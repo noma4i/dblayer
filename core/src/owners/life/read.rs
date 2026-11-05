@@ -6,8 +6,8 @@ use std::sync::Arc;
 use super::{Addresses, LifeReply, Ports, Wiring};
 use crate::db::Db;
 use crate::owners::contract::{BatchAuthor, Committed, Drained, Models, Rejected};
-use crate::owners::lifecycle::LifecycleInput;
-use crate::owners::network::{NetworkInput, SnapshotOwner};
+use crate::owners::lifecycle::{LifecycleInput, Peer};
+use crate::owners::network::NetworkInput;
 use crate::owners::read::deliveries::{DeliveriesState, Deliveries, DeliveryEffect, DeliveryInput, DeliveryPeers, PullAnswer, StreamEffect, StreamId, View};
 use crate::owners::read::feed::{Feed, FeedEffect, FeedPeers, FeedState};
 use crate::owners::read::windows::{Goal, Windows, WindowEffect, WindowKey, WindowsEffect, WindowsInput, WindowsPeers, WindowsState};
@@ -73,7 +73,7 @@ pub(super) fn add(builder: &mut RuntimeBuilder, wiring: &Arc<Wiring>, ports: &Po
                     Err(error) => wiring.fault(format!("the derived preload is invalid: {error}")),
                 });
             }
-            WindowsEffect::SnapshotRequest { epoch } => windows_wiring.to_network(NetworkInput::SnapshotRequest { owner: SnapshotOwner::Windows, epoch }),
+            WindowsEffect::SnapshotRequest { epoch } => windows_wiring.to_network(NetworkInput::SnapshotRequest { owner: Peer::Windows, epoch }),
             WindowsEffect::Drained(done) => drained(&windows_wiring, done),
             WindowsEffect::Window { .. } => {}
         }),

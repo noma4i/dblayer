@@ -11,14 +11,14 @@ use super::{LifeReply, Ports, Wiring};
 use crate::db::Db;
 use crate::identity::Generation;
 use crate::owners::calls::{CallError, Calls, CallsEffect, CallsInput};
-use crate::owners::contract::{Drained, Online};
+use crate::owners::contract::{Drained, Online, PublishedState};
 use crate::owners::lifecycle::{Lifecycle, LifecycleEffect, LifecycleInput, Peer};
-use crate::owners::network::{Network, NetworkEffect, NetworkInput, SnapshotOwner};
+use crate::owners::network::{Network, NetworkEffect, NetworkInput};
 use crate::owners::read::deliveries::DeliveryInput;
 use crate::owners::read::feed::FeedInput;
 use crate::owners::read::windows::WindowsInput;
 use crate::owners::session::SessionInput;
-use crate::owners::store::{StoreEffect, StoreInput, StoreOp, StoreWriter};
+use crate::owners::store::{Done, StoreEffect, StoreInput, StoreOp, StoreWriter};
 use crate::owners::write::outbox::OutboxInput;
 use crate::owners::write::transfer::TransferInput;
 use crate::runtime::{Back, EffectRunner, EpochStamp, OutcomeId};
@@ -38,38 +38,39 @@ impl EffectRunner<Lifecycle> for LifecycleRunner {
     fn run(&mut self, _stamp: EpochStamp, effect: LifecycleEffect, _back: &Back<Lifecycle>) {
         let wiring = &self.wiring;
         match effect {
-            LifecycleEffect::Publish(published) => {
-                self.held_published = Some(published.clone());
-                wiring.to_session(SessionInput::Published(published.clone()));
-                wiring.to_store(StoreInput::Published(published));
+            LifecycleEffect::Publish { publication_id, published } => {
+                if matches!(published.state, PublishedState::Ending | PublishedState::EndingFailed | PublishedState::Closing | PublishedState::StorageFailed) {
+                    self.held_published = Some(published.clone());
+                    wiring.to_session(SessionInput::Published(published.clone()));
+                }
+                wiring.to_store(StoreInput::Published { publication_id, published });
             }
+            LifecycleEffect::PublishCell(published) => {
+                self.held_published = Some(published.clone());
+                wiring.to_session(SessionInput::Published(published));
+            }
+            LifecycleEffect::RestoreReady { .. } => {}
             LifecycleEffect::EpochStarted { epoch, identity, generation } => {
-                wiring.set_ending(false);
                 wiring.handle.start_epoch(epoch);
-                let signed_in = identity.is_some();
+                // TEMPORARY: the owners of the epoch send `SnapshotRequest` themselves after their `EpochStarted` once directions B and C install them with the new table.
+                for owner in [Peer::Feed, Peer::Outbox, Peer::Transfer, Peer::Calls, Peer::Session] {
+                    wiring.to_network(NetworkInput::SnapshotRequest { owner, epoch });
+                }
                 let started = crate::owners::contract::EpochStarted { epoch, identity: identity.map(|identity| identity.into()), generation };
                 wiring.to_windows(WindowsInput::EpochStarted(started.clone()));
                 wiring.to_deliveries(DeliveryInput::EpochStarted(started.clone()));
                 wiring.to_feed(FeedInput::EpochStarted(started.clone()));
-                wiring.to_network(NetworkInput::EpochStarted);
                 wiring.to_outbox(OutboxInput::EpochStarted(started.clone()));
                 wiring.to_transfer(TransferInput::EpochStarted(started));
-                if signed_in {
-                    match self.db.read_intents() {
-                        Ok(stored) => wiring.to_outbox(OutboxInput::Restored(stored)),
-                        Err(error) => wiring.fault(format!("the intents of the queue are unreadable: {error}")),
-                    }
-                    if wiring.has_transfer() {
-                        match self.db.read_transfers() {
-                            Ok(stored) => wiring.to_transfer(TransferInput::Restored(stored)),
-                            Err(error) => wiring.fault(format!("the transfers are unreadable: {error}")),
-                        }
-                    }
+                if identity.is_some() {
+                    // TEMPORARY: Outbox and Transfer answer `Started` themselves once direction C installs them with the new table.
+                    wiring.to_lifecycle(LifecycleInput::Started { owner: Peer::Outbox, epoch });
+                    wiring.to_lifecycle(LifecycleInput::Started { owner: Peer::Transfer, epoch });
                 }
             }
+            LifecycleEffect::ReadIntents { epoch } => wiring.to_store(StoreInput::ReadIntents { epoch }),
             LifecycleEffect::EpochEnded { epoch, cause } => {
                 self.leases.epoch_ended(cause);
-                wiring.set_ending(true);
                 wiring.handle.end_epoch(epoch, cause);
                 wiring.outcomes.end_epoch(epoch, cause);
             }
@@ -89,10 +90,10 @@ impl EffectRunner<Lifecycle> for LifecycleRunner {
                     wiring.to_lifecycle(LifecycleInput::Drained(Drained { owner: peer.name() }));
                 }
             }
-            LifecycleEffect::ClearAccount { epoch_old, cause, generation_new } => wiring.to_store(StoreInput::ClearAccount { epoch_old, cause, generation_new }),
-            LifecycleEffect::ClearModels { epoch, generation_new, models } => wiring.to_store(StoreInput::ClearModels { epoch, generation_new, models }),
+            LifecycleEffect::StopObserving => wiring.to_lifecycle(LifecycleInput::ObserversStopped),
+            LifecycleEffect::ClearAccount { epoch_old, cause, generation_new, erase_id } => wiring.to_store(StoreInput::ClearAccount { epoch_old, cause, generation_new, erase_id }),
+            LifecycleEffect::ClearModels { epoch, generation_new, models, erase_id } => wiring.to_store(StoreInput::ClearModels { epoch, generation_new, models, erase_id }),
             LifecycleEffect::StoreClose => wiring.to_store(StoreInput::Close),
-            LifecycleEffect::ResetModelsSelf(models) => wiring.to_lifecycle(LifecycleInput::ResetModels { models, reply: None }),
             LifecycleEffect::Reply { id, result } => self.held_replies.push((id, result)),
         }
     }
@@ -103,7 +104,9 @@ impl EffectRunner<Lifecycle> for LifecycleRunner {
             self.wiring.publish(published);
         }
         for (id, result) in self.held_replies.drain(..) {
-            self.wiring.outcomes.settle(OutcomeId::from_raw(id), LifeReply::Life(result));
+            if !self.wiring.open_answered(id, result) {
+                self.wiring.outcomes.settle(OutcomeId::from_raw(id), LifeReply::Life(result));
+            }
         }
     }
 }
@@ -116,9 +119,12 @@ pub(super) struct StoreRunner {
 }
 
 impl StoreRunner {
-    fn erased(&self, back: &Back<StoreWriter>, result: Result<i64, crate::store::StoreError>) {
-        back.reply(EpochStamp::Control, StoreInput::Erased { result: result.map(drop).map_err(|error| error.to_string()) });
+    fn erased(&self, back: &Back<StoreWriter>, io_id: u64, result: Result<i64, crate::store::StoreError>) {
+        let result = result.map(|revision| Done { revision: u64::try_from(revision).unwrap_or(0) }).map_err(|error| error.to_string());
+        back.reply(EpochStamp::Control, StoreInput::Erased { io_id, result });
     }
+
+    fn revision(&self) -> Result<u64, String> { self.db.shared.store.revision_seq().map(|revision| u64::try_from(revision).unwrap_or(0)).map_err(|error| error.to_string()) }
 }
 
 impl EffectRunner<StoreWriter> for StoreRunner {
@@ -131,47 +137,66 @@ impl EffectRunner<StoreWriter> for StoreRunner {
                 saved_epoch: message.saved_epoch,
                 saved_generation: message.saved_generation,
                 saved_identity: message.saved_identity,
-                changed_models: message.changed_models,
+                reply: wiring.open_reply(),
             }),
-            StoreEffect::OpenFailed(error) => wiring.open_failed(error),
+            StoreEffect::OpenFailed(error) => wiring.open_failed(error, false),
+            StoreEffect::OpenCorrupt(error) => wiring.open_failed(error, true),
             StoreEffect::Write { batch } => {
-                let result = write_batch(&self.db, &batch);
+                let result = write_batch(&self.db, &batch).and_then(|()| self.revision()).map(|revision| Done { revision });
                 back.reply(EpochStamp::Control, StoreInput::Written { author: batch.author, batch: batch.id, result });
             }
-            StoreEffect::EraseAccount { generation_new, erase_encrypted } => {
-                let erased = store.erase_account(Generation::from_value(generation_new), erase_encrypted);
-                if erase_encrypted && erased.is_ok() {
-                    let cleared = match (&self.client, &self.credentials) {
-                        (Some(client), _) => client.erase_credential(),
-                        (None, Some(credentials)) => credentials.clear(),
-                        (None, None) => Ok(()),
-                    };
-                    if let Err(error) = cleared {
-                        wiring.fault(format!("clear secret: {error}"));
-                    }
-                }
-                self.erased(back, erased);
+            StoreEffect::EraseAccount { io_id, generation_new, erase_encrypted } => {
+                self.erased(back, io_id, store.erase_account(Generation::from_value(generation_new), erase_encrypted));
             }
-            StoreEffect::EraseModels { generation_new, models } => {
+            StoreEffect::EraseModels { io_id, generation_new, models } => {
                 let models: Vec<String> = models.into_iter().collect();
-                self.erased(back, store.erase_models(Generation::from_value(generation_new), &models));
+                self.erased(back, io_id, store.erase_models(Generation::from_value(generation_new), &models));
+            }
+            StoreEffect::ClearSecret { io_id } => {
+                let cleared = match (&self.client, &self.credentials) {
+                    (Some(client), _) => client.erase_credential(),
+                    (None, Some(credentials)) => credentials.clear(),
+                    (None, None) => Ok(()),
+                };
+                if let Err(error) = &cleared {
+                    wiring.fault(format!("clear secret: {error}"));
+                }
+                back.reply(EpochStamp::Control, StoreInput::Erased { io_id, result: cleared.map(|()| Done { revision: 0 }).map_err(|error| error.to_string()) });
+            }
+            StoreEffect::SavePublished { io_id, published, .. } => {
+                let saved = store.save_published(published.epoch, published.generation).map_err(|error| error.to_string()).and_then(|()| self.revision()).map(|revision| Done { revision });
+                back.reply(EpochStamp::Control, StoreInput::Erased { io_id, result: saved });
             }
             StoreEffect::Reply { author, batch, reply } => wiring.route_store_reply(author, batch, reply),
             StoreEffect::BroadcastCommitted { .. } => {}
-            StoreEffect::Cleared { epoch_old } => wiring.to_lifecycle(LifecycleInput::Cleared { epoch_old }),
-            StoreEffect::ModelsCleared { generation_new } => wiring.to_lifecycle(LifecycleInput::ModelsCleared { generation_new }),
-            StoreEffect::ClearFailed(error) => wiring.to_lifecycle(LifecycleInput::ClearFailed { error }),
-            StoreEffect::SavePublished { epoch, generation } => {
-                if let Err(error) = store.save_published(epoch, generation) {
-                    wiring.fault(format!("save published: {error}"));
+            StoreEffect::Cleared { erase_id, .. } => wiring.to_lifecycle(LifecycleInput::Cleared { erase_id }),
+            StoreEffect::ModelsCleared { generation_new, erase_id } => wiring.to_lifecycle(LifecycleInput::ModelsCleared { generation_new, erase_id }),
+            StoreEffect::ClearFailed { erase_id, error } => wiring.to_lifecycle(LifecycleInput::ClearFailed { erase_id, error }),
+            StoreEffect::Saved { publication_id } => wiring.to_lifecycle(LifecycleInput::Saved { publication_id }),
+            StoreEffect::SaveFailed { publication_id, error } => wiring.to_lifecycle(LifecycleInput::SaveFailed { publication_id, error }),
+            StoreEffect::ReadIntents { epoch } => {
+                match self.db.read_intents() {
+                    Ok(stored) => wiring.to_outbox(OutboxInput::Restored(stored)),
+                    Err(error) => wiring.fault(format!("the intents of the queue are unreadable: {error}")),
+                }
+                if wiring.has_transfer() {
+                    match self.db.read_transfers() {
+                        Ok(stored) => wiring.to_transfer(TransferInput::Restored(stored)),
+                        Err(error) => wiring.fault(format!("the transfers are unreadable: {error}")),
+                    }
+                }
+                // TEMPORARY: Outbox, Transfer and Session answer `RestoreClassified` themselves once their tables classify `Restored`.
+                for owner in [Peer::Outbox, Peer::Transfer, Peer::Session] {
+                    wiring.to_lifecycle(LifecycleInput::RestoreClassified { owner, epoch });
                 }
             }
+            StoreEffect::CloseReads => back.reply(EpochStamp::Control, StoreInput::ReadsClosed { ids: Vec::new() }),
             StoreEffect::CloseConnections => {
                 if let Err(error) = self.db.close() {
                     wiring.fault(format!("close: {error}"));
                 }
-                wiring.store_closed();
             }
+            StoreEffect::StoreClosed => wiring.to_lifecycle(LifecycleInput::StoreClosed),
         }
     }
 }
@@ -196,16 +221,20 @@ impl EffectRunner<Network> for NetworkRunner {
                 wiring.to_session(SessionInput::Online(Online(online)));
                 wiring.to_calls(CallsInput::Online(Online(online)));
             }
-            NetworkEffect::Snapshot { owner: SnapshotOwner::Windows, epoch, online } => wiring.to_windows_in(epoch, WindowsInput::Online(Online(online))),
-            NetworkEffect::EpochOnline(online) => {
-                wiring.to_feed(FeedInput::Online(Online(online)));
+            NetworkEffect::Snapshot { owner, epoch, online, .. } => {
                 self.db.connectivity().change(online);
-                wiring.to_calls(CallsInput::Online(Online(online)));
-                wiring.to_outbox(OutboxInput::Online(Online(online)));
-                wiring.to_transfer(TransferInput::Online(Online(online)));
-                wiring.to_session(SessionInput::Online(Online(online)));
+                match owner {
+                    Peer::Windows => wiring.to_windows_in(epoch, WindowsInput::Online(Online(online))),
+                    Peer::Feed => wiring.to_feed(FeedInput::Online(Online(online))),
+                    Peer::Calls => wiring.to_calls(CallsInput::Online(Online(online))),
+                    Peer::Outbox => wiring.to_outbox(OutboxInput::Online(Online(online))),
+                    Peer::Transfer => wiring.to_transfer(TransferInput::Online(Online(online))),
+                    Peer::Session => wiring.to_session(SessionInput::Online(Online(online))),
+                    _ => {}
+                }
             }
-            NetworkEffect::Foreground(_) | NetworkEffect::PowerSaving(_) | NetworkEffect::EpochPowerSaving(_) => {}
+            NetworkEffect::Foreground(seq) => wiring.to_windows(WindowsInput::Foreground(seq)),
+            NetworkEffect::PowerSaving(_) => {}
             NetworkEffect::Drained(drained) => wiring.to_lifecycle(LifecycleInput::Drained(drained)),
             NetworkEffect::Reply { id, closed } => self.held_replies.push((id, closed)),
         }

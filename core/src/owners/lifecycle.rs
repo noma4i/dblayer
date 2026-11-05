@@ -3,10 +3,12 @@
 
 use std::collections::BTreeSet;
 
-use super::contract::{CredentialCommitted, ReplyId, Drained, Published, ServerEnded};
+use super::contract::{CredentialCommitted, Drained, Published, PublishedState, ReplyId, ServerEnded};
 use crate::runtime::{Cause, Effect, Effects, Epoch, StateOwner, Time};
 
 pub type Identity = u64;
+pub type EraseId = u64;
+pub type PublicationId = u64;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Peer {
@@ -18,10 +20,12 @@ pub enum Peer {
     Outbox,
     Transfer,
     Calls,
+    LocalWrites,
+    Rounds,
 }
 
 /// `all owners` of the table.
-pub const ALL_OWNERS: [Peer; 8] = [Peer::Network, Peer::Session, Peer::Windows, Peer::Feed, Peer::Deliveries, Peer::Outbox, Peer::Transfer, Peer::Calls];
+pub const ALL_OWNERS: [Peer; 10] = [Peer::Network, Peer::Session, Peer::Windows, Peer::Feed, Peer::Deliveries, Peer::Outbox, Peer::Transfer, Peer::Calls, Peer::LocalWrites, Peer::Rounds];
 
 impl Peer {
     pub fn name(self) -> &'static str {
@@ -34,19 +38,46 @@ impl Peer {
             Self::Outbox => "outbox",
             Self::Transfer => "transfer",
             Self::Calls => "calls",
+            Self::LocalWrites => "local_writes",
+            Self::Rounds => "rounds",
         }
     }
 
     fn named(name: &str) -> Option<Self> { ALL_OWNERS.into_iter().find(|peer| peer.name() == name) }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum EraseKind {
+    Account,
+    Models,
+}
+
+/// An erase in the Store without an answer, with the waits bound to it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Erase {
+    pub id: EraseId,
+    pub kind: EraseKind,
+    /// The generation reserved for this erase (`issued_generation` + 1 at the time of issue).
+    pub target: u64,
+    pub replies: Vec<ReplyId>,
+}
+
+/// The restore of the intents of an epoch with an identity.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Restoring {
+    pub epoch: Epoch,
+    pub start_waiting: BTreeSet<Peer>,
+    pub restore_waiting: BTreeSet<Peer>,
+    pub open_reply: Option<ReplyId>,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum LifecyclePhase {
     NoSession { epoch: Epoch },
     Session { epoch: Epoch, identity: Identity },
-    Ending { epoch_old: Epoch, cause: Cause, next: Option<Identity>, replies: Vec<ReplyId>, failed: bool },
-    Resetting { epoch: Epoch, identity: Option<Identity>, models: BTreeSet<String>, queued_models: BTreeSet<String>, replies: Vec<ReplyId>, pending_credential: Option<Identity> },
-    Closing { waiting: BTreeSet<Peer>, clearing: bool, replies: Vec<ReplyId> },
+    Ending { epoch_old: Epoch, cause: Cause, next: Option<Identity>, failed: bool, erase_credential: bool, erases: Vec<Erase> },
+    Resetting { epoch: Epoch, identity: Option<Identity>, models: BTreeSet<String>, queued_models: BTreeSet<String>, queued_replies: Vec<ReplyId>, pending_credential: Option<Identity>, erases: Vec<Erase> },
+    Closing { waiting: BTreeSet<Peer>, erases: Vec<Erase>, close_replies: Vec<ReplyId>, store_closing: bool, store_closed: bool, observers_stopped: bool },
     Closed,
 }
 
@@ -54,35 +85,64 @@ pub enum LifecyclePhase {
 pub enum LifecycleError {
     Storage,
     Closed,
+    Runtime,
+    Interrupted,
+}
+
+/// The `EpochStarted` that waits for `Saved` of its publication.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Started {
+    pub epoch: Epoch,
+    pub identity: Option<Identity>,
+    pub generation: u64,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Publication {
+    pub id: PublicationId,
+    pub published: Published,
+    pub started: Option<Started>,
+    pub replies: Vec<ReplyId>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum LifecycleEffect {
-    Publish(Published),
+    /// The cell at once, the Store saves the value as `publication_id`.
+    Publish { publication_id: PublicationId, published: Published },
+    /// The cell only: the Store did not save the value.
+    PublishCell(Published),
     EpochStarted { epoch: Epoch, identity: Option<Identity>, generation: u64 },
     EpochEnded { epoch: Epoch, cause: Cause },
     ModelsReset { epoch: Epoch, generation: u64, models: BTreeSet<String> },
     Closing,
-    ClearAccount { epoch_old: Epoch, cause: Cause, generation_new: u64 },
-    ClearModels { epoch: Epoch, generation_new: u64, models: BTreeSet<String> },
+    StopObserving,
+    ClearAccount { epoch_old: Epoch, cause: Cause, generation_new: u64, erase_id: EraseId },
+    ClearModels { epoch: Epoch, generation_new: u64, models: BTreeSet<String>, erase_id: EraseId },
+    ReadIntents { epoch: Epoch },
+    RestoreReady { epoch: Epoch },
     StoreClose,
-    /// `Self ResetModels(changed_models, None)` of `life_open_changed_models`.
-    ResetModelsSelf(BTreeSet<String>),
     Reply { id: ReplyId, result: Result<(), LifecycleError> },
 }
 
 #[derive(Clone, Debug)]
 pub enum LifecycleInput {
-    Open { saved_epoch: Epoch, saved_generation: u64, saved_identity: Option<Identity>, changed_models: BTreeSet<String> },
+    Open { saved_epoch: Epoch, saved_generation: u64, saved_identity: Option<Identity>, reply: Option<ReplyId> },
     CredentialCommitted(CredentialCommitted),
-    SessionReset { reply: ReplyId },
+    SessionReset { reply: Option<ReplyId> },
     ServerEnded(ServerEnded),
     ResetModels { models: BTreeSet<String>, reply: Option<ReplyId> },
-    Cleared { epoch_old: Epoch },
-    ModelsCleared { generation_new: u64 },
-    ClearFailed { error: String },
+    Cleared { erase_id: EraseId },
+    ModelsCleared { generation_new: u64, erase_id: EraseId },
+    ClearFailed { erase_id: EraseId, error: String },
+    Saved { publication_id: PublicationId },
+    SaveFailed { publication_id: PublicationId, error: String },
+    StoreClosed,
+    ObserversStopped,
+    ExecutorFailed { executor: String },
     Close { reply: ReplyId },
     Drained(Drained),
+    Started { owner: Peer, epoch: Epoch },
+    RestoreClassified { owner: Peer, epoch: Epoch },
     /// `Tick`, `EpochEnded` and `Closing` are not inputs of Lifecycle.
     Idle,
 }
@@ -90,43 +150,131 @@ pub enum LifecycleInput {
 pub struct LifecycleState {
     phase: LifecyclePhase,
     published: Published,
+    publishing: Vec<Publication>,
+    /// The value of `PublishedCell`: restricting publications are written at once, active ones at `Saved`.
+    cell: Published,
+    cell_publication: PublicationId,
+    ended_up_to: Option<Epoch>,
+    restoring: Option<Restoring>,
+    next_publication: PublicationId,
+    next_erase: EraseId,
+    /// `issued_generation`: the highest generation reserved for an erase.
+    allocated: u64,
+}
+
+fn reply_all(replies: Vec<ReplyId>, result: Result<(), LifecycleError>, fx: &mut Vec<LifecycleEffect>) {
+    fx.extend(replies.into_iter().map(|id| LifecycleEffect::Reply { id, result }));
+}
+
+fn restricting(state: PublishedState) -> bool { matches!(state, PublishedState::Ending | PublishedState::EndingFailed | PublishedState::Closing | PublishedState::StorageFailed) }
+
+fn settled_state(identity: Option<Identity>) -> PublishedState { if identity.is_some() { PublishedState::Session } else { PublishedState::NoSession } }
+
+fn settled(epoch: Epoch, identity: Option<Identity>) -> LifecyclePhase {
+    match identity {
+        Some(identity) => LifecyclePhase::Session { epoch, identity },
+        None => LifecyclePhase::NoSession { epoch },
+    }
+}
+
+fn take_erase(erases: &mut Vec<Erase>, id: EraseId) -> Option<Erase> {
+    let at = erases.iter().position(|erase| erase.id == id)?;
+    Some(erases.remove(at))
 }
 
 impl LifecycleState {
     /// Before `Open`: no session, epoch 0.
-    pub fn new() -> Self { Self { phase: LifecyclePhase::NoSession { epoch: 0 }, published: Published { epoch: 0, identity: None, generation: 0, closed: false } } }
+    pub fn new() -> Self {
+        Self { phase: LifecyclePhase::NoSession { epoch: 0 }, published: Published::initial(), publishing: Vec::new(), cell: Published::initial(), cell_publication: 0, ended_up_to: None, restoring: None, next_publication: 1, next_erase: 1, allocated: 0 }
+    }
 
     pub fn phase(&self) -> &LifecyclePhase { &self.phase }
 
     pub fn published(&self) -> &Published { &self.published }
 
-    fn publish(&self, fx: &mut Vec<LifecycleEffect>) { fx.push(LifecycleEffect::Publish(self.published.clone())); }
+    pub fn publishing(&self) -> &[Publication] { &self.publishing }
 
-    fn started(&mut self, epoch: Epoch, identity: Option<Identity>, generation: u64, fx: &mut Vec<LifecycleEffect>) {
-        self.published = Published { epoch, identity, generation, closed: false };
-        self.publish(fx);
-        fx.push(LifecycleEffect::EpochStarted { epoch, identity, generation });
+    pub fn cell(&self) -> &Published { &self.cell }
+
+    pub fn restoring(&self) -> Option<&Restoring> { self.restoring.as_ref() }
+
+    fn publish(&mut self, started: Option<Started>, replies: Vec<ReplyId>, fx: &mut Vec<LifecycleEffect>) {
+        let id = self.next_publication;
+        self.next_publication += 1;
+        fx.push(LifecycleEffect::Publish { publication_id: id, published: self.published.clone() });
+        if restricting(self.published.state) {
+            self.cell = self.published.clone();
+            self.cell_publication = id;
+        }
+        self.publishing.push(Publication { id, published: self.published.clone(), started, replies });
     }
 
-    fn closing(&mut self, replies: Vec<ReplyId>, clearing: bool, end: Option<Epoch>, fx: &mut Vec<LifecycleEffect>) -> LifecyclePhase {
+    fn set_published(&mut self, epoch: Epoch, identity: Option<Identity>, generation: u64, state: PublishedState) {
+        self.published = Published { epoch, identity, generation, state, closed: false };
+    }
+
+    fn start(&mut self, epoch: Epoch, identity: Option<Identity>, generation: u64, replies: Vec<ReplyId>, fx: &mut Vec<LifecycleEffect>) {
+        self.set_published(epoch, identity, generation, settled_state(identity));
+        if identity.is_some() {
+            self.restoring = Some(Self::new_restoring(epoch, None));
+        }
+        self.publish(Some(Started { epoch, identity, generation }), replies, fx);
+    }
+
+    fn new_restoring(epoch: Epoch, open_reply: Option<ReplyId>) -> Restoring {
+        Restoring { epoch, start_waiting: [Peer::Outbox, Peer::Transfer].into(), restore_waiting: [Peer::Outbox, Peer::Transfer, Peer::Session].into(), open_reply }
+    }
+
+    /// The restore of an epoch that ended, or of a close, ends with the wait of `open`.
+    fn drop_restoring(&mut self, result: LifecycleError, fx: &mut Vec<LifecycleEffect>) {
+        if let Some(restoring) = self.restoring.take() {
+            reply_all(restoring.open_reply.into_iter().collect(), Err(result), fx);
+        }
+    }
+
+    fn ended(&mut self, epoch: Epoch) { self.ended_up_to = Some(self.ended_up_to.map_or(epoch, |ended| ended.max(epoch))); }
+
+    fn new_erase(&mut self, kind: EraseKind, replies: Vec<ReplyId>) -> Erase {
+        let id = self.next_erase;
+        self.next_erase += 1;
+        self.allocated = self.allocated.max(self.published.generation) + 1;
+        Erase { id, kind, target: self.allocated, replies }
+    }
+
+    fn closing(&mut self, erases: Vec<Erase>, close_replies: Vec<ReplyId>, end: Option<Epoch>, fx: &mut Vec<LifecycleEffect>) -> LifecyclePhase {
+        self.published.state = PublishedState::Closing;
         self.published.closed = true;
-        self.publish(fx);
+        self.publish(None, Vec::new(), fx);
+        self.drop_restoring(LifecycleError::Interrupted, fx);
         if let Some(epoch) = end {
+            self.ended(epoch);
             fx.push(LifecycleEffect::EpochEnded { epoch, cause: Cause::Close });
         }
         fx.push(LifecycleEffect::Closing);
-        LifecyclePhase::Closing { waiting: ALL_OWNERS.into_iter().collect(), clearing, replies }
+        fx.push(LifecycleEffect::StopObserving);
+        LifecyclePhase::Closing { waiting: ALL_OWNERS.into_iter().collect(), erases, close_replies, store_closing: false, store_closed: false, observers_stopped: false }
     }
 
-    fn ending(&mut self, epoch: Epoch, cause: Cause, next: Option<Identity>, replies: Vec<ReplyId>, fx: &mut Vec<LifecycleEffect>) {
+    /// `Ending` entered from a state with a live epoch: `EpochEnded` · `Publish` · `ClearAccount`.
+    fn ending(&mut self, epoch: Epoch, cause: Cause, next: Option<Identity>, mut erases: Vec<Erase>, replies: Vec<ReplyId>, fx: &mut Vec<LifecycleEffect>) {
+        self.ended(epoch);
+        self.drop_restoring(LifecycleError::Interrupted, fx);
         fx.push(LifecycleEffect::EpochEnded { epoch, cause });
-        fx.push(LifecycleEffect::ClearAccount { epoch_old: epoch, cause, generation_new: self.published.generation + 1 });
-        self.phase = LifecyclePhase::Ending { epoch_old: epoch, cause, next, replies, failed: false };
+        self.published.state = PublishedState::Ending;
+        self.publish(None, Vec::new(), fx);
+        let erase = self.new_erase(EraseKind::Account, replies);
+        fx.push(LifecycleEffect::ClearAccount { epoch_old: epoch, cause, generation_new: erase.target, erase_id: erase.id });
+        erases.push(erase);
+        self.phase = LifecyclePhase::Ending { epoch_old: epoch, cause, next, failed: false, erase_credential: false, erases };
     }
-}
 
-fn reply_all(replies: Vec<ReplyId>, result: Result<(), LifecycleError>, fx: &mut Vec<LifecycleEffect>) {
-    fx.extend(replies.into_iter().map(|id| LifecycleEffect::Reply { id, result }));
+    fn resetting(&mut self, epoch: Epoch, identity: Option<Identity>, models: BTreeSet<String>, reply: Option<ReplyId>, fx: &mut Vec<LifecycleEffect>) -> LifecyclePhase {
+        self.published.state = PublishedState::Resetting;
+        self.publish(None, Vec::new(), fx);
+        let erase = self.new_erase(EraseKind::Models, reply.into_iter().collect());
+        fx.push(LifecycleEffect::ClearModels { epoch, generation_new: erase.target, models: models.clone(), erase_id: erase.id });
+        LifecyclePhase::Resetting { epoch, identity, models, queued_models: BTreeSet::new(), queued_replies: Vec::new(), pending_credential: None, erases: vec![erase] }
+    }
 }
 
 pub struct Lifecycle;
@@ -154,227 +302,372 @@ impl StateOwner for Lifecycle {
 impl LifecycleState {
     /// One row of `lifecycle.md` per match arm, in table order.
     fn run(&mut self, input: LifecycleInput, fx: &mut Vec<LifecycleEffect>) {
+        match input {
+            LifecycleInput::Open { saved_epoch, saved_generation, saved_identity, reply } => {
+                self.allocated = saved_generation;
+                let epoch = saved_epoch + 1;
+                self.phase = settled(epoch, saved_identity);
+                self.set_published(epoch, saved_identity, saved_generation, settled_state(saved_identity));
+                if saved_identity.is_some() {
+                    self.restoring = Some(Self::new_restoring(epoch, reply));
+                    self.publish(Some(Started { epoch, identity: saved_identity, generation: saved_generation }), Vec::new(), fx);
+                } else {
+                    self.publish(Some(Started { epoch, identity: saved_identity, generation: saved_generation }), reply.into_iter().collect(), fx);
+                }
+                return;
+            }
+            LifecycleInput::Saved { publication_id } => return self.saved(publication_id, true, fx),
+            LifecycleInput::SaveFailed { publication_id, .. } => return self.saved(publication_id, false, fx),
+            LifecycleInput::ExecutorFailed { .. } => return self.executor_failed(fx),
+            LifecycleInput::Started { owner, epoch } => return self.restore(owner, epoch, true, fx),
+            LifecycleInput::RestoreClassified { owner, epoch } => return self.restore(owner, epoch, false, fx),
+            _ => {}
+        }
         let generation = self.published.generation;
         let phase = std::mem::replace(&mut self.phase, LifecyclePhase::Closed);
-        if let LifecycleInput::Open { saved_epoch, saved_generation, saved_identity, changed_models } = input {
-            self.phase = match saved_identity {
-                Some(identity) => LifecyclePhase::Session { epoch: saved_epoch + 1, identity },
-                None => LifecyclePhase::NoSession { epoch: saved_epoch + 1 },
-            };
-            self.started(saved_epoch + 1, saved_identity, saved_generation, fx);
-            if !changed_models.is_empty() {
-                fx.push(LifecycleEffect::ResetModelsSelf(changed_models));
-            }
-            return;
-        }
         self.phase = match (phase, input) {
             (LifecyclePhase::NoSession { epoch }, LifecycleInput::CredentialCommitted(CredentialCommitted { identity })) => {
+                self.ended(epoch);
                 fx.push(LifecycleEffect::EpochEnded { epoch, cause: Cause::SessionStarted });
-                self.started(epoch + 1, Some(identity), generation, fx);
+                self.start(epoch + 1, Some(identity), generation, Vec::new(), fx);
                 LifecyclePhase::Session { epoch: epoch + 1, identity }
             }
             (LifecyclePhase::NoSession { epoch }, LifecycleInput::SessionReset { reply }) => {
-                self.ending(epoch, Cause::SessionReset, None, vec![reply], fx);
+                self.ending(epoch, Cause::SessionReset, None, Vec::new(), reply.into_iter().collect(), fx);
                 return;
             }
-            (LifecyclePhase::NoSession { epoch }, LifecycleInput::ResetModels { models, reply }) => {
-                fx.push(LifecycleEffect::ClearModels { epoch, generation_new: generation + 1, models: models.clone() });
-                LifecyclePhase::Resetting { epoch, identity: None, models, queued_models: BTreeSet::new(), replies: reply.into_iter().collect(), pending_credential: None }
-            }
-            (LifecyclePhase::NoSession { epoch }, LifecycleInput::Close { reply }) => self.closing(vec![reply], false, Some(epoch), fx),
+            (LifecyclePhase::NoSession { epoch }, LifecycleInput::ResetModels { models, reply }) => self.resetting(epoch, None, models, reply, fx),
+            (LifecyclePhase::NoSession { epoch }, LifecycleInput::Close { reply }) => self.closing(Vec::new(), vec![reply], Some(epoch), fx),
             (phase @ LifecyclePhase::NoSession { .. }, _) => phase,
 
             (LifecyclePhase::Session { epoch, identity }, LifecycleInput::CredentialCommitted(CredentialCommitted { identity: other })) if other == identity => LifecyclePhase::Session { epoch, identity },
             (LifecyclePhase::Session { epoch, .. }, LifecycleInput::CredentialCommitted(CredentialCommitted { identity: other })) => {
-                self.ending(epoch, Cause::IdentityChanged, Some(other), vec![], fx);
+                self.ending(epoch, Cause::IdentityChanged, Some(other), Vec::new(), Vec::new(), fx);
                 return;
             }
             (LifecyclePhase::Session { epoch, .. }, LifecycleInput::SessionReset { reply }) => {
-                self.ending(epoch, Cause::SessionReset, None, vec![reply], fx);
+                self.ending(epoch, Cause::SessionReset, None, Vec::new(), reply.into_iter().collect(), fx);
                 return;
             }
             (LifecyclePhase::Session { epoch, .. }, LifecycleInput::ServerEnded(ServerEnded { epoch: request_epoch })) if request_epoch == epoch => {
-                self.ending(epoch, Cause::ServerEnded, None, vec![], fx);
+                self.ending(epoch, Cause::ServerEnded, None, Vec::new(), Vec::new(), fx);
                 return;
             }
-            (LifecyclePhase::Session { epoch, identity }, LifecycleInput::ResetModels { models, reply }) => {
-                fx.push(LifecycleEffect::ClearModels { epoch, generation_new: generation + 1, models: models.clone() });
-                LifecyclePhase::Resetting { epoch, identity: Some(identity), models, queued_models: BTreeSet::new(), replies: reply.into_iter().collect(), pending_credential: None }
-            }
-            (LifecyclePhase::Session { epoch, .. }, LifecycleInput::Close { reply }) => self.closing(vec![reply], false, Some(epoch), fx),
+            (LifecyclePhase::Session { epoch, identity }, LifecycleInput::ResetModels { models, reply }) => self.resetting(epoch, Some(identity), models, reply, fx),
+            (LifecyclePhase::Session { epoch, .. }, LifecycleInput::Close { reply }) => self.closing(Vec::new(), vec![reply], Some(epoch), fx),
             (phase @ LifecyclePhase::Session { .. }, _) => phase,
 
-            (LifecyclePhase::Ending { epoch_old, cause, replies, failed, .. }, LifecycleInput::CredentialCommitted(CredentialCommitted { identity })) => {
+            (LifecyclePhase::Ending { epoch_old, cause, failed, erase_credential, mut erases, .. }, LifecycleInput::CredentialCommitted(CredentialCommitted { identity })) => {
                 if failed {
-                    fx.push(LifecycleEffect::ClearAccount { epoch_old, cause, generation_new: generation + 1 });
+                    self.published.state = PublishedState::Ending;
+                    self.publish(None, Vec::new(), fx);
+                    let erase = self.new_erase(EraseKind::Account, Vec::new());
+                    fx.push(LifecycleEffect::ClearAccount { epoch_old, cause, generation_new: erase.target, erase_id: erase.id });
+                    erases.push(erase);
                 }
-                LifecyclePhase::Ending { epoch_old, cause, next: Some(identity), replies, failed: false }
+                LifecyclePhase::Ending { epoch_old, cause, next: Some(identity), failed: false, erase_credential, erases }
             }
-            (LifecyclePhase::Ending { epoch_old, cause, mut replies, failed, .. }, LifecycleInput::SessionReset { reply }) => {
-                let mut cause = cause;
+            (LifecyclePhase::Ending { epoch_old, cause, failed, erase_credential, mut erases, .. }, LifecycleInput::SessionReset { reply }) => {
                 if failed {
-                    replies = vec![reply];
-                    cause = Cause::SessionReset;
-                    fx.push(LifecycleEffect::ClearAccount { epoch_old, cause, generation_new: generation + 1 });
+                    self.published.state = PublishedState::Ending;
+                    self.publish(None, Vec::new(), fx);
+                    let erase = self.new_erase(EraseKind::Account, reply.into_iter().collect());
+                    fx.push(LifecycleEffect::ClearAccount { epoch_old, cause: Cause::SessionReset, generation_new: erase.target, erase_id: erase.id });
+                    erases.push(erase);
+                    LifecyclePhase::Ending { epoch_old, cause: Cause::SessionReset, next: None, failed: false, erase_credential: false, erases }
                 } else {
-                    replies.push(reply);
-                }
-                LifecyclePhase::Ending { epoch_old, cause, next: None, replies, failed: false }
-            }
-            (LifecyclePhase::Ending { epoch_old, cause, next, mut replies, failed }, LifecycleInput::ResetModels { reply, .. }) => {
-                replies.extend(reply);
-                LifecyclePhase::Ending { epoch_old, cause, next, replies, failed }
-            }
-            (LifecyclePhase::Ending { epoch_old, next, replies, .. }, LifecycleInput::Cleared { .. }) => {
-                reply_all(replies, Ok(()), fx);
-                match next {
-                    None => {
-                        self.started(epoch_old + 1, None, generation + 1, fx);
-                        LifecyclePhase::NoSession { epoch: epoch_old + 1 }
+                    let credential = erase_credential || cause == Cause::IdentityChanged;
+                    if let Some(account) = erases.iter_mut().rev().find(|erase| erase.kind == EraseKind::Account) {
+                        account.replies.extend(reply);
                     }
-                    Some(identity) => {
-                        self.started(epoch_old + 2, Some(identity), generation + 1, fx);
-                        LifecyclePhase::Session { epoch: epoch_old + 2, identity }
-                    }
+                    LifecyclePhase::Ending { epoch_old, cause, next: None, failed: false, erase_credential: credential, erases }
                 }
             }
-            (LifecyclePhase::Ending { epoch_old, cause, next, replies, .. }, LifecycleInput::ClearFailed { .. }) => {
-                reply_all(replies, Err(LifecycleError::Storage), fx);
-                LifecyclePhase::Ending { epoch_old, cause, next, replies: Vec::new(), failed: true }
-            }
-            (LifecyclePhase::Ending { mut replies, .. }, LifecycleInput::Close { reply }) => {
-                replies.push(reply);
-                self.closing(replies, true, None, fx)
-            }
-            (phase @ LifecyclePhase::Ending { .. }, _) => phase,
-
-            (LifecyclePhase::Resetting { epoch, identity, models, queued_models, replies, pending_credential }, LifecycleInput::CredentialCommitted(CredentialCommitted { identity: other })) => match identity {
-                None => LifecyclePhase::Resetting { epoch, identity, models, queued_models, replies, pending_credential: Some(other) },
-                Some(current) if current == other => LifecyclePhase::Resetting { epoch, identity, models, queued_models, replies, pending_credential },
-                Some(_) => {
-                    self.ending(epoch, Cause::IdentityChanged, Some(other), replies, fx);
-                    return;
+            (LifecyclePhase::Ending { epoch_old, cause, next, failed, erase_credential, mut erases }, LifecycleInput::ResetModels { reply, .. }) => {
+                if failed {
+                    reply_all(reply.into_iter().collect(), Err(LifecycleError::Storage), fx);
+                } else if let Some(account) = erases.iter_mut().rev().find(|erase| erase.kind == EraseKind::Account) {
+                    account.replies.extend(reply);
                 }
-            },
-            (LifecyclePhase::Resetting { epoch, mut replies, .. }, LifecycleInput::SessionReset { reply }) => {
-                replies.push(reply);
-                self.ending(epoch, Cause::SessionReset, None, replies, fx);
-                return;
+                LifecyclePhase::Ending { epoch_old, cause, next, failed, erase_credential, erases }
             }
-            (LifecyclePhase::Resetting { epoch, identity, models, queued_models, replies, pending_credential }, LifecycleInput::ServerEnded(ServerEnded { epoch: request_epoch })) => {
-                if request_epoch == epoch && identity.is_some() {
-                    self.ending(epoch, Cause::ServerEnded, None, replies, fx);
-                    return;
+            (LifecyclePhase::Ending { epoch_old, cause, next, failed, erase_credential, mut erases }, LifecycleInput::Cleared { erase_id }) => match take_erase(&mut erases, erase_id) {
+                None => LifecyclePhase::Ending { epoch_old, cause, next, failed, erase_credential, erases },
+                Some(erase) if erase_credential => {
+                    self.published.generation = self.published.generation.max(erase.target);
+                    let second = self.new_erase(EraseKind::Account, erase.replies);
+                    fx.push(LifecycleEffect::ClearAccount { epoch_old, cause: Cause::SessionReset, generation_new: second.target, erase_id: second.id });
+                    erases.push(second);
+                    LifecyclePhase::Ending { epoch_old, cause: Cause::SessionReset, next, failed, erase_credential: false, erases }
                 }
-                LifecyclePhase::Resetting { epoch, identity, models, queued_models, replies, pending_credential }
-            }
-            (LifecyclePhase::Resetting { epoch, identity, models, mut queued_models, mut replies, pending_credential }, LifecycleInput::ResetModels { models: more, reply }) => {
-                queued_models.extend(more);
-                replies.extend(reply);
-                LifecyclePhase::Resetting { epoch, identity, models, queued_models, replies, pending_credential }
-            }
-            (LifecyclePhase::Resetting { epoch, identity, models, queued_models, replies, pending_credential }, LifecycleInput::ModelsCleared { generation_new }) => {
-                self.published.generation = generation_new;
-                if !queued_models.is_empty() {
-                    self.publish(fx);
-                    fx.push(LifecycleEffect::ModelsReset { epoch, generation: generation_new, models });
-                    fx.push(LifecycleEffect::ClearModels { epoch, generation_new: generation_new + 1, models: queued_models.clone() });
-                    return self.set(LifecyclePhase::Resetting { epoch, identity, models: queued_models, queued_models: BTreeSet::new(), replies, pending_credential });
-                }
-                reply_all(replies, Ok(()), fx);
-                match pending_credential {
-                    Some(next) => {
-                        self.published.epoch = epoch + 1;
-                        self.published.identity = Some(next);
-                        self.publish(fx);
-                        fx.push(LifecycleEffect::ModelsReset { epoch, generation: generation_new, models });
-                        fx.push(LifecycleEffect::EpochEnded { epoch, cause: Cause::SessionStarted });
-                        fx.push(LifecycleEffect::EpochStarted { epoch: epoch + 1, identity: Some(next), generation: generation_new });
-                        LifecyclePhase::Session { epoch: epoch + 1, identity: next }
-                    }
-                    None => {
-                        self.publish(fx);
-                        fx.push(LifecycleEffect::ModelsReset { epoch, generation: generation_new, models });
-                        match identity {
-                            Some(identity) => LifecyclePhase::Session { epoch, identity },
-                            None => LifecyclePhase::NoSession { epoch },
+                Some(erase) => {
+                    let generation = self.published.generation.max(erase.target);
+                    match next {
+                        None => {
+                            self.start(epoch_old + 1, None, generation, erase.replies, fx);
+                            LifecyclePhase::NoSession { epoch: epoch_old + 1 }
+                        }
+                        Some(identity) => {
+                            self.start(epoch_old + 2, Some(identity), generation, erase.replies, fx);
+                            LifecyclePhase::Session { epoch: epoch_old + 2, identity }
                         }
                     }
                 }
-            }
-            (LifecyclePhase::Resetting { epoch, identity, replies, pending_credential, .. }, LifecycleInput::ClearFailed { .. }) => {
-                reply_all(replies, Err(LifecycleError::Storage), fx);
-                match pending_credential {
-                    Some(next) => {
-                        self.published.epoch = epoch + 1;
-                        self.published.identity = Some(next);
-                        self.publish(fx);
-                        fx.push(LifecycleEffect::EpochEnded { epoch, cause: Cause::SessionStarted });
-                        fx.push(LifecycleEffect::EpochStarted { epoch: epoch + 1, identity: Some(next), generation });
-                        LifecyclePhase::Session { epoch: epoch + 1, identity: next }
+            },
+            (LifecyclePhase::Ending { epoch_old, cause, next, failed, erase_credential, mut erases }, LifecycleInput::ClearFailed { erase_id, .. }) => match take_erase(&mut erases, erase_id) {
+                None => LifecyclePhase::Ending { epoch_old, cause, next, failed, erase_credential, erases },
+                Some(erase) => {
+                    reply_all(erase.replies, Err(LifecycleError::Storage), fx);
+                    if erase.kind == EraseKind::Account {
+                        self.published.state = PublishedState::EndingFailed;
+                        self.publish(None, Vec::new(), fx);
+                        LifecyclePhase::Ending { epoch_old, cause, next, failed: true, erase_credential, erases }
+                    } else {
+                        LifecyclePhase::Ending { epoch_old, cause, next, failed, erase_credential, erases }
                     }
-                    None => match identity {
-                        Some(identity) => LifecyclePhase::Session { epoch, identity },
-                        None => LifecyclePhase::NoSession { epoch },
-                    },
                 }
+            },
+            (LifecyclePhase::Ending { epoch_old, cause, next, failed, erase_credential, mut erases }, LifecycleInput::ModelsCleared { erase_id, .. }) => {
+                if let Some(erase) = take_erase(&mut erases, erase_id) {
+                    reply_all(erase.replies, Ok(()), fx);
+                }
+                LifecyclePhase::Ending { epoch_old, cause, next, failed, erase_credential, erases }
             }
-            (LifecyclePhase::Resetting { epoch, mut replies, .. }, LifecycleInput::Close { reply }) => {
-                replies.push(reply);
-                self.closing(replies, true, Some(epoch), fx)
+            (LifecyclePhase::Ending { erases, .. }, LifecycleInput::Close { reply }) => self.closing(erases, vec![reply], None, fx),
+            (phase @ LifecyclePhase::Ending { .. }, _) => phase,
+
+            (LifecyclePhase::Resetting { epoch, identity, models, queued_models, queued_replies, pending_credential, erases }, LifecycleInput::CredentialCommitted(CredentialCommitted { identity: other })) => match identity {
+                None => LifecyclePhase::Resetting { epoch, identity, models, queued_models, queued_replies, pending_credential: Some(other), erases },
+                Some(current) if current == other => LifecyclePhase::Resetting { epoch, identity, models, queued_models, queued_replies, pending_credential, erases },
+                Some(_) => {
+                    self.ending(epoch, Cause::IdentityChanged, Some(other), erases, queued_replies, fx);
+                    return;
+                }
+            },
+            (LifecyclePhase::Resetting { epoch, mut queued_replies, erases, .. }, LifecycleInput::SessionReset { reply }) => {
+                queued_replies.extend(reply);
+                self.ending(epoch, Cause::SessionReset, None, erases, queued_replies, fx);
+                return;
+            }
+            (LifecyclePhase::Resetting { epoch, identity, models, queued_models, queued_replies, pending_credential, erases }, LifecycleInput::ServerEnded(ServerEnded { epoch: request_epoch })) => {
+                if request_epoch == epoch && identity.is_some() {
+                    self.ending(epoch, Cause::ServerEnded, None, erases, queued_replies, fx);
+                    return;
+                }
+                LifecyclePhase::Resetting { epoch, identity, models, queued_models, queued_replies, pending_credential, erases }
+            }
+            (LifecyclePhase::Resetting { epoch, identity, models, mut queued_models, mut queued_replies, pending_credential, erases }, LifecycleInput::ResetModels { models: more, reply }) => {
+                queued_models.extend(more);
+                queued_replies.extend(reply);
+                LifecyclePhase::Resetting { epoch, identity, models, queued_models, queued_replies, pending_credential, erases }
+            }
+            (LifecyclePhase::Resetting { epoch, identity, models, queued_models, queued_replies, pending_credential, mut erases }, LifecycleInput::ModelsCleared { generation_new, erase_id }) => match take_erase(&mut erases, erase_id) {
+                None => LifecyclePhase::Resetting { epoch, identity, models, queued_models, queued_replies, pending_credential, erases },
+                Some(erase) => {
+                    let _ = generation_new;
+                    let generation_new = self.published.generation.max(erase.target);
+                    self.published.generation = generation_new;
+                    if !queued_models.is_empty() {
+                        self.published.state = PublishedState::Resetting;
+                        self.publish(None, erase.replies, fx);
+                        fx.push(LifecycleEffect::ModelsReset { epoch, generation: generation_new, models });
+                        let next = self.new_erase(EraseKind::Models, queued_replies);
+                        fx.push(LifecycleEffect::ClearModels { epoch, generation_new: next.target, models: queued_models.clone(), erase_id: next.id });
+                        erases.push(next);
+                        self.phase = LifecyclePhase::Resetting { epoch, identity, models: queued_models, queued_models: BTreeSet::new(), queued_replies: Vec::new(), pending_credential, erases };
+                        return;
+                    }
+                    match pending_credential {
+                        Some(next) => {
+                            fx.push(LifecycleEffect::ModelsReset { epoch, generation: generation_new, models });
+                            self.ended(epoch);
+                            fx.push(LifecycleEffect::EpochEnded { epoch, cause: Cause::SessionStarted });
+                            self.start(epoch + 1, Some(next), generation_new, erase.replies, fx);
+                            LifecyclePhase::Session { epoch: epoch + 1, identity: next }
+                        }
+                        None => {
+                            self.set_published(epoch, identity, generation_new, settled_state(identity));
+                            self.publish(None, erase.replies, fx);
+                            fx.push(LifecycleEffect::ModelsReset { epoch, generation: generation_new, models });
+                            settled(epoch, identity)
+                        }
+                    }
+                }
+            },
+            (LifecyclePhase::Resetting { epoch, identity, models, queued_models, queued_replies, pending_credential, mut erases }, LifecycleInput::ClearFailed { erase_id, .. }) => match take_erase(&mut erases, erase_id) {
+                None => LifecyclePhase::Resetting { epoch, identity, models, queued_models, queued_replies, pending_credential, erases },
+                Some(erase) => {
+                    reply_all(erase.replies, Err(LifecycleError::Storage), fx);
+                    reply_all(queued_replies, Err(LifecycleError::Storage), fx);
+                    match pending_credential {
+                        Some(next) => {
+                            self.ended(epoch);
+                            fx.push(LifecycleEffect::EpochEnded { epoch, cause: Cause::SessionStarted });
+                            self.start(epoch + 1, Some(next), generation, Vec::new(), fx);
+                            LifecyclePhase::Session { epoch: epoch + 1, identity: next }
+                        }
+                        None => {
+                            self.set_published(epoch, identity, generation, settled_state(identity));
+                            self.publish(None, Vec::new(), fx);
+                            settled(epoch, identity)
+                        }
+                    }
+                }
+            },
+            (LifecyclePhase::Resetting { epoch, queued_replies, erases, .. }, LifecycleInput::Close { reply }) => {
+                reply_all(queued_replies, Err(LifecycleError::Interrupted), fx);
+                self.closing(erases, vec![reply], Some(epoch), fx)
             }
             (phase @ LifecyclePhase::Resetting { .. }, _) => phase,
 
-            (LifecyclePhase::Closing { mut waiting, clearing, replies }, LifecycleInput::Drained(Drained { owner })) => {
+            (LifecyclePhase::Closing { mut waiting, erases, close_replies, store_closing, store_closed, observers_stopped }, LifecycleInput::Drained(Drained { owner })) => {
                 if let Some(peer) = Peer::named(owner) {
                     waiting.remove(&peer);
                 }
-                if waiting.is_empty() && !clearing {
-                    reply_all(replies, Ok(()), fx);
+                let last = waiting.is_empty() && erases.is_empty();
+                if last {
                     fx.push(LifecycleEffect::StoreClose);
+                }
+                LifecyclePhase::Closing { waiting, erases, close_replies, store_closing: store_closing || last, store_closed, observers_stopped }
+            }
+            (LifecyclePhase::Closing { waiting, mut erases, close_replies, mut store_closing, store_closed, observers_stopped }, input @ (LifecycleInput::Cleared { .. } | LifecycleInput::ModelsCleared { .. } | LifecycleInput::ClearFailed { .. })) => {
+                let (erase_id, result) = match input {
+                    LifecycleInput::Cleared { erase_id } | LifecycleInput::ModelsCleared { erase_id, .. } => (erase_id, Ok(())),
+                    LifecycleInput::ClearFailed { erase_id, .. } => (erase_id, Err(LifecycleError::Storage)),
+                    _ => (u64::MAX, Ok(())),
+                };
+                if let Some(erase) = take_erase(&mut erases, erase_id) {
+                    reply_all(erase.replies, result, fx);
+                    if waiting.is_empty() && erases.is_empty() {
+                        store_closing = true;
+                        fx.push(LifecycleEffect::StoreClose);
+                    }
+                }
+                LifecyclePhase::Closing { waiting, erases, close_replies, store_closing, store_closed, observers_stopped }
+            }
+            (LifecyclePhase::Closing { waiting, erases, close_replies, store_closing, store_closed, observers_stopped }, LifecycleInput::StoreClosed) => {
+                if store_closing && observers_stopped {
+                    reply_all(close_replies, Ok(()), fx);
                     LifecyclePhase::Closed
                 } else {
-                    LifecyclePhase::Closing { waiting, clearing, replies }
+                    LifecyclePhase::Closing { waiting, erases, close_replies, store_closing, store_closed: store_closed || store_closing, observers_stopped }
                 }
             }
-            (LifecyclePhase::Closing { waiting, replies, .. }, LifecycleInput::Cleared { .. } | LifecycleInput::ModelsCleared { .. } | LifecycleInput::ClearFailed { .. }) => {
-                if waiting.is_empty() {
-                    reply_all(replies, Ok(()), fx);
-                    fx.push(LifecycleEffect::StoreClose);
+            (LifecyclePhase::Closing { waiting, erases, close_replies, store_closing, store_closed, .. }, LifecycleInput::ObserversStopped) => {
+                if store_closed {
+                    reply_all(close_replies, Ok(()), fx);
                     LifecyclePhase::Closed
                 } else {
-                    LifecyclePhase::Closing { waiting, clearing: false, replies }
+                    LifecyclePhase::Closing { waiting, erases, close_replies, store_closing, store_closed, observers_stopped: true }
                 }
             }
-            (LifecyclePhase::Closing { waiting, clearing, mut replies }, LifecycleInput::Close { reply }) => {
-                replies.push(reply);
-                LifecyclePhase::Closing { waiting, clearing, replies }
+            (LifecyclePhase::Closing { waiting, erases, mut close_replies, store_closing, store_closed, observers_stopped }, LifecycleInput::Close { reply }) => {
+                close_replies.push(reply);
+                LifecyclePhase::Closing { waiting, erases, close_replies, store_closing, store_closed, observers_stopped }
             }
-            (phase @ LifecyclePhase::Closing { .. }, LifecycleInput::SessionReset { reply }) => {
-                fx.push(LifecycleEffect::Reply { id: reply, result: Err(LifecycleError::Closed) });
-                phase
-            }
-            (phase @ LifecyclePhase::Closing { .. }, LifecycleInput::ResetModels { reply, .. }) => {
-                refuse(reply, fx);
+            (phase @ LifecyclePhase::Closing { .. }, LifecycleInput::SessionReset { reply } | LifecycleInput::ResetModels { reply, .. }) => {
+                reply_all(reply.into_iter().collect(), Err(LifecycleError::Closed), fx);
                 phase
             }
             (phase @ LifecyclePhase::Closing { .. }, _) => phase,
 
-            (LifecyclePhase::Closed, LifecycleInput::SessionReset { reply } | LifecycleInput::Close { reply }) => {
-                fx.push(LifecycleEffect::Reply { id: reply, result: Err(LifecycleError::Closed) });
+            (LifecyclePhase::Closed, LifecycleInput::SessionReset { reply } | LifecycleInput::ResetModels { reply, .. }) => {
+                reply_all(reply.into_iter().collect(), Err(LifecycleError::Closed), fx);
                 LifecyclePhase::Closed
             }
-            (LifecyclePhase::Closed, LifecycleInput::ResetModels { reply, .. }) => {
-                refuse(reply, fx);
+            (LifecyclePhase::Closed, LifecycleInput::Close { reply }) => {
+                reply_all(vec![reply], Err(LifecycleError::Closed), fx);
                 LifecyclePhase::Closed
             }
             (LifecyclePhase::Closed, _) => LifecyclePhase::Closed,
         };
     }
 
-    fn set(&mut self, phase: LifecyclePhase) { self.phase = phase; }
-}
+    /// `life_owner_started`, `life_restore_classified` and their stray row.
+    fn restore(&mut self, owner: Peer, epoch: Epoch, started: bool, fx: &mut Vec<LifecycleEffect>) {
+        if matches!(self.phase, LifecyclePhase::Closing { .. } | LifecyclePhase::Closed) {
+            return;
+        }
+        let Some(restoring) = &mut self.restoring else { return };
+        if restoring.epoch != epoch {
+            return;
+        }
+        if started {
+            if restoring.start_waiting.remove(&owner) && restoring.start_waiting.is_empty() {
+                fx.push(LifecycleEffect::ReadIntents { epoch });
+            }
+            return;
+        }
+        if !restoring.restore_waiting.remove(&owner) || !restoring.restore_waiting.is_empty() {
+            return;
+        }
+        let reply = restoring.open_reply;
+        self.restoring = None;
+        reply_all(reply.into_iter().collect(), Ok(()), fx);
+        fx.push(LifecycleEffect::RestoreReady { epoch });
+    }
 
-fn refuse(reply: Option<ReplyId>, fx: &mut Vec<LifecycleEffect>) {
-    fx.extend(reply.map(|id| LifecycleEffect::Reply { id, result: Err(LifecycleError::Closed) }));
+    /// `life_saved`, `life_saved_stale`, `life_save_failed`, `life_save_failed_stale`, `life_closing_saved` and the stray rows.
+    fn saved(&mut self, id: PublicationId, ok: bool, fx: &mut Vec<LifecycleEffect>) {
+        let Some(at) = self.publishing.iter().position(|publication| publication.id == id) else { return };
+        if matches!(self.phase, LifecyclePhase::Closed) {
+            return;
+        }
+        let publication = self.publishing.remove(at);
+        if matches!(self.phase, LifecyclePhase::Closing { .. }) {
+            reply_all(publication.replies, if ok { Ok(()) } else { Err(LifecycleError::Storage) }, fx);
+            return;
+        }
+        let newer = self.cell_publication > id;
+        let restricting = restricting(publication.published.state);
+        if ok {
+            let ended = self.ended_up_to.is_some_and(|ended| publication.published.epoch <= ended);
+            if !restricting && (ended || newer) {
+                reply_all(publication.replies, Err(LifecycleError::Interrupted), fx);
+                return;
+            }
+            if !restricting {
+                self.cell = publication.published.clone();
+                self.cell_publication = id;
+                fx.push(LifecycleEffect::PublishCell(publication.published.clone()));
+            }
+            reply_all(publication.replies, Ok(()), fx);
+            if let Some(Started { epoch, identity, generation }) = publication.started {
+                fx.push(LifecycleEffect::EpochStarted { epoch, identity, generation });
+            }
+            return;
+        }
+        reply_all(publication.replies, Err(LifecycleError::Storage), fx);
+        if !newer {
+            self.cell.state = PublishedState::StorageFailed;
+            fx.push(LifecycleEffect::PublishCell(self.cell.clone()));
+        }
+    }
+
+    /// `life_executor_failed`.
+    fn executor_failed(&mut self, fx: &mut Vec<LifecycleEffect>) {
+        let phase = std::mem::replace(&mut self.phase, LifecyclePhase::Closed);
+        self.phase = match phase {
+            LifecyclePhase::Closed => LifecyclePhase::Closed,
+            phase @ LifecyclePhase::Closing { .. } => phase,
+            phase => {
+                let (end, erases, mut open) = match phase {
+                    LifecyclePhase::NoSession { epoch } | LifecyclePhase::Session { epoch, .. } => (Some(epoch), Vec::new(), Vec::new()),
+                    LifecyclePhase::Resetting { epoch, erases, queued_replies, .. } => (Some(epoch), erases, queued_replies),
+                    LifecyclePhase::Ending { erases, .. } => (None, erases, Vec::new()),
+                    _ => (None, Vec::new(), Vec::new()),
+                };
+                for erase in &erases {
+                    open.extend(erase.replies.iter().copied());
+                }
+                for publication in &mut self.publishing {
+                    open.append(&mut publication.replies);
+                }
+                self.drop_restoring(LifecycleError::Runtime, fx);
+                reply_all(open, Err(LifecycleError::Runtime), fx);
+                let erases: Vec<Erase> = erases.into_iter().map(|erase| Erase { replies: Vec::new(), ..erase }).collect();
+                self.closing(erases, Vec::new(), end, fx)
+            }
+        };
+    }
 }

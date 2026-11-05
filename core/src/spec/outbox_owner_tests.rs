@@ -147,6 +147,7 @@ fn fault_of(fault: &Fault) -> RFault {
         Fault::Rejected(RejectReason::StaleGeneration { .. }) => RFault::Reason(RReason::StaleGeneration),
         Fault::Rejected(RejectReason::Storage(_)) => RFault::Reason(RReason::Storage),
         Fault::Rejected(RejectReason::Closed) => RFault::Reason(RReason::Closed),
+        Fault::Rejected(RejectReason::Invalid) => panic!("the Outbox batch carries no rows"),
     }
 }
 

@@ -670,8 +670,6 @@ impl Database {
             crate::runtime::Outcome::Value(LifeReply::Life(Err(crate::owners::lifecycle::LifecycleError::Closed))) => Err(super::command::closed()),
             _ => Ok(()),
         });
-        let life = self.life.clone();
-        let stored = blocking(move || Ok(life.wait_store_closed(Duration::from_secs(10)))).await;
         let leases = self.streams.clone();
         let drained = on_executor(async move {
             tokio::time::timeout(Duration::from_secs(10), leases.settled()).await.map_err(|_| DbError::Invalid { detail: format!("close timed out while leases were still held: {}", leases.held().join("; ")) })
@@ -679,7 +677,7 @@ impl Database {
         let (db, life) = (self.db.clone(), self.life.clone());
         let ended = blocking(move || { life.shutdown(); Ok(db.close()?) }).await;
         if let Some(lease) = self.lease.get() { lease.release(); }
-        answered.and(stored.and_then(|closed| if closed { Ok(()) } else { Err(DbError::Invalid { detail: "close timed out while the store was open".into() }) })).and(drained).and(ended)
+        answered.and(drained).and(ended)
     }
 }
 
@@ -765,6 +763,7 @@ fn call_failure(error: crate::owners::calls::CallError) -> DbError {
         CallError::Graphql(messages) => DbError::Graphql { messages, extensions: None },
         CallError::Http => DbError::Http { status: 0, detail: "the server refused the request".into() },
         CallError::Interrupted => super::command::ended(),
+        CallError::Storage => DbError::Database { detail: "the database could not save its state".into() },
     }
 }
 

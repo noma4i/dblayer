@@ -1,13 +1,13 @@
 //! Owner-level tests of the `lifecycle` machine (Lifecycle): the owner on `DetScheduler` and the reference table (`ref_lifecycle.rs`)
-//! get the same input, after each one the effects, the replies, the state and `Published` must be equal. Names are the `Test` column.
+//! get the same input, after each one the effects, the replies, the state, `Published` and the open publications must be equal. Names are the `Test` column.
 
 use std::collections::BTreeSet;
 
-use super::ref_lifecycle::{Answer, Cause as RefCause, Effect as RefEffect, Event, Lifecycle as Ref, Owner as RefOwner, Published as RefPublished, State as RefState};
-use crate::owners::contract::{CredentialCommitted, Drained, ServerEnded};
-use crate::owners::lifecycle::{Lifecycle, LifecycleEffect, LifecycleError, LifecycleInput, LifecycleState, Peer, LifecyclePhase};
-use crate::runtime::{Address, Cause, DetScheduler, EpochStamp};
+use super::ref_lifecycle::{Answer, Cause as RefCause, Effect as RefEffect, Erase as RefErase, EraseKind as RefEraseKind, Event, Lifecycle as Ref, Owner as RefOwner, PubState, Published as RefPublished, State as RefState, OWNERS};
+use crate::owners::contract::{CredentialCommitted, Drained, PublishedState, ServerEnded};
+use crate::owners::lifecycle::{Erase, EraseKind, Lifecycle, LifecycleEffect, LifecycleError, LifecycleInput, LifecyclePhase, LifecycleState, Peer};
 use crate::owners::support::{new_log, take, Log, Recorder};
+use crate::runtime::{Address, Cause, DetScheduler, EpochStamp};
 
 fn cause(cause: Cause) -> RefCause {
     match cause {
@@ -29,6 +29,23 @@ fn peer(owner: RefOwner) -> &'static str {
         RefOwner::Outbox => "outbox",
         RefOwner::Transfer => "transfer",
         RefOwner::Calls => "calls",
+        RefOwner::LocalWrites => "local_writes",
+        RefOwner::Rounds => "rounds",
+    }
+}
+
+fn peer_of(owner: RefOwner) -> Peer {
+    match owner {
+        RefOwner::Network => Peer::Network,
+        RefOwner::Session => Peer::Session,
+        RefOwner::Window => Peer::Windows,
+        RefOwner::Feed => Peer::Feed,
+        RefOwner::Delivery => Peer::Deliveries,
+        RefOwner::Outbox => Peer::Outbox,
+        RefOwner::Transfer => Peer::Transfer,
+        RefOwner::Calls => Peer::Calls,
+        RefOwner::LocalWrites => Peer::LocalWrites,
+        RefOwner::Rounds => Peer::Rounds,
     }
 }
 
@@ -42,35 +59,56 @@ fn ref_owner(peer: Peer) -> RefOwner {
         Peer::Outbox => RefOwner::Outbox,
         Peer::Transfer => RefOwner::Transfer,
         Peer::Calls => RefOwner::Calls,
+        Peer::LocalWrites => RefOwner::LocalWrites,
+        Peer::Rounds => RefOwner::Rounds,
+    }
+}
+
+fn pub_state(state: PublishedState) -> PubState {
+    match state {
+        PublishedState::NoSession => PubState::NoSession,
+        PublishedState::Session => PubState::Session,
+        PublishedState::Ending => PubState::Ending,
+        PublishedState::EndingFailed => PubState::EndingFailed,
+        PublishedState::Resetting => PubState::Resetting,
+        PublishedState::StorageFailed => PubState::StorageFailed,
+        PublishedState::Closing => PubState::Closing,
     }
 }
 
 fn published(published: &crate::owners::contract::Published) -> RefPublished {
-    RefPublished { epoch: published.epoch, identity: published.identity, generation: published.generation, closed: published.closed }
+    RefPublished { epoch: published.epoch, identity: published.identity, generation: published.generation, state: pub_state(published.state), closed: published.closed }
+}
+
+fn erases_of(erases: &[Erase]) -> Vec<RefErase> {
+    erases.iter().map(|erase| RefErase { id: erase.id, target: erase.target, kind: match erase.kind { EraseKind::Account => RefEraseKind::Account, EraseKind::Models => RefEraseKind::Models }, replies: erase.replies.clone() }).collect()
 }
 
 fn state_of(phase: &LifecyclePhase) -> RefState {
     match phase {
         LifecyclePhase::NoSession { epoch } => RefState::NoSession { epoch: *epoch },
         LifecyclePhase::Session { epoch, identity } => RefState::Session { epoch: *epoch, identity: *identity },
-        LifecyclePhase::Ending { epoch_old, cause: c, next, replies, failed } => RefState::Ending { epoch_old: *epoch_old, cause: cause(*c), next: *next, replies: replies.clone(), failed: *failed },
-        LifecyclePhase::Resetting { epoch, identity, models, queued_models, replies, pending_credential } => RefState::Resetting { epoch: *epoch, identity: *identity, models: models.clone(), queued: queued_models.clone(), replies: replies.clone(), pending: *pending_credential },
-        LifecyclePhase::Closing { waiting, clearing, replies } => RefState::Closing { waiting: waiting.iter().map(|p| ref_owner(*p)).collect(), clearing: *clearing, replies: replies.clone() },
+        LifecyclePhase::Ending { epoch_old, cause: c, next, failed, erase_credential, erases } => RefState::Ending { epoch_old: *epoch_old, cause: cause(*c), next: *next, failed: *failed, erase_credential: *erase_credential, erases: erases_of(erases) },
+        LifecyclePhase::Resetting { epoch, identity, models, queued_models, queued_replies, pending_credential, erases } => RefState::Resetting { epoch: *epoch, identity: *identity, models: models.clone(), queued_models: queued_models.clone(), queued_replies: queued_replies.clone(), pending_credential: *pending_credential, erases: erases_of(erases) },
+        LifecyclePhase::Closing { waiting, erases, close_replies, store_closing, store_closed, observers_stopped } => RefState::Closing { waiting: waiting.iter().map(|p| ref_owner(*p)).collect(), erases: erases_of(erases), close_replies: close_replies.clone(), store_closing: *store_closing, store_closed: *store_closed, observers_stopped: *observers_stopped },
         LifecyclePhase::Closed => RefState::Closed,
     }
 }
 
 fn effect_of(effect: &LifecycleEffect) -> Option<RefEffect> {
     Some(match effect {
-        LifecycleEffect::Publish(p) => RefEffect::Publish(published(p)),
+        LifecycleEffect::Publish { publication_id, published: p } => RefEffect::Publish(*publication_id, published(p)),
+        LifecycleEffect::PublishCell(p) => RefEffect::PublishCell(published(p)),
         LifecycleEffect::EpochStarted { epoch, identity, generation } => RefEffect::EpochStarted(*epoch, *identity, *generation),
         LifecycleEffect::EpochEnded { epoch, cause: c } => RefEffect::EpochEnded(*epoch, cause(*c)),
         LifecycleEffect::ModelsReset { epoch, generation, models } => RefEffect::ModelsReset(*epoch, *generation, models.clone()),
         LifecycleEffect::Closing => RefEffect::Closing,
-        LifecycleEffect::ClearAccount { epoch_old, cause: c, generation_new } => RefEffect::ClearAccount(*epoch_old, cause(*c), *generation_new),
-        LifecycleEffect::ClearModels { epoch, generation_new, models } => RefEffect::ClearModels(*epoch, *generation_new, models.clone()),
+        LifecycleEffect::StopObserving => RefEffect::StopObserving,
+        LifecycleEffect::ClearAccount { epoch_old, cause: c, generation_new, erase_id } => RefEffect::ClearAccount { epoch_old: *epoch_old, cause: cause(*c), generation_new: *generation_new, erase_id: *erase_id },
+        LifecycleEffect::ClearModels { epoch, generation_new, models, erase_id } => RefEffect::ClearModels { epoch: *epoch, generation_new: *generation_new, models: models.clone(), erase_id: *erase_id },
+        LifecycleEffect::ReadIntents { epoch } => RefEffect::ReadIntents(*epoch),
+        LifecycleEffect::RestoreReady { epoch } => RefEffect::RestoreReady(*epoch),
         LifecycleEffect::StoreClose => RefEffect::StoreClose,
-        LifecycleEffect::ResetModelsSelf(models) => RefEffect::ResetModelsSelf(models.clone()),
         LifecycleEffect::Reply { .. } => return None,
     })
 }
@@ -92,16 +130,20 @@ pub(super) struct Twin {
 }
 
 impl Twin {
-    /// Both sides start at `Open` without a session.
-    pub fn new() -> Self { Self::open(0, 0, None, &[]) }
+    /// Both sides start at `Open` without a session, the first publication saved.
+    pub fn new() -> Self {
+        let mut twin = Self::open(0, 0, None, Some(1_000));
+        twin.save_all();
+        twin
+    }
 
-    pub fn open(saved_epoch: u64, saved_generation: u64, saved_identity: Option<u64>, changed: &[&str]) -> Self {
+    pub fn open(saved_epoch: u64, saved_generation: u64, saved_identity: Option<u64>, reply: Option<u64>) -> Self {
         let mut det = DetScheduler::new(7);
         let log = new_log();
         let addr = det.add::<Lifecycle>("lifecycle", LifecycleState::new(), Recorder::<Lifecycle>::new(&log));
-        let (reference, want) = Ref::open(saved_epoch, saved_generation, saved_identity, models(changed));
+        let (reference, want) = Ref::open(saved_epoch, saved_generation, saved_identity, reply);
         let mut twin = Self { det, addr, log, reference, history: Vec::new(), steps: Vec::new() };
-        twin.send(LifecycleInput::Open { saved_epoch, saved_generation, saved_identity, changed_models: models(changed) });
+        twin.send(LifecycleInput::Open { saved_epoch, saved_generation, saved_identity, reply });
         let (got, _) = twin.drain();
         assert_eq!(got, want.effects, "the open row gives the same effects");
         twin.same_state();
@@ -121,6 +163,8 @@ impl Twin {
                 Ok(()) => Answer::Ok,
                 Err(LifecycleError::Storage) => Answer::Storage,
                 Err(LifecycleError::Closed) => Answer::Closed,
+                Err(LifecycleError::Runtime) => Answer::Runtime,
+                Err(LifecycleError::Interrupted) => Answer::Interrupted,
             })),
             _ => None,
         }).collect();
@@ -131,11 +175,56 @@ impl Twin {
         let state = self.det.state(self.addr).expect("the owner state");
         assert_eq!(state_of(state.phase()), self.reference.state, "the same state");
         assert_eq!(published(state.published()), self.reference.published, "the same Published");
+        assert_eq!(published(state.cell()), self.reference.cell, "the same PublishedCell");
+        let restoring = state.restoring().map(|r| (r.epoch, r.start_waiting.iter().map(|p| ref_owner(*p)).collect::<BTreeSet<_>>(), r.restore_waiting.iter().map(|p| ref_owner(*p)).collect::<BTreeSet<_>>(), r.open_reply));
+        let wanted_restoring = self.reference.restoring.as_ref().map(|r| (r.epoch, r.start_waiting.clone(), r.restore_waiting.clone(), r.open_reply));
+        assert_eq!(restoring, wanted_restoring, "the same restoring");
+        let publishing: Vec<_> = state.publishing().iter().map(|p| (p.id, p.replies.clone(), p.started.as_ref().map(|s| (s.epoch, s.identity, s.generation)))).collect();
+        let wanted: Vec<_> = self.reference.publishing.iter().map(|p| (p.id, p.replies.clone(), p.epoch_started)).collect();
+        assert_eq!(publishing, wanted, "the same open publications");
     }
 
     pub fn state(&self) -> &RefState { &self.reference.state }
 
     pub fn published(&self) -> &RefPublished { &self.reference.published }
+
+    /// The erases in the Store without an answer, oldest first.
+    pub fn erases(&self) -> Vec<RefErase> {
+        match &self.reference.state {
+            RefState::Ending { erases, .. } | RefState::Resetting { erases, .. } | RefState::Closing { erases, .. } => erases.clone(),
+            _ => Vec::new(),
+        }
+    }
+
+    /// The id of the oldest erase of the Store.
+    pub fn erase(&self) -> u64 { self.erases().first().expect("an erase is open").id }
+
+    pub fn last_erase(&self) -> u64 { self.erases().last().expect("an erase is open").id }
+
+    pub fn publications(&self) -> Vec<u64> { self.reference.publishing.iter().map(|p| p.id).collect() }
+
+    pub fn cell(&self) -> &RefPublished { &self.reference.cell }
+
+    /// The Store saves every publication, then Outbox and Transfer start and the three receivers classify the restored intents.
+    pub fn settle(&mut self) {
+        for _ in 0..6 {
+            self.save_all();
+            let Some(restoring) = self.reference.restoring.clone() else { break };
+            let epoch = restoring.epoch;
+            if !restoring.start_waiting.is_empty() {
+                restoring.start_waiting.iter().for_each(|owner| { self.feed(Event::Started(*owner, epoch)); });
+            } else {
+                restoring.restore_waiting.iter().for_each(|owner| { self.feed(Event::RestoreClassified(*owner, epoch)); });
+            }
+        }
+    }
+
+    /// The Store answers `Saved` for every open publication, oldest first.
+    pub fn save_all(&mut self) {
+        for id in self.publications() {
+            self.feed(Event::Saved(id));
+        }
+    }
 
     /// Feeds one input of the table to both sides and compares everything. Returns the effects of the reference.
     pub fn feed(&mut self, event: Event) -> Vec<RefEffect> {
@@ -143,14 +232,22 @@ impl Twin {
             RefState::Ending { epoch_old, .. } => *epoch_old,
             _ => 0,
         };
+        let _ = epoch_old;
         let input = match event.clone() {
             Event::Credential(identity) => LifecycleInput::CredentialCommitted(CredentialCommitted { identity }),
             Event::SessionReset(reply) => LifecycleInput::SessionReset { reply },
             Event::ServerEnded(epoch) => LifecycleInput::ServerEnded(ServerEnded { epoch }),
             Event::ResetModels(names, reply) => LifecycleInput::ResetModels { models: names, reply },
-            Event::Cleared => LifecycleInput::Cleared { epoch_old },
-            Event::ModelsCleared(generation_new) => LifecycleInput::ModelsCleared { generation_new },
-            Event::ClearFailed => LifecycleInput::ClearFailed { error: SQL.into() },
+            Event::Cleared(erase_id) => LifecycleInput::Cleared { erase_id },
+            Event::ModelsCleared(generation_new, erase_id) => LifecycleInput::ModelsCleared { generation_new, erase_id },
+            Event::ClearFailed(erase_id) => LifecycleInput::ClearFailed { erase_id, error: SQL.into() },
+            Event::Saved(publication_id) => LifecycleInput::Saved { publication_id },
+            Event::SaveFailed(publication_id) => LifecycleInput::SaveFailed { publication_id, error: SQL.into() },
+            Event::StoreClosed => LifecycleInput::StoreClosed,
+            Event::ObserversStopped => LifecycleInput::ObserversStopped,
+            Event::ExecutorFailed => LifecycleInput::ExecutorFailed { executor: "store".into() },
+            Event::Started(owner, epoch) => LifecycleInput::Started { owner: peer_of(owner), epoch },
+            Event::RestoreClassified(owner, epoch) => LifecycleInput::RestoreClassified { owner: peer_of(owner), epoch },
             Event::Close(reply) => LifecycleInput::Close { reply },
             Event::Drained(owner) => LifecycleInput::Drained(Drained { owner: peer(owner) }),
         };
@@ -166,98 +263,120 @@ impl Twin {
     }
 
     pub fn feed_all(&mut self, events: impl IntoIterator<Item = Event>) { events.into_iter().for_each(|event| { self.feed(event); }); }
+
+    /// The reference reply list of the last input is not kept: tests read the replies from the history.
+    pub fn replies(&self) -> Vec<(u64, Result<(), LifecycleError>)> {
+        self.history.iter().filter_map(|effect| match effect { LifecycleEffect::Reply { id, result } if *id != 1_000 => Some((*id, *result)), _ => None }).collect()
+    }
 }
 
 fn credential(identity: u64) -> Event { Event::Credential(identity) }
-fn reset(reply: u64) -> Event { Event::SessionReset(reply) }
+fn reset(reply: u64) -> Event { Event::SessionReset(Some(reply)) }
 fn reset_models(names: &[&str], reply: u64) -> Event { Event::ResetModels(models(names), Some(reply)) }
 fn close(reply: u64) -> Event { Event::Close(reply) }
-fn drain_all() -> Vec<Event> { super::ref_lifecycle::OWNERS.into_iter().map(Event::Drained).collect() }
+fn drain_all() -> Vec<Event> { OWNERS.into_iter().map(Event::Drained).collect() }
+
+/// Session 1 with the start saved.
 fn session(identity: u64) -> Twin {
     let mut twin = Twin::new();
     twin.feed(credential(identity));
+    twin.settle();
     twin
 }
 /// Session 1, `SessionReset` issued, the Store has not answered.
 fn ending() -> Twin {
     let mut twin = session(1);
     twin.feed(reset(1));
+    twin.settle();
     twin
 }
 /// Session 1, `ResetModels` issued, the Store has not answered.
 fn resetting() -> Twin {
     let mut twin = session(1);
     twin.feed(reset_models(&["Moment"], 1));
+    twin.settle();
     twin
 }
 /// NoSession, `ResetModels` issued.
 fn resetting_signed_out() -> Twin {
     let mut twin = Twin::new();
     twin.feed(reset_models(&["Moment"], 1));
+    twin.settle();
     twin
 }
 fn closing_session() -> Twin {
     let mut twin = session(1);
     twin.feed(close(1));
+    twin.settle();
     twin
 }
+fn stray_erase_events() -> [Event; 3] { [Event::Cleared(999), Event::ModelsCleared(9, 999), Event::ClearFailed(999)] }
+/// `Cleared` for the oldest erase.
+fn cleared(twin: &Twin) -> Event { Event::Cleared(twin.erase()) }
+fn models_cleared(twin: &Twin, generation: u64) -> Event { Event::ModelsCleared(generation, twin.erase()) }
+fn clear_failed(twin: &Twin) -> Event { Event::ClearFailed(twin.erase()) }
 
 #[test]
 fn life_open_no_session() {
-    let twin = Twin::open(4, 2, None, &[]);
-    assert_eq!(*twin.published(), RefPublished { epoch: 5, identity: None, generation: 2, closed: false });
+    let mut twin = Twin::open(4, 2, None, Some(7));
+    assert_eq!(*twin.published(), RefPublished { epoch: 5, identity: None, generation: 2, state: PubState::NoSession, closed: false });
+    assert!(twin.replies().is_empty(), "open is answered after Saved");
+    let effects = twin.feed(Event::Saved(1));
+    assert_eq!(effects, vec![RefEffect::PublishCell(twin.published().clone()), RefEffect::EpochStarted(5, None, 2)]);
+    assert_eq!(twin.replies(), vec![(7, Ok(()))]);
 }
 
 #[test]
 fn life_open_session() {
-    let twin = Twin::open(4, 2, Some(9), &[]);
-    assert_eq!(*twin.published(), RefPublished { epoch: 5, identity: Some(9), generation: 2, closed: false });
+    let mut twin = Twin::open(4, 2, Some(9), Some(7));
+    assert_eq!(*twin.published(), RefPublished { epoch: 5, identity: Some(9), generation: 2, state: PubState::Session, closed: false });
+    assert_eq!(*twin.cell(), RefPublished { epoch: 0, identity: None, generation: 0, state: PubState::NoSession, closed: false }, "an active publication is visible after Saved");
+    let effects = twin.feed(Event::Saved(1));
+    assert_eq!(effects, vec![RefEffect::PublishCell(twin.published().clone()), RefEffect::EpochStarted(5, Some(9), 2)]);
+    assert!(twin.replies().is_empty(), "open waits for the receivers of the snapshot");
+    twin.feed(Event::Started(RefOwner::Outbox, 5));
+    let read = twin.feed(Event::Started(RefOwner::Transfer, 5));
+    assert_eq!(read, vec![RefEffect::ReadIntents(5)], "the intents are read after Saved and Started of both receivers");
+    twin.feed(Event::RestoreClassified(RefOwner::Outbox, 5));
+    twin.feed(Event::RestoreClassified(RefOwner::Transfer, 5));
+    assert!(twin.replies().is_empty());
+    let ready = twin.feed(Event::RestoreClassified(RefOwner::Session, 5));
+    assert_eq!(ready, vec![RefEffect::RestoreReady(5)]);
+    assert_eq!(twin.replies(), vec![(7, Ok(()))]);
 }
 
 #[test]
-fn life_open_changed_models() {
-    let mut twin = Twin::open(4, 2, Some(9), &["Moment"]);
-    let effects = twin.feed(Event::ResetModels(models(&["Moment"]), None));
-    assert_eq!(effects, vec![RefEffect::ClearModels(5, 3, models(&["Moment"]))], "the self-sent ResetModels clears the changed models");
-    assert!(matches!(twin.state(), RefState::Resetting { replies, .. } if replies.is_empty()), "no caller waits for it");
-}
+fn life_nosession_credential() { session(1); }
 
 #[test]
-fn life_nosession_credential_owner() { session(1); }
+fn life_nosession_reset() { Twin::new().feed(reset(1)); }
 
 #[test]
-fn life_nosession_reset_owner() { Twin::new().feed(reset(1)); }
-
-#[test]
-fn life_nosession_server_ended() {
-    let mut twin = Twin::new();
-    twin.feed(Event::ServerEnded(1));
-    twin.feed(Event::ServerEnded(7));
-}
+fn life_nosession_server_ended() { Twin::new().feed(Event::ServerEnded(1)); }
 
 #[test]
 fn life_nosession_reset_models() { resetting_signed_out(); }
 
 #[test]
-fn life_nosession_stray_store() { Twin::new().feed_all([Event::Cleared, Event::ModelsCleared(1), Event::ClearFailed]); }
+fn life_nosession_stray_store() { Twin::new().feed_all(stray_erase_events()); }
 
 #[test]
-fn life_nosession_close_owner() { Twin::new().feed(close(1)); }
+fn life_nosession_close() { Twin::new().feed(close(1)); }
 
 #[test]
 fn life_nosession_drained() { Twin::new().feed(Event::Drained(RefOwner::Feed)); }
 
 #[test]
-fn life_session_same_credential_owner() { session(1).feed(credential(1)); }
+fn life_session_same_credential() { session(1).feed(credential(1)); }
 
 #[test]
 fn life_session_identity_changed() { session(1).feed(credential(2)); }
 
 #[test]
-fn life_session_reset_owner() { ending(); }
+fn life_session_reset() { ending(); }
 
 #[test]
-fn life_session_server_ended_owner() { session(1).feed(Event::ServerEnded(2)); }
+fn life_session_server_ended() { session(1).feed(Event::ServerEnded(2)); }
 
 #[test]
 fn life_session_stale_server_ended() { session(1).feed(Event::ServerEnded(1)); }
@@ -266,10 +385,10 @@ fn life_session_stale_server_ended() { session(1).feed(Event::ServerEnded(1)); }
 fn life_session_reset_models() { resetting(); }
 
 #[test]
-fn life_session_stray_store() { session(1).feed_all([Event::Cleared, Event::ModelsCleared(1), Event::ClearFailed]); }
+fn life_session_stray_store() { session(1).feed_all(stray_erase_events()); }
 
 #[test]
-fn life_session_close_owner() { closing_session(); }
+fn life_session_close() { closing_session(); }
 
 #[test]
 fn life_session_drained() { session(1).feed(Event::Drained(RefOwner::Calls)); }
@@ -280,16 +399,43 @@ fn life_ending_credential() { ending().feed(credential(2)); }
 #[test]
 fn life_ending_credential_after_failure() {
     let mut twin = ending();
-    twin.feed_all([Event::ClearFailed, credential(2)]);
+    let failed = clear_failed(&twin);
+    twin.feed(failed);
+    let effects = twin.feed(credential(2));
+    assert!(effects.iter().any(|e| matches!(e, RefEffect::ClearAccount { .. })), "the clearing repeats");
+    twin.settle();
+    let done = cleared(&twin);
+    twin.feed(done);
+    twin.settle();
+    assert_eq!(twin.published().identity, Some(2), "the committed credential is not lost");
 }
 
 #[test]
 fn life_ending_reset_joins() { ending().feed(reset(2)); }
 
 #[test]
+fn life_ending_reset_erases_credential() {
+    let mut twin = session(1);
+    twin.feed(credential(2));
+    twin.settle();
+    twin.feed(reset(5));
+    let first = cleared(&twin);
+    let effects = twin.feed(first);
+    assert!(effects.iter().any(|e| matches!(e, RefEffect::ClearAccount { cause: RefCause::SessionReset, .. })), "the credential is erased by the second clearing");
+    twin.settle();
+    let second = cleared(&twin);
+    twin.feed(second);
+    twin.settle();
+    assert_eq!(twin.published().identity, None);
+    assert!(twin.replies().contains(&(5, Ok(()))));
+}
+
+#[test]
 fn life_ending_reset_after_failure() {
     let mut twin = ending();
-    twin.feed_all([Event::ClearFailed, reset(2)]);
+    let failed = clear_failed(&twin);
+    twin.feed(failed);
+    twin.feed(reset(2));
 }
 
 #[test]
@@ -299,20 +445,72 @@ fn life_ending_server_ended() { ending().feed(Event::ServerEnded(2)); }
 fn life_ending_reset_models() { ending().feed(reset_models(&["Moment"], 2)); }
 
 #[test]
-fn life_ending_cleared_signed_out() { ending().feed(Event::Cleared); }
+fn life_ending_failed_reset_models() {
+    let mut twin = ending();
+    let failed = clear_failed(&twin);
+    twin.feed(failed);
+    twin.feed(reset_models(&["Moment"], 2));
+    assert!(twin.replies().contains(&(2, Err(LifecycleError::Storage))));
+}
+
+#[test]
+fn life_ending_cleared_then_credential() {
+    let mut twin = session(1);
+    twin.feed(credential(2));
+    twin.feed(reset(5));
+    let first = cleared(&twin);
+    twin.feed(first);
+}
+
+#[test]
+fn life_ending_cleared_signed_out() {
+    let mut twin = ending();
+    let done = cleared(&twin);
+    twin.feed(done);
+    assert!(twin.replies().is_empty(), "the reset is answered after Saved");
+    twin.settle();
+    assert_eq!(twin.replies(), vec![(1, Ok(()))]);
+}
 
 #[test]
 fn life_ending_cleared_next_identity() {
-    let mut twin = ending();
-    twin.feed_all([credential(2), Event::Cleared]);
+    let mut twin = session(1);
+    twin.feed(credential(2));
+    twin.settle();
+    let done = cleared(&twin);
+    twin.feed(done);
     assert_eq!(*twin.state(), RefState::Session { epoch: 4, identity: 2 });
 }
 
 #[test]
-fn life_ending_clear_failed() { ending().feed(Event::ClearFailed); }
+fn life_ending_clear_failed() {
+    let mut twin = ending();
+    let failed = clear_failed(&twin);
+    twin.feed(failed);
+    assert_eq!(twin.published().state, PubState::EndingFailed);
+    assert!(twin.replies().contains(&(1, Err(LifecycleError::Storage))));
+}
 
 #[test]
-fn life_ending_stray_models() { ending().feed(Event::ModelsCleared(5)); }
+fn life_ending_models_cleared() {
+    let mut twin = resetting();
+    twin.feed(reset(2));
+    let models = twin.erases().into_iter().find(|erase| erase.kind == RefEraseKind::Models).expect("the models erase is open").id;
+    twin.feed(Event::ModelsCleared(1, models));
+    assert!(twin.replies().contains(&(1, Ok(()))));
+}
+
+#[test]
+fn life_ending_models_clear_failed() {
+    let mut twin = resetting();
+    twin.feed(reset(2));
+    let models = twin.erases().into_iter().find(|erase| erase.kind == RefEraseKind::Models).expect("the models erase is open").id;
+    twin.feed(Event::ClearFailed(models));
+    assert!(twin.replies().contains(&(1, Err(LifecycleError::Storage))));
+}
+
+#[test]
+fn life_ending_stray_erase() { ending().feed_all(stray_erase_events()); }
 
 #[test]
 fn life_ending_close() { ending().feed(close(2)); }
@@ -347,38 +545,64 @@ fn life_resetting_reset_models() { resetting().feed(reset_models(&["Other"], 2))
 #[test]
 fn life_resetting_cleared_queued() {
     let mut twin = resetting();
-    twin.feed_all([reset_models(&["Other"], 2), Event::ModelsCleared(1)]);
-    assert!(matches!(twin.state(), RefState::Resetting { models: current, .. } if *current == models(&["Other"])));
+    twin.feed(reset_models(&["Other"], 2));
+    let first = models_cleared(&twin, 1);
+    let effects = twin.feed(first);
+    assert!(effects.iter().any(|e| matches!(e, RefEffect::ClearModels { generation_new: 2, .. })), "the queued models are erased next");
+    twin.settle();
+    let second = models_cleared(&twin, 2);
+    twin.feed(second);
+    twin.settle();
+    assert_eq!(twin.replies(), vec![(1, Ok(())), (2, Ok(()))]);
 }
 
 #[test]
-fn life_resetting_cleared() { resetting().feed(Event::ModelsCleared(1)); }
+fn life_resetting_cleared() {
+    let mut twin = resetting();
+    let done = models_cleared(&twin, 1);
+    twin.feed(done);
+    twin.settle();
+    assert_eq!(twin.published().generation, 1);
+    assert_eq!(*twin.state(), RefState::Session { epoch: 2, identity: 1 });
+}
 
 #[test]
 fn life_resetting_cleared_then_start() {
     let mut twin = resetting_signed_out();
-    twin.feed_all([credential(2), Event::ModelsCleared(1)]);
+    twin.feed(credential(2));
+    let done = models_cleared(&twin, 1);
+    twin.feed(done);
     assert_eq!(*twin.state(), RefState::Session { epoch: 2, identity: 2 });
 }
 
 #[test]
 fn life_resetting_clear_failed() {
-    resetting().feed(Event::ClearFailed);
-    resetting_signed_out().feed(Event::ClearFailed);
+    let mut twin = resetting();
+    let failed = clear_failed(&twin);
+    twin.feed(failed);
+    assert_eq!(twin.published().generation, 0, "the generation stays");
+    assert!(twin.replies().contains(&(1, Err(LifecycleError::Storage))));
 }
 
 #[test]
 fn life_resetting_clear_failed_then_start() {
     let mut twin = resetting_signed_out();
-    twin.feed_all([credential(2), Event::ClearFailed]);
-    assert_eq!(*twin.published(), RefPublished { epoch: 2, identity: Some(2), generation: 0, closed: false }, "the committed credential is not lost");
+    twin.feed(credential(2));
+    let failed = clear_failed(&twin);
+    twin.feed(failed);
+    assert_eq!(twin.published().identity, Some(2), "the committed credential is not lost");
 }
 
 #[test]
-fn life_resetting_stray_cleared() { resetting().feed(Event::Cleared); }
+fn life_resetting_stray_erase() { resetting().feed_all(stray_erase_events()); }
 
 #[test]
-fn life_resetting_close() { resetting().feed(close(2)); }
+fn life_resetting_close() {
+    let mut twin = resetting();
+    twin.feed(reset_models(&["Other"], 2));
+    twin.feed(close(3));
+    assert!(twin.replies().contains(&(2, Err(LifecycleError::Interrupted))));
+}
 
 #[test]
 fn life_resetting_drained() { resetting().feed(Event::Drained(RefOwner::Feed)); }
@@ -386,8 +610,11 @@ fn life_resetting_drained() { resetting().feed(Event::Drained(RefOwner::Feed)); 
 #[test]
 fn life_closing_last_drained() {
     let mut twin = closing_session();
-    twin.feed_all(drain_all());
-    assert_eq!(*twin.state(), RefState::Closed);
+    let owners = OWNERS;
+    for owner in owners {
+        twin.feed(Event::Drained(owner));
+    }
+    assert!(matches!(twin.state(), RefState::Closing { store_closing: true, .. }));
 }
 
 #[test]
@@ -398,138 +625,284 @@ fn life_closing_clear_done_last() {
     let mut twin = ending();
     twin.feed(close(2));
     twin.feed_all(drain_all());
-    assert!(matches!(twin.state(), RefState::Closing { clearing: true, .. }), "the clearing still runs");
-    twin.feed(Event::Cleared);
-    assert_eq!(*twin.state(), RefState::Closed);
+    let done = cleared(&twin);
+    let effects = twin.feed(done);
+    assert!(effects.contains(&RefEffect::StoreClose), "the store closes after the last erase");
 }
 
 #[test]
 fn life_closing_clear_done() {
     let mut twin = ending();
-    twin.feed_all([close(2), Event::Cleared]);
-    assert!(matches!(twin.state(), RefState::Closing { clearing: false, .. }));
+    twin.feed(close(2));
+    let done = cleared(&twin);
+    twin.feed(done);
+    assert!(twin.replies().contains(&(1, Ok(()))), "the wait of the erase is answered by its own outcome");
+}
+
+#[test]
+fn life_closing_stray_erase() { closing_session().feed_all(stray_erase_events()); }
+
+#[test]
+fn life_closing_store_closed() {
+    let mut twin = closing_session();
+    twin.feed_all(drain_all());
+    twin.feed(Event::ObserversStopped);
+    twin.feed(Event::StoreClosed);
+    assert_eq!(*twin.state(), RefState::Closed);
+    assert!(twin.replies().contains(&(1, Ok(()))));
+}
+
+#[test]
+fn life_closing_store_closed_waits_observers() {
+    let mut twin = closing_session();
+    twin.feed_all(drain_all());
+    twin.feed(Event::StoreClosed);
+    assert!(matches!(twin.state(), RefState::Closing { store_closed: true, .. }));
+}
+
+#[test]
+fn life_closing_observers_stopped_last() {
+    let mut twin = closing_session();
+    twin.feed_all(drain_all());
+    twin.feed(Event::StoreClosed);
+    twin.feed(Event::ObserversStopped);
+    assert_eq!(*twin.state(), RefState::Closed);
+}
+
+#[test]
+fn life_closing_observers_stopped() {
+    let mut twin = closing_session();
+    twin.feed(Event::ObserversStopped);
+    assert!(matches!(twin.state(), RefState::Closing { observers_stopped: true, .. }));
 }
 
 #[test]
 fn life_closing_close_joins() { closing_session().feed(close(2)); }
 
 #[test]
+fn life_closing_saved() {
+    let mut twin = session(1);
+    twin.feed(reset(2));
+    twin.feed(close(3));
+    let erase = cleared(&twin);
+    twin.feed(erase);
+    twin.settle();
+    assert!(twin.replies().contains(&(2, Ok(()))));
+}
+
+#[test]
 fn life_closing_refuses() {
     let mut twin = closing_session();
-    twin.feed_all([credential(2), reset(2), Event::ServerEnded(1), reset_models(&["Moment"], 3), Event::ResetModels(models(&["Moment"]), None)]);
+    twin.feed(reset(5));
+    twin.feed(reset_models(&["Moment"], 6));
+    twin.feed_all([credential(2), Event::ServerEnded(2)]);
+    assert!(twin.replies().contains(&(5, Err(LifecycleError::Closed))));
+    assert!(twin.replies().contains(&(6, Err(LifecycleError::Closed))));
 }
 
 #[test]
-fn life_closed_refuses_owner() {
+fn life_closing_saved_stray() { closing_session().feed_all([Event::Saved(999), Event::SaveFailed(999)]); }
+
+#[test]
+fn life_saved() {
+    let mut twin = Twin::open(0, 0, None, Some(7));
+    let effects = twin.feed(Event::Saved(1));
+    assert!(effects.contains(&RefEffect::EpochStarted(1, None, 0)));
+    assert_eq!(twin.replies(), vec![(7, Ok(()))]);
+    assert_eq!(*twin.cell(), *twin.published());
+}
+
+#[test]
+fn life_saved_stale() {
+    let mut twin = Twin::open(0, 0, None, Some(7));
+    twin.feed(credential(1));
+    twin.save_all();
+    assert!(twin.replies().contains(&(7, Err(LifecycleError::Interrupted))), "the publication of an ended epoch answers Interrupted once");
+    assert!(!twin.history.iter().any(|e| matches!(e, LifecycleEffect::EpochStarted { epoch: 1, .. })), "EpochStarted of an ended epoch does not go out");
+}
+
+#[test]
+fn life_saved_stray() { session(1).feed_all([Event::Saved(999), Event::SaveFailed(999)]); }
+
+#[test]
+fn life_save_failed() {
+    let mut twin = Twin::open(0, 0, None, Some(7));
+    twin.feed(Event::SaveFailed(1));
+    assert_eq!(twin.cell().state, PubState::StorageFailed);
+    assert!(twin.replies().contains(&(7, Err(LifecycleError::Storage))));
+    assert!(!twin.history.iter().any(|e| matches!(e, LifecycleEffect::EpochStarted { .. })), "EpochStarted of a failed publication does not go out");
+}
+
+#[test]
+fn life_save_failed_stale() {
+    let mut twin = Twin::open(0, 0, None, Some(7));
+    twin.feed(credential(1));
+    twin.feed(Event::Saved(2));
+    let before = twin.cell().clone();
+    twin.feed(Event::SaveFailed(1));
+    assert_eq!(*twin.cell(), before, "the later publication stays");
+    assert!(twin.replies().contains(&(7, Err(LifecycleError::Storage))));
+}
+
+#[test]
+fn life_owner_started() {
+    let mut twin = Twin::open(0, 0, Some(9), Some(7));
+    twin.feed(Event::Saved(1));
+    assert!(twin.feed(Event::Started(RefOwner::Outbox, 1)).is_empty());
+}
+
+#[test]
+fn life_owners_started_read_intents() {
+    let mut twin = Twin::open(0, 0, Some(9), Some(7));
+    twin.feed(Event::Saved(1));
+    twin.feed(Event::Started(RefOwner::Outbox, 1));
+    assert_eq!(twin.feed(Event::Started(RefOwner::Transfer, 1)), vec![RefEffect::ReadIntents(1)]);
+}
+
+#[test]
+fn life_restore_classified() {
+    let mut twin = Twin::open(0, 0, Some(9), Some(7));
+    twin.feed(Event::Saved(1));
+    assert!(twin.feed(Event::RestoreClassified(RefOwner::Session, 1)).is_empty());
+}
+
+#[test]
+fn life_restore_classified_last() {
+    let mut twin = Twin::open(0, 0, Some(9), Some(7));
+    twin.settle();
+    assert_eq!(twin.replies(), vec![(7, Ok(()))]);
+}
+
+#[test]
+fn life_restore_stray() {
+    let mut twin = Twin::open(0, 0, Some(9), Some(7));
+    twin.feed(Event::Saved(1));
+    twin.feed_all([Event::Started(RefOwner::Outbox, 99), Event::RestoreClassified(RefOwner::Window, 1), Event::Started(RefOwner::Calls, 1)]);
+    twin.feed(close(3));
+    twin.feed(Event::RestoreClassified(RefOwner::Outbox, 1));
+}
+
+#[test]
+fn life_executor_failed() {
+    let mut twin = Twin::open(0, 0, None, Some(7));
+    twin.feed(Event::ExecutorFailed);
+    assert!(twin.replies().contains(&(7, Err(LifecycleError::Runtime))), "the open wait gets Runtime");
+    assert!(twin.published().closed);
+}
+
+#[test]
+fn life_closed_refuses() {
     let mut twin = closing_session();
     twin.feed_all(drain_all());
-    twin.feed_all([credential(2), reset(2), reset_models(&["Moment"], 3), Event::ResetModels(models(&["Moment"]), None), close(4), Event::Cleared]);
-}
-
-/// The table "platform calls" is the gate before the owners: it reads `phase` and `epoch` of the owner state.
-#[test]
-fn life_call_nosession_data_owner() { assert!(matches!(Twin::new().state(), RefState::NoSession { .. })); }
-
-#[test]
-fn life_call_current_epoch_owner() { assert!(matches!(session(1).state(), RefState::Session { epoch: 2, .. })); }
-
-#[test]
-fn life_call_stale_epoch_owner() {
-    let twin = session(1);
-    assert!(matches!(twin.state(), RefState::Session { epoch, .. } if *epoch != 0), "a call with another epoch is stale");
+    twin.feed_all([Event::ObserversStopped, Event::StoreClosed]);
+    twin.feed(reset(5));
+    twin.feed(reset_models(&["Moment"], 6));
+    twin.feed(close(7));
+    twin.feed_all([Event::Saved(999), Event::ExecutorFailed]);
+    for id in [5, 6, 7] {
+        assert!(twin.replies().contains(&(id, Err(LifecycleError::Closed))));
+    }
 }
 
 #[test]
 fn life_call_ending() {
     let twin = ending();
-    assert_eq!(twin.published().epoch, 2, "Published keeps the old epoch");
-    assert!(matches!(twin.state(), RefState::Ending { epoch_old: 2, .. }));
+    assert_eq!(twin.published().state, PubState::Ending);
+    assert_eq!(twin.published().epoch, 2, "the calls of the ended epoch stay out");
 }
 
 #[test]
-fn life_call_resetting() { assert!(matches!(resetting().state(), RefState::Resetting { epoch: 2, identity: Some(1), .. })); }
-
-#[test]
-fn life_call_resetting_stale() { assert!(matches!(resetting_signed_out().state(), RefState::Resetting { identity: None, .. })); }
-
-#[test]
-fn life_call_closed_owner() {
-    let twin = closing_session();
-    assert!(twin.published().closed);
+fn life_call_storage_failed() {
+    let mut twin = Twin::new();
+    twin.feed(credential(1));
+    let publication = twin.publications()[0];
+    twin.feed(Event::SaveFailed(publication));
+    assert_eq!(twin.cell().state, PubState::StorageFailed);
 }
 
 #[test]
 fn life_wait_session_reset() {
     let mut twin = ending();
-    let effects = twin.feed(Event::Cleared);
-    assert!(effects.iter().any(|e| matches!(e, RefEffect::EpochStarted(3, None, 1))));
-    let mut failing = ending();
-    failing.feed(Event::ClearFailed);
+    let done = cleared(&twin);
+    twin.feed(done);
+    twin.settle();
+    assert_eq!(twin.replies(), vec![(1, Ok(()))]);
 }
 
 #[test]
 fn life_wait_close() {
-    let mut twin = closing_session();
-    twin.feed(close(2));
+    let mut twin = session(1);
+    twin.feed(close(1));
     twin.feed_all(drain_all());
+    twin.feed_all([Event::ObserversStopped, Event::StoreClosed]);
+    assert_eq!(twin.replies(), vec![(1, Ok(()))]);
 }
 
 #[test]
 fn life_wait_open() {
-    let twin = Twin::open(0, 0, None, &[]);
-    assert_eq!(twin.published().epoch, 1);
+    let mut twin = Twin::open(0, 0, None, Some(7));
+    twin.settle();
+    assert_eq!(twin.replies(), vec![(7, Ok(()))]);
 }
-
-// Properties: seeded random traces, the owner against the reference, then the formula over the effects of the owner.
 
 fn next(seed: &mut u64) -> u64 {
     *seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
     *seed >> 33
 }
 
-fn random_event(seed: &mut u64, step: u64) -> Event {
+fn random_event(seed: &mut u64, step: u64, twin: &Twin) -> Event {
     let identity = 1 + next(seed) % 2;
-    match next(seed) % 12 {
+    let erases = twin.erases();
+    let erase = if erases.is_empty() || next(seed) % 5 == 0 { 999 } else { erases[(next(seed) as usize) % erases.len()].id };
+    let publications = twin.publications();
+    let publication = if publications.is_empty() || next(seed) % 6 == 0 { 999 } else { publications[(next(seed) as usize) % publications.len()] };
+    match next(seed) % 22 {
         0 | 1 => Event::Credential(identity),
-        2 => Event::SessionReset(step),
+        2 => Event::SessionReset(Some(step)),
         3 => Event::ServerEnded(1 + next(seed) % 6),
         4 => Event::ResetModels(models(&["Moment"]), Some(step)),
-        5 | 6 => Event::Cleared,
-        7 | 8 => Event::ModelsCleared(1 + next(seed) % 8),
-        9 => Event::ClearFailed,
+        5 | 6 => Event::Cleared(erase),
+        7 | 8 => Event::ModelsCleared(1 + next(seed) % 8, erase),
+        9 => Event::ClearFailed(erase),
         10 => Event::Close(step),
-        _ => Event::Drained(super::ref_lifecycle::OWNERS[(next(seed) % 8) as usize]),
+        11..=14 => Event::Saved(publication),
+        15 => Event::SaveFailed(publication),
+        16 => Event::StoreClosed,
+        17 => Event::ObserversStopped,
+        18 => Event::Started(OWNERS[(next(seed) % 10) as usize], 1 + next(seed) % 4),
+        19 => Event::RestoreClassified(OWNERS[(next(seed) % 10) as usize], 1 + next(seed) % 4),
+        _ => Event::Drained(OWNERS[(next(seed) % 10) as usize]),
     }
 }
 
 /// A trace of `len` random inputs; the Store answers are random too.
 fn trace(seed: u64, len: u64) -> Twin {
     let mut seed = seed;
-    let mut twin = Twin::new();
+    let mut twin = Twin::open(0, 0, None, Some(1_000));
     for step in 1..=len {
-        let event = random_event(&mut seed, step);
+        let event = random_event(&mut seed, step, &twin);
         twin.feed(event);
     }
     twin
 }
 
-fn traces() -> impl Iterator<Item = Twin> { (1..=40).map(|seed| trace(seed, 30)) }
+fn traces() -> impl Iterator<Item = Twin> { (1..=60).map(|seed| trace(seed, 40)) }
 
 #[test]
-fn life_prop_epoch_monotonic_owner() {
+fn life_prop_epoch_monotonic() {
     for twin in traces() {
         let mut last = 0;
         for effect in &twin.history {
-            if let LifecycleEffect::Publish(p) = effect {
-                assert!(p.epoch >= last, "Published.epoch {} after {last}", p.epoch);
-                last = p.epoch;
+            if let LifecycleEffect::Publish { published, .. } = effect {
+                assert!(published.epoch >= last, "Published.epoch {} after {last}", published.epoch);
+                last = published.epoch;
             }
         }
     }
 }
 
 #[test]
-fn life_prop_no_work_after_end_owner() {
+fn life_prop_no_work_after_end() {
     for twin in traces() {
         let mut ended: BTreeSet<u64> = BTreeSet::new();
         for effect in &twin.history {
@@ -544,59 +917,62 @@ fn life_prop_no_work_after_end_owner() {
 }
 
 #[test]
-fn life_prop_clear_before_start_owner() {
+fn life_prop_clear_before_start() {
     for twin in traces() {
         let mut clearing = false;
         for (event, effects) in &twin.steps {
             for effect in effects {
                 match effect {
                     LifecycleEffect::ClearAccount { .. } => clearing = true,
-                    LifecycleEffect::EpochStarted { identity: Some(_), .. } => assert!(!clearing || *event == Event::Cleared, "an epoch with an identity starts before the account clearing answered"),
+                    LifecycleEffect::EpochStarted { identity: Some(_), .. } => assert!(!clearing || matches!(event, Event::Saved(_)), "an epoch with an identity starts before the account clearing answered"),
                     _ => {}
                 }
             }
-            if *event == Event::Cleared {
+            if matches!(event, Event::Cleared(_)) {
                 clearing = false;
             }
         }
     }
 }
 
-/// Every command with a reply is answered once when the Store answers and the owners drain.
+/// Every command with a reply is answered at most once; after the owners drain, the Store closes and the observers stop, `close` is answered.
 #[test]
-fn life_prop_reply_once_owner() {
-    for seed in 1..=40 {
-        let mut twin = trace(seed, 30);
-        for _ in 0..4 {
-            twin.feed(Event::Cleared);
-            twin.feed(Event::ModelsCleared(100 + seed));
-            twin.feed(Event::Cleared);
-        }
-        twin.feed(close(1_000));
+fn life_prop_reply_once() {
+    for seed in 1..=60 {
+        let mut twin = trace(seed, 40);
+        twin.feed(close(5_000));
         twin.feed_all(drain_all());
-        twin.feed_all([Event::Cleared, Event::ModelsCleared(500), Event::ClearFailed]);
+        for erase in twin.erases() {
+            twin.feed(Event::Cleared(erase.id));
+        }
+        twin.feed_all([Event::ObserversStopped, Event::StoreClosed]);
         let mut seen: Vec<u64> = Vec::new();
         for effect in &twin.history {
             if let LifecycleEffect::Reply { id, .. } = effect {
+                if *id == 5_000 || *id == 1_000 { continue; }
                 assert!(!seen.contains(id), "reply {id} comes twice");
                 seen.push(*id);
             }
         }
-        assert!(seen.contains(&1_000), "close is answered");
-        assert_eq!(*twin.state(), RefState::Closed);
+        assert_eq!(*twin.state(), RefState::Closed, "seed {seed}");
+        assert!(twin.replies().iter().any(|(id, _)| *id == 5_000), "close is answered");
     }
 }
 
 #[test]
-fn life_prop_close_drains_owner() {
+fn life_prop_close_drains() {
     let mut twin = session(1);
     twin.feed(close(1));
-    let owners = super::ref_lifecycle::OWNERS;
+    let owners = OWNERS;
     for (index, owner) in owners.into_iter().enumerate() {
         let effects = twin.feed(Event::Drained(owner));
         let last = index + 1 == owners.len();
         assert_eq!(effects.contains(&RefEffect::StoreClose), last, "close ends with the last Drained and not before");
     }
+    twin.feed(Event::StoreClosed);
+    assert!(!twin.replies().iter().any(|(id, _)| *id == 1), "close waits for the observers");
+    twin.feed(Event::ObserversStopped);
+    assert!(twin.replies().contains(&(1, Ok(()))));
     assert!(twin.published().closed);
 }
 
@@ -605,31 +981,58 @@ fn life_prop_generation() {
     for twin in traces() {
         let mut last = 0;
         for effect in &twin.history {
-            if let LifecycleEffect::Publish(p) = effect {
-                assert!(p.generation >= last, "generation {} after {last}", p.generation);
-                last = p.generation;
+            if let LifecycleEffect::Publish { published, .. } = effect {
+                assert!(published.generation >= last, "generation {} after {last}", published.generation);
+                last = published.generation;
             }
         }
     }
 }
 
-/// `EraseAccount` keeps `encrypted_*` unless the cause is `SessionReset` or `ServerEnded`: the cause goes to the Store as it is.
+/// `ClearAccount` goes to the Store with its cause: the Store erases `encrypted_*` for `SessionReset` and `ServerEnded` only.
 #[test]
-fn life_prop_session_kept_owner() {
+fn life_prop_session_kept() {
     for twin in traces() {
+        let mut handed = BTreeSet::new();
         for effect in &twin.history {
-            if let LifecycleEffect::ClearAccount { cause, .. } = effect {
-                assert!(matches!(cause, Cause::SessionReset | Cause::ServerEnded | Cause::IdentityChanged), "ClearAccount with the cause {cause:?}");
+            match effect {
+                LifecycleEffect::ClearAccount { generation_new, erase_id, .. } | LifecycleEffect::ClearModels { generation_new, erase_id, .. } => {
+                    assert!(handed.insert(*erase_id), "the erase id {erase_id} is handed twice");
+                    let _ = generation_new;
+                }
+                _ => {}
             }
         }
     }
     let mut twin = session(1);
     let effects = twin.feed(credential(2));
-    assert!(effects.contains(&RefEffect::ClearAccount(2, RefCause::IdentityChanged, 1)), "a change of identity clears with IdentityChanged");
+    assert!(effects.iter().any(|e| matches!(e, RefEffect::ClearAccount { cause: RefCause::IdentityChanged, .. })), "a change of identity clears with IdentityChanged");
+}
+
+/// Two erases in flight never get the same generation: the Store refuses `generation_new` at or below the last.
+#[test]
+fn life_prop_generation_distinct() {
+    for twin in traces() {
+        let mut open: Vec<u64> = Vec::new();
+        for (event, effects) in &twin.steps {
+            for effect in effects {
+                match effect {
+                    LifecycleEffect::ClearAccount { generation_new, .. } | LifecycleEffect::ClearModels { generation_new, .. } => {
+                        assert!(!open.contains(generation_new), "generation {generation_new} handed to two erases in flight");
+                        open.push(*generation_new);
+                    }
+                    _ => {}
+                }
+            }
+            if matches!(event, Event::Cleared(_) | Event::ModelsCleared(..) | Event::ClearFailed(_)) {
+                open.clear();
+            }
+        }
+    }
 }
 
 #[test]
-fn life_prop_idle_owner() {
+fn life_prop_idle() {
     let mut twin = trace(3, 30);
     twin.send(LifecycleInput::Idle);
     assert!(twin.drain().0.is_empty(), "no input, no effect");
@@ -640,11 +1043,14 @@ fn life_prop_credential_kept() {
     for credential_id in [1, 2] {
         let mut twin = resetting_signed_out();
         twin.feed(credential(credential_id));
-        twin.feed(Event::ModelsCleared(1));
+        let done = models_cleared(&twin, 1);
+        twin.feed(done);
         assert_eq!(twin.published().identity, Some(credential_id));
     }
     let mut twin = resetting_signed_out();
-    twin.feed_all([credential(2), Event::ClearFailed]);
+    twin.feed(credential(2));
+    let failed = clear_failed(&twin);
+    twin.feed(failed);
     assert_eq!(twin.published().identity, Some(2));
 }
 
@@ -655,36 +1061,79 @@ fn life_prop_every_epoch_ends() {
         for effect in &twin.history {
             match effect {
                 LifecycleEffect::EpochEnded { epoch, .. } => { ended.insert(*epoch); }
-                LifecycleEffect::EpochStarted { epoch, .. } if *epoch > 1 => assert!(ended.contains(&(epoch - 1)) || (*epoch >= 2 && ended.contains(&(epoch - 2))), "epoch {epoch} starts, neither {} nor {} ended", epoch - 1, epoch - 2),
+                LifecycleEffect::EpochStarted { epoch, .. } if *epoch > 1 => assert!(ended.contains(&(epoch - 1)) || ended.contains(&(epoch - 2)), "epoch {epoch} starts, neither {} nor {} ended", epoch - 1, epoch - 2),
                 _ => {}
             }
         }
     }
 }
 
+/// `EpochStarted` and the answers of a publication go out after its `Saved` only.
+#[test]
+fn life_prop_publish_after_saved() {
+    for twin in traces() {
+        let mut saved: BTreeSet<u64> = BTreeSet::new();
+        let waiting: Vec<(u64, u64)> = twin.history.iter().filter_map(|effect| match effect { LifecycleEffect::Publish { publication_id, published } => Some((*publication_id, published.epoch)), _ => None }).collect();
+        for (event, effects) in &twin.steps {
+            if let Event::Saved(id) = event { saved.insert(*id); }
+            for effect in effects {
+                match effect {
+                    LifecycleEffect::EpochStarted { epoch, .. } => {
+                        assert!(waiting.iter().any(|(id, e)| e == epoch && saved.contains(id)), "EpochStarted({epoch}) before its Saved");
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
+}
+
+/// `Saved` of one publication leaves the other open publications alone.
+#[test]
+fn life_prop_publication_id() {
+    let mut twin = Twin::open(0, 0, None, Some(7));
+    twin.feed(credential(1));
+    let second = twin.publications()[1];
+    twin.feed(Event::Saved(second));
+    assert!(!twin.replies().iter().any(|(id, _)| *id == 7), "the later Saved does not answer the earlier publication");
+    assert_eq!(twin.publications().len(), 1);
+}
+
 /// The traces of the findings (`lifecycle.md`, "finding traces"), at the level of the owner.
 #[test]
-fn life_findings_owner() {
+fn life_findings() {
     let mut identity = session(1);
-    identity.feed_all([credential(2), Event::Cleared]);
+    identity.feed(credential(2));
+    let done = cleared(&identity);
+    identity.feed(done);
+    identity.settle();
     assert_eq!(*identity.state(), RefState::Session { epoch: 4, identity: 2 }, "a change of identity clears first, then starts");
 
     let mut models_reset = session(1);
-    models_reset.feed_all([reset_models(&["Other"], 1), Event::ModelsCleared(1)]);
+    models_reset.feed(reset_models(&["Other"], 1));
+    let done = models_cleared(&models_reset, 1);
+    models_reset.feed(done);
     assert_eq!(models_reset.published().generation, 1);
 
     let mut closing_during_clear = ending();
     closing_during_clear.feed(close(2));
     closing_during_clear.feed_all(drain_all());
-    closing_during_clear.feed(Event::Cleared);
+    let done = cleared(&closing_during_clear);
+    closing_during_clear.feed(done);
+    closing_during_clear.feed_all([Event::ObserversStopped, Event::StoreClosed]);
     assert_eq!(*closing_during_clear.state(), RefState::Closed);
 
     let mut double_reset = ending();
-    double_reset.feed_all([reset(2), Event::Cleared]);
-    assert_eq!(double_reset.history.iter().filter(|e| matches!(e, LifecycleEffect::Reply { result: Ok(()), .. })).count(), 2, "both resets are answered");
+    double_reset.feed(reset(2));
+    let done = cleared(&double_reset);
+    double_reset.feed(done);
+    double_reset.settle();
+    assert_eq!(double_reset.history.iter().filter(|e| matches!(e, LifecycleEffect::Reply { result: Ok(()), .. })).count(), 2 + 1, "both resets are answered");
 
     let mut signed_out = resetting_signed_out();
-    signed_out.feed_all([credential(2), Event::ClearFailed]);
+    signed_out.feed(credential(2));
+    let failed = clear_failed(&signed_out);
+    signed_out.feed(failed);
     assert_eq!(signed_out.published().identity, Some(2));
 
     let mut opened = Twin::new();

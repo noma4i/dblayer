@@ -74,6 +74,7 @@ pub enum RejectReason {
     StaleGeneration { models: Vec<String>, generation: u64 },
     Storage(String),
     Closed,
+    Invalid,
 }
 
 /// `Rejected`: the Store refused `batch`.
@@ -204,13 +205,30 @@ pub struct ModelLost {
     pub last: u64,
 }
 
-/// `Published{epoch, identity, generation, closed}`: Lifecycle to Store and Session.
+/// `Published.state` of `lifecycle.md`: the one value the platform call rule reads.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PublishedState {
+    NoSession,
+    Session,
+    Ending,
+    EndingFailed,
+    Resetting,
+    StorageFailed,
+    Closing,
+}
+
+/// `Published{epoch, identity, generation, state, closed}`: Lifecycle to Store and Session.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Published {
     pub epoch: Epoch,
     pub identity: Option<u64>,
     pub generation: u64,
+    pub state: PublishedState,
     pub closed: bool,
+}
+
+impl Published {
+    pub fn initial() -> Self { Self { epoch: 0, identity: None, generation: 0, state: PublishedState::NoSession, closed: false } }
 }
 
 /// `CredentialCommitted(identity)`: Session to Lifecycle.

@@ -159,6 +159,8 @@ impl Database {
         match self.await_life(self.life.session_reset()).await? {
             LifeReply::Life(Ok(())) => Ok(()),
             LifeReply::Life(Err(crate::owners::lifecycle::LifecycleError::Storage)) => Err(DbError::Database { detail: "the account could not be cleared".into() }),
+            LifeReply::Life(Err(crate::owners::lifecycle::LifecycleError::Closed)) => Err(super::command::closed()),
+            LifeReply::Life(Err(crate::owners::lifecycle::LifecycleError::Runtime)) => Err(DbError::Database { detail: "the owners failed".into() }),
             _ => Err(super::command::ended()),
         }
     }

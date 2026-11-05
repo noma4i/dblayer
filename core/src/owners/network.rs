@@ -1,6 +1,7 @@
 //! Owner `Network`: the only source of `online`, `foreground_seq` and `saving`.
 
 use super::contract::{Drained, ReplyId};
+use super::lifecycle::Peer;
 use crate::runtime::{Cause, Effect, Effects, Epoch, StateOwner, Time};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -10,23 +11,15 @@ pub enum NetworkMode {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum SnapshotOwner {
-    Windows,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum NetworkEffect {
     /// `Online(value)` to every owner.
     Broadcast(bool),
-    /// `Online(online)` to the owners of the new epoch.
-    EpochOnline(bool),
-    Snapshot { owner: SnapshotOwner, epoch: Epoch, online: bool },
-    /// `Foreground(seq)` to Transfer and Rounds.
+    /// `Online(online, epoch)` to the owner that asked, the first addressed snapshot; `saving` is set for Transfer: `PowerSaving(saving, epoch)`.
+    Snapshot { owner: Peer, epoch: Epoch, online: bool, saving: Option<bool> },
+    /// `Foreground(seq)` to Rounds, Session and Windows.
     Foreground(u64),
     /// `PowerSaving(value)` to Transfer.
     PowerSaving(bool),
-    /// `PowerSaving(saving)` to Transfer at `EpochStarted`.
-    EpochPowerSaving(bool),
     Drained(Drained),
     /// The answer to `set_online`, `foreground`, `set_power_saving`.
     Reply { id: ReplyId, closed: bool },
@@ -37,8 +30,7 @@ pub enum NetworkInput {
     SetOnline { online: bool, reply: ReplyId },
     Foreground { reply: ReplyId },
     PowerSaving { saving: bool, reply: ReplyId },
-    EpochStarted,
-    SnapshotRequest { owner: SnapshotOwner, epoch: Epoch },
+    SnapshotRequest { owner: Peer, epoch: Epoch },
     Closing,
     Idle,
 }
@@ -71,9 +63,6 @@ impl StateOwner for Network {
                 state.mode = NetworkMode::Open { online: value, foreground_seq, saving };
                 run(vec![reply(id), NetworkEffect::Broadcast(value)])
             }
-            (NetworkMode::Open { .. }, NetworkInput::SetOnline { reply, .. }) => run(NetworkEffect::Reply { id: reply, closed: false }),
-            (NetworkMode::Open { online }, NetworkInput::EpochStarted) => run(NetworkEffect::EpochOnline(online)),
-            (NetworkMode::Open { online, .. }, NetworkInput::SnapshotRequest { owner, epoch }) => run(NetworkEffect::Snapshot { owner, epoch, online }),
             (NetworkMode::Open { .. }, NetworkInput::SetOnline { reply: id, .. }) => run(vec![reply(id)]),
             (NetworkMode::Open { online, foreground_seq, saving }, NetworkInput::Foreground { reply: id }) => {
                 state.mode = NetworkMode::Open { online, foreground_seq: foreground_seq + 1, saving };
@@ -84,7 +73,7 @@ impl StateOwner for Network {
                 run(vec![reply(id), NetworkEffect::PowerSaving(value)])
             }
             (NetworkMode::Open { .. }, NetworkInput::PowerSaving { reply: id, .. }) => run(vec![reply(id)]),
-            (NetworkMode::Open { online, saving, .. }, NetworkInput::EpochStarted) => run(vec![NetworkEffect::EpochOnline(online), NetworkEffect::EpochPowerSaving(saving)]),
+            (NetworkMode::Open { online, saving, .. }, NetworkInput::SnapshotRequest { owner, epoch }) => run(vec![NetworkEffect::Snapshot { owner, epoch, online, saving: (owner == Peer::Transfer).then_some(saving) }]),
             (NetworkMode::Open { .. }, NetworkInput::Closing) => {
                 state.mode = NetworkMode::Closed;
                 run(vec![NetworkEffect::Drained(Drained { owner: "network" })])

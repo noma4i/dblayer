@@ -61,8 +61,7 @@ async fn start(db: &Db, transport: &Arc<MockTransport>) -> Life {
 }
 
 async fn closed(life: &Life) {
-    assert_eq!(answer(life.close()).await, Reply::Life(Ok(())));
-    assert!(life.wait_store_closed(LIMIT), "the store closed its connections");
+    assert_eq!(answer(life.close()).await, Reply::Life(Ok(())), "close is answered after the store closed its connections");
 }
 
 /// life_open_no_session: a new database opens at epoch 1 without a session and the epoch is saved for the next open.
@@ -139,7 +138,7 @@ async fn call_run_answers_by_epoch_and_network() {
     let life = start(&db, &transport).await;
     life.declare(vec!["Op".into()]);
     assert_eq!(answer(life.set_online(false)).await, Reply::Online { closed: false });
-    assert_eq!(answer(life.run(1, "Op".into(), "{}".into())).await, Reply::Call(Err(CallError::NoSession)), "an epoch without a session has no Calls");
+    assert_eq!(answer(life.run(1, "Op".into(), "{}".into())).await, Reply::Call(Err(CallError::Offline)), "a database without a session client hands the call to Calls in every state");
     life.credential_committed(IDENTITY);
     let published = loop {
         let published = life.published();
@@ -148,7 +147,7 @@ async fn call_run_answers_by_epoch_and_network() {
     };
     assert_eq!(published.epoch, 2);
     assert_eq!(answer(life.run(2, "Op".into(), "{}".into())).await, Reply::Call(Err(CallError::Offline)));
-    assert_eq!(answer(life.run(1, "Op".into(), "{}".into())).await, Reply::Call(Err(CallError::NoSession)), "call_run_stale");
+    assert!(matches!(life.run(1, "Op".into(), "{}".into()).wait().await, crate::runtime::Outcome::EpochEnded(_)), "call_run_stale: the wait of an ended epoch ends with the end of the epoch");
     assert_eq!(answer(life.set_online(true)).await, Reply::Online { closed: false });
     transport.enqueue("Op", MockReply::data(json!({ "feed": [1, 2] })));
     assert_eq!(answer(life.run(2, "Op".into(), "{}".into())).await, Reply::Call(Ok("[1,2]".into())));

@@ -1,6 +1,7 @@
 //! Owner-level tests of the Network table: the owner `Network` on `DetScheduler` against `ref_network.rs`. Names are the `Test` column.
 
-use super::ref_network::{Effect as RefEffect, Input, Network as Ref, Reply as RefReply, State as RefState};
+use super::ref_network::{Effect as RefEffect, Input, Network as Ref, Owner, Reply as RefReply, State as RefState};
+use crate::owners::lifecycle::Peer;
 use crate::owners::network::{Network, NetworkEffect, NetworkInput, NetworkMode, NetworkState};
 use crate::owners::support::{new_log, take, Log, Recorder};
 use crate::runtime::{Address, DetScheduler, EpochStamp};
@@ -26,7 +27,7 @@ impl Twin {
             Input::SetOnline(online) => NetworkInput::SetOnline { online, reply: 1 },
             Input::Foreground => NetworkInput::Foreground { reply: 1 },
             Input::PowerSaving(saving) => NetworkInput::PowerSaving { saving, reply: 1 },
-            Input::EpochStarted => NetworkInput::EpochStarted,
+            Input::SnapshotRequest(owner, epoch) => NetworkInput::SnapshotRequest { owner: match owner { Owner::Transfer => Peer::Transfer, Owner::Outbox => Peer::Outbox, Owner::Calls => Peer::Calls, Owner::Session => Peer::Session, Owner::Window => Peer::Windows, Owner::Feed => Peer::Feed, Owner::Delivery => Peer::Deliveries, Owner::Network => Peer::Network, Owner::LocalWrites => Peer::LocalWrites, Owner::Rounds => Peer::Rounds }, epoch },
             Input::Closing => NetworkInput::Closing,
         };
         self.det.post(self.addr, EpochStamp::Control, owner_input);
@@ -36,10 +37,9 @@ impl Twin {
         let want = self.reference.step(input);
         let effects: Vec<RefEffect> = raw.iter().filter_map(|effect| match effect {
             NetworkEffect::Broadcast(value) => Some(RefEffect::Broadcast(*value)),
-            NetworkEffect::EpochOnline(value) => Some(RefEffect::EpochOnline(*value)),
+            NetworkEffect::Snapshot { owner, epoch, online, saving } => Some(RefEffect::Snapshot { owner: match owner { Peer::Transfer => Owner::Transfer, Peer::Outbox => Owner::Outbox, Peer::Calls => Owner::Calls, Peer::Session => Owner::Session, Peer::Windows => Owner::Window, Peer::Feed => Owner::Feed, Peer::Deliveries => Owner::Delivery, Peer::Network => Owner::Network, Peer::LocalWrites => Owner::LocalWrites, Peer::Rounds => Owner::Rounds }, epoch: *epoch, online: *online, saving: *saving }),
             NetworkEffect::Foreground(seq) => Some(RefEffect::Foreground(*seq)),
             NetworkEffect::PowerSaving(value) => Some(RefEffect::PowerSaving(*value)),
-            NetworkEffect::EpochPowerSaving(value) => Some(RefEffect::EpochPowerSaving(*value)),
             NetworkEffect::Drained(_) => Some(RefEffect::Drained),
             NetworkEffect::Reply { .. } | NetworkEffect::Snapshot { .. } => None,
         }).collect();
@@ -90,13 +90,15 @@ fn net_power_saving_same() {
 }
 
 #[test]
-fn net_epoch_started() {
+fn net_snapshot_request() {
     let mut twin = Twin::new();
-    assert_eq!(twin.feed(Input::EpochStarted), vec![RefEffect::EpochOnline(false), RefEffect::EpochPowerSaving(false)]);
+    assert_eq!(twin.feed(snapshot()), vec![RefEffect::Snapshot { owner: Owner::Outbox, epoch: 1, online: false, saving: None }]);
     twin.feed(Input::SetOnline(true));
     twin.feed(Input::PowerSaving(true));
-    assert_eq!(twin.feed(Input::EpochStarted), vec![RefEffect::EpochOnline(true), RefEffect::EpochPowerSaving(true)]);
+    assert_eq!(twin.feed(Input::SnapshotRequest(Owner::Transfer, 2)), vec![RefEffect::Snapshot { owner: Owner::Transfer, epoch: 2, online: true, saving: Some(true) }]);
 }
+
+fn snapshot() -> Input { Input::SnapshotRequest(Owner::Outbox, 1) }
 
 #[test]
 fn net_closing() { assert_eq!(Twin::new().feed(Input::Closing), vec![RefEffect::Drained]); }
@@ -105,7 +107,7 @@ fn net_closing() { assert_eq!(Twin::new().feed(Input::Closing), vec![RefEffect::
 fn net_closed() {
     let mut twin = Twin::new();
     twin.feed(Input::Closing);
-    for input in [Input::SetOnline(true), Input::Foreground, Input::PowerSaving(true), Input::EpochStarted, Input::Closing] {
+    for input in [Input::SetOnline(true), Input::Foreground, Input::PowerSaving(true), snapshot(), Input::Closing] {
         assert!(twin.feed(input).is_empty(), "a closed Network gives no effect");
     }
     assert_eq!(twin.replies(), vec![true, true, true], "the three calls are answered Err(Closed)");
@@ -137,7 +139,7 @@ fn random_inputs(seed: u64, len: usize) -> Vec<Input> {
         match (state >> 33) % 7 {
             0 => Input::SetOnline(true),
             1 | 2 => Input::SetOnline(false),
-            3 => Input::EpochStarted,
+            3 => snapshot(),
             4 => Input::Foreground,
             5 => Input::PowerSaving((state >> 41) % 2 == 0),
             _ => if (state >> 40) % 9 == 0 { Input::Closing } else { Input::SetOnline(true) },
@@ -154,13 +156,13 @@ fn net_prop_broadcast_per_change() {
             if closed { break; }
             match input {
                 Input::SetOnline(value) => { if value != online { changes += 1; online = value; } }
-                Input::EpochStarted => epochs += 1,
+                Input::SnapshotRequest(..) => epochs += 1,
                 Input::Closing => closed = true,
                 Input::Foreground | Input::PowerSaving(_) => {}
             }
             twin.feed(input);
         }
-        let broadcasts = twin.history.iter().filter(|effect| matches!(effect, NetworkEffect::Broadcast(_) | NetworkEffect::EpochOnline(_))).count();
+        let broadcasts = twin.history.iter().filter(|effect| matches!(effect, NetworkEffect::Broadcast(_) | NetworkEffect::Snapshot { .. })).count();
         assert_eq!(broadcasts, changes + epochs, "one Online per change and per EpochStarted");
     }
 }
@@ -169,10 +171,10 @@ fn net_prop_broadcast_per_change() {
 fn net_prop_offline_silent() {
     let mut twin = Twin::new();
     twin.feed(Input::SetOnline(false));
-    twin.feed(Input::EpochStarted);
+    twin.feed(snapshot());
     twin.feed(Input::Foreground);
     twin.feed(Input::SetOnline(false));
-    assert!(twin.history.iter().all(|effect| !matches!(effect, NetworkEffect::Broadcast(true) | NetworkEffect::EpochOnline(true))), "no Online(true) goes out before SetOnline(true)");
+    assert!(twin.history.iter().all(|effect| !matches!(effect, NetworkEffect::Broadcast(true) | NetworkEffect::Snapshot { online: true, .. })), "no Online(true) goes out before SetOnline(true)");
 }
 
 #[test]
@@ -184,7 +186,7 @@ fn net_prop_single_source() {
             twin.feed(input);
             for effect in &twin.history {
                 match effect {
-                    NetworkEffect::Broadcast(value) | NetworkEffect::EpochOnline(value) => last = *value,
+                    NetworkEffect::Broadcast(value) | NetworkEffect::Snapshot { online: value, .. } => last = *value,
                     _ => {}
                 }
             }
@@ -201,10 +203,10 @@ fn net_prop_no_request_before_snapshot() {
         let mut twin = Twin::new();
         for input in random_inputs(seed, 30) {
             let before = twin.history.len();
-            let started = input == Input::EpochStarted;
+            let started = input == snapshot();
             twin.feed(input);
             if started && twin.reference.online().is_some() {
-                assert!(matches!(twin.history[before], NetworkEffect::EpochOnline(_)), "EpochStarted gives the owners of the epoch the first Online snapshot in the same step");
+                assert!(matches!(twin.history[before], NetworkEffect::Snapshot { .. }), "a SnapshotRequest gives the owner the first Online snapshot in the same step");
             }
         }
     }

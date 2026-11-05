@@ -17,6 +17,7 @@ pub enum CallError {
     Graphql(Vec<String>),
     Http,
     Interrupted,
+    Storage,
 }
 
 pub type CallAnswer = Result<String, CallError>;

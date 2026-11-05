@@ -436,7 +436,7 @@ impl FeedState {
                     self.commit_by_basis(rest, fx);
                 }
             }
-            Some(RejectReason::Storage(_)) => {
+            Some(RejectReason::Storage(_) | RejectReason::Invalid) => {
                 let lost_models = self.mark_lost(&events, fx);
                 Self::stale_all(&lost_models, fx);
             }

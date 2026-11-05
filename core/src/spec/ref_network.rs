@@ -1,11 +1,13 @@
 //! Executable table of the Network owner, one match arm per row.
 
+pub use super::ref_lifecycle::Owner;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Input {
     SetOnline(bool),
     Foreground,
     PowerSaving(bool),
-    EpochStarted,
+    SnapshotRequest(Owner, u64),
     Closing,
 }
 
@@ -13,14 +15,12 @@ pub enum Input {
 pub enum Effect {
     /// `Broadcast Online(value)` to every owner.
     Broadcast(bool),
-    /// `Online(online)` to the owners of the epoch.
-    EpochOnline(bool),
-    /// `Broadcast Foreground(foreground_seq)` to Transfer and Rounds.
+    /// `Send owner Online(online, epoch)`, for Transfer also `PowerSaving(saving, epoch)`.
+    Snapshot { owner: Owner, epoch: u64, online: bool, saving: Option<bool> },
+    /// `Broadcast Foreground(foreground_seq)` to Rounds and Session.
     Foreground(u64),
     /// `Broadcast PowerSaving(value)` to Transfer.
     PowerSaving(bool),
-    /// `PowerSaving(saving)` to Transfer at `EpochStarted`.
-    EpochPowerSaving(bool),
     Drained,
 }
 
@@ -75,7 +75,7 @@ impl Network {
                 ok(vec![Effect::PowerSaving(value)])
             }
             (State::Open { .. }, Input::PowerSaving(_)) => ok(vec![]),
-            (State::Open { online, saving, .. }, Input::EpochStarted) => Out { effects: vec![Effect::EpochOnline(online), Effect::EpochPowerSaving(saving)], reply: None },
+            (State::Open { online, saving, .. }, Input::SnapshotRequest(owner, epoch)) => Out { effects: vec![Effect::Snapshot { owner, epoch, online, saving: (owner == Owner::Transfer).then_some(saving) }], reply: None },
             (State::Open { .. }, Input::Closing) => {
                 self.state = State::Closed;
                 Out { effects: vec![Effect::Drained], reply: None }

@@ -31,6 +31,7 @@ fn reason_of(reason: &RejectReason) -> Reason {
         RejectReason::Storage(_) => Reason::Storage,
         RejectReason::Closed => Reason::Closed,
         RejectReason::StaleGeneration { .. } => panic!("the Session table has no generation"),
+        RejectReason::Invalid => panic!("the Session batch carries no rows"),
     }
 }
 
@@ -170,7 +171,7 @@ impl Twin {
             Input::Rejected(batch, reason) => SessionInput::Rejected(Rejected { batch: if batch == 0 { current } else { batch }, reason: reject(reason) }),
             Input::Tick => SessionInput::Tick(Time(0)),
             Input::Online(online) => SessionInput::Online(Online(online)),
-            Input::Published { epoch } => SessionInput::Published(Published { epoch, identity: None, generation: 0, closed: false }),
+            Input::Published { epoch } => SessionInput::Published(Published { epoch, identity: None, generation: 0, state: crate::owners::contract::PublishedState::Session, closed: false }),
             Input::EpochEnded { epoch, cause: c } => SessionInput::EpochEnded(EpochEnded { epoch, cause: cause(c) }),
             Input::Closing => SessionInput::Closing,
         };
@@ -761,7 +762,7 @@ impl Solo {
         let log = new_log();
         let addr = det.add::<SessionCalls>("session", state, Recorder::<SessionCalls>::new(&log));
         let mut solo = Self { det, addr, log };
-        solo.feed(SessionInput::Published(Published { epoch: EPOCH, identity: None, generation: 0, closed: false }));
+        solo.feed(SessionInput::Published(Published { epoch: EPOCH, identity: None, generation: 0, state: crate::owners::contract::PublishedState::Session, closed: false }));
         solo.feed(SessionInput::Open { credential, pending: None });
         solo
     }

@@ -15,7 +15,7 @@ use std::sync::{Arc, Condvar, Mutex, OnceLock, PoisonError};
 use std::time::Duration;
 
 use super::calls::{CallAnswer, CallError, Calls, CallsInput, CallsState};
-use super::contract::{BatchAuthor, BatchId, Committed, CredentialCommitted, Published, Rejected, RequestId};
+use super::contract::{BatchAuthor, BatchId, Committed, CredentialCommitted, Published, PublishedState, Rejected, RequestId};
 use super::session::{AuthorId, AuthorOutcome, SessionAnswer, SessionCalls, SessionInput, SessionState};
 use super::lifecycle::{Lifecycle, LifecycleError, LifecycleInput, LifecycleState, Peer};
 use super::network::{Network, NetworkInput, NetworkState};
@@ -96,16 +96,22 @@ pub(crate) struct Wiring {
     /// The ids of streams: they stay below the bit that marks the waiters of platform calls in `Windows`.
     pub next_stream: std::sync::atomic::AtomicU64,
     published: PublishedCell,
-    ending: AtomicBool,
-    store_closed: (Mutex<bool>, Condvar),
+    /// The id of the wait of `open` and its answer, set at `Saved` of the first publication.
+    open: Mutex<OpenWait>,
     faults: Mutex<Vec<String>>,
-    open_failed: Mutex<Option<String>>,
+    open_failed: Mutex<Option<(String, bool)>>,
     /// Where the answer to a `Mutate` goes, by author: `Transport{req_id, Response/Error}`.
     mutate_sinks: Mutex<HashMap<AuthorId, Arc<dyn Fn(RequestId, AuthorOutcome) + Send + Sync>>>,
     /// Where the answer of Store to a batch goes, by author: the `install` of Window, Feed, Outbox and Transfer registers its owner here.
     store_sinks: Mutex<HashMap<BatchAuthor, Arc<dyn Fn(BatchId, StoreReply) + Send + Sync>>>,
     /// The answer of a sign-in waits for the publication of its identity: a caller that heard it finds the new epoch.
     after_publish: Mutex<Vec<(Awaited, crate::runtime::OutcomeId, LifeReply)>>,
+}
+
+#[derive(Default)]
+struct OpenWait {
+    id: Option<u64>,
+    answer: Option<Result<(), LifecycleError>>,
 }
 
 /// What a held answer waits for.
@@ -124,8 +130,7 @@ impl Wiring {
             pulls: Outcomes::new(),
             next_stream: std::sync::atomic::AtomicU64::new(1),
             published: PublishedCell::default(),
-            ending: AtomicBool::new(false),
-            store_closed: (Mutex::new(false), Condvar::new()),
+            open: Mutex::new(OpenWait::default()),
             faults: Mutex::new(Vec::new()),
             open_failed: Mutex::new(None),
             mutate_sinks: Mutex::new(HashMap::new()),
@@ -186,20 +191,28 @@ impl Wiring {
         }
     }
 
-    pub fn set_ending(&self, ending: bool) { self.ending.store(ending, Ordering::SeqCst); }
+    /// The wait of `open`: the id Lifecycle answers when the first publication is saved.
+    pub fn open_reply(&self) -> Option<u64> { self.open.lock().unwrap_or_else(PoisonError::into_inner).id }
+
+    /// Takes the answer of `open` when `id` is its wait. Returns whether it was.
+    pub fn open_answered(&self, id: u64, result: Result<(), LifecycleError>) -> bool {
+        let mut open = self.open.lock().unwrap_or_else(PoisonError::into_inner);
+        if open.id != Some(id) || open.answer.is_some() {
+            return false;
+        }
+        open.answer = Some(result);
+        drop(open);
+        self.published.changed.notify_all();
+        true
+    }
 
     pub fn has_transfer(&self) -> bool { self.addresses().is_some_and(|addresses| addresses.transfer.is_some()) }
 
     pub fn fault(&self, what: String) { self.faults.lock().unwrap_or_else(PoisonError::into_inner).push(what); }
 
-    pub fn open_failed(&self, error: String) {
-        *self.open_failed.lock().unwrap_or_else(PoisonError::into_inner) = Some(error);
+    pub fn open_failed(&self, error: String, corrupt: bool) {
+        *self.open_failed.lock().unwrap_or_else(PoisonError::into_inner) = Some((error, corrupt));
         self.published.changed.notify_all();
-    }
-
-    pub fn store_closed(&self) {
-        *self.store_closed.0.lock().unwrap_or_else(PoisonError::into_inner) = true;
-        self.store_closed.1.notify_all();
     }
 
     pub fn to_lifecycle(&self, input: LifecycleInput) {
@@ -297,6 +310,7 @@ impl Wiring {
 #[derive(Debug, PartialEq, Eq)]
 pub enum LifeError {
     Storage(String),
+    CorruptManifest(String),
     Timeout,
 }
 
@@ -304,12 +318,16 @@ pub struct Life {
     wiring: Arc<Wiring>,
     runtime: Mutex<Option<Runtime>>,
     shut: AtomicBool,
+    /// The database has a session client: the rule of the calls reads `Published`. A database without one hands the calls to the owners.
+    with_session: bool,
     alive: Arc<std::sync::atomic::AtomicUsize>,
 }
 
 /// Peers of `all owners` without an installed owner answer `Drained` at `Closing`.
 fn absent(session: bool, transfer: bool) -> Vec<Peer> {
     let mut peers: Vec<Peer> = Vec::new();
+    peers.push(Peer::LocalWrites);
+    peers.push(Peer::Rounds);
     if !session {
         peers.push(Peer::Session);
         peers.push(Peer::Outbox);
@@ -328,6 +346,7 @@ impl Life {
         let restored = session.as_ref().map(|(client, _)| session_runner::SessionRunner::stored(client)).transpose().map_err(|error| LifeError::Storage(error.to_string()))?;
         let mut builder = RuntimeBuilder::new();
         let wiring = Arc::new(Wiring::new(builder.handle()));
+        let open_wait = wiring.outcomes.register(Epoch::MAX);
         let lifecycle = builder.add::<Lifecycle>("lifecycle", LifecycleState::new(), runners::LifecycleRunner { wiring: wiring.clone(), leases: ports.db.shared.store.lifecycle.clone(), absent: absent(session.is_some(), session.is_some() && ports.transfer.is_some()), db: ports.db.clone(), held_published: None, held_replies: Vec::new() });
         let store = builder.add::<StoreWriter>("store", StoreState::new(), runners::StoreRunner { wiring: wiring.clone(), db: ports.db.clone(), credentials: ports.credentials.clone(), client: ports.session.clone() });
         let network = builder.add::<Network>("network", NetworkState::new(), runners::NetworkRunner { wiring: wiring.clone(), db: ports.db.clone(), held_replies: Vec::new() });
@@ -385,19 +404,24 @@ impl Life {
         if let Some((_, restored)) = session_address {
             wiring.to_session(SessionInput::Open { credential: restored.credential, pending: restored.pending });
         }
+        wiring.open.lock().unwrap_or_else(PoisonError::into_inner).id = Some(open_wait.id().raw());
         wiring.to_store(StoreInput::Boot(found));
         let started = std::time::Instant::now();
-        let mut guard = wiring.published.value.lock().unwrap_or_else(PoisonError::into_inner);
-        while guard.is_none() {
-            if let Some(error) = wiring.open_failed.lock().unwrap_or_else(PoisonError::into_inner).clone() {
-                return Err(LifeError::Storage(error));
+        let mut guard = wiring.open.lock().unwrap_or_else(PoisonError::into_inner);
+        let answer = loop {
+            if let Some(answer) = guard.answer {
+                break answer;
+            }
+            if let Some((error, corrupt)) = wiring.open_failed.lock().unwrap_or_else(PoisonError::into_inner).clone() {
+                return Err(if corrupt { LifeError::CorruptManifest(error) } else { LifeError::Storage(error) });
             }
             let left = wait.checked_sub(started.elapsed()).ok_or(LifeError::Timeout)?;
             guard = crate::blocking::blocking_unit(|| wiring.published.changed.wait_timeout(guard, left).unwrap_or_else(PoisonError::into_inner).0);
-        }
+        };
         drop(guard);
+        answer.map_err(|error| LifeError::Storage(format!("the first publication was not saved: {error:?}")))?;
         let alive = runtime.alive();
-        Ok(Self { wiring, runtime: Mutex::new(Some(runtime)), shut: AtomicBool::new(false), alive })
+        Ok(Self { wiring, runtime: Mutex::new(Some(runtime)), shut: AtomicBool::new(false), with_session: session.is_some(), alive })
     }
 
     /// Stops the owner threads and joins them. The caller is not an owner thread. A second call does nothing.
@@ -414,7 +438,7 @@ impl Life {
     pub fn owners_alive(&self) -> usize { self.alive.load(Ordering::SeqCst) }
 
     pub fn published(&self) -> Published {
-        self.wiring.published.value.lock().unwrap_or_else(PoisonError::into_inner).clone().unwrap_or(Published { epoch: 0, identity: None, generation: 0, closed: false })
+        self.wiring.published.value.lock().unwrap_or_else(PoisonError::into_inner).clone().unwrap_or_else(Published::initial)
     }
 
     pub fn faults(&self) -> Vec<String> { self.wiring.faults.lock().unwrap_or_else(PoisonError::into_inner).clone() }
@@ -453,12 +477,22 @@ impl Life {
     pub fn run(&self, epoch: Epoch, operation: String, variables: String) -> Waiter<LifeReply> {
         if self.shut.load(Ordering::SeqCst) { return self.settled(LifeReply::Closed); }
         let published = self.published();
-        if published.closed {
-            return self.settled(LifeReply::Closed);
+        if !self.with_session {
+            return if published.closed { self.settled(LifeReply::Closed) } else { self.call(epoch, operation, variables) };
         }
-        if published.identity.is_none() || self.wiring.ending.load(Ordering::SeqCst) || published.epoch != epoch {
+        match published.state {
+            PublishedState::Closing => return self.settled(LifeReply::Closed),
+            PublishedState::StorageFailed => return self.settled(LifeReply::Call(Err(CallError::Storage))),
+            PublishedState::Ending | PublishedState::EndingFailed | PublishedState::NoSession => return self.settled(LifeReply::Call(Err(CallError::NoSession))),
+            PublishedState::Session | PublishedState::Resetting => {}
+        }
+        if published.identity.is_none() || published.epoch != epoch {
             return self.settled(LifeReply::Call(Err(CallError::NoSession)));
         }
+        self.call(epoch, operation, variables)
+    }
+
+    fn call(&self, epoch: Epoch, operation: String, variables: String) -> Waiter<LifeReply> {
         let waiter = self.wiring.outcomes.register(epoch);
         self.wiring.to_calls(CallsInput::Run { epoch, operation, variables, reply: waiter.id().raw() });
         waiter
@@ -504,7 +538,7 @@ impl Life {
     pub fn session_reset(&self) -> Waiter<LifeReply> {
         if self.shut.load(Ordering::SeqCst) { return self.settled(LifeReply::Closed); }
         let waiter = self.wiring.outcomes.register(Epoch::MAX);
-        self.wiring.to_lifecycle(LifecycleInput::SessionReset { reply: waiter.id().raw() });
+        self.wiring.to_lifecycle(LifecycleInput::SessionReset { reply: Some(waiter.id().raw()) });
         waiter
     }
 
@@ -524,20 +558,13 @@ impl Life {
         self.wiring.to_lifecycle(LifecycleInput::Close { reply: waiter.id().raw() });
         waiter
     }
-
-    /// Returns when the Store closed its connections, which follows the answer of `close`.
-    pub fn wait_store_closed(&self, wait: Duration) -> bool {
-        let guard = self.wiring.store_closed.0.lock().unwrap_or_else(PoisonError::into_inner);
-        crate::blocking::blocking_unit(|| *self.wiring.store_closed.1.wait_timeout_while(guard, wait, |closed| !*closed).unwrap_or_else(PoisonError::into_inner).0)
-    }
 }
 
 fn boot_found(db: &Db) -> Result<BootFound, LifeError> {
     let (saved_epoch, saved_generation, saved_identity) = db.shared.store.saved().map_err(|error| LifeError::Storage(error.to_string()))?;
-    let changed: BTreeSet<String> = db.open_report().changed_models.iter().cloned().collect();
-    Ok(if changed.is_empty() {
+    Ok(if db.open_report().changed_models.is_empty() {
         BootFound::Same { saved_epoch, saved_generation, saved_identity }
     } else {
-        BootFound::ChangedModels { saved_epoch, saved_generation, saved_identity, changed_models: changed }
+        BootFound::ChangedModels { saved_epoch, saved_generation, saved_identity }
     })
 }

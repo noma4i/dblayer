@@ -290,7 +290,7 @@ impl TransferState {
                 }
                 Self::shows(fx, &key, Shown::Failed { error });
             }
-            RejectReason::NoSession | RejectReason::Closed | RejectReason::StaleGeneration { .. } => self.interrupt(&key, fx),
+            RejectReason::NoSession | RejectReason::Closed | RejectReason::Invalid | RejectReason::StaleGeneration { .. } => self.interrupt(&key, fx),
         }
     }
 

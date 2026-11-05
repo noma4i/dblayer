@@ -29,7 +29,7 @@ impl Db {
             self.shared.store.erase_account(generation, false)?;
         }
         let epoch = self.shared.store.lifecycle.snapshot().session_epoch + 1;
-        self.shared.store.lifecycle.published(&crate::owners::contract::Published { epoch, identity: None, generation: generation.value(), closed: false });
+        self.shared.store.lifecycle.published(&crate::owners::contract::Published { epoch, identity: None, generation: generation.value(), state: crate::owners::contract::PublishedState::NoSession, closed: false });
         Ok(())
     }
 }

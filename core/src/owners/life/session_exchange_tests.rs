@@ -235,6 +235,7 @@ fn open_with(world: &World, slot: Arc<ProbeSlot>, db: &Db) -> (Arc<EncryptedClie
     *slot.db.lock().unwrap() = Some(db.clone());
     let client = Arc::new(EncryptedClient::new(&config(), world.server.clone(), slot, db.clone(), world.clock.clone()).unwrap());
     let life = client.start_owners_in_tests(db);
+    drop(life.set_online(true));
     (client, life)
 }
 

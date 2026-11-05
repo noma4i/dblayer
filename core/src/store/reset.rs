@@ -312,7 +312,7 @@ impl Store {
         self.lifecycle.epoch_ended(crate::runtime::Cause::IdentityChanged);
         self.erase_account(generation, false)?;
         let epoch = self.lifecycle.snapshot().session_epoch + 1;
-        self.lifecycle.published(&crate::owners::contract::Published { epoch, identity: None, generation: generation.value(), closed: false });
+        self.lifecycle.published(&crate::owners::contract::Published { epoch, identity: None, generation: generation.value(), state: crate::owners::contract::PublishedState::NoSession, closed: false });
         Ok(())
     }
 }

@@ -615,6 +615,7 @@ impl Facts {
                     Transition(WinState::ended())
                 }
                 RejectReason::Storage(message) => self.fail(message, None),
+                RejectReason::Invalid => self.fail("the batch has no basis for a model of its rows", None),
             },
             Ev::InterestPlus { id } => {
                 self.interest.insert(*id);

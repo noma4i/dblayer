@@ -87,6 +87,7 @@ fn error_of(error: &CallError) -> Fail {
         CallError::Graphql(messages) => Fail::Graphql(messages.clone()),
         CallError::Http => Fail::Http,
         CallError::Interrupted => Fail::Interrupted,
+        CallError::Storage => panic!("the Calls table does not read Published"),
     }
 }
 
