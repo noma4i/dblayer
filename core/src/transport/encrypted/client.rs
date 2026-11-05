@@ -212,6 +212,8 @@ impl EncryptedClient {
         declared.chain(std::iter::once(crate::owners::session::SessionOperation { name: "logout".into(), path: self.config.endpoints.logout.clone(), class: OperationClass::Logout })).collect()
     }
 
+    pub(crate) fn stored_answers(&self) -> Result<std::collections::BTreeMap<u64, state::StoredAnswer>, TransportError> { self.read_connection(state::answers) }
+
     pub(crate) fn stored_session(&self) -> Result<Option<state::Session>, TransportError> { self.read_connection(state::session) }
 
     pub(crate) fn stored_pending(&self) -> Result<Option<Pending>, TransportError> { self.read_connection(state::pending) }

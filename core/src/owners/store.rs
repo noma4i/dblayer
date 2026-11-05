@@ -92,6 +92,9 @@ pub enum StoreOp {
     Pending { pending: PendingCall, credential_digest: String, wire_id: String, response_key: String },
     /// Remove the row `encrypted_pending`.
     RemovePending,
+    /// `encrypted_answer`: the terminal outcome of the `Mutate` of `request_id`, written with `RemovePending` and kept until `RemoveAnswer`.
+    Answer { request_id: u64, result: crate::transport::encrypted::state::StoredAnswer },
+    RemoveAnswer { request_id: u64 },
     /// `encrypted_session`: `digest = None` keeps the stored digest, `sequence = None` keeps the stored sequence.
     Session { digest: Option<String>, sequence: Option<u64> },
     /// The intent of an operation with its optimistic `effects`.

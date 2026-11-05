@@ -264,7 +264,7 @@ impl Twin {
             Input::InterestPlus(stream_id) => SessionInput::InterestPlus { stream_id },
             Input::InterestMinus(stream_id) => SessionInput::InterestMinus { stream_id },
             Input::RestoreReady { epoch } => SessionInput::RestoreReady { epoch },
-            Input::Restored { epoch, pending } => SessionInput::Restored { epoch, pending: pending.map(owner_pending) },
+            Input::Restored { epoch, pending } => SessionInput::Restored { epoch, pending: pending.map(owner_pending), answers: Default::default(), pending_lost: false },
             Input::Response { request_id, attempt_id, body, sequence, refusal } => SessionInput::Response { request_id, attempt_id, body, sequence, refusal },
             Input::Revoked { request_id, attempt_id, body } => SessionInput::Revoked { request_id, attempt_id, body },
             Input::HttpError { request_id, attempt_id, temporary, auth, persisted_missing } => SessionInput::HttpError { request_id, attempt_id, temporary, auth, persisted_missing },

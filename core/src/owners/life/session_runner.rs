@@ -10,7 +10,7 @@ use tokio::task::AbortHandle;
 use super::{LifeReply, Wiring};
 use crate::owners::contract::{BatchAuthor, RejectReason, Rejected, ReplyId, RequestId};
 use crate::owners::lifecycle::{LifecycleInput, Peer};
-use crate::owners::session::{AttemptId, Credential, OperationClass, PendingCall, SecretState, SessionCalls, SessionEffect, SessionInput};
+use crate::owners::session::{stored_answer, AttemptId, Credential, OperationClass, PendingCall, SecretState, SessionCalls, SessionEffect, SessionInput};
 use crate::owners::store::{StoreBatch, StoreInput, StoreOp};
 use crate::runtime::{Back, EffectRunner, EpochStamp, OutcomeId};
 use crate::transport::encrypted::client::{digest_of, permanently_refused, temporary_error};
@@ -50,6 +50,7 @@ pub(crate) struct Restored {
     pub credential: Option<Credential>,
     pub pending: Option<PendingCall>,
     pub dropped_pending: bool,
+    pub answers: std::collections::BTreeMap<RequestId, crate::owners::session::StoredAnswer>,
     pub secret: SecretState,
     wire: Option<(RequestId, Wire)>,
     digest: Option<(u64, String)>,
@@ -71,8 +72,9 @@ impl SessionRunner {
             Ok(None) => SecretState::Missing,
             Err(error) => SecretState::Error(error.to_string()),
         };
+        let answers = client.stored_answers()?;
         let Some(row) = client.stored_pending()? else {
-            return Ok(Restored { credential, pending: None, dropped_pending: false, secret, wire: None, digest: None });
+            return Ok(Restored { credential, pending: None, dropped_pending: false, answers, secret, wire: None, digest: None });
         };
         let sequence = u64::try_from(row.sequence).map_err(|_| TransportError::Decode(format!("the stored pending has the sequence {}", row.sequence)))?;
         let sessionless = row.credential_digest.is_empty();
@@ -100,7 +102,7 @@ impl SessionRunner {
             reply: None,
         };
         let digest = identity.map(|identity| (identity, row.credential_digest));
-        Ok(Restored { credential, pending: Some(pending), dropped_pending: false, secret, wire: Some((request_id, Wire { id: row.request_id, key: row.response_key })), digest })
+        Ok(Restored { credential, pending: Some(pending), dropped_pending: false, answers, secret, wire: Some((request_id, Wire { id: row.request_id, key: row.response_key })), digest })
     }
 
     fn commit(&self, batch: u64, epoch: u64, ops: Vec<StoreOp>) {
@@ -219,12 +221,13 @@ impl EffectRunner<SessionCalls> for SessionRunner {
                 self.wires.insert(pending.request_id, wire);
                 self.commit(batch, epoch, ops);
             }
-            SessionEffect::CommitLanding { batch, epoch, digest, sequence, .. } => {
+            SessionEffect::CommitLanding { batch, epoch, digest, sequence, answer } => {
                 let digest = match digest.map(|identity| self.digests.get(&identity).cloned().ok_or(identity)).transpose() {
                     Ok(digest) => digest,
                     Err(identity) => return back.reply(control, SessionInput::Rejected(Rejected { batch, reason: RejectReason::Storage(format!("no digest for the identity {identity}")) })),
                 };
-                let ops = if digest.is_none() && sequence.is_none() { vec![StoreOp::RemovePending] } else { vec![StoreOp::Session { digest, sequence }, StoreOp::RemovePending] };
+                let mut ops = if digest.is_none() && sequence.is_none() { vec![StoreOp::RemovePending] } else { vec![StoreOp::Session { digest, sequence }, StoreOp::RemovePending] };
+                ops.extend(answer.and_then(|(request_id, answer)| Some(StoreOp::Answer { request_id, result: stored_answer(&answer)? })));
                 self.commit(batch, epoch, ops);
             }
             SessionEffect::HttpRequest { pending, attempt_id, full_document } => {

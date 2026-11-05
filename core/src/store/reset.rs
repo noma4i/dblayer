@@ -360,7 +360,7 @@ impl Store {
         wipe_all_cache(&transaction, false)?;
         retire_operations(&transaction, None, None)?;
         if erase_encrypted {
-            transaction.execute_batch("DELETE FROM encrypted_pending; DELETE FROM encrypted_session;")?;
+            transaction.execute_batch("DELETE FROM encrypted_pending; DELETE FROM encrypted_answer; DELETE FROM encrypted_session;")?;
         }
         manifest_stamp(&transaction, inner.data_version.as_deref(), &current_fingerprints(&inner))?;
         let revision = bump_revision(&transaction)?;
@@ -409,6 +409,8 @@ impl Store {
 pub(crate) enum RowOp {
     PutPending(Pending),
     RemovePending,
+    PutAnswer { request_id: u64, answer: state::StoredAnswer },
+    RemoveAnswer { request_id: u64 },
     /// `digest = None` keeps the stored digest, `sequence = None` keeps the stored sequence.
     PutSession { digest: Option<String>, sequence: Option<i64> },
     DiscardRestoreFailed { table: String, key: String },
@@ -428,6 +430,8 @@ impl Store {
                 RowOp::RemovePending => {
                     transaction.execute("DELETE FROM encrypted_pending", [])?;
                 }
+                RowOp::PutAnswer { request_id, answer } => state::store_answer(&transaction, request_id, &answer)?,
+                RowOp::RemoveAnswer { request_id } => state::remove_answer(&transaction, request_id)?,
                 RowOp::DiscardRestoreFailed { table, key } => {
                     transaction.execute("DELETE FROM restore_failed WHERE source_table = ?1 AND key = ?2", params![table, key])?;
                 }

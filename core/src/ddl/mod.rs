@@ -17,7 +17,7 @@ pub const DATA_VERSION_KEY: &str = "data_version";
 pub const REVISION_SEQ_KEY: &str = "revision_seq";
 pub(crate) const CARRIED_MANIFEST_KEYS: [&str; 3] = ["saved_epoch", "saved_generation", REVISION_SEQ_KEY];
 /// The tables a format change moves into the new layout (`store_boot_format_change`).
-pub(crate) const CARRIED_TABLES: [&str; 18] = ["op", "op_item", "op_item_retry", "op_item_header", "op_row", "op_part", "op_value", "op_error", "transfer_abort", "blob_upload", "blob_use", "encrypted_session", "encrypted_pending", "sync_upload", "sync_upload_error", "local_pending", "file", "restore_failed"];
+pub(crate) const CARRIED_TABLES: [&str; 19] = ["op", "op_item", "op_item_retry", "op_item_header", "op_row", "op_part", "op_value", "op_error", "transfer_abort", "blob_upload", "blob_use", "encrypted_session", "encrypted_pending", "encrypted_answer", "sync_upload", "sync_upload_error", "local_pending", "file", "restore_failed"];
 
 pub const SERVICE_COLUMNS: [&str; 3] = ["id", "revision", "born_rev"];
 
@@ -416,6 +416,11 @@ const CORE_STATEMENTS: [&str; 43] = [
   owner_item_id TEXT,
   owner_step TEXT,
   purpose INTEGER NOT NULL CHECK (purpose IN (0, 1))
+) STRICT",
+    "CREATE TABLE IF NOT EXISTS encrypted_answer (
+  request_id INTEGER PRIMARY KEY,
+  outcome TEXT NOT NULL CHECK (outcome IN ('ok', 'http', 'unauthorized', 'revoked', 'session')),
+  detail TEXT
 ) STRICT",
     "CREATE TABLE IF NOT EXISTS restore_failed (
   source_table TEXT NOT NULL,

@@ -18,6 +18,16 @@ pub struct Pending {
     pub purpose: crate::transport::NetworkPurpose,
 }
 
+/// The terminal outcome of a `Mutate` that the server answered: it stays until its author took it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum StoredAnswer {
+    Ok(String),
+    Http,
+    Unauthorized,
+    Revoked,
+    Session(crate::transport::SessionCode),
+}
+
 pub fn session(connection: &Connection) -> rusqlite::Result<Option<Session>> {
     connection
         .query_row("SELECT credential_digest, sequence FROM encrypted_session WHERE id = 1", [], |row| {
@@ -31,7 +41,7 @@ pub fn start(connection: &Connection, credential_digest: &str) -> rusqlite::Resu
     if session(&transaction)?.is_some_and(|session| session.credential_digest == credential_digest) {
         return transaction.commit();
     }
-    transaction.execute("DELETE FROM encrypted_pending", [])?;
+    transaction.execute_batch("DELETE FROM encrypted_pending; DELETE FROM encrypted_answer;")?;
     transaction.execute(
         "INSERT INTO encrypted_session (id, credential_digest, sequence) VALUES (1, ?1, 0)
          ON CONFLICT(id) DO UPDATE SET credential_digest = excluded.credential_digest, sequence = 0",
@@ -99,8 +109,47 @@ pub fn commit(connection: &Connection, sequence: i64) -> rusqlite::Result<()> {
 
 pub fn clear(connection: &Connection) -> rusqlite::Result<()> {
     let transaction = connection.unchecked_transaction()?;
-    transaction.execute("DELETE FROM encrypted_pending", [])?;
+    transaction.execute_batch("DELETE FROM encrypted_pending; DELETE FROM encrypted_answer;")?;
     transaction.execute("DELETE FROM encrypted_session", [])?;
     transaction.commit()
 }
 
+
+pub fn store_answer(connection: &Connection, request_id: u64, answer: &StoredAnswer) -> rusqlite::Result<()> {
+    let (outcome, detail) = match answer {
+        StoredAnswer::Ok(body) => ("ok", Some(body.as_str())),
+        StoredAnswer::Http => ("http", None),
+        StoredAnswer::Unauthorized => ("unauthorized", None),
+        StoredAnswer::Revoked => ("revoked", None),
+        StoredAnswer::Session(code) => ("session", Some(code.name())),
+    };
+    let request_id = i64::try_from(request_id).map_err(|_| rusqlite::Error::IntegralValueOutOfRange(0, i64::MAX))?;
+    connection.execute("INSERT OR REPLACE INTO encrypted_answer (request_id, outcome, detail) VALUES (?1, ?2, ?3)", params![request_id, outcome, detail])?;
+    Ok(())
+}
+
+pub fn remove_answer(connection: &Connection, request_id: u64) -> rusqlite::Result<()> {
+    let request_id = i64::try_from(request_id).map_err(|_| rusqlite::Error::IntegralValueOutOfRange(0, i64::MAX))?;
+    connection.execute("DELETE FROM encrypted_answer WHERE request_id = ?1", [request_id])?;
+    Ok(())
+}
+
+pub fn answers(connection: &Connection) -> rusqlite::Result<std::collections::BTreeMap<u64, StoredAnswer>> {
+    let mut statement = connection.prepare("SELECT request_id, outcome, detail FROM encrypted_answer")?;
+    let rows = statement.query_map([], |row| Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?, row.get::<_, Option<String>>(2)?)))?;
+    let mut found = std::collections::BTreeMap::new();
+    for row in rows {
+        let (request_id, outcome, detail) = row?;
+        let invalid = |what: &str| rusqlite::Error::FromSqlConversionFailure(2, rusqlite::types::Type::Text, Box::new(std::io::Error::new(std::io::ErrorKind::InvalidData, format!("the stored answer {request_id} has {what}"))));
+        let answer = match (outcome.as_str(), detail) {
+            ("ok", Some(body)) => StoredAnswer::Ok(body),
+            ("http", None) => StoredAnswer::Http,
+            ("unauthorized", None) => StoredAnswer::Unauthorized,
+            ("revoked", None) => StoredAnswer::Revoked,
+            ("session", Some(name)) => StoredAnswer::Session(crate::transport::SessionCode::from_wire(&name).ok_or_else(|| invalid("an unknown session code"))?),
+            _ => return Err(invalid("an outcome that does not match its detail")),
+        };
+        found.insert(u64::try_from(request_id).map_err(|_| invalid("a negative request id"))?, answer);
+    }
+    Ok(found)
+}

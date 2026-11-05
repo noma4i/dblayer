@@ -72,7 +72,7 @@ impl Db {
                     let key = crate::owners::read::windows::WindowKey { model: model.clone(), name: key.clone() };
                     return self.land_window_page(&super::land_window::WindowPage { key: &key, page: *page, replace_all: *replace_all, cursor: cursor.as_deref(), roots, related, total: *total, base_revision: *base_revision });
                 }
-                StoreOp::Pending { .. } | StoreOp::RemovePending | StoreOp::Session { .. } => {}
+                StoreOp::Pending { .. } | StoreOp::RemovePending | StoreOp::Answer { .. } | StoreOp::RemoveAnswer { .. } | StoreOp::Session { .. } => {}
             }
         }
         for seq in rolled_back {

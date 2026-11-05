@@ -106,6 +106,23 @@ async fn a_mutate_goes_out_once_with_the_next_sequence_and_its_answer_reaches_th
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn the_answer_of_a_mutate_is_stored_with_the_removal_of_its_pending() {
+    let world = World::new();
+    let db = Db::open_in_memory(Vec::new(), None).unwrap();
+    let (client, life) = world.open(&db).await;
+    sign_in(&client).await;
+    let reply = mutate_retrying(&life, json!({}).to_string()).await;
+    let crate::owners::life::LifeReply::Mutated(crate::owners::session::AuthorOutcome::Response(body)) = reply else { panic!("{reply:?}") };
+    let (_, pending) = rows(&db);
+    let answers = {
+        let inner = db.shared.store.lock();
+        state::answers(&inner.connection).unwrap()
+    };
+    assert!(pending.is_none());
+    assert_eq!(answers.values().collect::<Vec<_>>(), [&state::StoredAnswer::Ok(body)], "the sign-in is a call without an author and leaves no answer");
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn a_lost_answer_is_repeated_with_the_same_request_id_and_executes_once() {
     let world = World::new();
     let db = Db::open_in_memory(Vec::new(), None).unwrap();

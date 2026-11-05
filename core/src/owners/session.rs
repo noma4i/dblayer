@@ -4,6 +4,7 @@ use std::collections::{BTreeSet, VecDeque};
 use std::time::Duration;
 
 use super::contract::{BatchId, Committed, CredentialCommitted, Drained, EpochEnded, ErrorClass, Online, Published, PublishedState, RejectReason, Rejected, ReplyId, RequestId, ServerEnded};
+pub use crate::transport::encrypted::state::StoredAnswer;
 use crate::runtime::{Cause, Effect, Effects, Epoch, ScheduleId, StateOwner, Time};
 
 pub type Digest = u64;
@@ -45,6 +46,18 @@ pub enum SessionError {
 }
 
 pub type SessionAnswer = Result<String, SessionError>;
+
+/// The row of `encrypted_answer` for a terminal outcome of a `Mutate`; the other errors of a call never land.
+pub fn stored_answer(answer: &SessionAnswer) -> Option<StoredAnswer> {
+    match answer {
+        Ok(body) => Some(StoredAnswer::Ok(body.clone())),
+        Err(SessionError::Http) => Some(StoredAnswer::Http),
+        Err(SessionError::Unauthorized) => Some(StoredAnswer::Unauthorized),
+        Err(SessionError::Revoked) => Some(StoredAnswer::Revoked),
+        Err(SessionError::Session(code)) => Some(StoredAnswer::Session(*code)),
+        Err(_) => None,
+    }
+}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Credential {
@@ -202,7 +215,8 @@ pub enum SessionInput {
     InterestPlus { stream_id: StreamId },
     InterestMinus { stream_id: StreamId },
     RestoreReady { epoch: Epoch },
-    Restored { epoch: Epoch, pending: Option<PendingCall> },
+    /// The snapshot of `ReadIntents`: Session classifies `pending`; `answers` go to the authors, `pending_lost` is the dropped `encrypted_pending` (also `Open.dropped_pending`).
+    Restored { epoch: Epoch, pending: Option<PendingCall>, answers: std::collections::BTreeMap<RequestId, StoredAnswer>, pending_lost: bool },
     Response { request_id: RequestId, attempt_id: AttemptId, body: String, sequence: Option<u64>, refusal: Option<crate::transport::SessionCode> },
     Revoked { request_id: RequestId, attempt_id: AttemptId, body: String },
     HttpError { request_id: RequestId, attempt_id: AttemptId, temporary: bool, auth: bool, persisted_missing: bool },
@@ -554,7 +568,7 @@ impl SessionState {
                 self.answer_publication(fx, state, identity);
                 if matches!(self.phase, SessionPhase::Idle) { self.drain(fx); }
             }
-            SessionInput::Restored { epoch, pending } => {
+            SessionInput::Restored { epoch, pending, .. } => {
                 self.phase = phase;
                 fx.push(SessionEffect::RestoreClassified { epoch });
                 if let (SessionPhase::Idle, Some(pending)) = (&self.phase, pending) {
