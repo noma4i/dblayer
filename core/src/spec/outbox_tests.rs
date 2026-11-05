@@ -253,8 +253,9 @@ fn out_failed_retry() { bounded("out_failed_retry", out_failed_retry_run) }
 
 async fn out_failed_retry_run() {
     let ctx = Ctx { policy: Policy::Keep, ..Ctx::ready() };
-    let failed = want(St::Sending, &ctx, In::TransportError { temporary: false });
-    let cell = want(St::Failed, &ctx, In::Retry);
+    let failed = want(St::MarkingFailed, &ctx, In::Committed);
+    let marking = want(St::Failed, &ctx, In::Retry);
+    let cell = want(St::MarkingRetry, &ctx, In::Committed);
     let rig = Rig::open(OnFailure::Keep).await;
     rig.server.script("MakeMoment", Reply::Refuse);
     let receipt = rig.create("hello").await;
@@ -268,7 +269,7 @@ async fn out_failed_retry_run() {
     let retried = within(rig.db.retry(rig.epoch(), "Moment".into(), id.clone(), None, None)).await.unwrap();
     rig.server.wait_held(Kind::Mutate, 1).await;
 
-    assert_eq!(cell.next, St::Sending);
+    assert_eq!((marking.next, cell.next), (St::MarkingRetry, St::Sending));
     assert!(cell.obs.contains(&Obs::RowErrorCleared) && rig.row(&id).await.unwrap().sync.error.is_none());
     assert!(sends(&cell));
     rig.server.hold(Kind::Mutate, false);

@@ -49,7 +49,10 @@ impl EffectRunner<Lifecycle> for LifecycleRunner {
             LifecycleEffect::PublishCell(published) => {
                 self.held_published = Some(published);
             }
-            LifecycleEffect::RestoreReady { epoch } => wiring.to_session(SessionInput::RestoreReady { epoch }),
+            LifecycleEffect::RestoreReady { epoch } => {
+                wiring.to_outbox(OutboxInput::RestoreReady { epoch });
+                wiring.to_session(SessionInput::RestoreReady { epoch });
+            }
             LifecycleEffect::EpochStarted { epoch, identity, generation } => {
                 wiring.handle.start_epoch(epoch);
                 let started = crate::owners::contract::EpochStarted { epoch, identity: identity.map(|identity| identity.into()), generation };
@@ -202,7 +205,10 @@ impl EffectRunner<StoreWriter> for StoreRunner {
                     Err(error) => fail(wiring, error.to_string()),
                     Ok(restore) => {
                         match restore.ops {
-                            Ok(stored) => wiring.to_outbox(OutboxInput::Restored { ops: stored, pending_lost: false }),
+                            Ok(stored) => {
+                                wiring.to_outbox(OutboxInput::RegisterOperations { declarations: stored.iter().map(|item| (item.op.model.clone(), item.op.action.clone())).collect() });
+                                wiring.to_outbox(OutboxInput::Restored { ops: stored, pending_lost: false });
+                            }
                             Err(error) => {
                                 wiring.restore_failed_for(Peer::Outbox, error.to_string());
                                 wiring.to_outbox(OutboxInput::RestoreFailed { error: error.to_string() });

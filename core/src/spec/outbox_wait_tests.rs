@@ -56,8 +56,10 @@ fn out_wait_outcome() {
 
 #[test]
 fn out_wait_retry() {
-    let (mut twin, _) = reach(St::Failed, &keep());
-    let ok = twin.post(OutboxInput::Retry { model: "Moment".into(), row_id: "r".into(), reply: 61 });
+    let (mut twin, id) = reach(St::Failed, &keep());
+    let before = twin.post(OutboxInput::Retry { model: "Moment".into(), row_id: "r".into(), reply: 61 });
+    assert!(replies_of(&before, 61).is_empty(), "the receipt waits for the batch of the new cycle");
+    let ok = twin.committed(id);
     assert!(matches!(replies_of(&ok, 61).as_slice(), [OutboxAnswer::Receipt(_)]));
     let (mut twin, _) = reach(St::Done, &ready());
     let none = twin.post(OutboxInput::Retry { model: "Moment".into(), row_id: "r".into(), reply: 62 });
@@ -107,7 +109,11 @@ fn out_wait_local_write() {
     take_fx(&twin.log, state_of(&twin.det));
     twin.det.close();
     twin.run();
-    assert_eq!(replies_of(&take_fx(&twin.log, state_of(&twin.det)), 82), [OutboxAnswer::Err(Fault::Interrupted)]);
+    let closing = take_fx(&twin.log, state_of(&twin.det));
+    assert!(replies_of(&closing, 82).is_empty() && !closing.iter().any(|effect| matches!(effect, OutboxEffect::Drained)), "the write waits for the Store: {closing:?}");
+    let committed = twin.post(OutboxInput::Committed(Committed { batch: 1, revision: 11, tables: vec!["moments".into()], models: Default::default() }));
+    assert_eq!(replies_of(&committed, 82), [OutboxAnswer::Ok]);
+    assert_eq!(committed.iter().filter(|effect| matches!(effect, OutboxEffect::Drained)).count(), 1, "Drained after the last answer");
 }
 
 #[test]

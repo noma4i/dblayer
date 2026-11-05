@@ -35,7 +35,8 @@ pub(super) fn kind_in(input: &str) -> CommitKind {
     else if input.contains("ops: [RollBack {") { CommitKind::Rollback }
     else if input.contains("MarkError { op_id") && input.contains("error: Some(") { CommitKind::ErrorMark }
     else if input.contains("MarkError { op_id") { CommitKind::ClearMark }
-    else if input.contains("ops: [LocalRows {") { CommitKind::LocalWrite }
+    else if input.contains("Attempt {") { CommitKind::Attempt }
+    else if input.contains("ops: [LocalRows {") || input.contains("ops: [EphemeralRows {") || input.contains("ops: [LocalPending {") { CommitKind::LocalWrite }
     else if input.contains("ops: [RemoveRows {") { CommitKind::RemoveRow }
     else { CommitKind::Land }
 }
@@ -55,7 +56,7 @@ pub(super) fn lower(emitted: Emitted<Run>, state: Option<&OutboxState>) -> Optio
         Emitted::Run(Run::Copy { .. }) => return None,
         Emitted::Send { to: STORE_AT, input } => {
             let kind = kind_in(&input);
-            let op_id = matches!(kind, CommitKind::Intent | CommitKind::Land | CommitKind::Rollback | CommitKind::ErrorMark | CommitKind::ClearMark).then(|| number_after(&input, "op_id: ")).flatten();
+            let op_id = matches!(kind, CommitKind::Intent | CommitKind::Attempt | CommitKind::Land | CommitKind::Rollback | CommitKind::ErrorMark | CommitKind::ClearMark).then(|| number_after(&input, "op_id: ")).flatten();
             let generation = number_after(&input, "\"Moment\": ").unwrap_or(0);
             OutboxEffect::Store { op_id, batch: number_after(&input, "id: ")?, kind, generation }
         }

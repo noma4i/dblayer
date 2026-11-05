@@ -175,7 +175,7 @@ pub fn step_of(state: St, ctx: &Ctx, input: In) -> Option<Step> {
         (RollingBack(_), In::Rejected(Reason::NoSession | Reason::Closed)) => done_with(ctx, Out::Interrupted, &[Outcome(Out::Interrupted)], &[], &[]),
         (RollingBack(_), In::Rejected(Reason::Storage)) => step(state, &[], &[ScheduleTick]),
         (RollingBack(_), In::Tick) => step(state, &[], &[Store(Rollback)]),
-        (RollingBack(_), In::Discard) => step(state, &[DiscardOk], &[]),
+        (RollingBack(_), In::Discard) => step(state, &[], &[]),
         (RollingBack(_), In::Retry) => step(state, &[Fails(Fault::InFlight)], &[]),
         (RollingBack(_), In::Online(_) | In::ModelsReset | In::Response | In::TransportError { .. } | In::Dropped) => step(state, &[], &[]),
 
@@ -240,7 +240,7 @@ pub fn write_step_of(state: WSt, ctx: &WCtx, input: WIn) -> Option<WStep> {
         (WSt::Writing, WIn::Committed) => wstep(WSt::Done, &[Ok, ValueVisibleAtRevision], &[]),
         (WSt::Writing, WIn::Rejected(Reason::StaleGeneration)) => wstep(WSt::Writing, &[], &[StoreWriteNewBasis]),
         (WSt::Writing, WIn::Rejected(reason)) => wstep(WSt::Done, &[Fails(Fault::Reason(reason))], &[]),
-        (WSt::Writing, WIn::EpochEnded | WIn::Closing) => wstep(WSt::Done, &[Fails(Fault::Interrupted)], &[]),
+        (WSt::Writing, WIn::EpochEnded | WIn::Closing) => wstep(WSt::Writing, &[], &[]),
         (WSt::None, WIn::Expire) if !ctx.renewed => wstep(WSt::None, &[RowGone], &[StoreRemoveRow]),
         (WSt::None, WIn::Expire) => wstep(WSt::None, &[], &[]),
         _ => Option::None,
