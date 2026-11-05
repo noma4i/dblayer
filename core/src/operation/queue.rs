@@ -54,27 +54,6 @@ impl OperationQueue {
         for entry in entries { self.apply(entry.operation.id.0, Some(entry.clone())); }
     }
 
-    pub(crate) fn begin_pass(&mut self) {
-        self.held.clear();
-        self.attempted.clear();
-    }
-
-    pub(crate) fn attempted(&mut self, seq: i64) {
-        self.attempted.insert(seq);
-        if let Some(entry) = self.entries.get(&seq) {
-            for row in row_keys(&entry.operation) { self.held.entry(row).or_default().insert(seq); }
-        }
-    }
-
-    pub(crate) fn blocked_before(&self, operation: &Operation) -> (bool, bool) {
-        let mut held = false;
-        let mut blocked = false;
-        for row in row_keys(operation) {
-            held |= self.held.get(&row).and_then(BTreeSet::first).is_some_and(|seq| *seq < operation.id.0);
-            blocked |= self.blocked.get(&row).and_then(BTreeSet::first).is_some_and(|seq| *seq < operation.id.0);
-        }
-        (held, blocked)
-    }
 }
 
 fn remove_sequence(rows: &mut BTreeMap<RowRef, BTreeSet<i64>>, row: &RowRef, seq: i64) {
@@ -95,13 +74,6 @@ pub(crate) struct OperationQueues {
 }
 
 impl OperationQueues {
-    pub(crate) fn subscribe(&self, entries: &[QueueOperation]) -> Arc<Mutex<OperationQueue>> {
-        let mut queue = OperationQueue::default();
-        queue.reset(entries);
-        let queue = Arc::new(Mutex::new(queue));
-        self.subscribers.lock().unwrap_or_else(|error| error.into_inner()).push(Arc::downgrade(&queue));
-        queue
-    }
 
     pub(crate) fn changed(&self, updates: &BTreeMap<i64, Option<QueueOperation>>) {
         self.tell(|queue| {

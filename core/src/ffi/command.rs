@@ -1,7 +1,6 @@
 use std::future::Future;
 
 use crate::ffi::legacy::Origin;
-use super::database::on_executor;
 use super::receipt::{WireOperationReceipt};
 use super::upload_wire::WireUploadRequest;
 use super::{Database, DbError};
@@ -68,13 +67,6 @@ impl Database {
         let value = self.in_epoch(epoch, target, work).await?;
         if !answer.admits(epoch) { return Err(ended()); }
         Ok(value)
-    }
-
-    /// Server work of the epoch of the caller: the task is aborted when the epoch ends.
-    pub(super) async fn serve_in_epoch<T: Send + 'static, E: Into<DbError> + Send + 'static, F: Future<Output = Result<T, E>> + Send + 'static>(&self, epoch: u64, target: &'static str, work: impl FnOnce(crate::ffi::legacy::Admitted) -> F + Send + 'static) -> Result<T, DbError> {
-        self.in_epoch_as(Origin::Explicit, epoch, target, true, |admitted| async move {
-            super::database::cancellable(async move { work(admitted).await.map_err(Into::into) }).await?
-        }).await
     }
 
     fn admit_command(&self, request: &CommandRequest) -> Result<(), DbError> {

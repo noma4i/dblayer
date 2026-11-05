@@ -201,15 +201,6 @@ impl SubscriptionReceiver {
         }
     }
 
-    fn hold_frames(&self, hold: FrameHold) {
-        let waiting = !crate::db::locked(&self.0.queue).is_empty();
-        let mut lease = if waiting { hold() } else { None };
-        let mut queue = crate::db::locked(&self.0.queue);
-        if !queue.is_empty() && queue.held.is_none() { queue.held = lease.take(); }
-        queue.hold = Some(hold);
-        drop(queue);
-        drop(lease);
-    }
 }
 
 impl Drop for SubscriptionReceiver {
@@ -277,10 +268,6 @@ impl ServerSubscription {
         self
     }
 
-    pub(crate) fn hold_frames(&self, hold: impl Fn() -> Option<FrameLease> + Send + Sync + 'static) {
-        self.events.hold_frames(Arc::new(hold));
-    }
-
     pub async fn next(&mut self) -> Option<SubscriptionEvent> {
         drop(self.frame.take());
         #[cfg(any(test, feature = "stress"))]
@@ -297,14 +284,6 @@ impl ServerSubscription {
             hook(ConsumerSignal::Received);
         }
         event
-    }
-
-    pub(crate) fn take_queued_responses(&mut self) -> bool {
-        let mut taken = false;
-        while let Ok((event, _)) = self.events.try_recv() {
-            taken |= matches!(event, SubscriptionEvent::Next(_) | SubscriptionEvent::Lost { .. });
-        }
-        taken
     }
 
     #[cfg(test)]

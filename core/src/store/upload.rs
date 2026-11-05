@@ -35,23 +35,3 @@ pub(super) fn confirm_item(connection: &Connection, seq: i64, position: i64, ite
     connection.execute("UPDATE op SET transport_started = 0, attempts = 0 WHERE seq = ?1", [seq])?;
     Ok(())
 }
-
-impl super::Store {
-    pub(crate) fn pending_transfer_aborts(&self) -> Result<Vec<crate::upload::Transfer>, StoreError> {
-        let inner = self.lock();
-        let mut statement = inner.connection.prepare("SELECT id, operation_id, item_id, storage_key, upload_id, abort_operation FROM transfer_abort ORDER BY id")?;
-        let rows = statement.query_map([], |row| Ok(crate::upload::Transfer::Abort {
-            id: row.get(0)?,
-            operation_id: row.get(1)?, item_id: row.get(2)?,
-            key: row.get(3)?, upload_id: row.get(4)?, operation: row.get(5)?,
-        }))?.collect::<rusqlite::Result<Vec<_>>>()?;
-        Ok(rows)
-    }
-
-    pub(crate) fn settle_transfer_abort(&self, authority: &crate::lifecycle::authority::Authority, id: i64) -> Result<(), StoreError> {
-        self.write_store(authority, |inner| {
-            inner.connection.execute("DELETE FROM transfer_abort WHERE id = ?1", [id])?;
-            Ok(())
-        })
-    }
-}

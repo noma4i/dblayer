@@ -45,7 +45,6 @@ pub(crate) struct Shared {
     pub cache: Arc<Mutex<RowCache>>,
     pub observers: Mutex<Observers>,
     pub observer_commands: Mutex<Vec<super::observe::ObserverCommand>>,
-    pub observed_reads: Mutex<super::observed_reads::ObservedReads>,
     pub warm: Mutex<Warm>,
     #[cfg(test)]
     pub row_build_hook: Mutex<Option<RowBuildHook>>,
@@ -268,7 +267,6 @@ impl Db {
             cache,
             observers: Mutex::new(Observers::default()),
             observer_commands: Mutex::new(Vec::new()),
-            observed_reads: Mutex::new(Default::default()),
             warm: Mutex::new(Warm::default()),
             #[cfg(test)]
             row_build_hook: Mutex::new(None),

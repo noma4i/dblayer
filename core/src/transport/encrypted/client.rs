@@ -11,7 +11,9 @@ use super::state::{self, Pending};
 use super::{CredentialSlot, HttpExchange};
 use crate::db::Db;
 use crate::ffi::legacy::{Admitted, Origin};
-use crate::lifecycle::authority::{Authority, Internal};
+use crate::lifecycle::authority::Authority;
+#[cfg(test)]
+use crate::lifecycle::authority::Internal;
 use crate::pacing::{Clock, RetryPolicy};
 use crate::transport::{SessionCode, TransportError};
 use crate::transport::retry::{RetryClass, RetryCalls, Retrying};
@@ -399,18 +401,6 @@ impl EncryptedClient {
             Some(session) if session.credential_digest == digest_of(&credential) => Ok(credential),
             _ => Err(TransportError::Session { code: SessionCode::StateLost, detail: "lost session sequence state for the stored credential".into() }),
         }
-    }
-
-    #[cfg(test)]
-    pub(crate) fn sequence_for_test(&self) -> i64 {
-        self.read_connection(state::session).ok().flatten().map_or(0, |session| session.sequence)
-    }
-
-    #[cfg(test)]
-    pub(crate) fn sign_in_for_test(&self) -> Result<(), TransportError> {
-        let admitted = self.admit("test sign in")?;
-        self.credential(&admitted)?;
-        self.write_as(&Authority::Internal(Internal::for_tests()), |connection| state::commit(connection, 1))
     }
 
     fn read_connection<T>(&self, run: impl FnOnce(&Connection) -> rusqlite::Result<T>) -> Result<T, TransportError> {

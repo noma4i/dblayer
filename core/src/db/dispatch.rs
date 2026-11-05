@@ -44,10 +44,6 @@ impl Effects {
         self.0.push(Box::new(effect));
     }
 
-    pub(crate) fn release(&mut self, value: impl Send + 'static) {
-        self.push(move || drop(value));
-    }
-
     pub(crate) fn is_empty(&self) -> bool {
         self.0.is_empty()
     }
@@ -94,6 +90,8 @@ impl Drop for Unwinding<'_> {
 }
 
 impl OrderedEffects {
+
+    #[cfg(test)]
     pub(crate) fn push(&self, batch: Effects) {
         self.push_ticket(batch);
     }
@@ -110,18 +108,6 @@ impl OrderedEffects {
     /// The place of the last queued batch: waiting for it waits for everything queued so far.
     pub(crate) fn last_ticket(&self) -> u64 {
         held(&self.ordered).pushed
-    }
-
-    pub(crate) fn under<S, R>(&self, state: &Mutex<S>, apply: impl FnOnce(&mut S, &mut Effects) -> R) -> R {
-        let mut effects = Effects::default();
-        let result = {
-            let mut guard = held(state);
-            let result = apply(&mut guard, &mut effects);
-            self.push(effects);
-            result
-        };
-        self.run();
-        result
     }
 
     pub(crate) fn run(&self) {
@@ -174,10 +160,6 @@ impl OrderedEffects {
         self.ordered.try_lock().is_ok_and(|ordered| !ordered.running && ordered.batches.is_empty())
     }
 
-    #[cfg(test)]
-    pub(crate) fn is_free(&self) -> bool {
-        crate::test_wait::mutex_free(&self.ordered)
-    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]

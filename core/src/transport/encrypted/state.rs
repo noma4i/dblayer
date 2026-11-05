@@ -52,14 +52,6 @@ pub fn start(connection: &Connection, credential_digest: &str) -> rusqlite::Resu
     transaction.commit()
 }
 
-pub(crate) fn restore_session(connection: &Connection, session: &Session) -> rusqlite::Result<()> {
-    connection.execute(
-        "INSERT INTO encrypted_session (id, credential_digest, sequence) VALUES (1, ?1, ?2)",
-        params![session.credential_digest, session.sequence],
-    )?;
-    Ok(())
-}
-
 pub fn pending(connection: &Connection) -> rusqlite::Result<Option<Pending>> {
     connection
         .query_row("SELECT credential_digest, request_id, response_key, sequence, path, body, owner_kind, owner_operation_id, owner_item_id, owner_step, purpose, req_id FROM encrypted_pending WHERE id = 1", [], |row| {
@@ -116,7 +108,6 @@ pub fn clear(connection: &Connection) -> rusqlite::Result<()> {
     transaction.execute("DELETE FROM encrypted_session", [])?;
     transaction.commit()
 }
-
 
 pub fn store_answer(connection: &Connection, request_id: u64, operation: Option<i64>, answer: &StoredAnswer) -> rusqlite::Result<()> {
     let (outcome, detail) = match answer {

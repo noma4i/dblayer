@@ -19,11 +19,6 @@ pub(crate) fn read_members(count: usize) {
 #[inline(always)]
 pub(crate) fn read_members(_count: usize) {}
 
-#[cfg(test)]
-pub(crate) fn member_reads() -> usize {
-    MEMBERS_READ.with(std::cell::Cell::get)
-}
-
 #[cfg(not(test))]
 #[inline(always)]
 pub(crate) fn touch(_count: usize) {}

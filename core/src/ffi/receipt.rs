@@ -1,7 +1,6 @@
 use std::sync::Arc;
 
 use super::wire::WireRow;
-use super::DbError;
 
 /// What a receipt waits on: the old stack, the owner Outbox or the owner Transfer.
 #[derive(Clone)]

@@ -6,8 +6,8 @@ mod normalize;
 mod variables;
 
 pub(crate) use extract::{extract, root_value};
-pub(crate) use normalize::{nested_input, normalize_nodes, Normalized};
-pub(crate) use variables::{declared_variables, load_variables, mapped_variables};
+pub(crate) use normalize::{normalize_nodes, Normalized};
+pub(crate) use variables::load_variables;
 
 use serde_json::{Map, Value};
 

@@ -64,7 +64,4 @@ impl UploadFile {
         self
     }
 
-    pub(crate) fn with_steps(self, steps: UploadSteps) -> UploadInput {
-        UploadInput { path: self.path, name: self.name, mime: self.mime, variables: self.variables, steps }
-    }
 }

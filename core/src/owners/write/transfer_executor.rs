@@ -35,11 +35,6 @@ impl Link {
         self.transport.mutate(&self.admitted, request).await
     }
 
-    pub async fn query(&self, mut request: GraphQLRequest) -> Result<Response, TransportError> {
-        request.purpose = NetworkPurpose::Transfer;
-        self.transport.query(&self.admitted, request).await
-    }
-
     pub async fn put(&self, mut request: PutRequest) -> Result<PutResponse, TransportError> {
         request.cancel = self.cancel.clone();
         self.transport.put(&self.admitted, request).await

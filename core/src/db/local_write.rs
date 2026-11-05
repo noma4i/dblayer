@@ -187,92 +187,6 @@ impl Db {
         Ok((row, operation, revision, claimed))
     }
 
-    pub(crate) fn create_held(&self, admitted: &crate::ffi::legacy::Admitted, generation: crate::identity::Generation, model: &str, action: &str, values: Map<String, Value>, input: crate::upload::UploadInput, state: UploadState) -> Result<RowId, DbError> {
-        self.create_held_claiming(admitted, generation, model, action, values, input, state, |_| ()).map(|(row, _, _, ())| row.id.clone())
-    }
-
-    pub(crate) fn create_held_claiming<T>(&self, admitted: &crate::ffi::legacy::Admitted, generation: crate::identity::Generation, model: &str, action: &str, mut values: Map<String, Value>, input: crate::upload::UploadInput, state: UploadState, claim: impl FnOnce(i64) -> T) -> Result<(Row, i64, i64, T), DbError> {
-        let id = values.get("id").and_then(read_id).unwrap_or_else(|| RowId::generate_temp(None));
-        values.insert("id".into(), Value::String(id.to_string()));
-        let (row, operation, revision, ticket) = self.preparing_uploads(admitted, model, generation, |files, generation, committed| {
-            let item = files.prepare(model, id, uuid::Uuid::new_v4().to_string(), input, state)?;
-            let (id, operation, revision) = self.insert_local(admitted, model, values, Map::new(), Action::Upload(action.to_string()), (Some(item), Some(generation)), Some(committed))?;
-            let operation = operation.ok_or_else(|| DbError::Internal("upload has no operation".into()))?;
-            let row = committed.as_ref().and_then(|commit| commit.result().snapshot.clone()).ok_or(DbError::NotFound { model: model.to_string(), id: id.to_string() })?;
-            Ok::<_, DbError>((row, operation, revision, claim(operation)))
-        })?;
-        Ok((self.shared.overlay_snapshot(model, row)?, operation, revision, ticket))
-    }
-
-    pub(crate) fn declared_upload(&self, model: &str, action: &str) -> Result<String, DbError> {
-        let spec = self.shared.spec(model)?;
-        let declared = spec.upload_action(action).filter(|declared| declared.batch.is_none()).ok_or_else(|| DbError::InvalidUpload(format!("{model} declares no single upload action {action}")))?;
-        declared.mutation.clone().ok_or_else(|| DbError::InvalidUpload(format!("{model} {action} declares no mutation")))
-    }
-
-    pub(crate) fn create_upload_batch<T>(&self, admitted: &crate::ffi::legacy::Admitted, generation: crate::identity::Generation, model: &str, items: Vec<crate::upload::UploadItem>, request: crate::upload::UploadBatchInput, uploads: &crate::upload::UploadOperations, claim: impl FnOnce(i64) -> T) -> Result<(Vec<(String, Row)>, i64, i64, T), DbError> {
-        let spec = self.shared.spec(model)?;
-        let action = spec.actions.iter().find(|action| action.name == request.operation).ok_or_else(|| DbError::InvalidUpload("unknown upload operation".into()))?;
-        let batch = action.batch.as_ref().ok_or_else(|| DbError::InvalidUpload("operation has no upload batch declaration".into()))?;
-        if items.len() < batch.min || items.len() > batch.max {
-            return Err(DbError::InvalidUpload(format!("upload batch requires {}..{} items", batch.min, batch.max)));
-        }
-        let steps = uploads.steps(action.mutation.as_deref().ok_or_else(|| DbError::InvalidUpload("upload mutation is missing".into()))?);
-        let field = &action.correlate[0];
-        let mut keys = HashSet::new();
-        let now = self.shared.store.lock().now_ms();
-        let mut rows = Vec::new();
-        let mut files = Vec::new();
-        for item in items {
-            let key = item.values.get(field).and_then(Value::as_str).filter(|key| !key.trim().is_empty()).ok_or_else(|| DbError::InvalidUpload("upload correlation key is empty".into()))?.to_owned();
-            if !keys.insert(key.clone()) { return Err(DbError::InvalidUpload("upload correlation keys must be unique".into())); }
-            let id = RowId::generate_temp(None);
-            let mut values = item.values;
-            values.insert("id".into(), Value::String(id.to_string()));
-            reject_unknown_fields(spec, model, &values)?;
-            reject_invalid_values(spec, model, &values)?;
-            self.shared.store.decode_values(model, &mut values, |source, key| source.get(key))?;
-            let data = spec.normalize_local(&values, now)?;
-            let mut variables = item.variables;
-            for (target, source) in &batch.input {
-                variables.insert(target.clone(), data.get(source).cloned().unwrap_or(Value::Null));
-            }
-            files.push((id.clone(), key, crate::upload::UploadInput { path: item.path, name: item.name, mime: item.mime, variables, steps: steps.clone() }));
-            rows.push((id, data));
-        }
-        let ids: Vec<_> = rows.iter().map(|(id, _)| id.clone()).collect();
-        let record = OperationRecord {
-            seq: None, action_key: Operation::upload_action_key(model, &action.name), status: OperationStatus::Pending,
-            row_ids: ids.clone(), temp_id: None, input: Value::Object(request.variables), transport_started: false,
-            base_revision: Some(self.revision_seq()?), created_at: now, dedupe_key: None, upload: None,
-            rollback: Some(Prior { rows: ids.iter().map(|id| PriorRow::Created { model: model.into(), id: id.to_string() }).collect() }.to_value()),
-        };
-        let (snapshots, operation, revision, ticket) = self.preparing_uploads(admitted, model, generation, |prepared, generation, pending| {
-            let files = files.into_iter().map(|(row, key, input)| prepared.prepare(model, row, key, input, UploadState::queued())).collect::<Result<Vec<_>, _>>()?;
-            let (committed, _) = self.commit_following_deferred(&admitted.authority(), generation, |reader| {
-                let mut envelope = CommitEnvelope::new(WriteOrigin::Optimistic, generation);
-                for (id, data) in &rows {
-                    envelope.scope_ops.extend(local_scope_ops(reader, spec, id, data)?);
-                    envelope.entity_ops.push(EntityOp::Upsert { model: spec.key.clone(), id: id.clone(), row: data.clone() });
-                }
-                envelope.item_snapshots = files.iter().map(|item| (item.client_key.clone(), RowRef::new(spec.key.clone(), item.row.clone()))).collect();
-                let mut record = record.clone();
-                let mut prior: Prior = serde_json::from_value(record.rollback.take().unwrap_or(Value::Null)).map_err(StoreError::from)?;
-                prior.rows.extend(created_members(&envelope.scope_ops, reader.revision_seq()? + 1));
-                record.rollback = Some(prior.to_value());
-                envelope.operation_transitions.push(OperationTransition::BeginUpload { record: Box::new(record), items: files.clone() });
-                Ok(Some(envelope))
-            }).map_err(plan_fault)?;
-            let result = pending.insert(committed).result();
-            let operation = result.operations.first().copied().ok_or_else(|| DbError::Internal("upload batch has no operation".into()))?;
-            let revision = result.revision.ok_or_else(|| DbError::Internal("upload batch has no revision".into()))?;
-            let snapshots = result.item_snapshots.iter().map(|(item, row)| row.clone().map(|row| (item.clone(), row)).ok_or_else(|| DbError::Internal("upload batch item is missing".into()))).collect::<Result<Vec<_>, _>>()?;
-            Ok::<_, DbError>((snapshots, operation, revision, claim(operation)))
-        })?;
-        let snapshots = snapshots.into_iter().map(|(item, row)| self.shared.overlay_snapshot(model, row).map(|row| (item, row))).collect::<Result<Vec<_>, _>>()?;
-        Ok((snapshots, operation, revision, ticket))
-    }
-
     fn insert_local<'a>(&'a self, admitted: &crate::ffi::legacy::Admitted, model: &str, values: Map<String, Value>, args: Map<String, Value>, action: Action, held: (Option<crate::commit::UploadAdmission>, Option<crate::identity::Generation>), pending: Option<&mut Option<crate::store::Committed<'a>>>) -> Result<(RowId, Option<i64>, i64), DbError> {
         let spec = self.shared.spec(model)?;
         reject_unknown_fields(spec, model, &values)?;
@@ -622,16 +536,6 @@ impl Db {
         counters.outbox_reads += 1;
         counters.outbox_rows_loaded += entries.len();
         Ok(entries)
-    }
-
-    pub(crate) fn operation_queue(&self) -> Result<std::sync::Arc<std::sync::Mutex<crate::operation::OperationQueue>>, DbError> {
-        let stored = self.shared.store.lock();
-        let entries = crate::operation::read_queue(&stored.connection).map_err(StoreError::from)?;
-        let queue = self.shared.operation_queues.subscribe(&entries);
-        let mut counters = super::open::locked(&self.shared.counters);
-        counters.outbox_reads += 1;
-        counters.outbox_rows_loaded += entries.len();
-        Ok(queue)
     }
 
     fn commit_local_optional<'a>(

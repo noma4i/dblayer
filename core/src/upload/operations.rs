@@ -56,20 +56,6 @@ impl UploadOperations {
         }
     }
 
-    pub(crate) fn steps(&self, mutation: &str) -> UploadSteps {
-        UploadSteps {
-            single: self.create_blob.as_ref().map(|operation| SingleSteps { create: operation.name.clone() }),
-            multipart: self.multipart.as_ref().map(|steps| MultipartSteps {
-                init: steps.initiate.name.clone(),
-                presign: steps.presign.name.clone(),
-                complete: steps.complete.name.clone(),
-                abort: steps.abort.name.clone(),
-            }),
-            mutation: mutation.to_string(),
-            signed_id_variable: "signedId".to_string(),
-        }
-    }
-
     #[cfg(test)]
     pub fn empty() -> Self {
         Self { create_blob: None, multipart: None }

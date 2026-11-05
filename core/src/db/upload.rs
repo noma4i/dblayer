@@ -14,26 +14,6 @@ pub(crate) struct UploadFiles<'a> {
 }
 
 impl UploadFiles<'_> {
-    pub(crate) fn prepare(&mut self, model: &str, row: RowId, client_key: String, mut input: UploadInput, mut state: UploadState) -> Result<UploadAdmission, DbError> {
-        let id = uuid::Uuid::new_v4().to_string();
-        let name = input.name.clone().unwrap_or_else(|| Path::new(&input.path).file_name().unwrap_or_default().to_string_lossy().into_owned());
-        let mime = input.mime.clone().unwrap_or_else(|| crate::upload::mime_of(&name).into());
-        let source = match self.files.copy_source(&id, Path::new(&input.path)).map_err(super::files::io_fault)? {
-            CopiedSource::Unreadable(error) => Err(error),
-            CopiedSource::Ready { size, sha256, data, location } => {
-                state.total_bytes = size;
-                if location == Location::Directory { self.owned.push(id.clone()); }
-                Ok(FileRecord {
-                    descriptor: FileDescriptor { id: id.clone(), size, name: Some(name.clone()), mime: Some(mime.clone()), sha256: Some(sha256) },
-                    id, model: model.to_string(), row_id: row.to_string(), field: String::new(), location, data, created_at: self.now,
-                })
-            }
-        };
-        input.path.clear();
-        input.name = Some(name);
-        input.mime = Some(mime);
-        Ok(UploadAdmission { row, client_key, input, state, source })
-    }
 }
 
 impl Drop for UploadFiles<'_> {
@@ -63,19 +43,6 @@ impl Db {
     }
 
     // Preparation closures only copy files and reserve deferred commits; they must not publish or call foreign code.
-    pub(crate) fn prepare_blob<'a, T, E: From<DbError> + std::fmt::Display>(&'a self, admitted: &crate::ffi::legacy::Admitted, generation: Generation, run: impl FnOnce(&mut UploadFiles<'_>, &mut Option<crate::store::Committed<'a>>) -> Result<T, E>) -> Result<T, E> {
-        if !std::sync::Arc::ptr_eq(&self.shared.store.lifecycle, admitted.life()) { return Err(DbError::NoSession { detail: "the admission belongs to another database".into() }.into()); }
-        let _gate = locked(&self.shared.files_gate);
-        self.shared.store.lock().ensure_generation(&admitted.authority(), generation).map_err(DbError::from)?;
-        let mut files = UploadFiles { files: &self.shared.files, owned: Vec::new(), now: self.shared.store.lock().now_ms() };
-        let mut committed = None;
-        let result = run(&mut files, &mut committed);
-        if result.is_ok() { files.owned.clear(); }
-        drop(files);
-        drop(_gate);
-        if let Some(committed) = committed { committed.publish(); }
-        result
-    }
 
     pub fn blob_snapshot(&self, id: &str) -> Result<crate::upload::BlobSnapshot, DbError> {
         let store = self.shared.store.lock();
@@ -83,28 +50,4 @@ impl Db {
         crate::store::blob::snapshot(&store.connection, id)?.ok_or_else(|| DbError::InvalidUpload("unknown Blob in this database".into()))
     }
 
-    pub(crate) fn preparing_uploads<'a, T, E: From<DbError> + std::fmt::Display>(&'a self, admitted: &crate::ffi::legacy::Admitted, model: &str, generation: Generation, run: impl FnOnce(&mut UploadFiles<'_>, Generation, &mut Option<crate::store::Committed<'a>>) -> Result<T, E>) -> Result<T, E> {
-        if !std::sync::Arc::ptr_eq(&self.shared.store.lifecycle, admitted.life()) { return Err(DbError::NoSession { detail: "the admission belongs to another database".into() }.into()); }
-        let spec = self.shared.spec(model)?;
-        if spec.is_local() || spec.is_memory() {
-            return Err(DbError::InvalidUpload("upload requires a server model".into()).into());
-        }
-        let _gate = locked(&self.shared.files_gate);
-        self.shared.store.lock().ensure_generation(&admitted.authority(), generation).map_err(DbError::from)?;
-        let mut files = UploadFiles { files: &self.shared.files, owned: Vec::new(), now: self.shared.store.lock().now_ms() };
-        let mut committed = None;
-        let result = run(&mut files, generation, &mut committed);
-        let owned = std::mem::take(&mut files.owned);
-        let result = if let Err(error) = &result {
-            if let Err(cleanup) = files.files.discard(&owned) {
-                Err(super::files::io_fault(std::io::Error::other(format!("{error}; file cleanup: {cleanup}"))).into())
-            } else {
-                result
-            }
-        } else { result };
-        drop(files);
-        drop(_gate);
-        if let Some(committed) = committed { committed.publish(); }
-        result
-    }
 }

@@ -1,5 +1,7 @@
 #[cfg(not(dblayer_loom))]
-pub(crate) use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
+pub(crate) use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+#[cfg(test)]
+pub(crate) use std::sync::atomic::AtomicUsize;
 #[cfg(not(dblayer_loom))]
 pub(crate) use std::sync::{Arc, Condvar, Mutex, MutexGuard};
 

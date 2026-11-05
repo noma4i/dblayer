@@ -2,15 +2,13 @@
 
 use std::collections::BTreeMap;
 
-use serde_json::{json, Map, Value};
+use serde_json::{json, Map};
 
 use crate::schema::{
     ActionDeclaration, ActionLanding, AssociationKind, AssociationSpec, Coverage, FieldSpec, ModelSpec, OnFailure, PageDirection, RelationSpec,
     RemoteShape, RemoteSpec, RootShape, UpdatesSpec, EphemeralSpec, MergeRule,
 };
 use crate::value::ScalarKind;
-
-pub const START_MS: u64 = 1_000_000;
 
 pub fn remote(operation: &str, shape: RemoteShape, stale: &str) -> RemoteSpec {
     let selects_page_info = matches!(shape, RemoteShape::Connection { .. });
@@ -163,15 +161,8 @@ pub fn specs() -> Vec<ModelSpec> {
     vec![users_spec(), moments_spec(), vibes_spec()]
 }
 
-pub fn keeping_specs() -> Vec<ModelSpec> {
-    let mut moments = moments_spec();
-    moments.actions.iter_mut().filter(|action| action.name != "destroy").for_each(|action| action.on_failure = OnFailure::Keep);
-    vec![users_spec(), moments, vibes_spec()]
-}
-
 use crate::schema::{Sort, SortField};
 use crate::value::SortDirection;
-
 
 pub const CHAT: &str = "c1";
 

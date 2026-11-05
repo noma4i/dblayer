@@ -113,15 +113,6 @@ pub(crate) fn row_operation_sequences(connection: &Connection, keys: &BTreeSet<(
     Ok(sequences)
 }
 
-pub(crate) fn referencing_sequences(connection: &Connection, ids: &BTreeSet<String>) -> rusqlite::Result<BTreeSet<i64>> {
-    let mut statement = connection.prepare_cached("SELECT seq FROM op_row WHERE row_id = ?1 UNION SELECT seq FROM op_value WHERE text = ?1 UNION SELECT seq FROM op_effect WHERE row_id = ?1 UNION SELECT seq FROM op_effect_value WHERE text = ?1")?;
-    let mut sequences = BTreeSet::new();
-    for id in ids {
-        sequences.extend(statement.query_map([id], |row| row.get::<_, i64>(0))?.collect::<rusqlite::Result<Vec<_>>>()?);
-    }
-    Ok(sequences)
-}
-
 pub fn apply_fsck(connection: &Connection, actions: &[FsckAction], orphans: &Orphans) -> rusqlite::Result<usize> {
     let transaction = connection.unchecked_transaction()?;
     let mut applied = 0;
@@ -165,7 +156,6 @@ fn quarantine_row(connection: &Connection, row: &RowRef, orphans: &Orphans) -> r
     connection.execute("DELETE FROM scope_member WHERE model = ? AND row_id = ?", params![row.model.as_str(), id.as_str()])?;
     Ok(true)
 }
-
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct RebuiltRow {

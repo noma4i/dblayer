@@ -12,7 +12,7 @@ use crate::owners::read::windows::{WindowKind, WindowKey};
 use crate::owners::store::RowValue;
 use crate::read::{incoming_ids, plan_landing, StoredScope, EDGE_KEY};
 use crate::schema::{Coverage, FieldKind, FieldSpec, RemoteShape};
-use crate::store::{window_key, Reader};
+use crate::store::window_key;
 use crate::value::{read_id, ScalarKind};
 
 use super::error::DbError;

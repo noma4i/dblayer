@@ -22,7 +22,9 @@ use super::shape::{delete_tables, insert_children, member_values, normalize, nor
 use crate::ddl::FieldPlan;
 use super::windows::{upsert_window, WindowRecord};
 use super::tombstones::{prune_tombstones, write_tombstone, TombstoneRetention};
-use crate::lifecycle::authority::{Authority, Internal};
+use crate::lifecycle::authority::Authority;
+#[cfg(test)]
+use crate::lifecycle::authority::Internal;
 
 use super::{Committed, Inner, ModelInfo, Store, StoreError};
 

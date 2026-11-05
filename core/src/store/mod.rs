@@ -263,20 +263,6 @@ impl Store {
         }
     }
 
-    #[cfg(test)]
-    pub(crate) fn fail_next_entity_reads(&self, count: usize) {
-        self.failing_entity_reads.store(count, std::sync::atomic::Ordering::SeqCst);
-    }
-
-    #[cfg(test)]
-    pub(crate) fn injected_entity_read_failure(&self) -> Option<StoreError> {
-        use std::sync::atomic::Ordering;
-        self.failing_entity_reads
-            .try_update(Ordering::SeqCst, Ordering::SeqCst, |left| left.checked_sub(1))
-            .ok()
-            .map(|_| StoreError::Sqlite(rusqlite::Error::SqliteFailure(rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_IOERR), None)))
-    }
-
     pub(crate) fn lock(&self) -> MutexGuard<'_, Inner> {
         crate::db::lock::acquire(&self.inner)
     }
@@ -287,11 +273,6 @@ impl Store {
 
     pub(crate) fn set_commit_log(&self, log: CommitLog) {
         let _ = self.commit_log.set(log);
-    }
-
-    /// The newest operation any commit of this process wrote. It moves inside the commit, before the commit line is released, so a transition that waited for the line sees every operation committed before it.
-    pub(crate) fn newest_committed_operation(&self) -> i64 {
-        self.newest_operation.load(Ordering::SeqCst)
     }
 
     pub(crate) fn announce(&self, event: StoreEvent<'_>) {

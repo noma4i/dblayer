@@ -3,7 +3,6 @@
 //! The codec has no state. Its events carry the payload as JSON text with the field `op`: `upsert`, `delete`, `ephemeral`, `reread`, `invalid`.
 
 use std::collections::BTreeSet;
-use std::sync::Arc;
 
 use serde_json::{json, Map, Value};
 

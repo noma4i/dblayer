@@ -29,8 +29,6 @@ impl Connectivity {
         })
     }
 
-    pub(crate) fn returns(&self) -> watch::Receiver<u64> { self.returns.subscribe() }
-
     pub fn is_online(&self) -> bool {
         *self.sender.borrow()
     }

@@ -66,11 +66,6 @@ impl Warm {
 }
 
 impl Db {
-    pub(crate) fn entity_present(&self, model: &str, id: &str) -> Result<bool, DbError> {
-        #[cfg(test)]
-        if let Some(error) = self.shared.store.injected_entity_read_failure() { return Err(error.into()); }
-        self.shared.read(&[model], |reader| Ok(reader.point(model, id)?.is_some()))
-    }
 
     pub fn warm(&self, query: &Query) -> Result<(), DbError> {
         let warmed = self.warm_shelf(query)?;

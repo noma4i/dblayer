@@ -26,6 +26,5 @@ mod descriptor_tests;
 #[cfg(test)]
 mod directories_tests;
 #[cfg(test)]
-pub(crate) use directories_tests::{take_file_io, watch_file_io};
 #[cfg(test)]
 mod table_tests;

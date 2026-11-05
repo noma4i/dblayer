@@ -34,10 +34,6 @@ pub struct Reply {
 }
 
 impl Reply {
-    #[cfg(test)]
-    pub(crate) fn response(response: Response) -> Self {
-        Self { delay: Duration::ZERO, result: Ok(response) }
-    }
 
     pub fn data(value: Value) -> Self {
         Self { delay: Duration::ZERO, result: Ok(Response::data(value)) }
@@ -140,10 +136,6 @@ pub struct MockTransport {
 impl MockTransport {
     pub fn new() -> Self {
         Self::default()
-    }
-
-    pub(crate) fn delay_on(&self, clock: Arc<dyn crate::pacing::Clock>) {
-        self.lock().clock = Some(clock);
     }
 
     async fn wait(&self, delay: Duration) {

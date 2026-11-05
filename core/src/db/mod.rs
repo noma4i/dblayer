@@ -37,12 +37,9 @@ mod queue_write_tests;
 mod merge;
 mod lookup;
 #[cfg(test)]
-pub(crate) use lookup::FINDS;
 mod maintain;
 mod observe;
 pub(crate) mod op_effect;
-mod observed_reads;
-pub(crate) use observed_reads::{ObservedRead, ObservedReadLease};
 mod open;
 mod parent_pointer;
 mod ranked;
@@ -62,26 +59,20 @@ mod watch;
 mod window;
 
 pub use diff::{Diff, Entry, Stamp};
-pub(crate) use ranked::{OrderKey, Ranked};
 pub use error::DbError;
 pub use local_write::{Acted, OutboxOperation};
 pub use observe::ObserverHandle;
-pub(crate) use observe::ObserverControl;
 pub use open::{Db, DbConfig, DroppedRecord, OpenReport};
-pub(crate) use replace::ReplaceRequest;
-pub(crate) use land::AcceptedRows;
 pub use row::{Record, Row};
 pub use upload_accepted::{AcceptedUpload, UploadAccepted, UploadAcceptedCallback};
 pub use upload_round::RoundStep;
 pub use warm::Peeked;
-pub(crate) use listeners::{CallState, Feed};
-pub(crate) use local_write::read_outbox;
+pub(crate) use listeners::CallState;
+#[cfg(test)]
+pub(crate) use prior::Prior;
 pub(crate) use open::locked;
 #[cfg(test)]
 pub(crate) use open::Shared;
-pub(crate) use merge::Admission;
-pub(crate) use prior::Prior;
-pub(crate) use swap::TempReplacement;
 pub use watch::{Change, CountChange, Related};
 pub use window::{Page, Slice, WindowEdge, WindowHandle, WindowSpec};
 

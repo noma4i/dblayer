@@ -128,32 +128,3 @@ impl<'a> Retrying<'a> {
     }
 }
 
-pub(crate) async fn query(admitted: &crate::ffi::legacy::Admitted, transport: &dyn Transport, request: GraphQLRequest, clock: &dyn Clock, online: &Connectivity, called: impl Fn()) -> Result<(Response, u32), TransportError> {
-    if transport.retries_queries() {
-        called();
-        crate::db::lock::assert_no_library_lock("Transport::query");
-        return transport.query(admitted, request).await.map(|response| (response, 1));
-    }
-    let progress = RetryCalls::default();
-    let mut retry = Retrying::new(clock, &progress, online, RetryPolicy::QueryNetwork);
-    loop {
-        online.online().await;
-        called();
-        crate::db::lock::assert_no_library_lock("Transport::query");
-        let (error, response) = match transport.query(admitted, request.clone()).await {
-            Ok(response) => {
-                let codes: Vec<_> = response.errors.iter().filter_map(|error| error.code()).collect();
-                if RetryClass::classify(false, None, &codes) == RetryClass::Fatal { return Ok((response, retry.attempt as u32 + 1)); }
-                (TransportError::Graphql { messages: codes.into_iter().map(str::to_string).collect(), extensions: response.extensions() }, Some(response))
-            }
-            Err(error) => (error, None),
-        };
-        retry.backoff.max_attempts = match RetryClass::of_error(&error) {
-            RetryClass::Network => RetryPolicy::QueryNetwork.backoff().max_attempts,
-            _ => RetryPolicy::QueryServer.backoff().max_attempts,
-        };
-        if let Err(error) = retry.failed(error).await {
-            return response.map(|response| (response, retry.attempt as u32 + 1)).ok_or(error);
-        }
-    }
-}
