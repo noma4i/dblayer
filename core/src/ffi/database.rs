@@ -340,17 +340,17 @@ impl Database {
         if self.life.is_shut() { return Err(super::command::closed()); }
         let waiter = self.life.close();
         let _closing = crate::runtime::hold_until_woken(self.life.launch());
-        let answered = on_executor(async move {
+        let answered = on_executor(crate::runtime::counted(Some(self.life.launch()), async move {
             tokio::time::timeout(Duration::from_secs(10), async { waiter.wait().await }).await.map_err(|_| DbError::Invalid { detail: "close timed out while the owners were closing".into() })
-        }).await.and_then(|outcome| match outcome {
+        })).await.and_then(|outcome| match outcome {
             crate::runtime::Outcome::Value(LifeReply::Life(Err(crate::owners::lifecycle::LifecycleError::Closed))) => Err(super::command::closed()),
             _ => Ok(()),
         });
         let leases = self.streams.clone();
         let _draining = crate::runtime::hold_until_woken(self.life.launch());
-        let drained = on_executor(async move {
+        let drained = on_executor(crate::runtime::counted(Some(self.life.launch()), async move {
             tokio::time::timeout(Duration::from_secs(10), leases.settled()).await.map_err(|_| DbError::Invalid { detail: format!("close timed out while leases were still held: {}", leases.held().join("; ")) })
-        }).await;
+        })).await;
         let (db, life) = (self.db.clone(), self.life.clone());
         let _shutting = crate::runtime::hold_until_woken(self.life.launch());
         let ended = blocking(move || { life.shutdown(); Ok(db.close()?) }).await;

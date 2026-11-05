@@ -260,7 +260,8 @@ impl Database {
     fn watch_status(&self, stream: u64, key: &str) -> Option<tokio::task::AbortHandle> {
         let (shows, life, key) = (self.shows.clone(), Arc::downgrade(&self.life), key.to_string());
         let mut changes = shows.watch();
-        let task = crate::task::spawn_on(crate::task::Carry::Detached, super::database::executor().ok()?.handle(), async move {
+        let launch = self.life.launch();
+        let task = crate::task::spawn_on(crate::task::Carry::Detached, super::database::executor().ok()?.handle(), crate::runtime::counted(Some(launch), async move {
             let mut last = None;
             loop {
                 changes.borrow_and_update();
@@ -273,7 +274,7 @@ impl Database {
                 drop(life);
                 if changes.changed().await.is_err() { return; }
             }
-        });
+        }));
         Some(task.abort_handle())
     }
 }
