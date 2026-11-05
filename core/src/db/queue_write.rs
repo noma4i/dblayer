@@ -11,6 +11,7 @@ use crate::owners::store::{EffectRow, IntentEffects, RowValue, StoreOp};
 use crate::lifecycle::authority::Authority;
 use super::error::DbError;
 use super::local_write::{plan_fault, read_outbox};
+use super::merge::Admission;
 use super::swap::TempReplacement;
 use super::open::Db;
 use super::prior::{Prior, PriorRow};
@@ -106,6 +107,22 @@ impl Db {
         }
         self.commit_following(&Authority::Owner, generation, |reader| {
             let mut planned = envelope.clone();
+            if planned.origin == WriteOrigin::Response {
+                let closing = (landed_op >= 0).then_some(landed_op);
+                let mut drops = 0;
+                let mut merged = Vec::with_capacity(planned.entity_ops.len());
+                for op in std::mem::take(&mut planned.entity_ops) {
+                    match op {
+                        EntityOp::Upsert { model, id, row } => {
+                            if let Some(row) = self.admitted(reader, WriteOrigin::Response, Admission { base: None, closing }, model.as_str(), &row, &mut drops)? {
+                                merged.push(EntityOp::Upsert { model, id, row });
+                            }
+                        }
+                        other => merged.push(other),
+                    }
+                }
+                planned.entity_ops = merged;
+            }
             if !swaps.is_empty() {
                 let outbox = read_outbox(reader)?;
                 for (model, temp, real) in &swaps {
