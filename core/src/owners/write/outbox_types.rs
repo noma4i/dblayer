@@ -147,6 +147,10 @@ pub enum OutboxInput {
     Retry { model: String, row_id: String, reply: ReplyId },
     Discard { model: String, row_id: String, reply: ReplyId },
     Outcome { receipt: Receipt, reply: ReplyId },
+    /// Answers `Ok` when no operation is on its way (the platform `settled`).
+    WhenQuiet { reply: ReplyId },
+    /// The root row the answer of the operation landed.
+    Landed { op_id: OpId, reply: ReplyId },
     /// The id a temporary id has after its `create` landed (the same id before).
     Resolve { model: String, row: String, reply: ReplyId },
     Online(Online),
@@ -234,6 +238,8 @@ pub struct QueuedOperation {
     /// The rows of the server answer, kept for every attempt to land them.
     pub landing: Vec<(String, Vec<RowValue>)>,
     pub swap: Option<(String, String)>,
+    /// The root row of the answer that landed (the real id of a `create`, the row an action returned).
+    pub landed: Option<String>,
     pub outcome: Option<OutboxOutcome>,
     /// The error of the batch `MarkFailed` that is in flight, and the error shown on the row.
     pub error: Option<String>,

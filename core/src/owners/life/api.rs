@@ -11,7 +11,7 @@ use crate::owners::store::StoreReply;
 use crate::owners::lifecycle::LifecycleInput;
 use crate::owners::network::NetworkInput;
 use crate::owners::session::{AuthorId, AuthorOutcome, SessionInput};
-use crate::owners::write::outbox::OutboxInput;
+use crate::owners::write::outbox::{Fault, OutboxAnswer, OutboxInput};
 use crate::runtime::{Epoch, EpochStamp, Waiter};
 
 impl Life {
@@ -95,6 +95,7 @@ impl Life {
     /// A call of the platform to the owner Outbox: the answer is `LifeReply::Outbox` or the end of the epoch.
     fn outbox_call(&self, epoch: Epoch, input: impl FnOnce(u64) -> OutboxInput) -> Waiter<LifeReply> {
         if self.shut.load(Ordering::SeqCst) { return self.settled(LifeReply::Closed); }
+        if self.wiring.addresses().is_none_or(|addresses| addresses.outbox.is_none()) { return self.settled(LifeReply::Outbox(OutboxAnswer::Err(Fault::NoSession))); }
         let waiter = self.wiring.outcomes.register(epoch);
         self.wiring.to_outbox_at(EpochStamp::Epoch(epoch), input(waiter.id().raw()));
         waiter
@@ -106,6 +107,12 @@ impl Life {
 
     /// The id a row has now: a temporary id of a `create` that landed gives the real one.
     pub fn resolve_row(&self, epoch: Epoch, model: String, row: String) -> Waiter<LifeReply> { self.outbox_call(epoch, |reply| OutboxInput::Resolve { model, row, reply }) }
+
+    /// The root row the answer of an operation landed.
+    pub fn landed_row(&self, epoch: Epoch, op_id: u64) -> Waiter<LifeReply> { self.outbox_call(epoch, |reply| OutboxInput::Landed { op_id, reply }) }
+
+    /// Answers when no operation of the owner Outbox is on its way.
+    pub fn operations_quiet(&self, epoch: Epoch) -> Waiter<LifeReply> { self.outbox_call(epoch, |reply| OutboxInput::WhenQuiet { reply }) }
 
     pub fn discard_operation(&self, epoch: Epoch, model: String, row_id: String) -> Waiter<LifeReply> { self.outbox_call(epoch, |reply| OutboxInput::Discard { model, row_id, reply }) }
 

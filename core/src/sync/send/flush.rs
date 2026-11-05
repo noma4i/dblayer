@@ -405,7 +405,7 @@ impl Inner {
             let of_left_account = seq <= left;
             if !of_left_account && seq > lost && online && seq > self.reopened_through { continue; }
             let Some(entry) = self.outbox_operation(seq)? else { continue };
-            if self.sent_by_outbox(&entry.operation) { continue; }
+            if !Self::is_upload(&entry.operation) { continue; }
             let Some((model, action)) = Operation::split_action_key(&entry.operation.action_key) else { continue };
             if self.survives_offline(&model, &action) && !of_left_account { continue; }
             let generation = self.db.generation();
@@ -423,12 +423,8 @@ impl Inner {
         Ok(state)
     }
 
-    /// A plain mutation of a server model belongs to the owner Outbox; this flush sends the operations of uploads only.
-    fn sent_by_outbox(&self, operation: &Operation) -> bool {
-        if operation.upload.is_some() || Operation::upload_action(&operation.action_key).is_some() { return false; }
-        let Some((model, action)) = Operation::split_action_key(&operation.action_key) else { return false };
-        self.db.spec(&model).ok().is_some_and(|spec| !spec.is_local() && spec.actions.iter().any(|declared| declared.name == action && declared.mutation.is_some() && !declared.upload))
-    }
+    /// This flush sends the operations of uploads only: every other mutation is the business of the owner Outbox.
+    fn is_upload(operation: &Operation) -> bool { operation.upload.is_some() || Operation::upload_action(&operation.action_key).is_some() }
 
     /// Only a durable command, an upload and an action that sends nothing wait for the network. Any other action ends with the network error and rolls back.
     pub(crate) fn survives_offline(&self, model: &str, action: &str) -> bool {
@@ -468,7 +464,7 @@ impl Inner {
             let Some((operation, held_back, blocked)) = next else { return Ok(None) };
             let sequence = operation.id.0;
             *cursor = sequence;
-            if self.sent_by_outbox(&operation) { continue; }
+            if !Self::is_upload(&operation) { continue; }
             locked(&self.counters).outbox_candidates += 1;
             let waiting = if held_back { None } else { self.waiting_reason(&operation)? };
             if waiting.is_none() && !held_back && !blocked {

@@ -74,8 +74,9 @@ impl Database {
         self.account_call(epoch)?;
         let model = planned.model.clone();
         let row = planned.row_id.clone();
+        let shown = planned.shown.clone();
         if planned.noop {
-            let value = self.optimistic(&model, &row)?;
+            let value = self.optimistic(&model, &shown)?;
             return Ok(receipt_of(epoch, model, None, self.db.revision_seq()?, value, None, self.streams.clone()));
         }
         let destroyed = action == "destroy";
@@ -83,15 +84,15 @@ impl Database {
         let Some(call) = call else {
             let waiter = self.life.local_write(epoch, model.clone(), LocalWriteKind::Model(planned.effects), row.to_string(), String::new(), self.now());
             self.outbox_answer(waiter, action).await?;
-            let value = if destroyed { None } else { self.optimistic(&model, &row)? };
+            let value = if destroyed { None } else { self.optimistic(&model, &shown)? };
             return Ok(receipt_of(epoch, model, None, self.db.revision_seq()?, value, None, self.streams.clone()));
         };
         let (path, body) = self.mutation_request(&call)?;
         let op = NewOp { model: model.clone(), row_id: row.to_string(), action: action.to_string(), on_failure: call.on_failure, origin: Origin::Api, path, body, effects: planned.effects, durable: call.durable };
         let waiter = self.life.submit(epoch, op);
         let OutboxAnswer::Receipt(held) = self.outbox_answer(waiter, action).await? else { return Err(DbError::Database { detail: "the owner answered a call with no receipt".into() }) };
-        let value = if destroyed { None } else { self.optimistic(&model, &row)? };
-        Ok(receipt_of(epoch, model, Some(i64::try_from(held.op_id).unwrap_or(i64::MAX)), held.revision, value, Some(held), self.streams.clone()))
+        let value = if destroyed { None } else { self.optimistic(&model, &shown)? };
+        Ok(receipt_of(epoch, model, Some(i64::try_from(held.op_id).unwrap_or(i64::MAX)), value.as_ref().map_or(held.revision, |row| row.revision), value, Some(held), self.streams.clone()))
     }
 
     pub(super) async fn create_row(&self, epoch: u64, model: String, values: Map<String, Value>, args: Map<String, Value>) -> Result<WireOperationReceipt, DbError> {
@@ -174,8 +175,26 @@ impl Database {
 }
 
 impl Database {
+    /// Waits until no operation of the owner Outbox is on its way; a database without a session has none.
+    pub(super) async fn operations_quiet(&self) {
+        let _ = self.await_life(self.life.operations_quiet(self.life.published().epoch)).await;
+    }
+
+    /// The outcome of a receipt does not change: the first one is kept and given again.
     async fn operation_outcome(&self, receipt: WireOperationReceipt, ticket: Receipt) -> Result<WireOperationOutcome, DbError> {
-        let answer = match self.await_life(self.life.operation_outcome(receipt.epoch, ticket)).await {
+        let key = (ticket.epoch, ticket.op_id, ticket.cycle_id);
+        if let Some(kept) = crate::db::locked(&self.outcomes).get(&key).cloned() { return Ok(kept); }
+        let outcome = self.read_outcome(receipt, ticket).await?;
+        if matches!(outcome, WireOperationOutcome::Confirmed { .. } | WireOperationOutcome::Rejected { .. }) {
+            let mut kept = crate::db::locked(&self.outcomes);
+            kept.retain(|(epoch, _, _), _| *epoch == key.0);
+            kept.insert(key, outcome.clone());
+        }
+        Ok(outcome)
+    }
+
+    async fn read_outcome(&self, receipt: WireOperationReceipt, ticket: Receipt) -> Result<WireOperationOutcome, DbError> {
+        let answer = match self.await_life(self.life.operation_outcome(receipt.epoch, ticket.clone())).await {
             Ok(LifeReply::Outbox(OutboxAnswer::Outcome(outcome))) => outcome,
             Ok(LifeReply::Outbox(OutboxAnswer::Err(Fault::NoSession))) | Err(DbError::NoSession { .. } | DbError::Interrupted { .. }) => return Ok(WireOperationOutcome::Interrupted),
             Ok(LifeReply::Outbox(OutboxAnswer::Err(fault))) => return Err(refused(fault, "operation outcome")),
@@ -185,14 +204,19 @@ impl Database {
         };
         Ok(match answer {
             OutboxOutcome::Confirmed { .. } => {
-                let value = match receipt.optimistic_value.as_ref().map(|row| id(&row.id)) {
-                    Some(Ok(row)) => {
-                        let landed = self.resolved(receipt.epoch, &receipt.model, row).await?;
-                        self.optimistic(&receipt.model, &landed)?.or(receipt.optimistic_value)
+                let landed = match self.await_life(self.life.landed_row(receipt.epoch, ticket.op_id)).await {
+                    Ok(LifeReply::Outbox(OutboxAnswer::Resolved(row))) => id(&row).ok(),
+                    _ => None,
+                };
+                let value = match (landed, receipt.optimistic_value.as_ref().map(|row| id(&row.id))) {
+                    (Some(row), _) => self.optimistic(&receipt.model, &row)?,
+                    (None, Some(Ok(row))) => {
+                        let current = self.resolved(receipt.epoch, &receipt.model, row).await?;
+                        self.optimistic(&receipt.model, &current)?
                     }
                     _ => None,
                 };
-                WireOperationOutcome::Confirmed { value, answer_json: None }
+                WireOperationOutcome::Confirmed { value: value.or(receipt.optimistic_value), answer_json: None }
             }
             OutboxOutcome::Rejected { error } | OutboxOutcome::Failed { error } => WireOperationOutcome::Rejected { failure: failure_of(&error) },
             OutboxOutcome::Discarded | OutboxOutcome::Interrupted => WireOperationOutcome::Interrupted,

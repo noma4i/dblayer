@@ -24,7 +24,7 @@ pub fn of_session(error: &SessionError, class: ErrorClass) -> String {
         (None, ErrorClass::Server) => FailureKind::Server,
         (None, _) => FailureKind::Rejected,
     };
-    text(&OperationFailure::new(kind, format!("{error:?}")))
+    text(&OperationFailure::new(kind, code.map_or_else(|| format!("{error:?}"), |code| code.name().to_string())))
 }
 
 /// The server refused with GraphQL errors.
@@ -36,3 +36,6 @@ pub fn of_graphql(message: String, extensions: Option<GraphqlExtensions>) -> Str
 pub fn parse(error: &str) -> OperationFailure {
     serde_json::from_str(error).unwrap_or_else(|_| OperationFailure::new(FailureKind::Rejected, error))
 }
+
+/// The request never reached the server and the action does not wait for the network.
+pub fn network() -> String { text(&OperationFailure::new(FailureKind::Network, "network")) }

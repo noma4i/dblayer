@@ -24,6 +24,8 @@ type Row = Map<String, Value>;
 pub(crate) struct Planned {
     pub model: String,
     pub row_id: RowId,
+    /// The row the receipt shows: the row of the call, or the copy an action made.
+    pub shown: RowId,
     /// The data of the row and the arguments of the call: the variables of the mutation are built from it.
     pub input: Value,
     pub effects: IntentEffects,
@@ -83,7 +85,7 @@ impl Db {
             touch_effects(&mut effects, self.touch_ops(reader, spec, &[&data], &own)?);
             Ok(effects)
         })?;
-        Ok(Planned { model: model.to_string(), row_id: id, input, effects, noop: false })
+        Ok(Planned { model: model.to_string(), shown: id.clone(), row_id: id, input, effects, noop: false })
     }
 
     /// New values of a row. A call with the values the row has and no arguments changes nothing.
@@ -111,8 +113,8 @@ impl Db {
             Ok(Some(effects))
         })?;
         Ok(match effects {
-            Some(effects) => Planned { model: model.to_string(), row_id: id.clone(), input: Value::Object(input), effects, noop: false },
-            None => Planned { model: model.to_string(), row_id: id.clone(), input: Value::Object(input), effects: IntentEffects::default(), noop: true },
+            Some(effects) => Planned { model: model.to_string(), row_id: id.clone(), shown: id.clone(), input: Value::Object(input), effects, noop: false },
+            None => Planned { model: model.to_string(), row_id: id.clone(), shown: id.clone(), input: Value::Object(input), effects: IntentEffects::default(), noop: true },
         })
     }
 
@@ -131,6 +133,7 @@ impl Db {
         input.insert("id".to_string(), Value::String(id.to_string()));
         let declared = spec.actions.iter().find(|declared| declared.name == action).cloned();
         let now_ms = self.shared.store.lock().now_ms();
+        let mut shown = None;
         let effects = self.shared.read(&[model], |reader| {
             let current = reader.point(model, id.as_str())?.ok_or_else(|| DbError::NotFound { model: model.to_string(), id: id.to_string() })?;
             let mut merged = current.clone();
@@ -155,11 +158,11 @@ impl Db {
                 touch_effects(&mut effects, self.touch_ops(reader, self.shared.spec(&edited_model)?, &[&after, &before], &RowRef::new(ModelKey::new(&edited_model), RowId::new(&edited_id)?))?);
             }
             if let Some(declared) = &declared {
-                self.plan_closed_effect(reader, spec, declared, (&own, &args), now_ms, &mut effects)?;
+                self.plan_closed_effect(reader, spec, declared, (&own, &args), now_ms, &mut effects, &mut shown)?;
             }
             Ok(effects)
         })?;
-        Ok(Planned { model: model.to_string(), row_id: id.clone(), input: Value::Object(input), effects, noop: false })
+        Ok(Planned { model: model.to_string(), row_id: id.clone(), shown: shown.unwrap_or_else(|| id.clone()), input: Value::Object(input), effects, noop: false })
     }
 
     /// The row and every row that depends on it.
@@ -172,10 +175,10 @@ impl Db {
             let tombstones = self.destroy_targets(reader, &own)?.into_iter().map(|target| EffectTombstone { model: target.model.to_string(), row_id: target.id.to_string() }).collect();
             Ok(IntentEffects { tombstones, ..Default::default() })
         })?;
-        Ok(Planned { model: model.to_string(), row_id: id.clone(), input: json!({ "id": id.as_str() }), effects, noop: false })
+        Ok(Planned { model: model.to_string(), row_id: id.clone(), shown: id.clone(), input: json!({ "id": id.as_str() }), effects, noop: false })
     }
 
-    fn plan_closed_effect(&self, reader: &Reader<'_>, spec: &ModelSpec, declared: &crate::schema::ActionDeclaration, (own, args): (&RowRef, &Map<String, Value>), now_ms: i64, effects: &mut IntentEffects) -> Result<(), DbError> {
+    fn plan_closed_effect(&self, reader: &Reader<'_>, spec: &ModelSpec, declared: &crate::schema::ActionDeclaration, (own, args): (&RowRef, &Map<String, Value>), now_ms: i64, effects: &mut IntentEffects, shown: &mut Option<RowId>) -> Result<(), DbError> {
         if declared.removes_receiver {
             for target in self.destroy_targets(reader, own)? {
                 effects.tombstones.push(EffectTombstone { model: target.model.to_string(), row_id: target.id.to_string() });
@@ -190,12 +193,23 @@ impl Db {
             let data = spec.normalize_local(&values, now_ms)?;
             member_effects(effects, local_scope_ops(reader, spec, &copy_id, &data)?);
             effects.rows.push(row_effect(own.model.as_str(), copy_id.as_str(), None, &data));
+            *shown = Some(copy_id);
         }
-        let mut scope_ops = Vec::new();
+        let (mut scope_ops, mut joins) = (Vec::new(), Vec::new());
         for effect in &declared.scope_effects {
-            plan_scope_effect(reader, self.shared.spec(&effect.model)?, effect, (own, args), &mut Vec::<PriorRow>::new(), &mut scope_ops)?;
+            plan_scope_effect(reader, self.shared.spec(&effect.model)?, effect, (own, args), &mut joins, &mut scope_ops)?;
         }
-        member_effects(effects, scope_ops);
+        let order_of = |model: &str, list: &str, row: &str| scope_ops.iter().find_map(|operation| match operation {
+            ScopeOp::Append { scope, row: appended, order_key } if scope.model.as_str() == model && scope.key.as_str() == list && appended.as_str() == row => Some(order_key.clone()),
+            _ => None,
+        }).unwrap_or_default();
+        for prior in joins {
+            match prior {
+                PriorRow::Join { model, id, scope_key, .. } => { let order_key = order_of(&model, &scope_key, &id); effects.members.push(EffectMember { model, list: scope_key, row_id: id, order_key, leave: false }) }
+                PriorRow::Leave { model, id, scope_key, .. } => effects.members.push(EffectMember { model, list: scope_key, row_id: id, order_key: String::new(), leave: true }),
+                _ => {}
+            }
+        }
         Ok(())
     }
 }

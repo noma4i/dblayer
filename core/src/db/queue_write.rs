@@ -195,7 +195,8 @@ fn effects_envelope(reader: &crate::store::Reader<'_>, effects: &IntentEffects, 
             if before.is_some() { envelope.scope_ops.push(ScopeOp::Detach { scope, row: row_id(&member.row_id)? }); }
             prior.rows.push(PriorRow::Leave { model: member.model.clone(), id: member.row_id.clone(), scope_key: member.list.clone(), before, owned });
         } else {
-            if before.is_none() { envelope.scope_ops.push(ScopeOp::Append { scope, row: row_id(&member.row_id)?, order_key: member.order_key.clone() }); }
+            let present = effects.rows.iter().any(|row| row.model == member.model && row.row_id == member.row_id) || reader.point(&member.model, &member.row_id)?.is_some();
+            if before.is_none() && present { envelope.scope_ops.push(ScopeOp::Append { scope, row: row_id(&member.row_id)?, order_key: member.order_key.clone() }); }
             prior.rows.push(PriorRow::Join { model: member.model.clone(), id: member.row_id.clone(), scope_key: member.list.clone(), before, owned });
         }
     }

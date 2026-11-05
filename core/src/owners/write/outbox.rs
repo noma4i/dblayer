@@ -41,6 +41,7 @@ pub struct OutboxState {
     pub(super) ephemeral: BTreeMap<String, Time>,
     pub(super) drained: bool,
     pub(super) author: BatchAuthor,
+    pub(super) quiet_waiters: Vec<ReplyId>,
     pub(super) closing: bool,
     pub(super) queue_error: Option<String>,
     pub phase: Phase,
@@ -84,6 +85,7 @@ impl OutboxState {
             ephemeral: BTreeMap::new(),
             drained: false,
             author: BatchAuthor::Outbox,
+            quiet_waiters: Vec::new(),
             closing: false,
             queue_error: None,
             phase: Phase::Restoring,
@@ -133,6 +135,7 @@ impl OutboxState {
                 waiting_retry: false,
                 landing: Vec::new(),
                 swap: None,
+                landed: None,
                 outcome: None,
                 error: None,
                 failed_errors: BTreeMap::new(),
@@ -373,7 +376,7 @@ impl OutboxState {
             OutboxInput::Retry { model, row_id, reply } => self.retry(&model, &row_id, reply, fx),
             OutboxInput::Discard { model, row_id, reply } => self.discard(&model, &row_id, reply, fx),
             OutboxInput::Outcome { receipt, reply } => self.outcome(receipt, reply, fx),
-            OutboxInput::Resolve { .. } => {}
+            OutboxInput::Resolve { .. } | OutboxInput::Landed { .. } | OutboxInput::WhenQuiet { .. } => {}
             OutboxInput::Online(Online(on)) => self.online_changed(on, fx),
             OutboxInput::EpochStarted(started) => self.base_generation = started.generation,
             OutboxInput::ModelsReset(reset) => {
@@ -408,16 +411,24 @@ impl StateOwner for Outbox {
 
     fn step(state: &mut OutboxState, input: OutboxInput) -> Effects<Self> {
         let mut fx: Effects<Self> = Vec::new();
+        if let OutboxInput::Landed { op_id, reply } = input {
+            let answer = state.ops.get(&op_id).and_then(|operation| operation.landed.clone()).map_or(OutboxAnswer::Err(Fault::NotFound), OutboxAnswer::Resolved);
+            OutboxState::reply(&mut fx, reply, answer);
+            return fx;
+        }
         if let OutboxInput::Resolve { model, row, reply } = input {
             let resolved = state.aliases.get(&(model, row.clone())).cloned().unwrap_or(row);
             OutboxState::reply(&mut fx, reply, OutboxAnswer::Resolved(resolved));
             return fx;
         }
-        if state.phase == Phase::Restoring {
+        if let OutboxInput::WhenQuiet { reply } = input {
+            state.quiet_waiters.push(reply);
+        } else if state.phase == Phase::Restoring {
             state.restoring(input, &mut fx);
         } else {
             state.handle(input, &mut fx);
         }
+        state.release_quiet(&mut fx);
         fx
     }
 

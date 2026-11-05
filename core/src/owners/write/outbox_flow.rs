@@ -22,6 +22,7 @@ impl OutboxState {
         }
         if let Some(operation) = self.ops.get_mut(&op_id) {
             operation.stage = Stage::Landing;
+            operation.landed = swap.as_ref().map(|(_, real)| real.clone()).or_else(|| rows.iter().find(|(model, _)| *model == operation.op.model).and_then(|(_, rows)| rows.last()).map(|row| row.row_id.clone()));
             operation.landing = rows;
             operation.swap = swap;
         }
@@ -34,6 +35,13 @@ impl OutboxState {
         }
         if !temporary {
             return self.reject_or_keep(op_id, fx);
+        }
+        if !self.ops[&op_id].op.durable {
+            if let Some(operation) = self.ops.get_mut(&op_id) {
+                operation.stage = Stage::RollingBack(Why::Rejected);
+                operation.reject_error = Some(super::failure::network());
+            }
+            return self.store(op_id, CommitKind::Rollback, fx);
         }
         let attempts = self.ops[&op_id].attempts;
         if attempts >= ATTEMPT_LIMIT {
@@ -166,7 +174,7 @@ impl OutboxState {
             } else if self.ops.get(&op_id).is_some_and(|operation| !operation.op.durable && !operation.sent) {
                 if let Some(operation) = self.ops.get_mut(&op_id) {
                     operation.stage = Stage::RollingBack(Why::Rejected);
-                    operation.reject_error = Some("network".into());
+                    operation.reject_error = Some(super::failure::network());
                 }
                 self.store(op_id, CommitKind::Rollback, fx);
             }
@@ -192,6 +200,23 @@ impl OutboxState {
                 self.transport_failed(op_id, matches!(class, ErrorClass::Network | ErrorClass::Server), fx);
             }
             AuthorOutcome::Dropped => self.transport_failed(op_id, true, fx),
+        }
+    }
+}
+
+impl OutboxState {
+    /// No operation is being written, sent, landed or rolled back, and no local write is on its way.
+    fn is_quiet(&self) -> bool {
+        self.writes_active() == 0 && self.ops.values().all(|operation| match operation.stage {
+            Stage::Submitting | Stage::PersistingAttempt | Stage::Landing | Stage::RollingBack(_) | Stage::MarkingFailed | Stage::MarkingRetry => false,
+            Stage::Sending => operation.waiting_retry,
+            Stage::WaitingDeclaration | Stage::Queued | Stage::Failed | Stage::Done => true,
+        })
+    }
+
+    pub(super) fn release_quiet(&mut self, fx: &mut Effects<Outbox>) {
+        if !self.quiet_waiters.is_empty() && self.is_quiet() {
+            for reply in std::mem::take(&mut self.quiet_waiters) { Self::reply(fx, reply, OutboxAnswer::Ok); }
         }
     }
 }

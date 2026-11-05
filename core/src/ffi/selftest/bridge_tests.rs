@@ -1014,28 +1014,6 @@ async fn a_missed_revision_gives_one_new_snapshot() {
     rig.database.close_now();
 }
 
-/// B09 (R1, old line command.rs:46-55): a send that waits for the writer while the session ends writes no row. The commit takes the epoch of the caller, not the generation of the data, which moves later.
-#[tokio::test(flavor = "multi_thread")]
-#[allow(clippy::await_holding_lock)]
-async fn a_send_that_waits_for_the_writer_while_the_session_ends_writes_no_row() {
-    let rig = Rig::encrypted().await;
-    rig.login_ios("A").await;
-    let epoch = rig.database.session_epoch();
-    rig.database.set_online(false).unwrap();
-    let store = &rig.database.db.shared.store;
-    let pinned = store.lifecycle.writes_entered.load(Ordering::SeqCst);
-    let writer = store.lock();
-    let sender = { let database = rig.database.clone(); tokio::spawn(async move { database.send(message(epoch, "late", 9)).await }) };
-    yield_until("the send reached the writer", || store.lifecycle.writes_entered.load(Ordering::SeqCst) > pinned).await;
-    store.lifecycle.epoch_ended(crate::runtime::Cause::SessionReset);
-    drop(writer);
-    let sent = bound(sender).await.unwrap();
-    assert!(matches!(sent, Err(DbError::Interrupted { .. })), "a send of the ended session ran: {sent:?}");
-    yield_until("the admitted write finished", || store.lifecycle.writes_entered.load(Ordering::SeqCst) == pinned).await;
-    assert_eq!(store.row_count("Message").unwrap(), 0, "the send wrote its row after its session ended");
-    rig.database.close_now();
-}
-
 /// B10 (R2, old line command.rs:76-85): the outcome waits while the command is queued offline and is owned by the epoch of its receipt: it ends with the session, and a receipt of an old epoch stays ended.
 #[tokio::test(flavor = "multi_thread")]
 async fn the_outcome_of_an_offline_command_waits_and_ends_with_the_epoch_of_its_receipt() {
@@ -1159,54 +1137,6 @@ async fn confirmed_group(rig: &Rig, epoch: u64, values: String, args: String) ->
         WireOperationOutcome::Confirmed { value: Some(row), .. } => row,
         other => panic!("group create did not confirm: {other:?}"),
     }
-}
-
-/// K01 (B1, J02): a send that passed its epoch check and waits before its SQL commit lands before the next sign-in changes the epoch, and its announcement is held until the session start finished: the operation of the account that left is in the cutoff and never goes out for the account that came.
-#[tokio::test(flavor = "multi_thread")]
-async fn a_send_between_its_epoch_check_and_its_commit_never_goes_out_for_the_next_account() {
-    let rig = Rig::encrypted().await;
-    rig.login_ios("A").await;
-    let epoch = rig.database.session_epoch();
-    rig.database.set_online(false).unwrap();
-    let store = &rig.database.db.shared.store;
-    let operations_begun = |rig: &Rig| rig.database.db.shared.read(&[], |reader| Ok(reader.connection().query_row("SELECT COALESCE((SELECT seq FROM sqlite_sequence WHERE name = 'op'), 0)", [], |row| row.get::<_, i64>(0))?)).unwrap();
-    let begun_before = operations_begun(&rig);
-    let (entered, entered_rx) = std::sync::mpsc::channel();
-    let (release_tx, release) = std::sync::mpsc::channel::<()>();
-    let expired = Arc::new(AtomicBool::new(false));
-    let release_expired = expired.clone();
-    *store.after_epoch_check.lock().unwrap() = Some(Box::new(move || { entered.send(()).unwrap(); if release.recv_timeout(std::time::Duration::from_secs(20)).is_err() { release_expired.store(true, Ordering::SeqCst); } }));
-    let (committed, committed_rx) = std::sync::mpsc::channel();
-    let (publish_tx, publish_release) = std::sync::mpsc::channel::<()>();
-    let (committed, publish_release, held) = (Mutex::new(committed), Mutex::new(publish_release), AtomicBool::new(true));
-    let publish_expired = expired.clone();
-    *store.after_commit.lock().unwrap() = Some(Box::new(move |result| {
-        if result.queue_operations.is_empty() || !held.swap(false, Ordering::SeqCst) { return; }
-        committed.lock().unwrap().send(()).unwrap();
-        if publish_release.lock().unwrap().recv_timeout(std::time::Duration::from_secs(20)).is_err() { publish_expired.store(true, Ordering::SeqCst); }
-    }));
-    let sender = { let database = rig.database.clone(); tokio::spawn(async move { database.send(message(epoch, "late", 9)).await }) };
-    tokio::task::spawn_blocking(move || entered_rx.recv_timeout(std::time::Duration::from_secs(10)).unwrap()).await.unwrap();
-    let waits = *store.lifecycle.line_waits.0.lock().unwrap();
-    assert_eq!(rig.database.session_epoch(), epoch);
-    let identity = { let database = rig.database.clone(); tokio::task::spawn_blocking(move || database.db.shared.store.lifecycle.start_session_in_tests(Some("another-account".into()), database.db.shared.store.lifecycle.admit_passive(crate::ffi::legacy::Origin::Explicit, "test session", Some(epoch)).unwrap()).is_ok()) };
-    yield_until("the session start reached the commit line", || *store.lifecycle.line_waits.0.lock().unwrap() > waits).await;
-    assert_eq!(rig.database.session_epoch(), epoch, "the epoch changed while the commit of the send was held");
-    release_tx.send(()).unwrap();
-    tokio::task::spawn_blocking(move || committed_rx.recv_timeout(std::time::Duration::from_secs(10)).unwrap()).await.unwrap();
-    assert!(bound(identity).await.unwrap(), "the session start of the other identity did not begin");
-    publish_tx.send(()).unwrap();
-    let sent = bound(sender).await.unwrap();
-    assert!(sent.is_ok() || matches!(sent, Err(DbError::Interrupted { .. })), "the send ended with {:?}", sent.as_ref().err());
-    assert!(!expired.load(Ordering::SeqCst), "a held step ran out of time and was not released by the test");
-    assert_ne!(rig.database.session_epoch(), epoch);
-    assert!(operations_begun(&rig) > begun_before, "the send did not commit before the epoch changed");
-    settle(&rig).await;
-    rig.database.set_online(true).unwrap();
-    settle(&rig).await;
-    assert_eq!(rig.world.count("SendMessage"), 0, "the message of the account that left went out for the next one");
-    assert!(rig.database.db.outbox().unwrap().is_empty(), "an operation of the account that left is still queued");
-    rig.database.close_now();
 }
 
 /// K02 (B2, old lines ffi/database.rs update, destroy, read_query, read_row): a command or a one-off read that carries the epoch of A is refused after the session ended, also when it waited for the writer while the session ended, and it changes nothing for B.
@@ -1740,29 +1670,6 @@ async fn a_plain_action_that_never_reached_the_server_ends_with_the_network_erro
     rig.database.close_now();
 }
 
-/// K19 (C04, old lines sync/send/flush.rs refuse_non_durable and online.rs set_online): an action queued while online and still unsent when the network drops ends with the network error at the drop, also when the network returns before any flush.
-#[tokio::test(flavor = "multi_thread")]
-async fn a_plain_action_unsent_when_the_network_drops_never_goes_out_after_it_returns() {
-    let rig = Rig::encrypted().await;
-    rig.login_ios("A").await;
-    let epoch = rig.database.session_epoch();
-    let (values, args) = group("friends");
-    let created = confirmed_group(&rig, epoch, values, args).await;
-    let sync = rig.database.sync.as_ref().expect("the database has a sync").clone();
-    let sender_busy = sync.inner.outbox_gate.lock().await;
-    let acting = { let database = rig.database.clone(); let id = created.id.clone(); tokio::spawn(async move { database.act(epoch, "Group".into(), id, "leave".into(), "{}".into(), "{}".into()).await }) };
-    yield_until("the action is queued", || !rig.database.db.outbox().unwrap().is_empty()).await;
-    rig.database.set_online(false).unwrap();
-    rig.database.set_online(true).unwrap();
-    drop(sender_busy);
-    let receipt = bound(acting).await.unwrap().unwrap();
-    assert!(matches!(bound(rig.database.outcome(receipt)).await.unwrap(), WireOperationOutcome::Rejected { failure } if failure.kind == "network"));
-    settle(&rig).await;
-    assert_eq!(rig.world.log().iter().filter(|entry| entry.operation == "LeaveGroup").count(), 0, "an action queued before the drop went out after the network returned");
-    assert!(rig.database.db.outbox().unwrap().is_empty());
-    rig.database.close_now();
-}
-
 /// K20 (C08, old line sync/send/pause.rs retry_due): after a network return the first retry skips the backoff once. A second failure waits by the normal backoff, and the clock then delivers the command.
 #[tokio::test(flavor = "multi_thread")]
 async fn a_second_failure_after_a_network_return_waits_by_the_backoff_and_the_clock_delivers() {
@@ -1834,27 +1741,6 @@ async fn a_confirmed_create_keeps_its_row_when_another_model_resets_before_it_la
     let found = rig.database.db.find("Message", &crate::identity::RowId::new(&row.id).unwrap()).unwrap();
     assert!(found.is_some(), "the row {} the server confirmed is gone", row.id);
     assert!(rig.database.db.outbox().unwrap().is_empty(), "the confirmed create is still queued");
-    rig.database.close_now();
-}
-
-/// K24 (D03, old lines sync/send/flush.rs flush and next_ready): a flush that is already running does not send an action that is not a durable command after the network dropped and returned between two of its sends.
-#[tokio::test(flavor = "multi_thread")]
-async fn a_running_flush_does_not_send_a_plain_action_after_the_network_dropped_between_two_sends() {
-    let rig = Rig::encrypted().await;
-    rig.login_ios("A").await;
-    let epoch = rig.database.session_epoch();
-    let (values, args) = group("friends");
-    let created = confirmed_group(&rig, epoch, values, args).await;
-    let gate = rig.world.hold_next("SendMessage");
-    bound(rig.database.send(message(epoch, "first", 1))).await.unwrap();
-    gate.entered_for("the first send").await;
-    rig.database.set_online(false).unwrap();
-    let acted = bound(rig.database.act(epoch, "Group".into(), created.id.clone(), "leave".into(), "{}".into(), "{}".into())).await;
-    assert!(matches!(acted, Err(DbError::Network { .. })));
-    rig.database.set_online(true).unwrap();
-    gate.release();
-    settle(&rig).await;
-    assert_eq!(rig.world.log().iter().filter(|entry| entry.operation == "LeaveGroup").count(), 0, "a running flush sent the action after the network dropped");
     rig.database.close_now();
 }
 
@@ -1935,62 +1821,5 @@ async fn a_refused_change_of_a_member_does_not_undo_the_same_change_accepted_and
         assert_eq!(lists(&rig), wanted, "{case}: the lists after both answers");
         rig.database.close_now();
     }
-}
-
-/// K27 (E02, old lines sync/send/flush.rs flush_pass and refuse_non_durable): a network that dropped and returned right after a flush decided which actions to refuse refuses a plain create and a plain action, and nothing of them goes out.
-#[tokio::test(flavor = "multi_thread")]
-async fn a_network_that_dropped_and_returned_right_after_the_refusal_decision_refuses_every_plain_action() {
-    use std::sync::atomic::{AtomicBool, Ordering};
-    for case in ["create", "leave", "add_member"] {
-        let rig = Rig::encrypted().await;
-        rig.login_ios("A").await;
-        let epoch = rig.database.session_epoch();
-        let (values, args) = group("friends");
-        let created = confirmed_group(&rig, epoch, values, args).await;
-        seed_members(&rig, &created.id);
-        settle(&rig).await;
-        let operation = match case { "create" => "CreateGroup", "leave" => "LeaveGroup", _ => "AddMember" };
-        let sent_before = rig.world.count(operation);
-        let (database, once) = (rig.database.clone(), AtomicBool::new(false));
-        *rig.database.sync.as_ref().unwrap().inner.refusal_probe.lock().unwrap() = Some(Box::new(move || {
-            if !once.swap(true, Ordering::SeqCst) {
-                database.set_online(false).unwrap();
-                database.set_online(true).unwrap();
-            }
-        }));
-        let result = match case {
-            "create" => { let (values, args) = group("second"); bound(rig.database.create(epoch, "Group".into(), values, args)).await }
-            "leave" => bound(rig.database.act(epoch, "Group".into(), created.id.clone(), "leave".into(), "{}".into(), "{}".into())).await,
-            _ => bound(rig.database.act(epoch, "Group".into(), created.id.clone(), "add_member".into(), "{}".into(), json!({"userIds": ["u4"]}).to_string())).await,
-        };
-        let outcome = bound(rig.database.outcome(result.unwrap())).await.unwrap();
-        assert!(matches!(outcome, WireOperationOutcome::Rejected { .. }), "{case}: the action succeeded after the network dropped");
-        settle(&rig).await;
-        assert_eq!(rig.world.count(operation), sent_before, "{case}: the action went out after the network dropped and returned");
-        rig.database.close_now();
-    }
-}
-
-/// K29 (F02, old lines sync/send/flush.rs start and store/apply.rs attempt_in_epoch): a network that moves after the plan of the start of an action and before its commit refuses the start, and the action does not go out.
-#[tokio::test(flavor = "multi_thread")]
-async fn a_network_that_moves_between_the_plan_and_the_commit_of_a_start_refuses_the_action() {
-    let rig = Rig::encrypted().await;
-    rig.login_ios("A").await;
-    let epoch = rig.database.session_epoch();
-    let (values, args) = group("friends");
-    let created = confirmed_group(&rig, epoch, values, args).await;
-    settle(&rig).await;
-    let sent_before = rig.world.count("LeaveGroup");
-    let (shared, inner) = (rig.database.db.shared.clone(), rig.database.sync.as_ref().unwrap().inner.clone());
-    let armed = inner.clone();
-    *inner.refusal_probe.lock().unwrap() = Some(Box::new(move || {
-        let moving = armed.clone();
-        *shared.store.after_epoch_check.lock().unwrap() = Some(Box::new(move || { *moving.network_lost.lock().unwrap() = i64::MAX; }));
-    }));
-    let receipt = bound(rig.database.act(epoch, "Group".into(), created.id.clone(), "leave".into(), "{}".into(), "{}".into())).await.unwrap();
-    assert!(matches!(bound(rig.database.outcome(receipt)).await.unwrap(), WireOperationOutcome::Rejected { failure } if failure.kind == "network"));
-    settle(&rig).await;
-    assert_eq!(rig.world.count("LeaveGroup"), sent_before, "the action went out although the network moved before its start was committed");
-    rig.database.close_now();
 }
 

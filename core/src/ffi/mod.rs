@@ -6,6 +6,7 @@ pub(crate) async fn settled(database: &Database) -> Result<(), DbError> {
     let quiet = async {
         loop {
             lifecycle.settled().await;
+            database.operations_quiet().await;
             let listeners = db.clone();
             database::blocking(move || { listeners.await_revision(listeners.revision_seq()?); Ok(()) }).await?;
             if lifecycle.quiet() { return Ok::<(), DbError>(()); }
