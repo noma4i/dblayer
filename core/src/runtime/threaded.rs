@@ -15,6 +15,8 @@ enum Command {
     Deliver(EpochStamp, Box<dyn Message>),
     Control(Control),
     Failed(Vec<EffectId>),
+    /// The clock moved: the owner reads the time again.
+    Wake,
     Stop,
 }
 
@@ -82,7 +84,23 @@ impl Router {
     fn broadcast(&self, control: Control) { (0..self.boxes.len()).for_each(|to| self.push(to, Command::Control(control))); }
 }
 
-type Body = Box<dyn FnOnce(Arc<Router>, Instant) + Send>;
+/// The time of the owners: ms since the runtime started, from the clock of the database or from the process.
+pub(super) struct Timeline {
+    clock: Option<Arc<dyn crate::pacing::Clock>>,
+    base: Duration,
+    origin: Instant,
+}
+
+impl Timeline {
+    fn now(&self) -> Time {
+        match &self.clock {
+            Some(clock) => Time(clock.now().saturating_sub(self.base).as_millis() as u64),
+            None => Time(self.origin.elapsed().as_millis() as u64),
+        }
+    }
+}
+
+type Body = Box<dyn FnOnce(Arc<Router>, Arc<Timeline>) + Send>;
 
 #[derive(Default)]
 pub struct RuntimeBuilder {
@@ -92,6 +110,7 @@ pub struct RuntimeBuilder {
     failure: Option<FailureRoute>,
     record: bool,
     handle: Handle,
+    clock: Option<Arc<dyn crate::pacing::Clock>>,
 }
 
 /// A clonable address book of the running owners. An effect runner takes it before `start` and uses it after.
@@ -139,7 +158,7 @@ impl RuntimeBuilder {
         self.history.push(history.clone());
         self.boxes.push(mailbox);
         let runner: Box<dyn EffectRunner<O>> = Box::new(runner);
-        self.bodies.push((name, Box::new(move |router, origin| run_owner::<O>(OwnerThread { slot, name, cell: Cell::new(state), runner, mailbox: own, history }, router, origin))));
+        self.bodies.push((name, Box::new(move |router, timeline| run_owner::<O>(OwnerThread { slot, name, cell: Cell::new(state), runner, mailbox: own, history }, router, timeline))));
         Address::new(slot)
     }
 
@@ -149,6 +168,9 @@ impl RuntimeBuilder {
 
     pub fn record(&mut self) { self.record = true; }
 
+    /// The timers of the owners follow this clock.
+    pub fn with_clock(&mut self, clock: Arc<dyn crate::pacing::Clock>) { self.clock = Some(clock); }
+
     pub fn handle(&self) -> Handle { self.handle.clone() }
 
     pub fn start(self) -> std::io::Result<Runtime> { self.start_with(|name, body| spawn_thread(Carry::Internal, name, body)) }
@@ -156,14 +178,21 @@ impl RuntimeBuilder {
     pub(super) fn start_with(self, mut launch: impl FnMut(String, Box<dyn FnOnce() + Send>) -> std::io::Result<JoinHandle<()>>) -> std::io::Result<Runtime> {
         let router = Arc::new(Router { boxes: self.boxes, inflight: Inflight::default(), failure: self.failure, history: self.history, record: self.record });
         let _ = self.handle.router.set(router.clone());
-        let origin = Instant::now();
+        let timeline = Arc::new(Timeline { base: self.clock.as_ref().map_or(Duration::ZERO, |clock| clock.now()), clock: self.clock.clone(), origin: Instant::now() });
+        if let Some(clock) = &self.clock {
+            let weak = Arc::downgrade(&router);
+            clock.on_advance(Arc::new(move || {
+                if let Some(router) = weak.upgrade() { (0..router.boxes.len()).for_each(|to| router.push(to, Command::Wake)); }
+            }));
+        }
         let mut joins = Vec::new();
         let alive = Arc::new(AtomicUsize::new(0));
         for (name, body) in self.bodies {
             let own = router.clone();
             alive.fetch_add(1, Ordering::SeqCst);
             let running = Alive(alive.clone());
-            match launch(name.to_string(), Box::new(move || { let _running = running; body(own, origin) })) {
+            let timeline = timeline.clone();
+            match launch(name.to_string(), Box::new(move || { let _running = running; body(own, timeline) })) {
                 Ok(join) => joins.push(join),
                 Err(error) => {
                     stop(&router, &mut joins);
@@ -206,8 +235,6 @@ impl Drop for Runtime {
     fn drop(&mut self) { stop(&self.router, &mut self.joins); }
 }
 
-fn elapsed(origin: Instant) -> Time { Time(origin.elapsed().as_millis() as u64) }
-
 struct OwnerThread<O: StateOwner> {
     slot: usize,
     name: &'static str,
@@ -217,7 +244,7 @@ struct OwnerThread<O: StateOwner> {
     history: Arc<Mutex<Vec<TraceEntry>>>,
 }
 
-fn run_owner<O: StateOwner>(mut owner: OwnerThread<O>, router: Arc<Router>, origin: Instant) {
+fn run_owner<O: StateOwner>(mut owner: OwnerThread<O>, router: Arc<Router>, timeline: Arc<Timeline>) {
     owner.cell.set_jitter(|| rand_core::RngCore::next_u64(&mut rand_core::OsRng));
     let back = {
         let own = owner.slot;
@@ -227,7 +254,7 @@ fn run_owner<O: StateOwner>(mut owner: OwnerThread<O>, router: Arc<Router>, orig
     };
     loop {
         let cell = &owner.cell;
-        let commands = owner.mailbox.take(|| cell.next_due().map(|at| Duration::from_millis(at.0.saturating_sub(elapsed(origin).0))));
+        let commands = owner.mailbox.take(|| cell.next_due().map(|at| Duration::from_millis(at.0.saturating_sub(timeline.now().0))));
         let handled = commands.len();
         for command in commands {
             match command {
@@ -237,10 +264,11 @@ fn run_owner<O: StateOwner>(mut owner: OwnerThread<O>, router: Arc<Router>, orig
                     owner.cell.apply_failure(owner.name, pending);
                     router.report_failure(owner.name);
                 }
+                Command::Wake => {}
                 Command::Stop => return,
             }
         }
-        owner.cell.set_now(elapsed(origin));
+        owner.cell.set_now(timeline.now());
         while owner.cell.fire_next_due() {}
         while let Some(ran) = owner.cell.run_one(owner.name, owner.runner.as_mut(), &back, router.record) {
             if router.record {

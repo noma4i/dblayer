@@ -417,6 +417,7 @@ impl Life {
         let session = ports.session.clone().zip(ports.credentials.clone());
         let restored = session.as_ref().map(|(client, _)| session_runner::SessionRunner::stored(client)).transpose().map_err(|error| LifeError::Storage(error.to_string()))?;
         let mut builder = RuntimeBuilder::new();
+        builder.with_clock(ports.db.shared.store.lock().clock.clone());
         let wiring = Arc::new(Wiring::new(builder.handle()));
         let open_wait = wiring.outcomes.register(Epoch::MAX);
         let lifecycle = builder.add::<Lifecycle>("lifecycle", LifecycleState::new().with_restore_participants(restore_participants(session.is_some())), runners::LifecycleRunner { wiring: wiring.clone(), leases: ports.db.shared.store.lifecycle.clone(), absent: absent(session.is_some(), session.is_some() && ports.transfer.is_some()), db: ports.db.clone(), held_published: None, held_replies: Vec::new() });
