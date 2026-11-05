@@ -89,6 +89,8 @@ pub enum DbError {
     Config { code: ConfigCode, detail: String },
     #[error("invalid: {detail}")]
     Invalid { detail: String },
+    #[error("not found: {detail}")]
+    NotFound { detail: String },
     #[error("database: {detail}")]
     Database { detail: String },
     #[error("sync: {detail}")]

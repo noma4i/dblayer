@@ -19,7 +19,7 @@ pub(super) fn refused(fault: Fault, what: &str) -> DbError {
     use crate::owners::contract::RejectReason;
     match fault {
         Fault::NoSession => DbError::NoSession { detail: "the database has no session in this epoch".into() },
-        Fault::NotFound => DbError::Invalid { detail: format!("{what}: there is no such operation") },
+        Fault::NotFound => DbError::NotFound { detail: format!("{what}: there is no such operation") },
         Fault::InFlight => DbError::Invalid { detail: format!("{what}: the operation is in flight") },
         Fault::Interrupted => super::command::ended(),
         Fault::Offline => DbError::Network { detail: format!("{what} needs the network") },

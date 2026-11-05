@@ -12,5 +12,5 @@
 {"in":"pull","args":{"stream":"v1"},"out":[{"o":"event","v":{"area":"MESSAGE","kind":"UPDATED","position":1,"row":"c1","stream":"v1"}}]}
 {"in":"pull","args":{"stream":"v1"},"out":[{"o":"empty","v":{"stream":"v1"}}]}
 {"in":"lost","args":{"first":2,"last":3},"out":[{"o":"unsupported","v":"lost"}]}
-{"in":"drop","args":{"id":"r2"},"out":[]}
-{"in":"tick","args":{"ms":60000},"out":[{"o":"request","v":{"id":"r3","kind":"subscription","purpose":"standard"}}]}
+{"in":"drop","args":{"id":"r2"},"out":[{"o":"request","v":{"id":"r3","kind":"subscription","purpose":"standard"}}]}
+{"in":"tick","args":{"ms":60000},"out":[]}

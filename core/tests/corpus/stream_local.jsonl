@@ -14,4 +14,4 @@
 {"in":"open_entity","args":{"as":"e1","fetch":"never","row":"r1"},"out":[]}
 {"in":"pull","args":{"stream":"e1"},"out":[{"o":"snapshot","v":{"phase":"loaded","revision":4,"rows":["r1"],"stream":"e1"}}]}
 {"in":"cancel","args":{"target":"s1"},"out":[]}
-{"in":"pull","args":{"stream":"s1"},"out":[{"o":"empty","v":{"stream":"s1"}}]}
+{"in":"pull","args":{"stream":"s1"},"out":[{"o":"ended","v":{"cause":"cancelled","stream":"s1"}}]}

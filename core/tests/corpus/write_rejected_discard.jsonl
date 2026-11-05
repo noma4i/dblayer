@@ -9,4 +9,4 @@
 {"in":"outcome","args":{"receipt":"r1"},"out":[]}
 {"in":"error","args":{"id":"r2","kind":"permanent"},"out":[{"o":"outcome","v":{"receipt":"r1","result":"rejected"}}]}
 {"in":"has","args":{"row":"r1"},"out":[{"o":"row","v":{"present":false,"row":"r1"}}]}
-{"in":"discard","args":{"row":"r1"},"out":[{"o":"discarded","v":{"row":"r1"}}]}
+{"in":"discard","args":{"row":"r1"},"out":[{"o":"error","v":{"kind":"not_found"}}]}

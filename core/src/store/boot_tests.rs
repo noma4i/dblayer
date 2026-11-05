@@ -365,7 +365,7 @@ fn store_boot_layout_missing_column() {
 }
 
 #[test]
-fn store_boot_layout_incompatible_row() {
+fn store_boot_layout_mismatch_row() {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("a.sqlite");
     plant_old_layout(
