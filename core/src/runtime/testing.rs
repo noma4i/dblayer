@@ -1,6 +1,10 @@
-use std::sync::mpsc;
+use std::sync::{mpsc, Arc, Mutex, PoisonError};
 
 use super::*;
+
+pub const CLOSED: u32 = u32::MAX;
+
+pub type Pending = Arc<Mutex<Vec<(Back<Toy>, Stamp, ToyInput)>>>;
 
 pub struct Toy;
 
@@ -11,6 +15,9 @@ pub enum ToyInput {
     Seal,
     WorkRequest(u32),
     Result(u32),
+    Note(u32),
+    WorkAsync(u32),
+    Release,
     Resolve(OutcomeId, u32),
     ScheduleAt(u64, Time, u32),
     CancelSchedule(u64),
@@ -23,6 +30,8 @@ pub enum ToyInput {
 #[derive(Debug)]
 pub enum ToyEffect {
     Work(u32),
+    Park(u32),
+    ReleaseParked,
     Settle(OutcomeId, u32),
     EndOutcomes(Epoch, Cause),
     CloseOutcomes,
@@ -32,6 +41,8 @@ pub enum ToyEffect {
 #[derive(Clone, Default)]
 pub struct ToyState {
     pub on_go: Option<(Address<Toy>, ToyInput)>,
+    pub on_tick: Option<(Address<Toy>, ToyInput)>,
+    pub pump: Option<Address<Toy>>,
     pub total: u32,
     pub lost: u32,
     pub sealed: bool,
@@ -43,6 +54,8 @@ pub struct ToyState {
 }
 
 impl Owner for Toy {
+    const EPOCHED: bool = true;
+
     type State = ToyState;
     type Input = ToyInput;
     type Effect = ToyEffect;
@@ -65,8 +78,18 @@ impl Owner for Toy {
             ToyInput::WorkRequest(n) => vec![Effect::Run(ToyEffect::Work(n))],
             ToyInput::Result(n) => {
                 state.results.push(n);
+                vec![Effect::Run(ToyEffect::Report(n))]
+            }
+            ToyInput::Note(n) => {
+                state.results.push(n);
                 vec![]
             }
+            ToyInput::WorkAsync(n) => {
+                let mut effects = vec![Effect::Run(ToyEffect::Park(n))];
+                effects.extend(state.pump.map(|pump| Effect::Send(Outbound::new(pump, ToyInput::Release))));
+                effects
+            }
+            ToyInput::Release => vec![Effect::Run(ToyEffect::ReleaseParked)],
             ToyInput::Resolve(id, value) => vec![Effect::Run(ToyEffect::Settle(id, value))],
             ToyInput::ScheduleAt(id, at, n) => vec![Effect::Schedule { id: ScheduleId(id), at, input: ToyInput::Fire(n) }],
             ToyInput::CancelSchedule(id) => vec![Effect::Cancel(ScheduleId(id))],
@@ -76,7 +99,7 @@ impl Owner for Toy {
             }
             ToyInput::Tick(now) => {
                 state.ticks.push(now);
-                vec![]
+                state.on_tick.clone().map(|(to, message)| vec![Effect::Send(Outbound::new(to, message))]).unwrap_or_default()
             }
             ToyInput::EpochEnded(epoch, cause) => {
                 state.ended.push((epoch, cause));
@@ -100,12 +123,26 @@ impl Owner for Toy {
 pub struct ToyRunner {
     pub outcomes: Option<Outcomes<u32>>,
     pub report: Option<mpsc::Sender<u32>>,
+    pub pending: Option<Pending>,
 }
 
 impl EffectRunner<Toy> for ToyRunner {
-    fn run(&mut self, _stamp: Stamp, effect: ToyEffect, replies: &mut Vec<ToyInput>) {
+    fn run(&mut self, stamp: Stamp, effect: ToyEffect, back: &Back<Toy>) {
         match effect {
-            ToyEffect::Work(n) => replies.push(ToyInput::Result(n * 2)),
+            ToyEffect::Work(n) => back.send(stamp, ToyInput::Result(n * 2)),
+            ToyEffect::Park(n) => {
+                if let Some(pending) = &self.pending {
+                    pending.lock().unwrap_or_else(PoisonError::into_inner).push((back.clone(), stamp, ToyInput::Result(n * 2)));
+                }
+            }
+            ToyEffect::ReleaseParked => {
+                if let Some(pending) = &self.pending {
+                    let parked = std::mem::take(&mut *pending.lock().unwrap_or_else(PoisonError::into_inner));
+                    for (return_to, parked_stamp, input) in parked {
+                        return_to.send(parked_stamp, input);
+                    }
+                }
+            }
             ToyEffect::Settle(id, value) => {
                 if let Some(outcomes) = &self.outcomes {
                     outcomes.settle(id, value);
@@ -115,10 +152,16 @@ impl EffectRunner<Toy> for ToyRunner {
                 if let Some(outcomes) = &self.outcomes {
                     outcomes.end_epoch(epoch, cause);
                 }
+                if let Some(report) = &self.report {
+                    let _ = report.send(epoch as u32);
+                }
             }
             ToyEffect::CloseOutcomes => {
                 if let Some(outcomes) = &self.outcomes {
                     outcomes.close();
+                }
+                if let Some(report) = &self.report {
+                    let _ = report.send(CLOSED);
                 }
             }
             ToyEffect::Report(n) => {
@@ -128,6 +171,50 @@ impl EffectRunner<Toy> for ToyRunner {
             }
         }
     }
+}
+
+pub struct Hub;
+
+#[derive(Debug)]
+pub enum HubInput {
+    Begin(Epoch),
+    Finish(Epoch, Cause),
+    Shutdown,
+    Probe(Address<Toy>),
+    Idle,
+}
+
+#[derive(Debug)]
+pub enum HubEffect {}
+
+impl Owner for Hub {
+    const EPOCHED: bool = false;
+
+    type State = ();
+    type Input = HubInput;
+    type Effect = HubEffect;
+
+    fn step(_state: &mut (), input: HubInput) -> Effects<Hub> {
+        match input {
+            HubInput::Begin(epoch) => vec![Effect::Broadcast(Control::EpochStarted(epoch))],
+            HubInput::Finish(epoch, cause) => vec![Effect::Broadcast(Control::EpochEnded(epoch, cause))],
+            HubInput::Shutdown => vec![Effect::Broadcast(Control::Closing)],
+            HubInput::Probe(to) => vec![Effect::Send(Outbound::new(to, ToyInput::Deposit(1)))],
+            HubInput::Idle => vec![],
+        }
+    }
+
+    fn tick(_now: Time) -> HubInput { HubInput::Idle }
+
+    fn epoch_ended(_epoch: Epoch, _cause: Cause) -> HubInput { HubInput::Idle }
+
+    fn closing() -> HubInput { HubInput::Idle }
+}
+
+pub struct HubRunner;
+
+impl EffectRunner<Hub> for HubRunner {
+    fn run(&mut self, _stamp: Stamp, effect: HubEffect, _back: &Back<Hub>) { match effect {} }
 }
 
 pub fn race(seed: u64) -> (DetScheduler, Address<Toy>) {

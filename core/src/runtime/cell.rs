@@ -1,10 +1,10 @@
 use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::fmt::Debug;
 
-use super::owner::{Cause, Effect, Epoch, Message, Outbound, Owner, ScheduleId, Stamp, Time};
+use super::owner::{Back, Cause, Control, Effect, Epoch, Message, Outbound, Owner, ScheduleId, Stamp, Time};
 
 pub trait EffectRunner<O: Owner>: Send + 'static {
-    fn run(&mut self, stamp: Stamp, effect: O::Effect, replies: &mut Vec<O::Input>);
+    fn run(&mut self, stamp: Stamp, effect: O::Effect, back: &Back<O>);
 }
 
 enum Item<O: Owner> {
@@ -24,6 +24,7 @@ pub(crate) struct Ran {
     pub input: String,
     pub effects: String,
     pub sends: Vec<Outbound>,
+    pub broadcasts: Vec<Control>,
 }
 
 pub(crate) struct Cell<O: Owner> {
@@ -82,7 +83,7 @@ impl<O: Owner> Cell<O> {
         true
     }
 
-    pub fn run_one(&mut self, runner: &mut dyn EffectRunner<O>, trace: bool) -> Option<Ran> {
+    pub fn run_one(&mut self, runner: &mut dyn EffectRunner<O>, back: &Back<O>, trace: bool) -> Option<Ran> {
         let (stamp, input, ended) = match self.queue.pop_front()? {
             Item::Input(stamp, input) => {
                 if !self.admits(stamp) {
@@ -101,32 +102,40 @@ impl<O: Owner> Cell<O> {
         let input_label = label(trace, &input);
         let effects = O::step(&mut self.state, input);
         let effects_label = label(trace, &effects);
+        let out = self.owner_stamp();
         let mut sends = Vec::new();
-        let mut replies = Vec::new();
+        let mut broadcasts = Vec::new();
         for effect in effects {
             match effect {
-                Effect::Schedule { id, at, input } => self.schedule_input(id, at, stamp, input),
+                Effect::Schedule { id, at, input } => self.schedule_input(id, at, out.unwrap_or(Stamp::Control), input),
                 Effect::Cancel(id) => self.cancel(id),
                 Effect::Send(mut outbound) => {
-                    outbound.stamp = stamp;
-                    sends.push(outbound);
+                    if let Some(owner_stamp) = out {
+                        outbound.stamp = owner_stamp;
+                        sends.push(outbound);
+                    }
                 }
-                Effect::Run(effect) => runner.run(stamp, effect, &mut replies),
+                Effect::Broadcast(control) => {
+                    assert!(!O::EPOCHED, "only an owner outside epochs broadcasts control inputs");
+                    broadcasts.push(control);
+                }
+                Effect::Run(effect) => runner.run(out.unwrap_or(Stamp::Control), effect, back),
             }
-        }
-        for reply in replies {
-            self.queue.push_back(Item::Input(stamp, reply));
         }
         if ended {
             self.epoch = None;
             self.purge_schedule(|stamp| stamp != Stamp::Control);
         }
-        Some(Ran { stamp, dropped: false, input: input_label, effects: effects_label, sends })
+        Some(Ran { stamp, dropped: false, input: input_label, effects: effects_label, sends, broadcasts })
     }
 
     fn drop_input(&mut self, stamp: Stamp, input: String) -> Ran {
         self.dropped += 1;
-        Ran { stamp, dropped: true, input, effects: String::new(), sends: Vec::new() }
+        Ran { stamp, dropped: true, input, effects: String::new(), sends: Vec::new(), broadcasts: Vec::new() }
+    }
+
+    fn owner_stamp(&self) -> Option<Stamp> {
+        if O::EPOCHED { self.epoch.map(Stamp::Epoch) } else { Some(Stamp::Control) }
     }
 
     fn admits(&self, stamp: Stamp) -> bool {

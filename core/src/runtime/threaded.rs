@@ -5,7 +5,7 @@ use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
 use super::cell::{Cell, EffectRunner};
-use super::owner::{Address, Cause, Epoch, Message, Owner, Stamp, Time};
+use super::owner::{Address, Back, Cause, Control, Epoch, Message, Owner, Stamp, Time};
 use crate::task::{spawn_thread, Carry};
 
 enum Command {
@@ -33,6 +33,18 @@ fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> { mutex.lock().unwrap_or_else(
 
 struct Router {
     boxes: Vec<Arc<Mailbox>>,
+}
+
+impl Router {
+    fn each(&self, command: impl Fn() -> Command) { self.boxes.iter().for_each(|mailbox| mailbox.push(command())); }
+
+    fn broadcast(&self, control: Control) {
+        match control {
+            Control::EpochStarted(epoch) => self.each(|| Command::StartEpoch(epoch)),
+            Control::EpochEnded(epoch, cause) => self.each(|| Command::EndEpoch(epoch, cause)),
+            Control::Closing => self.each(|| Command::Close),
+        }
+    }
 }
 
 type Body = Box<dyn FnOnce(Arc<Router>, Instant) + Send>;
@@ -75,20 +87,18 @@ impl RuntimeBuilder {
 impl Runtime {
     pub fn send<O: Owner>(&self, to: Address<O>, stamp: Stamp, input: O::Input) { self.router.boxes[to.index].push(Command::Deliver(stamp, Box::new(input))); }
 
-    pub fn start_epoch(&self, epoch: Epoch) { self.each(|| Command::StartEpoch(epoch)); }
+    pub fn start_epoch(&self, epoch: Epoch) { self.router.broadcast(Control::EpochStarted(epoch)); }
 
-    pub fn end_epoch(&self, epoch: Epoch, cause: Cause) { self.each(|| Command::EndEpoch(epoch, cause)); }
+    pub fn end_epoch(&self, epoch: Epoch, cause: Cause) { self.router.broadcast(Control::EpochEnded(epoch, cause)); }
 
-    pub fn close(&self) { self.each(|| Command::Close); }
+    pub fn close(&self) { self.router.broadcast(Control::Closing); }
 
     pub fn wakeups<O: Owner>(&self, address: Address<O>) -> u64 { self.router.boxes[address.index].wakeups.load(Ordering::SeqCst) }
-
-    fn each(&self, command: impl Fn() -> Command) { self.router.boxes.iter().for_each(|mailbox| mailbox.push(command())); }
 }
 
 impl Drop for Runtime {
     fn drop(&mut self) {
-        self.each(|| Command::Stop);
+        self.router.each(|| Command::Stop);
         for join in self.joins.drain(..) {
             let _ = join.join();
         }
@@ -98,6 +108,10 @@ impl Drop for Runtime {
 fn elapsed(origin: Instant) -> Time { Time(origin.elapsed().as_millis() as u64) }
 
 fn run_owner<O: Owner>(mut cell: Cell<O>, mut runner: Box<dyn EffectRunner<O>>, mailbox: Arc<Mailbox>, router: Arc<Router>, origin: Instant) {
+    let back = {
+        let own = mailbox.clone();
+        Back::<O>::new(move |stamp, input| own.push(Command::Deliver(stamp, Box::new(input))))
+    };
     loop {
         let commands = {
             let mut queue = lock(&mailbox.commands);
@@ -126,9 +140,12 @@ fn run_owner<O: Owner>(mut cell: Cell<O>, mut runner: Box<dyn EffectRunner<O>>, 
             }
         }
         cell.tick(elapsed(origin));
-        while let Some(ran) = cell.run_one(runner.as_mut(), false) {
+        while let Some(ran) = cell.run_one(runner.as_mut(), &back, false) {
             for outbound in ran.sends {
                 router.boxes[outbound.to].push(Command::Deliver(outbound.stamp, outbound.payload));
+            }
+            for control in ran.broadcasts {
+                router.broadcast(control);
             }
         }
     }

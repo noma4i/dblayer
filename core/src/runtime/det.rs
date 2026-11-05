@@ -1,7 +1,9 @@
 use std::any::Any;
+use std::collections::VecDeque;
+use std::sync::{Arc, Mutex, PoisonError};
 
 use super::cell::{Cell, EffectRunner, Ran};
-use super::owner::{Address, Cause, Epoch, Message, Owner, Stamp, Time};
+use super::owner::{Address, Back, Cause, Control, Epoch, Message, Owner, Stamp, Time};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TraceEntry {
@@ -16,6 +18,7 @@ trait ErasedSlot {
     fn name(&self) -> &'static str;
     fn ready(&self) -> bool;
     fn run_one(&mut self) -> Option<Ran>;
+    fn absorb(&mut self);
     fn deliver(&mut self, stamp: Stamp, payload: Box<dyn Message>);
     fn start_epoch(&mut self, epoch: Epoch);
     fn end_epoch(&mut self, epoch: Epoch, cause: Cause);
@@ -24,10 +27,14 @@ trait ErasedSlot {
     fn as_any(&self) -> &dyn Any;
 }
 
+type Inbox<O> = Arc<Mutex<VecDeque<(Stamp, <O as Owner>::Input)>>>;
+
 struct Slot<O: Owner> {
     name: &'static str,
     cell: Cell<O>,
     runner: Box<dyn EffectRunner<O>>,
+    back: Back<O>,
+    inbox: Inbox<O>,
 }
 
 impl<O: Owner> ErasedSlot for Slot<O> {
@@ -35,7 +42,14 @@ impl<O: Owner> ErasedSlot for Slot<O> {
 
     fn ready(&self) -> bool { self.cell.ready() }
 
-    fn run_one(&mut self) -> Option<Ran> { self.cell.run_one(self.runner.as_mut(), true) }
+    fn run_one(&mut self) -> Option<Ran> { self.cell.run_one(self.runner.as_mut(), &self.back, true) }
+
+    fn absorb(&mut self) {
+        let arrived: Vec<_> = self.inbox.lock().unwrap_or_else(PoisonError::into_inner).drain(..).collect();
+        for (stamp, input) in arrived {
+            self.cell.push(stamp, input);
+        }
+    }
 
     fn deliver(&mut self, stamp: Stamp, payload: Box<dyn Message>) { self.cell.push_message(stamp, payload); }
 
@@ -60,13 +74,26 @@ impl DetScheduler {
     pub fn new(seed: u64) -> Self { Self { slots: Vec::new(), random: seed, trace: Vec::new() } }
 
     pub fn add<O: Owner>(&mut self, name: &'static str, state: O::State, runner: impl EffectRunner<O>) -> Address<O> {
-        self.slots.push(Box::new(Slot::<O> { name, cell: Cell::new(state), runner: Box::new(runner) }));
+        let inbox: Inbox<O> = Arc::default();
+        let arrivals = inbox.clone();
+        let back = Back::new(move |stamp, input| arrivals.lock().unwrap_or_else(PoisonError::into_inner).push_back((stamp, input)));
+        self.slots.push(Box::new(Slot::<O> { name, cell: Cell::new(state), runner: Box::new(runner), back, inbox }));
         Address::new(self.slots.len() - 1)
     }
 
     pub fn send<O: Owner>(&mut self, to: Address<O>, stamp: Stamp, input: O::Input) { self.slots[to.index].deliver(stamp, Box::new(input)); }
 
     pub fn start_epoch(&mut self, epoch: Epoch) { self.slots.iter_mut().for_each(|slot| slot.start_epoch(epoch)); }
+
+    pub fn start_epoch_for<O: Owner>(&mut self, to: Address<O>, epoch: Epoch) { self.slots[to.index].start_epoch(epoch); }
+
+    pub fn broadcast(&mut self, control: Control) {
+        match control {
+            Control::EpochStarted(epoch) => self.start_epoch(epoch),
+            Control::EpochEnded(epoch, cause) => self.end_epoch(epoch, cause),
+            Control::Closing => self.close(),
+        }
+    }
 
     pub fn end_epoch(&mut self, epoch: Epoch, cause: Cause) { self.slots.iter_mut().for_each(|slot| slot.end_epoch(epoch, cause)); }
 
@@ -81,8 +108,12 @@ impl DetScheduler {
         let Some(&index) = ready.get(choice) else { return false };
         let Some(ran) = self.slots[index].run_one() else { return false };
         self.trace.push(TraceEntry { owner: self.slots[index].name(), stamp: ran.stamp, input: ran.input, effects: ran.effects, dropped: ran.dropped });
+        self.slots.iter_mut().for_each(|slot| slot.absorb());
         for outbound in ran.sends {
             self.slots[outbound.to].deliver(outbound.stamp, outbound.payload);
+        }
+        for control in ran.broadcasts {
+            self.broadcast(control);
         }
         true
     }

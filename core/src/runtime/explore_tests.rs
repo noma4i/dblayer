@@ -1,3 +1,6 @@
+use std::cell::RefCell;
+use std::collections::HashSet;
+
 use super::testing::*;
 use super::*;
 
@@ -31,3 +34,33 @@ fn explorer_stops_at_the_trace_limit() {
     let report = explore(|| race(0).0, Limits { depth: 4, max_traces: 2 }, |_| Ok(()));
     assert_eq!(report.traces, 2);
 }
+
+fn async_reply() -> (DetScheduler, Address<Toy>) {
+    let pending = Pending::default();
+    let runner = || ToyRunner { pending: Some(pending.clone()), ..ToyRunner::default() };
+    let mut det = DetScheduler::new(0);
+    let pump = det.add::<Toy>("pump", ToyState::default(), runner());
+    let ledger = det.add::<Toy>("ledger", ToyState { pump: Some(pump), ..ToyState::default() }, runner());
+    let sender = det.add::<Toy>("sender", ToyState { on_go: Some((ledger, ToyInput::Note(9))), ..ToyState::default() }, ToyRunner::default());
+    det.start_epoch(1);
+    det.send(ledger, Stamp::Epoch(1), ToyInput::WorkAsync(3));
+    det.send(sender, Stamp::Epoch(1), ToyInput::Go);
+    (det, ledger)
+}
+
+#[test]
+fn explorer_finds_both_orders_of_an_asynchronous_effect_result_and_another_input() {
+    let ledger = async_reply().1;
+    let seen = RefCell::new(HashSet::new());
+    let report = explore(async_reply_scheduler, Limits { depth: 8, max_traces: 1000 }, |det| {
+        let results = &det.state(ledger).results;
+        if results.len() == 2 {
+            seen.borrow_mut().insert(results.clone());
+        }
+        Ok(())
+    });
+    assert!(report.violations.is_empty());
+    assert_eq!(*seen.borrow(), HashSet::from([vec![6, 9], vec![9, 6]]));
+}
+
+fn async_reply_scheduler() -> DetScheduler { async_reply().0 }

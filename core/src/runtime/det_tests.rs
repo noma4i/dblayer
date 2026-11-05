@@ -156,7 +156,7 @@ fn run_until_quiet_reports_the_step_limit() {
 fn every_open_id_gets_one_terminal_outcome_on_epoch_end_and_close() {
     let outcomes = Outcomes::<u32>::new();
     let mut det = DetScheduler::new(1);
-    let toy = det.add::<Toy>("toy", ToyState::default(), ToyRunner { outcomes: Some(outcomes.clone()), report: None });
+    let toy = det.add::<Toy>("toy", ToyState::default(), ToyRunner { outcomes: Some(outcomes.clone()), ..ToyRunner::default() });
     det.start_epoch(1);
     let mut first = outcomes.register(1);
     let mut second = outcomes.register(1);
@@ -175,4 +175,53 @@ fn every_open_id_gets_one_terminal_outcome_on_epoch_end_and_close() {
     assert_eq!(fourth.try_take(), Some(Outcome::Closing));
     assert_eq!(fourth.try_take(), None);
     assert_eq!(outcomes.open_count(), 0);
+}
+
+#[test]
+fn message_from_a_tick_carries_the_owner_epoch_and_a_receiver_of_another_epoch_drops_it() {
+    for (receiver_epoch, total, dropped) in [(1, 5, 0), (2, 0, 1)] {
+        let mut det = DetScheduler::new(1);
+        let receiver = det.add::<Toy>("receiver", ToyState::default(), ToyRunner::default());
+        let ticker = det.add::<Toy>("ticker", ToyState { on_tick: Some((receiver, ToyInput::Deposit(5))), ..ToyState::default() }, ToyRunner::default());
+        det.start_epoch(1);
+        det.start_epoch_for(receiver, receiver_epoch);
+        det.send(ticker, Stamp::Epoch(1), ToyInput::ScheduleAt(1, Time(10), 1));
+        det.run_until_quiet(10).unwrap();
+        det.tick(Time(10));
+        det.run_until_quiet(10).unwrap();
+        assert_eq!(det.state(ticker).ticks, vec![Time(10)]);
+        assert_eq!(det.state(receiver).total, total);
+        assert_eq!(det.dropped(receiver), dropped);
+    }
+}
+
+#[test]
+fn outbound_without_an_epoch_is_control_only_for_an_owner_type_without_epochs() {
+    let mut det = DetScheduler::new(1);
+    let receiver = det.add::<Toy>("receiver", ToyState::default(), ToyRunner::default());
+    let relay = det.add::<Toy>("relay", ToyState { on_go: Some((receiver, ToyInput::Deposit(2))), ..ToyState::default() }, ToyRunner::default());
+    let hub = det.add::<Hub>("hub", (), HubRunner);
+    det.start_epoch_for(receiver, 4);
+    det.send(relay, Stamp::Control, ToyInput::Go);
+    det.run_until_quiet(10).unwrap();
+    assert_eq!((det.state(receiver).total, det.dropped(receiver)), (0, 0));
+    det.send(hub, Stamp::Control, HubInput::Probe(receiver));
+    det.run_until_quiet(10).unwrap();
+    assert_eq!(det.state(receiver).total, 1);
+}
+
+#[test]
+fn lifecycle_broadcast_reaches_every_owner_on_the_scheduler() {
+    let mut det = DetScheduler::new(7);
+    let hub = det.add::<Hub>("hub", (), HubRunner);
+    let first = det.add::<Toy>("first", ToyState::default(), ToyRunner::default());
+    let second = det.add::<Toy>("second", ToyState::default(), ToyRunner::default());
+    det.send(hub, Stamp::Control, HubInput::Begin(1));
+    det.send(hub, Stamp::Control, HubInput::Finish(1, Cause::SessionReset));
+    det.send(hub, Stamp::Control, HubInput::Shutdown);
+    det.run_until_quiet(30).unwrap();
+    for toy in [first, second] {
+        assert_eq!(det.state(toy).ended, vec![(1, Cause::SessionReset)]);
+        assert!(det.state(toy).closed);
+    }
 }

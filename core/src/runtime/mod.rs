@@ -9,7 +9,7 @@ pub use cell::EffectRunner;
 pub use det::{DetScheduler, TraceEntry};
 pub use explore::{explore, Limits, Report, Violation};
 pub use outcomes::{Outcome, OutcomeId, Outcomes, Waiter};
-pub use owner::{Address, Cause, Effect, Effects, Epoch, Message, Outbound, Owner, ScheduleId, Stamp, Time};
+pub use owner::{Address, Back, Cause, Control, Effect, Effects, Epoch, Message, Outbound, Owner, ScheduleId, Stamp, Time};
 pub use threaded::{Runtime, RuntimeBuilder};
 
 #[cfg(test)]

@@ -1,6 +1,7 @@
 use std::any::Any;
 use std::fmt::{self, Debug};
 use std::marker::PhantomData;
+use std::sync::Arc;
 
 pub type Epoch = u64;
 
@@ -34,7 +35,15 @@ impl<T: Any + Send + Debug> Message for T {
 
 pub type Effects<O> = Vec<Effect<O>>;
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Control {
+    EpochStarted(Epoch),
+    EpochEnded(Epoch, Cause),
+    Closing,
+}
+
 pub trait Owner: Sized + 'static {
+    const EPOCHED: bool;
     type State: Send + 'static;
     type Input: Message;
     type Effect: Debug + Send + 'static;
@@ -49,6 +58,7 @@ pub enum Effect<O: Owner> {
     Schedule { id: ScheduleId, at: Time, input: O::Input },
     Cancel(ScheduleId),
     Send(Outbound),
+    Broadcast(Control),
     Run(O::Effect),
 }
 
@@ -58,6 +68,7 @@ impl<O: Owner> Debug for Effect<O> {
             Self::Schedule { id, at, input } => f.debug_struct("Schedule").field("id", id).field("at", at).field("input", input).finish(),
             Self::Cancel(id) => f.debug_tuple("Cancel").field(id).finish(),
             Self::Send(outbound) => Debug::fmt(outbound, f),
+            Self::Broadcast(control) => f.debug_tuple("Broadcast").field(control).finish(),
             Self::Run(effect) => f.debug_tuple("Run").field(effect).finish(),
         }
     }
@@ -96,4 +107,18 @@ impl Outbound {
 
 impl Debug for Outbound {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result { f.debug_struct("Send").field("to", &self.to).field("input", &self.payload).finish() }
+}
+
+pub struct Back<O: Owner> {
+    deliver: Arc<dyn Fn(Stamp, O::Input) + Send + Sync>,
+}
+
+impl<O: Owner> Back<O> {
+    pub(crate) fn new(deliver: impl Fn(Stamp, O::Input) + Send + Sync + 'static) -> Self { Self { deliver: Arc::new(deliver) } }
+
+    pub fn send(&self, stamp: Stamp, input: O::Input) { (self.deliver)(stamp, input); }
+}
+
+impl<O: Owner> Clone for Back<O> {
+    fn clone(&self) -> Self { Self { deliver: self.deliver.clone() } }
 }
