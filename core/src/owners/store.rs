@@ -9,24 +9,90 @@ use crate::runtime::{Cause, Effect, Effects, Epoch, StateOwner, Time};
 
 use super::lifecycle::Identity;
 
-/// One write of a batch, by value (R3), typed by the kind of data (`store.md`).
+/// An optimistic row of an operation: the values the caller sees before the server answers.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct EffectRow {
+    pub model: String,
+    pub row_id: String,
+    /// The values as JSON text.
+    pub values: String,
+}
+
+/// Membership of a row in a list with the revision of the operation (`outbox.md`, membership by revision).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct EffectMember {
+    pub list: String,
+    pub row_id: String,
+    pub revision: i64,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct EffectTombstone {
+    pub model: String,
+    pub row_id: String,
+}
+
+/// What an operation changes before the server answers; `RollBack` takes it back.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct IntentEffects {
+    pub rows: Vec<EffectRow>,
+    pub members: Vec<EffectMember>,
+    pub tombstones: Vec<EffectTombstone>,
+}
+
+/// A row of the server answer or of a local write.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RowValue {
+    pub row_id: String,
+    /// The values as JSON text.
+    pub values: String,
+}
+
+/// The columns of a row of `sync_upload`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct UploadRow {
+    pub key: String,
+    pub seq: u64,
+    pub source: String,
+    pub parts: u32,
+    pub batch: bool,
+    pub upload_id: Option<String>,
+    pub confirmed_parts: u32,
+    pub completed: bool,
+    pub failed: Option<String>,
+    pub created_at: u64,
+    pub inline: bool,
+    pub size: u64,
+    pub sha256: String,
+    /// The final mutation: `path` and `body` of the request.
+    pub path: String,
+    pub body: String,
+}
+
+/// One write of a batch, by value (R3). The writer executor turns it into SQL (`store.md`, the batch).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum StoreOp {
-    /// Rows of the cache of a server model, as JSON objects.
-    Rows { model: String, rows: Vec<String> },
-    RemoveRows { model: String, ids: Vec<String> },
-    /// An operation of the queue, as the JSON of its record.
-    Intent { op: String },
-    RemoveIntent { op_id: i64 },
-    /// A row of `sync_upload`, as JSON.
-    Upload { row: String },
-    RemoveUpload { key: String },
     /// `encrypted_pending` = this row. `credential_digest` is the full digest of the credential, `response_key` seals the answer.
     Pending { pending: PendingCall, credential_digest: String, response_key: String },
     /// Remove the row `encrypted_pending`.
     RemovePending,
     /// `encrypted_session`: `digest = None` keeps the stored digest, `sequence = None` keeps the stored sequence.
     Session { digest: Option<String>, sequence: Option<u64> },
+    /// The intent of an operation with its optimistic `effects`.
+    Intent { op_id: u64, model: String, row_id: String, action: String, payload: String, effects: IntentEffects },
+    /// Take back the `effects` of the operation.
+    RollBack { op_id: u64 },
+    /// The operation leaves the queue (its answer landed or it ended).
+    RemoveIntent { op_id: u64 },
+    /// Set or clear the error shown on the row of the operation (`on_reject: keep`).
+    MarkError { op_id: u64, error: Option<String> },
+    /// Rows of the server answer of `model`.
+    Rows { model: String, rows: Vec<RowValue> },
+    /// Rows of a local model (`set_local`, `set_ephemeral`, `attach`, `detach`).
+    LocalRows { model: String, rows: Vec<RowValue> },
+    RemoveRows { model: String, ids: Vec<String> },
+    Upload { row: UploadRow },
+    RemoveUpload { key: String },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

@@ -4,19 +4,15 @@
 use std::collections::BTreeMap;
 
 use super::transfer::{TransferInput, Transfers};
-use crate::owners::contract::{BatchAuthor, BatchId, Committed, Drained, EpochEnded, ModelsReset, Online, RejectReason, Rejected, ReplyId, RequestId};
-use crate::owners::session::{AuthorId, SessionCalls, SessionInput};
-use crate::owners::store::{StoreBatch, StoreInput, StoreWriter};
+use crate::owners::contract::{BatchAuthor, BatchId, Committed, Drained, EpochEnded, EpochStarted, ModelsReset, Online, RejectReason, Rejected, ReplyId, RequestId};
+use crate::owners::session::{SessionCalls, SessionInput, OUTBOX_AUTHOR};
+use crate::owners::store::{IntentEffects, RowValue, StoreBatch, StoreInput, StoreOp, StoreWriter};
 use crate::pacing::RetryPolicy;
 use crate::runtime::{Address, Cause, Effect, Effects, Epoch, Outbound, ScheduleId, StateOwner, Time};
 
-/// The author id of the `Mutate` inputs of Outbox.
-pub const MUTATE_AUTHOR: AuthorId = 1;
 /// `purpose` of a `Mutate`: a call of the queue, and the final mutation of a transfer.
 const PURPOSE_STANDARD: u8 = 0;
 const PURPOSE_TRANSFER: u8 = 1;
-/// Table of the rows that mark what a batch of Outbox is (`CommitKind::tag`).
-pub const MARK_TABLE: &str = "outbox";
 /// Timers of `Expire` use ids above the ids of the retry timers (`ScheduleId(op_id)`).
 const EXPIRE_TIMER: u64 = 1 << 32;
 
@@ -25,7 +21,8 @@ const EXPIRE_TIMER: u64 = 1 << 32;
 pub struct OutboxPeers {
     pub store: Address<StoreWriter>,
     pub session: Address<SessionCalls>,
-    pub transfer: Address<Transfers>,
+    /// `None` until the owner Transfer is installed: no operation of the origin `Transfer` exists then.
+    pub transfer: Option<Address<Transfers>>,
 }
 
 pub type OpId = u64;
@@ -53,9 +50,8 @@ pub struct NewOp {
     /// The request of the mutation.
     pub path: String,
     pub body: String,
-    /// The rows of the intent with the optimistic changes, and the rows that undo them.
-    pub intent_rows: Vec<(String, String)>,
-    pub rollback_rows: Vec<(String, String)>,
+    /// The optimistic changes of the operation. `RollBack` takes them back by `op_id`.
+    pub effects: IntentEffects,
 }
 
 /// An intent kept in the base (`encrypted_pending` pair when a request left before the close).
@@ -114,19 +110,21 @@ pub enum OutboxInput {
     Restored(Vec<StoredOp>),
     Committed(Committed),
     Rejected(Rejected),
-    Response { op_id: OpId, rows: Vec<(String, String)> },
+    Response { op_id: OpId, rows: Vec<(String, Vec<RowValue>)> },
     TransportError { op_id: OpId, temporary: bool },
     Dropped { op_id: OpId },
     Retry { model: String, row_id: String, reply: ReplyId },
     Discard { model: String, row_id: String, reply: ReplyId },
     Outcome { receipt: Receipt, reply: ReplyId },
     Online(Online),
+    /// The generation of every model at the start of the epoch.
+    EpochStarted(EpochStarted),
     ModelsReset(ModelsReset),
     EpochEnded(EpochEnded),
     Closing,
     /// `Tick(op_id)`: the retry timer of an operation (Backoff, landing retry).
     RetryDue { op_id: OpId },
-    LocalWrite { model: String, epoch: Epoch, write: LocalWriteKind, row: String, reply: ReplyId, now: Time },
+    LocalWrite { model: String, epoch: Epoch, write: LocalWriteKind, row: String, values: String, reply: ReplyId, now: Time },
     /// `Tick(expire)` of an ephemeral row, scheduled by the owner when the write commits: `due` is the expiry it was scheduled for.
     Expire { row: String, due: Time },
     Tick(Time),
@@ -141,21 +139,6 @@ pub enum CommitKind {
     ClearMark,
     LocalWrite,
     RemoveRow,
-}
-
-impl CommitKind {
-    /// The value of the row that marks a batch of this kind (`MARK_TABLE`).
-    pub fn tag(self) -> &'static str {
-        match self {
-            Self::Intent => "intent",
-            Self::Land => "land",
-            Self::Rollback => "rollback",
-            Self::ErrorMark => "error_mark",
-            Self::ClearMark => "clear_mark",
-            Self::LocalWrite => "local_write",
-            Self::RemoveRow => "remove_row",
-        }
-    }
 }
 
 /// What the executor does. Store batches, `Mutate`, `MutationOutcome` and timers are `Effect::Send` and `Effect::Schedule` of the owner.
@@ -196,7 +179,7 @@ pub struct QueuedOperation {
     pub sequence: u64,
     pub sends: u32,
     /// The rows of the server answer, kept for every attempt to land them.
-    pub landing: Vec<(String, String)>,
+    pub landing: Vec<(String, Vec<RowValue>)>,
     pub outcome: Option<OutboxOutcome>,
 }
 
@@ -204,7 +187,7 @@ pub struct QueuedOperation {
 #[derive(Clone, Debug)]
 enum Batch {
     Operation { op_id: OpId, kind: CommitKind },
-    Write { reply: ReplyId, row: String, model: String, expire: Option<(Time, u64)> },
+    Write { reply: ReplyId, row: String, values: String, model: String, expire: Option<(Time, u64)> },
 }
 
 #[derive(Debug)]
@@ -213,6 +196,8 @@ pub struct OutboxState {
     pub epoch: Epoch,
     pub online: bool,
     pub generation: BTreeMap<String, u64>,
+    /// The generation of the models without an entry in `generation`.
+    base_generation: u64,
     pub ops: BTreeMap<OpId, QueuedOperation>,
     pub next_op: OpId,
     pub next_batch: BatchId,
@@ -224,6 +209,8 @@ pub struct OutboxState {
     discard_waiters: Vec<(OpId, ReplyId)>,
     outcome_waiters: Vec<(OpId, ReplyId)>,
     ephemeral: BTreeMap<String, Time>,
+    /// The model of each ephemeral row, for its removal at the end of the term.
+    ephemeral_model: BTreeMap<String, String>,
     drained: bool,
 }
 
@@ -234,6 +221,7 @@ impl OutboxState {
             epoch,
             online: true,
             generation: BTreeMap::new(),
+            base_generation: 0,
             ops: BTreeMap::new(),
             next_op: 1,
             next_batch: 1,
@@ -245,13 +233,17 @@ impl OutboxState {
             discard_waiters: Vec::new(),
             outcome_waiters: Vec::new(),
             ephemeral: BTreeMap::new(),
+            ephemeral_model: BTreeMap::new(),
             drained: false,
         }
     }
 
+    /// A new epoch: a fresh instance. The platform call gate (`lifecycle.md`) keeps calls out of an epoch without an identity.
+    fn begin_epoch(&mut self, epoch: Epoch) { *self = Self::new(epoch, self.peers); }
+
     pub fn stage_of(&self, op_id: OpId) -> Option<Stage> { self.ops.get(&op_id).map(|operation| operation.stage) }
 
-    fn generation_of(&self, model: &str) -> u64 { self.generation.get(model).copied().unwrap_or(0) }
+    fn generation_of(&self, model: &str) -> u64 { self.generation.get(model).copied().unwrap_or(self.base_generation) }
 
     /// No earlier operation of the same row is Submitting, Sending, Landing, RollingBack or Failed.
     fn row_free(&self, op_id: OpId) -> bool {
@@ -277,31 +269,39 @@ impl OutboxState {
         let Some(operation) = self.ops.get_mut(&op_id) else { return };
         operation.sends += 1;
         let purpose = if matches!(operation.op.origin, Origin::Transfer(_)) { PURPOSE_TRANSFER } else { PURPOSE_STANDARD };
-        let mutate = SessionInput::Mutate { author: MUTATE_AUTHOR, owner: Some(crate::transport::RequestOwner::Operation { seq: i64::try_from(op_id).unwrap_or(i64::MAX) }), req_id: operation.request_id, path: operation.op.path.clone(), body: operation.op.body.clone(), purpose };
+        let owner = Some(crate::transport::RequestOwner::Operation { seq: i64::try_from(op_id).unwrap_or(i64::MAX) });
+        let mutate = SessionInput::Mutate { author: OUTBOX_AUTHOR, owner, req_id: operation.request_id, path: operation.op.path.clone(), body: operation.op.body.clone(), purpose };
         fx.push(Effect::Send(Outbound::new(self.peers.session, mutate)));
     }
 
     fn store(&mut self, op_id: OpId, kind: CommitKind, fx: &mut Effects<Outbox>) {
         let Some(operation) = self.ops.get(&op_id) else { return };
         let generation = self.generation_of(&operation.op.model);
-        let mut rows = match kind {
-            CommitKind::Intent => operation.op.intent_rows.clone(),
-            CommitKind::Land => operation.landing.clone(),
-            CommitKind::Rollback => operation.op.rollback_rows.clone(),
-            _ => Vec::new(),
+        let ops = match kind {
+            CommitKind::Intent => vec![StoreOp::Intent {
+                op_id,
+                model: operation.op.model.clone(),
+                row_id: operation.op.row_id.clone(),
+                action: operation.op.action.clone(),
+                payload: operation.op.body.clone(),
+                effects: operation.op.effects.clone(),
+            }],
+            CommitKind::Land => operation.landing.iter().map(|(model, rows)| StoreOp::Rows { model: model.clone(), rows: rows.clone() }).chain([StoreOp::RemoveIntent { op_id }]).collect(),
+            CommitKind::Rollback => vec![StoreOp::RollBack { op_id }, StoreOp::RemoveIntent { op_id }],
+            CommitKind::ErrorMark => vec![StoreOp::MarkError { op_id, error: Some("refused".into()) }],
+            CommitKind::ClearMark => vec![StoreOp::MarkError { op_id, error: None }],
+            CommitKind::LocalWrite | CommitKind::RemoveRow => Vec::new(),
         };
-        rows.insert(0, (MARK_TABLE.into(), op_id.to_string()));
-        rows.insert(0, (MARK_TABLE.into(), kind.tag().into()));
         let intents = u64::from(kind == CommitKind::Intent);
         let basis = BTreeMap::from([(operation.op.model.clone(), generation)]);
         let batch = self.next_batch;
         self.next_batch += 1;
         self.batches.insert(batch, Batch::Operation { op_id, kind });
-        self.commit(batch, basis, rows, intents, fx);
+        self.commit(batch, basis, ops, intents, fx);
     }
 
-    fn commit(&self, id: BatchId, basis: BTreeMap<String, u64>, rows: Vec<(String, String)>, intents: u64, fx: &mut Effects<Outbox>) {
-        let batch = StoreBatch { author: BatchAuthor::Outbox, id, epoch: self.epoch, basis, rows, intents, credential: None, ops: Vec::new() };
+    fn commit(&self, id: BatchId, basis: BTreeMap<String, u64>, ops: Vec<StoreOp>, intents: u64, fx: &mut Effects<Outbox>) {
+        let batch = StoreBatch { author: BatchAuthor::Outbox, id, epoch: self.epoch, basis, rows: Vec::new(), intents, credential: None, ops };
         fx.push(Effect::Send(Outbound::new(self.peers.store, StoreInput::Commit(batch))));
     }
 
@@ -331,8 +331,8 @@ impl OutboxState {
         operation.outcome = Some(outcome.clone());
         let origin = operation.op.origin.clone();
         let (model, row) = (operation.op.model.clone(), operation.op.row_id.clone());
-        if let Origin::Transfer(key) = origin {
-            fx.push(Effect::Send(Outbound::new(self.peers.transfer, TransferInput::MutationOutcome { key, outcome: outcome.clone() })));
+        if let (Origin::Transfer(key), Some(transfer)) = (origin, self.peers.transfer) {
+            fx.push(Effect::Send(Outbound::new(transfer, TransferInput::MutationOutcome { key, outcome: outcome.clone() })));
         }
         self.give_outcome(op_id, &outcome, fx);
         if next_goes {
@@ -398,8 +398,8 @@ impl OutboxState {
                 operation.outcome = Some(OutboxOutcome::Interrupted);
             }
             let origin = self.ops[&op_id].op.origin.clone();
-            if let (Origin::Transfer(key), false) = (origin, closing) {
-                fx.push(Effect::Send(Outbound::new(self.peers.transfer, TransferInput::MutationOutcome { key, outcome: OutboxOutcome::Interrupted })));
+            if let (Origin::Transfer(key), false, Some(transfer)) = (origin, closing, self.peers.transfer) {
+                fx.push(Effect::Send(Outbound::new(transfer, TransferInput::MutationOutcome { key, outcome: OutboxOutcome::Interrupted })));
             }
             self.give_outcome(op_id, &OutboxOutcome::Interrupted, fx);
         }
@@ -414,10 +414,11 @@ impl OutboxState {
     fn committed(&mut self, committed: Committed, fx: &mut Effects<Outbox>) {
         let Some(batch) = self.batches.remove(&committed.batch) else { return };
         match batch {
-            Batch::Write { reply, row, expire, .. } => {
+            Batch::Write { reply, row, model, expire, .. } => {
                 Self::reply(fx, reply, OutboxAnswer::Ok);
                 if let Some((due, after)) = expire {
                     self.ephemeral.insert(row.clone(), due);
+                    self.ephemeral_model.insert(row.clone(), model);
                     let id = ScheduleId(EXPIRE_TIMER + self.next_schedule);
                     self.next_schedule += 1;
                     fx.push(Effect::Schedule { id, after: std::time::Duration::from_millis(after), input: OutboxInput::Expire { row, due } });
@@ -459,14 +460,14 @@ impl OutboxState {
         let stale = matches!(rejected.reason, RejectReason::StaleGeneration { .. });
         let storage = matches!(rejected.reason, RejectReason::Storage(_));
         match batch {
-            Batch::Write { reply, row, model, expire } => {
+            Batch::Write { reply, row, values, model, expire } => {
                 if stale {
                     let generation = self.generation_of(&model);
                     let id = self.next_batch;
                     self.next_batch += 1;
-                    let row_for_retry = row.clone();
-                    self.batches.insert(id, Batch::Write { reply, row, model: model.clone(), expire });
-                    self.commit_write(id, &model, &row_for_retry, generation, fx);
+                    let (row_for_retry, values_for_retry) = (row.clone(), values.clone());
+                    self.batches.insert(id, Batch::Write { reply, row, values, model: model.clone(), expire });
+                    self.commit_write(id, &model, &row_for_retry, &values_for_retry, generation, fx);
                 } else {
                     Self::reply(fx, reply, OutboxAnswer::Err(Fault::Rejected(rejected.reason)));
                 }
@@ -605,7 +606,7 @@ impl OutboxState {
         }
     }
 
-    fn local_write(&mut self, model: String, epoch: Epoch, write: LocalWriteKind, row: String, reply: ReplyId, now: Time, fx: &mut Effects<Outbox>) {
+    fn local_write(&mut self, model: String, epoch: Epoch, write: LocalWriteKind, row: String, values: String, reply: ReplyId, now: Time, fx: &mut Effects<Outbox>) {
         if epoch != self.epoch {
             return Self::reply(fx, reply, OutboxAnswer::Err(Fault::NoSession));
         }
@@ -616,13 +617,13 @@ impl OutboxState {
         let generation = self.generation_of(&model);
         let batch = self.next_batch;
         self.next_batch += 1;
-        self.commit_write(batch, &model, &row, generation, fx);
-        self.batches.insert(batch, Batch::Write { reply, row, model, expire });
+        self.commit_write(batch, &model, &row, &values, generation, fx);
+        self.batches.insert(batch, Batch::Write { reply, row, values, model, expire });
     }
 
-    fn commit_write(&self, batch: BatchId, model: &str, row: &str, generation: u64, fx: &mut Effects<Outbox>) {
-        let rows = vec![(MARK_TABLE.into(), CommitKind::LocalWrite.tag().into()), (model.into(), row.into())];
-        self.commit(batch, BTreeMap::from([(model.into(), generation)]), rows, 0, fx);
+    fn commit_write(&self, batch: BatchId, model: &str, row: &str, values: &str, generation: u64, fx: &mut Effects<Outbox>) {
+        let ops = vec![StoreOp::LocalRows { model: model.into(), rows: vec![RowValue { row_id: row.into(), values: values.into() }] }];
+        self.commit(batch, BTreeMap::from([(model.into(), generation)]), ops, 0, fx);
     }
 
     fn expire(&mut self, row: String, due: Time, fx: &mut Effects<Outbox>) {
@@ -632,8 +633,8 @@ impl OutboxState {
         self.ephemeral.remove(&row);
         let batch = self.next_batch;
         self.next_batch += 1;
-        let rows = vec![(MARK_TABLE.into(), CommitKind::RemoveRow.tag().into()), (MARK_TABLE.into(), row)];
-        self.commit(batch, BTreeMap::new(), rows, 0, fx);
+        let model = self.ephemeral_model.remove(&row).unwrap_or_default();
+        self.commit(batch, BTreeMap::new(), vec![StoreOp::RemoveRows { model, ids: vec![row] }], 0, fx);
     }
 }
 
@@ -687,6 +688,9 @@ impl StateOwner for Outbox {
                     }
                 }
             }
+            OutboxInput::EpochStarted(started) => {
+                state.base_generation = started.generation;
+            }
             OutboxInput::ModelsReset(reset) => {
                 for model in reset.models {
                     state.generation.insert(model, reset.generation);
@@ -700,12 +704,14 @@ impl StateOwner for Outbox {
                 }
             }
             OutboxInput::RetryDue { op_id } => state.retry_due(op_id, &mut fx),
-            OutboxInput::LocalWrite { model, epoch, write, row, reply, now } => state.local_write(model, epoch, write, row, reply, now, &mut fx),
+            OutboxInput::LocalWrite { model, epoch, write, row, values, reply, now } => state.local_write(model, epoch, write, row, values, reply, now, &mut fx),
             OutboxInput::Expire { row, due } => state.expire(row, due, &mut fx),
             OutboxInput::Tick(_) => {}
         }
         fx
     }
+
+    fn epoch_started(state: &mut OutboxState, epoch: Epoch) { state.begin_epoch(epoch); }
 
     fn tick(now: Time) -> OutboxInput { OutboxInput::Tick(now) }
 

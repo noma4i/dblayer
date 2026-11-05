@@ -4,18 +4,21 @@
 use std::sync::Arc;
 
 use super::outbox::{Outbox, OutboxAnswer, OutboxEffect};
-use crate::owners::contract::ReplyId;
+use crate::owners::contract::{Drained, ReplyId};
 use crate::runtime::{Back, EffectRunner, EpochStamp};
 
 pub struct OutboxExecutor {
     pub settle: Arc<dyn Fn(ReplyId, OutboxAnswer) + Send + Sync>,
+    /// `Drained` goes to Lifecycle.
+    pub drained: Arc<dyn Fn(Drained) + Send + Sync>,
 }
 
 impl EffectRunner<Outbox> for OutboxExecutor {
     fn run(&mut self, _stamp: EpochStamp, effect: OutboxEffect, _back: &Back<Outbox>) {
         match effect {
             OutboxEffect::Reply { reply, answer } => (self.settle)(reply, answer),
-            OutboxEffect::CancelRequest { .. } | OutboxEffect::Drained(_) => {}
+            OutboxEffect::Drained(drained) => (self.drained)(drained),
+            OutboxEffect::CancelRequest { .. } => {}
         }
     }
 }

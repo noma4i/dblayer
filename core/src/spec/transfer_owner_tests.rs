@@ -6,7 +6,7 @@ use super::ref_transfer::{round_step, step_of, Ctx, Eff, In, Kind, Noise, Obs, R
 use crate::owners::contract::{EpochStarted, Online};
 use crate::owners::write::outbox::{Fault, OutboxOutcome};
 use crate::files::Location;
-use crate::owners::support::{new_log, text_after, Discard, Emitted, Log, Silent, Sink, Spy, SpyState};
+use crate::owners::support::{new_log, number_after, text_after, Discard, Emitted, Log, Silent, Sink, Spy, SpyState};
 use crate::owners::store::StoreWriter;
 use crate::owners::write::outbox::{NewOp, OnReject, Origin, Outbox};
 use crate::owners::write::transfer::{self as t, RoundState, Source, StoreKind, StoredTransfer, Steps, TransferAnswer, TransferEffect as Run, TransferInput, TransferPeers, TransferStage, TransferState, TransferTick, Transfers};
@@ -41,6 +41,23 @@ enum TransferEffect {
     Drained,
 }
 
+thread_local! {
+    /// The last `Upload` row seen per key: (confirmed parts, failed).
+    static LAST_UPLOAD: std::cell::RefCell<std::collections::BTreeMap<String, (u64, bool)>> = std::cell::RefCell::new(std::collections::BTreeMap::new());
+}
+
+/// The kind of an `Upload` batch from the row it holds: the row has no kind, the kind follows from how it differs from the previous row of the key.
+fn upload_kind(key: &str, input: &str) -> StoreKind {
+    let confirmed = number_after(input, "confirmed_parts: ").unwrap_or(0);
+    let failed = input.contains("failed: Some(");
+    let previous = LAST_UPLOAD.with(|last| last.borrow_mut().insert(key.to_string(), (confirmed, failed)));
+    if failed { StoreKind::Failed }
+    else if input.contains("completed: true") { StoreKind::Completed }
+    else if previous.is_none() { StoreKind::SyncUpload }
+    else if previous.is_some_and(|(_, was_failed)| was_failed) { StoreKind::Retrying }
+    else { StoreKind::ConfirmedParts }
+}
+
 fn lower(emitted: Emitted<Run>) -> Option<TransferEffect> {
     Some(match emitted {
         Emitted::Run(Run::Copy { key, .. }) => TransferEffect::Copy { key },
@@ -57,9 +74,9 @@ fn lower(emitted: Emitted<Run>) -> Option<TransferEffect> {
         Emitted::Run(Run::EndJob { round_id }) => TransferEffect::EndJob { round_id },
         Emitted::Run(Run::Drained(_)) => TransferEffect::Drained,
         Emitted::Send { to: STORE_AT, input } => {
-            let tag = text_after(&input, "rows: [(\"sync_upload\", ")?;
-            let kind = [StoreKind::SyncUpload, StoreKind::ConfirmedParts, StoreKind::Completed, StoreKind::Failed, StoreKind::Retrying, StoreKind::Removed].into_iter().find(|kind| kind.tag() == tag)?;
-            TransferEffect::Store { key: text_after(&input, "), (\"sync_upload\", ")?, kind }
+            let key = text_after(&input, "key: ")?;
+            let kind = if input.contains("RemoveUpload {") { StoreKind::Removed } else { upload_kind(&key, &input) };
+            TransferEffect::Store { key, kind }
         }
         Emitted::Send { to: OUTBOX_AT, input } if input.starts_with("Submit") => TransferEffect::SubmitMutation { key: text_after(&input, "origin: Transfer(")? },
         Emitted::Send { to: OUTBOX_AT, input } => TransferEffect::DiscardMutation { key: text_after(&input, "row_id: ")? },
@@ -75,6 +92,7 @@ fn state_of(det: &DetScheduler) -> Result<&TransferState, String> { det.state(Ad
 
 /// The owner with its two peers: the Store and Outbox keep what they receive.
 fn world(seed: u64, slots: u32) -> (DetScheduler, Log<Emitted<Run>>) {
+    LAST_UPLOAD.with(|last| last.borrow_mut().clear());
     let mut det = DetScheduler::new(seed);
     let store = det.add::<Sink<StoreWriter>>("store", new_log(), Silent).index();
     let outbox = det.add::<Sink<Outbox>>("outbox", new_log(), Silent).index();
@@ -87,7 +105,7 @@ fn world(seed: u64, slots: u32) -> (DetScheduler, Log<Emitted<Run>>) {
 }
 
 fn mutation() -> NewOp {
-    NewOp { model: "Moment".into(), row_id: KEY.into(), action: "upload".into(), on_reject: OnReject::Keep, origin: Origin::Api, path: "/moments".into(), body: String::new(), intent_rows: Vec::new(), rollback_rows: Vec::new() }
+    NewOp { model: "Moment".into(), row_id: KEY.into(), action: "upload".into(), on_reject: OnReject::Keep, origin: Origin::Api, path: "/moments".into(), body: String::new(), effects: Default::default() }
 }
 
 fn steps() -> Steps { Steps { path: "/upload".into(), body: String::new() } }

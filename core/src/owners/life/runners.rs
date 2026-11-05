@@ -16,6 +16,7 @@ use crate::owners::lifecycle::{Lifecycle, LifecycleEffect, LifecycleInput, Peer}
 use crate::owners::network::{Network, NetworkEffect, NetworkInput};
 use crate::owners::session::SessionInput;
 use crate::owners::store::{StoreEffect, StoreInput, StoreOp, StoreWriter};
+use crate::owners::write::outbox::OutboxInput;
 use crate::runtime::{Back, EffectRunner, EpochStamp, OutcomeId};
 use crate::transport::{GraphQLRequest, ResponseOutcome, TransportError};
 
@@ -37,10 +38,11 @@ impl EffectRunner<Lifecycle> for LifecycleRunner {
                 wiring.to_session(SessionInput::Published(published.clone()));
                 wiring.to_store(StoreInput::Published(published));
             }
-            LifecycleEffect::EpochStarted { epoch, .. } => {
+            LifecycleEffect::EpochStarted { epoch, identity, generation } => {
                 wiring.set_ending(false);
                 wiring.handle.start_epoch(epoch);
                 wiring.to_network(NetworkInput::EpochStarted);
+                wiring.to_outbox(OutboxInput::EpochStarted(crate::owners::contract::EpochStarted { epoch, identity: identity.map(|identity| identity.into()), generation }));
             }
             LifecycleEffect::EpochEnded { epoch, cause } => {
                 self.leases.epoch_ended(cause);
@@ -48,7 +50,11 @@ impl EffectRunner<Lifecycle> for LifecycleRunner {
                 wiring.handle.end_epoch(epoch, cause);
                 wiring.outcomes.end_epoch(epoch, cause);
             }
-            LifecycleEffect::ModelsReset { generation, models, .. } => self.leases.models_reset(generation, &models.into_iter().collect::<Vec<_>>()),
+            LifecycleEffect::ModelsReset { epoch, generation, models } => {
+                let models: Vec<String> = models.into_iter().collect();
+                self.leases.models_reset(generation, &models);
+                wiring.to_outbox(OutboxInput::ModelsReset(crate::owners::contract::ModelsReset { epoch, generation, models }));
+            }
             LifecycleEffect::Closing => {
                 wiring.release_held();
                 wiring.handle.close();
@@ -102,11 +108,7 @@ impl EffectRunner<StoreWriter> for StoreRunner {
             }),
             StoreEffect::OpenFailed(error) => wiring.open_failed(error),
             StoreEffect::Write { batch } => {
-                let result = if batch.rows.is_empty() {
-                    batch.ops.iter().map(row_op).collect::<Result<Vec<_>, _>>().and_then(|ops| store.write_ops(ops).map(drop).map_err(|error| error.to_string()))
-                } else {
-                    Err("`rows` are written by the owners of Window and Feed: their executors extend `Write`".to_string())
-                };
+                let result = write_batch(&self.db, &batch);
                 back.reply(EpochStamp::Control, StoreInput::Written { author: batch.author, batch: batch.id, result });
             }
             StoreEffect::EraseAccount { generation_new, erase_encrypted } => {
@@ -160,11 +162,13 @@ impl EffectRunner<Network> for NetworkRunner {
         match effect {
             NetworkEffect::Broadcast(online) => {
                 self.db.connectivity().change(online);
+                wiring.to_outbox(OutboxInput::Online(Online(online)));
                 wiring.to_session(SessionInput::Online(Online(online)));
                 wiring.to_calls(CallsInput::Online(Online(online)));
             }
             NetworkEffect::EpochOnline(online) => {
                 wiring.to_calls(CallsInput::Online(Online(online)));
+                wiring.to_outbox(OutboxInput::Online(Online(online)));
                 wiring.to_session(SessionInput::Online(Online(online)));
             }
             NetworkEffect::Drained(drained) => wiring.to_lifecycle(LifecycleInput::Drained(drained)),
@@ -249,9 +253,26 @@ impl EffectRunner<Calls> for CallsRunner {
     }
 }
 
+/// One transaction per kind of ops: the tables `encrypted_*` through the store, the queue through the commit path of `Db`.
+fn write_batch(db: &Db, batch: &crate::owners::store::StoreBatch) -> Result<(), String> {
+    if !batch.rows.is_empty() {
+        return Err("`rows` are written by the owners of Window and Feed: their executors extend `Write`".to_string());
+    }
+    let (encrypted, queue): (Vec<&StoreOp>, Vec<&StoreOp>) = batch.ops.iter().partition(|op| matches!(op, StoreOp::Pending { .. } | StoreOp::RemovePending | StoreOp::Session { .. }));
+    if !encrypted.is_empty() {
+        db.shared.store.write_ops(encrypted.into_iter().filter_map(row_op).collect()).map(drop).map_err(|error| error.to_string())?;
+    }
+    if queue.is_empty() {
+        return Ok(());
+    }
+    let admitted = db.shared.store.lifecycle.admit(crate::ffi::legacy::Origin::Explicit, "write").map_err(|_| "no session to write in".to_string())?;
+    let ops: Vec<StoreOp> = queue.into_iter().cloned().collect();
+    db.write_queue_ops(&admitted, &ops).map_err(|error| error.to_string())
+}
+
 /// The batch op as the tables hold it: ids as text, the purpose as the enum of the transport.
-fn row_op(op: &StoreOp) -> Result<crate::store::RowOp, String> {
-    Ok(match op {
+fn row_op(op: &StoreOp) -> Option<crate::store::RowOp> {
+    Some(match op {
         StoreOp::Pending { pending, credential_digest, response_key } => crate::store::RowOp::PutPending(crate::transport::encrypted::state::Pending {
             credential_digest: credential_digest.clone(),
             request_id: super::session_runner::wire_request_id(pending.request_id),
@@ -264,8 +285,6 @@ fn row_op(op: &StoreOp) -> Result<crate::store::RowOp, String> {
         }),
         StoreOp::RemovePending => crate::store::RowOp::RemovePending,
         StoreOp::Session { digest, sequence } => crate::store::RowOp::PutSession { digest: digest.clone(), sequence: sequence.map(|sequence| i64::try_from(sequence).unwrap_or(i64::MAX)) },
-        StoreOp::RemoveIntent { op_id } => crate::store::RowOp::RemoveIntent(*op_id),
-        StoreOp::RemoveRows { model, ids } => crate::store::RowOp::RemoveRows { model: model.clone(), ids: ids.clone() },
-        StoreOp::Rows { .. } | StoreOp::Intent { .. } | StoreOp::Upload { .. } | StoreOp::RemoveUpload { .. } => return Err(format!("{op:?} is written by the executor of its owner (Window, Feed, Outbox, Transfer): their payload types extend `Write`")),
+        _ => return None,
     })
 }

@@ -18,4 +18,5 @@ mod transfer_executor_tests;
 
 use super::lifecycle::Peer;
 
-pub const ABSENT: [Peer; 2] = [Peer::Outbox, Peer::Transfer];
+/// Transfer joins when its step codec is ported; Outbox is installed with the session.
+pub const ABSENT: [Peer; 1] = [Peer::Transfer];

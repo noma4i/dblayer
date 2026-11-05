@@ -18,6 +18,8 @@ use super::contract::{BatchAuthor, BatchId, Committed, CredentialCommitted, Publ
 use super::session::{AuthorId, AuthorOutcome, SessionAnswer, SessionCalls, SessionInput, SessionState};
 use super::lifecycle::{Lifecycle, LifecycleError, LifecycleInput, LifecycleState, Peer};
 use super::network::{Network, NetworkInput, NetworkState};
+use super::write::outbox::{Outbox, OutboxAnswer, OutboxInput, OutboxPeers, OutboxState};
+use super::write::outbox_executor::OutboxExecutor;
 use super::store::{BootFound, StoreInput, StoreReply, StoreState, StoreWriter};
 use crate::db::Db;
 use crate::runtime::{Address, Epoch, EpochStamp, Handle, Outcomes, Runtime, RuntimeBuilder, Waiter};
@@ -30,6 +32,7 @@ pub enum LifeReply {
     Call(CallAnswer),
     Session(SessionAnswer),
     Mutated(AuthorOutcome),
+    Outbox(OutboxAnswer),
     Closed,
 }
 
@@ -57,6 +60,8 @@ pub(crate) struct Addresses {
     pub network: Address<Network>,
     pub calls: Address<Calls>,
     pub session: Option<Address<SessionCalls>>,
+    /// Installed with the session: an operation needs the sequence of the session.
+    pub outbox: Option<Address<Outbox>>,
 }
 
 #[derive(Default)]
@@ -198,6 +203,13 @@ impl Wiring {
             });
             return;
         }
+        if author == BatchAuthor::Outbox {
+            self.to_outbox(match reply {
+                StoreReply::Committed { revision } => OutboxInput::Committed(Committed { batch, revision: i64::try_from(revision).unwrap_or(i64::MAX), tables: Vec::new(), models: Vec::new() }),
+                StoreReply::Rejected(reason) => OutboxInput::Rejected(Rejected { batch, reason }),
+            });
+            return;
+        }
         let sink = self.store_sinks.lock().unwrap_or_else(PoisonError::into_inner).get(&author).cloned();
         match sink {
             Some(sink) => sink(batch, reply),
@@ -220,6 +232,10 @@ impl Wiring {
             Some(sink) => sink(req_id, outcome),
             None => self.fault(format!("no author {author} for the answer to request {req_id}")),
         }
+    }
+
+    pub fn to_outbox(&self, input: OutboxInput) {
+        if let Some(Addresses { outbox: Some(outbox), .. }) = self.addresses() { self.handle.post(outbox, EpochStamp::Control, input); }
     }
 
     pub fn to_network(&self, input: NetworkInput) {
@@ -245,6 +261,7 @@ fn absent(session: bool) -> Vec<Peer> {
     let mut peers: Vec<Peer> = super::read::ABSENT.into_iter().chain(super::write::ABSENT).collect();
     if !session {
         peers.push(Peer::Session);
+        peers.push(Peer::Outbox);
     }
     peers
 }
@@ -266,7 +283,16 @@ impl Life {
             let address = builder.add::<SessionCalls>("session", state, session_runner::SessionRunner::new(wiring.clone(), client.clone(), credentials.clone(), ports.executor.clone(), &restored));
             (address, restored)
         });
-        let _ = wiring.addresses.set(Addresses { lifecycle, store, network, calls, session: session_address.as_ref().map(|(address, _)| *address) });
+        let outbox = session_address.as_ref().map(|(session, _)| {
+            let peers = OutboxPeers { store, session: *session, transfer: None };
+            let (settle_wiring, drained_wiring) = (wiring.clone(), wiring.clone());
+            let executor = OutboxExecutor {
+                settle: Arc::new(move |reply, answer| { settle_wiring.outcomes.settle(crate::runtime::OutcomeId::from_raw(reply), LifeReply::Outbox(answer)); }),
+                drained: Arc::new(move |drained| drained_wiring.to_lifecycle(LifecycleInput::Drained(drained))),
+            };
+            builder.add::<Outbox>("outbox", OutboxState::new(0, peers), executor)
+        });
+        let _ = wiring.addresses.set(Addresses { lifecycle, store, network, calls, session: session_address.as_ref().map(|(address, _)| *address), outbox });
         let runtime = builder.start().map_err(|error| LifeError::Storage(error.to_string()))?;
         if let Some((_, restored)) = session_address {
             wiring.to_session(SessionInput::Open { credential: restored.credential, pending: restored.pending });

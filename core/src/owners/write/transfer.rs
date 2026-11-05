@@ -7,15 +7,13 @@ use super::outbox::{Fault, NewOp, Origin, Outbox, OutboxInput, OutboxOutcome, Re
 use crate::files::Location;
 use crate::owners::contract::ReplyId;
 use crate::owners::contract::{BatchAuthor, BatchId, Drained, EpochEnded, EpochStarted, Online};
-use crate::owners::store::{StoreBatch, StoreInput, StoreWriter};
+use crate::owners::store::{StoreBatch, StoreInput, StoreOp, StoreWriter, UploadRow};
 use crate::pacing::RetryPolicy;
 use crate::runtime::{Address, Cause, Effect, Effects, Epoch, Outbound, ScheduleId, StateOwner, Time};
 use crate::transport::NetworkPurpose;
 
 /// The reply id of the final mutation Transfer hands to Outbox: Transfer waits for `MutationOutcome`, not for a reply.
 pub const NO_REPLY: ReplyId = ReplyId::MAX;
-/// Table of the rows that mark what a batch of Transfer is (`StoreKind::tag`).
-pub const MARK_TABLE: &str = "sync_upload";
 /// Timers of the retry of a step use ids above the ids of the expiry timers.
 const RETRY_TIMER: u64 = 1 << 32;
 
@@ -126,20 +124,6 @@ pub enum StoreKind {
     Removed,
 }
 
-impl StoreKind {
-    /// The value of the row that marks a batch of this kind (`MARK_TABLE`).
-    pub fn tag(self) -> &'static str {
-        match self {
-            Self::SyncUpload => "sync_upload",
-            Self::ConfirmedParts => "confirmed_parts",
-            Self::Completed => "completed",
-            Self::Failed => "failed",
-            Self::Retrying => "retrying",
-            Self::Removed => "removed",
-        }
-    }
-}
-
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum TransferEffect {
     /// Copy `source` into the file directory in chunks of 1 MiB.
@@ -223,6 +207,27 @@ impl TransferState {
     pub fn stage_of(&self, key: &str) -> Option<TransferStage> { self.transfers.get(key).map(|transfer| transfer.stage) }
 }
 
+/// The row of `sync_upload` a transfer is in the base after a batch of `kind`.
+fn upload_row(transfer: &Transfer, kind: StoreKind) -> UploadRow {
+    UploadRow {
+        key: transfer.key.clone(),
+        seq: transfer.seq,
+        source: transfer.source.path.clone(),
+        parts: transfer.source.parts,
+        batch: transfer.batch,
+        upload_id: transfer.upload_id.clone(),
+        confirmed_parts: transfer.confirmed_parts,
+        completed: matches!(kind, StoreKind::Completed) || transfer.stage == TransferStage::Mutating,
+        failed: if kind == StoreKind::Failed { transfer.error.clone().or_else(|| Some("failed".into())) } else { transfer.error.clone().filter(|_| kind != StoreKind::Retrying) },
+        created_at: transfer.created_at.0,
+        inline: transfer.place == Some(Location::Table),
+        size: transfer.size,
+        sha256: transfer.sha256.clone(),
+        path: transfer.mutation.path.clone(),
+        body: transfer.mutation.body.clone(),
+    }
+}
+
 /// A failed transfer older than 7 days is discarded.
 const EXPIRY_MS: u64 = 7 * 86_400_000;
 /// Attempts of a step before the permanent error (`design.md` 1a).
@@ -240,9 +245,12 @@ impl TransferState {
     fn store(&mut self, key: &str, kind: StoreKind, fx: &mut Fx) {
         let id = self.next_batch;
         self.next_batch += 1;
-        let rows = vec![(MARK_TABLE.into(), kind.tag().into()), (MARK_TABLE.into(), key.into())];
+        let ops = match (kind, self.transfers.get(key)) {
+            (StoreKind::Removed, _) | (_, None) => vec![StoreOp::RemoveUpload { key: key.into() }],
+            (_, Some(transfer)) => vec![StoreOp::Upload { row: upload_row(transfer, kind) }],
+        };
         let intents = u64::from(kind == StoreKind::SyncUpload);
-        let batch = StoreBatch { author: BatchAuthor::Transfer, id, epoch: self.epoch, basis: BTreeMap::new(), rows, intents, credential: None, ops: Vec::new() };
+        let batch = StoreBatch { author: BatchAuthor::Transfer, id, epoch: self.epoch, basis: BTreeMap::new(), rows: Vec::new(), intents, credential: None, ops };
         fx.push(Effect::Send(Outbound::new(self.peers.store, StoreInput::Commit(batch))));
     }
 

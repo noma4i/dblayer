@@ -80,7 +80,7 @@ struct World {
 }
 
 fn mutation() -> NewOp {
-    NewOp { model: "Moment".into(), row_id: "r1".into(), action: "upload".into(), on_reject: OnReject::Keep, origin: Origin::Api, path: "/moments/r1".into(), body: String::new(), intent_rows: Vec::new(), rollback_rows: Vec::new() }
+    NewOp { model: "Moment".into(), row_id: "r1".into(), action: "upload".into(), on_reject: OnReject::Keep, origin: Origin::Api, path: "/moments/r1".into(), body: String::new(), effects: Default::default() }
 }
 
 fn world() -> World {
