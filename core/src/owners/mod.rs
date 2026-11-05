@@ -8,7 +8,5 @@ pub mod session;
 pub mod store;
 pub mod write;
 
-pub use read::{deliveries, feed, windows};
-pub use read::{deliveries, feed, windows};
 #[cfg(test)]
 pub(crate) mod support;
