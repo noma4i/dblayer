@@ -257,7 +257,7 @@ async fn xfer_completed() {
     rig.server.hold_op("MakeMoment");
     accept(&rig, &source(directory.path(), "a.mp4", 1024), "a.mp4").await;
 
-    rig.server.wait_seen("MakeMoment", 1).await;
+    rig.server.wait_seen("MakeMoment", 2).await;
 
     assert_eq!(cell.next, St::Mutating);
     assert!(cell.eff.contains(&Eff::SubmitFinalMutation));

@@ -14,13 +14,13 @@ use crate::value::ScalarKind;
 pub const LIMIT_SECS: u64 = 10;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Reply { Ok, Temp, Refuse }
+pub(super) enum Reply { Ok, Temp, Refuse }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Kind { Mutate = 0, Put = 1 }
+pub(super) enum Kind { Mutate = 0, Put = 1 }
 
 #[derive(Clone, Debug)]
-pub struct Seen { pub kind: Kind, pub operation: String, pub variables: Value, pub purpose: String }
+pub(super) struct Seen { pub kind: Kind, pub operation: String, pub variables: Value, pub purpose: String }
 
 #[derive(Default)]
 struct State {
@@ -36,7 +36,7 @@ struct State {
     overlap: bool,
 }
 
-pub struct Server { state: Mutex<State> }
+pub(super) struct Server { state: Mutex<State> }
 
 struct Flight { server: Arc<Server>, row: Option<String>, done: bool }
 
@@ -78,7 +78,9 @@ impl Server {
         let mut state = self.state.lock().unwrap();
         state.held[kind as usize].retain(|(_, sender)| !sender.is_closed());
         let sender = state.held[kind as usize].pop_front();
-        let _ = sender.expect("no held request to answer").1.send(reply);
+        let sender = sender.expect("no held request to answer").1;
+        drop(state);
+        crate::db::lock::effect(|| { let _ = sender.send(reply); });
     }
 
     pub fn answer_text(&self, text: &str, reply: Reply) {
@@ -86,7 +88,9 @@ impl Server {
         let held = &mut state.held[Kind::Mutate as usize];
         held.retain(|(_, sender)| !sender.is_closed());
         let position = held.iter().position(|(held_text, _)| held_text == text).unwrap_or_else(|| panic!("no held request for {text}"));
-        let _ = held.remove(position).unwrap().1.send(reply);
+        let sender = held.remove(position).unwrap().1;
+        drop(state);
+        crate::db::lock::effect(|| { let _ = sender.send(reply); });
     }
 
     pub fn holds_text(&self, text: &str) -> bool {
@@ -137,7 +141,7 @@ impl Server {
     }
 }
 
-pub struct Wire(pub Arc<Server>);
+pub(super) struct Wire(pub Arc<Server>);
 
 fn answer_of(operation: &str, variables: &Value, number: u64) -> Value {
     let text = variables.get("text").cloned().unwrap_or(Value::Null);
@@ -226,7 +230,7 @@ pub fn upload_operations() -> UploadOperations {
     }
 }
 
-pub struct Rig { pub db: Arc<Database>, pub server: Arc<Server>, pub clock: Arc<TestClock>, pub models: String }
+pub(super) struct Rig { pub db: Arc<Database>, pub server: Arc<Server>, pub clock: Arc<TestClock>, pub models: String }
 
 impl Drop for Rig {
     fn drop(&mut self) { self.server.release_all(); }

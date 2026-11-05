@@ -1,24 +1,24 @@
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Why { Rejected, Discarded }
+pub(super) enum Why { Rejected, Discarded }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum St { None, Submitting, Queued, Sending, Landing, RollingBack(Why), Failed, Done }
+pub(super) enum St { None, Submitting, Queued, Sending, Landing, RollingBack(Why), Failed, Done }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Reason { StaleGeneration, NoSession, Storage }
+pub(super) enum Reason { StaleGeneration, NoSession, Storage }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Policy { Rollback, Keep }
+pub(super) enum Policy { Rollback, Keep }
 
 #[derive(Clone, Copy, Debug)]
-pub struct Ctx { pub epoch_current: bool, pub online: bool, pub row_free: bool, pub policy: Policy, pub owns_model: bool }
+pub(super) struct Ctx { pub epoch_current: bool, pub online: bool, pub row_free: bool, pub policy: Policy, pub owns_model: bool }
 
 impl Ctx {
     pub fn ready() -> Self { Self { epoch_current: true, online: true, row_free: true, policy: Policy::Rollback, owns_model: true } }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum In {
+pub(super) enum In {
     Submit,
     Committed,
     Rejected(Reason),
@@ -35,13 +35,13 @@ pub enum In {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Out { Confirmed, Rejected, Failed, Discarded, Interrupted }
+pub(super) enum Out { Confirmed, Rejected, Failed, Discarded, Interrupted }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Fault { NoSession, Reason(Reason), InFlight }
+pub(super) enum Fault { NoSession, Reason(Reason), InFlight }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Obs {
+pub(super) enum Obs {
     Receipt,
     Fails(Fault),
     Outcome(Out),
@@ -53,13 +53,13 @@ pub enum Obs {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Commit { Intent, Land, LandNewBasis, Rollback, RollbackNewBasis, ErrorMark, ClearMark }
+pub(super) enum Commit { Intent, Land, LandNewBasis, Rollback, RollbackNewBasis, ErrorMark, ClearMark }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Eff { Store(Commit), Send, Cancel, ScheduleTick, ScheduleLanding, ScheduleBackoffSend, Drained, SendNextOfRow }
+pub(super) enum Eff { Store(Commit), Send, Cancel, ScheduleTick, ScheduleLanding, ScheduleBackoffSend, Drained, SendNextOfRow }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Step { pub next: St, pub obs: Vec<Obs>, pub eff: Vec<Eff> }
+pub(super) struct Step { pub next: St, pub obs: Vec<Obs>, pub eff: Vec<Eff> }
 
 fn step(next: St, obs: &[Obs], eff: &[Eff]) -> Option<Step> { Some(Step { next, obs: obs.to_vec(), eff: eff.to_vec() }) }
 
@@ -107,28 +107,4 @@ pub fn step_of(state: St, ctx: &Ctx, input: In) -> Option<Step> {
         (Queued | Failed, In::Closing) => step(state, &[Outcome(Out::Interrupted)], &[Cancel, Drained]),
         _ => Option::None,
     }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum OutcomeCall { Stale, DoneAlready(Out), Waits }
-
-pub fn outcome_call(epoch_current: bool, state: St, done: Option<Out>) -> OutcomeCall {
-    match (epoch_current, state, done) {
-        (false, _, _) => OutcomeCall::Stale,
-        (true, St::Done, Some(out)) => OutcomeCall::DoneAlready(out),
-        _ => OutcomeCall::Waits,
-    }
-}
-
-pub fn restored_order(seqs: &[i64]) -> Vec<i64> {
-    let mut sorted = seqs.to_vec();
-    sorted.sort_unstable();
-    sorted
-}
-
-pub fn restored_state(_seq: i64) -> St { St::Queued }
-
-pub fn rows_after_format_change(created_optimistic_rows: usize) -> usize {
-    let _ = created_optimistic_rows;
-    0
 }

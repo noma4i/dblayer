@@ -1,18 +1,18 @@
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum St { None, Copying, Ready, Uploading, Completing, Mutating, Failed, Done }
+pub(super) enum St { None, Copying, Ready, Uploading, Completing, Mutating, Failed, Done }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Kind { Single, Batch }
+pub(super) enum Kind { Single, Batch }
 
 #[derive(Clone, Copy, Debug)]
-pub struct Ctx { pub epoch_current: bool, pub parts_all_confirmed: bool, pub has_upload_id: bool, pub kind: Kind, pub transport_started: bool, pub online: bool, pub age_days: u64 }
+pub(super) struct Ctx { pub epoch_current: bool, pub parts_all_confirmed: bool, pub has_upload_id: bool, pub kind: Kind, pub transport_started: bool, pub online: bool, pub age_days: u64 }
 
 impl Ctx {
     pub fn ready() -> Self { Self { epoch_current: true, parts_all_confirmed: false, has_upload_id: false, kind: Kind::Single, transport_started: false, online: true, age_days: 0 } }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum In {
+pub(super) enum In {
     Accept,
     CopyDone,
     CopyFailed,
@@ -32,10 +32,10 @@ pub enum In {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Shown { Copying, Queued, Uploading, Failed, Gone }
+pub(super) enum Shown { Copying, Queued, Uploading, Failed, Gone }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Obs {
+pub(super) enum Obs {
     Receipt,
     NoSession,
     Shows(Shown),
@@ -49,7 +49,7 @@ pub enum Obs {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Eff {
+pub(super) enum Eff {
     Copy,
     CopyCancelled,
     RoundNeeded,
@@ -70,7 +70,7 @@ pub enum Eff {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Step { pub next: St, pub obs: Vec<Obs>, pub eff: Vec<Eff> }
+pub(super) struct Step { pub next: St, pub obs: Vec<Obs>, pub eff: Vec<Eff> }
 
 fn step(next: St, obs: &[Obs], eff: &[Eff]) -> Option<Step> { Some(Step { next, obs: obs.to_vec(), eff: eff.to_vec() }) }
 
@@ -109,13 +109,13 @@ pub fn step_of(state: St, ctx: &Ctx, input: In) -> Option<Step> {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Round { None, Requested(u64), Running { id: u32, epoch: u64, next: Option<u64> } }
+pub(super) enum Round { None, Requested(u64), Running { id: u32, epoch: u64, next: Option<u64> } }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum RoundIn { Needed(u64), Started(u32, u64), Refused(u64), Ended(u32, u64), EpochEnded(u64) }
+pub(super) enum RoundIn { Needed(u64), Started(u32, u64), Refused(u64), Ended(u32, u64), EpochEnded(u64) }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct RoundStep { pub next: Round, pub schedule_job: Option<u64>, pub refused_error: bool }
+pub(super) struct RoundStep { pub next: Round, pub schedule_job: Option<u64>, pub refused_error: bool }
 
 pub fn round_step(state: Round, current_epoch: u64, input: RoundIn, next_has_open_transfers: bool) -> Option<RoundStep> {
     let out = |next, schedule_job, refused_error| Some(RoundStep { next, schedule_job, refused_error });
