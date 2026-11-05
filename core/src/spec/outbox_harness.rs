@@ -27,6 +27,7 @@ pub(super) enum OutboxEffect {
     TransferOutcome { key: String, outcome: o::OutboxOutcome },
     Schedule { id: u64, after_ms: u128 },
     Drained,
+    Copy { id: u64, source: String },
 }
 
 /// The kind of a batch from the ops it holds (`Debug` form of the typed ops).
@@ -53,7 +54,7 @@ pub(super) fn lower(emitted: Emitted<Run>, state: Option<&OutboxState>) -> Optio
     Some(match emitted {
         Emitted::Run(Run::Reply { reply, answer }) => OutboxEffect::Reply { reply, answer },
         Emitted::Run(Run::Drained(_)) => OutboxEffect::Drained,
-        Emitted::Run(Run::Copy { .. }) => return None,
+        Emitted::Run(Run::Copy { id, source }) => OutboxEffect::Copy { id, source },
         Emitted::Send { to: STORE_AT, input } => {
             let kind = kind_in(&input);
             let op_id = matches!(kind, CommitKind::Intent | CommitKind::Attempt | CommitKind::Land | CommitKind::Rollback | CommitKind::ErrorMark | CommitKind::ClearMark).then(|| number_after(&input, "op_id: ")).flatten();
@@ -370,6 +371,7 @@ pub(super) fn translate(twin: &Twin, id: OpId, effects: Vec<OutboxEffect>, sched
             OutboxEffect::Schedule { .. } => {}
             OutboxEffect::TransferOutcome { outcome, .. } => eff.push(Eff::TransferOutcome(out_of(&outcome))),
             OutboxEffect::Drained => eff.push(Eff::Drained),
+            OutboxEffect::Copy { .. } => {}
         }
     }
     if scheduled {
@@ -469,3 +471,5 @@ pub(super) fn rolling() -> St { St::RollingBack(RWhy::Rejected) }
 
 pub(super) fn discarding() -> St { St::RollingBack(RWhy::Discarded) }
 
+
+pub(super) fn sends_of(effects: &[OutboxEffect]) -> usize { effects.iter().filter(|effect| matches!(effect, OutboxEffect::Send { .. })).count() }

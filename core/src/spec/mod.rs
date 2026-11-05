@@ -35,5 +35,7 @@ mod outbox_harness;
 mod outbox_owner_tests;
 mod outbox_open_tests;
 mod outbox_cells_tests;
+mod outbox_restore_tests;
+mod outbox_local_tests;
 mod outbox_wait_tests;
 mod transfer_owner_tests;
