@@ -103,6 +103,35 @@ fn fetch_of(name: &str) -> Option<ReadFetch> {
     }
 }
 
+/// A call of the corpus. The runner polls it itself: its waker only marks it woken and the runner clears the mark before each poll.
+struct Call {
+    work: Option<std::pin::Pin<Box<dyn std::future::Future<Output = Done> + Send>>>,
+    woken: Arc<std::sync::atomic::AtomicBool>,
+    done: Option<Done>,
+}
+
+struct Wakes(Arc<std::sync::atomic::AtomicBool>);
+
+impl std::task::Wake for Wakes {
+    fn wake(self: Arc<Self>) { self.0.store(true, Ordering::SeqCst); }
+
+    fn wake_by_ref(self: &Arc<Self>) { self.0.store(true, Ordering::SeqCst); }
+}
+
+impl Call {
+    fn poll_woken(&mut self) {
+        let Some(work) = self.work.as_mut() else { return };
+        if !self.woken.swap(false, Ordering::SeqCst) { return; }
+        let waker = std::task::Waker::from(Arc::new(Wakes(self.woken.clone())));
+        if let std::task::Poll::Ready(done) = work.as_mut().poll(&mut std::task::Context::from_waker(&waker)) {
+            self.done = Some(done);
+            self.work = None;
+        }
+    }
+
+    fn is_woken(&self) -> bool { self.work.is_some() && self.woken.load(Ordering::SeqCst) }
+}
+
 /// The real core behind `Database` for the vocabulary of the `corpus` machine.
 /// A call that may wait for the network runs as a task. The runner settles after every input and observes what finished.
 pub struct DatabaseSut {
@@ -114,8 +143,7 @@ pub struct DatabaseSut {
     receipts: HashMap<String, WireOperationReceipt>,
     loads: HashMap<String, Cancel>,
     streams: HashMap<String, Pulled>,
-    calls: Vec<JoinHandle<Done>>,
-    started: Vec<tokio::sync::oneshot::Receiver<()>>,
+    calls: Vec<Call>,
 }
 
 impl Default for DatabaseSut {
@@ -130,7 +158,6 @@ impl Default for DatabaseSut {
             loads: HashMap::new(),
             streams: HashMap::new(),
             calls: Vec::new(),
-            started: Vec::new(),
         }
     }
 }
@@ -202,35 +229,29 @@ impl DatabaseSut {
     }
 
     fn launch(&mut self, work: impl std::future::Future<Output = Done> + Send + 'static) {
-        let (entered, started) = tokio::sync::oneshot::channel();
-        self.started.push(started);
-        self.calls.push(crate::task::spawn(crate::task::Carry::here(), async move {
-            let mut work = Box::pin(work);
-            let first = std::future::poll_fn(|cx| std::task::Poll::Ready(work.as_mut().poll(cx))).await;
-            let _ = entered.send(());
-            match first { std::task::Poll::Ready(done) => done, std::task::Poll::Pending => work.await }
-        }));
+        self.calls.push(Call { work: Some(Box::pin(work)), woken: Arc::new(std::sync::atomic::AtomicBool::new(true)), done: None });
     }
 
-    /// Waits for the barrier of the owners, then observes everything that finished.
+    /// Polls the woken calls, waits for the barrier of the owners and repeats until no call is woken. Then observes everything that finished.
     async fn settle(&mut self) -> Vec<Observation> {
-        for started in std::mem::take(&mut self.started) { let _ = started.await; }
-        if let Some(database) = self.database.clone() {
-            let owners = database.life_handle();
-            let (idle, held) = tokio::task::spawn_blocking(move || (owners.barrier(Duration::from_secs(15)), owners.pending())).await.unwrap_or((false, 0));
-            assert!(idle, "the owners still hold {held} inputs or started effect tasks after 15 s");
+        loop {
+            self.calls.iter_mut().for_each(Call::poll_woken);
+            if let Some(database) = self.database.clone() {
+                let owners = database.life_handle();
+                let (idle, held) = tokio::task::spawn_blocking(move || (owners.barrier(Duration::from_secs(15)), owners.pending())).await.unwrap_or((false, 0));
+                assert!(idle, "the owners still hold {held} inputs or started effect tasks after 15 s");
+            }
+            if !self.calls.iter().any(Call::is_woken) { break; }
         }
         let mut observed = Vec::new();
-        let mut waiting = Vec::new();
-        for call in std::mem::take(&mut self.calls) {
-            if !call.is_finished() { waiting.push(call); continue; }
-            let Ok(done) = call.await else { continue };
+        for call in &mut self.calls {
+            let Some(done) = call.done.take() else { continue };
             observed.extend(done.observed);
             if let Some((name, id)) = done.row { self.rows.insert(name, id); }
             if let Some((name, receipt)) = done.receipt { self.receipts.insert(name, receipt); }
             if let Some((name, load)) = done.load { self.loads.insert(name, load); }
         }
-        self.calls = waiting;
+        self.calls.retain(|call| call.work.is_some());
         observed.extend(self.mock.announce());
         observed
     }
