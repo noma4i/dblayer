@@ -1,8 +1,8 @@
-use std::sync::mpsc;
+use std::sync::{mpsc, Arc, Mutex};
 use std::thread::sleep;
 use std::time::Duration;
 
-use super::testing::*;
+use super::toys_tests::*;
 use super::*;
 
 const WAIT: Duration = Duration::from_secs(5);
@@ -80,4 +80,30 @@ fn lifecycle_broadcast_reaches_every_owner_on_threads() {
     let mut got: Vec<u32> = (0..4).map(|_| reports.recv_timeout(WAIT).unwrap()).collect();
     got.sort_unstable();
     assert_eq!(got, vec![1, 1, CLOSED, CLOSED]);
+}
+
+#[test]
+fn a_failed_start_of_an_owner_stops_the_owners_already_started() {
+    let ended = Arc::new(Mutex::new(Vec::new()));
+    let mut builder = RuntimeBuilder::new();
+    for name in ["first", "second", "third"] {
+        builder.add::<Toy>(name, ToyState::default(), ToyRunner::default());
+    }
+    let mut spawned = 0;
+    let result = builder.start_with(|name, body| {
+        spawned += 1;
+        let which = spawned;
+        if which == 3 {
+            return Err(std::io::Error::other("no thread for the third owner"));
+        }
+        let ended = ended.clone();
+        crate::task::spawn_thread(crate::task::Carry::Internal, name, move || {
+            body();
+            ended.lock().unwrap().push(which);
+        })
+    });
+    assert!(result.is_err());
+    let mut ended = ended.lock().unwrap().clone();
+    ended.sort_unstable();
+    assert_eq!(ended, vec![1, 2], "the two threads that started ended before start returned");
 }

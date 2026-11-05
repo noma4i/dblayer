@@ -1,11 +1,11 @@
-#[cfg(not(loom))]
-pub(crate) use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
-#[cfg(not(loom))]
+#[cfg(not(dblayer_loom))]
+pub(crate) use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
+#[cfg(not(dblayer_loom))]
 pub(crate) use std::sync::{Arc, Condvar, Mutex, MutexGuard};
 
-#[cfg(loom)]
-pub(crate) use loom::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
-#[cfg(loom)]
+#[cfg(dblayer_loom)]
+pub(crate) use loom::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
+#[cfg(dblayer_loom)]
 pub(crate) use loom::sync::{Arc, Condvar, Mutex, MutexGuard};
 
 pub(crate) use std::sync::PoisonError;

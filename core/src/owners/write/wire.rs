@@ -3,25 +3,14 @@
 
 use std::future::Future;
 use std::pin::Pin;
-use std::sync::{Arc, Mutex, PoisonError};
+use std::sync::Arc;
 
 use crate::lifecycle::Admitted;
 use crate::transport::Transport;
 
 pub type Task = Pin<Box<dyn Future<Output = ()> + Send>>;
 
-/// A task that runs; `cancel` stops it and nothing it would post arrives afterwards.
-pub struct Running(Option<Box<dyn FnOnce() + Send>>);
-
-impl Running {
-    pub fn new(cancel: impl FnOnce() + Send + 'static) -> Self { Self(Some(Box::new(cancel))) }
-
-    pub fn cancel(mut self) {
-        if let Some(cancel) = self.0.take() {
-            cancel();
-        }
-    }
-}
+pub use crate::runtime::{Flights, Running};
 
 pub trait Tasks: Send + Sync {
     fn start(&self, task: Task) -> Running;
@@ -54,37 +43,4 @@ pub struct Wire {
 
 impl Drop for Wire {
     fn drop(&mut self) { crate::db::lock::assert_no_library_lock("Wire"); }
-}
-
-/// Tasks in flight by key.
-pub struct Flights<K: Ord>(Arc<Mutex<std::collections::BTreeMap<K, Running>>>);
-
-impl<K: Ord> Clone for Flights<K> {
-    fn clone(&self) -> Self { Self(self.0.clone()) }
-}
-
-impl<K: Ord> Default for Flights<K> {
-    fn default() -> Self { Self(Arc::default()) }
-}
-
-impl<K: Ord> Flights<K> {
-    /// Keeps `running` under `key`; the task it replaces is cancelled after the lock is released.
-    pub fn put(&self, key: K, running: Running) {
-        let old = self.0.lock().unwrap_or_else(PoisonError::into_inner).insert(key, running);
-        if let Some(old) = old {
-            old.cancel();
-        }
-    }
-
-    /// The task ended by itself: forget it without cancelling.
-    pub fn done(&self, key: &K) { drop(self.0.lock().unwrap_or_else(PoisonError::into_inner).remove(key)); }
-
-    pub fn cancel(&self, key: &K) {
-        let running = self.0.lock().unwrap_or_else(PoisonError::into_inner).remove(key);
-        if let Some(running) = running {
-            running.cancel();
-        }
-    }
-
-    pub fn len(&self) -> usize { self.0.lock().unwrap_or_else(PoisonError::into_inner).len() }
 }

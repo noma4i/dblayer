@@ -5,7 +5,7 @@ use std::sync::atomic::Ordering;
 use std::sync::{mpsc, Arc, Mutex, PoisonError};
 use std::time::Duration;
 
-use super::testing::*;
+use super::toys_tests::*;
 use super::*;
 
 const WAIT: Duration = Duration::from_secs(5);
@@ -389,7 +389,7 @@ fn rt_prop_no_lock_on_effect() {
 #[test]
 fn rt_prop_start_close() {
     let mut det = DetScheduler::new(0);
-    let watch = det.add::<Watch>("watch", Vec::new(), WatchRunner);
+    let watch = det.add::<DeathLog>("deaths", Vec::new(), DeathLogRunner);
     let bare = det.add::<Bare>("bare", (), BareRunner);
     let toy = det.add::<Toy>("toy", ToyState::default(), ToyRunner::default());
     det.on_executor_failed(watch);
@@ -408,7 +408,7 @@ fn rt_prop_start_close() {
     assert_eq!(failed, vec![1, 2, 5, BOOM], "every id without a result got its failure cell, also the one asked after the death");
 
     let mut builder = RuntimeBuilder::new();
-    let watch = builder.add::<Watch>("watch", Vec::new(), WatchRunner);
+    let watch = builder.add::<DeathLog>("deaths", Vec::new(), DeathLogRunner);
     let bare = builder.add::<Bare>("bare", (), BareRunner);
     let (report, reports) = mpsc::channel();
     let outcomes = Outcomes::<u32>::new();

@@ -52,7 +52,7 @@ uuid = { version = "1.27.0", features = ["v4"] }
 x25519-dalek = { version = "3", features = ["static_secrets"] }
 zeroize = "1.9"
 
-[target.'cfg(loom)'.dev-dependencies]
+[target.'cfg(dblayer_loom)'.dev-dependencies]
 loom = "0.7"
 
 [dev-dependencies]

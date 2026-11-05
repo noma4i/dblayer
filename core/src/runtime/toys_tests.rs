@@ -369,42 +369,42 @@ impl EffectRunner<Bare> for BareRunner {
     }
 }
 
-pub struct Watch;
+pub struct DeathLog;
 
 #[derive(Debug)]
-pub enum WatchInput {
+pub enum DeathLogInput {
     Died(String),
     Idle,
 }
 
 #[derive(Debug)]
-pub enum WatchEffect {}
+pub enum DeathLogEffect {}
 
-impl StateOwner for Watch {
+impl StateOwner for DeathLog {
     const EPOCHED: bool = false;
 
     type State = Vec<String>;
-    type Input = WatchInput;
-    type Effect = WatchEffect;
+    type Input = DeathLogInput;
+    type Effect = DeathLogEffect;
 
-    fn step(state: &mut Vec<String>, input: WatchInput) -> Effects<Watch> {
-        if let WatchInput::Died(executor) = input {
+    fn step(state: &mut Vec<String>, input: DeathLogInput) -> Effects<DeathLog> {
+        if let DeathLogInput::Died(executor) = input {
             state.push(executor);
         }
         vec![]
     }
 
-    fn tick(_now: Time) -> WatchInput { WatchInput::Idle }
+    fn tick(_now: Time) -> DeathLogInput { DeathLogInput::Idle }
 
-    fn epoch_ended(_epoch: Epoch, _cause: Cause) -> WatchInput { WatchInput::Idle }
+    fn epoch_ended(_epoch: Epoch, _cause: Cause) -> DeathLogInput { DeathLogInput::Idle }
 
-    fn closing() -> WatchInput { WatchInput::Idle }
+    fn closing() -> DeathLogInput { DeathLogInput::Idle }
 
-    fn executor_failed(executor: &str, _pending: Vec<EffectId>) -> Option<WatchInput> { Some(WatchInput::Died(executor.to_string())) }
+    fn executor_failed(executor: &str, _pending: Vec<EffectId>) -> Option<DeathLogInput> { Some(DeathLogInput::Died(executor.to_string())) }
 }
 
-pub struct WatchRunner;
+pub struct DeathLogRunner;
 
-impl EffectRunner<Watch> for WatchRunner {
-    fn run(&mut self, _stamp: EpochStamp, effect: WatchEffect, _back: &Back<Watch>) { match effect {} }
+impl EffectRunner<DeathLog> for DeathLogRunner {
+    fn run(&mut self, _stamp: EpochStamp, effect: DeathLogEffect, _back: &Back<DeathLog>) { match effect {} }
 }

@@ -14,7 +14,8 @@ pub use observers::{ObserverPort, StopDone};
 
 use std::collections::{BTreeSet, HashMap};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Condvar, Mutex, OnceLock, PoisonError};
+use std::sync::{Arc, Mutex, OnceLock, PoisonError};
+use std::time::Duration;
 
 use super::calls::{CallAnswer, CallError, Calls, CallsInput, CallsState};
 use super::contract::{BatchAuthor, BatchId, Committed, CommittedBroadcast, CredentialCommitted, NetworkEvent, Published, PublishedState, Rejected, RequestId};
@@ -27,7 +28,7 @@ use super::write::transfer::{TransferAnswer, TransferInput, TransferPeers, Trans
 use super::write::transfer_executor::{TransferExecutor, TransferPort};
 use super::store::{BootFound, StoreInput, StoreReply, StoreState, StoreWriter};
 use crate::db::Db;
-use crate::runtime::{Address, Epoch, EpochStamp, Handle, Outcomes, Runtime, RuntimeBuilder, Waiter};
+use crate::runtime::{Address, Epoch, EpochStamp, Handle, Outcomes, PublishedCell, Runtime, RuntimeBuilder, Waiter};
 
 /// The result of a platform call, the payload of `Outcomes`.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -47,6 +48,7 @@ pub enum LifeReply {
 }
 
 /// The first author id of the calls that the old stack makes: below it the ids of Outbox, Transfer and Session.
+const OPEN_WAIT: Duration = Duration::from_secs(365 * 24 * 3600);
 const LEGACY_AUTHORS: AuthorId = 1 << 32;
 
 /// The document and the answer root of a declared operation.
@@ -81,12 +83,6 @@ pub(crate) struct Addresses {
     pub feed: Option<Address<super::read::feed::Feed>>,
 }
 
-#[derive(Default)]
-struct PublishedCell {
-    value: Mutex<Option<Published>>,
-    changed: Condvar,
-}
-
 /// What every runner shares: the address book, the registry of waiters and the published value.
 pub(crate) struct Wiring {
     pub handle: Handle,
@@ -96,7 +92,7 @@ pub(crate) struct Wiring {
     pub pulls: Outcomes<super::read::deliveries::PullAnswer>,
     /// The ids of streams: they stay below the bit that marks the waiters of platform calls in `Windows`.
     pub next_stream: std::sync::atomic::AtomicU64,
-    published: PublishedCell,
+    published: PublishedCell<Published>,
     /// The id of the wait of `open` and its answer, set at `Saved` of the first publication.
     open: Mutex<OpenWait>,
     faults: Mutex<Vec<String>>,
@@ -153,8 +149,7 @@ impl Wiring {
 
     pub fn publish(&self, published: Published) {
         let published_epoch = published.epoch;
-        *self.published.value.lock().unwrap_or_else(PoisonError::into_inner) = Some(published);
-        self.published.changed.notify_all();
+        self.published.publish(published);
         let due: Vec<_> = {
             let mut held = self.after_publish.lock().unwrap_or_else(PoisonError::into_inner);
             let (due, rest): (Vec<_>, Vec<_>) = held.drain(..).partition(|(waiting, ..)| match waiting {
@@ -171,7 +166,7 @@ impl Wiring {
     /// Settles the answer of a call that ended the session once the epoch moved past `epoch`. Nothing to wait for when the session already ended or the epoch is past.
     pub fn settle_after_epoch(&self, epoch: u64, id: crate::runtime::OutcomeId, reply: LifeReply) {
         let mut held = self.after_publish.lock().unwrap_or_else(PoisonError::into_inner);
-        let published = self.published.value.lock().unwrap_or_else(PoisonError::into_inner).clone();
+        let published = self.published.get();
         if published.as_ref().is_none_or(|published| published.epoch > epoch || published.identity.is_none() || published.closed) {
             drop(held);
             self.outcomes.settle(id, reply);
@@ -202,7 +197,7 @@ impl Wiring {
         }
         open.answer = Some(result);
         drop(open);
-        self.published.changed.notify_all();
+        self.published.notify();
         true
     }
 
@@ -212,7 +207,7 @@ impl Wiring {
 
     pub fn open_failed(&self, error: String, corrupt: bool) {
         *self.open_failed.lock().unwrap_or_else(PoisonError::into_inner) = Some((error, corrupt));
-        self.published.changed.notify_all();
+        self.published.notify();
     }
 
     pub fn to_lifecycle(&self, input: LifecycleInput) {
@@ -464,17 +459,18 @@ impl Life {
         }
         wiring.open.lock().unwrap_or_else(PoisonError::into_inner).id = Some(open_wait.id().raw());
         wiring.to_store(StoreInput::Boot(found));
-        let mut guard = wiring.open.lock().unwrap_or_else(PoisonError::into_inner);
-        let answer = loop {
-            if let Some(answer) = guard.answer {
-                break answer;
+        let settled = wiring.published.wait_for(OPEN_WAIT, || {
+            if let Some(answer) = wiring.open.lock().unwrap_or_else(PoisonError::into_inner).answer {
+                return Some(Ok(answer));
             }
-            if let Some((error, corrupt)) = wiring.open_failed.lock().unwrap_or_else(PoisonError::into_inner).clone() {
-                return Err(if corrupt { LifeError::CorruptManifest(error) } else { LifeError::Storage(error) });
             }
-            guard = crate::blocking::blocking_unit(|| wiring.published.changed.wait(guard).unwrap_or_else(PoisonError::into_inner));
+            wiring.open_failed.lock().unwrap_or_else(PoisonError::into_inner).clone().map(Err)
+        });
+        let answer = match settled {
+            Some(Ok(answer)) => answer,
+            Some(Err((error, corrupt))) => return Err(if corrupt { LifeError::CorruptManifest(error) } else { LifeError::Storage(error) }),
+            None => return Err(LifeError::Storage("the first publication did not come".to_string())),
         };
-        drop(guard);
         answer.map_err(|error| LifeError::Storage(format!("the first publication was not saved: {error:?}")))?;
         let alive = runtime.alive();
         Ok(Self { wiring, runtime: Mutex::new(Some(runtime)), shut: AtomicBool::new(false), with_session: session.is_some(), alive })
@@ -494,7 +490,7 @@ impl Life {
     pub fn owners_alive(&self) -> usize { self.alive.load(Ordering::SeqCst) }
 
     pub fn published(&self) -> Published {
-        self.wiring.published.value.lock().unwrap_or_else(PoisonError::into_inner).clone().unwrap_or_else(Published::initial)
+        self.wiring.published.get().unwrap_or_else(Published::initial)
     }
 
     pub fn faults(&self) -> Vec<String> { self.wiring.faults.lock().unwrap_or_else(PoisonError::into_inner).clone() }

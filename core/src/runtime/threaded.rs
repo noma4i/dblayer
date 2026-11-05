@@ -1,4 +1,5 @@
-use std::sync::OnceLock;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, OnceLock};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
@@ -6,7 +7,8 @@ use super::cell::{Cell, Emitted, EffectRunner};
 use super::det::TraceEntry;
 use super::mailbox::Mailbox;
 use super::owner::{Address, Back, Cause, Control, Epoch, EpochStamp, Message, StateOwner, Time};
-use super::sync::{lock, Arc, AtomicUsize, Condvar, Mutex, Ordering};
+use super::sync::{lock, Condvar, Mutex};
+use crate::blocking::blocking_unit;
 use crate::task::{spawn_thread, Carry};
 
 enum Command {
@@ -43,7 +45,7 @@ impl Inflight {
             if left.is_zero() {
                 return false;
             }
-            count = self.idle.wait_timeout(count, left).unwrap_or_else(std::sync::PoisonError::into_inner).0;
+            count = blocking_unit(|| self.idle.wait_timeout(count, left).unwrap_or_else(std::sync::PoisonError::into_inner).0);
         }
         true
     }
@@ -142,7 +144,9 @@ impl RuntimeBuilder {
 
     pub fn handle(&self) -> Handle { self.handle.clone() }
 
-    pub fn start(self) -> std::io::Result<Runtime> {
+    pub fn start(self) -> std::io::Result<Runtime> { self.start_with(|name, body| spawn_thread(Carry::Internal, name, body)) }
+
+    pub(super) fn start_with(self, mut launch: impl FnMut(String, Box<dyn FnOnce() + Send>) -> std::io::Result<JoinHandle<()>>) -> std::io::Result<Runtime> {
         let router = Arc::new(Router { boxes: self.boxes, inflight: Inflight::default(), failure: self.failure, history: self.history, record: self.record });
         let _ = self.handle.router.set(router.clone());
         let origin = Instant::now();
@@ -152,7 +156,7 @@ impl RuntimeBuilder {
             let own = router.clone();
             alive.fetch_add(1, Ordering::SeqCst);
             let running = Alive(alive.clone());
-            match spawn_thread(Carry::Internal, name.to_string(), move || { let _running = running; body(own, origin) }) {
+            match launch(name.to_string(), Box::new(move || { let _running = running; body(own, origin) })) {
                 Ok(join) => joins.push(join),
                 Err(error) => {
                     stop(&router, &mut joins);

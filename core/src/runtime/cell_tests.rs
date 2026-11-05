@@ -1,5 +1,5 @@
 use super::cell::Cell;
-use super::testing::*;
+use super::toys_tests::*;
 use super::*;
 
 fn drain(cell: &mut Cell<Toy>) {

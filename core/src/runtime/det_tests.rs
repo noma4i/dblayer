@@ -1,6 +1,6 @@
 use std::collections::HashSet;
 
-use super::testing::*;
+use super::toys_tests::*;
 use super::*;
 
 fn single(seed: u64) -> (DetScheduler, Address<Toy>) {
@@ -307,7 +307,7 @@ fn runtime_applies_the_jitter_of_a_backoff_from_its_seed() {
 #[test]
 fn a_panic_in_a_step_tells_lifecycle_and_the_owner_keeps_taking_inputs() {
     let mut det = DetScheduler::new(1);
-    let watch = det.add::<Watch>("watch", Vec::new(), WatchRunner);
+    let watch = det.add::<DeathLog>("deaths", Vec::new(), DeathLogRunner);
     let toy = det.add::<Toy>("toy", ToyState::default(), ToyRunner::default());
     det.on_executor_failed(watch);
     det.start_epoch(1);

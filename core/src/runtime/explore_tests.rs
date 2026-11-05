@@ -1,7 +1,7 @@
 use std::cell::RefCell;
 use std::collections::HashSet;
 
-use super::testing::*;
+use super::toys_tests::*;
 use super::*;
 
 #[test]

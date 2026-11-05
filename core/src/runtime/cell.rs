@@ -128,7 +128,10 @@ impl<O: StateOwner> Cell<O> {
                 }
                 (EpochStamp::Epoch(epoch), input, true)
             }
-            Item::Start(_) => unreachable!("a start of an epoch never stays at the head of the queue"),
+            Item::Start(epoch) => {
+                self.begin_epoch(epoch);
+                return self.run_one(name, runner, back, trace);
+            }
         };
         let input_label = label(trace, &input);
         let mut failed = false;
@@ -202,10 +205,14 @@ impl<O: StateOwner> Cell<O> {
         while let Some(Item::Start(epoch)) = self.queue.front() {
             let epoch = *epoch;
             self.queue.pop_front();
-            self.epoch = Some(epoch);
-            O::epoch_started(&mut self.state, epoch);
-            self.purge_schedule(|stamp| stamp != EpochStamp::Epoch(epoch) && stamp != EpochStamp::Control);
+            self.begin_epoch(epoch);
         }
+    }
+
+    fn begin_epoch(&mut self, epoch: Epoch) {
+        self.epoch = Some(epoch);
+        O::epoch_started(&mut self.state, epoch);
+        self.purge_schedule(|stamp| stamp != EpochStamp::Epoch(epoch) && stamp != EpochStamp::Control);
     }
 
     fn drop_input(&mut self, stamp: EpochStamp, input: String) -> Ran {
