@@ -242,3 +242,16 @@ pub struct CredentialCommitted {
 pub struct ServerEnded {
     pub epoch: Epoch,
 }
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum RestoreResult {
+    Restored,
+    WaitingDeclaration,
+    RestoreFailed { error: String, retained: bool },
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RestoreItem {
+    pub key: String,
+    pub result: RestoreResult,
+}

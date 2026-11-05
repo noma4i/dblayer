@@ -66,6 +66,7 @@ pub(crate) struct Shared {
     pub upload_round: Mutex<super::upload_round::UploadRound>,
     pub blob_failed_ttl_ms: std::sync::atomic::AtomicI64,
     pub expiry_gate: Mutex<()>,
+    pub os_observers: std::sync::OnceLock<Arc<dyn crate::owners::life::ObserverPort>>,
     #[cfg(test)]
     pub panic_key: Mutex<Option<String>>,
 }
@@ -185,6 +186,14 @@ pub struct OpenReport {
     pub recreated: Option<RecreateReason>,
     pub changed_models: Vec<String>,
     pub reset_models: Vec<String>,
+    pub dropped: Vec<DroppedRecord>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct DroppedRecord {
+    pub table: String,
+    pub key: String,
+    pub reason: String,
 }
 
 #[derive(Clone)]
@@ -231,7 +240,8 @@ impl Db {
             _ => Vec::new(),
         };
         let reset_models = boot.reset_models;
-        let opened = OpenReport { recreated: if unreadable { Some(RecreateReason::UnreadableFile) } else { boot.recreated }, changed_models, reset_models };
+        let dropped = boot.dropped.into_iter().map(|row| DroppedRecord { table: row.table, key: row.key, reason: row.reason.to_string() }).collect();
+        let opened = OpenReport { recreated: if unreadable { Some(RecreateReason::UnreadableFile) } else { boot.recreated }, changed_models, reset_models, dropped };
         recover_operations(&store, &models, opened.recreated.is_none())?;
         store.mark_ready();
         let ephemeral = Ephemerals::new(&models);
@@ -281,6 +291,7 @@ impl Db {
             upload_round: Mutex::new(super::upload_round::UploadRound::default()),
             blob_failed_ttl_ms: std::sync::atomic::AtomicI64::new(crate::upload::UploadConfig::default().failed_ttl.as_millis().try_into().unwrap_or(i64::MAX)),
             expiry_gate: Mutex::new(()),
+            os_observers: std::sync::OnceLock::new(),
             #[cfg(test)]
             panic_key: Mutex::new(None),
         });

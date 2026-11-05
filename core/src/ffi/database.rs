@@ -350,7 +350,10 @@ impl Database {
             read_operations: Some(read_operations),
         };
         let _entered = executor_enter()?;
-        let life = Arc::new(crate::owners::life::Life::start(ports, Duration::from_secs(30)).map_err(|error| DbError::Database { detail: format!("the owners did not start: {error:?}") })?);
+        let life = Arc::new(crate::owners::life::Life::start(ports, Duration::from_secs(30)).map_err(|error| match error {
+            crate::owners::life::LifeError::CorruptManifest(detail) => DbError::CorruptManifest { detail },
+            other => DbError::Database { detail: format!("the owners did not start: {other:?}") },
+        })?);
         if let Some(client) = session { client.attach(&life); }
         Ok(life)
     }
@@ -383,6 +386,8 @@ impl Database {
         }).await
     }
     pub fn open_report(&self) -> OpenReport { self.db.open_report().clone() }
+    pub fn restore_failed(&self) -> Result<Vec<crate::db::DroppedRecord>, DbError> { Ok(self.db.restore_failed()?) }
+    pub fn discard_restore_failed(&self, table: String, key: String) -> Result<bool, DbError> { Ok(self.db.discard_restore_failed(&table, &key)?) }
     pub fn subscription_census(&self) -> SubscriptionCensus {
         let census = self.db.observer_census();
         SubscriptionCensus { observed_queries: census.observed_queries as u64, subscriptions: census.subscriptions as u64, retained_observers: census.retained as u64 }

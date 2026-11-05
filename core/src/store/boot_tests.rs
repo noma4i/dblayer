@@ -343,3 +343,94 @@ fn store_prop_boot_any_layout() {
         assert_eq!(store.saved().unwrap().2, crate::store::identity_of(SESSION_DIGEST), "{case}: the identity is published");
     }
 }
+
+fn plant_old_layout(path: &std::path::Path, plant: &str) {
+    let (store, _) = reopen(path, &[messages_spec()], None);
+    exec(&store, plant);
+    exec(&store, "UPDATE manifest SET value = 'old' WHERE key = 'format_version'");
+}
+
+#[test]
+fn store_boot_layout_missing_column() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("a.sqlite");
+    plant_old_layout(&path, "DROP TABLE local_pending; CREATE TABLE local_pending (model TEXT NOT NULL, row_id TEXT NOT NULL, path TEXT NOT NULL, node INTEGER NOT NULL) STRICT; INSERT INTO local_pending VALUES ('messages', 'm1', 'body', 0);");
+    let (store, report) = reopen(&path, &[messages_spec()], None);
+    assert_eq!(report.dropped.len(), 1);
+    assert_eq!((report.dropped[0].table.as_str(), report.dropped[0].reason), ("local_pending", "missing_column"));
+    assert_eq!(count(&store, "SELECT COUNT(*) FROM local_pending"), 0);
+    let kept = text(&store, "SELECT columns FROM restore_failed WHERE source_table = 'local_pending'").unwrap();
+    assert_eq!(serde_json::from_str::<serde_json::Value>(&kept).unwrap()["row_id"], "m1");
+    assert_eq!(store.restore_failed().unwrap().len(), 1);
+}
+
+#[test]
+fn store_boot_layout_incompatible_row() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("a.sqlite");
+    plant_old_layout(
+        &path,
+        "DROP TABLE op; CREATE TABLE op (seq INTEGER PRIMARY KEY AUTOINCREMENT, action_key TEXT NOT NULL, status TEXT NOT NULL, created_at INTEGER NOT NULL, since INTEGER NOT NULL);\
+         INSERT INTO op VALUES (7, 'messages:send', 'pending', 1, 1);\
+         INSERT INTO op VALUES (8, 'messages:send', 'weird', 1, 1);\
+         DROP TABLE encrypted_session; CREATE TABLE encrypted_session (id INTEGER PRIMARY KEY, credential_digest TEXT NOT NULL, sequence TEXT NOT NULL);\
+         INSERT INTO encrypted_session VALUES (1, 'd', 'not a number');",
+    );
+    let (store, report) = reopen(&path, &[messages_spec()], None);
+    let mut dropped: Vec<_> = report.dropped.iter().map(|row| (row.table.as_str(), row.reason)).collect();
+    dropped.sort_unstable();
+    assert_eq!(dropped, vec![("encrypted_session", "type"), ("op", "constraint")]);
+    assert_eq!(count(&store, "SELECT COUNT(*) FROM op WHERE seq = 7"), 1, "the valid row is carried with its seq");
+    assert_eq!(count(&store, "SELECT COUNT(*) FROM op WHERE seq = 8"), 0);
+    assert_eq!(count(&store, "SELECT COUNT(*) FROM restore_failed"), 2);
+    exec(&store, "INSERT INTO op (action_key, status, created_at, since) VALUES ('messages:send', 'pending', 2, 2)");
+    assert!(count(&store, "SELECT MAX(seq) FROM op") > 7, "new operations number above every kept seq");
+}
+
+#[test]
+fn store_prop_boot_reopen() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("a.sqlite");
+    plant_old_layout(&path, "DROP TABLE local_pending; CREATE TABLE local_pending (model TEXT NOT NULL, row_id TEXT NOT NULL) STRICT; INSERT INTO local_pending VALUES ('messages', 'm1');");
+    let (first, report) = reopen(&path, &[messages_spec()], None);
+    assert_eq!(report.dropped.len(), 1);
+    let before = first.restore_failed().unwrap();
+    drop(first);
+    let (second, report) = reopen(&path, &[messages_spec()], None);
+    assert!(report.dropped.is_empty() && report.recreated.is_none());
+    assert_eq!(second.restore_failed().unwrap(), before, "the kept data does not move");
+    assert!(second.discard_restore_failed(&before[0].table, &before[0].key).unwrap());
+    assert!(second.restore_failed().unwrap().is_empty());
+}
+
+#[test]
+fn store_prop_boot_keys() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("a.sqlite");
+    {
+        let (store, _) = reopen(&path, &[messages_spec()], None);
+        exec(&store, "INSERT INTO encrypted_pending (id, credential_digest, request_id, response_key, sequence, path, body, purpose) VALUES (1, 'd', 'req-1', 'k', 5, '/p', '{}', 0);\
+                      INSERT INTO manifest (key, value) VALUES ('saved_epoch', '9'), ('saved_generation', '4') ON CONFLICT(key) DO UPDATE SET value = excluded.value;\
+                      UPDATE manifest SET value = 'old' WHERE key = 'format_version'");
+    }
+    let (store, report) = reopen(&path, &[messages_spec()], None);
+    assert!(report.recreated.is_some());
+    assert_eq!(text(&store, "SELECT request_id FROM encrypted_pending").as_deref(), Some("req-1"));
+    assert_eq!(count(&store, "SELECT sequence FROM encrypted_pending"), 5);
+    assert_eq!((store.saved().unwrap().0, store.saved().unwrap().1), (9, 4), "the published epoch and generation survive the transfer");
+}
+
+#[test]
+fn store_boot_corrupt_manifest_keeps_the_file_whole() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("a.sqlite");
+    {
+        let (store, _) = reopen(&path, &[messages_spec()], None);
+        exec(&store, "INSERT INTO manifest (key, value) VALUES ('saved_epoch', '-3') ON CONFLICT(key) DO UPDATE SET value = excluded.value;\
+                      UPDATE manifest SET value = 'old' WHERE key = 'format_version'");
+    }
+    let store = Store::open(&path).unwrap();
+    assert!(matches!(store.boot(&[messages_spec()], None), Err(StoreError::CorruptManifest(_))));
+    assert_eq!(text(&store, "SELECT value FROM manifest WHERE key = 'saved_epoch'").as_deref(), Some("-3"));
+    assert_eq!(text(&store, "SELECT value FROM manifest WHERE key = 'format_version'").as_deref(), Some("old"));
+}

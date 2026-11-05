@@ -21,12 +21,26 @@ fn probe(path: &Path) -> Result<Store, StoreError> {
     Ok(store)
 }
 
-pub(super) fn recreate(connection: &Connection) -> Result<bool, StoreError> {
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DroppedRow {
+    pub table: String,
+    pub key: String,
+    pub reason: &'static str,
+    pub columns: String,
+}
+
+pub(super) struct Recreated {
+    pub files_kept: bool,
+    pub dropped: Vec<DroppedRow>,
+}
+
+pub(super) fn recreate(connection: &Connection) -> Result<Recreated, StoreError> {
     let tables: Vec<String> = connection
         .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'")?
         .query_map([], |row| row.get(0))?
         .collect::<Result<_, _>>()?;
     let carried: Vec<&str> = CARRIED_TABLES.iter().copied().filter(|table| tables.iter().any(|found| found == table)).collect();
+    let manifest = carried_manifest(connection, &tables)?;
     for table in &carried {
         let filter = if *table == "file" && columns_of(connection, table)?.iter().any(|(name, _)| name == "field") { " WHERE field LIKE 'op_item.%'" } else { "" };
         connection.execute_batch(&format!("CREATE TEMP TABLE {} AS SELECT * FROM {}{filter}", sql_ident(&carry_name(table)), sql_ident(table)))?;
@@ -35,36 +49,105 @@ pub(super) fn recreate(connection: &Connection) -> Result<bool, StoreError> {
         connection.execute_batch(&format!("DROP TABLE IF EXISTS {}", sql_ident(table)))?;
     }
     create_core_tables(connection)?;
+    for (key, value) in &manifest {
+        crate::ddl::manifest_write(connection, key, value)?;
+    }
+    let mut dropped = Vec::new();
     for table in &carried {
-        carry_rows(connection, table)?;
+        dropped.extend(carry_rows(connection, table)?);
         connection.execute_batch(&format!("DROP TABLE {}", sql_ident(&carry_name(table))))?;
     }
     if carried.contains(&"op_value") {
         connection.execute_batch("DELETE FROM op_value WHERE part = 'prior';")?;
     }
-    Ok(carried.contains(&"file"))
+    for row in &dropped {
+        connection.execute(
+            "INSERT OR REPLACE INTO restore_failed (source_table, key, reason, columns) VALUES (?1, ?2, ?3, ?4)",
+            rusqlite::params![row.table, row.key, row.reason, row.columns],
+        )?;
+    }
+    Ok(Recreated { files_kept: carried.contains(&"file"), dropped })
+}
+
+fn carried_manifest(connection: &Connection, tables: &[String]) -> Result<Vec<(String, String)>, StoreError> {
+    if !tables.iter().any(|table| table == "manifest") {
+        return Ok(Vec::new());
+    }
+    let mut found = Vec::new();
+    for key in crate::ddl::CARRIED_MANIFEST_KEYS {
+        if let Some(value) = crate::ddl::manifest_read(connection, key)? {
+            found.push((key.to_string(), value));
+        }
+    }
+    Ok(found)
 }
 
 fn carry_name(table: &str) -> String { format!("carry_{table}") }
 
 fn columns_of(connection: &Connection, table: &str) -> Result<Vec<(String, bool)>, StoreError> {
     Ok(connection
-        .prepare("SELECT name, \"notnull\" = 1 AND dflt_value IS NULL AND pk = 0 FROM pragma_table_info(?1) ORDER BY cid")?
+        .prepare("SELECT name, \"notnull\" = 1 AND dflt_value IS NULL AND pk = 0 FROM pragma_table_xinfo(?1) WHERE hidden = 0 ORDER BY cid")?
         .query_map([table], |row| Ok((row.get(0)?, row.get(1)?)))?
         .collect::<Result<_, _>>()?)
 }
 
-/// Moves the rows by the columns both layouts have. A new column takes its DEFAULT. A table whose new layout has a required column without DEFAULT that the old layout lacks moves no rows.
-fn carry_rows(connection: &Connection, table: &str) -> Result<(), StoreError> {
+fn value_json(value: &rusqlite::types::Value) -> serde_json::Value {
+    use rusqlite::types::Value;
+    match value {
+        Value::Null => serde_json::Value::Null,
+        Value::Integer(number) => serde_json::Value::from(*number),
+        Value::Real(number) => serde_json::Number::from_f64(*number).map_or(serde_json::Value::Null, serde_json::Value::Number),
+        Value::Text(text) => serde_json::Value::String(text.clone()),
+        Value::Blob(bytes) => serde_json::json!({ "blob": bytes.iter().map(|byte| format!("{byte:02x}")).collect::<String>() }),
+    }
+}
+
+fn refusal(error: &rusqlite::Error) -> Option<&'static str> {
+    const CONSTRAINT_DATATYPE: i32 = 3091;
+    match error {
+        rusqlite::Error::SqliteFailure(failure, _) if failure.extended_code == CONSTRAINT_DATATYPE => Some("type"),
+        rusqlite::Error::SqliteFailure(failure, _) if failure.code == rusqlite::ErrorCode::ConstraintViolation => Some("constraint"),
+        _ => None,
+    }
+}
+
+fn carry_rows(connection: &Connection, table: &str) -> Result<Vec<DroppedRow>, StoreError> {
+    use sha2::{Digest, Sha256};
     let source = carry_name(table);
     let old: Vec<String> = columns_of(connection, &source)?.into_iter().map(|(name, _)| name).collect();
     let new = columns_of(connection, table)?;
-    if new.iter().any(|(name, required)| *required && !old.contains(name)) { return Ok(()); }
-    let shared: Vec<String> = new.into_iter().map(|(name, _)| name).filter(|name| old.contains(name)).map(|name| sql_ident(&name)).collect();
-    if shared.is_empty() { return Ok(()); }
-    let list = shared.join(", ");
-    connection.execute_batch(&format!("INSERT OR IGNORE INTO {} ({list}) SELECT {list} FROM {}", sql_ident(table), sql_ident(&source)))?;
-    Ok(())
+    let required_missing = new.iter().any(|(name, required)| *required && !old.contains(name));
+    let shared: Vec<String> = new.into_iter().map(|(name, _)| name).filter(|name| old.contains(name)).collect();
+    let select = old.iter().map(|name| sql_ident(name)).collect::<Vec<_>>().join(", ");
+    let insert = format!("INSERT INTO {} ({}) VALUES ({})", sql_ident(table), shared.iter().map(|name| sql_ident(name)).collect::<Vec<_>>().join(", "), (1..=shared.len()).map(|at| format!("?{at}")).collect::<Vec<_>>().join(", "));
+    let positions: Vec<usize> = shared.iter().filter_map(|name| old.iter().position(|found| found == name)).collect();
+    let rows: Vec<Vec<rusqlite::types::Value>> = connection
+        .prepare(&format!("SELECT {select} FROM {} ORDER BY rowid", sql_ident(&source)))?
+        .query_map([], |row| (0..old.len()).map(|at| row.get(at)).collect())?
+        .collect::<Result<_, _>>()?;
+    let mut dropped = Vec::new();
+    for row in rows {
+        let refuse = |reason: &'static str| {
+            let columns = serde_json::Value::Object(old.iter().cloned().zip(row.iter().map(value_json)).collect()).to_string();
+            let key: String = Sha256::digest(format!("{table}\0{columns}").as_bytes()).iter().take(16).map(|byte| format!("{byte:02x}")).collect();
+            DroppedRow { table: table.to_string(), key, reason, columns }
+        };
+        if required_missing || shared.is_empty() {
+            dropped.push(refuse("missing_column"));
+            continue;
+        }
+        connection.execute_batch("SAVEPOINT carry_row")?;
+        let params = rusqlite::params_from_iter(positions.iter().map(|at| row[*at].clone()));
+        match connection.execute(&insert, params) {
+            Ok(_) => connection.execute_batch("RELEASE carry_row")?,
+            Err(error) => {
+                let Some(reason) = refusal(&error) else { return Err(error.into()) };
+                connection.execute_batch("ROLLBACK TO carry_row; RELEASE carry_row")?;
+                dropped.push(refuse(reason));
+            }
+        }
+    }
+    Ok(dropped)
 }
 
 pub(crate) fn remove_database(path: &Path) -> Result<(), StoreError> {

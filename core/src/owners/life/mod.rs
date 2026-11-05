@@ -1,6 +1,7 @@
 //! Direction A install (`design.md` F1-F3): the owners Network, Lifecycle, Store and Calls on one `Runtime`, each with the executor of its effects.
 //! An executor does IO and returns the result as an input, it takes no transition. `Session` joins when its table gets `Mutate` and `GenerateCredential`.
 
+mod observers;
 mod read;
 mod runners;
 pub(crate) mod session_runner;
@@ -8,6 +9,8 @@ pub(crate) mod session_runner;
 mod life_tests;
 #[cfg(test)]
 mod session_exchange_tests;
+
+pub use observers::{ObserverPort, StopDone};
 
 use std::collections::{BTreeSet, HashMap};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -397,6 +400,13 @@ impl Life {
             }
             _ => None,
         };
+        {
+            let reads_wiring = wiring.clone();
+            ports.db.shared.store.reads().attach(move |event| reads_wiring.to_store(match event {
+                crate::store::reads::ReadEvent::Closed(ids) => StoreInput::ReadsClosed { ids },
+                crate::store::reads::ReadEvent::Finished(read_id) => StoreInput::ReadFinished { read_id },
+            }));
+        }
         let last = [Some(calls.index()), session_address.as_ref().map(|(address, _)| address.index()), outbox.map(|address| address.index()), transfer.map(|address| address.index())].into_iter().flatten().max().unwrap_or(0);
         let read = read::add(&mut builder, &wiring, &ports, store, last + 1);
         let _ = wiring.addresses.set(Addresses { lifecycle, store, network, calls, session: session_address.as_ref().map(|(address, _)| *address), outbox, transfer, windows: None, deliveries: None, feed: None }.with_read(&read));
@@ -561,10 +571,21 @@ impl Life {
 }
 
 fn boot_found(db: &Db) -> Result<BootFound, LifeError> {
-    let (saved_epoch, saved_generation, saved_identity) = db.shared.store.saved().map_err(|error| LifeError::Storage(error.to_string()))?;
-    Ok(if db.open_report().changed_models.is_empty() {
-        BootFound::Same { saved_epoch, saved_generation, saved_identity }
-    } else {
+    let (saved_epoch, saved_generation, saved_identity) = db.shared.store.saved().map_err(|error| match error {
+        crate::store::StoreError::CorruptManifest(detail) => LifeError::CorruptManifest(detail),
+        other => LifeError::Storage(other.to_string()),
+    })?;
+    let report = db.open_report();
+    let server_model_changed = report.changed_models.iter().any(|model| db.shared.specs.get(model).is_none_or(|spec| !spec.is_local()));
+    Ok(if report.recreated == Some(crate::ddl::RecreateReason::UnreadableFile) {
+        BootFound::Fresh
+    } else if report.recreated.is_some() {
+        BootFound::FormatChange { saved_epoch, saved_generation, saved_identity }
+    } else if server_model_changed {
         BootFound::ChangedModels { saved_epoch, saved_generation, saved_identity }
+    } else if !report.changed_models.is_empty() {
+        BootFound::LocalModelChanged { saved_epoch, saved_generation, saved_identity }
+    } else {
+        BootFound::Same { saved_epoch, saved_generation, saved_identity }
     })
 }

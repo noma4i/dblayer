@@ -21,6 +21,8 @@ pub enum StoreError {
     Constraint(String),
     #[error("the database is closed or its state moved")]
     Refused,
+    #[error("corrupt manifest: {0}")]
+    CorruptManifest(String),
 }
 
 impl From<rusqlite::Error> for StoreError {

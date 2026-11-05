@@ -20,6 +20,7 @@ pub struct BootReport {
     pub finished_interrupted_reset: bool,
     pub tombstone_drops: usize,
     pub reset_models: Vec<String>,
+    pub dropped: Vec<super::open::DroppedRow>,
 }
 
 impl Store {
@@ -35,14 +36,18 @@ impl Store {
         let mut migrated_reset = None;
         let mut recreated = None;
         let mut rebuilt = false;
+        let mut dropped = Vec::new();
 
+        verify_saved(&inner.connection)?;
         if let Some(reason) = crate::ddl::recreate_reason(&inner.connection)? {
             let fingerprints = current_fingerprints(&inner);
             let transaction = inner.connection.unchecked_transaction()?;
             let database: String = transaction.query_row("SELECT file FROM pragma_database_list WHERE name = 'main'", [], |row| row.get(0))?;
             let has_files: bool = transaction.query_row("SELECT EXISTS (SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'file')", [], |row| row.get(0))?;
             let before: Vec<String> = if has_files { transaction.prepare("SELECT id FROM file")?.query_map([], |row| row.get(0))?.collect::<rusqlite::Result<_>>()? } else { Vec::new() };
-            let outbox = super::open::recreate(&transaction)?;
+            let recreated_layout = super::open::recreate(&transaction)?;
+            let outbox = recreated_layout.files_kept;
+            dropped = recreated_layout.dropped;
             for statement in models_statements(models) { transaction.execute_batch(&statement)?; }
             crate::db::op_effect::rebuild_open_effects(&transaction, &inner.models)?;
             let after: std::collections::HashSet<String> = transaction.prepare("SELECT id FROM file")?.query_map([], |row| row.get(0))?.collect::<rusqlite::Result<_>>()?;
@@ -124,6 +129,19 @@ impl Store {
         drop(reading_models);
         if let Some((database, files)) = removed_files { crate::files::FileDirectories::beside(std::path::Path::new(&database)).discard(&files)?; }
         if let Some(database) = remove_all_files { crate::files::FileDirectories::beside(std::path::Path::new(&database)).remove_all()?; }
-        Ok(BootReport { recreated, verdict, finished_interrupted_reset, tombstone_drops, reset_models })
+        Ok(BootReport { recreated, verdict, finished_interrupted_reset, tombstone_drops, reset_models, dropped })
     }
+}
+
+fn verify_saved(connection: &rusqlite::Connection) -> Result<(), StoreError> {
+    let has_manifest: bool = connection.query_row("SELECT EXISTS (SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'manifest')", [], |row| row.get(0))?;
+    if !has_manifest {
+        return Ok(());
+    }
+    for key in ["saved_epoch", "saved_generation"] {
+        if let Some(value) = crate::ddl::manifest_read(connection, key)? {
+            value.parse::<u64>().map_err(|_| StoreError::CorruptManifest(format!("{key} = {value:?} is not a u64")))?;
+        }
+    }
+    Ok(())
 }

@@ -62,7 +62,7 @@ pub use error::DbError;
 pub use local_write::{Acted, OutboxOperation};
 pub use observe::ObserverHandle;
 pub(crate) use observe::ObserverControl;
-pub use open::{Db, DbConfig, OpenReport};
+pub use open::{Db, DbConfig, DroppedRecord, OpenReport};
 pub(crate) use replace::ReplaceRequest;
 pub(crate) use land::AcceptedRows;
 pub use row::{Record, Row};

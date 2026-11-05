@@ -19,8 +19,11 @@ mod error;
 mod file_ops;
 mod maintenance;
 mod open;
+mod restore;
 pub(crate) use open::{is_unreadable, remove_database};
+pub use open::DroppedRow;
 mod readers;
+pub(crate) mod reads;
 mod reset;
 pub(crate) use reset::{identity_of, RowOp};
 mod rows;
@@ -191,6 +194,7 @@ pub struct Store {
     models: RwLock<Arc<BTreeMap<String, ModelInfo>>>,
     poison: Arc<Mutex<Option<String>>>,
     readers: Option<readers::Readers>,
+    reads: Arc<reads::Reads>,
     hook: OnceLock<StoreHook>,
     commit_log: OnceLock<CommitLog>,
     newest_operation: std::sync::atomic::AtomicI64,
@@ -236,6 +240,7 @@ impl Store {
             models: RwLock::new(models),
             poison,
             readers: None,
+            reads: reads::Reads::new(),
             hook: OnceLock::new(),
             commit_log: OnceLock::new(),
             newest_operation: std::sync::atomic::AtomicI64::new(0),
@@ -356,7 +361,10 @@ impl Store {
         self.readers.is_some() && !Self::needs_writer(&models, &[])
     }
 
+    pub(crate) fn reads(&self) -> &Arc<reads::Reads> { &self.reads }
+
     pub fn read<T>(&self, required: &[&str], run: impl FnOnce(&Reader<'_>) -> Result<T, StoreError>) -> Result<T, StoreError> {
+        let _admitted = self.reads.admit().ok_or(StoreError::Refused)?;
         let models = self.models.read().unwrap_or_else(|error| error.into_inner());
         if let Some(readers) = self.readers.as_ref().filter(|_| !Self::needs_writer(&models, required)) {
             let connection = readers.lease();
@@ -406,6 +414,8 @@ mod memory_tests;
 mod open_tests;
 #[cfg(test)]
 mod readers_tests;
+#[cfg(test)]
+mod reads_tests;
 #[cfg(test)]
 mod hook_tests;
 #[cfg(test)]

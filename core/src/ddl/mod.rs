@@ -15,8 +15,9 @@ pub const SCHEMA_VERSION: i64 = 2;
 pub const FORMAT_VERSION_KEY: &str = "format_version";
 pub const DATA_VERSION_KEY: &str = "data_version";
 pub const REVISION_SEQ_KEY: &str = "revision_seq";
+pub(crate) const CARRIED_MANIFEST_KEYS: [&str; 3] = ["saved_epoch", "saved_generation", REVISION_SEQ_KEY];
 /// The tables a format change moves into the new layout (`store_boot_format_change`).
-pub(crate) const CARRIED_TABLES: [&str; 17] = ["op", "op_item", "op_item_retry", "op_item_header", "op_row", "op_part", "op_value", "op_error", "transfer_abort", "blob_upload", "blob_use", "encrypted_session", "encrypted_pending", "sync_upload", "sync_upload_error", "local_pending", "file"];
+pub(crate) const CARRIED_TABLES: [&str; 18] = ["op", "op_item", "op_item_retry", "op_item_header", "op_row", "op_part", "op_value", "op_error", "transfer_abort", "blob_upload", "blob_use", "encrypted_session", "encrypted_pending", "sync_upload", "sync_upload_error", "local_pending", "file", "restore_failed"];
 
 pub const SERVICE_COLUMNS: [&str; 3] = ["id", "revision", "born_rev"];
 
@@ -114,7 +115,7 @@ END",
 ) STRICT, WITHOUT ROWID",
 ];
 
-const CORE_STATEMENTS: [&str; 42] = [
+const CORE_STATEMENTS: [&str; 43] = [
     "CREATE TABLE IF NOT EXISTS blob_upload (
   id TEXT PRIMARY KEY NOT NULL,
   name TEXT NOT NULL,
@@ -416,6 +417,13 @@ const CORE_STATEMENTS: [&str; 42] = [
   owner_step TEXT,
   purpose INTEGER NOT NULL CHECK (purpose IN (0, 1))
 ) STRICT",
+    "CREATE TABLE IF NOT EXISTS restore_failed (
+  source_table TEXT NOT NULL,
+  key TEXT NOT NULL,
+  reason TEXT NOT NULL,
+  columns TEXT NOT NULL,
+  PRIMARY KEY (source_table, key)
+) STRICT, WITHOUT ROWID",
     "CREATE TABLE IF NOT EXISTS file (
   id TEXT PRIMARY KEY NOT NULL,
   model TEXT NOT NULL,

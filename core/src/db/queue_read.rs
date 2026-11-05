@@ -11,6 +11,12 @@ use super::local_write::read_outbox;
 use super::open::Db;
 
 impl Db {
+    pub fn restore_failed(&self) -> Result<Vec<super::open::DroppedRecord>, DbError> {
+        Ok(self.shared.store.restore_failed()?.into_iter().map(|row| super::open::DroppedRecord { table: row.table, key: row.key, reason: row.reason }).collect())
+    }
+
+    pub fn discard_restore_failed(&self, table: &str, key: &str) -> Result<bool, DbError> { Ok(self.shared.store.discard_restore_failed(table, key)?) }
+
     /// Every open operation of the queue. The `path` of a request and the rule `on_failure` come from the operation the model declares for `(model, action)`:
     /// the base has no column for them. An operation whose action declares no mutation is an error that names it: nothing is guessed.
     pub(crate) fn read_intents(&self) -> Result<Vec<StoredOp>, DbError> {

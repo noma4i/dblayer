@@ -90,7 +90,13 @@ impl EffectRunner<Lifecycle> for LifecycleRunner {
                     wiring.to_lifecycle(LifecycleInput::Drained(Drained { owner: peer.name() }));
                 }
             }
-            LifecycleEffect::StopObserving => wiring.to_lifecycle(LifecycleInput::ObserversStopped),
+            LifecycleEffect::StopObserving => {
+                let done = super::StopDone::new(wiring.clone());
+                match self.db.shared.os_observers.get() {
+                    Some(port) => crate::db::lock::effect(|| port.stop(done)),
+                    None => done.finish(),
+                }
+            }
             LifecycleEffect::ClearAccount { epoch_old, cause, generation_new, erase_id } => wiring.to_store(StoreInput::ClearAccount { epoch_old, cause, generation_new, erase_id }),
             LifecycleEffect::ClearModels { epoch, generation_new, models, erase_id } => wiring.to_store(StoreInput::ClearModels { epoch, generation_new, models, erase_id }),
             LifecycleEffect::StoreClose => wiring.to_store(StoreInput::Close),
@@ -190,7 +196,7 @@ impl EffectRunner<StoreWriter> for StoreRunner {
                     wiring.to_lifecycle(LifecycleInput::RestoreClassified { owner, epoch });
                 }
             }
-            StoreEffect::CloseReads => back.reply(EpochStamp::Control, StoreInput::ReadsClosed { ids: Vec::new() }),
+            StoreEffect::CloseReads => self.db.shared.store.reads().close(),
             StoreEffect::CloseConnections => {
                 if let Err(error) = self.db.close() {
                     wiring.fault(format!("close: {error}"));

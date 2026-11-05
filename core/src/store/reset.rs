@@ -329,7 +329,12 @@ impl Store {
     /// `saved_epoch`, `saved_generation` and the identity of the stored session, read at open (`store.md` Boot).
     pub(crate) fn saved(&self) -> Result<(u64, u64, Option<u64>), StoreError> {
         let inner = self.lock();
-        let read = |key: &str| -> Result<u64, StoreError> { Ok(crate::ddl::manifest_read(&inner.connection, key)?.and_then(|value| value.parse().ok()).unwrap_or(0)) };
+        let read = |key: &str| -> Result<u64, StoreError> {
+            match crate::ddl::manifest_read(&inner.connection, key)? {
+                None => Ok(0),
+                Some(value) => value.parse().map_err(|_| StoreError::CorruptManifest(format!("{key} = {value:?} is not a u64"))),
+            }
+        };
         let identity = crate::transport::encrypted::state::session(&inner.connection)?.filter(|session| session.sequence > 0).and_then(|session| identity_of(&session.credential_digest));
         Ok((read(SAVED_EPOCH_KEY)?, read(SAVED_GENERATION_KEY)?, identity))
     }
@@ -406,6 +411,7 @@ pub(crate) enum RowOp {
     RemovePending,
     /// `digest = None` keeps the stored digest, `sequence = None` keeps the stored sequence.
     PutSession { digest: Option<String>, sequence: Option<i64> },
+    DiscardRestoreFailed { table: String, key: String },
 }
 
 impl Store {
@@ -421,6 +427,9 @@ impl Store {
                 }
                 RowOp::RemovePending => {
                     transaction.execute("DELETE FROM encrypted_pending", [])?;
+                }
+                RowOp::DiscardRestoreFailed { table, key } => {
+                    transaction.execute("DELETE FROM restore_failed WHERE source_table = ?1 AND key = ?2", params![table, key])?;
                 }
                 RowOp::PutSession { digest, sequence } => {
                     let stored = state::session(&transaction)?;

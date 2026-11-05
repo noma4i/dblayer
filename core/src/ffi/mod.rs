@@ -97,12 +97,15 @@ pub enum DbError {
     /// The database is closed (`lifecycle.md`: calls after `Close` get `Err(Closed)`).
     #[error("closed: {detail}")]
     Closed { detail: String },
+    #[error("corrupt manifest: {detail}")]
+    CorruptManifest { detail: String },
 }
 
 impl From<crate::db::DbError> for DbError {
     fn from(error: crate::db::DbError) -> Self {
         match error {
             crate::db::DbError::NoSession { detail } => Self::NoSession { detail },
+            crate::db::DbError::Store(crate::store::StoreError::CorruptManifest(detail)) => Self::CorruptManifest { detail },
             other => Self::Database { detail: other.to_string() },
         }
     }
