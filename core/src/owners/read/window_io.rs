@@ -1,15 +1,14 @@
 //! Runner of the effects of `Windows`: the request of a page goes through the `Transport` of the core, the answer comes back as
-//! `WindowsInput::Transport`; the answer batch goes to the owner `StoreWriter`. A cancelled request gives no answer.
+//! `WindowsInput::Transport`. A cancelled request gives no answer.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::HashMap;
 use std::sync::{Arc, Mutex, PoisonError};
 
 use tokio::runtime::Handle;
 
-use super::ports::{epoch_of, Admit, Rest, StorePort};
+use super::ports::{Admit, Rest};
 use crate::owners::contract::{ErrorClass, RequestError, RequestId, Transport as Answer, TransportOutcome};
-use crate::owners::store::StoreBatch;
-use crate::owners::windows::{AnswerPage, WindowEffect, WindowKey, Windows, WindowsEffect, WindowsInput};
+use crate::owners::read::windows::{AnswerPage, WindowEffect, WindowKey, Windows, WindowsEffect, WindowsInput};
 use crate::runtime::{Back, EffectRunner, EpochStamp};
 use crate::task::{spawn_on, Carry};
 use crate::transport::{CancelToken, GraphQLRequest, Response, RetryClass, Transport, TransportError};
@@ -26,15 +25,14 @@ pub struct WindowIo {
     transport: Arc<dyn Transport>,
     codec: Arc<dyn WindowCodec>,
     admit: Admit,
-    writer: Arc<dyn StorePort>,
     handle: Handle,
     open: Open,
     rest: Rest<WindowsEffect>,
 }
 
 impl WindowIo {
-    pub fn new(transport: Arc<dyn Transport>, codec: Arc<dyn WindowCodec>, admit: Admit, writer: Arc<dyn StorePort>, handle: Handle, rest: Rest<WindowsEffect>) -> Self {
-        Self { transport, codec, admit, writer, handle, open: Open::default(), rest }
+    pub fn new(transport: Arc<dyn Transport>, codec: Arc<dyn WindowCodec>, admit: Admit, handle: Handle, rest: Rest<WindowsEffect>) -> Self {
+        Self { transport, codec, admit, handle, open: Open::default(), rest }
     }
 
     fn request(&self, stamp: EpochStamp, key: WindowKey, request: RequestId, page: u32, cursor: Option<String>, back: &Back<Windows>) {
@@ -59,12 +57,6 @@ impl WindowIo {
             token.cancel();
         }
     }
-
-    fn commit(&self, stamp: EpochStamp, key: &WindowKey, request: RequestId, basis: u64, page: AnswerPage) {
-        let rows = page.rows.into_iter().map(|row| (key.model.clone(), row)).collect();
-        let batch = StoreBatch { id: request, epoch: epoch_of(stamp), basis: BTreeMap::from([(key.model.clone(), basis)]), rows, intents: 0, credential: None };
-        self.writer.commit(stamp, batch);
-    }
 }
 
 impl EffectRunner<Windows> for WindowIo {
@@ -72,7 +64,6 @@ impl EffectRunner<Windows> for WindowIo {
         match effect {
             WindowsEffect::Window { key, effect: WindowEffect::Request { request, page, cursor, .. } } => self.request(stamp, key, request, page, cursor, back),
             WindowsEffect::Window { effect: WindowEffect::Cancel { request }, .. } => self.cancel(request),
-            WindowsEffect::Window { key, effect: WindowEffect::Commit { request, basis, page } } => self.commit(stamp, &key, request, basis, page),
             other => (self.rest)(stamp, other),
         }
     }

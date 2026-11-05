@@ -1,6 +1,6 @@
 //! `WindowIo` on `DetScheduler` with the mock transport. Requirement -> observed value -> assert:
-//! win_io_request_lands: a `Request` is asked through `Transport`, the answer is an input, the landed page reaches the store port.
-//! win_io_error_classes: a transport error is an input of its class (network -> retry, permanent -> `Failed`).
+//! win_io_request_lands: a `Request` is asked through `Transport`, the answer is an input, the landed page reaches the Store as `Commit`.
+//! win_io_error_classes: a transport error is an input of its class (network -> a `Schedule` of `RetryDue`, permanent -> `Failed`).
 //! win_io_cancel_no_answer: a cancelled request gives the owner no `Transport` input.
 
 use std::sync::{Arc, Mutex};
@@ -8,9 +8,12 @@ use std::time::Duration;
 
 use serde_json::json;
 
-use super::rig::{admit, collector, pump, pump_for, runtime, saw_input, Batches};
+use super::rig::{admit, collector, pump, pump_for, runtime, saw_input, BatchPeer, Batches};
 use super::{WindowCodec, WindowIo};
-use crate::owners::windows::{self as w, AnswerPage, WindowEffect, WindowKey, WindowOutcome, Windows, WindowsEffect, WindowsInput};
+use crate::owners::read::deliveries::Deliveries;
+use crate::owners::read::windows::{self as w, AnswerPage, WindowEffect, WindowKey, WindowOutcome, Windows, WindowsEffect, WindowsInput};
+use crate::owners::store::StoreWriter;
+use crate::owners::support::Sink;
 use crate::runtime::{Address, DetScheduler, EpochStamp};
 use crate::transport::{GraphQLRequest, MockTransport, Reply, Response, TransportError};
 
@@ -30,7 +33,7 @@ impl WindowCodec for Pages {
 
 fn key() -> WindowKey { WindowKey { model: "Moment".into(), name: "list".into() } }
 
-fn interest(id: u32) -> WindowsInput { WindowsInput::InterestPlus { key: key(), id, force: false, all: false, stream: false, store_revision: 0 } }
+fn interest(id: u64) -> WindowsInput { WindowsInput::InterestPlus { key: key(), id, force: false, all: false, stream: false, store_revision: 0 } }
 
 struct Rig {
     det: DetScheduler,
@@ -46,9 +49,12 @@ fn rig() -> Rig {
     let mock = MockTransport::new();
     let batches = Batches::default();
     let (rest, take_rest) = collector();
-    let io = WindowIo::new(Arc::new(mock.clone()), Arc::new(Pages), admit(), Arc::new(batches.clone()), runtime.handle().clone(), take_rest);
+    let io = WindowIo::new(Arc::new(mock.clone()), Arc::new(Pages), admit(), runtime.handle().clone(), take_rest);
     let mut det = DetScheduler::new(1);
-    let windows = det.add::<Windows>("windows", w::WindowsState::new(EPOCH, true), io);
+    let store = det.add::<BatchPeer>("store", batches.clone(), crate::owners::support::Discard);
+    let deliveries = det.add::<Sink<Deliveries>>("deliveries", Default::default(), crate::owners::support::Discard);
+    let peers = w::WindowsPeers { store: Address::<StoreWriter>::new(store.index()), deliveries: Address::<Deliveries>::new(deliveries.index()) };
+    let windows = det.add::<Windows>("windows", w::WindowsState::new(EPOCH, true, peers), io);
     det.start_epoch(EPOCH);
     Rig { det, windows, mock, batches, rest, _runtime: runtime }
 }
@@ -62,8 +68,7 @@ fn win_io_request_lands() {
     pump(&mut rig.det, rig.windows, |_| !batches.all().is_empty());
     let landed = rig.batches.all();
     assert_eq!(landed.len(), 1);
-    let (stamp, batch) = &landed[0];
-    assert_eq!(*stamp, EpochStamp::Epoch(EPOCH));
+    let batch = &landed[0];
     assert_eq!((batch.epoch, batch.intents), (EPOCH, 0));
     assert_eq!(batch.rows, [("Moment".to_string(), "r1".to_string()), ("Moment".to_string(), "r2".to_string())]);
     assert_eq!(batch.basis.get("Moment"), Some(&0));
@@ -72,17 +77,17 @@ fn win_io_request_lands() {
 
 #[test]
 fn win_io_error_classes() {
-    type Holds = fn(&[WindowsEffect]) -> bool;
+    type Holds = fn(&[WindowsEffect], &DetScheduler) -> bool;
     let cases: [(TransportError, Holds); 2] = [
-        (TransportError::Network("down".into()), |seen| seen.iter().any(|effect| matches!(effect, WindowsEffect::Window { effect: WindowEffect::ScheduleRetry { attempt: 1, .. }, .. }))),
-        (TransportError::Decode("broken".into()), |seen| seen.iter().any(|effect| matches!(effect, WindowsEffect::Window { effect: WindowEffect::Outcome { outcome: WindowOutcome::Failed { .. }, .. }, .. }))),
+        (TransportError::Network("down".into()), |_, det| det.trace().iter().any(|entry| entry.effects.contains("Schedule {") && entry.effects.contains("RetryDue { request: 1 }"))),
+        (TransportError::Decode("broken".into()), |seen, _| seen.iter().any(|effect| matches!(effect, WindowsEffect::Window { effect: WindowEffect::Outcome { outcome: WindowOutcome::Failed { .. }, .. }, .. }))),
     ];
     for (error, holds) in cases {
         let mut rig = rig();
         rig.mock.enqueue("Page", Reply::fail(error.clone()));
         rig.det.post(rig.windows, EpochStamp::Epoch(EPOCH), interest(1));
         let rest = rig.rest.clone();
-        pump(&mut rig.det, rig.windows, |_| holds(&rest.lock().unwrap()));
+        pump(&mut rig.det, rig.windows, |det| holds(&rest.lock().unwrap(), det));
         assert!(rig.batches.all().is_empty(), "{error:?} lands no page");
     }
 }

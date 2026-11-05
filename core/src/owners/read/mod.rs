@@ -11,9 +11,9 @@ mod ports;
 mod snapshots;
 mod window_io;
 
-pub use delivery_io::{DeliveryIo, StreamTable};
+pub use delivery_io::DeliveryIo;
 pub use feed_io::{FeedCodec, FeedIo};
-pub use ports::{Admit, Rest, StorePort};
+pub use ports::{Admit, Rest};
 pub use snapshots::{SnapshotStatements, Snapshots, SqliteSnapshots};
 pub use window_io::{WindowCodec, WindowIo};
 

@@ -1,20 +1,21 @@
 //! `DeliveryIo` on `DetScheduler` with a real SQLite file in WAL mode. Requirement -> observed value -> assert:
-//! delivery_io_read_sees_commit: the read of revision N sees the rows of the commit N, the first `Snapshot` has them and wakes the sink.
+//! delivery_io_read_sees_commit: the read of revision N sees the rows of the commit N, a waiting `Pull` settles its outcome with the first `Snapshot`.
 //! delivery_io_read_older_snapshot: a read of a revision the file does not hold yet gives `ReadFailed`, not rows.
 
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
 use rusqlite::{params, Connection};
 
-use super::deliveries::{self as d, Deliveries, DeliveryInput, Kind, Value, View};
+use super::deliveries::{self as d, Deliveries, DeliveryInput, Kind, PullAnswer, Value, View};
 use super::rig::{collector, pump, runtime, saw_input};
-use super::{DeliveryIo, SnapshotStatements, SqliteSnapshots, StreamTable};
+use super::feed::Feed;
+use super::windows::{WindowKey, Windows};
+use super::{DeliveryIo, SnapshotStatements, SqliteSnapshots};
 use crate::ddl::{create_model_tables, manifest_write, migrate_core, REVISION_SEQ_KEY};
-use crate::ffi::ValueSink;
 use crate::owners::contract::{WindowPhase, WindowState};
 use crate::query::{compile_keys, CompiledStatement, Query};
-use crate::runtime::{Address, DetScheduler, EpochStamp};
+use crate::owners::support::{new_log, Discard, Log, Sink};
+use crate::runtime::{Address, DetScheduler, EpochStamp, Outcome, Outcomes, Waiter};
 use crate::schema::{FieldSpec, ModelSpec};
 use crate::value::ScalarKind;
 
@@ -23,19 +24,12 @@ const STREAM: u64 = 7;
 
 fn people() -> ModelSpec { ModelSpec::new("people", vec![FieldSpec::scalar("id", ScalarKind::Id)]) }
 
-fn view() -> View { View { kind: Kind::List, model: "people".into(), tables: vec!["row_people".into()], local: false } }
+fn view() -> View { View { kind: Kind::List, model: "people".into(), tables: vec!["row_people".into()], local: false, window: WindowKey { model: "people".into(), name: "list".into() } } }
 
 struct People;
 
 impl SnapshotStatements for People {
     fn statement(&self, _view: &View) -> Result<CompiledStatement, String> { compile_keys(&Query::new("people"), &people()).map_err(|error| error.to_string()) }
-}
-
-#[derive(Default)]
-struct Heard(AtomicUsize);
-
-impl ValueSink for Heard {
-    fn available(&self) { self.0.fetch_add(1, Ordering::SeqCst); }
 }
 
 /// Commit `revision`: the row and the revision of the manifest in one transaction, like the writer of the Store.
@@ -49,7 +43,8 @@ fn commit(connection: &Connection, id: &str, revision: i64) {
 struct Rig {
     det: DetScheduler,
     owner: Address<Deliveries>,
-    heard: Arc<Heard>,
+    answers: Outcomes<PullAnswer>,
+    windows: Log<String>,
     rest: Arc<Mutex<Vec<d::DeliveryEffect>>>,
     writer: Connection,
     _dir: tempfile::TempDir,
@@ -63,16 +58,17 @@ fn rig() -> Rig {
     migrate_core(&writer).unwrap();
     create_model_tables(&writer, &[people()]).unwrap();
     let runtime = runtime();
-    let heard = Arc::new(Heard::default());
-    let table = StreamTable::default();
-    let sink: Arc<dyn ValueSink> = heard.clone();
-    table.register(STREAM, view(), sink);
+    let answers = Outcomes::new();
     let (rest, take_rest) = collector();
-    let io = DeliveryIo::new(Arc::new(SqliteSnapshots::new(path, Arc::new(People))), table, runtime.handle().clone(), take_rest);
+    let io = DeliveryIo::new(Arc::new(SqliteSnapshots::new(path, Arc::new(People))), answers.clone(), runtime.handle().clone(), take_rest);
     let mut det = DetScheduler::new(1);
-    let owner = det.add::<Deliveries>("deliveries", d::DeliveriesState::new(EPOCH), io);
+    let windows = new_log();
+    let windows_slot = det.add::<Sink<Windows>>("windows", windows.clone(), Discard);
+    let feed_slot = det.add::<Sink<Feed>>("feed", new_log(), Discard);
+    let peers = d::DeliveryPeers { windows: Address::<Windows>::new(windows_slot.index()), feed: Address::<Feed>::new(feed_slot.index()) };
+    let owner = det.add::<Deliveries>("deliveries", d::DeliveriesState::new(EPOCH, peers), io);
     det.start_epoch(EPOCH);
-    Rig { det, owner, heard, rest, writer, _dir: dir, _runtime: runtime }
+    Rig { det, owner, answers, windows, rest, writer, _dir: dir, _runtime: runtime }
 }
 
 fn open(rig: &mut Rig, revision: i64) {
@@ -81,20 +77,30 @@ fn open(rig: &mut Rig, revision: i64) {
     rig.det.post(rig.owner, EpochStamp::Epoch(EPOCH), DeliveryInput::WindowState { stream: STREAM, state: loaded });
 }
 
+fn pull(rig: &mut Rig) -> Waiter<PullAnswer> {
+    let waiter = rig.answers.register(EPOCH);
+    rig.det.post(rig.owner, EpochStamp::Control, DeliveryInput::Pull { stream: STREAM, outcome: waiter.id() });
+    waiter
+}
+
 #[test]
 fn delivery_io_read_sees_commit() {
     let mut rig = rig();
     commit(&rig.writer, "p1", 1);
     commit(&rig.writer, "p2", 2);
     open(&mut rig, 2);
+    let mut waiter = pull(&mut rig);
     let owner = rig.owner;
-    pump(&mut rig.det, owner, |det| det.state(owner).is_some_and(|state| state.journal_len(STREAM) > 0));
-    let journal = rig.det.state(owner).unwrap().journal(STREAM);
-    let Some(Value::Snapshot { revision, rows, .. }) = journal.first() else { panic!("the first value is a Snapshot: {journal:?}") };
-    assert_eq!(*revision, 2);
+    let mut taken = None;
+    pump(&mut rig.det, owner, |_| {
+        taken = taken.take().or_else(|| waiter.try_take());
+        taken.is_some()
+    });
+    let Some(Outcome::Value(PullAnswer::Value(Value::Snapshot { revision, rows, .. }))) = taken else { panic!("the first value is a Snapshot: {taken:?}") };
+    assert_eq!(revision, 2);
     assert_eq!(rows.iter().map(|row| row.id.as_str()).collect::<Vec<_>>(), ["p1", "p2"]);
-    assert_eq!(rig.heard.0.load(Ordering::SeqCst), 1, "the sink heard that a value waits");
-    assert!(!rig.rest.lock().unwrap().is_empty(), "the window interest of a List goes to the effects that are no IO");
+    assert!(rig.windows.lock().unwrap().iter().any(|input| input.starts_with("InterestPlus")), "the window interest of a List is an input of the Windows");
+    assert!(rig.rest.lock().unwrap().is_empty(), "nothing but IO leaves the runner");
 }
 
 #[test]
@@ -109,5 +115,4 @@ fn delivery_io_read_older_snapshot() {
     assert!(rows.is_empty(), "no rows of a snapshot older than the revision");
     assert_eq!(state.phase, WindowPhase::Failed);
     assert!(state.error.as_deref().is_some_and(|error| error.contains("older than 2")), "the error of the read reaches the stream: {state:?}");
-    assert_eq!(rig.heard.0.load(Ordering::SeqCst), 0);
 }

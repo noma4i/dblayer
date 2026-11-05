@@ -7,7 +7,7 @@ use std::sync::{Arc, Mutex, PoisonError};
 use rusqlite::{Connection, OpenFlags};
 
 use crate::ddl::{manifest_read, REVISION_SEQ_KEY};
-use crate::owners::deliveries::{Kind, ReadData, StreamRow, View};
+use crate::owners::read::deliveries::{Kind, ReadData, StreamRow, View};
 use crate::query::{fetch_count, fetch_keys, CompiledStatement};
 
 /// The statement of a stream: `(id, revision)` rows for `List` and `Entity`, one number for `Count`.

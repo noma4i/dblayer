@@ -5,7 +5,9 @@
 use std::collections::{BTreeMap, VecDeque};
 
 use crate::owners::contract::{Committed, Drained, EpochEnded, EpochStarted, ModelsReset, WindowPhase, WindowState};
-use crate::runtime::{Cause, Effect, Effects, Epoch, StateOwner, Time};
+use crate::owners::read::feed::{Feed, FeedInput};
+use crate::owners::read::windows::{WindowKey, Windows, WindowsInput};
+use crate::runtime::{Address, Cause, Effect, Effects, Epoch, Outbound, OutcomeId, StateOwner, Time};
 
 pub const JOURNAL_LIMIT: usize = 256;
 /// A read that moves more rows than this arrives as a `Snapshot`, not a `Delta`.
@@ -56,6 +58,8 @@ pub struct View {
     pub tables: Vec<String>,
     /// The model is `storage: local`: the stream needs no session.
     pub local: bool,
+    /// The window of the stream; an `Events` stream has none and the key is not used.
+    pub window: WindowKey,
 }
 
 /// A row of a snapshot: `stamp` changes when the content of the row changes.
@@ -87,21 +91,35 @@ pub enum Value {
     Ended(EndCause),
 }
 
+/// The answer of `Pull`: the first value of the journal, or the end of a stream that was over.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum PullAnswer {
+    Value(Value),
+    Done,
+}
+
+/// The effects of the runner: a read of the snapshot carries its view by value, an answer settles the outcome of a `Pull`.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum StreamEffect {
+    Read { read_id: u64, revision: i64, view: View },
+    Answer { outcome: OutcomeId, answer: PullAnswer },
+}
+
+/// What a machine gives out: an effect of the runner or an input for the Windows or the Feed.
+enum Emit {
     Read { read_id: u64, revision: i64 },
     InterestPlus { force: bool },
     InterestMinus,
     WantPlus,
     WantMinus,
-    /// The answer of `Pull`: the first value of the journal.
-    Deliver(Value),
-    /// The answer of `Pull`: the journal is empty, the reader waits for `Wake`.
-    ReaderWaits,
-    /// The answer of `Pull` after `Ended`: the stream is over.
-    Done,
-    /// The journal was empty and got a value: wake the reader.
-    Wake,
+    Answer { outcome: OutcomeId, answer: PullAnswer },
+}
+
+/// The owners `Deliveries` sends inputs to.
+#[derive(Clone, Copy, Debug)]
+pub struct DeliveryPeers {
+    pub windows: Address<Windows>,
+    pub feed: Address<Feed>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -122,7 +140,7 @@ pub enum DeliveryInput {
     ModelReady { stream: StreamId },
     ModelEvent { stream: StreamId, position: u64, payload: String },
     ModelLost { stream: StreamId, first: u64, last: u64 },
-    Pull { stream: StreamId },
+    Pull { stream: StreamId, outcome: OutcomeId },
     Cancel { stream: StreamId },
     EpochStarted(EpochStarted),
     EpochEnded(EpochEnded),
@@ -158,47 +176,54 @@ struct Delivery {
     ready: bool,
     journal: VecDeque<Value>,
     ended_given: bool,
+    /// Pulls that wait for the next value.
+    readers: VecDeque<OutcomeId>,
+    /// The revision of the Store at the open of the stream.
+    opened: i64,
 }
 
 impl Delivery {
-    fn open(view: View, epoch: Epoch, revision: i64, fx: &mut Vec<StreamEffect>) -> Self {
-        let mut machine = Self { epoch, view, stage: DeliveryStage::Opening, read: revision, read_id: 0, revision: 0, rows: Vec::new(), count: None, window: WindowState::idle(), next_feed: None, position: 0, ready: false, journal: VecDeque::new(), ended_given: false };
+    fn open(view: View, epoch: Epoch, revision: i64, fx: &mut Vec<Emit>) -> Self {
+        let mut machine = Self { epoch, view, stage: DeliveryStage::Opening, read: revision, read_id: 0, revision: 0, rows: Vec::new(), count: None, window: WindowState::idle(), next_feed: None, position: 0, ready: false, journal: VecDeque::new(), ended_given: false, readers: VecDeque::new(), opened: 0 };
         if machine.view.kind == Kind::Events {
+            machine.opened = revision;
             machine.stage = DeliveryStage::Live;
-            fx.push(StreamEffect::WantPlus);
+            fx.push(Emit::WantPlus);
             return machine;
         }
+        machine.opened = revision;
         fx.push(machine.new_read(revision));
         if let Some(force) = machine.view.kind.interest_at_open() {
-            fx.push(StreamEffect::InterestPlus { force });
+            fx.push(Emit::InterestPlus { force });
         }
         machine
     }
 
-    fn new_read(&mut self, revision: i64) -> StreamEffect {
+    fn new_read(&mut self, revision: i64) -> Emit {
         self.read_id += 1;
-        StreamEffect::Read { read_id: self.read_id, revision }
+        Emit::Read { read_id: self.read_id, revision }
     }
 
-    fn stale(view: View, epoch: Epoch, cause: EndCause, fx: &mut Vec<StreamEffect>) -> Self {
-        let mut machine = Self { epoch, view, stage: DeliveryStage::Ended, read: 0, read_id: 0, revision: 0, rows: Vec::new(), count: None, window: WindowState::idle(), next_feed: None, position: 0, ready: false, journal: VecDeque::new(), ended_given: false };
+    fn stale(view: View, epoch: Epoch, cause: EndCause, fx: &mut Vec<Emit>) -> Self {
+        let mut machine = Self { epoch, view, stage: DeliveryStage::Ended, read: 0, read_id: 0, revision: 0, rows: Vec::new(), count: None, window: WindowState::idle(), next_feed: None, position: 0, ready: false, journal: VecDeque::new(), ended_given: false, readers: VecDeque::new(), opened: 0 };
         machine.push(Value::Ended(cause), fx);
         machine
     }
 
-    fn push(&mut self, value: Value, fx: &mut Vec<StreamEffect>) {
-        if self.journal.is_empty() {
-            fx.push(StreamEffect::Wake);
-        }
+    fn push(&mut self, value: Value, fx: &mut Vec<Emit>) {
         match value {
             Value::Snapshot { .. } | Value::Count { .. } => self.journal.retain(|kept| !matches!(kept, Value::Delta { .. } | Value::Snapshot { .. } | Value::Count { .. } | Value::State { .. })),
             Value::State { .. } => self.journal.retain(|kept| !matches!(kept, Value::State { .. })),
             _ => {}
         }
         self.journal.push_back(value);
-        if self.journal.len() <= JOURNAL_LIMIT {
-            return;
+        if self.journal.len() > JOURNAL_LIMIT {
+            self.compact();
         }
+        self.serve(fx);
+    }
+
+    fn compact(&mut self) {
         let (mut first, mut last, mut at) = (u64::MAX, 0u64, None);
         while self.journal.len() > JOURNAL_LIMIT - 1 {
             let Some(index) = self.journal.iter().position(|kept| matches!(kept, Value::Event { .. } | Value::Lost { .. })) else { break };
@@ -220,32 +245,45 @@ impl Delivery {
         }
     }
 
-    fn end(&mut self, cause: EndCause, fx: &mut Vec<StreamEffect>) {
+    fn end(&mut self, cause: EndCause, fx: &mut Vec<Emit>) {
         self.stage = DeliveryStage::Ended;
         self.push(Value::Ended(cause), fx);
     }
 
-    fn leave(&self) -> StreamEffect {
+    fn leave(&self) -> Emit {
         match self.view.kind {
-            Kind::Events => StreamEffect::WantMinus,
-            _ => StreamEffect::InterestMinus,
+            Kind::Events => Emit::WantMinus,
+            _ => Emit::InterestMinus,
         }
     }
 
-    fn pull(&mut self, fx: &mut Vec<StreamEffect>) {
+    fn take(&mut self) -> Option<PullAnswer> {
         match self.journal.pop_front() {
             Some(value) => {
                 self.ended_given |= matches!(value, Value::Ended(_));
-                fx.push(StreamEffect::Deliver(value));
+                Some(PullAnswer::Value(value))
             }
-            None if self.ended_given => fx.push(StreamEffect::Done),
-            None => fx.push(StreamEffect::ReaderWaits),
+            None if self.ended_given => Some(PullAnswer::Done),
+            None => None,
         }
+    }
+
+    fn serve(&mut self, fx: &mut Vec<Emit>) {
+        while let Some(outcome) = self.readers.front().copied() {
+            let Some(answer) = self.take() else { return };
+            self.readers.pop_front();
+            fx.push(Emit::Answer { outcome, answer });
+        }
+    }
+
+    fn pull(&mut self, outcome: OutcomeId, fx: &mut Vec<Emit>) {
+        self.readers.push_back(outcome);
+        self.serve(fx);
     }
 
     fn touches(&self, committed: &Committed) -> bool { committed.tables.iter().any(|table| self.view.tables.contains(table)) }
 
-    fn committed(&mut self, committed: &Committed, fx: &mut Vec<StreamEffect>) {
+    fn committed(&mut self, committed: &Committed, fx: &mut Vec<Emit>) {
         if !self.touches(committed) {
             return;
         }
@@ -259,7 +297,7 @@ impl Delivery {
         }
     }
 
-    fn read_done(&mut self, read_id: u64, revision: i64, data: ReadData, fx: &mut Vec<StreamEffect>) {
+    fn read_done(&mut self, read_id: u64, revision: i64, data: ReadData, fx: &mut Vec<Emit>) {
         if read_id != self.read_id || self.view.kind == Kind::Events {
             return;
         }
@@ -272,7 +310,7 @@ impl Delivery {
                 self.rows = rows;
                 self.stage = DeliveryStage::Live;
                 if missing {
-                    fx.push(StreamEffect::InterestPlus { force: false });
+                    fx.push(Emit::InterestPlus { force: false });
                 }
             }
             (DeliveryStage::Opening, ReadData::Count(now)) if count => {
@@ -302,7 +340,7 @@ impl Delivery {
         }
     }
 
-    fn read_failed(&mut self, read_id: u64, revision: i64, error: String, fx: &mut Vec<StreamEffect>) {
+    fn read_failed(&mut self, read_id: u64, revision: i64, error: String, fx: &mut Vec<Emit>) {
         if read_id != self.read_id {
             return;
         }
@@ -325,7 +363,7 @@ impl Delivery {
         }
     }
 
-    fn window_state(&mut self, state: WindowState, fx: &mut Vec<StreamEffect>) {
+    fn window_state(&mut self, state: WindowState, fx: &mut Vec<Emit>) {
         match self.stage {
             DeliveryStage::Opening => self.window = state,
             DeliveryStage::Live => {
@@ -346,14 +384,14 @@ impl Delivery {
         }
     }
 
-    fn model_ready(&mut self, fx: &mut Vec<StreamEffect>) {
+    fn model_ready(&mut self, fx: &mut Vec<Emit>) {
         if self.is_live_events() && !self.ready {
             self.ready = true;
             self.push(Value::Ready, fx);
         }
     }
 
-    fn model_event(&mut self, position: u64, payload: String, fx: &mut Vec<StreamEffect>) {
+    fn model_event(&mut self, position: u64, payload: String, fx: &mut Vec<Emit>) {
         let Some(next) = self.next_feed.filter(|_| self.is_live_events()) else { return };
         if position < next {
             return;
@@ -368,7 +406,7 @@ impl Delivery {
         self.next_feed = Some(position + 1);
     }
 
-    fn model_lost(&mut self, first: u64, last: u64, fx: &mut Vec<StreamEffect>) {
+    fn model_lost(&mut self, first: u64, last: u64, fx: &mut Vec<Emit>) {
         let Some(next) = self.next_feed.filter(|_| self.is_live_events()) else { return };
         if last < next {
             return;
@@ -379,7 +417,7 @@ impl Delivery {
         self.next_feed = Some(last + 1);
     }
 
-    fn models_reset(&mut self, reset: &ModelsReset, fx: &mut Vec<StreamEffect>) {
+    fn models_reset(&mut self, reset: &ModelsReset, fx: &mut Vec<Emit>) {
         if self.view.kind == Kind::Events || !reset.models.contains(&self.view.model) {
             return;
         }
@@ -390,7 +428,7 @@ impl Delivery {
         }
     }
 
-    fn cancel(&mut self, fx: &mut Vec<StreamEffect>) {
+    fn cancel(&mut self, fx: &mut Vec<Emit>) {
         if self.stage == DeliveryStage::Ended {
             return;
         }
@@ -399,7 +437,7 @@ impl Delivery {
         fx.push(leave);
     }
 
-    fn epoch_ended(&mut self, ended: &EpochEnded, fx: &mut Vec<StreamEffect>) {
+    fn epoch_ended(&mut self, ended: &EpochEnded, fx: &mut Vec<Emit>) {
         if self.stage == DeliveryStage::Ended || ended.epoch != self.epoch {
             return;
         }
@@ -408,21 +446,22 @@ impl Delivery {
         fx.push(leave);
     }
 
-    fn closing(&mut self, fx: &mut Vec<StreamEffect>) {
+    fn closing(&mut self, fx: &mut Vec<Emit>) {
         if self.stage != DeliveryStage::Ended {
             self.end(EndCause::Closed, fx);
         }
     }
 }
 
-/// The state of the owner: the epoch it knows and the machines.
+/// The state of the owner: the epoch it knows, the machines and the addresses of the owners it sends to.
 pub struct DeliveriesState {
     epoch: Epoch,
     streams: BTreeMap<StreamId, Delivery>,
+    peers: DeliveryPeers,
 }
 
 impl DeliveriesState {
-    pub fn new(epoch: Epoch) -> Self { Self { epoch, streams: BTreeMap::new() } }
+    pub fn new(epoch: Epoch, peers: DeliveryPeers) -> Self { Self { epoch, streams: BTreeMap::new(), peers } }
 
     pub fn stage(&self, stream: StreamId) -> Option<DeliveryStage> { self.streams.get(&stream).map(|machine| machine.stage) }
 
@@ -438,8 +477,18 @@ impl DeliveriesState {
 
 pub struct Deliveries;
 
-fn keyed(stream: StreamId, effects: Vec<StreamEffect>) -> impl Iterator<Item = Effect<Deliveries>> {
-    effects.into_iter().map(move |effect| Effect::Run(DeliveryEffect::Stream { stream, effect }))
+fn lower(peers: DeliveryPeers, stream: StreamId, machine: &Delivery, emits: Vec<Emit>, out: &mut Effects<Deliveries>) {
+    for emit in emits {
+        let run = |effect| Effect::Run(DeliveryEffect::Stream { stream, effect });
+        out.push(match emit {
+            Emit::Read { read_id, revision } => run(StreamEffect::Read { read_id, revision, view: machine.view.clone() }),
+            Emit::Answer { outcome, answer } => run(StreamEffect::Answer { outcome, answer }),
+            Emit::InterestPlus { force } => Effect::Send(Outbound::new(peers.windows, WindowsInput::InterestPlus { key: machine.view.window.clone(), id: stream, force, all: false, stream: true, store_revision: machine.opened })),
+            Emit::InterestMinus => Effect::Send(Outbound::new(peers.windows, WindowsInput::InterestMinus { key: machine.view.window.clone(), id: stream })),
+            Emit::WantPlus => Effect::Send(Outbound::new(peers.feed, FeedInput::WantPlus { model: machine.view.model.clone(), debounce_ms: 0, delivery: Some(stream) })),
+            Emit::WantMinus => Effect::Send(Outbound::new(peers.feed, FeedInput::WantMinus { model: machine.view.model.clone(), delivery: Some(stream) })),
+        });
+    }
 }
 
 impl StateOwner for Deliveries {
@@ -464,8 +513,8 @@ impl StateOwner for Deliveries {
                 } else {
                     Delivery::open(view, epoch, revision, &mut fx)
                 };
+                lower(state.peers, stream, &machine, fx, &mut out);
                 state.streams.insert(stream, machine);
-                out.extend(keyed(stream, fx));
             }
             DeliveryInput::ReadDone { stream, read_id, revision, data } => on(state, stream, &mut out, |machine, fx| machine.read_done(read_id, revision, data, fx)),
             DeliveryInput::ReadFailed { stream, read_id, revision, error } => on(state, stream, &mut out, |machine, fx| machine.read_failed(read_id, revision, error, fx)),
@@ -475,17 +524,13 @@ impl StateOwner for Deliveries {
             DeliveryInput::ModelEvent { stream, position, payload } => on(state, stream, &mut out, |machine, fx| machine.model_event(position, payload, fx)),
             DeliveryInput::ModelLost { stream, first, last } => on(state, stream, &mut out, |machine, fx| machine.model_lost(first, last, fx)),
             DeliveryInput::Cancel { stream } => on(state, stream, &mut out, |machine, fx| machine.cancel(fx)),
-            DeliveryInput::Pull { stream } => match state.streams.get_mut(&stream) {
-                Some(machine) => {
-                    let mut fx = Vec::new();
-                    machine.pull(&mut fx);
-                    out.extend(keyed(stream, fx));
-                    if state.streams.get(&stream).is_some_and(|machine| machine.ended_given && machine.journal.is_empty()) {
-                        state.streams.remove(&stream);
-                    }
+            DeliveryInput::Pull { stream, outcome } => {
+                if state.streams.contains_key(&stream) {
+                    on(state, stream, &mut out, |machine, fx| machine.pull(outcome, fx));
+                } else {
+                    out.push(Effect::Run(DeliveryEffect::Stream { stream, effect: StreamEffect::Answer { outcome, answer: PullAnswer::Done } }));
                 }
-                None => out.extend(keyed(stream, vec![StreamEffect::Done])),
-            },
+            }
             DeliveryInput::Committed(committed) => every(state, &mut out, |machine, fx| machine.committed(&committed, fx)),
             DeliveryInput::ModelsReset(reset) => every(state, &mut out, |machine, fx| machine.models_reset(&reset, fx)),
             DeliveryInput::EpochEnded(ended) => every(state, &mut out, |machine, fx| machine.epoch_ended(&ended, fx)),
@@ -496,6 +541,7 @@ impl StateOwner for Deliveries {
             }
             DeliveryInput::Tick(_) => {}
         }
+        state.streams.retain(|_, machine| !(machine.ended_given && machine.journal.is_empty()));
         out
     }
 
@@ -506,17 +552,19 @@ impl StateOwner for Deliveries {
     fn closing() -> DeliveryInput { DeliveryInput::Closing }
 }
 
-fn on(state: &mut DeliveriesState, stream: StreamId, out: &mut Effects<Deliveries>, apply: impl FnOnce(&mut Delivery, &mut Vec<StreamEffect>)) {
+fn on(state: &mut DeliveriesState, stream: StreamId, out: &mut Effects<Deliveries>, apply: impl FnOnce(&mut Delivery, &mut Vec<Emit>)) {
+    let peers = state.peers;
     let Some(machine) = state.streams.get_mut(&stream) else { return };
     let mut fx = Vec::new();
     apply(machine, &mut fx);
-    out.extend(keyed(stream, fx));
+    lower(peers, stream, machine, fx, out);
 }
 
-fn every(state: &mut DeliveriesState, out: &mut Effects<Deliveries>, mut apply: impl FnMut(&mut Delivery, &mut Vec<StreamEffect>)) {
+fn every(state: &mut DeliveriesState, out: &mut Effects<Deliveries>, mut apply: impl FnMut(&mut Delivery, &mut Vec<Emit>)) {
+    let peers = state.peers;
     for (stream, machine) in state.streams.iter_mut() {
         let mut fx = Vec::new();
         apply(machine, &mut fx);
-        out.extend(keyed(*stream, fx));
+        lower(peers, *stream, machine, fx, out);
     }
 }

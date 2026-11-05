@@ -1,16 +1,19 @@
 //! Owner `Windows`: a dictionary of `Window` machines by key (`specs/machines/window.md`, one machine per key, `statig`).
 //! A table row applies to the machine of the key an input names. Inputs that name a request (`Transport`, `Committed`, `Rejected`, `RetryDue`)
 //! go to the machine that owns the request. `Online`, `EpochStarted`, `EpochEnded`, `ModelsReset`, `Closing` apply to every machine,
-//! `Stale` to every machine of the model. Request ids are unique in the owner. The retry timer is an effect for the executor
-//! (`ScheduleRetry`): it adds the backoff and the clock, then posts `RetryDue`.
+//! `Stale` to every machine of the model. Request ids are unique in the owner. The retry timer is `Effect::Schedule` of the owner
+//! (`now` of the last `Tick` plus the backoff). Inputs for other owners (`Commit`, `WindowState`) are `Effect::Send` to the addresses of the state.
 
 use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet};
 
 use statig::prelude::*;
 
+use crate::owners::read::deliveries::{DeliveryInput, Deliveries};
+use crate::owners::store::{StoreBatch, StoreInput, StoreWriter};
+use crate::pacing::RetryPolicy;
 use crate::owners::contract::{Committed, Drained, EpochEnded, EpochStarted, ErrorClass, ModelsReset, Online, RejectReason, Rejected, RequestError, RequestId, Stale, Transport, TransportOutcome, WindowPhase as Phase, WindowState};
-use crate::runtime::{Cause, Effect, Effects, Epoch, StateOwner, Time};
+use crate::runtime::{Address, Cause, Effect, Effects, Epoch, Outbound, ScheduleId, StateOwner, Time};
 
 /// `(model, relation, params)`, `(model, node, id)` or `(model, node, ids)` as one name; `model` is the model of the window.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -29,7 +32,7 @@ impl WindowKey {
 }
 
 /// An id of a caller or a stream that waits for the window. `PRELOAD` is the interest of a key declared `preload`.
-pub type InterestId = u32;
+pub type InterestId = u64;
 
 pub const PRELOAD: InterestId = InterestId::MAX;
 
@@ -52,10 +55,15 @@ pub enum WindowOutcome {
 pub enum WindowEffect {
     Request { request: RequestId, page: u32, cursor: Option<String>, basis: u64 },
     Cancel { request: RequestId },
-    Commit { request: RequestId, basis: u64, page: AnswerPage },
-    ScheduleRetry { request: RequestId, attempt: u32 },
-    Announce(WindowState),
     Outcome { id: InterestId, outcome: WindowOutcome },
+}
+
+/// What a machine gives out: an effect of the runner, or an input for another owner or a timer that the owner `Windows` turns into `Effect`.
+enum Emit {
+    Run(WindowEffect),
+    Commit { request: RequestId, basis: u64, page: AnswerPage },
+    Retry { request: RequestId, attempt: u32, class: ErrorClass },
+    Announce { state: WindowState, streams: Vec<InterestId> },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -76,6 +84,8 @@ pub enum WindowsInput {
     Rejected(Rejected),
     Stale(Stale),
     RetryDue { request: RequestId },
+    /// A model event of the Feed: the windows of the model declared `reread` load again.
+    Reread { model: String },
     Online(Online),
     EpochStarted(EpochStarted),
     EpochEnded(EpochEnded),
@@ -158,7 +168,7 @@ struct Facts {
     error: Option<String>,
     /// The revision of the last `Committed` of a landing of this machine, 0 before the first.
     landed_revision: i64,
-    fx: RefCell<Vec<WindowEffect>>,
+    fx: RefCell<Vec<Emit>>,
 }
 
 impl Facts {
@@ -170,7 +180,9 @@ impl Facts {
         }
     }
 
-    fn push_fx(&self, effect: WindowEffect) { self.fx.borrow_mut().push(effect); }
+    fn push_fx(&self, effect: WindowEffect) { self.fx.borrow_mut().push(Emit::Run(effect)); }
+
+    fn emit(&self, emit: Emit) { self.fx.borrow_mut().push(emit); }
 
     fn join(&mut self, id: InterestId, all: bool, stream: bool) {
         self.interest.insert(id);
@@ -190,7 +202,10 @@ impl Facts {
 
     fn load_state(&self) -> WindowState { WindowState { phase: self.phase, error: self.error.clone(), loaded: (self.landed_revision != 0).then_some(self.landed_revision) } }
 
-    fn announce(&mut self) { self.push_fx(WindowEffect::Announce(self.load_state())); }
+    fn announce(&mut self) {
+        let streams = self.streams.iter().copied().filter(|id| *id != PRELOAD).collect();
+        self.emit(Emit::Announce { state: self.load_state(), streams });
+    }
 
     fn answer_one(&mut self, id: InterestId, outcome: WindowOutcome) {
         self.push_fx(WindowEffect::Outcome { id, outcome });
@@ -333,13 +348,13 @@ impl Facts {
                 Handled
             }
             Ev::Response { request: got, page: answer } if got == request => {
-                self.push_fx(WindowEffect::Commit { request: *request, basis: *basis, page: answer.clone() });
+                self.emit(Emit::Commit { request: *request, basis: *basis, page: answer.clone() });
                 Transition(WinState::landing(*request, *page, *again, *more, answer.cursor.clone(), !answer.rows.is_empty()))
             }
             Ev::Failure { request: got, error } if got == request => {
                 if error.temporary() && *attempts + 1 < attempt_limit(error.class) {
                     *attempts += 1;
-                    self.push_fx(WindowEffect::ScheduleRetry { request: *request, attempt: *attempts });
+                    self.emit(Emit::Retry { request: *request, attempt: *attempts, class: error.class });
                     return Handled;
                 }
                 let last = match error.class {
@@ -511,7 +526,7 @@ impl Window {
         Self { machine: facts.uninitialized_state_machine().init_with_context(&mut ctx) }
     }
 
-    fn handle(&mut self, event: Ev, next_request: &mut RequestId) -> Vec<WindowEffect> {
+    fn handle(&mut self, event: Ev, next_request: &mut RequestId) -> Vec<Emit> {
         let mut ctx = Ctx { next_request };
         self.machine.handle_with_context(&event, &mut ctx);
         self.machine.fx.take()
@@ -544,10 +559,28 @@ pub struct WindowsState {
     preload: Vec<WindowKey>,
     next_request: RequestId,
     windows: BTreeMap<WindowKey, Window>,
+    reread: Vec<WindowKey>,
+    now: Time,
+    peers: WindowsPeers,
+}
+
+/// The owners `Windows` sends inputs to.
+#[derive(Clone, Copy, Debug)]
+pub struct WindowsPeers {
+    pub store: Address<StoreWriter>,
+    pub deliveries: Address<Deliveries>,
 }
 
 impl WindowsState {
-    pub fn new(epoch: Epoch, online: bool) -> Self { Self { epoch, online, generations: BTreeMap::new(), base_generation: 0, preload: Vec::new(), next_request: 1, windows: BTreeMap::new() } }
+    pub fn new(epoch: Epoch, online: bool, peers: WindowsPeers) -> Self {
+        Self { epoch, online, generations: BTreeMap::new(), base_generation: 0, preload: Vec::new(), next_request: 1, windows: BTreeMap::new(), reread: Vec::new(), now: Time(0), peers }
+    }
+
+    /// Keys that load again at every model event of their model.
+    pub fn with_reread(mut self, keys: Vec<WindowKey>) -> Self {
+        self.reread = keys;
+        self
+    }
 
     /// Keys that `EpochStarted` loads with `Interest+(PRELOAD)`.
     pub fn with_preload(mut self, keys: Vec<WindowKey>) -> Self {
@@ -576,29 +609,53 @@ impl WindowsState {
 pub struct Windows;
 
 impl Windows {
-    fn on(state: &mut WindowsState, key: &WindowKey, event: Ev, out: &mut Vec<WindowsEffect>) {
+    fn on(state: &mut WindowsState, key: &WindowKey, event: Ev, out: &mut Effects<Self>) {
+        let (now, peers) = (state.now, state.peers);
         let Some(window) = state.windows.get_mut(key) else { return };
-        for effect in window.handle(event, &mut state.next_request) {
-            out.push(WindowsEffect::Window { key: key.clone(), effect });
+        let epoch = window.machine.epoch;
+        for emit in window.handle(event, &mut state.next_request) {
+            match emit {
+                Emit::Run(effect) => {
+                    if let WindowEffect::Cancel { request } = &effect {
+                        out.push(Effect::Cancel(ScheduleId(*request)));
+                    }
+                    out.push(Effect::Run(WindowsEffect::Window { key: key.clone(), effect }));
+                }
+                Emit::Commit { request, basis, page } => {
+                    let rows = page.rows.into_iter().map(|row| (key.model.clone(), row)).collect();
+                    let batch = StoreBatch { id: request, epoch, basis: BTreeMap::from([(key.model.clone(), basis)]), rows, intents: 0, credential: None };
+                    out.push(Effect::Send(Outbound::new(peers.store, StoreInput::Commit(batch))));
+                }
+                Emit::Retry { request, attempt, class } => {
+                    let policy = if class == ErrorClass::Network { RetryPolicy::QueryNetwork } else { RetryPolicy::QueryServer };
+                    let at = Time(now.0.saturating_add(u64::try_from(policy.backoff().delay(attempt - 1).as_millis()).unwrap_or(u64::MAX)));
+                    out.push(Effect::Schedule { id: ScheduleId(request), at, input: WindowsInput::RetryDue { request } });
+                }
+                Emit::Announce { state, streams } => {
+                    for stream in streams {
+                        out.push(Effect::Send(Outbound::new(peers.deliveries, DeliveryInput::WindowState { stream, state: state.clone() })));
+                    }
+                }
+            }
         }
     }
 
-    fn by_request(state: &mut WindowsState, request: RequestId, event: Ev, out: &mut Vec<WindowsEffect>) {
+    fn by_request(state: &mut WindowsState, request: RequestId, event: Ev, out: &mut Effects<Self>) {
         let Some(key) = state.windows.iter().find(|(_, window)| window.owns(request)).map(|(key, _)| key.clone()) else { return };
         Self::on(state, &key, event, out);
     }
 
-    fn every(state: &mut WindowsState, event: &Ev, out: &mut Vec<WindowsEffect>) {
+    fn every(state: &mut WindowsState, event: &Ev, out: &mut Effects<Self>) {
         let keys: Vec<WindowKey> = state.windows.keys().cloned().collect();
         for key in keys {
             Self::on(state, &key, event.clone(), out);
         }
     }
 
-    fn interest_plus(state: &mut WindowsState, key: WindowKey, id: InterestId, force: bool, all: bool, stream: bool, store_revision: i64, out: &mut Vec<WindowsEffect>) {
+    fn interest_plus(state: &mut WindowsState, key: WindowKey, id: InterestId, force: bool, all: bool, stream: bool, store_revision: i64, out: &mut Effects<Self>) {
         if key.is_empty_nodes() {
             let effect = WindowEffect::Outcome { id, outcome: WindowOutcome::Loaded { revision: store_revision } };
-            out.push(WindowsEffect::Window { key, effect });
+            out.push(Effect::Run(WindowsEffect::Window { key, effect }));
             return;
         }
         state.ensure(&key);
@@ -614,7 +671,7 @@ impl StateOwner for Windows {
     type Effect = WindowsEffect;
 
     fn step(state: &mut WindowsState, input: WindowsInput) -> Effects<Self> {
-        let mut out = Vec::new();
+        let mut out: Effects<Self> = Vec::new();
         match input {
             WindowsInput::InterestPlus { key, id, force, all, stream, store_revision } => Self::interest_plus(state, key, id, force, all, stream, store_revision, &mut out),
             WindowsInput::InterestMinus { key, id } => Self::on(state, &key, Ev::InterestMinus { id }, &mut out),
@@ -642,6 +699,12 @@ impl StateOwner for Windows {
             }
             WindowsInput::Rejected(rejected) => Self::by_request(state, rejected.batch, Ev::Rejected { request: rejected.batch, reason: rejected.reason }, &mut out),
             WindowsInput::RetryDue { request } => Self::by_request(state, request, Ev::RetryDue { request }, &mut out),
+            WindowsInput::Reread { model } => {
+                let keys: Vec<WindowKey> = state.reread.iter().filter(|key| key.model == model && state.windows.contains_key(key)).cloned().collect();
+                for key in keys {
+                    Self::on(state, &key, Ev::Stale, &mut out);
+                }
+            }
             WindowsInput::Online(Online(online)) => {
                 state.online = online;
                 Self::every(state, &Ev::Online(online), &mut out);
@@ -669,11 +732,11 @@ impl StateOwner for Windows {
             }
             WindowsInput::Closing => {
                 Self::every(state, &Ev::Closing, &mut out);
-                out.push(WindowsEffect::Drained(Drained { owner: "Windows" }));
+                out.push(Effect::Run(WindowsEffect::Drained(Drained { owner: "Windows" })));
             }
-            WindowsInput::Tick(_) => {}
+            WindowsInput::Tick(now) => state.now = state.now.max(now),
         }
-        out.into_iter().map(Effect::Run).collect()
+        out
     }
 
     fn tick(now: Time) -> WindowsInput { WindowsInput::Tick(now) }

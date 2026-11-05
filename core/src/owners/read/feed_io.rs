@@ -1,15 +1,14 @@
 //! Runner of the effects of `Feed`: the subscription of the core transport is IO without transitions. Every frame becomes
-//! `FeedInput::Frame` of its connection; a closed connection gives no more frames; the batch of events goes to `StoreWriter`.
+//! `FeedInput::Frame` of its connection; a closed connection gives no more frames.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::HashMap;
 use std::sync::{Arc, Mutex, PoisonError};
 
 use tokio::runtime::Handle;
 
-use super::ports::{epoch_of, Admit, Rest, StorePort};
-use crate::owners::contract::{BatchId, ConnectionId, Frame, SubscriptionFrame};
-use crate::owners::feed::{Feed, FeedEffect, FeedEvent, FeedInput};
-use crate::owners::store::StoreBatch;
+use super::ports::{Admit, Rest};
+use crate::owners::contract::{ConnectionId, Frame, SubscriptionFrame};
+use crate::owners::read::feed::{Feed, FeedEffect, FeedInput};
 use crate::runtime::{Back, EffectRunner, EpochStamp};
 use crate::task::{spawn_on, Carry};
 use crate::transport::{CancelToken, GraphQLRequest, Response, SubscriptionEvent, Transport};
@@ -27,15 +26,14 @@ pub struct FeedIo {
     transport: Arc<dyn Transport>,
     codec: Arc<dyn FeedCodec>,
     admit: Admit,
-    writer: Arc<dyn StorePort>,
     handle: Handle,
     open: Open,
     rest: Rest<FeedEffect>,
 }
 
 impl FeedIo {
-    pub fn new(transport: Arc<dyn Transport>, codec: Arc<dyn FeedCodec>, admit: Admit, writer: Arc<dyn StorePort>, handle: Handle, rest: Rest<FeedEffect>) -> Self {
-        Self { transport, codec, admit, writer, handle, open: Open::default(), rest }
+    pub fn new(transport: Arc<dyn Transport>, codec: Arc<dyn FeedCodec>, admit: Admit, handle: Handle, rest: Rest<FeedEffect>) -> Self {
+        Self { transport, codec, admit, handle, open: Open::default(), rest }
     }
 
     fn subscribe(&self, stamp: EpochStamp, connection: ConnectionId, models: Vec<String>, back: &Back<Feed>) {
@@ -88,16 +86,6 @@ impl FeedIo {
         let tokens: Vec<CancelToken> = self.open.lock().unwrap_or_else(PoisonError::into_inner).drain().map(|(_, token)| token).collect();
         tokens.iter().for_each(CancelToken::cancel);
     }
-
-    fn commit(&self, stamp: EpochStamp, batch: BatchId, events: Vec<FeedEvent>) {
-        let mut basis = BTreeMap::new();
-        for event in &events {
-            let entry = basis.entry(event.model.clone()).or_insert(event.basis);
-            *entry = (*entry).min(event.basis);
-        }
-        let rows = events.into_iter().map(|event| (event.model, event.payload)).collect();
-        self.writer.commit(stamp, StoreBatch { id: batch, epoch: epoch_of(stamp), basis, rows, intents: 0, credential: None });
-    }
 }
 
 impl EffectRunner<Feed> for FeedIo {
@@ -106,7 +94,6 @@ impl EffectRunner<Feed> for FeedIo {
             FeedEffect::Subscribe { connection, models } => self.subscribe(stamp, connection, models, back),
             FeedEffect::Unsubscribe => self.close_all(),
             FeedEffect::CloseConnection { connection } => self.close(connection),
-            FeedEffect::Commit { batch, events } => self.commit(stamp, batch, events),
             other => (self.rest)(stamp, other),
         }
     }

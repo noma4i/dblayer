@@ -5,17 +5,52 @@
 use std::cell::RefCell;
 use std::collections::VecDeque;
 use std::rc::Rc;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::AtomicU64;
 use std::sync::{Arc, PoisonError};
 
 use super::ref_feed::{Effect, Feed as Ref, Input, Mode, Obs, Reject};
-use crate::owners::contract::{BatchId, Committed, ConnectionId, EpochStarted, Frame, ModelsReset, Online, RejectReason, Rejected, SubscriptionFrame};
-use crate::owners::feed::{self as f, Feed, FeedEffect};
-use crate::owners::support::{new_log, snapshot, take, Log, Recorder, Reset, ResetState, Silent, Source, SourceInput, SourceState, StoreGeneration};
-use crate::runtime::{explore, Address, Back, Cause as Ended, DetScheduler, EffectRunner, EpochStamp, Limits, Time};
+use crate::owners::contract::{BatchId, Committed, ConnectionId, EpochEnded, EpochStarted, Frame, ModelsReset, Online, RejectReason, Rejected, SubscriptionFrame};
+use crate::owners::read::deliveries::{Deliveries, DeliveryInput};
+use crate::owners::read::feed::{self as f, Feed, FeedEffect, FeedPeers};
+use crate::owners::read::windows::Windows;
+use crate::owners::store::StoreWriter;
+use crate::owners::support::{new_log, number_after, snapshot, take, text_after, Discard, Emitted, Landing, Log, NoEffect, Reset, ResetState, Silent, Sink, Source, SourceInput, SourceState, Spy, SpyState, StoreGeneration, StoreStub, StoreStubState};
+use crate::runtime::{explore, Address, Back, Cause as Ended, DetScheduler, Effects, EffectRunner, Epoch, EpochStamp, Limits, StateOwner, Time};
 
 const EPOCH: u64 = 1;
 const DEBOUNCE_MS: u64 = 50;
+/// Slots of the peers and of the owner: the Store, the Windows, the Deliveries, then the Feed.
+const STORE: usize = 0;
+const WINDOWS: usize = 1;
+const DELIVERIES: usize = 2;
+const FEED: usize = 3;
+
+type Spied = Log<Emitted<FeedEffect>>;
+
+fn peers() -> FeedPeers { FeedPeers { store: Address::<StoreWriter>::new(STORE), windows: Address::<Windows>::new(WINDOWS), deliveries: Address::<Deliveries>::new(DELIVERIES) } }
+
+/// One stream per model: the stream names the model of an input for the Deliveries.
+fn stream_of(model: &str) -> u64 {
+    match model {
+        "Chat" => 1,
+        "Post" => 2,
+        other => panic!("no stream for {other}"),
+    }
+}
+
+fn model_of(stream: u64) -> &'static str { if stream == 1 { "Chat" } else { "Post" } }
+
+/// Adds the Store, the Windows and the Deliveries as sinks, then the Feed watched by `log`.
+fn add_feed(det: &mut DetScheduler, log: &Spied, state: f::FeedState, runner: impl EffectRunner<Spy<Feed>>) -> Address<Spy<Feed>> {
+    det.add::<Sink<StoreWriter>>("store", new_log(), Discard);
+    det.add::<Sink<Windows>>("windows", new_log(), Discard);
+    det.add::<Sink<Deliveries>>("deliveries", new_log(), Discard);
+    det.add::<Spy<Feed>>("feed", SpyState::new(state, log), runner)
+}
+
+fn runs(emitted: Vec<Emitted<FeedEffect>>) -> Vec<FeedEffect> { emitted.into_iter().filter_map(|entry| if let Emitted::Run(effect) = entry { Some(effect) } else { None }).collect() }
+
+fn inner(det: &DetScheduler, address: Address<Spy<Feed>>) -> &f::FeedState { &det.state(address).expect("the owner state").inner }
 
 fn names(models: &[&str]) -> Vec<String> { models.iter().map(|model| model.to_string()).collect() }
 
@@ -31,8 +66,8 @@ fn mode_of(mode: f::Mode) -> Mode {
 /// The owner and the reference side by side.
 struct Twin {
     det: DetScheduler,
-    addr: Address<Feed>,
-    log: Log<FeedEffect>,
+    addr: Address<Spy<Feed>>,
+    log: Spied,
     reference: Ref,
     debounce_ms: u64,
     connection: ConnectionId,
@@ -49,7 +84,7 @@ impl Twin {
     fn with(online: bool, debounce: bool) -> Self {
         let mut det = DetScheduler::new(11);
         let log = new_log();
-        let addr = det.add::<Feed>("feed", f::FeedState::new(EPOCH, online), Recorder::<Feed>::new(&log));
+        let addr = add_feed(&mut det, &log, f::FeedState::new(EPOCH, online, peers()), Discard);
         det.start_epoch(EPOCH);
         let mut reference = Ref::new();
         reference.online = online;
@@ -57,7 +92,7 @@ impl Twin {
         Self { det, addr, log, reference, debounce_ms: if debounce { DEBOUNCE_MS } else { 0 }, connection: 0, batches: VecDeque::new(), generation: 0 }
     }
 
-    fn state(&self) -> &f::FeedState { self.det.state(self.addr).expect("the owner state") }
+    fn state(&self) -> &f::FeedState { inner(&self.det, self.addr) }
 
     fn run(&mut self) { self.det.run_until_quiet(10_000).expect("the owner is quiet"); }
 
@@ -74,8 +109,8 @@ impl Twin {
     fn step(&mut self, input: Input) -> Vec<Effect> {
         take(&self.log);
         match &input {
-            Input::WantPlus { model } => self.post(f::FeedInput::WantPlus { model: model.clone(), debounce_ms: self.debounce_ms, delivery: false }),
-            Input::WantDelivery { model } => self.post(f::FeedInput::WantPlus { model: model.clone(), debounce_ms: self.debounce_ms, delivery: true }),
+            Input::WantPlus { model } => self.post(f::FeedInput::WantPlus { model: model.clone(), debounce_ms: self.debounce_ms, delivery: None }),
+            Input::WantDelivery { model } => self.post(f::FeedInput::WantPlus { model: model.clone(), debounce_ms: self.debounce_ms, delivery: Some(stream_of(model)) }),
             Input::Ended => self.frame(self.connection, Frame::Ended),
             Input::Stray => {
                 for frame in [Frame::Ready, Frame::Dropped, Frame::Ended, Frame::ChannelLost { dropped: 1, models: vec!["Chat".into()] }, Frame::Event { model: "Chat".into(), payload: "x".into() }] {
@@ -87,7 +122,7 @@ impl Twin {
                 let connection = self.connection;
                 self.post(f::FeedInput::ResubscribeDue { connection });
             }
-            Input::WantMinus { model } => self.post(f::FeedInput::WantMinus { model: model.clone() }),
+            Input::WantMinus { model } => self.post(f::FeedInput::WantMinus { model: model.clone(), delivery: None }),
             Input::Ready => self.frame(self.connection, Frame::Ready),
             Input::Event { current, model, id } => {
                 let connection = if *current { self.connection } else { 9_999 };
@@ -127,39 +162,58 @@ impl Twin {
         }
         let (got, seen) = self.split(take(&self.log));
         let want = self.reference.step(input);
-        assert_eq!(got, want, "the owner and the reference give the same effects");
-        assert_eq!(seen, self.reference.take_obs(), "the owner and the reference show the same events");
+        let reference_obs = self.reference.take_obs();
+        let streamed = |model: &str| !inner(&self.det, self.addr).streams(model).is_empty();
+        let expected: Vec<Effect> = want.iter().filter(|effect| !matches!(effect, Effect::ModelReady(model) if !streamed(model))).cloned().collect();
+        let observed: Vec<Obs> = reference_obs.into_iter().filter(|obs| match obs { Obs::Event { model, .. } | Obs::Lost { model, .. } => streamed(model), Obs::Ended => true }).collect();
+        assert_eq!(got, expected, "the owner and the reference give the same effects");
+        assert_eq!(seen, observed, "the owner and the reference show the same events");
         assert_eq!(mode_of(self.state().mode()), self.reference.mode, "the same mode");
         want
     }
 
-    fn split(&mut self, effects: Vec<FeedEffect>) -> (Vec<Effect>, Vec<Obs>) {
+    /// The reference models `Stale` of the windows as one list, `Joined` and `ModelReady` per model, the events as what a reader sees.
+    /// A model with no stream of the Deliveries shows no event and no `ModelReady`.
+    fn split(&mut self, emitted: Vec<Emitted<FeedEffect>>) -> (Vec<Effect>, Vec<Obs>) {
         let (mut modelled, mut seen) = (Vec::new(), Vec::new());
-        for effect in effects {
-            match effect {
-                FeedEffect::Subscribe { connection, .. } => {
+        for entry in emitted {
+            match entry {
+                Emitted::Run(FeedEffect::Subscribe { connection, .. }) => {
                     self.connection = connection;
                     modelled.push(Effect::Subscribe);
                 }
-                FeedEffect::Unsubscribe => modelled.push(Effect::Unsubscribe),
-                FeedEffect::ScheduleTick { .. } => modelled.push(Effect::ScheduleTick),
-                FeedEffect::ScheduleResubscribe { connection, .. } => {
-                    self.connection = connection;
+                Emitted::Run(FeedEffect::Unsubscribe | FeedEffect::CloseConnection { .. }) => modelled.push(Effect::Unsubscribe),
+                Emitted::Run(FeedEffect::Drained(_)) => modelled.push(Effect::Drained),
+                Emitted::Run(FeedEffect::Ended) => seen.push(Obs::Ended),
+                Emitted::Schedule { input, .. } if input.starts_with("Tick") => modelled.push(Effect::ScheduleTick),
+                Emitted::Schedule { input, .. } if input.starts_with("ResubscribeDue") => {
+                    self.connection = number_after(&input, "connection: ").expect("the connection");
                     modelled.push(Effect::ScheduleResubscribe);
                 }
-                FeedEffect::Commit { batch, .. } => {
-                    self.batches.push_back(batch);
+                Emitted::Send { to: STORE, input } => {
+                    self.batches.push_back(number_after(&input, "id: ").expect("the batch id"));
                     modelled.push(Effect::Commit);
                 }
-                FeedEffect::StaleWindows(models) => modelled.push(Effect::StaleWindows(models)),
-                FeedEffect::Drained(_) => modelled.push(Effect::Drained),
-                FeedEffect::ModelEvent { model, position, payload } => seen.push(Obs::Event { model, position, id: payload }),
-                FeedEffect::ModelLost { model, first, last } => seen.push(Obs::Lost { model, first, last }),
-                FeedEffect::Ended => seen.push(Obs::Ended),
-                FeedEffect::CloseConnection { .. } => modelled.push(Effect::Unsubscribe),
-                FeedEffect::Joined { model, .. } => modelled.push(Effect::Joined(model)),
-                FeedEffect::ModelReady { model } => modelled.push(Effect::ModelReady(model)),
-                FeedEffect::RereadWindows(_) => {}
+                Emitted::Send { to: WINDOWS, input } if input.starts_with("Stale(") => {
+                    let model = text_after(&input, "model: ").expect("the model");
+                    match modelled.last_mut() {
+                        Some(Effect::StaleWindows(models)) => models.push(model),
+                        _ => modelled.push(Effect::StaleWindows(vec![model])),
+                    }
+                }
+                Emitted::Send { to: DELIVERIES, input } => {
+                    let model = model_of(number_after(&input, "stream: ").expect("the stream")).to_string();
+                    if input.starts_with("Joined") {
+                        modelled.push(Effect::Joined(model));
+                    } else if input.starts_with("ModelReady") {
+                        modelled.push(Effect::ModelReady(model));
+                    } else if input.starts_with("ModelEvent") {
+                        seen.push(Obs::Event { model, position: number_after(&input, "position: ").expect("the position"), id: text_after(&input, "payload: ").expect("the payload") });
+                    } else if input.starts_with("ModelLost") {
+                        seen.push(Obs::Lost { model, first: number_after(&input, "first: ").expect("first"), last: number_after(&input, "last: ").expect("last") });
+                    }
+                }
+                Emitted::Send { .. } | Emitted::Schedule { .. } | Emitted::Cancel(_) | Emitted::Broadcast(_) => {}
             }
         }
         (modelled, seen)
@@ -265,7 +319,7 @@ fn feed_opening_dropped_owner() {
     let connection = twin.connection;
     take(&twin.log);
     twin.post(f::FeedInput::ResubscribeDue { connection });
-    let again = take(&twin.log);
+    let again = runs(take(&twin.log));
     assert!(matches!(again.as_slice(), [FeedEffect::Subscribe { connection: found, .. }] if *found == connection), "the timer resubscribes the connection it was set for");
 }
 
@@ -403,7 +457,7 @@ fn feed_live_want_more() {
     let new_connection = twin.connection;
     take(&twin.log);
     twin.frame(new_connection, Frame::Ready);
-    let closed = take(&twin.log);
+    let closed = runs(take(&twin.log));
     assert!(closed.iter().any(|effect| matches!(effect, FeedEffect::CloseConnection { connection } if *connection != new_connection)), "the old connection closes after the new one is ready");
 }
 
@@ -436,52 +490,90 @@ fn feed_ended_owner() {
     }
     twin.det.close();
     twin.run();
-    assert!(take(&twin.log).iter().any(|effect| matches!(effect, FeedEffect::Drained(_))), "an ended feed still answers Closing with Drained");
+    assert!(runs(take(&twin.log)).iter().any(|effect| matches!(effect, FeedEffect::Drained(_))), "an ended feed still answers Closing with Drained");
 }
 
 // Properties. An executor stub in the scheduler subscribes, commits and resubscribes; the explorer orders what the sources send.
 
-struct Executor {
-    log: Log<FeedEffect>,
-    /// Generation of the model `Post` in the Store.
-    post_generation: Arc<AtomicU64>,
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum Saw {
+    Event { model: &'static str, position: u64 },
+    Lost { model: &'static str, first: u64, last: u64 },
+    /// A batch of the Feed reached the Store: `rows` events landed or were refused.
+    Verdict { rows: usize },
 }
 
-impl EffectRunner<Feed> for Executor {
-    fn run(&mut self, stamp: EpochStamp, effect: FeedEffect, back: &Back<Feed>) {
-        self.log.lock().unwrap_or_else(PoisonError::into_inner).push(effect.clone());
-        match effect {
-            FeedEffect::Subscribe { connection, .. } => back.reply(stamp, f::FeedInput::Frame(SubscriptionFrame { connection_id: connection, frame: Frame::Ready })),
-            FeedEffect::ScheduleResubscribe { connection, .. } => back.reply(stamp, f::FeedInput::ResubscribeDue { connection }),
-            FeedEffect::Commit { batch, events } => {
-                let stale = self.post_generation.load(Ordering::SeqCst);
-                let refused: Vec<String> = events.iter().filter(|event| event.model == "Post" && event.basis < stale).map(|event| event.model.clone()).collect();
-                if refused.is_empty() {
-                    back.reply(stamp, f::FeedInput::Committed(Committed { batch, revision: 1, tables: Vec::new(), models: Vec::new() }));
-                } else {
-                    back.reply(stamp, f::FeedInput::Rejected(Rejected { batch, reason: RejectReason::StaleGeneration { models: refused } }));
-                }
-            }
-            _ => {}
+/// Answers the subscription: every `Subscribe` becomes `Ready` of its connection.
+struct Executor;
+
+impl EffectRunner<Spy<Feed>> for Executor {
+    fn run(&mut self, stamp: EpochStamp, effect: FeedEffect, back: &Back<Spy<Feed>>) {
+        if let FeedEffect::Subscribe { connection, .. } = effect {
+            back.reply(stamp, f::FeedInput::Frame(SubscriptionFrame { connection_id: connection, frame: Frame::Ready }));
         }
     }
 }
 
-thread_local! {
-    static SEEN: RefCell<Option<Rc<(Log<FeedEffect>, Arc<AtomicU64>)>>> = const { RefCell::new(None) };
+/// The Deliveries of the property tests: it keeps the events and the losses in the order they arrive.
+struct Readers;
+
+impl StateOwner for Readers {
+    const EPOCHED: bool = false;
+
+    type State = Log<Saw>;
+    type Input = DeliveryInput;
+    type Effect = NoEffect;
+
+    fn step(state: &mut Log<Saw>, input: DeliveryInput) -> Effects<Self> {
+        let mut log = state.lock().unwrap_or_else(PoisonError::into_inner);
+        match input {
+            DeliveryInput::ModelEvent { stream, position, .. } => log.push(Saw::Event { model: model_of(stream), position }),
+            DeliveryInput::ModelLost { stream, first, last } => log.push(Saw::Lost { model: model_of(stream), first, last }),
+            _ => {}
+        }
+        Vec::new()
+    }
+
+    fn tick(now: Time) -> DeliveryInput { DeliveryInput::Tick(now) }
+
+    fn epoch_ended(epoch: Epoch, cause: Ended) -> DeliveryInput { DeliveryInput::EpochEnded(EpochEnded { epoch, cause }) }
+
+    fn closing() -> DeliveryInput { DeliveryInput::Closing }
 }
 
-fn seen() -> Log<FeedEffect> { SEEN.with(|slot| slot.borrow().clone()).expect("a rig was built").0.clone() }
+thread_local! {
+    static SEEN: RefCell<Option<Rc<Log<Saw>>>> = const { RefCell::new(None) };
+}
+
+fn seen() -> Log<Saw> { (*SEEN.with(|slot| slot.borrow().clone()).expect("a rig was built")).clone() }
 
 fn event_frame(model: &str, payload: &str) -> f::FeedInput { f::FeedInput::Frame(SubscriptionFrame { connection_id: 1, frame: Frame::Event { model: model.into(), payload: payload.into() } }) }
 
 fn rig(debounce_ms: u64, frames: Vec<f::FeedInput>, with_reset: bool) -> DetScheduler {
     let mut det = DetScheduler::new(1);
-    let log = new_log();
+    let log: Log<Saw> = new_log();
     let post_generation = Arc::new(AtomicU64::new(0));
-    let feed = det.add::<Feed>("feed", f::FeedState::new(EPOCH, true), Executor { log: log.clone(), post_generation: post_generation.clone() });
+    let feed_slot = Address::<Feed>::new(FEED);
+    let noted = log.clone();
+    det.add::<StoreStub<Feed>>("store", StoreStubState {
+        to: feed_slot,
+        generation: post_generation.clone(),
+        revision: 0,
+        only: Some("Post"),
+        committed: f::FeedInput::Committed,
+        rejected: f::FeedInput::Rejected,
+        note: Box::new(move |landing| {
+            let (Landing::Landed { rows, .. } | Landing::Rejected { rows, .. }) = landing;
+            noted.lock().unwrap_or_else(PoisonError::into_inner).push(Saw::Verdict { rows });
+        }),
+    }, Silent);
+    det.add::<Sink<Windows>>("windows", new_log(), Discard);
+    det.add::<Readers>("deliveries", log.clone(), Silent);
+    let feed = det.add::<Spy<Feed>>("feed", SpyState::new(f::FeedState::new(EPOCH, true, peers()), &new_log()), Executor);
+    let feed = Address::<Feed>::new(feed.index());
     det.start_epoch(EPOCH);
-    let readers = det.add::<Source<Feed>>("readers", SourceState { to: feed, script: vec![f::FeedInput::WantPlus { model: "Chat".into(), debounce_ms, delivery: false }, f::FeedInput::WantPlus { model: "Post".into(), debounce_ms, delivery: false }] }, Silent);
+    let wants = ["Chat", "Post"].map(|model| f::FeedInput::WantPlus { model: model.into(), debounce_ms, delivery: Some(stream_of(model)) });
+    let readers = det.add::<Source<Feed>>("readers", SourceState { to: feed, script: wants.to_vec() }, Silent);
     let transport = det.add::<Source<Feed>>("transport", SourceState { to: feed, script: frames }, Silent);
     let clock = det.add::<Source<Feed>>("clock", SourceState { to: feed, script: vec![f::FeedInput::Tick(Time(1)), f::FeedInput::Tick(Time(2))] }, Silent);
     for source in [readers, transport, clock] {
@@ -491,17 +583,17 @@ fn rig(debounce_ms: u64, frames: Vec<f::FeedInput>, with_reset: bool) -> DetSche
         let reset = det.add::<Reset<Feed>>("lifecycle", ResetState { to: feed, input: f::FeedInput::ModelsReset(ModelsReset { epoch: EPOCH, generation: 1, models: vec!["Post".into()] }), generation: 1 }, StoreGeneration(post_generation.clone()));
         det.post(reset, EpochStamp::Control, SourceInput::Go);
     }
-    SEEN.with(|slot| *slot.borrow_mut() = Some(Rc::new((log, post_generation))));
+    SEEN.with(|slot| *slot.borrow_mut() = Some(Rc::new(log)));
     det
 }
 
 const LIMITS: Limits = Limits { depth: 4, max_traces: 30_000 };
 
 /// Positions of the `ModelEvent` and the `ModelLost` of one model, in the order of the effects.
-fn positions(log: &Log<FeedEffect>, model: &str) -> Vec<(u64, u64)> {
-    snapshot(log).into_iter().filter_map(|effect| match effect {
-        FeedEffect::ModelEvent { model: found, position, .. } if found == model => Some((position, position)),
-        FeedEffect::ModelLost { model: found, first, last } if found == model => Some((first, last)),
+fn positions(log: &Log<Saw>, model: &str) -> Vec<(u64, u64)> {
+    snapshot(log).into_iter().filter_map(|saw| match saw {
+        Saw::Event { model: found, position } if found == model => Some((position, position)),
+        Saw::Lost { model: found, first, last } if found == model => Some((first, last)),
         _ => None,
     }).collect()
 }
@@ -552,9 +644,9 @@ fn feed_prop_pending_never_vanishes_owner() {
         }
         let log = seen();
         let effects = snapshot(&log);
-        let committed: usize = effects.iter().map(|effect| if let FeedEffect::Commit { events, .. } = effect { events.len() } else { 0 }).sum();
+        let committed: usize = effects.iter().map(|saw| if let Saw::Verdict { rows } = saw { *rows } else { 0 }).sum();
         let covered = covers(&positions(&log, "Chat"))? as usize;
-        let state = det.state(Address::<Feed>::new(0)).ok_or("no state")?;
+        let state = det.state(Address::<Spy<Feed>>::new(FEED)).map(|spy| &spy.inner).ok_or("no state")?;
         if covered < committed.saturating_sub(0) && state.landing() == 0 {
             return Err(format!("{committed} events were committed but {covered} positions are covered"));
         }
@@ -584,7 +676,7 @@ fn feed_prop_gap_visible_owner() {
 fn feed_prop_reset_other_model() {
     let frames = vec![event_frame("Chat", "c1"), event_frame("Post", "p1"), event_frame("Chat", "c2")];
     let report = explore(|| rig(DEBOUNCE_MS, frames.clone(), true), LIMITS, |_| {
-        let lost = snapshot(&seen()).into_iter().any(|effect| matches!(effect, FeedEffect::ModelLost { model, .. } if model == "Chat"));
+        let lost = snapshot(&seen()).into_iter().any(|saw| matches!(saw, Saw::Lost { model: "Chat", .. }));
         if lost {
             return Err("a Chat event was lost".into());
         }
@@ -608,7 +700,7 @@ fn feed_prop_stale_connection_owner() {
         LIMITS,
         |_| {
             let effects = snapshot(&seen());
-            if effects.iter().any(|effect| matches!(effect, FeedEffect::ModelEvent { .. } | FeedEffect::ModelLost { model: _, .. } | FeedEffect::Commit { .. })) {
+            if effects.iter().any(|saw| matches!(saw, Saw::Event { .. } | Saw::Lost { .. } | Saw::Verdict { .. })) {
                 return Err("a frame of another connection had an effect".into());
             }
             Ok(())
@@ -645,7 +737,7 @@ fn feed_created_owner() {
     take(&twin.log);
     twin.frame(twin.connection, Frame::Event { model: "Chat".into(), payload: "c1".into() });
     let effects = take(&twin.log);
-    assert!(effects.iter().any(|effect| matches!(effect, FeedEffect::Commit { events, .. } if events[0].basis == 4)), "the basis of an event is the generation of the epoch: {effects:?}");
+    assert!(effects.iter().any(|entry| matches!(entry, Emitted::Send { to: STORE, input } if input.contains("basis: {\"Chat\": 4}"))), "the basis of an event is the generation of the epoch: {effects:?}");
 }
 
 #[test]

@@ -5,12 +5,33 @@
 use super::harness::{loaded, Cause, Phase, Val, WState};
 use super::ref_delivery::{self as r, Delivery, Effect, Input, Kind};
 use crate::owners::contract::{Committed, EpochEnded, ModelsReset, WindowPhase, WindowState};
-use crate::owners::deliveries::{self as d, DeliveryEffect, Deliveries, StreamEffect};
-use crate::owners::support::{new_log, snapshot, take, Ender, EnderState, Log, Recorder, Silent, Source, SourceInput, SourceState};
-use crate::runtime::{explore, Address, Cause as Ended, DetScheduler, EpochStamp, Limits};
+use crate::owners::read::deliveries::{self as d, DeliveryEffect, DeliveryPeers, Deliveries, PullAnswer, StreamEffect};
+use crate::owners::read::feed::Feed;
+use crate::owners::read::windows::{WindowKey, Windows};
+use crate::owners::support::{as_owner, new_log, snapshot, take, Discard, Emitted, Ender, EnderState, Log, Silent, Sink, Source, SourceInput, SourceState, Spy, SpyState};
+use crate::runtime::{explore, Address, Cause as Ended, DetScheduler, EpochStamp, Limits, OutcomeId, Outcomes};
 
 const STREAM: d::StreamId = 1;
 const EPOCH: u64 = 1;
+/// Slots of the peers and of the owner: the Windows, the Feed, then the Deliveries.
+const WINDOWS: usize = 0;
+const FEED: usize = 1;
+
+type Spied = Log<Emitted<DeliveryEffect>>;
+
+fn peers() -> DeliveryPeers { DeliveryPeers { windows: Address::<Windows>::new(WINDOWS), feed: Address::<Feed>::new(FEED) } }
+
+fn window() -> WindowKey { WindowKey { model: "Moment".into(), name: "list".into() } }
+
+/// Adds the Windows and the Feed as sinks, then the Deliveries watched by `log`.
+fn add_deliveries(det: &mut DetScheduler, log: &Spied) -> Address<Spy<Deliveries>> {
+    det.add::<Sink<Windows>>("windows", new_log(), Discard);
+    det.add::<Sink<Feed>>("feed", new_log(), Discard);
+    det.add::<Spy<Deliveries>>("deliveries", SpyState::new(d::DeliveriesState::new(EPOCH, peers()), log), Discard)
+}
+
+fn inner(det: &DetScheduler, address: Address<Spy<Deliveries>>) -> &d::DeliveriesState { &det.state(address).expect("the owner state").inner }
+
 
 fn ids(rows: &[&str]) -> Vec<String> { rows.iter().map(|id| id.to_string()).collect() }
 
@@ -18,8 +39,8 @@ fn rows_of(rows: &[String]) -> Vec<d::StreamRow> { rows.iter().map(|id| d::Strea
 
 fn view(kind: Kind) -> d::View {
     match kind {
-        Kind::Rows => d::View { kind: d::Kind::List, model: "Moment".into(), tables: vec!["moments".into()], local: false },
-        Kind::Count => d::View { kind: d::Kind::Count, model: "Moment".into(), tables: vec!["moments".into()], local: false },
+        Kind::Rows => d::View { kind: d::Kind::List, model: "Moment".into(), tables: vec!["moments".into()], local: false, window: window() },
+        Kind::Count => d::View { kind: d::Kind::Count, model: "Moment".into(), tables: vec!["moments".into()], local: false, window: window() },
         Kind::Entity(fetch) => {
             let fetch = match fetch {
                 r::Fetch::Never => d::Fetch::Never,
@@ -27,9 +48,9 @@ fn view(kind: Kind) -> d::View {
                 r::Fetch::Force => d::Fetch::Force,
                 r::Fetch::IfMissing => d::Fetch::IfMissing,
             };
-            d::View { kind: d::Kind::Entity { fetch }, model: "Moment".into(), tables: vec!["moments".into()], local: false }
+            d::View { kind: d::Kind::Entity { fetch }, model: "Moment".into(), tables: vec!["moments".into()], local: false, window: window() }
         }
-        Kind::Events => d::View { kind: d::Kind::Events, model: "Chat".into(), tables: Vec::new(), local: false },
+        Kind::Events => d::View { kind: d::Kind::Events, model: "Chat".into(), tables: Vec::new(), local: false, window: window() },
     }
 }
 
@@ -71,22 +92,12 @@ fn val_of(value: &d::Value) -> Val {
     }
 }
 
-fn effect_of(effect: &StreamEffect) -> Option<Effect> {
-    Some(match effect {
-        StreamEffect::Read { revision, .. } => Effect::Read(*revision),
-        StreamEffect::InterestPlus { force } => Effect::InterestPlus { force: *force },
-        StreamEffect::InterestMinus => Effect::InterestMinus,
-        StreamEffect::WantPlus => Effect::WantPlus,
-        StreamEffect::WantMinus => Effect::WantMinus,
-        StreamEffect::Deliver(_) | StreamEffect::ReaderWaits | StreamEffect::Done | StreamEffect::Wake => return None,
-    })
-}
-
 /// The owner and the reference side by side.
 struct Twin {
     det: DetScheduler,
-    addr: Address<Deliveries>,
-    log: Log<DeliveryEffect>,
+    addr: Address<Spy<Deliveries>>,
+    log: Spied,
+    answers: Outcomes<PullAnswer>,
     reference: Delivery,
 }
 
@@ -94,9 +105,9 @@ impl Twin {
     fn new() -> Self {
         let mut det = DetScheduler::new(7);
         let log = new_log();
-        let addr = det.add::<Deliveries>("deliveries", d::DeliveriesState::new(EPOCH), Recorder::<Deliveries>::new(&log));
+        let addr = add_deliveries(&mut det, &log);
         det.start_epoch(EPOCH);
-        Self { det, addr, log, reference: Delivery::new() }
+        Self { det, addr, log, answers: Outcomes::new(), reference: Delivery::new() }
     }
 
     fn run(&mut self) { self.det.run_until_quiet(10_000).expect("the owner is quiet"); }
@@ -108,18 +119,25 @@ impl Twin {
 
     fn read_id(&self) -> u64 { self.state().read_id(STREAM) }
 
-    fn state(&self) -> &d::DeliveriesState { self.det.state(self.addr).expect("the owner state") }
+    fn state(&self) -> &d::DeliveriesState { inner(&self.det, self.addr) }
+
+    fn pull_input(&self) -> d::DeliveryInput { d::DeliveryInput::Pull { stream: STREAM, outcome: self.answers.register(EPOCH).id() } }
 
     /// The effects the reference models, in the order the owner produced them. Drained is keyless.
-    fn modelled(&self, effects: Vec<DeliveryEffect>) -> Vec<Effect> {
-        effects
-            .iter()
-            .filter_map(|effect| match effect {
-                DeliveryEffect::Stream { stream, effect } => {
-                    assert_eq!(*stream, STREAM);
-                    effect_of(effect)
+    fn modelled(&self, emitted: Vec<Emitted<DeliveryEffect>>) -> Vec<Effect> {
+        emitted
+            .into_iter()
+            .filter_map(|entry| match entry {
+                Emitted::Run(DeliveryEffect::Stream { stream, effect: StreamEffect::Read { revision, .. } }) => {
+                    assert_eq!(stream, STREAM);
+                    Some(Effect::Read(revision))
                 }
-                DeliveryEffect::Drained(_) => Some(Effect::Drained),
+                Emitted::Run(DeliveryEffect::Drained(_)) => Some(Effect::Drained),
+                Emitted::Send { to: WINDOWS, input } if input.starts_with("InterestPlus") => Some(Effect::InterestPlus { force: input.contains("force: true") }),
+                Emitted::Send { to: WINDOWS, .. } => Some(Effect::InterestMinus),
+                Emitted::Send { to: FEED, input } if input.starts_with("WantPlus") => Some(Effect::WantPlus),
+                Emitted::Send { to: FEED, .. } => Some(Effect::WantMinus),
+                _ => None,
             })
             .collect()
     }
@@ -190,18 +208,18 @@ impl Twin {
     fn pull_all(&mut self) -> Vec<Val> {
         let mut values = Vec::new();
         for _ in 0..2_000 {
-            self.det.post(self.addr, EpochStamp::Control, d::DeliveryInput::Pull { stream: STREAM });
-            self.run();
-            let mut last = false;
-            for effect in take(&self.log) {
-                match effect {
-                    DeliveryEffect::Stream { effect: StreamEffect::Deliver(value), .. } => values.push(val_of(&value)),
-                    DeliveryEffect::Stream { effect: StreamEffect::ReaderWaits | StreamEffect::Done, .. } => last = true,
-                    _ => {}
-                }
-            }
-            if last {
+            if self.state().journal_len(STREAM) == 0 {
                 break;
+            }
+            let input = self.pull_input();
+            let d::DeliveryInput::Pull { outcome, .. } = input else { unreachable!() };
+            self.det.post(self.addr, EpochStamp::Control, input);
+            self.run();
+            for entry in take(&self.log) {
+                if let Emitted::Run(DeliveryEffect::Stream { effect: StreamEffect::Answer { outcome: got, answer: PullAnswer::Value(value) }, .. }) = entry {
+                    assert_eq!(got, outcome);
+                    values.push(val_of(&value));
+                }
             }
         }
         values
@@ -406,13 +424,15 @@ fn dlv_live_read_changed_big_shift() {
     twin.det.post(twin.addr, EpochStamp::Control, d::DeliveryInput::Open { stream: STREAM, view: view(Kind::Rows), epoch: EPOCH, revision: 0, identity: true, valid: true });
     twin.run();
     twin.post(d::DeliveryInput::ReadDone { stream: STREAM, read_id: twin.read_id(), revision: 1, data: d::ReadData::Rows(Vec::new()) });
-    twin.post(d::DeliveryInput::Pull { stream: STREAM });
+    let pull = twin.pull_input();
+    twin.post(pull);
     take(&twin.log);
     let many: Vec<d::StreamRow> = (0..300).map(|n| d::StreamRow { id: format!("r{n}"), stamp: 0 }).collect();
     twin.post(d::DeliveryInput::ReadDone { stream: STREAM, read_id: twin.read_id(), revision: 2, data: d::ReadData::Rows(many) });
-    twin.post(d::DeliveryInput::Pull { stream: STREAM });
-    let delivered: Vec<d::Value> = take(&twin.log).into_iter().filter_map(|effect| match effect {
-        DeliveryEffect::Stream { effect: StreamEffect::Deliver(value), .. } => Some(value),
+    let pull = twin.pull_input();
+    twin.post(pull);
+    let delivered: Vec<d::Value> = take(&twin.log).into_iter().filter_map(|entry| match entry {
+        Emitted::Run(DeliveryEffect::Stream { effect: StreamEffect::Answer { answer: PullAnswer::Value(value), .. }, .. }) => Some(value),
         _ => None,
     }).collect();
     assert!(matches!(delivered.as_slice(), [d::Value::Snapshot { revision: 2, rows, .. }] if rows.len() == 300), "a shift over the limit arrives as a Snapshot");
@@ -545,33 +565,34 @@ fn dlv_ended_owner() {
     take(&twin.log);
     twin.det.close();
     twin.run();
-    assert!(take(&twin.log).iter().any(|effect| matches!(effect, DeliveryEffect::Drained(_))), "Closing is answered with Drained also when every stream has ended");
-    twin.det.post(twin.addr, EpochStamp::Control, d::DeliveryInput::Pull { stream: STREAM });
+    assert!(take(&twin.log).iter().any(|entry| matches!(entry, Emitted::Run(DeliveryEffect::Drained(_)))), "Closing is answered with Drained also when every stream has ended");
+    let pull = twin.pull_input();
+    twin.det.post(twin.addr, EpochStamp::Control, pull);
     twin.run();
-    assert!(take(&twin.log).iter().any(|effect| matches!(effect, DeliveryEffect::Stream { effect: StreamEffect::Done, .. })), "Pull after Ended gives None");
+    assert!(take(&twin.log).iter().any(|entry| matches!(entry, Emitted::Run(DeliveryEffect::Stream { effect: StreamEffect::Answer { answer: PullAnswer::Done, .. }, .. }))), "Pull after Ended gives None");
 }
 
 // Properties. The stubs are owners on the same scheduler: the explorer orders their inputs to the owner.
 
-fn delivered(log: &Log<DeliveryEffect>) -> Vec<d::Value> {
-    snapshot(log).into_iter().filter_map(|effect| match effect {
-        DeliveryEffect::Stream { effect: StreamEffect::Deliver(value), .. } => Some(value),
+fn delivered(log: &Spied) -> Vec<d::Value> {
+    snapshot(log).into_iter().filter_map(|entry| match entry {
+        Emitted::Run(DeliveryEffect::Stream { effect: StreamEffect::Answer { answer: PullAnswer::Value(value), .. }, .. }) => Some(value),
         _ => None,
     }).collect()
 }
 
-fn reads(log: &Log<DeliveryEffect>) -> usize { snapshot(log).iter().filter(|effect| matches!(effect, DeliveryEffect::Stream { effect: StreamEffect::Read { .. }, .. })).count() }
+fn reads(log: &Spied) -> usize { snapshot(log).iter().filter(|entry| matches!(entry, Emitted::Run(DeliveryEffect::Stream { effect: StreamEffect::Read { .. }, .. }))).count() }
 
 struct Rig {
     det: DetScheduler,
-    log: Log<DeliveryEffect>,
-    deliveries: Address<Deliveries>,
+    log: Spied,
+    deliveries: Address<Spy<Deliveries>>,
 }
 
 fn rig(kind: Kind) -> Rig {
     let mut det = DetScheduler::new(1);
     let log = new_log();
-    let deliveries = det.add::<Deliveries>("deliveries", d::DeliveriesState::new(EPOCH), Recorder::<Deliveries>::new(&log));
+    let deliveries = add_deliveries(&mut det, &log);
     det.start_epoch(EPOCH);
     det.post(deliveries, EpochStamp::Control, d::DeliveryInput::Open { stream: STREAM, view: view(kind), epoch: EPOCH, revision: 0, identity: true, valid: true });
     if kind == Kind::Events {
@@ -584,13 +605,16 @@ fn rig(kind: Kind) -> Rig {
 
 impl Rig {
     fn source(&mut self, name: &'static str, script: Vec<d::DeliveryInput>) -> Address<Source<Deliveries>> {
-        let source = self.det.add::<Source<Deliveries>>(name, SourceState { to: self.deliveries, script }, Silent);
+        let source = self.det.add::<Source<Deliveries>>(name, SourceState { to: as_owner(self.deliveries), script }, Silent);
         self.det.post(source, EpochStamp::Control, SourceInput::Go);
         source
     }
 }
 
-fn pulls(count: usize) -> Vec<d::DeliveryInput> { (0..count).map(|_| d::DeliveryInput::Pull { stream: STREAM }).collect() }
+fn pulls(count: usize) -> Vec<d::DeliveryInput> {
+    let answers = Outcomes::<PullAnswer>::new();
+    (0..count).map(|_| d::DeliveryInput::Pull { stream: STREAM, outcome: answers.register(EPOCH).id() }).collect()
+}
 
 fn row_sources(rig: &mut Rig) {
     rig.source("store", vec![
@@ -656,7 +680,7 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 thread_local! {
-    static LOG: RefCell<Option<Rc<Log<DeliveryEffect>>>> = const { RefCell::new(None) };
+    static LOG: RefCell<Option<Rc<Spied>>> = const { RefCell::new(None) };
 }
 
 /// P-DLV-04: rows that are in the base at revision R are in the last value (read or unread) at revision >= R once the reads are in.
@@ -848,9 +872,9 @@ fn dlv_dictionary_owner() {
     rig.det.post(rig.deliveries, EpochStamp::Epoch(EPOCH), d::DeliveryInput::ReadDone { stream: STREAM, read_id: 1, revision: 1, data: d::ReadData::Rows(rows_of(&ids(&["r1"]))) });
     rig.det.close();
     rig.det.run_until_quiet(100).expect("quiet");
-    let drained = snapshot(&rig.log).iter().filter(|effect| matches!(effect, DeliveryEffect::Drained(_))).count();
+    let drained = snapshot(&rig.log).iter().filter(|entry| matches!(entry, Emitted::Run(DeliveryEffect::Drained(_)))).count();
     assert_eq!(drained, 1, "one Drained for every stream");
-    let state: &d::DeliveriesState = rig.det.state(rig.deliveries).expect("state");
+    let state = inner(&rig.det, rig.deliveries);
     assert_eq!(state.stage(STREAM), Some(d::DeliveryStage::Ended));
     assert_eq!(state.stage(2), Some(d::DeliveryStage::Ended));
 }
@@ -861,7 +885,7 @@ fn dlv_epoch_started_unknown_cause() {
     rig.det.post(rig.deliveries, EpochStamp::Control, d::DeliveryInput::EpochStarted(crate::owners::contract::EpochStarted { epoch: 2, identity: None, generation: 0 }));
     rig.det.post(rig.deliveries, EpochStamp::Control, d::DeliveryInput::EpochEnded(EpochEnded { epoch: 2, cause: Ended::SessionReset }));
     rig.det.run_until_quiet(100).expect("quiet");
-    assert_eq!(rig.det.state(rig.deliveries).expect("state").stage(STREAM), Some(d::DeliveryStage::Opening), "the stream of epoch 1 is not touched by the end of epoch 2");
+    assert_eq!(inner(&rig.det, rig.deliveries).stage(STREAM), Some(d::DeliveryStage::Opening), "the stream of epoch 1 is not touched by the end of epoch 2");
 }
 
 // Cells of the second revision of `delivery.md`: `Joined`, `ModelReady`, `State`, the refused `open`, the waits.
@@ -935,7 +959,7 @@ fn dlv_ended_closing_owner() {
     take(&twin.log);
     twin.det.close();
     twin.run();
-    let drained = take(&twin.log).iter().filter(|effect| matches!(effect, DeliveryEffect::Drained(_))).count();
+    let drained = take(&twin.log).iter().filter(|entry| matches!(entry, Emitted::Run(DeliveryEffect::Drained(_)))).count();
     assert_eq!(drained, 1, "an ended stream still lets the owner answer Closing once");
 }
 
@@ -952,15 +976,20 @@ fn dlv_wait_pull_owner() {
 #[test]
 fn dlv_wait_available_owner() {
     let mut twin = live_rows();
-    twin.det.post(twin.addr, EpochStamp::Control, d::DeliveryInput::Pull { stream: STREAM });
+    let pull = twin.pull_input();
+    let d::DeliveryInput::Pull { outcome, .. } = pull else { unreachable!() };
+    twin.det.post(twin.addr, EpochStamp::Control, pull);
     twin.run();
-    take(&twin.log);
+    assert!(take(&twin.log).iter().all(|entry| !matches!(entry, Emitted::Run(DeliveryEffect::Stream { effect: StreamEffect::Answer { .. }, .. }))), "a Pull on an empty journal waits");
     twin.post(d::DeliveryInput::WindowState { stream: STREAM, state: load_state(loading()) });
-    let wakes = take(&twin.log).iter().filter(|effect| matches!(effect, DeliveryEffect::Stream { effect: StreamEffect::Wake, .. })).count();
-    assert_eq!(wakes, 1, "the first value of an empty journal wakes the sink");
+    let answers: Vec<OutcomeId> = take(&twin.log).into_iter().filter_map(|entry| match entry {
+        Emitted::Run(DeliveryEffect::Stream { effect: StreamEffect::Answer { outcome, answer: PullAnswer::Value(d::Value::State { .. }) }, .. }) => Some(outcome),
+        _ => None,
+    }).collect();
+    assert_eq!(answers, [outcome], "the first value of an empty journal answers the waiting Pull once");
     twin.post(d::DeliveryInput::WindowState { stream: STREAM, state: load_state(loaded()) });
-    let wakes = take(&twin.log).iter().filter(|effect| matches!(effect, DeliveryEffect::Stream { effect: StreamEffect::Wake, .. })).count();
-    assert_eq!(wakes, 0, "a value added to a journal that is not empty wakes nobody");
+    assert!(take(&twin.log).iter().all(|entry| !matches!(entry, Emitted::Run(DeliveryEffect::Stream { effect: StreamEffect::Answer { .. }, .. }))), "a value added with no waiting Pull answers nobody");
+    assert_eq!(twin.state().journal_len(STREAM), 1);
 }
 
 #[test]

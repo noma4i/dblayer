@@ -1,12 +1,13 @@
-//! Helpers of the runner tests: a Tokio runtime, a store port that keeps batches, a pump for the scheduler.
+//! Helpers of the runner tests: a Tokio runtime, a Store peer that keeps batches, a pump for the scheduler.
 //! `DetScheduler` takes the inputs that other threads reply only after a step, so the pump posts a `Tick` between checks.
 
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
-use super::{Admit, StorePort};
-use crate::owners::store::StoreBatch;
-use crate::runtime::{Address, DetScheduler, EpochStamp, StateOwner, Time};
+use super::Admit;
+use crate::owners::store::{StoreBatch, StoreInput};
+use crate::owners::support::NoEffect;
+use crate::runtime::{Address, Cause, DetScheduler, Effects, Epoch, EpochStamp, StateOwner, Time};
 
 pub const LIMIT: Duration = Duration::from_secs(10);
 
@@ -14,15 +15,35 @@ pub fn runtime() -> tokio::runtime::Runtime { tokio::runtime::Builder::new_multi
 
 pub fn admit() -> Admit { Arc::new(|| crate::transport::test_admission().ok()) }
 
+/// A Store peer: it keeps the batches of `Commit`.
 #[derive(Clone, Default)]
-pub struct Batches(pub Arc<Mutex<Vec<(EpochStamp, StoreBatch)>>>);
+pub struct Batches(pub Arc<Mutex<Vec<StoreBatch>>>);
 
 impl Batches {
-    pub fn all(&self) -> Vec<(EpochStamp, StoreBatch)> { self.0.lock().unwrap_or_else(PoisonError::into_inner).clone() }
+    pub fn all(&self) -> Vec<StoreBatch> { self.0.lock().unwrap_or_else(PoisonError::into_inner).clone() }
 }
 
-impl StorePort for Batches {
-    fn commit(&self, stamp: EpochStamp, batch: StoreBatch) { self.0.lock().unwrap_or_else(PoisonError::into_inner).push((stamp, batch)); }
+pub(crate) struct BatchPeer;
+
+impl StateOwner for BatchPeer {
+    const EPOCHED: bool = false;
+
+    type State = Batches;
+    type Input = StoreInput;
+    type Effect = NoEffect;
+
+    fn step(state: &mut Batches, input: StoreInput) -> Effects<Self> {
+        if let StoreInput::Commit(batch) = input {
+            state.0.lock().unwrap_or_else(PoisonError::into_inner).push(batch);
+        }
+        Vec::new()
+    }
+
+    fn tick(_now: Time) -> StoreInput { StoreInput::Idle }
+
+    fn epoch_ended(_epoch: Epoch, _cause: Cause) -> StoreInput { StoreInput::Idle }
+
+    fn closing() -> StoreInput { StoreInput::Idle }
 }
 
 pub fn collector<E: Send + 'static>() -> (Arc<Mutex<Vec<E>>>, super::Rest<E>) {
