@@ -100,7 +100,7 @@ impl AnswerPage {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum WindowOutcome {
-    Loaded { revision: i64 },
+    Loaded { revision: i64, has_more: bool, fetched: bool },
     Failed { error: String, source: Option<crate::transport::TransportError> },
     PageLimit,
     Interrupted,
@@ -380,7 +380,7 @@ impl Facts {
     }
 
     fn idle_load(&mut self, ctx: &mut Ctx<'_>, id: InterestId, goal: Goal, force: bool) -> Outcome<WinState> {
-        let loaded = WindowOutcome::Loaded { revision: self.landed_revision };
+        let loaded = WindowOutcome::Loaded { revision: self.landed_revision, has_more: self.cursor.is_some(), fetched: false };
         let next_page = self.page + 1;
         match goal {
             Goal::First if self.fresh && !force => self.immediate(id, loaded),
@@ -424,7 +424,7 @@ impl Facts {
             self.dependency_models = dependency_models.clone();
         }
         let wants_next = |want: &Want| matches!(want, Want::All) || matches!(want, Want::Next(c) if *c > page);
-        let loaded = WindowOutcome::Loaded { revision };
+        let loaded = WindowOutcome::Loaded { revision, has_more: self.cursor.is_some(), fetched: true };
         if self.cursor.is_some() && self.waiters.values().any(wants_next) {
             if self.page_limit_reached() {
                 for (id, want) in std::mem::take(&mut self.waiters) {
@@ -878,7 +878,7 @@ impl Windows {
 
     fn load(state: &mut WindowsState, key: WindowKey, id: InterestId, goal: Goal, force: bool, store_revision: i64, out: &mut Effects<Self>) {
         if key.is_empty_nodes() {
-            let effect = WindowEffect::Outcome { id, outcome: WindowOutcome::Loaded { revision: store_revision } };
+            let effect = WindowEffect::Outcome { id, outcome: WindowOutcome::Loaded { revision: store_revision, has_more: false, fetched: false } };
             out.push(Effect::Run(WindowsEffect::Window { key, effect }));
             return;
         }

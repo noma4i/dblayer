@@ -1264,9 +1264,9 @@ fn win_wait_nodes() {
     assert!(matches!(runs(take(&twin.log)).as_slice(), [WindowsEffect::Window { effect: WindowEffect::Request { page: 1, .. }, .. }]));
     twin.post(w::WindowsInput::Response { request: 1, attempt: 1, page: AnswerPage::new(1, vec!["m1".into()], None) });
     twin.post(w::WindowsInput::Committed(Committed { batch: 1, revision: 11, tables: Vec::new(), models: Default::default() }));
-    assert!(runs(take(&twin.log)).iter().any(|effect| matches!(effect, WindowsEffect::Window { effect: WindowEffect::Outcome { id: 1, outcome: WindowOutcome::Loaded { revision: 11 } }, .. })));
+    assert!(runs(take(&twin.log)).iter().any(|effect| matches!(effect, WindowsEffect::Window { effect: WindowEffect::Outcome { id: 1, outcome: WindowOutcome::Loaded { revision: 11, .. } }, .. })));
     twin.post_call(w::WindowsInput::Load { key: nodes, id: 2, goal: w::Goal::First, force: false, store_revision: 0 });
-    assert!(runs(take(&twin.log)).iter().any(|effect| matches!(effect, WindowsEffect::Window { effect: WindowEffect::Outcome { id: 2, outcome: WindowOutcome::Loaded { revision: 11 } }, .. })), "a fresh nodes key answers at once");
+    assert!(runs(take(&twin.log)).iter().any(|effect| matches!(effect, WindowsEffect::Window { effect: WindowEffect::Outcome { id: 2, outcome: WindowOutcome::Loaded { revision: 11, .. } }, .. })), "a fresh nodes key answers at once");
 }
 
 #[test]
@@ -1434,7 +1434,7 @@ fn win_prop_loaded_rows() {
         let (log, _) = seen();
         let events = snapshot(&log);
         for (at, event) in events.iter().enumerate() {
-            if let Seen::Outcome(_, WindowOutcome::Loaded { revision }) = event {
+            if let Seen::Outcome(_, WindowOutcome::Loaded { revision, .. }) = event {
                 let landed = events[..at].iter().any(|before| matches!(before, Seen::Landed { revision: found, .. } if found == revision));
                 if !landed {
                     return Err(format!("Loaded at {revision} without a landing"));
@@ -1665,7 +1665,7 @@ fn win_landed_revision_per_machine() {
     take(&log);
     det.post(windows, EpochStamp::Epoch(EPOCH), load(key(), 3, 99));
     det.run_until_quiet(100).expect("quiet");
-    assert!(runs(take(&log)).iter().any(|effect| matches!(effect, WindowsEffect::Window { effect: WindowEffect::Outcome { id: 3, outcome: WindowOutcome::Loaded { revision: 5 } }, .. })), "the fresh key answers with its own landing");
+    assert!(runs(take(&log)).iter().any(|effect| matches!(effect, WindowsEffect::Window { effect: WindowEffect::Outcome { id: 3, outcome: WindowOutcome::Loaded { revision: 5, .. } }, .. })), "the fresh key answers with its own landing");
 }
 
 /// win_loading_response (P-WIN-04): the basis of a batch names every model of the answer with the generation it had when the request left, also a model the window did not know before.

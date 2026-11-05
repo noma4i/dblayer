@@ -551,12 +551,8 @@ impl Database {
     }
     pub async fn load_more(&self, epoch: u64, model: String, relation: String, params_json: String) -> Result<LoadMoreResult, DbError> {
         self.require_online(&format!("{model}.{relation} load more"))?;
-        let params: Map<String, Value> = serde_json::from_str(&params_json)?;
-        let more_before = self.db.window_record(&model, &relation, &params)?.is_some_and(|record| record.has_next);
         let call = self.start_load(epoch, "load more", &model, &relation, &params_json, Goal::Next, false)?;
-        self.finish_load(call).await?;
-        if !more_before { return Ok(LoadMoreResult::NoMore); }
-        Ok(LoadMoreResult::Loaded { has_more: self.db.window_record(&model, &relation, &params)?.is_some_and(|record| record.has_next) })
+        self.finish_load(call).await
     }
     pub async fn node(&self, epoch: u64, model: String, relation: String, row_id: String, force: bool) -> Result<Option<WireRow>, DbError> {
         let sync = self.sync()?.clone();
@@ -709,21 +705,22 @@ impl Database {
         let params: Map<String, Value> = serde_json::from_str(params_json)?;
         self.db.window_record(model, relation, &params)?;
         drop(self.acquire(crate::ffi::legacy::Origin::Explicit, epoch, target)?);
-        if self.life.published().identity.is_none() { return Err(DbError::NoSession { detail: "the database has no session in this epoch".into() }); }
+        let published = self.life.published();
+        if published.epoch != epoch { return Err(super::command::ended()); }
+        if published.identity.is_none() { return Err(DbError::NoSession { detail: "the database has no session in this epoch".into() }); }
         let key = WindowKey::relation(model, relation, &params);
         let force = force || (goal == Goal::First && !self.db.window_is_fresh(model, relation, &params, self.sync()?.inner.now_ms())?);
-        let (waiter, id) = self.life.load(key.clone(), goal, force, self.db.revision_seq()?);
+        let (waiter, id) = self.life.load(epoch, key.clone(), goal, force, self.db.revision_seq()?);
         Ok(LoadCall { epoch, waiter, leave: LeaveLoad { life: self.life.clone(), key, id, settled: false } })
     }
 
-    /// Waits for the outcome of the call: the revision of the load. A call dropped before its outcome leaves the window.
-    async fn finish_load(&self, mut call: LoadCall) -> Result<i64, DbError> {
+    async fn finish_load(&self, mut call: LoadCall) -> Result<LoadMoreResult, DbError> {
         let reply = self.await_life(call.waiter).await;
         call.leave.settled = true;
         let reply = reply?;
         if !self.admits(call.epoch) { return Err(super::command::ended()); }
         match reply {
-            LifeReply::Window(WindowOutcome::Loaded { revision }) => Ok(revision),
+            LifeReply::Window(WindowOutcome::Loaded { has_more, fetched, .. }) => Ok(if fetched { LoadMoreResult::Loaded { has_more } } else { LoadMoreResult::NoMore }),
             LifeReply::Window(WindowOutcome::Failed { source: Some(source), .. }) => Err(crate::sync::SyncError::Transport(source).into()),
             LifeReply::Window(WindowOutcome::Failed { error, .. }) => Err(DbError::Database { detail: error }),
             LifeReply::Window(WindowOutcome::PageLimit) => Err(DbError::Invalid { detail: "the window reached its page limit".into() }),

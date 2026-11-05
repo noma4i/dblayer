@@ -2,6 +2,7 @@
 //! win_idle_load_more, win_idle_load_more_end, win_loading_join_waiter, win_loading_leave, win_idle_interest_offline (a refresh keeps its accepted fail-at-once rule).
 //! The observable values are the requests of the transport, the snapshot with its revision and phase, and the result of the call.
 
+use std::future::Future;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -21,6 +22,8 @@ struct Pages {
     gate: Arc<Semaphore>,
     gated: bool,
     count: AtomicUsize,
+    last_page: AtomicUsize,
+    response: Mutex<Option<String>>,
 }
 
 #[async_trait::async_trait]
@@ -33,7 +36,8 @@ impl Transport for Pages {
         let number = self.count.fetch_add(1, Ordering::SeqCst);
         self.asked.lock().unwrap().push(request.variables_json);
         if self.gated { self.gate.acquire().await.unwrap().forget(); }
-        let has_next = number == 0;
+        if let Some(response) = self.response.lock().unwrap().clone() { return Ok(response); }
+        let has_next = number < self.last_page.load(Ordering::SeqCst);
         Ok(format!(r#"{{"data":{{"feed":{{"nodes":[{{"id":"m{number}","text":"t"}}],"pageInfo":{{"hasNextPage":{has_next},"endCursor":"c{number}"}}}}}}}}"#))
     }
     async fn mutate(&self, _: super::TransportRequest) -> Result<String, DbError> { unreachable!() }
@@ -54,7 +58,7 @@ async fn open(gated: bool) -> (Arc<Database>, Arc<Pages>) {
         stale_time: "5.minutes".into(), empty_stale_time: None, selects_page_info: true, page_size: None, variables: Default::default(), root: None, total_from: None,
     });
     model.relations.push(feed);
-    let transport = Arc::new(Pages { asked: Mutex::new(Vec::new()), gate: Arc::new(Semaphore::new(0)), gated, count: AtomicUsize::new(0) });
+    let transport = Arc::new(Pages { asked: Mutex::new(Vec::new()), gate: Arc::new(Semaphore::new(0)), gated, count: AtomicUsize::new(0), last_page: AtomicUsize::new(1), response: Mutex::new(None) });
     let db = Database::open_with_clock(Config { path: None, data_version: None, cache_rows: 8 }, serde_json::to_string(&vec![model]).unwrap(), Some(transport.clone()), None, TestClock::new(1_000_000), None, None, None, None).await.unwrap();
     db.register_operations(r#"[{"name":"Feed","document":"query Feed { feed { nodes { id text } pageInfo { hasNextPage endCursor } } }","rootPath":"feed"}]"#.into()).unwrap();
     db.set_online(true).unwrap();
@@ -107,6 +111,45 @@ async fn a_load_more_asks_the_page_after_the_cursor_and_the_last_page_says_no_mo
     assert_eq!(rows.len(), 2, "both pages are in the window");
     assert_eq!(more(&db).await.unwrap(), LoadMoreResult::NoMore);
     assert_eq!(transport.requests(), 2, "the end of the pages asks nothing");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn inv_loadm_18_win_loading_load_more_reports_the_page_it_landed() {
+    let (db, transport) = open(true).await;
+    transport.last_page.store(2, Ordering::SeqCst);
+    let first = begin(&db).await;
+    crate::test_wait::yield_until("the first page left", || transport.requests() == 1).await;
+    let mut next = std::pin::pin!(more(&db));
+    assert!(std::future::poll_fn(|cx| std::task::Poll::Ready(next.as_mut().poll(cx))).await.is_pending());
+    transport.gate.add_permits(2);
+    crate::test_wait::within(first.result()).await.unwrap();
+    assert_eq!(crate::test_wait::within(next).await.unwrap(), LoadMoreResult::Loaded { has_more: true });
+    assert_eq!(transport.requests(), 2);
+    transport.gate.add_permits(1);
+    assert_eq!(crate::test_wait::within(more(&db)).await.unwrap(), LoadMoreResult::Loaded { has_more: false });
+    assert_eq!(crate::test_wait::within(more(&db)).await.unwrap(), LoadMoreResult::NoMore);
+    let asked = transport.asked.lock().unwrap().clone();
+    assert_eq!(asked.len(), 3);
+    assert!(asked[1].contains("c0") && asked[2].contains("c1"), "each call asks its next page: {asked:?}");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn win_loading_error_preserves_graphql_messages_and_extensions() {
+    for (next, code) in [(false, "FORBIDDEN"), (true, "FORBIDDEN"), (false, "INVALID_CURSOR"), (true, "INVALID_CURSOR")] {
+        let (db, transport) = open(false).await;
+        crate::test_wait::within(begin(&db).await.result()).await.unwrap();
+        let response = serde_json::json!({"errors": [
+            {"message": "first refusal", "extensions": {"code": code, "transactionDisposition": "FINISH", "field": "feed"}},
+            {"message": "second refusal"}
+        ]}).to_string();
+        let expected = crate::transport::graphql_extensions(response.clone()).unwrap();
+        *transport.response.lock().unwrap() = Some(response);
+        let error = if next { crate::test_wait::within(more(&db)).await.unwrap_err() } else { crate::test_wait::within(refresh(&db)).await.unwrap_err() };
+        let DbError::Graphql { messages, extensions } = error else { panic!("the call must preserve the GraphQL error: {error:?}") };
+        assert_eq!(messages, ["first refusal", "second refusal"]);
+        assert_eq!(extensions, expected);
+        assert_eq!(transport.requests(), if code == "INVALID_CURSOR" { 3 } else { 2 });
+    }
 }
 
 #[tokio::test(flavor = "multi_thread")]

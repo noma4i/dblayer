@@ -13,6 +13,9 @@
 - `EntityFetch.none` is `EntityFetch.never` in Swift and `EntityFetch.NEVER` in Kotlin.
 
 ### Fixed
+- Loads keep their caller's epoch when the account changes before dispatch.
+- Pagination reports the page it completed when called during an earlier load.
+- Refresh and pagination preserve GraphQL messages and extensions, including repeated cursor errors.
 - Opening a database of an older layout no longer fails: tables kept across a format change move by the columns both layouts share.
 - Operations of the previous account are not sent after an identity change without `sessionReset`.
 - A confirmed create keeps its row when another model is reset before its answer lands.

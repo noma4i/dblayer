@@ -19,8 +19,10 @@ pub trait WindowCodec: Send + Sync + 'static {
     fn answer(&self, key: &WindowKey, page: u32, response: Response) -> Result<AnswerPage, String>;
 
     fn refusal(&self, response: &Response) -> Option<RequestError> {
-        let error = response.errors.iter().find(|error| error.code() == Some(crate::transport::retry::INVALID_CURSOR))?;
-        Some(RequestError { message: error.message.clone(), class: ErrorClass::InvalidCursor, source: None })
+        if response.errors.is_empty() { return None; }
+        let class = if response.errors.iter().any(|error| error.code() == Some(crate::transport::retry::INVALID_CURSOR)) { ErrorClass::InvalidCursor } else { ErrorClass::Permanent };
+        let source = TransportError::Graphql { messages: response.errors.iter().map(|error| error.message.clone()).collect(), extensions: response.extensions() };
+        Some(RequestError { message: source.to_string(), class, source: Some(source) })
     }
 }
 

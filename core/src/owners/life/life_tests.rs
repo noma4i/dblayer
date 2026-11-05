@@ -236,10 +236,17 @@ async fn a_loaded_page_lands_through_the_store_and_the_caller_hears_loaded() {
     let life = tokio::task::spawn_blocking(move || Life::start(setup, LIMIT).expect("the first publish comes")).await.unwrap();
     assert_eq!(answer(life.set_online(true)).await, Reply::Online { closed: false });
     let key = crate::owners::read::windows::WindowKey::relation("moments", "mine", json!({"userId": "u1"}).as_object().unwrap());
-    let (waiter, _) = life.load(key, crate::owners::read::windows::Goal::First, false, 0);
+    let epoch = life.published().epoch;
+    life.credential_committed(2);
+    crate::test_wait::yield_until("the next identity was published", || life.published().identity == Some(2)).await;
+    let old_key = crate::owners::read::windows::WindowKey::relation("moments", "mine", json!({"userId": "old"}).as_object().unwrap());
+    let (stale, _) = life.load(epoch, old_key, crate::owners::read::windows::Goal::First, true, 0);
+    assert!(matches!(crate::test_wait::within(stale.wait()).await, crate::runtime::Outcome::EpochEnded(_)));
+    let (waiter, _) = life.load(life.published().epoch, key, crate::owners::read::windows::Goal::First, false, 0);
     let reply = answer(waiter).await;
     assert!(matches!(reply, Reply::Window(crate::owners::read::windows::WindowOutcome::Loaded { .. })), "the load ends as loaded: {reply:?} {:?}", life.faults());
     let stored: Vec<_> = ["m1", "m2"].iter().map(|id| db.find("moments", &crate::identity::RowId::new(id).unwrap()).unwrap().map(|row| row.text("text").map(str::to_string))).collect();
     assert_eq!(stored, [Some(Some("one".to_string())), Some(Some("two".to_string()))]);
+    assert_eq!(transport.calls().len(), 1, "the old epoch never starts a request in the new identity");
     closed(&life).await;
 }

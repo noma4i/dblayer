@@ -125,13 +125,13 @@ impl Addresses {
 
 impl super::Life {
     /// A platform call that waits for a load of `key`: the waiter is the id of the call in `Windows`.
-    pub fn load(&self, key: WindowKey, goal: Goal, force: bool, store_revision: i64) -> (Waiter<LifeReply>, u64) {
-        let waiter = self.wiring.outcomes.register(Epoch::MAX);
+    pub fn load(&self, epoch: Epoch, key: WindowKey, goal: Goal, force: bool, store_revision: i64) -> (Waiter<LifeReply>, u64) {
+        let waiter = self.wiring.outcomes.register(epoch);
         let id = waiter.id().raw() | CALL;
         if self.is_shut() {
             self.wiring.outcomes.settle(waiter.id(), LifeReply::Closed);
         } else {
-            self.wiring.to_windows(WindowsInput::Load { key, id, goal, force, store_revision });
+            self.wiring.to_windows_in(epoch, WindowsInput::Load { key, id, goal, force, store_revision });
         }
         (waiter, id)
     }
