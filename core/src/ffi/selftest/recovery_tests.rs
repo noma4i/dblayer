@@ -85,6 +85,7 @@ async fn ending_an_upload_round_keeps_the_epoch_of_each_accepted_group() {
         json!({"name": name, "document": document, "rootPath": root})
     }).collect();
     database.register_operations(json!(registered).to_string()).unwrap();
+    database.set_online(true).unwrap();
     database.set_upload_accepted_sink(Arc::new(AcceptUploads));
     named_bound("first sign-in", database.session_call("social".into(), SOCIAL_BODY.into())).await.unwrap();
     let first = database.session_epoch();
@@ -121,6 +122,7 @@ async fn an_active_and_a_queued_upload_end_at_the_exit_and_the_next_sign_in_runs
             json!({"name": name, "document": document, "rootPath": root})
         }).collect();
         database.register_operations(json!(registered).to_string()).unwrap();
+        database.set_online(true).unwrap();
         named_bound("first sign-in", database.session_call("social".into(), SOCIAL_BODY.into())).await.unwrap();
         rig.server.reply_with(json!({"createBlob": {"url": "https://upload", "signedId": "sid", "blobId": "bid"}, "makeMoment": {"id": "42", "text": "clip"}}));
         let mut receipts = Vec::new();

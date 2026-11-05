@@ -121,6 +121,7 @@ struct OpenWait {
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Awaited {
     EpochAbove(u64),
+    Identity(u64),
 }
 
 impl Wiring {
@@ -149,12 +150,13 @@ impl Wiring {
     pub fn addresses(&self) -> Option<Addresses> { self.addresses.get().copied() }
 
     pub fn publish(&self, published: Published) {
-        let published_epoch = published.epoch;
+        let (published_epoch, published_identity) = (published.epoch, published.identity);
         self.published.publish(published);
         let due: Vec<_> = {
             let mut held = self.after_publish.lock().unwrap_or_else(PoisonError::into_inner);
             let (due, rest): (Vec<_>, Vec<_>) = held.drain(..).partition(|(waiting, ..)| match waiting {
                 Awaited::EpochAbove(epoch) => published_epoch > *epoch,
+                Awaited::Identity(identity) => published_identity == Some(*identity),
             });
             *held = rest;
             due
@@ -173,6 +175,17 @@ impl Wiring {
             self.outcomes.settle(id, reply);
         } else {
             held.push((Awaited::EpochAbove(epoch), id, reply));
+        }
+    }
+
+    /// Settles the answer of a sign-in once the cell shows the identity it signed in: a caller that heard it finds the session.
+    pub fn settle_when_signed(&self, identity: u64, id: crate::runtime::OutcomeId, reply: LifeReply) {
+        let mut held = self.after_publish.lock().unwrap_or_else(PoisonError::into_inner);
+        if self.published.get().is_some_and(|published| published.identity == Some(identity) || published.closed) {
+            drop(held);
+            self.outcomes.settle(id, reply);
+        } else {
+            held.push((Awaited::Identity(identity), id, reply));
         }
     }
 

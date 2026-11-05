@@ -535,6 +535,7 @@ impl Rig {
             .await
             .unwrap();
         database.register_operations(plain_operations()).unwrap();
+        database.set_online(true).unwrap();
         Rig { opener, database, world, switch, clock }
     }
 
@@ -547,6 +548,7 @@ impl Rig {
         add_reactions(&mut models);
         let database = opener.open_with_clock(config(), models.to_string(), Some(switch.clone()), None, clock.clone(), None, None, None, None).await.unwrap();
         database.register_operations(plain_operations()).unwrap();
+        database.set_online(true).unwrap();
         Rig { opener, database, world: first, switch, clock }
     }
 
@@ -587,6 +589,7 @@ impl Rig {
         }
         let database = opener.open_with_clock(config(), models.to_string(), Some(switch.clone()), None, clock.clone(), None, None, None, None).await.unwrap();
         database.register_operations(plain_operations()).unwrap();
+        database.set_online(true).unwrap();
         Rig { opener, database, world: first, switch, clock }
     }
 
@@ -597,6 +600,7 @@ impl Rig {
         self.switch.set(next);
         let database = self.opener.open_with_clock(config(), plain_models(), Some(self.switch.clone()), None, self.clock.clone(), None, None, None, None).await.unwrap();
         database.register_operations(plain_operations()).unwrap();
+        database.set_online(true).unwrap();
         self.database = database;
     }
 

@@ -125,6 +125,7 @@ async fn open(server: Arc<Server>) -> Arc<Database> {
         {"name":"Users","document":"query Users { users { id name } }"},
         {"name":"SessionProfile","document":"query SessionProfile { sessionProfile { id } }"}
     ]).to_string()).unwrap();
+    database.set_online(true).unwrap();
     database
 }
 

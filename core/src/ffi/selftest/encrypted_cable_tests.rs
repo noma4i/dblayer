@@ -137,6 +137,7 @@ async fn an_old_encrypted_cable_cannot_deliver_into_the_next_account() {
     let peer = Arc::new(Peer { config: config.clone(), connections: Mutex::new(HashMap::new()), subscribed, closed, next: AtomicUsize::new(0) });
     let database = Database::open(Config { path: None, data_version: None, cache_rows: 8 }, plain_models(), Some(peer.clone()), Some(config), Some(rig.credentials.clone()), Some(Arc::new(ThroughServer(rig.server.clone()))), None, None).await.unwrap();
     database.register_operations(r#"[{"name":"Notices","document":"subscription Notices { notices { id } }","rootPath":"notices"}]"#.into()).unwrap();
+    database.set_online(true).unwrap();
     bound(database.session_call("social".into(), SOCIAL_BODY.into())).await.unwrap();
     let query = r#"{"model":"Notice","relation":"recent","params":{}}"#;
     let first = database.subscribe_reading(database.session_epoch(), StreamRequest::Query { query_json: query.into() }, Arc::new(Rows));
