@@ -190,7 +190,7 @@ pub(super) fn input_of(request_id: RequestId, attempt_id: AttemptId, logout: boo
             SessionInput::Response { request_id, attempt_id, body: answer.body.to_string(), sequence: answer.sequence.and_then(|sequence| u64::try_from(sequence).ok()), refusal: None }
         }
         Err(TransportError::Http { status: 401 | 403, .. }) => SessionInput::HttpError { request_id, attempt_id, temporary: false, auth: true, persisted_missing: false },
-        Err(error) if permanently_refused(&error) || matches!(error, TransportError::RequestTooLarge { .. } | TransportError::Decode(_)) => SessionInput::HttpError { request_id, attempt_id, temporary: false, auth: false, persisted_missing: false },
+        Err(error) if permanently_refused(&error) || matches!(error, TransportError::RequestTooLarge { .. } | TransportError::Decode(_) | TransportError::Graphql { .. }) => SessionInput::HttpError { request_id, attempt_id, temporary: false, auth: false, persisted_missing: false },
         Err(TransportError::Interrupted(_)) => SessionInput::Dropped { request_id, attempt_id },
         Err(_) => SessionInput::HttpError { request_id, attempt_id, temporary: true, auth: false, persisted_missing: false },
     }
