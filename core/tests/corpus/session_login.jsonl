@@ -1,0 +1,7 @@
+{"trace":"session_login"}
+{"args":{"encrypted":true},"in":"open","out":[{"o":"opened"}]}
+{"in":"published","out":[{"o":"published","v":{"epoch":1}}]}
+{"args":{"body":{"token":"t"},"operation":"social"},"in":"session_call","out":[{"o":"request","v":{"id":"r1","kind":"http","purpose":"standard"}}]}
+{"args":{"id":"r1","json":{"nextStep":"authenticated"}},"in":"answer","out":[{"o":"session","v":{"answer":{"nextStep":"authenticated"},"operation":"social"}}]}
+{"in":"published","out":[{"o":"published","v":{"epoch":2}}]}
+{"in":"close","out":[{"o":"closed"}]}

@@ -26,6 +26,13 @@ private class Heard : ValueSink {
     override fun available() { count.incrementAndGet() }
 }
 
+private class Credentials : CredentialStore {
+    @Volatile var current: String? = null
+    override fun get(): String? = current
+    override fun set(credential: String) { current = credential }
+    override fun clear() { current = null }
+}
+
 /** What a finished call hands back to the runner: what to observe and what to remember under a name. */
 private class Done(val observed: List<JsonObject> = emptyList(), val row: Pair<String, String>? = null, val receipt: Pair<String, WireOperationReceipt>? = null)
 
@@ -152,8 +159,9 @@ private class DatabaseRunner {
         return observed
     }
 
-    suspend fun open(models: String): List<JsonObject> = try {
-        val opened = OpenDatabase().openWithClock(Config(null, null, 32u), File(corpusDirectory, if (models == "events") "models_events.json" else "models.json").readText(), mock, null, clock, false, true, null, null, null, null)
+    suspend fun open(models: String, encrypted: Boolean): List<JsonObject> = try {
+        val session = if (encrypted) EncryptedConfig("https://api.example.com", SealedServer.SERVER_KEY, SealedServer.SERVER_PIN, EncryptedEndpoints("/api/graphql", "/api/cable", "/api/logout", "/api/bootstrap", mapOf("otp" to EncryptedSessionOperation("/api/auth/otp", false), "confirm" to EncryptedSessionOperation("/api/auth/confirm", false), "social" to EncryptedSessionOperation("/api/auth/social", false), "ticket" to EncryptedSessionOperation("/api/ticket", true))), "example-ws-v1", "ws.hello", "EncryptedGraphqlChannel") else null
+        val opened = OpenDatabase().openWithClock(Config(null, null, 32u), File(corpusDirectory, if (models == "events") "models_events.json" else "models.json").readText(), mock, null, clock, false, true, session, if (encrypted) Credentials() else null, if (encrypted) mock else null, null)
         opened.registerOperations(File(corpusDirectory, "operations.json").readText())
         database = opened
         listOf(observation("opened"))
@@ -244,6 +252,56 @@ private class DatabaseRunner {
                 val id = idOf(row)
                 spawn { done("node", mapOf("row" to row, "present" to (database.node(epoch, "Moment", relation, id, false) != null))) }
             }
+            "run" -> {
+                val operation = text("operation") ?: return failure("arguments")
+                val variables = (args["variables"] ?: JsonObject(emptyMap())).toString()
+                spawn { done("ran", mapOf("operation" to operation, "answer" to Json.parseToJsonElement(database.run(epoch, operation, variables)))) }
+            }
+            "nodes" -> {
+                val relation = text("relation") ?: return failure("arguments")
+                val names = (args["rows"] as? JsonArray)?.map { (it as JsonPrimitive).content } ?: return failure("arguments")
+                val model = text("model") ?: "Moment"
+                val ids = names.map(::idOf)
+                val byId = ids.zip(names).toMap()
+                spawn { done("nodes", mapOf("relation" to relation, "rows" to database.nodes(epoch, model, relation, ids).map { byId[it.id] ?: it.id })) }
+            }
+            "begin_load_all" -> {
+                val key = text("as") ?: return failure("arguments")
+                val relation = text("relation") ?: return failure("arguments")
+                try {
+                    val load = database.beginLoadAll(epoch, "Moment", relation, "{}", (args["force"] as? JsonPrimitive)?.booleanOrNull ?: false)
+                    loads[key] = load
+                    spawn { load.result(); done("loaded_all", mapOf("load" to key)) }
+                } catch (error: DbException) { return failure(kindOf(error)) }
+            }
+            "peek_row" -> {
+                val row = text("row") ?: return failure("arguments")
+                return try {
+                    listOf(obs("peeked", "row" to row, "present" to (database.peekRow(epoch, text("model") ?: "Moment", idOf(row)) != null)))
+                } catch (error: DbException) { failure(kindOf(error)) }
+            }
+            "edge_values" -> {
+                val relation = text("relation") ?: return failure("arguments")
+                val names = (args["rows"] as? JsonArray)?.map { (it as JsonPrimitive).content } ?: return failure("arguments")
+                val model = text("model") ?: "Moment"
+                val ids = names.map(::idOf)
+                val byId = ids.zip(names).toMap()
+                spawn {
+                    val parsed = Json.parseToJsonElement(database.edgeValues(epoch, model, relation, "{}", ids)).jsonObject
+                    done("edges", mapOf("relation" to relation, "values" to parsed.entries.associate { (byId[it.key] ?: it.key) to it.value }))
+                }
+            }
+            "upload_batch" -> {
+                val key = text("as") ?: return failure("arguments")
+                val count = (args["count"] as? JsonPrimitive)?.longOrNull?.toInt() ?: return failure("arguments")
+                val operation = text("operation") ?: return failure("arguments")
+                val file = File.createTempFile("corpus_batch_", ".bin").also { it.writeText("corpus"); it.deleteOnExit() }
+                val items = (1..count).map { WireUploadItem(JsonObject(mapOf("text" to JsonPrimitive("$key$it"))).toString(), file.path, "clip.bin", "application/octet-stream", "{}") }
+                spawn {
+                    val receipt = database.uploadCreateBatch(epoch, "Moment", items, WireUploadBatch(operation, "{}"))
+                    Done(receipt.items.indices.map { obs("receipt", "row" to "$key${it + 1}", "op" to "upload") })
+                }
+            }
             "session_call" -> {
                 val operation = text("operation") ?: return failure("arguments")
                 val body = args["body"] ?: return failure("arguments")
@@ -282,7 +340,7 @@ private class DatabaseRunner {
         val name = input.text("in") ?: ""
         val args = (input["args"] as? JsonObject) ?: JsonObject(emptyMap())
         when (name) {
-            "open" -> return open(args.text("models") ?: "")
+            "open" -> return open(args.text("models") ?: "", (args["encrypted"] as? JsonPrimitive)?.booleanOrNull ?: false)
             "tick" -> { clock.advance((args["ms"] as? JsonPrimitive)?.longOrNull?.toULong() ?: 0uL); return settle() }
             "answer", "error", "drop", "ready", "frame" -> {
                 val id = args.text("id") ?: return failure("arguments")
@@ -331,6 +389,7 @@ class CorpusRunnerTest {
     fun theSharedCorpusIsGreenThroughTheKotlinWrapper() = bounded(timeoutMillis = 300_000) {
         val files = corpusDirectory.listFiles { file -> file.extension == "jsonl" }!!.sortedBy { it.name }
         assertTrue(files.isNotEmpty())
+        val red = ArrayList<String>()
         for (file in files) {
             val runner = DatabaseRunner()
             val lines = file.readLines().filter { it.isNotBlank() }.drop(1)
@@ -338,10 +397,11 @@ class CorpusRunnerTest {
                 val step = Json.parseToJsonElement(line).jsonObject
                 val expected: JsonElement = step["out"] ?: JsonArray(emptyList())
                 val got = JsonArray(runner.apply(step))
-                assertEquals("${file.name} step ${index + 1} input ${step["in"]}", expected, got)
+                if (expected != got) { red.add("${file.name} step ${index + 1} input ${step["in"]} expected $expected got $got"); break }
             }
             runner.mock.releaseAll()
             runner.database?.closeDatabase()
         }
+        assertTrue("red traces:\n" + red.joinToString("\n"), red.isEmpty())
     }
 }

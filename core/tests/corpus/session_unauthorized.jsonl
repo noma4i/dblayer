@@ -1,0 +1,7 @@
+{"trace":"session_unauthorized"}
+{"args":{"encrypted":true},"in":"open","out":[{"o":"opened"}]}
+{"args":{"body":{"token":"t"},"operation":"social"},"in":"session_call","out":[{"o":"request","v":{"id":"r1","kind":"http","purpose":"standard"}}]}
+{"args":{"id":"r1","kind":"auth"},"in":"error","out":[{"o":"error","v":{"kind":"unauthorized"}}]}
+{"args":{"body":{"token":"t"},"operation":"social"},"in":"session_call","out":[{"o":"request","v":{"id":"r2","kind":"http","purpose":"standard"}}]}
+{"args":{"id":"r2","json":{"nextStep":"authenticated"}},"in":"answer","out":[{"o":"session","v":{"answer":{"nextStep":"authenticated"},"operation":"social"}}]}
+{"in":"close","out":[{"o":"closed"}]}

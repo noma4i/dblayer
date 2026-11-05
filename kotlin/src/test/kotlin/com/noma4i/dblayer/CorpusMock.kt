@@ -6,13 +6,15 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 
 /** The transport mock of the shared vocabulary (`specs/machines/corpus.md`). It answers no request by itself: a request waits until an input of the trace answers, fails or drops it. */
-class CorpusMock : Transport {
+class CorpusMock : Transport, EncryptedHttp {
     private class Seen(val id: String, val kind: String, val purpose: String, var announced: Boolean = false)
 
     private val seen = ArrayList<Seen>()
     private var next = 0
     private val waiting = ConcurrentHashMap<String, CompletableDeferred<String>>()
     private val waitingPuts = ConcurrentHashMap<String, CompletableDeferred<PutReply>>()
+    private val waitingHttp = ConcurrentHashMap<String, Pair<JsonObject, CompletableDeferred<EncryptedReply>>>()
+    private val sealed = SealedServer { _, _ -> JsonObject(emptyMap()) }
     private val sinks = ConcurrentHashMap<String, SubscriptionSink>()
 
     val count: Int get() = synchronized(seen) { seen.size }
@@ -34,6 +36,10 @@ class CorpusMock : Transport {
 
     fun answer(id: String, body: String): Boolean {
         waiting.remove(id)?.let { return it.complete(body) }
+        waitingHttp.remove(id)?.let { (request, reply) ->
+            val parsed = runCatching { kotlinx.serialization.json.Json.parseToJsonElement(body) as? JsonObject }.getOrNull() ?: return false
+            return reply.complete(EncryptedReply(200u, sealed.seal(request, parsed)))
+        }
         waitingPuts.remove(id)?.let {
             val status = Regex("\"status\"\\s*:\\s*(\\d+)").find(body)?.groupValues?.get(1)?.toInt() ?: 200
             return it.complete(PutReply(status.toUShort(), null))
@@ -48,13 +54,18 @@ class CorpusMock : Transport {
         else -> null
     }
 
-    fun fail(id: String, kind: String): Boolean = failure(kind)?.let { finish(id, it) } ?: false
+    fun fail(id: String, kind: String): Boolean {
+        val error = failure(kind) ?: return false
+        if (kind == "auth") waitingHttp.remove(id)?.let { return it.second.complete(EncryptedReply(401u, "")) }
+        return finish(id, error)
+    }
 
     fun dropConnection(id: String): Boolean = finish(id, DbException.Network("dropped"))
 
     private fun finish(id: String, error: DbException): Boolean {
         waiting.remove(id)?.let { return it.completeExceptionally(error) }
         waitingPuts.remove(id)?.let { return it.completeExceptionally(error) }
+        waitingHttp.remove(id)?.let { return it.second.completeExceptionally(error) }
         sinks.remove(id)?.let { it.failed(error); return true }
         return false
     }
@@ -63,6 +74,7 @@ class CorpusMock : Transport {
     fun releaseAll() {
         for (id in waiting.keys.toList()) waiting.remove(id)?.completeExceptionally(DbException.Interrupted("closed"))
         for (id in waitingPuts.keys.toList()) waitingPuts.remove(id)?.completeExceptionally(DbException.Interrupted("closed"))
+        for (id in waitingHttp.keys.toList()) waitingHttp.remove(id)?.second?.completeExceptionally(DbException.Interrupted("closed"))
     }
 
     fun ready(id: String): Boolean = sinks[id]?.let { it.ready(); true } ?: false
@@ -76,7 +88,18 @@ class CorpusMock : Transport {
         return reply.await()
     }
 
-    override suspend fun openCable(lease: CableLease) { throw DbException.Network("no cable") }
+    override suspend fun openCable(lease: CableLease) {
+        record("subscription", NetworkPurpose.STANDARD)
+        throw DbException.Network("no cable")
+    }
+
+    override suspend fun post(path: String, body: String, purpose: NetworkPurpose): EncryptedReply {
+        val request = sealed.open(body)
+        val id = record("http", purpose)
+        val reply = CompletableDeferred<EncryptedReply>()
+        waitingHttp[id] = request to reply
+        return reply.await()
+    }
     override suspend fun cableSend(token: String, text: String) { throw DbException.Network("no cable") }
     override suspend fun cableNext(token: String): EncryptedSocketEvent? = null
     override suspend fun cableClose(token: String) {}

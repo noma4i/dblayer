@@ -120,7 +120,7 @@ class SealedServer(private val deduplicate: Boolean = false, private val answer:
         return Json.parseToJsonElement(String(plain)).jsonObject
     }
 
-    private fun seal(request: JsonObject, body: JsonObject): String {
+    fun seal(request: JsonObject, body: JsonObject): String {
         val header = encode("""{"alg":"dir","enc":"A256GCM"}""".toByteArray())
         val plain = buildJsonObject {
             put("requestId", request.getValue("requestId"))

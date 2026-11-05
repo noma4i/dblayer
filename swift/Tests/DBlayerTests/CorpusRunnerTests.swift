@@ -10,6 +10,14 @@ private final class Heard: ValueSink, @unchecked Sendable {
   func available() { lock.withLock { heard += 1 } }
 }
 
+private final class Credentials: CredentialStore, @unchecked Sendable {
+  private let lock = NSLock()
+  private var value: String?
+  func get() throws -> String? { lock.withLock { value } }
+  func set(credential: String) throws { lock.withLock { value = credential } }
+  func clear() throws { lock.withLock { value = nil } }
+}
+
 private final class CallBox: @unchecked Sendable {
   private let lock = NSLock()
   private var value: CallResult?
@@ -179,9 +187,10 @@ private final class DatabaseRunner {
     return observed + mock.announce()
   }
 
-  func open(_ models: String) async -> [String] {
+  func open(_ models: String, encrypted: Bool) async -> [String] {
     do {
-      let opened = try await OpenDatabase().openWithClock(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: try modelsText(models == "events" ? "models_events.json" : "models.json"), transport: mock, uploads: nil, clock: clock, preload: false, listening: true, encrypted: nil, credentials: nil, http: nil, retries: nil)
+      let session = encrypted ? EncryptedConfig(origin: SealedServer.origin, serverKey: SealedServer.serverKey, pin: SealedServer.pin, endpoints: EncryptedEndpoints(graphql: "/api/graphql", cable: "/api/cable", logout: "/api/logout", bootstrap: "/api/bootstrap", sessionOperations: ["otp": EncryptedSessionOperation(path: "/api/auth/otp", sessionless: false), "confirm": EncryptedSessionOperation(path: "/api/auth/confirm", sessionless: false), "social": EncryptedSessionOperation(path: "/api/auth/social", sessionless: false), "ticket": EncryptedSessionOperation(path: "/api/ticket", sessionless: true)]), protocolLabel: "example-ws-v1", cablePurpose: "ws.hello", cableChannel: "EncryptedGraphqlChannel") : nil
+      let opened = try await OpenDatabase().openWithClock(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: try modelsText(models == "events" ? "models_events.json" : "models.json"), transport: mock, uploads: nil, clock: clock, preload: false, listening: true, encrypted: session, credentials: encrypted ? Credentials() : nil, http: encrypted ? mock : nil, retries: nil)
       let operations = try String(contentsOf: corpusDirectory().appendingPathComponent("operations.json"), encoding: .utf8)
       try opened.registerOperations(defsJson: operations)
       database = opened
@@ -276,6 +285,62 @@ private final class DatabaseRunner {
       spawn {
         do { return done("node", ["row": row, "present": try await database.node(epoch: epoch, model: "Moment", relation: relation, rowId: id, force: false) != nil]) } catch { return failed(error) }
       }
+    case "run":
+      guard let operation = text("operation") else { return failure("arguments") }
+      let variables = args["variables"].map(canonical) ?? "{}"
+      spawn {
+        do {
+          let answer = try await database.run(epoch: epoch, operation: operation, variablesJson: variables)
+          let parsed = (try? JSONSerialization.jsonObject(with: Data(answer.utf8), options: [.fragmentsAllowed])) ?? NSNull()
+          return done("ran", ["operation": operation, "answer": parsed])
+        } catch { return failed(error) }
+      }
+    case "nodes":
+      guard let relation = text("relation"), let names = args["rows"] as? [String] else { return failure("arguments") }
+      let model = textOr(args, "model", "Moment")
+      let ids = names.map(idOf)
+      let byId = Dictionary(zip(ids, names), uniquingKeysWith: { first, _ in first })
+      spawn {
+        do {
+          let found = try await database.nodes(epoch: epoch, model: model, relation: relation, rowIds: ids)
+          return done("nodes", ["relation": relation, "rows": found.map { byId[$0.id] ?? $0.id }])
+        } catch { return failed(error) }
+      }
+    case "begin_load_all":
+      guard let label = text("as"), let relation = text("relation") else { return failure("arguments") }
+      do {
+        let load = try database.beginLoadAll(epoch: epoch, model: "Moment", relation: relation, paramsJson: "{}", force: args["force"] as? Bool ?? false)
+        loads[label] = load
+        spawn {
+          do { try await load.result(); return done("loaded_all", ["load": label]) } catch { return failed(error) }
+        }
+      } catch { return failure(kind(of: error as? DbError ?? .Invalid(detail: ""))) }
+    case "peek_row":
+      guard let row = text("row") else { return failure("arguments") }
+      do { return [observation("peeked", ["row": row, "present": try database.peekRow(epoch: epoch, model: textOr(args, "model", "Moment"), rowId: idOf(row)) != nil])] } catch { return failure(kind(of: error as? DbError ?? .Invalid(detail: ""))) }
+    case "edge_values":
+      guard let relation = text("relation"), let names = args["rows"] as? [String] else { return failure("arguments") }
+      let model = textOr(args, "model", "Moment")
+      let ids = names.map(idOf)
+      let byId = Dictionary(zip(ids, names), uniquingKeysWith: { first, _ in first })
+      spawn {
+        do {
+          let values = try await database.edgeValues(epoch: epoch, model: model, relation: relation, paramsJson: "{}", rowIds: ids)
+          let parsed = ((try? JSONSerialization.jsonObject(with: Data(values.utf8))) as? [String: Any]) ?? [:]
+          return done("edges", ["relation": relation, "values": Dictionary(uniqueKeysWithValues: parsed.map { (byId[$0.key] ?? $0.key, $0.value) })])
+        } catch { return failed(error) }
+      }
+    case "upload_batch":
+      guard let label = text("as"), let count = (args["count"] as? NSNumber)?.intValue, let operation = text("operation") else { return failure("arguments") }
+      let path = FileManager.default.temporaryDirectory.appendingPathComponent("corpus_batch_\(ProcessInfo.processInfo.processIdentifier).bin")
+      guard (try? Data("corpus".utf8).write(to: path)) != nil else { return failure("file") }
+      let items = (0..<count).map { $0 + 1 }.map { WireUploadItem(valuesJson: canonical(["text": "\(label)\($0)"]), path: path.path, name: "clip.bin", mime: "application/octet-stream", variablesJson: "{}") }
+      spawn {
+        do {
+          let receipt = try await database.uploadCreateBatch(epoch: epoch, model: "Moment", items: items, request: WireUploadBatch(operation: operation, variablesJson: "{}"))
+          return CallResult(observed: receipt.items.indices.map { observation("receipt", ["row": "\(label)\($0 + 1)", "op": "upload"]) })
+        } catch { return failed(error) }
+      }
     case "session_call":
       guard let operation = text("operation"), let body = args["body"] else { return failure("arguments") }
       let json = canonical(body)
@@ -332,7 +397,7 @@ private final class DatabaseRunner {
     let name = input["in"] as? String ?? ""
     let args = input["args"] as? [String: Any] ?? [:]
     switch name {
-    case "open": return await open(args["models"] as? String ?? "")
+    case "open": return await open(args["models"] as? String ?? "", encrypted: args["encrypted"] as? Bool ?? false)
     case "tick":
       clock.advance(millis: (args["ms"] as? NSNumber)?.uint64Value ?? 0)
       return await settle()
@@ -405,6 +470,7 @@ struct CorpusRunnerTests {
         let got = "[" + (await runner.apply(step)).joined(separator: ",") + "]"
         let expected = canonical(step["out"] ?? [])
         #expect(got == expected, "\(file.lastPathComponent) step \(index + 1) input \(canonical(step["in"] ?? "")) expected \(expected) got \(got)")
+        if got != expected { break }
       }
       runner.mock.releaseAll()
       if let database = runner.database { try? await database.closeDatabase() }

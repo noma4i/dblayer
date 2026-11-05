@@ -1,0 +1,9 @@
+{"trace":"feed_off_online_no_want"}
+{"args":{"encrypted":true,"models":"events"},"in":"open","out":[{"o":"opened"}]}
+{"args":{"online":true},"in":"set_online","out":[{"o":"online","v":true}]}
+{"args":{"body":{"token":"t"},"operation":"social"},"in":"session_call","out":[{"o":"request","v":{"id":"r1","kind":"http","purpose":"standard"}}]}
+{"args":{"id":"r1","json":{"nextStep":"authenticated"}},"in":"answer","out":[{"o":"session","v":{"answer":{"nextStep":"authenticated"},"operation":"social"}}]}
+{"args":{"online":false},"in":"set_online","out":[{"o":"online","v":false}]}
+{"args":{"online":true},"in":"set_online","out":[{"o":"online","v":true}]}
+{"args":{"ms":60000},"in":"tick","out":[]}
+{"in":"close","out":[{"o":"closed"}]}

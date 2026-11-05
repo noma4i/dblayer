@@ -1,0 +1,9 @@
+{"trace": "calls_run"}
+{"in":"open","out":[{"o":"opened"}]}
+{"args":{"online":true},"in":"set_online","out":[{"o":"online","v":true}]}
+{"args":{"operation":"MomentsFeed","variables":{"first":1}},"in":"run","out":[{"o":"request","v":{"id":"r1","kind":"query","purpose":"standard"}}]}
+{"args":{"id":"r1","json":{"data":{"feed":{"nodes":[],"pageInfo":{"endCursor":null,"hasNextPage":false}}}}},"in":"answer","out":[{"o":"ran","v":{"answer":{"nodes":[],"pageInfo":{"endCursor":null,"hasNextPage":false}},"operation":"MomentsFeed"}}]}
+{"args":{"operation":"CreateMoment","variables":{"text":"x"}},"in":"run","out":[{"o":"request","v":{"id":"r2","kind":"mutation","purpose":"standard"}}]}
+{"args":{"id":"r2","kind":"temporary"},"in":"error","out":[{"o":"error","v":{"kind":"network"}}]}
+{"args":{"ms":60000},"in":"tick","out":[]}
+{"in":"close","out":[{"o":"closed"}]}

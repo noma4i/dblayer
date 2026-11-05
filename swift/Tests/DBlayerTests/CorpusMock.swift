@@ -2,7 +2,7 @@ import DBlayer
 import Foundation
 
 /// The transport mock of the shared vocabulary (`specs/machines/corpus.md`). It answers no request by itself: a request waits until an input of the trace answers, fails or drops it.
-final class CorpusMock: Transport, @unchecked Sendable {
+final class CorpusMock: Transport, EncryptedHttp, @unchecked Sendable {
   private struct Seen { let id: String; let kind: String; let purpose: String; var announced = false }
 
   private let lock = NSLock()
@@ -10,7 +10,9 @@ final class CorpusMock: Transport, @unchecked Sendable {
   private var seen: [Seen] = []
   private var waiting: [String: CheckedContinuation<String, Error>] = [:]
   private var waitingPuts: [String: CheckedContinuation<PutReply, Error>] = [:]
+  private var waitingHttp: [String: (request: [String: Any], continuation: CheckedContinuation<EncryptedReply, Error>)] = [:]
   private var sinks: [String: SubscriptionSink] = [:]
+  private let sealed: SealedServer = { do { return try SealedServer { _, _ in [:] } } catch { fatalError("\(error)") } }()
 
   var count: Int { lock.withLock { seen.count } }
 
@@ -37,6 +39,11 @@ final class CorpusMock: Transport, @unchecked Sendable {
 
   func answer(_ id: String, _ body: String) -> Bool {
     if let continuation = lock.withLock({ waiting.removeValue(forKey: id) }) { continuation.resume(returning: body); return true }
+    if let held = lock.withLock({ waitingHttp.removeValue(forKey: id) }) {
+      guard let reply = (try? JSONSerialization.jsonObject(with: Data(body.utf8))) as? [String: Any], let sealedBody = try? sealed.seal(held.request, reply) else { return false }
+      held.continuation.resume(returning: EncryptedReply(status: 200, body: sealedBody))
+      return true
+    }
     if let continuation = lock.withLock({ waitingPuts.removeValue(forKey: id) }) {
       let status = ((try? JSONSerialization.jsonObject(with: Data(body.utf8))) as? [String: Any])?["status"] as? Int ?? 200
       continuation.resume(returning: PutReply(status: UInt16(status), etag: nil))
@@ -56,6 +63,10 @@ final class CorpusMock: Transport, @unchecked Sendable {
 
   func fail(_ id: String, _ kind: String) -> Bool {
     guard let error = Self.failure(kind) else { return false }
+    if kind == "auth", let held = lock.withLock({ waitingHttp.removeValue(forKey: id) }) {
+      held.continuation.resume(returning: EncryptedReply(status: 401, body: ""))
+      return true
+    }
     return finish(id, error)
   }
 
@@ -64,6 +75,7 @@ final class CorpusMock: Transport, @unchecked Sendable {
   private func finish(_ id: String, _ error: DbError) -> Bool {
     if let continuation = lock.withLock({ waiting.removeValue(forKey: id) }) { continuation.resume(throwing: error); return true }
     if let continuation = lock.withLock({ waitingPuts.removeValue(forKey: id) }) { continuation.resume(throwing: error); return true }
+    if let held = lock.withLock({ waitingHttp.removeValue(forKey: id) }) { held.continuation.resume(throwing: error); return true }
     if let sink = lock.withLock({ sinks.removeValue(forKey: id) }) { sink.failed(error: error); return true }
     return false
   }
@@ -76,6 +88,11 @@ final class CorpusMock: Transport, @unchecked Sendable {
     }
     for continuation in calls { continuation.resume(throwing: DbError.Interrupted(detail: "closed")) }
     for continuation in puts { continuation.resume(throwing: DbError.Interrupted(detail: "closed")) }
+    let https = lock.withLock { () -> [CheckedContinuation<EncryptedReply, Error>] in
+      defer { waitingHttp.removeAll() }
+      return waitingHttp.values.map(\.continuation)
+    }
+    for continuation in https { continuation.resume(throwing: DbError.Interrupted(detail: "closed")) }
   }
 
   func ready(_ id: String) -> Bool {
@@ -95,7 +112,16 @@ final class CorpusMock: Transport, @unchecked Sendable {
     return try await withCheckedThrowingContinuation { continuation in lock.withLock { waiting[id] = continuation } }
   }
 
-  func openCable(lease: CableLease) async throws { throw DbError.Network(detail: "no cable") }
+  func openCable(lease: CableLease) async throws {
+    _ = record("subscription", .standard)
+    throw DbError.Network(detail: "no cable")
+  }
+
+  func post(path: String, body: String, purpose: NetworkPurpose) async throws -> EncryptedReply {
+    let request = try sealed.open(body)
+    let id = record("http", purpose)
+    return try await withCheckedThrowingContinuation { continuation in lock.withLock { waitingHttp[id] = (request, continuation) } }
+  }
   func cableSend(token: String, text: String) async throws { throw DbError.Network(detail: "no cable") }
   func cableNext(token: String) async -> EncryptedSocketEvent? { nil }
   func cableClose(token: String) async {}

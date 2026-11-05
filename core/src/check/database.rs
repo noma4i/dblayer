@@ -7,14 +7,14 @@ use async_trait::async_trait;
 use serde_json::{json, Map, Value};
 use tokio::task::JoinHandle;
 
-use super::mock::Mock;
+use super::mock::{Credentials, Mock};
 use super::model::Sut;
 use super::value::{Input, Observation};
 use crate::ffi::{
     CommandRequest, Config, Database, DbError, EntityFetch, LivePhase, LoadMoreResult, OpenDatabase, StreamEnd, StreamRequest, StreamState, StreamValue, TestClock, ValueSink,
     WireOperationOutcome, WireOperationReceipt, WireRow,
 };
-use crate::ffi::upload_wire::WireUploadRequest;
+use crate::ffi::upload_wire::{WireUploadBatch, WireUploadItem, WireUploadRequest};
 
 type Cancel = Arc<dyn Fn() + Send + Sync>;
 
@@ -215,10 +215,15 @@ impl DatabaseSut {
         observed
     }
 
-    async fn open(&mut self, models: &str) -> Vec<Observation> {
+    async fn open(&mut self, models: &str, encrypted: bool) -> Vec<Observation> {
         let config = Config { path: None, data_version: None, cache_rows: 32 };
         let transport: Arc<dyn crate::ffi::Transport> = self.mock.clone();
-        let opened = OpenDatabase::new().open_with_clock(config, if models == "events" { EVENT_MODELS } else { MODELS }.into(), Some(transport), None, self.clock.clone(), false, true, None, None, None, None).await;
+        let (encrypted, credentials, http): (Option<crate::ffi::EncryptedConfig>, Option<Arc<dyn crate::ffi::CredentialStore>>, Option<Arc<dyn crate::ffi::EncryptedHttp>>) = if encrypted {
+            (Some(crate::transport::encrypted::protocol_tests::config()), Some(Arc::new(Credentials::default())), Some(self.mock.clone()))
+        } else {
+            (None, None, None)
+        };
+        let opened = OpenDatabase::new().open_with_clock(config, if models == "events" { EVENT_MODELS } else { MODELS }.into(), Some(transport), None, self.clock.clone(), false, true, encrypted, credentials, http, None).await;
         match opened {
             Ok(database) => {
                 if database.register_operations(OPERATIONS.into()).is_err() { return error("operations"); }
@@ -343,6 +348,76 @@ impl DatabaseSut {
                     }
                 });
             }
+            "run" => {
+                let Some(operation) = text("operation") else { return Some(error("arguments")) };
+                let variables = input.args.get("variables").map_or_else(|| "{}".to_string(), Value::to_string);
+                self.launch(async move {
+                    match database.run(epoch, operation.clone(), variables).await {
+                        Ok(answer) => done("ran", json!({ "operation": operation, "answer": serde_json::from_str::<Value>(&answer).unwrap_or(Value::Null) })),
+                        Err(error) => failed(&error),
+                    }
+                });
+            }
+            "nodes" => {
+                let (Some(relation), Some(rows)) = (text("relation"), names_arg(input, "rows")) else { return Some(error("arguments")) };
+                let ids: Vec<String> = rows.iter().map(|row| self.id_of(row)).collect();
+                let by_id: HashMap<String, String> = rows.iter().map(|row| (self.id_of(row), row.clone())).collect();
+                let model = text_or(input, "model", "Moment");
+                self.launch(async move {
+                    match database.nodes(epoch, model, relation.clone(), ids).await {
+                        Ok(found) => done("nodes", json!({ "relation": relation, "rows": found.iter().map(|row| by_id.get(&row.id).cloned().unwrap_or_else(|| row.id.clone())).collect::<Vec<_>>() })),
+                        Err(error) => failed(&error),
+                    }
+                });
+            }
+            "begin_load_all" => {
+                let (Some(name), Some(relation)) = (text("as"), text("relation")) else { return Some(error("arguments")) };
+                match database.begin_load_all(epoch, "Moment".into(), relation, "{}".into(), input.flag("force").unwrap_or(false)) {
+                    Ok(load) => {
+                        let handle = load.clone();
+                        self.loads.insert(name.clone(), Arc::new(move || handle.cancel()));
+                        self.launch(async move { load.result().await.map_or_else(|e| failed(&e), |()| done("loaded_all", json!({ "load": name }))) });
+                    }
+                    Err(error) => return Some(self::error(error_kind(&error))),
+                }
+            }
+            "peek_row" => {
+                let Some(name) = text("row") else { return Some(error("arguments")) };
+                let id = self.id_of(&name);
+                return Some(match database.peek_row(epoch, text_or(input, "model", "Moment"), id) {
+                    Ok(found) => vec![Observation::new("peeked", json!({ "row": name, "present": found.is_some() }))],
+                    Err(error) => self::error(error_kind(&error)),
+                });
+            }
+            "edge_values" => {
+                let (Some(relation), Some(rows)) = (text("relation"), names_arg(input, "rows")) else { return Some(error("arguments")) };
+                let ids: Vec<String> = rows.iter().map(|row| self.id_of(row)).collect();
+                let by_id: HashMap<String, String> = rows.iter().map(|row| (self.id_of(row), row.clone())).collect();
+                let model = text_or(input, "model", "Moment");
+                self.launch(async move {
+                    match database.edge_values(epoch, model, relation.clone(), "{}".into(), ids).await {
+                        Ok(values) => {
+                            let parsed: Map<String, Value> = serde_json::from_str(&values).unwrap_or_default();
+                            let named: Map<String, Value> = parsed.into_iter().map(|(id, value)| (by_id.get(&id).cloned().unwrap_or(id), value)).collect();
+                            done("edges", json!({ "relation": relation, "values": named }))
+                        }
+                        Err(error) => failed(&error),
+                    }
+                });
+            }
+            "upload_batch" => {
+                let (Some(name), Some(count), Some(operation)) = (text("as"), input.number("count"), text("operation")) else { return Some(error("arguments")) };
+                let path = std::env::temp_dir().join(format!("corpus_batch_{}.bin", std::process::id()));
+                if std::fs::write(&path, b"corpus").is_err() { return Some(error("file")); }
+                let items: Vec<WireUploadItem> = (0..count).map(|index| WireUploadItem { values_json: json!({ "text": format!("{name}{}", index + 1) }).to_string(), path: path.to_string_lossy().into_owned(), name: Some("clip.bin".into()), mime: Some("application/octet-stream".into()), variables_json: "{}".into() }).collect();
+                let request = WireUploadBatch { operation, variables_json: "{}".into() };
+                self.launch(async move {
+                    match database.upload_create_batch(epoch, "Moment".into(), items, request).await {
+                        Ok(receipt) => Done { observed: (1..=receipt.items.len()).map(|index| Observation::new("receipt", json!({ "row": format!("{name}{index}"), "op": "upload" }))).collect(), ..Done::default() },
+                        Err(error) => failed(&error),
+                    }
+                });
+            }
             "session_call" => {
                 let (Some(operation), Some(body)) = (text("operation"), input.args.get("body")) else { return Some(error("arguments")) };
                 let body = body.to_string();
@@ -395,6 +470,10 @@ impl DatabaseSut {
     }
 }
 
+fn names_arg(input: &Input, key: &str) -> Option<Vec<String>> {
+    input.args.get(key)?.as_array()?.iter().map(|value| value.as_str().map(str::to_string)).collect()
+}
+
 fn text_or(input: &Input, key: &str, default: &str) -> String {
     input.text(key).unwrap_or(default).to_string()
 }
@@ -426,7 +505,7 @@ fn more_name(result: LoadMoreResult) -> &'static str {
 impl Sut for DatabaseSut {
     async fn apply(&mut self, input: &Input) -> Vec<Observation> {
         match input.name.as_str() {
-            "open" => return self.open(input.text("models").unwrap_or("")).await,
+            "open" => return self.open(input.text("models").unwrap_or(""), input.flag("encrypted").unwrap_or(false)).await,
             "tick" => {
                 self.clock.advance(input.number("ms").unwrap_or(0));
                 return self.settle().await;

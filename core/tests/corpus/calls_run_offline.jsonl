@@ -1,0 +1,5 @@
+{"trace": "calls_run_offline"}
+{"in":"open","out":[{"o":"opened"}]}
+{"args":{"online":false},"in":"set_online","out":[{"o":"online","v":false}]}
+{"args":{"operation":"MomentsFeed","variables":{"first":1}},"in":"run","out":[{"o":"error","v":{"kind":"offline"}}]}
+{"in":"close","out":[{"o":"closed"}]}

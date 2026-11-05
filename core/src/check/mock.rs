@@ -6,7 +6,8 @@ use serde_json::json;
 use tokio::sync::oneshot;
 
 use super::value::Observation;
-use crate::ffi::{ByteProgress, CableLease, DbError, EncryptedSocketEvent, PutReply, SubscriptionSink, Transport, TransportRequest};
+use crate::ffi::{ByteProgress, CableLease, CredentialStore, DbError, EncryptedHttp, EncryptedReply, EncryptedSocketEvent, PutReply, SubscriptionSink, Transport, TransportRequest};
+use crate::transport::encrypted::fake_server_tests::{decrypt_request, seal_response};
 use crate::transport::{NetworkPurpose, PutFile, TransferIdentity};
 
 type Reply = Result<String, DbError>;
@@ -24,6 +25,7 @@ struct Inner {
     seen: Vec<Seen>,
     waiting: HashMap<String, oneshot::Sender<Reply>>,
     waiting_puts: HashMap<String, oneshot::Sender<Result<PutReply, DbError>>>,
+    waiting_http: HashMap<String, (serde_json::Value, oneshot::Sender<Result<EncryptedReply, DbError>>)>,
     sinks: HashMap<String, Arc<SubscriptionSink>>,
 }
 
@@ -92,6 +94,11 @@ impl Mock {
         if let Some(sender) = inner.waiting.remove(id) {
             return deliver(sender, Ok(body.to_string()));
         }
+        if let Some((request, sender)) = inner.waiting_http.remove(id) {
+            let Ok(body) = serde_json::from_str::<serde_json::Value>(body) else { return false };
+            let sequence = request["sequence"].as_i64();
+            return deliver(sender, Ok(EncryptedReply { status: 200, body: seal_response(&request, sequence, body) }));
+        }
         if let Some(sender) = inner.waiting_puts.remove(id) {
             let reply = serde_json::from_str::<serde_json::Value>(body).ok();
             let status = reply.as_ref().and_then(|value| value["status"].as_u64()).unwrap_or(200) as u16;
@@ -103,6 +110,11 @@ impl Mock {
     /// Fails a waiting request or a subscription with `temporary`, `permanent` or `auth`. False for an unknown id or kind.
     pub fn fail(&self, id: &str, kind: &str) -> bool {
         let Some(error) = error_of(kind) else { return false };
+        if kind == "auth" {
+            if let Some((_, sender)) = locked(self).waiting_http.remove(id) {
+                return deliver(sender, Ok(EncryptedReply { status: 401, body: String::new() }));
+            }
+        }
         self.finish(id, error)
     }
 
@@ -119,6 +131,9 @@ impl Mock {
         if let Some(sender) = inner.waiting_puts.remove(id) {
             return deliver(sender, Err(error));
         }
+        if let Some((_, sender)) = inner.waiting_http.remove(id) {
+            return deliver(sender, Err(error));
+        }
         if let Some(sink) = inner.sinks.remove(id) {
             drop(inner);
             sink.failed(error);
@@ -132,6 +147,7 @@ impl Mock {
         let mut inner = locked(self);
         for (_, sender) in inner.waiting.drain() { deliver(sender, Err(DbError::Interrupted { detail: "closed".into() })); }
         for (_, sender) in inner.waiting_puts.drain() { deliver(sender, Err(DbError::Interrupted { detail: "closed".into() })); }
+        for (_, (_, sender)) in inner.waiting_http.drain() { deliver(sender, Err(DbError::Interrupted { detail: "closed".into() })); }
     }
 
     pub fn ready(&self, id: &str) -> bool {
@@ -157,7 +173,10 @@ impl Mock {
 
 #[async_trait]
 impl Transport for Mock {
-    async fn open_cable(&self, _: Arc<CableLease>) -> Result<(), DbError> { Err(DbError::Network { detail: "no cable".into() }) }
+    async fn open_cable(&self, _: Arc<CableLease>) -> Result<(), DbError> {
+        self.record("subscription", purpose_name(NetworkPurpose::Standard));
+        Err(DbError::Network { detail: "no cable".into() })
+    }
     async fn cable_send(&self, _: String, _: String) -> Result<(), DbError> { Err(DbError::Network { detail: "no cable".into() }) }
     async fn cable_next(&self, _: String) -> Option<EncryptedSocketEvent> { None }
     async fn cable_close(&self, _: String) {}
@@ -176,4 +195,26 @@ impl Transport for Mock {
         locked(self).waiting_puts.insert(id, sender);
         receiver.await.unwrap_or_else(|_| Err(DbError::Interrupted { detail: "the mock was dropped".into() }))
     }
+}
+
+/// The encrypted HTTP exchange of the shared vocabulary: the request waits for an input of the trace, the answer body is sealed with the fixture server key.
+#[async_trait]
+impl EncryptedHttp for Mock {
+    async fn post(&self, _path: String, body: String, purpose: NetworkPurpose) -> Result<EncryptedReply, DbError> {
+        let request = decrypt_request(&body).map_err(|detail| DbError::Invalid { detail })?;
+        let id = self.record("http", purpose_name(purpose));
+        let (sender, receiver) = oneshot::channel();
+        locked(self).waiting_http.insert(id, (request, sender));
+        receiver.await.unwrap_or_else(|_| Err(DbError::Interrupted { detail: "the mock was dropped".into() }))
+    }
+}
+
+/// The credential slot of the app side: it lives as long as the runner.
+#[derive(Default)]
+pub struct Credentials(Mutex<Option<String>>);
+
+impl CredentialStore for Credentials {
+    fn get(&self) -> Result<Option<String>, DbError> { Ok(self.0.lock().unwrap_or_else(std::sync::PoisonError::into_inner).clone()) }
+    fn set(&self, credential: String) -> Result<(), DbError> { *self.0.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = Some(credential); Ok(()) }
+    fn clear(&self) -> Result<(), DbError> { *self.0.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = None; Ok(()) }
 }

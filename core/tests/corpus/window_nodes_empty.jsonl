@@ -1,0 +1,5 @@
+{"trace":"window_nodes_empty"}
+{"args":{"models":"events"},"in":"open","out":[{"o":"opened"}]}
+{"args":{"online":true},"in":"set_online","out":[{"o":"online","v":true}]}
+{"args":{"model":"Container","relation":"nodes","rows":[]},"in":"nodes","out":[{"o":"nodes","v":{"relation":"nodes","rows":[]}}]}
+{"in":"close","out":[{"o":"closed"}]}

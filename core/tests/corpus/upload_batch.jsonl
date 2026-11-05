@@ -1,0 +1,5 @@
+{"trace":"upload_batch"}
+{"in":"open","out":[{"o":"opened"}]}
+{"args":{"online":true},"in":"set_online","out":[{"o":"online","v":true}]}
+{"args":{"as":"b","count":2,"operation":"upload_clip"},"in":"upload_batch","out":[{"o":"error","v":{"kind":"sync"}}]}
+{"in":"close","out":[{"o":"closed"}]}

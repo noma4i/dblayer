@@ -1,0 +1,8 @@
+{"trace":"window_nodes"}
+{"args":{"models":"events"},"in":"open","out":[{"o":"opened"}]}
+{"args":{"online":true},"in":"set_online","out":[{"o":"online","v":true}]}
+{"args":{"model":"Container","relation":"nodes","rows":["c1","c2"]},"in":"nodes","out":[{"o":"request","v":{"id":"r1","kind":"query","purpose":"standard"}}]}
+{"args":{"id":"r1","json":{"data":{"containersByIds":[{"__typename":"Container","id":"c1","title":"a"}]}}},"in":"answer","out":[{"o":"nodes","v":{"relation":"nodes","rows":["c1"]}}]}
+{"args":{"model":"Container","row":"c1"},"in":"peek_row","out":[{"o":"peeked","v":{"present":true,"row":"c1"}}]}
+{"args":{"model":"Container","row":"c2"},"in":"peek_row","out":[{"o":"peeked","v":{"present":false,"row":"c2"}}]}
+{"in":"close","out":[{"o":"closed"}]}

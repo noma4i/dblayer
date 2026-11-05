@@ -118,7 +118,7 @@ final class SealedServer: EncryptedHttp, @unchecked Sendable {
     return try JSONSerialization.jsonObject(with: plain) as! [String: Any]
   }
 
-  private func seal(_ request: [String: Any], _ body: [String: Any]) throws -> String {
+  func seal(_ request: [String: Any], _ body: [String: Any]) throws -> String {
     let header = Self.encode(Data(#"{"alg":"dir","enc":"A256GCM"}"#.utf8))
     var answer: [String: Any] = ["requestId": request["requestId"]!, "body": body]
     answer["sequence"] = request["sequence"] is NSNull ? NSNull() : request["sequence"]
