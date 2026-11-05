@@ -3,8 +3,30 @@
 
 use std::collections::BTreeMap;
 
-use crate::owners::contract::{BatchId, Committed, Drained, EpochEnded, ModelsReset, Online, RejectReason, Rejected, ReplyId, RequestId};
-use crate::runtime::{Cause, Effect, Effects, Epoch, ScheduleId, StateOwner, Time};
+use super::transfer::{TransferInput, Transfers};
+use crate::owners::contract::{BatchAuthor, BatchId, Committed, Drained, EpochEnded, ModelsReset, Online, RejectReason, Rejected, ReplyId, RequestId};
+use crate::owners::session::{AuthorId, SessionCalls, SessionInput};
+use crate::owners::store::{StoreBatch, StoreInput, StoreWriter};
+use crate::pacing::RetryPolicy;
+use crate::runtime::{Address, Cause, Effect, Effects, Epoch, Outbound, ScheduleId, StateOwner, Time};
+
+/// The author id of the `Mutate` inputs of Outbox.
+pub const MUTATE_AUTHOR: AuthorId = 1;
+/// `purpose` of a `Mutate`: a call of the queue, and the final mutation of a transfer.
+const PURPOSE_STANDARD: u8 = 0;
+const PURPOSE_TRANSFER: u8 = 1;
+/// Table of the rows that mark what a batch of Outbox is (`CommitKind::tag`).
+pub const MARK_TABLE: &str = "outbox";
+/// Timers of `Expire` use ids above the ids of the retry timers (`ScheduleId(op_id)`).
+const EXPIRE_TIMER: u64 = 1 << 32;
+
+/// The owners Outbox sends to.
+#[derive(Clone, Copy, Debug)]
+pub struct OutboxPeers {
+    pub store: Address<StoreWriter>,
+    pub session: Address<SessionCalls>,
+    pub transfer: Address<Transfers>,
+}
 
 pub type OpId = u64;
 
@@ -28,6 +50,12 @@ pub struct NewOp {
     pub action: String,
     pub on_reject: OnReject,
     pub origin: Origin,
+    /// The request of the mutation.
+    pub path: String,
+    pub body: String,
+    /// The rows of the intent with the optimistic changes, and the rows that undo them.
+    pub intent_rows: Vec<(String, String)>,
+    pub rollback_rows: Vec<(String, String)>,
 }
 
 /// An intent kept in the base (`encrypted_pending` pair when a request left before the close).
@@ -86,7 +114,7 @@ pub enum OutboxInput {
     Restored(Vec<StoredOp>),
     Committed(Committed),
     Rejected(Rejected),
-    Response { op_id: OpId },
+    Response { op_id: OpId, rows: Vec<(String, String)> },
     TransportError { op_id: OpId, temporary: bool },
     Dropped { op_id: OpId },
     Retry { model: String, row_id: String, reply: ReplyId },
@@ -115,16 +143,26 @@ pub enum CommitKind {
     RemoveRow,
 }
 
+impl CommitKind {
+    /// The value of the row that marks a batch of this kind (`MARK_TABLE`).
+    pub fn tag(self) -> &'static str {
+        match self {
+            Self::Intent => "intent",
+            Self::Land => "land",
+            Self::Rollback => "rollback",
+            Self::ErrorMark => "error_mark",
+            Self::ClearMark => "clear_mark",
+            Self::LocalWrite => "local_write",
+            Self::RemoveRow => "remove_row",
+        }
+    }
+}
+
+/// What the executor does. Store batches, `Mutate`, `MutationOutcome` and timers are `Effect::Send` and `Effect::Schedule` of the owner.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum OutboxEffect {
-    Store { op_id: Option<OpId>, batch: BatchId, kind: CommitKind, generation: u64 },
-    Send { op_id: OpId, request_id: RequestId, sequence: u64 },
     CancelRequest { op_id: OpId },
     Reply { reply: ReplyId, answer: OutboxAnswer },
-    /// `Transfer MutationOutcome(key, outcome)`.
-    TransferOutcome { key: String, outcome: OutboxOutcome },
-    /// To the executor: it adds the Backoff and the clock, then posts `RetryDue{op_id}`.
-    ScheduleRetry { op_id: OpId, attempt: u32 },
     Drained(Drained),
 }
 
@@ -157,6 +195,8 @@ pub struct QueuedOperation {
     pub request_id: RequestId,
     pub sequence: u64,
     pub sends: u32,
+    /// The rows of the server answer, kept for every attempt to land them.
+    pub landing: Vec<(String, String)>,
     pub outcome: Option<OutboxOutcome>,
 }
 
@@ -169,6 +209,7 @@ enum Batch {
 
 #[derive(Debug)]
 pub struct OutboxState {
+    peers: OutboxPeers,
     pub epoch: Epoch,
     pub online: bool,
     pub generation: BTreeMap<String, u64>,
@@ -187,8 +228,9 @@ pub struct OutboxState {
 }
 
 impl OutboxState {
-    pub fn new(epoch: Epoch) -> Self {
+    pub fn new(epoch: Epoch, peers: OutboxPeers) -> Self {
         Self {
+            peers,
             epoch,
             online: true,
             generation: BTreeMap::new(),
@@ -227,23 +269,45 @@ impl OutboxState {
     fn add_operation(&mut self, op_id: OpId, op: NewOp, stage: Stage) {
         let sequence = self.next_sequence;
         self.next_sequence += 1;
-        self.ops.insert(op_id, QueuedOperation { op_id, op, stage, attempts: 0, request_id: op_id, sequence, sends: 0, outcome: None });
+        self.ops.insert(op_id, QueuedOperation { op_id, op, stage, attempts: 0, request_id: op_id, sequence, sends: 0, landing: Vec::new(), outcome: None });
         self.next_op = self.next_op.max(op_id + 1);
     }
 
     fn emit_send(&mut self, op_id: OpId, fx: &mut Effects<Outbox>) {
         let Some(operation) = self.ops.get_mut(&op_id) else { return };
         operation.sends += 1;
-        fx.push(Effect::Run(OutboxEffect::Send { op_id, request_id: operation.request_id, sequence: operation.sequence }));
+        let purpose = if matches!(operation.op.origin, Origin::Transfer(_)) { PURPOSE_TRANSFER } else { PURPOSE_STANDARD };
+        let mutate = SessionInput::Mutate { author: MUTATE_AUTHOR, req_id: operation.request_id, path: operation.op.path.clone(), body: operation.op.body.clone(), purpose };
+        fx.push(Effect::Send(Outbound::new(self.peers.session, mutate)));
     }
 
     fn store(&mut self, op_id: OpId, kind: CommitKind, fx: &mut Effects<Outbox>) {
         let Some(operation) = self.ops.get(&op_id) else { return };
         let generation = self.generation_of(&operation.op.model);
+        let mut rows = match kind {
+            CommitKind::Intent => operation.op.intent_rows.clone(),
+            CommitKind::Land => operation.landing.clone(),
+            CommitKind::Rollback => operation.op.rollback_rows.clone(),
+            _ => Vec::new(),
+        };
+        rows.insert(0, (MARK_TABLE.into(), op_id.to_string()));
+        rows.insert(0, (MARK_TABLE.into(), kind.tag().into()));
+        let intents = u64::from(kind == CommitKind::Intent);
+        let basis = BTreeMap::from([(operation.op.model.clone(), generation)]);
         let batch = self.next_batch;
         self.next_batch += 1;
         self.batches.insert(batch, Batch::Operation { op_id, kind });
-        fx.push(Effect::Run(OutboxEffect::Store { op_id: Some(op_id), batch, kind, generation }));
+        self.commit(batch, basis, rows, intents, fx);
+    }
+
+    fn commit(&self, id: BatchId, basis: BTreeMap<String, u64>, rows: Vec<(String, String)>, intents: u64, fx: &mut Effects<Outbox>) {
+        let batch = StoreBatch { author: BatchAuthor::Outbox, id, epoch: self.epoch, basis, rows, intents, credential: None, ops: Vec::new() };
+        fx.push(Effect::Send(Outbound::new(self.peers.store, StoreInput::Commit(batch))));
+    }
+
+    fn retry_timer(op_id: OpId, attempt: u32, fx: &mut Effects<Outbox>) {
+        let after = RetryPolicy::Outbox.backoff().delay(attempt.saturating_sub(1));
+        fx.push(Effect::Schedule { id: ScheduleId(op_id), after, input: OutboxInput::RetryDue { op_id } });
     }
 
     fn reply(fx: &mut Effects<Outbox>, reply: ReplyId, answer: OutboxAnswer) { fx.push(Effect::Run(OutboxEffect::Reply { reply, answer })); }
@@ -268,7 +332,7 @@ impl OutboxState {
         let origin = operation.op.origin.clone();
         let (model, row) = (operation.op.model.clone(), operation.op.row_id.clone());
         if let Origin::Transfer(key) = origin {
-            fx.push(Effect::Run(OutboxEffect::TransferOutcome { key, outcome: outcome.clone() }));
+            fx.push(Effect::Send(Outbound::new(self.peers.transfer, TransferInput::MutationOutcome { key, outcome: outcome.clone() })));
         }
         self.give_outcome(op_id, &outcome, fx);
         if next_goes {
@@ -335,7 +399,7 @@ impl OutboxState {
             }
             let origin = self.ops[&op_id].op.origin.clone();
             if let (Origin::Transfer(key), false) = (origin, closing) {
-                fx.push(Effect::Run(OutboxEffect::TransferOutcome { key, outcome: OutboxOutcome::Interrupted }));
+                fx.push(Effect::Send(Outbound::new(self.peers.transfer, TransferInput::MutationOutcome { key, outcome: OutboxOutcome::Interrupted })));
             }
             self.give_outcome(op_id, &OutboxOutcome::Interrupted, fx);
         }
@@ -354,7 +418,7 @@ impl OutboxState {
                 Self::reply(fx, reply, OutboxAnswer::Ok);
                 if let Some((due, after)) = expire {
                     self.ephemeral.insert(row.clone(), due);
-                    let id = ScheduleId(self.next_schedule);
+                    let id = ScheduleId(EXPIRE_TIMER + self.next_schedule);
                     self.next_schedule += 1;
                     fx.push(Effect::Schedule { id, after: std::time::Duration::from_millis(after), input: OutboxInput::Expire { row, due } });
                 }
@@ -400,8 +464,9 @@ impl OutboxState {
                     let generation = self.generation_of(&model);
                     let id = self.next_batch;
                     self.next_batch += 1;
-                    self.batches.insert(id, Batch::Write { reply, row, model, expire });
-                    fx.push(Effect::Run(OutboxEffect::Store { op_id: None, batch: id, kind: CommitKind::LocalWrite, generation }));
+                    let row_for_retry = row.clone();
+                    self.batches.insert(id, Batch::Write { reply, row, model: model.clone(), expire });
+                    self.commit_write(id, &model, &row_for_retry, generation, fx);
                 } else {
                     Self::reply(fx, reply, OutboxAnswer::Err(Fault::Rejected(rejected.reason)));
                 }
@@ -425,7 +490,7 @@ impl OutboxState {
                     (CommitKind::Land | CommitKind::Rollback, Stage::Landing | Stage::RollingBack(_)) if stale => self.store(op_id, kind, fx),
                     (CommitKind::Land | CommitKind::Rollback, Stage::Landing | Stage::RollingBack(_)) if storage => {
                         let attempt = self.ops[&op_id].attempts;
-                        fx.push(Effect::Run(OutboxEffect::ScheduleRetry { op_id, attempt }));
+                        Self::retry_timer(op_id, attempt, fx);
                     }
                     (CommitKind::Land | CommitKind::Rollback, Stage::Landing | Stage::RollingBack(_)) => {
                         for reply in Self::take_waiters(&mut self.discard_waiters, op_id) {
@@ -454,7 +519,7 @@ impl OutboxState {
         let attempts = self.ops[&op_id].attempts;
         if attempts + 1 < ATTEMPT_LIMIT {
             self.ops.get_mut(&op_id).map(|operation| operation.attempts += 1);
-            fx.push(Effect::Run(OutboxEffect::ScheduleRetry { op_id, attempt: attempts + 1 }));
+            Self::retry_timer(op_id, attempts + 1, fx);
         } else {
             self.reject_or_keep(op_id, fx);
         }
@@ -551,8 +616,13 @@ impl OutboxState {
         let generation = self.generation_of(&model);
         let batch = self.next_batch;
         self.next_batch += 1;
+        self.commit_write(batch, &model, &row, generation, fx);
         self.batches.insert(batch, Batch::Write { reply, row, model, expire });
-        fx.push(Effect::Run(OutboxEffect::Store { op_id: None, batch, kind: CommitKind::LocalWrite, generation }));
+    }
+
+    fn commit_write(&self, batch: BatchId, model: &str, row: &str, generation: u64, fx: &mut Effects<Outbox>) {
+        let rows = vec![(MARK_TABLE.into(), CommitKind::LocalWrite.tag().into()), (model.into(), row.into())];
+        self.commit(batch, BTreeMap::from([(model.into(), generation)]), rows, 0, fx);
     }
 
     fn expire(&mut self, row: String, due: Time, fx: &mut Effects<Outbox>) {
@@ -562,7 +632,8 @@ impl OutboxState {
         self.ephemeral.remove(&row);
         let batch = self.next_batch;
         self.next_batch += 1;
-        fx.push(Effect::Run(OutboxEffect::Store { op_id: None, batch, kind: CommitKind::RemoveRow, generation: 0 }));
+        let rows = vec![(MARK_TABLE.into(), CommitKind::RemoveRow.tag().into()), (MARK_TABLE.into(), row)];
+        self.commit(batch, BTreeMap::new(), rows, 0, fx);
     }
 }
 
@@ -591,9 +662,12 @@ impl StateOwner for Outbox {
             OutboxInput::Restored(stored) => state.restored(stored, &mut fx),
             OutboxInput::Committed(committed) => state.committed(committed, &mut fx),
             OutboxInput::Rejected(rejected) => state.rejected(rejected, &mut fx),
-            OutboxInput::Response { op_id } => {
+            OutboxInput::Response { op_id, rows } => {
                 if state.stage_of(op_id) == Some(Stage::Sending) {
-                    state.ops.get_mut(&op_id).map(|operation| operation.stage = Stage::Landing);
+                    state.ops.get_mut(&op_id).map(|operation| {
+                        operation.stage = Stage::Landing;
+                        operation.landing = rows;
+                    });
                     state.store(op_id, CommitKind::Land, &mut fx);
                 }
             }

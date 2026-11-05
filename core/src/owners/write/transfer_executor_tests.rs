@@ -3,7 +3,7 @@
 //! Row of the spec -> test: Copy in chunks outside the writer -> `exec_xfer_copies_big_file_to_directory`, `exec_xfer_copy_cancel_leaves_nothing`, `exec_xfer_copy_failed_deletes_on_discard`
 //! · step, complete and abort with `NetworkPurpose::Transfer` and data by value -> `exec_xfer_steps_carry_transfer_purpose`, `exec_xfer_step_error_aborts_with_upload_id`
 //! · `Transport Cancel` of the step -> `exec_xfer_offline_cancels_step` · `ScheduleJob`, `EndJob`, `uploads[action]`, local copy deletion -> `exec_xfer_job_view_and_local_copy`.
-//! Store batches, Outbox inputs, `Drained` and the retry timer are owner effects in the next step.
+//! Store batches, Outbox inputs and the retry timer are owner effects, tested in `spec::transfer_owner_tests`.
 
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, PoisonError};
@@ -11,10 +11,10 @@ use std::sync::{Arc, Mutex, PoisonError};
 use async_trait::async_trait;
 use serde_json::json;
 
-use super::rig::{admit, settle, Act, ManualSpawn, Stub};
-use super::outbox::OutboxOutcome;
-use super::transfer::{RoundId, Shown, Source, TransferAnswer, TransferInput, TransferStage, TransferState, Transfers};
-use super::transfer_executor::{file_id, Link, RoundJobs, StepCodec, StepDone, TransferExecutor};
+use super::outbox::{NewOp, OnReject, Origin, OutboxOutcome};
+use super::rig::{admit, peer, settle, Act, ManualSpawn, Stub};
+use super::transfer::{file_id, RoundId, Shown, Source, Steps, TransferAnswer, TransferInput, TransferPeers, TransferStage, TransferState, Transfers};
+use super::transfer_executor::{Link, RoundJobs, StepCodec, StepDone, TransferExecutor};
 use super::wire::Wire;
 use crate::files::FileDirectories;
 use crate::owners::contract::{Online, ReplyId};
@@ -79,6 +79,10 @@ struct World {
     dir: tempfile::TempDir,
 }
 
+fn mutation() -> NewOp {
+    NewOp { model: "Moment".into(), row_id: "r1".into(), action: "upload".into(), on_reject: OnReject::Keep, origin: Origin::Api, path: "/moments/r1".into(), body: String::new(), intent_rows: Vec::new(), rollback_rows: Vec::new() }
+}
+
 fn world() -> World {
     let dir = tempfile::tempdir().expect("temp dir");
     let (spawn, stub) = (ManualSpawn::default(), Stub::default());
@@ -95,7 +99,9 @@ fn world() -> World {
         Arc::new(move |_key, shown| lock(&to_shown).push(shown)),
     );
     let mut det = DetScheduler::new(13);
-    let transfers = det.add::<Transfers>("transfers", TransferState::new(EPOCH, 2), executor);
+    let (store, _) = peer(&mut det, "store");
+    let (outbox, _) = peer(&mut det, "outbox");
+    let transfers = det.add::<Transfers>("transfers", TransferState::new(EPOCH, 2, TransferPeers { store, outbox }), executor);
     det.start_epoch(EPOCH);
     World { det, spawn, stub, transfers, files, codec, jobs, answers, shown, dir }
 }
@@ -108,7 +114,7 @@ impl World {
     }
 
     fn accept_input(&self, key: &str, path: PathBuf, parts: u32) -> TransferInput {
-        TransferInput::Accept { epoch: EPOCH, key: key.into(), source: Source { path: path.to_string_lossy().into_owned(), parts }, batch: false, reply: 1, now: Time(0) }
+        TransferInput::Accept { epoch: EPOCH, key: key.into(), source: Source { path: path.to_string_lossy().into_owned(), parts }, batch: false, reply: 1, now: Time(0), mutation: mutation(), steps: Steps { path: "/upload".into(), body: String::new() } }
     }
 
     fn post(&mut self, input: TransferInput) {

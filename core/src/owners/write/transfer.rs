@@ -3,11 +3,38 @@
 
 use std::collections::BTreeMap;
 
-use crate::owners::contract::{BatchId, Drained, EpochEnded, EpochStarted, Online};
-use crate::transport::NetworkPurpose;
+use super::outbox::{Fault, NewOp, Origin, Outbox, OutboxInput, OutboxOutcome, Receipt};
+use crate::files::Location;
 use crate::owners::contract::ReplyId;
-use super::outbox::{Fault, OutboxOutcome, Receipt};
-use crate::runtime::{Cause, Effect, Effects, Epoch, ScheduleId, StateOwner, Time};
+use crate::owners::contract::{BatchAuthor, BatchId, Drained, EpochEnded, EpochStarted, Online};
+use crate::owners::store::{StoreBatch, StoreInput, StoreWriter};
+use crate::pacing::RetryPolicy;
+use crate::runtime::{Address, Cause, Effect, Effects, Epoch, Outbound, ScheduleId, StateOwner, Time};
+use crate::transport::NetworkPurpose;
+
+/// The reply id of the final mutation Transfer hands to Outbox: Transfer waits for `MutationOutcome`, not for a reply.
+pub const NO_REPLY: ReplyId = ReplyId::MAX;
+/// Table of the rows that mark what a batch of Transfer is (`StoreKind::tag`).
+pub const MARK_TABLE: &str = "sync_upload";
+/// Timers of the retry of a step use ids above the ids of the expiry timers.
+const RETRY_TIMER: u64 = 1 << 32;
+
+/// The owners Transfer sends to.
+#[derive(Clone, Copy, Debug)]
+pub struct TransferPeers {
+    pub store: Address<StoreWriter>,
+    pub outbox: Address<Outbox>,
+}
+
+/// The id of the copy of `key` in the file directory.
+pub fn file_id(key: &str) -> String { key.replace(':', "_") }
+
+/// The description of the steps of a file: the request the codec of the executor builds its steps from.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Steps {
+    pub path: String,
+    pub body: String,
+}
 
 pub type Key = String;
 pub type RoundId = u32;
@@ -31,6 +58,9 @@ pub struct StoredTransfer {
     pub failed: Option<String>,
     pub file_present: bool,
     pub created_at: Time,
+    pub place: Location,
+    pub mutation: NewOp,
+    pub steps: Steps,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -41,9 +71,9 @@ pub enum TransferTick {
 
 #[derive(Clone, Debug)]
 pub enum TransferInput {
-    Accept { epoch: Epoch, key: Key, source: Source, batch: bool, reply: ReplyId, now: Time },
+    Accept { epoch: Epoch, key: Key, source: Source, batch: bool, reply: ReplyId, now: Time, mutation: NewOp, steps: Steps },
     Restored(Vec<StoredTransfer>),
-    CopyDone { key: Key },
+    CopyDone { key: Key, size: u64, sha256: String, place: Location },
     CopyFailed { key: Key, error: String },
     StepOk { key: Key, part: Option<u32>, upload_id: Option<String> },
     StepError { key: Key, part: Option<u32>, temporary: bool },
@@ -92,6 +122,22 @@ pub enum StoreKind {
     Completed,
     Failed,
     Retrying,
+    /// Remove the row of `sync_upload`, the operation and the inline bytes.
+    Removed,
+}
+
+impl StoreKind {
+    /// The value of the row that marks a batch of this kind (`MARK_TABLE`).
+    pub fn tag(self) -> &'static str {
+        match self {
+            Self::SyncUpload => "sync_upload",
+            Self::ConfirmedParts => "confirmed_parts",
+            Self::Completed => "completed",
+            Self::Failed => "failed",
+            Self::Retrying => "retrying",
+            Self::Removed => "removed",
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -99,19 +145,13 @@ pub enum TransferEffect {
     /// Copy `source` into the file directory in chunks of 1 MiB.
     Copy { key: Key, source: Source },
     CopyCancel { key: Key },
-    Store { key: Key, batch: BatchId, kind: StoreKind },
     /// A step of the file (`part`, `blob`) with `NetworkPurpose::Transfer`.
     Step { key: Key, part: Option<u32>, purpose: NetworkPurpose, upload_id: Option<String>, source: Source },
     Complete { key: Key, upload_id: Option<String> },
-    /// To the executor: it adds the Backoff and the clock, then posts `Tick(retry{key})`.
-    ScheduleRetry { key: Key, attempt: u32 },
     Abort { key: Key, upload_id: Option<String> },
     CancelStep { key: Key },
-    DeleteFile { key: Key },
-    DeleteOperation { key: Key },
-    DeleteLocalCopy { key: Key },
-    SubmitMutation { key: Key },
-    DiscardMutation { key: Key, reply: ReplyId },
+    /// The file `path` of the file directory.
+    DeleteFile { path: String },
     Reply { reply: ReplyId, answer: TransferAnswer },
     Shows { key: Key, shown: Shown },
     /// `uploads[action].error = refused` on the accepted transfer.
@@ -154,10 +194,17 @@ pub struct Transfer {
     pub created_at: Time,
     pub error: Option<String>,
     pub complete_in_flight: bool,
+    /// `None` while the source is copying.
+    pub place: Option<Location>,
+    pub size: u64,
+    pub sha256: String,
+    pub mutation: NewOp,
+    pub steps: Steps,
 }
 
 #[derive(Debug)]
 pub struct TransferState {
+    peers: TransferPeers,
     pub epoch: Epoch,
     pub online: bool,
     pub slots: u32,
@@ -165,12 +212,13 @@ pub struct TransferState {
     pub round: RoundState,
     pub next_seq: u64,
     pub next_batch: BatchId,
+    next_timer: u64,
     pub now: Time,
     pub drained: bool,
 }
 
 impl TransferState {
-    pub fn new(epoch: Epoch, slots: u32) -> Self { Self { epoch, online: true, slots, transfers: BTreeMap::new(), round: RoundState::None, next_seq: 1, next_batch: 1, now: Time(0), drained: false } }
+    pub fn new(epoch: Epoch, slots: u32, peers: TransferPeers) -> Self { Self { peers, epoch, online: true, slots, transfers: BTreeMap::new(), round: RoundState::None, next_seq: 1, next_batch: 1, next_timer: 1, now: Time(0), drained: false } }
 
     pub fn stage_of(&self, key: &str) -> Option<TransferStage> { self.transfers.get(key).map(|transfer| transfer.stage) }
 }
@@ -190,9 +238,17 @@ impl TransferState {
     fn shows(fx: &mut Fx, key: &str, shown: Shown) { run(fx, TransferEffect::Shows { key: key.into(), shown }); }
 
     fn store(&mut self, key: &str, kind: StoreKind, fx: &mut Fx) {
-        let batch = self.next_batch;
+        let id = self.next_batch;
         self.next_batch += 1;
-        run(fx, TransferEffect::Store { key: key.into(), batch, kind });
+        let rows = vec![(MARK_TABLE.into(), kind.tag().into()), (MARK_TABLE.into(), key.into())];
+        let intents = u64::from(kind == StoreKind::SyncUpload);
+        let batch = StoreBatch { author: BatchAuthor::Transfer, id, epoch: self.epoch, basis: BTreeMap::new(), rows, intents, credential: None, ops: Vec::new() };
+        fx.push(Effect::Send(Outbound::new(self.peers.store, StoreInput::Commit(batch))));
+    }
+
+    fn timer(&mut self) -> ScheduleId {
+        self.next_timer += 1;
+        ScheduleId(self.next_timer)
     }
 
     fn upload_id_of(&self, key: &str) -> Option<String> { self.transfers.get(key).and_then(|transfer| transfer.upload_id.clone()) }
@@ -225,8 +281,7 @@ impl TransferState {
     }
 
     fn schedule_expire(&mut self, fx: &mut Fx) {
-        let id = ScheduleId(self.next_batch);
-        self.next_batch += 1;
+        let id = self.timer();
         fx.push(Effect::Schedule { id, after: std::time::Duration::ZERO, input: TransferInput::Tick { now: self.now, kind: TransferTick::Expire } });
     }
 
@@ -235,9 +290,29 @@ impl TransferState {
         Self::shows(fx, key, Shown::Gone);
     }
 
-    fn delete_all(key: &str, fx: &mut Fx) {
-        run(fx, TransferEffect::DeleteFile { key: key.into() });
-        run(fx, TransferEffect::DeleteOperation { key: key.into() });
+    /// The copy of `key` goes: the file of the directory by `DeleteFile`, the inline bytes (and with `rows` the row of `sync_upload` and the operation) by a Store batch.
+    fn drop_file(&mut self, key: &str, rows: bool, fx: &mut Fx) {
+        let place = self.transfers.get(key).and_then(|transfer| transfer.place);
+        if place != Some(Location::Table) {
+            run(fx, TransferEffect::DeleteFile { path: file_id(key) });
+        }
+        if rows || place == Some(Location::Table) {
+            self.store(key, StoreKind::Removed, fx);
+        }
+    }
+
+    fn retry_timer(&mut self, key: &str, attempt: u32, fx: &mut Fx) {
+        let id = ScheduleId(RETRY_TIMER + self.next_timer);
+        self.next_timer += 1;
+        let after = RetryPolicy::Upload.backoff().delay(attempt.saturating_sub(1));
+        fx.push(Effect::Schedule { id, after, input: TransferInput::Tick { now: self.now, kind: TransferTick::Retry { key: key.into() } } });
+    }
+
+    /// The final mutation goes to Outbox as an operation of the origin `Transfer{key}`.
+    fn submit_mutation(&mut self, key: &str, fx: &mut Fx) {
+        let Some(transfer) = self.transfers.get(key) else { return };
+        let op = NewOp { origin: Origin::Transfer(key.into()), ..transfer.mutation.clone() };
+        fx.push(Effect::Send(Outbound::new(self.peers.outbox, OutboxInput::Submit { epoch: self.epoch, op, reply: NO_REPLY })));
     }
 
     fn round_needed(&mut self, epoch: Epoch, fx: &mut Fx) {
@@ -253,22 +328,22 @@ impl TransferState {
 
     fn open_in_epoch(&self, epoch: Epoch) -> bool { self.transfers.values().any(|transfer| transfer.epoch == epoch && transfer.stage != TransferStage::Done) }
 
-    fn create(&mut self, key: &str, source: Source, batch: bool, seq: Option<u64>, created_at: Time, stage: TransferStage) {
+    fn create(&mut self, key: &str, source: Source, batch: bool, seq: Option<u64>, created_at: Time, stage: TransferStage, mutation: NewOp, steps: Steps) {
         let seq = seq.unwrap_or_else(|| {
             self.next_seq += 1;
             self.next_seq - 1
         });
         self.next_seq = self.next_seq.max(seq + 1);
-        self.transfers.insert(key.into(), Transfer { key: key.into(), seq, source, batch, epoch: self.epoch, stage, attempts: 0, upload_id: None, confirmed_parts: 0, created_at, error: None, complete_in_flight: false });
+        self.transfers.insert(key.into(), Transfer { key: key.into(), seq, source, batch, epoch: self.epoch, stage, attempts: 0, upload_id: None, confirmed_parts: 0, created_at, error: None, complete_in_flight: false, place: None, size: 0, sha256: String::new(), mutation, steps });
     }
 
-    fn accept(&mut self, epoch: Epoch, key: Key, source: Source, batch: bool, rep: ReplyId, now: Time, fx: &mut Fx) {
+    fn accept(&mut self, epoch: Epoch, key: Key, source: Source, batch: bool, rep: ReplyId, now: Time, mutation: NewOp, steps: Steps, fx: &mut Fx) {
         if epoch != self.epoch {
             return reply(fx, rep, TransferAnswer::Err(Fault::NoSession));
         }
         self.now = self.now.max(now);
         let copy_from = source.clone();
-        self.create(&key, source, batch, None, now, TransferStage::Copying);
+        self.create(&key, source, batch, None, now, TransferStage::Copying, mutation, steps);
         let seq = self.transfers[&key].seq;
         reply(fx, rep, TransferAnswer::Receipt(Receipt { epoch, op_id: seq, revision: 0 }));
         Self::shows(fx, &key, Shown::Copying);
@@ -280,10 +355,11 @@ impl TransferState {
         let mut rows = rows;
         rows.sort_by_key(|row| row.seq);
         for row in rows {
-            let StoredTransfer { key, seq, source, batch, upload_id, confirmed_parts, completed, failed, file_present, created_at } = row;
+            let StoredTransfer { key, seq, source, batch, upload_id, confirmed_parts, completed, failed, file_present, created_at, place, mutation, steps } = row;
             let all = confirmed_parts >= source.parts;
-            self.create(&key, source, batch, Some(seq), created_at, TransferStage::Ready);
+            self.create(&key, source, batch, Some(seq), created_at, TransferStage::Ready, mutation, steps);
             let Some(transfer) = self.transfers.get_mut(&key) else { continue };
+            transfer.place = Some(place);
             transfer.upload_id = upload_id;
             transfer.confirmed_parts = confirmed_parts;
             if !file_present {
@@ -363,7 +439,8 @@ impl TransferState {
             Self::shows(fx, key, Shown::Queued);
         } else if temporary && transfer.attempts + 1 < ATTEMPT_LIMIT {
             transfer.attempts += 1;
-            run(fx, TransferEffect::ScheduleRetry { key: key.into(), attempt: transfer.attempts });
+            let attempt = transfer.attempts;
+            self.retry_timer(key, attempt, fx);
         } else {
             self.fail(key, has_upload, fx);
         }
@@ -401,7 +478,7 @@ impl TransferState {
             self.fail(key, false, fx);
             self.start_in_order(fx);
         } else if self.online {
-            run(fx, TransferEffect::ScheduleRetry { key: key.into(), attempt: 0 });
+            self.retry_timer(key, 1, fx);
         }
     }
 
@@ -412,12 +489,12 @@ impl TransferState {
         match outcome {
             OutboxOutcome::Confirmed { .. } => {
                 self.end_transfer(key, fx);
-                run(fx, TransferEffect::DeleteLocalCopy { key: key.into() });
+                self.drop_file(key, false, fx);
             }
             OutboxOutcome::Rejected { .. } | OutboxOutcome::Failed { .. } => self.fail(key, false, fx),
             OutboxOutcome::Discarded => {
                 self.end_transfer(key, fx);
-                run(fx, TransferEffect::DeleteFile { key: key.into() });
+                self.drop_file(key, false, fx);
             }
             OutboxOutcome::Interrupted => self.end_transfer(key, fx),
         }
@@ -434,12 +511,12 @@ impl TransferState {
                 reply(fx, rep, ok);
                 self.end_transfer(key, fx);
                 run(fx, TransferEffect::CopyCancel { key: key.into() });
-                run(fx, TransferEffect::DeleteFile { key: key.into() });
+                self.drop_file(key, false, fx);
             }
             TransferStage::Ready => {
                 reply(fx, rep, ok);
                 self.end_transfer(key, fx);
-                Self::delete_all(key, fx);
+                self.drop_file(key, true, fx);
                 self.start_in_order(fx);
             }
             TransferStage::Uploading | TransferStage::Completing if cancel && batch => reply(fx, rep, TransferAnswer::Err(Fault::InFlight)),
@@ -453,11 +530,15 @@ impl TransferState {
                     let upload_id = self.upload_id_of(key);
                     run(fx, TransferEffect::Abort { key: key.into(), upload_id });
                 }
-                Self::delete_all(key, fx);
+                self.drop_file(key, true, fx);
                 self.start_in_order(fx);
             }
             TransferStage::Mutating if cancel => reply(fx, rep, TransferAnswer::Cancelled(false).or_in_flight(batch)),
-            TransferStage::Mutating => run(fx, TransferEffect::DiscardMutation { key: key.into(), reply: rep }),
+            TransferStage::Mutating => {
+                let op = &self.transfers[key].mutation;
+                let discard = OutboxInput::Discard { model: op.model.clone(), row_id: op.row_id.clone(), reply: rep };
+                fx.push(Effect::Send(Outbound::new(self.peers.outbox, discard)));
+            }
             TransferStage::Failed => {
                 reply(fx, rep, ok);
                 self.end_transfer(key, fx);
@@ -465,7 +546,7 @@ impl TransferState {
                     let upload_id = self.upload_id_of(key);
                     run(fx, TransferEffect::Abort { key: key.into(), upload_id });
                 }
-                Self::delete_all(key, fx);
+                self.drop_file(key, true, fx);
             }
         }
     }
@@ -528,7 +609,7 @@ impl TransferState {
                 let upload_id = self.upload_id_of(&key);
                 run(fx, TransferEffect::Abort { key: key.clone(), upload_id });
             }
-            Self::delete_all(&key, fx);
+            self.drop_file(&key, true, fx);
         }
     }
 
@@ -537,7 +618,7 @@ impl TransferState {
         for (key, stage) in open {
             if closing && stage == TransferStage::Copying {
                 run(fx, TransferEffect::CopyCancel { key: key.clone() });
-                run(fx, TransferEffect::DeleteFile { key: key.clone() });
+                self.drop_file(&key, false, fx);
             } else {
                 run(fx, TransferEffect::CancelStep { key: key.clone() });
             }
@@ -596,10 +677,15 @@ impl StateOwner for Transfers {
     fn step(state: &mut TransferState, input: TransferInput) -> Effects<Self> {
         let mut fx: Fx = Vec::new();
         match input {
-            TransferInput::Accept { epoch, key, source, batch, reply, now } => state.accept(epoch, key, source, batch, reply, now, &mut fx),
+            TransferInput::Accept { epoch, key, source, batch, reply, now, mutation, steps } => state.accept(epoch, key, source, batch, reply, now, mutation, steps, &mut fx),
             TransferInput::Restored(rows) => state.restored(rows, &mut fx),
-            TransferInput::CopyDone { key } => {
+            TransferInput::CopyDone { key, size, sha256, place } => {
                 if state.stage_of(&key) == Some(TransferStage::Copying) {
+                    if let Some(transfer) = state.transfers.get_mut(&key) {
+                        transfer.size = size;
+                        transfer.sha256 = sha256;
+                        transfer.place = Some(place);
+                    }
                     state.set(&key, TransferStage::Ready);
                     TransferState::shows(&mut fx, &key, Shown::Queued);
                     state.store(&key, StoreKind::SyncUpload, &mut fx);
@@ -619,7 +705,7 @@ impl StateOwner for Transfers {
                 if state.stage_of(&key) == Some(TransferStage::Completing) {
                     state.set(&key, TransferStage::Mutating);
                     state.store(&key, StoreKind::Completed, &mut fx);
-                    run(&mut fx, TransferEffect::SubmitMutation { key });
+                    state.submit_mutation(&key, &mut fx);
                     state.start_in_order(&mut fx);
                 }
             }

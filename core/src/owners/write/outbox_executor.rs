@@ -1,6 +1,5 @@
-//! Executor of the effects of `Outbox` (`design.md` F3). In this step it does the IO the platform sees: it settles the answer of a call.
-//! Effects for other owners (Store batches, Session `Mutate`, `MutationOutcome`, `Drained`) and timers are `Effect::Send` and `Effect::Schedule`
-//! of the owner in the next step; until then the executor leaves them alone.
+//! Executor of the effects of `Outbox` (`design.md` F3): it settles the answer of a call.
+//! Store batches, Session `Mutate`, `MutationOutcome` and timers are `Effect::Send` and `Effect::Schedule` of the owner.
 
 use std::sync::Arc;
 
@@ -16,7 +15,7 @@ impl EffectRunner<Outbox> for OutboxExecutor {
     fn run(&mut self, _stamp: EpochStamp, effect: OutboxEffect, _back: &Back<Outbox>) {
         match effect {
             OutboxEffect::Reply { reply, answer } => (self.settle)(reply, answer),
-            OutboxEffect::Store { .. } | OutboxEffect::Send { .. } | OutboxEffect::CancelRequest { .. } | OutboxEffect::TransferOutcome { .. } | OutboxEffect::ScheduleRetry { .. } | OutboxEffect::Drained(_) => {}
+            OutboxEffect::CancelRequest { .. } | OutboxEffect::Drained(_) => {}
         }
     }
 }

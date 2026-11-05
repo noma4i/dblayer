@@ -8,10 +8,18 @@ use std::task::{Context, Poll, Wake, Waker};
 use async_trait::async_trait;
 
 use super::wire::{Running, Task, Tasks};
-use crate::runtime::DetScheduler;
+use crate::owners::support::{new_log, Log, Silent, Sink};
+use crate::runtime::{Address, DetScheduler, StateOwner};
 use crate::transport::{GraphQLRequest, PutRequest, PutResponse, Response, ServerSubscription, Transport, TransportError};
 
 pub(super) const STEPS: usize = 20_000;
+
+/// A peer owner that keeps the `Debug` form of what it receives. The address is the address of `P` for the owners that send to it.
+pub(super) fn peer<P: StateOwner>(det: &mut DetScheduler, name: &'static str) -> (Address<P>, Log<String>) {
+    let log = new_log();
+    let sink = det.add::<Sink<P>>(name, log.clone(), Silent);
+    (Address::new(sink.index()), log)
+}
 
 fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> { mutex.lock().unwrap_or_else(PoisonError::into_inner) }
 

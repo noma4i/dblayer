@@ -5,10 +5,92 @@
 use super::ref_transfer::{round_step, step_of, Ctx, Eff, In, Kind, Noise, Obs, Round, RoundIn, Shown, St, Step};
 use crate::owners::contract::{EpochStarted, Online};
 use crate::owners::write::outbox::{Fault, OutboxOutcome};
-use crate::owners::support::{new_log, take, Log, Recorder};
-use crate::owners::write::transfer::{self as t, RoundState, Source, StoreKind, StoredTransfer, TransferAnswer, TransferEffect, TransferInput, TransferStage, TransferState, TransferTick, Transfers};
+use crate::files::Location;
+use crate::owners::support::{new_log, text_after, Discard, Emitted, Log, Silent, Sink, Spy, SpyState};
+use crate::owners::store::StoreWriter;
+use crate::owners::write::outbox::{NewOp, OnReject, Origin, Outbox};
+use crate::owners::write::transfer::{self as t, RoundState, Source, StoreKind, StoredTransfer, Steps, TransferAnswer, TransferEffect as Run, TransferInput, TransferPeers, TransferStage, TransferState, TransferTick, Transfers};
 use crate::runtime::{Address, Cause, DetScheduler, EpochStamp, Time};
 use crate::transport::NetworkPurpose;
+
+/// The slots of the peers and of the owner in every test: the peers first.
+const STORE_AT: usize = 0;
+const OUTBOX_AT: usize = 1;
+const TRANSFER_AT: usize = 2;
+
+/// What the owner gave out in a step, in the terms the rows of the table use: the executor effects (`Run`) and the inputs for the Store and
+/// Outbox (`Send`), read from the `Debug` form the `Spy` keeps. `Schedule` is a timer of the owner.
+#[derive(Clone, Debug)]
+enum TransferEffect {
+    Copy { key: String },
+    CopyCancel { key: String },
+    Store { key: String, kind: StoreKind },
+    Step { key: String, purpose: NetworkPurpose },
+    Complete { key: String },
+    Abort { key: String },
+    CancelStep { key: String },
+    DeleteFile { key: String },
+    SubmitMutation { key: String },
+    DiscardMutation { key: String },
+    Reply { reply: u64, answer: TransferAnswer },
+    Shows { key: String, shown: t::Shown },
+    Refused { key: String },
+    ScheduleJob { epoch: u64 },
+    EndJob { round_id: u32 },
+    Schedule,
+    Drained,
+}
+
+fn lower(emitted: Emitted<Run>) -> Option<TransferEffect> {
+    Some(match emitted {
+        Emitted::Run(Run::Copy { key, .. }) => TransferEffect::Copy { key },
+        Emitted::Run(Run::CopyCancel { key }) => TransferEffect::CopyCancel { key },
+        Emitted::Run(Run::Step { key, purpose, .. }) => TransferEffect::Step { key, purpose },
+        Emitted::Run(Run::Complete { key, .. }) => TransferEffect::Complete { key },
+        Emitted::Run(Run::Abort { key, .. }) => TransferEffect::Abort { key },
+        Emitted::Run(Run::CancelStep { key }) => TransferEffect::CancelStep { key },
+        Emitted::Run(Run::DeleteFile { path }) => TransferEffect::DeleteFile { key: path },
+        Emitted::Run(Run::Reply { reply, answer }) => TransferEffect::Reply { reply, answer },
+        Emitted::Run(Run::Shows { key, shown }) => TransferEffect::Shows { key, shown },
+        Emitted::Run(Run::Refused { key }) => TransferEffect::Refused { key },
+        Emitted::Run(Run::ScheduleJob { epoch }) => TransferEffect::ScheduleJob { epoch },
+        Emitted::Run(Run::EndJob { round_id }) => TransferEffect::EndJob { round_id },
+        Emitted::Run(Run::Drained(_)) => TransferEffect::Drained,
+        Emitted::Send { to: STORE_AT, input } => {
+            let tag = text_after(&input, "rows: [(\"sync_upload\", ")?;
+            let kind = [StoreKind::SyncUpload, StoreKind::ConfirmedParts, StoreKind::Completed, StoreKind::Failed, StoreKind::Retrying, StoreKind::Removed].into_iter().find(|kind| kind.tag() == tag)?;
+            TransferEffect::Store { key: text_after(&input, "), (\"sync_upload\", ")?, kind }
+        }
+        Emitted::Send { to: OUTBOX_AT, input } if input.starts_with("Submit") => TransferEffect::SubmitMutation { key: text_after(&input, "origin: Transfer(")? },
+        Emitted::Send { to: OUTBOX_AT, input } => TransferEffect::DiscardMutation { key: text_after(&input, "row_id: ")? },
+        Emitted::Send { to, .. } => panic!("a send to the slot {to}"),
+        Emitted::Schedule { .. } => TransferEffect::Schedule,
+        Emitted::Cancel(_) | Emitted::Broadcast(_) => return None,
+    })
+}
+
+fn take_fx(log: &Log<Emitted<Run>>) -> Vec<TransferEffect> { crate::owners::support::take(log).into_iter().filter_map(lower).collect() }
+
+fn state_of(det: &DetScheduler) -> Result<&TransferState, String> { det.state(Address::<Spy<Transfers>>::new(TRANSFER_AT)).map(|spy: &SpyState<Transfers>| &spy.inner).ok_or_else(|| "no state".to_string()) }
+
+/// The owner with its two peers: the Store and Outbox keep what they receive.
+fn world(seed: u64, slots: u32) -> (DetScheduler, Log<Emitted<Run>>) {
+    let mut det = DetScheduler::new(seed);
+    let store = det.add::<Sink<StoreWriter>>("store", new_log(), Silent).index();
+    let outbox = det.add::<Sink<Outbox>>("outbox", new_log(), Silent).index();
+    assert_eq!((store, outbox), (STORE_AT, OUTBOX_AT));
+    let log = new_log();
+    let peers = TransferPeers { store: Address::new(store), outbox: Address::new(outbox) };
+    let addr = det.add::<Spy<Transfers>>("transfer", SpyState::new(TransferState::new(EPOCH, slots, peers), &log), Discard);
+    assert_eq!(addr.index(), TRANSFER_AT);
+    (det, log)
+}
+
+fn mutation() -> NewOp {
+    NewOp { model: "Moment".into(), row_id: KEY.into(), action: "upload".into(), on_reject: OnReject::Keep, origin: Origin::Api, path: "/moments".into(), body: String::new(), intent_rows: Vec::new(), rollback_rows: Vec::new() }
+}
+
+fn steps() -> Steps { Steps { path: "/upload".into(), body: String::new() } }
 
 const EPOCH: u64 = 1;
 const KEY: &str = "k1";
@@ -32,36 +114,34 @@ fn source() -> Source { Source { path: "a.mp4".into(), parts: PARTS } }
 struct Twin {
     det: DetScheduler,
     addr: Address<Transfers>,
-    log: Log<TransferEffect>,
+    log: Log<Emitted<Run>>,
     reply: u64,
 }
 
 impl Twin {
     fn new() -> Self {
-        let mut det = DetScheduler::new(7);
-        let log = new_log();
-        let addr = det.add::<Transfers>("transfer", TransferState::new(EPOCH, 1), Recorder::<Transfers>::new(&log));
+        let (mut det, log) = world(7, 1);
         det.start_epoch(EPOCH);
-        Self { det, addr, log, reply: 100 }
+        Self { det, addr: Address::new(TRANSFER_AT), log, reply: 100 }
     }
 
     fn run(&mut self) { self.det.run_until_quiet(10_000).expect("the owner is quiet"); }
 
     fn post(&mut self, input: TransferInput) -> Vec<TransferEffect> {
-        take(&self.log);
+        take_fx(&self.log);
         self.det.post(self.addr, EpochStamp::Epoch(EPOCH), input);
         self.run();
-        take(&self.log)
+        take_fx(&self.log)
     }
 
     fn control(&mut self, input: TransferInput) -> Vec<TransferEffect> {
-        take(&self.log);
+        take_fx(&self.log);
         self.det.post(self.addr, EpochStamp::Control, input);
         self.run();
-        take(&self.log)
+        take_fx(&self.log)
     }
 
-    fn state(&self) -> &TransferState { self.det.state(self.addr).expect("the owner state") }
+    fn state(&self) -> &TransferState { state_of(&self.det).expect("the owner state") }
 
     fn stage(&self, key: &str) -> St { self.state().stage_of(key).map_or(St::Done, stage_of) }
 
@@ -72,7 +152,7 @@ impl Twin {
 
     fn accept(&mut self, key: &str, batch: bool) -> Vec<TransferEffect> {
         let reply = self.reply();
-        self.post(TransferInput::Accept { epoch: EPOCH, key: key.into(), source: source(), batch, reply, now: Time(0) })
+        self.post(TransferInput::Accept { epoch: EPOCH, key: key.into(), source: source(), batch, reply, now: Time(0), mutation: mutation(), steps: steps() })
     }
 }
 
@@ -88,6 +168,9 @@ fn stored(key: &str, ctx: &Ctx, failed: bool, completed: bool, confirmed: u32) -
         failed: failed.then(|| "e".to_string()),
         file_present: true,
         created_at: Time(0),
+        place: Location::Directory,
+        mutation: mutation(),
+        steps: steps(),
     }
 }
 
@@ -103,10 +186,10 @@ fn reach(state: St, ctx: &Ctx) -> Twin {
             twin.post(TransferInput::Online(Online(false)));
             if !ctx.first_to_start {
                 twin.accept("k0", false);
-                twin.post(TransferInput::CopyDone { key: "k0".into() });
+                twin.post(TransferInput::CopyDone { key: "k0".into(), size: 1, sha256: "h".into(), place: Location::Directory });
             }
             twin.accept(KEY, batch);
-            twin.post(TransferInput::CopyDone { key: KEY.into() });
+            twin.post(TransferInput::CopyDone { key: KEY.into(), size: 1, sha256: "h".into(), place: Location::Directory });
         }
         St::Uploading => {
             twin.post(TransferInput::Restored(vec![stored(KEY, ctx, false, false, last_part)]));
@@ -148,9 +231,9 @@ fn input_of(twin: &mut Twin, ctx: &Ctx, input: In) -> Vec<TransferEffect> {
     match input {
         In::Accept => {
             let epoch = if ctx.epoch_current { EPOCH } else { EPOCH + 1 };
-            twin.post(TransferInput::Accept { epoch, key, source: source(), batch: ctx.kind == Kind::Batch, reply, now: Time(0) })
+            twin.post(TransferInput::Accept { epoch, key, source: source(), batch: ctx.kind == Kind::Batch, reply, now: Time(0), mutation: mutation(), steps: steps() })
         }
-        In::CopyDone => twin.post(TransferInput::CopyDone { key }),
+        In::CopyDone => twin.post(TransferInput::CopyDone { key, size: 1, sha256: "h".into(), place: Location::Directory }),
         In::CopyFailed => twin.post(TransferInput::CopyFailed { key, error: "e".into() }),
         In::Cancel => twin.post(TransferInput::Cancel { key, reply }),
         In::Start => twin.post(TransferInput::Online(Online(true))),
@@ -169,16 +252,16 @@ fn input_of(twin: &mut Twin, ctx: &Ctx, input: In) -> Vec<TransferEffect> {
         In::TickRetry => twin.post(TransferInput::Tick { now: Time(1), kind: TransferTick::Retry { key } }),
         In::SlotFreed => twin.post(TransferInput::SlotFreed),
         In::EpochEnded => {
-            take(&twin.log);
+            take_fx(&twin.log);
             twin.det.end_epoch(EPOCH, Cause::SessionReset);
             twin.run();
-            take(&twin.log)
+            take_fx(&twin.log)
         }
         In::Closing => {
-            take(&twin.log);
+            take_fx(&twin.log);
             twin.det.close();
             twin.run();
-            take(&twin.log)
+            take_fx(&twin.log)
         }
         In::Noise(noise) => twin.post(match noise {
             Noise::StepOk => TransferInput::StepOk { key, part: Some(1), upload_id: None },
@@ -196,8 +279,8 @@ fn input_of(twin: &mut Twin, ctx: &Ctx, input: In) -> Vec<TransferEffect> {
 
 fn effect_key(effect: &TransferEffect) -> Option<&str> {
     match effect {
-        TransferEffect::Copy { key, .. } | TransferEffect::CopyCancel { key } | TransferEffect::Store { key, .. } | TransferEffect::Step { key, .. } | TransferEffect::Complete { key, .. } | TransferEffect::ScheduleRetry { key, .. } | TransferEffect::Abort { key, .. } | TransferEffect::CancelStep { key } | TransferEffect::DeleteFile { key } | TransferEffect::DeleteOperation { key } | TransferEffect::DeleteLocalCopy { key } | TransferEffect::SubmitMutation { key } | TransferEffect::DiscardMutation { key, .. } | TransferEffect::Shows { key, .. } | TransferEffect::Refused { key } => Some(key),
-        TransferEffect::Reply { .. } | TransferEffect::ScheduleJob { .. } | TransferEffect::EndJob { .. } | TransferEffect::Drained(_) => None,
+        TransferEffect::Copy { key } | TransferEffect::CopyCancel { key } | TransferEffect::Store { key, .. } | TransferEffect::Step { key, .. } | TransferEffect::Complete { key } | TransferEffect::Abort { key } | TransferEffect::CancelStep { key } | TransferEffect::DeleteFile { key } | TransferEffect::SubmitMutation { key } | TransferEffect::DiscardMutation { key } | TransferEffect::Shows { key, .. } | TransferEffect::Refused { key } => Some(key),
+        TransferEffect::Reply { .. } | TransferEffect::ScheduleJob { .. } | TransferEffect::EndJob { .. } | TransferEffect::Schedule | TransferEffect::Drained => None,
     }
 }
 
@@ -221,27 +304,28 @@ fn translate(input: In, effects: Vec<TransferEffect>, scheduled: bool) -> (Vec<O
         match effect {
             TransferEffect::Copy { .. } => eff.push(Eff::Copy),
             TransferEffect::CopyCancel { .. } => eff.push(Eff::CopyCancelled),
-            TransferEffect::Store { kind, .. } => eff.push(match kind {
-                StoreKind::SyncUpload => Eff::StoreSyncUpload,
-                StoreKind::ConfirmedParts => Eff::StoreConfirmedParts,
-                StoreKind::Completed => Eff::StoreCompleted,
-                StoreKind::Failed => Eff::StoreFailed,
-                StoreKind::Retrying => Eff::StoreRetrying,
-            }),
+            TransferEffect::Store { kind, .. } => {
+                if kind == StoreKind::Removed && eff.last() == Some(&Eff::DeleteFile) {
+                    eff.pop();
+                }
+                eff.push(match kind {
+                    StoreKind::SyncUpload => Eff::StoreSyncUpload,
+                    StoreKind::ConfirmedParts => Eff::StoreConfirmedParts,
+                    StoreKind::Completed => Eff::StoreCompleted,
+                    StoreKind::Failed => Eff::StoreFailed,
+                    StoreKind::Retrying => Eff::StoreRetrying,
+                    StoreKind::Removed => Eff::DeleteFileAndOperation,
+                });
+            }
             TransferEffect::Step { purpose, .. } => {
                 assert_eq!(purpose, NetworkPurpose::Transfer, "P-XFER-03: a step carries the purpose Transfer");
                 eff.push(if matches!(input, In::StepOk { .. }) { Eff::NextStep } else { Eff::TransportStep });
             }
             TransferEffect::Complete { .. } => eff.push(Eff::Complete),
-            TransferEffect::ScheduleRetry { .. } => {}
+            TransferEffect::Schedule => {}
             TransferEffect::Abort { .. } => eff.push(Eff::Abort),
             TransferEffect::CancelStep { .. } => eff.push(if matches!(input, In::EpochEnded | In::Closing) { Eff::TransportCancel } else { Eff::StepCancelled }),
-            TransferEffect::DeleteFile { .. } => eff.push(Eff::DeleteFile),
-            TransferEffect::DeleteOperation { .. } => {
-                if eff.last() == Some(&Eff::DeleteFile) { eff.pop(); }
-                eff.push(Eff::DeleteFileAndOperation);
-            }
-            TransferEffect::DeleteLocalCopy { .. } => eff.push(Eff::DeleteLocalCopy),
+            TransferEffect::DeleteFile { .. } => eff.push(if matches!(input, In::MutationOutcome { confirmed: true }) { Eff::DeleteLocalCopy } else { Eff::DeleteFile }),
             TransferEffect::SubmitMutation { .. } => eff.push(Eff::SubmitFinalMutation),
             TransferEffect::DiscardMutation { .. } => eff.push(Eff::DiscardMutation),
             TransferEffect::Reply { answer, .. } => obs.push(match answer {
@@ -258,7 +342,7 @@ fn translate(input: In, effects: Vec<TransferEffect>, scheduled: bool) -> (Vec<O
             TransferEffect::Shows { shown, .. } => obs.push(Obs::Shows(shown_of(&shown))),
             TransferEffect::Refused { .. } | TransferEffect::EndJob { .. } => {}
             TransferEffect::ScheduleJob { .. } => eff.push(Eff::RoundNeeded),
-            TransferEffect::Drained(_) => eff.push(Eff::Drained),
+            TransferEffect::Drained => eff.push(Eff::Drained),
         }
     }
     if scheduled {
@@ -441,7 +525,7 @@ fn xfer_open_failed() {
     let effects = twin.post(TransferInput::Restored(vec![stored(KEY, &multipart(), true, false, 1)]));
     assert_eq!(twin.stage(KEY), St::Failed);
     assert!(effects.iter().any(|effect| matches!(effect, TransferEffect::Shows { shown: t::Shown::Failed { .. }, .. })));
-    take(&twin.log);
+    take_fx(&twin.log);
     twin.det.tick(Time(8 * DAY));
     twin.run();
     assert_eq!(twin.stage(KEY), St::Done, "the expiry tick requested at open ends a failed transfer older than 7 days");
@@ -473,16 +557,16 @@ fn round_in(twin: &mut Twin, input: RoundIn) -> Vec<TransferEffect> {
         RoundIn::Refused(epoch) => twin.control(TransferInput::RoundRefused { epoch }),
         RoundIn::Ended(round_id, epoch) => twin.control(TransferInput::RoundEnded { round_id, epoch }),
         RoundIn::EpochEnded(epoch) => {
-            take(&twin.log);
+            take_fx(&twin.log);
             twin.det.end_epoch(epoch, Cause::SessionReset);
             twin.run();
-            take(&twin.log)
+            take_fx(&twin.log)
         }
         RoundIn::Closing => {
-            take(&twin.log);
+            take_fx(&twin.log);
             twin.det.close();
             twin.run();
-            take(&twin.log)
+            take_fx(&twin.log)
         }
     }
 }
@@ -501,9 +585,9 @@ fn round_reach(from: Round, next_open: bool) -> Twin {
                 twin.control(TransferInput::EpochStarted(EpochStarted { epoch: next_epoch, identity: Some(1), generation: 0 }));
                 if next_open {
                     let reply = twin.reply();
-                    take(&twin.log);
+                    take_fx(&twin.log);
                     twin.det.start_epoch(next_epoch);
-                    twin.det.post(twin.addr, EpochStamp::Epoch(next_epoch), TransferInput::Accept { epoch: next_epoch, key: "n1".into(), source: source(), batch: false, reply, now: Time(0) });
+                    twin.det.post(twin.addr, EpochStamp::Epoch(next_epoch), TransferInput::Accept { epoch: next_epoch, key: "n1".into(), source: source(), batch: false, reply, now: Time(0), mutation: mutation(), steps: steps() });
                     twin.run();
                 }
                 round_in(&mut twin, RoundIn::Needed(next_epoch));
@@ -519,7 +603,7 @@ fn round_check(from: Round, input: RoundIn, next_open: bool) {
     let mut twin = round_reach(from, next_open);
     if matches!(input, RoundIn::Refused(_)) {
         twin.accept("a", false);
-        twin.post(TransferInput::CopyDone { key: "a".into() });
+        twin.post(TransferInput::CopyDone { key: "a".into(), size: 1, sha256: "h".into(), place: Location::Directory });
     }
     assert_eq!(round_state(twin.state().round), from, "the round reached {from:?}");
     let effects = round_in(&mut twin, input);
@@ -553,7 +637,7 @@ fn xfer_round_refused() {
     twin.post(TransferInput::Online(Online(false)));
     for key in ["a", "b"] {
         twin.accept(key, false);
-        twin.post(TransferInput::CopyDone { key: key.into() });
+        twin.post(TransferInput::CopyDone { key: key.into(), size: 1, sha256: "h".into(), place: Location::Directory });
     }
     let effects = round_in(&mut twin, RoundIn::Refused(EPOCH));
     let refused: Vec<_> = effects.iter().filter_map(|effect| if let TransferEffect::Refused { key } = effect { Some(key.clone()) } else { None }).collect();
@@ -599,10 +683,10 @@ fn xfer_round_closing() {
 #[test]
 fn xfer_done_closing_without_transfers() {
     let mut twin = Twin::new();
-    take(&twin.log);
+    take_fx(&twin.log);
     twin.det.close();
     twin.run();
-    assert_eq!(take(&twin.log).iter().filter(|effect| matches!(effect, TransferEffect::Drained(_))).count(), 1);
+    assert_eq!(take_fx(&twin.log).iter().filter(|effect| matches!(effect, TransferEffect::Drained)).count(), 1);
 }
 
 fn replies_of(effects: &[TransferEffect], reply: u64) -> Vec<TransferAnswer> {
@@ -615,9 +699,9 @@ fn replies_of(effects: &[TransferEffect], reply: u64) -> Vec<TransferAnswer> {
 #[test]
 fn xfer_wait_accept() {
     let mut twin = Twin::new();
-    let effects = twin.post(TransferInput::Accept { epoch: EPOCH, key: KEY.into(), source: source(), batch: false, reply: 1, now: Time(0) });
+    let effects = twin.post(TransferInput::Accept { epoch: EPOCH, key: KEY.into(), source: source(), batch: false, reply: 1, now: Time(0), mutation: mutation(), steps: steps() });
     assert!(matches!(replies_of(&effects, 1).as_slice(), [TransferAnswer::Receipt(_)]));
-    let stale = twin.post(TransferInput::Accept { epoch: EPOCH + 1, key: "x".into(), source: source(), batch: false, reply: 2, now: Time(0) });
+    let stale = twin.post(TransferInput::Accept { epoch: EPOCH + 1, key: "x".into(), source: source(), batch: false, reply: 2, now: Time(0), mutation: mutation(), steps: steps() });
     assert_eq!(replies_of(&stale, 2), [TransferAnswer::Err(Fault::NoSession)]);
     assert_eq!(twin.stage("x"), St::Done, "a stale accept leaves no transfer");
 }
@@ -627,12 +711,12 @@ fn xfer_wait_accept_batch() {
     let mut twin = Twin::new();
     let mut answered = Vec::new();
     for (index, key) in ["b1", "b2", "b3"].iter().enumerate() {
-        let effects = twin.post(TransferInput::Accept { epoch: EPOCH, key: (*key).into(), source: source(), batch: true, reply: 10 + index as u64, now: Time(0) });
+        let effects = twin.post(TransferInput::Accept { epoch: EPOCH, key: (*key).into(), source: source(), batch: true, reply: 10 + index as u64, now: Time(0), mutation: mutation(), steps: steps() });
         answered.push(replies_of(&effects, 10 + index as u64));
     }
     assert!(answered.iter().all(|answers| matches!(answers.as_slice(), [TransferAnswer::Receipt(_)])));
     assert!(twin.state().transfers.values().all(|transfer| transfer.batch));
-    take(&twin.log);
+    take_fx(&twin.log);
     twin.det.end_epoch(EPOCH, Cause::SessionReset);
     twin.run();
     assert!(["b1", "b2", "b3"].iter().all(|key| twin.stage(key) == St::Done), "accepted items end Interrupted with the epoch");
@@ -683,17 +767,16 @@ fn xfer_wait_outcome() {
 
 // Properties: the explorer walks the orders of the inputs of three sources.
 
-use crate::owners::support::{snapshot, Silent, Source as Feeder, SourceInput, SourceState};
+use crate::owners::support::{snapshot, Source as Feeder, SourceInput, SourceState};
 use crate::runtime::{explore, Limits};
 use std::cell::RefCell;
 
-thread_local! { static LOG: RefCell<Option<Log<TransferEffect>>> = const { RefCell::new(None) }; }
+thread_local! { static LOG: RefCell<Option<Log<Emitted<Run>>>> = const { RefCell::new(None) }; }
 
 fn scripted(sources: Vec<Vec<TransferInput>>, slots: u32) -> DetScheduler {
-    let mut det = DetScheduler::new(3);
-    let log = new_log();
+    let (mut det, log) = world(3, slots);
     LOG.with(|cell| *cell.borrow_mut() = Some(log.clone()));
-    let addr = det.add::<Transfers>("transfer", TransferState::new(EPOCH, slots), Recorder::<Transfers>::new(&log));
+    let addr = Address::<Transfers>::new(TRANSFER_AT);
     let feeders: Vec<_> = sources.into_iter().map(|script| det.add::<Feeder<Transfers>>("source", SourceState { to: addr, script }, Silent)).collect();
     det.start_epoch(EPOCH);
     for feeder in feeders {
@@ -703,10 +786,10 @@ fn scripted(sources: Vec<Vec<TransferInput>>, slots: u32) -> DetScheduler {
 }
 
 fn accepts(keys: &[&str]) -> Vec<TransferInput> {
-    keys.iter().enumerate().map(|(index, key)| TransferInput::Accept { epoch: EPOCH, key: (*key).into(), source: source(), batch: false, reply: 100 + index as u64, now: Time(0) }).collect()
+    keys.iter().enumerate().map(|(index, key)| TransferInput::Accept { epoch: EPOCH, key: (*key).into(), source: source(), batch: false, reply: 100 + index as u64, now: Time(0), mutation: mutation(), steps: steps() }).collect()
 }
 
-fn copies(keys: &[&str]) -> Vec<TransferInput> { keys.iter().map(|key| TransferInput::CopyDone { key: (*key).into() }).collect() }
+fn copies(keys: &[&str]) -> Vec<TransferInput> { keys.iter().map(|key| TransferInput::CopyDone { key: (*key).into(), size: 1, sha256: "h".into(), place: Location::Directory }).collect() }
 
 fn net(keys: &[&str]) -> Vec<TransferInput> {
     let mut script = Vec::new();
@@ -726,9 +809,7 @@ fn walk(sources: impl Fn() -> Vec<Vec<TransferInput>>, slots: u32, check: impl F
     assert!(report.traces > 0);
 }
 
-fn state_of(det: &DetScheduler) -> Result<&TransferState, String> { det.state(Address::<Transfers>::new(0)).ok_or_else(|| "no state".to_string()) }
-
-fn effects_now() -> Vec<TransferEffect> { LOG.with(|cell| cell.borrow().as_ref().map(snapshot).unwrap_or_default()) }
+fn effects_now() -> Vec<TransferEffect> { LOG.with(|cell| cell.borrow().as_ref().map(|log| snapshot(log).into_iter().filter_map(lower).collect()).unwrap_or_default()) }
 
 #[test]
 fn xfer_prop_outcome() {
@@ -767,9 +848,9 @@ fn xfer_prop_epoch() {
     det.run_until_quiet(10_000).unwrap();
     det.end_epoch(EPOCH, Cause::SessionReset);
     det.run_until_quiet(10_000).unwrap();
-    take(&LOG.with(|cell| cell.borrow().clone().unwrap()));
+    crate::owners::support::take(&LOG.with(|cell| cell.borrow().clone().unwrap()));
     for input in [TransferInput::Online(Online(true)), TransferInput::Tick { now: Time(1), kind: TransferTick::Retry { key: "a".into() } }, TransferInput::SlotFreed] {
-        det.post(Address::<Transfers>::new(0), EpochStamp::Epoch(EPOCH), input);
+        det.post(Address::<Transfers>::new(TRANSFER_AT), EpochStamp::Epoch(EPOCH), input);
     }
     det.run_until_quiet(10_000).unwrap();
     let after = effects_now();
@@ -810,7 +891,7 @@ fn xfer_prop_order() {
 fn xfer_prop_idle() {
     let mut det = scripted(vec![accepts(&["a"]), copies(&["a"])], 1);
     det.run_until_quiet(10_000).unwrap();
-    det.post(Address::<Transfers>::new(0), EpochStamp::Epoch(EPOCH), TransferInput::Cancel { key: "a".into(), reply: 9 });
+    det.post(Address::<Transfers>::new(TRANSFER_AT), EpochStamp::Epoch(EPOCH), TransferInput::Cancel { key: "a".into(), reply: 9 });
     det.run_until_quiet(10_000).unwrap();
     let before = det.trace().len();
     det.tick(Time(u64::MAX / 2));
@@ -823,14 +904,14 @@ fn xfer_prop_file_kept() {
     let mut twin = Twin::new();
     twin.post(TransferInput::Online(Online(false)));
     twin.accept("a", false);
-    twin.post(TransferInput::CopyDone { key: "a".into() });
-    take(&twin.log);
+    twin.post(TransferInput::CopyDone { key: "a".into(), size: 1, sha256: "h".into(), place: Location::Directory });
+    take_fx(&twin.log);
     twin.det.close();
     twin.run();
     twin.det.end_epoch(EPOCH, Cause::SessionReset);
     twin.run();
-    let effects = take(&twin.log);
-    assert!(effects.iter().all(|effect| !matches!(effect, TransferEffect::DeleteFile { .. } | TransferEffect::DeleteOperation { .. })), "{effects:?}");
+    let effects = take_fx(&twin.log);
+    assert!(effects.iter().all(|effect| !matches!(effect, TransferEffect::DeleteFile { .. } | TransferEffect::Store { kind: StoreKind::Removed, .. })), "{effects:?}");
 }
 
 #[test]

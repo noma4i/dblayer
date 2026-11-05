@@ -1,7 +1,7 @@
 //! Executor of the effects of `Transfers` (`design.md` F3): the copy of the source in chunks of 1 MiB outside the writer,
 //! the steps of the file (PUT, multipart, complete, abort) with `NetworkPurpose::Transfer`, the answers of calls, the view of `uploads[action]`, the platform job.
-//! The result of an effect is an input to `Transfers` through `Back` and nothing else. Store batches, `Mutation` inputs to Outbox, `Drained` and the retry timer
-//! are `Effect::Send` and `Effect::Schedule` of the owner in the next step; until then the executor leaves them alone.
+//! The result of an effect is an input to `Transfers` through `Back` and nothing else. Store batches, inputs to Outbox and the retry timer
+//! are `Effect::Send` and `Effect::Schedule` of the owner.
 
 use std::future::Future;
 use std::pin::Pin;
@@ -10,7 +10,7 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 
-use super::transfer::{Key, RoundId, Shown, Source, TransferAnswer, TransferEffect, TransferInput, Transfers};
+use super::transfer::{file_id, Key, RoundId, Shown, Source, TransferAnswer, TransferEffect, TransferInput, Transfers};
 use super::wire::{Flights, Running, Wire};
 use crate::files::{CopiedSource, FileDirectories};
 use crate::lifecycle::Admitted;
@@ -61,9 +61,6 @@ pub(crate) trait StepCodec: Send + Sync + 'static {
     async fn discard_upload(&self, link: &Link, key: &str, upload_id: Option<&str>) -> Result<(), TransportError>;
 }
 
-/// The id of the copy of `key` in the file directory.
-pub(crate) fn file_id(key: &str) -> String { key.replace(':', "_") }
-
 /// The platform side of the round (the background job of Android).
 pub trait RoundJobs: Send + Sync + 'static {
     fn schedule_job(&self, epoch: Epoch);
@@ -105,7 +102,7 @@ impl TransferExecutor {
                 None
             } else {
                 Some(match result {
-                    Ok(CopiedSource::Ready { .. }) => TransferInput::CopyDone { key: job_key.clone() },
+                    Ok(CopiedSource::Ready { size, sha256, location, .. }) => TransferInput::CopyDone { key: job_key.clone(), size, sha256, place: location },
                     Ok(CopiedSource::Unreadable(error)) => TransferInput::CopyFailed { key: job_key.clone(), error },
                     Err(error) => TransferInput::CopyFailed { key: job_key.clone(), error: error.to_string() },
                 })
@@ -192,8 +189,9 @@ impl TransferExecutor {
         }));
     }
 
-    fn delete_file(&self, key: &str) {
-        let (files, id) = (self.files.clone(), file_id(key));
+    fn delete_file(&self, path: String) {
+        let files = self.files.clone();
+        let id = path;
         let _ = self.wire.tasks.start_blocking(Box::new(move || {
             let _ = files.discard(&[id]);
         }));
@@ -214,18 +212,13 @@ impl EffectRunner<Transfers> for TransferExecutor {
             TransferEffect::Complete { key, upload_id } => self.complete(stamp, back, key, upload_id),
             TransferEffect::Abort { key, upload_id } => self.drop_upload(key, upload_id),
             TransferEffect::CancelStep { key } => self.steps.cancel(&key),
-            TransferEffect::DeleteFile { key } | TransferEffect::DeleteLocalCopy { key } => self.delete_file(&key),
+            TransferEffect::DeleteFile { path } => self.delete_file(path),
             TransferEffect::Reply { reply, answer } => (self.settle)(reply, answer),
             TransferEffect::Shows { key, shown } => (self.shows)(&key, shown),
             TransferEffect::Refused { key } => (self.shows)(&key, Shown::Failed { error: "refused".into() }),
             TransferEffect::ScheduleJob { epoch } => self.jobs.schedule_job(epoch),
             TransferEffect::EndJob { round_id } => self.jobs.end_job(round_id),
-            TransferEffect::Store { .. }
-            | TransferEffect::ScheduleRetry { .. }
-            | TransferEffect::DeleteOperation { .. }
-            | TransferEffect::SubmitMutation { .. }
-            | TransferEffect::DiscardMutation { .. }
-            | TransferEffect::Drained(_) => {}
+            TransferEffect::Drained(_) => {}
         }
     }
 }

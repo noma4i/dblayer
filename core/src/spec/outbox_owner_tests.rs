@@ -6,9 +6,86 @@ use std::collections::BTreeMap;
 
 use super::ref_outbox::{open_step_of, step_of, write_step_of, Ctx, Eff, Fault as RFault, In, OCtx, Obs, Out, Policy, Reason as RReason, Restored, St, Step, WCtx, WEff, WIn, WObs, WSt, Why as RWhy};
 use crate::owners::contract::{BatchId, Committed, ModelsReset, Online, RejectReason, Rejected, ReplyId, RequestId};
-use crate::owners::write::outbox::{self as o, OutboxAnswer, CommitKind, Fault, LocalWriteKind, NewOp, OnReject, OpId, Origin, Outbox, OutboxEffect, OutboxInput, OutboxState, Receipt, Stage, StoredOp, Why};
-use crate::owners::support::{new_log, take, Log, Recorder};
+use crate::owners::session::SessionCalls;
+use crate::owners::store::StoreWriter;
+use crate::owners::support::{new_log, number_after, text_after, Discard, Emitted, Log, Sink, Spy, SpyState};
+use crate::owners::write::outbox::{self as o, CommitKind, Fault, LocalWriteKind, NewOp, OnReject, OpId, Origin, Outbox, OutboxAnswer, OutboxEffect as Run, OutboxInput, OutboxPeers, OutboxState, Receipt, Stage, StoredOp, Why};
+use crate::owners::write::transfer::Transfers;
 use crate::runtime::{Address, Cause, DetScheduler, EpochStamp, Time};
+
+/// The slots of the peers and of the owner in every test: the peers first.
+const STORE_AT: usize = 0;
+const SESSION_AT: usize = 1;
+const TRANSFER_AT: usize = 2;
+const OUTBOX_AT: usize = 3;
+
+/// What the owner gave out in a step, in the terms the rows of the table use: the executor effects (`Run`) and the inputs for the Store,
+/// the Session and Transfer (`Send`), read from the typed `Debug` form the `Spy` keeps. `Schedule` is a timer of the owner.
+#[derive(Clone, Debug)]
+enum OutboxEffect {
+    Store { op_id: Option<OpId>, batch: u64, kind: CommitKind, generation: u64 },
+    Send { op_id: OpId, request_id: u64, sequence: u64 },
+    CancelRequest { op_id: OpId },
+    Reply { reply: ReplyId, answer: OutboxAnswer },
+    TransferOutcome { key: String, outcome: o::OutboxOutcome },
+    Schedule { id: u64, after_ms: u128 },
+    Drained,
+}
+
+fn kind_of(tag: &str) -> CommitKind {
+    [CommitKind::Intent, CommitKind::Land, CommitKind::Rollback, CommitKind::ErrorMark, CommitKind::ClearMark, CommitKind::LocalWrite, CommitKind::RemoveRow]
+        .into_iter()
+        .find(|kind| kind.tag() == tag)
+        .unwrap_or_else(|| panic!("a batch with the mark {tag}"))
+}
+
+fn outcome_named(text: &str) -> o::OutboxOutcome {
+    if text.contains("Confirmed") { o::OutboxOutcome::Confirmed { revision: 0 } }
+    else if text.contains("Rejected") { o::OutboxOutcome::Rejected { error: String::new() } }
+    else if text.contains("Failed") { o::OutboxOutcome::Failed { error: String::new() } }
+    else if text.contains("Discarded") { o::OutboxOutcome::Discarded }
+    else { o::OutboxOutcome::Interrupted }
+}
+
+fn lower(emitted: Emitted<Run>, state: Option<&OutboxState>) -> Option<OutboxEffect> {
+    Some(match emitted {
+        Emitted::Run(Run::Reply { reply, answer }) => OutboxEffect::Reply { reply, answer },
+        Emitted::Run(Run::CancelRequest { op_id }) => OutboxEffect::CancelRequest { op_id },
+        Emitted::Run(Run::Drained(_)) => OutboxEffect::Drained,
+        Emitted::Send { to: STORE_AT, input } => {
+            let kind = kind_of(&text_after(&input, "rows: [(\"outbox\", ")?);
+            let op_id = matches!(kind, CommitKind::Intent | CommitKind::Land | CommitKind::Rollback | CommitKind::ErrorMark | CommitKind::ClearMark).then(|| text_after(&input, "), (\"outbox\", ")?.parse::<u64>().ok()).flatten();
+            let generation = number_after(&input, "\"Moment\": ").unwrap_or(0);
+            OutboxEffect::Store { op_id, batch: number_after(&input, "id: ")?, kind, generation }
+        }
+        Emitted::Send { to: SESSION_AT, input } => {
+            let request_id = number_after(&input, "req_id: ")?;
+            let operation = state.and_then(|state| state.ops.values().find(|operation| operation.request_id == request_id));
+            OutboxEffect::Send { op_id: operation.map_or(request_id, |operation| operation.op_id), request_id, sequence: operation.map_or(0, |operation| operation.sequence) }
+        }
+        Emitted::Send { to: TRANSFER_AT, input } => OutboxEffect::TransferOutcome { key: text_after(&input, "key: ")?, outcome: outcome_named(&input) },
+        Emitted::Send { to, .. } => panic!("a send to the slot {to}"),
+        Emitted::Schedule { id, after, .. } => OutboxEffect::Schedule { id: id.0, after_ms: after.as_millis() },
+        Emitted::Cancel(_) | Emitted::Broadcast(_) => return None,
+    })
+}
+
+fn take_fx(log: &Log<Emitted<Run>>, state: Option<&OutboxState>) -> Vec<OutboxEffect> { crate::owners::support::take(log).into_iter().filter_map(|emitted| lower(emitted, state)).collect() }
+
+fn state_of(det: &DetScheduler) -> Option<&OutboxState> { det.state(Address::<Spy<Outbox>>::new(OUTBOX_AT)).map(|spy: &SpyState<Outbox>| &spy.inner) }
+
+/// The owner with its three peers: the Store, the Session and Transfer keep what they receive.
+fn world(seed: u64) -> (DetScheduler, Log<Emitted<Run>>, Address<Spy<Outbox>>) {
+    let mut det = DetScheduler::new(seed);
+    let peer = |det: &mut DetScheduler, name: &'static str| -> usize { det.add::<Sink<StoreWriter>>(name, new_log(), crate::owners::support::Silent).index() };
+    let (store, session, transfer) = (peer(&mut det, "store"), det.add::<Sink<SessionCalls>>("session", new_log(), crate::owners::support::Silent).index(), det.add::<Sink<Transfers>>("transfer", new_log(), crate::owners::support::Silent).index());
+    assert_eq!((store, session, transfer), (STORE_AT, SESSION_AT, TRANSFER_AT));
+    let peers = OutboxPeers { store: Address::new(store), session: Address::new(session), transfer: Address::new(transfer) };
+    let log = new_log();
+    let addr = det.add::<Spy<Outbox>>("outbox", SpyState::new(OutboxState::new(EPOCH, peers), &log), Discard);
+    assert_eq!(addr.index(), OUTBOX_AT);
+    (det, log, addr)
+}
 
 const EPOCH: u64 = 1;
 const SUBMIT_REPLY: ReplyId = 1;
@@ -68,14 +145,19 @@ fn model_op(row: &str, policy: Policy, transfer: bool) -> NewOp {
         action: "update".into(),
         on_reject: if policy == Policy::Keep { OnReject::Keep } else { OnReject::Rollback },
         origin: if transfer { Origin::Transfer("k".into()) } else { Origin::Api },
+        path: format!("/moments/{row}"),
+        body: format!("{{\"row\":\"{row}\"}}"),
+        intent_rows: vec![("moments".into(), format!("{row}:optimistic"))],
+        rollback_rows: vec![("moments".into(), format!("{row}:undone"))],
     }
 }
 
 /// The owner with a recorder and the book of what it sent.
 struct Twin {
     det: DetScheduler,
-    addr: Address<Outbox>,
-    log: Log<OutboxEffect>,
+    log: Log<Emitted<Run>>,
+    /// What the owner gave out when it restored the intents (read by `open_check`).
+    kept: Vec<OutboxEffect>,
     batches: BTreeMap<OpId, BatchId>,
     first_pair: BTreeMap<OpId, (RequestId, u64)>,
     revision: i64,
@@ -85,11 +167,9 @@ struct Twin {
 
 impl Twin {
     fn new() -> Self {
-        let mut det = DetScheduler::new(7);
-        let log = new_log();
-        let addr = det.add::<Outbox>("outbox", OutboxState::new(EPOCH), Recorder::<Outbox>::new(&log));
+        let (mut det, log, _) = world(7);
         det.start_epoch(EPOCH);
-        Self { det, addr, log, batches: BTreeMap::new(), first_pair: BTreeMap::new(), revision: 10, reply: 10, follower: None }
+        Self { det, log, kept: Vec::new(), batches: BTreeMap::new(), first_pair: BTreeMap::new(), revision: 10, reply: 10, follower: None }
     }
 
     fn run(&mut self) { self.det.run_until_quiet(10_000).expect("the owner is quiet"); }
@@ -105,15 +185,15 @@ impl Twin {
     }
 
     fn post(&mut self, input: OutboxInput) -> Vec<OutboxEffect> {
-        take(&self.log);
-        self.det.post(self.addr, EpochStamp::Epoch(EPOCH), input);
+        take_fx(&self.log, None);
+        self.det.post(Address::<Outbox>::new(OUTBOX_AT), EpochStamp::Epoch(EPOCH), input);
         self.run();
-        let effects = take(&self.log);
+        let effects = take_fx(&self.log, state_of(&self.det));
         self.note(&effects);
         effects
     }
 
-    fn state(&self) -> &OutboxState { self.det.state(self.addr).expect("the owner state") }
+    fn state(&self) -> &OutboxState { state_of(&self.det).expect("the owner state") }
 
     fn stage(&self, id: OpId) -> Option<St> { self.state().stage_of(id).map(stage_of) }
 
@@ -186,10 +266,10 @@ fn reach(state: St, ctx: &Ctx) -> (Twin, OpId) {
                 }
             }
             match state {
-                St::Landing => { twin.post(OutboxInput::Response { op_id: id }); }
+                St::Landing => { twin.post(OutboxInput::Response { op_id: id, rows: vec![("moments".into(), "r:server".into())] }); }
                 St::RollingBack(RWhy::Rejected) | St::Failed => { twin.post(OutboxInput::TransportError { op_id: id, temporary: false }); }
                 St::Done => {
-                    twin.post(OutboxInput::Response { op_id: id });
+                    twin.post(OutboxInput::Response { op_id: id, rows: vec![("moments".into(), "r:server".into())] });
                     twin.committed(id);
                 }
                 _ => {}
@@ -254,9 +334,9 @@ fn translate(twin: &Twin, id: OpId, effects: Vec<OutboxEffect>, scheduled: bool,
                     OutboxAnswer::Err(fault) => obs.push(Obs::Fails(fault_of(&fault))),
                 }
             }
-            OutboxEffect::ScheduleRetry { .. } => {}
+            OutboxEffect::Schedule { .. } => {}
             OutboxEffect::TransferOutcome { outcome, .. } => eff.push(Eff::TransferOutcome(out_of(&outcome))),
-            OutboxEffect::Drained(_) => eff.push(Eff::Drained),
+            OutboxEffect::Drained => eff.push(Eff::Drained),
         }
     }
     if scheduled {
@@ -291,7 +371,7 @@ fn input_of(twin: &mut Twin, id: OpId, ctx: &Ctx, input: In) -> Vec<OutboxEffect
         In::Rejected(reason) => twin.rejected(id, reason),
         In::RowFreed => {
             let blocker = 1;
-            twin.post(OutboxInput::Response { op_id: blocker });
+            twin.post(OutboxInput::Response { op_id: blocker, rows: vec![("moments".into(), "r:server".into())] });
             twin.committed(blocker)
         }
         In::Online(on) => twin.post(OutboxInput::Online(Online(on))),
@@ -299,21 +379,21 @@ fn input_of(twin: &mut Twin, id: OpId, ctx: &Ctx, input: In) -> Vec<OutboxEffect
         In::Retry => twin.post(OutboxInput::Retry { model: "Moment".into(), row_id: "r".into(), reply: 802 }),
         In::Outcome => twin.post(OutboxInput::Outcome { receipt: twin.receipt(id, epoch), reply: 803 }),
         In::ModelsReset => twin.post(OutboxInput::ModelsReset(ModelsReset { epoch: EPOCH, generation: 1, models: vec![if ctx.owns_model { "Moment".into() } else { "Chat".into() }] })),
-        In::Response => twin.post(OutboxInput::Response { op_id }),
+        In::Response => twin.post(OutboxInput::Response { op_id, rows: vec![("moments".into(), "r:server".into())] }),
         In::TransportError { temporary } => twin.post(OutboxInput::TransportError { op_id, temporary }),
         In::Dropped => twin.post(OutboxInput::Dropped { op_id }),
         In::Tick => twin.post(OutboxInput::RetryDue { op_id }),
         In::EpochEnded => {
-            take(&twin.log);
+            take_fx(&twin.log, state_of(&twin.det));
             twin.det.end_epoch(EPOCH, Cause::SessionReset);
             twin.run();
-            take(&twin.log)
+            take_fx(&twin.log, state_of(&twin.det))
         }
         In::Closing => {
-            take(&twin.log);
+            take_fx(&twin.log, state_of(&twin.det));
             twin.det.close();
             twin.run();
-            take(&twin.log)
+            take_fx(&twin.log, state_of(&twin.det))
         }
     }
 }
@@ -460,7 +540,7 @@ fn out_open_restores_failed() { open_check(Restored::ErrorMark, ready(), false);
 fn out_open_restores_transfer() {
     open_check(Restored::Transfer, ready(), false);
     let (mut twin, id) = restored(Restored::Transfer, &ready());
-    twin.post(OutboxInput::Response { op_id: id });
+    twin.post(OutboxInput::Response { op_id: id, rows: vec![("moments".into(), "r:server".into())] });
     let effects = twin.committed(id);
     assert!(effects.iter().any(|effect| matches!(effect, OutboxEffect::TransferOutcome { outcome: o::OutboxOutcome::Confirmed { .. }, .. })), "{effects:?}");
 }
@@ -482,16 +562,15 @@ fn restored(kind: Restored, ctx: &Ctx) -> (Twin, OpId) {
         error_mark: kind == Restored::ErrorMark,
         pending: (kind == Restored::Pending).then_some((41, 42)),
     };
-    twin.first_pair.insert(7, (41, 42));
-    let effects = twin.post(OutboxInput::Restored(vec![stored]));
-    twin.log.lock().unwrap().extend(effects);
+    twin.first_pair.insert(7, (41, 7));
+    twin.kept = twin.post(OutboxInput::Restored(vec![stored]));
     (twin, 7)
 }
 
 fn open_check(kind: Restored, ctx: Ctx, pair: bool) {
     let want = open_step_of(kind, &OCtx { online: ctx.online, row_free: ctx.row_free });
     let (twin, id) = restored(kind, &ctx);
-    let effects = take(&twin.log);
+    let effects = twin.kept.clone();
     let sends: Vec<_> = effects.iter().filter_map(|effect| match effect {
         OutboxEffect::Send { op_id, request_id, sequence } if *op_id == id => Some((*request_id, *sequence)),
         _ => None,
@@ -500,7 +579,7 @@ fn open_check(kind: Restored, ctx: Ctx, pair: bool) {
     let sent = want.eff.iter().any(|effect| matches!(effect, Eff::Send | Eff::SendStoredPair));
     assert_eq!(sends.len(), usize::from(sent), "{effects:?}");
     if pair {
-        assert_eq!(sends.first(), Some(&(41, 42)), "the first Send carries the stored pair");
+        assert_eq!(sends.first().map(|pair| pair.0), Some(41), "the first Send carries the stored request id");
     }
 }
 
@@ -525,8 +604,8 @@ fn write_check(state: WSt, ctx: WCtx, input: WIn) {
             if reason == RReason::StaleGeneration { twin.grow_generation(); }
             twin.post(OutboxInput::Rejected(Rejected { batch: 1, reason: reject(reason) }))
         }
-        WIn::EpochEnded => { twin.det.end_epoch(EPOCH, Cause::SessionReset); twin.run(); take(&twin.log) }
-        WIn::Closing => { twin.det.close(); twin.run(); take(&twin.log) }
+        WIn::EpochEnded => { twin.det.end_epoch(EPOCH, Cause::SessionReset); twin.run(); take_fx(&twin.log, state_of(&twin.det)) }
+        WIn::Closing => { twin.det.close(); twin.run(); take_fx(&twin.log, state_of(&twin.det)) }
         WIn::Expire => {
             if ctx.renewed {
                 twin.post(OutboxInput::LocalWrite { model: "Moment".into(), epoch: EPOCH, write: LocalWriteKind::SetEphemeral { expire_after: Some(1_000) }, row: "w".into(), reply: 51, now: Time(105) });
@@ -544,7 +623,7 @@ fn write_check(state: WSt, ctx: WCtx, input: WIn) {
             OutboxEffect::Reply { answer: OutboxAnswer::Err(fault), .. } => obs.push(WObs::Fails(fault_of(&fault))),
             OutboxEffect::Store { kind: CommitKind::LocalWrite, generation, .. } => eff.push(if generation > 0 { WEff::StoreWriteNewBasis } else { WEff::StoreWrite }),
             OutboxEffect::Store { kind: CommitKind::RemoveRow, .. } => eff.push(WEff::StoreRemoveRow),
-            OutboxEffect::Drained(_) => {}
+            OutboxEffect::Drained | OutboxEffect::Schedule { .. } => {}
             other => panic!("an effect outside the write table: {other:?}"),
         }
     }
@@ -601,7 +680,7 @@ fn replies_of(effects: &[OutboxEffect], reply: ReplyId) -> Vec<OutboxAnswer> {
 #[test]
 fn out_wait_submit() {
     let (mut twin, id) = reach(St::Submitting, &ready());
-    let ended = { take(&twin.log); twin.det.end_epoch(EPOCH, Cause::SessionReset); twin.run(); take(&twin.log) };
+    let ended = { take_fx(&twin.log, state_of(&twin.det)); twin.det.end_epoch(EPOCH, Cause::SessionReset); twin.run(); take_fx(&twin.log, state_of(&twin.det)) };
     assert_eq!(replies_of(&ended, SUBMIT_REPLY), [OutboxAnswer::Err(Fault::Interrupted)]);
     let (mut twin, id2) = reach(St::Submitting, &ready());
     let committed = twin.committed(id2);
@@ -610,10 +689,10 @@ fn out_wait_submit() {
     let rejected = twin.rejected(id3, RReason::NoSession);
     assert_eq!(replies_of(&rejected, SUBMIT_REPLY), [OutboxAnswer::Err(Fault::Rejected(RejectReason::NoSession))]);
     let (mut twin, _) = reach(St::Submitting, &ready());
-    take(&twin.log);
+    take_fx(&twin.log, state_of(&twin.det));
     twin.det.close();
     twin.run();
-    assert_eq!(replies_of(&take(&twin.log), SUBMIT_REPLY), [OutboxAnswer::Err(Fault::Interrupted)]);
+    assert_eq!(replies_of(&take_fx(&twin.log, state_of(&twin.det)), SUBMIT_REPLY), [OutboxAnswer::Err(Fault::Interrupted)]);
     let _ = id;
 }
 
@@ -646,10 +725,10 @@ fn out_wait_retry() {
     let (mut twin, _) = reach(St::Submitting, &ready());
     let pending = twin.post(OutboxInput::Retry { model: "Moment".into(), row_id: "r".into(), reply: 64 });
     assert!(replies_of(&pending, 64).is_empty());
-    take(&twin.log);
+    take_fx(&twin.log, state_of(&twin.det));
     twin.det.end_epoch(EPOCH, Cause::SessionReset);
     twin.run();
-    assert_eq!(replies_of(&take(&twin.log), 64), [OutboxAnswer::Err(Fault::Interrupted)]);
+    assert_eq!(replies_of(&take_fx(&twin.log, state_of(&twin.det)), 64), [OutboxAnswer::Err(Fault::Interrupted)]);
 }
 
 #[test]
@@ -667,10 +746,10 @@ fn out_wait_discard() {
     assert_eq!(replies_of(&none, 73), [OutboxAnswer::Err(Fault::NotFound)]);
     let (mut twin, _) = reach(St::Queued, &offline());
     twin.post(OutboxInput::Discard { model: "Moment".into(), row_id: "r".into(), reply: 74 });
-    take(&twin.log);
+    take_fx(&twin.log, state_of(&twin.det));
     twin.det.end_epoch(EPOCH, Cause::SessionReset);
     twin.run();
-    assert_eq!(replies_of(&take(&twin.log), 74), [OutboxAnswer::Err(Fault::Interrupted)]);
+    assert_eq!(replies_of(&take_fx(&twin.log, state_of(&twin.det)), 74), [OutboxAnswer::Err(Fault::Interrupted)]);
 }
 
 #[test]
@@ -682,19 +761,19 @@ fn out_wait_local_write() {
     assert_eq!(replies_of(&committed, 81), [OutboxAnswer::Ok]);
     let mut twin = Twin::new();
     twin.post(OutboxInput::LocalWrite { model: "Moment".into(), epoch: EPOCH, write: LocalWriteKind::Attach, row: "w".into(), reply: 82, now: Time(0) });
-    take(&twin.log);
+    take_fx(&twin.log, state_of(&twin.det));
     twin.det.close();
     twin.run();
-    assert_eq!(replies_of(&take(&twin.log), 82), [OutboxAnswer::Err(Fault::Interrupted)]);
+    assert_eq!(replies_of(&take_fx(&twin.log, state_of(&twin.det)), 82), [OutboxAnswer::Err(Fault::Interrupted)]);
 }
 
 #[test]
 fn out_done_closing_without_operations() {
     let mut twin = Twin::new();
-    take(&twin.log);
+    take_fx(&twin.log, state_of(&twin.det));
     twin.det.close();
     twin.run();
-    assert_eq!(take(&twin.log).iter().filter(|effect| matches!(effect, OutboxEffect::Drained(_))).count(), 1);
+    assert_eq!(take_fx(&twin.log, state_of(&twin.det)).iter().filter(|effect| matches!(effect, OutboxEffect::Drained)).count(), 1);
 }
 
 // Properties: the explorer walks the orders of the inputs of three sources.
@@ -703,13 +782,12 @@ use crate::owners::support::{Source, SourceInput, SourceState};
 use crate::runtime::{explore, Limits};
 use std::cell::RefCell;
 
-thread_local! { static LOG: RefCell<Option<Log<OutboxEffect>>> = const { RefCell::new(None) }; }
+thread_local! { static LOG: RefCell<Option<Log<Emitted<Run>>>> = const { RefCell::new(None) }; }
 
 fn scripted(sources: Vec<Vec<OutboxInput>>) -> DetScheduler {
-    let mut det = DetScheduler::new(3);
-    let log = new_log();
+    let (mut det, log, _) = world(3);
     LOG.with(|cell| *cell.borrow_mut() = Some(log.clone()));
-    let addr = det.add::<Outbox>("outbox", OutboxState::new(EPOCH), Recorder::<Outbox>::new(&log));
+    let addr = Address::<Outbox>::new(OUTBOX_AT);
     let mut feeders = Vec::new();
     for script in sources {
         feeders.push(det.add::<Source<Outbox>>("source", SourceState { to: addr, script }, crate::owners::support::Silent));
@@ -727,7 +805,7 @@ fn api_script(rows: &[&str]) -> Vec<OutboxInput> {
 
 fn net_script() -> Vec<OutboxInput> {
     vec![
-        OutboxInput::Response { op_id: 1 },
+        OutboxInput::Response { op_id: 1, rows: vec![("moments".into(), "r:server".into())] },
         OutboxInput::TransportError { op_id: 2, temporary: false },
         OutboxInput::Dropped { op_id: 2 },
         OutboxInput::Online(Online(false)),
@@ -739,7 +817,7 @@ fn store_script() -> Vec<OutboxInput> {
     (1..=4).map(|batch| OutboxInput::Committed(Committed { batch, revision: 10 + batch as i64, tables: vec!["moments".into()], models: vec![] })).collect()
 }
 
-fn effects_now() -> Vec<OutboxEffect> { LOG.with(|cell| cell.borrow().as_ref().map(|log| crate::owners::support::snapshot(log)).unwrap_or_default()) }
+fn effects_now() -> Vec<OutboxEffect> { LOG.with(|cell| cell.borrow().as_ref().map(|log| crate::owners::support::snapshot(log).into_iter().filter_map(|emitted| lower(emitted, None)).collect()).unwrap_or_default()) }
 
 fn walk(sources: impl Fn() -> Vec<Vec<OutboxInput>>, check: impl FnMut(&DetScheduler) -> Result<(), String>) {
     let report = explore(|| scripted(sources()), Limits { depth: 6, max_traces: 4_000 }, check);
@@ -762,11 +840,11 @@ fn out_prop_outcome_once() {
 fn out_prop_no_send_after_end() {
     let mut det = scripted(vec![api_script(&["r", "q"]), store_script()]);
     det.run_until_quiet(10_000).unwrap();
-    take(&LOG.with(|cell| cell.borrow().clone().unwrap()));
+    crate::owners::support::take(&LOG.with(|cell| cell.borrow().clone().unwrap()));
     det.end_epoch(EPOCH, Cause::SessionReset);
     det.run_until_quiet(10_000).unwrap();
-    det.post(Address::<Outbox>::new(0), EpochStamp::Epoch(EPOCH), OutboxInput::Online(Online(true)));
-    det.post(Address::<Outbox>::new(0), EpochStamp::Epoch(EPOCH), OutboxInput::RetryDue { op_id: 1 });
+    det.post(Address::<Outbox>::new(OUTBOX_AT), EpochStamp::Epoch(EPOCH), OutboxInput::Online(Online(true)));
+    det.post(Address::<Outbox>::new(OUTBOX_AT), EpochStamp::Epoch(EPOCH), OutboxInput::RetryDue { op_id: 1 });
     det.run_until_quiet(10_000).unwrap();
     let after = effects_now();
     assert!(after.iter().all(|effect| !matches!(effect, OutboxEffect::Send { .. } | OutboxEffect::Store { .. })), "{after:?}");
@@ -775,7 +853,7 @@ fn out_prop_no_send_after_end() {
 #[test]
 fn out_prop_row_order() {
     walk(|| vec![api_script(&["r", "r", "r"]), net_script(), store_script()], |det| {
-        let state = det.state(Address::<Outbox>::new(0)).ok_or("no state")?;
+        let state = state_of(det).ok_or("no state")?;
         let sending: Vec<_> = state.ops.values().filter(|op| op.op.row_id == "r" && matches!(op.stage, Stage::Sending)).collect();
         if sending.len() > 1 { return Err("two operations of one row in the network".into()); }
         let busy: Vec<OpId> = state.ops.values().filter(|op| matches!(op.stage, Stage::Sending | Stage::Landing | Stage::RollingBack(_) | Stage::Failed | Stage::Submitting)).map(|op| op.op_id).collect();
@@ -789,7 +867,7 @@ fn out_prop_row_order() {
 #[test]
 fn out_prop_intent_kept() {
     walk(|| vec![api_script(&["r", "q"]), net_script(), store_script()], |det| {
-        let state = det.state(Address::<Outbox>::new(0)).ok_or("no state")?;
+        let state = state_of(det).ok_or("no state")?;
         let done_without_outcome = state.ops.values().find(|op| op.stage == Stage::Done && op.outcome.is_none());
         match done_without_outcome { Some(op) => Err(format!("operation {} is Done without an outcome", op.op_id)), None => Ok(()) }
     });
@@ -799,9 +877,9 @@ fn out_prop_intent_kept() {
 fn out_prop_idle() {
     let mut det = scripted(vec![api_script(&["r"]), store_script()]);
     det.run_until_quiet(10_000).unwrap();
-    det.post(Address::<Outbox>::new(0), EpochStamp::Epoch(EPOCH), OutboxInput::Response { op_id: 1 });
+    det.post(Address::<Outbox>::new(OUTBOX_AT), EpochStamp::Epoch(EPOCH), OutboxInput::Response { op_id: 1, rows: vec![("moments".into(), "r:server".into())] });
     det.run_until_quiet(10_000).unwrap();
-    det.post(Address::<Outbox>::new(0), EpochStamp::Epoch(EPOCH), OutboxInput::Committed(Committed { batch: 2, revision: 20, tables: vec![], models: vec![] }));
+    det.post(Address::<Outbox>::new(OUTBOX_AT), EpochStamp::Epoch(EPOCH), OutboxInput::Committed(Committed { batch: 2, revision: 20, tables: vec![], models: vec![] }));
     det.run_until_quiet(10_000).unwrap();
     let before = det.trace().len();
     det.tick(Time(u64::MAX / 2));
