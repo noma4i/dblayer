@@ -20,6 +20,8 @@ pub mod files;
 pub mod sync;
 pub mod upload;
 pub mod ffi;
+#[cfg(test)]
+mod check;
 mod blocking;
 mod lifecycle;
 mod task;

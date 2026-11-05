@@ -21,6 +21,7 @@ steps=(
   "cheap|build-modes|120|*|bash scripts/check_build_modes.sh"
   "cheap|release-modes|120|*|bash scripts/check_release_modes.sh"
   "cheap|docs|120|*|bash scripts/check_docs.sh"
+  "cheap|spec|120|*|bash scripts/check_spec.sh && bash scripts/check_spec.sh selftest"
   "cheap|invariants|120|*|bash scripts/check_invariants.sh"
   "cheap|invariants-selftest|120|*|bash scripts/check_invariants_selftest.sh"
   "cheap|waits|120|*|bash scripts/check_waits.sh"
