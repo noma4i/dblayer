@@ -178,7 +178,7 @@ fn out_queued_blocked() {
 fn out_sending_response_temporary() {
     let mut twin = Twin::new();
     let id = sending(&mut twin, Policy::Rollback, false);
-    let effects = twin.post(OutboxInput::Response { op_id: id, rows: Vec::new(), swap: None, errors: Some(true) });
+    let effects = twin.post(OutboxInput::Response { op_id: id, rows: Vec::new(), swap: None, stale: Vec::new(), errors: Some(true) });
     assert_eq!((twin.stage(id), timers(&effects), sends(&effects)), (Some(St::Sending), 1, 0), "as a temporary TransportError: the backoff timer");
 }
 
@@ -186,11 +186,11 @@ fn out_sending_response_temporary() {
 fn out_sending_response_errors() {
     let mut twin = Twin::new();
     let id = sending(&mut twin, Policy::Rollback, false);
-    let effects = twin.post(OutboxInput::Response { op_id: id, rows: Vec::new(), swap: None, errors: Some(false) });
+    let effects = twin.post(OutboxInput::Response { op_id: id, rows: Vec::new(), swap: None, stale: Vec::new(), errors: Some(false) });
     assert_eq!((twin.stage(id), kinds(&effects)), (Some(St::RollingBack(RWhy::Rejected)), vec![CommitKind::Rollback]), "as a permanent TransportError by on_failure");
     let mut keeping = Twin::new();
     let kept = sending(&mut keeping, Policy::Keep, false);
-    let effects = keeping.post(OutboxInput::Response { op_id: kept, rows: Vec::new(), swap: None, errors: Some(false) });
+    let effects = keeping.post(OutboxInput::Response { op_id: kept, rows: Vec::new(), swap: None, stale: Vec::new(), errors: Some(false) });
     assert_eq!((keeping.stage(kept), kinds(&effects)), (Some(St::MarkingFailed), vec![CommitKind::ErrorMark]));
 }
 
@@ -292,7 +292,7 @@ fn out_persisting_attempt_other() {
     unchanged_by(&mut twin, id, St::PersistingAttempt, vec![
         OutboxInput::Online(Online(true)),
         reset,
-        OutboxInput::Response { op_id: id, rows: Vec::new(), swap: None, errors: None },
+        OutboxInput::Response { op_id: id, rows: Vec::new(), swap: None, stale: Vec::new(), errors: None },
         OutboxInput::TransportError { op_id: id, temporary: true },
         OutboxInput::Dropped { op_id: id },
         foreign_cycle,
@@ -306,7 +306,7 @@ fn out_landing_committed_swap() {
     let follower = submit_op(&mut twin, NewOp { body: "{\"row\":\"r\"}".into(), ..model_op("r", Policy::Rollback, false) }, 23);
     twin.committed(follower);
     twin.waiter(created);
-    twin.post(OutboxInput::Response { op_id: created, rows: server_rows(), swap: Some(("r".into(), "R".into())), errors: None });
+    twin.post(OutboxInput::Response { op_id: created, rows: server_rows(), swap: Some(("r".into(), "R".into())), stale: Vec::new(), errors: None });
     assert!(twin.store_text.contains("Swap") && twin.store_text.contains("\"R\""), "the landing batch swaps the row: {}", twin.store_text);
     let effects = twin.committed(created);
     assert!(answers(&effects, WAITER).iter().any(|answer| matches!(answer, OutboxAnswer::Outcome(OutboxOutcome::Confirmed { .. }))), "{effects:?}");
@@ -315,10 +315,21 @@ fn out_landing_committed_swap() {
 }
 
 #[test]
+fn out_landing_committed_stale() {
+    let mut twin = Twin::new();
+    let id = sending(&mut twin, Policy::Rollback, false);
+    twin.waiter(id);
+    twin.post(OutboxInput::Response { op_id: id, rows: server_rows(), swap: None, stale: vec![("Moment".into(), "history".into())], errors: None });
+    assert!(twin.store_text.contains("StaleFamilies") && twin.store_text.contains("history"), "the landing batch marks the windows stale: {}", twin.store_text);
+    let effects = twin.committed(id);
+    assert!(answers(&effects, WAITER).iter().any(|answer| matches!(answer, OutboxAnswer::Outcome(OutboxOutcome::Confirmed { .. }))), "{effects:?}");
+}
+
+#[test]
 fn out_landing_invalid() {
     let mut twin = Twin::new();
     let id = sending(&mut twin, Policy::Rollback, false);
-    twin.post(OutboxInput::Response { op_id: id, rows: server_rows(), swap: None, errors: None });
+    twin.post(OutboxInput::Response { op_id: id, rows: server_rows(), swap: None, stale: Vec::new(), errors: None });
     let effects = refuse(&mut twin, id, RejectReason::Invalid);
     assert_eq!((twin.stage(id), kinds(&effects)), (Some(St::MarkingFailed), vec![CommitKind::ErrorMark]));
 }
@@ -402,7 +413,7 @@ fn out_marking_failed_other() {
     unchanged_by(&mut twin, id, St::MarkingFailed, vec![
         OutboxInput::Online(Online(true)),
         reset,
-        OutboxInput::Response { op_id: id, rows: Vec::new(), swap: None, errors: None },
+        OutboxInput::Response { op_id: id, rows: Vec::new(), swap: None, stale: Vec::new(), errors: None },
         OutboxInput::TransportError { op_id: id, temporary: true },
         OutboxInput::Dropped { op_id: id },
     ]);
@@ -491,7 +502,7 @@ fn out_marking_retry_other() {
     unchanged_by(&mut twin, id, St::MarkingRetry, vec![
         OutboxInput::Online(Online(true)),
         reset,
-        OutboxInput::Response { op_id: id, rows: Vec::new(), swap: None, errors: None },
+        OutboxInput::Response { op_id: id, rows: Vec::new(), swap: None, stale: Vec::new(), errors: None },
         OutboxInput::TransportError { op_id: id, temporary: true },
         OutboxInput::Dropped { op_id: id },
         OutboxInput::RetryDue { op_id: id, cycle_id: 2 },

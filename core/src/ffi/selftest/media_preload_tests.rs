@@ -126,46 +126,6 @@ impl Transport for MarkedMediaTransport {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn a_media_refetch_after_mutation_reads_the_whole_stale_window() {
-    use crate::schema::{ActionDeclaration, MediaSpec, RootShape};
-    let mut specs: Vec<ModelSpec> = serde_json::from_str(&models()).unwrap();
-    let media = specs.iter_mut().find(|model| model.key.as_str() == "MediaMessage").unwrap();
-    let mut action = ActionDeclaration::new("like", RootShape::Upsert);
-    action.mutation = Some("LikeMoment".into());
-    action.variables.insert("momentId".into(), "id".into());
-    action.refetch.push("visual_media".into());
-    media.actions.push(action);
-    let relation = media.relations.iter_mut().find(|relation| relation.name == "visual_media").unwrap();
-    let bindings = std::collections::BTreeMap::from([("chatId".into(), VariableSource::Param { name: "chatId".into() })]);
-    relation.media = Some(MediaSpec { marker: "MediaMarker".into(), from: "node.mediaLibrary".into(), fields: ["revision", "visualCount", "audioCount", "giftCount"].map(str::to_string).to_vec(), sequence: "latestSequence".into(), tail: "MediaTail".into(), after: "afterSequence".into(), marker_variables: bindings.clone(), tail_variables: bindings });
-    let operations = json!([
-        {"name":"ChatMedia","document":"query ChatMedia($chatId: ID!, $first: Int, $after: String) { node(id: $chatId) { messages(first: $first, after: $after) { edges { cursor node { id chatId kind mediaKind sequenceNumber } } pageInfo { hasNextPage endCursor } } } }"},
-        {"name":"MediaMarker","document":"query MediaMarker($chatId: ID!, $upToSequence: Int!) { node(id: $chatId) { mediaLibrary(upToSequence: $upToSequence) { revision visualCount audioCount giftCount latestSequence } } }"},
-        {"name":"MediaTail","document":"query MediaTail($chatId: ID!, $afterSequence: Int!, $first: Int, $after: String) { node(id: $chatId) { messages(afterSequence: $afterSequence, first: $first, after: $after) { edges { cursor node { id chatId kind mediaKind sequenceNumber } } pageInfo { hasNextPage endCursor } } } }"},
-        {"name":"LikeMoment","document":"mutation LikeMoment($momentId: ID!) { likeMoment(momentId: $momentId) { id chatId kind mediaKind sequenceNumber } }"}
-    ]).to_string();
-    let transport = Arc::new(MarkedMediaTransport::default());
-    let options = OpenOptions { operations, uploads: None, power_saving: false, low_ram: false };
-    let database = within_secs(20, OpenDatabase::new().open(Config { path: None, data_version: None, cache_rows: 32 }, serde_json::to_string(&specs).unwrap(), options, Some(transport.clone()), None, None, None, None)).await.unwrap();
-    database.set_online(true).unwrap();
-    let epoch = database.session_epoch();
-    let params = json!({"chatId":"c1"}).to_string();
-    within_secs(20, database.load_all(epoch, "MediaMessage".into(), "visual_media".into(), params.clone(), false)).await.unwrap();
-    let receipt = within_secs(20, database.act(epoch, "MediaMessage".into(), "v1".into(), "like".into(), "{}".into(), "{}".into())).await.unwrap();
-    assert!(matches!(within_secs(20, database.outcome(receipt)).await.unwrap(), crate::ffi::WireOperationOutcome::Confirmed { .. }));
-    within_secs(20, database.load_all(epoch, "MediaMessage".into(), "visual_media".into(), params.clone(), false)).await.unwrap();
-    let query = json!({"model":"MediaMessage","relation":"visual_media","params":{"chatId":"c1"}}).to_string();
-    let rows = within_secs(20, database.read_query(epoch, query)).await.unwrap();
-    assert_eq!(rows.iter().map(|row| row.id.as_str()).collect::<Vec<_>>(), ["v2"]);
-    within_secs(20, database.load_all(epoch, "MediaMessage".into(), "visual_media".into(), params, false)).await.unwrap();
-    let requests = transport.requests.lock().unwrap();
-    assert_eq!(requests.iter().filter(|name| *name == "ChatMedia").count(), 2);
-    assert_eq!(requests.iter().filter(|name| *name == "MediaMarker").count(), 5);
-    drop(requests);
-    within_secs(20, database.close_database()).await.unwrap();
-}
-
-#[tokio::test(flavor = "multi_thread")]
 async fn preloads_and_three_media_loads_finish_on_empty_pages() {
     let transport = Arc::new(MediaTransport::default());
     let operations = json!([

@@ -78,6 +78,10 @@ impl Db {
                         None => OperationTransition::Retry { seq },
                     });
                 }
+                StoreOp::StaleFamilies { families } => {
+                    let since = self.shared.store.max_window_sequence()? + 1;
+                    envelope.window_debts.extend(families.iter().map(|(model, relation)| crate::commit::WindowDebt { model: model.clone(), relation: relation.clone(), since }));
+                }
                 StoreOp::Swap { model, temp, real } => swaps.push((model.as_str(), row_id(temp)?, row_id(real)?)),
                 StoreOp::Upload { row, kind } => self.write_upload_row(row, *kind)?,
                 StoreOp::RemoveUpload { key } => self.remove_upload_row(key)?,
@@ -85,7 +89,11 @@ impl Db {
                 StoreOp::Intent { op_id, model, row_id: id, action, payload, effects } => return self.write_intent(*op_id, (model, id, action), payload, effects),
                 StoreOp::Window { key, model, page, replace_all, cursor, roots, related, total, base_revision } => {
                     let key = crate::owners::read::windows::WindowKey { model: model.clone(), name: key.clone() };
-                    return self.land_window_page(&super::land_window::WindowPage { key: &key, page: *page, replace_all: *replace_all, cursor: cursor.as_deref(), roots, related, total: *total, base_revision: *base_revision });
+                    self.land_window_page(&super::land_window::WindowPage { key: &key, page: *page, replace_all: *replace_all, cursor: cursor.as_deref(), roots, related, total: *total, base_revision: *base_revision })?;
+                    for landed in roots.iter().filter_map(|row| row_id(&row.row_id).ok()) {
+                        let _ = self.find(model, &landed);
+                    }
+                    return Ok(());
                 }
                 StoreOp::Pending { .. } | StoreOp::RemovePending | StoreOp::EraseSession | StoreOp::Answer { .. } | StoreOp::RemoveAnswer { .. } | StoreOp::Session { .. } | StoreOp::Attempt { .. } => {}
             }
@@ -93,7 +101,7 @@ impl Db {
         for seq in rolled_back {
             self.roll_back_gated(&Authority::Owner, seq, generation, None)?;
         }
-        if envelope.entity_ops.is_empty() && envelope.operation_transitions.is_empty() && swaps.is_empty() {
+        if envelope.entity_ops.is_empty() && envelope.operation_transitions.is_empty() && envelope.window_debts.is_empty() && swaps.is_empty() {
             return Ok(());
         }
         self.commit_following(&Authority::Owner, generation, |reader| {

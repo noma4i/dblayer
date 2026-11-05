@@ -14,7 +14,7 @@ use crate::runtime::{Effect, Effects, Epoch, Outbound};
 
 
 impl OutboxState {
-    pub(super) fn on_response(&mut self, op_id: OpId, rows: Vec<(String, Vec<RowValue>)>, swap: Option<(String, String)>, errors: Option<bool>, fx: &mut Effects<Outbox>) {
+    pub(super) fn on_response(&mut self, op_id: OpId, rows: Vec<(String, Vec<RowValue>)>, swap: Option<(String, String)>, stale: Vec<(String, String)>, errors: Option<bool>, fx: &mut Effects<Outbox>) {
         if self.stage_of(op_id) != Some(Stage::Sending) {
             return;
         }
@@ -26,6 +26,7 @@ impl OutboxState {
             operation.landed = swap.as_ref().map(|(_, real)| real.clone()).or_else(|| rows.iter().find(|(model, _)| *model == operation.op.model).and_then(|(_, rows)| rows.last()).map(|row| row.row_id.clone()));
             operation.landing = rows;
             operation.swap = swap;
+            operation.stale = stale;
         }
         self.store(op_id, CommitKind::Land, fx);
     }

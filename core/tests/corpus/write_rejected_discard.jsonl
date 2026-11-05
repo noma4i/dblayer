@@ -1,8 +1,0 @@
-{"trace":"write_rejected_discard"}
-{"in":"open","out":[{"o":"opened"}]}
-{"in":"set_online","args":{"online":true},"out":[{"o":"online","v":true}]}
-{"in":"create","args":{"as":"r1","text":"a"},"out":[{"o":"receipt","v":{"op":"create","row":"r1"}},{"o":"request","v":{"id":"r1","kind":"mutation","purpose":"standard"}}]}
-{"in":"outcome","args":{"receipt":"r1"},"out":[]}
-{"in":"error","args":{"id":"r1","kind":"permanent"},"out":[{"o":"outcome","v":{"receipt":"r1","result":"rejected"}}]}
-{"in":"has","args":{"row":"r1"},"out":[{"o":"row","v":{"present":false,"row":"r1"}}]}
-{"in":"discard","args":{"row":"r1"},"out":[{"o":"discarded","v":{"row":"r1"}}]}

@@ -14,6 +14,8 @@ pub struct OutboxExecutor {
     pub drained: Arc<dyn Fn(Drained) + Send + Sync>,
     /// Copies a file into the directory of the files; `None` fails every copy.
     pub copy: Option<Arc<dyn Fn(&str) -> bool + Send + Sync>>,
+    /// Marks the windows of the (model, relation) pairs stale in memory.
+    pub stale: Option<Arc<dyn Fn(Vec<(String, String)>, i64) + Send + Sync>>,
     /// Reads the answer of an operation; `None` refuses every answer. It runs on a thread of the executor, not on the actor.
     pub decode: Option<(tokio::runtime::Handle, Arc<dyn Fn(&DecodeJob) -> Decoded + Send + Sync>)>,
 }
@@ -23,6 +25,9 @@ impl EffectRunner<Outbox> for OutboxExecutor {
         match effect {
             OutboxEffect::Reply { reply, answer } => (self.settle)(reply, answer),
             OutboxEffect::Drained(drained) => (self.drained)(drained),
+            OutboxEffect::Stale { families, revision } => {
+                if let Some(stale) = &self.stale { stale(families, revision); }
+            }
             OutboxEffect::Copy { id, source } => {
                 let copied = self.copy.as_ref().is_some_and(|copy| copy(&source));
                 back.reply(stamp, if copied { OutboxInput::CopyDone { id } } else { OutboxInput::CopyFailed { id } });
@@ -34,7 +39,7 @@ impl EffectRunner<Outbox> for OutboxExecutor {
                 let back = back.clone();
                 drop(handle.spawn_blocking(move || {
                     let input = match decode(&job) {
-                        Decoded::Land { rows, swap } => OutboxInput::Response { op_id: job.op_id, rows, swap, errors: None },
+                        Decoded::Land { rows, swap, stale } => OutboxInput::Response { op_id: job.op_id, rows, swap, stale, errors: None },
                         Decoded::Refused { temporary, detail } => OutboxInput::Refused { op_id: job.op_id, temporary, detail },
                     };
                     back.reply(stamp, input);

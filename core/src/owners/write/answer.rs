@@ -26,7 +26,7 @@ pub struct DecodeJob {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Decoded {
     /// The rows of the answer by model and the pair of a swap.
-    Land { rows: Vec<(String, Vec<RowValue>)>, swap: Option<(String, String)> },
+    Land { rows: Vec<(String, Vec<RowValue>)>, swap: Option<(String, String)>, stale: Vec<(String, String)> },
     /// The server refused or the answer cannot be read. A temporary refusal is sent again.
     Refused { temporary: bool, detail: String },
 }
@@ -43,8 +43,9 @@ pub fn decode_answer(db: &Db, root_of: &dyn Fn(&str) -> Option<String>, job: &De
     let data = answer.data.unwrap_or(Value::Null);
     let Ok(spec) = db.spec(&job.model) else { return refused(format!("unknown model {}", job.model)) };
     let declared = spec.actions.iter().find(|declared| declared.name == job.action);
+    let stale: Vec<(String, String)> = declared.iter().flat_map(|declared| &declared.refetch).map(|name| name.split_once('.').map_or_else(|| (job.model.clone(), name.clone()), |(model, relation)| (model.to_string(), relation.to_string()))).collect();
     if job.action == "destroy" || declared.is_some_and(|declared| declared.ignore_response) {
-        return Decoded::Land { rows: Vec::new(), swap: None };
+        return Decoded::Land { rows: Vec::new(), swap: None, stale };
     }
     let default_root = declared.and_then(|declared| declared.mutation.as_deref()).and_then(root_of);
     let Some(root) = declared.and_then(|declared| declared.root.clone()).or(default_root) else { return refused(format!("{}.{} has no answer root", job.model, job.action)) };
@@ -87,5 +88,5 @@ pub fn decode_answer(db: &Db, root_of: &dyn Fn(&str) -> Option<String>, job: &De
         let Some(id) = row.get("id").and_then(read_id) else { continue };
         by_model.entry(model).or_default().push(RowValue { row_id: id.to_string(), values: Value::Object(row.clone()).to_string() });
     }
-    Decoded::Land { rows: by_model.into_iter().collect(), swap }
+    Decoded::Land { rows: by_model.into_iter().collect(), swap, stale }
 }

@@ -438,6 +438,15 @@ impl Life {
                 settle: Arc::new(move |reply, answer| { settle_wiring.outcomes.settle(crate::runtime::OutcomeId::from_raw(reply), LifeReply::Outbox(answer)); }),
                 drained: Arc::new(move |drained| drained_wiring.to_lifecycle(LifecycleInput::Drained(drained))),
                 copy: None,
+                stale: Some({
+                    let stale_wiring = wiring.clone();
+                    Arc::new(move |families: Vec<(String, String)>, revision: i64| {
+                        stale_wiring.to_windows(super::read::windows::WindowsInput::StoreCommitted { models: Vec::new(), revision });
+                        for (model, relation) in families {
+                            stale_wiring.to_windows(super::read::windows::WindowsInput::Stale { model, keys: super::read::windows::StaleKeys::Relations(std::collections::BTreeSet::from([relation])) });
+                        }
+                    })
+                }),
                 decode: ports.read_operations.clone().map(|operations| {
                     let db = ports.db.clone();
                     let decode: Arc<dyn Fn(&super::write::answer::DecodeJob) -> super::write::answer::Decoded + Send + Sync> = Arc::new(move |job| super::write::answer::decode_answer(&db, &|name| operations.get(name).map(|operation| operation.root_path.clone()), job));
@@ -494,6 +503,7 @@ impl Life {
                 settle: Arc::new(move |reply, answer| { settle_wiring.outcomes.settle(crate::runtime::OutcomeId::from_raw(reply), LifeReply::Outbox(answer)); }),
                 drained: Arc::new(move |drained| drained_wiring.to_lifecycle(LifecycleInput::Drained(drained))),
                 copy: None,
+                stale: None,
                 decode: None,
             };
             builder.add::<Outbox>("local_writes", OutboxState::local_writes(0, store), executor)

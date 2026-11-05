@@ -1,7 +1,0 @@
-{"trace":"upload_cancel"}
-{"in":"open","out":[{"o":"opened"}]}
-{"in":"set_online","args":{"online":true},"out":[{"o":"online","v":true}]}
-{"in":"create","args":{"as":"r1","text":"a"},"out":[{"o":"receipt","v":{"op":"create","row":"r1"}},{"o":"request","v":{"id":"r1","kind":"mutation","purpose":"standard"}}]}
-{"in":"answer","args":{"id":"r1","json":{"data":{"createMoment":{"__typename":"Moment","createdAt":"2026-10-08T00:00:00.000Z","id":"m1","likedByMe":false,"media":{},"text":"a","uuid":"um1"}}}},"out":[]}
-{"in":"upload","args":{"action":"upload_clip","row":"r1"},"out":[{"o":"error","v":{"kind":"sync"}}]}
-{"in":"cancel_upload","args":{"action":"upload_clip","row":"r1"},"out":[{"o":"cancelled","v":{"row":"r1","value":false}}]}

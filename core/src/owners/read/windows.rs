@@ -135,16 +135,27 @@ pub enum WindowsEffect {
 pub enum StaleKeys {
     All,
     Set(BTreeSet<WindowKey>),
+    /// Every window of the model whose relation is named, whatever its params.
+    Relations(BTreeSet<String>),
 }
 
 impl StaleKeys {
     pub fn none() -> Self { Self::Set(BTreeSet::new()) }
 
-    pub fn is_empty(&self) -> bool { matches!(self, Self::Set(set) if set.is_empty()) }
+    pub fn is_empty(&self) -> bool { matches!(self, Self::Set(set) if set.is_empty()) || matches!(self, Self::Relations(set) if set.is_empty()) }
+
+    fn names(&self, key: &WindowKey) -> bool {
+        match self {
+            Self::All => true,
+            Self::Set(set) => set.contains(key),
+            Self::Relations(relations) => matches!(key.kind(), WindowKind::Relation { relation, .. } if relations.contains(&relation)),
+        }
+    }
 
     pub fn union(self, other: Self) -> Self {
         match (self, other) {
             (Self::Set(mut left), Self::Set(right)) => { left.extend(right); Self::Set(left) }
+            (Self::Relations(mut left), Self::Relations(right)) => { left.extend(right); Self::Relations(left) }
             _ => Self::All,
         }
     }
@@ -187,6 +198,8 @@ enum Ev {
     InterestPassive { id: InterestId },
     InterestMinus { id: InterestId },
     Load { id: InterestId, goal: Goal, force: bool, store_revision: i64 },
+    /// The Store published this revision: a request issued from now on is based on it.
+    StoreSeen { revision: i64 },
     Response { request: RequestId, attempt: u32, page: AnswerPage },
     /// `Failure` and `Dropped`: the cells are the same, a dropped request is a temporary network error.
     Failure { request: RequestId, attempt: u32, error: RequestError },
@@ -288,6 +301,7 @@ impl Facts {
                 }
             }
             Ev::Load { store_revision, .. } => self.store_seen = self.store_seen.max(*store_revision),
+            Ev::StoreSeen { revision } => self.store_seen = self.store_seen.max(*revision),
             _ => {}
         }
     }
@@ -921,7 +935,7 @@ impl StateOwner for Windows {
             WindowsInput::Committed(committed) => Self::by_request(state, committed.batch, Ev::Committed { request: committed.batch, revision: committed.revision }, &mut out),
             WindowsInput::Rejected(rejected) => Self::by_request(state, rejected.batch, Ev::Rejected { request: rejected.batch, reason: rejected.reason }, &mut out),
             WindowsInput::Stale { model, keys } => {
-                let named: Vec<WindowKey> = state.windows.keys().filter(|key| key.model == model && match &keys { StaleKeys::All => true, StaleKeys::Set(set) => set.contains(key) }).cloned().collect();
+                let named: Vec<WindowKey> = state.windows.keys().filter(|key| key.model == model && keys.names(key)).cloned().collect();
                 for key in named {
                     Self::on(state, &key, Ev::Stale, &mut out);
                 }
@@ -935,6 +949,10 @@ impl StateOwner for Windows {
                 }
             }
             WindowsInput::StoreCommitted { models, revision } => {
+                let keys: Vec<WindowKey> = state.windows.keys().cloned().collect();
+                for key in keys {
+                    Self::on(state, &key, Ev::StoreSeen { revision }, &mut out);
+                }
                 let sources: Vec<WindowKey> = state.sources.iter().filter(|key| models.contains(&key.model) && state.windows.contains_key(*key)).cloned().collect();
                 for key in sources {
                     Self::on(state, &key, Ev::SourceChanged { revision }, &mut out);

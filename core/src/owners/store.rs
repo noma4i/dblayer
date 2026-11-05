@@ -134,6 +134,8 @@ pub enum StoreOp {
     RollBack { op_id: u64 },
     /// The operation leaves the queue (its answer landed or it ended).
     RemoveIntent { op_id: u64 },
+    /// The answer of an action landed: the stored windows of these (model, relation) pairs are stale, whoever reads them.
+    StaleFamilies { families: Vec<(String, String)> },
     /// Set or clear the error shown on the row of the operation (`on_failure: keep`).
     MarkError { op_id: u64, error: Option<String> },
     /// Rows of the server answer of `model`.

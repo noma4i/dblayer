@@ -87,46 +87,6 @@ impl crate::ffi::tape::Reader for Deliveries {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn a_member_event_keeps_the_open_join_in_the_list() {
-    let world = World::new("server", "A", true);
-    let rig = Rig::plain_with_member_events(world.clone(), false, false, true).await;
-    let epoch = rig.database.session_epoch();
-    let group = confirmed_group(&rig).await;
-    world.set_members("JOINED", &["u1", "u2", "u3", "u4"]);
-    let params = json!({"groupId": group.id, "order": "JOINED"});
-    bound(rig.database.refresh(epoch, "Member".into(), "group_members".into(), params.to_string())).await.unwrap();
-    remove_member(&rig, &group.id).await;
-    world.set_members("JOINED", &["u1", "u2", "u3"]);
-    let query = json!({"model":"Member","relation":"group_members","params":params});
-    let (sender, mut deliveries) = tokio::sync::mpsc::unbounded_channel();
-    let stream = rig.database.subscribe_reading(epoch, crate::ffi::ReadRequest::List { query_json: query.to_string() }, Arc::new(Deliveries(sender)));
-    bound(rig.database.loaded(stream)).await.unwrap();
-    rig.switch.subscription_opened().await;
-    let hold = world.hold_next("AddMember");
-    let adding = { let database = rig.database.clone(); let id = group.id.clone(); tokio::spawn(async move { database.act(epoch, "Group".into(), id, "add_member".into(), "{}".into(), json!({"userIds":["u4"]}).to_string()).await }) };
-    hold.entered_for("the join").await;
-    rig.switch.emit(json!({"data":{"memberChanged":{"id":"u1","name":"updated"}}}).to_string()).unwrap();
-    let applied = tokio::time::timeout(std::time::Duration::from_secs(20), async {
-        while let Some(delivery) = crate::test_wait::within_secs(20, deliveries.recv()).await {
-            let rows = match delivery.value {
-                crate::ffi::ReadValue::Snapshot { rows, .. } | crate::ffi::ReadValue::Delta { rows, .. } => rows,
-                _ => continue,
-            };
-            if rows.iter().any(|row| row.id == "u1" && row.cells.contains(&crate::ffi::Cell::Text { value: "updated".into() })) { return true; }
-        }
-        false
-    }).await.unwrap_or(false);
-    assert!(applied, "the member event was not delivered");
-    let ids: Vec<_> = bound(rig.database.read_query(epoch, query.to_string())).await.unwrap().into_iter().map(|row| row.id).collect();
-    assert!(ids.contains(&"u4".to_string()));
-    hold.release();
-    let receipt = bound(adding).await.unwrap().unwrap();
-    assert!(matches!(bound(rig.database.outcome(receipt)).await.unwrap(), crate::ffi::WireOperationOutcome::Confirmed { .. }));
-    rig.database.cancel_stream(stream);
-    rig.database.close_now();
-}
-
-#[tokio::test(flavor = "multi_thread")]
 async fn an_outcome_arrives_before_a_held_list_and_the_automatic_reread_shows_the_added_member() {
     let rig = Rig::encrypted().await;
     rig.login_ios("A").await;

@@ -60,6 +60,9 @@ impl OutboxState {
                 if let Some((temp, real)) = self.ops.get(&op_id).and_then(|operation| operation.swap.clone()) {
                     self.swap_row(op_id, &temp, &real);
                 }
+                if let Some(operation) = self.ops.get(&op_id).filter(|operation| !operation.stale.is_empty()) {
+                    fx.push(Effect::Run(OutboxEffect::Stale { families: operation.stale.clone(), revision }));
+                }
                 self.finish(op_id, OutboxOutcome::Confirmed { revision }, true, fx);
             }
             (CommitKind::Rollback, Stage::RollingBack(why)) => {

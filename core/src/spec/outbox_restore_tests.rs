@@ -99,7 +99,7 @@ fn out_restoring_foreign() {
         OutboxInput::RetryDue { op_id: 1, cycle_id: 1 },
         OutboxInput::Committed(Committed { batch: 1, revision: 1, tables: Vec::new(), models: Default::default() }),
         OutboxInput::Rejected(Rejected { batch: 1, reason: RejectReason::Storage("disk".into()) }),
-        OutboxInput::Response { op_id: 1, rows: Vec::new(), swap: None, errors: None },
+        OutboxInput::Response { op_id: 1, rows: Vec::new(), swap: None, stale: Vec::new(), errors: None },
         OutboxInput::TransportError { op_id: 1, temporary: true },
         OutboxInput::Dropped { op_id: 1 },
     ];
@@ -207,7 +207,7 @@ fn out_waiting_declaration_other() {
     let inputs = vec![
         OutboxInput::Online(Online(true)),
         OutboxInput::ModelsReset(ModelsReset { epoch: EPOCH, generation: 2, models: vec!["Moment".into()] }),
-        OutboxInput::Response { op_id: 7, rows: Vec::new(), swap: None, errors: None },
+        OutboxInput::Response { op_id: 7, rows: Vec::new(), swap: None, stale: Vec::new(), errors: None },
         OutboxInput::TransportError { op_id: 7, temporary: true },
         OutboxInput::Dropped { op_id: 7 },
         OutboxInput::RetryDue { op_id: 7, cycle_id: 1 },

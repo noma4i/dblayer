@@ -26,7 +26,7 @@ fn out_open_restores_transfer() {
     open_check(Restored::Transfer, ready(), false);
     let (mut twin, id) = restored(Restored::Transfer, &ready());
     twin.committed(id);
-    twin.post(OutboxInput::Response { op_id: id, rows: server_rows(), swap: None, errors: None });
+    twin.post(OutboxInput::Response { op_id: id, rows: server_rows(), swap: None, stale: Vec::new(), errors: None });
     let effects = twin.committed(id);
     assert!(effects.iter().any(|effect| matches!(effect, OutboxEffect::TransferOutcome { outcome: o::OutboxOutcome::Confirmed { .. }, .. })), "{effects:?}");
 }

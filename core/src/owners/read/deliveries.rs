@@ -248,6 +248,7 @@ fn entry(row: &StreamRow) -> Result<Entry, String> {
 
 impl Delivery {
     fn new(epoch: Epoch, view: View, stage: DeliveryStage, revision: i64) -> Self {
+        let window = if view.remote { WindowState::idle() } else { WindowState { phase: WindowPhase::Loaded, error: None, loaded: None } };
         Self {
             epoch,
             view,
@@ -260,7 +261,7 @@ impl Delivery {
             rows: Vec::new(),
             acked_rows: Vec::new(),
             count: None,
-            window: WindowState::idle(),
+            window,
             held_state: None,
             next_feed: None,
             position: 0,

@@ -139,7 +139,7 @@ pub enum OutboxInput {
     Committed(Committed),
     Rejected(Rejected),
     /// `errors = Some(temporary)`: the answer carries errors, the codec classified them.
-    Response { op_id: OpId, rows: Vec<(String, Vec<RowValue>)>, swap: Option<(String, String)>, errors: Option<bool> },
+    Response { op_id: OpId, rows: Vec<(String, Vec<RowValue>)>, swap: Option<(String, String)>, stale: Vec<(String, String)>, errors: Option<bool> },
     TransportError { op_id: OpId, temporary: bool },
     /// The answer of Session to the `Mutate` with `req_id`: Outbox finds its operation and has the answer read.
     Answered { req_id: RequestId, outcome: crate::owners::session::AuthorOutcome },
@@ -192,6 +192,8 @@ pub enum OutboxEffect {
     Copy { id: u64, source: String },
     /// Read the answer of an operation outside the actor: the result is `Response` or `Refused`.
     Decode(super::answer::DecodeJob),
+    /// The windows of these (model, relation) pairs are stale in memory: the answer of an action that refetches them landed.
+    Stale { families: Vec<(String, String)>, revision: i64 },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -240,6 +242,8 @@ pub struct QueuedOperation {
     /// The rows of the server answer, kept for every attempt to land them.
     pub landing: Vec<(String, Vec<RowValue>)>,
     pub swap: Option<(String, String)>,
+    /// The (model, relation) pairs the action refetches: their windows turn stale when the answer lands.
+    pub stale: Vec<(String, String)>,
     /// The root row of the answer that landed (the real id of a `create`, the row an action returned).
     pub landed: Option<String>,
     pub outcome: Option<OutboxOutcome>,
