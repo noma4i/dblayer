@@ -410,7 +410,7 @@ pub(crate) enum RowOp {
     PutPending(Pending),
     RemovePending,
     RemoveSession,
-    PutAnswer { request_id: u64, answer: state::StoredAnswer },
+    PutAnswer { request_id: u64, operation: Option<i64>, answer: state::StoredAnswer },
     RemoveAnswer { request_id: u64 },
     /// `digest = None` keeps the stored digest, `sequence = None` keeps the stored sequence.
     PutSession { digest: Option<String>, sequence: Option<i64> },
@@ -434,7 +434,7 @@ impl Store {
                 RowOp::RemoveSession => {
                     transaction.execute("DELETE FROM encrypted_session", [])?;
                 }
-                RowOp::PutAnswer { request_id, answer } => state::store_answer(&transaction, request_id, &answer)?,
+                RowOp::PutAnswer { request_id, operation, answer } => state::store_answer(&transaction, request_id, operation, &answer)?,
                 RowOp::RemoveAnswer { request_id } => state::remove_answer(&transaction, request_id)?,
                 RowOp::DiscardRestoreFailed { table, key } => {
                     transaction.execute("DELETE FROM restore_failed WHERE source_table = ?1 AND key = ?2", params![table, key])?;

@@ -421,7 +421,8 @@ const CORE_STATEMENTS: [&str; 44] = [
     "CREATE TABLE IF NOT EXISTS encrypted_answer (
   request_id INTEGER PRIMARY KEY,
   outcome TEXT NOT NULL CHECK (outcome IN ('ok', 'http', 'unauthorized', 'revoked', 'session')),
-  detail TEXT
+  detail TEXT,
+  operation_id INTEGER
 ) STRICT",
     "CREATE TABLE IF NOT EXISTS restore_failed (
   source_table TEXT NOT NULL,

@@ -95,7 +95,7 @@ pub enum StoreOp {
     /// Remove the row `encrypted_session` (a sign-in that the server refused).
     EraseSession,
     /// `encrypted_answer`: the terminal outcome of the `Mutate` of `request_id`, written with `RemovePending` and kept until `RemoveAnswer`.
-    Answer { request_id: u64, result: crate::transport::encrypted::state::StoredAnswer },
+    Answer { request_id: u64, operation: Option<i64>, result: crate::transport::encrypted::state::StoredAnswer },
     RemoveAnswer { request_id: u64 },
     /// `encrypted_session`: `digest = None` keeps the stored digest, `sequence = None` keeps the stored sequence.
     Session { digest: Option<String>, sequence: Option<u64> },

@@ -26,22 +26,27 @@ impl Db {
     /// Every open operation of the queue. The `path` of a request and the rule `on_failure` come from the operation the model declares for `(model, action)`:
     /// the base has no column for them. An operation whose action declares no mutation is an error that names it: nothing is guessed.
     pub(crate) fn read_intents(&self) -> Result<Vec<StoredOp>, DbError> {
-        let (entries, pending) = self.shared.read(&[], |reader| Ok((read_outbox(reader)?, crate::transport::encrypted::state::pending(reader.connection()).map_err(crate::store::StoreError::from)?)))?;
-        self.stored_intents(entries, pending)
+        let (entries, pending, answers) = self.shared.read(&[], |reader| {
+            let connection = reader.connection();
+            Ok((read_outbox(reader)?, crate::transport::encrypted::state::pending(connection).map_err(crate::store::StoreError::from)?, crate::transport::encrypted::state::answers_of_operations(connection).map_err(crate::store::StoreError::from)?))
+        })?;
+        self.stored_intents(entries, pending, answers)
     }
 
     pub(crate) fn read_restore(&self) -> Result<Restore, DbError> {
-        let (entries, pending, uploads) = self.shared.read(&[], |reader| {
-            let pending = crate::transport::encrypted::state::pending(reader.connection()).map_err(crate::store::StoreError::from)?;
-            let uploads = super::queue_write::upload_rows(reader.connection()).map_err(crate::store::StoreError::from)?;
-            Ok((read_outbox(reader)?, pending, uploads))
+        let (entries, pending, uploads, answers) = self.shared.read(&[], |reader| {
+            let connection = reader.connection();
+            let pending = crate::transport::encrypted::state::pending(connection).map_err(crate::store::StoreError::from)?;
+            let answers = crate::transport::encrypted::state::answers_of_operations(connection).map_err(crate::store::StoreError::from)?;
+            let uploads = super::queue_write::upload_rows(connection).map_err(crate::store::StoreError::from)?;
+            Ok((read_outbox(reader)?, pending, uploads, answers))
         })?;
-        let ops = self.stored_intents(entries, pending.clone());
+        let ops = self.stored_intents(entries, pending.clone(), answers);
         let transfers = self.stored_transfers(uploads);
         Ok(Restore { ops, transfers, pending, pending_lost: self.open_report().dropped.iter().any(|row| row.table == "encrypted_pending") })
     }
 
-    fn stored_intents(&self, entries: Vec<super::local_write::OutboxOperation>, pending: Option<crate::transport::encrypted::state::Pending>) -> Result<Vec<StoredOp>, DbError> {
+    fn stored_intents(&self, entries: Vec<super::local_write::OutboxOperation>, pending: Option<crate::transport::encrypted::state::Pending>, mut answers: std::collections::BTreeMap<i64, (u64, crate::transport::encrypted::state::StoredAnswer)>) -> Result<Vec<StoredOp>, DbError> {
         let mut stored = Vec::with_capacity(entries.len());
         for entry in entries {
             let operation = &entry.operation;
@@ -68,7 +73,8 @@ impl Db {
             };
             let seq = operation.id.0;
             let resume = pending.as_ref().filter(|pending| pending.owner == Some(RequestOwner::Operation { seq })).and_then(|pending| Some((pending.req_id, u64::try_from(pending.sequence).ok()?)));
-            stored.push(StoredOp { op_id: u64::try_from(seq).map_err(|_| DbError::UnknownOperation(seq))?, op, error_mark: operation.status == OperationStatus::Failed, pending: resume });
+            let answered = answers.remove(&seq);
+            stored.push(StoredOp { answered, op_id: u64::try_from(seq).map_err(|_| DbError::UnknownOperation(seq))?, op, error_mark: operation.status == OperationStatus::Failed, pending: resume });
         }
         Ok(stored)
     }

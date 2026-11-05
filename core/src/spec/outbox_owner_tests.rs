@@ -560,6 +560,7 @@ fn restored(kind: Restored, ctx: &Ctx) -> (Twin, OpId) {
         twin.post(OutboxInput::Online(Online(false)));
     }
     let stored = StoredOp {
+        answered: None,
         op_id: 7,
         op: model_op("r", Policy::Rollback, kind == Restored::Transfer),
         error_mark: kind == Restored::ErrorMark,
@@ -568,6 +569,19 @@ fn restored(kind: Restored, ctx: &Ctx) -> (Twin, OpId) {
     twin.first_pair.insert(7, (41, 7));
     twin.kept = twin.post(OutboxInput::Restored(vec![stored]));
     (twin, 7)
+}
+
+/// Requirement: an answer saved before the close reaches its operation at open and the operation does not go out again.
+/// Observable: the effects of `Restored`. Assert: no `Send`, the batch of the end of the operation (`Land` for `Ok`, `Rollback` for a refusal) and the removal of the saved answer in it.
+#[test]
+fn out_open_saved_answer_ends_the_operation_without_a_send() {
+    for (answer, kind) in [(crate::owners::session::StoredAnswer::Ok("{}".into()), CommitKind::Land), (crate::owners::session::StoredAnswer::Http, CommitKind::Rollback)] {
+        let mut twin = Twin::new();
+        let stored = StoredOp { answered: Some((41, answer)), op_id: 7, op: model_op("r", Policy::Rollback, false), error_mark: false, pending: None };
+        let effects = twin.post(OutboxInput::Restored(vec![stored]));
+        assert!(!effects.iter().any(|effect| matches!(effect, OutboxEffect::Send { .. })), "{effects:?}");
+        assert!(effects.iter().any(|effect| matches!(effect, OutboxEffect::Store { op_id: Some(7), kind: found, .. } if *found == kind)), "{kind:?}: {effects:?}");
+    }
 }
 
 fn open_check(kind: Restored, ctx: Ctx, pair: bool) {

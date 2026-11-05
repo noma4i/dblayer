@@ -410,7 +410,7 @@ fn row_op(op: &StoreOp) -> Option<crate::store::RowOp> {
         }),
         StoreOp::RemovePending => crate::store::RowOp::RemovePending,
         StoreOp::EraseSession => crate::store::RowOp::RemoveSession,
-        StoreOp::Answer { request_id, result } => crate::store::RowOp::PutAnswer { request_id: *request_id, answer: result.clone() },
+        StoreOp::Answer { request_id, operation, result } => crate::store::RowOp::PutAnswer { request_id: *request_id, operation: *operation, answer: result.clone() },
         StoreOp::RemoveAnswer { request_id } => crate::store::RowOp::RemoveAnswer { request_id: *request_id },
         StoreOp::Session { digest, sequence } => crate::store::RowOp::PutSession { digest: digest.clone(), sequence: sequence.map(|sequence| i64::try_from(sequence).unwrap_or(i64::MAX)) },
         _ => return None,

@@ -46,9 +46,8 @@ pub enum LifeReply {
     Closed,
 }
 
-/// The first author id and request id of the calls that the old stack makes: below them the ids of Outbox, Transfer and Session.
+/// The first author id of the calls that the old stack makes: below it the ids of Outbox, Transfer and Session.
 const LEGACY_AUTHORS: AuthorId = 1 << 32;
-const LEGACY_REQUESTS: RequestId = 1 << 40;
 
 /// The document and the answer root of a declared operation.
 pub type OperationLookup = Arc<dyn Fn(&str) -> Option<(String, String)> + Send + Sync>;
@@ -589,7 +588,7 @@ impl Life {
             wiring.mutate_sinks.lock().unwrap_or_else(PoisonError::into_inner).remove(&author);
             wiring.outcomes.settle(id, LifeReply::Mutated(outcome));
         });
-        self.mutate(author, owner, LEGACY_REQUESTS + waiter.id().raw(), path, body, purpose);
+        self.mutate(author, owner, super::contract::next_request_id(), path, body, purpose);
         waiter
     }
 

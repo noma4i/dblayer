@@ -41,6 +41,7 @@ pub(super) struct SessionRunner {
     /// The generated secrets that `StoreSecret` has not written yet, by identity.
     generated: Arc<Mutex<HashMap<u64, String>>>,
     wires: HashMap<RequestId, Wire>,
+    operations: HashMap<RequestId, i64>,
     /// The epoch that the last step ended on the server: the `Reply` of the same step waits for the next epoch.
     ending: Option<u64>,
 }
@@ -60,7 +61,8 @@ impl SessionRunner {
     pub fn new(wiring: Arc<Wiring>, client: Arc<EncryptedClient>, credentials: Arc<dyn CredentialSlot>, executor: tokio::runtime::Handle, restored: &Restored) -> Self {
         let wires = restored.wire.iter().map(|(request_id, wire)| (*request_id, Wire { id: wire.id.clone(), key: wire.key.clone() })).collect();
         let digests = Arc::new(Mutex::new(restored.digest.iter().cloned().collect()));
-        Self { wiring, client, credentials, executor, running: HashMap::new(), digests, generated: Arc::default(), wires, ending: None }
+        let operations = restored.pending.iter().filter_map(|pending| match pending.owner { Some(crate::transport::RequestOwner::Operation { seq }) => Some((pending.request_id, seq)), _ => None }).collect();
+        Self { wiring, client, credentials, executor, running: HashMap::new(), digests, generated: Arc::default(), wires, operations, ending: None }
     }
 
     /// What `Open` of the owner takes: the rows and what `CredentialStore.get` found.
@@ -242,6 +244,8 @@ impl EffectRunner<SessionCalls> for SessionRunner {
                 if session.is_some() { ops.push(StoreOp::Session { digest: Some(credential_digest), sequence: Some(0) }); }
                 self.wires.clear();
                 self.wires.insert(pending.request_id, wire);
+                self.operations.clear();
+                if let Some(crate::transport::RequestOwner::Operation { seq }) = pending.owner { self.operations.insert(pending.request_id, seq); }
                 self.commit(batch, epoch, ops);
             }
             SessionEffect::CommitLanding { batch, epoch, digest, sequence, answer, erase_session } => {
@@ -250,7 +254,7 @@ impl EffectRunner<SessionCalls> for SessionRunner {
                     Err(identity) => return back.reply(control, SessionInput::Rejected(Rejected { batch, reason: RejectReason::Storage(format!("no digest for the identity {identity}")) })),
                 };
                 let mut ops = if erase_session { vec![StoreOp::EraseSession, StoreOp::RemovePending] } else if digest.is_none() && sequence.is_none() { vec![StoreOp::RemovePending] } else { vec![StoreOp::Session { digest, sequence }, StoreOp::RemovePending] };
-                ops.extend(answer.and_then(|(request_id, answer)| Some(StoreOp::Answer { request_id, result: stored_answer(&answer)? })));
+                ops.extend(answer.and_then(|(request_id, answer)| Some(StoreOp::Answer { request_id, operation: self.operations.get(&request_id).copied(), result: stored_answer(&answer)? })));
                 self.commit(batch, epoch, ops);
             }
             SessionEffect::HttpRequest { pending, attempt_id, full_document } => {

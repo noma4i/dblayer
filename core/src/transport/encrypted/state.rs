@@ -118,7 +118,7 @@ pub fn clear(connection: &Connection) -> rusqlite::Result<()> {
 }
 
 
-pub fn store_answer(connection: &Connection, request_id: u64, answer: &StoredAnswer) -> rusqlite::Result<()> {
+pub fn store_answer(connection: &Connection, request_id: u64, operation: Option<i64>, answer: &StoredAnswer) -> rusqlite::Result<()> {
     let (outcome, detail) = match answer {
         StoredAnswer::Ok(body) => ("ok", Some(body.as_str())),
         StoredAnswer::Http => ("http", None),
@@ -127,7 +127,7 @@ pub fn store_answer(connection: &Connection, request_id: u64, answer: &StoredAns
         StoredAnswer::Session(code) => ("session", Some(code.name())),
     };
     let request_id = i64::try_from(request_id).map_err(|_| rusqlite::Error::IntegralValueOutOfRange(0, i64::MAX))?;
-    connection.execute("INSERT OR REPLACE INTO encrypted_answer (request_id, outcome, detail) VALUES (?1, ?2, ?3)", params![request_id, outcome, detail])?;
+    connection.execute("INSERT OR REPLACE INTO encrypted_answer (request_id, outcome, detail, operation_id) VALUES (?1, ?2, ?3, ?4)", params![request_id, outcome, detail, operation])?;
     Ok(())
 }
 
@@ -138,11 +138,20 @@ pub fn remove_answer(connection: &Connection, request_id: u64) -> rusqlite::Resu
 }
 
 pub fn answers(connection: &Connection) -> rusqlite::Result<std::collections::BTreeMap<u64, StoredAnswer>> {
-    let mut statement = connection.prepare("SELECT request_id, outcome, detail FROM encrypted_answer")?;
-    let rows = statement.query_map([], |row| Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?, row.get::<_, Option<String>>(2)?)))?;
-    let mut found = std::collections::BTreeMap::new();
+    Ok(answer_rows(connection)?.into_iter().map(|(request_id, _, answer)| (request_id, answer)).collect())
+}
+
+/// The answers that belong to an operation of the queue, by the operation: `(request_id, answer)`.
+pub fn answers_of_operations(connection: &Connection) -> rusqlite::Result<std::collections::BTreeMap<i64, (u64, StoredAnswer)>> {
+    Ok(answer_rows(connection)?.into_iter().filter_map(|(request_id, operation, answer)| Some((operation?, (request_id, answer)))).collect())
+}
+
+fn answer_rows(connection: &Connection) -> rusqlite::Result<Vec<(u64, Option<i64>, StoredAnswer)>> {
+    let mut statement = connection.prepare("SELECT request_id, outcome, detail, operation_id FROM encrypted_answer")?;
+    let rows = statement.query_map([], |row| Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?, row.get::<_, Option<String>>(2)?, row.get::<_, Option<i64>>(3)?)))?;
+    let mut found = Vec::new();
     for row in rows {
-        let (request_id, outcome, detail) = row?;
+        let (request_id, outcome, detail, operation) = row?;
         let invalid = |what: &str| rusqlite::Error::FromSqlConversionFailure(2, rusqlite::types::Type::Text, Box::new(std::io::Error::new(std::io::ErrorKind::InvalidData, format!("the stored answer {request_id} has {what}"))));
         let answer = match (outcome.as_str(), detail) {
             ("ok", Some(body)) => StoredAnswer::Ok(body),
@@ -152,7 +161,7 @@ pub fn answers(connection: &Connection) -> rusqlite::Result<std::collections::BT
             ("session", Some(name)) => StoredAnswer::Session(crate::transport::SessionCode::from_wire(&name).ok_or_else(|| invalid("an unknown session code"))?),
             _ => return Err(invalid("an outcome that does not match its detail")),
         };
-        found.insert(u64::try_from(request_id).map_err(|_| invalid("a negative request id"))?, answer);
+        found.push((u64::try_from(request_id).map_err(|_| invalid("a negative request id"))?, operation, answer));
     }
     Ok(found)
 }

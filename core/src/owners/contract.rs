@@ -4,6 +4,14 @@
 pub use crate::runtime::{Cause, Epoch, Time};
 
 pub type RequestId = u64;
+
+static NEXT_REQUEST: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+
+/// The request id of a `Mutate`: one counter of the process for every author.
+pub fn next_request_id() -> RequestId { NEXT_REQUEST.fetch_add(1, std::sync::atomic::Ordering::SeqCst) }
+
+/// A request id read from the base is never issued again.
+pub fn seen_request_id(id: RequestId) { NEXT_REQUEST.fetch_max(id.saturating_add(1), std::sync::atomic::Ordering::SeqCst); }
 pub type ReplyId = u64;
 pub type BatchId = u64;
 pub type ConnectionId = u64;

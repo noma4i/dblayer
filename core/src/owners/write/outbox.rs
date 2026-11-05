@@ -52,6 +52,8 @@ pub struct NewOp {
 /// An intent kept in the base (`encrypted_pending` pair when a request left before the close).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct StoredOp {
+    /// The saved answer of the server to the request of this operation: `(request_id, answer)`.
+    pub answered: Option<(RequestId, crate::owners::session::StoredAnswer)>,
     pub op_id: OpId,
     pub op: NewOp,
     pub error_mark: bool,
@@ -255,7 +257,7 @@ impl OutboxState {
     fn add_operation(&mut self, op_id: OpId, op: NewOp, stage: Stage) {
         let sequence = self.next_sequence;
         self.next_sequence += 1;
-        self.ops.insert(op_id, QueuedOperation { op_id, op, stage, attempts: 0, request_id: op_id, sequence, sends: 0, landing: Vec::new(), outcome: None });
+        self.ops.insert(op_id, QueuedOperation { op_id, op, stage, attempts: 0, request_id: crate::owners::contract::next_request_id(), sequence, sends: 0, landing: Vec::new(), outcome: None });
         self.next_op = self.next_op.max(op_id + 1);
     }
 
@@ -280,8 +282,8 @@ impl OutboxState {
                 payload: operation.op.body.clone(),
                 effects: operation.op.effects.clone(),
             }],
-            CommitKind::Land => operation.landing.iter().map(|(model, rows)| StoreOp::Rows { model: model.clone(), rows: rows.clone() }).chain([StoreOp::RemoveIntent { op_id }]).collect(),
-            CommitKind::Rollback => vec![StoreOp::RollBack { op_id }, StoreOp::RemoveIntent { op_id }],
+            CommitKind::Land => operation.landing.iter().map(|(model, rows)| StoreOp::Rows { model: model.clone(), rows: rows.clone() }).chain([StoreOp::RemoveIntent { op_id }, StoreOp::RemoveAnswer { request_id: operation.request_id }]).collect(),
+            CommitKind::Rollback => vec![StoreOp::RollBack { op_id }, StoreOp::RemoveIntent { op_id }, StoreOp::RemoveAnswer { request_id: operation.request_id }],
             CommitKind::ErrorMark => vec![StoreOp::MarkError { op_id, error: Some("refused".into()) }],
             CommitKind::ClearMark => vec![StoreOp::MarkError { op_id, error: None }],
             CommitKind::LocalWrite | CommitKind::RemoveRow => Vec::new(),
@@ -509,6 +511,17 @@ impl OutboxState {
         }
     }
 
+    fn on_response(&mut self, op_id: OpId, rows: Vec<(String, Vec<RowValue>)>, fx: &mut Effects<Outbox>) {
+        if self.stage_of(op_id) != Some(Stage::Sending) {
+            return;
+        }
+        if let Some(operation) = self.ops.get_mut(&op_id) {
+            operation.stage = Stage::Landing;
+            operation.landing = rows;
+        }
+        self.store(op_id, CommitKind::Land, fx);
+    }
+
     fn transport_failed(&mut self, op_id: OpId, temporary: bool, fx: &mut Effects<Outbox>) {
         if self.stage_of(op_id) != Some(Stage::Sending) {
             return;
@@ -596,13 +609,22 @@ impl OutboxState {
         let mut stored = stored;
         stored.sort_by_key(|item| item.op_id);
         for item in stored {
-            let StoredOp { op_id, op, error_mark, pending } = item;
+            let StoredOp { answered, op_id, op, error_mark, pending } = item;
             self.add_operation(op_id, op, Stage::Queued);
             if let (Some((request_id, sequence)), Some(operation)) = (pending, self.ops.get_mut(&op_id)) {
+                crate::owners::contract::seen_request_id(request_id);
                 operation.request_id = request_id;
                 operation.sequence = sequence;
             }
-            if error_mark {
+            if let (Some((request_id, answer)), Some(operation)) = (answered, self.ops.get_mut(&op_id)) {
+                crate::owners::contract::seen_request_id(request_id);
+                operation.request_id = request_id;
+                operation.stage = Stage::Sending;
+                match answer {
+                    crate::owners::session::StoredAnswer::Ok(_) => self.on_response(op_id, Vec::new(), fx),
+                    _ => self.transport_failed(op_id, false, fx),
+                }
+            } else if error_mark {
                 self.ops.get_mut(&op_id).map(|operation| operation.stage = Stage::Failed);
             } else if self.goes_out(op_id) {
                 self.start_sending(op_id, fx);
@@ -671,15 +693,7 @@ impl StateOwner for Outbox {
             OutboxInput::RestoreFailed { error } => state.queue_error = Some(error),
             OutboxInput::Committed(committed) => state.committed(committed, &mut fx),
             OutboxInput::Rejected(rejected) => state.rejected(rejected, &mut fx),
-            OutboxInput::Response { op_id, rows } => {
-                if state.stage_of(op_id) == Some(Stage::Sending) {
-                    state.ops.get_mut(&op_id).map(|operation| {
-                        operation.stage = Stage::Landing;
-                        operation.landing = rows;
-                    });
-                    state.store(op_id, CommitKind::Land, &mut fx);
-                }
-            }
+            OutboxInput::Response { op_id, rows } => state.on_response(op_id, rows, &mut fx),
             OutboxInput::TransportError { op_id, temporary } => state.transport_failed(op_id, temporary, &mut fx),
             OutboxInput::Dropped { op_id } => state.transport_failed(op_id, true, &mut fx),
             OutboxInput::Retry { model, row_id, reply } => state.retry(&model, &row_id, reply, &mut fx),
