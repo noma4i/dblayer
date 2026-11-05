@@ -204,6 +204,7 @@ impl EffectRunner<Network> for NetworkRunner {
                 wiring.to_transfer(TransferInput::Online(Online(online)));
                 wiring.to_session(SessionInput::Online(Online(online)));
             }
+            NetworkEffect::Foreground(_) | NetworkEffect::PowerSaving(_) | NetworkEffect::EpochPowerSaving(_) => {}
             NetworkEffect::Drained(drained) => wiring.to_lifecycle(LifecycleInput::Drained(drained)),
             NetworkEffect::Reply { id, closed } => self.held_replies.push((id, closed)),
         }

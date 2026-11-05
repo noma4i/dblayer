@@ -1,13 +1,11 @@
-//! Owner `Network`: the only source of `online`.
+//! Owner `Network` (`specs/machines/network.md`): the only source of `online`, `foreground_seq` and `saving`.
 
-use super::contract::Drained;
+use super::contract::{Drained, ReplyId};
 use crate::runtime::{Cause, Effect, Effects, Epoch, StateOwner, Time};
-
-use super::contract::ReplyId;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum NetworkMode {
-    Open { online: bool },
+    Open { online: bool, foreground_seq: u64, saving: bool },
     Closed,
 }
 
@@ -23,14 +21,22 @@ pub enum NetworkEffect {
     /// `Online(online)` to the owners of the new epoch.
     EpochOnline(bool),
     Snapshot { owner: SnapshotOwner, epoch: Epoch, online: bool },
+    /// `Foreground(seq)` to Transfer and Rounds.
+    Foreground(u64),
+    /// `PowerSaving(value)` to Transfer.
+    PowerSaving(bool),
+    /// `PowerSaving(saving)` to Transfer at `EpochStarted`.
+    EpochPowerSaving(bool),
     Drained(Drained),
-    /// The answer to `set_online`.
+    /// The answer to `set_online`, `foreground`, `set_power_saving`.
     Reply { id: ReplyId, closed: bool },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum NetworkInput {
     SetOnline { online: bool, reply: ReplyId },
+    Foreground { reply: ReplyId },
+    PowerSaving { saving: bool, reply: ReplyId },
     EpochStarted,
     SnapshotRequest { owner: SnapshotOwner, epoch: Epoch },
     Closing,
@@ -42,8 +48,8 @@ pub struct NetworkState {
 }
 
 impl NetworkState {
-    /// `online = true` until the first `SetOnline` (`network.md`).
-    pub fn new() -> Self { Self { mode: NetworkMode::Open { online: true } } }
+    /// `online = false` and `saving = false` until the first input.
+    pub fn new() -> Self { Self { mode: NetworkMode::Open { online: false, foreground_seq: 0, saving: false } } }
 
     pub fn mode(&self) -> NetworkMode { self.mode }
 }
@@ -58,20 +64,32 @@ impl StateOwner for Network {
     type Effect = NetworkEffect;
 
     fn step(state: &mut NetworkState, input: NetworkInput) -> Effects<Self> {
-        let run = |effect| vec![Effect::Run(effect)];
+        let run = |effects: Vec<NetworkEffect>| effects.into_iter().map(Effect::Run).collect();
+        let reply = |id| NetworkEffect::Reply { id, closed: false };
         match (state.mode, input) {
-            (NetworkMode::Open { online }, NetworkInput::SetOnline { online: value, reply }) if value != online => {
-                state.mode = NetworkMode::Open { online: value };
-                vec![Effect::Run(NetworkEffect::Reply { id: reply, closed: false }), Effect::Run(NetworkEffect::Broadcast(value))]
+            (NetworkMode::Open { online, foreground_seq, saving }, NetworkInput::SetOnline { online: value, reply: id }) if value != online => {
+                state.mode = NetworkMode::Open { online: value, foreground_seq, saving };
+                run(vec![reply(id), NetworkEffect::Broadcast(value)])
             }
             (NetworkMode::Open { .. }, NetworkInput::SetOnline { reply, .. }) => run(NetworkEffect::Reply { id: reply, closed: false }),
             (NetworkMode::Open { online }, NetworkInput::EpochStarted) => run(NetworkEffect::EpochOnline(online)),
-            (NetworkMode::Open { online }, NetworkInput::SnapshotRequest { owner, epoch }) => run(NetworkEffect::Snapshot { owner, epoch, online }),
+            (NetworkMode::Open { online, .. }, NetworkInput::SnapshotRequest { owner, epoch }) => run(NetworkEffect::Snapshot { owner, epoch, online }),
+            (NetworkMode::Open { .. }, NetworkInput::SetOnline { reply: id, .. }) => run(vec![reply(id)]),
+            (NetworkMode::Open { online, foreground_seq, saving }, NetworkInput::Foreground { reply: id }) => {
+                state.mode = NetworkMode::Open { online, foreground_seq: foreground_seq + 1, saving };
+                run(vec![reply(id), NetworkEffect::Foreground(foreground_seq + 1)])
+            }
+            (NetworkMode::Open { online, foreground_seq, saving }, NetworkInput::PowerSaving { saving: value, reply: id }) if value != saving => {
+                state.mode = NetworkMode::Open { online, foreground_seq, saving: value };
+                run(vec![reply(id), NetworkEffect::PowerSaving(value)])
+            }
+            (NetworkMode::Open { .. }, NetworkInput::PowerSaving { reply: id, .. }) => run(vec![reply(id)]),
+            (NetworkMode::Open { online, saving, .. }, NetworkInput::EpochStarted) => run(vec![NetworkEffect::EpochOnline(online), NetworkEffect::EpochPowerSaving(saving)]),
             (NetworkMode::Open { .. }, NetworkInput::Closing) => {
                 state.mode = NetworkMode::Closed;
-                run(NetworkEffect::Drained(Drained { owner: "network" }))
+                run(vec![NetworkEffect::Drained(Drained { owner: "network" })])
             }
-            (NetworkMode::Closed, NetworkInput::SetOnline { reply, .. }) => run(NetworkEffect::Reply { id: reply, closed: true }),
+            (NetworkMode::Closed, NetworkInput::SetOnline { reply: id, .. } | NetworkInput::Foreground { reply: id } | NetworkInput::PowerSaving { reply: id, .. }) => run(vec![NetworkEffect::Reply { id, closed: true }]),
             (_, NetworkInput::Idle) | (NetworkMode::Closed, _) => Vec::new(),
         }
     }

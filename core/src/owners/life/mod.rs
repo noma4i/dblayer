@@ -433,6 +433,22 @@ impl Life {
         waiter
     }
 
+    /// `foreground`: Network answers after its `step`.
+    pub fn foreground(&self) -> Waiter<LifeReply> {
+        if self.shut.load(Ordering::SeqCst) { return self.settled(LifeReply::Closed); }
+        let waiter = self.wiring.outcomes.register(Epoch::MAX);
+        self.wiring.to_network(NetworkInput::Foreground { reply: waiter.id().raw() });
+        waiter
+    }
+
+    /// `set_power_saving`: Network answers after its `step`.
+    pub fn set_power_saving(&self, saving: bool) -> Waiter<LifeReply> {
+        if self.shut.load(Ordering::SeqCst) { return self.settled(LifeReply::Closed); }
+        let waiter = self.wiring.outcomes.register(Epoch::MAX);
+        self.wiring.to_network(NetworkInput::PowerSaving { saving, reply: waiter.id().raw() });
+        waiter
+    }
+
     /// `run`: the platform call rule of `lifecycle.md`, then the owner Calls.
     pub fn run(&self, epoch: Epoch, operation: String, variables: String) -> Waiter<LifeReply> {
         if self.shut.load(Ordering::SeqCst) { return self.settled(LifeReply::Closed); }
