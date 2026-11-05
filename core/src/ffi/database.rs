@@ -317,10 +317,8 @@ impl Database {
     }
     pub async fn run(&self, epoch: u64, operation: String, variables_json: String) -> Result<String, DbError> {
         self.remote()?;
-        let (variables_json, launch) = self.offload(move || { serde_json::from_str::<Value>(&variables_json)?; Ok(variables_json) }).await?;
-        let waiter = self.life.run(epoch, operation, variables_json);
-        drop(launch);
-        match self.await_life(waiter).await? {
+        let variables_json = self.offload(move || { serde_json::from_str::<Value>(&variables_json)?; Ok(variables_json) }).await?;
+        match self.await_life(self.life.run(epoch, operation, variables_json)).await? {
             LifeReply::Call(Ok(answer)) => Ok(answer),
             LifeReply::Call(Err(error)) => Err(call_failure(error)),
             _ => Err(super::command::ended()),
@@ -340,8 +338,8 @@ impl Database {
     /// Closes the database: every lease ends, every holder closes, every database thread lets go of the file, then the process slot opens for the next database. Closing again returns the same result. The name differs from `close` because Kotlin objects already carry `close()` for their native handle.
     pub async fn close_database(&self) -> Result<(), DbError> {
         if self.life.is_shut() { return Err(super::command::closed()); }
-        let _launch = self.life.launch();
         let waiter = self.life.close();
+        let _closing = crate::runtime::hold_until_woken(self.life.launch());
         let answered = on_executor(async move {
             tokio::time::timeout(Duration::from_secs(10), async { waiter.wait().await }).await.map_err(|_| DbError::Invalid { detail: "close timed out while the owners were closing".into() })
         }).await.and_then(|outcome| match outcome {
@@ -349,10 +347,12 @@ impl Database {
             _ => Ok(()),
         });
         let leases = self.streams.clone();
+        let _draining = crate::runtime::hold_until_woken(self.life.launch());
         let drained = on_executor(async move {
             tokio::time::timeout(Duration::from_secs(10), leases.settled()).await.map_err(|_| DbError::Invalid { detail: format!("close timed out while leases were still held: {}", leases.held().join("; ")) })
         }).await;
         let (db, life) = (self.db.clone(), self.life.clone());
+        let _shutting = crate::runtime::hold_until_woken(self.life.launch());
         let ended = blocking(move || { life.shutdown(); Ok(db.close()?) }).await;
         if let Some(lease) = self.lease.get() { lease.release(); }
         answered.and(drained).and(ended)
@@ -360,24 +360,17 @@ impl Database {
 }
 
 impl Database {
+    /// Runs the blocking part of a call. The owners barrier counts the job until the call wakes.
+    pub(super) async fn offload<T: Send + 'static>(&self, work: impl FnOnce() -> Result<T, DbError> + Send + 'static) -> Result<T, DbError> {
+        let kept = crate::runtime::hold_until_woken(self.life.launch());
+        let value = blocking(work).await;
+        drop(kept);
+        value
+    }
+
     /// Waits for the answer of an owner. An answer other than a value ends the call with the end of its epoch.
-    /// Runs the blocking part of a call. The count of the owners barrier starts here and the caller holds it until the call posted to the owners or ended.
-    pub(super) async fn offload<T: Send + 'static>(&self, work: impl FnOnce() -> Result<T, DbError> + Send + 'static) -> Result<(T, crate::runtime::Launch), DbError> {
-        let launch = self.life.launch();
-        let value = blocking(work).await?;
-        Ok((value, launch))
-    }
-
-    pub(super) async fn await_life(&self, waiter: crate::runtime::Waiter<LifeReply>) -> Result<LifeReply, DbError> { self.await_life_held(waiter).await.0 }
-
-    /// The answer and the count of the barrier of the owners: the call drops it when its work after the answer ends.
-    pub(super) async fn await_life_held(&self, waiter: crate::runtime::Waiter<LifeReply>) -> (Result<LifeReply, DbError>, Option<crate::runtime::Launch>) {
-        let (outcome, held) = waiter.wait_held().await;
-        (Self::life_reply(outcome), held)
-    }
-
-    fn life_reply(outcome: crate::runtime::Outcome<LifeReply>) -> Result<LifeReply, DbError> {
-        match outcome {
+    pub(super) async fn await_life(&self, waiter: crate::runtime::Waiter<LifeReply>) -> Result<LifeReply, DbError> {
+        match waiter.wait().await {
             crate::runtime::Outcome::Value(LifeReply::Closed) | crate::runtime::Outcome::Closing => Err(super::command::closed()),
             crate::runtime::Outcome::EpochEnded(_) => Err(super::command::ended()),
             crate::runtime::Outcome::Internal => Err(DbError::Database { detail: "the answer of the owner was lost".into() }),

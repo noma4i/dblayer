@@ -131,7 +131,7 @@ impl Database {
 impl Database {
     pub async fn upload(&self, epoch: u64, model: String, row_id: String, action: String, request: WireUploadRequest) -> Result<WireOperationReceipt, DbError> {
         self.account_call(epoch)?;
-        let (file, _held) = self.offload(move || request.into_file()).await?;
+        let file = self.offload(move || request.into_file()).await?;
         let row = self.resolved(epoch, &model, id(&row_id)?).await?;
         let item = self.single_upload(&model, row.as_str(), &action, &file, IntentEffects::default())?;
         let waiter = self.life.accept_upload(epoch, item, self.now());
@@ -142,7 +142,7 @@ impl Database {
 
     pub async fn upload_create_batch(&self, epoch: u64, model: String, items: Vec<WireUploadItem>, request: WireUploadBatch) -> Result<WireBatchReceipt, DbError> {
         self.account_call(epoch)?;
-        let ((items, request), _held) = self.offload(move || Ok((items.into_iter().map(WireUploadItem::into_item).collect::<Result<Vec<_>, _>>()?, request.into_input()?))).await?;
+        let (items, request) = self.offload(move || Ok((items.into_iter().map(WireUploadItem::into_item).collect::<Result<Vec<_>, _>>()?, request.into_input()?))).await?;
         let spec = self.db.spec(&model)?;
         let action = spec.actions.iter().find(|declared| declared.name == request.operation).ok_or_else(|| invalid("unknown upload operation"))?;
         let batch = action.batch.as_ref().ok_or_else(|| DbError::Sync { detail: "operation has no upload batch declaration".into() })?;
@@ -154,7 +154,7 @@ impl Database {
             if !keys.insert(key.to_string()) { return Err(invalid("upload correlation keys must be unique")); }
         }
         let (db, name) = (self.db.clone(), model.clone());
-        let (created, _held_plans) = self.offload(move || items.into_iter().map(|item| Ok((db.plan_create(&name, item.values.clone(), Map::new())?, item))).collect::<Result<Vec<_>, DbError>>()).await?;
+        let created = self.offload(move || items.into_iter().map(|item| Ok((db.plan_create(&name, item.values.clone(), Map::new())?, item))).collect::<Result<Vec<_>, DbError>>()).await?;
         let planned = created.into_iter().map(|(planned, item)| {
             let built = self.batch_upload(&model, &request.operation, &planned, &item, &request)?;
             Ok((item, planned, built))
@@ -191,7 +191,7 @@ impl Database {
         self.account_call(epoch)?;
         let Some(upload) = request.upload else { return Err(invalid("a command without a file goes through the owners")) };
         let (db, name, texts) = (self.db.clone(), request.model.clone(), (request.values_json.clone(), request.args_json.clone()));
-        let ((file, planned), _held) = self.offload(move || Ok((upload.request.into_file()?, db.plan_create(&name, serde_json::from_str(&texts.0)?, serde_json::from_str(&texts.1)?)?))).await?;
+        let (file, planned) = self.offload(move || Ok((upload.request.into_file()?, db.plan_create(&name, serde_json::from_str(&texts.0)?, serde_json::from_str(&texts.1)?)?))).await?;
         let item = self.single_upload(&request.model, planned.row_id.as_str(), &upload.action, &file, planned.effects.clone())?;
         let waiter = self.life.accept_upload(epoch, item, self.now());
         let TransferAnswer::Receipt(held) = self.transfer_answer(waiter, "send").await? else { return Err(DbError::Database { detail: "the owner answered a send with no receipt".into() }) };

@@ -61,11 +61,13 @@ impl Database {
 
     /// A read of the local database that belongs to the epoch of the caller: a result read after the epoch moved is not returned.
     pub(super) async fn read_in_epoch<T: Send + 'static>(&self, epoch: u64, target: &'static str, read: impl FnOnce(&Database) -> Result<T, DbError> + Send + 'static) -> Result<T, DbError> {
-        let _launch = self.life.launch();
+        let kept = crate::runtime::hold_until_woken(self.life.launch());
         let this = self.clone();
         let answer = this.clone();
         let work = async move { super::database::blocking(move || read(&this)).await };
-        let value = self.in_epoch(epoch, target, work).await?;
+        let value = self.in_epoch(epoch, target, work).await;
+        drop(kept);
+        let value = value?;
         if !answer.admits(epoch) { return Err(ended()); }
         Ok(value)
     }

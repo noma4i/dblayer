@@ -119,10 +119,9 @@ impl Database {
         if force { self.refuse_offline(&model, &relation, &Value::Object(params.clone()).to_string(), "node")?; }
         let wire = self.wire(&model)?.clone();
         let call = self.start_load(epoch, &model, &relation, &Value::Object(params.clone()).to_string(), Goal::First, force).await?;
-        let (loaded, _held) = self.finish_load_held(call).await;
-        loaded?;
+        self.finish_load(call).await?;
         let (db, found) = (self.db.clone(), model.clone());
-        let row = super::database::blocking(move || Ok(if db.window_member(&found, &relation, &params, id.as_str())? { db.find(&found, &id)? } else { None })).await?;
+        let row = self.offload(move || Ok(if db.window_member(&found, &relation, &params, id.as_str())? { db.find(&found, &id)? } else { None })).await?;
         Ok(row.map(|row| wire.row(&row)))
     }
 
@@ -134,10 +133,9 @@ impl Database {
         let wire = self.wire(&model)?.clone();
         let key = WindowKey::nodes(&model, &row_ids.iter().map(String::as_str).collect::<Vec<_>>());
         let call = self.start_window(epoch, key, Goal::First, true)?;
-        let (loaded, _held) = self.finish_load_held(call).await;
-        loaded?;
+        self.finish_load(call).await?;
         let (db, found) = (self.db.clone(), model.clone());
-        let rows = super::database::blocking(move || {
+        let rows = self.offload(move || {
             let mut rows = Vec::with_capacity(ids.len());
             for id in &ids {
                 rows.extend(db.find(&found, id)?);
@@ -172,12 +170,11 @@ impl Database {
             let LoadArgs { epoch, model, relation, params_json, goal, force } = args;
             let started = this.start_load(epoch, &model, &relation, &params_json, goal, force).await;
             drop(launch);
-            let (result, held) = match started {
-                Ok(call) => { let (result, held) = this.finish_load_held(call).await; (result.map(drop), held) }
-                Err(error) => (Err(error), None),
+            let result = match started {
+                Ok(call) => this.finish_load(call).await.map(drop),
+                Err(error) => Err(error),
             };
             crate::db::lock::effect(|| sender.send_replace(Some(result)));
-            drop(held);
         });
         Ok(Arc::new(LoadRequest { outcome, held: Mutex::new(Some(task.abort_handle())), life: self.life.clone(), dropping }))
     }
@@ -198,7 +195,7 @@ impl Database {
     /// Registers a call that waits for a load of the window of a relation. The window keeps the request while this call or another one waits for it.
     async fn start_load(&self, epoch: u64, model: &str, relation: &str, params_json: &str, goal: Goal, force: bool) -> Result<LoadCall, DbError> {
         self.remote()?;
-        let _launch = self.life.launch();
+        let _kept = crate::runtime::hold_until_woken(self.life.launch());
         let (db, found, name, text) = (self.db.clone(), model.to_string(), relation.to_string(), params_json.to_string());
         let (params, force) = super::database::blocking(move || {
             let params: Map<String, Value> = serde_json::from_str(&text)?;
@@ -220,18 +217,11 @@ impl Database {
         Ok(LoadCall { epoch, waiter, leave: LeaveLoad { life: self.life.clone(), key, id, settled: false } })
     }
 
-    async fn finish_load(&self, call: LoadCall) -> Result<LoadMoreResult, DbError> { self.finish_load_held(call).await.0 }
-
-    /// The result and the count of the barrier: the caller holds it until its own work after the answer ends.
-    async fn finish_load_held(&self, mut call: LoadCall) -> (Result<LoadMoreResult, DbError>, Option<crate::runtime::Launch>) {
-        let (reply, held) = self.await_life_held(call.waiter).await;
+    async fn finish_load(&self, mut call: LoadCall) -> Result<LoadMoreResult, DbError> {
+        let reply = self.await_life(call.waiter).await;
         call.leave.settled = true;
-        (self.load_result(call.epoch, reply), held)
-    }
-
-    fn load_result(&self, epoch: u64, reply: Result<LifeReply, DbError>) -> Result<LoadMoreResult, DbError> {
         let reply = reply?;
-        if !self.admits(epoch) { return Err(super::command::ended()); }
+        if !self.admits(call.epoch) { return Err(super::command::ended()); }
         match reply {
             LifeReply::Window(WindowOutcome::Loaded { has_more, fetched, .. }) => Ok(if fetched { LoadMoreResult::Loaded { has_more } } else { LoadMoreResult::NoMore }),
             LifeReply::Window(WindowOutcome::Failed { source: Some(source), .. }) => Err(DbError::from(source)),

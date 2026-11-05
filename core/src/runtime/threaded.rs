@@ -153,6 +153,40 @@ impl Handle {
 
 pub struct Launch(Option<Arc<Router>>);
 
+/// The counts a polled call holds while work started for it runs off its thread. The wake of the call lets them go.
+#[derive(Default)]
+pub struct Holds(Mutex<Vec<Launch>>);
+
+impl Holds {
+    pub fn release(&self) {
+        let held = std::mem::take(&mut *lock(&self.0));
+        drop(held);
+    }
+}
+
+thread_local! {
+    static POLLED: std::cell::RefCell<Option<Arc<Holds>>> = const { std::cell::RefCell::new(None) };
+}
+
+/// Runs one poll of a call whose started work counts in `holds`.
+pub fn polling<R>(holds: &Arc<Holds>, poll: impl FnOnce() -> R) -> R {
+    let previous = POLLED.replace(Some(holds.clone()));
+    let result = poll();
+    POLLED.set(previous);
+    result
+}
+
+/// Counts work started by the polled call until the call wakes. Outside a polled call the launch comes back and the caller keeps it.
+pub fn hold_until_woken(launch: Launch) -> Option<Launch> {
+    match POLLED.with(|polled| polled.borrow().clone()) {
+        Some(holds) => {
+            lock(&holds.0).push(launch);
+            None
+        }
+        None => Some(launch),
+    }
+}
+
 /// The count of one effect task in the barrier: held while the task can run (spawned, woken or polled), released while it waits for the outside.
 struct Gate {
     router: Arc<Router>,

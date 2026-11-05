@@ -142,8 +142,8 @@ impl Wiring {
     fn new(handle: Handle) -> Self {
         Self {
             addresses: OnceLock::new(),
-            outcomes: Outcomes::new().counted_by(handle.clone()),
-            pulls: Outcomes::new().counted_by(handle.clone()),
+            outcomes: Outcomes::new(),
+            pulls: Outcomes::new(),
             handle,
             next_stream: std::sync::atomic::AtomicU64::new(1),
             published: PublishedCell::default(),

@@ -107,25 +107,35 @@ fn fetch_of(name: &str) -> Option<ReadFetch> {
 struct Call {
     work: Option<std::pin::Pin<Box<dyn std::future::Future<Output = Done> + Send>>>,
     woken: Arc<std::sync::atomic::AtomicBool>,
+    holds: Arc<crate::runtime::Holds>,
     done: Option<Done>,
 }
 
-struct Wakes(Arc<std::sync::atomic::AtomicBool>);
+/// A wake marks the call woken first and then lets go of the barrier counts of the work it waited for.
+struct Wakes {
+    woken: Arc<std::sync::atomic::AtomicBool>,
+    holds: Arc<crate::runtime::Holds>,
+}
 
 impl std::task::Wake for Wakes {
-    fn wake(self: Arc<Self>) { self.0.store(true, Ordering::SeqCst); }
+    fn wake(self: Arc<Self>) { self.wake_by_ref(); }
 
-    fn wake_by_ref(self: &Arc<Self>) { self.0.store(true, Ordering::SeqCst); }
+    fn wake_by_ref(self: &Arc<Self>) {
+        self.woken.store(true, Ordering::SeqCst);
+        self.holds.release();
+    }
 }
 
 impl Call {
     fn poll_woken(&mut self) {
         let Some(work) = self.work.as_mut() else { return };
         if !self.woken.swap(false, Ordering::SeqCst) { return; }
-        let waker = std::task::Waker::from(Arc::new(Wakes(self.woken.clone())));
-        if let std::task::Poll::Ready(done) = work.as_mut().poll(&mut std::task::Context::from_waker(&waker)) {
+        let waker = std::task::Waker::from(Arc::new(Wakes { woken: self.woken.clone(), holds: self.holds.clone() }));
+        let polled = crate::runtime::polling(&self.holds, || work.as_mut().poll(&mut std::task::Context::from_waker(&waker)));
+        if let std::task::Poll::Ready(done) = polled {
             self.done = Some(done);
             self.work = None;
+            self.holds.release();
         }
     }
 
@@ -229,7 +239,7 @@ impl DatabaseSut {
     }
 
     fn launch(&mut self, work: impl std::future::Future<Output = Done> + Send + 'static) {
-        self.calls.push(Call { work: Some(Box::pin(work)), woken: Arc::new(std::sync::atomic::AtomicBool::new(true)), done: None });
+        self.calls.push(Call { work: Some(Box::pin(work)), woken: Arc::new(std::sync::atomic::AtomicBool::new(true)), holds: Arc::default(), done: None });
     }
 
     /// Polls the woken calls, waits for the barrier of the owners and repeats until no call is woken. Then observes everything that finished.
