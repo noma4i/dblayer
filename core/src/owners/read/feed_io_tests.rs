@@ -161,7 +161,7 @@ fn feed_io_broken_next_drops() {
     assert!(saw_input(&det, "ProtocolError") >= 1, "the broken frame is an explicit protocol error");
 }
 
-struct Hanging(Arc<AtomicUsize>);
+struct Hanging(Arc<AtomicUsize>, Arc<AtomicUsize>);
 
 struct DropCount(Arc<AtomicUsize>);
 
@@ -173,6 +173,7 @@ impl Drop for DropCount {
 impl CableLines for Hanging {
     async fn connect(&self) -> Result<Arc<dyn CableLine>, TransportError> {
         let _guard = DropCount(self.0.clone());
+        self.1.fetch_add(1, Ordering::SeqCst);
         std::future::pending().await
     }
 }
@@ -180,9 +181,9 @@ impl CableLines for Hanging {
 #[test]
 fn feed_io_close_cancels_handshake() {
     let runtime = runtime();
-    let dropped = Arc::new(AtomicUsize::new(0));
+    let (dropped, started) = (Arc::new(AtomicUsize::new(0)), Arc::new(AtomicUsize::new(0)));
     let (_, rest) = collector();
-    let io = FeedIo::new(Arc::new(Hanging(dropped.clone())), Arc::new(Models), runtime.handle().clone(), rest);
+    let io = FeedIo::new(Arc::new(Hanging(dropped.clone(), started.clone())), Arc::new(Models), runtime.handle().clone(), rest);
     let mut det = DetScheduler::new(1);
     let store = det.add::<BatchPeer>("store", Batches::default(), Discard);
     let windows = det.add::<Sink<Windows>>("windows", Default::default(), Discard);
@@ -192,9 +193,25 @@ fn feed_io_close_cancels_handshake() {
     det.start_epoch(EPOCH);
     det.post(feed, EpochStamp::Epoch(EPOCH), FeedInput::Online(Online(true)));
     det.post(feed, EpochStamp::Epoch(EPOCH), FeedInput::WantPlus { model: "Chat".into(), id: 1, stream: false });
-    pump_for(&mut det, feed, Duration::from_millis(100));
+    let began = started.clone();
+    pump(&mut det, feed, |_| began.load(Ordering::SeqCst) >= 1);
     assert_eq!(dropped.load(Ordering::SeqCst), 0, "the open waits");
     det.post(feed, EpochStamp::Epoch(EPOCH), FeedInput::WantMinus { model: "Chat".into(), id: 1 });
     let seen = dropped.clone();
     pump(&mut det, feed, |_| seen.load(Ordering::SeqCst) >= 1);
+}
+
+#[test]
+fn feed_io_foreign_subscription_is_ignored() {
+    let (line, peer) = line();
+    let (mut det, feed, batches, _runtime) = rig(vec![line]);
+    pump(&mut det, feed, |det| det.state(feed).is_some_and(|state| state.mode() == Mode::Live));
+    peer.frames.send(Incoming::Frame { counter: 1, body: json!({"t":"error", "id":"2", "code":"BAD", "retryable":false}) }).unwrap();
+    peer.frames.send(Incoming::Frame { counter: 2, body: json!({"t":"next", "id":"2", "result":{}}) }).unwrap();
+    peer.frames.send(Incoming::Frame { counter: 3, body: json!({"t":"complete", "id":"2"}) }).unwrap();
+    peer.frames.send(next(4, "mine")).unwrap();
+    let seen = batches.clone();
+    pump(&mut det, feed, |_| !seen.all().is_empty());
+    assert_eq!(batches.all()[0].rows, [("Chat".to_string(), "mine".to_string())]);
+    assert_eq!((saw_input(&det, "ProtocolError"), det.state(feed).map(|state| state.active_connection())), (0, Some(Some(1))), "frames of another subscription neither end nor break this one");
 }

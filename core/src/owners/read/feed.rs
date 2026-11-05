@@ -69,11 +69,13 @@ pub const SUBSCRIPTION: &str = "1";
 /// What a decrypted frame of the server says, as the executor reads it. The owner checks the counter before it reads the meaning.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Frame {
-    Ping { ts: i64 },
+    Ping { ts: serde_json::Number },
     Events { id: String, events: Vec<FramedEvent> },
     Complete { id: String },
-    /// The server closes the connection or reports an error: the connection ends.
+    /// The server closes the connection.
     Ended,
+    /// An `error` frame: `id` names the subscription it is for, none = the whole connection.
+    Error { id: Option<String> },
     /// `ready`, `subscribed`, `pong`: nothing for the owner.
     Quiet,
 }
@@ -98,7 +100,7 @@ pub enum Outgoing {
     Subscribe { models: Vec<String> },
     Unsubscribe,
     /// The answer to a server `ping`.
-    Pong { ts: i64 },
+    Pong { ts: serde_json::Number },
 }
 
 /// The effects of the runner: IO of the connection and the end of the owner.
@@ -428,6 +430,7 @@ impl FeedState {
                 let lost_models = self.mark_lost(&lost, fx);
                 Self::stale_all(&lost_models, fx);
                 if !rest.is_empty() {
+                    let rest = rest.into_iter().map(|event| FeedEvent { basis: self.generation_of(&event.model), ..event }).collect();
                     self.commit_by_basis(rest, fx);
                 }
             }
@@ -436,13 +439,7 @@ impl FeedState {
                 Self::stale_all(&lost_models, fx);
             }
             Some(RejectReason::NoSession | RejectReason::Closed) => {
-                if self.mode == Mode::Live {
-                    self.mode = Mode::Ended;
-                    self.close_all(fx);
-                } else {
-                    self.mark_lost(&events, fx);
-                    self.end(false, fx);
-                }
+                self.end(false, fx);
             }
         }
     }
@@ -647,7 +644,8 @@ impl FeedState {
             }
             Frame::Complete { id } if id == SUBSCRIPTION => self.dropped(connection, fx),
             Frame::Ended => self.dropped(connection, fx),
-            Frame::Events { .. } | Frame::Complete { .. } | Frame::Quiet => {}
+            Frame::Error { id } if id.as_deref().is_none_or(|id| id == SUBSCRIPTION) => self.dropped(connection, fx),
+            Frame::Events { .. } | Frame::Complete { .. } | Frame::Error { .. } | Frame::Quiet => {}
         }
     }
 

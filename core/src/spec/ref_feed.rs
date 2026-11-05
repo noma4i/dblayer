@@ -316,6 +316,7 @@ impl Feed {
                 let (lost, rest): (Vec<Ev>, Vec<Ev>) = batch.into_iter().partition(|event| models.contains(&event.model));
                 let lost_models = self.mark(&lost, |_| Slot::Lost);
                 Self::stale(&lost_models, &mut effects);
+                let rest = rest.into_iter().map(|event| Ev { basis: self.basis(&event.model), ..event }).collect();
                 self.commit(rest, &mut effects);
             }
             Some(Reject::Storage) => {
@@ -323,16 +324,10 @@ impl Feed {
                 Self::stale(&lost_models, &mut effects);
             }
             Some(Reject::NoSession) => {
-                if self.mode == Mode::Live {
-                    self.mode = Mode::Ended;
-                    self.close_all(&mut effects);
-                } else {
-                    self.mark(&batch, |_| Slot::Lost);
-                    self.mode = Mode::Ended;
-                    self.close_all(&mut effects);
-                    self.held.clear();
-                    self.pending.clear();
-                }
+                self.mode = Mode::Ended;
+                self.close_all(&mut effects);
+                self.held.clear();
+                self.pending.clear();
             }
         }
         effects

@@ -151,7 +151,7 @@ impl Twin {
             Input::Frame { to, counter, kind } => {
                 let connection = self.connection(*to);
                 let frame = match kind {
-                    Kind::Ping => Frame::Ping { ts: 5 },
+                    Kind::Ping => Frame::Ping { ts: 5.into() },
                     Kind::Complete => Frame::Complete { id: f::SUBSCRIPTION.into() },
                     Kind::OtherId => Frame::Complete { id: "2".into() },
                     Kind::Quiet => Frame::Quiet,
