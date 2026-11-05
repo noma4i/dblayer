@@ -82,13 +82,6 @@ pub(crate) struct Addresses {
     pub feed: Option<Address<super::read::feed::Feed>>,
 }
 
-#[derive(Clone, Debug)]
-pub struct SessionSnapshot {
-    pub epoch: Epoch,
-    pub pending: Option<crate::transport::encrypted::state::Pending>,
-    pub pending_lost: bool,
-}
-
 #[derive(Default)]
 struct PublishedCell {
     value: Mutex<Option<Published>>,
@@ -116,7 +109,6 @@ pub(crate) struct Wiring {
     /// The answer of a call that ended the session waits for the next epoch: a caller that heard it finds the new epoch.
     after_publish: Mutex<Vec<(Awaited, crate::runtime::OutcomeId, LifeReply)>>,
     network_sinks: Mutex<Vec<(Peer, Arc<dyn Fn(NetworkEvent) + Send + Sync>)>>,
-    restored_sink: Mutex<Option<Arc<dyn Fn(SessionSnapshot) + Send + Sync>>>,
     /// Every subscriber of the Store broadcast `Committed`, in the order of subscription.
     committed_sinks: Mutex<Vec<Arc<dyn Fn(CommittedBroadcast) + Send + Sync>>>,
     session_open: Mutex<Option<SessionInput>>,
@@ -151,7 +143,6 @@ impl Wiring {
             store_sinks: Mutex::new(HashMap::new()),
             after_publish: Mutex::new(Vec::new()),
             network_sinks: Mutex::new(Vec::new()),
-            restored_sink: Mutex::new(None),
             committed_sinks: Mutex::new(Vec::new()),
             session_open: Mutex::new(None),
             restore_failures: Mutex::new(Vec::new()),
@@ -197,6 +188,9 @@ impl Wiring {
             self.outcomes.settle(id, reply);
         }
     }
+
+    /// Whether the published epoch is already past `epoch`: an answer addressed to that epoch has no receiver left.
+    pub fn epoch_passed(&self, epoch: Epoch) -> bool { self.published.value.lock().unwrap_or_else(PoisonError::into_inner).as_ref().is_some_and(|published| published.epoch > epoch) }
 
     /// The wait of `open`: the id Lifecycle answers when the first publication is saved.
     pub fn open_reply(&self) -> Option<u64> { self.open.lock().unwrap_or_else(PoisonError::into_inner).id }
@@ -266,17 +260,6 @@ impl Wiring {
         let sinks = self.committed_sinks.lock().unwrap_or_else(PoisonError::into_inner).clone();
         for sink in sinks {
             crate::db::lock::effect(|| sink(broadcast.clone()));
-        }
-    }
-
-    pub fn on_restored(&self, sink: impl Fn(SessionSnapshot) + Send + Sync + 'static) {
-        *self.restored_sink.lock().unwrap_or_else(PoisonError::into_inner) = Some(Arc::new(sink));
-    }
-
-    pub fn tell_restored(&self, snapshot: SessionSnapshot) {
-        let sink = self.restored_sink.lock().unwrap_or_else(PoisonError::into_inner).clone();
-        if let Some(sink) = sink {
-            crate::db::lock::effect(|| sink(snapshot));
         }
     }
 
@@ -519,8 +502,6 @@ impl Life {
 
     pub fn on_network(&self, owner: Peer, sink: impl Fn(NetworkEvent) + Send + Sync + 'static) { self.wiring.on_network(owner, sink); }
 
-    pub fn on_restored(&self, sink: impl Fn(SessionSnapshot) + Send + Sync + 'static) { self.wiring.on_restored(sink); }
-
     /// Subscribes to the Store broadcast `Committed`: one call per committed batch, clear and models reset, in the order of revisions.
     pub fn on_committed(&self, sink: impl Fn(CommittedBroadcast) + Send + Sync + 'static) { self.wiring.on_committed(sink); }
 
@@ -649,17 +630,18 @@ fn boot_found(db: &Db) -> Result<BootFound, LifeError> {
         crate::store::StoreError::CorruptManifest(detail) => LifeError::CorruptManifest(detail),
         other => LifeError::Storage(other.to_string()),
     })?;
+    let revision = db.shared.store.revision_seq().ok().and_then(|revision| u64::try_from(revision).ok()).ok_or_else(|| LifeError::Storage("the stored revision is not a revision".into()))?;
     let report = db.open_report();
     let server_model_changed = report.changed_models.iter().any(|model| db.shared.specs.get(model).is_none_or(|spec| !spec.is_local()));
     Ok(if report.recreated == Some(crate::ddl::RecreateReason::UnreadableFile) {
         BootFound::Fresh
     } else if report.recreated.is_some() {
-        BootFound::FormatChange { saved_epoch, saved_generation, saved_identity }
+        BootFound::FormatChange { saved_epoch, saved_generation, saved_identity, revision }
     } else if server_model_changed {
-        BootFound::ChangedModels { saved_epoch, saved_generation, saved_identity }
+        BootFound::ChangedModels { saved_epoch, saved_generation, saved_identity, revision }
     } else if !report.changed_models.is_empty() {
-        BootFound::LocalModelChanged { saved_epoch, saved_generation, saved_identity }
+        BootFound::LocalModelChanged { saved_epoch, saved_generation, saved_identity, revision }
     } else {
-        BootFound::Same { saved_epoch, saved_generation, saved_identity }
+        BootFound::Same { saved_epoch, saved_generation, saved_identity, revision }
     })
 }

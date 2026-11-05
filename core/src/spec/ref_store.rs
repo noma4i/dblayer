@@ -119,6 +119,7 @@ pub struct Store {
     pub epoch: u64,
     pub saved_epoch: u64,
     pub saved_generation: u64,
+    pub saved_revision: u64,
     pub generations: BTreeMap<String, u64>,
     /// `model_generation[*]` of the models that have no entry.
     pub base_generation: u64,
@@ -143,6 +144,7 @@ impl Store {
             epoch: 0,
             saved_epoch: 0,
             saved_generation: 0,
+            saved_revision: 0,
             generations: BTreeMap::new(),
             base_generation: 0,
             rows: BTreeSet::new(),
@@ -172,9 +174,14 @@ impl Store {
                 None
             }
             Boot::New => Some(OpenMessage { saved_epoch: 0, saved_generation: 0, saved_identity: None }),
-            Boot::Same | Boot::LocalModelChanged => Some(OpenMessage { saved_epoch: self.saved_epoch, saved_generation: self.saved_generation, saved_identity: self.credential }),
+            Boot::Same | Boot::LocalModelChanged => {
+                self.revision = self.saved_revision;
+                self.generations.clear();
+                self.base_generation = self.saved_generation;
+                Some(OpenMessage { saved_epoch: self.saved_epoch, saved_generation: self.saved_generation, saved_identity: self.credential })
+            }
             Boot::ChangedModels | Boot::FormatChange => {
-                self.revision += 1;
+                self.revision = self.saved_revision + 1;
                 self.rows.clear();
                 self.generations.clear();
                 self.saved_generation += 1;

@@ -132,12 +132,12 @@ pub struct StoreBatch {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum BootFound {
     Fresh,
-    Same { saved_epoch: Epoch, saved_generation: u64, saved_identity: Option<Identity> },
+    Same { saved_epoch: Epoch, saved_generation: u64, saved_identity: Option<Identity>, revision: u64 },
     /// The fingerprint of a server model changed: the cache is erased in the `Boot` transaction and the generation grows.
-    ChangedModels { saved_epoch: Epoch, saved_generation: u64, saved_identity: Option<Identity> },
-    FormatChange { saved_epoch: Epoch, saved_generation: u64, saved_identity: Option<Identity> },
+    ChangedModels { saved_epoch: Epoch, saved_generation: u64, saved_identity: Option<Identity>, revision: u64 },
+    FormatChange { saved_epoch: Epoch, saved_generation: u64, saved_identity: Option<Identity>, revision: u64 },
     /// The fingerprint of a `storage: local` model changed, the server models match: only that model is rebuilt.
-    LocalModelChanged { saved_epoch: Epoch, saved_generation: u64, saved_identity: Option<Identity> },
+    LocalModelChanged { saved_epoch: Epoch, saved_generation: u64, saved_identity: Option<Identity>, revision: u64 },
     SqliteError(String),
     /// `saved_epoch` or `saved_generation` is not a u64.
     CorruptManifest(String),
@@ -529,16 +529,19 @@ impl StoreState {
                 fx.push(StoreEffect::Prepare { format_change: false });
                 fx.push(open(0, 0, None));
             }
-            BootFound::Same { saved_epoch, saved_generation, saved_identity } | BootFound::LocalModelChanged { saved_epoch, saved_generation, saved_identity } => {
+            BootFound::Same { saved_epoch, saved_generation, saved_identity, revision } | BootFound::LocalModelChanged { saved_epoch, saved_generation, saved_identity, revision } => {
                 if matches!(found, BootFound::LocalModelChanged { .. }) {
                     fx.push(StoreEffect::Prepare { format_change: false });
                 }
+                self.revision = revision;
                 self.saved_epoch = saved_epoch;
                 self.saved_generation = saved_generation;
+                self.base_generation = saved_generation;
+                self.generations.clear();
                 fx.push(open(saved_epoch, saved_generation, saved_identity));
             }
-            BootFound::ChangedModels { saved_epoch, saved_generation, saved_identity } | BootFound::FormatChange { saved_epoch, saved_generation, saved_identity } => {
-                self.revision += 1;
+            BootFound::ChangedModels { saved_epoch, saved_generation, saved_identity, revision } | BootFound::FormatChange { saved_epoch, saved_generation, saved_identity, revision } => {
+                self.revision = revision + 1;
                 self.saved_epoch = saved_epoch;
                 self.saved_generation = saved_generation + 1;
                 self.base_generation = saved_generation + 1;

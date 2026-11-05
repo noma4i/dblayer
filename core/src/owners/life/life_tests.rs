@@ -311,6 +311,31 @@ async fn network_events_reach_the_listeners_with_the_snapshot_of_the_epoch() {
     closed(&life).await;
 }
 
+/// net_prop_snapshot_after_create: a snapshot addressed to an epoch that is already past reaches no receiver.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_snapshot_of_a_past_epoch_reaches_no_receiver() {
+    use crate::owners::contract::NetworkEvent;
+    use crate::owners::lifecycle::Peer;
+    use crate::owners::network::NetworkInput;
+    use std::sync::Mutex;
+    let db = Db::open_in_memory(vec![moments_spec()], None).unwrap();
+    let transport = Arc::new(MockTransport::new());
+    let life = start(&db, &transport).await;
+    let heard: Arc<Mutex<Vec<NetworkEvent>>> = Arc::default();
+    let sink = heard.clone();
+    life.on_network(Peer::Transfer, move |event| sink.lock().unwrap().push(event));
+    let epoch = life.published().epoch;
+    life.wiring.to_network(NetworkInput::SnapshotRequest { owner: Peer::Transfer, epoch: epoch - 1 });
+    life.wiring.to_network(NetworkInput::SnapshotRequest { owner: Peer::Transfer, epoch });
+    let started = std::time::Instant::now();
+    while !heard.lock().unwrap().iter().any(|event| matches!(event, NetworkEvent::Online { epoch: Some(heard), .. } if *heard == epoch)) {
+        assert!(started.elapsed() < LIMIT, "the snapshot of the current epoch arrived");
+        tokio::time::sleep(Duration::from_millis(5)).await;
+    }
+    assert!(!heard.lock().unwrap().iter().any(|event| matches!(event, NetworkEvent::Online { epoch: Some(heard), .. } if *heard != epoch)), "the snapshot of the past epoch was dropped");
+    closed(&life).await;
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn the_rows_of_a_batch_land_through_the_common_path() {
     use crate::owners::contract::BatchAuthor;
@@ -397,19 +422,4 @@ fn outbox_and_transfer_answer_storage_while_their_queue_is_unreadable() {
     assert!(Transfers::step(&mut transfer, TransferInput::RestoreFailed { error: "disk".into() }).is_empty());
     let effects = Transfers::step(&mut transfer, TransferInput::Cancel { key: "k".into(), reply: 6 });
     assert!(matches!(effects.as_slice(), [Effect::Run(TransferEffect::Reply { reply: 6, answer: TransferAnswer::Err(Fault::Rejected(RejectReason::Storage(error))) })] if error == "disk"), "{effects:?}");
-}
-
-#[tokio::test(flavor = "multi_thread")]
-async fn read_intents_gives_session_the_pending_row_of_the_same_read() {
-    let transport = Arc::new(MockTransport::new());
-    let db = Db::open_in_memory(vec![moments_spec()], None).unwrap();
-    session_row(&db);
-    let life = start(&db, &transport).await;
-    let (sender, receiver) = std::sync::mpsc::channel();
-    life.on_restored(move |snapshot| { let _ = sender.send(snapshot); });
-    life.credential_committed(2);
-    let snapshot = tokio::task::spawn_blocking(move || receiver.recv_timeout(LIMIT).expect("Session got its snapshot")).await.unwrap();
-    assert_eq!(snapshot.epoch, life.published().epoch);
-    assert!(snapshot.pending.is_none() && !snapshot.pending_lost);
-    closed(&life).await;
 }

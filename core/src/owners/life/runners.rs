@@ -257,7 +257,9 @@ impl EffectRunner<Network> for NetworkRunner {
                 wiring.tell_network(&ALL_PEERS, NetworkEvent::Online { online, epoch: None });
             }
             NetworkEffect::Snapshot { owner, epoch, online, saving } => {
-                self.db.connectivity().change(online);
+                if wiring.epoch_passed(epoch) {
+                    return;
+                }
                 let stamp = EpochStamp::Epoch(epoch);
                 match owner {
                     Peer::Windows => wiring.to_windows_in(epoch, WindowsInput::Online(Online(online))),

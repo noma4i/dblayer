@@ -209,11 +209,11 @@ impl Twin {
         let want = self.reference.boot(found.clone());
         let input = match found {
             Boot::New => BootFound::Fresh,
-            Boot::Same => BootFound::Same { saved_epoch: saved.0, saved_generation: saved.1, saved_identity: saved.2 },
-            Boot::ChangedModels => BootFound::ChangedModels { saved_epoch: saved.0, saved_generation: saved.1, saved_identity: saved.2 },
-            Boot::LocalModelChanged => BootFound::LocalModelChanged { saved_epoch: saved.0, saved_generation: saved.1, saved_identity: saved.2 },
+            Boot::Same => BootFound::Same { saved_epoch: saved.0, saved_generation: saved.1, saved_identity: saved.2, revision: self.reference.saved_revision },
+            Boot::ChangedModels => BootFound::ChangedModels { saved_epoch: saved.0, saved_generation: saved.1, saved_identity: saved.2, revision: self.reference.saved_revision },
+            Boot::LocalModelChanged => BootFound::LocalModelChanged { saved_epoch: saved.0, saved_generation: saved.1, saved_identity: saved.2, revision: self.reference.saved_revision },
             Boot::CorruptManifest => BootFound::CorruptManifest(DISK.into()),
-            Boot::FormatChange => BootFound::FormatChange { saved_epoch: saved.0, saved_generation: saved.1, saved_identity: saved.2 },
+            Boot::FormatChange => BootFound::FormatChange { saved_epoch: saved.0, saved_generation: saved.1, saved_identity: saved.2, revision: self.reference.saved_revision },
             Boot::SqliteError => BootFound::SqliteError(DISK.into()),
         };
         let raw = self.send(StoreInput::Boot(input));
@@ -255,6 +255,16 @@ fn store_boot_same() {
     let mut twin = Twin::new();
     let Some(StoreEffect::OpenLifecycle(message)) = twin.boot(Boot::Same, (4, 2, Some(7))) else { panic!("the boot opens Lifecycle") };
     assert_eq!((message.saved_epoch, message.saved_generation, message.saved_identity), (4, 2, Some(7)));
+}
+
+/// store_boot_same: the working generation of every model and the revision come from the database, not only the fields for Lifecycle.
+#[test]
+fn store_boot_same_restores_generation_and_revision() {
+    let mut twin = Twin::new();
+    twin.reference.saved_revision = 9;
+    let Some(StoreEffect::OpenLifecycle(message)) = twin.boot(Boot::Same, (4, 7, Some(7))) else { panic!("the boot opens Lifecycle") };
+    assert_eq!(message.saved_generation, 7);
+    assert_eq!((twin.state().generation("Moment"), twin.state().revision()), (7, 9), "a batch with basis 6 is stale and the next revision follows 9");
 }
 
 #[test]
