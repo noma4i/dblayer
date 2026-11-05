@@ -13,7 +13,7 @@ use super::subscription::{ConsumerSignal, ServerSubscription, SubscriptionEvent,
 use super::Transport;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum CallKind {
+pub enum RecordedKind {
     Query,
     Mutation,
     Subscription,
@@ -21,7 +21,7 @@ pub enum CallKind {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct RecordedCall {
-    pub kind: CallKind,
+    pub kind: RecordedKind,
     pub operation_name: String,
     pub variables: Value,
     pub purpose: super::NetworkPurpose,
@@ -288,7 +288,7 @@ impl MockTransport {
         self.state.lock().expect("mock transport state")
     }
 
-    fn record(&self, kind: CallKind, request: &GraphQLRequest) {
+    fn record(&self, kind: RecordedKind, request: &GraphQLRequest) {
         self.lock().calls.push(RecordedCall {
             kind,
             operation_name: request.operation_name.clone(),
@@ -298,7 +298,7 @@ impl MockTransport {
         self.wake.notify_waiters();
     }
 
-    async fn reply(&self, kind: CallKind, request: GraphQLRequest) -> Result<Response, TransportError> {
+    async fn reply(&self, kind: RecordedKind, request: GraphQLRequest) -> Result<Response, TransportError> {
         self.record(kind, &request);
         let responder = self.lock().responder.clone();
         let answered = responder.and_then(|answer| answer(&request));
@@ -373,15 +373,15 @@ impl Transport for MockTransport {
     }
 
     async fn query(&self, _admitted: &crate::ffi::legacy::Admitted, request: GraphQLRequest) -> Result<Response, TransportError> {
-        self.reply(CallKind::Query, request).await
+        self.reply(RecordedKind::Query, request).await
     }
 
     async fn mutate(&self, _admitted: &crate::ffi::legacy::Admitted, request: GraphQLRequest) -> Result<Response, TransportError> {
-        self.reply(CallKind::Mutation, request).await
+        self.reply(RecordedKind::Mutation, request).await
     }
 
     async fn subscribe(&self, _admitted: &crate::ffi::legacy::Admitted, request: GraphQLRequest) -> Result<ServerSubscription, TransportError> {
-        self.record(CallKind::Subscription, &request);
+        self.record(RecordedKind::Subscription, &request);
         let (sender, receiver) = super::subscription_channel();
         let name = request.operation_name;
         let mut state = self.lock();

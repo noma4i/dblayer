@@ -2,7 +2,8 @@
 
 use std::sync::{Arc, OnceLock};
 
-use crate::owners::write::rounds::{RequestId, RoundId};
+use crate::owners::contract::RequestId;
+use crate::owners::write::rounds::RoundId;
 use crate::owners::write::rounds_executor::RoundJobs;
 use crate::runtime::Epoch;
 

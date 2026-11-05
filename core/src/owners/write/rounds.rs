@@ -9,7 +9,7 @@ use crate::owners::contract::{Drained, EpochEnded, EpochStarted};
 use crate::runtime::{Address, Cause, Effect, Effects, Epoch, Outbound, StateOwner, Time};
 
 pub type RoundId = u32;
-pub type RequestId = u64;
+use crate::owners::contract::RequestId;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum RoundsInput {

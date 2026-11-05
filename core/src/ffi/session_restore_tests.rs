@@ -86,7 +86,7 @@ async fn ids(database: &Database, model: &str, relation: &str) -> Vec<String> {
 }
 
 #[tokio::test]
-async fn the_explicit_load_that_restores_a_reset_session_returns_its_own_result() {
+async fn a_load_after_a_session_reset_needs_a_new_session_and_asks_nothing() {
     let transport = Accounts::new(None);
     let database = open(transport.clone()).await;
     within(load(&database, "Profile", "profile")).await.unwrap();
@@ -94,13 +94,9 @@ async fn the_explicit_load_that_restores_a_reset_session_returns_its_own_result(
     assert_eq!((ids(&database, "Profile", "profile").await, ids(&database, "Vibe", "list").await), (vec!["profile-a".to_string()], vec!["vibe-a".to_string()]));
 
     database.session_reset().await.unwrap();
-    let before = database.session_epoch();
-    assert_eq!(within(load(&database, "Profile", "profile")).await, Ok(()), "the load that restored the session was interrupted by its own restoration");
-    assert_eq!(within(load(&database, "Vibe", "list")).await, Ok(()));
-    assert!(database.session_epoch() > before, "the restoration still moves the epoch for everyone else");
-
-    assert_eq!((transport.asked("Profile"), transport.asked("Vibe")), (2, 2), "the reset kept a window fresh");
-    assert_eq!((ids(&database, "Profile", "profile").await, ids(&database, "Vibe", "list").await), (vec!["profile-b".to_string()], vec!["vibe-b".to_string()]));
+    assert!(matches!(within(load(&database, "Profile", "profile")).await, Err(DbError::NoSession { .. })));
+    assert!(matches!(within(load(&database, "Vibe", "list")).await, Err(DbError::NoSession { .. })));
+    assert_eq!((transport.asked("Profile"), transport.asked("Vibe")), (1, 1), "a load without a session asked the server");
     database.close_database().await.unwrap();
 }
 

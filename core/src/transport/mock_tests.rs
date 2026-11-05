@@ -55,8 +55,8 @@ async fn journal_records_calls_in_order_with_kind_and_variables() {
     mock.mutate(&super::test_admission().unwrap(), GraphQLRequest::new("mutation Rename { r }", "Rename", json!({"id": "a"}))).await.unwrap();
     let calls = mock.calls();
     assert_eq!(calls.len(), 2);
-    assert_eq!((calls[0].kind, calls[0].operation_name.as_str()), (CallKind::Query, "Ping"));
-    assert_eq!((calls[1].kind, calls[1].operation_name.as_str()), (CallKind::Mutation, "Rename"));
+    assert_eq!((calls[0].kind, calls[0].operation_name.as_str()), (RecordedKind::Query, "Ping"));
+    assert_eq!((calls[1].kind, calls[1].operation_name.as_str()), (RecordedKind::Mutation, "Rename"));
     assert_eq!(calls[1].variables, json!({"id": "a"}));
     assert_eq!(mock.call_count("Ping"), 1);
 }

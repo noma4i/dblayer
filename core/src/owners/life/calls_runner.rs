@@ -13,7 +13,7 @@ use crate::owners::contract::RequestId;
 use crate::owners::lifecycle::LifecycleInput;
 use crate::owners::session::{AuthorOutcome, SessionError, SessionInput, CALLS_AUTHOR};
 use crate::runtime::{Back, EffectRunner, EpochStamp, OutcomeId};
-use crate::transport::{GraphQLRequest, ResponseOutcome, TransportError};
+use crate::transport::{GraphQLRequest, ResponseOutcome, SessionCode, TransportError};
 
 type Roots = Arc<Mutex<HashMap<RequestId, String>>>;
 
@@ -33,18 +33,20 @@ fn input_of(call_id: u64, root: &str, result: Result<crate::transport::Response,
         Ok(response) => {
             if response.shape().outcome() != ResponseOutcome::Commit {
                 let messages: Vec<String> = response.errors.iter().map(|error| error.message.clone()).collect();
-                return CallsInput::Response { call_id, body: None, errors: if messages.is_empty() { vec!["empty response".to_string()] } else { messages } };
+                return CallsInput::Response { call_id, body: None, errors: if messages.is_empty() { vec!["empty response".to_string()] } else { messages }, extensions: response.extensions() };
             }
             let body = response.data.and_then(|data| data.get(root).filter(|value| !value.is_null()).map(Value::to_string));
-            CallsInput::Response { call_id, body, errors: Vec::new() }
+            CallsInput::Response { call_id, body, errors: Vec::new(), extensions: None }
         }
-        Err(TransportError::Graphql { messages, .. }) => CallsInput::TransportError { call_id, error: CallError::Graphql(messages) },
-        Err(TransportError::Session { code, .. }) => CallsInput::TransportError { call_id, error: CallError::Session(code) },
-        Err(TransportError::Http { .. }) => CallsInput::TransportError { call_id, error: CallError::Http },
+        Err(TransportError::Graphql { messages, extensions }) => CallsInput::TransportError { call_id, error: CallError::Graphql { messages, extensions } },
+        Err(TransportError::Session { code, detail }) => CallsInput::TransportError { call_id, error: CallError::Session { code, detail } },
+        Err(TransportError::Http { status, body }) => CallsInput::TransportError { call_id, error: CallError::Http { status, detail: body } },
         Err(TransportError::Interrupted(_)) => CallsInput::TransportError { call_id, error: CallError::Interrupted },
         Err(_) => CallsInput::TransportError { call_id, error: CallError::Network },
     }
 }
+
+fn session_call_error(code: SessionCode) -> CallError { CallError::Session { code, detail: code.name().to_string() } }
 
 fn answer_input(call_id: u64, root: &str, outcome: AuthorOutcome) -> CallsInput {
     match outcome {
@@ -56,7 +58,13 @@ fn answer_input(call_id: u64, root: &str, outcome: AuthorOutcome) -> CallsInput 
         AuthorOutcome::Error { error, .. } => CallsInput::TransportError { call_id, error: match error {
             SessionError::NoSession => CallError::NoSession,
             SessionError::Interrupted | SessionError::Closed => CallError::Interrupted,
-            SessionError::Http | SessionError::Unauthorized => CallError::Http,
+            SessionError::Http => CallError::Http { status: 0, detail: "the server refused the request".into() },
+            SessionError::Unauthorized => CallError::Http { status: 401, detail: String::new() },
+            SessionError::Session(code) => session_call_error(code),
+            SessionError::Revoked => session_call_error(SessionCode::SessionEnded),
+            SessionError::SequenceConflict => session_call_error(SessionCode::SequenceConflict),
+            SessionError::StateLost => session_call_error(SessionCode::StateLost),
+            SessionError::NoCredential => session_call_error(SessionCode::NoCredential),
             _ => CallError::Network,
         } },
     }

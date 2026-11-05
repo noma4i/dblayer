@@ -147,6 +147,7 @@ async fn a_media_refetch_after_mutation_reads_the_whole_stale_window() {
     let transport = Arc::new(MarkedMediaTransport::default());
     let options = OpenOptions { operations, uploads: None, power_saving: false, low_ram: false };
     let database = within_secs(20, OpenDatabase::new().open(Config { path: None, data_version: None, cache_rows: 32 }, serde_json::to_string(&specs).unwrap(), options, Some(transport.clone()), None, None, None, None)).await.unwrap();
+    database.set_online(true).unwrap();
     let epoch = database.session_epoch();
     let params = json!({"chatId":"c1"}).to_string();
     within_secs(20, database.load_all(epoch, "MediaMessage".into(), "visual_media".into(), params.clone(), false)).await.unwrap();
@@ -174,6 +175,7 @@ async fn preloads_and_three_media_loads_finish_on_empty_pages() {
     let options = OpenOptions { operations, uploads: None, power_saving: false, low_ram: false };
     let opener = OpenDatabase::new();
     let database = within_secs(20, opener.open(Config { path: None, data_version: None, cache_rows: 32 }, models(), options, Some(transport.clone()), None, None, None, None)).await.unwrap();
+    database.set_online(true).unwrap();
     within_secs(20, transport.preload.notified()).await;
     let epoch = database.session_epoch();
     for (relation, id) in [("visual_media", "v1"), ("audio_media", "a1"), ("gift_media", "g1")] {

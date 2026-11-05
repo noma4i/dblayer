@@ -14,10 +14,10 @@ pub enum CallError {
     Invalid,
     Offline,
     Network,
-    Graphql(Vec<String>),
-    Http,
+    Graphql { messages: Vec<String>, extensions: Option<crate::transport::GraphqlExtensions> },
+    Http { status: u16, detail: String },
     /// A query the server refused with a session code: the call ends, the session stays.
-    Session(crate::transport::SessionCode),
+    Session { code: crate::transport::SessionCode, detail: String },
     Dropped,
     InvalidResponse,
     Interrupted,
@@ -55,7 +55,7 @@ pub enum CallsInput {
     /// Operations declared by `register_operations` after the open.
     Declare(Vec<(String, CallKind)>),
     /// `body` is the root of the operation, `None` when the response has no root.
-    Response { call_id: CallId, body: Option<String>, errors: Vec<String> },
+    Response { call_id: CallId, body: Option<String>, errors: Vec<String>, extensions: Option<crate::transport::GraphqlExtensions> },
     TransportError { call_id: CallId, error: CallError },
     Dropped { call_id: CallId },
     Online(Online),
@@ -124,9 +124,9 @@ impl StateOwner for Calls {
                 state.calls.insert(id, (CallPhase::Sending { request_id: id, kind, generation: state.generation }, reply));
                 fx.push(CallsEffect::Request { call_id: id, request_id: id, operation, variables, kind, epoch: state.epoch });
             }
-            CallsInput::Response { call_id, body, errors } if state.sending(call_id) => {
+            CallsInput::Response { call_id, body, errors, extensions } if state.sending(call_id) => {
                 let answer = match (errors.is_empty(), body) {
-                    (false, _) => Err(CallError::Graphql(errors)),
+                    (false, _) => Err(CallError::Graphql { messages: errors, extensions }),
                     (true, Some(body)) => Ok(body),
                     (true, None) => Err(CallError::InvalidResponse),
                 };

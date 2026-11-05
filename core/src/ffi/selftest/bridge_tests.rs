@@ -846,7 +846,7 @@ async fn a_late_answer_of_the_old_epoch_is_dropped_and_a_command_of_the_old_epoc
     assert!(!second.ever_showed("A"), "the late answer of A reached the projection of B");
     assert!(second.shows("B"));
     let refused = bound(rig.database.send(message(epoch_a, "late", 3))).await;
-    assert!(matches!(refused, Err(DbError::Interrupted { .. })), "a command of the old epoch ran: {refused:?}");
+    assert!(matches!(refused, Err(DbError::NoSession { .. })), "a command of the old epoch ran: {refused:?}");
     assert_eq!(rig.world.count("SendMessage"), 0);
     rig.database.close_now();
 }
@@ -1110,11 +1110,10 @@ async fn a_send_needs_a_session_and_a_plain_action_never_waits_for_the_network()
     rig.login_ios("A").await;
     let epoch = rig.database.session_epoch();
     let (values, args) = group("g");
-    let admitted = rig.database.db.admit().unwrap();
-    rig.database.db.create_with(&admitted, "Group", serde_json::from_str(&values).unwrap(), serde_json::from_str(&args).unwrap()).unwrap();
-    drop(admitted);
-    assert_eq!(rig.database.db.outbox().unwrap().len(), 1, "the plain action was queued once");
     rig.database.set_online(false).unwrap();
+    settle(&rig).await;
+    let plain = bound(rig.database.create(epoch, "Group".into(), values, args)).await;
+    assert!(matches!(plain, Err(DbError::Network { .. })), "a plain action was not refused while the network was away: {plain:?}");
     settle(&rig).await;
     assert!(rig.database.db.outbox().unwrap().is_empty(), "a plain action stayed queued while the network was away");
     assert_eq!(rig.database.db.shared.store.row_count("Group").unwrap(), 0, "the row of the refused action stayed");

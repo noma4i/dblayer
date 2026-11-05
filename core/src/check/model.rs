@@ -35,7 +35,7 @@ pub trait Owner: Sync {
 }
 
 #[derive(Clone, Debug, PartialEq)]
-pub enum Fault {
+pub enum DivergenceKind {
     Observations,
     Property { name: &'static str, message: String },
 }
@@ -47,14 +47,14 @@ pub struct Divergence {
     pub input: Input,
     pub expected: Vec<Observation>,
     pub got: Vec<Observation>,
-    pub fault: Fault,
+    pub fault: DivergenceKind,
     pub inputs: Vec<Input>,
 }
 
 impl fmt::Display for Divergence {
     fn fmt(&self, out: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(out, "step {} input {} expected {} got {}", self.step, self.input, list(&self.expected), list(&self.got))?;
-        if let Fault::Property { name, message } = &self.fault {
+        if let DivergenceKind::Property { name, message } = &self.fault {
             write!(out, " property {name}: {message}")?;
         }
         Ok(())
@@ -71,14 +71,14 @@ pub async fn run(owner: &dyn Owner, name: &str, inputs: &[Input]) -> Result<Trac
     for (index, input) in inputs.iter().enumerate() {
         let expected = model.step(input);
         let got = real.apply(input).await;
-        let failure = |fault: Fault| Divergence { step: index + 1, input: input.clone(), expected: expected.clone(), got: got.clone(), fault, inputs: inputs.to_vec() };
+        let failure = |fault: DivergenceKind| Divergence { step: index + 1, input: input.clone(), expected: expected.clone(), got: got.clone(), fault, inputs: inputs.to_vec() };
         if expected != got {
-            return Err(failure(Fault::Observations));
+            return Err(failure(DivergenceKind::Observations));
         }
         steps.push(Step { input: input.clone(), observed: expected.clone() });
         for property in &properties {
             if let Err(message) = (property.check)(&steps) {
-                return Err(failure(Fault::Property { name: property.name, message }));
+                return Err(failure(DivergenceKind::Property { name: property.name, message }));
             }
         }
     }
@@ -98,7 +98,7 @@ pub async fn replay(real: &mut dyn Sut, trace: &Trace) -> Result<(), Divergence>
     for (index, step) in trace.steps.iter().enumerate() {
         let got = real.apply(&step.input).await;
         if got != step.observed {
-            return Err(Divergence { step: index + 1, input: step.input.clone(), expected: step.observed.clone(), got, fault: Fault::Observations, inputs });
+            return Err(Divergence { step: index + 1, input: step.input.clone(), expected: step.observed.clone(), got, fault: DivergenceKind::Observations, inputs });
         }
     }
     Ok(())

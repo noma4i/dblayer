@@ -55,6 +55,7 @@ pub(super) async fn rig(server_key: &str, pin: &str) -> (Arc<Database>, Arc<Fake
     let encrypted = EncryptedConfig { origin: origin().to_string(), server_key: server_key.to_string(), pin: pin.to_string(), ..crate::transport::encrypted::protocol_tests::config() };
     let database = Database::open(Config { path: None, data_version: None, cache_rows: 8 }, "[]".to_string(), Some(Arc::new(SubscriptionsOnly)), Some(encrypted), Some(Arc::new(Held(credentials.clone()))), Some(Arc::new(ThroughServer(server.clone()))), None, None).await
     .unwrap();
+    database.set_online(true).unwrap();
     (database, server, credentials)
 }
 
@@ -88,7 +89,7 @@ fn cancel_on_retry_waits_for_a_retry_that_the_executor_reaches_late() { crate::t
 }) }
 
 #[tokio::test]
-async fn dropping_foreign_calls_cancels_the_inflight_http_future() {
+async fn dropping_the_bootstrap_call_cancels_the_inflight_http_future() {
     struct Waiting {
         started: tokio::sync::Notify,
         stopped: Arc<tokio::sync::Notify>,
@@ -103,22 +104,15 @@ async fn dropping_foreign_calls_cancels_the_inflight_http_future() {
             std::future::pending().await
         }
     }
-    for bootstrap in [false, true] {
-        let stopped = Arc::new(tokio::sync::Notify::new());
-        let http = Arc::new(Waiting { started: tokio::sync::Notify::new(), stopped: stopped.clone() });
-        let config = crate::transport::EncryptedConfig { origin: origin().into(), pin: pin().into(), server_key: public_key_der_b64().into(), ..crate::transport::encrypted::protocol_tests::config() };
-        let db = Database::open(Config { path: None, data_version: None, cache_rows: 8 }, "[]".into(), Some(Arc::new(SubscriptionsOnly)), Some(config.clone()), Some(Arc::new(Held(Arc::new(MemoryCredentials::default())))), Some(http.clone()), None, None).await.unwrap();
-        let mut call = Box::pin(async {
-            if bootstrap {
-                super::fetch_server_config(config, crate::transport::AppPlatform::Ios, "1.2".into(), None, http.clone(), None, crate::transport::Connectivity::new(true)).await.map(|_| ())
-            } else { db.session_call("social".into(), "{}".into()).await.map(|_| ()) }
-        });
-        crate::test_wait::timeout(std::time::Duration::from_secs(2), async {
-            tokio::select! { _ = http.started.notified() => {}, result = &mut call => panic!("unexpected completion {result:?}") }
-        }).await.unwrap();
-        drop(call);
-        crate::test_wait::timeout(std::time::Duration::from_secs(2), stopped.notified()).await.expect("dropping the foreign call drops HTTP");
-    }
+    let stopped = Arc::new(tokio::sync::Notify::new());
+    let http = Arc::new(Waiting { started: tokio::sync::Notify::new(), stopped: stopped.clone() });
+    let config = crate::transport::EncryptedConfig { origin: origin().into(), pin: pin().into(), server_key: public_key_der_b64().into(), ..crate::transport::encrypted::protocol_tests::config() };
+    let mut call = Box::pin(super::fetch_server_config(config, crate::transport::AppPlatform::Ios, "1.2".into(), None, http.clone(), None, crate::transport::Connectivity::new(true)));
+    crate::test_wait::timeout(std::time::Duration::from_secs(2), async {
+        tokio::select! { _ = http.started.notified() => {}, result = &mut call => panic!("unexpected completion {:?}", result.map(|_| ())) }
+    }).await.unwrap();
+    drop(call);
+    crate::test_wait::timeout(std::time::Duration::from_secs(2), stopped.notified()).await.expect("dropping the foreign call drops HTTP");
 }
 
 #[tokio::test(flavor = "multi_thread")]

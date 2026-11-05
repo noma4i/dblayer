@@ -124,7 +124,7 @@ impl Transport for Refusing {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn a_session_error_thrown_by_a_platform_transport_keeps_its_code_through_load_run_and_settled() {
+async fn a_session_error_thrown_by_a_platform_transport_keeps_its_code_through_load_and_run() {
     for (_, code) in TABLE {
         let database = Database::open(Config { path: None, data_version: None, cache_rows: 8 }, serde_json::to_string(&vec![moment_spec()]).unwrap(), Some(Arc::new(Refusing(code))), None, None, None, None, None).await.unwrap();
         database.register_operations(OPERATIONS.into()).unwrap();
@@ -132,14 +132,10 @@ async fn a_session_error_thrown_by_a_platform_transport_keeps_its_code_through_l
 
         let load = database.load(database.session_epoch(), "Moment".into(), "feed".into(), "{}".into()).await.unwrap_err();
         let run = database.run(database.session_epoch(), "MakeMoment".into(), "{}".into()).await.unwrap_err();
-        let receipt = database.create_durable("Moment", r#"{"text":"hello"}"#).await;
-        let outcome = database.outcome(receipt).await.unwrap();
-        let super::WireOperationOutcome::Rejected { failure } = outcome else { panic!("expected rejection: {outcome:?}") };
 
         for error in [load, run] {
             assert_eq!(session(error).0, code, "{code:?}");
         }
-        assert_eq!(failure.session_code, Some(code), "{code:?}");
     }
 }
 

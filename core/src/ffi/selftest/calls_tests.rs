@@ -132,8 +132,9 @@ async fn close_ends_every_pending_stream_wait_of_a_held_handle() {
     held.shows("A").await;
     held.lists_show("A").await;
     let gate = rig.world.hold_next("Users");
-    let pending = rig.database.watch_query(r#"{"model":"User","relation":"all","params":{},"refreshOnConnect":true}"#, Arc::new(Rows::default()));
+    let _late = { let database = rig.database.clone(); let epoch = database.session_epoch(); tokio::spawn(async move { database.refresh(epoch, "User".into(), "all".into(), "{}".into()).await }) };
     gate.entered().await;
+    let pending = rig.database.watch_query(r#"{"model":"User","relation":"all","params":{}}"#, Arc::new(Rows::default()));
     let waits = [tokio::spawn(async move { pending.wait_for_initial_load().await })];
     rig.database.close_now();
 

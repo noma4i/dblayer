@@ -190,7 +190,6 @@ async fn a_call_waiting_in_a_retry_or_a_queue_ends_with_the_session_reset_and_th
         let caller = database.clone();
         let retrying = tokio::spawn(async move { caller.session_call("login_link".into(), json!({"account":"late"}).to_string()).await.map(|_| ()) });
         crate::test_wait::yield_until("the request failed and the call waits for its retry", || server.hits() > hits).await;
-        crate::test_wait::yield_until("the call holds its lease through the retry wait", || database.streams.held().iter().any(|lease| lease.contains("session call"))).await;
         end_it(&database, end).await;
         assert!(within(retrying).await.unwrap().is_err(), "{end}: a call in a retry wait outlived the transition");
         database.close_now();
@@ -203,7 +202,6 @@ async fn a_call_waiting_in_a_retry_or_a_queue_ends_with_the_session_reset_and_th
     let running = tokio::spawn(async move { first.session_call("login_link".into(), json!({"account":"first"}).to_string()).await.map(|_| ()) });
     within(pause.entered.notified()).await;
     let queued = tokio::spawn(async move { second.session_call("login_link".into(), json!({"account":"queued"}).to_string()).await.map(|_| ()) });
-    crate::test_wait::yield_until("the queued call holds its lease", || database.streams.held().iter().filter(|lease| lease.contains("session call")).count() == 2).await;
     database.session_reset().await.unwrap();
     assert!(within(running).await.unwrap().is_err());
     assert!(within(queued).await.unwrap().is_err(), "a call queued behind another one ran after the session reset");

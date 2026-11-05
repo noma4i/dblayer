@@ -74,7 +74,7 @@ C12		swift	BridgeProbeTests.aLogoutThenALoginOfTheSameAccountReadsItAgain	green	
 C12		kotlin	com.noma4i.dblayer.LifecycleSessionTest.aLogoutThenALoginOfTheSameAccountReadsItAgain	green	S1: exit loses the data logout	library
 C12		core	a_list_opened_after_the_exit_loads_after_the_next_login_and_its_wait_ends	green	S1: the wait after the exit gets Interrupted (design section 5, C12); slice 2: new projections, the same holder across A, empty, B	library
 C13		core	overlapping_load_more_and_refresh_in_both_answer_orders_leave_a_consistent_chain_and_a_clean_reset	green	-	library
-C14		core	a_queued_mutation_refused_without_a_sequence_needs_session_reset_then_sign_in_and_never_runs	green	-	library
+C14		core	a_queued_mutation_refused_without_a_sequence_keeps_the_session_and_a_reset_clears_the_mutation	green	-	library
 C15		core	an_active_and_a_queued_upload_end_at_the_exit_and_the_next_sign_in_runs_each_once	green	S1: the data logout variant becomes the session reset (it clears the data)	library
 C16		core	repeated_online_listening_and_power_saving_signals_add_no_request	green	S1: the test calls the data logout or the old exit through its helpers; the helpers lose the data logout and the exit is the session reset	library
 C17		core	out_open_restores_pending	green	S1: close is awaited	library
@@ -107,8 +107,7 @@ B06		kotlin	com.noma4i.dblayer.ValueBridgeTest.theReaderThatStopsEndsTheStreamIn
 B07		core	work_counters_idle_zero_one_row_one_decode_and_subscriptions_equal_readers	green	S2: spec F counters: idle 0, one row one decode, subscriptions equal readers	arch-r2
 B07		swift	BridgeProbeTests.aChangeOfOneRowDecodesOneRowAndSubscriptionsEqualReaders	green	S2: spec F counters: idle 0, one row one decode, subscriptions equal readers	arch-r2
 B07		kotlin	com.noma4i.dblayer.ValueBridgeTest.aChangeOfOneRowDecodesOneRowAndSubscriptionsEqualReaders	green	S2: spec F counters: idle 0, one row one decode, subscriptions equal readers	arch-r2
-B08		swift	BridgeProbeTests.aMissedRevisionGivesOneNewSnapshotAndTheQueuedDeltasWaitForIt	green	S3 R7: a missed revision gives one new snapshot, queued deltas wait	arch-r3
-B08		kotlin	com.noma4i.dblayer.ValueBridgeTest.aMissedRevisionGivesOneNewSnapshotAndTheQueuedDeltasWaitForIt	green	S3 R7: a missed revision gives one new snapshot, queued deltas wait	arch-r3
+B08		core	dlv_prop_single_unread_delta	green	core-only: the owner Deliveries holds one unread value and a missed revision gives one new snapshot (P-DLV-15)	arch-r3
 B10		core	the_outcome_of_an_offline_command_waits_and_ends_with_the_epoch_of_its_receipt	green	S3 R2: the outcome waits offline and ends with the epoch of its receipt	arch-r3
 B10		swift	BridgeProbeTests.theOutcomeOfAnOfflineCommandWaitsAndEndsWithTheEpochOfItsReceipt	green	S3 R2: the outcome waits offline and ends with the epoch of its receipt	arch-r3
 B10		kotlin	com.noma4i.dblayer.ValueBridgeTest.theOutcomeOfAnOfflineCommandWaitsAndEndsWithTheEpochOfItsReceipt	green	S3 R2: the outcome waits offline and ends with the epoch of its receipt	arch-r3
@@ -172,7 +171,6 @@ K25	D04	core	two_refused_changes_of_one_member_restore_the_original_lists_in_bot
 K26	E04	core	a_refused_change_of_a_member_does_not_undo_the_same_change_accepted_and_each_call_gets_its_own_outcome	green	core-only: the proof holds server requests through the fake world gate and reads the member lists in the store; the behaviour lives only in the core delivery queue and sender (spec B: wrappers carry values, no hooks)	arch-r3e review E04
 K28	E06	swift	BridgeProbeTests.updateAndDestroyReachTypedLiveRows	green	-	arch-r3e review E06
 K28	E06	kotlin	com.noma4i.dblayer.BridgeProbeTest.updateAndDestroyReachTypedLiveRows	green	-	arch-r3e review E06
-K31	F01	core	an_old_admission_cannot_write_ephemeral_data_in_the_next_session	red-by-reading	core-only: writes require admission at the call site	arch-r3f review F01
 P01		swift	BridgeProbeTests.aModelEventsCollectorHearsEventsInOrderAndNothingFromBeforeItStarted	green	-	parity slice 3 platform tests
 P01		kotlin	com.noma4i.dblayer.ModelEventsTest.aModelEventsCollectorHearsEventsInOrderAndNothingFromBeforeItStarted	green	-	parity slice 3 platform tests
 P02		core	the_session_reset_ends_every_stream_with_one_outcome_and_no_account_value_follows	green	-	parity slice 3 platform tests
@@ -191,7 +189,7 @@ K34		core	adding_a_member_whose_row_is_not_cached_ends_with_the_answer	green	-	i
 K34		swift	BridgeProbeTests.addingAMemberWhoseRowIsNotCachedEndsWithTheAnswer	green	-	ios-reds review R3 R4
 K34		kotlin	com.noma4i.dblayer.ClubTest.addingAMemberWhoseRowIsNotCachedEndsWithTheAnswer	green	-	ios-reds review R3 R4
 K35		core	a_command_read_between_its_confirming_commit_and_the_announcement_is_delivered	green	core-only: the proof pins the interval between the confirming commit and its announcement with a core hook	ios-reds review R3 R4
-C20	C4	core	the_explicit_load_that_restores_a_reset_session_returns_its_own_result	green	-	consumer-reds 4
+C20	C4	core	a_load_after_a_session_reset_needs_a_new_session_and_asks_nothing	green	-	consumer-reds 4
 C20	C4	core	a_reset_during_a_load_interrupts_it_and_its_late_answer_never_reaches_the_next_session	green	-	consumer-reds 4
 C20	C4	swift	BridgeProbeTests.theLoadThatRestoresAResetSessionReturnsItsOwnResult	green	-	consumer-reds 4
 C20	C4	kotlin	com.noma4i.dblayer.SessionRestoreTest.theLoadThatRestoresAResetSessionReturnsItsOwnResult	green	-	consumer-reds 4
@@ -215,7 +213,6 @@ S103		kotlin	com.noma4i.dblayer.UploadSessionTest.resetDuringPutEndsTheWaitAndRe
 S104		core	a_reset_during_a_load_interrupts_it_and_its_late_answer_never_reaches_the_next_session	unrun	S1: reset ends the load	arch-audit Fable K2
 S104		swift	BridgeProbeTests.aHeldLoadEndsAtResetAndCannotWriteIntoTheNextAccount	unrun	S1: reset ends the load	arch-audit Fable K2
 S104		kotlin	com.noma4i.dblayer.SessionRestoreTest.aHeldLoadEndsAtResetAndCannotWriteIntoTheNextAccount	unrun	S1: reset ends the load	arch-audit Fable K2
-S105		core	an_old_admission_cannot_write_ephemeral_data_in_the_next_session	red-by-reading	core-only: admission at memory commit	arch-audit Astra A1
 S106		core	an_old_subscription_admission_cannot_land_an_event_in_the_next_session	red-by-reading	core-only: admission at SQL commit	arch-audit Astra A1
 S107		core	an_old_subscription_sink_is_closed_before_the_next_account	unrun	S1: reset closes the subscription	arch-audit Astra A1
 S107		swift	BridgeProbeTests.oldSubscriptionSinkIsClosedBeforeTheNextAccount	unrun	S1: reset closes the subscription	arch-audit Astra A1

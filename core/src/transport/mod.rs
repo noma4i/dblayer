@@ -24,7 +24,7 @@ pub use extensions::{graphql_extensions, GraphqlExtensions, TransactionDispositi
 pub use events::{EventFault, EventSpec};
 pub use fetch::{FetchAttempt, FetchError, FetchReport};
 #[cfg(any(test, feature = "stress"))]
-pub use mock::{CallKind, MockTransport, PutReply, RecordedCall, RecordedPut, Reply};
+pub use mock::{RecordedKind, MockTransport, PutReply, RecordedCall, RecordedPut, Reply};
 pub use online::Connectivity;
 pub use put::{ByteSink, PutFile, PutRequest, PutResponse, TransferIdentity, TransferStep};
 pub use request::{GraphQLError, GraphQLRequest, NetworkPurpose, RequestOwner, Response};

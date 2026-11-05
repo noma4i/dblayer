@@ -28,7 +28,7 @@ async fn a_planted_difference_is_reported_with_step_input_expected_and_got() {
     assert_eq!(divergence.input, inc(2));
     assert!(divergence.expected.is_empty());
     assert_eq!(divergence.got, [Observation::new("count", json!({"epoch": 1, "n": 3}))]);
-    assert_eq!(divergence.fault, Fault::Observations);
+    assert_eq!(divergence.fault, DivergenceKind::Observations);
 }
 
 /// Requirement: properties are checked after every step. Observable: the fault of the run. Assert: the named property fails at the step that makes it false.
@@ -37,7 +37,7 @@ async fn a_property_is_checked_after_every_step() {
     let owner = CounterOwner { bug: None, extra: Some(Property { name: "P-COUNTER-99", check: no_count_of_three }) };
     let divergence = run(&owner, "t", &[inc(1), inc(1), inc(1), inc(1)]).await.unwrap_err();
     assert_eq!(divergence.step, 3);
-    assert!(matches!(divergence.fault, Fault::Property { name: "P-COUNTER-99", .. }), "{divergence}");
+    assert!(matches!(divergence.fault, DivergenceKind::Property { name: "P-COUNTER-99", .. }), "{divergence}");
 }
 
 /// Requirement: the built-in properties hold on a good trace and fail on a trace that breaks them.

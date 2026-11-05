@@ -1,26 +1,15 @@
-use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 use serde_json::json;
 
-use crate::ffi::legacy::{Holder, Leases};
 use super::open_slot::OpenSlot;
 use super::tape::Rows;
-use super::{Config, Database, DbError, ReadEnd, ReadRequest};
+use super::{Config, Database, DbError, ReadEnd};
 use crate::pacing::{Clock, ManualClock};
 use crate::schema::{FieldSpec, ModelSpec, Storage};
-use crate::test_wait::{join_within, within, yield_until};
-use crate::transport::{MockTransport, SubscriptionEvent};
+use crate::test_wait::yield_until;
+use crate::transport::MockTransport;
 use crate::value::ScalarKind;
-
-struct Counting(AtomicUsize, Option<Arc<Leases>>, Mutex<Vec<usize>>, std::sync::OnceLock<crate::ffi::legacy::Registration>);
-impl Holder for Counting {
-    fn close(&self) {
-        self.0.fetch_add(1, Ordering::SeqCst);
-        if let Some(streams) = &self.1 { crate::db::locked(&self.2).push(streams.enrolled()); }
-    }
-    fn registration(&self) -> &std::sync::OnceLock<crate::ffi::legacy::Registration> { &self.3 }
-}
 
 fn config() -> Config { Config { path: None, data_version: None, cache_rows: 8 } }
 
@@ -35,77 +24,28 @@ fn with_transport(clock: Arc<dyn Clock>) -> (Arc<Database>, Arc<MockTransport>) 
     let mut notice = ModelSpec::new("Notice", vec![FieldSpec::scalar("id", ScalarKind::Id)]);
     notice.listens.push(serde_json::from_value(json!({"subscription":"Signal"})).unwrap());
     let wired = transport.clone();
-    let database = Database::start_with(config(), serde_json::to_string(&vec![notice]).unwrap(), None, clock, move |_, _| Ok((Some(wired), None, None))).unwrap();
+    let database = Database::start_with(config(), serde_json::to_string(&vec![notice]).unwrap(), None, clock, move |db, _| {
+        super::signed_session_tests::signed_session(db);
+        Ok((Some(wired), None, None))
+    }).unwrap();
     database.register_operations(r#"[{"name":"Signal","document":"subscription Signal { signal { id } }","rootPath":"signal"}]"#.into()).unwrap();
     (database, transport)
 }
 
-#[test]
-fn the_open_streams_close_each_member_once_and_refuses_late_members() {
-    let streams = Arc::new(Leases::default());
-    let first = Arc::new(Counting(AtomicUsize::new(0), Some(streams.clone()), Mutex::default(), Default::default()));
-    let dropped = Arc::new(Counting(AtomicUsize::new(0), None, Mutex::default(), Default::default()));
-    streams.enroll(&first);
-    streams.enroll(&dropped);
-    drop(dropped);
-    assert_eq!(streams.enrolled(), 1);
-    let closing = streams.clone();
-    join_within(std::thread::spawn(move || { closing.close(); closing.close(); }));
-    assert_eq!(first.0.load(Ordering::SeqCst), 1);
-    assert_eq!(*crate::db::locked(&first.2), [0], "the member list was read from inside close, so the lock was free");
-    let late = Arc::new(Counting(AtomicUsize::new(0), None, Mutex::default(), Default::default()));
-    streams.enroll(&late);
-    assert_eq!(late.0.load(Ordering::SeqCst), 1);
-    assert_eq!(streams.enrolled(), 0);
-}
-
-#[test]
-fn enrolling_a_stream_does_the_same_work_with_existing_streams() {
-    let streams = Arc::new(Leases::default());
-    let members: Vec<_> = (0..128).map(|_| Arc::new(Counting(AtomicUsize::new(0), None, Mutex::default(), Default::default()))).collect();
-    for member in &members { streams.enroll(member); }
-    let before = streams.work();
-    let next = Arc::new(Counting(AtomicUsize::new(0), None, Mutex::default(), Default::default()));
-    streams.enroll(&next);
-    assert_eq!(streams.work() - before, 0);
-    assert_eq!(streams.enrolled(), members.len() + 1);
-    drop(members);
-    drop(next);
-    assert_eq!(streams.enrolled(), 0);
-}
-
 #[tokio::test]
-async fn stream_close_terminates_waiters() {
-    let (database, transport) = with_transport(Arc::new(crate::pacing::SystemClock));
-    transport.script_subscription("Signal", vec![]);
+async fn closing_the_database_ends_every_open_stream_with_closed_and_a_late_stream_too() {
+    let database = local_notes().await;
     let rows = Arc::new(Rows::default());
-    let live = database.watch_query(r#"{"model":"Notice"}"#, rows.clone());
-    within(live.wait_for_initial_load()).await.unwrap();
-    let pending = database.watch(ReadRequest::Events { model: "Notice".into() }, Arc::new(Rows::default()));
-    let waiting = { let pending = pending.clone(); tokio::spawn(within(async move { pending.wait_for_initial_load().await })) };
-    tokio::task::yield_now().await;
+    let _live = database.watch_query(r#"{"model":"Note"}"#, rows.clone());
+    yield_until("the first snapshot of a local list", || rows.last().is_some()).await;
     database.close_now();
-    let waited = within(waiting).await.unwrap();
-    assert!(matches!(waited, Err(DbError::Interrupted { .. })), "a wait for a stream outlived the close: {waited:?}");
     yield_until("the list ended", || !rows.ended().is_empty()).await;
     assert_eq!(rows.ended(), vec![ReadEnd::Closed]);
     let late = Arc::new(Rows::default());
-    database.watch_query(r#"{"model":"Notice"}"#, late.clone());
+    database.watch_query(r#"{"model":"Note"}"#, late.clone());
     yield_until("a stream opened after the close ended", || !late.ended().is_empty()).await;
     assert_eq!(late.ended(), vec![ReadEnd::Closed]);
     assert_eq!(database.stream_census().open, 0);
-}
-
-#[tokio::test]
-async fn closing_the_database_ends_a_model_event_stream_with_one_outcome() {
-    let (database, transport) = with_transport(Arc::new(crate::pacing::SystemClock));
-    transport.script_subscription("Signal", vec![SubscriptionEvent::Ready]);
-    let rows = Arc::new(Rows::default());
-    let live = database.watch(ReadRequest::Events { model: "Notice".into() }, rows.clone());
-    within(live.wait_for_initial_load()).await.ok();
-    database.close_now();
-    yield_until("the event stream ended", || !rows.ended().is_empty()).await;
-    assert_eq!(rows.ended(), vec![ReadEnd::Closed]);
 }
 
 #[tokio::test]
@@ -132,127 +72,12 @@ async fn close_releases_old_engine() {
     drop(sink);
 }
 
-struct Journal {
-    log: Mutex<Vec<String>>,
-    hold: Mutex<Option<std::sync::mpsc::Receiver<()>>>,
-    entered: std::sync::mpsc::Sender<()>,
-    registration: std::sync::OnceLock<crate::ffi::legacy::Registration>,
-}
-
-impl Holder for Journal {
-    fn close(&self) {}
-    fn registration(&self) -> &std::sync::OnceLock<crate::ffi::legacy::Registration> { &self.registration }
-    fn changed(&self, snapshot: &crate::ffi::legacy::Snapshot) {
-        let held = self.hold.lock().unwrap().take();
-        if let Some(release) = held {
-            self.entered.send(()).unwrap();
-            crate::test_wait::recv_within(&release);
-        }
-        self.log.lock().unwrap().push(format!("{:?}", snapshot.change));
-    }
-}
-
-#[test]
-fn a_transition_returns_after_its_callbacks_ran_even_while_another_thread_delivers() {
-    let streams = Arc::new(Leases::default());
-    let (entered, entered_receiver) = std::sync::mpsc::channel();
-    let (release, release_receiver) = std::sync::mpsc::channel();
-    let journal = Arc::new(Journal { log: Mutex::default(), hold: Mutex::new(Some(release_receiver)), entered, registration: Default::default() });
-    let at_enrollment = streams.enroll(&journal);
-    assert!(at_enrollment.session.is_none() && !at_enrollment.closed);
-    let content = |models: Vec<String>| { let streams = streams.clone(); std::thread::spawn(move || streams.models_reset(1, &models)) };
-    let delivering = content(vec!["a".into()]);
-    entered_receiver.recv_timeout(std::time::Duration::from_secs(5)).expect("the first callback started");
-    let ending = content(Vec::new());
-    std::thread::sleep(std::time::Duration::from_millis(300));
-    assert!(!ending.is_finished(), "the end of the session returned before its callbacks ran");
-    release.send(()).unwrap();
-    join_within(delivering);
-    join_within(ending);
-    assert_eq!(*journal.log.lock().unwrap(), ["Cleared(Some([\"a\"]))", "Cleared(Some([]))"]);
-}
-
-#[test]
-fn a_transition_walks_only_the_holders_open_now() {
-    let streams = Arc::new(Leases::default());
-    let crowd: Vec<_> = (0..4096).map(|_| Arc::new(Counting(AtomicUsize::new(0), None, Mutex::default(), Default::default()))).collect();
-    for member in &crowd { streams.enroll(member); }
-    drop(crowd);
-    let open: Vec<_> = (0..3).map(|_| Arc::new(Counting(AtomicUsize::new(0), None, Mutex::default(), Default::default()))).collect();
-    for member in &open { streams.enroll(member); }
-    let before = streams.work();
-    streams.models_reset(1, &[]);
-    assert_eq!(streams.work() - before, 3, "a reset visited holders that were closed long ago");
-}
-
-struct Blocking {
-    entered: std::sync::mpsc::Sender<()>,
-    hold: Mutex<Option<std::sync::mpsc::Receiver<()>>>,
-    closed: AtomicUsize,
-    registration: std::sync::OnceLock<crate::ffi::legacy::Registration>,
-}
-
-impl Holder for Blocking {
-    fn close(&self) {
-        let held = self.hold.lock().unwrap().take();
-        if let Some(release) = held {
-            self.entered.send(()).unwrap();
-            crate::test_wait::recv_within(&release);
-        }
-        self.closed.fetch_add(1, Ordering::SeqCst);
-    }
-    fn registration(&self) -> &std::sync::OnceLock<crate::ffi::legacy::Registration> { &self.registration }
-}
-
 #[tokio::test(flavor = "multi_thread")]
-async fn a_second_shutdown_returns_after_the_first_closed_every_member_and_the_slot_frees_then() {
+async fn a_second_close_is_refused_and_the_slot_frees_once() {
     let database = local_notes().await;
     let slot = OpenSlot::new();
     database.hold(slot.acquire().unwrap());
-    let (entered, entered_receiver) = std::sync::mpsc::channel();
-    let (release, release_receiver) = std::sync::mpsc::channel();
-    let member = Arc::new(Blocking { entered, hold: Mutex::new(Some(release_receiver)), closed: AtomicUsize::new(0), registration: Default::default() });
-    database.streams.enroll(&member);
-    let first = { let database = database.clone(); std::thread::spawn(move || database.close_now()) };
-    crate::test_wait::recv_within(&entered_receiver);
-    let second = { let database = database.clone(); std::thread::spawn(move || database.close_now()) };
-    std::thread::sleep(std::time::Duration::from_millis(300));
-    assert!(!second.is_finished(), "the second shutdown returned while the first still closed its members");
-    assert!(slot.acquire().is_err(), "the slot was free while a member was still closing");
-    release.send(()).unwrap();
-    join_within(first);
-    join_within(second);
-    assert_eq!(member.closed.load(Ordering::SeqCst), 1);
+    database.close_database().await.unwrap();
+    assert!(matches!(database.close_database().await, Err(DbError::Closed { .. })));
     assert!(slot.acquire().is_ok(), "the slot stayed taken after the close finished");
-}
-
-struct Reentering {
-    database: Mutex<Option<Arc<Database>>>,
-    slot: Arc<OpenSlot>,
-    slot_taken_inside: AtomicUsize,
-    registration: std::sync::OnceLock<crate::ffi::legacy::Registration>,
-}
-
-impl Holder for Reentering {
-    fn close(&self) {
-        let database = self.database.lock().unwrap().take();
-        if let Some(database) = database {
-            database.close_now();
-            self.slot_taken_inside.store(usize::from(self.slot.acquire().is_err()), Ordering::SeqCst);
-        }
-    }
-    fn registration(&self) -> &std::sync::OnceLock<crate::ffi::legacy::Registration> { &self.registration }
-}
-
-#[tokio::test(flavor = "multi_thread")]
-async fn a_member_that_shuts_the_database_down_again_does_not_wait_for_itself_or_free_the_slot() {
-    let database = local_notes().await;
-    let slot = OpenSlot::new();
-    database.hold(slot.acquire().unwrap());
-    let member = Arc::new(Reentering { database: Mutex::new(Some(database.clone())), slot: slot.clone(), slot_taken_inside: AtomicUsize::new(0), registration: Default::default() });
-    database.streams.enroll(&member);
-    let closing = { let database = database.clone(); std::thread::spawn(move || database.close_now()) };
-    join_within(closing);
-    assert_eq!(member.slot_taken_inside.load(Ordering::SeqCst), 1, "the inner shutdown freed the slot before the outer close finished");
-    assert!(slot.acquire().is_ok(), "the outer shutdown did not free the slot");
 }

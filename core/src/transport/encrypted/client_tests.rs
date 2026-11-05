@@ -133,6 +133,7 @@ impl EncryptedClient {
         let ports = crate::owners::life::Ports { db: db.clone(), transport: None, executor: tokio::runtime::Handle::current(), operations: Arc::new(|_| None), credentials: Some(self.credentials.clone()), session: Some(self.clone()), transfer: None, cable: None, read_operations: None };
         let life = Arc::new(crate::owners::life::Life::start(ports).expect("the owners started"));
         self.attach(&life);
+        drop(life.set_online(true));
         crate::db::locked(&self.kept).push(life.clone());
         life
     }

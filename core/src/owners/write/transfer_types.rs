@@ -22,9 +22,9 @@ pub(super) const RETRY_TIMER: u64 = 1 << 32;
 
 pub type Key = String;
 pub type TransferId = u64;
-pub type AttemptId = u64;
+pub use crate::owners::session::AttemptId;
 pub type CycleId = u64;
-pub type StreamId = u64;
+pub use crate::owners::read::deliveries::StreamId;
 /// The sink of `uploads[action]`: the key and what it shows.
 pub type ShowSink = std::sync::Arc<dyn Fn(&str, Shown) + Send + Sync>;
 

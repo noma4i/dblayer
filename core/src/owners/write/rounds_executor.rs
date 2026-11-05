@@ -2,7 +2,8 @@
 
 use std::sync::Arc;
 
-use super::rounds::{RequestId, RoundId, Rounds, RoundsEffect};
+use super::rounds::{RoundId, Rounds, RoundsEffect};
+use crate::owners::contract::RequestId;
 use crate::owners::contract::Drained;
 use crate::runtime::{Back, EffectRunner, Epoch, EpochStamp};
 

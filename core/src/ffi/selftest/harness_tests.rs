@@ -98,7 +98,7 @@ async fn reopening_through_the_same_opener_after_a_close_gives_a_clean_database(
     let local = rig.open_again(None).await.expect("the opener refused a reopen after the close");
     let rows = Arc::new(Rows::default());
     let live = local.watch_query(r#"{"model":"User"}"#, rows.clone());
-    bound(live.wait_for_initial_load()).await.unwrap();
+    assert!(matches!(bound(live.wait_for_initial_load()).await, Err(DbError::Interrupted { .. })), "a database without a session shows no rows of a server model");
     assert!(rows.0.lock().unwrap().is_empty(), "the reopened database holds rows of the closed one");
     live.cancel();
     local.close_now();

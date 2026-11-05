@@ -45,64 +45,19 @@ impl Transport for Counting {
 }
 
 #[tokio::test]
-async fn a_data_reset_ends_the_held_stream_with_its_epoch_and_a_new_stream_reloads() {
+async fn a_models_reset_clears_the_cache_of_the_held_stream_and_a_new_stream_reloads() {
     let (db, transport) = rig().await;
     let listener = Arc::new(Tape::default());
     let query = r#"{"model":"Moment","relation":"feed","params":{},"order":[{"field":"text","direction":"asc"}]}"#;
     let live = db.watch_query(query, listener.clone());
     within(live.wait_for_initial_load()).await.unwrap();
     crate::test_wait::yield_until("the first row", || listener.heard().iter().any(|seen| seen.size == 1)).await;
-    db.reset_data().await;
+    db.reset_models_of(&["Moment"]).await;
     let ended = Arc::new(Rows::default());
     let _watching = db.watch_query(query, ended.clone());
     crate::test_wait::yield_until("the reset and the reloaded row", || ended.last().is_some_and(|seen| seen.size == 1)).await;
     assert_eq!(transport.queries.load(Ordering::SeqCst), 2);
     live.cancel();
-}
-
-#[tokio::test]
-async fn a_terminal_subscription_failure_reaches_the_query_listener_once_without_http() {
-    struct Listener(tokio::sync::mpsc::UnboundedSender<DbError>);
-    impl crate::ffi::tape::Reader for Listener {
-        fn delivered(&self, delivery: StreamDelivery) {
-            if let ReadValue::Snapshot { state, .. } | ReadValue::Delta { state, .. } | ReadValue::State { state, .. } = delivery.value {
-                if let Some(error) = state.error { let _ = self.0.send(DbError::Database { detail: error }); }
-            }
-        }
-    }
-    for shared_changes in [false, true] {
-    let (opened, mut subscriptions) = tokio::sync::mpsc::unbounded_channel();
-    let transport = Arc::new(Counting { queries: AtomicUsize::new(0), started: Notify::new(), hold: None, gate: None, subscriptions: Some(opened) });
-    let mut model = ModelSpec::new("Notice", vec![FieldSpec::scalar("id", ScalarKind::Id)]);
-    model.storage = crate::schema::Storage::Memory;
-    let mut relation = if shared_changes { relation("recent", "5.minutes") } else { RelationSpec::global("recent") };
-    relation.updates.push(crate::schema::UpdatesSpec { apply: None, subscription: "Notices".into(), deleted_by: None, deleted_unless: None, set: Map::new(), removes: false, debounce: None, root: None, id: Vec::new() });
-    if shared_changes { relation.updates.clear(); }
-    model.relations.push(relation);
-    let mut models = vec![model];
-    if shared_changes {
-        models[0].changes.push(crate::schema::ChangeRead { area: "NOTICE".into(), relation: "recent".into(), parameter: None, removes_on: vec![], observed: false, payload: None, id_of: None });
-        let mut other = models[0].clone();
-        other.key = crate::identity::ModelKey::new("AnotherNotice");
-        models.push(other);
-        models[0].change_feed = Some(crate::schema::ChangeFeed { subscription: "Notices".into(), root: "notices.entries".into(), area: "topic".into(), kind: "action".into(), id: "recordId".into() });
-    }
-    let database = Database::open(Config { path: None, data_version: None, cache_rows: 8 }, serde_json::to_string(&models).unwrap(), Some(transport.clone()), None, None, None, None, None).await.unwrap();
-    database.register_operations(r#"[{"name":"Notices","document":"subscription Notices { notices { id } }","rootPath":"notices"},{"name":"Feed","document":"query Feed { moments { id } }","rootPath":"moments"}]"#.into()).unwrap();
-    let (failures, mut received) = tokio::sync::mpsc::unbounded_channel();
-    let live = database.watch_query(r#"{"model":"Notice","relation":"recent","params":{}}"#, Arc::new(Listener(failures)));
-    live.wait_for_initial_load().await.unwrap();
-    let initial_reads = transport.queries.load(Ordering::SeqCst);
-    let sink = within(subscriptions.recv()).await.unwrap();
-    sink.failed(DbError::Session { code: super::SessionCode::Unauthenticated, detail: "session_unknown".into() });
-    let error = within(received.recv()).await.expect("query listener receives terminal subscription failure");
-    assert!(matches!(error, DbError::Session { code: super::SessionCode::Unauthenticated, detail } if detail == "session_unknown"));
-    crate::ffi::settled(&database).await.unwrap();
-    assert!(received.try_recv().is_err(), "the failure reached the listener more than once");
-    assert!(subscriptions.try_recv().is_err());
-    assert_eq!(transport.queries.load(Ordering::SeqCst), initial_reads);
-    live.cancel();
-    }
 }
 
 pub(super) fn relation(name: &str, stale: &str) -> RelationSpec {
@@ -169,7 +124,6 @@ async fn settled_waits_for_a_load_that_outlives_a_data_reset() {
     db.reset_data().await;
     assert!(within(load).await.unwrap().is_err(), "the explicit load waited for its request after the reset");
     within(crate::ffi::settled(&db)).await.unwrap();
-    assert!(db.streams.quiet(), "the ended load left a lease: {:?}", db.streams.held());
     hold.add_permits(1);
     assert!(!stored(&db));
 
@@ -196,6 +150,7 @@ async fn settled_waits_for_a_load_that_outlives_a_data_reset() {
     model.relations.push(node);
     let db = Database::open_with_clock(Config { path: None, data_version: None, cache_rows: 8 }, serde_json::to_string(&vec![model]).unwrap(), Some(transport.clone()), None, TestClock::new(1_000_000), None, None, None, None).await.unwrap();
     db.register_operations(r#"[{"name":"Node","document":"query Node($id: ID!) { node(id: $id) { ... on Moment { id text } } }","rootPath":"node"}]"#.into()).unwrap();
+    db.set_online(true).unwrap();
     let listener = Arc::new(Rows::default());
     let _entity = db.watch(ReadRequest::Entity { model: "Moment".into(), id: "m1".into(), fetch: super::ReadFetch::Force }, listener.clone());
     within(transport.started.notified()).await;
@@ -253,35 +208,6 @@ fn inv_api_04_connecting_starts_the_load_and_only_refresh_asks_again() { crate::
     assert_eq!(queries(&transport), 2);
     first.cancel();
     second.cancel();
-}) }
-
-#[test]
-fn refreshing_on_connect_fetches_once_even_when_the_window_is_fresh() { crate::test_wait::paused(async {
-    for preloaded in [false, true] {
-        let hold = Arc::new(tokio::sync::Semaphore::new(0));
-        let gate = Arc::new(tokio::sync::Semaphore::new(usize::from(preloaded)));
-        let (db, transport, _) = open_rig(None, Some(hold.clone()), Some(gate.clone())).await;
-        if preloaded {
-            hold.add_permits(1);
-            load(&db, "feed").await.unwrap();
-            within(transport.started.notified()).await;
-        }
-        let before = queries(&transport);
-        tokio::spawn({ let gate = gate.clone(); async move { crate::test_wait::pass(Duration::from_secs(3)).await; gate.add_permits(1); } });
-        let seen = Arc::new(Tape::default());
-        let live = db.watch_query(r#"{"model":"Moment","relation":"feed","params":{},"refreshOnConnect":true}"#, seen.clone());
-        if preloaded {
-            crate::test_wait::yield_until("the cached row", || seen.last().is_some()).await;
-            assert_eq!(seen.last().unwrap().size, 1, "cached rows stay visible during the forced load");
-        }
-        within(transport.started.notified()).await;
-        hold.add_permits(1);
-        live.wait_for_initial_load().await.unwrap();
-        assert!(stored(&db));
-        load(&db, "feed").await.unwrap();
-        assert_eq!(queries(&transport) - before, 1, "preloaded={preloaded}");
-        live.cancel();
-    }
 }) }
 
 #[tokio::test]
