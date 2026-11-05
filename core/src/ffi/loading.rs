@@ -150,9 +150,12 @@ impl Database {
         self.remote()?;
         let (sender, outcome) = tokio::sync::watch::channel(None);
         let this = self.clone();
+        let launch = self.life.launch();
         let task = crate::task::spawn_on(crate::task::Carry::here(), executor()?.handle(), async move {
             let LoadArgs { epoch, model, relation, params_json, goal, force } = args;
-            let result = match this.start_load(epoch, &model, &relation, &params_json, goal, force).await {
+            let started = this.start_load(epoch, &model, &relation, &params_json, goal, force).await;
+            drop(launch);
+            let result = match started {
                 Ok(call) => this.finish_load(call).await.map(drop),
                 Err(error) => Err(error),
             };
@@ -177,6 +180,7 @@ impl Database {
     /// Registers a call that waits for a load of the window of a relation. The window keeps the request while this call or another one waits for it.
     async fn start_load(&self, epoch: u64, model: &str, relation: &str, params_json: &str, goal: Goal, force: bool) -> Result<LoadCall, DbError> {
         self.remote()?;
+        let _launch = self.life.launch();
         let (db, found, name, text) = (self.db.clone(), model.to_string(), relation.to_string(), params_json.to_string());
         let (params, force) = super::database::blocking(move || {
             let params: Map<String, Value> = serde_json::from_str(&text)?;

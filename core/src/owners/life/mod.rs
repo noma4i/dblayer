@@ -563,6 +563,9 @@ impl Life {
         runtime.as_ref().is_none_or(|runtime| runtime.barrier(limit))
     }
 
+    /// Counts a platform call as in flight until it registered with the owners.
+    pub fn launch(&self) -> crate::runtime::Launch { self.wiring.handle.launch() }
+
     /// The inputs and started effect tasks that still hold the barrier.
     #[cfg(test)]
     pub fn pending(&self) -> usize { self.runtime.lock().unwrap_or_else(PoisonError::into_inner).as_ref().map_or(0, |runtime| runtime.pending()) }

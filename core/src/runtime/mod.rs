@@ -22,7 +22,7 @@ pub use explore::{explore, Limits, Report, Violation};
 pub use property_tests::{Exhaustive, Manifest, Property};
 pub use outcomes::{Outcome, OutcomeId, Outcomes, Waiter};
 pub use owner::{Address, Back, Cause, Control, Effect, Effects, Epoch, Message, Outbound, StateOwner, ScheduleId, EpochStamp, Time, EffectId};
-pub use threaded::{Handle, Runtime, RuntimeBuilder};
+pub use threaded::{Handle, Launch, Runtime, RuntimeBuilder};
 
 #[cfg(test)]
 mod toys_tests;
