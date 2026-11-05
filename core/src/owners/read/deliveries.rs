@@ -4,7 +4,7 @@
 
 use std::collections::{BTreeMap, VecDeque};
 
-use super::contract::{Committed, Drained, EpochEnded, EpochStarted, ModelsReset, WindowPhase, WindowState};
+use crate::owners::contract::{Committed, Drained, EpochEnded, EpochStarted, ModelsReset, WindowPhase, WindowState};
 use crate::runtime::{Cause, Effect, Effects, Epoch, StateOwner, Time};
 
 pub const JOURNAL_LIMIT: usize = 256;

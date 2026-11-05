@@ -4,7 +4,7 @@
 
 use std::collections::BTreeMap;
 
-use super::contract::{BatchId, Committed, ConnectionId, Drained, EpochEnded, EpochStarted, Frame, ModelsReset, Online, RejectReason, Rejected, SubscriptionFrame};
+use crate::owners::contract::{BatchId, Committed, ConnectionId, Drained, EpochEnded, EpochStarted, Frame, ModelsReset, Online, RejectReason, Rejected, SubscriptionFrame};
 use crate::runtime::{Cause, Effect, Effects, Epoch, StateOwner, Time};
 
 #[derive(Clone, Debug, PartialEq, Eq)]

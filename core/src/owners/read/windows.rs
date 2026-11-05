@@ -9,7 +9,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use statig::prelude::*;
 
-use super::contract::{Committed, Drained, EpochEnded, EpochStarted, ErrorClass, ModelsReset, Online, RejectReason, Rejected, RequestError, RequestId, Stale, Transport, TransportOutcome, WindowPhase as Phase, WindowState};
+use crate::owners::contract::{Committed, Drained, EpochEnded, EpochStarted, ErrorClass, ModelsReset, Online, RejectReason, Rejected, RequestError, RequestId, Stale, Transport, TransportOutcome, WindowPhase as Phase, WindowState};
 use crate::runtime::{Cause, Effect, Effects, Epoch, StateOwner, Time};
 
 /// `(model, relation, params)`, `(model, node, id)` or `(model, node, ids)` as one name; `model` is the model of the window.
