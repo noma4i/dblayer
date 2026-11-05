@@ -423,3 +423,23 @@ fn outbox_and_transfer_answer_storage_while_their_queue_is_unreadable() {
     let effects = Transfers::step(&mut transfer, TransferInput::Cancel { key: "k".into(), reply: 6 });
     assert!(matches!(effects.as_slice(), [Effect::Run(TransferEffect::Reply { reply: 6, answer: TransferAnswer::Err(Fault::Rejected(RejectReason::Storage(error))) })] if error == "disk"), "{effects:?}");
 }
+
+#[test]
+fn open_waits_for_restore_classified_of_the_installed_session() {
+    use super::restore_participants;
+    use crate::owners::lifecycle::{Lifecycle, LifecycleEffect, LifecycleInput, LifecycleState, Peer};
+    use crate::runtime::{Effect, StateOwner};
+    assert!(restore_participants(false).is_empty());
+    let mut state = LifecycleState::new().with_restore_participants(restore_participants(true));
+    let run = |state: &mut LifecycleState, input| Lifecycle::step(state, input).into_iter().filter_map(|effect| if let Effect::Run(run) = effect { Some(run) } else { None }).collect::<Vec<_>>();
+    let published = run(&mut state, LifecycleInput::Open { saved_epoch: 4, saved_generation: 2, saved_identity: Some(9), reply: Some(7) });
+    let publication_id = state.publishing().first().expect("a publication waits for Saved").id;
+    assert!(published.iter().all(|effect| !matches!(effect, LifecycleEffect::RestoreReady { .. })));
+    let after_saved = run(&mut state, LifecycleInput::Saved { publication_id });
+    assert!(after_saved.iter().all(|effect| !matches!(effect, LifecycleEffect::RestoreReady { .. })), "{after_saved:?}");
+    let epoch = state.restoring().expect("the restore is open").epoch;
+    let started = run(&mut state, LifecycleInput::Started { owner: Peer::Session, epoch });
+    assert!(started.iter().all(|effect| !matches!(effect, LifecycleEffect::RestoreReady { .. })), "{started:?}");
+    let ready = run(&mut state, LifecycleInput::RestoreClassified { owner: Peer::Session, epoch });
+    assert!(ready.iter().any(|effect| matches!(effect, LifecycleEffect::RestoreReady { .. })), "{ready:?}");
+}

@@ -365,7 +365,10 @@ pub struct Life {
     legacy_requests: std::sync::atomic::AtomicU64,
 }
 
-const RESTORE_ACKS: [Peer; 0] = [];
+/// Installed owners that send `Started` and `RestoreClassified` to Lifecycle.
+fn restore_participants(session: bool) -> Vec<Peer> {
+    if session { vec![Peer::Session] } else { Vec::new() }
+}
 
 /// Peers of `all owners` without an installed owner answer `Drained` at `Closing`.
 fn absent(session: bool, transfer: bool) -> Vec<Peer> {
@@ -391,7 +394,7 @@ impl Life {
         let mut builder = RuntimeBuilder::new();
         let wiring = Arc::new(Wiring::new(builder.handle()));
         let open_wait = wiring.outcomes.register(Epoch::MAX);
-        let lifecycle = builder.add::<Lifecycle>("lifecycle", LifecycleState::new().with_restore_participants(RESTORE_ACKS), runners::LifecycleRunner { wiring: wiring.clone(), leases: ports.db.shared.store.lifecycle.clone(), absent: absent(session.is_some(), session.is_some() && ports.transfer.is_some()), db: ports.db.clone(), held_published: None, held_replies: Vec::new() });
+        let lifecycle = builder.add::<Lifecycle>("lifecycle", LifecycleState::new().with_restore_participants(restore_participants(session.is_some())), runners::LifecycleRunner { wiring: wiring.clone(), leases: ports.db.shared.store.lifecycle.clone(), absent: absent(session.is_some(), session.is_some() && ports.transfer.is_some()), db: ports.db.clone(), held_published: None, held_replies: Vec::new() });
         let store = builder.add::<StoreWriter>("store", StoreState::new(), runners::StoreRunner { wiring: wiring.clone(), db: ports.db.clone(), credentials: ports.credentials.clone(), client: ports.session.clone() });
         let network = builder.add::<Network>("network", NetworkState::new(), runners::NetworkRunner { wiring: wiring.clone(), db: ports.db.clone(), held_replies: Vec::new() });
         let calls = builder.add::<Calls>("calls", CallsState::new(0, false, &[]), runners::CallsRunner::new(wiring.clone(), &ports));
