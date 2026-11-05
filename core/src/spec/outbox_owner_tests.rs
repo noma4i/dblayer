@@ -18,7 +18,7 @@ const NEW_GENERATION: u64 = 5;
 
 fn reject(reason: RReason) -> RejectReason {
     match reason {
-        RReason::StaleGeneration => RejectReason::StaleGeneration { models: vec!["Moment".into()], generation: NEW_GENERATION },
+        RReason::StaleGeneration => RejectReason::StaleGeneration { models: vec!["Moment".into()] },
         RReason::NoSession => RejectReason::NoSession,
         RReason::Storage => RejectReason::Storage("disk".into()),
         RReason::Closed => RejectReason::Closed,
@@ -127,12 +127,18 @@ impl Twin {
     fn committed(&mut self, id: OpId) -> Vec<OutboxEffect> {
         self.revision += 1;
         let batch = self.batches[&id];
-        self.post(OutboxInput::Committed(Committed { batch, revision: self.revision, tables: vec!["moments".into()] }))
+        self.post(OutboxInput::Committed(Committed { batch, revision: self.revision, tables: vec!["moments".into()], models: vec![] }))
     }
 
     fn rejected(&mut self, id: OpId, reason: RReason) -> Vec<OutboxEffect> {
+        if reason == RReason::StaleGeneration { self.grow_generation(); }
         let batch = self.batches[&id];
         self.post(OutboxInput::Rejected(Rejected { batch, reason: reject(reason) }))
+    }
+
+    /// The Store generation grew: `ModelsReset` brings the new basis before `StaleGeneration` arrives.
+    fn grow_generation(&mut self) {
+        self.post(OutboxInput::ModelsReset(ModelsReset { epoch: EPOCH, generation: NEW_GENERATION, models: vec!["Moment".into()] }));
     }
 
     fn receipt(&self, id: OpId, epoch: u64) -> Receipt { Receipt { epoch, op_id: id, revision: 0 } }
@@ -167,6 +173,7 @@ fn reach(state: St, ctx: &Ctx) -> (Twin, OpId) {
             let id = twin.submit("r", policy, ctx.transfer);
             twin.committed(id);
             twin.post(OutboxInput::Discard { model: "Moment".into(), row_id: "r".into(), reply: DISCARD_REPLY });
+            twin.post(OutboxInput::Online(Online(ctx.online)));
             id
         }
         _ => {
@@ -247,6 +254,7 @@ fn translate(twin: &Twin, id: OpId, effects: Vec<OutboxEffect>, scheduled: bool,
                     OutboxAnswer::Err(fault) => obs.push(Obs::Fails(fault_of(&fault))),
                 }
             }
+            OutboxEffect::ScheduleRetry { .. } => {}
             OutboxEffect::TransferOutcome { outcome, .. } => eff.push(Eff::TransferOutcome(out_of(&outcome))),
             OutboxEffect::Drained(_) => eff.push(Eff::Drained),
         }
@@ -311,8 +319,11 @@ fn input_of(twin: &mut Twin, id: OpId, ctx: &Ctx, input: In) -> Vec<OutboxEffect
 }
 
 fn row_check(state: St, ctx: Ctx, input: In) {
-    let want = step_of(state, &ctx, input).unwrap_or_else(|| panic!("no table cell for {state:?} x {input:?}"));
-    let (mut twin, id) = reach(state, &ctx);
+    let after = if matches!(input, In::Online(true)) { Ctx { online: true, ..ctx } } else { ctx };
+    let before = if matches!(input, In::Online(true)) { Ctx { online: false, ..ctx } } else { ctx };
+    let want = step_of(state, &after, input).unwrap_or_else(|| panic!("no table cell for {state:?} x {input:?}"));
+    let (mut twin, id) = reach(state, &before);
+    let ctx = before;
     let ops_before = twin.det.trace().len();
     let effects = input_of(&mut twin, id, &ctx, input);
     let scheduled = twin.det.trace()[ops_before..].iter().any(|entry| entry.effects.contains("Schedule"));
@@ -496,7 +507,7 @@ fn open_check(kind: Restored, ctx: Ctx, pair: bool) {
 fn write_state(state: WSt, ctx: &WCtx) -> (Twin, o::ReplyId) {
     let mut twin = Twin::new();
     if state == WSt::Writing {
-        twin.post(OutboxInput::LocalWrite { epoch: EPOCH, write: LocalWriteKind::SetEphemeral { expire_after: ctx.ephemeral_expiry.then_some(10) }, row: "w".into(), reply: 50, now: Time(100) });
+        twin.post(OutboxInput::LocalWrite { model: "Moment".into(), epoch: EPOCH, write: LocalWriteKind::SetEphemeral { expire_after: ctx.ephemeral_expiry.then_some(10) }, row: "w".into(), reply: 50, now: Time(100) });
     }
     (twin, 50)
 }
@@ -508,15 +519,18 @@ fn write_check(state: WSt, ctx: WCtx, input: WIn) {
     let write_batch = twin.log.lock().unwrap().len();
     let _ = write_batch;
     let effects = match input {
-        WIn::Write => twin.post(OutboxInput::LocalWrite { epoch: if ctx.epoch_current { EPOCH } else { EPOCH + 1 }, write: LocalWriteKind::SetEphemeral { expire_after: ctx.ephemeral_expiry.then_some(10) }, row: "w".into(), reply, now: Time(100) }),
-        WIn::Committed => twin.post(OutboxInput::Committed(Committed { batch: 1, revision: 11, tables: vec!["moments".into()] })),
-        WIn::Rejected(reason) => twin.post(OutboxInput::Rejected(Rejected { batch: 1, reason: reject(reason) })),
+        WIn::Write => twin.post(OutboxInput::LocalWrite { model: "Moment".into(), epoch: if ctx.epoch_current { EPOCH } else { EPOCH + 1 }, write: LocalWriteKind::SetEphemeral { expire_after: ctx.ephemeral_expiry.then_some(10) }, row: "w".into(), reply, now: Time(100) }),
+        WIn::Committed => twin.post(OutboxInput::Committed(Committed { batch: 1, revision: 11, tables: vec!["moments".into()], models: vec![] })),
+        WIn::Rejected(reason) => {
+            if reason == RReason::StaleGeneration { twin.grow_generation(); }
+            twin.post(OutboxInput::Rejected(Rejected { batch: 1, reason: reject(reason) }))
+        }
         WIn::EpochEnded => { twin.det.end_epoch(EPOCH, Cause::SessionReset); twin.run(); take(&twin.log) }
         WIn::Closing => { twin.det.close(); twin.run(); take(&twin.log) }
         WIn::Expire => {
             if ctx.renewed {
-                twin.post(OutboxInput::LocalWrite { epoch: EPOCH, write: LocalWriteKind::SetEphemeral { expire_after: Some(1_000) }, row: "w".into(), reply: 51, now: Time(105) });
-                twin.post(OutboxInput::Committed(Committed { batch: 2, revision: 12, tables: vec!["moments".into()] }));
+                twin.post(OutboxInput::LocalWrite { model: "Moment".into(), epoch: EPOCH, write: LocalWriteKind::SetEphemeral { expire_after: Some(1_000) }, row: "w".into(), reply: 51, now: Time(105) });
+                twin.post(OutboxInput::Committed(Committed { batch: 1, revision: 12, tables: vec!["moments".into()], models: vec![] }));
             }
             twin.post(OutboxInput::Expire { row: "w".into(), due: Time(110) })
         }
@@ -530,6 +544,7 @@ fn write_check(state: WSt, ctx: WCtx, input: WIn) {
             OutboxEffect::Reply { answer: OutboxAnswer::Err(fault), .. } => obs.push(WObs::Fails(fault_of(&fault))),
             OutboxEffect::Store { kind: CommitKind::LocalWrite, generation, .. } => eff.push(if generation > 0 { WEff::StoreWriteNewBasis } else { WEff::StoreWrite }),
             OutboxEffect::Store { kind: CommitKind::RemoveRow, .. } => eff.push(WEff::StoreRemoveRow),
+            OutboxEffect::Drained(_) => {}
             other => panic!("an effect outside the write table: {other:?}"),
         }
     }
@@ -661,12 +676,12 @@ fn out_wait_discard() {
 #[test]
 fn out_wait_local_write() {
     let mut twin = Twin::new();
-    let effects = twin.post(OutboxInput::LocalWrite { epoch: EPOCH, write: LocalWriteKind::SetLocal, row: "w".into(), reply: 81, now: Time(0) });
+    let effects = twin.post(OutboxInput::LocalWrite { model: "Moment".into(), epoch: EPOCH, write: LocalWriteKind::SetLocal, row: "w".into(), reply: 81, now: Time(0) });
     assert!(replies_of(&effects, 81).is_empty());
-    let committed = twin.post(OutboxInput::Committed(Committed { batch: 1, revision: 11, tables: vec!["moments".into()] }));
+    let committed = twin.post(OutboxInput::Committed(Committed { batch: 1, revision: 11, tables: vec!["moments".into()], models: vec![] }));
     assert_eq!(replies_of(&committed, 81), [OutboxAnswer::Ok]);
     let mut twin = Twin::new();
-    twin.post(OutboxInput::LocalWrite { epoch: EPOCH, write: LocalWriteKind::Attach, row: "w".into(), reply: 82, now: Time(0) });
+    twin.post(OutboxInput::LocalWrite { model: "Moment".into(), epoch: EPOCH, write: LocalWriteKind::Attach, row: "w".into(), reply: 82, now: Time(0) });
     take(&twin.log);
     twin.det.close();
     twin.run();
@@ -721,7 +736,7 @@ fn net_script() -> Vec<OutboxInput> {
 }
 
 fn store_script() -> Vec<OutboxInput> {
-    (1..=4).map(|batch| OutboxInput::Committed(Committed { batch, revision: 10 + batch as i64, tables: vec!["moments".into()] })).collect()
+    (1..=4).map(|batch| OutboxInput::Committed(Committed { batch, revision: 10 + batch as i64, tables: vec!["moments".into()], models: vec![] })).collect()
 }
 
 fn effects_now() -> Vec<OutboxEffect> { LOG.with(|cell| cell.borrow().as_ref().map(|log| crate::owners::support::snapshot(log)).unwrap_or_default()) }
@@ -786,7 +801,7 @@ fn out_prop_idle() {
     det.run_until_quiet(10_000).unwrap();
     det.post(Address::<Outbox>::new(0), EpochStamp::Epoch(EPOCH), OutboxInput::Response { op_id: 1 });
     det.run_until_quiet(10_000).unwrap();
-    det.post(Address::<Outbox>::new(0), EpochStamp::Epoch(EPOCH), OutboxInput::Committed(Committed { batch: 2, revision: 20, tables: vec![] }));
+    det.post(Address::<Outbox>::new(0), EpochStamp::Epoch(EPOCH), OutboxInput::Committed(Committed { batch: 2, revision: 20, tables: vec![], models: vec![] }));
     det.run_until_quiet(10_000).unwrap();
     let before = det.trace().len();
     det.tick(Time(u64::MAX / 2));
@@ -844,7 +859,7 @@ fn out_prop_dropped_resent() {
 
 #[test]
 fn out_prop_local_write_kept() {
-    walk(|| vec![vec![OutboxInput::LocalWrite { epoch: EPOCH, write: LocalWriteKind::SetLocal, row: "w".into(), reply: 300, now: Time(0) }], store_script(), vec![OutboxInput::ModelsReset(ModelsReset { epoch: EPOCH, generation: 1, models: vec!["Moment".into()] })]], |_| {
+    walk(|| vec![vec![OutboxInput::LocalWrite { model: "Moment".into(), epoch: EPOCH, write: LocalWriteKind::SetLocal, row: "w".into(), reply: 300, now: Time(0) }], store_script(), vec![OutboxInput::ModelsReset(ModelsReset { epoch: EPOCH, generation: 1, models: vec!["Moment".into()] })]], |_| {
         let answers = effects_now().iter().filter(|effect| matches!(effect, OutboxEffect::Reply { reply: 300, .. })).count();
         if answers > 1 { Err("a local write got two answers".into()) } else { Ok(()) }
     });

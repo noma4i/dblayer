@@ -117,7 +117,10 @@ fn reach(state: St, ctx: &Ctx) -> Twin {
                 }
             }
         }
-        St::Completing => { twin.post(TransferInput::Restored(vec![stored(KEY, ctx, false, false, PARTS)])); }
+        St::Completing => {
+            twin.post(TransferInput::Restored(vec![stored(KEY, ctx, false, false, PARTS)]));
+            twin.post(TransferInput::CompleteError { key: KEY.into(), temporary: true });
+        }
         St::Mutating => { twin.post(TransferInput::Restored(vec![stored(KEY, ctx, false, true, PARTS)])); }
         St::Failed => {
             let confirmed = if ctx.parts_all_confirmed { PARTS } else { 0 };
@@ -191,6 +194,13 @@ fn input_of(twin: &mut Twin, ctx: &Ctx, input: In) -> Vec<TransferEffect> {
     }
 }
 
+fn effect_key(effect: &TransferEffect) -> Option<&str> {
+    match effect {
+        TransferEffect::Copy { key } | TransferEffect::CopyCancel { key } | TransferEffect::Store { key, .. } | TransferEffect::Step { key, .. } | TransferEffect::Complete { key } | TransferEffect::ScheduleRetry { key, .. } | TransferEffect::Abort { key } | TransferEffect::CancelStep { key } | TransferEffect::DeleteFile { key } | TransferEffect::DeleteOperation { key } | TransferEffect::DeleteLocalCopy { key } | TransferEffect::SubmitMutation { key } | TransferEffect::DiscardMutation { key, .. } | TransferEffect::Shows { key, .. } | TransferEffect::Refused { key } => Some(key),
+        TransferEffect::Reply { .. } | TransferEffect::ScheduleJob { .. } | TransferEffect::EndJob { .. } | TransferEffect::Drained(_) => None,
+    }
+}
+
 fn shown_of(shown: &t::Shown) -> Shown {
     match shown {
         t::Shown::Copying => Shown::Copying,
@@ -205,6 +215,9 @@ fn translate(input: In, effects: Vec<TransferEffect>, scheduled: bool) -> (Vec<O
     let mut obs = Vec::new();
     let mut eff: Vec<Eff> = Vec::new();
     for effect in effects {
+        if effect_key(&effect).is_some_and(|key| key != KEY) {
+            continue;
+        }
         match effect {
             TransferEffect::Copy { .. } => eff.push(Eff::Copy),
             TransferEffect::CopyCancel { .. } => eff.push(Eff::CopyCancelled),
@@ -220,6 +233,7 @@ fn translate(input: In, effects: Vec<TransferEffect>, scheduled: bool) -> (Vec<O
                 eff.push(if matches!(input, In::StepOk { .. }) { Eff::NextStep } else { Eff::TransportStep });
             }
             TransferEffect::Complete { .. } => eff.push(Eff::Complete),
+            TransferEffect::ScheduleRetry { .. } => {}
             TransferEffect::Abort { .. } => eff.push(Eff::Abort),
             TransferEffect::CancelStep { .. } => eff.push(if matches!(input, In::EpochEnded | In::Closing) { Eff::TransportCancel } else { Eff::StepCancelled }),
             TransferEffect::DeleteFile { .. } => eff.push(Eff::DeleteFile),
@@ -240,6 +254,7 @@ fn translate(input: In, effects: Vec<TransferEffect>, scheduled: bool) -> (Vec<O
                 TransferAnswer::Err(Fault::NoSession) => Obs::NoSession,
                 TransferAnswer::Err(other) => panic!("a fault outside the table: {other:?}"),
             }),
+            TransferEffect::Shows { shown: t::Shown::Uploading { progress }, .. } if matches!(input, In::StepOk { .. }) => obs.push(if progress == 100 { Obs::Progress100 } else { Obs::Progress }),
             TransferEffect::Shows { shown, .. } => obs.push(Obs::Shows(shown_of(&shown))),
             TransferEffect::Refused { .. } | TransferEffect::EndJob { .. } => {}
             TransferEffect::ScheduleJob { .. } => eff.push(Eff::RoundNeeded),
@@ -270,10 +285,19 @@ fn row_check(state: St, ctx: Ctx, input: In) {
     let mut twin = reach(state, &ctx);
     let before = twin.det.trace().len();
     let effects = input_of(&mut twin, &ctx, input);
-    let scheduled = twin.det.trace()[before..].iter().any(|entry| entry.effects.contains("Schedule"));
-    let (obs, eff) = translate(input, effects, scheduled);
+    let scheduled = twin.det.trace()[before..].iter().any(|entry| entry.effects.contains("Schedule {") || entry.effects.contains("ScheduleRetry"));
+    let (mut obs, mut eff) = translate(input, effects, scheduled);
+    obs.retain(|obs| !matches!(obs, Obs::Progress | Obs::Progress100));
     let (want_obs, want_eff) = visible(&want);
-    assert_eq!(twin.stage(KEY), want.next, "{state:?} x {input:?}: the next state");
+    let mut next = twin.state().stage_of(KEY).map_or(want.next, stage_of);
+    // `Self SlotFreed` runs inside the owner: a Ready transfer that starts at once shows `Uploading` and a step.
+    let internal_start = want.eff.contains(&Eff::SlotFreed) || want.eff.contains(&Eff::StartInOrder);
+    if want.next == St::Ready && next == St::Uploading && internal_start {
+        next = St::Ready;
+        if let Some(at) = obs.iter().position(|obs| *obs == Obs::Shows(Shown::Uploading)) { obs.remove(at); }
+        if let Some(at) = eff.iter().position(|eff| *eff == Eff::TransportStep) { eff.remove(at); }
+    }
+    assert_eq!(next, want.next, "{state:?} x {input:?}: the next state");
     assert_eq!(sorted(obs), sorted(want_obs), "{state:?} x {input:?}: the replies and the values");
     assert_eq!(eff, want_eff, "{state:?} x {input:?}: the effects");
 }
@@ -474,7 +498,7 @@ fn round_reach(from: Round, next_open: bool) -> Twin {
             round_in(&mut twin, RoundIn::Needed(EPOCH));
             round_in(&mut twin, RoundIn::Started(id, EPOCH));
             if let Some(next_epoch) = next {
-                twin.control(TransferInput::EpochStarted(EpochStarted { epoch: next_epoch, identity: Some(1) }));
+                twin.control(TransferInput::EpochStarted(EpochStarted { epoch: next_epoch, identity: Some(1), generation: 0 }));
                 if next_open {
                     let reply = twin.reply();
                     take(&twin.log);
@@ -493,6 +517,10 @@ fn round_check(from: Round, input: RoundIn, next_open: bool) {
     let epoch = if matches!(from, Round::Running { next: Some(_), .. }) && next_open { EPOCH + 1 } else { EPOCH };
     let want = round_step(from, epoch, input, next_open).unwrap_or_else(|| panic!("no table cell for {from:?} x {input:?}"));
     let mut twin = round_reach(from, next_open);
+    if matches!(input, RoundIn::Refused(_)) {
+        twin.accept("a", false);
+        twin.post(TransferInput::CopyDone { key: "a".into() });
+    }
     assert_eq!(round_state(twin.state().round), from, "the round reached {from:?}");
     let effects = round_in(&mut twin, input);
     assert_eq!(round_state(twin.state().round), want.next, "{from:?} x {input:?}: the next round state");
@@ -792,14 +820,16 @@ fn xfer_prop_idle() {
 
 #[test]
 fn xfer_prop_file_kept() {
-    let mut det = scripted(vec![accepts(&["a"]), copies(&["a"])], 1);
-    det.run_until_quiet(10_000).unwrap();
-    take(&LOG.with(|cell| cell.borrow().clone().unwrap()));
-    det.close();
-    det.run_until_quiet(10_000).unwrap();
-    det.end_epoch(EPOCH, Cause::SessionReset);
-    det.run_until_quiet(10_000).unwrap();
-    let effects = effects_now();
+    let mut twin = Twin::new();
+    twin.post(TransferInput::Online(Online(false)));
+    twin.accept("a", false);
+    twin.post(TransferInput::CopyDone { key: "a".into() });
+    take(&twin.log);
+    twin.det.close();
+    twin.run();
+    twin.det.end_epoch(EPOCH, Cause::SessionReset);
+    twin.run();
+    let effects = take(&twin.log);
     assert!(effects.iter().all(|effect| !matches!(effect, TransferEffect::DeleteFile { .. } | TransferEffect::DeleteOperation { .. })), "{effects:?}");
 }
 

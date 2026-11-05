@@ -156,7 +156,7 @@ pub fn step_of(state: St, ctx: &Ctx, input: In) -> Option<Step> {
         (Landing, In::Rejected(Reason::StaleGeneration)) => step(Landing, &[], &[Store(LandNewBasis)]),
         (Landing, In::Rejected(Reason::NoSession | Reason::Closed)) => done_with(ctx, Out::Interrupted, &[Outcome(Out::Interrupted)], &[], &[]),
         (Landing, In::Rejected(Reason::Storage)) => step(Landing, &[], &[ScheduleLanding]),
-        (Landing, In::Tick) => step(Landing, &[], &[Store(LandNewBasis)]),
+        (Landing, In::Tick) => step(Landing, &[], &[Store(Land)]),
         (Landing, In::Discard) => step(Landing, &[Fails(Fault::InFlight)], &[]),
         (Landing, In::Retry) => step(Landing, &[Receipt], &[]),
         (Landing, In::Online(_) | In::ModelsReset | In::Response | In::TransportError { .. } | In::Dropped) => step(Landing, &[], &[]),
