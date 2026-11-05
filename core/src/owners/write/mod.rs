@@ -19,5 +19,3 @@ mod rig;
 mod outbox_executor_tests;
 #[cfg(test)]
 mod transfer_executor_tests;
-
-

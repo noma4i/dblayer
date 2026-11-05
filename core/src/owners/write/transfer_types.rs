@@ -260,4 +260,3 @@ pub(super) type Fx = Effects<super::transfer::Transfers>;
 pub(super) fn run(fx: &mut Fx, effect: TransferEffect) { fx.push(Effect::Run(effect)); }
 
 pub(super) fn reply(fx: &mut Fx, reply: ReplyId, answer: TransferAnswer) { run(fx, TransferEffect::Reply { reply, answer }); }
-

@@ -229,4 +229,3 @@ pub struct QueuedOperation {
     /// A `destroy` that waits for the rollback of the unsent `create` it cancels.
     pub cancels: Option<OpId>,
 }
-

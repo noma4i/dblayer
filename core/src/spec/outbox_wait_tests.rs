@@ -291,4 +291,3 @@ fn out_prop_local_write_kept() {
         if answers > 1 { Err("a local write got two answers".into()) } else { Ok(()) }
     });
 }
-

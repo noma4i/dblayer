@@ -176,4 +176,3 @@ fn out_ephemeral_expire() { write_check(WSt::None, WCtx::ready(), WIn::Expire); 
 
 #[test]
 fn out_ephemeral_expire_renewed() { write_check(WSt::None, WCtx { renewed: true, ..WCtx::ready() }, WIn::Expire); }
-
