@@ -61,7 +61,8 @@ pub trait StateOwner: Sized + 'static {
     fn epoch_ended(epoch: Epoch, cause: Cause) -> Self::Input;
     fn closing() -> Self::Input;
     fn effect_id(_effect: &Self::Effect) -> Option<EffectId> { None }
-    fn executor_failed(_executor: &str, _pending: Vec<EffectId>) -> Option<Self::Input> { None }
+    /// The inputs that apply the failure cell of each pending effect id, and of the executor itself.
+    fn executor_failed(_executor: &str, _pending: Vec<EffectId>) -> Vec<Self::Input> { Vec::new() }
 }
 
 pub enum Effect<O: StateOwner> {
@@ -124,14 +125,34 @@ impl Debug for Outbound {
 
 pub struct Back<O: StateOwner> {
     deliver: Arc<dyn Fn(EpochStamp, O::Input) + Send + Sync>,
+    fail: Arc<dyn Fn(Vec<EffectId>) + Send + Sync>,
 }
 
 impl<O: StateOwner> Back<O> {
-    pub(crate) fn new(deliver: impl Fn(EpochStamp, O::Input) + Send + Sync + 'static) -> Self { Self { deliver: Arc::new(deliver) } }
+    pub(crate) fn new(deliver: impl Fn(EpochStamp, O::Input) + Send + Sync + 'static, fail: impl Fn(Vec<EffectId>) + Send + Sync + 'static) -> Self { Self { deliver: Arc::new(deliver), fail: Arc::new(fail) } }
 
     pub fn reply(&self, stamp: EpochStamp, input: O::Input) { (self.deliver)(stamp, input); }
+
+    /// An asynchronous task of the executor died: the owner gets the failure of `pending` and Lifecycle closes the database, as for a panic in `run`.
+    pub fn fail(&self, pending: Vec<EffectId>) { (self.fail)(pending); }
+
+    /// Held by an asynchronous task for the effect `id`: dropped while the task panics, it reports the failure of `id`.
+    pub fn watch(&self, id: EffectId) -> FailureWatch<O> { FailureWatch { back: self.clone(), id } }
+}
+
+pub struct FailureWatch<O: StateOwner> {
+    back: Back<O>,
+    id: EffectId,
+}
+
+impl<O: StateOwner> Drop for FailureWatch<O> {
+    fn drop(&mut self) {
+        if std::thread::panicking() {
+            self.back.fail(vec![self.id]);
+        }
+    }
 }
 
 impl<O: StateOwner> Clone for Back<O> {
-    fn clone(&self) -> Self { Self { deliver: self.deliver.clone() } }
+    fn clone(&self) -> Self { Self { deliver: self.deliver.clone(), fail: self.fail.clone() } }
 }

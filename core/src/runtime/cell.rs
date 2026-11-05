@@ -170,7 +170,7 @@ impl<O: StateOwner> Cell<O> {
                 }
                 Effect::Run(effect) => {
                     let id = O::effect_id(&effect);
-                    if self.executor_dead {
+                    if self.executor_dead && id.is_some() {
                         failures.extend(id);
                         continue;
                     }
@@ -183,22 +183,29 @@ impl<O: StateOwner> Cell<O> {
                 }
             }
         }
-        if !self.executor_dead {
-            runner.step_done();
+        if !self.executor_dead && catch_unwind(AssertUnwindSafe(|| runner.step_done())).is_err() {
+            self.executor_dead = true;
+            failed = true;
+            failures.extend(catch_unwind(AssertUnwindSafe(|| runner.pending())).unwrap_or_default());
         }
         if ended {
             self.last_epoch = self.epoch.take();
             self.purge_schedule(|stamp| stamp != EpochStamp::Control);
         }
-        failures.sort_unstable();
-        failures.dedup();
         if failed || !failures.is_empty() {
-            if let Some(input) = O::executor_failed(name, failures) {
-                self.push(EpochStamp::Control, input);
-            }
+            self.apply_failure(name, failures);
         }
         self.settle_head();
         Some(Ran { stamp, dropped: false, input: input_label, effects: effects_label, emitted, failed })
+    }
+
+    /// The pending effects of a dead executor get their failure inputs, in the order of the ids.
+    pub fn apply_failure(&mut self, name: &str, mut pending: Vec<EffectId>) {
+        pending.sort_unstable();
+        pending.dedup();
+        for input in O::executor_failed(name, pending) {
+            self.push(EpochStamp::Control, input);
+        }
     }
 
     fn settle_head(&mut self) {

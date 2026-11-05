@@ -160,7 +160,7 @@ impl StateOwner for Toy {
         }
     }
 
-    fn executor_failed(_executor: &str, pending: Vec<EffectId>) -> Option<ToyInput> { Some(ToyInput::ExecutorFailed(pending)) }
+    fn executor_failed(_executor: &str, pending: Vec<EffectId>) -> Vec<ToyInput> { vec![ToyInput::ExecutorFailed(pending)] }
 }
 
 #[derive(Default)]
@@ -400,7 +400,7 @@ impl StateOwner for DeathLog {
 
     fn closing() -> DeathLogInput { DeathLogInput::Idle }
 
-    fn executor_failed(executor: &str, _pending: Vec<EffectId>) -> Option<DeathLogInput> { Some(DeathLogInput::Died(executor.to_string())) }
+    fn executor_failed(executor: &str, _pending: Vec<EffectId>) -> Vec<DeathLogInput> { vec![DeathLogInput::Died(executor.to_string())] }
 }
 
 pub struct DeathLogRunner;

@@ -327,7 +327,7 @@ impl StateOwner for Lifecycle {
 
     fn closing() -> LifecycleInput { LifecycleInput::Idle }
 
-    fn executor_failed(executor: &str, _pending: Vec<crate::runtime::EffectId>) -> Option<LifecycleInput> { Some(LifecycleInput::ExecutorFailed { executor: executor.to_string() }) }
+    fn executor_failed(executor: &str, _pending: Vec<crate::runtime::EffectId>) -> Vec<LifecycleInput> { vec![LifecycleInput::ExecutorFailed { executor: executor.to_string() }] }
 }
 
 impl LifecycleState {

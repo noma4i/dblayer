@@ -274,7 +274,9 @@ impl EffectRunner<SessionCalls> for SessionRunner {
                 let body = body_of(&pending.body, full_document);
                 let purpose = if pending.purpose == 0 { NetworkPurpose::Standard } else { NetworkPurpose::Transfer };
                 let sequence = (pending.class != OperationClass::Sessionless).then_some(i64::try_from(pending.sequence).unwrap_or(i64::MAX));
+                let watch = back.watch(crate::owners::session::http_id(request_id));
                 let task = crate::task::spawn_on(crate::task::Carry::Detached, &self.executor, async move {
+                    let _watch = watch;
                     crate::db::lock::assert_no_library_lock("HttpExchange::post");
                     let credential = match secret_for(credentials.as_ref(), expected.as_deref()) {
                         Ok(secret) => secret,

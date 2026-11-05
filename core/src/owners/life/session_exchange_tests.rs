@@ -334,6 +334,7 @@ use crate::transport::{CredentialSlot, TransportError};
 struct ProbeSlot {
     memory: MemoryCredentials,
     fail_set: std::sync::atomic::AtomicBool,
+    panic_set: std::sync::atomic::AtomicBool,
     fail_get: std::sync::atomic::AtomicBool,
     db: std::sync::Mutex<Option<Db>>,
     session_at_clear: std::sync::Mutex<Vec<bool>>,
@@ -349,6 +350,7 @@ impl CredentialSlot for ProbeSlot {
 
     fn set(&self, credential: &str) -> Result<(), TransportError> {
         self.threads.lock().unwrap().push(("set", std::thread::current().name().map(str::to_string)));
+        if self.panic_set.load(std::sync::atomic::Ordering::SeqCst) { panic!("the keychain crashed"); }
         if self.fail_set.load(std::sync::atomic::Ordering::SeqCst) { return Err(TransportError::Network("keychain full".into())); }
         self.memory.set(credential)
     }
@@ -497,6 +499,20 @@ async fn a_credential_store_that_cannot_save_ends_the_sign_in_with_an_error() {
     assert!(outcome.is_err(), "{outcome:?}");
     assert_eq!(world.server.seen().len(), 0, "nothing left the device");
     assert_eq!(rows(&db), (None, None));
+}
+
+/// rt_executor_panic_reaches_owner: P-RT-09, the panic of `CredentialSlot.set` ends the sign-in with an error and closes the database through Lifecycle.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_credential_store_that_panics_fails_the_sign_in_and_closes_the_database() {
+    let world = World::new();
+    let db = Db::open_in_memory(Vec::new(), None).unwrap();
+    let slot = Arc::new(ProbeSlot::default());
+    slot.panic_set.store(true, std::sync::atomic::Ordering::SeqCst);
+    let (client, life) = open_with(&world, slot.clone(), &db);
+    let outcome = tokio::time::timeout(LIMIT, client.session_call_in_tests("social", json!({ "provider": "google", "idToken": "t" }))).await.expect("the call has an outcome, it does not wait for ever");
+    assert!(outcome.is_err(), "{outcome:?}");
+    until("Lifecycle never heard the executor failure", || life.published().closed).await;
+    assert_eq!(world.server.seen().len(), 0, "nothing left the device");
 }
 
 #[tokio::test(flavor = "multi_thread")]

@@ -5,7 +5,7 @@ use std::time::Duration;
 
 use super::contract::{BatchId, Committed, CredentialCommitted, Drained, EpochEnded, ErrorClass, Online, Published, PublishedState, RejectReason, Rejected, ReplyId, RequestId, ServerEnded};
 pub use crate::transport::encrypted::state::StoredAnswer;
-use crate::runtime::{Cause, Effect, Effects, Epoch, ScheduleId, StateOwner, Time};
+use crate::runtime::{Cause, Effect, EffectId, Effects, Epoch, ScheduleId, StateOwner, Time};
 
 pub type Digest = u64;
 pub type AuthorId = u64;
@@ -345,6 +345,40 @@ impl StateOwner for SessionCalls {
     fn epoch_ended(epoch: Epoch, cause: Cause) -> SessionInput { SessionInput::EpochEnded(EpochEnded { epoch, cause }) }
 
     fn closing() -> SessionInput { SessionInput::Closing }
+
+    fn effect_id(effect: &SessionEffect) -> Option<EffectId> { effect.io_id() }
+
+    fn executor_failed(_executor: &str, pending: Vec<EffectId>) -> Vec<SessionInput> { pending.into_iter().filter_map(SessionInput::io_failed).collect() }
+}
+
+const GENERATE_ID: EffectId = EffectId::MAX;
+const HTTP_ID: EffectId = 1 << 63;
+
+/// The id of the HTTP exchange of the request.
+pub fn http_id(request_id: RequestId) -> EffectId { HTTP_ID | request_id }
+
+impl SessionEffect {
+    /// The id of an effect that does IO: a batch, `HTTP_ID | request`, or `GENERATE_ID`. The other effects answer or notify and need no executor.
+    pub fn io_id(&self) -> Option<EffectId> {
+        match self {
+            Self::CommitPending { batch, .. } | Self::CommitLanding { batch, .. } | Self::RemovePending { batch, .. } => Some(*batch),
+            Self::HttpRequest { pending } => Some(http_id(pending.request_id)),
+            Self::GenerateCredential => Some(GENERATE_ID),
+            _ => None,
+        }
+    }
+}
+
+impl SessionInput {
+    /// The failure cell of the IO effect `id`.
+    fn io_failed(id: EffectId) -> Option<SessionInput> {
+        let detail = "the executor of Session failed".to_string();
+        Some(match id {
+            GENERATE_ID => SessionInput::CredentialFailed { detail },
+            id if id & HTTP_ID != 0 => SessionInput::HttpError { request_id: id & !HTTP_ID, temporary: false, auth: false },
+            batch => SessionInput::Rejected(Rejected { batch, reason: RejectReason::Storage(detail) }),
+        })
+    }
 }
 
 impl SessionState {

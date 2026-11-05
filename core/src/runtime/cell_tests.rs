@@ -4,7 +4,7 @@ use super::*;
 
 fn drain(cell: &mut Cell<Toy>) {
     let mut runner = ToyRunner::default();
-    let back = Back::<Toy>::new(|_, _| {});
+    let back = Back::<Toy>::new(|_, _| {}, |_| {});
     while cell.run_one("toy", &mut runner, &back, false).is_some() {}
 }
 

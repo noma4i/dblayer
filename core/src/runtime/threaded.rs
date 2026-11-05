@@ -6,7 +6,7 @@ use std::time::{Duration, Instant};
 use super::cell::{Cell, Emitted, EffectRunner};
 use super::det::TraceEntry;
 use super::mailbox::Mailbox;
-use super::owner::{Address, Back, Cause, Control, Epoch, EpochStamp, Message, StateOwner, Time};
+use super::owner::{Address, Back, Cause, Control, EffectId, Epoch, EpochStamp, Message, StateOwner, Time};
 use super::sync::{lock, Condvar, Mutex};
 use crate::blocking::blocking_unit;
 use crate::task::{spawn_thread, Carry};
@@ -14,10 +14,11 @@ use crate::task::{spawn_thread, Carry};
 enum Command {
     Deliver(EpochStamp, Box<dyn Message>),
     Control(Control),
+    Failed(Vec<EffectId>),
     Stop,
 }
 
-type FailureRoute = Box<dyn Fn(&str) -> Option<(usize, Box<dyn Message>)> + Send + Sync>;
+type FailureRoute = Box<dyn Fn(&str) -> Vec<(usize, Box<dyn Message>)> + Send + Sync>;
 
 #[derive(Default)]
 struct Inflight {
@@ -70,6 +71,12 @@ impl Router {
     fn push(&self, to: usize, command: Command) {
         self.inflight.add();
         self.boxes[to].push(command);
+    }
+
+    fn report_failure(&self, executor: &str) {
+        for (to, payload) in self.failure.as_ref().map_or_else(Vec::new, |route| route(executor)) {
+            self.push(to, Command::Deliver(EpochStamp::Control, payload));
+        }
     }
 
     fn broadcast(&self, control: Control) { (0..self.boxes.len()).for_each(|to| self.push(to, Command::Control(control))); }
@@ -137,7 +144,7 @@ impl RuntimeBuilder {
     }
 
     pub fn on_executor_failed<L: StateOwner>(&mut self, lifecycle: Address<L>) {
-        self.failure = Some(Box::new(move |executor| L::executor_failed(executor, Vec::new()).map(|input| (lifecycle.index, Box::new(input) as Box<dyn Message>))));
+        self.failure = Some(Box::new(move |executor| L::executor_failed(executor, Vec::new()).into_iter().map(|input| (lifecycle.index, Box::new(input) as Box<dyn Message>)).collect()));
     }
 
     pub fn record(&mut self) { self.record = true; }
@@ -215,7 +222,8 @@ fn run_owner<O: StateOwner>(mut owner: OwnerThread<O>, router: Arc<Router>, orig
     let back = {
         let own = owner.slot;
         let router = router.clone();
-        Back::<O>::new(move |stamp, input| router.push(own, Command::Deliver(stamp, Box::new(input))))
+        let failing = router.clone();
+        Back::<O>::new(move |stamp, input| router.push(own, Command::Deliver(stamp, Box::new(input))), move |pending| failing.push(own, Command::Failed(pending)))
     };
     loop {
         let cell = &owner.cell;
@@ -225,6 +233,10 @@ fn run_owner<O: StateOwner>(mut owner: OwnerThread<O>, router: Arc<Router>, orig
             match command {
                 Command::Deliver(stamp, payload) => owner.cell.push_message(stamp, payload),
                 Command::Control(control) => owner.cell.push_control(control),
+                Command::Failed(pending) => {
+                    owner.cell.apply_failure(owner.name, pending);
+                    router.report_failure(owner.name);
+                }
                 Command::Stop => return,
             }
         }
@@ -241,9 +253,7 @@ fn run_owner<O: StateOwner>(mut owner: OwnerThread<O>, router: Arc<Router>, orig
                 }
             }
             if ran.failed {
-                if let Some((to, payload)) = router.failure.as_ref().and_then(|route| route(owner.name)) {
-                    router.push(to, Command::Deliver(EpochStamp::Control, payload));
-                }
+                router.report_failure(owner.name);
             }
         }
         router.inflight.done(handled);

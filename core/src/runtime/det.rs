@@ -4,7 +4,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 
 use super::cell::{Cell, Emitted, EffectRunner, Ran};
-use super::owner::{Address, Back, Cause, Control, Epoch, EpochStamp, Message, StateOwner, Time};
+use super::owner::{Address, Back, Cause, Control, EffectId, Epoch, EpochStamp, Message, StateOwner, Time};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TraceEntry {
@@ -50,7 +50,8 @@ trait ErasedSlot {
     fn arriving(&self) -> bool;
     fn due(&self) -> bool;
     fn run_one(&mut self) -> Option<Ran>;
-    fn arrive(&mut self);
+    /// Takes the oldest arrival; true when it was the failure of an asynchronous task.
+    fn arrive(&mut self) -> bool;
     fn fire(&mut self);
     fn deliver(&mut self, stamp: EpochStamp, payload: Box<dyn Message>);
     fn push_control(&mut self, control: Control);
@@ -58,7 +59,12 @@ trait ErasedSlot {
     fn as_any(&self) -> &dyn Any;
 }
 
-type Inbox<O> = Arc<Mutex<VecDeque<(EpochStamp, <O as StateOwner>::Input)>>>;
+enum Arrival<O: StateOwner> {
+    Input(EpochStamp, O::Input),
+    Failed(Vec<EffectId>),
+}
+
+type Inbox<O> = Arc<Mutex<VecDeque<Arrival<O>>>>;
 
 struct Slot<O: StateOwner> {
     name: &'static str,
@@ -79,11 +85,17 @@ impl<O: StateOwner> ErasedSlot for Slot<O> {
 
     fn run_one(&mut self) -> Option<Ran> { self.cell.run_one(self.name, self.runner.as_mut(), &self.back, true) }
 
-    fn arrive(&mut self) {
+    fn arrive(&mut self) -> bool {
         let arrived = self.inbox.lock().unwrap_or_else(PoisonError::into_inner).pop_front();
-        if let Some((stamp, input)) = arrived {
-            self.cell.push(stamp, input);
+        match arrived {
+            Some(Arrival::Input(stamp, input)) => self.cell.push(stamp, input),
+            Some(Arrival::Failed(pending)) => {
+                self.cell.apply_failure(self.name, pending);
+                return true;
+            }
+            None => {}
         }
+        false
     }
 
     fn fire(&mut self) { self.cell.fire_next_due(); }
@@ -97,7 +109,7 @@ impl<O: StateOwner> ErasedSlot for Slot<O> {
     fn as_any(&self) -> &dyn Any { self }
 }
 
-type FailureTarget = Box<dyn Fn(&str) -> Option<(usize, Box<dyn Message>)>>;
+type FailureTarget = Box<dyn Fn(&str) -> Vec<(usize, Box<dyn Message>)>>;
 
 pub struct DetScheduler {
     slots: Vec<Box<dyn ErasedSlot>>,
@@ -115,7 +127,8 @@ impl DetScheduler {
     pub fn add<O: StateOwner>(&mut self, name: &'static str, state: O::State, runner: impl EffectRunner<O>) -> Address<O> {
         let inbox: Inbox<O> = Arc::default();
         let arrivals = inbox.clone();
-        let back = Back::new(move |stamp, input| arrivals.lock().unwrap_or_else(PoisonError::into_inner).push_back((stamp, input)));
+        let failures = inbox.clone();
+        let back = Back::new(move |stamp, input| arrivals.lock().unwrap_or_else(PoisonError::into_inner).push_back(Arrival::Input(stamp, input)), move |pending| failures.lock().unwrap_or_else(PoisonError::into_inner).push_back(Arrival::Failed(pending)));
         let mut cell = Cell::new(state);
         cell.set_now(self.now);
         let (seed, slot) = (self.jitter.clone(), self.slots.len() as u64);
@@ -129,7 +142,7 @@ impl DetScheduler {
     }
 
     pub fn on_executor_failed<L: StateOwner>(&mut self, lifecycle: Address<L>) {
-        self.failure_target = Some(Box::new(move |executor| L::executor_failed(executor, Vec::new()).map(|input| (lifecycle.index, Box::new(input) as Box<dyn Message>))));
+        self.failure_target = Some(Box::new(move |executor| L::executor_failed(executor, Vec::new()).into_iter().map(|input| (lifecycle.index, Box::new(input) as Box<dyn Message>)).collect()));
     }
 
     pub fn post<O: StateOwner>(&mut self, to: Address<O>, stamp: EpochStamp, input: O::Input) { self.slots[to.index].deliver(stamp, Box::new(input)); }
@@ -191,7 +204,11 @@ impl DetScheduler {
                     Pending::Control { to, control } => self.slots[to].push_control(control),
                 }
             }
-            Choice::Arrive(index) => self.slots[index].arrive(),
+            Choice::Arrive(index) => {
+                if self.slots[index].arrive() {
+                    self.report_failure(index);
+                }
+            }
             Choice::Fire(index) => self.slots[index].fire(),
         }
         true
@@ -207,10 +224,14 @@ impl DetScheduler {
             }
         }
         if ran.failed {
-            let name = self.slots[index].name();
-            if let Some((to, payload)) = self.failure_target.as_ref().and_then(|target| target(name)) {
-                self.lanes.entry(Lane::Runtime).or_default().push_back(Pending::Send { to, stamp: EpochStamp::Control, payload });
-            }
+            self.report_failure(index);
+        }
+    }
+
+    fn report_failure(&mut self, index: usize) {
+        let name = self.slots[index].name();
+        for (to, payload) in self.failure_target.as_ref().map_or_else(Vec::new, |target| target(name)) {
+            self.lanes.entry(Lane::Runtime).or_default().push_back(Pending::Send { to, stamp: EpochStamp::Control, payload });
         }
     }
 
