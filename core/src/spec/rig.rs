@@ -239,7 +239,7 @@ impl Drop for Rig {
         let (done, finished) = std::sync::mpsc::channel();
         std::thread::spawn(move || {
             let runtime = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
-            let closed = runtime.block_on(tokio::time::timeout(Duration::from_secs(LIMIT_SECS), db.close_database()));
+            let closed = runtime.block_on(async { tokio::time::timeout(Duration::from_secs(LIMIT_SECS), db.close_database()).await });
             let _ = done.send(closed.is_ok());
         });
         let closed = finished.recv_timeout(Duration::from_secs(LIMIT_SECS + 5));
