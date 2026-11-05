@@ -212,6 +212,7 @@ async fn worker_loop(id: usize, config: StressConfig, world: Arc<World>, progres
             stop.store(true, Ordering::SeqCst);
             return;
         }
+        settle(&world, config.threads).await;
         progress.end(id);
         done += 1;
         world.findings.trace(|| format!("outbox {}", outbox_line(&world)));
@@ -233,8 +234,15 @@ async fn settle_uploads(sync: &Sync) {
     sync.wait_uploads().await;
 }
 
-async fn drain(world: &World, progress: &Progress) {
+async fn settle(world: &World, threads: usize) {
+    if threads <= 1 {
+        world.rig.clock.idle(&|| world.rig.db.quiet_mark(), &|| world.rig.db.await_quiet()).await;
+    }
+}
+
+async fn drain(world: &World, progress: &Progress, threads: usize) {
     world.go_offline(false);
+    settle(world, threads).await;
     world.server.set_calm(true);
     let mut waited = 0;
     while world.pending_events.load(Ordering::SeqCst) > 0 && waited < 400 {
@@ -243,6 +251,7 @@ async fn drain(world: &World, progress: &Progress) {
     }
     for round in 0..DRAIN_ROUNDS {
         world.rig.clock.advance(Duration::from_secs(3600));
+        settle(world, threads).await;
         let _call = world.server.note_retry();
         let step = async {
             judge("drain retry_all", world.rig.sync.retry_all(&world.rig.sync.inner.db.admit().unwrap()).await.map(|_| ()), world);
@@ -253,6 +262,7 @@ async fn drain(world: &World, progress: &Progress) {
             return;
         }
         world.rig.db.await_revision(world.rig.db.revision_seq().unwrap());
+        settle(world, threads).await;
         crate::pacing::Clock::sleep(&world.rig.clock, Duration::from_millis(5)).await;
         if world.rig.db.outbox().map(|queue| queue.is_empty()).unwrap_or(false) {
             return;
@@ -297,6 +307,7 @@ async fn scenario(config: &StressConfig, progress: Arc<Progress>) -> StressRepor
     let _ = world.rig.sync.load(&world.rig.sync.inner.db.admit().unwrap(), "moments", "empty_aware", &Map::new(), LoadOptions { force: true }).await;
     world.server.set_calm(false);
     let _events = world.rig.sync.subscribe(subscription()).await.expect("subscribe");
+    settle(&world, config.threads).await;
     let stop = Arc::new(AtomicBool::new(false));
     let handles: Vec<_> = (0..workers).map(|id| tokio::spawn(worker_loop(id, config.clone(), world.clone(), progress.clone(), stop.clone()))).collect();
     for handle in handles {
@@ -305,8 +316,9 @@ async fn scenario(config: &StressConfig, progress: Arc<Progress>) -> StressRepor
         }
     }
     let ops = progress.ops();
-    drain(&world, &progress).await;
+    drain(&world, &progress, config.threads).await;
     crate::pacing::Clock::sleep(&world.rig.clock, Duration::from_millis(50)).await;
+    settle(&world, config.threads).await;
     world.rig.db.await_revision(world.rig.db.revision_seq().unwrap());
     let _ = world.rig.db.expire_ephemeral(&world.rig.db.admit().unwrap());
     check::queue(&world.rig.db, &findings);

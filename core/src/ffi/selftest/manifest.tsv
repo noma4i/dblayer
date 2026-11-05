@@ -366,3 +366,5 @@ T17		swift	BridgeProbeTests.shiftingABatchDuringAHeldEncryptedRequestKeepsTheFil
 T17		kotlin	com.noma4i.dblayer.TransferTest.shiftingABatchDuringAHeldEncryptedRequestKeepsTheFileOwner	red-by-reading	missing case	legacy transfer without an item
 S216	A3-lost	core	a_lost_event_range_reads_the_open_window_once	red-by-reading	lost subscription range marks the windows and reads the open one once	s2/design.md S216
 T18		core	records_below_the_minimum_go_as_single_steps_of_the_same_operation	red-by-reading	batch below minimum keeps one operation and receipt	coordinator S4 item 1
+K36		core	a_queued_message_of_a_never_goes_out_when_another_identity_takes_the_session_without_a_reset	green	core-only: the proof pins the interval between the epoch publish and the session start end with a core hook	final review Fable 1
+K37		core	a_confirmed_create_keeps_its_row_when_another_model_resets_before_it_lands	green	core-only: the proof holds a server request through the fake world gate and resets a model through the core database	final review Fable 3

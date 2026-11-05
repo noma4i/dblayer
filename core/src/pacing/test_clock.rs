@@ -89,9 +89,8 @@ impl TestClock {
         crate::db::locked(&self.time).sleepers.keys().next().copied()
     }
 
-    /// The only mover of a stopped clock: time jumps to the nearest sleeper only when `quiet` gives the same work mark before and after one whole idle turn of the runtime, so tasks woken by library threads run before the jump.
     #[cfg(any(test, feature = "stress"))]
-    pub(crate) async fn drive(&self, quiet: impl Fn() -> Option<u64>, settle: impl Fn()) {
+    pub(crate) async fn idle(&self, quiet: &impl Fn() -> Option<u64>, settle: &impl Fn()) {
         loop {
             tokio::time::sleep(Duration::from_millis(1)).await;
             let Some(mark) = quiet() else {
@@ -99,9 +98,17 @@ impl TestClock {
                 continue;
             };
             tokio::time::sleep(Duration::from_millis(1)).await;
-            if quiet() != Some(mark) {
-                continue;
+            if quiet() == Some(mark) {
+                return;
             }
+        }
+    }
+
+    /// The only mover of a stopped clock: time jumps to the nearest sleeper only when `quiet` gives the same work mark before and after one whole idle turn of the runtime, so tasks woken by library threads run before the jump.
+    #[cfg(any(test, feature = "stress"))]
+    pub(crate) async fn drive(&self, quiet: impl Fn() -> Option<u64>, settle: impl Fn()) {
+        loop {
+            self.idle(&quiet, &settle).await;
             let added = self.slept.notified();
             tokio::pin!(added);
             added.as_mut().enable();
