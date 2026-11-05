@@ -549,3 +549,20 @@ fn only_a_revoked_logout_answer_is_revoked() {
     assert!(matches!(super::session_runner::input_of(1, 1, false, answer(revoked)), SessionInput::Response { .. }));
     assert!(matches!(super::session_runner::input_of(1, 1, true, answer(json!({}))), SessionInput::Response { .. }));
 }
+
+#[test]
+fn the_answer_stays_when_the_landing_of_its_batch_fails_and_goes_with_the_landing() {
+    use crate::owners::contract::BatchAuthor;
+    use crate::owners::store::{StoreBatch, StoreOp};
+    let db = Db::open_in_memory(Vec::new(), None).unwrap();
+    {
+        let inner = db.shared.store.lock();
+        state::store_answer(&inner.connection, 7, None, &state::StoredAnswer::Ok("{}".into())).unwrap();
+    }
+    let answers = |db: &Db| state::answers(&db.shared.store.lock().connection).unwrap().len();
+    let batch = |rows: Vec<(String, String)>| StoreBatch { author: BatchAuthor::Outbox, id: 1, epoch: 1, basis: Default::default(), rows, intents: 0, credential: None, ops: vec![StoreOp::RemoveAnswer { request_id: 7 }] };
+    assert!(super::runners::write_batch(&db, &batch(vec![("Task".into(), "not json".into())])).is_err());
+    assert_eq!(answers(&db), 1);
+    super::runners::write_batch(&db, &batch(Vec::new())).unwrap();
+    assert_eq!(answers(&db), 0);
+}

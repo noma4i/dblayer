@@ -367,17 +367,21 @@ impl EffectRunner<Calls> for CallsRunner {
 }
 
 /// One transaction per kind of ops: the tables `encrypted_*` through the store, the queue through the commit path of `Db`.
-fn write_batch(db: &Db, batch: &crate::owners::store::StoreBatch) -> Result<(), String> {
+pub(super) fn write_batch(db: &Db, batch: &crate::owners::store::StoreBatch) -> Result<(), String> {
     let (encrypted, queue): (Vec<&StoreOp>, Vec<&StoreOp>) = batch.ops.iter().partition(|op| matches!(op, StoreOp::Pending { .. } | StoreOp::RemovePending | StoreOp::EraseSession | StoreOp::Answer { .. } | StoreOp::RemoveAnswer { .. } | StoreOp::Session { .. }));
+    let (removals, encrypted): (Vec<&StoreOp>, Vec<&StoreOp>) = encrypted.into_iter().partition(|op| matches!(op, StoreOp::RemoveAnswer { .. }));
     let row_ops = if batch.ops.iter().any(|op| matches!(op, StoreOp::Window { .. })) { Vec::new() } else { row_ops(&batch.rows)? };
     if !encrypted.is_empty() {
         db.shared.store.write_ops(encrypted.into_iter().filter_map(row_op).collect()).map(drop).map_err(|error| error.to_string())?;
     }
-    if queue.is_empty() && row_ops.is_empty() {
+    if !queue.is_empty() || !row_ops.is_empty() {
+        let ops: Vec<StoreOp> = row_ops.into_iter().chain(queue.into_iter().cloned()).collect();
+        db.write_queue_ops(&ops).map_err(|error| error.to_string())?;
+    }
+    if removals.is_empty() {
         return Ok(());
     }
-    let ops: Vec<StoreOp> = row_ops.into_iter().chain(queue.into_iter().cloned()).collect();
-    db.write_queue_ops(&ops).map_err(|error| error.to_string())
+    db.shared.store.write_ops(removals.into_iter().filter_map(row_op).collect()).map(drop).map_err(|error| error.to_string())
 }
 
 fn row_ops(rows: &[(String, String)]) -> Result<Vec<StoreOp>, String> {
