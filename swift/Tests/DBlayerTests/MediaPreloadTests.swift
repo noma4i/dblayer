@@ -19,7 +19,7 @@ extension BridgeProbeTests {
   @MainActor
   @Test(.timeLimit(.minutes(1)))
   func aMediaRefetchAfterMutationReadsTheWholeStaleWindow() async throws {
-    try await DB.close()
+    await DB.closeForCleanup()
     var models = try #require(JSONSerialization.jsonObject(with: Data(modelsJSON.utf8)) as? [[String: Any]])
     let momentIndex = try #require(models.firstIndex { $0["key"] as? String == "Moment" })
     let mediaIndex = try #require(models.firstIndex { $0["key"] as? String == "MediaMessage" })
@@ -74,7 +74,7 @@ extension BridgeProbeTests {
   @MainActor
   @Test(.timeLimit(.minutes(1)))
   func preloadsAndThreeMediaLoadsFinishOnEmptyPages() async throws {
-    try await DB.close()
+    await DB.closeForCleanup()
     let transport = MockTransport()
     let preload = transport.hold("PresenceOnline", reply: #"{"data":{"presenceOnline":[]}}"#)
     defer { preload.release() }

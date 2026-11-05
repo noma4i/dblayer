@@ -31,7 +31,7 @@ extension BridgeProbeTests {
 
   @MainActor
   static func openBridgeSession() async throws -> SealedServer {
-    try await DB.close()
+    await DB.closeForCleanup()
     let account = Self.bridgeAccount
     account.signOut()
     let server = try SealedServer { path, body in
@@ -355,7 +355,7 @@ extension BridgeProbeTests {
     try await Self.signIn("A")
     let oldScope = try DB.account()
     let row = try #require(try await User.profile.read(in: oldScope).first)
-    try await DB.close()
+    await DB.closeForCleanup()
     _ = try await Self.openBridgeSession()
     try await Self.signIn("A")
 

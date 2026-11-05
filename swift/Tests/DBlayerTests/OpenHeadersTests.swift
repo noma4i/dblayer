@@ -21,7 +21,7 @@ extension BridgeProbeTests {
 struct OpenHeadersTests {
   @Test @MainActor
   func openReadsTheHeadersAgainForEveryRequest() async throws {
-    try await DB.close()
+    await DB.closeForCleanup()
     let server = try BootstrapListener(responseStatus: "400 Bad Request")
     defer { server.listener.cancel() }
     let origin = try await server.start()

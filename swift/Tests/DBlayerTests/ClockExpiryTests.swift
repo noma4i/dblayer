@@ -7,7 +7,7 @@ extension BridgeProbeTests {
   @MainActor
   @Test(.timeLimit(.minutes(1)))
   func advancingTheTestClockExpiresAMemoryRowWithoutWaiting() async throws {
-    try await DB.close()
+    await DB.closeForCleanup()
     let transport = MockTransport()
     let clock = try await DB.openTesting(transport: transport, modelsJSON: modelsJSON)
     try DB.database.registerOperations(defsJson: #"[{"name":"BulletinAdded","document":"subscription BulletinAdded { bulletinAdded { body occurredAt } }","rootPath":"bulletinAdded"}]"#)
@@ -25,7 +25,7 @@ extension BridgeProbeTests {
   @MainActor
   @Test(.timeLimit(.minutes(1)))
   func writingEqualValuesRenewsAMemoryRowAndStaysSilent() async throws {
-    try await DB.close()
+    await DB.closeForCleanup()
     let clock = try await DB.openTesting(transport: MockTransport(), modelsJSON: modelsJSON)
     let lobby = Cursor(try await Presence.where(Presence.room == "lobby").live.stream())
     #expect(await lobby.next()?.isEmpty == true)

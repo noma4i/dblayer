@@ -47,7 +47,7 @@ extension BridgeProbeTests {
   @Test
   func aCloseWithTheTargetUnsetLeavesTheNextDatabaseClean() async throws {
     for unset in [DbError.Interrupted(detail: "transport unavailable during reset"), DbError.Invalid(detail: "No test transport")] {
-      try await DB.close()
+      await DB.closeForCleanup()
       let first = MockTransport(unanswered: .networkError)
       first.enqueue("UserProfile", reply: Self.profile("A"))
       let switchable = SwitchableTransport(first, unset: unset)
@@ -58,7 +58,7 @@ extension BridgeProbeTests {
       let before = first.calls.count
 
       switchable.target = nil
-      try await DB.close()
+      await DB.closeForCleanup()
       let second = MockTransport(unanswered: .networkError)
       second.enqueue("UserProfile", reply: Self.profile("B"))
       #expect(first.calls.count == before, "work of the close reached the old transport")
@@ -71,7 +71,7 @@ extension BridgeProbeTests {
       try await next.loaded()
       #expect(next.value?.name == "B")
       #expect(second.calls.count == 1)
-      try await DB.close()
+      await DB.closeForCleanup()
     }
   }
 
@@ -79,16 +79,16 @@ extension BridgeProbeTests {
   @MainActor
   @Test
   func reopeningAfterACloseGivesACleanDatabaseWithAndWithoutATransport() async throws {
-    try await DB.close()
+    await DB.closeForCleanup()
     let first = MockTransport(unanswered: .networkError)
     first.enqueue("UserProfile", reply: Self.profile("A"))
     try await DB.openTesting(transport: first, modelsJSON: modelsJSON)
     try DB.database.registerOperations(defsJson: Self.operations)
     let entity = Projected<User>(try DB.account().stream(User.profile))
     await eventually(#"entity.value?.name == "A""#) { entity.value?.name == "A" }
-    try await DB.close()
+    await DB.closeForCleanup()
     try await DB.openTesting(transport: nil, modelsJSON: modelsJSON)
-    try await DB.close()
+    await DB.closeForCleanup()
     let second = MockTransport(unanswered: .networkError)
     second.enqueue("UserProfile", reply: Self.profile("B"))
     try await DB.openTesting(transport: second, modelsJSON: modelsJSON)
@@ -96,6 +96,6 @@ extension BridgeProbeTests {
     let reopened = Projected<User>(try DB.account().stream(User.profile))
     await eventually(#"reopened.value?.name == "B""#) { reopened.value?.name == "B" }
     #expect(first.calls.count == 1)
-    try await DB.close()
+    await DB.closeForCleanup()
   }
 }

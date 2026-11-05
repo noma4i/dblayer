@@ -120,7 +120,7 @@ extension BridgeProbeTests {
     try await reopenSigned(config: config, modelsJson: models, operations: clubDefs)
     let receipt = try await Letter.send(in: DB.account(), chatId: "c1", text: "held", at: 1)
     let id = try #require(receipt.optimisticValue?.id)
-    try await DB.close()
+    await DB.closeForCleanup()
     var connection: OpaquePointer?
     try #require(sqlite3_open(path, &connection) == SQLITE_OK)
     let changed = sqlite3_exec(connection, "DROP TABLE IF EXISTS op_effect_value; DROP TABLE IF EXISTS op_effect; DROP TABLE IF EXISTS scope_revision; UPDATE manifest SET value = 'old' WHERE key = 'format_version'", nil, nil, nil)
@@ -141,7 +141,7 @@ extension BridgeProbeTests {
       guard case .rejected = try await valueBeforeDeadline(waiting, release: {}) else { throw WaitFailure.unexpectedOutcome }
     }
     #expect(try await Letter.ids([id]).read().isEmpty)
-    try await DB.close()
+    await DB.closeForCleanup()
   }
 
   @MainActor

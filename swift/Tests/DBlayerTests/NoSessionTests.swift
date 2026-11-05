@@ -7,7 +7,7 @@ extension BridgeProbeTests {
   @MainActor
   @Test(.timeLimit(.minutes(1)))
   func serverCallsWithoutATransportReportNoSession() async throws {
-    try await DB.close()
+    await DB.closeForCleanup()
     try await DB.openTesting(transport: nil, modelsJSON: modelsJSON)
     let database = try DB.database
     let epoch = database.sessionEpoch()

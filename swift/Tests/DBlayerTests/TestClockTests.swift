@@ -7,7 +7,7 @@ extension BridgeProbeTests {
   @MainActor
   @Test(.timeLimit(.minutes(1)))
   func cancellingOneLoadInterestKeepsTheOtherCallAlive() async throws {
-    try await DB.close()
+    await DB.closeForCleanup()
     let transport = MockTransport()
     let hold = transport.hold("MomentsFeed", reply: #"{"data":{"feed":{"nodes":[{"__typename":"Moment","id":"1","uuid":"a","likedByMe":false,"media":{},"createdAt":"2026-10-08T00:00:00.000Z"}],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}"#)
     defer { hold.release() }
@@ -34,7 +34,7 @@ extension BridgeProbeTests {
   @MainActor
   @Test(.timeLimit(.minutes(1)))
   func aMutationDuringTheFirstPageKeepsTheWholeChainStale() async throws {
-    try await DB.close()
+    await DB.closeForCleanup()
     let transport = MockTransport()
     let row1 = #"{"__typename":"Moment","id":"1","uuid":"a","likedByMe":false,"media":{},"createdAt":"2026-10-08T00:00:00.000Z"}"#
     let row2 = #"{"__typename":"Moment","id":"2","uuid":"b","likedByMe":false,"media":{},"createdAt":"2026-10-08T00:00:00.000Z"}"#
@@ -86,7 +86,7 @@ extension BridgeProbeTests {
   @MainActor
   @Test(.timeLimit(.minutes(1)))
   func aRefetchOwedWithoutAReaderSurvivesReopen() async throws {
-    try await DB.close()
+    await DB.closeForCleanup()
     let path = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString).path
     defer { Task { @MainActor in try? await DB.close(); try? FileManager.default.removeItem(atPath: path) } }
     let transport = MockTransport()
@@ -116,7 +116,7 @@ extension BridgeProbeTests {
     defer { outcome.cancel() }
     guard await cursor.next("the mutation is confirmed") == 2 else { Issue.record("the mutation was not confirmed"); return }
     try #require(transport.calls.filter { $0.operationName == "MomentsFeed" }.count == 1)
-    try await DB.close()
+    await DB.closeForCleanup()
     try await DB.openTesting(transport: transport, modelsJSON: modelsJSON, path: path, startingAt: Date(timeIntervalSince1970: 1_000))
     try DB.database.registerOperations(defsJson: definitions)
     let secondLoad = Task { do { try await Moment.feed.load(); signal.yield(3) } catch { signal.yield(9) } }
@@ -129,7 +129,7 @@ extension BridgeProbeTests {
   @MainActor
   @Test(.timeLimit(.minutes(1)))
   func aRefreshAfterReopenAndClockRollbackKeepsTheNewResponse() async throws {
-    try await DB.close()
+    await DB.closeForCleanup()
     let path = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString).path
     defer { Task { @MainActor in try? await DB.close(); try? FileManager.default.removeItem(atPath: path) } }
     let transport = MockTransport()
@@ -148,7 +148,7 @@ extension BridgeProbeTests {
     guard await observe("the initial profile", { first.value != nil }) else { return }
     try #require(first.value?.name == "A")
     first.stream.cancel()
-    try await DB.close()
+    await DB.closeForCleanup()
 
     try await DB.openTesting(transport: transport, modelsJSON: modelsJSON, path: path, startingAt: Date(timeIntervalSince1970: 1))
     try DB.database.registerOperations(defsJson: definitions)
@@ -164,7 +164,7 @@ extension BridgeProbeTests {
   @MainActor
   @Test(.timeLimit(.minutes(1)))
   func aTestClockMovesFreshForWithoutSleeping() async throws {
-    try await DB.close()
+    await DB.closeForCleanup()
     let transport = MockTransport()
     for _ in 0 ..< 2 { transport.enqueue("MomentsFeed", reply: #"{"data":{"feed":{"nodes":[{"__typename":"Moment","id":"1","uuid":"a","likedByMe":false,"media":{},"createdAt":"2026-10-08T00:00:00.000Z"}],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}"#) }
     let down = transport.hold("MomentsFeed", failure: .Network(detail: "down"))

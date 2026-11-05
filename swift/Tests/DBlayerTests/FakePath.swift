@@ -1,4 +1,5 @@
 import Foundation
+import Testing
 @testable import DBlayer
 
 /// A path the test moves by hand: every observer gets the current state at once and each change after.
@@ -27,4 +28,11 @@ final class FakePath: PathSource, @unchecked Sendable {
   }
 
   var observerCount: Int { lock.withLock { observers.count } }
+}
+
+extension DB {
+  /// Test cleanup: a database a test already closed is closed.
+  @MainActor static func closeForCleanup() async {
+    do { try await close() } catch DbError.Closed(_) {} catch { Issue.record("close failed: \(error)") }
+  }
 }

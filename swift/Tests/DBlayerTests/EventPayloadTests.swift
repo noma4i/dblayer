@@ -9,7 +9,7 @@ extension BridgeProbeTests {
   }
 
   private func checkEventPayload(_ eventsFirst: Bool) async throws {
-    try await DB.close()
+    await DB.closeForCleanup()
     let transport = MockTransport()
     try await reopen(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: transport)
     try DB.database.registerOperations(defsJson: #"[{"name":"ChatList","document":"query ChatList { chats { id title revision lists } }"},{"name":"ChatNode","document":"query ChatNode($id: ID!) { node(id: $id) { ... on Chat { id title revision lists } } }"},{"name":"RecordEvents","document":"subscription RecordEvents { recordEvents { entries { topic action recordId chat { id title revision lists } message { id text chatId } } } }"}]"#)
@@ -58,6 +58,6 @@ extension BridgeProbeTests {
     if let secondary { #expect(try await secondary.read().isEmpty) }
     let expected = eventsFirst ? ["RecordEvents", "ChatList", "ChatList", "ChatNode"] : ["ChatList", "ChatNode", "RecordEvents"]
     #expect(transport.calls.map(\.operationName) == expected)
-    try await DB.close()
+    await DB.closeForCleanup()
   }
 }

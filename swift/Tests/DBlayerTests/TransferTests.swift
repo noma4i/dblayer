@@ -125,7 +125,7 @@ extension BridgeProbeTests {
     #expect(transport.identities.filter { $0.itemId == "../../../outside" }.count == 3)
     let ranges = directory.appending(path: "db.sqlite.cache/ranges").resolvingSymlinksInPath().path + "/"
     #expect(transport.paths.filter { $0.0 == "../../../outside" }.allSatisfy { $0.1.hasPrefix(ranges) })
-    try await DB.close()
+    await DB.closeForCleanup()
   }
 
   @MainActor @Test(.timeLimit(.minutes(1)))
@@ -153,7 +153,7 @@ extension BridgeProbeTests {
       let path = directory.appending(path: "db.sqlite").path
       let uploads = UploadOperations(createBlob: .init("CreateBlob"))
       let operations = #"[{"name":"CreateBlob","document":"mutation CreateBlob { createBlob { url headers signedId blobId } }"},{"name":"CreateAssets","document":"mutation CreateAssets { createAssets { assets { id clientKey size position } } }"},{"name":"CreateAsset","document":"mutation CreateAsset { createAsset { asset { id clientKey size position } } }"}]"#
-      try await DB.close()
+      await DB.closeForCleanup()
       _ = try await DB.openTesting(transport: transport, modelsJSON: modelsJSON, path: path, uploads: uploads, encrypted: encrypted, credentials: credential, http: server)
       try DB.database.registerOperations(defsJson: operations)
       _ = try await DB.database.sessionCall(operation: "login_link", bodyJson: #"{"account":"A"}"#)
@@ -170,7 +170,7 @@ extension BridgeProbeTests {
       server.hold(operation: nil)
       if lose {
         await server.lostAnswer()
-        try await DB.close()
+        await DB.closeForCleanup()
         _ = try await DB.openTesting(transport: transport, modelsJSON: modelsJSON, path: path, uploads: uploads, encrypted: encrypted, credentials: credential, http: server)
         try DB.database.registerOperations(defsJson: operations)
         await eventually("both assets are stored") {
@@ -198,7 +198,7 @@ extension BridgeProbeTests {
       let sent = try #require(variables["items"] as? [[String: Any]])
       #expect(sent.compactMap { $0["clientKey"] as? String } == ["key-1", "key-2"])
       #expect(sent.compactMap { $0["signedId"] as? String } == ["signed-1.jpg", "signed-2.jpg"])
-      try await DB.close()
+      await DB.closeForCleanup()
     }
   }
 
@@ -212,7 +212,7 @@ extension BridgeProbeTests {
     let path = directory.appending(path: "db.sqlite").path
     let uploads = UploadOperations(createBlob: .init("CreateBlob"))
     let operations = #"[{"name":"CreateBlob","document":"mutation CreateBlob { createBlob { signedId } }"}]"#
-    try await DB.close()
+    await DB.closeForCleanup()
     let transport = MockTransport()
     transport.enqueue("CreateBlob", failure: .Http(status: 422, detail: "rejected"))
     let start = Date(timeIntervalSince1970: 1_000)
@@ -221,14 +221,14 @@ extension BridgeProbeTests {
     let blob = try await DB.upload(BlobUpload(name: "video", create: "CreateBlob"), request: UploadRequest(path: source.path))
     do { _ = try await blob.waitUntilUploaded(); Issue.record("the refused upload returned a signed ID") } catch {}
     let id = blob.id
-    try await DB.close()
+    await DB.closeForCleanup()
     _ = try await DB.openTesting(transport: transport, modelsJSON: "[]", path: path, uploads: uploads, startingAt: start.addingTimeInterval(7 * 24 * 60 * 60))
     try DB.database.registerOperations(defsJson: operations)
     let status = try AccountScope().uploadStatus(id)
     let updates = Cursor(status)
     #expect(await updates.first("the expired status") { $0.state == .expired } != nil)
     status.stream.cancel()
-    try await DB.close()
+    await DB.closeForCleanup()
   }
 
   @MainActor @Test(.timeLimit(.minutes(1)))
@@ -248,7 +248,7 @@ extension BridgeProbeTests {
     #expect(failed.sync.state == .failed)
     try await failed.discard(action: nil)
     #expect(try await Moment.find(row.id).current() == nil)
-    try await DB.close()
+    await DB.closeForCleanup()
   }
 
   @MainActor @Test(.timeLimit(.minutes(1)))
@@ -272,7 +272,7 @@ extension BridgeProbeTests {
     try await queued.discard(action: nil)
     #expect(try await Moment.find(queued.id).current() == nil)
     held.release()
-    try await DB.close()
+    await DB.closeForCleanup()
     let reopened = try await reopen(config: config, modelsJson: modelsJSON, transport: transport, operations: operations, uploads: uploads)
     try reopened.setOnline(online: false)
     try reopened.setOnline(online: true)
@@ -282,7 +282,7 @@ extension BridgeProbeTests {
     try reopened.setOnline(online: true)
     let aborts = transport.calls.filter { $0.operationName == "AbortMultipart" }
     #expect(aborts.count == 1 && aborts.first?.purpose == .transfer)
-    try await DB.close()
+    await DB.closeForCleanup()
   }
 
   @MainActor @Test(.timeLimit(.minutes(1)))
@@ -313,7 +313,7 @@ extension BridgeProbeTests {
     let call = try #require(transport.calls.first { $0.operationName == "CreateAsset" })
     let variables = try JSONSerialization.jsonObject(with: Data(call.variablesJson.utf8)) as! [String: Any]
     #expect(variables["clientKey"] as? String == "key-1")
-    try await DB.close()
+    await DB.closeForCleanup()
   }
 
   @MainActor @Test(.timeLimit(.minutes(1)))
@@ -349,7 +349,7 @@ extension BridgeProbeTests {
     }
     #expect(filenames.sorted() == ["0.jpg", "0.jpg", "1.jpg", "2.jpg"])
     #expect(transport.calls.filter { $0.operationName == "CreateAssets" }.count == 1)
-    try await DB.close()
+    await DB.closeForCleanup()
   }
 
   @MainActor @Test(.timeLimit(.minutes(1)))
@@ -389,7 +389,7 @@ extension BridgeProbeTests {
       return try #require(variables["filename"] as? String)
     }
     #expect(filenames.sorted() == ["0.jpg", "2.jpg"])
-    try await DB.close()
+    await DB.closeForCleanup()
   }
 
   @MainActor @Test(.timeLimit(.minutes(1)))
@@ -397,7 +397,7 @@ extension BridgeProbeTests {
     let source = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
     try Data("video".utf8).write(to: source)
     defer { try? FileManager.default.removeItem(at: source) }
-    try await DB.close()
+    await DB.closeForCleanup()
     let transport = MockTransport()
     transport.enqueue("CreateBlob", failure: .Http(status: 422, detail: "rejected"))
     let clock = try await DB.openTesting(transport: transport, modelsJSON: "[]", uploads: UploadOperations(createBlob: .init("CreateBlob")))
@@ -413,7 +413,7 @@ extension BridgeProbeTests {
     let result = try await DB.database.blob(epoch: DB.database.sessionEpoch(), id: blob.id)
     #expect(result.state == .expired)
     status.stream.cancel()
-    try await DB.close()
+    await DB.closeForCleanup()
   }
 
   @MainActor @Test(.timeLimit(.minutes(1)))
@@ -440,7 +440,7 @@ extension BridgeProbeTests {
     #expect(names.filter { $0 == "PresignParts" }.count == 1)
     #expect(names.filter { $0 == "CompleteMultipart" }.count == 2)
     #expect(transport.puts.sorted() == ["https://storage/1", "https://storage/2", "https://storage/3"])
-    try await DB.close()
+    await DB.closeForCleanup()
   }
 
   @MainActor @Test(.timeLimit(.minutes(1)))
@@ -461,7 +461,7 @@ extension BridgeProbeTests {
     _ = try await first.attach(.avatar, data: Data([4]), name: "replacement", mime: "image/png")
     #expect(try await first.detach(.avatar))
     let (firstId, secondId) = (first.id, second.id)
-    try await DB.close()
+    await DB.closeForCleanup()
     try await reopen(config: config, modelsJson: modelsJSON, transport: nil)
     let restoredFirst = try #require(try await User.find(firstId).current())
     let restoredSecond = try #require(try await User.find(secondId).current())
@@ -469,7 +469,7 @@ extension BridgeProbeTests {
     #expect(try await restoredSecond.read(.avatar) == large)
     let info = try #require(try await restoredSecond.file(.avatar))
     #expect(info.name == "large" && info.size == 300 * 1024)
-    try await DB.close()
+    await DB.closeForCleanup()
   }
 
   @MainActor @Test(.timeLimit(.minutes(1)))
@@ -496,7 +496,7 @@ extension BridgeProbeTests {
     #expect(try FileManager.default.contentsOfDirectory(atPath: files.path).isEmpty)
     #expect(FileManager.default.fileExists(atPath: source.path))
     held.release()
-    try await DB.close()
+    await DB.closeForCleanup()
     let reopened = try await reopen(config: config, modelsJson: "[]", transport: transport, operations: operations, uploads: uploads)
     try reopened.setOnline(online: false)
     try reopened.setOnline(online: true)
@@ -507,6 +507,6 @@ extension BridgeProbeTests {
     let aborts = transport.calls.filter { $0.operationName == "AbortMultipart" }
     #expect(aborts.count == 1)
     #expect(aborts.first?.purpose == .transfer)
-    try await DB.close()
+    await DB.closeForCleanup()
   }
 }

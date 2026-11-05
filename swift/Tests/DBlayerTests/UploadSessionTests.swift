@@ -61,7 +61,7 @@ extension BridgeProbeTests {
     #expect(groups.count == 2)
     #expect(groups.map(\.epoch) == [first, second])
     #expect(groups.map { $0.items.count } == [1, 1])
-    try await DB.close()
+    await DB.closeForCleanup()
   }
 
   @MainActor

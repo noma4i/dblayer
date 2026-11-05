@@ -61,7 +61,7 @@ extension BridgeProbeTests {
 
   @MainActor
   static func openSealedSession() async throws -> SealedServer {
-    try await DB.close()
+    await DB.closeForCleanup()
     let account = Self.account
     account.signOut()
     let server = try SealedServer { path, body in
@@ -288,7 +288,7 @@ extension BridgeProbeTests {
       ended.finish()
     }
     await eventually("the request waits at the server") { server.parkedCount > 0 }
-    try await DB.close()
+    await DB.closeForCleanup()
     await eventually("the call ended without its answer") { ended.isDone }
     server.hold(operation: nil)
   }

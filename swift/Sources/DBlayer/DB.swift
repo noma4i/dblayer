@@ -33,11 +33,11 @@ public enum DB {
     return (database, database.sessionEpoch())
   }
 
-  /// Closes the database. Every request, load and subscription ends, and the call returns after the library released its resources. A call on the closed database gets the closed error of the core.
+  /// Closes the database. Every request, load and subscription ends, and the call returns after the library released its resources. A call on the closed database, a second close included, gets the closed error of the core.
   @MainActor public static func close() async throws {
     guard let opened = slot.withLock({ $0 }) else { return }
     opened.stopObservers()
-    do { try await opened.database.closeDatabase() } catch DbError.Closed(_) {}
+    try await opened.database.closeDatabase()
   }
 
   public static func subscriptionCensus() throws -> SubscriptionCensus { try database.subscriptionCensus() }
