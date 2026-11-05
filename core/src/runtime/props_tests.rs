@@ -431,3 +431,32 @@ fn rt_prop_start_close() {
     drop(runtime);
     assert_eq!(alive.load(Ordering::SeqCst), 0, "the threads of the owners ended with the runtime");
 }
+
+fn due_against_cancel() -> DetScheduler {
+    let mut det = DetScheduler::new(0);
+    let toy = det.add::<Toy>("toy", ToyState::default(), ToyRunner::default());
+    det.start_epoch(1);
+    det.post(toy, EpochStamp::Epoch(1), ToyInput::ScheduleAt(1, Time(10), 7));
+    det.run_until_quiet(5).unwrap();
+    det.tick(Time(10));
+    det.inject(0, toy, EpochStamp::Epoch(1), ToyInput::CancelSchedule(1));
+    det
+}
+
+#[test]
+fn rt_race_a_cancel_against_a_due_entry() {
+    let toy = Address::<Toy>::new(0);
+    let seen = RefCell::new(BTreeSet::new());
+    let manifest = prop("P-RT-01", "Cancel x Fire of one entry", "R5 Cancel, R9 Fire", 8, "rt_race_a_cancel_against_a_due_entry").explore(due_against_cancel, |det| {
+        let fired = det.state(toy).unwrap().fired.clone();
+        if fired.len() > 1 {
+            return Err(format!("one entry fired twice: {fired:?}"));
+        }
+        if det.choices().is_empty() {
+            seen.borrow_mut().insert(fired);
+        }
+        Ok(())
+    });
+    manifest.assert_complete();
+    assert_eq!(*seen.borrow(), BTreeSet::from([vec![], vec![7]]), "a cancel before the Fire removes the entry, a cancel behind the Fire in the queue is too late");
+}
