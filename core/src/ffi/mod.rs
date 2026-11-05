@@ -1,4 +1,5 @@
 mod database;
+pub(crate) use database::NEEDS_NETWORK;
 mod receipt;
 pub(crate) mod legacy;
 #[cfg(test)]

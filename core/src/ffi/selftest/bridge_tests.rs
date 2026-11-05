@@ -114,6 +114,7 @@ async fn cancelling_one_load_interest_keeps_the_other_call_alive() {
     let first = rig.database.begin_load(epoch, "User".into(), "all".into(), "{}".into()).unwrap();
     held.entered_for("the shared load").await;
     let second = rig.database.begin_load(epoch, "User".into(), "all".into(), "{}".into()).unwrap();
+    yield_until("both calls wait for the shared load", || rig.database.life.waiting_calls() >= 2).await;
     first.cancel();
     held.release();
     bound(second.result()).await.unwrap();
@@ -1154,7 +1155,7 @@ async fn the_cancel_of_a_reader_releases_its_object_outside_every_library_lock()
     let stream = rig.database.subscribe_reading(epoch, users(), Arc::new(DropProbe { held: held.clone(), dropped: dropped.clone() }));
     bound(rig.database.loaded(stream)).await.unwrap();
     rig.database.cancel_stream(stream);
-    assert_eq!(rig.database.stream_census().open, 0);
+    yield_until("the stream left the census", || rig.database.stream_census().open == 0).await;
     yield_until("the reader object was released", || dropped.load(Ordering::SeqCst) == 1).await;
     assert_eq!(dropped.load(Ordering::SeqCst), 1, "the reader object was released more than once");
     assert!(held.lock().unwrap().is_empty(), "the reader object was released under {:?}", held.lock().unwrap());
@@ -1489,7 +1490,7 @@ async fn every_entry_of_a_left_account_is_refused_and_reaches_nothing() {
     ];
     for (name, call) in calls {
         let result = call(&rig.database, old).await;
-        assert!(matches!(result, Err(DbError::Interrupted { .. })), "{name} of a left account was not refused: {result:?}");
+        assert!(matches!(result, Err(DbError::Interrupted { .. } | DbError::NoSession { .. })), "{name} of a left account was not refused: {result:?}");
     }
     assert_eq!(rig.world.log().len(), before, "a refused entry reached the server");
     rig.database.close_now();

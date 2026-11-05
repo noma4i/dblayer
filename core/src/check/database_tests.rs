@@ -12,13 +12,15 @@ async fn the_shared_corpus_is_green_on_the_core() {
 async fn shared_corpus() {
     let traces = corpus::read_dir(&corpus::shared_dir()).unwrap();
     assert!(!traces.is_empty());
-    let mut red = Vec::new();
-    for trace in traces {
+    let runs: Vec<_> = traces.into_iter().map(|trace| tokio::spawn(async move {
         let mut real = DatabaseSut::default();
-        if let Err(divergence) = replay(&mut real, &trace).await {
-            red.push(format!("{}: {divergence}", trace.name));
-        }
+        let result = replay(&mut real, &trace).await.err().map(|divergence| format!("{}: {divergence}", trace.name));
         real.finish().await;
+        result
+    })).collect();
+    let mut red = Vec::new();
+    for run in runs {
+        red.extend(run.await.expect("a corpus trace did not panic"));
     }
     assert!(red.is_empty(), "red traces:\n{}", red.join("\n"));
 }

@@ -1,4 +1,8 @@
 use std::collections::HashMap;
+
+/// The detail of the `Network` error a call gets while the network is down.
+pub(crate) const NEEDS_NETWORK: &str = "the operation needs the network";
+
 use std::path::Path;
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
@@ -387,7 +391,7 @@ fn call_failure(error: crate::owners::calls::CallError) -> DbError {
     match error {
         CallError::NoSession => DbError::NoSession { detail: "the database has no session".into() },
         CallError::Invalid => DbError::Invalid { detail: "the operation is not registered".into() },
-        CallError::Offline => DbError::Network { detail: "the operation needs the network".into() },
+        CallError::Offline => DbError::Network { detail: NEEDS_NETWORK.into() },
         CallError::Network => DbError::Network { detail: "the request did not reach the server".into() },
         CallError::Graphql { messages, extensions } => DbError::Graphql { messages, extensions },
         CallError::Session { code, detail } => DbError::Session { code, detail },

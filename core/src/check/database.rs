@@ -53,6 +53,7 @@ fn error_kind(error: &DbError) -> &'static str {
         DbError::Invalid { .. } => "invalid",
         DbError::Database { .. } => "database",
         DbError::Sync { .. } => "sync",
+        DbError::Network { detail } if detail == crate::ffi::NEEDS_NETWORK => "offline",
         DbError::Network { .. } => "network",
         DbError::Interrupted { .. } => "interrupted",
         DbError::Http { status: 401, .. } => "unauthorized",
@@ -239,6 +240,7 @@ impl DatabaseSut {
         match opened {
             Ok(database) => {
                 if database.register_operations(OPERATIONS.into()).is_err() { return error("operations"); }
+                if database.set_online(true).is_err() { return error("online"); }
                 self.database = Some(database);
                 vec![Observation::bare("opened")]
             }
