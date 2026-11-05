@@ -41,7 +41,7 @@ impl Twin {
             NetworkEffect::Foreground(seq) => Some(RefEffect::Foreground(*seq)),
             NetworkEffect::PowerSaving(value) => Some(RefEffect::PowerSaving(*value)),
             NetworkEffect::Drained(_) => Some(RefEffect::Drained),
-            NetworkEffect::Reply { .. } | NetworkEffect::Snapshot { .. } => None,
+            NetworkEffect::Reply { .. } => None,
         }).collect();
         let reply = raw.iter().find_map(|effect| match effect {
             NetworkEffect::Reply { closed, .. } => Some(if *closed { RefReply::Closed } else { RefReply::Ok }),

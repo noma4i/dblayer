@@ -185,7 +185,7 @@ impl Wiring {
     }
 
     /// Whether the published epoch is already past `epoch`: an answer addressed to that epoch has no receiver left.
-    pub fn epoch_passed(&self, epoch: Epoch) -> bool { self.published.value.lock().unwrap_or_else(PoisonError::into_inner).as_ref().is_some_and(|published| published.epoch > epoch) }
+    pub fn epoch_passed(&self, epoch: Epoch) -> bool { self.published.read(|published| published.is_some_and(|published| published.epoch > epoch)) }
 
     /// The wait of `open`: the id Lifecycle answers when the first publication is saved.
     pub fn open_reply(&self) -> Option<u64> { self.open.lock().unwrap_or_else(PoisonError::into_inner).id }
@@ -464,7 +464,6 @@ impl Life {
         let settled = wiring.published.wait_for(OPEN_WAIT, || {
             if let Some(answer) = wiring.open.lock().unwrap_or_else(PoisonError::into_inner).answer {
                 return Some(Ok(answer));
-            }
             }
             wiring.open_failed.lock().unwrap_or_else(PoisonError::into_inner).clone().map(Err)
         });

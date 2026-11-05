@@ -222,6 +222,8 @@ pub enum SessionInput {
     Revoked { request_id: RequestId, attempt_id: AttemptId, body: String },
     HttpError { request_id: RequestId, attempt_id: AttemptId, temporary: bool, auth: bool, persisted_missing: bool },
     Dropped { request_id: RequestId, attempt_id: AttemptId },
+    /// The executor of the HTTP exchange of `attempt_id` died.
+    HttpFailed { attempt_id: AttemptId },
     Committed(Committed),
     Rejected(Rejected),
     Tick(Time),
@@ -351,19 +353,25 @@ impl StateOwner for SessionCalls {
     fn executor_failed(_executor: &str, pending: Vec<EffectId>) -> Vec<SessionInput> { pending.into_iter().filter_map(SessionInput::io_failed).collect() }
 }
 
-const GENERATE_ID: EffectId = EffectId::MAX;
 const HTTP_ID: EffectId = 1 << 63;
+const SECRET_ID: EffectId = 1 << 62;
 
-/// The id of the HTTP exchange of the request.
-pub fn http_id(request_id: RequestId) -> EffectId { HTTP_ID | request_id }
+/// The id of the HTTP exchange of the attempt.
+pub fn http_id(attempt_id: AttemptId) -> EffectId { HTTP_ID | attempt_id }
+
+/// The id of a secret operation: `kind` 0 generate, 1 store, 2 clear, 3 read.
+pub fn secret_id(kind: u64, secret_op_id: SecretOpId) -> EffectId { SECRET_ID | (kind << 56) | secret_op_id }
 
 impl SessionEffect {
-    /// The id of an effect that does IO: a batch, `HTTP_ID | request`, or `GENERATE_ID`. The other effects answer or notify and need no executor.
+    /// The id of an effect that does IO: a batch, an HTTP attempt or a secret operation. The other effects answer or notify and need no executor.
     pub fn io_id(&self) -> Option<EffectId> {
         match self {
-            Self::CommitPending { batch, .. } | Self::CommitLanding { batch, .. } | Self::RemovePending { batch, .. } => Some(*batch),
-            Self::HttpRequest { pending } => Some(http_id(pending.request_id)),
-            Self::GenerateCredential => Some(GENERATE_ID),
+            Self::CommitPending { batch, .. } | Self::CommitLanding { batch, .. } => Some(*batch),
+            Self::HttpRequest { attempt_id, .. } => Some(http_id(*attempt_id)),
+            Self::GenerateCredential { secret_op_id } => Some(secret_id(0, *secret_op_id)),
+            Self::StoreSecret { secret_op_id, .. } => Some(secret_id(1, *secret_op_id)),
+            Self::ClearSecret { secret_op_id } => Some(secret_id(2, *secret_op_id)),
+            Self::ReadSecret { secret_op_id } => Some(secret_id(3, *secret_op_id)),
             _ => None,
         }
     }
@@ -374,8 +382,15 @@ impl SessionInput {
     fn io_failed(id: EffectId) -> Option<SessionInput> {
         let detail = "the executor of Session failed".to_string();
         Some(match id {
-            GENERATE_ID => SessionInput::CredentialFailed { detail },
-            id if id & HTTP_ID != 0 => SessionInput::HttpError { request_id: id & !HTTP_ID, temporary: false, auth: false },
+            id if id & HTTP_ID != 0 => SessionInput::HttpFailed { attempt_id: id & !HTTP_ID },
+            id if id & SECRET_ID != 0 => {
+                let secret_op_id = id & ((1 << 56) - 1);
+                match (id >> 56) & 0x3 {
+                    2 => SessionInput::SecretCleared { secret_op_id, ok: false },
+                    3 => SessionInput::SecretRead { secret_op_id, read: SecretState::Error(detail) },
+                    _ => SessionInput::SecretStored { secret_op_id, ok: false },
+                }
+            }
             batch => SessionInput::Rejected(Rejected { batch, reason: RejectReason::Storage(detail) }),
         })
     }
@@ -969,6 +984,10 @@ impl SessionState {
 
     fn calling(&mut self, pending: PendingCall, attempts: u64, phase: CallPhase, document_sent: bool, input: SessionInput, fx: &mut Vec<SessionEffect>) {
         let mine = |request_id: RequestId, attempt_id: AttemptId| pending.request_id == request_id && phase == CallPhase::InFlight(attempt_id);
+        let input = match input {
+            SessionInput::HttpFailed { attempt_id } if mine(pending.request_id, attempt_id) => SessionInput::HttpError { request_id: pending.request_id, attempt_id, temporary: false, auth: false, persisted_missing: false },
+            other => other,
+        };
         match input {
             SessionInput::Response { request_id, attempt_id, body, sequence, refusal } if mine(request_id, attempt_id) => {
                 if let Some(code) = refusal {

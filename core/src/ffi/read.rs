@@ -173,6 +173,7 @@ impl ReadStream {
             }
             Outcome::Value(PullAnswer::Done) | Outcome::Closing => Ok(self.finished(ReadEnd::Closed)),
             Outcome::EpochEnded(_) => Ok(self.finished(ReadEnd::SessionEnded)),
+            Outcome::Internal => Err(DbError::Database { detail: "the answer of the owner was lost".into() }),
             Outcome::Value(PullAnswer::Invalid) => Err(DbError::Invalid { detail: "a pull of this stream is waiting already".into() }),
         }
     }

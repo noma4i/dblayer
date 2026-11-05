@@ -10,7 +10,7 @@ use tokio::task::AbortHandle;
 use super::{LifeReply, Wiring};
 use crate::owners::contract::{BatchAuthor, RejectReason, Rejected, ReplyId, RequestId};
 use crate::owners::lifecycle::{LifecycleInput, Peer};
-use crate::owners::session::{stored_answer, AttemptId, Credential, OperationClass, PendingCall, SecretState, SessionCalls, SessionEffect, SessionInput};
+use crate::owners::session::{secret_id, stored_answer, AttemptId, Credential, OperationClass, PendingCall, SecretState, SessionCalls, SessionEffect, SessionInput};
 use crate::owners::store::{StoreBatch, StoreInput, StoreOp};
 use crate::runtime::{Back, EffectRunner, EpochStamp, OutcomeId};
 use crate::transport::encrypted::client::{digest_of, permanently_refused, temporary_error};
@@ -133,9 +133,13 @@ impl SessionRunner {
     }
 
     /// The IO of the secret runs off the thread of the owners: the result comes back as an input with the same `secret_op_id`.
-    fn off_thread(&self, back: &Back<SessionCalls>, work: impl FnOnce() -> SessionInput + Send + 'static) {
+    fn off_thread(&self, back: &Back<SessionCalls>, id: crate::runtime::EffectId, work: impl FnOnce() -> SessionInput + Send + 'static) {
         let back = back.clone();
-        drop(crate::task::spawn_blocking_on(crate::task::Carry::Detached, &self.executor, move || back.reply(EpochStamp::Control, work())));
+        let watch = back.watch(id);
+        drop(crate::task::spawn_blocking_on(crate::task::Carry::Detached, &self.executor, move || {
+            let _watch = watch;
+            back.reply(EpochStamp::Control, work())
+        }));
     }
 
 }
@@ -202,7 +206,7 @@ impl EffectRunner<SessionCalls> for SessionRunner {
         match effect {
             SessionEffect::GenerateCredential { secret_op_id } => {
                 let (digests, generated) = (self.digests.clone(), self.generated.clone());
-                self.off_thread(back, move || {
+                self.off_thread(back, secret_id(0, secret_op_id), move || {
                     let secret = random_token();
                     let digest = digest_of(&secret);
                     let Some(identity) = crate::store::identity_of(&digest) else { return SessionInput::SecretStored { secret_op_id, ok: false } };
@@ -213,7 +217,7 @@ impl EffectRunner<SessionCalls> for SessionRunner {
             }
             SessionEffect::StoreSecret { credential, secret_op_id } => {
                 let (generated, credentials) = (self.generated.clone(), self.credentials.clone());
-                self.off_thread(back, move || {
+                self.off_thread(back, secret_id(1, secret_op_id), move || {
                     let secret = generated.lock().unwrap_or_else(PoisonError::into_inner).remove(&credential);
                     let ok = secret.is_some_and(|secret| credentials.set(&secret).is_ok());
                     SessionInput::SecretStored { secret_op_id, ok }
@@ -221,11 +225,11 @@ impl EffectRunner<SessionCalls> for SessionRunner {
             }
             SessionEffect::ClearSecret { secret_op_id } => {
                 let client = self.client.clone();
-                self.off_thread(back, move || SessionInput::SecretCleared { secret_op_id, ok: client.erase_credential().is_ok() });
+                self.off_thread(back, secret_id(2, secret_op_id), move || SessionInput::SecretCleared { secret_op_id, ok: client.erase_credential().is_ok() });
             }
             SessionEffect::ReadSecret { secret_op_id } => {
                 let credentials = self.credentials.clone();
-                self.off_thread(back, move || {
+                self.off_thread(back, secret_id(3, secret_op_id), move || {
                     let read = match credentials.get() {
                         Ok(Some(secret)) => crate::store::identity_of(&digest_of(&secret)).map_or(SecretState::Missing, SecretState::Present),
                         Ok(None) => SecretState::Missing,
@@ -274,7 +278,7 @@ impl EffectRunner<SessionCalls> for SessionRunner {
                 let body = body_of(&pending.body, full_document);
                 let purpose = if pending.purpose == 0 { NetworkPurpose::Standard } else { NetworkPurpose::Transfer };
                 let sequence = (pending.class != OperationClass::Sessionless).then_some(i64::try_from(pending.sequence).unwrap_or(i64::MAX));
-                let watch = back.watch(crate::owners::session::http_id(request_id));
+                let watch = back.watch(crate::owners::session::http_id(attempt_id));
                 let task = crate::task::spawn_on(crate::task::Carry::Detached, &self.executor, async move {
                     let _watch = watch;
                     crate::db::lock::assert_no_library_lock("HttpExchange::post");
