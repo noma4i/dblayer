@@ -512,9 +512,9 @@ impl Rig {
         let world = World::new("server", "initial", false);
         let switch = Switchable::new(Some(world.clone()), false);
         let mut encrypted = crate::transport::encrypted::protocol_tests::config();
-        encrypted.endpoints.session_operations.insert("login_link".into(), EncryptedSessionOperation { path: "/api/auth/login_link".into(), sessionless: false });
-        encrypted.endpoints.session_operations.insert("social".into(), EncryptedSessionOperation { path: "/api/auth/login_link".into(), sessionless: false });
-        encrypted.endpoints.session_operations.insert("otp".into(), EncryptedSessionOperation { path: "/api/auth/otp".into(), sessionless: true });
+        encrypted.endpoints.session_operations.insert("login_link".into(), EncryptedSessionOperation { path: "/api/auth/login_link".into(), class: crate::transport::EncryptedOperationClass::Authenticated });
+        encrypted.endpoints.session_operations.insert("social".into(), EncryptedSessionOperation { path: "/api/auth/login_link".into(), class: crate::transport::EncryptedOperationClass::Authenticated });
+        encrypted.endpoints.session_operations.insert("otp".into(), EncryptedSessionOperation { path: "/api/auth/otp".into(), class: crate::transport::EncryptedOperationClass::Sessionless });
         let clock = TestClock::new(1_000_000);
         let opener = OpenDatabase::new();
         let mut models: Value = serde_json::from_str(&plain_models()).unwrap();

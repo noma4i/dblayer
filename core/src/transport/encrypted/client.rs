@@ -47,7 +47,15 @@ pub struct EncryptedEndpoints {
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct EncryptedSessionOperation {
     pub path: String,
-    pub sessionless: bool,
+    pub class: EncryptedOperationClass,
+}
+
+/// How the core treats a declared session operation: `Login` creates the credential, `Authenticated` signs with it, `Sessionless` sends no credential.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
+pub enum EncryptedOperationClass {
+    Login,
+    Authenticated,
+    Sessionless,
 }
 
 impl EncryptedConfig {
@@ -200,7 +208,7 @@ impl EncryptedClient {
     /// The declared session operations and `logout`, as the owner Session takes them.
     pub(crate) fn session_operations(&self) -> Vec<crate::owners::session::SessionOperation> {
         use crate::owners::session::OperationClass;
-        let declared = self.config.endpoints.session_operations.iter().map(|(name, operation)| crate::owners::session::SessionOperation { name: name.clone(), path: operation.path.clone(), class: if operation.sessionless { OperationClass::Sessionless } else { OperationClass::Authenticated } });
+        let declared = self.config.endpoints.session_operations.iter().map(|(name, operation)| crate::owners::session::SessionOperation { name: name.clone(), path: operation.path.clone(), class: match operation.class { EncryptedOperationClass::Login => OperationClass::Login, EncryptedOperationClass::Authenticated => OperationClass::Authenticated, EncryptedOperationClass::Sessionless => OperationClass::Sessionless } });
         declared.chain(std::iter::once(crate::owners::session::SessionOperation { name: "logout".into(), path: self.config.endpoints.logout.clone(), class: OperationClass::Logout })).collect()
     }
 

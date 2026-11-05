@@ -117,7 +117,7 @@ class BootstrapConfigTest {
     }
     private fun encrypted(origin: String = kat.text("audience")): EncryptedConfig {
         val publicKey = KeyFactory.getInstance("RSA").generatePublic(RSAPublicKeySpec(privateKey.modulus, privateKey.publicExponent))
-        return EncryptedConfig(origin, Base64.getEncoder().encodeToString(publicKey.encoded), kat.text("kid"), EncryptedEndpoints("/api/graphql", "/api/cable", "/api/logout", kat.text("path"), mapOf("otp" to EncryptedSessionOperation("/api/auth/otp", false), "confirm" to EncryptedSessionOperation("/api/auth/confirm", false), "social" to EncryptedSessionOperation("/api/auth/social", false), "ticket" to EncryptedSessionOperation("/api/ticket", true))), "example-ws-v1", "ws.hello", "EncryptedGraphqlChannel")
+        return EncryptedConfig(origin, Base64.getEncoder().encodeToString(publicKey.encoded), kat.text("kid"), EncryptedEndpoints("/api/graphql", "/api/cable", "/api/logout", kat.text("path"), mapOf("otp" to EncryptedSessionOperation("/api/auth/otp", EncryptedOperationClass.AUTHENTICATED), "confirm" to EncryptedSessionOperation("/api/auth/confirm", EncryptedOperationClass.AUTHENTICATED), "social" to EncryptedSessionOperation("/api/auth/social", EncryptedOperationClass.AUTHENTICATED), "ticket" to EncryptedSessionOperation("/api/ticket", EncryptedOperationClass.SESSIONLESS))), "example-ws-v1", "ws.hello", "EncryptedGraphqlChannel")
     }
     private fun open(token: String): JsonObject {
         val parts = token.split(".")

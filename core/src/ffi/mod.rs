@@ -59,7 +59,7 @@ pub use database::{Config, Database, ItemId, SubscriptionCensus, TestClock, Wire
 pub use opening::{OpenDatabase, OpenOptions};
 pub use encrypted::{fetch_server_config, CredentialStore, EncryptedHttp, EncryptedReply, RetryProgress, RetryProgressListener, RetrySubscription};
 pub use crate::transport::SessionCode;
-pub use crate::transport::{AppPlatform, ConfigCode, EncryptedConfig, EncryptedEndpoints, EncryptedSessionOperation, SecurityCode, ServerConfig};
+pub use crate::transport::{AppPlatform, ConfigCode, EncryptedConfig, EncryptedEndpoints, EncryptedOperationClass, EncryptedSessionOperation, SecurityCode, ServerConfig};
 pub use stream::{CachedQuery, EntityFetch, LivePhase, LoadMoreResult, Placement, Replacement, StreamCensus, StreamDelivery, StreamEnd, StreamRequest, StreamState, StreamValue, ValueSink};
 pub use command::CommandRequest;
 pub use read::{ReadEnd, ReadFetch, ReadPhase, ReadRequest, ReadState, ReadStream, ReadValue, RowPlace, RowRename};

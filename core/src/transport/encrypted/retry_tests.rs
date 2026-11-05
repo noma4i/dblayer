@@ -44,7 +44,7 @@ fn rig_at(error: Option<Result<HttpReply, TransportError>>, code: Option<(&'stat
     let http = Arc::new(Fault { error: Mutex::new(error), code, seen: Mutex::new(Vec::new()), server: FakeServer::new(clock.clone()) });
     let db = Db::open_in_memory(Vec::new(), None).unwrap();
     let mut config = EncryptedConfig { origin: super::vectors_tests::origin().into(), server_key: super::vectors_tests::public_key_der_b64().into(), pin: super::vectors_tests::pin().into(), ..super::protocol_tests::config() };
-    config.endpoints.session_operations.insert("ticket".into(), EncryptedSessionOperation { path: "/api/ticket".into(), sessionless: true });
+    config.endpoints.session_operations.insert("ticket".into(), EncryptedSessionOperation { path: "/api/ticket".into(), class: crate::transport::EncryptedOperationClass::Sessionless });
     let client = EncryptedClient::new(&config, http.clone(), Arc::new(MemoryCredentials::default()), db.clone(), clock).unwrap();
     (client, http, db)
 }

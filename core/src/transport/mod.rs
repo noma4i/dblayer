@@ -18,7 +18,7 @@ mod subscription;
 
 pub use cancel::CancelToken;
 pub use encrypted::cable::{CableConnect, CableCredential, CableError, CableKeys, CableLine, CableLines, CableLink, CableSocket, CableSubscriptions, EncryptedLines, Incoming, SocketEvent};
-pub use encrypted::{missing_from_registry, repeats, response_of, Answer, AppPlatform, ConfigCode, Country, CredentialSlot, EncryptedClient, EncryptedConfig, EncryptedEndpoints, EncryptedSessionOperation, EncryptedTransport, HttpExchange, HttpReply, SecurityCode, ServerConfig};
+pub use encrypted::{missing_from_registry, repeats, response_of, Answer, AppPlatform, ConfigCode, Country, CredentialSlot, EncryptedClient, EncryptedConfig, EncryptedEndpoints, EncryptedOperationClass, EncryptedSessionOperation, EncryptedTransport, HttpExchange, HttpReply, SecurityCode, ServerConfig};
 pub use error::TransportError;
 pub use extensions::{graphql_extensions, GraphqlExtensions, TransactionDisposition};
 pub use events::{EventFault, EventSpec};

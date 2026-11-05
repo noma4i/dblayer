@@ -140,7 +140,7 @@ async fn a_sessionless_operation_posts_all_fields_without_a_session() {
     }
 
     let mut encrypted = EncryptedConfig { origin: origin().into(), server_key: public_key_der_b64().into(), pin: pin().into(), ..crate::transport::encrypted::protocol_tests::config() };
-    encrypted.endpoints.session_operations = [("ticket".into(), super::EncryptedSessionOperation { path: "/api/ticket".into(), sessionless: true })].into();
+    encrypted.endpoints.session_operations = [("ticket".into(), super::EncryptedSessionOperation { path: "/api/ticket".into(), class: crate::transport::EncryptedOperationClass::Sessionless })].into();
     let credentials = Arc::new(MemoryCredentials::default());
     let database = Database::open(Config { path: None, data_version: None, cache_rows: 8 }, "[]".into(), Some(Arc::new(SubscriptionsOnly)), Some(encrypted), Some(Arc::new(Held(credentials.clone()))), Some(Arc::new(TicketPost)), None, None).await.unwrap();
     assert!(credentials.value().is_none());
@@ -176,7 +176,7 @@ async fn sessionless_calls_leave_no_session_state_even_when_refused() {
             }
         }
         let mut encrypted = crate::transport::encrypted::protocol_tests::config();
-        encrypted.endpoints.session_operations.insert("ticket".into(), super::EncryptedSessionOperation { path: "/api/ticket".into(), sessionless: true });
+        encrypted.endpoints.session_operations.insert("ticket".into(), super::EncryptedSessionOperation { path: "/api/ticket".into(), class: crate::transport::EncryptedOperationClass::Sessionless });
         let credentials = Arc::new(MemoryCredentials::default());
         let database = Database::open(Config { path: None, data_version: None, cache_rows: 8 }, "[]".into(), Some(Arc::new(SubscriptionsOnly)), Some(encrypted), Some(Arc::new(Held(credentials.clone()))), Some(Arc::new(Reply(status))), None, None).await.unwrap();
         let result = database.session_call("ticket".into(), "{}".into()).await;

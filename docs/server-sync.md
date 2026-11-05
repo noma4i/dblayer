@@ -119,8 +119,8 @@ val answer: SignedIn = DBlayer.sessionCall("confirm", CodeBody("123456"))
 
 `sessionCall` encodes an `Encodable` (`@Serializable` in Kotlin) body, sends a configured operation and decodes the answer into the type you name. Without an answer type it returns nothing (`sessionSend` in Kotlin). `sessionReset()` drops the stored session. An answer with an `error` field throws `DbError.Session` (`DbException.Session` in Kotlin) with a typed `code`. After `logout()` the core keeps background reads and subscriptions idle until a call you made (`sessionCall`, `run`, `load`, `refresh`, `node` or `waitForInitialLoad` of a held entity) succeeds while a credential is stored. `waitForInitialLoad` of a held entity makes its own read once while the session is ended. A failed read, or a transport without a session, leaves the session ended. `sessionReset()` and a confirmed server logout clear the credential, so they never reopen them. After that `waitForInitialLoad` of a held entity throws an interrupted error without a request.
 
-Each `EncryptedSessionOperation` declares `path` and `sessionless`. This replaces the former path string on both platforms.
-For `sessionless: true`, the request contains exactly `audience`, `kid`, `method`, `path`, `requestId`, `issuedAt`, `responseKey`, and `body`.
+Each `EncryptedSessionOperation` declares `path` and `class`: `login` creates the credential and fails with `AlreadyAuthenticated` while one exists, `authenticated` signs with the credential, `sessionless` sends none.
+For `class: .sessionless`, the request contains exactly `audience`, `kid`, `method`, `path`, `requestId`, `issuedAt`, `responseKey`, and `body`.
 It omits `credential` and `sequence`, stores no pending request, and does not acquire the mutation lock.
 Errors return to the caller. The application decides whether to repeat the call.
 Bootstrap keeps its separate envelope and shares only the JWE encryption primitive.
@@ -886,8 +886,8 @@ The session operation dictionary maps application names to `EncryptedSessionOper
 let endpoints = EncryptedEndpoints(
   graphql: "/api/graphql", cable: "/api/cable", logout: "/api/logout",
   bootstrap: "/api/bootstrap", sessionOperations: [
-    "signIn": EncryptedSessionOperation(path: "/api/sign-in", sessionless: false),
-    "ticket": EncryptedSessionOperation(path: "/api/ticket", sessionless: true)
+    "signIn": EncryptedSessionOperation(path: "/api/sign-in", class: .authenticated),
+    "ticket": EncryptedSessionOperation(path: "/api/ticket", class: .sessionless)
   ]
 )
 let protocolLabel = "example-ws-v1"
@@ -906,8 +906,8 @@ try await DB.open(encrypted: encrypted, credentials: credentials, modelsJSON: mo
 val endpoints = EncryptedEndpoints(
     graphql = "/api/graphql", cable = "/api/cable", logout = "/api/logout",
     bootstrap = "/api/bootstrap", sessionOperations = mapOf(
-        "signIn" to EncryptedSessionOperation("/api/sign-in", false),
-        "ticket" to EncryptedSessionOperation("/api/ticket", true)
+        "signIn" to EncryptedSessionOperation("/api/sign-in", EncryptedOperationClass.AUTHENTICATED),
+        "ticket" to EncryptedSessionOperation("/api/ticket", EncryptedOperationClass.SESSIONLESS)
     )
 )
 val protocolLabel = "example-ws-v1"
