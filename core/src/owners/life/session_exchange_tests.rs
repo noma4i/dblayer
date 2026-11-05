@@ -152,3 +152,35 @@ async fn a_pending_request_stored_before_the_close_is_sent_again_when_the_owners
     assert!(world.server.seen().iter().any(|request| request["requestId"] == json!(request_id)), "the request left again with its request id");
     assert_eq!(rows(&db).0.unwrap().sequence, 2);
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_stored_request_of_an_older_format_is_sent_again_with_the_request_id_and_sequence_it_was_stored_with() {
+    let world = World::new();
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("session.sqlite");
+    let old_id = "3f1c2a52-9d3e-4b7a-8a11-0123456789ab";
+    {
+        let db = Db::open(&path, Vec::new(), None).unwrap();
+        let (client, life) = world.open(&db).await;
+        sign_in(&client).await;
+        let _ = tokio::time::timeout(LIMIT, life.close().wait()).await;
+    }
+    {
+        let db = Db::open(&path, Vec::new(), None).unwrap();
+        let digest = rows(&db).0.unwrap().credential_digest;
+        let pending = state::Pending { credential_digest: digest, request_id: old_id.into(), response_key: crate::transport::encrypted::jwe::random_token(), sequence: 2, path: OTP.into(), body: json!({}).to_string(), owner: None, purpose: crate::transport::NetworkPurpose::Standard };
+        let inner = db.shared.store.lock();
+        state::store_pending(&inner.connection, &pending).unwrap();
+    }
+    let db = Db::open(&path, Vec::new(), None).unwrap();
+    let (_client, _life) = world.open(&db).await;
+    let started = std::time::Instant::now();
+    while rows(&db).1.is_some() {
+        assert!(started.elapsed() < LIMIT, "the stored request of the older format was not sent again");
+        tokio::time::sleep(Duration::from_millis(5)).await;
+    }
+    let again: Vec<Value> = world.server.seen().into_iter().filter(|request| request["requestId"] == json!(old_id)).collect();
+    assert_eq!(again.len(), 1, "one request left with the stored request id");
+    assert_eq!(again[0]["sequence"], json!(2), "and the stored sequence");
+    assert_eq!(rows(&db).0.unwrap().sequence, 2);
+}

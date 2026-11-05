@@ -303,7 +303,7 @@ impl Admitted {
         let epoch = self.inner.epoch;
         tokio::select! {
             biased;
-            _ = changes.wait_for(|published| published.closed || published.ending || published.session_epoch != epoch) => Err(Ended),
+            _ = async { changes.wait_for(|published| published.closed || published.ending || published.session_epoch != epoch).await.map(|_| ()) } => Err(Ended),
             result = self.scope(work) => Ok(result),
         }
     }

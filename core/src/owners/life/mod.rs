@@ -80,7 +80,14 @@ pub(crate) struct Wiring {
     /// Where the answer of Store to a batch goes, by author: the `install` of Window, Feed, Outbox and Transfer registers its owner here.
     store_sinks: Mutex<HashMap<BatchAuthor, Arc<dyn Fn(BatchId, StoreReply) + Send + Sync>>>,
     /// The answer of a sign-in waits for the publication of its identity: a caller that heard it finds the new epoch.
-    after_publish: Mutex<Vec<(u64, crate::runtime::OutcomeId, LifeReply)>>,
+    after_publish: Mutex<Vec<(Awaited, crate::runtime::OutcomeId, LifeReply)>>,
+}
+
+/// What a held answer waits for.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Awaited {
+    Identity(u64),
+    EpochAbove(u64),
 }
 
 impl Wiring {
@@ -105,11 +112,15 @@ impl Wiring {
 
     pub fn publish(&self, published: Published) {
         let identity = published.identity;
+        let published_epoch = published.epoch;
         *self.published.value.lock().unwrap_or_else(PoisonError::into_inner) = Some(published);
         self.published.changed.notify_all();
         let due: Vec<_> = {
             let mut held = self.after_publish.lock().unwrap_or_else(PoisonError::into_inner);
-            let (due, rest): (Vec<_>, Vec<_>) = held.drain(..).partition(|(waiting, ..)| Some(*waiting) == identity);
+            let (due, rest): (Vec<_>, Vec<_>) = held.drain(..).partition(|(waiting, ..)| match waiting {
+                Awaited::Identity(waiting) => Some(*waiting) == identity,
+                Awaited::EpochAbove(epoch) => published_epoch > *epoch,
+            });
             *held = rest;
             due
         };
@@ -124,7 +135,19 @@ impl Wiring {
         if published == Some(identity) {
             self.outcomes.settle(id, reply);
         } else {
-            self.after_publish.lock().unwrap_or_else(PoisonError::into_inner).push((identity, id, reply));
+            self.after_publish.lock().unwrap_or_else(PoisonError::into_inner).push((Awaited::Identity(identity), id, reply));
+        }
+    }
+
+    /// Settles the answer of a call that ended the session once the epoch moved past `epoch`. Nothing to wait for when the session already ended or the epoch is past.
+    pub fn settle_after_epoch(&self, epoch: u64, id: crate::runtime::OutcomeId, reply: LifeReply) {
+        let mut held = self.after_publish.lock().unwrap_or_else(PoisonError::into_inner);
+        let published = self.published.value.lock().unwrap_or_else(PoisonError::into_inner).clone();
+        if published.as_ref().is_none_or(|published| published.epoch > epoch || published.identity.is_none() || published.closed) {
+            drop(held);
+            self.outcomes.settle(id, reply);
+        } else {
+            held.push((Awaited::EpochAbove(epoch), id, reply));
         }
     }
 
@@ -240,13 +263,13 @@ impl Life {
         let session_address = session.as_ref().map(|(client, credentials)| {
             let open = session_runner::SessionRunner::stored(client);
             let state = SessionState::with_operations(client.session_operations(), true);
-            let address = builder.add::<SessionCalls>("session", state, session_runner::SessionRunner::new(wiring.clone(), client.clone(), credentials.clone(), ports.executor.clone()));
+            let address = builder.add::<SessionCalls>("session", state, session_runner::SessionRunner::new(wiring.clone(), client.clone(), credentials.clone(), ports.executor.clone(), open.as_ref().ok().and_then(|(_, _, wire)| wire.clone())));
             (address, open)
         });
         let _ = wiring.addresses.set(Addresses { lifecycle, store, network, calls, session: session_address.as_ref().map(|(address, _)| *address) });
         let runtime = builder.start().map_err(|error| LifeError::Storage(error.to_string()))?;
         if let Some((_, open)) = session_address {
-            let (credential, pending) = open.map_err(|error| LifeError::Storage(error.to_string()))?;
+            let (credential, pending, _) = open.map_err(|error| LifeError::Storage(error.to_string()))?;
             wiring.to_session(SessionInput::Open { credential, pending });
         }
         wiring.to_store(StoreInput::Boot(found));

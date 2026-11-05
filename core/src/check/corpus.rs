@@ -50,7 +50,7 @@ pub fn read_dir(dir: &Path) -> Result<Vec<Trace>, String> {
     paths.iter().map(|path| read(path)).collect()
 }
 
-/// The corpus directory shared with the Swift and Kotlin runners.
+/// The corpus directory shared with the Swift and Kotlin runners, from the package directory where cargo and corgi start a test.
 pub fn shared_dir() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/corpus")
+    std::env::current_dir().expect("the test has a working directory").join("tests/corpus")
 }

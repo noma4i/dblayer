@@ -34,6 +34,8 @@ pub enum SessionError {
     Invalid,
     Rejected(RejectReason),
     Revoked,
+    /// A call that needs the session while there is none.
+    NoCredential,
     SequenceConflict,
     Protocol,
     Unauthorized,
@@ -196,6 +198,11 @@ impl SessionState {
                     return;
                 };
                 self.call_epoch = self.epoch;
+                if !def.sessionless && self.credential.is_none() && def.name == LOGOUT {
+                    fx.push(SessionEffect::Reply { id: reply, answer: Err(SessionError::NoCredential) });
+                    self.idle(fx);
+                    return;
+                }
                 if !def.sessionless && self.credential.is_none() {
                     fx.push(SessionEffect::GenerateCredential);
                     self.phase = SessionPhase::Generating { call: Queued::Call { operation, body, reply } };
@@ -253,6 +260,9 @@ fn pending_of(phase: &SessionPhase) -> Option<PendingCall> {
         _ => None,
     }
 }
+
+/// The name of the operation that ends the session on the server.
+const LOGOUT: &str = "logout";
 
 /// The only retry timer of Session: a new `Schedule` replaces the previous one.
 const RETRY_TICK: ScheduleId = ScheduleId(1);
@@ -402,10 +412,11 @@ impl SessionState {
             }
             (SessionPhase::Calling { pending, .. }, SessionInput::Response { request_id, body, sequence, credential, revoked }) if request_id == pending.request_id => {
                 if revoked {
-                    finish(fx, &pending, Err(SessionError::Revoked));
+                    let confirmed_logout = self.operations.iter().any(|def| def.name == LOGOUT && def.path == pending.path);
                     let batch = self.batch();
                     fx.push(SessionEffect::RemovePending { batch, epoch: self.call_epoch });
                     fx.push(SessionEffect::ServerEnded(ServerEnded { epoch: self.call_epoch }));
+                    finish(fx, &pending, if confirmed_logout { Ok(body) } else { Err(SessionError::Revoked) });
                     self.idle(fx);
                 } else if pending.sessionless || sequence == Some(pending.sequence) {
                     let batch = self.batch();
@@ -446,7 +457,11 @@ impl SessionState {
                 self.phase = SessionPhase::Calling { pending, attempts, sent: false };
             }
             (phase, SessionInput::Cancel { req_id }) => {
-                self.queue.retain(|queued| !matches!(queued, Queued::Mutate { req_id: queued_id, .. } if *queued_id == req_id));
+                if let Some(at) = self.queue.iter().position(|queued| matches!(queued, Queued::Mutate { req_id: queued_id, .. } if *queued_id == req_id)) {
+                    if let Some(removed) = self.queue.remove(at) {
+                        refuse(fx, removed, SessionError::Interrupted);
+                    }
+                }
                 self.phase = phase;
             }
             (SessionPhase::Calling { pending, attempts, .. }, SessionInput::Tick(_)) => {

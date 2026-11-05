@@ -3,7 +3,7 @@ use crate::{compile_files, emit_kotlin, emit_swift};
 
 #[test]
 fn media_marker_platforms() {
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap().join("fixtures/operations");
+    let root = crate::package_dir().parent().unwrap().join("fixtures/operations");
     let source = fs::read_to_string(root.join("media.dbl")).unwrap();
     let schema = fs::read_to_string(root.join("schema.graphql")).unwrap();
     let operations = fs::read_to_string(root.join("queries/media.graphql")).unwrap();

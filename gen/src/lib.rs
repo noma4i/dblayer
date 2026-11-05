@@ -1,3 +1,9 @@
+/// The directory of this package, read when the test runs: a test binary that embeds the path of the tree is not reusable from the cache.
+#[cfg(test)]
+pub(crate) fn package_dir() -> std::path::PathBuf {
+    std::env::current_dir().expect("the test has a working directory")
+}
+
 mod build;
 mod decl;
 mod check;

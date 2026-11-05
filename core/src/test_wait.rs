@@ -5,6 +5,11 @@ use std::task::Wake;
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
+/// The directory of this package, read when the test runs: a test binary that embeds the path of the tree is not reusable from the cache. Cargo and corgi start a test in the package directory.
+pub(crate) fn package_dir() -> std::path::PathBuf {
+    std::env::current_dir().expect("the test has a working directory")
+}
+
 const SPIN_LIMIT: Duration = Duration::from_secs(10);
 const BLOCK_LIMIT: Duration = Duration::from_secs(30);
 
@@ -170,6 +175,15 @@ struct Leave;
 
 impl Drop for Leave {
     fn drop(&mut self) { WORLD.with(|world| world.borrow_mut().take()); }
+}
+
+/// Runs an async test on its own runtime with a limit: a test that does not end is red, and a blocking task that does not end cannot hold the run (`shutdown_timeout`).
+#[track_caller]
+pub(crate) fn limited(limit: Duration, test: impl std::future::Future<Output = ()>) {
+    let runtime = tokio::runtime::Builder::new_multi_thread().enable_all().build().expect("test runtime");
+    let finished = runtime.block_on(async { tokio::time::timeout(limit, test).await });
+    runtime.shutdown_timeout(BLOCK_LIMIT);
+    finished.unwrap_or_else(|_| panic!("TIMEOUT {limit:?}: the test did not end"));
 }
 
 pub(crate) fn paused(test: impl std::future::Future<Output = ()>) {

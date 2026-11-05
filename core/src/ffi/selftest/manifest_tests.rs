@@ -43,7 +43,7 @@ fn the_manifest_lists_every_sequence_and_each_listed_test_exists() {
         let id = format!("C{number:02}");
         assert!(rows.iter().any(|row| row.id == id && row.lane == "core"), "{id} has no core row");
     }
-    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+    let root = crate::test_wait::package_dir().join("..");
     let (core, swift, kotlin) = (read_all(&root.join("core/src"), "rs"), read_all(&root.join("swift/Tests"), "swift"), read_all(&root.join("kotlin/src/test"), "kt"));
     for row in &rows {
         let (text, keyword) = match row.lane.as_str() {
@@ -80,7 +80,7 @@ fn the_manifest_lists_every_sequence_and_each_listed_test_exists() {
 #[test]
 fn a_selftest_that_uses_the_removed_logout_or_the_old_exit_is_marked_as_changing_in_s1() {
     let rows = rows();
-    let directory = Path::new(env!("CARGO_MANIFEST_DIR")).join("src/ffi/selftest");
+    let directory = crate::test_wait::package_dir().join("src/ffi/selftest");
     for file in ["app", "calls", "harness", "machine", "recovery", "windows"] {
         let source = std::fs::read_to_string(directory.join(format!("{file}_tests.rs"))).unwrap();
         let starts: Vec<usize> = source.match_indices("#[tokio::test").map(|(at, _)| at).collect();

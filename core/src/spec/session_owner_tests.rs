@@ -39,6 +39,7 @@ fn fail_of(error: &SessionError) -> Fail {
         SessionError::Invalid => Fail::Invalid,
         SessionError::Rejected(reason) => Fail::Reason(reason_of(reason)),
         SessionError::Revoked => Fail::Revoked,
+        SessionError::NoCredential => panic!("the reference has no NoCredential, the cell is tested without it"),
         SessionError::SequenceConflict => Fail::SequenceConflict,
         SessionError::Protocol => Fail::Protocol,
         SessionError::Unauthorized => Fail::Unauthorized,
@@ -545,7 +546,7 @@ fn sess_idle_mutate() {
 
 #[test]
 fn sess_idle_mutate_no_session() {
-    let mut twin = Twin::new();
+    let mut twin = Twin::bare();
     let effects = twin.feed(mutate(7, 11));
     assert_eq!(effects, vec![RefEffect::Answer { author: 7, req_id: 11, outcome: Outcome::Error(Fail::NoSession) }]);
 }
@@ -736,11 +737,100 @@ fn sess_prop_unauthorized_keeps_session() {
 fn sess_cancel_calling_and_queue() {
     let mut twin = Twin::new();
     twin.feed_all([mutate(7, 11), committed()]);
-    twin.feed(mutate(7, 12));
-    twin.feed(Input::Cancel { req_id: 12 });
-    assert_eq!(twin.reference.queue.len(), 0, "a cancelled entry of the queue is removed without an answer");
     let effects = twin.feed(Input::Cancel { req_id: 11 });
     assert_eq!(effects, vec![RefEffect::HttpCancel { request_id: 11 }]);
     assert!(matches!(twin.reference.state, RefState::Calling { sent: false, .. }), "the pending stays for the repeat with the same request id");
     twin.feed(Input::Online(true));
+}
+
+/// The owner alone, for the cells that `ref_session.rs` does not hold (D-08, D-11, D-17).
+struct Solo {
+    det: DetScheduler,
+    addr: Address<SessionCalls>,
+    log: Log<SessionEffect>,
+}
+
+impl Solo {
+    fn new(credential: Option<Credential>) -> Self {
+        let mut det = DetScheduler::new(2);
+        let log = new_log();
+        let addr = det.add::<SessionCalls>("session", SessionState::with_operations(owner_operations(), true), Recorder::<SessionCalls>::new(&log));
+        let mut solo = Self { det, addr, log };
+        solo.feed(SessionInput::Published(Published { epoch: EPOCH, identity: None, generation: 0, closed: false }));
+        solo.feed(SessionInput::Open { credential, pending: None });
+        solo
+    }
+
+    fn feed(&mut self, input: SessionInput) -> Vec<SessionEffect> {
+        self.det.post(self.addr, EpochStamp::Control, input);
+        self.det.run_until_quiet(100).expect("the owner is quiet");
+        take(&self.log)
+    }
+
+    fn phase(&self) -> SessionPhase { self.det.state(self.addr).expect("the owner state").phase().clone() }
+
+    fn commit(&mut self) -> Vec<SessionEffect> {
+        let batch = match self.phase() {
+            SessionPhase::Persisting { batch, .. } | SessionPhase::Landing { batch, .. } => batch,
+            other => panic!("no batch in {other:?}"),
+        };
+        self.feed(SessionInput::Committed(Committed { batch, revision: 1, tables: vec![], models: vec![] }))
+    }
+
+    fn calling(&mut self, operation: &str) -> u64 {
+        self.feed(SessionInput::SessionCall { operation: operation.into(), body: "{}".into(), reply: 1 });
+        self.commit();
+        match self.phase() {
+            SessionPhase::Calling { pending, .. } => pending.request_id,
+            other => panic!("not calling: {other:?}"),
+        }
+    }
+}
+
+fn stored_credential() -> Option<Credential> { Some(Credential { digest: 4, sequence: 0 }) }
+
+#[test]
+fn sess_idle_call_no_credential() {
+    let mut solo = Solo::new(None);
+    let effects = solo.feed(SessionInput::SessionCall { operation: "logout".into(), body: "{}".into(), reply: 1 });
+    assert_eq!(effects, vec![SessionEffect::Reply { id: 1, answer: Err(SessionError::NoCredential) }], "no request, no commit, the caller hears NoCredential");
+    assert_eq!(solo.phase(), SessionPhase::Idle);
+}
+
+#[test]
+fn sess_calling_revoked_logout() {
+    let mut solo = Solo::new(stored_credential());
+    let id = solo.calling("logout");
+    let effects = solo.feed(SessionInput::Response { request_id: id, body: r#"{"revoked":true}"#.into(), sequence: None, credential: None, revoked: true });
+    assert!(effects.contains(&SessionEffect::Reply { id: 1, answer: Ok(r#"{"revoked":true}"#.into()) }), "a revoked answer to logout confirms the logout: {effects:?}");
+    assert!(effects.iter().any(|effect| matches!(effect, SessionEffect::ServerEnded(_))), "and the server ended the session: {effects:?}");
+    assert_eq!(solo.phase(), SessionPhase::Idle);
+}
+
+#[test]
+fn sess_cancel_queued() {
+    let mut solo = Solo::new(stored_credential());
+    solo.feed(SessionInput::Mutate { author: 7, owner: None, req_id: 11, path: "/graphql".into(), body: "{}".into(), purpose: 0 });
+    solo.commit();
+    solo.feed(SessionInput::Mutate { author: 7, owner: None, req_id: 12, path: "/graphql".into(), body: "{}".into(), purpose: 0 });
+    let effects = solo.feed(SessionInput::Cancel { req_id: 12 });
+    assert_eq!(effects, vec![SessionEffect::Answer { author: 7, req_id: 12, outcome: AuthorOutcome::Error(SessionError::Interrupted) }], "the author of a queued Mutate hears Interrupted");
+    assert!(matches!(solo.phase(), SessionPhase::Calling { .. }), "the started request goes on");
+    assert_eq!(solo.det.state(solo.addr).expect("the owner state").queued(), 0);
+}
+
+#[test]
+fn sess_cancel_started() {
+    let mut solo = Solo::new(stored_credential());
+    solo.feed(SessionInput::Mutate { author: 7, owner: None, req_id: 11, path: "/graphql".into(), body: "{}".into(), purpose: 0 });
+    let persisting = solo.feed(SessionInput::Cancel { req_id: 11 });
+    assert!(persisting.is_empty(), "a Persisting request is not cancelled: {persisting:?}");
+    assert!(matches!(solo.phase(), SessionPhase::Persisting { .. }));
+    solo.commit();
+    solo.feed(SessionInput::Response { request_id: 11, body: "{}".into(), sequence: Some(1), credential: None, revoked: false });
+    let landing = solo.feed(SessionInput::Cancel { req_id: 11 });
+    assert!(landing.is_empty(), "a Landing request is not cancelled: {landing:?}");
+    assert!(matches!(solo.phase(), SessionPhase::Landing { .. }));
+    let done = solo.commit();
+    assert!(done.contains(&SessionEffect::Answer { author: 7, req_id: 11, outcome: AuthorOutcome::Response("{}".into()) }), "the started request reaches its outcome: {done:?}");
 }

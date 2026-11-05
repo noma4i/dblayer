@@ -1,3 +1,6 @@
+use crate::test_wait::limited;
+
+const LIMIT: std::time::Duration = std::time::Duration::from_secs(180);
 use super::lifecycle::explore_inputs;
 use super::store::StoreOwner;
 use crate::check::model::run;
@@ -31,42 +34,58 @@ async fn property(only: &'static str, full: bool, required: &[&[&str]]) {
     }
 }
 
-#[tokio::test(flavor = "multi_thread")]
-async fn store_commit_stale_epoch() {
+#[test]
+fn store_commit_stale_epoch() {
+    limited(LIMIT, async {
     check("store_commit_stale_epoch", &["login", "create:b:other", "rows"], false).await;
+    });
 }
 
-#[tokio::test(flavor = "multi_thread")]
-async fn store_commit_ok() {
+#[test]
+fn store_commit_ok() {
+    limited(LIMIT, async {
     check("store_commit_ok", &["login", "create:a", "rows"], false).await;
+    });
 }
 
-#[tokio::test(flavor = "multi_thread")]
-async fn store_clear_account() {
+#[test]
+fn store_clear_account() {
+    limited(LIMIT, async {
     check("store_clear_account", &["login", "create:a", "session_reset", "login", "rows"], false).await;
+    });
 }
 
-#[tokio::test(flavor = "multi_thread")]
-async fn store_epoch() {
+#[test]
+fn store_epoch() {
+    limited(LIMIT, async {
     check("store_epoch", &["login", "create:a", "session_reset", "login", "create:b", "create:c:other", "rows"], false).await;
+    });
 }
 
-#[tokio::test(flavor = "multi_thread")]
-async fn store_close() {
+#[test]
+fn store_close() {
+    limited(LIMIT, async {
     check("store_close", &["login", "create:a", "close", "rows", "create:b"], false).await;
+    });
 }
 
-#[tokio::test(flavor = "multi_thread")]
-async fn store_closed() {
+#[test]
+fn store_closed() {
+    limited(LIMIT, async {
     check("store_closed", &["login", "close", "create:a", "create:b:other"], false).await;
+    });
 }
 
-#[tokio::test(flavor = "multi_thread")]
-async fn store_prop_no_stale_epoch() {
+#[test]
+fn store_prop_no_stale_epoch() {
+    limited(LIMIT, async {
     property("P-STORE-03", false, &[&["login", "create:a", "session_reset", "login", "create:b:other", "rows"]]).await;
+    });
 }
 
-#[tokio::test(flavor = "multi_thread")]
-async fn store_prop_reply_once() {
+#[test]
+fn store_prop_reply_once() {
+    limited(LIMIT, async {
     property("P-STORE-05", false, &[&["login", "create:a", "close", "create:b"]]).await;
+    });
 }

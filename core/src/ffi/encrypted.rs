@@ -144,13 +144,11 @@ impl Database {
         let client = self.session()?;
         if !client.has_session_operation(&operation) { return Err(DbError::Invalid { detail: format!("unknown session operation {operation}") }); }
         serde_json::from_str::<Value>(&body_json)?;
-        let name = operation.clone();
         match self.await_life(self.life.session_call(operation, body_json)).await? {
             LifeReply::Session(Ok(body)) => {
                 let answer = core::Answer { sequence: None, body: serde_json::from_str(&body)? };
                 Ok(refused(answer)?.body.to_string())
             }
-            LifeReply::Session(Err(crate::owners::session::SessionError::Revoked)) if name == "logout" => Ok(serde_json::json!({ "revoked": true }).to_string()),
             LifeReply::Session(Err(error)) => Err(session_failure(error)),
             _ => Err(super::command::ended()),
         }
@@ -176,6 +174,7 @@ fn session_failure(error: crate::owners::session::SessionError) -> DbError {
     use crate::owners::session::SessionError as Failed;
     match error {
         Failed::Invalid | Failed::Protocol => DbError::Invalid { detail: "the answer does not confirm the sequence".into() },
+        Failed::NoCredential => DbError::Session { code: SessionCode::Unauthenticated, detail: "the call needs a session and the database has none".into() },
         Failed::Revoked => DbError::Session { code: SessionCode::SessionEnded, detail: "the session was ended by the server".into() },
         Failed::SequenceConflict => DbError::Session { code: SessionCode::SequenceConflict, detail: "the sequence of the request conflicts with the server".into() },
         Failed::Unauthorized => DbError::Http { status: 401, detail: String::new() },

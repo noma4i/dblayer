@@ -49,7 +49,7 @@ fn passes_gen(block: &str) -> Result<(), String> {
 
 #[test]
 fn inv_doc_01_every_dbl_block_in_the_docs_and_the_readme_passes_gen() {
-    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+    let root = crate::package_dir().join("..");
     let mut files = vec![root.join("README.md")];
     for entry in fs::read_dir(root.join("docs")).unwrap() {
         let path = entry.unwrap().path();

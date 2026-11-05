@@ -13,7 +13,7 @@ fn rust_files(dir: &Path, found: &mut Vec<PathBuf>) {
 }
 
 fn mentions(word: &str) -> Vec<String> {
-    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+    let root = crate::test_wait::package_dir().join("src");
     let mut files = Vec::new();
     rust_files(&root, &mut files);
     files
@@ -48,7 +48,7 @@ fn inv_fresh_09_a_freshness_window_is_a_duration_and_no_policy_table_resolves_na
         assert!(crate::pacing::parse_duration(name).is_none(), "{name} resolved as a freshness policy");
     }
     let mut declared = Vec::new();
-    declared_freshness(&Path::new(env!("CARGO_MANIFEST_DIR")).join("..").join("fixtures"), &mut declared);
+    declared_freshness(&crate::test_wait::package_dir().join("..").join("fixtures"), &mut declared);
     assert!(declared.len() >= 2, "no freshness declarations found: {declared:?}");
     for (place, value) in declared {
         assert!(crate::pacing::parse_duration(&value).is_some(), "{place} is not a duration: {value:?}");
@@ -68,7 +68,7 @@ fn inv_time_01_only_the_clock_module_and_the_stress_rigs_read_the_wall_clock() {
 
 #[test]
 fn inv_zoo_01_a_public_type_name_is_defined_once_in_core() {
-    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+    let root = crate::test_wait::package_dir().join("src");
     let mut files = Vec::new();
     rust_files(&root, &mut files);
     let mut places: std::collections::BTreeMap<String, Vec<String>> = Default::default();
@@ -82,7 +82,7 @@ fn inv_zoo_01_a_public_type_name_is_defined_once_in_core() {
             }
         }
     }
-    let allowed: Vec<String> = fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("..").join("scripts").join("zoo_allowlist.txt"))
+    let allowed: Vec<String> = fs::read_to_string(crate::test_wait::package_dir().join("..").join("scripts").join("zoo_allowlist.txt"))
         .unwrap()
         .lines()
         .filter_map(|line| line.split('#').next()?.trim().strip_prefix("type:").map(str::to_string))

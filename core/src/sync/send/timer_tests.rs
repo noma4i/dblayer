@@ -1,6 +1,6 @@
 #[test]
 fn inv_wait_03_the_send_sources_hold_no_timer() {
-    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/sync/send");
+    let dir = crate::test_wait::package_dir().join("src/sync/send");
     for entry in std::fs::read_dir(dir).unwrap() {
         let path = entry.unwrap().path();
         let name = path.file_name().unwrap().to_string_lossy().to_string();
@@ -16,7 +16,7 @@ fn inv_wait_03_the_send_sources_hold_no_timer() {
 
 #[test]
 fn inv_wait_04_no_test_of_the_wrappers_waits_without_a_bound() {
-    let scripts = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../scripts");
+    let scripts = crate::test_wait::package_dir().join("../scripts");
     for script in ["check_waits_test.sh", "check_waits.sh"] {
         let output = std::process::Command::new("bash").arg(scripts.join(script)).output().unwrap();
         assert!(output.status.success(), "{script}: {}", String::from_utf8_lossy(&output.stderr));

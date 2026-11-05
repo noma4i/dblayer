@@ -3,7 +3,7 @@ use crate::{compile_files, emit_swift, emit_kotlin, emit_blob_swift, emit_blob_k
 
 #[test]
 fn blob_platforms() {
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap().join("fixtures/operations");
+    let root = crate::package_dir().parent().unwrap().join("fixtures/operations");
     let source = fs::read_to_string(root.join("blob.dbl")).unwrap();
     let schema = fs::read_to_string(root.join("schema.graphql")).unwrap();
     let queries = fs::read_to_string(root.join("queries/blob.graphql")).unwrap();
