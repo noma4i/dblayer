@@ -1,0 +1,7 @@
+{"trace":"load_feed"}
+{"in":"open","out":[{"o":"opened"}]}
+{"in":"set_online","args":{"online":true},"out":[{"o":"online","v":true}]}
+{"in":"begin_load","args":{"as":"l1","relation":"feed"},"out":[{"o":"request","v":{"id":"r1","kind":"query","purpose":"standard"}}]}
+{"in":"answer","args":{"id":"r1","json":{"data":{"feed":{"nodes":[{"__typename":"Moment","createdAt":"2026-10-08T00:00:00.000Z","id":"1","likedByMe":false,"media":{},"text":"t1","uuid":"u1"},{"__typename":"Moment","createdAt":"2026-10-08T00:00:01.000Z","id":"2","likedByMe":false,"media":{},"text":"t2","uuid":"u2"}],"pageInfo":{"endCursor":"c","hasNextPage":true}}}}},"out":[{"o":"loaded","v":{"load":"l1"}}]}
+{"in":"open_list","args":{"as":"s1","relation":"feed"},"out":[{"o":"request","v":{"id":"r2","kind":"subscription","purpose":"standard"}}]}
+{"in":"pull","args":{"stream":"s1"},"out":[{"o":"snapshot","v":{"loaded":1800000000000,"phase":"loaded","revision":1,"rows":["1","2"],"stream":"s1"}}]}

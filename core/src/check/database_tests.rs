@@ -13,5 +13,6 @@ async fn the_shared_corpus_is_green_on_the_core() {
         if let Err(divergence) = replay(&mut real, &trace).await {
             panic!("{}: {divergence}", trace.name);
         }
+        real.finish().await;
     }
 }

@@ -1,0 +1,7 @@
+{"trace":"load_cancel_error"}
+{"in":"open","out":[{"o":"opened"}]}
+{"in":"set_online","args":{"online":true},"out":[{"o":"online","v":true}]}
+{"in":"begin_load","args":{"as":"l1","relation":"feed"},"out":[{"o":"request","v":{"id":"r1","kind":"query","purpose":"standard"}}]}
+{"in":"cancel","args":{"target":"l1"},"out":[{"o":"error","v":{"kind":"interrupted"}}]}
+{"in":"begin_load","args":{"as":"l2","relation":"feed"},"out":[{"o":"request","v":{"id":"r2","kind":"query","purpose":"standard"}}]}
+{"in":"error","args":{"id":"r2","kind":"permanent"},"out":[{"o":"error","v":{"kind":"graphql"}}]}

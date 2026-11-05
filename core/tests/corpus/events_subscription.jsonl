@@ -1,0 +1,12 @@
+{"trace":"events_subscription"}
+{"in":"open","args":{"models":"events"},"out":[{"o":"opened"}]}
+{"in":"open_events","args":{"as":"v1","model":"Chat"},"out":[{"o":"request","v":{"id":"r1","kind":"subscription","purpose":"standard"}}]}
+{"in":"set_online","args":{"online":true},"out":[{"o":"online","v":true}]}
+{"in":"ready","args":{"id":"r1"},"out":[]}
+{"in":"frame","args":{"event":{"data":{"recordEvents":{"entries":[{"action":"UPDATED","chat":{"id":"c1","lists":["PRIMARY"],"revision":"1","title":"t1"},"message":{"chatId":"c1","id":"m1","text":"x"},"recordId":"m1","topic":"MESSAGE"}]}}},"id":"r1"},"out":[]}
+{"in":"pull","args":{"stream":"v1"},"out":[{"o":"state","v":{"phase":"loaded","stream":"v1"}}]}
+{"in":"pull","args":{"stream":"v1"},"out":[{"o":"event","v":{"area":"MESSAGE","kind":"UPDATED","position":2,"row":"c1","stream":"v1"}}]}
+{"in":"pull","args":{"stream":"v1"},"out":[{"o":"empty","v":{"stream":"v1"}}]}
+{"in":"lost","args":{"first":2,"last":3},"out":[{"o":"unsupported","v":"lost"}]}
+{"in":"drop","args":{"id":"r1"},"out":[]}
+{"in":"tick","args":{"ms":60000},"out":[{"o":"request","v":{"id":"r2","kind":"subscription","purpose":"standard"}}]}

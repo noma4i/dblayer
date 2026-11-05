@@ -1,0 +1,8 @@
+{"trace":"session_local"}
+{"in":"open","out":[{"o":"opened"}]}
+{"in":"published","out":[{"o":"published","v":{"epoch":1}}]}
+{"in":"session_call","args":{"body":{},"operation":"login"},"out":[{"o":"error","v":{"kind":"invalid"}}]}
+{"in":"session_reset","out":[{"o":"reset"}]}
+{"in":"published","out":[{"o":"published","v":{"epoch":2}}]}
+{"in":"close","out":[{"o":"closed"}]}
+{"in":"published","out":[{"o":"error","v":{"kind":"not_open"}}]}

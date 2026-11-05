@@ -1,0 +1,7 @@
+{"trace":"stream_ended_on_reset"}
+{"in":"open","out":[{"o":"opened"}]}
+{"in":"open_list","args":{"as":"s1"},"out":[]}
+{"in":"pull","args":{"stream":"s1"},"out":[{"o":"snapshot","v":{"phase":"loaded","revision":0,"rows":[],"stream":"s1"}}]}
+{"in":"session_reset","out":[{"o":"reset"}]}
+{"in":"pull","args":{"stream":"s1"},"out":[{"o":"ended","v":{"cause":"session_ended","stream":"s1"}}]}
+{"in":"pull","args":{"stream":"s1"},"out":[{"o":"empty","v":{"stream":"s1"}}]}

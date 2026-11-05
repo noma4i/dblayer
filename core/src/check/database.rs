@@ -1,115 +1,489 @@
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::time::Duration;
 
 use async_trait::async_trait;
-use serde_json::json;
+use serde_json::{json, Map, Value};
+use tokio::task::JoinHandle;
 
+use super::mock::Mock;
 use super::model::Sut;
 use super::value::{Input, Observation};
-use crate::ffi::{CommandRequest, ByteProgress, CableLease, Config, Database, DbError, EncryptedSocketEvent, PutReply, SubscriptionSink, Transport, TransportRequest};
-use crate::schema::{ActionDeclaration, FieldSpec, ModelSpec, OnFailure, RootShape};
-use crate::transport::{PutFile, TransferIdentity};
-use crate::value::ScalarKind;
+use crate::ffi::{
+    CommandRequest, Config, Database, DbError, EntityFetch, LivePhase, LoadMoreResult, OpenDatabase, StreamEnd, StreamRequest, StreamState, StreamValue, TestClock, ValueSink,
+    WireOperationOutcome, WireOperationReceipt, WireRow,
+};
+use crate::ffi::upload_wire::WireUploadRequest;
 
-/// The transport mock of the shared vocabulary: it answers no request, every call fails with a network error.
-/// The database starts offline, so the vocabulary below sends nothing.
-struct Quiet;
+type Cancel = Arc<dyn Fn() + Send + Sync>;
 
-#[async_trait]
-impl Transport for Quiet {
-    async fn open_cable(&self, _: Arc<CableLease>) -> Result<(), DbError> { Err(DbError::Network { detail: "quiet".into() }) }
-    async fn cable_send(&self, _: String, _: String) -> Result<(), DbError> { Err(DbError::Network { detail: "quiet".into() }) }
-    async fn cable_next(&self, _: String) -> Option<EncryptedSocketEvent> { None }
-    async fn cable_close(&self, _: String) {}
-    async fn query(&self, _: TransportRequest) -> Result<String, DbError> { Err(DbError::Network { detail: "quiet".into() }) }
-    async fn mutate(&self, _: TransportRequest) -> Result<String, DbError> { Err(DbError::Network { detail: "quiet".into() }) }
-    async fn subscribe(&self, _: TransportRequest, _: Arc<SubscriptionSink>) -> Result<(), DbError> { Err(DbError::Network { detail: "quiet".into() }) }
-    fn unsubscribe(&self, _: String) {}
-    async fn put(&self, _: String, _: HashMap<String, String>, _: PutFile, _: TransferIdentity, _: Arc<ByteProgress>) -> Result<PutReply, DbError> { Err(DbError::Network { detail: "quiet".into() }) }
+const MODELS: &str = include_str!("../../tests/corpus/models.json");
+const EVENT_MODELS: &str = include_str!("../../tests/corpus/models_events.json");
+const OPERATIONS: &str = include_str!("../../tests/corpus/operations.json");
+
+#[derive(Default)]
+struct Heard(AtomicU64);
+
+impl ValueSink for Heard {
+    fn available(&self) { self.0.fetch_add(1, Ordering::SeqCst); }
 }
 
-const OPERATIONS: &str = r#"[{"name":"MakeMoment","document":"mutation MakeMoment { makeMoment { id text } }","rootPath":"makeMoment"}]"#;
+/// What a finished call hands back to the runner: what to observe and what to remember under a name.
+#[derive(Default)]
+struct Done {
+    observed: Vec<Observation>,
+    row: Option<(String, String)>,
+    receipt: Option<(String, WireOperationReceipt)>,
+    load: Option<(String, Cancel)>,
+}
 
-fn models_json() -> String {
-    let mut model = ModelSpec::new("Moment", vec![FieldSpec::scalar("id", ScalarKind::Id), FieldSpec::scalar("text", ScalarKind::Str).optional()]);
-    let mut create = ActionDeclaration::new("create", RootShape::Upsert);
-    create.mutation = Some("MakeMoment".to_string());
-    create.durable = true;
-    create.has_optimistic = true;
-    create.has_temp_row_retention = true;
-    create.on_failure = OnFailure::Keep;
-    model.actions.push(create);
-    serde_json::to_string(&vec![model]).unwrap_or_default()
+fn error_kind(error: &DbError) -> &'static str {
+    match error {
+        DbError::NoSession { .. } => "no_session",
+        DbError::Security { .. } => "security",
+        DbError::Config { .. } => "config",
+        DbError::Invalid { .. } => "invalid",
+        DbError::Database { .. } => "database",
+        DbError::Sync { .. } => "sync",
+        DbError::Network { .. } => "network",
+        DbError::Interrupted { .. } => "interrupted",
+        DbError::Http { .. } => "http",
+        DbError::RequestTooLarge { .. } => "request_too_large",
+        DbError::Graphql { .. } => "graphql",
+        DbError::Session { .. } => "session",
+    }
 }
 
 fn error(kind: &str) -> Vec<Observation> {
     vec![Observation::new("error", json!({ "kind": kind }))]
 }
 
-/// The real core behind `Database` for the vocabulary of `specs/machines/corpus.md` (section "Inputs of the database runner").
-/// `open`, `create`, `has`, `set_online`, `close` run. Every other input answers `unsupported`.
-#[derive(Default)]
+fn failed(error: &DbError) -> Done {
+    Done { observed: self::error(error_kind(error)), ..Done::default() }
+}
+
+fn phase_name(phase: LivePhase) -> &'static str {
+    match phase {
+        LivePhase::NotLoaded | LivePhase::Closed => "idle",
+        LivePhase::Loading => "loading",
+        LivePhase::Loaded | LivePhase::Empty => "loaded",
+        LivePhase::Failed => "failed",
+    }
+}
+
+fn cause_name(end: StreamEnd) -> &'static str {
+    match end {
+        StreamEnd::SessionEnded => "session_ended",
+        StreamEnd::Closed => "closed",
+        StreamEnd::Invalid => "invalid",
+        StreamEnd::OutOfSync => "out_of_sync",
+    }
+}
+
+fn fetch_of(name: &str) -> Option<EntityFetch> {
+    match name {
+        "never" => Some(EntityFetch::None),
+        "stale" => Some(EntityFetch::Stale),
+        "force" => Some(EntityFetch::Force),
+        "if_missing" => Some(EntityFetch::IfMissing),
+        _ => None,
+    }
+}
+
+/// The real core behind `Database` for the vocabulary of `specs/machines/corpus.md`.
+/// A call that may wait for the network runs as a task. The runner settles after every input and observes what finished.
 pub struct DatabaseSut {
     database: Option<Arc<Database>>,
+    mock: Arc<Mock>,
+    clock: Arc<TestClock>,
+    heard: Arc<Heard>,
     rows: HashMap<String, String>,
+    receipts: HashMap<String, WireOperationReceipt>,
+    loads: HashMap<String, Cancel>,
+    streams: HashMap<String, u64>,
+    calls: Vec<JoinHandle<Done>>,
+}
+
+impl Default for DatabaseSut {
+    fn default() -> Self {
+        Self {
+            database: None,
+            mock: Mock::new(),
+            clock: TestClock::new(1_800_000_000_000),
+            heard: Arc::default(),
+            rows: HashMap::new(),
+            receipts: HashMap::new(),
+            loads: HashMap::new(),
+            streams: HashMap::new(),
+            calls: Vec::new(),
+        }
+    }
+}
+
+impl DatabaseSut {
+    /// Closes the database a trace left open, so the next trace can open its own.
+    pub async fn finish(&mut self) {
+        self.mock.release_all();
+        if let Some(database) = self.database.take() { let _ = database.close_database().await; }
+    }
+
+    fn id_of(&self, name: &str) -> String {
+        self.rows.get(name).cloned().unwrap_or_else(|| name.to_string())
+    }
+
+    fn name_of(&self, id: &str) -> String {
+        self.rows.iter().find(|(_, value)| value.as_str() == id).map_or_else(|| id.to_string(), |(name, _)| name.clone())
+    }
+
+    fn names(&self, rows: &[WireRow]) -> Value {
+        Value::Array(rows.iter().map(|row| Value::String(self.name_of(&row.id))).collect())
+    }
+
+    fn state(&self, stream: &str, state: &StreamState, into: &mut Map<String, Value>) {
+        into.insert("stream".into(), stream.into());
+        into.insert("phase".into(), phase_name(state.phase).into());
+        if let Some(kind) = &state.error_kind { into.insert("error".into(), kind.clone().into()); }
+        if let Some(at) = state.loaded_at { into.insert("loaded".into(), at.into()); }
+    }
+
+    fn stream_name(&self, id: u64) -> String {
+        self.streams.iter().find(|(_, value)| **value == id).map_or_else(|| id.to_string(), |(name, _)| name.clone())
+    }
+
+    fn value(&self, stream: &str, seq: u64, value: &StreamValue) -> Observation {
+        let mut out = Map::new();
+        match value {
+            StreamValue::Snapshot { revision, rows, state } => {
+                self.state(stream, state, &mut out);
+                out.insert("revision".into(), (*revision).into());
+                out.insert("rows".into(), self.names(rows));
+                Observation::new("snapshot", Value::Object(out))
+            }
+            StreamValue::Delta { base, revision, rows, removed, state, .. } => {
+                self.state(stream, state, &mut out);
+                out.insert("base".into(), (*base).into());
+                out.insert("revision".into(), (*revision).into());
+                out.insert("rows".into(), self.names(rows));
+                out.insert("removed".into(), Value::Array(removed.iter().map(|id| Value::String(self.name_of(id))).collect()));
+                Observation::new("delta", Value::Object(out))
+            }
+            StreamValue::Count { revision, count, state } => {
+                self.state(stream, state, &mut out);
+                out.insert("revision".into(), (*revision).into());
+                out.insert("count".into(), (*count).into());
+                Observation::new("count", Value::Object(out))
+            }
+            StreamValue::State { state } => {
+                self.state(stream, state, &mut out);
+                Observation::new("state", Value::Object(out))
+            }
+            StreamValue::Event { event } => Observation::new("event", json!({ "stream": stream, "position": seq, "area": event.area, "kind": event.kind, "row": self.name_of(&event.id) })),
+            StreamValue::Lost { first, last } => Observation::new("lost", json!({ "stream": stream, "first": first, "last": last })),
+            StreamValue::Status { .. } => Observation::new("unsupported", json!("status")),
+            StreamValue::Ended { reason } => Observation::new("ended", json!({ "stream": stream, "cause": cause_name(*reason) })),
+        }
+    }
+
+    fn launch(&mut self, work: impl std::future::Future<Output = Done> + Send + 'static) {
+        self.calls.push(crate::task::spawn(crate::task::Carry::here(), work));
+    }
+
+    /// Waits until requests, finished calls and stream notices stop changing for 100 ms, then observes everything that finished.
+    async fn settle(&mut self) -> Vec<Observation> {
+        let mut quiet = 0;
+        let mut last = (usize::MAX, usize::MAX, u64::MAX);
+        for _ in 0..600 {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+            let now = (self.mock.count(), self.calls.iter().filter(|call| call.is_finished()).count(), self.heard.0.load(Ordering::SeqCst));
+            quiet = if now == last { quiet + 1 } else { 0 };
+            last = now;
+            if quiet >= 25 { break; }
+        }
+        let mut observed = Vec::new();
+        let mut waiting = Vec::new();
+        for call in std::mem::take(&mut self.calls) {
+            if !call.is_finished() { waiting.push(call); continue; }
+            let Ok(done) = call.await else { continue };
+            observed.extend(done.observed);
+            if let Some((name, id)) = done.row { self.rows.insert(name, id); }
+            if let Some((name, receipt)) = done.receipt { self.receipts.insert(name, receipt); }
+            if let Some((name, load)) = done.load { self.loads.insert(name, load); }
+        }
+        self.calls = waiting;
+        observed.extend(self.mock.announce());
+        observed
+    }
+
+    async fn open(&mut self, models: &str) -> Vec<Observation> {
+        let config = Config { path: None, data_version: None, cache_rows: 32 };
+        let transport: Arc<dyn crate::ffi::Transport> = self.mock.clone();
+        let opened = OpenDatabase::new().open_with_clock(config, if models == "events" { EVENT_MODELS } else { MODELS }.into(), Some(transport), None, self.clock.clone(), false, true, None, None, None, None).await;
+        match opened {
+            Ok(database) => {
+                if database.register_operations(OPERATIONS.into()).is_err() { return error("operations"); }
+                self.database = Some(database);
+                vec![Observation::bare("opened")]
+            }
+            Err(_) => error("open"),
+        }
+    }
+
+    fn receipt_done(name: String, row: String, op: &str, result: Result<WireOperationReceipt, DbError>) -> Done {
+        match result {
+            Ok(receipt) => Done { observed: vec![Observation::new("receipt", json!({ "row": row, "op": op }))], receipt: Some((name, receipt)), ..Done::default() },
+            Err(error) => failed(&error),
+        }
+    }
+
+    fn start(&mut self, database: Arc<Database>, input: &Input) -> Option<Vec<Observation>> {
+        let epoch = database.session_epoch();
+        let text = |key: &str| input.text(key).map(str::to_string);
+        match input.name.as_str() {
+            "create" => {
+                let (Some(name), Some(text)) = (text("as"), text("text")) else { return Some(error("arguments")) };
+                self.launch(async move {
+                    match Database::send(&database, CommandRequest { epoch, model: "Moment".into(), values_json: json!({ "text": text }).to_string(), args_json: "{}".into(), upload: None }).await {
+                        Ok(receipt) => {
+                            let row = receipt.optimistic_value.as_ref().map(|row| row.id.clone());
+                            let mut done = Self::receipt_done(name.clone(), name.clone(), "create", Ok(receipt));
+                            done.row = row.map(|id| (name, id));
+                            done
+                        }
+                        Err(error) => failed(&error),
+                    }
+                });
+            }
+            "update" => {
+                let (Some(row), Some(text)) = (text("row"), text("text")) else { return Some(error("arguments")) };
+                let id = self.id_of(&row);
+                let name = text_or(input, "as", &format!("{row}:update"));
+                self.launch(async move { Self::receipt_done(name, row, "update", database.update(epoch, "Moment".into(), id, json!({ "text": text }).to_string(), "{}".into()).await) });
+            }
+            "act" => {
+                let (Some(row), Some(action)) = (text("row"), text("action")) else { return Some(error("arguments")) };
+                let id = self.id_of(&row);
+                let name = text_or(input, "as", &format!("{row}:{action}"));
+                self.launch(async move { Self::receipt_done(name, row, "act", database.act(epoch, "Moment".into(), id, action, "{}".into(), "{}".into()).await) });
+            }
+            "destroy" => {
+                let Some(row) = text("row") else { return Some(error("arguments")) };
+                let id = self.id_of(&row);
+                let name = text_or(input, "as", &format!("{row}:destroy"));
+                self.launch(async move { Self::receipt_done(name, row, "destroy", database.destroy(epoch, "Moment".into(), id).await) });
+            }
+            "retry" => {
+                let Some(row) = text("row") else { return Some(error("arguments")) };
+                let id = self.id_of(&row);
+                let action = text("action");
+                let name = text_or(input, "as", &format!("{row}:retry"));
+                self.launch(async move { Self::receipt_done(name, row, "retry", database.retry(epoch, "Moment".into(), id, action, None).await) });
+            }
+            "discard" => {
+                let Some(row) = text("row") else { return Some(error("arguments")) };
+                let id = self.id_of(&row);
+                let action = text("action");
+                self.launch(async move { database.discard(epoch, "Moment".into(), id, action).await.map_or_else(|e| failed(&e), |()| done("discarded", json!({ "row": row }))) });
+            }
+            "upload" => {
+                let (Some(row), Some(action)) = (text("row"), text("action")) else { return Some(error("arguments")) };
+                let id = self.id_of(&row);
+                let name = text_or(input, "as", &format!("{row}:{action}"));
+                let path = std::env::temp_dir().join(format!("corpus_{}.bin", std::process::id()));
+                if std::fs::write(&path, b"corpus").is_err() { return Some(error("file")); }
+                let request = WireUploadRequest { path: path.to_string_lossy().into_owned(), name: Some("clip.bin".into()), mime: Some("application/octet-stream".into()), variables_json: "{}".into() };
+                self.launch(async move { Self::receipt_done(name, row, "upload", database.upload(epoch, "Moment".into(), id, action, request).await) });
+            }
+            "cancel_upload" => {
+                let (Some(row), Some(action)) = (text("row"), text("action")) else { return Some(error("arguments")) };
+                let id = self.id_of(&row);
+                self.launch(async move { database.cancel_upload(epoch, "Moment".into(), id, action).await.map_or_else(|e| failed(&e), |value| done("cancelled", json!({ "row": row, "value": value }))) });
+            }
+            "outcome" => {
+                let Some(name) = text("receipt") else { return Some(error("arguments")) };
+                let Some(receipt) = self.receipts.get(&name).cloned() else { return Some(error("unknown_receipt")) };
+                self.launch(async move {
+                    match database.outcome(receipt).await {
+                        Ok(outcome) => done("outcome", json!({ "receipt": name, "result": outcome_name(&outcome) })),
+                        Err(error) => failed(&error),
+                    }
+                });
+            }
+            "begin_load" => {
+                let (Some(name), Some(relation)) = (text("as"), text("relation")) else { return Some(error("arguments")) };
+                match database.begin_load(epoch, "Moment".into(), relation, "{}".into()) {
+                    Ok(load) => {
+                        let handle = load.clone();
+                        self.loads.insert(name.clone(), Arc::new(move || handle.cancel()));
+                        self.launch(async move { load.result().await.map_or_else(|e| failed(&e), |()| done("loaded", json!({ "load": name }))) });
+                    }
+                    Err(error) => return Some(self::error(error_kind(&error))),
+                }
+            }
+            "refresh" => {
+                let Some(relation) = text("relation") else { return Some(error("arguments")) };
+                self.launch(async move { database.refresh(epoch, "Moment".into(), relation.clone(), "{}".into()).await.map_or_else(|e| failed(&e), |()| done("refreshed", json!({ "relation": relation }))) });
+            }
+            "load_more" => {
+                let Some(relation) = text("relation") else { return Some(error("arguments")) };
+                self.launch(async move {
+                    match database.load_more(epoch, "Moment".into(), relation.clone(), "{}".into()).await {
+                        Ok(result) => done("more", json!({ "relation": relation, "result": more_name(result) })),
+                        Err(error) => failed(&error),
+                    }
+                });
+            }
+            "node" => {
+                let (Some(relation), Some(row)) = (text("relation"), text("row")) else { return Some(error("arguments")) };
+                let id = self.id_of(&row);
+                self.launch(async move {
+                    match database.node(epoch, "Moment".into(), relation, id, false).await {
+                        Ok(found) => done("node", json!({ "row": row, "present": found.is_some() })),
+                        Err(error) => failed(&error),
+                    }
+                });
+            }
+            "session_call" => {
+                let (Some(operation), Some(body)) = (text("operation"), input.args.get("body")) else { return Some(error("arguments")) };
+                let body = body.to_string();
+                self.launch(async move { database.session_call(operation.clone(), body).await.map_or_else(|e| failed(&e), |answer| done("session", json!({ "operation": operation, "answer": serde_json::from_str::<Value>(&answer).unwrap_or(Value::Null) }))) });
+            }
+            "session_reset" => {
+                self.launch(async move { database.session_reset().await.map_or_else(|e| failed(&e), |()| done("reset", Value::Null)) });
+            }
+            "close" => {
+                self.mock.release_all();
+                self.launch(async move { database.close_database().await.map_or_else(|e| failed(&e), |()| Done { observed: vec![Observation::bare("closed")], ..Done::default() }) });
+            }
+            "has" => {
+                let Some(name) = text("row") else { return Some(error("arguments")) };
+                let id = self.id_of(&name);
+                self.launch(async move {
+                    match database.read_query(epoch, r#"{"model":"Moment"}"#.into()).await {
+                        Ok(found) => done("row", json!({ "row": name, "present": found.iter().any(|row| row.id == id) })),
+                        Err(error) => failed(&error),
+                    }
+                });
+            }
+            _ => return None,
+        }
+        Some(Vec::new())
+    }
+
+    fn open_stream(&mut self, database: &Arc<Database>, input: &Input) -> Vec<Observation> {
+        let Some(name) = input.text("as") else { return error("arguments") };
+        let query = |relation: Option<&str>| match relation {
+            Some(relation) => json!({ "model": "Moment", "relation": relation, "params": {} }).to_string(),
+            None => json!({ "model": "Moment" }).to_string(),
+        };
+        let request = match input.name.as_str() {
+            "open_list" => StreamRequest::Query { query_json: query(input.text("relation")) },
+            "open_count" => StreamRequest::Count { query_json: query(input.text("relation")) },
+            "open_entity" => {
+                let (Some(row), Some(fetch)) = (input.text("row"), input.text("fetch").and_then(fetch_of)) else { return error("arguments") };
+                StreamRequest::Entity { model: "Moment".into(), id: self.id_of(row), fetch }
+            }
+            _ => {
+                let Some(model) = input.text("model") else { return error("arguments") };
+                StreamRequest::Events { model: model.into() }
+            }
+        };
+        let sink: Arc<dyn ValueSink> = self.heard.clone();
+        let id = database.subscribe(database.session_epoch(), request, sink);
+        self.streams.insert(name.into(), id);
+        Vec::new()
+    }
+}
+
+fn text_or(input: &Input, key: &str, default: &str) -> String {
+    input.text(key).unwrap_or(default).to_string()
+}
+
+fn done(kind: &str, value: Value) -> Done {
+    let observed = if value.is_null() { Observation::bare(kind) } else { Observation::new(kind, value) };
+    Done { observed: vec![observed], ..Done::default() }
+}
+
+fn outcome_name(outcome: &WireOperationOutcome) -> &'static str {
+    match outcome {
+        WireOperationOutcome::Confirmed { .. } => "confirmed",
+        WireOperationOutcome::Rejected { .. } => "rejected",
+        WireOperationOutcome::DeliveryUnknown => "delivery_unknown",
+        WireOperationOutcome::Interrupted => "interrupted",
+    }
+}
+
+fn more_name(result: LoadMoreResult) -> &'static str {
+    match result {
+        LoadMoreResult::Loaded { has_more: true } => "loaded_more",
+        LoadMoreResult::Loaded { has_more: false } => "loaded_last",
+        LoadMoreResult::NoMore => "no_more",
+        LoadMoreResult::AlreadyLoading => "already_loading",
+    }
 }
 
 #[async_trait]
 impl Sut for DatabaseSut {
     async fn apply(&mut self, input: &Input) -> Vec<Observation> {
-        if input.name == "open" {
-            let config = Config { path: None, data_version: None, cache_rows: 32 };
-            return match Database::open(config, models_json(), Some(Arc::new(Quiet)), None, None, None, None, None).await {
-                Ok(database) => {
-                    if database.register_operations(OPERATIONS.into()).is_err() {
-                        return error("operations");
-                    }
-                    let online = database.set_online(false);
-                    self.database = Some(database);
-                    match online {
-                        Ok(()) => vec![Observation::bare("opened")],
-                        Err(_) => error("online"),
-                    }
-                }
-                Err(_) => error("open"),
-            };
+        match input.name.as_str() {
+            "open" => return self.open(input.text("models").unwrap_or("")).await,
+            "tick" => {
+                self.clock.advance(input.number("ms").unwrap_or(0));
+                return self.settle().await;
+            }
+            "answer" | "error" | "drop" | "ready" | "frame" => {
+                let Some(id) = input.text("id") else { return error("arguments") };
+                let reached = match input.name.as_str() {
+                    "answer" => input.args.get("json").is_some_and(|body| self.mock.answer(id, &body.to_string())),
+                    "error" => input.text("kind").is_some_and(|kind| self.mock.fail(id, kind)),
+                    "drop" => self.mock.drop_connection(id),
+                    "ready" => self.mock.ready(id),
+                    _ => match input.args.get("event") {
+                        Some(event) => match self.mock.frame(id, &event.to_string()) {
+                            Ok(reached) => reached,
+                            Err(_) => return error("frame"),
+                        },
+                        None => return error("arguments"),
+                    },
+                };
+                if !reached { return error("no_request"); }
+                return self.settle().await;
+            }
+            "lost" => return vec![Observation::new("unsupported", json!(input.name))],
+            _ => {}
         }
         let Some(database) = self.database.clone() else { return error("not_open") };
-        match input.name.as_str() {
+        let mut observed = match input.name.as_str() {
+            "online" => match database.online_sink() {
+                Ok(sink) => { sink.set_online(input.flag("online").unwrap_or(false)); Vec::new() }
+                Err(_) => error("online"),
+            },
             "set_online" => match database.set_online(input.flag("online").unwrap_or(false)) {
                 Ok(()) => vec![Observation::new("online", json!(input.flag("online").unwrap_or(false)))],
                 Err(_) => error("online"),
             },
-            "create" => {
-                let (Some(name), Some(text)) = (input.text("as"), input.text("text")) else { return error("arguments") };
-                let values = json!({ "text": text }).to_string();
-                match Database::send(&database, CommandRequest { epoch: database.session_epoch(), model: "Moment".into(), values_json: values, args_json: "{}".into(), upload: None }).await {
-                    Ok(receipt) => match receipt.optimistic_value {
-                        Some(row) => {
-                            self.rows.insert(name.into(), row.id);
-                            vec![Observation::new("created", json!({ "row": name }))]
-                        }
-                        None => error("no_row"),
-                    },
-                    Err(_) => error("create"),
+            "published" => vec![Observation::new("published", json!({ "epoch": database.session_epoch() }))],
+            "open_list" | "open_count" | "open_entity" | "open_events" => self.open_stream(&database, input),
+            "pull" => {
+                let Some(name) = input.text("stream") else { return error("arguments") };
+                let Some(id) = self.streams.get(name).copied() else { return error("unknown_stream") };
+                match database.read_stream(id) {
+                    Some(delivery) => vec![self.value(&self.stream_name(id), delivery.seq, &delivery.value)],
+                    None => vec![Observation::new("empty", json!({ "stream": name }))],
                 }
             }
-            "has" => {
-                let Some(name) = input.text("row") else { return error("arguments") };
-                let id = self.rows.get(name).cloned().unwrap_or_else(|| name.to_string());
-                match database.read_query(database.session_epoch(), r#"{"model":"Moment"}"#.into()).await {
-                    Ok(found) => vec![Observation::new("row", json!({ "row": name, "present": found.iter().any(|row| row.id == id) }))],
-                    Err(_) => error("has"),
-                }
+            "cancel" => {
+                let Some(target) = input.text("target") else { return error("arguments") };
+                if let Some(cancel) = self.loads.get(target) { cancel(); } else if let Some(id) = self.streams.get(target) { database.cancel_stream(*id); } else { return error("unknown_target"); }
+                Vec::new()
             }
-            "close" => match database.close_database().await {
-                Ok(()) => {
-                    self.database = None;
-                    vec![Observation::bare("closed")]
-                }
-                Err(_) => error("close"),
+            _ => match self.start(database, input) {
+                Some(immediate) => immediate,
+                None => return vec![Observation::new("unsupported", json!(input.name))],
             },
-            other => vec![Observation::new("unsupported", json!(other))],
-        }
+        };
+        observed.extend(self.settle().await);
+        if input.name == "close" && self.calls.is_empty() { self.database = None; }
+        observed
     }
 }

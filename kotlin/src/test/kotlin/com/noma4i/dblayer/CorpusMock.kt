@@ -1,0 +1,120 @@
+package com.noma4i.dblayer
+
+import java.util.concurrent.ConcurrentHashMap
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+
+/** The transport mock of the shared vocabulary (`specs/machines/corpus.md`). It answers no request by itself: a request waits until an input of the trace answers, fails or drops it. */
+class CorpusMock : Transport {
+    private class Seen(val id: String, val kind: String, val purpose: String, var announced: Boolean = false)
+
+    private val seen = ArrayList<Seen>()
+    private var next = 0
+    private val waiting = ConcurrentHashMap<String, CompletableDeferred<String>>()
+    private val waitingPuts = ConcurrentHashMap<String, CompletableDeferred<PutReply>>()
+    private val sinks = ConcurrentHashMap<String, SubscriptionSink>()
+
+    val count: Int get() = synchronized(seen) { seen.size }
+
+    /** The requests that arrived since the last call, in arrival order, as `request` observations. */
+    fun announce(): List<JsonObject> = synchronized(seen) {
+        seen.filter { !it.announced }.map {
+            it.announced = true
+            observation("request", JsonObject(mapOf("id" to JsonPrimitive(it.id), "kind" to JsonPrimitive(it.kind), "purpose" to JsonPrimitive(it.purpose))))
+        }
+    }
+
+    private fun record(kind: String, purpose: NetworkPurpose): String = synchronized(seen) {
+        next += 1
+        val id = "r$next"
+        seen.add(Seen(id, kind, if (purpose == NetworkPurpose.STANDARD) "standard" else "transfer"))
+        id
+    }
+
+    fun answer(id: String, body: String): Boolean {
+        waiting.remove(id)?.let { return it.complete(body) }
+        waitingPuts.remove(id)?.let {
+            val status = Regex("\"status\"\\s*:\\s*(\\d+)").find(body)?.groupValues?.get(1)?.toInt() ?: 200
+            return it.complete(PutReply(status.toUShort(), null))
+        }
+        return false
+    }
+
+    private fun failure(kind: String): DbException? = when (kind) {
+        "temporary" -> DbException.Network("temporary")
+        "permanent" -> DbException.Graphql(listOf("permanent"), null)
+        "auth" -> DbException.Http(401u, "auth")
+        else -> null
+    }
+
+    fun fail(id: String, kind: String): Boolean = failure(kind)?.let { finish(id, it) } ?: false
+
+    fun dropConnection(id: String): Boolean = finish(id, DbException.Network("dropped"))
+
+    private fun finish(id: String, error: DbException): Boolean {
+        waiting.remove(id)?.let { return it.completeExceptionally(error) }
+        waitingPuts.remove(id)?.let { return it.completeExceptionally(error) }
+        sinks.remove(id)?.let { it.failed(error); return true }
+        return false
+    }
+
+    /** Fails every waiting request with `Interrupted`. The runner calls it before a close: the app's transport cancels its calls when the database closes. */
+    fun releaseAll() {
+        for (id in waiting.keys.toList()) waiting.remove(id)?.completeExceptionally(DbException.Interrupted("closed"))
+        for (id in waitingPuts.keys.toList()) waitingPuts.remove(id)?.completeExceptionally(DbException.Interrupted("closed"))
+    }
+
+    fun ready(id: String): Boolean = sinks[id]?.let { it.ready(); true } ?: false
+
+    fun frame(id: String, event: String): Boolean = sinks[id]?.let { it.event(event); true } ?: false
+
+    private suspend fun wait(kind: String, request: TransportRequest): String {
+        val id = record(kind, request.purpose)
+        val reply = CompletableDeferred<String>()
+        waiting[id] = reply
+        return reply.await()
+    }
+
+    override suspend fun openCable(lease: CableLease) { throw DbException.Network("no cable") }
+    override suspend fun cableSend(token: String, text: String) { throw DbException.Network("no cable") }
+    override suspend fun cableNext(token: String): EncryptedSocketEvent? = null
+    override suspend fun cableClose(token: String) {}
+    override suspend fun query(request: TransportRequest): String = wait("query", request)
+    override suspend fun mutate(request: TransportRequest): String = wait("mutation", request)
+
+    override suspend fun subscribe(request: TransportRequest, sink: SubscriptionSink) {
+        val id = record("subscription", request.purpose)
+        sink.opened(id)
+        sinks[id] = sink
+    }
+
+    override fun unsubscribe(token: String) { sinks.remove(token) }
+
+    override suspend fun put(url: String, headers: Map<String, String>, file: PutFile, identity: TransferIdentity, progress: ByteProgress): PutReply {
+        val id = record("put", NetworkPurpose.TRANSFER)
+        val reply = CompletableDeferred<PutReply>()
+        waitingPuts[id] = reply
+        return reply.await()
+    }
+}
+
+/** One observation: `{"o":kind,"v":value}`, `v` left out when there is none. */
+fun observation(kind: String, value: kotlinx.serialization.json.JsonElement? = null): JsonObject =
+    JsonObject(if (value == null) mapOf("o" to JsonPrimitive(kind)) else mapOf("o" to JsonPrimitive(kind), "v" to value))
+
+/** A JSON value from plain Kotlin values: maps, lists, strings, numbers, booleans. */
+fun js(value: Any?): kotlinx.serialization.json.JsonElement = when (value) {
+    null -> kotlinx.serialization.json.JsonNull
+    is kotlinx.serialization.json.JsonElement -> value
+    is String -> JsonPrimitive(value)
+    is Boolean -> JsonPrimitive(value)
+    is ULong -> JsonPrimitive(value.toLong())
+    is UInt -> JsonPrimitive(value.toLong())
+    is Number -> JsonPrimitive(value)
+    is Map<*, *> -> JsonObject(value.entries.associate { (key, item) -> key as String to js(item) })
+    is List<*> -> kotlinx.serialization.json.JsonArray(value.map { js(it) })
+    else -> JsonPrimitive(value.toString())
+}
+
+fun obs(kind: String, vararg fields: Pair<String, Any?>): JsonObject = observation(kind, js(fields.toMap()))

@@ -1,0 +1,13 @@
+{"trace":"stream_local"}
+{"in":"open","out":[{"o":"opened"}]}
+{"in":"open_list","args":{"as":"s1"},"out":[]}
+{"in":"pull","args":{"stream":"s1"},"out":[{"o":"snapshot","v":{"phase":"loaded","revision":0,"rows":[],"stream":"s1"}}]}
+{"in":"pull","args":{"stream":"s1"},"out":[{"o":"empty","v":{"stream":"s1"}}]}
+{"in":"create","args":{"as":"r1","text":"a"},"out":[{"o":"receipt","v":{"op":"create","row":"r1"}},{"o":"request","v":{"id":"r1","kind":"mutation","purpose":"standard"}}]}
+{"in":"pull","args":{"stream":"s1"},"out":[{"o":"delta","v":{"base":0,"phase":"loaded","removed":[],"revision":1,"rows":["r1"],"stream":"s1"}}]}
+{"in":"open_count","args":{"as":"c1"},"out":[]}
+{"in":"pull","args":{"stream":"c1"},"out":[{"o":"count","v":{"count":1,"phase":"loaded","revision":2,"stream":"c1"}}]}
+{"in":"open_entity","args":{"as":"e1","fetch":"never","row":"r1"},"out":[]}
+{"in":"pull","args":{"stream":"e1"},"out":[{"o":"snapshot","v":{"phase":"loaded","revision":2,"rows":["r1"],"stream":"e1"}}]}
+{"in":"cancel","args":{"target":"s1"},"out":[]}
+{"in":"pull","args":{"stream":"s1"},"out":[{"o":"empty","v":{"stream":"s1"}}]}
