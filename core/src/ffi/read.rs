@@ -1,4 +1,4 @@
-//! The values of reading as the platform gets them (`delivery.md`, "Значения для платформы"): the bridge carries the values of the owner `Deliveries`,
+//! The values of reading as the platform gets them (`delivery.md`, the values for the platform): the bridge carries the values of the owner `Deliveries`,
 //! the wrappers compute nothing. A stream is an object: `pull` waits for the next value, `cancel` returns when no value follows, the last handle gone releases it.
 
 use std::sync::Arc;
