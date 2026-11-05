@@ -65,7 +65,33 @@ fn edge_writes(scope: &ScopeRef, fields: &[FieldSpec], roots: &[Map<String, Valu
     }).collect()
 }
 
+/// The scope of a relation with params and the key of its window record.
+fn window_identity(spec: &crate::schema::ModelSpec, model: &str, relation: &str, remote: &crate::schema::RemoteSpec, params: &Map<String, Value>) -> Result<(ScopeRef, String), DbError> {
+    let scope_key = spec.selection_key(relation, params).map_err(json_fault)?;
+    let direction = match remote.shape {
+        RemoteShape::Connection { direction, .. } => direction,
+        _ => crate::schema::PageDirection::Forward,
+    };
+    let key = window_key(scope_key.as_str(), direction);
+    Ok((ScopeRef::new(ModelKey::new(model), scope_key), key))
+}
+
 impl Db {
+    /// The stored record of the window of a relation, `None` before its first page.
+    pub(crate) fn window_record(&self, model: &str, relation: &str, params: &Map<String, Value>) -> Result<Option<crate::store::WindowRecord>, DbError> {
+        let spec = self.spec(model)?;
+        let declared = spec.relations.iter().find(|candidate| candidate.name == relation).ok_or_else(|| DbError::Internal(format!("{model} has no relation {relation}")))?;
+        let remote = declared.remote.as_ref().ok_or_else(|| DbError::Internal(format!("{model}.{relation} is no remote relation")))?;
+        let (_, key) = window_identity(spec, model, relation, remote, params)?;
+        Ok(self.shared.store.window(&key)?)
+    }
+
+    /// Whether the row is in the membership of the scope of a relation with params.
+    pub(crate) fn window_member(&self, model: &str, relation: &str, params: &Map<String, Value>, id: &str) -> Result<bool, DbError> {
+        let scope = self.spec(model)?.selection_key(relation, params).map_err(json_fault)?;
+        Ok(self.shared.store.read(&[model], |reader| reader.scope_has_member(model, scope.as_str(), id))?)
+    }
+
     /// `StoreOp::Window`: the rows of a node or nodes key land as plain rows, the page of a relation key also plans the membership of its scope and saves the window record.
     pub(crate) fn land_window_page(&self, page: &WindowPage<'_>) -> Result<(), DbError> {
         let model = page.key.model.as_str();
@@ -90,13 +116,8 @@ impl Db {
         let spec = self.spec(model)?;
         let declared = spec.relations.iter().find(|candidate| candidate.name == relation).ok_or_else(|| DbError::Internal(format!("{model} has no relation {relation}")))?;
         let remote = declared.remote.as_ref().ok_or_else(|| DbError::Internal(format!("{model}.{relation} is no remote relation")))?;
-        let scope_key = spec.selection_key(&relation, &params).map_err(json_fault)?;
-        let (direction, is_connection) = match remote.shape {
-            RemoteShape::Connection { direction, .. } => (direction, true),
-            _ => (crate::schema::PageDirection::Forward, false),
-        };
-        let key = window_key(scope_key.as_str(), direction);
-        let scope = ScopeRef::new(ModelKey::new(model), scope_key);
+        let (scope, key) = window_identity(spec, model, &relation, remote, &params)?;
+        let is_connection = matches!(remote.shape, RemoteShape::Connection { .. });
         let coverage = remote.coverage();
         let edge_fields = declared.edge_fields.clone();
         let keeps_total = remote.total_from.is_some();

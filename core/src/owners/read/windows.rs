@@ -155,6 +155,8 @@ pub enum WindowsInput {
     /// A Store broadcast `Committed{tables}`: the models whose tables changed and the revision.
     StoreCommitted { models: Vec<String>, revision: i64 },
     Online(Online),
+    /// The application came to the front; `seq` grows by 1 with every return.
+    Foreground(u64),
     EpochStarted(EpochStarted),
     EpochEnded(EpochEnded),
     ModelsReset(ModelsReset),
@@ -174,6 +176,7 @@ enum Ev {
     Committed { request: RequestId, revision: i64 },
     Rejected { request: RequestId, reason: RejectReason },
     Stale,
+    Foreground,
     SourceChanged { revision: i64 },
     RetryDue { request: RequestId },
     Online(bool),
@@ -455,6 +458,7 @@ impl Facts {
                 self.fresh = false;
                 Handled
             }
+            Ev::Foreground if !self.interest.is_empty() && self.is_online() => self.begin(context, 1, false, true),
             Ev::SourceChanged { revision } => {
                 self.push_fx(WindowEffect::DerivePreload { revision: *revision });
                 Handled
@@ -720,6 +724,9 @@ impl Window {
 /// How many pages a key may land at most: the `max_pages` of its operation in the `.dbl`.
 pub type MaxPages = Arc<dyn Fn(&WindowKey) -> u32 + Send + Sync>;
 
+/// Whether the `.dbl` declares `refresh: foreground` for the relation of a key.
+pub type OnForeground = Arc<dyn Fn(&WindowKey) -> bool + Send + Sync>;
+
 /// The state of the owner: the fields the machines read (`online`, `generation[m]`), the keys declared `preload` and the machines.
 pub struct WindowsState {
     epoch: Epoch,
@@ -732,6 +739,8 @@ pub struct WindowsState {
     next_attempt: u32,
     windows: BTreeMap<WindowKey, Window>,
     max_pages: MaxPages,
+    on_foreground: OnForeground,
+    foreground_seen: u64,
     peers: WindowsPeers,
 }
 
@@ -745,7 +754,7 @@ pub struct WindowsPeers {
 impl WindowsState {
     /// `online` is the value of the first addressed `Online`, `None` before it.
     pub fn new(epoch: Epoch, online: Option<bool>, peers: WindowsPeers) -> Self {
-        Self { epoch, online, generations: BTreeMap::new(), base_generation: 0, preload: Vec::new(), sources: BTreeSet::new(), next_request: 1, next_attempt: 1, windows: BTreeMap::new(), max_pages: Arc::new(|_| u32::MAX), peers }
+        Self { epoch, online, generations: BTreeMap::new(), base_generation: 0, preload: Vec::new(), sources: BTreeSet::new(), next_request: 1, next_attempt: 1, windows: BTreeMap::new(), max_pages: Arc::new(|_| u32::MAX), on_foreground: Arc::new(|_| false), foreground_seen: 0, peers }
     }
 
     /// Keys that `EpochStarted` loads with `Interest+(PRELOAD)`.
@@ -762,6 +771,11 @@ impl WindowsState {
 
     pub fn with_max_pages(mut self, max_pages: MaxPages) -> Self {
         self.max_pages = max_pages;
+        self
+    }
+
+    pub fn with_foreground(mut self, on_foreground: OnForeground) -> Self {
+        self.on_foreground = on_foreground;
         self
     }
 
@@ -881,6 +895,14 @@ impl StateOwner for Windows {
                     Self::on(state, &key, Ev::SourceChanged { revision }, &mut out);
                 }
             }
+            WindowsInput::Foreground(seq) if seq > state.foreground_seen => {
+                state.foreground_seen = seq;
+                let named: Vec<WindowKey> = state.windows.keys().filter(|key| (state.on_foreground)(key)).cloned().collect();
+                for key in named {
+                    Self::on(state, &key, Ev::Foreground, &mut out);
+                }
+            }
+            WindowsInput::Foreground(_) => {}
             WindowsInput::Online(Online(online)) => {
                 state.online = Some(online);
                 Self::every(state, &Ev::Online(online), &mut out);

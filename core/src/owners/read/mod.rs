@@ -17,8 +17,8 @@ pub use delivery_io::DeliveryIo;
 pub use feed_codec::SchemaFeedCodec;
 pub use feed_io::{FeedCodec, FeedIo};
 pub use ports::{Admit, Rest};
-pub use schema_io::{max_pages, preload_keys, preload_sources, Operations, SchemaWindowCodec};
-pub use snapshots::{SnapshotStatements, Snapshots, SqliteSnapshots};
+pub use schema_io::{max_pages, preload_keys, preload_sources, refreshes_on_foreground, Operations, SchemaWindowCodec};
+pub use snapshots::{DbSnapshots, SnapshotStatements, Snapshots, SqliteSnapshots};
 pub use window_io::{WindowCodec, WindowIo};
 
 #[cfg(test)]
@@ -31,7 +31,3 @@ mod feed_io_tests;
 mod rig;
 #[cfg(test)]
 mod window_io_tests;
-
-use super::lifecycle::Peer;
-
-pub const ABSENT: [Peer; 3] = [Peer::Windows, Peer::Feed, Peer::Deliveries];

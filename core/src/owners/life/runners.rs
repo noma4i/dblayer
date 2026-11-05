@@ -14,6 +14,9 @@ use crate::owners::calls::{CallError, Calls, CallsEffect, CallsInput};
 use crate::owners::contract::{Drained, Online};
 use crate::owners::lifecycle::{Lifecycle, LifecycleEffect, LifecycleInput, Peer};
 use crate::owners::network::{Network, NetworkEffect, NetworkInput};
+use crate::owners::read::deliveries::DeliveryInput;
+use crate::owners::read::feed::FeedInput;
+use crate::owners::read::windows::WindowsInput;
 use crate::owners::session::SessionInput;
 use crate::owners::store::{StoreEffect, StoreInput, StoreOp, StoreWriter};
 use crate::owners::write::outbox::OutboxInput;
@@ -46,6 +49,9 @@ impl EffectRunner<Lifecycle> for LifecycleRunner {
                 wiring.to_network(NetworkInput::EpochStarted);
                 let signed_in = identity.is_some();
                 let started = crate::owners::contract::EpochStarted { epoch, identity: identity.map(|identity| identity.into()), generation };
+                wiring.to_windows(WindowsInput::EpochStarted(started.clone()));
+                wiring.to_deliveries(DeliveryInput::EpochStarted(started.clone()));
+                wiring.to_feed(FeedInput::EpochStarted(started.clone()));
                 wiring.to_outbox(OutboxInput::EpochStarted(started.clone()));
                 wiring.to_transfer(TransferInput::EpochStarted(started));
                 if signed_in {
@@ -70,7 +76,11 @@ impl EffectRunner<Lifecycle> for LifecycleRunner {
             LifecycleEffect::ModelsReset { epoch, generation, models } => {
                 let models: Vec<String> = models.into_iter().collect();
                 self.leases.models_reset(generation, &models);
-                wiring.to_outbox(OutboxInput::ModelsReset(crate::owners::contract::ModelsReset { epoch, generation, models }));
+                let reset = crate::owners::contract::ModelsReset { epoch, generation, models };
+                wiring.to_windows(WindowsInput::ModelsReset(reset.clone()));
+                wiring.to_deliveries(DeliveryInput::ModelsReset(reset.clone()));
+                wiring.to_feed(FeedInput::ModelsReset(reset.clone()));
+                wiring.to_outbox(OutboxInput::ModelsReset(reset));
             }
             LifecycleEffect::Closing => {
                 wiring.release_held();
@@ -179,12 +189,16 @@ impl EffectRunner<Network> for NetworkRunner {
         match effect {
             NetworkEffect::Broadcast(online) => {
                 self.db.connectivity().change(online);
+                wiring.to_windows(WindowsInput::Online(Online(online)));
+                wiring.to_feed(FeedInput::Online(Online(online)));
                 wiring.to_outbox(OutboxInput::Online(Online(online)));
                 wiring.to_transfer(TransferInput::Online(Online(online)));
                 wiring.to_session(SessionInput::Online(Online(online)));
                 wiring.to_calls(CallsInput::Online(Online(online)));
             }
             NetworkEffect::EpochOnline(online) => {
+                wiring.to_windows(WindowsInput::Online(Online(online)));
+                wiring.to_feed(FeedInput::Online(Online(online)));
                 wiring.to_calls(CallsInput::Online(Online(online)));
                 wiring.to_outbox(OutboxInput::Online(Online(online)));
                 wiring.to_transfer(TransferInput::Online(Online(online)));
@@ -274,7 +288,7 @@ impl EffectRunner<Calls> for CallsRunner {
 
 /// One transaction per kind of ops: the tables `encrypted_*` through the store, the queue through the commit path of `Db`.
 fn write_batch(db: &Db, batch: &crate::owners::store::StoreBatch) -> Result<(), String> {
-    if !batch.rows.is_empty() {
+    if !batch.rows.is_empty() && !batch.ops.iter().any(|op| matches!(op, StoreOp::Window { .. })) {
         return Err("`rows` are written by the owners of Window and Feed: their executors extend `Write`".to_string());
     }
     let (encrypted, queue): (Vec<&StoreOp>, Vec<&StoreOp>) = batch.ops.iter().partition(|op| matches!(op, StoreOp::Pending { .. } | StoreOp::RemovePending | StoreOp::Session { .. }));

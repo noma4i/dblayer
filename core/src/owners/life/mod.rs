@@ -1,6 +1,7 @@
 //! Direction A install (`design.md` F1-F3): the owners Network, Lifecycle, Store and Calls on one `Runtime`, each with the executor of its effects.
 //! An executor does IO and returns the result as an input, it takes no transition. `Session` joins when its table gets `Mutate` and `GenerateCredential`.
 
+mod read;
 mod runners;
 pub(crate) mod session_runner;
 #[cfg(test)]
@@ -36,6 +37,10 @@ pub enum LifeReply {
     Mutated(AuthorOutcome),
     Outbox(OutboxAnswer),
     Transfer(TransferAnswer),
+    /// The outcome of a load that a platform call waited for in `Windows`.
+    Window(super::read::windows::WindowOutcome),
+    /// `Deliveries` closed the sink of a stream: the `cancel` of the platform returns.
+    Cancelled,
     Closed,
 }
 
@@ -56,6 +61,8 @@ pub struct Ports {
     pub session: Option<Arc<crate::transport::EncryptedClient>>,
     /// Transfer installs only with the session and this port.
     pub(crate) transfer: Option<TransferPort>,
+    /// The operations of the schema by name, for the requests of the windows.
+    pub read_operations: Option<super::read::Operations>,
 }
 
 #[derive(Clone, Copy)]
@@ -68,6 +75,9 @@ pub(crate) struct Addresses {
     /// Installed with the session: an operation needs the sequence of the session.
     pub outbox: Option<Address<Outbox>>,
     pub transfer: Option<Address<Transfers>>,
+    pub windows: Option<Address<super::read::windows::Windows>>,
+    pub deliveries: Option<Address<super::read::deliveries::Deliveries>>,
+    pub feed: Option<Address<super::read::feed::Feed>>,
 }
 
 #[derive(Default)]
@@ -81,6 +91,8 @@ pub(crate) struct Wiring {
     pub handle: Handle,
     pub addresses: OnceLock<Addresses>,
     pub outcomes: Outcomes<LifeReply>,
+    /// The answers of `Pull`: the registry of the platform calls that wait for the next value of a stream.
+    pub pulls: Outcomes<super::read::deliveries::PullAnswer>,
     published: PublishedCell,
     ending: AtomicBool,
     store_closed: (Mutex<bool>, Condvar),
@@ -107,6 +119,7 @@ impl Wiring {
             handle,
             addresses: OnceLock::new(),
             outcomes: Outcomes::new(),
+            pulls: Outcomes::new(),
             published: PublishedCell::default(),
             ending: AtomicBool::new(false),
             store_closed: (Mutex::new(false), Condvar::new()),
@@ -257,6 +270,18 @@ impl Wiring {
         if let Some(Addresses { outbox: Some(outbox), .. }) = self.addresses() { self.handle.post(outbox, EpochStamp::Control, input); }
     }
 
+    pub fn to_windows(&self, input: super::read::windows::WindowsInput) {
+        if let Some(Addresses { windows: Some(windows), .. }) = self.addresses() { self.handle.post(windows, EpochStamp::Control, input); }
+    }
+
+    pub fn to_deliveries(&self, input: super::read::deliveries::DeliveryInput) {
+        if let Some(Addresses { deliveries: Some(deliveries), .. }) = self.addresses() { self.handle.post(deliveries, EpochStamp::Control, input); }
+    }
+
+    pub fn to_feed(&self, input: super::read::feed::FeedInput) {
+        if let Some(Addresses { feed: Some(feed), .. }) = self.addresses() { self.handle.post(feed, EpochStamp::Control, input); }
+    }
+
     pub fn to_network(&self, input: NetworkInput) {
         if let Some(addresses) = self.addresses() { self.handle.post(addresses.network, EpochStamp::Control, input); }
     }
@@ -277,7 +302,7 @@ pub struct Life {
 
 /// Peers of `all owners` without an installed owner answer `Drained` at `Closing`.
 fn absent(session: bool, transfer: bool) -> Vec<Peer> {
-    let mut peers: Vec<Peer> = super::read::ABSENT.into_iter().collect();
+    let mut peers: Vec<Peer> = Vec::new();
     if !session {
         peers.push(Peer::Session);
         peers.push(Peer::Outbox);
@@ -346,7 +371,9 @@ impl Life {
             }
             _ => None,
         };
-        let _ = wiring.addresses.set(Addresses { lifecycle, store, network, calls, session: session_address.as_ref().map(|(address, _)| *address), outbox, transfer });
+        let last = [Some(calls.index()), session_address.as_ref().map(|(address, _)| address.index()), outbox.map(|address| address.index()), transfer.map(|address| address.index())].into_iter().flatten().max().unwrap_or(0);
+        let read = read::add(&mut builder, &wiring, &ports, store, last + 1);
+        let _ = wiring.addresses.set(Addresses { lifecycle, store, network, calls, session: session_address.as_ref().map(|(address, _)| *address), outbox, transfer, windows: None, deliveries: None, feed: None }.with_read(&read));
         let runtime = builder.start().map_err(|error| LifeError::Storage(error.to_string()))?;
         if let Some((_, restored)) = session_address {
             wiring.to_session(SessionInput::Open { credential: restored.credential, pending: restored.pending });

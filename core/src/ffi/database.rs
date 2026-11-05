@@ -20,7 +20,6 @@ use super::wire::{WireModel, WireRow};
 use super::{DbError, LoadMoreResult, OnlineSink, Transport};
 use crate::owners::life::LifeReply;
 
-type ParsedQuery = (Query, Option<(String, Map<String, Value>)>);
 
 pub(super) fn executor_enter() -> Result<tokio::runtime::EnterGuard<'static>, DbError> { Ok(executor()?.enter()) }
 
@@ -310,10 +309,16 @@ impl Database {
     /// F1: the owners of direction A on the threads of the core, started from the booted `Db`. It returns after the first `Publish`.
     fn build_life(db: &Db, transport: Option<Arc<dyn core::Transport>>, session: &Option<Arc<EncryptedClient>>, lookup: Arc<OnceLock<crate::sync::WeakSync>>) -> Result<Arc<crate::owners::life::Life>, DbError> {
         let executor = executor()?.handle().clone();
+        let read_lookup = lookup.clone();
         let operations: crate::owners::life::OperationLookup = Arc::new(move |name| {
             let sync = lookup.get()?.upgrade()?;
             let definition = crate::db::locked(&sync.inner.operations).get(name).cloned()?;
             Some((definition.document.clone(), definition.root_path.clone()))
+        });
+        let read_operations: crate::owners::read::Operations = Arc::new(move |name| {
+            let sync = read_lookup.get()?.upgrade()?;
+            let definition = crate::db::locked(&sync.inner.operations).get(name).cloned();
+            definition
         });
         let ports = crate::owners::life::Ports {
             db: db.clone(),
@@ -323,6 +328,7 @@ impl Database {
             credentials: session.as_ref().map(|client| client.credential_slot()),
             session: session.clone(),
             transfer: None,
+            read_operations: Some(read_operations),
         };
         let _entered = executor_enter()?;
         let life = Arc::new(crate::owners::life::Life::start(ports, Duration::from_secs(30)).map_err(|error| DbError::Database { detail: format!("the owners did not start: {error:?}") })?);
@@ -708,21 +714,9 @@ impl Database {
         Ok(if declared { crate::ffi::legacy::Origin::Session } else { crate::ffi::legacy::Origin::Explicit })
     }
 
-    pub(super) fn parsed_query(&self, json: &str) -> Result<ParsedQuery, DbError> {
-        let description: Value = serde_json::from_str(json)?;
-        let mut query: Query = serde_json::from_value(description.clone())?;
-        let remote = description["relation"].as_str().map(|name| -> Result<_, DbError> {
-            let params: Map<String, Value> = description.get("params").map(|value| serde_json::from_value(value.clone())).transpose()?.unwrap_or_default();
-            let relation_query = self.db.remote_relation_query(query.model.as_str(), name, &params).map_err(|error| DbError::Invalid { detail: error.to_string() })?;
-            let watch = relation_query.is_some() || self.db.spec(query.model.as_str())?.relations.iter().any(|relation| relation.name == name && !relation.updates.is_empty());
-            if let Some(relation_query) = relation_query {
-                query.scope = relation_query.scope;
-                query.stable = relation_query.stable;
-                if query.order.is_empty() { query.order = relation_query.order; }
-            }
-            Ok(watch.then_some((name.to_string(), params)))
-        }).transpose()?.flatten();
-        Ok((query, remote))
+    pub(super) fn parsed_query(&self, json: &str) -> Result<crate::db::ParsedQuery, DbError> {
+        serde_json::from_str::<Query>(json)?;
+        Ok(self.db.parse_query(json)?)
     }
 }
 

@@ -353,17 +353,18 @@ impl Db {
 pub(crate) struct CommitNotice {
     pub revision: i64,
     pub tables: Vec<String>,
+    pub models: Vec<String>,
     pub all: bool,
 }
 
 impl CommitNotice {
     fn of_commit(result: &CommitResult) -> Self {
         let models: std::collections::BTreeSet<&str> = result.rows.iter().map(|change| change.row.model.as_str()).chain(result.scopes.iter().map(|scope| scope.model.as_str())).chain(result.members.iter().map(|row| row.model.as_str())).collect();
-        Self { revision: result.revision.unwrap_or_default(), tables: models.into_iter().map(table_name).collect(), all: false }
+        Self { revision: result.revision.unwrap_or_default(), tables: models.iter().map(|model| table_name(model)).collect(), models: models.into_iter().map(str::to_string).collect(), all: false }
     }
 
     fn of_reset(revision: i64, models: Option<&[String]>) -> Self {
-        Self { revision, tables: models.into_iter().flatten().map(|model| table_name(model)).collect(), all: models.is_none() }
+        Self { revision, tables: models.into_iter().flatten().map(|model| table_name(model)).collect(), models: models.map(<[String]>::to_vec).unwrap_or_default(), all: models.is_none() }
     }
 }
 

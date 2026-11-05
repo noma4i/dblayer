@@ -73,6 +73,7 @@ pub(super) enum Input {
     Committed { request: u64, revision: i64 },
     Rejected { request: u64, reason: Reject },
     Stale { in_keys: bool },
+    Foreground { seq: u64 },
     SourceChanged { revision: i64 },
     Online(bool),
     EpochEnded,
@@ -118,6 +119,7 @@ pub(super) struct Window {
     pub(super) replace_all: bool,
     pub(super) has_rows: bool,
     pub(super) landed_revision: i64,
+    pub(super) foreground_seen: u64,
     pub(super) phase: Phase,
     pub(super) outcomes: Vec<(u32, Result3)>,
     next_request: u64,
@@ -142,6 +144,7 @@ impl Window {
             replace_all: false,
             has_rows: false,
             landed_revision: 0,
+            foreground_seen: 0,
             phase: Phase::Idle,
             outcomes: Vec::new(),
             next_request: 1,
@@ -230,6 +233,12 @@ impl Window {
             Input::Closing => return self.end(true),
             Input::SourceChanged { revision } => return vec![Effect::DerivePreload { revision }],
             Input::Online(online) => self.online = Some(online),
+            Input::Foreground { seq } => {
+                if seq <= self.foreground_seen {
+                    return Vec::new();
+                }
+                self.foreground_seen = seq;
+            }
             _ => {}
         }
         match self.state {
@@ -274,6 +283,7 @@ impl Window {
                     Vec::new()
                 }
             }
+            Input::Foreground { .. } if !self.interest.is_empty() && self.is_online() => self.begin(1, false, true),
             Input::Online(true) if !self.fresh && self.watched() => self.begin(1, false, true),
             Input::ModelsReset { own_model: true } => {
                 self.fresh = false;

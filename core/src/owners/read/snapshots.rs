@@ -60,3 +60,28 @@ impl Snapshots for SqliteSnapshots {
         result
     }
 }
+
+/// Reads of the snapshot through `Db`: the query of the view runs in the read pool, the rows of the answer are ids with their stamps.
+pub struct DbSnapshots {
+    db: crate::db::Db,
+}
+
+impl DbSnapshots {
+    pub fn new(db: crate::db::Db) -> Self { Self { db } }
+}
+
+impl Snapshots for DbSnapshots {
+    fn read(&self, view: &View, revision: i64) -> Result<(i64, ReadData), String> {
+        let (query, count) = match view.kind {
+            Kind::List => (self.db.parse_query(&view.subject).map_err(|error| error.to_string())?.0, false),
+            Kind::Count => (self.db.parse_query(&view.subject).map_err(|error| error.to_string())?.0, true),
+            Kind::Entity { .. } => (crate::query::Query::new(&view.model).filtered(crate::query::Where::equal("id", serde_json::json!(view.subject))), false),
+            Kind::Events | Kind::Blob | Kind::RetryStatus => return Err("a stream of this kind reads no rows".to_string()),
+        };
+        let (seen, read) = self.db.read_view(&query, count, revision).map_err(|error| error.to_string())?;
+        Ok((seen, match read {
+            crate::db::ViewRead::Count(count) => ReadData::Count(u64::try_from(count).unwrap_or(0)),
+            crate::db::ViewRead::Rows(keys) => ReadData::Rows { rows: keys.into_iter().map(|(id, stamp)| StreamRow { id, stamp, row: None }).collect(), replaced: Vec::new() },
+        }))
+    }
+}

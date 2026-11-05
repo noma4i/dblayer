@@ -29,6 +29,7 @@ fn ports(db: Db, transport: Arc<MockTransport>) -> Ports {
         credentials: None,
         session: None,
         transfer: None,
+        read_operations: None,
     }
 }
 
@@ -90,7 +91,7 @@ async fn close_stops_every_owner_thread_of_the_database() {
     let transport = Arc::new(MockTransport::new());
     let db = open(&path);
     let life = Arc::new(start(&db, &transport).await);
-    assert_eq!(life.owners_alive(), 4, "lifecycle, store, network and calls run");
+    assert_eq!(life.owners_alive(), 7, "lifecycle, store, network, calls, windows, deliveries and feed run");
     closed(&life).await;
     let stopping = life.clone();
     tokio::task::spawn_blocking(move || stopping.shutdown()).await.unwrap();

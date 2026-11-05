@@ -116,7 +116,7 @@ impl Twin {
     fn build(online: Option<bool>, max: u32, preload: Vec<WindowKey>, sources: Vec<WindowKey>) -> Self {
         let mut det = DetScheduler::new(3);
         let log = new_log();
-        let state = w::WindowsState::new(EPOCH, online, peers()).with_preload(preload).with_sources(sources).with_max_pages(Arc::new(move |_| max));
+        let state = w::WindowsState::new(EPOCH, online, peers()).with_preload(preload).with_sources(sources).with_max_pages(Arc::new(move |_| max)).with_foreground(Arc::new(|_| true));
         let addr = add_windows(&mut det, &log, state, Discard);
         det.start_epoch(EPOCH);
         let mut reference = if online.is_some() { Window::new() } else { Window::before_online() };
@@ -188,6 +188,7 @@ impl Twin {
                 let keys = if *in_keys { StaleKeys::All } else { StaleKeys::Set(BTreeSet::new()) };
                 self.post(w::WindowsInput::Stale { model: "Moment".into(), keys });
             }
+            Input::Foreground { seq } => self.post(w::WindowsInput::Foreground(*seq)),
             Input::SourceChanged { revision } => self.post(w::WindowsInput::StoreCommitted { models: vec!["Moment".into()], revision: *revision }),
             Input::Online(on) => self.post(w::WindowsInput::Online(Online(*on))),
             Input::EpochEnded => {
@@ -578,6 +579,41 @@ fn win_idle_stale_other_key() {
     assert!(twin.step(Input::Stale { in_keys: false }).is_empty());
     assert_eq!(twin.stage(), Some(WindowStage::Idle));
     assert!(twin.reference.fresh);
+}
+
+/// win_foreground_reload (INV-API-07): a window with a reader that is idle and online loads its first page again at every return to the front.
+#[test]
+fn win_foreground_reload() {
+    let mut twin = Twin::new();
+    twin.step(Input::InterestPlus { id: 1 });
+    twin.step(Input::Response { request: 1, attempt: 1, cursor: None, rows: true });
+    twin.step(Input::Committed { request: 1, revision: 5 });
+    assert_eq!(twin.step(Input::Foreground { seq: 1 }), [Effect::Request { request: 2, attempt: 2, page: 1 }, Effect::WindowState]);
+}
+
+/// win_foreground_other: no reader, the same sequence number, a window that is not idle and no network give no request.
+#[test]
+fn win_foreground_other() {
+    let mut unread = Twin::new();
+    unread.step(Input::Load { id: 1, goal: Goal::First, force: false });
+    unread.step(Input::Response { request: 1, attempt: 1, cursor: None, rows: true });
+    unread.step(Input::Committed { request: 1, revision: 5 });
+    assert!(unread.step(Input::Foreground { seq: 1 }).is_empty(), "a waiter is no reader");
+    let mut again = Twin::new();
+    again.step(Input::InterestPlus { id: 1 });
+    again.step(Input::Response { request: 1, attempt: 1, cursor: None, rows: true });
+    again.step(Input::Committed { request: 1, revision: 5 });
+    again.step(Input::Foreground { seq: 1 });
+    assert!(again.step(Input::Foreground { seq: 1 }).is_empty(), "the same return counts once");
+    let mut loading = Twin::new();
+    loading.step(Input::InterestPlus { id: 1 });
+    assert!(loading.step(Input::Foreground { seq: 1 }).is_empty(), "a window that loads already is not idle");
+    let mut offline = Twin::new();
+    offline.step(Input::InterestPlus { id: 1 });
+    offline.step(Input::Response { request: 1, attempt: 1, cursor: None, rows: true });
+    offline.step(Input::Committed { request: 1, revision: 5 });
+    offline.step(Input::Online(false));
+    assert!(offline.step(Input::Foreground { seq: 1 }).is_empty(), "no network, no request");
 }
 
 #[test]
