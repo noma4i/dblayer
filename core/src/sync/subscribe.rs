@@ -18,8 +18,7 @@ use crate::transport::{
 use crate::value::read_id;
 
 use super::error::SyncError;
-use super::extract::root_value;
-use super::normalize::normalize_nodes;
+use crate::owners::read::codec::{nested_input, normalize_nodes, root_value};
 use super::model_event::Heard;
 use super::{locked, Inner, Sync};
 
@@ -348,7 +347,7 @@ impl Feed {
         if !terminal {
             let spec = self.inner.db.spec(model)?;
             let mut related = Vec::new();
-            let input = super::normalize::nested_input(&self.inner.db, model, &node, &mut related)?;
+            let input = nested_input(&self.inner.db, model, &node, &mut related)?;
             validate_payload(&spec.fields, &input)?;
         }
         let definition = Arc::new(SubscriptionDef { model: model.to_string(), effect: if terminal { EventEffect::Destroy } else { EventEffect::Upsert }, ..(*self.def).clone() });

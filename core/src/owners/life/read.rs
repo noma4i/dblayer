@@ -78,7 +78,7 @@ pub(super) fn add(builder: &mut RuntimeBuilder, wiring: &Arc<Wiring>, ports: &Po
             }
             WindowsEffect::Window { effect: WindowEffect::DerivePreload { .. }, .. } => {
                 let (db, handle, wiring) = (derive_db.clone(), derive_handle.clone(), windows_wiring.clone());
-                derive_executor.spawn_blocking(move || match preload_keys(&db, true) {
+                crate::task::spawn_blocking_on(crate::task::Carry::Detached, &derive_executor, move || match preload_keys(&db, true) {
                     Ok(keys) => handle.post(windows_at, EpochStamp::Control, WindowsInput::PreloadKeys { keys }),
                     Err(error) => wiring.fault(format!("the derived preload is invalid: {error}")),
                 });

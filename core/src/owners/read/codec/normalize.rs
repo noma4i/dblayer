@@ -8,7 +8,7 @@ use crate::read::EDGE_KEY;
 use crate::schema::AssociationKind;
 use crate::value::read_id;
 
-use super::error::SyncError;
+use super::CodecError;
 
 #[derive(Debug, Clone, PartialEq, Default)]
 pub(crate) struct Normalized {
@@ -41,8 +41,8 @@ impl Normalized {
     }
 }
 
-pub(crate) fn normalize_nodes(db: &Db, model: &str, nodes: &[Map<String, Value>]) -> Result<Normalized, SyncError> {
-    db.spec(model).map_err(|_| SyncError::UnknownModel(model.to_string()))?;
+pub(crate) fn normalize_nodes(db: &Db, model: &str, nodes: &[Map<String, Value>]) -> Result<Normalized, CodecError> {
+    db.spec(model).map_err(|_| CodecError::UnknownModel(model.to_string()))?;
     let mut related = Related::new();
     let mut normalized = Normalized::default();
     for node in nodes {
@@ -62,8 +62,8 @@ pub(crate) fn normalize_nodes(db: &Db, model: &str, nodes: &[Map<String, Value>]
     Ok(normalized)
 }
 
-pub(crate) fn nested_input(db: &Db, model: &str, node: &Map<String, Value>, related: &mut Related) -> Result<Map<String, Value>, SyncError> {
-    let spec = db.spec(model).map_err(|_| SyncError::UnknownModel(model.to_string()))?;
+pub(crate) fn nested_input(db: &Db, model: &str, node: &Map<String, Value>, related: &mut Related) -> Result<Map<String, Value>, CodecError> {
+    let spec = db.spec(model).map_err(|_| CodecError::UnknownModel(model.to_string()))?;
     let parent_id = node.get("id").and_then(read_id);
     let mut input = node.clone();
     for association in &spec.associations {
@@ -143,9 +143,9 @@ fn connection_items(value: &Value) -> Vec<&Value> {
     vec![value]
 }
 
-pub(crate) fn normalize_node(db: &Db, model: &str, node: &Map<String, Value>, related: &mut Related) -> Result<Option<Map<String, Value>>, SyncError> {
+pub(crate) fn normalize_node(db: &Db, model: &str, node: &Map<String, Value>, related: &mut Related) -> Result<Option<Map<String, Value>>, CodecError> {
     let input = nested_input(db, model, node, related)?;
-    let mut patch = db.spec(model).map_err(|_| SyncError::UnknownModel(model.to_string()))?.patch(&input);
+    let mut patch = db.spec(model).map_err(|_| CodecError::UnknownModel(model.to_string()))?.patch(&input);
     db.shared.store.decode_values(model, &mut patch, crate::schema::read_path)?;
     Ok(patch.get("id").and_then(read_id).is_some().then_some(patch))
 }

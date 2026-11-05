@@ -1,4 +1,4 @@
-use super::error::SyncError;
+use super::CodecError;
 use super::extract::*;
 use crate::schema::RemoteShape;
 use crate::store::PageInfo;
@@ -34,9 +34,9 @@ fn list_returns_object_items_only() {
 #[test]
 fn list_without_array_is_malformed() {
     let result = extract(&json!({"items": 5}), "items", &RemoteShape::List { coverage: Coverage::Complete }, None);
-    assert!(matches!(result, Err(SyncError::Malformed(_))));
+    assert!(matches!(result, Err(CodecError::Malformed(_))));
     let missing = extract(&json!({}), "items", &RemoteShape::List { coverage: Coverage::Complete }, None);
-    assert!(matches!(missing, Err(SyncError::Malformed(_))));
+    assert!(matches!(missing, Err(CodecError::Malformed(_))));
 }
 
 #[test]
@@ -50,9 +50,9 @@ fn connection_reads_edges_and_page_info() {
 #[test]
 fn connection_without_page_info_or_cursor_is_malformed() {
     let no_info = json!({"feed": {"nodes": [{"id": "a"}]}});
-    assert!(matches!(extract(&no_info, "feed", &connection(), None), Err(SyncError::Malformed(_))));
+    assert!(matches!(extract(&no_info, "feed", &connection(), None), Err(CodecError::Malformed(_))));
     let no_cursor = json!({"feed": {"nodes": [], "pageInfo": {"hasNextPage": true}}});
-    assert!(matches!(extract(&no_cursor, "feed", &connection(), None), Err(SyncError::Malformed(_))));
+    assert!(matches!(extract(&no_cursor, "feed", &connection(), None), Err(CodecError::Malformed(_))));
 }
 
 #[test]

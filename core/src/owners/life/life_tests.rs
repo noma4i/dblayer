@@ -201,3 +201,43 @@ async fn life_reset_models_raises_the_generation() {
     assert_eq!(life.published().generation, 1, "a failed clearing keeps the generation");
     closed(&life).await;
 }
+
+fn paged_spec() -> ModelSpec {
+    let mut spec = ModelSpec::new("moments", vec![FieldSpec::scalar("id", ScalarKind::Id), FieldSpec::scalar("userId", ScalarKind::Id).nullable().indexed(), FieldSpec::scalar("text", ScalarKind::Str).optional()]);
+    let mut mine = crate::schema::RelationSpec::new("mine", &["userId"]);
+    mine.remote = Some(crate::schema::RemoteSpec {
+        shape: crate::schema::RemoteShape::Connection { direction: crate::schema::PageDirection::Forward, coverage: crate::schema::Coverage::Page, max_pages: None, cursor: None },
+        operation: "Mine".into(),
+        stale_time: "1.minute".into(),
+        empty_stale_time: None,
+        selects_page_info: true,
+        page_size: None,
+        variables: Default::default(),
+        root: None,
+        total_from: None,
+    });
+    spec.relations.push(mine);
+    spec
+}
+
+/// win_loading_response, win_landing_committed (P-WIN-02): the answer of the server goes through Windows, the real Store executor and the Write of `Db`; the caller hears `Loaded` and the rows are in the database.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_loaded_page_lands_through_the_store_and_the_caller_hears_loaded() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("db.sqlite");
+    let transport = Arc::new(MockTransport::new());
+    let db = Db::open_with(Some(&path), vec![paged_spec()], None, DbConfig::default()).unwrap();
+    session_row(&db);
+    transport.enqueue("Mine", MockReply::data(json!({"mine": {"edges": [{"node": {"id": "m1", "userId": "u1", "text": "one"}}, {"node": {"id": "m2", "userId": "u1", "text": "two"}}], "pageInfo": {"hasNextPage": false, "endCursor": null}}})));
+    let mut setup = ports(db.clone(), transport.clone());
+    setup.read_operations = Some(Arc::new(|name| (name == "Mine").then(|| Arc::new(crate::sync::OperationDef::new("Mine", "query Mine { mine { edges { node { id userId text } } pageInfo { hasNextPage endCursor } } }", "mine")))));
+    let life = tokio::task::spawn_blocking(move || Life::start(setup, LIMIT).expect("the first publish comes")).await.unwrap();
+    assert_eq!(answer(life.set_online(true)).await, Reply::Online { closed: false });
+    let key = crate::owners::read::windows::WindowKey::relation("moments", "mine", json!({"userId": "u1"}).as_object().unwrap());
+    let (waiter, _) = life.load(key, crate::owners::read::windows::Goal::First, false, 0);
+    let reply = answer(waiter).await;
+    assert!(matches!(reply, Reply::Window(crate::owners::read::windows::WindowOutcome::Loaded { .. })), "the load ends as loaded: {reply:?} {:?}", life.faults());
+    let stored: Vec<_> = ["m1", "m2"].iter().map(|id| db.find("moments", &crate::identity::RowId::new(id).unwrap()).unwrap().map(|row| row.text("text").map(str::to_string))).collect();
+    assert_eq!(stored, [Some(Some("one".to_string())), Some(Some("two".to_string()))]);
+    closed(&life).await;
+}

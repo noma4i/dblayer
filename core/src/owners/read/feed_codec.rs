@@ -14,7 +14,7 @@ use super::windows::WindowKey;
 use crate::db::Db;
 use crate::identity::RowId;
 use crate::schema::{ChangeRead, ModelSpec, NodeRead, SubscriptionAction, UpdatesSpec, NODE_PARAM};
-use crate::sync::{normalize_nodes, root_value};
+use super::codec::{normalize_nodes, root_value};
 use crate::transport::{GraphQLRequest, Response};
 use crate::value::read_id;
 

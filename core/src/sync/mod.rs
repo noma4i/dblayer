@@ -5,7 +5,6 @@ pub(crate) type FailureProbe = Box<dyn Fn(bool) + Send>;
 #[cfg(test)]
 mod dsl_tests;
 mod error;
-mod extract;
 mod freshness;
 mod invalidate;
 pub(crate) use invalidate::{WindowEvent, WindowMark};
@@ -36,7 +35,6 @@ mod media;
 #[cfg(test)]
 mod media_tests;
 mod node;
-mod normalize;
 mod online;
 mod preload;
 #[cfg(test)]
@@ -55,17 +53,11 @@ mod run;
 mod send;
 mod subscribe;
 mod upload;
-mod variables;
 
 pub use entity_fetch::{EntityFetch, RefreshError, RefreshSink};
 pub use error::SyncError;
 pub use load::{DiscardReason, LoadOptions, LoadOutcome, LoadStatus};
 pub use registry::{OperationDef, DEFAULT_PAGE_SIZE};
-pub(crate) use extract::{extract, root_value};
-pub(crate) use load::stamp_scope_values;
-pub(crate) use normalize::{normalize_nodes, Normalized};
-pub(crate) use preload::limited_combinations;
-pub(crate) use variables::load_variables;
 pub use load_machine::{LoadError, LoadPhase, RelationState};
 pub use load_owner::RelationWatch;
 pub(crate) use preload::FirstScreenHold;
@@ -459,8 +451,6 @@ pub mod stress;
 mod edge_tests;
 
 #[cfg(test)]
-mod extract_tests;
-#[cfg(test)]
 mod freshness_tests;
 #[cfg(test)]
 mod invariants;
@@ -503,8 +493,6 @@ mod opponent_null_tests;
 #[cfg(test)]
 mod null_object_tests;
 #[cfg(test)]
-mod normalize_tests;
-#[cfg(test)]
 mod resume_tests;
 #[cfg(test)]
 mod run_tests;
@@ -518,8 +506,6 @@ mod subscribe_tests;
 mod model_event_tests;
 #[cfg(test)]
 mod subscribe_clock_tests;
-#[cfg(test)]
-mod variables_tests;
 #[cfg(test)]
 mod response_paths_tests;
 #[cfg(test)]

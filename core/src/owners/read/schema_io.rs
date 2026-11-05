@@ -13,7 +13,8 @@ use crate::identity::RowId;
 use crate::owners::store::RowValue;
 use crate::read::EDGE_KEY;
 use crate::schema::{Coverage, NodeRead, PreloadChoice, RemoteShape};
-use crate::sync::{extract, limited_combinations, load_variables, normalize_nodes, stamp_scope_values, OperationDef};
+use super::codec::{extract, limited_combinations, load_variables, normalize_nodes, stamp_scope_values, Normalized};
+use crate::sync::OperationDef;
 use crate::transport::{GraphQLRequest, Response, ResponseOutcome};
 use crate::value::read_id;
 
@@ -38,7 +39,7 @@ impl SchemaWindowCodec {
 
 fn row_value(row: &Map<String, Value>) -> Option<(RowId, Map<String, Value>)> { Some((row.get("id").and_then(read_id)?, row.clone())) }
 
-fn page_rows(normalized: crate::sync::Normalized, total: Option<i64>) -> (Vec<String>, PageRows) {
+fn page_rows(normalized: Normalized, total: Option<i64>) -> (Vec<String>, PageRows) {
     let mut ids = Vec::with_capacity(normalized.roots.len());
     let mut roots = Vec::with_capacity(normalized.roots.len());
     for root in &normalized.roots {

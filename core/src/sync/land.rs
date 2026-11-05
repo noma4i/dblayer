@@ -14,7 +14,7 @@ use crate::value::{fractional_between, read_id};
 
 use super::error::SyncError;
 use super::load::DiscardReason;
-use super::normalize::Normalized;
+use crate::owners::read::codec::Normalized;
 use super::{locked, Inner};
 
 impl Inner {

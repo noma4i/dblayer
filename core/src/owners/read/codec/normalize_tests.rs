@@ -1,4 +1,4 @@
-use super::error::SyncError;
+use super::CodecError;
 use super::normalize::*;
 use serde_json::{Map, Value};
 use crate::sync::rig::{rig, Rig};
@@ -87,7 +87,7 @@ fn inv_merge_06_invalid_author_is_skipped_but_moment_stays() {
 #[test]
 fn unknown_model_is_an_error() {
     let Rig { db, .. } = rig();
-    assert_eq!(normalize_nodes(&db, "ghosts", &[]), Err(SyncError::UnknownModel("ghosts".to_string())));
+    assert_eq!(normalize_nodes(&db, "ghosts", &[]), Err(CodecError::UnknownModel("ghosts".to_string())));
 }
 
 fn nesting_db() -> crate::db::Db {

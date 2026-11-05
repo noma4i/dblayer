@@ -19,8 +19,7 @@ use crate::transport::{GraphQLRequest, Response, ResponseOutcome, RetryClass, Tr
 use crate::value::read_id;
 
 use super::super::error::SyncError;
-use super::super::extract::{extract, root_value};
-use super::super::normalize::{normalize_nodes, Normalized};
+use crate::owners::read::codec::{extract, normalize_nodes, root_value, Normalized};
 use super::super::registry::OperationDef;
 use super::super::{locked, Inner};
 use super::report::{FlushReport, SendResult, SentOperation, SkipReason};

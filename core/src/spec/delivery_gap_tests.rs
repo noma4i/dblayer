@@ -1386,3 +1386,29 @@ fn dlv_epoch_started_unknown_cause() {
     rig.det.run_until_quiet(100).expect("quiet");
     assert_eq!(inner(&rig.det, rig.deliveries).stage(STREAM), Some(d::DeliveryStage::Opening), "the stream of epoch 1 is not touched by the end of epoch 2");
 }
+
+/// dlv_cancelling_other: a `Pull` after `Cancel` waits for `Ended` and does not hand out the value that was unread when the reader cancelled.
+#[test]
+fn dlv_cancelling_drops_the_unread_values() {
+    let mut twin = open_rows();
+    twin.step(Input::ReadDone { revision: 1, rows: rows(&["r1"]) });
+    twin.step(Input::Cancel { reply: 1 });
+    assert!(twin.step(Input::Pull).is_empty(), "the unread snapshot is gone: the pull waits");
+    assert_eq!(twin.step(Input::SinkClosed), [Effect::Cancelled(1), Effect::Answer(Pulled::Value(Val::Ended(Cause::Cancelled)))]);
+}
+
+/// P-DLV-06 (win_loading_error): the first load of a window fails while the snapshot holds cached rows: the stream shows `Loaded` with the error, `Failed` only without rows.
+#[test]
+fn dlv_failed_window_with_cached_rows_shows_loaded_with_the_error() {
+    let mut twin = open_rows();
+    twin.step(Input::ReadDone { revision: 1, rows: rows(&["r1"]) });
+    twin.read_all();
+    let failed = Ws { phase: Phase::Failed, error: true, loaded: None };
+    let (_, values) = twin.step_read(Input::WindowState(failed.clone()));
+    assert_eq!(values, [Val::State { revision: 1, state: Ws { phase: Phase::Loaded, error: true, loaded: None } }]);
+    let mut empty = open_rows();
+    empty.step(Input::ReadDone { revision: 1, rows: Vec::new() });
+    empty.read_all();
+    let (_, values) = empty.step_read(Input::WindowState(failed.clone()));
+    assert_eq!(values, [Val::State { revision: 1, state: failed }], "no rows: the failure stays");
+}

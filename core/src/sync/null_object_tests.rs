@@ -1,6 +1,6 @@
 use serde_json::{json, Map, Value};
 
-use super::normalize::normalize_nodes;
+use crate::owners::read::codec::normalize_nodes;
 use crate::db::Db;
 use crate::schema::{AssociationKind, AssociationSpec, FieldSpec, ModelSpec};
 use crate::sync::rig::specs;

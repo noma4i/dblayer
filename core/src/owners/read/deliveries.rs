@@ -345,7 +345,26 @@ impl Delivery {
         self.acked_rows = self.rows.clone();
     }
 
+    /// `Failed` only without rows, an error with rows is `Loaded` with the error: the rows of the snapshot decide, not the window.
+    fn shown(&self, mut state: WindowState) -> WindowState {
+        if state.error.is_some() && matches!(state.phase, WindowPhase::Loaded | WindowPhase::Failed) {
+            let has_rows = if self.view.kind == Kind::Count { self.count.is_some_and(|count| count > 0) } else { !self.rows.is_empty() };
+            state.phase = if has_rows { WindowPhase::Loaded } else { WindowPhase::Failed };
+        }
+        state
+    }
+
     fn push(&mut self, value: Value, fx: &mut Vec<Emit>) {
+        let value = match value {
+            Value::Snapshot { revision, rows, state } => Value::Snapshot { revision, rows, state: self.shown(state) },
+            Value::Count { revision, count, state } => Value::Count { revision, count, state: self.shown(state) },
+            Value::State { revision, state } => Value::State { revision, state: self.shown(state) },
+            Value::Delta(mut delta) => {
+                delta.state = self.shown(delta.state);
+                Value::Delta(delta)
+            }
+            other => other,
+        };
         let was_empty = self.journal.is_empty();
         match &value {
             Value::Snapshot { .. } | Value::Count { .. } => self.journal.retain(|kept| !matches!(kept, Value::Delta(_) | Value::Snapshot { .. } | Value::Count { .. } | Value::State { .. })),
@@ -681,6 +700,7 @@ impl Delivery {
                 fx.extend(self.leave());
                 self.stage = DeliveryStage::Cancelling;
                 self.cause = EndCause::Cancelled;
+                self.journal.clear();
                 self.replies.push(reply);
                 fx.push(Emit::Run(StreamEffect::CloseSink));
             }
@@ -696,6 +716,7 @@ impl Delivery {
                 fx.extend(self.leave());
                 self.stage = DeliveryStage::Cancelling;
                 self.cause = EndCause::Cancelled;
+                self.journal.clear();
                 self.released = true;
                 fx.push(Emit::Run(StreamEffect::CloseSink));
             }

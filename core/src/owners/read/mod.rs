@@ -1,6 +1,7 @@
 //! Direction B: the owners `Windows`, `Feed`, `Deliveries` and the runners of their effects (`design.md` F3).
 //! A runner does IO and answers with an input of its owner. It decides no transition.
 
+pub(crate) mod codec;
 pub mod deliveries;
 pub mod feed;
 pub mod windows;

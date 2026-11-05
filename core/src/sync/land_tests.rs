@@ -1,6 +1,6 @@
 use super::land::{Landed, Landing};
 use super::load::DiscardReason;
-use super::normalize::Normalized;
+use crate::owners::read::codec::Normalized;
 use super::rig::*;
 use crate::commit::ScopeRef;
 use crate::identity::ModelKey;

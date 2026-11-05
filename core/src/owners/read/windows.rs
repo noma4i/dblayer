@@ -28,9 +28,9 @@ impl WindowKey {
     const NODES: &'static str = "nodes:";
 
     /// The key `(model, node, ids)`: the order of `ids` is the order of the call.
-    pub fn nodes(model: &str, ids: &[&str]) -> Self { Self { model: model.into(), name: format!("{}{}", Self::NODES, ids.join(",")) } }
+    pub fn nodes(model: &str, ids: &[&str]) -> Self { Self { model: model.into(), name: format!("{}{}", Self::NODES, serde_json::to_string(ids).unwrap_or_default()) } }
 
-    fn is_empty_nodes(&self) -> bool { self.name == Self::NODES }
+    fn is_empty_nodes(&self) -> bool { matches!(self.kind(), WindowKind::Nodes { ids } if ids.is_empty()) }
 
     /// The key `(model, relation, params)`: `params` in the canonical form, keys in alphabetical order.
     pub fn relation(model: &str, relation: &str, params: &serde_json::Map<String, serde_json::Value>) -> Self {
@@ -40,7 +40,7 @@ impl WindowKey {
 
     pub fn kind(&self) -> WindowKind {
         if let Some(ids) = self.name.strip_prefix(Self::NODES) {
-            return WindowKind::Nodes { ids: ids.split(',').filter(|id| !id.is_empty()).map(str::to_string).collect() };
+            return WindowKind::Nodes { ids: serde_json::from_str(ids).unwrap_or_default() };
         }
         let (relation, params) = self.name.split_once('|').unwrap_or((self.name.as_str(), "{}"));
         let params = serde_json::from_str(params).unwrap_or_default();
@@ -222,6 +222,17 @@ impl Ctx<'_> {
     }
 }
 
+/// The generations of the models at the moment a request left.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct GenerationsAtIssue {
+    base: u64,
+    generations: BTreeMap<String, u64>,
+}
+
+impl GenerationsAtIssue {
+    fn of(&self, model: &str) -> u64 { self.generations.get(model).copied().unwrap_or(self.base) }
+}
+
 /// The values every state of the machine shares.
 struct Facts {
     epoch: Epoch,
@@ -279,7 +290,8 @@ impl Facts {
 
     fn generation_of(&self, model: &str) -> u64 { self.generations.get(model).copied().unwrap_or(self.base_generation) }
 
-    fn basis(&self) -> BTreeMap<String, u64> { self.dependency_models.iter().map(|model| (model.clone(), self.generation_of(model))).collect() }
+    /// The generation of every model when the request leaves: the answer may name models the window did not know before.
+    fn basis(&self) -> GenerationsAtIssue { GenerationsAtIssue { base: self.base_generation, generations: self.generations.clone() } }
 
     fn depends_on(&self, models: &[String]) -> bool { models.iter().any(|model| self.dependency_models.contains(model)) }
 
@@ -475,7 +487,7 @@ impl Facts {
 
     #[state]
     #[allow(clippy::too_many_arguments)]
-    fn loading(&mut self, context: &mut Ctx<'_>, request: &mut RequestId, attempt: &mut u32, retry: &mut bool, page: &mut u32, force: &mut bool, attempts: &mut u32, basis: &mut BTreeMap<String, u64>, event: &Ev) -> Outcome<WinState> {
+    fn loading(&mut self, context: &mut Ctx<'_>, request: &mut RequestId, attempt: &mut u32, retry: &mut bool, page: &mut u32, force: &mut bool, attempts: &mut u32, basis: &mut GenerationsAtIssue, event: &Ev) -> Outcome<WinState> {
         self.env(event);
         let mine = |got: &RequestId, got_attempt: &u32| got == request && got_attempt == attempt && !*retry;
         match event {
@@ -503,7 +515,8 @@ impl Facts {
             }
             Ev::Response { request: got, attempt: got_attempt, page: answer } if mine(got, got_attempt) => {
                 self.page_count = if *page == 1 { 1 } else { self.page_count + 1 };
-                let basis = basis.clone();
+                let models: BTreeSet<&String> = self.dependency_models.iter().chain(&answer.dependency_models).chain(answer.payload.related.iter().map(|(model, _)| model)).collect();
+                let basis = models.into_iter().map(|model| (model.clone(), basis.of(model))).collect();
                 self.emit(Emit::Commit { request: *request, basis, page: answer.clone(), number: *page, replace_all: self.replace_all, base_revision: self.request_base.get() });
                 Transition(WinState::landing(*request, *page, answer.cursor.clone(), !answer.rows.is_empty(), answer.dependency_models.clone()))
             }
@@ -572,7 +585,10 @@ impl Facts {
         match event {
             Ev::Committed { request: got, revision } if got == request => self.landed(context, *page, cursor.clone(), *rows, models, *revision),
             Ev::Rejected { request: got, reason } if got == request => match reason {
-                RejectReason::StaleGeneration { .. } => {
+                RejectReason::StaleGeneration { models: stale, generation } => {
+                    for model in stale {
+                        self.generations.insert(model.clone(), *generation);
+                    }
                     if self.watched() {
                         self.begin(context, 1, false, false)
                     } else {
@@ -911,6 +927,9 @@ impl StateOwner for Windows {
                 state.epoch = started.epoch;
                 state.base_generation = started.generation;
                 state.generations.clear();
+                state.windows.clear();
+                state.online = None;
+                state.foreground_seen = 0;
                 if started.identity.is_some() {
                     for key in state.preload.clone() {
                         Self::interest_plus(state, key, PRELOAD, &mut out);

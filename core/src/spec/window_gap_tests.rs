@@ -14,8 +14,8 @@ use crate::owners::contract::{Committed, EpochStarted, ErrorClass, ModelsReset, 
 use crate::owners::contract::WindowPhase as OwnerPhase;
 use crate::owners::support::{new_log, number_after, snapshot, take, Discard, Emitted, Landing, Log, Reset, ResetState, Silent, Sink, Source, SourceInput, SourceState, Spy, SpyState, StoreGeneration, StoreStub, StoreStubState};
 use crate::owners::read::deliveries::Deliveries;
-use crate::owners::store::StoreWriter;
-use crate::owners::read::windows::{self as w, AnswerPage, StaleKeys, WindowEffect, WindowKey, WindowOutcome, WindowStage, Windows, WindowsEffect, WindowsPeers};
+use crate::owners::store::{RowValue, StoreWriter};
+use crate::owners::read::windows::{self as w, AnswerPage, StaleKeys, WindowEffect, WindowKey, WindowKind, WindowOutcome, WindowStage, Windows, WindowsEffect, WindowsPeers};
 use crate::runtime::{explore, Address, Back, Cause as Ended, DetScheduler, EffectRunner, EpochStamp, Limits};
 
 const EPOCH: u64 = 1;
@@ -362,6 +362,7 @@ fn failed_watched() -> Twin {
 fn win_preload_created() {
     let mut twin = Twin::with_preload();
     twin.post_call(w::WindowsInput::EpochStarted(EpochStarted { epoch: EPOCH, identity: Some(1), generation: 0 }));
+    twin.post_call(w::WindowsInput::Online(Online(true)));
     let effects = twin.reference.step(Input::InterestPlus { id: PRELOAD });
     let (got, _) = twin.split(take(&twin.log));
     assert_eq!(got, effects.iter().filter(|effect| **effect != Effect::WindowState).cloned().collect::<Vec<_>>(), "the preload key loads without a stream to tell");
@@ -1600,6 +1601,7 @@ fn win_prop_waiters_leave() {
     assert!(twin.step(Input::Online(true)).is_empty());
     let mut preload = Twin::with_preload();
     preload.post_call(w::WindowsInput::EpochStarted(EpochStarted { epoch: EPOCH, identity: Some(1), generation: 0 }));
+    preload.post_call(w::WindowsInput::Online(Online(true)));
     preload.reference.step(Input::InterestPlus { id: PRELOAD });
     preload.reference.take_outcomes();
     preload.step(Input::Stale { in_keys: true });
@@ -1663,4 +1665,59 @@ fn win_landed_revision_per_machine() {
     det.post(windows, EpochStamp::Epoch(EPOCH), load(key(), 3, 99));
     det.run_until_quiet(100).expect("quiet");
     assert!(runs(take(&log)).iter().any(|effect| matches!(effect, WindowsEffect::Window { effect: WindowEffect::Outcome { id: 3, outcome: WindowOutcome::Loaded { revision: 5 } }, .. })), "the fresh key answers with its own landing");
+}
+
+/// win_loading_response (P-WIN-04): the basis of a batch names every model of the answer with the generation it had when the request left, also a model the window did not know before.
+#[test]
+fn win_basis_names_every_model_of_the_answer_at_issue() {
+    let mut twin = Twin::new();
+    twin.call(1, Goal::First);
+    take(&twin.log);
+    twin.post(w::WindowsInput::ModelsReset(ModelsReset { epoch: EPOCH, generation: 1, models: vec!["Chat".into()] }));
+    let mut page = AnswerPage::new(1, vec!["r1".into()], None);
+    page.dependency_models = BTreeSet::from(["Moment".to_string(), "Chat".to_string()]);
+    page.payload.related = vec![("Chat".into(), RowValue { row_id: "c1".into(), values: "{}".into() })];
+    twin.post(w::WindowsInput::Response { request: 1, attempt: 1, page });
+    let sent = take(&twin.log).into_iter().find_map(|entry| if let Emitted::Send { to: STORE, input } = entry { Some(input) } else { None }).expect("a batch");
+    assert!(sent.contains("\"Chat\": 0") && sent.contains("\"Moment\": 0"), "the generations of the issue, not the reset that came after: {sent}");
+}
+
+/// win_landing_stale_generation: the new request carries the generations of the refusal.
+#[test]
+fn win_stale_generation_reissues_with_the_generations_of_the_refusal() {
+    let mut twin = Twin::new();
+    twin.call(1, Goal::First);
+    twin.post(w::WindowsInput::Response { request: 1, attempt: 1, page: AnswerPage::new(1, vec!["r1".into()], None) });
+    twin.post(w::WindowsInput::Rejected(Rejected { batch: 1, reason: RejectReason::StaleGeneration { models: vec!["Moment".into()], generation: 3 } }));
+    take(&twin.log);
+    twin.post(w::WindowsInput::Response { request: 2, attempt: 2, page: AnswerPage::new(1, vec!["r1".into()], None) });
+    let sent = take(&twin.log).into_iter().find_map(|entry| if let Emitted::Send { to: STORE, input } = entry { Some(input) } else { None }).expect("a batch");
+    assert!(sent.contains("\"Moment\": 3"), "the basis of the new request is the generation of the refusal: {sent}");
+}
+
+/// win_wait_nodes: an id that holds a comma stays one id and the key keeps the order and the boundaries of the ids.
+#[test]
+fn win_nodes_key_keeps_the_boundaries_of_the_ids() {
+    let joined = WindowKey::nodes("Moment", &["a,b"]);
+    let split = WindowKey::nodes("Moment", &["a", "b"]);
+    assert_ne!(joined, split);
+    assert_eq!(joined.kind(), WindowKind::Nodes { ids: vec!["a,b".to_string()] });
+    assert_eq!(split.kind(), WindowKind::Nodes { ids: vec!["a".to_string(), "b".to_string()] });
+}
+
+/// win_created, P-WIN-12: the dictionary lives for one epoch. The key of the old epoch is gone and the first request of the new epoch waits for the addressed `Online`.
+#[test]
+fn win_dictionary_and_online_belong_to_the_epoch() {
+    let mut twin = Twin::new();
+    twin.call(1, Goal::First);
+    assert_eq!(twin.stage(), Some(WindowStage::Loading));
+    twin.post_call(w::WindowsInput::EpochStarted(EpochStarted { epoch: EPOCH + 1, identity: Some(1), generation: 0 }));
+    assert_eq!(twin.state().windows(), 0, "the machines of the old epoch are gone");
+    take(&twin.log);
+    twin.post_call(w::WindowsInput::Load { key: key(), id: 7, goal: w::Goal::First, force: false, store_revision: 0 });
+    let (requests_before_online, _) = twin.split(take(&twin.log));
+    assert!(requests_before_online.is_empty(), "no request before the addressed Online: {requests_before_online:?}");
+    assert_eq!(twin.stage(), Some(WindowStage::Waiting));
+    twin.post_call(w::WindowsInput::Online(Online(true)));
+    assert_eq!(twin.stage(), Some(WindowStage::Loading));
 }

@@ -10,7 +10,7 @@ use crate::schema::UpdatesSpec;
 use crate::transport::EventSpec;
 
 use super::subscribe::{EventEffect, Updates, SubscriptionDef};
-use super::variables::mapped_variables;
+use crate::owners::read::codec::mapped_variables;
 use super::{locked, Inner};
 
 #[derive(Default)]

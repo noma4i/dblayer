@@ -219,7 +219,22 @@ impl Delivery {
 
     fn sink_open(&self) -> bool { matches!(self.stage, Stage::Opening | Stage::Live) }
 
+    fn shown(&self, mut state: Ws) -> Ws {
+        if state.error && matches!(state.phase, Phase::Loaded | Phase::Failed) {
+            let has_rows = if self.kind == Kind::Count { self.count.is_some_and(|count| count > 0) } else { !self.rows.is_empty() };
+            state.phase = if has_rows { Phase::Loaded } else { Phase::Failed };
+        }
+        state
+    }
+
     fn append(&mut self, value: Val, fx: &mut Vec<Effect>) {
+        let value = match value {
+            Val::Snapshot { revision, rows, state } => Val::Snapshot { revision, rows, state: self.shown(state) },
+            Val::Count { revision, count, state } => Val::Count { revision, count, state: self.shown(state) },
+            Val::State { revision, state } => Val::State { revision, state: self.shown(state) },
+            Val::Delta { base, revision, size, upserted, removed, state } => Val::Delta { base, revision, size, upserted, removed, state: self.shown(state) },
+            other => other,
+        };
         let was_empty = self.journal.is_empty();
         match &value {
             Val::Snapshot { .. } | Val::Count { .. } => self.journal.retain(|kept| !matches!(kept, Val::Snapshot { .. } | Val::Count { .. } | Val::Delta { .. } | Val::State { .. })),
@@ -377,6 +392,7 @@ impl Delivery {
                 fx.extend(self.leave());
                 self.stage = Stage::Cancelling;
                 self.cause = Cause::Cancelled;
+                self.journal.clear();
                 self.replies.push(reply);
                 fx.push(Effect::CloseSink);
             }
@@ -384,6 +400,7 @@ impl Delivery {
                 fx.extend(self.leave());
                 self.stage = Stage::Cancelling;
                 self.cause = Cause::Cancelled;
+                self.journal.clear();
                 self.released = true;
                 fx.push(Effect::CloseSink);
             }

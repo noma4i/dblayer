@@ -8,7 +8,7 @@ use crate::syncstate::{FailureKind, OperationFailure};
 use crate::transport::{GraphQLRequest, PutFile, PutRequest, PutResponse, ResponseOutcome, RetryClass, TransportError};
 use crate::upload::{copy_range, UploadEvent, UploadStage};
 
-use super::super::extract::root_value;
+use crate::owners::read::codec::root_value;
 use super::super::locked;
 use super::run::Runner;
 

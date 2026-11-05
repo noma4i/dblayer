@@ -51,3 +51,13 @@ impl From<StoreError> for SyncError {
         SyncError::Store(error.to_string())
     }
 }
+
+impl From<crate::owners::read::codec::CodecError> for SyncError {
+    fn from(error: crate::owners::read::codec::CodecError) -> Self {
+        match error {
+            crate::owners::read::codec::CodecError::UnknownModel(model) => SyncError::UnknownModel(model),
+            crate::owners::read::codec::CodecError::Malformed(reason) => SyncError::Malformed(reason),
+            crate::owners::read::codec::CodecError::Store(reason) => SyncError::Store(reason),
+        }
+    }
+}

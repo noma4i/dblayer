@@ -10,6 +10,7 @@ use crate::db::dispatch::{Effects, OrderedEffects};
 use crate::schema::{PreloadChoice, PreloadSource};
 
 use super::error::SyncError;
+use crate::owners::read::codec::limited_combinations;
 use super::load_machine::LoadError;
 use super::load_owner::FlightTicket;
 use super::{locked, Inner, Sync};
@@ -110,20 +111,6 @@ impl Drop for FirstScreenHold {
 }
 
 type Window = (String, String, Map<String, Value>);
-
-pub(crate) fn limited_combinations(parameters: &[(&String, Vec<Value>)], at: usize, params: &mut Map<String, Value>, limit: usize, out: &mut Vec<Map<String, Value>>) {
-    if out.len() >= limit { return; }
-    let Some((name, choices)) = parameters.get(at) else {
-        if !out.contains(params) { out.push(params.clone()); }
-        return;
-    };
-    for choice in choices {
-        params.insert((*name).clone(), choice.clone());
-        limited_combinations(parameters, at + 1, params, limit, out);
-        if out.len() >= limit { break; }
-    }
-    params.remove(name.as_str());
-}
 
 impl Inner {
     pub(crate) fn admitted(&self, origin: crate::ffi::legacy::Origin) -> bool {

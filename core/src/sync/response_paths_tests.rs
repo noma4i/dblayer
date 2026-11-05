@@ -97,7 +97,7 @@ fn server_entries_read_nested_paths_once_before_keyed_edits() { crate::test_wait
         }
         rig.db.update(&rig.db.admit().unwrap(), "Message", &id, params(json!({"text": "kept"}))).unwrap();
         assert_eq!(rig.db.find("Message", &id).unwrap().unwrap().data["reactions"], edited.row.data["reactions"], "{entry}");
-        let cleared = normalize::normalize_nodes(&rig.db, "Message", &[params(json!({"id": "m1", "reactions": null}))]).unwrap();
+        let cleared = crate::owners::read::codec::normalize_nodes(&rig.db, "Message", &[params(json!({"id": "m1", "reactions": null}))]).unwrap();
         assert_eq!(cleared.roots[0].get("reactions"), Some(&serde_json::Value::Null), "{entry}: explicit null");
     }
     assert!(failures.is_empty(), "{failures:#?}");

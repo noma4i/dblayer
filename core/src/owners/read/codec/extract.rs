@@ -4,7 +4,7 @@ use crate::read::{connection_page_info, connection_rows, landing_fault};
 use crate::schema::RemoteShape;
 use crate::store::PageInfo;
 
-use super::error::SyncError;
+use super::CodecError;
 
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct Extracted {
@@ -16,9 +16,9 @@ pub(crate) fn root_value<'a>(data: &'a Value, path: &str) -> Option<&'a Value> {
     path.split('.').try_fold(data, |value, segment| value.get(segment))
 }
 
-pub(crate) fn extract(data: &Value, root_path: &str, shape: &RemoteShape, total_from: Option<&str>) -> Result<Extracted, SyncError> {
+pub(crate) fn extract(data: &Value, root_path: &str, shape: &RemoteShape, total_from: Option<&str>) -> Result<Extracted, CodecError> {
     let root = root_value(data, root_path);
-    let malformed = |reason: &str| SyncError::Malformed(format!("{root_path}: {reason}"));
+    let malformed = |reason: &str| CodecError::Malformed(format!("{root_path}: {reason}"));
     match shape {
         RemoteShape::Single => {
             let nodes = root.and_then(Value::as_object).cloned().into_iter().collect();

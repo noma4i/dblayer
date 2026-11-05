@@ -7,7 +7,7 @@ use crate::store::Reader;
 use crate::value::read_id;
 
 use super::super::error::SyncError;
-use super::super::normalize::Normalized;
+use crate::owners::read::codec::Normalized;
 
 pub(crate) fn response_ops(db: &Db, reader: &Reader<'_>, base: i64, closing: i64, model: &str, normalized: &Normalized, drops: &mut usize) -> Result<Vec<EntityOp>, SyncError> {
     let roots = db.admit_rows(reader, base, Some(closing), model, &normalized.roots, drops)?.rows;

@@ -15,12 +15,10 @@ use crate::transport::retry::INVALID_CURSOR;
 use crate::value::ScalarKind;
 
 use super::error::SyncError;
-use super::extract::extract;
+use crate::owners::read::codec::{extract, load_variables, normalize_nodes, stamp_scope_values};
 use super::freshness::stale_window;
 use super::land::{Landed, Landing};
-use super::normalize::normalize_nodes;
 use super::registry::OperationDef;
-use super::variables::load_variables;
 use super::load_machine::{LoadError, Stored};
 use super::load_owner::FlightTicket;
 use super::{locked, FlightEnd, FlightResult, Inner, Sync};
@@ -598,15 +596,6 @@ impl Sync {
         let resolved = self.inner.resolve(crate::ffi::legacy::Origin::Explicit, model, relation, params)?;
         self.inner.load_more(admitted, &resolved).await
     }
-}
-
-pub(crate) fn stamp_scope_values(mut nodes: Vec<Map<String, Value>>, values: &Map<String, Value>) -> Vec<Map<String, Value>> {
-    for node in &mut nodes {
-        for (column, value) in values {
-            node.entry(column.clone()).or_insert_with(|| value.clone());
-        }
-    }
-    nodes
 }
 
 fn edge_json(kind: &crate::schema::FieldKind, value: crate::commit::EdgeValue) -> Value {

@@ -6,10 +6,9 @@ use crate::schema::{Coverage, NodeRead, RemoteShape, NODE_PARAM};
 use crate::transport::GraphQLRequest;
 
 use super::error::SyncError;
-use super::extract::extract;
+use crate::owners::read::codec::{extract, normalize_nodes};
 use super::land::Landed;
 use super::load::Resolved;
-use super::normalize::normalize_nodes;
 use std::sync::Arc;
 
 use super::{Inner, Sync};
