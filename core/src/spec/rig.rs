@@ -8,9 +8,12 @@ use async_trait::async_trait;
 use serde_json::{json, Value};
 use tokio::sync::oneshot;
 
-use crate::ffi::{ByteProgress, CableLease, Config, Database, DbError, EncryptedSocketEvent, PutReply, SubscriptionSink, TestClock, Transport, TransportRequest, WireOperationOutcome, WireOperationReceipt, WireRow};
+use crate::ffi::{ByteProgress, CableLease, Config, Database, DbError, EncryptedHttp, EncryptedReply, EncryptedSocketEvent, PutReply, SubscriptionSink, TestClock, Transport, TransportRequest, WireOperationOutcome, WireOperationReceipt, WireRow};
 use crate::schema::{ActionDeclaration, FieldSpec, ModelSpec, OnFailure, RootShape};
 use crate::upload::{MultipartOperations, UploadOperation, UploadOperations};
+use crate::transport::encrypted::fake_server_tests::{decrypt_request, seal_response, MemoryCredentials};
+use crate::transport::CredentialSlot;
+use super::harness_life::Held;
 use crate::value::ScalarKind;
 
 pub const LIMIT_SECS: u64 = 10;
@@ -190,6 +193,28 @@ impl Transport for Wire {
     }
 }
 
+#[async_trait]
+impl EncryptedHttp for Wire {
+    async fn post(&self, path: String, body: String, purpose: crate::transport::NetworkPurpose) -> Result<EncryptedReply, DbError> {
+        let request = decrypt_request(&body).unwrap();
+        let sequence = request["sequence"].as_i64();
+        let answer = match path.as_str() {
+            "/api/auth/login_link" => json!({"sessionId": request["body"]["account"]}),
+            "/api/logout" => json!({"revoked": true}),
+            _ => {
+                let name = request["body"]["operationName"].as_str().unwrap_or_default().to_string();
+                let variables = request["body"]["variables"].clone();
+                match self.0.decide(Kind::Mutate, &name, variables.clone(), format!("{purpose:?}")).await {
+                    Reply::Ok => answer_of(&name, &variables, self.0.next()),
+                    Reply::Temp => return Err(DbError::Network { detail: "temporary".into() }),
+                    Reply::Refuse => json!({"errors": [{"message": "refused", "extensions": {"code": "REFUSED"}}]}),
+                }
+            }
+        };
+        Ok(EncryptedReply { status: 200, body: seal_response(&request, sequence, answer) })
+    }
+}
+
 pub const OPERATIONS: &str = r#"[
 {"name":"MakeMoment","document":"mutation MakeMoment { makeMoment { id text } }","rootPath":"makeMoment"},
 {"name":"UpdateMoment","document":"mutation UpdateMoment { updateMoment { id text } }","rootPath":"updateMoment"},
@@ -255,14 +280,18 @@ impl Drop for Rig {
 impl Rig {
     pub async fn open(on_failure: OnFailure) -> Rig { Self::open_at(on_failure, None, Server::new()).await }
 
-    pub async fn open_at(on_failure: OnFailure, path: Option<String>, server: Arc<Server>) -> Rig { Self::open_full(on_failure, path, server, None).await }
-
-    pub async fn open_full(on_failure: OnFailure, path: Option<String>, server: Arc<Server>, data_version: Option<String>) -> Rig {
+    pub async fn open_at(on_failure: OnFailure, path: Option<String>, server: Arc<Server>) -> Rig {
         let models = moment_models(on_failure);
         let clock = TestClock::new(1_000_000);
-        let db = within(Database::open_with_clock(Config { path, data_version, cache_rows: 64 }, models.clone(), Some(Arc::new(Wire(server.clone()))), Some(upload_operations()), clock.clone(), None, None, None, None)).await.unwrap();
+        let mut encrypted = crate::transport::encrypted::protocol_tests::config();
+        encrypted.endpoints.session_operations.insert("login_link".into(), crate::ffi::EncryptedSessionOperation { path: "/api/auth/login_link".into(), class: crate::transport::EncryptedOperationClass::Authenticated });
+        let credentials = credentials_of(path.as_deref());
+        let signed = CredentialSlot::get(&*credentials).unwrap().is_some();
+        let held = Arc::new(Held(credentials));
+        let db = within(Database::open_with_clock(Config { path, data_version: None, cache_rows: 64 }, models.clone(), Some(Arc::new(Wire(server.clone()))), Some(upload_operations()), clock.clone(), Some(encrypted), Some(held), Some(Arc::new(Wire(server.clone()))), None)).await.unwrap();
         db.register_operations(OPERATIONS.into()).unwrap();
         db.set_online(true).unwrap();
+        if !signed { within(db.session_call("login_link".into(), json!({"account": "A"}).to_string())).await.unwrap(); }
         Rig { db, server, clock, models }
     }
 
@@ -281,6 +310,13 @@ impl Rig {
     pub async fn pending(&self, receipt: &WireOperationReceipt) -> bool {
         tokio::time::timeout(Duration::from_millis(200), self.db.outcome(receipt.clone())).await.is_err()
     }
+}
+
+/// The credential of a file database outlives its reopen, as the credential store of the app does.
+fn credentials_of(path: Option<&str>) -> Arc<MemoryCredentials> {
+    static KEPT: std::sync::LazyLock<Mutex<HashMap<String, Arc<MemoryCredentials>>>> = std::sync::LazyLock::new(Default::default);
+    let Some(path) = path else { return Arc::default() };
+    KEPT.lock().unwrap().entry(path.to_string()).or_default().clone()
 }
 
 pub async fn within<T>(work: impl std::future::Future<Output = T>) -> T {

@@ -1,8 +1,8 @@
 use std::future::Future;
 
 use crate::ffi::legacy::Origin;
-use super::database::{blocking, on_executor};
-use super::database::{receipt, WireOperationReceipt};
+use super::database::on_executor;
+use super::receipt::{receipt, WireOperationReceipt};
 use super::upload_wire::WireUploadRequest;
 use super::{Database, DbError};
 
@@ -31,14 +31,6 @@ pub(super) fn ended() -> DbError { DbError::Interrupted { detail: "the session o
 /// The error of a call that finds the database closed.
 pub(super) fn closed() -> DbError { DbError::Closed { detail: "the database is closed".into() } }
 
-#[cfg(test)]
-struct WriteProbe(std::sync::Arc<crate::ffi::legacy::Leases>);
-
-#[cfg(test)]
-impl Drop for WriteProbe {
-    fn drop(&mut self) { self.0.writes_entered.fetch_sub(1, std::sync::atomic::Ordering::SeqCst); }
-}
-
 fn refused(model: &str) -> DbError { DbError::Invalid { detail: format!("{model} declares no durable command: only sending a message and a media upload work without a network") } }
 
 impl Database {
@@ -66,27 +58,6 @@ impl Database {
 
     pub(super) async fn in_epoch<T>(&self, epoch: u64, target: &'static str, work: impl Future<Output = Result<T, DbError>>) -> Result<T, DbError> {
         self.in_epoch_as(Origin::Explicit, epoch, target, false, |_| work).await
-    }
-
-    /// A write to the local database that belongs to the epoch of the caller. The SQL commit is refused when the epoch moved or the database closed before it.
-    pub(super) async fn write_in_epoch<T: Send + 'static>(&self, origin: Origin, epoch: u64, target: &'static str, write: impl FnOnce(&Database, &crate::ffi::legacy::Admitted) -> Result<T, DbError> + Send + 'static) -> Result<T, DbError> {
-        let admitted = self.acquire(origin, epoch, target)?;
-        if origin == Origin::Session { self.require_online(target)?; }
-        let this = self.clone();
-        let write_admitted = admitted.clone();
-        let work = async move {
-            super::database::blocking(move || {
-                #[cfg(test)]
-                let _probe = {
-                    let life = this.db.shared.store.lifecycle.clone();
-                    life.writes_entered.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-                    WriteProbe(life)
-                };
-                let result = write(&this, &write_admitted);
-                result.map_err(|error| if this.admits(epoch) { error } else { ended() })
-            }).await
-        };
-        admitted.run(work).await.map_err(|_| ended())?
     }
 
     /// A read of the local database that belongs to the epoch of the caller: a result read after the epoch moved is not returned.

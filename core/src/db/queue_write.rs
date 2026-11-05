@@ -6,12 +6,7 @@ use serde_json::{Map, Value};
 use crate::commit::{CommitEnvelope, DestroyReason, EntityOp, OperationRecord, OperationTransition, ScopeOp, ScopeRef, WriteOrigin};
 use crate::identity::{ListKey, ModelKey, RowId};
 use crate::operation::{Operation, OperationStatus};
-use crate::files::Location;
-use crate::owners::store::{EffectRow, IntentEffects, RowValue, StoreOp, UploadKind, UploadRow};
-use crate::owners::write::outbox::{NewOp, Origin};
-use crate::owners::write::transfer::{Source, Steps, StoredTransfer};
-use crate::runtime::Time;
-use crate::schema::OnFailure;
+use crate::owners::store::{EffectRow, IntentEffects, RowValue, StoreOp};
 
 use crate::lifecycle::authority::Authority;
 use super::error::DbError;
@@ -62,7 +57,12 @@ impl Db {
                         envelope.pending_locals.push(crate::commit::PendingLocal { model: model.clone(), row_id: row.row_id.clone(), path: path.to_string(), value: pending.get("value").cloned().unwrap_or(Value::Null) });
                     }
                 }
-                StoreOp::LocalRows { model, rows } | StoreOp::EphemeralRows { model, rows } => {
+                StoreOp::EphemeralRows { model, rows } => {
+                    for row in rows { self.write_ephemeral(model, &row_id(&row.row_id)?, &values(&row.values)?)?; }
+                }
+                StoreOp::AttachFile { model, row_id: id, field, bytes, name, mime } => { self.attach_as(&Authority::Owner, model, &row_id(id)?, field, bytes, name, mime)?; }
+                StoreOp::DetachFile { model, row_id: id, field } => { self.detach_as(&Authority::Owner, model, &row_id(id)?, field)?; }
+                StoreOp::LocalRows { model, rows } => {
                     envelope.writes_local = true;
                     envelope.entity_ops.extend(upserts(model, rows)?);
                 }

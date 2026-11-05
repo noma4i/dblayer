@@ -146,10 +146,6 @@ fn restore(reader: &Reader<'_>, outbox: &[OutboxOperation], entry: &OutboxOperat
             PriorRow::Created { model, .. } => {
                 plan.entity_ops.push(EntityOp::Destroy { model: ModelKey::new(model), id: row_id.clone(), reason: DestroyReason::Expired });
                 plan.discarded_files.extend(references_of_row(reader.connection(), model, row_id.as_str())?.into_iter().map(|file| file.id));
-                for follower in outbox.iter().filter(|other| other.operation.id.0 != own && other.operation.row_ids.contains(&row_id)) {
-                    plan.transitions.push(OperationTransition::Remove { seq: follower.operation.id.0, expected: None });
-                    chain.drop_op(follower.operation.id.0);
-                }
             }
             PriorRow::Destroyed { .. } if entry.operation.status == OperationStatus::Failed => {}
             PriorRow::Destroyed { .. } => {

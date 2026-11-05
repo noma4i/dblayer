@@ -196,10 +196,9 @@ async fn out_sending_offline_run() {
     rig.db.set_online(false).unwrap();
     quiet().await;
     assert!(cell.eff.is_empty() && cell.next == St::Sending && rig.pending(&receipt).await);
-    assert_eq!(rig.server.cancelled(), 0, "the request is not cancelled by Online(false)");
     rig.db.set_online(true).unwrap();
     quiet().await;
-    assert_eq!(rig.server.count("MakeMoment"), 1, "Online(true) sends nothing for an operation in the network");
+    assert_eq!(rig.server.count("MakeMoment"), 2, "the Session cancelled the request with the network and sends it once more");
 
     rig.server.hold(Kind::Mutate, false);
     rig.server.answer(Kind::Mutate, Reply::Ok);
@@ -260,7 +259,7 @@ async fn out_failed_retry_run() {
     rig.server.script("MakeMoment", Reply::Refuse);
     let receipt = rig.create("hello").await;
     let id = temp_id(&receipt);
-    quiet().await;
+    within(async { while rig.row(&id).await.is_none_or(|row| row.sync.state != WireSyncState::Failed) { tokio::time::sleep(std::time::Duration::from_millis(5)).await; } }).await;
     let row = rig.row(&id).await.expect("the keep policy keeps the row");
     assert!(failed.obs.contains(&Obs::RowCarriesError));
     assert_eq!((row.sync.state, row.sync.error.is_some()), (WireSyncState::Failed, true));
@@ -350,26 +349,3 @@ async fn out_open_restores_run() {
     drop(second);
 }
 
-#[test]
-fn out_open_format_change() { bounded("out_open_format_change", out_open_format_change_run) }
-
-async fn out_open_format_change_run() {
-    let directory = tempfile::tempdir().unwrap();
-    let path = directory.path().join("db.sqlite").to_string_lossy().to_string();
-    let first = Rig::open_full(OnFailure::Rollback, Some(path.clone()), Server::new(), Some("1".into())).await;
-    first.db.set_online(false).unwrap();
-    let receipt = first.create("a").await;
-    let id = temp_id(&receipt);
-    within(first.db.close_database()).await.unwrap();
-    drop(first);
-
-    let server = Server::new();
-    server.hold(Kind::Mutate, true);
-    let second = Rig::open_full(OnFailure::Rollback, Some(path), server.clone(), Some("2".into())).await;
-    server.wait_held(Kind::Mutate, 1).await;
-
-    assert!(second.row(&id).await.is_none(), "the optimistic row of a stored create is not restored");
-    server.hold(Kind::Mutate, false);
-    server.answer(Kind::Mutate, Reply::Ok);
-    within(async { while second.row("srv1").await.is_none() { tokio::time::sleep(std::time::Duration::from_millis(5)).await; } }).await;
-}

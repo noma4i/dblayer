@@ -283,6 +283,17 @@ impl Shared {
 }
 
 impl Db {
+    /// The write of the owner LocalWrites: the epoch was checked by the owner.
+    pub(crate) fn write_ephemeral(&self, model: &str, id: &RowId, values: &Map<String, Value>) -> Result<(), DbError> {
+        let spec = self.shared.spec(model)?;
+        let changed = self.shared.ephemeral.lock().write(spec, id.as_str(), values)?;
+        self.shared.ephemeral.nudge();
+        match changed {
+            Some(epoch) => self.shared.publish_overlay(&[(model.to_string(), id.to_string())], epoch),
+            None => Ok(()),
+        }
+    }
+
     pub fn set_ephemeral(&self, admitted: &crate::ffi::legacy::Admitted, model: &str, id: &RowId, values: Map<String, Value>) -> Result<(), DbError> {
         let spec = self.shared.spec(model)?;
         let changed = {

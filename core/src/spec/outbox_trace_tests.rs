@@ -23,6 +23,12 @@ fn model_apply(model: &mut Model, act: Act) {
         Act::On | Act::Off => {
             model.online = matches!(act, Act::On);
             let ctx = ctx_of(model);
+            if !model.online {
+                if let Some(in_flight) = model.ops.iter_mut().find(|op| op.state == St::Sending && op.requesting) {
+                    in_flight.state = St::Queued;
+                    in_flight.requesting = false;
+                }
+            }
             for op in model.ops.iter_mut().filter(|op| matches!(op.state, St::Queued | St::Sending)) {
                 let step = want(op.state, &ctx, In::Online(model.online));
                 op.requesting = match (op.state, step.next) {
@@ -90,6 +96,7 @@ async fn run_trace(trace: &[Act], check: Check) {
             }
             Act::On => { rig.db.set_online(true).unwrap(); model_apply(&mut model, *act); }
             Act::Off => { rig.db.set_online(false).unwrap(); model_apply(&mut model, *act); }
+            Act::Ok | Act::Refuse if !model.online => {}
             Act::Ok | Act::Refuse => {
                 if let Some(op) = model.ops.iter().find(|op| op.requesting) {
                     until(&label, || rig.server.holds_text(&op.text)).await;
@@ -106,7 +113,7 @@ async fn run_trace(trace: &[Act], check: Check) {
             }
             Act::Close => { within(rig.db.close_database()).await.unwrap(); model_apply(&mut model, *act); }
         }
-        let requesting = model.ops.iter().filter(|op| op.requesting).count();
+        let requesting = if model.online { model.ops.iter().filter(|op| op.requesting).count().min(1) } else { 0 };
         until(&format!("{label} step {index}: requests in flight {requesting}"), || rig.server.held(Kind::Mutate) == requesting).await;
         let expected: Vec<_> = model.ops.iter().map(|op| op.resolved.is_some()).collect();
         until(&format!("{label} step {index}: resolved {expected:?}"), || model.ops.iter().all(|op| op.resolved.is_none() || op.handle.is_finished())).await;
@@ -116,7 +123,7 @@ async fn run_trace(trace: &[Act], check: Check) {
             if let (Some(want_out), true) = (op.resolved, op.handle.is_finished()) {
                 let outcome = within(rig.db.outcome(op.receipt.clone())).await.unwrap();
                 assert_eq!(kind_of(&outcome), wire_of(want_out), "{label} step {index}: op {number}");
-                if check == Check::RollbackClean && matches!(want_out, Out::Rejected | Out::Discarded) {
+                if check == Check::RollbackClean && !matches!(act, Act::Close) && matches!(want_out, Out::Rejected | Out::Discarded) {
                     assert!(rig.row(&op.receipt.optimistic_value.clone().unwrap().id).await.is_none(), "{label}: op {number} left its optimism");
                 }
             }
@@ -149,10 +156,11 @@ fn traces() -> Vec<Vec<Act>> {
 }
 
 async fn run_all(check: Check) {
-    for trace in traces() {
-        let trace: Vec<Act> = trace.into_iter().flat_map(|act| if matches!(act, Act::Create) { vec![act] } else { vec![Act::Create, act] }).take(8).collect();
-        step(&format!("{trace:?} start"));
-        run_trace(&trace, check).await;
+    let traces: Vec<Vec<Act>> = traces().into_iter().map(|trace| trace.into_iter().flat_map(|act| if matches!(act, Act::Create) { vec![act] } else { vec![Act::Create, act] }).take(8).collect()).collect();
+    for chunk in traces.chunks(16) {
+        step(&format!("{} traces start", chunk.len()));
+        let running: Vec<_> = chunk.iter().cloned().map(|trace| tokio::spawn(async move { run_trace(&trace, check).await })).collect();
+        for trace in running { within(trace).await.unwrap(); }
     }
 }
 
@@ -225,12 +233,13 @@ async fn out_prop_intent_kept_run() {
             }
         }
         quiet().await;
-        let survivors = model.ops.iter().filter(|op| want(op.state, &ctx_of(&model), In::Closing).next == St::Queued).count();
+        let survivors = model.ops.iter().filter(|op| matches!(op.state, St::Queued | St::Sending)).count();
 
         within(first.db.close_database()).await.unwrap();
         drop(first);
         let server = Server::new();
         let second = Rig::open_at(OnFailure::Rollback, Some(path), server.clone()).await;
+        crate::test_wait::yield_until("the restored intents reached the server", || server.count("MakeMoment") >= survivors).await;
         quiet().await;
 
         assert_eq!(server.count("MakeMoment"), survivors, "{acts:?}");

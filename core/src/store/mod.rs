@@ -216,8 +216,6 @@ pub struct Store {
     pub(crate) after_commit: Mutex<Option<CommitCallback>>,
     #[cfg(test)]
     pub(crate) before_freshness: Mutex<Option<Box<dyn FnOnce() + Send>>>,
-    #[cfg(test)]
-    pub(crate) writes_waiting: std::sync::atomic::AtomicUsize,
 }
 
 impl Store {
@@ -259,8 +257,6 @@ impl Store {
             after_commit: Mutex::new(None),
             #[cfg(test)]
             before_freshness: Mutex::new(None),
-            #[cfg(test)]
-            writes_waiting: std::sync::atomic::AtomicUsize::new(0),
             session_end_replay: std::sync::atomic::AtomicBool::new(false),
             #[cfg(test)]
             failing_entity_reads: std::sync::atomic::AtomicUsize::new(0),

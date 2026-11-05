@@ -657,7 +657,8 @@ async fn discarding_a_queued_photo_offline_routes_the_abort_after_reopen() {
 async fn attached_files_survive_reopen_and_detaching_one_keeps_the_other() {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("files.sqlite");
-    let spec = crate::schema::ModelSpec::new("Files", vec![crate::schema::FieldSpec::scalar("id", crate::value::ScalarKind::Id), crate::schema::FieldSpec::file("photo").nullable()]);
+    let mut spec = crate::schema::ModelSpec::new("Files", vec![crate::schema::FieldSpec::scalar("id", crate::value::ScalarKind::Id), crate::schema::FieldSpec::file("photo").nullable()]);
+    spec.storage = crate::schema::Storage::Local;
     let models = serde_json::to_string(&vec![spec]).unwrap();
     let config = || Config { path: Some(path.to_string_lossy().into()), data_version: None, cache_rows: 8 };
     let db = Database::open(config(), models.clone(), None, None, None, None, None, None).await.unwrap();

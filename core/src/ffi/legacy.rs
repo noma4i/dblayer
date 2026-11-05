@@ -225,8 +225,6 @@ pub(crate) struct Leases {
     /// Epoch ends that reached the commit line, for the tests that hold the line.
     #[cfg(test)]
     pub(crate) line_waits: (Mutex<usize>, std::sync::Condvar),
-    #[cfg(test)]
-    pub(crate) writes_entered: std::sync::atomic::AtomicUsize,
 }
 
 impl Default for Leases {
@@ -242,8 +240,6 @@ impl Default for Leases {
             work: std::sync::atomic::AtomicUsize::new(0),
             #[cfg(test)]
             line_waits: (Mutex::new(0), std::sync::Condvar::new()),
-            #[cfg(test)]
-            writes_entered: std::sync::atomic::AtomicUsize::new(0),
         }
     }
 }

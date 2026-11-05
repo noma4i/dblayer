@@ -123,6 +123,9 @@ pub enum StoreOp {
     Swap { model: String, temp: String, real: String },
     /// The rows, membership, tombstones and touches of a call that has no operation (a local model, an action without a mutation): final at once.
     Planned { effects: IntentEffects },
+    /// A file for a field of a row: the bytes go to the directory of the files or to the table, the row gets the descriptor.
+    AttachFile { model: String, row_id: String, field: String, bytes: Vec<u8>, name: String, mime: String },
+    DetachFile { model: String, row_id: String, field: String },
     /// Rows of a `memory` model, written to the TEMP tables.
     EphemeralRows { model: String, rows: Vec<RowValue> },
     /// A local field of a row that is not in the base yet: it sits on the row when the row lands.

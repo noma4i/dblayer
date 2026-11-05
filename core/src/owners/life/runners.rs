@@ -1,13 +1,11 @@
 //! Executors of the effects of Lifecycle, Store, Network and Calls. Each one runs the IO its owner asked for
 //! and returns the result as an input. None of them decides a transition.
 
-use std::collections::HashMap;
 use std::sync::Arc;
 
 use serde_json::Value;
-use tokio::task::AbortHandle;
 
-use super::{LifeReply, Ports, Wiring};
+use super::{LifeReply, Wiring};
 use crate::db::Db;
 use crate::identity::Generation;
 use crate::owners::calls::CallsInput;
@@ -23,7 +21,6 @@ use crate::owners::write::outbox::OutboxInput;
 use crate::owners::write::rounds::RoundsInput;
 use crate::owners::write::transfer::TransferInput;
 use crate::runtime::{Back, EffectRunner, EpochStamp, OutcomeId};
-use crate::transport::{GraphQLRequest, ResponseOutcome, TransportError};
 
 const ALL_PEERS: [Peer; 10] = crate::owners::lifecycle::ALL_OWNERS;
 
@@ -211,7 +208,10 @@ impl EffectRunner<StoreWriter> for StoreRunner {
                     Err(error) => fail(wiring, error.to_string()),
                     Ok(restore) => {
                         match restore.ops {
-                            Ok(stored) => {
+                            Ok(mut stored) => {
+                                if let Some(client) = &self.client {
+                                    for item in &mut stored { item.op.path = client.graphql_path().to_string(); }
+                                }
                                 wiring.to_outbox(OutboxInput::RegisterOperations { declarations: stored.iter().map(|item| (item.op.model.clone(), item.op.action.clone())).collect() });
                                 wiring.to_outbox(OutboxInput::Restored { ops: stored, pending_lost: false });
                             }

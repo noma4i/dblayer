@@ -8,7 +8,8 @@ use crate::owners::contract::RequestId;
 use crate::owners::contract::{ReplyId};
 
 use crate::owners::store::{RowValue};
-use crate::runtime::{Effect, Effects, Epoch};
+use crate::owners::session::SessionInput;
+use crate::runtime::{Effect, Effects, Epoch, Outbound};
 
 
 
@@ -115,6 +116,9 @@ impl OutboxState {
                 Self::reply(fx, reply, OutboxAnswer::Err(Fault::InFlight));
             }
             Stage::Queued | Stage::Failed => {
+                if self.ops[&op_id].sent && self.ops[&op_id].stage == Stage::Queued {
+                    if let Some(session) = self.peers.session { fx.push(Effect::Send(Outbound::new(session, SessionInput::Release { req_id: self.ops[&op_id].request_id }))); }
+                }
                 self.discard_waiters.push((op_id, reply));
                 self.ops.get_mut(&op_id).map(|operation| operation.stage = Stage::RollingBack(Why::Discarded));
                 self.store(op_id, CommitKind::Rollback, fx);

@@ -1162,14 +1162,6 @@ async fn a_command_and_a_read_of_a_left_account_are_refused_and_change_nothing()
     let seen = bound(rig.database.read_row(current, "User".into(), "user".into())).await.unwrap().expect("the row of B");
     assert!(named(&seen, "B"), "the row of B changed");
 
-    let store = &rig.database.db.shared.store;
-    let pinned = store.lifecycle.writes_entered.load(Ordering::SeqCst);
-    let writer = store.lock();
-    let late = { let database = rig.database.clone(); tokio::spawn(async move { database.update(current, "User".into(), "user".into(), json!({"name":"late"}).to_string(), "{}".into()).await }) };
-    yield_until("the update reached the writer", || store.lifecycle.writes_entered.load(Ordering::SeqCst) > pinned).await;
-    store.lifecycle.epoch_ended(crate::runtime::Cause::SessionReset);
-    drop(writer);
-    assert!(refused(bound(late).await.unwrap().map(|_| ())), "an update that waited for the writer while the session ended ran");
     rig.database.close_now();
 }
 

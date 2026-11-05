@@ -16,6 +16,7 @@ use crate::upload::UploadOperations;
 use super::open_slot::OpenLease;
 use super::transport::ForeignTransport;
 use super::upload_wire::{WireUploadBatch, WireUploadItem, WireUploadRequest};
+use super::receipt::{receipt, ItemId, WireBatchOutcome, WireBatchReceipt, WireBatchResult, WireBatchTicket, WireItemOutcome, WireItemReceipt, WireOperationOutcome, WireOperationReceipt};
 use super::wire::{WireModel, WireRow};
 use super::{DbError, LoadMoreResult, OnlineSink, Transport};
 use crate::owners::life::LifeReply;
@@ -100,107 +101,6 @@ pub struct Config { pub path: Option<String>, pub data_version: Option<String>, 
 
 #[derive(uniffi::Record)]
 pub struct SubscriptionCensus { pub observed_queries: u64, pub subscriptions: u64, pub retained_observers: u64 }
-
-/// What a receipt waits on: the old stack (uploads) or the owner Outbox.
-#[derive(Clone)]
-pub(super) enum Ticket {
-    Sync(Arc<crate::sync::OutcomeTicket>),
-    Outbox(crate::owners::write::outbox::Receipt),
-}
-
-#[derive(uniffi::Object)]
-pub struct WireReceiptTicket {
-    pub(super) ticket: Option<Ticket>,
-    pub(super) streams: Arc<crate::ffi::legacy::Leases>,
-    pub(super) epoch: u64,
-    pub(super) model: String,
-    pub(super) operation: Option<i64>,
-    pub(super) revision: i64,
-    pub(super) optimistic_value: Option<WireRow>,
-}
-
-impl std::fmt::Debug for WireReceiptTicket {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        formatter.debug_struct("WireReceiptTicket").finish_non_exhaustive()
-    }
-}
-
-#[derive(Clone, Debug, uniffi::Record)]
-pub struct WireOperationReceipt {
-    pub epoch: u64,
-    pub model: String,
-    pub operation: Option<i64>,
-    pub revision: i64,
-    pub optimistic_value: Option<WireRow>,
-    pub ticket: Arc<WireReceiptTicket>,
-}
-
-pub(super) fn receipt(epoch: u64, model: String, operation: Option<i64>, revision: i64, optimistic_value: Option<WireRow>, ticket: Option<Arc<crate::sync::OutcomeTicket>>, streams: Arc<crate::ffi::legacy::Leases>) -> WireOperationReceipt {
-    held_receipt(epoch, model, operation, revision, optimistic_value, ticket.map(Ticket::Sync), streams)
-}
-
-#[allow(clippy::too_many_arguments)]
-pub(super) fn receipt_of(epoch: u64, model: String, operation: Option<i64>, revision: i64, optimistic_value: Option<WireRow>, ticket: Option<crate::owners::write::outbox::Receipt>, streams: Arc<crate::ffi::legacy::Leases>) -> WireOperationReceipt {
-    held_receipt(epoch, model, operation, revision, optimistic_value, ticket.map(Ticket::Outbox), streams)
-}
-
-fn held_receipt(epoch: u64, model: String, operation: Option<i64>, revision: i64, optimistic_value: Option<WireRow>, ticket: Option<Ticket>, streams: Arc<crate::ffi::legacy::Leases>) -> WireOperationReceipt {
-    let held = WireReceiptTicket { ticket, streams, epoch, model: model.clone(), operation, revision, optimistic_value: optimistic_value.clone() };
-    WireOperationReceipt { epoch, model, operation, revision, optimistic_value, ticket: Arc::new(held) }
-}
-
-#[derive(Clone, Debug, PartialEq, uniffi::Enum)]
-pub enum WireOperationOutcome {
-    Confirmed { value: Option<WireRow>, answer_json: Option<String> },
-    Rejected { failure: super::wire::WireFailure },
-    DeliveryUnknown,
-    Interrupted,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Hash, uniffi::Record)]
-pub struct ItemId { pub value: String }
-
-#[derive(Clone, Debug, PartialEq, uniffi::Record)]
-pub struct WireItemReceipt { pub item: ItemId, pub optimistic_value: WireRow }
-
-#[derive(uniffi::Object)]
-pub struct WireBatchTicket {
-    receipt: crate::sync::OperationReceipt,
-    model: String,
-    items: Vec<WireItemReceipt>,
-}
-
-impl std::fmt::Debug for WireBatchTicket {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        formatter.debug_struct("WireBatchTicket").finish_non_exhaustive()
-    }
-}
-
-#[derive(Clone, Debug, uniffi::Record)]
-pub struct WireBatchReceipt {
-    pub epoch: u64,
-    pub operation: i64,
-    pub revision: i64,
-    pub items: Vec<WireItemReceipt>,
-    pub ticket: Arc<WireBatchTicket>,
-}
-
-#[derive(Clone, Debug, PartialEq, uniffi::Enum)]
-pub enum WireItemOutcome {
-    Confirmed { item: ItemId, value: WireRow },
-    Discarded { item: ItemId },
-}
-
-#[derive(Clone, Debug, PartialEq, uniffi::Enum)]
-pub enum WireBatchResult {
-    Confirmed,
-    Rejected { failure: super::wire::WireFailure },
-    DeliveryUnknown,
-    Interrupted,
-}
-
-#[derive(Clone, Debug, PartialEq, uniffi::Record)]
-pub struct WireBatchOutcome { pub result: WireBatchResult, pub items: Vec<WireItemOutcome> }
 
 /// The interest of one caller in a load that `Database::begin_load` started.
 #[derive(uniffi::Object)]
@@ -408,16 +308,6 @@ impl Database {
         let census = self.db.observer_census();
         SubscriptionCensus { observed_queries: census.observed_queries as u64, subscriptions: census.subscriptions as u64, retained_observers: census.retained as u64 }
     }
-    pub async fn set_ephemeral(&self, epoch: u64, model: String, row_id: String, values_json: String) -> Result<(), DbError> {
-        self.write_in_epoch(crate::ffi::legacy::Origin::Explicit, epoch, "set ephemeral", move |database, admitted| {
-            Ok(database.db.set_ephemeral(admitted, &model, &id(&row_id)?, serde_json::from_str(&values_json)?)?)
-        }).await
-    }
-    #[allow(clippy::too_many_arguments)]
-    pub async fn attach(&self, epoch: u64, model: String, row_id: String, field: String, bytes: Vec<u8>, name: String, mime: String) -> Result<String, DbError> {
-        let row_id = id(&row_id)?;
-        self.write_in_epoch(crate::ffi::legacy::Origin::Explicit, epoch, "attach", move |database, admitted| Ok(database.db.attach(admitted, &model, &row_id, &field, &bytes, &name, &mime)?.to_value().to_string())).await
-    }
     pub async fn file(&self, epoch: u64, model: String, row_id: String, field: String) -> Result<Option<String>, DbError> {
         let row_id = id(&row_id)?;
         self.read_in_epoch(epoch, "file", move |database| Ok(database.db.file(&model, &row_id, &field)?.map(|file| file.to_value().to_string()))).await
@@ -429,10 +319,6 @@ impl Database {
     pub async fn url(&self, epoch: u64, model: String, row_id: String, field: String) -> Result<Option<String>, DbError> {
         let row_id = id(&row_id)?;
         self.read_in_epoch(epoch, "file url", move |database| Ok(database.db.url(&model, &row_id, &field)?.map(|path| path.to_string_lossy().into_owned()))).await
-    }
-    pub async fn detach(&self, epoch: u64, model: String, row_id: String, field: String) -> Result<bool, DbError> {
-        let row_id = id(&row_id)?;
-        self.write_in_epoch(crate::ffi::legacy::Origin::Explicit, epoch, "detach", move |database, admitted| Ok(database.db.detach(admitted, &model, &row_id, &field)?)).await
     }
     pub fn register_operations(&self, defs_json: String) -> Result<(), DbError> {
         let defs: Vec<Value> = serde_json::from_str(&defs_json)?;

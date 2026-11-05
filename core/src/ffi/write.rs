@@ -5,7 +5,8 @@ use std::sync::Arc;
 
 use serde_json::{Map, Value};
 
-use super::database::{id, receipt_of, Ticket, WireOperationOutcome, WireOperationReceipt};
+use super::database::id;
+use super::receipt::{receipt_of, Ticket, WireOperationOutcome, WireOperationReceipt};
 use super::{Database, DbError};
 use crate::db::Planned;
 use crate::owners::life::LifeReply;
@@ -149,11 +150,46 @@ impl Database {
         self.outbox_answer(waiter, "set local").await.map(drop)
     }
 
+    pub async fn set_ephemeral(&self, epoch: u64, model: String, row_id: String, values_json: String) -> Result<(), DbError> {
+        self.account_call(epoch)?;
+        let waiter = self.life.local_write(epoch, model, LocalWriteKind::SetEphemeral { expire_after: None }, id(&row_id)?.to_string(), values_json, self.now());
+        self.outbox_answer(waiter, "set ephemeral").await.map(drop)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub async fn attach(&self, epoch: u64, model: String, row_id: String, field: String, bytes: Vec<u8>, name: String, mime: String) -> Result<String, DbError> {
+        self.account_call(epoch)?;
+        let row = id(&row_id)?;
+        let (checked_model, checked_field) = (model.clone(), field.clone());
+        let checked = row.clone();
+        self.read_in_epoch(epoch, "attach", move |database| Ok(database.db.file(&checked_model, &checked, &checked_field)?.is_some())).await?;
+        let waiter = self.life.local_write(epoch, model.clone(), LocalWriteKind::AttachBytes { bytes, name, mime }, row.to_string(), field.clone(), self.now());
+        self.outbox_answer(waiter, "attach").await?;
+        self.read_in_epoch(epoch, "attach", move |database| {
+            let attached = database.db.file(&model, &row, &field)?.ok_or_else(|| DbError::Database { detail: "the attached file is not on the row".into() })?;
+            Ok(attached.to_value().to_string())
+        })
+        .await
+    }
+
+    pub async fn detach(&self, epoch: u64, model: String, row_id: String, field: String) -> Result<bool, DbError> {
+        self.account_call(epoch)?;
+        let row = id(&row_id)?;
+        let (checked_model, checked_field, checked) = (model.clone(), field.clone(), row.clone());
+        let had = self.read_in_epoch(epoch, "detach", move |database| Ok(database.db.file(&checked_model, &checked, &checked_field)?.is_some())).await?;
+        let waiter = self.life.local_write(epoch, model, LocalWriteKind::Detach, row.to_string(), field, self.now());
+        self.outbox_answer(waiter, "detach").await?;
+        Ok(had)
+    }
+
     pub async fn outcome(&self, receipt: WireOperationReceipt) -> Result<WireOperationOutcome, DbError> {
         let held = &receipt.ticket;
         if !Arc::ptr_eq(&held.streams, &self.streams) { return Err(DbError::Invalid { detail: "the receipt belongs to another database".into() }); }
         if receipt.epoch != held.epoch || receipt.model != held.model || receipt.operation != held.operation || receipt.revision != held.revision || receipt.optimistic_value != held.optimistic_value {
             return Err(DbError::Invalid { detail: "the receipt was changed".into() });
+        }
+        if let Some(Ticket::Outbox(ticket)) = &held.ticket {
+            if let Some(kept) = crate::db::locked(&self.outcomes).get(&(ticket.epoch, ticket.op_id, ticket.cycle_id)).cloned() { return Ok(kept); }
         }
         if !self.admits(receipt.epoch) { return Ok(WireOperationOutcome::Interrupted); }
         match held.ticket.clone() {
@@ -176,6 +212,7 @@ impl Database {
 
 impl Database {
     /// Waits until no operation of the owner Outbox is on its way; a database without a session has none.
+    #[cfg(test)]
     pub(super) async fn operations_quiet(&self) {
         let _ = self.await_life(self.life.operations_quiet(self.life.published().epoch)).await;
     }
@@ -183,7 +220,6 @@ impl Database {
     /// The outcome of a receipt does not change: the first one is kept and given again.
     async fn operation_outcome(&self, receipt: WireOperationReceipt, ticket: Receipt) -> Result<WireOperationOutcome, DbError> {
         let key = (ticket.epoch, ticket.op_id, ticket.cycle_id);
-        if let Some(kept) = crate::db::locked(&self.outcomes).get(&key).cloned() { return Ok(kept); }
         let outcome = self.read_outcome(receipt, ticket).await?;
         if matches!(outcome, WireOperationOutcome::Confirmed { .. } | WireOperationOutcome::Rejected { .. }) {
             let mut kept = crate::db::locked(&self.outcomes);
@@ -196,7 +232,7 @@ impl Database {
     async fn read_outcome(&self, receipt: WireOperationReceipt, ticket: Receipt) -> Result<WireOperationOutcome, DbError> {
         let answer = match self.await_life(self.life.operation_outcome(receipt.epoch, ticket.clone())).await {
             Ok(LifeReply::Outbox(OutboxAnswer::Outcome(outcome))) => outcome,
-            Ok(LifeReply::Outbox(OutboxAnswer::Err(Fault::NoSession))) | Err(DbError::NoSession { .. } | DbError::Interrupted { .. }) => return Ok(WireOperationOutcome::Interrupted),
+            Ok(LifeReply::Outbox(OutboxAnswer::Err(Fault::NoSession | Fault::Closed | Fault::Interrupted))) | Err(DbError::NoSession { .. } | DbError::Interrupted { .. } | DbError::Closed { .. }) => return Ok(WireOperationOutcome::Interrupted),
             Ok(LifeReply::Outbox(OutboxAnswer::Err(fault))) => return Err(refused(fault, "operation outcome")),
             Ok(_) => return Err(super::command::ended()),
             Err(_) if !self.admits(receipt.epoch) => return Ok(WireOperationOutcome::Interrupted),

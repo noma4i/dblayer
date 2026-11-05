@@ -23,15 +23,9 @@ impl Db {
 
     pub fn discard_restore_failed(&self, table: &str, key: &str) -> Result<bool, DbError> { Ok(self.shared.store.discard_restore_failed(table, key)?) }
 
-    /// Every open operation of the queue. The `path` of a request and the rule `on_failure` come from the operation the model declares for `(model, action)`:
-    /// the base has no column for them. An operation whose action declares no mutation is an error that names it: nothing is guessed.
-    pub(crate) fn read_intents(&self) -> Result<Vec<StoredOp>, DbError> {
-        let (entries, pending, answers) = self.shared.read(&[], |reader| {
-            let connection = reader.connection();
-            Ok((read_outbox(reader)?, crate::transport::encrypted::state::pending(connection).map_err(crate::store::StoreError::from)?, crate::transport::encrypted::state::answers_of_operations(connection).map_err(crate::store::StoreError::from)?))
-        })?;
-        self.stored_intents(entries, pending, answers)
-    }
+    /// The `on_failure` rule comes from the operation the model declares for `(model, action)`: the base has no column for it. An action that declares no mutation is an error that names it.
+    #[cfg(test)]
+    pub(crate) fn read_intents(&self) -> Result<Vec<StoredOp>, DbError> { self.read_restore()?.ops }
 
     pub(crate) fn read_restore(&self) -> Result<Restore, DbError> {
         let (entries, pending, uploads, answers) = self.shared.read(&[], |reader| {
@@ -58,16 +52,16 @@ impl Db {
             };
             let declared = self.spec(model)?.actions.iter().find(|declaration| declaration.name == action);
             let mutation = declared.and_then(|declaration| declaration.mutation.as_deref());
-            let Some(mutation) = mutation else {
+            if mutation.is_none() {
                 return Err(DbError::Internal(format!("the operation {} ({model}.{action}) declares no mutation to restore it with", operation.id.0)));
-            };
+            }
             let op = NewOp {
                 model: model.to_string(),
                 row_id: row_id.as_str().to_string(),
                 action: action.to_string(),
                 on_failure: declared.map_or(OnFailure::Rollback, |declaration| declaration.on_failure),
                 origin: Origin::Api,
-                path: format!("/{mutation}"),
+                path: String::new(),
                 body: entry.input.to_string(),
                 effects: Default::default(),
                 durable: true,

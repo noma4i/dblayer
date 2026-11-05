@@ -4,8 +4,6 @@ use super::{Inner, Store, StoreError};
 
 impl Store {
     pub(crate) fn write<T, E>(&self, authority: &Authority, refused: impl FnOnce() -> E, work: impl FnOnce(&Inner) -> Result<T, E>) -> Result<T, E> {
-        #[cfg(test)]
-        self.writes_waiting.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         let inner = self.lock();
         let _line = match authority {
             Authority::Admitted(admitted) => {

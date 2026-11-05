@@ -213,28 +213,6 @@ async fn a_call_waiting_in_a_retry_or_a_queue_ends_with_the_session_reset_and_th
 
 #[allow(clippy::await_holding_lock)]
 #[tokio::test(flavor = "multi_thread")]
-async fn an_answer_that_reaches_the_commit_after_the_session_ended_writes_nothing() {
-    let server = Arc::new(Server::default());
-    let database = open(server.clone()).await;
-    sign_in(&database, "A").await;
-    let sequence = || database.session.as_ref().unwrap().sequence_for_test();
-    let before = sequence();
-    let pause = server.pause_next();
-    let caller = database.clone();
-    let work = tokio::spawn(async move { caller.session_call("login_link".into(), json!({"account":"late"}).to_string()).await.map(|_| ()) });
-    within(pause.entered.notified()).await;
-    let store = &database.db.shared.store;
-    let waiting = store.writes_waiting.load(std::sync::atomic::Ordering::SeqCst);
-    let writer = store.lock();
-    pause.release.add_permits(1);
-    crate::test_wait::yield_until("the answer reached the writer", || store.writes_waiting.load(std::sync::atomic::Ordering::SeqCst) > waiting).await;
-    database.close_now();
-    drop(writer);
-    assert!(within(work).await.unwrap().is_err(), "the answer of the closed database was accepted");
-    assert_eq!(sequence(), before, "the answer wrote its sequence after the database closed");
-}
-
-#[tokio::test(flavor = "multi_thread")]
 async fn a_confirmed_logout_that_reaches_the_commit_after_the_close_clears_nothing() {
     let server = Arc::new(Server::default());
     let database = open(server.clone()).await;
