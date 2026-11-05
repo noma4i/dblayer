@@ -64,7 +64,7 @@ The Android ABI libraries, the host library for Kotlin bindings and the iOS slic
 When the stored fingerprint equals the current one and the artifacts exist, the step prints `native build skipped: inputs unchanged, fingerprint <hash>` and builds nothing. Any change of an input rebuilds, including the release profile in `Cargo.toml`.
 See [release profile measurements](release-profile-measurements.md) for the size, query CPU and compilation CPU comparisons.
 
-`specs/` is not in git: the invariants check reads `specs/invariants.md` of the main tree, or the file named by `SPEC=<file>`. The summary line counts CPU seconds of waited children plus the CPU of the processes below a java process (the single-use Gradle daemon and its test executors).
+The summary line counts CPU seconds of waited children plus the CPU of the processes below a java process (the single-use Gradle daemon and its test executors).
 
 `bash scripts/check_dblayer.sh --fast` runs the cheap checks and only the steps of the touched directories (`core/`, `gen/`, `swift/`, `kotlin/`). `--list` prints the steps, `--only <lane>` runs one lane. Run the full check before a merge.
 

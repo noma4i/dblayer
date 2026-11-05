@@ -1,4 +1,4 @@
-//! `specs/machines/transfer.md` as code: one match arm per table row. No library code.
+//! The `transfer` machine as code: one match arm per table row. No library code.
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum St { None, Copying, Ready, Uploading, Completing, Mutating, Failed, Done }

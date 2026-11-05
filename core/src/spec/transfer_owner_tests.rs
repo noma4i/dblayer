@@ -1,4 +1,4 @@
-//! Owner-level tests of `specs/machines/transfer.md`: the owner `Transfers` on `DetScheduler`, every row of the tables and every property.
+//! Owner-level tests of the `transfer` machine: the owner `Transfers` on `DetScheduler`, every row of the tables and every property.
 //! A row test brings the owner to the state of the row, feeds the input through its address and compares the stage, the replies and the
 //! effects with the reference (`ref_transfer.rs`). Names are the `Test` column.
 

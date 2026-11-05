@@ -1,4 +1,4 @@
-//! `specs/machines/window.md` as code: one match arm per table row. No library code.
+//! The `window` machine as code: one match arm per table row. No library code.
 
 use std::collections::{BTreeMap, BTreeSet};
 

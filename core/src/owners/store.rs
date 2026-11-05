@@ -1,4 +1,4 @@
-//! Owner `StoreWriter` (`specs/machines/store.md`): the only writer of SQLite. SQLite runs as the effects `Write` and `Erase`;
+//! Owner `StoreWriter`: the only writer of SQLite. SQLite runs as the effects `Write` and `Erase`;
 //! the result comes back as the input `Written` or `Erased` (R2), then `revision` grows and the author gets its answer.
 
 use std::collections::{BTreeMap, BTreeSet};

@@ -22,7 +22,7 @@ ps() {
 }
 export -f ps
 code=0
-bash "$here/check_invariants_selftest.sh" > "$work/out" 2>&1 || code=$?
+bash "$here/check_waits_test.sh" > "$work/out" 2>&1 || code=$?
 cat "$work/out"
 if [ "$code" -ne 0 ] || [ -f "$work/violation" ] || ! kill -0 "$outsider" 2>/dev/null; then
   echo "FAIL selftest isolation: code=$code, outsider PID=$outsider"

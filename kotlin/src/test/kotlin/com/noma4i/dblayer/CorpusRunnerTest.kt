@@ -97,7 +97,7 @@ private val corpusDirectory = File("../core/tests/corpus")
 
 private fun JsonObject.text(key: String): String? = (this[key] as? JsonPrimitive)?.contentOrNull
 
-/** Runs the inputs of `specs/machines/corpus.md` through the public API of `Database`. */
+/** Runs the inputs of the `corpus` machine through the public API of `Database`. */
 private class DatabaseRunner {
     var database: Database? = null
     val mock = CorpusMock()

@@ -34,7 +34,7 @@ def fixture(base, touch=None, manifest=True):
     repo = base / "repo"
     (repo / "scripts").mkdir(parents=True)
     shutil.copy2(release_script, repo / "scripts/release.sh")
-    for name in ("check_docs.sh", "check_invariants.sh", "check_zoo.sh"):
+    for name in ("check_docs.sh", "check_zoo.sh", "check_legacy.sh"):
         (repo / "scripts" / name).write_text("#!/bin/sh\nexit 0\n")
     (repo / "scripts/check_sequences.sh").write_text("""#!/bin/sh
 echo "check_sequences $*" >> "$TEST_EVENTS"
@@ -243,6 +243,14 @@ with tempfile.TemporaryDirectory(prefix="dblayer-release-modes-") as directory:
     run(["bash", "scripts/release.sh", version], dirty, dirty_env, expected=1, contains="working tree is not clean")
     assert not (dirty / "target/release.lock").exists(), "the lock stayed after a refusal"
     print("ok dirty tracked file is rejected and releases the lock")
+    legacy_repo, legacy_env = fixture(base / "legacy")
+    shutil.copy2(source / "scripts/check_legacy.sh", legacy_repo / "scripts/check_legacy.sh")
+    run(["bash", "scripts/check_legacy.sh", "check"], legacy_repo, legacy_env, expected=0)
+    (legacy_repo / "core/src/extra.rs").write_text("// one legacy line\n")
+    subprocess.run([real_git, "-C", str(legacy_repo), "add", "core/src/extra.rs"], check=True)
+    subprocess.run([real_git, "-C", str(legacy_repo), "commit", "-q", "--amend", "--no-edit"], check=True, capture_output=True)
+    run(["bash", "scripts/check_legacy.sh", "check"], legacy_repo, legacy_env, expected=1, contains="1 legacy lines, 0 development-file references")
+    print("ok check_legacy goes red at one match")
     incomplete, incomplete_env = fixture(base / "incomplete")
     stage = incomplete / "target/release-1.2.3"
     stage.mkdir(parents=True)

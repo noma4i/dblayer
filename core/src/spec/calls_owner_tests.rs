@@ -1,4 +1,4 @@
-//! Owner-level tests of `specs/machines/calls.md`: the owner `Calls` on `DetScheduler` against `ref_calls.rs`. Names are the `Test` column.
+//! Owner-level tests of the `calls` machine: the owner `Calls` on `DetScheduler` against `ref_calls.rs`. Names are the `Test` column.
 
 use super::ref_calls::{Calls as Ref, CallState, Effect as RefEffect, Fail, Input, Out};
 use crate::owners::calls::{CallAnswer, CallError, CallPhase, Calls, CallsEffect, CallsInput, CallsState};

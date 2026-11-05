@@ -88,42 +88,42 @@ G01	R-3	core	the_harness_cycle_releases_the_token_of_a_held_server_subscription_
 G01	R-3	core	a_subscription_declared_on_the_next_database_opens_once_on_the_next_target	green	S1: new declaration or explicit load makes the lease; the test then asserts the declaration path	library
 G01		core	harness_cycles_survive_tests_that_leave_offline_logout_and_subscriptions_behind	green	S1: each test closes its database and the next test opens a new one; the leftover logout becomes a session reset	library
 R10		core	seeded_lifecycle_steps_keep_every_view_and_every_request_consistent	green	S1: the Logout action leaves the generator; SessionReset clears the data (data_empty after it)	library
-R11		core	a_refused_refresh_keeps_the_views_and_the_credential	green	S1: the test calls the data logout or the old exit through its helpers; the helpers lose the data logout and the exit is the session reset	I LiveEventLifecycle.swift:24
-B01		core	a_stream_opened_after_the_login_starts_with_a_snapshot_of_the_account_in_its_epoch	green	S2: login: the first value is a snapshot in the epoch of the session	arch-r2 specs/architecture.md B, C, D, F
-B01		swift	BridgeProbeTests.aStreamAfterTheLoginStartsWithASnapshotOfTheAccountInItsEpoch	green	S2: login: the first value is a snapshot in the epoch of the session	arch-r2 specs/architecture.md B, C, D, F
-B01		kotlin	com.noma4i.dblayer.ValueBridgeTest.aStreamAfterTheLoginStartsWithASnapshotOfTheAccountInItsEpoch	green	S2: login: the first value is a snapshot in the epoch of the session	arch-r2 specs/architecture.md B, C, D, F
-B02		core	the_session_reset_ends_every_stream_with_one_outcome_and_no_account_value_follows	green	S2: sign-out: one outcome, no value after it, nothing open	arch-r2 specs/architecture.md B, C, D, F
-B02		swift	BridgeProbeTests.theSessionResetEndsEveryStreamWithOneOutcome	green	S2: sign-out: one outcome, no value after it, nothing open	arch-r2 specs/architecture.md B, C, D, F
-B02		kotlin	com.noma4i.dblayer.ValueBridgeTest.theSessionResetEndsEveryStreamWithOneOutcome	green	S2: sign-out: one outcome, no value after it, nothing open	arch-r2 specs/architecture.md B, C, D, F
-B03		core	an_account_switch_gives_new_streams_and_no_value_of_a_reaches_b	green	S2: account switch A to B: new projections, no A value in B	arch-r2 specs/architecture.md B, C, D, F
-B03		swift	BridgeProbeTests.anAccountSwitchGivesNewProjectionsAndNoValueOfAReachesB	green	S2: account switch A to B: new projections, no A value in B	arch-r2 specs/architecture.md B, C, D, F
-B03		kotlin	com.noma4i.dblayer.ValueBridgeTest.anAccountSwitchGivesNewProjectionsAndNoValueOfAReachesB	green	S2: account switch A to B: new projections, no A value in B	arch-r2 specs/architecture.md B, C, D, F
-B04		core	a_message_sent_offline_goes_out_once_and_keeps_its_position	green	S2: send offline then online: one message, stable position	arch-r2 specs/architecture.md B, C, D, F
-B04		swift	BridgeProbeTests.aMessageSentOfflineGoesOutOnceAndKeepsItsPosition	green	S2: send offline then online: one message, stable position	arch-r2 specs/architecture.md B, C, D, F
-B04		kotlin	com.noma4i.dblayer.ValueBridgeTest.aMessageSentOfflineGoesOutOnceAndKeepsItsPosition	green	S2: send offline then online: one message, stable position	arch-r2 specs/architecture.md B, C, D, F
-B05		core	a_late_answer_of_the_old_epoch_is_dropped_and_a_command_of_the_old_epoch_is_refused	green	S2: late old-epoch answer dropped, old-epoch command refused	arch-r2 specs/architecture.md B, C, D, F
-B05		swift	BridgeProbeTests.aCommandAndALateCallOfTheOldEpochEndWithoutReachingTheNewAccount	green	S2: late old-epoch answer dropped, old-epoch command refused	arch-r2 specs/architecture.md B, C, D, F
-B05		kotlin	com.noma4i.dblayer.ValueBridgeTest.aCommandAndALateCallOfTheOldEpochEndWithoutReachingTheNewAccount	green	S2: late old-epoch answer dropped, old-epoch command refused	arch-r2 specs/architecture.md B, C, D, F
-B06		core	the_reader_that_cancels_ends_the_stream_and_the_core_keeps_nothing	green	S2: cancel of the reader ends the stream	arch-r2 specs/architecture.md B, C, D, F
-B06		swift	BridgeProbeTests.theReaderThatStopsEndsTheStreamInTheCore	green	S2: cancel of the reader ends the stream	arch-r2 specs/architecture.md B, C, D, F
-B06		kotlin	com.noma4i.dblayer.ValueBridgeTest.theReaderThatStopsEndsTheStreamInTheCore	green	S2: cancel of the reader ends the stream	arch-r2 specs/architecture.md B, C, D, F
-B07		core	work_counters_idle_zero_one_row_one_decode_and_subscriptions_equal_readers	green	S2: spec F counters: idle 0, one row one decode, subscriptions equal readers	arch-r2 specs/architecture.md B, C, D, F
-B07		swift	BridgeProbeTests.aChangeOfOneRowDecodesOneRowAndSubscriptionsEqualReaders	green	S2: spec F counters: idle 0, one row one decode, subscriptions equal readers	arch-r2 specs/architecture.md B, C, D, F
-B07		kotlin	com.noma4i.dblayer.ValueBridgeTest.aChangeOfOneRowDecodesOneRowAndSubscriptionsEqualReaders	green	S2: spec F counters: idle 0, one row one decode, subscriptions equal readers	arch-r2 specs/architecture.md B, C, D, F
-B08		core	a_missed_revision_gives_one_new_snapshot	green	S2: a missed revision gives one new snapshot	arch-r2 specs/architecture.md B, C, D, F
-B08		swift	BridgeProbeTests.aMissedRevisionGivesOneNewSnapshotAndTheQueuedDeltasWaitForIt	green	S3 R7: a missed revision gives one new snapshot, queued deltas wait	arch-r3 specs/architecture.md A-F
-B08		kotlin	com.noma4i.dblayer.ValueBridgeTest.aMissedRevisionGivesOneNewSnapshotAndTheQueuedDeltasWaitForIt	green	S3 R7: a missed revision gives one new snapshot, queued deltas wait	arch-r3 specs/architecture.md A-F
-B09		core	a_send_that_waits_for_the_writer_while_the_session_ends_writes_no_row	green	core-only: the proof holds the SQL writer lock, a core hook	arch-r3 specs/architecture.md A-F
-B10		core	the_outcome_of_an_offline_command_waits_and_ends_with_the_epoch_of_its_receipt	green	S3 R2: the outcome waits offline and ends with the epoch of its receipt	arch-r3 specs/architecture.md A-F
-B10		swift	BridgeProbeTests.theOutcomeOfAnOfflineCommandWaitsAndEndsWithTheEpochOfItsReceipt	green	S3 R2: the outcome waits offline and ends with the epoch of its receipt	arch-r3 specs/architecture.md A-F
-B10		kotlin	com.noma4i.dblayer.ValueBridgeTest.theOutcomeOfAnOfflineCommandWaitsAndEndsWithTheEpochOfItsReceipt	green	S3 R2: the outcome waits offline and ends with the epoch of its receipt	arch-r3 specs/architecture.md A-F
-B11		core	a_stream_request_whose_caller_left_ends_with_its_epoch_and_holds_nothing	green	core-only: the proof holds a server request through the fake world gate	arch-r3 specs/architecture.md A-F
-B12		core	a_stream_that_cannot_connect_ends_once_and_leaves_the_table	green	S3 R4: a connect error ends the stream with one outcome	arch-r3 specs/architecture.md A-F
-B12		swift	BridgeProbeTests.aStreamThatCannotConnectEndsOnceAndLeavesTheTable	green	S3 R4: a connect error ends the stream with one outcome	arch-r3 specs/architecture.md A-F
-B12		kotlin	com.noma4i.dblayer.ValueBridgeTest.aStreamThatCannotConnectEndsOnceAndLeavesTheTable	green	S3 R4: a connect error ends the stream with one outcome	arch-r3 specs/architecture.md A-F
-B13		core	the_cancel_of_a_reader_returns_while_a_delivery_runs_and_none_is_admitted_after_it	green	core-only: the proof blocks the reader inside its delivery and counts calls in the core	arch-r3 specs/architecture.md A-F
-B14		kotlin	com.noma4i.dblayer.ValueBridgeTest.aProjectionInACancelledScopeLeavesNoStreamInTheCore	green	S3 R6: a projection in a cancelled scope leaves no stream in the core	arch-r3 specs/architecture.md A-F
-B15		core	work_counters_an_entity_stream_ignores_other_rows_and_a_count_stream_gets_one_value_per_write	green	core-only: the proof reads the core work counters	arch-r3 specs/architecture.md F
+R11		core	a_refused_foreground_refresh_keeps_the_views_and_the_credential	green	S1: the test calls the data logout or the old exit through its helpers; the helpers lose the data logout and the exit is the session reset	I LiveEventLifecycle.swift:24
+B01		core	a_stream_opened_after_the_login_starts_with_a_snapshot_of_the_account_in_its_epoch	green	S2: login: the first value is a snapshot in the epoch of the session	arch-r2
+B01		swift	BridgeProbeTests.aStreamAfterTheLoginStartsWithASnapshotOfTheAccountInItsEpoch	green	S2: login: the first value is a snapshot in the epoch of the session	arch-r2
+B01		kotlin	com.noma4i.dblayer.ValueBridgeTest.aStreamAfterTheLoginStartsWithASnapshotOfTheAccountInItsEpoch	green	S2: login: the first value is a snapshot in the epoch of the session	arch-r2
+B02		core	the_session_reset_ends_every_stream_with_one_outcome_and_no_account_value_follows	green	S2: sign-out: one outcome, no value after it, nothing open	arch-r2
+B02		swift	BridgeProbeTests.theSessionResetEndsEveryStreamWithOneOutcome	green	S2: sign-out: one outcome, no value after it, nothing open	arch-r2
+B02		kotlin	com.noma4i.dblayer.ValueBridgeTest.theSessionResetEndsEveryStreamWithOneOutcome	green	S2: sign-out: one outcome, no value after it, nothing open	arch-r2
+B03		core	an_account_switch_gives_new_streams_and_no_value_of_a_reaches_b	green	S2: account switch A to B: new projections, no A value in B	arch-r2
+B03		swift	BridgeProbeTests.anAccountSwitchGivesNewProjectionsAndNoValueOfAReachesB	green	S2: account switch A to B: new projections, no A value in B	arch-r2
+B03		kotlin	com.noma4i.dblayer.ValueBridgeTest.anAccountSwitchGivesNewProjectionsAndNoValueOfAReachesB	green	S2: account switch A to B: new projections, no A value in B	arch-r2
+B04		core	a_message_sent_offline_goes_out_once_and_keeps_its_position	green	S2: send offline then online: one message, stable position	arch-r2
+B04		swift	BridgeProbeTests.aMessageSentOfflineGoesOutOnceAndKeepsItsPosition	green	S2: send offline then online: one message, stable position	arch-r2
+B04		kotlin	com.noma4i.dblayer.ValueBridgeTest.aMessageSentOfflineGoesOutOnceAndKeepsItsPosition	green	S2: send offline then online: one message, stable position	arch-r2
+B05		core	a_late_answer_of_the_old_epoch_is_dropped_and_a_command_of_the_old_epoch_is_refused	green	S2: late old-epoch answer dropped, old-epoch command refused	arch-r2
+B05		swift	BridgeProbeTests.aCommandAndALateCallOfTheOldEpochEndWithoutReachingTheNewAccount	green	S2: late old-epoch answer dropped, old-epoch command refused	arch-r2
+B05		kotlin	com.noma4i.dblayer.ValueBridgeTest.aCommandAndALateCallOfTheOldEpochEndWithoutReachingTheNewAccount	green	S2: late old-epoch answer dropped, old-epoch command refused	arch-r2
+B06		core	the_reader_that_cancels_ends_the_stream_and_the_core_keeps_nothing	green	S2: cancel of the reader ends the stream	arch-r2
+B06		swift	BridgeProbeTests.theReaderThatStopsEndsTheStreamInTheCore	green	S2: cancel of the reader ends the stream	arch-r2
+B06		kotlin	com.noma4i.dblayer.ValueBridgeTest.theReaderThatStopsEndsTheStreamInTheCore	green	S2: cancel of the reader ends the stream	arch-r2
+B07		core	work_counters_idle_zero_one_row_one_decode_and_subscriptions_equal_readers	green	S2: spec F counters: idle 0, one row one decode, subscriptions equal readers	arch-r2
+B07		swift	BridgeProbeTests.aChangeOfOneRowDecodesOneRowAndSubscriptionsEqualReaders	green	S2: spec F counters: idle 0, one row one decode, subscriptions equal readers	arch-r2
+B07		kotlin	com.noma4i.dblayer.ValueBridgeTest.aChangeOfOneRowDecodesOneRowAndSubscriptionsEqualReaders	green	S2: spec F counters: idle 0, one row one decode, subscriptions equal readers	arch-r2
+B08		core	a_missed_revision_gives_one_new_snapshot	green	S2: a missed revision gives one new snapshot	arch-r2
+B08		swift	BridgeProbeTests.aMissedRevisionGivesOneNewSnapshotAndTheQueuedDeltasWaitForIt	green	S3 R7: a missed revision gives one new snapshot, queued deltas wait	arch-r3
+B08		kotlin	com.noma4i.dblayer.ValueBridgeTest.aMissedRevisionGivesOneNewSnapshotAndTheQueuedDeltasWaitForIt	green	S3 R7: a missed revision gives one new snapshot, queued deltas wait	arch-r3
+B09		core	a_send_that_waits_for_the_writer_while_the_session_ends_writes_no_row	green	core-only: the proof holds the SQL writer lock, a core hook	arch-r3
+B10		core	the_outcome_of_an_offline_command_waits_and_ends_with_the_epoch_of_its_receipt	green	S3 R2: the outcome waits offline and ends with the epoch of its receipt	arch-r3
+B10		swift	BridgeProbeTests.theOutcomeOfAnOfflineCommandWaitsAndEndsWithTheEpochOfItsReceipt	green	S3 R2: the outcome waits offline and ends with the epoch of its receipt	arch-r3
+B10		kotlin	com.noma4i.dblayer.ValueBridgeTest.theOutcomeOfAnOfflineCommandWaitsAndEndsWithTheEpochOfItsReceipt	green	S3 R2: the outcome waits offline and ends with the epoch of its receipt	arch-r3
+B11		core	a_stream_request_whose_caller_left_ends_with_its_epoch_and_holds_nothing	green	core-only: the proof holds a server request through the fake world gate	arch-r3
+B12		core	a_stream_that_cannot_connect_ends_once_and_leaves_the_table	green	S3 R4: a connect error ends the stream with one outcome	arch-r3
+B12		swift	BridgeProbeTests.aStreamThatCannotConnectEndsOnceAndLeavesTheTable	green	S3 R4: a connect error ends the stream with one outcome	arch-r3
+B12		kotlin	com.noma4i.dblayer.ValueBridgeTest.aStreamThatCannotConnectEndsOnceAndLeavesTheTable	green	S3 R4: a connect error ends the stream with one outcome	arch-r3
+B13		core	the_cancel_of_a_reader_returns_while_a_delivery_runs_and_none_is_admitted_after_it	green	core-only: the proof blocks the reader inside its delivery and counts calls in the core	arch-r3
+B14		kotlin	com.noma4i.dblayer.ValueBridgeTest.aProjectionInACancelledScopeLeavesNoStreamInTheCore	green	S3 R6: a projection in a cancelled scope leaves no stream in the core	arch-r3
+B15		core	work_counters_an_entity_stream_ignores_other_rows_and_a_count_stream_gets_one_value_per_write	green	core-only: the proof reads the core work counters	arch-r3
 K01	B1	core	a_send_between_its_epoch_check_and_its_commit_never_goes_out_for_the_next_account	green	-	arch-r3b review B1
 K02	B2	core	a_command_and_a_read_of_a_left_account_are_refused_and_change_nothing	green	-	arch-r3b review B2
 K02	B2	swift	BridgeProbeTests.aCommandAndAReadOfAnAccountThatLeftAreRefusedAndChangeNothing	green	-	arch-r3b review B2
@@ -353,8 +353,8 @@ T13		kotlin	com.noma4i.dblayer.UploadWorkTest.aNewSessionSchedulesUploadsAfterTh
 T14		kotlin	com.noma4i.dblayer.UploadWorkTest.onlyUploadRequestsGoThroughTheNetworkOfTheRunningJob	red-by-reading	-	late Android job must not clear a newer network route
 T15		kotlin	com.noma4i.dblayer.UploadWorkTest.aSchedulerRefusalReturningAfterResetDoesNotChangeTheNewUpload	red-by-reading	-	Android scheduler refusal crosses a session reset
 T16		kotlin	com.noma4i.dblayer.UploadWorkTest.aNewSessionSchedulesUploadsWhenTheOldEndingRoundLostItsSession	regression	-	ending Android round after session reset
-T17		swift	BridgeProbeTests.shiftingABatchDuringAHeldEncryptedRequestKeepsTheFileOwner	red-by-reading	missing case	legacy transfer without an item
-T17		kotlin	com.noma4i.dblayer.TransferTest.shiftingABatchDuringAHeldEncryptedRequestKeepsTheFileOwner	red-by-reading	missing case	legacy transfer without an item
+T17		swift	BridgeProbeTests.shiftingABatchDuringAHeldEncryptedRequestKeepsTheFileOwner	red-by-reading	missing case	transfer without an item
+T17		kotlin	com.noma4i.dblayer.TransferTest.shiftingABatchDuringAHeldEncryptedRequestKeepsTheFileOwner	red-by-reading	missing case	transfer without an item
 S216	A3-lost	core	a_lost_event_range_reads_the_open_window_once	red-by-reading	lost subscription range marks the windows and reads the open one once	s2/design.md S216
 T18		core	records_below_the_minimum_go_as_single_steps_of_the_same_operation	red-by-reading	batch below minimum keeps one operation and receipt	coordinator S4 item 1
 K36		core	a_queued_message_of_a_never_goes_out_when_another_identity_takes_the_session_without_a_reset	green	core-only: the proof pins the interval between the epoch publish and the session start end with a core hook	final review Fable 1

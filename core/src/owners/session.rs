@@ -1,4 +1,4 @@
-//! Owner `SessionCalls` (`specs/machines/lifecycle.md`, section "Session owner"): the credential, `sequence`, `encrypted_session` and `encrypted_pending`.
+//! Owner `SessionCalls`: the credential, `sequence`, `encrypted_session` and `encrypted_pending`.
 
 use std::collections::VecDeque;
 

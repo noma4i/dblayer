@@ -1,4 +1,4 @@
-//! Owner `Deliveries`: a dictionary of `Delivery` machines by stream id (`specs/machines/delivery.md`, one machine per stream).
+//! Owner `Deliveries`: a dictionary of `Delivery` machines by stream id (one machine per stream).
 //! Only this owner hands values to the platform. A table row applies to the machine of the stream the input names;
 //! `Committed`, `EpochStarted`, `EpochEnded`, `ModelsReset`, `Closing` apply to every machine.
 

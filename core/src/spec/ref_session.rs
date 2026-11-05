@@ -1,4 +1,4 @@
-//! Executable table of the owner `Session` in `specs/machines/lifecycle.md`.
+//! Executable table of the owner `Session` in the `lifecycle` machine.
 
 use std::collections::VecDeque;
 

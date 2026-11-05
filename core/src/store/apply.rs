@@ -463,9 +463,9 @@ pub(crate) fn remove_row(connection: &Connection, info: &ModelInfo, id: &str) ->
 }
 
 fn membership_moves(info: &ModelInfo, model: &ModelKey, id: &str, old: &Map<String, Value>, new: &Map<String, Value>, moves: &mut Vec<ScopeOp>, heads: &mut Vec<(ScopeRef, crate::identity::RowId)>) {
-    let legacy = |row: &Map<String, Value>| info.spec.relations.iter().filter(|relation| relation.membership.is_empty() && !relation.joins_node && (relation.lists_every_row_of_its_params() || relation.takes_created_rows())).flat_map(|relation| relation.row_params(row).into_iter().filter_map(|params| info.spec.selection_key(&relation.name, &params).ok())).collect::<Vec<_>>();
-    let before = legacy(old);
-    let after = legacy(new);
+    let selections = |row: &Map<String, Value>| info.spec.relations.iter().filter(|relation| relation.membership.is_empty() && !relation.joins_node && (relation.lists_every_row_of_its_params() || relation.takes_created_rows())).flat_map(|relation| relation.row_params(row).into_iter().filter_map(|params| info.spec.selection_key(&relation.name, &params).ok())).collect::<Vec<_>>();
+    let before = selections(old);
+    let after = selections(new);
     let Ok(row) = crate::identity::RowId::new(id) else { return };
     moves.extend(
         before.iter().filter(|key| !after.contains(key)).map(|key| ScopeOp::Detach { scope: ScopeRef::new(model.clone(), key.clone()), row: row.clone() }),

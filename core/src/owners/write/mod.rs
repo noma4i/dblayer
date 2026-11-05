@@ -1,4 +1,4 @@
-//! Direction C: owners `Outbox` and `Transfers` with the executors of their effects (`specs/machines/design.md` F3).
+//! Direction C: owners `Outbox` and `Transfers` with the executors of their effects.
 
 pub mod outbox;
 pub mod outbox_executor;

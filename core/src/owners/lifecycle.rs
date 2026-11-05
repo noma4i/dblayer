@@ -1,4 +1,4 @@
-//! Owner `Lifecycle` (`specs/machines/lifecycle.md`): the epoch, the identity of the session, the model generation and the close.
+//! Owner `Lifecycle`: the epoch, the identity of the session, the model generation and the close.
 //! Every output is an effect for the executor: it publishes, broadcasts the control inputs and sends the Store its requests.
 
 use std::collections::BTreeSet;

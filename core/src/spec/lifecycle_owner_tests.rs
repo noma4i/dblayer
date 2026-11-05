@@ -1,4 +1,4 @@
-//! Owner-level tests of `specs/machines/lifecycle.md` (Lifecycle): the owner on `DetScheduler` and the reference table (`ref_lifecycle.rs`)
+//! Owner-level tests of the `lifecycle` machine (Lifecycle): the owner on `DetScheduler` and the reference table (`ref_lifecycle.rs`)
 //! get the same input, after each one the effects, the replies, the state and `Published` must be equal. Names are the `Test` column.
 
 use std::collections::BTreeSet;

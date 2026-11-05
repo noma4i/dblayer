@@ -124,7 +124,7 @@ impl Lifecycle {
         out.effects.push(Effect::EpochStarted(epoch, identity, generation));
     }
 
-    /// One row of `specs/machines/lifecycle.md` per match arm, in table order.
+    /// One row of the `lifecycle` machine per match arm, in table order.
     pub fn step(&mut self, event: Event) -> Out {
         let mut out = Out::default();
         let state = std::mem::replace(&mut self.state, State::Closed);

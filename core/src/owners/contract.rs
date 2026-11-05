@@ -1,4 +1,4 @@
-//! Inputs shared by the owners (`specs/machines/design.md` section 3). Directions A and C take these types from here.
+//! Inputs shared by the owners. Directions A and C take these types from here.
 //! Changing a type goes through the coordinator.
 
 pub use crate::runtime::{Cause, Epoch, Time};

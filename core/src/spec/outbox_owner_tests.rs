@@ -1,4 +1,4 @@
-//! Owner-level tests of `specs/machines/outbox.md`: the owner `Outbox` on `DetScheduler`, every row of the table and every property.
+//! Owner-level tests of the `outbox` machine: the owner `Outbox` on `DetScheduler`, every row of the table and every property.
 //! A row test brings the owner to the state of the row, feeds the input to the owner through its address and compares the stage,
 //! the replies and the effects with the reference (`ref_outbox.rs`). Names are the `Test` column.
 

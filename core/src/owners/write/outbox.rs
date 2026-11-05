@@ -1,4 +1,4 @@
-//! Owner `Outbox`: operations of the queue, optimism, receipts and local writes (`specs/machines/outbox.md`).
+//! Owner `Outbox`: operations of the queue, optimism, receipts and local writes.
 //! One instance per epoch with an identity. Types of the table: inputs, effects, stages. The rows are in `step`.
 
 use std::collections::BTreeMap;

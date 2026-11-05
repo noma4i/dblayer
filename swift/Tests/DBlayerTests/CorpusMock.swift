@@ -1,7 +1,7 @@
 import DBlayer
 import Foundation
 
-/// The transport mock of the shared vocabulary (`specs/machines/corpus.md`). It answers no request by itself: a request waits until an input of the trace answers, fails or drops it.
+/// The transport mock of the shared vocabulary. It answers no request by itself: a request waits until an input of the trace answers, fails or drops it.
 final class CorpusMock: Transport, EncryptedHttp, @unchecked Sendable {
   private struct Seen { let id: String; let kind: String; let purpose: String; var announced = false }
 

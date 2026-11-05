@@ -19,5 +19,3 @@
 | feed_live_channel_lost | вход `ChannelLost{dropped, models}` (переполнение входного канала транспорта) | `SubscriptionSink::overflow_for_testing(dropped)` |
 | feed_opening_want, feed_live_want_more | нужна 2-я модель с `change_feed` в фикстуре и наблюдаемое «набор подписки сменился» | фикстура `World::events_stream_of(model)` + счётчик `subscribe` в моке (есть) |
 | dlv_opening_*, все `Opening` | наблюдаемое «ничего» до `ReadDone` без гонки | см. `hold_reads_for_testing` |
-
-Прочие расхождения спеки и текущего API (не пробелы, а красные тесты фазы C) перечислены в отчёте `.orca-artifacts/t-b/report.md`.

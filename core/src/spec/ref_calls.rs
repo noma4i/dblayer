@@ -1,4 +1,4 @@
-//! Executable table of `specs/machines/calls.md`.
+//! Executable table of the `calls` machine.
 
 use std::collections::{BTreeMap, BTreeSet};
 

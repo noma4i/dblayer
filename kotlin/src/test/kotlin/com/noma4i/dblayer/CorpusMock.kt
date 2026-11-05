@@ -5,7 +5,7 @@ import kotlinx.coroutines.CompletableDeferred
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 
-/** The transport mock of the shared vocabulary (`specs/machines/corpus.md`). It answers no request by itself: a request waits until an input of the trace answers, fails or drops it. */
+/** The transport mock of the shared vocabulary. It answers no request by itself: a request waits until an input of the trace answers, fails or drops it. */
 class CorpusMock : Transport, EncryptedHttp {
     private class Seen(val id: String, val kind: String, val purpose: String, var announced: Boolean = false)
 

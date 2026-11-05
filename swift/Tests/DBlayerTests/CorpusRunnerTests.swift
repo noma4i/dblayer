@@ -111,7 +111,7 @@ private func corpusDirectory() -> URL {
   URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("core/tests/corpus")
 }
 
-/// Runs the inputs of `specs/machines/corpus.md` through the public API of `Database`.
+/// Runs the inputs of the `corpus` machine through the public API of `Database`.
 private final class DatabaseRunner {
   var database: Database?
   let mock = CorpusMock()

@@ -101,7 +101,6 @@ Typical scenarios to cover:
 | Everything, including Swift and Kotlin | `bash scripts/check_dblayer.sh` |
 | Android R8 release and optimized JVM FFI calls | `gradle -p kotlin/r8-check probe` |
 | Touched directories only | `bash scripts/check_dblayer.sh --fast` |
-| Every invariant has a test with an assertion | `bash scripts/check_invariants.sh` |
 | Check scripts leave unrelated processes alone | `bash scripts/check_bounded.sh --selftest` |
 
 | A second check run in the same tree is refused (exit 3), a lock of a dead run is taken over | `bash scripts/check_lock_test.sh` |

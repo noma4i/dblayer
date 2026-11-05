@@ -1,4 +1,4 @@
-//! Owner-level tests of `specs/machines/network.md`: the owner `Network` on `DetScheduler` against `ref_network.rs`. Names are the `Test` column.
+//! Owner-level tests of the `network` machine: the owner `Network` on `DetScheduler` against `ref_network.rs`. Names are the `Test` column.
 
 use super::ref_network::{Effect as RefEffect, Input, Network as Ref, Reply as RefReply, State as RefState};
 use crate::owners::network::{Network, NetworkEffect, NetworkInput, NetworkMode, NetworkState};

@@ -1,4 +1,4 @@
-//! Owner `Network` (`specs/machines/network.md`): the only source of `online`.
+//! Owner `Network`: the only source of `online`.
 
 use super::contract::Drained;
 use crate::runtime::{Cause, Effect, Effects, Epoch, StateOwner, Time};

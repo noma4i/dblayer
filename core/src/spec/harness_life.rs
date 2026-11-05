@@ -121,7 +121,7 @@ pub fn timeout() -> DbError {
     DbError::Invalid { detail: "timeout".into() }
 }
 
-/// The error name of the observation vocabulary (`specs/machines/corpus.md`).
+/// The error name of the observation vocabulary.
 pub fn kind(error: &DbError) -> &'static str {
     match error {
         DbError::NoSession { .. } => "no_session",

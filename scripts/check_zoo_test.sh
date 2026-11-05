@@ -48,12 +48,12 @@ expect_red '#[cfg(test)]
 fn probe() {}
 fn parked(rx: &Receiver) { rx.recv(); }'
 
-mkdir -p "$work/core/src/specs"
-printf '#[cfg(test)]\nmod specs;\n' > "$work/core/src/lib.rs"
-printf 'fn fixture() { Some(1).unwrap(); }\n' > "$work/core/src/specs/harness.rs"
+mkdir -p "$work/core/src/zoo_probe"
+printf '#[cfg(test)]\nmod zoo_probe;\n' > "$work/core/src/lib.rs"
+printf 'fn fixture() { Some(1).unwrap(); }\n' > "$work/core/src/zoo_probe/harness.rs"
 : > "$probe"
 run || { echo "check_zoo_test: a cfg(test) module was scanned" >&2; exit 1; }
-printf 'mod specs;\n' > "$work/core/src/lib.rs"
+printf 'mod zoo_probe;\n' > "$work/core/src/lib.rs"
 if run; then
   echo "check_zoo_test: an unwrap in a non-test module was not caught" >&2
   exit 1

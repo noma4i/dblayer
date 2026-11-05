@@ -15,7 +15,7 @@ pub const SCHEMA_VERSION: i64 = 2;
 pub const FORMAT_VERSION_KEY: &str = "format_version";
 pub const DATA_VERSION_KEY: &str = "data_version";
 pub const REVISION_SEQ_KEY: &str = "revision_seq";
-/// The tables a format change moves into the new layout (`specs/machines/store.md`, `store_boot_format_change`).
+/// The tables a format change moves into the new layout (`store_boot_format_change`).
 pub(crate) const CARRIED_TABLES: [&str; 17] = ["op", "op_item", "op_item_retry", "op_item_header", "op_row", "op_part", "op_value", "op_error", "transfer_abort", "blob_upload", "blob_use", "encrypted_session", "encrypted_pending", "sync_upload", "sync_upload_error", "local_pending", "file"];
 
 pub const SERVICE_COLUMNS: [&str; 3] = ["id", "revision", "born_rev"];

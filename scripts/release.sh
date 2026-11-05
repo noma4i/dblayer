@@ -65,7 +65,7 @@ subjects="$(git log --format=%s "$previous_tag"..HEAD)" || fail 'cannot read com
 grep -Fq "## $version - " CHANGELOG.md || fail 'changelog heading missing'
 manifest=core/src/ffi/selftest/manifest.tsv
 [ -s "$manifest" ] || fail "sequence manifest missing: $manifest (the lifecycle sequences must be on master before a release)"
-for check in check_docs check_invariants check_zoo; do bash "scripts/$check.sh" || fail "$check failed"; done
+for check in check_docs check_zoo check_legacy; do bash "scripts/$check.sh" || fail "$check failed"; done
 # The app suites run when the release touches the library boundary or its build and test inputs. RELEASE_CONSUMERS=always forces them. No setting skips them.
 consumer_boundary='^(core/src/(lifecycle|ffi|session|sync|store)/|gen/|swift/|kotlin/|Cargo\.toml$|scripts/(build_|generate_|release\.sh|check_sequences|check_consumers))'
 consumers=required

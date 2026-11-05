@@ -1,4 +1,4 @@
-//! Owner-level tests of `specs/machines/store.md`: the owner `Store` on `DetScheduler` against `ref_store.rs`. SQLite is the effect `Write` or `Erase*`,
+//! Owner-level tests of the `store` machine: the owner `Store` on `DetScheduler` against `ref_store.rs`. SQLite is the effect `Write` or `Erase*`,
 //! the test answers it with `Written` or `Erased` (`sqlite_ok`). Names are the `Test` column.
 
 use std::collections::{BTreeMap, BTreeSet};

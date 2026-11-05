@@ -1,4 +1,4 @@
-//! Owner `Transfer`: file upload steps and the background round (`specs/machines/transfer.md`).
+//! Owner `Transfer`: file upload steps and the background round.
 //! One instance per epoch with an identity. Types of the table: inputs, effects, stages. The rows are in `step`.
 
 use std::collections::BTreeMap;

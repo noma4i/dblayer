@@ -14,7 +14,7 @@ pub struct CommandUpload {
 }
 
 /// A durable command: the row is written locally at once and the library sends it, also after the network returned or the app restarted.
-/// Only the commands of `specs/architecture.md` section D are durable: a model sends a message through its `durable` create action, and a media upload goes through a declared upload action.
+/// Only a message send and a media upload are durable: a model sends a message through its `durable` create action, and a media upload goes through a declared upload action.
 #[derive(Clone, Debug, uniffi::Record)]
 pub struct CommandRequest {
     /// The session epoch the caller was admitted in. A command for an epoch that has gone is refused.

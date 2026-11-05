@@ -1,4 +1,4 @@
-//! Owner `Calls` (`specs/machines/calls.md`): the arbitrary operation `run`, one transport request per call, no cache and no Store write.
+//! Owner `Calls`: the arbitrary operation `run`, one transport request per call, no cache and no Store write.
 
 use std::collections::{BTreeMap, BTreeSet};
 

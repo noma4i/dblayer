@@ -1,4 +1,4 @@
-//! Owner-level tests of `specs/machines/window.md`: the owner `Windows` on `DetScheduler`, every row of the table and every property.
+//! Owner-level tests of the `window` machine: the owner `Windows` on `DetScheduler`, every row of the table and every property.
 //! A row test feeds the same input to the reference (`ref_window.rs`) and to the owner through its address, then compares the effects,
 //! the outcomes of the callers, the stage and the phase. Names are the `Test` column, `_owner` marks the owner twin of a test that also runs on the API.
 

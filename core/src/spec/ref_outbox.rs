@@ -1,4 +1,4 @@
-//! `specs/machines/outbox.md` as code: one match arm per table row. No library code.
+//! The `outbox` machine as code: one match arm per table row. No library code.
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum Why { Rejected, Discarded }

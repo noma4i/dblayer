@@ -92,7 +92,7 @@ fn fetch_of(name: &str) -> Option<EntityFetch> {
     }
 }
 
-/// The real core behind `Database` for the vocabulary of `specs/machines/corpus.md`.
+/// The real core behind `Database` for the vocabulary of the `corpus` machine.
 /// A call that may wait for the network runs as a task. The runner settles after every input and observes what finished.
 pub struct DatabaseSut {
     database: Option<Arc<Database>>,

@@ -73,7 +73,7 @@ pub struct OpenMessage {
     pub changed_models: BTreeSet<String>,
 }
 
-/// The rows of `specs/machines/store.md`: `rows` holds the committed rows (model, id) a snapshot shows.
+/// The rows of the `store` machine: `rows` holds the committed rows (model, id) a snapshot shows.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Store {
     pub state: Open,

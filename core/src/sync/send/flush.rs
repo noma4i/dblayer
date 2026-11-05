@@ -396,7 +396,7 @@ impl Inner {
         (*locked(&self.network_lost), locked(&self.account).1, self.connectivity.is_online())
     }
 
-    /// Only sending a message and a media upload wait for the network (`specs/architecture.md` D). Any other action that needs the server is refused and rolled back when the network is away or when it was left over from before this open.
+    /// Only sending a message and a media upload wait for the network. Any other action that needs the server is refused and rolled back when the network is away or when it was left over from before this open.
     fn refuse_non_durable(&self, admitted: &crate::ffi::legacy::Admitted, effects: &std::sync::Arc<DeliveryEffects>) -> Result<RefusalState, SyncError> {
         let state = self.refusal_state();
         let (lost, left, online) = state;

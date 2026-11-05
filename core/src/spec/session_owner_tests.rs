@@ -1,4 +1,4 @@
-//! Owner-level tests of the owner `Session` in `specs/machines/lifecycle.md`: the owner on `DetScheduler` against `ref_session.rs`. Names are the `Test` column.
+//! Owner-level tests of the owner `Session` in the `lifecycle` machine: the owner on `DetScheduler` against `ref_session.rs`. Names are the `Test` column.
 
 use super::ref_session::{Credential as RefCredential, Effect as RefEffect, EndCause, Fail, Input, Operation, Outcome, Pending as RefPending, Queued as RefQueued, Reason, Session as Ref, State as RefState};
 use crate::owners::contract::{Committed, EpochEnded, Online, Published, RejectReason, Rejected};

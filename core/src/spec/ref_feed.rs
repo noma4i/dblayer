@@ -1,4 +1,4 @@
-//! `specs/machines/feed.md` as code: one match arm per table row. No library code.
+//! The `feed` machine as code: one match arm per table row. No library code.
 
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 

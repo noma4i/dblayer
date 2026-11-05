@@ -1,4 +1,4 @@
-//! Executable table of `specs/machines/network.md`.
+//! Executable table of the `network` machine.
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Input {

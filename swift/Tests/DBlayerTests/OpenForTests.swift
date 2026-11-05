@@ -18,7 +18,7 @@ func reopen(config: Config, modelsJson: String, transport: Transport?, operation
   try await adopt(try await openDatabase(config: config, modelsJson: modelsJson, transport: transport, operations: operations, uploads: uploads))
 }
 
-/// A database whose plain transport holds a session and sees no network: a sent row stays queued. A send needs a session (`specs/architecture.md` D).
+/// A database whose plain transport holds a session and sees no network: a sent row stays queued. A send needs a session.
 @MainActor @discardableResult
 func reopenSigned(config: Config, modelsJson: String, operations: String = "[]", uploads: UploadOperations? = nil) async throws -> Database {
   let database = try await reopen(config: config, modelsJson: modelsJson, transport: MockTransport(), operations: operations, uploads: uploads)
