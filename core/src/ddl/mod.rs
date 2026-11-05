@@ -115,7 +115,7 @@ END",
 ) STRICT, WITHOUT ROWID",
 ];
 
-const CORE_STATEMENTS: [&str; 43] = [
+const CORE_STATEMENTS: [&str; 44] = [
     "CREATE TABLE IF NOT EXISTS blob_upload (
   id TEXT PRIMARY KEY NOT NULL,
   name TEXT NOT NULL,
