@@ -604,6 +604,24 @@ fn life_resetting_close() {
     assert!(twin.replies().contains(&(2, Err(LifecycleError::Interrupted))));
 }
 
+/// life_resetting_credential_open_saved: the epoch of an `open` that passed `Saved` ends with a new identity, `open` answers `Ok`.
+#[test]
+fn life_resetting_credential_open_saved() {
+    let mut twin = Twin::open(0, 0, Some(1), Some(7));
+    twin.feed(Event::Saved(1));
+    twin.feed(reset_models(&["Moment"], 8));
+    twin.feed(credential(2));
+    assert!(twin.replies().contains(&(7, Ok(()))), "{:?}", twin.replies());
+}
+
+/// life_session_credential_open_unsaved: the first publication of `open` is not saved when the identity changes, `open` is interrupted.
+#[test]
+fn life_session_credential_open_unsaved() {
+    let mut twin = Twin::open(0, 0, Some(1), Some(7));
+    twin.feed(credential(2));
+    assert!(twin.replies().contains(&(7, Err(LifecycleError::Interrupted))), "{:?}", twin.replies());
+}
+
 #[test]
 fn life_resetting_drained() { resetting().feed(Event::Drained(RefOwner::Feed)); }
 

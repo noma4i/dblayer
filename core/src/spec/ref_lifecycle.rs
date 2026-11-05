@@ -236,6 +236,11 @@ impl Lifecycle {
         if let Some(restoring) = self.restoring.take() { answer_all(out, restoring.open_reply.into_iter().collect(), answer); }
     }
 
+    fn end_restoring(&mut self, out: &mut Out) {
+        let saved = self.restoring.as_ref().is_some_and(|restoring| !self.publishing.iter().any(|publication| publication.epoch_started.is_some_and(|(epoch, ..)| epoch == restoring.epoch)));
+        self.drop_restoring(out, if saved { Answer::Ok } else { Answer::Interrupted });
+    }
+
     fn ended(&mut self, epoch: u64) { self.ended_up_to = Some(self.ended_up_to.map_or(epoch, |ended| ended.max(epoch))); }
 
     fn closing(&mut self, out: &mut Out, erases: Vec<Erase>, close_replies: Vec<Id>, end: Option<u64>) -> State {
@@ -255,7 +260,7 @@ impl Lifecycle {
     /// `Ending` entered from a state with a live epoch: `EpochEnded` · `Publish` · `ClearAccount`.
     fn ending(&mut self, epoch: u64, cause: Cause, next: Option<Identity>, mut erases: Vec<Erase>, replies: Vec<Id>, out: &mut Out) {
         self.ended(epoch);
-        self.drop_restoring(out, Answer::Interrupted);
+        self.end_restoring(out);
         out.effects.push(Effect::EpochEnded(epoch, cause));
         self.published.state = PubState::Ending;
         self.publish(out, None, Vec::new());

@@ -249,10 +249,16 @@ impl LifecycleState {
     }
 
     /// The restore of an epoch that ended, or of a close, ends with the wait of `open`.
-    fn drop_restoring(&mut self, result: LifecycleError, fx: &mut Vec<LifecycleEffect>) {
+    fn drop_restoring(&mut self, result: Result<(), LifecycleError>, fx: &mut Vec<LifecycleEffect>) {
         if let Some(restoring) = self.restoring.take() {
-            reply_all(restoring.open_reply.into_iter().collect(), Err(result), fx);
+            reply_all(restoring.open_reply.into_iter().collect(), result, fx);
         }
+    }
+
+    /// The epoch of a restore ended by a new identity or a reset: `open` already passed `Saved` -> `Ok`, its publication still waits -> `Interrupted`.
+    fn end_restoring(&mut self, fx: &mut Vec<LifecycleEffect>) {
+        let saved = self.restoring.as_ref().is_some_and(|restoring| !self.publishing.iter().any(|publication| publication.started.as_ref().is_some_and(|started| started.epoch == restoring.epoch)));
+        self.drop_restoring(if saved { Ok(()) } else { Err(LifecycleError::Interrupted) }, fx);
     }
 
     fn ended(&mut self, epoch: Epoch) { self.ended_up_to = Some(self.ended_up_to.map_or(epoch, |ended| ended.max(epoch))); }
@@ -268,7 +274,7 @@ impl LifecycleState {
         self.published.state = PublishedState::Closing;
         self.published.closed = true;
         self.publish(None, Vec::new(), fx);
-        self.drop_restoring(LifecycleError::Interrupted, fx);
+        self.drop_restoring(Err(LifecycleError::Interrupted), fx);
         if let Some(epoch) = end {
             self.ended(epoch);
             fx.push(LifecycleEffect::EpochEnded { epoch, cause: Cause::Close });
@@ -281,7 +287,7 @@ impl LifecycleState {
     /// `Ending` entered from a state with a live epoch: `EpochEnded` · `Publish` · `ClearAccount`.
     fn ending(&mut self, epoch: Epoch, cause: Cause, next: Option<Identity>, mut erases: Vec<Erase>, replies: Vec<ReplyId>, fx: &mut Vec<LifecycleEffect>) {
         self.ended(epoch);
-        self.drop_restoring(LifecycleError::Interrupted, fx);
+        self.end_restoring(fx);
         fx.push(LifecycleEffect::EpochEnded { epoch, cause });
         self.published.state = PublishedState::Ending;
         self.publish(None, Vec::new(), fx);
@@ -688,7 +694,7 @@ impl LifecycleState {
                 for publication in &mut self.publishing {
                     open.append(&mut publication.replies);
                 }
-                self.drop_restoring(LifecycleError::Runtime, fx);
+                self.drop_restoring(Err(LifecycleError::Runtime), fx);
                 reply_all(open, Err(LifecycleError::Runtime), fx);
                 let erases: Vec<Erase> = erases.into_iter().map(|erase| Erase { replies: Vec::new(), ..erase }).collect();
                 self.closing(erases, Vec::new(), end, fx)
