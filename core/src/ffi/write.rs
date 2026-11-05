@@ -100,7 +100,7 @@ impl Database {
     pub(super) async fn create_row(&self, epoch: u64, model: String, values: Map<String, Value>, args: Map<String, Value>) -> Result<WireOperationReceipt, DbError> {
         if self.life.is_shut() { return Err(super::command::closed()); }
         let db = self.db.clone();
-        let planned = super::database::blocking(move || Ok(db.plan_create(&model, values, args)?)).await?;
+        let (planned, _held) = self.offload(move || Ok(db.plan_create(&model, values, args)?)).await?;
         self.write_planned(epoch, "create", planned).await
     }
 }
@@ -119,7 +119,7 @@ impl Database {
         let (patch, args) = (serde_json::from_str(&patch_json)?, serde_json::from_str(&args_json)?);
         let row = self.resolved(epoch, &model, id(&row_id)?).await?;
         let (db, name) = (self.db.clone(), model.clone());
-        let planned = super::database::blocking(move || Ok(db.plan_update(&name, &row, patch, args)?)).await?;
+        let (planned, _held) = self.offload(move || Ok(db.plan_update(&name, &row, patch, args)?)).await?;
         self.write_planned(epoch, "update", planned).await
     }
 
@@ -127,14 +127,14 @@ impl Database {
         let (patch, args) = (serde_json::from_str(&patch_json)?, serde_json::from_str(&args_json)?);
         let row = self.resolved(epoch, &model, id(&row_id)?).await?;
         let (db, name, verb) = (self.db.clone(), model.clone(), action.clone());
-        let planned = super::database::blocking(move || Ok(db.plan_act(&name, &verb, &row, patch, args)?)).await?;
+        let (planned, _held) = self.offload(move || Ok(db.plan_act(&name, &verb, &row, patch, args)?)).await?;
         self.write_planned(epoch, &action, planned).await
     }
 
     pub async fn destroy(&self, epoch: u64, model: String, row_id: String) -> Result<WireOperationReceipt, DbError> {
         let row = self.resolved(epoch, &model, id(&row_id)?).await?;
         let (db, name) = (self.db.clone(), model.clone());
-        let planned = super::database::blocking(move || Ok(db.plan_destroy(&name, &row)?)).await?;
+        let (planned, _held) = self.offload(move || Ok(db.plan_destroy(&name, &row)?)).await?;
         self.write_planned(epoch, "destroy", planned).await
     }
 
@@ -143,7 +143,7 @@ impl Database {
         let value: Value = serde_json::from_str(&value_json)?;
         let row = self.resolved(epoch, &model, id(&row_id)?).await?;
         let (db, name, field) = (self.db.clone(), model.clone(), path.clone());
-        let plan = super::database::blocking(move || Ok(db.plan_set_local(&name, &row, &field, value)?)).await?;
+        let (plan, _held) = self.offload(move || Ok(db.plan_set_local(&name, &row, &field, value)?)).await?;
         let (kind, row, values) = match plan {
             crate::db::LocalPlan::Row { row_id, values } => (LocalWriteKind::SetLocal, row_id, Value::Object(values).to_string()),
             crate::db::LocalPlan::Pending { row_id, path, value } => (LocalWriteKind::SetLocalPending, row_id, serde_json::json!({ "path": path, "value": value }).to_string()),

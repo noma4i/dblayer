@@ -109,7 +109,8 @@ impl Database {
         if force { self.refuse_offline(&model, &relation, &Value::Object(params.clone()).to_string(), "node")?; }
         let wire = self.wire(&model)?.clone();
         let call = self.start_load(epoch, &model, &relation, &Value::Object(params.clone()).to_string(), Goal::First, force).await?;
-        self.finish_load(call).await?;
+        let (loaded, _held) = self.finish_load_held(call).await;
+        loaded?;
         let (db, found) = (self.db.clone(), model.clone());
         let row = super::database::blocking(move || Ok(if db.window_member(&found, &relation, &params, id.as_str())? { db.find(&found, &id)? } else { None })).await?;
         Ok(row.map(|row| wire.row(&row)))
@@ -123,7 +124,8 @@ impl Database {
         let wire = self.wire(&model)?.clone();
         let key = WindowKey::nodes(&model, &row_ids.iter().map(String::as_str).collect::<Vec<_>>());
         let call = self.start_window(epoch, key, Goal::First, true)?;
-        self.finish_load(call).await?;
+        let (loaded, _held) = self.finish_load_held(call).await;
+        loaded?;
         let (db, found) = (self.db.clone(), model.clone());
         let rows = super::database::blocking(move || {
             let mut rows = Vec::with_capacity(ids.len());
@@ -155,11 +157,12 @@ impl Database {
             let LoadArgs { epoch, model, relation, params_json, goal, force } = args;
             let started = this.start_load(epoch, &model, &relation, &params_json, goal, force).await;
             drop(launch);
-            let result = match started {
-                Ok(call) => this.finish_load(call).await.map(drop),
-                Err(error) => Err(error),
+            let (result, held) = match started {
+                Ok(call) => { let (result, held) = this.finish_load_held(call).await; (result.map(drop), held) }
+                Err(error) => (Err(error), None),
             };
             crate::db::lock::effect(|| sender.send_replace(Some(result)));
+            drop(held);
         });
         Ok(Arc::new(LoadRequest { outcome, held: Mutex::new(Some(task.abort_handle())) }))
     }
@@ -202,11 +205,18 @@ impl Database {
         Ok(LoadCall { epoch, waiter, leave: LeaveLoad { life: self.life.clone(), key, id, settled: false } })
     }
 
-    async fn finish_load(&self, mut call: LoadCall) -> Result<LoadMoreResult, DbError> {
-        let reply = self.await_life(call.waiter).await;
+    async fn finish_load(&self, call: LoadCall) -> Result<LoadMoreResult, DbError> { self.finish_load_held(call).await.0 }
+
+    /// The result and the count of the barrier: the caller holds it until its own work after the answer ends.
+    async fn finish_load_held(&self, mut call: LoadCall) -> (Result<LoadMoreResult, DbError>, Option<crate::runtime::Launch>) {
+        let (reply, held) = self.await_life_held(call.waiter).await;
         call.leave.settled = true;
+        (self.load_result(call.epoch, reply), held)
+    }
+
+    fn load_result(&self, epoch: u64, reply: Result<LifeReply, DbError>) -> Result<LoadMoreResult, DbError> {
         let reply = reply?;
-        if !self.admits(call.epoch) { return Err(super::command::ended()); }
+        if !self.admits(epoch) { return Err(super::command::ended()); }
         match reply {
             LifeReply::Window(WindowOutcome::Loaded { has_more, fetched, .. }) => Ok(if fetched { LoadMoreResult::Loaded { has_more } } else { LoadMoreResult::NoMore }),
             LifeReply::Window(WindowOutcome::Failed { source: Some(source), .. }) => Err(DbError::from(source)),

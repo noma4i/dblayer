@@ -141,10 +141,10 @@ enum Awaited {
 impl Wiring {
     fn new(handle: Handle) -> Self {
         Self {
-            handle,
             addresses: OnceLock::new(),
-            outcomes: Outcomes::new(),
-            pulls: Outcomes::new(),
+            outcomes: Outcomes::new().counted_by(handle.clone()),
+            pulls: Outcomes::new().counted_by(handle.clone()),
+            handle,
             next_stream: std::sync::atomic::AtomicU64::new(1),
             published: PublishedCell::default(),
             open: Mutex::new(OpenWait::default()),

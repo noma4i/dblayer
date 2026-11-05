@@ -317,8 +317,10 @@ impl Database {
     }
     pub async fn run(&self, epoch: u64, operation: String, variables_json: String) -> Result<String, DbError> {
         self.remote()?;
-        let variables_json = blocking(move || { serde_json::from_str::<Value>(&variables_json)?; Ok(variables_json) }).await?;
-        match self.await_life(self.life.run(epoch, operation, variables_json)).await? {
+        let (variables_json, launch) = self.offload(move || { serde_json::from_str::<Value>(&variables_json)?; Ok(variables_json) }).await?;
+        let waiter = self.life.run(epoch, operation, variables_json);
+        drop(launch);
+        match self.await_life(waiter).await? {
             LifeReply::Call(Ok(answer)) => Ok(answer),
             LifeReply::Call(Err(error)) => Err(call_failure(error)),
             _ => Err(super::command::ended()),
@@ -358,8 +360,23 @@ impl Database {
 
 impl Database {
     /// Waits for the answer of an owner. An answer other than a value ends the call with the end of its epoch.
-    pub(super) async fn await_life(&self, waiter: crate::runtime::Waiter<LifeReply>) -> Result<LifeReply, DbError> {
-        match waiter.wait().await {
+    /// Runs the blocking part of a call. The count of the owners barrier starts here and the caller holds it until the call posted to the owners or ended.
+    pub(super) async fn offload<T: Send + 'static>(&self, work: impl FnOnce() -> Result<T, DbError> + Send + 'static) -> Result<(T, crate::runtime::Launch), DbError> {
+        let launch = self.life.launch();
+        let value = blocking(work).await?;
+        Ok((value, launch))
+    }
+
+    pub(super) async fn await_life(&self, waiter: crate::runtime::Waiter<LifeReply>) -> Result<LifeReply, DbError> { self.await_life_held(waiter).await.0 }
+
+    /// The answer and the count of the barrier of the owners: the call drops it when its work after the answer ends.
+    pub(super) async fn await_life_held(&self, waiter: crate::runtime::Waiter<LifeReply>) -> (Result<LifeReply, DbError>, Option<crate::runtime::Launch>) {
+        let (outcome, held) = waiter.wait_held().await;
+        (Self::life_reply(outcome), held)
+    }
+
+    fn life_reply(outcome: crate::runtime::Outcome<LifeReply>) -> Result<LifeReply, DbError> {
+        match outcome {
             crate::runtime::Outcome::Value(LifeReply::Closed) | crate::runtime::Outcome::Closing => Err(super::command::closed()),
             crate::runtime::Outcome::EpochEnded(_) => Err(super::command::ended()),
             crate::runtime::Outcome::Internal => Err(DbError::Database { detail: "the answer of the owner was lost".into() }),

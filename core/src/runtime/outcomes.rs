@@ -3,6 +3,7 @@ use std::collections::HashMap;
 use tokio::sync::oneshot;
 
 use super::owner::{Cause, Epoch};
+use super::threaded::{Handle, Launch};
 use super::sync::{lock, Arc, Mutex, MutexGuard};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -26,15 +27,19 @@ struct Inner<T> {
     next: u64,
     closed: bool,
     last_ended: Option<(Epoch, Cause)>,
-    open: HashMap<u64, (Epoch, oneshot::Sender<Outcome<T>>)>,
+    open: HashMap<u64, (Epoch, oneshot::Sender<Delivered<T>>)>,
 }
+
+/// An outcome with the count of the barrier: it holds the owners barrier from the settle on the owner thread until the call ends its work.
+type Delivered<T> = (Outcome<T>, Option<Launch>);
 
 pub struct Outcomes<T> {
     inner: Arc<Mutex<Inner<T>>>,
+    launcher: Option<Handle>,
 }
 
 impl<T> Clone for Outcomes<T> {
-    fn clone(&self) -> Self { Self { inner: self.inner.clone() } }
+    fn clone(&self) -> Self { Self { inner: self.inner.clone(), launcher: self.launcher.clone() } }
 }
 
 impl<T> Default for Outcomes<T> {
@@ -43,12 +48,20 @@ impl<T> Default for Outcomes<T> {
 
 pub struct Waiter<T> {
     id: OutcomeId,
-    receiver: oneshot::Receiver<Outcome<T>>,
+    receiver: oneshot::Receiver<Delivered<T>>,
     taken: bool,
 }
 
 impl<T> Outcomes<T> {
-    pub fn new() -> Self { Self { inner: Arc::new(Mutex::new(Inner { next: 0, closed: false, last_ended: None, open: HashMap::new() })) } }
+    pub fn new() -> Self { Self { inner: Arc::new(Mutex::new(Inner { next: 0, closed: false, last_ended: None, open: HashMap::new() })), launcher: None } }
+
+    /// A settled outcome counts in the barrier of these owners until the waiter lets it go.
+    pub fn counted_by(mut self, owners: Handle) -> Self {
+        self.launcher = Some(owners);
+        self
+    }
+
+    fn delivered(&self, outcome: Outcome<T>) -> Delivered<T> { (outcome, self.launcher.as_ref().map(Handle::launch)) }
 
     /// The calls that wait for an answer now.
     #[cfg(test)]
@@ -69,7 +82,8 @@ impl<T> Outcomes<T> {
         match terminal {
             Some(outcome) => {
                 drop(inner);
-                let _ = crate::db::lock::effect(|| sender.send(outcome));
+                let delivered = self.delivered(outcome);
+                let _ = crate::db::lock::effect(|| sender.send(delivered));
             }
             None => {
                 inner.open.insert(id, (epoch, sender));
@@ -80,7 +94,8 @@ impl<T> Outcomes<T> {
 
     pub fn settle(&self, id: OutcomeId, value: T) -> bool {
         let Some((_, sender)) = self.lock().open.remove(&id.0) else { return false };
-        crate::db::lock::effect(|| sender.send(Outcome::Value(value)).is_ok())
+        let delivered = self.delivered(Outcome::Value(value));
+        crate::db::lock::effect(|| sender.send(delivered).is_ok())
     }
 
     pub fn end_epoch(&self, epoch: Epoch, cause: Cause) -> usize {
@@ -92,7 +107,8 @@ impl<T> Outcomes<T> {
         let senders: Vec<_> = ids.iter().filter_map(|id| inner.open.remove(id)).map(|(_, sender)| sender).collect();
         drop(inner);
         for sender in senders {
-            let _ = crate::db::lock::effect(|| sender.send(Outcome::EpochEnded(cause)));
+            let delivered = self.delivered(Outcome::EpochEnded(cause));
+            let _ = crate::db::lock::effect(|| sender.send(delivered));
         }
         ids.len()
     }
@@ -104,7 +120,8 @@ impl<T> Outcomes<T> {
         drop(inner);
         let count = open.len();
         for (_, (_, sender)) in open {
-            let _ = crate::db::lock::effect(|| sender.send(Outcome::Closing));
+            let delivered = self.delivered(Outcome::Closing);
+            let _ = crate::db::lock::effect(|| sender.send(delivered));
         }
         count
     }
@@ -120,7 +137,7 @@ impl<T> Waiter<T> {
             return None;
         }
         let outcome = match self.receiver.try_recv() {
-            Ok(outcome) => outcome,
+            Ok((outcome, _)) => outcome,
             Err(oneshot::error::TryRecvError::Empty) => return None,
             Err(oneshot::error::TryRecvError::Closed) => Outcome::Internal,
         };
@@ -128,5 +145,8 @@ impl<T> Waiter<T> {
         Some(outcome)
     }
 
-    pub async fn wait(self) -> Outcome<T> { self.receiver.await.unwrap_or(Outcome::Internal) }
+    pub async fn wait(self) -> Outcome<T> { self.wait_held().await.0 }
+
+    /// The outcome and the count of the barrier: the call drops it when its work after the answer ends.
+    pub async fn wait_held(self) -> Delivered<T> { self.receiver.await.unwrap_or((Outcome::Internal, None)) }
 }
