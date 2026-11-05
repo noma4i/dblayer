@@ -86,7 +86,7 @@ impl Database {
     }
 
     pub async fn refresh(&self, epoch: u64, model: String, relation: String, params_json: String) -> Result<(), DbError> {
-        self.require_online(&format!("{model}.{relation} refresh"))?;
+        self.refuse_offline(&model, &relation, &params_json, "refresh")?;
         let call = self.start_load(epoch, &model, &relation, &params_json, Goal::First, true).await?;
         self.finish_load(call).await.map(drop)
     }
@@ -97,7 +97,7 @@ impl Database {
     }
 
     pub async fn load_more(&self, epoch: u64, model: String, relation: String, params_json: String) -> Result<LoadMoreResult, DbError> {
-        self.require_online(&format!("{model}.{relation} load more"))?;
+        self.refuse_offline(&model, &relation, &params_json, "load more")?;
         let call = self.start_load(epoch, &model, &relation, &params_json, Goal::Next, false).await?;
         self.finish_load(call).await
     }
@@ -106,7 +106,7 @@ impl Database {
         let params = Map::from_iter([(NODE_PARAM.to_string(), json!(row_id))]);
         self.node_relation(&model, &relation, NodeRead::One)?;
         let id = RowId::new(&row_id).map_err(|error| DbError::Invalid { detail: error.to_string() })?;
-        if force { self.require_online(&format!("{model}.{relation} node"))?; }
+        if force { self.refuse_offline(&model, &relation, &Value::Object(params.clone()).to_string(), "node")?; }
         let wire = self.wire(&model)?.clone();
         let call = self.start_load(epoch, &model, &relation, &Value::Object(params.clone()).to_string(), Goal::First, force).await?;
         self.finish_load(call).await?;
@@ -137,6 +137,15 @@ impl Database {
 }
 
 impl Database {
+    /// A call that goes to the server only fails at once with `Network` while the network is away. The window of the call shows the error.
+    fn refuse_offline(&self, model: &str, relation: &str, params_json: &str, what: &str) -> Result<(), DbError> {
+        let Err(error) = self.require_online(&format!("{model}.{relation} {what}")) else { return Ok(()) };
+        if let Ok(params) = serde_json::from_str::<Map<String, Value>>(params_json) {
+            self.life.offline_refused(WindowKey::relation(model, relation, &params), error.to_string());
+        }
+        Err(error)
+    }
+
     fn begin(&self, args: LoadArgs) -> Result<Arc<LoadRequest>, DbError> {
         self.remote()?;
         let (sender, outcome) = tokio::sync::watch::channel(None);

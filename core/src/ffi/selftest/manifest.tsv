@@ -126,7 +126,7 @@ K08	B7	swift	BridgeProbeTests.aProjectionKeepsTheDecodeErrorAndAStreamKeepsItsSo
 K08	B7	kotlin	com.noma4i.dblayer.ValueBridgeTest.aProjectionKeepsTheDecodeErrorAndAStreamKeepsItsSourceError	green	-	arch-r3b review B7
 K09	B	core	a_stream_that_refreshes_on_connect_loads_again_once_when_the_network_returns	green	-	arch-r3b consumer finding: refresh on reconnect
 K10	A	core	a_command_that_failed_on_the_network_is_delivered_by_the_backoff_and_the_clock	green	-	arch-r3c offline finding A
-K11	B	core	a_refresh_and_a_load_more_fail_at_once_offline	green	-	arch-r3c offline finding B
+K11	B	core	a_refresh_and_a_load_more_fail_at_once_offline_and_the_entity_stream_shows_the_error	green	-	arch-r3c offline finding B
 K12	forward	core	a_forward_leaves_the_source_unchanged_upserts_the_answer_row_and_returns_it	green	-	arch-r3c consumer finding: forward
 K13	B6	core	member_actions_change_both_member_lists_before_the_answer_and_a_refusal_restores_them	green	-	arch-r3c B6 leave and members
 K13	B6	core	leave_removes_the_group_from_its_list_before_the_answer_and_a_refusal_restores_it	green	-	arch-r3c B6 leave and members
@@ -290,3 +290,9 @@ T20		core	a_large_file_uploads_in_parts_and_completes_before_its_mutation	regres
 T20		core	a_cancelled_upload_sends_nothing	regression	-	Transfer owner through Database
 T20		core	a_send_with_a_file_confirms_the_row_the_server_answers	regression	-	Transfer owner through Database
 S300		core	a_fresh_profile_is_read_again_after_expiry	green	-	library
+S208	K4-destroy	core	a_missing_destroyed_row_causes_one_reread_of_the_open_list	unrun	-	arch-audit fable K4
+S208	K4-destroy	swift	BridgeProbeTests.aMissingDestroyedRowCausesOneRereadOfTheOpenList	unrun	-	arch-audit fable K4
+S208	K4-destroy	kotlin	com.noma4i.dblayer.DestroyRereadTest.aMissingDestroyedRowCausesOneRereadOfTheOpenList	unrun	-	arch-audit fable K4
+S209	A3-journal	core	a_slow_events_reader_reads_the_kept_events_and_one_exact_lost_range_then_one_end	unrun	-	arch-audit astra A3, one core journal
+S209	A3-journal	swift	BridgeProbeTests.aSlowCollectorReadsKeptEventsAndLostRangesThatAddUpToTheEventsSent	unrun	-	arch-audit astra A3, one core journal
+S209	A3-journal	kotlin	com.noma4i.dblayer.ModelEventsTest.aSlowCollectorReadsKeptEventsAndLostRangesThatAddUpToTheEventsSent	unrun	-	arch-audit astra A3, one core journal

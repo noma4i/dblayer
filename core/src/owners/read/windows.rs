@@ -167,6 +167,8 @@ pub enum WindowsInput {
     InterestPlus { key: WindowKey, id: InterestId },
     /// An interest that only watches: the phase goes to the stream, no load starts.
     InterestPassive { key: WindowKey, id: InterestId },
+    /// A call that goes to the server only was refused at once because the network is away: the error shows in the state of the window.
+    OfflineRefused { key: WindowKey, message: String },
     /// The stream of `id` asks for a load of the key each time the network returns.
     ReloadOnConnect { key: WindowKey, id: InterestId },
     InterestMinus { key: WindowKey, id: InterestId },
@@ -199,6 +201,7 @@ enum Ev {
     InterestPlus { id: InterestId },
     InterestPassive { id: InterestId },
     ReloadOnConnect { id: InterestId },
+    OfflineRefused { message: String },
     InterestMinus { id: InterestId },
     Load { id: InterestId, goal: Goal, force: bool, store_revision: i64 },
     /// The Store published this revision: a request issued from now on is based on it.
@@ -515,6 +518,12 @@ impl Facts {
                 }
             }
             Ev::Load { id, goal, force, .. } => self.idle_load(context, *id, *goal, *force),
+            Ev::OfflineRefused { message } => {
+                self.error = Some(message.clone());
+                self.phase = self.failed_phase();
+                self.announce();
+                Handled
+            }
             Ev::InterestMinus { id } => {
                 self.interest.remove(id);
                 self.waiters.remove(id);
@@ -956,6 +965,7 @@ impl StateOwner for Windows {
             WindowsInput::InterestPlus { key, id } => Self::interest_plus(state, key, id, &mut out),
             WindowsInput::InterestPassive { key, id } => Self::interest_passive(state, key, id, &mut out),
             WindowsInput::ReloadOnConnect { key, id } => Self::reload_on_connect(state, key, id, &mut out),
+            WindowsInput::OfflineRefused { key, message } => Self::on(state, &key, Ev::OfflineRefused { message }, &mut out),
             WindowsInput::InterestMinus { key, id } => Self::on(state, &key, Ev::InterestMinus { id }, &mut out),
             WindowsInput::Load { key, id, goal, force, store_revision } => Self::load(state, key, id, goal, force, store_revision, &mut out),
             WindowsInput::Response { request, attempt, page } => Self::by_request(state, request, Ev::Response { request, attempt, page }, &mut out),

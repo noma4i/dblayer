@@ -204,6 +204,9 @@ impl super::Life {
     #[cfg(test)]
     pub fn waiting_calls(&self) -> usize { self.wiring.outcomes.waiting() }
 
+    /// A call of the platform was refused at once because the network is away: the window shows the error.
+    pub fn offline_refused(&self, key: WindowKey, message: String) { self.wiring.to_windows(WindowsInput::OfflineRefused { key, message }); }
+
     /// The caller of `id` gives up: the window decides whether the request goes on for the others.
     pub fn leave_load(&self, key: WindowKey, id: u64) { self.wiring.to_windows(WindowsInput::InterestMinus { key, id }); }
 

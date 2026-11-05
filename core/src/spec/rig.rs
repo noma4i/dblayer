@@ -20,7 +20,7 @@ pub const LIMIT_SECS: u64 = 10;
 const STEP_SECS: u64 = 25;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum Reply { Ok, Temp, Refuse }
+pub(super) enum Reply { Ok, Temp, Refuse, NotFound }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum Kind { Mutate = 0, Put = 1 }
@@ -153,6 +153,7 @@ fn answer_of(operation: &str, variables: &Value, number: u64) -> Value {
     let text = variables.get("text").cloned().unwrap_or(Value::Null);
     match operation {
         "MakeMoment" => json!({"data":{"makeMoment":{"__typename":"Moment","id":format!("srv{number}"),"text":text}}}),
+        "DeleteMoment" => json!({"data":{"deleteMoment":{"id":variables["id"]}}}),
         "UpdateMoment" => json!({"data":{"updateMoment":{"__typename":"Moment","id":variables["momentId"],"text":text}}}),
         "CreateBlob" => json!({"data":{"createBlob":{"url":format!("https://put.invalid/{number}"),"headers":[],"signedId":format!("sig{number}"),"blobId":format!("blob{number}")}}}),
         "InitMultipart" => json!({"data":{"initMultipart":{"key":"k1","uploadId":"u1"}}}),
@@ -179,6 +180,7 @@ impl Transport for Wire {
             Reply::Ok => Ok(answer_of(&request.operation_name, &variables, self.0.next()).to_string()),
             Reply::Temp => Err(DbError::Network { detail: "temporary".into() }),
             Reply::Refuse => Err(DbError::Graphql { messages: vec!["refused".into()], extensions: None }),
+            Reply::NotFound => Err(DbError::Graphql { messages: vec!["gone".into()], extensions: None }),
         }
     }
     async fn subscribe(&self, _: TransportRequest, _: Arc<SubscriptionSink>) -> Result<(), DbError> { Err(DbError::Network { detail: "no subscriptions".into() }) }
@@ -189,6 +191,7 @@ impl Transport for Wire {
             Reply::Ok => Ok(PutReply { status: 200, etag: Some(format!("etag-{}", self.0.next())) }),
             Reply::Temp => Err(DbError::Network { detail: "temporary".into() }),
             Reply::Refuse => Err(DbError::Http { status: 400, detail: "refused".into() }),
+            Reply::NotFound => Err(DbError::Http { status: 404, detail: "gone".into() }),
         }
     }
 }
@@ -208,6 +211,7 @@ impl EncryptedHttp for Wire {
                     Reply::Ok => answer_of(&name, &variables, self.0.next()),
                     Reply::Temp => return Err(DbError::Network { detail: "temporary".into() }),
                     Reply::Refuse => json!({"errors": [{"message": "refused", "extensions": {"code": "REFUSED"}}]}),
+                    Reply::NotFound => json!({"errors": [{"message": "gone", "extensions": {"code": "NOT_FOUND"}}]}),
                 }
             }
         };
@@ -218,6 +222,7 @@ impl EncryptedHttp for Wire {
 pub const OPERATIONS: &str = r#"[
 {"name":"MakeMoment","document":"mutation MakeMoment { makeMoment { id text } }","rootPath":"makeMoment"},
 {"name":"UpdateMoment","document":"mutation UpdateMoment { updateMoment { id text } }","rootPath":"updateMoment"},
+{"name":"DeleteMoment","document":"mutation DeleteMoment { deleteMoment { id } }","rootPath":"deleteMoment"},
 {"name":"CreateBlob","document":"mutation CreateBlob { createBlob { url } }","rootPath":"createBlob"},
 {"name":"InitMultipart","document":"mutation InitMultipart { initMultipart { key } }","rootPath":"initMultipart"},
 {"name":"PresignParts","document":"mutation PresignParts { presignParts { parts } }","rootPath":"presignParts"},
@@ -243,6 +248,10 @@ pub fn moment_models(on_failure: OnFailure) -> String {
     update.variables.insert("momentId".into(), "id".into());
     update.variables.insert("text".into(), "text".into());
     model.actions.push(update);
+    let mut destroy = ActionDeclaration::new("destroy", RootShape::Destroy);
+    destroy.mutation = Some("DeleteMoment".into());
+    destroy.variables.insert("id".into(), "id".into());
+    model.actions.push(destroy);
     let mut upload = ActionDeclaration::new("upload", RootShape::Upsert);
     upload.upload = true;
     upload.mutation = Some("MakeMoment".into());

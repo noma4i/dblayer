@@ -491,6 +491,147 @@ async fn a_fresh_profile_is_read_again_after_expiry() {
     rig.database.close_now();
 }
 
+fn chat_entry(index: usize) -> serde_json::Value {
+    json!({"topic":"MESSAGE","action":"UPDATED","recordId":format!("m{index}"),"chat":{"id":format!("c{index}"),"title":"t","revision":1,"lists":["PRIMARY"]}})
+}
+
+/// The transport of a database with a session: the cable of the server is a peer that seals the frames.
+struct CableTransport {
+    cable: crate::transport::encrypted::cable::peer_tests::CablePeer,
+    token: Mutex<Option<String>>,
+    subscribed: tokio::sync::Notify,
+}
+
+impl CableTransport {
+    fn new(config: crate::transport::EncryptedConfig) -> Self { Self { cable: crate::transport::encrypted::cable::peer_tests::CablePeer::new(config), token: Mutex::new(None), subscribed: tokio::sync::Notify::new() } }
+
+    /// A data event of the open subscription, once the client subscribed.
+    fn emit(&self, result: serde_json::Value) {
+        let token = self.token.lock().unwrap().clone().expect("a subscription is open");
+        assert!(self.cable.event(&token, result), "the subscription is open");
+    }
+
+    async fn subscription(&self) {
+        loop {
+            let notified = self.subscribed.notified();
+            if self.token.lock().unwrap().is_some() { return; }
+            bound(notified).await;
+        }
+    }
+}
+
+#[async_trait::async_trait]
+impl crate::ffi::Transport for CableTransport {
+    async fn open_cable(&self, lease: Arc<crate::ffi::CableLease>, _url: String) -> Result<(), DbError> { self.cable.open(&lease).map(drop) }
+    async fn cable_send(&self, token: String, text: String) -> Result<(), DbError> {
+        if self.cable.receive(&token, &text)?.is_some() {
+            *self.token.lock().unwrap() = Some(token);
+            self.subscribed.notify_one();
+        }
+        Ok(())
+    }
+    async fn cable_next(&self, token: String) -> Option<crate::ffi::EncryptedSocketEvent> { self.cable.next(&token).await }
+    async fn cable_close(&self, _: String) {}
+    async fn query(&self, _: crate::ffi::TransportRequest) -> Result<String, DbError> { unreachable!() }
+    async fn mutate(&self, _: crate::ffi::TransportRequest) -> Result<String, DbError> { unreachable!() }
+    async fn subscribe(&self, _: crate::ffi::TransportRequest, _: Arc<crate::ffi::SubscriptionSink>) -> Result<(), DbError> { unreachable!() }
+    fn unsubscribe(&self, _: String) {}
+    async fn put(&self, _: String, _: HashMap<String, String>, _: crate::transport::PutFile, _: crate::transport::TransferIdentity, _: Arc<crate::ffi::ByteProgress>) -> Result<crate::ffi::PutReply, DbError> { unreachable!() }
+}
+
+/// S209: a reader of events that pulls nothing while 400 events arrive reads the kept events and the lost ranges, which add up to the 400 sent, then one end after the database closed.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_slow_events_reader_reads_the_kept_events_and_one_exact_lost_range_then_one_end() {
+    let (database, transport, _) = chat_events().await;
+    let stream = database.subscribe_values(database.session_epoch(), ReadRequest::Events { model: "Chat".into() });
+    let opened = bound(stream.pull()).await.unwrap();
+    assert!(matches!(opened, Some(ReadValue::Ready)), "the first value is the open source: {opened:?}");
+
+    let watcher = Reader::open();
+    database.subscribe_reading(database.session_epoch(), ReadRequest::Events { model: "Chat".into() }, watcher.clone());
+    transport.subscription().await;
+    transport.emit(json!({"data":{"recordEvents":{"entries":(0..400).map(chat_entry).collect::<Vec<_>>()}}}));
+    let seen = |reader: &Reader| reader.deliveries().iter().map(|delivery| match &delivery.value { ReadValue::Event { .. } => 1, ReadValue::Lost { first, last } => last - first + 1, _ => 0 }).sum::<u64>();
+    yield_until("the events reached a reading stream", || seen(&watcher) == 400).await;
+    let mut burst = Vec::new();
+    while seen_values(&burst) < 400 { burst.push(bound(stream.pull()).await.unwrap().expect("the stream is open")); }
+    let kept = burst.iter().filter(|value| matches!(value, ReadValue::Event { .. })).count() as u64;
+    let lost: u64 = burst.iter().map(|value| match value { ReadValue::Lost { first, last } => last - first + 1, _ => 0 }).sum();
+    assert_eq!(kept + lost, 400, "kept events and lost positions add up to the events sent");
+    assert!(lost > 0, "a reader that pulled nothing lost the oldest events");
+    database.close_now();
+    assert!(matches!(bound(stream.pull()).await.unwrap(), Some(ReadValue::Ended { cause: ReadEnd::Closed })), "the stream ends once at the close");
+    assert!(bound(stream.pull()).await.unwrap().is_none());
+}
+
+fn seen_values(values: &[ReadValue]) -> u64 { values.iter().map(|value| match value { ReadValue::Event { .. } => 1, ReadValue::Lost { first, last } => last - first + 1, _ => 0 }).sum() }
+
+/// A database whose chats arrive through a change feed with the chat in its payload.
+async fn chat_events() -> (Arc<Database>, Arc<CableTransport>, Arc<World>) {
+    use crate::schema::{Coverage, FieldSpec, Membership, ModelSpec, NodeRead, RelationSpec, RemoteShape, VariableSource, NODE_PARAM};
+    use crate::value::ScalarKind;
+    let mut revision = FieldSpec::scalar("serverRevision", ScalarKind::Int);
+    revision.from = Some("revision".into());
+    let mut chat = ModelSpec::new("Chat", vec![FieldSpec::scalar("id", ScalarKind::Id), FieldSpec::scalar("title", ScalarKind::Str), revision, FieldSpec::list("lists", ScalarKind::Str)]);
+    chat.server_revision = Some("serverRevision".into());
+    let mut node = RelationSpec::new("node", &[]);
+    node.text_params = vec![NODE_PARAM.into()];
+    node.node = Some(NodeRead::One);
+    let mut remote = crate::schema_fixtures::remote("ChatNode", RemoteShape::Single, "5.minutes");
+    remote.variables.insert("id".into(), VariableSource::Param { name: NODE_PARAM.into() });
+    node.remote = Some(remote);
+    let mut list = RelationSpec::new("list", &[]);
+    list.text_params.push("list".into());
+    list.membership.insert("list".into(), Membership::Contains("lists".into()));
+    list.joins_node = true;
+    list.joins_events = true;
+    let mut listed = crate::schema_fixtures::remote("ChatList", RemoteShape::List { coverage: Coverage::Complete }, "5.minutes");
+    listed.variables.insert("list".into(), VariableSource::Param { name: "list".into() });
+    list.remote = Some(listed);
+    chat.relations.extend([node, list]);
+    chat.changes.push(serde_json::from_value(json!({"area":"MESSAGE","relation":"node","payload":"chat"})).unwrap());
+    chat.change_feed = Some(crate::schema::ChangeFeed { subscription: "RecordEvents".into(), root: "recordEvents.entries".into(), area: "topic".into(), kind: "action".into(), id: "recordId".into() });
+    let world = World::new("server", "A", true);
+    let mut encrypted = crate::transport::encrypted::protocol_tests::config();
+    encrypted.endpoints.session_operations.insert("login_link".into(), crate::ffi::EncryptedSessionOperation { path: "/api/auth/login_link".into(), class: crate::transport::EncryptedOperationClass::Authenticated });
+    let transport = Arc::new(CableTransport::new(encrypted.clone()));
+    let database = bound(Database::open_with_clock(crate::ffi::Config { path: None, data_version: None, cache_rows: 32 }, serde_json::to_string(&vec![chat]).unwrap(), Some(transport.clone()), None, crate::ffi::TestClock::new(1_000_000), Some(encrypted), Some(Arc::new(crate::ffi::session_guards_tests::WatchedHeld::default())), Some(world.clone()), None)).await.unwrap();
+    database.register_operations(json!([
+        {"name":"ChatList","document":"query ChatList($list: String) { chats(list: $list) { id title revision lists } }"},
+        {"name":"ChatNode","document":"query ChatNode($id: ID!) { node(id: $id) { ... on Chat { id title revision lists } } }"},
+        {"name":"RecordEvents","document":"subscription RecordEvents { recordEvents { entries { topic action recordId chat { id title revision lists } } } }"}
+    ]).to_string()).unwrap();
+    database.set_online(true).unwrap();
+    bound(database.session_call("login_link".into(), json!({"account": world.account()}).to_string())).await.unwrap();
+    (database, transport, world)
+}
+
+/// S208 (out_sending_destroy_not_found): a destroy the server answers only with NOT_FOUND is confirmed, the row is gone, and the open list of the model is read once more.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_missing_destroyed_row_causes_one_reread_of_the_open_list() {
+    let world = World::new("server", "A", true);
+    let rig = Rig::signed_as(world.clone(), false, |models| {
+        let user = models.as_array_mut().unwrap().iter_mut().find(|model| model["key"] == "User").unwrap();
+        let mut action = crate::schema::ActionDeclaration::new("destroy", crate::schema::RootShape::Destroy);
+        action.mutation = Some("DeleteGroup".into());
+        action.variables.insert("id".into(), "id".into());
+        user["actions"].as_array_mut().unwrap().push(serde_json::to_value(action).unwrap());
+    }).await;
+    let epoch = rig.database.session_epoch();
+    let reader = Reader::open();
+    let stream = rig.database.subscribe_reading(epoch, users(), reader.clone());
+    bound(rig.database.loaded(stream)).await.unwrap();
+    assert_eq!(ids_of(reader.rows()), ["user"]);
+    let before = rig.world.count("Users");
+    rig.world.fail_next("DeleteGroup", Fault::Answer(json!({"errors":[{"message":"gone","extensions":{"code":"NOT_FOUND"}}]})));
+    let receipt = bound(rig.database.destroy(epoch, "User".into(), "user".into())).await.unwrap();
+    assert!(matches!(bound(rig.database.outcome(receipt)).await.unwrap(), WireOperationOutcome::Confirmed { .. }));
+    yield_until("the open list is read once more", || rig.world.count("Users") > before).await;
+    settle(&rig).await;
+    assert_eq!(rig.world.count("Users") - before, 1);
+    rig.database.close_now();
+}
+
 /// B01: after the login a stream delivers the account as one snapshot in the epoch of the session, in order, and the first value does not come from the calling thread.
 #[tokio::test(flavor = "multi_thread")]
 async fn a_stream_opened_after_the_login_starts_with_a_snapshot_of_the_account_in_its_epoch() {
@@ -1042,13 +1183,14 @@ async fn a_cancelled_list_stream_leaves_no_observer_and_a_later_write_does_no_re
 }
 
 
-/// K11 (offline finding B): a call that always goes to the server fails at once with `Network` while the network is away and sends nothing.
+/// K11 (offline finding B): a call that always goes to the server fails at once with `Network` while the network is away, sends nothing, and the entity stream shows the error in its state.
 #[tokio::test(flavor = "multi_thread")]
-async fn a_refresh_and_a_load_more_fail_at_once_offline() {
+async fn a_refresh_and_a_load_more_fail_at_once_offline_and_the_entity_stream_shows_the_error() {
     let rig = Rig::encrypted().await;
     rig.login_ios("A").await;
     let epoch = rig.database.session_epoch();
-    let stream = rig.database.subscribe_reading(epoch, ReadRequest::Entity { model: "User".into(), id: "user".into(), fetch: crate::ffi::ReadFetch::Force }, Reader::open());
+    let entity = Reader::open();
+    let stream = rig.database.subscribe_reading(epoch, ReadRequest::Entity { model: "User".into(), id: "user".into(), fetch: crate::ffi::ReadFetch::Force }, entity.clone());
     bound(rig.database.loaded(stream)).await.unwrap();
     let hits = rig.world.log().len();
     rig.database.set_online(false).unwrap();
@@ -1058,6 +1200,10 @@ async fn a_refresh_and_a_load_more_fail_at_once_offline() {
     assert!(matches!(refreshed, Err(DbError::Network { .. })), "refresh offline: {refreshed:?}");
     let more = bound(rig.database.load_more(rig.database.session_epoch(), "User".into(), "all".into(), "{}".into())).await;
     assert!(matches!(more, Err(DbError::Network { .. })), "load more offline: {more:?}");
+    yield_until("the entity stream shows the error", || entity.deliveries().iter().any(|delivery| match &delivery.value {
+        ReadValue::State { state, .. } | ReadValue::Snapshot { state, .. } => state.error.is_some(),
+        _ => false,
+    })).await;
     assert_eq!(rig.world.log().len(), hits, "a call offline reached the server");
     rig.database.close_now();
 }

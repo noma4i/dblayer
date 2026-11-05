@@ -20,6 +20,10 @@ pub trait RoundJobsSink: Send + Sync {
 #[derive(Default)]
 pub(super) struct RoundJobsSlot(OnceLock<Arc<dyn RoundJobsSink>>);
 
+impl Drop for RoundJobsSlot {
+    fn drop(&mut self) { crate::db::lock::assert_no_library_lock("RoundJobsSlot drop"); }
+}
+
 impl RoundJobs for RoundJobsSlot {
     fn schedule_job(&self, request_id: RequestId, epoch: Epoch) {
         if let Some(sink) = self.0.get() {

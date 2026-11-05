@@ -661,6 +661,16 @@ fn win_idle_reload_on_connect() {
 }
 
 #[test]
+fn win_idle_offline_refused() {
+    let mut twin = fresh_watched();
+    take(&twin.log);
+    twin.post(w::WindowsInput::OfflineRefused { key: key(), message: "User.all refresh needs the network".into() });
+    let (effects, outcomes) = twin.split(take(&twin.log));
+    assert_eq!((effects, outcomes.is_empty()), (vec![Effect::WindowState], true), "the window tells its streams about the error and starts no request");
+    assert_eq!(twin.stage(), Some(WindowStage::Idle));
+}
+
+#[test]
 fn win_idle_models_reset() {
     let mut twin = fresh_watched();
     assert_eq!(twin.step(Input::ModelsReset { own_model: true }), [Effect::Request { request: 2, attempt: 2, page: 1 }, Effect::WindowState]);

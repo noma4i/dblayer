@@ -424,7 +424,7 @@ fn dlv_open_rows_without_a_window_asks_for_nothing() {
 
 /// dlv_open_live: a read stream of a model that takes server events wants the subscription of the Feed and gives it back when it ends.
 #[test]
-fn dlv_open_live_wants_the_subscription_of_the_feed() {
+fn dlv_open_live() {
     let mut twin = Twin::new();
     take(&twin.log);
     twin.call(d::DeliveryInput::Open { stream: STREAM, view: d::View { live: true, ..view(Kind::List) }, epoch: EPOCH, revision: 0, identity: true, valid: true });

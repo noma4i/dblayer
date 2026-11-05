@@ -37,7 +37,7 @@ impl EffectRunner<Outbox> for OutboxExecutor {
                     return back.reply(stamp, OutboxInput::Refused { op_id: job.op_id, temporary: false, detail: "the answer cannot be read".into() });
                 };
                 let back = back.clone();
-                drop(handle.spawn_blocking(move || {
+                drop(crate::task::spawn_blocking_on(crate::task::Carry::Detached, &handle, move || {
                     let input = match decode(&job) {
                         Decoded::Land { rows, swap, stale } => OutboxInput::Response { op_id: job.op_id, rows, swap, stale, errors: None },
                         Decoded::Refused { temporary, detail } => OutboxInput::Refused { op_id: job.op_id, temporary, detail },

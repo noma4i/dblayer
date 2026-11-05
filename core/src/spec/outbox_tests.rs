@@ -148,6 +148,25 @@ async fn out_sending_response_run() {
 }
 
 #[test]
+fn out_sending_destroy_not_found() { bounded("out_sending_destroy_not_found", out_sending_destroy_not_found_run) }
+
+async fn out_sending_destroy_not_found_run() {
+    let cell = want(St::Sending, &Ctx::ready(), In::Response);
+    let rig = Rig::open(OnFailure::Rollback).await;
+    let created = rig.create("hello").await;
+    assert_eq!(kind_of(&rig.outcome(&created).await), "Confirmed");
+    rig.server.script("DeleteMoment", Reply::NotFound);
+
+    let receipt = within(rig.db.destroy(rig.epoch(), "Moment".into(), "srv1".into())).await.unwrap();
+    let outcome = rig.outcome(&receipt).await;
+
+    assert_eq!(cell.next, St::Landing);
+    assert_eq!(kind_of(&outcome), "Confirmed");
+    assert!(rig.row("srv1").await.is_none());
+    assert_eq!(rig.server.count("DeleteMoment"), 1);
+}
+
+#[test]
 fn out_sending_temp() { bounded("out_sending_temp", out_sending_temp_run) }
 
 async fn out_sending_temp_run() {
