@@ -61,6 +61,8 @@ pub enum ProtocolReason {
     Decrypt,
     /// A frame that passed the schema of the cable but is no valid frame of the subscription.
     Frame,
+    /// A `next` frame whose result carries GraphQL errors, with or without data.
+    Errors,
 }
 
 /// The id of the one subscription of a connection: the frames of any other id are not for Feed.

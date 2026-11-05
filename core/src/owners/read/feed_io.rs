@@ -148,8 +148,10 @@ impl FeedIo {
             Some("next") if foreign => Frame::Events { id: id.unwrap_or_default(), events: Vec::new() },
             Some("next") => {
                 let response = serde_json::from_value::<Response>(body["result"].clone()).map_err(|_| ProtocolReason::Frame)?;
-                if response.shape() == ResponseShape::Empty {
-                    return Err(ProtocolReason::Frame);
+                match response.shape() {
+                    ResponseShape::Empty => return Err(ProtocolReason::Frame),
+                    ResponseShape::ErrorsOnly | ResponseShape::DataWithErrors => return Err(ProtocolReason::Errors),
+                    _ => {}
                 }
                 Frame::Events { id: id.unwrap_or_default(), events: codec.events(response) }
             }

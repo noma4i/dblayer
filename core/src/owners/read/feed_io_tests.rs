@@ -161,6 +161,31 @@ fn feed_io_broken_next_drops() {
     assert!(saw_input(&det, "ProtocolError") >= 1, "the broken frame is an explicit protocol error");
 }
 
+#[test]
+fn feed_io_graphql_errors_drop() {
+    let cases = [
+        ("errors_only", json!({"errors":[{"message":"denied"}]}), true),
+        ("data_with_errors", json!({"data":{"model":"Chat", "payload":"p"}, "errors":[{"message":"denied"}]}), true),
+        ("data", json!({"data":{"model":"Chat", "payload":"p"}}), false),
+    ];
+    for (name, result, drops) in cases {
+        let (first, peer) = line();
+        let (second, _other) = line();
+        let (mut det, feed, batches, _runtime) = rig(vec![first, second]);
+        pump(&mut det, feed, |det| det.state(feed).is_some_and(|state| state.mode() == Mode::Live));
+        peer.frames.send(Incoming::Frame { counter: 1, body: json!({"t":"next", "id":"1", "result":result}) }).unwrap();
+        if drops {
+            pump(&mut det, feed, |det| det.state(feed).is_some_and(|state| matches!(state.mode(), Mode::Live | Mode::Opening { .. }) && state.active_connection() != Some(1)));
+            assert!(saw_input(&det, "ProtocolError") >= 1, "{name}: the error frame is an explicit protocol error");
+            assert!(batches.all().is_empty(), "{name}: no event reaches the Store");
+        } else {
+            let seen = batches.clone();
+            pump(&mut det, feed, |_| !seen.all().is_empty());
+            assert_eq!(saw_input(&det, "ProtocolError"), 0, "{name}: a clean frame is no error");
+        }
+    }
+}
+
 struct Hanging(Arc<AtomicUsize>, Arc<AtomicUsize>);
 
 struct DropCount(Arc<AtomicUsize>);
