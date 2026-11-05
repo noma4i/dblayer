@@ -24,7 +24,7 @@ final class SwitchableTransport: Transport, @unchecked Sendable {
     return target
   }
 
-  func openCable(lease: CableLease) async throws { try await resolve().openCable(lease: lease) }
+  func openCable(lease: CableLease, url: String) async throws { try await resolve().openCable(lease: lease, url: url) }
   func cableSend(token: String, text: String) async throws { try await resolve().cableSend(token: token, text: text) }
   func cableNext(token: String) async -> EncryptedSocketEvent? { await target?.cableNext(token: token) }
   func cableClose(token: String) async { await target?.cableClose(token: token) }

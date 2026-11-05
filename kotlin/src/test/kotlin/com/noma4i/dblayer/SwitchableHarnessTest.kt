@@ -10,7 +10,7 @@ import org.junit.Test
 class SwitchableTransport(@Volatile var target: MockTransport?, private val unset: () -> DbException) : Transport {
     private fun resolve(): MockTransport = target ?: throw unset()
 
-    override suspend fun openCable(lease: CableLease) = resolve().openCable(lease)
+    override suspend fun openCable(lease: CableLease, url: String) = resolve().openCable(lease, url)
     override suspend fun cableSend(token: String, text: String) = resolve().cableSend(token, text)
     override suspend fun cableNext(token: String): EncryptedSocketEvent? = target?.cableNext(token)
     override suspend fun cableClose(token: String) { target?.cableClose(token) }

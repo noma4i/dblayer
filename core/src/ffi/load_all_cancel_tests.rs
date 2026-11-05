@@ -20,7 +20,7 @@ impl Drop for OnCancel<'_> {
 
 #[async_trait::async_trait]
 impl Transport for Endless {
-    async fn open_cable(&self, _: Arc<super::CableLease>) -> Result<(), DbError> { Err(DbError::Network { detail: "fake socket unavailable".into() }) }
+    async fn open_cable(&self, _: Arc<super::CableLease>, _url: String) -> Result<(), DbError> { Err(DbError::Network { detail: "fake socket unavailable".into() }) }
     async fn cable_send(&self, _: String, _: String) -> Result<(), DbError> { unreachable!() }
     async fn cable_next(&self, _: String) -> Option<crate::ffi::EncryptedSocketEvent> { unreachable!() }
     async fn cable_close(&self, _: String) {}

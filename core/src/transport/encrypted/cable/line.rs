@@ -128,7 +128,7 @@ impl CableLine for SocketLine {
 impl CableLines for EncryptedLines {
     async fn connect(&self) -> Result<Arc<dyn CableLine>, TransportError> {
         let credential = (self.credential)()?;
-        let socket = self.transport.open_cable().await?;
+        let socket = self.transport.open_cable(&self.config.cable_url()?).await?;
         let mut open = OpenSocket(Some(socket.clone()));
         let keys = handshake(socket.as_ref(), &self.config, &credential).await;
         open.0 = None;

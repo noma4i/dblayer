@@ -22,7 +22,7 @@ pub(super) struct Counting {
 
 #[async_trait::async_trait]
 impl Transport for Counting {
-    async fn open_cable(&self, _: Arc<super::CableLease>) -> Result<(), DbError> { Err(DbError::Network { detail: "fake socket unavailable".into() }) }
+    async fn open_cable(&self, _: Arc<super::CableLease>, _url: String) -> Result<(), DbError> { Err(DbError::Network { detail: "fake socket unavailable".into() }) }
     async fn cable_send(&self, _: String, _: String) -> Result<(), DbError> { unreachable!() }
     async fn cable_next(&self, _: String) -> Option<crate::ffi::EncryptedSocketEvent> { unreachable!() }
     async fn cable_close(&self, _: String) {}
@@ -353,7 +353,7 @@ struct Interrupting {
 
 #[async_trait::async_trait]
 impl Transport for Interrupting {
-    async fn open_cable(&self, lease: Arc<super::CableLease>) -> Result<(), DbError> { self.inner.open_cable(lease).await }
+    async fn open_cable(&self, lease: Arc<super::CableLease>, _url: String) -> Result<(), DbError> { self.inner.open_cable(lease, _url).await }
     async fn cable_send(&self, token: String, text: String) -> Result<(), DbError> { self.inner.cable_send(token, text).await }
     async fn cable_next(&self, token: String) -> Option<crate::ffi::EncryptedSocketEvent> { self.inner.cable_next(token).await }
     async fn cable_close(&self, token: String) { self.inner.cable_close(token).await }

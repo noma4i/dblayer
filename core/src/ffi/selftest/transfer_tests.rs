@@ -18,7 +18,7 @@ struct TransferTransport {
 
 #[async_trait]
 impl Transport for TransferTransport {
-    async fn open_cable(&self, _: Arc<CableLease>) -> Result<(), DbError> { Err(DbError::Network { detail: "no socket".into() }) }
+    async fn open_cable(&self, _: Arc<CableLease>, _url: String) -> Result<(), DbError> { Err(DbError::Network { detail: "no socket".into() }) }
     async fn cable_send(&self, _: String, _: String) -> Result<(), DbError> { unreachable!() }
     async fn cable_next(&self, _: String) -> Option<EncryptedSocketEvent> { unreachable!() }
     async fn cable_close(&self, _: String) {}
@@ -90,7 +90,7 @@ struct RefusedBlob;
 
 #[async_trait]
 impl Transport for RefusedBlob {
-    async fn open_cable(&self, _: Arc<CableLease>) -> Result<(), DbError> { Err(DbError::Network { detail: "no socket".into() }) }
+    async fn open_cable(&self, _: Arc<CableLease>, _url: String) -> Result<(), DbError> { Err(DbError::Network { detail: "no socket".into() }) }
     async fn cable_send(&self, _: String, _: String) -> Result<(), DbError> { unreachable!() }
     async fn cable_next(&self, _: String) -> Option<EncryptedSocketEvent> { unreachable!() }
     async fn cable_close(&self, _: String) {}
@@ -106,7 +106,7 @@ struct PhotoRefusal { identities: Mutex<Vec<crate::transport::TransferIdentity>>
 
 #[async_trait]
 impl Transport for PhotoRefusal {
-    async fn open_cable(&self, _: Arc<CableLease>) -> Result<(), DbError> { Err(DbError::Network { detail: "no socket".into() }) }
+    async fn open_cable(&self, _: Arc<CableLease>, _url: String) -> Result<(), DbError> { Err(DbError::Network { detail: "no socket".into() }) }
     async fn cable_send(&self, _: String, _: String) -> Result<(), DbError> { unreachable!() }
     async fn cable_next(&self, _: String) -> Option<EncryptedSocketEvent> { unreachable!() }
     async fn cable_close(&self, _: String) {}
@@ -268,7 +268,7 @@ impl Default for AlbumTransport {
 
 #[async_trait]
 impl Transport for AlbumTransport {
-    async fn open_cable(&self, _: Arc<CableLease>) -> Result<(), DbError> { Err(DbError::Network { detail: "no socket".into() }) }
+    async fn open_cable(&self, _: Arc<CableLease>, _url: String) -> Result<(), DbError> { Err(DbError::Network { detail: "no socket".into() }) }
     async fn cable_send(&self, _: String, _: String) -> Result<(), DbError> { unreachable!() }
     async fn cable_next(&self, _: String) -> Option<EncryptedSocketEvent> { unreachable!() }
     async fn cable_close(&self, _: String) {}
@@ -509,7 +509,7 @@ async fn reopening_after_seven_days_expires_a_failed_blob() {
 
 #[async_trait]
 impl Transport for MultipartTransport {
-    async fn open_cable(&self, _: Arc<CableLease>) -> Result<(), DbError> { Err(DbError::Network { detail: "no socket".into() }) }
+    async fn open_cable(&self, _: Arc<CableLease>, _url: String) -> Result<(), DbError> { Err(DbError::Network { detail: "no socket".into() }) }
     async fn cable_send(&self, _: String, _: String) -> Result<(), DbError> { unreachable!() }
     async fn cable_next(&self, _: String) -> Option<EncryptedSocketEvent> { unreachable!() }
     async fn cable_close(&self, _: String) {}

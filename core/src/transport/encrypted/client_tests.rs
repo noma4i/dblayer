@@ -148,3 +148,12 @@ impl EncryptedClient {
     }
 
 }
+
+#[test]
+fn cable_url_is_built_by_the_core() {
+    let at = |origin: &str| EncryptedConfig { origin: origin.into(), ..config() }.cable_url();
+    let path = config().endpoints.cable;
+    assert_eq!(at("https://api.example.com/").unwrap(), format!("wss://api.example.com{path}"));
+    assert_eq!(at("http://localhost:3000").unwrap(), format!("ws://localhost:3000{path}"));
+    assert!(at("ftp://example.com").is_err(), "only an HTTP origin has a cable");
+}

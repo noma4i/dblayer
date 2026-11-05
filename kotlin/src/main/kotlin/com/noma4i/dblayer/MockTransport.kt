@@ -49,7 +49,7 @@ class MockTransport(private val unanswered: Unanswered = Unanswered.Strict) : Tr
     private val sentFrames = CopyOnWriteArrayList<Pair<String, String>>()
     val cableFrames: List<Pair<String, String>> get() { failTestThread(); return sentFrames.toList() }
 
-    override suspend fun openCable(lease: CableLease) {
+    override suspend fun openCable(lease: CableLease, url: String) {
         val token = UUID.randomUUID().toString()
         cableEvents[token] = Channel(Channel.UNLIMITED)
         lease.opened(token)

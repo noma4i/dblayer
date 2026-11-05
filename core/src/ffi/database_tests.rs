@@ -7,7 +7,7 @@ pub(super) struct Plain;
 
 #[async_trait::async_trait]
 impl Transport for Plain {
-    async fn open_cable(&self, _: Arc<super::CableLease>) -> Result<(), DbError> { unreachable!() }
+    async fn open_cable(&self, _: Arc<super::CableLease>, _url: String) -> Result<(), DbError> { unreachable!() }
     async fn cable_send(&self, _: String, _: String) -> Result<(), DbError> { unreachable!() }
     async fn cable_next(&self, _: String) -> Option<super::EncryptedSocketEvent> { unreachable!() }
     async fn cable_close(&self, _: String) { unreachable!() }

@@ -45,16 +45,12 @@ private final class SocketOpening: NSObject, URLSessionWebSocketDelegate, @unche
 }
 
 final class UrlSessionCable: @unchecked Sendable {
-  private let origin: URL?
-  private let cablePath: String?
   private let applicationUserAgent: @Sendable () -> String?
   private let makeSocket: @Sendable (URLRequest) -> any CableWebSocket
   private let lock = NSLock()
   private var sockets: [String: any CableWebSocket] = [:]
 
-  init(origin: URL?, cablePath: String?, applicationUserAgent: @escaping @Sendable () -> String? = { nil }, makeSocket: @escaping @Sendable (URLRequest) -> any CableWebSocket) {
-    self.origin = origin
-    self.cablePath = cablePath
+  init(applicationUserAgent: @escaping @Sendable () -> String? = { nil }, makeSocket: @escaping @Sendable (URLRequest) -> any CableWebSocket) {
     self.applicationUserAgent = applicationUserAgent
     self.makeSocket = makeSocket
   }
@@ -63,17 +59,9 @@ final class UrlSessionCable: @unchecked Sendable {
     for socket in sockets.values { socket.cancel(with: .goingAway, reason: nil) }
   }
 
-  func open() async throws -> String {
+  func open(url: String) async throws -> String {
     do { try Task.checkCancellation() } catch { throw TransportFailure.classifySocket(error) }
-    guard let cablePath, let origin, var url = URLComponents(url: origin, resolvingAgainstBaseURL: false),
-          ["https", "http"].contains(url.scheme), url.host != nil else {
-      throw DbError.Invalid(detail: "cable requires an HTTP origin")
-    }
-    url.scheme = url.scheme == "https" ? "wss" : "ws"
-    url.percentEncodedPath = cablePath
-    url.query = nil
-    url.fragment = nil
-    guard let target = url.url else { throw DbError.Invalid(detail: "invalid cable origin") }
+    guard let target = URL(string: url), ["ws", "wss"].contains(target.scheme), target.host != nil else { throw DbError.Invalid(detail: "invalid cable url") }
     var request = URLRequest(url: target)
     request.setValue(applicationUserAgent(), forHTTPHeaderField: "User-Agent")
     request.setUserAgent()

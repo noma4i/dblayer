@@ -43,7 +43,7 @@ class EncryptedCablePeer(private val server: SealedServer) : Transport {
     private fun rawPublic(bytes: ByteArray) = KeyFactory.getInstance("X25519").generatePublic(X509EncodedKeySpec(hex("302a300506032b656e032100") + bytes))
     private fun text(value: JsonObject) = value.toString()
 
-    override suspend fun openCable(lease: CableLease) {
+    override suspend fun openCable(lease: CableLease, url: String) {
         val token = UUID.randomUUID().toString()
         val connection = Connection()
         connections[token] = connection

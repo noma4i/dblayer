@@ -67,7 +67,7 @@ async fn inv_upload_22_uploads_with_empty_operations_explain_the_cause_and_the_f
 
 #[async_trait::async_trait]
 impl Transport for CountingFeed {
-    async fn open_cable(&self, _: Arc<super::super::CableLease>) -> Result<(), DbError> { unreachable!() }
+    async fn open_cable(&self, _: Arc<super::super::CableLease>, _url: String) -> Result<(), DbError> { unreachable!() }
     async fn cable_send(&self, _: String, _: String) -> Result<(), DbError> { unreachable!() }
     async fn cable_next(&self, _: String) -> Option<super::super::EncryptedSocketEvent> { unreachable!() }
     async fn cable_close(&self, _: String) { unreachable!() }

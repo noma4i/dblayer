@@ -125,9 +125,9 @@ struct GraphQLSocketTests {
     let origin = try await server.start()
     let session = URLSession(configuration: .ephemeral)
     defer { session.invalidateAndCancel() }
-    let transport = UrlSessionTransport(endpoint: origin, session: session, cablePath: "/api/cable")
+    let transport = UrlSessionTransport(endpoint: origin, session: session)
     let lease = RecordingLease(noHandle: .init())
-    try await transport.openCable(lease: lease)
+    try await transport.openCable(lease: lease, url: cableURL(origin))
     let token = try #require(lease.token)
     try await transport.cableSend(token: token, text: "client frame")
     let received = Cursor(server.received.stream)

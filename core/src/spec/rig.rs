@@ -164,7 +164,7 @@ fn answer_of(operation: &str, variables: &Value, number: u64) -> Value {
 
 #[async_trait]
 impl Transport for Wire {
-    async fn open_cable(&self, _: Arc<CableLease>) -> Result<(), DbError> { Err(DbError::Network { detail: "no cable".into() }) }
+    async fn open_cable(&self, _: Arc<CableLease>, _url: String) -> Result<(), DbError> { Err(DbError::Network { detail: "no cable".into() }) }
     async fn cable_send(&self, _: String, _: String) -> Result<(), DbError> { Err(DbError::Network { detail: "no cable".into() }) }
     async fn cable_next(&self, _: String) -> Option<EncryptedSocketEvent> { None }
     async fn cable_close(&self, _: String) {}

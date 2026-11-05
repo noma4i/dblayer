@@ -3,19 +3,18 @@ import Testing
 @testable import DBlayer
 
 struct UrlSessionCableTests {
-  @Test(arguments: ["missing-origin", "wrong-scheme", "missing-path"])
-  func invalidOriginsAndMissingPathsAreTyped(kind: String) async throws {
-    let origin = kind == "missing-origin" ? nil : URL(string: kind == "wrong-scheme" ? "ftp://example.test" : "https://example.test")
-    let cable = UrlSessionCable(origin: origin, cablePath: kind == "missing-path" ? nil : "/api/cable") { _ in
-      Issue.record("invalid cable configuration created a socket")
+  @Test
+  func anAddressThatIsNoUrlIsTyped() async throws {
+    let cable = UrlSessionCable { _ in
+      Issue.record("an invalid cable address created a socket")
       return Socket()
     }
     do {
-      _ = try await cable.open()
-      Issue.record("invalid cable configuration opened a socket")
+      _ = try await cable.open(url: "not a url")
+      Issue.record("an invalid cable address opened a socket")
     } catch let error as DbError {
       guard case .Invalid = error else {
-        Issue.record("expected Invalid for cable configuration, got \(error)")
+        Issue.record("expected Invalid for the cable address, got \(error)")
         return
       }
     }
@@ -28,12 +27,12 @@ struct UrlSessionCableTests {
     let origin = try await server.start()
     let session = URLSession(configuration: .ephemeral)
     defer { session.invalidateAndCancel() }
-    let transport = UrlSessionTransport(endpoint: origin, session: session, cablePath: "/api/cable")
+    let transport = UrlSessionTransport(endpoint: origin, session: session)
     let lease = RecordingLease(noHandle: .init())
     let outcome = AsyncStream<String>.makeStream()
     let task = Task {
       do {
-        try await transport.openCable(lease: lease)
+        try await transport.openCable(lease: lease, url: cableURL(origin))
         outcome.continuation.yield("opened")
       } catch let error as DbError {
         outcome.continuation.yield(TransportFailureTests.shape(error))
@@ -79,15 +78,15 @@ struct UrlSessionCableTests {
     }
   }
 
-  @Test func textUsesCableURLAndSeparateTokens() async throws {
+  @Test func textUsesTheGivenURLAndSeparateTokens() async throws {
     let socket = Socket()
-    let cable = UrlSessionCable(origin: URL(string: "https://example.com:8443/ignored?secret=value"), cablePath: "/api/cable") { request in
+    let cable = UrlSessionCable { request in
       #expect(request.url?.absoluteString == "wss://example.com:8443/api/cable")
       #expect(request.value(forHTTPHeaderField: "Sec-WebSocket-Protocol") == nil)
       return socket
     }
-    let first = try await cable.open()
-    let second = try await cable.open()
+    let first = try await cable.open(url: "wss://example.com:8443/api/cable")
+    let second = try await cable.open(url: "wss://example.com:8443/api/cable")
     #expect(first != second)
     #expect(socket.resumed)
     try await cable.send(token: first, text: "client frame")
@@ -105,8 +104,8 @@ struct UrlSessionCableTests {
       socket.closeReason = Data("UNAUTHENTICATED".utf8)
     }
     socket.incoming = code == 1003 ? .success(.data(Data([1]))) : .failure(URLError(.networkConnectionLost))
-    let cable = UrlSessionCable(origin: URL(string: "https://example.com"), cablePath: "/api/cable") { _ in socket }
-    let token = try await cable.open()
+    let cable = UrlSessionCable { _ in socket }
+    let token = try await cable.open(url: "wss://example.com:8443/api/cable")
     guard case let .closed(actual, reason) = await cable.next(token: token) else {
       Issue.record("expected a close event")
       return
@@ -120,8 +119,8 @@ struct UrlSessionCableTests {
 
   @Test func cancelClosesAndRemovesOnlyItsSocket() async throws {
     let socket = Socket()
-    let cable = UrlSessionCable(origin: URL(string: "https://example.com"), cablePath: "/api/cable") { _ in socket }
-    let token = try await cable.open()
+    let cable = UrlSessionCable { _ in socket }
+    let token = try await cable.open(url: "wss://example.com:8443/api/cable")
     await cable.close(token: token)
     #expect(socket.cancelled == .normalClosure)
     #expect(await cable.next(token: token) == nil)
@@ -132,8 +131,8 @@ struct UrlSessionCableTests {
   func sendFailureIsTyped(code: URLError.Code) async throws {
     let socket = Socket()
     socket.sendError = URLError(code)
-    let cable = UrlSessionCable(origin: URL(string: "https://example.com"), cablePath: "/api/cable") { _ in socket }
-    let token = try await cable.open()
+    let cable = UrlSessionCable { _ in socket }
+    let token = try await cable.open(url: "wss://example.com:8443/api/cable")
     do {
       try await cable.send(token: token, text: "frame")
       Issue.record("send must fail")
@@ -143,14 +142,14 @@ struct UrlSessionCableTests {
   }
 
   @Test func cancelledOpenFailsWithTypedErrorBeforeCreatingSocket() async throws {
-    let cable = UrlSessionCable(origin: URL(string: "https://example.com"), cablePath: "/api/cable") { _ in
+    let cable = UrlSessionCable { _ in
       Issue.record("cancelled open created a socket")
       return Socket()
     }
     let task = Task {
       withUnsafeCurrentTask { $0?.cancel() }
       do {
-        _ = try await cable.open()
+        _ = try await cable.open(url: "wss://example.com:8443/api/cable")
         Issue.record("cancelled open succeeded")
       } catch let error as DbError {
         #expect(TransportFailureTests.shape(error) == "Interrupted")
@@ -164,9 +163,9 @@ struct UrlSessionCableTests {
   @Test func connectionFailureRejectsOpenAndClosesSocket() async throws {
     let socket = Socket()
     socket.openError = URLError(.cannotConnectToHost)
-    let cable = UrlSessionCable(origin: URL(string: "https://example.com"), cablePath: "/api/cable") { _ in socket }
+    let cable = UrlSessionCable { _ in socket }
     do {
-      _ = try await cable.open()
+      _ = try await cable.open(url: "wss://example.com:8443/api/cable")
       Issue.record("open returned before the WebSocket connected")
     } catch let error as DbError {
       #expect(TransportFailureTests.shape(error) == "Network")

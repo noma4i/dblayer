@@ -14,11 +14,10 @@ class OkHttpTransport(
     private val endpoint: String,
     private val headers: () -> Map<String, String> = { emptyMap() },
     private val client: OkHttpClient = OkHttpClient(),
-    cablePath: String? = null,
 ) : Transport {
     private val sockets = ConcurrentHashMap<String, okhttp3.WebSocket>()
-    private val encryptedSocket = OkHttpEncryptedSocket(endpoint, client, cablePath) { headers().toHeaders()["User-Agent"] }
-    override suspend fun openCable(lease: CableLease) = lease.opened(encryptedSocket.open())
+    private val encryptedSocket = OkHttpEncryptedSocket(client) { headers().toHeaders()["User-Agent"] }
+    override suspend fun openCable(lease: CableLease, url: String) = lease.opened(encryptedSocket.open(url))
     override suspend fun cableSend(token: String, text: String) = encryptedSocket.send(token, text)
     override suspend fun cableNext(token: String): EncryptedSocketEvent? = encryptedSocket.next(token)
     override suspend fun cableClose(token: String) = encryptedSocket.close(token)

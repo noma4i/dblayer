@@ -10,7 +10,7 @@ private final class HeldProfileTransport: Transport, @unchecked Sendable {
   let ended = AsyncStream<Void>.makeStream()
   private let lock = NSLock()
   private var first = true
-  func openCable(lease: CableLease) async throws { try await base.openCable(lease: lease) }
+  func openCable(lease: CableLease, url: String) async throws { try await base.openCable(lease: lease, url: url) }
   func cableSend(token: String, text: String) async throws { try await base.cableSend(token: token, text: text) }
   func cableNext(token: String) async -> EncryptedSocketEvent? { await base.cableNext(token: token) }
   func cableClose(token: String) async { await base.cableClose(token: token) }

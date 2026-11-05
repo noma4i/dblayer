@@ -245,7 +245,7 @@ pub(super) fn chat_entry(index: usize, title: &str) -> serde_json::Value {
 
 #[async_trait]
 impl Transport for Net {
-    async fn open_cable(&self, _: Arc<CableLease>) -> Result<(), DbError> { Err(DbError::Network { detail: "fake socket unavailable".into() }) }
+    async fn open_cable(&self, _: Arc<CableLease>, _url: String) -> Result<(), DbError> { Err(DbError::Network { detail: "fake socket unavailable".into() }) }
     async fn cable_send(&self, _: String, _: String) -> Result<(), DbError> { Err(DbError::Network { detail: "no cable".into() }) }
     async fn cable_next(&self, _: String) -> Option<EncryptedSocketEvent> { None }
     async fn cable_close(&self, _: String) {}

@@ -88,7 +88,7 @@ class CorpusMock : Transport, EncryptedHttp {
         return reply.await()
     }
 
-    override suspend fun openCable(lease: CableLease) {
+    override suspend fun openCable(lease: CableLease, url: String) {
         record("subscription", NetworkPurpose.STANDARD)
         throw DbException.Network("no cable")
     }

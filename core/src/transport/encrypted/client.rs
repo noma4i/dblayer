@@ -51,6 +51,14 @@ pub struct EncryptedSessionOperation {
 }
 
 impl EncryptedConfig {
+    /// The WebSocket address of the cable: the origin with `ws` or `wss` and the cable path. The platform only opens it.
+    pub fn cable_url(&self) -> Result<String, TransportError> {
+        let origin = self.origin.trim_end_matches('/');
+        let rest = if let Some(rest) = origin.strip_prefix("https://") { format!("wss://{rest}") } else if let Some(rest) = origin.strip_prefix("http://") { format!("ws://{rest}") } else { return Err(TransportError::Decode("cable requires an HTTP origin".into())) };
+        check_path(&self.endpoints.cable)?;
+        Ok(format!("{rest}{}", self.endpoints.cable))
+    }
+
     pub fn validate(&self) -> Result<(), TransportError> {
         for path in [&self.endpoints.graphql, &self.endpoints.cable, &self.endpoints.logout, &self.endpoints.bootstrap].into_iter().chain(self.endpoints.session_operations.values().map(|operation| &operation.path)) {
             check_path(path)?;

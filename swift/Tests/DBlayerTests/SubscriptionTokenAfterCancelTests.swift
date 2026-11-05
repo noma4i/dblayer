@@ -48,7 +48,7 @@ private final class OrderedSubscribe: Transport, @unchecked Sendable {
   var issued: [String] { lock.withLock { issuedTokens } }
   var revokedTokens: [String] { lock.withLock { revoked } }
   init(_ order: Order) { self.order = order }
-  func openCable(lease: CableLease) async throws { try await mock.openCable(lease: lease) }
+  func openCable(lease: CableLease, url: String) async throws { try await mock.openCable(lease: lease, url: url) }
   func cableSend(token: String, text: String) async throws { try await mock.cableSend(token: token, text: text) }
   func cableNext(token: String) async -> EncryptedSocketEvent? { await mock.cableNext(token: token) }
   func cableClose(token: String) async { await mock.cableClose(token: token) }

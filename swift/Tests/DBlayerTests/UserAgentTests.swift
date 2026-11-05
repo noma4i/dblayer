@@ -22,7 +22,7 @@ struct UserAgentTests {
     let headers = application.map { ["uSeR-aGeNt": $0] } ?? [:]
     let session = URLSession(configuration: .ephemeral)
     defer { session.invalidateAndCancel() }
-    let transport = UrlSessionTransport(endpoint: origin, headers: { headers }, session: session, cablePath: "/api/cable")
+    let transport = UrlSessionTransport(endpoint: origin, headers: { headers }, session: session)
     let operation = TransportRequest(document: "query Probe { id }", operationName: "Probe", variablesJson: "{}", purpose: .standard)
     switch path {
     case "encrypted":
@@ -30,7 +30,7 @@ struct UserAgentTests {
     case "graphql":
       _ = try? await transport.query(request: operation)
     case "encryptedSocket":
-      _ = try? await transport.openCable(lease: RecordingLease(noHandle: .init()))
+      _ = try? await transport.openCable(lease: RecordingLease(noHandle: .init()), url: cableURL(origin))
     case "graphqlSocket":
       let sink = AgentSink(noHandle: .init())
       _ = try? await transport.subscribe(request: operation, sink: sink)

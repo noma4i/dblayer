@@ -66,7 +66,7 @@ struct FloodSubscription;
 
 #[async_trait::async_trait]
 impl super::Transport for FloodSubscription {
-    async fn open_cable(&self, _: Arc<super::CableLease>) -> Result<(), super::DbError> { unreachable!() }
+    async fn open_cable(&self, _: Arc<super::CableLease>, _url: String) -> Result<(), super::DbError> { unreachable!() }
     async fn cable_send(&self, _: String, _: String) -> Result<(), super::DbError> { unreachable!() }
     async fn cable_next(&self, _: String) -> Option<super::EncryptedSocketEvent> { unreachable!() }
     async fn cable_close(&self, _: String) { unreachable!() }
@@ -100,7 +100,7 @@ async fn subscription_overflow_reports_the_lost_range_before_failure() {
 
 #[async_trait::async_trait]
 impl super::Transport for FakeSocket {
-    async fn open_cable(&self, lease: Arc<super::CableLease>) -> Result<(), super::DbError> { lease.opened("socket-1".into()) }
+    async fn open_cable(&self, lease: Arc<super::CableLease>, _url: String) -> Result<(), super::DbError> { lease.opened("socket-1".into()) }
     async fn cable_send(&self, token: String, text: String) -> Result<(), super::DbError> {
         assert_eq!(token, "socket-1");
         assert_eq!(text, "ciphertext");
@@ -122,7 +122,7 @@ impl super::Transport for FakeSocket {
 async fn raw_socket_bridge_preserves_ciphertext_and_close_codes() {
     use crate::transport::Transport;
     let transport = super::ForeignTransport(std::sync::Arc::new(FakeSocket));
-    let socket = transport.open_cable().await.unwrap();
+    let socket = transport.open_cable("wss://test.invalid/cable").await.unwrap();
     socket.send("ciphertext".into()).await.unwrap();
     assert!(matches!(within(socket.next()).await, Some(crate::transport::SocketEvent::Closed { code: 4503, reason }) if reason == "unavailable"));
     socket.close().await;
@@ -157,7 +157,7 @@ struct EarlyFailure;
 
 #[async_trait::async_trait]
 impl super::Transport for EarlyFailure {
-    async fn open_cable(&self, _: Arc<super::CableLease>) -> Result<(), super::DbError> { unreachable!() }
+    async fn open_cable(&self, _: Arc<super::CableLease>, _url: String) -> Result<(), super::DbError> { unreachable!() }
     async fn cable_send(&self, _: String, _: String) -> Result<(), super::DbError> { unreachable!() }
     async fn cable_next(&self, _: String) -> Option<super::EncryptedSocketEvent> { unreachable!() }
     async fn cable_close(&self, _: String) { unreachable!() }
@@ -196,7 +196,7 @@ impl Ordered {
 
 #[async_trait::async_trait]
 impl super::Transport for Ordered {
-    async fn open_cable(&self, lease: Arc<super::CableLease>) -> Result<(), super::DbError> {
+    async fn open_cable(&self, lease: Arc<super::CableLease>, _url: String) -> Result<(), super::DbError> {
         let script = crate::db::locked(&self.open).take().expect("open script");
         script(lease).await
     }
@@ -308,7 +308,7 @@ fn a_cable_token_opened_before_the_call_is_dropped_is_closed() {
     use crate::transport::Transport;
     let script: Script<super::CableLease> = Box::new(|lease| boxed(async move { lease.opened("c1".into())?; std::future::pending::<()>().await; Ok(()) }));
     let (transport, events) = ordered(None, Some(script));
-    let mut call = Box::pin(transport.open_cable());
+    let mut call = Box::pin(transport.open_cable("wss://test.invalid/cable"));
     assert!(pending(&mut call));
     drop(call);
     assert_eq!(heard(&events), "close:c1");
@@ -323,7 +323,7 @@ fn a_cable_token_opened_after_the_call_was_dropped_is_closed() {
         boxed(async { std::future::pending::<()>().await; Ok(()) })
     });
     let (transport, events) = ordered(None, Some(script));
-    let mut call = Box::pin(transport.open_cable());
+    let mut call = Box::pin(transport.open_cable("wss://test.invalid/cable"));
     assert!(pending(&mut call));
     drop(call);
     go.send(()).unwrap();
@@ -334,7 +334,7 @@ fn a_cable_token_opened_after_the_call_was_dropped_is_closed() {
 async fn a_cable_socket_dropped_without_close_closes_its_token() {
     use crate::transport::Transport;
     let (transport, events) = ordered(None, Some(Box::new(|lease| boxed(async move { lease.opened("c1".into()) }))));
-    let socket = transport.open_cable().await.unwrap();
+    let socket = transport.open_cable("wss://test.invalid/cable").await.unwrap();
     drop(socket);
     assert_eq!(heard(&events), "close:c1");
 }
@@ -343,7 +343,7 @@ async fn a_cable_socket_dropped_without_close_closes_its_token() {
 async fn a_cancelled_close_leaves_the_token_to_the_dropped_socket() {
     use crate::transport::Transport;
     let (transport, events) = ordered(None, Some(Box::new(|lease| boxed(async move { lease.opened("stuck".into()) }))));
-    let socket = transport.open_cable().await.unwrap();
+    let socket = transport.open_cable("wss://test.invalid/cable").await.unwrap();
     let mut closing = Box::pin(socket.close());
     assert!(pending(&mut closing));
     assert_eq!(heard(&events), "close-started:stuck");

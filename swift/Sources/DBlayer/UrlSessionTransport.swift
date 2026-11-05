@@ -9,11 +9,11 @@ public final class UrlSessionTransport: Transport, @unchecked Sendable {
   private var sockets: [String: URLSessionWebSocketTask] = [:]
   var openSocketCount: Int { lock.withLock { sockets.count } }
 
-  public init(endpoint: URL, headers: @escaping @Sendable () -> [String: String] = { [:] }, session: URLSession = .shared, cablePath: String? = nil) {
+  public init(endpoint: URL, headers: @escaping @Sendable () -> [String: String] = { [:] }, session: URLSession = .shared) {
     self.endpoint = endpoint
     self.headers = headers
     self.session = session
-    self.encryptedCable = UrlSessionCable(origin: endpoint, cablePath: cablePath, applicationUserAgent: {
+    self.encryptedCable = UrlSessionCable(applicationUserAgent: {
       headers().first { $0.key.caseInsensitiveCompare("User-Agent") == .orderedSame }?.value
     }) { session.webSocketTask(with: $0) }
   }
@@ -21,7 +21,7 @@ public final class UrlSessionTransport: Transport, @unchecked Sendable {
   public func query(request: TransportRequest) async throws -> String { try await post(request, kind: .query) }
   public func mutate(request: TransportRequest) async throws -> String { try await post(request, kind: .mutation) }
 
-  public func openCable(lease: CableLease) async throws { try lease.opened(token: try await encryptedCable.open()) }
+  public func openCable(lease: CableLease, url: String) async throws { try lease.opened(token: try await encryptedCable.open(url: url)) }
   public func cableSend(token: String, text: String) async throws { try await encryptedCable.send(token: token, text: text) }
   public func cableNext(token: String) async -> EncryptedSocketEvent? { await encryptedCable.next(token: token) }
   public func cableClose(token: String) async { await encryptedCable.close(token: token) }

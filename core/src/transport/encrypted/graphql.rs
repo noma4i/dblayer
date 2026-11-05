@@ -17,17 +17,17 @@ pub struct EncryptedTransport {
     cable: CableSubscriptions,
 }
 
-struct TransportCable(Arc<dyn Transport>);
+struct TransportCable(Arc<dyn Transport>, super::client::EncryptedConfig);
 
 #[async_trait]
 impl CableConnect for TransportCable {
-    async fn open(&self) -> Result<Arc<dyn CableSocket>, TransportError> { crate::db::lock::assert_no_library_lock("Transport::open_cable"); self.0.open_cable().await }
+    async fn open(&self) -> Result<Arc<dyn CableSocket>, TransportError> { crate::db::lock::assert_no_library_lock("Transport::open_cable"); self.0.open_cable(&self.1.cable_url()?).await }
 }
 
 impl EncryptedTransport {
     pub fn new(client: Arc<EncryptedClient>, rest: Arc<dyn Transport>) -> Self {
         let credentials = client.clone();
-        let cable = CableSubscriptions::new(client.config.clone(), Arc::new(move |admitted| credentials.cable_credential(admitted)), Arc::new(TransportCable(rest.clone())), client.online.clone(), client.clock.clone());
+        let cable = CableSubscriptions::new(client.config.clone(), Arc::new(move |admitted| credentials.cable_credential(admitted)), Arc::new(TransportCable(rest.clone(), client.config.clone())), client.online.clone(), client.clock.clone());
         Self { client, rest, cable }
     }
 

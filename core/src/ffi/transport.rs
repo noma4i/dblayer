@@ -25,7 +25,8 @@ impl From<core::GraphQLRequest> for TransportRequest {
 #[uniffi::export(rust, foreign)]
 #[async_trait]
 pub trait Transport: Send + Sync {
-    async fn open_cable(&self, lease: Arc<CableLease>) -> Result<(), DbError>;
+    /// Opens the WebSocket at `url` (built by the core) and reports its token to `lease`. The platform sends and receives raw text frames only.
+    async fn open_cable(&self, lease: Arc<CableLease>, url: String) -> Result<(), DbError>;
     async fn cable_send(&self, token: String, text: String) -> Result<(), DbError>;
     async fn cable_next(&self, token: String) -> Option<EncryptedSocketEvent>;
     async fn cable_close(&self, token: String);
@@ -235,7 +236,7 @@ pub(super) fn transport_error(error: DbError) -> core::TransportError {
 
 #[async_trait]
 impl core::Transport for ForeignTransport {
-    async fn open_cable(&self) -> Result<Arc<dyn core::CableSocket>, core::TransportError> {
+    async fn open_cable(&self, url: &str) -> Result<Arc<dyn core::CableSocket>, core::TransportError> {
         crate::db::lock::assert_no_library_lock("Transport::open_cable");
         let transport = self.0.clone();
         let handle = super::database::executor().map_err(transport_error)?.handle().clone();
@@ -244,7 +245,7 @@ impl core::Transport for ForeignTransport {
             Box::pin(async move { crate::db::lock::assert_no_library_lock("Transport::cable_close"); transport.cable_close(token).await })
         }) });
         let abandoned = lease.clone();
-        Calling::new(self.0.open_cable(lease.clone()), move || abandoned.lease.abandon()).await.map_err(transport_error)?;
+        Calling::new(self.0.open_cable(lease.clone(), url.to_string()), move || abandoned.lease.abandon()).await.map_err(transport_error)?;
         let Some(token) = lease.lease.token() else {
             return Err(transport_error(DbError::Invalid { detail: "open_cable finished without opened".into() }));
         };

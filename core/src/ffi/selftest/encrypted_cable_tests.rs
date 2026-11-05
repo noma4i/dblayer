@@ -58,7 +58,7 @@ impl Peer {
 
 #[async_trait]
 impl Transport for Peer {
-    async fn open_cable(&self, lease: Arc<CableLease>) -> Result<(), DbError> {
+    async fn open_cable(&self, lease: Arc<CableLease>, _url: String) -> Result<(), DbError> {
         let token = self.next.fetch_add(1, Ordering::SeqCst).to_string();
         let (input, output) = mpsc::unbounded_channel();
         let connection = Arc::new(Connection { input, output: tokio::sync::Mutex::new(output), secret: StaticSecret::from([9; 32]), salt: [5; 32], keys: Mutex::new(None), sequence: AtomicUsize::new(0), subscription: Mutex::new(None) });

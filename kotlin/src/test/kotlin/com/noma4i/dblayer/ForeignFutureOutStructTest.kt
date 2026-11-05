@@ -16,7 +16,7 @@ class ForeignFutureOutStructTest {
     private val sentinel: Byte = 0x5A
 
     private class Instant : Transport {
-        override suspend fun openCable(lease: CableLease) {}
+        override suspend fun openCable(lease: CableLease, url: String) {}
         override suspend fun cableSend(token: String, text: String) {}
         override suspend fun cableNext(token: String): EncryptedSocketEvent? = null
         override suspend fun cableClose(token: String) {}

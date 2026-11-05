@@ -92,7 +92,7 @@ let origin = URL(string: "https://api.example.com")!
 try await DB.open(
   encrypted: EncryptedConfig(origin: origin.absoluteString, serverKey: bundledServerKey, pin: bundledServerPin, endpoints: endpoints, protocolLabel: protocolLabel, cablePurpose: cablePurpose, cableChannel: cableChannel),
   credentials: AppCredentials(),
-  transport: UrlSessionTransport(endpoint: origin, cablePath: endpoints.cable),
+  transport: UrlSessionTransport(endpoint: origin),
   modelsJSON: modelsJSON,
   path: path,
   http: UrlSessionEncryptedHttp(origin: origin)
@@ -107,7 +107,7 @@ DBlayer.open(
     context,
     encrypted = EncryptedConfig(origin, bundledServerKey, bundledServerPin, endpoints, protocolLabel, cablePurpose, cableChannel),
     credentials = AppCredentials(context),
-    transport = OkHttpTransport(origin, cablePath = endpoints.cable),
+    transport = OkHttpTransport(origin),
     modelsJson = modelsJSON,
     path = path,
     uploadNotification = notification,
@@ -923,5 +923,4 @@ DBlayer.open(context, encrypted = encrypted, credentials = credentials, modelsJs
 
 `DBlayer.open` and `DBlayer.serverConfig` require Android Context first. Swift calls keep their argument lists.
 Their required encrypted configuration has changed. Applications must supply every protocol value before opening or fetching config.
-Direct `UrlSessionTransport` and `OkHttpTransport` construction requires `cablePath` to open encrypted sockets.
-Omitting it disables encrypted socket opening. HTTP-only construction remains available.
+`UrlSessionTransport` and `OkHttpTransport` take no cable path. The core builds the WebSocket address from `EncryptedConfig` and passes it to `openCable`; the platform opens it and passes raw text frames.

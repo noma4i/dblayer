@@ -9,6 +9,7 @@
 - `OpenOptions` has no `preload` and no `listening`. `openTesting` and `openOnClock` have no `preload` and no `listening` parameter. A scope declared with `preload` loads on a test clock like it does in production.
 
 ### Changed
+- `UrlSessionTransport` and `OkHttpTransport` have no `cablePath`. `Transport.openCable` receives the WebSocket address built by the core.
 - `EntityFetch.none` is `EntityFetch.never` in Swift and `EntityFetch.NEVER` in Kotlin.
 
 ### Fixed

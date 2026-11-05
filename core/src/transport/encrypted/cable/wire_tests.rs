@@ -309,7 +309,7 @@ impl CableConnect for FakeConnect {
 
 #[async_trait]
 impl crate::transport::Transport for FakeConnect {
-    async fn open_cable(&self) -> Result<Arc<dyn CableSocket>, TransportError> { CableConnect::open(self).await }
+    async fn open_cable(&self, _url: &str) -> Result<Arc<dyn CableSocket>, TransportError> { CableConnect::open(self).await }
     async fn query(&self, _admitted: &crate::ffi::legacy::Admitted, _: GraphQLRequest) -> Result<crate::transport::Response, TransportError> { panic!("unencrypted query") }
     async fn mutate(&self, _admitted: &crate::ffi::legacy::Admitted, _: GraphQLRequest) -> Result<crate::transport::Response, TransportError> { panic!("unencrypted mutation") }
     async fn subscribe(&self, _admitted: &crate::ffi::legacy::Admitted, _: GraphQLRequest) -> Result<crate::transport::ServerSubscription, TransportError> { panic!("V2 subscription") }

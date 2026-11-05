@@ -41,7 +41,7 @@ final class EncryptedCablePeer: Transport, @unchecked Sendable {
     return value
   }
 
-  func openCable(lease: CableLease) async throws {
+  func openCable(lease: CableLease, url: String) async throws {
     let token = UUID().uuidString
     let connection = Connection()
     lock.withLock { connections[token] = connection }

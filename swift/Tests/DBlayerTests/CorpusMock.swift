@@ -112,7 +112,7 @@ final class CorpusMock: Transport, EncryptedHttp, @unchecked Sendable {
     return try await withCheckedThrowingContinuation { continuation in lock.withLock { waiting[id] = continuation } }
   }
 
-  func openCable(lease: CableLease) async throws {
+  func openCable(lease: CableLease, url: String) async throws {
     _ = record("subscription", .standard)
     throw DbError.Network(detail: "no cable")
   }

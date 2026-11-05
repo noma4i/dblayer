@@ -173,7 +173,7 @@ impl Mock {
 
 #[async_trait]
 impl Transport for Mock {
-    async fn open_cable(&self, _: Arc<CableLease>) -> Result<(), DbError> {
+    async fn open_cable(&self, _: Arc<CableLease>, _url: String) -> Result<(), DbError> {
         self.record("subscription", purpose_name(NetworkPurpose::Standard));
         Err(DbError::Network { detail: "no cable".into() })
     }

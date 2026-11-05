@@ -3844,7 +3844,10 @@ public func FfiConverterTypeTestClock_lower(_ value: TestClock) -> UInt64 {
 
 public protocol Transport: AnyObject, Sendable {
     
-    func openCable(lease: CableLease) async throws 
+    /**
+     * Opens the WebSocket at `url` (built by the core) and reports its token to `lease`. The platform sends and receives raw text frames only.
+     */
+    func openCable(lease: CableLease, url: String) async throws 
     
     func cableSend(token: String, text: String) async throws 
     
@@ -3916,12 +3919,15 @@ open class TransportImpl: Transport, @unchecked Sendable {
     
 
     
-open func openCable(lease: CableLease)async throws   {
+    /**
+     * Opens the WebSocket at `url` (built by the core) and reports its token to `lease`. The platform sends and receives raw text frames only.
+     */
+open func openCable(lease: CableLease, url: String)async throws   {
     return
         try  await uniffiRustCallAsync(
             rustFutureFunc: {
                 uniffi_dblayer_fn_method_transport_open_cable(
-                        self.uniffiCloneHandle(),FfiConverterTypeCableLease_lower(lease)
+                        self.uniffiCloneHandle(),FfiConverterTypeCableLease_lower(lease),FfiConverterString.lower(url)
                 )
             },
             pollFunc: ffi_dblayer_rust_future_poll_void,
@@ -4086,6 +4092,7 @@ fileprivate struct UniffiCallbackInterfaceTransport {
         openCable: { (
             uniffiHandle: UInt64,
             lease: UInt64,
+            url: RustBuffer,
             uniffiFutureCallback: @escaping UniffiForeignFutureCompleteVoid,
             uniffiCallbackData: UInt64,
             uniffiOutDroppedCallback: UnsafeMutablePointer<UniffiForeignFutureDroppedCallbackStruct>
@@ -4096,7 +4103,8 @@ fileprivate struct UniffiCallbackInterfaceTransport {
                     throw UniffiInternalError.unexpectedStaleHandle
                 }
                 return try await uniffiObj.openCable(
-                     lease: try FfiConverterTypeCableLease_lift(lease)
+                     lease: try FfiConverterTypeCableLease_lift(lease),
+                     url: try FfiConverterString.lift(url)
                 )
             }
 
@@ -11827,7 +11835,7 @@ private let initializationResult: InitializationResult = {
     if (uniffi_dblayer_checksum_method_subscriptionsink_ready() != 12426) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_dblayer_checksum_method_transport_open_cable() != 16195) {
+    if (uniffi_dblayer_checksum_method_transport_open_cable() != 1431) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_dblayer_checksum_method_transport_cable_send() != 24769) {

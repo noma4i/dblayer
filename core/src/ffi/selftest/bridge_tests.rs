@@ -135,7 +135,7 @@ impl Drop for CancelledLoad {
 
 #[async_trait::async_trait]
 impl crate::ffi::Transport for CancelledLoadTransport {
-    async fn open_cable(&self, _: Arc<crate::ffi::CableLease>) -> Result<(), DbError> { Err(DbError::Network { detail: "no cable".into() }) }
+    async fn open_cable(&self, _: Arc<crate::ffi::CableLease>, _url: String) -> Result<(), DbError> { Err(DbError::Network { detail: "no cable".into() }) }
     async fn cable_send(&self, _: String, _: String) -> Result<(), DbError> { unreachable!() }
     async fn cable_next(&self, _: String) -> Option<crate::ffi::EncryptedSocketEvent> { None }
     async fn cable_close(&self, _: String) {}
@@ -167,7 +167,7 @@ struct MomentTransport { reads: std::sync::atomic::AtomicUsize }
 
 #[async_trait::async_trait]
 impl crate::ffi::Transport for MomentTransport {
-    async fn open_cable(&self, _: Arc<crate::ffi::CableLease>) -> Result<(), DbError> { Err(DbError::Network { detail: "no cable".into() }) }
+    async fn open_cable(&self, _: Arc<crate::ffi::CableLease>, _url: String) -> Result<(), DbError> { Err(DbError::Network { detail: "no cable".into() }) }
     async fn cable_send(&self, _: String, _: String) -> Result<(), DbError> { Err(DbError::Network { detail: "no cable".into() }) }
     async fn cable_next(&self, _: String) -> Option<crate::ffi::EncryptedSocketEvent> { None }
     async fn cable_close(&self, _: String) {}
@@ -193,7 +193,7 @@ struct PagedMomentTransport {
 
 #[async_trait::async_trait]
 impl crate::ffi::Transport for PagedMomentTransport {
-    async fn open_cable(&self, _: Arc<crate::ffi::CableLease>) -> Result<(), DbError> { Err(DbError::Network { detail: "no cable".into() }) }
+    async fn open_cable(&self, _: Arc<crate::ffi::CableLease>, _url: String) -> Result<(), DbError> { Err(DbError::Network { detail: "no cable".into() }) }
     async fn cable_send(&self, _: String, _: String) -> Result<(), DbError> { Err(DbError::Network { detail: "no cable".into() }) }
     async fn cable_next(&self, _: String) -> Option<crate::ffi::EncryptedSocketEvent> { None }
     async fn cable_close(&self, _: String) {}

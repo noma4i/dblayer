@@ -20,13 +20,9 @@ import org.junit.Test
 @org.robolectric.annotation.Config(sdk = [35])
 class EncryptedSocketTest {
     @Test
-    fun invalidOriginsAndMissingPathsAreTyped() = bounded {
-        for ((origin, path) in listOf("ftp://example.test/" to "/api/cable", "https://example.test/" to null)) {
-            val error = runCatching {
-                OkHttpTransport(origin, cablePath = path).openedCable()
-            }.exceptionOrNull()
-            assertTrue("invalid cable configuration must report its type", error is DbException.Invalid)
-        }
+    fun anAddressThatIsNoWebSocketUrlIsTyped() = bounded {
+        val error = runCatching { OkHttpTransport("https://example.test/").openedCable("ftp://example.test/api/cable") }.exceptionOrNull()
+        assertTrue("an invalid cable address must report its type", error is DbException.Invalid)
     }
 
     @Test
@@ -41,8 +37,8 @@ class EncryptedSocketTest {
                 }
             }.build()
             server.enqueue(MockResponse().setSocketPolicy(SocketPolicy.NO_RESPONSE))
-            val transport = OkHttpTransport(server.url("/").toString(), client = client, cablePath = "/api/cable")
-            val pending = async(start = CoroutineStart.UNDISPATCHED) { transport.openedCable() }
+            val transport = OkHttpTransport(server.url("/").toString(), client = client)
+            val pending = async(start = CoroutineStart.UNDISPATCHED) { transport.openedCable(cableUrl(server)) }
             try {
                 assertEquals("/api/cable", server.takeRequest().path)
                 pending.cancelAndJoin()
@@ -69,8 +65,8 @@ class EncryptedSocketTest {
                     }
                 }))
                 val endpoint = server.url("/api/graphql").toString()
-                val transport: Transport = OkHttpTransport(endpoint, cablePath = "/api/cable")
-                val token = transport.openedCable()
+                val transport: Transport = OkHttpTransport(endpoint)
+                val token = transport.openedCable(cableUrl(server))
                 try {
                     assertEquals(EncryptedSocketEvent.Text("server challenge"), transport.cableNext(token))
                     transport.cableSend(token, "encrypted hello")
@@ -96,8 +92,8 @@ class EncryptedSocketTest {
                     webSocket.close(4401, "UNAUTHENTICATED")
                 }
             }))
-            val transport = OkHttpTransport(server.url("/").toString(), client = client, cablePath = "/api/cable")
-            val token = transport.openedCable()
+            val transport = OkHttpTransport(server.url("/").toString(), client = client)
+            val token = transport.openedCable(cableUrl(server))
             assertEquals(EncryptedSocketEvent.Closed(4401u, "UNAUTHENTICATED"), transport.cableNext(token))
             assertNull(transport.cableNext(token))
             withTimeout(2000) { idle.await() }
@@ -114,8 +110,8 @@ class EncryptedSocketTest {
                 }
                 override fun onClosing(webSocket: WebSocket, code: Int, reason: String) = Unit
             }))
-            val transport = OkHttpTransport(server.url("/").toString(), cablePath = "/api/cable")
-            val token = transport.openedCable()
+            val transport = OkHttpTransport(server.url("/").toString())
+            val token = transport.openedCable(cableUrl(server))
             assertEquals(EncryptedSocketEvent.Closed(4401u, "UNAUTHENTICATED"), transport.cableNext(token))
             assertNull(transport.cableNext(token))
             transport.cableClose(token)
@@ -136,8 +132,8 @@ class EncryptedSocketTest {
                         webSocket.close(code, reason)
                     }
                 }))
-                val transport = OkHttpTransport(server.url("/").toString(), cablePath = "/api/cable")
-                val token = transport.openedCable()
+                val transport = OkHttpTransport(server.url("/").toString())
+                val token = transport.openedCable(cableUrl(server))
                 val event = transport.cableNext(token) as EncryptedSocketEvent.Closed
                 assertEquals(if (binary) 1003.toUShort() else 1006.toUShort(), event.code)
                 assertTrue(event.reason.isNotBlank())
@@ -162,9 +158,9 @@ class EncryptedSocketTest {
                     webSocket.send("second")
                 }
             }))
-            val transport = OkHttpTransport(server.url("/").toString(), cablePath = "/api/cable")
-            val first = transport.openedCable()
-            val second = transport.openedCable()
+            val transport = OkHttpTransport(server.url("/").toString())
+            val first = transport.openedCable(cableUrl(server))
+            val second = transport.openedCable(cableUrl(server))
             assertNotEquals(first, second)
             val pending = async(start = CoroutineStart.UNDISPATCHED) { transport.cableNext(first) }
             transport.cableClose(first)
@@ -205,9 +201,9 @@ class EncryptedSocketTest {
     fun classifiesHandshakeRefusalAndSendingAfterCancellation() = bounded {
         MockWebServer().use { server ->
             server.enqueue(MockResponse().setResponseCode(403))
-            val transport = OkHttpTransport(server.url("/").toString(), cablePath = "/api/cable")
+            val transport = OkHttpTransport(server.url("/").toString())
             try {
-                transport.openedCable()
+                transport.openedCable(cableUrl(server))
                 fail("expected HTTP refusal")
             } catch (error: DbException.Http) {
                 assertEquals(403.toUShort(), error.status)

@@ -7,7 +7,7 @@ private final class OldSinkTransport: Transport, @unchecked Sendable {
   let base = MockTransport()
   let opened = AsyncStream<SubscriptionSink>.makeStream()
   let closed = AsyncStream<String>.makeStream()
-  func openCable(lease: CableLease) async throws { try await base.openCable(lease: lease) }
+  func openCable(lease: CableLease, url: String) async throws { try await base.openCable(lease: lease, url: url) }
   func cableSend(token: String, text: String) async throws { try await base.cableSend(token: token, text: text) }
   func cableNext(token: String) async -> EncryptedSocketEvent? { await base.cableNext(token: token) }
   func cableClose(token: String) async { await base.cableClose(token: token) }
