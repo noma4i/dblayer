@@ -7,7 +7,7 @@ use super::*;
 #[test]
 fn explorer_finds_the_planted_race() {
     let ledger = race(0).1;
-    let report = explore(|| race(0).0, Limits { depth: 4, max_traces: 1000 }, |det| {
+    let report = explore(|| race(0).0, Limits { depth: 8, max_traces: 100_000 }, |det| {
         if det.state(ledger).unwrap().lost == 0 { Ok(()) } else { Err("deposit lost after seal".to_string()) }
     });
     assert!(!report.violations.is_empty());
@@ -21,18 +21,20 @@ fn explorer_finds_the_planted_race() {
 #[test]
 fn explorer_passes_when_the_property_holds_in_every_order() {
     let ledger = race(0).1;
-    let report = explore(|| race(0).0, Limits { depth: 4, max_traces: 1000 }, |det| {
+    let report = explore(|| race(0).0, Limits { depth: 8, max_traces: 100_000 }, |det| {
         let state = det.state(ledger).unwrap();
         if state.total + state.lost <= 5 { Ok(()) } else { Err("money appeared".to_string()) }
     });
     assert!(report.violations.is_empty());
     assert!(report.traces >= 4);
+    assert!(!report.incomplete);
 }
 
 #[test]
 fn explorer_stops_at_the_trace_limit() {
     let report = explore(|| race(0).0, Limits { depth: 4, max_traces: 2 }, |_| Ok(()));
     assert_eq!(report.traces, 2);
+    assert!(report.incomplete, "a stop at max_traces is not an exhaustive walk");
 }
 
 fn async_reply() -> (DetScheduler, Address<Toy>) {
@@ -52,7 +54,7 @@ fn async_reply() -> (DetScheduler, Address<Toy>) {
 fn explorer_finds_both_orders_of_an_asynchronous_effect_result_and_another_input() {
     let ledger = async_reply().1;
     let seen = RefCell::new(HashSet::new());
-    let report = explore(async_reply_scheduler, Limits { depth: 8, max_traces: 1000 }, |det| {
+    let report = explore(async_reply_scheduler, Limits { depth: 14, max_traces: 200_000 }, |det| {
         let results = &det.state(ledger).unwrap().results;
         if results.len() == 2 {
             seen.borrow_mut().insert(results.clone());

@@ -1,39 +1,60 @@
-use std::collections::VecDeque;
-use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
-use std::sync::{Arc, Condvar, Mutex, MutexGuard, OnceLock, PoisonError};
+use std::sync::OnceLock;
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
-use super::cell::{Cell, EffectRunner};
-use super::owner::{Address, Back, Cause, Control, Epoch, Message, StateOwner, EpochStamp, Time};
-use crate::blocking::blocking_unit;
+use super::cell::{Cell, Emitted, EffectRunner};
+use super::det::TraceEntry;
+use super::mailbox::Mailbox;
+use super::owner::{Address, Back, Cause, Control, Epoch, EpochStamp, Message, StateOwner, Time};
+use super::sync::{lock, Arc, AtomicUsize, Condvar, Mutex, Ordering};
 use crate::task::{spawn_thread, Carry};
 
 enum Command {
     Deliver(EpochStamp, Box<dyn Message>),
-    StartEpoch(Epoch),
-    EndEpoch(Epoch, Cause),
-    Close,
+    Control(Control),
     Stop,
 }
 
-struct Mailbox {
-    commands: Mutex<VecDeque<Command>>,
-    wake: Condvar,
-    wakeups: AtomicU64,
+type FailureRoute = Box<dyn Fn(&str) -> Option<(usize, Box<dyn Message>)> + Send + Sync>;
+
+#[derive(Default)]
+struct Inflight {
+    count: Mutex<usize>,
+    idle: Condvar,
 }
 
-impl Mailbox {
-    fn push(&self, command: Command) {
-        lock(&self.commands).push_back(command);
-        crate::db::lock::effect(|| self.wake.notify_one());
+impl Inflight {
+    fn add(&self) { *lock(&self.count) += 1; }
+
+    fn done(&self, handled: usize) {
+        let mut count = lock(&self.count);
+        *count -= handled;
+        if *count == 0 {
+            drop(count);
+            crate::db::lock::effect(|| self.idle.notify_all());
+        }
+    }
+
+    fn wait_idle(&self, limit: Duration) -> bool {
+        let deadline = Instant::now() + limit;
+        let mut count = lock(&self.count);
+        while *count > 0 {
+            let left = deadline.saturating_duration_since(Instant::now());
+            if left.is_zero() {
+                return false;
+            }
+            count = self.idle.wait_timeout(count, left).unwrap_or_else(std::sync::PoisonError::into_inner).0;
+        }
+        true
     }
 }
 
-fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> { mutex.lock().unwrap_or_else(PoisonError::into_inner) }
-
 struct Router {
-    boxes: Vec<Arc<Mailbox>>,
+    boxes: Vec<Arc<Mailbox<Command>>>,
+    inflight: Inflight,
+    failure: Option<FailureRoute>,
+    history: Vec<Arc<Mutex<Vec<TraceEntry>>>>,
+    record: bool,
 }
 
 /// Counts the owner threads of one `Runtime` that run now.
@@ -44,23 +65,23 @@ impl Drop for Alive {
 }
 
 impl Router {
-    fn each(&self, command: impl Fn() -> Command) { self.boxes.iter().for_each(|mailbox| mailbox.push(command())); }
-
-    fn broadcast(&self, control: Control) {
-        match control {
-            Control::EpochStarted(epoch) => self.each(|| Command::StartEpoch(epoch)),
-            Control::EpochEnded(epoch, cause) => self.each(|| Command::EndEpoch(epoch, cause)),
-            Control::Closing => self.each(|| Command::Close),
-        }
+    fn push(&self, to: usize, command: Command) {
+        self.inflight.add();
+        self.boxes[to].push(command);
     }
+
+    fn broadcast(&self, control: Control) { (0..self.boxes.len()).for_each(|to| self.push(to, Command::Control(control))); }
 }
 
 type Body = Box<dyn FnOnce(Arc<Router>, Instant) + Send>;
 
 #[derive(Default)]
 pub struct RuntimeBuilder {
-    boxes: Vec<Arc<Mailbox>>,
-    bodies: Vec<(String, Body)>,
+    boxes: Vec<Arc<Mailbox<Command>>>,
+    bodies: Vec<(&'static str, Body)>,
+    history: Vec<Arc<Mutex<Vec<TraceEntry>>>>,
+    failure: Option<FailureRoute>,
+    record: bool,
     handle: Handle,
 }
 
@@ -75,7 +96,7 @@ impl Handle {
 
     pub fn post<O: StateOwner>(&self, to: Address<O>, stamp: EpochStamp, input: O::Input) {
         if let Some(router) = self.router() {
-            router.boxes[to.index].push(Command::Deliver(stamp, Box::new(input)));
+            router.push(to.index, Command::Deliver(stamp, Box::new(input)));
         }
     }
 
@@ -101,35 +122,58 @@ pub struct Runtime {
 impl RuntimeBuilder {
     pub fn new() -> Self { Self::default() }
 
-    pub fn add<O: StateOwner>(&mut self, name: &str, state: O::State, runner: impl EffectRunner<O>) -> Address<O> {
-        let mailbox = Arc::new(Mailbox { commands: Mutex::new(VecDeque::new()), wake: Condvar::new(), wakeups: AtomicU64::new(0) });
+    pub fn add<O: StateOwner>(&mut self, name: &'static str, state: O::State, runner: impl EffectRunner<O>) -> Address<O> {
+        let mailbox = Arc::new(Mailbox::new());
         let own = mailbox.clone();
+        let slot = self.boxes.len();
+        let history = Arc::new(Mutex::new(Vec::new()));
+        self.history.push(history.clone());
         self.boxes.push(mailbox);
         let runner: Box<dyn EffectRunner<O>> = Box::new(runner);
-        self.bodies.push((name.to_string(), Box::new(move |router, origin| run_owner::<O>(Cell::new(state), runner, own, router, origin))));
-        Address::new(self.boxes.len() - 1)
+        self.bodies.push((name, Box::new(move |router, origin| run_owner::<O>(OwnerThread { slot, name, cell: Cell::new(state), runner, mailbox: own, history }, router, origin))));
+        Address::new(slot)
     }
+
+    pub fn on_executor_failed<L: StateOwner>(&mut self, lifecycle: Address<L>) {
+        self.failure = Some(Box::new(move |executor| L::executor_failed(executor, Vec::new()).map(|input| (lifecycle.index, Box::new(input) as Box<dyn Message>))));
+    }
+
+    pub fn record(&mut self) { self.record = true; }
 
     pub fn handle(&self) -> Handle { self.handle.clone() }
 
     pub fn start(self) -> std::io::Result<Runtime> {
-        let router = Arc::new(Router { boxes: self.boxes });
+        let router = Arc::new(Router { boxes: self.boxes, inflight: Inflight::default(), failure: self.failure, history: self.history, record: self.record });
         let _ = self.handle.router.set(router.clone());
         let origin = Instant::now();
         let mut joins = Vec::new();
         let alive = Arc::new(AtomicUsize::new(0));
         for (name, body) in self.bodies {
-            let router = router.clone();
+            let own = router.clone();
             alive.fetch_add(1, Ordering::SeqCst);
             let running = Alive(alive.clone());
-            joins.push(spawn_thread(Carry::Internal, name, move || { let _running = running; body(router, origin) })?);
+            match spawn_thread(Carry::Internal, name.to_string(), move || { let _running = running; body(own, origin) }) {
+                Ok(join) => joins.push(join),
+                Err(error) => {
+                    stop(&router, &mut joins);
+                    return Err(error);
+                }
+            }
         }
         Ok(Runtime { router, joins, alive })
     }
 }
 
+fn stop(router: &Router, joins: &mut Vec<JoinHandle<()>>) {
+    router.boxes.iter().for_each(|mailbox| mailbox.push(Command::Stop));
+    for join in joins.drain(..) {
+        if join.thread().id() == std::thread::current().id() { continue; }
+        let _ = join.join();
+    }
+}
+
 impl Runtime {
-    pub fn post<O: StateOwner>(&self, to: Address<O>, stamp: EpochStamp, input: O::Input) { self.router.boxes[to.index].push(Command::Deliver(stamp, Box::new(input))); }
+    pub fn post<O: StateOwner>(&self, to: Address<O>, stamp: EpochStamp, input: O::Input) { self.router.push(to.index, Command::Deliver(stamp, Box::new(input))); }
 
     pub fn start_epoch(&self, epoch: Epoch) { self.router.broadcast(Control::EpochStarted(epoch)); }
 
@@ -140,61 +184,64 @@ impl Runtime {
     /// The number of owner threads of this runtime that have not ended.
     pub fn alive(&self) -> Arc<AtomicUsize> { self.alive.clone() }
 
-    pub fn wakeups<O: StateOwner>(&self, address: Address<O>) -> u64 { self.router.boxes[address.index].wakeups.load(Ordering::SeqCst) }
+    pub fn wakeups<O: StateOwner>(&self, address: Address<O>) -> u64 { self.router.boxes[address.index].wakeups() }
+
+    pub fn barrier(&self, limit: Duration) -> bool { self.router.inflight.wait_idle(limit) }
+
+    pub fn history<O: StateOwner>(&self, address: Address<O>) -> Vec<TraceEntry> { lock(&self.router.history[address.index]).clone() }
 }
 
 impl Drop for Runtime {
-    fn drop(&mut self) {
-        self.router.each(|| Command::Stop);
-        for join in self.joins.drain(..) {
-            if join.thread().id() == std::thread::current().id() { continue; }
-            let _ = join.join();
-        }
-    }
+    fn drop(&mut self) { stop(&self.router, &mut self.joins); }
 }
 
 fn elapsed(origin: Instant) -> Time { Time(origin.elapsed().as_millis() as u64) }
 
-fn run_owner<O: StateOwner>(mut cell: Cell<O>, mut runner: Box<dyn EffectRunner<O>>, mailbox: Arc<Mailbox>, router: Arc<Router>, origin: Instant) {
+struct OwnerThread<O: StateOwner> {
+    slot: usize,
+    name: &'static str,
+    cell: Cell<O>,
+    runner: Box<dyn EffectRunner<O>>,
+    mailbox: Arc<Mailbox<Command>>,
+    history: Arc<Mutex<Vec<TraceEntry>>>,
+}
+
+fn run_owner<O: StateOwner>(mut owner: OwnerThread<O>, router: Arc<Router>, origin: Instant) {
+    owner.cell.set_jitter(|| rand_core::RngCore::next_u64(&mut rand_core::OsRng));
     let back = {
-        let own = mailbox.clone();
-        Back::<O>::new(move |stamp, input| own.push(Command::Deliver(stamp, Box::new(input))))
+        let own = owner.slot;
+        let router = router.clone();
+        Back::<O>::new(move |stamp, input| router.push(own, Command::Deliver(stamp, Box::new(input))))
     };
     loop {
-        let commands = {
-            let mut queue = lock(&mailbox.commands);
-            while queue.is_empty() {
-                match cell.next_due() {
-                    None => queue = blocking_unit(|| mailbox.wake.wait(queue).unwrap_or_else(PoisonError::into_inner)),
-                    Some(at) => {
-                        let now = elapsed(origin);
-                        if at <= now {
-                            break;
-                        }
-                        queue = blocking_unit(|| mailbox.wake.wait_timeout(queue, Duration::from_millis(at.0 - now.0)).unwrap_or_else(PoisonError::into_inner).0);
-                    }
-                }
-                mailbox.wakeups.fetch_add(1, Ordering::SeqCst);
-            }
-            std::mem::take(&mut *queue)
-        };
+        let cell = &owner.cell;
+        let commands = owner.mailbox.take(|| cell.next_due().map(|at| Duration::from_millis(at.0.saturating_sub(elapsed(origin).0))));
+        let handled = commands.len();
         for command in commands {
             match command {
-                Command::Deliver(stamp, payload) => cell.push_message(stamp, payload),
-                Command::StartEpoch(epoch) => cell.start_epoch(epoch),
-                Command::EndEpoch(epoch, cause) => cell.end_epoch(epoch, cause),
-                Command::Close => cell.close(),
+                Command::Deliver(stamp, payload) => owner.cell.push_message(stamp, payload),
+                Command::Control(control) => owner.cell.push_control(control),
                 Command::Stop => return,
             }
         }
-        cell.tick(elapsed(origin));
-        while let Some(ran) = cell.run_one(runner.as_mut(), &back, false) {
-            for outbound in ran.sends {
-                router.boxes[outbound.to].push(Command::Deliver(outbound.stamp, outbound.payload));
+        owner.cell.set_now(elapsed(origin));
+        while owner.cell.fire_next_due() {}
+        while let Some(ran) = owner.cell.run_one(owner.name, owner.runner.as_mut(), &back, router.record) {
+            if router.record {
+                lock(&owner.history).push(TraceEntry { slot: owner.slot, owner: owner.name, stamp: ran.stamp, input: ran.input, effects: ran.effects, dropped: ran.dropped });
             }
-            for control in ran.broadcasts {
-                router.broadcast(control);
+            for emitted in ran.emitted {
+                match emitted {
+                    Emitted::Send(outbound) => router.push(outbound.to, Command::Deliver(outbound.stamp, outbound.payload)),
+                    Emitted::Broadcast(control) => router.broadcast(control),
+                }
+            }
+            if ran.failed {
+                if let Some((to, payload)) = router.failure.as_ref().and_then(|route| route(owner.name)) {
+                    router.push(to, Command::Deliver(EpochStamp::Control, payload));
+                }
             }
         }
+        router.inflight.done(handled);
     }
 }

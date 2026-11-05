@@ -692,6 +692,7 @@ impl Database {
         match waiter.wait().await {
             crate::runtime::Outcome::Value(LifeReply::Closed) | crate::runtime::Outcome::Closing => Err(super::command::closed()),
             crate::runtime::Outcome::EpochEnded(_) => Err(super::command::ended()),
+            crate::runtime::Outcome::Internal => Err(DbError::Database { detail: "the answer of the owner was lost".into() }),
             crate::runtime::Outcome::Value(reply) => Ok(reply),
         }
     }

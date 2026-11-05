@@ -1,12 +1,14 @@
 use std::any::Any;
-use std::collections::VecDeque;
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 
-use super::cell::{Cell, EffectRunner, Ran};
-use super::owner::{Address, Back, Cause, Control, Epoch, Message, StateOwner, EpochStamp, Time};
+use super::cell::{Cell, Emitted, EffectRunner, Ran};
+use super::owner::{Address, Back, Cause, Control, Epoch, EpochStamp, Message, StateOwner, Time};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TraceEntry {
+    pub slot: usize,
     pub owner: &'static str,
     pub stamp: EpochStamp,
     pub input: String,
@@ -14,16 +16,45 @@ pub struct TraceEntry {
     pub dropped: bool,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum Lane {
+    Owner(usize),
+    External(u32),
+    Runtime,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Choice {
+    Step(usize),
+    Deliver(Lane),
+    Arrive(usize),
+    Fire(usize),
+}
+
+enum Pending {
+    Send { to: usize, stamp: EpochStamp, payload: Box<dyn Message> },
+    Control { to: usize, control: Control },
+}
+
+impl Pending {
+    fn to(&self) -> usize {
+        match self {
+            Self::Send { to, .. } | Self::Control { to, .. } => *to,
+        }
+    }
+}
+
 trait ErasedSlot {
     fn name(&self) -> &'static str;
     fn ready(&self) -> bool;
+    fn arriving(&self) -> bool;
+    fn due(&self) -> bool;
     fn run_one(&mut self) -> Option<Ran>;
-    fn absorb(&mut self);
+    fn arrive(&mut self);
+    fn fire(&mut self);
     fn deliver(&mut self, stamp: EpochStamp, payload: Box<dyn Message>);
-    fn start_epoch(&mut self, epoch: Epoch);
-    fn end_epoch(&mut self, epoch: Epoch, cause: Cause);
-    fn close(&mut self);
-    fn tick(&mut self, now: Time);
+    fn push_control(&mut self, control: Control);
+    fn set_now(&mut self, now: Time);
     fn as_any(&self) -> &dyn Any;
 }
 
@@ -40,109 +71,179 @@ struct Slot<O: StateOwner> {
 impl<O: StateOwner> ErasedSlot for Slot<O> {
     fn name(&self) -> &'static str { self.name }
 
-    /// An answer of the executor waits in the inbox: it is a pending input of the owner like any other (R9).
-    fn ready(&self) -> bool { self.cell.ready() || !self.inbox.lock().unwrap_or_else(PoisonError::into_inner).is_empty() }
+    fn ready(&self) -> bool { self.cell.ready() }
 
-    fn run_one(&mut self) -> Option<Ran> {
-        self.absorb();
-        self.cell.run_one(self.runner.as_mut(), &self.back, true)
-    }
+    fn arriving(&self) -> bool { !self.inbox.lock().unwrap_or_else(PoisonError::into_inner).is_empty() }
 
-    fn absorb(&mut self) {
-        let arrived: Vec<_> = self.inbox.lock().unwrap_or_else(PoisonError::into_inner).drain(..).collect();
-        for (stamp, input) in arrived {
+    fn due(&self) -> bool { self.cell.due() }
+
+    fn run_one(&mut self) -> Option<Ran> { self.cell.run_one(self.name, self.runner.as_mut(), &self.back, true) }
+
+    fn arrive(&mut self) {
+        let arrived = self.inbox.lock().unwrap_or_else(PoisonError::into_inner).pop_front();
+        if let Some((stamp, input)) = arrived {
             self.cell.push(stamp, input);
         }
     }
 
+    fn fire(&mut self) { self.cell.fire_next_due(); }
+
     fn deliver(&mut self, stamp: EpochStamp, payload: Box<dyn Message>) { self.cell.push_message(stamp, payload); }
 
-    fn start_epoch(&mut self, epoch: Epoch) { self.cell.start_epoch(epoch); }
+    fn push_control(&mut self, control: Control) { self.cell.push_control(control); }
 
-    fn end_epoch(&mut self, epoch: Epoch, cause: Cause) { self.cell.end_epoch(epoch, cause); }
-
-    fn close(&mut self) { self.cell.close(); }
-
-    fn tick(&mut self, now: Time) { self.cell.tick(now); }
+    fn set_now(&mut self, now: Time) { self.cell.set_now(now); }
 
     fn as_any(&self) -> &dyn Any { self }
 }
 
+type FailureTarget = Box<dyn Fn(&str) -> Option<(usize, Box<dyn Message>)>>;
+
 pub struct DetScheduler {
     slots: Vec<Box<dyn ErasedSlot>>,
+    lanes: BTreeMap<Lane, VecDeque<Pending>>,
     random: u64,
     trace: Vec<TraceEntry>,
+    now: Time,
+    failure_target: Option<FailureTarget>,
+    jitter: Arc<AtomicU64>,
 }
 
 impl DetScheduler {
-    pub fn new(seed: u64) -> Self { Self { slots: Vec::new(), random: seed, trace: Vec::new() } }
+    pub fn new(seed: u64) -> Self { Self { slots: Vec::new(), lanes: BTreeMap::new(), random: seed, trace: Vec::new(), now: Time(0), failure_target: None, jitter: Arc::new(AtomicU64::new(seed)) } }
 
     pub fn add<O: StateOwner>(&mut self, name: &'static str, state: O::State, runner: impl EffectRunner<O>) -> Address<O> {
         let inbox: Inbox<O> = Arc::default();
         let arrivals = inbox.clone();
         let back = Back::new(move |stamp, input| arrivals.lock().unwrap_or_else(PoisonError::into_inner).push_back((stamp, input)));
-        self.slots.push(Box::new(Slot::<O> { name, cell: Cell::new(state), runner: Box::new(runner), back, inbox }));
+        let mut cell = Cell::new(state);
+        cell.set_now(self.now);
+        let (seed, slot) = (self.jitter.clone(), self.slots.len() as u64);
+        let mut draws = 0u64;
+        cell.set_jitter(move || {
+            draws += 1;
+            mix(seed.load(Ordering::SeqCst) ^ (slot << 32) ^ draws)
+        });
+        self.slots.push(Box::new(Slot::<O> { name, cell, runner: Box::new(runner), back, inbox }));
         Address::new(self.slots.len() - 1)
+    }
+
+    pub fn on_executor_failed<L: StateOwner>(&mut self, lifecycle: Address<L>) {
+        self.failure_target = Some(Box::new(move |executor| L::executor_failed(executor, Vec::new()).map(|input| (lifecycle.index, Box::new(input) as Box<dyn Message>))));
     }
 
     pub fn post<O: StateOwner>(&mut self, to: Address<O>, stamp: EpochStamp, input: O::Input) { self.slots[to.index].deliver(stamp, Box::new(input)); }
 
-    pub fn start_epoch(&mut self, epoch: Epoch) { self.slots.iter_mut().for_each(|slot| slot.start_epoch(epoch)); }
-
-    pub fn start_epoch_for<O: StateOwner>(&mut self, to: Address<O>, epoch: Epoch) { self.slots[to.index].start_epoch(epoch); }
-
-    pub fn broadcast(&mut self, control: Control) {
-        match control {
-            Control::EpochStarted(epoch) => self.start_epoch(epoch),
-            Control::EpochEnded(epoch, cause) => self.end_epoch(epoch, cause),
-            Control::Closing => self.close(),
-        }
+    pub fn inject<O: StateOwner>(&mut self, lane: u32, to: Address<O>, stamp: EpochStamp, input: O::Input) {
+        self.lanes.entry(Lane::External(lane)).or_default().push_back(Pending::Send { to: to.index, stamp, payload: Box::new(input) });
     }
 
-    pub fn end_epoch(&mut self, epoch: Epoch, cause: Cause) { self.slots.iter_mut().for_each(|slot| slot.end_epoch(epoch, cause)); }
+    pub fn start_epoch(&mut self, epoch: Epoch) { self.slots.iter_mut().for_each(|slot| slot.push_control(Control::EpochStarted(epoch))); }
 
-    pub fn close(&mut self) { self.slots.iter_mut().for_each(|slot| slot.close()); }
+    pub fn start_epoch_for<O: StateOwner>(&mut self, to: Address<O>, epoch: Epoch) { self.slots[to.index].push_control(Control::EpochStarted(epoch)); }
 
-    pub fn tick(&mut self, now: Time) { self.slots.iter_mut().for_each(|slot| slot.tick(now)); }
+    pub fn broadcast(&mut self, control: Control) { self.slots.iter_mut().for_each(|slot| slot.push_control(control)); }
 
-    pub fn ready(&self) -> Vec<usize> { (0..self.slots.len()).filter(|index| self.slots[*index].ready()).collect() }
+    pub fn end_epoch(&mut self, epoch: Epoch, cause: Cause) { self.broadcast(Control::EpochEnded(epoch, cause)); }
+
+    pub fn close(&mut self) { self.broadcast(Control::Closing); }
+
+    pub fn tick(&mut self, now: Time) {
+        self.now = self.now.max(now);
+        let now = self.now;
+        self.slots.iter_mut().for_each(|slot| slot.set_now(now));
+    }
+
+    pub fn choices(&self) -> Vec<Choice> {
+        let mut choices: Vec<Choice> = (0..self.slots.len()).filter(|index| self.slots[*index].ready()).map(Choice::Step).collect();
+        choices.extend(self.lanes.iter().filter(|(_, queue)| !queue.is_empty()).map(|(lane, _)| Choice::Deliver(*lane)));
+        choices.extend((0..self.slots.len()).filter(|index| self.slots[*index].arriving()).map(Choice::Arrive));
+        choices.extend((0..self.slots.len()).filter(|index| self.slots[*index].due()).map(Choice::Fire));
+        choices
+    }
+
+    pub fn ready(&self) -> Vec<usize> {
+        let mut owners: BTreeSet<usize> = BTreeSet::new();
+        for choice in self.choices() {
+            match choice {
+                Choice::Step(index) | Choice::Arrive(index) | Choice::Fire(index) => owners.insert(index),
+                Choice::Deliver(lane) => owners.insert(self.lanes[&lane].front().map_or(0, Pending::to)),
+            };
+        }
+        owners.into_iter().collect()
+    }
 
     pub fn step_choice(&mut self, choice: usize) -> bool {
-        let ready = self.ready();
-        let Some(&index) = ready.get(choice) else { return false };
-        let Some(ran) = self.slots[index].run_one() else { return false };
-        self.trace.push(TraceEntry { owner: self.slots[index].name(), stamp: ran.stamp, input: ran.input, effects: ran.effects, dropped: ran.dropped });
-        for outbound in ran.sends {
-            self.slots[outbound.to].deliver(outbound.stamp, outbound.payload);
-        }
-        for control in ran.broadcasts {
-            self.broadcast(control);
+        let Some(&chosen) = self.choices().get(choice) else { return false };
+        self.apply(chosen)
+    }
+
+    fn apply(&mut self, choice: Choice) -> bool {
+        match choice {
+            Choice::Step(index) => {
+                let Some(ran) = self.slots[index].run_one() else { return false };
+                self.finish_step(index, ran);
+            }
+            Choice::Deliver(lane) => {
+                let Some(pending) = self.lanes.get_mut(&lane).and_then(VecDeque::pop_front) else { return false };
+                match pending {
+                    Pending::Send { to, stamp, payload } => self.slots[to].deliver(stamp, payload),
+                    Pending::Control { to, control } => self.slots[to].push_control(control),
+                }
+            }
+            Choice::Arrive(index) => self.slots[index].arrive(),
+            Choice::Fire(index) => self.slots[index].fire(),
         }
         true
     }
 
+    fn finish_step(&mut self, index: usize, ran: Ran) {
+        self.trace.push(TraceEntry { slot: index, owner: self.slots[index].name(), stamp: ran.stamp, input: ran.input, effects: ran.effects, dropped: ran.dropped });
+        let lane = self.lanes.entry(Lane::Owner(index)).or_default();
+        for emitted in ran.emitted {
+            match emitted {
+                Emitted::Send(outbound) => lane.push_back(Pending::Send { to: outbound.to, stamp: outbound.stamp, payload: outbound.payload }),
+                Emitted::Broadcast(control) => (0..self.slots.len()).for_each(|to| lane.push_back(Pending::Control { to, control })),
+            }
+        }
+        if ran.failed {
+            let name = self.slots[index].name();
+            if let Some((to, payload)) = self.failure_target.as_ref().and_then(|target| target(name)) {
+                self.lanes.entry(Lane::Runtime).or_default().push_back(Pending::Send { to, stamp: EpochStamp::Control, payload });
+            }
+        }
+    }
+
+    pub fn reseed(&mut self, seed: u64) {
+        self.random = seed;
+        self.jitter.store(seed, Ordering::SeqCst);
+    }
+
     pub fn step(&mut self) -> bool {
-        let ready = self.ready().len();
-        if ready == 0 {
+        let choices = self.choices();
+        if choices.is_empty() {
             return false;
         }
-        let choice = (self.next_random() % ready as u64) as usize;
-        self.step_choice(choice)
+        let pick = (self.next_random() % choices.len() as u64) as usize;
+        self.apply(choices[pick])
     }
 
     pub fn run_until_quiet(&mut self, limit: usize) -> Result<usize, usize> {
         let mut steps = 0;
-        while !self.ready().is_empty() {
+        while !self.choices().is_empty() {
             if steps == limit {
                 return Err(steps);
             }
+            let before = self.trace.len();
             self.step();
-            steps += 1;
+            steps += self.trace.len() - before;
         }
         Ok(steps)
     }
 
     pub fn trace(&self) -> &[TraceEntry] { &self.trace }
+
+    pub fn history<O: StateOwner>(&self, address: Address<O>) -> Vec<&TraceEntry> { self.trace.iter().filter(|entry| entry.slot == address.index).collect() }
 
     fn slot<O: StateOwner>(&self, address: Address<O>) -> Option<&Slot<O>> { self.slots.get(address.index)?.as_any().downcast_ref::<Slot<O>>() }
 
@@ -152,9 +253,13 @@ impl DetScheduler {
 
     fn next_random(&mut self) -> u64 {
         self.random = self.random.wrapping_add(0x9E37_79B9_7F4A_7C15);
-        let mut value = self.random;
-        value = (value ^ (value >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
-        value = (value ^ (value >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
-        value ^ (value >> 31)
+        mix(self.random.wrapping_sub(0x9E37_79B9_7F4A_7C15))
     }
+}
+
+fn mix(mut value: u64) -> u64 {
+    value = value.wrapping_add(0x9E37_79B9_7F4A_7C15);
+    value = (value ^ (value >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+    value = (value ^ (value >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+    value ^ (value >> 31)
 }

@@ -52,6 +52,9 @@ uuid = { version = "1.27.0", features = ["v4"] }
 x25519-dalek = { version = "3", features = ["static_secrets"] }
 zeroize = "1.9"
 
+[target.'cfg(loom)'.dev-dependencies]
+loom = "0.7"
+
 [dev-dependencies]
 rusqlite = { version = "0.40.2", features = ["bundled", "hooks", "trace"] }
 tempfile = "3.27.0"

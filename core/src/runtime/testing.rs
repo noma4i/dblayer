@@ -3,6 +3,8 @@ use std::sync::{mpsc, Arc, Mutex, PoisonError};
 use super::*;
 
 pub const CLOSED: u32 = u32::MAX;
+pub const BOOM: u64 = 13;
+pub const RETRY: crate::pacing::Backoff = crate::pacing::Backoff::new(std::time::Duration::from_millis(1000), std::time::Duration::from_millis(30_000)).with_jitter(0.2, 0);
 
 pub type ParkedBacks = Arc<Mutex<Vec<(Back<Toy>, EpochStamp, ToyInput)>>>;
 
@@ -24,12 +26,19 @@ pub enum ToyInput {
     CancelSchedule(u64),
     Fire(u32),
     Tick(Time),
+    Burst(Vec<u32>),
+    Fan(u32),
+    Retry(u32),
+    Crash,
+    Ask(u64),
+    ExecutorFailed(Vec<u64>),
     EpochEnded(Epoch, Cause),
     Closing,
 }
 
 #[derive(Debug)]
 pub enum ToyEffect {
+    Fetch(u64),
     Work(u32),
     Park(u32),
     ReleaseParked,
@@ -49,6 +58,7 @@ pub struct ToyState {
     pub lost: u32,
     pub sealed: bool,
     pub results: Vec<u32>,
+    pub failed: Vec<u64>,
     pub fired: Vec<u32>,
     pub ticks: Vec<Time>,
     pub ended: Vec<(Epoch, Cause)>,
@@ -104,6 +114,28 @@ impl StateOwner for Toy {
                 state.ticks.push(now);
                 state.on_tick.clone().map(|(to, message)| vec![Effect::Send(Outbound::new(to, message))]).unwrap_or_default()
             }
+            ToyInput::Burst(list) => list
+                .into_iter()
+                .flat_map(|n| {
+                    let run = Effect::Run(ToyEffect::Report(n));
+                    match state.tell {
+                        Some((to, _)) => vec![run, Effect::Send(Outbound::new(to, SinkInput::Note(n)))],
+                        None => vec![run],
+                    }
+                })
+                .collect(),
+            ToyInput::Fan(n) => {
+                let mut effects: Vec<Effect<Toy>> = state.on_go.clone().map(|(to, message)| Effect::Send(Outbound::new(to, message))).into_iter().collect();
+                effects.extend(state.tell.map(|(to, _)| Effect::Send(Outbound::new(to, SinkInput::Note(n)))));
+                effects
+            }
+            ToyInput::Retry(attempt) => vec![Effect::Backoff { id: ScheduleId(1), policy: RETRY, attempt, input: ToyInput::Fire(attempt) }],
+            ToyInput::Crash => panic!("the step of the owner died"),
+            ToyInput::Ask(id) => vec![Effect::Run(ToyEffect::Fetch(id))],
+            ToyInput::ExecutorFailed(ids) => {
+                state.failed.extend(ids);
+                vec![]
+            }
             ToyInput::EpochEnded(epoch, cause) => {
                 state.ended.push((epoch, cause));
                 vec![Effect::Run(ToyEffect::EndOutcomes(epoch, cause))]
@@ -120,6 +152,15 @@ impl StateOwner for Toy {
     fn epoch_ended(epoch: Epoch, cause: Cause) -> ToyInput { ToyInput::EpochEnded(epoch, cause) }
 
     fn closing() -> ToyInput { ToyInput::Closing }
+
+    fn effect_id(effect: &ToyEffect) -> Option<EffectId> {
+        match effect {
+            ToyEffect::Fetch(id) => Some(*id),
+            _ => None,
+        }
+    }
+
+    fn executor_failed(_executor: &str, pending: Vec<EffectId>) -> Option<ToyInput> { Some(ToyInput::ExecutorFailed(pending)) }
 }
 
 #[derive(Default)]
@@ -127,11 +168,23 @@ pub struct ToyRunner {
     pub outcomes: Option<Outcomes<u32>>,
     pub report: Option<mpsc::Sender<u32>>,
     pub pending: Option<ParkedBacks>,
+    pub calls: Option<Arc<Mutex<Vec<u32>>>>,
+    pub held: Option<Arc<Mutex<Vec<&'static str>>>>,
+    pub asked: Vec<EffectId>,
 }
 
 impl EffectRunner<Toy> for ToyRunner {
+    fn pending(&mut self) -> Vec<EffectId> { std::mem::take(&mut self.asked) }
+
     fn run(&mut self, stamp: EpochStamp, effect: ToyEffect, back: &Back<Toy>) {
+        if let Some(held) = &self.held {
+            held.lock().unwrap_or_else(PoisonError::into_inner).extend(crate::db::lock::held_classes());
+        }
         match effect {
+            ToyEffect::Fetch(id) => {
+                assert_ne!(id, BOOM, "the executor died");
+                self.asked.push(id);
+            }
             ToyEffect::Work(n) => back.reply(stamp, ToyInput::Result(n * 2)),
             ToyEffect::Park(n) => {
                 if let Some(pending) = &self.pending {
@@ -168,6 +221,9 @@ impl EffectRunner<Toy> for ToyRunner {
                 }
             }
             ToyEffect::Report(n) => {
+                if let Some(calls) = &self.calls {
+                    calls.lock().unwrap_or_else(PoisonError::into_inner).push(n);
+                }
                 if let Some(report) = &self.report {
                     let _ = crate::db::lock::effect(|| report.send(n));
                 }
@@ -267,4 +323,88 @@ pub struct SinkRunner;
 
 impl EffectRunner<Sink> for SinkRunner {
     fn run(&mut self, _stamp: EpochStamp, effect: SinkEffect, _back: &Back<Sink>) { match effect {} }
+}
+
+pub struct Bare;
+
+#[derive(Debug)]
+pub enum BareInput {
+    Boom,
+    Idle,
+}
+
+#[derive(Debug)]
+pub enum BareEffect {
+    Explode,
+}
+
+impl StateOwner for Bare {
+    const EPOCHED: bool = false;
+
+    type State = ();
+    type Input = BareInput;
+    type Effect = BareEffect;
+
+    fn step(_state: &mut (), input: BareInput) -> Effects<Bare> {
+        match input {
+            BareInput::Boom => vec![Effect::Run(BareEffect::Explode)],
+            BareInput::Idle => vec![],
+        }
+    }
+
+    fn tick(_now: Time) -> BareInput { BareInput::Idle }
+
+    fn epoch_ended(_epoch: Epoch, _cause: Cause) -> BareInput { BareInput::Idle }
+
+    fn closing() -> BareInput { BareInput::Idle }
+}
+
+pub struct BareRunner;
+
+impl EffectRunner<Bare> for BareRunner {
+    fn run(&mut self, _stamp: EpochStamp, effect: BareEffect, _back: &Back<Bare>) {
+        match effect {
+            BareEffect::Explode => panic!("the executor died"),
+        }
+    }
+}
+
+pub struct Watch;
+
+#[derive(Debug)]
+pub enum WatchInput {
+    Died(String),
+    Idle,
+}
+
+#[derive(Debug)]
+pub enum WatchEffect {}
+
+impl StateOwner for Watch {
+    const EPOCHED: bool = false;
+
+    type State = Vec<String>;
+    type Input = WatchInput;
+    type Effect = WatchEffect;
+
+    fn step(state: &mut Vec<String>, input: WatchInput) -> Effects<Watch> {
+        if let WatchInput::Died(executor) = input {
+            state.push(executor);
+        }
+        vec![]
+    }
+
+    fn tick(_now: Time) -> WatchInput { WatchInput::Idle }
+
+    fn epoch_ended(_epoch: Epoch, _cause: Cause) -> WatchInput { WatchInput::Idle }
+
+    fn closing() -> WatchInput { WatchInput::Idle }
+
+    fn executor_failed(executor: &str, _pending: Vec<EffectId>) -> Option<WatchInput> { Some(WatchInput::Died(executor.to_string())) }
+}
+
+pub struct WatchRunner;
+
+impl EffectRunner<Watch> for WatchRunner {
+    fn run(&mut self, _stamp: EpochStamp, effect: WatchEffect, _back: &Back<Watch>) { match effect {} }
 }

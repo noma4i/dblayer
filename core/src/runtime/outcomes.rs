@@ -1,9 +1,9 @@
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 use tokio::sync::oneshot;
 
 use super::owner::{Cause, Epoch};
+use super::sync::{lock, Arc, Mutex, MutexGuard};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct OutcomeId(u64);
@@ -19,6 +19,7 @@ pub enum Outcome<T> {
     Value(T),
     EpochEnded(Cause),
     Closing,
+    Internal,
 }
 
 struct Inner<T> {
@@ -53,7 +54,7 @@ impl<T> Outcomes<T> {
     #[cfg(test)]
     pub fn waiting(&self) -> usize { self.lock().open.len() }
 
-    fn lock(&self) -> MutexGuard<'_, Inner<T>> { self.inner.lock().unwrap_or_else(PoisonError::into_inner) }
+    fn lock(&self) -> MutexGuard<'_, Inner<T>> { lock(&self.inner) }
 
     pub fn register(&self, epoch: Epoch) -> Waiter<T> {
         let mut inner = self.lock();
@@ -121,11 +122,11 @@ impl<T> Waiter<T> {
         let outcome = match self.receiver.try_recv() {
             Ok(outcome) => outcome,
             Err(oneshot::error::TryRecvError::Empty) => return None,
-            Err(oneshot::error::TryRecvError::Closed) => Outcome::Closing,
+            Err(oneshot::error::TryRecvError::Closed) => Outcome::Internal,
         };
         self.taken = true;
         Some(outcome)
     }
 
-    pub async fn wait(self) -> Outcome<T> { self.receiver.await.unwrap_or(Outcome::Closing) }
+    pub async fn wait(self) -> Outcome<T> { self.receiver.await.unwrap_or(Outcome::Internal) }
 }

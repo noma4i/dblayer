@@ -4,6 +4,8 @@ use std::marker::PhantomData;
 use std::sync::Arc;
 use std::time::Duration;
 
+use crate::pacing::Backoff;
+
 pub type Epoch = u64;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -44,6 +46,8 @@ pub enum Control {
     Closing,
 }
 
+pub type EffectId = u64;
+
 pub trait StateOwner: Sized + 'static {
     const EPOCHED: bool;
     type State: Send + 'static;
@@ -56,11 +60,14 @@ pub trait StateOwner: Sized + 'static {
     fn tick(now: Time) -> Self::Input;
     fn epoch_ended(epoch: Epoch, cause: Cause) -> Self::Input;
     fn closing() -> Self::Input;
+    fn effect_id(_effect: &Self::Effect) -> Option<EffectId> { None }
+    fn executor_failed(_executor: &str, _pending: Vec<EffectId>) -> Option<Self::Input> { None }
 }
 
 pub enum Effect<O: StateOwner> {
     /// The Runtime adds `after` to its own clock when the effect runs (R5).
     Schedule { id: ScheduleId, after: Duration, input: O::Input },
+    Backoff { id: ScheduleId, policy: Backoff, attempt: u32, input: O::Input },
     Cancel(ScheduleId),
     Send(Outbound),
     Broadcast(Control),
@@ -71,6 +78,7 @@ impl<O: StateOwner> Debug for Effect<O> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Schedule { id, after, input } => f.debug_struct("Schedule").field("id", id).field("after", after).field("input", input).finish(),
+            Self::Backoff { id, policy, attempt, input } => f.debug_struct("Backoff").field("id", id).field("base", &policy.base).field("attempt", attempt).field("input", input).finish(),
             Self::Cancel(id) => f.debug_tuple("Cancel").field(id).finish(),
             Self::Send(outbound) => Debug::fmt(outbound, f),
             Self::Broadcast(control) => f.debug_tuple("Broadcast").field(control).finish(),

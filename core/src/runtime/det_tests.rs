@@ -27,7 +27,9 @@ fn one_input_per_step_and_effect_result_returns_as_input() {
     assert!(det.step());
     assert_eq!(det.trace().len(), 1);
     assert!(det.state(toy).unwrap().results.is_empty());
-    assert_eq!(det.ready(), vec![0]);
+    assert_eq!(det.choices(), vec![Choice::Arrive(0)], "the answer of the executor is a move of its own");
+    assert!(det.step());
+    assert_eq!(det.choices(), vec![Choice::Step(0)]);
     assert!(det.step());
     assert_eq!(det.trace().len(), 2);
     assert_eq!(det.state(toy).unwrap().results, vec![14]);
@@ -280,4 +282,40 @@ fn lifecycle_broadcast_reaches_every_owner_on_the_scheduler() {
         assert_eq!(det.state(toy).unwrap().ended, vec![(1, Cause::SessionReset)]);
         assert!(det.state(toy).unwrap().closed);
     }
+}
+
+fn due_after(seed: u64, attempt: u32) -> u64 {
+    let (mut det, toy) = single(seed);
+    det.start_epoch(1);
+    det.post(toy, EpochStamp::Epoch(1), ToyInput::Retry(attempt));
+    det.run_until_quiet(5).unwrap();
+    (0..=40_000).find(|at| {
+        det.tick(Time(*at));
+        det.choices().contains(&Choice::Fire(0))
+    }).unwrap()
+}
+
+#[test]
+fn runtime_applies_the_jitter_of_a_backoff_from_its_seed() {
+    let delays: Vec<u64> = (0..16).map(|seed| due_after(seed, 0)).collect();
+    assert!(delays.iter().all(|delay| (800..=1000).contains(delay)), "attempt 0 of 1 s with jitter 0.2 lies in [800, 1000] ms: {delays:?}");
+    assert!(delays.iter().collect::<HashSet<_>>().len() >= 4, "the seed spreads the retries: {delays:?}");
+    assert_eq!(due_after(3, 2), due_after(3, 2), "one seed gives one delay");
+    assert!((3200..=4000).contains(&due_after(3, 2)), "attempt 2 doubles twice");
+}
+
+#[test]
+fn a_panic_in_a_step_tells_lifecycle_and_the_owner_keeps_taking_inputs() {
+    let mut det = DetScheduler::new(1);
+    let watch = det.add::<Watch>("watch", Vec::new(), WatchRunner);
+    let toy = det.add::<Toy>("toy", ToyState::default(), ToyRunner::default());
+    det.on_executor_failed(watch);
+    det.start_epoch(1);
+    det.post(toy, EpochStamp::Epoch(1), ToyInput::Ask(7));
+    det.post(toy, EpochStamp::Epoch(1), ToyInput::Crash);
+    det.post(toy, EpochStamp::Epoch(1), ToyInput::Deposit(2));
+    det.run_until_quiet(20).unwrap();
+    assert_eq!(det.state(watch).unwrap(), &vec!["toy".to_string()]);
+    assert_eq!(det.state(toy).unwrap().failed, vec![7], "the id without a result got its failure cell");
+    assert_eq!(det.state(toy).unwrap().total, 2);
 }
