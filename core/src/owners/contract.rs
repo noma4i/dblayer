@@ -77,6 +77,7 @@ pub enum ErrorClass {
     Network,
     Server,
     Permanent,
+    InvalidCursor,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -86,7 +87,7 @@ pub struct RequestError {
 }
 
 impl RequestError {
-    pub fn temporary(&self) -> bool { self.class != ErrorClass::Permanent }
+    pub fn temporary(&self) -> bool { matches!(self.class, ErrorClass::Network | ErrorClass::Server) }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

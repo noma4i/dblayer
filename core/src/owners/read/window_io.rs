@@ -17,6 +17,11 @@ use crate::transport::{CancelToken, GraphQLRequest, Response, RetryClass, Transp
 pub trait WindowCodec: Send + Sync + 'static {
     fn request(&self, key: &WindowKey, page: u32, cursor: Option<&str>) -> GraphQLRequest;
     fn answer(&self, key: &WindowKey, page: u32, response: Response) -> Result<AnswerPage, String>;
+
+    fn refusal(&self, response: &Response) -> Option<RequestError> {
+        let error = response.errors.iter().find(|error| error.code() == Some(crate::transport::retry::INVALID_CURSOR))?;
+        Some(RequestError { message: error.message.clone(), class: ErrorClass::InvalidCursor })
+    }
 }
 
 type Open = Arc<Mutex<HashMap<(RequestId, u32), CancelToken>>>;
@@ -76,9 +81,12 @@ impl EffectRunner<Windows> for WindowIo {
 async fn ask(transport: &dyn Transport, codec: &dyn WindowCodec, admit: &Admit, key: &WindowKey, page: u32, cursor: Option<&str>) -> TransportOutcome<AnswerPage> {
     let Some(admitted) = admit() else { return TransportOutcome::Dropped };
     match transport.query(&admitted, codec.request(key, page, cursor)).await {
-        Ok(response) => match codec.answer(key, page, response) {
-            Ok(answer) => TransportOutcome::Response(answer),
-            Err(message) => TransportOutcome::Error(RequestError { message, class: ErrorClass::Permanent }),
+        Ok(response) => match codec.refusal(&response) {
+            Some(error) => TransportOutcome::Error(error),
+            None => match codec.answer(key, page, response) {
+                Ok(answer) => TransportOutcome::Response(answer),
+                Err(message) => TransportOutcome::Error(RequestError { message, class: ErrorClass::Permanent }),
+            },
         },
         Err(error) => failure(&error),
     }
@@ -86,6 +94,9 @@ async fn ask(transport: &dyn Transport, codec: &dyn WindowCodec, admit: &Admit, 
 
 /// `Interrupted` = the request left and no answer came; every other error has the class of its retry policy.
 pub(super) fn failure<R>(error: &TransportError) -> TransportOutcome<R> {
+    if matches!(error, TransportError::Graphql { extensions: Some(extensions), .. } if extensions.code.as_deref() == Some(crate::transport::retry::INVALID_CURSOR)) {
+        return TransportOutcome::Error(RequestError { message: error.to_string(), class: ErrorClass::InvalidCursor });
+    }
     let class = match RetryClass::of_error(error) {
         _ if matches!(error, TransportError::Interrupted(_)) => return TransportOutcome::Dropped,
         RetryClass::Network => ErrorClass::Network,

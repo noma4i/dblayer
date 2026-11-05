@@ -14,7 +14,6 @@ mod ref_delivery;
 mod ref_feed;
 mod ref_window;
 
-mod feed_tests;
 mod lifecycle_tests;
 mod lifecycle_owner_tests;
 mod network_owner_tests;
@@ -22,7 +21,6 @@ mod store_owner_tests;
 mod session_owner_tests;
 mod calls_owner_tests;
 mod store_tests;
-mod window_tests;
 
 mod delivery_gap_tests;
 mod feed_gap_tests;

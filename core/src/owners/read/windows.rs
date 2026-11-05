@@ -95,7 +95,7 @@ pub enum WindowEffect {
 /// What a machine gives out: an effect of the runner, or an input for another owner or a timer that the owner `Windows` turns into `Effect`.
 enum Emit {
     Run(WindowEffect),
-    Commit { request: RequestId, basis: BTreeMap<String, u64>, page: AnswerPage, number: u32, replace_all: bool },
+    Commit { request: RequestId, basis: BTreeMap<String, u64>, page: AnswerPage, number: u32, replace_all: bool, base_revision: i64 },
     Retry { request: RequestId, attempt: u32, class: ErrorClass },
     CancelRetry { request: RequestId },
     Announce { state: WindowState, streams: Vec<InterestId> },
@@ -147,7 +147,7 @@ pub enum WindowsInput {
 enum Ev {
     InterestPlus { id: InterestId },
     InterestMinus { id: InterestId },
-    Load { id: InterestId, goal: Goal, force: bool },
+    Load { id: InterestId, goal: Goal, force: bool, store_revision: i64 },
     Response { request: RequestId, attempt: u32, page: AnswerPage },
     /// `Failure` and `Dropped`: the cells are the same, a dropped request is a temporary network error.
     Failure { request: RequestId, attempt: u32, error: RequestError },
@@ -176,11 +176,9 @@ fn attempt_limit(class: ErrorClass) -> u32 {
     match class {
         ErrorClass::Network => 3,
         ErrorClass::Server => 2,
-        ErrorClass::Permanent => 0,
+        ErrorClass::Permanent | ErrorClass::InvalidCursor => 0,
     }
 }
-
-pub const INVALID_CURSOR: &str = crate::transport::retry::INVALID_CURSOR;
 
 struct Ctx<'a> {
     next_request: &'a mut RequestId,
@@ -224,6 +222,8 @@ struct Facts {
     error: Option<String>,
     /// The revision of the last `Committed` of a landing of this machine, 0 before the first.
     landed_revision: i64,
+    store_seen: i64,
+    request_base: std::cell::Cell<i64>,
     fx: RefCell<Vec<Emit>>,
 }
 
@@ -236,6 +236,7 @@ impl Facts {
                     self.generations.insert(model.clone(), *generation);
                 }
             }
+            Ev::Load { store_revision, .. } => self.store_seen = self.store_seen.max(*store_revision),
             _ => {}
         }
     }
@@ -244,7 +245,12 @@ impl Facts {
 
     fn watched(&self) -> bool { !self.interest.is_empty() || !self.waiters.is_empty() }
 
-    fn push_fx(&self, effect: WindowEffect) { self.fx.borrow_mut().push(Emit::Run(effect)); }
+    fn push_fx(&self, effect: WindowEffect) {
+        if matches!(effect, WindowEffect::Request { .. }) {
+            self.request_base.set(self.store_seen.max(self.landed_revision));
+        }
+        self.fx.borrow_mut().push(Emit::Run(effect));
+    }
 
     fn emit(&self, emit: Emit) { self.fx.borrow_mut().push(emit); }
 
@@ -418,7 +424,7 @@ impl Facts {
                     self.begin(context, 1, false, true)
                 }
             }
-            Ev::Load { id, goal, force } => self.idle_load(context, *id, *goal, *force),
+            Ev::Load { id, goal, force, .. } => self.idle_load(context, *id, *goal, *force),
             Ev::InterestMinus { id } => {
                 self.interest.remove(id);
                 self.waiters.remove(id);
@@ -454,7 +460,7 @@ impl Facts {
                 self.announce();
                 Handled
             }
-            Ev::Load { id, goal, force: wider } => {
+            Ev::Load { id, goal, force: wider, .. } => {
                 self.join_load(*id, *goal, *page);
                 *force |= *wider && *goal != Goal::Next;
                 Handled
@@ -474,18 +480,18 @@ impl Facts {
             Ev::Response { request: got, attempt: got_attempt, page: answer } if mine(got, got_attempt) => {
                 self.page_count = if *page == 1 { 1 } else { self.page_count + 1 };
                 let basis = basis.clone();
-                self.emit(Emit::Commit { request: *request, basis, page: answer.clone(), number: *page, replace_all: self.replace_all });
+                self.emit(Emit::Commit { request: *request, basis, page: answer.clone(), number: *page, replace_all: self.replace_all, base_revision: self.request_base.get() });
                 Transition(WinState::landing(*request, *page, answer.cursor.clone(), !answer.rows.is_empty(), answer.dependency_models.clone()))
             }
             Ev::Failure { request: got, attempt: got_attempt, error } if mine(got, got_attempt) => {
-                if error.message == INVALID_CURSOR && !self.cursor_reset_used {
+                if error.class == ErrorClass::InvalidCursor && !self.cursor_reset_used {
                     let (new_request, new_attempt) = context.request();
                     self.cursor_reset_used = true;
                     self.replace_all = true;
                     self.push_fx(WindowEffect::Request { request: new_request, attempt: new_attempt, page: 1, cursor: None });
                     return Transition(WinState::loading(new_request, new_attempt, false, 1, *force, 0, self.basis()));
                 }
-                let class = if error.message == INVALID_CURSOR { ErrorClass::Permanent } else { error.class };
+                let class = if error.class == ErrorClass::InvalidCursor { ErrorClass::Permanent } else { error.class };
                 if class != ErrorClass::Permanent && *attempts + 1 < attempt_limit(class) {
                     *attempts += 1;
                     *retry = true;
@@ -599,7 +605,7 @@ impl Facts {
                 self.announce();
                 Handled
             }
-            Ev::Load { id, goal, force: wider } => {
+            Ev::Load { id, goal, force: wider, .. } => {
                 self.join_load(*id, *goal, *page);
                 *force |= *wider && *goal != Goal::Next;
                 Handled
@@ -659,6 +665,8 @@ impl Window {
             phase: Phase::Idle,
             error: None,
             landed_revision: 0,
+            store_seen: 0,
+            request_base: std::cell::Cell::new(0),
             fx: RefCell::new(Vec::new()),
         };
         let mut ctx = Ctx { next_request: ids.0, next_attempt: ids.1 };
@@ -773,9 +781,9 @@ impl Windows {
         for emit in window.handle(event, (&mut state.next_request, &mut state.next_attempt)) {
             match emit {
                 Emit::Run(effect) => out.push(Effect::Run(WindowsEffect::Window { key: key.clone(), effect })),
-                Emit::Commit { request, basis, page, number, replace_all } => {
+                Emit::Commit { request, basis, page, number, replace_all, base_revision } => {
                     let rows: Vec<(String, String)> = page.payload.roots.iter().map(|row| (key.model.clone(), row.row_id.clone())).chain(page.payload.related.iter().map(|(model, row)| (model.clone(), row.row_id.clone()))).collect();
-                    let op = StoreOp::Window { key: key.name.clone(), model: key.model.clone(), page: number, replace_all, cursor: page.cursor.clone(), roots: page.payload.roots.clone(), related: page.payload.related.clone(), total: page.payload.total };
+                    let op = StoreOp::Window { key: key.name.clone(), model: key.model.clone(), page: number, replace_all, cursor: page.cursor.clone(), roots: page.payload.roots.clone(), related: page.payload.related.clone(), total: page.payload.total, base_revision };
                     let batch = StoreBatch { author: BatchAuthor::Window, id: request, epoch, basis, rows, intents: 0, credential: None, ops: vec![op] };
                     out.push(Effect::Send(Outbound::new(peers.store, StoreInput::Commit(batch))));
                 }
@@ -818,7 +826,7 @@ impl Windows {
             return;
         }
         state.ensure(&key);
-        Self::on(state, &key, Ev::Load { id, goal, force }, out);
+        Self::on(state, &key, Ev::Load { id, goal, force, store_revision }, out);
     }
 }
 

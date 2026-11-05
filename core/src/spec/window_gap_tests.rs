@@ -56,7 +56,8 @@ fn class_of(failure: Failure) -> ErrorClass {
     match failure {
         Failure::Network => ErrorClass::Network,
         Failure::Server => ErrorClass::Server,
-        Failure::Permanent | Failure::InvalidCursor => ErrorClass::Permanent,
+        Failure::Permanent => ErrorClass::Permanent,
+        Failure::InvalidCursor => ErrorClass::InvalidCursor,
     }
 }
 
@@ -168,8 +169,7 @@ impl Twin {
                 self.post(w::WindowsInput::Response { request: *request, attempt: *attempt, page });
             }
             Input::TransportError { request, attempt, failure } => {
-                let message = if *failure == Failure::InvalidCursor { w::INVALID_CURSOR.to_string() } else { "e".to_string() };
-                self.post(w::WindowsInput::Failure { request: *request, attempt: *attempt, error: RequestError { message, class: class_of(*failure) } });
+                self.post(w::WindowsInput::Failure { request: *request, attempt: *attempt, error: RequestError { message: "e".to_string(), class: class_of(*failure) } });
             }
             Input::Dropped { request, attempt } => self.post(w::WindowsInput::Dropped { request: *request, attempt: *attempt }),
             Input::Retry { request } => self.post(w::WindowsInput::RetryDue { request: *request }),
@@ -1512,6 +1512,30 @@ fn win_prop_fields_only() {
     twin.post(w::WindowsInput::Response { request: 1, attempt: 1, page: AnswerPage::new(1, vec!["r1".into()], None) });
     let sent = take(&twin.log).into_iter().find_map(|entry| if let Emitted::Send { to: STORE, input } = entry { Some(input) } else { None }).expect("a batch");
     assert!(sent.contains("\"Moment\": 5"), "the basis is the generation of the dictionary: {sent}");
+}
+
+#[test]
+fn win_prop_landing_settles_first() {
+    let mut twin = Twin::new();
+    twin.call(1, Goal::First);
+    twin.call(2, Goal::All);
+    twin.respond(Some(2));
+    let effects = twin.land();
+    assert_eq!(requests(&effects), 1, "the request for the next page is chosen by the AllPages waiter alone");
+    assert_eq!(twin.state().waiters(&key()).len(), 1, "the waiter of the first page left with its outcome");
+}
+
+#[test]
+fn win_base_revision() {
+    let sent_batch = |twin: &mut Twin| take(&twin.log).into_iter().find_map(|entry| if let Emitted::Send { to: STORE, input } = entry { Some(input) } else { None }).expect("a batch");
+    let mut twin = Twin::new();
+    twin.post_call(w::WindowsInput::Load { key: key(), id: 1, goal: w::Goal::First, force: false, store_revision: 7 });
+    twin.post(w::WindowsInput::Response { request: 1, attempt: 1, page: AnswerPage::new(1, vec!["r1".into()], None) });
+    assert!(sent_batch(&mut twin).contains("base_revision: 7"), "the batch carries the revision of the Store at the entry of the call");
+    twin.post(w::WindowsInput::Committed(Committed { batch: 1, revision: 9, tables: Vec::new(), models: Vec::new() }));
+    twin.post_call(w::WindowsInput::Load { key: key(), id: 2, goal: w::Goal::First, force: true, store_revision: 5 });
+    twin.post(w::WindowsInput::Response { request: 2, attempt: 2, page: AnswerPage::new(1, vec!["r1".into()], None) });
+    assert!(sent_batch(&mut twin).contains("base_revision: 9"), "the revision of the last landing is newer than the entry of the call");
 }
 
 /// P-WIN-10: the outcome `Loaded` of `AllPages` comes only at the end of the pages: one request per page after the first.
