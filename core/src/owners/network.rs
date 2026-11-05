@@ -3,7 +3,7 @@
 use super::contract::Drained;
 use crate::runtime::{Cause, Effect, Effects, Epoch, StateOwner, Time};
 
-use super::lifecycle::ReplyId;
+use super::contract::ReplyId;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum NetworkMode {

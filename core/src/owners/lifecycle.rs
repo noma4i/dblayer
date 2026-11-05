@@ -3,11 +3,10 @@
 
 use std::collections::BTreeSet;
 
-use super::contract::{CredentialCommitted, Drained, Published, ServerEnded};
+use super::contract::{CredentialCommitted, ReplyId, Drained, Published, ServerEnded};
 use crate::runtime::{Cause, Effect, Effects, Epoch, StateOwner, Time};
 
 pub type Identity = u64;
-pub type ReplyId = u64;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Peer {

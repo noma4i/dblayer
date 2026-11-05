@@ -6,7 +6,7 @@ use super::contract::{Drained, Online, RequestId};
 use crate::runtime::{Cause, Effect, Effects, Epoch, StateOwner, Time};
 
 pub type CallId = u64;
-use super::lifecycle::ReplyId;
+use super::contract::ReplyId;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum CallError {

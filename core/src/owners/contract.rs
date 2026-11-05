@@ -4,6 +4,7 @@
 pub use crate::runtime::{Cause, Epoch, Time};
 
 pub type RequestId = u64;
+pub type ReplyId = u64;
 pub type BatchId = u64;
 pub type ConnectionId = u64;
 

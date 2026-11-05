@@ -5,7 +5,7 @@ use std::collections::VecDeque;
 use super::contract::{BatchId, Committed, CredentialCommitted, Drained, EpochEnded, Online, Published, RejectReason, Rejected, RequestId, ServerEnded};
 use crate::runtime::{Cause, Effect, Effects, Epoch, StateOwner, Time};
 
-use super::lifecycle::ReplyId;
+use super::contract::ReplyId;
 pub type Digest = u64;
 
 #[derive(Clone, Debug, PartialEq, Eq)]

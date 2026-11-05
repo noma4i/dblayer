@@ -3,11 +3,10 @@
 
 use std::collections::BTreeMap;
 
-use super::contract::{BatchId, Committed, Drained, EpochEnded, ModelsReset, Online, RejectReason, Rejected, RequestId};
+use super::contract::{BatchId, Committed, Drained, EpochEnded, ModelsReset, Online, RejectReason, Rejected, ReplyId, RequestId};
 use crate::runtime::{Cause, Effect, Effects, Epoch, ScheduleId, StateOwner, Time};
 
 pub type OpId = u64;
-pub type ReplyId = u64;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum OnReject {

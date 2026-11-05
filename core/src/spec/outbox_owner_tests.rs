@@ -5,15 +5,15 @@
 use std::collections::BTreeMap;
 
 use super::ref_outbox::{open_step_of, step_of, write_step_of, Ctx, Eff, Fault as RFault, In, OCtx, Obs, Out, Policy, Reason as RReason, Restored, St, Step, WCtx, WEff, WIn, WObs, WSt, Why as RWhy};
-use crate::owners::contract::{BatchId, Committed, ModelsReset, Online, RejectReason, Rejected, RequestId};
+use crate::owners::contract::{BatchId, Committed, ModelsReset, Online, RejectReason, Rejected, ReplyId, RequestId};
 use crate::owners::outbox::{self as o, OutboxAnswer, CommitKind, Fault, LocalWriteKind, NewOp, OnReject, OpId, Origin, Outbox, OutboxEffect, OutboxInput, OutboxState, Receipt, Stage, StoredOp, Why};
 use crate::owners::support::{new_log, take, Log, Recorder};
 use crate::runtime::{Address, Cause, DetScheduler, EpochStamp, Time};
 
 const EPOCH: u64 = 1;
-const SUBMIT_REPLY: o::ReplyId = 1;
-const DISCARD_REPLY: o::ReplyId = 800;
-const WAITER: o::ReplyId = 900;
+const SUBMIT_REPLY: ReplyId = 1;
+const DISCARD_REPLY: ReplyId = 800;
+const WAITER: ReplyId = 900;
 const NEW_GENERATION: u64 = 5;
 
 fn reject(reason: RReason) -> RejectReason {
@@ -79,7 +79,7 @@ struct Twin {
     batches: BTreeMap<OpId, BatchId>,
     first_pair: BTreeMap<OpId, (RequestId, u64)>,
     revision: i64,
-    reply: o::ReplyId,
+    reply: ReplyId,
     follower: Option<OpId>,
 }
 
@@ -504,7 +504,7 @@ fn open_check(kind: Restored, ctx: Ctx, pair: bool) {
     }
 }
 
-fn write_state(state: WSt, ctx: &WCtx) -> (Twin, o::ReplyId) {
+fn write_state(state: WSt, ctx: &WCtx) -> (Twin, ReplyId) {
     let mut twin = Twin::new();
     if state == WSt::Writing {
         twin.post(OutboxInput::LocalWrite { model: "Moment".into(), epoch: EPOCH, write: LocalWriteKind::SetEphemeral { expire_after: ctx.ephemeral_expiry.then_some(10) }, row: "w".into(), reply: 50, now: Time(100) });
@@ -590,7 +590,7 @@ fn out_ephemeral_expire() { write_check(WSt::None, WCtx::ready(), WIn::Expire); 
 #[test]
 fn out_ephemeral_expire_renewed() { write_check(WSt::None, WCtx { renewed: true, ..WCtx::ready() }, WIn::Expire); }
 
-fn replies_of(effects: &[OutboxEffect], reply: o::ReplyId) -> Vec<OutboxAnswer> {
+fn replies_of(effects: &[OutboxEffect], reply: ReplyId) -> Vec<OutboxAnswer> {
     effects.iter().filter_map(|effect| match effect {
         OutboxEffect::Reply { reply: id, answer } if *id == reply => Some(answer.clone()),
         _ => None,

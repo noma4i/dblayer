@@ -5,7 +5,8 @@ use std::collections::BTreeMap;
 
 use super::contract::{BatchId, Drained, EpochEnded, EpochStarted, Online};
 use crate::transport::NetworkPurpose;
-use super::outbox::{Fault, OutboxOutcome, Receipt, ReplyId};
+use super::contract::ReplyId;
+use super::outbox::{Fault, OutboxOutcome, Receipt};
 use crate::runtime::{Cause, Effect, Effects, Epoch, ScheduleId, StateOwner, Time};
 
 pub type Key = String;
