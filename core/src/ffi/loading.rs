@@ -163,19 +163,18 @@ impl Database {
         let launch = self.life.launch();
         let dropping: Arc<Mutex<Option<crate::runtime::Launch>>> = Arc::default();
         let release = ReleaseBarrier(dropping.clone());
-        let task = crate::task::spawn_on(crate::task::Carry::here(), executor()?.handle(), async move {
+        let task = crate::task::spawn_on(crate::task::Carry::here(), executor()?.handle(), crate::runtime::counted(Some(launch), async move {
             let _release = release;
             let sender = sender;
             let this = this;
             let LoadArgs { epoch, model, relation, params_json, goal, force } = args;
             let started = this.start_load(epoch, &model, &relation, &params_json, goal, force).await;
-            drop(launch);
             let result = match started {
                 Ok(call) => this.finish_load(call).await.map(drop),
                 Err(error) => Err(error),
             };
             crate::db::lock::effect(|| sender.send_replace(Some(result)));
-        });
+        }));
         Ok(Arc::new(LoadRequest { outcome, held: Mutex::new(Some(task.abort_handle())), life: self.life.clone(), dropping }))
     }
 
