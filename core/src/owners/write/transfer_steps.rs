@@ -10,7 +10,7 @@ use crate::transport::NetworkPurpose;
 
 impl TransferState {
     /// Transfers in the network: only a physical attempt in flight holds a slot.
-    pub(super) fn active(&self) -> u32 { self.transfers.values().filter(|transfer| transfer.in_flight).count() as u32 }
+    pub fn active(&self) -> u32 { self.transfers.values().filter(|transfer| transfer.in_flight).count() as u32 }
 
     fn progress(transfer: &Transfer) -> u32 { transfer.confirmed_parts * 100 / transfer.source.parts.max(1) }
 

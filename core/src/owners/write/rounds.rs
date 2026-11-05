@@ -73,7 +73,7 @@ impl RoundsState {
 
     /// A job is asked for the epoch again: the refusal on the transfers goes.
     fn resume(&mut self, epoch: Epoch, fx: &mut Fx) {
-        if matches!(self.round, Round::Refused { .. }) {
+        if matches!(self.round, Round::Refused { epoch: refused } if refused == epoch) {
             self.status(epoch, None, fx);
         }
         self.request(epoch, fx);

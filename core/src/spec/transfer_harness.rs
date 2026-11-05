@@ -56,14 +56,6 @@ pub(super) struct Out {
 }
 
 impl Out {
-    fn merge(&mut self, other: Out) {
-        self.runs.extend(other.runs);
-        self.batches.extend(other.batches);
-        self.outbox.extend(other.outbox);
-        self.rounds.extend(other.rounds);
-        self.timers += other.timers;
-    }
-
     pub fn replies(&self, reply: ReplyId) -> Vec<TransferAnswer> { self.runs.iter().filter_map(|run| if let Run::Reply { reply: found, answer } = run { (*found == reply).then(|| answer.clone()) } else { None }).collect() }
 
     pub fn all_replies(&self) -> usize { self.runs.iter().filter(|run| matches!(run, Run::Reply { .. })).count() }
@@ -272,8 +264,6 @@ impl Twin {
 
     pub fn reject(&mut self, reason: RejectReason) -> Out { self.answer(|batch| TransferInput::Rejected(Rejected { batch, reason })) }
 
-    pub fn pending_batches(&self) -> usize { self.unanswered.len() }
-
     pub fn accepting(&mut self, key: &str, parts: u32) -> (TransferId, ReplyId, Out) {
         let reply = self.reply();
         let out = self.post(TransferInput::Accept { epoch: EPOCH, item: Box::new(item(key, parts)), reply, now: Time(0) });
@@ -417,6 +407,30 @@ impl Twin {
         self.commit();
         assert_eq!(self.stage(id), TransferStage::Mutating);
         id
+    }
+
+    /// The elements of a batch of `parts` parts each, copied and written. The first one starts, the others are `Ready`.
+    pub fn accepted_batch(&mut self, keys: &[&str], parts: u32) -> Vec<TransferId> {
+        let reply = self.reply();
+        self.post(TransferInput::AcceptBatch { epoch: EPOCH, items: keys.iter().map(|key| item(key, parts)).collect(), reply, now: Time(0) });
+        let ids: Vec<TransferId> = keys.iter().map(|key| self.state().open_id(key).expect("an element")).collect();
+        self.commit();
+        for id in &ids {
+            self.copy_done(*id);
+        }
+        self.commit();
+        ids
+    }
+
+    /// `Mutating` of the first element of a batch: the owner has at least two slots.
+    pub fn batch_mutating(&mut self, keys: &[&str]) -> Vec<TransferId> {
+        let ids = self.accepted_batch(keys, 1);
+        self.step_ok(ids[0], 1, None);
+        self.commit();
+        self.completed(ids[0]);
+        self.commit();
+        assert_eq!(self.stage(ids[0]), TransferStage::Mutating);
+        ids
     }
 
     /// A `Ready` transfer behind a full slot: the network is up, the slot is held by another transfer.

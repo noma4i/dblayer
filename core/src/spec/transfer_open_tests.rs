@@ -1,0 +1,239 @@
+//! Owner-level tests of the owner `Transfer`: the opening: `Restored`, `RegisterOperations`, `RestoreReady` and the class of every restored row.
+
+use std::collections::BTreeMap;
+
+use super::transfer_harness::*;
+use crate::owners::contract::Online;
+use crate::owners::store::UploadKind;
+use crate::owners::write::outbox::{Fault, OutboxOutcome};
+use crate::owners::write::transfer::{NextStep, Shown, StoredTransfer, TransferAnswer, TransferInput, TransferStage};
+use crate::runtime::Time;
+
+const KEY: &str = "Moment:r1:upload";
+const OTHER: &str = "Moment:r2:upload";
+
+fn row(id: u64, key: &str) -> StoredTransfer { stored(id, key, 2) }
+
+fn partly(id: u64, key: &str) -> StoredTransfer {
+    let mut found = row(id, key);
+    found.confirmed_parts = 1;
+    found.upload_id = Some("u1".into());
+    found
+}
+
+fn completed(id: u64, key: &str) -> StoredTransfer {
+    let mut found = row(id, key);
+    found.confirmed_parts = 2;
+    found.completed = true;
+    found.signed_id = Some("signed".into());
+    found
+}
+
+fn outcomes(id: u64, outcome: OutboxOutcome) -> BTreeMap<u64, OutboxOutcome> { BTreeMap::from([(id, outcome)]) }
+
+/// The owner after `Restored` of `rows` with no declaration: every row waits for it.
+fn undeclared(rows: Vec<StoredTransfer>) -> (Twin, Out) {
+    let mut twin = Twin::bare(1);
+    let out = twin.post(TransferInput::Restored { uploads: rows, outcomes: Default::default() });
+    (twin, out)
+}
+
+#[test]
+fn xfer_restored() {
+    let mut failed = row(2, OTHER);
+    failed.restore_failed = Some("moved".into());
+    let (mut twin, out) = Twin::opened(vec![partly(1, KEY), failed], Default::default());
+    assert_eq!((twin.stage(1), twin.stage(2), out.classified()), (TransferStage::Ready, TransferStage::Failed, 1), "every row has its class and Lifecycle hears it");
+    twin.online(true);
+    assert_eq!(twin.stage(1), TransferStage::Ready, "the network start of a restored transfer waits for RestoreReady");
+    let out = twin.post(TransferInput::RestoreReady { epoch: EPOCH });
+    assert_eq!((twin.stage(1), out.steps().len()), (TransferStage::Uploading, 1));
+}
+
+#[test]
+fn xfer_restoring_register() {
+    let mut twin = Twin::bare(1);
+    let out = twin.post(TransferInput::RegisterOperations { declarations: vec![("Moment".into(), "upload".into())] });
+    assert!(Twin::quiet(&out), "{out:?}");
+    twin.post(TransferInput::Restored { uploads: vec![partly(1, KEY)], outcomes: Default::default() });
+    assert_eq!(twin.stage(1), TransferStage::Ready, "the declaration of the Restoring phase counts");
+}
+
+#[test]
+fn xfer_restore_ready() {
+    let (mut twin, _) = Twin::opened(vec![partly(1, KEY), partly(2, OTHER)], Default::default());
+    twin.online(true);
+    let out = twin.post(TransferInput::RestoreReady { epoch: EPOCH });
+    assert_eq!(out.steps().len(), 1, "the start goes by the common order and one slot");
+    assert_eq!(twin.stage(1), TransferStage::Uploading);
+    assert_eq!(twin.stage(2), TransferStage::Ready);
+}
+
+#[test]
+fn xfer_restore_ready_other() {
+    let (mut twin, _) = Twin::opened(vec![partly(1, KEY)], Default::default());
+    twin.online(true);
+    let out = twin.post(TransferInput::RestoreReady { epoch: EPOCH + 1 });
+    assert!(Twin::quiet(&out), "{out:?}");
+    twin.post(TransferInput::RestoreReady { epoch: EPOCH });
+    let out = twin.post(TransferInput::RestoreReady { epoch: EPOCH });
+    assert!(Twin::quiet(&out), "a second RestoreReady changes nothing: {out:?}");
+    let mut restoring = Twin::bare(1);
+    restoring.post(TransferInput::RegisterOperations { declarations: vec![("Moment".into(), "upload".into())] });
+    restoring.online(true);
+    assert!(Twin::quiet(&restoring.post(TransferInput::RestoreReady { epoch: EPOCH })), "no rows have been read yet");
+    let out = restoring.post(TransferInput::Restored { uploads: vec![partly(1, KEY)], outcomes: Default::default() });
+    assert_eq!(out.steps().len(), 0, "the early RestoreReady did not open the start");
+}
+
+#[test]
+fn xfer_register_rechecks_waiting() {
+    let (mut twin, _) = undeclared(vec![partly(1, KEY)]);
+    assert_eq!(twin.stage(1), TransferStage::WaitingDeclaration);
+    let out = twin.post(TransferInput::RegisterOperations { declarations: vec![("Moment".into(), "upload".into())] });
+    assert_eq!((twin.stage(1), out.shows(), out.round_needed()), (TransferStage::Ready, vec![Shown::Queued], vec![vec![1]]), "the row is classified again, only this one");
+}
+
+#[test]
+fn xfer_register_still_waiting() {
+    let (mut twin, _) = undeclared(vec![partly(1, KEY)]);
+    let out = twin.post(TransferInput::RegisterOperations { declarations: vec![("Moment".into(), "other".into())] });
+    assert!(Twin::quiet(&out), "{out:?}");
+    assert_eq!(twin.stage(1), TransferStage::WaitingDeclaration);
+}
+
+#[test]
+fn xfer_register_other() {
+    let mut twin = Twin::new();
+    let id = twin.uploading(KEY, 3);
+    twin.ignores(id, vec![TransferInput::RegisterOperations { declarations: vec![("Moment".into(), "upload".into())] }]);
+}
+
+#[test]
+fn xfer_waiting_declaration_refuses() {
+    let (mut twin, _) = undeclared(vec![partly(1, KEY)]);
+    twin.post(TransferInput::RestoreReady { epoch: EPOCH });
+    for (name, (reply, out)) in [("cancel", twin.cancel(KEY)), ("discard", twin.discard(KEY)), ("retry", twin.retry(KEY, None))] {
+        assert_eq!(Twin::fault(&out, reply), Some(Fault::InFlight), "{name}");
+    }
+    assert_eq!(twin.stage(1), TransferStage::WaitingDeclaration);
+}
+
+#[test]
+fn xfer_waiting_declaration_other() {
+    let (mut twin, _) = undeclared(vec![partly(1, KEY)]);
+    twin.post(TransferInput::RestoreReady { epoch: EPOCH });
+    let mut inputs = twin.stray_results(1);
+    inputs.extend([
+        TransferInput::Online(Online(true)),
+        TransferInput::PowerSaving(true),
+        TransferInput::SlotFreed,
+        TransferInput::MutationOutcome { key: KEY.into(), outcome: OutboxOutcome::Confirmed { revision: 1 } },
+        TransferInput::Tick { now: Time(1), kind: crate::owners::write::transfer::TransferTick::Expire },
+    ]);
+    twin.ignores(1, inputs);
+}
+
+#[test]
+fn xfer_open_restore_failed() {
+    let mut broken = row(1, KEY);
+    broken.restore_failed = Some("moved".into());
+    let (mut twin, out) = Twin::opened(vec![broken], Default::default());
+    assert_eq!((twin.stage(1), out.shows(), out.timers), (TransferStage::Failed, vec![Shown::Failed { error: "RestoreFailed".into() }], 1));
+    let (reply, out) = twin.outcome(1, 1);
+    assert_eq!(out.replies(reply), vec![TransferAnswer::Outcome(OutboxOutcome::Failed { error: "RestoreFailed".into() })], "the outcome is Failed, not NotFound");
+}
+
+#[test]
+fn xfer_open_waiting_declaration() {
+    let (twin, out) = undeclared(vec![partly(1, KEY)]);
+    assert_eq!((twin.stage(1), out.shows().len(), out.writes(), out.copies()), (TransferStage::WaitingDeclaration, 0, 0, 0));
+    assert_eq!(out.classified(), 1);
+}
+
+#[test]
+fn xfer_open_copying() {
+    let mut found = row(1, KEY);
+    found.copying = true;
+    found.size = 0;
+    let (twin, out) = Twin::opened(vec![found], Default::default());
+    assert_eq!((twin.stage(1), out.copies(), out.shows(), out.round_needed()), (TransferStage::Copying, 1, vec![Shown::Copying], vec![vec![1]]));
+    assert!(twin.t(1).accept_reply.is_none(), "no call waits for a restored copy");
+}
+
+#[test]
+fn xfer_open_ready() {
+    let (mut twin, out) = Twin::opened(vec![partly(1, KEY)], Default::default());
+    assert_eq!((twin.stage(1), twin.next_step(1), out.shows(), out.round_needed(), out.timers), (TransferStage::Ready, NextStep::Part(2), vec![Shown::Queued], vec![vec![1]], 1));
+    twin.online(true);
+    let out = twin.post(TransferInput::RestoreReady { epoch: EPOCH });
+    assert_eq!(out.steps().iter().map(|step| step.0).collect::<Vec<_>>(), vec![Some(2)]);
+}
+
+#[test]
+fn xfer_open_completing() {
+    let mut found = row(1, KEY);
+    found.confirmed_parts = 2;
+    let (mut twin, out) = Twin::opened(vec![found], Default::default());
+    assert_eq!((twin.stage(1), twin.next_step(1), out.shows(), out.round_needed()), (TransferStage::Ready, NextStep::Complete, vec![Shown::Uploading { progress: 100 }], vec![vec![1]]));
+    twin.online(true);
+    assert_eq!(twin.post(TransferInput::RestoreReady { epoch: EPOCH }).completes(), 1);
+}
+
+#[test]
+fn xfer_open_saved_outcome() {
+    let (mut twin, out) = Twin::opened(vec![completed(1, KEY)], outcomes(1, OutboxOutcome::Confirmed { revision: 5 }));
+    assert_eq!((twin.stage(1), out.removed()), (TransferStage::Removing, vec![KEY.to_string()]));
+    twin.commit();
+    let (reply, out) = twin.outcome(1, 1);
+    assert_eq!((twin.stage(1), out.replies(reply)), (TransferStage::Done, vec![TransferAnswer::Outcome(OutboxOutcome::Confirmed { revision: 5 })]));
+}
+
+#[test]
+fn xfer_open_saved_outcome_discarded() {
+    let (mut twin, out) = Twin::opened(vec![completed(1, KEY)], outcomes(1, OutboxOutcome::Discarded));
+    assert_eq!((twin.stage(1), out.removed()), (TransferStage::Removing, vec![KEY.to_string()]));
+    twin.commit();
+    let (reply, out) = twin.outcome(1, 1);
+    assert_eq!(out.replies(reply), vec![TransferAnswer::Outcome(OutboxOutcome::Discarded)]);
+}
+
+#[test]
+fn xfer_open_saved_outcome_rejected() {
+    let (mut twin, out) = Twin::opened(vec![completed(1, KEY)], outcomes(1, OutboxOutcome::Rejected { error: "refused".into() }));
+    assert_eq!((twin.stage(1), out.kinds()), (TransferStage::PersistingFailure, vec![UploadKind::Failed]));
+    let out = twin.commit();
+    assert_eq!((twin.stage(1), out.shows()), (TransferStage::Failed, vec![Shown::Failed { error: "refused".into() }]));
+}
+
+#[test]
+fn xfer_open_mutating() {
+    let mut found = completed(1, KEY);
+    found.has_intent = true;
+    let (twin, out) = Twin::opened(vec![found], Default::default());
+    assert_eq!((twin.stage(1), out.submits(), out.writes(), out.shows()), (TransferStage::Mutating, 0, 0, vec![Shown::Uploading { progress: 100 }]), "the outcome comes from Outbox");
+}
+
+#[test]
+fn xfer_open_failed() {
+    let mut found = partly(1, KEY);
+    found.failed = Some("e".into());
+    let (twin, out) = Twin::opened(vec![found], Default::default());
+    assert_eq!((twin.stage(1), out.shows(), out.timers), (TransferStage::Failed, vec![Shown::Failed { error: "e".into() }], 1));
+}
+
+#[test]
+fn xfer_open_missing_file() {
+    let mut found = partly(1, KEY);
+    found.file_present = false;
+    let (mut twin, out) = Twin::opened(vec![found], Default::default());
+    assert_eq!((twin.stage(1), out.kinds(), out.shows().len()), (TransferStage::PersistingFailure, vec![UploadKind::Failed], 0));
+    let out = twin.commit();
+    assert_eq!(out.shows(), vec![Shown::Failed { error: "missing_file".into() }]);
+}
+
+#[test]
+fn xfer_open_completed_no_intent() {
+    let (twin, out) = Twin::opened(vec![completed(1, KEY)], Default::default());
+    assert_eq!((twin.stage(1), out.submits(), out.shows()), (TransferStage::Mutating, 1, vec![Shown::Uploading { progress: 100 }]), "the mutation never left: it is handed to Outbox again");
+}

@@ -67,7 +67,7 @@ impl TransferState {
 
     /// `Accept` and `AcceptBatch`: every element is checked before the transaction, the rows of all N elements go in one batch.
     pub(super) fn accept(&mut self, epoch: Epoch, items: Vec<BatchItem>, batch: bool, rep: ReplyId, now: Time, fx: &mut Fx) {
-        if epoch != self.epoch || self.closing {
+        if epoch != self.epoch || self.closing || self.ended {
             return reply(fx, rep, TransferAnswer::Err(if self.closing { Fault::Interrupted } else { Fault::NoSession }));
         }
         if items.is_empty() || !items.iter().all(Self::valid) {
