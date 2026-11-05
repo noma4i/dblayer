@@ -14,21 +14,10 @@ use crate::owners::read::windows::{Goal, Windows, WindowEffect, WindowKey, Windo
 use crate::owners::read::{max_pages, preload_keys, preload_sources, refreshes_on_foreground, DbSnapshots, DeliveryIo, SchemaWindowCodec, WindowIo};
 use crate::owners::store::{StoreReply, StoreWriter};
 use crate::runtime::{Address, Back, EffectRunner, Epoch, EpochStamp, OutcomeId, RuntimeBuilder, Waiter};
-use crate::transport::{GraphQLRequest, PutRequest, PutResponse, Response, ServerSubscription, Transport, TransportError};
+use crate::transport::Transport;
 
 /// The ids of waiters that platform calls register in `Windows` carry this bit, the ids of streams stay below it.
 pub(crate) const CALL: u64 = 1 << 62;
-
-/// The transport of a database without one: every request fails as a network error.
-struct Unconnected;
-
-#[async_trait::async_trait]
-impl Transport for Unconnected {
-    async fn query(&self, _admitted: &crate::ffi::legacy::Admitted, _request: GraphQLRequest) -> Result<Response, TransportError> { Err(TransportError::Network("the database has no transport".into())) }
-    async fn mutate(&self, _admitted: &crate::ffi::legacy::Admitted, _request: GraphQLRequest) -> Result<Response, TransportError> { Err(TransportError::Network("the database has no transport".into())) }
-    async fn subscribe(&self, _admitted: &crate::ffi::legacy::Admitted, _request: GraphQLRequest) -> Result<ServerSubscription, TransportError> { Err(TransportError::Network("the database has no transport".into())) }
-    async fn put(&self, _admitted: &crate::ffi::legacy::Admitted, _request: PutRequest) -> Result<PutResponse, TransportError> { Err(TransportError::Network("the database has no transport".into())) }
-}
 
 /// `Feed` runs no IO here: the owner exists for its address and ends with the database. The runner of its subscription replaces this one.
 struct FeedWithoutIo {
@@ -56,7 +45,7 @@ pub(super) fn add(builder: &mut RuntimeBuilder, wiring: &Arc<Wiring>, ports: &Po
     let (windows_at, deliveries_at, feed_at) = (Address::<Windows>::new(base), Address::<Deliveries>::new(base + 1), Address::<Feed>::new(base + 2));
     let db: Db = ports.db.clone();
     let handle = builder.handle();
-    let transport: Arc<dyn Transport> = ports.transport.clone().unwrap_or_else(|| Arc::new(Unconnected));
+    let transport: Option<Arc<dyn Transport>> = ports.transport.clone();
     let admit_db = db.clone();
     let admit: crate::owners::read::Admit = Arc::new(move || admit_db.admit().map_err(|error| crate::owners::read::Refused(error.to_string())));
     let codec = Arc::new(SchemaWindowCodec::new(db.clone(), ports.read_operations.clone().unwrap_or_default()));

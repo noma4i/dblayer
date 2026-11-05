@@ -27,7 +27,7 @@ pub trait WindowCodec: Send + Sync + 'static {
 type Open = Arc<Mutex<HashMap<(RequestId, u32), CancelToken>>>;
 
 pub struct WindowIo {
-    transport: Arc<dyn Transport>,
+    transport: Option<Arc<dyn Transport>>,
     codec: Arc<dyn WindowCodec>,
     admit: Admit,
     handle: Handle,
@@ -36,7 +36,7 @@ pub struct WindowIo {
 }
 
 impl WindowIo {
-    pub fn new(transport: Arc<dyn Transport>, codec: Arc<dyn WindowCodec>, admit: Admit, handle: Handle, rest: Rest<WindowsEffect>) -> Self {
+    pub fn new(transport: Option<Arc<dyn Transport>>, codec: Arc<dyn WindowCodec>, admit: Admit, handle: Handle, rest: Rest<WindowsEffect>) -> Self {
         Self { transport, codec, admit, handle, open: Open::default(), rest }
     }
 
@@ -47,7 +47,7 @@ impl WindowIo {
         spawn_on(Carry::Detached, &self.handle, async move {
             let outcome = tokio::select! {
                 () = token.cancelled() => None,
-                outcome = ask(transport.as_ref(), codec.as_ref(), &admit, &key, page, cursor.as_deref()) => Some(outcome),
+                outcome = ask(transport.as_deref(), codec.as_ref(), &admit, &key, page, cursor.as_deref()) => Some(outcome),
             };
             open.lock().unwrap_or_else(PoisonError::into_inner).remove(&(request, attempt));
             if let Some(outcome) = outcome.filter(|_| !token.is_cancelled()) {
@@ -78,7 +78,7 @@ impl EffectRunner<Windows> for WindowIo {
     }
 }
 
-async fn ask(transport: &dyn Transport, codec: &dyn WindowCodec, admit: &Admit, key: &WindowKey, page: u32, cursor: Option<&str>) -> TransportOutcome<AnswerPage> {
+async fn ask(transport: Option<&dyn Transport>, codec: &dyn WindowCodec, admit: &Admit, key: &WindowKey, page: u32, cursor: Option<&str>) -> TransportOutcome<AnswerPage> {
     let admitted = match admit() {
         Ok(admitted) => admitted,
         Err(refused) => return TransportOutcome::Error(RequestError { message: refused.0, class: ErrorClass::Permanent }),
@@ -86,6 +86,9 @@ async fn ask(transport: &dyn Transport, codec: &dyn WindowCodec, admit: &Admit, 
     let request = match codec.request(key, page, cursor) {
         Ok(request) => request,
         Err(message) => return TransportOutcome::Error(RequestError { message, class: ErrorClass::Permanent }),
+    };
+    let Some(transport) = transport else {
+        return TransportOutcome::Error(RequestError { message: "the database has no transport".into(), class: ErrorClass::Network });
     };
     match transport.query(&admitted, request).await {
         Ok(response) => match codec.refusal(&response) {
