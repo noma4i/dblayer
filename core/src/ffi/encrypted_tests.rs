@@ -26,7 +26,7 @@ impl EncryptedHttp for ThroughServer {
     }
 }
 
-struct Held(Arc<MemoryCredentials>);
+pub(super) struct Held(pub(super) Arc<MemoryCredentials>);
 
 impl CredentialStore for Held {
     fn get(&self) -> Result<Option<String>, DbError> { self.0.get().map_err(failure) }

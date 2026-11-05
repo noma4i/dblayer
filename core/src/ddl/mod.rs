@@ -15,8 +15,8 @@ pub const SCHEMA_VERSION: i64 = 2;
 pub const FORMAT_VERSION_KEY: &str = "format_version";
 pub const DATA_VERSION_KEY: &str = "data_version";
 pub const REVISION_SEQ_KEY: &str = "revision_seq";
-pub const OUTBOX_FORMAT_KEY: &str = "outbox_format";
-pub(crate) const OUTBOX_TABLES: [&str; 12] = ["op", "op_item", "op_item_retry", "op_item_header", "op_row", "op_part", "op_value", "op_error", "transfer_abort", "blob_upload", "blob_use", "file"];
+/// The tables a format change moves into the new layout (`specs/machines/store.md`, `store_boot_format_change`).
+pub(crate) const CARRIED_TABLES: [&str; 17] = ["op", "op_item", "op_item_retry", "op_item_header", "op_row", "op_part", "op_value", "op_error", "transfer_abort", "blob_upload", "blob_use", "encrypted_session", "encrypted_pending", "sync_upload", "sync_upload_error", "local_pending", "file"];
 
 pub const SERVICE_COLUMNS: [&str; 3] = ["id", "revision", "born_rev"];
 
@@ -629,20 +629,6 @@ pub(crate) fn create_core_tables(connection: &Connection) -> Result<(), DdlError
     Ok(())
 }
 
-pub(crate) fn rebuild_transfer_tables(connection: &Connection) -> Result<(), DdlError> {
-    for name in ["op_item", "transfer_abort"] {
-        let prefix = format!("CREATE TABLE IF NOT EXISTS {name} (");
-        let statement = CORE_STATEMENTS.iter().find(|statement| statement.starts_with(&prefix)).ok_or(rusqlite::Error::InvalidQuery)?;
-        let next = format!("{name}_next");
-        let create = statement.replacen(&prefix, &format!("CREATE TABLE {} (", sql_ident(&next)), 1);
-        connection.execute_batch(&create)?;
-        let columns: Vec<String> = connection.prepare("SELECT name FROM pragma_table_info(?1) ORDER BY cid")?.query_map([&next], |row| row.get::<_, String>(0))?.collect::<Result<_, _>>()?;
-        let columns = columns.iter().map(|name| sql_ident(name)).collect::<Vec<_>>().join(", ");
-        connection.execute_batch(&format!("INSERT INTO {} ({columns}) SELECT {columns} FROM {}; DROP TABLE {}; ALTER TABLE {} RENAME TO {};", sql_ident(&next), sql_ident(name), sql_ident(name), sql_ident(&next), sql_ident(name)))?;
-    }
-    Ok(())
-}
-
 pub fn recreate_reason(connection: &Connection) -> Result<Option<RecreateReason>, DdlError> {
     let version: i64 = connection.query_row("pragma user_version", [], |row| row.get(0))?;
     if version != 0 && version != SCHEMA_VERSION {
@@ -656,13 +642,6 @@ pub fn recreate_reason(connection: &Connection) -> Result<Option<RecreateReason>
 }
 
 const STORED_VALUE_FORMAT: &str = "dates are UTC text with milliseconds; rows are typed columns with rev__ columns; free values are node trees; relation parameters are type-tagged JSON values";
-
-pub fn outbox_format() -> String {
-    let tables = OUTBOX_TABLES.map(|table| format!("CREATE TABLE IF NOT EXISTS {table} ("));
-    let statements: Vec<&str> = CORE_STATEMENTS.iter().copied().filter(|statement| tables.iter().any(|table| statement.starts_with(table.as_str()))).collect();
-    let text = [statements.as_slice(), &[STORED_VALUE_FORMAT]].concat().join("\n");
-    Sha256::digest(text.as_bytes()).iter().map(|byte| format!("{byte:02x}")).collect()
-}
 
 pub fn format_version() -> String {
     let text = [CORE_STATEMENTS.as_slice(), CACHE_STATEMENTS.as_slice(), &[STORED_VALUE_FORMAT]].concat().join("\n");
@@ -768,7 +747,6 @@ pub fn manifest_stamp(
         manifest_write(connection, &fingerprint_key(model), fingerprint)?;
     }
     manifest_write(connection, FORMAT_VERSION_KEY, &format_version())?;
-    manifest_write(connection, OUTBOX_FORMAT_KEY, &outbox_format())?;
     Ok(())
 }
 

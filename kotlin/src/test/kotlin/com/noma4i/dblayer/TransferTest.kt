@@ -24,7 +24,6 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.fail
 import org.junit.Test
 import com.sun.jna.Library
-import com.sun.jna.Native
 import com.sun.jna.Pointer
 import com.sun.jna.ptr.PointerByReference
 
@@ -32,19 +31,6 @@ internal interface LegacySqlite : Library {
     fun sqlite3_open(path: String, database: PointerByReference): Int
     fun sqlite3_exec(database: Pointer, sql: String, callback: Pointer?, context: Pointer?, error: Pointer?): Int
     fun sqlite3_close(database: Pointer): Int
-}
-
-private fun writeLegacyTransfer(path: String, dropPendingItem: Boolean = false) {
-    val sqlite = Native.load("sqlite3", LegacySqlite::class.java)
-    val database = PointerByReference()
-    check(sqlite.sqlite3_open(path, database) == 0)
-    try {
-        val fixture = java.io.File("../fixtures/transfer-legacy.sql").readText()
-        val deletion = if (dropPendingItem) "DELETE FROM op_item WHERE seq = (SELECT owner_seq FROM encrypted_pending) AND position = (SELECT item_position FROM encrypted_pending);" else ""
-        check(sqlite.sqlite3_exec(database.value, fixture + deletion, null, null, null) == 0)
-    } finally {
-        check(sqlite.sqlite3_close(database.value) == 0)
-    }
 }
 
 private class MultipartTransfer(val mock: MockTransport = MockTransport()) : Transport by mock {
@@ -107,65 +93,6 @@ private suspend fun <Model : DBModel> confirmedIds(receipt: OperationReceipt<Mod
 private suspend fun finishTransfers() = DBlayer.database.resumeUploads(DBlayer.database.sessionEpoch())
 
 class TransferTest {
-    @OptIn(DBlayerTestingApi::class)
-    @Test
-    fun openingLegacyPendingKeepsTheSessionAndLocalFile() = bounded {
-        val directory = Files.createTempDirectory("legacy-pending").toFile()
-        val server = SealedServer(deduplicate = true) { path, _ ->
-            Json.parseToJsonElement(if (path == "/api/auth/login_link") """{"sessionId":"A"}""" else """{"data":{"createBlob":{"id":"one"}}}""").jsonObject
-        }
-        try {
-            val path = directory.resolve("db.sqlite").path
-            val encrypted = EncryptedConfig("https://api.example.com", SealedServer.SERVER_KEY, SealedServer.SERVER_PIN, EncryptedEndpoints("/api/graphql", "/api/cable", "/api/logout", "/api/bootstrap", mapOf("login_link" to EncryptedSessionOperation("/api/auth/login_link", false))), "example-ws-v1", "ws.hello", "EncryptedGraphqlChannel")
-            val transport = MockTransport()
-            val credentials = TransferCredential()
-            val models = java.io.File("../fixtures/transfer-local-models.json").readText()
-            val operations = """[{"name":"CreateBlob","document":"mutation CreateBlob { createBlob { id } }"}]"""
-            DBlayer.close()
-            DBlayer.openTesting(transport, models, path = path, encrypted = encrypted, credentials = credentials, http = server)
-            val database = DBlayer.database
-            database.registerOperations(operations)
-            database.sessionCall("login_link", """{"account":"A"}""")
-            val note = requireNotNull(database.create(database.sessionEpoch(), "Note", """{"text":"kept"}""", "{}").optimisticValue)
-            val bytes = ByteArray(300 * 1024) { 7 }
-            database.attach(database.sessionEpoch(), "Note", note.id, "attachment", bytes, "file", "application/octet-stream")
-            server.hold("CreateBlob")
-            val call = async { runCatching { database.run(database.sessionEpoch(), "CreateBlob", """{"filename":"pending"}""") } }
-            val arrived = async { server.heldRequest() }
-            select<Unit> {
-                arrived.onAwait { }
-                call.onAwait { throw AssertionError("the request returned before reaching the server: $it") }
-            }
-            database.setOnline(false)
-            server.loseAnswer("pending")
-            server.hold(null)
-            val lost = async { server.lostAnswer() }
-            select<Unit> {
-                lost.onAwait { }
-                call.onAwait { if (!server.hasLostAnswer()) throw AssertionError("the request ended before its answer was lost: $it") }
-            }
-            lost.cancel()
-            DBlayer.close()
-            call.await()
-            writeLegacyTransfer(path)
-            DBlayer.openTesting(transport, models, path = path, encrypted = encrypted, credentials = credentials, http = server)
-            val reopened = DBlayer.database
-            reopened.registerOperations(operations)
-            assertTrue(reopened.readRow(reopened.sessionEpoch(), "Note", note.id) != null)
-            assertArrayEquals(bytes, reopened.read(reopened.sessionEpoch(), "Note", note.id, "attachment"))
-            assertTrue(reopened.sessionResume() != null)
-            reopened.run(reopened.sessionEpoch(), "CreateBlob", """{"filename":"next"}""")
-            val effects = server.effects.filter { it["operationName"]?.jsonPrimitive?.content == "CreateBlob" }
-            assertEquals(1, effects.count { it.getValue("variables").jsonObject.getValue("filename").jsonPrimitive.content == "pending" })
-            assertEquals(1, effects.count { it.getValue("variables").jsonObject.getValue("filename").jsonPrimitive.content == "next" })
-            assertEquals(3, server.operationRequests("CreateBlob"))
-        } finally {
-            server.hold(null)
-            DBlayer.close()
-            directory.deleteRecursively()
-        }
-    }
-
     @Test
     fun multipartBatchAcceptsACorrelationKeyWithPathCharacters() = bounded {
         val directory = Files.createTempDirectory("multipart-key").toFile()
@@ -198,9 +125,8 @@ class TransferTest {
     fun shiftingABatchDuringAHeldEncryptedRequestKeepsTheFileOwner() = bounded {
         val directory = Files.createTempDirectory("encrypted-album").toFile()
         try {
-            for (case in listOf("live", "reopen", "missing")) {
+            for (case in listOf("live", "reopen")) {
                 val lose = case != "live"
-                val missing = case == "missing"
                 val server = SealedServer(deduplicate = true) { path, body ->
                     when {
                         path == "/api/auth/login_link" -> Json.parseToJsonElement("""{"sessionId":"A"}""").jsonObject
@@ -234,27 +160,8 @@ class TransferTest {
                     if (lose) {
                         server.lostAnswer()
                         DBlayer.close()
-                        if (missing) writeLegacyTransfer(path, dropPendingItem = true)
                         DBlayer.openTesting(transport, modelsJSON, path = path, uploads = uploads, encrypted = encrypted, credentials = credential, http = server)
                         DBlayer.database.registerOperations(operations)
-                        if (missing) {
-                            val before = runCatching { DBlayer.database.retryAll(DBlayer.database.sessionEpoch()) }.exceptionOrNull()
-                            assertTrue("missing file before resume: $before", before?.message?.contains("select the file again", ignoreCase = true) == true)
-                            assertTrue(runCatching { DBlayer.database.sessionResume() }.isFailure)
-                            val after = runCatching { DBlayer.database.retryAll(DBlayer.database.sessionEpoch()) }.exceptionOrNull()
-                            assertTrue("missing file after resume: $after", after?.message?.contains("select the file again", ignoreCase = true) == true)
-                            assertEquals(0, server.operationRequests("CreateAssets"))
-                            val replacement = directory.resolve("again.jpg").apply { writeText("image-again") }
-                            Asset.retry(receipt.items[1].item.value, "create_files", UploadRequest(replacement.path))
-                            finishTransfers()
-                            DBlayer.database.flush()
-                            assertEquals(1, server.operationRequests("CreateAssets"))
-                            val identities = synchronized(transport.identities) { transport.identities.toList() }
-                            assertEquals(identities.first { it.itemId == "key-2" }.operationId, identities.last { it.itemId == "key-1" }.operationId)
-                            assertTrue(Asset.find("a1").current() != null)
-                            DBlayer.close()
-                            continue
-                        }
                         DBlayer.database.sessionResume()
                         finishTransfers()
                         DBlayer.database.flush()

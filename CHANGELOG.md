@@ -3,6 +3,7 @@
 ## Unreleased
 
 ### Fixed
+- Opening a database of an older layout no longer fails: tables kept across a format change move by the columns both layouts share.
 - Operations of the previous account are not sent after an identity change without `sessionReset`.
 - A confirmed create keeps its row when another model is reset before its answer lands.
 

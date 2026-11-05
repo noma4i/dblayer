@@ -6,7 +6,6 @@ use super::sealed_errors_tests::moment_spec;
 use super::session_guards_tests::{Rig, SOCIAL_BODY};
 use crate::transport::encrypted::vectors_tests::{origin, pin, public_key_der_b64};
 use crate::upload::{UploadFile, UploadOperations};
-use crate::test_wait::within;
 
 pub(super) struct Bytes;
 
@@ -107,129 +106,6 @@ async fn resume_returns_a_direct_mutation_without_creating_an_upload_owner() {
     assert!(database.db.outbox().unwrap().is_empty());
     assert_eq!(database.session_resume().await.unwrap(), None);
     assert_eq!(rig.server.executed().iter().filter(|body| body["operationName"] == "MakeMoment").count(), 1);
-}
-
-fn legacy_format(path: &std::path::Path) {
-    let connection = rusqlite::Connection::open(path).unwrap();
-    let old: bool = connection.query_row("SELECT EXISTS (SELECT 1 FROM pragma_table_info('encrypted_pending') WHERE name = 'owner_seq')", [], |row| row.get(0)).unwrap();
-    if old { return; }
-    connection.execute_batch(include_str!("../../../fixtures/transfer-legacy.sql")).unwrap();
-}
-
-#[tokio::test(flavor = "multi_thread")]
-async fn opening_legacy_pending_keeps_the_encrypted_sequence_and_session() {
-    let rig = Rig::new();
-    let directory = tempfile::tempdir().unwrap();
-    let path = directory.path().join("db.sqlite");
-    let database = open(&rig, &path).await;
-    database.session_call("social".into(), SOCIAL_BODY.into()).await.unwrap();
-    let note = database.create(database.session_epoch(), "Note".into(), r#"{"text":"kept"}"#.into(), "{}".into()).await.unwrap().optimistic_value.unwrap();
-    let bytes = vec![7; 300 * 1024];
-    database.attach(database.session_epoch(), "Note".into(), note.id.clone(), "attachment".into(), bytes.clone(), "file".into(), "application/octet-stream".into()).await.unwrap();
-    let mut seeded = crate::commit::CommitEnvelope::new(crate::commit::WriteOrigin::Event, database.db.generation());
-    seeded.entity_ops.push(crate::commit::EntityOp::Upsert { model: crate::identity::ModelKey::new("Moment"), id: crate::identity::RowId::new("cached").unwrap(), row: json!({"id": "cached", "text": "server"}).as_object().unwrap().clone() });
-    database.db.land(&database.db.admit().unwrap(), seeded).unwrap();
-    assert!(database.read_row(database.session_epoch(), "Moment".into(), "cached".into()).await.unwrap().is_some());
-    rig.server.reply_with(json!({"makeMoment": {"id": "42"}}));
-    rig.server.refuse_next("ACCOUNT_UNAVAILABLE", false);
-    database.run(database.session_epoch(), "MakeMoment".into(), "{}".into()).await.unwrap_err();
-    within(database.close_database()).await.unwrap();
-    drop(database);
-    legacy_format(&path);
-    let database = open(&rig, &path).await;
-    assert!(database.read_row(database.session_epoch(), "Moment".into(), "cached".into()).await.unwrap().is_none());
-    assert!(database.read_row(database.session_epoch(), "Note".into(), note.id.clone()).await.unwrap().is_some());
-    assert_eq!(database.read(database.session_epoch(), "Note".into(), note.id, "attachment".into()).await.unwrap(), Some(bytes));
-    let answer = within(database.session_resume()).await.unwrap().unwrap();
-    assert_eq!(serde_json::from_str::<serde_json::Value>(&answer).unwrap()["data"]["makeMoment"]["id"], "42");
-    let next = within(database.run(database.session_epoch(), "MakeMoment".into(), "{}".into())).await.unwrap();
-    assert_eq!(serde_json::from_str::<serde_json::Value>(&next).unwrap()["id"], "42");
-    assert_eq!(rig.server.executed().iter().filter(|body| body["operationName"] == "MakeMoment").count(), 2);
-}
-
-#[tokio::test(flavor = "multi_thread")]
-async fn opening_a_legacy_pending_upload_keeps_its_owner_and_file() {
-    let rig = Rig::new();
-    let directory = tempfile::tempdir().unwrap();
-    let path = directory.path().join("db.sqlite");
-    let source = directory.path().join("clip.mp4");
-    std::fs::write(&source, b"abc").unwrap();
-    let database = open(&rig, &path).await;
-    database.session_call("social".into(), SOCIAL_BODY.into()).await.unwrap();
-    rig.server.reply_with(json!({"createBlob": {"url": "https://upload", "signedId": "sid", "blobId": "bid"}, "makeMoment": {"id": "42"}}));
-    rig.server.refuse_next("ACCOUNT_UNAVAILABLE", false);
-    let input = UploadFile::new(source.to_str().unwrap());
-    database.upload(database.session_epoch(), "Moment".into(), "42".into(), "upload".into(), crate::ffi::upload_wire::WireUploadRequest::of(&input)).await.unwrap();
-    within(database.sync.as_ref().unwrap().wait_uploads()).await;
-    within(database.close_database()).await.unwrap();
-    drop(database);
-    legacy_format(&path);
-    let database = open(&rig, &path).await;
-    within(database.session_resume()).await.unwrap();
-    within(database.retry(database.session_epoch(), "Moment".into(), "42".into(), None, None)).await.unwrap();
-    within(database.sync.as_ref().unwrap().wait_uploads()).await;
-    assert_eq!(rig.server.executed().iter().filter(|body| body["operationName"] == "CreateBlob").count(), 1);
-    assert!(database.db.outbox().unwrap().is_empty());
-}
-
-#[tokio::test(flavor = "multi_thread")]
-async fn a_missing_legacy_transfer_item_needs_a_new_file_before_its_mutation() {
-    let rig = Rig::new();
-    let directory = tempfile::tempdir().unwrap();
-    let path = directory.path().join("db.sqlite");
-    let source = directory.path().join("clip.mp4");
-    std::fs::write(&source, b"abc").unwrap();
-    let database = open(&rig, &path).await;
-    database.session_call("social".into(), SOCIAL_BODY.into()).await.unwrap();
-    rig.server.reply_with(json!({"createBlob": {"url": "https://upload", "signedId": "sid", "blobId": "bid"}, "makeMoment": {"id": "42"}}));
-    rig.server.refuse_next("ACCOUNT_UNAVAILABLE", false);
-    database.upload(database.session_epoch(), "Moment".into(), "42".into(), "upload".into(), crate::ffi::upload_wire::WireUploadRequest::of(&UploadFile::new(source.to_str().unwrap()))).await.unwrap();
-    within(database.sync.as_ref().unwrap().wait_uploads()).await;
-    within(database.close_database()).await.unwrap();
-    drop(database);
-    legacy_format(&path);
-    let connection = rusqlite::Connection::open(&path).unwrap();
-    connection.execute("DELETE FROM op_item", []).unwrap();
-    drop(connection);
-    let database = open(&rig, &path).await;
-    let before = within(database.retry_all(database.session_epoch())).await.unwrap_err();
-    assert!(before.to_string().contains("select the file again"), "{before:?}");
-    assert!(within(database.session_resume()).await.is_err());
-    let after = within(database.retry_all(database.session_epoch())).await.unwrap_err();
-    assert!(after.to_string().contains("select the file again"), "{after:?}");
-    let without = within(database.retry(database.session_epoch(), "Moment".into(), "42".into(), None, None)).await.unwrap_err();
-    assert!(without.to_string().contains("select the file again"), "{without:?}");
-    assert_eq!(rig.server.executed().iter().filter(|body| body["operationName"] == "MakeMoment").count(), 0);
-    let replacement = directory.path().join("again.mp4");
-    std::fs::write(&replacement, b"abcd").unwrap();
-    rig.server.reply_with(json!({"createBlob": {"url": "https://upload", "signedId": "sid-2", "blobId": "bid-2"}, "makeMoment": {"id": "42"}}));
-    let receipt = within(database.retry(database.session_epoch(), "Moment".into(), "42".into(), None, Some(crate::ffi::upload_wire::WireUploadRequest::of(&UploadFile::new(replacement.to_str().unwrap()))))).await.unwrap();
-    assert!(matches!(within(database.outcome(receipt)).await.unwrap(), WireOperationOutcome::Confirmed { .. }));
-    assert_eq!(rig.server.executed().iter().filter(|body| body["operationName"] == "MakeMoment").count(), 1);
-    assert!(database.db.outbox().unwrap().is_empty());
-}
-
-#[tokio::test(flavor = "multi_thread")]
-async fn opening_a_legacy_pending_abort_does_not_repeat_the_remote_cleanup() {
-    let rig = Rig::new();
-    let directory = tempfile::tempdir().unwrap();
-    let path = directory.path().join("db.sqlite");
-    let database = open(&rig, &path).await;
-    database.session_call("social".into(), SOCIAL_BODY.into()).await.unwrap();
-    rig.server.reply_with(json!({"abortMultipart": {"ok": true}}));
-    rig.server.refuse_next("ACCOUNT_UNAVAILABLE", false);
-    database.run(database.session_epoch(), "AbortMultipart".into(), r#"{"key":"key","uploadId":"upload"}"#.into()).await.unwrap_err();
-    within(database.close_database()).await.unwrap();
-    drop(database);
-    legacy_format(&path);
-    let connection = rusqlite::Connection::open(&path).unwrap();
-    connection.execute("INSERT INTO upload_orphan (storage_key, upload_id, abort_operation) VALUES ('key', 'upload', 'AbortMultipart')", []).unwrap();
-    drop(connection);
-    let database = open(&rig, &path).await;
-    within(database.session_resume()).await.unwrap();
-    within(database.resume_uploads(database.session_epoch())).await.unwrap();
-    within(database.sync.as_ref().unwrap().wait_uploads()).await;
-    assert_eq!(rig.server.executed().iter().filter(|body| body["operationName"] == "AbortMultipart").count(), 1);
 }
 
 #[tokio::test(flavor = "multi_thread")]

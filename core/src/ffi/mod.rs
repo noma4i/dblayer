@@ -151,6 +151,8 @@ mod session_guards_tests;
 #[cfg(test)]
 mod session_resume_effect_tests;
 #[cfg(test)]
+mod open_layout_tests;
+#[cfg(test)]
 mod upload_resume_tests;
 #[cfg(test)]
 mod upload_process_tests;

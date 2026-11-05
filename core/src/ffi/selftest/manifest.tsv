@@ -347,21 +347,15 @@ T05S		kotlin	com.noma4i.dblayer.TransferTest.reopeningAfterSevenDaysExpiresAFail
 T06		core	shifting_a_batch_during_a_held_encrypted_request_keeps_the_file_owner	hypothesis	-	arch-audit/astra.md A6 transfer identity
 T06		swift	BridgeProbeTests.shiftingABatchDuringAHeldEncryptedRequestKeepsTheFileOwner	hypothesis	-	arch-audit/astra.md A6 transfer identity
 T06		kotlin	com.noma4i.dblayer.TransferTest.shiftingABatchDuringAHeldEncryptedRequestKeepsTheFileOwner	hypothesis	-	arch-audit/astra.md A6 transfer identity
-T07		core	opening_legacy_pending_keeps_the_encrypted_sequence_and_session	regression	-	legacy encrypted_pending conversion
-T07		swift	BridgeProbeTests.openingLegacyPendingKeepsTheSessionAndLocalFile	regression	-	legacy encrypted_pending conversion
-T07		kotlin	com.noma4i.dblayer.TransferTest.openingLegacyPendingKeepsTheSessionAndLocalFile	regression	-	legacy encrypted_pending conversion
-T08		core	opening_a_legacy_pending_upload_keeps_its_owner_and_file	regression	-	legacy transfer owner conversion
 T09		kotlin	com.noma4i.dblayer.UploadWorkTest.aLateBackgroundRefusalDoesNotChangeTheNextSession	red-by-reading	-	late Android scheduler refusal after session reset
 T10		core	multipart_batch_accepts_a_correlation_key_with_path_characters	regression	-	multipart transfer identity range file
 T10		swift	BridgeProbeTests.multipartBatchAcceptsACorrelationKeyWithPathCharacters	regression	-	multipart transfer identity range file
 T10		kotlin	com.noma4i.dblayer.TransferTest.multipartBatchAcceptsACorrelationKeyWithPathCharacters	regression	-	multipart transfer identity range file
 T11		core	subscription_overflow_reports_the_lost_range_before_failure	red-by-reading	-	bounded subscription intake
-T12		core	opening_a_legacy_pending_abort_does_not_repeat_the_remote_cleanup	regression	-	legacy orphan abort replay
 T13		kotlin	com.noma4i.dblayer.UploadWorkTest.aNewSessionSchedulesUploadsAfterTheOldRoundWasRunning	red-by-reading	-	new Android upload after old running round
 T14		kotlin	com.noma4i.dblayer.UploadWorkTest.onlyUploadRequestsGoThroughTheNetworkOfTheRunningJob	red-by-reading	-	late Android job must not clear a newer network route
 T15		kotlin	com.noma4i.dblayer.UploadWorkTest.aSchedulerRefusalReturningAfterResetDoesNotChangeTheNewUpload	red-by-reading	-	Android scheduler refusal crosses a session reset
 T16		kotlin	com.noma4i.dblayer.UploadWorkTest.aNewSessionSchedulesUploadsWhenTheOldEndingRoundLostItsSession	regression	-	ending Android round after session reset
-T17		core	a_missing_legacy_transfer_item_needs_a_new_file_before_its_mutation	red-by-reading	-	legacy transfer without an item
 T17		swift	BridgeProbeTests.shiftingABatchDuringAHeldEncryptedRequestKeepsTheFileOwner	red-by-reading	missing case	legacy transfer without an item
 T17		kotlin	com.noma4i.dblayer.TransferTest.shiftingABatchDuringAHeldEncryptedRequestKeepsTheFileOwner	red-by-reading	missing case	legacy transfer without an item
 S216	A3-lost	core	a_lost_event_range_reads_the_open_window_once	red-by-reading	lost subscription range marks the windows and reads the open one once	s2/design.md S216

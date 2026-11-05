@@ -291,3 +291,55 @@ fn open_recreates_a_missing_core_table() {
     let (store, _) = reopen(&path, &models, None);
     assert_eq!(count(&store, "SELECT COUNT(*) FROM row_sync"), 0);
 }
+
+const SESSION_DIGEST: &str = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+
+#[test]
+fn store_prop_boot_any_layout() {
+    let layouts: [(&str, &str, i64, i64); 4] = [
+        (
+            "before 6.8.0: pending without purpose and owner columns, no rows",
+            "DROP TABLE encrypted_pending; CREATE TABLE encrypted_pending (id INTEGER PRIMARY KEY CHECK (id = 1), credential_digest TEXT NOT NULL, request_id TEXT NOT NULL, response_key TEXT NOT NULL, sequence INTEGER NOT NULL, path TEXT NOT NULL, body TEXT NOT NULL, owner_seq INTEGER, item_position INTEGER, stage TEXT) STRICT;",
+            4,
+            0,
+        ),
+        (
+            "pending with an extra column and a row",
+            "DROP TABLE encrypted_pending; CREATE TABLE encrypted_pending (id INTEGER PRIMARY KEY CHECK (id = 1), credential_digest TEXT NOT NULL, request_id TEXT NOT NULL, response_key TEXT NOT NULL, sequence INTEGER NOT NULL, path TEXT NOT NULL, body TEXT NOT NULL, owner_kind TEXT, owner_operation_id INTEGER, owner_item_id TEXT, owner_step TEXT, purpose INTEGER NOT NULL, upload INTEGER NOT NULL DEFAULT 0) STRICT; INSERT INTO encrypted_pending (id, credential_digest, request_id, response_key, sequence, path, body, purpose) VALUES (1, 'd', 'r', 'k', 5, '/p', '{}', 0);",
+            4,
+            1,
+        ),
+        (
+            "session with an extra column",
+            "DROP TABLE encrypted_session; CREATE TABLE encrypted_session (id INTEGER PRIMARY KEY CHECK (id = 1), credential_digest TEXT NOT NULL, sequence INTEGER NOT NULL, legacy TEXT) STRICT; INSERT INTO encrypted_session (id, credential_digest, sequence, legacy) VALUES (1, '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef', 4, 'x');",
+            4,
+            0,
+        ),
+        (
+            "pending with only its key columns",
+            "DROP TABLE encrypted_pending; CREATE TABLE encrypted_pending (id INTEGER PRIMARY KEY, credential_digest TEXT NOT NULL) STRICT; INSERT INTO encrypted_pending VALUES (1, 'd');",
+            4,
+            0,
+        ),
+    ];
+    for (case, plant, sequence, pending_rows) in layouts {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("a.sqlite");
+        let models = [messages_spec()];
+        {
+            let (store, _) = reopen(&path, &models, None);
+            exec(&store, &format!("INSERT OR REPLACE INTO encrypted_session (id, credential_digest, sequence) VALUES (1, '{SESSION_DIGEST}', {sequence});"));
+            exec(&store, plant);
+            exec(&store, "UPDATE manifest SET value = 'old' WHERE key = 'format_version'");
+        }
+        let (store, report) = reopen(&path, &models, None);
+        assert_eq!(report.recreated, Some(crate::ddl::RecreateReason::CoreFormat), "{case}");
+        assert_eq!(count(&store, &format!("SELECT COUNT(*) FROM encrypted_session WHERE credential_digest = '{SESSION_DIGEST}' AND sequence = {sequence}")), 1, "{case}: the session is kept");
+        assert_eq!(count(&store, "SELECT COUNT(*) FROM encrypted_pending"), pending_rows, "{case}: pending rows");
+        {
+            let inner = store.lock();
+            crate::transport::encrypted::state::pending(&inner.connection).unwrap_or_else(|error| panic!("{case}: reading pending: {error}"));
+        }
+        assert_eq!(store.saved().unwrap().2, crate::store::identity_of(SESSION_DIGEST), "{case}: the identity is published");
+    }
+}

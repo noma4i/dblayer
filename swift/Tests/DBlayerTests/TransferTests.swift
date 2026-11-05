@@ -3,15 +3,6 @@ import Foundation
 import Testing
 @testable import DBlayer
 
-@_silgen_name("sqlite3_open") private func legacyOpen(_ path: UnsafePointer<CChar>, _ database: UnsafeMutablePointer<OpaquePointer?>) -> Int32
-@_silgen_name("sqlite3_exec") private func legacyExec(_ database: OpaquePointer?, _ sql: UnsafePointer<CChar>, _ callback: UnsafeMutableRawPointer?, _ context: UnsafeMutableRawPointer?, _ error: UnsafeMutableRawPointer?) -> Int32
-@_silgen_name("sqlite3_close") private func legacyClose(_ database: OpaquePointer?) -> Int32
-
-private func transferFixture(_ name: String) throws -> String {
-  let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
-  return try String(contentsOf: root.appendingPathComponent("fixtures/\(name)"), encoding: .utf8)
-}
-
 /// The item outcomes of a batch, read from the core: the API has no item outcome yet (`holes` of the d4 report).
 func confirmedPairs<Model: DBModel>(_ receipt: OperationReceipt<Model>) async throws -> [(key: String, id: String)?] {
   let outcome = try await receipt.database.batchOutcome(receipt: receipt.wire)
@@ -27,14 +18,6 @@ private func confirmedIds<Model: DBModel>(_ receipt: OperationReceipt<Model>) as
 }
 
 private func finishTransfers() async throws { try await DB.database.resumeUploads(epoch: DB.database.sessionEpoch()) }
-
-private func writeLegacyTransfer(_ path: String, dropPendingItem: Bool = false) throws {
-  var database: OpaquePointer?
-  guard legacyOpen(path, &database) == 0 else { throw DbError.Invalid(detail: "cannot open the legacy fixture") }
-  defer { _ = legacyClose(database) }
-  let deletion = dropPendingItem ? "DELETE FROM op_item WHERE seq = (SELECT owner_seq FROM encrypted_pending) AND position = (SELECT item_position FROM encrypted_pending);" : ""
-  guard legacyExec(database, try transferFixture("transfer-legacy.sql") + deletion, nil, nil, nil) == 0 else { throw DbError.Invalid(detail: "cannot write the legacy fixture") }
-}
 
 private final class MultipartTransfer: Transport, @unchecked Sendable {
   let mock = MockTransport()
@@ -121,65 +104,6 @@ private final class RefuseFirstFile: Transport, @unchecked Sendable {
 
 extension BridgeProbeTests {
   @MainActor @Test(.timeLimit(.minutes(1)))
-  func openingLegacyPendingKeepsTheSessionAndLocalFile() async throws {
-    let directory = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
-    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-    defer { try? FileManager.default.removeItem(at: directory) }
-    let path = directory.appending(path: "db.sqlite").path
-    let server = try SealedServer(deduplicate: true) { path, _ in
-      path == "/api/auth/login_link" ? ["sessionId": "A"] : ["data": ["createBlob": ["id": "one"]]]
-    }
-    defer { server.hold(operation: nil) }
-    let encrypted = EncryptedConfig(origin: SealedServer.origin, serverKey: SealedServer.serverKey, pin: SealedServer.pin, endpoints: EncryptedEndpoints(graphql: "/api/graphql", cable: "/api/cable", logout: "/api/logout", bootstrap: "/api/bootstrap", sessionOperations: ["login_link": EncryptedSessionOperation(path: "/api/auth/login_link", sessionless: false)]), protocolLabel: "example-ws-v1", cablePurpose: "ws.hello", cableChannel: "EncryptedGraphqlChannel")
-    let transport = MockTransport()
-    let credentials = TransferCredential()
-    let models = try transferFixture("transfer-local-models.json")
-    let operations = #"[{"name":"CreateBlob","document":"mutation CreateBlob { createBlob { id } }"}]"#
-    try await DB.close()
-    _ = try await DB.openTesting(transport: transport, modelsJSON: models, path: path, encrypted: encrypted, credentials: credentials, http: server)
-    let database = try DB.database
-    try database.registerOperations(defsJson: operations)
-    _ = try await database.sessionCall(operation: "login_link", bodyJson: #"{"account":"A"}"#)
-    let note = try #require(try await database.create(epoch: database.sessionEpoch(), model: "Note", valuesJson: #"{"text":"kept"}"#, argsJson: "{}").optimisticValue)
-    let bytes = Data(repeating: 7, count: 300 * 1024)
-    _ = try await database.attach(epoch: database.sessionEpoch(), model: "Note", rowId: note.id, field: "attachment", bytes: bytes, name: "file", mime: "application/octet-stream")
-    server.hold(operation: "CreateBlob")
-    let call = Task { try await database.run(epoch: database.sessionEpoch(), operation: "CreateBlob", variablesJson: #"{"filename":"pending"}"#) }
-    let signals = AsyncStream<Bool>.makeStream()
-    let arrived = Task { await server.heldRequest(); signals.continuation.yield(true) }
-    let ended = Task { _ = await call.result; signals.continuation.yield(false) }
-    let reached = await Cursor(signals.stream).next("the held request or the end of the call")
-    arrived.cancel()
-    ended.cancel()
-    try #require(reached == true)
-    try database.setOnline(online: false)
-    server.loseAnswer(filename: "pending")
-    server.hold(operation: nil)
-    let outcomes = AsyncStream<Bool>.makeStream()
-    let lost = Task { await server.lostAnswer(); outcomes.continuation.yield(true) }
-    let completed = Task { _ = await call.result; outcomes.continuation.yield(server.hasLostAnswer) }
-    let answerLost = await Cursor(outcomes.stream).next("the lost answer or the end of the call")
-    lost.cancel()
-    completed.cancel()
-    try #require(answerLost == true)
-    try await DB.close()
-    _ = try? await call.value
-    try writeLegacyTransfer(path)
-    _ = try await DB.openTesting(transport: transport, modelsJSON: models, path: path, encrypted: encrypted, credentials: credentials, http: server)
-    let reopened = try DB.database
-    try reopened.registerOperations(defsJson: operations)
-    #expect(try await reopened.readRow(epoch: reopened.sessionEpoch(), model: "Note", rowId: note.id) != nil)
-    #expect(try await reopened.read(epoch: reopened.sessionEpoch(), model: "Note", rowId: note.id, field: "attachment") == bytes)
-    _ = try #require(try await reopened.sessionResume())
-    _ = try await reopened.run(epoch: reopened.sessionEpoch(), operation: "CreateBlob", variablesJson: #"{"filename":"next"}"#)
-    let effects = server.effects.filter { $0["operationName"] as? String == "CreateBlob" }
-    #expect(effects.filter { ($0["variables"] as? [String: Any])?["filename"] as? String == "pending" }.count == 1)
-    #expect(effects.filter { ($0["variables"] as? [String: Any])?["filename"] as? String == "next" }.count == 1)
-    #expect(server.operationRequests("CreateBlob") == 3)
-    try await DB.close()
-  }
-
-  @MainActor @Test(.timeLimit(.minutes(1)))
   func multipartBatchAcceptsACorrelationKeyWithPathCharacters() async throws {
     let directory = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
     try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
@@ -207,9 +131,8 @@ extension BridgeProbeTests {
 
   @MainActor @Test(.timeLimit(.minutes(1)))
   func shiftingABatchDuringAHeldEncryptedRequestKeepsTheFileOwner() async throws {
-    for scenario in ["live", "reopen", "missing"] {
+    for scenario in ["live", "reopen"] {
       let lose = scenario != "live"
-      let missing = scenario == "missing"
       let directory = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
       try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
       defer { try? FileManager.default.removeItem(at: directory) }
@@ -249,34 +172,8 @@ extension BridgeProbeTests {
       if lose {
         await server.lostAnswer()
         try await DB.close()
-        if missing { try writeLegacyTransfer(path, dropPendingItem: true) }
         _ = try await DB.openTesting(transport: transport, modelsJSON: modelsJSON, path: path, uploads: uploads, encrypted: encrypted, credentials: credential, http: server)
         try DB.database.registerOperations(defsJson: operations)
-        if missing {
-          do {
-            _ = try await DB.database.retryAll(epoch: DB.database.sessionEpoch())
-            Issue.record("retry accepted a missing file before resume")
-          } catch { #expect("\(error)".localizedCaseInsensitiveContains("select the file again")) }
-          await #expect(throws: DbError.self) { _ = try await DB.database.sessionResume() }
-          do {
-            _ = try await DB.database.retryAll(epoch: DB.database.sessionEpoch())
-            Issue.record("retry accepted a missing file after resume")
-          } catch { #expect("\(error)".localizedCaseInsensitiveContains("select the file again")) }
-          #expect(server.operationRequests("CreateAssets") == 0)
-          let replacement = directory.appending(path: "again.jpg")
-          try Data("image-again".utf8).write(to: replacement)
-          _ = try await Asset.retry(id: receipt.items[1].item.value, action: "create_files", source: UploadRequest(path: replacement.path))
-          try await finishTransfers()
-          try await DB.database.flush()
-          #expect(server.operationRequests("CreateAssets") == 1)
-          let identities = transport.identities
-          let kept = identities.first(where: { $0.itemId == "key-2" })?.operationId
-          let replaced = identities.last(where: { $0.itemId == "key-1" })?.operationId
-          #expect(kept != nil && kept == replaced)
-          #expect(try await Asset.find("a1").current() != nil)
-          try await DB.close()
-          continue
-        }
         _ = try await DB.database.sessionResume()
         try await finishTransfers()
         try await DB.database.flush()
