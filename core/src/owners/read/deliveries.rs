@@ -53,6 +53,8 @@ pub struct View {
     pub local: bool,
     /// The stream reads a window: its relation is loaded from the server.
     pub remote: bool,
+    /// The model takes events of the server (`updates` of a relation or `listens`): an open stream wants its subscription.
+    pub live: bool,
     pub window: WindowKey,
     pub subject: String,
 }
@@ -232,6 +234,8 @@ struct Delivery {
     released: bool,
     sink_closed: bool,
     interested: bool,
+    /// A read stream of a live model holds a `Want+` of the Feed.
+    wants: bool,
     opened: i64,
 }
 
@@ -274,6 +278,7 @@ impl Delivery {
             released: false,
             sink_closed: false,
             interested: false,
+            wants: false,
             opened: revision,
         }
     }
@@ -293,6 +298,10 @@ impl Delivery {
             }
             Kind::List | Kind::Count | Kind::Entity { .. } => {
                 fx.push(machine.new_read(revision));
+                if machine.view.live {
+                    fx.push(Emit::WantPlus);
+                    machine.wants = true;
+                }
                 let watches = machine.view.remote
                     && matches!(kind, Kind::List | Kind::Count | Kind::Entity { fetch: Fetch::Stale | Fetch::Force | Fetch::IfMissing });
                 if watches {
@@ -419,6 +428,8 @@ impl Delivery {
         }
         self.window.clone()
     }
+
+    fn unwant(&mut self) -> Option<Emit> { std::mem::take(&mut self.wants).then_some(Emit::WantMinus) }
 
     fn leave(&mut self) -> Option<Emit> {
         if !std::mem::take(&mut self.interested) {
@@ -704,6 +715,7 @@ impl Delivery {
         match self.stage {
             DeliveryStage::Opening | DeliveryStage::Live => {
                 fx.extend(self.leave());
+                fx.extend(self.unwant());
                 self.stage = DeliveryStage::Cancelling;
                 self.cause = EndCause::Cancelled;
                 self.journal.clear();
@@ -720,6 +732,7 @@ impl Delivery {
         match self.stage {
             DeliveryStage::Opening | DeliveryStage::Live => {
                 fx.extend(self.leave());
+                fx.extend(self.unwant());
                 self.stage = DeliveryStage::Cancelling;
                 self.cause = EndCause::Cancelled;
                 self.journal.clear();
@@ -732,6 +745,7 @@ impl Delivery {
 
     fn finish(&mut self, cause: EndCause, closing: bool, fx: &mut Vec<Emit>) {
         fx.extend(self.leave());
+                fx.extend(self.unwant());
         self.stage = DeliveryStage::Ended;
         self.cause = cause;
         self.closing = closing;
@@ -836,7 +850,7 @@ fn lower(peers: DeliveryPeers, stream: StreamId, machine: &Delivery, emits: Vec<
             Emit::InterestPlus => Effect::Send(Outbound::new(peers.windows, WindowsInput::InterestPlus { key: machine.view.window.clone(), id: stream })),
             Emit::Load { force } => Effect::Send(Outbound::new(peers.windows, WindowsInput::Load { key: machine.view.window.clone(), id: stream, goal: Goal::First, force, store_revision: machine.opened })),
             Emit::InterestMinus => Effect::Send(Outbound::new(peers.windows, WindowsInput::InterestMinus { key: machine.view.window.clone(), id: stream })),
-            Emit::WantPlus => Effect::Send(Outbound::new(peers.feed, FeedInput::WantPlus { model: machine.view.model.clone(), id: stream, stream: true })),
+            Emit::WantPlus => Effect::Send(Outbound::new(peers.feed, FeedInput::WantPlus { model: machine.view.model.clone(), id: stream, stream: machine.view.kind == Kind::Events })),
             Emit::WantMinus => Effect::Send(Outbound::new(peers.feed, FeedInput::WantMinus { model: machine.view.model.clone(), id: stream })),
         };
         out.push(effect);

@@ -224,13 +224,13 @@ impl Database {
                     Some((relation, params)) => WindowKey::relation(&model, relation, params),
                     None => WindowKey { model: model.clone(), name: String::new() },
                 };
-                Ok(View { kind, model: model.clone(), tables: vec![crate::ddl::table_name(&model)], local: spec.is_local(), remote: remote.is_some(), window, subject: query_json.clone() })
+                Ok(View { kind, model: model.clone(), tables: vec![crate::ddl::table_name(&model)], local: spec.is_local(), remote: remote.is_some(), live: !spec.is_local() && spec.is_live(), window, subject: query_json.clone() })
             }
             ReadRequest::Events { model } => {
                 self.db.spec(model)?;
-                Ok(View { kind: Kind::Events, model: model.clone(), tables: Vec::new(), local: false, remote: false, window: WindowKey { model: model.clone(), name: String::new() }, subject: model.clone() })
+                Ok(View { kind: Kind::Events, model: model.clone(), tables: Vec::new(), local: false, remote: false, live: false, window: WindowKey { model: model.clone(), name: String::new() }, subject: model.clone() })
             }
-            ReadRequest::Blob { key } => Ok(View { kind: Kind::Blob, model: String::new(), tables: Vec::new(), local: true, remote: false, window: WindowKey { model: String::new(), name: String::new() }, subject: key.clone() }),
+            ReadRequest::Blob { key } => Ok(View { kind: Kind::Blob, model: String::new(), tables: Vec::new(), local: true, remote: false, live: false, window: WindowKey { model: String::new(), name: String::new() }, subject: key.clone() }),
             ReadRequest::Entity { model, id, fetch } => {
                 let spec = self.db.spec(model)?;
                 let node = spec.relations.iter().find(|relation| relation.node == Some(crate::schema::NodeRead::One));
@@ -242,7 +242,7 @@ impl Database {
                     Some(relation) => WindowKey::relation(model, &relation.name, &serde_json::Map::from_iter([(crate::schema::NODE_PARAM.to_string(), serde_json::Value::String(id.clone()))])),
                     None => WindowKey { model: model.clone(), name: String::new() },
                 };
-                Ok(View { kind: Kind::Entity { fetch }, model: model.clone(), tables: vec![crate::ddl::table_name(model)], local: spec.is_local(), remote: fetch != Fetch::Never, window, subject: id.clone() })
+                Ok(View { kind: Kind::Entity { fetch }, model: model.clone(), tables: vec![crate::ddl::table_name(model)], local: spec.is_local(), remote: fetch != Fetch::Never, live: !spec.is_local() && spec.is_live(), window, subject: id.clone() })
             }
         }
     }
@@ -292,8 +292,8 @@ impl Database {
         let shut = self.life.is_shut();
         let (view, revision, valid, refusal) = match opened {
             Ok((view, revision)) => (view, revision, true, None),
-            Err(_) if shut => (View { kind: Kind::List, model: String::new(), tables: Vec::new(), local: true, remote: false, window: WindowKey { model: String::new(), name: String::new() }, subject: String::new() }, 0, false, None),
-            Err(error) => (View { kind: Kind::List, model: String::new(), tables: Vec::new(), local: true, remote: false, window: WindowKey { model: String::new(), name: String::new() }, subject: String::new() }, 0, false, Some(error)),
+            Err(_) if shut => (View { kind: Kind::List, model: String::new(), tables: Vec::new(), local: true, remote: false, live: false, window: WindowKey { model: String::new(), name: String::new() }, subject: String::new() }, 0, false, None),
+            Err(error) => (View { kind: Kind::List, model: String::new(), tables: Vec::new(), local: true, remote: false, live: false, window: WindowKey { model: String::new(), name: String::new() }, subject: String::new() }, 0, false, Some(error)),
         };
         if valid { self.stale_before_open(&view); }
         self.life.open_stream(stream, view, epoch, revision, valid);

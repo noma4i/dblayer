@@ -41,7 +41,7 @@ fn view(kind: Kind) -> d::View {
         Kind::Blob => (d::Kind::Blob, "Moment"),
         Kind::Retry => (d::Kind::RetryStatus, "Moment"),
     };
-    d::View { kind, model: model.into(), tables: vec!["moments".into()], local: false, remote: true, window: window(), subject: "t1".into() }
+    d::View { kind, model: model.into(), tables: vec!["moments".into()], local: false, remote: true, live: false, window: window(), subject: "t1".into() }
 }
 
 fn rows_of(rows: &[r::Row]) -> Vec<d::StreamRow> { rows.iter().map(|(id, stamp)| d::StreamRow::new(id, *stamp)).collect() }
@@ -420,6 +420,15 @@ fn dlv_open_rows_without_a_window_asks_for_nothing() {
     take(&twin.log);
     twin.call(d::DeliveryInput::Open { stream: STREAM, view: d::View { remote: false, ..view(Kind::List) }, epoch: EPOCH, revision: 0, identity: true, valid: true });
     assert_eq!(Twin::modelled(take(&twin.log)), [Effect::Read(0)]);
+}
+
+/// dlv_open_live: a read stream of a model that takes server events wants the subscription of the Feed and gives it back when it ends.
+#[test]
+fn dlv_open_live_wants_the_subscription_of_the_feed() {
+    let mut twin = Twin::new();
+    take(&twin.log);
+    twin.call(d::DeliveryInput::Open { stream: STREAM, view: d::View { live: true, ..view(Kind::List) }, epoch: EPOCH, revision: 0, identity: true, valid: true });
+    assert!(Twin::modelled(take(&twin.log)).contains(&Effect::WantPlus));
 }
 
 /// dlv_opening_committed (D-34): a commit of `All` models touches a stream whose tables it does not list; the empty set touches none.
