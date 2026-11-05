@@ -289,7 +289,7 @@ impl<O: StateOwner> StateOwner for StoreStub<O> {
         let stale: Vec<String> = batch.basis.iter().filter(|(model, basis)| **basis < current && state.only.is_none_or(|only| only == model.as_str())).map(|(model, _)| model.clone()).collect();
         if !stale.is_empty() {
             (state.note)(Landing::Rejected { batch: batch.id, rows: batch.rows.len() });
-            let rejected = Rejected { batch: batch.id, reason: RejectReason::StaleGeneration { models: stale } };
+            let rejected = Rejected { batch: batch.id, reason: RejectReason::StaleGeneration { models: stale, generation: current } };
             return vec![Effect::Send(Outbound::new(state.to, (state.rejected)(rejected)))];
         }
         state.revision += 1;

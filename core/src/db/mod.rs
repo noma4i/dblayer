@@ -20,7 +20,12 @@ mod listeners;
 pub(crate) mod lock;
 mod local_field;
 mod local_write;
+mod queue_read;
+#[cfg(test)]
+mod queue_read_tests;
 mod queue_write;
+#[cfg(test)]
+mod queue_write_tests;
 mod merge;
 mod lookup;
 #[cfg(test)]

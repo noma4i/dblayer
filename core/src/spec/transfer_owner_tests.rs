@@ -2,13 +2,15 @@
 //! A row test brings the owner to the state of the row, feeds the input through its address and compares the stage, the replies and the
 //! effects with the reference (`ref_transfer.rs`). Names are the `Test` column.
 
+use crate::owners::contract::{RejectReason, Rejected};
+use crate::schema::OnFailure;
 use super::ref_transfer::{round_step, step_of, Ctx, Eff, In, Kind, Noise, Obs, Round, RoundIn, Shown, St, Step};
 use crate::owners::contract::{EpochStarted, Online};
 use crate::owners::write::outbox::{Fault, OutboxOutcome};
 use crate::files::Location;
-use crate::owners::support::{new_log, number_after, text_after, Discard, Emitted, Log, Silent, Sink, Spy, SpyState};
+use crate::owners::support::{new_log, text_after, Discard, Emitted, Log, Silent, Sink, Spy, SpyState};
 use crate::owners::store::StoreWriter;
-use crate::owners::write::outbox::{NewOp, OnReject, Origin, Outbox};
+use crate::owners::write::outbox::{NewOp, Origin, Outbox};
 use crate::owners::write::transfer::{self as t, RoundState, Source, StoreKind, StoredTransfer, Steps, TransferAnswer, TransferEffect as Run, TransferInput, TransferPeers, TransferStage, TransferState, TransferTick, Transfers};
 use crate::runtime::{Address, Cause, DetScheduler, EpochStamp, Time};
 use crate::transport::NetworkPurpose;
@@ -41,21 +43,14 @@ enum TransferEffect {
     Drained,
 }
 
-thread_local! {
-    /// The last `Upload` row seen per key: (confirmed parts, failed).
-    static LAST_UPLOAD: std::cell::RefCell<std::collections::BTreeMap<String, (u64, bool)>> = std::cell::RefCell::new(std::collections::BTreeMap::new());
-}
-
-/// The kind of an `Upload` batch from the row it holds: the row has no kind, the kind follows from how it differs from the previous row of the key.
-fn upload_kind(key: &str, input: &str) -> StoreKind {
-    let confirmed = number_after(input, "confirmed_parts: ").unwrap_or(0);
-    let failed = input.contains("failed: Some(");
-    let previous = LAST_UPLOAD.with(|last| last.borrow_mut().insert(key.to_string(), (confirmed, failed)));
-    if failed { StoreKind::Failed }
-    else if input.contains("completed: true") { StoreKind::Completed }
-    else if previous.is_none() { StoreKind::SyncUpload }
-    else if previous.is_some_and(|(_, was_failed)| was_failed) { StoreKind::Retrying }
-    else { StoreKind::ConfirmedParts }
+/// The kind of an `Upload` batch: the op names it.
+fn upload_kind(input: &str) -> StoreKind {
+    let kind = input.rsplit("kind: ").next().unwrap_or_default();
+    [("SyncUpload", StoreKind::SyncUpload), ("ConfirmedParts", StoreKind::ConfirmedParts), ("Completed", StoreKind::Completed), ("Failed", StoreKind::Failed), ("Retrying", StoreKind::Retrying)]
+        .into_iter()
+        .find(|(name, _)| kind.starts_with(name))
+        .map(|(_, kind)| kind)
+        .unwrap_or_else(|| panic!("an Upload without a kind: {input}"))
 }
 
 fn lower(emitted: Emitted<Run>) -> Option<TransferEffect> {
@@ -75,7 +70,7 @@ fn lower(emitted: Emitted<Run>) -> Option<TransferEffect> {
         Emitted::Run(Run::Drained(_)) => TransferEffect::Drained,
         Emitted::Send { to: STORE_AT, input } => {
             let key = text_after(&input, "key: ")?;
-            let kind = if input.contains("RemoveUpload {") { StoreKind::Removed } else { upload_kind(&key, &input) };
+            let kind = if input.contains("RemoveUpload {") { StoreKind::Removed } else { upload_kind(&input) };
             TransferEffect::Store { key, kind }
         }
         Emitted::Send { to: OUTBOX_AT, input } if input.starts_with("Submit") => TransferEffect::SubmitMutation { key: text_after(&input, "origin: Transfer(")? },
@@ -92,7 +87,6 @@ fn state_of(det: &DetScheduler) -> Result<&TransferState, String> { det.state(Ad
 
 /// The owner with its two peers: the Store and Outbox keep what they receive.
 fn world(seed: u64, slots: u32) -> (DetScheduler, Log<Emitted<Run>>) {
-    LAST_UPLOAD.with(|last| last.borrow_mut().clear());
     let mut det = DetScheduler::new(seed);
     let store = det.add::<Sink<StoreWriter>>("store", new_log(), Silent).index();
     let outbox = det.add::<Sink<Outbox>>("outbox", new_log(), Silent).index();
@@ -105,7 +99,7 @@ fn world(seed: u64, slots: u32) -> (DetScheduler, Log<Emitted<Run>>) {
 }
 
 fn mutation() -> NewOp {
-    NewOp { model: "Moment".into(), row_id: KEY.into(), action: "upload".into(), on_reject: OnReject::Keep, origin: Origin::Api, path: "/moments".into(), body: String::new(), effects: Default::default() }
+    NewOp { model: "Moment".into(), row_id: KEY.into(), action: "upload".into(), on_failure: OnFailure::Keep, origin: Origin::Api, path: "/moments".into(), body: String::new(), effects: Default::default() }
 }
 
 fn steps() -> Steps { Steps { path: "/upload".into(), body: String::new() } }
@@ -187,6 +181,8 @@ fn stored(key: &str, ctx: &Ctx, failed: bool, completed: bool, confirmed: u32) -
         file_present: true,
         created_at: Time(0),
         place: Location::Directory,
+        size: 1,
+        sha256: "h".into(),
         mutation: mutation(),
         steps: steps(),
     }
@@ -947,5 +943,20 @@ fn xfer_prop_batch_all_or_none() {
         if in_flight {
             assert_eq!(replies_of(&effects, 7), [TransferAnswer::Err(Fault::InFlight)]);
         }
+    }
+}
+
+/// The rule of the table for the answer of Store (`transfer.md`, rules of the table): `Rejected(NoSession)` ends the transfer, `Rejected(Storage)` leaves it failed with the error shown and writes nothing again.
+#[test]
+fn xfer_store_rejected() {
+    for (reason, want_stage, shows_error) in [(RejectReason::NoSession, St::Done, false), (RejectReason::Storage("disk".into()), St::Failed, true)] {
+        let mut twin = Twin::new();
+        twin.accept(KEY, false);
+        let effects = twin.post(TransferInput::CopyDone { key: KEY.into(), size: 1, sha256: "h".into(), place: Location::Directory });
+        assert!(effects.iter().any(|effect| matches!(effect, TransferEffect::Store { kind: StoreKind::SyncUpload, .. })), "{effects:?}");
+        let effects = twin.post(TransferInput::Rejected(Rejected { batch: 1, reason: reason.clone() }));
+        assert_eq!(twin.stage(KEY), want_stage, "{reason:?}");
+        assert_eq!(effects.iter().any(|effect| matches!(effect, TransferEffect::Shows { shown: t::Shown::Failed { error }, .. } if error == "disk")), shows_error, "{effects:?}");
+        assert!(effects.iter().all(|effect| !matches!(effect, TransferEffect::Store { .. })), "a refused write is not written again: {effects:?}");
     }
 }

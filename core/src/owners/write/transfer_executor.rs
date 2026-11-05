@@ -14,7 +14,7 @@ use super::transfer::{file_id, Key, RoundId, Shown, Source, TransferAnswer, Tran
 use super::wire::{Flights, Running, Wire};
 use crate::files::{CopiedSource, FileDirectories};
 use crate::lifecycle::Admitted;
-use crate::owners::contract::ReplyId;
+use crate::owners::contract::{Drained, ReplyId};
 use crate::runtime::{Back, EffectRunner, Epoch, EpochStamp};
 use crate::transport::{CancelToken, GraphQLRequest, NetworkPurpose, PutRequest, PutResponse, Response, RetryClass, Transport, TransportError};
 
@@ -61,6 +61,15 @@ pub(crate) trait StepCodec: Send + Sync + 'static {
     async fn discard_upload(&self, link: &Link, key: &str, upload_id: Option<&str>) -> Result<(), TransportError>;
 }
 
+/// What Life needs to install Transfer: the codec of the steps, the platform job of the round and the sink of `uploads[action]`.
+pub(crate) struct TransferPort {
+    pub codec: Arc<dyn StepCodec>,
+    pub jobs: Arc<dyn RoundJobs>,
+    pub shows: Arc<dyn Fn(&str, Shown) + Send + Sync>,
+    /// `FileSlots`: transfers in Uploading and Completing at the same time.
+    pub slots: u32,
+}
+
 /// The platform side of the round (the background job of Android).
 pub trait RoundJobs: Send + Sync + 'static {
     fn schedule_job(&self, epoch: Epoch);
@@ -76,6 +85,8 @@ pub(crate) struct TransferExecutor {
     jobs: Arc<dyn RoundJobs>,
     settle: Arc<dyn Fn(ReplyId, TransferAnswer) + Send + Sync>,
     shows: Arc<dyn Fn(&str, Shown) + Send + Sync>,
+    /// `Drained` goes to Lifecycle.
+    drained: Arc<dyn Fn(Drained) + Send + Sync>,
     copies: Flights<Key>,
     steps: Flights<Key>,
 }
@@ -88,8 +99,9 @@ impl TransferExecutor {
         jobs: Arc<dyn RoundJobs>,
         settle: Arc<dyn Fn(ReplyId, TransferAnswer) + Send + Sync>,
         shows: Arc<dyn Fn(&str, Shown) + Send + Sync>,
+        drained: Arc<dyn Fn(Drained) + Send + Sync>,
     ) -> Self {
-        Self { wire, codec, files, jobs, settle, shows, copies: Flights::default(), steps: Flights::default() }
+        Self { wire, codec, files, jobs, settle, shows, drained, copies: Flights::default(), steps: Flights::default() }
     }
 
     fn copy(&self, stamp: EpochStamp, back: &Back<Transfers>, key: Key, source: Source) {
@@ -218,7 +230,7 @@ impl EffectRunner<Transfers> for TransferExecutor {
             TransferEffect::Refused { key } => (self.shows)(&key, Shown::Failed { error: "refused".into() }),
             TransferEffect::ScheduleJob { epoch } => self.jobs.schedule_job(epoch),
             TransferEffect::EndJob { round_id } => self.jobs.end_job(round_id),
-            TransferEffect::Drained(_) => {}
+            TransferEffect::Drained(drained) => (self.drained)(drained),
         }
     }
 }

@@ -28,6 +28,7 @@ fn ports(db: Db, transport: Arc<MockTransport>) -> Ports {
         operations: Arc::new(|name| (name == "Op").then(|| ("query Op { feed }".to_string(), "feed".to_string()))),
         credentials: None,
         session: None,
+        transfer: None,
     }
 }
 

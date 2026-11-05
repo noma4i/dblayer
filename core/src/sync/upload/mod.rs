@@ -4,7 +4,6 @@ mod run;
 #[cfg(test)]
 mod run_tests;
 mod steps;
-pub(crate) use steps::transfer_abort_settled;
 mod blob;
 #[cfg(test)]
 mod blob_tests;
@@ -135,20 +134,6 @@ struct FileTask {
 impl Drop for FileTask {
     fn drop(&mut self) {
         crate::db::lock::effect(|| self.pending.send_modify(|pending| *pending -= 1));
-    }
-}
-
-pub(crate) struct UploadResume {
-    inner: Arc<Inner>,
-    admitted: crate::ffi::legacy::Admitted,
-    seq: i64,
-    position: i64,
-    run: u64,
-}
-
-impl Drop for UploadResume {
-    fn drop(&mut self) {
-        self.inner.finish_run(&self.admitted, self.seq, self.position, self.run);
     }
 }
 
@@ -480,62 +465,6 @@ impl Inner {
         }
     }
 
-    pub(crate) async fn claim_upload_resume(self: &Arc<Self>, admitted: &crate::ffi::legacy::Admitted, owner: &crate::transport::RequestOwner) -> Result<Option<UploadResume>, SyncError> {
-        loop {
-            use rusqlite::OptionalExtension;
-            let location: Option<(i64, i64)> = self.db.shared.read(&[], |reader| {
-                let connection = reader.connection();
-                Ok(match owner {
-                    crate::transport::RequestOwner::Transfer { operation_id, item_id, .. } => connection.query_row("SELECT seq, position FROM op_item WHERE client_key = ?1 AND transfer_operation_id = ?2", rusqlite::params![item_id, operation_id], |row| Ok((row.get(0)?, row.get(1)?))).optional()?,
-                    crate::transport::RequestOwner::Operation { seq } => connection.query_row("SELECT seq, position FROM op_item WHERE seq = ?1 AND stage = 'mutation' ORDER BY position LIMIT 1", [seq], |row| Ok((row.get(0)?, row.get(1)?))).optional()?,
-                    crate::transport::RequestOwner::Unmatched { .. } => None,
-                })
-            })?;
-            let Some((seq, position)) = location else { return Ok(None) };
-            let Some(state) = self.operation_uploads(seq)?.remove(&(seq, position)) else { return Ok(None) };
-            if let crate::transport::RequestOwner::Transfer { step, .. } = owner {
-                if state.stage != *step { return Ok(None); }
-            }
-            if let Some((run, _)) = self.register(seq, position) {
-                return Ok(Some(UploadResume { inner: self.clone(), admitted: admitted.clone(), seq, position, run }));
-            }
-            let waiting = locked(&self.uploads).active.get(&(seq, position)).map(|active| active.done.subscribe());
-            if let Some(mut done) = waiting {
-                let _ = done.wait_for(|finished| *finished).await;
-            }
-        }
-    }
-
-    pub(crate) async fn resume_upload(self: &Arc<Self>, owner: UploadResume, result: Result<crate::transport::Response, crate::transport::TransportError>) {
-        let seq = owner.seq;
-        let state = match self.operation_uploads(seq) {
-            Ok(mut items) => items.remove(&(seq, owner.position)),
-            Err(error) => { self.fail_upload(&owner.admitted, seq, error); return; }
-        };
-        let Some(state) = state else { return };
-        let mode = state.resume_mode();
-        let resumed = {
-            let life = &self.db.shared.store.lifecycle;
-            let _line = life.commit_line();
-            let mut effects = Effects::default();
-            let mut runs = locked(&self.uploads);
-            let resumed = if runs.active.get(&(seq, owner.position)).is_none_or(|active| active.run != owner.run) {
-                false
-            } else {
-            if let Some(active) = runs.active.remove(&(seq, owner.position)) { effects.push(move || { crate::db::lock::effect(|| active.done.send_replace(true)); }); }
-            if !owner.admitted.is_current() {
-                false
-            } else {
-                runs.ready.insert((seq, owner.position), ReadyRun { mode, resumed: Some(result) });
-                true
-            }
-            };
-            self.upload_effects.push(effects);
-            resumed
-        };
-        self.upload_effects.run();
-        if resumed { self.drain_uploads(); }
-    }
 }
 
 impl Sync {
@@ -717,8 +646,6 @@ impl UploadRuns {
 mod upload_tests;
 #[cfg(test)]
 mod generation_tests;
-#[cfg(test)]
-mod resume_tests;
 #[cfg(test)]
 mod steps_tests;
 #[cfg(test)]

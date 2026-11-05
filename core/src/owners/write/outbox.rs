@@ -8,6 +8,7 @@ use crate::owners::contract::{BatchAuthor, BatchId, Committed, Drained, EpochEnd
 use crate::owners::session::{SessionCalls, SessionInput, OUTBOX_AUTHOR};
 use crate::owners::store::{IntentEffects, RowValue, StoreBatch, StoreInput, StoreOp, StoreWriter};
 use crate::pacing::RetryPolicy;
+use crate::schema::OnFailure;
 use crate::runtime::{Address, Cause, Effect, Effects, Epoch, Outbound, ScheduleId, StateOwner, Time};
 
 /// `purpose` of a `Mutate`: a call of the queue, and the final mutation of a transfer.
@@ -27,12 +28,6 @@ pub struct OutboxPeers {
 
 pub type OpId = u64;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum OnReject {
-    Rollback,
-    Keep,
-}
-
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Origin {
     Api,
@@ -45,7 +40,7 @@ pub struct NewOp {
     pub model: String,
     pub row_id: String,
     pub action: String,
-    pub on_reject: OnReject,
+    pub on_failure: OnFailure,
     pub origin: Origin,
     /// The request of the mutation.
     pub path: String,
@@ -144,7 +139,6 @@ pub enum CommitKind {
 /// What the executor does. Store batches, `Mutate`, `MutationOutcome` and timers are `Effect::Send` and `Effect::Schedule` of the owner.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum OutboxEffect {
-    CancelRequest { op_id: OpId },
     Reply { reply: ReplyId, answer: OutboxAnswer },
     Drained(Drained),
 }
@@ -356,16 +350,21 @@ impl OutboxState {
         self.emit_send(op_id, fx);
     }
 
-    /// `Failed` -> start a new rollback with the `Discarded` reason, or fail the operation in `keep` mode.
+    /// The operation stays in the base with the error on its row and waits for `retry` or `discard`.
+    fn fail(&mut self, op_id: OpId, fx: &mut Effects<Outbox>) {
+        if let Some(operation) = self.ops.get_mut(&op_id) {
+            operation.stage = Stage::Failed;
+        }
+        self.store(op_id, CommitKind::ErrorMark, fx);
+        let failed = OutboxOutcome::Failed { error: "refused".into() };
+        self.give_outcome(op_id, &failed, fx);
+    }
+
+    /// A permanent refusal of the server: `on_failure` of the action decides.
     fn reject_or_keep(&mut self, op_id: OpId, fx: &mut Effects<Outbox>) {
-        let keep = self.ops.get(&op_id).is_some_and(|operation| operation.op.on_reject == OnReject::Keep);
+        let keep = self.ops.get(&op_id).is_some_and(|operation| operation.op.on_failure == OnFailure::Keep);
         if keep {
-            if let Some(operation) = self.ops.get_mut(&op_id) {
-                operation.stage = Stage::Failed;
-            }
-            self.store(op_id, CommitKind::ErrorMark, fx);
-            let failed = OutboxOutcome::Failed { error: "refused".into() };
-            self.give_outcome(op_id, &failed, fx);
+            self.fail(op_id, fx);
         } else {
             if let Some(operation) = self.ops.get_mut(&op_id) {
                 operation.stage = Stage::RollingBack(Why::Rejected);
@@ -385,7 +384,8 @@ impl OutboxState {
             let Some(stage) = self.stage_of(op_id) else { continue };
             let cancels = if closing { matches!(stage, Stage::Submitting | Stage::Sending | Stage::Landing | Stage::RollingBack(_)) } else { stage == Stage::Sending };
             if cancels {
-                fx.push(Effect::Run(OutboxEffect::CancelRequest { op_id }));
+                let req_id = self.ops[&op_id].request_id;
+                fx.push(Effect::Send(Outbound::new(self.peers.session, SessionInput::Cancel { req_id })));
             }
             if let Some(reply) = self.submit_replies.remove(&op_id) {
                 Self::reply(fx, reply, OutboxAnswer::Err(Fault::Interrupted));
@@ -458,6 +458,11 @@ impl OutboxState {
     fn rejected(&mut self, rejected: Rejected, fx: &mut Effects<Outbox>) {
         let Some(batch) = self.batches.remove(&rejected.batch) else { return };
         let stale = matches!(rejected.reason, RejectReason::StaleGeneration { .. });
+        if let RejectReason::StaleGeneration { models, generation } = &rejected.reason {
+            for model in models {
+                self.generation.insert(model.clone(), *generation);
+            }
+        }
         let storage = matches!(rejected.reason, RejectReason::Storage(_));
         match batch {
             Batch::Write { reply, row, values, model, expire } => {
@@ -522,7 +527,7 @@ impl OutboxState {
             self.ops.get_mut(&op_id).map(|operation| operation.attempts += 1);
             Self::retry_timer(op_id, attempts + 1, fx);
         } else {
-            self.reject_or_keep(op_id, fx);
+            self.fail(op_id, fx);
         }
     }
 

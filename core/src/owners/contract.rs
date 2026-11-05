@@ -59,7 +59,8 @@ pub struct Committed {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum RejectReason {
     NoSession,
-    StaleGeneration { models: Vec<String> },
+    /// `generation` is the current one of the stale models: the author sends the batch again with it.
+    StaleGeneration { models: Vec<String>, generation: u64 },
     Storage(String),
     Closed,
 }

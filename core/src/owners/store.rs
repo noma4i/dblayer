@@ -48,7 +48,17 @@ pub struct RowValue {
     pub values: String,
 }
 
-/// The columns of a row of `sync_upload`.
+/// Why the batch writes the row of `sync_upload` (`transfer.md`, effects of the table).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum UploadKind {
+    SyncUpload,
+    ConfirmedParts,
+    Completed,
+    Failed,
+    Retrying,
+}
+
+/// The columns of a row of `sync_upload`: the whole value of a transfer.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct UploadRow {
     pub key: String,
@@ -67,6 +77,10 @@ pub struct UploadRow {
     /// The final mutation: `path` and `body` of the request.
     pub path: String,
     pub body: String,
+    pub on_failure: crate::schema::OnFailure,
+    /// The request the steps of the file are built from.
+    pub steps_path: String,
+    pub steps_body: String,
 }
 
 /// One write of a batch, by value (R3). The writer executor turns it into SQL (`store.md`, the batch).
@@ -84,14 +98,14 @@ pub enum StoreOp {
     RollBack { op_id: u64 },
     /// The operation leaves the queue (its answer landed or it ended).
     RemoveIntent { op_id: u64 },
-    /// Set or clear the error shown on the row of the operation (`on_reject: keep`).
+    /// Set or clear the error shown on the row of the operation (`on_failure: keep`).
     MarkError { op_id: u64, error: Option<String> },
     /// Rows of the server answer of `model`.
     Rows { model: String, rows: Vec<RowValue> },
     /// Rows of a local model (`set_local`, `set_ephemeral`, `attach`, `detach`).
     LocalRows { model: String, rows: Vec<RowValue> },
     RemoveRows { model: String, ids: Vec<String> },
-    Upload { row: UploadRow },
+    Upload { row: UploadRow, kind: UploadKind },
     RemoveUpload { key: String },
 }
 
@@ -250,7 +264,8 @@ impl StoreState {
             StoreInput::Commit(batch) if batch.epoch != self.epoch => fx.push(StoreEffect::Reply { author: batch.author, batch: batch.id, reply: StoreReply::Rejected(RejectReason::NoSession) }),
             StoreInput::Commit(batch) if !self.stale_models(&batch).is_empty() => {
                 let models = self.stale_models(&batch);
-                fx.push(StoreEffect::Reply { author: batch.author, batch: batch.id, reply: StoreReply::Rejected(RejectReason::StaleGeneration { models }) });
+                let generation = models.iter().map(|model| self.generation(model)).max().unwrap_or(self.base_generation);
+                fx.push(StoreEffect::Reply { author: batch.author, batch: batch.id, reply: StoreReply::Rejected(RejectReason::StaleGeneration { models, generation }) });
             }
             StoreInput::Commit(batch) => {
                 self.writing.insert((batch.author, batch.id), batch.clone());

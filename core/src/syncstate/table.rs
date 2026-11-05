@@ -167,7 +167,7 @@ fn write(connection: &Connection, key: &SyncKey, info: &SyncInfo) -> rusqlite::R
         let mut cells: Vec<SqlValue> = vec![key.0.clone().into(), key.1.clone().into(), action.clone().into()];
         cells.extend(info_cells(Some(upload))?);
         let marks = vec!["?"; cells.len()].join(", ");
-        connection.prepare_cached(&format!("INSERT INTO sync_upload (model, row_id, action, {INFO_COLUMNS}) VALUES ({marks})"))?.execute(params_from_iter(cells))?;
+        connection.prepare_cached(&format!("INSERT OR IGNORE INTO sync_upload (model, row_id, action, {INFO_COLUMNS}) VALUES ({marks})"))?.execute(params_from_iter(cells))?;
     }
     for (table, names) in [("sync_action", &info.actions), ("sync_field", &info.dirty_fields)] {
         let mut insert = connection.prepare_cached(&format!("INSERT INTO {table} (model, row_id, pos, name) VALUES (?1, ?2, ?3, ?4)"))?;
@@ -179,9 +179,10 @@ fn write(connection: &Connection, key: &SyncKey, info: &SyncInfo) -> rusqlite::R
 }
 
 fn remove(connection: &Connection, key: &SyncKey) -> rusqlite::Result<()> {
-    for table in ["sync_action", "sync_field", "sync_upload", "sync_upload_error", "row_sync", "sync_row_error"] {
+    for table in ["sync_action", "sync_field", "sync_upload_error", "row_sync", "sync_row_error"] {
         connection.prepare_cached(&format!("DELETE FROM {table} WHERE model = ?1 AND row_id = ?2"))?.execute(params![key.0, key.1])?;
     }
+    connection.prepare_cached("DELETE FROM sync_upload WHERE model = ?1 AND row_id = ?2 AND seq IS NULL")?.execute(params![key.0, key.1])?;
     Ok(())
 }
 

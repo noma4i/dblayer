@@ -17,6 +17,7 @@ use crate::owners::network::{Network, NetworkEffect, NetworkInput};
 use crate::owners::session::SessionInput;
 use crate::owners::store::{StoreEffect, StoreInput, StoreOp, StoreWriter};
 use crate::owners::write::outbox::OutboxInput;
+use crate::owners::write::transfer::TransferInput;
 use crate::runtime::{Back, EffectRunner, EpochStamp, OutcomeId};
 use crate::transport::{GraphQLRequest, ResponseOutcome, TransportError};
 
@@ -24,6 +25,7 @@ pub(super) struct LifecycleRunner {
     pub wiring: Arc<Wiring>,
     pub leases: Arc<crate::ffi::legacy::Leases>,
     pub absent: Vec<Peer>,
+    pub db: Db,
     /// The published value and the answers of one step wait for `step_done`: a caller that sees a new epoch finds every owner already in it.
     pub held_published: Option<crate::owners::contract::Published>,
     pub held_replies: Vec<(u64, Result<(), crate::owners::lifecycle::LifecycleError>)>,
@@ -42,7 +44,22 @@ impl EffectRunner<Lifecycle> for LifecycleRunner {
                 wiring.set_ending(false);
                 wiring.handle.start_epoch(epoch);
                 wiring.to_network(NetworkInput::EpochStarted);
-                wiring.to_outbox(OutboxInput::EpochStarted(crate::owners::contract::EpochStarted { epoch, identity: identity.map(|identity| identity.into()), generation }));
+                let signed_in = identity.is_some();
+                let started = crate::owners::contract::EpochStarted { epoch, identity: identity.map(|identity| identity.into()), generation };
+                wiring.to_outbox(OutboxInput::EpochStarted(started.clone()));
+                wiring.to_transfer(TransferInput::EpochStarted(started));
+                if signed_in {
+                    match self.db.read_intents() {
+                        Ok(stored) => wiring.to_outbox(OutboxInput::Restored(stored)),
+                        Err(error) => wiring.fault(format!("the intents of the queue are unreadable: {error}")),
+                    }
+                    if wiring.has_transfer() {
+                        match self.db.read_transfers() {
+                            Ok(stored) => wiring.to_transfer(TransferInput::Restored(stored)),
+                            Err(error) => wiring.fault(format!("the transfers are unreadable: {error}")),
+                        }
+                    }
+                }
             }
             LifecycleEffect::EpochEnded { epoch, cause } => {
                 self.leases.epoch_ended(cause);
@@ -163,12 +180,14 @@ impl EffectRunner<Network> for NetworkRunner {
             NetworkEffect::Broadcast(online) => {
                 self.db.connectivity().change(online);
                 wiring.to_outbox(OutboxInput::Online(Online(online)));
+                wiring.to_transfer(TransferInput::Online(Online(online)));
                 wiring.to_session(SessionInput::Online(Online(online)));
                 wiring.to_calls(CallsInput::Online(Online(online)));
             }
             NetworkEffect::EpochOnline(online) => {
                 wiring.to_calls(CallsInput::Online(Online(online)));
                 wiring.to_outbox(OutboxInput::Online(Online(online)));
+                wiring.to_transfer(TransferInput::Online(Online(online)));
                 wiring.to_session(SessionInput::Online(Online(online)));
             }
             NetworkEffect::Drained(drained) => wiring.to_lifecycle(LifecycleInput::Drained(drained)),

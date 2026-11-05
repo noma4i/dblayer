@@ -137,7 +137,7 @@ impl Twin {
             Input::Rejected(reason) => {
                 let batch = self.batch();
                 let reason = match reason {
-                    Reject::StaleGeneration(models) => RejectReason::StaleGeneration { models: models.clone() },
+                    Reject::StaleGeneration(models) => RejectReason::StaleGeneration { models: models.clone(), generation: 0 },
                     Reject::Storage => RejectReason::Storage("disk".into()),
                     Reject::NoSession => RejectReason::NoSession,
                 };

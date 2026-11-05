@@ -682,53 +682,6 @@ impl Inner {
         Ok(request)
     }
 
-    pub(crate) async fn settle_resumed(self: &std::sync::Arc<Self>, admitted: &crate::ffi::legacy::Admitted, effects: std::sync::Arc<DeliveryEffects>, upload: Option<super::super::upload::UploadResume>, request_owner: crate::transport::RequestOwner, result: Result<Response, TransportError>) -> Result<(), SyncError> {
-        let seq = match &request_owner {
-            crate::transport::RequestOwner::Operation { seq } => *seq,
-            crate::transport::RequestOwner::Transfer { operation_id, item_id, step } => {
-                use rusqlite::OptionalExtension;
-                let location: Option<i64> = self.db.shared.read(&[], |reader| Ok(reader.connection().query_row("SELECT seq FROM op_item WHERE client_key = ?1 AND transfer_operation_id = ?2", rusqlite::params![item_id, operation_id], |row| row.get(0)).optional()?))?;
-                match location {
-                    Some(seq) => seq,
-                    None if *step == crate::upload::UploadStage::Abort => {
-                        let name = self.db.shared.store.transfer_abort_name(*operation_id, item_id)?;
-                        let settled = match (name, result) {
-                            (Some(name), Ok(response)) => {
-                                let operation = locked(&self.operations).get(&name).cloned().ok_or_else(|| SyncError::Malformed(format!("operation {name} is not registered")))?;
-                                super::super::upload::transfer_abort_settled(&name, &operation, response)
-                            }
-                            _ => false,
-                        };
-                        if settled {
-                            let authority = admitted.authority();
-                            self.db.shared.store.settle_transfer_abort_identity(&authority, *operation_id, item_id)?;
-                        }
-                        return Ok(());
-                    }
-                    None => return Err(SyncError::Store("the resumed transfer no longer has an item".into())),
-                }
-            }
-            crate::transport::RequestOwner::Unmatched { operation_id } => {
-                return Err(SyncError::Store(format!("transfer {operation_id} has no file; select the file again")));
-            }
-        };
-        let settled = crate::blocking::blocking_unit(|| -> Result<_, SyncError> {
-            let Some(owner) = self.db.shared.read(&[], |reader| Ok(OutboxOperation::read(reader, seq)?))? else { return Ok(None) };
-            if matches!(owner.operation.status, OperationStatus::Failed | OperationStatus::DeliveryUnknown) && owner.operation.upload.as_ref().is_none_or(|state| state.stage != crate::upload::UploadStage::Abort) {
-                self.db.retry_operations(admitted, vec![owner.clone()])?;
-            }
-            Ok(self.db.shared.read(&[], |reader| Ok(OutboxOperation::read(reader, owner.operation.id.0)?))?)
-        })?;
-        let Some(entry) = settled else { return Ok(()) };
-        if let Some(upload) = upload {
-            self.resume_upload(upload, result).await;
-            return Ok(());
-        }
-        if matches!(request_owner, crate::transport::RequestOwner::Transfer { .. }) { return Err(SyncError::Store("the resumed transfer is not available".into())); }
-        self.send(admitted, &entry, Some(result), None, effects, None).await?;
-        Ok(())
-    }
-
     async fn settle_delivery(&self, sending: &Sending<'_>, operation: &OperationDef, delivery: Delivery, keep: bool) -> Result<SendResult, SyncError> {
         let unsettled = match &delivery {
             Delivery::Response(_) => OperationFailure::new(FailureKind::Unrecognized, "the answer arrived after the database was reset"),

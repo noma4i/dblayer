@@ -20,6 +20,8 @@ use super::lifecycle::{Lifecycle, LifecycleError, LifecycleInput, LifecycleState
 use super::network::{Network, NetworkInput, NetworkState};
 use super::write::outbox::{Outbox, OutboxAnswer, OutboxInput, OutboxPeers, OutboxState};
 use super::write::outbox_executor::OutboxExecutor;
+use super::write::transfer::{TransferAnswer, TransferInput, TransferPeers, TransferState, Transfers};
+use super::write::transfer_executor::{TransferExecutor, TransferPort};
 use super::store::{BootFound, StoreInput, StoreReply, StoreState, StoreWriter};
 use crate::db::Db;
 use crate::runtime::{Address, Epoch, EpochStamp, Handle, Outcomes, Runtime, RuntimeBuilder, Waiter};
@@ -33,6 +35,7 @@ pub enum LifeReply {
     Session(SessionAnswer),
     Mutated(AuthorOutcome),
     Outbox(OutboxAnswer),
+    Transfer(TransferAnswer),
     Closed,
 }
 
@@ -51,6 +54,8 @@ pub struct Ports {
     pub credentials: Option<Arc<dyn crate::transport::CredentialSlot>>,
     /// The encrypted client: Session installs only with it and `credentials`. It does the encoding and the HTTP exchange, Session decides.
     pub session: Option<Arc<crate::transport::EncryptedClient>>,
+    /// Transfer installs only with the session and this port.
+    pub(crate) transfer: Option<TransferPort>,
 }
 
 #[derive(Clone, Copy)]
@@ -62,6 +67,7 @@ pub(crate) struct Addresses {
     pub session: Option<Address<SessionCalls>>,
     /// Installed with the session: an operation needs the sequence of the session.
     pub outbox: Option<Address<Outbox>>,
+    pub transfer: Option<Address<Transfers>>,
 }
 
 #[derive(Default)]
@@ -166,6 +172,8 @@ impl Wiring {
 
     pub fn set_ending(&self, ending: bool) { self.ending.store(ending, Ordering::SeqCst); }
 
+    pub fn has_transfer(&self) -> bool { self.addresses().is_some_and(|addresses| addresses.transfer.is_some()) }
+
     pub fn fault(&self, what: String) { self.faults.lock().unwrap_or_else(PoisonError::into_inner).push(what); }
 
     pub fn open_failed(&self, error: String) {
@@ -203,6 +211,13 @@ impl Wiring {
             });
             return;
         }
+        if author == BatchAuthor::Transfer {
+            self.to_transfer(match reply {
+                StoreReply::Committed { revision } => TransferInput::Committed(Committed { batch, revision: i64::try_from(revision).unwrap_or(i64::MAX), tables: Vec::new(), models: Vec::new() }),
+                StoreReply::Rejected(reason) => TransferInput::Rejected(Rejected { batch, reason }),
+            });
+            return;
+        }
         if author == BatchAuthor::Outbox {
             self.to_outbox(match reply {
                 StoreReply::Committed { revision } => OutboxInput::Committed(Committed { batch, revision: i64::try_from(revision).unwrap_or(i64::MAX), tables: Vec::new(), models: Vec::new() }),
@@ -234,6 +249,10 @@ impl Wiring {
         }
     }
 
+    pub fn to_transfer(&self, input: TransferInput) {
+        if let Some(Addresses { transfer: Some(transfer), .. }) = self.addresses() { self.handle.post(transfer, EpochStamp::Control, input); }
+    }
+
     pub fn to_outbox(&self, input: OutboxInput) {
         if let Some(Addresses { outbox: Some(outbox), .. }) = self.addresses() { self.handle.post(outbox, EpochStamp::Control, input); }
     }
@@ -257,11 +276,14 @@ pub struct Life {
 }
 
 /// Peers of `all owners` without an installed owner answer `Drained` at `Closing`.
-fn absent(session: bool) -> Vec<Peer> {
-    let mut peers: Vec<Peer> = super::read::ABSENT.into_iter().chain(super::write::ABSENT).collect();
+fn absent(session: bool, transfer: bool) -> Vec<Peer> {
+    let mut peers: Vec<Peer> = super::read::ABSENT.into_iter().collect();
     if !session {
         peers.push(Peer::Session);
         peers.push(Peer::Outbox);
+    }
+    if !transfer {
+        peers.push(Peer::Transfer);
     }
     peers
 }
@@ -274,7 +296,7 @@ impl Life {
         let restored = session.as_ref().map(|(client, _)| session_runner::SessionRunner::stored(client)).transpose().map_err(|error| LifeError::Storage(error.to_string()))?;
         let mut builder = RuntimeBuilder::new();
         let wiring = Arc::new(Wiring::new(builder.handle()));
-        let lifecycle = builder.add::<Lifecycle>("lifecycle", LifecycleState::new(), runners::LifecycleRunner { wiring: wiring.clone(), leases: ports.db.shared.store.lifecycle.clone(), absent: absent(session.is_some()), held_published: None, held_replies: Vec::new() });
+        let lifecycle = builder.add::<Lifecycle>("lifecycle", LifecycleState::new(), runners::LifecycleRunner { wiring: wiring.clone(), leases: ports.db.shared.store.lifecycle.clone(), absent: absent(session.is_some(), session.is_some() && ports.transfer.is_some()), db: ports.db.clone(), held_published: None, held_replies: Vec::new() });
         let store = builder.add::<StoreWriter>("store", StoreState::new(), runners::StoreRunner { wiring: wiring.clone(), db: ports.db.clone(), credentials: ports.credentials.clone(), client: ports.session.clone() });
         let network = builder.add::<Network>("network", NetworkState::new(), runners::NetworkRunner { wiring: wiring.clone(), db: ports.db.clone(), held_replies: Vec::new() });
         let calls = builder.add::<Calls>("calls", CallsState::new(0, false, &[]), runners::CallsRunner::new(wiring.clone(), &ports));
@@ -283,8 +305,9 @@ impl Life {
             let address = builder.add::<SessionCalls>("session", state, session_runner::SessionRunner::new(wiring.clone(), client.clone(), credentials.clone(), ports.executor.clone(), &restored));
             (address, restored)
         });
+        let transfer_at = session_address.as_ref().zip(ports.transfer.as_ref()).map(|((session, _), _)| Address::<Transfers>::new(session.index() + 2));
         let outbox = session_address.as_ref().map(|(session, _)| {
-            let peers = OutboxPeers { store, session: *session, transfer: None };
+            let peers = OutboxPeers { store, session: *session, transfer: transfer_at };
             let (settle_wiring, drained_wiring) = (wiring.clone(), wiring.clone());
             let executor = OutboxExecutor {
                 settle: Arc::new(move |reply, answer| { settle_wiring.outcomes.settle(crate::runtime::OutcomeId::from_raw(reply), LifeReply::Outbox(answer)); }),
@@ -292,7 +315,32 @@ impl Life {
             };
             builder.add::<Outbox>("outbox", OutboxState::new(0, peers), executor)
         });
-        let _ = wiring.addresses.set(Addresses { lifecycle, store, network, calls, session: session_address.as_ref().map(|(address, _)| *address), outbox });
+        let transfer = match (outbox, ports.transfer.as_ref(), ports.transport.as_ref()) {
+            (Some(outbox), Some(port), Some(transport)) => {
+                let (settle_wiring, drained_wiring, admit_db) = (wiring.clone(), wiring.clone(), ports.db.clone());
+                let wire = super::write::wire::Wire {
+                    transport: transport.clone(),
+                    admit: Arc::new(move || admit_db.admit().ok()),
+                    tasks: Arc::new(super::write::wire::TokioTasks(ports.executor.clone())),
+                };
+                let executor = TransferExecutor::new(
+                    wire,
+                    port.codec.clone(),
+                    ports.db.shared.files.clone(),
+                    port.jobs.clone(),
+                    Arc::new(move |reply, answer| { settle_wiring.outcomes.settle(crate::runtime::OutcomeId::from_raw(reply), LifeReply::Transfer(answer)); }),
+                    port.shows.clone(),
+                    Arc::new(move |drained| drained_wiring.to_lifecycle(LifecycleInput::Drained(drained))),
+                );
+                let address = builder.add::<Transfers>("transfer", TransferState::new(0, port.slots, TransferPeers { store, outbox }), executor);
+                if Some(address.index()) != transfer_at.map(|at| at.index()) {
+                    return Err(LifeError::Storage("the address of Transfer is not the one Outbox was given".into()));
+                }
+                Some(address)
+            }
+            _ => None,
+        };
+        let _ = wiring.addresses.set(Addresses { lifecycle, store, network, calls, session: session_address.as_ref().map(|(address, _)| *address), outbox, transfer });
         let runtime = builder.start().map_err(|error| LifeError::Storage(error.to_string()))?;
         if let Some((_, restored)) = session_address {
             wiring.to_session(SessionInput::Open { credential: restored.credential, pending: restored.pending });

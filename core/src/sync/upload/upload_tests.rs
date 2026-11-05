@@ -270,39 +270,6 @@ fn repeated_expired_grants_wait_before_renewal() { crate::test_wait::paused(asyn
     assert_eq!(observations, [(false, 1, 3, true, 2), (true, 1, 3, true, 2)]);
 }) }
 
-#[tokio::test]
-async fn wait_uploads_parks_while_resume_owns_the_upload() {
-    use std::future::Future;
-    use std::task::{Context, Poll, Wake, Waker};
-    struct Wakes(std::sync::atomic::AtomicUsize);
-    impl Wake for Wakes {
-        fn wake(self: Arc<Self>) { self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst); }
-    }
-    let rig = upload_rig(small());
-    let source = file(b"abcdef");
-    let (seq, _, _, _) = (rig.sync.inner.begin_upload(&rig.sync.inner.db.admit().unwrap(), rig.db.generation(), "moments", &rid("m1"), "upload", &input(&source), UploadState::queued())).unwrap();
-    let (operation_id, item_id) = rig.sync.inner.transfer_identity(seq, 0).unwrap();
-    let owner = crate::transport::RequestOwner::Transfer { operation_id, item_id, step: UploadStage::Prepare };
-    let resume = rig.sync.inner.claim_upload_resume(&rig.db.admit().unwrap(), &owner).await.unwrap().unwrap();
-    let wakes = Arc::new(Wakes(std::sync::atomic::AtomicUsize::new(0)));
-    let waker = Waker::from(wakes.clone());
-    let (send, receive) = std::sync::mpsc::channel();
-    let sync = rig.sync.clone();
-    let thread = std::thread::spawn(move || {
-        let mut waiting = Box::pin(sync.wait_uploads());
-        let first = waiting.as_mut().poll(&mut Context::from_waker(&waker));
-        send.send(matches!(first, Poll::Pending)).unwrap();
-    });
-    let parked = receive.recv_timeout(Duration::from_secs(1));
-    assert_eq!(wakes.0.load(std::sync::atomic::Ordering::SeqCst), 0);
-    let active = locked(&rig.sync.inner.uploads).active.remove(&(seq, 0)).unwrap();
-    active.done.send_replace(true);
-    join_within(thread);
-    rig.db.discard(&rig.db.admit().unwrap(), "moments", &rid("m1"), None).unwrap();
-    drop(resume);
-    assert_eq!(parked, Ok(true), "wait_uploads did not return Pending");
-}
-
 #[test]
 fn retryable_storage_refusal_retries_upload() { crate::test_wait::paused(async {
     for code in ["UPLOAD_STORAGE_FAILURE", "IN_PROGRESS", "RATE_LIMITED", "INVALID_RECEIPT", "INVALID_OPERATION", "SERVICE_UNAVAILABLE"] {

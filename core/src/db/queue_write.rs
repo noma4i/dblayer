@@ -6,7 +6,12 @@ use serde_json::{Map, Value};
 use crate::commit::{CommitEnvelope, DestroyReason, EntityOp, OperationRecord, OperationTransition, ScopeOp, ScopeRef, WriteOrigin};
 use crate::identity::{ListKey, ModelKey, RowId};
 use crate::operation::{Operation, OperationStatus};
-use crate::owners::store::{EffectRow, IntentEffects, RowValue, StoreOp, UploadRow};
+use crate::files::Location;
+use crate::owners::store::{EffectRow, IntentEffects, RowValue, StoreOp, UploadKind, UploadRow};
+use crate::owners::write::outbox::{NewOp, Origin};
+use crate::owners::write::transfer::{Source, Steps, StoredTransfer};
+use crate::runtime::Time;
+use crate::schema::OnFailure;
 
 use super::error::DbError;
 use super::local_write::plan_fault;
@@ -59,7 +64,7 @@ impl Db {
                         None => OperationTransition::Retry { seq },
                     });
                 }
-                StoreOp::Upload { row } => self.write_upload_row(admitted, row)?,
+                StoreOp::Upload { row, kind } => self.write_upload_row(admitted, row, *kind)?,
                 StoreOp::RemoveUpload { key } => self.remove_upload_row(admitted, key)?,
                 StoreOp::Intent { op_id, model, row_id: id, action, payload, effects } => return self.write_intent(admitted, *op_id, (model, id, action), payload, effects),
                 StoreOp::Pending { .. } | StoreOp::RemovePending | StoreOp::Session { .. } => {}
@@ -125,24 +130,95 @@ impl Db {
         Ok(())
     }
 
-    /// `Upload{row}`: the columns of `sync_upload` that exist for the key `model:row_id:action`.
-    fn write_upload_row(&self, admitted: &crate::ffi::legacy::Admitted, row: &UploadRow) -> Result<(), DbError> {
+    /// `Upload{row, kind}`: the whole value of a transfer in `sync_upload` for the key `model:row_id:action`. The kind of the batch names the status.
+    fn write_upload_row(&self, admitted: &crate::ffi::legacy::Admitted, row: &UploadRow, kind: UploadKind) -> Result<(), DbError> {
         let [model, id, action] = key_parts(&row.key)?;
-        let (status, stage) = match (&row.failed, row.completed) {
-            (Some(_), _) => ("failed", "failed"),
-            (None, true) => ("uploading", "mutating"),
-            (None, false) => ("uploading", "uploading"),
+        let (status, stage) = match kind {
+            UploadKind::Failed => ("failed", "failed"),
+            UploadKind::Completed => ("uploading", "mutating"),
+            UploadKind::SyncUpload | UploadKind::ConfirmedParts | UploadKind::Retrying => ("uploading", "uploading"),
+        };
+        let on_failure = match row.on_failure {
+            OnFailure::Rollback => "rollback",
+            OnFailure::Keep => "keep",
         };
         self.shared
             .store
             .write_store(&admitted.authority(), |stored| {
                 stored.connection.execute(
-                "INSERT OR REPLACE INTO sync_upload (model, row_id, action, status, stage, sent, total, wait, attempts, error_kind, error_message) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, NULL, 0, ?8, ?9)",
-                rusqlite::params![model, id, action, status, stage, row.confirmed_parts, row.parts, row.failed.as_ref().map(|_| "failed"), row.failed],
+                    "INSERT OR REPLACE INTO sync_upload (model, row_id, action, status, stage, sent, total, wait, attempts, error_kind, error_message, seq, source, batch, upload_id, completed, created_at, inline, size, sha256, mutation_path, mutation_body, on_failure, steps_path, steps_body) \
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, NULL, 0, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23)",
+                    rusqlite::params![
+                        model, id, action, status, stage, row.confirmed_parts, row.parts, row.failed.as_ref().map(|_| "failed"), row.failed,
+                        i64::try_from(row.seq).unwrap_or(i64::MAX), row.source, row.batch, row.upload_id, row.completed, i64::try_from(row.created_at).unwrap_or(i64::MAX), row.inline,
+                        i64::try_from(row.size).unwrap_or(i64::MAX), row.sha256, row.path, row.body, on_failure, row.steps_path, row.steps_body
+                    ],
                 )?;
                 Ok(())
             })
             .map_err(DbError::from)
+    }
+
+    /// The transfers kept in the base, whole, for `Restored` (`transfer.md`). A row of the display without the value of a transfer (`seq` empty) is not one.
+    pub(crate) fn read_transfers(&self) -> Result<Vec<StoredTransfer>, DbError> {
+        let rows = self
+            .shared
+            .store
+            .read_locked(|connection| {
+                let mut statement = connection.prepare(
+                    "SELECT model, row_id, action, seq, source, total, batch, upload_id, sent, completed, error_message, created_at, inline, size, sha256, mutation_path, mutation_body, on_failure, steps_path, steps_body \
+                     FROM sync_upload WHERE seq IS NOT NULL ORDER BY seq",
+                )?;
+                let rows = statement.query_map([], |row| {
+                    Ok((
+                        [row.get::<_, String>(0)?, row.get(1)?, row.get(2)?],
+                        row.get::<_, i64>(3)?, row.get::<_, String>(4)?, row.get::<_, i64>(5)?, row.get::<_, bool>(6)?, row.get::<_, Option<String>>(7)?, row.get::<_, i64>(8)?,
+                        row.get::<_, bool>(9)?, row.get::<_, Option<String>>(10)?, row.get::<_, i64>(11)?, row.get::<_, bool>(12)?, row.get::<_, i64>(13)?, row.get::<_, String>(14)?,
+                        row.get::<_, String>(15)?, row.get::<_, String>(16)?, row.get::<_, String>(17)?, row.get::<_, String>(18)?, row.get::<_, String>(19)?,
+                    ))
+                })?;
+                rows.collect::<Result<Vec<_>, _>>()
+            })
+            .map_err(|error| DbError::Internal(error.to_string()))?;
+        Ok(rows
+            .into_iter()
+            .map(|([model, id, action], seq, source, total, batch, upload_id, sent, completed, failed, created_at, inline, size, sha256, path, body, on_failure, steps_path, steps_body)| {
+                let key = format!("{model}:{id}:{action}");
+                let place = if inline { Location::Table } else { Location::Directory };
+                let file_id = crate::owners::write::transfer::file_id(&key);
+                let file_present = match place {
+                    Location::Table => self.shared.store.read_locked(|connection| connection.query_row("SELECT COUNT(*) FROM file WHERE id = ?1", [&file_id], |row| row.get::<_, i64>(0))).map(|count| count > 0),
+                    Location::Directory => Ok(self.shared.files.path(&file_id).is_some_and(|path| path.exists())),
+                }
+                .map_err(|error| DbError::Internal(error.to_string()))?;
+                Ok(StoredTransfer {
+                    key,
+                    seq: u64::try_from(seq).unwrap_or_default(),
+                    source: Source { path: source, parts: u32::try_from(total).unwrap_or_default() },
+                    batch,
+                    upload_id,
+                    confirmed_parts: u32::try_from(sent).unwrap_or_default(),
+                    completed,
+                    failed,
+                    file_present,
+                    created_at: Time(u64::try_from(created_at).unwrap_or_default()),
+                    place,
+                    size: u64::try_from(size).unwrap_or_default(),
+                    sha256,
+                    mutation: NewOp {
+                        model: model.clone(),
+                        row_id: id.clone(),
+                        action: action.clone(),
+                        on_failure: if on_failure == "keep" { OnFailure::Keep } else { OnFailure::Rollback },
+                        origin: Origin::Api,
+                        path,
+                        body,
+                        effects: IntentEffects::default(),
+                    },
+                    steps: Steps { path: steps_path, body: steps_body },
+                })
+            })
+            .collect::<Result<Vec<_>, DbError>>()?)
     }
 
     fn remove_upload_row(&self, admitted: &crate::ffi::legacy::Admitted, key: &str) -> Result<(), DbError> {

@@ -1,11 +1,8 @@
 //! Direction C: owners `Outbox` and `Transfers` with the executors of their effects (`specs/machines/design.md` F3).
-//! The executors are not connected to `Database` yet.
 
 pub mod outbox;
 pub mod outbox_executor;
 pub mod transfer;
-// The Transfer executor is wired to `Database` in the next step.
-#[allow(dead_code)]
 pub(crate) mod transfer_executor;
 pub mod wire;
 
@@ -16,7 +13,4 @@ mod outbox_executor_tests;
 #[cfg(test)]
 mod transfer_executor_tests;
 
-use super::lifecycle::Peer;
 
-/// Transfer joins when its step codec is ported; Outbox is installed with the session.
-pub const ABSENT: [Peer; 1] = [Peer::Transfer];

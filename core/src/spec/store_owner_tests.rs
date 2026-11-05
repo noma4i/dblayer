@@ -99,7 +99,7 @@ impl Twin {
             StoreEffect::Reply { reply: StoreReply::Committed { revision }, .. } => Some(Reply::Committed(*revision)),
             StoreEffect::Reply { reply: StoreReply::Rejected(reason), .. } => Some(Reply::Rejected(match reason {
                 RejectReason::NoSession => Reason::NoSession,
-                RejectReason::StaleGeneration { models } => Reason::StaleGeneration(models.clone()),
+                RejectReason::StaleGeneration { models, .. } => Reason::StaleGeneration(models.clone()),
                 RejectReason::Storage(_) => Reason::Storage,
                 RejectReason::Closed => Reason::Closed,
             })),

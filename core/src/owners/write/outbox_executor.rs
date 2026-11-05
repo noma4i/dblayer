@@ -18,7 +18,6 @@ impl EffectRunner<Outbox> for OutboxExecutor {
         match effect {
             OutboxEffect::Reply { reply, answer } => (self.settle)(reply, answer),
             OutboxEffect::Drained(drained) => (self.drained)(drained),
-            OutboxEffect::CancelRequest { .. } => {}
         }
     }
 }

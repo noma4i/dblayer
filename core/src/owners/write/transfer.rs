@@ -6,8 +6,8 @@ use std::collections::BTreeMap;
 use super::outbox::{Fault, NewOp, Origin, Outbox, OutboxInput, OutboxOutcome, Receipt};
 use crate::files::Location;
 use crate::owners::contract::ReplyId;
-use crate::owners::contract::{BatchAuthor, BatchId, Drained, EpochEnded, EpochStarted, Online};
-use crate::owners::store::{StoreBatch, StoreInput, StoreOp, StoreWriter, UploadRow};
+use crate::owners::contract::{BatchAuthor, BatchId, Committed, Drained, EpochEnded, EpochStarted, Online, RejectReason, Rejected};
+use crate::owners::store::{StoreBatch, StoreInput, StoreOp, StoreWriter, UploadKind, UploadRow};
 use crate::pacing::RetryPolicy;
 use crate::runtime::{Address, Cause, Effect, Effects, Epoch, Outbound, ScheduleId, StateOwner, Time};
 use crate::transport::NetworkPurpose;
@@ -57,6 +57,8 @@ pub struct StoredTransfer {
     pub file_present: bool,
     pub created_at: Time,
     pub place: Location,
+    pub size: u64,
+    pub sha256: String,
     pub mutation: NewOp,
     pub steps: Steps,
 }
@@ -71,6 +73,9 @@ pub enum TransferTick {
 pub enum TransferInput {
     Accept { epoch: Epoch, key: Key, source: Source, batch: bool, reply: ReplyId, now: Time, mutation: NewOp, steps: Steps },
     Restored(Vec<StoredTransfer>),
+    /// The answer of Store to a batch of Transfer.
+    Committed(Committed),
+    Rejected(Rejected),
     CopyDone { key: Key, size: u64, sha256: String, place: Location },
     CopyFailed { key: Key, error: String },
     StepOk { key: Key, part: Option<u32>, upload_id: Option<String> },
@@ -196,13 +201,15 @@ pub struct TransferState {
     pub round: RoundState,
     pub next_seq: u64,
     pub next_batch: BatchId,
+    /// The transfer each batch in the Store is for.
+    batches: BTreeMap<BatchId, Key>,
     next_timer: u64,
     pub now: Time,
     pub drained: bool,
 }
 
 impl TransferState {
-    pub fn new(epoch: Epoch, slots: u32, peers: TransferPeers) -> Self { Self { peers, epoch, online: true, slots, transfers: BTreeMap::new(), round: RoundState::None, next_seq: 1, next_batch: 1, next_timer: 1, now: Time(0), drained: false } }
+    pub fn new(epoch: Epoch, slots: u32, peers: TransferPeers) -> Self { Self { peers, epoch, online: true, slots, transfers: BTreeMap::new(), round: RoundState::None, next_seq: 1, next_batch: 1, batches: BTreeMap::new(), next_timer: 1, now: Time(0), drained: false } }
 
     pub fn stage_of(&self, key: &str) -> Option<TransferStage> { self.transfers.get(key).map(|transfer| transfer.stage) }
 }
@@ -225,6 +232,19 @@ fn upload_row(transfer: &Transfer, kind: StoreKind) -> UploadRow {
         sha256: transfer.sha256.clone(),
         path: transfer.mutation.path.clone(),
         body: transfer.mutation.body.clone(),
+        on_failure: transfer.mutation.on_failure,
+        steps_path: transfer.steps.path.clone(),
+        steps_body: transfer.steps.body.clone(),
+    }
+}
+
+fn upload_kind(kind: StoreKind) -> UploadKind {
+    match kind {
+        StoreKind::SyncUpload | StoreKind::Removed => UploadKind::SyncUpload,
+        StoreKind::ConfirmedParts => UploadKind::ConfirmedParts,
+        StoreKind::Completed => UploadKind::Completed,
+        StoreKind::Failed => UploadKind::Failed,
+        StoreKind::Retrying => UploadKind::Retrying,
     }
 }
 
@@ -247,11 +267,31 @@ impl TransferState {
         self.next_batch += 1;
         let ops = match (kind, self.transfers.get(key)) {
             (StoreKind::Removed, _) | (_, None) => vec![StoreOp::RemoveUpload { key: key.into() }],
-            (_, Some(transfer)) => vec![StoreOp::Upload { row: upload_row(transfer, kind) }],
+            (kind, Some(transfer)) => vec![StoreOp::Upload { row: upload_row(transfer, kind), kind: upload_kind(kind) }],
         };
         let intents = u64::from(kind == StoreKind::SyncUpload);
+        self.batches.insert(id, key.into());
         let batch = StoreBatch { author: BatchAuthor::Transfer, id, epoch: self.epoch, basis: BTreeMap::new(), rows: Vec::new(), intents, credential: None, ops };
         fx.push(Effect::Send(Outbound::new(self.peers.store, StoreInput::Commit(batch))));
+    }
+
+    /// `Rejected(NoSession | Closed)` ends the transfer as interrupted, `Rejected(Storage)` leaves it failed with the error shown. Nothing is written again.
+    fn store_rejected(&mut self, rejected: Rejected, fx: &mut Fx) {
+        let Some(key) = self.batches.remove(&rejected.batch) else { return };
+        let Some(stage) = self.stage_of(&key) else { return };
+        if stage == TransferStage::Done {
+            return;
+        }
+        match rejected.reason {
+            RejectReason::Storage(error) => {
+                self.set(&key, TransferStage::Failed);
+                if let Some(transfer) = self.transfers.get_mut(&key) {
+                    transfer.error = Some(error.clone());
+                }
+                Self::shows(fx, &key, Shown::Failed { error });
+            }
+            RejectReason::NoSession | RejectReason::Closed | RejectReason::StaleGeneration { .. } => self.interrupt(&key, fx),
+        }
     }
 
     fn timer(&mut self) -> ScheduleId {
@@ -363,11 +403,13 @@ impl TransferState {
         let mut rows = rows;
         rows.sort_by_key(|row| row.seq);
         for row in rows {
-            let StoredTransfer { key, seq, source, batch, upload_id, confirmed_parts, completed, failed, file_present, created_at, place, mutation, steps } = row;
+            let StoredTransfer { key, seq, source, batch, upload_id, confirmed_parts, completed, failed, file_present, created_at, place, size, sha256, mutation, steps } = row;
             let all = confirmed_parts >= source.parts;
             self.create(&key, source, batch, Some(seq), created_at, TransferStage::Ready, mutation, steps);
             let Some(transfer) = self.transfers.get_mut(&key) else { continue };
             transfer.place = Some(place);
+            transfer.size = size;
+            transfer.sha256 = sha256;
             transfer.upload_id = upload_id;
             transfer.confirmed_parts = confirmed_parts;
             if !file_present {
@@ -621,6 +663,11 @@ impl TransferState {
         }
     }
 
+    fn interrupt(&mut self, key: &str, fx: &mut Fx) {
+        run(fx, TransferEffect::CancelStep { key: key.into() });
+        self.set(key, TransferStage::Done);
+    }
+
     fn interrupt_all(&mut self, closing: bool, fx: &mut Fx) {
         let open: Vec<(Key, TransferStage)> = self.transfers.values().filter(|transfer| transfer.stage != TransferStage::Done).map(|transfer| (transfer.key.clone(), transfer.stage)).collect();
         for (key, stage) in open {
@@ -687,6 +734,10 @@ impl StateOwner for Transfers {
         match input {
             TransferInput::Accept { epoch, key, source, batch, reply, now, mutation, steps } => state.accept(epoch, key, source, batch, reply, now, mutation, steps, &mut fx),
             TransferInput::Restored(rows) => state.restored(rows, &mut fx),
+            TransferInput::Committed(committed) => {
+                state.batches.remove(&committed.batch);
+            }
+            TransferInput::Rejected(rejected) => state.store_rejected(rejected, &mut fx),
             TransferInput::CopyDone { key, size, sha256, place } => {
                 if state.stage_of(&key) == Some(TransferStage::Copying) {
                     if let Some(transfer) = state.transfers.get_mut(&key) {

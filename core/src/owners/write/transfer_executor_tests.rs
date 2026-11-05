@@ -5,13 +5,14 @@
 //! · `Transport Cancel` of the step -> `exec_xfer_offline_cancels_step` · `ScheduleJob`, `EndJob`, `uploads[action]`, local copy deletion -> `exec_xfer_job_view_and_local_copy`.
 //! Store batches, Outbox inputs and the retry timer are owner effects, tested in `spec::transfer_owner_tests`.
 
+use crate::schema::OnFailure;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, PoisonError};
 
 use async_trait::async_trait;
 use serde_json::json;
 
-use super::outbox::{NewOp, OnReject, Origin, OutboxOutcome};
+use super::outbox::{NewOp, Origin, OutboxOutcome};
 use super::rig::{admit, peer, settle, Act, ManualSpawn, Stub};
 use super::transfer::{file_id, RoundId, Shown, Source, Steps, TransferAnswer, TransferInput, TransferPeers, TransferStage, TransferState, Transfers};
 use super::transfer_executor::{Link, RoundJobs, StepCodec, StepDone, TransferExecutor};
@@ -80,7 +81,7 @@ struct World {
 }
 
 fn mutation() -> NewOp {
-    NewOp { model: "Moment".into(), row_id: "r1".into(), action: "upload".into(), on_reject: OnReject::Keep, origin: Origin::Api, path: "/moments/r1".into(), body: String::new(), effects: Default::default() }
+    NewOp { model: "Moment".into(), row_id: "r1".into(), action: "upload".into(), on_failure: OnFailure::Keep, origin: Origin::Api, path: "/moments/r1".into(), body: String::new(), effects: Default::default() }
 }
 
 fn world() -> World {
@@ -97,6 +98,7 @@ fn world() -> World {
         jobs.clone(),
         Arc::new(move |reply, answer| lock(&to_answers).push((reply, answer))),
         Arc::new(move |_key, shown| lock(&to_shown).push(shown)),
+        Arc::new(|_| {}),
     );
     let mut det = DetScheduler::new(13);
     let (store, _) = peer(&mut det, "store");

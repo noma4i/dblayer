@@ -143,7 +143,7 @@ impl Twin {
             }
             Input::Rejected { request, reason } => {
                 let reason = match reason {
-                    Reject::StaleGeneration => RejectReason::StaleGeneration { models: vec!["Moment".into()] },
+                    Reject::StaleGeneration => RejectReason::StaleGeneration { models: vec!["Moment".into()], generation: 0 },
                     Reject::NoSession => RejectReason::NoSession,
                     Reject::Storage => RejectReason::Storage("disk".into()),
                 };

@@ -377,13 +377,4 @@ impl UploadState {
             _ => None,
         }
     }
-
-    pub(crate) fn resume_mode(&self) -> RunMode {
-        match (self.stage, self.phase) {
-            (UploadStage::Abort, UploadStatus::Cancelled) => RunMode::Cancel,
-            (UploadStage::Abort, _) => RunMode::Abort,
-            _ if self.is_transferred() => RunMode::Mutation,
-            _ => RunMode::Transfer,
-        }
-    }
 }

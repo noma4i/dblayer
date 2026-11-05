@@ -406,8 +406,6 @@ pub(crate) enum RowOp {
     RemovePending,
     /// `digest = None` keeps the stored digest, `sequence = None` keeps the stored sequence.
     PutSession { digest: Option<String>, sequence: Option<i64> },
-    RemoveIntent(i64),
-    RemoveRows { model: String, ids: Vec<String> },
 }
 
 impl Store {
@@ -423,15 +421,6 @@ impl Store {
                 }
                 RowOp::RemovePending => {
                     transaction.execute("DELETE FROM encrypted_pending", [])?;
-                }
-                RowOp::RemoveIntent(op_id) => {
-                    crate::operation::delete_operation(&transaction, op_id)?;
-                }
-                RowOp::RemoveRows { model, ids } => {
-                    let info = inner.model(&model)?;
-                    for id in &ids {
-                        super::apply::remove_row(&transaction, info, id)?;
-                    }
                 }
                 RowOp::PutSession { digest, sequence } => {
                     let stored = state::session(&transaction)?;

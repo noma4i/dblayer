@@ -129,7 +129,7 @@ async fn resume_finishes_a_cancelled_multipart_abort_after_reopen() {
     database.cancel_upload(database.session_epoch(), "Moment".into(), "42".into(), "upload".into()).await.unwrap();
     sync.wait_uploads().await;
     assert_eq!(rig.server.executed().iter().filter(|body| body["operationName"] == "AbortMultipart").count(), 0);
-    assert!(matches!(database.session.as_ref().unwrap().pending_owner().unwrap(), Some(crate::transport::RequestOwner::Transfer { step: crate::upload::UploadStage::Abort, .. })));
+    assert!(matches!(crate::transport::encrypted::state::pending(&database.db.shared.store.lock().connection).unwrap().and_then(|pending| pending.owner), Some(crate::transport::RequestOwner::Transfer { step: crate::upload::UploadStage::Abort, .. })));
     drop(sync);
     database.db.close().unwrap();
     drop(database);

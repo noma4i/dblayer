@@ -212,7 +212,7 @@ impl FeedState {
         let Some(events) = self.take_batch(batch) else { return };
         match rejected {
             None => self.deliver(events, fx),
-            Some(RejectReason::StaleGeneration { models }) => {
+            Some(RejectReason::StaleGeneration { models, .. }) => {
                 let lost = self.lose_events(&events, Some(&models), fx);
                 fx.push(Fx::StaleWindows(lost));
                 let rest: Vec<FeedEvent> = events.into_iter().filter(|event| !models.contains(&event.model)).collect();

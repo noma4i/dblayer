@@ -37,12 +37,6 @@ pub(super) fn confirm_item(connection: &Connection, seq: i64, position: i64, ite
 }
 
 impl super::Store {
-    pub(crate) fn transfer_abort_name(&self, operation_id: i64, item_id: &str) -> Result<Option<String>, StoreError> {
-        use rusqlite::OptionalExtension;
-        let inner = self.lock();
-        Ok(inner.connection.query_row("SELECT abort_operation FROM transfer_abort WHERE operation_id = ?1 AND item_id = ?2", params![operation_id, item_id], |row| row.get(0)).optional()?)
-    }
-
     pub(crate) fn pending_transfer_aborts(&self) -> Result<Vec<crate::upload::Transfer>, StoreError> {
         let inner = self.lock();
         let mut statement = inner.connection.prepare("SELECT id, operation_id, item_id, storage_key, upload_id, abort_operation FROM transfer_abort ORDER BY id")?;
@@ -58,12 +52,6 @@ impl super::Store {
         self.write_store(authority, |inner| {
             inner.connection.execute("DELETE FROM transfer_abort WHERE id = ?1", [id])?;
             Ok(())
-        })
-    }
-
-    pub(crate) fn settle_transfer_abort_identity(&self, authority: &crate::ffi::legacy::Authority, operation_id: i64, item_id: &str) -> Result<bool, StoreError> {
-        self.write_store(authority, |inner| {
-            Ok(inner.connection.execute("DELETE FROM transfer_abort WHERE operation_id = ?1 AND item_id = ?2", params![operation_id, item_id])? > 0)
         })
     }
 }

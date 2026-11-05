@@ -262,10 +262,6 @@ impl EncryptedClient {
         }).transpose()
     }
 
-    pub(crate) fn pending_owner(&self) -> Result<Option<crate::transport::RequestOwner>, TransportError> {
-        Ok(self.read_connection(state::pending)?.and_then(|pending| pending.owner))
-    }
-
     pub async fn read(&self, admitted: &Admitted, path: &str, body: Value) -> Result<Answer, TransportError> {
         self.validate(admitted)?;
         admitted.run(self.read_in(admitted, path, body)).await?

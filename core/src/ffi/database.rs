@@ -322,6 +322,7 @@ impl Database {
             operations,
             credentials: session.as_ref().map(|client| client.credential_slot()),
             session: session.clone(),
+            transfer: None,
         };
         let _entered = executor_enter()?;
         let life = Arc::new(crate::owners::life::Life::start(ports, Duration::from_secs(30)).map_err(|error| DbError::Database { detail: format!("the owners did not start: {error:?}") })?);

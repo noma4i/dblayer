@@ -2,6 +2,7 @@
 //! A row test brings the owner to the state of the row, feeds the input to the owner through its address and compares the stage,
 //! the replies and the effects with the reference (`ref_outbox.rs`). Names are the `Test` column.
 
+use crate::schema::OnFailure;
 use std::collections::BTreeMap;
 
 use super::ref_outbox::{open_step_of, step_of, write_step_of, Ctx, Eff, Fault as RFault, In, OCtx, Obs, Out, Policy, Reason as RReason, Restored, St, Step, WCtx, WEff, WIn, WObs, WSt, Why as RWhy};
@@ -9,7 +10,7 @@ use crate::owners::contract::{BatchId, Committed, ModelsReset, Online, RejectRea
 use crate::owners::session::SessionCalls;
 use crate::owners::store::StoreWriter;
 use crate::owners::support::{new_log, number_after, text_after, Discard, Emitted, Log, Sink, Spy, SpyState};
-use crate::owners::write::outbox::{self as o, CommitKind, Fault, LocalWriteKind, NewOp, OnReject, OpId, Origin, Outbox, OutboxAnswer, OutboxEffect as Run, OutboxInput, OutboxPeers, OutboxState, Receipt, Stage, StoredOp, Why};
+use crate::owners::write::outbox::{self as o, CommitKind, Fault, LocalWriteKind, NewOp, OpId, Origin, Outbox, OutboxAnswer, OutboxEffect as Run, OutboxInput, OutboxPeers, OutboxState, Receipt, Stage, StoredOp, Why};
 use crate::owners::write::transfer::Transfers;
 use crate::runtime::{Address, Cause, DetScheduler, EpochStamp, Time};
 
@@ -54,13 +55,17 @@ fn outcome_named(text: &str) -> o::OutboxOutcome {
 fn lower(emitted: Emitted<Run>, state: Option<&OutboxState>) -> Option<OutboxEffect> {
     Some(match emitted {
         Emitted::Run(Run::Reply { reply, answer }) => OutboxEffect::Reply { reply, answer },
-        Emitted::Run(Run::CancelRequest { op_id }) => OutboxEffect::CancelRequest { op_id },
         Emitted::Run(Run::Drained(_)) => OutboxEffect::Drained,
         Emitted::Send { to: STORE_AT, input } => {
             let kind = kind_in(&input);
             let op_id = matches!(kind, CommitKind::Intent | CommitKind::Land | CommitKind::Rollback | CommitKind::ErrorMark | CommitKind::ClearMark).then(|| number_after(&input, "op_id: ")).flatten();
             let generation = number_after(&input, "\"Moment\": ").unwrap_or(0);
             OutboxEffect::Store { op_id, batch: number_after(&input, "id: ")?, kind, generation }
+        }
+        Emitted::Send { to: SESSION_AT, input } if input.starts_with("Cancel") => {
+            let request_id = number_after(&input, "req_id: ")?;
+            let operation = state.and_then(|state| state.ops.values().find(|operation| operation.request_id == request_id));
+            OutboxEffect::CancelRequest { op_id: operation.map_or(request_id, |operation| operation.op_id) }
         }
         Emitted::Send { to: SESSION_AT, input } => {
             let request_id = number_after(&input, "req_id: ")?;
@@ -102,7 +107,7 @@ const NEW_GENERATION: u64 = 5;
 
 fn reject(reason: RReason) -> RejectReason {
     match reason {
-        RReason::StaleGeneration => RejectReason::StaleGeneration { models: vec!["Moment".into()] },
+        RReason::StaleGeneration => RejectReason::StaleGeneration { models: vec!["Moment".into()], generation: NEW_GENERATION },
         RReason::NoSession => RejectReason::NoSession,
         RReason::Storage => RejectReason::Storage("disk".into()),
         RReason::Closed => RejectReason::Closed,
@@ -150,7 +155,7 @@ fn model_op(row: &str, policy: Policy, transfer: bool) -> NewOp {
         model: "Moment".into(),
         row_id: row.into(),
         action: "update".into(),
-        on_reject: if policy == Policy::Keep { OnReject::Keep } else { OnReject::Rollback },
+        on_failure: if policy == Policy::Keep { OnFailure::Keep } else { OnFailure::Rollback },
         origin: if transfer { Origin::Transfer("k".into()) } else { Origin::Api },
         path: format!("/moments/{row}"),
         body: format!("{{\"row\":\"{row}\"}}"),
@@ -217,14 +222,8 @@ impl Twin {
     }
 
     fn rejected(&mut self, id: OpId, reason: RReason) -> Vec<OutboxEffect> {
-        if reason == RReason::StaleGeneration { self.grow_generation(); }
         let batch = self.batches[&id];
         self.post(OutboxInput::Rejected(Rejected { batch, reason: reject(reason) }))
-    }
-
-    /// The Store generation grew: `ModelsReset` brings the new basis before `StaleGeneration` arrives.
-    fn grow_generation(&mut self) {
-        self.post(OutboxInput::ModelsReset(ModelsReset { epoch: EPOCH, generation: NEW_GENERATION, models: vec!["Moment".into()] }));
     }
 
     fn receipt(&self, id: OpId, epoch: u64) -> Receipt { Receipt { epoch, op_id: id, revision: 0 } }
@@ -432,8 +431,6 @@ fn busy() -> Ctx { Ctx { row_free: false, ..Ctx::ready() } }
 
 fn stranger() -> Ctx { Ctx { ours: false, ..Ctx::ready() } }
 
-fn exhausted() -> Ctx { Ctx { attempts_left: false, ..Ctx::ready() } }
-
 fn keep() -> Ctx { Ctx { policy: Policy::Keep, ..Ctx::ready() } }
 
 fn transfer() -> Ctx { Ctx { transfer: true, ..Ctx::ready() } }
@@ -471,7 +468,6 @@ row!(out_sending_response, St::Sending, ready(), In::Response);
 row!(out_sending_stray, St::Sending, stranger(), In::Response, In::TransportError { temporary: true }, In::Dropped);
 row!(out_sending_temp, St::Sending, ready(), In::TransportError { temporary: true }, In::Dropped);
 row!(out_sending_temp_offline, St::Sending, offline(), In::TransportError { temporary: true }, In::Dropped);
-row!(out_sending_exhausted_rollback, St::Sending, exhausted(), In::TransportError { temporary: true }, In::Dropped);
 row!(out_sending_exhausted_keep, St::Sending, Ctx { policy: Policy::Keep, attempts_left: false, ..Ctx::ready() }, In::TransportError { temporary: true }, In::Dropped);
 row!(out_sending_reject_rollback, St::Sending, ready(), In::TransportError { temporary: false });
 row!(out_sending_reject_keep, St::Sending, keep(), In::TransportError { temporary: false });
@@ -607,7 +603,6 @@ fn write_check(state: WSt, ctx: WCtx, input: WIn) {
         WIn::Write => twin.post(OutboxInput::LocalWrite { model: "Moment".into(), epoch: if ctx.epoch_current { EPOCH } else { EPOCH + 1 }, write: LocalWriteKind::SetEphemeral { expire_after: ctx.ephemeral_expiry.then_some(10) }, row: "w".into(), values: "{}".into(), reply, now: Time(100) }),
         WIn::Committed => twin.post(OutboxInput::Committed(Committed { batch: 1, revision: 11, tables: vec!["moments".into()], models: vec![] })),
         WIn::Rejected(reason) => {
-            if reason == RReason::StaleGeneration { twin.grow_generation(); }
             twin.post(OutboxInput::Rejected(Rejected { batch: 1, reason: reject(reason) }))
         }
         WIn::EpochEnded => { twin.det.end_epoch(EPOCH, Cause::SessionReset); twin.run(); take_fx(&twin.log, state_of(&twin.det)) }
