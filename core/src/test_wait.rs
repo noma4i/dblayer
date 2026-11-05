@@ -10,6 +10,25 @@ pub(crate) fn package_dir() -> std::path::PathBuf {
     std::env::current_dir().expect("the test has a working directory")
 }
 
+/// Seconds a single test may run. The runner starts one process per test (`--exact`): a test that is still running after this long is a hang, the process names it and aborts.
+const TEST_DEADLINE: u64 = 30;
+
+#[used]
+#[cfg_attr(target_os = "macos", link_section = "__DATA,__mod_init_func")]
+#[cfg_attr(not(target_os = "macos"), link_section = ".init_array")]
+static ARM_TEST_DEADLINE: extern "C" fn() = arm_test_deadline;
+
+extern "C" fn arm_test_deadline() {
+    let args: Vec<String> = std::env::args().collect();
+    if !args.iter().any(|argument| argument == "--exact") { return; }
+    let name = args.iter().find(|argument| argument.contains("::")).cloned().unwrap_or_default();
+    std::thread::spawn(move || {
+        std::thread::sleep(Duration::from_secs(TEST_DEADLINE));
+        eprintln!("TIMEOUT {TEST_DEADLINE}s {name}: the test hangs, a blocked thread cannot be caught by a bounded wait");
+        std::process::abort();
+    });
+}
+
 const SPIN_LIMIT: Duration = Duration::from_secs(10);
 const BLOCK_LIMIT: Duration = Duration::from_secs(30);
 
@@ -70,7 +89,7 @@ impl Rendezvous {
 
 /// The limit runs on the wall clock: a paused test clock advances the moment the runtime idles, which would expire it before a real thread answers.
 pub(crate) async fn within<T>(work: impl std::future::Future<Output = T>) -> T {
-    within_secs(120, work).await
+    within_secs(20, work).await
 }
 
 pub(crate) async fn within_secs<T>(seconds: u64, work: impl std::future::Future<Output = T>) -> T {
