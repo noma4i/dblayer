@@ -138,9 +138,9 @@ impl SessionRunner {
         let watch = back.watch(id);
         let launch = self.wiring.handle.launch();
         drop(crate::task::spawn_blocking_on(crate::task::Carry::Detached, &self.executor, move || {
-            drop(launch);
             let _watch = watch;
-            back.reply(EpochStamp::Control, work())
+            back.reply(EpochStamp::Control, work());
+            drop(launch);
         }));
     }
 

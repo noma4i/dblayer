@@ -169,7 +169,6 @@ impl EffectRunner<StoreWriter> for StoreRunner {
                 let (client, credentials, wiring, back) = (self.client.clone(), self.credentials.clone(), wiring.clone(), back.clone());
                 let launch = wiring.handle.launch();
                 drop(crate::task::spawn_blocking_on(crate::task::Carry::Detached, &self.executor, move || {
-                    drop(launch);
                     let cleared = match (&client, &credentials) {
                         (Some(client), _) => client.erase_credential(),
                         (None, Some(credentials)) => credentials.clear(),
@@ -179,6 +178,7 @@ impl EffectRunner<StoreWriter> for StoreRunner {
                         wiring.fault(format!("clear secret: {error}"));
                     }
                     back.reply(EpochStamp::Control, StoreInput::Erased { io_id, result: cleared.map(|()| Done { revision: 0 }).map_err(|error| error.to_string()) });
+                    drop(launch);
                 }));
             }
             StoreEffect::SavePublished { io_id, published, .. } => {
