@@ -43,6 +43,7 @@ async fn open(replies: &[&str]) -> (Arc<Database>, Arc<TestClock>) {
     let clock = TestClock::new(1_000_000);
     let db = Database::open_with_clock(Config { path: None, data_version: None, cache_rows: 8 }, serde_json::to_string(&vec![model]).unwrap(), Some(transport), None, clock.clone(), None, None, None, None).await.unwrap();
     db.register_operations(r#"[{"name":"Feed","document":"query Feed { moments { id text } }","rootPath":"moments"}]"#.into()).unwrap();
+    db.set_online(true).unwrap();
     (db, clock)
 }
 
@@ -166,6 +167,7 @@ async fn open_with_authors(replies: &[&str]) -> (Arc<Database>, Arc<TestClock>) 
     let clock = TestClock::new(1_000_000);
     let db = Database::open_with_clock(Config { path: None, data_version: None, cache_rows: 8 }, serde_json::to_string(&vec![user, model]).unwrap(), Some(transport), None, clock.clone(), None, None, None, None).await.unwrap();
     db.register_operations(r#"[{"name":"Feed","document":"query Feed { moments { id text author { id name } } }","rootPath":"moments"}]"#.into()).unwrap();
+    db.set_online(true).unwrap();
     (db, clock)
 }
 

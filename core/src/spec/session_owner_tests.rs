@@ -148,16 +148,16 @@ fn outcome_of(outcome: &AuthorOutcome) -> Outcome {
 }
 
 fn phase_of(phase: &SessionPhase) -> RefState {
-    let call_phase = |phase: &owner::CallPhase| match phase {
-        owner::CallPhase::InFlight(attempt) => CallPhase::InFlight(*attempt),
-        owner::CallPhase::WaitingRetry => CallPhase::WaitingRetry,
-        owner::CallPhase::WaitingNetwork => CallPhase::WaitingNetwork,
-        owner::CallPhase::WaitingSecret => CallPhase::WaitingSecret,
+    let call_phase = |phase: &owner::AttemptPhase| match phase {
+        owner::AttemptPhase::InFlight(attempt) => CallPhase::InFlight(*attempt),
+        owner::AttemptPhase::WaitingRetry => CallPhase::WaitingRetry,
+        owner::AttemptPhase::WaitingNetwork => CallPhase::WaitingNetwork,
+        owner::AttemptPhase::WaitingSecret => CallPhase::WaitingSecret,
     };
     match phase {
         SessionPhase::Idle => RefState::Idle,
-        SessionPhase::Generating { call, op } => RefState::Generating { call: queued_of(call), op: *op },
-        SessionPhase::Storing { call, credential_new, op, after } => RefState::Storing { call: queued_of(call), credential_new: *credential_new, op: *op, after: match after {
+        SessionPhase::Generating { call, op } => RefState::Generating { call: queued_of(&call.clone().into()), op: *op },
+        SessionPhase::Storing { call, credential_new, op, after } => RefState::Storing { call: queued_of(&call.clone().into()), credential_new: *credential_new, op: *op, after: match after {
             owner::AfterStore::Persist => AfterStore::Persist,
             owner::AfterStore::Clear(error) => AfterStore::Clear(fail_of(error)),
             owner::AfterStore::Drain => AfterStore::Drain,

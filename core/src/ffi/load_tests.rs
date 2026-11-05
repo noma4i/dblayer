@@ -166,6 +166,7 @@ pub(super) async fn open_rig(clock: Option<Arc<TestClock>>, hold: Option<Arc<tok
     }
     .unwrap();
     db.register_operations(r#"[{"name":"Feed","document":"query Feed { moments { id text } }","rootPath":"moments"}]"#.into()).unwrap();
+    db.set_online(true).unwrap();
     (db, transport, clock)
 }
 

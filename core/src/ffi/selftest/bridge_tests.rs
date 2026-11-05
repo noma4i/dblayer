@@ -155,6 +155,7 @@ async fn cancelling_the_last_load_interest_cancels_the_request() {
     let transport = Arc::new(CancelledLoadTransport::default());
     let database = bound(Database::open(crate::ffi::Config { path: None, data_version: None, cache_rows: 32 }, crate::ffi::lifecycle_tests::models(), Some(transport.clone()), None, None, None, None, None)).await.unwrap();
     database.register_operations(json!([{"name":"Users","document":"query Users { users { id name } }"}]).to_string()).unwrap();
+    database.set_online(true).unwrap();
     let request = database.begin_load(database.session_epoch(), "User".into(), "all".into(), "{}".into()).unwrap();
     bound(transport.started.notified()).await;
     request.cancel();
@@ -236,6 +237,7 @@ async fn a_mutation_during_the_first_page_keeps_the_whole_chain_stale() {
         {"name":"MomentsFeed","document":"query MomentsFeed($first: Int, $after: String) { feed(first: $first, after: $after) { nodes { id text } pageInfo { hasNextPage endCursor } } }"},
         {"name":"LikeMoment","document":"mutation LikeMoment($id: ID!) { likeMoment(id: $id) { id text } }"}
     ]).to_string()).unwrap();
+    database.set_online(true).unwrap();
     let epoch = database.session_epoch();
     bound(database.load(epoch, "Moment".into(), "feed".into(), "{}".into())).await.unwrap();
     let loading = { let database = database.clone(); tokio::spawn(async move { database.load_all(epoch, "Moment".into(), "feed".into(), "{}".into(), true).await }) };
@@ -277,6 +279,7 @@ async fn a_refetch_owed_without_a_reader_survives_reopen() {
     let transport = Arc::new(MomentTransport::default());
     let first = bound(opener.open_with_clock(config.clone(), models.clone(), Some(transport.clone()), None, crate::ffi::TestClock::new(1_000_000), None, None, None, None)).await.unwrap();
     first.register_operations(operations.clone()).unwrap();
+    first.set_online(true).unwrap();
     let epoch = first.session_epoch();
     bound(first.load(epoch, "Moment".into(), "feed".into(), "{}".into())).await.unwrap();
     let receipt = bound(first.act(epoch, "Moment".into(), "1".into(), "like".into(), "{}".into(), "{}".into())).await.unwrap();
@@ -285,6 +288,7 @@ async fn a_refetch_owed_without_a_reader_survives_reopen() {
     bound(first.close_database()).await.unwrap();
     let second = bound(opener.open_with_clock(config, models, Some(transport.clone()), None, crate::ffi::TestClock::new(1_000_000), None, None, None, None)).await.unwrap();
     second.register_operations(operations).unwrap();
+    second.set_online(true).unwrap();
     let epoch = second.session_epoch();
     bound(second.load(epoch, "Moment".into(), "feed".into(), "{}".into())).await.unwrap();
     let rows = bound(second.read_query(epoch, json!({"model":"Moment","relation":"feed","params":{}}).to_string())).await.unwrap();
@@ -338,6 +342,7 @@ async fn a_refresh_after_reopen_and_clock_rollback_keeps_the_new_response() {
     let switch = Switchable::new(Some(world_a.clone()), false);
     let first = bound(opener.open_with_clock(config.clone(), plain_models(), Some(switch.clone()), None, crate::ffi::TestClock::new(1_000_000), None, None, None, None)).await.unwrap();
     first.register_operations(plain_operations()).unwrap();
+    first.set_online(true).unwrap();
     bound(first.refresh(first.session_epoch(), "User".into(), "profile".into(), "{}".into())).await.unwrap();
     let query = r#"{"model":"User","relation":"profile","params":{}}"#.to_string();
     let rows = bound(first.read_query(first.session_epoch(), query.clone())).await.unwrap();
@@ -347,6 +352,7 @@ async fn a_refresh_after_reopen_and_clock_rollback_keeps_the_new_response() {
     switch.set(Some(world_b.clone()));
     let second = bound(opener.open_with_clock(config, plain_models(), Some(switch), None, crate::ffi::TestClock::new(100), None, None, None, None)).await.unwrap();
     second.register_operations(plain_operations()).unwrap();
+    second.set_online(true).unwrap();
     bound(second.refresh(second.session_epoch(), "User".into(), "profile".into(), "{}".into())).await.unwrap();
     let rows = bound(second.read_query(second.session_epoch(), query)).await.unwrap();
     assert!(rows.iter().any(|row| named(row, "B")));
@@ -697,6 +703,7 @@ async fn chat_events() -> (Arc<Database>, Arc<Switchable>, Arc<World>) {
         {"name":"ChatNode","document":"query ChatNode($id: ID!) { node(id: $id) { ... on Chat { id title revision lists } } }"},
         {"name":"RecordEvents","document":"subscription RecordEvents { recordEvents { entries { topic action recordId chat { id title revision lists } } } }"}
     ]).to_string()).unwrap();
+    database.set_online(true).unwrap();
     (database, transport, world)
 }
 

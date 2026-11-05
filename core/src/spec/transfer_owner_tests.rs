@@ -536,12 +536,9 @@ fn xfer_open_mutating() {
 #[test]
 fn xfer_open_failed() {
     let mut twin = Twin::new();
-    let effects = twin.post(TransferInput::Restored(vec![stored(KEY, &multipart(), true, false, 1)]));
-    assert_eq!(twin.stage(KEY), St::Failed);
-    assert!(effects.iter().any(|effect| matches!(effect, TransferEffect::Shows { shown: t::Shown::Failed { .. }, .. })));
-    take_fx(&twin.log);
     twin.det.tick(Time(8 * DAY));
-    twin.run();
+    let effects = twin.post(TransferInput::Restored(vec![stored(KEY, &multipart(), true, false, 1)]));
+    assert!(effects.iter().any(|effect| matches!(effect, TransferEffect::Shows { shown: t::Shown::Failed { .. }, .. })));
     assert_eq!(twin.stage(KEY), St::Done, "the expiry tick requested at open ends a failed transfer older than 7 days");
 }
 

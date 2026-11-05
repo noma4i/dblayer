@@ -43,13 +43,11 @@ impl EffectRunner<Lifecycle> for LifecycleRunner {
             LifecycleEffect::Publish { publication_id, published } => {
                 if matches!(published.state, PublishedState::Ending | PublishedState::EndingFailed | PublishedState::Closing | PublishedState::StorageFailed) {
                     self.held_published = Some(published.clone());
-                    wiring.to_session(SessionInput::Published(published.clone()));
                 }
                 wiring.to_store(StoreInput::Published { publication_id, published });
             }
             LifecycleEffect::PublishCell(published) => {
-                self.held_published = Some(published.clone());
-                wiring.to_session(SessionInput::Published(published));
+                self.held_published = Some(published);
             }
             LifecycleEffect::RestoreReady { epoch } => wiring.to_session(SessionInput::RestoreReady { epoch }),
             LifecycleEffect::EpochStarted { epoch, identity, generation } => {
@@ -103,7 +101,8 @@ impl EffectRunner<Lifecycle> for LifecycleRunner {
     fn step_done(&mut self) {
         if let Some(published) = self.held_published.take() {
             self.leases.published(&published);
-            self.wiring.publish(published);
+            self.wiring.publish(published.clone());
+            self.wiring.to_session(SessionInput::Published(published));
         }
         for (id, result) in self.held_replies.drain(..) {
             if !self.wiring.open_answered(id, result) {

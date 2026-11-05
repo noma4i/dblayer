@@ -13,6 +13,8 @@
 - `EntityFetch.none` is `EntityFetch.never` in Swift and `EntityFetch.NEVER` in Kotlin.
 
 ### Fixed
+- Sign-in returns after its session identity is visible to subsequent calls.
+- Receipt waits return Interrupted when session reset races with their admission.
 - Loads keep their caller's epoch when the account changes before dispatch.
 - Pagination reports the page it completed when called during an earlier load.
 - Refresh and pagination preserve GraphQL messages and extensions, including repeated cursor errors.

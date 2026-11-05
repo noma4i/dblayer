@@ -262,6 +262,7 @@ impl Rig {
         let clock = TestClock::new(1_000_000);
         let db = within(Database::open_with_clock(Config { path, data_version, cache_rows: 64 }, models.clone(), Some(Arc::new(Wire(server.clone()))), Some(upload_operations()), clock.clone(), None, None, None, None)).await.unwrap();
         db.register_operations(OPERATIONS.into()).unwrap();
+        db.set_online(true).unwrap();
         Rig { db, server, clock, models }
     }
 

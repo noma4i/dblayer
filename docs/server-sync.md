@@ -444,6 +444,8 @@ The final content mutation follows the [write rules](files.md#rules-1): a confir
 | `INVALID_OPERATION` | retry with a pause if the step returned this code | `Failed` |
 | `SERVICE_UNAVAILABLE` | retry with a pause | retry with a pause |
 - `sessionReset()` ends the session without contacting the server. It ends the work of the old session, deletes the credential and the stored state, and clears the data of the account. It returns after the clearing. Signing out of the app is this one call.
+- Sign-in returns after the new session identity is visible to subsequent calls.
+- A receipt's `outcome()` returns `Interrupted` if session reset ends its epoch while the wait starts.
 - A `logout` answer with `revoked` clears the stored state first and the credential second, without confirming the sequence first. If your `CredentialStore.clear` fails, the logout still succeeds and the next open clears the credential that has no stored state.
 - The core never clears the credential for a refusal code, an HTTP error, a key mismatch or a closed cable.
 

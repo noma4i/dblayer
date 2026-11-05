@@ -4,6 +4,7 @@ use std::collections::{BTreeSet, VecDeque};
 use std::time::Duration;
 
 use super::contract::{BatchId, Committed, CredentialCommitted, Drained, EpochEnded, ErrorClass, Online, Published, PublishedState, RejectReason, Rejected, ReplyId, RequestId, ServerEnded};
+use super::read::deliveries::StreamId;
 pub use crate::transport::encrypted::state::StoredAnswer;
 use crate::runtime::{Cause, Effect, EffectId, Effects, Epoch, ScheduleId, StateOwner, Time};
 
@@ -11,7 +12,6 @@ pub type Digest = u64;
 pub type AuthorId = u64;
 pub type AttemptId = u64;
 pub type SecretOpId = u64;
-pub type StreamId = u64;
 
 pub const OUTBOX_AUTHOR: AuthorId = 1;
 pub const TRANSFER_AUTHOR: AuthorId = 2;
@@ -103,6 +103,19 @@ pub enum Queued {
     Mutate { author: AuthorId, owner: Option<MutateOwner>, req_id: RequestId, epoch: Epoch, path: String, body: String, purpose: u8 },
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LoginCall {
+    pub operation: SessionOperation,
+    pub body: String,
+    pub reply: ReplyId,
+}
+
+impl From<LoginCall> for Queued {
+    fn from(call: LoginCall) -> Self {
+        Self::Call { operation: call.operation.name, body: call.body, reply: call.reply }
+    }
+}
+
 /// What `CredentialStore.get` found: the digest of the secret, nothing, or an access error.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum SecretState {
@@ -112,7 +125,7 @@ pub enum SecretState {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum CallPhase {
+pub enum AttemptPhase {
     InFlight(AttemptId),
     WaitingRetry,
     WaitingNetwork,
@@ -143,14 +156,14 @@ pub enum AfterClear {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum SessionPhase {
     Idle,
-    Generating { call: Queued, op: SecretOpId },
-    Storing { call: Queued, credential_new: Digest, op: SecretOpId, after: AfterStore },
+    Generating { call: LoginCall, op: SecretOpId },
+    Storing { call: LoginCall, credential_new: Digest, op: SecretOpId, after: AfterStore },
     ClearingSecret { call: Option<Queued>, reason: Option<SessionError>, op: SecretOpId, after: AfterClear },
     PendingHeld { pending: PendingCall },
     SecretMismatch,
     SecretUnavailable { error: String, read: Option<SecretOpId> },
     Persisting { pending: PendingCall, batch: BatchId },
-    Calling { pending: PendingCall, attempts: u64, phase: CallPhase, document_sent: bool },
+    Calling { pending: PendingCall, attempts: u64, phase: AttemptPhase, document_sent: bool },
     Landing { pending: PendingCall, batch: BatchId, answer: SessionAnswer, identity: Option<Digest>, sequence: Option<u64>, server_ended: bool },
     Blocked { pending: Option<PendingCall>, reason: Block },
     Closed,
@@ -449,10 +462,10 @@ impl SessionState {
     fn view(&self) -> (u64, RetryPhase) {
         match &self.phase {
             SessionPhase::Calling { attempts, phase, .. } => (*attempts, match phase {
-                CallPhase::InFlight(_) => RetryPhase::InFlight,
-                CallPhase::WaitingRetry => RetryPhase::WaitingRetry,
-                CallPhase::WaitingNetwork => RetryPhase::WaitingNetwork,
-                CallPhase::WaitingSecret => RetryPhase::WaitingSecret,
+                AttemptPhase::InFlight(_) => RetryPhase::InFlight,
+                AttemptPhase::WaitingRetry => RetryPhase::WaitingRetry,
+                AttemptPhase::WaitingNetwork => RetryPhase::WaitingNetwork,
+                AttemptPhase::WaitingSecret => RetryPhase::WaitingSecret,
             }),
             _ => (0, RetryPhase::Idle),
         }
@@ -498,13 +511,12 @@ impl SessionState {
                     reply(fx, id, Err(SessionError::Invalid));
                     return;
                 };
-                let call = Queued::Call { operation: operation.clone(), body: body.clone(), reply: id };
                 let epoch = self.epoch;
                 let sequence = self.credential.as_ref().map_or(1, |credential| credential.sequence + 1);
                 match def.class {
                     OperationClass::Login if self.credential.is_some() => reply(fx, id, Err(SessionError::SessionExists)),
-                    OperationClass::Login => self.generate(call, fx),
-                    OperationClass::Authenticated if self.credential.is_none() => self.generate(call, fx),
+                    OperationClass::Login => self.generate(LoginCall { operation: def, body, reply: id }, fx),
+                    OperationClass::Authenticated if self.credential.is_none() => self.generate(LoginCall { operation: def, body, reply: id }, fx),
                     OperationClass::Logout if self.credential.is_none() => reply(fx, id, Err(SessionError::NoCredential)),
                     OperationClass::Sessionless => {
                         let request_id = self.request();
@@ -527,7 +539,7 @@ impl SessionState {
         }
     }
 
-    fn generate(&mut self, call: Queued, fx: &mut Vec<SessionEffect>) {
+    fn generate(&mut self, call: LoginCall, fx: &mut Vec<SessionEffect>) {
         let op = self.secret_op();
         fx.push(SessionEffect::GenerateCredential { secret_op_id: op });
         self.phase = SessionPhase::Generating { call, op };
@@ -539,17 +551,17 @@ impl SessionState {
         self.phase = SessionPhase::Persisting { pending, batch };
     }
 
-    fn send(&mut self, pending: PendingCall, attempts: u64, document_sent: bool, fx: &mut Vec<SessionEffect>) {
+    fn request_http(&mut self, pending: PendingCall, attempts: u64, document_sent: bool, fx: &mut Vec<SessionEffect>) {
         let attempt_id = self.attempt();
         fx.push(SessionEffect::HttpRequest { pending: pending.clone(), attempt_id, full_document: document_sent });
-        self.phase = SessionPhase::Calling { pending, attempts, phase: CallPhase::InFlight(attempt_id), document_sent };
+        self.phase = SessionPhase::Calling { pending, attempts, phase: AttemptPhase::InFlight(attempt_id), document_sent };
     }
 
     fn start_calling(&mut self, pending: PendingCall, fx: &mut Vec<SessionEffect>) {
         if self.is_online() {
-            self.send(pending, 0, false, fx);
+            self.request_http(pending, 0, false, fx);
         } else {
-            self.phase = SessionPhase::Calling { pending, attempts: 0, phase: CallPhase::WaitingNetwork, document_sent: false };
+            self.phase = SessionPhase::Calling { pending, attempts: 0, phase: AttemptPhase::WaitingNetwork, document_sent: false };
         }
     }
 
@@ -680,7 +692,7 @@ impl SessionState {
                 self.phase = SessionPhase::Idle;
             }
             SessionPhase::Generating { call, .. } if is_ended(cause) => {
-                refuse(fx, call, SessionError::Interrupted);
+                refuse(fx, call.into(), SessionError::Interrupted);
                 self.refuse_queue(fx, SessionError::NoSession);
                 self.credential = None;
                 self.phase = SessionPhase::Idle;
@@ -705,7 +717,7 @@ impl SessionState {
                     return;
                 };
                 finish(fx, &pending, Err(SessionError::Interrupted));
-                if let SessionPhase::Calling { phase: CallPhase::InFlight(attempt_id), .. } = phase { fx.push(SessionEffect::HttpCancel { attempt_id }); }
+                if let SessionPhase::Calling { phase: AttemptPhase::InFlight(attempt_id), .. } = phase { fx.push(SessionEffect::HttpCancel { attempt_id }); }
                 self.refuse_queue(fx, SessionError::NoSession);
                 self.credential = None;
                 self.idle(fx);
@@ -720,9 +732,9 @@ impl SessionState {
             SessionPhase::Persisting { pending, .. } | SessionPhase::Landing { pending, .. } => finish(fx, &pending, Err(SessionError::Closed)),
             SessionPhase::Calling { pending, phase, .. } => {
                 finish(fx, &pending, Err(SessionError::Closed));
-                if let CallPhase::InFlight(attempt_id) = phase { fx.push(SessionEffect::HttpCancel { attempt_id }); }
+                if let AttemptPhase::InFlight(attempt_id) = phase { fx.push(SessionEffect::HttpCancel { attempt_id }); }
             }
-            SessionPhase::Generating { call, .. } => refuse(fx, call, SessionError::Closed),
+            SessionPhase::Generating { call, .. } => refuse(fx, call.into(), SessionError::Closed),
             SessionPhase::Storing { call, credential_new, op, .. } => {
                 self.refuse_queue(fx, SessionError::Closed);
                 self.phase = SessionPhase::Storing { call, credential_new, op, after: AfterStore::Drain };
@@ -741,17 +753,17 @@ impl SessionState {
     fn online_changed(&mut self, phase: SessionPhase, online: bool, fx: &mut Vec<SessionEffect>) {
         self.online = Some(online);
         match phase {
-            SessionPhase::Calling { pending, attempts, phase: CallPhase::InFlight(attempt_id), document_sent } if !online => {
+            SessionPhase::Calling { pending, attempts, phase: AttemptPhase::InFlight(attempt_id), document_sent } if !online => {
                 fx.push(SessionEffect::HttpCancel { attempt_id });
                 if let Some(author) = pending.author {
                     fx.push(SessionEffect::Answer { author, req_id: pending.request_id, outcome: AuthorOutcome::Dropped });
                     self.phase = SessionPhase::PendingHeld { pending };
                 } else {
-                    self.phase = SessionPhase::Calling { pending, attempts, phase: CallPhase::WaitingNetwork, document_sent };
+                    self.phase = SessionPhase::Calling { pending, attempts, phase: AttemptPhase::WaitingNetwork, document_sent };
                 }
             }
-            SessionPhase::Calling { pending, attempts, phase: CallPhase::WaitingNetwork, document_sent } if online => self.send(pending, attempts, document_sent, fx),
-            SessionPhase::Blocked { pending: Some(pending), reason: Block::Storage } if online && pending.author.is_none() => self.send(pending, 0, false, fx),
+            SessionPhase::Calling { pending, attempts, phase: AttemptPhase::WaitingNetwork, document_sent } if online => self.request_http(pending, attempts, document_sent, fx),
+            SessionPhase::Blocked { pending: Some(pending), reason: Block::Storage } if online && pending.author.is_none() => self.request_http(pending, 0, false, fx),
             other => self.phase = other,
         }
     }
@@ -876,16 +888,15 @@ impl SessionState {
             }
             (SessionPhase::Storing { call, credential_new, op, after }, SessionInput::SecretStored { secret_op_id, ok }) if secret_op_id == op => match (after, ok) {
                 (AfterStore::Persist, true) => {
-                    let Queued::Call { operation, body, reply: id } = call else { unreachable!("a generating call is a call") };
-                    let def = self.def(&operation).expect("a generating call is declared");
+                    let LoginCall { operation, body, reply: id } = call;
                     let request_id = self.request();
                     let epoch = self.epoch;
-                    self.persist(PendingCall { request_id, sequence: 1, class: OperationClass::Login, operation, path: def.path, body, credential: Some(credential_new), purpose: 0, author: None, owner: None, epoch, reply: Some(id) }, Some(credential_new), fx);
+                    self.persist(PendingCall { request_id, sequence: 1, class: OperationClass::Login, operation: operation.name, path: operation.path, body, credential: Some(credential_new), purpose: 0, author: None, owner: None, epoch, reply: Some(id) }, Some(credential_new), fx);
                 }
-                (AfterStore::Persist, false) => self.clearing(Some(call), Some(SessionError::Storage("the secret could not be stored".into())), AfterClear::Idle, fx),
-                (AfterStore::Clear(reason), _) => self.clearing(Some(call), Some(reason), AfterClear::Idle, fx),
+                (AfterStore::Persist, false) => self.clearing(Some(call.into()), Some(SessionError::Storage("the secret could not be stored".into())), AfterClear::Idle, fx),
+                (AfterStore::Clear(reason), _) => self.clearing(Some(call.into()), Some(reason), AfterClear::Idle, fx),
                 (AfterStore::Drain, _) => {
-                    refuse(fx, call, SessionError::Closed);
+                    refuse(fx, call.into(), SessionError::Closed);
                     self.drained(fx);
                 }
             },
@@ -936,7 +947,7 @@ impl SessionState {
                     }
                 }
             }
-            (SessionPhase::Blocked { pending: Some(pending), reason: Block::Storage }, SessionInput::Tick(_)) if self.is_online() && pending.author.is_none() => self.send(pending, 0, false, fx),
+            (SessionPhase::Blocked { pending: Some(pending), reason: Block::Storage }, SessionInput::Tick(_)) if self.is_online() && pending.author.is_none() => self.request_http(pending, 0, false, fx),
             (SessionPhase::Persisting { pending, batch }, SessionInput::Committed(Committed { batch: committed, .. })) if committed == batch => self.start_calling(pending, fx),
             (SessionPhase::Persisting { pending, batch }, SessionInput::Rejected(Rejected { batch: rejected, reason })) if rejected == batch => {
                 finish(fx, &pending, Err(SessionError::Rejected(reason)));
@@ -982,8 +993,8 @@ impl SessionState {
         }
     }
 
-    fn calling(&mut self, pending: PendingCall, attempts: u64, phase: CallPhase, document_sent: bool, input: SessionInput, fx: &mut Vec<SessionEffect>) {
-        let mine = |request_id: RequestId, attempt_id: AttemptId| pending.request_id == request_id && phase == CallPhase::InFlight(attempt_id);
+    fn calling(&mut self, pending: PendingCall, attempts: u64, phase: AttemptPhase, document_sent: bool, input: SessionInput, fx: &mut Vec<SessionEffect>) {
+        let mine = |request_id: RequestId, attempt_id: AttemptId| pending.request_id == request_id && phase == AttemptPhase::InFlight(attempt_id);
         let input = match input {
             SessionInput::HttpFailed { attempt_id } if mine(pending.request_id, attempt_id) => SessionInput::HttpError { request_id: pending.request_id, attempt_id, temporary: false, auth: false, persisted_missing: false },
             other => other,
@@ -1009,16 +1020,16 @@ impl SessionState {
                 let answer = if pending.class == OperationClass::Logout { Ok(body) } else { Err(SessionError::Revoked) };
                 self.land(pending, answer, None, None, true, fx);
             }
-            SessionInput::HttpError { request_id, attempt_id, persisted_missing: true, .. } if mine(request_id, attempt_id) && !document_sent => self.send(pending, attempts, true, fx),
+            SessionInput::HttpError { request_id, attempt_id, persisted_missing: true, .. } if mine(request_id, attempt_id) && !document_sent => self.request_http(pending, attempts, true, fx),
             SessionInput::HttpError { request_id, attempt_id, temporary: true, persisted_missing: false, .. } if mine(request_id, attempt_id) => {
                 if let Some(author) = pending.author {
                     author_error(fx, author, pending.request_id, ErrorClass::Network, SessionError::Http);
                     self.phase = SessionPhase::PendingHeld { pending };
                 } else if self.is_online() {
                     fx.push(SessionEffect::ScheduleTick { attempts: attempts + 1 });
-                    self.phase = SessionPhase::Calling { pending, attempts: attempts + 1, phase: CallPhase::WaitingRetry, document_sent };
+                    self.phase = SessionPhase::Calling { pending, attempts: attempts + 1, phase: AttemptPhase::WaitingRetry, document_sent };
                 } else {
-                    self.phase = SessionPhase::Calling { pending, attempts, phase: CallPhase::WaitingNetwork, document_sent };
+                    self.phase = SessionPhase::Calling { pending, attempts, phase: AttemptPhase::WaitingNetwork, document_sent };
                 }
             }
             SessionInput::HttpError { request_id, attempt_id, auth, .. } if mine(request_id, attempt_id) => {
@@ -1031,9 +1042,9 @@ impl SessionState {
                     self.phase = SessionPhase::PendingHeld { pending };
                 } else if self.is_online() {
                     fx.push(SessionEffect::ScheduleTick { attempts: attempts + 1 });
-                    self.phase = SessionPhase::Calling { pending, attempts: attempts + 1, phase: CallPhase::WaitingRetry, document_sent };
+                    self.phase = SessionPhase::Calling { pending, attempts: attempts + 1, phase: AttemptPhase::WaitingRetry, document_sent };
                 } else {
-                    self.phase = SessionPhase::Calling { pending, attempts, phase: CallPhase::WaitingNetwork, document_sent };
+                    self.phase = SessionPhase::Calling { pending, attempts, phase: AttemptPhase::WaitingNetwork, document_sent };
                 }
             }
             SessionInput::SecretMissing { request_id, attempt_id, lost } if mine(request_id, attempt_id) => {
@@ -1041,15 +1052,15 @@ impl SessionState {
                     finish(fx, &pending, Err(SessionError::StateLost));
                     self.phase = SessionPhase::SecretMismatch;
                 } else {
-                    self.phase = SessionPhase::Calling { pending, attempts, phase: CallPhase::WaitingSecret, document_sent };
+                    self.phase = SessionPhase::Calling { pending, attempts, phase: AttemptPhase::WaitingSecret, document_sent };
                 }
             }
-            SessionInput::Tick(_) if phase == CallPhase::WaitingRetry && self.is_online() => self.send(pending, attempts, document_sent, fx),
-            SessionInput::Foreground { .. } if phase == CallPhase::WaitingSecret => {
+            SessionInput::Tick(_) if phase == AttemptPhase::WaitingRetry && self.is_online() => self.request_http(pending, attempts, document_sent, fx),
+            SessionInput::Foreground { .. } if phase == AttemptPhase::WaitingSecret => {
                 if self.is_online() {
-                    self.send(pending, attempts, document_sent, fx);
+                    self.request_http(pending, attempts, document_sent, fx);
                 } else {
-                    self.phase = SessionPhase::Calling { pending, attempts, phase: CallPhase::WaitingNetwork, document_sent };
+                    self.phase = SessionPhase::Calling { pending, attempts, phase: AttemptPhase::WaitingNetwork, document_sent };
                 }
             }
             _ => self.phase = SessionPhase::Calling { pending, attempts, phase, document_sent },

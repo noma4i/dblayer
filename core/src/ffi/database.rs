@@ -451,6 +451,7 @@ impl Database {
         let result = self.in_epoch(receipt.epoch, "operation outcome", async move { Ok::<_, DbError>(ticket.result().await) }).await;
         let result = match result {
             Ok(result) => result,
+            Err(DbError::NoSession { .. } | DbError::Interrupted { .. }) => return Ok(WireOperationOutcome::Interrupted),
             Err(_) if !self.admits(receipt.epoch) => return Ok(WireOperationOutcome::Interrupted),
             Err(error) => return Err(error),
         };
