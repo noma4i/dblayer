@@ -3,24 +3,43 @@ use super::database::DatabaseSut;
 use super::model::replay;
 
 /// Requirement: the shared corpus is green on the core through the public API of `Database`.
-/// Observable: the observations of each corpus trace. Assert: equal to the recorded ones after every input; the corpus is not empty. Every red trace is listed, not only the first.
-#[tokio::test(flavor = "multi_thread")]
-async fn the_shared_corpus_is_green_on_the_core() {
-    tokio::time::timeout(std::time::Duration::from_secs(300), shared_corpus()).await.expect("the shared corpus did not finish in 300 s");
-}
-
-async fn shared_corpus() {
+/// Observable: the observations of each corpus trace. Assert: equal to the recorded ones after every input; the corpus is not empty. Every red trace is listed, not only the first. The traces run in eight tests so that each stays under its time limit.
+async fn shared_corpus(part: usize) {
     let traces = corpus::read_dir(&corpus::shared_dir()).unwrap();
     assert!(!traces.is_empty());
-    let runs: Vec<_> = traces.into_iter().map(|trace| tokio::spawn(async move {
-        let mut real = DatabaseSut::default();
-        let result = replay(&mut real, &trace).await.err().map(|divergence| format!("{}: {divergence}", trace.name));
-        real.finish().await;
-        result
-    })).collect();
     let mut red = Vec::new();
-    for run in runs {
-        red.extend(run.await.expect("a corpus trace did not panic"));
+    for trace in traces.into_iter().enumerate().filter(|(index, _)| index % PARTS == part).map(|(_, trace)| trace) {
+        let mut real = DatabaseSut::default();
+        if let Err(divergence) = replay(&mut real, &trace).await {
+            red.push(format!("{}: {divergence}", trace.name));
+        }
+        real.finish().await;
     }
     assert!(red.is_empty(), "red traces:\n{}", red.join("\n"));
 }
+
+const PARTS: usize = 8;
+
+#[tokio::test(flavor = "multi_thread")]
+async fn the_shared_corpus_is_green_on_the_core_part_0() { shared_corpus(0).await }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn the_shared_corpus_is_green_on_the_core_part_1() { shared_corpus(1).await }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn the_shared_corpus_is_green_on_the_core_part_2() { shared_corpus(2).await }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn the_shared_corpus_is_green_on_the_core_part_3() { shared_corpus(3).await }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn the_shared_corpus_is_green_on_the_core_part_4() { shared_corpus(4).await }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn the_shared_corpus_is_green_on_the_core_part_5() { shared_corpus(5).await }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn the_shared_corpus_is_green_on_the_core_part_6() { shared_corpus(6).await }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn the_shared_corpus_is_green_on_the_core_part_7() { shared_corpus(7).await }

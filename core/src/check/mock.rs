@@ -8,6 +8,7 @@ use tokio::sync::oneshot;
 use super::value::Observation;
 use crate::ffi::{ByteProgress, CableLease, CredentialStore, DbError, EncryptedHttp, EncryptedReply, EncryptedSocketEvent, PutReply, SubscriptionSink, Transport, TransportRequest};
 use crate::transport::encrypted::fake_server_tests::{decrypt_request, seal_response};
+use crate::transport::encrypted::cable::peer_tests::CablePeer;
 use crate::transport::{NetworkPurpose, PutFile, TransferIdentity};
 
 type Reply = Result<String, DbError>;
@@ -27,12 +28,14 @@ struct Inner {
     waiting_puts: HashMap<String, oneshot::Sender<Result<PutReply, DbError>>>,
     waiting_http: HashMap<String, (serde_json::Value, oneshot::Sender<Result<EncryptedReply, DbError>>)>,
     sinks: HashMap<String, Arc<SubscriptionSink>>,
+    /// The socket of each cable request: the token of the lease.
+    cables: HashMap<String, String>,
 }
 
 /// The transport mock of the shared vocabulary. It answers no request by itself: a request waits until an input of the trace answers, fails or drops it.
-#[derive(Default)]
 pub struct Mock {
     inner: Mutex<Inner>,
+    peer: CablePeer,
 }
 
 fn deliver<T>(sender: oneshot::Sender<T>, value: T) -> bool {
@@ -61,7 +64,7 @@ fn error_of(kind: &str) -> Option<DbError> {
 
 impl Mock {
     pub fn new() -> Arc<Self> {
-        Arc::new(Self::default())
+        Arc::new(Self { inner: Mutex::new(Inner::default()), peer: CablePeer::new(crate::transport::encrypted::protocol_tests::config()) })
     }
 
     fn record(&self, kind: &'static str, purpose: &'static str) -> String {
@@ -139,6 +142,10 @@ impl Mock {
             sink.failed(error);
             return true;
         }
+        if let Some(token) = inner.cables.remove(id) {
+            drop(inner);
+            return self.peer.close(&token);
+        }
         false
     }
 
@@ -152,13 +159,16 @@ impl Mock {
 
     pub fn ready(&self, id: &str) -> bool {
         let sink = locked(self).sinks.get(id).cloned();
-        sink.map(|sink| sink.ready()).is_some()
+        if let Some(sink) = sink { sink.ready(); return true; }
+        locked(self).cables.contains_key(id)
     }
 
     pub fn frame(&self, id: &str, event: &str) -> Result<bool, DbError> {
         let sink = locked(self).sinks.get(id).cloned();
-        match sink {
-            Some(sink) => sink.event(event.to_string()).map(|()| true),
+        if let Some(sink) = sink { return sink.event(event.to_string()).map(|()| true); }
+        let token = locked(self).cables.get(id).cloned();
+        match token {
+            Some(token) => Ok(self.peer.event(&token, serde_json::from_str(event).map_err(|error| DbError::Invalid { detail: error.to_string() })?)),
             None => Ok(false),
         }
     }
@@ -173,12 +183,14 @@ impl Mock {
 
 #[async_trait]
 impl Transport for Mock {
-    async fn open_cable(&self, _: Arc<CableLease>, _url: String) -> Result<(), DbError> {
-        self.record("subscription", purpose_name(NetworkPurpose::Standard));
-        Err(DbError::Network { detail: "no cable".into() })
+    async fn open_cable(&self, lease: Arc<CableLease>, _url: String) -> Result<(), DbError> {
+        let id = self.record("subscription", purpose_name(NetworkPurpose::Standard));
+        let token = self.peer.open(&lease)?;
+        locked(self).cables.insert(id, token);
+        Ok(())
     }
-    async fn cable_send(&self, _: String, _: String) -> Result<(), DbError> { Err(DbError::Network { detail: "no cable".into() }) }
-    async fn cable_next(&self, _: String) -> Option<EncryptedSocketEvent> { None }
+    async fn cable_send(&self, token: String, text: String) -> Result<(), DbError> { self.peer.receive(&token, &text).map(drop) }
+    async fn cable_next(&self, token: String) -> Option<EncryptedSocketEvent> { self.peer.next(&token).await }
     async fn cable_close(&self, _: String) {}
     async fn query(&self, request: TransportRequest) -> Result<String, DbError> { self.wait("query", &request).await }
     async fn mutate(&self, request: TransportRequest) -> Result<String, DbError> { self.wait("mutation", &request).await }

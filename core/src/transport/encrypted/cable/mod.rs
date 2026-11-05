@@ -15,6 +15,8 @@ pub use wire::{CableConnect, CableSocket, CableSubscriptions, SocketEvent};
 #[cfg(test)]
 mod session_tests;
 #[cfg(test)]
+pub(crate) mod peer_tests;
+#[cfg(test)]
 mod wire_tests;
 pub use link::{CableKeys, CableLink};
 

@@ -202,16 +202,17 @@ impl DatabaseSut {
         self.calls.push(crate::task::spawn(crate::task::Carry::here(), work));
     }
 
-    /// Waits until requests, finished calls and stream notices stop changing for 100 ms, then observes everything that finished.
+    /// Waits until requests, finished calls and stream notices stop changing for 80 ms, then observes everything that finished.
     async fn settle(&mut self) -> Vec<Observation> {
         let mut quiet = 0;
         let mut last = (usize::MAX, usize::MAX, u64::MAX);
+        if let Some(database) = self.database.clone() { let _ = crate::ffi::settled(&database).await; }
         for _ in 0..600 {
             tokio::time::sleep(Duration::from_millis(10)).await;
             let now = (self.mock.count(), self.calls.iter().filter(|call| call.is_finished()).count(), self.heard.0.load(Ordering::SeqCst));
             quiet = if now == last { quiet + 1 } else { 0 };
             last = now;
-            if quiet >= 25 { break; }
+            if quiet >= 8 { break; }
         }
         let mut observed = Vec::new();
         let mut waiting = Vec::new();
@@ -242,6 +243,7 @@ impl DatabaseSut {
                 if database.register_operations(OPERATIONS.into()).is_err() { return error("operations"); }
                 if database.set_online(true).is_err() { return error("online"); }
                 self.database = Some(database);
+                let _ = self.settle().await;
                 vec![Observation::bare("opened")]
             }
             Err(_) => error("open"),
