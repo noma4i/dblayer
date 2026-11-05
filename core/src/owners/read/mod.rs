@@ -6,6 +6,7 @@ pub mod feed;
 pub mod windows;
 
 mod delivery_io;
+mod feed_codec;
 mod feed_io;
 mod ports;
 mod schema_io;
@@ -13,6 +14,7 @@ mod snapshots;
 mod window_io;
 
 pub use delivery_io::DeliveryIo;
+pub use feed_codec::SchemaFeedCodec;
 pub use feed_io::{FeedCodec, FeedIo};
 pub use ports::{Admit, Rest};
 pub use schema_io::{max_pages, preload_keys, preload_sources, Operations, SchemaWindowCodec};
@@ -21,6 +23,8 @@ pub use window_io::{WindowCodec, WindowIo};
 
 #[cfg(test)]
 mod delivery_io_tests;
+#[cfg(test)]
+mod feed_codec_tests;
 #[cfg(test)]
 mod feed_io_tests;
 #[cfg(test)]

@@ -61,7 +61,7 @@ pub use entity_fetch::{EntityFetch, RefreshError, RefreshSink};
 pub use error::SyncError;
 pub use load::{DiscardReason, LoadOptions, LoadOutcome, LoadStatus};
 pub use registry::{OperationDef, DEFAULT_PAGE_SIZE};
-pub(crate) use extract::extract;
+pub(crate) use extract::{extract, root_value};
 pub(crate) use load::stamp_scope_values;
 pub(crate) use normalize::{normalize_nodes, Normalized};
 pub(crate) use preload::limited_combinations;
