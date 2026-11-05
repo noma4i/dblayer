@@ -1,25 +1,25 @@
 use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::fmt::Debug;
 
-use super::owner::{Back, Cause, Control, Effect, Epoch, Message, Outbound, Owner, ScheduleId, Stamp, Time};
+use super::owner::{Back, Cause, Control, Effect, Epoch, Message, Outbound, StateOwner, ScheduleId, EpochStamp, Time};
 
-pub trait EffectRunner<O: Owner>: Send + 'static {
-    fn run(&mut self, stamp: Stamp, effect: O::Effect, back: &Back<O>);
+pub trait EffectRunner<O: StateOwner>: Send + 'static {
+    fn run(&mut self, stamp: EpochStamp, effect: O::Effect, back: &Back<O>);
 }
 
-enum Item<O: Owner> {
-    Input(Stamp, O::Input),
+enum Item<O: StateOwner> {
+    Input(EpochStamp, O::Input),
     EndEpoch(Epoch, Cause),
 }
 
 struct Scheduled<I> {
     id: ScheduleId,
-    stamp: Stamp,
+    stamp: EpochStamp,
     input: I,
 }
 
 pub(crate) struct Ran {
-    pub stamp: Stamp,
+    pub stamp: EpochStamp,
     pub dropped: bool,
     pub input: String,
     pub effects: String,
@@ -27,7 +27,7 @@ pub(crate) struct Ran {
     pub broadcasts: Vec<Control>,
 }
 
-pub(crate) struct Cell<O: Owner> {
+pub(crate) struct Cell<O: StateOwner> {
     pub state: O::State,
     queue: VecDeque<Item<O>>,
     epoch: Option<Epoch>,
@@ -38,7 +38,7 @@ pub(crate) struct Cell<O: Owner> {
     dropped: u64,
 }
 
-impl<O: Owner> Cell<O> {
+impl<O: StateOwner> Cell<O> {
     pub fn new(state: O::State) -> Self {
         Self { state, queue: VecDeque::new(), epoch: None, last_epoch: None, schedule: BTreeMap::new(), keys: HashMap::new(), sequence: 0, dropped: 0 }
     }
@@ -49,18 +49,20 @@ impl<O: Owner> Cell<O> {
 
     pub fn next_due(&self) -> Option<Time> { self.schedule.keys().next().map(|key| key.0) }
 
-    pub fn push(&mut self, stamp: Stamp, input: O::Input) { self.queue.push_back(Item::Input(stamp, input)); }
+    pub fn push(&mut self, stamp: EpochStamp, input: O::Input) { self.queue.push_back(Item::Input(stamp, input)); }
 
-    pub fn push_message(&mut self, stamp: Stamp, payload: Box<dyn Message>) {
-        let input = *payload.into_any().downcast::<O::Input>().unwrap_or_else(|_| unreachable!("an address carries the input type of its owner"));
-        self.push(stamp, input);
+    pub fn push_message(&mut self, stamp: EpochStamp, payload: Box<dyn Message>) {
+        match payload.into_any().downcast::<O::Input>() {
+            Ok(input) => self.push(stamp, *input),
+            Err(_) => self.dropped += 1,
+        }
     }
 
-    pub fn close(&mut self) { self.push(Stamp::Control, O::closing()); }
+    pub fn close(&mut self) { self.push(EpochStamp::Control, O::closing()); }
 
     pub fn start_epoch(&mut self, epoch: Epoch) {
         self.epoch = Some(epoch);
-        self.purge_schedule(|stamp| stamp != Stamp::Epoch(epoch) && stamp != Stamp::Control);
+        self.purge_schedule(|stamp| stamp != EpochStamp::Epoch(epoch) && stamp != EpochStamp::Control);
     }
 
     pub fn end_epoch(&mut self, epoch: Epoch, cause: Cause) { self.queue.push_back(Item::EndEpoch(epoch, cause)); }
@@ -76,7 +78,7 @@ impl<O: Owner> Cell<O> {
         if due.is_empty() {
             return false;
         }
-        self.queue.push_back(Item::Input(Stamp::Control, O::tick(now)));
+        self.queue.push_back(Item::Input(EpochStamp::Control, O::tick(now)));
         for scheduled in due {
             self.keys.remove(&scheduled.id);
             self.queue.push_back(Item::Input(scheduled.stamp, scheduled.input));
@@ -95,9 +97,9 @@ impl<O: Owner> Cell<O> {
             Item::EndEpoch(epoch, cause) => {
                 let input = O::epoch_ended(epoch, cause);
                 if O::EPOCHED && self.epoch != Some(epoch) {
-                    return Some(self.drop_input(Stamp::Epoch(epoch), label(trace, &input)));
+                    return Some(self.drop_input(EpochStamp::Epoch(epoch), label(trace, &input)));
                 }
-                (Stamp::Epoch(epoch), input, true)
+                (EpochStamp::Epoch(epoch), input, true)
             }
         };
         let input_label = label(trace, &input);
@@ -123,28 +125,28 @@ impl<O: Owner> Cell<O> {
         }
         if ended {
             self.last_epoch = self.epoch.take();
-            self.purge_schedule(|stamp| stamp != Stamp::Control);
+            self.purge_schedule(|stamp| stamp != EpochStamp::Control);
         }
         Some(Ran { stamp, dropped: false, input: input_label, effects: effects_label, sends, broadcasts })
     }
 
-    fn drop_input(&mut self, stamp: Stamp, input: String) -> Ran {
+    fn drop_input(&mut self, stamp: EpochStamp, input: String) -> Ran {
         self.dropped += 1;
         Ran { stamp, dropped: true, input, effects: String::new(), sends: Vec::new(), broadcasts: Vec::new() }
     }
 
-    fn owner_stamp(&self) -> Stamp {
-        if O::EPOCHED { Stamp::Epoch(self.epoch.or(self.last_epoch).unwrap_or(0)) } else { Stamp::Control }
+    fn owner_stamp(&self) -> EpochStamp {
+        if O::EPOCHED { EpochStamp::Epoch(self.epoch.or(self.last_epoch).unwrap_or(0)) } else { EpochStamp::Control }
     }
 
-    fn admits(&self, stamp: Stamp) -> bool {
+    fn admits(&self, stamp: EpochStamp) -> bool {
         match stamp {
-            Stamp::Control => true,
-            Stamp::Epoch(epoch) => !O::EPOCHED || self.epoch == Some(epoch),
+            EpochStamp::Control => true,
+            EpochStamp::Epoch(epoch) => !O::EPOCHED || self.epoch == Some(epoch),
         }
     }
 
-    fn schedule_input(&mut self, id: ScheduleId, at: Time, stamp: Stamp, input: O::Input) {
+    fn schedule_input(&mut self, id: ScheduleId, at: Time, stamp: EpochStamp, input: O::Input) {
         self.cancel(id);
         let key = (at, self.sequence);
         self.sequence += 1;
@@ -158,7 +160,7 @@ impl<O: Owner> Cell<O> {
         }
     }
 
-    fn purge_schedule(&mut self, remove: impl Fn(Stamp) -> bool) {
+    fn purge_schedule(&mut self, remove: impl Fn(EpochStamp) -> bool) {
         self.schedule.retain(|_, scheduled| !remove(scheduled.stamp));
         let live: HashSet<ScheduleId> = self.schedule.values().map(|scheduled| scheduled.id).collect();
         self.keys.retain(|id, _| live.contains(id));

@@ -57,7 +57,8 @@ impl<T> Outcomes<T> {
         };
         match terminal {
             Some(outcome) => {
-                let _ = sender.send(outcome);
+                drop(inner);
+                let _ = crate::db::lock::effect(|| sender.send(outcome));
             }
             None => {
                 inner.open.insert(id, (epoch, sender));
@@ -68,7 +69,7 @@ impl<T> Outcomes<T> {
 
     pub fn settle(&self, id: OutcomeId, value: T) -> bool {
         let Some((_, sender)) = self.lock().open.remove(&id.0) else { return false };
-        sender.send(Outcome::Value(value)).is_ok()
+        crate::db::lock::effect(|| sender.send(Outcome::Value(value)).is_ok())
     }
 
     pub fn end_epoch(&self, epoch: Epoch, cause: Cause) -> usize {
@@ -77,10 +78,10 @@ impl<T> Outcomes<T> {
             inner.last_ended = Some((epoch, cause));
         }
         let ids: Vec<u64> = inner.open.iter().filter(|(_, (open_epoch, _))| *open_epoch <= epoch).map(|(id, _)| *id).collect();
-        for id in &ids {
-            if let Some((_, sender)) = inner.open.remove(id) {
-                let _ = sender.send(Outcome::EpochEnded(cause));
-            }
+        let senders: Vec<_> = ids.iter().filter_map(|id| inner.open.remove(id)).map(|(_, sender)| sender).collect();
+        drop(inner);
+        for sender in senders {
+            let _ = crate::db::lock::effect(|| sender.send(Outcome::EpochEnded(cause)));
         }
         ids.len()
     }
@@ -89,9 +90,10 @@ impl<T> Outcomes<T> {
         let mut inner = self.lock();
         inner.closed = true;
         let open: Vec<_> = inner.open.drain().collect();
+        drop(inner);
         let count = open.len();
         for (_, (_, sender)) in open {
-            let _ = sender.send(Outcome::Closing);
+            let _ = crate::db::lock::effect(|| sender.send(Outcome::Closing));
         }
         count
     }

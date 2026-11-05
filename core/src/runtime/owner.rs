@@ -20,7 +20,7 @@ pub enum Cause {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Stamp {
+pub enum EpochStamp {
     Epoch(Epoch),
     Control,
 }
@@ -42,7 +42,7 @@ pub enum Control {
     Closing,
 }
 
-pub trait Owner: Sized + 'static {
+pub trait StateOwner: Sized + 'static {
     const EPOCHED: bool;
     type State: Send + 'static;
     type Input: Message;
@@ -54,7 +54,7 @@ pub trait Owner: Sized + 'static {
     fn closing() -> Self::Input;
 }
 
-pub enum Effect<O: Owner> {
+pub enum Effect<O: StateOwner> {
     Schedule { id: ScheduleId, at: Time, input: O::Input },
     Cancel(ScheduleId),
     Send(Outbound),
@@ -62,7 +62,7 @@ pub enum Effect<O: Owner> {
     Run(O::Effect),
 }
 
-impl<O: Owner> Debug for Effect<O> {
+impl<O: StateOwner> Debug for Effect<O> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Schedule { id, at, input } => f.debug_struct("Schedule").field("id", id).field("at", at).field("input", input).finish(),
@@ -74,51 +74,51 @@ impl<O: Owner> Debug for Effect<O> {
     }
 }
 
-pub struct Address<O: Owner> {
+pub struct Address<O: StateOwner> {
     pub(crate) index: usize,
     marker: PhantomData<fn() -> O>,
 }
 
-impl<O: Owner> Address<O> {
+impl<O: StateOwner> Address<O> {
     pub(crate) fn new(index: usize) -> Self { Self { index, marker: PhantomData } }
 
     pub fn index(&self) -> usize { self.index }
 }
 
-impl<O: Owner> Clone for Address<O> {
+impl<O: StateOwner> Clone for Address<O> {
     fn clone(&self) -> Self { *self }
 }
 
-impl<O: Owner> Copy for Address<O> {}
+impl<O: StateOwner> Copy for Address<O> {}
 
-impl<O: Owner> Debug for Address<O> {
+impl<O: StateOwner> Debug for Address<O> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result { f.debug_tuple("Address").field(&self.index).finish() }
 }
 
 pub struct Outbound {
     pub(crate) to: usize,
-    pub(crate) stamp: Stamp,
+    pub(crate) stamp: EpochStamp,
     pub(crate) payload: Box<dyn Message>,
 }
 
 impl Outbound {
-    pub fn new<P: Owner>(to: Address<P>, input: P::Input) -> Self { Self { to: to.index, stamp: Stamp::Control, payload: Box::new(input) } }
+    pub fn new<P: StateOwner>(to: Address<P>, input: P::Input) -> Self { Self { to: to.index, stamp: EpochStamp::Control, payload: Box::new(input) } }
 }
 
 impl Debug for Outbound {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result { f.debug_struct("Send").field("to", &self.to).field("input", &self.payload).finish() }
 }
 
-pub struct Back<O: Owner> {
-    deliver: Arc<dyn Fn(Stamp, O::Input) + Send + Sync>,
+pub struct Back<O: StateOwner> {
+    deliver: Arc<dyn Fn(EpochStamp, O::Input) + Send + Sync>,
 }
 
-impl<O: Owner> Back<O> {
-    pub(crate) fn new(deliver: impl Fn(Stamp, O::Input) + Send + Sync + 'static) -> Self { Self { deliver: Arc::new(deliver) } }
+impl<O: StateOwner> Back<O> {
+    pub(crate) fn new(deliver: impl Fn(EpochStamp, O::Input) + Send + Sync + 'static) -> Self { Self { deliver: Arc::new(deliver) } }
 
-    pub fn send(&self, stamp: Stamp, input: O::Input) { (self.deliver)(stamp, input); }
+    pub fn reply(&self, stamp: EpochStamp, input: O::Input) { (self.deliver)(stamp, input); }
 }
 
-impl<O: Owner> Clone for Back<O> {
+impl<O: StateOwner> Clone for Back<O> {
     fn clone(&self) -> Self { Self { deliver: self.deliver.clone() } }
 }

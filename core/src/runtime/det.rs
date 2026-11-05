@@ -3,12 +3,12 @@ use std::collections::VecDeque;
 use std::sync::{Arc, Mutex, PoisonError};
 
 use super::cell::{Cell, EffectRunner, Ran};
-use super::owner::{Address, Back, Cause, Control, Epoch, Message, Owner, Stamp, Time};
+use super::owner::{Address, Back, Cause, Control, Epoch, Message, StateOwner, EpochStamp, Time};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TraceEntry {
     pub owner: &'static str,
-    pub stamp: Stamp,
+    pub stamp: EpochStamp,
     pub input: String,
     pub effects: String,
     pub dropped: bool,
@@ -19,7 +19,7 @@ trait ErasedSlot {
     fn ready(&self) -> bool;
     fn run_one(&mut self) -> Option<Ran>;
     fn absorb(&mut self);
-    fn deliver(&mut self, stamp: Stamp, payload: Box<dyn Message>);
+    fn deliver(&mut self, stamp: EpochStamp, payload: Box<dyn Message>);
     fn start_epoch(&mut self, epoch: Epoch);
     fn end_epoch(&mut self, epoch: Epoch, cause: Cause);
     fn close(&mut self);
@@ -27,9 +27,9 @@ trait ErasedSlot {
     fn as_any(&self) -> &dyn Any;
 }
 
-type Inbox<O> = Arc<Mutex<VecDeque<(Stamp, <O as Owner>::Input)>>>;
+type Inbox<O> = Arc<Mutex<VecDeque<(EpochStamp, <O as StateOwner>::Input)>>>;
 
-struct Slot<O: Owner> {
+struct Slot<O: StateOwner> {
     name: &'static str,
     cell: Cell<O>,
     runner: Box<dyn EffectRunner<O>>,
@@ -37,7 +37,7 @@ struct Slot<O: Owner> {
     inbox: Inbox<O>,
 }
 
-impl<O: Owner> ErasedSlot for Slot<O> {
+impl<O: StateOwner> ErasedSlot for Slot<O> {
     fn name(&self) -> &'static str { self.name }
 
     fn ready(&self) -> bool { self.cell.ready() }
@@ -51,7 +51,7 @@ impl<O: Owner> ErasedSlot for Slot<O> {
         }
     }
 
-    fn deliver(&mut self, stamp: Stamp, payload: Box<dyn Message>) { self.cell.push_message(stamp, payload); }
+    fn deliver(&mut self, stamp: EpochStamp, payload: Box<dyn Message>) { self.cell.push_message(stamp, payload); }
 
     fn start_epoch(&mut self, epoch: Epoch) { self.cell.start_epoch(epoch); }
 
@@ -73,7 +73,7 @@ pub struct DetScheduler {
 impl DetScheduler {
     pub fn new(seed: u64) -> Self { Self { slots: Vec::new(), random: seed, trace: Vec::new() } }
 
-    pub fn add<O: Owner>(&mut self, name: &'static str, state: O::State, runner: impl EffectRunner<O>) -> Address<O> {
+    pub fn add<O: StateOwner>(&mut self, name: &'static str, state: O::State, runner: impl EffectRunner<O>) -> Address<O> {
         let inbox: Inbox<O> = Arc::default();
         let arrivals = inbox.clone();
         let back = Back::new(move |stamp, input| arrivals.lock().unwrap_or_else(PoisonError::into_inner).push_back((stamp, input)));
@@ -81,11 +81,11 @@ impl DetScheduler {
         Address::new(self.slots.len() - 1)
     }
 
-    pub fn send<O: Owner>(&mut self, to: Address<O>, stamp: Stamp, input: O::Input) { self.slots[to.index].deliver(stamp, Box::new(input)); }
+    pub fn post<O: StateOwner>(&mut self, to: Address<O>, stamp: EpochStamp, input: O::Input) { self.slots[to.index].deliver(stamp, Box::new(input)); }
 
     pub fn start_epoch(&mut self, epoch: Epoch) { self.slots.iter_mut().for_each(|slot| slot.start_epoch(epoch)); }
 
-    pub fn start_epoch_for<O: Owner>(&mut self, to: Address<O>, epoch: Epoch) { self.slots[to.index].start_epoch(epoch); }
+    pub fn start_epoch_for<O: StateOwner>(&mut self, to: Address<O>, epoch: Epoch) { self.slots[to.index].start_epoch(epoch); }
 
     pub fn broadcast(&mut self, control: Control) {
         match control {
@@ -141,13 +141,11 @@ impl DetScheduler {
 
     pub fn trace(&self) -> &[TraceEntry] { &self.trace }
 
-    pub fn state<O: Owner>(&self, address: Address<O>) -> &O::State {
-        &self.slots[address.index].as_any().downcast_ref::<Slot<O>>().expect("address type matches owner").cell.state
-    }
+    fn slot<O: StateOwner>(&self, address: Address<O>) -> Option<&Slot<O>> { self.slots.get(address.index)?.as_any().downcast_ref::<Slot<O>>() }
 
-    pub fn dropped<O: Owner>(&self, address: Address<O>) -> u64 {
-        self.slots[address.index].as_any().downcast_ref::<Slot<O>>().expect("address type matches owner").cell.dropped()
-    }
+    pub fn state<O: StateOwner>(&self, address: Address<O>) -> Option<&O::State> { self.slot(address).map(|slot| &slot.cell.state) }
+
+    pub fn dropped<O: StateOwner>(&self, address: Address<O>) -> u64 { self.slot(address).map_or(0, |slot| slot.cell.dropped()) }
 
     fn next_random(&mut self) -> u64 {
         self.random = self.random.wrapping_add(0x9E37_79B9_7F4A_7C15);

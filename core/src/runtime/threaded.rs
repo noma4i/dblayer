@@ -5,11 +5,12 @@ use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
 use super::cell::{Cell, EffectRunner};
-use super::owner::{Address, Back, Cause, Control, Epoch, Message, Owner, Stamp, Time};
+use super::owner::{Address, Back, Cause, Control, Epoch, Message, StateOwner, EpochStamp, Time};
+use crate::blocking::blocking_unit;
 use crate::task::{spawn_thread, Carry};
 
 enum Command {
-    Deliver(Stamp, Box<dyn Message>),
+    Deliver(EpochStamp, Box<dyn Message>),
     StartEpoch(Epoch),
     EndEpoch(Epoch, Cause),
     Close,
@@ -25,7 +26,7 @@ struct Mailbox {
 impl Mailbox {
     fn push(&self, command: Command) {
         lock(&self.commands).push_back(command);
-        self.wake.notify_one();
+        crate::db::lock::effect(|| self.wake.notify_one());
     }
 }
 
@@ -63,7 +64,7 @@ pub struct Runtime {
 impl RuntimeBuilder {
     pub fn new() -> Self { Self::default() }
 
-    pub fn add<O: Owner>(&mut self, name: &str, state: O::State, runner: impl EffectRunner<O>) -> Address<O> {
+    pub fn add<O: StateOwner>(&mut self, name: &str, state: O::State, runner: impl EffectRunner<O>) -> Address<O> {
         let mailbox = Arc::new(Mailbox { commands: Mutex::new(VecDeque::new()), wake: Condvar::new(), wakeups: AtomicU64::new(0) });
         let own = mailbox.clone();
         self.boxes.push(mailbox);
@@ -85,7 +86,7 @@ impl RuntimeBuilder {
 }
 
 impl Runtime {
-    pub fn send<O: Owner>(&self, to: Address<O>, stamp: Stamp, input: O::Input) { self.router.boxes[to.index].push(Command::Deliver(stamp, Box::new(input))); }
+    pub fn post<O: StateOwner>(&self, to: Address<O>, stamp: EpochStamp, input: O::Input) { self.router.boxes[to.index].push(Command::Deliver(stamp, Box::new(input))); }
 
     pub fn start_epoch(&self, epoch: Epoch) { self.router.broadcast(Control::EpochStarted(epoch)); }
 
@@ -93,7 +94,7 @@ impl Runtime {
 
     pub fn close(&self) { self.router.broadcast(Control::Closing); }
 
-    pub fn wakeups<O: Owner>(&self, address: Address<O>) -> u64 { self.router.boxes[address.index].wakeups.load(Ordering::SeqCst) }
+    pub fn wakeups<O: StateOwner>(&self, address: Address<O>) -> u64 { self.router.boxes[address.index].wakeups.load(Ordering::SeqCst) }
 }
 
 impl Drop for Runtime {
@@ -107,7 +108,7 @@ impl Drop for Runtime {
 
 fn elapsed(origin: Instant) -> Time { Time(origin.elapsed().as_millis() as u64) }
 
-fn run_owner<O: Owner>(mut cell: Cell<O>, mut runner: Box<dyn EffectRunner<O>>, mailbox: Arc<Mailbox>, router: Arc<Router>, origin: Instant) {
+fn run_owner<O: StateOwner>(mut cell: Cell<O>, mut runner: Box<dyn EffectRunner<O>>, mailbox: Arc<Mailbox>, router: Arc<Router>, origin: Instant) {
     let back = {
         let own = mailbox.clone();
         Back::<O>::new(move |stamp, input| own.push(Command::Deliver(stamp, Box::new(input))))
@@ -117,13 +118,13 @@ fn run_owner<O: Owner>(mut cell: Cell<O>, mut runner: Box<dyn EffectRunner<O>>, 
             let mut queue = lock(&mailbox.commands);
             while queue.is_empty() {
                 match cell.next_due() {
-                    None => queue = mailbox.wake.wait(queue).unwrap_or_else(PoisonError::into_inner),
+                    None => queue = blocking_unit(|| mailbox.wake.wait(queue).unwrap_or_else(PoisonError::into_inner)),
                     Some(at) => {
                         let now = elapsed(origin);
                         if at <= now {
                             break;
                         }
-                        queue = mailbox.wake.wait_timeout(queue, Duration::from_millis(at.0 - now.0)).unwrap_or_else(PoisonError::into_inner).0;
+                        queue = blocking_unit(|| mailbox.wake.wait_timeout(queue, Duration::from_millis(at.0 - now.0)).unwrap_or_else(PoisonError::into_inner).0);
                     }
                 }
                 mailbox.wakeups.fetch_add(1, Ordering::SeqCst);

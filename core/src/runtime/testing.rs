@@ -4,7 +4,7 @@ use super::*;
 
 pub const CLOSED: u32 = u32::MAX;
 
-pub type Pending = Arc<Mutex<Vec<(Back<Toy>, Stamp, ToyInput)>>>;
+pub type ParkedBacks = Arc<Mutex<Vec<(Back<Toy>, EpochStamp, ToyInput)>>>;
 
 pub struct Toy;
 
@@ -55,7 +55,7 @@ pub struct ToyState {
     pub closed: bool,
 }
 
-impl Owner for Toy {
+impl StateOwner for Toy {
     const EPOCHED: bool = true;
 
     type State = ToyState;
@@ -126,13 +126,13 @@ impl Owner for Toy {
 pub struct ToyRunner {
     pub outcomes: Option<Outcomes<u32>>,
     pub report: Option<mpsc::Sender<u32>>,
-    pub pending: Option<Pending>,
+    pub pending: Option<ParkedBacks>,
 }
 
 impl EffectRunner<Toy> for ToyRunner {
-    fn run(&mut self, stamp: Stamp, effect: ToyEffect, back: &Back<Toy>) {
+    fn run(&mut self, stamp: EpochStamp, effect: ToyEffect, back: &Back<Toy>) {
         match effect {
-            ToyEffect::Work(n) => back.send(stamp, ToyInput::Result(n * 2)),
+            ToyEffect::Work(n) => back.reply(stamp, ToyInput::Result(n * 2)),
             ToyEffect::Park(n) => {
                 if let Some(pending) = &self.pending {
                     pending.lock().unwrap_or_else(PoisonError::into_inner).push((back.clone(), stamp, ToyInput::Result(n * 2)));
@@ -142,7 +142,7 @@ impl EffectRunner<Toy> for ToyRunner {
                 if let Some(pending) = &self.pending {
                     let parked = std::mem::take(&mut *pending.lock().unwrap_or_else(PoisonError::into_inner));
                     for (return_to, parked_stamp, input) in parked {
-                        return_to.send(parked_stamp, input);
+                        return_to.reply(parked_stamp, input);
                     }
                 }
             }
@@ -156,7 +156,7 @@ impl EffectRunner<Toy> for ToyRunner {
                     outcomes.end_epoch(epoch, cause);
                 }
                 if let Some(report) = &self.report {
-                    let _ = report.send(epoch as u32);
+                    let _ = crate::db::lock::effect(|| report.send(epoch as u32));
                 }
             }
             ToyEffect::CloseOutcomes => {
@@ -164,12 +164,12 @@ impl EffectRunner<Toy> for ToyRunner {
                     outcomes.close();
                 }
                 if let Some(report) = &self.report {
-                    let _ = report.send(CLOSED);
+                    let _ = crate::db::lock::effect(|| report.send(CLOSED));
                 }
             }
             ToyEffect::Report(n) => {
                 if let Some(report) = &self.report {
-                    let _ = report.send(n);
+                    let _ = crate::db::lock::effect(|| report.send(n));
                 }
             }
         }
@@ -190,7 +190,7 @@ pub enum HubInput {
 #[derive(Debug)]
 pub enum HubEffect {}
 
-impl Owner for Hub {
+impl StateOwner for Hub {
     const EPOCHED: bool = false;
 
     type State = ();
@@ -217,7 +217,7 @@ impl Owner for Hub {
 pub struct HubRunner;
 
 impl EffectRunner<Hub> for HubRunner {
-    fn run(&mut self, _stamp: Stamp, effect: HubEffect, _back: &Back<Hub>) { match effect {} }
+    fn run(&mut self, _stamp: EpochStamp, effect: HubEffect, _back: &Back<Hub>) { match effect {} }
 }
 
 pub fn race(seed: u64) -> (DetScheduler, Address<Toy>) {
@@ -226,8 +226,8 @@ pub fn race(seed: u64) -> (DetScheduler, Address<Toy>) {
     let depositor = det.add::<Toy>("depositor", ToyState { on_go: Some((ledger, ToyInput::Deposit(5))), ..ToyState::default() }, ToyRunner::default());
     let sealer = det.add::<Toy>("sealer", ToyState { on_go: Some((ledger, ToyInput::Seal)), ..ToyState::default() }, ToyRunner::default());
     det.start_epoch(1);
-    det.send(depositor, Stamp::Epoch(1), ToyInput::Go);
-    det.send(sealer, Stamp::Epoch(1), ToyInput::Go);
+    det.post(depositor, EpochStamp::Epoch(1), ToyInput::Go);
+    det.post(sealer, EpochStamp::Epoch(1), ToyInput::Go);
     (det, ledger)
 }
 
@@ -242,7 +242,7 @@ pub enum SinkInput {
 #[derive(Debug)]
 pub enum SinkEffect {}
 
-impl Owner for Sink {
+impl StateOwner for Sink {
     const EPOCHED: bool = false;
 
     type State = Vec<u32>;
@@ -266,5 +266,5 @@ impl Owner for Sink {
 pub struct SinkRunner;
 
 impl EffectRunner<Sink> for SinkRunner {
-    fn run(&mut self, _stamp: Stamp, effect: SinkEffect, _back: &Back<Sink>) { match effect {} }
+    fn run(&mut self, _stamp: EpochStamp, effect: SinkEffect, _back: &Back<Sink>) { match effect {} }
 }

@@ -23,14 +23,14 @@ fn step_is_a_function_of_state_and_input_only() {
 fn one_input_per_step_and_effect_result_returns_as_input() {
     let (mut det, toy) = single(1);
     det.start_epoch(1);
-    det.send(toy, Stamp::Epoch(1), ToyInput::WorkRequest(7));
+    det.post(toy, EpochStamp::Epoch(1), ToyInput::WorkRequest(7));
     assert!(det.step());
     assert_eq!(det.trace().len(), 1);
-    assert!(det.state(toy).results.is_empty());
+    assert!(det.state(toy).unwrap().results.is_empty());
     assert_eq!(det.ready(), vec![0]);
     assert!(det.step());
     assert_eq!(det.trace().len(), 2);
-    assert_eq!(det.state(toy).results, vec![14]);
+    assert_eq!(det.state(toy).unwrap().results, vec![14]);
     assert!(det.ready().is_empty());
 }
 
@@ -38,7 +38,7 @@ fn one_input_per_step_and_effect_result_returns_as_input() {
 fn owners_exchange_values_and_share_no_state() {
     let (mut det, ledger) = race(3);
     assert_eq!(det.run_until_quiet(20), Ok(4));
-    let state = det.state(ledger);
+    let state = det.state(ledger).unwrap();
     assert_eq!(state.total + state.lost, 5);
     assert!(state.sealed);
 }
@@ -47,10 +47,10 @@ fn owners_exchange_values_and_share_no_state() {
 fn input_of_another_epoch_never_reaches_step() {
     let (mut det, toy) = single(1);
     det.start_epoch(2);
-    det.send(toy, Stamp::Epoch(1), ToyInput::Deposit(5));
-    det.send(toy, Stamp::Epoch(2), ToyInput::Deposit(3));
+    det.post(toy, EpochStamp::Epoch(1), ToyInput::Deposit(5));
+    det.post(toy, EpochStamp::Epoch(2), ToyInput::Deposit(3));
     det.run_until_quiet(10).unwrap();
-    assert_eq!(det.state(toy).total, 3);
+    assert_eq!(det.state(toy).unwrap().total, 3);
     assert_eq!(det.dropped(toy), 1);
     assert!(det.trace().iter().any(|entry| entry.dropped && entry.input == "Deposit(5)"));
 }
@@ -59,11 +59,11 @@ fn input_of_another_epoch_never_reaches_step() {
 fn effect_result_of_replaced_epoch_is_dropped() {
     let (mut det, toy) = single(1);
     det.start_epoch(1);
-    det.send(toy, Stamp::Epoch(1), ToyInput::WorkRequest(4));
+    det.post(toy, EpochStamp::Epoch(1), ToyInput::WorkRequest(4));
     det.step();
     det.start_epoch(2);
     det.run_until_quiet(10).unwrap();
-    assert!(det.state(toy).results.is_empty());
+    assert!(det.state(toy).unwrap().results.is_empty());
     assert_eq!(det.dropped(toy), 1);
 }
 
@@ -71,16 +71,16 @@ fn effect_result_of_replaced_epoch_is_dropped() {
 fn epoch_end_reaches_owner_then_drops_later_inputs_and_schedule() {
     let (mut det, toy) = single(1);
     det.start_epoch(2);
-    det.send(toy, Stamp::Epoch(2), ToyInput::ScheduleAt(1, Time(10), 5));
+    det.post(toy, EpochStamp::Epoch(2), ToyInput::ScheduleAt(1, Time(10), 5));
     det.run_until_quiet(10).unwrap();
     det.end_epoch(2, Cause::SessionReset);
     det.run_until_quiet(10).unwrap();
-    assert_eq!(det.state(toy).ended, vec![(2, Cause::SessionReset)]);
-    det.send(toy, Stamp::Epoch(2), ToyInput::Deposit(1));
+    assert_eq!(det.state(toy).unwrap().ended, vec![(2, Cause::SessionReset)]);
+    det.post(toy, EpochStamp::Epoch(2), ToyInput::Deposit(1));
     det.tick(Time(100));
     det.run_until_quiet(10).unwrap();
-    assert_eq!(det.state(toy).total, 0);
-    assert!(det.state(toy).fired.is_empty());
+    assert_eq!(det.state(toy).unwrap().total, 0);
+    assert!(det.state(toy).unwrap().fired.is_empty());
     assert_eq!(det.dropped(toy), 1);
 }
 
@@ -88,27 +88,27 @@ fn epoch_end_reaches_owner_then_drops_later_inputs_and_schedule() {
 fn schedule_fires_only_after_tick_reaches_its_time() {
     let (mut det, toy) = single(1);
     det.start_epoch(1);
-    det.send(toy, Stamp::Epoch(1), ToyInput::ScheduleAt(1, Time(100), 9));
+    det.post(toy, EpochStamp::Epoch(1), ToyInput::ScheduleAt(1, Time(100), 9));
     det.run_until_quiet(10).unwrap();
     det.tick(Time(99));
     assert!(det.ready().is_empty());
-    assert!(det.state(toy).fired.is_empty());
+    assert!(det.state(toy).unwrap().fired.is_empty());
     det.tick(Time(100));
     det.run_until_quiet(10).unwrap();
-    assert_eq!(det.state(toy).fired, vec![9]);
-    assert_eq!(det.state(toy).ticks, vec![Time(100)]);
+    assert_eq!(det.state(toy).unwrap().fired, vec![9]);
+    assert_eq!(det.state(toy).unwrap().ticks, vec![Time(100)]);
 }
 
 #[test]
 fn cancelled_schedule_never_fires() {
     let (mut det, toy) = single(1);
     det.start_epoch(1);
-    det.send(toy, Stamp::Epoch(1), ToyInput::ScheduleAt(1, Time(100), 9));
-    det.send(toy, Stamp::Epoch(1), ToyInput::CancelSchedule(1));
+    det.post(toy, EpochStamp::Epoch(1), ToyInput::ScheduleAt(1, Time(100), 9));
+    det.post(toy, EpochStamp::Epoch(1), ToyInput::CancelSchedule(1));
     det.run_until_quiet(10).unwrap();
     det.tick(Time(500));
     assert!(det.ready().is_empty());
-    assert!(det.state(toy).fired.is_empty());
+    assert!(det.state(toy).unwrap().fired.is_empty());
 }
 
 #[test]
@@ -161,7 +161,7 @@ fn every_open_id_gets_one_terminal_outcome_on_epoch_end_and_close() {
     let mut first = outcomes.register(1);
     let mut second = outcomes.register(1);
     let mut third = outcomes.register(1);
-    det.send(toy, Stamp::Epoch(1), ToyInput::Resolve(first.id(), 11));
+    det.post(toy, EpochStamp::Epoch(1), ToyInput::Resolve(first.id(), 11));
     det.end_epoch(1, Cause::ServerEnded);
     det.run_until_quiet(10).unwrap();
     assert_eq!(first.try_take(), Some(Outcome::Value(11)));
@@ -185,12 +185,12 @@ fn message_from_a_tick_carries_the_owner_epoch_and_a_receiver_of_another_epoch_d
         let ticker = det.add::<Toy>("ticker", ToyState { on_tick: Some((receiver, ToyInput::Deposit(5))), ..ToyState::default() }, ToyRunner::default());
         det.start_epoch(1);
         det.start_epoch_for(receiver, receiver_epoch);
-        det.send(ticker, Stamp::Epoch(1), ToyInput::ScheduleAt(1, Time(10), 1));
+        det.post(ticker, EpochStamp::Epoch(1), ToyInput::ScheduleAt(1, Time(10), 1));
         det.run_until_quiet(10).unwrap();
         det.tick(Time(10));
         det.run_until_quiet(10).unwrap();
-        assert_eq!(det.state(ticker).ticks, vec![Time(10)]);
-        assert_eq!(det.state(receiver).total, total);
+        assert_eq!(det.state(ticker).unwrap().ticks, vec![Time(10)]);
+        assert_eq!(det.state(receiver).unwrap().total, total);
         assert_eq!(det.dropped(receiver), dropped);
     }
 }
@@ -203,9 +203,9 @@ fn owner_with_epochs_keeps_sending_after_epoch_end_and_epochless_receiver_admits
     det.start_epoch_for(sender, 1);
     det.end_epoch(1, Cause::Close);
     det.run_until_quiet(10).unwrap();
-    det.send(sender, Stamp::Control, ToyInput::Tell);
+    det.post(sender, EpochStamp::Control, ToyInput::Tell);
     det.run_until_quiet(10).unwrap();
-    assert_eq!(det.state(sink), &vec![9]);
+    assert_eq!(det.state(sink).unwrap(), &vec![9]);
     assert_eq!(det.dropped(sink), 0);
 
     let receiver = det.add::<Toy>("receiver", ToyState::default(), ToyRunner::default());
@@ -215,18 +215,18 @@ fn owner_with_epochs_keeps_sending_after_epoch_end_and_epochless_receiver_admits
     det.end_epoch(1, Cause::Close);
     det.run_until_quiet(10).unwrap();
     let before = det.dropped(receiver);
-    det.send(relay, Stamp::Control, ToyInput::Go);
+    det.post(relay, EpochStamp::Control, ToyInput::Go);
     det.run_until_quiet(10).unwrap();
-    assert_eq!((det.state(receiver).total, det.dropped(receiver) - before), (0, 1));
+    assert_eq!((det.state(receiver).unwrap().total, det.dropped(receiver) - before), (0, 1));
 }
 
 #[test]
 fn owner_without_epochs_runs_step_for_input_stamped_with_epoch_7() {
     let mut det = DetScheduler::new(1);
     let sink = det.add::<Sink>("sink", Vec::new(), SinkRunner);
-    det.send(sink, Stamp::Epoch(7), SinkInput::Note(3));
+    det.post(sink, EpochStamp::Epoch(7), SinkInput::Note(3));
     det.run_until_quiet(10).unwrap();
-    assert_eq!(det.state(sink), &vec![3]);
+    assert_eq!(det.state(sink).unwrap(), &vec![3]);
     assert_eq!(det.dropped(sink), 0);
 }
 
@@ -236,10 +236,10 @@ fn owner_with_epochs_before_its_first_epoch_stamps_epoch_0_and_receiver_of_epoch
     let receiver = det.add::<Toy>("receiver", ToyState::default(), ToyRunner::default());
     let relay = det.add::<Toy>("relay", ToyState { on_go: Some((receiver, ToyInput::Deposit(2))), ..ToyState::default() }, ToyRunner::default());
     det.start_epoch_for(receiver, 1);
-    det.send(relay, Stamp::Control, ToyInput::Go);
+    det.post(relay, EpochStamp::Control, ToyInput::Go);
     det.run_until_quiet(10).unwrap();
-    assert_eq!((det.state(receiver).total, det.dropped(receiver)), (0, 1));
-    assert!(det.trace().iter().any(|entry| entry.owner == "receiver" && entry.dropped && entry.stamp == Stamp::Epoch(0)));
+    assert_eq!((det.state(receiver).unwrap().total, det.dropped(receiver)), (0, 1));
+    assert!(det.trace().iter().any(|entry| entry.owner == "receiver" && entry.dropped && entry.stamp == EpochStamp::Epoch(0)));
 }
 
 #[test]
@@ -248,9 +248,9 @@ fn control_input_from_an_owner_without_epochs_reaches_a_receiver_with_an_epoch()
     let receiver = det.add::<Toy>("receiver", ToyState::default(), ToyRunner::default());
     let hub = det.add::<Hub>("hub", (), HubRunner);
     det.start_epoch_for(receiver, 4);
-    det.send(hub, Stamp::Control, HubInput::Probe(receiver));
+    det.post(hub, EpochStamp::Control, HubInput::Probe(receiver));
     det.run_until_quiet(10).unwrap();
-    assert_eq!(det.state(receiver).total, 1);
+    assert_eq!(det.state(receiver).unwrap().total, 1);
 }
 
 #[test]
@@ -259,12 +259,12 @@ fn lifecycle_broadcast_reaches_every_owner_on_the_scheduler() {
     let hub = det.add::<Hub>("hub", (), HubRunner);
     let first = det.add::<Toy>("first", ToyState::default(), ToyRunner::default());
     let second = det.add::<Toy>("second", ToyState::default(), ToyRunner::default());
-    det.send(hub, Stamp::Control, HubInput::Begin(1));
-    det.send(hub, Stamp::Control, HubInput::Finish(1, Cause::SessionReset));
-    det.send(hub, Stamp::Control, HubInput::Shutdown);
+    det.post(hub, EpochStamp::Control, HubInput::Begin(1));
+    det.post(hub, EpochStamp::Control, HubInput::Finish(1, Cause::SessionReset));
+    det.post(hub, EpochStamp::Control, HubInput::Shutdown);
     det.run_until_quiet(30).unwrap();
     for toy in [first, second] {
-        assert_eq!(det.state(toy).ended, vec![(1, Cause::SessionReset)]);
-        assert!(det.state(toy).closed);
+        assert_eq!(det.state(toy).unwrap().ended, vec![(1, Cause::SessionReset)]);
+        assert!(det.state(toy).unwrap().closed);
     }
 }
