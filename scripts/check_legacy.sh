@@ -6,7 +6,7 @@ set -euo pipefail
 
 LEGACY_RE='[Ll]egacy|LEGACY|[Cc]ompat([^i]|$|i[^b]|ib[^l]|ibl[^e])|COMPAT|Leases|Admitted|Origin::|DeliveryUnknown|DELIVERY_UNKNOWN|deliveryUnknown|delivery_unknown|_for_testing|reach_stream|resync_stream|reachStream|resyncStream|session_resume|sessionResume|set_listening|setListening|retry_all|retryAll|batch_outcome|batchOutcome|refresh_preloads|refreshPreloads|resume_uploads|resumeUploads|round_(begin|next|leave|abandon)|round(Begin|Next|Leave|Abandon)|awaitingSnapshot|mutate_wait|forget_credential|start_session_in_tests|fn[[:space:]]+(flush|resume|maintain|warm)[[:space:]]*\(|crate::sync([^_[:alnum:]]|$)|ffi::stream|ffi/stream|ffi/live'
 LEGACY_PATHS='core/src gen/src swift/Sources swift/Tests kotlin/src scripts docs README.md fixtures Makefile'
-DEV_RE='specs/|CLAUDE\.md|AGENTS\.md|\.orca-artifacts|\.claude/(plans|rules|skills|specs|orchestration-facts)'
+DEV_RE='specs/|CLAUDE\.md|AGENTS\.md|\.orca-artifacts|(^|[^/])\.claude/'
 LEGACY_NAME_RE='(^|[/._-])(legacy|compat|old|v1|shim|adapter)([/._-]|$)'
 DEV_NAME_RE='(^|/)(specs|\.claude|\.orca-artifacts)/|(^|/)(CLAUDE|AGENTS)\.md$|\.log$|(^|/)api_gap[^/]*\.md$'
 
@@ -32,10 +32,10 @@ count_names() {
 counts() {
   local tree="$1" ref="$2" lines names_legacy dev_lines names_dev
   # shellcheck disable=SC2086
-  lines="$(count "$tree" "$ref" "$LEGACY_RE" $LEGACY_PATHS ':(exclude)scripts/check_legacy.sh' ':(exclude)scripts/release.sh' ':(exclude)scripts/check_release_modes.sh')"
-  names_legacy="$(count_names "$tree" "$ref" "$LEGACY_NAME_RE")"
-  dev_lines="$(count "$tree" "$ref" "$DEV_RE" . ':(exclude)scripts/check_legacy.sh' ':(exclude)scripts/check_release_modes.sh')"
-  names_dev="$(count_names "$tree" "$ref" "$DEV_NAME_RE")"
+  lines="$(count "$tree" "$ref" "$LEGACY_RE" $LEGACY_PATHS ':(exclude)scripts/check_legacy.sh' ':(exclude)scripts/release.sh' ':(exclude)scripts/check_release_modes.sh')" || return $?
+  names_legacy="$(count_names "$tree" "$ref" "$LEGACY_NAME_RE")" || return $?
+  dev_lines="$(count "$tree" "$ref" "$DEV_RE" . ':(exclude)scripts/check_legacy.sh' ':(exclude)scripts/check_release_modes.sh')" || return $?
+  names_dev="$(count_names "$tree" "$ref" "$DEV_NAME_RE")" || return $?
   printf '%s %s\n' "$((lines + names_legacy))" "$((dev_lines + names_dev))"
 }
 

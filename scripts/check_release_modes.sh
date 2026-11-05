@@ -122,6 +122,7 @@ if command[:1] == ["tag"] and len(command) == 3 and os.environ.get("STUB_AFTER_T
     rc = subprocess.run([os.environ["REAL_GIT"], *a]).returncode
     subprocess.run([os.environ["REAL_GIT"], *(a[:2] if a[0] == "-C" else []), "commit", "-q", "--allow-empty", "-m", "Foreign commit after the tag"], check=True)
     sys.exit(rc)
+if command and command[0] == os.environ.get("STUB_GIT_FAIL"): sys.exit(3)
 if a[:2] == ["ls-remote", "--heads"]: sys.exit(0)
 if a[:2] == ["remote", "get-url"]: print("https://example.invalid/dblayer.git"); sys.exit(0)
 rc = subprocess.run([os.environ["REAL_GIT"], *a]).returncode
@@ -255,6 +256,9 @@ with tempfile.TemporaryDirectory(prefix="dblayer-release-modes-") as directory:
         ("a legacy file name", "core/src/shim.rs", "pub fn a() {}\n", "1 legacy lines or files, 0 development-file references or files"),
         ("a development file", "CLAUDE.md", "notes\n", "0 legacy lines or files, 1 development-file references or files"),
         ("a plans reference", "core/src/p.rs", "// see .claude/plans/a.md\n", "0 legacy lines or files, 1 development-file references or files"),
+        ("a hooks reference", "core/src/h.rs", "// see .claude/hooks/review.sh\n", "0 legacy lines or files, 1 development-file references or files"),
+        ("a full-suite reference", "core/src/fs.rs", "// run .claude/full-suite\n", "0 legacy lines or files, 1 development-file references or files"),
+        ("a notes reference", "core/src/n.rs", "let n = \".claude/notes.md\";\n", "0 legacy lines or files, 1 development-file references or files"),
         ("COMPAT", "core/src/c.rs", "// COMPAT\n", "1 legacy lines or files, 0 development-file references or files"),
         ("a spaced flush", "core/src/f.rs", "pub fn flush () {}\n", "1 legacy lines or files, 0 development-file references or files"),
         ("a sync root import", "core/src/s.rs", "use crate::sync;\n", "1 legacy lines or files, 0 development-file references or files"),
@@ -271,6 +275,13 @@ with tempfile.TemporaryDirectory(prefix="dblayer-release-modes-") as directory:
     broken, broken_env = fixture(base / "broken")
     run(["bash", "scripts/check_legacy.sh", "count", str(broken), "no-such-ref"], broken, broken_env, expected=2, contains="git grep failed")
     print("ok a git failure is not a zero count")
+    for failing in ("grep", "ls-tree"):
+        git_red, git_red_env = fixture(base / f"git-{failing}")
+        run(["bash", "scripts/release.sh", version], git_red, dict(git_red_env, STUB_GIT_FAIL=failing), expected=1, contains="check_legacy failed")
+        assert not (git_red / "target/release-1.2.3").exists(), f"git {failing} failure: the stage was built after a failed check_legacy"
+        git_events = (base / f"git-{failing}/events").read_text().splitlines()
+        assert not any(line.startswith("gh ") or line.startswith("git push ") for line in git_events), git_events
+        print(f"ok release refuses when git {failing} fails inside check_legacy")
     incomplete, incomplete_env = fixture(base / "incomplete")
     stage = incomplete / "target/release-1.2.3"
     stage.mkdir(parents=True)

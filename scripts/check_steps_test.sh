@@ -30,7 +30,7 @@ wait_until_gone() {
 }
 
 expect_red_step_killed() {
-  if [ "$1" -ne 124 ] || { [ -n "$2" ] && ! wait_until_gone "$2"; }; then
+  if [ "$1" -ne 124 ] || [ -z "$2" ] || ! wait_until_gone "$2"; then
     echo "FAIL step code $1, leftover PID: ${2:-none}"
     failed=1
   fi
