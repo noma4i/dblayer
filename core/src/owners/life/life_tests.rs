@@ -335,6 +335,31 @@ async fn the_rows_of_a_batch_land_through_the_common_path() {
     closed(&life).await;
 }
 
+/// store_commit_ok: every subscriber hears one `Committed` with the revision and the models of the batch.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_committed_batch_is_broadcast_to_every_subscriber() {
+    use crate::owners::contract::{BatchAuthor, CommittedModels};
+    use crate::owners::store::{StoreBatch, StoreInput, StoreReply};
+    let db = Db::open_in_memory(vec![moments_spec()], None).unwrap();
+    let transport = Arc::new(MockTransport::new());
+    let life = start(&db, &transport).await;
+    let (replies, reply) = std::sync::mpsc::channel();
+    life.on_store_reply(BatchAuthor::Window, move |_, reply| { let _ = replies.send(reply); });
+    let (first, heard_first) = std::sync::mpsc::channel();
+    let (second, heard_second) = std::sync::mpsc::channel();
+    life.on_committed(move |broadcast| { let _ = first.send(broadcast); });
+    life.on_committed(move |broadcast| { let _ = second.send(broadcast); });
+    let epoch = life.published().epoch;
+    let batch = StoreBatch { author: BatchAuthor::Window, id: 1, epoch, basis: [("moments".to_string(), 0)].into(), rows: vec![("moments".into(), r#"{"id":"m1"}"#.into())], intents: 0, credential: None, ops: Vec::new() };
+    life.wiring.to_store(StoreInput::Commit(batch));
+    let StoreReply::Committed { revision } = reply.recv_timeout(LIMIT).expect("the author got its reply") else { panic!("the batch was refused") };
+    for heard in [heard_first, heard_second] {
+        let broadcast = heard.recv_timeout(LIMIT).expect("the subscriber heard the broadcast");
+        assert_eq!((broadcast.revision, broadcast.models), (revision, CommittedModels::Set(vec!["moments".into()])));
+    }
+    closed(&life).await;
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn an_unreadable_queue_is_reported_for_outbox_and_open_still_ends() {
     use crate::owners::lifecycle::Peer;

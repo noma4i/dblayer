@@ -174,8 +174,12 @@ impl EffectRunner<StoreWriter> for StoreRunner {
                 let saved = store.save_published(published.epoch, published.generation).map_err(|error| error.to_string()).and_then(|()| self.revision()).map(|revision| Done { revision });
                 back.reply(EpochStamp::Control, StoreInput::Erased { io_id, result: saved });
             }
-            StoreEffect::Reply { author, batch, reply } => wiring.route_store_reply(author, batch, reply),
-            StoreEffect::BroadcastCommitted { .. } => {}
+            StoreEffect::Reply { author, batch, epoch, reply } => wiring.route_store_reply(author, batch, epoch, reply),
+            StoreEffect::BroadcastCommitted { revision, models } => wiring.tell_committed(crate::owners::contract::CommittedBroadcast {
+                revision,
+                tables: Vec::new(),
+                models: models.map_or(crate::owners::contract::CommittedModels::All, crate::owners::contract::CommittedModels::Set),
+            }),
             StoreEffect::Cleared { erase_id, .. } => wiring.to_lifecycle(LifecycleInput::Cleared { erase_id }),
             StoreEffect::ModelsCleared { generation_new, erase_id } => wiring.to_lifecycle(LifecycleInput::ModelsCleared { generation_new, erase_id }),
             StoreEffect::ClearFailed { erase_id, error } => wiring.to_lifecycle(LifecycleInput::ClearFailed { erase_id, error }),

@@ -178,7 +178,7 @@ pub enum StoreEffect {
     ClearSecret { io_id: u64 },
     /// One transaction: `saved_epoch`, `saved_generation`, `saved_identity`.
     SavePublished { io_id: u64, publication_id: u64, published: Published },
-    Reply { author: BatchAuthor, batch: BatchId, reply: StoreReply },
+    Reply { author: BatchAuthor, batch: BatchId, epoch: Epoch, reply: StoreReply },
     Cleared { epoch_old: Epoch, erase_id: u64 },
     ModelsCleared { generation_new: u64, erase_id: u64 },
     ClearFailed { erase_id: u64, error: String },
@@ -319,7 +319,7 @@ impl StoreState {
         }
         if self.mode == StoreMode::Closed {
             match input {
-                StoreInput::Commit(batch) => fx.push(StoreEffect::Reply { author: batch.author, batch: batch.id, reply: StoreReply::Rejected(RejectReason::Closed) }),
+                StoreInput::Commit(batch) => fx.push(StoreEffect::Reply { author: batch.author, batch: batch.id, epoch: batch.epoch, reply: StoreReply::Rejected(RejectReason::Closed) }),
                 StoreInput::ClearAccount { erase_id, .. } | StoreInput::ClearModels { erase_id, .. } => fx.push(StoreEffect::ClearFailed { erase_id, error: "closed".into() }),
                 _ => {}
             }
@@ -373,7 +373,7 @@ impl StoreState {
         if self.closing {
             match &input {
                 StoreInput::Commit(batch) => {
-                    fx.push(StoreEffect::Reply { author: batch.author, batch: batch.id, reply: StoreReply::Rejected(RejectReason::Closed) });
+                    fx.push(StoreEffect::Reply { author: batch.author, batch: batch.id, epoch: batch.epoch, reply: StoreReply::Rejected(RejectReason::Closed) });
                     return;
                 }
                 StoreInput::ClearAccount { erase_id, .. } | StoreInput::ClearModels { erase_id, .. } => {
@@ -393,13 +393,13 @@ impl StoreState {
                 if self.busy() {
                     self.deferred.push_back(StoreInput::Commit(batch));
                 } else if batch.epoch != self.epoch {
-                    fx.push(StoreEffect::Reply { author: batch.author, batch: batch.id, reply: StoreReply::Rejected(RejectReason::NoSession) });
+                    fx.push(StoreEffect::Reply { author: batch.author, batch: batch.id, epoch: batch.epoch, reply: StoreReply::Rejected(RejectReason::NoSession) });
                 } else if batch.rows.iter().any(|(model, _)| !batch.basis.contains_key(model)) {
-                    fx.push(StoreEffect::Reply { author: batch.author, batch: batch.id, reply: StoreReply::Rejected(RejectReason::Invalid) });
+                    fx.push(StoreEffect::Reply { author: batch.author, batch: batch.id, epoch: batch.epoch, reply: StoreReply::Rejected(RejectReason::Invalid) });
                 } else if !self.stale_models(&batch).is_empty() {
                     let models = self.stale_models(&batch);
                     let generation = models.iter().map(|model| self.generation(model)).max().unwrap_or(self.base_generation);
-                    fx.push(StoreEffect::Reply { author: batch.author, batch: batch.id, reply: StoreReply::Rejected(RejectReason::StaleGeneration { models, generation }) });
+                    fx.push(StoreEffect::Reply { author: batch.author, batch: batch.id, epoch: batch.epoch, reply: StoreReply::Rejected(RejectReason::StaleGeneration { models, generation }) });
                 } else {
                     self.writing = Some(batch.clone());
                     fx.push(StoreEffect::Write { batch });
@@ -411,11 +411,11 @@ impl StoreState {
                 }
                 let Some(written) = self.writing.take() else { return };
                 match result {
-                    Err(error) => fx.push(StoreEffect::Reply { author, batch, reply: StoreReply::Rejected(RejectReason::Storage(error)) }),
+                    Err(error) => fx.push(StoreEffect::Reply { author, batch, epoch: written.epoch, reply: StoreReply::Rejected(RejectReason::Storage(error)) }),
                     Ok(Done { revision }) => {
                         self.revision = revision;
                         let models: Vec<String> = written.rows.iter().map(|(model, _)| model.clone()).collect::<BTreeSet<_>>().into_iter().collect();
-                        fx.push(StoreEffect::Reply { author, batch, reply: StoreReply::Committed { revision } });
+                        fx.push(StoreEffect::Reply { author, batch, epoch: written.epoch, reply: StoreReply::Committed { revision } });
                         fx.push(StoreEffect::BroadcastCommitted { revision, models: Some(models) });
                     }
                 }

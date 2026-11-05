@@ -67,6 +67,21 @@ impl Default for Models {
     fn default() -> Self { Models::Set(std::collections::BTreeSet::new()) }
 }
 
+/// `Committed.models` (D-34): `All` touches every stream, an empty `Set` touches none.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum CommittedModels {
+    All,
+    Set(Vec<String>),
+}
+
+/// The Store broadcast `Committed{revision, tables, models}` to every subscriber (Deliveries).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CommittedBroadcast {
+    pub revision: u64,
+    pub tables: Vec<String>,
+    pub models: CommittedModels,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum RejectReason {
     NoSession,

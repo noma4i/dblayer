@@ -17,7 +17,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Condvar, Mutex, OnceLock, PoisonError};
 
 use super::calls::{CallAnswer, CallError, Calls, CallsInput, CallsState};
-use super::contract::{BatchAuthor, BatchId, Committed, CredentialCommitted, NetworkEvent, Published, PublishedState, Rejected, RequestId};
+use super::contract::{BatchAuthor, BatchId, Committed, CommittedBroadcast, CredentialCommitted, NetworkEvent, Published, PublishedState, Rejected, RequestId};
 use super::session::{AuthorId, AuthorOutcome, SessionAnswer, SessionCalls, SessionInput, SessionState};
 use super::lifecycle::{Lifecycle, LifecycleError, LifecycleInput, LifecycleState, Peer};
 use super::network::{Network, NetworkInput, NetworkState};
@@ -117,6 +117,8 @@ pub(crate) struct Wiring {
     after_publish: Mutex<Vec<(Awaited, crate::runtime::OutcomeId, LifeReply)>>,
     network_sinks: Mutex<Vec<(Peer, Arc<dyn Fn(NetworkEvent) + Send + Sync>)>>,
     restored_sink: Mutex<Option<Arc<dyn Fn(SessionSnapshot) + Send + Sync>>>,
+    /// Every subscriber of the Store broadcast `Committed`, in the order of subscription.
+    committed_sinks: Mutex<Vec<Arc<dyn Fn(CommittedBroadcast) + Send + Sync>>>,
     session_open: Mutex<Option<SessionInput>>,
     restore_failures: Mutex<Vec<(Peer, String)>>,
 }
@@ -150,6 +152,7 @@ impl Wiring {
             after_publish: Mutex::new(Vec::new()),
             network_sinks: Mutex::new(Vec::new()),
             restored_sink: Mutex::new(None),
+            committed_sinks: Mutex::new(Vec::new()),
             session_open: Mutex::new(None),
             restore_failures: Mutex::new(Vec::new()),
         }
@@ -255,6 +258,17 @@ impl Wiring {
         }
     }
 
+    pub fn on_committed(&self, sink: impl Fn(CommittedBroadcast) + Send + Sync + 'static) {
+        self.committed_sinks.lock().unwrap_or_else(PoisonError::into_inner).push(Arc::new(sink));
+    }
+
+    pub fn tell_committed(&self, broadcast: CommittedBroadcast) {
+        let sinks = self.committed_sinks.lock().unwrap_or_else(PoisonError::into_inner).clone();
+        for sink in sinks {
+            crate::db::lock::effect(|| sink(broadcast.clone()));
+        }
+    }
+
     pub fn on_restored(&self, sink: impl Fn(SessionSnapshot) + Send + Sync + 'static) {
         *self.restored_sink.lock().unwrap_or_else(PoisonError::into_inner) = Some(Arc::new(sink));
     }
@@ -272,23 +286,24 @@ impl Wiring {
     }
 
     /// The answer of Store to the batch `(author, batch)`.
-    pub fn route_store_reply(&self, author: BatchAuthor, batch: BatchId, reply: StoreReply) {
+    pub fn route_store_reply(&self, author: BatchAuthor, batch: BatchId, epoch: Epoch, reply: StoreReply) {
+        let stamp = EpochStamp::Epoch(epoch);
         if author == BatchAuthor::Session {
-            self.to_session(match reply {
+            self.to_session_at(stamp, match reply {
                 StoreReply::Committed { revision } => SessionInput::Committed(Committed { batch, revision: i64::try_from(revision).unwrap_or(i64::MAX), tables: Vec::new(), models: Default::default() }),
                 StoreReply::Rejected(reason) => SessionInput::Rejected(Rejected { batch, reason }),
             });
             return;
         }
         if author == BatchAuthor::Transfer {
-            self.to_transfer(match reply {
+            self.to_transfer_at(stamp, match reply {
                 StoreReply::Committed { revision } => TransferInput::Committed(Committed { batch, revision: i64::try_from(revision).unwrap_or(i64::MAX), tables: Vec::new(), models: Default::default() }),
                 StoreReply::Rejected(reason) => TransferInput::Rejected(Rejected { batch, reason }),
             });
             return;
         }
         if author == BatchAuthor::Outbox {
-            self.to_outbox(match reply {
+            self.to_outbox_at(stamp, match reply {
                 StoreReply::Committed { revision } => OutboxInput::Committed(Committed { batch, revision: i64::try_from(revision).unwrap_or(i64::MAX), tables: Vec::new(), models: Default::default() }),
                 StoreReply::Rejected(reason) => OutboxInput::Rejected(Rejected { batch, reason }),
             });
@@ -505,6 +520,9 @@ impl Life {
     pub fn on_network(&self, owner: Peer, sink: impl Fn(NetworkEvent) + Send + Sync + 'static) { self.wiring.on_network(owner, sink); }
 
     pub fn on_restored(&self, sink: impl Fn(SessionSnapshot) + Send + Sync + 'static) { self.wiring.on_restored(sink); }
+
+    /// Subscribes to the Store broadcast `Committed`: one call per committed batch, clear and models reset, in the order of revisions.
+    pub fn on_committed(&self, sink: impl Fn(CommittedBroadcast) + Send + Sync + 'static) { self.wiring.on_committed(sink); }
 
     fn settled(&self, reply: LifeReply) -> Waiter<LifeReply> {
         let waiter = self.wiring.outcomes.register(Epoch::MAX);
