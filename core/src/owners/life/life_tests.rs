@@ -57,7 +57,7 @@ async fn answer(waiter: Waiter<Reply>) -> Reply {
 
 async fn start(db: &Db, transport: &Arc<MockTransport>) -> Life {
     let (db, transport) = (db.clone(), transport.clone());
-    tokio::task::spawn_blocking(move || Life::start(ports(db, transport), LIMIT).expect("the first publish comes")).await.unwrap()
+    tokio::task::spawn_blocking(move || Life::start(ports(db, transport)).expect("the first publish comes")).await.unwrap()
 }
 
 async fn closed(life: &Life) {
@@ -232,7 +232,7 @@ async fn a_loaded_page_lands_through_the_store_and_the_caller_hears_loaded() {
     let operations = crate::owners::read::ReadOperations::default();
     operations.declare([crate::owners::read::ReadOperation { name: "Mine".into(), document: "query Mine { mine { edges { node { id userId text } } pageInfo { hasNextPage endCursor } } }".into(), root_path: "mine".into(), page_size: 20 }]);
     setup.read_operations = Some(operations);
-    let life = tokio::task::spawn_blocking(move || Life::start(setup, LIMIT).expect("the first publish comes")).await.unwrap();
+    let life = tokio::task::spawn_blocking(move || Life::start(setup).expect("the first publish comes")).await.unwrap();
     assert_eq!(answer(life.set_online(true)).await, Reply::Online { closed: false });
     let key = crate::owners::read::windows::WindowKey::relation("moments", "mine", json!({"userId": "u1"}).as_object().unwrap());
     let epoch = life.published().epoch;
@@ -247,5 +247,113 @@ async fn a_loaded_page_lands_through_the_store_and_the_caller_hears_loaded() {
     let stored: Vec<_> = ["m1", "m2"].iter().map(|id| db.find("moments", &crate::identity::RowId::new(id).unwrap()).unwrap().map(|row| row.text("text").map(str::to_string))).collect();
     assert_eq!(stored, [Some(Some("one".to_string())), Some(Some("two".to_string()))]);
     assert_eq!(transport.calls().len(), 1, "the old epoch never starts a request in the new identity");
+    closed(&life).await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn net_prop_no_request_before_snapshot() {
+    let db = Db::open_in_memory(vec![moments_spec()], None).unwrap();
+    let transport = Arc::new(MockTransport::new());
+    let life = start(&db, &transport).await;
+    life.declare(vec!["Op".into()]);
+    assert_eq!(answer(life.run(1, "Op".into(), "{}".into())).await, Reply::Call(Err(CallError::Offline)));
+    assert!(transport.calls().is_empty(), "no request left before the network said it is online");
+    assert_eq!(answer(life.set_online(true)).await, Reply::Online { closed: false });
+    transport.enqueue("Op", MockReply::data(json!({ "feed": [1] })));
+    assert_eq!(answer(life.run(1, "Op".into(), "{}".into())).await, Reply::Call(Ok("[1]".into())));
+    assert_eq!(transport.calls().len(), 1);
+    closed(&life).await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn network_events_reach_the_listeners_with_the_snapshot_of_the_epoch() {
+    use crate::owners::contract::NetworkEvent;
+    use crate::owners::lifecycle::Peer;
+    use std::sync::Mutex;
+    let db = Db::open_in_memory(vec![moments_spec()], None).unwrap();
+    let transport = Arc::new(MockTransport::new());
+    let life = start(&db, &transport).await;
+    let heard: Arc<Mutex<Vec<(Peer, NetworkEvent)>>> = Arc::default();
+    for owner in [Peer::Rounds, Peer::Session, Peer::Transfer] {
+        let heard = heard.clone();
+        life.on_network(owner, move |event| heard.lock().unwrap().push((owner, event)));
+    }
+    assert_eq!(answer(life.foreground()).await, Reply::Online { closed: false });
+    assert_eq!(answer(life.set_power_saving(true)).await, Reply::Online { closed: false });
+    assert_eq!(answer(life.set_power_saving(true)).await, Reply::Online { closed: false });
+    assert_eq!(answer(life.foreground()).await, Reply::Online { closed: false });
+    assert_eq!(
+        *heard.lock().unwrap(),
+        vec![
+            (Peer::Rounds, NetworkEvent::Foreground(1)),
+            (Peer::Session, NetworkEvent::Foreground(1)),
+            (Peer::Transfer, NetworkEvent::PowerSaving { saving: true, epoch: None }),
+            (Peer::Rounds, NetworkEvent::Foreground(2)),
+            (Peer::Session, NetworkEvent::Foreground(2)),
+        ],
+        "each change goes out once, to the owners the table names"
+    );
+    heard.lock().unwrap().clear();
+    life.credential_committed(IDENTITY);
+    let epoch = loop {
+        let published = life.published();
+        if published.epoch == 2 { break published.epoch; }
+        tokio::time::sleep(Duration::from_millis(5)).await;
+    };
+    let started = std::time::Instant::now();
+    while !heard.lock().unwrap().iter().any(|(owner, event)| *owner == Peer::Transfer && matches!(event, NetworkEvent::PowerSaving { epoch: Some(_), .. })) {
+        assert!(started.elapsed() < LIMIT, "the snapshot of the new epoch reached Transfer");
+        tokio::time::sleep(Duration::from_millis(5)).await;
+    }
+    let heard = heard.lock().unwrap().clone();
+    assert!(heard.contains(&(Peer::Transfer, NetworkEvent::Online { online: false, epoch: Some(epoch) })));
+    assert!(heard.contains(&(Peer::Transfer, NetworkEvent::PowerSaving { saving: true, epoch: Some(epoch) })), "Transfer gets `saving` with its first snapshot");
+    closed(&life).await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn the_rows_of_a_batch_land_through_the_common_path() {
+    use crate::owners::contract::BatchAuthor;
+    use crate::owners::store::{StoreBatch, StoreInput, StoreReply};
+    let db = Db::open_in_memory(vec![moments_spec()], None).unwrap();
+    let transport = Arc::new(MockTransport::new());
+    let life = start(&db, &transport).await;
+    let (sender, receiver) = std::sync::mpsc::channel();
+    life.on_store_reply(BatchAuthor::Window, move |batch, reply| { let _ = sender.send((batch, reply)); });
+    let epoch = life.published().epoch;
+    let batch = |id, row: &str| StoreBatch { author: BatchAuthor::Window, id, epoch, basis: [("moments".to_string(), 0)].into(), rows: vec![("moments".into(), row.into())], intents: 0, credential: None, ops: Vec::new() };
+    life.wiring.to_store(StoreInput::Commit(batch(1, r#"{"id":"m1"}"#)));
+    let (id, reply) = receiver.recv_timeout(LIMIT).expect("the store answered");
+    assert_eq!(id, 1);
+    assert!(matches!(reply, StoreReply::Committed { .. }), "{reply:?}");
+    assert_eq!(db.shared.store.row_count("moments").unwrap(), 1);
+    life.wiring.to_store(StoreInput::Commit(batch(2, r#"{"name":"no id"}"#)));
+    let (id, reply) = receiver.recv_timeout(LIMIT).expect("the store answered");
+    assert_eq!(id, 2);
+    assert!(matches!(reply, StoreReply::Rejected(_)), "a row without an id is refused: {reply:?}");
+    assert_eq!(db.shared.store.row_count("moments").unwrap(), 1);
+    closed(&life).await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn an_unreadable_queue_is_reported_for_outbox_and_open_still_ends() {
+    use crate::owners::lifecycle::Peer;
+    let transport = Arc::new(MockTransport::new());
+    let db = Db::open_in_memory(vec![moments_spec()], None).unwrap();
+    session_row(&db);
+    {
+        let inner = db.shared.store.lock();
+        inner.connection.execute_batch("INSERT INTO op (action_key, status, created_at, since) VALUES ('moments:send', 'pending', 1, 1)").unwrap();
+    }
+    let life = start(&db, &transport).await;
+    let started = std::time::Instant::now();
+    while life.restore_failures().is_empty() {
+        assert!(started.elapsed() < LIMIT, "the failure of the queue was reported");
+        tokio::time::sleep(Duration::from_millis(5)).await;
+    }
+    let failures = life.restore_failures();
+    assert_eq!(failures.len(), 1);
+    assert_eq!(failures[0].0, Peer::Outbox);
+    assert_eq!(life.published().identity, Some(IDENTITY));
     closed(&life).await;
 }

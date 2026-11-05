@@ -11,7 +11,7 @@ use super::{LifeReply, Ports, Wiring};
 use crate::db::Db;
 use crate::identity::Generation;
 use crate::owners::calls::{CallError, Calls, CallsEffect, CallsInput};
-use crate::owners::contract::{Drained, Online, PublishedState};
+use crate::owners::contract::{Drained, NetworkEvent, Online, PublishedState};
 use crate::owners::lifecycle::{Lifecycle, LifecycleEffect, LifecycleInput, Peer};
 use crate::owners::network::{Network, NetworkEffect, NetworkInput};
 use crate::owners::read::deliveries::DeliveryInput;
@@ -23,6 +23,8 @@ use crate::owners::write::outbox::OutboxInput;
 use crate::owners::write::transfer::TransferInput;
 use crate::runtime::{Back, EffectRunner, EpochStamp, OutcomeId};
 use crate::transport::{GraphQLRequest, ResponseOutcome, TransportError};
+
+const ALL_PEERS: [Peer; 10] = crate::owners::lifecycle::ALL_OWNERS;
 
 pub(super) struct LifecycleRunner {
     pub wiring: Arc<Wiring>,
@@ -52,20 +54,14 @@ impl EffectRunner<Lifecycle> for LifecycleRunner {
             LifecycleEffect::RestoreReady { .. } => {}
             LifecycleEffect::EpochStarted { epoch, identity, generation } => {
                 wiring.handle.start_epoch(epoch);
-                // TEMPORARY: the owners of the epoch send `SnapshotRequest` themselves after their `EpochStarted` once directions B and C install them with the new table.
-                for owner in [Peer::Feed, Peer::Outbox, Peer::Transfer, Peer::Calls, Peer::Session] {
-                    wiring.to_network(NetworkInput::SnapshotRequest { owner, epoch });
-                }
                 let started = crate::owners::contract::EpochStarted { epoch, identity: identity.map(|identity| identity.into()), generation };
                 wiring.to_windows(WindowsInput::EpochStarted(started.clone()));
                 wiring.to_deliveries(DeliveryInput::EpochStarted(started.clone()));
                 wiring.to_feed(FeedInput::EpochStarted(started.clone()));
                 wiring.to_outbox(OutboxInput::EpochStarted(started.clone()));
                 wiring.to_transfer(TransferInput::EpochStarted(started));
-                if identity.is_some() {
-                    // TEMPORARY: Outbox and Transfer answer `Started` themselves once direction C installs them with the new table.
-                    wiring.to_lifecycle(LifecycleInput::Started { owner: Peer::Outbox, epoch });
-                    wiring.to_lifecycle(LifecycleInput::Started { owner: Peer::Transfer, epoch });
+                for owner in [Peer::Feed, Peer::Outbox, Peer::Transfer, Peer::Calls, Peer::Session] {
+                    wiring.to_network(NetworkInput::SnapshotRequest { owner, epoch });
                 }
             }
             LifecycleEffect::ReadIntents { epoch } => wiring.to_store(StoreInput::ReadIntents { epoch }),
@@ -117,6 +113,8 @@ impl EffectRunner<Lifecycle> for LifecycleRunner {
     }
 }
 
+fn revision_of(revision: i64) -> Result<u64, String> { u64::try_from(revision).map_err(|_| format!("the stored revision {revision} is not a revision")) }
+
 pub(super) struct StoreRunner {
     pub wiring: Arc<Wiring>,
     pub db: Db,
@@ -126,11 +124,11 @@ pub(super) struct StoreRunner {
 
 impl StoreRunner {
     fn erased(&self, back: &Back<StoreWriter>, io_id: u64, result: Result<i64, crate::store::StoreError>) {
-        let result = result.map(|revision| Done { revision: u64::try_from(revision).unwrap_or(0) }).map_err(|error| error.to_string());
+        let result = result.map_err(|error| error.to_string()).and_then(|revision| revision_of(revision).map(|revision| Done { revision }));
         back.reply(EpochStamp::Control, StoreInput::Erased { io_id, result });
     }
 
-    fn revision(&self) -> Result<u64, String> { self.db.shared.store.revision_seq().map(|revision| u64::try_from(revision).unwrap_or(0)).map_err(|error| error.to_string()) }
+    fn revision(&self) -> Result<u64, String> { self.db.shared.store.revision_seq().map_err(|error| error.to_string()).and_then(revision_of) }
 }
 
 impl EffectRunner<StoreWriter> for StoreRunner {
@@ -139,12 +137,15 @@ impl EffectRunner<StoreWriter> for StoreRunner {
         let store = &self.db.shared.store;
         match effect {
             StoreEffect::Prepare { .. } => {}
-            StoreEffect::OpenLifecycle(message) => wiring.to_lifecycle(LifecycleInput::Open {
-                saved_epoch: message.saved_epoch,
-                saved_generation: message.saved_generation,
-                saved_identity: message.saved_identity,
-                reply: wiring.open_reply(),
-            }),
+            StoreEffect::OpenLifecycle(message) => {
+                wiring.open_session();
+                wiring.to_lifecycle(LifecycleInput::Open {
+                    saved_epoch: message.saved_epoch,
+                    saved_generation: message.saved_generation,
+                    saved_identity: message.saved_identity,
+                    reply: wiring.open_reply(),
+                });
+            }
             StoreEffect::OpenFailed(error) => wiring.open_failed(error, false),
             StoreEffect::OpenCorrupt(error) => wiring.open_failed(error, true),
             StoreEffect::Write { batch } => {
@@ -180,20 +181,16 @@ impl EffectRunner<StoreWriter> for StoreRunner {
             StoreEffect::ClearFailed { erase_id, error } => wiring.to_lifecycle(LifecycleInput::ClearFailed { erase_id, error }),
             StoreEffect::Saved { publication_id } => wiring.to_lifecycle(LifecycleInput::Saved { publication_id }),
             StoreEffect::SaveFailed { publication_id, error } => wiring.to_lifecycle(LifecycleInput::SaveFailed { publication_id, error }),
-            StoreEffect::ReadIntents { epoch } => {
+            StoreEffect::ReadIntents { .. } => {
                 match self.db.read_intents() {
                     Ok(stored) => wiring.to_outbox(OutboxInput::Restored(stored)),
-                    Err(error) => wiring.fault(format!("the intents of the queue are unreadable: {error}")),
+                    Err(error) => wiring.restore_failed_for(Peer::Outbox, error.to_string()),
                 }
                 if wiring.has_transfer() {
                     match self.db.read_transfers() {
                         Ok(stored) => wiring.to_transfer(TransferInput::Restored(stored)),
-                        Err(error) => wiring.fault(format!("the transfers are unreadable: {error}")),
+                        Err(error) => wiring.restore_failed_for(Peer::Transfer, error.to_string()),
                     }
-                }
-                // TEMPORARY: Outbox, Transfer and Session answer `RestoreClassified` themselves once their tables classify `Restored`.
-                for owner in [Peer::Outbox, Peer::Transfer, Peer::Session] {
-                    wiring.to_lifecycle(LifecycleInput::RestoreClassified { owner, epoch });
                 }
             }
             StoreEffect::CloseReads => self.db.shared.store.reads().close(),
@@ -226,21 +223,30 @@ impl EffectRunner<Network> for NetworkRunner {
                 wiring.to_transfer(TransferInput::Online(Online(online)));
                 wiring.to_session(SessionInput::Online(Online(online)));
                 wiring.to_calls(CallsInput::Online(Online(online)));
+                wiring.tell_network(&ALL_PEERS, NetworkEvent::Online { online, epoch: None });
             }
-            NetworkEffect::Snapshot { owner, epoch, online, .. } => {
+            NetworkEffect::Snapshot { owner, epoch, online, saving } => {
                 self.db.connectivity().change(online);
+                let stamp = EpochStamp::Epoch(epoch);
                 match owner {
                     Peer::Windows => wiring.to_windows_in(epoch, WindowsInput::Online(Online(online))),
                     Peer::Feed => wiring.to_feed(FeedInput::Online(Online(online))),
-                    Peer::Calls => wiring.to_calls(CallsInput::Online(Online(online))),
-                    Peer::Outbox => wiring.to_outbox(OutboxInput::Online(Online(online))),
-                    Peer::Transfer => wiring.to_transfer(TransferInput::Online(Online(online))),
-                    Peer::Session => wiring.to_session(SessionInput::Online(Online(online))),
+                    Peer::Calls => wiring.to_calls_at(stamp, CallsInput::Online(Online(online))),
+                    Peer::Outbox => wiring.to_outbox_at(stamp, OutboxInput::Online(Online(online))),
+                    Peer::Transfer => wiring.to_transfer_at(stamp, TransferInput::Online(Online(online))),
+                    Peer::Session => wiring.to_session_at(stamp, SessionInput::Online(Online(online))),
                     _ => {}
                 }
+                wiring.tell_network(&[owner], NetworkEvent::Online { online, epoch: Some(epoch) });
+                if let Some(saving) = saving {
+                    wiring.tell_network(&[owner], NetworkEvent::PowerSaving { saving, epoch: Some(epoch) });
+                }
             }
-            NetworkEffect::Foreground(seq) => wiring.to_windows(WindowsInput::Foreground(seq)),
-            NetworkEffect::PowerSaving(_) => {}
+            NetworkEffect::Foreground(seq) => {
+                wiring.to_windows(WindowsInput::Foreground(seq));
+                wiring.tell_network(&[Peer::Rounds, Peer::Session, Peer::Windows], NetworkEvent::Foreground(seq));
+            }
+            NetworkEffect::PowerSaving(saving) => wiring.tell_network(&[Peer::Transfer], NetworkEvent::PowerSaving { saving, epoch: None }),
             NetworkEffect::Drained(drained) => wiring.to_lifecycle(LifecycleInput::Drained(drained)),
             NetworkEffect::Reply { id, closed } => self.held_replies.push((id, closed)),
         }
@@ -325,18 +331,30 @@ impl EffectRunner<Calls> for CallsRunner {
 
 /// One transaction per kind of ops: the tables `encrypted_*` through the store, the queue through the commit path of `Db`.
 fn write_batch(db: &Db, batch: &crate::owners::store::StoreBatch) -> Result<(), String> {
-    if !batch.rows.is_empty() && !batch.ops.iter().any(|op| matches!(op, StoreOp::Window { .. })) {
-        return Err("`rows` are written by the owners of Window and Feed: their executors extend `Write`".to_string());
-    }
     let (encrypted, queue): (Vec<&StoreOp>, Vec<&StoreOp>) = batch.ops.iter().partition(|op| matches!(op, StoreOp::Pending { .. } | StoreOp::RemovePending | StoreOp::Session { .. }));
+    let row_ops = row_ops(&batch.rows)?;
     if !encrypted.is_empty() {
         db.shared.store.write_ops(encrypted.into_iter().filter_map(row_op).collect()).map(drop).map_err(|error| error.to_string())?;
     }
-    if queue.is_empty() {
+    if queue.is_empty() && row_ops.is_empty() {
         return Ok(());
     }
-    let ops: Vec<StoreOp> = queue.into_iter().cloned().collect();
+    let ops: Vec<StoreOp> = row_ops.into_iter().chain(queue.into_iter().cloned()).collect();
     db.write_queue_ops(&ops).map_err(|error| error.to_string())
+}
+
+fn row_ops(rows: &[(String, String)]) -> Result<Vec<StoreOp>, String> {
+    let mut ops: Vec<StoreOp> = Vec::new();
+    for (model, text) in rows {
+        let value: Value = serde_json::from_str(text).map_err(|error| format!("a row of {model} is not JSON: {error}"))?;
+        let Some(row_id) = value.get("id").and_then(Value::as_str) else { return Err(format!("a row of {model} has no id")) };
+        let row = crate::owners::store::RowValue { row_id: row_id.to_string(), values: text.clone() };
+        match ops.last_mut() {
+            Some(StoreOp::Rows { model: last, rows }) if last == model => rows.push(row),
+            _ => ops.push(StoreOp::Rows { model: model.clone(), rows: vec![row] }),
+        }
+    }
+    Ok(ops)
 }
 
 /// The batch op as the tables hold it: ids as text, the purpose as the enum of the transport.

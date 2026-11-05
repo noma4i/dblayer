@@ -350,7 +350,7 @@ impl Database {
             read_operations: Some(read_operations),
         };
         let _entered = executor_enter()?;
-        let life = Arc::new(crate::owners::life::Life::start(ports, Duration::from_secs(30)).map_err(|error| match error {
+        let life = Arc::new(crate::owners::life::Life::start(ports).map_err(|error| match error {
             crate::owners::life::LifeError::CorruptManifest(detail) => DbError::CorruptManifest { detail },
             other => DbError::Database { detail: format!("the owners did not start: {other:?}") },
         })?);

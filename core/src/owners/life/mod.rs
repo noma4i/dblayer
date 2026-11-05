@@ -15,10 +15,9 @@ pub use observers::{ObserverPort, StopDone};
 use std::collections::{BTreeSet, HashMap};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Condvar, Mutex, OnceLock, PoisonError};
-use std::time::Duration;
 
 use super::calls::{CallAnswer, CallError, Calls, CallsInput, CallsState};
-use super::contract::{BatchAuthor, BatchId, Committed, CredentialCommitted, Published, PublishedState, Rejected, RequestId};
+use super::contract::{BatchAuthor, BatchId, Committed, CredentialCommitted, NetworkEvent, Published, PublishedState, Rejected, RequestId};
 use super::session::{AuthorId, AuthorOutcome, SessionAnswer, SessionCalls, SessionInput, SessionState};
 use super::lifecycle::{Lifecycle, LifecycleError, LifecycleInput, LifecycleState, Peer};
 use super::network::{Network, NetworkInput, NetworkState};
@@ -109,6 +108,9 @@ pub(crate) struct Wiring {
     store_sinks: Mutex<HashMap<BatchAuthor, Arc<dyn Fn(BatchId, StoreReply) + Send + Sync>>>,
     /// The answer of a sign-in waits for the publication of its identity: a caller that heard it finds the new epoch.
     after_publish: Mutex<Vec<(Awaited, crate::runtime::OutcomeId, LifeReply)>>,
+    network_sinks: Mutex<Vec<(Peer, Arc<dyn Fn(NetworkEvent) + Send + Sync>)>>,
+    session_open: Mutex<Option<SessionInput>>,
+    restore_failures: Mutex<Vec<(Peer, String)>>,
 }
 
 #[derive(Default)]
@@ -139,6 +141,9 @@ impl Wiring {
             mutate_sinks: Mutex::new(HashMap::new()),
             store_sinks: Mutex::new(HashMap::new()),
             after_publish: Mutex::new(Vec::new()),
+            network_sinks: Mutex::new(Vec::new()),
+            session_open: Mutex::new(None),
+            restore_failures: Mutex::new(Vec::new()),
         }
     }
 
@@ -226,12 +231,37 @@ impl Wiring {
         if let Some(addresses) = self.addresses() { self.handle.post(addresses.store, EpochStamp::Control, input); }
     }
 
-    pub fn to_calls(&self, input: CallsInput) {
-        if let Some(addresses) = self.addresses() { self.handle.post(addresses.calls, EpochStamp::Control, input); }
+    pub fn to_calls(&self, input: CallsInput) { self.to_calls_at(EpochStamp::Control, input); }
+
+    pub fn to_calls_at(&self, stamp: EpochStamp, input: CallsInput) {
+        if let Some(addresses) = self.addresses() { self.handle.post(addresses.calls, stamp, input); }
     }
 
-    pub fn to_session(&self, input: SessionInput) {
-        if let Some(Addresses { session: Some(session), .. }) = self.addresses() { self.handle.post(session, EpochStamp::Control, input); }
+    pub fn to_session(&self, input: SessionInput) { self.to_session_at(EpochStamp::Control, input); }
+
+    pub fn to_session_at(&self, stamp: EpochStamp, input: SessionInput) {
+        if let Some(Addresses { session: Some(session), .. }) = self.addresses() { self.handle.post(session, stamp, input); }
+    }
+
+    pub fn open_session(&self) {
+        let open = self.session_open.lock().unwrap_or_else(PoisonError::into_inner).take();
+        if let Some(open) = open { self.to_session(open); }
+    }
+
+    pub fn on_network(&self, owner: Peer, sink: impl Fn(NetworkEvent) + Send + Sync + 'static) {
+        self.network_sinks.lock().unwrap_or_else(PoisonError::into_inner).push((owner, Arc::new(sink)));
+    }
+
+    pub fn tell_network(&self, owners: &[Peer], event: NetworkEvent) {
+        let sinks: Vec<_> = self.network_sinks.lock().unwrap_or_else(PoisonError::into_inner).iter().filter(|(owner, _)| owners.contains(owner)).map(|(_, sink)| sink.clone()).collect();
+        for sink in sinks {
+            crate::db::lock::effect(|| sink(event));
+        }
+    }
+
+    pub fn restore_failed_for(&self, owner: Peer, error: String) {
+        self.fault(format!("{} could not restore its intents: {error}", owner.name()));
+        self.restore_failures.lock().unwrap_or_else(PoisonError::into_inner).push((owner, error));
     }
 
     /// The answer of Store to the batch `(author, batch)`.
@@ -281,12 +311,16 @@ impl Wiring {
         }
     }
 
-    pub fn to_transfer(&self, input: TransferInput) {
-        if let Some(Addresses { transfer: Some(transfer), .. }) = self.addresses() { self.handle.post(transfer, EpochStamp::Control, input); }
+    pub fn to_transfer(&self, input: TransferInput) { self.to_transfer_at(EpochStamp::Control, input); }
+
+    pub fn to_transfer_at(&self, stamp: EpochStamp, input: TransferInput) {
+        if let Some(Addresses { transfer: Some(transfer), .. }) = self.addresses() { self.handle.post(transfer, stamp, input); }
     }
 
-    pub fn to_outbox(&self, input: OutboxInput) {
-        if let Some(Addresses { outbox: Some(outbox), .. }) = self.addresses() { self.handle.post(outbox, EpochStamp::Control, input); }
+    pub fn to_outbox(&self, input: OutboxInput) { self.to_outbox_at(EpochStamp::Control, input); }
+
+    pub fn to_outbox_at(&self, stamp: EpochStamp, input: OutboxInput) {
+        if let Some(Addresses { outbox: Some(outbox), .. }) = self.addresses() { self.handle.post(outbox, stamp, input); }
     }
 
     pub fn to_windows(&self, input: super::read::windows::WindowsInput) {
@@ -314,7 +348,6 @@ impl Wiring {
 pub enum LifeError {
     Storage(String),
     CorruptManifest(String),
-    Timeout,
 }
 
 pub struct Life {
@@ -325,6 +358,8 @@ pub struct Life {
     with_session: bool,
     alive: Arc<std::sync::atomic::AtomicUsize>,
 }
+
+const RESTORE_ACKS: [Peer; 0] = [];
 
 /// Peers of `all owners` without an installed owner answer `Drained` at `Closing`.
 fn absent(session: bool, transfer: bool) -> Vec<Peer> {
@@ -343,19 +378,19 @@ fn absent(session: bool, transfer: bool) -> Vec<Peer> {
 
 impl Life {
     /// Builds the owners, boots the Store from the booted `Db` and returns after the first `Publish`.
-    pub fn start(ports: Ports, wait: Duration) -> Result<Self, LifeError> {
+    pub fn start(ports: Ports) -> Result<Self, LifeError> {
         let found = boot_found(&ports.db)?;
         let session = ports.session.clone().zip(ports.credentials.clone());
         let restored = session.as_ref().map(|(client, _)| session_runner::SessionRunner::stored(client)).transpose().map_err(|error| LifeError::Storage(error.to_string()))?;
         let mut builder = RuntimeBuilder::new();
         let wiring = Arc::new(Wiring::new(builder.handle()));
         let open_wait = wiring.outcomes.register(Epoch::MAX);
-        let lifecycle = builder.add::<Lifecycle>("lifecycle", LifecycleState::new(), runners::LifecycleRunner { wiring: wiring.clone(), leases: ports.db.shared.store.lifecycle.clone(), absent: absent(session.is_some(), session.is_some() && ports.transfer.is_some()), db: ports.db.clone(), held_published: None, held_replies: Vec::new() });
+        let lifecycle = builder.add::<Lifecycle>("lifecycle", LifecycleState::new().with_restore_participants(RESTORE_ACKS), runners::LifecycleRunner { wiring: wiring.clone(), leases: ports.db.shared.store.lifecycle.clone(), absent: absent(session.is_some(), session.is_some() && ports.transfer.is_some()), db: ports.db.clone(), held_published: None, held_replies: Vec::new() });
         let store = builder.add::<StoreWriter>("store", StoreState::new(), runners::StoreRunner { wiring: wiring.clone(), db: ports.db.clone(), credentials: ports.credentials.clone(), client: ports.session.clone() });
         let network = builder.add::<Network>("network", NetworkState::new(), runners::NetworkRunner { wiring: wiring.clone(), db: ports.db.clone(), held_replies: Vec::new() });
         let calls = builder.add::<Calls>("calls", CallsState::new(0, false, &[]), runners::CallsRunner::new(wiring.clone(), &ports));
         let session_address = session.as_ref().zip(restored).map(|((client, credentials), restored)| {
-            let state = SessionState::with_operations(client.session_operations(), client.logout_path().to_string(), true);
+            let state = SessionState::with_operations(client.session_operations(), client.logout_path().to_string(), false);
             let address = builder.add::<SessionCalls>("session", state, session_runner::SessionRunner::new(wiring.clone(), client.clone(), credentials.clone(), ports.executor.clone(), &restored));
             (address, restored)
         });
@@ -412,11 +447,10 @@ impl Life {
         let _ = wiring.addresses.set(Addresses { lifecycle, store, network, calls, session: session_address.as_ref().map(|(address, _)| *address), outbox, transfer, windows: None, deliveries: None, feed: None }.with_read(&read));
         let runtime = builder.start().map_err(|error| LifeError::Storage(error.to_string()))?;
         if let Some((_, restored)) = session_address {
-            wiring.to_session(SessionInput::Open { credential: restored.credential, pending: restored.pending });
+            *wiring.session_open.lock().unwrap_or_else(PoisonError::into_inner) = Some(SessionInput::Open { credential: restored.credential, pending: restored.pending });
         }
         wiring.open.lock().unwrap_or_else(PoisonError::into_inner).id = Some(open_wait.id().raw());
         wiring.to_store(StoreInput::Boot(found));
-        let started = std::time::Instant::now();
         let mut guard = wiring.open.lock().unwrap_or_else(PoisonError::into_inner);
         let answer = loop {
             if let Some(answer) = guard.answer {
@@ -425,8 +459,7 @@ impl Life {
             if let Some((error, corrupt)) = wiring.open_failed.lock().unwrap_or_else(PoisonError::into_inner).clone() {
                 return Err(if corrupt { LifeError::CorruptManifest(error) } else { LifeError::Storage(error) });
             }
-            let left = wait.checked_sub(started.elapsed()).ok_or(LifeError::Timeout)?;
-            guard = crate::blocking::blocking_unit(|| wiring.published.changed.wait_timeout(guard, left).unwrap_or_else(PoisonError::into_inner).0);
+            guard = crate::blocking::blocking_unit(|| wiring.published.changed.wait(guard).unwrap_or_else(PoisonError::into_inner));
         };
         drop(guard);
         answer.map_err(|error| LifeError::Storage(format!("the first publication was not saved: {error:?}")))?;
@@ -452,6 +485,10 @@ impl Life {
     }
 
     pub fn faults(&self) -> Vec<String> { self.wiring.faults.lock().unwrap_or_else(PoisonError::into_inner).clone() }
+
+    pub fn restore_failures(&self) -> Vec<(Peer, String)> { self.wiring.restore_failures.lock().unwrap_or_else(PoisonError::into_inner).clone() }
+
+    pub fn on_network(&self, owner: Peer, sink: impl Fn(NetworkEvent) + Send + Sync + 'static) { self.wiring.on_network(owner, sink); }
 
     fn settled(&self, reply: LifeReply) -> Waiter<LifeReply> {
         let waiter = self.wiring.outcomes.register(Epoch::MAX);

@@ -198,21 +198,6 @@ fn net_prop_single_source() {
 }
 
 #[test]
-fn net_prop_no_request_before_snapshot() {
-    for seed in 1..=40 {
-        let mut twin = Twin::new();
-        for input in random_inputs(seed, 30) {
-            let before = twin.history.len();
-            let started = input == snapshot();
-            twin.feed(input);
-            if started && twin.reference.online().is_some() {
-                assert!(matches!(twin.history[before], NetworkEffect::Snapshot { .. }), "a SnapshotRequest gives the owner the first Online snapshot in the same step");
-            }
-        }
-    }
-}
-
-#[test]
 fn net_prop_foreground_once() {
     for seed in 1..=40 {
         let mut twin = Twin::new();

@@ -131,7 +131,7 @@ impl EncryptedClient {
     /// The owners behind a client that was built without `Database`: Lifecycle, Store, Network, Calls and Session on the threads of the core.
     pub(crate) fn start_owners_in_tests(self: &Arc<Self>, db: &Db) -> Arc<crate::owners::life::Life> {
         let ports = crate::owners::life::Ports { db: db.clone(), transport: None, executor: tokio::runtime::Handle::current(), operations: Arc::new(|_| None), credentials: Some(self.credentials.clone()), session: Some(self.clone()), transfer: None, read_operations: None };
-        let life = Arc::new(crate::owners::life::Life::start(ports, std::time::Duration::from_secs(10)).expect("the owners started"));
+        let life = Arc::new(crate::owners::life::Life::start(ports).expect("the owners started"));
         self.attach(&life);
         crate::db::locked(&self.kept).push(life.clone());
         life

@@ -158,6 +158,7 @@ pub struct LifecycleState {
     restoring: Option<Restoring>,
     next_publication: PublicationId,
     next_erase: EraseId,
+    restore_participants: BTreeSet<Peer>,
     /// `issued_generation`: the highest generation reserved for an erase.
     allocated: u64,
 }
@@ -185,7 +186,12 @@ fn take_erase(erases: &mut Vec<Erase>, id: EraseId) -> Option<Erase> {
 impl LifecycleState {
     /// Before `Open`: no session, epoch 0.
     pub fn new() -> Self {
-        Self { phase: LifecyclePhase::NoSession { epoch: 0 }, published: Published::initial(), publishing: Vec::new(), cell: Published::initial(), cell_publication: 0, ended_up_to: None, restoring: None, next_publication: 1, next_erase: 1, allocated: 0 }
+        Self { phase: LifecyclePhase::NoSession { epoch: 0 }, published: Published::initial(), publishing: Vec::new(), cell: Published::initial(), cell_publication: 0, ended_up_to: None, restoring: None, next_publication: 1, next_erase: 1, restore_participants: [Peer::Outbox, Peer::Transfer, Peer::Session].into(), allocated: 0 }
+    }
+
+    pub fn with_restore_participants(mut self, participants: impl IntoIterator<Item = Peer>) -> Self {
+        self.restore_participants = participants.into_iter().collect();
+        self
     }
 
     pub fn phase(&self) -> &LifecyclePhase { &self.phase }
@@ -216,13 +222,30 @@ impl LifecycleState {
     fn start(&mut self, epoch: Epoch, identity: Option<Identity>, generation: u64, replies: Vec<ReplyId>, fx: &mut Vec<LifecycleEffect>) {
         self.set_published(epoch, identity, generation, settled_state(identity));
         if identity.is_some() {
-            self.restoring = Some(Self::new_restoring(epoch, None));
+            self.restoring = Some(self.new_restoring(epoch, None));
         }
         self.publish(Some(Started { epoch, identity, generation }), replies, fx);
     }
 
-    fn new_restoring(epoch: Epoch, open_reply: Option<ReplyId>) -> Restoring {
-        Restoring { epoch, start_waiting: [Peer::Outbox, Peer::Transfer].into(), restore_waiting: [Peer::Outbox, Peer::Transfer, Peer::Session].into(), open_reply }
+    fn new_restoring(&self, epoch: Epoch, open_reply: Option<ReplyId>) -> Restoring {
+        let taking_part = |owners: &[Peer]| owners.iter().copied().filter(|owner| self.restore_participants.contains(owner)).collect();
+        Restoring { epoch, start_waiting: taking_part(&[Peer::Outbox, Peer::Transfer]), restore_waiting: taking_part(&[Peer::Outbox, Peer::Transfer, Peer::Session]), open_reply }
+    }
+
+    fn restore_progress(&mut self, epoch: Epoch, fx: &mut Vec<LifecycleEffect>) {
+        let Some(restoring) = self.restoring.as_ref().filter(|restoring| restoring.epoch == epoch) else { return };
+        if restoring.start_waiting.is_empty() {
+            fx.push(LifecycleEffect::ReadIntents { epoch });
+        }
+        if restoring.restore_waiting.is_empty() {
+            self.finish_restore(epoch, fx);
+        }
+    }
+
+    fn finish_restore(&mut self, epoch: Epoch, fx: &mut Vec<LifecycleEffect>) {
+        let Some(restoring) = self.restoring.take() else { return };
+        reply_all(restoring.open_reply.into_iter().collect(), Ok(()), fx);
+        fx.push(LifecycleEffect::RestoreReady { epoch });
     }
 
     /// The restore of an epoch that ended, or of a close, ends with the wait of `open`.
@@ -309,7 +332,7 @@ impl LifecycleState {
                 self.phase = settled(epoch, saved_identity);
                 self.set_published(epoch, saved_identity, saved_generation, settled_state(saved_identity));
                 if saved_identity.is_some() {
-                    self.restoring = Some(Self::new_restoring(epoch, reply));
+                    self.restoring = Some(self.new_restoring(epoch, reply));
                     self.publish(Some(Started { epoch, identity: saved_identity, generation: saved_generation }), Vec::new(), fx);
                 } else {
                     self.publish(Some(Started { epoch, identity: saved_identity, generation: saved_generation }), reply.into_iter().collect(), fx);
@@ -524,7 +547,7 @@ impl LifecycleState {
                 if let Some(peer) = Peer::named(owner) {
                     waiting.remove(&peer);
                 }
-                let last = waiting.is_empty() && erases.is_empty();
+                let last = waiting.is_empty() && erases.is_empty() && !store_closing;
                 if last {
                     fx.push(LifecycleEffect::StoreClose);
                 }
@@ -601,10 +624,7 @@ impl LifecycleState {
         if !restoring.restore_waiting.remove(&owner) || !restoring.restore_waiting.is_empty() {
             return;
         }
-        let reply = restoring.open_reply;
-        self.restoring = None;
-        reply_all(reply.into_iter().collect(), Ok(()), fx);
-        fx.push(LifecycleEffect::RestoreReady { epoch });
+        self.finish_restore(epoch, fx);
     }
 
     /// `life_saved`, `life_saved_stale`, `life_save_failed`, `life_save_failed_stale`, `life_closing_saved` and the stray rows.
@@ -634,10 +654,15 @@ impl LifecycleState {
             reply_all(publication.replies, Ok(()), fx);
             if let Some(Started { epoch, identity, generation }) = publication.started {
                 fx.push(LifecycleEffect::EpochStarted { epoch, identity, generation });
+                self.restore_progress(epoch, fx);
             }
             return;
         }
         reply_all(publication.replies, Err(LifecycleError::Storage), fx);
+        let opening = publication.started.as_ref().map(|started| started.epoch);
+        if let Some(restoring) = self.restoring.take_if(|restoring| opening == Some(restoring.epoch)) {
+            reply_all(restoring.open_reply.into_iter().collect(), Err(LifecycleError::Storage), fx);
+        }
         if !newer {
             self.cell.state = PublishedState::StorageFailed;
             fx.push(LifecycleEffect::PublishCell(self.cell.clone()));

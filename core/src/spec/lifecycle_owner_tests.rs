@@ -615,6 +615,7 @@ fn life_closing_last_drained() {
         twin.feed(Event::Drained(owner));
     }
     assert!(matches!(twin.state(), RefState::Closing { store_closing: true, .. }));
+    assert!(twin.feed(Event::Drained(RefOwner::Feed)).is_empty(), "a repeated Drained closes the store a second time");
 }
 
 #[test]
@@ -726,11 +727,21 @@ fn life_saved_stray() { session(1).feed_all([Event::Saved(999), Event::SaveFaile
 
 #[test]
 fn life_save_failed() {
-    let mut twin = Twin::open(0, 0, None, Some(7));
+    for saved_identity in [None, Some(9)] {
+        let mut twin = Twin::open(0, 0, saved_identity, Some(7));
+        twin.feed(Event::SaveFailed(1));
+        assert_eq!(twin.cell().state, PubState::StorageFailed, "{saved_identity:?}");
+        assert_eq!(twin.replies(), vec![(7, Err(LifecycleError::Storage))], "{saved_identity:?}: open answers Err(Storage) once");
+        assert!(!twin.history.iter().any(|e| matches!(e, LifecycleEffect::EpochStarted { .. } | LifecycleEffect::ReadIntents { .. })), "{saved_identity:?}: no work of the epoch starts");
+    }
+}
+
+#[test]
+fn life_save_failed_open() {
+    let mut twin = Twin::open(0, 0, Some(9), Some(7));
     twin.feed(Event::SaveFailed(1));
-    assert_eq!(twin.cell().state, PubState::StorageFailed);
-    assert!(twin.replies().contains(&(7, Err(LifecycleError::Storage))));
-    assert!(!twin.history.iter().any(|e| matches!(e, LifecycleEffect::EpochStarted { .. })), "EpochStarted of a failed publication does not go out");
+    twin.feed_all([Event::Started(RefOwner::Outbox, 1), Event::Started(RefOwner::Transfer, 1), Event::RestoreClassified(RefOwner::Session, 1)]);
+    assert_eq!(twin.replies(), vec![(7, Err(LifecycleError::Storage))], "a late restore answer does not answer open again");
 }
 
 #[test]

@@ -255,3 +255,10 @@ pub struct RestoreItem {
     pub key: String,
     pub result: RestoreResult,
 }
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum NetworkEvent {
+    Online { online: bool, epoch: Option<Epoch> },
+    Foreground(u64),
+    PowerSaving { saving: bool, epoch: Option<Epoch> },
+}

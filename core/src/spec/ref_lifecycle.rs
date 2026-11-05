@@ -497,7 +497,7 @@ impl Lifecycle {
 
             (State::Closing { mut waiting, erases, close_replies, store_closing, store_closed, observers_stopped }, Event::Drained(owner)) => {
                 waiting.remove(&owner);
-                let last = waiting.is_empty() && erases.is_empty();
+                let last = waiting.is_empty() && erases.is_empty() && !store_closing;
                 if last { out.effects.push(Effect::StoreClose); }
                 State::Closing { waiting, erases, close_replies, store_closing: store_closing || last, store_closed, observers_stopped }
             }
@@ -616,6 +616,10 @@ impl Lifecycle {
             return;
         }
         answer_all(out, publication.replies, Answer::Storage);
+        let opening = publication.epoch_started.map(|(epoch, ..)| epoch);
+        if let Some(restoring) = self.restoring.take_if(|restoring| opening == Some(restoring.epoch)) {
+            answer_all(out, restoring.open_reply.into_iter().collect(), Answer::Storage);
+        }
         if !newer {
             self.cell.state = PubState::StorageFailed;
             out.effects.push(Effect::PublishCell(self.cell.clone()));
