@@ -1,0 +1,7 @@
+{"trace":"local_write_offline"}
+{"in":"open","out":[{"o":"opened"}]}
+{"in":"set_online","args":{"online":false},"out":[{"o":"online","v":false}]}
+{"in":"create","args":{"as":"r1","text":"a"},"out":[{"o":"receipt","v":{"op":"create","row":"r1"}}]}
+{"in":"has","args":{"row":"r1"},"out":[{"o":"row","v":{"present":true,"row":"r1"}}]}
+{"in":"has","args":{"row":"ghost"},"out":[{"o":"row","v":{"present":false,"row":"ghost"}}]}
+{"in":"close","out":[{"o":"closed"}]}
