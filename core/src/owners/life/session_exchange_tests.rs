@@ -184,3 +184,18 @@ async fn a_stored_request_of_an_older_format_is_sent_again_with_the_request_id_a
     assert_eq!(again[0]["sequence"], json!(2), "and the stored sequence");
     assert_eq!(rows(&db).0.unwrap().sequence, 2);
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn an_unreadable_stored_request_fails_the_open_with_a_storage_error() {
+    let world = World::new();
+    let db = Db::open_in_memory(Vec::new(), None).unwrap();
+    let client = Arc::new(EncryptedClient::new(&config(), world.server.clone(), world.credentials.clone(), db.clone(), world.clock.clone()).unwrap());
+    {
+        let inner = db.shared.store.lock();
+        inner.connection.execute("INSERT INTO encrypted_pending (id, credential_digest, request_id, response_key, sequence, path, body, purpose) VALUES (1, 'd', 'r', 'k', 1, '/p', 'not json', 0)", []).unwrap();
+    }
+    let credentials: Arc<dyn crate::transport::CredentialSlot> = world.credentials.clone();
+    let ports = super::Ports { db: db.clone(), transport: None, executor: tokio::runtime::Handle::current(), operations: Arc::new(|_| None), credentials: Some(credentials), session: Some(client) };
+    let error = super::Life::start(ports, LIMIT).err().expect("the open fails");
+    assert!(matches!(error, super::LifeError::Storage(_)), "the read error reaches the caller: {error:?}");
+}

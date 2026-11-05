@@ -149,6 +149,8 @@ pub struct SessionState {
     epoch: Epoch,
     call_epoch: Epoch,
     operations: Vec<SessionOperation>,
+    /// The path of the logout of the client: the call that ends the session on the server.
+    logout_path: String,
     next_request: RequestId,
     next_batch: BatchId,
     /// A pending restored at open waits for the first `Published`: it belongs to that epoch.
@@ -158,11 +160,11 @@ pub struct SessionState {
 impl SessionState {
     pub fn new(declared: &[&str], online: bool) -> Self {
         let operations = declared.iter().map(|name| SessionOperation { name: name.to_string(), path: format!("/{name}"), sessionless: false }).collect();
-        Self::with_operations(operations, online)
+        Self::with_operations(operations, "/logout".into(), online)
     }
 
-    pub fn with_operations(operations: Vec<SessionOperation>, online: bool) -> Self {
-        Self { phase: SessionPhase::Idle, credential: None, queue: VecDeque::new(), online, epoch: 0, call_epoch: 0, operations, next_request: 1, next_batch: 1, restored: false }
+    pub fn with_operations(operations: Vec<SessionOperation>, logout_path: String, online: bool) -> Self {
+        Self { phase: SessionPhase::Idle, credential: None, queue: VecDeque::new(), online, epoch: 0, call_epoch: 0, operations, logout_path, next_request: 1, next_batch: 1, restored: false }
     }
 
     pub fn phase(&self) -> &SessionPhase { &self.phase }
@@ -198,7 +200,7 @@ impl SessionState {
                     return;
                 };
                 self.call_epoch = self.epoch;
-                if !def.sessionless && self.credential.is_none() && def.name == LOGOUT {
+                if !def.sessionless && self.credential.is_none() && def.path == self.logout_path {
                     fx.push(SessionEffect::Reply { id: reply, answer: Err(SessionError::NoCredential) });
                     self.idle(fx);
                     return;
@@ -260,9 +262,6 @@ fn pending_of(phase: &SessionPhase) -> Option<PendingCall> {
         _ => None,
     }
 }
-
-/// The name of the operation that ends the session on the server.
-const LOGOUT: &str = "logout";
 
 /// The only retry timer of Session: a new `Schedule` replaces the previous one.
 const RETRY_TICK: ScheduleId = ScheduleId(1);
@@ -412,7 +411,7 @@ impl SessionState {
             }
             (SessionPhase::Calling { pending, .. }, SessionInput::Response { request_id, body, sequence, credential, revoked }) if request_id == pending.request_id => {
                 if revoked {
-                    let confirmed_logout = self.operations.iter().any(|def| def.name == LOGOUT && def.path == pending.path);
+                    let confirmed_logout = pending.path == self.logout_path;
                     let batch = self.batch();
                     fx.push(SessionEffect::RemovePending { batch, epoch: self.call_epoch });
                     fx.push(SessionEffect::ServerEnded(ServerEnded { epoch: self.call_epoch }));

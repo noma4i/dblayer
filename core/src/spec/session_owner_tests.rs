@@ -141,7 +141,7 @@ impl Twin {
     fn start(online: bool, credential: Option<RefCredential>) -> Self {
         let mut det = DetScheduler::new(2);
         let log = new_log();
-        let addr = det.add::<SessionCalls>("session", SessionState::with_operations(owner_operations(), online), Recorder::<SessionCalls>::new(&log));
+        let addr = det.add::<SessionCalls>("session", SessionState::with_operations(owner_operations(), "/logout".into(), online), Recorder::<SessionCalls>::new(&log));
         let mut twin = Self { det, addr, log, reference: Ref::new(operations(), online), history: Vec::new(), replies: Vec::new() };
         twin.feed(Input::Published { epoch: EPOCH });
         twin.feed(Input::Open { credential, pending: None });
@@ -751,10 +751,12 @@ struct Solo {
 }
 
 impl Solo {
-    fn new(credential: Option<Credential>) -> Self {
+    fn new(credential: Option<Credential>) -> Self { Self::with(SessionState::with_operations(owner_operations(), "/logout".into(), true), credential) }
+
+    fn with(state: SessionState, credential: Option<Credential>) -> Self {
         let mut det = DetScheduler::new(2);
         let log = new_log();
-        let addr = det.add::<SessionCalls>("session", SessionState::with_operations(owner_operations(), true), Recorder::<SessionCalls>::new(&log));
+        let addr = det.add::<SessionCalls>("session", state, Recorder::<SessionCalls>::new(&log));
         let mut solo = Self { det, addr, log };
         solo.feed(SessionInput::Published(Published { epoch: EPOCH, identity: None, generation: 0, closed: false }));
         solo.feed(SessionInput::Open { credential, pending: None });
@@ -833,4 +835,38 @@ fn sess_cancel_started() {
     assert!(matches!(solo.phase(), SessionPhase::Landing { .. }));
     let done = solo.commit();
     assert!(done.contains(&SessionEffect::Answer { author: 7, req_id: 11, outcome: AuthorOutcome::Response("{}".into()) }), "the started request reaches its outcome: {done:?}");
+}
+
+/// The logout of the client is a path: the operation named `logout` is an ordinary one, the operation on the path of the logout is the logout.
+fn renamed_logout() -> SessionState {
+    let def = |name: &str, path: &str| SessionOperation { name: name.into(), path: path.into(), sessionless: false };
+    SessionState::with_operations(vec![def("logout", "/signin"), def("leave", "/exit")], "/exit".into(), true)
+}
+
+#[test]
+fn sess_idle_call_no_credential_by_path() {
+    let mut solo = Solo::with(renamed_logout(), None);
+    let refused = solo.feed(SessionInput::SessionCall { operation: "leave".into(), body: "{}".into(), reply: 1 });
+    assert_eq!(refused, vec![SessionEffect::Reply { id: 1, answer: Err(SessionError::NoCredential) }], "the operation on the logout path of the client is refused without a request");
+    assert_eq!(solo.phase(), SessionPhase::Idle);
+}
+
+#[test]
+fn sess_idle_login_generate_by_path() {
+    let mut solo = Solo::with(renamed_logout(), None);
+    let effects = solo.feed(SessionInput::SessionCall { operation: "logout".into(), body: "{}".into(), reply: 1 });
+    assert_eq!(effects, vec![SessionEffect::GenerateCredential], "an operation named logout on another path is a sign-in");
+    assert!(matches!(solo.phase(), SessionPhase::Generating { .. }));
+}
+
+#[test]
+fn sess_calling_revoked_logout_by_path() {
+    let mut solo = Solo::with(renamed_logout(), stored_credential());
+    let id = solo.calling("leave");
+    let effects = solo.feed(SessionInput::Response { request_id: id, body: "{}".into(), sequence: None, credential: None, revoked: true });
+    assert!(effects.contains(&SessionEffect::Reply { id: 1, answer: Ok("{}".into()) }), "revoked on the logout path of the client confirms the logout: {effects:?}");
+    let mut solo = Solo::with(renamed_logout(), stored_credential());
+    let id = solo.calling("logout");
+    let effects = solo.feed(SessionInput::Response { request_id: id, body: "{}".into(), sequence: None, credential: None, revoked: true });
+    assert!(effects.contains(&SessionEffect::Reply { id: 1, answer: Err(SessionError::Revoked) }), "revoked on another path is Revoked: {effects:?}");
 }

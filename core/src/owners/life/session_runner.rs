@@ -8,7 +8,7 @@ use serde_json::Value;
 use tokio::task::AbortHandle;
 
 use super::{LifeReply, Wiring};
-use crate::owners::contract::{BatchAuthor, ReplyId, RequestId};
+use crate::owners::contract::{BatchAuthor, RejectReason, Rejected, ReplyId, RequestId};
 use crate::owners::lifecycle::LifecycleInput;
 use crate::owners::session::{Credential, PendingCall, SessionCalls, SessionEffect, SessionInput};
 use crate::owners::store::{StoreBatch, StoreInput, StoreOp};
@@ -55,9 +55,20 @@ pub(super) struct SessionRunner {
     restored_wire: Option<String>,
 }
 
+/// What the stored rows give to the owner and its executor at open.
+pub(crate) struct Restored {
+    pub credential: Option<Credential>,
+    pub pending: Option<PendingCall>,
+    /// The wire id of a pending that keeps the id it was stored with.
+    wire: Option<String>,
+    /// The response key stored with the pending.
+    key: Option<String>,
+}
+
 impl SessionRunner {
-    pub fn new(wiring: Arc<Wiring>, client: Arc<EncryptedClient>, credentials: Arc<dyn CredentialSlot>, executor: tokio::runtime::Handle, restored_wire: Option<String>) -> Self {
-        Self { wiring, client, credentials, executor, running: HashMap::new(), minted: HashMap::new(), keys: HashMap::new(), committing: None, ending: None, restored_wire }
+    pub fn new(wiring: Arc<Wiring>, client: Arc<EncryptedClient>, credentials: Arc<dyn CredentialSlot>, executor: tokio::runtime::Handle, restored: &Restored) -> Self {
+        let keys = restored.pending.iter().zip(&restored.key).map(|(pending, key)| (pending.request_id, key.clone())).collect();
+        Self { wiring, client, credentials, executor, running: HashMap::new(), minted: HashMap::new(), keys, committing: None, ending: None, restored_wire: restored.wire.clone() }
     }
 
     fn wire(&self, id: RequestId) -> String {
@@ -68,18 +79,17 @@ impl SessionRunner {
     }
 
     /// What `Open` of the owner takes: the stored `encrypted_session` (signed in when its sequence is above 0) and the stored `encrypted_pending`.
-    /// The third value is the wire id of a pending that keeps the id it was stored with.
-    pub fn stored(client: &EncryptedClient) -> Result<(Option<Credential>, Option<PendingCall>, Option<String>), TransportError> {
+    pub fn stored(client: &EncryptedClient) -> Result<Restored, TransportError> {
         let credential = client.stored_session()?.filter(|session| session.sequence > 0).and_then(|session| crate::store::identity_of(&session.credential_digest).map(|digest| Credential { digest, sequence: u64::try_from(session.sequence).unwrap_or(0) }));
         let operations = client.session_operations();
-        let Some(row) = client.stored_pending()? else { return Ok((credential, None, None)) };
+        let Some(row) = client.stored_pending()? else { return Ok(Restored { credential, pending: None, wire: None, key: None }) };
         let sequence = u64::try_from(row.sequence).map_err(|_| TransportError::Decode(format!("the stored pending has the sequence {}", row.sequence)))?;
         let own = request_id_of_wire(&row.request_id).filter(|id| wire_request_id(*id) == row.request_id);
         let request_id = own.unwrap_or(RESTORED_REQUEST);
         let restored_wire = own.is_none().then(|| row.request_id.clone());
         let pending = {
             let sessionless = row.credential_digest.is_empty();
-            let operation = operations.iter().find(|def| def.path == row.path && row.owner.is_none()).map(|def| def.name.clone()).unwrap_or_default();
+            let operation = operations.iter().find(|def| def.path == row.path && row.owner.is_none()).map_or_else(String::new, |def| def.name.clone());
             PendingCall {
                 request_id,
                 sequence,
@@ -94,7 +104,7 @@ impl SessionRunner {
                 reply: None,
             }
         };
-        Ok((credential, Some(pending), restored_wire))
+        Ok(Restored { credential, pending: Some(pending), wire: restored_wire, key: Some(row.response_key) })
     }
 
     fn commit(&self, back: &Back<SessionCalls>, batch: u64, epoch: u64, ops: Vec<StoreOp>) {
@@ -102,18 +112,18 @@ impl SessionRunner {
         self.wiring.to_store(StoreInput::Commit(StoreBatch { author: BatchAuthor::Session, id: batch, epoch, basis: Default::default(), rows: Vec::new(), intents: 1, credential: None, ops }));
     }
 
-    fn digest_for(&self, pending: &PendingCall) -> String {
+    fn digest_for(&self, pending: &PendingCall) -> Result<String, TransportError> {
         if pending.sessionless {
-            return String::new();
+            return Ok(String::new());
         }
         match pending.credential.and_then(|digest| self.minted.get(&digest)) {
-            Some(minted) => minted.digest.clone(),
-            None => self.client.stored_session().ok().flatten().map(|session| session.credential_digest).unwrap_or_default(),
+            Some(minted) => Ok(minted.digest.clone()),
+            None => Ok(self.client.stored_session()?.map_or_else(String::new, |session| session.credential_digest)),
         }
     }
 
-    fn secret_for(&self, pending: &PendingCall, stored_key: Option<String>) -> Result<(Option<String>, String), TransportError> {
-        let key = self.keys.get(&pending.request_id).cloned().or(stored_key).unwrap_or_else(random_token);
+    fn secret_for(&self, pending: &PendingCall) -> Result<(Option<String>, String), TransportError> {
+        let key = self.keys.get(&pending.request_id).cloned().ok_or_else(|| TransportError::Decode(format!("no response key for the request {}", pending.request_id)))?;
         if pending.sessionless {
             return Ok((None, key));
         }
@@ -162,21 +172,32 @@ impl EffectRunner<SessionCalls> for SessionRunner {
                 back.reply(EpochStamp::Control, SessionInput::CredentialGenerated { credential: identity });
             }
             SessionEffect::CommitPending { batch, epoch, pending } => {
-                let response_key = self.keys.entry(pending.request_id).or_insert_with(random_token).clone();
-                let credential_digest = self.digest_for(&pending);
+                let credential_digest = match self.digest_for(&pending) {
+                    Ok(digest) => digest,
+                    Err(error) => return back.reply(EpochStamp::Control, SessionInput::Rejected(Rejected { batch, reason: RejectReason::Storage(error.to_string()) })),
+                };
+                self.keys.clear();
+                let response_key = random_token();
+                self.keys.insert(pending.request_id, response_key.clone());
                 self.commit(back, batch, epoch, vec![StoreOp::Pending { pending, credential_digest, response_key }]);
             }
             SessionEffect::CommitLanding { batch, epoch, digest, sequence } => {
+                self.keys.clear();
                 let digest = digest.and_then(|identity| self.minted.get(&identity)).map(|minted| minted.digest.clone());
                 self.commit(back, batch, epoch, vec![StoreOp::Session { digest, sequence }, StoreOp::RemovePending]);
             }
-            SessionEffect::RemovePending { batch, epoch } => self.commit(back, batch, epoch, vec![StoreOp::RemovePending]),
+            SessionEffect::RemovePending { batch, epoch } => {
+                self.keys.clear();
+                self.commit(back, batch, epoch, vec![StoreOp::RemovePending]);
+            }
             SessionEffect::HttpRequest { pending } => {
                 let wire = self.wire(pending.request_id);
-                let stored_key = self.client.stored_pending().ok().flatten().filter(|row| row.request_id == wire).map(|row| row.response_key);
-                let (credential, key) = match self.secret_for(&pending, stored_key) {
+                let (credential, key) = match self.secret_for(&pending) {
                     Ok(secret) => secret,
-                    Err(_) => return back.reply(EpochStamp::Control, SessionInput::HttpError { request_id: pending.request_id, temporary: true, auth: false }),
+                    Err(error) => {
+                        self.wiring.fault(format!("request {}: {error}", pending.request_id));
+                        return back.reply(EpochStamp::Control, SessionInput::HttpError { request_id: pending.request_id, temporary: true, auth: false });
+                    }
                 };
                 let (client, back) = (self.client.clone(), back.clone());
                 let request_id = pending.request_id;
@@ -195,7 +216,6 @@ impl EffectRunner<SessionCalls> for SessionRunner {
                 }
             }
             SessionEffect::HttpCancel { request_id } => {
-                self.keys.remove(&request_id);
                 if let Some(task) = self.running.remove(&request_id) {
                     crate::db::lock::effect(|| task.abort());
                 }

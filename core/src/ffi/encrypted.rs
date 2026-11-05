@@ -174,7 +174,7 @@ fn session_failure(error: crate::owners::session::SessionError) -> DbError {
     use crate::owners::session::SessionError as Failed;
     match error {
         Failed::Invalid | Failed::Protocol => DbError::Invalid { detail: "the answer does not confirm the sequence".into() },
-        Failed::NoCredential => DbError::Session { code: SessionCode::Unauthenticated, detail: "the call needs a session and the database has none".into() },
+        Failed::NoCredential => DbError::Session { code: SessionCode::NoCredential, detail: "the call needs a session and the database has none".into() },
         Failed::Revoked => DbError::Session { code: SessionCode::SessionEnded, detail: "the session was ended by the server".into() },
         Failed::SequenceConflict => DbError::Session { code: SessionCode::SequenceConflict, detail: "the sequence of the request conflicts with the server".into() },
         Failed::Unauthorized => DbError::Http { status: 401, detail: String::new() },

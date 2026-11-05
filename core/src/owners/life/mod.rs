@@ -254,23 +254,22 @@ impl Life {
     pub fn start(ports: Ports, wait: Duration) -> Result<Self, LifeError> {
         let found = boot_found(&ports.db)?;
         let session = ports.session.clone().zip(ports.credentials.clone());
+        let restored = session.as_ref().map(|(client, _)| session_runner::SessionRunner::stored(client)).transpose().map_err(|error| LifeError::Storage(error.to_string()))?;
         let mut builder = RuntimeBuilder::new();
         let wiring = Arc::new(Wiring::new(builder.handle()));
         let lifecycle = builder.add::<Lifecycle>("lifecycle", LifecycleState::new(), runners::LifecycleRunner { wiring: wiring.clone(), leases: ports.db.shared.store.lifecycle.clone(), absent: absent(session.is_some()), held_published: None, held_replies: Vec::new() });
         let store = builder.add::<StoreWriter>("store", StoreState::new(), runners::StoreRunner { wiring: wiring.clone(), db: ports.db.clone(), credentials: ports.credentials.clone(), client: ports.session.clone() });
         let network = builder.add::<Network>("network", NetworkState::new(), runners::NetworkRunner { wiring: wiring.clone(), db: ports.db.clone(), held_replies: Vec::new() });
         let calls = builder.add::<Calls>("calls", CallsState::new(0, false, &[]), runners::CallsRunner::new(wiring.clone(), &ports));
-        let session_address = session.as_ref().map(|(client, credentials)| {
-            let open = session_runner::SessionRunner::stored(client);
-            let state = SessionState::with_operations(client.session_operations(), true);
-            let address = builder.add::<SessionCalls>("session", state, session_runner::SessionRunner::new(wiring.clone(), client.clone(), credentials.clone(), ports.executor.clone(), open.as_ref().ok().and_then(|(_, _, wire)| wire.clone())));
-            (address, open)
+        let session_address = session.as_ref().zip(restored).map(|((client, credentials), restored)| {
+            let state = SessionState::with_operations(client.session_operations(), client.logout_path().to_string(), true);
+            let address = builder.add::<SessionCalls>("session", state, session_runner::SessionRunner::new(wiring.clone(), client.clone(), credentials.clone(), ports.executor.clone(), &restored));
+            (address, restored)
         });
         let _ = wiring.addresses.set(Addresses { lifecycle, store, network, calls, session: session_address.as_ref().map(|(address, _)| *address) });
         let runtime = builder.start().map_err(|error| LifeError::Storage(error.to_string()))?;
-        if let Some((_, open)) = session_address {
-            let (credential, pending, _) = open.map_err(|error| LifeError::Storage(error.to_string()))?;
-            wiring.to_session(SessionInput::Open { credential, pending });
+        if let Some((_, restored)) = session_address {
+            wiring.to_session(SessionInput::Open { credential: restored.credential, pending: restored.pending });
         }
         wiring.to_store(StoreInput::Boot(found));
         let started = std::time::Instant::now();
