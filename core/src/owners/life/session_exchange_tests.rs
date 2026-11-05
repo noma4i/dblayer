@@ -113,7 +113,6 @@ async fn a_request_over_the_size_limit_is_refused_and_spends_no_sequence() {
     sign_in(&client).await;
     let reply = answer(life.mutate_wait(None, OTP.into(), json!({ "text": "x".repeat(300_000) }).to_string(), 0)).await;
     assert!(matches!(reply, LifeReply::Mutated(crate::owners::session::AuthorOutcome::Error(_))), "{reply:?}");
-    crate::test_wait::yield_until("the pending row of the refused request is removed", || rows(&db).1.is_none()).await;
     let (session, pending) = rows(&db);
     assert_eq!((session.unwrap().sequence, pending.is_none()), (1, true), "the refused request left no pending and spent no sequence");
     let next = answer(life.mutate_wait(None, OTP.into(), json!({}).to_string(), 0)).await;
