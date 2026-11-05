@@ -561,6 +561,10 @@ impl Life {
         runtime.as_ref().is_none_or(|runtime| runtime.barrier(limit))
     }
 
+    /// The inputs and started effect tasks that still hold the barrier.
+    #[cfg(test)]
+    pub fn pending(&self) -> usize { self.runtime.lock().unwrap_or_else(PoisonError::into_inner).as_ref().map_or(0, |runtime| runtime.pending()) }
+
     /// Whether `shutdown` ran: the database is closed for good.
     pub fn is_shut(&self) -> bool { self.shut.load(Ordering::SeqCst) }
 

@@ -239,6 +239,10 @@ impl Runtime {
 
     pub fn barrier(&self, limit: Duration) -> bool { self.router.inflight.wait_idle(limit) }
 
+    /// Inputs in mailboxes and started effect tasks that did not reply yet.
+    #[cfg(test)]
+    pub fn pending(&self) -> usize { *lock(&self.router.inflight.count) }
+
     pub fn history<O: StateOwner>(&self, address: Address<O>) -> Vec<TraceEntry> { lock(&self.router.history[address.index]).clone() }
 }
 

@@ -212,18 +212,13 @@ impl DatabaseSut {
         }));
     }
 
-    /// Waits until requests, finished calls and stream notices stop changing for 80 ms, then observes everything that finished.
+    /// Waits for the barrier of the owners, then observes everything that finished.
     async fn settle(&mut self) -> Vec<Observation> {
         for started in std::mem::take(&mut self.started) { let _ = started.await; }
-        let mut quiet = 0;
-        let mut last = (usize::MAX, usize::MAX, u64::MAX);
-        if let Some(database) = self.database.clone() { let owners = database.life_handle(); let _ = tokio::task::spawn_blocking(move || owners.barrier(Duration::from_secs(2))).await; }
-        for _ in 0..600 {
-            tokio::time::sleep(Duration::from_millis(10)).await;
-            let now = (self.mock.count(), self.calls.iter().filter(|call| call.is_finished()).count(), self.heard.0.load(Ordering::SeqCst));
-            quiet = if now == last { quiet + 1 } else { 0 };
-            last = now;
-            if quiet >= 8 { break; }
+        if let Some(database) = self.database.clone() {
+            let owners = database.life_handle();
+            let (idle, held) = tokio::task::spawn_blocking(move || (owners.barrier(Duration::from_secs(15)), owners.pending())).await.unwrap_or((false, 0));
+            assert!(idle, "the owners still hold {held} inputs or started effect tasks after 15 s");
         }
         let mut observed = Vec::new();
         let mut waiting = Vec::new();
