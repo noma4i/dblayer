@@ -1,4 +1,4 @@
-use super::*;
+use super::diff::*;
 use crate::identity::{ModelKey, RowId, RowRef};
 
 fn id(text: &str) -> RowId {

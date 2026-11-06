@@ -1,6 +1,6 @@
 use serde_json::{Map, Value};
 
-use crate::read::{connection_page_info, connection_rows, landing_fault};
+use crate::owners::read::codec::{connection_page_info, connection_rows, landing_fault};
 use crate::schema::RemoteShape;
 use crate::store::PageInfo;
 

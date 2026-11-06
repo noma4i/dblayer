@@ -11,7 +11,7 @@ use super::WindowCodec;
 use crate::store::Store;
 use crate::identity::RowId;
 use crate::owners::store::RowValue;
-use crate::read::EDGE_KEY;
+use crate::owners::read::codec::EDGE_KEY;
 use crate::schema::{Coverage, NodeRead, PreloadChoice, RemoteShape};
 use super::codec::{declared_variables, extract, limited_combinations, load_variables, normalize_nodes, root_value, stamp_scope_values, Normalized};
 use crate::transport::{GraphQLRequest, Response, ResponseOutcome};

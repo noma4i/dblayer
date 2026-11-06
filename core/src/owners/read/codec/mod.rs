@@ -1,18 +1,26 @@
 //! The wire form of rows and requests shared by the readers and the writers: how an answer of the server becomes normalized rows, how a request gets its variables.
 //! The functions have no state and know no owner.
 
+mod connection;
 mod extract;
+mod landing;
 mod normalize;
 mod variables;
 
+pub use connection::{connection_page_info, connection_rows, landing_fault, EDGE_KEY};
 pub(crate) use extract::{extract, root_value};
+pub use landing::{incoming_ids, plan_landing, LandingError, LandingPlan, StoredScope};
 pub(crate) use normalize::{normalize_nodes, Normalized};
 pub(crate) use variables::{declared_variables, load_variables};
 
 use serde_json::{Map, Value};
 
 #[cfg(test)]
+mod connection_tests;
+#[cfg(test)]
 mod extract_tests;
+#[cfg(test)]
+mod landing_tests;
 #[cfg(test)]
 mod normalize_tests;
 #[cfg(test)]

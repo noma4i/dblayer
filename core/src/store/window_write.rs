@@ -5,7 +5,7 @@ use serde_json::{Map, Value};
 use crate::store::{BatchPlan, CommitResult, EntityOp, ScopeOp, ScopeRef, WindowMarker, WindowSave, WindowTail};
 use crate::identity::{ModelKey, RowId};
 use crate::owners::read::windows::WindowKind;
-use crate::read::{incoming_ids, plan_landing, StoredScope, EDGE_KEY};
+use crate::owners::read::codec::{incoming_ids, plan_landing, StoredScope, EDGE_KEY};
 use crate::schema::{Coverage, RemoteShape};
 use crate::value::read_id;
 

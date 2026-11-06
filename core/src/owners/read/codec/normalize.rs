@@ -4,7 +4,7 @@ use serde_json::{Map, Value};
 
 use crate::store::Store;
 use crate::identity::{ModelKey, RowId};
-use crate::read::EDGE_KEY;
+use crate::owners::read::codec::EDGE_KEY;
 use crate::schema::AssociationKind;
 use crate::value::read_id;
 

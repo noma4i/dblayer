@@ -50,7 +50,7 @@ pub enum DbError {
     #[error("internal error: {0}")]
     Internal(String),
     #[error(transparent)]
-    Landing(#[from] crate::read::LandingError),
+    Landing(#[from] crate::owners::read::codec::LandingError),
     #[error(transparent)]
     Selection(#[from] crate::schema::SelectionKeyError),
 }

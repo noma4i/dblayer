@@ -3,10 +3,10 @@ use std::collections::{HashMap, HashSet};
 use serde_json::{Map, Value};
 
 use crate::store::{EntityOp, ScopeOp, ScopeRef};
-use crate::read::longest_increasing;
+use crate::owners::read::diff::longest_increasing;
 use crate::store::DbError;
 use crate::identity::RowId;
-use crate::read::LandingPlan;
+use crate::owners::read::codec::LandingPlan;
 use crate::schema::Coverage;
 use crate::value::{fractional_between, read_id};
 
@@ -91,7 +91,7 @@ fn order_ops(scope: &ScopeRef, current: &[Member], result: &[String]) -> Result<
         let lower = position.checked_sub(1).and_then(|before| keys[before].clone());
         let upper = uppers[position].take();
         crate::identity::touches::touch(1);
-        let key = fractional_between(lower.as_deref(), upper.as_deref()).map_err(|_| crate::read::LandingError::InvalidOrderBounds)?;
+        let key = fractional_between(lower.as_deref(), upper.as_deref()).map_err(|_| crate::owners::read::codec::LandingError::InvalidOrderBounds)?;
         let row = RowId::new(&result[position])?;
         ops.push(if rank.contains_key(result[position].as_str()) {
             ScopeOp::Move { scope: scope.clone(), row, order_key: key.clone() }

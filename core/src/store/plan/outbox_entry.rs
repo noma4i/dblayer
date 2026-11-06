@@ -67,7 +67,7 @@ pub(super) fn local_scope_ops(reader: &Reader<'_>, spec: &ModelSpec, id: &RowId,
     let mut operations = Vec::new();
     for key in spec.list_scopes(row) {
         let first = reader.scope_first_key(spec.key.as_str(), key.as_str())?;
-        let order_key = fractional_between(None, first.as_deref()).map_err(|_| crate::read::LandingError::InvalidOrderBounds)?;
+        let order_key = fractional_between(None, first.as_deref()).map_err(|_| crate::owners::read::codec::LandingError::InvalidOrderBounds)?;
         operations.push(ScopeOp::Append { scope: ScopeRef::new(spec.key.clone(), key), row: id.clone(), order_key });
     }
     Ok(operations)

@@ -2,6 +2,7 @@
 //! A runner does IO and answers with an input of its owner. It decides no transition.
 
 pub(crate) mod codec;
+pub mod diff;
 pub mod deliveries;
 pub mod feed;
 pub mod windows;
@@ -26,6 +27,8 @@ pub use window_io::{WindowCodec, WindowIo, WindowReader};
 
 #[cfg(test)]
 mod delivery_io_tests;
+#[cfg(test)]
+mod diff_tests;
 #[cfg(test)]
 mod delivery_work_tests;
 #[cfg(test)]
