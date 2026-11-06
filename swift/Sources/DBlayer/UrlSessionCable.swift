@@ -45,13 +45,13 @@ private final class SocketOpening: NSObject, URLSessionWebSocketDelegate, @unche
 }
 
 final class UrlSessionCable: @unchecked Sendable {
-  private let applicationUserAgent: @Sendable () -> String?
+  private let headers: @Sendable () -> [String: String]
   private let makeSocket: @Sendable (URLRequest) -> any CableWebSocket
   private let lock = NSLock()
   private var sockets: [String: any CableWebSocket] = [:]
 
-  init(applicationUserAgent: @escaping @Sendable () -> String? = { nil }, makeSocket: @escaping @Sendable (URLRequest) -> any CableWebSocket) {
-    self.applicationUserAgent = applicationUserAgent
+  init(headers: @escaping @Sendable () -> [String: String] = { [:] }, makeSocket: @escaping @Sendable (URLRequest) -> any CableWebSocket) {
+    self.headers = headers
     self.makeSocket = makeSocket
   }
 
@@ -63,7 +63,7 @@ final class UrlSessionCable: @unchecked Sendable {
     do { try Task.checkCancellation() } catch { throw TransportFailure.classifySocket(error) }
     guard let target = URL(string: url), ["ws", "wss"].contains(target.scheme), target.host != nil else { throw DbError.Invalid(detail: "invalid cable url") }
     var request = URLRequest(url: target)
-    request.setValue(applicationUserAgent(), forHTTPHeaderField: "User-Agent")
+    headers().forEach { request.setValue($1, forHTTPHeaderField: $0) }
     request.setUserAgent()
     let socket = makeSocket(request)
     let token = UUID().uuidString

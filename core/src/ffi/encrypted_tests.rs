@@ -11,6 +11,14 @@ use crate::test_wait::recv_within;
 
 pub(super) struct ThroughServer(pub(super) Arc<FakeServer>);
 
+#[test]
+fn life_prop_user_agent() {
+    let library = format!("DBlayer/{}", env!("CARGO_PKG_VERSION"));
+    assert_eq!(super::user_agent(None), library);
+    assert_eq!(super::user_agent(Some(String::new())), library);
+    assert_eq!(super::user_agent(Some("Reader".into())), format!("Reader {library}"));
+}
+
 struct SecurityHttp {
     server: Arc<FakeServer>,
     refused: std::sync::atomic::AtomicBool,

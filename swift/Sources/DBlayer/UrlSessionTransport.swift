@@ -13,9 +13,7 @@ public final class UrlSessionTransport: Transport, @unchecked Sendable {
     self.endpoint = endpoint
     self.headers = headers
     self.session = session
-    self.encryptedCable = UrlSessionCable(applicationUserAgent: {
-      headers().first { $0.key.caseInsensitiveCompare("User-Agent") == .orderedSame }?.value
-    }) { session.webSocketTask(with: $0) }
+    self.encryptedCable = UrlSessionCable(headers: headers) { session.webSocketTask(with: $0) }
   }
 
   public func query(request: TransportRequest) async throws -> String { try await post(request, kind: .query) }

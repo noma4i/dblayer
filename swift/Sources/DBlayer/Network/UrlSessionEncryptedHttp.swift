@@ -3,13 +3,15 @@ import Foundation
 public final class UrlSessionEncryptedHttp: EncryptedHttp, @unchecked Sendable {
   private let origin: String
   private let session: URLSession
+  private let headers: @Sendable () -> [String: String]
 
-  public convenience init(origin: URL, session: URLSession? = nil) {
-    self.init(origin: origin.absoluteString, session: session)
+  public convenience init(origin: URL, headers: @escaping @Sendable () -> [String: String] = { [:] }, session: URLSession? = nil) {
+    self.init(origin: origin.absoluteString, headers: headers, session: session)
   }
 
-  init(origin: String, session: URLSession? = nil) {
+  init(origin: String, headers: @escaping @Sendable () -> [String: String] = { [:] }, session: URLSession? = nil) {
     self.origin = origin
+    self.headers = headers
     let configuration = session?.configuration ?? .ephemeral
     configuration.timeoutIntervalForRequest = 30
     configuration.timeoutIntervalForResource = 30
@@ -31,6 +33,7 @@ public final class UrlSessionEncryptedHttp: EncryptedHttp, @unchecked Sendable {
     var request = URLRequest(url: url, timeoutInterval: 30)
     request.httpMethod = "POST"
     request.httpShouldHandleCookies = false
+    headers().forEach { request.setValue($1, forHTTPHeaderField: $0) }
     request.setValue("application/jose", forHTTPHeaderField: "Content-Type")
     request.setValue("", forHTTPHeaderField: "Accept")
     request.setValue("", forHTTPHeaderField: "Accept-Language")

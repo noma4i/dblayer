@@ -28,7 +28,7 @@ DBlayer.open(context, endpoint = endpoint, headers = { mapOf("Authorization" to 
 ```
 
 `endpoint`, `encrypted`, `credentials`, `transport`, `path` and `http` default to nil or null.
-`headers` is a closure that returns the request headers, `@Sendable () -> [String: String]` in Swift and `() -> Map<String, String>` in Kotlin. It defaults to an empty map and is called for every query, mutation and subscription handshake. `operations` defaults to an empty list. `modelsJSON` or `modelsJson` is required.
+`headers` is a closure that returns the request headers, `@Sendable () -> [String: String]` in Swift and `() -> Map<String, String>` in Kotlin. It defaults to an empty map and is called for each request and cable connection to the database origin. Presigned file uploads use their supplied headers and User-Agent. `operations` defaults to an empty list. `modelsJSON` or `modelsJson` is required.
 
 The built-in clients send `User-Agent: DBlayer/<version>` on HTTP requests, file PUTs and WebSocket handshakes.
 The core supplies the library version from `core/Cargo.toml`.

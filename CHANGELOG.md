@@ -35,6 +35,7 @@
 - `EntityFetch.none` is `EntityFetch.never` in Swift and `EntityFetch.NEVER` in Kotlin.
 
 ### Fixed
+- Send current application headers to encrypted requests and cable connections.
 - Keyed reactions match elements stored under a nested path.
 - The receipt of an action carries the revision of its commit.
 - A parent pointer follows a sent child to the id the server gave it.

@@ -17,7 +17,7 @@ class OkHttpTransport(
 ) : Transport {
     private val client = client.newBuilder().retryOnConnectionFailure(false).build()
     private val sockets = ConcurrentHashMap<String, okhttp3.WebSocket>()
-    private val encryptedSocket = OkHttpEncryptedSocket(client) { headers().toHeaders()["User-Agent"] }
+    private val encryptedSocket = OkHttpEncryptedSocket(client, headers)
     override suspend fun openCable(lease: CableLease, url: String) = lease.opened(encryptedSocket.open(url))
     override suspend fun cableSend(token: String, text: String) = encryptedSocket.send(token, text)
     override suspend fun cableNext(token: String): EncryptedSocketEvent? = encryptedSocket.next(token)

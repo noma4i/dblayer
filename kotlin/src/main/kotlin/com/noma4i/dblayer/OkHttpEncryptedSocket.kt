@@ -14,7 +14,7 @@ import java.io.IOException
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 
-internal class OkHttpEncryptedSocket(private val client: OkHttpClient, private val applicationUserAgent: () -> String? = { null }) {
+internal class OkHttpEncryptedSocket(private val client: OkHttpClient, private val headers: () -> Map<String, String> = { emptyMap() }) {
     private class Connection {
         val opened = CompletableDeferred<Unit>()
         val events = Channel<EncryptedSocketEvent>(Channel.UNLIMITED)
@@ -41,7 +41,7 @@ internal class OkHttpEncryptedSocket(private val client: OkHttpClient, private v
         }
         val token = UUID.randomUUID().toString()
         val connection = Connection()
-        val request = Request.Builder().url(url).apply { applicationUserAgent()?.let { header("User-Agent", it) } }.build().withUserAgent()
+        val request = Request.Builder().url(url).apply { headers().forEach { (field, value) -> header(field, value) } }.build().withUserAgent()
         try {
             connection.socket = client.newWebSocket(request, object : WebSocketListener() {
                 override fun onOpen(webSocket: WebSocket, response: Response) {

@@ -104,7 +104,7 @@ object DBlayer {
         val options = OpenOptions(operations = JsonArray(definitions).jsonText(), powerSaving = PowerSaving.saving(context), lowRam = PowerSaving.lowRam(context))
         val selectedTransport = transport ?: (endpoint ?: encrypted?.origin)?.let { OkHttpTransport(it, headers) }
         Reachability.start(context)
-        val made = opener.open(Config(path, null, 2000u), modelsJson, options, selectedTransport, encrypted, credentials, http ?: encrypted?.let { OkHttpEncryptedHttp(it.origin) }, retries)
+        val made = opener.open(Config(path, null, 2000u), modelsJson, options, selectedTransport, encrypted, credentials, http ?: encrypted?.let { OkHttpEncryptedHttp(it.origin, headers = headers) }, retries)
         val sink = made.onlineSink()
         Reachability.connect(sink)
         ForegroundEvents.start(sink)
