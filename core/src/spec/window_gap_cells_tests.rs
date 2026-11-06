@@ -2,7 +2,7 @@
 fn win_preload_created() {
     let mut twin = Twin::with_preload();
     twin.post_call(w::WindowsInput::EpochStarted(EpochStarted { epoch: EPOCH, identity: Some(1), generation: 0 }));
-    twin.post_call(w::WindowsInput::Online(Online(true)));
+    twin.post_call(w::WindowsInput::Online { online: Online(true), now: NOW });
     let effects = twin.reference.step(Input::InterestPlus { id: PRELOAD });
     let (got, _) = twin.split(take(&twin.log));
     assert_eq!(got, effects.iter().filter(|effect| **effect != Effect::WindowState).cloned().collect::<Vec<_>>(), "the preload key loads without a stream to tell");
@@ -59,7 +59,7 @@ fn build_sources(stage: Option<WindowStage>) -> Twin {
 fn win_nodes_empty() {
     let mut twin = Twin::new();
     let nodes = WindowKey::nodes("Moment", &[]);
-    twin.post_call(w::WindowsInput::Load { key: nodes, id: 1, goal: w::Goal::First, force: false, store_revision: 42 });
+    twin.post_call(w::WindowsInput::Load { key: nodes, id: 1, goal: w::Goal::First, force: false, store_revision: 42, now: NOW });
     let (_, outcomes) = twin.split(take(&twin.log));
     assert_eq!(outcomes, [(1, Result3::Loaded)]);
     assert_eq!(twin.state().windows(), 0, "no machine for a key without ids");
@@ -313,12 +313,12 @@ fn win_idle_online() {
 fn win_idle_reload_on_connect() {
     let mut twin = fresh_watched();
     twin.post_call(w::WindowsInput::ReloadOnConnect { key: key(), id: id64(STREAM) });
-    twin.post(w::WindowsInput::Online(Online(false)));
-    twin.post(w::WindowsInput::Online(Online(true)));
+    twin.post(w::WindowsInput::Online { online: Online(false), now: NOW });
+    twin.post(w::WindowsInput::Online { online: Online(true), now: NOW });
     assert_eq!(twin.stage(), Some(WindowStage::Loading), "a fresh window with a reload interest loads again when the network returns");
     let mut plain = fresh_watched();
-    plain.post(w::WindowsInput::Online(Online(false)));
-    plain.post(w::WindowsInput::Online(Online(true)));
+    plain.post(w::WindowsInput::Online { online: Online(false), now: NOW });
+    plain.post(w::WindowsInput::Online { online: Online(true), now: NOW });
     assert_eq!(plain.stage(), Some(WindowStage::Idle), "a fresh window without the interest stays");
 }
 

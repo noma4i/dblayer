@@ -34,6 +34,7 @@ pub struct WindowIo {
     admit: Admit,
     gate: Arc<crate::runtime::EpochGate>,
     handle: Handle,
+    now: Arc<dyn Fn() -> i64 + Send + Sync>,
     counted: Option<crate::runtime::Handle>,
     open: Open,
     rest: Rest<WindowsEffect>,
@@ -42,8 +43,8 @@ pub struct WindowIo {
 }
 
 impl WindowIo {
-    pub fn new(transport: Option<Arc<dyn Transport>>, codec: Arc<dyn WindowCodec>, (admit, gate): (Admit, Arc<crate::runtime::EpochGate>), handle: Handle, rest: Rest<WindowsEffect>) -> Self {
-        Self { transport, codec, admit, gate, handle, counted: None, open: Open::default(), rest, #[cfg(test)] flights: None }
+    pub fn new(transport: Option<Arc<dyn Transport>>, codec: Arc<dyn WindowCodec>, (admit, gate): (Admit, Arc<crate::runtime::EpochGate>), (handle, now): (Handle, Arc<dyn Fn() -> i64 + Send + Sync>), rest: Rest<WindowsEffect>) -> Self {
+        Self { transport, codec, admit, gate, handle, now, counted: None, open: Open::default(), rest, #[cfg(test)] flights: None }
     }
 
     #[cfg(test)]
@@ -64,7 +65,7 @@ impl WindowIo {
         }
         let token = CancelToken::new();
         self.open.lock().unwrap_or_else(PoisonError::into_inner).insert((request, attempt), token.clone());
-        let (transport, codec, open, back, admit, gate) = (self.transport.clone(), self.codec.clone(), self.open.clone(), back.clone(), self.admit.clone(), self.gate.clone());
+        let (transport, codec, open, back, admit, gate, now) = (self.transport.clone(), self.codec.clone(), self.open.clone(), back.clone(), self.admit.clone(), self.gate.clone(), self.now.clone());
         let launch = self.counted.as_ref().map(crate::runtime::Handle::launch);
         #[cfg(test)]
         let flight = self.flights.as_ref().map(super::ports::InFlight::start);
@@ -82,7 +83,7 @@ impl WindowIo {
             open.lock().unwrap_or_else(PoisonError::into_inner).remove(&(request, attempt));
             if let Some(outcome) = outcome.filter(|_| !token.is_cancelled()) {
                 back.reply(stamp, match outcome {
-                    TransportOutcome::Response(page) => WindowsInput::Response { request, attempt, page },
+                    TransportOutcome::Response(page) => WindowsInput::Response { request, attempt, page, now: now() },
                     TransportOutcome::Error(error) => WindowsInput::Failure { request, attempt, error },
                     TransportOutcome::Dropped => WindowsInput::Dropped { request, attempt },
                 });

@@ -1,6 +1,13 @@
-/// One machine of a window.
+/// One machine of a window. While `opening` is set the saved window is read in the read pool and the inputs of the key wait in `held`.
 struct Window {
     machine: InitializedStateMachine<Facts>,
+    opening: Option<Opening>,
+}
+
+struct Opening {
+    read_id: u64,
+    basis: u64,
+    held: Vec<Ev>,
 }
 
 /// What a window knows of its owner when it opens.
@@ -12,8 +19,9 @@ struct WindowBasis {
 }
 
 impl Window {
-    fn new(model: String, basis: WindowBasis, max_pages: u32, members_complete: bool, ids: (&mut RequestId, &mut u32)) -> Self {
+    fn new(model: String, basis: WindowBasis, (max_pages, members_complete, lifetime): (u32, bool, (i64, i64)), read_id: Option<u64>, ids: (&mut RequestId, &mut u32)) -> Self {
         let WindowBasis { epoch, online, base_generation, generations } = basis;
+        let opening = read_id.map(|read_id| Opening { read_id, basis: generations.get(&model).copied().unwrap_or(base_generation), held: Vec::new() });
         let facts = Facts {
             dependency_models: BTreeSet::from([model]),
             epoch,
@@ -26,6 +34,10 @@ impl Window {
             reconnected: false,
             waiters: BTreeMap::new(),
             fresh: false,
+            landed_at: 0,
+            fresh_until: 0,
+            lifetime,
+            answered_at: 0,
             cursor: None,
             page: 0,
             page_count: 0,
@@ -44,10 +56,44 @@ impl Window {
             fx: RefCell::new(Vec::new()),
         };
         let mut ctx = Ctx { next_request: ids.0, next_attempt: ids.1 };
-        Self { machine: facts.uninitialized_state_machine().init_with_context(&mut ctx) }
+        Self { machine: facts.uninitialized_state_machine().init_with_context(&mut ctx), opening }
     }
 
     fn handle(&mut self, event: Ev, ids: (&mut RequestId, &mut u32)) -> Vec<Emit> {
+        if let Some(opening) = &mut self.opening {
+            match event {
+                Ev::EpochEnded | Ev::Closing => {
+                    let held = std::mem::take(&mut opening.held);
+                    self.opening = None;
+                    let mut effects: Vec<Emit> = held.iter().filter_map(|held| if let Ev::Load { id, .. } = held { Some(Emit::Run(WindowEffect::Outcome { id: *id, outcome: WindowOutcome::Interrupted })) } else { None }).collect();
+                    effects.extend(self.run(event, ids));
+                    return effects;
+                }
+                Ev::StoreSeen { .. } | Ev::SourceChanged { .. } => return self.run(event, ids),
+                Ev::Foreground => return Vec::new(),
+                held => {
+                    opening.held.push(held);
+                    return Vec::new();
+                }
+            }
+        }
+        self.run(event, ids)
+    }
+
+    /// The saved window arrived: the machine takes it (a window of another generation or one that a reset touched is none), then the held inputs run in the order they came.
+    fn opened(&mut self, saved: Option<SavedWindow>, ids: (&mut RequestId, &mut u32)) -> Vec<Emit> {
+        let Some(opening) = self.opening.take() else { return Vec::new() };
+        let reset = opening.held.iter().any(|held| matches!(held, Ev::ModelsReset { models, .. } if self.machine.depends_on(models)));
+        let saved = saved.filter(|saved| saved.generation == opening.basis && !reset);
+        let (next_request, next_attempt) = ids;
+        let mut effects = self.run(Ev::Saved(saved), (&mut *next_request, &mut *next_attempt));
+        for held in opening.held {
+            effects.extend(self.run(held, (&mut *next_request, &mut *next_attempt)));
+        }
+        effects
+    }
+
+    fn run(&mut self, event: Ev, ids: (&mut RequestId, &mut u32)) -> Vec<Emit> {
         let previous = self.request_id();
         let mut ctx = Ctx { next_request: ids.0, next_attempt: ids.1 };
         self.machine.handle_with_context(&event, &mut ctx);
@@ -66,7 +112,38 @@ impl Window {
         }
     }
 
+    /// The interest and the waiters the inputs held while opening already changed.
+    fn held_ids(&self, opening: &Opening) -> (BTreeSet<InterestId>, BTreeSet<InterestId>) {
+        let (mut interest, mut waiters) = (BTreeSet::new(), BTreeSet::new());
+        for held in &opening.held {
+            match held {
+                Ev::InterestPlus { id, .. } | Ev::InterestPassive { id } => { interest.insert(*id); }
+                Ev::Load { id, .. } => { waiters.insert(*id); }
+                Ev::InterestMinus { id } => { interest.remove(id); waiters.remove(id); }
+                _ => {}
+            }
+        }
+        (interest, waiters)
+    }
+
+    fn interest(&self) -> Vec<InterestId> {
+        match &self.opening {
+            Some(opening) => self.held_ids(opening).0.into_iter().collect(),
+            None => self.machine.interest.iter().copied().collect(),
+        }
+    }
+
+    fn waiters(&self) -> Vec<InterestId> {
+        match &self.opening {
+            Some(opening) => self.held_ids(opening).1.into_iter().collect(),
+            None => self.machine.waiters.keys().copied().collect(),
+        }
+    }
+
     fn stage(&self) -> WindowStage {
+        if self.opening.is_some() {
+            return WindowStage::Opening;
+        }
         match self.machine.state() {
             WinState::Idle {} => WindowStage::Idle,
             WinState::Loading { .. } => WindowStage::Loading,
@@ -75,6 +152,8 @@ impl Window {
             WinState::Ended {} => WindowStage::Ended,
         }
     }
+
+    fn reading(&self, read_id: u64) -> bool { self.opening.as_ref().is_some_and(|opening| opening.read_id == read_id) }
 
     fn owns(&self, id: RequestId) -> bool {
         match self.machine.state() {
@@ -87,6 +166,9 @@ impl Window {
 
 /// How many pages a key may land at most: the `max_pages` of its operation in the `.dbl`.
 pub type MaxPages = Arc<dyn Fn(&WindowKey) -> u32 + Send + Sync>;
+
+/// `expires_in` and `empty_in` of the relation of a key, in milliseconds.
+pub type Lifetimes = Arc<dyn Fn(&WindowKey) -> (i64, i64) + Send + Sync>;
 
 /// Whether the `.dbl` declares `members_complete` for the relation of a key.
 pub type MembersComplete = Arc<dyn Fn(&WindowKey) -> bool + Send + Sync>;
@@ -107,6 +189,8 @@ pub struct WindowsState {
     windows: BTreeMap<WindowKey, Window>,
     max_pages: MaxPages,
     members_complete: MembersComplete,
+    lifetimes: Lifetimes,
+    next_read: u64,
     on_foreground: OnForeground,
     foreground_seen: u64,
     peers: WindowsPeers,
@@ -122,7 +206,7 @@ pub struct WindowsPeers {
 impl WindowsState {
     /// `online` is the value of the first addressed `Online`, `None` before it.
     pub fn new(epoch: Epoch, online: Option<bool>, peers: WindowsPeers) -> Self {
-        Self { epoch, online, generations: BTreeMap::new(), base_generation: 0, preload: Vec::new(), sources: BTreeSet::new(), next_request: 1, next_attempt: 1, windows: BTreeMap::new(), max_pages: Arc::new(|_| u32::MAX), members_complete: Arc::new(|_| false), on_foreground: Arc::new(|_| false), foreground_seen: 0, peers }
+        Self { epoch, online, generations: BTreeMap::new(), base_generation: 0, preload: Vec::new(), sources: BTreeSet::new(), next_request: 1, next_attempt: 1, windows: BTreeMap::new(), max_pages: Arc::new(|_| u32::MAX), members_complete: Arc::new(|_| false), lifetimes: Arc::new(|_| (300_000, 300_000)), next_read: 1, on_foreground: Arc::new(|_| false), foreground_seen: 0, peers }
     }
 
     /// Keys that `EpochStarted` loads with `Interest+(PRELOAD)`.
@@ -142,6 +226,11 @@ impl WindowsState {
         self
     }
 
+    pub fn with_lifetimes(mut self, lifetimes: Lifetimes) -> Self {
+        self.lifetimes = lifetimes;
+        self
+    }
+
     pub fn with_max_pages(mut self, max_pages: MaxPages) -> Self {
         self.max_pages = max_pages;
         self
@@ -154,20 +243,32 @@ impl WindowsState {
 
     pub fn stage(&self, key: &WindowKey) -> Option<WindowStage> { self.windows.get(key).map(Window::stage) }
 
-    pub fn interest(&self, key: &WindowKey) -> Vec<InterestId> { self.windows.get(key).map(|window| window.machine.interest.iter().copied().collect()).unwrap_or_default() }
+    pub fn interest(&self, key: &WindowKey) -> Vec<InterestId> { self.windows.get(key).map(|window| window.interest()).unwrap_or_default() }
 
-    pub fn waiters(&self, key: &WindowKey) -> Vec<InterestId> { self.windows.get(key).map(|window| window.machine.waiters.keys().copied().collect()).unwrap_or_default() }
+    pub fn waiters(&self, key: &WindowKey) -> Vec<InterestId> { self.windows.get(key).map(Window::waiters).unwrap_or_default() }
 
     pub fn load_state(&self, key: &WindowKey) -> Option<WindowState> { self.windows.get(key).map(|window| window.machine.load_state()) }
 
     pub fn windows(&self) -> usize { self.windows.len() }
 
-    fn ensure(&mut self, key: &WindowKey) {
+    /// The read of the saved window the key waits for.
+    pub fn reading(&self, key: &WindowKey) -> Option<u64> { self.windows.get(key).and_then(|window| window.opening.as_ref().map(|opening| opening.read_id)) }
+
+    /// A key without a machine gets one in `Opening` and asks for its saved window.
+    fn ensure(&mut self, key: &WindowKey, out: &mut Effects<Windows>) {
         if !self.windows.contains_key(key) {
-            let ids = (&mut self.next_request, &mut self.next_attempt);
-            let window = Window::new(key.model.clone(), WindowBasis { epoch: self.epoch, online: self.online, base_generation: self.base_generation, generations: self.generations.clone() }, (self.max_pages)(key), (self.members_complete)(key), ids);
-            self.windows.insert(key.clone(), window);
+            let read_id = self.next_read;
+            self.next_read += 1;
+            self.create(key, Some(read_id));
+            out.push(Effect::Run(WindowsEffect::ReadWindow { key: key.clone(), read_id }));
         }
+    }
+
+    /// A machine of the preload interest starts not fresh: there is no saved window to read.
+    fn create(&mut self, key: &WindowKey, read_id: Option<u64>) {
+        let ids = (&mut self.next_request, &mut self.next_attempt);
+        let window = Window::new(key.model.clone(), WindowBasis { epoch: self.epoch, online: self.online, base_generation: self.base_generation, generations: self.generations.clone() }, ((self.max_pages)(key), (self.members_complete)(key), (self.lifetimes)(key)), read_id, ids);
+        self.windows.insert(key.clone(), window);
     }
 }
 
@@ -175,10 +276,16 @@ pub struct Windows;
 
 impl Windows {
     fn on(state: &mut WindowsState, key: &WindowKey, event: Ev, out: &mut Effects<Self>) {
-        let peers = state.peers;
         let Some(window) = state.windows.get_mut(key) else { return };
+        let emits = window.handle(event, (&mut state.next_request, &mut state.next_attempt));
+        Self::emitted(state, key, emits, out);
+    }
+
+    fn emitted(state: &mut WindowsState, key: &WindowKey, emits: Vec<Emit>, out: &mut Effects<Self>) {
+        let peers = state.peers;
+        let Some(window) = state.windows.get(key) else { return };
         let epoch = window.machine.epoch;
-        for emit in window.handle(event, (&mut state.next_request, &mut state.next_attempt)) {
+        for emit in emits {
             match emit {
                 Emit::Run(effect) => out.push(Effect::Run(WindowsEffect::Window { key: key.clone(), effect })),
                 Emit::Pin { epoch, request } => out.push(Effect::Send(Outbound::new(peers.store, StoreInput::Pin { epoch, request_id: request }))),
@@ -215,29 +322,38 @@ impl Windows {
         }
     }
 
-    fn interest_plus(state: &mut WindowsState, key: WindowKey, id: InterestId, out: &mut Effects<Self>) {
-        state.ensure(&key);
-        Self::on(state, &key, Ev::InterestPlus { id }, out);
+    fn interest_plus(state: &mut WindowsState, key: WindowKey, (id, now): (InterestId, i64), out: &mut Effects<Self>) {
+        state.ensure(&key, out);
+        Self::on(state, &key, Ev::InterestPlus { id, now }, out);
+    }
+
+    fn interest_preload(state: &mut WindowsState, key: WindowKey, out: &mut Effects<Self>) {
+        match state.windows.get(&key) {
+            None => state.create(&key, None),
+            Some(window) if window.interest().contains(&PRELOAD) => return,
+            Some(_) => {}
+        }
+        Self::on(state, &key, Ev::InterestPlus { id: PRELOAD, now: 0 }, out);
     }
 
     fn interest_passive(state: &mut WindowsState, key: WindowKey, id: InterestId, out: &mut Effects<Self>) {
-        state.ensure(&key);
+        state.ensure(&key, out);
         Self::on(state, &key, Ev::InterestPassive { id }, out);
     }
 
     fn reload_on_connect(state: &mut WindowsState, key: WindowKey, id: InterestId, out: &mut Effects<Self>) {
-        state.ensure(&key);
+        state.ensure(&key, out);
         Self::on(state, &key, Ev::ReloadOnConnect { id }, out);
     }
 
-    fn load(state: &mut WindowsState, key: WindowKey, id: InterestId, goal: Goal, force: bool, store_revision: i64, out: &mut Effects<Self>) {
+    fn load(state: &mut WindowsState, key: WindowKey, (id, now): (InterestId, i64), (goal, force, store_revision): (Goal, bool, i64), out: &mut Effects<Self>) {
         if key.is_empty_nodes() {
             let effect = WindowEffect::Outcome { id, outcome: WindowOutcome::Loaded { revision: store_revision, has_more: false, fetched: false } };
             out.push(Effect::Run(WindowsEffect::Window { key, effect }));
             return;
         }
-        state.ensure(&key);
-        Self::on(state, &key, Ev::Load { id, goal, force, store_revision }, out);
+        state.ensure(&key, out);
+        Self::on(state, &key, Ev::Load { id, goal, force, store_revision, now }, out);
     }
 }
 
@@ -251,12 +367,12 @@ impl StateOwner for Windows {
     fn step(state: &mut WindowsState, input: WindowsInput) -> Effects<Self> {
         let mut out: Effects<Self> = Vec::new();
         match input {
-            WindowsInput::InterestPlus { key, id } => Self::interest_plus(state, key, id, &mut out),
+            WindowsInput::InterestPlus { key, id, now } => Self::interest_plus(state, key, (id, now), &mut out),
             WindowsInput::InterestPassive { key, id } => Self::interest_passive(state, key, id, &mut out),
             WindowsInput::ReloadOnConnect { key, id } => Self::reload_on_connect(state, key, id, &mut out),
             WindowsInput::OfflineRefused { key, message } => Self::on(state, &key, Ev::OfflineRefused { message }, &mut out),
             WindowsInput::InterestMinus { key, id } => Self::on(state, &key, Ev::InterestMinus { id }, &mut out),
-            WindowsInput::Load { key, id, goal, force, store_revision } => Self::load(state, key, id, goal, force, store_revision, &mut out),
+            WindowsInput::Load { key, id, goal, force, store_revision, now } => Self::load(state, key, (id, now), (goal, force, store_revision), &mut out),
             WindowsInput::Pinned { request_id, base_revision } => {
                 if state.windows.values().any(|window| window.owns(request_id)) {
                     Self::by_request(state, request_id, Ev::Pinned { request: request_id, base_revision }, &mut out);
@@ -264,7 +380,7 @@ impl StateOwner for Windows {
                     out.push(Effect::Send(Outbound::new(state.peers.store, StoreInput::Unpin { request_id })));
                 }
             }
-            WindowsInput::Response { request, attempt, page } => Self::by_request(state, request, Ev::Response { request, attempt, page }, &mut out),
+            WindowsInput::Response { request, attempt, page, now } => Self::by_request(state, request, Ev::Response { request, attempt, page, now }, &mut out),
             WindowsInput::Failure { request, attempt, error } => Self::by_request(state, request, Ev::Failure { request, attempt, error: error.clone() }, &mut out),
             WindowsInput::Dropped { request, attempt } => Self::by_request(state, request, Ev::Failure { request, attempt, error: RequestError { message: "dropped".into(), class: ErrorClass::Network, source: None } }, &mut out),
             WindowsInput::Committed(committed) => Self::by_request(state, committed.batch, Ev::Committed { request: committed.batch, revision: committed.revision }, &mut out),
@@ -278,9 +394,7 @@ impl StateOwner for Windows {
             WindowsInput::RetryDue { request } => Self::by_request(state, request, Ev::RetryDue { request }, &mut out),
             WindowsInput::PreloadKeys { keys } => {
                 for key in keys {
-                    if !state.windows.contains_key(&key) {
-                        Self::interest_plus(state, key, PRELOAD, &mut out);
-                    }
+                    Self::interest_preload(state, key, &mut out);
                 }
             }
             WindowsInput::StoreCommitted { models, revision } => {
@@ -301,9 +415,15 @@ impl StateOwner for Windows {
                 }
             }
             WindowsInput::Foreground(_) => {}
-            WindowsInput::Online(Online(online)) => {
+            WindowsInput::Online { online: Online(online), now } => {
                 state.online = Some(online);
-                Self::every(state, &Ev::Online(online), &mut out);
+                Self::every(state, &Ev::Online { online, now }, &mut out);
+            }
+            WindowsInput::WindowRead { key, read_id, result } => {
+                let Some(window) = state.windows.get_mut(&key).filter(|window| window.reading(read_id)) else { return out };
+                let saved = result.unwrap_or(None);
+                let emits = window.opened(saved, (&mut state.next_request, &mut state.next_attempt));
+                Self::emitted(state, &key, emits, &mut out);
             }
             WindowsInput::EpochStarted(started) => {
                 state.epoch = started.epoch;
@@ -315,7 +435,7 @@ impl StateOwner for Windows {
                 if started.identity.is_some() {
                     out.push(Effect::Run(WindowsEffect::SnapshotRequest { epoch: started.epoch }));
                     for key in state.preload.clone() {
-                        Self::interest_plus(state, key, PRELOAD, &mut out);
+                        Self::interest_preload(state, key, &mut out);
                     }
                 }
             }

@@ -275,7 +275,7 @@ impl EffectRunner<Network> for NetworkRunner {
         match effect {
             NetworkEffect::Broadcast(online) => {
                 self.db.connectivity().change(online);
-                wiring.to_windows(WindowsInput::Online(Online(online)));
+                wiring.to_windows(WindowsInput::Online { online: Online(online), now: self.db.lock().now_ms() });
                 wiring.to_feed(FeedInput::Online(Online(online)));
                 wiring.to_outbox(OutboxInput::Online(Online(online)));
                 wiring.to_transfer(TransferInput::Online(Online(online)));
@@ -289,7 +289,7 @@ impl EffectRunner<Network> for NetworkRunner {
                 }
                 let stamp = EpochStamp::Epoch(epoch);
                 match owner {
-                    Peer::Windows => wiring.to_windows_in(epoch, WindowsInput::Online(Online(online))),
+                    Peer::Windows => wiring.to_windows_in(epoch, WindowsInput::Online { online: Online(online), now: self.db.lock().now_ms() }),
                     Peer::Feed => wiring.to_feed(FeedInput::Online(Online(online))),
                     Peer::Calls => wiring.to_calls_at(stamp, CallsInput::Online(Online(online))),
                     Peer::Outbox => wiring.to_outbox_at(stamp, OutboxInput::Online(Online(online))),

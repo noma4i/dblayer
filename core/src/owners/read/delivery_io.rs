@@ -41,7 +41,6 @@ impl DeliveryIo {
         let launch = self.counted.as_ref().map(crate::runtime::Handle::launch);
         spawn_blocking_on(Carry::Detached, &self.handle, move || {
             let _launch = launch;
-            if read_id == 1 { snapshots.opening(&view, stamp); }
             let answer = match snapshots.read(&view, revision, after) {
                 Ok((seen, data)) => DeliveryInput::ReadDone { stream, read_id, revision: seen, data },
                 Err(error) => DeliveryInput::ReadFailed { stream, read_id, revision, error },

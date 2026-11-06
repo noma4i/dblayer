@@ -9,7 +9,7 @@ fn dlv_force_load_uses_committed_revision() {
     let revision = std::sync::Arc::new(std::sync::atomic::AtomicI64::new(37));
     let addr = det.add::<Spy<Deliveries>>("deliveries", SpyState::new(d::DeliveriesState::new(EPOCH, peers(), revision), &log), Discard);
     det.start_epoch(EPOCH);
-    det.post(addr, EpochStamp::Control, d::DeliveryInput::Open { stream: STREAM, view: view(Kind::Entity(Fetch::Force)), epoch: EPOCH, identity: true, valid: true });
+    det.post(addr, EpochStamp::Control, d::DeliveryInput::Open { stream: STREAM, view: view(Kind::Entity(Fetch::Force)), epoch: EPOCH, identity: true, valid: true, now: 1_000_000 });
     det.run_until_quiet(100).unwrap();
     assert!(snapshot(&log).iter().any(|entry| matches!(entry, Emitted::Send { to: WINDOWS, input } if input.starts_with("Load") && input.contains("store_revision: 37"))));
 }

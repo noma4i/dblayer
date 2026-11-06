@@ -166,15 +166,15 @@ impl Twin {
         match &input {
             Input::Open { kind, epoch_current } => {
                 let epoch = if *epoch_current { EPOCH } else { EPOCH + 1 };
-                self.det.post(self.addr, EpochStamp::Control, d::DeliveryInput::Open { stream, view: view(*kind), epoch, identity: true, valid: true });
+                self.det.post(self.addr, EpochStamp::Control, d::DeliveryInput::Open { stream, view: view(*kind), epoch, identity: true, valid: true, now: 1_000_000 });
                 self.run();
             }
             Input::OpenNoSession => {
-                self.det.post(self.addr, EpochStamp::Control, d::DeliveryInput::Open { stream, view: view(Kind::List), epoch: EPOCH, identity: false, valid: true });
+                self.det.post(self.addr, EpochStamp::Control, d::DeliveryInput::Open { stream, view: view(Kind::List), epoch: EPOCH, identity: false, valid: true, now: 1_000_000 });
                 self.run();
             }
             Input::OpenInvalid => {
-                self.det.post(self.addr, EpochStamp::Control, d::DeliveryInput::Open { stream, view: view(Kind::List), epoch: EPOCH, identity: true, valid: false });
+                self.det.post(self.addr, EpochStamp::Control, d::DeliveryInput::Open { stream, view: view(Kind::List), epoch: EPOCH, identity: true, valid: false, now: 1_000_000 });
                 self.run();
             }
             Input::Committed { revision, touches } => {
@@ -482,7 +482,7 @@ fn dlv_opening_unrelated() {
 fn dlv_open_rows_without_a_window_asks_for_nothing() {
     let mut twin = Twin::new();
     take(&twin.log);
-    twin.call(d::DeliveryInput::Open { stream: STREAM, view: d::View { remote: false, ..view(Kind::List) }, epoch: EPOCH, identity: true, valid: true });
+    twin.call(d::DeliveryInput::Open { stream: STREAM, view: d::View { remote: false, ..view(Kind::List) }, epoch: EPOCH, identity: true, valid: true, now: 1_000_000 });
     assert_eq!(Twin::modelled(take(&twin.log)), [Effect::Read(0)]);
 }
 
@@ -491,7 +491,7 @@ fn dlv_open_rows_without_a_window_asks_for_nothing() {
 fn dlv_open_live() {
     let mut twin = Twin::new();
     take(&twin.log);
-    twin.call(d::DeliveryInput::Open { stream: STREAM, view: d::View { live: true, ..view(Kind::List) }, epoch: EPOCH, identity: true, valid: true });
+    twin.call(d::DeliveryInput::Open { stream: STREAM, view: d::View { live: true, ..view(Kind::List) }, epoch: EPOCH, identity: true, valid: true, now: 1_000_000 });
     assert!(Twin::modelled(take(&twin.log)).contains(&Effect::WantPlus));
 }
 

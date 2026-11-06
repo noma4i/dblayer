@@ -6,6 +6,8 @@
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+const NOW: i64 = 1_000_000;
+
 use serde_json::json;
 
 use super::rig::{admit, open_gate, collector, pump, pump_for, runtime, saw_input, BatchPeer, Batches};
@@ -35,7 +37,7 @@ impl WindowCodec for Pages {
 
 fn key() -> WindowKey { WindowKey { model: "Moment".into(), name: "list".into() } }
 
-fn interest(id: u64) -> WindowsInput { WindowsInput::Load { key: key(), id, goal: w::Goal::First, force: false, store_revision: 0 } }
+fn interest(id: u64) -> WindowsInput { WindowsInput::Load { key: key(), id, goal: w::Goal::First, force: false, store_revision: 0, now: NOW } }
 
 struct WindowStore;
 
@@ -75,7 +77,7 @@ fn rig() -> Rig {
     let mock = MockTransport::new();
     let batches = Batches::default();
     let (rest, take_rest) = collector();
-    let io = WindowIo::new(Some(Arc::new(mock.clone())), Arc::new(Pages), (admit(), open_gate(EPOCH)), runtime.handle().clone(), take_rest);
+    let io = WindowIo::new(Some(Arc::new(mock.clone())), Arc::new(Pages), (admit(), open_gate(EPOCH)), (runtime.handle().clone(), Arc::new(|| NOW)), take_rest);
     let mut det = DetScheduler::new(1);
     let store = det.add::<WindowStore>("store", batches.clone(), crate::owners::support::Discard);
     let deliveries = det.add::<Sink<Deliveries>>("deliveries", Default::default(), crate::owners::support::Discard);
@@ -85,11 +87,19 @@ fn rig() -> Rig {
     Rig { det, windows, mock, batches, rest, _runtime: runtime }
 }
 
+impl Rig {
+    /// A stream opens the key; the saved window of a key that never landed is none.
+    fn watch(&mut self, id: u64) {
+        self.det.post(self.windows, EpochStamp::Epoch(EPOCH), interest(id));
+        self.det.post(self.windows, EpochStamp::Epoch(EPOCH), WindowsInput::WindowRead { key: key(), read_id: 1, result: Ok(None) });
+    }
+}
+
 #[test]
 fn win_io_request_lands() {
     let mut rig = rig();
     rig.mock.enqueue("Page", Reply::data(json!({ "rows": ["r1", "r2"], "cursor": null })));
-    rig.det.post(rig.windows, EpochStamp::Epoch(EPOCH), interest(1));
+    rig.watch(1);
     let batches = rig.batches.clone();
     pump(&mut rig.det, rig.windows, |_| !batches.all().is_empty());
     let landed = rig.batches.all();
@@ -112,7 +122,7 @@ fn win_io_error_classes() {
     for (error, holds) in cases {
         let mut rig = rig();
         rig.mock.enqueue("Page", Reply::fail(error.clone()));
-        rig.det.post(rig.windows, EpochStamp::Epoch(EPOCH), interest(1));
+        rig.watch(1);
         let rest = rig.rest.clone();
         pump(&mut rig.det, rig.windows, |det| holds(&rest.lock().unwrap(), det));
         assert!(rig.batches.all().is_empty(), "{error:?} lands no page");
@@ -123,7 +133,7 @@ fn win_io_error_classes() {
 fn win_io_cancel_no_answer() {
     let mut rig = rig();
     rig.mock.enqueue("Page", Reply::data(json!({ "rows": ["r1"], "cursor": null })).after(Duration::from_millis(300)));
-    rig.det.post(rig.windows, EpochStamp::Epoch(EPOCH), interest(1));
+    rig.watch(1);
     pump(&mut rig.det, rig.windows, |det| det.trace().iter().any(|entry| entry.effects.contains("Request")));
     rig.det.post(rig.windows, EpochStamp::Epoch(EPOCH), WindowsInput::InterestMinus { key: key(), id: 1 });
     pump(&mut rig.det, rig.windows, |det| det.trace().iter().any(|entry| entry.effects.contains("Cancel")));

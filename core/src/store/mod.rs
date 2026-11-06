@@ -95,7 +95,7 @@ pub(crate) use response::coalesce_rows;
 #[cfg(test)]
 pub use rows::ScopeRowsResult;
 pub use tombstones::TombstoneRetention;
-pub use windows::{family_prefix, window_key, PageInfo, WindowFreshness, WindowRecord};
+pub use windows::{family_prefix, window_key, PageInfo, SavedWindow, WindowFreshness, WindowRecord};
 pub(crate) use windows::window_identity;
 
 #[cfg(test)]

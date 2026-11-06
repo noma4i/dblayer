@@ -8,6 +8,8 @@ use std::rc::Rc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, PoisonError};
 
+const NOW: i64 = 1_000_000;
+
 use super::ref_window::Phase;
 use super::ref_window::{Effect, Failure, Goal, Input, Reject, Result3, State, Window, PRELOAD};
 use crate::owners::contract::{Committed, EpochStarted, ErrorClass, ModelsReset, Online, RejectReason, Rejected, RequestError};
@@ -57,7 +59,18 @@ fn add_windows(det: &mut DetScheduler, log: &Spied, state: w::WindowsState, runn
     det.add::<Spy<Windows>>("windows", SpyState::new(state, log), runner)
 }
 
-fn runs(emitted: Vec<Emitted<WindowsEffect>>) -> Vec<WindowsEffect> { emitted.into_iter().filter_map(|entry| if let Emitted::Run(effect) = entry { Some(effect) } else { None }).collect() }
+/// The read pool of the tests: the saved window of every key is none.
+struct Reads;
+
+impl EffectRunner<Spy<Windows>> for Reads {
+    fn run(&mut self, stamp: EpochStamp, effect: WindowsEffect, back: &Back<Spy<Windows>>) {
+        if let WindowsEffect::ReadWindow { key, read_id } = effect {
+            back.reply(stamp, w::WindowsInput::WindowRead { key, read_id, result: Ok(None) });
+        }
+    }
+}
+
+fn runs(emitted: Vec<Emitted<WindowsEffect>>) -> Vec<WindowsEffect> { emitted.into_iter().filter_map(|entry| if let Emitted::Run(effect) = entry { Some(effect) } else { None }).filter(|effect| !matches!(effect, WindowsEffect::ReadWindow { .. })).collect() }
 
 fn inner(det: &DetScheduler, address: Address<Spy<Windows>>) -> &w::WindowsState { &det.state(address).expect("the owner state").inner }
 
@@ -121,6 +134,8 @@ struct Twin {
     revision: i64,
     generation: u64,
     pin_revision: Arc<AtomicU64>,
+    /// The `now` the inputs carry.
+    now: i64,
 }
 
 impl Twin {
@@ -141,13 +156,13 @@ impl Twin {
         let log = new_log();
         let state = w::WindowsState::new(EPOCH, online, peers()).with_preload(preload).with_sources(sources).with_max_pages(Arc::new(move |_| max)).with_members_complete(Arc::new(move |_| members_complete)).with_foreground(Arc::new(|_| true));
         let pin_revision = Arc::new(AtomicU64::new(0));
-        let addr = add_windows(&mut det, &log, state, Discard, pin_revision.clone());
+        let addr = add_windows(&mut det, &log, state, Reads, pin_revision.clone());
         det.start_epoch(EPOCH);
         let mut reference = if online.is_some() { Window::new() } else { Window::before_online() };
         reference.online = online;
         reference.max_pages = max;
         reference.members_complete = members_complete;
-        Self { det, addr, log, reference, revision: 10, generation: 0, pin_revision }
+        Self { det, addr, log, reference, revision: 10, generation: 0, pin_revision, now: NOW }
     }
 
     fn state(&self) -> &w::WindowsState { inner(&self.det, self.addr) }
@@ -186,13 +201,13 @@ impl Twin {
         take(&self.log);
         let k = key();
         match &input {
-            Input::InterestPlus { id } => self.post_call(w::WindowsInput::InterestPlus { key: k, id: id64(*id) }),
+            Input::InterestPlus { id } => self.post_call(w::WindowsInput::InterestPlus { key: k, id: id64(*id), now: self.now }),
             Input::InterestPassive { id } => self.post_call(w::WindowsInput::InterestPassive { key: k, id: id64(*id) }),
             Input::InterestMinus { id } => self.post_call(w::WindowsInput::InterestMinus { key: k, id: id64(*id) }),
-            Input::Load { id, goal, force } => self.post_call(w::WindowsInput::Load { key: k, id: id64(*id), goal: goal_of(*goal), force: *force, store_revision: 0 }),
+            Input::Load { id, goal, force } => self.post_call(w::WindowsInput::Load { key: k, id: id64(*id), goal: goal_of(*goal), force: *force, store_revision: 0, now: self.now }),
             Input::Response { request, attempt, cursor, rows } => {
                 let page = AnswerPage::new(1, if *rows { vec!["r1".into()] } else { Vec::new() }, cursor.map(cursor_text));
-                self.post(w::WindowsInput::Response { request: *request, attempt: *attempt, page });
+                self.post(w::WindowsInput::Response { request: *request, attempt: *attempt, page, now: self.now });
             }
             Input::TransportError { request, attempt, failure } => {
                 self.post(w::WindowsInput::Failure { request: *request, attempt: *attempt, error: RequestError { message: "e".to_string(), class: class_of(*failure), source: None } });
@@ -216,7 +231,7 @@ impl Twin {
             }
             Input::Foreground { seq } => self.post(w::WindowsInput::Foreground(*seq)),
             Input::SourceChanged { revision } => self.post(w::WindowsInput::StoreCommitted { models: vec!["Moment".into()], revision: *revision }),
-            Input::Online(on) => self.post(w::WindowsInput::Online(Online(*on))),
+            Input::Online(on) => self.post(w::WindowsInput::Online { online: Online(*on), now: self.now }),
             Input::EpochEnded => {
                 self.det.end_epoch(EPOCH, Ended::SessionReset);
                 self.run();
@@ -286,7 +301,7 @@ impl Twin {
                     WindowEffect::Outcome { id, outcome } => outcomes.push((u32::try_from(id).expect("a test id"), result_of(&outcome))),
                 },
                 Emitted::Run(WindowsEffect::Drained(_)) => modelled.push(Effect::Drained),
-                Emitted::Run(WindowsEffect::SnapshotRequest { .. }) => {}
+                Emitted::Run(WindowsEffect::SnapshotRequest { .. } | WindowsEffect::ReadWindow { .. }) => {}
                 Emitted::Send { to: STORE, input } if input.contains("author: Window") => modelled.push(Effect::Commit { request: number_after(&input, "id: ").expect("the batch id"), replace_all: input.contains("replace_all: true") }),
                 Emitted::Send { to: DELIVERIES, .. } if modelled.last() == Some(&Effect::WindowState) => {}
                 Emitted::Send { to: DELIVERIES, .. } => modelled.push(Effect::WindowState),
@@ -401,3 +416,4 @@ include!("window_gap_cells_tests.rs");
 include!("window_gap_loading_tests.rs");
 include!("window_gap_landing_tests.rs");
 include!("window_gap_property_tests.rs");
+include!("window_fresh_tests.rs");

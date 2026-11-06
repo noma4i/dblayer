@@ -17,6 +17,18 @@ pub struct WindowRecord {
     pub generation: i64,
 }
 
+/// What the Store keeps of the window of a key between runs: when it landed, until when it is fresh, and where its pages stand.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SavedWindow {
+    pub landed_at: i64,
+    pub fresh_until: i64,
+    pub stale: bool,
+    pub cursor: Option<String>,
+    pub pages: u32,
+    pub has_rows: bool,
+    pub generation: u64,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct WindowFreshness {
     pub landed_at: i64,

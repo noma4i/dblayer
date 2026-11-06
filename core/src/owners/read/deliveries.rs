@@ -176,7 +176,7 @@ pub enum DeliveryEffect {
 
 #[derive(Clone, Debug)]
 pub enum DeliveryInput {
-    Open { stream: StreamId, view: View, epoch: Epoch, identity: bool, valid: bool },
+    Open { stream: StreamId, view: View, epoch: Epoch, identity: bool, valid: bool, now: i64 },
     Committed(Committed),
     ReadDone { stream: StreamId, read_id: u64, revision: i64, data: ReadData },
     ReadFailed { stream: StreamId, read_id: u64, revision: i64, error: String },
@@ -220,6 +220,8 @@ enum Held {
 
 #[derive(Debug)]
 struct Delivery {
+    /// The `now` of the open of the stream: the loads this stream asks for carry it.
+    opened_at: i64,
     epoch: Epoch,
     view: View,
     stage: DeliveryStage,
@@ -281,6 +283,7 @@ impl Delivery {
     fn new(epoch: Epoch, view: View, stage: DeliveryStage, revision: i64) -> Self {
         let window = if view.remote { WindowState::idle() } else { WindowState { phase: WindowPhase::Loaded, error: None, loaded: None, has_more: false, settled: true, total: None } };
         Self {
+            opened_at: 0,
             epoch,
             view,
             stage,
@@ -398,9 +401,9 @@ fn lower(peers: DeliveryPeers, revision: &std::sync::atomic::AtomicI64, stream: 
     for emit in emits {
         let effect = match emit {
             Emit::Run(effect) => Effect::Run(DeliveryEffect::Stream { stream, effect }),
-            Emit::InterestPlus => Effect::Send(Outbound::new(peers.windows, WindowsInput::InterestPlus { key: machine.view.window.clone(), id: stream })),
+            Emit::InterestPlus => Effect::Send(Outbound::new(peers.windows, WindowsInput::InterestPlus { key: machine.view.window.clone(), id: stream, now: machine.opened_at })),
             Emit::ReloadOnConnect => Effect::Send(Outbound::new(peers.windows, WindowsInput::ReloadOnConnect { key: machine.view.window.clone(), id: stream })),
-            Emit::Load { force } => Effect::Send(Outbound::new(peers.windows, WindowsInput::Load { key: machine.view.window.clone(), id: stream, goal: Goal::First, force, store_revision: revision.load(std::sync::atomic::Ordering::Acquire) })),
+            Emit::Load { force } => Effect::Send(Outbound::new(peers.windows, WindowsInput::Load { key: machine.view.window.clone(), id: stream, goal: Goal::First, force, store_revision: revision.load(std::sync::atomic::Ordering::Acquire), now: machine.opened_at })),
             Emit::InterestMinus => Effect::Send(Outbound::new(peers.windows, WindowsInput::InterestMinus { key: machine.view.window.clone(), id: stream })),
             Emit::WantPlus => Effect::Send(Outbound::new(peers.feed, FeedInput::WantPlus { model: machine.view.model.clone(), id: stream, stream: machine.view.kind == Kind::Events })),
             Emit::WantMinus => Effect::Send(Outbound::new(peers.feed, FeedInput::WantMinus { model: machine.view.model.clone(), id: stream })),
@@ -419,7 +422,7 @@ impl StateOwner for Deliveries {
     fn step(state: &mut DeliveriesState, input: DeliveryInput) -> Effects<Self> {
         let mut out: Effects<Self> = Vec::new();
         match input {
-            DeliveryInput::Open { stream, view, epoch, identity, valid } => {
+            DeliveryInput::Open { stream, view, epoch, identity, valid, now } => {
                 if state.streams.contains_key(&stream) {
                     return out;
                 }
@@ -431,6 +434,8 @@ impl StateOwner for Deliveries {
                 } else {
                     Delivery::open(view, epoch, 0, &mut fx)
                 };
+                let mut machine = machine;
+                machine.opened_at = now;
                 lower(state.peers, &state.revision, stream, &machine, fx, &mut out);
                 state.streams.insert(stream, machine);
             }

@@ -77,6 +77,8 @@ async fn flow_connection_accept() {
     let chat_stream = rig.database.watch_query(r#"{"model":"Chat","relation":"all","params":{}}"#, chats.clone());
     bound(chat_stream.wait_for_initial_load()).await.unwrap();
     yield_until("the list and the chat show", || field(&rig, &people, "u5", "connectionStatus") == Some(text("PENDING")) && chats.len() == 1).await;
+    let life = rig.database.life_handle();
+    assert!(bound(tokio::task::spawn_blocking(move || life.barrier(std::time::Duration::from_secs(5)))).await.unwrap(), "the loads of the windows ended before the act");
     let hold = rig.world.hold_next("AnswerConnection");
 
     let receipt = bound(rig.database.act(epoch, "User".into(), "u5".into(), "answer_connection".into(), json!({"connectionStatus": "CONNECTED"}).to_string(), json!({"chatId": "c1"}).to_string())).await.unwrap();

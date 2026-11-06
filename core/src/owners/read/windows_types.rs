@@ -95,6 +95,8 @@ pub enum WindowEffect {
     DerivePreload { revision: i64 },
 }
 
+pub use crate::store::SavedWindow;
+
 /// What a machine gives out: an effect of the runner, or an input for another owner or a timer that the owner `Windows` turns into `Effect`.
 enum Emit {
     Run(WindowEffect),
@@ -110,6 +112,8 @@ enum Emit {
 pub enum WindowsEffect {
     Window { key: WindowKey, effect: WindowEffect },
     SnapshotRequest { epoch: Epoch },
+    /// Read the saved window of `key` in the read pool; the answer is `WindowsInput::WindowRead`.
+    ReadWindow { key: WindowKey, read_id: u64 },
     Drained(Drained),
 }
 
@@ -147,7 +151,7 @@ impl StaleKeys {
 #[derive(Clone, Debug)]
 pub enum WindowsInput {
     /// A stream opened the key (Delivery open) or the preload of the key began.
-    InterestPlus { key: WindowKey, id: InterestId },
+    InterestPlus { key: WindowKey, id: InterestId, now: i64 },
     /// An interest that only watches: the phase goes to the stream, no load starts.
     InterestPassive { key: WindowKey, id: InterestId },
     /// A call that goes to the server only was refused at once because the network is away: the error shows in the state of the window.
@@ -156,9 +160,9 @@ pub enum WindowsInput {
     ReloadOnConnect { key: WindowKey, id: InterestId },
     InterestMinus { key: WindowKey, id: InterestId },
     /// `begin_load`, `begin_load_all`, `refresh`, `load_more`, `node`, `nodes`. `store_revision` is the Published revision of the Store at the entry.
-    Load { key: WindowKey, id: InterestId, goal: Goal, force: bool, store_revision: i64 },
+    Load { key: WindowKey, id: InterestId, goal: Goal, force: bool, store_revision: i64, now: i64 },
     Pinned { request_id: RequestId, base_revision: u64 },
-    Response { request: RequestId, attempt: u32, page: AnswerPage },
+    Response { request: RequestId, attempt: u32, page: AnswerPage, now: i64 },
     Failure { request: RequestId, attempt: u32, error: RequestError },
     Dropped { request: RequestId, attempt: u32 },
     Committed(Committed),
@@ -169,9 +173,11 @@ pub enum WindowsInput {
     PreloadKeys { keys: Vec<WindowKey> },
     /// A Store broadcast `Committed{tables}`: the models whose tables changed and the revision.
     StoreCommitted { models: Vec<String>, revision: i64 },
-    Online(Online),
+    Online { online: Online, now: i64 },
     /// The application came to the front; `seq` grows by 1 with every return.
     Foreground(u64),
+    /// The answer of `ReadWindow`: the saved window of a key that had no machine.
+    WindowRead { key: WindowKey, read_id: u64, result: Result<Option<SavedWindow>, String> },
     EpochStarted(EpochStarted),
     EpochEnded(EpochEnded),
     ModelsReset(ModelsReset),
@@ -183,15 +189,15 @@ pub enum WindowsInput {
 #[derive(Clone, Debug)]
 enum Ev {
     Pinned { request: RequestId, base_revision: u64 },
-    InterestPlus { id: InterestId },
+    InterestPlus { id: InterestId, now: i64 },
     InterestPassive { id: InterestId },
     ReloadOnConnect { id: InterestId },
     OfflineRefused { message: String },
     InterestMinus { id: InterestId },
-    Load { id: InterestId, goal: Goal, force: bool, store_revision: i64 },
+    Load { id: InterestId, goal: Goal, force: bool, store_revision: i64, now: i64 },
     /// The Store published this revision: a request issued from now on is based on it.
     StoreSeen { revision: i64 },
-    Response { request: RequestId, attempt: u32, page: AnswerPage },
+    Response { request: RequestId, attempt: u32, page: AnswerPage, now: i64 },
     /// `Failure` and `Dropped`: the cells are the same, a dropped request is a temporary network error.
     Failure { request: RequestId, attempt: u32, error: RequestError },
     Committed { request: RequestId, revision: i64 },
@@ -200,7 +206,9 @@ enum Ev {
     Foreground,
     SourceChanged { revision: i64 },
     RetryDue { request: RequestId },
-    Online(bool),
+    Online { online: bool, now: i64 },
+    /// The saved window of the key: `None` before its first page or after a reset of its generation.
+    Saved(Option<SavedWindow>),
     ModelsReset { generation: u64, models: Vec<String> },
     EpochEnded,
     Closing,
@@ -208,6 +216,7 @@ enum Ev {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum WindowStage {
+    Opening,
     Idle,
     Loading,
     Landing,

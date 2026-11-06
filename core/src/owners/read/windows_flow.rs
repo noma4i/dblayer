@@ -9,9 +9,9 @@ impl Facts {
                 self.announce();
                 Handled
             }
-            Ev::InterestPlus { id } => {
+            Ev::InterestPlus { id, now } => {
                 self.interest.insert(*id);
-                if self.fresh {
+                if self.is_fresh(*now) {
                     self.set_phase(Phase::Loaded);
                     self.announce();
                     Handled
@@ -19,7 +19,7 @@ impl Facts {
                     self.begin(context, 1, false, true)
                 }
             }
-            Ev::Load { id, goal, force, .. } => self.idle_load(context, *id, *goal, *force),
+            Ev::Load { id, goal, force, now, .. } => self.idle_load(context, (*id, *now), *goal, *force),
             Ev::OfflineRefused { message } => {
                 self.error = Some(crate::ffi::DbError::Network { detail: message.clone() });
                 self.set_phase(self.failed_phase());
@@ -40,8 +40,8 @@ impl Facts {
                 self.push_fx(WindowEffect::DerivePreload { revision: *revision });
                 Handled
             }
-            Ev::Online(true) if !self.fresh && self.watched() => self.begin(context, 1, false, true),
-            Ev::Online(true) if self.reconnected && self.interest.iter().any(|id| self.reload.contains(id)) => self.begin(context, 1, false, true),
+            Ev::Online { online: true, now } if !self.is_fresh(*now) && self.watched() => self.begin(context, 1, false, true),
+            Ev::Online { online: true, .. } if self.reconnected && self.interest.iter().any(|id| self.reload.contains(id)) => self.begin(context, 1, false, true),
             Ev::ModelsReset { models, .. } if self.depends_on(models) => {
                 self.fresh = false;
                 if self.watched() { self.begin(context, 1, false, self.is_online()) } else { Handled }
@@ -62,7 +62,7 @@ impl Facts {
                 self.push_fx(WindowEffect::Request { request: load.request, attempt: load.attempt, page: load.page, cursor: self.page_cursor(load.page), epoch: self.epoch });
                 Handled
             }
-            Ev::InterestPlus { id } => {
+            Ev::InterestPlus { id, .. } => {
                 self.interest.insert(*id);
                 self.announce();
                 Handled
@@ -83,7 +83,8 @@ impl Facts {
                 self.emit(Emit::CancelRetry { request: load.request });
                 Transition(WinState::idle())
             }
-            Ev::Response { request: got, attempt: got_attempt, page: answer } if mine(got, got_attempt) => {
+            Ev::Response { request: got, attempt: got_attempt, page: answer, now } if mine(got, got_attempt) => {
+                self.answered_at = *now;
                 self.page_count = if load.page == 1 { 1 } else { self.page_count + 1 };
                 let models: BTreeSet<&String> = self.dependency_models.iter().chain(&answer.dependency_models).chain(answer.payload.related.iter().map(|(model, _)| model)).collect();
                 let basis = crate::owners::store::basis_for(models.into_iter().map(|model| (model.clone(), load.basis.of(model))));
@@ -113,7 +114,7 @@ impl Facts {
                 self.push_fx(WindowEffect::Request { request: load.request, attempt: load.attempt, page: load.page, cursor: self.page_cursor(load.page), epoch: self.epoch });
                 Handled
             }
-            Ev::Online(false) => {
+            Ev::Online { online: false, .. } => {
                 if !load.retry {
                     self.push_fx(WindowEffect::Cancel { request: load.request, attempt: load.attempt });
                 }
@@ -174,7 +175,7 @@ impl Facts {
                 RejectReason::Storage(message) => self.fail(message, None),
                 RejectReason::Invalid => self.fail("the batch has no basis for a model of its rows", None),
             },
-            Ev::InterestPlus { id } => {
+            Ev::InterestPlus { id, .. } => {
                 self.interest.insert(*id);
                 self.announce();
                 Handled
@@ -204,14 +205,14 @@ impl Facts {
     fn waiting(&mut self, context: &mut Ctx<'_>, force: &mut bool, page: &mut u32, event: &Ev) -> Outcome<WinState> {
         self.env(event);
         match event {
-            Ev::Online(true) => {
+            Ev::Online { online: true, .. } => {
                 let (request, attempt) = context.request();
                 self.phase = Phase::Loading;
                 self.emit(Emit::Pin { epoch: self.epoch, request });
                 self.announce();
                 Transition(WinState::loading(Load::issued(request, attempt, *page, *force, self.basis())))
             }
-            Ev::InterestPlus { id } => {
+            Ev::InterestPlus { id, .. } => {
                 self.interest.insert(*id);
                 self.announce();
                 Handled
@@ -241,7 +242,7 @@ impl Facts {
 
     #[state]
     fn ended(&mut self, event: &Ev) -> Outcome<WinState> {
-        if let Ev::InterestPlus { id } | Ev::Load { id, .. } = event {
+        if let Ev::InterestPlus { id, .. } | Ev::Load { id, .. } = event {
             self.answer(*id, WindowOutcome::Interrupted);
         }
         Handled

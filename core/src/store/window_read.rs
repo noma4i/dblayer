@@ -23,14 +23,22 @@ impl Store {
         Ok(self.window(&key)?)
     }
 
+    /// The saved window of a relation with params, `None` before its first page.
+    pub(crate) fn window_saved(&self, model: &str, relation: &str, params: &Map<String, Value>) -> Result<Option<crate::store::SavedWindow>, DbError> {
+        let spec = self.spec(model)?;
+        let declared = spec.relations.iter().find(|candidate| candidate.name == relation).ok_or_else(|| DbError::Internal(format!("{model} has no relation {relation}")))?;
+        let remote = declared.remote.as_ref().ok_or_else(|| DbError::Internal(format!("{model}.{relation} is no remote relation")))?;
+        let (scope, key) = window_identity(spec, model, relation, remote, params)?;
+        let (Some(record), Some(freshness)) = (self.window(&key)?, self.window_freshness(&key)?) else { return Ok(None) };
+        let has_rows = self.read(&[model], |reader| reader.scope_last_id(model, scope.key.as_str()))?.is_some();
+        let policy = crate::pacing::selected_policy(!has_rows, &remote.stale_time, remote.empty_stale_time.as_deref());
+        let lifetime = crate::pacing::parse_duration(policy).map_or(i64::MAX / 4, |window| i64::try_from(window.as_millis()).unwrap_or(i64::MAX / 4));
+        Ok(Some(crate::store::SavedWindow { landed_at: freshness.landed_at, fresh_until: freshness.landed_at.saturating_add(lifetime), stale: freshness.stale_since.is_some(), cursor: record.cursor, pages: u32::try_from(record.pages).unwrap_or(u32::MAX), has_rows, generation: u64::try_from(record.generation).unwrap_or(0) }))
+    }
+
     /// Whether the window landed within the stale time of its relation and nothing marked it stale since (`now_ms` is the clock of the database).
     pub(crate) fn window_is_fresh(&self, model: &str, relation: &str, params: &Map<String, Value>, now_ms: i64) -> Result<bool, DbError> {
         Ok(self.window_age(model, relation, params, now_ms)?.unwrap_or(false))
-    }
-
-    /// Whether a window that landed once outlived its stale time or was marked stale; a window that never landed has no answer.
-    pub(crate) fn window_expired(&self, model: &str, relation: &str, params: &Map<String, Value>, now_ms: i64) -> Result<bool, DbError> {
-        Ok(self.window_age(model, relation, params, now_ms)? == Some(false))
     }
 
     fn window_age(&self, model: &str, relation: &str, params: &Map<String, Value>, now_ms: i64) -> Result<Option<bool>, DbError> {

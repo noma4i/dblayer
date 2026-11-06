@@ -12,7 +12,14 @@ struct Facts {
     dropped: bool,
     reconnected: bool,
     waiters: BTreeMap<InterestId, Want>,
+    /// The first page landed and nothing marked the window stale since.
     fresh: bool,
+    landed_at: i64,
+    fresh_until: i64,
+    /// `expires_in` and `empty_in` of the relation in ms.
+    lifetime: (i64, i64),
+    /// The `now` of the response that is landing.
+    answered_at: i64,
     cursor: Option<String>,
     /// The last page that landed.
     page: u32,
@@ -37,7 +44,7 @@ struct Facts {
 impl Facts {
     fn env(&mut self, event: &Ev) {
         match event {
-            Ev::Online(online) => {
+            Ev::Online { online, .. } => {
                 self.online = Some(*online);
                 if *online {
                     self.reconnected = std::mem::take(&mut self.dropped);
@@ -56,11 +63,23 @@ impl Facts {
                     self.generations.insert(model.clone(), *generation);
                 }
             }
+            Ev::Saved(Some(saved)) => {
+                self.fresh = !saved.stale;
+                self.landed_at = saved.landed_at;
+                self.fresh_until = saved.fresh_until;
+                self.cursor.clone_from(&saved.cursor);
+                self.page = saved.pages;
+                self.page_count = saved.pages;
+                self.has_rows = saved.has_rows;
+            }
             Ev::Load { store_revision, .. } => self.store_seen = self.store_seen.max(*store_revision),
             Ev::StoreSeen { revision } => self.store_seen = self.store_seen.max(*revision),
             _ => {}
         }
     }
+
+    /// Loaded, not marked stale, and `now` inside `landed_at <= now < fresh_until`: a clock that went back makes the window stale.
+    fn is_fresh(&self, now: i64) -> bool { self.fresh && self.landed_at <= now && now < self.fresh_until }
 
     fn is_online(&self) -> bool { self.online == Some(true) }
 
@@ -160,12 +179,13 @@ impl Facts {
         Handled
     }
 
-    fn idle_load(&mut self, ctx: &mut Ctx<'_>, id: InterestId, goal: Goal, force: bool) -> Outcome<WinState> {
+    fn idle_load(&mut self, ctx: &mut Ctx<'_>, (id, now): (InterestId, i64), goal: Goal, force: bool) -> Outcome<WinState> {
+        let fresh = self.is_fresh(now);
         let loaded = WindowOutcome::Loaded { revision: self.landed_revision, has_more: self.cursor.is_some(), fetched: false };
         let next_page = self.page + 1;
         match goal {
-            Goal::First if self.fresh && !force => self.immediate(id, loaded),
-            Goal::All if self.fresh && !force => {
+            Goal::First if fresh && !force => self.immediate(id, loaded),
+            Goal::All if fresh && !force => {
                 if self.cursor.is_none() {
                     self.immediate(id, loaded)
                 } else if self.page_limit_reached() {
@@ -197,6 +217,10 @@ impl Facts {
         self.cursor = cursor;
         self.page = page;
         self.landed_revision = revision;
+        if page == 1 {
+            self.landed_at = self.answered_at;
+            self.fresh_until = self.answered_at + if rows { self.lifetime.0 } else { self.lifetime.1 };
+        }
         self.error = None;
         self.cursor_reset_used = false;
         self.replace_all = false;

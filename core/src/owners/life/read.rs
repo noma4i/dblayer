@@ -12,7 +12,7 @@ use crate::owners::network::NetworkInput;
 use crate::owners::read::deliveries::{DeliveriesState, Deliveries, DeliveryEffect, DeliveryInput, DeliveryPeers, PullAnswer, StreamEffect, StreamId, View};
 use crate::owners::read::feed::{Feed, FeedEffect, FeedInput, FeedPeers, FeedState};
 use crate::owners::read::windows::{Goal, Windows, WindowEffect, WindowKey, WindowsEffect, WindowsInput, WindowsPeers, WindowsState};
-use crate::owners::read::{channels_of, max_pages, members_complete, preload_keys, preload_sources, refreshes_on_foreground, DbSnapshots, DeliveryIo, FeedIo, Rest, SchemaFeedCodec, SchemaWindowCodec, WindowIo};
+use crate::owners::read::{channels_of, lifetimes, max_pages, members_complete, preload_keys, preload_sources, refreshes_on_foreground, DbSnapshots, DeliveryIo, FeedIo, Rest, SchemaFeedCodec, SchemaWindowCodec, WindowIo};
 use crate::owners::store::{StoreReply, StoreWriter};
 use crate::runtime::{Address, Back, EffectRunner, Epoch, EpochStamp, Outcome, OutcomeId, RuntimeBuilder, Waiter};
 use crate::transport::Transport;
@@ -61,14 +61,15 @@ pub(super) fn add(builder: &mut RuntimeBuilder, wiring: &Arc<Wiring>, ports: &Po
         wiring.fault(format!("the preload of the schema is invalid: {error}"));
         Vec::new()
     });
-    let state = WindowsState::new(0, None, WindowsPeers { store, deliveries: deliveries_at }).with_preload(preload).with_sources(preload_sources(&db)).with_max_pages(max_pages(db.clone())).with_members_complete(members_complete(db.clone())).with_foreground(refreshes_on_foreground(db.clone()));
+    let state = WindowsState::new(0, None, WindowsPeers { store, deliveries: deliveries_at }).with_preload(preload).with_sources(preload_sources(&db)).with_lifetimes(lifetimes(db.clone())).with_max_pages(max_pages(db.clone())).with_members_complete(members_complete(db.clone())).with_foreground(refreshes_on_foreground(db.clone()));
     let windows_wiring = wiring.clone();
     let (derive_db, derive_executor, derive_handle) = (db.clone(), ports.executor.clone(), handle.clone());
+    let (read_db, read_executor, read_handle) = (db.clone(), ports.executor.clone(), handle.clone());
     let windows_io = WindowIo::new(
         transport,
         codec,
         (admit, wiring.gate.clone()),
-        ports.executor.clone(),
+        (ports.executor.clone(), wiring.now.clone()),
         Box::new(move |stamp, effect| match effect {
             WindowsEffect::Window { effect: WindowEffect::Outcome { id, outcome }, .. } if id & CALL != 0 => {
                 windows_wiring.outcomes.settle(OutcomeId::from_raw(id & !CALL), LifeReply::Window(Box::new(outcome)));
@@ -80,6 +81,18 @@ pub(super) fn add(builder: &mut RuntimeBuilder, wiring: &Arc<Wiring>, ports: &Po
                     Ok(keys) => handle.post(windows_at, stamp, WindowsInput::PreloadKeys { keys }),
                     Err(error) => wiring.fault(format!("the derived preload is invalid: {error}")),
                 } });
+            }
+            WindowsEffect::ReadWindow { key, read_id } => {
+                let (db, handle) = (read_db.clone(), read_handle.clone());
+                let launch = read_handle.launch();
+                crate::task::spawn_blocking_on(crate::task::Carry::Detached, &read_executor, move || {
+                    let _launch = launch;
+                    let result = match key.kind() {
+                        crate::owners::read::windows::WindowKind::Relation { relation, params } => db.window_saved(&key.model, &relation, &params).map_err(|error| error.to_string()),
+                        crate::owners::read::windows::WindowKind::Nodes { .. } => Ok(None),
+                    };
+                    handle.post(windows_at, stamp, WindowsInput::WindowRead { key, read_id, result });
+                });
             }
             WindowsEffect::SnapshotRequest { epoch } => windows_wiring.to_network(NetworkInput::SnapshotRequest { owner: Peer::Windows, epoch }),
             WindowsEffect::Drained(done) => drained(&windows_wiring, done),
@@ -95,7 +108,7 @@ pub(super) fn add(builder: &mut RuntimeBuilder, wiring: &Arc<Wiring>, ports: &Po
 
     let deliveries_wiring = wiring.clone();
     let delivery_io = DeliveryIo::new(
-        Arc::new(DbSnapshots::new(db.clone(), windows_at, handle.clone())),
+        Arc::new(DbSnapshots::new(db.clone())),
         wiring.pulls.clone(),
         ports.executor.clone(),
         Box::new(move |_stamp, effect| match effect {
@@ -170,7 +183,7 @@ impl super::Life {
         if self.is_shut() {
             self.wiring.outcomes.settle(waiter.id(), LifeReply::Closed);
         } else {
-            self.wiring.to_windows_in(epoch, WindowsInput::Load { key, id, goal, force, store_revision });
+            self.wiring.to_windows_in(epoch, WindowsInput::Load { key, id, goal, force, store_revision, now: (self.wiring.now)() });
         }
         (waiter, id)
     }
@@ -194,7 +207,7 @@ impl super::Life {
 
     pub fn open_stream(&self, stream: StreamId, view: View, epoch: Epoch, valid: bool) {
         let identity = self.published().identity.is_some();
-        self.wiring.to_deliveries(DeliveryInput::Open { stream, view, epoch, identity, valid });
+        self.wiring.to_deliveries(DeliveryInput::Open { stream, view, epoch, identity, valid, now: (self.wiring.now)() });
     }
 
     /// The next value of a stream: the answer comes with the next value of the journal.

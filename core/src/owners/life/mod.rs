@@ -93,6 +93,8 @@ pub(crate) struct Addresses {
 /// What every runner shares: the address book, the registry of waiters and the published value.
 pub(crate) struct Wiring {
     pub handle: Handle,
+    /// The clock of the database in ms: the platform calls stamp the inputs that decide freshness with it.
+    pub now: Arc<dyn Fn() -> i64 + Send + Sync>,
     pub addresses: OnceLock<Addresses>,
     pub outcomes: Outcomes<LifeReply>,
     /// The answers of `Pull`: the registry of the platform calls that wait for the next value of a stream.
@@ -137,8 +139,9 @@ impl Wiring {
     /// The epoch is the published one, open, and has an identity: a request to the server needs a session.
     pub(crate) fn admits_session(&self, epoch: Epoch) -> bool { self.published.read(|published| published.is_some_and(|published| published.epoch == epoch && !published.closed && published.identity.is_some())) }
 
-    fn new(handle: Handle) -> Self {
+    fn new(handle: Handle, now: Arc<dyn Fn() -> i64 + Send + Sync>) -> Self {
         Self {
+            now,
             addresses: OnceLock::new(),
             outcomes: Outcomes::new(),
             pulls: Outcomes::new(),
@@ -430,7 +433,8 @@ impl Life {
         let restored = session.as_ref().map(|(exchange, secret, _)| session_runner::SessionRunner::stored(exchange, secret, &ports.db)).transpose().map_err(|error| LifeError::Storage(error.to_string()))?;
         let mut builder = RuntimeBuilder::new();
         builder.with_clock(ports.db.lock().clock.clone());
-        let wiring = Arc::new(Wiring::new(builder.handle()));
+        let clock = ports.db.lock().clock.clone();
+        let wiring = Arc::new(Wiring::new(builder.handle(), Arc::new(move || i64::try_from(clock.now().as_millis()).unwrap_or(i64::MAX))));
         let open_wait = wiring.outcomes.register(Epoch::MAX);
         let lifecycle = builder.add::<Lifecycle>("lifecycle", LifecycleState::new().with_restore_participants(restore_participants(session.is_some())), runners::LifecycleRunner { wiring: wiring.clone(), absent: absent(session.is_some(), session.is_some() && ports.transfer.is_some()), db: ports.db.clone(), held_published: None, held_replies: Vec::new() });
         builder.on_executor_failed(lifecycle);

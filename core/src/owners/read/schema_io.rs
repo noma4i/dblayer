@@ -6,7 +6,7 @@ use std::sync::Arc;
 
 use serde_json::{json, Map, Value};
 
-use super::windows::{AnswerPage, MaxPages, MembersComplete, OnForeground, PageRows, WindowKey, WindowKind};
+use super::windows::{AnswerPage, Lifetimes, MaxPages, MembersComplete, OnForeground, PageRows, WindowKey, WindowKind};
 use super::WindowCodec;
 use crate::store::Store;
 use crate::identity::RowId;
@@ -172,6 +172,18 @@ pub fn max_pages(db: std::sync::Arc<Store>) -> MaxPages {
             })
             .unwrap_or(u32::MAX),
         WindowKind::Nodes { .. } => 1,
+    })
+}
+
+/// `expires_in` and `empty_in` of the relation of a key in milliseconds; a policy that is no duration (`paged_session`) never expires.
+pub fn lifetimes(db: std::sync::Arc<Store>) -> Lifetimes {
+    Arc::new(move |key| {
+        let never = i64::MAX / 4;
+        let millis = |text: &str| crate::pacing::parse_duration(text).map_or(never, |window| i64::try_from(window.as_millis()).unwrap_or(never));
+        let WindowKind::Relation { relation, .. } = key.kind() else { return (never, never) };
+        let Some(remote) = db.spec(&key.model).ok().and_then(|spec| spec.relations.iter().find(|candidate| candidate.name == relation)).and_then(|declared| declared.remote.as_ref()) else { return (never, never) };
+        let expires = millis(&remote.stale_time);
+        (expires, remote.empty_stale_time.as_deref().map_or(expires, millis))
     })
 }
 
