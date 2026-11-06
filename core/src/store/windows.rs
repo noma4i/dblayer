@@ -131,7 +131,7 @@ impl Store {
 
     #[cfg(test)]
     pub fn save_window(&self, record: &WindowRecord) -> Result<(), StoreError> {
-        self.write_store(&crate::lifecycle::authority::Authority::Internal(crate::lifecycle::authority::Internal::for_tests()), |inner| upsert_window(&inner.connection, record, inner.now_ms()))
+        self.write(|inner| upsert_window(&inner.connection, record, inner.now_ms()))
     }
 
     pub fn window(&self, key: &str) -> Result<Option<WindowRecord>, StoreError> {
@@ -154,8 +154,8 @@ impl Store {
 
 
     #[cfg(test)]
-    pub(crate) fn invalidate_family(&self, authority: &crate::lifecycle::authority::Authority, model: &str, relation: &str, since: i64) -> Result<usize, StoreError> {
-        self.write_store(authority, |inner| {
+    pub(crate) fn invalidate_family(&self, model: &str, relation: &str, since: i64) -> Result<usize, StoreError> {
+        self.write(|inner| {
             mark_families(&inner.connection, &[(model.to_string(), relation.to_string())], since)
         })
     }
@@ -170,7 +170,7 @@ impl Store {
     #[cfg(test)]
     pub(crate) fn invalidate_family_now(&self, model: &str, relation: &str) -> Result<usize, StoreError> {
         let since = self.max_window_sequence()? + 1;
-        self.invalidate_family(&crate::lifecycle::authority::Authority::Internal(crate::lifecycle::authority::Internal::for_tests()), model, relation, since)
+        self.invalidate_family(model, relation, since)
     }
 
     #[cfg(test)]

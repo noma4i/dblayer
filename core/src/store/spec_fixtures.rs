@@ -123,7 +123,7 @@ pub fn put(db: &Store, model: &str, value: Value) {
     let id = rid(row["id"].as_str().unwrap());
     let mut envelope = CommitEnvelope::new(WriteOrigin::Event, db.generation());
     envelope.entity_ops.push(EntityOp::Upsert { model: ModelKey::new(model), id, row });
-    db.commit_as(&crate::lifecycle::authority::Authority::Internal(crate::lifecycle::authority::Internal::for_tests()), envelope).unwrap();
+    db.commit(envelope).unwrap();
 }
 
 impl Store {
@@ -136,7 +136,7 @@ impl Store {
 impl Store {
     /// Lands an envelope the way an owner batch would, without the owners.
     pub fn land_in_tests(&self, envelope: CommitEnvelope) -> Result<crate::commit::CommitResult, super::StoreError> {
-        self.commit_as(&crate::lifecycle::authority::Authority::Internal(crate::lifecycle::authority::Internal::for_tests()), envelope)
+        self.commit(envelope)
     }
 
     pub(crate) fn write_queue_ops(&self, ops: &[crate::owners::store::StoreOp]) -> Result<super::batch_write::BatchWritten, super::StoreError> {

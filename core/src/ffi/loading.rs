@@ -211,7 +211,7 @@ impl Database {
             let force = force || (goal == Goal::First && !db.window_is_fresh(&found, &name, &params, now)?);
             Ok((params, force))
         }).await;
-        crate::runtime::release_held();
+        crate::runtime::release_holds();
         let (params, force) = prepared?;
         self.start_window(epoch, WindowKey::relation(model, relation, &params), goal, force)
     }

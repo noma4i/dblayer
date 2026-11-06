@@ -165,7 +165,7 @@ write_methods = r"(?:execute|execute_batch|unchecked_transaction|transaction)\b"
 connection_write = re.compile(r"\.connection\s*\.\s*" + write_methods + r"|\.connection\s*\.\s*prepare(?:_cached)?\([^;]*?\)\??\s*\.\s*execute\b")
 connection_alias = re.compile(r"\blet\s+(?:mut\s+)?(\w+)\s*=\s*&(?:mut\s+)?[\w.]*\.connection\b")
 read_callback = re.compile(r"\bread_locked\s*\(\s*(?:move\s*)?\|\s*(\w+)")
-through_authority = re.compile(r"\bwrite_store\(|\bstore\s*\.\s*write\(|\bself\s*\.\s*write\(|\bcommit_as\(")
+through_authority = re.compile(r"\bstore\s*\.\s*write\(|\bself\s*\.\s*write\(|\.commit\(")
 function_head = re.compile(r"\bfn\s+(\w+)\s*(?:<[^>]*>)?\(([^)]*)\)")
 connection_param = re.compile(r"(\w+)\s*:\s*&(?:mut\s+)?(?:rusqlite::)?(?:Connection|Transaction)\b")
 

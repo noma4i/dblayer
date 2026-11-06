@@ -63,7 +63,7 @@ impl Store {
         if due.is_empty() { return Ok(()); }
         let mut envelope = crate::commit::CommitEnvelope::new(crate::commit::WriteOrigin::Response, self.generation());
         envelope.operation_transitions.extend(due.iter().map(|(id, _)| crate::commit::OperationTransition::RetireBlob { id: id.clone(), expired: true }));
-        self.commit_as(&crate::lifecycle::authority::Authority::Internal(crate::lifecycle::authority::Internal::opening()), envelope)?;
+        self.commit(envelope)?;
         let files: Vec<String> = self.read_models(&[], |reader| {
             Ok(due.iter().filter_map(|(_, file)| file.as_ref()).filter_map(|id| match reader.connection().query_row("SELECT EXISTS (SELECT 1 FROM file WHERE id = ?1)", [id], |row| row.get::<_, bool>(0)) { Ok(false) => Some(Ok(id.clone())), Ok(true) => None, Err(error) => Some(Err(StoreError::from(error))) }).collect::<Result<Vec<_>, _>>()?)
         })?;

@@ -210,7 +210,7 @@ pub fn polling<R>(holds: &Arc<Holds>, poll: impl FnOnce() -> R) -> R {
 }
 
 /// The awaited work of the polled call ended: the counts it held end with it, also when no wake came.
-pub fn release_held() {
+pub fn release_holds() {
     if let Some(holds) = POLLED.with(|polled| polled.borrow().clone()) { holds.release(); }
 }
 

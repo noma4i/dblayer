@@ -359,14 +359,14 @@ impl Database {
                 () = clock.sleep(Duration::from_secs(10)) => Err(DbError::Invalid { detail: "close timed out while the owners were closing".into() }),
             }
         })).await;
-        crate::runtime::release_held();
+        crate::runtime::release_holds();
         let answered = answered.and_then(|outcome| match outcome {
             crate::runtime::Outcome::Value(LifeReply::Life(Err(crate::owners::lifecycle::LifecycleError::Closed))) => Err(super::command::closed()),
             _ => Ok(()),
         });
         let (life, _closing) = (self.life.clone(), crate::runtime::hold_until_woken(self.life.launch()));
         let ended = blocking(move || { life.shutdown(); Ok(()) }).await;
-        crate::runtime::release_held();
+        crate::runtime::release_holds();
         if let Some(lease) = self.lease.get() { lease.release(); }
         answered.and(ended)
     }
@@ -377,7 +377,7 @@ impl Database {
     pub(super) async fn offload<T: Send + 'static>(&self, work: impl FnOnce() -> Result<T, DbError> + Send + 'static) -> Result<T, DbError> {
         let kept = crate::runtime::hold_until_woken(self.life.launch());
         let value = blocking(work).await;
-        crate::runtime::release_held();
+        crate::runtime::release_holds();
         drop(kept);
         value
     }

@@ -71,7 +71,7 @@ impl Secret {
                 let credential = random_token();
                 crate::lock::assert_no_library_lock("CredentialSlot::set");
                 crate::blocking::blocking_unit(|| self.slot.set(&credential))?;
-                store.write_store(&crate::lifecycle::authority::Authority::Owner, |inner| Ok(state::start(&inner.connection, &digest_of(&credential))?)).map_err(|error| TransportError::Network(format!("session storage: {error}")))?;
+                store.write(|inner| Ok(state::start(&inner.connection, &digest_of(&credential))?)).map_err(|error| TransportError::Network(format!("session storage: {error}")))?;
                 Ok(credential)
             }
         }
@@ -106,7 +106,7 @@ pub(crate) fn dropped_pending(store: &Store) -> Result<bool, TransportError> {
 /// The state of the session at open: a session end that did not finish clears the tables and the secret.
 pub(crate) fn finish_session_end(store: &Store, secret: &Secret) -> Result<(), TransportError> {
     if store.take_session_end_replay() {
-        store.write_store(&crate::lifecycle::authority::Authority::Owner, |inner| Ok(state::clear(&inner.connection)?)).map_err(|error| TransportError::Network(format!("session storage: {error}")))?;
+        store.write(|inner| Ok(state::clear(&inner.connection)?)).map_err(|error| TransportError::Network(format!("session storage: {error}")))?;
         secret.slot.clear()?;
     }
     Ok(())

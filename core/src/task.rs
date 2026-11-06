@@ -4,7 +4,6 @@ use std::future::Future;
 use tokio::runtime::Handle;
 use tokio::task::JoinHandle;
 
-use crate::lifecycle::authority::Authority;
 
 #[derive(Clone)]
 pub(crate) enum Carry {
@@ -16,9 +15,6 @@ impl Carry {
     pub(crate) fn here() -> Self { Self::Detached }
 }
 
-impl From<&Authority> for Carry {
-    fn from(_: &Authority) -> Self { Self::Internal }
-}
 
 #[allow(clippy::disallowed_methods)]
 pub(crate) fn spawn<F>(_: Carry, work: F) -> JoinHandle<F::Output> where F: Future + Send + 'static, F::Output: Send + 'static {

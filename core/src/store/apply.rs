@@ -22,42 +22,34 @@ use super::shape::{delete_tables, insert_children, member_values, normalize, nor
 use crate::ddl::FieldPlan;
 use super::windows::{upsert_window, WindowRecord};
 use super::tombstones::write_tombstone;
-use crate::lifecycle::authority::Authority;
-#[cfg(test)]
-use crate::lifecycle::authority::Internal;
 
 use super::{Committed, Inner, ModelInfo, Store, StoreError};
 
 impl Store {
     #[cfg(test)]
+    pub(crate) fn commit_deferred(&self, envelope: CommitEnvelope) -> Result<Committed<'_>, StoreError> {
+        let inner = self.lock();
+        inner.ensure_healthy()?;
+        inner.ensure_generation(envelope.generation)?;
+        self.write_envelope(inner, envelope)
+    }
+
     pub(crate) fn commit(&self, envelope: CommitEnvelope) -> Result<CommitResult, StoreError> {
-        self.commit_as(&Authority::Internal(Internal::for_tests()), envelope)
-    }
-
-    #[cfg(test)]
-    pub(crate) fn commit_deferred(&self, authority: &Authority, envelope: CommitEnvelope) -> Result<Committed<'_>, StoreError> {
         let inner = self.lock();
         inner.ensure_healthy()?;
-        inner.ensure_generation(authority, envelope.generation)?;
-        self.write_envelope(authority, inner, envelope)
+        inner.ensure_generation(envelope.generation)?;
+        self.write_envelope(inner, envelope).map(Committed::publish)
     }
 
-    pub(crate) fn commit_as(&self, authority: &Authority, envelope: CommitEnvelope) -> Result<CommitResult, StoreError> {
-        let inner = self.lock();
-        inner.ensure_healthy()?;
-        inner.ensure_generation(authority, envelope.generation)?;
-        self.write_envelope(authority, inner, envelope).map(Committed::publish)
-    }
-
-    fn write_envelope<'a>(&'a self, authority: &Authority, inner: std::sync::MutexGuard<'_, Inner>, envelope: CommitEnvelope) -> Result<Committed<'a>, StoreError> {
+    fn write_envelope<'a>(&'a self, inner: std::sync::MutexGuard<'_, Inner>, envelope: CommitEnvelope) -> Result<Committed<'a>, StoreError> {
         let now_ms = inner.now_ms();
         envelope.validate(inner.generation).map_err(StoreError::Envelope)?;
         if envelope.is_empty() {
             return Ok(Committed::unannounced(CommitResult::noop(envelope.tx_id)));
         }
-        match self.attempt_in_epoch(authority, &inner, &envelope, now_ms) {
+        match self.attempt_in_epoch(&inner, &envelope, now_ms) {
             Ok(result) => Ok(self.finish(inner, result)),
-            Err(first) if first.is_apply_failure() => match self.attempt_in_epoch(authority, &inner, &envelope, now_ms) {
+            Err(first) if first.is_apply_failure() => match self.attempt_in_epoch(&inner, &envelope, now_ms) {
                 Ok(result) => Ok(self.finish(inner, result)),
                 Err(second) => {
                     if second.is_apply_failure() {
@@ -71,8 +63,7 @@ impl Store {
     }
 
     /// The SQL commit of a write that belongs to a session epoch: the epoch check and the commit happen while the lifecycle holds its commit line, so a transition either comes before the check and refuses the write, or waits for the commit.
-    fn attempt_in_epoch(&self, authority: &Authority, inner: &Inner, envelope: &CommitEnvelope, now_ms: i64) -> Result<(CommitResult, u32), StoreError> {
-        let _ = authority;
+    fn attempt_in_epoch(&self, inner: &Inner, envelope: &CommitEnvelope, now_ms: i64) -> Result<(CommitResult, u32), StoreError> {
         let _network = envelope.network.as_ref().map(|network| network.enter());
         if envelope.network.as_ref().is_some_and(|network| !network.holds()) { return Err(StoreError::Envelope(crate::commit::EnvelopeFault::NetworkMoved)); }
         #[cfg(test)]

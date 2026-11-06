@@ -126,8 +126,7 @@ pub(crate) struct Inner {
 }
 
 impl Inner {
-    pub(crate) fn ensure_generation(&self, authority: &crate::lifecycle::authority::Authority, generation: Generation) -> Result<(), StoreError> {
-        let _ = authority;
+    pub(crate) fn ensure_generation(&self, generation: Generation) -> Result<(), StoreError> {
         if generation != self.generation {
             return Err(StoreError::Envelope(crate::commit::EnvelopeFault::StaleGeneration));
         }
