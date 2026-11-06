@@ -133,7 +133,7 @@ fn xfer_remove_rolls_back_optimistic() {
 
 /// P-XFER-30: the removal rolls the effects back in every cause before the final mutation left, never after it and never for a confirmed one.
 #[test]
-fn xfer_prop_removal_rolls_back_only_unsent_effects() {
+fn xfer_prop_optimistic_row_once() {
     let mut cancel_copying = Twin::new();
     let (id, _) = reserved(&mut cancel_copying);
     cancel_copying.commit();

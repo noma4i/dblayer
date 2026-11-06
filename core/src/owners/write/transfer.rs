@@ -58,7 +58,15 @@ impl TransferState {
                         ops.extend([StoreOp::RollBack { op_id }, StoreOp::RemoveIntent { op_id }]);
                     }
                 } else {
+                    let cached_copy = kind == StoreKind::SyncUpload && transfer.stage == TransferStage::PersistingCopy && transfer.from_cache;
+                    let kind = if cached_copy { StoreKind::Completed } else { kind };
                     ops.push(StoreOp::Upload { row: upload_row(transfer, kind), kind: upload_kind(kind) });
+                    if transfer.stage == TransferStage::PersistingCopy && transfer.cache_stale {
+                        ops.push(StoreOp::BlobCacheRemove { content_sha256: transfer.sha256.clone() });
+                    }
+                    if let (StoreKind::Completed, TransferStage::PersistingComplete, false, Some(blob_id)) = (kind, transfer.stage, transfer.from_cache, transfer.signed_id.clone()) {
+                        ops.push(StoreOp::BlobCachePut { content_sha256: transfer.sha256.clone(), blob_id, created_at: self.now.0 });
+                    }
                     if let (Some(op_id), StoreKind::SyncUpload, TransferStage::Accepting, None) = (own, kind, transfer.stage, transfer.prior) {
                         ops.push(StoreOp::Intent { op_id, model: transfer.mutation.model.clone(), row_id: transfer.mutation.row_id.clone(), action: transfer.mutation.action.clone(), payload: transfer.mutation.body.clone(), effects: transfer.mutation.effects.clone() });
                     }
@@ -241,7 +249,7 @@ impl TransferState {
             TransferInput::RegisterOperations { declarations } => self.register(declarations, fx),
             TransferInput::RestoreReady { epoch } => self.restore_ready(epoch, fx),
             TransferInput::RoundStatus { epoch, transfer_ids, refused } => self.round_status(epoch, &transfer_ids, refused, fx),
-            TransferInput::CopyDone { transfer_id, attempt_id, size, sha256, place } => self.copy_done(transfer_id, attempt_id, size, sha256, place, fx),
+            TransferInput::CopyDone { transfer_id, attempt_id, size, sha256, place, cached } => self.copy_done(transfer_id, attempt_id, size, sha256, place, cached, fx),
             TransferInput::CopyFailed { transfer_id, attempt_id, error } => self.copy_failed(transfer_id, attempt_id, error, fx),
             TransferInput::OpReserved { transfer_id, result } => self.op_reserved(transfer_id, result, fx),
             TransferInput::StepOk { transfer_id, attempt_id, part, upload_id, etag } => self.step_ok(transfer_id, attempt_id, part, upload_id, etag, fx),

@@ -307,7 +307,7 @@ fn xfer_prop_provenance() {
         TransferInput::StepError { transfer_id: id, attempt_id: old_attempt, temporary: false },
         TransferInput::StepOk { transfer_id: fresh, attempt_id: old_attempt, part: Some(1), upload_id: None, etag: None },
         TransferInput::Completed { transfer_id: fresh, attempt_id: old_attempt, signed_id: None },
-        TransferInput::CopyDone { transfer_id: fresh, attempt_id: old_attempt, size: 1, sha256: "x".into(), place: Location::Directory },
+        TransferInput::CopyDone { transfer_id: fresh, attempt_id: old_attempt, size: 1, sha256: "x".into(), place: Location::Directory, cached: crate::owners::write::transfer::CachedBlob::Miss },
     ] {
         let out = twin.post(input);
         assert!(Twin::quiet(&out), "{out:?}");

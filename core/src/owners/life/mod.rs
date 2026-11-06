@@ -485,6 +485,7 @@ impl Life {
                         LifeSignal::SnapshotRequest(epoch) => signal_wiring.to_network(NetworkInput::SnapshotRequest { owner: Peer::Transfer, epoch }),
                         LifeSignal::RestoreClassified(epoch) => signal_wiring.to_lifecycle(LifecycleInput::RestoreClassified { owner: Peer::Transfer, epoch }),
                     }),
+                    { let db = ports.db.clone(); Arc::new(move |sha256: &str| db.blob_cache_lookup(sha256)) },
                 );
                 let address = builder.add::<Transfers>("transfer", TransferState::new(0, port.slots, TransferPeers { store, outbox, rounds: rounds_at }), executor);
                 if Some(address.index()) != transfer_at.map(|at| at.index()) {

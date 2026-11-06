@@ -126,3 +126,18 @@ fn a_landing_with_a_swap_replaces_the_temporary_row_by_the_real_one() {
     assert!(db.find("moments", &temp).unwrap().is_none(), "the temporary row is gone");
     assert_eq!(db.find("moments", &rid("m9")).unwrap().unwrap().text("text"), Some("a"));
 }
+
+/// xfer_blob_cache_by_content: the cache keeps the blob by the content; an entry older than 7 days is stale.
+#[test]
+fn the_cache_of_blobs_gives_fresh_stale_and_missing_by_content() {
+    use crate::owners::write::transfer::CachedBlob;
+    let db = booted();
+    db.set_clock(std::sync::Arc::new(crate::pacing::TestClock::stopped(std::time::Duration::from_secs(10 * 86_400))));
+    let now = u64::try_from(db.shared.store.lock().now_ms()).unwrap();
+    db.write_queue_ops(&[StoreOp::BlobCachePut { content_sha256: "new".into(), blob_id: "b1".into(), created_at: now }, StoreOp::BlobCachePut { content_sha256: "old".into(), blob_id: "b0".into(), created_at: now - 8 * 86_400_000 }]).unwrap();
+    assert_eq!(db.blob_cache_lookup("new"), CachedBlob::Fresh { blob_id: "b1".into() });
+    assert_eq!(db.blob_cache_lookup("old"), CachedBlob::Stale);
+    assert_eq!(db.blob_cache_lookup("none"), CachedBlob::Miss);
+    db.write_queue_ops(&[StoreOp::BlobCacheRemove { content_sha256: "old".into() }]).unwrap();
+    assert_eq!(db.blob_cache_lookup("old"), CachedBlob::Miss);
+}

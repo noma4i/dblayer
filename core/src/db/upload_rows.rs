@@ -208,6 +208,34 @@ impl Db {
         })
     }
 
+    /// `BlobCachePut` and `BlobCacheRemove`.
+    pub(super) fn write_blob_cache(&self, content_sha256: &str, entry: Option<(&str, u64)>) -> Result<(), DbError> {
+        self.shared
+            .store
+            .write_store(&Authority::Owner, |stored| {
+                match entry {
+                    Some((blob_id, created_at)) => stored.connection.execute("INSERT OR REPLACE INTO blob_cache (content_sha256, blob_id, created_at) VALUES (?1, ?2, ?3)", rusqlite::params![content_sha256, blob_id, i64::try_from(created_at).unwrap_or(i64::MAX)])?,
+                    None => stored.connection.execute("DELETE FROM blob_cache WHERE content_sha256 = ?1", [content_sha256])?,
+                };
+                Ok(())
+            })
+            .map_err(DbError::from)
+    }
+
+    /// The cache entry of a file with this content: `Fresh` while the blob of the server lives (7 days from `createBlob`), `Stale` after it.
+    pub(crate) fn blob_cache_lookup(&self, content_sha256: &str) -> crate::owners::write::transfer::CachedBlob {
+        use crate::owners::write::transfer::{CachedBlob, EXPIRY_MS};
+        let now = u64::try_from(self.shared.store.lock().now_ms()).unwrap_or(0);
+        let found = self.shared.store.read_locked(|connection| {
+            rusqlite::OptionalExtension::optional(connection.query_row("SELECT blob_id, created_at FROM blob_cache WHERE content_sha256 = ?1", [content_sha256], |row| Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))))
+        });
+        match found {
+            Ok(Some((blob_id, created_at))) if now < u64::try_from(created_at).unwrap_or(0).saturating_add(EXPIRY_MS) => CachedBlob::Fresh { blob_id },
+            Ok(Some(_)) => CachedBlob::Stale,
+            _ => CachedBlob::Miss,
+        }
+    }
+
     pub(super) fn remove_upload_row(&self, key: &str) -> Result<(), DbError> {
         let [model, id, action] = key_parts(key)?;
         self.shared

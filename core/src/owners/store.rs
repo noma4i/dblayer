@@ -151,6 +151,9 @@ pub enum StoreOp {
     RemoveRows { model: String, ids: Vec<String> },
     Upload { row: UploadRow, kind: UploadKind },
     RemoveUpload { key: String },
+    /// The server blob of a file with this content: a later upload of the same bytes skips the steps while the blob lives.
+    BlobCachePut { content_sha256: String, blob_id: String, created_at: u64 },
+    BlobCacheRemove { content_sha256: String },
     /// A page of a window: the rows of the answer, the window record (`page`, `cursor`) and whether it replaces the rows of the window.
     Window { key: String, model: String, page: u32, replace_all: bool, cursor: Option<String>, roots: Vec<RowValue>, related: Vec<(String, RowValue)>, total: Option<i64>, base_revision: i64 },
 }

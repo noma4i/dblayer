@@ -115,7 +115,7 @@ END",
 ) STRICT, WITHOUT ROWID",
 ];
 
-const CORE_STATEMENTS: [&str; 45] = [
+const CORE_STATEMENTS: [&str; 46] = [
     "CREATE TABLE IF NOT EXISTS blob_upload (
   id TEXT PRIMARY KEY NOT NULL,
   name TEXT NOT NULL,
@@ -317,6 +317,11 @@ const CORE_STATEMENTS: [&str; 45] = [
   aborted INTEGER,
   op_id INTEGER,
   PRIMARY KEY (model, row_id, action)
+) STRICT, WITHOUT ROWID",
+    "CREATE TABLE IF NOT EXISTS blob_cache (
+  content_sha256 TEXT NOT NULL PRIMARY KEY,
+  blob_id TEXT NOT NULL,
+  created_at INTEGER NOT NULL
 ) STRICT, WITHOUT ROWID",
     "CREATE TABLE IF NOT EXISTS sync_upload_part (
   model TEXT NOT NULL,

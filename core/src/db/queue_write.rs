@@ -92,6 +92,8 @@ impl Db {
                     self.remove_upload_row(key)?;
                     envelope.entity_ops.push(self.upload_touch(key)?);
                 }
+                StoreOp::BlobCachePut { content_sha256, blob_id, created_at } => self.write_blob_cache(content_sha256, Some((blob_id, *created_at)))?,
+                StoreOp::BlobCacheRemove { content_sha256 } => self.write_blob_cache(content_sha256, None)?,
                 StoreOp::Planned { effects } => return self.write_planned(effects),
                 StoreOp::Intent { op_id, model, row_id: id, action, payload, effects } => return self.write_intent(*op_id, (model, id, action), payload, effects),
                 StoreOp::Window { key, model, page, replace_all, cursor, roots, related, total, base_revision } => {

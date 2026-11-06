@@ -10,7 +10,7 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 
-use super::transfer::{file_id, ShowSink, Shown, Source, Steps, TransferAnswer, TransferEffect, TransferId, TransferInput, Transfers};
+use super::transfer::{file_id, CachedBlob, ShowSink, Shown, Source, Steps, TransferAnswer, TransferEffect, TransferId, TransferInput, Transfers};
 use super::wire::{Flights, Running, Wire};
 use crate::files::{CopiedSource, FileDirectories};
 use crate::lifecycle::Admitted;
@@ -96,6 +96,8 @@ pub(crate) struct TransferExecutor {
     signal: Arc<dyn Fn(LifeSignal) + Send + Sync>,
     copies: Flights<TransferId>,
     steps: Flights<TransferId>,
+    /// The cache of blobs: what is known of a server blob for the content of a copy.
+    cache: Arc<dyn Fn(&str) -> CachedBlob + Send + Sync>,
 }
 
 impl TransferExecutor {
@@ -107,13 +109,14 @@ impl TransferExecutor {
         shows: ShowSink,
         drained: Arc<dyn Fn(Drained) + Send + Sync>,
         signal: Arc<dyn Fn(LifeSignal) + Send + Sync>,
+        cache: Arc<dyn Fn(&str) -> CachedBlob + Send + Sync>,
     ) -> Self {
-        Self { wire, codec, files, settle, shows, drained, signal, copies: Flights::default(), steps: Flights::default() }
+        Self { wire, codec, files, settle, shows, drained, signal, copies: Flights::default(), steps: Flights::default(), cache }
     }
 
     fn copy(&self, stamp: EpochStamp, back: &Back<Transfers>, transfer_id: TransferId, attempt_id: u64, key: String, source: Source) {
         let cancelled = Arc::new(AtomicBool::new(false));
-        let (files, copies, back, flag, id) = (self.files.clone(), self.copies.clone(), back.clone(), cancelled.clone(), file_id(&key));
+        let (files, copies, back, flag, id, cache) = (self.files.clone(), self.copies.clone(), back.clone(), cancelled.clone(), file_id(&key), self.cache.clone());
         let running = self.wire.tasks.start_blocking(Box::new(move || {
             let result = files.copy_source(&id, std::path::Path::new(&source.path));
             let input = if flag.load(Ordering::SeqCst) {
@@ -122,7 +125,7 @@ impl TransferExecutor {
             } else {
                 Some(match result {
                     Ok(CopiedSource::Ready { size, sha256, location, data }) => match keep_small_copy(&files, &id, location, &data) {
-                        Ok(location) => TransferInput::CopyDone { transfer_id, attempt_id, size, sha256, place: location },
+                        Ok(location) => TransferInput::CopyDone { transfer_id, attempt_id, size, cached: cache(&sha256), sha256, place: location },
                         Err(error) => TransferInput::CopyFailed { transfer_id, attempt_id, error: error.to_string() },
                     },
                     Ok(CopiedSource::Unreadable(error)) => TransferInput::CopyFailed { transfer_id, attempt_id, error },

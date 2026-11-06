@@ -47,6 +47,8 @@ impl TransferState {
             urgent,
             op_id: None,
             submitted: false,
+            from_cache: false,
+            cache_stale: false,
             round_error: None,
             removal: None,
             prior: None,
@@ -162,7 +164,7 @@ impl TransferState {
 
     fn group_of(&self, id: TransferId) -> Option<u64> { self.transfers.get(&id).and_then(|transfer| transfer.batch_id) }
 
-    pub(super) fn copy_done(&mut self, id: TransferId, attempt_id: AttemptId, size: u64, sha256: String, place: Location, fx: &mut Fx) {
+    pub(super) fn copy_done(&mut self, id: TransferId, attempt_id: AttemptId, size: u64, sha256: String, place: Location, cached: CachedBlob, fx: &mut Fx) {
         let Some(transfer) = self.transfers.get_mut(&id) else { return };
         if transfer.stage != TransferStage::Copying || transfer.attempt_id != attempt_id {
             return;
@@ -170,6 +172,11 @@ impl TransferState {
         transfer.size = size;
         transfer.sha256 = sha256;
         transfer.place = Some(place);
+        transfer.cache_stale = cached == CachedBlob::Stale;
+        if let CachedBlob::Fresh { blob_id } = cached {
+            transfer.from_cache = true;
+            transfer.signed_id = Some(blob_id);
+        }
         let Some(group) = self.group_of(id) else {
             self.set(id, TransferStage::PersistingCopy);
             return self.store(&[id], StoreKind::SyncUpload, fx);
@@ -230,14 +237,20 @@ impl TransferState {
             if transfer.prior.take() == Some(TransferStage::Failed) {
                 transfer.cycle_id += 1;
             }
-            transfer.stage = TransferStage::Ready;
             transfer.next_step = NextStep::Part(1);
             transfer.confirmed_parts = 0;
             transfer.upload_id = None;
             transfer.error = None;
             transfer.etags.clear();
+            let cached = transfer.from_cache;
+            transfer.stage = if cached { TransferStage::Mutating } else { TransferStage::Ready };
             receipts.push(self.receipt(id));
-            self.show(id, Shown::Queued, fx);
+            if cached {
+                self.show(id, Shown::Uploading { progress: 100 }, fx);
+                self.submit_mutation(id, fx);
+            } else {
+                self.show(id, Shown::Queued, fx);
+            }
         }
         for (position, &id) in ids.iter().enumerate() {
             let Some(transfer) = self.transfers.get_mut(&id) else { continue };

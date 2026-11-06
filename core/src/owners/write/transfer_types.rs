@@ -45,6 +45,14 @@ pub struct Steps {
     pub body: String,
 }
 
+/// What the cache of blobs holds for the content of a copy.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum CachedBlob {
+    Fresh { blob_id: String },
+    Stale,
+    Miss,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Source {
     pub path: String,
@@ -106,7 +114,7 @@ pub enum TransferInput {
     RegisterOperations { declarations: Vec<(String, String)> },
     RestoreReady { epoch: Epoch },
     RoundStatus { epoch: Epoch, transfer_ids: Vec<TransferId>, refused: Option<String> },
-    CopyDone { transfer_id: TransferId, attempt_id: AttemptId, size: u64, sha256: String, place: Location },
+    CopyDone { transfer_id: TransferId, attempt_id: AttemptId, size: u64, sha256: String, place: Location, cached: CachedBlob },
     CopyFailed { transfer_id: TransferId, attempt_id: AttemptId, error: String },
     /// The answer of Outbox to `ReserveOp`.
     OpReserved { transfer_id: TransferId, result: Result<OpId, Fault> },
@@ -262,6 +270,10 @@ pub struct Transfer {
     pub op_id: Option<OpId>,
     /// The final mutation left for Outbox: Outbox owns the operation, a removal does not roll it back.
     pub submitted: bool,
+    /// The file is already on the server: the cache of blobs gave its `signed_id` (the steps are skipped).
+    pub from_cache: bool,
+    /// The cache entry of the content is old: the write of the copy removes it.
+    pub cache_stale: bool,
     pub round_error: Option<String>,
     pub removal: Option<Removal>,
     pub prior: Option<TransferStage>,

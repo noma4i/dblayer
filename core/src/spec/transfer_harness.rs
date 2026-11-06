@@ -281,7 +281,7 @@ impl Twin {
 
     pub fn copy_done(&mut self, id: TransferId) -> Out {
         let attempt_id = self.attempt(id);
-        self.post(TransferInput::CopyDone { transfer_id: id, attempt_id, size: 10, sha256: "h".into(), place: Location::Directory })
+        self.post(TransferInput::CopyDone { transfer_id: id, attempt_id, size: 10, sha256: "h".into(), place: Location::Directory, cached: crate::owners::write::transfer::CachedBlob::Miss })
     }
 
     pub fn copy_failed(&mut self, id: TransferId) -> Out {

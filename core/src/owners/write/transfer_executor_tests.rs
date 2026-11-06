@@ -87,6 +87,7 @@ fn world() -> World {
         Arc::new(move |_key, shown| lock(&to_shown).push(shown)),
         Arc::new(|_| {}),
         Arc::new(|_| {}),
+        Arc::new(|_| super::transfer::CachedBlob::Miss),
     );
     let mut det = DetScheduler::new(13);
     let generation = Arc::new(std::sync::atomic::AtomicU64::new(0));
