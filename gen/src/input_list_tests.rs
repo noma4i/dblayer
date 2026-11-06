@@ -154,7 +154,7 @@ fn list_args_of_create_and_of_other_model_actions_become_typed_parameters() {
     let kotlin = emit_kotlin(&declared.models, &declared.operations, &declared.inputs);
     for line in [
         "widgets: List<WidgetInput>? = null",
-        "suspend fun decorate(widgets: List<WidgetInput>, account: AccountScope? = null): Moment = this.act(\"decorate\"",
+        "suspend fun decorate(widgets: List<WidgetInput>, account: AccountScope? = null): MutationReceipt<Moment> = this.act(\"decorate\"",
     ] {
         assert!(kotlin.contains(line), "kotlin lacks {line}\n{kotlin}");
     }

@@ -102,6 +102,7 @@ async fn app_logout_local_only_skips_the_revoke_and_stops_every_read() {
 
         assert!(rig.world.signed(), "cancel={cancel}: the local-only exit revoked the server session");
         assert_eq!(rig.world.count("UnregisterDevice"), 0);
+        ends(&rig.database).await;
         rig.world.forbid(true);
         ends(&rig.database).await;
         assert!(rig.world.violations().is_empty(), "cancel={cancel}: a read followed the local exit: {:?} log {:?}", rig.world.violations(), rig.world.log().iter().rev().take(6).collect::<Vec<_>>());

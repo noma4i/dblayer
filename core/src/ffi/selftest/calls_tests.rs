@@ -62,45 +62,46 @@ impl Transition {
 
 /// C10, G-02, G-09: every explicit call is in flight at the server when reset, sessionReset or close arrives. The call ends within the bound, the late answer (success or sealed refusal) writes nothing into held handles, and the next request of the same key reads the next account.
 async fn every_explicit_call_survives_every_transition_with_a_late_answer(refusal: bool) {
-    for call in CALLS {
-        for transition in TRANSITIONS {
-            {
-                let case = format!("{call:?} x {transition:?} x refusal={refusal}");
-                let rig = Rig::encrypted().await;
-                rig.login_ios("A").await;
-                let held = Held::open(&rig.database);
-                held.shows("A").await;
-                held.lists_show("A").await;
-                rig.settle().await;
-                let gate = if refusal { rig.world.hold_then(call.operation(), Fault::Refuse { code: "UNAUTHENTICATED", confirmed: false }) } else { rig.world.hold_next(call.operation()) };
-                gate.as_account("late");
-                let running = call.start(rig.database.clone());
-                gate.entered_for(&case).await;
-                rig.world.set_account("B");
-
-                transition.apply(&rig.database).await;
-
-                if matches!(transition, Transition::Close) {
-                    gate.release();
-                    let result = tokio::time::timeout(std::time::Duration::from_secs(BOUND), running).await.unwrap_or_else(|_| panic!("{case}: the call outlived the close")).unwrap();
-                    assert!(result.is_err(), "{case}: the call ended the close with {result:?}");
-                    continue;
-                }
-                rig.login_ios("B").await;
-                let result = bound(rig.database.refresh(rig.database.session_epoch(), "User".into(), "all".into(), "{}".into())).await;
-                assert!(result.is_ok(), "{case}: the next read of the same key failed with {result:?}");
-                gate.release();
-                let late = bound(running).await.unwrap();
-                rig.settle().await;
-                held.follow(&rig.database);
-                held.shows("B").await;
-                assert!(held.never_showed("late"), "{case}: the late answer ({late:?}) reached a held handle");
-                bound(rig.database.refresh(rig.database.session_epoch(), "User".into(), "all".into(), "{}".into())).await.unwrap_or_else(|error| panic!("{case}: the read after the late answer failed with {error:?}"));
-                held.lists_show("B").await;
-                rig.database.close_now();
-            }
-        }
+    let runs: Vec<_> = CALLS.into_iter().flat_map(|call| TRANSITIONS.into_iter().map(move |transition| tokio::spawn(late_answer_case(call, transition, refusal)))).collect();
+    for run in runs {
+        run.await.expect("a case did not panic");
     }
+}
+
+async fn late_answer_case(call: Call, transition: Transition, refusal: bool) {
+    let case = format!("{call:?} x {transition:?} x refusal={refusal}");
+    let rig = Rig::encrypted().await;
+    rig.login_ios("A").await;
+    let held = Held::open(&rig.database);
+    held.shows("A").await;
+    held.lists_show("A").await;
+    rig.settle().await;
+    let gate = if refusal { rig.world.hold_then(call.operation(), Fault::Refuse { code: "UNAUTHENTICATED", confirmed: false }) } else { rig.world.hold_next(call.operation()) };
+    gate.as_account("late");
+    let running = call.start(rig.database.clone());
+    gate.entered_for(&case).await;
+    rig.world.set_account("B");
+
+    transition.apply(&rig.database).await;
+
+    if matches!(transition, Transition::Close) {
+        gate.release();
+        let result = tokio::time::timeout(std::time::Duration::from_secs(BOUND), running).await.unwrap_or_else(|_| panic!("{case}: the call outlived the close")).unwrap();
+        assert!(result.is_err(), "{case}: the call ended the close with {result:?}");
+        return;
+    }
+    rig.login_ios("B").await;
+    let result = bound(rig.database.refresh(rig.database.session_epoch(), "User".into(), "all".into(), "{}".into())).await;
+    assert!(result.is_ok(), "{case}: the next read of the same key failed with {result:?}");
+    gate.release();
+    let late = bound(running).await.unwrap();
+    rig.settle().await;
+    held.follow(&rig.database);
+    held.shows("B").await;
+    assert!(held.never_showed("late"), "{case}: the late answer ({late:?}) reached a held handle");
+    bound(rig.database.refresh(rig.database.session_epoch(), "User".into(), "all".into(), "{}".into())).await.unwrap_or_else(|error| panic!("{case}: the read after the late answer failed with {error:?}"));
+    held.lists_show("B").await;
+    rig.database.close_now();
 }
 
 #[tokio::test(flavor = "multi_thread")]

@@ -100,7 +100,7 @@ pub fn apply<E>(
     let mut element: Map<String, Value> = spec.iter().map(|(name, value)| (stored_name(name), resolved(value, args))).collect();
     let Some(key) = element.get(&by).cloned() else { return Ok(None) };
     let mut items: Vec<Value> = current.and_then(Value::as_array).cloned().unwrap_or_default();
-    let at = items.iter().position(|item| item.get(&by) == Some(&key));
+    let at = items.iter().position(|item| item.get(&by) == Some(&key) || item.as_object().and_then(|stored| super::read_path(stored, &by)) == Some(&key));
     let removes = element.iter().filter(|(name, _)| **name != by).all(|(_, value)| is_blank(value));
     if !removes {
         let missing: Vec<(&FieldSpec, &FieldLink)> = declared().filter(|nested| nested.kind == FieldKind::Object && !element.contains_key(&stored_name(&nested.name))).filter_map(|nested| nested.link.as_ref().map(|link| (nested, link))).collect();

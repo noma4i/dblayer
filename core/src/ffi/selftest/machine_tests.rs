@@ -252,11 +252,21 @@ async fn seeded_lifecycle_steps(seeds: std::ops::Range<u64>) {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn seeded_lifecycle_steps_keep_every_view_and_every_request_consistent_in_the_first_half() {
-    seeded_lifecycle_steps(0..SEEDS / 2).await;
+async fn seeded_lifecycle_steps_keep_every_view_and_every_request_consistent_in_the_first_quarter() {
+    seeded_lifecycle_steps(0..SEEDS / 4).await;
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn seeded_lifecycle_steps_keep_every_view_and_every_request_consistent_in_the_second_half() {
-    seeded_lifecycle_steps(SEEDS / 2..SEEDS).await;
+async fn seeded_lifecycle_steps_keep_every_view_and_every_request_consistent_in_the_second_quarter() {
+    seeded_lifecycle_steps(SEEDS / 4..SEEDS / 2).await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn seeded_lifecycle_steps_keep_every_view_and_every_request_consistent_in_the_third_quarter() {
+    seeded_lifecycle_steps(SEEDS / 2..SEEDS * 3 / 4).await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn seeded_lifecycle_steps_keep_every_view_and_every_request_consistent_in_the_fourth_quarter() {
+    seeded_lifecycle_steps(SEEDS * 3 / 4..SEEDS).await;
 }

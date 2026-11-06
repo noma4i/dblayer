@@ -81,8 +81,10 @@ C19	R-5	core	login_link_already_authenticated_signs_out_then_repeats_once	green	
 C19	R-5	swift	BridgeProbeTests.anAlreadyAuthenticatedLoginSignsOutThenLogsInAgain	green	S1: startSealedSession loses the data logout	I LoginLinkSignIn.swift:53-78
 C19	R-5	kotlin	com.noma4i.dblayer.LifecycleSessionTest.anAlreadyAuthenticatedLoginSignsOutThenLogsInAgain	green	S1: startSession loses the data logout	A LoginLinkSignIn.kt:36-47
 G01		core	harness_cycles_survive_tests_that_leave_offline_logout_and_subscriptions_behind	green	S1: each test closes its database and the next test opens a new one; the leftover logout becomes a session reset	library
-R10		core	seeded_lifecycle_steps_keep_every_view_and_every_request_consistent_in_the_first_half	green	S1: the Logout action leaves the generator; SessionReset clears the data (data_empty after it)	library
-R10		core	seeded_lifecycle_steps_keep_every_view_and_every_request_consistent_in_the_second_half	green	S1: the Logout action leaves the generator; SessionReset clears the data (data_empty after it)	library
+R10		core	seeded_lifecycle_steps_keep_every_view_and_every_request_consistent_in_the_first_quarter	green	S1: the Logout action leaves the generator; SessionReset clears the data (data_empty after it)	library
+R10		core	seeded_lifecycle_steps_keep_every_view_and_every_request_consistent_in_the_second_quarter	green	S1: the Logout action leaves the generator; SessionReset clears the data (data_empty after it)	library
+R10		core	seeded_lifecycle_steps_keep_every_view_and_every_request_consistent_in_the_third_quarter	green	S1: the Logout action leaves the generator; SessionReset clears the data (data_empty after it)	library
+R10		core	seeded_lifecycle_steps_keep_every_view_and_every_request_consistent_in_the_fourth_quarter	green	S1: the Logout action leaves the generator; SessionReset clears the data (data_empty after it)	library
 R11		core	a_refused_refresh_keeps_the_views_and_the_credential	green	S1: the refusal is typed, the credential and the views stay	I LiveEventLifecycle.swift:24
 B01		core	a_stream_opened_after_the_login_starts_with_a_snapshot_of_the_account_in_its_epoch	green	S2: login: the first value is a snapshot in the epoch of the session	arch-r2
 B01		swift	BridgeProbeTests.aStreamAfterTheLoginStartsWithASnapshotOfTheAccountInItsEpoch	green	S2: login: the first value is a snapshot in the epoch of the session	arch-r2
@@ -275,14 +277,14 @@ T05S		swift	BridgeProbeTests.reopeningAfterSevenDaysExpiresAFailedBlob	hypothesi
 T05S		kotlin	com.noma4i.dblayer.TransferTest.reopeningAfterSevenDaysExpiresAFailedBlob	hypothesis	-	arch-audit/astra.md A6 startup expiry
 T06		swift	BridgeProbeTests.shiftingABatchDuringAHeldEncryptedRequestKeepsTheFileOwner	hypothesis	-	arch-audit/astra.md A6 transfer identity
 T06		kotlin	com.noma4i.dblayer.TransferTest.shiftingABatchDuringAHeldEncryptedRequestKeepsTheFileOwner	hypothesis	-	arch-audit/astra.md A6 transfer identity
-T09		kotlin	com.noma4i.dblayer.UploadWorkTest.aLateBackgroundRefusalDoesNotChangeTheNextSession	red-by-reading	-	late Android scheduler refusal after session reset
+T09		core	xfer_round_refused_stale	red-by-reading	-	late Android scheduler refusal after session reset
 T10		swift	BridgeProbeTests.multipartBatchAcceptsACorrelationKeyWithPathCharacters	regression	-	multipart transfer identity range file
 T10		kotlin	com.noma4i.dblayer.TransferTest.multipartBatchAcceptsACorrelationKeyWithPathCharacters	regression	-	multipart transfer identity range file
 T11		core	subscription_overflow_reports_the_lost_range_before_failure	red-by-reading	-	bounded subscription intake
-T13		kotlin	com.noma4i.dblayer.UploadWorkTest.aNewSessionSchedulesUploadsAfterTheOldRoundWasRunning	red-by-reading	-	new Android upload after old running round
+T13		core	xfer_round_needed_new_epoch	red-by-reading	-	new Android upload after old running round
 T14		kotlin	com.noma4i.dblayer.UploadWorkTest.onlyUploadRequestsGoThroughTheNetworkOfTheRunningJob	red-by-reading	-	late Android job must not clear a newer network route
-T15		kotlin	com.noma4i.dblayer.UploadWorkTest.aSchedulerRefusalReturningAfterResetDoesNotChangeTheNewUpload	red-by-reading	-	Android scheduler refusal crosses a session reset
-T16		kotlin	com.noma4i.dblayer.UploadWorkTest.aNewSessionSchedulesUploadsWhenTheOldEndingRoundLostItsSession	regression	-	ending Android round after session reset
+T15		core	xfer_round_requested_new_epoch	red-by-reading	-	Android scheduler refusal crosses a session reset
+T16		core	xfer_round_running_epoch_ended	regression	-	ending Android round after session reset
 T17		swift	BridgeProbeTests.shiftingABatchDuringAHeldEncryptedRequestKeepsTheFileOwner	red-by-reading	missing case	transfer without an item
 T17		kotlin	com.noma4i.dblayer.TransferTest.shiftingABatchDuringAHeldEncryptedRequestKeepsTheFileOwner	red-by-reading	missing case	transfer without an item
 K37		core	a_confirmed_create_keeps_its_row_when_another_model_resets_before_it_lands	green	core-only: the proof holds a server request through the fake world gate and resets a model through the core database	final review Fable 3

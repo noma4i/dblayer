@@ -115,8 +115,10 @@ async fn inv_loadm_16_a_background_failure_is_loaded_with_the_error_when_rows_ex
     let (cold, _) = open(&[REFUSED]).await;
     let listener = tape();
     let live = cold.watch_query(FEED, listener.clone());
-    assert!(matches!(live.wait_for_initial_load().await, Err(DbError::Database { .. })), "the load error of the connect reaches the waiter");
+    let waited = live.wait_for_initial_load().await;
+    assert!(waited.is_err(), "the load error of the connect reaches the waiter: {waited:?}");
     let failed = heard(&listener).pop().unwrap();
+    assert_eq!(waited.unwrap_err().to_string(), failed.error.as_ref().unwrap().to_string(), "the waiter and the state show the same error");
     assert_eq!((failed.phase, failed.size, failed.error.as_ref().map(|_| "server")), (Some(ReadPhase::Failed), 0, Some("server")));
 }
 
