@@ -15,8 +15,6 @@ public protocol DBSingleton: DBModel { static var singleton: Query<Self> { get }
 extension DBModel {
   public func hash(into hasher: inout Hasher) { hasher.combine(id) }
 
-  public var needsAttention: Bool { sync.state == .failed || sync.state == .deliveryUnknown }
-  public var canRetry: Bool { needsAttention }
   public var errorMessage: String? { sync.error?.message }
 
   public static func ids(_ ids: [String]) -> Query<Self> { Query<Self>().where(.inList("id", ids.map(JSONValue.string))) }
@@ -132,31 +130,28 @@ public struct MutationReceipt<Model: DBModel>: Sendable {
 public struct ItemReceipt<Model: DBModel>: Sendable {
   public let item: ItemId
   public let optimisticValue: Model
+  /// The receipt of this item: its own operation, revision and outcome.
+  public let receipt: MutationReceipt<Model>
 }
 
 public struct OperationReceipt<Model: DBModel>: Sendable {
   public let epoch: UInt64
-  public let operation: Int64
-  public let revision: Int64
   public let items: [ItemReceipt<Model>]
-  let database: Database
-  let wire: WireBatchReceipt
 
   init(database: Database, wire: WireBatchReceipt) throws {
-    self.database = database
-    self.wire = wire
     self.epoch = wire.epoch
-    self.operation = wire.operation
-    self.revision = wire.revision
-    self.items = try wire.items.map { ItemReceipt(item: $0.item, optimisticValue: try Model.decode($0.optimisticValue)) }
+    self.items = try wire.items.map { ItemReceipt(item: $0.item, optimisticValue: try Model.decode($0.optimisticValue), receipt: try MutationReceipt(database: database, wire: $0.receipt)) }
   }
 }
 
 public struct ModelEvent<Model: DBModel>: Sendable {
+  public let position: UInt64
   public let area: String
   public let kind: String
   public let id: String
+  /// The row before the event landed. It is `nil` for a created row.
   public let before: Model?
+  /// The row after the event landed. It is `nil` for a destroyed row.
   public let after: Model?
 }
 
@@ -166,5 +161,7 @@ public enum ModelEventItem<Model: DBModel>: Sendable {
   case event(ModelEvent<Model>)
   /// The events at these positions of the stream are lost. `first` and `last` are included.
   case lost(first: UInt64, last: UInt64)
+  /// The core lost the order of the events: the reader reads the rows again.
+  case gap
   case failed(any Error)
 }

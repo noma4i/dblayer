@@ -75,6 +75,10 @@ public struct Query<Model: DBModel>: Sendable {
     return try JSONValue.object(object).text
   }
 
+  var loadTarget: ValueStream.LoadTarget? {
+    get throws { try relation.map { ValueStream.LoadTarget(model: Model.modelName, relation: $0, paramsJson: try JSONValue.object(params).text) } }
+  }
+
   @concurrent public func cached(in scope: AccountScope? = nil) async throws -> Cached<[Model]>? {
     let (database, epoch) = try DB.admitted(scope)
     guard let peeked = try await database.peekQuery(epoch: epoch, queryJson: json) else { return nil }

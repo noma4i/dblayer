@@ -1,71 +1,53 @@
 import Foundation
 import Observation
 
-/// The deliveries of one stream in order, read from the journal of the stream in the core. The stream lives while this value is read: when the reader stops or the task that iterates it is cancelled, the stream ends in the core. A stream that ends by itself delivers one `.ended` value last. Values the core could not keep for a slow reader reach it as `.lost`.
+/// The values of one stream in order, taken from the core one by one. The stream lives while its reader lives: when the reader stops or the task that iterates it is cancelled, the stream ends in the core. A stream that ends by itself delivers one `.ended` value last.
 public struct ValueStream: AsyncSequence, Sendable {
-  public typealias Element = StreamDelivery
-  public let id: UInt64
+  public typealias Element = ReadValue
   public let epoch: UInt64
-  private let signal: AsyncStream<Void>
-  private let database: Database
-  private let stop: @Sendable () -> Void
+  let reader: ReadStream
+  let database: Database
+  let load: LoadTarget?
 
-  fileprivate init(id: UInt64, epoch: UInt64, signal: AsyncStream<Void>, database: Database, stop: @escaping @Sendable () -> Void) {
-    self.id = id
-    self.epoch = epoch
-    self.signal = signal
-    self.database = database
-    self.stop = stop
+  struct LoadTarget: Sendable {
+    let model: String
+    let relation: String
+    let paramsJson: String
   }
 
-  public func makeAsyncIterator() -> AsyncIterator { AsyncIterator(id: id, database: database, signal: signal) }
+  public func makeAsyncIterator() -> AsyncIterator { AsyncIterator(reader: reader) }
 
   public struct AsyncIterator: AsyncIteratorProtocol {
-    private let id: UInt64
-    private let database: Database
-    private var signal: AsyncStream<Void>.AsyncIterator
-    private var ended = false
+    let reader: ReadStream
 
-    init(id: UInt64, database: Database, signal: AsyncStream<Void>) {
-      self.id = id
-      self.database = database
-      self.signal = signal.makeAsyncIterator()
-    }
-
-    public mutating func next() async -> StreamDelivery? {
-      while !ended {
-        if let delivery = database.readStream(stream: id) {
-          if case .ended = delivery.value { ended = true }
-          return delivery
-        }
-        guard await signal.next() != nil else { return nil }
-      }
-      return nil
-    }
+    public mutating func next() async throws -> ReadValue? { try await reader.pull() }
   }
 
   /// Loads the relation of the stream again. Throws `Interrupted` when the session of the stream ended.
-  public func refresh() async throws { try await database.refreshStream(stream: id) }
+  public func refresh() async throws {
+    let load = try target
+    try await database.refresh(epoch: epoch, model: load.model, relation: load.relation, paramsJson: load.paramsJson)
+  }
 
-  public func loadMore() async throws -> LoadMoreResult { try await database.loadMoreStream(stream: id) }
+  public func loadMore() async throws -> LoadMoreResult {
+    let load = try target
+    return try await database.loadMore(epoch: epoch, model: load.model, relation: load.relation, paramsJson: load.paramsJson)
+  }
 
-  /// Stops reading: the stream ends in the core and nothing is read after this returns.
-  public func cancel() { database.cancelStream(stream: id); stop() }
-}
+  /// Stops reading: the stream ends in the core and nothing is delivered after this returns.
+  public func cancel() async { await reader.cancel() }
 
-/// Hears that the journal of a stream holds values. It carries no value: the reader takes them with `readStream`.
-final class Forward: ValueSink, @unchecked Sendable {
-  private let continuation: AsyncStream<Void>.Continuation
-  init(_ continuation: AsyncStream<Void>.Continuation) { self.continuation = continuation }
-  func available() { continuation.yield(()) }
+  private var target: LoadTarget {
+    get throws {
+      guard let load else { throw DbError.Invalid(detail: "the stream has no relation to load") }
+      return load
+    }
+  }
 }
 
 extension Database {
-  fileprivate func openValueStream(epoch: UInt64, request: StreamRequest) -> ValueStream {
-    let (signal, continuation) = AsyncStream<Void>.makeStream(bufferingPolicy: .bufferingNewest(1))
-    let id = subscribe(epoch: epoch, request: request, sink: Forward(continuation))
-    continuation.onTermination = { [self] _ in cancelStream(stream: id) }
-    return ValueStream(id: id, epoch: epoch, signal: signal, database: self, stop: { continuation.finish() })
+  fileprivate func openValueStream(epoch: UInt64, request: ReadRequest, load: ValueStream.LoadTarget? = nil) -> ValueStream {
+    ValueStream(epoch: epoch, reader: subscribeValues(epoch: epoch, request: request), database: self, load: load)
   }
 }
 
@@ -74,10 +56,9 @@ public struct ListProjection<Model: DBModel>: Sendable {
   public enum Applied: Sendable, Equatable { case changed, resync, ignored }
 
   public private(set) var rows: [Model] = []
-  public private(set) var state: StreamState?
+  public private(set) var state: ReadState?
   public private(set) var revision: Int64?
-  public private(set) var epoch: UInt64?
-  public private(set) var ended: StreamEnd?
+  public private(set) var ended: ReadEnd?
   public private(set) var failure: String?
   /// How many rows were decoded so far. A change of one row decodes one row.
   public private(set) var decoded = 0
@@ -87,38 +68,35 @@ public struct ListProjection<Model: DBModel>: Sendable {
   public private(set) var lastEdits: [ListEdit<Model>]? = nil
   /// Server id to the temporary id the row had when the screen first showed it, so a screen keeps the identity of a row that the server confirmed.
   public private(set) var temporaryIds: [String: String] = [:]
-  private var awaitingSnapshot = false
-
   public init() {}
 
-  public var phase: LivePhase? { state?.phase }
+  public var phase: ReadPhase? { state?.phase }
 
   /// The error the screen shows: the one the core reports for the stream, else a row the platform could not decode.
   public var error: DbError? { state?.error ?? failure.map { DbError.Invalid(detail: $0) } }
 
-  public mutating func apply(_ delivery: StreamDelivery) -> Applied {
-    if let epoch, delivery.epoch != epoch { return .ignored }
-    epoch = delivery.epoch
-    switch delivery.value {
+  public mutating func fail(_ error: Error) { failure = String(describing: error) }
+
+  public mutating func apply(_ value: ReadValue) -> Applied {
+    switch value {
     case let .snapshot(revision, wire, state):
       failure = nil
       rows = decode(wire).compactMap { $0 }
       self.revision = revision
       self.state = state
-      awaitingSnapshot = false
       lastEdits = nil
       return .changed
-    case let .state(state):
+    case let .state(_, state):
       self.state = state
       lastEdits = []
       return .changed
-    case let .ended(reason):
-      ended = reason
+    case let .ended(cause):
+      ended = cause
       lastEdits = []
       return .changed
     case let .delta(base, revision, size, wire, indexes, removed, placed, replaced, renamed, state):
-      if awaitingSnapshot { return .ignored }
-      guard base == self.revision else { return gap() }
+      guard let held = self.revision else { return .ignored }
+      guard base == held else { return gap() }
       let carried = decode(wire)
       guard carried.allSatisfy({ $0 != nil }) else { return gap() }
       guard let edits = rebuild(carried: zip(carried.compactMap { $0 }, indexes).map { ($0, Int($1)) }, removed: removed, placed: placed, replaced: replaced, size: Int(size)) else { return gap() }
@@ -133,8 +111,9 @@ public struct ListProjection<Model: DBModel>: Sendable {
     }
   }
 
+  /// The projection holds no revision until the next snapshot: deltas wait for it.
   private mutating func gap() -> Applied {
-    awaitingSnapshot = true
+    revision = nil
     return .resync
   }
 
@@ -152,7 +131,7 @@ public struct ListProjection<Model: DBModel>: Sendable {
   }
 
   /// Changes of values at their own place touch the carried rows only. A change of order works on a copy and leaves the rows as they were when it cannot apply.
-  private mutating func rebuild(carried: [(Model, Int)], removed: [String], placed: [Placement], replaced: [Replacement], size: Int) -> [ListEdit<Model>]? {
+  private mutating func rebuild(carried: [(Model, Int)], removed: [String], placed: [RowPlace], replaced: [RowRename], size: Int) -> [ListEdit<Model>]? {
     if removed.isEmpty && placed.isEmpty && replaced.isEmpty {
       guard size == rows.count, carried.allSatisfy({ $0.1 < rows.count && rows[$0.1].id == $0.0.id }) else { return nil }
       for (model, index) in carried { rows[index] = model }
@@ -209,8 +188,8 @@ public final class Projected<Model: DBModel> {
   public private(set) var projection = ListProjection<Model>()
   public var rows: [Model] { projection.rows }
   public var value: Model? { projection.rows.first }
-  public var state: StreamState? { projection.state }
-  public var phase: LivePhase? { projection.phase }
+  public var state: ReadState? { projection.state }
+  public var phase: ReadPhase? { projection.phase }
   public var error: DbError? { projection.error }
   public var isEnded: Bool { projection.ended != nil }
   @ObservationIgnored public let stream: ValueStream
@@ -220,15 +199,19 @@ public final class Projected<Model: DBModel> {
   public init(_ stream: ValueStream) {
     self.stream = stream
     reading = Task { [weak self] in
-      for await delivery in stream {
-        guard let self else { return }
-        self.receive(delivery)
+      do {
+        for try await value in stream {
+          guard let self else { return }
+          self.receive(value)
+        }
+      } catch {
+        self?.projection.fail(error)
       }
     }
   }
 
-  private func receive(_ delivery: StreamDelivery) {
-    let applied = projection.apply(delivery)
+  private func receive(_ value: ReadValue) {
+    let applied = projection.apply(value)
     if applied == .changed { pending = ListEdit.composing(pending, projection.lastEdits, within: projection.rows.count) }
   }
 
@@ -241,49 +224,42 @@ public final class Projected<Model: DBModel> {
   public func refresh() async throws { try await stream.refresh() }
   public func loadMore() async throws -> LoadMoreResult { try await stream.loadMore() }
 
-  isolated deinit {
-    reading?.cancel()
-    stream.cancel()
-  }
+  isolated deinit { reading?.cancel() }
 }
 
 /// The screen model of a count stream.
 @MainActor @Observable
 public final class ProjectedCount {
   public private(set) var count: Int?
-  public private(set) var state: StreamState?
+  public private(set) var state: ReadState?
   /// Why the stream ended by itself.
-  public private(set) var ended: StreamEnd?
+  public private(set) var ended: ReadEnd?
   public var error: DbError? { state?.error }
   @ObservationIgnored public let stream: ValueStream
   @ObservationIgnored private var reading: Task<Void, Never>?
-  @ObservationIgnored private var epoch: UInt64?
 
   public init(_ stream: ValueStream) {
     self.stream = stream
     reading = Task { [weak self] in
-      for await delivery in stream {
-        guard let self else { return }
-        self.receive(delivery)
-      }
+      do {
+        for try await value in stream {
+          guard let self else { return }
+          self.receive(value)
+        }
+      } catch {}
     }
   }
 
-  private func receive(_ delivery: StreamDelivery) {
-    if let epoch, delivery.epoch != epoch { return }
-    epoch = delivery.epoch
-    switch delivery.value {
+  private func receive(_ value: ReadValue) {
+    switch value {
     case let .count(_, count, state): self.count = Int(count); self.state = state
-    case let .state(state): self.state = state
-    case let .ended(reason): ended = reason
+    case let .state(_, state): self.state = state
+    case let .ended(cause): ended = cause
     default: break
     }
   }
 
-  isolated deinit {
-    reading?.cancel()
-    stream.cancel()
-  }
+  isolated deinit { reading?.cancel() }
 }
 
 /// The events of a model, after the stream opened. The stream ends when the reader stops or the session of its account ends.
@@ -293,26 +269,20 @@ public struct EventStream<Model: DBModel>: AsyncSequence, Sendable {
 
   public struct AsyncIterator: AsyncIteratorProtocol {
     var inner: ValueStream.AsyncIterator
-    let stream: ValueStream
-    var reported = false
-    var opened = false
 
-    public mutating func next() async -> ModelEventItem<Model>? {
-      while let delivery = await inner.next() {
-        switch delivery.value {
-        case let .state(state):
-          if let error = state.error, !reported { reported = true; return .failed(error) }
-          if state.error == nil, state.settled, !opened { opened = true; return .ready }
-        case let .ended(reason):
-          if reason == .invalid, !reported { reported = true; return .failed(DbError.Invalid(detail: "the events stream could not open")) }
+    public mutating func next() async throws -> ModelEventItem<Model>? {
+      while let value = try await inner.next() {
+        switch value {
+        case let .state(_, state):
+          if let error = state.error { return .failed(error) }
+        case .ready: return .ready
+        case let .ended(cause):
+          if cause == .invalid { return .failed(DbError.Invalid(detail: "the events stream could not open")) }
           return nil
         case let .lost(first, last): return .lost(first: first, last: last)
-        case let .event(wire):
-          do { return .event(ModelEvent(area: wire.area, kind: wire.kind, id: wire.id, before: try wire.before.map(Model.decode), after: try wire.after.map(Model.decode))) }
-          catch {
-            stream.cancel()
-            return .failed(error)
-          }
+        case .gap: return .gap
+        case let .event(position, area, kind, id, before, after):
+          do { return .event(ModelEvent(position: position, area: area, kind: kind, id: id, before: try before.map(Model.decode), after: try after.map(Model.decode))) } catch { return .failed(error) }
         default: continue
         }
       }
@@ -320,21 +290,29 @@ public struct EventStream<Model: DBModel>: AsyncSequence, Sendable {
     }
   }
 
-  public func makeAsyncIterator() -> AsyncIterator { AsyncIterator(inner: stream.makeAsyncIterator(), stream: stream) }
+  public func makeAsyncIterator() -> AsyncIterator { AsyncIterator(inner: stream.makeAsyncIterator()) }
 }
 
-/// The status of a media upload while it runs.
+/// The status of a transfer at one change.
+public struct TransferProgress: Sendable, Equatable {
+  public let revision: Int64
+  public let state: String
+  public let progress: UInt64
+  public let error: String?
+}
+
+/// The status of a transfer while it runs, by the key `model:row:action`.
 public struct UploadStatusStream: AsyncSequence, Sendable {
-  public typealias Element = WireBlobSnapshot
+  public typealias Element = TransferProgress
   public let stream: ValueStream
 
   public struct AsyncIterator: AsyncIteratorProtocol {
     var inner: ValueStream.AsyncIterator
 
-    public mutating func next() async -> WireBlobSnapshot? {
-      while let delivery = await inner.next() {
-        switch delivery.value {
-        case let .status(blob): return blob
+    public mutating func next() async throws -> TransferProgress? {
+      while let value = try await inner.next() {
+        switch value {
+        case let .status(revision, state, progress, error): return TransferProgress(revision: revision, state: state, progress: progress, error: error)
         case .ended: return nil
         default: continue
         }
@@ -369,30 +347,27 @@ public struct AccountScope: Sendable {
 
   /// `refreshOnConnect` loads the relation again when the stream opens, also when it is fresh. The first rows stay visible.
   public func stream<Model: DBModel>(_ query: Query<Model>, refreshOnConnect: Bool = false) throws -> ValueStream {
-    database.openValueStream(epoch: epoch, request: .query(queryJson: try query.json(refreshOnConnect: refreshOnConnect)))
+    database.openValueStream(epoch: epoch, request: .list(queryJson: try query.json(refreshOnConnect: refreshOnConnect)), load: try query.loadTarget)
   }
 
   public func count<Model: DBModel>(_ query: Query<Model>) throws -> ValueStream {
     database.openValueStream(epoch: epoch, request: .count(queryJson: try query.json))
   }
 
-  public func related<Model: DBModel, Target: DBModel>(_ query: Query<Model>, _ association: Association<Model, Target>) throws -> ValueStream {
-    database.openValueStream(epoch: epoch, request: .related(queryJson: try query.json, name: association.name))
-  }
-
   /// One row by id. `fetch` tells when the library loads it from the server.
-  public func entity<Model: DBModel>(_: Model.Type, _ id: String, fetch: EntityFetch = .never) -> ValueStream {
+  public func entity<Model: DBModel>(_: Model.Type, _ id: String, fetch: ReadFetch = .never) -> ValueStream {
     database.openValueStream(epoch: epoch, request: .entity(model: Model.modelName, id: id, fetch: fetch))
   }
 
   public func singleton<Model: DBSingleton>(_: Model.Type) throws -> ValueStream { try stream(Model.singleton) }
 
   public func events<Model: DBModel>(_: Model.Type) -> EventStream<Model> {
-    EventStream(stream: database.openValueStream(epoch: epoch, request: .events(model: Model.modelName)))
+    EventStream<Model>(stream: database.openValueStream(epoch: epoch, request: .events(model: Model.modelName)))
   }
 
-  public func uploadStatus(_ id: String) -> UploadStatusStream {
-    UploadStatusStream(stream: database.openValueStream(epoch: epoch, request: .blob(id: id)))
+  /// The status of the transfer of `uploads[action]` of a row.
+  public func uploadStatus<Model: DBModel>(_ row: Model, action: String) -> UploadStatusStream {
+    UploadStatusStream(stream: database.openValueStream(epoch: epoch, request: .blob(key: "\(Model.modelName):\(row.id):\(action)")))
   }
 
   /// Writes the model locally and queues it for the server. It works without a network and after the app closed. Only a durable create action (sending a message) and a declared upload action work this way; another model is refused. Throws `Interrupted` when the session of this scope ended.
@@ -416,5 +391,4 @@ public struct AccountScope: Sendable {
 extension DB {
   public static func account() throws -> AccountScope { try AccountScope() }
 
-  public static func streamCensus() throws -> StreamCensus { try database.streamCensus() }
 }
