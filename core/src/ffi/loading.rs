@@ -219,7 +219,9 @@ impl Database {
 
     /// Registers a call that waits for a load of the window of a relation. The window keeps the request while this call or another one waits for it.
     async fn start_load(&self, epoch: u64, model: &str, relation: &str, params_json: &str, goal: Goal, force: bool) -> Result<LoadCall, DbError> {
+        let turn = self.loads.begin();
         let (params, force) = self.prepare_load(model, relation, params_json, goal, force).await?;
+        turn.wait().await;
         self.start_window(epoch, WindowKey::relation(model, relation, &params), goal, force)
     }
 
