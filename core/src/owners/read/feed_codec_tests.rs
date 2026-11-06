@@ -138,6 +138,12 @@ fn feed_codec_invalid() {
 }
 
 #[test]
+fn feed_changes_area_unknown() {
+    let events = codec(true).events("Changes", frame(change("UNKNOWN", "UPDATED", "m1", Value::Null)));
+    assert!(events.is_empty());
+}
+
+#[test]
 fn feed_codec_joins() {
     let codec = codec(true);
     let row = json!({"id":"m1", "chatId":"c1"}).as_object().unwrap().clone();
