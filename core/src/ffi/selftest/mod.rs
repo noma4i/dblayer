@@ -41,6 +41,7 @@ mod nested_storage_tests;
 mod offline_load_tests;
 mod record_reactions_tests;
 mod window_interest_tests;
+mod reconnect_tests;
 mod media_refetch_tests;
 mod open_headers_tests;
 mod channel_census_tests;

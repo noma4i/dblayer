@@ -36,8 +36,8 @@ impl Twin {
         self.history.extend(raw.iter().cloned());
         let want = self.reference.step(input);
         let effects: Vec<RefEffect> = raw.iter().filter_map(|effect| match effect {
-            NetworkEffect::Broadcast(value) => Some(RefEffect::Broadcast(*value)),
-            NetworkEffect::Snapshot { owner, epoch, online, saving } => Some(RefEffect::Snapshot { owner: match owner { Peer::Transfer => Owner::Transfer, Peer::Outbox => Owner::Outbox, Peer::Calls => Owner::Calls, Peer::Session => Owner::Session, Peer::Windows => Owner::Window, Peer::Feed => Owner::Feed, Peer::Deliveries => Owner::Delivery, Peer::Network => Owner::Network, Peer::LocalWrites => Owner::LocalWrites, Peer::Rounds => Owner::Rounds }, epoch: *epoch, online: *online, saving: *saving }),
+            NetworkEffect::Broadcast { online, online_seq } => Some(RefEffect::Broadcast(*online, *online_seq)),
+            NetworkEffect::Snapshot { owner, epoch, online, online_seq, saving } => Some(RefEffect::Snapshot { owner: match owner { Peer::Transfer => Owner::Transfer, Peer::Outbox => Owner::Outbox, Peer::Calls => Owner::Calls, Peer::Session => Owner::Session, Peer::Windows => Owner::Window, Peer::Feed => Owner::Feed, Peer::Deliveries => Owner::Delivery, Peer::Network => Owner::Network, Peer::LocalWrites => Owner::LocalWrites, Peer::Rounds => Owner::Rounds }, epoch: *epoch, online: *online, online_seq: *online_seq, saving: *saving }),
             NetworkEffect::Foreground(seq) => Some(RefEffect::Foreground(*seq)),
             NetworkEffect::PowerSaving(value) => Some(RefEffect::PowerSaving(*value)),
             NetworkEffect::Drained(_) => Some(RefEffect::Drained),
@@ -50,7 +50,7 @@ impl Twin {
         assert_eq!(effects, want.effects, "the same effects");
         assert_eq!(reply, want.reply, "the same answer");
         let mode = match self.det.state(self.addr).expect("state").mode() {
-            NetworkMode::Open { online, foreground_seq, saving } => RefState::Open { online, foreground_seq, saving },
+            NetworkMode::Open { online, online_seq, foreground_seq, saving } => RefState::Open { online, online_seq, foreground_seq, saving },
             NetworkMode::Closed => RefState::Closed,
         };
         assert_eq!(mode, self.reference.state, "the same state");
@@ -61,7 +61,7 @@ impl Twin {
 }
 
 #[test]
-fn net_set_online_changed() { assert_eq!(Twin::new().feed(Input::SetOnline(true)), vec![RefEffect::Broadcast(true)]); }
+fn net_set_online_changed() { assert_eq!(Twin::new().feed(Input::SetOnline(true)), vec![RefEffect::Broadcast(true, 1)]); }
 
 #[test]
 fn net_set_online_same() {
@@ -92,10 +92,10 @@ fn net_power_saving_same() {
 #[test]
 fn net_snapshot_request() {
     let mut twin = Twin::new();
-    assert_eq!(twin.feed(snapshot()), vec![RefEffect::Snapshot { owner: Owner::Outbox, epoch: 1, online: false, saving: None }]);
+    assert_eq!(twin.feed(snapshot()), vec![RefEffect::Snapshot { owner: Owner::Outbox, epoch: 1, online: false, online_seq: 0, saving: None }]);
     twin.feed(Input::SetOnline(true));
     twin.feed(Input::PowerSaving(true));
-    assert_eq!(twin.feed(Input::SnapshotRequest(Owner::Transfer, 2)), vec![RefEffect::Snapshot { owner: Owner::Transfer, epoch: 2, online: true, saving: Some(true) }]);
+    assert_eq!(twin.feed(Input::SnapshotRequest(Owner::Transfer, 2)), vec![RefEffect::Snapshot { owner: Owner::Transfer, epoch: 2, online: true, online_seq: 1, saving: Some(true) }]);
 }
 
 fn snapshot() -> Input { Input::SnapshotRequest(Owner::Outbox, 1) }
@@ -108,7 +108,7 @@ fn net_snapshot_windows() {
     det.post(addr, EpochStamp::Control, NetworkInput::PowerSaving { saving: true, reply: 1 });
     det.post(addr, EpochStamp::Control, NetworkInput::SnapshotRequest { owner: Peer::Windows, epoch: 2 });
     det.run_until_quiet(100).expect("the owner is quiet");
-    assert!(take(&log).contains(&NetworkEffect::Snapshot { owner: Peer::Windows, epoch: 2, online: false, saving: Some(true) }));
+    assert!(take(&log).contains(&NetworkEffect::Snapshot { owner: Peer::Windows, epoch: 2, online: false, online_seq: 0, saving: Some(true) }));
 }
 
 #[test]
@@ -173,7 +173,7 @@ fn net_prop_broadcast_per_change() {
             }
             twin.feed(input);
         }
-        let broadcasts = twin.history.iter().filter(|effect| matches!(effect, NetworkEffect::Broadcast(_) | NetworkEffect::Snapshot { .. })).count();
+        let broadcasts = twin.history.iter().filter(|effect| matches!(effect, NetworkEffect::Broadcast { .. } | NetworkEffect::Snapshot { .. })).count();
         assert_eq!(broadcasts, changes + epochs, "one Online per change and per EpochStarted");
     }
 }
@@ -185,7 +185,7 @@ fn net_prop_offline_silent() {
     twin.feed(snapshot());
     twin.feed(Input::Foreground);
     twin.feed(Input::SetOnline(false));
-    assert!(twin.history.iter().all(|effect| !matches!(effect, NetworkEffect::Broadcast(true) | NetworkEffect::Snapshot { online: true, .. })), "no Online(true) goes out before SetOnline(true)");
+    assert!(twin.history.iter().all(|effect| !matches!(effect, NetworkEffect::Broadcast { online: true, .. } | NetworkEffect::Snapshot { online: true, .. })), "no Online(true) goes out before SetOnline(true)");
 }
 
 #[test]
@@ -197,7 +197,7 @@ fn net_prop_single_source() {
             twin.feed(input);
             for effect in &twin.history {
                 match effect {
-                    NetworkEffect::Broadcast(value) | NetworkEffect::Snapshot { online: value, .. } => last = *value,
+                    NetworkEffect::Broadcast { online: value, .. } | NetworkEffect::Snapshot { online: value, .. } => last = *value,
                     _ => {}
                 }
             }

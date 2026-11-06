@@ -13,10 +13,10 @@ pub enum Input {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Effect {
-    /// `Broadcast Online(value)` to every owner.
-    Broadcast(bool),
+    /// `Broadcast Online(value, online_seq)` to every owner.
+    Broadcast(bool, u64),
     /// `Send owner Online(online, epoch)`, for Transfer also `PowerSaving(saving, epoch)`.
-    Snapshot { owner: Owner, epoch: u64, online: bool, saving: Option<bool> },
+    Snapshot { owner: Owner, epoch: u64, online: bool, online_seq: u64, saving: Option<bool> },
     /// `Broadcast Foreground(foreground_seq)` to Rounds and Session.
     Foreground(u64),
     /// `Broadcast PowerSaving(value)` to Transfer.
@@ -32,7 +32,7 @@ pub enum Reply {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum State {
-    Open { online: bool, foreground_seq: u64, saving: bool },
+    Open { online: bool, online_seq: u64, foreground_seq: u64, saving: bool },
     Closed,
 }
 
@@ -49,7 +49,7 @@ pub struct Network {
 
 impl Network {
     /// `online = false` and `saving = false` until the first input (network.md, values).
-    pub fn new() -> Self { Self { state: State::Open { online: false, foreground_seq: 0, saving: false } } }
+    pub fn new() -> Self { Self { state: State::Open { online: false, online_seq: 0, foreground_seq: 0, saving: false } } }
 
     pub fn online(&self) -> Option<bool> {
         match self.state {
@@ -61,21 +61,22 @@ impl Network {
     pub fn step(&mut self, input: Input) -> Out {
         let ok = |effects| Out { effects, reply: Some(Reply::Ok) };
         match (self.state, input) {
-            (State::Open { online, foreground_seq, saving }, Input::SetOnline(value)) if value != online => {
-                self.state = State::Open { online: value, foreground_seq, saving };
-                ok(vec![Effect::Broadcast(value)])
+            (State::Open { online, online_seq, foreground_seq, saving }, Input::SetOnline(value)) if value != online => {
+                let online_seq = online_seq + u64::from(value);
+                self.state = State::Open { online: value, online_seq, foreground_seq, saving };
+                ok(vec![Effect::Broadcast(value, online_seq)])
             }
             (State::Open { .. }, Input::SetOnline(_)) => ok(vec![]),
-            (State::Open { online, foreground_seq, saving }, Input::Foreground) => {
-                self.state = State::Open { online, foreground_seq: foreground_seq + 1, saving };
+            (State::Open { online, online_seq, foreground_seq, saving }, Input::Foreground) => {
+                self.state = State::Open { online, online_seq, foreground_seq: foreground_seq + 1, saving };
                 ok(vec![Effect::Foreground(foreground_seq + 1)])
             }
-            (State::Open { online, foreground_seq, saving }, Input::PowerSaving(value)) if value != saving => {
-                self.state = State::Open { online, foreground_seq, saving: value };
+            (State::Open { online, online_seq, foreground_seq, saving }, Input::PowerSaving(value)) if value != saving => {
+                self.state = State::Open { online, online_seq, foreground_seq, saving: value };
                 ok(vec![Effect::PowerSaving(value)])
             }
             (State::Open { .. }, Input::PowerSaving(_)) => ok(vec![]),
-            (State::Open { online, saving, .. }, Input::SnapshotRequest(owner, epoch)) => Out { effects: vec![Effect::Snapshot { owner, epoch, online, saving: (owner == Owner::Transfer).then_some(saving) }], reply: None },
+            (State::Open { online, online_seq, saving, .. }, Input::SnapshotRequest(owner, epoch)) => Out { effects: vec![Effect::Snapshot { owner, epoch, online, online_seq, saving: (owner == Owner::Transfer).then_some(saving) }], reply: None },
             (State::Open { .. }, Input::Closing) => {
                 self.state = State::Closed;
                 Out { effects: vec![Effect::Drained], reply: None }

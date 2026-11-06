@@ -65,6 +65,21 @@ fn win_landing_stale() {
 }
 
 #[test]
+fn win_landing_stale_gap_covered() {
+    let mut twin = landing();
+    twin.step(Input::Online(true));
+    assert!(twin.step(Input::StaleGap).is_empty());
+    assert!(twin.reference.reread_due, "the request began before the return of the network");
+    let mut covered = Twin::new();
+    covered.step(Input::Online(true));
+    covered.call(1, Goal::First);
+    covered.respond(None);
+    assert_eq!(covered.stage(), Some(WindowStage::Landing));
+    assert!(covered.step(Input::StaleGap).is_empty());
+    assert!(!covered.reference.reread_due, "the landing began after the return of the network");
+}
+
+#[test]
 fn win_landing_online() {
     let mut twin = landing();
     assert!(twin.step(Input::Online(false)).is_empty());
@@ -377,8 +392,8 @@ pub(super) fn explore_rig() -> DetScheduler {
     det.start_epoch(EPOCH);
     let load = |id: u64| w::WindowsInput::Load { key: key(), id, goal: w::Goal::First, force: false, store_revision: 0, now: NOW };
     let callers = det.add::<Source<Windows>>("callers", SourceState { to: windows, script: vec![load(1), load(2)] }, Silent);
-    let marks = det.add::<Source<Windows>>("feed", SourceState { to: windows, script: vec![w::WindowsInput::Stale { model: "Moment".into(), keys: StaleKeys::All }] }, Silent);
-    let network = det.add::<Source<Windows>>("network", SourceState { to: windows, script: vec![w::WindowsInput::Online { online: Online(false), now: NOW }, w::WindowsInput::Online { online: Online(true), now: NOW }] }, Silent);
+    let marks = det.add::<Source<Windows>>("feed", SourceState { to: windows, script: vec![w::WindowsInput::Stale { model: "Moment".into(), keys: StaleKeys::All, cause: w::StaleCause::Change }] }, Silent);
+    let network = det.add::<Source<Windows>>("network", SourceState { to: windows, script: vec![w::WindowsInput::Online { online: Online(false), online_seq: 0, now: NOW }, w::WindowsInput::Online { online: Online(true), online_seq: 1, now: NOW }] }, Silent);
     let lifecycle = det.add::<Reset<Windows>>("lifecycle", ResetState { to: windows, input: w::WindowsInput::ModelsReset(ModelsReset { epoch: EPOCH, generation: 1, models: vec!["Moment".into()] }), generation: 1 }, StoreGeneration(generation.clone()));
     for source in [callers, marks, network] {
         det.post(source, EpochStamp::Control, SourceInput::Go);

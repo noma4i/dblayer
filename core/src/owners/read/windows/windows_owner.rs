@@ -16,6 +16,7 @@ pub(super) struct Opening {
 pub(super) struct WindowBasis {
     pub(super) epoch: Epoch,
     pub(super) online: Option<bool>,
+    pub(super) online_seq: u64,
     pub(super) saving: bool,
     pub(super) base_generation: u64,
     pub(super) generations: BTreeMap<String, u64>,
@@ -23,12 +24,14 @@ pub(super) struct WindowBasis {
 
 impl Window {
     pub(super) fn new(model: String, basis: WindowBasis, (max_pages, members_complete, lifetime, media): (u32, bool, (i64, i64), bool), read_id: Option<u64>, ids: (&mut RequestId, &mut u32)) -> Self {
-        let WindowBasis { epoch, online, saving, base_generation, generations } = basis;
+        let WindowBasis { epoch, online, online_seq, saving, base_generation, generations } = basis;
         let opening = read_id.map(|read_id| Opening { read_id, basis: generations.get(&model).copied().unwrap_or(base_generation), held: Vec::new() });
         let facts = Facts {
             dependency_models: BTreeSet::from([model]),
             epoch,
             online,
+            online_seq,
+            load_seq: std::cell::Cell::new(0),
             base_generation,
             generations,
             interest: BTreeSet::new(),
@@ -193,6 +196,7 @@ pub type OnForeground = Arc<dyn Fn(&WindowKey) -> bool + Send + Sync>;
 pub struct WindowsState {
     pub(super) epoch: Epoch,
     pub(super) online: Option<bool>,
+    pub(super) online_seq: u64,
     pub(super) saving: bool,
     pub(super) generations: BTreeMap<String, u64>,
     pub(super) base_generation: u64,
@@ -221,7 +225,7 @@ pub struct WindowsPeers {
 impl WindowsState {
     /// `online` is the value of the first addressed `Online`, `None` before it.
     pub fn new(epoch: Epoch, online: Option<bool>, peers: WindowsPeers) -> Self {
-        Self { epoch, online, saving: false, generations: BTreeMap::new(), base_generation: 0, preload: Vec::new(), sources: BTreeSet::new(), next_request: 1, next_attempt: 1, windows: BTreeMap::new(), max_pages: Arc::new(|_| u32::MAX), members_complete: Arc::new(|_| false), lifetimes: Arc::new(|_| (300_000, 300_000)), media: Arc::new(|_| false), next_read: 1, on_foreground: Arc::new(|_| false), foreground_seen: 0, peers }
+        Self { epoch, online, online_seq: 0, saving: false, generations: BTreeMap::new(), base_generation: 0, preload: Vec::new(), sources: BTreeSet::new(), next_request: 1, next_attempt: 1, windows: BTreeMap::new(), max_pages: Arc::new(|_| u32::MAX), members_complete: Arc::new(|_| false), lifetimes: Arc::new(|_| (300_000, 300_000)), media: Arc::new(|_| false), next_read: 1, on_foreground: Arc::new(|_| false), foreground_seen: 0, peers }
     }
 
     /// Keys that `EpochStarted` loads with `Interest+(PRELOAD)`.
@@ -287,7 +291,7 @@ impl WindowsState {
     /// A machine of the preload interest starts not fresh: there is no saved window to read.
     pub(super) fn create(&mut self, key: &WindowKey, read_id: Option<u64>) {
         let ids = (&mut self.next_request, &mut self.next_attempt);
-        let window = Window::new(key.model.clone(), WindowBasis { epoch: self.epoch, online: self.online, saving: self.saving, base_generation: self.base_generation, generations: self.generations.clone() }, ((self.max_pages)(key), (self.members_complete)(key), (self.lifetimes)(key), (self.media)(key)), read_id, ids);
+        let window = Window::new(key.model.clone(), WindowBasis { epoch: self.epoch, online: self.online, online_seq: self.online_seq, saving: self.saving, base_generation: self.base_generation, generations: self.generations.clone() }, ((self.max_pages)(key), (self.members_complete)(key), (self.lifetimes)(key), (self.media)(key)), read_id, ids);
         self.windows.insert(key.clone(), window);
     }
 }
@@ -411,10 +415,10 @@ impl StateOwner for Windows {
             WindowsInput::Dropped { request, attempt } => Self::by_request(state, request, Ev::Failure { request, attempt, error: RequestError { message: "dropped".into(), class: ErrorClass::Network, source: None } }, &mut out),
             WindowsInput::Committed(committed) => Self::by_request(state, committed.batch, Ev::Committed { request: committed.batch, revision: committed.revision }, &mut out),
             WindowsInput::Rejected(rejected) => Self::by_request(state, rejected.batch, Ev::Rejected { request: rejected.batch, reason: rejected.reason }, &mut out),
-            WindowsInput::Stale { model, keys } => {
+            WindowsInput::Stale { model, keys, cause } => {
                 let named: Vec<WindowKey> = state.windows.keys().filter(|key| key.model == model && keys.names(key)).cloned().collect();
                 for key in named {
-                    Self::on(state, &key, Ev::Stale, &mut out);
+                    Self::on(state, &key, Ev::Stale { cause }, &mut out);
                 }
             }
             WindowsInput::RetryDue { request } => Self::by_request(state, request, Ev::RetryDue { request }, &mut out),
@@ -445,9 +449,12 @@ impl StateOwner for Windows {
                 }
             }
             WindowsInput::Foreground(_) => {}
-            WindowsInput::Online { online: Online(online), now } => {
+            WindowsInput::Online { online: Online(online), online_seq, now } => {
                 state.online = Some(online);
-                Self::every(state, &Ev::Online { online, now }, &mut out);
+                if online {
+                    state.online_seq = online_seq;
+                }
+                Self::every(state, &Ev::Online { online, online_seq, now }, &mut out);
             }
             WindowsInput::PowerSaving { saving } => {
                 state.saving = saving;
@@ -475,6 +482,7 @@ impl StateOwner for Windows {
                 state.generations.clear();
                 state.windows.clear();
                 state.online = None;
+                state.online_seq = 0;
                 state.saving = false;
                 state.foreground_seen = 0;
                 if started.identity.is_some() {

@@ -208,6 +208,14 @@ impl StaleKeys {
     }
 }
 
+/// Why a `Stale` was sent.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum StaleCause {
+    Change,
+    /// The subscription was cut and came back after the `Online(true)` of `online_seq`.
+    Gap { online_seq: u64 },
+}
+
 #[derive(Clone, Debug)]
 pub enum WindowsInput {
     /// A stream opened the key (Delivery open) or the preload of the key began.
@@ -227,13 +235,13 @@ pub enum WindowsInput {
     Dropped { request: RequestId, attempt: u32 },
     Committed(Committed),
     Rejected(Rejected),
-    Stale { model: String, keys: StaleKeys },
+    Stale { model: String, keys: StaleKeys, cause: StaleCause },
     RetryDue { request: RequestId },
     /// The executor of `DerivePreload` found these keys in the rows of a source window.
     PreloadKeys { keys: Vec<WindowKey>, now: i64 },
     /// A Store broadcast `Committed{tables}`: the models whose tables changed and the revision.
     StoreCommitted { models: Vec<String>, revision: i64 },
-    Online { online: Online, now: i64 },
+    Online { online: Online, online_seq: u64, now: i64 },
     /// The device saves power: a key that only the preload watches waits (Network snapshot and broadcast).
     PowerSaving { saving: bool },
     /// The application came to the front; `seq` grows by 1 with every return.
@@ -265,11 +273,11 @@ pub(super) enum Ev {
     Failure { request: RequestId, attempt: u32, error: RequestError },
     Committed { request: RequestId, revision: i64 },
     Rejected { request: RequestId, reason: RejectReason },
-    Stale,
+    Stale { cause: StaleCause },
     Foreground,
     SourceChanged { revision: i64 },
     RetryDue { request: RequestId },
-    Online { online: bool, now: i64 },
+    Online { online: bool, online_seq: u64, now: i64 },
     PowerSaving { saving: bool },
     /// The saved window of the key: `None` before its first page or after a reset of its generation.
     Saved(Option<SavedWindow>),

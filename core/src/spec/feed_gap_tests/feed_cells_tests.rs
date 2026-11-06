@@ -9,7 +9,7 @@ fn feed_created() {
     twin.post(FeedInput::EpochStarted(EpochStarted { epoch: EPOCH, identity: Some(7), generation: 4 }));
     let requests = take(&twin.log);
     assert!(requests.iter().any(|entry| matches!(entry, Emitted::Run(FeedEffect::SnapshotRequest { epoch: EPOCH }))), "the step of EpochStarted asks Network for the snapshot of Feed: {requests:?}");
-    twin.post(FeedInput::Online(Online(true)));
+    twin.post(FeedInput::Online { online: Online(true), online_seq: 1 });
     twin.reference.online = Some(true);
     twin.step(plus("Chat"));
     twin.step(Input::HandshakeDone);

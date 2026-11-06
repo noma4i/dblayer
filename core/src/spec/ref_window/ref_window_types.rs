@@ -112,6 +112,8 @@ pub(in super::super) enum Input {
     Committed { request: u64, revision: i64 },
     Rejected { request: u64, reason: Reject },
     Stale { in_keys: bool },
+    /// `Stale{cause = Gap{online_seq of the last Online(true)}}` of a key in `keys`.
+    StaleGap,
     Foreground { seq: u64 },
     SourceChanged { revision: i64 },
     Online(bool),
@@ -203,5 +205,8 @@ pub(in super::super) struct Window {
     pub(in super::super) chain: Option<Chain3>,
     pub(in super::super) stale_marked: bool,
     pub(in super::super) stale_owed: bool,
+    /// Online(true) inputs seen, and the count when the last request was issued.
+    pub(in super::super) online_seq: u64,
+    pub(in super::super) load_seq: u64,
     pub(in super::super) landing_marker: Option<(Marker3, i64, bool)>,
 }

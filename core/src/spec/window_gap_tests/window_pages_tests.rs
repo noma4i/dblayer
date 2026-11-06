@@ -77,8 +77,8 @@ fn win_reload_on_connect_flag() {
     twin.post_call(w::WindowsInput::ReloadOnConnect { key: key(), id: id64(STREAM) });
     twin.step(Input::InterestMinus { id: STREAM });
     twin.step(Input::InterestPlus { id: STREAM });
-    twin.post(w::WindowsInput::Online { online: Online(false), now: NOW });
-    twin.post(w::WindowsInput::Online { online: Online(true), now: NOW });
+    twin.post(w::WindowsInput::Online { online: Online(false), online_seq: 0, now: NOW });
+    twin.post(w::WindowsInput::Online { online: Online(true), online_seq: 1, now: NOW });
     assert_eq!(twin.stage(), Some(WindowStage::Idle), "the flag ended with the Interest- of its id");
 }
 
@@ -86,7 +86,7 @@ fn win_reload_on_connect_flag() {
 fn win_prop_first_load_after_reset() {
     let mut twin = fresh();
     twin.post_call(w::WindowsInput::EpochStarted(EpochStarted { epoch: EPOCH + 1, identity: Some(1), generation: 3 }));
-    twin.post_call(w::WindowsInput::Online { online: Online(true), now: NOW });
+    twin.post_call(w::WindowsInput::Online { online: Online(true), online_seq: 1, now: NOW });
     take(&twin.log);
     twin.post_call(w::WindowsInput::Load { key: key(), id: 9, goal: w::Goal::First, force: false, store_revision: 0, now: NOW });
     twin.post(w::WindowsInput::Response { request: 2, attempt: 2, page: AnswerPage::new(1, vec!["r1".into()], None), now: NOW });

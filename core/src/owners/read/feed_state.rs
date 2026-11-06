@@ -6,6 +6,7 @@ impl FeedState {
             epoch,
             mode: Mode::Off { gap: false },
             online: None,
+            online_seq: 0,
             want: BTreeMap::new(),
             streams: BTreeSet::new(),
             debounce,
@@ -181,7 +182,14 @@ impl FeedState {
 
     pub(super) fn stale_all(models: &[String], fx: &mut Vec<Fx>) {
         for model in models {
-            fx.push(Fx::Stale { model: model.clone(), keys: StaleKeys::All });
+            fx.push(Fx::Stale { model: model.clone(), keys: StaleKeys::All, cause: StaleCause::Change });
+        }
+    }
+
+    /// `Stale` of the models after a break of the subscription: the cause names the `Online(true)` that began it.
+    pub(super) fn stale_gap(&self, models: &[String], fx: &mut Vec<Fx>) {
+        for model in models {
+            fx.push(Fx::Stale { model: model.clone(), keys: StaleKeys::All, cause: StaleCause::Gap { online_seq: self.online_seq } });
         }
     }
 
@@ -276,7 +284,7 @@ impl FeedState {
         for model in models {
             let keys = events.iter().filter(|event| event.model == model).fold(StaleKeys::none(), |keys, event| keys.union(event.reread.clone()));
             if !keys.is_empty() {
-                fx.push(Fx::Stale { model, keys });
+                fx.push(Fx::Stale { model, keys, cause: StaleCause::Change });
             }
         }
     }
@@ -327,7 +335,7 @@ impl FeedState {
         for model in &gapped {
             fx.push(Fx::ModelGap { model: model.clone() });
         }
-        Self::stale_all(&gapped, fx);
+        self.stale_gap(&gapped, fx);
         for model in &ready {
             fx.push(Fx::ModelReady { model: model.clone(), id: None });
             self.announced.insert(model.clone());

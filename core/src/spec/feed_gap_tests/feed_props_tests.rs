@@ -198,7 +198,7 @@ pub(super) fn rig(debounce_ms: u64, frames: Vec<FeedInput>, with_reset: bool) ->
     let feed = det.add::<Spy<Feed>>("feed", SpyState::new(f::FeedState::new(EPOCH, peers(), debounces(debounce_ms), channels()), &new_log()), Answerer);
     let feed = Address::<Feed>::new(feed.index());
     det.start_epoch(EPOCH);
-    let setup = [FeedInput::Online(Online(true)), FeedInput::WantPlus { model: "Chat".into(), id: CHAT, stream: true }, FeedInput::WantPlus { model: "Post".into(), id: POST, stream: true }];
+    let setup = [FeedInput::Online { online: Online(true), online_seq: 1 }, FeedInput::WantPlus { model: "Chat".into(), id: CHAT, stream: true }, FeedInput::WantPlus { model: "Post".into(), id: POST, stream: true }];
     for input in setup {
         det.post(feed, EpochStamp::Epoch(EPOCH), input);
         det.run_until_quiet(1_000).expect("the setup is quiet");

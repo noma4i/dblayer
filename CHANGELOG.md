@@ -27,6 +27,7 @@
 - `UrlSessionTransport` and `OkHttpTransport` refuse `subscribe`: server events arrive on the encrypted cable.
 
 ### Fixed
+- A list that refreshes on connect reads once when the network returns, not again for the resumed subscription.
 - `discard` and `cancelUpload` of an upload whose final mutation failed remove its operation and its optimistic row.
 - A media window marked stale reads the whole window again after a failed load.
 - The Android upload service reports its start after `open` and stops when no transfer is unfinished.

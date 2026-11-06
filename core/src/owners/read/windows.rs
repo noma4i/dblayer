@@ -55,8 +55,9 @@ impl Facts {
                 self.drop_interest(id);
                 Handled
             }
-            Ev::Stale if self.watched() => self.begin(context, 1, false, self.is_online()),
-            Ev::Stale => {
+            Ev::Stale { cause } if self.covers(*cause) => Handled,
+            Ev::Stale { .. } if self.watched() => self.begin(context, 1, false, self.is_online()),
+            Ev::Stale { .. } => {
                 self.fresh = false;
                 Handled
             }
@@ -65,7 +66,7 @@ impl Facts {
                 self.push_fx(WindowEffect::DerivePreload { revision: *revision });
                 Handled
             }
-            Ev::Online { online: true, now } if !self.is_fresh(*now) && self.watched() => self.begin(context, 1, false, true),
+            Ev::Online { online: true, now, .. } if !self.is_fresh(*now) && self.watched() => self.begin(context, 1, false, true),
             Ev::Online { online: true, .. } if self.reconnected && self.interest.iter().any(|id| self.reload.contains(id)) => self.begin(context, 1, false, true),
             Ev::ModelsReset { models, .. } if self.depends_on(models) => {
                 self.fresh = false;
@@ -161,7 +162,8 @@ impl Facts {
                 self.emit(Emit::CancelRetry { request: load.request });
                 Transition(WinState::waiting(load.force, load.page))
             }
-            Ev::Stale => {
+            Ev::Stale { cause } if self.covers(*cause) => Handled,
+            Ev::Stale { .. } => {
                 self.reread_due = true;
                 Handled
             }
@@ -227,7 +229,8 @@ impl Facts {
                 self.drop_interest(id);
                 Handled
             }
-            Ev::Stale => {
+            Ev::Stale { cause } if self.covers(*cause) => Handled,
+            Ev::Stale { .. } => {
                 self.reread_due = true;
                 Handled
             }

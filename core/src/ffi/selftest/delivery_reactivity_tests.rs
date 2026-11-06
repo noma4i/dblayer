@@ -8,9 +8,9 @@ use super::rig_tests::{add_reactions, bound, Fault, Rig, World};
 use crate::ffi::{Database, DbError, ReadFetch, ReadRequest, ReadStream, ReadValue, WireOperationOutcome};
 use crate::ffi::wire::Cell;
 
-struct FeedTransport {
+pub(super) struct FeedTransport {
     cable: crate::transport::encrypted::cable::peer_tests::CablePeer,
-    token: Mutex<Option<String>>,
+    pub(super) token: Mutex<Option<String>>,
     opened: tokio::sync::Notify,
 }
 
@@ -39,6 +39,10 @@ async fn feed_database_with_listen(listen: Option<serde_json::Value>) -> (Arc<Da
 }
 
 async fn feed_database_with_models(listen: Option<serde_json::Value>, fanout: bool, memory: bool) -> (Arc<Database>, Arc<FeedTransport>) {
+    feed_database_in(World::new("server", "A", true), listen, fanout, memory).await
+}
+
+pub(super) async fn feed_database_in(world: Arc<World>, listen: Option<serde_json::Value>, fanout: bool, memory: bool) -> (Arc<Database>, Arc<FeedTransport>) {
     use crate::schema::{Coverage, FieldSpec, Membership, ModelSpec, NodeRead, RelationSpec, RemoteShape, VariableSource, NODE_PARAM};
     use crate::value::ScalarKind;
     let mut revision = FieldSpec::scalar("serverRevision", ScalarKind::Int);
@@ -70,7 +74,6 @@ async fn feed_database_with_models(listen: Option<serde_json::Value>, fanout: bo
         room.key = crate::identity::ModelKey::new("Room");
         vec![chat, room]
     } else { vec![chat] };
-    let world = World::new("server", "A", true);
     let mut encrypted = crate::transport::encrypted::protocol_tests::config();
     encrypted.endpoints.session_operations.insert("login_link".into(), crate::ffi::EncryptedSessionOperation { path: "/api/auth/login_link".into(), class: crate::ffi::EncryptedOperationClass::Authenticated });
     let transport = Arc::new(FeedTransport { cable: crate::transport::encrypted::cable::peer_tests::CablePeer::new(encrypted.clone()), token: Mutex::new(None), opened: tokio::sync::Notify::new() });

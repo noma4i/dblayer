@@ -10,7 +10,7 @@ use std::time::Duration;
 
 use crate::owners::contract::{BatchAuthor, BatchId, Committed, ConnectionId, Drained, EpochEnded, EpochStarted, ModelsReset, Online, RejectReason, Rejected, ReplyId};
 use crate::owners::read::deliveries::{Deliveries, DeliveryInput};
-use crate::owners::read::windows::{StaleKeys, Windows, WindowsInput};
+use crate::owners::read::windows::{StaleCause, StaleKeys, Windows, WindowsInput};
 use crate::owners::store::{StoreBatch, StoreInput, StoreWriter};
 use crate::runtime::RetryPolicy;
 use crate::runtime::{Address, Cause, Effect, Effects, Epoch, Outbound, ScheduleId, StateOwner, Time};
@@ -137,7 +137,7 @@ enum Fx {
     HandshakeDeadline { connection: ConnectionId },
     CancelHandshake { connection: ConnectionId },
     Commit { batch: BatchId, events: Vec<FeedEvent> },
-    Stale { model: String, keys: StaleKeys },
+    Stale { model: String, keys: StaleKeys, cause: StaleCause },
     Joined { id: SubscriptionId, position: u64 },
     /// `id` = `None`: every stream that wants the model.
     ModelReady { model: String, id: Option<SubscriptionId> },
@@ -174,7 +174,7 @@ pub enum FeedInput {
     Observed { batch: BatchId, payloads: Vec<String> },
     Rejected(Rejected),
     Tick(Time),
-    Online(Online),
+    Online { online: Online, online_seq: u64 },
     ModelsReset(ModelsReset),
     EpochStarted(EpochStarted),
     EpochEnded(EpochEnded),
@@ -233,6 +233,8 @@ pub struct FeedState {
     epoch: Epoch,
     mode: Mode,
     online: Option<bool>,
+    /// The `online_seq` of the last `Online(true)`.
+    online_seq: u64,
     want: BTreeMap<String, BTreeSet<SubscriptionId>>,
     streams: BTreeSet<SubscriptionId>,
     /// `updates.debounce` of the models, from the schema at `install`.
@@ -322,7 +324,7 @@ impl Feed {
                 Fx::HandshakeDeadline { connection } => out.push(Effect::Schedule { id: ScheduleId(HANDSHAKE_SCHEDULE | connection), after: HANDSHAKE_DEADLINE, input: FeedInput::HandshakeDeadline { connection_id: connection } }),
                 Fx::CancelHandshake { connection } => out.push(Effect::Cancel(ScheduleId(HANDSHAKE_SCHEDULE | connection))),
                 Fx::Commit { batch, events } => out.push(Effect::Send(Outbound::new(peers.store, StoreInput::Commit(Self::commit_batch(state, batch, events))))),
-                Fx::Stale { model, keys } => out.push(Effect::Send(Outbound::new(peers.windows, WindowsInput::Stale { model, keys }))),
+                Fx::Stale { model, keys, cause } => out.push(Effect::Send(Outbound::new(peers.windows, WindowsInput::Stale { model, keys, cause }))),
                 Fx::Joined { id, position } => out.push(Effect::Send(Outbound::new(peers.deliveries, DeliveryInput::Joined { stream: id, position }))),
                 Fx::ModelReady { id: Some(id), .. } => out.push(Effect::Send(Outbound::new(peers.deliveries, DeliveryInput::ModelReady { stream: id }))),
                 Fx::ModelReady { model, id: None } => Self::to_streams(state, &model, &mut out, |stream| DeliveryInput::ModelReady { stream }),
@@ -394,7 +396,7 @@ impl StateOwner for Feed {
             FeedInput::Committed(committed) => {
                 let landed = state.owns_landing(committed.batch);
                 state.verdict(committed.batch, None, &mut fx);
-                if landed { fx.extend(committed.stale_parents.into_iter().map(|model| Fx::Stale { model, keys: StaleKeys::All })); }
+                if landed { fx.extend(committed.stale_parents.into_iter().map(|model| Fx::Stale { model, keys: StaleKeys::All, cause: StaleCause::Change })); }
             }
             FeedInput::Rejected(rejected) => state.verdict(rejected.batch, Some(rejected.reason), &mut fx),
             FeedInput::Tick(_) => {
@@ -402,7 +404,7 @@ impl StateOwner for Feed {
                     state.flush_pending(&mut fx);
                 }
             }
-            FeedInput::Online(Online(online)) => state.online_changed(online, &mut fx),
+            FeedInput::Online { online: Online(online), online_seq } => state.online_changed(online, online_seq, &mut fx),
             FeedInput::ModelsReset(reset) => state.models_reset(reset, &mut fx),
         }
         Self::lower(state, fx)

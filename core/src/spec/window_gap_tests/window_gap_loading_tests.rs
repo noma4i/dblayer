@@ -158,6 +158,20 @@ fn win_loading_online() {
 }
 
 #[test]
+fn win_loading_stale_covered() {
+    let mut twin = loading();
+    twin.step(Input::Online(true));
+    assert!(twin.step(Input::StaleGap).is_empty());
+    assert!(twin.reference.reread_due, "the request began before the return of the network");
+    let mut covered = Twin::new();
+    covered.step(Input::Online(false));
+    covered.step(Input::Online(true));
+    covered.call(1, Goal::First);
+    assert!(covered.step(Input::StaleGap).is_empty());
+    assert!(!covered.reference.reread_due, "the request began after the return of the network");
+}
+
+#[test]
 fn win_loading_stale() {
     let mut twin = loading();
     assert!(twin.step(Input::Stale { in_keys: true }).is_empty());

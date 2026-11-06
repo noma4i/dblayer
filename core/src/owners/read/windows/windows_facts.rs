@@ -4,6 +4,10 @@ use super::*;
 pub(super) struct Facts {
     pub(super) epoch: Epoch,
     pub(super) online: Option<bool>,
+    /// The `online_seq` of the last `Online(true)`.
+    pub(super) online_seq: u64,
+    /// The `online_seq` the window knew when its last request was issued.
+    pub(super) load_seq: std::cell::Cell<u64>,
     pub(super) base_generation: u64,
     pub(super) generations: BTreeMap<String, u64>,
     pub(super) dependency_models: BTreeSet<String>,
@@ -56,9 +60,10 @@ pub(super) struct Facts {
 impl Facts {
     pub(super) fn env(&mut self, event: &Ev) {
         match event {
-            Ev::Online { online, .. } => {
+            Ev::Online { online, online_seq, .. } => {
                 self.online = Some(*online);
                 if *online {
+                    self.online_seq = *online_seq;
                     self.reconnected = std::mem::take(&mut self.dropped);
                 } else {
                     self.dropped = true;
@@ -92,7 +97,7 @@ impl Facts {
                 self.marker.clone_from(&saved.marker);
                 self.members = saved.members;
             }
-            Ev::Stale => self.stale_marked.set(true),
+            Ev::Stale { cause } => if !self.covers(*cause) { self.stale_marked.set(true) },
             Ev::Load { store_revision, .. } => self.store_seen = self.store_seen.max(*store_revision),
             Ev::StoreSeen { revision } => self.store_seen = self.store_seen.max(*revision),
             _ => {}
@@ -101,6 +106,9 @@ impl Facts {
 
     /// Loaded, not marked stale, and `now` inside `landed_at <= now < fresh_until`: a clock that went back makes the window stale.
     pub(super) fn is_fresh(&self, now: i64) -> bool { self.fresh && self.landed_at <= now && now < self.fresh_until }
+
+    /// A request issued after the `Online(true)` that a gap names reads what the gap lost.
+    pub(super) fn covers(&self, cause: StaleCause) -> bool { matches!(cause, StaleCause::Gap { online_seq } if online_seq > 0 && self.load_seq.get() >= online_seq) }
 
     /// Only the preload watches the window.
     pub(super) fn preload_only(&self) -> bool { self.waiters.is_empty() && self.interest.len() == 1 && self.interest.contains(&PRELOAD) }
@@ -185,6 +193,7 @@ impl Facts {
 
     /// A load of the first page of a media window starts with a check of its marker; every other load asks for a page.
     pub(super) fn issue(&self, request: RequestId, attempt: u32, page: u32, force: bool) -> Load {
+        self.load_seq.set(self.online_seq);
         let load = Load::issued(request, attempt, page, force, self.basis());
         if !(self.media && page == 1) { return load; }
         let up_to = self.marker.as_ref().map_or(0, |marker| marker.sequence);

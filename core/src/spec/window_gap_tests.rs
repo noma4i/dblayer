@@ -147,6 +147,8 @@ struct Twin {
     revision: i64,
     generation: u64,
     pin_revision: Arc<AtomicU64>,
+    /// The `online_seq` of the last `Online(true)` the twin posted.
+    online_seq: u64,
     /// The `now` the inputs carry.
     now: i64,
     held: HeldReads,
@@ -187,7 +189,7 @@ impl Twin {
         reference.max_pages = max;
         reference.members_complete = members_complete;
         reference.media = media;
-        Self { det, addr, log, reference, revision: 10, generation: 0, pin_revision, now: NOW, held, hold, commit: String::new() }
+        Self { det, addr, log, reference, revision: 10, generation: 0, pin_revision, online_seq: 0, now: NOW, held, hold, commit: String::new() }
     }
 
     fn state(&self) -> &w::WindowsState { inner(&self.det, self.addr) }
@@ -262,11 +264,15 @@ impl Twin {
             }
             Input::Stale { in_keys } => {
                 let keys = if *in_keys { StaleKeys::All } else { StaleKeys::Set(BTreeSet::new()) };
-                self.post(w::WindowsInput::Stale { model: "Moment".into(), keys });
+                self.post(w::WindowsInput::Stale { model: "Moment".into(), keys, cause: w::StaleCause::Change });
             }
+            Input::StaleGap => self.post(w::WindowsInput::Stale { model: "Moment".into(), keys: StaleKeys::All, cause: w::StaleCause::Gap { online_seq: self.online_seq } }),
             Input::Foreground { seq } => self.post(w::WindowsInput::Foreground(*seq)),
             Input::SourceChanged { revision } => self.post(w::WindowsInput::StoreCommitted { models: vec!["Moment".into()], revision: *revision }),
-            Input::Online(on) => self.post(w::WindowsInput::Online { online: Online(*on), now: self.now }),
+            Input::Online(on) => {
+                self.online_seq += u64::from(*on);
+                self.post(w::WindowsInput::Online { online: Online(*on), online_seq: self.online_seq, now: self.now });
+            }
             Input::EpochEnded => {
                 self.det.end_epoch(EPOCH, Ended::SessionReset);
                 self.run();

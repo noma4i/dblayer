@@ -285,17 +285,17 @@ impl EffectRunner<Network> for NetworkRunner {
     fn run(&mut self, _stamp: EpochStamp, effect: NetworkEffect, _back: &Back<Network>) {
         let wiring = &self.wiring;
         match effect {
-            NetworkEffect::Broadcast(online) => {
+            NetworkEffect::Broadcast { online, online_seq } => {
                 self.db.connectivity().change(online);
-                wiring.to_windows(WindowsInput::Online { online: Online(online), now: self.db.lock().now_ms() });
-                wiring.to_feed(FeedInput::Online(Online(online)));
+                wiring.to_windows(WindowsInput::Online { online: Online(online), online_seq, now: self.db.lock().now_ms() });
+                wiring.to_feed(FeedInput::Online { online: Online(online), online_seq });
                 wiring.to_outbox(OutboxInput::Online(Online(online)));
                 wiring.to_transfer(TransferInput::Online(Online(online)));
                 wiring.to_session(SessionInput::Online(Online(online)));
                 wiring.to_calls(CallsInput::Online(Online(online)));
                 wiring.tell_network(&ALL_PEERS, NetworkEvent::Online { online, epoch: None });
             }
-            NetworkEffect::Snapshot { owner, epoch, online, saving } => {
+            NetworkEffect::Snapshot { owner, epoch, online, online_seq, saving } => {
                 if wiring.epoch_passed(epoch) {
                     return;
                 }
@@ -304,8 +304,8 @@ impl EffectRunner<Network> for NetworkRunner {
                     wiring.to_windows_in(epoch, WindowsInput::PowerSaving { saving });
                 }
                 match owner {
-                    Peer::Windows => wiring.to_windows_in(epoch, WindowsInput::Online { online: Online(online), now: self.db.lock().now_ms() }),
-                    Peer::Feed => wiring.to_feed(FeedInput::Online(Online(online))),
+                    Peer::Windows => wiring.to_windows_in(epoch, WindowsInput::Online { online: Online(online), online_seq, now: self.db.lock().now_ms() }),
+                    Peer::Feed => wiring.to_feed(FeedInput::Online { online: Online(online), online_seq }),
                     Peer::Calls => wiring.to_calls_at(stamp, CallsInput::Online(Online(online))),
                     Peer::Outbox => wiring.to_outbox_at(stamp, OutboxInput::Online(Online(online))),
                     Peer::Transfer => wiring.to_transfer_at(stamp, TransferInput::Online(Online(online))),

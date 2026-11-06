@@ -109,7 +109,7 @@ impl Twin {
         reference.debounce = debounce;
         let mut twin = Self { det, addr, log, reference, debounce_ms: ms, batches: VecDeque::new(), generation: 0, sealed: Vec::new(), snapshots: 0, reread: false, history: Vec::new(), shown: Vec::new() };
         if let Some(on) = online {
-            twin.post(FeedInput::Online(Online(on)));
+            twin.post(FeedInput::Online { online: Online(on), online_seq: u64::from(on) });
             twin.reference.online = Some(on);
         }
         take(&twin.log);
@@ -193,7 +193,7 @@ impl Twin {
             }
             Input::StrayBatch => vec![FeedInput::Committed(Committed { batch: 9_999, revision: 1, tables: Vec::new(), rows: None, models: Default::default(), stale_parents: Vec::new(), position: 0 })],
             Input::Tick => vec![FeedInput::Tick(Time(0))],
-            Input::Online(on) => vec![FeedInput::Online(Online(*on))],
+            Input::Online(on) => vec![FeedInput::Online { online: Online(*on), online_seq: u64::from(*on) }],
             Input::ModelsReset { models, generation } => vec![FeedInput::ModelsReset(ModelsReset { epoch: EPOCH, generation: *generation, models: models.clone() })],
             Input::EpochEnded | Input::Closing => Vec::new(),
         }

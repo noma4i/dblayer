@@ -43,7 +43,7 @@ impl Rig {
         let addr = det.add::<Spy<Feed>>("feed", SpyState::new(f::FeedState::new(EPOCH, peers, BTreeMap::new(), channels()), &log), Discard);
         det.start_epoch(EPOCH);
         let mut rig = Self { det, addr, log, batches: Vec::new() };
-        rig.post(FeedInput::Online(Online(true)));
+        rig.post(FeedInput::Online { online: Online(true), online_seq: 1 });
         rig
     }
 
@@ -67,7 +67,7 @@ impl Rig {
                     self.batches.push(number_after(&input, "id: ").expect("the batch id"));
                     words.push("commit".to_string());
                 }
-                Emitted::Send { to: WINDOWS, input } if input.starts_with("Stale {") => words.push(format!("stale:{}", text_after(&input, "model: ").expect("the model"))),
+                Emitted::Send { to: WINDOWS, input } if input.starts_with("Stale {") => words.push(format!("stale:{}{}", text_after(&input, "model: ").expect("the model"), number_after(&input, "online_seq: ").map_or(String::new(), |seq| format!(":gap{seq}")))),
                 Emitted::Send { to: DELIVERIES, input } => {
                     let stream = number_after(&input, "stream: ").expect("the stream");
                     let kind = input.split([' ', '{']).next().unwrap_or("");
@@ -245,7 +245,18 @@ fn feed_chan_ended_resubscribes() {
     assert_eq!(rig.post(FeedInput::ChannelResubscribe { connection_id: FIRST, channel: "B".into() }), ["subscribe:B"]);
     let mut shown = rig.confirm("B");
     shown.sort();
-    assert_eq!(shown, ["modelgap:1", "modelgap:2", "stale:Chat", "stale:Post"], "each model of the channel sees one gap after the new confirmation, and no second ready");
+    assert_eq!(shown, ["modelgap:1", "modelgap:2", "stale:Chat:gap1", "stale:Post:gap1"], "each model of the channel sees one gap after the new confirmation, its windows turn Stale with the cause Gap of the Online(true) that began the subscription, and no second ready");
+}
+
+#[test]
+fn feed_chan_gap_cause_names_last_online() {
+    let mut rig = Rig::live();
+    rig.post(FeedInput::Online { online: Online(true), online_seq: 2 });
+    rig.post(FeedInput::ChannelEnded { connection_id: FIRST, channel: "B".into(), failed: false });
+    rig.post(FeedInput::ChannelResubscribe { connection_id: FIRST, channel: "B".into() });
+    let mut shown = rig.confirm("B");
+    shown.sort();
+    assert_eq!(shown, ["modelgap:1", "modelgap:2", "stale:Chat:gap2", "stale:Post:gap2"]);
 }
 
 #[test]

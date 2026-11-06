@@ -6,16 +6,16 @@ use crate::runtime::{Cause, Effect, Effects, Epoch, StateOwner, Time};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum NetworkMode {
-    Open { online: bool, foreground_seq: u64, saving: bool },
+    Open { online: bool, online_seq: u64, foreground_seq: u64, saving: bool },
     Closed,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum NetworkEffect {
-    /// `Online(value)` to every owner.
-    Broadcast(bool),
-    /// `Online(online, epoch)` and, for Transfer and Windows, `PowerSaving(saving, epoch)`.
-    Snapshot { owner: Peer, epoch: Epoch, online: bool, saving: Option<bool> },
+    /// `Online(value, online_seq)` to every owner.
+    Broadcast { online: bool, online_seq: u64 },
+    /// `Online(online, online_seq, epoch)` and, for Transfer and Windows, `PowerSaving(saving, epoch)`.
+    Snapshot { owner: Peer, epoch: Epoch, online: bool, online_seq: u64, saving: Option<bool> },
     /// `Foreground(seq)` to Rounds, Session and Windows.
     Foreground(u64),
     /// `PowerSaving(value)` to Transfer and Windows.
@@ -45,7 +45,7 @@ impl Default for NetworkState {
 
 impl NetworkState {
     /// `online = false` and `saving = false` until the first input.
-    pub fn new() -> Self { Self { mode: NetworkMode::Open { online: false, foreground_seq: 0, saving: false } } }
+    pub fn new() -> Self { Self { mode: NetworkMode::Open { online: false, online_seq: 0, foreground_seq: 0, saving: false } } }
 
     pub fn mode(&self) -> NetworkMode { self.mode }
 }
@@ -63,21 +63,22 @@ impl StateOwner for Network {
         let run = |effects: Vec<NetworkEffect>| effects.into_iter().map(Effect::Run).collect();
         let reply = |id| NetworkEffect::Reply { id, closed: false };
         match (state.mode, input) {
-            (NetworkMode::Open { online, foreground_seq, saving }, NetworkInput::SetOnline { online: value, reply: id }) if value != online => {
-                state.mode = NetworkMode::Open { online: value, foreground_seq, saving };
-                run(vec![reply(id), NetworkEffect::Broadcast(value)])
+            (NetworkMode::Open { online, online_seq, foreground_seq, saving }, NetworkInput::SetOnline { online: value, reply: id }) if value != online => {
+                let online_seq = online_seq + u64::from(value);
+                state.mode = NetworkMode::Open { online: value, online_seq, foreground_seq, saving };
+                run(vec![reply(id), NetworkEffect::Broadcast { online: value, online_seq }])
             }
             (NetworkMode::Open { .. }, NetworkInput::SetOnline { reply: id, .. }) => run(vec![reply(id)]),
-            (NetworkMode::Open { online, foreground_seq, saving }, NetworkInput::Foreground { reply: id }) => {
-                state.mode = NetworkMode::Open { online, foreground_seq: foreground_seq + 1, saving };
+            (NetworkMode::Open { online, online_seq, foreground_seq, saving }, NetworkInput::Foreground { reply: id }) => {
+                state.mode = NetworkMode::Open { online, online_seq, foreground_seq: foreground_seq + 1, saving };
                 run(vec![reply(id), NetworkEffect::Foreground(foreground_seq + 1)])
             }
-            (NetworkMode::Open { online, foreground_seq, saving }, NetworkInput::PowerSaving { saving: value, reply: id }) if value != saving => {
-                state.mode = NetworkMode::Open { online, foreground_seq, saving: value };
+            (NetworkMode::Open { online, online_seq, foreground_seq, saving }, NetworkInput::PowerSaving { saving: value, reply: id }) if value != saving => {
+                state.mode = NetworkMode::Open { online, online_seq, foreground_seq, saving: value };
                 run(vec![reply(id), NetworkEffect::PowerSaving(value)])
             }
             (NetworkMode::Open { .. }, NetworkInput::PowerSaving { reply: id, .. }) => run(vec![reply(id)]),
-            (NetworkMode::Open { online, saving, .. }, NetworkInput::SnapshotRequest { owner, epoch }) => run(vec![NetworkEffect::Snapshot { owner, epoch, online, saving: matches!(owner, Peer::Transfer | Peer::Windows).then_some(saving) }]),
+            (NetworkMode::Open { online, online_seq, saving, .. }, NetworkInput::SnapshotRequest { owner, epoch }) => run(vec![NetworkEffect::Snapshot { owner, epoch, online, online_seq, saving: matches!(owner, Peer::Transfer | Peer::Windows).then_some(saving) }]),
             (NetworkMode::Open { .. }, NetworkInput::Closing) => {
                 state.mode = NetworkMode::Closed;
                 run(vec![NetworkEffect::Drained(Drained { owner: "network" })])

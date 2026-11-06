@@ -157,7 +157,7 @@ fn win_prop_fields_only() {
     twin.call(1, Goal::First);
     assert_eq!(twin.stage(), Some(WindowStage::Waiting), "a machine created after Online(false) reads the field of the dictionary");
     take(&twin.log);
-    twin.post(w::WindowsInput::Online { online: Online(true), now: NOW });
+    twin.post(w::WindowsInput::Online { online: Online(true), online_seq: 1, now: NOW });
     twin.post(w::WindowsInput::Response { request: 1, attempt: 1, page: AnswerPage::new(1, vec!["r1".into()], None), now: NOW });
     let sent = take(&twin.log).into_iter().find_map(|entry| if let Emitted::Send { to: STORE, input } = entry { input.contains("author: Window").then_some(input) } else { None }).expect("a batch");
     assert!(sent.contains("\"Moment\": 5"), "the basis is the generation of the dictionary: {sent}");
@@ -237,7 +237,7 @@ fn win_prop_waiters_leave() {
     assert!(twin.step(Input::Online(true)).is_empty());
     let mut preload = Twin::with_preload();
     preload.post_call(w::WindowsInput::EpochStarted(EpochStarted { epoch: EPOCH, identity: Some(1), generation: 0 }));
-    preload.post_call(w::WindowsInput::Online { online: Online(true), now: NOW });
+    preload.post_call(w::WindowsInput::Online { online: Online(true), online_seq: 1, now: NOW });
     preload.reference.step(Input::InterestPlus { id: PRELOAD });
     preload.reference.take_outcomes();
     preload.step(Input::Stale { in_keys: true });
@@ -356,6 +356,6 @@ fn win_dictionary_and_online_belong_to_the_epoch() {
     let (requests_before_online, _) = twin.split(take(&twin.log));
     assert_eq!(requests(&requests_before_online), 0, "no request before the addressed Online: {requests_before_online:?}");
     assert_eq!(twin.stage(), Some(WindowStage::Waiting));
-    twin.post_call(w::WindowsInput::Online { online: Online(true), now: NOW });
+    twin.post_call(w::WindowsInput::Online { online: Online(true), online_seq: 1, now: NOW });
     assert_eq!(twin.stage(), Some(WindowStage::Loading));
 }

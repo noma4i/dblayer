@@ -38,7 +38,7 @@ impl FeedState {
         for model in &regapped {
             fx.push(Fx::ModelGap { model: model.clone() });
         }
-        Self::stale_all(&regapped, fx);
+        self.stale_gap(&regapped, fx);
         self.announce_ready(fx);
     }
 
@@ -261,8 +261,11 @@ impl FeedState {
         Self::stale_all(&lost, fx);
     }
 
-    pub(super) fn online_changed(&mut self, online: bool, fx: &mut Vec<Fx>) {
+    pub(super) fn online_changed(&mut self, online: bool, online_seq: u64, fx: &mut Vec<Fx>) {
         self.online = Some(online);
+        if online {
+            self.online_seq = online_seq;
+        }
         match self.mode {
             Mode::Off { gap } if online && !self.want.is_empty() => {
                 self.mode = Mode::Opening { gap };

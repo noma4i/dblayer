@@ -45,6 +45,8 @@ impl Window {
             chain: None,
             stale_marked: false,
             stale_owed: false,
+            online_seq: 0,
+            load_seq: 0,
             landing_marker: None,
         }
     }
@@ -76,6 +78,7 @@ impl Window {
     fn request_ids(&mut self) -> (u64, u32) {
         let request = self.next_request;
         self.next_request += 1;
+        self.load_seq = self.online_seq;
         (request, self.attempt_id())
     }
 
@@ -120,6 +123,14 @@ impl Window {
                 return self.hold(input, vec![Effect::ReadWindow]);
             }
         }
+        if let Input::Online(true) = input {
+            self.online_seq += 1;
+        }
+        let input = match input {
+            Input::StaleGap if matches!(self.state, State::Idle | State::Loading { .. } | State::Landing { .. }) && self.online_seq > 0 && self.load_seq >= self.online_seq => return Vec::new(),
+            Input::StaleGap => Input::Stale { in_keys: true },
+            other => other,
+        };
         if self.state == State::Opening {
             return self.opening(input);
         }
