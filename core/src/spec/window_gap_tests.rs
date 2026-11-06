@@ -235,6 +235,10 @@ impl Twin {
         assert_eq!(owner_interest, want_interest, "the interest");
         let waiters: Vec<u64> = self.reference.waiters.keys().map(|id| id64(*id)).collect();
         assert_eq!(self.state().waiters(&key()), waiters, "the waiters");
+        if stage != WindowStage::Ended {
+            let state = self.load_state();
+            assert_eq!((state.has_more, state.settled), (self.reference.has_more(), self.reference.settled), "has_more and settled");
+        }
     }
 
     /// The reference models `WindowState` as one effect; the owner sends it to every stream of the interest, so a window with no stream sends none.
@@ -454,6 +458,30 @@ fn win_idle_interest() {
     assert_eq!(known.watch(), [Effect::WindowState], "a fresh window only tells its phase");
     assert_eq!(known.stage(), Some(WindowStage::Idle));
     assert_eq!(known.phase(), Phase::Loaded);
+}
+
+#[test]
+fn win_state_has_more_settled() {
+    let mut twin = Twin::new();
+    twin.watch();
+    let loading = twin.load_state();
+    assert!(!loading.settled && !loading.has_more, "the first load has no outcome yet");
+    twin.finish(Some(2));
+    let first = twin.load_state();
+    assert!(first.settled && first.has_more, "a page with a cursor settles the window and offers more");
+    assert_eq!(twin.call(2, Goal::Next), [Effect::Request { request: 2, attempt: 2, page: 2 }, Effect::WindowState]);
+    assert!(twin.load_state().settled, "a later load does not unsettle a held window");
+    twin.finish(None);
+    assert!(!twin.load_state().has_more, "the last page has no cursor");
+    twin.step(Input::InterestMinus { id: STREAM });
+    assert!(!twin.load_state().settled, "the last stream left");
+    twin.watch();
+    assert!(twin.load_state().settled, "a fresh window settles when a stream joins");
+    let mut failing = Twin::new();
+    failing.watch();
+    failing.fail(Failure::Permanent);
+    let failed = failing.load_state();
+    assert!(failed.settled && !failed.has_more, "a failed first load is an outcome");
 }
 
 #[test]

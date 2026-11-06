@@ -298,6 +298,6 @@ S208	K4-destroy	kotlin	com.noma4i.dblayer.DestroyRereadTest.aMissingDestroyedRow
 S209	A3-journal	core	a_slow_events_reader_reads_the_kept_events_and_one_exact_lost_range_then_one_end	unrun	-	arch-audit astra A3, one core journal
 S209	A3-journal	swift	BridgeProbeTests.aSlowCollectorReadsKeptEventsAndLostRangesThatAddUpToTheEventsSent	unrun	-	arch-audit astra A3, one core journal
 S209	A3-journal	kotlin	com.noma4i.dblayer.ModelEventsTest.aSlowCollectorReadsKeptEventsAndLostRangesThatAddUpToTheEventsSent	unrun	-	arch-audit astra A3, one core journal
-S219	A3-events	core	an_event_opened_before_linked_lists_reports_the_committed_payload	unrun	-	arch-audit astra A3
+S219	A3-events	core	dlv_event_before_after	unrun	-	arch-audit astra A3
 S219	A3-events	swift	BridgeProbeTests.chatEventPayloadPlatforms	unrun	-	arch-audit astra A3
 S219	A3-events	kotlin	com.noma4i.dblayer.EventPayloadTest.chatEventPayloadPlatforms	unrun	-	arch-audit astra A3

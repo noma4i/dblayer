@@ -580,7 +580,7 @@ async fn a_missing_destroyed_row_causes_one_reread_of_the_open_list() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn an_event_opened_before_linked_lists_reports_the_committed_payload() {
+async fn dlv_event_before_after() {
     let (database, transport, world) = chat_events().await;
     let epoch = database.session_epoch();
     let reader = Reader::open();
@@ -599,9 +599,10 @@ async fn an_event_opened_before_linked_lists_reports_the_committed_payload() {
         assert!(std::time::Instant::now() < deadline, "no event arrived: {:?}", reader.deliveries().iter().map(|delivery| format!("{:?}", delivery.value)).collect::<Vec<_>>());
         tokio::task::yield_now().await;
     }
-    let event = reader.deliveries().into_iter().find_map(|delivery| match delivery.value { ReadValue::Event { payload, .. } => serde_json::from_str::<serde_json::Value>(&payload).ok(), _ => None }).unwrap();
-    assert_eq!(event["id"], "c1");
-    assert_eq!(event["row"]["title"], "after", "the event carries the committed row");
+    let (id, before_row, after_row) = reader.deliveries().into_iter().find_map(|delivery| match delivery.value { ReadValue::Event { id, before, after, .. } => Some((id, before, after)), _ => None }).unwrap();
+    assert_eq!(id, "c1");
+    assert!(named(&before_row.expect("the event carries the row before"), "before"));
+    assert!(named(&after_row.expect("the event carries the committed row"), "after"));
     let primary = bound(database.read_query(epoch, query("PRIMARY"))).await.unwrap();
     assert_eq!(ids_of(primary.clone()), ["c1"]);
     assert!(named(&primary[0], "after"));

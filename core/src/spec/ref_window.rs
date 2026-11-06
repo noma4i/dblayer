@@ -130,6 +130,7 @@ pub(super) struct Window {
     pub(super) landed_revision: i64,
     pub(super) foreground_seen: u64,
     pub(super) phase: Phase,
+    pub(super) settled: bool,
     pub(super) outcomes: Vec<(u32, Result3)>,
     next_request: u64,
     next_attempt: u32,
@@ -155,6 +156,7 @@ impl Window {
             landed_revision: 0,
             foreground_seen: 0,
             phase: Phase::Idle,
+            settled: false,
             outcomes: Vec::new(),
             next_request: 1,
             next_attempt: 1,
@@ -255,6 +257,13 @@ impl Window {
         Vec::new()
     }
 
+    fn set_phase(&mut self, phase: Phase) {
+        self.phase = phase;
+        self.settled |= matches!(phase, Phase::Loaded | Phase::Failed);
+    }
+
+    pub(super) fn has_more(&self) -> bool { self.cursor.is_some() }
+
     fn page_limit_reached(&self) -> bool { self.page_count >= self.max_pages }
 
     fn idle(&mut self, input: Input) -> Vec<Effect> {
@@ -266,7 +275,7 @@ impl Window {
             Input::InterestPlus { id } => {
                 self.interest.insert(id);
                 if self.fresh {
-                    self.phase = Phase::Loaded;
+                    self.set_phase(Phase::Loaded);
                     vec![Effect::WindowState]
                 } else {
                     self.begin(1, false, true)
@@ -275,6 +284,9 @@ impl Window {
             Input::Load { id, goal, force } => self.idle_load(id, goal, force),
             Input::InterestMinus { id } => {
                 self.interest.remove(&id);
+                if self.interest.is_empty() {
+                    self.settled = false;
+                }
                 self.waiters.remove(&id);
                 Vec::new()
             }
@@ -347,13 +359,16 @@ impl Window {
             }
             Input::InterestMinus { id } => {
                 self.interest.remove(&id);
+                if self.interest.is_empty() {
+                    self.settled = false;
+                }
                 self.waiters.remove(&id);
                 if self.watched() {
                     Vec::new()
                 } else {
                     self.state = State::Idle;
                     self.fresh = false;
-                    self.phase = if self.has_rows { Phase::Loaded } else { Phase::Idle };
+                    self.set_phase(if self.has_rows { Phase::Loaded } else { Phase::Idle });
                     vec![Effect::Cancel { request, attempt }]
                 }
             }
@@ -407,7 +422,7 @@ impl Window {
         self.fresh = false;
         self.last_error = Some(network);
         self.reread_due = false;
-        self.phase = self.failed_phase();
+        self.set_phase(self.failed_phase());
         self.answer_all(Result3::Failed);
         vec![Effect::WindowState]
     }
@@ -426,6 +441,9 @@ impl Window {
             }
             Input::InterestMinus { id } => {
                 self.interest.remove(&id);
+                if self.interest.is_empty() {
+                    self.settled = false;
+                }
                 self.waiters.remove(&id);
                 Vec::new()
             }
@@ -445,7 +463,7 @@ impl Window {
         self.last_error = None;
         self.cursor_reset_used = false;
         self.replace_all = false;
-        self.phase = Phase::Loaded;
+        self.set_phase(Phase::Loaded);
         let next_target = |window: &Window| window.waiters.values().any(|want| matches!(want, Want::All) || matches!(want, Want::Next(c) if *c > page));
         let answered: Vec<(u32, Want)> = self.waiters.iter().map(|(id, want)| (*id, *want)).collect();
         let settle = |window: &mut Window, result_for: &dyn Fn(Want) -> Option<Result3>| {
@@ -534,6 +552,9 @@ impl Window {
             }
             Input::InterestMinus { id } => {
                 self.interest.remove(&id);
+                if self.interest.is_empty() {
+                    self.settled = false;
+                }
                 self.waiters.remove(&id);
                 if !self.watched() {
                     self.state = State::Idle;

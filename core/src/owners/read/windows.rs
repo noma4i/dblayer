@@ -294,6 +294,8 @@ struct Facts {
     reread_due: bool,
     has_rows: bool,
     phase: Phase,
+    /// The first load of the interest now held ended with an outcome.
+    settled: bool,
     error: Option<String>,
     /// The revision of the last `Committed` of a landing of this machine, 0 before the first.
     landed_revision: i64,
@@ -348,7 +350,20 @@ impl Facts {
 
     fn depends_on(&self, models: &[String]) -> bool { models.iter().any(|model| self.dependency_models.contains(model)) }
 
-    fn load_state(&self) -> WindowState { WindowState { phase: self.phase, error: self.error.clone(), loaded: (self.landed_revision != 0 || self.phase == Phase::Loaded).then_some(self.landed_revision) } }
+    fn load_state(&self) -> WindowState { WindowState { phase: self.phase, error: self.error.clone(), loaded: (self.landed_revision != 0 || self.phase == Phase::Loaded).then_some(self.landed_revision), has_more: self.cursor.is_some(), settled: self.settled, total: None } }
+
+    fn set_phase(&mut self, phase: Phase) {
+        self.phase = phase;
+        self.settled |= matches!(phase, Phase::Loaded | Phase::Failed);
+    }
+
+    fn drop_interest(&mut self, id: &InterestId) {
+        self.interest.remove(id);
+        self.waiters.remove(id);
+        if self.interest.is_empty() {
+            self.settled = false;
+        }
+    }
 
     fn announce(&mut self) {
         let streams = self.interest.iter().copied().filter(|id| *id != PRELOAD).collect();
@@ -397,7 +412,7 @@ impl Facts {
     fn fail(&mut self, message: &str, source: Option<crate::transport::TransportError>) -> Outcome<WinState> {
         self.fresh = false;
         self.reread_due = false;
-        self.phase = self.failed_phase();
+        self.set_phase(self.failed_phase());
         self.error = Some(message.to_string());
         self.answer_all(&WindowOutcome::Failed { error: message.to_string(), source });
         self.announce();
@@ -458,7 +473,7 @@ impl Facts {
         self.error = None;
         self.cursor_reset_used = false;
         self.replace_all = false;
-        self.phase = Phase::Loaded;
+        self.set_phase(Phase::Loaded);
         if !dependency_models.is_empty() {
             self.dependency_models = dependency_models.clone();
         }
@@ -510,7 +525,7 @@ impl Facts {
             Ev::InterestPlus { id } => {
                 self.interest.insert(*id);
                 if self.fresh {
-                    self.phase = Phase::Loaded;
+                    self.set_phase(Phase::Loaded);
                     self.announce();
                     Handled
                 } else {
@@ -520,13 +535,12 @@ impl Facts {
             Ev::Load { id, goal, force, .. } => self.idle_load(context, *id, *goal, *force),
             Ev::OfflineRefused { message } => {
                 self.error = Some(message.clone());
-                self.phase = self.failed_phase();
+                self.set_phase(self.failed_phase());
                 self.announce();
                 Handled
             }
             Ev::InterestMinus { id } => {
-                self.interest.remove(id);
-                self.waiters.remove(id);
+                self.drop_interest(id);
                 Handled
             }
             Ev::Stale if self.watched() => self.begin(context, 1, false, self.is_online()),
@@ -567,13 +581,12 @@ impl Facts {
                 Handled
             }
             Ev::InterestMinus { id } => {
-                self.interest.remove(id);
-                self.waiters.remove(id);
+                self.drop_interest(id);
                 if self.watched() {
                     return Handled;
                 }
                 self.fresh = false;
-                self.phase = if self.has_rows { Phase::Loaded } else { Phase::Idle };
+                self.set_phase(if self.has_rows { Phase::Loaded } else { Phase::Idle });
                 self.push_fx(WindowEffect::Cancel { request: *request, attempt: *attempt });
                 self.emit(Emit::CancelRetry { request: *request });
                 Transition(WinState::idle())
@@ -678,8 +691,7 @@ impl Facts {
                 Handled
             }
             Ev::InterestMinus { id } => {
-                self.interest.remove(id);
-                self.waiters.remove(id);
+                self.drop_interest(id);
                 Handled
             }
             Ev::Stale => {
@@ -717,8 +729,7 @@ impl Facts {
                 Handled
             }
             Ev::InterestMinus { id } => {
-                self.interest.remove(id);
-                self.waiters.remove(id);
+                self.drop_interest(id);
                 if self.watched() {
                     Handled
                 } else {
@@ -772,6 +783,7 @@ impl Window {
             reread_due: false,
             has_rows: false,
             phase: Phase::Idle,
+            settled: false,
             error: None,
             landed_revision: 0,
             store_seen: 0,

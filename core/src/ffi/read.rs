@@ -4,7 +4,7 @@
 use std::sync::Arc;
 
 use super::database::Database;
-use super::wire::WireRow;
+use super::wire::{WireModel, WireRow};
 use super::DbError;
 use crate::owners::contract::{WindowPhase, WindowState};
 use crate::owners::life::Life;
@@ -26,6 +26,12 @@ pub struct ReadState {
     pub phase: ReadPhase,
     pub error: Option<String>,
     pub loaded: Option<i64>,
+    /// The window has a next page.
+    pub has_more: bool,
+    /// The first load of the interest of the stream ended with an outcome.
+    pub settled: bool,
+    /// The rows of the membership at the revision of the value, for a list.
+    pub total: Option<u64>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, uniffi::Enum)]
@@ -58,7 +64,8 @@ pub enum ReadValue {
     Count { revision: i64, count: u64, state: ReadState },
     State { revision: i64, state: ReadState },
     Ready,
-    Event { position: u64, payload: String },
+    /// One event of a model: the rows before and after its landing, read only while a stream of events is open.
+    Event { position: u64, area: String, kind: String, id: String, before: Option<WireRow>, after: Option<WireRow> },
     Lost { first: u64, last: u64 },
     Gap,
     Status { revision: i64, state: String, progress: u64, error: Option<String> },
@@ -98,6 +105,9 @@ fn state_of(state: WindowState) -> ReadState {
         },
         error: state.error,
         loaded: state.loaded,
+        has_more: state.has_more,
+        settled: state.settled,
+        total: state.total,
     }
 }
 
@@ -114,7 +124,20 @@ fn full_row(row: &StreamRow) -> Result<WireRow, DbError> {
     row.row.clone().ok_or_else(|| DbError::Database { detail: format!("the read gave row {} without its values", row.id) })
 }
 
-fn read_value(value: Value) -> Result<ReadValue, DbError> {
+fn event_row(wire: Option<&WireModel>, id: &str, value: Option<&serde_json::Value>) -> Option<WireRow> {
+    let (wire, data) = (wire?, value?.as_object()?);
+    let id = crate::identity::RowId::new(id).ok()?;
+    Some(wire.row(&crate::db::Record { id, revision: 0, data: data.clone(), sync: Default::default(), ephemeral: 0 }))
+}
+
+fn event_of(position: u64, payload: &str, wire: Option<&WireModel>) -> ReadValue {
+    let fields: serde_json::Value = serde_json::from_str(payload).unwrap_or(serde_json::Value::Null);
+    let text = |name: &str| fields.get(name).and_then(serde_json::Value::as_str).unwrap_or_default().to_string();
+    let id = text("id");
+    ReadValue::Event { position, area: text("area"), kind: text("kind"), before: event_row(wire, &id, fields.get("before")), after: event_row(wire, &id, fields.get("after")), id }
+}
+
+fn read_value(value: Value, wire: Option<&WireModel>) -> Result<ReadValue, DbError> {
     Ok(match value {
         Value::Snapshot { revision, rows, state } => ReadValue::Snapshot { revision, rows: rows.iter().map(full_row).collect::<Result<_, _>>()?, state: state_of(state) },
         Value::Delta(delta) => {
@@ -137,7 +160,7 @@ fn read_value(value: Value) -> Result<ReadValue, DbError> {
         Value::Count { revision, count, state } => ReadValue::Count { revision, count, state: state_of(state) },
         Value::State { revision, state } => ReadValue::State { revision, state: state_of(state) },
         Value::Ready => ReadValue::Ready,
-        Value::Event { position, payload } => ReadValue::Event { position, payload },
+        Value::Event { position, payload } => event_of(position, &payload, wire),
         Value::Lost { first, last } => ReadValue::Lost { first, last },
         Value::Gap => ReadValue::Gap,
         Value::Status { revision, blob } => ReadValue::Status { revision, state: blob.state, progress: blob.progress, error: blob.error },
@@ -154,6 +177,8 @@ pub struct ReadStream {
     ended: std::sync::atomic::AtomicBool,
     /// The task that hands the status of a transfer to the stream.
     status: Option<tokio::task::AbortHandle>,
+    /// The model of an events stream, to turn the rows of its events into wire rows.
+    wire: Option<Arc<WireModel>>,
 }
 
 impl ReadStream {
@@ -174,7 +199,7 @@ impl ReadStream {
                 if matches!(value, Value::Ended(_)) {
                     self.ended.store(true, std::sync::atomic::Ordering::SeqCst);
                 }
-                read_value(value).map(Some)
+                read_value(value, self.wire.as_deref()).map(Some)
             }
             Outcome::Value(PullAnswer::Done) | Outcome::Closing => Ok(self.finished(ReadEnd::Closed)),
             Outcome::EpochEnded(_) => Ok(self.finished(ReadEnd::SessionEnded)),
@@ -297,6 +322,10 @@ impl Database {
             (ReadRequest::Blob { key }, true) => self.watch_status(stream, key),
             _ => None,
         };
-        Arc::new(ReadStream { life: self.life.clone(), stream, ended: std::sync::atomic::AtomicBool::new(false), status })
+        let wire = match (&request, valid) {
+            (ReadRequest::Events { model }, true) => self.wire(model).ok().cloned(),
+            _ => None,
+        };
+        Arc::new(ReadStream { life: self.life.clone(), stream, ended: std::sync::atomic::AtomicBool::new(false), status, wire })
     }
 }

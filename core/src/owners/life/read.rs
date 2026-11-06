@@ -156,7 +156,14 @@ pub(super) fn add(builder: &mut RuntimeBuilder, wiring: &Arc<Wiring>, ports: &Po
         });
     });
     let feed_reply = wiring.clone();
+    let feed_db = db.clone();
     wiring.on_store_reply(BatchAuthor::Feed, move |batch, reply| {
+        if matches!(reply, StoreReply::Committed { .. }) {
+            let payloads = crate::db::lock::lock(&feed_db.shared.landed_events).remove(&batch);
+            if let Some(payloads) = payloads {
+                feed_reply.to_feed(FeedInput::Observed { batch, payloads });
+            }
+        }
         feed_reply.to_feed(match reply {
             StoreReply::Committed { revision } => FeedInput::Committed(Committed { batch, revision: i64::try_from(revision).unwrap_or(i64::MAX), tables: Vec::new(), models: Models::default() }),
             StoreReply::Rejected(reason) => FeedInput::Rejected(Rejected { batch, reason }),

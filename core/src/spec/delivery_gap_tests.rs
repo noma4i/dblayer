@@ -48,7 +48,7 @@ fn rows_of(rows: &[r::Row]) -> Vec<d::StreamRow> { rows.iter().map(|(id, stamp)|
 
 fn window_state(state: &Ws) -> WindowState {
     let phase = match state.phase { Phase::Idle => WindowPhase::Idle, Phase::Loading => WindowPhase::Loading, Phase::Loaded => WindowPhase::Loaded, Phase::Failed => WindowPhase::Failed };
-    WindowState { phase, error: state.error.then(|| "e".to_string()), loaded: state.loaded }
+    WindowState { phase, error: state.error.then(|| "e".to_string()), loaded: state.loaded, has_more: false, settled: false, total: None }
 }
 
 fn ws_of(state: &WindowState) -> Ws {
@@ -56,7 +56,15 @@ fn ws_of(state: &WindowState) -> Ws {
     Ws { phase, error: state.error.is_some(), loaded: state.loaded }
 }
 
+thread_local! {
+    /// The `total` of each rows value the owner gave, in order.
+    static TOTALS: std::cell::RefCell<Vec<Option<u64>>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
 fn val_of(value: &d::Value) -> Val {
+    if let d::Value::Snapshot { state, .. } | d::Value::Count { state, .. } | d::Value::State { state, .. } | d::Value::Delta(d::Delta { state, .. }) = value {
+        TOTALS.with(|totals| totals.borrow_mut().push(state.total));
+    }
     let ids = |rows: &[d::StreamRow]| rows.iter().map(|row| row.id.clone()).collect::<Vec<_>>();
     match value {
         d::Value::Snapshot { revision, rows, state } => Val::Snapshot { revision: *revision, rows: ids(rows), state: ws_of(state) },
@@ -363,6 +371,20 @@ fn dlv_opening_read_holds() {
     let (effects, values) = twin.step_read(Input::WindowState(Ws::loaded_at(1)));
     assert_eq!(effects, [Effect::Available]);
     assert_eq!(values, [snap(1, &["r1"], Ws::loaded_at(1))], "the first value holds the loaded phase");
+}
+
+#[test]
+fn dlv_snapshot_total() {
+    let mut list = open_rows();
+    list.step(Input::WindowState(Ws::loaded_at(1)));
+    TOTALS.with(|totals| totals.borrow_mut().clear());
+    list.step_read(Input::ReadDone { revision: 1, rows: rows(&["r1", "r2"]) });
+    list.step_read(Input::ReadDone { revision: 2, rows: rows(&["r1", "r2", "r3"]) });
+    assert_eq!(TOTALS.with(|totals| totals.borrow().clone()), [Some(2), Some(3)], "a snapshot and a delta carry the rows of the membership at their revision");
+    let mut entity = open_as(Kind::Entity(Fetch::Never));
+    TOTALS.with(|totals| totals.borrow_mut().clear());
+    entity.step_read(Input::ReadDone { revision: 1, rows: rows(&["r1"]) });
+    assert_eq!(TOTALS.with(|totals| totals.borrow().clone()), [None], "a row by id has no total");
 }
 
 #[test]

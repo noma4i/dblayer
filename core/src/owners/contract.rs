@@ -169,16 +169,20 @@ pub enum WindowPhase {
     Failed,
 }
 
-/// `WindowState{phase, error, loaded}`: Windows to the Deliveries of the key.
+/// `WindowState{phase, error, loaded, has_more, settled}`: Windows to the Deliveries of the key.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct WindowState {
     pub phase: WindowPhase,
     pub error: Option<String>,
     pub loaded: Option<i64>,
+    pub has_more: bool,
+    pub settled: bool,
+    /// The rows of the membership at the revision of the value: set by `Deliveries` for a list.
+    pub total: Option<u64>,
 }
 
 impl WindowState {
-    pub fn idle() -> Self { Self { phase: WindowPhase::Idle, error: None, loaded: None } }
+    pub fn idle() -> Self { Self { phase: WindowPhase::Idle, error: None, loaded: None, has_more: false, settled: false, total: None } }
 }
 
 /// `Want+(model)`.

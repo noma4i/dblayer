@@ -315,7 +315,8 @@ pub(super) fn write_batch(db: &Db, batch: &crate::owners::store::StoreBatch) -> 
     let (encrypted, queue): (Vec<&StoreOp>, Vec<&StoreOp>) = batch.ops.iter().partition(|op| matches!(op, StoreOp::Pending { .. } | StoreOp::RemovePending | StoreOp::EraseSession | StoreOp::Answer { .. } | StoreOp::RemoveAnswer { .. } | StoreOp::Attempt { .. } | StoreOp::Session { .. }));
     let (removals, encrypted): (Vec<&StoreOp>, Vec<&StoreOp>) = encrypted.into_iter().partition(|op| matches!(op, StoreOp::RemoveAnswer { .. }));
     if batch.author == crate::owners::contract::BatchAuthor::Feed && !batch.rows.is_empty() {
-        db.land_events(&batch.rows).map_err(|error| error.to_string())?;
+        let payloads = db.land_events(&batch.rows).map_err(|error| error.to_string())?;
+        crate::db::lock::lock(&db.shared.landed_events).insert(batch.id, payloads);
     }
     let row_ops = if batch.author == crate::owners::contract::BatchAuthor::Feed || batch.ops.iter().any(|op| matches!(op, StoreOp::Window { .. })) { Vec::new() } else { row_ops(&batch.rows)? };
     if !encrypted.is_empty() {

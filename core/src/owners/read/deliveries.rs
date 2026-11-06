@@ -253,7 +253,7 @@ fn entry(row: &StreamRow) -> Result<Entry, String> {
 
 impl Delivery {
     fn new(epoch: Epoch, view: View, stage: DeliveryStage, revision: i64) -> Self {
-        let window = if view.remote { WindowState::idle() } else { WindowState { phase: WindowPhase::Loaded, error: None, loaded: None } };
+        let window = if view.remote { WindowState::idle() } else { WindowState { phase: WindowPhase::Loaded, error: None, loaded: None, has_more: false, settled: true, total: None } };
         Self {
             epoch,
             view,
@@ -371,6 +371,7 @@ impl Delivery {
             let has_rows = if self.view.kind == Kind::Count { self.count.is_some_and(|count| count > 0) } else { !self.rows.is_empty() };
             state.phase = if has_rows { WindowPhase::Loaded } else { WindowPhase::Failed };
         }
+        state.total = (self.view.kind == Kind::List).then(|| self.rows.len() as u64);
         state
     }
 
@@ -566,7 +567,7 @@ impl Delivery {
         }
         match self.stage {
             DeliveryStage::Opening => {
-                let state = WindowState { phase: WindowPhase::Failed, error: Some(error), loaded: None };
+                let state = WindowState { phase: WindowPhase::Failed, error: Some(error), loaded: None, has_more: false, settled: true, total: None };
                 self.window = state.clone();
                 self.revision = revision;
                 self.rows = Vec::new();
@@ -575,7 +576,7 @@ impl Delivery {
             }
             DeliveryStage::Live if revision > self.revision => {
                 let phase = if self.rows.is_empty() { WindowPhase::Failed } else { WindowPhase::Loaded };
-                let state = WindowState { phase, error: Some(error), loaded: self.window.loaded };
+                let state = WindowState { phase, error: Some(error), loaded: self.window.loaded, has_more: self.window.has_more, settled: true, total: None };
                 self.window = state.clone();
                 self.push(Value::State { revision: self.revision, state }, fx);
             }

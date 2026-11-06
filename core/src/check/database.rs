@@ -224,9 +224,8 @@ impl DatabaseSut {
                 self.state(stream, state, &mut out);
                 Observation::new("state", Value::Object(out))
             }
-            ReadValue::Event { position, payload } => {
-                let event: Value = serde_json::from_str(payload).unwrap_or(Value::Null);
-                Observation::new("event", json!({ "stream": stream, "position": position, "area": event["area"], "kind": event["kind"], "row": self.name_of(event["id"].as_str().unwrap_or_default()) }))
+            ReadValue::Event { position, area, kind, id, .. } => {
+                Observation::new("event", json!({ "stream": stream, "position": position, "area": area, "kind": kind, "row": self.name_of(id) }))
             }
             ReadValue::Ready => Observation::new("ready", json!({ "stream": stream })),
             ReadValue::Gap => Observation::new("gap", json!({ "stream": stream })),

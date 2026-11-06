@@ -155,6 +155,8 @@ pub enum FeedInput {
     /// The timer of a `Connect`: a connection still in `Handshake` fails.
     HandshakeDeadline { connection_id: ConnectionId },
     Committed(Committed),
+    /// The payloads of the events of a batch with the rows read at its landing: they arrive before the `Committed` of the batch.
+    Observed { batch: BatchId, payloads: Vec<String> },
     Rejected(Rejected),
     Tick(Time),
     Online(Online),
@@ -419,6 +421,15 @@ impl FeedState {
         let events = std::mem::take(&mut self.pending);
         fx.push(Fx::CancelDebounce);
         self.commit_by_basis(events, fx);
+    }
+
+    fn observed(&mut self, batch: BatchId, payloads: Vec<String>) {
+        let Some((_, events)) = self.landing.iter_mut().find(|(id, _)| *id == batch) else { return };
+        if payloads.len() == events.len() {
+            for (event, payload) in events.iter_mut().zip(payloads) {
+                event.payload = payload;
+            }
+        }
     }
 
     /// `Committed` and `Rejected` of a batch of `landing`: delivered on `Committed`, lost on `Rejected`. `NoSession` and `Closed` end a `Live` feed.
@@ -772,6 +783,17 @@ impl FeedState {
     }
 }
 
+/// The payload of an event of a model that a stream of events reads: the landing adds the rows before and after.
+fn with_observe(payload: &str) -> String {
+    match serde_json::from_str::<serde_json::Value>(payload) {
+        Ok(serde_json::Value::Object(mut object)) => {
+            object.insert("observe".into(), serde_json::Value::Bool(true));
+            serde_json::Value::Object(object).to_string()
+        }
+        _ => payload.to_string(),
+    }
+}
+
 pub struct Feed;
 
 const DEBOUNCE: ScheduleId = ScheduleId(0);
@@ -790,7 +812,10 @@ impl Feed {
             let entry = basis.entry(event.model.clone()).or_insert(event.basis);
             *entry = (*entry).min(event.basis);
         }
-        let rows = events.into_iter().map(|event| (event.model, event.payload)).collect();
+        let rows = events.into_iter().map(|event| {
+            let observed = state.want.get(&event.model).is_some_and(|ids| ids.iter().any(|id| state.streams.contains(id)));
+            (event.model, if observed { with_observe(&event.payload) } else { event.payload })
+        }).collect();
         StoreBatch { author: BatchAuthor::Feed, id: batch, epoch: state.epoch, basis, rows, intents: 0, credential: None, ops: Vec::new() }
     }
 
@@ -864,6 +889,7 @@ impl StateOwner for Feed {
             FeedInput::Dropped { connection_id } | FeedInput::SubscriptionEnded { connection_id } => state.dropped(connection_id, &mut fx),
             FeedInput::Resubscribe { connection_id } => state.resubscribe(connection_id, &mut fx),
             FeedInput::HandshakeDeadline { connection_id } => state.handshake_deadline(connection_id, &mut fx),
+            FeedInput::Observed { batch, payloads } => state.observed(batch, payloads),
             FeedInput::Committed(committed) => state.verdict(committed.batch, None, &mut fx),
             FeedInput::Rejected(rejected) => state.verdict(rejected.batch, Some(rejected.reason), &mut fx),
             FeedInput::Tick(_) => {

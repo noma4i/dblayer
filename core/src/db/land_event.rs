@@ -71,11 +71,30 @@ fn parse(events: &[(String, String)]) -> Result<Parsed, DbError> {
     Ok(parsed)
 }
 
+/// The payloads of the events with the rows read at the landing: only the events marked `observe` change.
+fn observed(events: &[(String, String)], seen: &BTreeMap<(String, String), (Option<Map<String, Value>>, Option<Map<String, Value>>)>) -> Vec<String> {
+    events
+        .iter()
+        .map(|(model, text)| {
+            let Ok(Value::Object(mut payload)) = serde_json::from_str::<Value>(text) else { return text.clone() };
+            if payload.get("observe") != Some(&Value::Bool(true)) {
+                return text.clone();
+            }
+            let Some(id) = payload.get("id").and_then(Value::as_str) else { return text.clone() };
+            let (before, after) = seen.get(&(model.clone(), id.to_string())).cloned().unwrap_or((None, None));
+            payload.insert("before".into(), before.map_or(Value::Null, Value::Object));
+            payload.insert("after".into(), after.map_or(Value::Null, Value::Object));
+            Value::Object(payload).to_string()
+        })
+        .collect()
+}
+
 impl Db {
-    /// Lands the events of one batch in one commit. A failing event rejects the batch.
-    pub(crate) fn land_events(&self, events: &[(String, String)]) -> Result<(), DbError> {
+    /// Lands the events of one batch in one commit. A failing event rejects the batch. An event marked `observe` comes back with the row before and the row after the landing, read in the same transaction.
+    pub(crate) fn land_events(&self, events: &[(String, String)]) -> Result<Vec<String>, DbError> {
         let parsed = parse(events)?;
         let generation = self.generation();
+        let mut seen: BTreeMap<(String, String), (Option<Map<String, Value>>, Option<Map<String, Value>>)> = BTreeMap::new();
         self.commit_following(&Authority::Owner, generation, |reader| {
             let mut operations: BTreeMap<(String, String), EntityOp> = BTreeMap::new();
             let mut touches: Vec<EntityOp> = Vec::new();
@@ -86,6 +105,8 @@ impl Db {
                 let Some(patch) = parsed.patches.get(&key) else { continue };
                 let Some(row) = self.admitted(reader, WriteOrigin::Event, Admission::default(), &upsert.model, patch, &mut 0)? else { continue };
                 let stored = reader.point(&upsert.model, upsert.id.as_str())?;
+                let entry = seen.entry((upsert.model.clone(), upsert.id.to_string())).or_insert_with(|| (stored.clone(), None));
+                entry.1 = Some(row.clone());
                 let own = RowRef::new(ModelKey::new(&upsert.model), upsert.id.clone());
                 let seen: Vec<&Map<String, Value>> = std::iter::once(&row).chain(stored.as_ref()).collect();
                 touches.extend(self.touch_ops(reader, spec, &seen, &own)?);
@@ -100,6 +121,7 @@ impl Db {
                 operations.insert(key, EntityOp::Upsert { model: ModelKey::new(&upsert.model), id: upsert.id.clone(), row });
             }
             for (model, id) in &parsed.deletes {
+                seen.entry((model.clone(), id.to_string())).or_insert((reader.point(model, id.as_str())?, None)).1 = None;
                 let own = RowRef::new(ModelKey::new(model), id.clone());
                 for target in self.destroy_targets(reader, &own)? {
                     operations.insert((target.model.to_string(), target.id.to_string()), EntityOp::Destroy { model: target.model, id: target.id, reason: DestroyReason::Server });
@@ -121,7 +143,7 @@ impl Db {
                 self.set_ephemeral(&admitted, &model, &id, values)?;
             }
         }
-        Ok(())
+        Ok(observed(events, &seen))
     }
 
     /// The loaded windows a row joins by its columns: the row is appended to the list of each.

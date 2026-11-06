@@ -73,7 +73,7 @@ fn rig() -> Rig {
 
 fn open(rig: &mut Rig, revision: i64) {
     rig.det.post(rig.owner, EpochStamp::Epoch(EPOCH), DeliveryInput::Open { stream: STREAM, view: view(), epoch: EPOCH, revision, identity: true, valid: true });
-    let loaded = WindowState { phase: WindowPhase::Loaded, error: None, loaded: Some(revision) };
+    let loaded = WindowState { phase: WindowPhase::Loaded, error: None, loaded: Some(revision), has_more: false, settled: true, total: None };
     rig.det.post(rig.owner, EpochStamp::Epoch(EPOCH), DeliveryInput::WindowState { stream: STREAM, state: loaded });
 }
 
