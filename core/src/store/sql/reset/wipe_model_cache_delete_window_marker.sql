@@ -1,0 +1,1 @@
+DELETE FROM window_marker WHERE window_key LIKE ?1 ESCAPE '\'

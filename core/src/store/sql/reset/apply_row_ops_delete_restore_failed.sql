@@ -1,0 +1,1 @@
+DELETE FROM restore_failed WHERE source_table = ?1 AND key = ?2

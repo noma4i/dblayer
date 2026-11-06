@@ -1,0 +1,1 @@
+SELECT id, seq FROM tombstone WHERE model = ? AND id IN ({})

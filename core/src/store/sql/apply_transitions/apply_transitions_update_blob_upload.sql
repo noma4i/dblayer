@@ -1,0 +1,1 @@
+UPDATE blob_upload SET ready = ?1, failed_at = ?2, signed_id = ?3, total_bytes = ?4, sent_bytes = ?5 WHERE seq = ?6

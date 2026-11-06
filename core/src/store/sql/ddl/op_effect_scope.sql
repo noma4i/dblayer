@@ -1,0 +1,1 @@
+CREATE INDEX IF NOT EXISTS op_effect_scope ON op_effect (model, scope_key, seq, position, row_id) WHERE scope_key IS NOT NULL

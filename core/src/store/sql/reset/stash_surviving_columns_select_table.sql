@@ -1,0 +1,1 @@
+SELECT id, {column} FROM {table} WHERE {column} IS NOT NULL

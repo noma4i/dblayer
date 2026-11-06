@@ -1,0 +1,1 @@
+SELECT row_id, fields FROM sync_upload WHERE model = ?1 AND action = ?2 AND batch = ?3 ORDER BY seq

@@ -1,0 +1,1 @@
+SELECT COALESCE((SELECT CAST(value AS INTEGER) FROM manifest WHERE key = 'revision_seq'), 0) + 1

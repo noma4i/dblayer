@@ -1,0 +1,1 @@
+DELETE FROM scope_revision WHERE model = ?1 AND row_id = ?2 AND scope_key IN (SELECT scope_key FROM scope_member WHERE model = ?1 AND row_id = ?3)

@@ -19,11 +19,11 @@ struct Origins {
 }
 
 fn read_origins(connection: &rusqlite::Connection) -> Result<Origins, super::StoreError> {
-    let rows = connection.prepare("SELECT seq, origin_kind, transfer_id, batch_id FROM op WHERE intent_state = 'ready'")?.query_map([], |row| Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?, row.get::<_, Option<i64>>(2)?, row.get::<_, Option<i64>>(3)?)))?.collect::<rusqlite::Result<Vec<_>>>()?;
+    let rows = connection.prepare(include_str!("sql/restore_read/read_origins_select_op.sql"))?.query_map([], |row| Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?, row.get::<_, Option<i64>>(2)?, row.get::<_, Option<i64>>(3)?)))?.collect::<rusqlite::Result<Vec<_>>>()?;
     let mut origins = Origins::default();
     for (seq, kind, transfer, batch) in rows {
         let member = |id: i64| -> Result<TransferMember, super::StoreError> {
-            let (cycle, row_id): (i64, String) = connection.query_row("SELECT cycle_id, row_id FROM sync_upload WHERE transfer_id = ?1", [id], |row| Ok((row.get(0)?, row.get(1)?)))?;
+            let (cycle, row_id): (i64, String) = connection.query_row(include_str!("sql/restore_read/read_origins_select_sync_upload.sql"), [id], |row| Ok((row.get(0)?, row.get(1)?)))?;
             Ok(TransferMember { transfer_id: u64::try_from(id).map_err(|_| super::StoreError::Constraint("invalid transfer id".into()))?, cycle_id: u64::try_from(cycle).map_err(|_| super::StoreError::Constraint("invalid transfer cycle".into()))?, row_id })
         };
         let origin = match (kind.as_str(), transfer, batch) {
@@ -33,14 +33,14 @@ fn read_origins(connection: &rusqlite::Connection) -> Result<Origins, super::Sto
                 Err(_) => { if let Ok(id) = u64::try_from(id) { origins.invalid_transfers.insert(id); } None },
             },
             ("transfer_group", None, Some(batch_id)) => {
-                let entries = connection.prepare("SELECT position, transfer_id FROM op_transfer WHERE op_id = ?1 ORDER BY position")?.query_map([seq], |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?)))?.collect::<rusqlite::Result<Vec<_>>>()?;
+                let entries = connection.prepare(include_str!("sql/restore_read/read_origins_select_op_transfer.sql"))?.query_map([seq], |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?)))?.collect::<rusqlite::Result<Vec<_>>>()?;
                 let ordered = entries.iter().enumerate().all(|(index, (position, _))| *position == index as i64);
                 let ids: Vec<_> = entries.into_iter().map(|(_, id)| id).collect();
                 let found = ids.iter().map(|id| member(*id)).collect::<Result<Vec<_>, _>>();
-                let valid_group: bool = connection.query_row("SELECT EXISTS(SELECT 1 FROM sync_upload_batch WHERE batch_id = ?1 AND op_id = ?2)", rusqlite::params![batch_id, seq], |row| row.get(0))?;
+                let valid_group: bool = connection.query_row(include_str!("sql/restore_read/read_origins_select_sync_upload_batch.sql"), rusqlite::params![batch_id, seq], |row| row.get(0))?;
                 let mut belongs = true;
                 for id in &ids {
-                    let matched: bool = connection.query_row("SELECT EXISTS(SELECT 1 FROM sync_upload WHERE transfer_id = ?1 AND batch = ?2)", rusqlite::params![id, batch_id], |row| row.get(0))?;
+                    let matched: bool = connection.query_row(include_str!("sql/restore_read/read_origins_select_sync_upload_2.sql"), rusqlite::params![id, batch_id], |row| row.get(0))?;
                     belongs &= matched;
                 }
                 match (u64::try_from(batch_id), found) {
@@ -84,14 +84,14 @@ impl Store {
             let connection = reader.connection();
             let pending = crate::transport::encrypted::state::pending(connection).map_err(crate::store::StoreError::from)?;
             let answers = crate::transport::encrypted::state::answers_of_operations(connection).map_err(crate::store::StoreError::from)?;
-            let effects_only = connection.prepare("SELECT seq FROM op WHERE intent_state = 'effects_only'").and_then(|mut statement| statement.query_map([], |row| row.get::<_, i64>(0))?.collect::<rusqlite::Result<Vec<_>>>()).map_err(crate::store::StoreError::from)?;
-            let cycles = connection.prepare("SELECT seq, cycle_id FROM op").and_then(|mut statement| statement.query_map([], |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?)))?.collect::<rusqlite::Result<std::collections::BTreeMap<_, _>>>()).map_err(crate::store::StoreError::from)?;
+            let effects_only = connection.prepare(include_str!("sql/restore_read/read_restore_select_op.sql")).and_then(|mut statement| statement.query_map([], |row| row.get::<_, i64>(0))?.collect::<rusqlite::Result<Vec<_>>>()).map_err(crate::store::StoreError::from)?;
+            let cycles = connection.prepare(include_str!("sql/restore_read/read_restore_select_op_2.sql")).and_then(|mut statement| statement.query_map([], |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?)))?.collect::<rusqlite::Result<std::collections::BTreeMap<_, _>>>()).map_err(crate::store::StoreError::from)?;
             let uploads = super::upload_rows::upload_rows(connection).map_err(crate::store::StoreError::from)?;
             let origins = read_origins(connection)?;
-            let outcomes = connection.prepare("SELECT transfer_id, cycle_id, kind, revision, value FROM transfer_outcome ORDER BY transfer_id, cycle_id").and_then(|mut statement| statement.query_map([], |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?, row.get::<_, String>(2)?, row.get::<_, Option<i64>>(3)?, row.get::<_, Option<String>>(4)?)))?.collect::<rusqlite::Result<Vec<_>>>()).map_err(crate::store::StoreError::from)?;
-            let orphans = connection.prepare("SELECT upload_id, key FROM upload_orphan ORDER BY upload_id").and_then(|mut statement| statement.query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)))?.collect::<rusqlite::Result<Vec<_>>>()).map_err(crate::store::StoreError::from)?;
-            let batches = connection.prepare("SELECT batch_id, joint, op_id FROM sync_upload_batch").and_then(|mut statement| statement.query_map([], |row| Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?, row.get::<_, Option<i64>>(2)?)))?.collect::<rusqlite::Result<Vec<_>>>()).map_err(crate::store::StoreError::from)?;
-            let orphan_answers = connection.prepare("SELECT request_id FROM encrypted_answer WHERE operation_id IS NULL OR operation_id NOT IN (SELECT seq FROM op) ORDER BY request_id").and_then(|mut statement| statement.query_map([], |row| row.get::<_, i64>(0))?.collect::<rusqlite::Result<Vec<_>>>()).map_err(crate::store::StoreError::from)?;
+            let outcomes = connection.prepare(include_str!("sql/restore_read/read_restore_select_transfer_outcome.sql")).and_then(|mut statement| statement.query_map([], |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?, row.get::<_, String>(2)?, row.get::<_, Option<i64>>(3)?, row.get::<_, Option<String>>(4)?)))?.collect::<rusqlite::Result<Vec<_>>>()).map_err(crate::store::StoreError::from)?;
+            let orphans = connection.prepare(include_str!("sql/restore_read/read_restore_select_upload_orphan.sql")).and_then(|mut statement| statement.query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)))?.collect::<rusqlite::Result<Vec<_>>>()).map_err(crate::store::StoreError::from)?;
+            let batches = connection.prepare(include_str!("sql/restore_read/read_restore_select_sync_upload_batch.sql")).and_then(|mut statement| statement.query_map([], |row| Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?, row.get::<_, Option<i64>>(2)?)))?.collect::<rusqlite::Result<Vec<_>>>()).map_err(crate::store::StoreError::from)?;
+            let orphan_answers = connection.prepare(include_str!("sql/restore_read/read_restore_select_encrypted_answer.sql")).and_then(|mut statement| statement.query_map([], |row| row.get::<_, i64>(0))?.collect::<rusqlite::Result<Vec<_>>>()).map_err(crate::store::StoreError::from)?;
             Ok((read_outbox(reader)?, origins, cycles, effects_only, pending, uploads, outcomes, answers, orphans, batches, orphan_answers))
         })?;
         let owned: Vec<i64> = uploads.iter().filter_map(UploadRaw::owned_op).collect();

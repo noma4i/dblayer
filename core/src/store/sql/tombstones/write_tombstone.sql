@@ -1,0 +1,1 @@
+INSERT OR REPLACE INTO tombstone (model, id, seq, deleted_at) VALUES (?1, ?2, ?3, ?4)

@@ -180,7 +180,7 @@ impl Store {
                     match remote {
                         Some(remote) => {
                             let (_, key) = super::window_identity(spec, model, &relation, remote, &params)?;
-                            rusqlite::OptionalExtension::optional(reader.connection().query_row("SELECT total FROM query_window WHERE key = ?1", [key], |row| row.get::<_, Option<i64>>(0)))?.flatten().and_then(|total| u64::try_from(total).ok())
+                            rusqlite::OptionalExtension::optional(reader.connection().query_row(include_str!("sql/lookup/read_view.sql"), [key], |row| row.get::<_, Option<i64>>(0)))?.flatten().and_then(|total| u64::try_from(total).ok())
                         }
                         None => None,
                     }

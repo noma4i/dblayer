@@ -1,0 +1,1 @@
+SELECT key, cursor, has_next, issued, applied, generation, total, pages FROM query_window WHERE key = ?1

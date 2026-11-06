@@ -1,0 +1,1 @@
+DELETE FROM {table} WHERE seq = ?1 AND item_position = ?2

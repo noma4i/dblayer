@@ -1,0 +1,1 @@
+INSERT INTO scope_revision (model, scope_key, row_id, revision, operation_seq) VALUES (?1, ?2, ?3, ?4, ?5) ON CONFLICT (model, scope_key, row_id) DO UPDATE SET revision = excluded.revision, operation_seq = excluded.operation_seq

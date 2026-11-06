@@ -86,7 +86,7 @@ impl SessionRunner {
                     let sequence = u64::try_from(session.sequence).map_err(|_| TransportError::Decode(format!("the stored session has the sequence {}", session.sequence)))?;
                     Ok::<_, TransportError>(crate::store::identity_of(&session.credential_digest).map(|digest| Credential { digest, sequence }))
                 }).transpose()?.flatten();
-                let unowned_pending = store.read_locked(|connection| connection.query_row("SELECT EXISTS (SELECT 1 FROM encrypted_pending WHERE owner_kind IS NULL OR owner_kind = 'detached')", [], |row| row.get(0))).map_err(|error| TransportError::Network(format!("session storage: {error}")))?;
+                let unowned_pending = store.read_locked(|connection| connection.query_row(include_str!("../../store/sql/session_state/stored.sql"), [], |row| row.get(0))).map_err(|error| TransportError::Network(format!("session storage: {error}")))?;
                 Ok(Restored { credential, pending: None, dropped_pending: false, answers: Default::default(), secret, restore_error: Some(error.to_string()), unowned_pending, wire: None, digest: None })
             }
         }

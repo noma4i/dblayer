@@ -342,25 +342,18 @@ impl Layout {
     }
 
     pub fn table_statements(&self, temp: bool) -> Vec<String> {
-        let kind = if temp { "CREATE TEMP TABLE" } else { "CREATE TABLE" };
-        let values = self.value_table.iter().map(|name| crate::nodes::node_table_statement(kind, name, &[("row_id", "TEXT"), ("field", "TEXT")]));
+        let temp = if temp { "TEMP " } else { "" };
+        let values = self.value_table.iter().map(|name| crate::nodes::node_table_statement(temp, name, &[("row_id", "TEXT"), ("field", "TEXT")]));
         self.tables
             .iter()
             .map(|table| match &table.shape {
-                TableShape::Nodes => crate::nodes::node_table_statement(kind, &table.name, &[("row_id", "TEXT"), ("owner", "INTEGER")]),
-                TableShape::Values(value) => format!(
-                    "{kind} IF NOT EXISTS {} (\n  row_id TEXT NOT NULL,\n  owner INTEGER NOT NULL,\n  pos INTEGER NOT NULL,\n  value {},\n  PRIMARY KEY (row_id, owner, pos)\n) STRICT, WITHOUT ROWID",
-                    table.name,
-                    value.ty.as_sql()
-                ),
+                TableShape::Nodes => crate::nodes::node_table_statement(temp, &table.name, &[("row_id", "TEXT"), ("owner", "INTEGER")]),
+                TableShape::Values(value) => format!(include_str!("../store/sql/ddl/values_table.sql"), temp = temp, table = table.name, value_type = value.ty.as_sql()),
                 TableShape::Elements(members) => {
                     let mut columns = Vec::new();
                     members.iter().for_each(|member| member_columns(member, &mut columns));
                     let extra: String = columns.iter().map(|(name, ty)| format!(",\n  {} {}", super::sql_ident(name), ty.as_sql())).collect();
-                    format!(
-                        "{kind} IF NOT EXISTS {} (\n  row_id TEXT NOT NULL,\n  node INTEGER NOT NULL,\n  owner INTEGER NOT NULL,\n  pos INTEGER NOT NULL{extra},\n  PRIMARY KEY (row_id, node)\n) STRICT, WITHOUT ROWID",
-                        table.name
-                    )
+                    format!(include_str!("../store/sql/ddl/elements_table.sql"), temp = temp, table = table.name, extra = extra)
                 }
             })
             .chain(values)

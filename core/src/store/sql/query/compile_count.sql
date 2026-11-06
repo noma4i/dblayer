@@ -1,0 +1,1 @@
+SELECT COUNT(*) FROM {} AS r{join}{filter}

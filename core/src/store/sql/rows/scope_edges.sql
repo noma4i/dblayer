@@ -1,0 +1,1 @@
+SELECT e.name, e.whole, e.fraction, e.text FROM scope_member AS m LEFT JOIN scope_edge AS e ON e.model = m.model AND e.scope_key = m.scope_key AND e.row_id = m.row_id WHERE m.model = ?1 AND m.scope_key = ?2 AND m.row_id = ?3

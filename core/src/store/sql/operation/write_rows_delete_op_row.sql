@@ -1,0 +1,1 @@
+DELETE FROM op_row WHERE seq = ?1

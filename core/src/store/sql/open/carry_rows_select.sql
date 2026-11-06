@@ -1,0 +1,1 @@
+SELECT {select} FROM {} ORDER BY rowid

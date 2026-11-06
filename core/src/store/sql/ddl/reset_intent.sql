@@ -1,0 +1,5 @@
+CREATE TABLE IF NOT EXISTS reset_intent (
+  id INTEGER PRIMARY KEY CHECK (id = 1),
+  mode TEXT NOT NULL,
+  started_at INTEGER NOT NULL
+) STRICT

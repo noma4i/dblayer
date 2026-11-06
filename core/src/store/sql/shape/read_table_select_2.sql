@@ -1,0 +1,1 @@
+SELECT row_id, node, owner, pos{list} FROM {} WHERE row_id IN ({}) ORDER BY row_id, owner, pos

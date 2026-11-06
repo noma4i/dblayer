@@ -1,0 +1,1 @@
+SELECT blob_id, created_at FROM blob_cache WHERE content_sha256 = ?1

@@ -1,0 +1,1 @@
+SELECT seq FROM op WHERE intent_state = 'effects_only'

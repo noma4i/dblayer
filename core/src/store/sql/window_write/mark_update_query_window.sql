@@ -1,0 +1,1 @@
+UPDATE query_window SET stale_since = NULL, landed_at = ?1 WHERE key = ?2

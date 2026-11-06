@@ -1,0 +1,20 @@
+CREATE TABLE IF NOT EXISTS op (
+  seq INTEGER PRIMARY KEY AUTOINCREMENT,
+  action_key TEXT NOT NULL,
+  status TEXT NOT NULL CHECK (status IN ('pending', 'failed', 'committed', 'rolledback')),
+  temp_id TEXT,
+  transport_started INTEGER NOT NULL DEFAULT 0,
+  base_revision INTEGER,
+  created_at INTEGER NOT NULL,
+  dedupe_key TEXT,
+  client_mutation_id TEXT NOT NULL DEFAULT (lower(hex(randomblob(16)))),
+  attempts INTEGER NOT NULL DEFAULT 0,
+  cycle_id INTEGER NOT NULL DEFAULT 1,
+  since INTEGER NOT NULL,
+  error_kind TEXT,
+  error_message TEXT,
+  intent_state TEXT NOT NULL DEFAULT 'ready' CHECK (intent_state IN ('effects_only', 'ready')),
+  origin_kind TEXT NOT NULL DEFAULT 'api' CHECK (origin_kind IN ('api', 'transfer', 'transfer_group')),
+  transfer_id INTEGER,
+  batch_id INTEGER
+) STRICT

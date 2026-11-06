@@ -1,0 +1,1 @@
+UPDATE op SET transport_started = 1, attempts = attempts + 1, since = ?2 WHERE seq = ?1 AND {}

@@ -1,0 +1,1 @@
+SELECT COALESCE(MAX(MAX(issued, applied, COALESCE(stale_since, 0))), 0) FROM query_window

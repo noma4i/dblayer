@@ -1,0 +1,1 @@
+CREATE INDEX IF NOT EXISTS tombstone_age ON tombstone (deleted_at)

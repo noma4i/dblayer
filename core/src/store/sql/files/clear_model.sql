@@ -1,0 +1,1 @@
+DELETE FROM file WHERE model = ?1

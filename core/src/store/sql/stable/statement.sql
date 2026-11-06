@@ -1,0 +1,1 @@
+SELECT order_key FROM scope_member WHERE model = ?1 AND scope_key = ?2 AND place IS NOT NULL AND (place, row_id) < (?3, ?4) ORDER BY place DESC, row_id DESC LIMIT 1

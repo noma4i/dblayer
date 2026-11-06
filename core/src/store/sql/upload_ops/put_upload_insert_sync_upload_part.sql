@@ -1,0 +1,1 @@
+INSERT INTO sync_upload_part (model, row_id, action, number, etag) VALUES (?1, ?2, ?3, ?4, ?5)

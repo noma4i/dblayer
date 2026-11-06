@@ -1,0 +1,7 @@
+CREATE {temp}TABLE IF NOT EXISTS {table} (
+  row_id TEXT NOT NULL,
+  node INTEGER NOT NULL,
+  owner INTEGER NOT NULL,
+  pos INTEGER NOT NULL{extra},
+  PRIMARY KEY (row_id, node)
+) STRICT, WITHOUT ROWID

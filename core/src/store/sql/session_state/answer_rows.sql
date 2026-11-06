@@ -1,0 +1,1 @@
+SELECT request_id, outcome, detail, operation_id FROM encrypted_answer

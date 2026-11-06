@@ -72,7 +72,7 @@ impl Store {
         let inner = self.lock();
         if !inner.ready { return Err(StoreError::Refused); }
         let transaction = inner.connection.unchecked_transaction()?;
-        transaction.execute_batch("CREATE TEMP TABLE batch_file_deletions (id TEXT PRIMARY KEY) WITHOUT ROWID; CREATE TEMP TRIGGER batch_file_delete BEFORE DELETE ON main.file BEGIN INSERT OR IGNORE INTO batch_file_deletions VALUES (OLD.id); END;")?;
+        transaction.execute_batch(include_str!("sql/batch_write/write_batch_prepared_create_table_batch_file_deletions.sql"))?;
         let base_revision = Reader::new(&transaction, &inner.models).revision_seq()?;
         let revision = base_revision.checked_add(1).ok_or_else(|| StoreError::Constraint("revision overflow".into()))?;
         let own = batch.ops.iter().find_map(|op| match op { crate::owners::store::StoreOp::RemoveIntent { op_id } => i64::try_from(*op_id).ok(), _ => None }).unwrap_or(-1);
@@ -122,11 +122,11 @@ impl Store {
         let candidates = writer.candidates;
         let mut live_files = std::collections::HashSet::new();
         for file in files {
-            let present: bool = transaction.query_row("SELECT EXISTS(SELECT 1 FROM file WHERE id = ?1)", [&file.record.id], |row| row.get(0))?;
+            let present: bool = transaction.query_row(include_str!("sql/batch_write/write_batch_prepared_select_file.sql"), [&file.record.id], |row| row.get(0))?;
             if present { live_files.insert(file.record.id.clone()); }
         }
-        let discarded = transaction.prepare("SELECT id FROM batch_file_deletions WHERE NOT EXISTS (SELECT 1 FROM file WHERE file.id = batch_file_deletions.id)")?.query_map([], |row| row.get(0))?.collect::<rusqlite::Result<Vec<String>>>()?;
-        transaction.execute_batch("DROP TRIGGER batch_file_delete; DROP TABLE batch_file_deletions;")?;
+        let discarded = transaction.prepare(include_str!("sql/batch_write/write_batch_prepared_select_batch_file_deletions.sql"))?.query_map([], |row| row.get(0))?.collect::<rusqlite::Result<Vec<String>>>()?;
+        transaction.execute_batch(include_str!("sql/batch_write/write_batch_prepared_drop_trigger_batch_file_delete.sql"))?;
         let (expiring, removed_memory) = super::batch_result::expiry(&transaction, &inner.models, &results, inner.now_ms())?;
         let stale_parents = super::batch_result::stale_parents(&transaction, &inner.models, &results)?;
         let removed_operations: Vec<u64> = if batch.author == BatchAuthor::Feed { results.iter().flat_map(|result| result.operations.iter()).filter_map(|seq| u64::try_from(*seq).ok()).collect() } else { Vec::new() };

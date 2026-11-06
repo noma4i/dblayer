@@ -1,0 +1,1 @@
+DELETE FROM op_item_header WHERE seq = ?1 AND position = ?2

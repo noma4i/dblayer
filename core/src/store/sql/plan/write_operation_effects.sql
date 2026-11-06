@@ -1,0 +1,1 @@
+INSERT INTO op_effect (seq, position, model, row_id, scope_key, kind, revision) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)

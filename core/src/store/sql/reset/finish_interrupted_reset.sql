@@ -1,0 +1,1 @@
+SELECT model FROM reset_intent_model ORDER BY pos

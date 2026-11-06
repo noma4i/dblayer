@@ -1,0 +1,1 @@
+SELECT name, "notnull" = 1 AND dflt_value IS NULL AND pk = 0 FROM pragma_table_xinfo(?1) WHERE hidden = 0 ORDER BY cid

@@ -1,0 +1,1 @@
+CREATE INDEX IF NOT EXISTS op_temp ON op (temp_id)

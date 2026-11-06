@@ -41,15 +41,15 @@ impl Store {
         if let Some(reason) = crate::ddl::recreate_reason(&inner.connection)? {
             let fingerprints = current_fingerprints(&inner);
             let transaction = inner.connection.unchecked_transaction()?;
-            let database: String = transaction.query_row("SELECT file FROM pragma_database_list WHERE name = 'main'", [], |row| row.get(0))?;
-            let has_files: bool = transaction.query_row("SELECT EXISTS (SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'file')", [], |row| row.get(0))?;
-            let before: Vec<String> = if has_files { transaction.prepare("SELECT id FROM file")?.query_map([], |row| row.get(0))?.collect::<rusqlite::Result<_>>()? } else { Vec::new() };
+            let database: String = transaction.query_row(include_str!("sql/boot/boot_select_pragma_database_list.sql"), [], |row| row.get(0))?;
+            let has_files: bool = transaction.query_row(include_str!("sql/boot/boot_select_sqlite_master.sql"), [], |row| row.get(0))?;
+            let before: Vec<String> = if has_files { transaction.prepare(include_str!("sql/boot/boot_select_file.sql"))?.query_map([], |row| row.get(0))?.collect::<rusqlite::Result<_>>()? } else { Vec::new() };
             let recreated_layout = super::open::recreate(&transaction)?;
             let outbox = recreated_layout.files_kept;
             dropped = recreated_layout.dropped;
             for statement in models_statements(models) { transaction.execute_batch(&statement)?; }
             crate::store::plan::op_effect::rebuild_open_effects(&transaction, &inner.models)?;
-            let after: std::collections::HashSet<String> = transaction.prepare("SELECT id FROM file")?.query_map([], |row| row.get(0))?.collect::<rusqlite::Result<_>>()?;
+            let after: std::collections::HashSet<String> = transaction.prepare(include_str!("sql/boot/boot_select_file.sql"))?.query_map([], |row| row.get(0))?.collect::<rusqlite::Result<_>>()?;
             manifest_stamp(&transaction, data_version, &fingerprints)?;
             transaction.commit()?;
             if !database.is_empty() {
@@ -84,7 +84,7 @@ impl Store {
                 for model in &reset {
                     wipe_model_cache(&transaction, model, &table_name(model), true)?;
                     if !fingerprints.contains_key(model) {
-                        transaction.execute("DELETE FROM manifest WHERE key = ?1", params![fingerprint_key(model)])?;
+                        transaction.execute(include_str!("sql/boot/boot_delete_manifest.sql"), params![fingerprint_key(model)])?;
                     }
                 }
                 restore_local_values(&transaction, &stash)?;
@@ -101,7 +101,7 @@ impl Store {
                 wipe_all_cache(&transaction, true, true)?;
                 reset_models = models.iter().filter(|spec| !spec.is_memory()).map(|spec| spec.key.as_str().to_string()).collect();
                 rebuild_cache_tables(&transaction)?;
-                transaction.execute("DELETE FROM manifest WHERE key LIKE 'fingerprint:%'", [])?;
+                transaction.execute(include_str!("sql/boot/boot_delete_manifest_2.sql"), [])?;
                 transaction.commit()?;
                 create_model_tables(&inner.connection, models)?;
                 let transaction = inner.connection.unchecked_transaction()?;
@@ -122,9 +122,9 @@ impl Store {
         }
 
         let tombstone_drops = prune_tombstones(&inner.connection, now, &TombstoneRetention::DEFAULT, None)?;
-        let database: String = inner.connection.query_row("SELECT file FROM pragma_database_list WHERE name = 'main'", [], |row| row.get(0))?;
-        let files: std::collections::HashSet<String> = inner.connection.prepare("SELECT id FROM file")?.query_map([], |row| row.get(0))?.collect::<rusqlite::Result<_>>()?;
-        let transfer_holders: std::collections::HashSet<String> = inner.connection.prepare("SELECT COALESCE(transfer_id, seq) FROM sync_upload WHERE COALESCE(transfer_id, seq) IS NOT NULL")?.query_map([], |row| row.get::<_, i64>(0).map(|id| id.to_string()))?.collect::<rusqlite::Result<_>>()?;
+        let database: String = inner.connection.query_row(include_str!("sql/boot/boot_select_pragma_database_list.sql"), [], |row| row.get(0))?;
+        let files: std::collections::HashSet<String> = inner.connection.prepare(include_str!("sql/boot/boot_select_file.sql"))?.query_map([], |row| row.get(0))?.collect::<rusqlite::Result<_>>()?;
+        let transfer_holders: std::collections::HashSet<String> = inner.connection.prepare(include_str!("sql/boot/boot_select_sync_upload.sql"))?.query_map([], |row| row.get::<_, i64>(0).map(|id| id.to_string()))?.collect::<rusqlite::Result<_>>()?;
         self.overlays.reset(super::rows::read_revision(&inner.connection)?);
         drop(inner);
         drop(reading_models);
@@ -158,7 +158,7 @@ fn remove_unheld_transfer_copies(directories: &crate::files::FileDirectories, ho
 }
 
 fn verify_saved(connection: &rusqlite::Connection) -> Result<(), StoreError> {
-    let has_manifest: bool = connection.query_row("SELECT EXISTS (SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'manifest')", [], |row| row.get(0))?;
+    let has_manifest: bool = connection.query_row(include_str!("sql/boot/verify_saved.sql"), [], |row| row.get(0))?;
     if !has_manifest {
         return Ok(());
     }

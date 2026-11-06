@@ -1,0 +1,1 @@
+SELECT seq FROM op_effect WHERE model = ?1 AND row_id = ?2

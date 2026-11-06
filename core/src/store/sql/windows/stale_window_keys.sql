@@ -1,0 +1,1 @@
+SELECT key FROM query_window WHERE stale_since IS NOT NULL ORDER BY key

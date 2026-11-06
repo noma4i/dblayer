@@ -1,0 +1,1 @@
+SELECT EXISTS (SELECT 1 FROM op WHERE seq = ?1 AND status = ?2)

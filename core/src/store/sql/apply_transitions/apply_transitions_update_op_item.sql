@@ -1,0 +1,1 @@
+UPDATE op_item SET background_refused = ?3 WHERE seq = ?1 AND position = ?2 AND phase NOT IN ('failed', 'cancelled')

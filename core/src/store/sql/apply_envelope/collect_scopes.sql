@@ -1,0 +1,1 @@
+SELECT DISTINCT scope_key FROM scope_member WHERE model = ? AND row_id IN ({})

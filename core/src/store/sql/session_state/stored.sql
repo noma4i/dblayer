@@ -1,0 +1,1 @@
+SELECT EXISTS (SELECT 1 FROM encrypted_pending WHERE owner_kind IS NULL OR owner_kind = 'detached')

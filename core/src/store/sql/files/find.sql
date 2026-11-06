@@ -1,0 +1,1 @@
+SELECT {COLUMNS} FROM file WHERE model = ?1 AND row_id = ?2 AND field = ?3

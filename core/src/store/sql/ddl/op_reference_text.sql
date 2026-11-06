@@ -1,0 +1,1 @@
+CREATE INDEX IF NOT EXISTS op_reference_text ON op_value (text, seq) WHERE text IS NOT NULL

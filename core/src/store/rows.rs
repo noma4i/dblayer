@@ -43,7 +43,7 @@ pub(crate) fn fetch_stored(connection: &Connection, info: &ModelInfo, ids: &[Str
     let select = if with_revisions { &layout.select } else { &layout.select_lean };
     let mut found = BTreeMap::new();
     for chunk in ids.chunks(CHUNK) {
-        let sql = format!("SELECT {} FROM {} WHERE id IN ({})", select, info.table, placeholders(chunk.len()));
+        let sql = format!(include_str!("sql/rows/fetch_stored.sql"), select, info.table, placeholders(chunk.len()));
         let mut statement = connection.prepare_cached(&sql)?;
         let mut partial = Vec::new();
         let rows = statement.query_map(params_from_iter(chunk.iter()), |row| {
@@ -117,7 +117,7 @@ pub struct ScopeRowsResult {
     pub dangling_members: usize,
 }
 
-pub(crate) const MEMBER_EXISTS_SQL: &str = "SELECT 1 FROM scope_member WHERE model = ?1 AND scope_key = ?2 AND row_id = ?3";
+pub(crate) const MEMBER_EXISTS_SQL: &str = include_str!("sql/rows/placeholders.sql");
 
 pub(crate) fn read_revision(connection: &Connection) -> Result<i64, StoreError> {
     manifest_read(connection, REVISION_SEQ_KEY)?.map(|text| {
@@ -185,7 +185,7 @@ impl<'a> Reader<'a> {
     #[cfg(test)]
     pub fn row_count(&self, model: &str) -> Result<i64, StoreError> {
         let info = self.model(model)?;
-        Ok(self.connection.query_row(&format!("SELECT COUNT(*) FROM {}", info.table), [], |row| row.get(0))?)
+        Ok(self.connection.query_row(&format!(include_str!("sql/rows/row_count.sql"), info.table), [], |row| row.get(0))?)
     }
 
     #[cfg(test)]
@@ -208,7 +208,7 @@ impl<'a> Reader<'a> {
 
     pub fn scope_members(&self, model: &str, scope_key: &str) -> Result<Vec<(String, String)>, StoreError> {
         let mut statement = self.connection.prepare_cached(
-            "SELECT row_id, order_key FROM scope_member WHERE model = ?1 AND scope_key = ?2 ORDER BY order_key, row_id",
+            include_str!("sql/rows/scope_members.sql"),
         )?;
         let rows = statement.query_map(params![model, scope_key], |row| Ok((row.get(0)?, row.get(1)?)))?;
         let members: Vec<(String, String)> = rows.collect::<Result<_, _>>()?;
@@ -218,9 +218,7 @@ impl<'a> Reader<'a> {
 
     pub(crate) fn scope_changes_since(&self, model: &str, scope_key: &str, revision: i64) -> Result<Vec<(String, Option<String>)>, StoreError> {
         let mut statement = self.connection.prepare_cached(
-            "SELECT r.row_id, m.order_key FROM scope_revision AS r \
-             LEFT JOIN scope_member AS m ON m.model = r.model AND m.scope_key = r.scope_key AND m.row_id = r.row_id \
-             WHERE r.model = ?1 AND r.scope_key = ?2 AND r.revision > ?3 ORDER BY r.revision, r.row_id",
+            include_str!("sql/rows/scope_changes_since.sql"),
         )?;
         let rows = statement.query_map(params![model, scope_key, revision], |row| Ok((row.get(0)?, row.get(1)?)))?;
         Ok(rows.collect::<Result<Vec<_>, _>>()?)
@@ -228,7 +226,7 @@ impl<'a> Reader<'a> {
 
     pub(crate) fn scope_first_ids(&self, model: &str, scope_key: &str, limit: usize) -> Result<Vec<String>, StoreError> {
         let mut statement = self.connection.prepare_cached(
-            "SELECT row_id FROM scope_member WHERE model = ?1 AND scope_key = ?2 ORDER BY order_key, row_id LIMIT ?3",
+            include_str!("sql/rows/scope_first_ids.sql"),
         )?;
         let rows = statement.query_map(params![model, scope_key, limit as i64], |row| row.get(0))?;
         let ids: Vec<String> = rows.collect::<Result<_, _>>()?;
@@ -238,9 +236,7 @@ impl<'a> Reader<'a> {
 
     pub fn scope_edges(&self, model: &str, scope_key: &str, row_ids: &[&str]) -> Result<EdgeRead, StoreError> {
         let mut statement = self.connection.prepare_cached(
-            "SELECT e.name, e.whole, e.fraction, e.text FROM scope_member AS m \
-             LEFT JOIN scope_edge AS e ON e.model = m.model AND e.scope_key = m.scope_key AND e.row_id = m.row_id \
-             WHERE m.model = ?1 AND m.scope_key = ?2 AND m.row_id = ?3",
+            include_str!("sql/rows/scope_edges.sql"),
         )?;
         let mut read = EdgeRead::default();
         for row_id in row_ids {
@@ -286,15 +282,15 @@ impl<'a> Reader<'a> {
     }
 
     pub fn scope_member_key(&self, model: &str, scope_key: &str, row_id: &str) -> Result<Option<String>, StoreError> {
-        Ok(self.connection.query_row("SELECT order_key FROM scope_member WHERE model = ?1 AND scope_key = ?2 AND row_id = ?3", params![model, scope_key, row_id], |row| row.get(0)).optional()?)
+        Ok(self.connection.query_row(include_str!("sql/rows/scope_member_key.sql"), params![model, scope_key, row_id], |row| row.get(0)).optional()?)
     }
 
     pub fn scope_first_key(&self, model: &str, scope_key: &str) -> Result<Option<String>, StoreError> {
-        Ok(self.connection.query_row("SELECT MIN(order_key) FROM scope_member WHERE model = ?1 AND scope_key = ?2", params![model, scope_key], |row| row.get(0))?)
+        Ok(self.connection.query_row(include_str!("sql/rows/scope_first_key.sql"), params![model, scope_key], |row| row.get(0))?)
     }
 
     pub fn scope_last_key(&self, model: &str, scope_key: &str) -> Result<Option<String>, StoreError> {
-        Ok(self.connection.query_row("SELECT MAX(order_key) FROM scope_member WHERE model = ?1 AND scope_key = ?2", params![model, scope_key], |row| row.get(0))?)
+        Ok(self.connection.query_row(include_str!("sql/rows/scope_last_key.sql"), params![model, scope_key], |row| row.get(0))?)
     }
 
     pub fn free_order_key(&self, model: &str, scope_key: &str, row_id: &str, wanted: &str, taken: &HashSet<String>) -> Result<String, StoreError> {
@@ -302,39 +298,39 @@ impl<'a> Reader<'a> {
         loop {
             let holder: Option<String> = self
                 .connection
-                .query_row("SELECT row_id FROM scope_member WHERE model = ?1 AND scope_key = ?2 AND order_key = ?3", params![model, scope_key, key], |row| row.get(0))
+                .query_row(include_str!("sql/rows/free_order_key_select_scope_member.sql"), params![model, scope_key, key], |row| row.get(0))
                 .optional()?;
             if holder.as_deref().is_none_or(|holder| holder == row_id) && !taken.contains(&key) {
                 return Ok(key);
             }
             let upper: Option<String> = self
                 .connection
-                .query_row("SELECT MIN(order_key) FROM scope_member WHERE model = ?1 AND scope_key = ?2 AND order_key > ?3", params![model, scope_key, key], |row| row.get(0))?;
+                .query_row(include_str!("sql/rows/free_order_key_select_scope_member_2.sql"), params![model, scope_key, key], |row| row.get(0))?;
             key = fractional_between(Some(&key), upper.as_deref()).map_err(|error| StoreError::Constraint(error.to_string()))?;
         }
     }
 
     pub fn scopes_of(&self, model: &str, row_id: &str) -> Result<Vec<String>, StoreError> {
-        let mut statement = self.connection.prepare_cached("SELECT scope_key FROM scope_member WHERE model = ?1 AND row_id = ?2")?;
+        let mut statement = self.connection.prepare_cached(include_str!("sql/rows/scopes_of.sql"))?;
         let keys = statement.query_map(params![model, row_id], |row| row.get(0))?;
         Ok(keys.collect::<Result<_, _>>()?)
     }
 
     pub fn scope_last_id(&self, model: &str, scope_key: &str) -> Result<Option<String>, StoreError> {
         Ok(self.connection.query_row(
-            "SELECT row_id FROM scope_member WHERE model = ?1 AND scope_key = ?2 ORDER BY order_key DESC, row_id DESC LIMIT 1",
+            include_str!("sql/rows/scope_last_id.sql"),
             params![model, scope_key], |row| row.get(0),
         ).optional()?)
     }
 
     pub fn scope_member_count(&self, model: &str, scope_key: &str) -> Result<i64, StoreError> {
-        Ok(self.connection.query_row("SELECT COUNT(*) FROM scope_member WHERE model = ?1 AND scope_key = ?2", params![model, scope_key], |row| row.get(0))?)
+        Ok(self.connection.query_row(include_str!("sql/rows/scope_member_count.sql"), params![model, scope_key], |row| row.get(0))?)
     }
 
     pub fn tombstone_seq(&self, model: &str, id: &str) -> Result<Option<i64>, StoreError> {
         Ok(self
             .connection
-            .query_row("SELECT seq FROM tombstone WHERE model = ?1 AND id = ?2", params![model, id], |row| row.get(0))
+            .query_row(include_str!("sql/rows/tombstone_seq.sql"), params![model, id], |row| row.get(0))
             .optional()?)
     }
 
@@ -342,7 +338,7 @@ impl<'a> Reader<'a> {
     pub fn tombstones(&self, model: &str, ids: &[String]) -> Result<BTreeMap<String, i64>, StoreError> {
         let mut found = BTreeMap::new();
         for chunk in ids.chunks(CHUNK) {
-            let sql = format!("SELECT id, seq FROM tombstone WHERE model = ? AND id IN ({})", placeholders(chunk.len()));
+            let sql = format!(include_str!("sql/rows/tombstones.sql"), placeholders(chunk.len()));
             let mut statement = self.connection.prepare_cached(&sql)?;
             let arguments = std::iter::once(model).chain(chunk.iter().map(String::as_str));
             let rows = statement.query_map(params_from_iter(arguments), |row| Ok((row.get(0)?, row.get(1)?)))?;

@@ -45,7 +45,7 @@ pub(super) fn apply_common(writer: &mut RowWrite<'_>, op: &StoreOp, index: usize
         }
         StoreOp::Effects { op_id, model, row_id, action, payload, effects } => {
             results.push(super::intent_write::intent(writer, *op_id, model, row_id, action, payload, effects)?);
-            writer.connection.execute("UPDATE op SET intent_state = 'effects_only' WHERE seq = ?1", [i64::try_from(*op_id).map_err(|_| StoreError::Constraint("operation id is too large".into()))?])?;
+            writer.connection.execute(include_str!("sql/batch_common/apply_common.sql"), [i64::try_from(*op_id).map_err(|_| StoreError::Constraint("operation id is too large".into()))?])?;
         }
         StoreOp::TransferOutcome { transfer_id, cycle_id, outcome } => super::upload_ops::put_outcome(writer.connection, *transfer_id, *cycle_id, outcome, writer.revision)?,
         StoreOp::RollBack { op_id } => results.push(super::rollback::apply(writer, *op_id)?),

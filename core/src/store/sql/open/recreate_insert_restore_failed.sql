@@ -1,0 +1,1 @@
+INSERT OR REPLACE INTO restore_failed (source_table, key, reason, columns) VALUES (?1, ?2, ?3, ?4)

@@ -1,0 +1,5 @@
+CREATE TABLE IF NOT EXISTS sync_upload_batch (
+  batch_id INTEGER NOT NULL PRIMARY KEY,
+  op_id INTEGER,
+  joint TEXT NOT NULL
+) STRICT, WITHOUT ROWID

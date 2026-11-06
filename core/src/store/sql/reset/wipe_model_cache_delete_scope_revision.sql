@@ -1,0 +1,1 @@
+DELETE FROM scope_revision WHERE model = ?1

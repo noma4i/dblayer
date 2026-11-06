@@ -193,7 +193,7 @@ fn recover_operations(store: &Store, models: &[ModelSpec], restore_rows: bool) -
         let mut open_row_ids: HashSet<RowRef> = HashSet::new();
         for spec in models {
             let table = table_name(spec.key.as_str());
-            let mut statement = inner.connection.prepare(&format!("SELECT id FROM {table} WHERE id LIKE '{}%'", crate::identity::TEMP_ID_PREFIX))?;
+            let mut statement = inner.connection.prepare(&format!(include_str!("sql/context/recover_operations.sql"), crate::identity::TEMP_ID_PREFIX, table = table))?;
             let ids = statement.query_map([], |row| row.get::<_, String>(0))?;
             for id in ids {
                 temp_rows.insert(RowRef::new(spec.key.clone(), crate::operation::stored_row_id(&id?)?));

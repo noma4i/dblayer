@@ -1,0 +1,1 @@
+DELETE FROM blob_cache WHERE content_sha256 = ?1

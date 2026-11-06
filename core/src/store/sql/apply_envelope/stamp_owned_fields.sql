@@ -1,0 +1,1 @@
+UPDATE {} SET {column} = ?1 WHERE id = ?2 AND {column} IS NOT NULL

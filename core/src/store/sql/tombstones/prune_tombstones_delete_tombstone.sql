@@ -1,0 +1,1 @@
+DELETE FROM tombstone WHERE deleted_at < ?1 AND (?2 IS NULL OR seq <= ?2)

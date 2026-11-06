@@ -1,0 +1,1 @@
+DELETE FROM scope_member WHERE model = ? AND row_id = ?

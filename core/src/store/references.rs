@@ -41,9 +41,9 @@ pub(super) fn rows_referencing(reader: &Reader<'_>, models: &BTreeMap<String, Mo
         let info = models.get(model).ok_or_else(|| StoreError::UnknownModel(model.clone()))?;
         let layout = &info.layout;
         let array = match layout.plan(field) {
-            Some(FieldPlan::Typed { member: Member::List { table, .. }, .. }) => Some(format!("SELECT DISTINCT row_id FROM {} WHERE value = ?1", sql_ident(&layout.tables[*table].name))),
-            Some(FieldPlan::Typed { member: Member::Raw { table, .. }, .. }) => Some(format!("SELECT DISTINCT row_id FROM {} WHERE parent = 0 AND text = ?1", sql_ident(&layout.tables[*table].name))),
-            Some(FieldPlan::Rest { .. }) => layout.value_table.as_ref().map(|table| format!("SELECT DISTINCT row_id FROM {} WHERE field = ?2 AND parent = 0 AND text = ?1", sql_ident(table))),
+            Some(FieldPlan::Typed { member: Member::List { table, .. }, .. }) => Some(format!(include_str!("sql/references/rows_referencing_select.sql"), sql_ident(&layout.tables[*table].name))),
+            Some(FieldPlan::Typed { member: Member::Raw { table, .. }, .. }) => Some(format!(include_str!("sql/references/rows_referencing_select_2.sql"), sql_ident(&layout.tables[*table].name))),
+            Some(FieldPlan::Rest { .. }) => layout.value_table.as_ref().map(|table| format!(include_str!("sql/references/rows_referencing_select_3.sql"), sql_ident(table))),
             _ => None,
         };
         let ids = if let Some(sql) = array {

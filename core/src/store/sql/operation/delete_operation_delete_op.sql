@@ -1,0 +1,1 @@
+DELETE FROM op WHERE seq = ?1

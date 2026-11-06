@@ -53,14 +53,13 @@ impl UploadRaw {
 
 pub(crate) fn upload_rows(connection: &rusqlite::Connection) -> rusqlite::Result<Vec<UploadRaw>> {
     let mut parts: BTreeMap<[String; 3], Vec<Option<String>>> = BTreeMap::new();
-    let mut statement = connection.prepare("SELECT model, row_id, action, etag FROM sync_upload_part ORDER BY model, row_id, action, number")?;
+    let mut statement = connection.prepare(include_str!("sql/upload_rows/upload_rows_select_sync_upload_part.sql"))?;
     for found in statement.query_map([], |row| Ok(([row.get::<_, String>(0)?, row.get(1)?, row.get(2)?], row.get::<_, Option<String>>(3)?)))? {
         let (key, etag) = found?;
         parts.entry(key).or_default().push(etag);
     }
     let mut statement = connection.prepare(
-        "SELECT model, row_id, action, seq, source, total, batch, upload_id, sent, completed, error_message, created_at, inline, size, sha256, mutation_path, mutation_body, on_failure, steps_path, steps_body, \
-         transfer_id, cycle_id, signed_id, aborted, op_id, fields, attempts FROM sync_upload WHERE seq IS NOT NULL ORDER BY seq",
+        include_str!("sql/upload_rows/upload_rows_select_sync_upload.sql"),
     )?;
     let rows = statement.query_map([], |row| {
         let key = [row.get::<_, String>(0)?, row.get(1)?, row.get(2)?];
@@ -103,7 +102,7 @@ impl Store {
     fn file_present(&self, transfer_id: u64, place: Location) -> Result<bool, DbError> {
         let file_id = crate::owners::write::transfer::file_id(transfer_id);
         match place {
-            Location::Table => self.read_locked(|connection| connection.query_row("SELECT COUNT(*) FROM file WHERE id = ?1", [&file_id], |row| row.get::<_, i64>(0))).map(|count| count > 0),
+            Location::Table => self.read_locked(|connection| connection.query_row(include_str!("sql/upload_rows/file_present.sql"), [&file_id], |row| row.get::<_, i64>(0))).map(|count| count > 0),
             Location::Directory => Ok(self.files().path(&file_id).is_some_and(|path| path.exists())),
         }
         .map_err(|error| DbError::Internal(error.to_string()))
@@ -166,7 +165,7 @@ impl Store {
         use crate::owners::write::transfer::{CachedBlob, EXPIRY_MS};
         let now = u64::try_from(self.lock().now_ms()).unwrap_or(0);
         let found = self.read_locked(|connection| {
-            rusqlite::OptionalExtension::optional(connection.query_row("SELECT blob_id, created_at FROM blob_cache WHERE content_sha256 = ?1", [content_sha256], |row| Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))))
+            rusqlite::OptionalExtension::optional(connection.query_row(include_str!("sql/upload_rows/blob_cache_lookup.sql"), [content_sha256], |row| Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))))
         });
         match found {
             Ok(Some((blob_id, created_at))) if now < u64::try_from(created_at).unwrap_or(0).saturating_add(EXPIRY_MS) => CachedBlob::Fresh { blob_id },
@@ -179,7 +178,7 @@ impl Store {
     pub(crate) fn batch_rows(&self, model: &str, action: &str, group: u64) -> Result<Vec<BatchRow>, DbError> {
         let found = self
             .read_locked(|connection| {
-                let mut statement = connection.prepare_cached("SELECT row_id, fields FROM sync_upload WHERE model = ?1 AND action = ?2 AND batch = ?3 ORDER BY seq")?;
+                let mut statement = connection.prepare_cached(include_str!("sql/upload_rows/batch_rows.sql"))?;
                 let rows = statement.query_map(rusqlite::params![model, action, i64::try_from(group).unwrap_or(i64::MAX)], |row| Ok((row.get::<_, String>(0)?, row.get::<_, Option<String>>(1)?)))?.collect::<Result<Vec<_>, _>>();
                 rows
             })

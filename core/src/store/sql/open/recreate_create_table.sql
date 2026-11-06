@@ -1,0 +1,1 @@
+CREATE TEMP TABLE {} AS SELECT * FROM {}{filter}

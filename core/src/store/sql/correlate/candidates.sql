@@ -1,0 +1,1 @@
+SELECT seq FROM op WHERE action_key = ?1 AND temp_id IS NOT NULL AND status IN {} ORDER BY seq

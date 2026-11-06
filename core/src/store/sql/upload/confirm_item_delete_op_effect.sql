@@ -1,0 +1,1 @@
+DELETE FROM op_effect WHERE seq = ?1 AND row_id = ?2

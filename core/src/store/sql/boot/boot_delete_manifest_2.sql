@@ -1,0 +1,1 @@
+DELETE FROM manifest WHERE key LIKE 'fingerprint:%'

@@ -1,0 +1,1 @@
+UPDATE op SET status = 'pending', transport_started = 0, attempts = 0, error_kind = NULL, error_message = NULL, since = ?2 WHERE seq = ?1 AND {}

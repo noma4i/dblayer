@@ -1,0 +1,1 @@
+DELETE FROM reset_intent

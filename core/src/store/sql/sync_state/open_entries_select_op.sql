@@ -1,0 +1,1 @@
+SELECT seq FROM op WHERE status IN {OPEN_STATUSES} ORDER BY seq

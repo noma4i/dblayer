@@ -1,0 +1,1 @@
+SELECT e.row_id, e.kind FROM op_effect AS e JOIN op ON op.seq = e.seq LEFT JOIN scope_revision r ON r.model = e.model AND r.scope_key = e.scope_key AND r.row_id = e.row_id WHERE e.model = ?1 AND e.scope_key = ?2 AND e.kind IN ('join', 'leave') AND e.seq >= COALESCE(r.operation_seq, 0) AND op.status IN {} ORDER BY e.seq, e.position

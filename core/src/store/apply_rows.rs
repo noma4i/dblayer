@@ -35,7 +35,7 @@ fn hidden_rows(connection: &Connection, transitions: &[OperationTransition]) -> 
             _ => {}
         }
     }
-    let mut statement = connection.prepare_cached("SELECT seq, action_key FROM op WHERE status = 'pending' AND action_key LIKE '%:destroy'")?;
+    let mut statement = connection.prepare_cached(include_str!("sql/apply_rows/hidden_rows.sql"))?;
     let open: Vec<OpenDestroy> = statement.query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?.collect::<Result<_, _>>()?;
     let mut hidden = HiddenRows::new();
     for (seq, action_key) in open {
@@ -157,7 +157,7 @@ fn apply_upsert(
             let changed = diff_fields(&stored.row, row);
             if changed.is_empty() {
                 if info.spec.is_memory() && info.spec.expire_window().is_some() {
-                    connection.execute(&format!("UPDATE {} SET revision = ?1 WHERE id = ?2", info.table), params![revision, id])?;
+                    connection.execute(&format!(include_str!("sql/apply_rows/apply_upsert.sql"), info.table), params![revision, id])?;
                 }
                 if let Ok(row_id) = crate::identity::RowId::new(&id) {
                     result.renewed.push(RowRef::new(model.clone(), row_id));
@@ -243,11 +243,11 @@ fn write_row(connection: &Connection, info: &ModelInfo, id: &str, row: &Map<Stri
     if exists {
         let assignments: Vec<String> = names.iter().map(|name| format!("{} = ?", crate::ddl::sql_ident(name))).collect();
         values.push(id.to_string().into());
-        connection.prepare_cached(&format!("UPDATE {} SET {} WHERE id = ?", info.table, assignments.join(", ")))?.execute(params_from_iter(values))?;
+        connection.prepare_cached(&format!(include_str!("sql/apply_rows/write_row_update.sql"), info.table, assignments.join(", ")))?.execute(params_from_iter(values))?;
     } else {
         names.splice(0..0, ["id".to_string(), "born_rev".to_string()]);
         values.splice(0..0, [id.to_string().into(), born_rev.into()]);
-        connection.prepare_cached(&format!("INSERT INTO {} ({}) VALUES ({})", info.table, names.iter().map(|name| crate::ddl::sql_ident(name)).collect::<Vec<_>>().join(", "), placeholders(names.len())))?.execute(params_from_iter(values))?;
+        connection.prepare_cached(&format!(include_str!("sql/apply_rows/write_row_insert.sql"), info.table, names.iter().map(|name| crate::ddl::sql_ident(name)).collect::<Vec<_>>().join(", "), placeholders(names.len())))?.execute(params_from_iter(values))?;
     }
     for plan in rewritten {
         let FieldPlan::Typed { field, member, tables } = plan else { continue };
@@ -277,7 +277,7 @@ pub(crate) fn remove_row(connection: &Connection, info: &ModelInfo, id: &str) ->
     if let Some(table) = &info.layout.value_table {
         delete_trees(connection, table, "row_id = ?1", &texts(&[id]))?;
     }
-    Ok(connection.execute(&format!("DELETE FROM {} WHERE id = ?1", info.table), params![id])?)
+    Ok(connection.execute(&format!(include_str!("sql/apply_rows/remove_row.sql"), info.table), params![id])?)
 }
 
 fn membership_moves(info: &ModelInfo, model: &ModelKey, id: &str, old: &Map<String, Value>, new: &Map<String, Value>, moves: &mut Vec<ScopeOp>, heads: &mut Vec<(ScopeRef, crate::identity::RowId)>) {
@@ -332,7 +332,7 @@ fn declared_membership(connection: &Connection, info: &ModelInfo, model: &ModelK
         let direction = match relation.remote.as_ref().map(|remote| &remote.shape) { Some(RemoteShape::Connection { direction, .. }) => *direction, _ => PageDirection::Forward };
         for key in after {
             let window = super::windows::window_key(key.as_str(), direction);
-            let loaded = connection.query_row("SELECT 1 FROM query_window WHERE key = ?1", [&window], |_| Ok(())).optional()?.is_some();
+            let loaded = connection.query_row(include_str!("sql/apply_rows/declared_membership.sql"), [&window], |_| Ok(())).optional()?.is_some();
             if loaded { heads.push((ScopeRef::new(model.clone(), key), row.clone())); }
         }
     }
@@ -345,7 +345,7 @@ fn loaded_threshold_scopes(connection: &Connection, info: &ModelInfo, relation: 
     let mut keys = BTreeSet::new();
     if wanted.is_empty() { return Ok(keys); }
     let pattern = super::windows::like_prefix(&super::windows::family_prefix(info.spec.key.as_str(), &relation.name));
-    let mut statement = connection.prepare_cached("SELECT key FROM query_window WHERE key LIKE ?1 ESCAPE '\\'")?;
+    let mut statement = connection.prepare_cached(include_str!("sql/apply_rows/loaded_threshold_scopes.sql"))?;
     let windows = statement.query_map([pattern], |row| row.get::<_, String>(0))?.collect::<Result<Vec<_>, _>>()?;
     for window in windows {
         let (scope, _) = window.rsplit_once(':').ok_or_else(|| constraint(format!("malformed window key {window}")))?;

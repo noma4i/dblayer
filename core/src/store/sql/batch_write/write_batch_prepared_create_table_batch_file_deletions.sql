@@ -1,0 +1,1 @@
+CREATE TEMP TABLE batch_file_deletions (id TEXT PRIMARY KEY) WITHOUT ROWID; CREATE TEMP TRIGGER batch_file_delete BEFORE DELETE ON main.file BEGIN INSERT OR IGNORE INTO batch_file_deletions VALUES (OLD.id); END;

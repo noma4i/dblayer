@@ -1,0 +1,7 @@
+CREATE TABLE IF NOT EXISTS tombstone (
+  model TEXT NOT NULL,
+  id TEXT NOT NULL,
+  seq INTEGER NOT NULL,
+  deleted_at INTEGER NOT NULL,
+  PRIMARY KEY (model, id)
+) STRICT, WITHOUT ROWID

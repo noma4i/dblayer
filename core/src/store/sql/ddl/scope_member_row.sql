@@ -1,0 +1,1 @@
+CREATE INDEX IF NOT EXISTS scope_member_row ON scope_member (model, row_id, scope_key)

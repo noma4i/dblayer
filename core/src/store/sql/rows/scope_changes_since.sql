@@ -1,0 +1,1 @@
+SELECT r.row_id, m.order_key FROM scope_revision AS r LEFT JOIN scope_member AS m ON m.model = r.model AND m.scope_key = r.scope_key AND m.row_id = r.row_id WHERE r.model = ?1 AND r.scope_key = ?2 AND r.revision > ?3 ORDER BY r.revision, r.row_id

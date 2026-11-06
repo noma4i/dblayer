@@ -42,7 +42,7 @@ fn effects(reader: &Reader<'_>, writes: &IntentEffects, writer: &RowWrite<'_>) -
                             _ => crate::schema::PageDirection::Forward,
                         };
                         let window = super::window_key(key.as_str(), direction);
-                        let loaded: bool = reader.connection().query_row("SELECT EXISTS(SELECT 1 FROM query_window WHERE key = ?1)", [&window], |row| row.get(0))?;
+                        let loaded: bool = reader.connection().query_row(include_str!("sql/intent_write/effects.sql"), [&window], |row| row.get(0))?;
                         if !loaded { continue; }
                         let first = reader.scope_first_key(model, key.as_str())?;
                         let order_key = crate::value::fractional_between(None, first.as_deref()).map_err(|error| StoreError::Constraint(error.to_string()))?;

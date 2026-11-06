@@ -1,0 +1,1 @@
+DELETE FROM encrypted_pending; DELETE FROM encrypted_answer; DELETE FROM encrypted_session; DELETE FROM restore_failed WHERE source_table = 'encrypted_pending';

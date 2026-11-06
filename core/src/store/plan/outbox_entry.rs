@@ -74,7 +74,7 @@ pub(super) fn local_scope_ops(reader: &Reader<'_>, spec: &ModelSpec, id: &RowId,
 }
 
 pub(super) fn is_resident(reader: &Reader<'_>, model: &ModelKey, id: &RowId) -> Result<bool, DbError> {
-    let sql = format!("SELECT 1 FROM {} WHERE id = ?1", table_name(model.as_str()));
+    let sql = format!(include_str!("../sql/plan/is_resident.sql"), table_name(model.as_str()));
     let found: Option<i64> = reader.connection().query_row(&sql, [id.as_str()], |row| row.get(0)).optional()?;
     Ok(found.is_some())
 }

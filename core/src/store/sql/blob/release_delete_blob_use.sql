@@ -1,0 +1,1 @@
+DELETE FROM blob_use WHERE consumer_seq = ?1

@@ -1,0 +1,1 @@
+DELETE FROM {search} WHERE rowid = (SELECT rowid FROM {main} WHERE id = ?1)

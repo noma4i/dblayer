@@ -62,7 +62,7 @@ impl PriorRow {
 
     pub fn destroyed(reader: &Reader<'_>, model: &str, id: &str) -> Result<Option<PriorRow>, StoreError> {
         let Some(before) = reader.point(model, id)? else { return Ok(None) };
-        let mut statement = reader.connection().prepare_cached("SELECT scope_key, order_key FROM scope_member WHERE model = ?1 AND row_id = ?2")?;
+        let mut statement = reader.connection().prepare_cached(include_str!("../sql/plan/destroyed.sql"))?;
         let members = statement
             .query_map(params![model, id], |row| Ok(PriorMember { scope_key: row.get(0)?, order_key: row.get(1)? }))?
             .collect::<Result<Vec<_>, _>>()?;
@@ -92,7 +92,7 @@ impl Prior {
             PriorRow::Created { model, id } | PriorRow::Edited { model, id, .. } | PriorRow::Destroyed { model, id, .. } | PriorRow::Join { model, id, .. } | PriorRow::Leave { model, id, .. } => (model, id),
         }).collect();
         let mut sequences = crate::operation::row_operation_sequences(reader.connection(), &keys)?;
-        let mut statement = reader.connection().prepare_cached("SELECT seq FROM op_effect WHERE model = ?1 AND row_id = ?2")?;
+        let mut statement = reader.connection().prepare_cached(include_str!("../sql/plan/related_operations.sql"))?;
         for (model, id) in keys {
             sequences.extend(statement.query_map(params![model, id], |row| row.get::<_, i64>(0))?.collect::<Result<Vec<_>, _>>()?);
         }

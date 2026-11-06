@@ -1,0 +1,1 @@
+SELECT model, row_id, action, seq, source, total, batch, upload_id, sent, completed, error_message, created_at, inline, size, sha256, mutation_path, mutation_body, on_failure, steps_path, steps_body, transfer_id, cycle_id, signed_id, aborted, op_id, fields, attempts FROM sync_upload WHERE seq IS NOT NULL ORDER BY seq

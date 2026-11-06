@@ -1,0 +1,1 @@
+UPDATE query_window SET stale_since = CASE WHEN stale_since <= ?3 THEN NULL ELSE stale_since END, landed_at = ?1 WHERE key = ?2

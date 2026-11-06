@@ -1,0 +1,1 @@
+UPDATE op SET intent_state = 'ready', origin_kind = ?2, transfer_id = ?3, batch_id = ?4 WHERE seq = ?1

@@ -1,0 +1,1 @@
+SELECT COALESCE(transfer_id, seq) FROM sync_upload WHERE COALESCE(transfer_id, seq) IS NOT NULL

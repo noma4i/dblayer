@@ -1,0 +1,1 @@
+SELECT credential_digest, sequence FROM encrypted_session WHERE id = 1

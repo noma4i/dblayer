@@ -1,0 +1,1 @@
+SELECT client_key FROM op_item WHERE seq = ?1 AND position = ?2

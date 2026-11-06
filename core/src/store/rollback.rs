@@ -161,7 +161,7 @@ fn restore_member(reader: &Reader<'_>, chain: &mut Chain<'_>, own: i64, (model, 
         return Ok(());
     }
     let owns = reader.connection().query_row(
-        "SELECT EXISTS (SELECT 1 FROM op_effect e JOIN scope_revision r ON r.model = e.model AND r.scope_key = e.scope_key AND r.row_id = e.row_id AND r.operation_seq = e.seq WHERE e.seq = ?1 AND e.model = ?2 AND e.scope_key = ?3 AND e.row_id = ?4 AND e.kind IN ('join', 'leave'))",
+        include_str!("sql/rollback/restore_member.sql"),
         rusqlite::params![own, model, scope_key, id], |row| row.get::<_, bool>(0),
     )?;
     if !owns { return Ok(()); }

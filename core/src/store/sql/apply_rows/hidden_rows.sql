@@ -1,0 +1,1 @@
+SELECT seq, action_key FROM op WHERE status = 'pending' AND action_key LIKE '%:destroy'

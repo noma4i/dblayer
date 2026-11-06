@@ -1,0 +1,1 @@
+UPDATE query_window SET stale_since = MAX(COALESCE(stale_since, 0), ?2) WHERE key LIKE ?1 ESCAPE '\' AND applied < ?2

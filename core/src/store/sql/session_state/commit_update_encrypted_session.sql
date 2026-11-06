@@ -1,0 +1,1 @@
+UPDATE encrypted_session SET sequence = ?1 WHERE id = 1

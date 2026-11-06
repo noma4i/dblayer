@@ -1,0 +1,1 @@
+INSERT OR IGNORE INTO sync_upload (model, row_id, action, {INFO_COLUMNS}) VALUES ({marks})

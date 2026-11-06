@@ -1,0 +1,1 @@
+SELECT row_id, position FROM op_item WHERE seq = ?1 AND row_id IS NOT NULL

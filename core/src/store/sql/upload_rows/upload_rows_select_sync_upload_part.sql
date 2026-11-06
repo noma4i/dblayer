@@ -1,0 +1,1 @@
+SELECT model, row_id, action, etag FROM sync_upload_part ORDER BY model, row_id, action, number

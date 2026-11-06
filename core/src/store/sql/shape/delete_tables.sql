@@ -1,0 +1,1 @@
+DELETE FROM {} WHERE row_id = ?1

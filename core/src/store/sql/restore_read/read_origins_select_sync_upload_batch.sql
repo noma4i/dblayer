@@ -1,0 +1,1 @@
+SELECT EXISTS(SELECT 1 FROM sync_upload_batch WHERE batch_id = ?1 AND op_id = ?2)

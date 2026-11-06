@@ -1,0 +1,1 @@
+INSERT INTO row_sync (model, row_id, state, error_kind, error_message, attempts, since) VALUES ({marks})

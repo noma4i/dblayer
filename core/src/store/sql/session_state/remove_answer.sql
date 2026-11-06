@@ -1,0 +1,1 @@
+DELETE FROM encrypted_answer WHERE request_id = ?1

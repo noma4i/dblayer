@@ -1,0 +1,6 @@
+CREATE TABLE IF NOT EXISTS op_transfer (
+  op_id INTEGER NOT NULL,
+  position INTEGER NOT NULL,
+  transfer_id INTEGER NOT NULL,
+  PRIMARY KEY (op_id, position)
+) STRICT, WITHOUT ROWID

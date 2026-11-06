@@ -11,7 +11,7 @@ pub struct RestoreFailedRow {
 impl Store {
     pub(crate) fn restore_failed(&self) -> Result<Vec<RestoreFailedRow>, StoreError> {
         self.read(&[], |reader| {
-            let mut statement = reader.connection().prepare("SELECT source_table, key, reason, columns FROM restore_failed ORDER BY source_table, key")?;
+            let mut statement = reader.connection().prepare(include_str!("sql/restore/restore_failed.sql"))?;
             let rows = statement
                 .query_map([], |row| Ok(RestoreFailedRow { table: row.get(0)?, key: row.get(1)?, reason: row.get(2)?, columns: row.get(3)? }))?
                 .collect::<rusqlite::Result<_>>()?;

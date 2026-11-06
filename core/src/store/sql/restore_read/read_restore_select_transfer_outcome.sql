@@ -1,0 +1,1 @@
+SELECT transfer_id, cycle_id, kind, revision, value FROM transfer_outcome ORDER BY transfer_id, cycle_id

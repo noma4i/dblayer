@@ -1,0 +1,1 @@
+SELECT row_id, order_key FROM scope_member WHERE model = ?1 AND scope_key = ?2 AND order_key {comparison} ?3 ORDER BY order_key {direction} LIMIT {}

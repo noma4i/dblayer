@@ -1,0 +1,1 @@
+DELETE FROM tombstone WHERE model = ?1

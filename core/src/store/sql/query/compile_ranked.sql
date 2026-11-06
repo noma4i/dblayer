@@ -1,0 +1,1 @@
+SELECT {} FROM {} AS r{join}{filter}{order}

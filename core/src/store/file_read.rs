@@ -65,7 +65,7 @@ impl Store {
         envelope.operation_transitions.extend(due.iter().map(|(id, _)| crate::store::OperationTransition::RetireBlob { id: id.clone(), expired: true }));
         self.commit(envelope)?;
         let files: Vec<String> = self.read_models(&[], |reader| {
-            Ok(due.iter().filter_map(|(_, file)| file.as_ref()).filter_map(|id| match reader.connection().query_row("SELECT EXISTS (SELECT 1 FROM file WHERE id = ?1)", [id], |row| row.get::<_, bool>(0)) { Ok(false) => Some(Ok(id.clone())), Ok(true) => None, Err(error) => Some(Err(StoreError::from(error))) }).collect::<Result<Vec<_>, _>>()?)
+            Ok(due.iter().filter_map(|(_, file)| file.as_ref()).filter_map(|id| match reader.connection().query_row(include_str!("sql/file_read/expire_blobs_before_use.sql"), [id], |row| row.get::<_, bool>(0)) { Ok(false) => Some(Ok(id.clone())), Ok(true) => None, Err(error) => Some(Err(StoreError::from(error))) }).collect::<Result<Vec<_>, _>>()?)
         })?;
         self.files().discard(&files).map_err(io_fault)?;
         Ok(())

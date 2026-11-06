@@ -1,0 +1,1 @@
+INSERT INTO transfer_abort (operation_id, item_id, storage_key, upload_id, abort_operation) VALUES (?1, ?2, ?3, ?4, ?5)

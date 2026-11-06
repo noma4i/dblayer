@@ -1,0 +1,1 @@
+SELECT {columns} FROM {} AS r{join}{filter}{order}{window}

@@ -1,0 +1,1 @@
+INSERT INTO op_row (seq, pos, row_id) VALUES (?1, ?2, ?3)

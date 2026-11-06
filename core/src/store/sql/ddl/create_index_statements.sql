@@ -1,0 +1,1 @@
+CREATE INDEX IF NOT EXISTS {table}_idx_{index} ON {table} ({})

@@ -1,0 +1,1 @@
+SELECT DISTINCT row_id FROM {} WHERE field = ?2 AND parent = 0 AND text = ?1

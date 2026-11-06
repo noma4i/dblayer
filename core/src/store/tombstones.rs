@@ -38,7 +38,7 @@ pub(crate) fn write_tombstone(
     deleted_at: i64,
 ) -> Result<(), StoreError> {
     connection.execute(
-        "INSERT OR REPLACE INTO tombstone (model, id, seq, deleted_at) VALUES (?1, ?2, ?3, ?4)",
+        include_str!("sql/tombstones/write_tombstone.sql"),
         params![model, id, seq, deleted_at],
     )?;
     Ok(())
@@ -51,14 +51,13 @@ pub(crate) fn prune_tombstones(
     min_pin_revision: Option<u64>,
 ) -> Result<usize, StoreError> {
     let mut removed =
-        connection.execute("DELETE FROM tombstone WHERE deleted_at < ?1 AND (?2 IS NULL OR seq <= ?2)", params![now - retention.ttl_ms, min_pin_revision.map(|value| i64::try_from(value).unwrap_or(i64::MAX))])?;
-    let total: i64 = connection.query_row("SELECT COUNT(*) FROM tombstone", [], |row| row.get(0))?;
+        connection.execute(include_str!("sql/tombstones/prune_tombstones_delete_tombstone.sql"), params![now - retention.ttl_ms, min_pin_revision.map(|value| i64::try_from(value).unwrap_or(i64::MAX))])?;
+    let total: i64 = connection.query_row(include_str!("sql/tombstones/prune_tombstones_select_tombstone.sql"), [], |row| row.get(0))?;
     let excess = retention.eviction_count(total);
     if excess > 0 {
         let age_clause = if retention.ignores_minimum_age(total) { 1 } else { 0 };
         removed += connection.execute(
-            "DELETE FROM tombstone WHERE (model, id) IN \
-             (SELECT model, id FROM tombstone WHERE (?1 = 1 OR deleted_at < ?2) AND (?4 IS NULL OR seq <= ?4) ORDER BY deleted_at LIMIT ?3)",
+            include_str!("sql/tombstones/prune_tombstones_delete_tombstone_2.sql"),
             params![age_clause, now - retention.min_age_ms, excess, min_pin_revision.map(|value| i64::try_from(value).unwrap_or(i64::MAX))],
         )?;
     }
@@ -84,7 +83,7 @@ impl Store {
     #[cfg(test)]
     pub fn tombstone_count(&self) -> Result<i64, StoreError> {
         let inner = self.lock();
-        Ok(inner.connection.query_row("SELECT COUNT(*) FROM tombstone", [], |row| row.get(0))?)
+        Ok(inner.connection.query_row(include_str!("sql/tombstones/prune_tombstones_select_tombstone.sql"), [], |row| row.get(0))?)
     }
 
     #[cfg(test)]

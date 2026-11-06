@@ -1,0 +1,1 @@
+UPDATE encrypted_pending SET owner_kind = 'detached', owner_operation_id = NULL, owner_item_id = NULL, owner_step = NULL WHERE id = 1 AND req_id = ?1

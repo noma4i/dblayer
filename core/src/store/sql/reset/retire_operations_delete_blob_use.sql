@@ -1,0 +1,1 @@
+DELETE FROM blob_use; DELETE FROM blob_upload;

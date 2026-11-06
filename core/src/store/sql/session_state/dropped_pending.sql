@@ -1,0 +1,1 @@
+SELECT EXISTS (SELECT 1 FROM restore_failed WHERE source_table = 'encrypted_pending')

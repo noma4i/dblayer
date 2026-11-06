@@ -36,17 +36,17 @@ pub(super) struct Recreated {
 
 pub(super) fn recreate(connection: &Connection) -> Result<Recreated, StoreError> {
     let tables: Vec<String> = connection
-        .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'")?
+        .prepare(include_str!("sql/open/recreate_select_sqlite_master.sql"))?
         .query_map([], |row| row.get(0))?
         .collect::<Result<_, _>>()?;
     let carried: Vec<&str> = CARRIED_TABLES.iter().copied().filter(|table| tables.iter().any(|found| found == table)).collect();
     let manifest = carried_manifest(connection, &tables)?;
     for table in &carried {
         let filter = if *table == "file" && columns_of(connection, table)?.iter().any(|(name, _)| name == "field") { " WHERE field LIKE 'op_item.%'" } else { "" };
-        connection.execute_batch(&format!("CREATE TEMP TABLE {} AS SELECT * FROM {}{filter}", sql_ident(&carry_name(table)), sql_ident(table)))?;
+        connection.execute_batch(&format!(include_str!("sql/open/recreate_create_table.sql"), sql_ident(&carry_name(table)), sql_ident(table), filter = filter))?;
     }
     for table in &tables {
-        connection.execute_batch(&format!("DROP TABLE IF EXISTS {}", sql_ident(table)))?;
+        connection.execute_batch(&format!(include_str!("sql/open/recreate_drop_table.sql"), sql_ident(table)))?;
     }
     create_core_tables(connection)?;
     for (key, value) in &manifest {
@@ -55,14 +55,14 @@ pub(super) fn recreate(connection: &Connection) -> Result<Recreated, StoreError>
     let mut dropped = Vec::new();
     for table in &carried {
         dropped.extend(carry_rows(connection, table)?);
-        connection.execute_batch(&format!("DROP TABLE {}", sql_ident(&carry_name(table))))?;
+        connection.execute_batch(&format!(include_str!("sql/open/recreate_drop_table_2.sql"), sql_ident(&carry_name(table))))?;
     }
     if carried.contains(&"op_value") {
-        connection.execute_batch("DELETE FROM op_value WHERE part = 'prior';")?;
+        connection.execute_batch(include_str!("sql/open/recreate_delete_op_value.sql"))?;
     }
     for row in &dropped {
         connection.execute(
-            "INSERT OR REPLACE INTO restore_failed (source_table, key, reason, columns) VALUES (?1, ?2, ?3, ?4)",
+            include_str!("sql/open/recreate_insert_restore_failed.sql"),
             rusqlite::params![row.table, row.key, row.reason, row.columns],
         )?;
     }
@@ -86,7 +86,7 @@ fn carry_name(table: &str) -> String { format!("carry_{table}") }
 
 fn columns_of(connection: &Connection, table: &str) -> Result<Vec<(String, bool)>, StoreError> {
     Ok(connection
-        .prepare("SELECT name, \"notnull\" = 1 AND dflt_value IS NULL AND pk = 0 FROM pragma_table_xinfo(?1) WHERE hidden = 0 ORDER BY cid")?
+        .prepare(include_str!("sql/open/columns_of.sql"))?
         .query_map([table], |row| Ok((row.get(0)?, row.get(1)?)))?
         .collect::<Result<_, _>>()?)
 }
@@ -119,10 +119,10 @@ fn carry_rows(connection: &Connection, table: &str) -> Result<Vec<DroppedRow>, S
     let required_missing = new.iter().any(|(name, required)| *required && !old.contains(name));
     let shared: Vec<String> = new.into_iter().map(|(name, _)| name).filter(|name| old.contains(name)).collect();
     let select = old.iter().map(|name| sql_ident(name)).collect::<Vec<_>>().join(", ");
-    let insert = format!("INSERT INTO {} ({}) VALUES ({})", sql_ident(table), shared.iter().map(|name| sql_ident(name)).collect::<Vec<_>>().join(", "), (1..=shared.len()).map(|at| format!("?{at}")).collect::<Vec<_>>().join(", "));
+    let insert = format!(include_str!("sql/open/carry_rows_insert.sql"), sql_ident(table), shared.iter().map(|name| sql_ident(name)).collect::<Vec<_>>().join(", "), (1..=shared.len()).map(|at| format!("?{at}")).collect::<Vec<_>>().join(", "));
     let positions: Vec<usize> = shared.iter().filter_map(|name| old.iter().position(|found| found == name)).collect();
     let rows: Vec<Vec<rusqlite::types::Value>> = connection
-        .prepare(&format!("SELECT {select} FROM {} ORDER BY rowid", sql_ident(&source)))?
+        .prepare(&format!(include_str!("sql/open/carry_rows_select.sql"), sql_ident(&source), select = select))?
         .query_map([], |row| (0..old.len()).map(|at| row.get(at)).collect())?
         .collect::<Result<_, _>>()?;
     let mut dropped = Vec::new();
@@ -136,13 +136,13 @@ fn carry_rows(connection: &Connection, table: &str) -> Result<Vec<DroppedRow>, S
             dropped.push(refuse("missing_column"));
             continue;
         }
-        connection.execute_batch("SAVEPOINT carry_row")?;
+        connection.execute_batch(include_str!("sql/open/carry_rows_savepoint_carry_row.sql"))?;
         let params = rusqlite::params_from_iter(positions.iter().map(|at| row[*at].clone()));
         match connection.execute(&insert, params) {
-            Ok(_) => connection.execute_batch("RELEASE carry_row")?,
+            Ok(_) => connection.execute_batch(include_str!("sql/open/carry_rows_release_carry_row.sql"))?,
             Err(error) => {
                 let Some(reason) = refusal(&error) else { return Err(error.into()) };
-                connection.execute_batch("ROLLBACK TO carry_row; RELEASE carry_row")?;
+                connection.execute_batch(include_str!("sql/open/carry_rows_rollback_to.sql"))?;
                 dropped.push(refuse(reason));
             }
         }
@@ -179,14 +179,14 @@ impl Store {
     #[cfg(test)]
     pub fn journal_mode(&self) -> Result<String, StoreError> {
         let inner = self.lock();
-        Ok(inner.connection.query_row("PRAGMA journal_mode", [], |row| row.get(0))?)
+        Ok(inner.connection.query_row(include_str!("sql/open/journal_mode.sql"), [], |row| row.get(0))?)
     }
 
     #[cfg(test)]
     pub fn table_exists(&self, name: &str) -> Result<bool, StoreError> {
         let inner = self.lock();
         let found: Option<i64> = rusqlite::OptionalExtension::optional(inner.connection.query_row(
-            "SELECT 1 FROM (SELECT type, name FROM sqlite_master UNION ALL SELECT type, name FROM sqlite_temp_master) WHERE type = 'table' AND name = ?1",
+            include_str!("sql/open/table_exists.sql"),
             [name],
             |row| row.get(0),
         ))?;

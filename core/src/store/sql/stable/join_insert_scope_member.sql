@@ -1,0 +1,1 @@
+INSERT INTO scope_member (model, scope_key, row_id, order_key, place) VALUES (?1, ?2, ?3, ?4, ?5)

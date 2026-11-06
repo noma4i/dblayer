@@ -1,0 +1,1 @@
+SELECT batch_id, joint, op_id FROM sync_upload_batch

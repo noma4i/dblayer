@@ -1,0 +1,1 @@
+SELECT cycle_id, row_id FROM sync_upload WHERE transfer_id = ?1

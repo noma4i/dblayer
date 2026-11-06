@@ -1,0 +1,1 @@
+SELECT total FROM query_window WHERE key = ?1

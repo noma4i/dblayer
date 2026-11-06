@@ -1,0 +1,1 @@
+SELECT revision FROM op_effect WHERE seq = ?1 AND model = ?2 AND row_id = ?3 AND scope_key IS ?4 AND kind = ?5 LIMIT 1

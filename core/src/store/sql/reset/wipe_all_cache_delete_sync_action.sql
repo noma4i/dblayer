@@ -1,0 +1,1 @@
+DELETE FROM sync_action; DELETE FROM sync_field; DELETE FROM row_sync; DELETE FROM sync_row_error; DELETE FROM file WHERE id NOT IN (SELECT 'transfers/' || transfer_id FROM sync_upload WHERE transfer_id IS NOT NULL);

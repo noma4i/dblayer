@@ -44,7 +44,7 @@ fn joins(writer: &RowWrite<'_>, reader: &Reader<'_>, model: &str, id: &RowId, jo
         let Ok(scope_key) = spec.selection_key(relation, params) else { continue };
         let direction = match remote.shape { RemoteShape::Connection { direction, .. } => direction, _ => PageDirection::Forward };
         let key = super::window_key(scope_key.as_str(), direction);
-        let loaded = reader.connection().query_row("SELECT 1 FROM query_window WHERE key = ?1", [&key], |row| row.get::<_, i64>(0)).optional()?;
+        let loaded = reader.connection().query_row(include_str!("sql/feed_write/joins.sql"), [&key], |row| row.get::<_, i64>(0)).optional()?;
         if loaded.is_none() || reader.scope_has_member(model, scope_key.as_str(), id.as_str())? { continue; }
         let last = reader.scope_last_key(model, scope_key.as_str())?;
         let order_key = fractional_between(last.as_deref(), None).map_err(fault)?;

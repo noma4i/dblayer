@@ -1,0 +1,2 @@
+SELECT name FROM sqlite_master WHERE type = 'table' AND name LIKE 'fts\_row\_%' ESCAPE '\' AND sql LIKE 'CREATE VIRTUAL%'
+         UNION ALL SELECT name FROM sqlite_temp_master WHERE type = 'table' AND name LIKE 'fts\_row\_%' ESCAPE '\' AND sql LIKE 'CREATE VIRTUAL%'

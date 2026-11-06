@@ -1,0 +1,1 @@
+SELECT model, row_id FROM row_sync

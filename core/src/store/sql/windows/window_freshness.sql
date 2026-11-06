@@ -1,0 +1,1 @@
+SELECT landed_at, stale_since FROM query_window WHERE key = ?1

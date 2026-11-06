@@ -1,0 +1,1 @@
+DELETE FROM scope_edge WHERE model = ?1 AND scope_key = ?2 AND row_id = ?3

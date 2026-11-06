@@ -1,0 +1,1 @@
+DELETE FROM encrypted_session

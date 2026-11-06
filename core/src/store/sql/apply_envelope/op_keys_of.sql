@@ -1,0 +1,1 @@
+SELECT action_key, temp_id FROM op WHERE seq = ?1

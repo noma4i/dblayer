@@ -1,0 +1,1 @@
+UPDATE scope_member SET place = ?1 WHERE model = ?2 AND row_id = ?3 AND substr(scope_key, 1, ?4) = ?5 AND place IS NOT ?1

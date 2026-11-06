@@ -1,0 +1,1 @@
+INSERT INTO op_part (seq, item_position, number, etag, confirmed_bytes) VALUES (?1, ?2, ?3, ?4, ?5)

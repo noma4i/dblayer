@@ -1,0 +1,1 @@
+CREATE INDEX IF NOT EXISTS scope_member_place ON scope_member (model, scope_key, place, row_id) WHERE place IS NOT NULL

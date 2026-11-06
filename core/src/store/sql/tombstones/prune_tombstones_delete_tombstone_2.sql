@@ -1,0 +1,1 @@
+DELETE FROM tombstone WHERE (model, id) IN (SELECT model, id FROM tombstone WHERE (?1 = 1 OR deleted_at < ?2) AND (?4 IS NULL OR seq <= ?4) ORDER BY deleted_at LIMIT ?3)

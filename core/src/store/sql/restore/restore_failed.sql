@@ -1,0 +1,1 @@
+SELECT source_table, key, reason, columns FROM restore_failed ORDER BY source_table, key

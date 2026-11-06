@@ -1,0 +1,1 @@
+UPDATE tombstone SET seq = ?1 WHERE model = ?2 AND id = ?3

@@ -1,0 +1,1 @@
+INSERT OR REPLACE INTO encrypted_answer (request_id, outcome, detail, operation_id) VALUES (?1, ?2, ?3, ?4)

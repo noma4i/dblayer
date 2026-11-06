@@ -1,0 +1,1 @@
+CREATE INDEX IF NOT EXISTS scope_revision_since ON scope_revision (model, scope_key, revision, row_id)

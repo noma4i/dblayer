@@ -1,0 +1,1 @@
+DELETE FROM encrypted_pending; DELETE FROM encrypted_answer;

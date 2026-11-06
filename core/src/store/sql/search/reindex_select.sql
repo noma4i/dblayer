@@ -1,0 +1,1 @@
+SELECT rowid FROM {} WHERE id = ?1

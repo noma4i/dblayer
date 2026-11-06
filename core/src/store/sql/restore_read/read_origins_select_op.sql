@@ -1,0 +1,1 @@
+SELECT seq, origin_kind, transfer_id, batch_id FROM op WHERE intent_state = 'ready'

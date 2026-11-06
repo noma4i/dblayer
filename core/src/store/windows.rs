@@ -40,7 +40,7 @@ pub struct WindowFreshness {
 
 pub(super) fn read_window(connection: &Connection, key: &str) -> Result<Option<WindowRecord>, StoreError> {
     let found = connection.query_row(
-        "SELECT key, cursor, has_next, issued, applied, generation, total, pages FROM query_window WHERE key = ?1",
+        include_str!("sql/windows/read_window.sql"),
         params![key],
         |row| Ok((row.get::<_, String>(0)?, row.get::<_, Option<String>>(1)?, row.get::<_, i64>(2)?, row.get::<_, i64>(3)?, row.get::<_, i64>(4)?, row.get::<_, i64>(5)?, row.get::<_, Option<i64>>(6)?, row.get::<_, i64>(7)?)),
     ).optional()?;
@@ -49,7 +49,7 @@ pub(super) fn read_window(connection: &Connection, key: &str) -> Result<Option<W
 }
 
 pub(super) fn read_marker(connection: &Connection, key: &str) -> Result<Option<crate::store::WindowMarker>, StoreError> {
-    let mut statement = connection.prepare_cached("SELECT sequence, field, value FROM window_marker WHERE window_key = ?1")?;
+    let mut statement = connection.prepare_cached(include_str!("sql/windows/read_marker.sql"))?;
     let rows = statement.query_map(params![key], |row| Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?, row.get::<_, i64>(2)?)))?;
     let mut marker: Option<crate::store::WindowMarker> = None;
     for row in rows {
@@ -60,7 +60,7 @@ pub(super) fn read_marker(connection: &Connection, key: &str) -> Result<Option<c
 }
 
 pub(super) fn max_sequence(connection: &Connection) -> Result<i64, StoreError> {
-    Ok(connection.query_row("SELECT COALESCE(MAX(MAX(issued, applied, COALESCE(stale_since, 0))), 0) FROM query_window", [], |row| row.get(0))?)
+    Ok(connection.query_row(include_str!("sql/windows/max_sequence.sql"), [], |row| row.get(0))?)
 }
 
 pub(crate) fn window_identity(spec: &crate::schema::ModelSpec, model: &str, relation: &str, remote: &crate::schema::RemoteSpec, params: &serde_json::Map<String, serde_json::Value>) -> Result<(crate::store::ScopeRef, String), crate::store::DbError> {
@@ -112,11 +112,7 @@ pub struct PageInfo {
 
 pub(super) fn upsert_window(connection: &Connection, record: &WindowRecord, landed_at: i64) -> Result<(), StoreError> {
     connection.execute(
-        "INSERT INTO query_window (key, cursor, has_next, total, pages, issued, applied, generation, landed_at) \
-         VALUES (?1, ?2, ?3, ?8, ?9, ?4, ?5, ?6, ?7) \
-         ON CONFLICT (key) DO UPDATE SET cursor = excluded.cursor, has_next = excluded.has_next, total = excluded.total, pages = excluded.pages, \
-         issued = excluded.issued, applied = excluded.applied, \
-         generation = excluded.generation",
+        include_str!("sql/windows/upsert_window.sql"),
         params![
             record.key,
             record.cursor,
@@ -133,7 +129,7 @@ pub(super) fn upsert_window(connection: &Connection, record: &WindowRecord, land
 }
 
 pub(super) fn mark_families(connection: &Connection, families: &[(String, String)], since: i64) -> Result<usize, StoreError> {
-    let mut update = connection.prepare_cached("UPDATE query_window SET stale_since = MAX(COALESCE(stale_since, 0), ?2) WHERE key LIKE ?1 ESCAPE '\\' AND applied < ?2")?;
+    let mut update = connection.prepare_cached(include_str!("sql/windows/mark_families.sql"))?;
     let mut marked = 0;
     for (model, relation) in families {
         marked += update.execute(params![like_prefix(&family_prefix(model, relation)), since])?;
@@ -159,7 +155,7 @@ impl Store {
         inner.ensure_healthy()?;
         Ok(inner
             .connection
-            .query_row("SELECT landed_at, stale_since FROM query_window WHERE key = ?1", params![key], |row| {
+            .query_row(include_str!("sql/windows/window_freshness.sql"), params![key], |row| {
                 Ok(WindowFreshness { landed_at: row.get(0)?, stale_since: row.get(1)? })
             })
             .optional()?)
@@ -191,7 +187,7 @@ impl Store {
     pub fn stale_window_keys(&self) -> Result<Vec<String>, StoreError> {
         let inner = self.lock();
         inner.ensure_healthy()?;
-        let mut statement = inner.connection.prepare("SELECT key FROM query_window WHERE stale_since IS NOT NULL ORDER BY key")?;
+        let mut statement = inner.connection.prepare(include_str!("sql/windows/stale_window_keys.sql"))?;
         let keys = statement.query_map([], |row| row.get(0))?;
         Ok(keys.collect::<Result<_, _>>()?)
     }

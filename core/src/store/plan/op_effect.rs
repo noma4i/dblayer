@@ -41,7 +41,7 @@ fn write_operation_effects(connection: &Connection, sequence: i64, effects: &[Op
     for (position, effect) in effects.iter().enumerate() {
         let position = position as i64;
         connection.execute(
-            "INSERT INTO op_effect (seq, position, model, row_id, scope_key, kind, revision) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            include_str!("../sql/plan/write_operation_effects.sql"),
             params![sequence, position, effect.model, effect.row_id, effect.scope_key, effect.kind.as_sql(), effect.revision],
         )?;
         crate::nodes::write_tree(connection, "op_effect_value", &["seq", "position"], &[SqlValue::Integer(sequence), SqlValue::Integer(position)], &effect.before)?;
@@ -50,13 +50,13 @@ fn write_operation_effects(connection: &Connection, sequence: i64, effects: &[Op
 }
 
 pub(crate) fn remove_operation_effects(connection: &Connection, sequence: i64) -> Result<(), StoreError> {
-    connection.execute("DELETE FROM op_effect_value WHERE seq = ?1", [sequence])?;
-    connection.execute("DELETE FROM op_effect WHERE seq = ?1", [sequence])?;
+    connection.execute(include_str!("../sql/plan/remove_operation_effects_delete_op_effect_value.sql"), [sequence])?;
+    connection.execute(include_str!("../sql/plan/remove_operation_effects_delete_op_effect.sql"), [sequence])?;
     Ok(())
 }
 
 pub(crate) fn open_scope_effects(connection: &Connection, model: &str, scope_key: &str) -> Result<Vec<(String, bool)>, StoreError> {
-    let sql = format!("SELECT e.row_id, e.kind FROM op_effect AS e JOIN op ON op.seq = e.seq LEFT JOIN scope_revision r ON r.model = e.model AND r.scope_key = e.scope_key AND r.row_id = e.row_id WHERE e.model = ?1 AND e.scope_key = ?2 AND e.kind IN ('join', 'leave') AND e.seq >= COALESCE(r.operation_seq, 0) AND op.status IN {} ORDER BY e.seq, e.position", crate::operation::OPEN_STATUSES);
+    let sql = format!(include_str!("../sql/plan/open_scope_effects.sql"), crate::operation::OPEN_STATUSES);
     let mut statement = connection.prepare_cached(&sql)?;
     let rows = statement.query_map(params![model, scope_key], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)? == "join")))?;
     Ok(rows.collect::<Result<Vec<_>, _>>()?)
@@ -74,7 +74,7 @@ pub(crate) fn write_prior(connection: &Connection, sequence: i64, revision: i64,
             PriorRow::Leave { model, id, scope_key, .. } => (model, id, Some(scope_key.clone()), EffectKind::Leave),
         };
         let held_revision: Option<i64> = connection.query_row(
-            "SELECT revision FROM op_effect WHERE seq = ?1 AND model = ?2 AND row_id = ?3 AND scope_key IS ?4 AND kind = ?5 LIMIT 1",
+            include_str!("../sql/plan/write_prior_select_op_effect.sql"),
             params![sequence, model, row_id, scope_key, kind.as_sql()], |row| row.get(0),
         ).optional()?;
         let owned = match &row {
@@ -87,7 +87,7 @@ pub(crate) fn write_prior(connection: &Connection, sequence: i64, revision: i64,
     for effect in &effects {
         if let Some(scope_key) = &effect.scope_key {
             if effect.revision == revision {
-                connection.execute("INSERT INTO scope_revision (model, scope_key, row_id, revision, operation_seq) VALUES (?1, ?2, ?3, ?4, ?5) ON CONFLICT (model, scope_key, row_id) DO UPDATE SET revision = excluded.revision, operation_seq = excluded.operation_seq", params![effect.model, scope_key, effect.row_id, revision, sequence])?;
+                connection.execute(include_str!("../sql/plan/write_prior_insert_scope_revision.sql"), params![effect.model, scope_key, effect.row_id, revision, sequence])?;
             }
         }
     }
@@ -97,7 +97,7 @@ pub(crate) fn write_prior(connection: &Connection, sequence: i64, revision: i64,
 pub(crate) fn rebuild_open_effects(connection: &Connection, models: &std::collections::BTreeMap<String, crate::store::ModelInfo>) -> Result<(), StoreError> {
     let reader = crate::store::Reader::new(connection, models);
     let revision = reader.revision_seq()? + 1;
-    let operations: Vec<(i64, String)> = connection.prepare(&format!("SELECT seq, action_key FROM op WHERE status IN {} ORDER BY seq", crate::operation::OPEN_STATUSES))?.query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?.collect::<Result<_, _>>()?;
+    let operations: Vec<(i64, String)> = connection.prepare(&format!(include_str!("../sql/plan/rebuild_open_effects.sql"), crate::operation::OPEN_STATUSES))?.query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?.collect::<Result<_, _>>()?;
     let spec = |name: &str| models.get(name).map(|info| &info.spec);
     let mut written = false;
     for (seq, action_key) in operations {

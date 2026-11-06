@@ -1,0 +1,1 @@
+SELECT state, error_kind, error_message, attempts, since FROM row_sync

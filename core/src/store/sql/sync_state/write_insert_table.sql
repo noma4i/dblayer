@@ -1,0 +1,1 @@
+INSERT INTO {table} (model, row_id, pos, name) VALUES (?1, ?2, ?3, ?4)

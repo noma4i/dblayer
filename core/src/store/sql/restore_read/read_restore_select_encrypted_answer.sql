@@ -1,0 +1,1 @@
+SELECT request_id FROM encrypted_answer WHERE operation_id IS NULL OR operation_id NOT IN (SELECT seq FROM op) ORDER BY request_id

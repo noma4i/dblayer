@@ -1,0 +1,1 @@
+INSERT INTO scope_member (model, scope_key, row_id, order_key) VALUES (?1, ?2, ?3, ?4) ON CONFLICT (model, scope_key, row_id) DO UPDATE SET order_key = excluded.order_key WHERE order_key IS NOT excluded.order_key

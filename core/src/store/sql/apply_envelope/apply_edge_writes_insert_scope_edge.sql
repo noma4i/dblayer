@@ -1,0 +1,1 @@
+INSERT INTO scope_edge (model, scope_key, row_id, name, whole, fraction, text) SELECT ?1, ?2, ?3, ?4, ?5, ?6, ?7 WHERE EXISTS (SELECT 1 FROM scope_member WHERE model = ?1 AND scope_key = ?2 AND row_id = ?3)

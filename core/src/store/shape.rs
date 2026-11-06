@@ -160,14 +160,14 @@ pub(crate) fn member_values(member: &Member, value: Option<&Value>, out: &mut Ve
 
 pub(crate) fn delete_tables(connection: &Connection, layout: &Layout, tables: &[usize], row_id: &str) -> Result<(), StoreError> {
     for index in tables {
-        connection.prepare_cached(&format!("DELETE FROM {} WHERE row_id = ?1", layout.tables[*index].name))?.execute([row_id])?;
+        connection.prepare_cached(&format!(include_str!("sql/shape/delete_tables.sql"), layout.tables[*index].name))?.execute([row_id])?;
     }
     Ok(())
 }
 
 fn insert_element(connection: &Connection, table: &str, columns: Vec<(String, SqlValue)>, head: [SqlValue; 4]) -> Result<(), StoreError> {
     let names: Vec<&str> = ["row_id", "node", "owner", "pos"].into_iter().chain(columns.iter().map(|(name, _)| name.as_str())).collect();
-    let sql = format!("INSERT INTO {table} ({}) VALUES ({})", names.iter().map(|name| crate::ddl::sql_ident(name)).collect::<Vec<_>>().join(", "), placeholders(names.len()));
+    let sql = format!(include_str!("sql/shape/insert_element.sql"), names.iter().map(|name| crate::ddl::sql_ident(name)).collect::<Vec<_>>().join(", "), placeholders(names.len()), table = table);
     connection.prepare_cached(&sql)?.execute(params_from_iter(head.into_iter().chain(columns.into_iter().map(|(_, value)| value))))?;
     Ok(())
 }
@@ -203,7 +203,7 @@ pub(crate) fn insert_children(
         }
         Member::List { table, .. } => {
             let (Some(items), TableShape::Values(leaf)) = (value.and_then(Value::as_array), &layout.tables[*table].shape) else { return Ok(()) };
-            let sql = format!("INSERT INTO {} (row_id, owner, pos, value) VALUES (?1, ?2, ?3, ?4)", layout.tables[*table].name);
+            let sql = format!(include_str!("sql/shape/insert_children.sql"), layout.tables[*table].name);
             let mut statement = connection.prepare_cached(&sql)?;
             for (position, item) in items.iter().enumerate() {
                 statement.execute(params_from_iter([SqlValue::Text(row_id.to_string()), owner.into(), (position as i64).into(), leaf_sql(leaf, Some(item))]))?;
@@ -352,7 +352,7 @@ fn read_table(connection: &Connection, table: &Table, ids: &[String]) -> Result<
             }
         }
         TableShape::Values(_) => {
-            let sql = format!("SELECT row_id, owner, pos, value FROM {} WHERE row_id IN ({}) ORDER BY row_id, owner, pos", table.name, placeholders(ids.len()));
+            let sql = format!(include_str!("sql/shape/read_table_select.sql"), table.name, placeholders(ids.len()));
             let mut statement = connection.prepare_cached(&sql)?;
             let rows = statement.query_map(params_from_iter(ids.iter()), |row| Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?, row.get::<_, i64>(2)?, row.get::<_, SqlValue>(3)?)))?;
             for item in rows {
@@ -365,7 +365,7 @@ fn read_table(connection: &Connection, table: &Table, ids: &[String]) -> Result<
             members.iter().for_each(|member| crate::ddl::member_columns(member, &mut columns));
             let names: Vec<String> = columns.into_iter().map(|(name, _)| name).collect();
             let list: String = names.iter().map(|name| format!(", {}", crate::ddl::sql_ident(name))).collect();
-            let sql = format!("SELECT row_id, node, owner, pos{list} FROM {} WHERE row_id IN ({}) ORDER BY row_id, owner, pos", table.name, placeholders(ids.len()));
+            let sql = format!(include_str!("sql/shape/read_table_select_2.sql"), table.name, placeholders(ids.len()), list = list);
             let mut statement = connection.prepare_cached(&sql)?;
             let rows = statement.query_map(params_from_iter(ids.iter()), |row| Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?, row.get::<_, i64>(2)?, row.get::<_, i64>(3)?, read_cells(row, names.len(), 4)?)))?;
             for item in rows {

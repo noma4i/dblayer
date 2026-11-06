@@ -78,7 +78,7 @@ pub(crate) fn put(connection: &Connection, record: &FileRecord) -> rusqlite::Res
     remove_pair(connection, &record.model, &record.row_id, &record.field)?;
     let data = (record.location == Location::Table).then_some(record.data.as_slice());
     connection.execute(
-        &format!("INSERT OR REPLACE INTO file ({COLUMNS}) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)"),
+        &format!(include_str!("../store/sql/files/put.sql"), COLUMNS = COLUMNS),
         params![
             record.id,
             record.model,
@@ -99,7 +99,7 @@ pub(crate) fn put(connection: &Connection, record: &FileRecord) -> rusqlite::Res
 pub(crate) fn find(connection: &Connection, model: &str, row_id: &str, field: &str) -> rusqlite::Result<Option<FileRecord>> {
     connection
         .query_row(
-            &format!("SELECT {COLUMNS} FROM file WHERE model = ?1 AND row_id = ?2 AND field = ?3"),
+            &format!(include_str!("../store/sql/files/find.sql"), COLUMNS = COLUMNS),
             params![model, row_id, field],
             record_from,
         )
@@ -107,29 +107,29 @@ pub(crate) fn find(connection: &Connection, model: &str, row_id: &str, field: &s
 }
 
 pub(crate) fn remove_pair(connection: &Connection, model: &str, row_id: &str, field: &str) -> rusqlite::Result<usize> {
-    connection.execute("DELETE FROM file WHERE model = ?1 AND row_id = ?2 AND field = ?3", params![model, row_id, field])
+    connection.execute(include_str!("../store/sql/files/remove_pair.sql"), params![model, row_id, field])
 }
 
 pub(crate) fn remove_row(connection: &Connection, model: &str, row_id: &str) -> rusqlite::Result<usize> {
-    connection.execute("DELETE FROM file WHERE model = ?1 AND row_id = ?2", params![model, row_id])
+    connection.execute(include_str!("../store/sql/files/remove_row.sql"), params![model, row_id])
 }
 
 pub(crate) fn move_row(connection: &Connection, model: &str, from: &str, to: &str) -> rusqlite::Result<usize> {
-    connection.execute("UPDATE OR REPLACE file SET row_id = ?3 WHERE model = ?1 AND row_id = ?2", params![model, from, to])
+    connection.execute(include_str!("../store/sql/files/move_row.sql"), params![model, from, to])
 }
 
 pub(crate) fn references_of_row(connection: &Connection, model: &str, row_id: &str) -> rusqlite::Result<Vec<FileReference>> {
     connection
-        .prepare("SELECT id, model, row_id, field, location FROM file WHERE model = ?1 AND row_id = ?2 ORDER BY field")?
+        .prepare(include_str!("../store/sql/files/references_of_row.sql"))?
         .query_map(params![model, row_id], reference_from)?
         .collect()
 }
 
 
 pub(crate) fn clear_model(connection: &Connection, model: &str) -> rusqlite::Result<usize> {
-    connection.execute("DELETE FROM file WHERE model = ?1", [model])
+    connection.execute(include_str!("../store/sql/files/clear_model.sql"), [model])
 }
 
 pub(crate) fn clear_all(connection: &Connection) -> rusqlite::Result<usize> {
-    connection.execute("DELETE FROM file", [])
+    connection.execute(include_str!("../store/sql/files/clear_all.sql"), [])
 }

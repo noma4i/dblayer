@@ -55,9 +55,9 @@ fn like_pattern(prefix: &str) -> String {
 pub(crate) fn write_intent(connection: &Connection, mode: &str, models: &[String], now: i64) -> Result<(), StoreError> {
     let transaction = connection.unchecked_transaction()?;
     clear_intent(&transaction)?;
-    transaction.execute("INSERT INTO reset_intent (id, mode, started_at) VALUES (1, ?1, ?2)", params![mode, now])?;
+    transaction.execute(include_str!("sql/reset/write_intent_insert_reset_intent.sql"), params![mode, now])?;
     for (pos, model) in models.iter().enumerate() {
-        transaction.execute("INSERT INTO reset_intent_model (pos, model) VALUES (?1, ?2)", params![pos as i64, model])?;
+        transaction.execute(include_str!("sql/reset/write_intent_insert_reset_intent_model.sql"), params![pos as i64, model])?;
     }
     transaction.commit()?;
     Ok(())
@@ -70,19 +70,18 @@ fn bump_revision(connection: &Connection) -> Result<i64, StoreError> {
 }
 
 pub(crate) fn pending_intent(connection: &Connection) -> Result<Option<String>, StoreError> {
-    Ok(connection.query_row("SELECT mode FROM reset_intent", [], |row| row.get(0)).optional()?)
+    Ok(connection.query_row(include_str!("sql/reset/pending_intent.sql"), [], |row| row.get(0)).optional()?)
 }
 
 pub(crate) fn clear_intent(connection: &Connection) -> Result<(), StoreError> {
-    connection.execute("DELETE FROM reset_intent", [])?;
-    connection.execute("DELETE FROM reset_intent_model", [])?;
+    connection.execute(include_str!("sql/reset/clear_intent_delete_reset_intent.sql"), [])?;
+    connection.execute(include_str!("sql/reset/clear_intent_delete_reset_intent_model.sql"), [])?;
     Ok(())
 }
 
 pub(crate) fn row_tables(connection: &Connection) -> Result<Vec<String>, StoreError> {
     let mut statement = connection.prepare(
-        "SELECT name FROM sqlite_master WHERE type = 'table' AND name LIKE 'row\\_%' ESCAPE '\\'
-         UNION ALL SELECT name FROM sqlite_temp_master WHERE type = 'table' AND name LIKE 'row\\_%' ESCAPE '\\'",
+        include_str!("sql/reset/row_tables.sql"),
     )?;
     let names = statement.query_map([], |row| row.get(0))?;
     Ok(names.collect::<Result<_, _>>()?)
@@ -91,28 +90,28 @@ pub(crate) fn row_tables(connection: &Connection) -> Result<Vec<String>, StoreEr
 pub(crate) fn wipe_model_cache(connection: &Connection, model: &str, table: &str, drop_table: bool) -> Result<(), StoreError> {
     let children: Vec<String> = row_tables(connection)?.into_iter().filter(|name| name.starts_with(&format!("{table}__"))).collect();
     for name in fts_tables(connection)?.iter().filter(|name| **name == format!("fts_{table}")) {
-        connection.execute_batch(&format!("{} {name}", if drop_table { "DROP TABLE IF EXISTS" } else { "DELETE FROM" }))?;
+        connection.execute_batch(&format!("{} {name}", if drop_table { include_str!("sql/reset/wipe_model_cache_drop_table_if.sql") } else { include_str!("sql/reset/wipe_model_cache_delete_from.sql") }))?;
     }
     for name in children.iter().map(String::as_str).chain([table]) {
         if drop_table {
-            connection.execute_batch(&format!("DROP TABLE IF EXISTS {name}"))?;
+            connection.execute_batch(&format!(include_str!("sql/reset/wipe_model_cache_drop_table_name.sql"), name = name))?;
         } else {
-            connection.execute_batch(&format!("DELETE FROM {name}"))?;
+            connection.execute_batch(&format!(include_str!("sql/reset/wipe_model_cache_delete_name.sql"), name = name))?;
         }
     }
-    connection.execute("DELETE FROM scope_member WHERE model = ?1", params![model])?;
-    connection.execute("DELETE FROM scope_revision WHERE model = ?1", params![model])?;
+    connection.execute(include_str!("sql/reset/wipe_model_cache_delete_scope_member.sql"), params![model])?;
+    connection.execute(include_str!("sql/reset/wipe_model_cache_delete_scope_revision.sql"), params![model])?;
     clear_model(connection, model)?;
-    connection.execute("DELETE FROM tombstone WHERE model = ?1", params![model])?;
-    connection.execute("DELETE FROM local_pending WHERE model = ?1", params![model])?;
-    connection.execute("DELETE FROM window_marker WHERE window_key LIKE ?1 ESCAPE '\\'", params![like_pattern(ListKey::compose(&[model]).as_str())])?;
-    connection.execute("DELETE FROM query_window WHERE key LIKE ?1 ESCAPE '\\'", params![like_pattern(ListKey::compose(&[model]).as_str())])?;
+    connection.execute(include_str!("sql/reset/wipe_model_cache_delete_tombstone.sql"), params![model])?;
+    connection.execute(include_str!("sql/reset/wipe_model_cache_delete_local_pending.sql"), params![model])?;
+    connection.execute(include_str!("sql/reset/wipe_model_cache_delete_window_marker.sql"), params![like_pattern(ListKey::compose(&[model]).as_str())])?;
+    connection.execute(include_str!("sql/reset/wipe_model_cache_delete_query_window.sql"), params![like_pattern(ListKey::compose(&[model]).as_str())])?;
     Ok(())
 }
 
 pub(crate) fn retire_operations(connection: &Connection, models: Option<&[String]>, quarantined: Option<QuarantineReason>) -> Result<(), StoreError> {
-    if models.is_none() { connection.execute_batch("DELETE FROM blob_use; DELETE FROM blob_upload;")?; }
-    let open: Vec<(i64, String)> = connection.prepare("SELECT seq, action_key FROM op")?.query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?.collect::<Result<_, _>>()?;
+    if models.is_none() { connection.execute_batch(include_str!("sql/reset/retire_operations_delete_blob_use.sql"))?; }
+    let open: Vec<(i64, String)> = connection.prepare(include_str!("sql/reset/retire_operations_select_op.sql"))?.query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?.collect::<Result<_, _>>()?;
     for (seq, action_key) in open {
         let owner = Operation::split_action_key(&action_key).map(|(owner, _)| owner).unwrap_or_default();
         if models.is_some_and(|models| !models.contains(&owner)) {
@@ -128,10 +127,10 @@ pub(crate) fn retire_operations(connection: &Connection, models: Option<&[String
     match models {
         Some(models) => models.iter().try_for_each(|model| clear_sync(connection, Some(model)))?,
         None => {
-            connection.execute("DELETE FROM transfer_abort", [])?;
-            connection.execute("DELETE FROM transfer_outcome", [])?;
-            connection.execute("DELETE FROM upload_orphan", [])?;
-            connection.execute("DELETE FROM sync_upload_batch", [])?;
+            connection.execute(include_str!("sql/reset/retire_operations_delete_transfer_abort.sql"), [])?;
+            connection.execute(include_str!("sql/reset/retire_operations_delete_transfer_outcome.sql"), [])?;
+            connection.execute(include_str!("sql/reset/retire_operations_delete_upload_orphan.sql"), [])?;
+            connection.execute(include_str!("sql/reset/retire_operations_delete_sync_upload_batch.sql"), [])?;
             clear_sync(connection, None)?;
         }
     }
@@ -140,18 +139,18 @@ pub(crate) fn retire_operations(connection: &Connection, models: Option<&[String
 
 pub(crate) fn wipe_all_cache(connection: &Connection, drop_tables: bool, keep_intents: bool) -> Result<(), StoreError> {
     for name in fts_tables(connection)? {
-        connection.execute_batch(&format!("{} {name}", if drop_tables { "DROP TABLE IF EXISTS" } else { "DELETE FROM" }))?;
+        connection.execute_batch(&format!("{} {name}", if drop_tables { include_str!("sql/reset/wipe_model_cache_drop_table_if.sql") } else { include_str!("sql/reset/wipe_model_cache_delete_from.sql") }))?;
     }
     for table in row_tables(connection)?.into_iter().filter(|table| table != "row_sync") {
         if drop_tables {
-            connection.execute_batch(&format!("DROP TABLE IF EXISTS {table}"))?;
+            connection.execute_batch(&format!(include_str!("sql/reset/wipe_all_cache_drop_table_table.sql"), table = table))?;
         } else {
-            connection.execute_batch(&format!("DELETE FROM {table}"))?;
+            connection.execute_batch(&format!(include_str!("sql/reset/wipe_all_cache_delete_table.sql"), table = table))?;
         }
     }
-    connection.execute_batch("DELETE FROM scope_member; DELETE FROM scope_revision; DELETE FROM tombstone; DELETE FROM window_marker; DELETE FROM query_window; DELETE FROM local_pending;")?;
+    connection.execute_batch(include_str!("sql/reset/wipe_all_cache_delete_scope_member.sql"))?;
     if keep_intents {
-        connection.execute_batch("DELETE FROM sync_action; DELETE FROM sync_field; DELETE FROM row_sync; DELETE FROM sync_row_error; DELETE FROM file WHERE id NOT IN (SELECT 'transfers/' || transfer_id FROM sync_upload WHERE transfer_id IS NOT NULL);")?;
+        connection.execute_batch(include_str!("sql/reset/wipe_all_cache_delete_sync_action.sql"))?;
     } else {
         clear_sync(connection, None)?;
         clear_all(connection)?;
@@ -204,7 +203,7 @@ pub(crate) fn stash_local_values(connection: &Connection, models: &BTreeMap<Stri
             stash_surviving_columns(connection, info, model, &paths, &mut stash)?;
             continue;
         }
-        let ids: Vec<String> = connection.prepare(&format!("SELECT id FROM {}", info.table))?.query_map([], |row| row.get(0))?.collect::<Result<_, _>>()?;
+        let ids: Vec<String> = connection.prepare(&format!(include_str!("sql/reset/stash_local_values.sql"), info.table))?.query_map([], |row| row.get(0))?.collect::<Result<_, _>>()?;
         for (id, stored) in fetch_stored(connection, info, &ids, false)? {
             for path in &paths {
                 let found = match path.split_once('.') {
@@ -222,7 +221,7 @@ pub(crate) fn stash_local_values(connection: &Connection, models: &BTreeMap<Stri
 
 fn stash_surviving_columns(connection: &Connection, info: &ModelInfo, model: &str, paths: &[String], stash: &mut Vec<PendingValue>) -> Result<(), StoreError> {
     let columns: BTreeMap<String, String> = connection
-        .prepare(&format!("SELECT name, type FROM pragma_table_info('{}')", info.table))?
+        .prepare(&format!(include_str!("sql/reset/stash_surviving_columns_select_pragma_table_info.sql"), info.table))?
         .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?
         .collect::<Result<_, _>>()?;
     for plan in &info.layout.fields {
@@ -230,7 +229,7 @@ fn stash_surviving_columns(connection: &Connection, info: &ModelInfo, model: &st
         if !paths.contains(field) || columns.get(&leaf.column).is_none_or(|declared| !declared.eq_ignore_ascii_case(leaf.ty.as_sql())) {
             continue;
         }
-        let mut statement = connection.prepare(&format!("SELECT id, {column} FROM {table} WHERE {column} IS NOT NULL", column = crate::ddl::sql_ident(&leaf.column), table = info.table))?;
+        let mut statement = connection.prepare(&format!(include_str!("sql/reset/stash_surviving_columns_select_table.sql"), column = crate::ddl::sql_ident(&leaf.column), table = info.table))?;
         let cells = statement.query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, rusqlite::types::Value>(1)?)))?;
         for cell in cells {
             let (row_id, cell) = cell?;
@@ -252,7 +251,7 @@ pub(crate) fn current_fingerprints(inner: &Inner) -> BTreeMap<String, String> {
 
 pub(crate) fn finish_interrupted_reset(inner: &mut Inner) -> Result<bool, StoreError> {
     let Some(mode) = pending_intent(&inner.connection)? else { return Ok(false) };
-    let models: Vec<String> = inner.connection.prepare("SELECT model FROM reset_intent_model ORDER BY pos")?.query_map([], |row| row.get(0))?.collect::<Result<_, _>>()?;
+    let models: Vec<String> = inner.connection.prepare(include_str!("sql/reset/finish_interrupted_reset.sql"))?.query_map([], |row| row.get(0))?.collect::<Result<_, _>>()?;
     if !matches!(mode.as_str(), "cache_only" | "mismatched" | "account" | "session_end") {
         let transaction = inner.connection.unchecked_transaction()?;
         quarantine_add(&transaction, None, &serde_json::json!({ "mode": mode }), QuarantineReason::CorruptResetIntent)?;
@@ -338,7 +337,7 @@ impl Store {
         wipe_all_cache(&transaction, false, false)?;
         retire_operations(&transaction, None, None)?;
         if erase_encrypted {
-            transaction.execute_batch("DELETE FROM encrypted_pending; DELETE FROM encrypted_answer; DELETE FROM encrypted_session; DELETE FROM restore_failed WHERE source_table = 'encrypted_pending';")?;
+            transaction.execute_batch(include_str!("sql/reset/erase_account.sql"))?;
         }
         manifest_stamp(&transaction, inner.data_version.as_deref(), &current_fingerprints(&inner))?;
         let revision = bump_revision(&transaction)?;
@@ -446,22 +445,22 @@ pub(super) fn apply_row_ops(transaction: &Connection, ops: Vec<RowOp>) -> Result
     for op in ops {
         match op {
             RowOp::PutPending(pending) => {
-                transaction.execute("DELETE FROM encrypted_pending", [])?;
+                transaction.execute(include_str!("sql/reset/apply_row_ops_delete_encrypted_pending.sql"), [])?;
                 state::store_pending(transaction, &pending)?;
             }
-            RowOp::RemovePending => { transaction.execute("DELETE FROM encrypted_pending", [])?; }
-            RowOp::RemoveSession => { transaction.execute("DELETE FROM encrypted_session", [])?; }
+            RowOp::RemovePending => { transaction.execute(include_str!("sql/reset/apply_row_ops_delete_encrypted_pending.sql"), [])?; }
+            RowOp::RemoveSession => { transaction.execute(include_str!("sql/reset/apply_row_ops_delete_encrypted_session.sql"), [])?; }
             RowOp::PutAnswer { request_id, operation, answer } => state::store_answer(transaction, request_id, operation, &answer)?,
             RowOp::RemoveAnswer { request_id } => state::remove_answer(transaction, request_id)?,
             RowOp::ReleasePendingOwner { request_id } => state::release_pending_owner(transaction, request_id)?,
-            RowOp::PutAttempts { op_id, attempts, cycle_id } => { transaction.execute("UPDATE op SET attempts = ?2, cycle_id = ?3 WHERE seq = ?1", params![op_id, attempts, cycle_id])?; }
-            RowOp::DiscardRestoreFailed { table, key } => { transaction.execute("DELETE FROM restore_failed WHERE source_table = ?1 AND key = ?2", params![table, key])?; }
+            RowOp::PutAttempts { op_id, attempts, cycle_id } => { transaction.execute(include_str!("sql/reset/apply_row_ops_update_op.sql"), params![op_id, attempts, cycle_id])?; }
+            RowOp::DiscardRestoreFailed { table, key } => { transaction.execute(include_str!("sql/reset/apply_row_ops_delete_restore_failed.sql"), params![table, key])?; }
             RowOp::PutSession { digest, sequence } => {
                 let stored = state::session(transaction)?;
                 let digest = digest.or_else(|| stored.as_ref().map(|session| session.credential_digest.clone())).ok_or(rusqlite::Error::QueryReturnedNoRows)?;
                 let sequence = sequence.or_else(|| stored.as_ref().map(|session| session.sequence)).unwrap_or(0);
                 transaction.execute(
-                    "INSERT INTO encrypted_session (id, credential_digest, sequence) VALUES (1, ?1, ?2) ON CONFLICT(id) DO UPDATE SET credential_digest = excluded.credential_digest, sequence = excluded.sequence",
+                    include_str!("sql/reset/apply_row_ops_insert_encrypted_session.sql"),
                     params![digest, sequence],
                 )?;
             }

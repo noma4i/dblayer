@@ -1,0 +1,1 @@
+SELECT reason, COUNT(*) FROM quarantine GROUP BY reason

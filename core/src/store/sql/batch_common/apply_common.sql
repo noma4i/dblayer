@@ -1,0 +1,1 @@
+UPDATE op SET intent_state = 'effects_only' WHERE seq = ?1

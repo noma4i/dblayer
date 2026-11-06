@@ -1,0 +1,1 @@
+SELECT row_id FROM scope_member WHERE model = ?1 AND scope_key = ?2 AND order_key = ?3

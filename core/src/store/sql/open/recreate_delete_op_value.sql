@@ -1,0 +1,1 @@
+DELETE FROM op_value WHERE part = 'prior';

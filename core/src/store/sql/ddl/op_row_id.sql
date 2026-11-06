@@ -1,0 +1,1 @@
+CREATE INDEX IF NOT EXISTS op_row_id ON op_row (row_id)

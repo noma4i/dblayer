@@ -1,0 +1,1 @@
+CREATE INDEX IF NOT EXISTS op_open ON op (action_key, status)

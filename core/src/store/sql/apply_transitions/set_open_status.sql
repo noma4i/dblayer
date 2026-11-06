@@ -1,0 +1,1 @@
+UPDATE op SET status = ?1, error_kind = ?2, error_message = ?3, since = ?4{dedupe} WHERE seq = ?5 AND {}

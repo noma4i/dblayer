@@ -1,3 +1,3 @@
 [extra-inputs]
-dblayer = ["../fixtures/**", "../scripts/zoo_allowlist.txt", "tests/corpus/**", "src/**/*.tsv", "src/**/*.inc"]
+dblayer = ["../fixtures/**", "../scripts/zoo_allowlist.txt", "tests/corpus/**", "src/**/*.tsv", "src/**/*.inc", "src/**/*.sql"]
 dblayer-gen = ["../fixtures/**", "../docs/**"]

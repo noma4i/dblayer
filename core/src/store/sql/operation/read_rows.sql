@@ -1,0 +1,1 @@
+SELECT row_id FROM op_row WHERE seq = ?1 ORDER BY pos

@@ -1,0 +1,1 @@
+SELECT {order}, node, parent, pos, name, kind, whole, fraction, text FROM {table} WHERE {filter} ORDER BY {order}, node

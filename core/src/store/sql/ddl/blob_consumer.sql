@@ -1,0 +1,1 @@
+CREATE INDEX IF NOT EXISTS blob_consumer ON blob_use (blob_id)

@@ -1,0 +1,1 @@
+SELECT row_id, action, {INFO_COLUMNS}, size, transfer_id FROM sync_upload WHERE model = ? AND row_id IN ({marks})

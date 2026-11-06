@@ -121,11 +121,12 @@ pub fn create_table_statement(model: &ModelSpec) -> String {
     ];
     definitions.extend(plan.row_columns().iter().map(|(name, ty)| format!("{} {}", sql_ident(name), ty.as_sql())));
     definitions.extend(plan.rev_columns().iter().map(|(_, column)| format!("{} INTEGER", sql_ident(column))));
-    let kind = if model.is_memory() { "CREATE TEMP TABLE" } else { "CREATE TABLE" };
+    let temp = if model.is_memory() { "TEMP " } else { "" };
     format!(
-        "{kind} IF NOT EXISTS {} (\n  {}\n) STRICT",
-        table_name(model.key.as_str()),
-        definitions.join(",\n  ")
+        include_str!("../store/sql/ddl/row_table.sql"),
+        temp = temp,
+        table = table_name(model.key.as_str()),
+        columns = definitions.join(",\n  ")
     )
 }
 
@@ -160,7 +161,7 @@ pub fn create_index_statements(model: &ModelSpec) -> Vec<String> {
     indexes.iter().filter(|fields| !indexes.iter().any(|other| other.len() > fields.len() && other.starts_with(fields)))
         .enumerate().map(|(index, fields)| {
             let columns: Vec<_> = fields.iter().map(|(name, descending)| if *descending { format!("{name} DESC") } else { name.clone() }).collect();
-            format!("CREATE INDEX IF NOT EXISTS {table}_idx_{index} ON {table} ({})", columns.join(", "))
+            format!(include_str!("../store/sql/ddl/create_index_statements.sql"), columns.join(", "), table = table, index = index)
         }).collect()
 }
 
@@ -176,16 +177,15 @@ pub fn fts_statement(model: &ModelSpec) -> Option<String> {
     let columns: Vec<String> = (0..count).map(|index| format!("c{index}")).collect();
     let schema = if model.is_memory() { "temp." } else { "" };
     Some(format!(
-        "CREATE VIRTUAL TABLE IF NOT EXISTS {schema}{} USING fts5({}, tokenize = 'unicode61 remove_diacritics 2', prefix = '2 3 4')",
+        include_str!("../store/sql/ddl/fts_statement.sql"),
         fts_name(model.key.as_str()),
-        columns.join(", ")
+        columns.join(", "), schema = schema
     ))
 }
 
 pub fn fts_tables(connection: &Connection) -> Result<Vec<String>, DdlError> {
     let mut statement = connection.prepare(
-        "SELECT name FROM sqlite_master WHERE type = 'table' AND name LIKE 'fts\\_row\\_%' ESCAPE '\\' AND sql LIKE 'CREATE VIRTUAL%'
-         UNION ALL SELECT name FROM sqlite_temp_master WHERE type = 'table' AND name LIKE 'fts\\_row\\_%' ESCAPE '\\' AND sql LIKE 'CREATE VIRTUAL%'",
+        include_str!("../store/sql/ddl/fts_tables.sql"),
     )?;
     let names = statement.query_map([], |row| row.get(0))?;
     Ok(names.collect::<Result<_, _>>()?)
@@ -221,16 +221,16 @@ pub(crate) fn create_core_tables(connection: &Connection) -> Result<(), DdlError
     for statement in CORE_STATEMENTS.iter().chain(CACHE_STATEMENTS.iter()) {
         connection.execute_batch(statement)?;
     }
-    connection.execute_batch(&format!("pragma user_version = {SCHEMA_VERSION}"))?;
+    connection.execute_batch(&format!(include_str!("../store/sql/ddl/create_core_tables.sql"), SCHEMA_VERSION = SCHEMA_VERSION))?;
     Ok(())
 }
 
 pub fn recreate_reason(connection: &Connection) -> Result<Option<RecreateReason>, DdlError> {
-    let version: i64 = connection.query_row("pragma user_version", [], |row| row.get(0))?;
+    let version: i64 = connection.query_row(include_str!("../store/sql/ddl/recreate_reason.sql"), [], |row| row.get(0))?;
     if version != 0 && version != SCHEMA_VERSION {
         return Ok(Some(RecreateReason::SchemaVersion));
     }
-    let has_manifest: bool = connection.query_row("SELECT EXISTS (SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'manifest')", [], |row| row.get(0))?;
+    let has_manifest: bool = connection.query_row(include_str!("../store/sql/ddl/recreate_reason_2.sql"), [], |row| row.get(0))?;
     if has_manifest && manifest_read(connection, FORMAT_VERSION_KEY)?.is_some_and(|stored| stored != format_version()) {
         return Ok(Some(RecreateReason::CoreFormat));
     }
@@ -246,7 +246,7 @@ pub fn format_version() -> String {
 
 pub fn rebuild_cache_tables(connection: &Connection) -> Result<(), DdlError> {
     for table in CACHE_TABLES {
-        connection.execute_batch(&format!("DROP TABLE IF EXISTS {table}"))?;
+        connection.execute_batch(&format!(include_str!("../store/sql/ddl/rebuild_cache_tables.sql"), table = table))?;
     }
     for statement in CACHE_STATEMENTS {
         connection.execute_batch(statement)?;
@@ -322,12 +322,12 @@ pub fn fingerprint_key(model: &str) -> String {
 }
 
 pub fn manifest_read(connection: &Connection, key: &str) -> Result<Option<String>, DdlError> {
-    Ok(connection.query_row("SELECT value FROM manifest WHERE key = ?1", [key], |row| row.get(0)).optional()?)
+    Ok(connection.query_row(include_str!("../store/sql/ddl/manifest_read.sql"), [key], |row| row.get(0)).optional()?)
 }
 
 pub fn manifest_write(connection: &Connection, key: &str, value: &str) -> Result<(), DdlError> {
     connection.execute(
-        "INSERT INTO manifest (key, value) VALUES (?1, ?2) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+        include_str!("../store/sql/ddl/manifest_write.sql"),
         params![key, value],
     )?;
     Ok(())
@@ -348,7 +348,7 @@ pub fn manifest_stamp(
 
 fn cache_is_empty(connection: &Connection) -> Result<bool, DdlError> {
     for table in CACHE_TABLES {
-        let used: bool = connection.query_row(&format!("SELECT EXISTS (SELECT 1 FROM {table})"), [], |row| row.get(0))?;
+        let used: bool = connection.query_row(&format!(include_str!("../store/sql/ddl/cache_is_empty.sql"), table = table), [], |row| row.get(0))?;
         if used {
             return Ok(false);
         }
@@ -361,7 +361,7 @@ pub fn manifest_verify(
     data_version: Option<&str>,
     fingerprints: &BTreeMap<String, String>,
 ) -> Result<ManifestVerdict, DdlError> {
-    let mut statement = connection.prepare("SELECT key, value FROM manifest")?;
+    let mut statement = connection.prepare(include_str!("../store/sql/ddl/manifest_verify.sql"))?;
     let values: BTreeMap<String, String> =
         statement.query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?.collect::<Result<_, _>>()?;
 

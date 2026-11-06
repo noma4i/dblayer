@@ -1,0 +1,1 @@
+SELECT name FROM op_value WHERE seq = ?1 AND item_position = -1 AND part = 'input' AND parent = 0 AND name IS NOT NULL AND name != 'id' ORDER BY pos

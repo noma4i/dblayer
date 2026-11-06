@@ -1,0 +1,1 @@
+CREATE INDEX IF NOT EXISTS quarantine_reason ON quarantine (reason, seq)

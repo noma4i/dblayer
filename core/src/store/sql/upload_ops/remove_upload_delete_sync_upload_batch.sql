@@ -1,0 +1,1 @@
+DELETE FROM sync_upload_batch WHERE batch_id NOT IN (SELECT batch FROM sync_upload WHERE batch IS NOT NULL)

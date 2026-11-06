@@ -1,0 +1,1 @@
+INSERT OR REPLACE INTO sync_upload_batch (batch_id, op_id, joint) VALUES (?1, ?2, ?3)

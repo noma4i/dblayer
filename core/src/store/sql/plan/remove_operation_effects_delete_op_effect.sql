@@ -1,0 +1,1 @@
+DELETE FROM op_effect WHERE seq = ?1

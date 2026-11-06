@@ -1,0 +1,1 @@
+INSERT INTO op (action_key, status, temp_id, transport_started, base_revision, dedupe_key, created_at, since) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?7)

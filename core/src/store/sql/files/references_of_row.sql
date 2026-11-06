@@ -1,0 +1,1 @@
+SELECT id, model, row_id, field, location FROM file WHERE model = ?1 AND row_id = ?2 ORDER BY field

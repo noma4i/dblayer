@@ -13,8 +13,7 @@ use super::{ModelInfo, StoreError};
 
 const REBALANCE_SPAN: usize = 8;
 const PARKED: &str = "~parked~";
-pub(super) const LOWER_NEIGHBOUR_SQL: &str = "SELECT order_key FROM scope_member WHERE model = ?1 AND scope_key = ?2 AND place IS NOT NULL AND (place, row_id) < (?3, ?4) \
-             ORDER BY place DESC, row_id DESC LIMIT 1";
+pub(super) const LOWER_NEIGHBOUR_SQL: &str = include_str!("sql/stable/statement.sql");
 
 fn orders_of(fields: &[SortField]) -> Vec<Order> {
     fields.iter().map(|field| Order::new(&field.column, field.direction)).collect()
@@ -42,15 +41,15 @@ fn key_text(connection: &Connection, sql: &str, scope: &ScopeRef, bound: Option<
 
 fn neighbours(connection: &Connection, scope: &ScopeRef, row: &RowId, place: Option<&str>) -> Result<(Option<String>, Option<String>), StoreError> {
     let Some(place) = place.filter(|_| !row.is_temp()) else {
-        return Ok((key_text(connection, "SELECT MAX(order_key) FROM scope_member WHERE model = ?1 AND scope_key = ?2", scope, None)?, None));
+        return Ok((key_text(connection, include_str!("sql/stable/neighbours_select_scope_member.sql"), scope, None)?, None));
     };
     let lower: Option<String> = connection
         .prepare_cached(LOWER_NEIGHBOUR_SQL)?
         .query_row(params![scope.model.as_str(), scope.key.as_str(), place, row.as_str()], |found| found.get(0))
         .optional()?;
     let upper = match &lower {
-        Some(lower) => key_text(connection, "SELECT MIN(order_key) FROM scope_member WHERE model = ?1 AND scope_key = ?2 AND order_key > ?3", scope, Some(lower))?,
-        None => key_text(connection, "SELECT MIN(order_key) FROM scope_member WHERE model = ?1 AND scope_key = ?2", scope, None)?,
+        Some(lower) => key_text(connection, include_str!("sql/stable/neighbours_select_scope_member_2.sql"), scope, Some(lower))?,
+        None => key_text(connection, include_str!("sql/stable/neighbours_select_scope_member_3.sql"), scope, None)?,
     };
     Ok((lower, upper))
 }
@@ -59,8 +58,8 @@ fn side(connection: &Connection, scope: &ScopeRef, bound: Option<&str>, above: b
     let Some(bound) = bound else { return Ok(Vec::new()) };
     let (comparison, direction) = if above { (">=", "ASC") } else { ("<=", "DESC") };
     let sql = format!(
-        "SELECT row_id, order_key FROM scope_member WHERE model = ?1 AND scope_key = ?2 AND order_key {comparison} ?3 ORDER BY order_key {direction} LIMIT {}",
-        REBALANCE_SPAN + 1
+        include_str!("sql/stable/side.sql"),
+        REBALANCE_SPAN + 1, comparison = comparison, direction = direction
     );
     let mut statement = connection.prepare_cached(&sql)?;
     let rows = statement.query_map(params![scope.model.as_str(), scope.key.as_str(), bound], |row| Ok((row.get(0)?, row.get(1)?)))?;
@@ -77,7 +76,7 @@ fn rebalanced(connection: &Connection, scope: &ScopeRef, lower: Option<&str>, up
     let members: Vec<&(String, String)> = below.iter().chain(&above).collect();
     for (row_id, _) in &members {
         connection.execute(
-            "UPDATE scope_member SET order_key = ?1 WHERE model = ?2 AND scope_key = ?3 AND row_id = ?4",
+            include_str!("sql/stable/rebalanced.sql"),
             params![format!("{PARKED}{row_id}"), scope.model.as_str(), scope.key.as_str(), row_id],
         )?;
     }
@@ -96,7 +95,7 @@ fn rebalanced(connection: &Connection, scope: &ScopeRef, lower: Option<&str>, up
 
 fn set_key(connection: &Connection, scope: &ScopeRef, row_id: &str, key: &str) -> Result<(), StoreError> {
     connection.execute(
-        "UPDATE scope_member SET order_key = ?1 WHERE model = ?2 AND scope_key = ?3 AND row_id = ?4",
+        include_str!("sql/stable/rebalanced.sql"),
         params![key, scope.model.as_str(), scope.key.as_str(), row_id],
     )?;
     Ok(())
@@ -109,7 +108,7 @@ pub(super) struct Joined {
 
 pub(super) fn join(connection: &Connection, info: &ModelInfo, fields: &[SortField], scope: &ScopeRef, row: &RowId) -> Result<Joined, StoreError> {
     let member: Option<i64> = connection
-        .prepare_cached("SELECT 1 FROM scope_member WHERE model = ?1 AND scope_key = ?2 AND row_id = ?3")?
+        .prepare_cached(include_str!("sql/stable/join_select_scope_member.sql"))?
         .query_row(params![scope.model.as_str(), scope.key.as_str(), row.as_str()], |found| found.get(0))
         .optional()?;
     let mut moved = BTreeSet::new();
@@ -123,7 +122,7 @@ pub(super) fn join(connection: &Connection, info: &ModelInfo, fields: &[SortFiel
         key = rebalanced(connection, scope, lower.as_deref(), upper.as_deref(), &mut moved)?;
     }
     connection.execute(
-        "INSERT INTO scope_member (model, scope_key, row_id, order_key, place) VALUES (?1, ?2, ?3, ?4, ?5)",
+        include_str!("sql/stable/join_insert_scope_member.sql"),
         params![scope.model.as_str(), scope.key.as_str(), row.as_str(), key, place],
     )?;
     Ok(Joined { joined: true, moved })
@@ -141,7 +140,7 @@ pub(super) fn refresh_places(connection: &Connection, info: &ModelInfo, changes:
         for chunk in ids.chunks(CHUNK) {
             for (row_id, place) in places_of(connection, info, fields, chunk)? {
                 connection.prepare_cached(
-                    "UPDATE scope_member SET place = ?1 WHERE model = ?2 AND row_id = ?3 AND substr(scope_key, 1, ?4) = ?5 AND place IS NOT ?1",
+                    include_str!("sql/stable/refresh_places.sql"),
                 )?.execute(params![place, info.spec.key.as_str(), row_id, prefix.as_str().chars().count() as i64, prefix.as_str()])?;
             }
         }

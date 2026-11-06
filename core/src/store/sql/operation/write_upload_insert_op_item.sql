@@ -1,0 +1,1 @@
+INSERT INTO op_item (seq, position, transfer_operation_id, {UPLOAD_COLUMNS}) SELECT ?1, ?2, ?1, {marks} WHERE EXISTS (SELECT 1 FROM op WHERE seq = ?1) ON CONFLICT (seq, position) DO UPDATE SET {assignments}

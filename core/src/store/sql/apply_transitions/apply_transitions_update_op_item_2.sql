@@ -1,0 +1,1 @@
+UPDATE op_item SET background_refused = NULL WHERE seq = ?1

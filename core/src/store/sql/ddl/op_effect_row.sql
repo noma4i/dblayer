@@ -1,0 +1,1 @@
+CREATE INDEX IF NOT EXISTS op_effect_row ON op_effect (model, row_id, seq, position)

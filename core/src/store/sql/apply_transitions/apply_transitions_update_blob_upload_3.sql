@@ -1,0 +1,1 @@
+UPDATE blob_upload SET failed_at = NULL WHERE seq = ?1

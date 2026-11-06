@@ -1,0 +1,1 @@
+UPDATE blob_upload SET consumer_seq = NULL WHERE consumer_seq = ?1

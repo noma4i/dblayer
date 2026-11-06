@@ -1,0 +1,1 @@
+INSERT OR REPLACE INTO blob_cache (content_sha256, blob_id, created_at) VALUES (?1, ?2, ?3)

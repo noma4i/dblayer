@@ -1,0 +1,1 @@
+CREATE UNIQUE INDEX IF NOT EXISTS file_pair ON file (model, row_id, field)

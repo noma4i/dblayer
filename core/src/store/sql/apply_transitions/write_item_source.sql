@@ -1,0 +1,1 @@
+UPDATE op_item SET row_id = ?2, file_id = ?3, source_error = ?4, client_key = ?6 WHERE seq = ?1 AND position = ?5

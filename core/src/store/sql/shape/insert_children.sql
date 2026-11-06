@@ -1,0 +1,1 @@
+INSERT INTO {} (row_id, owner, pos, value) VALUES (?1, ?2, ?3, ?4)

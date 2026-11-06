@@ -1,0 +1,4 @@
+CREATE TABLE IF NOT EXISTS reset_intent_model (
+  pos INTEGER PRIMARY KEY,
+  model TEXT NOT NULL
+) STRICT

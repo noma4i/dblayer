@@ -1,0 +1,1 @@
+DELETE FROM upload_orphan WHERE upload_id = ?1

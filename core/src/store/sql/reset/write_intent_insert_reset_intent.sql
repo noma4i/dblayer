@@ -1,0 +1,1 @@
+INSERT INTO reset_intent (id, mode, started_at) VALUES (1, ?1, ?2)

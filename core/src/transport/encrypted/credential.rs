@@ -100,7 +100,7 @@ pub(crate) fn stored_answers(store: &Store) -> Result<std::collections::BTreeMap
 
 /// A stored request could not be carried over a format change: Session stays blocked until `session_reset`.
 pub(crate) fn dropped_pending(store: &Store) -> Result<bool, TransportError> {
-    store.read_locked(|connection| connection.query_row("SELECT EXISTS (SELECT 1 FROM restore_failed WHERE source_table = 'encrypted_pending')", [], |row| row.get(0))).map_err(storage)
+    store.read_locked(|connection| connection.query_row(include_str!("../../store/sql/session_state/dropped_pending.sql"), [], |row| row.get(0))).map_err(storage)
 }
 
 /// The state of the session at open: a session end that did not finish clears the tables and the secret.

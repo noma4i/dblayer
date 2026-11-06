@@ -52,7 +52,7 @@ pub(super) fn apply_envelope_at(
             EntityOp::Touch { model, id } => {
                 let info = models.get(model.as_str()).ok_or_else(|| StoreError::UnknownModel(model.to_string()))?;
                 let touched = connection
-                    .execute(&format!("UPDATE {} SET revision = ?1 WHERE id = ?2", info.table), params![revision, id.as_str()])?;
+                    .execute(&format!(include_str!("sql/apply_envelope/apply_envelope_at_update.sql"), info.table), params![revision, id.as_str()])?;
                 if touched > 0 {
                     changes.push(model, id.as_str(), RowChangeKind::Touched, BTreeSet::new());
                 }
@@ -104,17 +104,17 @@ pub(super) fn apply_envelope_at(
         let removed = match &item.reason {
             DestroyReason::Replaced { by } => {
                 let moved = connection.execute(
-                    "UPDATE OR REPLACE scope_member SET row_id = ?1 WHERE model = ?2 AND row_id = ?3",
+                    include_str!("sql/apply_envelope/apply_envelope_at_update_scope_member.sql"),
                     params![by.as_str(), item.model.as_str(), item.id],
                 )?;
                 connection.execute(
-                    "DELETE FROM scope_revision WHERE model = ?1 AND row_id = ?2 AND scope_key IN (SELECT scope_key FROM scope_member WHERE model = ?1 AND row_id = ?3)",
+                    include_str!("sql/apply_envelope/apply_envelope_at_delete_scope_revision.sql"),
                     params![item.model.as_str(), item.id, by.as_str()],
                 )?;
                 moved
             }
             _ => connection.execute(
-                "DELETE FROM scope_member WHERE model = ?1 AND row_id = ?2",
+                include_str!("sql/apply_envelope/apply_envelope_at_delete_scope_member.sql"),
                 params![item.model.as_str(), item.id],
             )?,
         };
@@ -208,7 +208,7 @@ pub(super) fn apply_envelope_at(
 fn save_window(connection: &Connection, window: &WindowSave, generation: Generation, now_ms: i64) -> Result<(), StoreError> {
     let kept = match &window.tail {
         Some(tail) => connection.query_row(
-            "SELECT 1 FROM scope_member WHERE model = ?1 AND scope_key = ?2 AND row_id = ?3",
+            include_str!("sql/apply_envelope/save_window_select_scope_member.sql"),
             params![window.scope.model.as_str(), window.scope.key.as_str(), tail.anchor], |_| Ok(()),
         ).optional()?.map(|_| tail),
         None => None,
@@ -217,17 +217,17 @@ fn save_window(connection: &Connection, window: &WindowSave, generation: Generat
     let record = WindowRecord { key: window.key.clone(), cursor, has_next, total: window.total, pages: window.pages, issued: window.issued, applied: window.applied, generation: generation.value() as i64 };
     upsert_window(connection, &record, now_ms)?;
     if let Some(since) = window.stale_since {
-        connection.execute("UPDATE query_window SET stale_since = MAX(COALESCE(stale_since, 0), ?2) WHERE key = ?1", params![window.key, since])?;
+        connection.execute(include_str!("sql/apply_envelope/save_window_update_query_window.sql"), params![window.key, since])?;
     }
     if let Some(marker) = &window.marker {
-        connection.execute("DELETE FROM window_marker WHERE window_key = ?1", [&window.key])?;
-        let mut insert = connection.prepare_cached("INSERT INTO window_marker (window_key, generation, sequence, field, value) VALUES (?1, ?2, ?3, ?4, ?5)")?;
+        connection.execute(include_str!("sql/apply_envelope/save_window_delete_window_marker.sql"), [&window.key])?;
+        let mut insert = connection.prepare_cached(include_str!("sql/apply_envelope/save_window_insert_window_marker.sql"))?;
         for (field, value) in &marker.values {
             insert.execute(params![window.key, generation.value() as i64, marker.sequence, field, value])?;
         }
     }
     if let Some(landed_at) = window.cleared_at {
-        connection.execute("UPDATE query_window SET stale_since = CASE WHEN stale_since <= ?3 THEN NULL ELSE stale_since END, landed_at = ?1 WHERE key = ?2", params![landed_at, window.key, window.applied])?;
+        connection.execute(include_str!("sql/apply_envelope/save_window_update_query_window_2.sql"), params![landed_at, window.key, window.applied])?;
     }
     Ok(())
 }
@@ -251,7 +251,7 @@ fn collect_scopes(
         let ids: Vec<&str> = ids.into_iter().collect();
         for chunk in ids.chunks(CHUNK) {
             let sql = format!(
-                "SELECT DISTINCT scope_key FROM scope_member WHERE model = ? AND row_id IN ({})",
+                include_str!("sql/apply_envelope/collect_scopes.sql"),
                 placeholders(chunk.len())
             );
             let mut statement = connection.prepare_cached(&sql)?;
@@ -268,7 +268,7 @@ fn collect_scopes(
 fn apply_edge_writes(connection: &Connection, writes: &[EdgeWrite]) -> Result<(), StoreError> {
     for write in writes {
         let key = params![write.scope.model.as_str(), write.scope.key.as_str(), write.row.as_str()];
-        connection.execute("DELETE FROM scope_edge WHERE model = ?1 AND scope_key = ?2 AND row_id = ?3", key)?;
+        connection.execute(include_str!("sql/apply_envelope/apply_edge_writes_delete_scope_edge.sql"), key)?;
         for (name, value) in &write.values {
             let (whole, fraction, text) = match value {
                 EdgeValue::Whole(whole) => (Some(*whole), None, None),
@@ -276,8 +276,7 @@ fn apply_edge_writes(connection: &Connection, writes: &[EdgeWrite]) -> Result<()
                 EdgeValue::Text(text) => (None, None, Some(text.as_str())),
             };
             connection.execute(
-                "INSERT INTO scope_edge (model, scope_key, row_id, name, whole, fraction, text) \
-                 SELECT ?1, ?2, ?3, ?4, ?5, ?6, ?7 WHERE EXISTS (SELECT 1 FROM scope_member WHERE model = ?1 AND scope_key = ?2 AND row_id = ?3)",
+                include_str!("sql/apply_envelope/apply_edge_writes_insert_scope_edge.sql"),
                 params![write.scope.model.as_str(), write.scope.key.as_str(), write.row.as_str(), name, whole, fraction, text],
             )?;
         }
@@ -316,7 +315,7 @@ fn apply_scope_ops(
             }
             claimed.entry(scope.clone()).or_default().insert(order_key.clone());
             connection.execute(
-                "UPDATE scope_member SET order_key = ?1 WHERE model = ?2 AND scope_key = ?3 AND row_id = ?4",
+                include_str!("sql/apply_envelope/apply_scope_ops_update_scope_member.sql"),
                 params![format!("~parked~{}", row.as_str()), scope.model.as_str(), scope.key.as_str(), row.as_str()],
             )?;
         }
@@ -338,18 +337,16 @@ fn apply_scope_ops(
                 let wanted = claimed.get(scope).unwrap_or(&none);
                 let order_key = reader.free_order_key(scope.model.as_str(), scope.key.as_str(), row.as_str(), order_key, wanted)?;
                 connection.execute(
-                    "INSERT INTO scope_member (model, scope_key, row_id, order_key) VALUES (?1, ?2, ?3, ?4) \
-                     ON CONFLICT (model, scope_key, row_id) DO UPDATE SET order_key = excluded.order_key \
-                     WHERE order_key IS NOT excluded.order_key",
+                    include_str!("sql/apply_envelope/apply_scope_ops_insert_scope_member.sql"),
                     params![scope.model.as_str(), scope.key.as_str(), row.as_str(), order_key],
                 )?
             }
             (ScopeOp::Move { scope, row, order_key }, None) => connection.execute(
-                "UPDATE scope_member SET order_key = ?1 WHERE model = ?2 AND scope_key = ?3 AND row_id = ?4",
+                include_str!("sql/apply_envelope/apply_scope_ops_update_scope_member.sql"),
                 params![order_key, scope.model.as_str(), scope.key.as_str(), row.as_str()],
             )?,
             (ScopeOp::Detach { scope, row }, _) => connection.execute(
-                "DELETE FROM scope_member WHERE model = ?1 AND scope_key = ?2 AND row_id = ?3",
+                include_str!("sql/apply_envelope/apply_scope_ops_delete_scope_member.sql"),
                 params![scope.model.as_str(), scope.key.as_str(), row.as_str()],
             )?,
         };
@@ -365,7 +362,7 @@ fn apply_scope_ops(
 
 fn op_keys_of(connection: &Connection, seq: i64) -> Result<Vec<SyncKey>, StoreError> {
     let found: Option<(String, Option<String>)> =
-        connection.query_row("SELECT action_key, temp_id FROM op WHERE seq = ?1", params![seq], |row| Ok((row.get(0)?, row.get(1)?))).optional()?;
+        connection.query_row(include_str!("sql/apply_envelope/op_keys_of.sql"), params![seq], |row| Ok((row.get(0)?, row.get(1)?))).optional()?;
     let Some((action_key, temp_id)) = found else { return Ok(Vec::new()) };
     let row_ids = read_rows(connection, seq)?;
     let temp_id = temp_id.as_deref().map(stored_row_id).transpose()?;
@@ -389,7 +386,7 @@ fn stamp_confirmed_rows(
             };
             match (kind, item.get("owned").and_then(Value::as_object), models.get(model)) {
                 ("destroyed", _, _) => {
-                    connection.execute("UPDATE tombstone SET seq = ?1 WHERE model = ?2 AND id = ?3", params![revision, model, id])?;
+                    connection.execute(include_str!("sql/apply_envelope/stamp_confirmed_rows.sql"), params![revision, model, id])?;
                 }
                 ("edited", Some(owned), Some(info)) => stamp_owned_fields(connection, info, id, owned, revision)?,
                 _ => {}
@@ -402,7 +399,7 @@ fn stamp_confirmed_rows(
 fn stamp_owned_fields(connection: &Connection, info: &ModelInfo, id: &str, owned: &Map<String, Value>, revision: i64) -> Result<(), StoreError> {
     for (_, column) in info.layout.rev_columns().iter().filter(|(field, _)| owned.contains_key(field)) {
         let column = crate::ddl::sql_ident(column);
-        connection.prepare_cached(&format!("UPDATE {} SET {column} = ?1 WHERE id = ?2 AND {column} IS NOT NULL", info.table))?.execute(params![revision, id])?;
+        connection.prepare_cached(&format!(include_str!("sql/apply_envelope/stamp_owned_fields.sql"), info.table, column = column))?.execute(params![revision, id])?;
     }
     Ok(())
 }

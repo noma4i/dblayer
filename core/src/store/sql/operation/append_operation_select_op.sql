@@ -1,0 +1,1 @@
+SELECT client_mutation_id FROM op WHERE seq = ?

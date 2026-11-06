@@ -1,0 +1,1 @@
+SELECT seq, consumer_seq, created_at, expired FROM blob_upload WHERE id = ?1

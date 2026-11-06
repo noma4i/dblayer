@@ -1,0 +1,1 @@
+SELECT id FROM batch_file_deletions WHERE NOT EXISTS (SELECT 1 FROM file WHERE file.id = batch_file_deletions.id)

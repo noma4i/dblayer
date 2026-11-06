@@ -13,7 +13,7 @@ pub(super) struct Correlated {
 }
 
 fn candidates(reader: &Reader<'_>, spec: &crate::schema::ModelSpec, model: &str) -> Result<Vec<OutboxOperation>, StoreError> {
-    let sql = format!("SELECT seq FROM op WHERE action_key = ?1 AND temp_id IS NOT NULL AND status IN {} ORDER BY seq", crate::operation::OPEN_STATUSES);
+    let sql = format!(include_str!("sql/correlate/candidates.sql"), crate::operation::OPEN_STATUSES);
     let mut statement = reader.connection().prepare_cached(&sql)?;
     let mut entries = Vec::new();
     for declared in spec.actions.iter().filter(|declared| !declared.correlate.is_empty()) {

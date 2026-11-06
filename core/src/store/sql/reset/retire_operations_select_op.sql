@@ -1,0 +1,1 @@
+SELECT seq, action_key FROM op

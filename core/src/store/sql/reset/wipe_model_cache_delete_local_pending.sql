@@ -1,0 +1,1 @@
+DELETE FROM local_pending WHERE model = ?1

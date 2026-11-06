@@ -1,0 +1,7 @@
+CREATE TABLE IF NOT EXISTS sync_field (
+  model TEXT NOT NULL,
+  row_id TEXT NOT NULL,
+  pos INTEGER NOT NULL,
+  name TEXT NOT NULL,
+  PRIMARY KEY (model, row_id, pos)
+) STRICT, WITHOUT ROWID

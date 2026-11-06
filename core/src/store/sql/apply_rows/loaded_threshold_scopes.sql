@@ -1,0 +1,1 @@
+SELECT key FROM query_window WHERE key LIKE ?1 ESCAPE '\'

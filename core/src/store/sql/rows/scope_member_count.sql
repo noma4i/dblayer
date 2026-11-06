@@ -1,0 +1,1 @@
+SELECT COUNT(*) FROM scope_member WHERE model = ?1 AND scope_key = ?2

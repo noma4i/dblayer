@@ -15,8 +15,7 @@ const OPERATION_COLUMNS: &str = "seq, action_key, status, temp_id, transport_sta
 #[cfg(test)]
 pub fn append_operation(connection: &Connection, operation: &mut Operation, input: &Value) -> rusqlite::Result<i64> {
     connection.execute(
-        "INSERT INTO op (action_key, status, temp_id, transport_started, base_revision, dedupe_key, created_at, since) \
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?7)",
+        include_str!("../store/sql/operation/append_operation_insert_op.sql"),
         params![
             operation.action_key,
             operation.status.as_sql(),
@@ -28,7 +27,7 @@ pub fn append_operation(connection: &Connection, operation: &mut Operation, inpu
         ],
     )?;
     let seq = connection.last_insert_rowid();
-    operation.client_mutation_id = connection.query_row("SELECT client_mutation_id FROM op WHERE seq = ?", [seq], |row| row.get(0))?;
+    operation.client_mutation_id = connection.query_row(include_str!("../store/sql/operation/append_operation_select_op.sql"), [seq], |row| row.get(0))?;
     write_rows(connection, seq, &operation.row_ids)?;
     write_value(connection, seq, "input", Some(input))?;
     Ok(seq)
@@ -36,7 +35,7 @@ pub fn append_operation(connection: &Connection, operation: &mut Operation, inpu
 
 #[cfg(test)]
 pub fn set_status(connection: &Connection, sequence: i64, status: OperationStatus) -> rusqlite::Result<()> {
-    connection.execute("UPDATE op SET status = ? WHERE seq = ?", params![status.as_sql(), sequence])?;
+    connection.execute(include_str!("../store/sql/operation/set_status.sql"), params![status.as_sql(), sequence])?;
     Ok(())
 }
 
@@ -45,7 +44,7 @@ pub fn operation_input(connection: &Connection, sequence: i64) -> rusqlite::Resu
 }
 
 pub fn open_operations(connection: &Connection) -> rusqlite::Result<Vec<Operation>> {
-    let sql = format!("SELECT {OPERATION_COLUMNS} FROM op WHERE status IN {OPEN_STATUSES} ORDER BY seq");
+    let sql = format!(include_str!("../store/sql/operation/open_operations.sql"), OPERATION_COLUMNS = OPERATION_COLUMNS, OPEN_STATUSES = OPEN_STATUSES);
     let mut rows_of = read_all_rows(connection)?;
     let mut uploads = read_uploads(connection)?;
     let mut extensions = operation_extensions(connection, None)?;
@@ -75,7 +74,7 @@ fn operation_at(row: &Row<'_>) -> rusqlite::Result<Option<Operation>> {
 }
 
 pub(crate) fn read_operation(connection: &Connection, seq: i64) -> rusqlite::Result<Option<Operation>> {
-    let sql = format!("SELECT {OPERATION_COLUMNS} FROM op WHERE seq = ?1 AND status IN {OPEN_STATUSES}");
+    let sql = format!(include_str!("../store/sql/operation/read_operation.sql"), OPERATION_COLUMNS = OPERATION_COLUMNS, OPEN_STATUSES = OPEN_STATUSES);
     let Some(mut operation) = connection.query_row(&sql, [seq], operation_at).optional()?.flatten() else { return Ok(None) };
     operation.row_ids = read_rows(connection, seq)?;
     attach_extensions(&mut operation.error, operation_extensions(connection, Some(seq))?.remove(&seq));
@@ -84,12 +83,12 @@ pub(crate) fn read_operation(connection: &Connection, seq: i64) -> rusqlite::Res
 
 pub(crate) fn read_queue_operation(connection: &Connection, seq: i64) -> rusqlite::Result<Option<super::QueueOperation>> {
     let Some(operation) = read_operation(connection, seq)? else { return Ok(None) };
-    let uploading = connection.query_row("SELECT EXISTS (SELECT 1 FROM op_item WHERE seq = ?1)", [seq], |row| row.get(0))?;
+    let uploading = connection.query_row(include_str!("../store/sql/operation/read_queue_operation.sql"), [seq], |row| row.get(0))?;
     Ok(Some(super::QueueOperation { operation, uploading }))
 }
 
 pub(crate) fn row_operation_sequences(connection: &Connection, keys: &BTreeSet<(String, String)>) -> rusqlite::Result<BTreeSet<i64>> {
-    let sql = format!("SELECT seq FROM op WHERE seq IN (SELECT seq FROM op_row WHERE row_id = ?2 UNION SELECT seq FROM op WHERE temp_id = ?2) AND substr(action_key, 1, instr(action_key, ':') - 1) = ?1 AND status IN {OPEN_STATUSES}");
+    let sql = format!(include_str!("../store/sql/operation/row_operation_sequences.sql"), OPEN_STATUSES = OPEN_STATUSES);
     let mut statement = connection.prepare_cached(&sql)?;
     let mut sequences = BTreeSet::new();
     for (model, id) in keys {
@@ -128,13 +127,13 @@ fn quarantine_row(connection: &Connection, row: &RowRef, orphans: &Orphans) -> r
     let id = &row.id;
     quarantine_add(connection, Some(row.model.as_str()), &orphan.payload, QuarantineReason::OrphanTempRow)?;
     if let (Some(search), Some(main)) = (&orphan.search, orphan.tables.last()) {
-        connection.execute(&format!("DELETE FROM {search} WHERE rowid = (SELECT rowid FROM {main} WHERE id = ?1)"), [id.as_str()])?;
+        connection.execute(&format!(include_str!("../store/sql/operation/quarantine_row_delete_search.sql"), search = search, main = main), [id.as_str()])?;
     }
     for (index, table) in orphan.tables.iter().enumerate() {
         let column = if index + 1 == orphan.tables.len() { "id" } else { "row_id" };
-        connection.execute(&format!("DELETE FROM {table} WHERE {column} = ?"), [id.as_str()])?;
+        connection.execute(&format!(include_str!("../store/sql/operation/quarantine_row_delete_table.sql"), table = table, column = column), [id.as_str()])?;
     }
-    connection.execute("DELETE FROM scope_member WHERE model = ? AND row_id = ?", params![row.model.as_str(), id.as_str()])?;
+    connection.execute(include_str!("../store/sql/operation/quarantine_row_delete_scope_member.sql"), params![row.model.as_str(), id.as_str()])?;
     Ok(true)
 }
 

@@ -1,0 +1,1 @@
+SELECT seq, consumer_seq FROM blob_upload WHERE id = ?1

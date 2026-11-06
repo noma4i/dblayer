@@ -1,0 +1,1 @@
+SELECT seq, cycle_id FROM op

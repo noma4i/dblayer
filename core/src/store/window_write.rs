@@ -119,12 +119,12 @@ pub(super) fn mark(writer: &mut RowWrite<'_>, key: &crate::owners::read::windows
     let remote = declared.remote.as_ref().ok_or_else(|| fault(format!("{model}.{relation} is not remote")))?;
     let (_, window_key) = super::windows::window_identity(spec, model, &relation, remote, &params).map_err(fault)?;
     let generation = writer.generation.value() as i64;
-    writer.connection.execute("DELETE FROM window_marker WHERE window_key = ?1", [&window_key])?;
-    let mut insert = writer.connection.prepare_cached("INSERT INTO window_marker (window_key, generation, sequence, field, value) VALUES (?1, ?2, ?3, ?4, ?5)")?;
+    writer.connection.execute(include_str!("sql/window_write/mark_delete_window_marker.sql"), [&window_key])?;
+    let mut insert = writer.connection.prepare_cached(include_str!("sql/window_write/mark_insert_window_marker.sql"))?;
     for (field, value) in &marker.values {
         insert.execute(rusqlite::params![window_key, generation, marker.sequence, field, value])?;
     }
-    writer.connection.execute("UPDATE query_window SET stale_since = NULL, landed_at = ?1 WHERE key = ?2", rusqlite::params![writer.now, window_key])?;
+    writer.connection.execute(include_str!("sql/window_write/mark_update_query_window.sql"), rusqlite::params![writer.now, window_key])?;
     Ok(CommitResult::noop(uuid::Uuid::new_v4()))
 }
 

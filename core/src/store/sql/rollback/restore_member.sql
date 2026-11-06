@@ -1,0 +1,1 @@
+SELECT EXISTS (SELECT 1 FROM op_effect e JOIN scope_revision r ON r.model = e.model AND r.scope_key = e.scope_key AND r.row_id = e.row_id AND r.operation_seq = e.seq WHERE e.seq = ?1 AND e.model = ?2 AND e.scope_key = ?3 AND e.row_id = ?4 AND e.kind IN ('join', 'leave'))
