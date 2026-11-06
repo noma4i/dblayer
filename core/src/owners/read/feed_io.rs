@@ -12,7 +12,7 @@ use tokio::runtime::Handle;
 use tokio::sync::mpsc;
 
 use super::feed::{Frame, FramedEvent, Outgoing, ProtocolReason, SUBSCRIPTION};
-use super::ports::Rest;
+use super::ports::{Admit, Rest};
 use crate::owners::contract::ConnectionId;
 use crate::owners::read::feed::{Feed, FeedEffect, FeedInput};
 use crate::runtime::{Back, EffectRunner, EpochStamp};
@@ -46,6 +46,7 @@ pub struct FeedIo {
     codec: Arc<dyn FeedCodec>,
     handle: Handle,
     counted: Option<crate::runtime::Handle>,
+    admit: Option<Admit>,
     open: Connections,
     attempts: AtomicU64,
     rest: Rest<FeedEffect>,
@@ -55,7 +56,13 @@ pub struct FeedIo {
 fn session_closed(code: u16, reason: &str) -> bool { matches!(code, 4401 | 4403) || matches!(reason, "LOGGED_OUT" | "ACCOUNT_LOCKED") }
 
 impl FeedIo {
-    pub fn new(lines: Arc<dyn CableLines>, codec: Arc<dyn FeedCodec>, handle: Handle, rest: Rest<FeedEffect>) -> Self { Self { lines, codec, handle, counted: None, open: Connections::default(), attempts: AtomicU64::new(0), rest } }
+    pub fn new(lines: Arc<dyn CableLines>, codec: Arc<dyn FeedCodec>, handle: Handle, rest: Rest<FeedEffect>) -> Self { Self { lines, codec, handle, counted: None, admit: None, open: Connections::default(), attempts: AtomicU64::new(0), rest } }
+
+    /// A connection starts with the admission of the epoch it was decided in, and its end cancels it.
+    pub fn admitted_by(mut self, admit: Admit) -> Self {
+        self.admit = Some(admit);
+        self
+    }
 
     /// The barrier of the owners waits for the connections this executor starts.
     pub fn counted_by(mut self, owners: crate::runtime::Handle) -> Self {
@@ -64,6 +71,13 @@ impl FeedIo {
     }
 
     fn connect(&self, stamp: EpochStamp, connection: ConnectionId, back: &Back<Feed>) {
+        let admitted = match (&self.admit, stamp) {
+            (Some(admit), EpochStamp::Epoch(epoch)) => match admit(epoch) {
+                Ok(admitted) => Some(admitted),
+                Err(_) => return back.reply(stamp, FeedInput::SubscriptionEnded { connection_id: connection }),
+            },
+            _ => None,
+        };
         let cancel = CancelToken::new();
         let attempt = self.attempts.fetch_add(1, Ordering::SeqCst);
         let open = self.open.clone();
@@ -79,7 +93,11 @@ impl FeedIo {
         };
         let launch = self.counted.as_ref().map(crate::runtime::Handle::launch);
         spawn_on(Carry::Detached, &self.handle, crate::runtime::counted(launch, async move {
-            Self::run(lines, codec, connection, (cancel, closing, established), queued, reply).await;
+            let running = Self::run(lines, codec, connection, (cancel, closing, established), queued, reply);
+            match admitted {
+                Some(admitted) => drop(admitted.run(running).await),
+                None => running.await,
+            }
             let mut open = open.lock().unwrap_or_else(PoisonError::into_inner);
             if open.get(&connection).is_some_and(|entry| entry.attempt == attempt) {
                 open.remove(&connection);

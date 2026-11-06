@@ -43,7 +43,8 @@ impl Tasks for TokioTasks {
 #[derive(Clone)]
 pub struct Wire {
     pub transport: Arc<dyn Transport>,
-    pub admit: Arc<dyn Fn() -> Option<Admitted> + Send + Sync>,
+    /// The admission of the epoch the step was decided in (`None` for a step without an epoch).
+    pub admit: Arc<dyn Fn(Option<crate::runtime::Epoch>) -> Option<Admitted> + Send + Sync>,
     pub tasks: Arc<dyn Tasks>,
 }
 

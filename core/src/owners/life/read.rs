@@ -82,7 +82,8 @@ pub(super) fn add(builder: &mut RuntimeBuilder, wiring: &Arc<Wiring>, ports: &Po
     let handle = builder.handle();
     let transport: Option<Arc<dyn Transport>> = ports.transport.clone();
     let admit_db = db.clone();
-    let admit: crate::owners::read::Admit = Arc::new(move |epoch| admit_db.admit_at(epoch).map_err(|error| crate::owners::read::Refused(error.to_string())));
+    let admit: crate::owners::read::Admit = Arc::new(move |epoch| admit_db.admit_in(crate::ffi::admission::Origin::Session, "window request", epoch).map_err(|error| crate::owners::read::Refused(error.to_string())));
+    let feed_admit = admit.clone();
     let codec = Arc::new(SchemaWindowCodec::new(db.clone(), ports.read_operations.clone().unwrap_or_default()));
 
     let preload = preload_keys(&db, false).unwrap_or_else(|error| {
@@ -141,7 +142,7 @@ pub(super) fn add(builder: &mut RuntimeBuilder, wiring: &Arc<Wiring>, ports: &Po
     let feed = match &ports.cable {
         Some(lines) => {
             let codec = Arc::new(LazyFeedCodec { db: db.clone(), operations: ports.read_operations.clone().unwrap_or_default(), wiring: wiring.clone(), built: OnceLock::new() });
-            builder.add::<Feed>("feed", feed_state, FeedIo::new(lines.clone(), codec, ports.executor.clone(), feed_rest).counted_by(handle.clone()))
+            builder.add::<Feed>("feed", feed_state, FeedIo::new(lines.clone(), codec, ports.executor.clone(), feed_rest).counted_by(handle.clone()).admitted_by(feed_admit.clone()))
         }
         None => builder.add::<Feed>("feed", feed_state, FeedWithoutIo { rest: feed_rest }),
     };

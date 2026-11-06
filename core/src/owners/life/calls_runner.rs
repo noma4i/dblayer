@@ -81,16 +81,15 @@ impl CallsRunner {
         Self { wiring, transport: ports.transport.clone(), session: ports.session.clone(), executor: ports.executor.clone(), operations: ports.operations.clone(), db: ports.db.clone(), running: HashMap::new(), roots }
     }
 
-    fn query(&mut self, call_id: u64, request_id: RequestId, operation: String, variables: String, document: String, root: String, back: &Back<Calls>) {
+    fn query(&mut self, call_id: u64, request_id: RequestId, epoch: crate::runtime::Epoch, operation: String, variables: String, document: String, root: String, back: &Back<Calls>) {
         let Some(transport) = self.transport.clone() else { return back.reply(EpochStamp::Control, CallsInput::TransportError { call_id, error: CallError::Invalid }) };
         let back = back.clone();
-        let lease = self.db.shared.store.lifecycle.clone();
+        let admitted = match self.db.admit_in(crate::ffi::admission::Origin::Explicit, "run", epoch) {
+            Ok(admitted) => admitted,
+            Err(_) => return back.reply(EpochStamp::Control, CallsInput::TransportError { call_id, error: CallError::Interrupted }),
+        };
         let launch = self.wiring.handle.launch();
         let task = crate::task::spawn_on(crate::task::Carry::Detached, &self.executor, crate::runtime::counted(Some(launch), async move {
-            let admitted = match lease.admit(crate::ffi::admission::Origin::Explicit, "run") {
-                Ok(admitted) => admitted,
-                Err(_) => return back.reply(EpochStamp::Control, CallsInput::TransportError { call_id, error: CallError::Interrupted }),
-            };
             let variables: Value = serde_json::from_str(&variables).unwrap_or(Value::Null);
             let request = GraphQLRequest::new(document.clone(), operation, variables);
             crate::db::lock::assert_no_library_lock("Transport::request");
@@ -107,7 +106,7 @@ impl CallsRunner {
     }
 
     fn mutate(&mut self, call_id: u64, request_id: RequestId, epoch: crate::runtime::Epoch, operation: String, variables: String, document: String, root: String, back: &Back<Calls>) {
-        let Some(client) = self.session.clone() else { return self.query(call_id, request_id, operation, variables, document, root, back) };
+        let Some(client) = self.session.clone() else { return self.query(call_id, request_id, epoch, operation, variables, document, root, back) };
         let variables: Value = serde_json::from_str(&variables).unwrap_or(Value::Null);
         let body = crate::transport::encrypted::graphql_body(&GraphQLRequest::new(document, operation, variables), true);
         self.roots.lock().unwrap_or_else(PoisonError::into_inner).insert(request_id, root);
@@ -124,7 +123,7 @@ impl EffectRunner<Calls> for CallsRunner {
                     return;
                 };
                 match kind {
-                    CallKind::Query => self.query(call_id, request_id, operation, variables, document, root, back),
+                    CallKind::Query => self.query(call_id, request_id, epoch, operation, variables, document, root, back),
                     CallKind::Mutate => self.mutate(call_id, request_id, epoch, operation, variables, document, root, back),
                 };
             }

@@ -464,7 +464,7 @@ impl Life {
                 let (settle_wiring, drained_wiring, admit_db, admit_wiring, signal_wiring) = (wiring.clone(), wiring.clone(), ports.db.clone(), wiring.clone(), wiring.clone());
                 let wire = super::write::wire::Wire {
                     transport: transport.clone(),
-                    admit: Arc::new(move || match admit_db.admit() {
+                    admit: Arc::new(move |epoch| match epoch.map_or_else(|| admit_db.admit(), |epoch| admit_db.admit_in(crate::ffi::admission::Origin::Explicit, "transfer step", epoch)) {
                         Ok(admitted) => Some(admitted),
                         Err(error) => {
                             admit_wiring.fault(format!("a step of a transfer found no session to run in: {error}"));

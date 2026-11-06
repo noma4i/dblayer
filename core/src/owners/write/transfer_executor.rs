@@ -150,8 +150,12 @@ impl TransferExecutor {
         }
     }
 
-    fn link(&self) -> Option<Link> {
-        let admitted = (self.wire.admit)()?;
+    fn link(&self, stamp: EpochStamp) -> Option<Link> {
+        let epoch = match stamp {
+            EpochStamp::Epoch(epoch) => Some(epoch),
+            EpochStamp::Control => None,
+        };
+        let admitted = (self.wire.admit)(epoch)?;
         Some(Link { transport: self.wire.transport.clone(), admitted, cancel: CancelToken::new() })
     }
 
@@ -165,7 +169,7 @@ impl TransferExecutor {
         call: impl FnOnce(Arc<dyn StepCodec>, Link) -> Call<T> + Send + 'static,
         input_of: impl FnOnce(Result<T, TransportError>) -> TransferInput + Send + 'static,
     ) {
-        let Some(link) = self.link() else {
+        let Some(link) = self.link(stamp) else {
             back.reply(stamp, no_link);
             return;
         };
@@ -214,7 +218,7 @@ impl TransferExecutor {
 
     /// The owner has no input for the end of an abort: the result is not reported.
     fn drop_upload(&self, key: String, upload_id: String) {
-        let Some(link) = self.link() else { return };
+        let Some(link) = self.link(EpochStamp::Control) else { return };
         let codec = self.codec.clone();
         let _ = self.wire.tasks.start(Box::pin(async move {
             let _ = codec.discard_upload(&link, &key, Some(&upload_id)).await;

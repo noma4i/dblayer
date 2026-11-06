@@ -11,8 +11,9 @@ use super::open::Db;
 use super::parent_pointer::Followed;
 
 impl Db {
-    pub fn admit_at(&self, epoch: u64) -> Result<crate::ffi::admission::Admitted, DbError> {
-        self.shared.store.lifecycle.admit_at("window request", epoch)
+    /// The admission of the epoch an owner decided in. `Session` origin also needs a session in that epoch.
+    pub(crate) fn admit_in(&self, origin: crate::ffi::admission::Origin, target: &'static str, epoch: u64) -> Result<crate::ffi::admission::Admitted, DbError> {
+        self.shared.store.lifecycle.admit_in(origin, target, epoch)
             .map_err(|_| DbError::NoSession { detail: "the epoch of the request ended or has no session".into() })
     }
 

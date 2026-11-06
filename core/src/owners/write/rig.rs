@@ -146,7 +146,7 @@ impl Transport for Stub {
     async fn put(&self, _admitted: &crate::lifecycle::Admitted, _request: PutRequest) -> Result<PutResponse, TransportError> { Ok(PutResponse::with_etag("etag")) }
 }
 
-pub(super) fn admit() -> Option<crate::lifecycle::Admitted> { crate::transport::test_admission().ok() }
+pub(super) fn admit(_: Option<crate::runtime::Epoch>) -> Option<crate::lifecycle::Admitted> { crate::transport::test_admission().ok() }
 
 /// Runs tasks and jobs until nothing moves, with the owners between. `wake` posts a no-op input: the scheduler takes what a task
 /// replied only after a step, so a reply from a task needs one step to be seen. A run that does not settle is a failure.

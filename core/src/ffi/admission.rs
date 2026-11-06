@@ -225,9 +225,9 @@ impl Leases {
 
 
 
-    /// The admission of the epoch the owner decided in: refused once that epoch ended or has no session.
-    pub(crate) fn admit_at(self: &Arc<Self>, target: &'static str, epoch: u64) -> Result<Admitted, Ended> {
-        self.admit_as(Origin::Session, target, false, Some(epoch))
+    /// The admission of the epoch the owner decided in: refused once that epoch ended, and for `Origin::Session` also when it has no session.
+    pub(crate) fn admit_in(self: &Arc<Self>, origin: Origin, target: &'static str, epoch: u64) -> Result<Admitted, Ended> {
+        self.admit_as(origin, target, false, Some(epoch))
     }
 
     #[cfg(test)]
