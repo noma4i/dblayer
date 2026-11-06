@@ -289,6 +289,7 @@ struct Facts {
     page: u32,
     page_count: u32,
     max_pages: u32,
+    members_complete: bool,
     cursor_reset_used: bool,
     replace_all: bool,
     reread_due: bool,
@@ -473,9 +474,28 @@ impl Facts {
         self.error = None;
         self.cursor_reset_used = false;
         self.replace_all = false;
+        let chain = self.members_complete && self.cursor.is_some();
+        let settled = self.settled;
         self.set_phase(Phase::Loaded);
         if !dependency_models.is_empty() {
             self.dependency_models = dependency_models.clone();
+        }
+        if chain {
+            self.settled = settled;
+            if self.watched() {
+                let loaded = WindowOutcome::Loaded { revision, has_more: true, fetched: true };
+                let wants_next = |want: &Want| matches!(want, Want::All) || matches!(want, Want::Next(c) if *c > page);
+                let finished: Vec<InterestId> = self.waiters.iter().filter(|(_, want)| !wants_next(want)).map(|(id, _)| *id).collect();
+                for id in finished {
+                    self.waiters.remove(&id);
+                    self.answer(id, loaded.clone());
+                }
+                return self.begin(ctx, page + 1, false, true);
+            }
+            self.answer_all(&WindowOutcome::Loaded { revision, has_more: true, fetched: true });
+            self.fresh = false;
+            self.announce();
+            return Transition(WinState::idle());
         }
         let wants_next = |want: &Want| matches!(want, Want::All) || matches!(want, Want::Next(c) if *c > page);
         let loaded = WindowOutcome::Loaded { revision, has_more: self.cursor.is_some(), fetched: true };
@@ -761,7 +781,7 @@ struct Window {
 }
 
 impl Window {
-    fn new(model: String, epoch: Epoch, online: Option<bool>, base_generation: u64, generations: BTreeMap<String, u64>, max_pages: u32, ids: (&mut RequestId, &mut u32)) -> Self {
+    fn new(model: String, epoch: Epoch, online: Option<bool>, base_generation: u64, generations: BTreeMap<String, u64>, max_pages: u32, members_complete: bool, ids: (&mut RequestId, &mut u32)) -> Self {
         let facts = Facts {
             dependency_models: BTreeSet::from([model]),
             epoch,
@@ -778,6 +798,7 @@ impl Window {
             page: 0,
             page_count: 0,
             max_pages,
+            members_complete,
             cursor_reset_used: false,
             replace_all: false,
             reread_due: false,
@@ -821,6 +842,9 @@ impl Window {
 /// How many pages a key may land at most: the `max_pages` of its operation in the `.dbl`.
 pub type MaxPages = Arc<dyn Fn(&WindowKey) -> u32 + Send + Sync>;
 
+/// Whether the `.dbl` declares `members_complete` for the relation of a key.
+pub type MembersComplete = Arc<dyn Fn(&WindowKey) -> bool + Send + Sync>;
+
 /// Whether the `.dbl` declares `refresh: foreground` for the relation of a key.
 pub type OnForeground = Arc<dyn Fn(&WindowKey) -> bool + Send + Sync>;
 
@@ -836,6 +860,7 @@ pub struct WindowsState {
     next_attempt: u32,
     windows: BTreeMap<WindowKey, Window>,
     max_pages: MaxPages,
+    members_complete: MembersComplete,
     on_foreground: OnForeground,
     foreground_seen: u64,
     peers: WindowsPeers,
@@ -851,7 +876,7 @@ pub struct WindowsPeers {
 impl WindowsState {
     /// `online` is the value of the first addressed `Online`, `None` before it.
     pub fn new(epoch: Epoch, online: Option<bool>, peers: WindowsPeers) -> Self {
-        Self { epoch, online, generations: BTreeMap::new(), base_generation: 0, preload: Vec::new(), sources: BTreeSet::new(), next_request: 1, next_attempt: 1, windows: BTreeMap::new(), max_pages: Arc::new(|_| u32::MAX), on_foreground: Arc::new(|_| false), foreground_seen: 0, peers }
+        Self { epoch, online, generations: BTreeMap::new(), base_generation: 0, preload: Vec::new(), sources: BTreeSet::new(), next_request: 1, next_attempt: 1, windows: BTreeMap::new(), max_pages: Arc::new(|_| u32::MAX), members_complete: Arc::new(|_| false), on_foreground: Arc::new(|_| false), foreground_seen: 0, peers }
     }
 
     /// Keys that `EpochStarted` loads with `Interest+(PRELOAD)`.
@@ -863,6 +888,11 @@ impl WindowsState {
     /// Keys whose rows name other keys to preload: a Store commit of their model asks `DerivePreload`.
     pub fn with_sources(mut self, keys: Vec<WindowKey>) -> Self {
         self.sources = keys.into_iter().collect();
+        self
+    }
+
+    pub fn with_members_complete(mut self, members_complete: MembersComplete) -> Self {
+        self.members_complete = members_complete;
         self
     }
 
@@ -889,7 +919,7 @@ impl WindowsState {
     fn ensure(&mut self, key: &WindowKey) {
         if !self.windows.contains_key(key) {
             let ids = (&mut self.next_request, &mut self.next_attempt);
-            let window = Window::new(key.model.clone(), self.epoch, self.online, self.base_generation, self.generations.clone(), (self.max_pages)(key), ids);
+            let window = Window::new(key.model.clone(), self.epoch, self.online, self.base_generation, self.generations.clone(), (self.max_pages)(key), (self.members_complete)(key), ids);
             self.windows.insert(key.clone(), window);
         }
     }

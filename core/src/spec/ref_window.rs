@@ -124,6 +124,7 @@ pub(super) struct Window {
     pub(super) page: u32,
     pub(super) page_count: u32,
     pub(super) max_pages: u32,
+    pub(super) members_complete: bool,
     pub(super) cursor_reset_used: bool,
     pub(super) replace_all: bool,
     pub(super) has_rows: bool,
@@ -150,6 +151,7 @@ impl Window {
             page: 0,
             page_count: 0,
             max_pages: 1000,
+            members_complete: false,
             cursor_reset_used: false,
             replace_all: false,
             has_rows: false,
@@ -463,7 +465,36 @@ impl Window {
         self.last_error = None;
         self.cursor_reset_used = false;
         self.replace_all = false;
+        let chain = self.members_complete && self.cursor.is_some();
+        let settled = self.settled;
         self.set_phase(Phase::Loaded);
+        if chain {
+            self.settled = settled;
+            let watched = self.watched();
+            for (id, want) in self.waiters.clone() {
+                if !(matches!(want, Want::All) || matches!(want, Want::Next(c) if c > page)) {
+                    self.waiters.remove(&id);
+                    self.outcomes.push((id, Result3::Loaded));
+                }
+            }
+            if watched {
+                let next = self.cursor.expect("a cursor");
+                if self.is_online() {
+                    let (request, attempt) = self.request_ids();
+                    self.state = State::Loading { request, attempt, retry: false, page: next, force: false, attempts: 0 };
+                    self.phase = Phase::Loading;
+                    return vec![Effect::Request { request, attempt, page: next }, Effect::WindowState];
+                }
+                self.state = State::Waiting { force: false, page: next };
+                return vec![Effect::WindowState];
+            }
+            for (id, _) in std::mem::take(&mut self.waiters) {
+                self.outcomes.push((id, Result3::Loaded));
+            }
+            self.state = State::Idle;
+            self.fresh = false;
+            return vec![Effect::WindowState];
+        }
         let next_target = |window: &Window| window.waiters.values().any(|want| matches!(want, Want::All) || matches!(want, Want::Next(c) if *c > page));
         let answered: Vec<(u32, Want)> = self.waiters.iter().map(|(id, want)| (*id, *want)).collect();
         let settle = |window: &mut Window, result_for: &dyn Fn(Want) -> Option<Result3>| {

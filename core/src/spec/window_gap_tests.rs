@@ -103,25 +103,28 @@ struct Twin {
 }
 
 impl Twin {
-    fn new() -> Self { Self::build(Some(true), u32::MAX, Vec::new(), Vec::new()) }
+    fn new() -> Self { Self::build(Some(true), u32::MAX, Vec::new(), Vec::new(), false) }
 
-    fn before_online() -> Self { Self::build(None, u32::MAX, Vec::new(), Vec::new()) }
+    fn before_online() -> Self { Self::build(None, u32::MAX, Vec::new(), Vec::new(), false) }
 
-    fn with_max_pages(max: u32) -> Self { Self::build(Some(true), max, Vec::new(), Vec::new()) }
+    fn with_max_pages(max: u32) -> Self { Self::build(Some(true), max, Vec::new(), Vec::new(), false) }
 
-    fn with_sources() -> Self { Self::build(Some(true), u32::MAX, Vec::new(), vec![key()]) }
+    fn members_complete() -> Self { Self::build(Some(true), u32::MAX, Vec::new(), Vec::new(), true) }
 
-    fn with_preload() -> Self { Self::build(Some(true), u32::MAX, vec![key()], Vec::new()) }
+    fn with_sources() -> Self { Self::build(Some(true), u32::MAX, Vec::new(), vec![key()], false) }
 
-    fn build(online: Option<bool>, max: u32, preload: Vec<WindowKey>, sources: Vec<WindowKey>) -> Self {
+    fn with_preload() -> Self { Self::build(Some(true), u32::MAX, vec![key()], Vec::new(), false) }
+
+    fn build(online: Option<bool>, max: u32, preload: Vec<WindowKey>, sources: Vec<WindowKey>, members_complete: bool) -> Self {
         let mut det = DetScheduler::new(3);
         let log = new_log();
-        let state = w::WindowsState::new(EPOCH, online, peers()).with_preload(preload).with_sources(sources).with_max_pages(Arc::new(move |_| max)).with_foreground(Arc::new(|_| true));
+        let state = w::WindowsState::new(EPOCH, online, peers()).with_preload(preload).with_sources(sources).with_max_pages(Arc::new(move |_| max)).with_members_complete(Arc::new(move |_| members_complete)).with_foreground(Arc::new(|_| true));
         let addr = add_windows(&mut det, &log, state, Discard);
         det.start_epoch(EPOCH);
         let mut reference = if online.is_some() { Window::new() } else { Window::before_online() };
         reference.online = online;
         reference.max_pages = max;
+        reference.members_complete = members_complete;
         Self { det, addr, log, reference, revision: 10, generation: 0 }
     }
 
@@ -1020,6 +1023,44 @@ fn win_landing_committed_next_page() {
 }
 
 #[test]
+fn win_members_complete_chain() {
+    let mut twin = Twin::members_complete();
+    twin.watch();
+    twin.call(1, Goal::First);
+    twin.respond(Some(2));
+    assert_eq!(twin.land(), [Effect::Request { request: 2, attempt: 2, page: 2 }, Effect::WindowState], "the next page is requested without a call of the app");
+    assert_eq!(twin.stage(), Some(WindowStage::Loading));
+    assert!(twin.state().waiters(&key()).is_empty(), "the caller of the first page heard `Loaded`");
+    assert!(!twin.load_state().settled, "the window is not settled before the last page");
+}
+
+#[test]
+fn win_members_complete_chain_offline() {
+    let mut twin = Twin::members_complete();
+    twin.watch();
+    twin.call(1, Goal::First);
+    twin.respond(Some(2));
+    twin.step(Input::Online(false));
+    assert_eq!(twin.land(), [Effect::WindowState]);
+    assert_eq!(twin.stage(), Some(WindowStage::Waiting));
+    assert_eq!(twin.phase(), Phase::Loaded);
+    assert!(!twin.load_state().settled);
+    assert_eq!(twin.step(Input::Online(true)), [Effect::Request { request: 2, attempt: 2, page: 2 }, Effect::WindowState], "the return of the network continues the chain");
+}
+
+#[test]
+fn win_members_complete_end() {
+    let mut twin = Twin::members_complete();
+    twin.watch();
+    twin.call(1, Goal::First);
+    twin.finish(Some(2));
+    assert_eq!(twin.finish(None), [Effect::WindowState]);
+    assert_eq!(twin.stage(), Some(WindowStage::Idle));
+    let state = twin.load_state();
+    assert!(state.settled && !state.has_more && twin.reference.fresh);
+}
+
+#[test]
 fn win_landing_committed_next_page_offline() {
     let mut twin = Twin::new();
     twin.call(1, Goal::First);
@@ -1650,6 +1691,28 @@ fn win_prop_load_all_complete() {
     assert_eq!(requests_after_first, 2, "one request per page after the first");
     assert_eq!(twin.stage(), Some(WindowStage::Idle));
     assert!(twin.state().waiters(&key()).is_empty());
+}
+
+/// P-WIN-16: a `members_complete` window with a reader reaches the end of the cursor without calls of the app, settles only after the last page and ignores `max_pages`; without a reader the chain stands.
+#[test]
+fn win_prop_members_complete() {
+    let mut twin = Twin::members_complete();
+    twin.watch();
+    twin.call(1, Goal::First);
+    let mut requests_after_first = 0;
+    for page in 1..=5u32 {
+        twin.respond((page < 5).then_some(page + 1));
+        requests_after_first += requests(&twin.land());
+        assert_eq!(twin.load_state().settled, page == 5, "settled only after the last page");
+    }
+    assert_eq!(requests_after_first, 4, "one request per page after the first");
+    assert_eq!(twin.stage(), Some(WindowStage::Idle));
+    let mut alone = Twin::members_complete();
+    alone.watch();
+    alone.respond(Some(2));
+    alone.step(Input::InterestMinus { id: STREAM });
+    assert_eq!(requests(&alone.land()), 0, "without a reader the chain stands");
+    assert_eq!(alone.stage(), Some(WindowStage::Idle));
 }
 
 /// P-WIN-11: a finished waiter does not stay: `Stale` and `Online(true)` give no request when interest and waiters are empty; the preload stays.

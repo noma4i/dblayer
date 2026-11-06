@@ -6,7 +6,7 @@ use std::sync::Arc;
 
 use serde_json::{json, Map, Value};
 
-use super::windows::{AnswerPage, MaxPages, OnForeground, PageRows, WindowKey, WindowKind};
+use super::windows::{AnswerPage, MaxPages, MembersComplete, OnForeground, PageRows, WindowKey, WindowKind};
 use super::WindowCodec;
 use crate::db::Db;
 use crate::identity::RowId;
@@ -172,6 +172,14 @@ pub fn max_pages(db: Db) -> MaxPages {
             })
             .unwrap_or(u32::MAX),
         WindowKind::Nodes { .. } => 1,
+    })
+}
+
+/// The keys of the relations the `.dbl` declares `members_complete`.
+pub fn members_complete(db: Db) -> MembersComplete {
+    Arc::new(move |key| match key.kind() {
+        WindowKind::Relation { relation, .. } => db.spec(&key.model).ok().and_then(|spec| spec.relations.iter().find(|candidate| candidate.name == relation)).is_some_and(|declared| declared.members_complete),
+        WindowKind::Nodes { .. } => false,
     })
 }
 

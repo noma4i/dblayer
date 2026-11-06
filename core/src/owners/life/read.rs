@@ -12,7 +12,7 @@ use crate::owners::network::NetworkInput;
 use crate::owners::read::deliveries::{DeliveriesState, Deliveries, DeliveryEffect, DeliveryInput, DeliveryPeers, PullAnswer, StreamEffect, StreamId, View};
 use crate::owners::read::feed::{Feed, FeedEffect, FeedInput, FeedPeers, FeedState, FramedEvent};
 use crate::owners::read::windows::{Goal, Windows, WindowEffect, WindowKey, WindowsEffect, WindowsInput, WindowsPeers, WindowsState};
-use crate::owners::read::{max_pages, preload_keys, preload_sources, refreshes_on_foreground, DbSnapshots, DeliveryIo, FeedCodec, FeedIo, ReadOperations, Rest, SchemaFeedCodec, SchemaWindowCodec, WindowIo};
+use crate::owners::read::{max_pages, members_complete, preload_keys, preload_sources, refreshes_on_foreground, DbSnapshots, DeliveryIo, FeedCodec, FeedIo, ReadOperations, Rest, SchemaFeedCodec, SchemaWindowCodec, WindowIo};
 use crate::owners::store::{StoreReply, StoreWriter};
 use crate::runtime::{Address, Back, EffectRunner, Epoch, EpochStamp, OutcomeId, RuntimeBuilder, Waiter};
 use crate::transport::{GraphQLRequest, Response, Transport};
@@ -90,7 +90,7 @@ pub(super) fn add(builder: &mut RuntimeBuilder, wiring: &Arc<Wiring>, ports: &Po
         wiring.fault(format!("the preload of the schema is invalid: {error}"));
         Vec::new()
     });
-    let state = WindowsState::new(0, None, WindowsPeers { store, deliveries: deliveries_at }).with_preload(preload).with_sources(preload_sources(&db)).with_max_pages(max_pages(db.clone())).with_foreground(refreshes_on_foreground(db.clone()));
+    let state = WindowsState::new(0, None, WindowsPeers { store, deliveries: deliveries_at }).with_preload(preload).with_sources(preload_sources(&db)).with_max_pages(max_pages(db.clone())).with_members_complete(members_complete(db.clone())).with_foreground(refreshes_on_foreground(db.clone()));
     let windows_wiring = wiring.clone();
     let (derive_db, derive_executor, derive_handle) = (db.clone(), ports.executor.clone(), handle.clone());
     let windows_io = WindowIo::new(
