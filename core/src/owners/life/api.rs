@@ -69,6 +69,13 @@ impl Life {
         waiter
     }
 
+    pub fn session_resume(&self) -> Waiter<LifeReply> {
+        if self.shut.load(Ordering::SeqCst) || self.published().closed { return self.settled(LifeReply::Closed); }
+        let waiter = self.wiring.outcomes.register(Epoch::MAX);
+        self.wiring.to_session(SessionInput::SessionResume { reply: waiter.id().raw() });
+        waiter
+    }
+
     /// `Mutate` of Outbox and Transfer: the answer comes to the sink the author registered with `on_mutate_answer`.
     pub fn mutate(&self, author: AuthorId, owner: Option<crate::owners::session::MutateOwner>, req_id: RequestId, path: String, body: String, purpose: u8) {
         self.wiring.to_session(SessionInput::Mutate { author, owner, req_id, epoch: self.published().epoch, path, body, purpose });

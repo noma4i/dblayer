@@ -102,4 +102,20 @@ fn calling_error(too_large: Option<(u64, u64)>, expected: SessionError) {
 fn sess_calling_status_zero() { calling_error(None, SessionError::Http { status: 0 }); }
 
 #[test]
-fn sess_calling_too_large() { calling_error(Some((262145, 262144)), SessionError::TooLarge { size: 262145, limit: 262144 }); }
+fn sess_calling_too_large() {
+    use crate::transport::encrypted::state;
+    calling_error(Some((262145, 262144)), SessionError::TooLarge { size: 262145, limit: 262144 });
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("db.sqlite");
+    let open = || crate::db::Db::open_with(Some(&path), vec![], None, crate::db::DbConfig::default()).unwrap();
+    let db = open();
+    db.shared.store.lock().connection.execute_batch("DROP TABLE encrypted_answer; CREATE TABLE encrypted_answer (request_id INTEGER PRIMARY KEY, outcome TEXT NOT NULL CHECK (outcome IN ('ok', 'http', 'unauthorized', 'revoked', 'session')), detail TEXT, operation_id INTEGER) STRICT; INSERT INTO encrypted_answer VALUES (10, 'http', '422', 6); UPDATE manifest SET value = 'old' WHERE key = 'format_version';").unwrap();
+    drop(db);
+    let db = open();
+    assert_eq!(state::answers(&db.shared.store.lock().connection).unwrap().get(&10), Some(&state::StoredAnswer::Http { status: 422 }));
+    let answer = crate::owners::session::stored_answer(&Err(SessionError::TooLarge { size: 262145, limit: 262144 })).unwrap();
+    state::store_answer(&db.shared.store.lock().connection, 11, Some(7), &answer).unwrap();
+    drop(db);
+    let db = open();
+    assert_eq!(state::answers(&db.shared.store.lock().connection).unwrap().get(&11), Some(&answer));
+}

@@ -25,6 +25,7 @@ pub struct Pending {
 pub enum StoredAnswer {
     Ok(String),
     Http { status: u16 },
+    TooLarge { size: u64, limit: u64 },
     Unauthorized,
     Revoked,
     Session(crate::transport::SessionCode),
@@ -113,6 +114,7 @@ pub fn store_answer(connection: &Connection, request_id: u64, operation: Option<
     let (outcome, detail) = match answer {
         StoredAnswer::Ok(body) => ("ok", Some(body.clone())),
         StoredAnswer::Http { status } => ("http", Some(status.to_string())),
+        StoredAnswer::TooLarge { size, limit } => ("too_large", Some(format!("{size}:{limit}"))),
         StoredAnswer::Unauthorized => ("unauthorized", None),
         StoredAnswer::Revoked => ("revoked", None),
         StoredAnswer::Session(code) => ("session", Some(code.name().to_string())),
@@ -147,6 +149,10 @@ fn answer_rows(connection: &Connection) -> rusqlite::Result<Vec<(u64, Option<i64
         let answer = match (outcome.as_str(), detail) {
             ("ok", Some(body)) => StoredAnswer::Ok(body),
             ("http", Some(status)) => StoredAnswer::Http { status: status.parse().map_err(|_| invalid("a status that is not a number"))? },
+            ("too_large", Some(detail)) => {
+                let (size, limit) = detail.split_once(':').ok_or_else(|| invalid("an invalid size limit"))?;
+                StoredAnswer::TooLarge { size: size.parse().map_err(|_| invalid("an invalid size"))?, limit: limit.parse().map_err(|_| invalid("an invalid limit"))? }
+            }
             ("unauthorized", None) => StoredAnswer::Unauthorized,
             ("revoked", None) => StoredAnswer::Revoked,
             ("session", Some(name)) => StoredAnswer::Session(crate::transport::SessionCode::from_wire(&name).ok_or_else(|| invalid("an unknown session code"))?),

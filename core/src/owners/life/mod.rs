@@ -47,6 +47,7 @@ pub enum LifeReply {
     Online { closed: bool },
     Call(CallAnswer),
     Session(SessionAnswer),
+    SessionResume(Result<Option<String>, super::session::SessionError>),
     Mutated(AuthorOutcome),
     Outbox(OutboxAnswer),
     Transfer(TransferAnswer),
