@@ -24,7 +24,7 @@ pub enum ReadPhase {
 #[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
 pub struct ReadState {
     pub phase: ReadPhase,
-    pub error: Option<String>,
+    pub error: Option<DbError>,
     pub loaded: Option<i64>,
     /// The window has a next page.
     pub has_more: bool,

@@ -11,7 +11,8 @@ use super::open::Db;
 pub(crate) type ParsedQuery = (Query, Option<(String, Map<String, Value>)>);
 
 pub(crate) enum ViewRead {
-    Rows(Vec<(String, i64, super::Row)>),
+    /// The rows and the total the server gave for their window.
+    Rows(Vec<(String, i64, super::Row)>, Option<u64>),
     Count(i64),
 }
 
@@ -36,7 +37,7 @@ impl Db {
     }
 
     /// Reads `query` in one snapshot that is not older than `floor`; gives the revision of the snapshot.
-    pub(crate) fn read_view(&self, query: &Query, count: bool, floor: i64) -> Result<(i64, ViewRead), DbError> {
+    pub(crate) fn read_view(&self, query: &Query, count: bool, floor: i64, window: Option<&crate::owners::read::windows::WindowKey>) -> Result<(i64, ViewRead), DbError> {
         let model = query.model.as_str();
         self.shared.read(&[model], |reader| {
             let seen = reader.revision_seq()?;
@@ -52,7 +53,21 @@ impl Db {
             if rows.len() != keys.len() {
                 return Err(DbError::Internal(format!("the snapshot at revision {seen} lost {} of {} rows of {model}", keys.len() - rows.len(), keys.len())));
             }
-            Ok((seen, ViewRead::Rows(keys.into_iter().zip(rows).map(|((id, stamp), row)| (id, stamp, row)).collect())))
+            let total = match window.map(crate::owners::read::windows::WindowKey::kind) {
+                Some(crate::owners::read::windows::WindowKind::Relation { relation, params }) => {
+                    let spec = self.spec(model)?;
+                    let remote = spec.relations.iter().find(|declared| declared.name == relation).and_then(|declared| declared.remote.as_ref());
+                    match remote {
+                        Some(remote) => {
+                            let (_, key) = super::land_window::window_identity(spec, model, &relation, remote, &params)?;
+                            rusqlite::OptionalExtension::optional(reader.connection().query_row("SELECT total FROM query_window WHERE key = ?1", [key], |row| row.get::<_, Option<i64>>(0)))?.flatten().and_then(|total| u64::try_from(total).ok())
+                        }
+                        None => None,
+                    }
+                }
+                _ => None,
+            };
+            Ok((seen, ViewRead::Rows(keys.into_iter().zip(rows).map(|((id, stamp), row)| (id, stamp, row)).collect(), total)))
         })
     }
 }

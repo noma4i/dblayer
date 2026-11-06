@@ -173,7 +173,7 @@ pub enum WindowPhase {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct WindowState {
     pub phase: WindowPhase,
-    pub error: Option<String>,
+    pub error: Option<crate::ffi::DbError>,
     pub loaded: Option<i64>,
     pub has_more: bool,
     pub settled: bool,

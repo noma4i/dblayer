@@ -35,7 +35,7 @@ pub(crate) struct Seen {
     pub(crate) replaced: Vec<RowRename>,
     pub(crate) count: Option<u64>,
     pub(crate) phase: Option<ReadPhase>,
-    pub(crate) error: Option<String>,
+    pub(crate) error: Option<DbError>,
     pub(crate) loaded: Option<i64>,
 }
 
@@ -192,7 +192,7 @@ fn settled_by(value: &ReadValue, seq: u64) -> Option<Result<u64, DbError>> {
     match value {
         ReadValue::Snapshot { state, .. } | ReadValue::Delta { state, .. } | ReadValue::Count { state, .. } | ReadValue::State { state, .. } => match state.phase {
             ReadPhase::Loaded => Some(Ok(seq)),
-            ReadPhase::Failed => Some(Err(DbError::Database { detail: state.error.clone().unwrap_or_default() })),
+            ReadPhase::Failed => Some(Err(state.error.clone().unwrap_or(DbError::Database { detail: String::new() }))),
             ReadPhase::Idle | ReadPhase::Loading => None,
         },
         ReadValue::Ended { cause: ReadEnd::Invalid } => Some(Err(DbError::Invalid { detail: "the stream could not open".into() })),

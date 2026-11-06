@@ -296,7 +296,7 @@ struct Facts {
     phase: Phase,
     /// The first load of the interest now held ended with an outcome.
     settled: bool,
-    error: Option<String>,
+    error: Option<crate::ffi::DbError>,
     /// The revision of the last `Committed` of a landing of this machine, 0 before the first.
     landed_revision: i64,
     store_seen: i64,
@@ -413,7 +413,7 @@ impl Facts {
         self.fresh = false;
         self.reread_due = false;
         self.set_phase(self.failed_phase());
-        self.error = Some(message.to_string());
+        self.error = Some(source.clone().map_or_else(|| crate::ffi::DbError::Database { detail: message.to_string() }, crate::ffi::DbError::from));
         self.answer_all(&WindowOutcome::Failed { error: message.to_string(), source });
         self.announce();
         Transition(WinState::idle())
@@ -534,7 +534,7 @@ impl Facts {
             }
             Ev::Load { id, goal, force, .. } => self.idle_load(context, *id, *goal, *force),
             Ev::OfflineRefused { message } => {
-                self.error = Some(message.clone());
+                self.error = Some(crate::ffi::DbError::Network { detail: message.clone() });
                 self.set_phase(self.failed_phase());
                 self.announce();
                 Handled

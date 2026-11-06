@@ -51,7 +51,7 @@ impl Snapshots for SqliteSnapshots {
             let data = match view.kind {
                 Kind::Events | Kind::Blob | Kind::RetryStatus => return Err("a stream of this kind reads no rows".to_string()),
                 Kind::Count => ReadData::Count(u64::try_from(fetch_count(&connection, &statement).map_err(|error| error.to_string())?).unwrap_or(0)),
-                Kind::List | Kind::Entity { .. } => ReadData::Rows { rows: fetch_keys(&connection, &statement).map_err(|error| error.to_string())?.into_iter().map(|(id, stamp)| StreamRow { id, stamp, row: None }).collect(), replaced: Vec::new() },
+                Kind::List | Kind::Entity { .. } => ReadData::Rows { rows: fetch_keys(&connection, &statement).map_err(|error| error.to_string())?.into_iter().map(|(id, stamp)| StreamRow { id, stamp, row: None }).collect(), replaced: Vec::new(), total: None },
             };
             drop(snapshot);
             Ok((seen, data))
@@ -88,12 +88,12 @@ impl Snapshots for DbSnapshots {
             Kind::Entity { .. } => (crate::query::Query::new(&view.model).filtered(crate::query::Where::equal("id", serde_json::json!(view.subject))), false),
             Kind::Events | Kind::Blob | Kind::RetryStatus => return Err("a stream of this kind reads no rows".to_string()),
         };
-        let (seen, read) = self.db.read_view(&query, count, revision).map_err(|error| error.to_string())?;
+        let (seen, read) = self.db.read_view(&query, count, revision, view.remote.then_some(&view.window)).map_err(|error| error.to_string())?;
         Ok((seen, match read {
             crate::db::ViewRead::Count(count) => ReadData::Count(u64::try_from(count).unwrap_or(0)),
-            crate::db::ViewRead::Rows(rows) => {
+            crate::db::ViewRead::Rows(rows, total) => {
                 let wire = self.wire(&view.model)?;
-                ReadData::Rows { rows: rows.into_iter().map(|(id, stamp, row)| StreamRow { id, stamp, row: Some(wire.row(&row)) }).collect(), replaced: Vec::new() }
+                ReadData::Rows { rows: rows.into_iter().map(|(id, stamp, row)| StreamRow { id, stamp, row: Some(wire.row(&row)) }).collect(), replaced: Vec::new(), total }
             }
         }))
     }

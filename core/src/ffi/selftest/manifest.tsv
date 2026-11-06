@@ -209,8 +209,8 @@ S104		swift	BridgeProbeTests.aHeldLoadEndsAtResetAndCannotWriteIntoTheNextAccoun
 S104		kotlin	com.noma4i.dblayer.SessionRestoreTest.aHeldLoadEndsAtResetAndCannotWriteIntoTheNextAccount	unrun	S1: reset ends the load	arch-audit Fable K2
 S106		core	an_old_subscription_admission_cannot_land_an_event_in_the_next_session	red-by-reading	core-only: admission at SQL commit	arch-audit Astra A1
 S107		core	an_old_encrypted_cable_cannot_deliver_into_the_next_account	unrun	S1: reset closes the subscription	arch-audit Astra A1
-S107		swift	BridgeProbeTests.oldSubscriptionSinkIsClosedBeforeTheNextAccount	unrun	S1: reset closes the subscription	arch-audit Astra A1
-S107		kotlin	com.noma4i.dblayer.OldSinkTest.oldSubscriptionSinkIsClosedBeforeTheNextAccount	unrun	S1: reset closes the subscription	arch-audit Astra A1
+S107		swift	BridgeProbeTests.oldEncryptedCableCannotDeliverIntoTheNextAccount	unrun	S1: reset closes the subscription	arch-audit Astra A1
+S107		kotlin	com.noma4i.dblayer.EncryptedOldSinkTest.oldEncryptedCableCannotDeliverIntoTheNextAccount	unrun	S1: reset closes the subscription	arch-audit Astra A1
 S108		core	an_old_encrypted_cable_cannot_deliver_into_the_next_account	unrun	S1: reset closes the cable	arch-audit Astra A1
 S108		swift	BridgeProbeTests.oldEncryptedCableCannotDeliverIntoTheNextAccount	unrun	S1: reset closes the cable	arch-audit Astra A1
 S108		kotlin	com.noma4i.dblayer.EncryptedOldSinkTest.oldEncryptedCableCannotDeliverIntoTheNextAccount	unrun	S1: reset closes the cable	arch-audit Astra A1

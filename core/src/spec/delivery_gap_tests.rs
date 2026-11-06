@@ -48,7 +48,7 @@ fn rows_of(rows: &[r::Row]) -> Vec<d::StreamRow> { rows.iter().map(|(id, stamp)|
 
 fn window_state(state: &Ws) -> WindowState {
     let phase = match state.phase { Phase::Idle => WindowPhase::Idle, Phase::Loading => WindowPhase::Loading, Phase::Loaded => WindowPhase::Loaded, Phase::Failed => WindowPhase::Failed };
-    WindowState { phase, error: state.error.then(|| "e".to_string()), loaded: state.loaded, has_more: false, settled: false, total: None }
+    WindowState { phase, error: state.error.then(|| crate::ffi::DbError::Database { detail: "e".into() }), loaded: state.loaded, has_more: false, settled: false, total: None }
 }
 
 fn ws_of(state: &WindowState) -> Ws {
@@ -100,6 +100,8 @@ struct Twin {
     log: Spied,
     answers: Outcomes<PullAnswer>,
     reference: Delivery,
+    /// The total the reads of this twin give with their rows.
+    total: Option<u64>,
 }
 
 impl Twin {
@@ -108,7 +110,7 @@ impl Twin {
         let log = new_log();
         let addr = add_deliveries(&mut det, &log);
         det.start_epoch(EPOCH);
-        Self { det, addr, log, answers: Outcomes::new(), reference: Delivery::new() }
+        Self { det, addr, log, answers: Outcomes::new(), reference: Delivery::new(), total: None }
     }
 
     fn run(&mut self) { self.det.run_until_quiet(10_000).expect("the owner is quiet"); }
@@ -175,9 +177,9 @@ impl Twin {
                 let table = if *touches { "moments" } else { "other" };
                 self.post(d::DeliveryInput::Committed(Committed { batch: 0, revision: *revision, tables: vec![table.into()], models: Default::default() }));
             }
-            Input::ReadDone { revision, rows } => self.post(d::DeliveryInput::ReadDone { stream, read_id: self.read_id(), revision: *revision, data: d::ReadData::Rows { rows: rows_of(rows), replaced: Vec::new() } }),
+            Input::ReadDone { revision, rows } => self.post(d::DeliveryInput::ReadDone { stream, read_id: self.read_id(), revision: *revision, data: d::ReadData::Rows { rows: rows_of(rows), replaced: Vec::new(), total: self.total } }),
             Input::CountDone { revision, count } => self.post(d::DeliveryInput::ReadDone { stream, read_id: self.read_id(), revision: *revision, data: d::ReadData::Count(*count) }),
-            Input::ReadStale { revision, rows } => self.post(d::DeliveryInput::ReadDone { stream, read_id: self.read_id() + 100, revision: *revision, data: d::ReadData::Rows { rows: rows_of(rows), replaced: Vec::new() } }),
+            Input::ReadStale { revision, rows } => self.post(d::DeliveryInput::ReadDone { stream, read_id: self.read_id() + 100, revision: *revision, data: d::ReadData::Rows { rows: rows_of(rows), replaced: Vec::new(), total: None } }),
             Input::ReadFailed { revision } => self.post(d::DeliveryInput::ReadFailed { stream, read_id: self.read_id(), revision: *revision, error: "e".into() }),
             Input::WindowState(state) => self.post(d::DeliveryInput::WindowState { stream, state: window_state(state) }),
             Input::Joined { position } => self.post(d::DeliveryInput::Joined { stream, position: *position }),
@@ -376,12 +378,15 @@ fn dlv_opening_read_holds() {
 #[test]
 fn dlv_snapshot_total() {
     let mut list = open_rows();
+    list.total = Some(53);
     list.step(Input::WindowState(Ws::loaded_at(1)));
     TOTALS.with(|totals| totals.borrow_mut().clear());
     list.step_read(Input::ReadDone { revision: 1, rows: rows(&["r1", "r2"]) });
+    list.total = Some(54);
     list.step_read(Input::ReadDone { revision: 2, rows: rows(&["r1", "r2", "r3"]) });
-    assert_eq!(TOTALS.with(|totals| totals.borrow().clone()), [Some(2), Some(3)], "a snapshot and a delta carry the rows of the membership at their revision");
+    assert_eq!(TOTALS.with(|totals| totals.borrow().clone()), [Some(53), Some(54)], "a snapshot and a delta carry the total of the window read with their rows");
     let mut entity = open_as(Kind::Entity(Fetch::Never));
+    entity.total = Some(7);
     TOTALS.with(|totals| totals.borrow_mut().clear());
     entity.step_read(Input::ReadDone { revision: 1, rows: rows(&["r1"]) });
     assert_eq!(TOTALS.with(|totals| totals.borrow().clone()), [None], "a row by id has no total");
@@ -1029,7 +1034,7 @@ fn rows_script(rev: &[(i64, &[&str])]) -> Vec<d::DeliveryInput> {
             script.push(d::DeliveryInput::Committed(Committed { batch: 0, revision: *revision, tables: vec!["moments".into()], models: Default::default() }));
         }
         let rows = list.iter().map(|id| d::StreamRow::new(id, 0)).collect();
-        script.push(d::DeliveryInput::ReadDone { stream: STREAM, read_id: index as u64 + 1, revision: *revision, data: d::ReadData::Rows { rows, replaced: Vec::new() } });
+        script.push(d::DeliveryInput::ReadDone { stream: STREAM, read_id: index as u64 + 1, revision: *revision, data: d::ReadData::Rows { rows, replaced: Vec::new(), total: None } });
     }
     script
 }
@@ -1399,7 +1404,7 @@ fn dlv_prop_delta_order() {
         lists.insert(revision, list.clone());
         let read_id = inner(&det, addr).read_id(STREAM);
         let rows: Vec<d::StreamRow> = list.iter().map(|id| d::StreamRow::new(id, if next(5) == 0 { revision } else { 0 })).collect();
-        det.post(addr, EpochStamp::Epoch(EPOCH), d::DeliveryInput::ReadDone { stream: STREAM, read_id, revision, data: d::ReadData::Rows { rows, replaced: Vec::new() } });
+        det.post(addr, EpochStamp::Epoch(EPOCH), d::DeliveryInput::ReadDone { stream: STREAM, read_id, revision, data: d::ReadData::Rows { rows, replaced: Vec::new(), total: None } });
         det.post(addr, EpochStamp::Epoch(EPOCH), d::DeliveryInput::Committed(Committed { batch: 0, revision, tables: vec!["moments".into()], models: Default::default() }));
         if next(2) == 0 {
             det.post(addr, EpochStamp::Control, d::DeliveryInput::Pull { stream: STREAM, outcome: answers.register(EPOCH).id() });

@@ -41,7 +41,8 @@ impl Kind {
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum ReadData {
-    Rows { rows: Vec<StreamRow>, replaced: Vec<(String, String)> },
+    /// `total` = the total the server gave for the window, read in the same snapshot as the rows.
+    Rows { rows: Vec<StreamRow>, replaced: Vec<(String, String)>, total: Option<u64> },
     Count(u64),
 }
 
@@ -219,6 +220,7 @@ struct Delivery {
     rows: Vec<StreamRow>,
     acked_rows: Vec<StreamRow>,
     count: Option<u64>,
+    total: Option<u64>,
     window: WindowState,
     held_state: Option<WindowState>,
     next_feed: Option<u64>,
@@ -266,6 +268,7 @@ impl Delivery {
             rows: Vec::new(),
             acked_rows: Vec::new(),
             count: None,
+            total: None,
             window,
             held_state: None,
             next_feed: None,
@@ -371,7 +374,7 @@ impl Delivery {
             let has_rows = if self.view.kind == Kind::Count { self.count.is_some_and(|count| count > 0) } else { !self.rows.is_empty() };
             state.phase = if has_rows { WindowPhase::Loaded } else { WindowPhase::Failed };
         }
-        state.total = (self.view.kind == Kind::List).then(|| self.rows.len() as u64);
+        state.total = if self.view.kind == Kind::List { self.total } else { None };
         state
     }
 
@@ -472,7 +475,8 @@ impl Delivery {
         }
         self.read_seen = self.read_seen.max(revision);
         match (self.stage, data) {
-            (DeliveryStage::Opening, ReadData::Rows { rows, .. }) if self.view.kind != Kind::Count => {
+            (DeliveryStage::Opening, ReadData::Rows { rows, total, .. }) if self.view.kind != Kind::Count => {
+                self.total = total;
                 let missing = rows.is_empty() && self.view.kind == (Kind::Entity { fetch: Fetch::IfMissing });
                 let state = self.state_at(revision);
                 self.rows = rows.clone();
@@ -490,7 +494,7 @@ impl Delivery {
                 self.stage = DeliveryStage::Live;
                 self.push(Value::Count { revision, count: now, state }, fx);
             }
-            (DeliveryStage::Live, ReadData::Rows { rows, replaced }) if self.view.kind != Kind::Count => self.live_rows(revision, rows, replaced, fx),
+            (DeliveryStage::Live, ReadData::Rows { rows, replaced, total }) if self.view.kind != Kind::Count => self.live_rows(revision, rows, replaced, total, fx),
             (DeliveryStage::Live, ReadData::Count(now)) if self.view.kind == Kind::Count && revision > self.revision => {
                 if self.count != Some(now) {
                     let state = self.state_at(revision);
@@ -512,7 +516,7 @@ impl Delivery {
         }
     }
 
-    fn live_rows(&mut self, revision: i64, rows: Vec<StreamRow>, replaced: Vec<(String, String)>, fx: &mut Vec<Emit>) {
+    fn live_rows(&mut self, revision: i64, rows: Vec<StreamRow>, replaced: Vec<(String, String)>, total: Option<u64>, fx: &mut Vec<Emit>) {
         if revision <= self.revision {
             return;
         }
@@ -522,6 +526,7 @@ impl Delivery {
         }
         let state = self.state_at(revision);
         self.rows = rows.clone();
+        self.total = total;
         self.revision = revision;
         let unread_snapshot = self.journal.iter().any(|kept| matches!(kept, Value::Snapshot { .. }));
         let Some(base) = self.acknowledged.filter(|_| !unread_snapshot) else {
@@ -567,7 +572,7 @@ impl Delivery {
         }
         match self.stage {
             DeliveryStage::Opening => {
-                let state = WindowState { phase: WindowPhase::Failed, error: Some(error), loaded: None, has_more: false, settled: true, total: None };
+                let state = WindowState { phase: WindowPhase::Failed, error: Some(crate::ffi::DbError::Database { detail: error }), loaded: None, has_more: false, settled: true, total: None };
                 self.window = state.clone();
                 self.revision = revision;
                 self.rows = Vec::new();
@@ -576,7 +581,7 @@ impl Delivery {
             }
             DeliveryStage::Live if revision > self.revision => {
                 let phase = if self.rows.is_empty() { WindowPhase::Failed } else { WindowPhase::Loaded };
-                let state = WindowState { phase, error: Some(error), loaded: self.window.loaded, has_more: self.window.has_more, settled: true, total: None };
+                let state = WindowState { phase, error: Some(crate::ffi::DbError::Database { detail: error }), loaded: self.window.loaded, has_more: self.window.has_more, settled: true, total: None };
                 self.window = state.clone();
                 self.push(Value::State { revision: self.revision, state }, fx);
             }

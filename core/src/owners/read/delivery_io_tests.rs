@@ -114,5 +114,5 @@ fn delivery_io_read_older_snapshot() {
     let Some(Value::Snapshot { rows, state, .. }) = journal.first() else { panic!("a failed first read gives a Snapshot without rows: {journal:?}") };
     assert!(rows.is_empty(), "no rows of a snapshot older than the revision");
     assert_eq!(state.phase, WindowPhase::Failed);
-    assert!(state.error.as_deref().is_some_and(|error| error.contains("older than 2")), "the error of the read reaches the stream: {state:?}");
+    assert!(state.error.as_ref().is_some_and(|error| error.to_string().contains("older than 2")), "the error of the read reaches the stream: {state:?}");
 }

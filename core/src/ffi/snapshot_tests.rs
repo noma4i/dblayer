@@ -121,6 +121,16 @@ async fn inv_loadm_16_a_background_failure_is_loaded_with_the_error_when_rows_ex
 }
 
 #[tokio::test]
+async fn dlv_state_error_typed() {
+    let (cold, _) = open(&[REFUSED]).await;
+    let listener = tape();
+    let live = cold.watch_query(FEED, listener.clone());
+    let waiter = live.wait_for_initial_load().await.expect_err("the load is refused");
+    let failed = heard(&listener).pop().unwrap();
+    assert_eq!(failed.error, Some(waiter), "the state carries the typed error of the load, not its text");
+}
+
+#[tokio::test]
 async fn inv_loadm_16_a_refresh_that_changes_no_row_still_shows_its_state_once_the_group_has_read_through_it() {
     let (db, clock) = open(&[ONE_ROW, ONE_ROW]).await;
     db.load(db.session_epoch(), "Moment".into(), "feed".into(), "{}".into()).await.unwrap();

@@ -8,7 +8,7 @@ use crate::test_wait::yield_until;
 
 const ALL: &str = r#"{"model":"User","relation":"all","params":{}}"#;
 
-fn first_error(rows: &Rows) -> Option<String> { rows.1.lock().unwrap().iter().find_map(|change| change.error.clone()) }
+fn first_error(rows: &Rows) -> Option<String> { rows.1.lock().unwrap().iter().find_map(|change| change.error.as_ref().map(ToString::to_string)) }
 
 fn trace(rows: &Rows) -> Vec<String> { rows.1.lock().unwrap().iter().map(|change| format!("rev={} size={} phase={:?} error={:?}", change.revision, change.size, change.phase, change.error)).collect() }
 

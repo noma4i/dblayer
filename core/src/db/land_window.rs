@@ -66,7 +66,7 @@ fn edge_writes(scope: &ScopeRef, fields: &[FieldSpec], roots: &[Map<String, Valu
 }
 
 /// The scope of a relation with params and the key of its window record.
-fn window_identity(spec: &crate::schema::ModelSpec, model: &str, relation: &str, remote: &crate::schema::RemoteSpec, params: &Map<String, Value>) -> Result<(ScopeRef, String), DbError> {
+pub(super) fn window_identity(spec: &crate::schema::ModelSpec, model: &str, relation: &str, remote: &crate::schema::RemoteSpec, params: &Map<String, Value>) -> Result<(ScopeRef, String), DbError> {
     let scope_key = spec.selection_key(relation, params).map_err(json_fault)?;
     let direction = match remote.shape {
         RemoteShape::Connection { direction, .. } => direction,

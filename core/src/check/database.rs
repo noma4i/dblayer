@@ -193,7 +193,7 @@ impl DatabaseSut {
     fn state(&self, stream: &str, state: &ReadState, into: &mut Map<String, Value>) {
         into.insert("stream".into(), stream.into());
         into.insert("phase".into(), phase_name(state.phase).into());
-        if let Some(error) = &state.error { into.insert("error".into(), error.clone().into()); }
+        if let Some(error) = &state.error { into.insert("error".into(), error.to_string().into()); }
         if let Some(at) = state.loaded { into.insert("loaded".into(), at.into()); }
     }
 
