@@ -7,7 +7,7 @@ use super::outbox_types::*;
 use crate::owners::contract::{BatchId, Drained, RejectReason, ReplyId};
 
 use crate::owners::store::{RowValue, StoreOp};
-use crate::runtime::{Effect, Effects, Epoch, Time};
+use crate::runtime::{Effect, Effects, Epoch, ScheduleId, Time};
 
 
 
@@ -91,6 +91,26 @@ impl OutboxState {
         let batch = self.next_batch;
         self.next_batch += 1;
         self.commit(batch, BTreeMap::new(), vec![StoreOp::RemoveRows { model, ids: vec![row] }], 0, fx);
+    }
+
+    pub(super) fn arm_expiry(&mut self, model: String, row: String, revision: u64, after: u64, fx: &mut Effects<Outbox>) {
+        self.disarm_expiry(&model, &row, fx);
+        let id = ScheduleId(EXPIRE_TIMER + self.next_schedule);
+        self.next_schedule += 1;
+        self.expiry.insert((model.clone(), row.clone()), (id, revision));
+        fx.push(Effect::Schedule { id, after: std::time::Duration::from_millis(after), input: OutboxInput::ExpireRow { model, row, revision } });
+    }
+
+    pub(super) fn disarm_expiry(&mut self, model: &str, row: &str, fx: &mut Effects<Outbox>) {
+        if let Some((id, _)) = self.expiry.remove(&(model.to_string(), row.to_string())) { fx.push(Effect::Cancel(id)); }
+    }
+
+    pub(super) fn expire_row(&mut self, model: String, row: String, revision: u64, fx: &mut Effects<Outbox>) {
+        if !self.expiry.get(&(model.clone(), row.clone())).is_some_and(|(_, held)| *held == revision) { return; }
+        self.expiry.remove(&(model.clone(), row.clone()));
+        let batch = self.next_batch;
+        self.next_batch += 1;
+        self.commit(batch, BTreeMap::new(), vec![StoreOp::ExpireRow { model, row_id: row, write_revision: revision }], 0, fx);
     }
 
 }

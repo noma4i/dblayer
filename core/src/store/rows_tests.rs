@@ -17,6 +17,7 @@ fn revision_reads_and_resets_distinguish_missing_corrupt_and_unreadable_values()
                 crate::ddl::manifest_write(&inner.connection, crate::ddl::REVISION_SEQ_KEY, value).unwrap();
             }
         }
+        if value == Some("17") { store.overlays.reset(17); }
         match value {
             None | Some("17") => {
                 let expected = if value.is_none() { 0 } else { 17 };

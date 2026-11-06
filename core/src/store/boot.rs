@@ -125,10 +125,14 @@ impl Store {
         }
 
         let tombstone_drops = prune_tombstones(&inner.connection, now, &TombstoneRetention::DEFAULT, None)?;
+        let database: String = inner.connection.query_row("SELECT file FROM pragma_database_list WHERE name = 'main'", [], |row| row.get(0))?;
+        let files: std::collections::HashSet<String> = inner.connection.prepare("SELECT id FROM file")?.query_map([], |row| row.get(0))?.collect::<rusqlite::Result<_>>()?;
+        self.overlays.reset(super::rows::read_revision(&inner.connection)?);
         drop(inner);
         drop(reading_models);
         if let Some((database, files)) = removed_files { crate::files::FileDirectories::beside(std::path::Path::new(&database)).discard(&files)?; }
         if let Some(database) = remove_all_files { crate::files::FileDirectories::beside(std::path::Path::new(&database)).remove_all()?; }
+        if !database.is_empty() { crate::files::FileDirectories::beside(std::path::Path::new(&database)).recover_partials(&files)?; }
         Ok(BootReport { recreated, verdict, finished_interrupted_reset, tombstone_drops, reset_models, dropped })
     }
 }

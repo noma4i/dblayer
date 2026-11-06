@@ -172,7 +172,7 @@ impl Store {
             let hook = self.after_network_check.lock().unwrap_or_else(|error| error.into_inner()).take();
             if let Some(hook) = hook { hook(); }
         }
-        let committed = attempt(inner, envelope, now_ms, prune)?;
+        let committed = attempt(self, inner, envelope, now_ms, prune)?;
         if let Some(newest) = committed.0.queue_operations.iter().filter(|(_, entry)| entry.is_some()).map(|(seq, _)| *seq).max() {
             self.newest_operation.fetch_max(newest, std::sync::atomic::Ordering::SeqCst);
         }
@@ -185,12 +185,16 @@ impl Store {
     }
 }
 
-fn attempt(inner: &Inner, envelope: &CommitEnvelope, now_ms: i64, prune: TombstonePrune) -> Result<(CommitResult, u32), StoreError> {
+fn attempt(store: &Store, inner: &Inner, envelope: &CommitEnvelope, now_ms: i64, prune: TombstonePrune) -> Result<(CommitResult, u32), StoreError> {
     let transaction = inner.connection.unchecked_transaction()?;
     let outcome = apply_envelope(&transaction, &inner.models, envelope, now_ms, prune)?;
     if outcome.is_noop() && envelope.window.is_none() && envelope.window_debts.is_empty() && envelope.pending_locals.is_empty() {
         transaction.rollback()?;
     } else {
+        if let Some(revision) = outcome.revision {
+            let snapshot = store.overlays.next(revision - 1, true).ok_or_else(|| StoreError::Constraint("overlay revision is unavailable".into()))?;
+            store.overlays.publish(snapshot);
+        }
         transaction.commit()?;
     }
     let acks = outcome.unknown_operation_acks;

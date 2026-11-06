@@ -128,6 +128,7 @@ pub(crate) fn read_revision(connection: &Connection) -> Result<i64, StoreError> 
 pub struct Reader<'a> {
     connection: &'a Connection,
     models: &'a BTreeMap<String, ModelInfo>,
+    overlay: Option<&'a super::overlay::OverlaySnapshot>,
 }
 
 #[derive(Debug, Default)]
@@ -139,8 +140,10 @@ pub struct EdgeRead {
 
 impl<'a> Reader<'a> {
     pub(crate) fn new(connection: &'a Connection, models: &'a BTreeMap<String, ModelInfo>) -> Self {
-        Self { connection, models }
+        Self { connection, models, overlay: None }
     }
+
+    pub(super) fn with_overlay(connection: &'a Connection, models: &'a BTreeMap<String, ModelInfo>, overlay: &'a super::overlay::OverlaySnapshot) -> Self { Self { connection, models, overlay: Some(overlay) } }
 
     pub(crate) fn connection(&self) -> &'a Connection {
         self.connection
@@ -161,7 +164,18 @@ impl<'a> Reader<'a> {
     }
 
     pub fn stored_rows(&self, model: &str, ids: &[String]) -> Result<BTreeMap<String, StoredRow>, StoreError> {
-        fetch_stored(self.connection, self.model(model)?, ids, false)
+        let info = self.model(model)?;
+        let mut rows = fetch_stored(self.connection, info, ids, false)?;
+        if let Some(overlay) = self.overlay {
+            for (id, row) in &mut rows {
+                let key = super::overlay::RowKey { model: model.to_string(), row_id: id.clone() };
+                for field in &info.spec.ephemeral {
+                    let value = overlay.values.get(&key).and_then(|values| values.get(&field.field.name)).map(|value| value.value.clone()).unwrap_or_else(|| field.initial());
+                    row.row.insert(field.field.name.clone(), value);
+                }
+            }
+        }
+        Ok(rows)
     }
 
     pub fn point(&self, model: &str, id: &str) -> Result<Option<Map<String, Value>>, StoreError> {

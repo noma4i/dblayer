@@ -185,7 +185,7 @@ impl OutboxState {
                 self.phase = Phase::Classified;
                 self.replay_held(fx);
             }
-            OutboxInput::OrphanAnswers { .. } | OutboxInput::Resolve { .. } | OutboxInput::Landed { .. } | OutboxInput::WhenQuiet { .. } | OutboxInput::LocalWrite { .. } | OutboxInput::CopyDone { .. } | OutboxInput::CopyFailed { .. } | OutboxInput::Expire { .. } | OutboxInput::Committed(_) | OutboxInput::Rejected(_) => self.handle(input, fx),
+            OutboxInput::OrphanAnswers { .. } | OutboxInput::Resolve { .. } | OutboxInput::Landed { .. } | OutboxInput::WhenQuiet { .. } | OutboxInput::LocalWrite { .. } | OutboxInput::CopyDone { .. } | OutboxInput::CopyFailed { .. } | OutboxInput::Expire { .. } | OutboxInput::ArmExpiry { .. } | OutboxInput::DisarmExpiry { .. } | OutboxInput::ExpireRow { .. } | OutboxInput::Committed(_) | OutboxInput::Rejected(_) => self.handle(input, fx),
             _ => {}
         }
     }

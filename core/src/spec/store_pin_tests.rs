@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 
 use crate::owners::contract::{BatchAuthor, EpochEnded};
-use crate::owners::store::{BootFound, Done, StoreBatch, StoreEffect, StoreInput, StoreState, StoreWriter};
+use crate::owners::store::{BootFound, Done, StoreBatch, StoreEffect, StoreInput, StoreState, StoreWriter, WriteDone};
 use crate::runtime::{Cause, Effect, StateOwner};
 
 fn step(state: &mut StoreState, input: StoreInput) -> Vec<StoreEffect> {
@@ -45,7 +45,7 @@ fn store_pin_deferred_while_writing() {
     let mut state = state(4);
     step(&mut state, batch(1));
     assert!(pin(&mut state, 0, 1).is_empty());
-    let effects = step(&mut state, StoreInput::Written { author: BatchAuthor::Outbox, batch: 1, result: Ok(Done { revision: 5 }) });
+    let effects = step(&mut state, StoreInput::Written { author: BatchAuthor::Outbox, batch: 1, result: Ok(WriteDone { revision: 5, ..WriteDone::default() }) });
     assert!(effects.contains(&StoreEffect::Pinned { epoch: 0, request_id: 1, base_revision: 5 }));
     assert_eq!(limit(&step(&mut state, batch(2))), Some(Some(5)));
 
@@ -112,7 +112,7 @@ fn store_prop_tombstone_flight() {
     let key = WindowKey::nodes("moments", &["m1"]);
     db.write_queue_ops_with_pin(&[StoreOp::Window { key: key.name, model: key.model, page: 1, replace_all: false, cursor: None, roots: vec![row("m1")], related: vec![], total: None, base_revision: i64::try_from(base).unwrap() }], min).unwrap();
     assert!(db.find("moments", &RowId::new("m1").unwrap()).unwrap().is_none());
-    step(&mut owner, StoreInput::Written { author: BatchAuthor::Outbox, batch: 1, result: Ok(Done { revision: u64::try_from(db.revision_seq().unwrap()).unwrap() }) });
+    step(&mut owner, StoreInput::Written { author: BatchAuthor::Outbox, batch: 1, result: Ok(WriteDone { revision: u64::try_from(db.revision_seq().unwrap()).unwrap(), ..WriteDone::default() }) });
     step(&mut owner, StoreInput::Unpin { request_id: 7 });
     let min = limit(&step(&mut owner, batch(2))).unwrap();
     db.write_queue_ops_with_pin(&[StoreOp::Rows { model: "moments".into(), rows: vec![row("m3")] }], min).unwrap();

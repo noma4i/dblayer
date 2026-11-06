@@ -51,7 +51,6 @@ pub(crate) struct Shared {
     pub files: Arc<FileDirectories>,
     pub files_gate: Mutex<()>,
     /// The payloads of the feed events a batch landed, with their rows before and after: the Feed takes them at the verdict of the batch.
-    pub landed_events: Mutex<BTreeMap<u64, Vec<String>>>,
     pub blob_failed_ttl_ms: std::sync::atomic::AtomicI64,
     pub expiry_gate: Mutex<()>,
     pub os_observers: std::sync::OnceLock<Arc<dyn crate::owners::life::ObserverPort>>,
@@ -193,7 +192,6 @@ impl Db {
             ephemeral: ephemeral.clone(),
             files: Arc::new(path.map_or_else(FileDirectories::scratch, FileDirectories::beside)),
             files_gate: Mutex::new(()),
-            landed_events: Mutex::new(BTreeMap::new()),
             blob_failed_ttl_ms: std::sync::atomic::AtomicI64::new(crate::upload::UploadConfig::default().failed_ttl.as_millis().try_into().unwrap_or(i64::MAX)),
             expiry_gate: Mutex::new(()),
             os_observers: std::sync::OnceLock::new(),

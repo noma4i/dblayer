@@ -11,13 +11,24 @@ use crate::pacing::{Clock, Counters, SystemClock};
 use crate::schema::{ModelSpec, SearchPath};
 
 mod admission;
+#[cfg(test)]
+mod atomic_tests;
 mod apply;
+mod batch_common;
+mod batch_result;
+mod batch_write;
 mod upload;
+mod upload_ops;
 pub(crate) mod blob;
 mod boot;
 mod error;
 mod file_ops;
+mod file_write;
+mod feed_write;
+mod intent_write;
 pub(crate) mod merge;
+mod overlay;
+mod overlay_write;
 mod open;
 mod restore;
 mod rollback;
@@ -31,6 +42,7 @@ pub(crate) mod reads;
 mod reset;
 pub(crate) use reset::{identity_of, row_op, RowOp};
 mod rows;
+mod row_write;
 mod response;
 pub(crate) mod replace;
 mod scopes;
@@ -40,6 +52,7 @@ mod stable;
 pub(crate) mod swap;
 mod tombstones;
 mod windows;
+pub(crate) mod window_write;
 pub(crate) mod window_values;
 mod write;
 
@@ -202,6 +215,7 @@ pub struct Store {
     models: RwLock<Arc<BTreeMap<String, ModelInfo>>>,
     poison: Arc<Mutex<Option<String>>>,
     readers: Option<readers::Readers>,
+    overlays: overlay::Overlays,
     reads: Arc<reads::Reads>,
     hook: OnceLock<StoreHook>,
     commit_log: OnceLock<CommitLog>,
@@ -243,6 +257,7 @@ impl Store {
             models: RwLock::new(models),
             poison,
             readers: None,
+            overlays: overlay::Overlays::new(0),
             reads: reads::Reads::new(),
             hook: OnceLock::new(),
             commit_log: OnceLock::new(),
@@ -354,18 +369,24 @@ impl Store {
             if let Some(reason) = &*self.poison.lock().unwrap_or_else(|error| error.into_inner()) {
                 return Err(StoreError::Poisoned(reason.clone()));
             }
-            let transaction = connection.unchecked_transaction()?;
-            #[cfg(test)]
-            self.read_threads.lock().unwrap_or_else(|error| error.into_inner()).push(std::thread::current().id());
-            let result = run(&Reader::new(&transaction, &models))?;
-            transaction.commit()?;
-            return Ok(result);
+            loop {
+                let transaction = connection.unchecked_transaction()?;
+                let revision = rows::read_revision(&transaction)?;
+                let Some(snapshot) = self.overlays.get(revision) else { transaction.rollback()?; continue };
+                #[cfg(test)]
+                self.read_threads.lock().unwrap_or_else(|error| error.into_inner()).push(std::thread::current().id());
+                let result = run(&Reader::with_overlay(&transaction, &models, &snapshot))?;
+                transaction.commit()?;
+                return Ok(result);
+            }
         }
         let inner = self.lock();
         inner.ensure_healthy()?;
         #[cfg(test)]
         self.read_threads.lock().unwrap_or_else(|error| error.into_inner()).push(std::thread::current().id());
-        run(&Reader::new(&inner.connection, &inner.models))
+        let revision = rows::read_revision(&inner.connection)?;
+        let snapshot = self.overlays.get(revision).ok_or_else(|| StoreError::Constraint("overlay revision is unavailable".into()))?;
+        run(&Reader::with_overlay(&inner.connection, &inner.models, &snapshot))
     }
 
     pub fn revision_seq(&self) -> Result<i64, StoreError> {

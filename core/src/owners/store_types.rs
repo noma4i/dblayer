@@ -141,6 +141,7 @@ pub enum StoreOp {
     /// Rows of a local model (`set_local`, `set_ephemeral`, `attach`, `detach`).
     LocalRows { model: String, rows: Vec<RowValue> },
     RemoveRows { model: String, ids: Vec<String> },
+    ExpireRow { model: String, row_id: String, write_revision: u64 },
     Upload { row: UploadRow, kind: UploadKind },
     RemoveUpload { key: String },
     /// A multipart upload of a removed transfer: `abort` goes to the server until the server answers.
@@ -207,6 +208,23 @@ pub struct Done {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+pub struct MemoryExpiry {
+    pub model: String,
+    pub row_id: String,
+    pub written_at: u64,
+    pub expires_after: u64,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct WriteDone {
+    pub revision: u64,
+    pub position: u64,
+    pub observed: Vec<String>,
+    pub expiring: Vec<MemoryExpiry>,
+    pub removed_memory: Vec<(String, String)>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum StoreEffect {
     /// Create the tables (boot of a new database) or rebuild the cache tables (format change).
     Prepare { format_change: bool },
@@ -230,7 +248,10 @@ pub enum StoreEffect {
     Saved { publication_id: u64 },
     SaveFailed { publication_id: u64, error: String },
     /// Broadcast `Committed{revision, tables, models}`; `None` = all tables and models.
-    BroadcastCommitted { revision: u64, models: Option<Vec<String>> },
+    BroadcastCommitted { revision: u64, position: u64, models: Option<Vec<String>> },
+    Observed { epoch: Epoch, batch: BatchId, payloads: Vec<String> },
+    ArmExpiry { epoch: Epoch, model: String, row_id: String, revision: u64, deadline: u64 },
+    DisarmExpiry { epoch: Epoch, model: String, row_id: String },
     /// The snapshot of the intents for Outbox, Transfer and Session.
     ReadIntents { epoch: Epoch },
     CloseReads,
@@ -244,7 +265,7 @@ pub enum StoreInput {
     Commit(StoreBatch),
     Pin { epoch: Epoch, request_id: u64 },
     Unpin { request_id: u64 },
-    Written { author: BatchAuthor, batch: BatchId, result: Result<Done, String> },
+    Written { author: BatchAuthor, batch: BatchId, result: Result<WriteDone, String> },
     ClearAccount { epoch_old: Epoch, cause: Cause, generation_new: u64, erase_id: u64 },
     ClearModels { epoch: Epoch, generation_new: u64, models: BTreeSet<String>, erase_id: u64 },
     Erased { io_id: u64, result: Result<Done, String> },

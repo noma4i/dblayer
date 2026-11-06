@@ -3,8 +3,6 @@
 
 use std::sync::Arc;
 
-use serde_json::Value;
-
 use super::{LifeReply, Wiring};
 use crate::db::Db;
 use crate::identity::Generation;
@@ -16,7 +14,7 @@ use crate::owners::read::deliveries::DeliveryInput;
 use crate::owners::read::feed::FeedInput;
 use crate::owners::read::windows::WindowsInput;
 use crate::owners::session::SessionInput;
-use crate::owners::store::{Done, StoreEffect, StoreInput, StoreOp, StoreWriter};
+use crate::owners::store::{Done, StoreEffect, StoreInput, StoreWriter, WriteDone};
 use crate::owners::write::outbox::OutboxInput;
 use crate::owners::write::rounds::RoundsInput;
 use crate::owners::write::transfer::TransferInput;
@@ -157,7 +155,10 @@ impl EffectRunner<StoreWriter> for StoreRunner {
             StoreEffect::OpenFailed(error) => wiring.open_failed(error, false),
             StoreEffect::OpenCorrupt(error) => wiring.open_failed(error, true),
             StoreEffect::Write { batch, min_pin_revision } => {
-                let result = write_batch(&self.db, &batch, min_pin_revision).and_then(|()| self.revision()).map(|revision| Done { revision });
+                let result = store.write_batch(&batch, &self.db.shared.files, &self.db.shared.pointer_guards, min_pin_revision).map(|written| {
+                    for fault in written.faults { wiring.fault(fault); }
+                    WriteDone { revision: written.revision, position: written.position, observed: written.observed, expiring: written.expiring, removed_memory: written.removed_memory }
+                }).map_err(|error| error.to_string());
                 back.reply(EpochStamp::Control, StoreInput::Written { author: batch.author, batch: batch.id, result });
             }
             StoreEffect::Pinned { epoch, request_id, base_revision } => wiring.to_windows_in(epoch, WindowsInput::Pinned { request_id, base_revision }),
@@ -189,8 +190,15 @@ impl EffectRunner<StoreWriter> for StoreRunner {
                 back.reply(EpochStamp::Control, StoreInput::Erased { io_id, result: saved });
             }
             StoreEffect::Reply { author, batch, epoch, reply } => wiring.route_store_reply(author, batch, epoch, reply),
-            StoreEffect::BroadcastCommitted { revision, models } => wiring.tell_committed(crate::owners::contract::CommittedBroadcast {
+            StoreEffect::Observed { epoch, batch, payloads } => wiring.to_feed_at(EpochStamp::Epoch(epoch), FeedInput::Observed { batch, payloads }),
+            StoreEffect::ArmExpiry { epoch, model, row_id, revision, deadline } => {
+                let now = u64::try_from(store.lock().now_ms()).unwrap_or(0);
+                wiring.to_local_writes_at(EpochStamp::Epoch(epoch), OutboxInput::ArmExpiry { model, row: row_id, revision, after: deadline.saturating_sub(now) });
+            }
+            StoreEffect::DisarmExpiry { epoch, model, row_id } => wiring.to_local_writes_at(EpochStamp::Epoch(epoch), OutboxInput::DisarmExpiry { model, row: row_id }),
+            StoreEffect::BroadcastCommitted { revision, position, models } => wiring.tell_committed(crate::owners::contract::CommittedBroadcast {
                 revision,
+                position,
                 tables: Vec::new(),
                 models: models.map_or(crate::owners::contract::Models::All, |models| crate::owners::contract::Models::Set(models.into_iter().collect())),
             }),
@@ -317,38 +325,3 @@ impl EffectRunner<Network> for NetworkRunner {
     }
 }
 
-/// One transaction per kind of ops: the tables `encrypted_*` through the store, the queue through the commit path of `Db`.
-pub(super) fn write_batch(db: &Db, batch: &crate::owners::store::StoreBatch, min_pin_revision: Option<u64>) -> Result<(), String> {
-    let (encrypted, queue): (Vec<&StoreOp>, Vec<&StoreOp>) = batch.ops.iter().partition(|op| matches!(op, StoreOp::Pending { .. } | StoreOp::RemovePending | StoreOp::EraseSession | StoreOp::Answer { .. } | StoreOp::RemoveAnswer { .. } | StoreOp::Attempt { .. } | StoreOp::Session { .. } | StoreOp::DiscardRestoreFailed { .. }));
-    let (removals, encrypted): (Vec<&StoreOp>, Vec<&StoreOp>) = encrypted.into_iter().partition(|op| matches!(op, StoreOp::RemoveAnswer { .. }));
-    if batch.author == crate::owners::contract::BatchAuthor::Feed && !batch.rows.is_empty() {
-        let payloads = db.land_events_with_pin(&batch.rows, min_pin_revision).map_err(|error| error.to_string())?;
-        crate::db::lock::lock(&db.shared.landed_events).insert(batch.id, payloads);
-    }
-    let row_ops = if batch.author == crate::owners::contract::BatchAuthor::Feed || batch.ops.iter().any(|op| matches!(op, StoreOp::Window { .. })) { Vec::new() } else { row_ops(&batch.rows)? };
-    if !encrypted.is_empty() {
-        db.shared.store.write_ops(encrypted.into_iter().filter_map(crate::store::row_op).collect()).map(drop).map_err(|error| error.to_string())?;
-    }
-    if !queue.is_empty() || !row_ops.is_empty() {
-        let ops: Vec<StoreOp> = row_ops.into_iter().chain(queue.into_iter().cloned()).collect();
-        db.write_queue_ops_with_pin(&ops, min_pin_revision).map_err(|error| error.to_string())?;
-    }
-    if removals.is_empty() {
-        return Ok(());
-    }
-    db.shared.store.write_ops(removals.into_iter().filter_map(crate::store::row_op).collect()).map(drop).map_err(|error| error.to_string())
-}
-
-fn row_ops(rows: &[(String, String)]) -> Result<Vec<StoreOp>, String> {
-    let mut ops: Vec<StoreOp> = Vec::new();
-    for (model, text) in rows {
-        let value: Value = serde_json::from_str(text).map_err(|error| format!("a row of {model} is not JSON: {error}"))?;
-        let Some(row_id) = value.get("id").and_then(Value::as_str) else { return Err(format!("a row of {model} has no id")) };
-        let row = crate::owners::store::RowValue { row_id: row_id.to_string(), values: text.clone() };
-        match ops.last_mut() {
-            Some(StoreOp::Rows { model: last, rows }) if last == model => rows.push(row),
-            _ => ops.push(StoreOp::Rows { model: model.clone(), rows: vec![row] }),
-        }
-    }
-    Ok(ops)
-}

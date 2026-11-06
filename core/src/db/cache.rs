@@ -67,6 +67,7 @@ impl RowCache {
     }
 
     pub(crate) fn put_sized(&mut self, model: &str, row: Row, bytes: usize, snapshot_revision: i64) {
+        eprintln!("TEMPORARY put_sized {model} {} snap={snapshot_revision} committed={}", row.id, self.committed_revision);
         if snapshot_revision < self.committed_revision {
             return;
         }

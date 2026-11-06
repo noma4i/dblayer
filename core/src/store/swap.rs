@@ -102,3 +102,15 @@ fn carry_locals(reader: &Reader<'_>, envelope: &mut CommitEnvelope, model: &str,
         }
         Ok(())
 }
+
+pub(super) fn apply(writer: &mut super::row_write::RowWrite<'_>, model: &str, temp: &str, real: &str, own: i64) -> Result<crate::commit::CommitResult, StoreError> {
+    let temp = RowId::new(temp).map_err(|error| StoreError::Constraint(error.to_string()))?;
+    let real = RowId::new(real).map_err(|error| StoreError::Constraint(error.to_string()))?;
+    let reader = Reader::new(writer.connection, writer.models);
+    let mut envelope = CommitEnvelope::new(crate::commit::WriteOrigin::Optimistic, writer.generation);
+    if reader.point(model, temp.as_str())?.is_some() {
+        let outbox = crate::db::read_outbox(&reader)?;
+        plan(&reader, &mut envelope, &outbox, TempReplacement { model, temp: &temp, real: &real }, own)?;
+    }
+    super::apply::apply_envelope_at(writer.connection, writer.models, &envelope, writer.now, super::TombstonePrune::Skip, writer.revision, Some(writer.originals))
+}

@@ -573,9 +573,9 @@ fn the_answer_stays_when_the_landing_of_its_batch_fails_and_goes_with_the_landin
     }
     let answers = |db: &Db| state::answers(&db.shared.store.lock().connection).unwrap().len();
     let batch = |rows: Vec<(String, String)>| StoreBatch { author: BatchAuthor::Outbox, id: 1, epoch: 1, basis: Default::default(), rows, intents: 0, credential: None, ops: vec![StoreOp::RemoveAnswer { request_id: 7 }] };
-    assert!(super::runners::write_batch(&db, &batch(vec![("Task".into(), "not json".into())]), None).is_err());
+    assert!(db.shared.store.write_batch(&batch(vec![("Task".into(), "not json".into())]), &db.shared.files, &db.shared.pointer_guards, None).is_err());
     assert_eq!(answers(&db), 1);
-    super::runners::write_batch(&db, &batch(Vec::new()), None).unwrap();
+    db.shared.store.write_batch(&batch(Vec::new()), &db.shared.files, &db.shared.pointer_guards, None).unwrap();
     assert_eq!(answers(&db), 0);
 }
 

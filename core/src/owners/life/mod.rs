@@ -359,7 +359,11 @@ impl Wiring {
     }
 
     pub fn to_feed(&self, input: super::read::feed::FeedInput) {
-        if let Some(Addresses { feed: Some(feed), .. }) = self.addresses() { self.handle.post(feed, EpochStamp::Control, input); }
+        self.to_feed_at(EpochStamp::Control, input);
+    }
+
+    pub fn to_feed_at(&self, stamp: EpochStamp, input: super::read::feed::FeedInput) {
+        if let Some(Addresses { feed: Some(feed), .. }) = self.addresses() { self.handle.post(feed, stamp, input); }
     }
 
     pub fn to_network(&self, input: NetworkInput) {

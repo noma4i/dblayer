@@ -6,7 +6,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use super::ref_lifecycle::Cause as RefCause;
 use super::ref_store::{Action, Batch, Boot, Open, Reason, Request, Store as Ref};
 use crate::owners::contract::{BatchAuthor, EpochEnded, Published, PublishedState, RejectReason};
-use crate::owners::store::{BootFound, Done, StoreBatch, StoreEffect, StoreInput, StoreMode, StoreReply, StoreState, StoreWriter};
+use crate::owners::store::{BootFound, Done, StoreBatch, StoreEffect, StoreInput, StoreMode, StoreReply, StoreState, StoreWriter, WriteDone};
 use crate::owners::support::{new_log, take, Log, Recorder};
 use crate::runtime::{Address, Cause, DetScheduler, EpochStamp};
 
@@ -46,12 +46,12 @@ fn action_of(effect: &StoreEffect) -> Option<Action> {
         StoreEffect::ClearFailed { erase_id, error } => Action::ClearFailed { erase_id: *erase_id, closed: error == "closed" },
         StoreEffect::Saved { publication_id } => Action::Saved(*publication_id),
         StoreEffect::SaveFailed { publication_id, error } => Action::SaveFailed { publication_id: *publication_id, closed: error == "closed" },
-        StoreEffect::BroadcastCommitted { revision, models } => Action::BroadcastCommitted { revision: *revision, all: models.is_none() },
+        StoreEffect::BroadcastCommitted { revision, models, .. } => Action::BroadcastCommitted { revision: *revision, all: models.is_none() },
         StoreEffect::ReadIntents { epoch } => Action::ReadIntents(*epoch),
         StoreEffect::CloseReads => Action::CloseReads,
         StoreEffect::CloseConnections => Action::CloseConnections,
         StoreEffect::StoreClosed => Action::StoreClosed,
-        StoreEffect::Prepare { .. } | StoreEffect::OpenLifecycle(_) | StoreEffect::OpenFailed(_) | StoreEffect::OpenCorrupt(_) => return None,
+        StoreEffect::Prepare { .. } | StoreEffect::OpenLifecycle(_) | StoreEffect::OpenFailed(_) | StoreEffect::OpenCorrupt(_) | StoreEffect::ArmExpiry { .. } | StoreEffect::DisarmExpiry { .. } | StoreEffect::Observed { .. } => return None,
     })
 }
 
@@ -130,7 +130,7 @@ impl Twin {
             Request::EpochEnded { epoch } => StoreInput::EpochEnded(EpochEnded { epoch, cause: Cause::SessionReset }),
             Request::ReadIntents { epoch } => StoreInput::ReadIntents { epoch },
             Request::Close => StoreInput::Close,
-            Request::Written { id, result } => StoreInput::Written { author: BatchAuthor::Outbox, batch: id, result: result.map(|revision| Done { revision }).map_err(|()| DISK.into()) },
+            Request::Written { id, result } => StoreInput::Written { author: BatchAuthor::Outbox, batch: id, result: result.map(|revision| WriteDone { revision, ..WriteDone::default() }).map_err(|()| DISK.into()) },
             Request::Erased { io_id, result } => StoreInput::Erased { io_id, result: result.map(|revision| Done { revision }).map_err(|()| DISK.into()) },
             Request::ReadsClosed(ids) => StoreInput::ReadsClosed { ids },
             Request::ReadFinished(read_id) => StoreInput::ReadFinished { read_id },

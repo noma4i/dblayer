@@ -320,6 +320,19 @@ impl Db {
     }
 }
 
+pub(super) fn apply(writer: &mut super::row_write::RowWrite<'_>, op_id: u64) -> Result<CommitResult, StoreError> {
+    let seq = i64::try_from(op_id).map_err(|_| StoreError::Constraint("operation id is too large".into()))?;
+    let reader = Reader::new(writer.connection, writer.models);
+    let entry = OutboxOperation::read(&reader, seq)?.ok_or_else(|| StoreError::Constraint(format!("operation {seq} does not exist")))?;
+    let plan = restore(&reader, &Prior::related_operations(&reader, &entry)?, &entry, writer.revision)?;
+    let mut envelope = CommitEnvelope::new(WriteOrigin::Optimistic, writer.generation);
+    envelope.entity_ops = plan.entity_ops;
+    envelope.scope_ops = plan.scope_ops;
+    envelope.operation_transitions = plan.transitions;
+    envelope.operation_transitions.push(OperationTransition::Close { seq, status: OperationStatus::RolledBack });
+    super::apply::apply_envelope_at(writer.connection, writer.models, &envelope, writer.now, super::TombstonePrune::Skip, writer.revision, Some(writer.originals))
+}
+
 fn write_number(row: &mut Map<String, Value>, keys: &[&str], number: usize) {
     let key = keys[0];
     if keys.len() == 1 {

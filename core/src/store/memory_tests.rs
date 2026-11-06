@@ -30,13 +30,19 @@ fn seed(store: &Store) {
 }
 
 #[test]
-fn memory_rows_live_in_the_temp_schema_and_read_like_any_row() {
+fn store_prop_memory_model_tables() {
     let store = Store::open_in_memory().unwrap();
     store.boot(&models(), None).unwrap();
     seed(&store);
     assert_eq!(count(&store, "SELECT COUNT(*) FROM sqlite_temp_master WHERE name = 'row_presence'"), 1);
     assert_eq!(count(&store, "SELECT COUNT(*) FROM sqlite_master WHERE name = 'row_presence'"), 0);
     assert_eq!(store.row_count("presence").unwrap(), 1);
+    store.read(&["presence", "messages"], |reader| {
+        assert_eq!(reader.point("presence", "p1")?.unwrap().get("room"), Some(&json!("r1")));
+        assert!(reader.point("messages", "m1")?.is_some());
+        assert_eq!(reader.revision_seq()?, 1);
+        Ok(())
+    }).unwrap();
     assert_eq!(store.scope_members("presence", scope("presence", "room").key.as_str()).unwrap().len(), 1);
     assert!(store.table_exists("row_presence").unwrap());
 }

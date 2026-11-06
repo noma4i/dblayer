@@ -80,6 +80,7 @@ impl Default for Models {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CommittedBroadcast {
     pub revision: u64,
+    pub position: u64,
     pub tables: Vec<String>,
     pub models: Models,
 }

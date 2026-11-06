@@ -180,6 +180,9 @@ pub enum OutboxInput {
     CopyFailed { id: u64 },
     /// `Tick(expire)` of an ephemeral row, scheduled by the owner when the write commits: `due` is the expiry it was scheduled for.
     Expire { model: String, row: String, due: Time },
+    ArmExpiry { model: String, row: String, revision: u64, after: u64 },
+    DisarmExpiry { model: String, row: String },
+    ExpireRow { model: String, row: String, revision: u64 },
     Tick(Time),
 }
 

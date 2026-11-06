@@ -368,6 +368,9 @@ impl Store {
         let revision = bump_revision(&transaction)?;
         clear_intent(&transaction)?;
         let operations = crate::operation::read_queue(&transaction)?;
+        let mut snapshot = self.overlays.next(revision - 1, true).ok_or_else(|| StoreError::Constraint("overlay revision is unavailable".into()))?;
+        snapshot.clear_models(None);
+        self.overlays.publish(snapshot);
         transaction.commit()?;
         self.publish_revision(revision);
         *inner.poison.lock().unwrap_or_else(|error| error.into_inner()) = None;
@@ -396,6 +399,9 @@ impl Store {
         let revision = bump_revision(&transaction)?;
         clear_intent(&transaction)?;
         let operations = crate::operation::read_queue(&transaction)?;
+        let mut snapshot = self.overlays.next(revision - 1, true).ok_or_else(|| StoreError::Constraint("overlay revision is unavailable".into()))?;
+        snapshot.clear_models(Some(models));
+        self.overlays.publish(snapshot);
         transaction.commit()?;
         self.publish_revision(revision);
         *inner.poison.lock().unwrap_or_else(|error| error.into_inner()) = None;
@@ -453,40 +459,39 @@ impl Store {
     pub(crate) fn write_ops(&self, ops: Vec<RowOp>) -> Result<i64, StoreError> {
         let inner = self.lock();
         let transaction = inner.connection.unchecked_transaction()?;
-        for op in ops {
-            match op {
-                RowOp::PutPending(pending) => {
-                    transaction.execute("DELETE FROM encrypted_pending", [])?;
-                    state::store_pending(&transaction, &pending)?;
-                }
-                RowOp::RemovePending => {
-                    transaction.execute("DELETE FROM encrypted_pending", [])?;
-                }
-                RowOp::RemoveSession => {
-                    transaction.execute("DELETE FROM encrypted_session", [])?;
-                }
-                RowOp::PutAnswer { request_id, operation, answer } => state::store_answer(&transaction, request_id, operation, &answer)?,
-                RowOp::RemoveAnswer { request_id } => state::remove_answer(&transaction, request_id)?,
-                RowOp::PutAttempts { op_id, attempts } => {
-                    transaction.execute("UPDATE op SET attempts = ?2 WHERE seq = ?1", params![op_id, attempts])?;
-                }
-                RowOp::DiscardRestoreFailed { table, key } => {
-                    transaction.execute("DELETE FROM restore_failed WHERE source_table = ?1 AND key = ?2", params![table, key])?;
-                }
-                RowOp::PutSession { digest, sequence } => {
-                    let stored = state::session(&transaction)?;
-                    let digest = digest.or_else(|| stored.as_ref().map(|session| session.credential_digest.clone())).ok_or(rusqlite::Error::QueryReturnedNoRows)?;
-                    let sequence = sequence.or_else(|| stored.as_ref().map(|session| session.sequence)).unwrap_or(0);
-                    transaction.execute(
-                        "INSERT INTO encrypted_session (id, credential_digest, sequence) VALUES (1, ?1, ?2) ON CONFLICT(id) DO UPDATE SET credential_digest = excluded.credential_digest, sequence = excluded.sequence",
-                        params![digest, sequence],
-                    )?;
-                }
-            }
-        }
+        apply_row_ops(&transaction, ops)?;
         let revision = bump_revision(&transaction)?;
+        let snapshot = self.overlays.next(revision - 1, true).ok_or_else(|| StoreError::Constraint("overlay revision is unavailable".into()))?;
+        self.overlays.publish(snapshot);
         transaction.commit()?;
         self.publish_revision(revision);
         Ok(revision)
     }
+}
+
+pub(super) fn apply_row_ops(transaction: &Connection, ops: Vec<RowOp>) -> Result<(), StoreError> {
+    for op in ops {
+        match op {
+            RowOp::PutPending(pending) => {
+                transaction.execute("DELETE FROM encrypted_pending", [])?;
+                state::store_pending(transaction, &pending)?;
+            }
+            RowOp::RemovePending => { transaction.execute("DELETE FROM encrypted_pending", [])?; }
+            RowOp::RemoveSession => { transaction.execute("DELETE FROM encrypted_session", [])?; }
+            RowOp::PutAnswer { request_id, operation, answer } => state::store_answer(transaction, request_id, operation, &answer)?,
+            RowOp::RemoveAnswer { request_id } => state::remove_answer(transaction, request_id)?,
+            RowOp::PutAttempts { op_id, attempts } => { transaction.execute("UPDATE op SET attempts = ?2 WHERE seq = ?1", params![op_id, attempts])?; }
+            RowOp::DiscardRestoreFailed { table, key } => { transaction.execute("DELETE FROM restore_failed WHERE source_table = ?1 AND key = ?2", params![table, key])?; }
+            RowOp::PutSession { digest, sequence } => {
+                let stored = state::session(transaction)?;
+                let digest = digest.or_else(|| stored.as_ref().map(|session| session.credential_digest.clone())).ok_or(rusqlite::Error::QueryReturnedNoRows)?;
+                let sequence = sequence.or_else(|| stored.as_ref().map(|session| session.sequence)).unwrap_or(0);
+                transaction.execute(
+                    "INSERT INTO encrypted_session (id, credential_digest, sequence) VALUES (1, ?1, ?2) ON CONFLICT(id) DO UPDATE SET credential_digest = excluded.credential_digest, sequence = excluded.sequence",
+                    params![digest, sequence],
+                )?;
+            }
+        }
+    }
+    Ok(())
 }

@@ -39,6 +39,7 @@ pub struct OutboxState {
     pub(super) discard_waiters: Vec<(OpId, ReplyId)>,
     pub(super) outcome_waiters: Vec<(OpId, ReplyId)>,
     pub(super) ephemeral: BTreeMap<String, Time>,
+    pub(super) expiry: BTreeMap<(String, String), (ScheduleId, u64)>,
     pub(super) drained: bool,
     pub(super) author: BatchAuthor,
     pub(super) quiet_waiters: Vec<ReplyId>,
@@ -83,6 +84,7 @@ impl OutboxState {
             discard_waiters: Vec::new(),
             outcome_waiters: Vec::new(),
             ephemeral: BTreeMap::new(),
+            expiry: BTreeMap::new(),
             drained: false,
             author: BatchAuthor::Outbox,
             quiet_waiters: Vec::new(),
@@ -416,6 +418,9 @@ impl OutboxState {
             OutboxInput::CopyDone { id } => self.copy_done(id, fx),
             OutboxInput::CopyFailed { id } => self.copy_failed(id, fx),
             OutboxInput::Expire { model, row, due } => self.expire(model, row, due, fx),
+            OutboxInput::ArmExpiry { model, row, revision, after } => self.arm_expiry(model, row, revision, after, fx),
+            OutboxInput::DisarmExpiry { model, row } => self.disarm_expiry(&model, &row, fx),
+            OutboxInput::ExpireRow { model, row, revision } => self.expire_row(model, row, revision, fx),
             OutboxInput::Tick(_) => {}
         }
     }

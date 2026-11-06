@@ -5,8 +5,28 @@ pub(crate) fn apply_envelope(
     now_ms: i64,
     prune: TombstonePrune,
 ) -> Result<CommitResult, StoreError> {
-    let reader = Reader::new(connection, models);
-    let revision = reader.revision_seq()? + 1;
+    let revision = Reader::new(connection, models).revision_seq()? + 1;
+    apply_envelope_at(connection, models, envelope, now_ms, prune, revision, None)
+}
+
+pub(super) fn apply_envelope_at(
+    connection: &Connection,
+    models: &BTreeMap<String, ModelInfo>,
+    envelope: &CommitEnvelope,
+    now_ms: i64,
+    prune: TombstonePrune,
+    revision: i64,
+    mut originals: Option<&mut BTreeMap<RowRef, Option<Map<String, Value>>>>,
+) -> Result<CommitResult, StoreError> {
+    if let Some(originals) = originals.as_deref_mut() {
+        let reader = Reader::new(connection, models);
+        for operation in &envelope.entity_ops {
+            let row = operation.row_ref();
+            if !originals.contains_key(&row) {
+                originals.insert(row.clone(), reader.point(row.model.as_str(), row.id.as_str())?);
+            }
+        }
+    }
     let mut wrote = false;
     let mut tombstoned = false;
     let mut files_changed = false;
@@ -56,6 +76,17 @@ pub(crate) fn apply_envelope(
     stamp_confirmed_rows(connection, models, &envelope.operation_transitions, revision)?;
     let mut synced_keys: BTreeSet<SyncKey> = BTreeSet::new();
     wrote |= apply_transitions(connection, models, envelope.generation, &envelope.operation_transitions, now_ms, &mut synced_keys, &mut result)?;
+    if let Some(originals) = originals.as_deref_mut() {
+        let reader = Reader::new(connection, models);
+        for (model, id) in &synced_keys {
+            if !models.contains_key(model) { continue; }
+            let Ok(id) = crate::identity::RowId::new(id) else { continue };
+            let row = RowRef::new(ModelKey::new(model), id);
+            if !originals.contains_key(&row) {
+                originals.insert(row.clone(), reader.point(model, row.id.as_str())?);
+            }
+        }
+    }
     let is_batch = |key: &str| crate::operation::Operation::upload_action(key).is_some_and(|(model, action)| models.get(model.as_str()).is_some_and(|info| info.spec.upload_action(&action).is_some_and(|declared| declared.batch.is_some())));
     for (model, id) in recompute_sync_with(connection, &synced_keys, &is_batch)? {
         let touched = changes.changes.iter().any(|change| change.row.model.as_str() == model && change.row.id.as_str() == id);

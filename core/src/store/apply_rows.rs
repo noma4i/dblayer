@@ -156,6 +156,9 @@ fn apply_upsert(
         Some(stored) => {
             let changed = diff_fields(&stored.row, row);
             if changed.is_empty() {
+                if info.spec.is_memory() && info.spec.expire_window().is_some() {
+                    connection.execute(&format!("UPDATE {} SET revision = ?1 WHERE id = ?2", info.table), params![revision, id])?;
+                }
                 if let Ok(row_id) = crate::identity::RowId::new(&id) {
                     result.renewed.push(RowRef::new(model.clone(), row_id));
                 }

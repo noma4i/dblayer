@@ -69,6 +69,63 @@ impl FileDirectories {
         self.directory.as_ref().map(|directory| directory.join(id))
     }
 
+    pub(crate) fn prepare(&self, id: &str, bytes: &[u8]) -> io::Result<()> {
+        let target = self.path(id).ok_or_else(|| io::Error::new(io::ErrorKind::Unsupported, "no file directory"))?;
+        if let Some(parent) = target.parent() { fs::create_dir_all(parent)?; }
+        let partial = suffixed(&target, ".partial");
+        let mut file = fs::OpenOptions::new().write(true).create_new(true).open(&partial)?;
+        let result = (|| {
+            file.write_all(bytes)?;
+            file.sync_all()
+        })();
+        drop(file);
+        if result.is_err() { fs::remove_file(partial)?; }
+        result
+    }
+
+    pub(crate) fn finish(&self, id: &str) -> io::Result<()> {
+        let target = self.path(id).ok_or_else(|| io::Error::new(io::ErrorKind::Unsupported, "no file directory"))?;
+        fs::rename(suffixed(&target, ".partial"), target)
+    }
+
+    pub(crate) fn discard_partial(&self, id: &str) -> io::Result<()> {
+        let Some(target) = self.path(id) else { return Ok(()) };
+        ignore_missing(fs::remove_file(suffixed(&target, ".partial")))
+    }
+
+    pub(crate) fn recover_partials(&self, ids: &std::collections::HashSet<String>) -> io::Result<()> {
+        let Some(directory) = &self.directory else { return Ok(()) };
+        let entries = match fs::read_dir(directory) {
+            Ok(entries) => entries,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
+            Err(error) => return Err(error),
+        };
+        for entry in entries {
+            let entry = entry?;
+            if !entry.file_type()?.is_file() { continue; }
+            let name = entry.file_name();
+            let Some(name) = name.to_str() else { continue };
+            if let Some(id) = name.strip_suffix(".partial") {
+                let target = directory.join(id);
+                if ids.contains(id) && !target.exists() { fs::rename(entry.path(), target)?; } else { fs::remove_file(entry.path())?; }
+            } else if !ids.contains(name) {
+                self.discard(&[name.to_string()])?;
+            }
+        }
+        match fs::read_dir(&self.cache) {
+            Ok(entries) => for entry in entries {
+                let entry = entry?;
+                if !entry.file_type()?.is_file() { continue; }
+                if let Some(name) = entry.file_name().to_str() {
+                    if !ids.contains(name) { fs::remove_file(entry.path())?; }
+                }
+            },
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error),
+        }
+        Ok(())
+    }
+
     pub(crate) fn write(&self, id: &str, bytes: &[u8]) -> io::Result<PathBuf> {
         let target = self.path(id).ok_or_else(|| io::Error::new(io::ErrorKind::Unsupported, "no file directory"))?;
         write_atomic(&target, &suffixed(&target, PART_SUFFIX), bytes)?;

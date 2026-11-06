@@ -23,6 +23,20 @@ pub struct WindowFreshness {
     pub stale_since: Option<i64>,
 }
 
+pub(super) fn read_window(connection: &Connection, key: &str) -> Result<Option<WindowRecord>, StoreError> {
+    let found = connection.query_row(
+        "SELECT key, cursor, has_next, issued, applied, generation, total, pages FROM query_window WHERE key = ?1",
+        params![key],
+        |row| Ok((row.get::<_, String>(0)?, row.get::<_, Option<String>>(1)?, row.get::<_, i64>(2)?, row.get::<_, i64>(3)?, row.get::<_, i64>(4)?, row.get::<_, i64>(5)?, row.get::<_, Option<i64>>(6)?, row.get::<_, i64>(7)?)),
+    ).optional()?;
+    let Some((key, cursor, has_next, issued, applied, generation, total, pages)) = found else { return Ok(None) };
+    Ok(Some(WindowRecord { key, cursor, has_next: has_next != 0, total, pages, issued, applied, generation }))
+}
+
+pub(super) fn max_sequence(connection: &Connection) -> Result<i64, StoreError> {
+    Ok(connection.query_row("SELECT COALESCE(MAX(MAX(issued, applied, COALESCE(stale_since, 0))), 0) FROM query_window", [], |row| row.get(0))?)
+}
+
 pub(crate) fn window_identity(spec: &crate::schema::ModelSpec, model: &str, relation: &str, remote: &crate::schema::RemoteSpec, params: &serde_json::Map<String, serde_json::Value>) -> Result<(crate::commit::ScopeRef, String), crate::db::DbError> {
     let scope_key = spec.selection_key(relation, params).map_err(|error| crate::db::DbError::Internal(error.to_string()))?;
     let direction = match remote.shape {
@@ -111,27 +125,7 @@ impl Store {
     pub fn window(&self, key: &str) -> Result<Option<WindowRecord>, StoreError> {
         let inner = self.lock();
         inner.ensure_healthy()?;
-        let found = inner
-            .connection
-            .query_row(
-                "SELECT key, cursor, has_next, issued, applied, generation, total, pages FROM query_window WHERE key = ?1",
-                params![key],
-                |row| {
-                    Ok((
-                        row.get::<_, String>(0)?,
-                        row.get::<_, Option<String>>(1)?,
-                        row.get::<_, i64>(2)?,
-                        row.get::<_, i64>(3)?,
-                        row.get::<_, i64>(4)?,
-                        row.get::<_, i64>(5)?,
-                        row.get::<_, Option<i64>>(6)?,
-                        row.get::<_, i64>(7)?,
-                    ))
-                },
-            )
-            .optional()?;
-        let Some((key, cursor, has_next, issued, applied, generation, total, pages)) = found else { return Ok(None) };
-        Ok(Some(WindowRecord { key, cursor, has_next: has_next != 0, total, pages, issued, applied, generation }))
+        read_window(&inner.connection, key)
     }
 
     pub fn window_freshness(&self, key: &str) -> Result<Option<WindowFreshness>, StoreError> {
@@ -176,6 +170,6 @@ impl Store {
     pub(crate) fn max_window_sequence(&self) -> Result<i64, StoreError> {
         let inner = self.lock();
         inner.ensure_healthy()?;
-        Ok(inner.connection.query_row("SELECT COALESCE(MAX(MAX(issued, applied, COALESCE(stale_since, 0))), 0) FROM query_window", [], |row| row.get(0))?)
+        max_sequence(&inner.connection)
     }
 }

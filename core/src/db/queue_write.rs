@@ -92,6 +92,7 @@ impl Db {
                         envelope.entity_ops.push(EntityOp::Destroy { model: ModelKey::new(model), id: row_id(id)?, reason: DestroyReason::Local });
                     }
                 }
+                StoreOp::ExpireRow { .. } => return Err(DbError::Internal("expiry requires the Store executor".into())),
                 StoreOp::MarkError { op_id, error } => {
                     let seq = i64::try_from(*op_id).unwrap_or(i64::MAX);
                     envelope.operation_transitions.push(match error {
