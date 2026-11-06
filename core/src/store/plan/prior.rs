@@ -9,7 +9,7 @@ use crate::store::files::references_of_row;
 use crate::identity::{ModelKey, RowId, ListKey};
 use crate::store::{Reader, StoreError};
 use crate::value::read_id;
-use crate::write::restore_patch;
+use crate::owners::write::plan_intent::restore_patch;
 
 use super::outbox_entry::OutboxOperation;
 

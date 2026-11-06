@@ -1,4 +1,4 @@
-use super::variables::mutation_variables;
+use super::plan_variables::mutation_variables;
 use crate::identity::RowId;
 use crate::schema::{ActionDeclaration, RootShape};
 use serde_json::json;

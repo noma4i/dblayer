@@ -9,6 +9,9 @@ mod outbox_local;
 pub mod outbox_plan;
 mod outbox_restore;
 pub mod outbox_types;
+pub mod plan_cascade;
+pub mod plan_intent;
+pub(crate) mod plan_variables;
 pub(crate) mod operation_machine;
 pub mod operation_outbox;
 pub mod operation_status;
@@ -42,3 +45,9 @@ mod operation_machine_tests;
 mod operation_outbox_tests;
 #[cfg(test)]
 mod operation_status_tests;
+#[cfg(test)]
+mod plan_cascade_tests;
+#[cfg(test)]
+mod plan_intent_tests;
+#[cfg(test)]
+mod plan_variables_tests;

@@ -11,7 +11,7 @@ use crate::store::query::{Query, Where};
 use crate::schema::{AssociationKind, Dependent, ModelSpec, SchemaError, ValueFault};
 use crate::store::{Reader, Store, StoreError, DbError};
 use crate::value::{fractional_between, read_id};
-use crate::write::cascade_destroys;
+use crate::owners::write::plan_cascade::cascade_destroys;
 
 use super::prior::PriorRow;
 

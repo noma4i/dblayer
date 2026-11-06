@@ -251,8 +251,8 @@ impl Store {
         let Some(mutation) = declaration.mutation.clone() else { return Ok(None) };
         let is_id = |field: &str| spec.field(field).is_some_and(|field| matches!(field.kind, crate::schema::FieldKind::Scalar { kind: crate::value::ScalarKind::Id }));
         let temp = planned.row_id.is_temp().then_some(&planned.row_id);
-        let variables = crate::write::variables::mutation_variables(declaration, &planned.input, temp, &is_id);
-        let variables = crate::write::variables::idempotent_variables(declaration, &planned.input, variables, client_mutation_id);
+        let variables = crate::owners::write::plan_variables::mutation_variables(declaration, &planned.input, temp, &is_id);
+        let variables = crate::owners::write::plan_variables::idempotent_variables(declaration, &planned.input, variables, client_mutation_id);
         Ok(Some(MutationCall { mutation, variables, on_failure: declaration.on_failure, durable: declaration.durable || declaration.upload }))
     }
 
