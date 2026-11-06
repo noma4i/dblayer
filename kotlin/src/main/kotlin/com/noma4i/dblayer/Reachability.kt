@@ -15,9 +15,9 @@ internal object Reachability {
     fun start(context: Context): Connectivity {
         val service = context.applicationContext.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
         val callback = object : ConnectivityManager.NetworkCallback() {
-            override fun onAvailable(network: Network) = report(isOnline(service))
-            override fun onLost(network: Network) = report(isOnline(service))
-            override fun onCapabilitiesChanged(network: Network, capabilities: NetworkCapabilities) = report(isOnline(service))
+            override fun onAvailable(network: Network) = report(validated(service.getNetworkCapabilities(network)))
+            override fun onLost(network: Network) = report(false)
+            override fun onCapabilitiesChanged(network: Network, capabilities: NetworkCapabilities) = report(validated(capabilities))
         }
         val first = state.getAndUpdate { if (it.manager == null) State(service, callback, it.online, it.sink) else it }.manager == null
         if (!first) return connectivity
@@ -42,8 +42,7 @@ internal object Reachability {
         target?.setOnline(now)
     }
 
-    private fun isOnline(manager: ConnectivityManager): Boolean {
-        val capabilities = manager.getNetworkCapabilities(manager.activeNetwork) ?: return false
-        return capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)
-    }
+    private fun isOnline(manager: ConnectivityManager): Boolean = validated(manager.getNetworkCapabilities(manager.activeNetwork))
+
+    private fun validated(capabilities: NetworkCapabilities?): Boolean = capabilities?.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED) == true
 }

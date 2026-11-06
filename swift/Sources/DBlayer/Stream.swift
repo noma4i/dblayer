@@ -224,7 +224,11 @@ public final class Projected<Model: DBModel> {
   public func refresh() async throws { try await stream.refresh() }
   public func loadMore() async throws -> LoadMoreResult { try await stream.loadMore() }
 
-  isolated deinit { reading?.cancel() }
+  isolated deinit {
+    reading?.cancel()
+    let stream = stream
+    Task { await stream.cancel() }
+  }
 }
 
 /// The screen model of a count stream.
@@ -259,7 +263,11 @@ public final class ProjectedCount {
     }
   }
 
-  isolated deinit { reading?.cancel() }
+  isolated deinit {
+    reading?.cancel()
+    let stream = stream
+    Task { await stream.cancel() }
+  }
 }
 
 /// The events of a model, after the stream opened. The stream ends when the reader stops or the session of its account ends.
