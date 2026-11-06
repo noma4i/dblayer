@@ -431,16 +431,14 @@ Singular associations capitalize their name, preserving a final `s`. Plural asso
 // group { id opponent { id } }       -> Group.opponent is the user
 // group { id opponent { id } }       -> opponent: null, Group.opponent is nil, the user row stays
 // group { id title }                 -> opponent not selected, Group.opponent keeps its last user
-let groups = Query<Group>().where(Condition.equal("id", try JSONValue.encode(groupId)))
-let opponent = Projected<User>(try scope.related(groups, Group.Relations.opponent))   // opponent.value is the user
+let opponent = Projected<User>(try scope.entity(User.self, opponentId))   // opponent.value is the user
 ```
 
 ```kotlin
 // group { id opponent { id } }       -> Group.opponent is the user
 // group { id opponent { id } }       -> opponent: null, Group.opponent is null, the user row stays
 // group { id title }                 -> opponent not selected, Group.opponent keeps its last user
-val groups = Query("Group", Group).where(Condition.equal("id", jsonValue(groupId)))
-val opponent = Projected(scope.related(groups, Group.Relations.opponent), User, screenScope)   // opponent.value is the user
+val opponent = Projected(scope.entity(User, opponentId), User, screenScope)   // opponent.value is the user
 ```
 
 - `dependent: :destroy` removes children in the same commit as the parent.

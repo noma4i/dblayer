@@ -19,19 +19,9 @@ Keep the generated list scope and open `scope.events(Chat)` for the events. The 
 Without a payload declaration, the declared identifier-based read remains forced. There is no TTL skip or automatic fallback.
 Rust `ChangeRead` literals add `payload: None` for identifier-based reads. `ModelSpec` adds the optional `server_revision` field.
 
-## Upload before choosing a mutation
+## Blob uploads
 
-Add `blob_upload :video_intro, create: "uploadCreate"` and `parameter :video, :blob` to the consumer operation.
-Regenerate both platforms. Keep the existing UploadOperations multipart declaration when needed.
-Replace DirectUploadSend and VideoIntroSend with `DB.upload(.videoIntro, request: request)` on Swift or `DBlayer.upload(BlobUpload.VideoIntro, request)` on Kotlin.
-Persist `blob.id` for editor restoration and use `DB.blob(id)` or `DBlayer.blob(id)` after reopening.
-Replace manual signedId passing with `Profile.setVideo(video: blob)` on Swift or `Profile.setVideo(video = blob)` on Kotlin.
-Use `blob.snapshot` on Swift and `blob.snapshot.value` on Kotlin for state, progress and errors.
-`waitUntilUploaded()` returns signedId when needed, while typed operations accept Blob and wait for it themselves.
-Remove app PUT, multipart, retry queues and background completion code.
-Use `retry()` for failed transfers and `discard()` for unused uploads.
-Keep a Blob after final mutation refusal for another choice. Unknown outcomes keep its operation pin.
-Expiry is seven days from createBlob. Completion does not restart that period.
+Replace `DB.upload(.videoIntro, request:)`, `DB.blob(id)`, `Blob.waitUntilUploaded()` and `Blob.snapshot` on Swift, and `DBlayer.upload(BlobUpload.VideoIntro, request)`, `DBlayer.blob(id)`, `waitUntilUploaded()` and `snapshot` on Kotlin, with a model action that declares the upload. Send the record with `upload: UploadCommand(action:, request:)` and read `uploads[action]` on the record. Remove `blob_upload` and `parameter :video, :blob` from the `.dbl` files.
 
 ## Media library marker
 

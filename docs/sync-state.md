@@ -13,8 +13,6 @@ Every record knows whether the server has seen it. The state is live like everyt
 | `sync.attempts` | how many times sending was tried since the last `retry(action)` |
 | `sync.since` | when the record entered this state |
 | `uploads` | one entry per declared upload action with its status, stage, bytes and error, empty when nothing is uploading |
-| `needsAttention` | the state is `failed` or `deliveryUnknown` |
-| `canRetry` | same as `needsAttention`: `retry(action)` can run |
 | `errorMessage` | `sync.error?.message` |
 
 | State | When |

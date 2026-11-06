@@ -2,18 +2,30 @@
 
 ## Unreleased
 
+### Added
+- `ReadState` carries `hasMore`, `settled` and the server `total` of the window.
+- `ModelEvent` carries `position` and the rows `before` and `after`.
+- `ModelEventItem` has a `gap` item for a lost order of events.
+
 ### Removed
+- `scope.related` is gone: read a server relation with a query.
+- `Blob`, `BlobUpload`, `DB.blob` and `blob_upload` are gone: upload through a model action.
+- `needsAttention`, `canRetry`, `loadedAt` and `errorKind` are gone: read `sync.state` and `ReadState.error`.
+- `ValueSink`, `readStream` and `cancelStream` are gone: read a value stream.
 - `Database.flush`, `resume`, `resumeUploads`, `retryAll`, `refreshPreloads`, `warm`, `maintain` and `setListening` are gone from the bridge on both platforms. The library sends, resumes and maintains by itself.
 - `sessionResume` is gone from Swift, Kotlin and the core. Opening the database with a session sends a request stored before the close.
 - `enterForegroundForTesting` is gone. The foreground notice comes from the system.
 - `OpenOptions` has no `preload` and no `listening`. `openTesting` and `openOnClock` have no `preload` and no `listening` parameter. A scope declared with `preload` loads on a test clock like it does in production.
 
 ### Changed
+- `ReadState.error` is the typed `DbError`.
+- `OperationReceipt.items` carry one `MutationReceipt` each.
 - A refused sessionless call reports a network error without the HTTP status.
 - `UrlSessionTransport` and `OkHttpTransport` have no `cablePath`. `Transport.openCable` receives the WebSocket address built by the core.
 - `EntityFetch.none` is `EntityFetch.never` in Swift and `EntityFetch.NEVER` in Kotlin.
 
 ### Fixed
+- Keyed reactions match elements stored under a nested path.
 - Events of the server subscription land in the cache and reach event streams.
 - A destroy the server answers only with NOT_FOUND is confirmed and the open lists of the model are read once more.
 - An offline refresh shows its error in the state of the stream of the window.

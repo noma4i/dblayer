@@ -2,7 +2,7 @@
 
 Reading data means opening a stream of values from the core.
 See [value bridge](value-bridge.md) for snapshots, deltas, epochs and commands.
-One owner in the core serves each stream: the query, the count, the related rows, the row by id, the events of a model and the status of an upload all work the same way.
+One owner in the core serves each stream: the query, the count, the row by id, the events of a model and the status of an upload all work the same way.
 
 ## Streams
 
@@ -10,7 +10,6 @@ One owner in the core serves each stream: the query, the count, the related rows
 | --- | --- |
 | `scope.stream(query)` | The rows of a query: a snapshot, then deltas. |
 | `scope.count(query)` | The number of rows of a query. |
-| `scope.related(query, association)` | The rows an association points to, for every row of the query. |
 | `scope.entity(Model, id, fetch)` | One row by id. `fetch` tells when the library loads it from the server. |
 | `scope.singleton(Model)` | The one row of a model that has a single record. |
 | `scope.events(Model)` | The events of a model after the stream opened. Past events are not repeated. |
@@ -123,23 +122,37 @@ The count of a relation is a query: `scope.count(...)`. There are no counter cac
 A query is plain data (`model`, `where`, `order`, `limit`, `offset`). The core compiles it to SQL. Every scalar and enum field compares as its own SQLite column, and an index makes the comparison fast.
 A row with a null field matches `!(field == value)`.
 
-## Related rows of a query
+## Related rows
 
-`scope.related(query, Moment.Relations.author)` reads the targets of one association for every row of the source query.
-The generated `Relations` of a model lists its `belongs_to`, `has_one`, `has_many` and `references` links with their target type.
+The rows of a server relation are a query with a `remote` relation: `Chat.list("SECONDARY")` lists the chats of one server list. A change of a row or of its membership in the relation updates the stream. No separate related call exists.
 
 ```swift
-let authors = Projected<User>(try scope.related(Moment.feed, Moment.Relations.author))
+let secondary = Projected<Chat>(try scope.stream(try Chat.list("SECONDARY")))
 ```
 
 ```kotlin
-val authors = Projected(scope.related(Moment.feed, Moment.Relations.author), User, screenScope)
+val secondary = Projected(scope.stream(Chat.list("SECONDARY")), Chat, screenScope)
 ```
 
-- The source query owns the where, order, limit, remote relation, load, refresh and load-more. `refresh()` and `loadMore()` of the stream act on it.
-- Targets follow the order of the source rows, then the order of the link. A target that several parents share appears once, at its first position.
-- A change of a parent row, a link or a target updates the result. No parents give an empty result.
-- `total` is nil, because the source count is not the number of targets.
+- The query owns the where, order, limit, load, refresh and load-more. `refresh()` and `loadMore()` of the stream act on it.
+- `total` is the server count of the relation when the server sends one.
+
+## State of a stream
+
+| Field | Meaning |
+| --- | --- |
+| `phase` | `idle`, `loading`, `loaded` or `failed`. `failed` shows only while the stream has no rows. |
+| `error` | The typed `DbError` (`DbException` on Kotlin) of the last load, `nil` when it succeeded. |
+| `loaded` | When the last load ended. |
+| `hasMore` | The relation has a next page. |
+| `settled` | The first load of the stream ended with an outcome. |
+| `total` | The server total of the window, `nil` when the server sent none. |
+
+A list is complete when `settled` is true and `hasMore` is false.
+
+## Model events
+
+An event of `scope.events(Model)` carries `position`, `area`, `kind`, `id` and the rows `before` and `after` the event, `nil` when the row did not exist on that side. A `gap` item tells that the order of the events is lost: read the rows again.
 
 ## Text search
 

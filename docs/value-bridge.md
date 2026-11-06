@@ -77,7 +77,7 @@ The call that opens a stream never reads the database on your thread.
 
 ## Every path is a stream
 
-Queries, counts, related rows, a row by id, model events and upload status use the same values. See [live data](live-data.md).
+Queries, counts, a row by id, model events and upload status use the same values. See [live data](live-data.md).
 One owner in the core serves each stream. The wrappers keep no registry, no lock and no cache for it.
 
 ## Calls on a stream
