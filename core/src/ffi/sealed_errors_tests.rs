@@ -163,7 +163,7 @@ async fn an_unauthenticated_or_unavailable_refusal_keeps_the_queued_mutation_fai
         assert_eq!(failure.session_code, Some(code), "{wire}");
         let stored = database.db.find("Moment", &crate::identity::RowId::new(&row.id).unwrap()).unwrap();
         assert_eq!(stored.and_then(|stored| stored.text("text").map(str::to_string)), Some("hello".to_string()), "{wire}");
-        let states: Vec<_> = database.db.outbox().unwrap().iter().map(|entry| entry.operation.status).collect();
+        let states: Vec<_> = crate::ffi::queue_view_tests::queued(&database).iter().map(|operation| operation.status).collect();
         assert_eq!(states, [crate::operation::OperationStatus::Failed], "{wire}");
         let before = graphql_posts(&rig);
 

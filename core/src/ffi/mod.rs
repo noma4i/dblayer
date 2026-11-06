@@ -171,6 +171,8 @@ pub(super) mod encrypted_tests;
 #[cfg(test)]
 mod lost_session_recovery_tests;
 #[cfg(test)]
+pub(super) mod queue_view_tests;
+#[cfg(test)]
 mod online_tests;
 #[cfg(test)]
 mod queued_detail_tests;

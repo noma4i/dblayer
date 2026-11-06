@@ -18,7 +18,7 @@ async fn a_queued_mutation_refused_without_a_sequence_keeps_the_session_and_a_re
     database.session_call("social".into(), SOCIAL_BODY.into()).await.unwrap();
     database.session_reset().await.unwrap();
     database.session_call("social".into(), SOCIAL_BODY.into()).await.unwrap();
-    let outbox = database.db.outbox().unwrap().len();
+    let outbox = super::queue_view_tests::queued(&database).len();
 
     assert_eq!(refused.session_code, Some(SessionCode::Unauthenticated));
     assert_eq!(outbox, 0, "the session reset left the refused mutation of the ended session in the outbox");

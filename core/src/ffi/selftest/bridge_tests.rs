@@ -1015,7 +1015,7 @@ async fn a_send_needs_a_session_and_a_plain_action_never_waits_for_the_network()
     let epoch = rig.database.session_epoch();
     let sent = bound(rig.database.send(message(epoch, "anonymous", 1))).await;
     assert!(matches!(sent, Err(DbError::NoSession { .. })), "a send without a session was accepted: {sent:?}");
-    assert!(rig.database.db.outbox().unwrap().is_empty(), "a send without a session left an operation");
+    assert!(crate::ffi::queue_view_tests::queued(&rig.database).is_empty(), "a send without a session left an operation");
     rig.login_ios("A").await;
     let epoch = rig.database.session_epoch();
     let (values, args) = group("g");
@@ -1024,7 +1024,7 @@ async fn a_send_needs_a_session_and_a_plain_action_never_waits_for_the_network()
     let plain = bound(rig.database.create(epoch, "Group".into(), values, args)).await;
     assert!(matches!(plain, Err(DbError::Network { .. })), "a plain action was not refused while the network was away: {plain:?}");
     settle(&rig).await;
-    assert!(rig.database.db.outbox().unwrap().is_empty(), "a plain action stayed queued while the network was away");
+    assert!(crate::ffi::queue_view_tests::queued(&rig.database).is_empty(), "a plain action stayed queued while the network was away");
     assert_eq!(rig.database.db.shared.store.row_count("Group").unwrap(), 0, "the row of the refused action stayed");
     rig.database.set_online(true).unwrap();
     settle(&rig).await;
@@ -1090,7 +1090,7 @@ async fn a_server_create_returns_the_confirmed_row_and_needs_the_network() {
     let offline = bound(rig.database.create(epoch, "Group".into(), values, args)).await;
     assert!(matches!(offline, Err(DbError::Network { .. })), "an offline server create did not fail at once: {offline:?}");
     assert_eq!(rig.world.count("CreateGroup"), 1);
-    assert!(rig.database.db.outbox().unwrap().is_empty());
+    assert!(crate::ffi::queue_view_tests::queued(&rig.database).is_empty());
     rig.database.close_now();
 }
 
@@ -1439,7 +1439,7 @@ async fn a_plain_action_that_never_reached_the_server_ends_with_the_network_erro
     assert!(matches!(outcome, WireOperationOutcome::Rejected { failure } if failure.kind == "network"));
     let after = bound(rig.database.read_row(epoch, "Group".into(), created.id.clone())).await.unwrap();
     assert!(after.is_some(), "the group stayed removed after the failed request");
-    assert!(rig.database.db.outbox().unwrap().is_empty(), "the failed action stayed queued");
+    assert!(crate::ffi::queue_view_tests::queued(&rig.database).is_empty(), "the failed action stayed queued");
     rig.database.set_online(false).unwrap();
     rig.database.set_online(true).unwrap();
     settle(&rig).await;
@@ -1535,7 +1535,7 @@ async fn a_confirmed_create_keeps_its_row_when_another_model_resets_before_it_la
     settle(&rig).await;
     let found = rig.database.db.find("Message", &crate::identity::RowId::new(&row.id).unwrap()).unwrap();
     assert!(found.is_some(), "the row {} the server confirmed is gone", row.id);
-    assert!(rig.database.db.outbox().unwrap().is_empty(), "the confirmed create is still queued");
+    assert!(crate::ffi::queue_view_tests::queued(&rig.database).is_empty(), "the confirmed create is still queued");
     rig.database.close_now();
 }
 
@@ -1560,7 +1560,7 @@ async fn two_refused_changes_of_one_member_restore_the_original_lists_in_both_or
         let first_call = start(first.0);
         first_gate.entered_for(case).await;
         let second_call = start(second.0);
-        yield_until("the second change is queued", || rig.database.db.outbox().unwrap().len() == 2).await;
+        yield_until("the second change is queued", || crate::ffi::queue_view_tests::queued(&rig.database).len() == 2).await;
         first_gate.release();
         second_gate.entered_for(case).await;
         let lists = |rig: &Rig| (member_list(rig, &created.id, "JOINED"), member_list(rig, &created.id, "OWNER_FIRST"));
@@ -1602,7 +1602,7 @@ async fn a_refused_change_of_a_member_does_not_undo_the_same_change_accepted_and
         let first_call = start();
         first_gate.entered_for(case).await;
         let second_call = start();
-        yield_until("the second change is queued", || rig.database.db.outbox().unwrap().len() == 2).await;
+        yield_until("the second change is queued", || crate::ffi::queue_view_tests::queued(&rig.database).len() == 2).await;
         first_gate.release();
         second_gate.entered_for(case).await;
         let lists = |rig: &Rig| (member_list(rig, &created.id, "JOINED"), member_list(rig, &created.id, "OWNER_FIRST"));
