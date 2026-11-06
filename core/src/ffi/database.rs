@@ -120,8 +120,8 @@ pub struct Database { pub(super) lease: Arc<OnceLock<Arc<OpenLease>>>, pub(super
 pub(super) type Wiring = (Option<Arc<dyn core::Transport>>, Option<Arc<EncryptedClient>>, Option<Arc<dyn core::CableLines>>);
 
 impl Database {
-    fn start(config: Config, models_json: String, transport: Option<Arc<dyn Transport>>, uploads: Option<UploadOperations>, clock: Arc<dyn Clock>) -> Result<Arc<Self>, DbError> {
-        Self::start_with(config, models_json, uploads, clock, |db, _| {
+    fn start(config: Config, models_json: String, transport: Option<Arc<dyn Transport>>, clock: Arc<dyn Clock>) -> Result<Arc<Self>, DbError> {
+        Self::start_with(config, models_json, clock, |db, _| {
             #[cfg(test)]
             if transport.is_some() { super::signed_session_tests::signed_session(db); }
             let _ = db;
@@ -132,11 +132,11 @@ impl Database {
     pub(super) fn start_with(
         config: Config,
         models_json: String,
-        uploads: Option<UploadOperations>,
         clock: Arc<dyn Clock>,
         wire: impl FnOnce(&Db, &Arc<dyn Clock>) -> Result<Wiring, DbError>,
     ) -> Result<Arc<Self>, DbError> {
         let models: Vec<ModelSpec> = serde_json::from_str(&models_json)?;
+        let uploads = upload_steps_of(&models)?;
         let keys: Vec<String> = models.iter().map(|model| model.key.to_string()).collect();
         let db = Db::open_with(config.path.as_deref().map(Path::new), models, config.data_version.as_deref(), DbConfig { cache_rows: config.cache_rows as usize })?;
         db.set_clock(clock.clone());
@@ -165,19 +165,18 @@ impl Database {
         encrypted: Option<super::EncryptedConfig>,
         credentials: Option<Arc<dyn super::CredentialStore>>,
         http: Option<Arc<dyn super::EncryptedHttp>>,
-        uploads: Option<UploadOperations>,
         retries: Option<Arc<super::RetryProgress>>,
     ) -> Result<Arc<Self>, DbError> {
-        Self::open_at(config, models_json, transport, encrypted, credentials, http, uploads, retries, Arc::new(SystemClock)).await
+        Self::open_at(config, models_json, transport, encrypted, credentials, http, retries, Arc::new(SystemClock)).await
     }
 
     #[allow(clippy::too_many_arguments)]
-    pub async fn open_with_clock(config: Config, models_json: String, transport: Option<Arc<dyn Transport>>, uploads: Option<UploadOperations>, clock: Arc<TestClock>, encrypted: Option<super::EncryptedConfig>, credentials: Option<Arc<dyn super::CredentialStore>>, http: Option<Arc<dyn super::EncryptedHttp>>, retries: Option<Arc<super::RetryProgress>>) -> Result<Arc<Self>, DbError> {
-        Self::open_at(config, models_json, transport, encrypted, credentials, http, uploads, retries, clock.clock.clone()).await
+    pub async fn open_with_clock(config: Config, models_json: String, transport: Option<Arc<dyn Transport>>, clock: Arc<TestClock>, encrypted: Option<super::EncryptedConfig>, credentials: Option<Arc<dyn super::CredentialStore>>, http: Option<Arc<dyn super::EncryptedHttp>>, retries: Option<Arc<super::RetryProgress>>) -> Result<Arc<Self>, DbError> {
+        Self::open_at(config, models_json, transport, encrypted, credentials, http, retries, clock.clock.clone()).await
     }
 
     #[allow(clippy::too_many_arguments)]
-    async fn open_at(config: Config, models_json: String, transport: Option<Arc<dyn Transport>>, encrypted: Option<super::EncryptedConfig>, credentials: Option<Arc<dyn super::CredentialStore>>, http: Option<Arc<dyn super::EncryptedHttp>>, uploads: Option<UploadOperations>, retries: Option<Arc<super::RetryProgress>>, clock: Arc<dyn Clock>) -> Result<Arc<Self>, DbError> {
+    async fn open_at(config: Config, models_json: String, transport: Option<Arc<dyn Transport>>, encrypted: Option<super::EncryptedConfig>, credentials: Option<Arc<dyn super::CredentialStore>>, http: Option<Arc<dyn super::EncryptedHttp>>, retries: Option<Arc<super::RetryProgress>>, clock: Arc<dyn Clock>) -> Result<Arc<Self>, DbError> {
         blocking(move || {
             let database = match encrypted {
                 Some(encrypted) => {
@@ -185,7 +184,7 @@ impl Database {
                     let http = http.ok_or_else(|| DbError::Invalid { detail: "encrypted requires http".into() })?;
                     let transport = transport.ok_or_else(|| DbError::Invalid { detail: "encrypted requires transport".into() })?;
                     let _entered = executor()?.enter();
-                    Self::start_with(config, models_json, uploads, clock, |db, clock| {
+                    Self::start_with(config, models_json, clock, |db, clock| {
                         super::encrypted::wire(db, clock, encrypted, http, credentials, transport, retries)
                     })?
                 }
@@ -193,7 +192,7 @@ impl Database {
                     if credentials.is_some() || http.is_some() || retries.is_some() {
                         return Err(DbError::Invalid { detail: "credentials, http and retries require encrypted".into() });
                     }
-                    Self::start(config, models_json, transport, uploads, clock)?
+                    Self::start(config, models_json, transport, clock)?
                 }
             };
             Ok(database)
@@ -418,3 +417,14 @@ fn call_failure(error: crate::owners::calls::CallError) -> DbError {
     }
 }
 
+/// The upload steps the models declare: every model with them carries the same block (the generator copies the one block of the project).
+fn upload_steps_of(models: &[ModelSpec]) -> Result<Option<UploadOperations>, DbError> {
+    let mut found: Option<&UploadOperations> = None;
+    for steps in models.iter().filter_map(|model| model.upload_steps.as_ref()) {
+        match found {
+            Some(first) if first != steps => return Err(DbError::Invalid { detail: "models declare different upload steps".into() }),
+            _ => found = Some(steps),
+        }
+    }
+    Ok(found.cloned())
+}

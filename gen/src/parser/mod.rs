@@ -69,10 +69,19 @@ pub struct ScalarNode {
     pub file: usize,
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub struct UploadsNode {
+    pub line: usize,
+    pub column: usize,
+    pub file: usize,
+    pub body: Vec<Call>,
+}
+
 pub struct Parsed {
     pub models: Vec<ModelNode>,
     pub operations: Vec<OperationNode>,
     pub scalars: Vec<ScalarNode>,
+    pub uploads: Vec<UploadsNode>,
 }
 
 struct Reader<'a> {
@@ -147,7 +156,7 @@ fn describe(kind: &Kind) -> String {
 
 pub fn parse(tokens: &[Token], file: usize) -> Result<Parsed, ParseError> {
     let mut reader = Reader { tokens, index: 0 };
-    let mut parsed = Parsed { models: Vec::new(), operations: Vec::new(), scalars: Vec::new() };
+    let mut parsed = Parsed { models: Vec::new(), operations: Vec::new(), scalars: Vec::new(), uploads: Vec::new() };
     loop {
         reader.skip_newlines();
         if reader.peek().is_none() {
@@ -158,6 +167,8 @@ pub fn parse(tokens: &[Token], file: usize) -> Result<Parsed, ParseError> {
             parsed.operations.push(operation_from(call, file)?);
         } else if call.word == "scalar" {
             parsed.scalars.push(scalar_from(call, file)?);
+        } else if call.word == "uploads" {
+            parsed.uploads.push(uploads_from(call, file)?);
         } else {
             parsed.models.push(model_from(call, file)?);
         }
@@ -178,6 +189,15 @@ fn scalar_from(call: Call, file: usize) -> Result<ScalarNode, ParseError> {
     Ok(ScalarNode { name: name.clone(), kind, line: call.line, column: call.column, file })
 }
 
+fn uploads_from(call: Call, file: usize) -> Result<UploadsNode, ParseError> {
+    let at = |message: &str| ParseError::new(call.line, call.column, message.to_string());
+    if !call.args.is_empty() || !call.options.is_empty() {
+        return Err(at("uploads takes no arguments: write `uploads do ... end`"));
+    }
+    let Some(body) = call.block else { return Err(at("uploads needs a `do ... end` block")) };
+    Ok(UploadsNode { line: call.line, column: call.column, file, body })
+}
+
 fn operation_from(call: Call, file: usize) -> Result<OperationNode, ParseError> {
     let at = |message: String| ParseError::new(call.line, call.column, message);
     if let Some(option) = call.options.first() {
@@ -196,7 +216,7 @@ fn operation_from(call: Call, file: usize) -> Result<OperationNode, ParseError> 
 fn model_from(call: Call, file: usize) -> Result<ModelNode, ParseError> {
     let at = |message: String| ParseError::new(call.line, call.column, message);
     if call.word != "model" {
-        return Err(at(format!("expected `model`, `operation` or `scalar`, found `{}`", call.word)));
+        return Err(at(format!("expected `model`, `operation`, `scalar` or `uploads`, found `{}`", call.word)));
     }
     let name = match call.args.as_slice() {
         [Node { item: Value::Const(name), .. }] => name.clone(),

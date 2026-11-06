@@ -1,36 +1,5 @@
 import Foundation
 
-public struct UploadOperation: Sendable {
-  public var name: String
-  public var rootPath: String?
-
-  public init(_ name: String, rootPath: String? = nil) {
-    (self.name, self.rootPath) = (name, rootPath)
-  }
-
-  var wire: WireUploadOperation { WireUploadOperation(name: name, rootPath: rootPath) }
-}
-
-public struct UploadOperations: Sendable {
-  public struct Multipart: Sendable {
-    public var initiate: UploadOperation, presign: UploadOperation, complete: UploadOperation, abort: UploadOperation
-    public init(initiate: UploadOperation, presign: UploadOperation, complete: UploadOperation, abort: UploadOperation) {
-      (self.initiate, self.presign, self.complete, self.abort) = (initiate, presign, complete, abort)
-    }
-
-    var wire: WireMultipartOperations { WireMultipartOperations(initiate: initiate.wire, presign: presign.wire, complete: complete.wire, abort: abort.wire) }
-  }
-
-  public var createBlob: UploadOperation?
-  public var multipart: Multipart?
-
-  public init(createBlob: UploadOperation? = nil, multipart: Multipart? = nil) {
-    (self.createBlob, self.multipart) = (createBlob, multipart)
-  }
-
-  var wire: WireUploadOperations { WireUploadOperations(createBlob: createBlob?.wire, multipart: multipart?.wire) }
-}
-
 public struct UploadRequest: Sendable {
   public var path: String
   public var name: String?

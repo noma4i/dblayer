@@ -2,18 +2,6 @@ package com.noma4i.dblayer
 
 import kotlinx.serialization.json.JsonObject
 
-data class UploadOperation(val name: String, val rootPath: String? = null) {
-    internal fun wire() = WireUploadOperation(name, rootPath)
-}
-
-data class UploadOperations(val createBlob: UploadOperation? = null, val multipart: Multipart? = null) {
-    data class Multipart(val initiate: UploadOperation, val presign: UploadOperation, val complete: UploadOperation, val abort: UploadOperation) {
-        internal fun wire() = WireMultipartOperations(initiate.wire(), presign.wire(), complete.wire(), abort.wire())
-    }
-
-    internal fun wire() = WireUploadOperations(createBlob?.wire(), multipart?.wire())
-}
-
 data class UploadRequest(
     val path: String,
     val name: String? = null,

@@ -16,7 +16,7 @@ fn config() -> Config { Config { path: None, data_version: None, cache_rows: 8 }
 async fn local_notes() -> Arc<Database> {
     let mut model = ModelSpec::new("Note", vec![FieldSpec::scalar("id", ScalarKind::Id), FieldSpec::scalar("text", ScalarKind::Str)]);
     model.storage = Storage::Local;
-    Database::open(config(), serde_json::to_string(&vec![model]).unwrap(), None, None, None, None, None, None).await.unwrap()
+    Database::open(config(), serde_json::to_string(&vec![model]).unwrap(), None, None, None, None, None).await.unwrap()
 }
 
 fn with_transport(clock: Arc<dyn Clock>) -> (Arc<Database>, Arc<MockTransport>) {
@@ -24,7 +24,7 @@ fn with_transport(clock: Arc<dyn Clock>) -> (Arc<Database>, Arc<MockTransport>) 
     let mut notice = ModelSpec::new("Notice", vec![FieldSpec::scalar("id", ScalarKind::Id)]);
     notice.listens.push(serde_json::from_value(json!({"subscription":"Signal"})).unwrap());
     let wired = transport.clone();
-    let database = Database::start_with(config(), serde_json::to_string(&vec![notice]).unwrap(), None, clock, move |db, _| {
+    let database = Database::start_with(config(), serde_json::to_string(&vec![notice]).unwrap(), clock, move |db, _| {
         super::signed_session_tests::signed_session(db);
         Ok((Some(wired), None, None))
     }).unwrap();

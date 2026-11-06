@@ -1,3 +1,8 @@
+uploads do
+  create_blob :CreateBlob, root: "blobCreate"
+  multipart initiate: :InitMultipart, presign: :PresignParts, complete: :CompleteMultipart, abort: :AbortMultipart
+end
+
 model Clip do
   attribute :title, :string, null: true
   operation :create_file, upload: true do

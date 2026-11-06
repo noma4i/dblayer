@@ -4,7 +4,7 @@ use dblayer::value::{ScalarKind, SortDirection};
 use serde_json::{Map, Number, Value as Json};
 
 use super::*;
-use crate::parser::{Call, ModelNode, Node, OperationNode, Pair, Value};
+use crate::parser::{Call, ModelNode, Node, OperationNode, Pair, UploadsNode, Value};
 use crate::schema_check::{Schema, Ty, TyKind, TypeKind};
 use crate::ParseError;
 
@@ -1842,3 +1842,66 @@ pub(crate) fn lower_calls(nodes: &[OperationNode], errors: &mut Vec<Found>) -> V
     }
     found
 }
+
+/// The one `uploads do` block of the project: the steps of file uploads. A project with upload operations needs it, a project without them refuses it.
+pub(crate) fn lower_uploads(nodes: &[UploadsNode], models: &[ModelDecl], errors: &mut Vec<Found>) -> Option<dblayer::upload::UploadOperations> {
+    use dblayer::upload::{MultipartOperations, UploadOperation, UploadOperations};
+    let uses = models.iter().flat_map(|model| model.operations.iter().filter_map(move |operation| operation.upload.map(|pos| (model.file, pos, operation.name.clone()))));
+    let Some(first) = nodes.first() else {
+        if let Some((file, pos, name)) = uses.into_iter().next() {
+            errors.push((file, ParseError::new(pos.line, pos.column, format!("operation `{name}` has `upload: true`: declare the steps of the upload once in `uploads do ... end`"))));
+        }
+        return None;
+    };
+    if let Some(second) = nodes.get(1) {
+        errors.push((second.file, ParseError::new(second.line, second.column, "`uploads do ... end` is declared once per project")));
+        return None;
+    }
+    let mut cx = Cx { file: first.file, errors, schema: None, memory: false };
+    let mut steps = UploadOperations { create_blob: None, multipart: None };
+    for call in &first.body {
+        let mut line = Line::of(call);
+        no_block(&mut cx, call);
+        match call.word.as_str() {
+            "create_blob" => {
+                let name = exactly_one_arg(&mut cx, &line, "an operation like `create_blob :CreateBlob, root: \"createBlob\"`").and_then(|arg| symbol(&mut cx, arg, "the operation"));
+                let root = line.opt(&mut cx, "root").and_then(|pair| string(&mut cx, &pair.value, "`root`"));
+                line.finish(&mut cx);
+                match (name, steps.create_blob.is_some()) {
+                    (Some(_), true) => cx.fail(line.pos, "`create_blob` is declared twice"),
+                    (Some(name), false) => steps.create_blob = Some(UploadOperation { name, root_path: root }),
+                    (None, _) => {}
+                }
+            }
+            "multipart" => {
+                line.no_args(&mut cx);
+                let mut part = |key: &str, cx: &mut Cx| match line.opt(cx, key) {
+                    Some(pair) => symbol(cx, &pair.value, &format!("`{key}:`")).map(|name| UploadOperation { name, root_path: None }),
+                    None => {
+                        cx.fail(call_pos(call), format!("`multipart` needs `{key}:`"));
+                        None
+                    }
+                };
+                let parts = (part("initiate", &mut cx), part("presign", &mut cx), part("complete", &mut cx), part("abort", &mut cx));
+                line.finish(&mut cx);
+                if let (Some(initiate), Some(presign), Some(complete), Some(abort)) = parts {
+                    if steps.multipart.replace(MultipartOperations { initiate, presign, complete, abort }).is_some() {
+                        cx.fail(line.pos, "`multipart` is declared twice");
+                    }
+                }
+            }
+            other => cx.fail(line.pos, format!("`uploads` knows `create_blob` and `multipart`, not `{other}`")),
+        }
+    }
+    if steps.create_blob.is_none() && steps.multipart.is_none() {
+        cx.fail(Pos { line: first.line, column: first.column }, "`uploads` declares neither `create_blob` nor `multipart`");
+        return None;
+    }
+    if uses.into_iter().next().is_none() {
+        cx.fail(Pos { line: first.line, column: first.column }, "`uploads` is declared but no operation has `upload: true`");
+        return None;
+    }
+    Some(steps)
+}
+
+fn call_pos(call: &Call) -> Pos { Pos::of(call) }

@@ -1,12 +1,13 @@
 
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct UploadOperation {
     pub name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub root_path: Option<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct MultipartOperations {
     pub initiate: UploadOperation,
     pub presign: UploadOperation,
@@ -14,9 +15,11 @@ pub struct MultipartOperations {
     pub abort: UploadOperation,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct UploadOperations {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub create_blob: Option<UploadOperation>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub multipart: Option<MultipartOperations>,
 }
 
@@ -54,6 +57,11 @@ impl UploadOperations {
             Some(operation) => Err(format!("upload operation {} is not registered", operation.name)),
             None => Ok(()),
         }
+    }
+
+    #[cfg(test)]
+    pub fn test_steps() -> Self {
+        Self::empty().create_blob("CreateBlob").multipart("InitMultipart", "PresignParts", "CompleteMultipart", "AbortMultipart")
     }
 
     #[cfg(test)]

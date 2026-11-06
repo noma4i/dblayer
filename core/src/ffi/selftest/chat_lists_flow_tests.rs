@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use serde_json::json;
 
-use super::rig_tests::{bound, Rig, World};
+use super::rig_tests::{bound, Rig};
 use super::flow_fixtures::{add_chat, add_lists, add_profile, cell, land_event, text};
 use crate::ffi::tape::Rows;
 use crate::ffi::wire::Cell;

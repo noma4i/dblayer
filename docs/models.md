@@ -1108,7 +1108,7 @@ A `parameter` inside a model operation takes the same types as an operation with
 
 A top-level `operation` outside a model takes only its name and block. Named options produce a generator error naming the option.
 
-For file uploads, name each operation and declare it with `operation :name, upload: true`. Each operation declares its own `response`, `upsert` and `parameter` lines. The sent mutation selects that declaration for the same response processing used by other actions. The generator emits `<operationName>Variables` on Swift and Kotlin when the operation has parameters. See [uploads](files.md#uploads).
+For file uploads, name each operation and declare it with `operation :name, upload: true`. Each operation declares its own `response`, `upsert` and `parameter` lines. The sent mutation selects that declaration for the same response processing used by other actions. The generator emits `<operationName>Variables` on Swift and Kotlin when the operation has parameters. The steps of the upload (`createBlob`, multipart) are declared once per project in `uploads do ... end`, see [uploads](files.md#uploads).
 
 ```ruby
 operation :answer_connection do

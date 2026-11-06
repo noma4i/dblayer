@@ -22,7 +22,8 @@ fn compile(source: &str, mutation: &str, schema: &str) -> Result<Declarations, V
     fs::create_dir(directory.path().join("mutations")).unwrap();
     fs::write(directory.path().join("mutations/calls.graphql"), mutation).unwrap();
     let file = directory.path().join("sample.dbl");
-    fs::write(&file, source).unwrap();
+    let steps = if source.contains("upload: true") { crate::TEST_UPLOADS } else { "" };
+    fs::write(&file, format!("{steps}{source}")).unwrap();
     let operations: Vec<PathBuf> = vec![directory.path().join("mutations")];
     compile_files(&[file], Some(&schema_file), &operations).map_err(|errors| errors.into_iter().map(|error| error.error.message).collect())
 }

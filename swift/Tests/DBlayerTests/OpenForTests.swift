@@ -2,8 +2,25 @@ import DBlayerTesting
 import Foundation
 @testable import DBlayer
 
-func openDatabase(config: Config, modelsJson: String, transport: Transport?, encrypted: EncryptedConfig? = nil, credentials: CredentialStore? = nil, http: EncryptedHttp? = nil, operations: String = "[]", uploads: UploadOperations? = nil) async throws -> Database {
-  try await OpenDatabase().open(config: config, modelsJson: modelsJson, options: OpenOptions(operations: operations, uploads: uploads?.wire, powerSaving: false, lowRam: false), transport: transport, encrypted: encrypted, credentials: credentials, http: http, retries: nil)
+func openDatabase(config: Config, modelsJson: String, transport: Transport?, encrypted: EncryptedConfig? = nil, credentials: CredentialStore? = nil, http: EncryptedHttp? = nil, operations: String = "[]") async throws -> Database {
+  try await OpenDatabase().open(config: config, modelsJson: modelsJson, options: OpenOptions(operations: withUploadSteps(operations, models: modelsJson), powerSaving: false, lowRam: false), transport: transport, encrypted: encrypted, credentials: credentials, http: http, retries: nil)
+}
+
+private let uploadStepOperations: [(name: String, document: String)] = [
+  ("CreateBlob", "mutation CreateBlob { createBlob { url headers signedId blobId } }"),
+  ("InitMultipart", "mutation InitMultipart { initMultipart { key uploadId } }"),
+  ("PresignParts", "mutation PresignParts { presignParts { parts { partNumber url } } }"),
+  ("CompleteMultipart", "mutation CompleteMultipart { completeMultipart { signedId blobId } }"),
+  ("AbortMultipart", "mutation AbortMultipart { abortMultipart { ok } }"),
+]
+
+/// The models declare the upload steps once, so every open registers the operations of the steps.
+func withUploadSteps(_ operations: String, models: String) -> String {
+  guard models.contains("upload_steps"), operations.hasSuffix("]") else { return operations }
+  let missing = uploadStepOperations.filter { !operations.contains("\"name\":\"\($0.name)\"") }
+  guard !missing.isEmpty else { return operations }
+  let added = missing.map { #"{"name":"\#($0.name)","document":"\#($0.document)"}"# }.joined(separator: ",")
+  return String(operations.dropLast()) + (operations == "[]" ? "" : ",") + added + "]"
 }
 
 @MainActor @discardableResult
@@ -68,15 +85,15 @@ private func signIn(restored: Bool = false) async throws {
 
 /// A transport signs in through the real session path, and its queries and mutations ride the session HTTP.
 @MainActor @discardableResult
-func reopen(config: Config, modelsJson: String, transport: Transport?, operations: String = "[]", uploads: UploadOperations? = nil) async throws -> Database {
+func reopen(config: Config, modelsJson: String, transport: Transport?, operations: String = "[]") async throws -> Database {
   guard let mock = transport else {
-    return try await adopt(try await openDatabase(config: config, modelsJson: modelsJson, transport: transport, operations: operations, uploads: uploads))
+    return try await adopt(try await openDatabase(config: config, modelsJson: modelsJson, transport: transport, operations: operations))
   }
   let server = try SealedServer(bridge: bridgeToTransport(mock))
   (mock as? MockTransport ?? (mock as? any WrapsMock)?.base)?.cable = EncryptedCablePeer(server: server)
   let held = credential(of: config)
   let restored = (try? held.get()) != nil
-  let database = try await adopt(try await openDatabase(config: config, modelsJson: modelsJson, transport: mock, encrypted: standEncrypted(), credentials: held, http: server, operations: withSessionProfile(operations), uploads: uploads))
+  let database = try await adopt(try await openDatabase(config: config, modelsJson: modelsJson, transport: mock, encrypted: standEncrypted(), credentials: held, http: server, operations: withSessionProfile(operations)))
   try await signIn(restored: restored)
   return database
 }
@@ -95,8 +112,8 @@ func reopenClocked(modelsJson: String, transport: MockTransport, operations: Str
 
 /// A database whose plain transport holds a session and sees no network: a sent row stays queued. A send needs a session.
 @MainActor @discardableResult
-func reopenSigned(config: Config, modelsJson: String, operations: String = sendMoment, uploads: UploadOperations? = nil) async throws -> Database {
-  let database = try await reopen(config: config, modelsJson: modelsJson, transport: MockTransport(), operations: operations, uploads: uploads)
+func reopenSigned(config: Config, modelsJson: String, operations: String = sendMoment) async throws -> Database {
+  let database = try await reopen(config: config, modelsJson: modelsJson, transport: MockTransport(), operations: operations)
   try database.setOnline(online: false)
   return database
 }

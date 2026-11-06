@@ -97,8 +97,7 @@ class TransferTest {
             }
             transport.mock.enqueue("CreateAssets", """{"data":{"createAssets":{"assets":[{"id":"a0","clientKey":"../../../outside","size":2,"position":0},{"id":"a1","clientKey":"other","size":2,"position":1}]}}}""")
             val operations = """[{"name":"InitMultipart","document":"mutation InitMultipart { initMultipart { key uploadId } }"},{"name":"PresignParts","document":"mutation PresignParts { presignParts { parts { partNumber url } } }"},{"name":"CompleteMultipart","document":"mutation CompleteMultipart { completeMultipart { signedId blobId } }"},{"name":"AbortMultipart","document":"mutation AbortMultipart { abortMultipart { ok } }"},{"name":"CreateAssets","document":"mutation CreateAssets { createAssets { assets { id clientKey size position } } }"},{"name":"CreateAsset","document":"mutation CreateAsset { createAsset { asset { id clientKey size position } } }"}]"""
-            val uploads = UploadOperations(multipart = UploadOperations.Multipart(UploadOperation("InitMultipart"), UploadOperation("PresignParts"), UploadOperation("CompleteMultipart"), UploadOperation("AbortMultipart")))
-            reopen(Config(directory.resolve("db.sqlite").path, null, 8u), modelsJSON, transport, operations, uploads)
+            reopen(Config(directory.resolve("db.sqlite").path, null, 8u), modelsJSON, transport, operations)
             val items = listOf("../../../outside", "other").mapIndexed { index, key -> UploadItem(values = buildJsonObject { put("clientKey", key); put("size", 2); put("position", index) }, path = source.path) }
             val receipt = AccountScope.current().uploadBatch(Asset, items, UploadBatchRequest(operation = "create_files"))
             assertEquals(listOf("a0", "a1"), confirmedIds(receipt))
@@ -134,10 +133,9 @@ class TransferTest {
                     val transport = HoldSecondFile(server)
                     val credential = TransferCredential()
                     val path = directory.resolve("db-$case.sqlite").path
-                    val uploads = UploadOperations(createBlob = UploadOperation("CreateBlob"))
                     val operations = """[{"name":"CreateBlob","document":"mutation CreateBlob { createBlob { url headers signedId blobId } }"},{"name":"CreateAssets","document":"mutation CreateAssets { createAssets { assets { id clientKey size position } } }"},{"name":"CreateAsset","document":"mutation CreateAsset { createAsset { asset { id clientKey size position } } }"}]"""
                     DBlayer.close()
-                    DBlayer.openTesting(transport, modelsJSON, path = path, uploads = uploads, encrypted = encrypted, credentials = credential, http = server)
+                    DBlayer.openTesting(transport, modelsJSON, path = path, encrypted = encrypted, credentials = credential, http = server)
                     DBlayer.database.registerOperations(operations)
                     DBlayer.database.sessionCall("login_link", """{"account":"A"}""")
                     val files = (0..2).map { index -> directory.resolve("$index.jpg").apply { writeText("image-$index") } }
@@ -151,7 +149,7 @@ class TransferTest {
                     if (lose) {
                         server.lostAnswer()
                         DBlayer.close()
-                        DBlayer.openTesting(transport, modelsJSON, path = path, uploads = uploads, encrypted = encrypted, credentials = credential, http = server)
+                        DBlayer.openTesting(transport, modelsJSON, path = path, encrypted = encrypted, credentials = credential, http = server)
                         DBlayer.database.registerOperations(operations)
                         eventually("both assets are stored") { Asset.find("a1").current() != null && Asset.find("a2").current() != null }
                         assertEquals(listOf("a1", "a2"), listOf("a1", "a2").filter { Asset.find(it).current() != null })
@@ -198,14 +196,13 @@ class TransferTest {
         try {
             val source = directory.resolve("video").apply { writeText("video") }
             val path = directory.resolve("db.sqlite").path
-            val uploads = UploadOperations(createBlob = UploadOperation("CreateBlob"))
             DBlayer.close()
             val transport = MockTransport()
-            DBlayer.openTesting(transport, modelsJSON, path = path, uploads = uploads, startMillis = 1_000_000L)
+            DBlayer.openTesting(transport, modelsJSON, path = path, startMillis = 1_000_000L)
             DBlayer.database.registerOperations(expiryOperations)
             val row = refusedUpload(transport, source)
             DBlayer.close()
-            DBlayer.openTesting(transport, modelsJSON, path = path, uploads = uploads, startMillis = 1_000_000L + 7L * 24 * 60 * 60 * 1000)
+            DBlayer.openTesting(transport, modelsJSON, path = path, startMillis = 1_000_000L + 7L * 24 * 60 * 60 * 1000)
             DBlayer.database.registerOperations(expiryOperations)
             eventually("the expired upload is discarded at the open") { isGone(row) }
             DBlayer.close()
@@ -221,7 +218,7 @@ class TransferTest {
             transport.enqueue("CreateBlob", """{"data":{"createBlob":{"url":"https://storage/file","headers":{},"signedId":"signed","blobId":"blob"}}}""")
             transport.enqueue("CreateMoment", DbException.Http(422u, "rejected"))
             val operations = """[{"name":"CreateBlob","document":"mutation CreateBlob { createBlob { url headers signedId blobId } }"},{"name":"CreateMoment","document":"mutation CreateMoment { createMoment { id uuid likedByMe media createdAt } }"}]"""
-            reopen(Config(null, null, 32u), modelsJSON, transport, operations, UploadOperations(createBlob = UploadOperation("CreateBlob")))
+            reopen(Config(null, null, 32u), modelsJSON, transport, operations)
             val receipt = AccountScope.current().send(Moment, buildJsonObject { put("text", "group") }, upload = UploadCommand("upload_clip", UploadRequest(source.path)))
             val row = requireNotNull(receipt.optimisticValue)
             assertTrue(receipt.outcome() is OperationOutcome.Rejected)
@@ -244,8 +241,7 @@ class TransferTest {
             val source = directory.resolve("photo").apply { writeBytes(ByteArray(11 * 1024 * 1024)) }
             val config = Config(directory.resolve("db.sqlite").path, null, 32u)
             val operations = """[{"name":"CreateMoment","document":"mutation CreateMoment { createMoment { id uuid likedByMe media createdAt } }"},{"name":"InitMultipart","document":"mutation InitMultipart { initMultipart { key uploadId } }"},{"name":"PresignParts","document":"mutation PresignParts { presignParts { parts { partNumber url } } }"},{"name":"CompleteMultipart","document":"mutation CompleteMultipart { completeMultipart { signedId blobId } }"},{"name":"AbortMultipart","document":"mutation AbortMultipart { abortMultipart { ok } }"}]"""
-            val uploads = UploadOperations(multipart = UploadOperations.Multipart(UploadOperation("InitMultipart"), UploadOperation("PresignParts"), UploadOperation("CompleteMultipart"), UploadOperation("AbortMultipart")))
-            val db = reopen(config, modelsJSON, transport, operations, uploads)
+            val db = reopen(config, modelsJSON, transport, operations)
             val queued = requireNotNull(AccountScope.current().send(Moment, buildJsonObject { put("text", "group") }, upload = UploadCommand("upload_clip", UploadRequest(source.path))).optimisticValue)
             held.entered()
             db.setOnline(false)
@@ -253,7 +249,7 @@ class TransferTest {
             assertNull(Moment.find(queued.id).current())
             held.release()
             DBlayer.close()
-            val reopened = reopen(config, modelsJSON, transport, operations, uploads)
+            val reopened = reopen(config, modelsJSON, transport, operations)
             reopened.setOnline(false)
             reopened.setOnline(true)
             abort.entered()
@@ -276,7 +272,7 @@ class TransferTest {
             repeat(2) { index -> transport.enqueue("CreateBlob", createdBlob(index)) }
             transport.enqueue("CreateAsset", """{"data":{"createAsset":{"asset":{"id":"a1","clientKey":"key-1","size":2,"position":1}}}}""")
             val operations = """[{"name":"CreateBlob","document":"mutation CreateBlob { createBlob { url headers signedId blobId } }"},{"name":"CreateAssets","document":"mutation CreateAssets { createAssets { assets { id clientKey size position } } }"},{"name":"CreateAsset","document":"mutation CreateAsset { createAsset { asset { id clientKey size position } } }"}]"""
-            reopen(Config(null, null, 32u), modelsJSON, RefuseFirstFile(transport), operations, UploadOperations(createBlob = UploadOperation("CreateBlob")))
+            reopen(Config(null, null, 32u), modelsJSON, RefuseFirstFile(transport), operations)
             val items = files.mapIndexed { index, file -> UploadItem(values = buildJsonObject { put("clientKey", "key-$index"); put("size", 2); put("position", index) }, path = file.path) }
             val receipt = AccountScope.current().uploadBatch(Asset, items, UploadBatchRequest(operation = "create_files"))
             val rows = receipt.items.map { it.optimisticValue }
@@ -301,7 +297,7 @@ class TransferTest {
             repeat(4) { index -> transport.enqueue("CreateBlob", createdBlob(index)) }
             transport.enqueue("CreateAssets", """{"data":{"createAssets":{"assets":[{"id":"a2","clientKey":"key-2","size":3,"position":2},{"id":"a1","clientKey":"key-1","size":3,"position":1},{"id":"a0","clientKey":"key-0","size":3,"position":0}]}}}""")
             val operations = """[{"name":"CreateBlob","document":"mutation CreateBlob { createBlob { url headers signedId blobId } }"},{"name":"CreateAssets","document":"mutation CreateAssets { createAssets { assets { id clientKey size position } } }"},{"name":"CreateAsset","document":"mutation CreateAsset { createAsset { asset { id clientKey size position } } }"}]"""
-            reopen(Config(null, null, 32u), modelsJSON, RefuseFirstFile(transport), operations, UploadOperations(createBlob = UploadOperation("CreateBlob")))
+            reopen(Config(null, null, 32u), modelsJSON, RefuseFirstFile(transport), operations)
             val items = files.mapIndexed { index, file -> UploadItem(values = buildJsonObject { put("clientKey", "key-$index"); put("size", 3); put("position", index) }, path = file.path) }
             val receipt = AccountScope.current().uploadBatch(Asset, items, UploadBatchRequest(operation = "create_files"))
             val rows = receipt.items.map { it.optimisticValue }
@@ -329,7 +325,7 @@ class TransferTest {
             transport.enqueue("CreateBlob", """{"data":{"createBlob":{"url":"https://storage/file","headers":{},"signedId":"signed-2","blobId":"b2"}}}""")
             transport.enqueue("CreateAssets", """{"data":{"createAssets":{"assets":[{"id":"a2","clientKey":"key-2","size":2,"position":1},{"id":"a0","clientKey":"key-0","size":2,"position":0}]}}}""")
             val operations = """[{"name":"CreateBlob","document":"mutation CreateBlob { createBlob { url headers signedId blobId } }"},{"name":"CreateAssets","document":"mutation CreateAssets { createAssets { assets { id clientKey size position } } }"},{"name":"CreateAsset","document":"mutation CreateAsset { createAsset { asset { id clientKey size position } } }"}]"""
-            reopen(Config(null, null, 32u), modelsJSON, transport, operations, UploadOperations(createBlob = UploadOperation("CreateBlob")))
+            reopen(Config(null, null, 32u), modelsJSON, transport, operations)
             val items = files.mapIndexed { index, file -> UploadItem(values = buildJsonObject { put("clientKey", "key-$index"); put("size", 3); put("position", index) }, path = file.path) }
             val receipt = AccountScope.current().uploadBatch(Asset, items, UploadBatchRequest(operation = "create_files"))
             val rows = receipt.items.map { it.optimisticValue }
@@ -358,7 +354,7 @@ class TransferTest {
         try {
             DBlayer.close()
             val transport = MockTransport()
-            val clock = DBlayer.openTesting(transport, modelsJSON, uploads = UploadOperations(createBlob = UploadOperation("CreateBlob")))
+            val clock = DBlayer.openTesting(transport, modelsJSON)
             DBlayer.database.registerOperations(expiryOperations)
             val row = refusedUpload(transport, source)
             DBlayer.database.setOnline(false)
@@ -382,9 +378,8 @@ class TransferTest {
             transport.mock.enqueue("CompleteMultipart", DbException.Http(422u, "rejected"))
             transport.mock.enqueue("CompleteMultipart", """{"data":{"completeMultipart":{"signedId":"signed","blobId":"blob"}}}""")
             val operations = """[{"name":"CreateMoment","document":"mutation CreateMoment { createMoment { id } }"},{"name":"CreateBlob","document":"mutation CreateBlob { createBlob { signedId } }"},{"name":"InitMultipart","document":"mutation InitMultipart { initMultipart { key uploadId } }"},{"name":"PresignParts","document":"mutation PresignParts { presignParts { parts { partNumber url } } }"},{"name":"CompleteMultipart","document":"mutation CompleteMultipart { completeMultipart { signedId blobId } }"},{"name":"AbortMultipart","document":"mutation AbortMultipart { abortMultipart { ok } }"}]"""
-            val uploads = UploadOperations(multipart = UploadOperations.Multipart(UploadOperation("InitMultipart"), UploadOperation("PresignParts"), UploadOperation("CompleteMultipart"), UploadOperation("AbortMultipart")))
             transport.mock.enqueue("CreateMoment", """{"data":{"createMoment":{"__typename":"Moment","id":"m1","uuid":"u","likedByMe":false,"media":{},"createdAt":"2026-10-08T00:00:00.000Z"}}}""")
-            reopen(Config(null, null, 8u), modelsJSON, transport, operations, uploads)
+            reopen(Config(null, null, 8u), modelsJSON, transport, operations)
             val sent = AccountScope.current().send(Moment, buildJsonObject { put("text", "video") }, upload = UploadCommand("upload_clip", UploadRequest(source.path)))
             val row = requireNotNull(sent.optimisticValue)
             eventually("the refused complete fails the upload") { Moment.find(row.id).current()?.sync?.state == SyncState.Failed }
@@ -441,9 +436,8 @@ class TransferTest {
             val source = directory.resolve("video").apply { writeBytes(ByteArray(11 * 1024 * 1024)) }
             val config = Config(directory.resolve("db.sqlite").path, null, 8u)
             val operations = """[{"name":"CreateMoment","document":"mutation CreateMoment { createMoment { id } }"},{"name":"CreateBlob","document":"mutation CreateBlob { createBlob { signedId } }"},{"name":"InitMultipart","document":"mutation InitMultipart { initMultipart { key uploadId } }"},{"name":"PresignParts","document":"mutation PresignParts { presignParts { parts { partNumber url } } }"},{"name":"CompleteMultipart","document":"mutation CompleteMultipart { completeMultipart { signedId blobId } }"},{"name":"AbortMultipart","document":"mutation AbortMultipart { abortMultipart { ok } }"}]"""
-            val uploads = UploadOperations(multipart = UploadOperations.Multipart(UploadOperation("InitMultipart"), UploadOperation("PresignParts"), UploadOperation("CompleteMultipart"), UploadOperation("AbortMultipart")))
             transport.enqueue("CreateMoment", """{"data":{"createMoment":{"__typename":"Moment","id":"m1","uuid":"u","likedByMe":false,"media":{},"createdAt":"2026-10-08T00:00:00.000Z"}}}""")
-            val db = reopen(config, modelsJSON, transport, operations, uploads)
+            val db = reopen(config, modelsJSON, transport, operations)
             val sent = AccountScope.current().send(Moment, buildJsonObject { put("text", "video") }, upload = UploadCommand("upload_clip", UploadRequest(source.path)))
             val row = requireNotNull(sent.optimisticValue)
             held.entered()
@@ -455,7 +449,7 @@ class TransferTest {
             assertTrue(source.exists())
             held.release()
             DBlayer.close()
-            val reopened = reopen(config, modelsJSON, transport, operations, uploads)
+            val reopened = reopen(config, modelsJSON, transport, operations)
             reopened.setOnline(false)
             reopened.setOnline(true)
             abort.entered()

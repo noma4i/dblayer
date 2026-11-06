@@ -228,6 +228,7 @@ pub const OPERATIONS: &str = r#"[
 
 pub fn moment_models(on_failure: OnFailure) -> String {
     let mut model = ModelSpec::new("Moment", vec![FieldSpec::scalar("id", ScalarKind::Id), FieldSpec::scalar("text", ScalarKind::Str).optional()]);
+    model.upload_steps = Some(upload_operations());
     let mut create = ActionDeclaration::new("create", RootShape::Upsert);
     create.mutation = Some("MakeMoment".into());
     create.durable = true;
@@ -294,7 +295,7 @@ impl Rig {
         let credentials = credentials_of(path.as_deref());
         let signed = CredentialSlot::get(&*credentials).unwrap().is_some();
         let held = Arc::new(Held(credentials));
-        let db = within(Database::open_with_clock(Config { path, data_version: None, cache_rows: 64 }, models.clone(), Some(Arc::new(Wire(server.clone()))), Some(upload_operations()), clock.clone(), Some(encrypted), Some(held), Some(Arc::new(Wire(server.clone()))), None)).await.unwrap();
+        let db = within(Database::open_with_clock(Config { path, data_version: None, cache_rows: 64 }, models.clone(), Some(Arc::new(Wire(server.clone()))), clock.clone(), Some(encrypted), Some(held), Some(Arc::new(Wire(server.clone()))), None)).await.unwrap();
         db.register_operations(OPERATIONS.into()).unwrap();
         db.set_online(true).unwrap();
         if !signed { within(db.session_call("login_link".into(), json!({"account": "A"}).to_string())).await.unwrap(); }

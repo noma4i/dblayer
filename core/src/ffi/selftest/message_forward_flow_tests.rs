@@ -60,7 +60,7 @@ async fn flow_message_forward() {
     yield_until("the copy stands in the thread", || thread.len() == 1).await;
     let copy = ids(&thread).remove(0);
     assert!(forwarded_by_me(&rig, &thread, &copy), "the copy lacks the author, the flag or the origin");
-    assert_eq!(field(&rig, "Chat", &chats, "c2", "lastMessageId"), Some(text(&copy)), "the target chat does not point at the copy");
+    yield_until("the target chat points at the copy", || field(&rig, "Chat", &chats, "c2", "lastMessageId") == Some(text(&copy))).await;
     assert_eq!(thread.1.lock().unwrap().iter().find(|seen| !seen.rows.is_empty()).map(|seen| seen.revision), Some(receipt.revision), "the copy came at another revision than the receipt");
     refused.release();
     assert!(matches!(bound(rig.database.outcome(receipt)).await.unwrap(), WireOperationOutcome::Rejected { .. }));
@@ -75,7 +75,7 @@ async fn flow_message_forward() {
     yield_until("the answer replaced the copy", || ids(&thread) == ["forwarded-1"]).await;
     assert!(thread.1.lock().unwrap().iter().all(|seen| seen.size <= 1), "the thread showed the copy and the answer together");
     assert!(forwarded_by_me(&rig, &thread, "forwarded-1"));
-    assert_eq!(field(&rig, "Chat", &chats, "c2", "lastMessageId"), Some(text("forwarded-1")));
+    yield_until("the target chat points at the answer", || field(&rig, "Chat", &chats, "c2", "lastMessageId") == Some(text("forwarded-1"))).await;
 
     land_event(&rig, "Message", json!({"id": "f2", "chatId": "c2", "text": "again", "at": 9, "authorId": "user", "isForwarded": true, "forwardedFromUserId": "u7"}));
     yield_until("the event bubble stands in the thread", || ids(&thread).len() == 2 && forwarded_by_me(&rig, &thread, "f2")).await;

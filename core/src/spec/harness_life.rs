@@ -82,7 +82,7 @@ impl Rig {
         let credentials = Arc::new(MemoryCredentials::default());
         let encrypted = EncryptedConfig { origin: origin().to_string(), server_key: public_key_der_b64().to_string(), pin: pin().to_string(), ..crate::transport::encrypted::protocol_tests::config() };
         let config = Config { path: None, data_version: None, cache_rows: 32 };
-        let database = Database::open(config, models_json(), Some(Arc::new(NoCable)), Some(encrypted), Some(Arc::new(Held(credentials.clone()))), Some(Arc::new(ThroughServer(server.clone()))), None, None).await.expect("the database opens");
+        let database = Database::open(config, models_json(), Some(Arc::new(NoCable)), Some(encrypted), Some(Arc::new(Held(credentials.clone()))), Some(Arc::new(ThroughServer(server.clone()))), None).await.expect("the database opens");
         database.register_operations(OPERATIONS.into()).expect("operations register");
         Self { server, credentials, database }
     }

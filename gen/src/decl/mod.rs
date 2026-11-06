@@ -8,7 +8,7 @@ use crate::parser::Call;
 mod lower;
 mod params;
 
-pub(crate) use lower::{lower_calls, lower_models};
+pub(crate) use lower::{lower_calls, lower_models, lower_uploads};
 pub(crate) use params::{ParamBase, ParamType};
 #[cfg(test)]
 pub(crate) use params::PARAM_TYPES;

@@ -38,7 +38,7 @@ class UploadSessionTest {
         try {
             transport.enqueue("UserProfile", """{"data":{"me":{"__typename":"User","id":"1","name":"B"}}}""")
             val operations = """[{"name":"CreateBlob","document":"mutation CreateBlob { createBlob { url headers signedId blobId } }"},{"name":"CreateMoment","document":"mutation CreateMoment { createMoment { id } }"},{"name":"UserProfile","document":"query UserProfile { me { id name } }"}]"""
-            val database = reopen(Config(null, null, 32u), modelsJSON, transport, operations = operations, uploads = UploadOperations(createBlob = UploadOperation("CreateBlob")))
+            val database = reopen(Config(null, null, 32u), modelsJSON, transport, operations = operations)
             database.setOnline(false)
             val first = database.sessionEpoch()
             val sentFirst = AccountScope.current().send(Moment, buildJsonObject { put("text", "A") }, upload = UploadCommand("upload_clip", UploadRequest(file.path)))
@@ -63,7 +63,7 @@ class UploadSessionTest {
         try {
             transport.base.enqueue("CreateBlob", """{"data":{"createBlob":{"url":"https://storage.test/file","headers":{},"signedId":"signed","blobId":"blob"}}}""")
             transport.base.enqueue("UserProfile", """{"data":{"me":{"__typename":"User","id":"1","name":"B"}}}""")
-            val database = reopen(Config(null, null, 32u), modelsJSON, transport, operations = """[{"name":"CreateBlob","document":"mutation CreateBlob { createBlob { url headers signedId blobId } }"},{"name":"CreateMoment","document":"mutation CreateMoment { createMoment { id } }"},{"name":"UserProfile","document":"query UserProfile { me { id name } }"}]""", uploads = UploadOperations(createBlob = UploadOperation("CreateBlob")))
+            val database = reopen(Config(null, null, 32u), modelsJSON, transport, operations = """[{"name":"CreateBlob","document":"mutation CreateBlob { createBlob { url headers signedId blobId } }"},{"name":"CreateMoment","document":"mutation CreateMoment { createMoment { id } }"},{"name":"UserProfile","document":"query UserProfile { me { id name } }"}]""")
             val sent = AccountScope.current().send(Moment, buildJsonObject { put("text", "hello") }, upload = UploadCommand("upload_clip", UploadRequest(file.path)))
             val row = sent.optimisticValue!!
             transport.arrived.await()

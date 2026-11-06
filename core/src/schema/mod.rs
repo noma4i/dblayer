@@ -1183,6 +1183,9 @@ pub struct ModelSpec {
     pub change_feed: Option<ChangeFeed>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub server_revision: Option<String>,
+    /// The steps of file uploads declared once per project (`uploads do`): the generator copies them to every model with an upload action.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub upload_steps: Option<crate::upload::UploadOperations>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -1253,6 +1256,7 @@ impl ModelSpec {
             changes: Vec::new(),
             change_feed: None,
             server_revision: None,
+            upload_steps: None,
         }
     }
 

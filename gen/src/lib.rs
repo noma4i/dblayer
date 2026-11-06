@@ -97,7 +97,13 @@ pub fn compile_files(paths: &[impl AsRef<Path>], schema: Option<&Path>, operatio
         return Err(locate(call_errors));
     }
     let checked = loaded.as_ref().map(|schema| schema_check::check_schema(schema, &scalars, operations, &names, &models, &calls)).transpose()?;
+    let mut upload_errors = Vec::new();
+    let steps = decl::lower_uploads(&parsed.uploads, &models, &mut upload_errors);
+    if !upload_errors.is_empty() {
+        return Err(locate(upload_errors));
+    }
     let mut declared = build_declarations(&models, &calls).map_err(locate)?;
+    stamp_upload_steps(&mut declared.models, steps);
     if let Some(checked) = &checked {
         for media in declared.models.iter_mut().flat_map(|model| &mut model.relations).filter_map(|scope| scope.media.as_mut()) {
             media.marker_variables.retain(|name, _| checked.variables.get(&media.marker).is_some_and(|variables| variables.contains(name)));
@@ -164,7 +170,13 @@ fn parse_all(sources: &[&str]) -> Result<Declarations, Vec<(usize, ParseError)>>
     if !call_errors.is_empty() {
         return Err(call_errors);
     }
+    let mut upload_errors = Vec::new();
+    let steps = decl::lower_uploads(&parsed.uploads, &models, &mut upload_errors);
+    if !upload_errors.is_empty() {
+        return Err(upload_errors);
+    }
     let mut declared = build_declarations(&models, &calls)?;
+    stamp_upload_steps(&mut declared.models, steps);
     let clashes = name_clash_errors(&declared, &models, &calls);
     if !clashes.is_empty() { return Err(clashes); }
     let clashes = output_clash_errors(&declared, &models);
@@ -173,10 +185,21 @@ fn parse_all(sources: &[&str]) -> Result<Declarations, Vec<(usize, ParseError)>>
     Ok(declared)
 }
 
+#[cfg(test)]
+pub(crate) const TEST_UPLOADS: &str = "uploads do\n  create_blob :CreateBlob\nend\n\n";
+
+/// Every model with an upload action carries the steps of the project, so `open` reads them from the models.
+fn stamp_upload_steps(models: &mut [ModelSpec], steps: Option<dblayer::upload::UploadOperations>) {
+    for model in models.iter_mut().filter(|model| model.actions.iter().any(|action| action.upload)) {
+        model.upload_steps = steps.clone();
+    }
+}
+
 fn parse_tree(sources: &[&str]) -> Result<parser::Parsed, Vec<(usize, ParseError)>> {
     let mut nodes = Vec::new();
     let mut operation_nodes = Vec::new();
     let mut scalar_nodes = Vec::new();
+    let mut upload_nodes = Vec::new();
     let mut errors = Vec::new();
     for (file, source) in sources.iter().enumerate() {
         match lexer::lex(source).and_then(|tokens| parser::parse(&tokens, file)) {
@@ -184,6 +207,7 @@ fn parse_tree(sources: &[&str]) -> Result<parser::Parsed, Vec<(usize, ParseError
                 nodes.extend(parsed.models);
                 operation_nodes.extend(parsed.operations);
                 scalar_nodes.extend(parsed.scalars);
+                upload_nodes.extend(parsed.uploads);
             }
             Err(error) => errors.push((file, error)),
         }
@@ -191,7 +215,7 @@ fn parse_tree(sources: &[&str]) -> Result<parser::Parsed, Vec<(usize, ParseError
     if !errors.is_empty() {
         return Err(errors);
     }
-    Ok(parser::Parsed { models: nodes, operations: operation_nodes, scalars: scalar_nodes })
+    Ok(parser::Parsed { models: nodes, operations: operation_nodes, scalars: scalar_nodes, uploads: upload_nodes })
 }
 
 fn build_declarations(declared_models: &[decl::ModelDecl], calls: &[decl::CallDecl]) -> Result<Declarations, Vec<(usize, ParseError)>> {
@@ -337,3 +361,6 @@ mod patch_tests;
 
 #[cfg(test)]
 mod file_field_tests;
+
+#[cfg(test)]
+mod upload_steps_tests;

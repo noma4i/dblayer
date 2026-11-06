@@ -12,7 +12,7 @@ use crate::ffi::session_guards_tests::{Rig as SessionRig, SOCIAL_BODY};
 use crate::ffi::upload_wire::WireUploadRequest;
 use crate::ffi::{ByteProgress, CableLease, Config, Database, DbError, EncryptedConfig, EncryptedSocketEvent, PutReply, SubscriptionSink, Transport, TransportRequest};
 use crate::transport::encrypted::vectors_tests::{origin, pin, public_key_der_b64};
-use crate::upload::{UploadFile, UploadOperations};
+use crate::upload::UploadFile;
 
 fn effects(rig: &SessionRig, operation: &str) -> Vec<serde_json::Value> {
     rig.server.executed().into_iter().filter(|body| body["operationName"] == operation).collect()
@@ -59,8 +59,7 @@ async fn a_round_running_at_the_session_exit_asks_for_the_job_of_the_next_epoch_
     let directory = tempfile::tempdir().unwrap();
     let source = directory.path().join("upload.mp4");
     std::fs::write(&source, b"abc").unwrap();
-    let operations = UploadOperations::empty().create_blob("CreateBlob").multipart("InitMultipart", "PresignParts", "CompleteMultipart", "AbortMultipart");
-    let database = Database::open(Config { path: None, data_version: None, cache_rows: 8 }, serde_json::to_string(&vec![moment_spec()]).unwrap(), Some(Arc::new(HeldPut { gate, ended: Arc::new(tokio::sync::Notify::new()) })), Some(EncryptedConfig { origin: origin().into(), server_key: public_key_der_b64().into(), pin: pin().into(), ..crate::transport::encrypted::protocol_tests::config() }), Some(rig.credentials.clone()), Some(Arc::new(ThroughServer(rig.server.clone()))), Some(operations), None).await.unwrap();
+    let database = Database::open(Config { path: None, data_version: None, cache_rows: 8 }, serde_json::to_string(&vec![moment_spec()]).unwrap(), Some(Arc::new(HeldPut { gate, ended: Arc::new(tokio::sync::Notify::new()) })), Some(EncryptedConfig { origin: origin().into(), server_key: public_key_der_b64().into(), pin: pin().into(), ..crate::transport::encrypted::protocol_tests::config() }), Some(rig.credentials.clone()), Some(Arc::new(ThroughServer(rig.server.clone()))), None).await.unwrap();
     let registered: Vec<_> = [("CreateBlob", "createBlob"), ("MakeMoment", "makeMoment"), ("InitMultipart", "initMultipart"), ("PresignParts", "presignParts"), ("CompleteMultipart", "completeMultipart"), ("AbortMultipart", "abortMultipart")].into_iter().map(|(name, root)| {
         let document = format!("mutation {name} {{ {root} {{ id }} }}");
         rig.server.register(&document);
@@ -99,8 +98,7 @@ async fn an_active_and_a_queued_upload_end_at_the_exit_and_the_next_sign_in_runs
         let gate = Gate::new();
         let put_ended = Arc::new(tokio::sync::Notify::new());
         let directory = tempfile::tempdir().unwrap();
-        let operations = UploadOperations::empty().create_blob("CreateBlob").multipart("InitMultipart", "PresignParts", "CompleteMultipart", "AbortMultipart");
-        let database = Database::open(Config { path: None, data_version: None, cache_rows: 8 }, serde_json::to_string(&vec![moment_spec()]).unwrap(), Some(Arc::new(HeldPut { gate: gate.clone(), ended: put_ended.clone() })), Some(EncryptedConfig { origin: origin().into(), server_key: public_key_der_b64().into(), pin: pin().into(), ..crate::transport::encrypted::protocol_tests::config() }), Some(rig.credentials.clone()), Some(Arc::new(ThroughServer(rig.server.clone()))), Some(operations), None).await.unwrap();
+        let database = Database::open(Config { path: None, data_version: None, cache_rows: 8 }, serde_json::to_string(&vec![moment_spec()]).unwrap(), Some(Arc::new(HeldPut { gate: gate.clone(), ended: put_ended.clone() })), Some(EncryptedConfig { origin: origin().into(), server_key: public_key_der_b64().into(), pin: pin().into(), ..crate::transport::encrypted::protocol_tests::config() }), Some(rig.credentials.clone()), Some(Arc::new(ThroughServer(rig.server.clone()))), None).await.unwrap();
         let registered: Vec<_> = [("CreateBlob", "createBlob"), ("MakeMoment", "makeMoment"), ("InitMultipart", "initMultipart"), ("PresignParts", "presignParts"), ("CompleteMultipart", "completeMultipart"), ("AbortMultipart", "abortMultipart")].into_iter().map(|(name, root)| {
             let document = format!("mutation {name} {{ {root} {{ id }} }}");
             rig.server.register(&document);

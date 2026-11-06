@@ -72,13 +72,12 @@ object DBlayer {
         modelsJson: String,
         path: String? = null,
         operations: List<GraphQLOperation> = emptyList(),
-        uploads: UploadOperations? = null,
         http: EncryptedHttp? = null,
         retries: RetryProgress? = null,
         uploadNotification: UploadNotification,
     ) = opening.withLock {
         try {
-            openLocked(context, endpoint, headers, encrypted, credentials, transport, modelsJson, path, operations, uploads, http, retries, uploadNotification)
+            openLocked(context, endpoint, headers, encrypted, credentials, transport, modelsJson, path, operations, http, retries, uploadNotification)
         } catch (error: Throwable) {
             if (ready.completeExceptionally(error)) ready = CompletableDeferred()
             throw error
@@ -95,14 +94,13 @@ object DBlayer {
         modelsJson: String,
         path: String?,
         operations: List<GraphQLOperation>,
-        uploads: UploadOperations?,
         http: EncryptedHttp?,
         retries: RetryProgress?,
         uploadNotification: UploadNotification,
     ) {
         UploadNotifications.store(context, uploadNotification)
         val definitions = operations.map { JsonObject(mapOf("name" to JsonPrimitive(it.operationName), "document" to JsonPrimitive(it.document))) }
-        val options = OpenOptions(operations = JsonArray(definitions).jsonText(), uploads = uploads?.wire(), powerSaving = PowerSaving.saving(context), lowRam = PowerSaving.lowRam(context))
+        val options = OpenOptions(operations = JsonArray(definitions).jsonText(), powerSaving = PowerSaving.saving(context), lowRam = PowerSaving.lowRam(context))
         val selectedTransport = transport ?: (endpoint ?: encrypted?.origin)?.let { OkHttpTransport(it, headers) }
         Reachability.start(context)
         val made = opener.open(Config(path, null, 2000u), modelsJson, options, selectedTransport, encrypted, credentials, http ?: encrypted?.let { OkHttpEncryptedHttp(it.origin) }, retries)
@@ -116,7 +114,7 @@ object DBlayer {
         ready.complete(made)
     }
 
-    internal suspend fun openOnClock(config: Config, modelsJson: String, transport: Transport?, uploads: UploadOperations?, clock: TestClock, encrypted: EncryptedConfig? = null, credentials: CredentialStore? = null, http: EncryptedHttp? = null, retries: RetryProgress? = null): Database = opening.withLock { opener.openWithClock(config, modelsJson, transport, uploads?.wire(), clock, encrypted, credentials, http, retries) }
+    internal suspend fun openOnClock(config: Config, modelsJson: String, transport: Transport?, clock: TestClock, encrypted: EncryptedConfig? = null, credentials: CredentialStore? = null, http: EncryptedHttp? = null, retries: RetryProgress? = null): Database = opening.withLock { opener.openWithClock(config, modelsJson, transport, clock, encrypted, credentials, http, retries) }
 
     internal fun install(opened: Database, transport: Transport?, operations: List<GraphQLOperation>) {
         val definitions = operations.map { JsonObject(mapOf("name" to JsonPrimitive(it.operationName), "document" to JsonPrimitive(it.document))) }

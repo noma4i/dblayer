@@ -1,7 +1,7 @@
 use super::*;
 
 fn config() -> Config { Config { path: None, data_version: None, cache_rows: 8 } }
-fn options() -> OpenOptions { OpenOptions { operations: "[]".into(), uploads: None, power_saving: false, low_ram: false } }
+fn options() -> OpenOptions { OpenOptions { operations: "[]".into(), power_saving: false, low_ram: false } }
 async fn open(slot: &OpenDatabase) -> Result<Arc<Database>, DbError> {
     slot.open(config(), "[]".into(), options(), None, None, None, None, None).await
 }
@@ -29,15 +29,19 @@ async fn an_open_that_fails_leaves_the_slot_free() {
     assert!(open(&slot).await.is_ok());
 }
 
+fn clip_with_blob(name: &str) -> String {
+    let mut clip = crate::schema::ModelSpec::new("Clip", vec![crate::schema::FieldSpec::scalar("id", crate::value::ScalarKind::Id)]);
+    clip.upload_steps = Some(crate::upload::UploadOperations { create_blob: Some(crate::upload::UploadOperation::new(name)), multipart: None });
+    serde_json::to_string(&vec![clip]).unwrap()
+}
+
 #[tokio::test]
 async fn open_carries_the_upload_declaration_and_frees_the_slot_when_it_is_refused() {
     use super::super::database_tests::Plain;
-    use super::super::upload_wire::{WireUploadOperation, WireUploadOperations};
-    let blob = |name: &str| WireUploadOperations { create_blob: Some(WireUploadOperation { name: name.into(), root_path: None }), multipart: None };
     let slot = OpenDatabase::new();
     for (name, accepted) in [("Missing", false), ("CreateBlob", true)] {
-        let options = OpenOptions { operations: r#"[{"name":"CreateBlob","document":"mutation CreateBlob { createBlob { url } }"}]"#.into(), uploads: Some(blob(name)), power_saving: false, low_ram: false };
-        let opened = slot.open(config(), "[]".into(), options, Some(Arc::new(Plain)), None, None, None, None).await;
+        let options = OpenOptions { operations: r#"[{"name":"CreateBlob","document":"mutation CreateBlob { createBlob { url } }"}]"#.into(), power_saving: false, low_ram: false };
+        let opened = slot.open(config(), clip_with_blob(name), options, Some(Arc::new(Plain)), None, None, None, None).await;
         match opened {
             Ok(_) => assert!(accepted, "{name} was opened"),
             Err(error) => assert!(!accepted && error.to_string().ends_with("invalid: upload operation Missing is not registered"), "{name}: {error}"),
@@ -49,13 +53,8 @@ async fn open_carries_the_upload_declaration_and_frees_the_slot_when_it_is_refus
 #[tokio::test]
 async fn inv_upload_22_uploads_with_empty_operations_explain_the_cause_and_the_fix() {
     use super::super::database_tests::Plain;
-    use super::super::upload_wire::{WireUploadOperation, WireUploadOperations};
     let slot = OpenDatabase::new();
-    let options = OpenOptions {
-        uploads: Some(WireUploadOperations { create_blob: Some(WireUploadOperation { name: "CreateBlob".into(), root_path: None }), multipart: None }),
-        ..options()
-    };
-    let opened = slot.open(config(), "[]".into(), options, Some(Arc::new(Plain)), None, None, None, None).await;
+    let opened = slot.open(config(), clip_with_blob("CreateBlob"), options(), Some(Arc::new(Plain)), None, None, None, None).await;
     let error = match opened {
         Err(error) => error.to_string(),
         Ok(_) => panic!("uploads with empty operations were accepted"),

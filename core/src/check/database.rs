@@ -272,7 +272,7 @@ impl DatabaseSut {
         } else {
             (None, None, None)
         };
-        let opened = OpenDatabase::new().open_with_clock(config, if models == "events" { EVENT_MODELS } else { MODELS }.into(), Some(transport), None, self.clock.clone(), encrypted, credentials, http, None).await;
+        let opened = OpenDatabase::new().open_with_clock(config, if models == "events" { EVENT_MODELS } else { MODELS }.into(), Some(transport), self.clock.clone(), encrypted, credentials, http, None).await;
         match opened {
             Ok(database) => {
                 if database.register_operations(OPERATIONS.into()).is_err() { return error("operations"); }

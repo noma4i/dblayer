@@ -1,27 +1,7 @@
 use serde_json::{Map, Value};
 
 use super::DbError;
-use crate::upload::{MultipartOperations, UploadBatchInput, UploadFile, UploadItem, UploadOperation, UploadOperations};
-
-#[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
-pub struct WireUploadOperation {
-    pub name: String,
-    pub root_path: Option<String>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
-pub struct WireMultipartOperations {
-    pub initiate: WireUploadOperation,
-    pub presign: WireUploadOperation,
-    pub complete: WireUploadOperation,
-    pub abort: WireUploadOperation,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
-pub struct WireUploadOperations {
-    pub create_blob: Option<WireUploadOperation>,
-    pub multipart: Option<WireMultipartOperations>,
-}
+use crate::upload::{UploadBatchInput, UploadFile, UploadItem};
 
 #[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
 pub struct WireUploadRequest {
@@ -50,21 +30,6 @@ fn object(json: &str) -> Result<Map<String, Value>, DbError> {
     match serde_json::from_str(json).map_err(DbError::from)? {
         Value::Object(map) => Ok(map),
         _ => Err(DbError::Invalid { detail: "upload values must be a JSON object".into() }),
-    }
-}
-
-impl From<WireUploadOperation> for UploadOperation {
-    fn from(wire: WireUploadOperation) -> Self {
-        Self { name: wire.name, root_path: wire.root_path }
-    }
-}
-
-impl From<WireUploadOperations> for UploadOperations {
-    fn from(wire: WireUploadOperations) -> Self {
-        Self {
-            create_blob: wire.create_blob.map(Into::into),
-            multipart: wire.multipart.map(|steps| MultipartOperations { initiate: steps.initiate.into(), presign: steps.presign.into(), complete: steps.complete.into(), abort: steps.abort.into() }),
-        }
     }
 }
 

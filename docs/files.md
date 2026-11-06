@@ -69,12 +69,20 @@ The database format changes with these tables. Opening a database of another for
 
 An upload belongs to a declared upload action of the model (`operation :upload_clip, upload: true`), which names the content mutation. A record holds one upload per action and several uploads of different actions at the same time. Starting the same action again while it is open is refused. The transfer steps are operations you registered by name. Declare them once in `DB.open` (Swift) or `DBlayer.open` (Kotlin) with a transport or endpoint, and register the content mutation next to them; every upload and batch uses that declaration. A file takes `createBlob` below the multipart threshold and the multipart steps above it. `rootPath` names the response field a step answers under, and nil keeps the first field of its document. Without a declaration an upload is refused before any file is read or request sent, and `open` fails when a declared name is not registered.
 
+The steps of the upload are declared once in the `.dbl` files and travel with the models:
+
+```ruby
+uploads do
+  create_blob :CreateBlob, root: "uploadCreate.directUpload"
+  multipart initiate: :InitMultipart, presign: :PresignParts, complete: :CompleteMultipart, abort: :AbortMultipart
+end
+```
+
+A project with an `upload: true` operation declares the block exactly once. A second block, an empty block, a block without an upload operation and an upload operation without the block fail the generator with the file and line. `open` registers the operations of the steps from `operations`.
+
 ```swift
 try await DB.open(endpoint: endpoint, modelsJSON: models,
-  operations: [MomentCreateFile.self, CreateBlob.self, InitMultipart.self, PresignParts.self, CompleteMultipart.self, AbortMultipart.self],
-  uploads: UploadOperations(
-    createBlob: UploadOperation("CreateBlob", rootPath: "uploadCreate.directUpload"),
-    multipart: .init(initiate: UploadOperation("InitMultipart"), presign: UploadOperation("PresignParts"), complete: UploadOperation("CompleteMultipart"), abort: UploadOperation("AbortMultipart"))))
+  operations: [MomentCreateFile.self, CreateBlob.self, InitMultipart.self, PresignParts.self, CompleteMultipart.self, AbortMultipart.self])
 let request = UploadRequest(path: url.path, variables: ["text": .string("hello")])
 try await DB.account().upload(moment, action: "upload_clip", request)
 moment.uploads["upload_clip"]?.status       // .uploading
@@ -85,9 +93,6 @@ try await moment.cancelUpload(action: "upload_clip")
 ```kotlin
 DBlayer.open(context, endpoint = endpoint, modelsJson = models,
     operations = listOf(MomentCreateFile, CreateBlob, InitMultipart, PresignParts, CompleteMultipart, AbortMultipart),
-    uploads = UploadOperations(
-        createBlob = UploadOperation("CreateBlob", rootPath = "uploadCreate.directUpload"),
-        multipart = UploadOperations.Multipart(UploadOperation("InitMultipart"), UploadOperation("PresignParts"), UploadOperation("CompleteMultipart"), UploadOperation("AbortMultipart"))),
     uploadNotification = notification)
 val request = UploadRequest(path = file.path, variables = variables)
 AccountScope.current().upload(moment, "upload_clip", request, UploadClipAnswer.serializer())

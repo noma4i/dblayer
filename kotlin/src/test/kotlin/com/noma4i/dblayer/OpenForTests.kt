@@ -3,8 +3,8 @@ package com.noma4i.dblayer
 /** A test transport that forwards to a `MockTransport`: the session cable of the stand goes to that mock. */
 interface WrapsMock { val base: MockTransport }
 
-suspend fun openDatabase(config: Config, modelsJson: String, transport: Transport? = null, encrypted: EncryptedConfig? = null, credentials: CredentialStore? = null, http: EncryptedHttp? = null, operations: String = "[]", uploads: UploadOperations? = null): Database =
-    OpenDatabase().open(config, modelsJson, OpenOptions(operations, uploads?.wire(), false, false), transport, encrypted, credentials, http, null)
+suspend fun openDatabase(config: Config, modelsJson: String, transport: Transport? = null, encrypted: EncryptedConfig? = null, credentials: CredentialStore? = null, http: EncryptedHttp? = null, operations: String = "[]"): Database =
+    OpenDatabase().open(config, modelsJson, OpenOptions(withUploadSteps(operations, modelsJson), false, false), transport, encrypted, credentials, http, null)
 
 suspend fun adopt(database: Database): Database {
     try {
@@ -61,14 +61,14 @@ private suspend fun signIn(database: Database, restored: Boolean = false) {
 }
 
 /** A transport signs in through the real session path, and its queries and mutations ride the session HTTP. */
-suspend fun reopen(config: Config, modelsJson: String, transport: Transport? = null, operations: String = "[]", uploads: UploadOperations? = null): Database {
-    val mock = transport ?: return adopt(openDatabase(config, modelsJson, transport, operations = operations, uploads = uploads))
+suspend fun reopen(config: Config, modelsJson: String, transport: Transport? = null, operations: String = "[]"): Database {
+    val mock = transport ?: return adopt(openDatabase(config, modelsJson, transport, operations = operations))
     val server = SealedServer(answer = bridgeToTransport(mock))
     val host = mock as? MockTransport ?: (mock as? WrapsMock)?.base
     host?.cable = EncryptedCablePeer(server)
     val credential = credentialOf(config)
     val restored = credential.get() != null
-    val database = adopt(openDatabase(config, modelsJson, mock, standEncrypted(), credential, server, withSessionProfile(operations), uploads))
+    val database = adopt(openDatabase(config, modelsJson, mock, standEncrypted(), credential, server, withSessionProfile(operations)))
     signIn(database, restored)
     return database
 }
@@ -89,8 +89,8 @@ suspend fun reopenClocked(modelsJson: String, transport: MockTransport, operatio
 }
 
 /** A database whose plain transport holds a session and sees no network: a sent row stays queued. A send needs a session. */
-suspend fun reopenSigned(config: Config, modelsJson: String, operations: String = SEND_MOMENT, uploads: UploadOperations? = null): Database {
-    val database = reopen(config, modelsJson, MockTransport(), operations, uploads)
+suspend fun reopenSigned(config: Config, modelsJson: String, operations: String = SEND_MOMENT): Database {
+    val database = reopen(config, modelsJson, MockTransport(), operations)
     database.setOnline(false)
     return database
 }
@@ -110,4 +110,21 @@ fun schema(onlySubscription: String, source: String = com.noma4i.dblayer.models.
         }
         kotlinx.serialization.json.JsonObject(fields)
     }).toString()
+}
+
+private val UPLOAD_STEP_OPERATIONS = listOf(
+    "CreateBlob" to "mutation CreateBlob { createBlob { url headers signedId blobId } }",
+    "InitMultipart" to "mutation InitMultipart { initMultipart { key uploadId } }",
+    "PresignParts" to "mutation PresignParts { presignParts { parts { partNumber url } } }",
+    "CompleteMultipart" to "mutation CompleteMultipart { completeMultipart { signedId blobId } }",
+    "AbortMultipart" to "mutation AbortMultipart { abortMultipart { ok } }",
+)
+
+/** The models declare the upload steps once, so every open registers the operations of the steps. */
+fun withUploadSteps(operations: String, models: String): String {
+    if (!models.contains("upload_steps") || !operations.endsWith("]")) return operations
+    val missing = UPLOAD_STEP_OPERATIONS.filter { !operations.contains("\"name\":\"${it.first}\"") }
+    if (missing.isEmpty()) return operations
+    val added = missing.joinToString(",") { """{"name":"${it.first}","document":"${it.second}"}""" }
+    return operations.dropLast(1) + (if (operations == "[]") "" else ",") + added + "]"
 }

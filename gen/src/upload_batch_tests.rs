@@ -2,7 +2,7 @@ use crate::compile_files;
 
 #[test]
 fn batch_renumber_requires_known_integer_fields_and_an_explicit_base() {
-    let source = include_str!("../../fixtures/asset.dbl");
+    let source = &format!("{}{}", crate::TEST_UPLOADS, include_str!("../../fixtures/asset.dbl"));
     let renumber = |declaration: &str| source.replace("renumber: { position: \"position\", size: \"size\", start: 0 }", declaration);
     for (declaration, accepted) in [
         ("renumber: { position: \"position\", size: \"size\", start: 0 }", true),
@@ -47,7 +47,7 @@ fn batch_items_require_an_input_list_with_the_key_and_signed_id() {
     ] {
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("asset.dbl");
-        std::fs::write(&path, include_str!("../../fixtures/asset.dbl")).unwrap();
+        std::fs::write(&path, format!("{}{}", crate::TEST_UPLOADS, include_str!("../../fixtures/asset.dbl"))).unwrap();
         let schema = directory.path().join("schema.graphql");
         std::fs::write(&schema, format!("type Query {{ ping: Int }} type Mutation {{ createAssets(items: {items}): AssetsPayload, createAsset(signedId: String!, clientKey: String): AssetPayload }} input AssetInput {{ {fields} }} type AssetsPayload {{ assets: [Asset!]! }} type AssetPayload {{ asset: Asset! }} type Asset {{ id: ID!, clientKey: String!, size: Int! }}")).unwrap();
         let document = directory.path().join("mutations.graphql");
@@ -63,7 +63,7 @@ fn batch_items_require_an_input_list_with_the_key_and_signed_id() {
 fn upload_batch_declaration_reaches_the_core_spec() {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("asset.dbl");
-    std::fs::write(&path, r#"model Asset do
+    std::fs::write(&path, format!("{}{}", crate::TEST_UPLOADS, r#"model Asset do
   attribute :clientKey, :string
   operation :create_file, upload: true do
     mutation "CreateAsset"
@@ -80,7 +80,7 @@ fn upload_batch_declaration_reaches_the_core_spec() {
     response from: "createAssets.assets"
   end
 end
-"#).unwrap();
+"#)).unwrap();
     let declarations = compile_files(&[path], None, &[]).unwrap();
     let value = serde_json::to_value(&declarations.models[0]).unwrap();
     let action = value["actions"].as_array().unwrap().iter().find(|action| action["name"] == "create_files").unwrap();
