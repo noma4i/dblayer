@@ -232,6 +232,7 @@ pub(super) fn add_typing(models: &mut Value) {
     let mut action = ModelSpec::new("ChatAction", vec![FieldSpec::scalar("id", ScalarKind::Id), FieldSpec::scalar("chatId", ScalarKind::Id).indexed(), optional("userId", ScalarKind::Id), optional("kind", ScalarKind::Str)]);
     action.storage = crate::schema::Storage::Memory;
     action.expire_after = Some("8.seconds".into());
+    action.removed_by.push(crate::schema::RemovedBy { model: "Message".into(), matches: [("chatId".to_string(), "chatId".to_string()), ("userId".to_string(), "authorId".to_string())].into() });
     models.as_array_mut().unwrap().push(serde_json::to_value(action).unwrap());
 }
 

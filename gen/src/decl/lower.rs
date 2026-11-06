@@ -1684,7 +1684,7 @@ fn model(cx: &mut Cx, node: &ModelNode) -> ModelDecl {
     let owner = Owner(cx.schema.map(|_| node.name.clone()));
     let mut decl = ModelDecl {
         name: node.name.clone(), pos: Pos { line: node.line, column: node.column }, file: node.file, storage, expires_in, attributes: Vec::new(), ephemeral: Vec::new(),
-        indexes: Vec::new(), search: Vec::new(), associations: Vec::new(), scopes: Vec::new(), subscriptions: Vec::new(), changes: Vec::new(), changed_by: Vec::new(), server_revision: None, operations: Vec::new(),
+        indexes: Vec::new(), search: Vec::new(), associations: Vec::new(), scopes: Vec::new(), subscriptions: Vec::new(), changes: Vec::new(), changed_by: Vec::new(), removed_by: Vec::new(), server_revision: None, operations: Vec::new(),
     };
     for call in &node.body {
         let mut line = Line::of(call);
@@ -1769,6 +1769,22 @@ fn model(cx: &mut Cx, node: &ModelNode) -> ModelDecl {
                 let via = require(cx, &line, "via", via);
                 if let (Some(area), Some(via)) = (area, via) {
                     decl.changed_by.push(ChangedByDecl { pos: line.pos, area, via, parameter, removes_on, id_of, payload });
+                }
+            }
+            "removed_by" => {
+                no_block(cx, call);
+                let model = exactly_one_arg(cx, &line, "a model like `removed_by Message, match: { chatId: :chatId }`").and_then(|arg| konst(cx, arg, "the model"));
+                let matches = line.opt(cx, "match").and_then(|pair| match &pair.value.item {
+                    Value::Hash(parts) if !parts.is_empty() => parts.iter().map(|part| symbol(cx, &part.value, &format!("`{}:`", part.key)).map(|theirs| (part.key.clone(), theirs))).collect::<Option<Vec<_>>>(),
+                    _ => {
+                        cx.fail(at(&pair.value), "`match` is `{ field: :model_field }`");
+                        None
+                    }
+                });
+                line.finish(cx);
+                let matches = require(cx, &line, "match", matches);
+                if let (Some(model), Some(matches)) = (model, matches) {
+                    decl.removed_by.push(RemovedByDecl { pos: line.pos, model, matches });
                 }
             }
             "operation" => decl.operations.extend(operation(cx, call)),

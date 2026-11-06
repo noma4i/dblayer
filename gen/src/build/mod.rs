@@ -76,6 +76,7 @@ fn build_model(node: &ModelDecl) -> ModelSpec {
     model.associations = node.associations.iter().map(|association| build_association(association, &node.name)).collect();
     model.relations = node.scopes.iter().map(build_scope).collect();
     model.listens = node.subscriptions.iter().map(updates_spec).collect();
+    model.removed_by = node.removed_by.iter().map(|removal| dblayer::schema::RemovedBy { model: removal.model.clone(), matches: removal.matches.iter().cloned().collect() }).collect();
     model.change_feed = node.changes.first().map(|feed| dblayer::schema::ChangeFeed {
         subscription: feed.subscription.clone(),
         root: feed.from.item.clone(),

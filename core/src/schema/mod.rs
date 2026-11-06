@@ -98,6 +98,8 @@ pub enum DeclarationError {
     SetsUnknownField(String),
     #[error("action {action} lands the unknown model {model}")]
     UnknownLanding { action: String, model: String },
+    #[error("removed_by {model} matches the field {field} that is not declared")]
+    UnknownRemovedBy { model: String, field: String },
     #[error("action {0} destroys a record and cannot keep it on failure")]
     KeepOnDestroy(String),
     #[error("relation name is empty")]
@@ -1186,6 +1188,16 @@ pub struct ModelSpec {
     /// The steps of file uploads declared once per project (`uploads do`): the generator copies them to every model with an upload action.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub upload_steps: Option<crate::upload::UploadOperations>,
+    /// A row of the named model that lands removes the rows of this model whose fields equal its own (M40).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub removed_by: Vec<RemovedBy>,
+}
+
+/// `removed_by Model, match: { field: :model_field }`: `matches` maps a field of this model to a field of `model`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RemovedBy {
+    pub model: String,
+    pub matches: BTreeMap<String, String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -1257,6 +1269,7 @@ impl ModelSpec {
             change_feed: None,
             server_revision: None,
             upload_steps: None,
+            removed_by: Vec::new(),
         }
     }
 
@@ -1533,6 +1546,12 @@ pub fn validate_models(models: &[ModelSpec], reserved_members: &[&str]) -> Vec<M
                         .into_iter()
                         .find(|(_, target, relation)| !by_key.get(target).is_some_and(|target| target.has_remote(relation)))
                         .map_or(Ok(()), |(action, target, relation)| Err(DeclarationError::UnknownRefetch { action: action.name.clone(), relation: format!("{target}.{relation}") }))
+                })
+                .and_then(|()| {
+                    let unknown = model.removed_by.iter().flat_map(|removal| removal.matches.iter().map(move |(own, theirs)| (removal, own, theirs))).find(|(removal, own, theirs)| {
+                        !model.fields.iter().any(|field| &field.name == *own) || !by_key.get(removal.model.as_str()).is_some_and(|source| source.fields.iter().any(|field| &field.name == *theirs))
+                    });
+                    unknown.map_or(Ok(()), |(removal, own, theirs)| Err(DeclarationError::UnknownRemovedBy { model: removal.model.clone(), field: if model.fields.iter().any(|field| &field.name == own) { theirs.clone() } else { own.clone() } }))
                 })
                 .and_then(|()| {
                     let unknown = model.actions.iter().flat_map(|action| action.lands.iter().map(move |landing| (action, landing))).find(|(_, landing)| !by_key.contains_key(landing.model.as_str()));

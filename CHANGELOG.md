@@ -7,6 +7,10 @@
 - `ModelEvent` carries `position` and the rows `before` and `after`.
 - `ModelEventItem` has a `gap` item for a lost order of events.
 - `copies_receiver_to` takes `set:` for literals and fields of the copied row (`owner:`) or a singleton row.
+- `uploads do ... end` declares the steps of file uploads once per project.
+- `removed_by Model, match: { field: :model_field }` removes the rows of a model when a matching row of another model lands.
+- The state of an upload reaches the streams of its row.
+- The local values of a temporary row move to the row that replaces it.
 
 ### Removed
 - `scope.related` is gone: read a server relation with a query.
@@ -20,6 +24,7 @@
 
 ### Changed
 - `ReadState.error` is the typed `DbError`.
+- `open` takes the upload steps from the models: `UploadOperations` and the `uploads` parameter are gone.
 - `OperationReceipt.items` carry one `MutationReceipt` each.
 - A refused sessionless call reports a network error without the HTTP status.
 - `UrlSessionTransport` and `OkHttpTransport` have no `cablePath`. `Transport.openCable` receives the WebSocket address built by the core.

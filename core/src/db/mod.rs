@@ -36,6 +36,7 @@ mod observe;
 pub(crate) mod op_effect;
 mod open;
 mod parent_pointer;
+mod removed_by;
 mod ranked;
 mod reads;
 mod prior;

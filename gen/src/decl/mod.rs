@@ -335,6 +335,13 @@ pub struct ChangesDecl {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+pub struct RemovedByDecl {
+    pub pos: Pos,
+    pub model: String,
+    pub matches: Vec<(String, String)>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub struct ChangedByDecl {
     pub pos: Pos,
     pub area: String,
@@ -502,6 +509,7 @@ pub struct ModelDecl {
     pub subscriptions: Vec<SubscribeDecl>,
     pub changes: Vec<ChangesDecl>,
     pub changed_by: Vec<ChangedByDecl>,
+    pub removed_by: Vec<RemovedByDecl>,
     pub server_revision: Option<String>,
     pub operations: Vec<OperationDecl>,
 }

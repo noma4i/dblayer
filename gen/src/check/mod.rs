@@ -12,6 +12,7 @@ use crate::ParseError;
 
 mod attributes;
 mod changes;
+mod removed_by;
 mod effects;
 mod enums;
 mod nested;
@@ -53,6 +54,7 @@ pub fn check(nodes: &[ModelDecl]) -> Result<Vec<ModelSpec>, Vec<Found>> {
     }
     let models = build(nodes);
     changes::check_changes(nodes, &models, &mut errors);
+    removed_by::check_removed_by(nodes, &models, &mut errors);
     enums::check_enums(nodes, &models, &mut errors);
     if !errors.is_empty() {
         return Err(errors);

@@ -693,6 +693,8 @@ end
 
 `changes` names the registered subscription and the path to its array of changes.
 `area`, `kind` and `id` name response paths within each entry.
+A model removes its own rows when a row of another model lands with `removed_by Message, match: { chatId: :chatId, userId: :authorId }`. The rows of this model whose fields equal the listed fields of the new row go in the same commit, whether the new row comes from a local write, an answer or an event. The generator refuses an unknown model, an unknown field and fields of another type.
+
 Declare `changes` once across the input files. Every `changed_by` declaration uses that subscription.
 Missing declarations, duplicate subscriptions and empty paths produce generator errors.
 
