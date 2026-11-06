@@ -108,7 +108,7 @@ struct EncryptedSessionTests {
     let posts = http.posts
     #expect(posts.map(\.path) == ["/api/ticket", "/api/auth/otp", "/api/auth/otp"])
     #expect(posts[0].body.split(separator: ".", omittingEmptySubsequences: false).count == 5)
-    #expect(credentials.current?.count == 43)
+    #expect(credentials.current == nil)
     try await database.sessionReset()
     #expect(credentials.current == nil)
   }

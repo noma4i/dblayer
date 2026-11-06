@@ -5,7 +5,7 @@ import Testing
 
 extension BridgeProbeTests.EnumTests {
   private func openShelves() async throws -> Database {
-    try await openDatabase(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: nil)
+    try await reopenSigned(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, operations: #"[{"name":"CreateContainer","document":"mutation CreateContainer($title: String, $shelves: [String!]) { createContainer(title: $title, shelves: $shelves) { id title shelves } }"}]"#)
   }
 
   @Test @MainActor

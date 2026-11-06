@@ -78,7 +78,8 @@ extension BridgeProbeTests {
     let transport = MockTransport()
     let preload = transport.hold("PresenceOnline", reply: #"{"data":{"presenceOnline":[]}}"#)
     defer { preload.release() }
-    try await DB.openTesting(transport: transport, modelsJSON: modelsJSON, operations: [MediaPresenceOnline.self, ChatMediaOperation.self])
+    let operations: [any GraphQLOperation.Type] = [MediaPresenceOnline.self, ChatMediaOperation.self]
+    try await reopen(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: transport, operations: JSONValue.array(operations.map { .object(["name": .string($0.operationName), "document": .string($0.document)]) }).text)
     let (signals, signal) = AsyncStream<Void>.makeStream()
     let entered = Task { await preload.entered(); signal.yield(()) }
     defer { entered.cancel(); signal.finish() }
