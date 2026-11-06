@@ -341,6 +341,9 @@ impl EncryptedClient {
 
     async fn post(&self, path: &str, token: String, request_id: &str, response_key: &str, purpose: crate::transport::NetworkPurpose) -> Result<Answer, TransportError> {
         crate::db::lock::assert_no_library_lock("HttpExchange::post");
+        if crate::task::admitted().is_some_and(|admitted| !admitted.is_current()) {
+            return Err(TransportError::Interrupted("the epoch of the request ended".into()));
+        }
         let reply = self.http.post(path, token, purpose).await?;
         if reply.status != 200 {
             return Err(TransportError::Http { status: reply.status, body: reply.body });
