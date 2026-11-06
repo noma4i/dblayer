@@ -122,3 +122,41 @@ pub(super) fn texts(cell: &Cell) -> Vec<String> {
         _ => Vec::new(),
     }
 }
+
+/// The user row of the account and of other users: counters of the account, the connection with a chat, the blocked list, and the actions on them.
+pub(super) fn add_profile(models: &mut Value) {
+    let models = models.as_array_mut().unwrap();
+    let chat = models.iter_mut().find(|model| model["key"] == "Chat").unwrap();
+    chat["fields"].as_array_mut().unwrap().push(serde_json::to_value(optional("connectionStatus", ScalarKind::Str)).unwrap());
+    let user = models.iter_mut().find(|model| model["key"] == "User").unwrap();
+    for name in ["connectionStatus"] { user["fields"].as_array_mut().unwrap().push(serde_json::to_value(optional(name, ScalarKind::Str)).unwrap()); }
+    for name in ["unreadChatsCount", "secondaryChatsCount", "premiumSecondaryChatsCount", "unreadSecondaryChatsCount"] { user["fields"].as_array_mut().unwrap().push(serde_json::to_value(optional(name, ScalarKind::Int)).unwrap()); }
+    let mut blocked = user["relations"].as_array().unwrap().iter().find(|relation| relation["name"] == "all").unwrap().clone();
+    blocked["name"] = json!("blocked");
+    blocked["remote"]["operation"] = json!("BlockedUsers");
+    user["relations"].as_array_mut().unwrap().push(blocked);
+    let mut update = ActionDeclaration::new("update", RootShape::Upsert);
+    update.mutation = Some("ProfileUpdate".into());
+    update.variables.insert("name".into(), "name".into());
+    update.args.insert("name".into(), "string".into());
+    update.ignore_response = true;
+    update.refetch.push("User.profile".into());
+    let mut answer = ActionDeclaration::new("answer_connection", RootShape::Upsert);
+    answer.mutation = Some("AnswerConnection".into());
+    answer.root = Some("answerConnection.user".into());
+    answer.variables.insert("userId".into(), "id".into());
+    answer.variables.insert("chatId".into(), "chatId".into());
+    answer.args.insert("chatId".into(), "id".into());
+    answer.lands.push(crate::schema::ActionLanding { model: "Chat".into(), root: "answerConnection.chat".into() });
+    answer.refetch.push("User.profile".into());
+    let mut actions = vec![update, answer];
+    for (name, mutation) in [("block", "BlockUser"), ("unblock", "UnblockUser")] {
+        let mut action = ActionDeclaration::new(name, RootShape::Upsert);
+        action.mutation = Some(mutation.into());
+        action.variables.insert("id".into(), "id".into());
+        action.ignore_response = true;
+        action.refetch.push("User.blocked".into());
+        actions.push(action);
+    }
+    user["actions"].as_array_mut().unwrap().extend(actions.into_iter().map(|action| serde_json::to_value(action).unwrap()));
+}

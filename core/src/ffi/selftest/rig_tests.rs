@@ -3,7 +3,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
-use serde_json::{json, Value};
+use serde_json::{json, Map, Value};
 use tokio::sync::{Notify, Semaphore};
 
 use crate::ffi::lifecycle_tests::{models, named, Rows};
@@ -86,6 +86,8 @@ struct State {
     script: Vec<(String, Fault)>,
     messages: Vec<(String, Value)>,
     group_members: BTreeMap<String, Vec<String>>,
+    profile: Map<String, Value>,
+    blocked: Vec<String>,
 }
 
 /// A held request first waits at its gate, then ends in the inner fault, if any.
@@ -120,6 +122,7 @@ impl World {
     pub(super) fn seed_message(&self, account: &str, id: &str, text: &str, at: i64) {
         self.state.lock().unwrap().messages.push((account.into(), json!({"__typename":"Message","id":id,"chatId":"c1","text":text,"at":at})));
     }
+    pub(super) fn set_profile(&self, fields: Value) { self.state.lock().unwrap().profile.extend(fields.as_object().unwrap().clone()); }
     pub(super) fn seed_authored_message(&self, account: &str, id: &str, text: &str, at: i64, author: &str) {
         self.state.lock().unwrap().messages.push((account.into(), json!({"__typename":"Message","id":id,"chatId":"c1","text":text,"at":at,"authorId":author})));
     }
@@ -160,7 +163,8 @@ impl World {
             _ => None,
         };
         let account = held_account.unwrap_or(account);
-        let row = json!({"__typename":"User","id":"user","name":account});
+        let mut row = json!({"__typename":"User","id":"user","name":account});
+        row.as_object_mut().unwrap().extend(state.profile.clone());
         let answer = match operation {
             "login_link" | "social" => {
                 if commits {
@@ -199,6 +203,22 @@ impl World {
                 if commits { state.messages.push((account.clone(), message.clone())); }
                 json!({"data":{"messageForward":{"message":message,"chat":{"id":input["chatId"],"updatedAt":"2026-11-04T00:00:00Z"}}}})
             }
+            "ProfileUpdate" => {
+                if commits { if let Some(name) = body["variables"].get("name") { state.profile.insert("name".into(), name.clone()); } }
+                json!({"data":{"profileUpdate":{"ok":true}}})
+            }
+            "AnswerConnection" => {
+                let variables = &body["variables"];
+                json!({"data":{"answerConnection":{"user":{"__typename":"User","id":variables["userId"],"connectionStatus":"CONNECTED"},"chat":{"__typename":"Chat","id":variables["chatId"],"connectionStatus":"CONNECTED"}}}})
+            }
+            "BlockUser" | "UnblockUser" => {
+                let id = body["variables"]["id"].as_str().unwrap_or_default().to_string();
+                if commits {
+                    if operation == "BlockUser" { state.blocked.push(id.clone()); } else { state.blocked.retain(|blocked| *blocked != id); }
+                }
+                json!({"data":{"blockUser":{"id":id}}})
+            }
+            "BlockedUsers" => json!({"data":{"blockedUsers":state.blocked.iter().map(|id| json!({"__typename":"User","id":id,"name":id})).collect::<Vec<_>>()}}),
             "ChatPin" => json!({"data":{"chatPin":{"__typename":"Chat","id":body["variables"]["id"],"pinned":body["variables"]["pinned"]}}}),
             "ChatMute" => json!({"data":{"chatMute":{"__typename":"Chat","id":body["variables"]["id"],"muted":body["variables"]["muted"]}}}),
             "ChatMarkRead" => json!({"data":{"chatMarkRead":{"__typename":"Chat","id":body["variables"]["id"],"unreadCount":0}}}),
@@ -370,6 +390,11 @@ const OPERATIONS: &str = r#"[
     {"name":"MessageForward","document":"mutation MessageForward($input: MessageForwardInput!) { messageForward(input: $input) { message { id chatId text at authorId isForwarded forwardedFromUserId } chat { id updatedAt } } }"},
     {"name":"MessageReact","document":"mutation MessageReact($id: ID!, $body: String!, $userId: ID!) { messageReact(id: $id, body: $body, userId: $userId) { id chatId text at reactions { body userId } } }"},
     {"name":"MemberChanged","document":"subscription MemberChanged { memberChanged { id name } }"},
+    {"name":"ProfileUpdate","document":"mutation ProfileUpdate($name: String!) { profileUpdate(name: $name) { ok } }"},
+    {"name":"AnswerConnection","document":"mutation AnswerConnection($userId: ID!, $chatId: ID!) { answerConnection(userId: $userId, chatId: $chatId) { user { id connectionStatus } chat { id connectionStatus } } }"},
+    {"name":"BlockUser","document":"mutation BlockUser($id: ID!) { blockUser(id: $id) { id } }"},
+    {"name":"UnblockUser","document":"mutation UnblockUser($id: ID!) { unblockUser(id: $id) { id } }"},
+    {"name":"BlockedUsers","document":"query BlockedUsers { blockedUsers { id name } }"},
     {"name":"ChatPin","document":"mutation ChatPin($id: ID!, $pinned: Boolean!) { chatPin(id: $id, pinned: $pinned) { id pinned } }"},
     {"name":"ChatMute","document":"mutation ChatMute($id: ID!, $muted: Boolean!) { chatMute(id: $id, muted: $muted) { id muted } }"},
     {"name":"ChatMarkRead","document":"mutation ChatMarkRead($id: ID!) { chatMarkRead(id: $id) { id unreadCount } }"},

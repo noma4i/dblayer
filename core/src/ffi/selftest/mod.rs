@@ -19,5 +19,6 @@ mod v3_group_members_tests;
 mod v3_message_forward_tests;
 mod v3_message_reactions_tests;
 mod v3_message_tests;
+mod v3_profile_tests;
 mod v3_user_tests;
 mod windows_tests;
