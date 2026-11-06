@@ -16,7 +16,7 @@ pub use operations::{MultipartOperations, UploadOperation, UploadOperations};
 pub use plan::{mime_of, parse_headers, part_count, part_range, scenario_for};
 pub use progress::TransferProgress;
 pub use source::{copy_range, file_len, md5_base64};
-pub use state::{UploadInfo, UploadPart, UploadRequest, UploadRetry, UploadScenario, UploadStage, UploadState, UploadStatus, WaitReason};
+pub use state::{UploadInfo, UploadProcessing, UploadPart, UploadRequest, UploadRetry, UploadScenario, UploadStage, UploadState, UploadStatus, WaitReason};
 
 #[cfg(test)]
 mod config_tests;

@@ -141,6 +141,15 @@ impl UploadState {
     }
 }
 
+/// The server works on the file of a finished transfer (`processing` of the action).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct UploadProcessing {
+    pub progress: Option<f64>,
+}
+
+/// The progress is a finite number read from JSON, so equality is total.
+impl Eq for UploadProcessing {}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct UploadInfo {
     pub status: UploadStatus,
@@ -150,6 +159,14 @@ pub struct UploadInfo {
     pub wait_reason: Option<WaitReason>,
     pub attempts: u32,
     pub error: Option<OperationFailure>,
+    /// The file URL of the copy of the library from the end of the copy to the removal of the transfer.
+    #[serde(default)]
+    pub local_url: Option<String>,
+    #[serde(default)]
+    pub processing: Option<UploadProcessing>,
+    /// The id of the copy in the file directory while the transfer holds one: `local_url` is made from it at the read.
+    #[serde(skip)]
+    pub copy_file: Option<String>,
 }
 
 impl UploadInfo {
@@ -163,7 +180,7 @@ impl UploadInfo {
             _ => state.phase,
         };
         let wait_reason = (shown == UploadStatus::Waiting).then_some(wait_reason).flatten();
-        Self { status: shown, stage: state.stage, sent_bytes: state.sent_bytes, total_bytes: state.total_bytes, wait_reason, attempts: state.attempts(), error }
+        Self { status: shown, stage: state.stage, sent_bytes: state.sent_bytes, total_bytes: state.total_bytes, wait_reason, attempts: state.attempts(), error, local_url: None, processing: None, copy_file: None }
     }
 
     #[cfg(test)]

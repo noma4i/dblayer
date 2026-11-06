@@ -272,6 +272,9 @@ pub fn info_at(row: &Row<'_>, first: usize) -> Result<Option<UploadInfo>> {
         wait_reason: row.get::<_, Option<String>>(first + 4)?.map(|text| enum_from(&text)).transpose()?,
         attempts: row.get::<_, i64>(first + 5)? as u32,
         error: failure_at(row, first + 6)?,
+        local_url: None,
+        processing: None,
+        copy_file: None,
     }))
 }
 

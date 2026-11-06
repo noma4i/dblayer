@@ -1001,6 +1001,9 @@ pub struct ActionDeclaration {
     pub lands: Vec<ActionLanding>,
     #[serde(default)]
     pub result: BTreeMap<String, String>,
+    /// The server works on the file after `Confirmed`: the field, its terminal values and the field of the progress (M37).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub processing: Option<ProcessingDeclaration>,
     /// Closed effect: the receiver row leaves every list before the answer and returns when the server refuses.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub removes_receiver: bool,
@@ -1071,6 +1074,22 @@ pub struct UploadBatchRenumber {
     pub position_from: usize,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProcessingDeclaration {
+    pub field: String,
+    pub done: Vec<String>,
+    #[serde(default)]
+    pub progress: Option<String>,
+}
+
+impl ProcessingDeclaration {
+    /// `Some(progress)` while the value of `field` in `data` is not terminal; `None` when it is terminal or absent.
+    pub fn progress_in(&self, data: &Map<String, Value>) -> Option<Option<f64>> {
+        let value = read_path(data, &self.field).and_then(Value::as_str)?;
+        (!self.done.iter().any(|done| done == value)).then(|| self.progress.as_deref().and_then(|path| read_path(data, path)).and_then(Value::as_f64))
+    }
+}
+
 impl ActionDeclaration {
     /// The call that queued the action waits for the answer and returns the row at its root: it has a mutation and no optimistic change, no declared result and no upload.
     pub fn returns_answer(&self) -> bool {
@@ -1103,6 +1122,7 @@ impl ActionDeclaration {
             root: None,
             lands: Vec::new(),
             result: BTreeMap::new(),
+            processing: None,
             removes_receiver: false,
             copies_receiver_to: None,
             scope_effects: Vec::new(),

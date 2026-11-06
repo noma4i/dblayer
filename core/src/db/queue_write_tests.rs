@@ -141,3 +141,25 @@ fn the_cache_of_blobs_gives_fresh_stale_and_missing_by_content() {
     db.write_queue_ops(&[StoreOp::BlobCacheRemove { content_sha256: "old".into() }]).unwrap();
     assert_eq!(db.blob_cache_lookup("old"), CachedBlob::Miss);
 }
+
+/// xfer_processing_by_event: the processing of an upload action follows the row, a terminal value ends it, nothing polls (M37).
+#[test]
+fn the_processing_of_an_upload_action_follows_the_row() {
+    use crate::schema::{ActionDeclaration, FieldSpec, ProcessingDeclaration, RootShape};
+    use crate::value::ScalarKind;
+    let mut moments = moments_spec();
+    moments.fields.push(FieldSpec::scalar("percent", ScalarKind::Num).optional());
+    let mut upload = ActionDeclaration::new("upload", RootShape::Upsert);
+    upload.upload = true;
+    upload.mutation = Some("CreateMoment".to_string());
+    upload.processing = Some(ProcessingDeclaration { field: "text".into(), done: vec!["ready".into()], progress: Some("percent".into()) });
+    moments.actions.push(upload);
+    let db = super::Db::open_in_memory(vec![users_spec(), moments, vibes_spec(), chats_spec(), messages_spec()], None).unwrap();
+    let processing = |db: &super::Db| db.find("moments", &rid("m1")).unwrap().unwrap().sync.uploads.get("upload").and_then(|info| info.processing.clone()).map(|processing| processing.progress);
+    put(&db, "moments", json!({"id": "m1", "text": "working", "percent": 0.4}));
+    assert_eq!(processing(&db), Some(Some(0.4)), "the server is working: the progress is the field of the row");
+    put(&db, "moments", json!({"id": "m1", "text": "working", "percent": 0.9}));
+    assert_eq!(processing(&db), Some(Some(0.9)), "an event of the row moves the progress");
+    put(&db, "moments", json!({"id": "m1", "text": "ready"}));
+    assert_eq!(processing(&db), None, "a terminal value ends the processing");
+}

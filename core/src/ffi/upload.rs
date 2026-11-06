@@ -196,7 +196,7 @@ impl Database {
         let item = self.single_upload(&request.model, planned.row_id.as_str(), &upload.action, &file, planned.effects.clone())?;
         let waiter = self.life.accept_upload(epoch, item, self.now());
         let TransferAnswer::Receipt(held) = self.transfer_answer(waiter, "send").await? else { return Err(DbError::Database { detail: "the owner answered a send with no receipt".into() }) };
-        let queued = crate::upload::UploadInfo { status: crate::upload::UploadStatus::Queued, stage: crate::upload::UploadStage::Prepare, sent_bytes: 0, total_bytes: 0, wait_reason: None, attempts: 0, error: None };
+        let queued = crate::upload::UploadInfo { status: crate::upload::UploadStatus::Queued, stage: crate::upload::UploadStage::Prepare, sent_bytes: 0, total_bytes: 0, wait_reason: None, attempts: 0, error: None, local_url: None, processing: None, copy_file: None };
         let sync = crate::syncstate::SyncInfo { uploads: std::collections::BTreeMap::from([(action, queued)]), ..Default::default() };
         let record = Record { id: planned.row_id.clone(), revision: 0, data: planned.input.as_object().cloned().unwrap_or_default(), sync, ephemeral: 0 };
         let value = self.wire(&request.model)?.row(&record);

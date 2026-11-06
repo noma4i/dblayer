@@ -38,10 +38,12 @@ impl Shared {
                 let mut data = record.row;
                 let ephemeral = overlay.as_ref().map_or(0, |state| state.overlay(spec, &id, &mut data));
                 let mut stamp = record.revision;
+                let mut sync = syncs.remove(&id).unwrap_or_default();
+                self.finish_uploads(spec, &data, &mut sync);
                 if linked {
                     stamp = stamp.max(self.resolve_nested_refs(reader, spec, &mut data)?);
                 }
-                built.push((id.clone(), Arc::new(Record { id: record.id, revision: stamp, data, sync: syncs.remove(&id).unwrap_or_default(), ephemeral })));
+                built.push((id.clone(), Arc::new(Record { id: record.id, revision: stamp, data, sync, ephemeral })));
             }
         }
         #[cfg(test)]
@@ -56,6 +58,25 @@ impl Shared {
             }
         }
         Ok(built.into_iter().collect())
+    }
+
+    /// `uploads[action]` of a row: the file URL of the copy while the transfer holds one, and the processing the server reports in the row after the transfer.
+    fn finish_uploads(&self, spec: &crate::schema::ModelSpec, data: &Map<String, Value>, sync: &mut crate::syncstate::SyncInfo) {
+        for info in sync.uploads.values_mut() {
+            if let Some(id) = info.copy_file.take() {
+                info.local_url = self.files.path(&id).filter(|path| path.exists()).or_else(|| Some(self.files.cache_target(&id, "source")).filter(|path| path.exists())).map(|path| format!("file://{}", path.display()));
+            }
+        }
+        for action in spec.actions.iter().filter(|action| action.upload) {
+            let Some(progress) = action.processing.as_ref().and_then(|processing| processing.progress_in(data)) else { continue };
+            let processing = Some(crate::upload::UploadProcessing { progress });
+            match sync.uploads.get_mut(&action.name) {
+                Some(info) => info.processing = processing,
+                None => {
+                    sync.uploads.insert(action.name.clone(), crate::upload::UploadInfo { status: crate::upload::UploadStatus::Done, stage: crate::upload::UploadStage::Mutation, sent_bytes: 0, total_bytes: 0, wait_reason: None, attempts: 0, error: None, local_url: None, processing, copy_file: None });
+                }
+            }
+        }
     }
 
     pub(crate) fn rows_for_keys(&self, reader: &Reader<'_>, model: &str, keys: &[RowKey]) -> Result<Vec<Row>, DbError> {

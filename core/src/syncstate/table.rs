@@ -94,12 +94,16 @@ fn read_uploads(connection: &Connection, model: &str, ids: &[String]) -> rusqlit
     let mut found: HashMap<String, std::collections::BTreeMap<String, crate::upload::UploadInfo>> = HashMap::new();
     for chunk in ids.chunks(CHUNK) {
         let marks = vec!["?"; chunk.len()].join(", ");
-        let mut statement = connection.prepare_cached(&format!("SELECT row_id, action, {INFO_COLUMNS} FROM sync_upload WHERE model = ? AND row_id IN ({marks})"))?;
+        let mut statement = connection.prepare_cached(&format!("SELECT row_id, action, {INFO_COLUMNS}, size FROM sync_upload WHERE model = ? AND row_id IN ({marks})"))?;
         let arguments = std::iter::once(model).chain(chunk.iter().map(String::as_str));
         let mut rows = statement.query(params_from_iter(arguments))?;
         while let Some(row) = rows.next()? {
-            if let Some(info) = info_at(row, 2)? {
-                found.entry(row.get(0)?).or_default().insert(row.get(1)?, info);
+            if let Some(mut info) = info_at(row, 2)? {
+                let (id, action): (String, String) = (row.get(0)?, row.get(1)?);
+                if row.get::<_, Option<i64>>(10)?.is_some_and(|size| size > 0) {
+                    info.copy_file = Some(crate::owners::write::transfer::file_id(&format!("{model}:{id}:{action}")));
+                }
+                found.entry(id).or_default().insert(action, info);
             }
         }
         let owner = std::iter::once(SqlValue::Text(model.to_string())).chain(chunk.iter().cloned().map(SqlValue::Text)).collect::<Vec<_>>();
