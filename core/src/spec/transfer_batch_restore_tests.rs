@@ -40,7 +40,9 @@ fn xfer_batch_restored_goes_out_as_one_mutation() {
     assert_eq!((twin.stage(2), twin.stage(1)), (TransferStage::BatchReady, TransferStage::Ready));
     twin.post(TransferInput::RestoreReady { epoch: EPOCH });
     twin.online(true);
+    twin.commit();
     twin.step_ok(1, 1, None);
+    twin.commit();
     twin.commit();
     twin.completed(1);
     let out = twin.commit();

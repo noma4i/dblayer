@@ -19,6 +19,7 @@ impl TransferState {
             transfer.restored = true;
             transfer.upload_id = row.upload_id.clone();
             transfer.confirmed_parts = row.confirmed_parts;
+            transfer.attempts = row.attempts;
             transfer.etags = row.etags.clone();
             transfer.signed_id = row.signed_id.clone();
             transfer.aborted = row.aborted;

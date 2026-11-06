@@ -10,6 +10,7 @@ fn with_upload(twin: &mut Twin, key: &str) -> TransferId {
     let id = twin.uploading(key, 3);
     twin.step_ok(id, 1, Some("u1"));
     twin.commit();
+    twin.commit();
     assert_eq!(twin.stage(id), TransferStage::Uploading);
     id
 }
@@ -85,7 +86,9 @@ fn xfer_prop_orphan_abort() {
             let id = twin.uploading(KEY, 2);
             twin.step_ok(id, 1, Some("u1"));
             twin.commit();
+            twin.commit();
             twin.step_ok(id, 2, None);
+            twin.commit();
             twin.commit();
             assert_eq!(twin.stage(id), TransferStage::Completing);
             id
@@ -120,6 +123,8 @@ fn xfer_ready_start_small() {
     let id = twin.accepted(KEY, 1);
     assert_eq!(twin.stage(id), TransferStage::Ready);
     let out = twin.online(true);
+    assert_eq!((twin.stage(id), out.steps().len()), (TransferStage::PersistingAttempt, 0));
+    let out = twin.commit();
     assert_eq!((twin.stage(id), out.steps().iter().map(|(part, _)| *part).collect::<Vec<_>>(), out.shows()), (TransferStage::Uploading, vec![Some(1)], vec![crate::owners::write::transfer::Shown::Uploading { progress: 0 }]));
 }
 
@@ -131,8 +136,10 @@ fn xfer_step_forbidden_part() {
     let out = twin.step_error(id, true);
     assert!(out.steps().is_empty() && out.timers == 1, "the refused part waits for its timer: {out:?}");
     let out = twin.tick_retry(id);
+    assert!(out.steps().is_empty());
+    let out = twin.commit();
     assert_eq!(out.steps().iter().map(|(part, _)| *part).collect::<Vec<_>>(), vec![Some(2)], "only part 2 asks for a new URL");
-    assert_eq!((twin.t(id).upload_id.as_deref(), twin.t(id).attempts), (Some("u1"), 1));
+    assert_eq!((twin.t(id).upload_id.as_deref(), twin.t(id).attempts), (Some("u1"), 2));
 }
 
 #[test]
@@ -144,6 +151,8 @@ fn xfer_restart_stale_presign() {
     let (mut twin, _) = Twin::opened(vec![row], Default::default());
     twin.post(TransferInput::RestoreReady { epoch: EPOCH });
     let out = twin.online(true);
+    assert!(out.steps().is_empty());
+    let out = twin.commit();
     assert_eq!(out.steps().iter().map(|(part, _)| *part).collect::<Vec<_>>(), vec![Some(3)], "the first step after a restart asks only for the unfinished part");
 }
 

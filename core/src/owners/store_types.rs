@@ -74,6 +74,7 @@ pub struct UploadRow {
     pub fields: Option<String>,
     pub upload_id: Option<String>,
     pub confirmed_parts: u32,
+    pub attempts: u32,
     pub completed: bool,
     pub failed: Option<String>,
     pub created_at: u64,

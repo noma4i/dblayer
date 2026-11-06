@@ -78,6 +78,7 @@ fn xfer_prop_abort_rule() {
     let id = twin.uploading(KEY, 3);
     twin.step_ok(id, 1, Some("u1"));
     twin.commit();
+    twin.commit();
     assert_eq!(twin.cancel(KEY).1.orphans_written().len(), 1, "cancel after a part leaves the upload to abort");
     let mut complete = Twin::new();
     let id = complete.completing(KEY);
@@ -88,8 +89,9 @@ fn xfer_prop_abort_rule() {
     let id = aborted.uploading(KEY, 3);
     aborted.step_ok(id, 1, Some("u1"));
     aborted.commit();
-    assert_eq!(aborted.step_error(id, false).aborts(), 1, "a permanent error before the last part");
     aborted.commit();
+    assert_eq!(aborted.step_error(id, false).orphans_written().len(), 1);
+    assert_eq!(aborted.commit().orphan_aborts().len(), 1);
     assert_eq!(aborted.discard(KEY).1.orphans_written().len(), 0, "an upload that was aborted is not aborted twice");
     let mut expired = Twin::new();
     let id = expired.uploading(KEY, 3);
@@ -108,10 +110,13 @@ fn xfer_prop_purpose() {
     let id = twin.uploading(KEY, 3);
     outs.push(twin.step_error(id, true));
     outs.push(twin.tick_retry(id));
+    outs.push(twin.commit());
     outs.push(twin.step_ok(id, 1, Some("u1")));
+    outs.push(twin.commit());
     outs.push(twin.commit());
     outs.push(twin.online(false));
     outs.push(twin.online(true));
+    outs.push(twin.commit());
     let steps: Vec<NetworkPurpose> = outs.iter().flat_map(|out| out.runs.iter()).filter_map(|run| if let TransferEffect::Step { purpose, .. } = run { Some(*purpose) } else { None }).collect();
     assert!(steps.len() >= 3 && steps.iter().all(|purpose| *purpose == NetworkPurpose::Transfer), "{steps:?}");
 }
@@ -137,7 +142,9 @@ fn xfer_prop_round_covers() {
     let mut covered = twin.commit().round_needed();
     twin.copy_done(id);
     twin.commit();
+    twin.commit();
     twin.step_ok(id, 1, None);
+    twin.commit();
     twin.commit();
     twin.completed(id);
     twin.commit();
@@ -155,9 +162,20 @@ fn xfer_prop_order() {
     for seed in 0..12u64 {
         let mut twin = Twin::with_slots(2);
         let keys = [KEY, OTHER, THIRD, "Moment:r4:upload"];
-        let ids: Vec<TransferId> = keys.iter().map(|key| twin.accepted(key, 2)).collect();
+        let ids: Vec<TransferId> = keys.iter().map(|key| {
+            let id = twin.accepted(key, 2);
+            if twin.stage(id) == TransferStage::PersistingAttempt {
+                twin.commit();
+            }
+            id
+        }).collect();
         let mut state = seed + 1;
         for _ in 0..40 {
+            if twin.has_pending() {
+                twin.commit();
+                assert!(twin.state().active() <= 2, "seed {seed}: at most FileSlots attempts in the network");
+                continue;
+            }
             state = state.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
             let pick = ids[(state >> 33) as usize % ids.len()];
             if twin.t(pick).in_flight && twin.stage(pick) == TransferStage::Uploading {
@@ -266,10 +284,12 @@ fn xfer_prop_observed_after_commit() {
     let out = twin.copy_done(id);
     assert_eq!((out.shows().len(), out.all_replies()), (0, 0), "copy");
     twin.commit();
+    twin.commit();
     let out = twin.step_ok(id, 1, Some("u1"));
     assert_eq!(out.shows().len(), 0, "progress");
     let out = twin.commit();
     assert!(out.shows().contains(&Shown::Uploading { progress: 33 }));
+    twin.commit();
     let out = twin.step_error(id, false);
     assert_eq!(out.shows().len(), 0, "failed");
     assert_eq!(twin.commit().shows(), vec![Shown::Failed { error: "failed".into() }]);
@@ -283,6 +303,7 @@ fn xfer_prop_intent_after_complete() {
     let mut twin = Twin::new();
     let id = twin.uploading(KEY, 1);
     let mut submits = twin.step_ok(id, 1, None).submits();
+    submits += twin.commit().submits();
     submits += twin.commit().submits();
     submits += twin.completed(id).submits();
     assert_eq!(submits, 0, "no mutation before the write of `completed`");
@@ -326,7 +347,8 @@ fn xfer_prop_batch_after_all_copies() {
     let second = twin.copy_done(ids[1]);
     assert_eq!((second.all_replies(), second.steps().len(), second.writes()), (0, 0, 1), "one common write, no receipt and no request before it");
     let out = twin.commit();
-    assert_eq!((out.all_replies(), out.steps().len()), (1, 1), "the receipts go together and then the first element starts");
+    assert_eq!((out.all_replies(), out.steps().len()), (1, 0));
+    assert_eq!(twin.commit().steps().len(), 1);
     let mut failing = Twin::new();
     failing.post(TransferInput::AcceptBatch { joint: Box::new(joint()), epoch: EPOCH, items: vec![item(KEY, 2), item(OTHER, 2)], reply: 9, now: Time(0) });
     failing.commit();
@@ -367,6 +389,7 @@ fn xfer_prop_status_subscribers() {
     twin.step_ok(id, 1, None);
     let out = twin.commit();
     assert!(out.statuses().iter().all(|(stream, _)| *stream == 2) && !out.statuses().is_empty());
+    twin.commit();
     twin.post(TransferInput::InterestMinus { transfer_id: id, stream_id: 2 });
     twin.step_ok(id, 2, None);
     assert!(twin.commit().statuses().is_empty(), "no values after the last id is taken off");
@@ -378,10 +401,12 @@ fn xfer_prop_persist_before_step() {
     let id = twin.uploading(KEY, 2);
     let out = twin.step_ok(id, 1, Some("u1"));
     assert_eq!((out.steps().len(), out.completes()), (0, 0), "the next step waits for the write of the part");
+    assert_eq!(twin.commit().steps().len(), 0);
     assert_eq!(twin.commit().steps().len(), 1);
     twin.step_ok(id, 2, None);
     let out = twin.commit();
-    assert_eq!(out.completes(), 1, "complete goes after the write of the last part");
+    assert_eq!(out.completes(), 0);
+    assert_eq!(twin.commit().completes(), 1);
     let out = twin.completed(id);
     assert_eq!(out.submits(), 0);
     assert_eq!(twin.commit().submits(), 1, "the mutation goes after the write of `completed`");
@@ -389,5 +414,6 @@ fn xfer_prop_persist_before_step() {
     failed.failed(KEY);
     let (_, out) = failed.retry(KEY, None);
     assert_eq!(out.steps().len(), 0, "the repeat starts after the write of `Retrying`");
+    assert_eq!(failed.commit().steps().len(), 0);
     assert_eq!(failed.commit().steps().len(), 1);
 }

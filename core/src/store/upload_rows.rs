@@ -23,6 +23,7 @@ pub(crate) struct UploadRaw {
     batch: Option<i64>,
     upload_id: Option<String>,
     sent: i64,
+    attempts: i64,
     completed: bool,
     failed: Option<String>,
     created_at: i64,
@@ -59,7 +60,7 @@ pub(crate) fn upload_rows(connection: &rusqlite::Connection) -> rusqlite::Result
     }
     let mut statement = connection.prepare(
         "SELECT model, row_id, action, seq, source, total, batch, upload_id, sent, completed, error_message, created_at, inline, size, sha256, mutation_path, mutation_body, on_failure, steps_path, steps_body, \
-         transfer_id, cycle_id, signed_id, aborted, op_id, fields FROM sync_upload WHERE seq IS NOT NULL ORDER BY seq",
+         transfer_id, cycle_id, signed_id, aborted, op_id, fields, attempts FROM sync_upload WHERE seq IS NOT NULL ORDER BY seq",
     )?;
     let rows = statement.query_map([], |row| {
         let key = [row.get::<_, String>(0)?, row.get(1)?, row.get(2)?];
@@ -89,6 +90,7 @@ pub(crate) fn upload_rows(connection: &rusqlite::Connection) -> rusqlite::Result
             aborted: row.get::<_, Option<bool>>(23)?.unwrap_or(false),
             op_id: row.get(24)?,
             fields: row.get(25)?,
+            attempts: row.get(26)?,
         })
     })?;
     rows.collect()
@@ -128,6 +130,7 @@ impl Store {
             upload_id: raw.upload_id,
             fields: raw.fields.and_then(|text| serde_json::from_str::<serde_json::Value>(&text).ok()).and_then(|value| value.as_object().cloned()).unwrap_or_default(),
             confirmed_parts: unsigned(raw.sent, "sent")?,
+            attempts: unsigned(raw.attempts, "attempts")?,
             etags: raw.etags,
             completed: raw.completed,
             signed_id: raw.signed_id,

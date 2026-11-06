@@ -50,8 +50,9 @@ fn xfer_copy_stale_cache_removed() {
     assert_eq!(cache_ops(&out), vec![StoreOp::BlobCacheRemove { content_sha256: "h".into() }]);
     assert_eq!(out.kinds(), vec![UploadKind::SyncUpload]);
     let out = twin.commit();
-    assert_eq!(twin.stage(id), TransferStage::Uploading, "the full cycle of steps follows");
-    assert_eq!(out.steps().len(), 1);
+    assert_eq!(twin.stage(id), TransferStage::PersistingAttempt);
+    assert_eq!(out.steps().len(), 0);
+    assert_eq!(twin.commit().steps().len(), 1);
 }
 
 #[test]
@@ -60,7 +61,9 @@ fn xfer_blob_cache_by_content() {
     let id = twin.copying(KEY, 1);
     assert!(cache_ops(&copied(&mut twin, id, CachedBlob::Miss)).is_empty(), "a miss writes nothing to the cache");
     twin.commit();
+    twin.commit();
     twin.step_ok(id, 1, None);
+    twin.commit();
     twin.commit();
     let written = twin.completed(id);
     assert_eq!(cache_ops(&written), vec![StoreOp::BlobCachePut { content_sha256: "h".into(), blob_id: "signed".into(), created_at: 0 }], "the completed upload is remembered by its content");

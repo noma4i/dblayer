@@ -26,7 +26,6 @@ impl TransferState {
             attempts: 0,
             in_flight: false,
             waiting_retry: false,
-            retry_due: false,
             next_step: NextStep::Part(1),
             upload_id: None,
             confirmed_parts: 0,

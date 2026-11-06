@@ -57,7 +57,7 @@ fn stage_in(name: &str, twin: &mut Twin) -> TransferId {
             id
         }
         "Removing" => {
-            let id = twin.accepted(KEY, 2);
+            let id = twin.uploading(KEY, 2);
             twin.cancel(KEY);
             id
         }
@@ -153,7 +153,9 @@ fn xfer_completing_power_saving_urgent() {
     twin.commit();
     twin.copy_done(id);
     twin.commit();
+    twin.commit();
     twin.step_ok(id, 1, None);
+    twin.commit();
     twin.commit();
     assert_eq!(twin.stage(id), TransferStage::Completing);
     let out = twin.post(TransferInput::PowerSaving(true));

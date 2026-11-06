@@ -68,8 +68,9 @@ fn xfer_retry_complete() {
     let (reply, out) = twin.retry(KEY, None);
     assert_eq!((twin.stage(id), twin.next_step(id), out.kinds(), out.all_replies()), (TransferStage::PersistingRetry, NextStep::Complete, vec![UploadKind::Retrying], 0));
     let out = twin.commit();
-    assert_eq!((out.completes(), out.steps().len()), (1, 0), "all parts are on the server: only complete is repeated");
+    assert_eq!((out.completes(), out.steps().len()), (0, 0));
     assert!(matches!(out.replies(reply).as_slice(), [TransferAnswer::Receipt(receipt)] if receipt.cycle_id == 2));
+    assert_eq!(twin.commit().completes(), 1);
 }
 
 #[test]
@@ -78,13 +79,15 @@ fn xfer_retry_after_abort() {
     let id = twin.uploading(KEY, 3);
     twin.step_ok(id, 1, Some("u1"));
     twin.commit();
+    twin.commit();
     twin.step_error(id, false);
     twin.commit();
     let (_, out) = twin.retry(KEY, None);
     let row = out.rows()[0].0.clone();
     assert_eq!((twin.next_step(id), row.confirmed_parts, row.upload_id, row.etags.len()), (NextStep::Part(1), 0, None, 0), "a new multipart upload starts from the first part");
     let out = twin.commit();
-    assert_eq!(out.steps().iter().map(|step| step.0).collect::<Vec<_>>(), vec![Some(1)]);
+    assert!(out.steps().is_empty());
+    assert_eq!(twin.commit().steps()[0].0, Some(1));
 }
 
 #[test]
@@ -92,8 +95,10 @@ fn xfer_retry() {
     let (mut twin, id) = failed_with_upload();
     let (_, out) = twin.retry(KEY, None);
     assert_eq!((twin.stage(id), twin.next_step(id), out.rows()[0].0.confirmed_parts), (TransferStage::PersistingRetry, NextStep::Part(2), 1), "the first part that is not confirmed");
+    assert_eq!(out.rows()[0].0.attempts, 0);
     let out = twin.commit();
-    assert_eq!(out.steps().iter().map(|step| step.0).collect::<Vec<_>>(), vec![Some(2)]);
+    assert!(out.steps().is_empty());
+    assert_eq!(twin.commit().steps()[0].0, Some(2));
 }
 
 #[test]

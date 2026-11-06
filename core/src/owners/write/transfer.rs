@@ -70,6 +70,11 @@ impl TransferState {
                     let cached_copy = kind == StoreKind::SyncUpload && transfer.stage == TransferStage::PersistingCopy && transfer.from_cache;
                     let kind = if cached_copy { StoreKind::Completed } else { kind };
                     ops.push(StoreOp::Upload { row: upload_row(transfer, kind), kind: upload_kind(kind) });
+                    if kind == StoreKind::Failed && transfer.failure_abort {
+                        if let Some(upload_id) = transfer.upload_id.clone() {
+                            ops.push(StoreOp::UploadOrphan { upload_id, key: transfer.key.clone() });
+                        }
+                    }
                     if transfer.stage == TransferStage::PersistingCopy && transfer.cache_stale {
                         ops.push(StoreOp::BlobCacheRemove { content_sha256: transfer.sha256.clone() });
                     }
@@ -184,7 +189,6 @@ impl TransferState {
     pub(super) fn schedule_retry(&mut self, id: TransferId, fx: &mut Fx) {
         let Some(transfer) = self.transfers.get_mut(&id) else { return };
         transfer.waiting_retry = true;
-        transfer.retry_due = false;
         transfer.in_flight = false;
         let attempt_id = self.next_attempt;
         self.next_attempt += 1;
@@ -204,7 +208,7 @@ impl TransferState {
         replies.extend(transfer.cancel_reply.take().map(|(reply, _)| reply));
         replies.extend(transfer.retry_reply.take());
         replies.append(&mut transfer.discard_waiters);
-        let in_flight = std::mem::replace(&mut transfer.in_flight, false);
+        let in_flight = std::mem::replace(&mut transfer.in_flight, false) && transfer.stage != TransferStage::PersistingAttempt;
         let grouped = transfer.batch_id.and_then(|group| self.groups.get_mut(&group).and_then(|group| group.reply.take()));
         for reply_id in replies.into_iter().chain(grouped) {
             reply(fx, reply_id, fault(Fault::Interrupted));
@@ -230,6 +234,7 @@ impl TransferState {
         match stage {
             Some(TransferStage::Accepting) => self.accepting_committed(&pending.ids, fx),
             Some(TransferStage::PersistingCopy) => self.copy_committed(&pending.ids, fx),
+            Some(TransferStage::PersistingAttempt) => self.attempt_committed(pending.ids[0], fx),
             Some(TransferStage::PersistingPart) => self.part_committed(pending.ids[0], fx),
             Some(TransferStage::PersistingComplete) => self.complete_committed(pending.ids[0], fx),
             Some(TransferStage::PersistingRetry) if self.transfers.get(&pending.ids[0]).is_some_and(|transfer| transfer.next_step == NextStep::Mutation) => self.retry_mutation_committed(&pending.ids, fx),
@@ -249,14 +254,16 @@ impl TransferState {
         let Some(pending) = self.pending.remove(&rejected.batch) else { return };
         let stage = pending.ids.first().and_then(|id| self.stage_of(*id));
         let interrupts = !matches!(rejected.reason, RejectReason::Storage(_));
-        let persisting = matches!(stage, Some(TransferStage::PersistingCopy | TransferStage::PersistingRetry | TransferStage::PersistingPart | TransferStage::PersistingComplete | TransferStage::PersistingFailure | TransferStage::Removing));
+        let persisting = matches!(stage, Some(TransferStage::PersistingCopy | TransferStage::PersistingAttempt | TransferStage::PersistingRetry | TransferStage::PersistingPart | TransferStage::PersistingComplete | TransferStage::PersistingFailure | TransferStage::Removing));
         if let (RejectReason::StaleGeneration { models, generation }, true) = (&rejected.reason, persisting) {
             for model in models { self.generations.insert(model.clone(), *generation); }
             let basis = models.iter().map(|model| (model.clone(), *generation)).collect();
             return self.store_basis(&pending.ids, pending.kind, basis, fx);
         }
         if let (RejectReason::Invalid, true) = (&rejected.reason, persisting) {
-            return self.invalid_write(&pending.ids, stage == Some(TransferStage::PersistingFailure), fx);
+            self.invalid_write(&pending.ids, stage == Some(TransferStage::PersistingFailure), fx);
+            self.start_in_order(fx);
+            return;
         }
         match (stage, interrupts) {
             (Some(TransferStage::Accepting), _) => self.accepting_rejected(&pending.ids, rejected.reason, fx),
@@ -264,7 +271,10 @@ impl TransferState {
             (Some(TransferStage::PersistingRetry), false) => self.retry_rejected(pending.ids[0], rejected.reason, fx),
             (Some(TransferStage::PersistingFailure), false) => self.failure_rejected(pending.ids[0], fx),
             (Some(TransferStage::PersistingCopy), false) => self.copy_rejected(&pending.ids, fx),
-            (Some(TransferStage::PersistingPart | TransferStage::PersistingComplete), false) => self.persist_failed(pending.ids[0], rejected.reason, fx),
+            (Some(TransferStage::PersistingAttempt | TransferStage::PersistingPart | TransferStage::PersistingComplete), false) => {
+                self.persist_failed(pending.ids[0], rejected.reason, fx);
+                self.start_in_order(fx);
+            }
             (Some(_), true) => {
                 for id in pending.ids {
                     self.interrupt(id, fx);

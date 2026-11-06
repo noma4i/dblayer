@@ -30,7 +30,9 @@ fn completing_multipart(twin: &mut Twin, key: &str) -> TransferId {
     let id = twin.uploading(key, 2);
     twin.step_ok(id, 1, Some("u1"));
     twin.commit();
+    twin.commit();
     twin.step_ok(id, 2, None);
+    twin.commit();
     twin.commit();
     assert_eq!(twin.stage(id), TransferStage::Completing);
     id
@@ -42,6 +44,10 @@ fn purpose_of_steps(out: &Out) -> Vec<NetworkPurpose> { out.runs.iter().filter_m
 fn xfer_ready_start() {
     let (mut twin, id) = ready(3);
     let out = twin.online(true);
+    assert_eq!(twin.stage(id), TransferStage::PersistingAttempt);
+    assert_eq!(out.rows()[0].0.attempts, 1);
+    assert!(out.steps().is_empty());
+    let out = twin.commit();
     assert_eq!(twin.stage(id), TransferStage::Uploading);
     assert_eq!((out.steps().len(), out.steps()[0].0, out.shows()), (1, Some(1), vec![Shown::Uploading { progress: 0 }]));
     assert_eq!(purpose_of_steps(&out), vec![NetworkPurpose::Transfer]);
@@ -50,7 +56,77 @@ fn xfer_ready_start() {
     let other = slow.accepted(OTHER, 2);
     assert!(Twin::quiet(&slow.online(true)), "saving holds the start");
     let out = slow.post(TransferInput::PowerSaving(false));
+    assert_eq!((slow.stage(other), out.steps().len()), (TransferStage::PersistingAttempt, 0));
+    let out = slow.commit();
     assert_eq!((slow.stage(other), out.steps().len()), (TransferStage::Uploading, 1));
+}
+
+#[test]
+fn xfer_attempt_committed_wait() {
+    let (mut twin, id) = ready(2);
+    twin.online(true);
+    twin.online(false);
+    let out = twin.commit();
+    assert_eq!(twin.stage(id), TransferStage::Ready);
+    assert!(out.steps().is_empty());
+    let out = twin.online(true);
+    assert_eq!(out.rows()[0].0.attempts, 2);
+    assert!(out.steps().is_empty());
+}
+
+#[test]
+fn xfer_attempt_busy() {
+    let (mut twin, id) = ready(2);
+    twin.online(true);
+    refuses_calls(&mut twin, KEY);
+    assert_eq!(twin.stage(id), TransferStage::PersistingAttempt);
+}
+
+#[test]
+fn xfer_attempt_rejected() {
+    for (reason, error) in [(RejectReason::Storage("disk".into()), "disk"), (RejectReason::Invalid, "Internal(Invalid)")] {
+        let (mut twin, id) = ready(2);
+        twin.online(true);
+        let out = twin.reject(reason);
+        assert_eq!(twin.stage(id), TransferStage::PersistingFailure);
+        assert!(out.steps().is_empty());
+        assert_eq!(out.rows()[0].0.failed.as_deref(), Some(error));
+    }
+}
+
+#[test]
+fn xfer_attempt_committed() {
+    let (mut twin, id) = ready(2);
+    let before = twin.online(true);
+    let attempt = twin.attempt(id);
+    assert!(before.steps().is_empty());
+    let after = twin.commit();
+    assert_eq!(after.steps(), vec![(Some(1), attempt)]);
+    assert_eq!(twin.stage(id), TransferStage::Uploading);
+}
+
+#[test]
+fn xfer_attempt_stale() {
+    let (mut twin, id) = ready(2);
+    twin.online(true);
+    let attempt = twin.attempt(id);
+    let out = twin.reject(RejectReason::StaleGeneration { models: vec!["Moment".into()], generation: 7 });
+    assert_eq!(twin.stage(id), TransferStage::PersistingAttempt);
+    assert_eq!(out.rows()[0].0.attempts, 1);
+    assert_eq!(out.batches[0].basis.get("Moment"), Some(&7));
+    assert!(out.steps().is_empty());
+    assert_eq!(twin.commit().steps(), vec![(Some(1), attempt)]);
+}
+
+#[test]
+fn xfer_attempt_other() {
+    let (mut twin, id) = ready(2);
+    twin.online(true);
+    let attempt_id = twin.attempt(id);
+    let out = twin.post(TransferInput::StepError { transfer_id: id, attempt_id, temporary: false });
+    assert_eq!(twin.stage(id), TransferStage::PersistingAttempt);
+    assert!(out.steps().is_empty());
+    assert!(out.batches.is_empty());
 }
 
 #[test]
@@ -62,6 +138,8 @@ fn xfer_ready_start_complete() {
     twin.commit();
     assert_eq!((twin.stage(id), twin.next_step(id)), (TransferStage::Ready, NextStep::Complete));
     let out = twin.online(true);
+    assert_eq!((twin.stage(id), out.completes()), (TransferStage::PersistingAttempt, 0));
+    let out = twin.commit();
     assert_eq!((twin.stage(id), out.completes(), out.steps().len(), out.shows()), (TransferStage::Completing, 1, 0, vec![Shown::Uploading { progress: 100 }]));
 }
 
@@ -74,7 +152,7 @@ fn xfer_ready_wait() {
     assert_eq!(twin.stage(id), TransferStage::Ready);
     let first = twin.state().open_id("busy:r:upload").expect("the first transfer");
     let out = twin.step_error(first, false);
-    assert_eq!((out.steps().len(), twin.stage(id)), (1, TransferStage::Uploading), "the slot of the first is free at once, the second starts");
+    assert_eq!((out.steps().len(), twin.stage(id)), (0, TransferStage::PersistingAttempt));
 }
 
 #[test]
@@ -151,9 +229,11 @@ fn xfer_step_fail() {
     let id = twin.uploading(KEY, 3);
     twin.step_ok(id, 1, Some("u1"));
     twin.commit();
+    twin.commit();
     let out = twin.step_error(id, false);
-    assert_eq!((twin.stage(id), out.aborts(), out.kinds()), (TransferStage::PersistingFailure, 1, vec![UploadKind::Failed]));
-    assert!(out.rows()[0].0.aborted && out.rows()[0].0.confirmed_parts == 1);
+    assert_eq!((twin.stage(id), out.aborts(), out.kinds()), (TransferStage::PersistingFailure, 0, vec![UploadKind::Failed]));
+    assert_eq!(out.orphans_written(), vec![("u1".into(), KEY.into())]);
+    assert_eq!(out.rows()[0].0.confirmed_parts, 0);
     assert_eq!(out.shows().len(), 0, "failed is observable only after the write");
     let mut single = Twin::new();
     let id = single.uploading(OTHER, 2);
@@ -163,6 +243,7 @@ fn xfer_step_fail() {
     for _ in 0..49 {
         assert_eq!(worn.step_error(id, true).writes(), 0);
         worn.tick_retry(id);
+        worn.commit();
     }
     let out = worn.step_error(id, true);
     assert_eq!((worn.stage(id), out.kinds()), (TransferStage::PersistingFailure, vec![UploadKind::Failed]), "the 50th attempt is the last");
@@ -176,8 +257,10 @@ fn xfer_step_tick() {
     twin.step_error(id, true);
     let waiting = twin.attempt(id);
     let out = twin.tick_retry(id);
-    assert_eq!(out.steps(), vec![(Some(1), waiting)], "the same part, the new attempt");
+    assert!(out.steps().is_empty());
     assert_ne!(waiting, first);
+    let out = twin.commit();
+    assert_eq!(out.steps()[0].0, Some(1));
     assert_eq!((twin.stage(id), twin.t(id).waiting_retry, twin.state().active()), (TransferStage::Uploading, false, 1));
 }
 
@@ -211,7 +294,8 @@ fn xfer_step_power_saving() {
     let out = twin.post(TransferInput::PowerSaving(true));
     assert_eq!((twin.stage(id), out.cancel_steps(), out.shows()), (TransferStage::Ready, 1, vec![Shown::Queued]));
     let out = twin.post(TransferInput::PowerSaving(false));
-    assert_eq!((twin.stage(id), out.steps().len()), (TransferStage::Uploading, 1));
+    assert_eq!((twin.stage(id), out.steps().len()), (TransferStage::PersistingAttempt, 0));
+    twin.commit();
 }
 
 #[test]
@@ -227,6 +311,7 @@ fn xfer_uploading_cancel() {
     let id = twin.uploading(KEY, 3);
     twin.step_ok(id, 1, Some("u1"));
     twin.commit();
+    twin.commit();
     let (reply, out) = twin.cancel(KEY);
     assert_eq!((twin.stage(id), out.cancel_steps(), out.aborts(), out.removed()), (TransferStage::Removing, 1, 0, vec![KEY.to_string()]));
     assert_eq!(out.all_replies(), 0, "the answer waits for the write");
@@ -239,6 +324,7 @@ fn xfer_uploading_cancel() {
 fn xfer_uploading_discard() {
     let mut twin = Twin::new();
     let ids = twin.accepted_batch(&[KEY, OTHER], 2);
+    twin.commit();
     let (reply, out) = twin.discard(KEY);
     assert_eq!((twin.stage(ids[0]), out.cancel_steps(), out.removed()), (TransferStage::Removing, 1, vec![KEY.to_string()]), "a discard works for a batch element");
     let out = twin.commit();
@@ -291,8 +377,9 @@ fn xfer_persisting_part_committed() {
     let id = twin.uploading(KEY, 3);
     twin.step_ok(id, 1, Some("u1"));
     let out = twin.commit();
-    assert_eq!((twin.stage(id), out.steps().iter().map(|step| step.0).collect::<Vec<_>>()), (TransferStage::Uploading, vec![Some(2)]), "the next step goes after the write, through the common start");
+    assert_eq!((twin.stage(id), out.steps().len()), (TransferStage::PersistingAttempt, 0));
     assert_eq!(out.shows().first(), Some(&Shown::Uploading { progress: 33 }));
+    assert_eq!(twin.commit().steps()[0].0, Some(2));
     let mut offline = Twin::new();
     let id = offline.uploading(KEY, 3);
     offline.step_ok(id, 1, Some("u1"));
@@ -312,7 +399,8 @@ fn xfer_persisting_part_last() {
     let mut online = Twin::new();
     let id = online.uploading(KEY, 1);
     online.step_ok(id, 1, None);
-    assert_eq!((online.commit().completes(), online.stage(id)), (1, TransferStage::Completing), "the common start picks the complete");
+    assert_eq!((online.commit().completes(), online.stage(id)), (0, TransferStage::PersistingAttempt));
+    assert_eq!((online.commit().completes(), online.stage(id)), (1, TransferStage::Completing));
 }
 
 #[test]
@@ -371,10 +459,11 @@ fn xfer_completed() {
 fn xfer_complete_temp() {
     let mut twin = Twin::new();
     let id = twin.completing(KEY);
-    for round in 1..=60 {
+    for round in 1..=10 {
         let out = twin.complete_error(id, true);
-        assert_eq!((out.timers, out.writes(), twin.stage(id)), (1, 0, TransferStage::Completing), "round {round}: complete has no limit of attempts");
-        assert!(twin.tick_retry(id).completes() == 1);
+        assert_eq!((out.timers, out.writes(), twin.stage(id)), (1, 0, TransferStage::Completing), "round {round}");
+        assert_eq!(twin.tick_retry(id).completes(), 0);
+        assert_eq!(twin.commit().completes(), 1);
     }
 }
 
@@ -394,7 +483,8 @@ fn xfer_complete_tick() {
     let first = twin.attempt(id);
     twin.complete_error(id, true);
     let out = twin.tick_retry(id);
-    assert_eq!(out.completes(), 1);
+    assert_eq!(out.completes(), 0);
+    assert_eq!(twin.commit().completes(), 1);
     assert_ne!(twin.attempt(id), first);
     twin.ignores(id, vec![TransferInput::Tick { now: Time(1), kind: TransferTick::Retry { transfer_id: id, attempt_id: twin.attempt(id) } }]);
 }
@@ -489,9 +579,11 @@ fn inv_upload_08_a_restarted_part_never_lowers_the_total_inside_a_phase() {
     assert!(before.is_empty(), "a step result changes no value: {before:?}");
     commit(&mut twin, &mut committed);
     assert_eq!(committed, 25);
+    twin.commit();
     for outs in [levels(twin.step_error(id, true)), levels(twin.tick_retry(id))] {
         assert!(outs.iter().all(|level| *level == committed), "an error and a restart show only the committed value: {outs:?}");
     }
+    twin.commit();
     assert!(levels(twin.step_ok(id, 2, None)).is_empty());
     commit(&mut twin, &mut committed);
     assert_eq!(committed, 50);

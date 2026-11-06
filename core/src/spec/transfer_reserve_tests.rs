@@ -36,6 +36,8 @@ fn ready(twin: &mut Twin) -> TransferId {
     twin.commit();
     twin.copy_done(id);
     twin.commit();
+    assert_eq!(twin.stage(id), TransferStage::PersistingAttempt);
+    assert_eq!(twin.commit().steps().len(), 1);
     id
 }
 
@@ -117,7 +119,7 @@ fn xfer_accept_key_open() {
     let out = twin.post(TransferInput::AcceptBatch { joint: Box::new(joint()), epoch: EPOCH, items: vec![item("Message:m2:send", 2), item(KEY, 2)], reply: 91, now: Time(0) });
     assert_eq!(Twin::fault(&out, 91), Some(Fault::InFlight), "one open key refuses the whole batch");
     assert_eq!((out.writes(), twin.state().open_id("Message:m2:send")), (0, None));
-    assert_eq!(twin.stage(id), TransferStage::Uploading);
+    assert_eq!(twin.stage(id), TransferStage::PersistingAttempt);
 }
 
 #[test]
@@ -175,8 +177,12 @@ impl Twin {
         let id = ready(self);
         self.step_ok(id, 1, Some("u"));
         self.commit();
+        assert_eq!(self.stage(id), TransferStage::PersistingAttempt);
+        assert_eq!(self.commit().steps().len(), 1);
         self.step_ok(id, 2, None);
         self.commit();
+        assert_eq!(self.stage(id), TransferStage::PersistingAttempt);
+        assert_eq!(self.commit().completes(), 1);
         self.completed(id);
         let out = self.commit();
         assert_eq!(self.stage(id), TransferStage::Mutating);

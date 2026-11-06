@@ -267,7 +267,7 @@ The final content mutation does not hold a file permit.
 | `waitReason` | why a `waiting` upload does not run yet: `createUnconfirmed` (the record is still local, its `create` has no answer) or `offline` (the step waits for the network and sends no request, `record.sync.state` stays `pending`). The upload leaves `offline` when the network returns. `nil` in every other status |
 | `stage` | `prepare`, `create`, `put`, `init`, `presign`, `part`, `complete`, `abort`, `mutation` |
 | `sentBytes`, `totalBytes`, `fraction` | for multipart the sum over all parts divided by the file size |
-| `attempts` | sum of retries for unfinished steps, preserved across restarts |
+| `attempts` | saved attempts for the current unfinished step, preserved across restarts |
 | `error` | kind and message, `isRetryable` is false for a rejection |
 
 An upload of a local record starts as `waiting` with `totalBytes` set from the file size and `sentBytes` and `fraction` at zero. When the `create` is confirmed the real id replaces the local id in the upload variables and the status moves on through `preparing` or `queued` to `uploading`, `sending` and the end. If the `create` is refused the upload is discarded with the record. Every change of status, stage, bytes or reason reaches observers as a new row.
@@ -276,16 +276,17 @@ A finished upload closes its operation and removes its entry from `uploads`. The
 
 ### Rules
 
-- Transport errors inside the upload steps retry with backoff. Offline waits for `setOnline(true)` and spends no attempts.
-- Each step and multipart part stores its retry count and next retry time. Restarting preserves both. A successful step removes its retry record.
-- An explicit `retry(action)` after failure clears saved retry counts and times, giving unfinished steps a fresh budget.
+- Transport errors retry with backoff. Offline waits for `setOnline(true)` without starting another attempt.
+- Each step saves its attempt count before starting a network request. A restart or network change does not refund that attempt.
+- A successful part starts the next step with a fresh budget. Each step permits up to 50 attempts.
+- An explicit `retry(action)` after failure saves a fresh attempt budget before restarting unfinished work.
 - When an upgraded database has lost the item of a saved transfer, the error kind is `missing_file`. A retry without a file is refused. `retry(id, action, source)` gives the item a new file: `id` is the item key of the batch receipt or the record id. The new transfer keeps the operation and the item key.
 - A PUT succeeds only with an HTTP status from 200 through 299. Other statuses follow the transfer error rules before the content mutation can run.
 - A `403` renews the single-upload url or affected part url after backoff. The renewal uses that PUT step's retry budget. Urls older than the presign lifetime are requested again for unfinished parts.
 - The final content mutation uses the [outbox retry policy](server-sync.md#retries), including its saved budget and encrypted request identity.
 - Retrying the content mutation preserves confirmed file transfers.
 - The grant, including `signedId`, `blobId`, URL and headers, is stored before PUT. A separate flag records confirmed transfer.
-- A restarted unfinished PUT uses its saved grant. `retry(action)` after a failed or unknown content mutation skips confirmed transfers.
+- A restarted unfinished PUT saves another attempt before sending. `retry(action)` after a failed content mutation skips confirmed transfers.
 - A multipart failure calls `abort` only while parts remain unconfirmed. After all parts are confirmed, a failed `complete` preserves their ETags and upload id.
 - `retry(action)` and `discard(action)` on the record work as for any pending operation. `cancelUpload` stops the transfer, aborts a multipart and removes the operation.
 - Offline cancellation returns without a network call and keeps the multipart upload id. After `setOnline(true)`, the saved cancellation aborts the multipart and removes the operation.

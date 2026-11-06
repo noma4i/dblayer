@@ -17,8 +17,7 @@ impl TransferState {
     fn can_start(&self, transfer: &Transfer) -> bool {
         let opened = !transfer.restored || self.phase == Phase::Ready;
         let allowed = !self.saving || transfer.urgent;
-        let due = matches!(transfer.stage, TransferStage::Uploading | TransferStage::Completing) && transfer.waiting_retry && transfer.retry_due;
-        opened && allowed && (transfer.stage == TransferStage::Ready || due)
+        opened && allowed && transfer.stage == TransferStage::Ready
     }
 
     fn step_effect(transfer: &Transfer) -> TransferEffect {
@@ -36,20 +35,33 @@ impl TransferState {
         while self.online == Some(true) && self.active() < self.slots {
             let next = self.transfers.values().filter(|transfer| self.can_start(transfer)).min_by_key(|transfer| transfer.seq).map(|transfer| transfer.transfer_id);
             let Some(id) = next else { return };
+            if let Some(abort) = self.transfers.get(&id).filter(|transfer| transfer.attempts >= ATTEMPT_LIMIT).map(|transfer| transfer.confirmed_parts < transfer.source.parts) {
+                self.begin_failure(id, "Exhausted".into(), abort, fx);
+                continue;
+            }
             let attempt_id = self.attempt();
             let Some(transfer) = self.transfers.get_mut(&id) else { return };
-            if transfer.stage == TransferStage::Ready {
-                transfer.attempt_id = attempt_id;
-                transfer.attempts = 0;
-                transfer.stage = if transfer.next_step == NextStep::Complete { TransferStage::Completing } else { TransferStage::Uploading };
-            }
+            transfer.attempt_id = attempt_id;
+            transfer.attempts += 1;
+            transfer.stage = TransferStage::PersistingAttempt;
             transfer.in_flight = true;
             transfer.waiting_retry = false;
-            transfer.retry_due = false;
-            let (effect, shown) = (Self::step_effect(transfer), if transfer.stage == TransferStage::Completing { Shown::Uploading { progress: 100 } } else { Shown::Uploading { progress: Self::progress(transfer) } });
-            self.show(id, shown, fx);
-            run(fx, effect);
+            self.store(&[id], StoreKind::SyncUpload, fx);
         }
+    }
+
+    pub(super) fn attempt_committed(&mut self, id: TransferId, fx: &mut Fx) {
+        let Some(transfer) = self.transfers.get_mut(&id) else { return };
+        if self.online != Some(true) || (self.saving && !transfer.urgent) {
+            transfer.stage = TransferStage::Ready;
+            transfer.in_flight = false;
+            self.start_in_order(fx);
+            return;
+        }
+        transfer.stage = if transfer.next_step == NextStep::Complete { TransferStage::Completing } else { TransferStage::Uploading };
+        let (effect, shown) = (Self::step_effect(transfer), if transfer.stage == TransferStage::Completing { Shown::Uploading { progress: 100 } } else { Shown::Uploading { progress: Self::progress(transfer) } });
+        self.show(id, shown, fx);
+        run(fx, effect);
     }
 
     /// `Online(false)` and `PowerSaving(true)` of a transfer that is not urgent: the steps in the network go back to `Ready`.
@@ -61,7 +73,6 @@ impl TransferState {
             transfer.next_step = if transfer.stage == TransferStage::Completing { NextStep::Complete } else { NextStep::Part(transfer.confirmed_parts + 1) };
             transfer.stage = TransferStage::Ready;
             transfer.waiting_retry = false;
-            transfer.retry_due = false;
             if std::mem::replace(&mut transfer.in_flight, false) {
                 run(fx, TransferEffect::CancelStep { transfer_id: id });
             }
@@ -83,6 +94,7 @@ impl TransferState {
             transfer.upload_id = upload_id;
         }
         transfer.confirmed_parts += 1;
+        transfer.attempts = 0;
         transfer.etags.push(etag);
         transfer.last_part = transfer.confirmed_parts >= transfer.source.parts;
         transfer.in_flight = false;
@@ -102,14 +114,9 @@ impl TransferState {
     }
 
     pub(super) fn begin_failure(&mut self, id: TransferId, error: String, abort: bool, fx: &mut Fx) {
-        let attempt_id = self.attempt();
         self.mark_failure(id, error);
         let Some(transfer) = self.transfers.get_mut(&id) else { return };
         transfer.failure_abort = abort;
-        if let (true, Some(upload_id)) = (abort, transfer.upload_id.clone()) {
-            transfer.aborted = true;
-            run(fx, TransferEffect::Abort { transfer_id: id, attempt_id, key: transfer.key.clone(), upload_id });
-        }
         self.store(&[id], StoreKind::Failed, fx);
     }
 
@@ -118,8 +125,7 @@ impl TransferState {
             return;
         }
         let Some(transfer) = self.transfers.get_mut(&id) else { return };
-        if temporary && transfer.attempts + 1 < ATTEMPT_LIMIT {
-            transfer.attempts += 1;
+        if temporary && transfer.attempts < ATTEMPT_LIMIT {
             self.schedule_retry(id, fx);
         } else {
             self.begin_failure(id, "failed".into(), true, fx);
@@ -144,10 +150,7 @@ impl TransferState {
         if !self.live(id, TransferStage::Completing, attempt_id) {
             return;
         }
-        if temporary {
-            if let Some(transfer) = self.transfers.get_mut(&id) {
-                transfer.attempts += 1;
-            }
+        if temporary && self.transfers.get(&id).is_some_and(|transfer| transfer.attempts < ATTEMPT_LIMIT) {
             self.schedule_retry(id, fx);
         } else {
             self.begin_failure(id, "failed".into(), false, fx);
@@ -170,7 +173,8 @@ impl TransferState {
         }
         match transfer.stage {
             TransferStage::Uploading | TransferStage::Completing if transfer.waiting_retry => {
-                transfer.retry_due = true;
+                transfer.stage = TransferStage::Ready;
+                transfer.waiting_retry = false;
                 self.start_in_order(fx);
             }
             TransferStage::PersistingFailure => self.store(&[id], StoreKind::Failed, fx),

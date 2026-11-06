@@ -16,6 +16,9 @@
 - The state of an upload reaches the streams of its row.
 - The local values of a temporary row move to the row that replaces it.
 
+### Fixed
+- Preserve upload attempt limits across restarts and network changes.
+
 ### Removed
 - `scope.related` is gone: read a server relation with a query.
 - `Blob`, `BlobUpload`, `DB.blob` and `blob_upload` are gone: upload through a model action.

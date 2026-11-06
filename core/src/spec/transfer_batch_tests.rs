@@ -29,12 +29,16 @@ fn rules(minimum: usize, renumber: bool) -> Joint {
 fn batch(keys: &[&str], minimum: usize, renumber: bool) -> (Twin, Vec<TransferId>) {
     let mut twin = Twin::with_slots(4);
     let ids = twin.accepted_items(keys.iter().map(|key| fielded(key)).collect(), rules(minimum, renumber));
+    for _ in &ids {
+        assert_eq!(twin.commit().steps().len(), 1);
+    }
     (twin, ids)
 }
 
 /// The file of the element is on the server and the write of `completed` is answered.
 fn file_done(twin: &mut Twin, id: TransferId) -> Out {
     twin.step_ok(id, 1, None);
+    twin.commit();
     twin.commit();
     twin.completed(id);
     twin.commit()
@@ -123,6 +127,8 @@ fn xfer_batch_member_discard() {
     }
     twin.commit();
     ids.iter().for_each(|id| drop(twin.copy_done(*id)));
+    twin.commit();
+    twin.commit();
     twin.commit();
     let (reply, out) = twin.discard(KEY);
     assert_eq!((out.rolled_back(), out.removed()), (vec![11], vec![KEY.to_string()]), "the optimistic row of the element goes, the other stays");
@@ -213,7 +219,8 @@ fn xfer_batch_retry_file() {
     assert_eq!((twin.stage(ids[0]), twin.stage(ids[1]), out.writes()), (TransferStage::PersistingRetry, TransferStage::Uploading, 1), "only the element of the failed file is written");
     let out = twin.commit();
     assert!(matches!(out.replies(reply).as_slice(), [TransferAnswer::Receipt(receipt)] if receipt.cycle_id == 2), "{:?}", out.replies(reply));
-    assert_eq!((twin.t(ids[0]).cycle_id, twin.stage(ids[0])), (2, TransferStage::Uploading), "a slot is free: the file goes at once");
+    assert_eq!((twin.t(ids[0]).cycle_id, twin.stage(ids[0])), (2, TransferStage::PersistingAttempt));
+    assert_eq!(twin.commit().steps().len(), 1);
 }
 
 #[test]

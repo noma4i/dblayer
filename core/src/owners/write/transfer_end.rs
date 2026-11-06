@@ -80,6 +80,7 @@ impl TransferState {
                 transfer.accept_reply = Some(rep);
                 transfer.place = None;
                 transfer.confirmed_parts = 0;
+                transfer.attempts = 0;
                 transfer.upload_id = None;
                 transfer.etags.clear();
                 self.store(&[id], StoreKind::Retrying, fx);
@@ -97,6 +98,7 @@ impl TransferState {
                     transfer.next_step = if all { NextStep::Complete } else { NextStep::Part(transfer.confirmed_parts + 1) };
                 }
                 transfer.stage = TransferStage::PersistingRetry;
+                transfer.attempts = 0;
                 transfer.retry_reply = Some(rep);
                 self.store(&[id], StoreKind::Retrying, fx);
             }
@@ -109,7 +111,6 @@ impl TransferState {
         transfer.cycle_id += 1;
         transfer.stage = TransferStage::Ready;
         transfer.error = None;
-        transfer.attempts = 0;
         let rep = transfer.retry_reply.take();
         let receipt = self.receipt(id);
         if let Some(rep) = rep {
@@ -130,12 +131,22 @@ impl TransferState {
 
     pub(super) fn failure_committed(&mut self, id: TransferId, fx: &mut Fx) {
         let Some(transfer) = self.transfers.get_mut(&id) else { return };
+        if transfer.failure_abort {
+            if let Some(upload_id) = transfer.upload_id.take() {
+                self.orphans.insert(upload_id, transfer.key.clone());
+            }
+            transfer.confirmed_parts = 0;
+            transfer.etags.clear();
+            transfer.aborted = true;
+            transfer.failure_abort = false;
+        }
         transfer.stage = TransferStage::Failed;
         let error = transfer.error.clone().unwrap_or_default();
         self.settle(id, OutboxOutcome::Failed { error: error.clone() }, fx);
         self.show(id, Shown::Failed { error }, fx);
         self.rounds_idle(id, fx);
         self.batch_after_removal(id, fx);
+        self.send_orphans(fx);
     }
 
     pub(super) fn failure_rejected(&mut self, id: TransferId, fx: &mut Fx) { self.schedule_retry(id, fx); }

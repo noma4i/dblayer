@@ -137,6 +137,7 @@ pub(super) fn joint() -> Joint { Joint { minimum: 2, maximum: 10, items_key: "it
 pub(super) fn stored(id: TransferId, key: &str, parts: u32) -> StoredTransfer {
     StoredTransfer {
         transfer_id: id,
+        attempts: 0,
         key: key.into(),
         seq: id,
         source: Source { path: format!("/src/{key}"), parts },
@@ -288,6 +289,8 @@ impl Twin {
     /// `Committed` for the oldest batch the Store has not answered.
     pub fn commit(&mut self) -> Out { self.answer(|batch| TransferInput::Committed(Committed { batch, revision: 1, tables: Vec::new(), models: Default::default(), stale_parents: Vec::new(), position: 0 })) }
 
+    pub fn has_pending(&self) -> bool { !self.unanswered.is_empty() }
+
     pub fn reject(&mut self, reason: RejectReason) -> Out { self.answer(|batch| TransferInput::Rejected(Rejected { batch, reason })) }
 
     pub fn accepting(&mut self, key: &str, parts: u32) -> (TransferId, ReplyId, Out) {
@@ -393,6 +396,9 @@ impl Twin {
     /// `Uploading` with a multipart upload: `parts` parts, the first step done.
     pub fn uploading(&mut self, key: &str, parts: u32) -> TransferId {
         let id = self.accepted(key, parts);
+        if self.stage(id) == TransferStage::PersistingAttempt {
+            self.commit();
+        }
         assert_eq!(self.stage(id), TransferStage::Uploading);
         id
     }
@@ -416,6 +422,7 @@ impl Twin {
     pub fn completing(&mut self, key: &str) -> TransferId {
         let id = self.uploading(key, 1);
         self.step_ok(id, 1, None);
+        self.commit();
         self.commit();
         assert_eq!(self.stage(id), TransferStage::Completing);
         id
@@ -455,11 +462,16 @@ impl Twin {
     /// `Mutating` of every element of a batch: all files are on the server and the mutation of the batch is on its way. The owner has a slot for each element.
     pub fn batch_mutating(&mut self, keys: &[&str]) -> Vec<TransferId> {
         let ids = self.accepted_batch(keys, 1);
-        for id in &ids {
-            self.step_ok(*id, 1, None);
-            self.commit();
-            self.completed(*id);
-            self.commit();
+        while ids.iter().any(|id| self.stage(*id) != TransferStage::Mutating) {
+            if !self.unanswered.is_empty() {
+                self.commit();
+            } else if let Some(id) = ids.iter().find(|id| self.stage(**id) == TransferStage::Uploading) {
+                self.step_ok(*id, 1, None);
+            } else if let Some(id) = ids.iter().find(|id| self.stage(**id) == TransferStage::Completing) {
+                self.completed(*id);
+            } else {
+                panic!("batch cannot advance");
+            }
         }
         assert!(ids.iter().all(|id| self.stage(*id) == TransferStage::Mutating));
         ids
@@ -467,7 +479,7 @@ impl Twin {
 
     /// A `Ready` transfer behind a full slot: the network is up, the slot is held by another transfer.
     pub fn ready_behind(&mut self, key: &str) -> TransferId {
-        self.accepted("busy:r:upload", 2);
+        self.uploading("busy:r:upload", 2);
         let id = self.accepted(key, 2);
         assert_eq!(self.stage(id), TransferStage::Ready);
         id
