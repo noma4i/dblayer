@@ -17,6 +17,7 @@ banned_words = [
 ]
 status_words = ["in development", "work in progress", "planned", "coming soon", "not finished", "todo", "status:"]
 path_roots = ("core/", "gen/", "fixtures/", "swift/", "kotlin/", "scripts/", "docs/")
+generated_paths = ("swift/Sources/DBlayer/dblayer.swift", "kotlin/src/main/kotlin/com/noma4i/dblayer/dblayer.kt")
 
 for document in documents:
     text = document.read_text()
@@ -37,7 +38,7 @@ for document in documents:
             problems.append(f"{name}: status wording '{phrase}'")
     for match in re.findall(r"`([A-Za-z0-9_./-]+)`", text):
         if match.startswith(path_roots) and not any(char in match for char in "*<>"):
-            if not (root / match.rstrip("/")).exists() and not match.startswith("swift/DBlayerFFI"):
+            if not (root / match.rstrip("/")).exists() and not match.startswith("swift/DBlayerFFI") and match not in generated_paths:
                 problems.append(f"{name}: path does not exist: {match}")
     for target in re.findall(r"\]\(([^)#]+\.md)(?:#[^)]*)?\)", text):
         if not (document.parent / target).exists():
