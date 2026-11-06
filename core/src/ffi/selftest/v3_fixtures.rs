@@ -226,3 +226,11 @@ pub(super) fn add_search(models: &mut Value) {
     search.remote = Some(crate::schema_fixtures::remote("ChatSearch", crate::schema::RemoteShape::List { coverage: crate::schema::Coverage::Complete }, "1.minute"));
     chat["relations"].as_array_mut().unwrap().push(serde_json::to_value(search).unwrap());
 }
+
+/// Who is typing in a chat: a row in memory that expires after 8 seconds.
+pub(super) fn add_typing(models: &mut Value) {
+    let mut action = ModelSpec::new("ChatAction", vec![FieldSpec::scalar("id", ScalarKind::Id), FieldSpec::scalar("chatId", ScalarKind::Id).indexed(), optional("userId", ScalarKind::Id), optional("kind", ScalarKind::Str)]);
+    action.storage = crate::schema::Storage::Memory;
+    action.expire_after = Some("8.seconds".into());
+    models.as_array_mut().unwrap().push(serde_json::to_value(action).unwrap());
+}
