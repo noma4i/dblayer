@@ -142,7 +142,8 @@ impl World {
         let mut state = self.state.lock().unwrap();
         if state.forbidden {
             let frames = std::backtrace::Backtrace::force_capture().to_string().lines().filter(|line| line.contains("dblayer::owners") || line.contains("dblayer::ffi::database") || line.contains("dblayer::ffi::loading") || line.contains("dblayer::ffi::command") || line.contains("dblayer::ffi::read")).take(16).map(|line| line.trim().to_string()).collect::<Vec<_>>().join(" | ");
-            let detail = format!("{} {operation} via {frames}", self.label);
+            let lease = crate::task::admitted().map(|admitted| (admitted.value(), admitted.is_current()));
+            let detail = format!("{} {operation} lease {lease:?} via {frames}", self.label);
             state.violations.push(detail);
             return None;
         }
