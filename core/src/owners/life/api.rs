@@ -64,6 +64,9 @@ impl Life {
         if published.closed {
             return self.settled(LifeReply::Closed);
         }
+        if self.wiring.addresses().is_none_or(|addresses| addresses.session.is_none()) {
+            return self.settled(LifeReply::Session(Err(crate::owners::session::SessionError::NoSession)));
+        }
         let waiter = self.wiring.outcomes.register(Epoch::MAX);
         self.wiring.to_session(SessionInput::SessionCall { operation, body, reply: waiter.id().raw() });
         waiter
@@ -71,6 +74,9 @@ impl Life {
 
     pub fn interrupted_session_answer(&self) -> Waiter<LifeReply> {
         if self.shut.load(Ordering::SeqCst) || self.published().closed { return self.settled(LifeReply::Closed); }
+        if self.wiring.addresses().is_none_or(|addresses| addresses.session.is_none()) {
+            return self.settled(LifeReply::SessionResume(Err(crate::owners::session::SessionError::NoSession)));
+        }
         let waiter = self.wiring.outcomes.register(Epoch::MAX);
         self.wiring.to_session(SessionInput::SessionResume { reply: waiter.id().raw() });
         waiter

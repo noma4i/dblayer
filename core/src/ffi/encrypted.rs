@@ -142,8 +142,6 @@ impl Drop for RetrySubscription {
 #[uniffi::export]
 impl Database {
     pub async fn session_call(&self, operation: String, body_json: String) -> Result<String, DbError> {
-        let client = self.session()?;
-        if !client.has_session_operation(&operation) { return Err(DbError::Invalid { detail: format!("unknown session operation {operation}") }); }
         serde_json::from_str::<Value>(&body_json)?;
         match self.await_life(self.life.session_call(operation, body_json)).await? {
             LifeReply::Session(Ok(body)) => {
@@ -156,7 +154,6 @@ impl Database {
     }
 
     pub async fn interrupted_session_answer(&self) -> Result<Option<String>, DbError> {
-        self.session()?;
         match self.await_life(self.life.interrupted_session_answer()).await? {
             LifeReply::SessionResume(Ok(Some(body))) => {
                 let answer = core::Answer { sequence: None, body: serde_json::from_str(&body)? };
@@ -198,12 +195,6 @@ pub(super) fn session_failure(error: crate::owners::session::SessionError) -> Db
         Failed::NoSession => DbError::NoSession { detail: "the database has no session".into() },
         Failed::Interrupted => super::command::ended(),
         Failed::Closed => super::command::closed(),
-    }
-}
-
-impl Database {
-    fn session(&self) -> Result<&Arc<EncryptedClient>, DbError> {
-        self.session.as_ref().ok_or_else(|| DbError::Invalid { detail: "the database was not opened with an encrypted session".into() })
     }
 }
 

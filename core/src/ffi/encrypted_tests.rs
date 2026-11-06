@@ -60,6 +60,17 @@ pub(super) async fn rig(server_key: &str, pin: &str) -> (Arc<Database>, Arc<Fake
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn sess_wait_call() {
+    use crate::test_wait::within;
+    let database = within(Database::open(Config { path: None, data_version: None, cache_rows: 8 }, "[]".into(), None, None, None, None, None)).await.unwrap();
+    assert!(matches!(within(database.session_call("unknown".into(), "{}".into())).await, Err(DbError::NoSession { .. })));
+    within(database.close_database()).await.unwrap();
+    let (database, _, _) = rig(public_key_der_b64(), pin()).await;
+    assert!(matches!(within(database.session_call("unknown".into(), "{}".into())).await, Err(DbError::Invalid { .. })));
+    within(database.close_database()).await.unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn interrupted_session_answer_returns_the_restored_call_once() {
     use crate::test_wait::within;
     use crate::transport::encrypted::{jwe, state};
