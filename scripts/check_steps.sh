@@ -83,7 +83,9 @@ run_bounded() {
 # Step table engine. A step with a build slot gets its limit inside the slot ({limit} in the command, see check_bounded.sh)
 # and the limit plus CHECK_QUEUE_ALLOWANCE (3600 s) outside, so the wait for a slot never counts as test time.
 # The library script defines `steps` (lines "lane|name|limit seconds|paths|command"), then calls
-# run_checks "$@". Lanes run one after another (never 2 build slot commands of one check): cheap first, table order, final last, the first red lane stops the run.
+# run_checks "$@". Order: cheap first, then every lane except cheap, ship and final at the same time (steps of one lane run one after another and each takes its own build slot),
+# then ship, then final. A red lane does not stop the other lanes of its group, ship and final run only when every earlier lane passed.
+# The output of a lane group is printed after the group ends, lanes in table order.
 # --fast keeps the steps whose paths prefix a changed file ("*" always): the same commands, a subset of the full run.
 # Lane "final" runs last, only when every lane passed (checks of their outputs). --list prints the selected steps. --only <lane> runs one lane.
 
@@ -148,9 +150,9 @@ keep_step_artifacts() {
   while IFS= read -r path; do
     [ -n "$path" ] || continue
     if [ ! -e "$root/$path" ]; then
-      echo "check: step $name left no $path" | tee -a "$logdir/summary.txt" >&2
+      echo "check: step $name left no $path" >&2
     elif ! { mkdir -p "$logdir/$name.artifacts/$(dirname "$path")" && cp -R "$root/$path" "$logdir/$name.artifacts/$path"; }; then
-      echo "check: could not keep $path of step $name" | tee -a "$logdir/summary.txt" >&2
+      echo "check: could not keep $path of step $name" >&2
       kept=1
     fi
   done < <(step_artifacts "$name")
@@ -169,7 +171,7 @@ run_step() {
   run_bounded "$outer" "$name" bash -c 'cd -- "$1" && shift && eval "$1"' _ "$root" "$command" > "$log" 2>&1 || code=$?
   waited="$(sed -n 's/.*got slot[0-9]* after \([0-9]*\)s.*/\1/p' "$log" | paste -sd+ - | bc 2> /dev/null)"
   keep_step_artifacts "$name" || [ "$code" -ne 0 ] || code=70
-  printf '%-8s %-20s %-8s %4ss (queue for a build slot %ss)\n' "$lane" "$name" "$([ "$code" -eq 0 ] && echo ok || echo "FAIL($code)")" "$((SECONDS - start))" "${waited:-0}" | tee -a "$logdir/summary.txt"
+  printf '%-8s %-20s %-8s %4ss (queue for a build slot %ss)\n' "$lane" "$name" "$([ "$code" -eq 0 ] && echo ok || echo "FAIL($code)")" "$((SECONDS - start))" "${waited:-0}"
   grep -h 'native build skipped' "$log" | sed 's/^/    | /'
   if [ "$code" -ne 0 ]; then
     tail -25 "$log" | sed 's/^/    | /'
@@ -185,6 +187,37 @@ run_lane() {
     [ "$step_lane" = "$lane" ] || continue
     run_step "$line" || return 1
   done
+}
+
+in_list() {
+  local wanted="$1" one
+  shift
+  for one in "$@"; do [ "$one" = "$wanted" ] && return 0; done
+  return 1
+}
+
+# Lanes of a group start together, each prints into its own file, the files are printed in the order given.
+run_lane_group() {
+  local group=() pids=() lane code=0 index
+  for lane in "$@"; do
+    in_list "$lane" ${lanes[@]+"${lanes[@]}"} && group+=("$lane")
+  done
+  [ "${#group[@]}" -gt 0 ] || return 0
+  if [ "${#group[@]}" -eq 1 ]; then
+    run_lane "${group[0]}" 2>&1 | tee -a "$logdir/summary.txt"
+    return
+  fi
+  for lane in "${group[@]}"; do
+    ( run_lane "$lane" ) > "$logdir/lane-$lane.out" 2>&1 &
+    pids+=("$!")
+  done
+  for index in "${!group[@]}"; do
+    wait "${pids[$index]}" || code=1
+  done
+  for lane in "${group[@]}"; do
+    tee -a "$logdir/summary.txt" < "$logdir/lane-$lane.out"
+  done
+  return "$code"
 }
 
 open_run_logs() {
@@ -239,7 +272,7 @@ run_checks() {
   fi
   take_tree_lock || return 3
   open_run_logs || { echo "check: cannot open a log directory under $root/target/check-logs" >&2; return 4; }
-  local start=$SECONDS lanes=() ordered=() failed=0 cpu sampled before sampler cpu_children daemon
+  local start=$SECONDS lanes=() parallel=() failed=0 cpu sampled before sampler cpu_children daemon
   sampled="$(mktemp)"
   CHECK_OWNER_ID="$(basename "$sampled" | tr -cd '[:alnum:]')"
   CHECK_ROOT_PID="$(exec sh -c 'echo "$PPID"')"
@@ -250,16 +283,10 @@ run_checks() {
   sample_java_cpu "$sampled" &
   sampler=$!
   while IFS= read -r lane; do lanes+=("$lane"); done < <(printf '%s\n' "${selected[@]}" | cut -d'|' -f1 | awk '!seen[$0]++')
-  # One lane at a time: the check never holds more than one build slot command, the first red lane stops the run.
-  ordered=(cheap)
   for lane in "${lanes[@]}"; do
-    [ "$lane" = cheap ] || [ "$lane" = final ] || ordered+=("$lane")
+    case "$lane" in cheap | ship | final) ;; *) parallel+=("$lane") ;; esac
   done
-  ordered+=(final)
-  for lane in "${ordered[@]}"; do
-    printf '%s\n' "${lanes[@]}" | grep -qx "$lane" || continue
-    run_lane "$lane" || { failed=1; break; }
-  done
+  { run_lane_group cheap && run_lane_group ${parallel[@]+"${parallel[@]}"} && run_lane_group ship && run_lane_group final; } || failed=1
   times > "$logdir/times.txt"
   cpu_children="$(tail -1 "$logdir/times.txt" | tr 'ms' '  ' | awk '{printf "%d", $1 * 60 + $2 + $3 * 60 + $4}')"
   kill "$sampler" 2> /dev/null; wait "$sampler" 2> /dev/null

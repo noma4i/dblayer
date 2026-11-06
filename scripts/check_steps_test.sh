@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Self test of the step runner (check_steps.sh): process kill at the limit, build slot allowance, lane order, CPU counter.
+# Self test of the step runner (check_steps.sh): process kill at the limit, build slot allowance, concurrent lanes, CPU counter.
 # Runs in seconds, takes no build slot.
 set -uo pipefail
 
@@ -138,17 +138,43 @@ step_runner_fast_and_full_fail_on_the_same_step_and_cheap_runs_first() {
     || { echo "FAIL expect_green: a fast step is not a full step"; failed=1; }
 }
 
-step_runner_lanes_run_one_after_another_and_the_first_red_lane_stops_the_run() {
+step_runner_lanes_run_at_the_same_time_and_a_red_lane_does_not_hide_the_others() {
   root="$work/engine"
   mkdir -p "$root/target"
-  /bin/rm -f "$root"/overlap "$root"/ran-*
-  rmdir "$root/lock" 2> /dev/null
+  /bin/rm -f "$root"/met-* "$root"/ran-*
   changed_files() { echo "$CHANGED"; }
-  local hold='mkdir lock 2> /dev/null || touch overlap; sleep 1; rmdir lock 2> /dev/null; true'
-  steps=("a|a1|20|-|$hold" "b|b1|20|-|$hold" "c|c1|20|-|touch ran-c1; false" "d|d1|20|-|touch ran-d1")
+  local meet='touch met-NAME; n=0; until [ -e met-OTHER ] || [ "$n" -ge 100 ]; do sleep 0.1; n=$((n + 1)); done; [ -e met-OTHER ]'
+  steps=(
+    "a|a1|20|-|${meet//NAME/a}"
+    "b|b1|20|-|${meet//NAME/b}"
+    "c|c1|20|-|touch ran-c1; false"
+    "c|c2|20|-|touch ran-c2"
+    "d|d1|20|-|sleep 1; touch ran-d1"
+    "final|f1|20|-|touch ran-f1"
+  )
+  steps[0]="${steps[0]//OTHER/b}"
+  steps[1]="${steps[1]//OTHER/a}"
   (run_checks) > "$work/engine.out" 2>&1
-  [ ! -e "$root/overlap" ] || { echo "FAIL expect_red: 2 lanes ran at the same time"; failed=1; }
-  [ -e "$root/ran-c1" ] && [ ! -e "$root/ran-d1" ] || { echo "FAIL expect_red: a lane ran after the first red lane"; failed=1; }
+  [ -e "$root/met-a" ] && [ -e "$root/met-b" ] && ! grep -q 'FAIL' <(grep -E '^(a|b) ' "$work/engine.out") || { echo "FAIL expect_green: lanes a and b did not run at the same time"; failed=1; }
+  [ -e "$root/ran-c1" ] && [ ! -e "$root/ran-c2" ] || { echo "FAIL expect_red: a step ran after a red step of its lane"; failed=1; }
+  [ -e "$root/ran-d1" ] || { echo "FAIL expect_red: a red lane hid the lane d"; failed=1; }
+  [ ! -e "$root/ran-f1" ] || { echo "FAIL expect_red: final ran after a red lane"; failed=1; }
+  [ "$(grep -E '^[a-d] ' "$work/engine.out" | awk '{print $1 $2}' | paste -sd, -)" = "aa1,bb1,cc1,dd1" ] || { echo "FAIL the summary is not in table order"; cat "$work/engine.out"; failed=1; }
+  grep -q '^check: FAILED' "$work/engine.out" || { echo "FAIL the run did not end red"; failed=1; }
+}
+
+step_runner_the_limit_kills_the_processes_of_every_lane() {
+  root="$work/engine"
+  mkdir -p "$root/target"
+  /bin/rm -rf "$root/target/check.lock"
+  changed_files() { echo "$CHANGED"; }
+  steps=("a|a1|280|-|sleep 603 & echo \$! > $work/pid-lane-a; wait" "b|b1|280|-|sleep 604 & echo \$! > $work/pid-lane-b; wait")
+  local code=0 pid
+  (run_bounded 5 selftest run_checks) > "$work/engine.out" 2>&1 || code=$?
+  [ "$code" -eq 124 ] || { echo "FAIL expected the limit (124), got $code"; failed=1; }
+  for pid in "$work"/pid-lane-a "$work"/pid-lane-b; do
+    [ -s "$pid" ] && wait_until_gone "$(cat "$pid")" || { echo "FAIL a lane left a process after the limit: $pid"; failed=1; }
+  done
 }
 
 expect_green_counter() {
