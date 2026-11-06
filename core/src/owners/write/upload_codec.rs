@@ -57,7 +57,7 @@ impl UploadCodec {
 
     async fn graphql(&self, link: &Link, (name, step): (&str, UploadStage), (operation, item): (u64, &str), variables: Value) -> Result<Value, TransportError> {
         let (document, root) = (self.lookup)(name).ok_or_else(|| rejected(&format!("operation {name} is not registered")))?;
-        let response = link.mutate(GraphQLRequest { owner: Some(RequestOwner::Transfer { operation_id: i64::try_from(operation).unwrap_or(i64::MAX), item_id: item.to_string(), step }), ..GraphQLRequest::new(&document, name, variables) }).await?;
+        let response = link.mutate(GraphQLRequest { owner: (step != UploadStage::Abort).then(|| RequestOwner::Transfer { operation_id: i64::try_from(operation).unwrap_or(i64::MAX), item_id: item.to_string(), step }), ..GraphQLRequest::new(&document, name, variables) }).await?;
         answered(name, &root, response)
     }
 
