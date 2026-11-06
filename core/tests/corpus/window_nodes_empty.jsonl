@@ -1,5 +1,9 @@
 {"trace":"window_nodes_empty"}
-{"args":{"models":"events"},"in":"open","out":[{"o":"opened"}]}
+{"args":{"models":"events","encrypted":true},"in":"open","out":[{"o":"opened"}]}
+{"in":"published","out":[{"o":"published","v":{"epoch":1}}]}
+{"args":{"body":{"token":"t"},"operation":"social"},"in":"session_call","out":[{"o":"request","v":{"id":"r1","kind":"http","purpose":"standard"}}]}
+{"args":{"id":"r1","json":{"nextStep":"authenticated"}},"in":"answer","out":[{"o":"session","v":{"answer":{"nextStep":"authenticated"},"operation":"social"}}]}
+{"in":"published","out":[{"o":"published","v":{"epoch":2}}]}
 {"args":{"online":true},"in":"set_online","out":[{"o":"online","v":true}]}
 {"args":{"model":"Container","relation":"nodes","rows":[]},"in":"nodes","out":[{"o":"nodes","v":{"relation":"nodes","rows":[]}}]}
 {"in":"close","out":[{"o":"closed"}]}

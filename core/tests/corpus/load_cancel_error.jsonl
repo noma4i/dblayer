@@ -1,7 +1,11 @@
 {"trace":"load_cancel_error"}
-{"in":"open","out":[{"o":"opened"}]}
+{"in":"open","out":[{"o":"opened"}],"args":{"encrypted":true}}
+{"in":"published","out":[{"o":"published","v":{"epoch":1}}]}
+{"args":{"body":{"token":"t"},"operation":"social"},"in":"session_call","out":[{"o":"request","v":{"id":"r1","kind":"http","purpose":"standard"}}]}
+{"args":{"id":"r1","json":{"nextStep":"authenticated"}},"in":"answer","out":[{"o":"session","v":{"answer":{"nextStep":"authenticated"},"operation":"social"}}]}
+{"in":"published","out":[{"o":"published","v":{"epoch":2}}]}
 {"in":"set_online","args":{"online":true},"out":[{"o":"online","v":true}]}
-{"in":"begin_load","args":{"as":"l1","relation":"feed"},"out":[{"o":"request","v":{"id":"r1","kind":"query","purpose":"standard"}}]}
+{"in":"begin_load","args":{"as":"l1","relation":"feed"},"out":[{"o":"request","v":{"id":"r2","kind":"http","purpose":"standard"}}]}
 {"in":"cancel","args":{"target":"l1"},"out":[{"o":"error","v":{"kind":"interrupted"}}]}
-{"in":"begin_load","args":{"as":"l2","relation":"feed"},"out":[{"o":"request","v":{"id":"r2","kind":"query","purpose":"standard"}}]}
-{"in":"error","args":{"id":"r2","kind":"permanent"},"out":[{"o":"error","v":{"kind":"graphql"}}]}
+{"in":"begin_load","args":{"as":"l2","relation":"feed"},"out":[{"o":"request","v":{"id":"r3","kind":"http","purpose":"standard"}}]}
+{"in":"error","args":{"id":"r3","kind":"permanent"},"out":[{"o":"error","v":{"kind":"graphql"}}]}
