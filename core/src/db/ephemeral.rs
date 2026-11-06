@@ -312,7 +312,7 @@ impl Db {
     }
 
     pub fn expire_ephemeral(&self, admitted: &crate::ffi::admission::Admitted) -> Result<usize, DbError> {
-        let _gate = locked(&self.shared.expiry_gate);
+        let _gate = self.shared.expiry_gate.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         let (due, epoch) = {
             let life = &self.shared.store.lifecycle;
             let _line = life.commit_line();
