@@ -316,7 +316,7 @@ for path in files:
         if admitted_argument.match(code[match.end() - 1:]) or f"z23:{relative}" in allowed:
             continue
         number = text.count("\n", 0, match.start()) + 1
-        findings.append(f"Z23 a request goes to the network with an Admitted epoch permit: {path.relative_to(root)}:{number}: {text.splitlines()[number - 1].strip()}")
+        findings.append(f"Z23 a request goes to the network with an epoch permit: {path.relative_to(root)}:{number}: {text.splitlines()[number - 1].strip()}")
 
 for path in files:
     relative = str(path.relative_to(source))
