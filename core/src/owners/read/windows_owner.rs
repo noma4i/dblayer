@@ -14,13 +14,14 @@ struct Opening {
 struct WindowBasis {
     epoch: Epoch,
     online: Option<bool>,
+    saving: bool,
     base_generation: u64,
     generations: BTreeMap<String, u64>,
 }
 
 impl Window {
     fn new(model: String, basis: WindowBasis, (max_pages, members_complete, lifetime): (u32, bool, (i64, i64)), read_id: Option<u64>, ids: (&mut RequestId, &mut u32)) -> Self {
-        let WindowBasis { epoch, online, base_generation, generations } = basis;
+        let WindowBasis { epoch, online, saving, base_generation, generations } = basis;
         let opening = read_id.map(|read_id| Opening { read_id, basis: generations.get(&model).copied().unwrap_or(base_generation), held: Vec::new() });
         let facts = Facts {
             dependency_models: BTreeSet::from([model]),
@@ -34,6 +35,7 @@ impl Window {
             reconnected: false,
             waiters: BTreeMap::new(),
             fresh: false,
+            saving,
             landed_at: 0,
             fresh_until: 0,
             lifetime,
@@ -180,6 +182,7 @@ pub type OnForeground = Arc<dyn Fn(&WindowKey) -> bool + Send + Sync>;
 pub struct WindowsState {
     epoch: Epoch,
     online: Option<bool>,
+    saving: bool,
     generations: BTreeMap<String, u64>,
     base_generation: u64,
     preload: Vec<WindowKey>,
@@ -206,7 +209,7 @@ pub struct WindowsPeers {
 impl WindowsState {
     /// `online` is the value of the first addressed `Online`, `None` before it.
     pub fn new(epoch: Epoch, online: Option<bool>, peers: WindowsPeers) -> Self {
-        Self { epoch, online, generations: BTreeMap::new(), base_generation: 0, preload: Vec::new(), sources: BTreeSet::new(), next_request: 1, next_attempt: 1, windows: BTreeMap::new(), max_pages: Arc::new(|_| u32::MAX), members_complete: Arc::new(|_| false), lifetimes: Arc::new(|_| (300_000, 300_000)), next_read: 1, on_foreground: Arc::new(|_| false), foreground_seen: 0, peers }
+        Self { epoch, online, saving: false, generations: BTreeMap::new(), base_generation: 0, preload: Vec::new(), sources: BTreeSet::new(), next_request: 1, next_attempt: 1, windows: BTreeMap::new(), max_pages: Arc::new(|_| u32::MAX), members_complete: Arc::new(|_| false), lifetimes: Arc::new(|_| (300_000, 300_000)), next_read: 1, on_foreground: Arc::new(|_| false), foreground_seen: 0, peers }
     }
 
     /// Keys that `EpochStarted` loads with `Interest+(PRELOAD)`.
@@ -267,7 +270,7 @@ impl WindowsState {
     /// A machine of the preload interest starts not fresh: there is no saved window to read.
     fn create(&mut self, key: &WindowKey, read_id: Option<u64>) {
         let ids = (&mut self.next_request, &mut self.next_attempt);
-        let window = Window::new(key.model.clone(), WindowBasis { epoch: self.epoch, online: self.online, base_generation: self.base_generation, generations: self.generations.clone() }, ((self.max_pages)(key), (self.members_complete)(key), (self.lifetimes)(key)), read_id, ids);
+        let window = Window::new(key.model.clone(), WindowBasis { epoch: self.epoch, online: self.online, saving: self.saving, base_generation: self.base_generation, generations: self.generations.clone() }, ((self.max_pages)(key), (self.members_complete)(key), (self.lifetimes)(key)), read_id, ids);
         self.windows.insert(key.clone(), window);
     }
 }
@@ -327,13 +330,13 @@ impl Windows {
         Self::on(state, &key, Ev::InterestPlus { id, now }, out);
     }
 
-    fn interest_preload(state: &mut WindowsState, key: WindowKey, out: &mut Effects<Self>) {
+    fn interest_preload(state: &mut WindowsState, key: WindowKey, now: i64, out: &mut Effects<Self>) {
         match state.windows.get(&key) {
             None => state.create(&key, None),
             Some(window) if window.interest().contains(&PRELOAD) => return,
             Some(_) => {}
         }
-        Self::on(state, &key, Ev::InterestPlus { id: PRELOAD, now: 0 }, out);
+        Self::on(state, &key, Ev::InterestPlus { id: PRELOAD, now }, out);
     }
 
     fn interest_passive(state: &mut WindowsState, key: WindowKey, id: InterestId, out: &mut Effects<Self>) {
@@ -392,9 +395,13 @@ impl StateOwner for Windows {
                 }
             }
             WindowsInput::RetryDue { request } => Self::by_request(state, request, Ev::RetryDue { request }, &mut out),
-            WindowsInput::PreloadKeys { keys } => {
+            WindowsInput::PreloadKeys { keys, now } => {
+                let dropped: Vec<WindowKey> = state.windows.iter().filter(|(key, window)| !keys.contains(key) && !state.preload.contains(key) && window.interest().contains(&PRELOAD)).map(|(key, _)| key.clone()).collect();
+                for key in dropped {
+                    Self::on(state, &key, Ev::InterestMinus { id: PRELOAD }, &mut out);
+                }
                 for key in keys {
-                    Self::interest_preload(state, key, &mut out);
+                    Self::interest_preload(state, key, now, &mut out);
                 }
             }
             WindowsInput::StoreCommitted { models, revision } => {
@@ -419,6 +426,10 @@ impl StateOwner for Windows {
                 state.online = Some(online);
                 Self::every(state, &Ev::Online { online, now }, &mut out);
             }
+            WindowsInput::PowerSaving { saving } => {
+                state.saving = saving;
+                Self::every(state, &Ev::PowerSaving { saving }, &mut out);
+            }
             WindowsInput::WindowRead { key, read_id, result } => {
                 let Some(window) = state.windows.get_mut(&key).filter(|window| window.reading(read_id)) else { return out };
                 let saved = result.unwrap_or(None);
@@ -431,11 +442,12 @@ impl StateOwner for Windows {
                 state.generations.clear();
                 state.windows.clear();
                 state.online = None;
+                state.saving = false;
                 state.foreground_seen = 0;
                 if started.identity.is_some() {
                     out.push(Effect::Run(WindowsEffect::SnapshotRequest { epoch: started.epoch }));
                     for key in state.preload.clone() {
-                        Self::interest_preload(state, key, &mut out);
+                        Self::interest_preload(state, key, 0, &mut out);
                     }
                 }
             }

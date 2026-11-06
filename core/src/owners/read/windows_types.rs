@@ -170,10 +170,12 @@ pub enum WindowsInput {
     Stale { model: String, keys: StaleKeys },
     RetryDue { request: RequestId },
     /// The executor of `DerivePreload` found these keys in the rows of a source window.
-    PreloadKeys { keys: Vec<WindowKey> },
+    PreloadKeys { keys: Vec<WindowKey>, now: i64 },
     /// A Store broadcast `Committed{tables}`: the models whose tables changed and the revision.
     StoreCommitted { models: Vec<String>, revision: i64 },
     Online { online: Online, now: i64 },
+    /// The device saves power: a key that only the preload watches waits (Network snapshot and broadcast).
+    PowerSaving { saving: bool },
     /// The application came to the front; `seq` grows by 1 with every return.
     Foreground(u64),
     /// The answer of `ReadWindow`: the saved window of a key that had no machine.
@@ -207,6 +209,7 @@ enum Ev {
     SourceChanged { revision: i64 },
     RetryDue { request: RequestId },
     Online { online: bool, now: i64 },
+    PowerSaving { saving: bool },
     /// The saved window of the key: `None` before its first page or after a reset of its generation.
     Saved(Option<SavedWindow>),
     ModelsReset { generation: u64, models: Vec<String> },

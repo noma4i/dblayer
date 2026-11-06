@@ -257,7 +257,7 @@ fn win_prop_no_request_before_online() {
 fn win_dictionary_owner() {
     let mut det = DetScheduler::new(5);
     let log = new_log();
-    let windows = add_windows(&mut det, &log, w::WindowsState::new(EPOCH, Some(true), peers()), Reads, Arc::new(AtomicU64::new(0)));
+    let windows = add_windows(&mut det, &log, w::WindowsState::new(EPOCH, Some(true), peers()), Reads::auto(), Arc::new(AtomicU64::new(0)));
     det.start_epoch(EPOCH);
     let other = WindowKey { model: "Chat".into(), name: "room".into() };
     for (key, id) in [(key(), 1), (other.clone(), 2)] {
@@ -284,7 +284,7 @@ fn win_dictionary_owner() {
 fn win_landed_revision_per_machine() {
     let mut det = DetScheduler::new(5);
     let log = new_log();
-    let windows = add_windows(&mut det, &log, w::WindowsState::new(EPOCH, Some(true), peers()), Reads, Arc::new(AtomicU64::new(0)));
+    let windows = add_windows(&mut det, &log, w::WindowsState::new(EPOCH, Some(true), peers()), Reads::auto(), Arc::new(AtomicU64::new(0)));
     det.start_epoch(EPOCH);
     let other = WindowKey { model: "Chat".into(), name: "room".into() };
     let load = |key: WindowKey, id: u64, revision: i64| w::WindowsInput::Load { key, id, goal: w::Goal::First, force: false, store_revision: revision, now: NOW };
@@ -352,7 +352,7 @@ fn win_dictionary_and_online_belong_to_the_epoch() {
     take(&twin.log);
     twin.post_call(w::WindowsInput::Load { key: key(), id: 7, goal: w::Goal::First, force: false, store_revision: 0, now: NOW });
     let (requests_before_online, _) = twin.split(take(&twin.log));
-    assert!(requests_before_online.is_empty(), "no request before the addressed Online: {requests_before_online:?}");
+    assert_eq!(requests(&requests_before_online), 0, "no request before the addressed Online: {requests_before_online:?}");
     assert_eq!(twin.stage(), Some(WindowStage::Waiting));
     twin.post_call(w::WindowsInput::Online { online: Online(true), now: NOW });
     assert_eq!(twin.stage(), Some(WindowStage::Loading));

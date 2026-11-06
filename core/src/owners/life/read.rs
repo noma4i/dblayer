@@ -78,7 +78,7 @@ pub(super) fn add(builder: &mut RuntimeBuilder, wiring: &Arc<Wiring>, ports: &Po
                 let (db, handle, wiring) = (derive_db.clone(), derive_handle.clone(), windows_wiring.clone());
                 let launch = derive_handle.launch();
                 crate::task::spawn_blocking_on(crate::task::Carry::Detached, &derive_executor, move || { let _launch = launch; match preload_keys(&db, true) {
-                    Ok(keys) => handle.post(windows_at, stamp, WindowsInput::PreloadKeys { keys }),
+                    Ok(keys) => { let now = db.lock().now_ms(); handle.post(windows_at, stamp, WindowsInput::PreloadKeys { keys, now }) }
                     Err(error) => wiring.fault(format!("the derived preload is invalid: {error}")),
                 } });
             }
@@ -189,7 +189,7 @@ impl super::Life {
     }
 
     /// The keys of the schema declared `preload` start loading once their operations are registered.
-    pub fn preload(&self, keys: Vec<WindowKey>) { self.wiring.to_windows(WindowsInput::PreloadKeys { keys }); }
+    pub fn preload(&self, keys: Vec<WindowKey>) { self.wiring.to_windows(WindowsInput::PreloadKeys { keys, now: (self.wiring.now)() }); }
 
     /// The platform calls that wait for an outcome of `Windows` now.
     #[cfg(test)]

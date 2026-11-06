@@ -205,21 +205,29 @@ impl Facts {
     fn waiting(&mut self, context: &mut Ctx<'_>, force: &mut bool, page: &mut u32, event: &Ev) -> Outcome<WinState> {
         self.env(event);
         match event {
-            Ev::Online { online: true, .. } => {
-                let (request, attempt) = context.request();
-                self.phase = Phase::Loading;
-                self.emit(Emit::Pin { epoch: self.epoch, request });
+            Ev::Online { online: true, .. } if self.deferred() => Handled,
+            Ev::Online { online: true, .. } => self.leave_waiting(context, *force, *page),
+            Ev::PowerSaving { .. } if self.is_online() && !self.deferred() => self.leave_waiting(context, *force, *page),
+            Ev::OfflineRefused { message } => {
+                self.error = Some(crate::ffi::DbError::Network { detail: message.clone() });
+                self.set_phase(self.failed_phase());
                 self.announce();
-                Transition(WinState::loading(Load::issued(request, attempt, *page, *force, self.basis())))
+                Handled
             }
             Ev::InterestPlus { id, .. } => {
                 self.interest.insert(*id);
+                if self.is_online() && !self.deferred() {
+                    return self.leave_waiting(context, *force, *page);
+                }
                 self.announce();
                 Handled
             }
             Ev::Load { id, goal, force: wider, .. } => {
                 self.join_load(*id, *goal, *page);
                 *force |= *wider && *goal != Goal::Next;
+                if self.is_online() && !self.deferred() {
+                    return self.leave_waiting(context, *force, *page);
+                }
                 Handled
             }
             Ev::InterestMinus { id } => {

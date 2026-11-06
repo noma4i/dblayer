@@ -14,6 +14,8 @@ struct Facts {
     waiters: BTreeMap<InterestId, Want>,
     /// The first page landed and nothing marked the window stale since.
     fresh: bool,
+    /// The device saves power (`saving` of the dictionary).
+    saving: bool,
     landed_at: i64,
     fresh_until: i64,
     /// `expires_in` and `empty_in` of the relation in ms.
@@ -52,6 +54,7 @@ impl Facts {
                     self.dropped = true;
                 }
             }
+            Ev::PowerSaving { saving } => self.saving = *saving,
             Ev::ReloadOnConnect { id } => {
                 self.reload.insert(*id);
             }
@@ -80,6 +83,12 @@ impl Facts {
 
     /// Loaded, not marked stale, and `now` inside `landed_at <= now < fresh_until`: a clock that went back makes the window stale.
     fn is_fresh(&self, now: i64) -> bool { self.fresh && self.landed_at <= now && now < self.fresh_until }
+
+    /// Only the preload watches the window.
+    fn preload_only(&self) -> bool { self.waiters.is_empty() && self.interest.len() == 1 && self.interest.contains(&PRELOAD) }
+
+    /// A load waits for the end of power saving: no reader and no waiter asked for it.
+    fn deferred(&self) -> bool { self.saving && self.preload_only() }
 
     fn is_online(&self) -> bool { self.online == Some(true) }
 
@@ -133,7 +142,7 @@ impl Facts {
     /// A load of `page`: a request when online, `Waiting` otherwise. `announce` adds the window state.
     fn begin(&mut self, ctx: &mut Ctx<'_>, page: u32, force: bool, announce: bool) -> Outcome<WinState> {
         self.replace_all = false;
-        let next = if self.is_online() {
+        let next = if self.is_online() && !self.deferred() {
             let (request, attempt) = ctx.request();
             self.phase = Phase::Loading;
             self.emit(Emit::Pin { epoch: self.epoch, request });
@@ -145,6 +154,15 @@ impl Facts {
             self.announce();
         }
         Transition(next)
+    }
+
+    /// A window that waited goes to the network: `Loading` with a new request.
+    fn leave_waiting(&mut self, ctx: &mut Ctx<'_>, force: bool, page: u32) -> Outcome<WinState> {
+        let (request, attempt) = ctx.request();
+        self.phase = Phase::Loading;
+        self.emit(Emit::Pin { epoch: self.epoch, request });
+        self.announce();
+        Transition(WinState::loading(Load::issued(request, attempt, page, force, self.basis())))
     }
 
     fn finish(&mut self, request: Option<(RequestId, u32)>) -> Outcome<WinState> {

@@ -288,6 +288,9 @@ impl EffectRunner<Network> for NetworkRunner {
                     return;
                 }
                 let stamp = EpochStamp::Epoch(epoch);
+                if let (Peer::Windows, Some(saving)) = (owner, saving) {
+                    wiring.to_windows_in(epoch, WindowsInput::PowerSaving { saving });
+                }
                 match owner {
                     Peer::Windows => wiring.to_windows_in(epoch, WindowsInput::Online { online: Online(online), now: self.db.lock().now_ms() }),
                     Peer::Feed => wiring.to_feed(FeedInput::Online(Online(online))),
@@ -307,7 +310,10 @@ impl EffectRunner<Network> for NetworkRunner {
                 wiring.to_rounds(RoundsInput::Foreground);
                 wiring.tell_network(&[Peer::Rounds, Peer::Session, Peer::Windows], NetworkEvent::Foreground(seq));
             }
-            NetworkEffect::PowerSaving(saving) => wiring.tell_network(&[Peer::Transfer, Peer::Windows], NetworkEvent::PowerSaving { saving, epoch: None }),
+            NetworkEffect::PowerSaving(saving) => {
+                wiring.to_windows(WindowsInput::PowerSaving { saving });
+                wiring.tell_network(&[Peer::Transfer, Peer::Windows], NetworkEvent::PowerSaving { saving, epoch: None });
+            }
             NetworkEffect::Drained(drained) => wiring.to_lifecycle(LifecycleInput::Drained(drained)),
             NetworkEffect::Reply { id, closed } => self.held_replies.push((id, closed)),
         }

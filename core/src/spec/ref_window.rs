@@ -88,10 +88,24 @@ pub(super) enum Input {
     EpochEnded,
     ModelsReset { own_model: bool },
     Closing,
+    /// The answer of the read pool for the saved window of the key.
+    Read(Read),
+    PowerSaving(bool),
+    OfflineRefused,
+}
+
+/// What the read pool answers: the saved window (`generation_ok` = the generation did not change), nothing, an error, or the answer of another read.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum Read {
+    Saved { landed_at: i64, fresh_until: i64, stale: bool, generation_ok: bool },
+    None,
+    Failed,
+    Stray,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) enum Effect {
+    ReadWindow,
     Request { request: u64, attempt: u32, page: u32 },
     Cancel { request: u64, attempt: u32 },
     Commit { request: u64, replace_all: bool },
@@ -103,6 +117,7 @@ pub(super) enum Effect {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum State {
+    Opening,
     Idle,
     Loading { request: u64, attempt: u32, retry: bool, page: u32, force: bool, attempts: u32 },
     Landing { request: u64, page: u32, cursor: Option<u32>, rows: bool },
@@ -133,6 +148,17 @@ pub(super) struct Window {
     pub(super) phase: Phase,
     pub(super) settled: bool,
     pub(super) outcomes: Vec<(u32, Result3)>,
+    /// The `now` of the input, set by the test before every step.
+    pub(super) now: i64,
+    pub(super) landed_at: i64,
+    pub(super) fresh_until: i64,
+    answered_at: i64,
+    /// `expires_in` and `empty_in`.
+    pub(super) lifetime: (i64, i64),
+    pub(super) saving: bool,
+    /// The key has had no machine: its first creating input reads the saved window.
+    unread: bool,
+    held: Vec<Input>,
     next_request: u64,
     next_attempt: u32,
 }
@@ -160,6 +186,14 @@ impl Window {
             phase: Phase::Idle,
             settled: false,
             outcomes: Vec::new(),
+            now: 1_000_000,
+            landed_at: 0,
+            fresh_until: 0,
+            answered_at: 0,
+            lifetime: (300_000, 60_000),
+            saving: false,
+            unread: true,
+            held: Vec::new(),
             next_request: 1,
             next_attempt: 1,
         }
@@ -179,6 +213,13 @@ impl Window {
     pub(super) fn empty_nodes_outcome(id: u32) -> (u32, Result3) { (id, Result3::Loaded) }
 
     fn is_online(&self) -> bool { self.online == Some(true) }
+
+    /// Loaded, not marked stale and `landed_at <= now < fresh_until` by the `now` of the input.
+    fn fresh_at(&self) -> bool { self.fresh && self.landed_at <= self.now && self.now < self.fresh_until }
+
+    fn preload_only(&self) -> bool { self.waiters.is_empty() && self.interest.len() == 1 && self.interest.contains(&PRELOAD) }
+
+    fn deferred(&self) -> bool { self.saving && self.preload_only() }
 
     fn watched(&self) -> bool { !self.interest.is_empty() || !self.waiters.is_empty() }
 
@@ -206,7 +247,7 @@ impl Window {
     fn begin(&mut self, page: u32, force: bool, announce: bool) -> Vec<Effect> {
         let mut effects = Vec::new();
         self.replace_all = false;
-        if self.is_online() {
+        if self.is_online() && !self.deferred() {
             let (request, attempt) = self.request_ids();
             self.state = State::Loading { request, attempt, retry: false, page, force, attempts: 0 };
             self.phase = Phase::Loading;
@@ -222,6 +263,19 @@ impl Window {
     fn after(page: u32) -> Want { Want::Next(page + 1) }
 
     pub(super) fn step(&mut self, input: Input) -> Vec<Effect> {
+        if self.unread && self.state == State::Idle && matches!(input, Input::InterestPlus { .. } | Input::InterestPassive { .. } | Input::Load { .. }) {
+            self.unread = false;
+            if !matches!(input, Input::InterestPlus { id: PRELOAD }) {
+                self.state = State::Opening;
+                return self.hold(input, vec![Effect::ReadWindow]);
+            }
+        }
+        if self.state == State::Opening {
+            return self.opening(input);
+        }
+        if let Input::PowerSaving(on) = input {
+            self.saving = on;
+        }
         if self.state == State::Ended {
             return match input {
                 Input::Closing => vec![Effect::Drained],
@@ -250,7 +304,60 @@ impl Window {
             State::Loading { request, attempt, retry, page, force, attempts } => self.loading(request, attempt, retry, page, force, attempts, input),
             State::Landing { request, page, cursor, rows } => self.landing(request, page, cursor, rows, input),
             State::Waiting { force, page } => self.waiting(force, page, input),
-            State::Ended => Vec::new(),
+            State::Opening | State::Ended => Vec::new(),
+        }
+    }
+
+    /// A held input changes the interest and the waiters at once, the machine runs it after the read.
+    fn hold(&mut self, input: Input, effects: Vec<Effect>) -> Vec<Effect> {
+        match &input {
+            Input::InterestPlus { id } | Input::InterestPassive { id } => { self.interest.insert(*id); }
+            Input::Load { id, .. } => { self.waiters.insert(*id, Want::First); }
+            Input::InterestMinus { id } => {
+                self.interest.remove(id);
+                self.waiters.remove(id);
+            }
+            _ => {}
+        }
+        self.held.push(input);
+        effects
+    }
+
+    /// Rows of `Opening`.
+    fn opening(&mut self, input: Input) -> Vec<Effect> {
+        match input {
+            Input::Read(Read::Stray) => Vec::new(),
+            Input::Read(read) => {
+                if let Read::Saved { landed_at, fresh_until, stale, generation_ok: true } = read {
+                    if !self.held.iter().any(|held| matches!(held, Input::ModelsReset { own_model: true })) {
+                        self.fresh = !stale;
+                        self.landed_at = landed_at;
+                        self.fresh_until = fresh_until;
+                    }
+                }
+                self.state = State::Idle;
+                let held = std::mem::take(&mut self.held);
+                for held in &held {
+                    if let Input::Load { id, .. } = held { self.waiters.remove(id); }
+                }
+                let mut effects = Vec::new();
+                for held in held {
+                    effects.extend(self.step(held));
+                }
+                effects
+            }
+            Input::EpochEnded | Input::Closing => {
+                for held in std::mem::take(&mut self.held) {
+                    if let Input::Load { id, .. } = held { self.outcomes.push((id, Result3::Interrupted)); }
+                }
+                self.waiters.clear();
+                self.state = State::Idle;
+                let closing = input == Input::Closing;
+                self.end(closing)
+            }
+            Input::SourceChanged { revision } => vec![Effect::DerivePreload { revision }],
+            Input::Foreground { .. } => Vec::new(),
+            other => self.hold(other, Vec::new()),
         }
     }
 
@@ -276,7 +383,7 @@ impl Window {
             }
             Input::InterestPlus { id } => {
                 self.interest.insert(id);
-                if self.fresh {
+                if self.fresh_at() {
                     self.set_phase(Phase::Loaded);
                     vec![Effect::WindowState]
                 } else {
@@ -302,7 +409,12 @@ impl Window {
                 }
             }
             Input::Foreground { .. } if !self.interest.is_empty() && self.is_online() => self.begin(1, false, true),
-            Input::Online(true) if !self.fresh && self.watched() => self.begin(1, false, true),
+            Input::Online(true) if !self.fresh_at() && self.watched() => self.begin(1, false, true),
+            Input::OfflineRefused => {
+                self.last_error = Some(true);
+                self.set_phase(self.failed_phase());
+                vec![Effect::WindowState]
+            }
             Input::ModelsReset { own_model: true } => {
                 self.fresh = false;
                 if self.watched() { self.begin(1, false, self.is_online()) } else { Vec::new() }
@@ -313,8 +425,8 @@ impl Window {
 
     fn idle_load(&mut self, id: u32, goal: Goal, force: bool) -> Vec<Effect> {
         match goal {
-            Goal::First if self.fresh && !force => self.immediate(id, Result3::Loaded),
-            Goal::All if self.fresh && !force => match self.cursor {
+            Goal::First if self.fresh_at() && !force => self.immediate(id, Result3::Loaded),
+            Goal::All if self.fresh_at() && !force => match self.cursor {
                 None => self.immediate(id, Result3::Loaded),
                 Some(_) if self.page_limit_reached() => self.immediate(id, Result3::PageLimit),
                 Some(cursor) => {
@@ -375,6 +487,7 @@ impl Window {
                 }
             }
             Input::Response { request: got, attempt: got_attempt, cursor, rows } if mine(got, got_attempt) => {
+                self.answered_at = self.now;
                 self.page_count = if page == 1 { 1 } else { self.page_count + 1 };
                 self.state = State::Landing { request, page, cursor, rows };
                 vec![Effect::Commit { request, replace_all: self.replace_all }]
@@ -462,6 +575,10 @@ impl Window {
         self.cursor = cursor;
         self.page = page;
         self.landed_revision = revision;
+        if page == 1 {
+            self.landed_at = self.answered_at;
+            self.fresh_until = self.answered_at + if rows { self.lifetime.0 } else { self.lifetime.1 };
+        }
         self.last_error = None;
         self.cursor_reset_used = false;
         self.replace_all = false;
@@ -566,19 +683,28 @@ impl Window {
 
     fn waiting(&mut self, force: bool, page: u32, input: Input) -> Vec<Effect> {
         match input {
-            Input::Online(true) => {
-                let (request, attempt) = self.request_ids();
-                self.state = State::Loading { request, attempt, retry: false, page, force, attempts: 0 };
-                self.phase = Phase::Loading;
-                vec![Effect::Request { request, attempt, page }, Effect::WindowState]
+            Input::Online(true) if self.deferred() => Vec::new(),
+            Input::Online(true) => self.leave_waiting(force, page),
+            Input::PowerSaving(_) if self.is_online() && !self.deferred() => self.leave_waiting(force, page),
+            Input::OfflineRefused => {
+                self.last_error = Some(true);
+                self.set_phase(self.failed_phase());
+                vec![Effect::WindowState]
             }
             Input::InterestPlus { id } => {
                 self.interest.insert(id);
+                if self.is_online() && !self.deferred() {
+                    return self.leave_waiting(force, page);
+                }
                 vec![Effect::WindowState]
             }
             Input::Load { id, goal, force: wider } => {
                 self.join_load(id, goal, page);
-                self.state = State::Waiting { force: force || (wider && goal != Goal::Next), page };
+                let force = force || (wider && goal != Goal::Next);
+                self.state = State::Waiting { force, page };
+                if self.is_online() && !self.deferred() {
+                    return self.leave_waiting(force, page);
+                }
                 Vec::new()
             }
             Input::InterestMinus { id } => {
@@ -595,6 +721,13 @@ impl Window {
             }
             _ => Vec::new(),
         }
+    }
+
+    fn leave_waiting(&mut self, force: bool, page: u32) -> Vec<Effect> {
+        let (request, attempt) = self.request_ids();
+        self.state = State::Loading { request, attempt, retry: false, page, force, attempts: 0 };
+        self.phase = Phase::Loading;
+        vec![Effect::Request { request, attempt, page }, Effect::WindowState]
     }
 
     /// Rows `win_epoch_ended` and `win_closing`.

@@ -13,12 +13,12 @@ fn win_preload_created() {
 #[test]
 fn win_preload_derived() {
     let mut twin = Twin::new();
-    twin.post(w::WindowsInput::PreloadKeys { keys: vec![key()] });
+    twin.post(w::WindowsInput::PreloadKeys { keys: vec![key()], now: NOW });
     let effects = twin.reference.step(Input::InterestPlus { id: PRELOAD });
     let (got, _) = twin.split(take(&twin.log));
     assert_eq!(got, effects.iter().filter(|effect| **effect != Effect::WindowState).cloned().collect::<Vec<_>>());
     assert_eq!(twin.state().interest(&key()), [w::PRELOAD]);
-    twin.post(w::WindowsInput::PreloadKeys { keys: vec![key()] });
+    twin.post(w::WindowsInput::PreloadKeys { keys: vec![key()], now: NOW });
     assert!(take(&twin.log).is_empty(), "a key that has a machine is not created again");
 }
 

@@ -11,7 +11,7 @@ use std::sync::{Arc, PoisonError};
 const NOW: i64 = 1_000_000;
 
 use super::ref_window::Phase;
-use super::ref_window::{Effect, Failure, Goal, Input, Reject, Result3, State, Window, PRELOAD};
+use super::ref_window::{Effect, Failure, Goal, Input, Read, Reject, Result3, State, Window, PRELOAD};
 use crate::owners::contract::{Committed, EpochStarted, ErrorClass, ModelsReset, Online, RejectReason, Rejected, RequestError};
 use crate::owners::contract::WindowPhase as OwnerPhase;
 use crate::owners::support::{new_log, number_after, snapshot, take, Discard, Emitted, Landing, Log, Reset, ResetState, Silent, Sink, Source, SourceInput, SourceState, Spy, SpyState, StoreGeneration, StoreStub, StoreStubState};
@@ -59,12 +59,24 @@ fn add_windows(det: &mut DetScheduler, log: &Spied, state: w::WindowsState, runn
     det.add::<Spy<Windows>>("windows", SpyState::new(state, log), runner)
 }
 
-/// The read pool of the tests: the saved window of every key is none.
-struct Reads;
+type HeldReads = Arc<std::sync::Mutex<Vec<(WindowKey, u64)>>>;
+
+/// The read pool of the tests: the saved window of every key is none, or the read waits in `held` until the test answers it.
+struct Reads {
+    held: HeldReads,
+    hold: Arc<std::sync::atomic::AtomicBool>,
+}
+
+impl Reads {
+    fn auto() -> Self { Self { held: HeldReads::default(), hold: Arc::default() } }
+}
 
 impl EffectRunner<Spy<Windows>> for Reads {
     fn run(&mut self, stamp: EpochStamp, effect: WindowsEffect, back: &Back<Spy<Windows>>) {
-        if let WindowsEffect::ReadWindow { key, read_id } = effect {
+        let WindowsEffect::ReadWindow { key, read_id } = effect else { return };
+        if self.hold.load(Ordering::SeqCst) {
+            self.held.lock().unwrap_or_else(PoisonError::into_inner).push((key, read_id));
+        } else {
             back.reply(stamp, w::WindowsInput::WindowRead { key, read_id, result: Ok(None) });
         }
     }
@@ -117,6 +129,7 @@ fn cursor_text(cursor: u32) -> String { format!("c{cursor}") }
 
 fn stage_of(state: &State) -> WindowStage {
     match state {
+        State::Opening => WindowStage::Opening,
         State::Idle => WindowStage::Idle,
         State::Loading { .. } => WindowStage::Loading,
         State::Landing { .. } => WindowStage::Landing,
@@ -136,6 +149,8 @@ struct Twin {
     pin_revision: Arc<AtomicU64>,
     /// The `now` the inputs carry.
     now: i64,
+    held: HeldReads,
+    hold: Arc<std::sync::atomic::AtomicBool>,
 }
 
 impl Twin {
@@ -154,15 +169,17 @@ impl Twin {
     fn build(online: Option<bool>, max: u32, preload: Vec<WindowKey>, sources: Vec<WindowKey>, members_complete: bool) -> Self {
         let mut det = DetScheduler::new(3);
         let log = new_log();
-        let state = w::WindowsState::new(EPOCH, online, peers()).with_preload(preload).with_sources(sources).with_max_pages(Arc::new(move |_| max)).with_members_complete(Arc::new(move |_| members_complete)).with_foreground(Arc::new(|_| true));
+        let state = w::WindowsState::new(EPOCH, online, peers()).with_preload(preload).with_sources(sources).with_max_pages(Arc::new(move |_| max)).with_members_complete(Arc::new(move |_| members_complete)).with_foreground(Arc::new(|_| true)).with_lifetimes(Arc::new(|_| (300_000, 60_000)));
         let pin_revision = Arc::new(AtomicU64::new(0));
-        let addr = add_windows(&mut det, &log, state, Reads, pin_revision.clone());
+        let reads = Reads::auto();
+        let (held, hold) = (reads.held.clone(), reads.hold.clone());
+        let addr = add_windows(&mut det, &log, state, reads, pin_revision.clone());
         det.start_epoch(EPOCH);
         let mut reference = if online.is_some() { Window::new() } else { Window::before_online() };
         reference.online = online;
         reference.max_pages = max;
         reference.members_complete = members_complete;
-        Self { det, addr, log, reference, revision: 10, generation: 0, pin_revision, now: NOW }
+        Self { det, addr, log, reference, revision: 10, generation: 0, pin_revision, now: NOW, held, hold }
     }
 
     fn state(&self) -> &w::WindowsState { inner(&self.det, self.addr) }
@@ -201,6 +218,7 @@ impl Twin {
         take(&self.log);
         let k = key();
         match &input {
+            Input::InterestPlus { id: PRELOAD } => self.post(w::WindowsInput::PreloadKeys { keys: vec![k], now: self.now }),
             Input::InterestPlus { id } => self.post_call(w::WindowsInput::InterestPlus { key: k, id: id64(*id), now: self.now }),
             Input::InterestPassive { id } => self.post_call(w::WindowsInput::InterestPassive { key: k, id: id64(*id) }),
             Input::InterestMinus { id } => self.post_call(w::WindowsInput::InterestMinus { key: k, id: id64(*id) }),
@@ -245,10 +263,31 @@ impl Twin {
                 self.det.close();
                 self.run();
             }
+            Input::PowerSaving(on) => self.post(w::WindowsInput::PowerSaving { saving: *on }),
+            Input::OfflineRefused => self.post_call(w::WindowsInput::OfflineRefused { key: k, message: "no network".into() }),
+            Input::Read(read) => {
+                let (key, read_id) = {
+                    let mut held = self.held.lock().unwrap_or_else(PoisonError::into_inner);
+                    if *read == Read::Stray { held.last().cloned() } else { held.pop() }
+                }.expect("a read waits");
+                let saved = |landed_at: i64, fresh_until: i64, stale: bool, generation: u64| w::SavedWindow { landed_at, fresh_until, stale, cursor: None, pages: 1, has_rows: true, generation };
+                let (read_id, result) = match read {
+                    Read::Saved { landed_at, fresh_until, stale, generation_ok } => (read_id, Ok(Some(saved(*landed_at, *fresh_until, *stale, if *generation_ok { 0 } else { 7 })))),
+                    Read::None => (read_id, Ok(None)),
+                    Read::Failed => (read_id, Err("disk".to_string())),
+                    Read::Stray => (read_id + 50, Ok(None)),
+                };
+                self.post(w::WindowsInput::WindowRead { key, read_id, result });
+            }
         }
         let emitted = take(&self.log);
         let pin_sent = emitted.iter().any(|entry| matches!(entry, Emitted::Send { to: STORE, input } if input.starts_with("Pin {")));
-        let want = self.reference.step(input);
+        self.reference.now = self.now;
+        let mut want = self.reference.step(input);
+        if !self.hold.load(Ordering::SeqCst) && self.reference.state == State::Opening {
+            want.extend(self.reference.step(Input::Read(Read::None)));
+        }
+        want.dedup_by(|next, last| *next == Effect::WindowState && *last == Effect::WindowState);
         let (got, outcomes) = self.split(emitted);
         let watched = self.reference.interest.iter().any(|id| *id != PRELOAD);
         let expected: Vec<Effect> = want.iter().filter(|effect| watched || **effect != Effect::WindowState).cloned().collect();
@@ -266,7 +305,8 @@ impl Twin {
         got_outcomes.sort_by_key(|(id, _)| *id);
         assert_eq!(got_outcomes, want_outcomes, "the owner and the reference answer the same callers");
         self.same_state();
-        expected
+        let held = self.hold.load(Ordering::SeqCst);
+        expected.into_iter().filter(|effect| held || *effect != Effect::ReadWindow).collect()
     }
 
     fn same_state(&self) {
@@ -301,7 +341,8 @@ impl Twin {
                     WindowEffect::Outcome { id, outcome } => outcomes.push((u32::try_from(id).expect("a test id"), result_of(&outcome))),
                 },
                 Emitted::Run(WindowsEffect::Drained(_)) => modelled.push(Effect::Drained),
-                Emitted::Run(WindowsEffect::SnapshotRequest { .. } | WindowsEffect::ReadWindow { .. }) => {}
+                Emitted::Run(WindowsEffect::SnapshotRequest { .. }) => {}
+                Emitted::Run(WindowsEffect::ReadWindow { .. }) => modelled.push(Effect::ReadWindow),
                 Emitted::Send { to: STORE, input } if input.contains("author: Window") => modelled.push(Effect::Commit { request: number_after(&input, "id: ").expect("the batch id"), replace_all: input.contains("replace_all: true") }),
                 Emitted::Send { to: DELIVERIES, .. } if modelled.last() == Some(&Effect::WindowState) => {}
                 Emitted::Send { to: DELIVERIES, .. } => modelled.push(Effect::WindowState),
@@ -417,3 +458,4 @@ include!("window_gap_loading_tests.rs");
 include!("window_gap_landing_tests.rs");
 include!("window_gap_property_tests.rs");
 include!("window_fresh_tests.rs");
+include!("window_saving_tests.rs");
