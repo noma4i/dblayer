@@ -65,10 +65,10 @@ impl Database {
 
     /// The path and the body of the request of a mutation: the registered document, the variables of the call.
     fn mutation_request(&self, call: &crate::db::MutationCall) -> Result<(String, String), DbError> {
-        let client = self.session.as_ref().ok_or_else(|| DbError::NoSession { detail: "transport is required for server operations".into() })?;
+        let path = self.life.graphql_path().ok_or_else(|| DbError::NoSession { detail: "transport is required for server operations".into() })?;
         let operation = self.reads.get(&call.mutation).ok_or_else(|| DbError::Invalid { detail: format!("operation {} is not registered", call.mutation) })?;
         let request = GraphQLRequest::new(operation.document.clone(), call.mutation.clone(), call.variables.clone());
-        Ok((client.graphql_path().to_string(), crate::transport::encrypted::graphql_body(&request, true).to_string()))
+        Ok((path.to_string(), crate::transport::encrypted::graphql_body(&request, true).to_string()))
     }
 
     /// One call that writes: a mutation goes to Outbox with its receipt, a local write is final when the owner answers.
@@ -80,7 +80,7 @@ impl Database {
         if planned.noop {
             self.db.renew_ephemeral(&model, &shown);
             let value = self.optimistic(&model, &shown)?;
-            return Ok(receipt_of(epoch, model, None, self.db.revision_seq()?, value, None, self.streams.clone()));
+            return Ok(receipt_of(epoch, model, None, self.db.revision_seq()?, value, None, self.life.clone()));
         }
         let destroyed = action == "destroy";
         let call = self.db.mutation_call(&model, action, &planned, &uuid::Uuid::new_v4().to_string())?;
@@ -88,14 +88,14 @@ impl Database {
             let waiter = self.life.local_write(epoch, model.clone(), LocalWriteKind::Model(planned.effects), row.to_string(), String::new(), self.now());
             self.outbox_answer(waiter, action).await?;
             let value = if destroyed { None } else { self.optimistic(&model, &shown)? };
-            return Ok(receipt_of(epoch, model, None, self.db.revision_seq()?, value, None, self.streams.clone()));
+            return Ok(receipt_of(epoch, model, None, self.db.revision_seq()?, value, None, self.life.clone()));
         };
         let (path, body) = self.mutation_request(&call)?;
         let op = NewOp { model: model.clone(), row_id: row.to_string(), action: action.to_string(), on_failure: call.on_failure, origin: OpSource::Api, path, body, effects: planned.effects, durable: call.durable };
         let waiter = self.life.submit(epoch, op);
         let OutboxAnswer::Receipt(held) = self.outbox_answer(waiter, action).await? else { return Err(DbError::Database { detail: "the owner answered a call with no receipt".into() }) };
         let value = if destroyed { None } else { self.optimistic(&model, &shown)? };
-        Ok(receipt_of(epoch, model, Some(i64::try_from(held.op_id).unwrap_or(i64::MAX)), held.revision, value, Some(held), self.streams.clone()))
+        Ok(receipt_of(epoch, model, Some(i64::try_from(held.op_id).unwrap_or(i64::MAX)), held.revision, value, Some(held), self.life.clone()))
     }
 
     pub(super) async fn create_row(&self, epoch: u64, model: String, values: Map<String, Value>, args: Map<String, Value>) -> Result<WireOperationReceipt, DbError> {
@@ -187,7 +187,7 @@ impl Database {
 
     pub async fn outcome(&self, receipt: WireOperationReceipt) -> Result<WireOperationOutcome, DbError> {
         let held = &receipt.ticket;
-        if !Arc::ptr_eq(&held.streams, &self.streams) { return Err(DbError::Invalid { detail: "the receipt belongs to another database".into() }); }
+        if !Arc::ptr_eq(&held.owner, &self.life) { return Err(DbError::Invalid { detail: "the receipt belongs to another database".into() }); }
         if receipt.epoch != held.epoch || receipt.model != held.model || receipt.operation != held.operation || receipt.revision != held.revision || receipt.optimistic_value != held.optimistic_value {
             return Err(DbError::Invalid { detail: "the receipt was changed".into() });
         }
@@ -268,6 +268,6 @@ impl Database {
         let waiter = self.life.retry_operation(epoch, model.clone(), row_id.clone());
         let OutboxAnswer::Receipt(held): OutboxAnswer = self.outbox_answer(waiter, "retry").await? else { return Err(DbError::Database { detail: "the owner answered a retry with no receipt".into() }) };
         let value = self.optimistic(&model, &id(&row_id)?)?;
-        Ok(receipt_of(epoch, model, Some(i64::try_from(held.op_id).unwrap_or(i64::MAX)), held.revision, value, Some(held), self.streams.clone()))
+        Ok(receipt_of(epoch, model, Some(i64::try_from(held.op_id).unwrap_or(i64::MAX)), held.revision, value, Some(held), self.life.clone()))
     }
 }

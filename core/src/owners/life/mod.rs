@@ -45,6 +45,7 @@ use crate::runtime::{Address, Epoch, EpochStamp, Handle, Outcomes, PublishedCell
 mod reply;
 mod boot;
 pub use reply::LifeReply;
+pub(crate) use call_rule::CallVerdict;
 use boot::boot_found;
 
 const OPEN_WAIT: Duration = Duration::from_secs(365 * 24 * 3600);
@@ -378,6 +379,8 @@ pub struct Life {
     shut: AtomicBool,
     /// The database has a session client: the rule of the calls reads `Published`. A database without one hands the calls to the owners.
     with_session: bool,
+    /// The path of the requests of the server, when the database has a session client.
+    graphql_path: Option<String>,
     alive: Arc<std::sync::atomic::AtomicUsize>,
 }
 
@@ -537,7 +540,7 @@ impl Life {
         };
         answer.map_err(|error| LifeError::Storage(format!("the first publication was not saved: {error:?}")))?;
         let alive = runtime.alive();
-        Ok(Self { wiring, runtime: Mutex::new(Some(runtime)), shut: AtomicBool::new(false), with_session: session.is_some(), alive })
+        Ok(Self { wiring, runtime: Mutex::new(Some(runtime)), shut: AtomicBool::new(false), with_session: session.is_some(), graphql_path: session.as_ref().map(|client| client.0.graphql_path().to_string()), alive })
     }
 
     /// Stops the owner threads and joins them. The caller is not an owner thread. A second call does nothing.

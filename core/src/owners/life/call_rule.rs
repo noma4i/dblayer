@@ -5,13 +5,13 @@ use crate::owners::contract::{Published, PublishedState};
 use crate::runtime::Epoch;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(super) enum CallVerdict {
+pub(crate) enum CallVerdict {
     Closed,
     Refuse(CallError),
     Pass,
 }
 
-pub(super) fn call_verdict(published: &Published, epoch: Epoch, with_session: bool) -> CallVerdict {
+pub(crate) fn call_verdict(published: &Published, epoch: Epoch, with_session: bool) -> CallVerdict {
     if !with_session {
         return if published.closed { CallVerdict::Closed } else { CallVerdict::Pass };
     }

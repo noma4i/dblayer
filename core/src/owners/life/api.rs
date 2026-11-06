@@ -39,6 +39,18 @@ impl Life {
         waiter
     }
 
+    /// The rule of a call of account data for the epoch of the caller.
+    pub fn verdict(&self, epoch: Epoch) -> super::call_rule::CallVerdict {
+        if self.shut.load(Ordering::SeqCst) { return super::call_rule::CallVerdict::Closed; }
+        let published = self.published();
+        match super::call_rule::call_verdict(&published, epoch, self.with_session) {
+            super::call_rule::CallVerdict::Pass if published.epoch != epoch => super::call_rule::CallVerdict::Refuse(crate::owners::calls::CallError::NoSession),
+            verdict => verdict,
+        }
+    }
+
+    pub fn graphql_path(&self) -> Option<&str> { self.graphql_path.as_deref() }
+
     /// `run`: the platform call rule, then the owner Calls.
     pub fn run(&self, epoch: Epoch, operation: String, variables: String) -> Waiter<LifeReply> {
         if self.shut.load(Ordering::SeqCst) { return self.settled(LifeReply::Closed); }

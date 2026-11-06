@@ -83,7 +83,7 @@ impl Database {
     }
 
     /// Whether the epoch is still the one the receipt belongs to.
-    pub(super) fn admits(&self, epoch: u64) -> bool { self.streams.admits_epoch(epoch) }
+    pub(super) fn admits(&self, epoch: u64) -> bool { self.life.verdict(epoch) == crate::owners::life::CallVerdict::Pass }
 
     /// A call that holds no future: refused when the epoch of the caller is not current.
     pub(super) fn admit_now(&self, epoch: u64) -> Result<(), DbError> {
@@ -92,12 +92,13 @@ impl Database {
 
     /// The rule for a call of account data: `Closed` after the close, `NoSession` when the epoch of the caller is not the current one or a database with a session has none.
     pub(super) fn account_call(&self, epoch: u64) -> Result<(), DbError> {
-        let state = self.streams.snapshot();
-        if state.closed { return Err(closed()); }
-        if !self.streams.admits_epoch(epoch) || (self.session.is_some() && !state.signed_in()) {
-            return Err(DbError::NoSession { detail: "the database has no session in this epoch".into() });
+        use crate::owners::life::CallVerdict;
+        match self.life.verdict(epoch) {
+            CallVerdict::Pass => Ok(()),
+            CallVerdict::Closed => Err(closed()),
+            CallVerdict::Refuse(crate::owners::calls::CallError::Storage) => Err(DbError::Database { detail: "the database could not save its state".into() }),
+            CallVerdict::Refuse(_) => Err(DbError::NoSession { detail: "the database has no session in this epoch".into() }),
         }
-        Ok(())
     }
 
 }

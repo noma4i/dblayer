@@ -53,12 +53,12 @@ impl Database {
 
     /// The request of the final mutation: the variables carry a sentinel where the signed id of the file goes.
     fn upload_mutation(&self, plan: &Plan<'_>, mutation: &str) -> Result<NewOp, DbError> {
-        let client = self.session.as_ref().ok_or_else(|| DbError::NoSession { detail: "transport is required for uploads".into() })?;
+        let path = self.life.graphql_path().ok_or_else(|| DbError::NoSession { detail: "transport is required for uploads".into() })?;
         let operation = self.reads.get(mutation).ok_or_else(|| invalid(format!("operation {mutation} is not registered")))?;
         let variables = crate::write::variables::upload_variables(plan.declaration, Value::Object(plan.variables.clone()), &uuid::Uuid::new_v4().to_string());
         let request = GraphQLRequest::new(operation.document.clone(), mutation.to_string(), variables);
         let body = crate::transport::encrypted::graphql_body(&request, true).to_string();
-        Ok(NewOp { model: plan.model.to_string(), row_id: plan.row.to_string(), action: plan.action.to_string(), on_failure: plan.declaration.on_failure, origin: OpSource::Api, path: client.graphql_path().to_string(), body, effects: plan.effects.clone(), durable: true })
+        Ok(NewOp { model: plan.model.to_string(), row_id: plan.row.to_string(), action: plan.action.to_string(), on_failure: crate::schema::OnFailure::Keep, origin: OpSource::Api, path: path.to_string(), body, effects: plan.effects.clone(), durable: true })
     }
 
     fn upload_item(&self, plan: &Plan<'_>, mutation: &str, fields: Map<String, Value>) -> Result<BatchItem, DbError> {
@@ -132,7 +132,7 @@ impl Database {
     }
 
     fn transfer_receipt(&self, epoch: u64, model: String, held: Receipt, value: Option<super::wire::WireRow>) -> WireOperationReceipt {
-        receipt_of_transfer(epoch, model, held, value, self.streams.clone())
+        receipt_of_transfer(epoch, model, held, value, self.life.clone())
     }
 
     /// The upload actions a model declares: a call without an action names the transfer by them.
