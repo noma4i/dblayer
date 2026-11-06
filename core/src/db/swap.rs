@@ -55,6 +55,7 @@ impl Db {
             envelope.entity_ops.retain(|operation| !matches!(operation, EntityOp::Upsert { model: owner, id, .. } if owner.as_str() == model && id == real));
             envelope.entity_ops.push(EntityOp::Destroy { model: ModelKey::new(model), id: real.clone(), reason: DestroyReason::Local });
         }
+        self.carry_locals(reader, envelope, model, temp, real)?;
         envelope.entity_ops.push(EntityOp::Destroy { model: ModelKey::new(model), id: temp.clone(), reason: DestroyReason::Replaced { by: real.clone() } });
         let references = self.references_to(model);
         let swap = Swap { model, temp, real, references: &references };
@@ -75,6 +76,25 @@ impl Db {
                     }
                 }
                 None => envelope.entity_ops.push(EntityOp::Upsert { model: ModelKey::new(&owner), id: child, row }),
+            }
+        }
+        Ok(())
+    }
+
+    /// The `local` fields of the temporary row go to the row of the answer unless the answer brings its own value (P-OUT-22).
+    fn carry_locals(&self, reader: &Reader<'_>, envelope: &mut CommitEnvelope, model: &str, temp: &RowId, real: &RowId) -> Result<(), DbError> {
+        let Some(held) = reader.point(model, temp.as_str())? else { return Ok(()) };
+        let spec = self.shared.spec(model)?;
+        for field in spec.fields.iter().filter(|field| matches!(field.merge, Some(crate::schema::MergeRule::Local))) {
+            let Some(value) = held.get(&field.name).filter(|value| !value.is_null()) else { continue };
+            let landing = envelope.entity_ops.iter_mut().find_map(|op| match op {
+                EntityOp::Upsert { model: owner, id, row } if owner.as_str() == model && id == real => Some(row),
+                _ => None,
+            });
+            match landing {
+                Some(row) if row.get(&field.name).is_some_and(|brought| !brought.is_null()) => {}
+                Some(row) => { row.insert(field.name.clone(), value.clone()); }
+                None => envelope.pending_locals.push(crate::commit::PendingLocal { model: model.to_string(), row_id: real.to_string(), path: field.name.clone(), value: value.clone() }),
             }
         }
         Ok(())

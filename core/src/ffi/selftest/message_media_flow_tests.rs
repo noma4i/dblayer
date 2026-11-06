@@ -60,7 +60,6 @@ async fn flow_message_media_upload() {
     bound(rig.database.outcome(receipt)).await.unwrap();
     yield_until("the answer replaced the bubble", || rows.0.lock().unwrap().iter().map(|row| row.id.clone()).collect::<Vec<_>>() == ["m1"]).await;
     yield_until("the entity of the answer shows", || last.len() == 1).await;
-    bound(rig.database.set_local(epoch, "Message".into(), "m1".into(), "localPreviewUrl".into(), json!("file:///clip.jpg").to_string())).await.unwrap();
     yield_until("the preview stands on the row of the server", || field(&rig, "Message", &rows, "m1", "localPreviewUrl") == Some(text("file:///clip.jpg"))).await;
 
     for (url, progress, shown_url, shown_progress) in [("", 40, "", 40), ("https://cdn/a", 80, "https://cdn/a", 80), ("", 30, "https://cdn/a", 80)] {
@@ -114,5 +113,24 @@ async fn flow_chat_media_library() {
     land_event(&rig, "Chat", json!({"id": "c1", "name": "renamed", "lastMessageAt": 0, "lastActivityAt": 0, "unreadCount": 1, "pinned": false, "muted": false}));
     yield_until("the event renames the chat", || field(&rig, "Chat", &chats, "c1", "name") == Some(text("renamed"))).await;
     assert_eq!((field(&rig, "Chat", &chats, "c1", "mediaSequence"), field(&rig, "Chat", &chats, "c1", "mediaPhotoCount")), (Some(int(5)), Some(int(3))), "an event cleared the local counters");
+    rig.database.close_now();
+}
+
+/// P-OUT-22 out_prop_swap_carries_local: the answer that replaces a temporary row keeps the local value the app set on the temporary row, in the thread and in the entity.
+#[tokio::test(flavor = "multi_thread")]
+async fn out_prop_swap_carries_local() {
+    let rig = rig().await;
+    let (rows, last) = (thread(&rig).await, entity(&rig, "Message", "m1"));
+    let epoch = rig.database.session_epoch();
+    let hold = rig.world.hold_next("SendMessage");
+
+    let receipt = bound(rig.database.send(message(epoch, "clip", 10))).await.unwrap();
+    hold.entered_for("the send").await;
+    let temporary = receipt.optimistic_value.clone().unwrap().id;
+    bound(rig.database.set_local(epoch, "Message".into(), temporary, "localPreviewUrl".into(), json!("file:///clip.jpg").to_string())).await.unwrap();
+    hold.release();
+    bound(rig.database.outcome(receipt)).await.unwrap();
+    yield_until("the answer replaced the bubble", || rows.0.lock().unwrap().iter().map(|row| row.id.clone()).collect::<Vec<_>>() == ["m1"] && last.len() == 1).await;
+    yield_until("the preview stands on the row of the answer in both places", || [&rows, &last].iter().all(|place| field(&rig, "Message", place, "m1", "localPreviewUrl") == Some(text("file:///clip.jpg")))).await;
     rig.database.close_now();
 }
