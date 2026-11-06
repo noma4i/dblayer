@@ -289,31 +289,6 @@ impl Store {
     }
 }
 
-#[cfg(test)]
-impl Store {
-    /// The intent that `EraseAccount` writes before it clears, left unfinished.
-    pub(crate) fn mark_session_end_in_tests(&self) -> Result<(), StoreError> {
-        let inner = self.lock();
-        let now = inner.now_ms();
-        write_intent(&inner.connection, "session_end", &[], now)
-    }
-
-    /// The clearing the executor does for `ClearModels`, for the tests that run without the owners: the cache of the models goes, the generation moves and the leases hear it.
-    pub(crate) fn clear_models_in_tests(&self, models: &[&str]) -> Result<(), StoreError> {
-        let generation = self.generation().next();
-        let names: Vec<String> = models.iter().map(|model| model.to_string()).collect();
-        self.erase_models(generation, &names)?;
-        Ok(())
-    }
-
-    /// The clearing the executor does for `ClearAccount` without the credential tables, for the tests that run without the owners: the epoch ends and the next one starts without a session.
-    pub(crate) fn clear_account_in_tests(&self) -> Result<(), StoreError> {
-        let generation = self.generation().next();
-        self.erase_account(generation, false)?;
-        Ok(())
-    }
-}
-
 const SAVED_EPOCH_KEY: &str = "saved_epoch";
 const SAVED_GENERATION_KEY: &str = "saved_generation";
 

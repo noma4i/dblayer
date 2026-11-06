@@ -73,7 +73,7 @@ fn cache_only_clears_one_model_closes_operations_and_clears_intent() {
     let (store, _) = booted_store();
     seed_two_models(&store);
     user_tables(&store);
-    store.clear_models_in_tests(&["messages"]).unwrap();
+    store.erase_models(store.generation().next(), &["messages"].map(String::from)).unwrap();
     assert_eq!(cache_counts(&store), vec![0, 1, 0, 1, 0, 1, 1]);
     assert_eq!(count(&store, "SELECT COUNT(*) FROM op"), 0);
     assert_eq!(store.reset_intent().unwrap(), None);
@@ -84,7 +84,7 @@ fn mismatched_clears_all_cache_tables_and_the_outbox_and_keeps_the_other_user_ta
     let (store, _) = booted_store();
     seed_two_models(&store);
     user_tables(&store);
-    store.clear_account_in_tests().unwrap();
+    store.erase_account(store.generation().next(), false).unwrap();
     assert_eq!(cache_counts(&store), vec![0, 0, 0, 0, 0, 0, 0]);
     assert_eq!(count(&store, "SELECT COUNT(*) FROM op"), 0);
     assert_eq!(count(&store, "SELECT COUNT(*) FROM quarantine"), 1);
@@ -95,7 +95,7 @@ fn mismatched_clears_all_cache_tables_and_the_outbox_and_keeps_the_other_user_ta
 fn mismatched_restores_manifest_atomically() {
     let (store, _) = booted_store();
     seed_two_models(&store);
-    store.clear_account_in_tests().unwrap();
+    store.erase_account(store.generation().next(), false).unwrap();
     assert_eq!(count(&store, "SELECT COUNT(*) FROM manifest WHERE key = 'format_version'"), 1);
     assert_eq!(count(&store, "SELECT COUNT(*) FROM manifest WHERE key LIKE 'fingerprint:%'"), 2);
 }
@@ -106,10 +106,10 @@ fn reset_advances_generation_and_the_revision_sequence() {
     seed_two_models(&store);
     let before = store.generation();
     let revision = store.revision_seq().unwrap();
-    store.clear_account_in_tests().unwrap();
+    store.erase_account(store.generation().next(), false).unwrap();
     assert!(store.generation() > before);
     assert_eq!(store.revision_seq().unwrap(), revision + 1);
-    store.clear_models_in_tests(&["items"]).unwrap();
+    store.erase_models(store.generation().next(), &["items"].map(String::from)).unwrap();
     assert!(store.generation() > before.next());
 }
 
@@ -117,7 +117,7 @@ fn reset_advances_generation_and_the_revision_sequence() {
 fn reset_unknown_model_fails_without_touching_data() {
     let (store, _) = booted_store();
     seed_two_models(&store);
-    assert!(matches!(store.clear_models_in_tests(&["nope"]), Err(StoreError::UnknownModel(_))));
+    assert!(matches!(store.erase_models(store.generation().next(), &["nope"].map(String::from)), Err(StoreError::UnknownModel(_))));
     assert_eq!(count(&store, "SELECT COUNT(*) FROM row_messages"), 1);
 }
 
@@ -125,7 +125,7 @@ fn reset_unknown_model_fails_without_touching_data() {
 fn writes_work_again_after_reset() {
     let (store, _) = booted_store();
     seed_two_models(&store);
-    store.clear_account_in_tests().unwrap();
+    store.erase_account(store.generation().next(), false).unwrap();
     store.commit(envelope(&store, vec![upsert("messages", message("m2", "c1"))], vec![])).unwrap();
     assert_eq!(store.row_count("messages").unwrap(), 1);
 }
@@ -143,9 +143,9 @@ fn resets_advance_the_revision_and_tell_the_hook() {
             sink.lock().unwrap().push((revision, models));
         }
     }));
-    store.clear_models_in_tests(&["messages"]).unwrap();
+    store.erase_models(store.generation().next(), &["messages"].map(String::from)).unwrap();
     assert_eq!(store.revision_seq().unwrap(), 2);
-    store.clear_account_in_tests().unwrap();
+    store.erase_account(store.generation().next(), false).unwrap();
     assert_eq!(store.revision_seq().unwrap(), 3);
     assert_eq!(*seen.lock().unwrap(), vec![(2, Some(vec!["messages".to_string()])), (3, None)]);
 }

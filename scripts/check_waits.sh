@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# INV-WAIT-04: a test never waits without a bound or pauses for a time. Swift waits through eventually and Cursor (Waiting.swift), Kotlin through bounded and eventually (TestWaiting.kt), Rust through within, spin_until and yield_until (test_wait.rs); only those three files may poll.
+# Wait rule 4: a test never waits without a bound or pauses for a time. Swift waits through eventually and Cursor (Waiting.swift), Kotlin through bounded and eventually (TestWaiting.kt), Rust through within, spin_until and yield_until (test_wait.rs); only those three files may poll.
 set -euo pipefail
 
 root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)"

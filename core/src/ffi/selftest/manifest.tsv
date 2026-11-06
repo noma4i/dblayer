@@ -36,7 +36,7 @@ S309	A5	core	an_outcome_arrives_before_a_held_list_and_the_automatic_reread_show
 S311	K7	core	a_refused_destroy_restores_the_row_according_to_its_declaration	regression-by-reading	destroy refusal restores row	arch-audit/fable.md K7
 S311	K7	swift	BridgeProbeTests.aRefusedDestroyRestoresTheRowAccordingToItsDeclaration	regression-by-reading	destroy refusal restores row	arch-audit/fable.md K7
 S311	K7	kotlin	com.noma4i.dblayer.ClubTest.aRefusedDestroyRestoresTheRowAccordingToItsDeclaration	regression-by-reading	destroy refusal restores row	arch-audit/fable.md K7
-C01	R-3	core	closing_with_the_target_unset_sends_nothing_and_leaves_the_next_database_clean	green	S1: no fresh-open promise; the harness sets online/listening/power/preload itself, target=nil ends Interrupted, a new explicit load makes B visible	I SharedTestDatabase.kt:22-35 and SwitchableTransport.kt:7
+C01	R-3	core	closing_with_the_target_unset_sends_nothing_and_leaves_the_next_database_clean	green	S1: no fresh-open promise; the harness sets online/power/preload itself, target=nil ends Interrupted, a new explicit load makes B visible	I SharedTestDatabase.kt:22-35 and SwitchableTransport.kt:7
 C01	R-3	kotlin	com.noma4i.dblayer.SwitchableHarnessTest.aCloseWithTheTargetUnsetLeavesTheNextDatabaseClean	green	S1: as core	I SharedTestDatabase.kt:22-35
 C02	R-1	core	closing_with_the_target_unset_sends_nothing_and_leaves_the_next_database_clean	green	S1: as C01	I TestDatabaseClock.swift:28-55 and TestTransport.swift:95-96
 C02	R-1	swift	BridgeProbeTests.aCloseWithTheTargetUnsetLeavesTheNextDatabaseClean	green	S1: as core	I TestDatabaseClock.swift:28-55
@@ -74,7 +74,7 @@ C12		core	a_list_opened_after_the_exit_loads_after_the_next_login_and_its_wait_e
 C13		core	overlapping_load_more_and_refresh_in_both_answer_orders_leave_a_consistent_chain_and_a_clean_reset	green	-	library
 C14		core	a_queued_mutation_refused_without_a_sequence_keeps_the_session_and_a_reset_clears_the_mutation	green	-	library
 C15		core	an_active_and_a_queued_upload_end_at_the_exit_and_the_next_sign_in_runs_each_once	green	S1: the data logout variant becomes the session reset (it clears the data)	library
-C16		core	repeated_online_listening_and_power_saving_signals_add_no_request	green	S1: the test calls the data logout or the old exit through its helpers; the helpers lose the data logout and the exit is the session reset	library
+C16		core	repeated_online_and_power_saving_signals_add_no_request	green	S1: the test calls the data logout or the old exit through its helpers; the helpers lose the data logout and the exit is the session reset	library
 C17		core	out_open_restores_pending	green	S1: close is awaited	library
 C18		core	memory_expiry_follows_the_last_write	green	-	library
 C19	R-5	core	login_link_already_authenticated_signs_out_then_repeats_once	green	S1: the test calls the data logout or the old exit through its helpers; the helpers lose the data logout and the exit is the session reset	I LoginLinkSignIn.swift:53-78, A LoginLinkSignIn.kt:36-47

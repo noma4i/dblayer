@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""INV-WAIT-04 for Rust tests: a test never waits without a bound.
+"""Wait rule 4 for Rust tests: a test never waits without a bound.
 
 Usage: check_waits_rust.py <dir>...  Prints one line per hit and exits 1 when there is any.
 Only test_wait.rs may poll or block: it owns within, spin_until, yield_until, recv_within, recv_or_closed, join_within and Rendezvous.

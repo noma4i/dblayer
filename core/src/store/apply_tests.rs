@@ -295,7 +295,7 @@ fn unknown_model_is_a_plan_error_without_poison() {
 fn stale_generation_envelope_is_rejected_before_any_write() {
     let (store, _) = booted_store();
     let stale = envelope(&store, vec![upsert("messages", message("m1", "c1"))], vec![]);
-    store.clear_account_in_tests().unwrap();
+    store.erase_account(store.generation().next(), false).unwrap();
     let error = store.commit(stale).unwrap_err();
     assert!(matches!(error, StoreError::Envelope(EnvelopeFault::StaleGeneration)));
     assert_eq!(count(&store, "SELECT COUNT(*) FROM row_messages"), 0);
@@ -325,7 +325,7 @@ fn second_apply_failure_poisons_reads_until_reset() {
             store.commit(envelope(&store, vec![upsert("items", json!({"id": "i1"}))], vec![])),
             Err(StoreError::Poisoned(_))
         ));
-        store.clear_account_in_tests().unwrap();
+        store.erase_account(store.generation().next(), false).unwrap();
         assert!(store.apply_failure().is_none());
         assert!(store.point("items", "i1").unwrap().is_none());
     }

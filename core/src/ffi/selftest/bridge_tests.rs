@@ -1275,7 +1275,7 @@ pub(super) fn seed_members(rig: &Rig, group: &str) {
             envelope.scope_ops.push(ScopeOp::Append { scope: scope.clone(), row: RowId::new(id).unwrap(), order_key });
         }
     }
-    db.land_in_tests(envelope).unwrap();
+    db.commit(envelope).unwrap();
 }
 
 fn ids_of(rows: Vec<WireRow>) -> Vec<String> { rows.into_iter().map(|row| row.id).collect() }

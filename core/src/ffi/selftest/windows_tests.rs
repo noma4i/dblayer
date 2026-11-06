@@ -107,9 +107,9 @@ async fn overlapping_load_more_and_refresh_in_both_answer_orders_leave_a_consist
     }
 }
 
-/// C16, I05, I12, I34: repeating online, listening, power saving and an offline-online pair adds no request, with held handles and without them.
+/// C16, I05, I12, I34: repeating online, power saving and an offline-online pair adds no request, with held handles and without them.
 #[tokio::test(flavor = "multi_thread")]
-async fn repeated_online_listening_and_power_saving_signals_add_no_request() {
+async fn repeated_online_and_power_saving_signals_add_no_request() {
     for observed in [true, false] {
         let rig = Rig::encrypted().await;
         rig.login_ios("A").await;

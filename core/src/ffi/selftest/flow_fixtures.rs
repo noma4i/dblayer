@@ -74,7 +74,7 @@ pub(super) fn land_event(rig: &Rig, model: &str, row: Value) {
     let id = RowId::new(row["id"].as_str().unwrap()).unwrap();
     let mut envelope = CommitEnvelope::new(Source::Event, db.generation());
     envelope.entity_ops.push(EntityOp::Upsert { model: ModelKey::new(model), id, row });
-    db.land_in_tests(envelope).unwrap();
+    db.commit(envelope).unwrap();
 }
 
 /// Lands a row through the owner Store, as a batch of the owners does: the expiry of a memory row arms.
@@ -107,7 +107,7 @@ pub(super) fn land_delete(rig: &Rig, model: &str, id: &str) {
     let db = &rig.database.db;
     let mut envelope = CommitEnvelope::new(Source::Event, db.generation());
     envelope.entity_ops.push(EntityOp::Destroy { model: ModelKey::new(model), id: RowId::new(id).unwrap(), reason: DestroyReason::Server });
-    db.land_in_tests(envelope).unwrap();
+    db.commit(envelope).unwrap();
 }
 
 /// The reactor of a reaction is the row of a user: the nested `user` links to `User` by `userId`.

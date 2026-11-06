@@ -121,6 +121,6 @@ fn store_prop_edge_read() {
     let after = db.counters();
     assert_eq!(after.edge_read_scans - before.edge_read_scans, 0);
     assert!(after.edge_read_steps - before.edge_read_steps < 100);
-    db.clear_models_in_tests(&["moments"]).unwrap();
+    db.erase_models(db.generation().next(), &["moments"].map(String::from)).unwrap();
     assert_eq!(edges(&db, &["m1"]), json!({}));
 }

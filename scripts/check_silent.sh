@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# INV-SILENT-01: a wrapper does not swallow an error. `try?` in Swift and `runCatching {...}.getOrNull()` in Kotlin turn a failure into nil, so each use is listed with its reason in scripts/silent_allowlist.txt (path, trimmed line, reason; tab separated). A new use fails the check, and so does a listed line that no longer exists.
+# Silent rule 1: a wrapper does not swallow an error. `try?` in Swift and `runCatching {...}.getOrNull()` in Kotlin turn a failure into nil, so each use is listed with its reason in scripts/silent_allowlist.txt (path, trimmed line, reason; tab separated). A new use fails the check, and so does a listed line that no longer exists.
 set -euo pipefail
 
 root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)"

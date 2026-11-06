@@ -254,7 +254,7 @@ fn win_idle_stale_other_key() {
     assert!(twin.reference.fresh);
 }
 
-/// win_foreground_reload (INV-API-07): a window with a reader that is idle and online loads its first page again at every return to the front.
+/// win_foreground_reload: a window with a reader that is idle and online loads its first page again at every return to the front.
 #[test]
 fn win_foreground_reload() {
     let mut twin = Twin::new();

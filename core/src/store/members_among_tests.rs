@@ -20,7 +20,7 @@ fn steps_to_find_stored_members(size: usize) -> i32 {
         envelope.entity_ops.push(EntityOp::Upsert { model: ModelKey::new("messages"), id: id.clone(), row });
         envelope.scope_ops.push(ScopeOp::Append { scope: scope.clone(), row: id, order_key: format!("k{index:06}") });
     }
-    db.land_in_tests(envelope).unwrap();
+    db.commit(envelope).unwrap();
     let ids: Vec<String> = (size - 30..size).map(|index| format!("m{index:05}")).collect();
     let wanted: Vec<&str> = ids.iter().map(String::as_str).collect();
     db

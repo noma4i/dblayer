@@ -134,11 +134,6 @@ impl Store {
 
 
 impl Store {
-    /// Lands an envelope the way an owner batch would, without the owners.
-    pub fn land_in_tests(&self, envelope: CommitEnvelope) -> Result<crate::commit::CommitResult, super::StoreError> {
-        self.commit(envelope)
-    }
-
     pub(crate) fn write_queue_ops(&self, ops: &[crate::owners::store::StoreOp]) -> Result<super::batch_write::BatchWritten, super::StoreError> {
         self.write_queue_ops_with_pin(ops, None)
     }

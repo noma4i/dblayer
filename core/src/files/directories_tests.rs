@@ -22,7 +22,7 @@ fn beside_database() -> (tempfile::TempDir, FileDirectories) {
 }
 
 #[test]
-fn write_stores_bytes_under_the_id_and_leaves_no_partial_file() {
+fn a_write_keeps_the_bytes_under_the_id_and_leaves_no_partial_file() {
     let (_root, directories) = beside_database();
     let path = directories.write("f1", b"hello").unwrap();
     assert_eq!(fs::read(&path).unwrap(), b"hello");

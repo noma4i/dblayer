@@ -82,7 +82,7 @@ fn clearing_the_account_empties_memory_tables_too() {
     let store = Store::open_in_memory().unwrap();
     store.boot(&models(), None).unwrap();
     seed(&store);
-    store.clear_account_in_tests().unwrap();
+    store.erase_account(store.generation().next(), false).unwrap();
     assert_eq!(store.row_count("presence").unwrap(), 0);
     assert_eq!(store.row_count("messages").unwrap(), 0);
 }
