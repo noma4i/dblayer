@@ -11,7 +11,7 @@ import org.junit.Test
 class OpenHeadersTest {
     @Test
     fun openReadsTheHeadersAgainForEveryRequest() = bounded {
-        DBlayer.close()
+        closeForCleanup()
         for (name in listOf("manager")) {
             Reachability::class.java.getDeclaredField(name).apply { isAccessible = true }.set(null, null)
         }
@@ -23,7 +23,7 @@ class OpenHeadersTest {
                 override val document = "query HeaderProbe { __typename }"
             }
             val token = java.util.concurrent.atomic.AtomicReference("first")
-            DBlayer.open(org.robolectric.RuntimeEnvironment.getApplication(), endpoint = server.url("/").toString(), headers = { mapOf("X-Token" to token.get()) }, modelsJson = modelsJSON, operations = listOf(operation), uploadNotification = UploadNotification("Uploading", "Files are on their way", 1))
+            DBlayer.open(org.robolectric.RuntimeEnvironment.getApplication(), endpoint = server.url("/").toString(), headers = { mapOf("X-Token" to token.get()) }, modelsJson = "[]", operations = listOf(operation), uploadNotification = UploadNotification("Uploading", "Files are on their way", 1))
 
             val context = org.robolectric.RuntimeEnvironment.getApplication()
             val manager = context.getSystemService(android.content.Context.CONNECTIVITY_SERVICE) as android.net.ConnectivityManager
@@ -36,7 +36,7 @@ class OpenHeadersTest {
             runCatching { DBlayer.database.let { it.run(it.sessionEpoch(), "HeaderProbe", "{}") } }
 
             assertEquals(listOf("first", "second"), List(2) { server.takeRequest(5, java.util.concurrent.TimeUnit.SECONDS)?.getHeader("X-Token") })
-            DBlayer.close()
+            closeForCleanup()
         }
     }
 }

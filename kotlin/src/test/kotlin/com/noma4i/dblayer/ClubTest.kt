@@ -118,7 +118,7 @@ class ClubTest {
                 reopenSigned(config, models, CLUB_DEFS)
                 val receipt = Letter.send(AccountScope.current(), chatId = "c1", text = "held", at = 1)
                 val id = requireNotNull(receipt.optimisticValue).id
-                DBlayer.close()
+                closeForCleanup()
                 val sqlite = Native.load("sqlite3", LegacySqlite::class.java)
                 val handle = PointerByReference()
                 check(sqlite.sqlite3_open(requireNotNull(config.path), handle) == 0)
@@ -145,7 +145,7 @@ class ClubTest {
                 }
                 assertTrue(Query("Letter", Letter).readRow(id) == null)
             } finally {
-                DBlayer.close()
+                closeForCleanup()
                 directory.deleteRecursively()
             }
         }

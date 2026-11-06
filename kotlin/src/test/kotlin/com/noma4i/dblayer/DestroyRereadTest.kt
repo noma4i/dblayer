@@ -34,7 +34,7 @@ class DestroyRereadTest {
             held.close()
         } finally {
             scope.cancel()
-            DBlayer.close()
+            closeForCleanup()
         }
     }
 }

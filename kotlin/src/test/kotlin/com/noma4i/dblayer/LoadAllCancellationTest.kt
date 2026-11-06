@@ -55,7 +55,7 @@ class LoadAllCancellationTest {
         } finally {
             request.cancel()
             held.release()
-            DBlayer.close()
+            closeForCleanup()
         }
     }
 
@@ -80,7 +80,7 @@ class LoadAllCancellationTest {
         } finally {
             sixth.release()
             scope.cancel()
-            DBlayer.close()
+            closeForCleanup()
         }
     }
 }

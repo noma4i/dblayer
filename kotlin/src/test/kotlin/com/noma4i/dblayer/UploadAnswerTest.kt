@@ -26,7 +26,7 @@ class UploadAnswerTest {
             assertEquals(0.0, waiting.percent, 0.0)
             assertTrue(transport.calls.isEmpty())
         } finally {
-            DBlayer.close()
+            closeForCleanup()
             source.delete()
         }
     }
@@ -51,7 +51,7 @@ class UploadAnswerTest {
             assertEquals(listOf("CreateMoment", "CreateBlob", "CreateMoment", "CreateBlob", "CreateMoment"), transport.calls.map { it.operationName })
             assertTrue(transport.unscripted.isEmpty())
         } finally {
-            DBlayer.close()
+            closeForCleanup()
             source.delete()
         }
     }

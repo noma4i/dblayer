@@ -10,7 +10,7 @@ class ServerModelWithoutTransportTest {
     @Test
     fun aCreateOfAServerModelOnADatabaseWithoutATransportIsRefusedAsNoSession() = bounded {
         try {
-            DBlayer.close()
+            closeForCleanup()
             DBlayer.openTesting(null, modelsJSON)
             val refused = runCatching {
                 DBlayer.database.create(DBlayer.database.sessionEpoch(), "Club", """{"name":"friends"}""", "{}")
@@ -25,7 +25,7 @@ class ServerModelWithoutTransportTest {
             }.exceptionOrNull()
             assertTrue("the act was not refused: $act", act is DbException.NoSession)
         } finally {
-            DBlayer.close()
+            closeForCleanup()
         }
     }
 }

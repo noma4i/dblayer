@@ -36,7 +36,7 @@ class SessionRestoreTest {
     fun aHeldLoadEndsAtResetAndCannotWriteIntoTheNextAccount() = bounded {
         val transport = HeldProfileTransport()
         try {
-            DBlayer.close()
+            closeForCleanup()
             transport.base.enqueue("UserProfile", """{"data":{"me":{"__typename":"User","id":"1","name":"B"}}}""")
             DBlayer.openTesting(transport, modelsJSON)
             DBlayer.database.registerOperations("""[{"name":"UserProfile","document":"query UserProfile { me { id name } }"}]""")
@@ -52,14 +52,14 @@ class SessionRestoreTest {
             assertEquals(1, transport.base.calls.count { it.operationName == "UserProfile" })
         } finally {
             transport.released.complete(Unit)
-            DBlayer.close()
+            closeForCleanup()
         }
     }
 
     @Test
     fun resetClearsEphemeralValuesBeforeTheNextAccountReadsTheSameId() = bounded {
         try {
-            DBlayer.close()
+            closeForCleanup()
             val transport = MockTransport()
             for (name in listOf("A", "B")) {
                 transport.enqueue("UserProfile", """{"data":{"me":{"__typename":"User","id":"1","name":"$name"}}}""")
@@ -79,14 +79,14 @@ class SessionRestoreTest {
             assertEquals("B", current.name)
             assertFalse(current.typing)
         } finally {
-            DBlayer.close()
+            closeForCleanup()
         }
     }
 
     @Test
     fun theLoadThatRestoresAResetSessionReturnsItsOwnResult() = bounded {
         try {
-            DBlayer.close()
+            closeForCleanup()
             val transport = MockTransport()
             for ((user, region) in listOf("u1" to "r1", "u2" to "r2")) {
                 transport.enqueue("CurrentUserQuery", """{"data":{"user":{"id":"$user","name":"$user"}}}""")
@@ -106,7 +106,7 @@ class SessionRestoreTest {
             assertEquals(listOf("u2"), CurrentUser.current.read(AccountScope.current()).map { it.id })
             assertEquals(listOf("r2"), CurrentRegion.current.read(AccountScope.current()).map { it.id })
         } finally {
-            DBlayer.close()
+            closeForCleanup()
         }
     }
 }

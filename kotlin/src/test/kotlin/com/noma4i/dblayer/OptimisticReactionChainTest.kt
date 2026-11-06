@@ -55,12 +55,12 @@ class OptimisticReactionChainTest {
     @Test
     fun aSendOnADatabaseWithoutATransportIsRefusedAsNoSession() = bounded {
         try {
-            DBlayer.close()
+            closeForCleanup()
             DBlayer.openTesting(null, modelsJSON)
             val refused = runCatching { Record.send(AccountScope.current(), containerId = "c1", authorId = "u1", text = "hello") }.exceptionOrNull()
             assertTrue("the send was not refused: $refused", refused is DbException.NoSession)
         } finally {
-            DBlayer.close()
+            closeForCleanup()
         }
     }
 }

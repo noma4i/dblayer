@@ -26,7 +26,7 @@ class ClockExpiryTest {
         clock.advance(61_000L)
 
         Notice.recent.live.flow.first { it.isEmpty() }
-        DBlayer.close()
+        closeForCleanup()
     }
 
     @Test
@@ -46,6 +46,6 @@ class ClockExpiryTest {
         clock.advance(21_000L)
         assertTrue(inbox.receive().isEmpty())
         collection.cancelAndJoin()
-        DBlayer.close()
+        closeForCleanup()
     }
 }

@@ -69,7 +69,7 @@ class ValueBridgeTest {
     }
 
     private suspend fun openSession() {
-        DBlayer.close()
+        closeForCleanup()
         account.set(null)
         val encrypted = EncryptedConfig("https://api.example.com", SealedServer.SERVER_KEY, SealedServer.SERVER_PIN, EncryptedEndpoints("/api/graphql", "/api/cable", "/api/logout", "/api/bootstrap", mapOf("login_link" to EncryptedSessionOperation("/api/auth/login_link", EncryptedOperationClass.AUTHENTICATED))), "example-ws-v1", "ws.hello", "EncryptedGraphqlChannel")
         DBlayer.openTesting(MockTransport(), modelsJSON, encrypted = encrypted, credentials = BridgeCredential(), http = server)
@@ -95,7 +95,7 @@ class ValueBridgeTest {
             assertTrue(profile.projection.value.decoded >= 1)
         } finally {
             screen.cancel()
-            DBlayer.close()
+            closeForCleanup()
         }
     }
 
@@ -117,7 +117,7 @@ class ValueBridgeTest {
             assertEquals("A", profile.value?.name)
         } finally {
             screen.cancel()
-            DBlayer.close()
+            closeForCleanup()
         }
     }
 
@@ -145,7 +145,7 @@ class ValueBridgeTest {
             assertEquals(ReadEnd.SESSION_ENDED, projectionA.projection.value.ended)
         } finally {
             screen.cancel()
-            DBlayer.close()
+            closeForCleanup()
         }
     }
 
@@ -176,7 +176,7 @@ class ValueBridgeTest {
             assertEquals(1, server.operationRequests("CreateMoment"))
         } finally {
             screen.cancel()
-            DBlayer.close()
+            closeForCleanup()
         }
     }
 
@@ -211,7 +211,7 @@ class ValueBridgeTest {
             assertEquals("B", projectionB.value?.name)
         } finally {
             screen.cancel()
-            DBlayer.close()
+            closeForCleanup()
         }
     }
 
@@ -230,7 +230,7 @@ class ValueBridgeTest {
             eventually("the stream left the core") { DBlayer.subscriptionCensus().subscriptions == 0uL }
         } finally {
             screen.cancel()
-            DBlayer.close()
+            closeForCleanup()
         }
     }
 
@@ -264,7 +264,7 @@ class ValueBridgeTest {
             assertTrue(profile.projection.value.decoded >= 1)
         } finally {
             screen.cancel()
-            DBlayer.close()
+            closeForCleanup()
         }
     }
 
@@ -287,7 +287,7 @@ class ValueBridgeTest {
             assertEquals("a receipt of A answered in the epoch of B", OperationOutcome.Interrupted, sent.outcome())
         } finally {
             screen.cancel()
-            DBlayer.close()
+            closeForCleanup()
         }
     }
 
@@ -307,7 +307,7 @@ class ValueBridgeTest {
             assertEquals("a stream that ended gives nothing more", null, reader.pull())
             assertEquals(0uL, DBlayer.subscriptionCensus().subscriptions)
         } finally {
-            DBlayer.close()
+            closeForCleanup()
         }
     }
 
@@ -327,7 +327,7 @@ class ValueBridgeTest {
             assertTrue(runCatching { User.profile.readRow(row.id, scopeA) }.exceptionOrNull() is DbException.Interrupted)
             assertEquals("a command of A changed the row of B", "B", User.profile.read().first().name)
         } finally {
-            DBlayer.close()
+            closeForCleanup()
         }
     }
 
@@ -354,7 +354,7 @@ class ValueBridgeTest {
             assertTrue("the events stream did not report its source error: $first", first is ModelEventItem.Failed)
         } finally {
             screen.cancel()
-            DBlayer.close()
+            closeForCleanup()
         }
     }
 
@@ -370,7 +370,7 @@ class ValueBridgeTest {
             Projected(scope.stream(User.profile), User, cancelled)
             eventually("the stream left the core") { DBlayer.subscriptionCensus().subscriptions == 0uL }
         } finally {
-            DBlayer.close()
+            closeForCleanup()
         }
     }
 
@@ -382,7 +382,7 @@ class ValueBridgeTest {
             signIn("A")
             val oldScope = AccountScope.current()
             val row = User.profile.read(oldScope).first()
-            DBlayer.close()
+            closeForCleanup()
             openSession()
             signIn("A")
 
@@ -390,7 +390,7 @@ class ValueBridgeTest {
             assertTrue("a read of the old scope reached the new database", runCatching { User.profile.read(oldScope) }.isFailure)
             assertEquals("a command of the old scope changed the new database", "A", User.profile.read().first().name)
         } finally {
-            DBlayer.close()
+            closeForCleanup()
         }
     }
 
@@ -430,7 +430,7 @@ class ValueBridgeTest {
                 stream.close()
             }
         } finally {
-            DBlayer.close()
+            closeForCleanup()
         }
     }
 }

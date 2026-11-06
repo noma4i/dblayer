@@ -31,7 +31,7 @@ class SwitchableHarnessTest {
     @Test
     fun aCloseWithTheTargetUnsetLeavesTheNextDatabaseClean() = bounded {
         for (unset in listOf<() -> DbException>({ DbException.Interrupted("transport unavailable during reset") }, { DbException.Invalid("No test transport") })) {
-            DBlayer.close()
+            closeForCleanup()
             try {
                 val first = MockTransport(Unanswered.NetworkError)
                 first.enqueue("UserProfile", profile("A"))
@@ -43,7 +43,7 @@ class SwitchableHarnessTest {
                 val before = first.calls.size
 
                 switchable.target = null
-                DBlayer.close()
+                closeForCleanup()
                 val second = MockTransport(Unanswered.NetworkError)
                 second.enqueue("UserProfile", profile("B"))
                 assertEquals("work of the close reached the old transport", before, first.calls.size)
@@ -57,7 +57,7 @@ class SwitchableHarnessTest {
                 assertEquals("B", next.value?.name)
                 assertEquals(1, second.calls.size)
             } finally {
-                DBlayer.close()
+                closeForCleanup()
             }
         }
     }
@@ -65,7 +65,7 @@ class SwitchableHarnessTest {
     /** C04, R-2, R-4: close, then open again without a transport (the iOS reopen), then with one (the Android direct open). The last open reads its own transport. */
     @Test
     fun reopeningAfterACloseGivesACleanDatabaseWithAndWithoutATransport() = bounded {
-        DBlayer.close()
+        closeForCleanup()
         try {
             val first = MockTransport(Unanswered.NetworkError)
             first.enqueue("UserProfile", profile("A"))
@@ -73,10 +73,10 @@ class SwitchableHarnessTest {
             DBlayer.database.registerOperations(operations)
             val entity = heldUser()
             eventually("the held entity shows A") { entity.value?.name == "A" }
-            DBlayer.close()
+            closeForCleanup()
 
             DBlayer.openTesting(null, modelsJSON)
-            DBlayer.close()
+            closeForCleanup()
 
             val second = MockTransport(Unanswered.NetworkError)
             second.enqueue("UserProfile", profile("B"))
@@ -86,7 +86,7 @@ class SwitchableHarnessTest {
             eventually("the reopened entity shows B") { reopened.value?.name == "B" }
             assertEquals(1, first.calls.size)
         } finally {
-            DBlayer.close()
+            closeForCleanup()
         }
     }
 }

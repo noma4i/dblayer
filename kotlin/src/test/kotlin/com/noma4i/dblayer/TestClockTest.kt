@@ -18,7 +18,7 @@ class TestClockTest {
     @Test
     fun cancellingOneLoadInterestKeepsTheOtherCallAlive() = bounded {
         try {
-            DBlayer.close()
+            closeForCleanup()
             val transport = MockTransport()
             val hold = transport.hold("MomentsFeed", """{"data":{"feed":{"nodes":[{"__typename":"Moment","id":"1","uuid":"a","likedByMe":false,"media":{},"createdAt":"2026-10-08T00:00:00.000Z"}],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}""")
             DBlayer.openTesting(transport, modelsJSON)
@@ -41,14 +41,14 @@ class TestClockTest {
                 hold.release()
             }
         } finally {
-            DBlayer.close()
+            closeForCleanup()
         }
     }
 
     @Test
     fun aMutationDuringTheFirstPageKeepsTheWholeChainStale() = bounded {
         try {
-            DBlayer.close()
+            closeForCleanup()
             val transport = MockTransport()
             val row1 = """{"__typename":"Moment","id":"1","uuid":"a","likedByMe":false,"media":{},"createdAt":"2026-10-08T00:00:00.000Z"}"""
             val row2 = """{"__typename":"Moment","id":"2","uuid":"b","likedByMe":false,"media":{},"createdAt":"2026-10-08T00:00:00.000Z"}"""
@@ -81,7 +81,7 @@ class TestClockTest {
                 loading.cancel()
             }
         } finally {
-            DBlayer.close()
+            closeForCleanup()
         }
     }
 
@@ -89,7 +89,7 @@ class TestClockTest {
     fun aRefetchOwedWithoutAReaderSurvivesReopen() = bounded {
         val directory = kotlin.io.path.createTempDirectory().toFile()
         try {
-            DBlayer.close()
+            closeForCleanup()
             val path = directory.resolve("cache.sqlite").absolutePath
             val transport = MockTransport()
             for ((id, uuid) in listOf("1" to "a", "2" to "b")) {
@@ -105,14 +105,14 @@ class TestClockTest {
             val receipt = row.like()
             assertTrue(awaitWithin("the mutation is confirmed") { receipt.outcome() } is OperationOutcome.Confirmed)
             assertEquals(1, transport.calls.count { it.operationName == "MomentsFeed" })
-            DBlayer.close()
+            closeForCleanup()
             DBlayer.openTesting(transport, modelsJSON, path = path, startMillis = 1_000_000)
             DBlayer.database.registerOperations(definitions)
             Moment.feed.load()
             assertEquals(listOf("2"), Moment.feed.read().map { it.id })
             assertEquals(2, transport.calls.count { it.operationName == "MomentsFeed" })
         } finally {
-            DBlayer.close()
+            closeForCleanup()
             directory.deleteRecursively()
         }
     }
@@ -122,7 +122,7 @@ class TestClockTest {
         val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
         val directory = kotlin.io.path.createTempDirectory().toFile()
         try {
-            DBlayer.close()
+            closeForCleanup()
             val path = directory.resolve("cache.sqlite").absolutePath
             val transport = MockTransport()
             transport.enqueue("CurrentUserQuery", """{"data":{"user":{"id":"u1","name":"A"}}}""")
@@ -135,7 +135,7 @@ class TestClockTest {
             awaitWithin("the initial profile") { first.projection.first { it.rows.isNotEmpty() } }
             assertEquals("A", first.value?.name)
             first.close()
-            DBlayer.close()
+            closeForCleanup()
 
             DBlayer.openTesting(transport, modelsJSON, path = path, startMillis = 1_000)
             DBlayer.database.registerOperations(definitions)
@@ -147,7 +147,7 @@ class TestClockTest {
             second.close()
         } finally {
             scope.cancel()
-            DBlayer.close()
+            closeForCleanup()
             directory.deleteRecursively()
         }
     }
@@ -159,7 +159,7 @@ class TestClockTest {
             val transport = MockTransport()
             repeat(2) { transport.enqueue("MomentsFeed", """{"data":{"feed":{"nodes":[{"__typename":"Moment","id":"1","uuid":"a","likedByMe":false,"media":{},"createdAt":"2026-10-08T00:00:00.000Z"}],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}""") }
             val down = transport.hold("MomentsFeed", failure = DbException.Network("down"))
-            DBlayer.close()
+            closeForCleanup()
             val clock = DBlayer.openTesting(transport, modelsJSON)
             DBlayer.database.registerOperations("""[{"name":"MomentsFeed","document":"query MomentsFeed(${'$'}first: Int, ${'$'}after: String) { feed(first: ${'$'}first, after: ${'$'}after) { nodes { id uuid likedByMe media createdAt } pageInfo { hasNextPage endCursor } } }"}]""")
             Moment.feed.load()
@@ -184,7 +184,7 @@ class TestClockTest {
             held.close()
         } finally {
             scope.cancel()
-            DBlayer.close()
+            closeForCleanup()
         }
     }
 }

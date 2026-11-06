@@ -51,7 +51,7 @@ class UploadSessionTest {
             val sentSecond = AccountScope.current().send(Moment, buildJsonObject { put("text", "B") }, upload = UploadCommand("upload_clip", UploadRequest(file.path)))
             assertEquals("each upload keeps the epoch it was sent in", listOf(first, second), listOf(sentFirst.epoch, sentSecond.epoch))
         } finally {
-            DBlayer.close()
+            closeForCleanup()
             file.delete()
         }
     }
@@ -80,7 +80,7 @@ class UploadSessionTest {
             assertTrue(transport.base.calls.none { it.operationName == "CreateMoment" })
         } finally {
             transport.released.complete(Unit)
-            DBlayer.close()
+            closeForCleanup()
             file.delete()
         }
     }

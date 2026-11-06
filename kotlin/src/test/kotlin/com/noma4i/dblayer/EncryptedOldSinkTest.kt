@@ -23,7 +23,7 @@ class EncryptedOldSinkTest {
     @Test
     fun oldEncryptedCableCannotDeliverIntoTheNextAccount() = bounded {
         try {
-            DBlayer.close()
+            closeForCleanup()
             val server = SealedServer { path, body ->
                 if (path == "/api/auth/login_link") {
                     Json.parseToJsonElement("""{"sessionId":${body.getValue("account")}}""").jsonObject
@@ -53,7 +53,7 @@ class EncryptedOldSinkTest {
             first.cancel()
             second.cancel()
         } finally {
-            DBlayer.close()
+            closeForCleanup()
         }
     }
 }

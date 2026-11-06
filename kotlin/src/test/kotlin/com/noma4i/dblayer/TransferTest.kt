@@ -105,7 +105,7 @@ class TransferTest {
             val ranges = directory.resolve("db.sqlite.cache/ranges").canonicalFile.toPath()
             assertTrue(transport.paths.filter { it.first == "../../../outside" }.all { it.second.startsWith(ranges) })
         } finally {
-            DBlayer.close()
+            closeForCleanup()
             directory.deleteRecursively()
         }
     }
@@ -134,7 +134,7 @@ class TransferTest {
                     val credential = TransferCredential()
                     val path = directory.resolve("db-$case.sqlite").path
                     val operations = """[{"name":"CreateBlob","document":"mutation CreateBlob { createBlob { url headers signedId blobId } }"},{"name":"CreateAssets","document":"mutation CreateAssets { createAssets { assets { id clientKey size position } } }"},{"name":"CreateAsset","document":"mutation CreateAsset { createAsset { asset { id clientKey size position } } }"}]"""
-                    DBlayer.close()
+                    closeForCleanup()
                     DBlayer.openTesting(transport, modelsJSON, path = path, encrypted = encrypted, credentials = credential, http = server)
                     DBlayer.database.registerOperations(operations)
                     DBlayer.database.sessionCall("login_link", """{"account":"A"}""")
@@ -148,7 +148,7 @@ class TransferTest {
                     server.hold(null)
                     if (lose) {
                         server.lostAnswer()
-                        DBlayer.close()
+                        closeForCleanup()
                         DBlayer.openTesting(transport, modelsJSON, path = path, encrypted = encrypted, credentials = credential, http = server)
                         DBlayer.database.registerOperations(operations)
                         eventually("both assets are stored") { Asset.find("a1").current() != null && Asset.find("a2").current() != null }
@@ -171,10 +171,10 @@ class TransferTest {
                     val sent = final.getValue("variables").jsonObject.getValue("items").jsonArray
                     assertEquals(listOf("key-1", "key-2"), sent.map { it.jsonObject.getValue("clientKey").jsonPrimitive.content })
                     assertEquals(listOf("signed-1.jpg", "signed-2.jpg"), sent.map { it.jsonObject.getValue("signedId").jsonPrimitive.content })
-                    DBlayer.close()
-                } finally { server.hold(null); DBlayer.close() }
+                    closeForCleanup()
+                } finally { server.hold(null); closeForCleanup() }
             }
-        } finally { DBlayer.close(); directory.deleteRecursively() }
+        } finally { closeForCleanup(); directory.deleteRecursively() }
     }
 
     private val expiryOperations = """[{"name":"CreateBlob","document":"mutation CreateBlob { createBlob { signedId } }"},{"name":"CreateMoment","document":"mutation CreateMoment { createMoment { id } }"}]"""
@@ -196,17 +196,17 @@ class TransferTest {
         try {
             val source = directory.resolve("video").apply { writeText("video") }
             val path = directory.resolve("db.sqlite").path
-            DBlayer.close()
+            closeForCleanup()
             val transport = MockTransport()
             DBlayer.openTesting(transport, modelsJSON, path = path, startMillis = 1_000_000L)
             DBlayer.database.registerOperations(expiryOperations)
             val row = refusedUpload(transport, source)
-            DBlayer.close()
+            closeForCleanup()
             DBlayer.openTesting(transport, modelsJSON, path = path, startMillis = 1_000_000L + 7L * 24 * 60 * 60 * 1000)
             DBlayer.database.registerOperations(expiryOperations)
             eventually("the expired upload is discarded at the open") { isGone(row) }
-            DBlayer.close()
-        } finally { DBlayer.close(); directory.deleteRecursively() }
+            closeForCleanup()
+        } finally { closeForCleanup(); directory.deleteRecursively() }
     }
 
 
@@ -226,8 +226,8 @@ class TransferTest {
             assertEquals(SyncState.Failed, failed.sync.state)
             failed.discard(null)
             assertNull(Moment.find(row.id).current())
-            DBlayer.close()
-        } finally { DBlayer.close(); source.delete() }
+            closeForCleanup()
+        } finally { closeForCleanup(); source.delete() }
     }
 
     @Test
@@ -248,7 +248,7 @@ class TransferTest {
             queued.discard(null)
             assertNull(Moment.find(queued.id).current())
             held.release()
-            DBlayer.close()
+            closeForCleanup()
             val reopened = reopen(config, modelsJSON, transport, operations)
             reopened.setOnline(false)
             reopened.setOnline(true)
@@ -259,8 +259,8 @@ class TransferTest {
             val aborts = transport.calls.filter { it.operationName == "AbortMultipart" }
             assertEquals(1, aborts.size)
             assertEquals(NetworkPurpose.TRANSFER, aborts.single().purpose)
-            DBlayer.close()
-        } finally { held.release(); abort.release(); DBlayer.close(); directory.deleteRecursively() }
+            closeForCleanup()
+        } finally { held.release(); abort.release(); closeForCleanup(); directory.deleteRecursively() }
     }
 
     @Test
@@ -284,8 +284,8 @@ class TransferTest {
             assertTrue(transport.calls.none { it.operationName == "CreateAssets" })
             val call = transport.calls.single { it.operationName == "CreateAsset" }
             assertEquals("key-1", Json.parseToJsonElement(call.variablesJson).jsonObject.getValue("clientKey").jsonPrimitive.content)
-            DBlayer.close()
-        } finally { DBlayer.close(); directory.deleteRecursively() }
+            closeForCleanup()
+        } finally { closeForCleanup(); directory.deleteRecursively() }
     }
 
     @Test
@@ -311,8 +311,8 @@ class TransferTest {
             assertEquals(4, transport.calls.count { it.operationName == "CreateBlob" })
             val filenames = transport.calls.filter { it.operationName == "CreateBlob" }.map { Json.parseToJsonElement(it.variablesJson).jsonObject.getValue("filename").jsonPrimitive.content }.sorted()
             assertEquals(listOf("0.jpg", "0.jpg", "1.jpg", "2.jpg"), filenames)
-            DBlayer.close()
-        } finally { DBlayer.close(); directory.deleteRecursively() }
+            closeForCleanup()
+        } finally { closeForCleanup(); directory.deleteRecursively() }
     }
 
     @Test
@@ -343,8 +343,8 @@ class TransferTest {
             assertEquals(2, transport.calls.count { it.operationName == "CreateBlob" })
             val filenames = transport.calls.filter { it.operationName == "CreateBlob" }.map { Json.parseToJsonElement(it.variablesJson).jsonObject.getValue("filename").jsonPrimitive.content }.sorted()
             assertEquals(listOf("0.jpg", "2.jpg"), filenames)
-            DBlayer.close()
-        } finally { held.release(); DBlayer.close(); directory.deleteRecursively() }
+            closeForCleanup()
+        } finally { held.release(); closeForCleanup(); directory.deleteRecursively() }
     }
 
     @OptIn(DBlayerTestingApi::class)
@@ -352,7 +352,7 @@ class TransferTest {
     fun aFailedBlobExpiresWhenTheNetworkReturnsAfterSevenDays() = bounded {
         val source = Files.createTempFile("blob-expiry", ".mp4").toFile().apply { writeText("video") }
         try {
-            DBlayer.close()
+            closeForCleanup()
             val transport = MockTransport()
             val clock = DBlayer.openTesting(transport, modelsJSON)
             DBlayer.database.registerOperations(expiryOperations)
@@ -361,8 +361,8 @@ class TransferTest {
             clock.advance(7L * 24 * 60 * 60 * 1000)
             DBlayer.database.setOnline(true)
             eventually("the expired upload is discarded when the network returns") { isGone(row) }
-            DBlayer.close()
-        } finally { DBlayer.close(); source.delete() }
+            closeForCleanup()
+        } finally { closeForCleanup(); source.delete() }
     }
 
 
@@ -390,8 +390,8 @@ class TransferTest {
             assertEquals(1, names.count { it == "PresignParts" })
             assertEquals(2, names.count { it == "CompleteMultipart" })
             assertEquals(listOf("https://storage/1", "https://storage/2", "https://storage/3"), transport.puts.sorted())
-            DBlayer.close()
-        } finally { DBlayer.close(); scope.cancel(); directory.deleteRecursively() }
+            closeForCleanup()
+        } finally { closeForCleanup(); scope.cancel(); directory.deleteRecursively() }
     }
 
     @Test
@@ -411,7 +411,7 @@ class TransferTest {
             assertTrue(first.detach(User.avatar))
             val firstId = first.id
             val secondId = second.id
-            DBlayer.close()
+            closeForCleanup()
             reopen(config, modelsJSON, null)
             val restoredFirst = requireNotNull(User.find(firstId).current())
             val restoredSecond = requireNotNull(User.find(secondId).current())
@@ -420,8 +420,8 @@ class TransferTest {
             val info = requireNotNull(restoredSecond.file(User.avatar))
             assertEquals("large", info.name)
             assertEquals(300L * 1024, info.size)
-            DBlayer.close()
-        } finally { DBlayer.close(); directory.deleteRecursively() }
+            closeForCleanup()
+        } finally { closeForCleanup(); directory.deleteRecursively() }
     }
 
     @Test
@@ -448,7 +448,7 @@ class TransferTest {
             assertTrue(requireNotNull(files.list()).isEmpty())
             assertTrue(source.exists())
             held.release()
-            DBlayer.close()
+            closeForCleanup()
             val reopened = reopen(config, modelsJSON, transport, operations)
             reopened.setOnline(false)
             reopened.setOnline(true)
@@ -459,11 +459,11 @@ class TransferTest {
             val aborts = transport.calls.filter { it.operationName == "AbortMultipart" }
             assertEquals(1, aborts.size)
             assertEquals(NetworkPurpose.TRANSFER, aborts.single().purpose)
-            DBlayer.close()
+            closeForCleanup()
         } finally {
             held.release()
             abort.release()
-            DBlayer.close()
+            closeForCleanup()
             scope.cancel()
             directory.deleteRecursively()
         }

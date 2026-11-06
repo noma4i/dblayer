@@ -17,7 +17,7 @@ class EventPayloadTest {
     fun chatEventPayloadPlatforms() = bounded {
         for (eventsFirst in listOf(false, true)) {
             val screen = CoroutineScope(SupervisorJob() + Dispatchers.Default)
-            try { checkOrder(screen, eventsFirst) } finally { screen.cancel(); DBlayer.close() }
+            try { checkOrder(screen, eventsFirst) } finally { screen.cancel(); closeForCleanup() }
         }
     }
 

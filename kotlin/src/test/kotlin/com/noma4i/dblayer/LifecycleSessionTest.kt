@@ -101,7 +101,7 @@ class LifecycleSessionTest {
 
     private suspend fun openSession() {
         try {
-            DBlayer.close()
+            closeForCleanup()
         } catch (_: DbException.Closed) {
         }
         val encrypted = EncryptedConfig("https://api.example.com", SealedServer.SERVER_KEY, SealedServer.SERVER_PIN, EncryptedEndpoints("/api/graphql", "/api/cable", "/api/logout", "/api/bootstrap", mapOf("login_link" to EncryptedSessionOperation("/api/auth/login_link", EncryptedOperationClass.AUTHENTICATED))), "example-ws-v1", "ws.hello", "EncryptedGraphqlChannel")
@@ -128,7 +128,7 @@ class LifecycleSessionTest {
             entity = heldUser()
             eventually("the held entity shows B") { entity.value?.name == "B" }
         } finally {
-            DBlayer.close()
+            closeForCleanup()
         }
     }
 
@@ -151,7 +151,7 @@ class LifecycleSessionTest {
             entity = heldUser()
             eventually("the held entity shows B") { entity.value?.name == "B" }
         } finally {
-            DBlayer.close()
+            closeForCleanup()
         }
     }
 
@@ -169,7 +169,7 @@ class LifecycleSessionTest {
             val late = runCatching { awaitWithin("the first-load wait after the exit") { entity.loaded() } }.exceptionOrNull()
             assertTrue("the wait after the exit must end Interrupted: $late", late is DbException.Interrupted)
         } finally {
-            DBlayer.close()
+            closeForCleanup()
         }
     }
 
@@ -194,7 +194,7 @@ class LifecycleSessionTest {
                 live.cancel()
             }
         } finally {
-            DBlayer.close()
+            closeForCleanup()
         }
     }
 
@@ -229,7 +229,7 @@ class LifecycleSessionTest {
                 server.hold(null)
             }
         } finally {
-            DBlayer.close()
+            closeForCleanup()
         }
     }
 
@@ -267,7 +267,7 @@ class LifecycleSessionTest {
                 server.hold(null)
             }
         } finally {
-            DBlayer.close()
+            closeForCleanup()
         }
     }
 
@@ -288,7 +288,7 @@ class LifecycleSessionTest {
             eventually("the held entity shows A again") { entity.value?.name == "A" }
             assertTrue(server.operationRequests("UserProfile") > reads)
         } finally {
-            DBlayer.close()
+            closeForCleanup()
         }
     }
 
@@ -308,7 +308,7 @@ class LifecycleSessionTest {
             assertEquals(0, server.pathRequests("/api/logout"))
             server.refuseEverything(false)
         } finally {
-            DBlayer.close()
+            closeForCleanup()
         }
     }
 
@@ -321,12 +321,12 @@ class LifecycleSessionTest {
             server.hold("UserProfile")
             val ended = async(start = CoroutineStart.UNDISPATCHED) { runCatching { User.profile.refresh() } }
             eventually("the request waits at the server") { server.parkedCount > 0 }
-            DBlayer.close()
+            closeForCleanup()
             awaitWithin("the call that the server never answered") { ended.await() }
             Unit
         } finally {
             server.hold(null)
-            runCatching { DBlayer.close() }
+            runCatching { closeForCleanup() }
         }
     }
 
@@ -345,7 +345,7 @@ class LifecycleSessionTest {
             var entity = heldUser()
             eventually("the held entity shows A") { entity.value?.name == "A" }
         } finally {
-            DBlayer.close()
+            closeForCleanup()
         }
     }
 }

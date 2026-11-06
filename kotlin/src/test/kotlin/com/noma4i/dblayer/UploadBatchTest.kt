@@ -41,7 +41,7 @@ class UploadBatchTest {
             val sent = Json.parseToJsonElement(calls.single().variablesJson).jsonObject.getValue("items").jsonArray
             assertEquals(listOf("key-0", "key-1"), sent.map { it.jsonObject.getValue("clientKey").jsonPrimitive.content })
             assertTrue(sent.all { it.jsonObject.getValue("signedId").jsonPrimitive.content == "signed" })
-            DBlayer.close()
+            closeForCleanup()
         } finally {
             directory.deleteRecursively()
         }

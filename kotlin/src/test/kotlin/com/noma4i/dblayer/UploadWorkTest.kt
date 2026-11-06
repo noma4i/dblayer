@@ -87,14 +87,14 @@ class UploadWorkTest {
                 rows.items.all { Asset.find(it.optimisticValue.id).current()?.uploads?.values?.singleOrNull()?.error?.message?.contains("the app was not visible") == true }
             }
         } finally {
-            DBlayer.close()
+            closeForCleanup()
             directory.deleteRecursively()
         }
     }
 
     @Test
     fun theUploadServiceShowsItsNotificationBeforeOpenFinishedAndStopsWhenNothingIsUnfinished() = bounded {
-        DBlayer.close()
+        closeForCleanup()
         val context = org.robolectric.RuntimeEnvironment.getApplication()
         UploadNotifications.store(context, notification)
         val controller = Robolectric.buildService(UploadService::class.java).create()
@@ -103,6 +103,6 @@ class UploadWorkTest {
         assertTrue(!shadowOf(controller.get()).isStoppedBySelf)
         DBlayer.open(context, transport = MockTransport(), modelsJson = modelsJSON, uploadNotification = notification)
         eventually("the service stops by itself when no upload is unfinished") { shadowOf(controller.get()).isStoppedBySelf }
-        DBlayer.close()
+        closeForCleanup()
     }
 }

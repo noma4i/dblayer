@@ -36,7 +36,7 @@ class FirstFrameAndRelatedTest {
             assertEquals("the first value lacked the cached rows: ${snapshot?.rows?.map { it.id }}", seats.map { it.id }.toSet(), snapshot!!.rows.map { it.id }.toSet())
         } finally {
             stream.cancel()
-            DBlayer.close()
+            closeForCleanup()
         }
     }
 
@@ -63,7 +63,7 @@ class FirstFrameAndRelatedTest {
             eventually("a change of the link moves the row out of the relation") { titles(related).isEmpty() }
         } finally {
             screen.cancel()
-            DBlayer.close()
+            closeForCleanup()
         }
     }
 }

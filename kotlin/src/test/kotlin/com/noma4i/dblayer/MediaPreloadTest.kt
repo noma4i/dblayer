@@ -24,7 +24,7 @@ class MediaPreloadTest {
     @Test
     fun aMediaRefetchAfterMutationReadsTheWholeStaleWindow() = bounded {
         try {
-            DBlayer.close()
+            closeForCleanup()
             val original = Json.parseToJsonElement(modelsJSON).jsonArray
             val moment = original.first { it.jsonObject["key"]?.jsonPrimitive?.content == "Moment" }.jsonObject
             val like = moment.getValue("actions").jsonArray.first { it.jsonObject["name"]?.jsonPrimitive?.content == "like" }.jsonObject
@@ -61,7 +61,7 @@ class MediaPreloadTest {
             awaitWithin("the fresh media load") { query.loadAll() }
             assertEquals(5, transport.calls.count { it.operationName == "MediaMarker" })
         } finally {
-            DBlayer.close()
+            closeForCleanup()
         }
     }
 
@@ -80,7 +80,7 @@ class MediaPreloadTest {
 
     @Test
     fun preloadsAndThreeMediaLoadsFinishOnEmptyPages() = bounded {
-        DBlayer.close()
+        closeForCleanup()
         val transport = MockTransport()
         val preload = transport.hold("PresenceOnline", """{"data":{"presenceOnline":[]}}""")
         val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
@@ -130,7 +130,7 @@ class MediaPreloadTest {
         } finally {
             preload.release()
             scope.cancel()
-            DBlayer.close()
+            closeForCleanup()
         }
     }
 }

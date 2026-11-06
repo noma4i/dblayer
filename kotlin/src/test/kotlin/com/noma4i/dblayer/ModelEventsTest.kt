@@ -59,7 +59,7 @@ class ModelEventsTest {
             assertEquals("c3", chat(awaitWithin("the third event of the early collector") { early.receive() }))
         } finally {
             screen.cancel()
-            DBlayer.close()
+            closeForCleanup()
         }
     }
 
@@ -95,7 +95,7 @@ class ModelEventsTest {
             org.junit.Assert.assertTrue("a reader that read nothing during the burst lost no position", lost.isNotEmpty())
         } finally {
             screen.cancel()
-            DBlayer.close()
+            closeForCleanup()
         }
     }
 
@@ -115,7 +115,7 @@ class ModelEventsTest {
             assertEquals("the old stream delivered an item instead of ending after the session reset", Ended, awaitWithin("the end of the old stream") { first.receive() })
         } finally {
             screen.cancel()
-            DBlayer.close()
+            closeForCleanup()
         }
     }
 }
