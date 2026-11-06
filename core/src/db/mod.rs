@@ -46,7 +46,6 @@ mod prior;
 mod upload;
 #[cfg(test)]
 mod prior_tests;
-mod replace;
 mod record_sync;
 mod references;
 mod reset;
@@ -57,6 +56,7 @@ mod threads;
 
 pub use diff::{Diff, Entry, Stamp};
 pub use error::DbError;
+pub(crate) use diff::longest_increasing;
 pub use local_write::{Acted, OutboxOperation};
 pub use open::{Db, DbConfig, DroppedRecord, OpenReport};
 pub use row::{Record, Row};

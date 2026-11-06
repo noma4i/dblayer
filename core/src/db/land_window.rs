@@ -18,7 +18,7 @@ use crate::value::{read_id, ScalarKind};
 use super::error::DbError;
 use super::local_write::plan_fault;
 use super::open::Db;
-use super::replace::ReplaceRequest;
+use crate::store::replace::{replace_plan, scope_membership, ReplaceRequest};
 
 /// One page of a window as `StoreOp::Window` carries it.
 pub(crate) struct WindowPage<'a> {
@@ -190,7 +190,7 @@ impl Db {
                 let plan = if plans_as_first {
                     let mut request = ReplaceRequest::new(scope.clone(), coverage);
                     request.replace_all = page.replace_all;
-                    self.replace_plan(reader, &request, &admitted, base_revision)?
+                    replace_plan(reader, &request, &admitted, base_revision)?
                 } else {
                     let ids: Vec<String> = incoming_ids(&admitted).iter().map(ToString::to_string).collect();
                     let wanted: Vec<&str> = ids.iter().map(String::as_str).collect();
@@ -198,7 +198,7 @@ impl Db {
                         last_key: reader.scope_last_key(model, scope.key.as_str())?,
                         incoming: reader.scope_members_among(model, scope.key.as_str(), if keeps_member_order { &[] } else { &wanted })?,
                     };
-                    let membership = Db::scope_membership(reader, model, scope.key.as_str(), base_revision)?;
+                    let membership = scope_membership(reader, model, scope.key.as_str(), base_revision)?;
                     let (placed, left): (Vec<_>, Vec<_>) = admitted.iter().cloned().partition(|row| row.get("id").and_then(read_id).is_none_or(|id| membership.get(id.as_str()) != Some(&false)));
                     let mut plan = plan_landing(&scope, &model_key, &stored_scope, &placed).map_err(json_fault)?;
                     plan.entity_ops.extend(left.into_iter().filter_map(|row| row.get("id").and_then(read_id).map(|id| EntityOp::Upsert { model: model_key.clone(), id, row })));

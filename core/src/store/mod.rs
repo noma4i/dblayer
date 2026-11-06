@@ -30,6 +30,7 @@ mod reset;
 pub(crate) use reset::{identity_of, RowOp};
 mod rows;
 mod response;
+pub(crate) mod replace;
 mod scopes;
 mod search;
 mod shape;
