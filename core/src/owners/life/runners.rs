@@ -327,7 +327,7 @@ pub(super) fn write_batch(db: &Db, batch: &crate::owners::store::StoreBatch, min
     }
     let row_ops = if batch.author == crate::owners::contract::BatchAuthor::Feed || batch.ops.iter().any(|op| matches!(op, StoreOp::Window { .. })) { Vec::new() } else { row_ops(&batch.rows)? };
     if !encrypted.is_empty() {
-        db.shared.store.write_ops(encrypted.into_iter().filter_map(row_op).collect()).map(drop).map_err(|error| error.to_string())?;
+        db.shared.store.write_ops(encrypted.into_iter().filter_map(crate::store::row_op).collect()).map(drop).map_err(|error| error.to_string())?;
     }
     if !queue.is_empty() || !row_ops.is_empty() {
         let ops: Vec<StoreOp> = row_ops.into_iter().chain(queue.into_iter().cloned()).collect();
@@ -336,7 +336,7 @@ pub(super) fn write_batch(db: &Db, batch: &crate::owners::store::StoreBatch, min
     if removals.is_empty() {
         return Ok(());
     }
-    db.shared.store.write_ops(removals.into_iter().filter_map(row_op).collect()).map(drop).map_err(|error| error.to_string())
+    db.shared.store.write_ops(removals.into_iter().filter_map(crate::store::row_op).collect()).map(drop).map_err(|error| error.to_string())
 }
 
 fn row_ops(rows: &[(String, String)]) -> Result<Vec<StoreOp>, String> {
@@ -351,29 +351,4 @@ fn row_ops(rows: &[(String, String)]) -> Result<Vec<StoreOp>, String> {
         }
     }
     Ok(ops)
-}
-
-/// The batch op as the tables hold it: ids as text, the purpose as the enum of the transport.
-fn row_op(op: &StoreOp) -> Option<crate::store::RowOp> {
-    Some(match op {
-        StoreOp::Pending { pending, credential_digest, wire_id, response_key } => crate::store::RowOp::PutPending(crate::transport::encrypted::state::Pending {
-            credential_digest: credential_digest.clone(),
-            request_id: wire_id.clone(),
-            response_key: response_key.clone(),
-            sequence: i64::try_from(pending.sequence).unwrap_or(i64::MAX),
-            path: pending.path.clone(),
-            body: pending.body.clone(),
-            owner: pending.owner.clone(),
-            purpose: if pending.purpose == 0 { crate::transport::NetworkPurpose::Standard } else { crate::transport::NetworkPurpose::Transfer },
-            req_id: pending.request_id,
-        }),
-        StoreOp::RemovePending => crate::store::RowOp::RemovePending,
-        StoreOp::EraseSession => crate::store::RowOp::RemoveSession,
-        StoreOp::Answer { request_id, operation, result } => crate::store::RowOp::PutAnswer { request_id: *request_id, operation: *operation, answer: result.clone() },
-        StoreOp::RemoveAnswer { request_id } => crate::store::RowOp::RemoveAnswer { request_id: *request_id },
-        StoreOp::DiscardRestoreFailed { table, key } => crate::store::RowOp::DiscardRestoreFailed { table: table.clone(), key: key.clone() },
-        StoreOp::Attempt { op_id, attempts, .. } => crate::store::RowOp::PutAttempts { op_id: i64::try_from(*op_id).unwrap_or(i64::MAX), attempts: i64::from(*attempts) },
-        StoreOp::Session { digest, sequence } => crate::store::RowOp::PutSession { digest: digest.clone(), sequence: sequence.map(|sequence| i64::try_from(sequence).unwrap_or(i64::MAX)) },
-        _ => return None,
-    })
 }

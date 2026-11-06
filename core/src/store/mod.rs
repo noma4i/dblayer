@@ -29,7 +29,7 @@ mod readers;
 mod references;
 pub(crate) mod reads;
 mod reset;
-pub(crate) use reset::{identity_of, RowOp};
+pub(crate) use reset::{identity_of, row_op, RowOp};
 mod rows;
 mod response;
 pub(crate) mod replace;

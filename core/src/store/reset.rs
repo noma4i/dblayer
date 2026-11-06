@@ -423,6 +423,31 @@ pub(crate) enum RowOp {
     PutAttempts { op_id: i64, attempts: i64 },
 }
 
+pub(crate) fn row_op(op: &crate::owners::store::StoreOp) -> Option<RowOp> {
+    use crate::owners::store::StoreOp;
+    Some(match op {
+        StoreOp::Pending { pending, credential_digest, wire_id, response_key } => RowOp::PutPending(Pending {
+            credential_digest: credential_digest.clone(),
+            request_id: wire_id.clone(),
+            response_key: response_key.clone(),
+            sequence: i64::try_from(pending.sequence).unwrap_or(i64::MAX),
+            path: pending.path.clone(),
+            body: pending.body.clone(),
+            owner: pending.owner.clone(),
+            purpose: if pending.purpose == 0 { crate::transport::NetworkPurpose::Standard } else { crate::transport::NetworkPurpose::Transfer },
+            req_id: pending.request_id,
+        }),
+        StoreOp::RemovePending => RowOp::RemovePending,
+        StoreOp::EraseSession => RowOp::RemoveSession,
+        StoreOp::Answer { request_id, operation, result } => RowOp::PutAnswer { request_id: *request_id, operation: *operation, answer: result.clone() },
+        StoreOp::RemoveAnswer { request_id } => RowOp::RemoveAnswer { request_id: *request_id },
+        StoreOp::DiscardRestoreFailed { table, key } => RowOp::DiscardRestoreFailed { table: table.clone(), key: key.clone() },
+        StoreOp::Attempt { op_id, attempts, .. } => RowOp::PutAttempts { op_id: i64::try_from(*op_id).unwrap_or(i64::MAX), attempts: i64::from(*attempts) },
+        StoreOp::Session { digest, sequence } => RowOp::PutSession { digest: digest.clone(), sequence: sequence.map(|sequence| i64::try_from(sequence).unwrap_or(i64::MAX)) },
+        _ => return None,
+    })
+}
+
 impl Store {
     /// The effect `Write`: the writes of one batch in one transaction. Returns the new revision.
     pub(crate) fn write_ops(&self, ops: Vec<RowOp>) -> Result<i64, StoreError> {
