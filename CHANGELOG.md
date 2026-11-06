@@ -29,6 +29,7 @@
 ### Fixed
 - `discard` and `cancelUpload` of an upload whose final mutation failed remove its operation and its optimistic row.
 - A media window marked stale reads the whole window again after a failed load.
+- The Android upload service reports its start after `open` and stops when no transfer is unfinished.
 - Preserve validated local fields copied from singleton rows during creation.
 - Preserve queued operations and uploads when model caches are reset.
 - Keep readable snapshots after a failed database commit.

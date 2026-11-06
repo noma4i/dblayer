@@ -11,9 +11,10 @@ import kotlinx.serialization.json.JsonPrimitive
 object DBlayer {
     private val opener = OpenDatabase()
     @Volatile private var opened: Database? = null
+    @Volatile private var running = false
     @Volatile private var powerSaving: PowerSaving.Registration? = null
 
-    internal fun openedDatabase(): Database? = opened
+    internal fun openedDatabase(): Database? = opened.takeIf { running }
 
     suspend inline fun <reified Body, reified Answer> sessionCall(operation: String, body: Body): Answer =
         offCaller { dbJson.decodeFromString<Answer>(database.sessionCall(operation, dbJson.encodeToString(body))) }
@@ -29,6 +30,7 @@ object DBlayer {
 
     /** Closes the database. Every request, load and subscription ends, and the call returns after the library released its resources. */
     suspend fun close() {
+        running = false
         ForegroundEvents.stop()
         powerSaving?.stop()
         powerSaving = null
@@ -49,7 +51,7 @@ object DBlayer {
 
     var database: Database
         get() = opened ?: throw IllegalStateException("database is not open; call DBlayer.open once at app start")
-        internal set(value) { opened = value }
+        internal set(value) { opened = value; running = true }
 
     suspend fun serverConfig(context: Context, encrypted: EncryptedConfig, platform: AppPlatform, version: String, build: String? = null, http: EncryptedHttp? = null, retries: RetryProgress? = null): ServerConfig =
         fetchServerConfig(encrypted, platform, version, build, http ?: OkHttpEncryptedHttp(encrypted.origin), retries, Reachability.start(context))
@@ -81,6 +83,7 @@ object DBlayer {
         powerSaving = PowerSaving.start(context, sink)
         made.setRoundJobs(UploadRounds(context.applicationContext, made))
         database = made
+        UploadService.opened(made)
     }
 
     internal suspend fun openOnClock(config: Config, modelsJson: String, transport: Transport?, clock: TestClock, encrypted: EncryptedConfig? = null, credentials: CredentialStore? = null, http: EncryptedHttp? = null, retries: RetryProgress? = null): Database = opener.openWithClock(config, modelsJson, OpenPorts(transport, encrypted, credentials, http, retries), clock)

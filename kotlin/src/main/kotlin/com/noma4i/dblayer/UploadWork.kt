@@ -83,10 +83,8 @@ internal class UploadRounds(private val context: Context, private val database: 
     }
 
     override fun endJob(roundId: UInt) {
-        when (uploadMode(Build.VERSION.SDK_INT)) {
-            UploadMode.UserInitiatedJob -> context.getSystemService(JobScheduler::class.java).cancel(UploadJobService.JOB_ID)
-            UploadMode.ForegroundService -> context.stopService(Intent(context, UploadService::class.java))
-        }
+        context.getSystemService(JobScheduler::class.java).cancel(UploadJobService.JOB_ID)
+        UploadService.stop()
     }
 }
 
@@ -162,27 +160,43 @@ internal class UploadJobService : JobService() {
 }
 
 internal class UploadService : Service() {
+    @Volatile private var pending: Pair<ULong, ULong?>? = null
     @Volatile private var running: Pair<UInt, ULong>? = null
 
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         startForeground(UploadNotifications.ID, UploadNotifications.build(this), ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC)
-        val requestId = intent?.getLongExtra(REQUEST, 0)?.toULong() ?: return START_STICKY
-        val epoch = intent.getLongExtra(EPOCH, 0).toULong()
-        val roundId = roundIdOf(requestId)
-        running = roundId to epoch
-        DBlayer.openedDatabase()?.roundStarted(requestId, roundId, epoch)
+        live = this
+        val requested = intent?.takeIf { it.hasExtra(REQUEST) }
+        pending = (requested?.getLongExtra(REQUEST, 0)?.toULong() ?: 0uL) to requested?.getLongExtra(EPOCH, 0)?.toULong()
+        DBlayer.openedDatabase()?.let(::report)
         return START_STICKY
     }
 
     override fun onDestroy() {
+        if (live === this) live = null
         val (roundId, epoch) = running ?: return
         running = null
         DBlayer.openedDatabase()?.roundEnded(roundId, epoch)
     }
 
+    private fun report(database: Database) {
+        val (requestId, requestedEpoch) = pending ?: return
+        pending = null
+        val epoch = requestedEpoch ?: database.sessionEpoch()
+        val roundId = roundIdOf(requestId)
+        running = roundId to epoch
+        database.roundStarted(requestId, roundId, epoch)
+    }
+
     companion object {
+        @Volatile private var live: UploadService? = null
+
+        fun opened(database: Database) { live?.report(database) }
+
+        fun stop() { live?.stopSelf() }
+
         fun start(context: Context, requestId: ULong, epoch: ULong): String? = try {
             context.startForegroundService(Intent(context, UploadService::class.java).putExtra(REQUEST, requestId.toLong()).putExtra(EPOCH, epoch.toLong()))
             null
