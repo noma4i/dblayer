@@ -19,7 +19,7 @@ object LoadPhase {
 }
 
 /** The first load ended and the relation has no next page. */
-val ReadState.complete: Boolean get() = settled && !hasMore
+val ReadState.complete: Boolean get() = settled && !hasMore && error == null
 
 class Snapshot<M : DBModel>(
     val rows: List<M>,

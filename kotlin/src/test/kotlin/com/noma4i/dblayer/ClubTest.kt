@@ -132,11 +132,18 @@ class ClubTest {
                 assertEquals(1, transport.calls.count { it.operationName == "SendLetter" })
                 assertTrue(Query("Letter", Letter).readRow(id) == null)
                 transport.enqueue("SendLetter", DbException.Http(422.toUShort(), "refused again"))
-                val retried = withTimeout(5000) { Letter.retry(id, null) }
-                assertEquals(keep, retried.operation != null)
-                if (keep) assertTrue(withTimeout(5000) { retried.outcome() } is OperationOutcome.Rejected)
+                if (keep) {
+                    var attempt: MutationReceipt<Letter>? = null
+                    eventually("the refusal of the first attempt is recorded") {
+                        try { attempt = withTimeout(5000) { Letter.retry(id, null) }; true } catch (error: DbException.Invalid) { false }
+                    }
+                    assertTrue(withTimeout(5000) { requireNotNull(attempt).outcome() } is OperationOutcome.Rejected)
+                } else {
+                    eventually("the refused operation is gone") {
+                        try { withTimeout(5000) { Letter.retry(id, null) }; false } catch (error: DbException.NotFound) { true } catch (error: DbException.Invalid) { false }
+                    }
+                }
                 assertTrue(Query("Letter", Letter).readRow(id) == null)
-                DBlayer.close()
             } finally {
                 DBlayer.close()
                 directory.deleteRecursively()

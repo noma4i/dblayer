@@ -22,6 +22,11 @@ private class StandCredential : CredentialStore {
     override fun clear() { current = null }
 }
 
+private val credentialsByPath = java.util.concurrent.ConcurrentHashMap<String, StandCredential>()
+
+/** The secret outlives a process like the Keychain does: a database file opened again finds the credential of its stored session. */
+private fun credentialOf(config: Config): StandCredential = config.path?.let { credentialsByPath.getOrPut(it) { StandCredential() } } ?: StandCredential()
+
 const val SEND_MOMENT = """[{"name":"CreateMoment","document":"mutation CreateMoment(${'$'}text: String) { createMoment(text: ${'$'}text) { id uuid text likedByMe media createdAt } }"}]"""
 
 private const val SESSION_PROFILE = """{"name":"SessionProfile","document":"query SessionProfile { sessionProfile { id } }"}"""
@@ -49,9 +54,9 @@ private fun standEncrypted() = EncryptedConfig("https://api.example.com", Sealed
 
 private fun withSessionProfile(operations: String) = if (operations.trim() == "[]") "[$SESSION_PROFILE]" else operations.dropLast(1) + ",$SESSION_PROFILE]"
 
-private suspend fun signIn(database: Database) {
+private suspend fun signIn(database: Database, restored: Boolean = false) {
     database.setOnline(true)
-    database.sessionCall("login_link", """{"account":"stand"}""")
+    if (!restored) database.sessionCall("login_link", """{"account":"stand"}""")
     DBlayer.run("SessionProfile", kotlinx.serialization.json.JsonObject(emptyMap()))
 }
 
@@ -61,8 +66,10 @@ suspend fun reopen(config: Config, modelsJson: String, transport: Transport? = n
     val server = SealedServer(answer = bridgeToTransport(mock))
     val host = mock as? MockTransport ?: (mock as? WrapsMock)?.base
     host?.cable = EncryptedCablePeer(server)
-    val database = adopt(openDatabase(config, modelsJson, mock, standEncrypted(), StandCredential(), server, withSessionProfile(operations), uploads))
-    signIn(database)
+    val credential = credentialOf(config)
+    val restored = credential.get() != null
+    val database = adopt(openDatabase(config, modelsJson, mock, standEncrypted(), credential, server, withSessionProfile(operations), uploads))
+    signIn(database, restored)
     return database
 }
 
