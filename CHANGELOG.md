@@ -16,27 +16,6 @@
 - The state of an upload reaches the streams of its row.
 - The local values of a temporary row move to the row that replaces it.
 
-### Fixed
-- Preserve validated local fields copied from singleton rows during creation.
-- Preserve queued operations and uploads when model caches are reset.
-- Keep readable snapshots after a failed database commit.
-- Insert created and response rows into matching loaded windows.
-- Share the same window for omitted and explicit enum defaults.
-- Preserve upload attempt limits across restarts and network changes.
-- Restore interrupted first logins and report damaged saved session requests until reset.
-
-### Removed
-- `scope.related` is gone: read a server relation with a query.
-- `Blob`, `BlobUpload`, `DB.blob` and `blob_upload` are gone: upload through a model action.
-- `needsAttention`, `canRetry`, `loadedAt` and `errorKind` are gone: read `sync.state` and `ReadState.error`.
-- `ValueSink`, `readStream` and `cancelStream` are gone: read a value stream.
-- `Query.cached()` and `Database.peekQuery` are gone: read rows with `read()` or a stream.
-- `deliveryUnknown` is gone from `SyncState`, `UploadStatus` and `OperationOutcome`: a send without an answer repeats with the same request id.
-- `Database.flush`, `resume`, `resumeUploads`, `retryAll`, `refreshPreloads`, `warm`, `maintain` and `setListening` are gone from the bridge on both platforms. The library sends, resumes and maintains by itself.
-- `sessionResume` is gone from Swift, Kotlin and the core. Opening the database with a session sends a request stored before the close.
-- `enterForegroundForTesting` is gone. The foreground notice comes from the system.
-- `OpenOptions` has no `preload` and no `listening`. `openTesting` and `openOnClock` have no `preload` and no `listening` parameter. A scope declared with `preload` loads on a test clock like it does in production.
-
 ### Changed
 - `subscriptionCensus` is async and reads the streams and channels of the owners.
 - `ReadState.error` is the typed `DbError`.
@@ -47,6 +26,13 @@
 - `EntityFetch.none` is `EntityFetch.never` in Swift and `EntityFetch.NEVER` in Kotlin.
 
 ### Fixed
+- Preserve validated local fields copied from singleton rows during creation.
+- Preserve queued operations and uploads when model caches are reset.
+- Keep readable snapshots after a failed database commit.
+- Insert created and response rows into matching loaded windows.
+- Share the same window for omitted and explicit enum defaults.
+- Preserve upload attempt limits across restarts and network changes.
+- Restore interrupted first logins and report damaged saved session requests until reset.
 - Send current application headers to encrypted requests and cable connections.
 - Keyed reactions match elements stored under a nested path.
 - The receipt of an action carries the revision of its commit.
@@ -73,6 +59,18 @@
 - A rejected landing keeps the stored request and repeats it with the same request id.
 - Only a `logout` answer with `revoked` ends the session.
 - The session end erases the digest rows before the credential; a credential left by a crash is erased at open.
+
+### Removed
+- `scope.related` is gone: read a server relation with a query.
+- `Blob`, `BlobUpload`, `DB.blob` and `blob_upload` are gone: upload through a model action.
+- `needsAttention`, `canRetry`, `loadedAt` and `errorKind` are gone: read `sync.state` and `ReadState.error`.
+- `ValueSink`, `readStream` and `cancelStream` are gone: read a value stream.
+- `Query.cached()` and `Database.peekQuery` are gone: read rows with `read()` or a stream.
+- `deliveryUnknown` is gone from `SyncState`, `UploadStatus` and `OperationOutcome`: a send without an answer repeats with the same request id.
+- `Database.flush`, `resume`, `resumeUploads`, `retryAll`, `refreshPreloads`, `warm`, `maintain` and `setListening` are gone from the bridge on both platforms. The library sends, resumes and maintains by itself.
+- `sessionResume` is gone from Swift, Kotlin and the core. Opening the database with a session sends a request stored before the close.
+- `enterForegroundForTesting` is gone. The foreground notice comes from the system.
+- `OpenOptions` has no `preload` and no `listening`. `openTesting` and `openOnClock` have no `preload` and no `listening` parameter. A scope declared with `preload` loads on a test clock like it does in production.
 
 ## 6.17.0 - 2026-11-04
 
