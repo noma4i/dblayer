@@ -12,6 +12,7 @@ private let uploadStepOperations: [(name: String, document: String)] = [
   ("PresignParts", "mutation PresignParts { presignParts { parts { partNumber url } } }"),
   ("CompleteMultipart", "mutation CompleteMultipart { completeMultipart { signedId blobId } }"),
   ("AbortMultipart", "mutation AbortMultipart { abortMultipart { ok } }"),
+  ("CreateAsset", "mutation CreateAsset { createAsset { asset { id clientKey size position } } }"),
 ]
 
 /// The models declare the upload steps once, so every open registers the operations of the steps.

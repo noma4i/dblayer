@@ -27,6 +27,13 @@ import com.sun.jna.Library
 import com.sun.jna.Pointer
 import com.sun.jna.ptr.PointerByReference
 
+/** A part gets its own presign: each of the three parts of an 11 MiB file asks once and finds its url in the answer. */
+private fun enqueuePresigns(mock: MockTransport) {
+    repeat(3) {
+        mock.enqueue("PresignParts", """{"data":{"presignParts":{"parts":[{"partNumber":1,"url":"https://storage/1"},{"partNumber":2,"url":"https://storage/2"},{"partNumber":3,"url":"https://storage/3"}]}}}""")
+    }
+}
+
 internal interface LegacySqlite : Library {
     fun sqlite3_open(path: String, database: PointerByReference): Int
     fun sqlite3_exec(database: Pointer, sql: String, callback: Pointer?, context: Pointer?, error: Pointer?): Int
@@ -92,7 +99,7 @@ class TransferTest {
             val transport = MultipartTransfer()
             repeat(2) {
                 transport.mock.enqueue("InitMultipart", """{"data":{"initMultipart":{"key":"key","uploadId":"upload"}}}""")
-                transport.mock.enqueue("PresignParts", """{"data":{"presignParts":{"parts":[{"partNumber":1,"url":"https://storage/1"},{"partNumber":2,"url":"https://storage/2"},{"partNumber":3,"url":"https://storage/3"}]}}}""")
+                enqueuePresigns(transport.mock)
                 transport.mock.enqueue("CompleteMultipart", """{"data":{"completeMultipart":{"signedId":"signed","blobId":"blob"}}}""")
             }
             transport.mock.enqueue("CreateAssets", """{"data":{"createAssets":{"assets":[{"id":"a0","clientKey":"../../../outside","size":2,"position":0},{"id":"a1","clientKey":"other","size":2,"position":1}]}}}""")
@@ -374,7 +381,7 @@ class TransferTest {
             val source = directory.resolve("video").apply { writeBytes(ByteArray(11 * 1024 * 1024)) }
             val transport = MultipartTransfer()
             transport.mock.enqueue("InitMultipart", """{"data":{"initMultipart":{"key":"key","uploadId":"upload"}}}""")
-            transport.mock.enqueue("PresignParts", """{"data":{"presignParts":{"parts":[{"partNumber":1,"url":"https://storage/1"},{"partNumber":2,"url":"https://storage/2"},{"partNumber":3,"url":"https://storage/3"}]}}}""")
+            enqueuePresigns(transport.mock)
             transport.mock.enqueue("CompleteMultipart", DbException.Http(422u, "rejected"))
             transport.mock.enqueue("CompleteMultipart", """{"data":{"completeMultipart":{"signedId":"signed","blobId":"blob"}}}""")
             val operations = """[{"name":"CreateMoment","document":"mutation CreateMoment { createMoment { id } }"},{"name":"CreateBlob","document":"mutation CreateBlob { createBlob { signedId } }"},{"name":"InitMultipart","document":"mutation InitMultipart { initMultipart { key uploadId } }"},{"name":"PresignParts","document":"mutation PresignParts { presignParts { parts { partNumber url } } }"},{"name":"CompleteMultipart","document":"mutation CompleteMultipart { completeMultipart { signedId blobId } }"},{"name":"AbortMultipart","document":"mutation AbortMultipart { abortMultipart { ok } }"}]"""
@@ -387,7 +394,7 @@ class TransferTest {
             eventually("the retry confirms the upload") { Moment.find(row.id).current()?.sync?.state == SyncState.Synced }
             val names = transport.mock.calls.map { it.operationName }
             assertEquals(1, names.count { it == "InitMultipart" })
-            assertEquals(1, names.count { it == "PresignParts" })
+            assertEquals(3, names.count { it == "PresignParts" })
             assertEquals(2, names.count { it == "CompleteMultipart" })
             assertEquals(listOf("https://storage/1", "https://storage/2", "https://storage/3"), transport.puts.sorted())
             closeForCleanup()

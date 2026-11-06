@@ -106,6 +106,7 @@ private func causeName(_ end: ReadEnd) -> String {
   case .closed: return "closed"
   case .cancelled: return "cancelled"
   case .invalid: return "invalid"
+  case .storage: return "storage"
   }
 }
 

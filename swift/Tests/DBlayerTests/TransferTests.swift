@@ -40,6 +40,13 @@ private final class MultipartTransfer: Transport, @unchecked Sendable {
   }
 }
 
+/// A part gets its own presign: each of the three parts of an 11 MiB file asks once and finds its url in the answer.
+private func enqueuePresigns(_ mock: MockTransport) {
+  for _ in 0..<3 {
+    mock.enqueue("PresignParts", reply: #"{"data":{"presignParts":{"parts":[{"partNumber":1,"url":"https://storage/1"},{"partNumber":2,"url":"https://storage/2"},{"partNumber":3,"url":"https://storage/3"}]}}}"#)
+  }
+}
+
 private final class TransferCredential: CredentialStore, @unchecked Sendable {
   private let lock = NSLock()
   private var value: String?
@@ -111,7 +118,7 @@ extension BridgeProbeTests {
     let transport = MultipartTransfer()
     for _ in 0..<2 {
       transport.mock.enqueue("InitMultipart", reply: #"{"data":{"initMultipart":{"key":"key","uploadId":"upload"}}}"#)
-      transport.mock.enqueue("PresignParts", reply: #"{"data":{"presignParts":{"parts":[{"partNumber":1,"url":"https://storage/1"},{"partNumber":2,"url":"https://storage/2"},{"partNumber":3,"url":"https://storage/3"}]}}}"#)
+      enqueuePresigns(transport.mock)
       transport.mock.enqueue("CompleteMultipart", reply: #"{"data":{"completeMultipart":{"signedId":"signed","blobId":"blob"}}}"#)
     transport.mock.enqueue("CreateMoment", reply: #"{"data":{"createMoment":{"__typename":"Moment","id":"m1","uuid":"u","likedByMe":false,"media":{},"createdAt":"2026-10-08T00:00:00.000Z"}}}"#)
     }
@@ -369,7 +376,7 @@ extension BridgeProbeTests {
     try Data(repeating: 0, count: 11 * 1024 * 1024).write(to: source)
     let transport = MultipartTransfer()
     transport.mock.enqueue("InitMultipart", reply: #"{"data":{"initMultipart":{"key":"key","uploadId":"upload"}}}"#)
-    transport.mock.enqueue("PresignParts", reply: #"{"data":{"presignParts":{"parts":[{"partNumber":1,"url":"https://storage/1"},{"partNumber":2,"url":"https://storage/2"},{"partNumber":3,"url":"https://storage/3"}]}}}"#)
+    enqueuePresigns(transport.mock)
     transport.mock.enqueue("CompleteMultipart", failure: .Http(status: 422, detail: "rejected"))
     transport.mock.enqueue("CompleteMultipart", reply: #"{"data":{"completeMultipart":{"signedId":"signed","blobId":"blob"}}}"#)
     transport.mock.enqueue("CreateMoment", reply: #"{"data":{"createMoment":{"__typename":"Moment","id":"m1","uuid":"u","likedByMe":false,"media":{},"createdAt":"2026-10-08T00:00:00.000Z"}}}"#)
@@ -382,7 +389,7 @@ extension BridgeProbeTests {
     await eventually("the retry confirms the upload") { ((try? await Moment.find(row.id).current()?.sync.state) ?? nil) == .synced }
     let names = transport.mock.calls.map(\.operationName)
     #expect(names.filter { $0 == "InitMultipart" }.count == 1)
-    #expect(names.filter { $0 == "PresignParts" }.count == 1)
+    #expect(names.filter { $0 == "PresignParts" }.count == 3)
     #expect(names.filter { $0 == "CompleteMultipart" }.count == 2)
     #expect(transport.puts.sorted() == ["https://storage/1", "https://storage/2", "https://storage/3"])
     await DB.closeForCleanup()

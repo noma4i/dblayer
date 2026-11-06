@@ -141,6 +141,7 @@ private val UPLOAD_STEP_OPERATIONS = listOf(
     "PresignParts" to "mutation PresignParts { presignParts { parts { partNumber url } } }",
     "CompleteMultipart" to "mutation CompleteMultipart { completeMultipart { signedId blobId } }",
     "AbortMultipart" to "mutation AbortMultipart { abortMultipart { ok } }",
+    "CreateAsset" to "mutation CreateAsset { createAsset { asset { id clientKey size position } } }",
 )
 
 /** The models declare the upload steps once, so every open registers the operations of the steps. */
