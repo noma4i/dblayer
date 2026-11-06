@@ -80,6 +80,7 @@ pub enum CallsInput {
     TransportError { call_id: CallId, error: CallError },
     Dropped { call_id: CallId },
     Online(Online),
+    ActivateEpoch(Epoch),
     EpochEnded,
     Closing,
     Idle,
@@ -163,6 +164,7 @@ impl StateOwner for Calls {
                 state.generation += 1;
             }
             CallsInput::Online(Online(online)) => state.online = Some(online),
+            CallsInput::ActivateEpoch(epoch) => { state.epoch = epoch; state.calls.clear(); }
             CallsInput::EpochEnded => state.interrupt(&mut fx),
             CallsInput::Closing => {
                 state.interrupt(&mut fx);
@@ -176,10 +178,7 @@ impl StateOwner for Calls {
         fx.into_iter().map(Effect::Run).collect()
     }
 
-    fn epoch_started(state: &mut CallsState, epoch: Epoch) {
-        state.epoch = epoch;
-        state.calls.clear();
-    }
+    fn epoch_started(epoch: Epoch) -> Option<CallsInput> { Some(CallsInput::ActivateEpoch(epoch)) }
 
     fn tick(_now: Time) -> CallsInput { CallsInput::Idle }
 

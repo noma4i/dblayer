@@ -150,6 +150,7 @@ enum Fx {
 
 #[derive(Clone, Debug)]
 pub enum FeedInput {
+    ActivateEpoch(Epoch),
     /// `stream` = the id is a stream `Events` of Deliveries: it gets `Joined` and `ModelReady`.
     WantPlus { model: String, id: SubscriptionId, stream: bool },
     WantMinus { model: String, id: SubscriptionId },
@@ -344,6 +345,10 @@ impl StateOwner for Feed {
 
     fn step(state: &mut FeedState, input: FeedInput) -> Effects<Self> {
         let mut fx = Vec::new();
+        if let FeedInput::ActivateEpoch(epoch) = &input {
+            *state = FeedState::new(*epoch, state.peers, std::mem::take(&mut state.debounce), std::mem::take(&mut state.channels));
+            return Vec::new();
+        }
         if let FeedInput::Census { reply } = input {
             fx.push(Fx::Run(FeedEffect::Census { reply, subscriptions: state.census(), refused: state.refused }));
             return Self::lower(state, fx);
@@ -355,6 +360,7 @@ impl StateOwner for Feed {
             return Self::lower(state, fx);
         }
         match input {
+            FeedInput::ActivateEpoch(_) => {}
             FeedInput::EpochStarted(started) => {
                 state.epoch = started.epoch;
                 state.base_generation = started.generation;
@@ -402,7 +408,7 @@ impl StateOwner for Feed {
         Self::lower(state, fx)
     }
 
-    fn epoch_started(state: &mut FeedState, epoch: Epoch) { *state = FeedState::new(epoch, state.peers, std::mem::take(&mut state.debounce), std::mem::take(&mut state.channels)); }
+    fn epoch_started(epoch: Epoch) -> Option<FeedInput> { Some(FeedInput::ActivateEpoch(epoch)) }
 
     fn tick(now: Time) -> FeedInput { FeedInput::Tick(now) }
 

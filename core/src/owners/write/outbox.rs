@@ -463,6 +463,7 @@ impl OutboxState {
             OutboxInput::Outcome { receipt, reply } => self.outcome(receipt, reply, fx),
             OutboxInput::Resolve { .. } | OutboxInput::Landed { .. } | OutboxInput::WhenQuiet { .. } => {}
             OutboxInput::Online(Online(on)) => self.online_changed(on, fx),
+            OutboxInput::ActivateEpoch(epoch) => self.begin_epoch(epoch),
             OutboxInput::EpochStarted(started) => self.base_generation = started.generation,
             OutboxInput::ModelsReset(reset) => {
                 for model in reset.models {
@@ -502,6 +503,10 @@ impl StateOwner for Outbox {
 
     fn step(state: &mut OutboxState, input: OutboxInput) -> Effects<Self> {
         let mut fx: Effects<Self> = Vec::new();
+        if let OutboxInput::ActivateEpoch(epoch) = &input {
+            state.begin_epoch(*epoch);
+            return fx;
+        }
         if let OutboxInput::Landed { op_id, reply } = input {
             let answer = state.ops.get(&op_id).and_then(|operation| operation.landed.clone()).map_or(OutboxAnswer::Err(Fault::NotFound), OutboxAnswer::Resolved);
             OutboxState::reply(&mut fx, reply, answer);
@@ -523,7 +528,7 @@ impl StateOwner for Outbox {
         fx
     }
 
-    fn epoch_started(state: &mut OutboxState, epoch: Epoch) { state.begin_epoch(epoch); }
+    fn epoch_started(epoch: Epoch) -> Option<OutboxInput> { Some(OutboxInput::ActivateEpoch(epoch)) }
 
     fn tick(now: Time) -> OutboxInput { OutboxInput::Tick(now) }
 

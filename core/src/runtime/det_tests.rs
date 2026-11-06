@@ -26,12 +26,14 @@ fn one_input_per_step_and_effect_result_returns_as_input() {
     det.post(toy, EpochStamp::Epoch(1), ToyInput::WorkRequest(7));
     assert!(det.step());
     assert_eq!(det.trace().len(), 1);
-    assert!(det.state(toy).unwrap().results.is_empty());
-    assert_eq!(det.choices(), vec![Choice::Arrive(0)], "the answer of the executor is a move of its own");
-    assert!(det.step());
-    assert_eq!(det.choices(), vec![Choice::Step(0)]);
     assert!(det.step());
     assert_eq!(det.trace().len(), 2);
+    assert!(det.state(toy).unwrap().results.is_empty());
+    assert_eq!(det.choices(), vec![Choice::Emit(0)]);
+    assert!(det.step());
+    assert!(det.choices().contains(&Choice::Arrive(0)), "the answer of the executor is a move of its own");
+    det.run_until_quiet(5).unwrap();
+    assert_eq!(det.trace().len(), 3);
     assert_eq!(det.state(toy).unwrap().results, vec![14]);
     assert!(det.ready().is_empty());
 }
@@ -41,6 +43,8 @@ fn an_answer_of_the_executor_in_the_inbox_makes_the_owner_ready_and_runs_a_step(
     let (mut det, toy) = single(1);
     det.start_epoch(1);
     det.post(toy, EpochStamp::Epoch(1), ToyInput::WorkRequest(7));
+    assert!(det.step());
+    assert!(det.step());
     assert!(det.step());
     assert_eq!(det.ready(), vec![0], "the answer that came through Back is a pending input of the owner");
     assert!(det.state(toy).unwrap().results.is_empty(), "the answer did not run a step yet");
@@ -76,7 +80,11 @@ fn effect_result_of_replaced_epoch_is_dropped() {
     det.start_epoch(1);
     det.post(toy, EpochStamp::Epoch(1), ToyInput::WorkRequest(4));
     det.step();
+    det.step();
+    det.step();
     det.start_epoch(2);
+    let index = det.choices().iter().position(|choice| *choice == Choice::Step(toy.index())).unwrap();
+    det.step_choice(index);
     det.run_until_quiet(10).unwrap();
     assert!(det.state(toy).unwrap().results.is_empty());
     assert_eq!(det.dropped(toy), 1);
@@ -130,11 +138,13 @@ fn cancelled_schedule_never_fires() {
 fn idle_scheduler_has_no_work_and_tick_creates_none() {
     let (mut det, _toy) = single(1);
     det.start_epoch(1);
+    assert!(det.step());
     assert!(det.ready().is_empty());
+    let before = det.trace().len();
     det.tick(Time(1_000_000));
     assert!(det.ready().is_empty());
     assert!(!det.step());
-    assert!(det.trace().is_empty());
+    assert_eq!(det.trace().len(), before);
 }
 
 #[test]
@@ -156,7 +166,7 @@ fn same_seed_gives_same_trace_and_seeds_differ() {
 fn trace_records_owner_input_and_effects() {
     let (mut det, _) = race(5);
     det.run_until_quiet(20).unwrap();
-    let go = det.trace().iter().find(|entry| entry.owner == "depositor").unwrap();
+    let go = det.trace().iter().find(|entry| entry.owner == "depositor" && entry.input == "Go").unwrap();
     assert_eq!(go.input, "Go");
     assert!(go.effects.contains("Deposit(5)"));
 }

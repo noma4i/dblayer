@@ -5,7 +5,12 @@ use super::*;
 fn drain(cell: &mut Cell<Toy>) {
     let mut runner = ToyRunner::default();
     let back = Back::<Toy>::new(|_, _| {}, |_| {});
-    while cell.run_one("toy", &mut runner, &back, false).is_some() {}
+    while cell.run_one("toy", &mut runner, &back, false).is_some() {
+        while cell.emitting() {
+            cell.emit_one("toy", &mut runner, &back);
+            cell.finish_emission("toy", &mut runner);
+        }
+    }
 }
 
 #[test]
@@ -48,12 +53,14 @@ fn schedule_with_same_id_replaces_the_entry() {
 fn start_of_a_new_epoch_waits_behind_the_end_of_the_old_one() {
     let mut cell = Cell::<Toy>::new(ToyState::default());
     cell.start_epoch(1);
+    assert!(cell.state.started.is_empty(), "enqueuing Start does not change the owner");
     cell.push(EpochStamp::Epoch(1), ToyInput::Deposit(2));
     cell.end_epoch(1, Cause::SessionReset);
     cell.start_epoch(2);
     cell.push(EpochStamp::Epoch(2), ToyInput::Deposit(3));
     cell.push(EpochStamp::Epoch(1), ToyInput::Deposit(100));
     drain(&mut cell);
+    assert_eq!(cell.state.started, [1, 2]);
     assert_eq!(cell.state.ended, vec![(1, Cause::SessionReset)]);
     assert_eq!(cell.state.total, 5, "the input of epoch 2 is taken, the late input of epoch 1 is dropped");
     assert_eq!(cell.dropped(), 1);

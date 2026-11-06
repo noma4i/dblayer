@@ -33,13 +33,21 @@ pub(crate) struct Ran {
     pub dropped: bool,
     pub input: String,
     pub effects: String,
-    pub emitted: Vec<Emitted>,
     pub failed: bool,
+}
+
+struct PendingStep<O: StateOwner> {
+    effects: VecDeque<Effect<O>>,
+    stamp: EpochStamp,
+    ended: bool,
+    failed: bool,
+    failures: Vec<EffectId>,
 }
 
 pub(crate) struct Cell<O: StateOwner> {
     pub state: O::State,
     queue: VecDeque<Item<O>>,
+    pending: Option<PendingStep<O>>,
     epoch: Option<Epoch>,
     last_epoch: Option<Epoch>,
     schedule: BTreeMap<(Time, u64), Scheduled<O::Input>>,
@@ -53,12 +61,14 @@ pub(crate) struct Cell<O: StateOwner> {
 
 impl<O: StateOwner> Cell<O> {
     pub fn new(state: O::State) -> Self {
-        Self { state, queue: VecDeque::new(), epoch: None, last_epoch: None, schedule: BTreeMap::new(), keys: HashMap::new(), sequence: 0, dropped: 0, now: Time(0), executor_dead: false, jitter: Box::new(|| 0) }
+        Self { state, queue: VecDeque::new(), pending: None, epoch: None, last_epoch: None, schedule: BTreeMap::new(), keys: HashMap::new(), sequence: 0, dropped: 0, now: Time(0), executor_dead: false, jitter: Box::new(|| 0) }
     }
 
     pub fn set_jitter(&mut self, jitter: impl FnMut() -> u64 + Send + 'static) { self.jitter = Box::new(jitter); }
 
-    pub fn ready(&self) -> bool { !self.queue.is_empty() }
+    pub fn ready(&self) -> bool { self.pending.is_none() && !self.queue.is_empty() }
+
+    pub fn emitting(&self) -> bool { self.pending.is_some() }
 
     pub fn dropped(&self) -> u64 { self.dropped }
 
@@ -68,7 +78,6 @@ impl<O: StateOwner> Cell<O> {
 
     pub fn push(&mut self, stamp: EpochStamp, input: O::Input) {
         self.queue.push_back(Item::Input(stamp, input));
-        self.settle_head();
     }
 
     pub fn push_message(&mut self, stamp: EpochStamp, payload: Box<dyn Message>) {
@@ -90,7 +99,6 @@ impl<O: StateOwner> Cell<O> {
 
     pub fn start_epoch(&mut self, epoch: Epoch) {
         self.queue.push_back(Item::Start(epoch));
-        self.settle_head();
     }
 
     pub fn end_epoch(&mut self, epoch: Epoch, cause: Cause) { self.queue.push_back(Item::End(epoch, cause)); }
@@ -109,12 +117,12 @@ impl<O: StateOwner> Cell<O> {
         true
     }
 
-    pub fn run_one(&mut self, name: &str, runner: &mut dyn EffectRunner<O>, back: &Back<O>, trace: bool) -> Option<Ran> {
+    pub fn run_one(&mut self, name: &str, runner: &mut dyn EffectRunner<O>, _back: &Back<O>, trace: bool) -> Option<Ran> {
+        if self.pending.is_some() { return None; }
         let (stamp, input, ended) = match self.queue.pop_front()? {
             Item::Input(stamp, input) => {
                 if !self.admits(stamp) {
                     let ran = self.drop_input(stamp, label(trace, &input));
-                    self.settle_head();
                     return Some(ran);
                 }
                 (stamp, input, false)
@@ -123,14 +131,17 @@ impl<O: StateOwner> Cell<O> {
                 let input = O::epoch_ended(epoch, cause);
                 if O::EPOCHED && self.epoch != Some(epoch) {
                     let ran = self.drop_input(EpochStamp::Epoch(epoch), label(trace, &input));
-                    self.settle_head();
                     return Some(ran);
                 }
                 (EpochStamp::Epoch(epoch), input, true)
             }
             Item::Start(epoch) => {
-                self.begin_epoch(epoch);
-                return self.run_one(name, runner, back, trace);
+                self.epoch = Some(epoch);
+                self.purge_schedule(|stamp| stamp != EpochStamp::Epoch(epoch) && stamp != EpochStamp::Control);
+                let Some(input) = O::epoch_started(epoch) else {
+                    return Some(Ran { stamp: EpochStamp::Control, dropped: false, input: if trace { format!("EpochStarted({epoch})") } else { String::new() }, effects: String::new(), failed: false });
+                };
+                (EpochStamp::Control, input, false)
             }
         };
         let input_label = label(trace, &input);
@@ -147,56 +158,73 @@ impl<O: StateOwner> Cell<O> {
         };
         let effects_label = label(trace, &effects);
         let out = self.owner_stamp();
-        let mut emitted = Vec::new();
-        for effect in effects {
-            match effect {
+        self.pending = Some(PendingStep { effects: effects.into(), stamp: out, ended, failed, failures });
+        let failed = if self.pending.as_ref().is_some_and(|pending| pending.effects.is_empty()) { self.finish_step(name, runner) } else { false };
+        Some(Ran { stamp, dropped: false, input: input_label, effects: effects_label, failed })
+    }
+
+    pub fn emit_one(&mut self, name: &str, runner: &mut dyn EffectRunner<O>, back: &Back<O>) -> (Option<Emitted>, bool) {
+        let Some(mut pending) = self.pending.take() else { return (None, false) };
+        let Some(effect) = pending.effects.pop_front() else { self.pending = Some(pending); return (None, self.finish_step(name, runner)) };
+        let out = pending.stamp;
+        let emitted = match effect {
                 Effect::Schedule { id, after, input } => {
                     let at = Time(self.now.0.saturating_add(u64::try_from(after.as_millis()).unwrap_or(u64::MAX)));
                     self.schedule_input(id, at, out, input);
+                    None
                 }
                 Effect::Backoff { id, policy, attempt, input } => {
                     let delay = policy.with_jitter(policy.jitter, (self.jitter)()).delay(attempt);
                     let at = Time(self.now.0.saturating_add(u64::try_from(delay.as_millis()).unwrap_or(u64::MAX)));
                     self.schedule_input(id, at, out, input);
+                    None
                 }
-                Effect::Cancel(id) => self.cancel(id),
+                Effect::Cancel(id) => { self.cancel(id); None }
                 Effect::Send(mut outbound) => {
                     outbound.stamp = out;
-                    emitted.push(Emitted::Send(outbound));
+                    Some(Emitted::Send(outbound))
                 }
                 Effect::Broadcast(control) => {
                     assert!(!O::EPOCHED, "only an owner outside epochs broadcasts control inputs");
-                    emitted.push(Emitted::Broadcast(control));
+                    Some(Emitted::Broadcast(control))
                 }
                 Effect::Run(effect) => {
                     let id = O::effect_id(&effect);
                     if self.executor_dead && id.is_some() {
-                        failures.extend(id);
-                        continue;
-                    }
-                    if catch_unwind(AssertUnwindSafe(|| runner.run(out, effect, back))).is_err() {
+                        pending.failures.extend(id);
+                    } else if catch_unwind(AssertUnwindSafe(|| runner.run(out, effect, back))).is_err() {
                         self.executor_dead = true;
-                        failed = true;
-                        failures.extend(catch_unwind(AssertUnwindSafe(|| runner.pending())).unwrap_or_default());
-                        failures.extend(id);
+                        pending.failed = true;
+                        pending.failures.extend(catch_unwind(AssertUnwindSafe(|| runner.pending())).unwrap_or_default());
+                        pending.failures.extend(id);
                     }
+                    None
                 }
-            }
-        }
+            };
+        self.pending = Some(pending);
+        let failed = if emitted.is_none() { self.finish_emission(name, runner) } else { false };
+        (emitted, failed)
+    }
+
+    pub fn finish_emission(&mut self, name: &str, runner: &mut dyn EffectRunner<O>) -> bool {
+        if self.pending.as_ref().is_some_and(|pending| pending.effects.is_empty()) { self.finish_step(name, runner) } else { false }
+    }
+
+    fn finish_step(&mut self, name: &str, runner: &mut dyn EffectRunner<O>) -> bool {
+        let Some(mut pending) = self.pending.take() else { return false };
         if !self.executor_dead && catch_unwind(AssertUnwindSafe(|| runner.step_done())).is_err() {
             self.executor_dead = true;
-            failed = true;
-            failures.extend(catch_unwind(AssertUnwindSafe(|| runner.pending())).unwrap_or_default());
+            pending.failed = true;
+            pending.failures.extend(catch_unwind(AssertUnwindSafe(|| runner.pending())).unwrap_or_default());
         }
-        if ended {
+        if pending.ended {
             self.last_epoch = self.epoch.take();
             self.purge_schedule(|stamp| stamp != EpochStamp::Control);
         }
-        if failed || !failures.is_empty() {
-            self.apply_failure(name, failures);
+        if pending.failed || !pending.failures.is_empty() {
+            self.apply_failure(name, pending.failures);
         }
-        self.settle_head();
-        Some(Ran { stamp, dropped: false, input: input_label, effects: effects_label, emitted, failed })
+        pending.failed
     }
 
     /// The pending effects of a dead executor get their failure inputs, in the order of the ids.
@@ -208,23 +236,9 @@ impl<O: StateOwner> Cell<O> {
         }
     }
 
-    fn settle_head(&mut self) {
-        while let Some(Item::Start(epoch)) = self.queue.front() {
-            let epoch = *epoch;
-            self.queue.pop_front();
-            self.begin_epoch(epoch);
-        }
-    }
-
-    fn begin_epoch(&mut self, epoch: Epoch) {
-        self.epoch = Some(epoch);
-        O::epoch_started(&mut self.state, epoch);
-        self.purge_schedule(|stamp| stamp != EpochStamp::Epoch(epoch) && stamp != EpochStamp::Control);
-    }
-
     fn drop_input(&mut self, stamp: EpochStamp, input: String) -> Ran {
         self.dropped += 1;
-        Ran { stamp, dropped: true, input, effects: String::new(), emitted: Vec::new(), failed: false }
+        Ran { stamp, dropped: true, input, effects: String::new(), failed: false }
     }
 
     fn owner_stamp(&self) -> EpochStamp {

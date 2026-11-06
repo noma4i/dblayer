@@ -471,14 +471,18 @@ fn run_owner<O: StateOwner>(mut owner: OwnerThread<O>, router: Arc<Router>, time
             if router.record {
                 lock(&owner.history).push(TraceEntry { slot: owner.slot, owner: owner.name, stamp: ran.stamp, input: ran.input, effects: ran.effects, dropped: ran.dropped });
             }
-            for emitted in ran.emitted {
-                match emitted {
-                    Emitted::Send(outbound) => router.push(outbound.to, Command::Deliver(outbound.stamp, outbound.payload)),
-                    Emitted::Broadcast(control) => router.broadcast(control),
-                }
-            }
             if ran.failed {
                 router.report_failure(owner.name);
+            }
+            while owner.cell.emitting() {
+                let (emitted, failed) = owner.cell.emit_one(owner.name, owner.runner.as_mut(), &back);
+                match emitted {
+                    Some(Emitted::Send(outbound)) => router.push(outbound.to, Command::Deliver(outbound.stamp, outbound.payload)),
+                    Some(Emitted::Broadcast(control)) => router.broadcast(control),
+                    None => {}
+                }
+                let finished_failed = owner.cell.finish_emission(owner.name, owner.runner.as_mut());
+                if failed || finished_failed { router.report_failure(owner.name); }
             }
         }
         router.inflight.done(handled);

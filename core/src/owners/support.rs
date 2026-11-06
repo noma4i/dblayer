@@ -213,6 +213,8 @@ where
 
     fn tick(now: Time) -> O::Input { O::tick(now) }
 
+    fn epoch_started(epoch: Epoch) -> Option<O::Input> { O::epoch_started(epoch) }
+
     fn epoch_ended(epoch: Epoch, cause: Cause) -> O::Input { O::epoch_ended(epoch, cause) }
 
     fn closing() -> O::Input { O::closing() }

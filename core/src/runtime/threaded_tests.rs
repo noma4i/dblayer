@@ -9,6 +9,120 @@ const WAIT: Duration = Duration::from_secs(5);
 
 fn reporting(report: mpsc::Sender<u32>) -> ToyRunner { ToyRunner { report: Some(report), ..ToyRunner::default() } }
 
+struct OrderedRecipient;
+
+#[derive(Debug)]
+enum OrderedRecipientInput { Hold, Notice, Idle }
+
+#[derive(Debug)]
+enum OrderedRecipientEffect { Hold }
+
+impl StateOwner for OrderedRecipient {
+    const EPOCHED: bool = false;
+    type State = ();
+    type Input = OrderedRecipientInput;
+    type Effect = OrderedRecipientEffect;
+    fn step(_: &mut (), input: Self::Input) -> Effects<Self> {
+        match input { OrderedRecipientInput::Hold => vec![Effect::Run(OrderedRecipientEffect::Hold)], _ => Vec::new() }
+    }
+    fn tick(_: Time) -> Self::Input { OrderedRecipientInput::Idle }
+    fn epoch_ended(_: Epoch, _: Cause) -> Self::Input { OrderedRecipientInput::Idle }
+    fn closing() -> Self::Input { OrderedRecipientInput::Idle }
+}
+
+struct HoldRecipient { entered: mpsc::Sender<()>, release: mpsc::Receiver<()> }
+
+impl EffectRunner<OrderedRecipient> for HoldRecipient {
+    fn run(&mut self, _: EpochStamp, _: OrderedRecipientEffect, _: &Back<OrderedRecipient>) {
+        self.entered.send(()).unwrap();
+        self.release.recv_timeout(WAIT).unwrap();
+    }
+}
+
+struct OrderedSource;
+
+#[derive(Debug)]
+enum OrderedSourceInput { Go, Idle }
+
+#[derive(Debug)]
+enum OrderedSourceEffect { Observe }
+
+impl StateOwner for OrderedSource {
+    const EPOCHED: bool = false;
+    type State = Address<OrderedRecipient>;
+    type Input = OrderedSourceInput;
+    type Effect = OrderedSourceEffect;
+    fn step(target: &mut Self::State, input: Self::Input) -> Effects<Self> {
+        match input {
+            OrderedSourceInput::Go => vec![Effect::Send(Outbound::new(*target, OrderedRecipientInput::Notice)), Effect::Run(OrderedSourceEffect::Observe), Effect::Broadcast(Control::Closing), Effect::Run(OrderedSourceEffect::Observe)],
+            OrderedSourceInput::Idle => Vec::new(),
+        }
+    }
+    fn tick(_: Time) -> Self::Input { OrderedSourceInput::Idle }
+    fn epoch_ended(_: Epoch, _: Cause) -> Self::Input { OrderedSourceInput::Idle }
+    fn closing() -> Self::Input { OrderedSourceInput::Idle }
+}
+
+struct ObservePending { handle: Handle, count: mpsc::Sender<usize> }
+
+impl EffectRunner<OrderedSource> for ObservePending {
+    fn run(&mut self, _: EpochStamp, _: OrderedSourceEffect, _: &Back<OrderedSource>) { self.count.send(self.handle.pending()).unwrap(); }
+}
+
+struct ObserveRuns(Arc<Mutex<usize>>);
+
+impl EffectRunner<OrderedSource> for ObserveRuns {
+    fn run(&mut self, _: EpochStamp, _: OrderedSourceEffect, _: &Back<OrderedSource>) { *self.0.lock().unwrap() += 1; }
+}
+
+#[test]
+fn mixed_effects_enqueue_before_the_next_run_in_the_scheduler() {
+    let (entered, _held) = mpsc::channel();
+    let (_release, release_rx) = mpsc::channel();
+    let mut det = DetScheduler::new(0);
+    let recipient = det.add::<OrderedRecipient>("recipient", (), HoldRecipient { entered, release: release_rx });
+    let observed = Arc::new(Mutex::new(0));
+    let source = det.add::<OrderedSource>("source", recipient, ObserveRuns(observed.clone()));
+    det.post(source, EpochStamp::Control, OrderedSourceInput::Go);
+    let choose = |det: &mut DetScheduler, wanted| {
+        let index = det.choices().iter().position(|choice| *choice == wanted).unwrap();
+        assert!(det.step_choice(index));
+    };
+    choose(&mut det, Choice::Step(source.index()));
+    choose(&mut det, Choice::Emit(source.index()));
+    assert!(det.choices().contains(&Choice::Step(recipient.index())));
+    assert_eq!(*observed.lock().unwrap(), 0);
+    choose(&mut det, Choice::Emit(source.index()));
+    assert_eq!(*observed.lock().unwrap(), 1);
+    choose(&mut det, Choice::Emit(source.index()));
+    choose(&mut det, Choice::Step(recipient.index()));
+    choose(&mut det, Choice::Step(recipient.index()));
+    let inputs: Vec<_> = det.history(recipient).into_iter().map(|entry| entry.input.as_str()).collect();
+    assert_eq!(inputs, ["Notice", "Idle"]);
+    assert_eq!(*observed.lock().unwrap(), 1);
+    choose(&mut det, Choice::Emit(source.index()));
+    assert_eq!(*observed.lock().unwrap(), 2);
+}
+
+#[test]
+fn mixed_effects_enqueue_before_the_next_run_on_threads() {
+    let (entered, held) = mpsc::channel();
+    let (release, release_rx) = mpsc::channel();
+    let (count, counts) = mpsc::channel();
+    let mut builder = RuntimeBuilder::new();
+    let handle = builder.handle();
+    let recipient = builder.add::<OrderedRecipient>("recipient", (), HoldRecipient { entered, release: release_rx });
+    let source = builder.add::<OrderedSource>("source", recipient, ObservePending { handle, count });
+    let runtime = builder.start().unwrap();
+    runtime.post(recipient, EpochStamp::Control, OrderedRecipientInput::Hold);
+    held.recv_timeout(WAIT).unwrap();
+    runtime.post(source, EpochStamp::Control, OrderedSourceInput::Go);
+    assert_eq!(counts.recv_timeout(WAIT), Ok(3), "Send entered the blocked recipient mailbox");
+    assert_eq!(counts.recv_timeout(WAIT), Ok(5), "Broadcast entered both mailboxes before the next Run");
+    release.send(()).unwrap();
+    assert!(runtime.barrier(WAIT));
+}
+
 #[test]
 fn idle_runtime_has_zero_wakeups_and_schedule_fires_once() {
     let (report, fired) = mpsc::channel();

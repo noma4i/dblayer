@@ -32,6 +32,7 @@ pub enum ToyInput {
     Crash,
     Ask(u64),
     ExecutorFailed(Vec<u64>),
+    EpochStarted(Epoch),
     EpochEnded(Epoch, Cause),
     Closing,
 }
@@ -62,6 +63,7 @@ pub struct ToyState {
     pub fired: Vec<u32>,
     pub ticks: Vec<Time>,
     pub ended: Vec<(Epoch, Cause)>,
+    pub started: Vec<Epoch>,
     pub closed: bool,
 }
 
@@ -136,6 +138,7 @@ impl StateOwner for Toy {
                 state.failed.extend(ids);
                 vec![]
             }
+            ToyInput::EpochStarted(epoch) => { state.started.push(epoch); vec![] }
             ToyInput::EpochEnded(epoch, cause) => {
                 state.ended.push((epoch, cause));
                 vec![Effect::Run(ToyEffect::EndOutcomes(epoch, cause))]
@@ -148,6 +151,8 @@ impl StateOwner for Toy {
     }
 
     fn tick(now: Time) -> ToyInput { ToyInput::Tick(now) }
+
+    fn epoch_started(epoch: Epoch) -> Option<ToyInput> { Some(ToyInput::EpochStarted(epoch)) }
 
     fn epoch_ended(epoch: Epoch, cause: Cause) -> ToyInput { ToyInput::EpochEnded(epoch, cause) }
 
@@ -282,6 +287,7 @@ pub fn race(seed: u64) -> (DetScheduler, Address<Toy>) {
     let depositor = det.add::<Toy>("depositor", ToyState { on_go: Some((ledger, ToyInput::Deposit(5))), ..ToyState::default() }, ToyRunner::default());
     let sealer = det.add::<Toy>("sealer", ToyState { on_go: Some((ledger, ToyInput::Seal)), ..ToyState::default() }, ToyRunner::default());
     det.start_epoch(1);
+    det.run_until_quiet(10).unwrap();
     det.post(depositor, EpochStamp::Epoch(1), ToyInput::Go);
     det.post(sealer, EpochStamp::Epoch(1), ToyInput::Go);
     (det, ledger)

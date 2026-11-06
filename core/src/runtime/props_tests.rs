@@ -87,7 +87,7 @@ fn rt_prop_effect_order() {
     det.start_epoch(1);
     det.post(toy, EpochStamp::Epoch(1), ToyInput::Burst(vec![1, 2, 3]));
     det.run_until_quiet(10).unwrap();
-    let label = &det.trace()[0].effects;
+    let label = &det.trace().iter().find(|entry| entry.input.starts_with("Burst(")).unwrap().effects;
     let positions: Vec<usize> = ["Report(1)", "Note(1)", "Report(2)", "Note(2)", "Report(3)", "Note(3)"].iter().map(|part| label.find(part).unwrap()).collect();
     assert!(positions.windows(2).all(|pair| pair[0] < pair[1]), "the step lists its effects in the order of the table: {label}");
     assert_eq!(*calls.lock().unwrap(), vec![1, 2, 3]);
@@ -98,6 +98,7 @@ fn rt_prop_effect_order() {
         let sink = det.add::<Sink>("sink", Vec::new(), SinkRunner);
         let toy = det.add::<Toy>("toy", ToyState { tell: Some((sink, 0)), ..ToyState::default() }, ToyRunner::default());
         det.start_epoch(1);
+        det.run_until_quiet(10).unwrap();
         det.post(toy, EpochStamp::Epoch(1), ToyInput::Burst(vec![1, 2, 3]));
         det.inject(0, toy, EpochStamp::Epoch(1), ToyInput::Burst(vec![4, 5]));
         det
@@ -121,7 +122,7 @@ fn rt_prop_effect_order() {
     runtime.post(toy, EpochStamp::Epoch(1), ToyInput::Burst(vec![1, 2, 3]));
     assert!(runtime.barrier(WAIT));
     let history = runtime.history(sink);
-    assert_eq!(history.iter().map(|entry| entry.input.as_str()).collect::<Vec<_>>(), vec!["Note(1)", "Note(2)", "Note(3)"]);
+    assert_eq!(history.iter().map(|entry| entry.input.as_str()).filter(|input| input.starts_with("Note(")).collect::<Vec<_>>(), vec!["Note(1)", "Note(2)", "Note(3)"]);
 }
 
 fn epochs() -> (DetScheduler, [Address<Toy>; 2]) {
@@ -131,6 +132,7 @@ fn epochs() -> (DetScheduler, [Address<Toy>; 2]) {
     let second = det.add::<Toy>("second", ToyState::default(), ToyRunner::default());
     det.start_epoch_for(first, 1);
     det.start_epoch_for(second, 1);
+    det.run_until_quiet(10).unwrap();
     det.post(hub, EpochStamp::Control, HubInput::Finish(1, Cause::SessionReset));
     det.post(hub, EpochStamp::Control, HubInput::Begin(2));
     det.inject(0, first, EpochStamp::Epoch(1), ToyInput::Deposit(4));
@@ -140,7 +142,7 @@ fn epochs() -> (DetScheduler, [Address<Toy>; 2]) {
 #[test]
 fn rt_prop_epoch_queue() {
     let toys = epochs().1;
-    let manifest = prop("P-RT-04", "End(e) x Start(e+1) x input of e", "R4 queue of control inputs", 14, "rt_prop_epoch_queue").explore(
+    let manifest = prop("P-RT-04", "End(e) x Start(e+1) x input of e", "R4 queue of control inputs", 20, "rt_prop_epoch_queue").explore(
         || epochs().0,
         |det| {
             for toy in toys {
@@ -148,9 +150,15 @@ fn rt_prop_epoch_queue() {
                 if state.ended.len() > 1 || state.ended.iter().any(|ended| *ended != (1, Cause::SessionReset)) {
                     return Err(format!("{:?}", state.ended));
                 }
+                if state.started.contains(&2) && state.ended != [(1, Cause::SessionReset)] {
+                    return Err(format!("Start(2) preceded End(1): started={:?} ended={:?}", state.started, state.ended));
+                }
             }
             if det.choices().is_empty() && toys.iter().any(|toy| det.state(*toy).unwrap().ended.len() != 1) {
                 return Err("EpochEnded(1) was dropped before the owner took it".to_string());
+            }
+            if det.choices().is_empty() && toys.iter().any(|toy| det.state(*toy).unwrap().started != [1, 2]) {
+                return Err("the owner did not step through both starts".to_string());
             }
             Ok(())
         },
@@ -178,6 +186,7 @@ fn revocation() -> DetScheduler {
     let pump = det.add::<Toy>("pump", ToyState::default(), ToyRunner { pending: Some(pending.clone()), ..ToyRunner::default() });
     let data = det.add::<Toy>("data", ToyState { pump: Some(pump), ..ToyState::default() }, ToyRunner { pending: Some(pending), ..ToyRunner::default() });
     det.start_epoch(1);
+    det.run_until_quiet(10).unwrap();
     det.post(data, EpochStamp::Epoch(1), ToyInput::WorkAsync(4));
     det.inject(0, hub, EpochStamp::Control, HubInput::Finish(1, Cause::ServerEnded));
     det
@@ -210,6 +219,7 @@ fn outcome_world(world: &Rc<RefCell<Option<World>>>) -> DetScheduler {
     let hub = det.add::<Hub>("hub", (), HubRunner);
     let toy = det.add::<Toy>("toy", ToyState::default(), ToyRunner { outcomes: Some(outcomes.clone()), ..ToyRunner::default() });
     det.start_epoch(1);
+    det.run_until_quiet(10).unwrap();
     det.inject(0, toy, EpochStamp::Epoch(1), ToyInput::Resolve(waiters[0].id(), 11));
     det.inject(1, hub, EpochStamp::Control, HubInput::Finish(1, Cause::ServerEnded));
     det.inject(2, hub, EpochStamp::Control, HubInput::Shutdown);
@@ -265,6 +275,7 @@ fn fan() -> DetScheduler {
     let relay = det.add::<Toy>("relay", ToyState { tell: Some((sink, 5)), ..ToyState::default() }, ToyRunner::default());
     let producer = det.add::<Toy>("producer", ToyState { on_go: Some((relay, ToyInput::Tell)), tell: Some((sink, 9)), ..ToyState::default() }, ToyRunner::default());
     det.start_epoch(1);
+    det.run_until_quiet(10).unwrap();
     det.post(producer, EpochStamp::Epoch(1), ToyInput::Fan(9));
     det
 }
@@ -293,7 +304,7 @@ fn rt_prop_refinement() {
         runtime.start_epoch(1);
         runtime.post(producer, EpochStamp::Epoch(1), ToyInput::Fan(9));
         assert!(runtime.barrier(WAIT));
-        let order: Vec<u32> = runtime.history(sink).iter().map(|entry| entry.input.trim_start_matches("Note(").trim_end_matches(')').parse().unwrap()).collect();
+        let order: Vec<u32> = runtime.history(sink).iter().filter(|entry| entry.input.starts_with("Note(")).map(|entry| entry.input.trim_start_matches("Note(").trim_end_matches(')').parse().unwrap()).collect();
         assert!(seen.borrow().contains(&order), "the threads produced {order:?}, which the model does not allow");
     }
 }
@@ -305,6 +316,7 @@ fn chain() -> DetScheduler {
     let middle = det.add::<Toy>("middle", ToyState { on_go: Some((last, ToyInput::Tell)), ..ToyState::default() }, ToyRunner::default());
     let first = det.add::<Toy>("first", ToyState { on_go: Some((middle, ToyInput::Go)), ..ToyState::default() }, ToyRunner::default());
     det.start_epoch(1);
+    det.run_until_quiet(10).unwrap();
     det.post(first, EpochStamp::Epoch(1), ToyInput::Go);
     det
 }
@@ -423,7 +435,7 @@ fn rt_prop_start_close() {
     runtime.post(bare, EpochStamp::Control, BareInput::Boom);
     runtime.post(dying, EpochStamp::Epoch(1), ToyInput::Ask(BOOM));
     assert!(runtime.barrier(WAIT));
-    assert_eq!(runtime.history(watch).len(), 2, "the threads told Lifecycle about both executors");
+    assert_eq!(runtime.history(watch).iter().filter(|entry| !entry.input.starts_with("EpochStarted(")).count(), 2, "the threads told Lifecycle about both executors");
     runtime.close();
     assert_eq!(reports.recv_timeout(WAIT), Ok(CLOSED));
     assert_eq!(open.try_take(), Some(Outcome::Closing), "a wait that nobody answered ends with the close");

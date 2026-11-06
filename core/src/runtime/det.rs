@@ -18,7 +18,6 @@ pub struct TraceEntry {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Lane {
-    Owner(usize),
     External(u32),
     Runtime,
 }
@@ -26,6 +25,7 @@ pub enum Lane {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Choice {
     Step(usize),
+    Emit(usize),
     Deliver(Lane),
     Arrive(usize),
     Fire(usize),
@@ -33,13 +33,12 @@ pub enum Choice {
 
 enum Pending {
     Send { to: usize, stamp: EpochStamp, payload: Box<dyn Message> },
-    Control { to: usize, control: Control },
 }
 
 impl Pending {
     fn to(&self) -> usize {
         match self {
-            Self::Send { to, .. } | Self::Control { to, .. } => *to,
+            Self::Send { to, .. } => *to,
         }
     }
 }
@@ -50,6 +49,9 @@ trait ErasedSlot {
     fn arriving(&self) -> bool;
     fn due(&self) -> bool;
     fn run_one(&mut self) -> Option<Ran>;
+    fn emitting(&self) -> bool;
+    fn emit_one(&mut self) -> (Option<Emitted>, bool);
+    fn finish_emission(&mut self) -> bool;
     /// Takes the oldest arrival; true when it was the failure of an asynchronous task.
     fn arrive(&mut self) -> bool;
     fn fire(&mut self);
@@ -84,6 +86,12 @@ impl<O: StateOwner> ErasedSlot for Slot<O> {
     fn due(&self) -> bool { self.cell.due() }
 
     fn run_one(&mut self) -> Option<Ran> { self.cell.run_one(self.name, self.runner.as_mut(), &self.back, true) }
+
+    fn emitting(&self) -> bool { self.cell.emitting() }
+
+    fn emit_one(&mut self) -> (Option<Emitted>, bool) { self.cell.emit_one(self.name, self.runner.as_mut(), &self.back) }
+
+    fn finish_emission(&mut self) -> bool { self.cell.finish_emission(self.name, self.runner.as_mut()) }
 
     fn arrive(&mut self) -> bool {
         let arrived = self.inbox.lock().unwrap_or_else(PoisonError::into_inner).pop_front();
@@ -170,6 +178,7 @@ impl DetScheduler {
 
     pub fn choices(&self) -> Vec<Choice> {
         let mut choices: Vec<Choice> = (0..self.slots.len()).filter(|index| self.slots[*index].ready()).map(Choice::Step).collect();
+        choices.extend((0..self.slots.len()).filter(|index| self.slots[*index].emitting()).map(Choice::Emit));
         choices.extend(self.lanes.iter().filter(|(_, queue)| !queue.is_empty()).map(|(lane, _)| Choice::Deliver(*lane)));
         choices.extend((0..self.slots.len()).filter(|index| self.slots[*index].arriving()).map(Choice::Arrive));
         choices.extend((0..self.slots.len()).filter(|index| self.slots[*index].due()).map(Choice::Fire));
@@ -180,7 +189,7 @@ impl DetScheduler {
         let mut owners: BTreeSet<usize> = BTreeSet::new();
         for choice in self.choices() {
             match choice {
-                Choice::Step(index) | Choice::Arrive(index) | Choice::Fire(index) => owners.insert(index),
+                Choice::Step(index) | Choice::Emit(index) | Choice::Arrive(index) | Choice::Fire(index) => owners.insert(index),
                 Choice::Deliver(lane) => owners.insert(self.lanes[&lane].front().map_or(0, Pending::to)),
             };
         }
@@ -198,11 +207,20 @@ impl DetScheduler {
                 let Some(ran) = self.slots[index].run_one() else { return false };
                 self.finish_step(index, ran);
             }
+            Choice::Emit(index) => {
+                let (emitted, failed) = self.slots[index].emit_one();
+                match emitted {
+                    Some(Emitted::Send(outbound)) => self.slots[outbound.to].deliver(outbound.stamp, outbound.payload),
+                    Some(Emitted::Broadcast(control)) => self.slots.iter_mut().for_each(|slot| slot.push_control(control)),
+                    None => {}
+                }
+                let finished_failed = self.slots[index].finish_emission();
+                if failed || finished_failed { self.report_failure(index); }
+            }
             Choice::Deliver(lane) => {
                 let Some(pending) = self.lanes.get_mut(&lane).and_then(VecDeque::pop_front) else { return false };
                 match pending {
                     Pending::Send { to, stamp, payload } => self.slots[to].deliver(stamp, payload),
-                    Pending::Control { to, control } => self.slots[to].push_control(control),
                 }
             }
             Choice::Arrive(index) => {
@@ -217,13 +235,6 @@ impl DetScheduler {
 
     fn finish_step(&mut self, index: usize, ran: Ran) {
         self.trace.push(TraceEntry { slot: index, owner: self.slots[index].name(), stamp: ran.stamp, input: ran.input, effects: ran.effects, dropped: ran.dropped });
-        let lane = self.lanes.entry(Lane::Owner(index)).or_default();
-        for emitted in ran.emitted {
-            match emitted {
-                Emitted::Send(outbound) => lane.push_back(Pending::Send { to: outbound.to, stamp: outbound.stamp, payload: outbound.payload }),
-                Emitted::Broadcast(control) => (0..self.slots.len()).for_each(|to| lane.push_back(Pending::Control { to, control })),
-            }
-        }
         if ran.failed {
             self.report_failure(index);
         }
@@ -252,8 +263,10 @@ impl DetScheduler {
 
     pub fn run_until_quiet(&mut self, limit: usize) -> Result<usize, usize> {
         let mut steps = 0;
-        while !self.choices().is_empty() {
-            if steps == limit {
+        loop {
+            let choices = self.choices();
+            if choices.is_empty() { break; }
+            if steps == limit && choices.iter().any(|choice| matches!(choice, Choice::Step(_))) {
                 return Err(steps);
             }
             let before = self.trace.len();
