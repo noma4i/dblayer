@@ -1007,7 +1007,7 @@ async fn a_command_and_a_read_of_a_left_account_are_refused_and_change_nothing()
     rig.database.close_now();
 }
 
-/// K03 (B3, old lines ffi/command.rs in_epoch with Origin::Explicit and sync/send/flush.rs waiting_reason): a send needs a session, and an action that is not a durable command does not wait for the network: it is refused and rolled back, and it never goes out later.
+/// K03 a send needs a session, and an action that is not a durable command does not wait for the network: it is refused and rolled back, and it never goes out later.
 #[tokio::test(flavor = "multi_thread")]
 async fn a_send_needs_a_session_and_a_plain_action_never_waits_for_the_network() {
     let rig = Rig::encrypted().await;
@@ -1142,7 +1142,7 @@ async fn a_queued_message_shows_as_pending_in_the_thread_before_the_server_answe
     rig.database.close_now();
 }
 
-/// K07 (B9, old lines ffi/stream/open.rs retain_query and db/observe.rs query_count): a stream that ended leaves no observer and no work behind: a write after it reads nothing and no retained observer is counted.
+/// K07 a stream that ended leaves no observer and no work behind: a write after it reads nothing and no retained observer is counted.
 #[tokio::test(flavor = "multi_thread")]
 async fn a_cancelled_list_stream_leaves_no_observer_and_a_later_write_does_no_reading() {
     let rig = Rig::encrypted().await;
@@ -1395,7 +1395,7 @@ type Call = for<'a> fn(&'a Database, u64) -> std::pin::Pin<Box<dyn std::future::
 
 fn case(name: &'static str, call: Call) -> (&'static str, Call) { (name, call) }
 
-/// K17 (C01, old lines ffi/database.rs run, load, refresh, load_all, load_more, node, nodes, retry_all, warm, edge_values, peek_row, cancel_upload and stream/mod.rs peek_query): every entry of the database names the epoch of its caller and is refused after that session ended. Nothing reaches the server.
+/// K17 every entry of the database names the epoch of its caller and is refused after that session ended. Nothing reaches the server.
 #[tokio::test(flavor = "multi_thread")]
 async fn every_entry_of_a_left_account_is_refused_and_reaches_nothing() {
     let rig = Rig::encrypted().await;
@@ -1446,7 +1446,7 @@ async fn a_plain_action_that_never_reached_the_server_ends_with_the_network_erro
     rig.database.close_now();
 }
 
-/// K09 (spec B, C; old line ffi/stream/open.rs connect_json with `force` used once at open): a list stream opened with refresh on connect loads again once when the network returns, without a call of the app. A stream without the flag asks nothing.
+/// K09 a list stream opened with refresh on connect loads again once when the network returns, without a call of the app. A stream without the flag asks nothing.
 #[tokio::test(flavor = "multi_thread")]
 async fn a_stream_that_refreshes_on_connect_loads_again_once_when_the_network_returns() {
     let rig = Rig::encrypted().await;

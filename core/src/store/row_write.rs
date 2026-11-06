@@ -27,6 +27,7 @@ pub(super) struct RowWrite<'a> {
     pub revision: i64,
     pub now: i64,
     pub originals: &'a mut BTreeMap<RowRef, Option<Map<String, Value>>>,
+    pub closing: Option<i64>,
 }
 
 impl RowWrite<'_> {
@@ -38,7 +39,7 @@ impl RowWrite<'_> {
         let origin = if local { WriteOrigin::Optimistic } else { WriteOrigin::Response };
         let reader = Reader::new(self.connection, self.models);
         let guards = self.guards.get(model).map(Vec::as_slice).unwrap_or_default();
-        let Some(row) = admitted(&reader, origin, Admission::default(), model, patch, &mut 0, spec, guards)? else { return Ok(None) };
+        let Some(row) = admitted(&reader, origin, Admission { base: None, closing: self.closing }, model, patch, &mut 0, spec, guards)? else { return Ok(None) };
         let mut envelope = CommitEnvelope::new(origin, self.generation);
         envelope.writes_local = local;
         envelope.entity_ops.push(EntityOp::Upsert { model: ModelKey::new(model), id, row });

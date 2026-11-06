@@ -1317,9 +1317,11 @@ public protocol DatabaseProtocol: AnyObject, Sendable {
     
     func setOnline(online: Bool) throws 
     
-    func subscriptionCensus()  -> SubscriptionCensus
+    func subscriptionCensus() async throws  -> SubscriptionCensus
     
     func url(epoch: UInt64, model: String, rowId: String, field: String) async throws  -> String?
+    
+    func interruptedSessionAnswer() async throws  -> String?
     
     func sessionCall(operation: String, bodyJson: String) async throws  -> String
     
@@ -1348,11 +1350,6 @@ public protocol DatabaseProtocol: AnyObject, Sendable {
     func nodes(epoch: UInt64, model: String, relation: String, rowIds: [String]) async throws  -> [WireRow]
     
     func refresh(epoch: UInt64, model: String, relation: String, paramsJson: String) async throws 
-    
-    /**
-     * The rows of a query the core already holds, without a stream and without reading SQLite on the calling thread.
-     */
-    func peekQuery(epoch: UInt64, queryJson: String) async throws  -> CachedQuery?
     
     /**
      * The rows of a query read from SQLite once, off the calling thread. Nothing is loaded from the server and no stream stays open.
@@ -1656,13 +1653,20 @@ open func setOnline(online: Bool)throws   {try rustCallWithError(FfiConverterTyp
 }
 }
     
-open func subscriptionCensus() -> SubscriptionCensus  {
-    return try!  FfiConverterTypeSubscriptionCensus_lift(try! rustCall() {
-        uniffiCallStatus in
-    uniffi_dblayer_fn_method_database_subscription_census(
-            self.uniffiCloneHandle(),uniffiCallStatus
-    )
-})
+open func subscriptionCensus()async throws  -> SubscriptionCensus  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_dblayer_fn_method_database_subscription_census(
+                        self.uniffiCloneHandle()
+                )
+            },
+            pollFunc: ffi_dblayer_rust_future_poll_rust_buffer,
+            completeFunc: ffi_dblayer_rust_future_complete_rust_buffer,
+            freeFunc: ffi_dblayer_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterTypeSubscriptionCensus_lift,
+            errorHandler: FfiConverterTypeDbError_lift
+        )
 }
     
 open func url(epoch: UInt64, model: String, rowId: String, field: String)async throws  -> String?  {
@@ -1671,6 +1675,22 @@ open func url(epoch: UInt64, model: String, rowId: String, field: String)async t
             rustFutureFunc: {
                 uniffi_dblayer_fn_method_database_url(
                         self.uniffiCloneHandle(),FfiConverterUInt64.lower(epoch),FfiConverterString.lower(model),FfiConverterString.lower(rowId),FfiConverterString.lower(field)
+                )
+            },
+            pollFunc: ffi_dblayer_rust_future_poll_rust_buffer,
+            completeFunc: ffi_dblayer_rust_future_complete_rust_buffer,
+            freeFunc: ffi_dblayer_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterOptionString.lift,
+            errorHandler: FfiConverterTypeDbError_lift
+        )
+}
+    
+open func interruptedSessionAnswer()async throws  -> String?  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_dblayer_fn_method_database_interrupted_session_answer(
+                        self.uniffiCloneHandle()
                 )
             },
             pollFunc: ffi_dblayer_rust_future_poll_rust_buffer,
@@ -1813,25 +1833,6 @@ open func refresh(epoch: UInt64, model: String, relation: String, paramsJson: St
             completeFunc: ffi_dblayer_rust_future_complete_void,
             freeFunc: ffi_dblayer_rust_future_free_void,
             liftFunc: { $0 },
-            errorHandler: FfiConverterTypeDbError_lift
-        )
-}
-    
-    /**
-     * The rows of a query the core already holds, without a stream and without reading SQLite on the calling thread.
-     */
-open func peekQuery(epoch: UInt64, queryJson: String)async throws  -> CachedQuery?  {
-    return
-        try  await uniffiRustCallAsync(
-            rustFutureFunc: {
-                uniffi_dblayer_fn_method_database_peek_query(
-                        self.uniffiCloneHandle(),FfiConverterUInt64.lower(epoch),FfiConverterString.lower(queryJson)
-                )
-            },
-            pollFunc: ffi_dblayer_rust_future_poll_rust_buffer,
-            completeFunc: ffi_dblayer_rust_future_complete_rust_buffer,
-            freeFunc: ffi_dblayer_rust_future_free_rust_buffer,
-            liftFunc: FfiConverterOptionTypeCachedQuery.lift,
             errorHandler: FfiConverterTypeDbError_lift
         )
 }
@@ -2724,7 +2725,7 @@ public protocol OpenDatabaseProtocol: AnyObject, Sendable {
     
     func `open`(config: Config, modelsJson: String, options: OpenOptions, transport: Transport?, encrypted: EncryptedConfig?, credentials: CredentialStore?, http: EncryptedHttp?, retries: RetryProgress?) async throws  -> Database
     
-    func openWithClock(config: Config, modelsJson: String, transport: Transport?, uploads: WireUploadOperations?, clock: TestClock, encrypted: EncryptedConfig?, credentials: CredentialStore?, http: EncryptedHttp?, retries: RetryProgress?) async throws  -> Database
+    func openWithClock(config: Config, modelsJson: String, transport: Transport?, clock: TestClock, encrypted: EncryptedConfig?, credentials: CredentialStore?, http: EncryptedHttp?, retries: RetryProgress?) async throws  -> Database
     
 }
 open class OpenDatabase: OpenDatabaseProtocol, @unchecked Sendable {
@@ -2804,12 +2805,12 @@ open func `open`(config: Config, modelsJson: String, options: OpenOptions, trans
         )
 }
     
-open func openWithClock(config: Config, modelsJson: String, transport: Transport?, uploads: WireUploadOperations?, clock: TestClock, encrypted: EncryptedConfig?, credentials: CredentialStore?, http: EncryptedHttp?, retries: RetryProgress?)async throws  -> Database  {
+open func openWithClock(config: Config, modelsJson: String, transport: Transport?, clock: TestClock, encrypted: EncryptedConfig?, credentials: CredentialStore?, http: EncryptedHttp?, retries: RetryProgress?)async throws  -> Database  {
     return
         try  await uniffiRustCallAsync(
             rustFutureFunc: {
                 uniffi_dblayer_fn_method_opendatabase_open_with_clock(
-                        self.uniffiCloneHandle(),FfiConverterTypeConfig_lower(config),FfiConverterString.lower(modelsJson),FfiConverterOptionTypeTransport.lower(transport),FfiConverterOptionTypeWireUploadOperations.lower(uploads),FfiConverterTypeTestClock_lower(clock),FfiConverterOptionTypeEncryptedConfig.lower(encrypted),FfiConverterOptionTypeCredentialStore.lower(credentials),FfiConverterOptionTypeEncryptedHttp.lower(http),FfiConverterOptionTypeRetryProgress.lower(retries)
+                        self.uniffiCloneHandle(),FfiConverterTypeConfig_lower(config),FfiConverterString.lower(modelsJson),FfiConverterOptionTypeTransport.lower(transport),FfiConverterTypeTestClock_lower(clock),FfiConverterOptionTypeEncryptedConfig.lower(encrypted),FfiConverterOptionTypeCredentialStore.lower(credentials),FfiConverterOptionTypeEncryptedHttp.lower(http),FfiConverterOptionTypeRetryProgress.lower(retries)
                 )
             },
             pollFunc: ffi_dblayer_rust_future_poll_u64,
@@ -2884,6 +2885,8 @@ public protocol ReadStreamProtocol: AnyObject, Sendable {
      * The next value of the stream, `None` once the stream ended and its last value was taken.
      */
     func pull() async throws  -> ReadValue?
+    
+    func resync() 
     
 }
 /**
@@ -2979,6 +2982,14 @@ open func pull()async throws  -> ReadValue?  {
             liftFunc: FfiConverterOptionTypeReadValue.lift,
             errorHandler: FfiConverterTypeDbError_lift
         )
+}
+    
+open func resync()  {try! rustCall() {
+        uniffiCallStatus in
+    uniffi_dblayer_fn_method_readstream_resync(
+            self.uniffiCloneHandle(),uniffiCallStatus
+    )
+}
 }
     
 
@@ -4817,63 +4828,6 @@ public func FfiConverterTypeWireReceiptTicket_lower(_ value: WireReceiptTicket) 
 
 
 
-/**
- * The rows of a query that were read without a stream.
- */
-public struct CachedQuery: Equatable, Hashable {
-    public var revision: Int64
-    public var rows: [WireRow]
-
-    // Default memberwise initializers are never public by default, so we
-    // declare one manually.
-    public init(revision: Int64, rows: [WireRow]) {
-        self.revision = revision
-        self.rows = rows
-    }
-
-    
-
-    
-}
-
-#if compiler(>=6)
-extension CachedQuery: Sendable {}
-#endif
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public struct FfiConverterTypeCachedQuery: FfiConverterRustBuffer {
-    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> CachedQuery {
-        return
-            try CachedQuery(
-                revision: FfiConverterInt64.read(from: &buf), 
-                rows: FfiConverterSequenceTypeWireRow.read(from: &buf)
-        )
-    }
-
-    public static func write(_ value: CachedQuery, into buf: inout [UInt8]) {
-        FfiConverterInt64.write(value.revision, into: &buf)
-        FfiConverterSequenceTypeWireRow.write(value.rows, into: &buf)
-    }
-}
-
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeCachedQuery_lift(_ buf: RustBuffer) throws -> CachedQuery {
-    return try FfiConverterTypeCachedQuery.lift(buf)
-}
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeCachedQuery_lower(_ value: CachedQuery) -> RustBuffer {
-    return FfiConverterTypeCachedQuery.lower(value)
-}
-
-
 public struct CellEntry: Equatable, Hashable {
     public var key: String
     public var value: Cell
@@ -5619,15 +5573,13 @@ public func FfiConverterTypeItemId_lower(_ value: ItemId) -> RustBuffer {
 
 public struct OpenOptions: Equatable, Hashable {
     public var operations: String
-    public var uploads: WireUploadOperations?
     public var powerSaving: Bool
     public var lowRam: Bool
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(operations: String, uploads: WireUploadOperations?, powerSaving: Bool, lowRam: Bool) {
+    public init(operations: String, powerSaving: Bool, lowRam: Bool) {
         self.operations = operations
-        self.uploads = uploads
         self.powerSaving = powerSaving
         self.lowRam = lowRam
     }
@@ -5649,7 +5601,6 @@ public struct FfiConverterTypeOpenOptions: FfiConverterRustBuffer {
         return
             try OpenOptions(
                 operations: FfiConverterString.read(from: &buf), 
-                uploads: FfiConverterOptionTypeWireUploadOperations.read(from: &buf), 
                 powerSaving: FfiConverterBool.read(from: &buf), 
                 lowRam: FfiConverterBool.read(from: &buf)
         )
@@ -5657,7 +5608,6 @@ public struct FfiConverterTypeOpenOptions: FfiConverterRustBuffer {
 
     public static func write(_ value: OpenOptions, into buf: inout [UInt8]) {
         FfiConverterString.write(value.operations, into: &buf)
-        FfiConverterOptionTypeWireUploadOperations.write(value.uploads, into: &buf)
         FfiConverterBool.write(value.powerSaving, into: &buf)
         FfiConverterBool.write(value.lowRam, into: &buf)
     }
@@ -6254,13 +6204,15 @@ public struct SubscriptionCensus: Equatable, Hashable {
     public var observedQueries: UInt64
     public var subscriptions: UInt64
     public var retainedObservers: UInt64
+    public var refusedEvents: UInt64
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(observedQueries: UInt64, subscriptions: UInt64, retainedObservers: UInt64) {
+    public init(observedQueries: UInt64, subscriptions: UInt64, retainedObservers: UInt64, refusedEvents: UInt64) {
         self.observedQueries = observedQueries
         self.subscriptions = subscriptions
         self.retainedObservers = retainedObservers
+        self.refusedEvents = refusedEvents
     }
 
     
@@ -6281,7 +6233,8 @@ public struct FfiConverterTypeSubscriptionCensus: FfiConverterRustBuffer {
             try SubscriptionCensus(
                 observedQueries: FfiConverterUInt64.read(from: &buf), 
                 subscriptions: FfiConverterUInt64.read(from: &buf), 
-                retainedObservers: FfiConverterUInt64.read(from: &buf)
+                retainedObservers: FfiConverterUInt64.read(from: &buf), 
+                refusedEvents: FfiConverterUInt64.read(from: &buf)
         )
     }
 
@@ -6289,6 +6242,7 @@ public struct FfiConverterTypeSubscriptionCensus: FfiConverterRustBuffer {
         FfiConverterUInt64.write(value.observedQueries, into: &buf)
         FfiConverterUInt64.write(value.subscriptions, into: &buf)
         FfiConverterUInt64.write(value.retainedObservers, into: &buf)
+        FfiConverterUInt64.write(value.refusedEvents, into: &buf)
     }
 }
 
@@ -6488,14 +6442,24 @@ public func FfiConverterTypeWireBatchReceipt_lower(_ value: WireBatchReceipt) ->
 public struct WireFailure: Equatable, Hashable {
     public var kind: String
     public var sessionCode: SessionCode?
+    /**
+     * Set for `request_too_large`: the size of the sealed request and the limit, in bytes.
+     */
+    public var requestSize: UInt64?
+    public var requestLimit: UInt64?
     public var message: String
     public var extensions: GraphqlExtensions?
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(kind: String, sessionCode: SessionCode?, message: String, extensions: GraphqlExtensions?) {
+    public init(kind: String, sessionCode: SessionCode?, 
+        /**
+         * Set for `request_too_large`: the size of the sealed request and the limit, in bytes.
+         */requestSize: UInt64?, requestLimit: UInt64?, message: String, extensions: GraphqlExtensions?) {
         self.kind = kind
         self.sessionCode = sessionCode
+        self.requestSize = requestSize
+        self.requestLimit = requestLimit
         self.message = message
         self.extensions = extensions
     }
@@ -6518,6 +6482,8 @@ public struct FfiConverterTypeWireFailure: FfiConverterRustBuffer {
             try WireFailure(
                 kind: FfiConverterString.read(from: &buf), 
                 sessionCode: FfiConverterOptionTypeSessionCode.read(from: &buf), 
+                requestSize: FfiConverterOptionUInt64.read(from: &buf), 
+                requestLimit: FfiConverterOptionUInt64.read(from: &buf), 
                 message: FfiConverterString.read(from: &buf), 
                 extensions: FfiConverterOptionTypeGraphqlExtensions.read(from: &buf)
         )
@@ -6526,6 +6492,8 @@ public struct FfiConverterTypeWireFailure: FfiConverterRustBuffer {
     public static func write(_ value: WireFailure, into buf: inout [UInt8]) {
         FfiConverterString.write(value.kind, into: &buf)
         FfiConverterOptionTypeSessionCode.write(value.sessionCode, into: &buf)
+        FfiConverterOptionUInt64.write(value.requestSize, into: &buf)
+        FfiConverterOptionUInt64.write(value.requestLimit, into: &buf)
         FfiConverterString.write(value.message, into: &buf)
         FfiConverterOptionTypeGraphqlExtensions.write(value.extensions, into: &buf)
     }
@@ -6671,68 +6639,6 @@ public func FfiConverterTypeWireModelEvent_lower(_ value: WireModelEvent) -> Rus
 }
 
 
-public struct WireMultipartOperations: Equatable, Hashable {
-    public var initiate: WireUploadOperation
-    public var presign: WireUploadOperation
-    public var complete: WireUploadOperation
-    public var abort: WireUploadOperation
-
-    // Default memberwise initializers are never public by default, so we
-    // declare one manually.
-    public init(initiate: WireUploadOperation, presign: WireUploadOperation, complete: WireUploadOperation, abort: WireUploadOperation) {
-        self.initiate = initiate
-        self.presign = presign
-        self.complete = complete
-        self.abort = abort
-    }
-
-    
-
-    
-}
-
-#if compiler(>=6)
-extension WireMultipartOperations: Sendable {}
-#endif
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public struct FfiConverterTypeWireMultipartOperations: FfiConverterRustBuffer {
-    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> WireMultipartOperations {
-        return
-            try WireMultipartOperations(
-                initiate: FfiConverterTypeWireUploadOperation.read(from: &buf), 
-                presign: FfiConverterTypeWireUploadOperation.read(from: &buf), 
-                complete: FfiConverterTypeWireUploadOperation.read(from: &buf), 
-                abort: FfiConverterTypeWireUploadOperation.read(from: &buf)
-        )
-    }
-
-    public static func write(_ value: WireMultipartOperations, into buf: inout [UInt8]) {
-        FfiConverterTypeWireUploadOperation.write(value.initiate, into: &buf)
-        FfiConverterTypeWireUploadOperation.write(value.presign, into: &buf)
-        FfiConverterTypeWireUploadOperation.write(value.complete, into: &buf)
-        FfiConverterTypeWireUploadOperation.write(value.abort, into: &buf)
-    }
-}
-
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeWireMultipartOperations_lift(_ buf: RustBuffer) throws -> WireMultipartOperations {
-    return try FfiConverterTypeWireMultipartOperations.lift(buf)
-}
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeWireMultipartOperations_lower(_ value: WireMultipartOperations) -> RustBuffer {
-    return FfiConverterTypeWireMultipartOperations.lower(value)
-}
-
-
 public struct WireOperationReceipt {
     public var epoch: UInt64
     public var model: String
@@ -6800,6 +6706,56 @@ public func FfiConverterTypeWireOperationReceipt_lift(_ buf: RustBuffer) throws 
 #endif
 public func FfiConverterTypeWireOperationReceipt_lower(_ value: WireOperationReceipt) -> RustBuffer {
     return FfiConverterTypeWireOperationReceipt.lower(value)
+}
+
+
+public struct WireProcessing: Equatable, Hashable {
+    public var progress: Double?
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(progress: Double?) {
+        self.progress = progress
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension WireProcessing: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeWireProcessing: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> WireProcessing {
+        return
+            try WireProcessing(
+                progress: FfiConverterOptionDouble.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: WireProcessing, into buf: inout [UInt8]) {
+        FfiConverterOptionDouble.write(value.progress, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeWireProcessing_lift(_ buf: RustBuffer) throws -> WireProcessing {
+    return try FfiConverterTypeWireProcessing.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeWireProcessing_lower(_ value: WireProcessing) -> RustBuffer {
+    return FfiConverterTypeWireProcessing.lower(value)
 }
 
 
@@ -7020,10 +6976,24 @@ public struct WireUpload: Equatable, Hashable {
     public var waitReason: String?
     public var attempts: UInt32
     public var error: WireFailure?
+    /**
+     * The file URL of the copy of the library while the transfer holds it.
+     */
+    public var localUrl: String?
+    /**
+     * The server works on the file after the transfer: the progress it reports.
+     */
+    public var processing: WireProcessing?
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(status: WireUploadStatus, stage: String, sentBytes: UInt64, totalBytes: UInt64, waitReason: String?, attempts: UInt32, error: WireFailure?) {
+    public init(status: WireUploadStatus, stage: String, sentBytes: UInt64, totalBytes: UInt64, waitReason: String?, attempts: UInt32, error: WireFailure?, 
+        /**
+         * The file URL of the copy of the library while the transfer holds it.
+         */localUrl: String?, 
+        /**
+         * The server works on the file after the transfer: the progress it reports.
+         */processing: WireProcessing?) {
         self.status = status
         self.stage = stage
         self.sentBytes = sentBytes
@@ -7031,6 +7001,8 @@ public struct WireUpload: Equatable, Hashable {
         self.waitReason = waitReason
         self.attempts = attempts
         self.error = error
+        self.localUrl = localUrl
+        self.processing = processing
     }
 
     
@@ -7055,7 +7027,9 @@ public struct FfiConverterTypeWireUpload: FfiConverterRustBuffer {
                 totalBytes: FfiConverterUInt64.read(from: &buf), 
                 waitReason: FfiConverterOptionString.read(from: &buf), 
                 attempts: FfiConverterUInt32.read(from: &buf), 
-                error: FfiConverterOptionTypeWireFailure.read(from: &buf)
+                error: FfiConverterOptionTypeWireFailure.read(from: &buf), 
+                localUrl: FfiConverterOptionString.read(from: &buf), 
+                processing: FfiConverterOptionTypeWireProcessing.read(from: &buf)
         )
     }
 
@@ -7067,6 +7041,8 @@ public struct FfiConverterTypeWireUpload: FfiConverterRustBuffer {
         FfiConverterOptionString.write(value.waitReason, into: &buf)
         FfiConverterUInt32.write(value.attempts, into: &buf)
         FfiConverterOptionTypeWireFailure.write(value.error, into: &buf)
+        FfiConverterOptionString.write(value.localUrl, into: &buf)
+        FfiConverterOptionTypeWireProcessing.write(value.processing, into: &buf)
     }
 }
 
@@ -7257,114 +7233,6 @@ public func FfiConverterTypeWireUploadItem_lift(_ buf: RustBuffer) throws -> Wir
 #endif
 public func FfiConverterTypeWireUploadItem_lower(_ value: WireUploadItem) -> RustBuffer {
     return FfiConverterTypeWireUploadItem.lower(value)
-}
-
-
-public struct WireUploadOperation: Equatable, Hashable {
-    public var name: String
-    public var rootPath: String?
-
-    // Default memberwise initializers are never public by default, so we
-    // declare one manually.
-    public init(name: String, rootPath: String?) {
-        self.name = name
-        self.rootPath = rootPath
-    }
-
-    
-
-    
-}
-
-#if compiler(>=6)
-extension WireUploadOperation: Sendable {}
-#endif
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public struct FfiConverterTypeWireUploadOperation: FfiConverterRustBuffer {
-    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> WireUploadOperation {
-        return
-            try WireUploadOperation(
-                name: FfiConverterString.read(from: &buf), 
-                rootPath: FfiConverterOptionString.read(from: &buf)
-        )
-    }
-
-    public static func write(_ value: WireUploadOperation, into buf: inout [UInt8]) {
-        FfiConverterString.write(value.name, into: &buf)
-        FfiConverterOptionString.write(value.rootPath, into: &buf)
-    }
-}
-
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeWireUploadOperation_lift(_ buf: RustBuffer) throws -> WireUploadOperation {
-    return try FfiConverterTypeWireUploadOperation.lift(buf)
-}
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeWireUploadOperation_lower(_ value: WireUploadOperation) -> RustBuffer {
-    return FfiConverterTypeWireUploadOperation.lower(value)
-}
-
-
-public struct WireUploadOperations: Equatable, Hashable {
-    public var createBlob: WireUploadOperation?
-    public var multipart: WireMultipartOperations?
-
-    // Default memberwise initializers are never public by default, so we
-    // declare one manually.
-    public init(createBlob: WireUploadOperation?, multipart: WireMultipartOperations?) {
-        self.createBlob = createBlob
-        self.multipart = multipart
-    }
-
-    
-
-    
-}
-
-#if compiler(>=6)
-extension WireUploadOperations: Sendable {}
-#endif
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public struct FfiConverterTypeWireUploadOperations: FfiConverterRustBuffer {
-    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> WireUploadOperations {
-        return
-            try WireUploadOperations(
-                createBlob: FfiConverterOptionTypeWireUploadOperation.read(from: &buf), 
-                multipart: FfiConverterOptionTypeWireMultipartOperations.read(from: &buf)
-        )
-    }
-
-    public static func write(_ value: WireUploadOperations, into buf: inout [UInt8]) {
-        FfiConverterOptionTypeWireUploadOperation.write(value.createBlob, into: &buf)
-        FfiConverterOptionTypeWireMultipartOperations.write(value.multipart, into: &buf)
-    }
-}
-
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeWireUploadOperations_lift(_ buf: RustBuffer) throws -> WireUploadOperations {
-    return try FfiConverterTypeWireUploadOperations.lift(buf)
-}
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeWireUploadOperations_lower(_ value: WireUploadOperations) -> RustBuffer {
-    return FfiConverterTypeWireUploadOperations.lower(value)
 }
 
 
@@ -8310,6 +8178,8 @@ public enum ReadEnd: Equatable, Hashable {
     case closed
     case cancelled
     case invalid
+    case storage(error: String
+    )
 
 
 
@@ -8339,6 +8209,9 @@ public struct FfiConverterTypeReadEnd: FfiConverterRustBuffer {
         
         case 4: return .invalid
         
+        case 5: return .storage(error: try FfiConverterString.read(from: &buf)
+        )
+        
         default: throw UniffiInternalError.unexpectedEnumCase
         }
     }
@@ -8362,6 +8235,11 @@ public struct FfiConverterTypeReadEnd: FfiConverterRustBuffer {
         case .invalid:
             writeInt(&buf, Int32(4))
         
+        
+        case let .storage(error):
+            writeInt(&buf, Int32(5))
+            FfiConverterString.write(error, into: &buf)
+            
         }
     }
 }
@@ -9309,7 +9187,6 @@ public enum WireOperationOutcome: Equatable, Hashable {
     )
     case rejected(failure: WireFailure
     )
-    case deliveryUnknown
     case interrupted
 
 
@@ -9338,9 +9215,7 @@ public struct FfiConverterTypeWireOperationOutcome: FfiConverterRustBuffer {
         case 2: return .rejected(failure: try FfiConverterTypeWireFailure.read(from: &buf)
         )
         
-        case 3: return .deliveryUnknown
-        
-        case 4: return .interrupted
+        case 3: return .interrupted
         
         default: throw UniffiInternalError.unexpectedEnumCase
         }
@@ -9361,12 +9236,8 @@ public struct FfiConverterTypeWireOperationOutcome: FfiConverterRustBuffer {
             FfiConverterTypeWireFailure.write(failure, into: &buf)
             
         
-        case .deliveryUnknown:
-            writeInt(&buf, Int32(3))
-        
-        
         case .interrupted:
-            writeInt(&buf, Int32(4))
+            writeInt(&buf, Int32(3))
         
         }
     }
@@ -9396,7 +9267,6 @@ public enum WireSyncState: Equatable, Hashable {
     case pending
     case sending
     case failed
-    case deliveryUnknown
 
 
 
@@ -9426,8 +9296,6 @@ public struct FfiConverterTypeWireSyncState: FfiConverterRustBuffer {
         
         case 4: return .failed
         
-        case 5: return .deliveryUnknown
-        
         default: throw UniffiInternalError.unexpectedEnumCase
         }
     }
@@ -9450,10 +9318,6 @@ public struct FfiConverterTypeWireSyncState: FfiConverterRustBuffer {
         
         case .failed:
             writeInt(&buf, Int32(4))
-        
-        
-        case .deliveryUnknown:
-            writeInt(&buf, Int32(5))
         
         }
     }
@@ -9573,7 +9437,6 @@ public enum WireUploadStatus: Equatable, Hashable {
     case sending
     case done
     case failed
-    case deliveryUnknown
     case cancelled
 
 
@@ -9610,9 +9473,7 @@ public struct FfiConverterTypeWireUploadStatus: FfiConverterRustBuffer {
         
         case 7: return .failed
         
-        case 8: return .deliveryUnknown
-        
-        case 9: return .cancelled
+        case 8: return .cancelled
         
         default: throw UniffiInternalError.unexpectedEnumCase
         }
@@ -9650,12 +9511,8 @@ public struct FfiConverterTypeWireUploadStatus: FfiConverterRustBuffer {
             writeInt(&buf, Int32(7))
         
         
-        case .deliveryUnknown:
-            writeInt(&buf, Int32(8))
-        
-        
         case .cancelled:
-            writeInt(&buf, Int32(9))
+            writeInt(&buf, Int32(8))
         
         }
     }
@@ -9720,6 +9577,30 @@ fileprivate struct FfiConverterOptionInt64: FfiConverterRustBuffer {
         switch try readInt(&buf) as Int8 {
         case 0: return nil
         case 1: return try FfiConverterInt64.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterOptionDouble: FfiConverterRustBuffer {
+    typealias SwiftType = Double?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterDouble.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterDouble.read(from: &buf)
         default: throw UniffiInternalError.unexpectedOptionalTag
         }
     }
@@ -9872,30 +9753,6 @@ fileprivate struct FfiConverterOptionTypeTransport: FfiConverterRustBuffer {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
-fileprivate struct FfiConverterOptionTypeCachedQuery: FfiConverterRustBuffer {
-    typealias SwiftType = CachedQuery?
-
-    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
-        guard let value = value else {
-            writeInt(&buf, Int8(0))
-            return
-        }
-        writeInt(&buf, Int8(1))
-        FfiConverterTypeCachedQuery.write(value, into: &buf)
-    }
-
-    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
-        switch try readInt(&buf) as Int8 {
-        case 0: return nil
-        case 1: return try FfiConverterTypeCachedQuery.read(from: &buf)
-        default: throw UniffiInternalError.unexpectedOptionalTag
-        }
-    }
-}
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
 fileprivate struct FfiConverterOptionTypeCommandUpload: FfiConverterRustBuffer {
     typealias SwiftType = CommandUpload?
 
@@ -10016,8 +9873,8 @@ fileprivate struct FfiConverterOptionTypeWireFailure: FfiConverterRustBuffer {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
-fileprivate struct FfiConverterOptionTypeWireMultipartOperations: FfiConverterRustBuffer {
-    typealias SwiftType = WireMultipartOperations?
+fileprivate struct FfiConverterOptionTypeWireProcessing: FfiConverterRustBuffer {
+    typealias SwiftType = WireProcessing?
 
     public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
         guard let value = value else {
@@ -10025,13 +9882,13 @@ fileprivate struct FfiConverterOptionTypeWireMultipartOperations: FfiConverterRu
             return
         }
         writeInt(&buf, Int8(1))
-        FfiConverterTypeWireMultipartOperations.write(value, into: &buf)
+        FfiConverterTypeWireProcessing.write(value, into: &buf)
     }
 
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
         switch try readInt(&buf) as Int8 {
         case 0: return nil
-        case 1: return try FfiConverterTypeWireMultipartOperations.read(from: &buf)
+        case 1: return try FfiConverterTypeWireProcessing.read(from: &buf)
         default: throw UniffiInternalError.unexpectedOptionalTag
         }
     }
@@ -10056,54 +9913,6 @@ fileprivate struct FfiConverterOptionTypeWireRow: FfiConverterRustBuffer {
         switch try readInt(&buf) as Int8 {
         case 0: return nil
         case 1: return try FfiConverterTypeWireRow.read(from: &buf)
-        default: throw UniffiInternalError.unexpectedOptionalTag
-        }
-    }
-}
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-fileprivate struct FfiConverterOptionTypeWireUploadOperation: FfiConverterRustBuffer {
-    typealias SwiftType = WireUploadOperation?
-
-    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
-        guard let value = value else {
-            writeInt(&buf, Int8(0))
-            return
-        }
-        writeInt(&buf, Int8(1))
-        FfiConverterTypeWireUploadOperation.write(value, into: &buf)
-    }
-
-    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
-        switch try readInt(&buf) as Int8 {
-        case 0: return nil
-        case 1: return try FfiConverterTypeWireUploadOperation.read(from: &buf)
-        default: throw UniffiInternalError.unexpectedOptionalTag
-        }
-    }
-}
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-fileprivate struct FfiConverterOptionTypeWireUploadOperations: FfiConverterRustBuffer {
-    typealias SwiftType = WireUploadOperations?
-
-    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
-        guard let value = value else {
-            writeInt(&buf, Int8(0))
-            return
-        }
-        writeInt(&buf, Int8(1))
-        FfiConverterTypeWireUploadOperations.write(value, into: &buf)
-    }
-
-    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
-        switch try readInt(&buf) as Int8 {
-        case 0: return nil
-        case 1: return try FfiConverterTypeWireUploadOperations.read(from: &buf)
         default: throw UniffiInternalError.unexpectedOptionalTag
         }
     }
@@ -10897,10 +10706,13 @@ private let initializationResult: InitializationResult = {
     if (uniffi_dblayer_checksum_method_database_set_online() != 62209) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_dblayer_checksum_method_database_subscription_census() != 38217) {
+    if (uniffi_dblayer_checksum_method_database_subscription_census() != 28361) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_dblayer_checksum_method_database_url() != 24988) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_dblayer_checksum_method_database_interrupted_session_answer() != 28550) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_dblayer_checksum_method_database_session_call() != 15531) {
@@ -10925,9 +10737,6 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_dblayer_checksum_method_database_refresh() != 49825) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_dblayer_checksum_method_database_peek_query() != 22864) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_dblayer_checksum_method_database_read_query() != 40910) {
@@ -11029,13 +10838,16 @@ private let initializationResult: InitializationResult = {
     if (uniffi_dblayer_checksum_method_opendatabase_open() != 52767) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_dblayer_checksum_method_opendatabase_open_with_clock() != 26343) {
+    if (uniffi_dblayer_checksum_method_opendatabase_open_with_clock() != 15102) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_dblayer_checksum_method_readstream_cancel() != 53433) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_dblayer_checksum_method_readstream_pull() != 43897) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_dblayer_checksum_method_readstream_resync() != 9292) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_dblayer_checksum_method_byteprogress_is_cancelled() != 6714) {

@@ -222,6 +222,7 @@ pub(crate) struct MutationCall {
 /// What `set_local` writes: the whole row when it is in the base, the value that waits for the row when it is not.
 #[derive(Debug, Clone)]
 pub(crate) enum LocalPlan {
+    Unchanged,
     Row { row_id: RowId, values: Row },
     Pending { row_id: RowId, path: String, value: Value },
 }
@@ -255,7 +256,9 @@ impl Store {
         let row = self.read_models(&[model], |reader| Ok(reader.point(model, id.as_str())?))?;
         Ok(match row {
             Some(mut row) => {
+                let before = row.clone();
                 slot.write(&mut row, value);
+                if same_fields(&row, &before) { return Ok(LocalPlan::Unchanged); }
                 LocalPlan::Row { row_id: id.clone(), values: row }
             }
             None => LocalPlan::Pending { row_id: id.clone(), path: path.to_string(), value },

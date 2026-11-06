@@ -151,6 +151,7 @@ impl Database {
         let (db, name, field) = (self.db.clone(), model.clone(), path.clone());
         let plan = self.offload(move || Ok(db.plan_set_local(&name, &row, &field, value)?)).await?;
         let (kind, row, values) = match plan {
+            crate::store::LocalPlan::Unchanged => return Ok(()),
             crate::store::LocalPlan::Row { row_id, values } => (LocalWriteKind::SetLocal, row_id, Value::Object(values).to_string()),
             crate::store::LocalPlan::Pending { row_id, path, value } => (LocalWriteKind::SetLocalPending, row_id, serde_json::json!({ "path": path, "value": value }).to_string()),
         };

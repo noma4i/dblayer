@@ -99,8 +99,8 @@ impl Life {
         self.wiring.to_session(SessionInput::Mutate { author, owner, req_id, epoch: self.published().epoch, path, body, purpose });
     }
 
-    /// One `Mutate` of the old stack: the outcome comes to the waiter, a repeat is the business of its caller.
-    pub fn mutate_wait(&self, owner: Option<crate::owners::session::MutateOwner>, path: String, body: String, purpose: u8) -> Waiter<LifeReply> {
+    /// One `Mutate` of a direct call: the outcome comes to the waiter, a repeat is the business of its caller.
+    pub fn mutate_for_call(&self, owner: Option<crate::owners::session::MutateOwner>, path: String, body: String, purpose: u8) -> Waiter<LifeReply> {
         if self.shut.load(Ordering::SeqCst) { return self.settled(LifeReply::Closed); }
         let waiter = self.wiring.outcomes.register(Epoch::MAX);
         let author = WAITER_AUTHORS + waiter.id().raw();

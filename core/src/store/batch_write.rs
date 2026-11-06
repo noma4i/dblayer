@@ -52,9 +52,10 @@ impl Store {
         transaction.execute_batch("CREATE TEMP TABLE batch_file_deletions (id TEXT PRIMARY KEY) WITHOUT ROWID; CREATE TEMP TRIGGER batch_file_delete BEFORE DELETE ON main.file BEGIN INSERT OR IGNORE INTO batch_file_deletions VALUES (OLD.id); END;")?;
         let base_revision = Reader::new(&transaction, &inner.models).revision_seq()?;
         let revision = base_revision.checked_add(1).ok_or_else(|| StoreError::Constraint("revision overflow".into()))?;
+        let own = batch.ops.iter().find_map(|op| match op { crate::owners::store::StoreOp::RemoveIntent { op_id } => i64::try_from(*op_id).ok(), _ => None }).unwrap_or(-1);
         let mut originals = BTreeMap::new();
         let mut results = Vec::new();
-        let mut writer = RowWrite { connection: &transaction, models: &inner.models, guards, generation: inner.generation, revision, now, originals: &mut originals };
+        let mut writer = RowWrite { connection: &transaction, models: &inner.models, guards, generation: inner.generation, revision, now, originals: &mut originals, closing: (own >= 0).then_some(own) };
         let mut overlay = Vec::new();
         let observed = if batch.author == BatchAuthor::Feed {
             super::feed_write::land(&mut writer, &batch.rows, &mut overlay, &mut results)?
@@ -69,7 +70,6 @@ impl Store {
         };
         let mut writes_database = !results.is_empty() || (batch.author != BatchAuthor::Feed && !batch.rows.is_empty());
         let mut rolled_back = std::collections::BTreeSet::new();
-        let own = batch.ops.iter().find_map(|op| match op { crate::owners::store::StoreOp::RemoveIntent { op_id } => i64::try_from(*op_id).ok(), _ => None }).unwrap_or(-1);
         for (index, op) in batch.ops.iter().enumerate() {
             if let crate::owners::store::StoreOp::EphemeralRows { model, rows } = op {
                 for row in rows {

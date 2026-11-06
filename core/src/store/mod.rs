@@ -13,6 +13,8 @@ use crate::schema::{ModelSpec, SearchPath};
 mod admission;
 mod context;
 mod file_read;
+mod follow_pointer;
+mod follow_removed;
 mod lookup;
 pub(crate) mod plan;
 mod restore_read;

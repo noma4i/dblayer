@@ -193,7 +193,7 @@ async fn a_pending_request_stored_before_the_close_is_sent_again_when_the_owners
         let (client, life) = world.open(&db).await;
         sign_in(&client).await;
         world.server.drop_next_request();
-        let waiter = life.mutate_wait(None, OTP.into(), json!({}).to_string(), 0);
+        let waiter = life.mutate_for_call(None, OTP.into(), json!({}).to_string(), 0);
         let started = std::time::Instant::now();
         let pending = loop {
             if let (_, Some(pending)) = rows(&db) { break pending; }

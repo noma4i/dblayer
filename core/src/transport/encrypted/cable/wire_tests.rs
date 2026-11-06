@@ -354,7 +354,7 @@ fn authentication_refusal_before_ready_stops_without_reopening() { crate::test_w
     cable.settled().await.unwrap();
     assert_eq!(connect.opens.load(Ordering::SeqCst), 1);
     assert!(matches!(within(late.next()).await, Some(SubscriptionEvent::Failed(crate::transport::SubscriptionFailure { error: TransportError::Session { code: crate::transport::SessionCode::Unauthenticated, .. }, .. }))));
-    cable.resume();
+    cable.reconnect();
     let _signed_in = cable.subscribe(GraphQLRequest::new("subscription { recordEvents { __typename } }", "SignedInChanges", json!({}))).await.unwrap();
     cable.settled().await.unwrap();
     assert_eq!(connect.opens.load(Ordering::SeqCst), 2);

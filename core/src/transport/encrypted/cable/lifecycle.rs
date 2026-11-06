@@ -72,7 +72,7 @@ pub(super) enum Heard {
 pub(super) enum Event {
     Demand,
     Connectivity,
-    Resume,
+    Reconnect,
     Refuse(SubscriptionFailure),
     Opened,
     OpenFailed,
@@ -99,7 +99,7 @@ impl Transitions {
     fn refused(failure: &SubscriptionFailure, event: &Event) -> Outcome<State> {
         let _ = failure;
         match event {
-            Event::Resume => Transition(State::idle()),
+            Event::Reconnect => Transition(State::idle()),
             _ => Handled,
         }
     }

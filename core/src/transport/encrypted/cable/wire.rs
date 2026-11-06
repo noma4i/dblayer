@@ -33,7 +33,7 @@ struct Add {
 
 enum Command {
     Add(Add),
-    Resume,
+    Reconnect,
     #[cfg(test)]
     Settled(oneshot::Sender<()>),
 }
@@ -59,7 +59,7 @@ impl CableSubscriptions {
 
     pub fn wake_count(&self) -> usize { self.wakes.load(Ordering::Relaxed) }
 
-    pub fn resume(&self) { crate::lock::effect(|| { let _ = self.commands.send(Command::Resume); }); }
+    pub fn reconnect(&self) { crate::lock::effect(|| { let _ = self.commands.send(Command::Reconnect); }); }
 
     #[cfg(test)]
     pub async fn settled(&self) -> Result<(), TransportError> {
@@ -105,7 +105,7 @@ async fn await_connected<T>(next: impl std::future::Future<Output = T>, session:
             command = commands.recv() => {
                 match command {
                     Some(Command::Add(add)) => { let (_, subscription) = session.subscribe(add.request); crate::lock::effect(|| { let _ = add.reply.send(subscription); }); }
-                    Some(Command::Resume) => session.resume(),
+                    Some(Command::Reconnect) => session.reconnect(),
                     #[cfg(test)]
                     Some(Command::Settled(sender)) => { crate::lock::effect(|| { let _ = sender.send(()); }); }
                     None => return Err(TransportError::Interrupted("cable stopped".into())),
@@ -198,7 +198,7 @@ async fn run(config: EncryptedConfig, credential: Arc<dyn Fn() -> Result<String,
             command = commands.recv() => {
                 match command {
                     Some(Command::Add(add)) => { let (_, subscription) = session.subscribe(add.request); crate::lock::effect(|| { let _ = add.reply.send(subscription); }); }
-                    Some(Command::Resume) => session.resume(),
+                    Some(Command::Reconnect) => session.reconnect(),
                     #[cfg(test)]
                     Some(Command::Settled(sender)) => { crate::lock::effect(|| { let _ = sender.send(()); }); }
                     None => break,

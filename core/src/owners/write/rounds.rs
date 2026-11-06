@@ -76,7 +76,7 @@ impl RoundsState {
     }
 
     /// A job is asked for the epoch again: the refusal on the transfers goes.
-    fn resume(&mut self, epoch: Epoch, fx: &mut Fx) {
+    fn request_again(&mut self, epoch: Epoch, fx: &mut Fx) {
         if matches!(self.round, Round::Refused { epoch: refused } if refused == epoch) {
             self.status(epoch, None, fx);
         }
@@ -94,7 +94,7 @@ impl RoundsState {
         match self.round {
             Round::None => self.request(epoch, fx),
             Round::Requested { epoch: asked, .. } if asked != epoch => self.request(epoch, fx),
-            Round::Refused { .. } | Round::Stopped { .. } => self.resume(epoch, fx),
+            Round::Refused { .. } | Round::Stopped { .. } => self.request_again(epoch, fx),
             Round::Running { round_id, epoch: running, ended, .. } if running != epoch => self.round = Round::Running { round_id, epoch: running, next: Some(epoch), ended },
             _ => {}
         }
@@ -111,7 +111,7 @@ impl RoundsState {
             _ => false,
         };
         if waits && self.busy(epoch) {
-            self.resume(epoch, fx);
+            self.request_again(epoch, fx);
         }
     }
 

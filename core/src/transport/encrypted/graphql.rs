@@ -76,7 +76,7 @@ impl EncryptedTransport {
     /// A request with a `sequence`: the owner Session sends it, in order with every other request of the session.
     async fn mutate_owned(&self, path: &str, body: Value, owner: Option<crate::transport::RequestOwner>, purpose: crate::transport::NetworkPurpose) -> Result<Answer, TransportError> {
         let life = self.life.get().and_then(Weak::upgrade).ok_or_else(|| TransportError::Interrupted("the database closed".into()))?;
-        let waiter = life.mutate_wait(owner, path.to_string(), body.to_string(), u8::from(purpose == crate::transport::NetworkPurpose::Transfer));
+        let waiter = life.mutate_for_call(owner, path.to_string(), body.to_string(), u8::from(purpose == crate::transport::NetworkPurpose::Transfer));
         match waiter.wait().await {
             crate::runtime::Outcome::Value(crate::owners::life::LifeReply::Mutated(outcome)) => match outcome {
                 crate::owners::session::AuthorOutcome::Response(text) => Ok(Answer { sequence: None, body: serde_json::from_str(&text).map_err(|error| TransportError::Decode(error.to_string()))? }),
@@ -127,7 +127,7 @@ pub fn missing_from_registry(response: &Response) -> bool {
 #[async_trait]
 impl Transport for EncryptedTransport {
     fn retries_queries(&self) -> bool { true }
-    fn resume_subscriptions(&self) { self.cable.resume(); }
+    fn resume_subscriptions(&self) { self.cable.reconnect(); }
     fn session(&self) -> Result<Option<String>, TransportError> {
         Ok(super::credential::stored_session(&self.store)?.filter(|session| session.sequence > 0).map(|session| session.credential_digest))
     }

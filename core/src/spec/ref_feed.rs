@@ -272,7 +272,7 @@ impl Feed {
         }
     }
 
-    fn flush(&mut self, effects: &mut Vec<Effect>) {
+    fn commit_pending(&mut self, effects: &mut Vec<Effect>) {
         let events = std::mem::take(&mut self.pending);
         self.commit(events, effects);
     }
@@ -391,7 +391,7 @@ impl Feed {
             Mode::Live => {
                 self.mode = Mode::Off { gap: false };
                 if !self.pending.is_empty() {
-                    self.flush(&mut effects);
+                    self.commit_pending(&mut effects);
                 }
                 self.close_all(&mut effects);
             }
@@ -412,7 +412,7 @@ impl Feed {
             }
             (Mode::Live, To::Active) => {
                 if !self.pending.is_empty() {
-                    self.flush(&mut effects);
+                    self.commit_pending(&mut effects);
                 }
                 self.active = None;
                 self.mode = Mode::Opening { gap: true };
@@ -479,7 +479,7 @@ impl Feed {
             Mode::Live if !on => {
                 self.mode = Mode::Off { gap: true };
                 if !self.pending.is_empty() {
-                    self.flush(&mut effects);
+                    self.commit_pending(&mut effects);
                 }
                 self.close_all(&mut effects);
             }
@@ -551,7 +551,7 @@ impl Feed {
                     return effects;
                 }
                 if self.mode == Mode::Live && !self.pending.is_empty() {
-                    self.flush(&mut effects);
+                    self.commit_pending(&mut effects);
                 }
                 match dropped {
                     Some(counts) => {
@@ -584,7 +584,7 @@ impl Feed {
             Input::StrayBatch => {}
             Input::Tick => {
                 if self.mode == Mode::Live && !self.pending.is_empty() {
-                    self.flush(&mut effects);
+                    self.commit_pending(&mut effects);
                 }
             }
             Input::Online(on) => return self.online_changed(on),

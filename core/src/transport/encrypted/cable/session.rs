@@ -48,7 +48,7 @@ impl CableSession {
 
     pub fn take_frames(&mut self) -> Vec<Value> { std::mem::take(&mut self.lifecycle.core.frames) }
 
-    pub fn resume(&mut self) { self.lifecycle.handle(Event::Resume); }
+    pub fn reconnect(&mut self) { self.lifecycle.handle(Event::Reconnect); }
 
     pub fn refuse(&mut self, failure: SubscriptionFailure) { self.lifecycle.handle(Event::Refuse(failure)); }
 

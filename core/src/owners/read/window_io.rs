@@ -63,7 +63,7 @@ impl WindowIo {
         }
         let token = CancelToken::new();
         self.open.lock().unwrap_or_else(PoisonError::into_inner).insert((request, attempt), token.clone());
-        let (transport, codec, open, back) = (self.transport.clone(), self.codec.clone(), self.open.clone(), back.clone());
+        let (transport, codec, open, back, admit) = (self.transport.clone(), self.codec.clone(), self.open.clone(), back.clone(), self.admit.clone());
         let launch = self.counted.as_ref().map(crate::runtime::Handle::launch);
         #[cfg(test)]
         let flight = self.flights.as_ref().map(super::ports::InFlight::start);
@@ -73,7 +73,10 @@ impl WindowIo {
             let outcome = tokio::select! {
                 biased;
                 () = token.cancelled() => None,
-                outcome = ask(transport.as_deref(), codec.as_ref(), &key, page, cursor.as_deref()) => Some(outcome),
+                outcome = async {
+                    if let Err(refused) = admit(epoch) { return TransportOutcome::Error(RequestError { message: refused.0, class: ErrorClass::Permanent, source: None }); }
+                    ask(transport.as_deref(), codec.as_ref(), &key, page, cursor.as_deref()).await
+                } => Some(outcome),
             };
             open.lock().unwrap_or_else(PoisonError::into_inner).remove(&(request, attempt));
             if let Some(outcome) = outcome.filter(|_| !token.is_cancelled()) {

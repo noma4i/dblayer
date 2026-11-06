@@ -12,12 +12,16 @@ pub(crate) fn apply_envelope(
 pub(super) fn apply_envelope_at(
     connection: &Connection,
     models: &BTreeMap<String, ModelInfo>,
-    envelope: &CommitEnvelope,
+    planned: &CommitEnvelope,
     now_ms: i64,
     prune: TombstonePrune,
     revision: i64,
     mut originals: Option<&mut BTreeMap<RowRef, Option<Map<String, Value>>>>,
 ) -> Result<CommitResult, StoreError> {
+    let mut followed = planned.clone();
+    super::follow_removed::follow_removed_by(connection, models, &mut followed)?;
+    super::follow_pointer::follow_parent_pointers(connection, models, &mut followed)?;
+    let envelope = &followed;
     if let Some(originals) = originals.as_deref_mut() {
         let reader = Reader::new(connection, models);
         for operation in &envelope.entity_ops {

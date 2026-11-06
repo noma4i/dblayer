@@ -178,7 +178,7 @@ fn revoke_finishes_every_subscription_and_unavailable_keeps_them_for_retry() { c
             let (_, mut late) = session.subscribe(request());
             assert!(matches!(tokio::time::timeout(Duration::from_secs(1), late.next()).await.expect("late failure delivered"), Some(SubscriptionEvent::Failed(_))));
             assert!(!session.is_connecting());
-            session.resume();
+            session.reconnect();
             let _signed_in = session.subscribe(request());
             assert!(session.is_connecting());
         } else {
