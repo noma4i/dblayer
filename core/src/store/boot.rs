@@ -128,10 +128,10 @@ impl Store {
         self.overlays.reset(super::rows::read_revision(&inner.connection)?);
         drop(inner);
         drop(reading_models);
-        if let Some((database, files)) = removed_files { crate::files::FileDirectories::beside(std::path::Path::new(&database)).discard(&files)?; }
-        if let Some(database) = remove_all_files { crate::files::FileDirectories::beside(std::path::Path::new(&database)).remove_all()?; }
+        if let Some((database, files)) = removed_files { crate::store::files::FileDirectories::beside(std::path::Path::new(&database)).discard(&files)?; }
+        if let Some(database) = remove_all_files { crate::store::files::FileDirectories::beside(std::path::Path::new(&database)).remove_all()?; }
         if !database.is_empty() {
-            let directories = crate::files::FileDirectories::beside(std::path::Path::new(&database));
+            let directories = crate::store::files::FileDirectories::beside(std::path::Path::new(&database));
             directories.recover_partials(&files)?;
             remove_unheld_transfer_copies(&directories, &transfer_holders)?;
         }
@@ -139,7 +139,7 @@ impl Store {
     }
 }
 
-fn remove_unheld_transfer_copies(directories: &crate::files::FileDirectories, holders: &std::collections::HashSet<String>) -> std::io::Result<()> {
+fn remove_unheld_transfer_copies(directories: &crate::store::files::FileDirectories, holders: &std::collections::HashSet<String>) -> std::io::Result<()> {
     let Some(copies) = directories.path("transfers") else { return Ok(()) };
     let entries = match std::fs::read_dir(&copies) {
         Ok(entries) => entries,

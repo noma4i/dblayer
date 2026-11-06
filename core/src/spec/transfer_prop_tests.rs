@@ -3,7 +3,7 @@
 use std::collections::BTreeMap;
 
 use super::transfer_harness::*;
-use crate::files::Location;
+use crate::store::files::Location;
 use crate::owners::contract::RejectReason;
 use crate::owners::write::outbox::{Fault, OutboxOutcome};
 use crate::owners::write::transfer::{Shown, TransferAnswer, TransferEffect, TransferId, TransferInput, TransferStage, TransferTick};

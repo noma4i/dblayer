@@ -3,7 +3,7 @@
 use std::marker::PhantomData;
 use std::sync::PoisonError;
 
-use crate::files::Location;
+use crate::store::files::Location;
 use crate::owners::contract::{BatchId, Committed, Online, RejectReason, Rejected, ReplyId};
 use crate::owners::store::{StoreBatch, StoreInput, StoreOp, StoreWriter, UploadKind, UploadRow};
 use crate::owners::support::{new_log, take, Discard, Emitted, Log, NoEffect, Silent, Spy, SpyState};

@@ -12,7 +12,6 @@ pub mod write;
 pub mod store;
 pub mod query;
 pub mod read;
-pub mod files;
 pub mod upload;
 pub mod ffi;
 #[cfg(test)]

@@ -4,7 +4,7 @@ use serde_json::{Map, Value};
 
 use crate::store::{BatchPlan, CommitResult, DestroyReason, EntityOp, OperationTransition, ScopeOp};
 use crate::operation::OperationStatus;
-use crate::files::references_of_row;
+use crate::store::files::references_of_row;
 use crate::identity::{ModelKey, RowId};
 use crate::store::{Reader, StoreError};
 

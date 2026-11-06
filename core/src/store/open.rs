@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use rusqlite::{Connection, ErrorCode};
 
 use crate::store::ddl::{create_core_tables, prepare_connection, sql_ident, DdlError, CARRIED_TABLES};
-use crate::files::FileDirectories;
+use crate::store::files::FileDirectories;
 
 use super::{Store, StoreError};
 

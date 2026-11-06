@@ -258,7 +258,7 @@ fn xfer_copy_ready_other() {
         TransferInput::Online(Online(true)),
         TransferInput::PowerSaving(true),
         TransferInput::SlotFreed,
-        TransferInput::CopyDone { transfer_id: ids[0], attempt_id: 999, size: 1, sha256: "x".into(), place: crate::files::Location::Directory, cached: crate::owners::write::transfer::CachedBlob::Miss },
+        TransferInput::CopyDone { transfer_id: ids[0], attempt_id: 999, size: 1, sha256: "x".into(), place: crate::store::files::Location::Directory, cached: crate::owners::write::transfer::CachedBlob::Miss },
         TransferInput::CopyFailed { transfer_id: ids[0], attempt_id: 999, error: "late".into() },
     ]);
     twin.ignores(ids[0], inputs);
@@ -271,9 +271,9 @@ fn xfer_copy_stray() {
     twin.ignores(
         id,
         vec![
-            TransferInput::CopyDone { transfer_id: id, attempt_id: 999, size: 1, sha256: "x".into(), place: crate::files::Location::Directory, cached: crate::owners::write::transfer::CachedBlob::Miss },
+            TransferInput::CopyDone { transfer_id: id, attempt_id: 999, size: 1, sha256: "x".into(), place: crate::store::files::Location::Directory, cached: crate::owners::write::transfer::CachedBlob::Miss },
             TransferInput::CopyFailed { transfer_id: id, attempt_id: 999, error: "late".into() },
-            TransferInput::CopyDone { transfer_id: id + 50, attempt_id: twin.attempt(id), size: 1, sha256: "x".into(), place: crate::files::Location::Directory, cached: crate::owners::write::transfer::CachedBlob::Miss },
+            TransferInput::CopyDone { transfer_id: id + 50, attempt_id: twin.attempt(id), size: 1, sha256: "x".into(), place: crate::store::files::Location::Directory, cached: crate::owners::write::transfer::CachedBlob::Miss },
         ],
     );
 }

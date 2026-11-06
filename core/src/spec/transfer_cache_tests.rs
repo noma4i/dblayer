@@ -1,7 +1,7 @@
 //! Owner-level tests of the owner `Transfer`: the cache of server blobs by the content of a copy (D-67).
 
 use super::transfer_harness::*;
-use crate::files::Location;
+use crate::store::files::Location;
 use crate::owners::store::{StoreOp, UploadKind};
 use crate::owners::write::transfer::{CachedBlob, Shown, TransferAnswer, TransferId, TransferInput, TransferStage};
 

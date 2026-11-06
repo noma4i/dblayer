@@ -4,7 +4,7 @@ use rusqlite::{params, Connection, OptionalExtension};
 use serde_json::Value;
 
 use crate::store::ddl::{fingerprint, fts_tables, manifest_stamp, manifest_write, FieldPlan, REVISION_SEQ_KEY};
-use crate::files::{clear_all, clear_model};
+use crate::store::files::{clear_all, clear_model};
 use crate::identity::ListKey;
 use crate::store::nodes::read_trees;
 use crate::operation::{delete_operation, quarantine_add, read_value, Operation, QuarantineReason};

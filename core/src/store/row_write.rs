@@ -73,7 +73,7 @@ impl RowWrite<'_> {
         super::apply::apply_envelope_at(self.connection, self.models, &envelope, self.now, self.revision, Some(self.originals))
     }
 
-    pub fn attach(&mut self, record: &crate::files::FileRecord) -> Result<CommitResult, StoreError> {
+    pub fn attach(&mut self, record: &crate::store::files::FileRecord) -> Result<CommitResult, StoreError> {
         let reader = Reader::new(self.connection, self.models);
         let mut envelope = BatchPlan::new(self.generation);
         super::file_write::attach(&reader, self.models, &mut envelope, record)?;

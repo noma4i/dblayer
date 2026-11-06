@@ -6,7 +6,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use super::outbox::{Fault, NewOp, Outbox, OutboxOutcome, Receipt};
 use super::outbox_types::{OpId, Phase};
 use super::rounds::Rounds;
-use crate::files::Location;
+use crate::store::files::Location;
 use crate::owners::contract::{BatchId, Committed, Drained, EpochEnded, EpochStarted, ModelsReset, Online, Rejected, ReplyId};
 use crate::owners::store::{StoreWriter, UploadRow};
 use crate::runtime::{Address, Effect, Effects, Epoch, Time};

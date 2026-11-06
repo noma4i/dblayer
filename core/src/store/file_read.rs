@@ -2,7 +2,7 @@
 
 use std::path::PathBuf;
 
-use crate::files::{find, FileDescriptor, FileRecord, Location};
+use crate::store::files::{find, FileDescriptor, FileRecord, Location};
 use crate::identity::RowId;
 use crate::schema::FieldKind;
 

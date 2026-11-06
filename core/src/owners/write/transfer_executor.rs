@@ -12,7 +12,7 @@ use async_trait::async_trait;
 
 use super::transfer::{file_id, CachedBlob, ShowSink, Shown, Source, Steps, TransferAnswer, TransferEffect, TransferId, TransferInput, Transfers};
 use super::wire::{Flights, Running, Wire};
-use crate::files::{CopiedSource, FileDirectories};
+use crate::store::files::{CopiedSource, FileDirectories};
 use crate::owners::contract::{Drained, ReplyId};
 use crate::runtime::{Back, EffectRunner, Epoch, EpochStamp};
 use crate::transport::{CancelToken, GraphQLRequest, NetworkPurpose, PutRequest, PutResponse, Response, RetryClass, Transport, TransportError};
@@ -252,14 +252,14 @@ impl TransferExecutor {
 }
 
 /// A copy below the limit of the table also lies in the directory (or in the cache without one): the bytes of the steps come from one place.
-fn keep_small_copy(files: &FileDirectories, id: &str, location: crate::files::Location, data: &[u8]) -> std::io::Result<crate::files::Location> {
-    if location == crate::files::Location::Directory { return Ok(location); }
+fn keep_small_copy(files: &FileDirectories, id: &str, location: crate::store::files::Location, data: &[u8]) -> std::io::Result<crate::store::files::Location> {
+    if location == crate::store::files::Location::Directory { return Ok(location); }
     if files.has_directory() {
         files.write(id, data)?;
-        Ok(crate::files::Location::Directory)
+        Ok(crate::store::files::Location::Directory)
     } else {
         files.materialize(id, "source", data)?;
-        Ok(crate::files::Location::Table)
+        Ok(crate::store::files::Location::Table)
     }
 }
 

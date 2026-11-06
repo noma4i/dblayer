@@ -6,7 +6,7 @@ use std::sync::{Arc, OnceLock};
 
 use crate::store::{BatchPlan, CommitResult, EntityOp};
 use crate::store::ddl::{table_name, ManifestVerdict, RecreateReason};
-use crate::files::FileDirectories;
+use crate::store::files::FileDirectories;
 use crate::identity::{ModelKey, RowRef};
 use crate::operation::{apply_fsck, fsck_plan, open_operations, rebuilt_rows, FsckAction, Orphan, Orphans, OutboxQueue};
 use crate::schema::{reserved_member_names, resolve_types, validate_models, AssociationKind, AssociationSpec, ModelSpec};

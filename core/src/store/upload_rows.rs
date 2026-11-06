@@ -2,7 +2,7 @@
 
 use std::collections::BTreeMap;
 
-use crate::files::Location;
+use crate::store::files::Location;
 use crate::owners::store::IntentEffects;
 use crate::owners::write::outbox::{NewOp, OpSource};
 use crate::owners::write::transfer::{Source, Steps, StoredTransfer};

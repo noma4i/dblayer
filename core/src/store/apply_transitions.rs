@@ -268,7 +268,7 @@ fn write_item_source(connection: &Connection, seq: i64, position: i64, item: &cr
         Ok(file) => {
             let mut file = file.clone();
             file.field = format!("op_item.{seq}.{position}");
-            crate::files::put(connection, &file)?;
+            crate::store::files::put(connection, &file)?;
             (Some(file.id), None)
         }
         Err(error) => (None, Some(error)),

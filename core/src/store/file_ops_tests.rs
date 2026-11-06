@@ -1,7 +1,7 @@
 use super::fixtures::*;
 use super::*;
 use crate::store::{BatchPlan, DestroyReason, EntityOp, FileOp};
-use crate::files::{find, FileDescriptor, FileRecord, Location};
+use crate::store::files::{find, FileDescriptor, FileRecord, Location};
 
 fn file(id: &str, row: &str, field: &str, data: &[u8]) -> FileRecord {
     FileRecord {

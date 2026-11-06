@@ -10,6 +10,7 @@ use crate::pacing::{Clock, Counters, SystemClock};
 use crate::schema::{ModelSpec, SearchPath};
 
 pub mod ddl;
+pub mod files;
 pub mod nodes;
 mod admission;
 mod context;

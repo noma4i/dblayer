@@ -1,6 +1,21 @@
 use rusqlite::{params, Connection, OptionalExtension, Row};
 
-use super::descriptor::FileDescriptor;
+mod descriptor;
+mod directories;
+
+pub use descriptor::FileDescriptor;
+pub(crate) use descriptor::sha256_hex;
+pub(crate) use directories::{CopiedSource, FileDirectories};
+
+pub(crate) const TABLE_LIMIT: usize = 256 * 1024;
+
+pub(crate) fn placement(length: usize, has_directory: bool) -> Location {
+    if length <= TABLE_LIMIT || !has_directory {
+        Location::Table
+    } else {
+        Location::Directory
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Location {
@@ -78,7 +93,7 @@ pub(crate) fn put(connection: &Connection, record: &FileRecord) -> rusqlite::Res
     remove_pair(connection, &record.model, &record.row_id, &record.field)?;
     let data = (record.location == Location::Table).then_some(record.data.as_slice());
     connection.execute(
-        &format!(include_str!("../store/sql/files/put.sql"), COLUMNS = COLUMNS),
+        &format!(include_str!("sql/files/put.sql"), COLUMNS = COLUMNS),
         params![
             record.id,
             record.model,
@@ -99,7 +114,7 @@ pub(crate) fn put(connection: &Connection, record: &FileRecord) -> rusqlite::Res
 pub(crate) fn find(connection: &Connection, model: &str, row_id: &str, field: &str) -> rusqlite::Result<Option<FileRecord>> {
     connection
         .query_row(
-            &format!(include_str!("../store/sql/files/find.sql"), COLUMNS = COLUMNS),
+            &format!(include_str!("sql/files/find.sql"), COLUMNS = COLUMNS),
             params![model, row_id, field],
             record_from,
         )
@@ -107,29 +122,36 @@ pub(crate) fn find(connection: &Connection, model: &str, row_id: &str, field: &s
 }
 
 pub(crate) fn remove_pair(connection: &Connection, model: &str, row_id: &str, field: &str) -> rusqlite::Result<usize> {
-    connection.execute(include_str!("../store/sql/files/remove_pair.sql"), params![model, row_id, field])
+    connection.execute(include_str!("sql/files/remove_pair.sql"), params![model, row_id, field])
 }
 
 pub(crate) fn remove_row(connection: &Connection, model: &str, row_id: &str) -> rusqlite::Result<usize> {
-    connection.execute(include_str!("../store/sql/files/remove_row.sql"), params![model, row_id])
+    connection.execute(include_str!("sql/files/remove_row.sql"), params![model, row_id])
 }
 
 pub(crate) fn move_row(connection: &Connection, model: &str, from: &str, to: &str) -> rusqlite::Result<usize> {
-    connection.execute(include_str!("../store/sql/files/move_row.sql"), params![model, from, to])
+    connection.execute(include_str!("sql/files/move_row.sql"), params![model, from, to])
 }
 
 pub(crate) fn references_of_row(connection: &Connection, model: &str, row_id: &str) -> rusqlite::Result<Vec<FileReference>> {
     connection
-        .prepare(include_str!("../store/sql/files/references_of_row.sql"))?
+        .prepare(include_str!("sql/files/references_of_row.sql"))?
         .query_map(params![model, row_id], reference_from)?
         .collect()
 }
 
 
 pub(crate) fn clear_model(connection: &Connection, model: &str) -> rusqlite::Result<usize> {
-    connection.execute(include_str!("../store/sql/files/clear_model.sql"), [model])
+    connection.execute(include_str!("sql/files/clear_model.sql"), [model])
 }
 
 pub(crate) fn clear_all(connection: &Connection) -> rusqlite::Result<usize> {
-    connection.execute(include_str!("../store/sql/files/clear_all.sql"), [])
+    connection.execute(include_str!("sql/files/clear_all.sql"), [])
 }
+
+#[cfg(test)]
+mod descriptor_tests;
+#[cfg(test)]
+mod directories_tests;
+#[cfg(test)]
+mod table_tests;

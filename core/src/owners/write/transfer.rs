@@ -183,7 +183,7 @@ impl TransferState {
 
     pub(super) fn delete_copy(&self, id: TransferId, fx: &mut Fx) {
         if let Some(transfer) = self.transfers.get(&id) {
-            if transfer.place != Some(crate::files::Location::Table) {
+            if transfer.place != Some(crate::store::files::Location::Table) {
                 run(fx, TransferEffect::DeleteFile { path: file_id(transfer.transfer_id) });
             }
         }

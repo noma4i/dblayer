@@ -18,7 +18,7 @@ use crate::owners::support::{StoreStub, StoreStubState};
 use super::transfer::{file_id, BatchItem, Shown, Source, Steps, TransferAnswer, TransferInput, TransferPeers, TransferStage, TransferState, Transfers};
 use super::transfer_executor::{Link, StepCodec, StepDone, TransferExecutor, TransferSinks};
 use super::wire::Wire;
-use crate::files::FileDirectories;
+use crate::store::files::FileDirectories;
 use crate::owners::contract::{Online, ReplyId};
 use crate::runtime::{Address, DetScheduler, EpochStamp, Time};
 use crate::transport::{CancelToken, GraphQLRequest, NetworkPurpose, PutFile, PutRequest, Response, TransferIdentity, TransferStep, TransportError};

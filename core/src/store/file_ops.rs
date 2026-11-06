@@ -1,7 +1,7 @@
 use rusqlite::Connection;
 
 use crate::store::{DestroyReason, FileOp};
-use crate::files::{move_row, put, remove_pair, remove_row};
+use crate::store::files::{move_row, put, remove_pair, remove_row};
 use crate::identity::{ModelKey, RowId};
 
 use super::StoreError;

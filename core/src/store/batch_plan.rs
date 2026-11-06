@@ -3,7 +3,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use serde_json::{Map, Value};
 use uuid::Uuid;
 
-use crate::files::FileRecord;
+use crate::store::files::FileRecord;
 use crate::identity::{Generation, ModelKey, RowId, RowRef, ListKey};
 use crate::operation::OperationStatus;
 use crate::syncstate::OperationFailure;

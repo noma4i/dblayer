@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 
-use crate::files::{FileDirectories, Location};
+use crate::store::files::{FileDirectories, Location};
 use crate::owners::contract::BatchAuthor;
 use crate::owners::store::{RowValue, StoreBatch};
 use crate::schema::AssociationSpec;
