@@ -9,10 +9,7 @@ use crate::identity::{Generation, ModelKey, RowId};
 use crate::store::{Reader, StoreError};
 
 use crate::lifecycle::authority::Authority;
-use super::error::DbError;
-use super::local_write::{plan_fault, OutboxOperation};
-use super::open::Db;
-use super::prior::{Prior, PriorRow};
+use crate::db::{plan_fault, Db, DbError, OutboxOperation, Prior, PriorRow};
 
 pub(crate) type Still<'a> = dyn Fn(&Reader<'_>, &OutboxOperation) -> Result<bool, StoreError> + 'a;
 
@@ -130,12 +127,11 @@ fn writes(row: &PriorRow, hidden: bool, model: &str, id: &str, field: &str) -> b
     }
 }
 
-fn restore(reader: &Reader<'_>, outbox: &[OutboxOperation], entry: &OutboxOperation) -> Result<Restore, StoreError> {
+fn restore(reader: &Reader<'_>, outbox: &[OutboxOperation], entry: &OutboxOperation, revision: i64) -> Result<Restore, StoreError> {
     let mut plan = Restore::default();
     let Some(prior) = Prior::of(entry)? else { return Ok(plan) };
     let own = entry.operation.id.0;
     let mut chain = Chain::new(outbox, own)?;
-    let revision = reader.revision_seq()? + 1;
     for row in &prior.rows {
         let Ok(row_id) = RowId::new(row.id()) else { continue };
         match row {
@@ -150,7 +146,7 @@ fn restore(reader: &Reader<'_>, outbox: &[OutboxOperation], entry: &OutboxOperat
                 plan.scope_ops.extend(scope_ops);
             }
             PriorRow::Join { model, id, scope_key, before, .. } | PriorRow::Leave { model, id, scope_key, before, .. } => {
-                restore_member(reader, &mut chain, own, (model, id, scope_key), before, &mut plan)?;
+                restore_member(reader, &mut chain, own, (model, id, scope_key), before, revision, &mut plan)?;
             }
             PriorRow::Edited { model, id, before, owned } => {
                 restore_edit(reader, &mut chain, own, (model, id), (before, owned), revision, &mut plan)?;
@@ -162,7 +158,7 @@ fn restore(reader: &Reader<'_>, outbox: &[OutboxOperation], entry: &OutboxOperat
 }
 
 /// A refused change of a list member puts the member back the way it was before the operation, unless a later operation changed it again: that one inherits the state and decides.
-fn restore_member(reader: &Reader<'_>, chain: &mut Chain<'_>, own: i64, (model, id, scope_key): (&str, &str, &str), before: &Option<String>, plan: &mut Restore) -> Result<(), StoreError> {
+fn restore_member(reader: &Reader<'_>, chain: &mut Chain<'_>, own: i64, (model, id, scope_key): (&str, &str, &str), before: &Option<String>, revision: i64, plan: &mut Restore) -> Result<(), StoreError> {
     if let Some(later) = chain.later_member_writer(own, model, id, scope_key) {
         chain.hand_down_member(later, (model, id, scope_key), before);
         return Ok(());
@@ -175,7 +171,7 @@ fn restore_member(reader: &Reader<'_>, chain: &mut Chain<'_>, own: i64, (model, 
     let (Ok(row), key) = (RowId::new(id), crate::identity::ListKey::from_raw(scope_key)) else { return Ok(()) };
     let scope = crate::commit::ScopeRef::new(ModelKey::new(model), key);
     let present = reader.scope_has_member(model, scope_key, id)?;
-    chain.reown_member(own, (model, id, scope_key), reader.revision_seq()? + 1);
+    chain.reown_member(own, (model, id, scope_key), revision);
     match (before, present) {
         (Some(order_key), true) => plan.scope_ops.push(ScopeOp::Move { scope, row, order_key: order_key.clone() }),
         (Some(order_key), false) => plan.scope_ops.push(ScopeOp::Append { scope, row, order_key: order_key.clone() }),
@@ -241,7 +237,7 @@ impl Db {
             if remove_row {
                 let mut selected = entry.clone();
                 selected.rollback = Some(Prior { rows: prior.rows.iter().filter(|row| row.id() == id.as_str()).cloned().collect() }.to_value());
-                let plan = restore(reader, &Prior::related_operations(reader, &selected)?, &selected)?;
+                let plan = restore(reader, &Prior::related_operations(reader, &selected)?, &selected, reader.revision_seq()? + 1)?;
                 envelope.entity_ops = plan.entity_ops;
                 envelope.scope_ops = plan.scope_ops;
                 envelope.operation_transitions = plan.transitions;
@@ -308,7 +304,7 @@ impl Db {
                     (None, None) => return Err(DbError::UnknownOperation(seq)),
                     (None, Some(_)) => return Ok(None),
                 };
-                let plan = restore(reader, &Prior::related_operations(reader, &entry)?, &entry)?;
+                let plan = restore(reader, &Prior::related_operations(reader, &entry)?, &entry, reader.revision_seq()? + 1)?;
                 let mut envelope = CommitEnvelope::new(WriteOrigin::Optimistic, generation);
                 envelope.entity_ops = plan.entity_ops;
                 envelope.scope_ops = plan.scope_ops;
@@ -319,7 +315,7 @@ impl Db {
             })
             .map_err(plan_fault)?;
         let result = result.publish();
-        self.shared.files.discard(&discarded).map_err(super::files::io_fault)?;
+        self.shared.files.discard(&discarded).map_err(|error| DbError::Store(StoreError::from(error)))?;
         Ok(result)
     }
 }

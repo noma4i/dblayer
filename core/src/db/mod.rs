@@ -46,11 +46,8 @@ mod upload;
 #[cfg(test)]
 mod prior_tests;
 mod record_sync;
-mod references;
 mod reset;
-mod roll_back;
 mod row;
-mod swap;
 mod threads;
 
 pub use diff::{Diff, Entry, Stamp};
@@ -60,6 +57,8 @@ pub use local_write::{Acted, OutboxOperation};
 pub use open::{Db, DbConfig, DroppedRecord, OpenReport};
 pub use row::{Record, Row};
 pub(crate) use prior::{Prior, PriorRow};
+pub(crate) use prior::swap_id;
+pub(crate) use local_write::{plan_fault, read_outbox};
 pub(crate) use open::locked;
 #[cfg(test)]
 pub(crate) use open::Shared;

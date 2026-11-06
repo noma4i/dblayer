@@ -76,7 +76,7 @@ impl Db {
         if replacements.is_empty() { return Ok(()) }
         let outbox = read_outbox(reader)?;
         for (model, temp, id, own) in replacements {
-            self.swap_temp(reader, envelope, &outbox, super::swap::TempReplacement { model: model.as_str(), temp: &temp, real: &id }, own)?;
+            self.swap_temp(reader, envelope, &outbox, crate::store::swap::TempReplacement { model: model.as_str(), temp: &temp, real: &id }, own)?;
         }
         Ok(())
     }

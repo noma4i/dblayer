@@ -4,20 +4,18 @@ use crate::operation::Operation;
 use crate::store::Reader;
 use crate::value::read_id;
 
-use super::error::DbError;
-use super::local_write::OutboxOperation;
-use super::open::Db;
-use super::prior::{swap_id, Prior};
-use super::references::ReferencingRow;
+use crate::db::{swap_id, Db, DbError, OutboxOperation, Prior};
+use super::references::{references_to, rows_referencing, ReferencingRow};
+use super::StoreError;
 
-pub(super) struct Swap<'a> {
+pub(crate) struct Swap<'a> {
     pub model: &'a str,
     pub temp: &'a RowId,
     pub real: &'a RowId,
     pub references: &'a [(String, String)],
 }
 
-pub(super) fn retarget(entry: &OutboxOperation, swap: &Swap<'_>) -> Result<Option<OperationTransition>, crate::store::StoreError> {
+pub(crate) fn retarget(entry: &OutboxOperation, swap: &Swap<'_>) -> Result<Option<OperationTransition>, crate::store::StoreError> {
     let Swap { model, temp, real, references } = *swap;
     let owner = Operation::split_action_key(&entry.operation.action_key).map(|(owner, _)| owner).unwrap_or_default();
     let mut input = entry.input.clone();
@@ -49,18 +47,23 @@ pub(crate) struct TempReplacement<'a> {
 
 impl Db {
     pub(crate) fn swap_temp(&self, reader: &Reader<'_>, envelope: &mut CommitEnvelope, outbox: &[OutboxOperation], replacement: TempReplacement<'_>, own: i64) -> Result<(), DbError> {
+        plan(reader, envelope, outbox, replacement, own).map_err(DbError::from)
+    }
+}
+
+fn plan(reader: &Reader<'_>, envelope: &mut CommitEnvelope, outbox: &[OutboxOperation], replacement: TempReplacement<'_>, own: i64) -> Result<(), StoreError> {
         let TempReplacement { model, temp, real } = replacement;
         let followed = |other: &&OutboxOperation| other.operation.id.0 != own && other.operation.row_ids.contains(temp);
         if outbox.iter().filter(followed).any(|follower| follower.operation.action_key.ends_with(":destroy")) {
             envelope.entity_ops.retain(|operation| !matches!(operation, EntityOp::Upsert { model: owner, id, .. } if owner.as_str() == model && id == real));
             envelope.entity_ops.push(EntityOp::Destroy { model: ModelKey::new(model), id: real.clone(), reason: DestroyReason::Local });
         }
-        self.carry_locals(reader, envelope, model, temp, real)?;
+        carry_locals(reader, envelope, model, temp, real)?;
         envelope.entity_ops.push(EntityOp::Destroy { model: ModelKey::new(model), id: temp.clone(), reason: DestroyReason::Replaced { by: real.clone() } });
-        let references = self.references_to(model);
+        let references = references_to(reader.models(), model);
         let swap = Swap { model, temp, real, references: &references };
         envelope.operation_transitions.extend(outbox.iter().filter(|other| other.operation.id.0 != own).filter_map(|other| retarget(other, &swap).transpose()).collect::<Result<Vec<_>, _>>()?);
-        for ReferencingRow { model: owner, field, mut row } in self.rows_referencing(reader, &references, temp)? {
+        for ReferencingRow { model: owner, field, mut row } in rows_referencing(reader, reader.models(), &references, temp)? {
             let Some(child) = row.get("id").and_then(read_id) else { continue };
             if let Some(value) = row.get_mut(&field) { swap_id(value, temp, real); }
             let landing = envelope.entity_ops.iter_mut().find_map(|op| match op {
@@ -79,12 +82,12 @@ impl Db {
             }
         }
         Ok(())
-    }
+}
 
     /// The `local` fields of the temporary row go to the row of the answer unless the answer brings its own value (P-OUT-22).
-    fn carry_locals(&self, reader: &Reader<'_>, envelope: &mut CommitEnvelope, model: &str, temp: &RowId, real: &RowId) -> Result<(), DbError> {
+fn carry_locals(reader: &Reader<'_>, envelope: &mut CommitEnvelope, model: &str, temp: &RowId, real: &RowId) -> Result<(), StoreError> {
         let Some(held) = reader.point(model, temp.as_str())? else { return Ok(()) };
-        let spec = self.shared.spec(model)?;
+        let spec = &reader.models().get(model).ok_or_else(|| StoreError::UnknownModel(model.to_string()))?.spec;
         for field in spec.fields.iter().filter(|field| matches!(field.merge, Some(crate::schema::MergeRule::Local))) {
             let Some(value) = held.get(&field.name).filter(|value| !value.is_null()) else { continue };
             let landing = envelope.entity_ops.iter_mut().find_map(|op| match op {
@@ -98,5 +101,4 @@ impl Db {
             }
         }
         Ok(())
-    }
 }

@@ -12,7 +12,7 @@ use crate::lifecycle::authority::Authority;
 use super::error::DbError;
 use super::local_write::{plan_fault, read_outbox};
 use crate::store::merge::{admitted, Admission};
-use super::swap::TempReplacement;
+use crate::store::swap::TempReplacement;
 use super::open::Db;
 use super::prior::{Prior, PriorRow};
 

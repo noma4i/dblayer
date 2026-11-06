@@ -2,7 +2,7 @@ use serde_json::json;
 
 use super::fixtures::*;
 use super::prior::Prior;
-use super::swap::{retarget, Swap};
+use crate::store::swap::{retarget, Swap};
 use crate::commit::OperationTransition;
 
 #[test]

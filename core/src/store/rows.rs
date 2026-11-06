@@ -146,6 +146,8 @@ impl<'a> Reader<'a> {
         self.connection
     }
 
+    pub(super) fn models(&self) -> &'a BTreeMap<String, ModelInfo> { self.models }
+
     fn model(&self, key: &str) -> Result<&'a ModelInfo, StoreError> {
         self.models.get(key).ok_or_else(|| StoreError::UnknownModel(key.to_string()))
     }
