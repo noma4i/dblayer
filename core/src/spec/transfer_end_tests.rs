@@ -465,15 +465,18 @@ fn xfer_round_status() {
     let refused = TransferInput::RoundStatus { epoch: EPOCH, transfer_ids: vec![id], refused: Some("denied".into()) };
     let out = twin.post(refused.clone());
     assert_eq!(out.refused(), vec![Some("denied".to_string())]);
+    assert_eq!(out.round_errors(), vec![(KEY.to_string(), Some("denied".to_string()))], "the reason goes to the row of the transfer through the Store");
     assert!(Twin::quiet(&twin.post(refused)), "the same refusal is not shown twice");
     let out = twin.post(TransferInput::RoundStatus { epoch: EPOCH, transfer_ids: vec![id], refused: None });
     assert_eq!(out.refused(), vec![None], "the refusal is taken off");
+    assert_eq!(out.round_errors(), vec![(KEY.to_string(), None)], "the column is cleared");
     let out = twin.post(TransferInput::RoundStatus { epoch: EPOCH + 1, transfer_ids: vec![id], refused: Some("late".into()) });
     assert!(Twin::quiet(&out), "{out:?}");
     let mut broken = Twin::new();
     let failed = broken.failed(OTHER);
     let out = broken.post(TransferInput::RoundStatus { epoch: EPOCH, transfer_ids: vec![failed], refused: Some("denied".into()) });
     assert!(out.refused().is_empty(), "a failed transfer shows its own error");
+    assert_eq!(out.round_errors(), vec![(OTHER.to_string(), Some("denied".to_string()))], "the column still holds the reason: the row shows error_message first");
 }
 
 #[test]

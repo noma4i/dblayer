@@ -1,1 +1,1 @@
-SELECT row_id, action, status, stage, sent, total, wait, attempts, error_kind, error_message, size, transfer_id, batch FROM sync_upload WHERE model = ? AND row_id IN ({marks})
+SELECT row_id, action, status, stage, sent, total, wait, attempts, error_kind, error_message, size, transfer_id, batch, round_error FROM sync_upload WHERE model = ? AND row_id IN ({marks})

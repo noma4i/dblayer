@@ -114,6 +114,8 @@ impl Out {
 
     pub fn kinds(&self) -> Vec<UploadKind> { self.rows().into_iter().map(|(_, kind)| kind).collect() }
 
+    pub fn round_errors(&self) -> Vec<(String, Option<String>)> { self.batches.iter().flat_map(|batch| batch.ops.iter()).filter_map(|op| if let StoreOp::UploadRoundError { key, error } = op { Some((key.clone(), error.clone())) } else { None }).collect() }
+
     pub fn removed(&self) -> Vec<String> { self.batches.iter().flat_map(|batch| batch.ops.iter()).filter_map(|op| if let StoreOp::RemoveUpload { key } = op { Some(key.clone()) } else { None }).collect() }
 
     pub fn writes(&self) -> usize { self.batches.len() }

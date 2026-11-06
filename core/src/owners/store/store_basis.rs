@@ -27,7 +27,7 @@ impl StoreBatch {
                 }
                 StoreOp::Planned { effects } => effect_models(&mut models, effects),
                 StoreOp::Upload { row, .. } => key_model(&mut models, &row.key),
-                StoreOp::RemoveUpload { key } | StoreOp::UploadOrphan { key, .. } => key_model(&mut models, key),
+                StoreOp::RemoveUpload { key } | StoreOp::UploadRoundError { key, .. } | StoreOp::UploadOrphan { key, .. } => key_model(&mut models, key),
                 _ => {}
             }
         }

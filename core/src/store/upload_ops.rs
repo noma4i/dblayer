@@ -81,6 +81,10 @@ pub(super) fn apply_upload(connection: &Connection, op: &StoreOp) -> Result<bool
     match op {
         StoreOp::Upload { row, kind } => put_upload(connection, row, *kind)?,
         StoreOp::RemoveUpload { key } => remove_upload(connection, key)?,
+        StoreOp::UploadRoundError { key, error } => {
+            let [model, id, action] = key_parts(key)?;
+            connection.execute(include_str!("sql/upload_ops/upload_round_error.sql"), params![model, id, action, error])?;
+        }
         StoreOp::UploadBatch { batch_id, op_id, joint } => {
             connection.execute(include_str!("sql/upload_ops/apply_upload_insert_sync_upload_batch.sql"), params![i64::try_from(*batch_id).unwrap_or(i64::MAX), i64::try_from(*op_id).unwrap_or(i64::MAX), joint])?;
         }

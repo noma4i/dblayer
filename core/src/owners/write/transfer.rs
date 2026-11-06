@@ -135,6 +135,19 @@ impl TransferState {
         }
     }
 
+    /// One Store batch of ops that no stage of a transfer waits for.
+    pub(super) fn commit_ops(&mut self, ops: Vec<StoreOp>, fx: &mut Fx) {
+        if ops.is_empty() {
+            return;
+        }
+        let id = self.next_batch;
+        self.next_batch += 1;
+        self.pending.insert(id, Pending { ids: Vec::new(), kind: StoreKind::Removed });
+        let mut batch = StoreBatch { author: BatchAuthor::Transfer, id, epoch: self.epoch, basis: BTreeMap::new(), rows: Vec::new(), intents: 0, credential: None, ops };
+        batch.basis = crate::owners::store::basis_for(batch.models().into_iter().map(|model| (self.generations.get(&model).copied().unwrap_or(self.base_generation), model)).map(|(generation, model)| (model, generation)));
+        fx.push(Effect::Send(Outbound::new(self.peers.store, StoreInput::Commit(batch))));
+    }
+
     pub(super) fn abort_done(&mut self, upload_id: String, answered: bool, fx: &mut Fx) {
         self.orphan_flight.remove(&upload_id);
         if !answered || self.orphans.remove(&upload_id).is_none() {

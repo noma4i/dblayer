@@ -45,6 +45,8 @@ pub enum FailureKind {
     Unrecognized,
     /// The answer of the server breaks the contract of the action: a batch answer lacks the row of an element.
     Protocol,
+    /// The platform refused to start the background round of the transfer.
+    Refused,
 }
 
 const SESSION_PREFIX: &str = "session:";
@@ -61,6 +63,7 @@ impl FailureKind {
             FailureKind::RequestTooLarge { size, limit } => format!("{TOO_LARGE_PREFIX}{size}:{limit}"),
             FailureKind::Unrecognized => "unrecognized".into(),
             FailureKind::Protocol => "protocol".into(),
+            FailureKind::Refused => "refused".into(),
         }
     }
 
@@ -72,6 +75,7 @@ impl FailureKind {
             "missing_file" => Some(FailureKind::MissingFile),
             "unrecognized" => Some(FailureKind::Unrecognized),
             "protocol" => Some(FailureKind::Protocol),
+            "refused" => Some(FailureKind::Refused),
             _ => text.strip_prefix(TOO_LARGE_PREFIX).and_then(|numbers| numbers.split_once(':')).and_then(|(size, limit)| Some(FailureKind::RequestTooLarge { size: size.parse().ok()?, limit: limit.parse().ok()? })).or_else(|| text.strip_prefix(SESSION_PREFIX).and_then(SessionCode::named).map(FailureKind::Session)),
         }
     }

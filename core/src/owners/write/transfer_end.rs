@@ -344,17 +344,20 @@ impl TransferState {
         if epoch != self.epoch {
             return;
         }
+        let mut ops = Vec::new();
         for &id in ids {
             let Some(transfer) = self.transfers.get_mut(&id) else { continue };
             if transfer.stage == TransferStage::Done || transfer.round_error == refused {
                 continue;
             }
             transfer.round_error = refused.clone();
+            ops.push(crate::owners::store::StoreOp::UploadRoundError { key: transfer.key.clone(), error: refused.clone() });
             let shows = refused.is_none() || matches!(transfer.stage, TransferStage::Ready | TransferStage::Uploading);
             if shows {
                 run(fx, TransferEffect::Refused { key: transfer.key.clone(), reason: refused.clone() });
             }
         }
+        self.commit_ops(ops, fx);
     }
 
     fn open_ids(&self) -> Vec<TransferId> { self.scan().filter(|transfer| transfer.stage != TransferStage::Done).map(|transfer| transfer.transfer_id).collect() }

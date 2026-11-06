@@ -94,6 +94,9 @@ fn read_uploads(connection: &Connection, model: &str, ids: &[String]) -> rusqlit
                 if size > 0 {
                     info.copy_file = Some(crate::owners::write::transfer::file_id(u64::try_from(row.get::<_, i64>(11)?).unwrap_or_default()));
                 }
+                if let (None, Some(reason)) = (&info.error, row.get::<_, Option<String>>(13)?) {
+                    info.error = Some(crate::value::sync::OperationFailure::new(crate::value::sync::FailureKind::Refused, reason));
+                }
                 info.sent_bytes = crate::owners::write::upload::bytes_sent(&info, size);
                 info.total_bytes = size;
                 let entry = found.entry(id).or_default();

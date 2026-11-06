@@ -474,6 +474,7 @@ fn a_format_change_carries_the_transfer_rows_of_sync_upload_and_not_the_folded_o
     let (store, report) = reopen(&path, &[messages_spec()], None);
     assert_eq!(report.recreated, Some(crate::store::ddl::RecreateReason::CoreFormat));
     assert_eq!(count(&store, "SELECT COUNT(*) FROM sync_upload WHERE row_id = 'm1' AND seq = 7 AND transfer_id = 7 AND sent = 2 AND total = 5 AND size = 40 AND status = 'uploading'"), 1, "the transfer row is carried with its values");
+    assert_eq!(count(&store, "SELECT COUNT(*) FROM sync_upload WHERE row_id = 'm1' AND round_error IS NULL"), 1, "the carried row has the new column, empty");
     assert_eq!(count(&store, "SELECT COUNT(*) FROM sync_upload"), 1, "the folded row is not carried");
     assert_eq!(count(&store, "SELECT COUNT(*) FROM restore_failed"), 0, "the folded row is not reported as a lost intent");
     assert!(!store.table_exists("sync_upload_error").unwrap());

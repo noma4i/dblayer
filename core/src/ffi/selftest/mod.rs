@@ -33,6 +33,7 @@ mod upload_expiry_tests;
 mod upload_discard_tests;
 mod upload_batch_shift_tests;
 mod upload_reopen_tests;
+mod upload_round_status_tests;
 mod upload_album_tests;
 mod upload_session_tests;
 mod user_flow_tests;

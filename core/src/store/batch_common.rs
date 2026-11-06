@@ -67,7 +67,7 @@ pub(super) fn apply_common(writer: &mut RowWrite<'_>, op: &StoreOp, index: usize
             super::upload_ops::apply_upload(writer.connection, op)?;
             results.push(writer.touch_upload(&row.key)?);
         }
-        StoreOp::RemoveUpload { key } => {
+        StoreOp::RemoveUpload { key } | StoreOp::UploadRoundError { key, .. } => {
             super::upload_ops::apply_upload(writer.connection, op)?;
             results.push(writer.touch_upload(key)?);
         }
