@@ -258,3 +258,34 @@ pub(super) fn add_media(models: &mut Value) {
     ];
     message["fields"].as_array_mut().unwrap().extend(fields.map(|field| serde_json::to_value(field).unwrap()));
 }
+
+/// The inbox lists of the chat: a chat belongs to the lists it names, the node read of a chat puts it into them, the group chat is renamed by `update`.
+pub(super) fn add_lists(models: &mut Value) {
+    use crate::schema::{Coverage, Membership, NodeRead, RemoteShape, VariableSource, NODE_PARAM};
+    let models = models.as_array_mut().unwrap();
+    let chat = models.iter_mut().find(|model| model["key"] == "Chat").unwrap();
+    chat["fields"].as_array_mut().unwrap().push(serde_json::to_value(FieldSpec::list("lists", ScalarKind::Str).nullable().optional()).unwrap());
+    let mut node = RelationSpec::new("node", &[]);
+    node.text_params = vec![NODE_PARAM.into()];
+    node.node = Some(NodeRead::One);
+    let mut remote = crate::schema_fixtures::remote("ChatNode", RemoteShape::Single, "5.minutes");
+    remote.variables.insert("id".into(), VariableSource::Param { name: NODE_PARAM.into() });
+    node.remote = Some(remote);
+    let mut list = RelationSpec::new("list", &[]);
+    list.text_params.push("list".into());
+    list.membership.insert("list".into(), Membership::Contains("lists".into()));
+    list.joins_node = true;
+    list.joins_events = true;
+    list.joins_created = true;
+    let mut listed = crate::schema_fixtures::remote("ChatList", RemoteShape::List { coverage: Coverage::Complete }, "5.minutes");
+    listed.variables.insert("list".into(), VariableSource::Param { name: "list".into() });
+    list.remote = Some(listed);
+    chat["relations"].as_array_mut().unwrap().extend([serde_json::to_value(node).unwrap(), serde_json::to_value(list).unwrap()]);
+    let mut update = ActionDeclaration::new("update", RootShape::Upsert);
+    update.mutation = Some("ChatUpdate".into());
+    update.root = Some("chatUpdate".into());
+    update.variables.insert("id".into(), "id".into());
+    update.variables.insert("name".into(), "name".into());
+    update.args.insert("name".into(), "string".into());
+    chat["actions"].as_array_mut().unwrap().push(serde_json::to_value(update).unwrap());
+}

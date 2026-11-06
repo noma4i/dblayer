@@ -13,6 +13,7 @@ mod refetch_tests;
 mod upload_tests;
 mod rig_tests;
 mod v3_chat_last_message_tests;
+mod v3_chat_lists_tests;
 mod v3_chat_row_tests;
 mod v3_chat_typing_tests;
 mod v3_fixtures;
