@@ -5,7 +5,7 @@ use std::collections::BTreeMap;
 use crate::files::Location;
 use crate::lifecycle::authority::Authority;
 use crate::owners::store::{IntentEffects, UploadKind, UploadRow};
-use crate::owners::write::outbox::{NewOp, OpOrigin};
+use crate::owners::write::outbox::{NewOp, OpSource};
 use crate::owners::write::transfer::{Source, Steps, StoredTransfer};
 use crate::runtime::Time;
 use crate::schema::OnFailure;
@@ -197,7 +197,7 @@ impl Db {
                 row_id: id.clone(),
                 action: action.clone(),
                 on_failure: if raw.on_failure == "keep" { OnFailure::Keep } else { OnFailure::Rollback },
-                origin: OpOrigin::Api,
+                origin: OpSource::Api,
                 path: raw.path,
                 body: raw.body,
                 effects: IntentEffects::default(),

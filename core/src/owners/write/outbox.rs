@@ -155,7 +155,7 @@ impl OutboxState {
         operation.sends += 1;
         operation.sent = true;
         operation.waiting_retry = false;
-        let purpose = if matches!(operation.op.origin, OpOrigin::Transfer(_)) { PURPOSE_TRANSFER } else { PURPOSE_STANDARD };
+        let purpose = if matches!(operation.op.origin, OpSource::Transfer(_)) { PURPOSE_TRANSFER } else { PURPOSE_STANDARD };
         let owner = Some(crate::transport::RequestOwner::Operation { seq: i64::try_from(op_id).unwrap_or(i64::MAX) });
         let mutate = SessionInput::Mutate { author: OUTBOX_AUTHOR, owner, req_id: operation.request_id, epoch: self.epoch, path: operation.op.path.clone(), body: operation.op.body.clone(), purpose };
         if let Some(session) = self.peers.session { fx.push(Effect::Send(Outbound::new(session, mutate))); }
@@ -225,7 +225,7 @@ impl OutboxState {
 
     pub(super) fn tell_transfer(&self, op_id: OpId, outcome: &OutboxOutcome, fx: &mut Effects<Outbox>) {
         let Some(operation) = self.ops.get(&op_id) else { return };
-        if let (OpOrigin::Transfer(key), Some(transfer)) = (&operation.op.origin, self.peers.transfer) {
+        if let (OpSource::Transfer(key), Some(transfer)) = (&operation.op.origin, self.peers.transfer) {
             fx.push(Effect::Send(Outbound::new(transfer, TransferInput::MutationOutcome { key: key.clone(), outcome: outcome.clone() })));
         }
     }

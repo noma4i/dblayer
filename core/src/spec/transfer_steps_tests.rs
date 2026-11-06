@@ -462,7 +462,7 @@ fn xfer_persisting_complete_committed() {
     let id = twin.persisting_complete(KEY);
     let out = twin.commit();
     assert_eq!((twin.stage(id), out.submits(), out.shows()), (TransferStage::Mutating, 1, vec![Shown::Uploading { progress: 100 }]));
-    assert!(matches!(&out.outbox[0], crate::owners::write::outbox::OutboxInput::Submit { op, .. } if op.origin == crate::owners::write::outbox::OpOrigin::Transfer(KEY.into())));
+    assert!(matches!(&out.outbox[0], crate::owners::write::outbox::OutboxInput::Submit { op, .. } if op.origin == crate::owners::write::outbox::OpSource::Transfer(KEY.into())));
 }
 
 #[test]

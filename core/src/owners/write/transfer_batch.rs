@@ -2,7 +2,7 @@
 
 use serde_json::{Map, Value};
 
-use super::outbox::{NewOp, OpOrigin, OutboxInput, OutboxOutcome};
+use super::outbox::{NewOp, OpSource, OutboxInput, OutboxOutcome};
 use super::transfer::{reply, Fx, TransferState};
 use super::transfer_types::*;
 use crate::owners::store::{StoreOp, UploadKind};
@@ -102,7 +102,7 @@ impl TransferState {
             entry.phase = BatchPhase::Mutating;
             entry.op_row = Some(first.clone());
         }
-        let op = NewOp { model: first.0, row_id: first.1, origin: OpOrigin::Transfer(batch_key(group)), body: body.to_string(), ..joint.mutation };
+        let op = NewOp { model: first.0, row_id: first.1, origin: OpSource::Transfer(batch_key(group)), body: body.to_string(), ..joint.mutation };
         fx.push(Effect::Send(Outbound::new(self.peers.outbox, OutboxInput::Submit { epoch: self.epoch, op, reply: NO_REPLY })));
     }
 

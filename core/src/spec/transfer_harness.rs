@@ -7,7 +7,7 @@ use crate::files::Location;
 use crate::owners::contract::{BatchId, Committed, Online, RejectReason, Rejected, ReplyId};
 use crate::owners::store::{StoreBatch, StoreInput, StoreOp, StoreWriter, UploadKind, UploadRow};
 use crate::owners::support::{new_log, take, Discard, Emitted, Log, NoEffect, Silent, Spy, SpyState};
-use crate::owners::write::outbox::{Fault, NewOp, Outbox, OutboxInput, OutboxOutcome, OpOrigin, Receipt};
+use crate::owners::write::outbox::{Fault, NewOp, Outbox, OutboxInput, OutboxOutcome, OpSource, Receipt};
 use crate::owners::write::rounds::{Rounds, RoundsInput};
 use crate::owners::write::transfer::{BatchItem, Joint, NextStep, Shown, Source, Steps, StoredTransfer, Transfer, TransferAnswer, TransferEffect as Run, TransferId, TransferInput, TransferPeers, TransferStage, TransferState, TransferTick, Transfers};
 use crate::runtime::{Address, Cause, DetScheduler, Effects, Epoch, EpochStamp, StateOwner, Time};
@@ -117,7 +117,7 @@ impl Out {
 pub(super) fn mutation(key: &str) -> NewOp {
     let mut parts = key.splitn(3, ':');
     let (model, row, action) = (parts.next().unwrap_or("Moment"), parts.next().unwrap_or("r"), parts.next().unwrap_or("upload"));
-    NewOp { model: model.into(), row_id: row.into(), action: action.into(), on_failure: OnFailure::Keep, origin: OpOrigin::Api, path: "/moments".into(), body: String::new(), effects: Default::default(), durable: true }
+    NewOp { model: model.into(), row_id: row.into(), action: action.into(), on_failure: OnFailure::Keep, origin: OpSource::Api, path: "/moments".into(), body: String::new(), effects: Default::default(), durable: true }
 }
 
 pub(super) fn item(key: &str, parts: u32) -> BatchItem { BatchItem { key: key.into(), fields: Default::default(), urgent: false, source: Source { path: format!("/src/{key}"), parts }, mutation: mutation(key), steps: Steps { path: "/upload".into(), body: String::new() } } }
