@@ -302,6 +302,7 @@ pub struct SessionState {
     subscribers: BTreeSet<StreamId>,
     restored_direct: Option<PendingCall>,
     restored_detached: Option<PendingCall>,
+    released: BTreeSet<RequestId>,
     restored_active: Option<RequestId>,
     restored_answer: Option<SessionAnswer>,
     restore_error: Option<String>,

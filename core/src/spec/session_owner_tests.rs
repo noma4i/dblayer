@@ -306,6 +306,7 @@ impl Twin {
         assert_eq!(state.awaiting_publication().map(|(reply, wait)| (reply, match wait { crate::owners::session::PublishWait::EpochAfter(epoch) => Some(epoch), crate::owners::session::PublishWait::Identity => None })), self.reference.awaiting(), "the same answer after publish");
         assert_eq!(state.restored_direct().map(pending_of), self.reference.restored_direct, "the same restored direct pending");
         assert_eq!(state.restored_detached().map(pending_of), self.reference.restored_detached, "the same restored detached pending");
+        assert_eq!(state.released(), self.reference.released.len(), "the same remembered Releases");
         want.effects
     }
 
@@ -440,5 +441,6 @@ mod session_owner_http_tests;
 mod session_owner_restore_tests;
 use session_owner_restore_tests::*;
 mod session_owner_props_tests;
+mod session_owner_early_release_tests;
 mod session_owner_release_tests;
 mod session_owner_detached_tests;
