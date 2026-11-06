@@ -103,7 +103,7 @@ impl Facts {
                 let models: BTreeSet<&String> = self.dependency_models.iter().chain(&answer.dependency_models).chain(answer.payload.related.iter().map(|(model, _)| model)).collect();
                 let basis = crate::owners::store::basis_for(models.into_iter().map(|model| (model.clone(), load.basis.of(model))));
                 self.emit(Emit::Commit { request: load.request, basis, page: answer.clone(), number: load.page, replace_all: self.replace_all, base_revision: self.request_base.get(), marker: None, keep_rows: false });
-                Transition(WinState::landing(load.request, load.page, answer.cursor.clone(), !answer.rows.is_empty(), answer.dependency_models.clone()))
+                Transition(WinState::landing(Landing { request: load.request, page: load.page, cursor: answer.cursor.clone(), rows: !answer.rows.is_empty(), models: answer.dependency_models.clone() }))
             }
             Ev::Failure { request: got, attempt: got_attempt, error } if mine(got, got_attempt) => {
                 if error.class == ErrorClass::InvalidCursor && !self.cursor_reset_used {
@@ -166,12 +166,11 @@ impl Facts {
     }
 
     #[state]
-    #[allow(clippy::too_many_arguments)]
-    fn landing(&mut self, context: &mut Ctx<'_>, request: &mut RequestId, page: &mut u32, cursor: &mut Option<String>, rows: &mut bool, models: &mut BTreeSet<String>, event: &Ev) -> Outcome<WinState> {
+    fn landing(&mut self, context: &mut Ctx<'_>, landing: &mut Landing, event: &Ev) -> Outcome<WinState> {
         self.env(event);
         match event {
-            Ev::Committed { request: got, revision } if got == request => self.landed(context, *page, cursor.clone(), *rows, models, *revision),
-            Ev::Rejected { request: got, reason } if got == request => match reason {
+            Ev::Committed { request: got, revision } if *got == landing.request => self.landed(context, landing.page, landing.cursor.clone(), landing.rows, &landing.models, *revision),
+            Ev::Rejected { request: got, reason } if *got == landing.request => match reason {
                 RejectReason::StaleGeneration { models: stale, generation } => {
                     for model in stale {
                         self.generations.insert(model.clone(), *generation);
@@ -196,7 +195,7 @@ impl Facts {
                 Handled
             }
             Ev::Load { id, goal, .. } => {
-                self.join_load(*id, *goal, *page);
+                self.join_load(*id, *goal, landing.page);
                 Handled
             }
             Ev::InterestMinus { id } => {

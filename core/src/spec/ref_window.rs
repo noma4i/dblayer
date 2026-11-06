@@ -148,7 +148,7 @@ impl Window {
         }
         match self.state {
             State::Idle => self.idle(input),
-            State::Loading { request, attempt, retry, page, force, attempts } => self.loading(request, attempt, retry, page, force, attempts, input),
+            State::Loading { request, attempt, retry, page, force, attempts } => self.loading((request, attempt, retry), (page, force, attempts), input),
             State::Landing { request, page, cursor, rows } => self.landing(request, page, cursor, rows, input),
             State::Waiting { force, page } => self.waiting(force, page, input),
             State::Opening | State::Ended => Vec::new(),
@@ -312,8 +312,7 @@ impl Window {
         self.waiters.insert(id, want);
     }
 
-    #[allow(clippy::too_many_arguments)]
-    fn loading(&mut self, request: u64, attempt: u32, retry: bool, page: u32, force: bool, attempts: u32, input: Input) -> Vec<Effect> {
+    fn loading(&mut self, (request, attempt, retry): (u64, u32, bool), (page, force, attempts): (u32, bool, u32), input: Input) -> Vec<Effect> {
         let mine = |got_request: u64, got_attempt: u32| got_request == request && got_attempt == attempt && !retry;
         match input {
             Input::InterestPlus { id } => {

@@ -1,4 +1,3 @@
-#![allow(clippy::result_large_err)]
 use std::fmt;
 
 use async_trait::async_trait;
@@ -63,7 +62,7 @@ impl fmt::Display for Divergence {
 
 /// Runs the inputs through the model and the real core, compares after every input, checks the properties after every input.
 /// Returns the trace with the expected observations.
-pub async fn run(owner: &dyn Owner, name: &str, inputs: &[Input]) -> Result<Trace, Divergence> {
+pub async fn run(owner: &dyn Owner, name: &str, inputs: &[Input]) -> Result<Trace, Box<Divergence>> {
     let mut model = owner.model();
     let mut real = owner.real().await;
     let properties = owner.properties();
@@ -71,7 +70,7 @@ pub async fn run(owner: &dyn Owner, name: &str, inputs: &[Input]) -> Result<Trac
     for (index, input) in inputs.iter().enumerate() {
         let expected = model.step(input);
         let got = real.apply(input).await;
-        let failure = |fault: DivergenceKind| Divergence { step: index + 1, input: input.clone(), expected: expected.clone(), got: got.clone(), fault, inputs: inputs.to_vec() };
+        let failure = |fault: DivergenceKind| Box::new(Divergence { step: index + 1, input: input.clone(), expected: expected.clone(), got: got.clone(), fault, inputs: inputs.to_vec() });
         if expected != got {
             return Err(failure(DivergenceKind::Observations));
         }
@@ -93,12 +92,12 @@ pub fn expected_trace(owner: &dyn Owner, name: &str, inputs: &[Input]) -> Trace 
 }
 
 /// Plays a recorded trace (from a corpus file) against a real core: the observations must equal the recorded ones.
-pub async fn replay(real: &mut dyn Sut, trace: &Trace) -> Result<(), Divergence> {
+pub async fn replay(real: &mut dyn Sut, trace: &Trace) -> Result<(), Box<Divergence>> {
     let inputs = trace.inputs();
     for (index, step) in trace.steps.iter().enumerate() {
         let got = real.apply(&step.input).await;
         if got != step.observed {
-            return Err(Divergence { step: index + 1, input: step.input.clone(), expected: step.observed.clone(), got, fault: DivergenceKind::Observations, inputs });
+            return Err(Box::new(Divergence { step: index + 1, input: step.input.clone(), expected: step.observed.clone(), got, fault: DivergenceKind::Observations, inputs }));
         }
     }
     Ok(())

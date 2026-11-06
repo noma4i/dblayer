@@ -36,7 +36,6 @@ pub struct WireOperationReceipt {
     pub ticket: Arc<WireReceiptTicket>,
 }
 
-#[allow(clippy::too_many_arguments)]
 pub(super) fn receipt_of(epoch: u64, model: String, operation: Option<i64>, revision: i64, optimistic_value: Option<WireRow>, ticket: Option<crate::owners::write::outbox::Receipt>, owner: Arc<crate::owners::life::Life>) -> WireOperationReceipt {
     held_receipt(epoch, model, operation, revision, optimistic_value, ticket.map(Ticket::Outbox), owner)
 }

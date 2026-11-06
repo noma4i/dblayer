@@ -41,12 +41,12 @@ pub async fn find(owner: &dyn Owner, depth: usize, seeds: &[u64], length: usize)
     let alphabet = owner.alphabet();
     for inputs in all_traces(&alphabet, depth) {
         if let Err(divergence) = run(owner, owner.name(), &inputs).await {
-            return Some(divergence);
+            return Some(*divergence);
         }
     }
     for seed in seeds {
         if let Err(divergence) = run(owner, owner.name(), &seeded(&alphabet, *seed, length)).await {
-            return Some(divergence);
+            return Some(*divergence);
         }
     }
     None
@@ -65,7 +65,7 @@ pub async fn minimize(owner: &dyn Owner, divergence: Divergence) -> Divergence {
                 continue;
             }
             if let Err(smaller) = run(owner, owner.name(), &candidate).await {
-                let mut smaller = smaller;
+                let mut smaller = *smaller;
                 smaller.inputs.truncate(smaller.step);
                 current = smaller;
                 shrunk = true;

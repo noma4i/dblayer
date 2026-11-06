@@ -217,7 +217,7 @@ impl Facts {
         self.emit(Emit::Commit { request: load.request, basis, page, number, replace_all: false, base_revision: self.request_base.get(), marker: Some(marker.clone()), keep_rows });
         self.landing_marker = Some((marker, members));
         let cursor = if keep_rows { self.cursor.clone() } else { None };
-        Transition(WinState::landing(load.request, 1, cursor, keep_rows && self.has_rows || !chain.ids.is_empty(), chain.models.clone()))
+        Transition(WinState::landing(Landing { request: load.request, page: 1, cursor, rows: keep_rows && self.has_rows || !chain.ids.is_empty(), models: chain.models.clone() }))
     }
 
     /// The answer of a request of a media chain, by the phase of the chain.

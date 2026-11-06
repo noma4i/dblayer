@@ -39,7 +39,7 @@ impl RowWrite<'_> {
         let kind = if local { RowKind::Local } else { RowKind::Server };
         let reader = Reader::new(self.connection, self.models);
         let guards = self.guards.get(model).map(Vec::as_slice).unwrap_or_default();
-        let Some(row) = admitted(&reader, kind, Admission { base: None, closing: self.closing }, model, patch, &mut 0, spec, guards)? else { return Ok(None) };
+        let Some(row) = admitted(&reader, kind, Admission { base: None, closing: self.closing }, model, patch, spec, guards)? else { return Ok(None) };
         let mut envelope = if local { BatchPlan::new(self.generation) } else { BatchPlan::from_server(self.generation) };
         envelope.writes_local = local;
         envelope.entity_ops.push(EntityOp::Upsert { model: ModelKey::new(model), id, row });

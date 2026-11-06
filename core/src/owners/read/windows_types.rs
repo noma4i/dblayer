@@ -303,6 +303,16 @@ impl Ctx<'_> {
     }
 }
 
+/// What the state of a window that lands keeps: the request in the Store, the page it carries, the cursor and whether it has rows.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Landing {
+    pub request: RequestId,
+    pub page: u32,
+    pub cursor: Option<String>,
+    pub rows: bool,
+    pub models: BTreeSet<String>,
+}
+
 /// What the state of a window that loads keeps: the request in flight and how often it was tried.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Load {

@@ -68,6 +68,9 @@ printf 'impl Database { pub async fn create(&self, values: String) { self.owner.
 run || { echo "check_zoo_test: a clean public call failed" >&2; exit 1; }
 /bin/rm -f "$work/core/src/owners/probe.rs" "$work/core/src/ffi/probe.rs"
 
+expect_red '#[allow(clippy::too_many_arguments)] fn many(a: u8) {}'
+expect_red '#![allow(unexpected_cfgs)]'
+
 mkdir -p "$work/core/src/zoo_probe"
 printf '#[cfg(test)]\nmod zoo_probe;\n' > "$work/core/src/lib.rs"
 printf 'fn fixture() { Some(1).unwrap(); }\n' > "$work/core/src/zoo_probe/harness.rs"

@@ -106,8 +106,13 @@ fn source_value(view: &dyn PlanView, merged: &Row, owner: (&str, &str), args: &R
 }
 
 /// The receiver after the action: the patch, then the keyed elements, then the flagged values (`include` puts an id at the head of a list, `at_least` lifts a number).
-#[allow(clippy::too_many_arguments)]
-pub fn optimistic_row(spec: &ModelSpec, view: &dyn PlanView, current: &Row, patch: &Row, keyed: &[(String, Row)], flagged: &[(String, String, Flagged)], args: &Row, owner: (&str, &str)) -> Result<Row, PlanError> {
+/// The keyed elements and the flagged values an action puts after its patch.
+pub struct Fields<'a> {
+    pub keyed: &'a [(String, Row)],
+    pub flagged: &'a [(String, String, Flagged)],
+}
+
+pub fn optimistic_row(spec: &ModelSpec, view: &dyn PlanView, (current, patch): (&Row, &Row), Fields { keyed, flagged }: Fields<'_>, args: &Row, owner: (&str, &str)) -> Result<Row, PlanError> {
     let mut merged = current.clone();
     merged.extend(patch.clone());
     for (field, op) in keyed {

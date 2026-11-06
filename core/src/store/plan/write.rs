@@ -139,7 +139,7 @@ impl Store {
         let effects = self.read_models(&read_models, |reader| {
             let current = reader.point(model, id.as_str())?.ok_or_else(|| DbError::NotFound { model: model.to_string(), id: id.to_string() })?;
             let view = super::view::ReaderView { reader, specs: &|name| self.spec(name).ok(), db: Some(self) };
-            let merged = crate::owners::write::outbox_plan::optimistic_row(spec, &view, &current, &patch, &keyed, &flagged, &args, (model, id.as_str())).map_err(|error| DbError::Internal(error.0))?;
+            let merged = crate::owners::write::outbox_plan::optimistic_row(spec, &view, (&current, &patch), crate::owners::write::outbox_plan::Fields { keyed: &keyed, flagged: &flagged }, &args, (model, id.as_str())).map_err(|error| DbError::Internal(error.0))?;
             let edits = Edits::of_owner(model, id, current, merged);
             let mut effects = IntentEffects::default();
             let removes = declared.as_ref().is_some_and(|declared| declared.removes_receiver);

@@ -1,7 +1,7 @@
 //! Owner `LocalWrites` inside the Outbox actor: local writes, file copies, ephemeral expiry and `Drained`.
 use std::collections::{BTreeMap};
 
-use super::outbox::{Batch, Outbox, OutboxState};
+use super::outbox::{Batch, LocalCall, Outbox, OutboxState};
 use super::outbox_types::*;
 
 use crate::owners::contract::{BatchId, Drained, RejectReason, ReplyId};
@@ -21,39 +21,37 @@ impl OutboxState {
         }
     }
 
-    #[allow(clippy::too_many_arguments)]
-    pub(super) fn local_write(&mut self, model: String, epoch: Epoch, write: LocalWriteKind, row: String, values: String, reply: ReplyId, now: Time, fx: &mut Effects<Outbox>) {
+    pub(super) fn local_write(&mut self, call: LocalCall, epoch: Epoch, (reply, now): (ReplyId, Time), fx: &mut Effects<Outbox>) {
         if self.closing {
             return Self::reply(fx, reply, OutboxAnswer::Err(Fault::Closed));
         }
         if epoch != self.epoch {
             return Self::reply(fx, reply, OutboxAnswer::Err(Fault::NoSession));
         }
-        if let LocalWriteKind::Attach { source: Some(source) } = &write {
+        if let LocalWriteKind::Attach { source: Some(source) } = &call.kind {
             let id = self.next_copy;
             self.next_copy += 1;
             fx.push(Effect::Run(OutboxEffect::Copy { id, source: source.clone() }));
-            self.copying.insert(id, (reply, model, write, row, values, now));
+            self.copying.insert(id, (reply, call, now));
             return;
         }
-        self.write_now(model, write, row, values, reply, now, fx);
+        self.write_now(call, (reply, now), fx);
     }
 
-    #[allow(clippy::too_many_arguments)]
-    pub(super) fn write_now(&mut self, model: String, write: LocalWriteKind, row: String, values: String, reply: ReplyId, now: Time, fx: &mut Effects<Outbox>) {
-        let expire = match write {
+    pub(super) fn write_now(&mut self, call: LocalCall, (reply, now): (ReplyId, Time), fx: &mut Effects<Outbox>) {
+        let expire = match call.kind {
             LocalWriteKind::SetEphemeral { expire_after: Some(after) } => Some((Time(now.0 + after), after)),
             _ => None,
         };
-        let generation = self.generation_of(&model);
+        let generation = self.generation_of(&call.model);
         let batch = self.next_batch;
         self.next_batch += 1;
-        self.commit_write(batch, &model, &write, &row, &values, generation, fx);
-        self.batches.insert(batch, Batch::Write { reply, row, values, model, kind: write, expire });
+        self.commit_write(batch, &call, generation, fx);
+        self.batches.insert(batch, Batch::Write { reply, call, expire });
     }
 
-    #[allow(clippy::too_many_arguments)]
-    pub(super) fn commit_write(&self, batch: BatchId, model: &str, kind: &LocalWriteKind, row: &str, values: &str, generation: u64, fx: &mut Effects<Outbox>) {
+    pub(super) fn commit_write(&self, batch: BatchId, call: &LocalCall, generation: u64, fx: &mut Effects<Outbox>) {
+        let LocalCall { model, kind, row, values } = call;
         let rows = vec![RowValue { row_id: row.into(), values: values.into() }];
         let op = match kind {
             LocalWriteKind::Model(effects) => StoreOp::Planned { effects: effects.clone() },
@@ -67,12 +65,9 @@ impl OutboxState {
     }
 
     pub(super) fn copy_done(&mut self, id: u64, fx: &mut Effects<Outbox>) {
-        if let Some((reply, model, write, row, values, now)) = self.copying.remove(&id) {
-            let write = match write {
-                LocalWriteKind::Attach { .. } => LocalWriteKind::Attach { source: None },
-                other => other,
-            };
-            self.write_now(model, write, row, values, reply, now, fx);
+        if let Some((reply, mut call, now)) = self.copying.remove(&id) {
+            if matches!(call.kind, LocalWriteKind::Attach { .. }) { call.kind = LocalWriteKind::Attach { source: None }; }
+            self.write_now(call, (reply, now), fx);
         }
     }
 

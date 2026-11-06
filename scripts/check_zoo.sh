@@ -392,6 +392,15 @@ if design.exists():
             if name not in section and f"z27:{name}" not in allowed:
                 findings.append(f"Z27 an owner constant is listed in design.md section 1a with its file: {path.relative_to(root)}: {name}")
 
+for path in files:
+    relative = str(path.relative_to(source))
+    if relative == "task.rs":
+        continue
+    for number, line in enumerate(contents[path].splitlines(), 1):
+        suppressed = re.search(r"#!?\[allow\(([^)]*)\)\]", line)
+        if suppressed and f"z29:{relative}:{suppressed.group(1)}" not in allowed:
+            findings.append(f"Z29 a lint is fixed at its cause, not suppressed (spawn lives in task.rs): {path.relative_to(root)}:{number}: {suppressed.group(0)}")
+
 if findings:
     print("zoo check found", len(findings), "problem(s):")
     for finding in findings:

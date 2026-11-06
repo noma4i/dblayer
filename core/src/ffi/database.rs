@@ -165,7 +165,6 @@ impl Database {
         Ok(Arc::new(Self { lease: Arc::new(OnceLock::new()), life, db, remote, reads, uploads, jobs, shows, outcomes: Arc::default(), wires: Arc::new(wires) }))
     }
 
-    #[allow(clippy::too_many_arguments)]
     pub async fn open(
         config: Config,
         models_json: String,

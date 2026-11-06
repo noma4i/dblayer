@@ -4,7 +4,7 @@ use std::collections::BTreeMap;
 
 use serde_json::{json, Map, Value};
 
-use crate::owners::write::outbox_plan::{optimistic_row, receiver_tombstones, scope_changes, ListChange, PlanError, PlanView};
+use crate::owners::write::outbox_plan::{optimistic_row, Fields, receiver_tombstones, scope_changes, ListChange, PlanError, PlanView};
 use crate::schema::keyed::{take, take_flags};
 use crate::schema::{Coverage, FieldSpec, ModelSpec, RelationSpec, RemoteShape, ScopeEffect, ScopeEffectKind};
 use crate::value::ScalarKind;
@@ -135,7 +135,7 @@ fn plan(spec: &ModelSpec, base: &Base, current: &Row, mut patch: Row, args: Valu
     crate::schema::keyed::resolve_maps(&mut patch, &args);
     let keyed = take(&mut patch);
     let flagged = take_flags(&mut patch);
-    optimistic_row(spec, base, current, &patch, &keyed, &flagged, &args, ("messages", "m1")).unwrap()
+    optimistic_row(spec, base, (current, &patch), Fields { keyed: &keyed, flagged: &flagged }, &args, ("messages", "m1")).unwrap()
 }
 
 fn react(_: &str, _: &str) -> Row { object(json!({"reactions": {"$keyed": {"by": "userId", "element": {"userId": {"$arg": "user"}, "body": {"$arg": "body"}}}}})) }

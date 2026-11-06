@@ -1006,7 +1006,6 @@ async fn confirmed_group(rig: &Rig, epoch: u64, values: String, args: String) ->
 
 /// K02 (B2, old lines ffi/database.rs update, destroy, read_query, read_row): a command or a one-off read that carries the epoch of A is refused after the session ended, also when it waited for the writer while the session ended, and it changes nothing for B.
 #[tokio::test(flavor = "multi_thread")]
-#[allow(clippy::await_holding_lock)]
 async fn a_command_and_a_read_of_a_left_account_are_refused_and_change_nothing() {
     let rig = Rig::encrypted().await;
     rig.world.seed_message("B", "b1", "hello", 1);

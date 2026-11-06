@@ -14,10 +14,19 @@ use crate::owners::store::StoreWriter;
 use crate::runtime::{Address, Cause, Effect, Effects, Epoch, Outbound, ScheduleId, StateOwner, Time};
 
 /// What a batch sent to the Store is for.
+/// A write of the device that needs no network: the model, what it writes, the row and its values (or the field for a file).
+#[derive(Clone, Debug)]
+pub(super) struct LocalCall {
+    pub(super) model: String,
+    pub(super) kind: LocalWriteKind,
+    pub(super) row: String,
+    pub(super) values: String,
+}
+
 #[derive(Clone, Debug)]
 pub(super) enum Batch {
     Operation { op_id: OpId, kind: CommitKind },
-    Write { reply: ReplyId, row: String, values: String, model: String, kind: LocalWriteKind, expire: Option<(Time, u64)> },
+    Write { reply: ReplyId, call: LocalCall, expire: Option<(Time, u64)> },
 }
 
 #[derive(Debug)]
@@ -54,7 +63,7 @@ pub struct OutboxState {
     pub(super) deferred: Vec<OpId>,
     pub(super) waiting: BTreeMap<OpId, (StoredOp, bool)>,
     pub(super) aliases: BTreeMap<(String, String), String>,
-    pub(super) copying: BTreeMap<u64, (ReplyId, String, LocalWriteKind, String, String, Time)>,
+    pub(super) copying: BTreeMap<u64, (ReplyId, LocalCall, Time)>,
     pub(super) next_copy: u64,
 }
 
@@ -417,7 +426,7 @@ impl OutboxState {
                 self.maybe_drained(fx);
             }
             OutboxInput::RetryDue { op_id, cycle_id } => self.retry_due(op_id, cycle_id, fx),
-            OutboxInput::LocalWrite { model, epoch, write, row, values, reply, now } => self.local_write(model, epoch, write, row, values, reply, now, fx),
+            OutboxInput::LocalWrite { model, epoch, write, row, values, reply, now } => self.local_write(LocalCall { model, kind: write, row, values }, epoch, (reply, now), fx),
             OutboxInput::CopyDone { id } => self.copy_done(id, fx),
             OutboxInput::CopyFailed { id } => self.copy_failed(id, fx),
             OutboxInput::Expire { model, row, due } => self.expire(model, row, due, fx),

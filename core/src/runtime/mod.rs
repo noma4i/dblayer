@@ -1,4 +1,3 @@
-#![allow(unexpected_cfgs)]
 
 mod cell;
 mod det;

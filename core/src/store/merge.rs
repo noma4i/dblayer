@@ -49,8 +49,7 @@ pub(crate) enum RowKind {
     Server,
 }
 
-#[allow(clippy::too_many_arguments)]
-pub(crate) fn admitted(reader: &Reader<'_>, kind: RowKind, admission: Admission, model: &str, patch: &Map<String, Value>, drops: &mut usize, spec: &ModelSpec, guards: &[AssociationSpec]) -> Result<Option<Map<String, Value>>, StoreError> {
+pub(crate) fn admitted(reader: &Reader<'_>, kind: RowKind, admission: Admission, model: &str, patch: &Map<String, Value>, spec: &ModelSpec, guards: &[AssociationSpec]) -> Result<Option<Map<String, Value>>, StoreError> {
     let Some(id) = patch.get("id").and_then(read_id) else { return Ok(None) };
     if kind == RowKind::Local { return Ok(Some(patch.clone())); }
     let decoded = decode_nested(spec, patch)?;
@@ -59,22 +58,19 @@ pub(crate) fn admitted(reader: &Reader<'_>, kind: RowKind, admission: Admission,
     let versioned = spec.server_revision.as_ref().and_then(|field| patch.get(field)).and_then(Value::as_i64);
     let current = spec.server_revision.as_ref().and_then(|field| stored.as_ref()?.row.get(field)).and_then(Value::as_i64);
     if matches!((versioned, current), (Some(incoming), Some(current)) if incoming < current) {
-        *drops += 1;
         return Ok(None);
     }
     let tombstone = reader.tombstone_seq(model, id.as_str())?;
-    let (mut row, mut dropped) = match admit_upsert(admission.base, stored.as_ref(), tombstone, patch.clone()) {
-        UpsertAdmission::Row { row, dropped_fields } => (row, !dropped_fields.is_empty()),
-        UpsertAdmission::DropExistence => { *drops += 1; return Ok(stored.map(|stored| stored.row)); }
+    let mut row = match admit_upsert(admission.base, stored.as_ref(), tombstone, patch.clone()) {
+        UpsertAdmission::Row { row, .. } => row,
+        UpsertAdmission::DropExistence => { return Ok(stored.map(|stored| stored.row)); }
     };
     for field in unconfirmed_fields(reader, admission.closing, model, id.as_str())? {
-        dropped |= row.contains_key(&field);
         match stored.as_ref().and_then(|stored| stored.row.get(&field)) {
             Some(value) => row.insert(field.clone(), value.clone()),
             None => row.remove(&field),
         };
     }
-    *drops += usize::from(dropped);
     let Some(mut row) = spec.merged(stored.as_ref().map(|stored| &stored.row), &row) else { return Ok(None) };
     let Some(stored) = stored else { return Ok(Some(row)) };
     for association in guards {

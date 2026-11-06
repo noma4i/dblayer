@@ -2,7 +2,7 @@
 
 use std::sync::{Arc, Mutex};
 
-use super::read::{ReadEnd, ReadPhase, ReadRequest, ReadState, ReadStream, ReadValue, RowPlace, RowRename};
+use super::read::{ReadEnd, ReadPhase, ReadRequest, ReadState, ReadStream, ReadValue};
 use super::wire::WireRow;
 use super::{Database, DbError};
 
@@ -21,36 +21,30 @@ pub(crate) struct StreamDelivery {
 }
 
 /// One value as a test reads it: the rows part and the state side by side.
-#[allow(dead_code)]
 #[derive(Clone, Debug)]
 pub(crate) struct Seen {
-    pub(crate) full: bool,
     pub(crate) rows: Vec<WireRow>,
-    pub(crate) row_indexes: Vec<u32>,
     pub(crate) size: u32,
     pub(crate) revision: i64,
     pub(crate) seq: u64,
     pub(crate) removed: Vec<String>,
-    pub(crate) placed: Vec<RowPlace>,
-    pub(crate) replaced: Vec<RowRename>,
-    pub(crate) count: Option<u64>,
     pub(crate) phase: Option<ReadPhase>,
     pub(crate) error: Option<DbError>,
     pub(crate) loaded: Option<i64>,
 }
 
 fn seen_of(seq: u64, value: ReadValue, size: &mut u32) -> Result<Seen, Option<ReadEnd>> {
-    let blank = |revision: i64, state: ReadState, size: u32| Seen { full: false, rows: Vec::new(), row_indexes: Vec::new(), size, revision, seq, removed: Vec::new(), placed: Vec::new(), replaced: Vec::new(), count: None, phase: Some(state.phase), error: state.error, loaded: state.loaded };
+    let blank = |revision: i64, state: ReadState, size: u32| Seen { rows: Vec::new(), size, revision, seq, removed: Vec::new(), phase: Some(state.phase), error: state.error, loaded: state.loaded };
     Ok(match value {
         ReadValue::Snapshot { revision, rows, state } => {
             *size = u32::try_from(rows.len()).unwrap_or(u32::MAX);
-            Seen { full: true, rows, ..blank(revision, state, *size) }
+            Seen { rows, ..blank(revision, state, *size) }
         }
-        ReadValue::Delta { revision, size: now, rows, indexes, removed, placed, replaced, state, .. } => {
+        ReadValue::Delta { revision, size: now, rows, removed, state, .. } => {
             *size = now;
-            Seen { rows, row_indexes: indexes, removed, placed, replaced, ..blank(revision, state, now) }
+            Seen { rows, removed, ..blank(revision, state, now) }
         }
-        ReadValue::Count { revision, count, state } => Seen { count: Some(count), ..blank(revision, state, *size) },
+        ReadValue::Count { revision, state, .. } => blank(revision, state, *size),
         ReadValue::State { revision, state } => blank(revision, state, *size),
         ReadValue::Ended { cause } => return Err(Some(cause)),
         _ => return Err(None),

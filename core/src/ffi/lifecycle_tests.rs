@@ -213,7 +213,6 @@ async fn a_call_waiting_in_a_retry_or_a_queue_ends_with_the_session_reset_and_th
     database.close_now();
 }
 
-#[allow(clippy::await_holding_lock)]
 #[tokio::test(flavor = "multi_thread")]
 async fn a_confirmed_logout_that_reaches_the_commit_after_the_close_clears_nothing() {
     let server = Arc::new(Server::default());

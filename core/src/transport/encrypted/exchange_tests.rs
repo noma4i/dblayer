@@ -4,7 +4,7 @@ use std::time::Duration;
 use serde_json::{json, Value};
 
 use super::credential::{stored_pending, Secret};
-use super::fake_server_tests::{FakeServer, MemoryCredentials};
+use super::fake_server_tests::FakeServer;
 use super::state;
 use super::vectors_tests::*;
 use super::*;
@@ -134,5 +134,3 @@ fn cable_url_is_built_by_the_core() {
     assert!(at("ftp://example.com").is_err(), "only an HTTP origin has a cable");
 }
 
-#[allow(dead_code)]
-fn credentials() -> Arc<MemoryCredentials> { Arc::new(MemoryCredentials::default()) }

@@ -113,7 +113,7 @@ impl Window {
     fn request_id(&self) -> Option<RequestId> {
         match self.machine.state() {
             WinState::Loading { load } => Some(load.request),
-            WinState::Landing { request, .. } => Some(*request),
+            WinState::Landing { landing } => Some(landing.request),
             _ => None,
         }
     }
@@ -164,7 +164,7 @@ impl Window {
     fn owns(&self, id: RequestId) -> bool {
         match self.machine.state() {
             WinState::Loading { load } => load.request == id,
-            WinState::Landing { request, .. } => *request == id,
+            WinState::Landing { landing } => landing.request == id,
             _ => false,
         }
     }

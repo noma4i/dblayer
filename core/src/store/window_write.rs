@@ -23,7 +23,7 @@ fn admitted_rows(writer: &RowWrite<'_>, model: &str, rows: &[Map<String, Value>]
     let guards = writer.guards.get(model).map(Vec::as_slice).unwrap_or_default();
     let mut accepted = Vec::new();
     for row in rows {
-        if let Some(row) = admitted(&reader, RowKind::Server, Admission { base: Some(base_revision), closing: None }, model, row, &mut 0, spec, guards)? {
+        if let Some(row) = admitted(&reader, RowKind::Server, Admission { base: Some(base_revision), closing: None }, model, row, spec, guards)? {
             accepted.push(row);
         }
     }

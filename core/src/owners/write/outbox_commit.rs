@@ -1,7 +1,7 @@
 //! Owner `Outbox`: the answers of the Store to the batches of an operation (`Committed`, `Rejected`).
 
 
-use super::outbox::{Batch, Outbox, OutboxState};
+use super::outbox::{Batch, LocalCall, Outbox, OutboxState};
 use super::outbox_types::*;
 
 use crate::owners::contract::{Committed, RejectReason, Rejected};
@@ -16,9 +16,10 @@ impl OutboxState {
     pub(super) fn committed(&mut self, committed: Committed, fx: &mut Effects<Outbox>) {
         let Some(batch) = self.batches.remove(&committed.batch) else { return };
         match batch {
-            Batch::Write { reply, row, model, expire, .. } => {
+            Batch::Write { reply, call, expire } => {
                 Self::reply(fx, reply, OutboxAnswer::Ok);
                 if let Some((due, after)) = expire {
+                    let LocalCall { model, row, .. } = call;
                     self.ephemeral.insert(row.clone(), due);
                     let id = ScheduleId(EXPIRE_TIMER + self.next_schedule);
                     self.next_schedule += 1;
@@ -146,13 +147,13 @@ impl OutboxState {
             }
         }
         match batch {
-            Batch::Write { reply, row, values, model, kind, expire } => {
+            Batch::Write { reply, call, expire } => {
                 if matches!(rejected.reason, RejectReason::StaleGeneration { .. }) {
-                    let generation = self.generation_of(&model);
+                    let generation = self.generation_of(&call.model);
                     let id = self.next_batch;
                     self.next_batch += 1;
-                    self.commit_write(id, &model, &kind, &row, &values, generation, fx);
-                    self.batches.insert(id, Batch::Write { reply, row, values, model, kind, expire });
+                    self.commit_write(id, &call, generation, fx);
+                    self.batches.insert(id, Batch::Write { reply, call, expire });
                 } else {
                     Self::reply(fx, reply, OutboxAnswer::Err(Fault::Rejected(rejected.reason)));
                     self.maybe_drained(fx);
