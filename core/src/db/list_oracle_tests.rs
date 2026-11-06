@@ -172,8 +172,14 @@ fn run_sequence(seed: u64) {
 
 #[test]
 fn stepped_lists_equal_a_fresh_query_over_random_edit_sequences() {
+    let next = std::sync::atomic::AtomicU64::new(1);
+    let workers = std::thread::available_parallelism().map_or(4, std::num::NonZero::get).min(8);
     std::thread::scope(|scope| {
-        let runs: Vec<_> = (1..=SEQUENCES).map(|seed| scope.spawn(move || run_sequence(seed))).collect();
+        let runs: Vec<_> = (0..workers).map(|_| scope.spawn(|| loop {
+            let seed = next.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            if seed > SEQUENCES { break; }
+            run_sequence(seed);
+        })).collect();
         for run in runs {
             run.join().unwrap();
         }
