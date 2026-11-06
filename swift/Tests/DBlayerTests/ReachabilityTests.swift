@@ -37,7 +37,7 @@ struct ReachabilityTests {
     let (posts, continuation) = AsyncStream<Void>.makeStream()
     let http = RefusingHttp(continuation)
     try await Reachability.$source.withValue(path) {
-      try await DB.open(encrypted: encrypted, credentials: PathCredential(), transport: MockTransport(), modelsJSON: modelsJSON, operations: [PathProbe.self], http: http)
+      try await DB.open(encrypted: encrypted, credentials: PathCredential(), transport: MockTransport(), modelsJSON: "[]", operations: [PathProbe.self], http: http)
     }
 
     #expect(await refusal().contains("offline"))

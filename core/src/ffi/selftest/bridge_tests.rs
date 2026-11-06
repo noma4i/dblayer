@@ -1067,7 +1067,9 @@ async fn server_calls_without_a_transport_report_no_session() {
     let send = bound(database.send(message(epoch, "hello", 1))).await;
     assert!(matches!(create, Err(DbError::NoSession { .. })), "create: {create:?}");
     assert!(matches!(load, Err(DbError::NoSession { .. })), "load: {load:?}");
+    let act = bound(database.act(epoch, "Group".into(), "g1".into(), "add_member".into(), "{}".into(), json!({"userIds":["u9"]}).to_string())).await;
     assert!(matches!(send, Err(DbError::NoSession { .. })), "send: {send:?}");
+    assert!(matches!(act, Err(DbError::NoSession { .. })), "act: {act:?}");
     database.close_now();
 }
 

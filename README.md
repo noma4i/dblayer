@@ -59,11 +59,16 @@ Core tests check shared behavior. Swift and Kotlin tests check bindings and plat
 Models are described in `.dbl` files with a Rails-like syntax:
 
 ```ruby
+model User do
+  attribute :name, :string, null: true
+  attribute :avatar, :file, null: true
+end
+
 model Moment do
   attribute :uuid, :string
   attribute :userId, :id, null: true
   attribute :text, :string, null: true
-  attribute :media, :file, null: true
+  attribute :media, :json, default: {}
   attribute :createdAt, :date
   index :uuid
   index :userId, :createdAt
@@ -114,8 +119,8 @@ struct FeedView: View {
   }
 }
 
-let moment = try await Moment.send(in: scope, text: "hello").row   // shown at once, queued, synced
-try await moment.attach(.media, data: bytes, name: "a.png", mime: "image/png")   // typed file call
+let moment = try await Moment.send(in: scope, text: "hello").optimisticValue   // shown at once, queued, synced
+try await user.attach(.avatar, data: bytes, name: "a.png", mime: "image/png")   // typed file call
 ```
 
 ### Kotlin
@@ -126,8 +131,8 @@ class FeedModel(me: User, scope: AccountScope) : ViewModel() {
   val moments = Projected(scope.stream(query), query.decoder, viewModelScope)   // rows: moments.projection
 }
 
-val moment = Moment.send(scope, text = "hello").row            // shown at once, queued, synced
-moment.attach(Moment.media, data = bytes, name = "a.png", mime = "image/png")   // typed file call
+val moment = Moment.send(scope, text = "hello").optimisticValue   // shown at once, queued, synced
+user.attach(User.avatar, data = bytes, name = "a.png", mime = "image/png")   // typed file call
 ```
 
 ### Encrypted sign-in

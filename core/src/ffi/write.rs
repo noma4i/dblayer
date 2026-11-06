@@ -66,6 +66,12 @@ impl Database {
         }
     }
 
+    pub(super) fn mutation_needs_transport(&self, model: &str, action: &str) -> Result<(), DbError> {
+        let spec = self.db.spec(model)?;
+        let sends = !spec.is_local() && !spec.is_memory() && spec.actions.iter().any(|declared| declared.name == action && declared.mutation.is_some());
+        if sends { self.remote() } else { Ok(()) }
+    }
+
     pub(super) fn now(&self) -> Time { Time(u64::try_from(self.db.lock().now_ms()).unwrap_or(0)) }
 
     pub(super) fn optimistic(&self, model: &str, row: &crate::identity::RowId) -> Result<Option<super::wire::WireRow>, DbError> {
@@ -113,6 +119,7 @@ impl Database {
 
     pub(super) async fn create_row(&self, epoch: u64, model: String, values: Map<String, Value>, args: Map<String, Value>) -> Result<WireOperationReceipt, DbError> {
         if self.life.is_shut() { return Err(super::command::closed()); }
+        self.mutation_needs_transport(&model, "create")?;
         let db = self.db.clone();
         let planned = self.offload(move || Ok(db.plan_create(&model, values, args)?)).await?;
         self.write_planned(epoch, "create", planned).await
@@ -130,6 +137,7 @@ impl Database {
     }
 
     pub async fn update(&self, epoch: u64, model: String, row_id: String, patch_json: String, args_json: String) -> Result<WireOperationReceipt, DbError> {
+        self.mutation_needs_transport(&model, "update")?;
         let (patch, args) = (serde_json::from_str(&patch_json)?, serde_json::from_str(&args_json)?);
         let row = self.resolved(epoch, &model, id(&row_id)?).await?;
         let (db, name) = (self.db.clone(), model.clone());
@@ -138,6 +146,7 @@ impl Database {
     }
 
     pub async fn act(&self, epoch: u64, model: String, row_id: String, action: String, patch_json: String, args_json: String) -> Result<WireOperationReceipt, DbError> {
+        self.mutation_needs_transport(&model, &action)?;
         let (patch, args) = (serde_json::from_str(&patch_json)?, serde_json::from_str(&args_json)?);
         let row = self.resolved(epoch, &model, id(&row_id)?).await?;
         let (db, name, verb) = (self.db.clone(), model.clone(), action.clone());
@@ -146,6 +155,7 @@ impl Database {
     }
 
     pub async fn destroy(&self, epoch: u64, model: String, row_id: String) -> Result<WireOperationReceipt, DbError> {
+        self.mutation_needs_transport(&model, "destroy")?;
         let row = self.resolved(epoch, &model, id(&row_id)?).await?;
         let (db, name) = (self.db.clone(), model.clone());
         let planned = self.offload(move || Ok(db.plan_destroy(&name, &row)?)).await?;
