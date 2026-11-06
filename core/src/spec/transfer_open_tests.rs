@@ -35,7 +35,7 @@ fn outcomes(id: u64, outcome: OutboxOutcome) -> BTreeMap<u64, OutboxOutcome> { B
 async fn xfer_prop_saved_outcome_reopens_sqlite() {
     use crate::ffi::upload_wire::WireUploadRequest;
     use crate::schema::OnFailure;
-    use crate::upload::UploadFile;
+    use crate::owners::write::upload::UploadFile;
     use super::rig::{Kind, Rig, Server, within};
 
     let directory = tempfile::tempdir().unwrap();
@@ -213,7 +213,7 @@ fn xfer_complete_temp_offline() {
 async fn xfer_attempt_reopen_file() {
     use crate::ffi::upload_wire::WireUploadRequest;
     use crate::schema::OnFailure;
-    use crate::upload::UploadFile;
+    use crate::owners::write::upload::UploadFile;
     use super::rig::{Kind, Rig, Server, within};
 
     let directory = tempfile::tempdir().unwrap();
@@ -245,7 +245,7 @@ async fn xfer_attempt_reopen_file() {
 async fn xfer_upload_survives_model_fingerprint_change() {
     use crate::ffi::upload_wire::WireUploadRequest;
     use crate::schema::OnFailure;
-    use crate::upload::UploadFile;
+    use crate::owners::write::upload::UploadFile;
     use super::rig::{moment_models, Kind, Rig, Server, within};
 
     let directory = tempfile::tempdir().unwrap();

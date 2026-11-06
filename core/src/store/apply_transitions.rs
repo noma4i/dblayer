@@ -145,7 +145,7 @@ fn apply_transitions(
             }
             OperationTransition::Progress { seq, item_position, state } => {
                 synced.extend(op_keys_of(connection, *seq)?);
-                let starts_blob = if matches!(state.stage, crate::upload::UploadStage::Create | crate::upload::UploadStage::Init) && state.put_url.is_none() && state.upload_id.is_none() {
+                let starts_blob = if matches!(state.stage, crate::owners::write::upload::UploadStage::Create | crate::owners::write::upload::UploadStage::Init) && state.put_url.is_none() && state.upload_id.is_none() {
                     let previous_stage: Option<String> = connection.query_row(include_str!("sql/apply_transitions/apply_transitions_select_op_item.sql"), params![seq, item_position], |row| row.get(0)).optional()?;
                     previous_stage != crate::store::operation::enum_text(&state.stage)
                 } else { false };
@@ -158,7 +158,7 @@ fn apply_transitions(
                     result.unknown_operation_acks += 1;
                     continue;
                 }
-                if matches!(state.phase, crate::upload::UploadStatus::Failed | crate::upload::UploadStatus::Cancelled) {
+                if matches!(state.phase, crate::owners::write::upload::UploadStatus::Failed | crate::owners::write::upload::UploadStatus::Cancelled) {
                     let open: bool = connection.query_row(include_str!("sql/apply_transitions/apply_transitions_select_op_item_2.sql"), [seq], |row| row.get(0))?;
                     if !open { result.ended_uploads.push((*seq, state.phase, state.error.clone())); }
                 }

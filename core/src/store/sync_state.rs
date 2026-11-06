@@ -58,7 +58,7 @@ fn open_entries(connection: &Connection, keys: Option<&BTreeSet<SyncKey>>, batch
             let mut item = entry.clone();
             let position = positions.get(&key.1).copied().unwrap_or(0);
             item.upload = uploads.get(&(seq, position)).cloned();
-            if item.status == OperationStatus::Pending && item.upload.as_ref().is_some_and(|state| state.phase == crate::upload::UploadStatus::Failed) {
+            if item.status == OperationStatus::Pending && item.upload.as_ref().is_some_and(|state| state.phase == crate::owners::write::upload::UploadStatus::Failed) {
                 item.status = OperationStatus::Failed;
                 item.error = item.upload.as_ref().and_then(|state| state.error.clone());
             }
@@ -90,8 +90,8 @@ fn stored_info(connection: &Connection, key: &SyncKey, row: &Row<'_>, first: usi
     Ok(info)
 }
 
-fn read_uploads(connection: &Connection, model: &str, ids: &[String]) -> rusqlite::Result<HashMap<String, std::collections::BTreeMap<String, crate::upload::UploadInfo>>> {
-    let mut found: HashMap<String, std::collections::BTreeMap<String, crate::upload::UploadInfo>> = HashMap::new();
+fn read_uploads(connection: &Connection, model: &str, ids: &[String]) -> rusqlite::Result<HashMap<String, std::collections::BTreeMap<String, crate::owners::write::upload::UploadInfo>>> {
+    let mut found: HashMap<String, std::collections::BTreeMap<String, crate::owners::write::upload::UploadInfo>> = HashMap::new();
     for chunk in ids.chunks(CHUNK) {
         let marks = vec!["?"; chunk.len()].join(", ");
         let mut statement = connection.prepare_cached(&format!(include_str!("sql/sync_state/read_uploads.sql"), INFO_COLUMNS = INFO_COLUMNS, marks = marks))?;

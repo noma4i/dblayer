@@ -12,7 +12,7 @@ pub enum NetworkPurpose {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RequestOwner {
     Operation { seq: i64 },
-    Transfer { operation_id: i64, item_id: String, step: crate::upload::UploadStage },
+    Transfer { operation_id: i64, item_id: String, step: crate::owners::write::upload::UploadStage },
     Unmatched { operation_id: i64 },
     Detached,
 }

@@ -419,8 +419,8 @@ pub(crate) fn lower_calls(nodes: &[OperationNode], errors: &mut Vec<Found>) -> V
 }
 
 /// The one `uploads do` block of the project: the steps of file uploads. A project with upload operations needs it, a project without them refuses it.
-pub(crate) fn lower_uploads(nodes: &[UploadsNode], models: &[ModelDecl], errors: &mut Vec<Found>) -> Option<dblayer::upload::UploadOperations> {
-    use dblayer::upload::{MultipartOperations, UploadOperation, UploadOperations};
+pub(crate) fn lower_uploads(nodes: &[UploadsNode], models: &[ModelDecl], errors: &mut Vec<Found>) -> Option<dblayer::owners::write::upload::UploadOperations> {
+    use dblayer::owners::write::upload::{MultipartOperations, UploadOperation, UploadOperations};
     let uses = models.iter().flat_map(|model| model.operations.iter().filter_map(move |operation| operation.upload.map(|pos| (model.file, pos, operation.name.clone()))));
     let Some(first) = nodes.first() else {
         if let Some((file, pos, name)) = uses.into_iter().next() {

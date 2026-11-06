@@ -19,7 +19,7 @@ use crate::ffi::{ByteProgress, CableLease, Config, Database, DbError, EncryptedC
 use crate::transport::encrypted::vectors_tests::{origin, pin, public_key_der_b64};
 use crate::transport::encrypted::fake_server_tests::{decrypt_request, seal_response, FakeServer};
 use crate::transport::NetworkPurpose;
-use crate::upload::{UploadFile, MEBIBYTE};
+use crate::owners::write::upload::{UploadFile, MEBIBYTE};
 
 /// A transport that only takes the PUTs of the file steps: it records each range and answers with an etag.
 #[derive(Default)]

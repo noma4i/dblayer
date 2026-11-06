@@ -55,10 +55,10 @@ impl Store {
 
     /// Drops the blobs whose lifetime ended before the first use of the database.
     pub(crate) fn expire_blobs_before_use(&self) -> Result<(), DbError> {
-        let failed_ttl = i64::try_from(crate::upload::UploadConfig::default().failed_ttl.as_millis()).unwrap_or(i64::MAX);
+        let failed_ttl = i64::try_from(crate::owners::write::upload::UploadConfig::default().failed_ttl.as_millis()).unwrap_or(i64::MAX);
         let now = self.lock().now_ms();
         let failed_due = now.saturating_sub(failed_ttl);
-        let ready_due = now.saturating_sub(crate::upload::BLOB_LIFETIME_MS);
+        let ready_due = now.saturating_sub(crate::owners::write::upload::BLOB_LIFETIME_MS);
         let due = self.read_models(&[], |reader| Ok(super::blob::due(reader.connection(), ready_due, failed_due)?))?;
         if due.is_empty() { return Ok(()); }
         let mut envelope = crate::store::BatchPlan::from_server(self.generation());

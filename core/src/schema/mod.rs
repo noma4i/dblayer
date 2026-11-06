@@ -69,7 +69,7 @@ pub struct ModelSpec {
     pub server_revision: Option<String>,
     /// The steps of file uploads declared once per project (`uploads do`): the generator copies them to every model with an upload action.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub upload_steps: Option<crate::upload::UploadOperations>,
+    pub upload_steps: Option<crate::owners::write::upload::UploadOperations>,
     /// A row of the named model that lands removes the rows of this model whose fields equal its own (M40).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub removed_by: Vec<RemovedBy>,

@@ -7,7 +7,7 @@ use super::flow_fixtures::{add_chat, add_moment, add_profile, cell, int, land_de
 use super::upload_fixtures::add_moment_file;
 use crate::ffi::command::{CommandRequest, CommandUpload};
 use crate::ffi::upload_wire::WireUploadRequest;
-use crate::upload::UploadFile;
+use crate::owners::write::upload::UploadFile;
 use crate::ffi::tape::Rows;
 use crate::ffi::wire::Cell;
 use crate::ffi::WireOperationOutcome;

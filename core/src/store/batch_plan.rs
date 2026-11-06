@@ -7,7 +7,7 @@ use crate::store::files::FileRecord;
 use crate::identity::{Generation, ModelKey, RowId, RowRef, ListKey};
 use crate::owners::write::operation_status::OperationStatus;
 use crate::value::sync::OperationFailure;
-use crate::upload::UploadState;
+use crate::owners::write::upload::UploadState;
 use crate::value::duplicates;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -110,7 +110,7 @@ pub struct OperationRecord {
 pub struct UploadAdmission {
     pub row: RowId,
     pub client_key: String,
-    pub input: crate::upload::UploadInput,
+    pub input: crate::owners::write::upload::UploadInput,
     pub state: UploadState,
     pub source: Result<FileRecord, String>,
 }
@@ -121,7 +121,7 @@ pub enum OperationTransition {
     RetireBlob { id: String, expired: bool },
     Begin(Box<OperationRecord>),
     BeginUpload { record: Box<OperationRecord>, items: Vec<UploadAdmission> },
-    RemoveUploadItem { seq: i64, position: i64, inputs: Vec<(i64, crate::upload::UploadInput)> },
+    RemoveUploadItem { seq: i64, position: i64, inputs: Vec<(i64, crate::owners::write::upload::UploadInput)> },
     ReplaceUploadSource { seq: i64, position: i64, item: Box<UploadAdmission> },
     ConfirmUploadItem { seq: i64, position: i64, item: String, temp: String, row: String },
     Close { seq: i64, status: OperationStatus },
@@ -357,7 +357,7 @@ pub struct CommitResult {
     pub unknown_operation_acks: u32,
     pub(crate) snapshot: Option<crate::store::Row>,
     pub(crate) item_snapshots: Vec<(String, Option<crate::store::Row>)>,
-    pub(crate) ended_uploads: Vec<(i64, crate::upload::UploadStatus, Option<crate::value::sync::OperationFailure>)>,
+    pub(crate) ended_uploads: Vec<(i64, crate::owners::write::upload::UploadStatus, Option<crate::value::sync::OperationFailure>)>,
     pub(crate) discarded_items: Vec<(i64, String)>,
     /// The version of the overlay of ephemeral values the commit published at its revision.
     pub position: u64,

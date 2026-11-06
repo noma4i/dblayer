@@ -1,7 +1,7 @@
 use serde_json::Value;
 
 use crate::schema::FieldSpec;
-use crate::upload::UploadOperations;
+use crate::owners::write::upload::UploadOperations;
 use crate::value::ScalarKind;
 
 /// The photo of a chat and the steps of the project.

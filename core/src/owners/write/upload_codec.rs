@@ -13,7 +13,7 @@ use super::transfer_executor::{Link, StepCodec, StepDone};
 use crate::owners::life::OperationLookup;
 use crate::owners::read::codec::root_value;
 use crate::transport::{CancelToken, GraphQLRequest, PutFile, PutRequest, Response, TransferIdentity, TransferStep, TransportError};
-use crate::upload::{md5_base64, parse_headers, part_range, UploadConfig, UploadOperations};
+use crate::owners::write::upload::{md5_base64, parse_headers, part_range, UploadConfig, UploadOperations};
 
 /// What `Steps.body` holds: the file the steps are for.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

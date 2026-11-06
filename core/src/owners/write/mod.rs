@@ -24,6 +24,7 @@ mod transfer_open;
 mod transfer_steps;
 pub mod transfer_types;
 pub mod rounds;
+pub mod upload;
 pub(crate) mod rounds_executor;
 pub(crate) mod transfer_executor;
 pub mod wire;

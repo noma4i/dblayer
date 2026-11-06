@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::identity::RowId;
 use crate::value::sync::OperationFailure;
-use crate::upload::UploadState;
+use crate::owners::write::upload::UploadState;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct OperationId(pub i64);

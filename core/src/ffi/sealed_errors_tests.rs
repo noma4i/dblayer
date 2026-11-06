@@ -25,7 +25,7 @@ pub(super) const OPERATIONS: &str = r#"[{"name":"Feed","document":"query Feed { 
 
 pub(super) fn moment_spec() -> ModelSpec {
     let mut model = ModelSpec::new("Moment", vec![FieldSpec::scalar("id", ScalarKind::Id), FieldSpec::scalar("text", ScalarKind::Str).optional()]);
-    model.upload_steps = Some(crate::upload::UploadOperations::test_steps());
+    model.upload_steps = Some(crate::owners::write::upload::UploadOperations::test_steps());
     let mut feed = RelationSpec::global("feed");
     feed.remote = Some(RemoteSpec {
         operation: "Feed".into(), shape: RemoteShape::List { coverage: Coverage::Complete }, stale_time: "5.minutes".into(),

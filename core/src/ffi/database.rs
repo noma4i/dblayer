@@ -14,7 +14,7 @@ use crate::pacing::{Clock, ManualClock, SystemClock};
 use crate::store::query::Query;
 use crate::schema::ModelSpec;
 use crate::transport::{self as core, EncryptedTransport, Exchange};
-use crate::upload::UploadOperations;
+use crate::owners::write::upload::UploadOperations;
 use super::open_slot::OpenLease;
 use super::transport::ForeignTransport;
 use super::upload_wire::WireUploadRequest;
@@ -202,7 +202,7 @@ impl Database {
         let executor = executor()?.handle().clone();
         let operations = operations_lookup(&read_operations);
         let transfer = uploads.filter(|_| encrypted.is_some()).map(|operations| crate::owners::write::transfer_executor::TransferPort {
-            codec: Arc::new(crate::owners::write::upload_codec::UploadCodec::new(operations, operations_lookup(&read_operations), crate::upload::UploadConfig::default())),
+            codec: Arc::new(crate::owners::write::upload_codec::UploadCodec::new(operations, operations_lookup(&read_operations), crate::owners::write::upload::UploadConfig::default())),
             jobs,
             shows: Arc::new(move |key, shown| shows.put(key, shown)),
             slots: 1,

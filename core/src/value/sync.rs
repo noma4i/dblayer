@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::owners::write::operation_status::OperationStatus;
 use crate::transport::SessionCode;
-use crate::upload::{UploadInfo, UploadState, UploadStatus, WaitReason};
+use crate::owners::write::upload::{UploadInfo, UploadState, UploadStatus, WaitReason};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]

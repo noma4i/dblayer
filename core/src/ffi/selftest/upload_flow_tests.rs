@@ -11,7 +11,7 @@ use crate::ffi::upload_wire::WireUploadRequest;
 use crate::ffi::wire::WireUploadStatus;
 use crate::ffi::{ReadFetch, ReadRequest, WireOperationOutcome};
 use crate::test_wait::yield_until;
-use crate::upload::UploadFile;
+use crate::owners::write::upload::UploadFile;
 
 async fn rig() -> Rig {
     let rig = Rig::signed_as(World::new("server", "A", true), false, |models| {

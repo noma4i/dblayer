@@ -1,7 +1,7 @@
 use serde_json::{Map, Value};
 
 use super::DbError;
-use crate::upload::{UploadBatchInput, UploadFile, UploadItem};
+use crate::owners::write::upload::{UploadBatchInput, UploadFile, UploadItem};
 
 #[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
 pub struct WireUploadRequest {

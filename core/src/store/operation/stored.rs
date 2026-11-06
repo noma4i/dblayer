@@ -10,7 +10,7 @@ use crate::identity::RowId;
 use crate::store::nodes::{delete_trees, read_trees, write_tree};
 use crate::value::sync::OperationFailure;
 use crate::transport::GraphqlExtensions;
-use crate::upload::{UploadInfo, UploadPart, UploadRequest, UploadRetry, UploadState};
+use crate::owners::write::upload::{UploadInfo, UploadPart, UploadRequest, UploadRetry, UploadState};
 
 pub const UPLOAD_COLUMNS: &str = "phase, stage, scenario, total_bytes, sent_bytes, storage_key, upload_id, signed_id, blob_id, document, operation, transferred, confirmed_bytes, checksum, put_url, url_issued_at, failed_at, error_kind, error_message, offline";
 pub const INFO_COLUMNS: &str = "status, stage, sent, total, wait, attempts, error_kind, error_message";
@@ -356,7 +356,7 @@ pub(crate) fn record_transfer_aborts(connection: &Connection, seq: i64, position
     let mut statement = connection.prepare_cached(include_str!("../sql/operation/record_transfer_aborts_select_op_item.sql"))?;
     let pending = statement.query_map(params![seq, position], |row| Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?, row.get::<_, String>(2)?, row.get::<_, i64>(3)?, row.get::<_, String>(4)?)))?.collect::<Result<Vec<_>>>()?;
     for (item, key, upload_id, operation_id, item_id) in pending {
-        let input = read_item_value(connection, seq, item, "input")?.map(serde_json::from_value::<crate::upload::UploadInput>).transpose().map_err(from_sql_error)?;
+        let input = read_item_value(connection, seq, item, "input")?.map(serde_json::from_value::<crate::owners::write::upload::UploadInput>).transpose().map_err(from_sql_error)?;
         let Some(steps) = input.and_then(|input| input.steps.multipart) else { continue };
         connection.prepare_cached(include_str!("../sql/operation/record_transfer_aborts_insert_transfer_abort.sql"))?.execute(params![operation_id, item_id, key, upload_id, steps.abort])?;
     }

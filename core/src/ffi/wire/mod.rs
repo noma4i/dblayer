@@ -5,7 +5,7 @@ use crate::store::Record;
 use crate::store::operation::enum_text;
 use crate::schema::{FieldKind, FieldSpec, ModelSpec, TYPENAME};
 use crate::value::sync::{OperationFailure, SyncInfo, SyncState};
-use crate::upload::{UploadInfo, UploadStatus};
+use crate::owners::write::upload::{UploadInfo, UploadStatus};
 
 #[derive(Clone, Debug, PartialEq, uniffi::Enum)]
 pub enum Cell {

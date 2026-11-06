@@ -13,7 +13,7 @@ use crate::ffi::tape::Rows;
 use crate::ffi::upload_wire::WireUploadRequest;
 use crate::ffi::{DbError, WireOperationOutcome};
 use crate::test_wait::yield_until;
-use crate::upload::UploadFile;
+use crate::owners::write::upload::UploadFile;
 
 const THREAD: &str = r#"{"model":"Message","where":{"type":"equal","field":"chatId","value":"c1"}}"#;
 

@@ -6,7 +6,7 @@ use super::*;
 use crate::store::ddl::migrate_core;
 use crate::value::sync::{FailureKind, OperationFailure};
 use crate::store::operation::{delete_operation, failure_cells, write_rows};
-use crate::upload::{UploadStage, UploadState, UploadStatus};
+use crate::owners::write::upload::{UploadStage, UploadState, UploadStatus};
 
 fn database() -> Connection {
     let connection = Connection::open_in_memory().unwrap();

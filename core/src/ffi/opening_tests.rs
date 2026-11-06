@@ -106,7 +106,7 @@ async fn an_open_that_fails_leaves_the_slot_free() {
 
 fn clip_with_blob(name: &str) -> String {
     let mut clip = crate::schema::ModelSpec::new("Clip", vec![crate::schema::FieldSpec::scalar("id", crate::value::ScalarKind::Id)]);
-    clip.upload_steps = Some(crate::upload::UploadOperations { create_blob: Some(crate::upload::UploadOperation::new(name)), multipart: None });
+    clip.upload_steps = Some(crate::owners::write::upload::UploadOperations { create_blob: Some(crate::owners::write::upload::UploadOperation::new(name)), multipart: None });
     serde_json::to_string(&vec![clip]).unwrap()
 }
 

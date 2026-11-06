@@ -9,7 +9,7 @@ use super::upload_fixtures::add_message_file;
 use crate::ffi::command::{CommandRequest, CommandUpload};
 use crate::ffi::upload_wire::WireUploadRequest;
 use crate::ffi::wire::WireUploadStatus;
-use crate::upload::UploadFile;
+use crate::owners::write::upload::UploadFile;
 use crate::ffi::tape::Rows;
 use crate::ffi::wire::Cell;
 use crate::ffi::{ReadFetch, ReadRequest};

@@ -386,7 +386,7 @@ if design.exists():
     constant = re.compile(r"^\s*(?:pub(?:\([^)]*\))?\s+)?const\s+([A-Z][A-Z0-9_]*)\s*:\s*(?:u8|u16|u32|u64|usize|i32|i64|f64|Duration)\b", re.M)
     for path in files:
         relative = str(path.relative_to(source))
-        if not (relative.startswith("owners/") or relative == "upload/config.rs") or any(marker in "/" + relative for marker in task_support):
+        if not ((relative.startswith("owners/") and not relative.startswith("owners/write/upload/")) or relative == "owners/write/upload/config.rs") or any(marker in "/" + relative for marker in task_support):
             continue
         for name in constant.findall(contents[path]):
             if name not in section and f"z27:{name}" not in allowed:

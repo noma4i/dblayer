@@ -10,7 +10,7 @@ use tokio::sync::oneshot;
 
 use crate::ffi::{ByteProgress, CableLease, Config, Database, DbError, EncryptedHttp, EncryptedReply, EncryptedSocketEvent, PutReply, SubscriptionSink, TestClock, Transport, TransportRequest, WireOperationOutcome, WireOperationReceipt, WireRow};
 use crate::schema::{ActionDeclaration, FieldSpec, ModelSpec, OnFailure, RootShape};
-use crate::upload::{MultipartOperations, UploadOperation, UploadOperations};
+use crate::owners::write::upload::{MultipartOperations, UploadOperation, UploadOperations};
 use crate::transport::encrypted::fake_server_tests::{decrypt_request, seal_response, MemoryCredentials};
 use crate::transport::CredentialSlot;
 use super::harness_life::Held;

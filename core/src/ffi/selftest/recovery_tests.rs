@@ -12,7 +12,7 @@ use crate::ffi::session_guards_tests::{Rig as SessionRig, SOCIAL_BODY};
 use crate::ffi::upload_wire::WireUploadRequest;
 use crate::ffi::{ByteProgress, CableLease, Config, Database, DbError, EncryptedConfig, EncryptedSocketEvent, PutReply, SubscriptionSink, Transport, TransportRequest};
 use crate::transport::encrypted::vectors_tests::{origin, pin, public_key_der_b64};
-use crate::upload::UploadFile;
+use crate::owners::write::upload::UploadFile;
 
 fn effects(rig: &SessionRig, operation: &str) -> Vec<serde_json::Value> {
     rig.server.executed().into_iter().filter(|body| body["operationName"] == operation).collect()

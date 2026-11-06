@@ -189,7 +189,7 @@ fn parse_all(sources: &[&str]) -> Result<Declarations, Vec<(usize, ParseError)>>
 pub(crate) const TEST_UPLOADS: &str = "uploads do\n  create_blob :CreateBlob\nend\n\n";
 
 /// Every model with an upload action carries the steps of the project, so `open` reads them from the models.
-fn stamp_upload_steps(models: &mut [ModelSpec], steps: Option<dblayer::upload::UploadOperations>) {
+fn stamp_upload_steps(models: &mut [ModelSpec], steps: Option<dblayer::owners::write::upload::UploadOperations>) {
     for model in models.iter_mut().filter(|model| model.actions.iter().any(|action| action.upload)) {
         model.upload_steps = steps.clone();
     }

@@ -7,7 +7,6 @@ pub mod transport;
 pub mod value;
 pub mod schema;
 pub mod store;
-pub mod upload;
 pub mod ffi;
 #[cfg(test)]
 mod check;

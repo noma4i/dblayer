@@ -179,14 +179,14 @@ pub(super) fn apply_envelope_at(
         result.rows = changes.changes;
         result.replaced = replaced;
         let mut progress_only: BTreeSet<_> = envelope.operation_transitions.iter().filter_map(|transition| match transition {
-            OperationTransition::Progress { seq, state, .. } if state.phase != crate::upload::UploadStatus::Queued => Some(*seq),
+            OperationTransition::Progress { seq, state, .. } if state.phase != crate::owners::write::upload::UploadStatus::Queued => Some(*seq),
             _ => None,
         }).collect();
         for transition in &envelope.operation_transitions {
             let seq = match transition {
                 OperationTransition::Begin(record) | OperationTransition::BeginUpload { record, .. } | OperationTransition::BeginBlob { record, .. } => record.seq,
                 OperationTransition::RetireBlob { .. } => None,
-                OperationTransition::Progress { seq, state, .. } if state.phase == crate::upload::UploadStatus::Queued => Some(*seq),
+                OperationTransition::Progress { seq, state, .. } if state.phase == crate::owners::write::upload::UploadStatus::Queued => Some(*seq),
                 OperationTransition::Progress { .. } | OperationTransition::BackgroundRefused { .. } => None,
                 OperationTransition::RemoveUploadItem { seq, .. } | OperationTransition::ReplaceUploadSource { seq, .. } | OperationTransition::ConfirmUploadItem { seq, .. }
                 | OperationTransition::Close { seq, .. } | OperationTransition::Fail { seq, .. }

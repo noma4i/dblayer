@@ -66,11 +66,11 @@ impl Store {
         }
         for action in spec.actions.iter().filter(|action| action.upload) {
             let Some(progress) = action.processing.as_ref().and_then(|processing| processing.progress_in(data)) else { continue };
-            let processing = Some(crate::upload::UploadProcessing { progress });
+            let processing = Some(crate::owners::write::upload::UploadProcessing { progress });
             match sync.uploads.get_mut(&action.name) {
                 Some(info) => info.processing = processing,
                 None => {
-                    sync.uploads.insert(action.name.clone(), crate::upload::UploadInfo { status: crate::upload::UploadStatus::Done, stage: crate::upload::UploadStage::Mutation, sent_bytes: 0, total_bytes: 0, wait_reason: None, attempts: 0, error: None, local_url: None, processing, copy_file: None });
+                    sync.uploads.insert(action.name.clone(), crate::owners::write::upload::UploadInfo { status: crate::owners::write::upload::UploadStatus::Done, stage: crate::owners::write::upload::UploadStage::Mutation, sent_bytes: 0, total_bytes: 0, wait_reason: None, attempts: 0, error: None, local_url: None, processing, copy_file: None });
                 }
             }
         }

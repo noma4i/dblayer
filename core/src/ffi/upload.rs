@@ -16,7 +16,7 @@ use crate::owners::write::transfer::{BatchItem, Joint, Renumber, Source, Transfe
 use crate::owners::write::upload_codec::StepsBody;
 use crate::schema::ActionDeclaration;
 use crate::transport::GraphQLRequest;
-use crate::upload::{mime_of, part_count, scenario_for, UploadConfig, UploadFile, UploadScenario};
+use crate::owners::write::upload::{mime_of, part_count, scenario_for, UploadConfig, UploadFile, UploadScenario};
 
 /// What one transfer is planned from.
 struct Plan<'a> {
@@ -78,7 +78,7 @@ impl Database {
     }
 
     /// One item of a batch: the row of the item is planned like a `create`, its final mutation carries the item alone.
-    fn batch_upload(&self, model: &str, action: &str, planned: &Planned, item: &crate::upload::UploadItem, request: &crate::upload::UploadBatchInput) -> Result<BatchItem, DbError> {
+    fn batch_upload(&self, model: &str, action: &str, planned: &Planned, item: &crate::owners::write::upload::UploadItem, request: &crate::owners::write::upload::UploadBatchInput) -> Result<BatchItem, DbError> {
         let spec = self.db.spec(model)?;
         let declaration = spec.actions.iter().find(|declared| declared.name == action).ok_or_else(|| invalid("unknown upload operation"))?;
         let batch = declaration.batch.as_ref().ok_or_else(|| DbError::Sync { detail: "operation has no upload batch declaration".into() })?;
@@ -105,7 +105,7 @@ impl Database {
     }
 
     /// How the elements of a batch go out together: at least `min` of them in one request of the batch action, fewer one by one.
-    fn joint_of(&self, model: &str, request: &crate::upload::UploadBatchInput) -> Result<Joint, DbError> {
+    fn joint_of(&self, model: &str, request: &crate::owners::write::upload::UploadBatchInput) -> Result<Joint, DbError> {
         let spec = self.db.spec(model)?;
         let declaration = spec.actions.iter().find(|declared| declared.name == request.operation).ok_or_else(|| invalid("unknown upload operation"))?;
         let batch = declaration.batch.as_ref().ok_or_else(|| DbError::Sync { detail: "operation has no upload batch declaration".into() })?;
@@ -223,7 +223,7 @@ impl Database {
         let item = self.single_upload(&request.model, planned.row_id.as_str(), &upload.action, &file, planned.effects.clone())?;
         let waiter = self.life.accept_upload(epoch, item, self.now());
         let TransferAnswer::Receipt(held) = self.transfer_answer(waiter, "send").await? else { return Err(DbError::Database { detail: "the owner answered a send with no receipt".into() }) };
-        let queued = crate::upload::UploadInfo { status: crate::upload::UploadStatus::Queued, stage: crate::upload::UploadStage::Prepare, sent_bytes: 0, total_bytes: 0, wait_reason: None, attempts: 0, error: None, local_url: None, processing: None, copy_file: None };
+        let queued = crate::owners::write::upload::UploadInfo { status: crate::owners::write::upload::UploadStatus::Queued, stage: crate::owners::write::upload::UploadStage::Prepare, sent_bytes: 0, total_bytes: 0, wait_reason: None, attempts: 0, error: None, local_url: None, processing: None, copy_file: None };
         let sync = crate::value::sync::SyncInfo { uploads: std::collections::BTreeMap::from([(action, queued)]), ..Default::default() };
         let record = Record { id: planned.row_id.clone(), revision: 0, data: planned.input.as_object().cloned().unwrap_or_default(), sync };
         let value = self.wire(&request.model)?.row(&record);

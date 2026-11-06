@@ -3,7 +3,7 @@ use super::*;
 use crate::store::{OperationRecord, OperationTransition};
 use crate::owners::write::operation_status::OperationStatus;
 use crate::value::sync::{FailureKind, OperationFailure};
-use crate::upload::{UploadPart, UploadScenario, UploadStage, UploadState, UploadStatus};
+use crate::owners::write::upload::{UploadPart, UploadScenario, UploadStage, UploadState, UploadStatus};
 use serde_json::json;
 
 fn record() -> OperationRecord {

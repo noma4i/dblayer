@@ -85,7 +85,7 @@ fn state_names_round_trip_through_sql() {
 
 #[test]
 fn inv_upload_14_an_upload_behind_an_open_create_folds_to_waiting_and_stops_waiting_without_it() {
-    use crate::upload::{UploadState, UploadStatus, WaitReason};
+    use crate::owners::write::upload::{UploadState, UploadStatus, WaitReason};
     let upload = SyncEntry { upload: Some(UploadState::queued()), ..entry("upload:upload", OperationStatus::Pending, false, 2) };
     let behind = fold_entries(&[entry("create", OperationStatus::Pending, false, 1), upload.clone()]).unwrap().uploads.get("upload").cloned().unwrap();
     assert_eq!((behind.status, behind.wait_reason), (UploadStatus::Waiting, Some(WaitReason::CreateUnconfirmed)));
@@ -95,7 +95,7 @@ fn inv_upload_14_an_upload_behind_an_open_create_folds_to_waiting_and_stops_wait
 
 #[test]
 fn an_offline_upload_folds_to_waiting_offline_and_the_row_stays_pending() {
-    use crate::upload::{UploadState, UploadStage, UploadStatus, WaitReason};
+    use crate::owners::write::upload::{UploadState, UploadStage, UploadStatus, WaitReason};
     let state = UploadState { phase: UploadStatus::Uploading, stage: UploadStage::Create, offline: true, ..UploadState::queued() };
     let upload = SyncEntry { upload: Some(state.clone()), ..entry("upload:upload", OperationStatus::Pending, false, 1) };
     let info = fold_entries(&[upload]).unwrap();

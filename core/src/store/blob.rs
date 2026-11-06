@@ -3,7 +3,7 @@ use rusqlite::{params, Connection, OptionalExtension};
 use serde_json::Value;
 use crate::store::OperationRecord;
 use crate::owners::write::operation_status::Operation;
-use crate::upload::{BlobSnapshot, BlobState, UploadState, BLOB_LIFETIME_MS};
+use crate::owners::write::upload::{BlobSnapshot, BlobState, UploadState, BLOB_LIFETIME_MS};
 use super::{ModelInfo, StoreError};
 
 type BlobUploadRow = (Option<i64>, Option<i64>, Option<i64>, bool);
@@ -17,7 +17,7 @@ pub(crate) fn snapshot(connection: &Connection, id: &str) -> Result<Option<BlobS
     };
     if seq.is_none() { (upload.signed_id, upload.total_bytes, upload.sent_bytes) = connection.query_row(include_str!("sql/blob/snapshot_select_blob_upload_2.sql"), [id], |row| Ok((row.get(0)?, row.get::<_, i64>(1)? as u64, row.get::<_, i64>(2)? as u64)))?; }
     let operation = seq.map(|seq| crate::store::operation::read_operation(connection, seq)).transpose()?.flatten();
-    let failed = upload.background_refused.is_some() || upload.phase == crate::upload::UploadStatus::Failed || operation.as_ref().is_some_and(|operation| operation.status == crate::owners::write::operation_status::OperationStatus::Failed);
+    let failed = upload.background_refused.is_some() || upload.phase == crate::owners::write::upload::UploadStatus::Failed || operation.as_ref().is_some_and(|operation| operation.status == crate::owners::write::operation_status::OperationStatus::Failed);
     if upload.error.is_none() { upload.error = operation.and_then(|operation| operation.error); }
     let state = if expired { BlobState::Expired } else if seq.is_none() && ready { BlobState::Consumed } else if seq.is_none() { BlobState::Discarded } else if failed { BlobState::Failed } else if upload.is_transferred() { BlobState::Uploaded } else { BlobState::Uploading };
     let signed_id = matches!(state, BlobState::Uploaded | BlobState::Consumed).then(|| upload.signed_id.clone()).flatten();

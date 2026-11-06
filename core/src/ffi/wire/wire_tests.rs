@@ -132,16 +132,16 @@ fn the_row_carries_its_id_sync_state_and_upload() {
     data.sync.error = Some(crate::value::sync::OperationFailure::new(crate::value::sync::FailureKind::Server, "http 503"));
     data.sync.attempts = 2;
     data.sync.since = 7;
-    data.sync.uploads.insert("upload".to_string(), crate::upload::UploadInfo {
-        status: crate::upload::UploadStatus::Uploading,
-        stage: crate::upload::UploadStage::Part,
+    data.sync.uploads.insert("upload".to_string(), crate::owners::write::upload::UploadInfo {
+        status: crate::owners::write::upload::UploadStatus::Uploading,
+        stage: crate::owners::write::upload::UploadStage::Part,
         sent_bytes: 40,
         total_bytes: 90,
-        wait_reason: Some(crate::upload::WaitReason::CreateUnconfirmed),
+        wait_reason: Some(crate::owners::write::upload::WaitReason::CreateUnconfirmed),
         attempts: 1,
         error: None,
         local_url: Some("file:///copy".to_string()),
-        processing: Some(crate::upload::UploadProcessing { progress: Some(0.5) }),
+        processing: Some(crate::owners::write::upload::UploadProcessing { progress: Some(0.5) }),
         copy_file: None,
     });
     let wire = WireModel::of(&spec()).row(&Arc::new(data));
