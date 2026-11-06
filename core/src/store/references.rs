@@ -4,7 +4,7 @@ use serde_json::{json, Map, Value};
 
 use crate::store::ddl::{sql_ident, FieldPlan, Member};
 use crate::identity::RowId;
-use crate::query::{compile_keys, fetch_keys, Query, Where};
+use crate::store::query::{compile_keys, fetch_keys, Query, Where};
 use crate::schema::AssociationKind;
 
 use super::{ModelInfo, Reader, StoreError};

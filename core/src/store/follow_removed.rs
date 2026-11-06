@@ -5,7 +5,7 @@ use serde_json::json;
 
 use crate::store::{BatchPlan, DestroyReason, EntityOp};
 use crate::identity::{ModelKey, RowId};
-use crate::query::{compile_keys, fetch_keys, Query, Where};
+use crate::store::query::{compile_keys, fetch_keys, Query, Where};
 
 use super::{ModelInfo, StoreError};
 

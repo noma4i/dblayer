@@ -1,5 +1,5 @@
 use crate::identity::IdentityError;
-use crate::query::QueryError;
+use crate::store::query::QueryError;
 use crate::schema::{ModelFault, SchemaError};
 use crate::store::StoreError;
 

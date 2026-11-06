@@ -6,7 +6,7 @@ use serde_json::{json, Value};
 
 use crate::owners::contract::BatchAuthor;
 use crate::owners::store::{EffectRow, IntentEffects, StoreBatch, StoreOp};
-use crate::query::{Order, Query, Where};
+use crate::store::query::{Order, Query, Where};
 use crate::owners::read::windows::WindowKey;
 use crate::store::spec_fixtures::{all_specs, moments_spec, obj, put};
 use crate::store::Store;
@@ -221,9 +221,9 @@ fn inv_ephemeral_07_ephemeral_fields_cannot_be_queried() {
     let specs = ephemeral_specs();
     let spec = specs.iter().find(|spec| spec.key.as_str() == "moments").unwrap();
     let filtered = Query::new("moments").filtered(Where::equal("typing", json!(true)));
-    assert_eq!(crate::query::compile_keys(&filtered, spec).unwrap_err(), crate::query::QueryError::EphemeralField("typing".into()));
+    assert_eq!(crate::store::query::compile_keys(&filtered, spec).unwrap_err(), crate::store::query::QueryError::EphemeralField("typing".into()));
     let ordered = Query::new("moments").ordered(vec![Order::new("typing", SortDirection::Asc)]);
-    assert_eq!(crate::query::compile_keys(&ordered, spec).unwrap_err(), crate::query::QueryError::EphemeralField("typing".into()));
+    assert_eq!(crate::store::query::compile_keys(&ordered, spec).unwrap_err(), crate::store::query::QueryError::EphemeralField("typing".into()));
 }
 
 #[test]

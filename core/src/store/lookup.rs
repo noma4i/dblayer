@@ -7,7 +7,7 @@ use serde_json::{Map, Value};
 
 use crate::identity::touches::touch;
 use crate::identity::RowId;
-use crate::query::{compile_count, compile_keys, fetch_count, fetch_keys, Order, Query};
+use crate::store::query::{compile_count, compile_keys, fetch_count, fetch_keys, Order, Query};
 use crate::schema::Sort;
 use crate::store::sync_state::read_sync;
 

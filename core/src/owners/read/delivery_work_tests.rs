@@ -11,7 +11,7 @@ use super::feed::Feed;
 use super::{DbSnapshots, Snapshots};
 use crate::store::ddl::table_name;
 use crate::owners::contract::{ChangedRows, Committed, Models};
-use crate::query::Query;
+use crate::store::query::Query;
 use crate::runtime::{Address, Effect, Outcomes, StateOwner};
 use crate::schema::{FieldSpec, ModelSpec};
 use crate::store::spec_fixtures::put;
@@ -133,7 +133,7 @@ fn dlv_prop_work_by_affected() {
 fn inv_observe_16_a_row_that_cannot_enter_the_list_costs_no_read_and_no_delivery() {
     let mut work = Work::new(1);
     work.put(0, "a", "keep");
-    let query = Query::new(&model(0)).filtered(crate::query::Where::equal("text", json!("keep")));
+    let query = Query::new(&model(0)).filtered(crate::store::query::Where::equal("text", json!("keep")));
     work.feed(DeliveryInput::Open { stream: 1, view: view_of(&query), epoch: EPOCH, identity: true, valid: true, now: 0, revision: 0 });
     work.pull(1);
     let cost = |work: &Work| (work.db.counters().rows_read, work.state.journal_len(1));
@@ -152,7 +152,7 @@ fn inv_observe_16_a_row_that_cannot_enter_the_list_costs_no_read_and_no_delivery
 fn dlv_streams_of_one_commit_deliver_independently() {
     let mut work = Work::new(1);
     work.put(0, "r0", "old");
-    let marked = Query::new(&model(0)).filtered(crate::query::Where::equal("text", json!("new")));
+    let marked = Query::new(&model(0)).filtered(crate::store::query::Where::equal("text", json!("new")));
     work.feed(DeliveryInput::Open { stream: 1, view: view(0), epoch: EPOCH, identity: true, valid: true, now: 0, revision: 0 });
     work.feed(DeliveryInput::Open { stream: 2, view: view_of(&marked), epoch: EPOCH, identity: true, valid: true, now: 0, revision: 0 });
     work.pull(1);

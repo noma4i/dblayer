@@ -5,7 +5,7 @@ use serde_json::{json, Map, Value};
 
 use crate::store::{BatchPlan, DestroyReason, EntityOp};
 use crate::identity::{ModelKey, RowId, RowRef};
-use crate::query::{compile_keys, fetch_keys, Order, Query, Where};
+use crate::store::query::{compile_keys, fetch_keys, Order, Query, Where};
 use crate::schema::{AssociationKind, AssociationSpec};
 use crate::value::{read_id, same_fields, SortDirection};
 

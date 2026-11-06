@@ -7,7 +7,7 @@ use crate::store::{EntityOp, OperationRecord, OperationTransition, ScopeOp, Scop
 use crate::store::ddl::table_name;
 use crate::identity::{ModelKey, RowId, RowRef};
 use crate::owners::write::operation_status::Operation;
-use crate::query::{Query, Where};
+use crate::store::query::{Query, Where};
 use crate::schema::{AssociationKind, Dependent, ModelSpec, SchemaError, ValueFault};
 use crate::store::{Reader, Store, StoreError, DbError};
 use crate::value::{fractional_between, read_id};

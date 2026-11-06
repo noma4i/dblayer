@@ -135,7 +135,7 @@ impl From<crate::store::DbError> for DbError {
                 | crate::store::DbError::LocalValue { .. }
                 | crate::store::DbError::Selection(_)
                 | crate::store::DbError::Store(crate::store::StoreError::UnknownModel(_))) => Self::Invalid { detail: error.to_string() },
-            crate::store::DbError::Query(crate::query::QueryError::Sqlite(detail)) => Self::Database { detail },
+            crate::store::DbError::Query(crate::store::query::QueryError::Sqlite(detail)) => Self::Database { detail },
             error @ crate::store::DbError::Query(_) => Self::Invalid { detail: error.to_string() },
             other => Self::Database { detail: other.to_string() },
         }

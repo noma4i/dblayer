@@ -251,7 +251,7 @@ fn compile_columns(query: &Query, model: &ModelSpec, columns: &str) -> Result<Co
     let filter = filter_clause(query, model, &mut bindings)?;
     let order = order_clause(query, model)?;
     let window = window_clause(query, &mut bindings);
-    let sql = format!(include_str!("../store/sql/query/compile_columns.sql"), table_name(query.model.as_str()), columns = columns, join = join, filter = filter, order = order, window = window);
+    let sql = format!(include_str!("../sql/query/compile_columns.sql"), table_name(query.model.as_str()), columns = columns, join = join, filter = filter, order = order, window = window);
     Ok(CompiledStatement { sql, bindings })
 }
 
@@ -290,7 +290,7 @@ pub fn compile_ranked(query: &Query, model: &ModelSpec, only: Option<&[String]>)
             (format!(" WHERE {}", parts.join(" AND ")), String::new())
         }
     };
-    let sql = format!(include_str!("../store/sql/query/compile_ranked.sql"), columns.join(", "), table_name(query.model.as_str()), join = join, filter = filter, order = order);
+    let sql = format!(include_str!("../sql/query/compile_ranked.sql"), columns.join(", "), table_name(query.model.as_str()), join = join, filter = filter, order = order);
     Ok(RankedStatement { statement: CompiledStatement { sql, bindings }, descending: terms.iter().map(|term| term.descending).collect() })
 }
 
@@ -299,7 +299,7 @@ pub fn compile_count(query: &Query, model: &ModelSpec) -> Result<CompiledStateme
     let mut bindings = Vec::new();
     let join = join_clause(query, &mut bindings, false) + &sync_join(query, &mut bindings) + &search_join(query, model, &mut bindings)?;
     let filter = filter_clause(query, model, &mut bindings)?;
-    let sql = format!(include_str!("../store/sql/query/compile_count.sql"), table_name(query.model.as_str()), join = join, filter = filter);
+    let sql = format!(include_str!("../sql/query/compile_count.sql"), table_name(query.model.as_str()), join = join, filter = filter);
     Ok(CompiledStatement { sql, bindings })
 }
 

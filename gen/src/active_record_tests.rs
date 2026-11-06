@@ -1,5 +1,5 @@
 use crate::SchemaTypes;
-use dblayer::query::{Order, Query, Where};
+use dblayer::store::query::{Order, Query, Where};
 use dblayer::value::SortDirection;
 use serde_json::json;
 
@@ -106,7 +106,7 @@ fn filtered_ordered_query_uses_one_index_without_a_temporary_sort() {
     db.execute_batch(&dblayer::store::ddl::create_table_statement(&models[0])).unwrap();
     for sql in dblayer::store::ddl::create_index_statements(&models[0]) { db.execute_batch(&sql).unwrap(); }
     let query = Query::new("Note").filtered(Where::equal("folderId", json!("folder"))).ordered(vec![Order::new("position", direction)]);
-    let statement = dblayer::query::compile_keys(&query, &models[0]).unwrap();
+    let statement = dblayer::store::query::compile_keys(&query, &models[0]).unwrap();
     let mut explain = db.prepare(&format!("EXPLAIN QUERY PLAN {}", statement.sql)).unwrap();
     let plan = explain.query_map(rusqlite::params_from_iter(statement.bindings), |row| row.get::<_, String>(3)).unwrap().collect::<Result<Vec<_>, _>>().unwrap();
     assert!(plan.iter().any(|line| line.to_lowercase().contains("using index row_note_idx_")), "{plan:?}");

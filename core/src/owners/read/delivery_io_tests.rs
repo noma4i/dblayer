@@ -13,7 +13,7 @@ use super::windows::{WindowKey, Windows};
 use super::{DeliveryIo, Snapshots};
 use crate::store::ddl::{create_model_tables, manifest_read, manifest_write, migrate_core, REVISION_SEQ_KEY};
 use crate::owners::contract::{WindowPhase, WindowState};
-use crate::query::{compile_keys, fetch_keys, Query};
+use crate::store::query::{compile_keys, fetch_keys, Query};
 use crate::owners::support::{new_log, Discard, Log, Sink};
 use crate::runtime::{Address, DetScheduler, EpochStamp, Outcome, Outcomes, Waiter};
 use crate::schema::{FieldSpec, ModelSpec};

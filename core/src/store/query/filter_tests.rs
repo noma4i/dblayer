@@ -1,5 +1,5 @@
 use super::*;
-use crate::query::statement::QueryError;
+use crate::store::query::statement::QueryError;
 use crate::schema::{FieldSpec, ModelSpec};
 use crate::value::ScalarKind;
 use rusqlite::types::Value as SqlValue;
@@ -69,8 +69,8 @@ fn ephemeral_fields_cannot_be_filtered_or_ordered() {
     let model = ModelSpec { ephemeral: vec![crate::schema::EphemeralSpec::new(FieldSpec::scalar("typing", ScalarKind::Bool).with_default(json!(false)))], ..people() };
     let rejected = Where::equal("typing", json!(true)).compile(&model, &mut Vec::new()).unwrap_err();
     assert_eq!(rejected, QueryError::EphemeralField("typing".into()));
-    let ordered = crate::query::Query::new("people").ordered(vec![crate::query::Order::new("typing", crate::value::SortDirection::Asc)]);
-    assert_eq!(crate::query::compile_keys(&ordered, &model).unwrap_err(), QueryError::EphemeralField("typing".into()));
+    let ordered = crate::store::query::Query::new("people").ordered(vec![crate::store::query::Order::new("typing", crate::value::SortDirection::Asc)]);
+    assert_eq!(crate::store::query::compile_keys(&ordered, &model).unwrap_err(), QueryError::EphemeralField("typing".into()));
 }
 
 #[test]

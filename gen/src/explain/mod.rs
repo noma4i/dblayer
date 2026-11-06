@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 
 use dblayer::store::ddl;
-use dblayer::query::{compile_keys, Order, Query, Where};
+use dblayer::store::query::{compile_keys, Order, Query, Where};
 use dblayer::schema::{ModelSpec, Sort};
 use rusqlite::Connection;
 use serde_json::{json, Value};
