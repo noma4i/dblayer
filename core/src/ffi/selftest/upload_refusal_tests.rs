@@ -75,6 +75,7 @@ async fn a_failed_blob_expires_when_the_network_returns_after_seven_days() {
     let id = bound(database.send(clip("Moment", r#"{"text":"video"}"#, "upload_clip", &source, database.session_epoch()))).await.unwrap().optimistic_value.unwrap().id;
     until_state(&database, &id, WireSyncState::Failed).await;
     database.set_online(false).unwrap();
+    bound(crate::ffi::settled(&database)).await.unwrap();
     clock.advance(WEEK_MILLIS);
 
     database.set_online(true).unwrap();
@@ -154,6 +155,7 @@ async fn an_offline_discard_routes_its_reopened_abort_as_a_transfer() {
     let files = directory.path().join("db.sqlite.files/transfers");
     assert_eq!(std::fs::read_dir(&files).unwrap().count(), 1);
     database.set_online(false).unwrap();
+    presign.dropped().await;
 
     bound(database.discard(epoch, "Moment".into(), id, Some("upload_clip".into()))).await.unwrap();
 
@@ -169,7 +171,9 @@ async fn an_offline_discard_routes_its_reopened_abort_as_a_transfer() {
     abort.release();
     yield_until("the abort was answered", || stand.script.count("AbortMultipart") == 1).await;
     reopened.set_online(false).unwrap();
+    bound(crate::ffi::settled(&reopened)).await.unwrap();
     reopened.set_online(true).unwrap();
+    bound(crate::ffi::settled(&reopened)).await.unwrap();
     assert_eq!(stand.script.count("AbortMultipart"), 1);
     assert_eq!(stand.script.purposes("AbortMultipart"), [crate::transport::NetworkPurpose::Transfer]);
     reopened.close_now();

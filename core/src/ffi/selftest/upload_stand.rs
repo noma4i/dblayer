@@ -42,11 +42,19 @@ pub(super) enum Answer {
 #[derive(Default)]
 pub(super) struct Hold {
     entered: AtomicBool,
+    dropped: AtomicBool,
     gate: Notify,
+}
+
+struct Dropped(Arc<Hold>);
+
+impl Drop for Dropped {
+    fn drop(&mut self) { self.0.dropped.store(true, Ordering::SeqCst) }
 }
 
 impl Hold {
     pub(super) async fn entered(&self) { yield_until("the held request arrived", || self.entered.load(Ordering::SeqCst)).await }
+    pub(super) async fn dropped(&self) { yield_until("the library dropped the held request", || self.dropped.load(Ordering::SeqCst)).await }
     pub(super) fn release(&self) { crate::lock::effect(|| self.gate.notify_one()) }
 }
 
@@ -92,6 +100,7 @@ impl EncryptedHttp for ScriptedHttp {
             match answer {
                 Some(Answer::Held(hold, next)) => {
                     hold.entered.store(true, Ordering::SeqCst);
+                    let _dropped = Dropped(hold.clone());
                     hold.gate.notified().await;
                     answer = Some(*next);
                 }
