@@ -135,7 +135,6 @@ impl TransferState {
         }
     }
 
-    /// One Store batch of ops that no stage of a transfer waits for.
     pub(super) fn commit_ops(&mut self, ops: Vec<StoreOp>, fx: &mut Fx) {
         if ops.is_empty() {
             return;

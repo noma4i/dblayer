@@ -45,7 +45,6 @@ pub enum FailureKind {
     Unrecognized,
     /// The answer of the server breaks the contract of the action: a batch answer lacks the row of an element.
     Protocol,
-    /// The platform refused to start the background round of the transfer.
     Refused,
 }
 

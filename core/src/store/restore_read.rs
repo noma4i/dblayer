@@ -71,11 +71,9 @@ pub(crate) struct Restore {
     pub reserved: Option<u64>,
     /// The saved answers that no operation of the queue owns.
     pub orphan_answers: Vec<u64>,
-    /// `encrypted_pending` is the pair of a transfer step that no restored transfer asks for again.
     pub transfer_pending_orphan: bool,
 }
 
-/// A step of a restored transfer sends the pair of `owner` again: the row is unfinished and the step is one that the row still has to run.
 fn transfer_asks_again(rows: &[crate::owners::write::transfer::StoredTransfer], owner: &crate::transport::RequestOwner) -> bool {
     use crate::owners::write::upload::UploadStage;
     let crate::transport::RequestOwner::Transfer { item_id, step, .. } = owner else { return true };

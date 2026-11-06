@@ -186,7 +186,6 @@ impl FeedState {
         }
     }
 
-    /// `Stale` of the models after a break of the subscription: the cause names the `Online(true)` that began it.
     pub(super) fn stale_gap(&self, models: &[String], fx: &mut Vec<Fx>) {
         for model in models {
             fx.push(Fx::Stale { model: model.clone(), keys: StaleKeys::All, cause: StaleCause::Gap { online_seq: self.online_seq } });

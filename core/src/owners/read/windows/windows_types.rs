@@ -208,11 +208,9 @@ impl StaleKeys {
     }
 }
 
-/// Why a `Stale` was sent.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum StaleCause {
     Change,
-    /// The subscription was cut and came back after the `Online(true)` of `online_seq`.
     Gap { online_seq: u64 },
 }
 

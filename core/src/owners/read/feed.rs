@@ -233,7 +233,6 @@ pub struct FeedState {
     epoch: Epoch,
     mode: Mode,
     online: Option<bool>,
-    /// The `online_seq` of the last `Online(true)`.
     online_seq: u64,
     want: BTreeMap<String, BTreeSet<SubscriptionId>>,
     streams: BTreeSet<SubscriptionId>,

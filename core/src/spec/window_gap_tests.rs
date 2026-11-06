@@ -147,7 +147,6 @@ struct Twin {
     revision: i64,
     generation: u64,
     pin_revision: Arc<AtomicU64>,
-    /// The `online_seq` of the last `Online(true)` the twin posted.
     online_seq: u64,
     /// The `now` the inputs carry.
     now: i64,

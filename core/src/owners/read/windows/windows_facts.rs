@@ -4,9 +4,7 @@ use super::*;
 pub(super) struct Facts {
     pub(super) epoch: Epoch,
     pub(super) online: Option<bool>,
-    /// The `online_seq` of the last `Online(true)`.
     pub(super) online_seq: u64,
-    /// The `online_seq` the window knew when its last request was issued.
     pub(super) load_seq: std::cell::Cell<u64>,
     pub(super) base_generation: u64,
     pub(super) generations: BTreeMap<String, u64>,
@@ -107,7 +105,6 @@ impl Facts {
     /// Loaded, not marked stale, and `now` inside `landed_at <= now < fresh_until`: a clock that went back makes the window stale.
     pub(super) fn is_fresh(&self, now: i64) -> bool { self.fresh && self.landed_at <= now && now < self.fresh_until }
 
-    /// A request issued after the `Online(true)` that a gap names reads what the gap lost.
     pub(super) fn covers(&self, cause: StaleCause) -> bool { matches!(cause, StaleCause::Gap { online_seq } if online_seq > 0 && self.load_seq.get() >= online_seq) }
 
     /// Only the preload watches the window.

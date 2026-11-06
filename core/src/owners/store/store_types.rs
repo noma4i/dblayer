@@ -159,7 +159,6 @@ pub enum StoreOp {
     ResetEphemeral { model: String, row_id: String, field: String, position: u64 },
     Upload { row: UploadRow, kind: UploadKind },
     RemoveUpload { key: String },
-    /// The reason a refused round shows on the row of the transfer, or none once the next round is asked.
     UploadRoundError { key: String, error: Option<String> },
     /// A multipart upload of a removed transfer: `abort` goes to the server until the server answers.
     UploadOrphan { upload_id: String, key: String },
