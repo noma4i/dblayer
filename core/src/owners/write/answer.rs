@@ -57,6 +57,12 @@ pub fn decode_answer(db: &Db, root_of: &dyn Fn(&str) -> Option<String>, job: &De
     let default_root = declared.and_then(|declared| declared.mutation.as_deref()).and_then(root_of);
     let Some(root) = declared.and_then(|declared| declared.root.clone()).or(default_root) else { return refused(format!("{}.{} has no answer root", job.model, job.action)) };
     let root = root.as_str();
+    if let Some(declared) = declared.filter(|declared| !declared.result.is_empty()) {
+        if root_value(&data, root).is_none_or(Value::is_null) {
+            let result = returns_of(&data, default_root_of(declared.mutation.as_deref().and_then(root_of), root), &declared.result);
+            return Decoded::Land { rows: Vec::new(), swap: None, stale, result: Some(result) };
+        }
+    }
     if !root_value(&data, root).is_some_and(|value| value.is_object() || value.is_array()) {
         return refused(format!("{root}: the answer has no row"));
     }

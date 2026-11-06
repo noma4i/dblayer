@@ -24,6 +24,8 @@ pub(crate) mod upload_codec;
 #[cfg(test)]
 mod rig;
 #[cfg(test)]
+mod answer_tests;
+#[cfg(test)]
 mod outbox_executor_tests;
 #[cfg(test)]
 mod transfer_executor_tests;
