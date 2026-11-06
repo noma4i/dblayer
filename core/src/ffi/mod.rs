@@ -33,7 +33,7 @@ mod lifecycle_tests;
 #[cfg(test)]
 mod selftest;
 #[cfg(test)]
-mod database_tests;
+pub(crate) mod database_tests;
 mod encrypted;
 mod query;
 #[cfg(test)]

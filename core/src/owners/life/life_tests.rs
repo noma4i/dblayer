@@ -252,6 +252,43 @@ async fn a_loaded_page_lands_through_the_store_and_the_caller_hears_loaded() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn net_open_power_saving() {
+    use crate::owners::contract::NetworkEvent;
+    use crate::owners::lifecycle::Peer;
+    use crate::owners::network::NetworkInput;
+    use std::sync::Mutex;
+    let slot = crate::ffi::OpenDatabase::new();
+    let config = crate::ffi::Config { path: None, data_version: None, cache_rows: 8 };
+    let options = crate::ffi::OpenOptions { operations: "[]".into(), power_saving: true, low_ram: false };
+    let transport = Arc::new(crate::ffi::database_tests::Plain);
+    let database = slot.open(config, "[]".into(), options, Some(transport), None, None, None, None).await.unwrap();
+    let life = database.life_handle();
+    let heard = Arc::new(Mutex::new(Vec::new()));
+    let sink = heard.clone();
+    life.on_network(Peer::Windows, move |event| sink.lock().unwrap().push(event));
+    let epoch = life.published().epoch;
+    life.wiring.to_network(NetworkInput::SnapshotRequest { owner: Peer::Windows, epoch });
+    crate::test_wait::yield_until("the snapshot contains power saving", || heard.lock().unwrap().contains(&NetworkEvent::PowerSaving { saving: true, epoch: Some(epoch) })).await;
+    database.close_database().await.unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn net_prop_connectivity_not_database() {
+    let db = Db::open_in_memory(vec![moments_spec()], None).unwrap();
+    let transport = Arc::new(MockTransport::new());
+    let life = start(&db, &transport).await;
+    life.declare(vec![("Op".into(), crate::owners::calls::CallKind::Query)]);
+    db.connectivity().change(true);
+    assert_eq!(answer(life.run(1, "Op".into(), "{}".into())).await, Reply::Call(Err(CallError::Offline)));
+    assert_eq!(answer(life.set_online(true)).await, Reply::Online { closed: false });
+    db.connectivity().change(false);
+    transport.enqueue("Op", MockReply::data(json!({ "feed": [1] })));
+    assert_eq!(answer(life.run(1, "Op".into(), "{}".into())).await, Reply::Call(Ok("[1]".into())));
+    assert_eq!(transport.calls().len(), 1);
+    closed(&life).await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn net_prop_no_request_before_snapshot() {
     let db = Db::open_in_memory(vec![moments_spec()], None).unwrap();
     let transport = Arc::new(MockTransport::new());

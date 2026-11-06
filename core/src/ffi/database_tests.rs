@@ -3,7 +3,7 @@ use std::sync::Arc;
 use super::{Config, CredentialStore, Database, DbError, EncryptedConfig, EncryptedHttp, EncryptedReply, Transport, TransportRequest};
 use crate::transport::encrypted::vectors_tests::{origin, pin, public_key_der_b64};
 
-pub(super) struct Plain;
+pub(crate) struct Plain;
 
 #[async_trait::async_trait]
 impl Transport for Plain {
