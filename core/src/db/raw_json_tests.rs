@@ -33,7 +33,7 @@ fn edge_fields_reject_json_parsing_with_an_explicit_error() {
 }
 
 #[test]
-fn json_text_fields_accept_only_valid_json_strings() {
+fn data_parse_json() {
     let field = parsed("data");
     for (input, expected) in [
         (json!("{\"a\":[1,true,null,{\"b\":[]}]}"), Some(json!({"a":[1,true,null,{"b":[]}]}))),

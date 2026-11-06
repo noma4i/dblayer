@@ -37,7 +37,7 @@ fn nested_author_with_only_an_id_still_sets_the_foreign_key_when_the_user_row_ne
 }
 
 #[test]
-fn a_row_whose_id_comes_from_its_belongs_to_parent_keeps_that_parent_id() {
+fn data_id_from_parent() {
     let hit = ModelSpec::new(
         "hits",
         vec![FieldSpec::parent_id("id", "chat"), FieldSpec::scalar("chatId", ScalarKind::Id).indexed()],

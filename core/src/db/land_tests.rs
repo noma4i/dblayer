@@ -79,7 +79,7 @@ fn chat_pointer(db: &Db) -> (Option<String>, Option<String>) {
 }
 
 #[test]
-fn landed_newer_message_moves_the_chat_pointer() {
+fn data_sets_every_write() {
     let db = booted();
     put(&db, "chats", json!({"id": "c1", "title": "t", "lastMessageId": "m1", "lastMessageAt": OLD}));
     for origin in [WriteOrigin::Event, WriteOrigin::Snapshot, WriteOrigin::Response] {

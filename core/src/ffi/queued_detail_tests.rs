@@ -11,7 +11,7 @@ const THROWN: [(SessionCode, &str); 4] = [
 ];
 
 #[test]
-fn graphql_extensions_keep_server_fields() {
+fn data_graphql_extensions() {
     for typed in [serde_json::json!({"code":"REFUSED","transactionDisposition":"KEEP"}), serde_json::json!({})] {
         let mut fields = typed.as_object().unwrap().clone();
         fields.extend(serde_json::json!({"detail":"refused","limit":3,"context":{"values":[true,null,2]}}).as_object().unwrap().clone());

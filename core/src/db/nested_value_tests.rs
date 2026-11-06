@@ -53,7 +53,7 @@ fn cases() -> Vec<(Value, &'static str)> {
 }
 
 #[test]
-fn nested_values_are_checked_on_create_update_and_act() {
+fn data_nested_write_rejects_path() {
     let db = notes();
     let kept = db.create(&db.admit().unwrap(), "notes", obj(json!({"title": "kept"}))).unwrap();
     for (values, expected) in cases() {

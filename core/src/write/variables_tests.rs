@@ -38,7 +38,7 @@ fn local_sources_never_become_mutation_variables_with_or_without_mapping() {
 }
 
 #[test]
-fn integer_ids_travel_as_numbers_so_int_and_id_arguments_both_accept_them() {
+fn data_operation_variables() {
     let is_id = |field: &str| field == "replyToId" || field == "chatId";
     let input = json!({"chatId": "427014", "replyToId": "477867", "body": "12"});
     let variables = mutation_variables(&declaration(&[]), &input, None, &is_id);

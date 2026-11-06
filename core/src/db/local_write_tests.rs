@@ -68,7 +68,7 @@ fn create_keeps_the_pointer_of_a_pending_message_that_is_newer() {
 }
 
 #[test]
-fn destroying_the_head_message_moves_the_pointer_to_the_previous_one_and_a_refusal_gives_it_back() {
+fn data_sets_destroy_moves_back() {
     let db = booted();
     put(&db, "messages", json!({"id": "m1", "chatId": "c1", "createdAt": OLD}));
     put(&db, "messages", json!({"id": "m2", "chatId": "c1", "createdAt": NEW}));
@@ -90,7 +90,7 @@ fn destroying_a_chat_does_not_bring_it_back_through_its_own_pointer() {
 }
 
 #[test]
-fn discarding_the_create_gives_the_parent_fields_back() {
+fn data_sets_rollback() {
     let db = booted();
     put(&db, "chats", json!({"id": "c1", "title": "t", "lastMessageId": "m0", "lastMessageAt": OLD}));
     let message = db.create(&db.admit().unwrap(), "messages", obj(json!({"chatId": "c1", "body": "yo", "createdAt": NEW}))).unwrap();

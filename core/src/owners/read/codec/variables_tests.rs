@@ -48,7 +48,7 @@ fn custom_cursor_names_its_variable_and_sends_no_page_size() {
 }
 
 #[test]
-fn mapped_variables_rename_params_and_add_constants() {
+fn data_scope_variables() {
     use crate::schema::VariableSource;
     use std::collections::BTreeMap;
     let mapping = BTreeMap::from([

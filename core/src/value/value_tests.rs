@@ -27,7 +27,7 @@ fn scalar_kinds_convert_supported_values_only() {
 }
 
 #[test]
-fn a_date_is_stored_as_utc_with_milliseconds_so_text_order_is_time_order() {
+fn data_date_normalized() {
     let cases = [
         ("2021-05-05T10:00:00Z", "2021-05-05T10:00:00.000Z"),
         ("2021-05-05T10:00:00.9Z", "2021-05-05T10:00:00.900Z"),
