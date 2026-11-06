@@ -11,8 +11,7 @@ extension BridgeProbeTests {
   private func checkEventPayload(_ eventsFirst: Bool) async throws {
     await DB.closeForCleanup()
     let transport = MockTransport()
-    try await reopen(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: transport)
-    try DB.database.registerOperations(defsJson: #"[{"name":"ChatList","document":"query ChatList { chats { id title revision lists } }"},{"name":"ChatNode","document":"query ChatNode($id: ID!) { node(id: $id) { ... on Chat { id title revision lists } } }"},{"name":"RecordEvents","document":"subscription RecordEvents { recordEvents { entries { topic action recordId chat { id title revision lists } message { id text chatId } } } }"}]"#)
+    try await reopen(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: transport, operations: #"[{"name":"ChatList","document":"query ChatList { chats { id title revision lists } }"},{"name":"ChatNode","document":"query ChatNode($id: ID!) { node(id: $id) { ... on Chat { id title revision lists } } }"},{"name":"RecordEvents","document":"subscription RecordEvents { recordEvents { entries { topic action recordId chat { id title revision lists } message { id text chatId } } } }"}]"#)
     let scope = try DB.account()
     var streams: (Cursor<EventStream<Chat>>, Cursor<EventStream<Message>>, ValueStream, ValueStream)?
     if eventsFirst {

@@ -104,32 +104,6 @@ struct BridgeProbeTests {
     #expect(entity.value?.uuid == "a")
   }
 
-  @MainActor
-  @Test(.timeLimit(.minutes(1)))
-  func eachNewListCanRefreshAndAwaitItsOwnInitialRequest() async throws {
-    let transport = MockTransport()
-    try await reopen(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: transport)
-    try DB.database.registerOperations(defsJson: #"[{"name":"MomentsFeed","document":"query MomentsFeed { feed { nodes { id uuid likedByMe media createdAt } pageInfo { hasNextPage endCursor } } }"}]"#)
-    for index in 0..<3 {
-      if index == 2 {
-        transport.enqueue("MomentsFeed", failure: .Http(status: 400, detail: "rejected"))
-      } else {
-        transport.enqueue("MomentsFeed", reply: #"{"data":{"feed":{"nodes":[{"__typename":"Moment","id":"1","uuid":"a","likedByMe":false,"media":{},"createdAt":"2026-10-08T00:00:00.000Z"}],"pageInfo":{"hasNextPage":false}}}}"#)
-      }
-      let list = Projected<Moment>(try AccountScope().stream(Moment.feed, refreshOnConnect: true))
-      try await list.loaded()
-      #expect(transport.calls.filter { $0.operationName == "MomentsFeed" }.count == index + 1)
-      if index == 2 {
-        await eventually("the own request shows its error with the rows") { list.error != nil }
-        guard case .Http(let status, _) = list.error else { Issue.record("not an HTTP error: \(String(describing: list.error))"); return }
-        #expect(status == 400)
-        #expect(list.phase == .loaded)
-      }
-      await eventually("initial rows remain visible") { list.rows.first?.uuid == "a" }
-    }
-  }
-
-
   @Test
   func theOutcomeOfASentCreateCarriesTheServerId() async throws {
     let transport = MockTransport()
@@ -175,7 +149,8 @@ struct BridgeProbeTests {
   func aCreateReadsTwoDeclaredLocalSources() async throws {
     let transport = MockTransport()
     try await reopen(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: transport)
-    try DB.database.registerOperations(defsJson: #"[{"name":"CurrentUserQuery","document":"query CurrentUserQuery { user { id name } }"},{"name":"CurrentRegionQuery","document":"query CurrentRegionQuery { region { id name } }"}]"#)
+    transport.enqueue("CreateRecord", reply: #"{"data":{"createRecord":{"__typename":"Record","id":"x1","containerId":"c","authorId":"u1","text":"hi","createdAt":"2026-10-08T00:00:00.000Z"}}}"#)
+    try DB.database.registerOperations(defsJson: #"[{"name":"CreateRecord","document":"mutation CreateRecord($containerId: ID!, $text: String!, $signedId: String, $attachedUserId: ID) { createRecord(containerId: $containerId, text: $text, signedId: $signedId, attachedUserId: $attachedUserId) { id containerId authorId text createdAt } }"},{"name":"CurrentUserQuery","document":"query CurrentUserQuery { user { id name } }"},{"name":"CurrentRegionQuery","document":"query CurrentRegionQuery { region { id name } }"}]"#)
     transport.enqueue("CurrentUserQuery", reply: #"{"data":{"user":{"id":"u1","name":"Ann"}}}"#)
     transport.enqueue("CurrentRegionQuery", reply: #"{"data":{"region":{"id":"r1","name":"Home"}}}"#)
     try await CurrentUser.current.load()

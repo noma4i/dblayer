@@ -41,13 +41,7 @@ private val FORBIDDEN = DbException.Http(403.toUShort(), "forbidden")
 
 private fun forwardAnswer(id: String, chat: String) = """{"data":{"forwardLetter":{"letter":{"__typename":"Letter","id":"$id","chatId":"$chat","text":"hello","at":99}}}}"""
 
-private class MemberEventsTransport(val base: MockTransport = MockTransport()) : Transport by base {
-    val opened = CompletableDeferred<Unit>()
-    override suspend fun subscribe(request: TransportRequest, sink: SubscriptionSink) {
-        base.subscribe(request, sink)
-        if (request.operationName == "MemberChanged") opened.complete(Unit)
-    }
-}
+private class MemberEventsTransport(override val base: MockTransport = MockTransport()) : Transport by base, WrapsMock
 
 private fun clubModels(keep: Boolean = false, complete: Boolean = false, keepLetter: Boolean = false, events: Boolean = false, destroy: Boolean = false): String {
     if (!keep && !complete && !keepLetter && !events && !destroy) return modelsJSON
@@ -201,8 +195,7 @@ class ClubTest {
         val transport = MemberEventsTransport()
         transport.base.enqueue("CreateClub", CLUB_CREATED)
         transport.base.enqueue("ClubMembers", membersReply(listOf("u1", "u2", "u3", "u4")))
-        openClubSession(transport, clubModels(events = true))
-        DBlayer.database.registerOperations("""[{"name":"MemberChanged","document":"subscription MemberChanged { memberChanged { id name } }"}]""")
+        openClubSession(transport, clubModels(events = true), """{"name":"MemberChanged","document":"subscription MemberChanged { memberChanged { id name } }"}""")
         val club = confirmedClub()
         val joined = Person.clubMembers(club.id, "JOINED")
         joined.load()
@@ -214,7 +207,7 @@ class ClubTest {
         val list = ListReader(joined, scope)
         try {
             list.waitForInitialLoad()
-            withTimeout(5000) { transport.opened.await() }
+            eventually("member subscription") { transport.base.calls.any { it.operationName == "MemberChanged" } }
             val hold = transport.base.hold("AddClubMember", clubAnswer("addClubMember"))
             try {
                 val adding = async { club.addMember(userIds = listOf("u4")) }
@@ -385,9 +378,9 @@ class ClubTest {
         }
     }
 
-    private suspend fun openClubSession(transport: Transport, models: String = modelsJSON) {
-        reopen(Config(null, null, 32u), models, transport)
-        DBlayer.database.registerOperations(CLUB_DEFS)
+    private suspend fun openClubSession(transport: Transport, models: String = modelsJSON, subscription: String? = null) {
+        val defs = if (subscription == null) CLUB_DEFS else CLUB_DEFS.dropLast(1) + "," + subscription + "]"
+        reopen(Config(null, null, 32u), models, transport, defs)
     }
 
     private suspend fun club(id: String) = Query("Club", Club).readRow(id)!!

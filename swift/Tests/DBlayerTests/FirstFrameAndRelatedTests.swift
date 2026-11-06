@@ -31,11 +31,10 @@ extension BridgeProbeTests {
   @Test(.timeLimit(.minutes(1)))
   func aRelatedQueryReturnsTheLinkedRowsAndFollowsATargetChangeAndALinkChange() async throws {
     let transport = MockTransport()
-    try await reopen(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: transport)
-    try DB.database.registerOperations(defsJson: #"[{"name":"ChatList","document":"query ChatList { chats { id title revision lists } }"},{"name":"RecordEvents","document":"subscription RecordEvents { recordEvents { entries { topic action recordId chat { id title revision lists } message { id text chatId } } } }"}]"#)
+    try await reopen(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: transport, operations: #"[{"name":"ChatList","document":"query ChatList { chats { id title revision lists } }"},{"name":"RecordEvents","document":"subscription RecordEvents { recordEvents { entries { topic action recordId chat { id title revision lists } message { id text chatId } } } }"}]"#)
     let scope = try DB.account()
     let chats = await opened(scope.events(Chat.self))
-    await eventually("the events subscription opens") { transport.calls.count == 1 }
+    await eventually("the events subscription opens") { transport.calls.contains { $0.operationName == "RecordEvents" } }
     transport.enqueue("ChatList", reply: #"{"data":{"chats":[{"__typename":"Chat","id":"c1","title":"before","revision":1,"lists":["SECONDARY"]}]}}"#)
     let related = Projected<Chat>(try scope.stream(try Chat.list("SECONDARY")))
     try await Chat.list("SECONDARY").load()

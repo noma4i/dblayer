@@ -18,8 +18,7 @@ class ModelEventsTest {
 
     private suspend fun openNoticeRig(): MockTransport {
         val transport = MockTransport()
-        reopen(Config(null, null, 32u), modelsJSON, transport)
-        DBlayer.database.registerOperations("""[{"name":"ChatActionSignal","document":"subscription ChatActionSignal { chatActionSignal { chatId userId kind active } }"}]""")
+        reopen(Config(null, null, 32u), modelsJSON, transport, """[{"name":"ChatActionSignal","document":"subscription ChatActionSignal { chatActionSignal { chatId userId kind active } }"}]""")
         return transport
     }
 

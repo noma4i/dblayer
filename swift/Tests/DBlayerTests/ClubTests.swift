@@ -23,15 +23,8 @@ private func forwardAnswer(_ id: String, chat: String) -> String {
   #"{"data":{"forwardLetter":{"letter":{"__typename":"Letter","id":"\#(id)","chatId":"\#(chat)","text":"hello","at":99}}}}"#
 }
 
-private final class MemberEventsTransport: Transport, @unchecked Sendable {
+private final class MemberEventsTransport: Transport, WrapsMock, @unchecked Sendable {
   let base = MockTransport()
-  let opened: AsyncStream<Void>
-  private let signal: AsyncStream<Void>.Continuation
-  init() {
-    let (stream, continuation) = AsyncStream<Void>.makeStream()
-    opened = stream
-    signal = continuation
-  }
   func openCable(lease: CableLease, url: String) async throws { try await base.openCable(lease: lease, url: url) }
   func cableSend(token: String, text: String) async throws { try await base.cableSend(token: token, text: text) }
   func cableNext(token: String) async -> EncryptedSocketEvent? { await base.cableNext(token: token) }
@@ -40,7 +33,6 @@ private final class MemberEventsTransport: Transport, @unchecked Sendable {
   func mutate(request: TransportRequest) async throws -> String { try await base.mutate(request: request) }
   func subscribe(request: TransportRequest, sink: SubscriptionSink) async throws {
     try await base.subscribe(request: request, sink: sink)
-    if request.operationName == "MemberChanged" { signal.yield(()) }
   }
   func unsubscribe(token: String) { base.unsubscribe(token: token) }
   func put(url: String, headers: [String: String], file: PutFile, identity: TransferIdentity, progress: ByteProgress) async throws -> PutReply {
@@ -223,8 +215,7 @@ extension BridgeProbeTests {
     let transport = MemberEventsTransport()
     transport.base.enqueue("CreateClub", reply: clubCreated)
     transport.base.enqueue("ClubMembers", reply: membersReply(["u1", "u2", "u3", "u4"]))
-    try await Self.openClubSession(transport, models: clubModels(events: true))
-    try DB.database.registerOperations(defsJson: #"[{"name":"MemberChanged","document":"subscription MemberChanged { memberChanged { id name } }"}]"#)
+    try await Self.openClubSession(transport, models: clubModels(events: true), subscription: #"{"name":"MemberChanged","document":"subscription MemberChanged { memberChanged { id name } }"}"#)
     let club = try await Self.confirmedClub()
     let joined = try Person.clubMembers(club.id, "JOINED")
     try await joined.load()
@@ -241,8 +232,7 @@ extension BridgeProbeTests {
       return projection.state?.settled == true
     }
     try #require(projection.state?.settled == true, "the list did not settle")
-    let opened = Cursor(transport.opened)
-    try #require(await opened.next("member subscription", timeout: .seconds(10)) != nil)
+    await eventually("member subscription", timeout: .seconds(10)) { transport.base.calls.contains { $0.operationName == "MemberChanged" } }
     let hold = transport.base.hold("AddClubMember", reply: clubAnswer("addClubMember"))
     defer { hold.release() }
     let adding = Task { try await club.addMember(userIds: ["u4"]) }
@@ -425,9 +415,9 @@ extension BridgeProbeTests {
   }
 
   @MainActor
-  static func openClubSession(_ transport: any Transport, models: String = modelsJSON) async throws {
-    try await reopen(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: models, transport: transport)
-    try DB.database.registerOperations(defsJson: clubDefs)
+  static func openClubSession(_ transport: any Transport, models: String = modelsJSON, subscription: String? = nil) async throws {
+    let defs = subscription.map { String(clubDefs.dropLast()) + ",\($0)]" } ?? clubDefs
+    try await reopen(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: models, transport: transport, operations: defs)
   }
 
   /// K04 (B4): a create the server answers returns the confirmed row, needs the network, and queues nothing offline.

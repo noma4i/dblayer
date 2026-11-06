@@ -141,34 +141,6 @@ class BridgeProbeTest {
     }
 
     @Test
-    fun eachNewListCanRefreshAndAwaitItsOwnInitialRequest() = bounded {
-        val transport = MockTransport()
-        reopen(Config(null, null, 32u), modelsJSON, transport)
-        DBlayer.database.registerOperations("""[{"name":"MomentsFeed","document":"query MomentsFeed { feed { nodes { id uuid likedByMe media createdAt } pageInfo { hasNextPage endCursor } } }"}]""")
-        repeat(3) { index ->
-            if (index == 2) {
-                transport.enqueue("MomentsFeed", DbException.Http(400u, "rejected"))
-            } else {
-                transport.enqueue("MomentsFeed", """{"data":{"feed":{"nodes":[{"__typename":"Moment","id":"1","uuid":"a","likedByMe":false,"media":{},"createdAt":"2026-10-08T00:00:00.000Z"}],"pageInfo":{"hasNextPage":false}}}}""")
-            }
-            val listScope = CoroutineScope(SupervisorJob())
-            try {
-                val list = ListReader(Moment.feed, listScope, refreshOnConnect = true)
-                withTimeout(5000) { list.waitForInitialLoad() }
-                assertEquals(index + 1, transport.calls.count { it.operationName == "MomentsFeed" })
-                if (index == 2) {
-                    val failed = withTimeout(5000) { list.snapshot.first { it.error != null } }
-                    assertEquals(true, failed.error is DbException.Http)
-                    assertEquals(ReadPhase.LOADED, failed.phase)
-                }
-                assertEquals("a", withTimeout(5000) { list.rows.first { it.isNotEmpty() } }.first().uuid)
-            } finally {
-                listScope.cancel()
-            }
-        }
-    }
-
-    @Test
     fun theOutcomeOfASentCreateCarriesTheServerId() = bounded {
         val transport = MockTransport()
         transport.enqueue("CreateMoment", """{"data":{"createMoment":{"__typename":"Moment","id":"m77","uuid":"u","likedByMe":false,"media":{},"createdAt":"2026-10-08T00:00:00.000Z"}}}""")

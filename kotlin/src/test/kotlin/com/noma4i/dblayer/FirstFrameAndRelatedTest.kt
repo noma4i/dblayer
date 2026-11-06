@@ -44,8 +44,7 @@ class FirstFrameAndRelatedTest {
     @Test
     fun aRelatedQueryReturnsTheLinkedRowsAndFollowsATargetChangeAndALinkChange() = bounded {
         val transport = MockTransport()
-        reopen(Config(null, null, 32u), modelsJSON, transport)
-        DBlayer.database.registerOperations("""[{"name":"ChatList","document":"query ChatList { chats { id title revision lists } }"},{"name":"RecordEvents","document":"subscription RecordEvents { recordEvents { entries { topic action recordId chat { id title revision lists } message { id text chatId } } } }"}]""")
+        reopen(Config(null, null, 32u), modelsJSON, transport, """[{"name":"ChatList","document":"query ChatList { chats { id title revision lists } }"},{"name":"RecordEvents","document":"subscription RecordEvents { recordEvents { entries { topic action recordId chat { id title revision lists } message { id text chatId } } } }"}]""")
         val screen = CoroutineScope(SupervisorJob() + Dispatchers.Default)
         try {
             val scope = AccountScope.current()

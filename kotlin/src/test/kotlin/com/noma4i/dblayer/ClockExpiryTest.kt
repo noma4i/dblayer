@@ -16,12 +16,10 @@ import org.junit.Test
 class ClockExpiryTest {
     @Test
     fun advancingTheTestClockExpiresAMemoryRowWithoutWaiting() = bounded {
-        DBlayer.close()
         val transport = MockTransport()
-        val clock = DBlayer.openTesting(transport, modelsJSON)
-        DBlayer.database.registerOperations("""[{"name":"BulletinAdded","document":"subscription BulletinAdded { bulletinAdded { body occurredAt } }","rootPath":"bulletinAdded"}]""")
+        val clock = reopenClocked(modelsJSON, transport, """[{"name":"BulletinAdded","document":"subscription BulletinAdded { bulletinAdded { body occurredAt } }","rootPath":"bulletinAdded"}]""")
         val shown = async { Notice.recent.live.flow.first { it.isNotEmpty() } }
-        eventually("the notice subscription opens") { transport.calls.size == 1 }
+        eventually("the notice subscription opens") { transport.calls.any { it.operationName == "BulletinAdded" } }
         transport.emit("BulletinAdded", """{"data":{"bulletinAdded":{"body":"hello","occurredAt":"2026-10-18T00:00:00Z"}}}""")
         shown.await()
 
@@ -33,8 +31,7 @@ class ClockExpiryTest {
 
     @Test
     fun writingEqualValuesRenewsAMemoryRowAndStaysSilent() = bounded {
-        DBlayer.close()
-        val clock = DBlayer.openTesting(MockTransport(), modelsJSON)
+        val clock = reopenClocked(modelsJSON, MockTransport())
         val inbox = Channel<List<Presence>>(Channel.UNLIMITED)
         val collection = launch { Presence.where(Presence.room eq "lobby").live.flow.collect { inbox.send(it) } }
         assertTrue(inbox.receive().isEmpty())

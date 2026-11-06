@@ -9,7 +9,7 @@ extension BridgeProbeTests {
     defer { Task { @MainActor in try? await DB.close() } }
     await DB.closeForCleanup()
     try await Reachability.$source.withValue(path) {
-      try await DB.openTesting(transport: MockTransport(), modelsJSON: modelsJSON)
+      try await reopenClocked(modelsJson: modelsJSON, transport: MockTransport())
     }
     try DB.database.setOnline(online: false)
     #expect(path.observerCount == 1)
