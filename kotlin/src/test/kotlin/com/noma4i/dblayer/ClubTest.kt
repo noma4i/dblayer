@@ -73,7 +73,7 @@ private fun clubModels(keep: Boolean = false, complete: Boolean = false, keepLet
             }
             JsonObject(fields + ("relations" to JsonArray(relations)))
         } else model
-    }).toString()
+    }).toString().let { if (events) schema("MemberChanged", it) else it }
 }
 
 class ClubTest {

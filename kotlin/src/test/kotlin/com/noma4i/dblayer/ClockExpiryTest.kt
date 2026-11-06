@@ -17,7 +17,7 @@ class ClockExpiryTest {
     @Test
     fun advancingTheTestClockExpiresAMemoryRowWithoutWaiting() = bounded {
         val transport = MockTransport()
-        val clock = reopenClocked(modelsJSON, transport, """[{"name":"BulletinAdded","document":"subscription BulletinAdded { bulletinAdded { body occurredAt } }","rootPath":"bulletinAdded"}]""")
+        val clock = reopenClocked(schema("BulletinAdded"), transport, """[{"name":"BulletinAdded","document":"subscription BulletinAdded { bulletinAdded { body occurredAt } }","rootPath":"bulletinAdded"}]""")
         val shown = async { Notice.recent.live.flow.first { it.isNotEmpty() } }
         eventually("the notice subscription opens") { transport.calls.any { it.operationName == "BulletinAdded" } }
         transport.emit("BulletinAdded", """{"data":{"bulletinAdded":{"body":"hello","occurredAt":"2026-10-18T00:00:00Z"}}}""")

@@ -77,7 +77,8 @@ private func clubModels(keep: Bool = false, complete: Bool = false, keepLetter: 
     actions.append(["name": "destroy", "root_shape": "destroy", "mutation": "DeleteClub", "variables": ["id": "id"]])
     models[index]["actions"] = actions
   }
-  return String(decoding: try JSONSerialization.data(withJSONObject: models), as: UTF8.self)
+  let text = String(decoding: try JSONSerialization.data(withJSONObject: models), as: UTF8.self)
+  return events ? schema(onlySubscription: "MemberChanged", in: text) : text
 }
 
 extension BridgeProbeTests {

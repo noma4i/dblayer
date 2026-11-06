@@ -7,7 +7,7 @@ extension BridgeProbeTests {
   @Test(.timeLimit(.minutes(1)))
   func oneSignalRoutesTypedActionsAndNotices() async throws {
     let transport = MockTransport()
-    try await reopen(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: transport, operations: #"[{"name":"ChatActionSignal","document":"subscription ChatActionSignal { chatActionSignal { chatId userId kind active } }"}]"#)
+    try await reopen(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: schema(onlySubscription: "ChatActionSignal"), transport: transport, operations: #"[{"name":"ChatActionSignal","document":"subscription ChatActionSignal { chatActionSignal { chatId userId kind active } }"}]"#)
     let events = Cursor(try DB.account().events(ChatActivityNotice.self))
     let actions = Cursor(try await ChatAction.byChat("c").live.stream())
     #expect(await actions.next()?.isEmpty == true)
@@ -27,7 +27,7 @@ extension BridgeProbeTests {
   @Test
   func memoryNoticesReachTheGeneratedLiveQueryWithoutAReadRequest() async throws {
     let transport = MockTransport()
-    try await reopen(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: transport, operations: #"[{"name":"BulletinAdded","document":"subscription BulletinAdded { bulletinAdded { body occurredAt } }","rootPath":"bulletinAdded"}]"#)
+    try await reopen(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: schema(onlySubscription: "BulletinAdded"), transport: transport, operations: #"[{"name":"BulletinAdded","document":"subscription BulletinAdded { bulletinAdded { body occurredAt } }","rootPath":"bulletinAdded"}]"#)
     let notices = Cursor(try await Notice.recent.live.stream())
     #expect(await notices.next()?.isEmpty == true)
     await eventually("the notice subscription opens") { transport.calls.count == 1 }

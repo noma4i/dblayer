@@ -9,7 +9,7 @@ extension BridgeProbeTests {
   func advancingTheTestClockExpiresAMemoryRowWithoutWaiting() async throws {
     await DB.closeForCleanup()
     let transport = MockTransport()
-    let clock = try await reopenClocked(modelsJson: modelsJSON, transport: transport, operations: #"[{"name":"BulletinAdded","document":"subscription BulletinAdded { bulletinAdded { body occurredAt } }","rootPath":"bulletinAdded"}]"#)
+    let clock = try await reopenClocked(modelsJson: schema(onlySubscription: "BulletinAdded"), transport: transport, operations: #"[{"name":"BulletinAdded","document":"subscription BulletinAdded { bulletinAdded { body occurredAt } }","rootPath":"bulletinAdded"}]"#)
     let notices = Cursor(try await Notice.recent.live.stream())
     #expect(await notices.next()?.isEmpty == true)
     await eventually("the notice subscription opens") { transport.calls.contains { $0.operationName == "BulletinAdded" } }
