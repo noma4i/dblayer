@@ -236,7 +236,7 @@ extension Query {
 
 extension ReadState {
   /// The first load ended and the relation has no next page.
-  var complete: Bool { settled && !hasMore }
+  var complete: Bool { settled && !hasMore && error == nil }
 }
 
 struct TestListState<Model: DBModel>: Sendable {

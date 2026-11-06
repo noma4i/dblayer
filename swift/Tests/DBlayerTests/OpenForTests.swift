@@ -24,6 +24,15 @@ private final class HeldCredential: CredentialStore, @unchecked Sendable {
   func clear() throws { lock.withLock { value = nil } }
 }
 
+private let heldCredentials = NSLock()
+nonisolated(unsafe) private var credentialsByPath: [String: HeldCredential] = [:]
+
+/// The secret outlives a process like the Keychain does: a database file opened again finds the credential of its stored session.
+private func credential(of config: Config) -> HeldCredential {
+  guard let path = config.path else { return HeldCredential() }
+  return heldCredentials.withLock { credentialsByPath[path] ?? { let made = HeldCredential(); credentialsByPath[path] = made; return made }() }
+}
+
 private struct StandLogin: Encodable, Sendable { let account: String }
 
 let sendMoment = #"[{"name":"CreateMoment","document":"mutation CreateMoment($text: String) { createMoment(text: $text) { id uuid text likedByMe media createdAt } }"}]"#
@@ -51,9 +60,9 @@ private func withSessionProfile(_ operations: String) -> String {
   operations.trimmingCharacters(in: .whitespaces) == "[]" ? "[\(sessionProfile)]" : String(operations.dropLast()) + ",\(sessionProfile)]"
 }
 
-private func signIn() async throws {
+private func signIn(restored: Bool = false) async throws {
   try DB.database.setOnline(online: true)
-  try await DB.sessionCall("login_link", body: StandLogin(account: "stand"))
+  if !restored { try await DB.sessionCall("login_link", body: StandLogin(account: "stand")) }
   try await DB.run("SessionProfile", variables: [:])
 }
 
@@ -65,8 +74,10 @@ func reopen(config: Config, modelsJson: String, transport: Transport?, operation
   }
   let server = try SealedServer(bridge: bridgeToTransport(mock))
   (mock as? MockTransport ?? (mock as? any WrapsMock)?.base)?.cable = EncryptedCablePeer(server: server)
-  let database = try await adopt(try await openDatabase(config: config, modelsJson: modelsJson, transport: mock, encrypted: standEncrypted(), credentials: HeldCredential(), http: server, operations: withSessionProfile(operations), uploads: uploads))
-  try await signIn()
+  let held = credential(of: config)
+  let restored = (try? held.get()) != nil
+  let database = try await adopt(try await openDatabase(config: config, modelsJson: modelsJson, transport: mock, encrypted: standEncrypted(), credentials: held, http: server, operations: withSessionProfile(operations), uploads: uploads))
+  try await signIn(restored: restored)
   return database
 }
 
