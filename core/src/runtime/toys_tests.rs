@@ -178,7 +178,7 @@ impl EffectRunner<Toy> for ToyRunner {
 
     fn run(&mut self, stamp: EpochStamp, effect: ToyEffect, back: &Back<Toy>) {
         if let Some(held) = &self.held {
-            held.lock().unwrap_or_else(PoisonError::into_inner).extend(crate::db::lock::held_classes());
+            held.lock().unwrap_or_else(PoisonError::into_inner).extend(crate::lock::held_classes());
         }
         match effect {
             ToyEffect::Fetch(id) => {
@@ -209,7 +209,7 @@ impl EffectRunner<Toy> for ToyRunner {
                     outcomes.end_epoch(epoch, cause);
                 }
                 if let Some(report) = &self.report {
-                    let _ = crate::db::lock::effect(|| report.send(epoch as u32));
+                    let _ = crate::lock::effect(|| report.send(epoch as u32));
                 }
             }
             ToyEffect::CloseOutcomes => {
@@ -217,7 +217,7 @@ impl EffectRunner<Toy> for ToyRunner {
                     outcomes.close();
                 }
                 if let Some(report) = &self.report {
-                    let _ = crate::db::lock::effect(|| report.send(CLOSED));
+                    let _ = crate::lock::effect(|| report.send(CLOSED));
                 }
             }
             ToyEffect::Report(n) => {
@@ -225,7 +225,7 @@ impl EffectRunner<Toy> for ToyRunner {
                     calls.lock().unwrap_or_else(PoisonError::into_inner).push(n);
                 }
                 if let Some(report) = &self.report {
-                    let _ = crate::db::lock::effect(|| report.send(n));
+                    let _ = crate::lock::effect(|| report.send(n));
                 }
             }
         }

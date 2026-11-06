@@ -83,7 +83,7 @@ impl Server {
         let sender = state.held[kind as usize].pop_front();
         let sender = sender.expect("no held request to answer").1;
         drop(state);
-        crate::db::lock::effect(|| { let _ = sender.send(reply); });
+        crate::lock::effect(|| { let _ = sender.send(reply); });
     }
 
     pub fn answer_text(&self, text: &str, reply: Reply) {
@@ -93,7 +93,7 @@ impl Server {
         let position = held.iter().position(|(held_text, _)| held_text == text).unwrap_or_else(|| panic!("no held request for {text}"));
         let sender = held.remove(position).unwrap().1;
         drop(state);
-        crate::db::lock::effect(|| { let _ = sender.send(reply); });
+        crate::lock::effect(|| { let _ = sender.send(reply); });
     }
 
     pub fn holds_text(&self, text: &str) -> bool {

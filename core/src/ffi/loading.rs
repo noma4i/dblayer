@@ -34,7 +34,7 @@ struct ReleaseBarrier(Arc<Mutex<Option<crate::runtime::Launch>>>);
 
 impl Drop for ReleaseBarrier {
     fn drop(&mut self) {
-        let held = crate::db::locked(&self.0).take();
+        let held = crate::lock::lock(&self.0).take();
         drop(held);
     }
 }
@@ -52,13 +52,13 @@ impl LoadRequest {
 
     /// Gives up this caller's interest. The request goes on while another caller waits for it.
     pub fn cancel(&self) {
-        let held = crate::db::locked(&self.held).take();
+        let held = crate::lock::lock(&self.held).take();
         let Some(task) = held else { return };
-        let previous = crate::db::locked(&self.dropping).replace(self.life.launch());
+        let previous = crate::lock::lock(&self.dropping).replace(self.life.launch());
         drop(previous);
-        crate::db::lock::effect(|| task.abort());
+        crate::lock::effect(|| task.abort());
         if task.is_finished() {
-            let held = crate::db::locked(&self.dropping).take();
+            let held = crate::lock::lock(&self.dropping).take();
             drop(held);
         }
     }
@@ -181,7 +181,7 @@ impl Database {
                 Ok(call) => this.finish_load(call).await.map(drop),
                 Err(error) => Err(error),
             };
-            crate::db::lock::effect(|| sender.send_replace(Some(result)));
+            crate::lock::effect(|| sender.send_replace(Some(result)));
         }));
         Ok(Arc::new(LoadRequest { outcome, held: Mutex::new(Some(task.abort_handle())), life: self.life.clone(), dropping }))
     }

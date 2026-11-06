@@ -1,6 +1,5 @@
 mod database;
 mod receipt;
-pub(crate) mod admission;
 #[cfg(test)]
 pub(crate) use database::NEEDS_NETWORK;
 #[cfg(test)]
@@ -25,7 +24,6 @@ mod close_tests;
 mod call_state;
 pub(crate) use call_state::CallState;
 mod foreign_future;
-mod lease;
 mod open_slot;
 mod opening;
 #[cfg(test)]

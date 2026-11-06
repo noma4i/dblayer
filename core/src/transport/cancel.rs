@@ -13,7 +13,7 @@ impl CancelToken {
     }
 
     pub fn cancel(&self) {
-        crate::db::lock::effect(|| self.sender.send_replace(true));
+        crate::lock::effect(|| self.sender.send_replace(true));
     }
 
     pub fn is_cancelled(&self) -> bool {

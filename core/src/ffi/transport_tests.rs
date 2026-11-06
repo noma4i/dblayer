@@ -191,13 +191,13 @@ struct Ordered {
 }
 
 impl Ordered {
-    fn say(&self, event: String) { let _ = crate::db::locked(&self.events).send(event); }
+    fn say(&self, event: String) { let _ = crate::lock::lock(&self.events).send(event); }
 }
 
 #[async_trait::async_trait]
 impl super::Transport for Ordered {
     async fn open_cable(&self, lease: Arc<super::CableLease>, _url: String) -> Result<(), super::DbError> {
-        let script = crate::db::locked(&self.open).take().expect("open script");
+        let script = crate::lock::lock(&self.open).take().expect("open script");
         script(lease).await
     }
     async fn cable_send(&self, _: String, _: String) -> Result<(), super::DbError> { unreachable!() }
@@ -212,7 +212,7 @@ impl super::Transport for Ordered {
     async fn query(&self, _: super::TransportRequest) -> Result<String, super::DbError> { unreachable!() }
     async fn mutate(&self, _: super::TransportRequest) -> Result<String, super::DbError> { unreachable!() }
     async fn subscribe(&self, _: super::TransportRequest, sink: Arc<super::SubscriptionSink>) -> Result<(), super::DbError> {
-        let script = crate::db::locked(&self.subscribe).take().expect("subscribe script");
+        let script = crate::lock::lock(&self.subscribe).take().expect("subscribe script");
         script(sink).await
     }
     fn unsubscribe(&self, token: String) { self.say(format!("unsubscribe:{token}")); }

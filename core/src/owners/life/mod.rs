@@ -249,7 +249,7 @@ impl Wiring {
     pub fn tell_network(&self, owners: &[Peer], event: NetworkEvent) {
         let sinks: Vec<_> = self.network_sinks.lock().unwrap_or_else(PoisonError::into_inner).iter().filter(|(owner, _)| owners.contains(owner)).map(|(_, sink)| sink.clone()).collect();
         for sink in sinks {
-            crate::db::lock::effect(|| sink(event));
+            crate::lock::effect(|| sink(event));
         }
     }
 
@@ -260,7 +260,7 @@ impl Wiring {
     pub fn tell_committed(&self, broadcast: CommittedBroadcast) {
         let sinks = self.committed_sinks.lock().unwrap_or_else(PoisonError::into_inner).clone();
         for sink in sinks {
-            crate::db::lock::effect(|| sink(broadcast.clone()));
+            crate::lock::effect(|| sink(broadcast.clone()));
         }
     }
 

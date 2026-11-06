@@ -15,7 +15,7 @@ impl<T> Default for PublishedCell<T> {
 impl<T: Clone> PublishedCell<T> {
     pub fn publish(&self, value: T) {
         *lock(&self.value) = Some(value);
-        crate::db::lock::effect(|| self.changed.notify_all());
+        crate::lock::effect(|| self.changed.notify_all());
     }
 
     pub fn get(&self) -> Option<T> { lock(&self.value).clone() }
@@ -24,7 +24,7 @@ impl<T: Clone> PublishedCell<T> {
 
     pub fn notify(&self) {
         drop(lock(&self.value));
-        crate::db::lock::effect(|| self.changed.notify_all());
+        crate::lock::effect(|| self.changed.notify_all());
     }
 
     pub fn wait_for<R>(&self, limit: Duration, mut ready: impl FnMut() -> Option<R>) -> Option<R> {

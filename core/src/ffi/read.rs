@@ -221,7 +221,7 @@ impl ReadStream {
 
 impl Drop for ReadStream {
     fn drop(&mut self) {
-        if let Some(task) = &self.status { crate::db::lock::effect(|| task.abort()); }
+        if let Some(task) = &self.status { crate::lock::effect(|| task.abort()); }
         self.life.release_stream(self.stream);
     }
 }

@@ -64,11 +64,11 @@ impl Default for Shows {
 
 impl Shows {
     pub(super) fn put(&self, key: &str, shown: Shown) {
-        crate::db::locked(&self.map).insert(key.to_string(), shown);
-        crate::db::lock::effect(|| self.changed.send_modify(|count| *count += 1));
+        crate::lock::lock(&self.map).insert(key.to_string(), shown);
+        crate::lock::effect(|| self.changed.send_modify(|count| *count += 1));
     }
 
-    pub(super) fn status(&self, key: &str) -> WireTransferStatus { WireTransferStatus::of(key, crate::db::locked(&self.map).get(key)) }
+    pub(super) fn status(&self, key: &str) -> WireTransferStatus { WireTransferStatus::of(key, crate::lock::lock(&self.map).get(key)) }
 
     pub(super) fn watch(&self) -> watch::Receiver<u64> { self.changed.subscribe() }
 }

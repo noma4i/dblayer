@@ -15,7 +15,7 @@ impl<C> Mailbox<C> {
 
     pub fn push(&self, command: C) {
         lock(&self.commands).push_back(command);
-        crate::db::lock::effect(|| self.wake.notify_one());
+        crate::lock::effect(|| self.wake.notify_one());
     }
 
     pub fn take(&self, mut next_due: impl FnMut() -> Option<Duration>) -> Vec<C> {

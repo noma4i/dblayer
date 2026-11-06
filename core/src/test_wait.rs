@@ -143,7 +143,7 @@ impl ProbeWaker {
 
 impl Wake for ProbeWaker {
     fn wake(self: Arc<Self>) {
-        if !crate::db::lock::is_empty() || !(self.unlocked)() { self.violations.fetch_add(1, Ordering::SeqCst); }
+        if !crate::lock::is_empty() || !(self.unlocked)() { self.violations.fetch_add(1, Ordering::SeqCst); }
         self.wakes.fetch_add(1, Ordering::SeqCst);
     }
 }

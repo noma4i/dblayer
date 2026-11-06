@@ -26,7 +26,7 @@ impl Tasks for TokioTasks {
     fn start(&self, task: Task) -> Running {
         let launch = self.1.as_ref().map(crate::runtime::Handle::launch);
         let handle = crate::task::spawn_on(crate::task::Carry::Internal, &self.0, crate::runtime::counted(launch, task));
-        Running::new(move || crate::db::lock::effect(|| handle.abort()))
+        Running::new(move || crate::lock::effect(|| handle.abort()))
     }
 
     fn start_blocking(&self, job: Box<dyn FnOnce() + Send>) -> Running {
@@ -35,7 +35,7 @@ impl Tasks for TokioTasks {
             let _launch = launch;
             job()
         });
-        Running::new(move || crate::db::lock::effect(|| handle.abort()))
+        Running::new(move || crate::lock::effect(|| handle.abort()))
     }
 }
 
@@ -49,5 +49,5 @@ pub struct Wire {
 }
 
 impl Drop for Wire {
-    fn drop(&mut self) { crate::db::lock::assert_no_library_lock("Wire"); }
+    fn drop(&mut self) { crate::lock::assert_no_library_lock("Wire"); }
 }

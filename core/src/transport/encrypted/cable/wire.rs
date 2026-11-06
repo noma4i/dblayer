@@ -54,18 +54,18 @@ impl CableSubscriptions {
 
     pub async fn subscribe(&self, admitted: &crate::ffi::admission::Admitted, request: GraphQLRequest) -> Result<ServerSubscription, TransportError> {
         let (reply, receiver) = oneshot::channel();
-        crate::db::lock::effect(|| self.commands.send(Command::Add(Add { request, admitted: admitted.clone(), reply })).map_err(|_| TransportError::Network("cable stopped".into())))?;
+        crate::lock::effect(|| self.commands.send(Command::Add(Add { request, admitted: admitted.clone(), reply })).map_err(|_| TransportError::Network("cable stopped".into())))?;
         receiver.await.map_err(|_| TransportError::Network("cable stopped".into()))
     }
 
     pub fn wake_count(&self) -> usize { self.wakes.load(Ordering::Relaxed) }
 
-    pub fn resume(&self) { crate::db::lock::effect(|| { let _ = self.commands.send(Command::Resume); }); }
+    pub fn resume(&self) { crate::lock::effect(|| { let _ = self.commands.send(Command::Resume); }); }
 
     #[cfg(test)]
     pub async fn settled(&self) -> Result<(), TransportError> {
         let (sender, receiver) = oneshot::channel();
-        crate::db::lock::effect(|| self.commands.send(Command::Settled(sender)).map_err(|_| TransportError::Network("cable stopped".into())))?;
+        crate::lock::effect(|| self.commands.send(Command::Settled(sender)).map_err(|_| TransportError::Network("cable stopped".into())))?;
         tokio::time::timeout(Duration::from_secs(1), receiver).await.map_err(|_| TransportError::Network("cable busy".into()))?.map_err(|_| TransportError::Network("cable stopped".into()))
     }
 }
@@ -105,10 +105,10 @@ async fn await_connected<T>(next: impl std::future::Future<Output = T>, session:
             _ = session.cancelled() => {}
             command = commands.recv() => {
                 match command {
-                    Some(Command::Add(add)) => { session.discard_ended(); let (_, subscription) = session.subscribe(add.admitted, add.request); crate::db::lock::effect(|| { let _ = add.reply.send(subscription); }); }
+                    Some(Command::Add(add)) => { session.discard_ended(); let (_, subscription) = session.subscribe(add.admitted, add.request); crate::lock::effect(|| { let _ = add.reply.send(subscription); }); }
                     Some(Command::Resume) => session.resume(),
                     #[cfg(test)]
-                    Some(Command::Settled(sender)) => { crate::db::lock::effect(|| { let _ = sender.send(()); }); }
+                    Some(Command::Settled(sender)) => { crate::lock::effect(|| { let _ = sender.send(()); }); }
                     None => return Err(TransportError::Interrupted("cable stopped".into())),
                 }
             }
@@ -200,10 +200,10 @@ async fn run(config: EncryptedConfig, credential: Arc<dyn Fn(&crate::ffi::admiss
         tokio::select! {
             command = commands.recv() => {
                 match command {
-                    Some(Command::Add(add)) => { session.discard_ended(); let (_, subscription) = session.subscribe(add.admitted, add.request); crate::db::lock::effect(|| { let _ = add.reply.send(subscription); }); }
+                    Some(Command::Add(add)) => { session.discard_ended(); let (_, subscription) = session.subscribe(add.admitted, add.request); crate::lock::effect(|| { let _ = add.reply.send(subscription); }); }
                     Some(Command::Resume) => session.resume(),
                     #[cfg(test)]
-                    Some(Command::Settled(sender)) => { crate::db::lock::effect(|| { let _ = sender.send(()); }); }
+                    Some(Command::Settled(sender)) => { crate::lock::effect(|| { let _ = sender.send(()); }); }
                     None => break,
                 }
             }

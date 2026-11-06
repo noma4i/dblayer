@@ -26,7 +26,7 @@ pub struct Link {
 }
 
 impl Drop for Link {
-    fn drop(&mut self) { crate::db::lock::assert_no_library_lock("Link"); }
+    fn drop(&mut self) { crate::lock::assert_no_library_lock("Link"); }
 }
 
 impl Link {

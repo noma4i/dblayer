@@ -128,5 +128,5 @@ pub(super) fn failure<R>(error: &TransportError) -> TransportOutcome<R> {
 }
 
 impl Drop for WindowIo {
-    fn drop(&mut self) { crate::db::lock::assert_no_library_lock("WindowIo drop"); }
+    fn drop(&mut self) { crate::lock::assert_no_library_lock("WindowIo drop"); }
 }

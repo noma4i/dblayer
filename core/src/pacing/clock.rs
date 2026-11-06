@@ -41,31 +41,31 @@ impl ManualClock {
     }
 
     pub fn advance(&self, by: Duration) {
-        *crate::db::locked(&self.now) += by;
-        crate::db::lock::effect(|| self.changed.notify_waiters());
+        *crate::lock::lock(&self.now) += by;
+        crate::lock::effect(|| self.changed.notify_waiters());
         self.wake(); // lock-ok: clock guard ended at statement
     }
 
     fn wake(&self) {
-        let wakers = crate::db::locked(&self.wakers).clone();
+        let wakers = crate::lock::lock(&self.wakers).clone();
         for wake in wakers { wake(); }
     }
 
     #[cfg(test)]
     pub fn set(&self, now: Duration) {
-        *crate::db::locked(&self.now) = now;
-        crate::db::lock::effect(|| self.changed.notify_waiters());
+        *crate::lock::lock(&self.now) = now;
+        crate::lock::effect(|| self.changed.notify_waiters());
         self.wake(); // lock-ok: clock guard ended at statement
     }
 }
 
 impl Clock for ManualClock {
     fn now(&self) -> Duration {
-        *crate::db::locked(&self.now)
+        *crate::lock::lock(&self.now)
     }
 
     fn on_advance(&self, wake: Waker) {
-        crate::db::locked(&self.wakers).push(wake);
+        crate::lock::lock(&self.wakers).push(wake);
     }
 
     fn sleep(&self, duration: Duration) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send + '_>> {

@@ -192,7 +192,7 @@ impl Database {
             return Err(DbError::Invalid { detail: "the receipt was changed".into() });
         }
         if let Some(Ticket::Outbox(ticket)) = &held.ticket {
-            if let Some(kept) = crate::db::locked(&self.outcomes).get(&(ticket.epoch, ticket.op_id, ticket.cycle_id)).cloned() { return Ok(kept); }
+            if let Some(kept) = crate::lock::lock(&self.outcomes).get(&(ticket.epoch, ticket.op_id, ticket.cycle_id)).cloned() { return Ok(kept); }
         }
         if !self.admits(receipt.epoch) { return Ok(WireOperationOutcome::Interrupted); }
         match held.ticket.clone() {
@@ -225,7 +225,7 @@ impl Database {
         let key = (ticket.epoch, ticket.op_id, ticket.cycle_id);
         let outcome = self.read_outcome(receipt, ticket).await?;
         if matches!(outcome, WireOperationOutcome::Confirmed { .. } | WireOperationOutcome::Rejected { .. }) {
-            let mut kept = crate::db::locked(&self.outcomes);
+            let mut kept = crate::lock::lock(&self.outcomes);
             kept.retain(|(epoch, _, _), _| *epoch == key.0);
             kept.insert(key, outcome.clone());
         }

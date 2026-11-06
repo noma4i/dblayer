@@ -198,7 +198,7 @@ impl NetworkLine {
             *self.waiting.0.lock().unwrap_or_else(|error| error.into_inner()) += 1;
             self.waiting.1.notify_all();
         }
-        crate::db::lock::acquire(&self.line)
+        crate::lock::acquire(&self.line)
     }
 }
 

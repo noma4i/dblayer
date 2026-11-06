@@ -154,7 +154,7 @@ impl AnnounceLine {
                 self.0.turn.notify_all();
             }
         }
-        let mut next = crate::db::lock::acquire(&self.next);
+        let mut next = crate::lock::acquire(&self.next);
         if *next != ticket {
             next = crate::blocking::blocking_unit(|| {
                 let mut next = next;
@@ -281,7 +281,7 @@ impl Store {
     }
 
     pub(crate) fn lock(&self) -> MutexGuard<'_, Inner> {
-        crate::db::lock::acquire(&self.inner)
+        crate::lock::acquire(&self.inner)
     }
 
     pub(crate) fn set_hook(&self, hook: StoreHook) {

@@ -48,7 +48,7 @@ impl Inflight {
         *count -= handled;
         if *count == 0 {
             drop(count);
-            crate::db::lock::effect(|| self.idle.notify_all());
+            crate::lock::effect(|| self.idle.notify_all());
         }
     }
 

@@ -1,5 +1,4 @@
 use super::debug::{lock, lock_as};
-use crate::db::dispatch::Effects;
 use std::sync::Mutex;
 
 #[tokio::test]
@@ -71,7 +70,7 @@ fn effect_entry_rejects_guard() {
     struct EffectLock;
     let mutex = Mutex::new(EffectLock);
     let _guard = lock(&mutex);
-    let result = std::panic::catch_unwind(|| Effects::default().run());
+    let result = std::panic::catch_unwind(|| super::assert_no_library_lock("Effects::run"));
     let diagnostic = message(result.expect_err("effects must reject an active library guard"));
     assert!(diagnostic.contains("EffectLock") && diagnostic.contains("Effects::run"));
 }

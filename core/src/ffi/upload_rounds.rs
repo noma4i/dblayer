@@ -21,20 +21,20 @@ pub trait RoundJobsSink: Send + Sync {
 pub(super) struct RoundJobsSlot(OnceLock<Arc<dyn RoundJobsSink>>);
 
 impl Drop for RoundJobsSlot {
-    fn drop(&mut self) { crate::db::lock::assert_no_library_lock("RoundJobsSlot drop"); }
+    fn drop(&mut self) { crate::lock::assert_no_library_lock("RoundJobsSlot drop"); }
 }
 
 impl RoundJobs for RoundJobsSlot {
     fn schedule_job(&self, request_id: RequestId, epoch: Epoch) {
         if let Some(sink) = self.0.get() {
-            crate::db::lock::assert_no_library_lock("RoundJobsSink::schedule_job");
+            crate::lock::assert_no_library_lock("RoundJobsSink::schedule_job");
             sink.schedule_job(request_id, epoch);
         }
     }
 
     fn end_job(&self, round_id: RoundId) {
         if let Some(sink) = self.0.get() {
-            crate::db::lock::assert_no_library_lock("RoundJobsSink::end_job");
+            crate::lock::assert_no_library_lock("RoundJobsSink::end_job");
             sink.end_job(round_id);
         }
     }

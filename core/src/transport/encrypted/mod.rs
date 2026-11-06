@@ -3,7 +3,6 @@ use async_trait::async_trait;
 
 use super::error::TransportError;
 
-pub(crate) mod client;
 pub mod cable;
 mod config;
 pub(crate) mod bootstrap;
@@ -40,8 +39,6 @@ pub trait CredentialSlot: Send + Sync {
     fn clear(&self) -> Result<(), TransportError>;
 }
 
-#[cfg(test)]
-mod client_tests;
 #[cfg(test)]
 mod credential_reenter_tests;
 #[cfg(test)]

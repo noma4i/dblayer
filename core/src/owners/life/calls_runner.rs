@@ -92,7 +92,7 @@ impl CallsRunner {
         let task = crate::task::spawn_on(crate::task::Carry::Detached, &self.executor, crate::runtime::counted(Some(launch), async move {
             let variables: Value = serde_json::from_str(&variables).unwrap_or(Value::Null);
             let request = GraphQLRequest::new(document.clone(), operation, variables);
-            crate::db::lock::assert_no_library_lock("Transport::request");
+            crate::lock::assert_no_library_lock("Transport::request");
             let result = admitted.run(async {
                 if document.trim_start().starts_with("mutation") { transport.mutate(&admitted, request).await } else { transport.query(&admitted, request).await }
             }).await;
@@ -130,7 +130,7 @@ impl EffectRunner<Calls> for CallsRunner {
             CallsEffect::Cancel { request_id, kind } => match kind {
                 CallKind::Query => {
                     if let Some(task) = self.running.remove(&request_id) {
-                        crate::db::lock::effect(|| task.abort());
+                        crate::lock::effect(|| task.abort());
                     }
                 }
                 CallKind::Mutate => {

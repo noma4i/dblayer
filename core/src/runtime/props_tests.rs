@@ -381,8 +381,8 @@ fn rt_prop_no_lock_on_effect() {
     assert_eq!(*held.lock().unwrap_or_else(PoisonError::into_inner), Vec::<&str>::new(), "no library lock is held while a runner runs");
 
     let guard = Mutex::new(0u8);
-    let _held = crate::db::lock::lock(&guard);
-    let pushed = std::panic::catch_unwind(|| crate::db::lock::effect(|| ()));
+    let _held = crate::lock::lock(&guard);
+    let pushed = std::panic::catch_unwind(|| crate::lock::effect(|| ()));
     assert!(pushed.is_err(), "the detector sees a lock held at the boundary of an effect");
 }
 

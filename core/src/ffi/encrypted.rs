@@ -26,13 +26,13 @@ pub trait CredentialStore: Send + Sync {
 struct ForeignHttp(Arc<dyn EncryptedHttp>);
 
 impl Drop for ForeignHttp {
-    fn drop(&mut self) { crate::db::lock::assert_no_library_lock("ForeignHttp::drop"); }
+    fn drop(&mut self) { crate::lock::assert_no_library_lock("ForeignHttp::drop"); }
 }
 
 #[async_trait]
 impl core::HttpExchange for ForeignHttp {
     async fn post(&self, path: &str, body: String, purpose: core::NetworkPurpose) -> Result<core::HttpReply, core::TransportError> {
-        crate::db::lock::assert_no_library_lock("EncryptedHttp::post");
+        crate::lock::assert_no_library_lock("EncryptedHttp::post");
         let reply = self.0.post(path.to_string(), body, purpose).await.map_err(transport_error)?;
         Ok(core::HttpReply { status: reply.status, body: reply.body })
     }
@@ -42,13 +42,13 @@ impl core::HttpExchange for ForeignHttp {
 struct ForeignCredentials(Arc<dyn CredentialStore>);
 
 impl Drop for ForeignCredentials {
-    fn drop(&mut self) { crate::db::lock::assert_no_library_lock("ForeignCredentials::drop"); }
+    fn drop(&mut self) { crate::lock::assert_no_library_lock("ForeignCredentials::drop"); }
 }
 
 impl core::CredentialSlot for ForeignCredentials {
-    fn get(&self) -> Result<Option<String>, core::TransportError> { crate::db::lock::assert_no_library_lock("CredentialStore::get"); self.0.get().map_err(transport_error) }
-    fn set(&self, credential: &str) -> Result<(), core::TransportError> { crate::db::lock::assert_no_library_lock("CredentialStore::set"); self.0.set(credential.to_string()).map_err(transport_error) }
-    fn clear(&self) -> Result<(), core::TransportError> { crate::db::lock::assert_no_library_lock("CredentialStore::clear"); self.0.clear().map_err(transport_error) }
+    fn get(&self) -> Result<Option<String>, core::TransportError> { crate::lock::assert_no_library_lock("CredentialStore::get"); self.0.get().map_err(transport_error) }
+    fn set(&self, credential: &str) -> Result<(), core::TransportError> { crate::lock::assert_no_library_lock("CredentialStore::set"); self.0.set(credential.to_string()).map_err(transport_error) }
+    fn clear(&self) -> Result<(), core::TransportError> { crate::lock::assert_no_library_lock("CredentialStore::clear"); self.0.clear().map_err(transport_error) }
 }
 
 fn typed(error: core::TransportError) -> DbError {
@@ -114,7 +114,7 @@ impl RetryProgress {
                     let snapshot = changes.borrow_and_update().clone();
                     let (listener, calls) = (listener.clone(), calls.clone());
                     let _ = crate::task::spawn_blocking(crate::task::Carry::Detached, move || {
-                        crate::db::lock::assert_no_library_lock("RetryProgressListener::changed");
+                        crate::lock::assert_no_library_lock("RetryProgressListener::changed");
                         calls.call(|| listener.changed(snapshot))
                     }).await;
                     if changes.changed().await.is_err() { break; }
@@ -132,7 +132,7 @@ pub struct RetrySubscription { task: tokio::task::AbortHandle, pub(crate) calls:
 impl RetrySubscription {
     pub fn cancel(&self) {
         self.calls.cancel();
-        crate::db::lock::effect(|| self.task.abort());
+        crate::lock::effect(|| self.task.abort());
     }
 }
 

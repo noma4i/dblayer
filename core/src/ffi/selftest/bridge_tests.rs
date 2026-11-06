@@ -1103,7 +1103,7 @@ impl crate::ffi::tape::Reader for DropProbe {
 
 impl Drop for DropProbe {
     fn drop(&mut self) {
-        self.held.lock().unwrap().extend(crate::db::lock::held_classes().into_iter().map(str::to_string));
+        self.held.lock().unwrap().extend(crate::lock::held_classes().into_iter().map(str::to_string));
         self.dropped.fetch_add(1, Ordering::SeqCst);
     }
 }

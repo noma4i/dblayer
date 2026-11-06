@@ -124,7 +124,7 @@ impl FeedIo {
                 let (line, reply) = (line.clone(), reply.clone());
                 async move {
                     while let Some((counter, body)) = queued.recv().await {
-                        if crate::db::lock::effect(|| line.send(counter, body)).await.is_err() {
+                        if crate::lock::effect(|| line.send(counter, body)).await.is_err() {
                             return reply(FeedInput::Dropped { connection_id: connection });
                         }
                     }
@@ -202,7 +202,7 @@ impl FeedIo {
         let body = self.body_of(frame);
         let frames = self.open.lock().unwrap_or_else(PoisonError::into_inner).get(&connection).map(|open| open.frames.clone());
         if let Some(frames) = frames {
-            let _ = crate::db::lock::effect(|| frames.send((counter, body)));
+            let _ = crate::lock::effect(|| frames.send((counter, body)));
         }
     }
 
@@ -230,7 +230,7 @@ impl EffectRunner<Feed> for FeedIo {
 
 impl Drop for FeedIo {
     fn drop(&mut self) {
-        crate::db::lock::assert_no_library_lock("FeedIo drop");
+        crate::lock::assert_no_library_lock("FeedIo drop");
         let open: Vec<Open> = self.open.lock().unwrap_or_else(PoisonError::into_inner).drain().map(|(_, open)| open).collect();
         open.iter().for_each(|open| open.cancel.cancel());
     }

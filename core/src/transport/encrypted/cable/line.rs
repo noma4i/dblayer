@@ -39,7 +39,7 @@ impl EncryptedLines {
 }
 
 impl Drop for EncryptedLines {
-    fn drop(&mut self) { crate::db::lock::assert_no_library_lock("EncryptedLines drop"); }
+    fn drop(&mut self) { crate::lock::assert_no_library_lock("EncryptedLines drop"); }
 }
 
 fn command(channel: &str, command: &str, data: Option<Value>) -> String {
@@ -64,11 +64,11 @@ async fn handshake(socket: &dyn CableSocket, config: &EncryptedConfig, credentia
         match body["type"].as_str() {
             Some("challenge") => {
                 agreed = Some(CableKeys::agree(config, &body, credential).map_err(decode_fault)?);
-                crate::db::lock::effect(|| socket.send(command(&config.cable_channel, "subscribe", None))).await?;
+                crate::lock::effect(|| socket.send(command(&config.cable_channel, "subscribe", None))).await?;
             }
             Some("confirm_subscription") => {
                 let (_, hello) = agreed.as_ref().ok_or_else(|| decode_fault("confirmation before challenge"))?;
-                crate::db::lock::effect(|| socket.send(command(&config.cable_channel, "message", Some(json!({"action":"hello", "hello":hello}))))).await?;
+                crate::lock::effect(|| socket.send(command(&config.cable_channel, "message", Some(json!({"action":"hello", "hello":hello}))))).await?;
             }
             Some("reject_subscription") => return Err(TransportError::Session { code: crate::transport::SessionCode::AccountUnavailable, detail: "cable subscription refused".into() }),
             _ => if let Some(token) = body["message"]["frame"].as_str() {
@@ -101,7 +101,7 @@ struct SocketLine {
 impl CableLine for SocketLine {
     async fn send(&self, counter: u64, body: Value) -> Result<(), TransportError> {
         let token = self.keys.seal(counter, body).map_err(decode_fault)?;
-        crate::db::lock::effect(|| self.socket.send(command(&self.channel, "message", Some(json!({"action":"frame", "frame":token}))))).await
+        crate::lock::effect(|| self.socket.send(command(&self.channel, "message", Some(json!({"action":"frame", "frame":token}))))).await
     }
 
     async fn next(&self) -> Incoming {

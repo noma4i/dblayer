@@ -92,7 +92,7 @@ impl EffectRunner<Lifecycle> for LifecycleRunner {
             LifecycleEffect::StopObserving => {
                 let done = super::StopDone::new(wiring.clone());
                 match self.db.shared.os_observers.get() {
-                    Some(port) => crate::db::lock::effect(|| port.stop(done)),
+                    Some(port) => crate::lock::effect(|| port.stop(done)),
                     None => done.finish(),
                 }
             }

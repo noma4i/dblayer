@@ -83,7 +83,7 @@ impl Reads {
                 return;
             };
             drop(state);
-            crate::db::lock::effect(|| sink(event));
+            crate::lock::effect(|| sink(event));
             state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
         }
     }

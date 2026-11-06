@@ -24,11 +24,11 @@ impl Readers {
     }
 
     pub(super) fn lease(&self) -> Lease<'_> {
-        let mut idle = crate::db::lock::acquire(&self.idle);
+        let mut idle = crate::lock::acquire(&self.idle);
         loop {
             if let Some(index) = idle.pop() {
                 drop(idle);
-                let connection = crate::db::lock::acquire(&self.connections[index]);
+                let connection = crate::lock::acquire(&self.connections[index]);
                 return Lease { pool: self, connection, index };
             }
             idle = crate::blocking::blocking_unit(|| self.available.wait(idle).unwrap_or_else(|error| error.into_inner()));

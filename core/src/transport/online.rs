@@ -22,7 +22,7 @@ impl Connectivity {
 }
 impl Connectivity {
     pub(crate) fn change(&self, online: bool) -> bool {
-        crate::db::lock::effect(|| {
+        crate::lock::effect(|| {
             let was = self.sender.send_replace(online);
             if online && !was { self.returns.send_modify(|count| *count += 1); }
             was

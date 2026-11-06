@@ -30,7 +30,7 @@ struct Sleeper<'a> {
 
 impl Drop for Sleeper<'_> {
     fn drop(&mut self) {
-        let mut time = crate::db::locked(&self.clock.time);
+        let mut time = crate::lock::lock(&self.clock.time);
         if let Some(count) = time.sleepers.get_mut(&self.deadline) {
             *count -= 1;
             if *count == 0 { time.sleepers.remove(&self.deadline); }
@@ -58,20 +58,20 @@ impl TestClock {
 
 
     fn base(&self) -> Duration {
-        crate::db::locked(&self.time).base()
+        crate::lock::lock(&self.time).base()
     }
 
 
 
     #[cfg(test)]
     fn advance_base(&self, by: Duration) {
-        crate::db::locked(&self.time).now += by;
-        crate::db::lock::effect(|| self.changed.notify_waiters());
+        crate::lock::lock(&self.time).now += by;
+        crate::lock::effect(|| self.changed.notify_waiters());
     }
 
     #[cfg(test)]
     fn next_deadline(&self) -> Option<Duration> {
-        crate::db::locked(&self.time).sleepers.keys().next().copied()
+        crate::lock::lock(&self.time).sleepers.keys().next().copied()
     }
 
     #[cfg(test)]
@@ -105,16 +105,16 @@ impl TestClock {
     }
 
     fn sleeper(&self, deadline: Duration) -> Option<Sleeper<'_>> {
-        let mut time = crate::db::locked(&self.time);
+        let mut time = crate::lock::lock(&self.time);
         if time.started.is_some() { return None; }
         *time.sleepers.entry(deadline).or_default() += 1;
         drop(time);
-        crate::db::lock::effect(|| self.slept.notify_waiters());
+        crate::lock::effect(|| self.slept.notify_waiters());
         Some(Sleeper { clock: self, deadline })
     }
 
     fn stopped_deadline(&self, deadline: Duration) -> Duration {
-        deadline.saturating_sub(*crate::db::locked(&self.shift))
+        deadline.saturating_sub(*crate::lock::lock(&self.shift))
     }
 }
 
@@ -124,7 +124,7 @@ impl Default for TestClock {
 
 impl Clock for TestClock {
     fn now(&self) -> Duration {
-        self.base() + *crate::db::locked(&self.shift)
+        self.base() + *crate::lock::lock(&self.shift)
     }
 
     fn sleep(&self, duration: Duration) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send + '_>> {
