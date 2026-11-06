@@ -46,7 +46,6 @@ pub fn operation_input(connection: &Connection, sequence: i64) -> rusqlite::Resu
 pub fn open_operations(connection: &Connection) -> rusqlite::Result<Vec<Operation>> {
     let sql = format!(include_str!("../sql/operation/open_operations.sql"), OPERATION_COLUMNS = OPERATION_COLUMNS, OPEN_STATUSES = OPEN_STATUSES);
     let mut rows_of = read_all_rows(connection)?;
-    let mut uploads = read_uploads(connection)?;
     let mut extensions = operation_extensions(connection, None)?;
     let mut statement = connection.prepare(&sql)?;
     let rows = statement.query_map([], operation_at)?;
@@ -54,7 +53,6 @@ pub fn open_operations(connection: &Connection) -> rusqlite::Result<Vec<Operatio
     for item in rows {
         if let Some(mut operation) = item? {
             operation.row_ids = rows_of.remove(&operation.id.0).unwrap_or_default();
-            operation.upload = uploads.remove(&operation.id.0);
             attach_extensions(&mut operation.error, extensions.remove(&operation.id.0));
             operations.push(operation);
         }
@@ -69,7 +67,7 @@ fn operation_at(row: &Row<'_>) -> rusqlite::Result<Option<Operation>> {
         temp_id: row.get::<_, Option<String>>(3)?.as_deref().map(stored_row_id).transpose()?,
         transport_started: row.get::<_, i64>(4)? != 0,
         base_revision: row.get::<_, Option<i64>>(5)?.unwrap_or(0), created_at: row.get(6)?, dedupe_key: row.get(7)?,
-        attempts: row.get(8)?, error: failure_at(row, 9)?, since: row.get(11)?, upload: None, client_mutation_id: row.get(12)?,
+        attempts: row.get(8)?, error: failure_at(row, 9)?, since: row.get(11)?, client_mutation_id: row.get(12)?,
     }))
 }
 
@@ -79,12 +77,6 @@ pub(crate) fn read_operation(connection: &Connection, seq: i64) -> rusqlite::Res
     operation.row_ids = read_rows(connection, seq)?;
     attach_extensions(&mut operation.error, operation_extensions(connection, Some(seq))?.remove(&seq));
     Ok(Some(operation))
-}
-
-pub(crate) fn read_queue_operation(connection: &Connection, seq: i64) -> rusqlite::Result<Option<super::QueueOperation>> {
-    let Some(operation) = read_operation(connection, seq)? else { return Ok(None) };
-    let uploading = connection.query_row(include_str!("../sql/operation/read_queue_operation.sql"), [seq], |row| row.get(0))?;
-    Ok(Some(super::QueueOperation { operation, uploading }))
 }
 
 pub(crate) fn row_operation_sequences(connection: &Connection, keys: &BTreeSet<(String, String)>) -> rusqlite::Result<BTreeSet<i64>> {

@@ -111,7 +111,6 @@ pub(crate) fn wipe_model_cache(connection: &Connection, model: &str, table: &str
 }
 
 pub(crate) fn retire_operations(connection: &Connection, models: Option<&[String]>, quarantined: Option<QuarantineReason>) -> Result<(), StoreError> {
-    if models.is_none() { connection.execute_batch(include_str!("sql/reset/retire_operations_delete_blob_use.sql"))?; }
     let open: Vec<(i64, String)> = connection.prepare(include_str!("sql/reset/retire_operations_select_op.sql"))?.query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?.collect::<Result<_, _>>()?;
     for (seq, action_key) in open {
         let owner = Operation::split_action_key(&action_key).map(|(owner, _)| owner).unwrap_or_default();
@@ -122,13 +121,11 @@ pub(crate) fn retire_operations(connection: &Connection, models: Option<&[String
             let input = read_value(connection, seq, "input")?.unwrap_or(serde_json::Value::Null);
             quarantine_add(connection, Some(&owner), &input, reason)?;
         }
-        super::blob::release(connection, seq, false)?;
         delete_operation(connection, seq)?;
     }
     match models {
         Some(models) => models.iter().try_for_each(|model| clear_sync(connection, Some(model)))?,
         None => {
-            connection.execute(include_str!("sql/reset/retire_operations_delete_transfer_abort.sql"), [])?;
             connection.execute(include_str!("sql/reset/retire_operations_delete_transfer_outcome.sql"), [])?;
             connection.execute(include_str!("sql/reset/retire_operations_delete_upload_orphan.sql"), [])?;
             connection.execute(include_str!("sql/reset/retire_operations_delete_sync_upload_batch.sql"), [])?;

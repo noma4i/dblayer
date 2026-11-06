@@ -3,7 +3,6 @@ use super::*;
 use crate::store::{OperationRecord, OperationTransition};
 use crate::owners::write::operation_status::OperationStatus;
 use crate::value::sync::{FailureKind, OperationFailure};
-use crate::owners::write::upload::{UploadPart, UploadScenario, UploadStage, UploadState, UploadStatus};
 use serde_json::json;
 
 fn record() -> OperationRecord {
@@ -19,7 +18,6 @@ fn record() -> OperationRecord {
         created_at: 5,
         dedupe_key: None,
         rollback: Some(json!({"rows": [{"kind": "edited", "model": "messages", "id": "m1", "before": {"body": "old"}, "owned": {"body": 1}}]})),
-        upload: None,
     }
 }
 
@@ -33,18 +31,6 @@ fn begun() -> (Store, i64) {
     let (store, _) = booted_store();
     let seq = send(&store, vec![OperationTransition::Begin(Box::new(record()))]);
     (store, seq)
-}
-
-fn upload() -> UploadState {
-    let mut state = UploadState::queued();
-    state.phase = UploadStatus::Uploading;
-    state.stage = UploadStage::Part;
-    state.scenario = Some(UploadScenario::Multipart);
-    state.total_bytes = 90;
-    state.sent_bytes = 40;
-    state.key = Some("k1".into());
-    state.parts = vec![UploadPart { number: 1, etag: "a".into(), confirmed_bytes: 20 }, UploadPart { number: 2, etag: "b".into(), confirmed_bytes: 20 }];
-    state
 }
 
 #[test]
@@ -65,15 +51,12 @@ fn an_operation_keeps_its_rows_and_values_in_child_tables() {
 }
 
 #[test]
-fn a_failure_and_the_upload_progress_are_columns() {
+fn a_failure_is_columns() {
     let (store, seq) = begun();
     let failure = OperationFailure::new(FailureKind::Server, "http 503");
     send(&store, vec![OperationTransition::Start { seq }]);
     send(&store, vec![OperationTransition::Fail { seq, status: OperationStatus::Failed, failure }]);
-    send(&store, vec![OperationTransition::Progress { seq, item_position: 0, state: Box::new(upload()) }]);
-    assert_eq!(count(&store, "SELECT COUNT(*) FROM pragma_table_info('op') WHERE name LIKE 'up_%'"), 0);
-    assert_eq!(count(&store, "SELECT COUNT(*) FROM op JOIN op_item USING (seq) WHERE op.error_kind = 'server' AND op.error_message = 'http 503' AND position = 0 AND phase = 'uploading' AND sent_bytes = 40"), 1);
-    assert_eq!(count(&store, &format!("SELECT COUNT(*) FROM op_part WHERE seq = {seq} AND etag IN ('a', 'b')")), 2);
+    assert_eq!(count(&store, "SELECT COUNT(*) FROM op WHERE error_kind = 'server' AND error_message = 'http 503'"), 1);
     assert_eq!(count(&store, "SELECT COUNT(*) FROM row_sync WHERE error_kind = 'server' AND error_message = 'http 503'"), 2);
 }
 
@@ -86,7 +69,6 @@ fn graphql_extensions_survive_reopen_in_every_error_owner_and_leave_with_it() {
         message: message.into(),
         extensions: extensions.map(|value| serde_json::from_value::<GraphqlExtensions>(value).unwrap()),
     };
-    let item = failure(Some(json!({"code":"ITEM","transaction_disposition":null,"fields":{"list":"[[1,[2]],{\"a\":{\"b\":null}}]"}})), "item refused");
     let cases = [
         Some(json!({"code":"REFUSED","transaction_disposition":"LATER","fields":{"detail":"\"refused\"","limit":"3","context":"{\"values\":[true,null,2.5,[1,{\"k\":null}]]}"}})),
         Some(json!({"code":null,"transaction_disposition":null,"fields":{}})),
@@ -101,35 +83,25 @@ fn graphql_extensions_survive_reopen_in_every_error_owner_and_leave_with_it() {
         store.mark_ready();
         let seq = send(&store, vec![OperationTransition::Begin(Box::new(record()))]);
         let failure = failure(extensions.clone(), "purchase refused");
-        let mut uploading = record();
-        uploading.action_key = "messages:upload:file".into();
-        let upload_seq = send(&store, vec![OperationTransition::Begin(Box::new(uploading))]);
-        let mut state = upload();
-        state.error = Some(item.clone());
-        send(&store, vec![OperationTransition::Progress { seq: upload_seq, item_position: 0, state: Box::new(state) }]);
-        for seq in [seq, upload_seq] {
-            send(&store, vec![OperationTransition::Start { seq }]);
-            send(&store, vec![OperationTransition::Fail { seq, status: OperationStatus::Failed, failure: failure.clone() }]);
-        }
+        send(&store, vec![OperationTransition::Start { seq }]);
+        send(&store, vec![OperationTransition::Fail { seq, status: OperationStatus::Failed, failure: failure.clone() }]);
         drop(store);
         let store = Store::open(&path).unwrap();
         store.boot(&[messages_spec(), items_spec()], None).unwrap();
         store.mark_ready();
         store.read(&[], |reader| {
             let stored = crate::store::operation::open_operations(reader.connection())?;
-            assert_eq!(stored.len(), 2);
+            assert_eq!(stored.len(), 1);
             assert!(stored.iter().all(|operation| operation.error.as_ref() == Some(&failure)), "op");
-            assert_eq!(stored.iter().find(|operation| operation.id.0 == upload_seq).unwrap().upload.as_ref().unwrap().error.as_ref(), Some(&item), "op_item");
             let rows = crate::store::sync_state::read_sync(reader.connection(), "messages", &["m1".into(), "m2".into()])?;
             assert_eq!(rows.len(), 2);
             assert!(rows.values().all(|row| row.error.as_ref() == Some(&failure)), "row_sync");
             Ok(())
         }).unwrap();
-        assert!(nodes(&store, "op_error") > 0);
+        assert_eq!(nodes(&store, "op_error") > 0, extensions.is_some(), "op_error");
         for table in ["op_error", "sync_row_error"] {
             assert_eq!(count(&store, &format!("SELECT COUNT(*) FROM {table} WHERE kind = 4 AND (text LIKE '[%' OR text LIKE '{{%' OR text LIKE '\"%')")), 0, "{table} keeps JSON text");
         }
-        assert_eq!(count(&store, "SELECT COUNT(*) FROM op_error AS list JOIN op_error AS leaf ON leaf.seq = list.seq AND leaf.item_position = list.item_position WHERE list.item_position = 0 AND list.name = 'list' AND list.kind = 6 AND leaf.name = 'b' AND leaf.kind = 0"), 1, "item list is child nodes with a null leaf");
         let fields = extensions.as_ref().map(|value| value["fields"].clone()).unwrap_or_default();
         if fields.get("context").is_some() {
             assert_eq!(count(&store, &format!("SELECT COUNT(*) FROM op_error WHERE seq = {seq} AND item_position = -1 AND name = 'detail' AND kind = 4 AND text = 'refused'")), 1, "a string field has no JSON quotes");
@@ -142,11 +114,7 @@ fn graphql_extensions_survive_reopen_in_every_error_owner_and_leave_with_it() {
         assert_eq!(nodes(&store, "sync_row_error") > 0, extensions.is_some(), "sync_row_error");
         send(&store, vec![OperationTransition::Retry { seq }]);
         assert_eq!(count(&store, &format!("SELECT COUNT(*) FROM op_error WHERE seq = {seq}")), 0, "retry clears the operation tree");
-        assert!(count(&store, &format!("SELECT COUNT(*) FROM op_error WHERE seq = {upload_seq} AND item_position = 0")) > 0);
-        for seq in [seq, upload_seq] {
-            let status = if seq == upload_seq { OperationStatus::RolledBack } else { OperationStatus::Committed };
-            send(&store, vec![OperationTransition::Close { seq, status }]);
-        }
+        send(&store, vec![OperationTransition::Close { seq, status: OperationStatus::Committed }]);
         for table in ["op_error", "sync_row_error"] {
             assert_eq!(nodes(&store, table), 0, "{table} after close");
         }
@@ -178,9 +146,8 @@ fn row_sync_keeps_actions_and_dirty_fields_in_child_tables() {
 #[test]
 fn closing_an_operation_removes_its_child_rows() {
     let (store, seq) = begun();
-    send(&store, vec![OperationTransition::Progress { seq, item_position: 0, state: Box::new(upload()) }]);
     send(&store, vec![OperationTransition::Close { seq, status: OperationStatus::Committed }]);
-    for table in ["op", "op_row", "op_value", "op_error", "op_item", "op_part", "row_sync", "sync_row_error", "sync_action", "sync_field"] {
+    for table in ["op", "op_row", "op_value", "op_error", "row_sync", "sync_row_error", "sync_action", "sync_field"] {
         assert_eq!(count(&store, &format!("SELECT COUNT(*) FROM {table}")), 0, "{table}");
     }
 }

@@ -1,1 +1,0 @@
-SELECT seq, position, {UPLOAD_COLUMNS}, background_refused FROM op_item {filter} ORDER BY seq, position

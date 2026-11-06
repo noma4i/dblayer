@@ -1,1 +1,0 @@
-SELECT seq, item_position, number, etag, confirmed_bytes FROM op_part {filter} ORDER BY seq, item_position, number

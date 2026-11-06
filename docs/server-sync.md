@@ -201,7 +201,7 @@ After reopening the database, the library passes the answer to the same upload s
 The saved request identifies the exact part numbers when an upload URL needs renewal.
 Upload failures retain their typed `SessionCode` in Swift and Kotlin.
 
-A batch upload stores one `op` and one `op_item` per file, including its source, correlation key, progress, and saved request.
+A batch upload stores one `op` for the final mutation and one `sync_upload` row per file, including its source, progress, and saved steps.
 The final mutation carries all remaining items in their original order and uses the operation's existing delivery key.
 An uncertain final delivery keeps every member until explicit retry or discard.
 A direct `run` mutation has no queued owner and creates no operation.

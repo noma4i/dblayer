@@ -478,3 +478,30 @@ fn a_format_change_carries_the_transfer_rows_of_sync_upload_and_not_the_folded_o
     assert_eq!(count(&store, "SELECT COUNT(*) FROM restore_failed"), 0, "the folded row is not reported as a lost intent");
     assert!(!store.table_exists("sync_upload_error").unwrap());
 }
+
+#[test]
+fn a_format_change_carries_queued_operations_transfers_and_the_session_and_drops_the_old_upload_writer() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("a.sqlite");
+    {
+        let (store, _) = reopen(&path, &[messages_spec()], None);
+        exec(&store, "INSERT INTO op (action_key, status, created_at, since) VALUES ('messages:send', 'pending', 1, 1); \
+            INSERT INTO encrypted_session (id, credential_digest, sequence) VALUES (1, 'digest', 41); \
+            INSERT INTO sync_upload (model, row_id, action, status, stage, sent, total, attempts, seq, transfer_id) VALUES ('messages', 'm1', 'photo', 'uploading', 'part', 2, 5, 1, 7, 7); \
+            CREATE TABLE blob_upload (id TEXT PRIMARY KEY NOT NULL, seq INTEGER); \
+            CREATE TABLE blob_use (consumer_seq INTEGER NOT NULL, blob_id TEXT NOT NULL); \
+            CREATE TABLE op_item (seq INTEGER NOT NULL, position INTEGER NOT NULL); \
+            INSERT INTO blob_upload (id, seq) VALUES ('b1', 1); \
+            INSERT INTO op_item (seq, position) VALUES (1, 0); \
+            UPDATE manifest SET value = 'old' WHERE key = 'format_version'");
+    }
+    let (store, report) = reopen(&path, &[messages_spec()], None);
+    assert_eq!(report.recreated, Some(crate::store::ddl::RecreateReason::CoreFormat));
+    assert_eq!(count(&store, "SELECT COUNT(*) FROM op WHERE action_key = 'messages:send' AND status = 'pending'"), 1, "the queued operation is carried");
+    assert_eq!(count(&store, "SELECT COUNT(*) FROM sync_upload WHERE row_id = 'm1' AND transfer_id = 7 AND sent = 2 AND total = 5"), 1, "the transfer row is carried");
+    assert_eq!(count(&store, "SELECT COUNT(*) FROM encrypted_session WHERE credential_digest = 'digest' AND sequence = 41"), 1, "the saved session is carried");
+    for table in ["blob_upload", "blob_use", "op_item"] {
+        assert!(!store.table_exists(table).unwrap(), "{table}");
+    }
+    assert_eq!(count(&store, "SELECT COUNT(*) FROM restore_failed"), 0);
+}

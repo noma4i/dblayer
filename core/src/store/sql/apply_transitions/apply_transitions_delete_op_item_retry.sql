@@ -1,1 +1,0 @@
-DELETE FROM op_item_retry WHERE seq = ?1

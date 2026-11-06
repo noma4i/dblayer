@@ -80,7 +80,7 @@ pub(in super::super) fn apply_envelope_at(
 
     stamp_confirmed_rows(connection, models, &envelope.operation_transitions, revision)?;
     let mut synced_keys: BTreeSet<SyncKey> = BTreeSet::new();
-    wrote |= apply_transitions(connection, models, envelope.generation, &envelope.operation_transitions, now_ms, &mut synced_keys, &mut result)?;
+    wrote |= apply_transitions(connection, &envelope.operation_transitions, now_ms, &mut synced_keys, &mut result)?;
     if let Some(originals) = originals {
         let reader = Reader::new(connection, models);
         for (model, id) in &synced_keys {
@@ -180,25 +180,8 @@ pub(in super::super) fn apply_envelope_at(
         result.revision = Some(revision);
         result.rows = changes.changes;
         result.replaced = replaced;
-        let mut progress_only: BTreeSet<_> = envelope.operation_transitions.iter().filter_map(|transition| match transition {
-            OperationTransition::Progress { seq, state, .. } if state.phase != crate::owners::write::upload::UploadStatus::Queued => Some(*seq),
-            _ => None,
-        }).collect();
-        for transition in &envelope.operation_transitions {
-            let seq = match transition {
-                OperationTransition::Begin(record) | OperationTransition::BeginUpload { record, .. } | OperationTransition::BeginBlob { record, .. } => record.seq,
-                OperationTransition::RetireBlob { .. } => None,
-                OperationTransition::Progress { seq, state, .. } if state.phase == crate::owners::write::upload::UploadStatus::Queued => Some(*seq),
-                OperationTransition::Progress { .. } | OperationTransition::BackgroundRefused { .. } => None,
-                OperationTransition::RemoveUploadItem { seq, .. } | OperationTransition::ReplaceUploadSource { seq, .. } | OperationTransition::ConfirmUploadItem { seq, .. }
-                | OperationTransition::Close { seq, .. } | OperationTransition::Fail { seq, .. }
-                | OperationTransition::Start { seq } | OperationTransition::Postpone { seq, .. }
-                | OperationTransition::Retry { seq } | OperationTransition::Remove { seq, .. } => Some(*seq),
-            };
-            if let Some(seq) = seq { progress_only.remove(&seq); }
-        }
-        for seq in result.operations.iter().filter(|seq| !progress_only.contains(seq)) {
-            result.queue_operations.insert(*seq, crate::store::operation::read_queue_operation(connection, *seq)?);
+        for seq in result.operations.iter() {
+            result.queue_operations.insert(*seq, crate::store::operation::read_operation(connection, *seq)?);
         }
     } else {
         result.scopes.clear();

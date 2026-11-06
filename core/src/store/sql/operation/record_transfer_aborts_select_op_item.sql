@@ -1,1 +1,0 @@
-SELECT position, storage_key, upload_id, transfer_operation_id, client_key FROM op_item WHERE seq = ?1 AND upload_id IS NOT NULL AND storage_key IS NOT NULL AND (?2 IS NULL OR position = ?2)

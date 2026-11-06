@@ -2,7 +2,6 @@ use serde::{Deserialize, Serialize};
 
 use crate::identity::RowId;
 use crate::value::sync::OperationFailure;
-use crate::owners::write::upload::UploadState;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct OperationId(pub i64);
@@ -60,7 +59,6 @@ pub struct Operation {
     pub attempts: u32,
     pub error: Option<OperationFailure>,
     pub since: i64,
-    pub upload: Option<UploadState>,
 }
 
 impl Operation {
@@ -80,7 +78,6 @@ impl Operation {
             attempts: 0,
             error: None,
             since: created_at,
-            upload: None,
         }
     }
 

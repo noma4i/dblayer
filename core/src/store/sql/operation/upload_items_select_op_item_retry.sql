@@ -1,1 +1,0 @@
-SELECT stage, part_number, attempts, retry_at FROM op_item_retry WHERE seq = ?1 AND position = ?2 ORDER BY stage, part_number

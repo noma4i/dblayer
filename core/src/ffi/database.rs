@@ -154,7 +154,6 @@ impl Database {
         let keys: Vec<String> = models.iter().map(|model| model.key.to_string()).collect();
         let db = Arc::new(Store::open_models(config.path.as_deref().map(Path::new), models, config.data_version.as_deref())?);
         db.set_clock(clock.clone());
-        db.expire_blobs_before_use()?;
         let Wiring { transport, encrypted, cable, seal } = wire(&db, &clock)?;
         let reads = crate::owners::read::ReadOperations::default();
         let jobs: Arc<super::upload_rounds::RoundJobsSlot> = Arc::default();

@@ -104,7 +104,6 @@ pub(super) fn intent(writer: &mut RowWrite<'_>, op_id: u64, model: &str, row_id:
         created_at: writer.now,
         dedupe_key: None,
         rollback: Some(prior),
-        upload: None,
     })));
     envelope.validate(writer.generation)?;
     super::apply::apply_envelope_at(writer.connection, writer.models, &envelope, writer.now, writer.revision, Some(writer.originals))

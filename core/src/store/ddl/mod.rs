@@ -17,7 +17,7 @@ pub const DATA_VERSION_KEY: &str = "data_version";
 pub const REVISION_SEQ_KEY: &str = "revision_seq";
 pub(crate) const CARRIED_MANIFEST_KEYS: [&str; 3] = ["saved_epoch", "saved_generation", REVISION_SEQ_KEY];
 /// The tables a format change moves into the new layout (`store_boot_format_change`).
-pub(crate) const CARRIED_TABLES: [&str; 23] = ["op", "op_transfer", "transfer_outcome", "op_item", "op_item_retry", "op_item_header", "op_row", "op_part", "op_value", "op_error", "transfer_abort", "blob_upload", "blob_use", "encrypted_session", "encrypted_pending", "encrypted_answer", "sync_upload", "sync_upload_part", "local_pending", "file", "restore_failed", "upload_orphan", "sync_upload_batch"];
+pub(crate) const CARRIED_TABLES: [&str; 15] = ["op", "op_transfer", "transfer_outcome", "op_row", "op_value", "op_error", "encrypted_session", "encrypted_pending", "encrypted_answer", "sync_upload", "sync_upload_part", "local_pending", "restore_failed", "upload_orphan", "sync_upload_batch"];
 
 pub const SERVICE_COLUMNS: [&str; 3] = ["id", "revision", "born_rev"];
 

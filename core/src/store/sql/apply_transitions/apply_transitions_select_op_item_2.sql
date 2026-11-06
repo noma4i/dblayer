@@ -1,1 +1,0 @@
-SELECT EXISTS (SELECT 1 FROM op_item WHERE seq = ?1 AND phase NOT IN ('failed', 'cancelled'))

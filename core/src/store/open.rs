@@ -45,7 +45,6 @@ pub(super) fn recreate(connection: &Connection) -> Result<Recreated, StoreError>
         let columns = columns_of(connection, table)?;
         let has = |wanted: &str| columns.iter().any(|(name, _)| name == wanted);
         let filter = match *table {
-            "file" if has("field") => " WHERE field LIKE 'op_item.%'",
             "sync_upload" if has("seq") && has("transfer_id") => " WHERE seq IS NOT NULL AND transfer_id IS NOT NULL",
             "sync_upload" => " WHERE 0",
             _ => "",

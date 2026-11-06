@@ -1,1 +1,0 @@
-DELETE FROM op_part WHERE seq = ?1 AND item_position = ?2

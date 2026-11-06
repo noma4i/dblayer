@@ -24,8 +24,7 @@ pub struct OutboxOperation {
 
 impl OutboxOperation {
     pub(crate) fn read(reader: &Reader<'_>, seq: i64) -> Result<Option<Self>, StoreError> {
-        let Some(mut operation) = crate::store::operation::read_operation(reader.connection(), seq)? else { return Ok(None) };
-        operation.upload = crate::store::operation::read_operation_uploads(reader.connection(), seq)?.into_iter().min_by_key(|(key, _)| *key).map(|(_, state)| state);
+        let Some(operation) = crate::store::operation::read_operation(reader.connection(), seq)? else { return Ok(None) };
         Self::from_operation(reader, operation).map(Some)
     }
 
@@ -49,7 +48,6 @@ impl OutboxOperation {
             created_at: operation.created_at,
             dedupe_key: operation.dedupe_key.clone(),
             rollback,
-            upload: None,
         }))
     }
 }

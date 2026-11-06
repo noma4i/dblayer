@@ -10,9 +10,7 @@ use crate::identity::RowId;
 use crate::store::nodes::{delete_trees, read_trees, write_tree};
 use crate::value::sync::OperationFailure;
 use crate::transport::GraphqlExtensions;
-use crate::owners::write::upload::{UploadInfo, UploadPart, UploadRequest, UploadRetry, UploadState};
-
-pub const UPLOAD_COLUMNS: &str = "phase, stage, scenario, total_bytes, sent_bytes, storage_key, upload_id, signed_id, blob_id, document, operation, transferred, confirmed_bytes, checksum, put_url, url_issued_at, failed_at, error_kind, error_message, offline";
+use crate::owners::write::upload::UploadInfo;
 
 pub fn enum_text<T: Serialize>(value: &T) -> Option<String> {
     match serde_json::to_value(value) {
@@ -106,145 +104,6 @@ pub fn operation_extensions(connection: &Connection, seq: Option<i64>) -> Result
         .collect())
 }
 
-fn item_extensions(connection: &Connection, seq: Option<i64>) -> Result<HashMap<(i64, i64), GraphqlExtensions>> {
-    let (filter, params) = match seq {
-        Some(seq) => ("seq = ?1 AND item_position >= 0", vec![SqlValue::Integer(seq)]),
-        None => ("item_position >= 0", Vec::new()),
-    };
-    read_extensions(connection, "op_error", &["seq", "item_position"], filter, &params)?.into_iter()
-        .map(|(owner, extensions)| match owner.as_slice() {
-            [SqlValue::Integer(seq), SqlValue::Integer(position)] => Ok(((*seq, *position), extensions)),
-            _ => Err(rusqlite::Error::InvalidQuery),
-        })
-        .collect()
-}
-
-pub fn upload_cells(state: Option<&UploadState>) -> Result<Vec<SqlValue>> {
-    let Some(state) = state else { return Ok(vec![SqlValue::Null; 20]) };
-    let [kind, message] = failure_cells(state.error.as_ref());
-    Ok(vec![
-        text_cell(enum_text(&state.phase)),
-        text_cell(enum_text(&state.stage)),
-        text_cell(state.scenario.and_then(|scenario| enum_text(&scenario))),
-        SqlValue::Integer(state.total_bytes as i64),
-        SqlValue::Integer(state.sent_bytes as i64),
-        text_cell(state.key.clone()),
-        text_cell(state.upload_id.clone()),
-        text_cell(state.signed_id.clone()),
-        text_cell(state.blob_id.clone()),
-        text_cell(state.request.as_ref().map(|request| request.document.clone())),
-        text_cell(state.request.as_ref().map(|request| request.name.clone())),
-        SqlValue::Integer(i64::from(state.transferred)),
-        SqlValue::Integer(state.confirmed_bytes as i64),
-        text_cell(state.checksum.clone()),
-        text_cell(state.put_url.clone()),
-        state.url_issued_at.map_or(SqlValue::Null, |time| SqlValue::Integer(time as i64)),
-        state.failed_at.map_or(SqlValue::Null, |time| SqlValue::Integer(time as i64)),
-        kind,
-        message,
-        SqlValue::Integer(i64::from(state.offline)),
-    ])
-}
-
-pub fn upload_at(row: &Row<'_>, first: usize) -> Result<Option<UploadState>> {
-    let Some(phase) = row.get::<_, Option<String>>(first)?.map(|text| enum_from(&text)).transpose()? else { return Ok(None) };
-    let stage = enum_from(&row.get::<_, String>(first + 1)?)?;
-    Ok(Some(UploadState {
-        phase,
-        stage,
-        scenario: row.get::<_, Option<String>>(first + 2)?.map(|text| enum_from(&text)).transpose()?,
-        total_bytes: row.get::<_, i64>(first + 3)? as u64,
-        sent_bytes: row.get::<_, i64>(first + 4)? as u64,
-        retries: Vec::new(),
-        key: row.get(first + 5)?,
-        upload_id: row.get(first + 6)?,
-        parts: Vec::new(),
-        signed_id: row.get(first + 7)?,
-        blob_id: row.get(first + 8)?,
-        request: row.get::<_, Option<String>>(first + 9)?.zip(row.get::<_, Option<String>>(first + 10)?).map(|(document, name)| UploadRequest { document, name, variables: Value::Null }),
-        transferred: row.get::<_, i64>(first + 11)? != 0,
-        confirmed_bytes: row.get::<_, i64>(first + 12)? as u64,
-        checksum: row.get(first + 13)?,
-        put_url: row.get(first + 14)?,
-        url_issued_at: row.get::<_, Option<i64>>(first + 15)?.map(|time| time as u64),
-        failed_at: row.get::<_, Option<i64>>(first + 16)?.map(|time| time as u64),
-        headers: Vec::new(),
-        error: failure_at(row, first + 17)?,
-        background_refused: None,
-        offline: row.get::<_, Option<i64>>(first + 19)?.is_some_and(|flag| flag != 0),
-    }))
-}
-
-pub fn read_upload_items(connection: &Connection) -> Result<HashMap<(i64, i64), UploadState>> {
-    upload_items(connection, None)
-}
-
-pub(crate) fn read_operation_uploads(connection: &Connection, seq: i64) -> Result<HashMap<(i64, i64), UploadState>> {
-    upload_items(connection, Some(seq))
-}
-
-fn upload_items(connection: &Connection, seq: Option<i64>) -> Result<HashMap<(i64, i64), UploadState>> {
-    let mut parts = read_parts(connection, seq)?;
-    let filter = if seq.is_some() { "WHERE seq = ?1" } else { "" };
-    let mut statement = connection.prepare(&format!(include_str!("../sql/operation/upload_items_select_op_item.sql"), UPLOAD_COLUMNS = UPLOAD_COLUMNS, filter = filter))?;
-    let mut found = HashMap::new();
-    let mut extensions = item_extensions(connection, seq)?;
-    for item in statement.query_map(rusqlite::params_from_iter(seq), |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?, upload_at(row, 2)?, row.get::<_, Option<String>>(2 + UPLOAD_COLUMNS.split(", ").count())?)))? {
-        let (seq, position, state, refused) = item?;
-        if let Some(mut state) = state {
-            state.background_refused = refused;
-            attach_extensions(&mut state.error, extensions.remove(&(seq, position)));
-            let mut headers = connection.prepare_cached(include_str!("../sql/operation/upload_items_select_op_item_header.sql"))?;
-            state.headers = headers.query_map(params![seq, position], |row| Ok((row.get(0)?, row.get(1)?)))?.collect::<Result<Vec<_>>>()?;
-            state.parts = parts.remove(&(seq, position)).unwrap_or_default();
-            let mut retries = connection.prepare_cached(include_str!("../sql/operation/upload_items_select_op_item_retry.sql"))?;
-            state.retries = retries.query_map(params![seq, position], |row| {
-                let stage: String = row.get(0)?;
-                Ok(UploadRetry {
-                    stage: enum_from(&stage)?,
-                    part_number: row.get(1)?, attempts: row.get(2)?, retry_at: row.get::<_, Option<i64>>(3)?.map(|time| time as u64),
-                })
-            })?.collect::<Result<Vec<_>>>()?;
-            if let Some(request) = state.request.as_mut() {
-                request.variables = read_item_value(connection, seq, position, "request")?.unwrap_or(Value::Null);
-            }
-            found.insert((seq, position), state);
-        }
-    }
-    Ok(found)
-}
-
-pub fn read_uploads(connection: &Connection) -> Result<HashMap<i64, UploadState>> {
-    let mut items: Vec<_> = read_upload_items(connection)?.into_iter().collect();
-    items.sort_by_key(|(key, _)| *key);
-    let mut uploads = HashMap::new();
-    for ((seq, _), state) in items { uploads.entry(seq).or_insert(state); }
-    Ok(uploads)
-}
-
-pub fn write_upload(connection: &Connection, seq: i64, position: i64, state: &UploadState) -> Result<usize> {
-    let columns: Vec<&str> = UPLOAD_COLUMNS.split(", ").collect();
-    let marks = (3..columns.len() + 3).map(|at| format!("?{at}")).collect::<Vec<_>>().join(", ");
-    let assignments = columns.iter().map(|name| format!("{name} = excluded.{name}")).collect::<Vec<_>>().join(", ");
-    let mut values = vec![SqlValue::Integer(seq), SqlValue::Integer(position)];
-    values.extend(upload_cells(Some(state))?);
-    let saved = connection.execute(&format!(include_str!("../sql/operation/write_upload_insert_op_item.sql"), UPLOAD_COLUMNS = UPLOAD_COLUMNS, marks = marks, assignments = assignments), rusqlite::params_from_iter(values))?;
-    if saved > 0 {
-        connection.execute(include_str!("../sql/operation/write_upload_delete_op_item_retry.sql"), params![seq, position])?;
-        for retry in &state.retries {
-            connection.execute(include_str!("../sql/operation/write_upload_insert_op_item_retry.sql"), params![seq, position, enum_text(&retry.stage), retry.part_number, retry.attempts, retry.retry_at.map(|time| time as i64)])?;
-        }
-        connection.execute(include_str!("../sql/operation/write_upload_delete_op_item_header.sql"), params![seq, position])?;
-        for (name, value) in &state.headers {
-            connection.execute(include_str!("../sql/operation/write_upload_insert_op_item_header.sql"), params![seq, position, name, value])?;
-        }
-        write_extensions(connection, "op_error", &["seq", "item_position"], &[SqlValue::Integer(seq), SqlValue::Integer(position)], state.error.as_ref())?;
-        write_parts(connection, seq, position, &state.parts)?;
-        write_item_value(connection, seq, position, "request", state.request.as_ref().map(|request| &request.variables))?;
-    }
-    Ok(saved)
-}
-
 pub fn info_at(row: &Row<'_>, first: usize) -> Result<Option<UploadInfo>> {
     let Some(status) = row.get::<_, Option<String>>(first)?.map(|text| enum_from(&text)).transpose()? else { return Ok(None) };
     let stage = enum_from(&row.get::<_, String>(first + 1)?)?;
@@ -281,15 +140,6 @@ pub fn write_item_value(connection: &Connection, seq: i64, position: i64, part: 
     value.map_or(Ok(()), |value| write_tree(connection, "op_value", &["seq", "item_position", "part"], &owner, value))
 }
 
-pub fn write_parts(connection: &Connection, seq: i64, position: i64, parts: &[UploadPart]) -> Result<()> {
-    connection.prepare_cached(include_str!("../sql/operation/write_parts_delete_op_part.sql"))?.execute(params![seq, position])?;
-    let mut insert = connection.prepare_cached(include_str!("../sql/operation/write_parts_insert_op_part.sql"))?;
-    for part in parts {
-        insert.execute(params![seq, position, i64::from(part.number), part.etag, part.confirmed_bytes as i64])?;
-    }
-    Ok(())
-}
-
 pub fn read_value(connection: &Connection, seq: i64, part: &str) -> Result<Option<Value>> {
     read_item_value(connection, seq, -1, part)
 }
@@ -319,38 +169,15 @@ pub fn read_all_rows(connection: &Connection) -> Result<HashMap<i64, Vec<RowId>>
     Ok(found)
 }
 
-fn read_parts(connection: &Connection, seq: Option<i64>) -> Result<HashMap<(i64, i64), Vec<UploadPart>>> {
-    let filter = if seq.is_some() { "WHERE seq = ?1" } else { "" };
-    let mut statement = connection.prepare_cached(&format!(include_str!("../sql/operation/read_parts.sql"), filter = filter))?;
-    let mut found: HashMap<(i64, i64), Vec<UploadPart>> = HashMap::new();
-    for item in statement.query_map(rusqlite::params_from_iter(seq), |row| Ok(((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?), UploadPart { number: row.get::<_, i64>(2)? as u32, etag: row.get(3)?, confirmed_bytes: row.get::<_, i64>(4)? as u64 })))? {
-        let (owner, part) = item?;
-        found.entry(owner).or_default().push(part);
-    }
-    Ok(found)
-}
-
 pub(crate) fn read_fields(connection: &Connection, seq: i64) -> Result<Vec<String>> {
     let mut statement = connection.prepare_cached(include_str!("../sql/operation/read_fields.sql"))?;
     let fields = statement.query_map([seq], |row| row.get(0))?.collect();
     fields
 }
 
-pub(crate) fn record_transfer_aborts(connection: &Connection, seq: i64, position: Option<i64>) -> Result<()> {
-    let mut statement = connection.prepare_cached(include_str!("../sql/operation/record_transfer_aborts_select_op_item.sql"))?;
-    let pending = statement.query_map(params![seq, position], |row| Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?, row.get::<_, String>(2)?, row.get::<_, i64>(3)?, row.get::<_, String>(4)?)))?.collect::<Result<Vec<_>>>()?;
-    for (item, key, upload_id, operation_id, item_id) in pending {
-        let input = read_item_value(connection, seq, item, "input")?.map(serde_json::from_value::<crate::owners::write::upload::UploadInput>).transpose().map_err(from_sql_error)?;
-        let Some(steps) = input.and_then(|input| input.steps.multipart) else { continue };
-        connection.prepare_cached(include_str!("../sql/operation/record_transfer_aborts_insert_transfer_abort.sql"))?.execute(params![operation_id, item_id, key, upload_id, steps.abort])?;
-    }
-    Ok(())
-}
-
 pub fn delete_operation(connection: &Connection, seq: i64) -> Result<usize> {
     connection.execute(include_str!("../sql/operation/delete_operation_delete_op_transfer.sql"), [seq])?;
-    connection.execute(include_str!("../sql/operation/delete_operation_delete_file.sql"), [seq])?;
-    for table in ["op_row", "op_value", "op_error", "op_part", "op_item_header", "op_item_retry", "op_item", "op_effect_value", "op_effect"] {
+    for table in ["op_row", "op_value", "op_error", "op_effect_value", "op_effect"] {
         connection.prepare_cached(&format!(include_str!("../sql/operation/delete_operation_delete_table.sql"), table = table))?.execute([seq])?;
     }
     connection.prepare_cached(include_str!("../sql/operation/delete_operation_delete_op.sql"))?.execute([seq])

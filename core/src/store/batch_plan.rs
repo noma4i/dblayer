@@ -7,7 +7,6 @@ use crate::store::files::FileRecord;
 use crate::identity::{Generation, ModelKey, RowId, RowRef, ListKey};
 use crate::owners::write::operation_status::OperationStatus;
 use crate::value::sync::OperationFailure;
-use crate::owners::write::upload::UploadState;
 use crate::value::duplicates;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -103,34 +102,16 @@ pub struct OperationRecord {
     pub created_at: i64,
     pub dedupe_key: Option<String>,
     pub rollback: Option<Value>,
-    pub upload: Option<UploadState>,
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub struct UploadAdmission {
-    pub row: RowId,
-    pub client_key: String,
-    pub input: crate::owners::write::upload::UploadInput,
-    pub state: UploadState,
-    pub source: Result<FileRecord, String>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum OperationTransition {
-    BeginBlob { record: Box<OperationRecord>, item: Box<UploadAdmission>, id: String, name: String },
-    RetireBlob { id: String, expired: bool },
     Begin(Box<OperationRecord>),
-    BeginUpload { record: Box<OperationRecord>, items: Vec<UploadAdmission> },
-    RemoveUploadItem { seq: i64, position: i64, inputs: Vec<(i64, crate::owners::write::upload::UploadInput)> },
-    ReplaceUploadSource { seq: i64, position: i64, item: Box<UploadAdmission> },
-    ConfirmUploadItem { seq: i64, position: i64, item: String, temp: String, row: String },
     Close { seq: i64, status: OperationStatus },
     Start { seq: i64 },
     Fail { seq: i64, status: OperationStatus, failure: OperationFailure },
     Retry { seq: i64 },
     Postpone { seq: i64, failure: OperationFailure },
-    Progress { seq: i64, item_position: i64, state: Box<UploadState> },
-    BackgroundRefused { seq: i64, item_position: i64, detail: String },
     Remove { seq: i64, expected: Option<OperationStatus> },
 }
 
@@ -352,13 +333,11 @@ pub struct CommitResult {
     pub scopes: BTreeSet<ScopeRef>,
     pub members: BTreeSet<RowRef>,
     pub operations: BTreeSet<i64>,
-    pub(crate) queue_operations: BTreeMap<i64, Option<crate::store::operation::QueueOperation>>,
+    pub(crate) queue_operations: BTreeMap<i64, Option<crate::owners::write::operation_status::Operation>>,
     pub replaced: Vec<(RowRef, RowId)>,
     pub unknown_operation_acks: u32,
     pub(crate) snapshot: Option<crate::store::Row>,
     pub(crate) item_snapshots: Vec<(String, Option<crate::store::Row>)>,
-    pub(crate) ended_uploads: Vec<(i64, crate::owners::write::upload::UploadStatus, Option<crate::value::sync::OperationFailure>)>,
-    pub(crate) discarded_items: Vec<(i64, String)>,
     /// The version of the overlay of ephemeral values the commit published at its revision.
     pub position: u64,
 }
@@ -378,8 +357,6 @@ impl CommitResult {
             unknown_operation_acks: 0,
             snapshot: None,
             item_snapshots: Vec::new(),
-            ended_uploads: Vec::new(),
-            discarded_items: Vec::new(),
             position: 0,
         }
     }

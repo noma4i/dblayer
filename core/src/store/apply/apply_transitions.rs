@@ -2,8 +2,6 @@ use super::*;
 
 pub(super) fn apply_transitions(
     connection: &Connection,
-    models: &BTreeMap<String, ModelInfo>,
-    generation: Generation,
     transitions: &[OperationTransition],
     now_ms: i64,
     synced: &mut BTreeSet<SyncKey>,
@@ -12,78 +10,11 @@ pub(super) fn apply_transitions(
     let mut wrote = false;
     for transition in transitions {
         match transition {
-            OperationTransition::BeginBlob { record, item, id, name } => {
-                let seq = begin_operation(connection, record)?;
-                crate::store::operation::write_upload(connection, seq, 0, &item.state)?;
-                write_item_source(connection, seq, 0, item)?;
-                connection.execute(include_str!("../sql/apply_transitions/apply_transitions_insert_blob_upload.sql"), params![id, name, seq, generation.value() as i64])?;
-                result.operations.insert(seq);
-                wrote = true;
-            }
-            OperationTransition::RetireBlob { id, expired } => {
-                let row: Option<(Option<i64>, Option<i64>)> = connection.query_row(include_str!("../sql/apply_transitions/apply_transitions_select_blob_upload.sql"), [id], |row| Ok((row.get(0)?, row.get(1)?))).optional()?;
-                if let Some((Some(seq), owner)) = row {
-                    if owner.is_some() {
-                        if *expired { continue; }
-                        return Err(StoreError::Constraint("Blob is pinned to an operation".into()));
-                    }
-                    crate::store::operation::record_transfer_aborts(connection, seq, None)?;
-                    connection.execute(include_str!("../sql/apply_transitions/apply_transitions_update_blob_upload_4.sql"), params![expired, id])?;
-                    delete_operation(connection, seq)?;
-                    result.operations.insert(seq);
-                    wrote = true;
-                }
-            }
-            OperationTransition::BeginUpload { record, items } => {
-                let seq = begin_operation(connection, record)?;
-                for (position, item) in items.iter().enumerate() {
-                    let position = position as i64;
-                    crate::store::operation::write_upload(connection, seq, position, &item.state)?;
-                    write_item_source(connection, seq, position, item)?;
-                }
-                synced.extend(operation_keys(&record.action_key, &record.row_ids, None));
-                result.operations.insert(seq);
-                wrote = true;
-            }
-            OperationTransition::ReplaceUploadSource { seq, position, item } => {
-                synced.extend(op_keys_of(connection, *seq)?);
-                crate::store::operation::record_transfer_aborts(connection, *seq, Some(*position))?;
-                connection.execute(include_str!("../sql/apply_transitions/apply_transitions_delete_file.sql"), params![seq, position])?;
-                connection.execute(include_str!("../sql/apply_transitions/apply_transitions_delete_op_part.sql"), params![seq, position])?;
-                connection.execute(include_str!("../sql/apply_transitions/apply_transitions_delete_op_item_retry_2.sql"), params![seq, position])?;
-                crate::store::operation::write_upload(connection, *seq, *position, &item.state)?;
-                write_item_source(connection, *seq, *position, item)?;
-                result.operations.insert(*seq);
-                wrote = true;
-            }
-            OperationTransition::RemoveUploadItem { seq, position, inputs } => {
-                synced.extend(op_keys_of(connection, *seq)?);
-                let key: Option<String> = connection.query_row(include_str!("../sql/apply_transitions/apply_transitions_select_op_item_3.sql"), params![seq, position], |row| row.get(0)).optional()?;
-                result.discarded_items.extend(key.map(|key| (*seq, key)));
-                super::super::upload::remove_item(connection, *seq, *position)?;
-                for (item_position, input) in inputs {
-                    let value = serde_json::to_value(input).map_err(|error| StoreError::Constraint(error.to_string()))?;
-                    crate::store::operation::write_item_value(connection, *seq, *item_position, "input", Some(&value))?;
-                }
-                let rows = read_rows(connection, *seq)?;
-                if rows.is_empty() {
-                    delete_operation(connection, *seq)?;
-                }
-                result.operations.insert(*seq);
-                wrote = true;
-            }
-            OperationTransition::ConfirmUploadItem { seq, position, item, temp, row } => {
-                synced.extend(op_keys_of(connection, *seq)?);
-                super::super::upload::confirm_item(connection, *seq, *position, item, [temp.as_str(), row.as_str()])?;
-                result.operations.insert(*seq);
-                wrote = true;
-            }
             OperationTransition::Begin(record) => {
                 if let Some(seq) = record.seq {
                     synced.extend(op_keys_of(connection, seq)?);
                 }
                 let seq = begin_operation(connection, record)?;
-                super::super::blob::pin(connection, seq, record, models, now_ms)?;
                 synced.extend(operation_keys(&record.action_key, &record.row_ids, record.temp_id.as_ref()));
                 result.operations.insert(seq);
                 wrote = true;
@@ -96,10 +27,6 @@ pub(super) fn apply_transitions(
                     continue;
                 }
                 synced.extend(op_keys_of(connection, *seq)?);
-                result.operations.extend(super::super::blob::release(connection, *seq, *status == OperationStatus::Committed)?);
-                if *status == OperationStatus::RolledBack {
-                    crate::store::operation::record_transfer_aborts(connection, *seq, None)?;
-                }
                 delete_operation(connection, *seq)?;
                 result.operations.insert(*seq);
                 wrote = true;
@@ -109,10 +36,6 @@ pub(super) fn apply_transitions(
                 if set_open_status(connection, *seq, *status, failure, now_ms)? == 0 {
                     result.unknown_operation_acks += 1;
                     continue;
-                }
-                if *status == OperationStatus::Failed {
-                    connection.execute(include_str!("../sql/apply_transitions/apply_transitions_update_blob_upload_5.sql"), params![now_ms, seq])?;
-                    if failure.kind == crate::value::sync::FailureKind::Rejected { super::super::blob::release(connection, *seq, false)?; }
                 }
                 result.operations.insert(*seq);
                 wrote = true;
@@ -145,46 +68,8 @@ pub(super) fn apply_transitions(
                 result.operations.insert(*seq);
                 wrote = true;
             }
-            OperationTransition::Progress { seq, item_position, state } => {
-                synced.extend(op_keys_of(connection, *seq)?);
-                let starts_blob = if matches!(state.stage, crate::owners::write::upload::UploadStage::Create | crate::owners::write::upload::UploadStage::Init) && state.put_url.is_none() && state.upload_id.is_none() {
-                    let previous_stage: Option<String> = connection.query_row(include_str!("../sql/apply_transitions/apply_transitions_select_op_item.sql"), params![seq, item_position], |row| row.get(0)).optional()?;
-                    previous_stage != crate::store::operation::enum_text(&state.stage)
-                } else { false };
-                let saved = crate::store::operation::write_upload(connection, *seq, *item_position, state)?;
-                connection.execute(include_str!("../sql/apply_transitions/apply_transitions_update_blob_upload.sql"), params![state.transferred, state.failed_at.map(|at| at as i64), state.signed_id, state.total_bytes as i64, state.sent_bytes as i64, seq])?;
-                if starts_blob {
-                    connection.execute(include_str!("../sql/apply_transitions/apply_transitions_update_blob_upload_2.sql"), params![now_ms, seq])?;
-                }
-                if saved == 0 {
-                    result.unknown_operation_acks += 1;
-                    continue;
-                }
-                if matches!(state.phase, crate::owners::write::upload::UploadStatus::Failed | crate::owners::write::upload::UploadStatus::Cancelled) {
-                    let open: bool = connection.query_row(include_str!("../sql/apply_transitions/apply_transitions_select_op_item_2.sql"), [seq], |row| row.get(0))?;
-                    if !open { result.ended_uploads.push((*seq, state.phase, state.error.clone())); }
-                }
-                result.operations.insert(*seq);
-                wrote = true;
-            }
-            OperationTransition::BackgroundRefused { seq, item_position, detail } => {
-                synced.extend(op_keys_of(connection, *seq)?);
-                let saved = connection.execute(
-                    include_str!("../sql/apply_transitions/apply_transitions_update_op_item.sql"),
-                    params![seq, item_position, detail],
-                )?;
-                if saved == 0 {
-                    result.unknown_operation_acks += 1;
-                    continue;
-                }
-                connection.execute(include_str!("../sql/apply_transitions/apply_transitions_update_blob_upload_5.sql"), params![now_ms, seq])?;
-                result.operations.insert(*seq);
-                wrote = true;
-            }
             OperationTransition::Retry { seq } => {
-                super::super::blob::retry(connection, *seq, models, now_ms)?;
                 synced.extend(op_keys_of(connection, *seq)?);
-                connection.execute(include_str!("../sql/apply_transitions/apply_transitions_update_op_item_2.sql"), params![seq])?;
                 let retried = connection.execute(
                     &format!(include_str!("../sql/apply_transitions/apply_transitions_update_op_3.sql"), operation_guard(OperationEvent::Retry)?),
                     params![seq, now_ms],
@@ -193,8 +78,6 @@ pub(super) fn apply_transitions(
                     result.unknown_operation_acks += 1;
                     continue;
                 }
-                connection.execute(include_str!("../sql/apply_transitions/apply_transitions_delete_op_item_retry.sql"), [seq])?;
-                connection.execute(include_str!("../sql/apply_transitions/apply_transitions_update_blob_upload_3.sql"), [seq])?;
                 write_operation_error(connection, *seq, None)?;
                 result.operations.insert(*seq);
                 wrote = true;
@@ -205,10 +88,6 @@ pub(super) fn apply_transitions(
                     Some(status) => connection.query_row(include_str!("../sql/apply_transitions/apply_transitions_select_op.sql"), params![seq, status.as_sql()], |row| row.get(0))?,
                     None => true,
                 };
-                if matches {
-                    super::super::blob::release(connection, *seq, false)?;
-                    crate::store::operation::record_transfer_aborts(connection, *seq, None)?;
-                }
                 let removed = if matches { delete_operation(connection, *seq)? } else { 0 };
                 if removed == 0 {
                     result.unknown_operation_acks += 1;
@@ -259,26 +138,7 @@ pub(in super::super) fn begin_operation(connection: &Connection, record: &Operat
     write_value(connection, seq, "input", Some(&record.input))?;
     let revision = connection.query_row(include_str!("../sql/apply_transitions/begin_operation_select_manifest.sql"), [], |row| row.get(0))?;
     crate::store::plan::op_effect::write_prior(connection, seq, revision, record.rollback.as_ref())?;
-    if let Some(state) = &record.upload {
-        crate::store::operation::write_upload(connection, seq, 0, state)?;
-    }
     Ok(seq)
-}
-
-pub(super) fn write_item_source(connection: &Connection, seq: i64, position: i64, item: &crate::store::UploadAdmission) -> Result<(), StoreError> {
-    let (file_id, error) = match &item.source {
-        Ok(file) => {
-            let mut file = file.clone();
-            file.field = format!("op_item.{seq}.{position}");
-            crate::store::files::put(connection, &file)?;
-            (Some(file.id), None)
-        }
-        Err(error) => (None, Some(error)),
-    };
-    let value = serde_json::to_value(&item.input).map_err(|error| StoreError::from(std::io::Error::other(error)))?;
-    crate::store::operation::write_item_value(connection, seq, position, "input", Some(&value))?;
-    connection.execute(include_str!("../sql/apply_transitions/write_item_source.sql"), params![seq, item.row.as_str(), file_id, error, position, item.client_key])?;
-    Ok(())
 }
 
 pub(crate) fn save_pending(connection: &Connection, model: &str, row_id: &str, path: &str, value: &Value) -> Result<(), StoreError> {

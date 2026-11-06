@@ -1,1 +1,0 @@
-INSERT INTO op_item_retry (seq, position, stage, part_number, attempts, retry_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6)

@@ -1,1 +1,0 @@
-INSERT INTO op_item_header (seq, position, name, value) VALUES (?1, ?2, ?3, ?4)

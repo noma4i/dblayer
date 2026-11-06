@@ -51,8 +51,6 @@ pub(super) fn consolidate(connection: &Connection, models: &BTreeMap<String, Mod
         combined.unknown_operation_acks += result.unknown_operation_acks;
         combined.snapshot = result.snapshot.or(combined.snapshot);
         combined.item_snapshots.extend(result.item_snapshots);
-        combined.ended_uploads.extend(result.ended_uploads);
-        combined.discarded_items.extend(result.discarded_items);
     }
     let reader = Reader::new(connection, models);
     for (row, changes) in rows {

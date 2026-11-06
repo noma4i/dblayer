@@ -53,24 +53,6 @@ impl Store {
         }
     }
 
-    /// Drops the blobs whose lifetime ended before the first use of the database.
-    pub(crate) fn expire_blobs_before_use(&self) -> Result<(), DbError> {
-        let failed_ttl = i64::try_from(crate::owners::write::upload::UploadConfig::default().failed_ttl.as_millis()).unwrap_or(i64::MAX);
-        let now = self.lock().now_ms();
-        let failed_due = now.saturating_sub(failed_ttl);
-        let ready_due = now.saturating_sub(crate::owners::write::upload::BLOB_LIFETIME_MS);
-        let due = self.read_models(&[], |reader| Ok(super::blob::due(reader.connection(), ready_due, failed_due)?))?;
-        if due.is_empty() { return Ok(()); }
-        let mut envelope = crate::store::BatchPlan::from_server(self.generation());
-        envelope.operation_transitions.extend(due.iter().map(|(id, _)| crate::store::OperationTransition::RetireBlob { id: id.clone(), expired: true }));
-        self.commit(envelope)?;
-        let files: Vec<String> = self.read_models(&[], |reader| {
-            Ok(due.iter().filter_map(|(_, file)| file.as_ref()).filter_map(|id| match reader.connection().query_row(include_str!("sql/file_read/expire_blobs_before_use.sql"), [id], |row| row.get::<_, bool>(0)) { Ok(false) => Some(Ok(id.clone())), Ok(true) => None, Err(error) => Some(Err(StoreError::from(error))) }).collect::<Result<Vec<_>, _>>()?)
-        })?;
-        self.files().discard(&files).map_err(io_fault)?;
-        Ok(())
-    }
-
     /// The row from the pool of the readers, or `None` when it does not exist.
     pub fn peek_row(&self, model: &str, id: &RowId) -> Option<super::Row> {
         self.find(model, id).ok().flatten()

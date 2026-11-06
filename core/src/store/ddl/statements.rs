@@ -19,12 +19,7 @@ pub(super) const CACHE_STATEMENTS: [&str; 18] = [
     include_str!("../sql/ddl/window_marker.sql"),
 ];
 
-pub(super) const CORE_STATEMENTS: [&str; 49] = [
-    include_str!("../sql/ddl/blob_upload.sql"),
-    include_str!("../sql/ddl/blob_expiry.sql"),
-    include_str!("../sql/ddl/blob_failed_expiry.sql"),
-    include_str!("../sql/ddl/blob_use.sql"),
-    include_str!("../sql/ddl/blob_consumer.sql"),
+pub(super) const CORE_STATEMENTS: [&str; 38] = [
     include_str!("../sql/ddl/manifest.sql"),
     include_str!("../sql/ddl/op.sql"),
     include_str!("../sql/ddl/op_transfer.sql"),
@@ -33,14 +28,8 @@ pub(super) const CORE_STATEMENTS: [&str; 49] = [
     include_str!("../sql/ddl/op_effect_row.sql"),
     include_str!("../sql/ddl/op_effect_scope.sql"),
     include_str!("../sql/ddl/op_effect_value.sql"),
-    include_str!("../sql/ddl/op_item.sql"),
-    include_str!("../sql/ddl/op_item_retry.sql"),
-    include_str!("../sql/ddl/op_item_header.sql"),
     include_str!("../sql/ddl/op_row.sql"),
     include_str!("../sql/ddl/op_row_id.sql"),
-    include_str!("../sql/ddl/transfer_abort.sql"),
-    include_str!("../sql/ddl/transfer_abort_identity.sql"),
-    include_str!("../sql/ddl/op_part.sql"),
     include_str!("../sql/ddl/op_value.sql"),
     include_str!("../sql/ddl/op_prior_row.sql"),
     include_str!("../sql/ddl/op_reference_text.sql"),

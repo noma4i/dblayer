@@ -13,7 +13,6 @@ pub(super) fn record(seq: Option<i64>, status: OperationStatus, dedupe: Option<&
         created_at: 5,
         dedupe_key: dedupe.map(str::to_string),
         rollback: Some(json!({"rows": []})),
-        upload: None,
     }
 }
 

@@ -21,7 +21,7 @@ Rust `ChangeRead` literals add `payload: None` for identifier-based reads. `Mode
 
 ## Blob uploads
 
-Replace `DB.upload(.videoIntro, request:)`, `DB.blob(id)`, `Blob.waitUntilUploaded()` and `Blob.snapshot` on Swift, and `DBlayer.upload(BlobUpload.VideoIntro, request)`, `DBlayer.blob(id)`, `waitUntilUploaded()` and `snapshot` on Kotlin, with a model action that declares the upload. Send the record with `upload: UploadCommand(action:, request:)` and read `uploads[action]` on the record. Remove `blob_upload` and `parameter :video, :blob` from the `.dbl` files.
+Replace `DB.upload(.videoIntro, request:)`, `DB.blob(id)`, `Blob.waitUntilUploaded()` and `Blob.snapshot` on Swift, and `DBlayer.upload(BlobUpload.VideoIntro, request)`, `DBlayer.blob(id)`, `waitUntilUploaded()` and `snapshot` on Kotlin, with a model action that declares the upload. Send the record with `upload: UploadCommand(action:, request:)` and read `uploads[action]` on the record. Remove the blob upload declaration and `parameter :video, :blob` from the `.dbl` files.
 
 ## Media library marker
 

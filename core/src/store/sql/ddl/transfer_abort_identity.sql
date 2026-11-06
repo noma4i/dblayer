@@ -1,1 +1,0 @@
-CREATE UNIQUE INDEX IF NOT EXISTS transfer_abort_identity ON transfer_abort (operation_id, item_id)
