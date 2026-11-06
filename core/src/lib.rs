@@ -17,7 +17,6 @@ pub mod runtime;
 pub mod owners;
 pub(crate) mod lock;
 mod blocking;
-mod lifecycle;
 mod task;
 
 #[cfg(test)]
