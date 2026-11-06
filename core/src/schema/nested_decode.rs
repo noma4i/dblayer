@@ -22,12 +22,12 @@ impl FieldSpec {
             FieldKind::Enum { .. } => read_enum(value).map(Value::String).ok_or_else(wrong),
             FieldKind::Object => Ok(Value::Object(self.decode_members(value.as_object().ok_or_else(wrong)?)?)),
             FieldKind::Array => value.as_array().ok_or_else(wrong)?.iter().map(|item| Ok(Value::Object(self.decode_members(item.as_object().ok_or_else(wrong)?)?))).collect::<Result<Vec<_>, String>>().map(Value::Array),
-            _ => self.decode(value).ok_or_else(wrong),
+            _ => self.decode_stored(value).ok_or_else(wrong),
         }
     }
 
     fn decode_members(&self, source: &Map<String, Value>) -> Result<Map<String, Value>, String> {
-        self.fields.iter().map(|member| Ok((member.name.clone(), member.decode_nested(source.get(&member.name))?))).collect()
+        self.fields.iter().map(|member| { let key = member.from.as_deref().unwrap_or(&member.name); Ok((key.to_string(), member.decode_nested(source.get(key))?)) }).collect()
     }
 
     /// Whether the member holds nested members that `decode_nested` checks.
