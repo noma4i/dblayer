@@ -459,6 +459,13 @@ pub struct ReceiverCopyDecl {
     pub pos: Pos,
     pub arg: String,
     pub field: String,
+    pub set: Vec<(String, CopySetDecl, Pos)>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum CopySetDecl {
+    Literal(Json),
+    Source(SourceDecl),
 }
 
 #[derive(Debug, Clone, PartialEq)]

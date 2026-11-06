@@ -1206,6 +1206,25 @@ fn optimistic(cx: &mut Cx, call: &Call) -> Option<OptimisticDecl> {
     Some(OptimisticDecl::Fields(fields))
 }
 
+fn copy_set(cx: &mut Cx, pair: &Pair) -> Vec<(String, CopySetDecl, Pos)> {
+    let Some(pairs) = hash_pairs(cx, &pair.value, "`set`") else { return Vec::new() };
+    let mut set = Vec::new();
+    for entry in pairs {
+        let pos = pair_pos(entry);
+        let value = match &entry.value.item {
+            Value::Hash(parts) if parts.len() == 1 && parts[0].key == "receiver" => symbol(cx, &parts[0].value, "`receiver:`").map(|field| CopySetDecl::Source(SourceDecl::Owner(field))),
+            Value::Hash(parts) => source_hash(cx, parts, &entry.value).map(CopySetDecl::Source),
+            Value::Array(_) | Value::OptionalArray(_) | Value::Duration { .. } => {
+                cx.fail(at(&entry.value), "`set` takes a literal, `{ receiver: :field }` or `{ of: Model, field: :name }`");
+                None
+            }
+            other => Some(CopySetDecl::Literal(json_of(other))),
+        };
+        if let Some(value) = value { set.push((entry.key.clone(), value, pos)); }
+    }
+    set
+}
+
 fn source_hash(cx: &mut Cx, parts: &[Pair], node: &Node<Value>) -> Option<SourceDecl> {
     let find = |key: &str| parts.iter().find(|part| part.key == key);
     let name_of = |cx: &mut Cx, key: &str| find(key).and_then(|part| symbol(cx, &part.value, &format!("`{key}:`")));
@@ -1602,10 +1621,11 @@ fn operation_line(cx: &mut Cx, call: &Call, decl: &mut OperationDecl) {
                 }
             };
             let field = line.opt(cx, "field").and_then(|pair| symbol(cx, &pair.value, "`field`"));
+            let set = line.opt(cx, "set").map(|pair| copy_set(cx, pair)).unwrap_or_default();
             line.finish(cx);
             let field = require(cx, &line, "field", field);
             if let (Some(arg), Some(field)) = (arg, field) {
-                decl.copies_receiver_to = Some(ReceiverCopyDecl { pos: line.pos, arg, field });
+                decl.copies_receiver_to = Some(ReceiverCopyDecl { pos: line.pos, arg, field, set });
             }
         }
         "joins_scope" | "leaves_scope" => {

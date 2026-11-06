@@ -1010,10 +1010,20 @@ pub struct ActionDeclaration {
     pub scope_effects: Vec<ScopeEffect>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ReceiverCopy {
     pub arg: String,
     pub field: String,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub set: BTreeMap<String, CopyValue>,
+}
+
+/// The value a copy of the receiver gets in a field: a literal, or a field of the receiver or of a singleton row at the time of the call.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CopyValue {
+    Literal(Value),
+    Source(EffectSource),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

@@ -120,6 +120,9 @@ impl World {
     pub(super) fn seed_message(&self, account: &str, id: &str, text: &str, at: i64) {
         self.state.lock().unwrap().messages.push((account.into(), json!({"__typename":"Message","id":id,"chatId":"c1","text":text,"at":at})));
     }
+    pub(super) fn seed_authored_message(&self, account: &str, id: &str, text: &str, at: i64, author: &str) {
+        self.state.lock().unwrap().messages.push((account.into(), json!({"__typename":"Message","id":id,"chatId":"c1","text":text,"at":at,"authorId":author})));
+    }
     pub(super) fn seed_reacted_message(&self) {
         self.state.lock().unwrap().messages.push(("A".into(), json!({"__typename":"Message","id":"m1","chatId":"c1","text":"hello","at":1,"reactions":[{"userId":"u2","body":"B"}]})));
     }
@@ -191,7 +194,8 @@ impl World {
                 let input = &body["variables"]["input"];
                 let source = state.messages.iter().find(|(owner, message)| *owner == account && message["id"] == input["messageId"]).map(|(_, message)| message.clone());
                 let text = source.as_ref().map_or(Value::Null, |message| message["text"].clone());
-                let message = json!({"__typename":"Message","id":"forwarded-1","chatId":input["chatId"],"text":text,"at":99});
+                let author = source.as_ref().map_or(Value::Null, |message| message["authorId"].clone());
+                let message = json!({"__typename":"Message","id":"forwarded-1","chatId":input["chatId"],"text":text,"at":99,"authorId":"user","isForwarded":true,"forwardedFromUserId":author});
                 if commits { state.messages.push((account.clone(), message.clone())); }
                 json!({"data":{"messageForward":{"message":message,"chat":{"id":input["chatId"],"updatedAt":"2026-11-04T00:00:00Z"}}}})
             }
@@ -363,7 +367,7 @@ const OPERATIONS: &str = r#"[
     {"name":"AddMember","document":"mutation AddMember($groupId: ID!, $userIds: [ID!]!) { addMember(groupId: $groupId, userIds: $userIds) { id name left membership } }"},
     {"name":"RemoveMember","document":"mutation RemoveMember($groupId: ID!, $userIds: [ID!]!) { removeMember(groupId: $groupId, userIds: $userIds) { id name left membership } }"},
     {"name":"GroupMembers","document":"query GroupMembers($groupId: ID!, $order: String!) { groupMembers(groupId: $groupId, order: $order) { id name } }"},
-    {"name":"MessageForward","document":"mutation MessageForward($input: MessageForwardInput!) { messageForward(input: $input) { message { id chatId text at } chat { id updatedAt } } }"},
+    {"name":"MessageForward","document":"mutation MessageForward($input: MessageForwardInput!) { messageForward(input: $input) { message { id chatId text at authorId isForwarded forwardedFromUserId } chat { id updatedAt } } }"},
     {"name":"MessageReact","document":"mutation MessageReact($id: ID!, $body: String!, $userId: ID!) { messageReact(id: $id, body: $body, userId: $userId) { id chatId text at reactions { body userId } } }"},
     {"name":"MemberChanged","document":"subscription MemberChanged { memberChanged { id name } }"},
     {"name":"ChatPin","document":"mutation ChatPin($id: ID!, $pinned: Boolean!) { chatPin(id: $id, pinned: $pinned) { id pinned } }"},
@@ -415,7 +419,7 @@ fn message_spec() -> crate::schema::ModelSpec {
     forward.variables.insert("chatId".into(), "targetChatId".into());
     forward.wrap = Some("input".into());
     forward.root = Some("messageForward.message".into());
-    forward.copies_receiver_to = Some(crate::schema::ReceiverCopy { arg: "targetChatId".into(), field: "chatId".into() });
+    forward.copies_receiver_to = Some(crate::schema::ReceiverCopy { arg: "targetChatId".into(), field: "chatId".into(), set: Default::default() });
     message.actions.push(forward);
     message
 }

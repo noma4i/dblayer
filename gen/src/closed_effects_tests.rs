@@ -32,3 +32,17 @@ fn an_operation_cannot_combine_effects_or_name_an_unknown_scope() {
         assert!(errors.iter().any(|message| message.contains(expected)), "{case}: {errors:?}");
     }
 }
+
+#[test]
+fn a_copy_sets_literals_and_sources_and_names_only_known_attributes() {
+    use dblayer::schema::{CopyValue, EffectSource};
+    let copy = |set: &str| format!("  operation :copy do\n    mutation \"CopyClub\"\n    parameter :target, :id\n    variables clubId: :id, target: :target\n    optimistic false\n    copies_receiver_to :target, field: :name, set: {set}\n    response from: \"copyClub\"\n  end\n");
+    let models = club(&copy("{ name: \"x\" }")).unwrap();
+    let declared = models.iter().find(|model| model.key.as_str() == "Club").unwrap().actions.iter().find(|action| action.name == "copy").unwrap();
+    assert_eq!(declared.copies_receiver_to.as_ref().unwrap().set.get("name"), Some(&CopyValue::Literal(serde_json::json!("x"))));
+    let models = club(&copy("{ name: { receiver: :name } }")).unwrap();
+    let declared = models.iter().find(|model| model.key.as_str() == "Club").unwrap().actions.iter().find(|action| action.name == "copy").unwrap();
+    assert_eq!(declared.copies_receiver_to.as_ref().unwrap().set.get("name"), Some(&CopyValue::Source(EffectSource::Owner("name".into()))));
+    let errors = club(&copy("{ nothing: true }")).unwrap_err();
+    assert!(errors.iter().any(|message| message.contains("sets unknown attribute")), "{errors:?}");
+}

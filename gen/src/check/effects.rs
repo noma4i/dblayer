@@ -89,6 +89,12 @@ pub(super) fn check_closed_effects(node: &ModelDecl, all: &[ModelDecl], operatio
         if !node.attributes.iter().any(|attribute| attribute.name == copy.field) {
             report(copy.pos, format!("`copies_receiver_to` names unknown attribute `{}`", copy.field));
         }
+        for (field, value, pos) in &copy.set {
+            if !node.attributes.iter().any(|attribute| &attribute.name == field) {
+                report(*pos, format!("`copies_receiver_to` sets unknown attribute `{field}`"));
+            }
+            if let crate::decl::CopySetDecl::Source(source) = value { source_of(&site, source, *pos, report); }
+        }
     }
     for effect in &operation.scope_effects {
         let Some(target) = site.model(&effect.model) else {

@@ -6,6 +6,7 @@
 - `ReadState` carries `hasMore`, `settled` and the server `total` of the window.
 - `ModelEvent` carries `position` and the rows `before` and `after`.
 - `ModelEventItem` has a `gap` item for a lost order of events.
+- `copies_receiver_to` takes `set:` for literals and fields of the copied row or a singleton row.
 
 ### Removed
 - `scope.related` is gone: read a server relation with a query.
@@ -26,6 +27,8 @@
 
 ### Fixed
 - Keyed reactions match elements stored under a nested path.
+- The receipt of an action carries the revision of its commit.
+- A parent pointer follows a sent child to the id the server gave it.
 - Events of the server subscription land in the cache and reach event streams.
 - A destroy the server answers only with NOT_FOUND is confirmed and the open lists of the model are read once more.
 - An offline refresh shows its error in the state of the stream of the window.

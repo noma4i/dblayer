@@ -407,9 +407,11 @@ impl Db {
     ) -> Result<(), DbError> {
         let target = args.get(&copy.arg).cloned().ok_or_else(|| DbError::Internal(format!("the argument {} of the copy is missing", copy.arg)))?;
         let mut values = reader.point(own.model.as_str(), own.id.as_str())?.ok_or_else(|| DbError::NotFound { model: own.model.to_string(), id: own.id.to_string() })?;
+        let receiver = values.clone();
         let copy_id = RowId::generate_temp(None);
         values.insert("id".to_string(), Value::String(copy_id.to_string()));
         values.insert(copy.field.clone(), target);
+        self.apply_copy_set(reader, copy, &receiver, args, &mut values)?;
         let data = spec.normalize_local(&values, now_ms)?;
         queued.scope_ops.extend(local_scope_ops(reader, spec, &copy_id, &data)?);
         plan.upsert(own.model.clone(), vec![data]);

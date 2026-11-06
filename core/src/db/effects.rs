@@ -91,6 +91,34 @@ impl Db {
         })
     }
 
+    /// The models besides the receiver that the copy of `declared` reads.
+    pub(crate) fn copy_source_models(copy: &crate::schema::ReceiverCopy) -> Vec<&str> {
+        copy.set.values().filter_map(|value| match value {
+            crate::schema::CopyValue::Source(EffectSource::Row { model, .. }) => Some(model.as_str()),
+            _ => None,
+        }).collect()
+    }
+
+    /// The fields `set:` of a copy of the receiver: a literal, a field of the receiver, or a field of the row of another model.
+    pub(crate) fn apply_copy_set(&self, reader: &Reader<'_>, copy: &crate::schema::ReceiverCopy, receiver: &Row, args: &Map<String, Value>, values: &mut Row) -> Result<(), DbError> {
+        for (field, source) in &copy.set {
+            let value = match source {
+                crate::schema::CopyValue::Literal(value) => value.clone(),
+                crate::schema::CopyValue::Source(EffectSource::Owner(from)) => receiver.get(from).cloned().unwrap_or(Value::Null),
+                crate::schema::CopyValue::Source(EffectSource::Row { model, row, field: from }) => {
+                    let id = self.effect_row(reader, args, model, row.as_deref())?.ok_or_else(|| DbError::NotFound { model: model.clone(), id: format!("the row of {model} that {field} copies") })?;
+                    if from == "id" {
+                        Value::String(id.to_string())
+                    } else {
+                        reader.point(model, id.as_str())?.and_then(|found| found.get(from).cloned()).unwrap_or(Value::Null)
+                    }
+                }
+            };
+            values.insert(field.clone(), value);
+        }
+        Ok(())
+    }
+
     fn effect_row(&self, reader: &Reader<'_>, args: &Map<String, Value>, model: &str, row: Option<&str>) -> Result<Option<RowId>, DbError> {
         if let Some(name) = row {
             return Ok(args.get(name).and_then(read_id));

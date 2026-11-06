@@ -46,6 +46,15 @@ pub(super) fn add_chat(models: &mut Value) {
     chat.sets = [("lastMessageId", "id"), ("lastMessageAt", "at"), ("lastActivityAt", "at")].map(|(parent, child)| (parent.to_string(), child.to_string())).into();
     chat.newer = vec![Newer { child: "at".to_string(), parent: "lastMessageAt".to_string() }];
     message["fields"].as_array_mut().unwrap().push(serde_json::to_value(optional("status", ScalarKind::Str)).unwrap());
+    for field in [optional("authorId", ScalarKind::Id), optional("isForwarded", ScalarKind::Bool), optional("forwardedFromUserId", ScalarKind::Id)] {
+        message["fields"].as_array_mut().unwrap().push(serde_json::to_value(field).unwrap());
+    }
+    let forward = message["actions"].as_array_mut().unwrap().iter_mut().find(|action| action["name"] == "forward").unwrap();
+    forward["copies_receiver_to"]["set"] = json!({
+        "authorId": {"source": {"row": {"model": "User", "field": "id"}}},
+        "isForwarded": {"literal": true},
+        "forwardedFromUserId": {"source": {"owner": "authorId"}},
+    });
     let mut edit = ActionDeclaration::new("update", RootShape::Upsert);
     edit.mutation = Some("MessageEdit".into());
     edit.root = Some("messageEdit".into());

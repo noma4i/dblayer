@@ -134,7 +134,9 @@ impl Db {
         let declared = spec.actions.iter().find(|declared| declared.name == action).cloned();
         let now_ms = self.shared.store.lock().now_ms();
         let mut shown = None;
-        let effects = self.shared.read(&[model], |reader| {
+        let mut read_models = vec![model];
+        if let Some(copy) = declared.as_ref().and_then(|declared| declared.copies_receiver_to.as_ref()) { read_models.extend(Self::copy_source_models(copy)); }
+        let effects = self.shared.read(&read_models, |reader| {
             let current = reader.point(model, id.as_str())?.ok_or_else(|| DbError::NotFound { model: model.to_string(), id: id.to_string() })?;
             let mut merged = current.clone();
             merged.extend(patch.clone());
@@ -187,9 +189,11 @@ impl Db {
         if let Some(copy) = &declared.copies_receiver_to {
             let target = args.get(&copy.arg).cloned().ok_or_else(|| DbError::Internal(format!("the argument {} of the copy is missing", copy.arg)))?;
             let mut values = reader.point(own.model.as_str(), own.id.as_str())?.ok_or_else(|| DbError::NotFound { model: own.model.to_string(), id: own.id.to_string() })?;
+            let receiver = values.clone();
             let copy_id = RowId::generate_temp(None);
             values.insert("id".to_string(), Value::String(copy_id.to_string()));
             values.insert(copy.field.clone(), target);
+            self.apply_copy_set(reader, copy, &receiver, args, &mut values)?;
             let data = spec.normalize_local(&values, now_ms)?;
             member_effects(effects, local_scope_ops(reader, spec, &copy_id, &data)?);
             effects.rows.push(row_effect(own.model.as_str(), copy_id.as_str(), None, &data));
