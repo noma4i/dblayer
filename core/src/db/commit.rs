@@ -3,7 +3,7 @@ use std::collections::HashSet;
 use crate::commit::{CommitEnvelope, CommitResult, EntityOp, OperationTransition, WriteOrigin};
 use crate::identity::Generation;
 use crate::lifecycle::authority::Authority;
-use crate::store::{Committed, PlanCommitError, Reader};
+use crate::store::{Committed, PlanCommitError, Reader, TombstonePrune};
 
 use super::error::DbError;
 use super::merge::Admission;
@@ -47,18 +47,18 @@ impl Db {
         generation: Generation,
         plan: impl FnMut(&Reader<'_>) -> Result<Option<CommitEnvelope>, E>,
     ) -> Result<(Committed<'_>, Followed), PlanCommitError<E>> {
-        self.commit_following_with_pin(authority, generation, None, plan)
+        self.commit_following_with_pin(authority, generation, TombstonePrune::Skip, plan)
     }
 
     pub(crate) fn commit_following_with_pin<E: From<DbError>>(
         &self,
         authority: &Authority,
         generation: Generation,
-        min_pin_revision: Option<u64>,
+        prune: TombstonePrune,
         mut plan: impl FnMut(&Reader<'_>) -> Result<Option<CommitEnvelope>, E>,
     ) -> Result<(Committed<'_>, Followed), PlanCommitError<E>> {
         let mut followed = Followed::default();
-        let result = self.shared.store.commit_prepared_with_pin(authority, generation, min_pin_revision, |reader| {
+        let result = self.shared.store.commit_prepared_with_pin(authority, generation, prune, |reader| {
             followed = Followed::default();
             let Some(envelope) = plan(reader)? else { return Ok(None) };
             let (envelope, found) = self.follow(reader, envelope)?;

@@ -291,12 +291,12 @@ impl Db {
     }
 
     pub(crate) fn roll_back_gated(&self, authority: &Authority, seq: i64, generation: Generation, still: Option<&Still<'_>>) -> Result<CommitResult, DbError> {
-        self.roll_back_with_pin(authority, seq, generation, still, None)
+        self.roll_back_with_pin(authority, seq, generation, still, crate::store::TombstonePrune::Skip)
     }
 
-    pub(crate) fn roll_back_with_pin(&self, authority: &Authority, seq: i64, generation: Generation, still: Option<&Still<'_>>, min_pin_revision: Option<u64>) -> Result<CommitResult, DbError> {
+    pub(crate) fn roll_back_with_pin(&self, authority: &Authority, seq: i64, generation: Generation, still: Option<&Still<'_>>, prune: crate::store::TombstonePrune) -> Result<CommitResult, DbError> {
         let mut discarded = Vec::new();
-        let (result, _) = self.commit_following_with_pin(authority, generation, min_pin_revision, |reader| {
+        let (result, _) = self.commit_following_with_pin(authority, generation, prune, |reader| {
                 discarded = Vec::new();
                 let found = OutboxOperation::read(reader, seq)?;
                 let entry = match (found, still) {

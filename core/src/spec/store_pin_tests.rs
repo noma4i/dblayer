@@ -75,3 +75,39 @@ fn store_epoch_ended_drops_pins() {
     if let StoreInput::Commit(ref mut batch) = input { batch.epoch = 1; }
     assert_eq!(limit(&step(&mut state, input)), Some(None));
 }
+
+#[test]
+fn store_prop_tombstone_flight() {
+    use std::sync::Arc;
+    use std::time::Duration;
+    use crate::identity::RowId;
+    use crate::owners::read::windows::WindowKey;
+    use crate::owners::store::{RowValue, StoreOp};
+
+    let db = crate::db::Db::open_in_memory(crate::db::fixtures::all_specs(), None).unwrap();
+    let clock = Arc::new(crate::pacing::ManualClock::new(Duration::from_secs(1)));
+    db.set_clock(clock.clone());
+    let row = |id: &str| RowValue { row_id: id.into(), values: format!(r#"{{"id":"{id}","text":"value"}}"#) };
+    db.write_queue_ops_with_pin(&[StoreOp::Rows { model: "moments".into(), rows: vec![row("m1")] }], None).unwrap();
+    let base = u64::try_from(db.revision_seq().unwrap()).unwrap();
+    let mut owner = state(base);
+    assert_eq!(pin(&mut owner, 0, 7), vec![StoreEffect::Pinned { epoch: 0, request_id: 7, base_revision: base }]);
+    let min = limit(&step(&mut owner, batch(1))).unwrap();
+    db.land_events_with_pin(&[("moments".into(), r#"{"op":"delete","id":"m1"}"#.into())], min).unwrap();
+    assert!(db.shared.store.is_tombstoned("moments", "m1").unwrap());
+    clock.advance(Duration::from_secs(86_401));
+    db.write_queue_ops_with_pin(&[StoreOp::Rows { model: "moments".into(), rows: vec![row("m2")] }], min).unwrap();
+    assert!(db.shared.store.is_tombstoned("moments", "m1").unwrap());
+    db.write_queue_ops_with_pin(&[StoreOp::AttachFile { model: "moments".into(), row_id: "m2".into(), field: "media".into(), bytes: b"file".to_vec(), name: "file.txt".into(), mime: "text/plain".into() }], min).unwrap();
+    assert!(db.shared.store.is_tombstoned("moments", "m1").unwrap());
+    db.attach(&db.admit().unwrap(), "moments", &RowId::new("m2").unwrap(), "cover", b"other", "other.txt", "text/plain").unwrap();
+    assert!(db.shared.store.is_tombstoned("moments", "m1").unwrap());
+    let key = WindowKey::nodes("moments", &["m1"]);
+    db.write_queue_ops_with_pin(&[StoreOp::Window { key: key.name, model: key.model, page: 1, replace_all: false, cursor: None, roots: vec![row("m1")], related: vec![], total: None, base_revision: i64::try_from(base).unwrap() }], min).unwrap();
+    assert!(db.find("moments", &RowId::new("m1").unwrap()).unwrap().is_none());
+    step(&mut owner, StoreInput::Written { author: BatchAuthor::Outbox, batch: 1, result: Ok(Done { revision: u64::try_from(db.revision_seq().unwrap()).unwrap() }) });
+    step(&mut owner, StoreInput::Unpin { request_id: 7 });
+    let min = limit(&step(&mut owner, batch(2))).unwrap();
+    db.write_queue_ops_with_pin(&[StoreOp::Rows { model: "moments".into(), rows: vec![row("m3")] }], min).unwrap();
+    assert!(!db.shared.store.is_tombstoned("moments", "m1").unwrap());
+}

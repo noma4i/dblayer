@@ -81,8 +81,8 @@ impl Db {
                 StoreOp::EphemeralRows { model, rows } => {
                     for row in rows { self.write_ephemeral(model, &row_id(&row.row_id)?, &values(&row.values)?)?; }
                 }
-                StoreOp::AttachFile { model, row_id: id, field, bytes, name, mime } => { self.attach_as(&Authority::Owner, model, &row_id(id)?, field, bytes, name, mime)?; }
-                StoreOp::DetachFile { model, row_id: id, field } => { self.detach_as(&Authority::Owner, model, &row_id(id)?, field)?; }
+                StoreOp::AttachFile { model, row_id: id, field, bytes, name, mime } => { self.attach_as(&Authority::Owner, model, &row_id(id)?, field, bytes, name, mime, crate::store::TombstonePrune::WithPins(min_pin_revision))?; }
+                StoreOp::DetachFile { model, row_id: id, field } => { self.detach_as(&Authority::Owner, model, &row_id(id)?, field, crate::store::TombstonePrune::WithPins(min_pin_revision))?; }
                 StoreOp::LocalRows { model, rows } => {
                     envelope.writes_local = true;
                     envelope.entity_ops.extend(upserts(model, rows)?);
@@ -141,12 +141,12 @@ impl Db {
             }
         }
         for seq in rolled_back {
-            self.roll_back_with_pin(&Authority::Owner, seq, generation, None, min_pin_revision)?;
+            self.roll_back_with_pin(&Authority::Owner, seq, generation, None, crate::store::TombstonePrune::WithPins(min_pin_revision))?;
         }
         if envelope.entity_ops.is_empty() && envelope.operation_transitions.is_empty() && envelope.window_debts.is_empty() && swaps.is_empty() {
             return Ok(());
         }
-        let (committed, _) = self.commit_following_with_pin(&Authority::Owner, generation, min_pin_revision, |reader| {
+        let (committed, _) = self.commit_following_with_pin(&Authority::Owner, generation, crate::store::TombstonePrune::WithPins(min_pin_revision), |reader| {
             let mut planned = envelope.clone();
             if planned.origin == WriteOrigin::Response {
                 let closing = (landed_op >= 0).then_some(landed_op);
@@ -186,7 +186,7 @@ impl Db {
         let input: Value = serde_json::from_str(payload).map_err(json_fault)?;
         let owner = row_id(id)?;
         let (result, _) = self
-            .commit_following_with_pin(&Authority::Owner, generation, min_pin_revision, |reader| {
+            .commit_following_with_pin(&Authority::Owner, generation, crate::store::TombstonePrune::WithPins(min_pin_revision), |reader| {
                 let (mut envelope, prior) = effects_envelope(reader, effects, generation)?;
                 envelope.snapshot = Some(crate::identity::RowRef::new(ModelKey::new(model), owner.clone()));
                 envelope.operation_transitions.push(OperationTransition::Begin(Box::new(OperationRecord {
@@ -214,7 +214,7 @@ impl Db {
     fn write_planned(&self, effects: &IntentEffects, min_pin_revision: Option<u64>) -> Result<(), DbError> {
         let generation = self.generation();
         let (result, _) = self
-            .commit_following_with_pin(&Authority::Owner, generation, min_pin_revision, |reader| {
+            .commit_following_with_pin(&Authority::Owner, generation, crate::store::TombstonePrune::WithPins(min_pin_revision), |reader| {
                 let (mut envelope, _) = effects_envelope(reader, effects, generation)?;
                 envelope.writes_local = true;
                 Ok::<_, DbError>(Some(envelope))

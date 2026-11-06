@@ -47,6 +47,7 @@ pub(crate) use response::coalesce_rows;
 #[cfg(test)]
 pub use rows::ScopeRowsResult;
 pub use tombstones::TombstoneRetention;
+pub(crate) use tombstones::TombstonePrune;
 pub use windows::{family_prefix, window_key, PageInfo, WindowFreshness, WindowRecord};
 
 #[cfg(test)]

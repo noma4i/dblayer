@@ -184,7 +184,7 @@ impl Db {
         let model_key = ModelKey::new(model);
         let mut drops = 0;
         let (committed, _) = self
-            .commit_following_with_pin(&Authority::Owner, generation, min_pin_revision, |reader| {
+            .commit_following_with_pin(&Authority::Owner, generation, crate::store::TombstonePrune::WithPins(min_pin_revision), |reader| {
                 drops = 0;
                 let admitted = self.admit_rows(reader, base_revision, None, model, &roots, &mut drops)?.rows;
                 let plan = if plans_as_first {
@@ -240,7 +240,7 @@ impl Db {
         let model_key = ModelKey::new(model);
         let mut drops = 0;
         let (committed, _) = self
-            .commit_following_with_pin(&Authority::Owner, generation, min_pin_revision, |reader| {
+            .commit_following_with_pin(&Authority::Owner, generation, crate::store::TombstonePrune::WithPins(min_pin_revision), |reader| {
                 drops = 0;
                 let admitted = self.admit_rows(reader, base_revision, None, model, roots, &mut drops)?.rows;
                 let mut envelope = CommitEnvelope::new(WriteOrigin::Snapshot, generation);

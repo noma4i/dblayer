@@ -100,7 +100,7 @@ impl Db {
         let parsed = parse(events)?;
         let generation = self.generation();
         let mut seen: BTreeMap<(String, String), (Option<Map<String, Value>>, Option<Map<String, Value>>)> = BTreeMap::new();
-        let (committed, _) = self.commit_following_with_pin(&Authority::Owner, generation, min_pin_revision, |reader| {
+        let (committed, _) = self.commit_following_with_pin(&Authority::Owner, generation, crate::store::TombstonePrune::WithPins(min_pin_revision), |reader| {
             let mut operations: BTreeMap<(String, String), EntityOp> = BTreeMap::new();
             let mut touches: Vec<EntityOp> = Vec::new();
             let mut joins: Vec<ScopeOp> = Vec::new();
