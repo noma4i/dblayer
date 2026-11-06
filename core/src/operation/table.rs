@@ -34,6 +34,7 @@ pub fn append_operation(connection: &Connection, operation: &mut Operation, inpu
     Ok(seq)
 }
 
+#[cfg(test)]
 pub fn set_status(connection: &Connection, sequence: i64, status: OperationStatus) -> rusqlite::Result<()> {
     connection.execute("UPDATE op SET status = ? WHERE seq = ?", params![status.as_sql(), sequence])?;
     Ok(())

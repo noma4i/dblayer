@@ -40,7 +40,6 @@ pub(crate) mod op_effect;
 mod open;
 mod parent_pointer;
 mod removed_by;
-mod ranked;
 mod replaced_log;
 mod prior;
 mod upload;

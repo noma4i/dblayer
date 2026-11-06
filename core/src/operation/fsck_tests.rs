@@ -20,10 +20,6 @@ fn plain(seq: i64) -> Operation {
     operation(seq, "message", Pending, None, false)
 }
 
-fn known() -> HashSet<String> {
-    ["message".to_string()].into()
-}
-
 #[test]
 fn temp_rebuild_needs_missing_row_and_orphans_are_sorted_and_filtered() {
     let temp = id("temp-1");
