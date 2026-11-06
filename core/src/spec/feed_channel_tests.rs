@@ -264,6 +264,16 @@ fn feed_chan_resubscribe_unwanted() {
     assert!(rig.post(FeedInput::ChannelResubscribe { connection_id: FIRST, channel: "C".into() }).is_empty());
 }
 
+#[test]
+fn feed_live_graphql_error() {
+    let mut rig = Rig::live();
+    let mut ended = rig.post(FeedInput::ChannelEnded { connection_id: FIRST, channel: "B".into(), failed: true });
+    ended.sort();
+    assert_eq!(ended.iter().filter(|event| event.starts_with("modelinvalid:")).cloned().collect::<Vec<_>>(), ["modelinvalid:1", "modelinvalid:2"]);
+    assert!(rig.state().wants().is_empty());
+    assert!(rig.post(FeedInput::ChannelResubscribe { connection_id: FIRST, channel: "B".into() }).is_empty());
+}
+
 /// P-FEED-21: every channel of `wanted` gets exactly one subscribe on the connection, a channel outside it none, and without a wanted model no connection opens.
 #[test]
 fn feed_prop_chan_one_subscribe() {
