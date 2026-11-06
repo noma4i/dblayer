@@ -133,20 +133,21 @@ impl Database {
         Ok(row.map(|row| wire.row(&row)))
     }
 
-    /// The rows of the ids that the root of the model has now, in the order of the call.
+    /// The rows of the ids that the answer of the server returned, in the order of the call.
     pub async fn nodes(&self, epoch: u64, model: String, relation: String, row_ids: Vec<String>) -> Result<Vec<WireRow>, DbError> {
         self.admit_now(epoch)?;
         self.node_relation(&model, &relation, NodeRead::Many)?;
         let ids = row_ids.iter().map(|id| RowId::new(id).map_err(|error| DbError::Invalid { detail: error.to_string() })).collect::<Result<Vec<_>, _>>()?;
         let wire = self.wire(&model)?.clone();
         let key = WindowKey::nodes(&model, &row_ids.iter().map(String::as_str).collect::<Vec<_>>());
+        let name = key.name.clone();
         let call = self.start_window(epoch, key, Goal::First, true)?;
         self.finish_load(call).await?;
         let (db, found) = (self.db.clone(), model.clone());
         let rows = self.offload(move || {
             let mut rows = Vec::with_capacity(ids.len());
-            for id in &ids {
-                rows.extend(db.find(&found, id)?);
+            for id in db.nodes_answered(&found, &name, &ids)? {
+                rows.extend(db.find(&found, &id)?);
             }
             Ok(rows)
         }).await?;

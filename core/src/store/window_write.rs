@@ -2,7 +2,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use serde_json::{Map, Value};
 
-use crate::commit::{BatchPlan, CommitResult, EntityOp, WindowMarker, WindowSave, WindowTail};
+use crate::commit::{BatchPlan, CommitResult, EntityOp, ScopeOp, ScopeRef, WindowMarker, WindowSave, WindowTail};
 use crate::identity::{ModelKey, RowId};
 use crate::owners::read::windows::WindowKind;
 use crate::read::{incoming_ids, plan_landing, StoredScope, EDGE_KEY};
@@ -59,6 +59,7 @@ pub(super) fn land(writer: &mut RowWrite<'_>, page: &WindowPage<'_>) -> Result<C
         for row in accepted {
             if let Some(id) = row.get("id").and_then(read_id) { envelope.entity_ops.push(EntityOp::Upsert { model: ModelKey::new(model), id, row }); }
         }
+        envelope.scope_ops = answered_scope_ops(writer, page.key, &roots)?;
         return super::apply::apply_envelope_at(writer.connection, writer.models, &envelope, writer.now, writer.revision, Some(writer.originals));
     };
     let spec = &writer.models.get(model).ok_or_else(|| StoreError::UnknownModel(model.to_string()))?.spec;
@@ -125,4 +126,19 @@ pub(super) fn mark(writer: &mut RowWrite<'_>, key: &crate::owners::read::windows
     }
     writer.connection.execute("UPDATE query_window SET stale_since = NULL, landed_at = ?1 WHERE key = ?2", rusqlite::params![writer.now, window_key])?;
     Ok(CommitResult::noop(uuid::Uuid::new_v4()))
+}
+
+/// The ids that the server returned as rows for the ids of a `nodes` window, in the order of the answer: what `nodes` gives back.
+fn answered_scope_ops(writer: &RowWrite<'_>, key: &crate::owners::read::windows::WindowKey, roots: &[Map<String, Value>]) -> Result<Vec<ScopeOp>, StoreError> {
+    let scope = ScopeRef::new(ModelKey::new(&key.model), crate::identity::ListKey::from_raw(&key.name));
+    let reader = Reader::new(writer.connection, writer.models);
+    let previous: BTreeSet<String> = reader.scope_members(&key.model, &key.name)?.into_iter().map(|(id, _)| id).collect();
+    let mut seen = BTreeSet::new();
+    let answered: Vec<RowId> = roots.iter().filter_map(|root| root.get("id").and_then(read_id)).filter(|id| seen.insert(id.as_str().to_string())).collect();
+    let mut ops: Vec<ScopeOp> = previous.iter().filter(|id| !seen.contains(*id)).filter_map(|id| RowId::new(id).ok()).map(|row| ScopeOp::Detach { scope: scope.clone(), row }).collect();
+    for (index, row) in answered.into_iter().enumerate() {
+        let order_key = format!("{index:010}");
+        ops.push(if previous.contains(row.as_str()) { ScopeOp::Move { scope: scope.clone(), row, order_key } } else { ScopeOp::Append { scope: scope.clone(), row, order_key } });
+    }
+    Ok(ops)
 }

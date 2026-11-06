@@ -36,6 +36,8 @@ mod data_cells_tests;
 mod data_inv_tests;
 #[cfg(test)]
 mod data_nested_tests;
+#[cfg(test)]
+mod nodes_answer_tests;
 mod apply;
 mod batch_common;
 mod batch_result;

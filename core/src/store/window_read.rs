@@ -73,6 +73,17 @@ impl Store {
     }
 
     /// Whether the row is in the membership of the scope of a relation with params.
+    /// The ids of a `nodes` window that came back as rows in the answer of its request, in the order of `ids`.
+    pub(crate) fn nodes_answered(&self, model: &str, key: &str, ids: &[crate::identity::RowId]) -> Result<Vec<crate::identity::RowId>, DbError> {
+        Ok(self.read(&[model], |reader| {
+            let mut answered = Vec::new();
+            for id in ids {
+                if reader.scope_has_member(model, key, id.as_str())? { answered.push(id.clone()); }
+            }
+            Ok(answered)
+        })?)
+    }
+
     pub(crate) fn window_member(&self, model: &str, relation: &str, params: &Map<String, Value>, id: &str) -> Result<bool, DbError> {
         let scope = self.spec(model)?.selection_key(relation, params).map_err(json_fault)?;
         Ok(self.read(&[model], |reader| reader.scope_has_member(model, scope.as_str(), id))?)
