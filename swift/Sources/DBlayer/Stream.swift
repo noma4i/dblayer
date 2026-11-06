@@ -100,7 +100,7 @@ public struct ListProjection<Model: DBModel>: Sendable {
       let carried = decode(wire)
       guard carried.allSatisfy({ $0 != nil }) else { return gap() }
       guard let edits = rebuild(carried: zip(carried.compactMap { $0 }, indexes).map { ($0, Int($1)) }, removed: removed, placed: placed, replaced: replaced, size: Int(size)) else { return gap() }
-      for pair in renamed { temporaryIds[pair.to] = temporaryIds[pair.from] ?? pair.from; temporaryIds[pair.from] = nil }
+      for pair in replaced + renamed { temporaryIds[pair.to] = temporaryIds[pair.from] ?? pair.from; temporaryIds[pair.from] = nil }
       lastEdits = edits.count <= rows.count ? edits : nil
       deltas += 1
       self.revision = revision

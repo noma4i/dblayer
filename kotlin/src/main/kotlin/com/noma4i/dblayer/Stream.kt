@@ -106,7 +106,7 @@ class ListProjection<Model : DBModel> private constructor(
                 if (carried.any { it == null }) return gap()
                 val result = rebuild(carried.filterNotNull().zip(value.indexes.map { it.toInt() }), value.removed, value.placed, value.replaced, value.size.toInt()) ?: return gap()
                 val ids = HashMap(temporaryIds)
-                for (pair in value.renamed) { ids[pair.to] = ids[pair.from] ?: pair.from; ids.remove(pair.from) }
+                for (pair in value.replaced + value.renamed) { ids[pair.to] = ids[pair.from] ?: pair.from; ids.remove(pair.from) }
                 Step(copy(rows = result.first, state = value.state, revision = value.revision, failure = failure, decoded = decoded, deltas = deltas + 1, lastEdits = result.second.takeIf { it.size <= result.first.size }, temporaryIds = ids), Applied.Changed)
             }
             else -> Step(this, Applied.Ignored)
