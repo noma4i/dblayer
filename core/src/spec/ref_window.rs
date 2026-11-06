@@ -44,6 +44,7 @@ impl Window {
             members: 0,
             chain: None,
             stale_marked: false,
+            stale_owed: false,
             landing_marker: None,
         }
     }
@@ -441,9 +442,10 @@ impl Window {
 
     fn landed(&mut self, page: u32, cursor: Option<u32>, rows: bool, revision: i64) -> Vec<Effect> {
         self.has_rows |= rows;
-        if let Some((marker, members)) = self.landing_marker.take() {
+        if let Some((marker, members, replaced)) = self.landing_marker.take() {
             self.marker = Some(marker);
             self.members = members;
+            if replaced { self.stale_owed = false; }
         }
         self.cursor = cursor;
         self.page = page;

@@ -1,1 +1,0 @@
-CREATE INDEX IF NOT EXISTS blob_failed_expiry ON blob_upload (consumer_seq, expired, failed_at)

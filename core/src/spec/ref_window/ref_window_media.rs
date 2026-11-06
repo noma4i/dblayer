@@ -10,7 +10,8 @@ impl Window {
             return Effect::Request { request, attempt, page };
         }
         let up_to = self.marker.map_or(0, |marker| marker.sequence);
-        self.chain = Some(Chain3 { stage: Stage3::MarkerCheck { up_to }, cursor: None, rows: 0, latest: 0, base: 0, stale: std::mem::take(&mut self.stale_marked) });
+        self.stale_owed |= std::mem::take(&mut self.stale_marked);
+        self.chain = Some(Chain3 { stage: Stage3::MarkerCheck { up_to }, cursor: None, rows: 0, latest: 0, base: 0, stale: self.stale_owed });
         Effect::Marker { request, attempt, up_to }
     }
 
@@ -33,7 +34,7 @@ impl Window {
     /// The chain ended: its rows and its marker land in 1 batch, or only the marker when the rows stay.
     pub(super) fn land_chain(&mut self, request: u64, chain: Chain3, marker: Marker3, keep_rows: bool) -> Vec<Effect> {
         self.page_count = 1;
-        self.landing_marker = Some((marker, if keep_rows { self.members } else { chain.base + chain.rows }));
+        self.landing_marker = Some((marker, if keep_rows { self.members } else { chain.base + chain.rows }, !keep_rows));
         let cursor = if keep_rows { self.cursor } else { None };
         self.state = State::Landing { request, page: 1, cursor, rows: (keep_rows && self.has_rows) || chain.rows > 0 };
         vec![Effect::Commit { request, replace_all: false }]

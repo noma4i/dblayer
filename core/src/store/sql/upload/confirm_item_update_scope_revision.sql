@@ -1,1 +1,0 @@
-UPDATE scope_revision SET operation_seq = NULL WHERE operation_seq = ?1 AND row_id = ?2

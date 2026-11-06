@@ -74,6 +74,20 @@ fn win_media_marker_does_not_prove_a_window_that_opened_stale() {
 }
 
 #[test]
+fn win_media_stale_mark_survives_failed_load() {
+    let mut twin = Twin::media();
+    twin.hold.store(true, Ordering::SeqCst);
+    twin.watch();
+    twin.step(Input::Read(Read::MediaMarked { marker: SAVED, members: 3 }));
+    twin.step(Input::Online(false));
+    assert_eq!(twin.stage(), Some(WindowStage::Waiting));
+    let effects = twin.step(Input::Online(true));
+    assert!(effects.iter().any(|effect| matches!(effect, Effect::Marker { up_to: 5, .. })), "{effects:?}");
+    let effects = answer_marker(&mut twin, SAVED);
+    assert!(matches!(&effects[..], [Effect::Request { page: 1, .. }]), "the mark was spent by the failed load and the marker proved a stale window: {effects:?}");
+}
+
+#[test]
 fn win_media_tail() {
     let mut twin = media_checking();
     let effects = answer_marker(&mut twin, marker(9, 1, 3));

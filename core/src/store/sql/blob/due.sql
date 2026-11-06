@@ -1,1 +1,0 @@
-SELECT b.id, i.file_id FROM (SELECT id, seq FROM blob_upload WHERE consumer_seq IS NULL AND expired = 0 AND ready = 1 AND created_at <= ?1 UNION SELECT id, seq FROM blob_upload WHERE consumer_seq IS NULL AND expired = 0 AND failed_at <= ?2) b JOIN op_item i ON i.seq = b.seq AND i.position = 0

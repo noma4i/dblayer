@@ -1,1 +1,0 @@
-SELECT id, seq FROM blob_upload WHERE consumer_seq = ?1

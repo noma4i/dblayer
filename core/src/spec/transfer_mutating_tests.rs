@@ -80,6 +80,17 @@ fn xfer_failed_discard_live_intent() {
 }
 
 #[test]
+fn xfer_failed_cancel_live_intent() {
+    let mut twin = Twin::new();
+    let id = failed_mutation(&mut twin);
+    let (reply, out) = twin.cancel(KEY);
+    assert_eq!((out.outbox_discards(), out.all_replies(), out.removed(), twin.stage(id)), (1, 0, Vec::<String>::new(), TransferStage::Failed), "the live intent is discarded by Outbox, Transfer does not remove it behind its back");
+    let out = twin.mutation_outcome(KEY, OutboxOutcome::Discarded);
+    assert_eq!((twin.stage(id), out.removed()), (TransferStage::Removing, vec![KEY.to_string()]));
+    assert_eq!((twin.commit().replies(reply), twin.stage(id)), (vec![TransferAnswer::Cancelled(true)], TransferStage::Done));
+}
+
+#[test]
 fn xfer_failed_discard_live_intent_refused() {
     let mut twin = Twin::new();
     let id = failed_mutation(&mut twin);

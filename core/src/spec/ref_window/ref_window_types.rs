@@ -202,5 +202,6 @@ pub(in super::super) struct Window {
     pub(in super::super) members: i64,
     pub(in super::super) chain: Option<Chain3>,
     pub(in super::super) stale_marked: bool,
-    pub(in super::super) landing_marker: Option<(Marker3, i64)>,
+    pub(in super::super) stale_owed: bool,
+    pub(in super::super) landing_marker: Option<(Marker3, i64, bool)>,
 }

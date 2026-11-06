@@ -1,1 +1,0 @@
-UPDATE blob_upload SET ready = 0, failed_at = COALESCE(failed_at, ?1) WHERE seq = ?2

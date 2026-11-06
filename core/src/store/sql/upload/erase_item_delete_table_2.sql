@@ -1,1 +1,0 @@
-DELETE FROM {table} WHERE seq = ?1 AND position = ?2

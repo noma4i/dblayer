@@ -1,1 +1,0 @@
-INSERT INTO blob_upload (id, name, seq, generation) VALUES (?1, ?2, ?3, ?4)

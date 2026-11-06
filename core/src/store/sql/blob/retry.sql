@@ -1,1 +1,0 @@
-SELECT EXISTS (SELECT 1 FROM blob_use WHERE consumer_seq = ?1)

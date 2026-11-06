@@ -1,1 +1,0 @@
-SELECT signed_id, total_bytes, sent_bytes FROM blob_upload WHERE id = ?1

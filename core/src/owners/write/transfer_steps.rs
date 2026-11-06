@@ -250,12 +250,13 @@ impl TransferState {
 
     pub(super) fn mutation_outcome(&mut self, id: TransferId, outcome: OutboxOutcome, fx: &mut Fx) {
         if !self.waits_for_discard(id) { return; }
-        let waiting = self.transfers.get(&id).is_some_and(|transfer| !transfer.discard_waiters.is_empty());
+        let waiting = self.transfers.get(&id).is_some_and(|transfer| !transfer.discard_waiters.is_empty() || transfer.cancel_reply.is_some());
         let next_single = (!matches!(outcome, OutboxOutcome::Interrupted) && !(waiting && matches!(outcome, OutboxOutcome::Failed { .. }))).then(|| self.group_entry(id)).flatten().filter(|group| self.phase_of(*group) == Some(BatchPhase::Singles));
         match outcome {
             OutboxOutcome::Confirmed { revision, result } => {
                 if let Some(transfer) = self.transfers.get_mut(&id) {
-                    for waiter in std::mem::take(&mut transfer.discard_waiters) {
+                    let cancelled = transfer.cancel_reply.take().map(|(waiter, _)| waiter);
+                    for waiter in std::mem::take(&mut transfer.discard_waiters).into_iter().chain(cancelled) {
                         reply(fx, waiter, TransferAnswer::Err(Fault::NotFound));
                     }
                 }
@@ -291,7 +292,8 @@ impl TransferState {
             return;
         }
         transfer.discard_sent = false;
-        for waiter in std::mem::take(&mut transfer.discard_waiters) {
+        let cancelled = transfer.cancel_reply.take().map(|(waiter, _)| waiter);
+        for waiter in std::mem::take(&mut transfer.discard_waiters).into_iter().chain(cancelled) {
             reply(fx, waiter, TransferAnswer::Err(Fault::InFlight));
         }
     }

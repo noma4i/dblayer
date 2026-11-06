@@ -1,1 +1,0 @@
-UPDATE op SET transport_started = 0, attempts = 0 WHERE seq = ?1

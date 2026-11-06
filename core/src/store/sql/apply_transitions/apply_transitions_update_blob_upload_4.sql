@@ -1,1 +1,0 @@
-UPDATE blob_upload SET seq = NULL, ready = 0, expired = ?1 WHERE id = ?2

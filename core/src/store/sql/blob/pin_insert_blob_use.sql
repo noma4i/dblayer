@@ -1,1 +1,0 @@
-INSERT INTO blob_use (consumer_seq, parameter, blob_id) VALUES (?1, ?2, ?3)

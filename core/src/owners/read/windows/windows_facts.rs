@@ -43,12 +43,13 @@ pub(super) struct Facts {
     pub(super) store_seen: i64,
     pub(super) request_base: std::cell::Cell<i64>,
     pub(super) stale_marked: std::cell::Cell<bool>,
+    pub(super) stale_owed: std::cell::Cell<bool>,
     /// The window has a marker and a tail (`media` in the `.dbl`).
     pub(super) media: bool,
     pub(super) marker: Option<Marker>,
     pub(super) members: i64,
     /// The marker and the member count that the landing in flight makes the saved ones.
-    pub(super) landing_marker: Option<(Marker, i64)>,
+    pub(super) landing_marker: Option<(Marker, i64, bool)>,
     pub(super) fx: RefCell<Vec<Emit>>,
 }
 
@@ -187,7 +188,9 @@ impl Facts {
         let load = Load::issued(request, attempt, page, force, self.basis());
         if !(self.media && page == 1) { return load; }
         let up_to = self.marker.as_ref().map_or(0, |marker| marker.sequence);
-        Load { chain: Some(Chain { phase: MediaPhase::MarkerCheck { up_to }, cursor: None, ids: Vec::new(), rows: PageRows::default(), models: BTreeSet::new(), latest: 0, stale: self.stale_marked.take(), base: 0 }), ..load }
+        let stale = self.stale_marked.take() || self.stale_owed.get();
+        self.stale_owed.set(stale);
+        Load { chain: Some(Chain { phase: MediaPhase::MarkerCheck { up_to }, cursor: None, ids: Vec::new(), rows: PageRows::default(), models: BTreeSet::new(), latest: 0, stale, base: 0 }), ..load }
     }
 
     pub(super) fn request_effect(&self, load: &Load) -> WindowEffect {
@@ -220,7 +223,7 @@ impl Facts {
         let number = if chain.base > 0 { 2 } else { 1 };
         self.page_count = 1;
         self.emit(Emit::Commit { request: load.request, basis, page, number, replace_all: false, base_revision: self.request_base.get(), marker: Some(marker.clone()), keep_rows });
-        self.landing_marker = Some((marker, members));
+        self.landing_marker = Some((marker, members, !keep_rows));
         let cursor = if keep_rows { self.cursor.clone() } else { None };
         Transition(WinState::landing(Landing { request: load.request, page: 1, cursor, rows: keep_rows && self.has_rows || !chain.ids.is_empty(), models: chain.models.clone() }))
     }
@@ -348,9 +351,10 @@ impl Facts {
 
     pub(super) fn landed(&mut self, ctx: &mut Ctx<'_>, page: u32, cursor: Option<String>, rows: bool, dependency_models: &BTreeSet<String>, revision: i64) -> Outcome<WinState> {
         self.has_rows |= rows;
-        if let Some((marker, members)) = self.landing_marker.take() {
+        if let Some((marker, members, replaced)) = self.landing_marker.take() {
             self.marker = Some(marker);
             self.members = members;
+            if replaced { self.stale_owed.set(false); }
         }
         self.cursor = cursor;
         self.page = page;

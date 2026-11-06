@@ -1,1 +1,0 @@
-UPDATE blob_upload SET created_at = ?1 WHERE seq = ?2

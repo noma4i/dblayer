@@ -1,1 +1,0 @@
-UPDATE blob_upload SET seq = NULL WHERE id = ?1
