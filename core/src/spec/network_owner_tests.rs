@@ -101,6 +101,17 @@ fn net_snapshot_request() {
 fn snapshot() -> Input { Input::SnapshotRequest(Owner::Outbox, 1) }
 
 #[test]
+fn net_snapshot_windows() {
+    let mut det = DetScheduler::new(3);
+    let log = new_log();
+    let addr = det.add::<Network>("network", NetworkState::new(), Recorder::<Network>::new(&log));
+    det.post(addr, EpochStamp::Control, NetworkInput::PowerSaving { saving: true, reply: 1 });
+    det.post(addr, EpochStamp::Control, NetworkInput::SnapshotRequest { owner: Peer::Windows, epoch: 2 });
+    det.run_until_quiet(100).expect("the owner is quiet");
+    assert!(take(&log).contains(&NetworkEffect::Snapshot { owner: Peer::Windows, epoch: 2, online: false, saving: Some(true) }));
+}
+
+#[test]
 fn net_closing() { assert_eq!(Twin::new().feed(Input::Closing), vec![RefEffect::Drained]); }
 
 #[test]

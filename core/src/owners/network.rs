@@ -14,11 +14,11 @@ pub enum NetworkMode {
 pub enum NetworkEffect {
     /// `Online(value)` to every owner.
     Broadcast(bool),
-    /// `Online(online, epoch)` to the owner that asked, the first addressed snapshot; `saving` is set for Transfer: `PowerSaving(saving, epoch)`.
+    /// `Online(online, epoch)` and, for Transfer and Windows, `PowerSaving(saving, epoch)`.
     Snapshot { owner: Peer, epoch: Epoch, online: bool, saving: Option<bool> },
     /// `Foreground(seq)` to Rounds, Session and Windows.
     Foreground(u64),
-    /// `PowerSaving(value)` to Transfer.
+    /// `PowerSaving(value)` to Transfer and Windows.
     PowerSaving(bool),
     Drained(Drained),
     /// The answer to `set_online`, `foreground`, `set_power_saving`.
@@ -73,7 +73,7 @@ impl StateOwner for Network {
                 run(vec![reply(id), NetworkEffect::PowerSaving(value)])
             }
             (NetworkMode::Open { .. }, NetworkInput::PowerSaving { reply: id, .. }) => run(vec![reply(id)]),
-            (NetworkMode::Open { online, saving, .. }, NetworkInput::SnapshotRequest { owner, epoch }) => run(vec![NetworkEffect::Snapshot { owner, epoch, online, saving: (owner == Peer::Transfer).then_some(saving) }]),
+            (NetworkMode::Open { online, saving, .. }, NetworkInput::SnapshotRequest { owner, epoch }) => run(vec![NetworkEffect::Snapshot { owner, epoch, online, saving: matches!(owner, Peer::Transfer | Peer::Windows).then_some(saving) }]),
             (NetworkMode::Open { .. }, NetworkInput::Closing) => {
                 state.mode = NetworkMode::Closed;
                 run(vec![NetworkEffect::Drained(Drained { owner: "network" })])

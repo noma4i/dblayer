@@ -302,7 +302,7 @@ impl EffectRunner<Network> for NetworkRunner {
                 wiring.to_rounds(RoundsInput::Foreground);
                 wiring.tell_network(&[Peer::Rounds, Peer::Session, Peer::Windows], NetworkEvent::Foreground(seq));
             }
-            NetworkEffect::PowerSaving(saving) => wiring.tell_network(&[Peer::Transfer], NetworkEvent::PowerSaving { saving, epoch: None }),
+            NetworkEffect::PowerSaving(saving) => wiring.tell_network(&[Peer::Transfer, Peer::Windows], NetworkEvent::PowerSaving { saving, epoch: None }),
             NetworkEffect::Drained(drained) => wiring.to_lifecycle(LifecycleInput::Drained(drained)),
             NetworkEffect::Reply { id, closed } => self.held_replies.push((id, closed)),
         }

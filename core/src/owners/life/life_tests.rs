@@ -276,7 +276,7 @@ async fn network_events_reach_the_listeners_with_the_snapshot_of_the_epoch() {
     let life = start(&db, &transport).await;
     assert!(life.barrier(std::time::Duration::from_secs(5)), "the owners handled the snapshots of the first epoch");
     let heard: Arc<Mutex<Vec<(Peer, NetworkEvent)>>> = Arc::default();
-    for owner in [Peer::Rounds, Peer::Session, Peer::Transfer] {
+    for owner in [Peer::Rounds, Peer::Session, Peer::Transfer, Peer::Windows] {
         let heard = heard.clone();
         life.on_network(owner, move |event| heard.lock().unwrap().push((owner, event)));
     }
@@ -289,9 +289,12 @@ async fn network_events_reach_the_listeners_with_the_snapshot_of_the_epoch() {
         vec![
             (Peer::Rounds, NetworkEvent::Foreground(1)),
             (Peer::Session, NetworkEvent::Foreground(1)),
+            (Peer::Windows, NetworkEvent::Foreground(1)),
             (Peer::Transfer, NetworkEvent::PowerSaving { saving: true, epoch: None }),
+            (Peer::Windows, NetworkEvent::PowerSaving { saving: true, epoch: None }),
             (Peer::Rounds, NetworkEvent::Foreground(2)),
             (Peer::Session, NetworkEvent::Foreground(2)),
+            (Peer::Windows, NetworkEvent::Foreground(2)),
         ],
         "each change goes out once, to the owners the table names"
     );
