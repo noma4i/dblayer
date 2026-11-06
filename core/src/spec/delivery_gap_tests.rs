@@ -698,6 +698,19 @@ fn dlv_live_read_unread_snapshot() {
     assert_eq!(twin.read_all(), [snap(3, &["n1", "r1"], Ws::loaded_at(1))], "an unread recovery Snapshot gives way to a Snapshot");
 }
 
+/// P-DLV-18 (D-73): the value carries the revision of the last commit that touched the stream, whether the read saw the head of the database or an older one.
+#[test]
+fn dlv_prop_value_revision_relevant_commit() {
+    for seen in [3, 4] {
+        let mut twin = live_rows();
+        twin.step(Input::WindowState(Ws::loaded_at(2)));
+        twin.step(Input::Committed { revision: 3, touches: true });
+        twin.step(Input::Committed { revision: 4, touches: false });
+        let (_, values) = twin.step_read(Input::ReadDone { revision: seen, rows: rows(&["r1", "r2"]) });
+        assert_eq!(values, [Val::Delta { base: 1, revision: 3, size: 2, upserted: ids(&["r2"]), removed: Vec::new(), state: Ws::loaded_at(2) }], "seen {seen}");
+    }
+}
+
 #[test]
 fn dlv_live_read_changed() {
     let mut twin = live_rows();

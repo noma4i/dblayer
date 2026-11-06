@@ -500,9 +500,10 @@ impl Delivery {
             (DeliveryStage::Live, ReadData::Count(now)) if self.view.kind == Kind::Count && revision > self.revision => {
                 if self.count != Some(now) {
                     let state = self.state_at(revision);
+                    let shown = self.shown_revision(revision);
                     self.count = Some(now);
-                    self.revision = revision;
-                    self.push(Value::Count { revision, count: now, state }, fx);
+                    self.revision = shown;
+                    self.push(Value::Count { revision: shown, count: now, state }, fx);
                 } else {
                     self.same_rows(revision, fx);
                 }
@@ -518,15 +519,19 @@ impl Delivery {
         }
     }
 
-    fn live_rows(&mut self, revision: i64, rows: Vec<StreamRow>, replaced: Vec<(String, String)>, total: Option<u64>, fx: &mut Vec<Emit>) {
-        if revision <= self.revision {
+    /// The revision a value carries: the last commit that touched the stream, not the head of the database at the read (D-73). A read that no commit asked for (a reset of models) carries the revision it saw.
+    fn shown_revision(&self, seen: i64) -> i64 { if self.read_revision > self.revision { self.read_revision.min(seen) } else { seen } }
+
+    fn live_rows(&mut self, seen: i64, rows: Vec<StreamRow>, replaced: Vec<(String, String)>, total: Option<u64>, fx: &mut Vec<Emit>) {
+        if seen <= self.revision {
             return;
         }
+        let revision = self.shown_revision(seen);
         if rows == self.rows {
-            self.same_rows(revision, fx);
+            self.same_rows(seen, fx);
             return;
         }
-        let state = self.state_at(revision);
+        let state = self.state_at(seen);
         self.rows = rows.clone();
         self.total = total;
         self.revision = revision;

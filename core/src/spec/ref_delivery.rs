@@ -416,7 +416,7 @@ impl Delivery {
             (Stage::Opening | Stage::Live, Input::EpochEnded { own: true }) => self.end_now(Cause::SessionEnded, fx),
             (Stage::Opening | Stage::Live, Input::Closing) => self.end_now(Cause::Closed, fx),
             (Stage::Live, Input::Committed { revision, touches }) => {
-                if touches && self.kind.reads_rows() { fx.push(Effect::Read(revision)); }
+                if touches && self.kind.reads_rows() { self.read_revision = revision; fx.push(Effect::Read(revision)); }
             }
             (Stage::Live, Input::ReadDone { revision, rows }) if self.kind.reads_rows() && self.kind != Kind::Count => {
                 self.read_seen = self.read_seen.max(revision);
@@ -427,9 +427,10 @@ impl Delivery {
                 if revision <= self.revision { return; }
                 if self.count == Some(count) { self.same_rows(revision, fx); return; }
                 let state = self.state_at(revision);
+                let shown = self.shown_revision(revision);
                 self.count = Some(count);
-                self.revision = revision;
-                self.append(Val::Count { revision, count, state }, fx);
+                self.revision = shown;
+                self.append(Val::Count { revision: shown, count, state }, fx);
             }
             (Stage::Live, Input::ReadFailed { revision }) if self.kind.reads_rows() => {
                 if revision <= self.revision { return; }
@@ -521,10 +522,14 @@ impl Delivery {
         }
     }
 
-    fn live_rows(&mut self, revision: i64, rows: Vec<Row>, fx: &mut Vec<Effect>) {
-        if revision <= self.revision { return; }
-        if rows == self.rows { self.same_rows(revision, fx); return; }
-        let state = self.state_at(revision);
+    /// D-73: the value carries the revision of the last commit that touched the stream; a read nobody asked a commit for carries what it saw.
+    fn shown_revision(&self, seen: i64) -> i64 { if self.read_revision > self.revision { self.read_revision.min(seen) } else { seen } }
+
+    fn live_rows(&mut self, seen: i64, rows: Vec<Row>, fx: &mut Vec<Effect>) {
+        if seen <= self.revision { return; }
+        if rows == self.rows { self.same_rows(seen, fx); return; }
+        let state = self.state_at(seen);
+        let revision = self.shown_revision(seen);
         let old = std::mem::replace(&mut self.rows, rows.clone());
         self.revision = revision;
         let unread_snapshot = self.journal.iter().any(|kept| matches!(kept, Val::Snapshot { .. }));
