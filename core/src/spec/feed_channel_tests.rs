@@ -140,6 +140,20 @@ fn feed_chan_event_routed() {
 }
 
 #[test]
+fn feed_live_rejected_invalid() {
+    use crate::owners::contract::{RejectReason, Rejected};
+    let mut rig = Rig::live();
+    assert_eq!(rig.event("A", "Chat", "first"), ["commit"]);
+    assert_eq!(rig.event("A", "Chat", "second"), ["commit"]);
+    let first = rig.batches[0];
+    let second = rig.batches[1];
+    assert_eq!(rig.post(FeedInput::Rejected(Rejected { batch: second, reason: RejectReason::Invalid })), ["stale:Chat"]);
+    let emitted = rig.post(FeedInput::Committed(Committed { batch: first, revision: 1, tables: Vec::new(), models: Default::default() }));
+    assert_eq!(emitted, ["modelevent:1", "modellost:1"]);
+    assert_eq!(rig.state().mode(), f::Mode::Live);
+}
+
+#[test]
 fn feed_chan_event_unwanted() {
     let mut rig = Rig::live();
     assert!(rig.event("A", "Third", "t1").is_empty(), "a model that is not wanted gets no position");
