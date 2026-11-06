@@ -127,3 +127,29 @@ async fn flow_user_block() {
     yield_until("the blocked list is empty again", || blocked.len() == 0).await;
     rig.database.close_now();
 }
+
+/// P-APP-05: the three counters of the requests show one value in the banner, the tabs and the feed after an answer with a refetch of the profile and after a counters event.
+#[tokio::test(flavor = "multi_thread")]
+async fn flow_pending_counters() {
+    let rig = rig().await;
+    rig.world.set_profile(json!({"secondaryChatsCount": 4, "premiumSecondaryChatsCount": 1, "unreadSecondaryChatsCount": 3}));
+    rig.login_ios("A").await;
+    let held = Held::open(&rig.database);
+    held.shows("A").await;
+    land_event(&rig, "User", json!({"id": "u5", "name": "Eve", "connectionStatus": "PENDING"}));
+    land_event(&rig, "Chat", json!({"id": "c1", "name": "Eve", "connectionStatus": "PENDING"}));
+    let epoch = rig.database.session_epoch();
+    let counters = |rows: &Rows| ["secondaryChatsCount", "premiumSecondaryChatsCount", "unreadSecondaryChatsCount"].map(|name| field(&rig, rows, "user", name));
+    let places = [&held.single, &held.entity, &held.rows];
+    let all = |values: [i64; 3]| places.iter().all(|rows| counters(rows) == values.map(|value| Some(int(value))));
+    yield_until("every place shows the profile counters", || all([4, 1, 3])).await;
+
+    rig.world.set_profile(json!({"secondaryChatsCount": 3, "premiumSecondaryChatsCount": 1, "unreadSecondaryChatsCount": 2}));
+    let receipt = bound(rig.database.act(epoch, "User".into(), "u5".into(), "answer_connection".into(), json!({"connectionStatus": "CONNECTED"}).to_string(), json!({"chatId": "c1"}).to_string())).await.unwrap();
+    assert!(matches!(bound(rig.database.outcome(receipt)).await.unwrap(), WireOperationOutcome::Confirmed { .. }));
+    yield_until("the refetch of the profile sets every place to one value", || all([3, 1, 2])).await;
+
+    land_event(&rig, "User", json!({"id": "user", "secondaryChatsCount": 0, "premiumSecondaryChatsCount": 0, "unreadSecondaryChatsCount": 0}));
+    yield_until("a counters event sets every place to one value", || all([0, 0, 0])).await;
+    rig.database.close_now();
+}

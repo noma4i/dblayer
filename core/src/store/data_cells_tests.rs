@@ -88,3 +88,18 @@ fn out_prop_destroy_hides_row() {
         assert_eq!(moment_text(&db), Value::Null, "via_event={via_event}: a landing does not show the row before the outcome of the destroy");
     }
 }
+
+#[test]
+fn out_server_removed_row() {
+    let db = open_moments();
+    let effects = crate::owners::store::IntentEffects { rows: vec![crate::owners::store::EffectRow { model: "moments".into(), row_id: "m1".into(), values: json!({"id": "m1", "userId": "u1", "text": "edit"}).to_string() }], ..Default::default() };
+    write(&db, BatchAuthor::Outbox, Vec::new(), vec![StoreOp::Intent { op_id: 7, model: "moments".into(), row_id: "m1".into(), action: "update".into(), payload: "{}".into(), effects }]);
+    let open = |db: &Store| db.lock().connection.query_row("SELECT COUNT(*) FROM op", [], |row| row.get::<_, i64>(0)).unwrap();
+    assert_eq!(open(&db), 1);
+    let event = json!({"op": "delete", "id": "m1"}).to_string();
+    let batch = StoreBatch { author: BatchAuthor::Feed, id: 2, epoch: 1, basis: Default::default(), rows: vec![("moments".into(), event)], intents: 0, credential: None, ops: Vec::new() };
+    let written = db.write_batch(&batch, db.files(), db.pointer_guards(), None).unwrap();
+    assert_eq!(written.removed_operations, vec![7], "the operation of the removed row leaves with the row");
+    assert_eq!(open(&db), 0);
+    assert_eq!(moment_text(&db), Value::Null);
+}

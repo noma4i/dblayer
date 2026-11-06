@@ -261,7 +261,7 @@ fn keep_small_copy(files: &FileDirectories, id: &str, location: crate::files::Lo
     }
 }
 
-fn temporary(error: &TransportError) -> bool { RetryClass::of_error(error) != RetryClass::Fatal }
+pub(crate) fn temporary(error: &TransportError) -> bool { RetryClass::of_error(error) != RetryClass::Fatal }
 
 impl EffectRunner<Transfers> for TransferExecutor {
     fn run(&mut self, stamp: EpochStamp, effect: TransferEffect, back: &Back<Transfers>) {

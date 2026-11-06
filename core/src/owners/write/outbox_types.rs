@@ -182,6 +182,10 @@ pub enum OutboxInput {
     Expire { model: String, row: String, due: Time },
     ArmExpiry { model: String, row: String, revision: u64, after: u64 },
     DisarmExpiry { model: String, row: String },
+    /// The server removed the rows of these operations: they end `Discarded` with no `Mutate` and no rollback.
+    ArmReset { reset: crate::owners::store::EphemeralReset },
+    ResetField { reset: crate::owners::store::EphemeralReset },
+    RowsGone { ops: Vec<OpId> },
     ExpireRow { model: String, row: String, revision: u64 },
     Tick(Time),
 }

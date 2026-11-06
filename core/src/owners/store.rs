@@ -228,11 +228,13 @@ impl StoreState {
                 let Some(written) = self.writing.take() else { return };
                 match result {
                     Err(error) => fx.push(StoreEffect::Reply { author, batch, epoch: written.epoch, reply: StoreReply::Rejected(RejectReason::Storage(error)) }),
-                    Ok(WriteDone { revision, position, observed, expiring, removed_memory, stale_parents }) => {
+                    Ok(WriteDone { revision, position, observed, expiring, removed_memory, stale_parents, removed_operations, resets }) => {
                         self.revision = revision;
                         let models: Vec<String> = written.models().into_iter().collect();
                         if !observed.is_empty() { fx.push(StoreEffect::Observed { epoch: written.epoch, batch, payloads: observed }); }
                         fx.push(StoreEffect::Reply { author, batch, epoch: written.epoch, reply: StoreReply::Committed { revision, stale_parents } });
+                        for reset in resets { fx.push(StoreEffect::ArmReset { epoch: written.epoch, reset }); }
+                        if !removed_operations.is_empty() { fx.push(StoreEffect::OperationsGone { epoch: written.epoch, ops: removed_operations }); }
                         for (model, row_id) in removed_memory { fx.push(StoreEffect::DisarmExpiry { epoch: written.epoch, model, row_id }); }
                         for item in expiring { fx.push(StoreEffect::ArmExpiry { epoch: written.epoch, model: item.model, row_id: item.row_id, revision, deadline: item.written_at.saturating_add(item.expires_after) }); }
                         fx.push(StoreEffect::BroadcastCommitted { revision, position, models: Some(models) });

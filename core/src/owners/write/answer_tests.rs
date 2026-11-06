@@ -23,7 +23,7 @@ fn object(text: &str) -> serde_json::Map<String, serde_json::Value> { serde_json
 
 /// out_sending_response_batch_items: every element row of the answer replaces the one waiting temporary row with its key, in the order of the answer; an element the answer lacks and an ambiguous key keep their temporary rows.
 #[test]
-fn the_rows_of_a_batch_answer_replace_the_temporary_rows_by_key() {
+fn out_sending_response_batch_items() {
     let waiting = vec![
         ("temp-a".to_string(), object(r#"{"clientKey":"a"}"#)),
         ("temp-b".to_string(), object(r#"{"clientKey":"b"}"#)),

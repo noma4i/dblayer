@@ -65,6 +65,8 @@ pub struct Committed {
     pub models: Models,
     /// Parent models whose `sets:` fields the batch did not write because the parent row is not in the base.
     pub stale_parents: Vec<String>,
+    /// The version of the overlay of ephemeral values at `revision`.
+    pub position: u64,
 }
 
 /// The models a commit touched: `All` touches every stream, a `Set` touches the streams of its tables (the empty set touches none).

@@ -125,8 +125,9 @@ impl Delivery {
         if !self.view.kind.reads_rows() || !self.touches(committed) {
             return;
         }
-        if self.stage == DeliveryStage::Live && committed.revision <= self.read_seen { return; }
+        if self.stage == DeliveryStage::Live && (committed.revision, committed.position) <= (self.read_seen, self.read_position) { return; }
         if matches!(self.stage, DeliveryStage::Opening | DeliveryStage::Live) {
+            self.reading_position = committed.position;
             fx.push(self.new_read(committed.revision));
         }
     }
@@ -139,6 +140,7 @@ impl Delivery {
             self.pending_read = Some((read_id, revision, data));
             return;
         }
+        self.read_position = if revision > self.read_seen { self.reading_position } else { self.read_position.max(self.reading_position) };
         self.read_seen = self.read_seen.max(revision);
         if self.stage == DeliveryStage::Live && (revision > self.revision || self.resync_pending) && self.read_error {
             self.read_error = false;
@@ -203,9 +205,10 @@ impl Delivery {
     pub(super) fn shown_revision(&self, seen: i64) -> i64 { if self.read_revision > self.revision { self.read_revision.min(seen) } else { seen } }
 
     pub(super) fn live_rows(&mut self, seen: i64, rows: Vec<StreamRow>, replaced: Vec<(String, String)>, total: Option<u64>, fx: &mut Vec<Emit>) {
-        if seen <= self.revision {
+        if seen < self.revision || (seen == self.revision && self.reading_position <= self.shown_position) {
             return;
         }
+        self.shown_position = if seen > self.revision { self.reading_position } else { self.reading_position.max(self.shown_position) };
         let revision = self.shown_revision(seen);
         if rows == self.rows {
             self.same_rows(seen, fx);

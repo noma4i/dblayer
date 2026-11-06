@@ -16,6 +16,8 @@ pub(crate) struct BatchWritten {
     pub expiring: Vec<crate::owners::store::MemoryExpiry>,
     pub removed_memory: Vec<(String, String)>,
     pub stale_parents: Vec<String>,
+    pub removed_operations: Vec<u64>,
+    pub resets: Vec<crate::owners::store::EphemeralReset>,
 }
 
 impl Store {
@@ -30,7 +32,7 @@ impl Store {
                 }
                 Err(error)
             }
-            Ok((result, observed, live_files, discarded, (expiring, removed_memory, stale_parents), position)) => {
+            Ok((result, observed, live_files, discarded, (expiring, removed_memory, stale_parents), position, (removed_operations, resets))) => {
                 let mut faults = Vec::new();
                 for file in prepared.iter().filter(|file| file.record.location == Location::Directory) {
                     let removed = if live_files.contains(&file.record.id) { files.finish(&file.record.id) } else { files.discard_partial(&file.record.id) };
@@ -41,12 +43,12 @@ impl Store {
                 }
                 let revision = result.result().revision.unwrap_or_default();
                 result.publish();
-                Ok(BatchWritten { revision: u64::try_from(revision).map_err(|_| StoreError::Constraint("negative revision".into()))?, position, observed, faults, expiring, removed_memory, stale_parents })
+                Ok(BatchWritten { revision: u64::try_from(revision).map_err(|_| StoreError::Constraint("negative revision".into()))?, position, observed, faults, expiring, removed_memory, stale_parents, removed_operations, resets })
             }
         }
     }
 
-    fn write_batch_prepared<'a>(&'a self, batch: &StoreBatch, guards: &BTreeMap<String, Vec<AssociationSpec>>, min_pin_revision: Option<u64>, now: i64, files: &[super::file_write::PreparedFile]) -> Result<(super::Committed<'a>, Vec<String>, std::collections::HashSet<String>, Vec<String>, (Vec<crate::owners::store::MemoryExpiry>, Vec<(String, String)>, Vec<String>), u64), StoreError> {
+    fn write_batch_prepared<'a>(&'a self, batch: &StoreBatch, guards: &BTreeMap<String, Vec<AssociationSpec>>, min_pin_revision: Option<u64>, now: i64, files: &[super::file_write::PreparedFile]) -> Result<(super::Committed<'a>, Vec<String>, std::collections::HashSet<String>, Vec<String>, (Vec<crate::owners::store::MemoryExpiry>, Vec<(String, String)>, Vec<String>), u64, (Vec<u64>, Vec<crate::owners::store::EphemeralReset>)), StoreError> {
         let inner = self.lock();
         if !inner.ready { return Err(StoreError::Refused); }
         let transaction = inner.connection.unchecked_transaction()?;
@@ -70,6 +72,7 @@ impl Store {
             Vec::new()
         };
         let mut writes_database = !results.is_empty() || (batch.author != BatchAuthor::Feed && !batch.rows.is_empty());
+        let mut resets = Vec::new();
         let mut rolled_back = std::collections::BTreeSet::new();
         for (index, op) in batch.ops.iter().enumerate() {
             if let crate::owners::store::StoreOp::EphemeralRows { model, rows } = op {
@@ -77,6 +80,10 @@ impl Store {
                     let values = serde_json::from_str::<serde_json::Value>(&row.values)?.as_object().cloned().ok_or_else(|| StoreError::Constraint("ephemeral values must be an object".into()))?;
                     overlay.push((model.clone(), row.row_id.clone(), values));
                 }
+                continue;
+            }
+            if let crate::owners::store::StoreOp::ResetEphemeral { model, row_id, field, position } = op {
+                resets.push((model.clone(), row_id.clone(), field.clone(), *position));
                 continue;
             }
             writes_database = true;
@@ -102,12 +109,16 @@ impl Store {
         transaction.execute_batch("DROP TRIGGER batch_file_delete; DROP TABLE batch_file_deletions;")?;
         let (expiring, removed_memory) = super::batch_result::expiry(&transaction, &inner.models, &results, inner.now_ms())?;
         let stale_parents = super::batch_result::stale_parents(&transaction, &inner.models, &results)?;
+        let removed_operations: Vec<u64> = if batch.author == BatchAuthor::Feed { results.iter().flat_map(|result| result.operations.iter()).filter_map(|seq| u64::try_from(*seq).ok()).collect() } else { Vec::new() };
         let target_revision = if writes_database { revision } else { base_revision };
         let mut combined = super::batch_result::consolidate(&transaction, &inner.models, originals, results, target_revision)?;
         let current = self.overlays.get(base_revision).ok_or_else(|| StoreError::Constraint("overlay revision is unavailable".into()))?;
-        let mut snapshot = if writes_database || !overlay.is_empty() { self.overlays.next(base_revision, writes_database).ok_or_else(|| StoreError::Constraint("overlay revision is unavailable".into()))? } else { current.as_ref().clone() };
-        combined.rows.extend(super::overlay_write::apply(&mut snapshot, &inner.models, overlay)?);
+        let mut snapshot = if writes_database || !overlay.is_empty() || !resets.is_empty() { self.overlays.next(base_revision, writes_database).ok_or_else(|| StoreError::Constraint("overlay revision is unavailable".into()))? } else { current.as_ref().clone() };
+        let (changes, arms) = super::overlay_write::apply(&mut snapshot, &inner.models, overlay)?;
+        combined.rows.extend(changes);
+        combined.rows.extend(super::overlay_write::reset(&mut snapshot, &inner.models, &resets)?);
         let position = snapshot.position;
+        combined.position = position;
         if writes_database {
             super::tombstones::prune_tombstones(&transaction, now, &TombstoneRetention::DEFAULT, min_pin_revision)?;
             crate::ddl::manifest_write(&transaction, crate::ddl::REVISION_SEQ_KEY, &revision.to_string())?;
@@ -117,6 +128,6 @@ impl Store {
             transaction.rollback()?;
             if position != current.position { self.overlays.publish(snapshot); }
         }
-        Ok((self.commit_announcement(inner, combined), observed, live_files, discarded, (expiring, removed_memory, stale_parents), position))
+        Ok((self.commit_announcement(inner, combined), observed, live_files, discarded, (expiring, removed_memory, stale_parents), position, (removed_operations, arms)))
     }
 }

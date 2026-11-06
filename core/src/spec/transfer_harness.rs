@@ -286,7 +286,7 @@ impl Twin {
     }
 
     /// `Committed` for the oldest batch the Store has not answered.
-    pub fn commit(&mut self) -> Out { self.answer(|batch| TransferInput::Committed(Committed { batch, revision: 1, tables: Vec::new(), models: Default::default(), stale_parents: Vec::new() })) }
+    pub fn commit(&mut self) -> Out { self.answer(|batch| TransferInput::Committed(Committed { batch, revision: 1, tables: Vec::new(), models: Default::default(), stale_parents: Vec::new(), position: 0 })) }
 
     pub fn reject(&mut self, reason: RejectReason) -> Out { self.answer(|batch| TransferInput::Rejected(Rejected { batch, reason })) }
 

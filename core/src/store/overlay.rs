@@ -41,9 +41,9 @@ impl OverlaySnapshot {
         self.values.remove(row);
     }
 
-    pub fn expire(&mut self, row: &RowKey, field: &str, revision: i64, position: u64) -> bool {
+    pub fn expire(&mut self, row: &RowKey, field: &str, position: u64) -> bool {
         let Some(mut fields) = self.values.get(row).cloned() else { return false };
-        if !fields.get(field).is_some_and(|slot| slot.revision == revision && slot.position == position) { return false; }
+        if !fields.get(field).is_some_and(|slot| slot.position == position) { return false; }
         fields.remove(field);
         if fields.is_empty() { self.values.remove(row); } else { self.values.insert(row.clone(), fields); }
         true

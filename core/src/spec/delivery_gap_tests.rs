@@ -179,7 +179,7 @@ impl Twin {
             }
             Input::Committed { revision, touches } => {
                 let table = if *touches { "moments" } else { "other" };
-                self.post(d::DeliveryInput::Committed(Committed { batch: 0, revision: *revision, tables: vec![table.into()], models: Default::default(), stale_parents: Vec::new() }));
+                self.post(d::DeliveryInput::Committed(Committed { batch: 0, revision: *revision, tables: vec![table.into()], models: Default::default(), stale_parents: Vec::new(), position: 0 }));
             }
             Input::ReadDone { revision, rows } => self.post(d::DeliveryInput::ReadDone { stream, read_id: self.read_id(), revision: *revision, data: d::ReadData::Rows { rows: rows_of(rows), replaced: Vec::new(), total: self.total } }),
             Input::CountDone { revision, count } => self.post(d::DeliveryInput::ReadDone { stream, read_id: self.read_id(), revision: *revision, data: d::ReadData::Count(*count) }),
@@ -500,7 +500,7 @@ fn dlv_open_live() {
 fn dlv_committed_all_models_touch_every_stream() {
     let mut twin = open_rows();
     take(&twin.log);
-    twin.post(d::DeliveryInput::Committed(Committed { batch: 0, revision: 2, tables: vec!["other".into()], models: Models::All, stale_parents: Vec::new() }));
+    twin.post(d::DeliveryInput::Committed(Committed { batch: 0, revision: 2, tables: vec!["other".into()], models: Models::All, stale_parents: Vec::new(), position: 0 }));
     assert_eq!(Twin::modelled(take(&twin.log)), [Effect::Read(2)]);
 }
 

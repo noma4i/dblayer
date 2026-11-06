@@ -142,6 +142,8 @@ pub enum StoreOp {
     LocalRows { model: String, rows: Vec<RowValue> },
     RemoveRows { model: String, ids: Vec<String> },
     ExpireRow { model: String, row_id: String, write_revision: u64 },
+    /// The field of an ephemeral row goes back to its default when the overlay still holds the value written at `position`.
+    ResetEphemeral { model: String, row_id: String, field: String, position: u64 },
     Upload { row: UploadRow, kind: UploadKind },
     RemoveUpload { key: String },
     /// A multipart upload of a removed transfer: `abort` goes to the server until the server answers.
@@ -216,6 +218,15 @@ pub struct MemoryExpiry {
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct EphemeralReset {
+    pub model: String,
+    pub row_id: String,
+    pub field: String,
+    pub position: u64,
+    pub after_ms: u64,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct WriteDone {
     pub revision: u64,
     pub position: u64,
@@ -223,6 +234,8 @@ pub struct WriteDone {
     pub expiring: Vec<MemoryExpiry>,
     pub removed_memory: Vec<(String, String)>,
     pub stale_parents: Vec<String>,
+    pub removed_operations: Vec<u64>,
+    pub resets: Vec<EphemeralReset>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -253,6 +266,9 @@ pub enum StoreEffect {
     Observed { epoch: Epoch, batch: BatchId, payloads: Vec<String> },
     ArmExpiry { epoch: Epoch, model: String, row_id: String, revision: u64, deadline: u64 },
     DisarmExpiry { epoch: Epoch, model: String, row_id: String },
+    /// The server removed rows: their operations left the queue in the batch.
+    ArmReset { epoch: Epoch, reset: EphemeralReset },
+    OperationsGone { epoch: Epoch, ops: Vec<u64> },
     /// The snapshot of the intents for Outbox, Transfer and Session.
     ReadIntents { epoch: Epoch },
     CloseReads,

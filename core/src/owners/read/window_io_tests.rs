@@ -131,3 +131,25 @@ fn win_io_cancel_no_answer() {
     assert_eq!(saw_input(&rig.det, "Response"), 0, "a cancelled request gives no answer");
     assert!(rig.batches.all().is_empty());
 }
+
+/// P-SESS-14: the same raw outcome gets one class from `RetryClass`, and Windows and Transfer take their verdict from that class.
+#[test]
+fn sess_prop_transport_classify() {
+    use crate::owners::contract::{ErrorClass, TransportOutcome};
+    use crate::transport::RetryClass;
+    let graphql = |code: &str| TransportError::Graphql { messages: vec![code.into()], extensions: Some(crate::transport::GraphqlExtensions { code: Some(code.into()), transaction_disposition: None, fields: Default::default() }) };
+    let table = [
+        (TransportError::Network("down".into()), RetryClass::Network, ErrorClass::Network, true),
+        (TransportError::Http { status: 503, body: String::new() }, RetryClass::Server, ErrorClass::Server, true),
+        (TransportError::Http { status: 429, body: String::new() }, RetryClass::Retriable, ErrorClass::Server, true),
+        (TransportError::Http { status: 400, body: String::new() }, RetryClass::Fatal, ErrorClass::Permanent, false),
+        (graphql("TIMEOUT"), RetryClass::Retriable, ErrorClass::Server, true),
+        (graphql("FORBIDDEN"), RetryClass::Fatal, ErrorClass::Permanent, false),
+    ];
+    for (error, class, window, transfer) in table {
+        assert_eq!(RetryClass::of_error(&error), class, "{error}");
+        assert!(matches!(super::window_io::failure::<()>(&error), TransportOutcome::Error(found) if found.class == window), "{error}: Windows");
+        assert_eq!(crate::owners::write::transfer_executor::temporary(&error), transfer, "{error}: Transfer");
+    }
+    assert!(matches!(super::window_io::failure::<()>(&TransportError::Interrupted("cancelled".into())), TransportOutcome::Dropped), "only the core sets Interrupted, and it is Dropped everywhere");
+}

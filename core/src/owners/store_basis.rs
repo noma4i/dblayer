@@ -13,7 +13,7 @@ impl StoreBatch {
             match op {
                 StoreOp::Rows { model, .. } | StoreOp::LocalRows { model, .. } | StoreOp::EphemeralRows { model, .. }
                 | StoreOp::LocalPending { model, .. } | StoreOp::RemoveRows { model, .. } | StoreOp::AttachFile { model, .. }
-                | StoreOp::DetachFile { model, .. } | StoreOp::Numbers { model, .. } | StoreOp::Swap { model, .. } | StoreOp::ExpireRow { model, .. } => { models.insert(model.clone()); }
+                | StoreOp::DetachFile { model, .. } | StoreOp::Numbers { model, .. } | StoreOp::Swap { model, .. } | StoreOp::ExpireRow { model, .. } | StoreOp::ResetEphemeral { model, .. } => { models.insert(model.clone()); }
                 StoreOp::Window { model, related, .. } => {
                     models.insert(model.clone());
                     models.extend(related.iter().map(|(model, _)| model.clone()));

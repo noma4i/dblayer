@@ -139,6 +139,18 @@ impl OutboxState {
         }
     }
 
+    /// The server removed the row: each of its open operations ends `Discarded`, a request on its way is released.
+    pub(super) fn rows_gone(&mut self, ops: Vec<OpId>, fx: &mut Effects<Outbox>) {
+        for op_id in ops {
+            let Some(operation) = self.ops.get(&op_id) else { continue };
+            if matches!(operation.stage, Stage::Done | Stage::Landing | Stage::RollingBack(_) | Stage::Submitting) { continue; }
+            if operation.sent {
+                if let Some(session) = self.peers.session { fx.push(Effect::Send(Outbound::new(session, SessionInput::Cancel { req_id: operation.request_id }))); }
+            }
+            self.finish(op_id, OutboxOutcome::Discarded, false, fx);
+        }
+    }
+
     /// `(none) x DiscardRestoreFailed`: the operation of the element ends like a `Discard`, the element leaves in the same batch.
     pub(super) fn discard_restore_failed(&mut self, table: &str, key: &str, reply: ReplyId, fx: &mut Effects<Outbox>) {
         let found = self.ops.values().find(|operation| operation.stage == Stage::Failed && operation.restore_element.as_ref().is_some_and(|(found_table, found_key)| found_table == table && found_key == key));

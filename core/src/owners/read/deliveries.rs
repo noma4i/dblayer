@@ -227,6 +227,9 @@ struct Delivery {
     read_id: u64,
     /// The revision of the last read that finished: the rows of the stream are current up to it, `revision` is the revision of the last value of rows.
     read_seen: i64,
+    read_position: u64,
+    shown_position: u64,
+    reading_position: u64,
     revision: i64,
     acknowledged: Option<i64>,
     resync_pending: bool,
@@ -262,9 +265,16 @@ struct Delivery {
 
 fn visible_after(state: &WindowState) -> i64 { state.loaded.unwrap_or(0) }
 
+fn shown_hash(row: &WireRow) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    format!("{:?}", row.cells).hash(&mut hasher);
+    hasher.finish()
+}
+
 fn entry(row: &StreamRow) -> Result<Entry, String> {
     let id = RowId::new(&row.id).map_err(|error| error.to_string())?;
-    Ok(Entry { id, stamp: Stamp { revision: row.stamp, ..Stamp::default() } })
+    Ok(Entry { id, stamp: Stamp { revision: row.stamp, shown: row.row.as_ref().map_or(0, shown_hash), ..Stamp::default() } })
 }
 
 impl Delivery {
@@ -277,6 +287,9 @@ impl Delivery {
             read_revision: revision,
             read_id: 0,
             read_seen: 0,
+            read_position: 0,
+            shown_position: 0,
+            reading_position: 0,
             revision: 0,
             acknowledged: None,
             resync_pending: false,

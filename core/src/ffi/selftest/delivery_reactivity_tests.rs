@@ -395,3 +395,26 @@ async fn dlv_prop_one_change_every_view_related_row() {
     assert_quiet(db, &[&list, &entity, &count]).await;
     db.close_now();
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn dlv_live_overlay_position() {
+    let listen = json!({"subscription":"RecordEvents", "root":"recordEvents.item", "apply":{"effect":"ephemeral", "fields":{"typing":"active"}}});
+    let (database, transport, stream, token) = feed_listen_events(listen).await;
+    assert!(transport.cable.event(&token, json!({"data":{"recordEvents":{"entries":[{"topic":"MESSAGE","action":"UPDATED","recordId":"c1","chat":{"id":"c1","title":"t","revision":1,"lists":[]}}]}}})));
+    assert!(matches!(bound(stream.pull()).await.unwrap(), Some(ReadValue::Event { after: Some(_), .. })));
+    let entity = database.subscribe_values(database.session_epoch(), ReadRequest::Entity { model: "Chat".into(), id: "c1".into(), fetch: ReadFetch::Never });
+    let ReadValue::Snapshot { revision, rows, .. } = bound(entity.pull()).await.unwrap().unwrap() else { panic!("the first value is a Snapshot") };
+    assert!(rows[0].cells.contains(&Cell::Bool { value: false }));
+    for (active, shown) in [(true, true), (false, false)] {
+        assert!(transport.cable.event(&token, json!({"data":{"recordEvents":{"item":{"id":"c1","active":active}}}})));
+        let value = loop {
+            match bound(entity.pull()).await.unwrap().unwrap() {
+                ReadValue::Delta { revision: seen, rows, .. } => { assert_eq!(seen, revision, "an overlay-only batch keeps the revision"); break rows; }
+                ReadValue::State { .. } => {}
+                other => panic!("an overlay-only batch is a Delta: {other:?}"),
+            }
+        };
+        assert!(value[0].cells.contains(&Cell::Bool { value: shown }), "active={active}: {value:?}");
+    }
+    bound(database.close_database()).await.unwrap();
+}

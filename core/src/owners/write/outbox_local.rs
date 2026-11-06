@@ -101,6 +101,25 @@ impl OutboxState {
         fx.push(Effect::Schedule { id, after: std::time::Duration::from_millis(after), input: OutboxInput::ExpireRow { model, row, revision } });
     }
 
+    pub(super) fn arm_reset(&mut self, reset: crate::owners::store::EphemeralReset, fx: &mut Effects<Outbox>) {
+        let key = (reset.model.clone(), reset.row_id.clone(), reset.field.clone());
+        if let Some((id, _)) = self.resets.remove(&key) { fx.push(Effect::Cancel(id)); }
+        let id = ScheduleId(EXPIRE_TIMER + self.next_schedule);
+        self.next_schedule += 1;
+        self.resets.insert(key, (id, reset.position));
+        let after = std::time::Duration::from_millis(reset.after_ms);
+        fx.push(Effect::Schedule { id, after, input: OutboxInput::ResetField { reset } });
+    }
+
+    pub(super) fn reset_field(&mut self, reset: crate::owners::store::EphemeralReset, fx: &mut Effects<Outbox>) {
+        let key = (reset.model.clone(), reset.row_id.clone(), reset.field.clone());
+        if !self.resets.get(&key).is_some_and(|(_, held)| *held == reset.position) { return; }
+        self.resets.remove(&key);
+        let batch = self.next_batch;
+        self.next_batch += 1;
+        self.commit(batch, BTreeMap::new(), vec![StoreOp::ResetEphemeral { model: reset.model, row_id: reset.row_id, field: reset.field, position: reset.position }], 0, fx);
+    }
+
     pub(super) fn disarm_expiry(&mut self, model: &str, row: &str, fx: &mut Effects<Outbox>) {
         if let Some((id, _)) = self.expiry.remove(&(model.to_string(), row.to_string())) { fx.push(Effect::Cancel(id)); }
     }

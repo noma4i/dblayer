@@ -10,11 +10,13 @@ pub struct Stamp {
     pub revision: i64,
     pub sync: SyncInfo,
     pub related: Vec<(RowRef, Stamp)>,
+    /// Hash of the shown cells: a change of an ephemeral value moves it while the revision of the row stays.
+    pub shown: u64,
 }
 
 impl Stamp {
     pub fn of(row: &Row, related: Vec<(RowRef, Stamp)>) -> Self {
-        Self { revision: row.revision, sync: row.sync.clone(), related }
+        Self { revision: row.revision, sync: row.sync.clone(), related, shown: 0 }
     }
 }
 

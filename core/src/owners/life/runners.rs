@@ -153,7 +153,7 @@ impl EffectRunner<StoreWriter> for StoreRunner {
             StoreEffect::Write { batch, min_pin_revision } => {
                 let result = store.write_batch(&batch, self.db.files(), self.db.pointer_guards(), min_pin_revision).map(|written| {
                     for fault in written.faults { wiring.fault(fault); }
-                    WriteDone { revision: written.revision, position: written.position, observed: written.observed, expiring: written.expiring, removed_memory: written.removed_memory, stale_parents: written.stale_parents }
+                    WriteDone { revision: written.revision, position: written.position, observed: written.observed, expiring: written.expiring, removed_memory: written.removed_memory, stale_parents: written.stale_parents, removed_operations: written.removed_operations, resets: written.resets }
                 }).map_err(|error| error.to_string());
                 back.reply(EpochStamp::Control, StoreInput::Written { author: batch.author, batch: batch.id, result });
             }
@@ -191,6 +191,8 @@ impl EffectRunner<StoreWriter> for StoreRunner {
                 wiring.to_local_writes_at(EpochStamp::Epoch(epoch), OutboxInput::ArmExpiry { model, row: row_id, revision, after: deadline.saturating_sub(now) });
             }
             StoreEffect::DisarmExpiry { epoch, model, row_id } => wiring.to_local_writes_at(EpochStamp::Epoch(epoch), OutboxInput::DisarmExpiry { model, row: row_id }),
+            StoreEffect::ArmReset { epoch, reset } => wiring.to_local_writes_at(EpochStamp::Epoch(epoch), OutboxInput::ArmReset { reset }),
+            StoreEffect::OperationsGone { epoch, ops } => wiring.to_local_writes_at(EpochStamp::Epoch(epoch), OutboxInput::RowsGone { ops }),
             StoreEffect::BroadcastCommitted { revision, position, models } => wiring.tell_committed(crate::owners::contract::CommittedBroadcast {
                 revision,
                 position,

@@ -374,6 +374,8 @@ pub struct CommitResult {
     pub(crate) item_snapshots: Vec<(String, Option<crate::store::Row>)>,
     pub(crate) ended_uploads: Vec<(i64, crate::upload::UploadStatus, Option<crate::syncstate::OperationFailure>)>,
     pub(crate) discarded_items: Vec<(i64, String)>,
+    /// The version of the overlay of ephemeral values the commit published at its revision.
+    pub position: u64,
 }
 
 impl CommitResult {
@@ -393,6 +395,7 @@ impl CommitResult {
             item_snapshots: Vec::new(),
             ended_uploads: Vec::new(),
             discarded_items: Vec::new(),
+            position: 0,
         }
     }
 
