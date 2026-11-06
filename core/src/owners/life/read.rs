@@ -46,9 +46,10 @@ pub(super) struct ReadAt {
 
 fn drained(wiring: &Wiring, drained: Drained) { wiring.to_lifecycle(LifecycleInput::Drained(drained)); }
 
-/// Adds the owners at the indexes `base`, `base + 1`, `base + 2`; each owner holds the addresses of the others.
-pub(super) fn add(builder: &mut RuntimeBuilder, wiring: &Arc<Wiring>, ports: &Ports, store: Address<StoreWriter>, base: usize) -> ReadAt {
-    let (windows_at, deliveries_at, feed_at) = (Address::<Windows>::new(base), Address::<Deliveries>::new(base + 1), Address::<Feed>::new(base + 2));
+pub(super) fn add(builder: &mut RuntimeBuilder, wiring: &Arc<Wiring>, ports: &Ports, store: Address<StoreWriter>) -> ReadAt {
+    let windows_at = builder.reserve::<Windows>();
+    let deliveries_at = builder.reserve::<Deliveries>();
+    let feed_at = builder.reserve::<Feed>();
     let db: std::sync::Arc<Store> = ports.db.clone();
     let handle = builder.handle();
     let transport: Option<Arc<dyn Transport>> = ports.transport.clone();
@@ -99,7 +100,7 @@ pub(super) fn add(builder: &mut RuntimeBuilder, wiring: &Arc<Wiring>, ports: &Po
             WindowsEffect::Window { .. } => {}
         }),
     );
-    let windows = builder.add::<Windows>("windows", state, {
+    builder.install(windows_at, "windows", state, {
         let io = windows_io.counted_by(handle.clone());
         #[cfg(test)]
         let io = io.flights_in(wiring.flights.clone());
@@ -123,7 +124,7 @@ pub(super) fn add(builder: &mut RuntimeBuilder, wiring: &Arc<Wiring>, ports: &Po
             DeliveryEffect::Stream { .. } => {}
         }),
     ).counted_by(handle.clone());
-    let deliveries = builder.add::<Deliveries>("deliveries", DeliveriesState::new(0, DeliveryPeers { windows: windows_at, feed: feed_at }, db.published_revision()), delivery_io);
+    builder.install(deliveries_at, "deliveries", DeliveriesState::new(0, DeliveryPeers { windows: windows_at, feed: feed_at }, db.published_revision()), delivery_io);
     let feed_wiring = wiring.clone();
     let feed_rest: Rest<FeedEffect> = Box::new(move |_stamp, effect| match effect {
         FeedEffect::Drained(done) => drained(&feed_wiring, done),
@@ -134,14 +135,13 @@ pub(super) fn add(builder: &mut RuntimeBuilder, wiring: &Arc<Wiring>, ports: &Po
         _ => {}
     });
     let feed_state = FeedState::new(0, FeedPeers { store, windows: windows_at, deliveries: deliveries_at }, debounce_of(&db), channels_of(&db));
-    let feed = match &ports.cable {
+    match &ports.cable {
         Some(lines) => {
             let codec = Arc::new(SchemaFeedCodec::new(db.clone(), ports.read_operations.clone().unwrap_or_default()));
-            builder.add::<Feed>("feed", feed_state, FeedIo::new(lines.clone(), codec, ports.executor.clone(), feed_rest, (ports.db.lock().clock.clone(), wiring.gate.clone())).counted_by(handle.clone()).admitted_by(feed_admit.clone()))
+            builder.install(feed_at, "feed", feed_state, FeedIo::new(lines.clone(), codec, ports.executor.clone(), feed_rest, (ports.db.lock().clock.clone(), wiring.gate.clone())).counted_by(handle.clone()).admitted_by(feed_admit.clone()))
         }
-        None => builder.add::<Feed>("feed", feed_state, FeedWithoutIo { rest: feed_rest }),
+        None => builder.install(feed_at, "feed", feed_state, FeedWithoutIo { rest: feed_rest }),
     };
-    debug_assert!(windows.index() == base && deliveries.index() == base + 1 && feed.index() == base + 2);
 
     let reply_wiring = wiring.clone();
     wiring.on_store_reply(BatchAuthor::Window, move |batch, reply| {
@@ -163,7 +163,7 @@ pub(super) fn add(builder: &mut RuntimeBuilder, wiring: &Arc<Wiring>, ports: &Po
         commit_wiring.to_deliveries(DeliveryInput::Committed(Committed { batch: 0, revision: notice.revision, tables: notice.tables.clone(), models, stale_parents: Vec::new(), position: notice.position }));
         commit_wiring.to_windows(WindowsInput::StoreCommitted { models: notice.models.clone(), revision: notice.revision });
     });
-    ReadAt { windows, deliveries, feed }
+    ReadAt { windows: windows_at, deliveries: deliveries_at, feed: feed_at }
 }
 
 impl Addresses {

@@ -46,7 +46,7 @@ z25:ffi/write.rs:create   # public call parses JSON on the caller thread, open f
 z25:ffi/write.rs:update   # public call parses JSON on the caller thread, open finding (line D)
 z25:ffi/write.rs:act   # public call parses JSON on the caller thread, open finding (line D)
 z25:ffi/write.rs:set_local   # public call parses JSON on the caller thread, open finding (line D)
-z26:runtime/threaded.rs:356   # time read outside Clock, open finding (line D)
+z26:runtime/threaded.rs:373   # time read outside Clock, open finding (line D)
 z26:runtime/published.rs:31   # time read outside Clock, open finding (line D)
 z26:runtime/published.rs:37   # time read outside Clock, open finding (line D)
 z26:ffi/database.rs:343   # time read outside Clock, open finding (line D)

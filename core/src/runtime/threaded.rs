@@ -117,7 +117,8 @@ type Body = Box<dyn FnOnce(Arc<Router>, Arc<Timeline>) + Send>;
 #[derive(Default)]
 pub struct RuntimeBuilder {
     boxes: Vec<Arc<Mailbox<Command>>>,
-    bodies: Vec<(&'static str, Body)>,
+    bodies: Vec<Option<(&'static str, Body)>>,
+    types: Vec<std::any::TypeId>,
     history: Vec<Arc<Mutex<Vec<TraceEntry>>>>,
     failure: Option<FailureRoute>,
     record: bool,
@@ -325,16 +326,29 @@ pub struct Runtime {
 impl RuntimeBuilder {
     pub fn new() -> Self { Self::default() }
 
-    pub fn add<O: StateOwner>(&mut self, name: &'static str, state: O::State, runner: impl EffectRunner<O>) -> Address<O> {
-        let mailbox = Arc::new(Mailbox::new());
-        let own = mailbox.clone();
+    pub fn reserve<O: StateOwner>(&mut self) -> Address<O> {
         let slot = self.boxes.len();
-        let history = Arc::new(Mutex::new(Vec::new()));
-        self.history.push(history.clone());
-        self.boxes.push(mailbox);
-        let runner: Box<dyn EffectRunner<O>> = Box::new(runner);
-        self.bodies.push((name, Box::new(move |router, timeline| run_owner::<O>(OwnerThread { slot, name, cell: Cell::new(state), runner, mailbox: own, history }, router, timeline))));
+        self.boxes.push(Arc::new(Mailbox::new()));
+        self.history.push(Arc::new(Mutex::new(Vec::new())));
+        self.bodies.push(None);
+        self.types.push(std::any::TypeId::of::<O>());
         Address::new(slot)
+    }
+
+    pub fn install<O: StateOwner>(&mut self, address: Address<O>, name: &'static str, state: O::State, runner: impl EffectRunner<O>) {
+        let slot = address.index;
+        assert_eq!(self.types.get(slot), Some(&std::any::TypeId::of::<O>()));
+        assert!(self.bodies[slot].is_none());
+        let own = self.boxes[slot].clone();
+        let history = self.history[slot].clone();
+        let runner: Box<dyn EffectRunner<O>> = Box::new(runner);
+        self.bodies[slot] = Some((name, Box::new(move |router, timeline| run_owner::<O>(OwnerThread { slot, name, cell: Cell::new(state), runner, mailbox: own, history }, router, timeline))));
+    }
+
+    pub fn add<O: StateOwner>(&mut self, name: &'static str, state: O::State, runner: impl EffectRunner<O>) -> Address<O> {
+        let address = self.reserve::<O>();
+        self.install(address, name, state, runner);
+        address
     }
 
     pub fn on_executor_failed<L: StateOwner>(&mut self, lifecycle: Address<L>) {
@@ -351,6 +365,9 @@ impl RuntimeBuilder {
     pub fn start(self) -> std::io::Result<Runtime> { self.start_with(|name, body| spawn_thread(Carry::Internal, name, body)) }
 
     pub(super) fn start_with(self, mut launch: impl FnMut(String, Box<dyn FnOnce() + Send>) -> std::io::Result<JoinHandle<()>>) -> std::io::Result<Runtime> {
+        if self.bodies.iter().any(Option::is_none) {
+            return Err(std::io::Error::other("owner reservation is not installed"));
+        }
         let router = Arc::new(Router { boxes: self.boxes, inflight: Inflight::default(), failure: self.failure, history: self.history, record: self.record });
         let _ = self.handle.router.set(router.clone());
         let timeline = Arc::new(Timeline { base: self.clock.as_ref().map_or(Duration::ZERO, |clock| clock.now()), clock: self.clock.clone(), origin: Instant::now() });
@@ -362,7 +379,7 @@ impl RuntimeBuilder {
         }
         let mut joins = Vec::new();
         let alive = Arc::new(AtomicUsize::new(0));
-        for (name, body) in self.bodies {
+        for (name, body) in self.bodies.into_iter().flatten() {
             let own = router.clone();
             alive.fetch_add(1, Ordering::SeqCst);
             let running = Alive(alive.clone());

@@ -403,8 +403,9 @@ impl Life {
             let address = builder.add::<SessionCalls>("session", state, session_runner::SessionRunner::new(wiring.clone(), (exchange.clone(), secret.clone(), ports.db.clone()), seal.clone(), ports.executor.clone(), &restored));
             (address, restored)
         });
-        let transfer_at = session_address.as_ref().zip(ports.transfer.as_ref()).map(|((session, _), _)| Address::<Transfers>::new(session.index() + 2));
-        let rounds_at = transfer_at.map(|at| Address::<Rounds>::new(at.index() + 1));
+        let has_transfer = session_address.is_some() && ports.transfer.is_some() && ports.transport.is_some();
+        let transfer_at = has_transfer.then(|| builder.reserve::<Transfers>());
+        let rounds_at = has_transfer.then(|| builder.reserve::<Rounds>());
         let outbox = session_address.as_ref().map(|(session, _)| {
             let peers = OutboxPeers { store, session: Some(*session), transfer: transfer_at };
             let (settle_wiring, drained_wiring) = (wiring.clone(), wiring.clone());
@@ -432,8 +433,8 @@ impl Life {
             wiring.on_mutate_answer(super::session::OUTBOX_AUTHOR, move |req_id, outcome| answers.to_outbox(OutboxInput::Answered { req_id, outcome }));
             builder.add::<Outbox>("outbox", OutboxState::new(0, peers), executor)
         });
-        let transfer = match (outbox, ports.transfer.as_ref(), ports.transport.as_ref()) {
-            (Some(outbox), Some(port), Some(transport)) => {
+        let transfer = match (outbox, ports.transfer.as_ref(), ports.transport.as_ref(), transfer_at, rounds_at) {
+            (Some(outbox), Some(port), Some(transport), Some(address), Some(rounds)) => {
                 let (settle_wiring, drained_wiring, signal_wiring) = (wiring.clone(), wiring.clone(), wiring.clone());
                 let wire = super::write::wire::Wire {
                     transport: transport.clone(),
@@ -456,15 +457,9 @@ impl Life {
                     },
                     { let db = ports.db.clone(); Arc::new(move |sha256: &str| db.blob_cache_lookup(sha256)) },
                 );
-                let address = builder.add::<Transfers>("transfer", TransferState::new(0, port.slots, TransferPeers { store, outbox, rounds: rounds_at }), executor);
-                if Some(address.index()) != transfer_at.map(|at| at.index()) {
-                    return Err(LifeError::Storage("the address of Transfer is not the one Outbox was given".into()));
-                }
+                builder.install(address, "transfer", TransferState::new(0, port.slots, TransferPeers { store, outbox, rounds: rounds_at }), executor);
                 let rounds_drained = wiring.clone();
-                let rounds = builder.add::<Rounds>("rounds", RoundsState::new(address), RoundsExecutor::new(port.jobs.clone(), Arc::new(move |drained| rounds_drained.to_lifecycle(LifecycleInput::Drained(drained)))));
-                if Some(rounds.index()) != rounds_at.map(|at| at.index()) {
-                    return Err(LifeError::Storage("the address of Rounds is not the one Transfer was given".into()));
-                }
+                builder.install(rounds, "rounds", RoundsState::new(address), RoundsExecutor::new(port.jobs.clone(), Arc::new(move |drained| rounds_drained.to_lifecycle(LifecycleInput::Drained(drained)))));
                 Some((address, rounds))
             }
             _ => None,
@@ -494,8 +489,7 @@ impl Life {
                 if let (NetworkEvent::Foreground(seq), Some(wiring)) = (event, weak.upgrade()) { wiring.to_session(SessionInput::Foreground { seq }); }
             });
         }
-        let last = [Some(calls.index()), session_address.as_ref().map(|(address, _)| address.index()), outbox.map(|address| address.index()), transfer.map(|(address, _)| address.index()), Some(local_writes.index())].into_iter().flatten().max().unwrap_or(0);
-        let read = read::add(&mut builder, &wiring, &ports, store, last + 1);
+        let read = read::add(&mut builder, &wiring, &ports, store);
         let _ = wiring.addresses.set(Addresses { lifecycle, store, network, calls, session: session_address.as_ref().map(|(address, _)| *address), outbox, local_writes, transfer: transfer.map(|(address, _)| address), rounds: transfer.map(|(_, rounds)| rounds), windows: None, deliveries: None, feed: None }.with_read(&read));
         let runtime = builder.start().map_err(|error| LifeError::Storage(error.to_string()))?;
         if let Some((_, restored)) = session_address {

@@ -107,3 +107,21 @@ fn a_failed_start_of_an_owner_stops_the_owners_already_started() {
     ended.sort_unstable();
     assert_eq!(ended, vec![1, 2], "the two threads that started ended before start returned");
 }
+
+#[test]
+fn rt_prop_addresses_reserved() {
+    let mut missing = RuntimeBuilder::new();
+    missing.reserve::<Toy>();
+    assert!(missing.start().is_err());
+
+    let (report, fired) = mpsc::channel();
+    let mut builder = RuntimeBuilder::new();
+    let sender = builder.reserve::<Toy>();
+    let receiver = builder.reserve::<Toy>();
+    builder.install(sender, "sender", ToyState { on_go: Some((receiver, ToyInput::Fire(3))), ..ToyState::default() }, ToyRunner::default());
+    builder.install(receiver, "receiver", ToyState::default(), reporting(report));
+    let runtime = builder.start().unwrap();
+    runtime.start_epoch(1);
+    runtime.post(sender, EpochStamp::Epoch(1), ToyInput::Go);
+    assert_eq!(fired.recv_timeout(WAIT), Ok(3));
+}
