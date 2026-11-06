@@ -88,10 +88,9 @@ fn inv_open_02_recreate_removes_every_file_of_the_old_database() {
         }
     }
     std::fs::write(&path, "this is not a database ".repeat(400)).unwrap();
-    for suffix in [".files", ".cache"] {
-        std::fs::create_dir_all(beside(suffix)).unwrap();
-        std::fs::write(beside(suffix).join("f1"), "bytes").unwrap();
-    }
+    std::fs::create_dir_all(beside(".files").join("cache")).unwrap();
+    std::fs::write(beside(".files").join("f1"), "bytes").unwrap();
+    std::fs::write(beside(".files").join("cache").join("f1"), "bytes").unwrap();
 
     let store = Store::open(&path).unwrap();
     let report = store.boot(&[messages_spec()], None).unwrap();
@@ -99,5 +98,4 @@ fn inv_open_02_recreate_removes_every_file_of_the_old_database() {
     assert_eq!(report.recreated, Some(RecreateReason::SchemaVersion));
     assert!(!store.table_exists("marker").unwrap());
     assert!(!beside(".files").exists());
-    assert!(!beside(".cache").exists());
 }
