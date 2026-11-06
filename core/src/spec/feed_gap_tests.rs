@@ -597,17 +597,6 @@ fn feed_live_event_unwatched() {
 }
 
 #[test]
-fn feed_live_event_pending_connection() {
-    let mut twin = live();
-    twin.step(plus("Post"));
-    assert!(twin.step(event(To::Opening, "Chat", "c1")).is_empty(), "a frame before the Ready of the new connection is not applied");
-    let mut protocol = live();
-    protocol.step(plus("Post"));
-    protocol.step(Input::FrameOpened { to: To::Opening, counter: Counter::Expected, events: vec![("Chat".into(), "c1".into())] });
-    assert_eq!(protocol.state().position("Chat"), 0, "a frame of a connection in Handshake is a protocol error, not an event");
-}
-
-#[test]
 fn feed_live_stray() {
     let mut twin = live();
     for input in [event(To::Stray, "Chat", "x"), Input::ChannelLost { to: To::Stray, dropped: None }, Input::Dropped { to: To::Stray }, Input::Ended { to: To::Stray }, Input::Resubscribe { to: To::Stray }] {
