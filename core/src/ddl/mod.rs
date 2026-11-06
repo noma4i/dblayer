@@ -17,7 +17,7 @@ pub const DATA_VERSION_KEY: &str = "data_version";
 pub const REVISION_SEQ_KEY: &str = "revision_seq";
 pub(crate) const CARRIED_MANIFEST_KEYS: [&str; 3] = ["saved_epoch", "saved_generation", REVISION_SEQ_KEY];
 /// The tables a format change moves into the new layout (`store_boot_format_change`).
-pub(crate) const CARRIED_TABLES: [&str; 20] = ["op", "op_item", "op_item_retry", "op_item_header", "op_row", "op_part", "op_value", "op_error", "transfer_abort", "blob_upload", "blob_use", "encrypted_session", "encrypted_pending", "encrypted_answer", "sync_upload", "sync_upload_part", "sync_upload_error", "local_pending", "file", "restore_failed"];
+pub(crate) const CARRIED_TABLES: [&str; 22] = ["op", "op_item", "op_item_retry", "op_item_header", "op_row", "op_part", "op_value", "op_error", "transfer_abort", "blob_upload", "blob_use", "encrypted_session", "encrypted_pending", "encrypted_answer", "sync_upload", "sync_upload_part", "sync_upload_error", "local_pending", "file", "restore_failed", "upload_orphan", "sync_upload_batch"];
 
 pub const SERVICE_COLUMNS: [&str; 3] = ["id", "revision", "born_rev"];
 
@@ -115,7 +115,7 @@ END",
 ) STRICT, WITHOUT ROWID",
 ];
 
-const CORE_STATEMENTS: [&str; 46] = [
+const CORE_STATEMENTS: [&str; 48] = [
     "CREATE TABLE IF NOT EXISTS blob_upload (
   id TEXT PRIMARY KEY NOT NULL,
   name TEXT NOT NULL,
@@ -316,12 +316,21 @@ const CORE_STATEMENTS: [&str; 46] = [
   signed_id TEXT,
   aborted INTEGER,
   op_id INTEGER,
+  fields TEXT,
   PRIMARY KEY (model, row_id, action)
 ) STRICT, WITHOUT ROWID",
     "CREATE TABLE IF NOT EXISTS blob_cache (
   content_sha256 TEXT NOT NULL PRIMARY KEY,
   blob_id TEXT NOT NULL,
   created_at INTEGER NOT NULL
+) STRICT, WITHOUT ROWID",
+    "CREATE TABLE IF NOT EXISTS sync_upload_batch (
+  batch_id INTEGER NOT NULL PRIMARY KEY,
+  joint TEXT NOT NULL
+) STRICT, WITHOUT ROWID",
+    "CREATE TABLE IF NOT EXISTS upload_orphan (
+  upload_id TEXT NOT NULL PRIMARY KEY,
+  key TEXT NOT NULL
 ) STRICT, WITHOUT ROWID",
     "CREATE TABLE IF NOT EXISTS sync_upload_part (
   model TEXT NOT NULL,

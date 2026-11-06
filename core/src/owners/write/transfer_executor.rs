@@ -114,9 +114,9 @@ impl TransferExecutor {
         Self { wire, codec, files, settle, shows, drained, signal, copies: Flights::default(), steps: Flights::default(), cache }
     }
 
-    fn copy(&self, stamp: EpochStamp, back: &Back<Transfers>, transfer_id: TransferId, attempt_id: u64, key: String, source: Source) {
+    fn copy(&self, stamp: EpochStamp, back: &Back<Transfers>, transfer_id: TransferId, attempt_id: u64, source: Source) {
         let cancelled = Arc::new(AtomicBool::new(false));
-        let (files, copies, back, flag, id, cache) = (self.files.clone(), self.copies.clone(), back.clone(), cancelled.clone(), file_id(&key), self.cache.clone());
+        let (files, copies, back, flag, id, cache) = (self.files.clone(), self.copies.clone(), back.clone(), cancelled.clone(), file_id(transfer_id), self.cache.clone());
         let running = self.wire.tasks.start_blocking(Box::new(move || {
             let result = files.copy_source(&id, std::path::Path::new(&source.path));
             let input = if flag.load(Ordering::SeqCst) {
@@ -144,8 +144,8 @@ impl TransferExecutor {
     }
 
     /// The copy of the library when it exists: the original file may be gone after the call of `upload`.
-    fn local(&self, key: &str, source: Source) -> Source {
-        let id = file_id(key);
+    fn local(&self, transfer_id: TransferId, source: Source) -> Source {
+        let id = file_id(transfer_id);
         let copy = self.files.path(&id).filter(|path| path.exists()).or_else(|| Some(self.files.cache_target(&id, "source")).filter(|path| path.exists()));
         match copy {
             Some(path) => Source { path: path.to_string_lossy().into_owned(), ..source },
@@ -191,7 +191,7 @@ impl TransferExecutor {
 
     fn step(&self, stamp: EpochStamp, back: &Back<Transfers>, (transfer_id, attempt_id): (TransferId, u64), ask: StepAsk) {
         let StepAsk { key, part, upload_id, source, steps } = ask;
-        let source = self.local(&key, source);
+        let source = self.local(transfer_id, source);
         self.task(
             stamp,
             back,
@@ -228,6 +228,21 @@ impl TransferExecutor {
         }));
     }
 
+    fn abort_orphan(&self, stamp: EpochStamp, back: &Back<Transfers>, key: String, upload_id: String) {
+        let Some(link) = self.link(stamp) else {
+            back.reply(stamp, TransferInput::AbortDone { upload_id, answered: false });
+            return;
+        };
+        let (codec, back) = (self.codec.clone(), back.clone());
+        let _ = self.wire.tasks.start(Box::pin(async move {
+            let answered = match codec.discard_upload(&link, &key, Some(&upload_id)).await {
+                Ok(()) => true,
+                Err(error) => !temporary(&error),
+            };
+            back.reply(stamp, TransferInput::AbortDone { upload_id, answered });
+        }));
+    }
+
     fn delete_file(&self, path: String) {
         let files = self.files.clone();
         let _ = self.wire.tasks.start_blocking(Box::new(move || {
@@ -253,7 +268,7 @@ fn temporary(error: &TransportError) -> bool { RetryClass::of_error(error) != Re
 impl EffectRunner<Transfers> for TransferExecutor {
     fn run(&mut self, stamp: EpochStamp, effect: TransferEffect, back: &Back<Transfers>) {
         match effect {
-            TransferEffect::Copy { transfer_id, attempt_id, key, source } => self.copy(stamp, back, transfer_id, attempt_id, key, source),
+            TransferEffect::Copy { transfer_id, attempt_id, source, .. } => self.copy(stamp, back, transfer_id, attempt_id, source),
             TransferEffect::CopyCancel { transfer_id } => self.copies.cancel(&transfer_id),
             TransferEffect::Step { transfer_id, attempt_id, key, part, purpose, upload_id, source, steps, .. } => {
                 debug_assert_eq!(purpose, NetworkPurpose::Transfer);
@@ -261,6 +276,7 @@ impl EffectRunner<Transfers> for TransferExecutor {
             }
             TransferEffect::Complete { transfer_id, attempt_id, key, upload_id, parts, .. } => self.complete(stamp, back, (transfer_id, attempt_id), key, upload_id, parts),
             TransferEffect::Abort { key, upload_id, .. } => self.drop_upload(key, upload_id),
+            TransferEffect::AbortOrphan { key, upload_id } => self.abort_orphan(stamp, back, key, upload_id),
             TransferEffect::CancelStep { transfer_id } => self.steps.cancel(&transfer_id),
             TransferEffect::DeleteFile { path } => self.delete_file(path),
             TransferEffect::Reply { reply, answer } => (self.settle)(reply, answer),

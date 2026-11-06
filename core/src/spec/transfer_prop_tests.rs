@@ -78,7 +78,7 @@ fn xfer_prop_abort_rule() {
     let id = twin.uploading(KEY, 3);
     twin.step_ok(id, 1, Some("u1"));
     twin.commit();
-    assert_eq!(twin.cancel(KEY).1.aborts(), 1, "cancel after a part");
+    assert_eq!(twin.cancel(KEY).1.orphans_written().len(), 1, "cancel after a part leaves the upload to abort");
     let mut complete = Twin::new();
     let id = complete.completing(KEY);
     assert_eq!(complete.complete_error(id, false).aborts(), 0, "no abort after an error of complete");
@@ -90,14 +90,15 @@ fn xfer_prop_abort_rule() {
     aborted.commit();
     assert_eq!(aborted.step_error(id, false).aborts(), 1, "a permanent error before the last part");
     aborted.commit();
-    assert_eq!(aborted.discard(KEY).1.aborts(), 0, "an upload that was aborted is not aborted twice");
+    assert_eq!(aborted.discard(KEY).1.orphans_written().len(), 0, "an upload that was aborted is not aborted twice");
     let mut expired = Twin::new();
     let id = expired.uploading(KEY, 3);
     expired.step_ok(id, 1, Some("u1"));
     expired.reject(RejectReason::Storage("disk".into()));
     expired.commit();
     let out = expired.post(TransferInput::Tick { now: Time(8 * DAY), kind: TransferTick::Expire });
-    assert_eq!(out.aborts(), 1, "the expiry of a failed upload");
+    assert_eq!(out.orphans_written().len(), 1, "the expiry of a failed upload");
+    assert_eq!(expired.commit().orphan_aborts(), vec!["u1".to_string()]);
 }
 
 #[test]

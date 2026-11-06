@@ -1,6 +1,6 @@
 //! Owner `Transfer`: the opening: `Restored`, `RegisterOperations`, `RestoreReady` and the class of every restored row.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use super::outbox::OutboxOutcome;
 use super::outbox_types::Phase;
@@ -9,10 +9,10 @@ use super::transfer_types::*;
 
 impl TransferState {
     fn insert_restored(&mut self, row: &StoredTransfer, stage: TransferStage) -> TransferId {
-        let item = BatchItem { key: row.key.clone(), fields: Default::default(), urgent: false, source: row.source.clone(), mutation: row.mutation.clone(), steps: row.steps.clone() };
+        let item = BatchItem { key: row.key.clone(), fields: row.fields.clone(), urgent: false, source: row.source.clone(), mutation: row.mutation.clone(), steps: row.steps.clone() };
         let id = row.transfer_id;
         self.next_id = self.next_id.max(id + 1);
-        let created = self.create(item, row.batch.then_some(0), row.created_at, stage);
+        let created = self.create(item, row.batch.filter(|group| !row.completed && self.groups.contains_key(group)), row.created_at, stage);
         if let Some(mut transfer) = self.transfers.remove(&created) {
             transfer.transfer_id = id;
             transfer.seq = row.seq;
@@ -29,10 +29,31 @@ impl TransferState {
             transfer.sha256 = row.sha256.clone();
             transfer.cycle_id = row.cycle_id.max(1);
             transfer.next_step = if row.confirmed_parts >= row.source.parts { NextStep::Complete } else { NextStep::Part(row.confirmed_parts + 1) };
+            let group = transfer.batch_id;
             self.transfers.insert(id, transfer);
+            if let Some(group) = group {
+                self.rejoin(id, group);
+            }
         }
         self.next_seq = self.next_seq.max(row.seq + 1);
         id
+    }
+
+    /// The element is in the group once, in the order of `seq`.
+    fn rejoin(&mut self, id: TransferId, group: u64) {
+        let seqs: BTreeMap<TransferId, u64> = self.transfers.values().map(|transfer| (transfer.transfer_id, transfer.seq)).collect();
+        if let Some(entry) = self.groups.get_mut(&group) {
+            entry.ids.retain(|found| *found != id);
+            entry.ids.push(id);
+            entry.ids.sort_by_key(|found| seqs.get(found).copied().unwrap_or(u64::MAX));
+        }
+    }
+
+    pub(super) fn restore_groups(&mut self, batches: BTreeMap<u64, Joint>) {
+        for (group, joint) in batches {
+            self.next_group = self.next_group.max(group + 1);
+            self.groups.insert(group, Group { ids: Vec::new(), reply: None, ready: BTreeSet::new(), joint, phase: BatchPhase::Collecting, op_row: None });
+        }
     }
 
     fn failed_restored(&mut self, id: TransferId, error: String, fx: &mut Fx) {
@@ -99,8 +120,8 @@ impl TransferState {
 
     fn restore_completed(&mut self, id: TransferId, row: &StoredTransfer, saved: Option<&OutboxOutcome>, fx: &mut Fx) {
         match saved {
-            Some(OutboxOutcome::Confirmed { revision, .. }) => {
-                self.remove_with(id, Removal::Confirmed { revision: *revision });
+            Some(OutboxOutcome::Confirmed { revision, result }) => {
+                self.remove_with(id, Removal::Confirmed { revision: *revision, result: result.clone() });
                 self.store(&[id], StoreKind::Removed, fx);
             }
             Some(OutboxOutcome::Discarded) => {
@@ -112,6 +133,15 @@ impl TransferState {
                 self.begin_failure(id, error.clone(), false, fx);
             }
             Some(OutboxOutcome::Interrupted) | None => {
+                let group = row.batch.filter(|group| self.open_groups.contains(group) && self.groups.contains_key(group));
+                if let Some(group) = group {
+                    if let Some(transfer) = self.transfers.get_mut(&id) {
+                        transfer.batch_id = Some(group);
+                        transfer.stage = TransferStage::BatchReady;
+                    }
+                    self.rejoin(id, group);
+                    return self.show(id, Shown::Uploading { progress: 100 }, fx);
+                }
                 self.set(id, TransferStage::Mutating);
                 self.show(id, Shown::Uploading { progress: 100 }, fx);
                 if !row.has_intent {
@@ -124,6 +154,7 @@ impl TransferState {
 
     pub(super) fn restored(&mut self, mut uploads: Vec<StoredTransfer>, outcomes: BTreeMap<TransferId, OutboxOutcome>, fx: &mut Fx) {
         uploads.sort_by_key(|row| row.seq);
+        self.open_groups = uploads.iter().filter(|row| !row.completed).filter_map(|row| row.batch).collect();
         for row in uploads {
             self.classify(row, &outcomes, fx);
         }
@@ -142,6 +173,9 @@ impl TransferState {
         for id in ready {
             if let Some((row, outcomes)) = self.waiting.remove(&id) {
                 self.transfers.remove(&id);
+                for entry in self.groups.values_mut() {
+                    entry.ids.retain(|found| *found != id);
+                }
                 self.classify_declared(row, &outcomes, fx);
             }
         }
@@ -153,6 +187,7 @@ impl TransferState {
             return;
         }
         self.phase = Phase::Ready;
+        self.send_orphans(fx);
         self.start_in_order(fx);
     }
 }

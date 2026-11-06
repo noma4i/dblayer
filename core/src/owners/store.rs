@@ -81,7 +81,10 @@ pub struct UploadRow {
     pub seq: u64,
     pub source: String,
     pub parts: u32,
-    pub batch: bool,
+    /// The group of the elements of a batch.
+    pub batch: Option<u64>,
+    /// The fields of an element of a batch in the list of the mutation of the batch (JSON).
+    pub fields: Option<String>,
     pub upload_id: Option<String>,
     pub confirmed_parts: u32,
     pub completed: bool,
@@ -151,6 +154,11 @@ pub enum StoreOp {
     RemoveRows { model: String, ids: Vec<String> },
     Upload { row: UploadRow, kind: UploadKind },
     RemoveUpload { key: String },
+    /// A multipart upload of a removed transfer: `abort` goes to the server until the server answers.
+    UploadOrphan { upload_id: String, key: String },
+    RemoveOrphan { upload_id: String },
+    /// How the elements of a batch go out together: `joint` is the text `Joint::to_text` gives.
+    UploadBatch { batch_id: u64, joint: String },
     /// Integer fields of a row set to numbers (the position and the size of an element of a batch): `writes` are paths with their values.
     Numbers { model: String, row_id: String, writes: Vec<(String, i64)> },
     /// The server blob of a file with this content: a later upload of the same bytes skips the steps while the blob lives.

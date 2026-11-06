@@ -47,6 +47,8 @@ mod transfer_cache_tests;
 mod transfer_steps_tests;
 mod transfer_mutating_tests;
 mod transfer_end_tests;
+mod transfer_orphan_tests;
+mod transfer_batch_restore_tests;
 mod transfer_open_tests;
 mod rounds_tests;
 mod transfer_prop_tests;

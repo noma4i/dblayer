@@ -9,15 +9,6 @@ use crate::runtime::{Effect, Outbound};
 impl TransferState {
     fn refuse(fx: &mut Fx, rep: ReplyId, fault: Fault) { reply(fx, rep, TransferAnswer::Err(fault)); }
 
-    fn send_abort(&mut self, id: TransferId, fx: &mut Fx) {
-        let attempt_id = self.attempt();
-        let Some(transfer) = self.transfers.get_mut(&id) else { return };
-        let Some(upload_id) = transfer.upload_id.clone() else { return };
-        if !std::mem::replace(&mut transfer.aborted, true) {
-            run(fx, TransferEffect::Abort { transfer_id: id, attempt_id, key: transfer.key.clone(), upload_id });
-        }
-    }
-
     fn begin_cancel(&mut self, id: TransferId, cancel: Option<(ReplyId, bool)>, prior: Option<TransferStage>, fx: &mut Fx) {
         self.remove_with(id, Removal::Cancel);
         if let Some(transfer) = self.transfers.get_mut(&id) {
@@ -50,12 +41,10 @@ impl TransferState {
                 if std::mem::replace(&mut transfer.in_flight, false) {
                     run(fx, TransferEffect::CancelStep { transfer_id: id });
                 }
-                self.send_abort(id, fx);
                 self.begin_cancel(id, Some((rep, cancel)), Some(TransferStage::Ready), fx);
                 self.start_in_order(fx);
             }
             TransferStage::Failed => {
-                self.send_abort(id, fx);
                 self.begin_cancel(id, Some((rep, cancel)), Some(TransferStage::Failed), fx);
             }
             TransferStage::BatchReady => self.begin_cancel(id, Some((rep, cancel)), Some(TransferStage::BatchReady), fx),
@@ -189,10 +178,15 @@ impl TransferState {
         for &id in ids {
             let Some(removal) = self.transfers.get_mut(&id).and_then(|transfer| transfer.removal.take()) else { continue };
             self.removal_replies(id, &removal, fx);
-            match removal {
+            if let (Removal::Cancel, Some(transfer)) = (&removal, self.transfers.get(&id)) {
+                if let Some(upload_id) = Self::orphan_of(transfer) {
+                    self.orphans.insert(upload_id, transfer.key.clone());
+                }
+            }
+            match removal.clone() {
                 Removal::Cancel | Removal::Discarded => self.settle(id, OutboxOutcome::Discarded, fx),
-                Removal::Confirmed { revision } => self.settle(id, OutboxOutcome::Confirmed { revision, result: None }, fx),
-                Removal::CopyFailed { .. } | Removal::Storage => run(fx, TransferEffect::DeleteFile { path: file_id(&self.transfers[&id].key) }),
+                Removal::Confirmed { revision, result } => self.settle(id, OutboxOutcome::Confirmed { revision, result }, fx),
+                Removal::CopyFailed { .. } | Removal::Storage => run(fx, TransferEffect::DeleteFile { path: file_id(id) }),
             }
             if matches!(removal, Removal::Cancel | Removal::Discarded | Removal::Confirmed { .. }) {
                 self.delete_copy(id, fx);
@@ -200,6 +194,7 @@ impl TransferState {
             self.finish(id, fx);
             self.batch_after_removal(id, fx);
         }
+        self.send_orphans(fx);
         self.start_in_order(fx);
     }
 
@@ -249,7 +244,6 @@ impl TransferState {
     pub(super) fn expire(&mut self, fx: &mut Fx) {
         let old: Vec<TransferId> = self.transfers.values().filter(|transfer| transfer.stage == TransferStage::Failed && self.now.0.saturating_sub(transfer.created_at.0) > EXPIRY_MS).map(|transfer| transfer.transfer_id).collect();
         for id in old {
-            self.send_abort(id, fx);
             self.begin_cancel(id, None, Some(TransferStage::Failed), fx);
         }
     }
@@ -320,7 +314,7 @@ impl TransferState {
                 }
                 Some(TransferStage::Copying | TransferStage::CopyReady) => {
                     run(fx, TransferEffect::CopyCancel { transfer_id: id });
-                    run(fx, TransferEffect::DeleteFile { path: file_id(&self.transfers[&id].key) });
+                    run(fx, TransferEffect::DeleteFile { path: file_id(id) });
                     self.interrupt(id, fx);
                 }
                 _ => self.interrupt(id, fx),

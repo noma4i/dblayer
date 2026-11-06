@@ -117,6 +117,9 @@ impl Db {
                     self.remove_upload_row(key)?;
                     envelope.entity_ops.push(self.upload_touch(key)?);
                 }
+                StoreOp::UploadBatch { batch_id, joint } => self.write_upload_batch(*batch_id, joint)?,
+                StoreOp::UploadOrphan { upload_id, key } => self.write_orphan(upload_id, Some(key))?,
+                StoreOp::RemoveOrphan { upload_id } => self.write_orphan(upload_id, None)?,
                 StoreOp::BlobCachePut { content_sha256, blob_id, created_at } => self.write_blob_cache(content_sha256, Some((blob_id, *created_at)))?,
                 StoreOp::BlobCacheRemove { content_sha256 } => self.write_blob_cache(content_sha256, None)?,
                 StoreOp::Planned { effects } => return self.write_planned(effects),

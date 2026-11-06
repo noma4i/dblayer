@@ -125,9 +125,9 @@ impl TransferState {
         }
         let ids: Vec<TransferId> = self.remaining(group).into_iter().filter(|id| self.stage_of(*id) == Some(TransferStage::Mutating)).collect();
         match outcome {
-            OutboxOutcome::Confirmed { revision, .. } => {
+            OutboxOutcome::Confirmed { revision, result } => {
                 for &id in &ids {
-                    self.remove_with(id, Removal::Confirmed { revision });
+                    self.remove_with(id, Removal::Confirmed { revision, result: result.clone() });
                 }
                 self.store(&ids, StoreKind::Removed, fx);
             }

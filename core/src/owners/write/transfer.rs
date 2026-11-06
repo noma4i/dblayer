@@ -56,6 +56,9 @@ impl TransferState {
                 let mut ops = Vec::new();
                 if kind == StoreKind::Removed {
                     ops.push(StoreOp::RemoveUpload { key: transfer.key.clone() });
+                    if let (Some(Removal::Cancel), Some(upload_id)) = (&transfer.removal, Self::orphan_of(transfer)) {
+                        ops.push(StoreOp::UploadOrphan { upload_id, key: transfer.key.clone() });
+                    }
                     if let Some(op_id) = own {
                         match transfer.removal {
                             Some(Removal::Confirmed { .. }) if transfer.batch_id.is_some() => ops.push(StoreOp::RemoveIntent { op_id }),
@@ -73,6 +76,11 @@ impl TransferState {
                     if let (StoreKind::Completed, TransferStage::PersistingComplete, false, Some(blob_id)) = (kind, transfer.stage, transfer.from_cache, transfer.signed_id.clone()) {
                         ops.push(StoreOp::BlobCachePut { content_sha256: transfer.sha256.clone(), blob_id, created_at: self.now.0 });
                     }
+                    if let (StoreKind::SyncUpload, TransferStage::Accepting, Some(group)) = (kind, transfer.stage, transfer.batch_id) {
+                        if let Some(entry) = self.groups.get(&group).filter(|entry| entry.ids.first() == Some(&transfer.transfer_id)) {
+                            ops.push(StoreOp::UploadBatch { batch_id: group, joint: entry.joint.to_text() });
+                        }
+                    }
                     if let (Some(op_id), StoreKind::SyncUpload, TransferStage::Accepting, None) = (own, kind, transfer.stage, transfer.prior) {
                         ops.push(StoreOp::Intent { op_id, model: transfer.mutation.model.clone(), row_id: transfer.mutation.row_id.clone(), action: transfer.mutation.action.clone(), payload: transfer.mutation.body.clone(), effects: transfer.mutation.effects.clone() });
                     }
@@ -86,6 +94,33 @@ impl TransferState {
         self.pending.insert(id, Pending { ids: ids.to_vec(), kind });
         let intents = if kind == StoreKind::SyncUpload { ids.len() as u64 } else { 0 };
         let batch = StoreBatch { author: BatchAuthor::Transfer, id, epoch: self.epoch, basis, rows: Vec::new(), intents, credential: None, ops };
+        fx.push(Effect::Send(Outbound::new(self.peers.store, StoreInput::Commit(batch))));
+    }
+
+    /// The multipart upload a removed transfer leaves on the server: it gets `abort` until the server answers.
+    pub(super) fn orphan_of(transfer: &Transfer) -> Option<String> { transfer.upload_id.clone().filter(|_| !transfer.aborted && transfer.signed_id.is_none()) }
+
+    /// `abort` of every orphan the server has not answered, when the network is up.
+    pub(super) fn send_orphans(&mut self, fx: &mut Fx) {
+        if self.online != Some(true) || self.ended {
+            return;
+        }
+        for (upload_id, key) in &self.orphans {
+            if self.orphan_flight.insert(upload_id.clone()) {
+                run(fx, TransferEffect::AbortOrphan { key: key.clone(), upload_id: upload_id.clone() });
+            }
+        }
+    }
+
+    pub(super) fn abort_done(&mut self, upload_id: String, answered: bool, fx: &mut Fx) {
+        self.orphan_flight.remove(&upload_id);
+        if !answered || self.orphans.remove(&upload_id).is_none() {
+            return;
+        }
+        let id = self.next_batch;
+        self.next_batch += 1;
+        self.pending.insert(id, Pending { ids: Vec::new(), kind: StoreKind::Removed });
+        let batch = StoreBatch { author: BatchAuthor::Transfer, id, epoch: self.epoch, basis: BTreeMap::new(), rows: Vec::new(), intents: 0, credential: None, ops: vec![StoreOp::RemoveOrphan { upload_id }] };
         fx.push(Effect::Send(Outbound::new(self.peers.store, StoreInput::Commit(batch))));
     }
 
@@ -126,7 +161,7 @@ impl TransferState {
     pub(super) fn delete_copy(&self, id: TransferId, fx: &mut Fx) {
         if let Some(transfer) = self.transfers.get(&id) {
             if transfer.place != Some(crate::files::Location::Table) {
-                run(fx, TransferEffect::DeleteFile { path: file_id(&transfer.key) });
+                run(fx, TransferEffect::DeleteFile { path: file_id(transfer.transfer_id) });
             }
         }
     }
@@ -246,6 +281,7 @@ impl TransferState {
         self.leave_network(fx);
         if online == Some(true) && was_online != Some(true) {
             self.expire_failed(fx);
+            self.send_orphans(fx);
         }
         self.start_in_order(fx);
     }
@@ -258,6 +294,7 @@ impl TransferState {
             TransferInput::Accept { epoch, item, reply, now } => self.accept(epoch, vec![*item], None, reply, now, fx),
             TransferInput::AcceptBatch { epoch, items, joint, reply, now } => self.accept(epoch, items, Some(joint), reply, now, fx),
             TransferInput::Restored { .. } | TransferInput::RestoreFailed { .. } => {}
+            TransferInput::AbortDone { upload_id, answered } => self.abort_done(upload_id, answered, fx),
             TransferInput::RegisterOperations { declarations } => self.register(declarations, fx),
             TransferInput::RestoreReady { epoch } => self.restore_ready(epoch, fx),
             TransferInput::RoundStatus { epoch, transfer_ids, refused } => self.round_status(epoch, &transfer_ids, refused, fx),
@@ -292,7 +329,11 @@ impl TransferState {
     /// `Restoring`: the calls on the keys of the base wait for `Restored`, the rest of the table works as in the other phases.
     fn restoring(&mut self, input: TransferInput, fx: &mut Fx) {
         match input {
-            TransferInput::Restored { uploads, outcomes } if !self.ended => self.restored(uploads, outcomes, fx),
+            TransferInput::Restored { uploads, outcomes, orphans, batches } if !self.ended => {
+                self.orphans.extend(orphans);
+                self.restore_groups(batches);
+                self.restored(uploads, outcomes, fx)
+            }
             TransferInput::RestoreFailed { error } if !self.ended => {
                 self.queue_error = Some(error);
                 self.phase = Phase::Classified;

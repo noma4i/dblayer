@@ -228,13 +228,13 @@ impl TransferState {
         let waiting = self.transfers.get(&id).is_some_and(|transfer| !transfer.discard_waiters.is_empty());
         let next_single = (!matches!(outcome, OutboxOutcome::Interrupted) && !(waiting && matches!(outcome, OutboxOutcome::Failed { .. }))).then(|| self.group_entry(id)).flatten().filter(|group| self.phase_of(*group) == Some(BatchPhase::Singles));
         match outcome {
-            OutboxOutcome::Confirmed { revision, .. } => {
+            OutboxOutcome::Confirmed { revision, result } => {
                 if let Some(transfer) = self.transfers.get_mut(&id) {
                     for waiter in std::mem::take(&mut transfer.discard_waiters) {
                         reply(fx, waiter, TransferAnswer::Err(Fault::NotFound));
                     }
                 }
-                self.remove_with_batch(id, Removal::Confirmed { revision }, fx)
+                self.remove_with_batch(id, Removal::Confirmed { revision, result }, fx)
             }
             OutboxOutcome::Discarded => self.remove_with_batch(id, Removal::Discarded, fx),
             OutboxOutcome::Rejected { .. } if waiting => self.remove_with_batch(id, Removal::Discarded, fx),

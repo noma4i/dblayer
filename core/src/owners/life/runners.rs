@@ -228,7 +228,7 @@ impl EffectRunner<StoreWriter> for StoreRunner {
                         }
                         if wiring.has_transfer() {
                             match restore.transfers {
-                                Ok(stored) => wiring.to_transfer(TransferInput::Restored { uploads: stored, outcomes: Default::default() }),
+                                Ok(stored) => wiring.to_transfer(TransferInput::Restored { uploads: stored, outcomes: Default::default(), orphans: restore.orphans, batches: restore.batches }),
                                 Err(error) => {
                                     wiring.restore_failed_for(Peer::Transfer, error.to_string());
                                     wiring.to_transfer(TransferInput::RestoreFailed { error: error.to_string() });

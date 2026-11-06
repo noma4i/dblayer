@@ -35,8 +35,8 @@ pub struct TransferPeers {
     pub rounds: Option<Address<Rounds>>,
 }
 
-/// The id of the copy of `key` in the file directory.
-pub fn file_id(key: &str) -> String { key.replace(':', "_") }
+/// The id of the copy of a transfer in the file directory: it never holds a character of the key.
+pub fn file_id(transfer_id: TransferId) -> String { format!("transfers/{transfer_id}") }
 
 /// The request the codec of the executor builds the steps of a file from.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -66,7 +66,8 @@ pub struct StoredTransfer {
     pub key: Key,
     pub seq: u64,
     pub source: Source,
-    pub batch: bool,
+    pub batch: Option<u64>,
+    pub fields: serde_json::Map<String, serde_json::Value>,
     pub upload_id: Option<String>,
     pub confirmed_parts: u32,
     pub etags: Vec<Option<String>>,
@@ -119,6 +120,34 @@ pub struct Joint {
     pub renumber: Option<Renumber>,
 }
 
+impl Joint {
+    /// The text kept in the base: the rule of a batch survives a restart.
+    pub fn to_text(&self) -> String {
+        let op = &self.mutation;
+        let renumber = self.renumber.as_ref().map(|r| serde_json::json!({"position": r.position, "size": r.size, "position_target": r.position_target, "size_target": r.size_target, "start": r.start}));
+        serde_json::json!({"minimum": self.minimum, "maximum": self.maximum, "items_key": self.items_key, "renumber": renumber,
+            "mutation": {"model": op.model, "row_id": op.row_id, "action": op.action, "keep": op.on_failure == crate::schema::OnFailure::Keep, "path": op.path, "body": op.body}}).to_string()
+    }
+
+    pub fn from_text(text: &str) -> Option<Self> {
+        let value: serde_json::Value = serde_json::from_str(text).ok()?;
+        let (mutation, text_of) = (value.get("mutation")?, |value: &serde_json::Value, key: &str| value.get(key).and_then(serde_json::Value::as_str).map(str::to_string));
+        let renumber = value.get("renumber").filter(|found| !found.is_null()).map(|r| Some(Renumber { position: text_of(r, "position")?, size: text_of(r, "size")?, position_target: text_of(r, "position_target")?, size_target: text_of(r, "size_target")?, start: usize::try_from(r.get("start")?.as_u64()?).ok()? })).unwrap_or(None);
+        let op = NewOp {
+            model: text_of(mutation, "model")?,
+            row_id: text_of(mutation, "row_id")?,
+            action: text_of(mutation, "action")?,
+            on_failure: if mutation.get("keep")?.as_bool()? { crate::schema::OnFailure::Keep } else { crate::schema::OnFailure::Rollback },
+            origin: super::outbox::OpSource::Api,
+            path: text_of(mutation, "path")?,
+            body: text_of(mutation, "body")?,
+            effects: Default::default(),
+            durable: true,
+        };
+        Some(Self { minimum: usize::try_from(value.get("minimum")?.as_u64()?).ok()?, maximum: usize::try_from(value.get("maximum")?.as_u64()?).ok()?, items_key: text_of(&value, "items_key")?, mutation: op, renumber })
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum BatchPhase {
     Collecting,
@@ -142,7 +171,9 @@ pub struct BatchItem {
 pub enum TransferInput {
     Accept { epoch: Epoch, item: Box<BatchItem>, reply: ReplyId, now: Time },
     AcceptBatch { epoch: Epoch, items: Vec<BatchItem>, joint: Joint, reply: ReplyId, now: Time },
-    Restored { uploads: Vec<StoredTransfer>, outcomes: BTreeMap<TransferId, OutboxOutcome> },
+    Restored { uploads: Vec<StoredTransfer>, outcomes: BTreeMap<TransferId, OutboxOutcome>, orphans: Vec<(String, String)>, batches: BTreeMap<u64, Joint> },
+    /// The answer to `abort` of a removed transfer: `answered` is false for a temporary failure.
+    AbortDone { upload_id: String, answered: bool },
     RestoreFailed { error: String },
     RegisterOperations { declarations: Vec<(String, String)> },
     RestoreReady { epoch: Epoch },
@@ -216,6 +247,8 @@ pub enum TransferEffect {
     Step { transfer_id: TransferId, attempt_id: AttemptId, key: Key, part: Option<u32>, purpose: NetworkPurpose, upload_id: Option<String>, source: Source, steps: Steps, place: Option<Location> },
     Complete { transfer_id: TransferId, attempt_id: AttemptId, key: Key, upload_id: Option<String>, parts: Vec<(u32, Option<String>)>, place: Option<Location> },
     Abort { transfer_id: TransferId, attempt_id: AttemptId, key: Key, upload_id: String },
+    /// `abort` of an upload whose transfer is gone: the answer comes back as `AbortDone`.
+    AbortOrphan { key: Key, upload_id: String },
     CancelStep { transfer_id: TransferId },
     DeleteFile { path: String },
     Reply { reply: ReplyId, answer: TransferAnswer },
@@ -256,7 +289,7 @@ pub enum TransferStage {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Removal {
     Cancel,
-    Confirmed { revision: i64 },
+    Confirmed { revision: i64, result: Option<String> },
     Discarded,
     CopyFailed { error: String },
     Storage,
@@ -358,6 +391,11 @@ pub struct TransferState {
     pub(super) pending: BTreeMap<BatchId, Pending>,
     pub(super) subscribers: BTreeMap<TransferId, BTreeSet<StreamId>>,
     pub(super) declarations: BTreeSet<(String, String)>,
+    /// `upload_id` -> key of the removed transfers whose `abort` the server has not answered.
+    pub(super) orphans: BTreeMap<String, Key>,
+    pub(super) orphan_flight: BTreeSet<String>,
+    /// The restored groups that still have an element without its file on the server.
+    pub(super) open_groups: BTreeSet<u64>,
     pub(super) held: Vec<TransferInput>,
     pub(super) waiting: BTreeMap<TransferId, (StoredTransfer, BTreeMap<TransferId, OutboxOutcome>)>,
     pub next_id: TransferId,
@@ -387,6 +425,9 @@ impl TransferState {
             pending: BTreeMap::new(),
             subscribers: BTreeMap::new(),
             declarations: BTreeSet::new(),
+            orphans: BTreeMap::new(),
+            orphan_flight: BTreeSet::new(),
+            open_groups: BTreeSet::new(),
             held: Vec::new(),
             waiting: BTreeMap::new(),
             next_id: 1,
@@ -427,7 +468,8 @@ pub(super) fn upload_row(transfer: &Transfer, kind: StoreKind) -> UploadRow {
         seq: transfer.seq,
         source: transfer.source.path.clone(),
         parts: transfer.source.parts,
-        batch: transfer.batch_id.is_some(),
+        batch: transfer.batch_id,
+        fields: transfer.batch_id.filter(|_| !transfer.fields.is_empty()).map(|_| serde_json::Value::Object(transfer.fields.clone()).to_string()),
         upload_id: transfer.upload_id.clone(),
         confirmed_parts: transfer.confirmed_parts,
         completed: matches!(kind, StoreKind::Completed) || transfer.stage == TransferStage::Mutating,

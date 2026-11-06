@@ -34,7 +34,7 @@ fn outcomes(id: u64, outcome: OutboxOutcome) -> BTreeMap<u64, OutboxOutcome> { B
 /// The owner after `Restored` of `rows` with no declaration: every row waits for it.
 fn undeclared(rows: Vec<StoredTransfer>) -> (Twin, Out) {
     let mut twin = Twin::bare(1);
-    let out = twin.post(TransferInput::Restored { uploads: rows, outcomes: Default::default() });
+    let out = twin.post(TransferInput::Restored { uploads: rows, outcomes: Default::default(), orphans: Vec::new(), batches: Default::default() });
     (twin, out)
 }
 
@@ -55,7 +55,7 @@ fn xfer_restoring_register() {
     let mut twin = Twin::bare(1);
     let out = twin.post(TransferInput::RegisterOperations { declarations: vec![("Moment".into(), "upload".into())] });
     assert!(Twin::quiet(&out), "{out:?}");
-    twin.post(TransferInput::Restored { uploads: vec![partly(1, KEY)], outcomes: Default::default() });
+    twin.post(TransferInput::Restored { uploads: vec![partly(1, KEY)], outcomes: Default::default(), orphans: Vec::new(), batches: Default::default() });
     assert_eq!(twin.stage(1), TransferStage::Ready, "the declaration of the Restoring phase counts");
 }
 
@@ -82,7 +82,7 @@ fn xfer_restore_ready_other() {
     restoring.post(TransferInput::RegisterOperations { declarations: vec![("Moment".into(), "upload".into())] });
     restoring.online(true);
     assert!(Twin::quiet(&restoring.post(TransferInput::RestoreReady { epoch: EPOCH })), "no rows have been read yet");
-    let out = restoring.post(TransferInput::Restored { uploads: vec![partly(1, KEY)], outcomes: Default::default() });
+    let out = restoring.post(TransferInput::Restored { uploads: vec![partly(1, KEY)], outcomes: Default::default(), orphans: Vec::new(), batches: Default::default() });
     assert_eq!(out.steps().len(), 0, "the early RestoreReady did not open the start");
 }
 

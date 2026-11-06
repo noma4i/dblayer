@@ -13,6 +13,10 @@ use super::upload_rows::UploadRaw;
 pub(crate) struct Restore {
     pub ops: Result<Vec<StoredOp>, DbError>,
     pub transfers: Result<Vec<crate::owners::write::transfer::StoredTransfer>, DbError>,
+    /// `(upload_id, key)` of the multipart uploads of removed transfers that wait for the answer of `abort`.
+    pub orphans: Vec<(String, String)>,
+    /// The rule of every batch that still has an element in the base.
+    pub batches: std::collections::BTreeMap<u64, crate::owners::write::transfer::Joint>,
     /// The highest `op_id` a transfer reserved: Outbox gives no `op_id` at or below it.
     pub reserved: Option<u64>,
 }
@@ -29,19 +33,22 @@ impl Db {
     pub(crate) fn read_intents(&self) -> Result<Vec<StoredOp>, DbError> { self.read_restore()?.ops }
 
     pub(crate) fn read_restore(&self) -> Result<Restore, DbError> {
-        let (entries, pending, uploads, answers) = self.shared.read(&[], |reader| {
+        let (entries, pending, uploads, answers, orphans, batches) = self.shared.read(&[], |reader| {
             let connection = reader.connection();
             let pending = crate::transport::encrypted::state::pending(connection).map_err(crate::store::StoreError::from)?;
             let answers = crate::transport::encrypted::state::answers_of_operations(connection).map_err(crate::store::StoreError::from)?;
             let uploads = super::upload_rows::upload_rows(connection).map_err(crate::store::StoreError::from)?;
-            Ok((read_outbox(reader)?, pending, uploads, answers))
+            let orphans = connection.prepare("SELECT upload_id, key FROM upload_orphan ORDER BY upload_id").and_then(|mut statement| statement.query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)))?.collect::<rusqlite::Result<Vec<_>>>()).map_err(crate::store::StoreError::from)?;
+            let batches = connection.prepare("SELECT batch_id, joint FROM sync_upload_batch").and_then(|mut statement| statement.query_map([], |row| Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?)))?.collect::<rusqlite::Result<Vec<_>>>()).map_err(crate::store::StoreError::from)?;
+            Ok((read_outbox(reader)?, pending, uploads, answers, orphans, batches))
         })?;
         let owned: Vec<i64> = uploads.iter().filter_map(UploadRaw::owned_op).collect();
         let reserved = uploads.iter().filter_map(UploadRaw::reserved_op).max().and_then(|op| u64::try_from(op).ok());
         let entries = entries.into_iter().filter(|entry| !owned.contains(&entry.operation.id.0)).collect();
         let ops = self.stored_intents(entries, pending.clone(), answers);
         let transfers = self.stored_transfers(uploads);
-        Ok(Restore { ops, transfers, reserved })
+        let batches = batches.into_iter().filter_map(|(id, text)| Some((u64::try_from(id).ok()?, crate::owners::write::transfer::Joint::from_text(&text)?))).collect();
+        Ok(Restore { ops, transfers, orphans, batches, reserved })
     }
 
     fn stored_intents(&self, entries: Vec<super::local_write::OutboxOperation>, pending: Option<crate::transport::encrypted::state::Pending>, mut answers: std::collections::BTreeMap<i64, (u64, crate::transport::encrypted::state::StoredAnswer)>) -> Result<Vec<StoredOp>, DbError> {

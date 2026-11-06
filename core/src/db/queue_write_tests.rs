@@ -35,7 +35,8 @@ fn the_base_keeps_the_whole_value_of_a_transfer() {
         seq: 7,
         source: "/src/video.mov".into(),
         parts: 4,
-        batch: true,
+        batch: Some(3),
+        fields: None,
         upload_id: Some("u-1".into()),
         confirmed_parts: 2,
         completed: false,
@@ -61,7 +62,7 @@ fn the_base_keeps_the_whole_value_of_a_transfer() {
     assert_eq!(stored.len(), 1);
     let transfer = &stored[0];
     assert_eq!((transfer.key.as_str(), transfer.seq, transfer.source.path.as_str(), transfer.source.parts), ("moments:m1:upload", 7, "/src/video.mov", 4));
-    assert_eq!((transfer.batch, transfer.upload_id.as_deref(), transfer.confirmed_parts, transfer.completed, transfer.failed.as_deref()), (true, Some("u-1"), 2, false, None));
+    assert_eq!((transfer.batch, transfer.upload_id.as_deref(), transfer.confirmed_parts, transfer.completed, transfer.failed.as_deref()), (Some(3), Some("u-1"), 2, false, None));
     assert_eq!((transfer.created_at.0, transfer.size, transfer.sha256.as_str()), (1234, 4096, "abc"));
     assert_eq!((transfer.mutation.path.as_str(), transfer.mutation.body.as_str(), transfer.mutation.on_failure), ("/moments", "{\"a\":1}", OnFailure::Keep));
     assert_eq!((transfer.steps.path.as_str(), transfer.steps.body.as_str()), ("/presign", "{\"b\":2}"));

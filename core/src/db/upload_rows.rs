@@ -19,7 +19,7 @@ pub(crate) struct UploadRaw {
     seq: i64,
     source: String,
     total: i64,
-    batch: bool,
+    batch: Option<i64>,
     upload_id: Option<String>,
     sent: i64,
     completed: bool,
@@ -38,6 +38,7 @@ pub(crate) struct UploadRaw {
     signed_id: Option<String>,
     aborted: bool,
     op_id: Option<i64>,
+    fields: Option<String>,
     etags: Vec<Option<String>>,
 }
 
@@ -57,7 +58,7 @@ pub(crate) fn upload_rows(connection: &rusqlite::Connection) -> rusqlite::Result
     }
     let mut statement = connection.prepare(
         "SELECT model, row_id, action, seq, source, total, batch, upload_id, sent, completed, error_message, created_at, inline, size, sha256, mutation_path, mutation_body, on_failure, steps_path, steps_body, \
-         transfer_id, cycle_id, signed_id, aborted, op_id FROM sync_upload WHERE seq IS NOT NULL ORDER BY seq",
+         transfer_id, cycle_id, signed_id, aborted, op_id, fields FROM sync_upload WHERE seq IS NOT NULL ORDER BY seq",
     )?;
     let rows = statement.query_map([], |row| {
         let key = [row.get::<_, String>(0)?, row.get(1)?, row.get(2)?];
@@ -86,6 +87,7 @@ pub(crate) fn upload_rows(connection: &rusqlite::Connection) -> rusqlite::Result
             signed_id: row.get(22)?,
             aborted: row.get::<_, Option<bool>>(23)?.unwrap_or(false),
             op_id: row.get(24)?,
+            fields: row.get(25)?,
         })
     })?;
     rows.collect()
@@ -125,13 +127,13 @@ impl Db {
             .store
             .write_store(&Authority::Owner, |stored| {
                 stored.connection.execute(
-                    "INSERT OR REPLACE INTO sync_upload (model, row_id, action, status, stage, sent, total, wait, attempts, error_kind, error_message, seq, source, batch, upload_id, completed, created_at, inline, size, sha256, mutation_path, mutation_body, on_failure, steps_path, steps_body, transfer_id, cycle_id, signed_id, aborted, op_id) \
-                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, NULL, 0, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?28)",
+                    "INSERT OR REPLACE INTO sync_upload (model, row_id, action, status, stage, sent, total, wait, attempts, error_kind, error_message, seq, source, batch, upload_id, completed, created_at, inline, size, sha256, mutation_path, mutation_body, on_failure, steps_path, steps_body, transfer_id, cycle_id, signed_id, aborted, op_id, fields) \
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, NULL, 0, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?28, ?29)",
                     rusqlite::params![
                         model, id, action, status, stage, row.confirmed_parts, row.parts, row.failed.as_ref().map(|_| "unrecognized"), row.failed,
-                        i64::try_from(row.seq).unwrap_or(i64::MAX), row.source, row.batch, row.upload_id, row.completed, i64::try_from(row.created_at).unwrap_or(i64::MAX), row.inline,
+                        i64::try_from(row.seq).unwrap_or(i64::MAX), row.source, row.batch.and_then(|group| i64::try_from(group).ok()), row.upload_id, row.completed, i64::try_from(row.created_at).unwrap_or(i64::MAX), row.inline,
                         i64::try_from(row.size).unwrap_or(i64::MAX), row.sha256, row.path, row.body, on_failure, row.steps_path, row.steps_body,
-                        i64::try_from(row.transfer_id).unwrap_or(i64::MAX), i64::try_from(row.cycle_id).unwrap_or(i64::MAX), row.signed_id, row.aborted, row.op_id.and_then(|op| i64::try_from(op).ok())
+                        i64::try_from(row.transfer_id).unwrap_or(i64::MAX), i64::try_from(row.cycle_id).unwrap_or(i64::MAX), row.signed_id, row.aborted, row.op_id.and_then(|op| i64::try_from(op).ok()), row.fields
                     ],
                 )?;
                 stored.connection.execute("DELETE FROM sync_upload_part WHERE model = ?1 AND row_id = ?2 AND action = ?3", rusqlite::params![model, id, action])?;
@@ -150,8 +152,8 @@ impl Db {
         self.stored_transfers(rows)
     }
 
-    fn file_present(&self, key: &str, place: Location) -> Result<bool, DbError> {
-        let file_id = crate::owners::write::transfer::file_id(key);
+    fn file_present(&self, transfer_id: u64, place: Location) -> Result<bool, DbError> {
+        let file_id = crate::owners::write::transfer::file_id(transfer_id);
         match place {
             Location::Table => self.shared.store.read_locked(|connection| connection.query_row("SELECT COUNT(*) FROM file WHERE id = ?1", [&file_id], |row| row.get::<_, i64>(0))).map(|count| count > 0),
             Location::Directory => Ok(self.shared.files.path(&file_id).is_some_and(|path| path.exists())),
@@ -168,15 +170,17 @@ impl Db {
         let key = format!("{model}:{id}:{action}");
         let place = if raw.inline { Location::Table } else { Location::Directory };
         let copying = raw.size == 0;
-        let file_present = if copying { std::path::Path::new(&raw.source).exists() } else { self.file_present(&key, place)? };
         let seq: u64 = unsigned(raw.seq, "seq")?;
+        let transfer_id: u64 = raw.transfer_id.map_or(Ok(seq), |value| unsigned(value, "transfer_id"))?;
+        let file_present = if copying { std::path::Path::new(&raw.source).exists() } else { self.file_present(transfer_id, place)? };
         Ok(StoredTransfer {
-            transfer_id: raw.transfer_id.map_or(Ok(seq), |value| unsigned(value, "transfer_id"))?,
+            transfer_id,
             key,
             seq,
             source: Source { path: raw.source, parts: unsigned(raw.total, "total")? },
-            batch: raw.batch,
+            batch: raw.batch.and_then(|group| u64::try_from(group).ok()).filter(|group| *group > 0),
             upload_id: raw.upload_id,
+            fields: raw.fields.and_then(|text| serde_json::from_str::<serde_json::Value>(&text).ok()).and_then(|value| value.as_object().cloned()).unwrap_or_default(),
             confirmed_parts: unsigned(raw.sent, "sent")?,
             etags: raw.etags,
             completed: raw.completed,
@@ -206,6 +210,29 @@ impl Db {
             steps: Steps { path: raw.steps_path, body: raw.steps_body },
             restore_failed: None,
         })
+    }
+
+    pub(super) fn write_upload_batch(&self, batch_id: u64, joint: &str) -> Result<(), DbError> {
+        self.shared
+            .store
+            .write_store(&Authority::Owner, |stored| {
+                stored.connection.execute("INSERT OR REPLACE INTO sync_upload_batch (batch_id, joint) VALUES (?1, ?2)", rusqlite::params![i64::try_from(batch_id).unwrap_or(i64::MAX), joint])?;
+                Ok(())
+            })
+            .map_err(DbError::from)
+    }
+
+    pub(super) fn write_orphan(&self, upload_id: &str, key: Option<&str>) -> Result<(), DbError> {
+        self.shared
+            .store
+            .write_store(&Authority::Owner, |stored| {
+                match key {
+                    Some(key) => stored.connection.execute("INSERT OR REPLACE INTO upload_orphan (upload_id, key) VALUES (?1, ?2)", rusqlite::params![upload_id, key])?,
+                    None => stored.connection.execute("DELETE FROM upload_orphan WHERE upload_id = ?1", [upload_id])?,
+                };
+                Ok(())
+            })
+            .map_err(DbError::from)
     }
 
     /// `BlobCachePut` and `BlobCacheRemove`.
@@ -243,6 +270,7 @@ impl Db {
             .write_store(&Authority::Owner, |stored| {
                 stored.connection.execute("DELETE FROM sync_upload WHERE model = ?1 AND row_id = ?2 AND action = ?3", rusqlite::params![model, id, action])?;
                 stored.connection.execute("DELETE FROM sync_upload_part WHERE model = ?1 AND row_id = ?2 AND action = ?3", rusqlite::params![model, id, action])?;
+                stored.connection.execute("DELETE FROM sync_upload_batch WHERE batch_id NOT IN (SELECT batch FROM sync_upload WHERE batch IS NOT NULL)", [])?;
                 Ok(())
             })
             .map_err(DbError::from)

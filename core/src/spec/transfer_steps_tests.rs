@@ -228,10 +228,10 @@ fn xfer_uploading_cancel() {
     twin.step_ok(id, 1, Some("u1"));
     twin.commit();
     let (reply, out) = twin.cancel(KEY);
-    assert_eq!((twin.stage(id), out.cancel_steps(), out.aborts(), out.removed()), (TransferStage::Removing, 1, 1, vec![KEY.to_string()]));
+    assert_eq!((twin.stage(id), out.cancel_steps(), out.aborts(), out.removed()), (TransferStage::Removing, 1, 0, vec![KEY.to_string()]));
     assert_eq!(out.all_replies(), 0, "the answer waits for the write");
     let out = twin.commit();
-    assert_eq!(out.replies(reply), vec![TransferAnswer::Cancelled(true)]);
+    assert_eq!((out.replies(reply), out.orphan_aborts()), (vec![TransferAnswer::Cancelled(true)], vec!["u1".to_string()]));
     assert_eq!(twin.stage(id), TransferStage::Done);
 }
 
@@ -416,8 +416,9 @@ fn xfer_completing_cancel() {
     let mut twin = Twin::new();
     let id = completing_multipart(&mut twin, KEY);
     let (reply, out) = twin.cancel(KEY);
-    assert_eq!((twin.stage(id), out.cancel_steps(), out.aborts(), out.removed()), (TransferStage::Removing, 1, 1, vec![KEY.to_string()]));
-    assert_eq!(twin.commit().replies(reply), vec![TransferAnswer::Cancelled(true)]);
+    assert_eq!((twin.stage(id), out.cancel_steps(), out.aborts(), out.removed()), (TransferStage::Removing, 1, 0, vec![KEY.to_string()]));
+    let committed = twin.commit();
+    assert_eq!((committed.replies(reply), committed.orphan_aborts()), (vec![TransferAnswer::Cancelled(true)], vec!["u1".to_string()]));
 }
 
 #[test]
@@ -425,7 +426,7 @@ fn xfer_completing_discard() {
     let mut twin = Twin::new();
     let id = completing_multipart(&mut twin, KEY);
     let (reply, out) = twin.discard(KEY);
-    assert_eq!((twin.stage(id), out.aborts()), (TransferStage::Removing, 1));
+    assert_eq!((twin.stage(id), out.aborts(), out.orphans_written().len()), (TransferStage::Removing, 0, 1));
     assert_eq!(twin.commit().replies(reply), vec![TransferAnswer::Ok]);
 }
 

@@ -130,6 +130,8 @@ pub(crate) fn retire_operations(connection: &Connection, models: Option<&[String
         Some(models) => models.iter().try_for_each(|model| clear_sync(connection, Some(model)))?,
         None => {
             connection.execute("DELETE FROM transfer_abort", [])?;
+            connection.execute("DELETE FROM upload_orphan", [])?;
+            connection.execute("DELETE FROM sync_upload_batch", [])?;
             clear_sync(connection, None)?;
         }
     }

@@ -163,8 +163,9 @@ fn xfer_persisting_failure_refuses() {
 fn xfer_discard() {
     let (mut twin, id) = failed_with_upload();
     let (reply, out) = twin.discard(KEY);
-    assert_eq!((twin.stage(id), out.aborts(), out.removed()), (TransferStage::Removing, 1, vec![KEY.to_string()]));
-    assert_eq!(twin.commit().replies(reply), vec![TransferAnswer::Ok]);
+    assert_eq!((twin.stage(id), out.aborts(), out.orphans_written().len(), out.removed()), (TransferStage::Removing, 0, 1, vec![KEY.to_string()]));
+    let committed = twin.commit();
+    assert_eq!((committed.replies(reply), committed.orphan_aborts()), (vec![TransferAnswer::Ok], vec!["u1".to_string()]));
     let (mut other, id) = failed_with_upload();
     let (reply, _) = other.cancel(KEY);
     assert_eq!((other.commit().replies(reply), other.stage(id)), (vec![TransferAnswer::Cancelled(true)], TransferStage::Done));

@@ -21,7 +21,7 @@ use super::wire::Wire;
 use crate::files::FileDirectories;
 use crate::owners::contract::{Online, ReplyId};
 use crate::runtime::{Address, DetScheduler, EpochStamp, Time};
-use crate::transport::{GraphQLRequest, NetworkPurpose, Response, TransportError};
+use crate::transport::{CancelToken, GraphQLRequest, NetworkPurpose, PutFile, PutRequest, Response, TransferIdentity, TransferStep, TransportError};
 
 const EPOCH: u64 = 1;
 const KEY: &str = "Moment:r1:upload";
@@ -35,13 +35,20 @@ type Asked = (String, Option<u32>, Option<String>, String);
 #[derive(Default)]
 struct Codec {
     asked: Mutex<Vec<Asked>>,
+    /// The step is a PUT of the file instead of a mutation.
+    put: std::sync::atomic::AtomicBool,
 }
 
 #[async_trait]
 impl StepCodec for Codec {
     async fn step(&self, link: &Link, _key: &str, part: Option<u32>, upload_id: Option<&str>, source: &Source, _steps: &Steps) -> Result<StepDone, TransportError> {
         lock(&self.asked).push(("Step".into(), part, upload_id.map(str::to_string), source.path.clone()));
-        link.mutate(GraphQLRequest::new("mutation Step", "Step", json!({ "part": part }))).await?;
+        if self.put.load(std::sync::atomic::Ordering::SeqCst) {
+            let request = PutRequest { url: "https://storage/part".into(), headers: Vec::new(), file: PutFile { path: source.path.clone(), offset: 0, length: 1 }, identity: TransferIdentity { operation_id: 0, item_id: "k".into(), step: TransferStep::Put }, cancel: CancelToken::new(), sent: Arc::new(|_| {}) };
+            link.put(request).await?;
+        } else {
+            link.mutate(GraphQLRequest::new("mutation Step", "Step", json!({ "part": part }))).await?;
+        }
         Ok(StepDone { upload_id: (part == Some(1)).then(|| "u1".to_string()), etag: None })
     }
 
@@ -97,7 +104,7 @@ fn world() -> World {
     let transfers = det.add::<Transfers>("transfers", TransferState::new(EPOCH, 2, TransferPeers { store, outbox, rounds: None }), executor);
     det.start_epoch(EPOCH);
     let mut world = World { det, spawn, stub, transfers, files, codec, answers, shown, dir };
-    world.post(TransferInput::Restored { uploads: Vec::new(), outcomes: Default::default() });
+    world.post(TransferInput::Restored { uploads: Vec::new(), outcomes: Default::default(), orphans: Vec::new(), batches: Default::default() });
     world.post(TransferInput::RestoreReady { epoch: EPOCH });
     world.post(TransferInput::Online(Online(true)));
     world
@@ -105,7 +112,7 @@ fn world() -> World {
 
 impl World {
     fn source(&self, key: &str, bytes: &[u8]) -> PathBuf {
-        let path = self.dir.path().join(format!("source-{}", file_id(key)));
+        let path = self.dir.path().join(format!("source-{}", key.replace([':', '/'], "_")));
         std::fs::write(&path, bytes).expect("write source");
         path
     }
@@ -123,6 +130,9 @@ impl World {
         let input = self.accept_input(key, path, parts);
         self.post(input);
     }
+
+    /// The id of the copy of the transfer of `key` in the file directory.
+    fn copy(&self, key: &str) -> String { file_id(self.det.state(self.transfers).expect("transfer state").transfers.values().rev().find(|transfer| transfer.key == key).map(|transfer| transfer.transfer_id).expect("transfer")) }
 
     fn stage(&self, key: &str) -> Option<TransferStage> { self.det.state(self.transfers).expect("transfer state").transfers.values().rev().find(|transfer| transfer.key == key).map(|transfer| transfer.stage) }
 
@@ -149,8 +159,8 @@ fn exec_xfer_copies_big_file_to_directory() {
     w.stub.script([Act::Hang, Act::Hang]);
     w.accept(big_key, big_path, 2);
     w.accept(small_key, small_path, 1);
-    assert_eq!(w.files.read(&file_id(big_key)).expect("copy in the directory"), big);
-    assert_eq!(w.files.directory_entries().expect("entries"), vec![file_id(big_key), file_id(small_key)], "every copy lies in the directory: the steps read one place");
+    assert_eq!(w.files.read(&w.copy(big_key)).expect("copy in the directory"), big);
+    assert_eq!(w.files.read(&w.copy(small_key)).expect("small copy in the directory"), b"0123456789", "every copy lies in the directory: the steps read one place");
     assert_eq!((w.stage(big_key), w.stage(small_key)), (Some(TransferStage::Uploading), Some(TransferStage::Uploading)));
 }
 
@@ -190,7 +200,7 @@ fn exec_xfer_steps_carry_transfer_purpose() {
     assert_eq!(w.stage(KEY), Some(TransferStage::Mutating));
     let (step, complete) = (("Step".to_string(), NetworkPurpose::Transfer), ("Complete".to_string(), NetworkPurpose::Transfer));
     assert_eq!(w.calls(), vec![step.clone(), step, complete]);
-    let source = w.files.path(&file_id(KEY)).expect("directory").to_string_lossy().into_owned();
+    let source = w.files.path(&w.copy(KEY)).expect("directory").to_string_lossy().into_owned();
     let _ = path;
     assert_eq!(
         w.asked(),
@@ -234,8 +244,51 @@ fn exec_xfer_view_and_local_copy() {
     w.accept(KEY, path, 1);
     assert_eq!(w.stage(KEY), Some(TransferStage::Mutating));
     assert_eq!(lock(&w.shown).first(), Some(&Shown::Copying));
-    assert!(w.files.read(&file_id(KEY)).is_ok(), "the local copy is on disk before Confirmed");
+    assert!(w.files.read(&w.copy(KEY)).is_ok(), "the local copy is on disk before Confirmed");
     w.post(TransferInput::MutationOutcome { key: KEY.into(), outcome: OutboxOutcome::Confirmed { revision: 3, result: None } });
     assert_eq!(w.stage(KEY), Some(TransferStage::Done));
-    assert!(w.files.read(&file_id(KEY)).is_err(), "the local copy is deleted after Confirmed");
+    assert!(w.files.read(&w.copy(KEY)).is_err(), "the local copy is deleted after Confirmed");
+}
+
+#[test]
+fn exec_xfer_key_path_chars() {
+    let mut w = world();
+    let key = "Moment:../../escape:upload";
+    let path = w.source(key, b"abc");
+    w.accept(key, path, 1);
+    let (directory, copy) = (w.files.path("").expect("directory"), w.files.path(&w.copy(key)).expect("directory"));
+    assert!(copy.starts_with(&directory) && copy.exists() && !copy.to_string_lossy().contains(".."), "the copy lies in the directory of the files: {copy:?}");
+}
+
+#[test]
+fn exec_xfer_put_cancelled() {
+    let mut w = world();
+    w.codec.put.store(true, std::sync::atomic::Ordering::SeqCst);
+    w.stub.hang_puts();
+    let path = w.source(KEY, b"abc");
+    w.accept(KEY, path, 2);
+    let tokens = w.stub.put_tokens();
+    assert_eq!((tokens.len(), tokens[0].is_cancelled()), (1, false));
+    w.post(TransferInput::Online(Online(false)));
+    assert!(tokens[0].is_cancelled(), "the platform stops the PUT of the cancelled attempt");
+    assert_eq!((w.stage(KEY), w.late(&["StepOk", "StepError"])), (Some(TransferStage::Ready), 0));
+}
+
+#[test]
+fn exec_xfer_prop_put_cancel() {
+    for cause in ["offline", "saving", "discard"] {
+        let mut w = world();
+        w.codec.put.store(true, std::sync::atomic::Ordering::SeqCst);
+        w.stub.hang_puts();
+        let path = w.source(KEY, b"abc");
+        w.accept(KEY, path, 2);
+        let token = w.stub.put_tokens().remove(0);
+        match cause {
+            "offline" => w.post(TransferInput::Online(Online(false))),
+            "saving" => w.post(TransferInput::PowerSaving(true)),
+            _ => w.post(TransferInput::Discard { key: KEY.into(), reply: 9 }),
+        }
+        assert!(token.is_cancelled(), "{cause}: the attempt stays cancelled");
+        assert!(lock(&w.shown).iter().all(|shown| !matches!(shown, Shown::Uploading { progress } if *progress > 0)), "{cause}: the bytes of a cancelled attempt raise no progress");
+    }
 }

@@ -106,6 +106,9 @@ pub(super) struct Stub {
     script: Arc<Mutex<VecDeque<Act>>>,
     calls: Arc<Mutex<Vec<GraphQLRequest>>>,
     dropped: Arc<AtomicUsize>,
+    /// The tokens of the PUT requests it saw, and whether a PUT hangs until the token is cancelled.
+    puts: Arc<Mutex<Vec<crate::transport::CancelToken>>>,
+    hang_puts: Arc<std::sync::atomic::AtomicBool>,
 }
 
 struct Waiting(Arc<AtomicUsize>);
@@ -120,6 +123,10 @@ impl Stub {
     pub fn calls(&self) -> Vec<GraphQLRequest> { lock(&self.calls).clone() }
 
     pub fn dropped(&self) -> usize { self.dropped.load(Ordering::SeqCst) }
+
+    pub fn put_tokens(&self) -> Vec<crate::transport::CancelToken> { lock(&self.puts).clone() }
+
+    pub fn hang_puts(&self) { self.hang_puts.store(true, Ordering::SeqCst); }
 
     async fn answer(&self, request: GraphQLRequest) -> Result<Response, TransportError> {
         lock(&self.calls).push(request);
@@ -143,7 +150,14 @@ impl Transport for Stub {
 
     async fn subscribe(&self, _admitted: &crate::lifecycle::Admitted, request: GraphQLRequest) -> Result<ServerSubscription, TransportError> { Err(TransportError::Unscripted(request.operation_name)) }
 
-    async fn put(&self, _admitted: &crate::lifecycle::Admitted, _request: PutRequest) -> Result<PutResponse, TransportError> { Ok(PutResponse::with_etag("etag")) }
+    async fn put(&self, _admitted: &crate::lifecycle::Admitted, request: PutRequest) -> Result<PutResponse, TransportError> {
+        lock(&self.puts).push(request.cancel.clone());
+        if self.hang_puts.load(Ordering::SeqCst) {
+            let _waiting = Waiting(self.dropped.clone());
+            std::future::pending::<()>().await;
+        }
+        Ok(PutResponse::with_etag("etag"))
+    }
 }
 
 pub(super) fn admit(_: Option<crate::runtime::Epoch>) -> Option<crate::lifecycle::Admitted> { crate::transport::test_admission().ok() }

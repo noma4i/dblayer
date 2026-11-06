@@ -70,6 +70,15 @@ impl Out {
 
     pub fn aborts(&self) -> usize { self.count(|run| matches!(run, Run::Abort { .. })) }
 
+    /// The upload ids of the `abort` calls of transfers that are gone.
+    pub fn orphan_aborts(&self) -> Vec<String> { self.runs.iter().filter_map(|run| if let Run::AbortOrphan { upload_id, .. } = run { Some(upload_id.clone()) } else { None }).collect() }
+
+    pub fn orphans_written(&self) -> Vec<(String, String)> { self.batches.iter().flat_map(|batch| batch.ops.iter()).filter_map(|op| if let StoreOp::UploadOrphan { upload_id, key } = op { Some((upload_id.clone(), key.clone())) } else { None }).collect() }
+
+    pub fn orphans_removed(&self) -> Vec<String> { self.batches.iter().flat_map(|batch| batch.ops.iter()).filter_map(|op| if let StoreOp::RemoveOrphan { upload_id } = op { Some(upload_id.clone()) } else { None }).collect() }
+
+    pub fn delete_paths(&self) -> Vec<String> { self.runs.iter().filter_map(|run| if let Run::DeleteFile { path } = run { Some(path.clone()) } else { None }).collect() }
+
     pub fn cancel_steps(&self) -> usize { self.count(|run| matches!(run, Run::CancelStep { .. })) }
 
     pub fn copies(&self) -> usize { self.count(|run| matches!(run, Run::Copy { .. })) }
@@ -131,7 +140,8 @@ pub(super) fn stored(id: TransferId, key: &str, parts: u32) -> StoredTransfer {
         key: key.into(),
         seq: id,
         source: Source { path: format!("/src/{key}"), parts },
-        batch: false,
+        batch: None,
+        fields: Default::default(),
         upload_id: None,
         confirmed_parts: 0,
         etags: Vec::new(),
@@ -180,11 +190,14 @@ impl Twin {
     }
 
     /// The owner after `Restored` of `rows`: the operations of the rows are declared, the network has not spoken yet.
-    pub fn opened(rows: Vec<StoredTransfer>, outcomes: std::collections::BTreeMap<TransferId, OutboxOutcome>) -> (Self, Out) {
+    pub fn opened(rows: Vec<StoredTransfer>, outcomes: std::collections::BTreeMap<TransferId, OutboxOutcome>) -> (Self, Out) { Self::opened_with(rows, outcomes, Default::default()) }
+
+    /// The same with the rules of the batches kept in the base.
+    pub fn opened_with(rows: Vec<StoredTransfer>, outcomes: std::collections::BTreeMap<TransferId, OutboxOutcome>, batches: std::collections::BTreeMap<u64, Joint>) -> (Self, Out) {
         let mut twin = Self::bare(1);
         let declarations = rows.iter().map(|row| (row.mutation.model.clone(), row.mutation.action.clone())).collect();
         twin.post(TransferInput::RegisterOperations { declarations });
-        let out = twin.post(TransferInput::Restored { uploads: rows, outcomes });
+        let out = twin.post(TransferInput::Restored { uploads: rows, outcomes, orphans: Vec::new(), batches });
         (twin, out)
     }
 
@@ -216,7 +229,7 @@ impl Twin {
 
     pub fn with_slots(slots: u32) -> Self {
         let mut twin = Self::bare(slots);
-        twin.post(TransferInput::Restored { uploads: Vec::new(), outcomes: Default::default() });
+        twin.post(TransferInput::Restored { uploads: Vec::new(), outcomes: Default::default(), orphans: Vec::new(), batches: Default::default() });
         twin.post(TransferInput::RestoreReady { epoch: EPOCH });
         twin.post(TransferInput::Online(Online(true)));
         twin
