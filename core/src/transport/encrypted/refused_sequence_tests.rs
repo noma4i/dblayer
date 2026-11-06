@@ -13,7 +13,7 @@ use crate::transport::{GraphQLRequest, MockTransport, SessionCode, Transport, Tr
 
 const WRITE: &str = "mutation Rename { rename { id } }";
 
-async fn signed_in() -> (Arc<FakeServer>, Arc<EncryptedTransport>) {
+async fn signed_in() -> (Arc<FakeServer>, Arc<EncryptedTransport>, Arc<Client>) {
     let clock = Arc::new(ManualClock::new(Duration::from_secs(1_800_000_000)));
     let server = FakeServer::new(clock.clone());
     let config = EncryptedConfig { origin: origin().to_string(), server_key: public_key_der_b64().to_string(), pin: pin().to_string(), ..crate::transport::encrypted::protocol_tests::config() };
@@ -22,12 +22,13 @@ async fn signed_in() -> (Arc<FakeServer>, Arc<EncryptedTransport>) {
     client.start_owners();
     client.session_call("social", json!({ "provider": "google", "idToken": "t" })).await.unwrap();
     server.register(WRITE);
-    (server, client.transport())
+    let transport = client.transport();
+    (server, transport, client)
 }
 
 #[tokio::test]
 async fn a_confirmed_refusal_spends_its_sequence_and_the_next_mutation_is_accepted() {
-    let (server, transport) = signed_in().await;
+    let (server, transport, _client) = signed_in().await;
     let request = GraphQLRequest::new(WRITE, "", json!({}));
     server.refuse_next("RATE_LIMITED", true);
 

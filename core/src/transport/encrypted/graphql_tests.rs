@@ -12,7 +12,7 @@ use crate::store::Store;
 use crate::pacing::ManualClock;
 use crate::transport::{GraphQLRequest, MockTransport, Transport};
 
-async fn transport(rest: MockTransport) -> (Arc<EncryptedTransport>, Arc<FakeServer>) {
+async fn transport(rest: MockTransport) -> (Arc<EncryptedTransport>, Arc<FakeServer>, Arc<Client>) {
     let clock = Arc::new(ManualClock::new(Duration::from_secs(1_800_000_000)));
     let server = FakeServer::new(clock.clone());
     let config = EncryptedConfig { origin: origin().to_string(), server_key: public_key_der_b64().to_string(), pin: pin().to_string(), ..crate::transport::encrypted::protocol_tests::config() };
@@ -20,13 +20,14 @@ async fn transport(rest: MockTransport) -> (Arc<EncryptedTransport>, Arc<FakeSer
     let client = Client::new(&config, server.clone(), Arc::new(MemoryCredentials::default()), db, clock, Arc::new(rest)).unwrap();
     client.start_owners();
     client.session_call("social", json!({ "provider": "google", "idToken": "t" })).await.unwrap();
-    (client.transport(), server)
+    let transport = client.transport();
+    (transport, server, client)
 }
 
 #[tokio::test]
 async fn encrypted_subscriptions_do_not_send_credentials_or_queries_to_v2() {
     let rest = MockTransport::new();
-    let (transport, _) = transport(rest.clone()).await;
+    let (transport, _, _client) = transport(rest.clone()).await;
     let _subscription = transport.subscribe(GraphQLRequest::new("subscription Changes { recordEvents { changes { entityId } } }", "Changes", json!({}))).await.unwrap();
     assert_eq!(rest.call_count("Changes"), 0);
 }
@@ -60,7 +61,7 @@ fn an_answer_maps_to_a_response_and_a_server_code_becomes_a_graphql_error() {
 #[tokio::test]
 async fn queries_and_mutations_use_the_encrypted_client() {
     let rest = MockTransport::new();
-    let (transport, server) = transport(rest.clone()).await;
+    let (transport, server, _client) = transport(rest.clone()).await;
     server.register("query Q { q }");
     server.register("mutation M { m }");
 

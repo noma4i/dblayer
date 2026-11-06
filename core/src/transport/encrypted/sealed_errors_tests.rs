@@ -31,6 +31,7 @@ struct Rig {
     server: Arc<FakeServer>,
     credentials: Arc<MemoryCredentials>,
     db: Arc<Store>,
+    _client: Arc<Client>,
 }
 
 async fn rig() -> Rig {
@@ -44,7 +45,7 @@ async fn rig() -> Rig {
     client.session_call("social", json!({ "provider": "google", "idToken": "t" })).await.unwrap();
     server.register("query Q { q }");
     server.register("mutation M { m }");
-    Rig { transport: client.transport(), server, credentials, db }
+    Rig { transport: client.transport(), server, credentials, db, _client: client }
 }
 
 fn pending(db: &Store) -> bool {

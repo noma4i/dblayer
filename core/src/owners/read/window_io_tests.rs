@@ -12,7 +12,7 @@ use super::rig::{admit, collector, pump, pump_for, runtime, saw_input, BatchPeer
 use super::{WindowCodec, WindowIo};
 use crate::owners::read::deliveries::Deliveries;
 use crate::owners::read::windows::{self as w, AnswerPage, WindowEffect, WindowKey, WindowOutcome, Windows, WindowsEffect, WindowsInput};
-use crate::owners::store::{RowValue, StoreInput, StoreWriter};
+use crate::owners::store::{RowValue, StoreInput, StoreOp, StoreWriter};
 use crate::owners::support::Sink;
 use crate::runtime::{Address, Cause, DetScheduler, Effect, Effects, EpochStamp, Outbound, StateOwner, Time};
 use crate::transport::{GraphQLRequest, MockTransport, Reply, Response, TransportError};
@@ -96,7 +96,8 @@ fn win_io_request_lands() {
     assert_eq!(landed.len(), 1);
     let batch = &landed[0];
     assert_eq!((batch.epoch, batch.intents), (EPOCH, 0));
-    assert_eq!(batch.rows, [("Moment".to_string(), "r1".to_string()), ("Moment".to_string(), "r2".to_string())]);
+    let landed_rows: Vec<&str> = batch.ops.iter().flat_map(|op| match op { StoreOp::Window { roots, .. } => roots.iter().map(|row| row.row_id.as_str()).collect(), _ => Vec::new() }).collect();
+    assert_eq!(landed_rows, ["r1", "r2"]);
     assert_eq!(batch.basis.get("Moment"), Some(&0));
     assert_eq!(saw_input(&rig.det, "Response"), 1, "the answer came back as one input");
 }
