@@ -86,7 +86,7 @@ class SealedServer(private val deduplicate: Boolean = false, private val answer:
             if (it.first != stable) throw DbException.Invalid("request ID reused with different content")
             return EncryptedReply(200u, it.second)
         }
-        val reply = answer(path, sent)
+        val reply = try { answer(path, sent) } catch (failure: DbException.Http) { return EncryptedReply(failure.status, "") }
         effects.add(sent)
         val operation = sent["operationName"]?.jsonPrimitive?.content
         if (operation != null && holding.get() == operation) {

@@ -207,7 +207,7 @@ class ValueBridgeTest {
             val ended = late.await().exceptionOrNull()
             assertTrue("the late call of the old epoch ended as $ended", ended is DbException.Interrupted)
             val refused = runCatching { old.send(Moment, text("late")) }.exceptionOrNull()
-            assertTrue("a command of the old epoch ran: $refused", refused is DbException.Interrupted)
+            assertTrue("a command of the old epoch ran: $refused", refused is DbException.NoSession)
             assertEquals(0, server.operationRequests("CreateMoment"))
             assertEquals("B", projectionB.value?.name)
         } finally {

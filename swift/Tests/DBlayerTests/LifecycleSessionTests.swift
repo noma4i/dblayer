@@ -319,7 +319,11 @@ extension BridgeProbeTests {
     }
     #expect(code == .alreadyAuthenticated)
     let logins = server.pathRequests("/api/auth/login_link")
-    try await DB.sessionCall("logout", body: NoBody())
+    var logout: SessionCode?
+    do { try await DB.sessionCall("logout", body: NoBody()) } catch let error as DbError {
+      if case let .Session(refused, _) = error { logout = refused }
+    }
+    #expect(logout == .noCredential)
     try await Self.startSealedSession("A")
     #expect(server.pathRequests("/api/auth/login_link") == logins + 1)
     var entity = Projected<User>(try DB.account().stream(User.profile))

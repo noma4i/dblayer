@@ -6,12 +6,13 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import kotlinx.serialization.decodeFromString
-const val HANG_GUARD_MILLIS = 60_000L
-fun <T> bounded(timeoutMillis: Long = HANG_GUARD_MILLIS * 2, body: suspend CoroutineScope.() -> T): T = runBlocking {
+const val HANG_GUARD_MILLIS = 18_000L
+const val TEST_DEADLINE_MILLIS = 20_000L
+fun <T> bounded(timeoutMillis: Long = TEST_DEADLINE_MILLIS, body: suspend CoroutineScope.() -> T): T = runBlocking {
     try {
         withTimeout(timeoutMillis) { body() }
     } catch (error: TimeoutCancellationException) {
-        throw AssertionError("the test body did not finish within $timeoutMillis ms", error)
+        throw AssertionError("the test body did not finish within $timeoutMillis ms\n${threadStacks()}", error)
     }
 }
 suspend fun eventually(what: String, timeoutMillis: Long = HANG_GUARD_MILLIS, condition: suspend () -> Boolean) {
@@ -21,7 +22,7 @@ suspend fun eventually(what: String, timeoutMillis: Long = HANG_GUARD_MILLIS, co
         delay(5)
     }
 }
-fun eventuallyBlocking(what: String, timeoutMillis: Long = HANG_GUARD_MILLIS, condition: () -> Boolean) = bounded(timeoutMillis + HANG_GUARD_MILLIS) { eventually(what, timeoutMillis) { condition() } }
+fun eventuallyBlocking(what: String, timeoutMillis: Long = HANG_GUARD_MILLIS, condition: () -> Boolean) = bounded(timeoutMillis + 2_000) { eventually(what, timeoutMillis) { condition() } }
 suspend fun <T> awaitWithin(what: String, block: suspend () -> T): T = try {
     withTimeout(HANG_GUARD_MILLIS) { block() }
 } catch (error: TimeoutCancellationException) {
