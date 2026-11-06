@@ -106,20 +106,6 @@ fn published_response_opens_and_binds_to_the_request() {
 }
 
 #[test]
-fn mismatched_digest_id_key_and_broken_jwe_are_tampering() {
-    let k = kat();
-    let response: Value = serde_json::from_str(text(&k["response"], "plaintext")).unwrap();
-    for field in ["requestId", "requestDigest", "sequence"] {
-        let mut other = response.clone();
-        other[field] = json!("other");
-        assert!(matches!(accept(&seal(&other, text(&k, "response_key")), text(&k, "response_key"), text(&k, "request_id"), text(&k, "request_digest")), Err(TransportError::Security { code: SecurityCode::ResponseAuthentication, .. })), "{field}");
-    }
-    for (token, key) in [(text(&k["response"], "token"), "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"), ("broken", text(&k, "response_key"))] {
-        assert!(matches!(accept(token, key, text(&k, "request_id"), text(&k, "request_digest")), Err(TransportError::Security { code: SecurityCode::ResponseAuthentication, .. })));
-    }
-}
-
-#[test]
 fn future_fields_are_accepted_and_invalid_config_is_typed() {
     let k = kat();
     let base: Value = serde_json::from_str(text(&k["response"], "plaintext")).unwrap();
@@ -144,12 +130,12 @@ fn future_fields_are_accepted_and_invalid_config_is_typed() {
 
 struct Http { calls: AtomicUsize, status: u16 }
 
-struct Reconnecting { calls: AtomicUsize, ids: std::sync::Mutex<Vec<String>>, fault: &'static str }
+struct Reconnecting { calls: AtomicUsize, requests: std::sync::Mutex<Vec<Value>>, fault: &'static str }
 #[async_trait::async_trait]
 impl HttpExchange for Reconnecting {
     async fn post(&self, path: &str, token: String, _: crate::transport::NetworkPurpose) -> Result<HttpReply, TransportError> {
         let plain: Value = serde_json::from_str(&decrypt_request(&token)).unwrap();
-        self.ids.lock().unwrap().push(text(&plain, "requestId").into());
+        self.requests.lock().unwrap().push(plain.clone());
         if self.calls.fetch_add(1, Ordering::SeqCst) == 0 {
             if self.fault == "network" { return Err(TransportError::Network("timeout".into())); }
             if let Ok(status) = self.fault.parse() { return Ok(HttpReply { status, body: String::new() }); }
@@ -161,14 +147,26 @@ impl HttpExchange for Reconnecting {
 }
 
 #[test]
-fn bootstrap_retries_with_a_new_request_id() { crate::test_wait::paused(async {
+fn life_prop_bootstrap_bound() { crate::test_wait::paused(async {
   for fault in ["network", "408", "429", "500", "503", "599", "TIMEOUT", "SERVICE_UNAVAILABLE", "INTERNAL_SERVER_ERROR", "DATABASE_ERROR"] {
-    let http = Arc::new(Reconnecting { calls: AtomicUsize::new(0), ids: std::sync::Mutex::new(Vec::new()), fault });
+    let http = Arc::new(Reconnecting { calls: AtomicUsize::new(0), requests: std::sync::Mutex::new(Vec::new()), fault });
     let result = fetch_with(&configuration(), AppPlatform::Ios, "1.2", None, http.clone(), &crate::pacing::TestClock::new(Duration::from_secs(1_800_000_000))).await;
     assert!(result.is_ok(), "{result:?}");
-    let ids = http.ids.lock().unwrap();
-    assert_eq!(ids.len(), 2);
-    assert_ne!(ids[0], ids[1]);
+    let requests = http.requests.lock().unwrap();
+    assert_eq!(requests.len(), 2);
+    assert_ne!(requests[0]["requestId"], requests[1]["requestId"]);
+    assert_ne!(requests[0]["responseKey"], requests[1]["responseKey"]);
+    assert!(requests.iter().all(|request| request.get("credential").is_none() && request.get("sequence").is_none()));
+  }
+  let k = kat();
+  let response: Value = serde_json::from_str(text(&k["response"], "plaintext")).unwrap();
+  for field in ["requestId", "requestDigest", "sequence"] {
+    let mut other = response.clone();
+    other[field] = json!("other");
+    assert!(matches!(accept(&seal(&other, text(&k, "response_key")), text(&k, "response_key"), text(&k, "request_id"), text(&k, "request_digest")), Err(TransportError::Security { code: SecurityCode::ResponseAuthentication, .. })), "{field}");
+  }
+  for (token, key) in [(text(&k["response"], "token"), "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"), ("broken", text(&k, "response_key"))] {
+    assert!(matches!(accept(token, key, text(&k, "request_id"), text(&k, "request_digest")), Err(TransportError::Security { code: SecurityCode::ResponseAuthentication, .. })));
   }
 }) }
 #[async_trait::async_trait]
