@@ -5,7 +5,7 @@ use serde_json::{json, Value};
 use super::transfer_harness::*;
 use crate::owners::contract::Online;
 use crate::owners::store::{EffectRow, IntentEffects};
-use crate::owners::write::outbox::{Fault, OpSource, OutboxOutcome};
+use crate::owners::write::outbox::{Fault, OpSource, OutboxOutcome, ReserveTarget};
 use crate::owners::write::transfer::{BatchItem, Joint, Renumber, Shown, TransferAnswer, TransferId, TransferInput, TransferStage, SIGNED_ID_SENTINEL};
 use crate::runtime::Time;
 
@@ -26,6 +26,8 @@ fn rules(minimum: usize, renumber: bool) -> Joint {
     Joint { minimum, renumber, ..joint() }
 }
 
+fn single(id: TransferId) -> OpSource { OpSource::Transfer { transfer_id: id, cycle_id: 1 } }
+
 fn batch(keys: &[&str], minimum: usize, renumber: bool) -> (Twin, Vec<TransferId>) {
     let mut twin = Twin::with_slots(4);
     let ids = twin.accepted_items(keys.iter().map(|key| fielded(key)).collect(), rules(minimum, renumber));
@@ -41,7 +43,85 @@ fn file_done(twin: &mut Twin, id: TransferId) -> Out {
     twin.commit();
     twin.commit();
     twin.completed(id);
-    twin.commit()
+    let out = twin.commit();
+    if twin.state().transfers.values().any(|transfer| transfer.stage == TransferStage::PersistingBatchIntent) {
+        assert_eq!(out.writes(), 1);
+        assert!(out.submit_ops().is_empty());
+        twin.commit()
+    } else { out }
+}
+
+#[test]
+fn xfer_batch_intent_committed() {
+    let (mut twin, ids) = batch(&[KEY, OTHER], 2, false);
+    file_done(&mut twin, ids[0]);
+    twin.step_ok(ids[1], 1, None);
+    twin.commit();
+    twin.commit();
+    twin.completed(ids[1]);
+    let before = twin.commit();
+    assert!(ids.iter().all(|id| twin.stage(*id) == TransferStage::PersistingBatchIntent));
+    assert_eq!(before.writes(), 1);
+    assert!(before.submit_ops().is_empty());
+    let after = twin.commit();
+    assert!(ids.iter().all(|id| twin.stage(*id) == TransferStage::Mutating));
+    assert_eq!(after.submit_ops().len(), 1);
+}
+
+fn persisting_joint() -> (Twin, Vec<TransferId>) {
+    let (mut twin, ids) = batch(&[KEY, OTHER], 2, false);
+    file_done(&mut twin, ids[0]);
+    twin.step_ok(ids[1], 1, None);
+    twin.commit();
+    twin.commit();
+    twin.completed(ids[1]);
+    twin.commit();
+    (twin, ids)
+}
+
+#[test]
+fn xfer_batch_intent_busy() {
+    let (mut twin, ids) = persisting_joint();
+    for (reply, out) in [twin.cancel(KEY), twin.discard(KEY), twin.retry(KEY, None)] {
+        assert_eq!(Twin::fault(&out, reply), Some(Fault::InFlight));
+    }
+    assert!(ids.iter().all(|id| twin.stage(*id) == TransferStage::PersistingBatchIntent));
+}
+
+#[test]
+fn xfer_batch_intent_rejected() {
+    let (mut twin, ids) = persisting_joint();
+    let out = twin.reject(crate::owners::contract::RejectReason::Storage("disk".into()));
+    assert_eq!(out.timers, 1);
+    assert!(out.submit_ops().is_empty());
+    assert!(ids.iter().all(|id| twin.stage(*id) == TransferStage::PersistingBatchIntent));
+    let retry = twin.tick_retry(ids[0]);
+    assert_eq!(retry.writes(), 1);
+    assert!(retry.submit_ops().is_empty());
+    assert_eq!(twin.commit().submit_ops().len(), 1);
+}
+
+#[test]
+fn xfer_batch_intent_invalid() {
+    let (mut twin, ids) = persisting_joint();
+    let out = twin.reject(crate::owners::contract::RejectReason::Invalid);
+    assert_eq!((out.writes(), out.rows().len()), (1, 2));
+    assert!(ids.iter().all(|id| twin.stage(*id) == TransferStage::PersistingFailure));
+    assert!(out.submit_ops().is_empty());
+}
+
+#[test]
+fn xfer_completed_batch() {
+    let (mut twin, ids) = batch(&[KEY, OTHER], 2, false);
+    twin.step_ok(ids[0], 1, None);
+    twin.commit();
+    twin.commit();
+    let out = twin.completed(ids[0]);
+    assert_eq!(twin.stage(ids[0]), TransferStage::PersistingComplete);
+    assert_eq!(out.rows().len(), 1);
+    assert!(out.rows()[0].0.completed);
+    assert!(out.batches[0].ops.iter().all(|op| !matches!(op, crate::owners::store::StoreOp::Intent { .. })));
+    assert!(out.submit_ops().is_empty());
 }
 
 fn variables(op: &crate::owners::write::outbox::NewOp) -> Value { serde_json::from_str::<Value>(&op.body).unwrap()["variables"].clone() }
@@ -62,7 +142,7 @@ fn xfer_batch_mutation() {
     assert!(ids.iter().all(|id| twin.stage(*id) == TransferStage::Mutating));
     let ops = out.submit_ops();
     assert_eq!(ops.len(), 1, "one request for the batch");
-    assert_eq!(ops[0].origin, OpSource::Transfer("batch:1".into()));
+    assert!(matches!(&ops[0].origin, OpSource::TransferGroup { batch_id: 1, members } if members.iter().map(|member| member.transfer_id).collect::<Vec<_>>() == ids));
     assert_eq!(variables(ops[0])["items"], json!([{"name": KEY, "position": 0, "size": 0, "signedId": "signed"}, {"name": OTHER, "position": 0, "size": 0, "signedId": "signed"}]), "the elements in the original order with the signed ids");
 }
 
@@ -75,7 +155,7 @@ fn xfer_batch_singles() {
     let out = file_done(&mut twin, ids[0]);
     let ops = out.submit_ops();
     assert_eq!((twin.stage(ids[0]), ops.len()), (TransferStage::Mutating, 1), "fewer than the minimum remain: the element goes alone");
-    assert_eq!(ops[0].origin, OpSource::Transfer(KEY.into()));
+    assert_eq!(ops[0].origin, single(ids[0]));
 }
 
 #[test]
@@ -86,11 +166,15 @@ fn xfer_batch_singles_next() {
     file_done(&mut twin, ids[0]);
     let out = file_done(&mut twin, ids[1]);
     assert_eq!((twin.stage(ids[0]), twin.stage(ids[1])), (TransferStage::Mutating, TransferStage::BatchReady));
-    assert_eq!(out.submit_ops().iter().map(|op| op.origin.clone()).collect::<Vec<_>>(), vec![OpSource::Transfer(KEY.into())], "the first element goes alone");
-    let out = twin.mutation_outcome(KEY, OutboxOutcome::Confirmed { revision: 5, result: None });
+    assert_eq!(out.submit_ops().iter().map(|op| op.origin.clone()).collect::<Vec<_>>(), vec![single(ids[0])], "the first element goes alone");
+    let pending = twin.mutation_outcome(KEY, OutboxOutcome::Confirmed { revision: 5, result: None });
+    assert_eq!((twin.stage(ids[1]), pending.writes()), (TransferStage::PersistingBatchIntent, 2));
+    assert!(pending.submit_ops().is_empty());
+    assert!(twin.commit().submit_ops().is_empty());
+    let out = twin.commit();
     let ops = out.submit_ops();
     assert_eq!((twin.stage(ids[1]), ops.len()), (TransferStage::Mutating, 1), "the next element goes when the previous one ended");
-    assert_eq!(ops[0].origin, OpSource::Transfer(OTHER.into()));
+    assert_eq!(ops[0].origin, single(ids[1]));
 }
 
 #[test]
@@ -123,8 +207,10 @@ fn xfer_batch_member_discard() {
     twin.post(TransferInput::AcceptBatch { joint: Box::new(rules(2, false)), epoch: EPOCH, items, reply, now: Time(0) });
     let ids: Vec<TransferId> = [KEY, OTHER].iter().map(|key| twin.state().open_id(key).unwrap()).collect();
     for (op, id) in [(11, ids[0]), (12, ids[1])] {
-        twin.post(TransferInput::OpReserved { transfer_id: id, result: Ok(op) });
+        twin.post(TransferInput::OpReserved { target: ReserveTarget::Transfer(id), result: Ok(op) });
     }
+    let group = twin.t(ids[0]).batch_id.unwrap();
+    twin.post(TransferInput::OpReserved { target: ReserveTarget::Group(group), result: Ok(13) });
     twin.commit();
     ids.iter().for_each(|id| drop(twin.copy_done(*id)));
     twin.commit();
@@ -164,7 +250,7 @@ fn xfer_batch_ready_other() {
     let (mut twin, ids) = batch(&[KEY, OTHER], 2, false);
     file_done(&mut twin, ids[0]);
     let mut inputs = twin.stray_results(ids[0]);
-    inputs.extend([TransferInput::Online(Online(true)), TransferInput::SlotFreed, TransferInput::MutationOutcome { key: OTHER.into(), outcome: OutboxOutcome::Confirmed { revision: 1, result: None } }]);
+    inputs.extend([TransferInput::Online(Online(true)), TransferInput::SlotFreed, TransferInput::MutationOutcome { transfer_id: ids[1], outcome: OutboxOutcome::Confirmed { revision: 1, result: None } }]);
     twin.ignores(ids[0], inputs);
 }
 
@@ -202,10 +288,15 @@ fn xfer_batch_retry_mutation() {
     twin.mutation_outcome("batch:1", OutboxOutcome::Failed { error: "boom".into() });
     twin.commit();
     let (reply, out) = twin.retry(KEY, None);
-    assert!(ids.iter().all(|id| twin.stage(*id) == TransferStage::PersistingRetry) && out.writes() == 1 && out.outbox_retries() == 0, "the write comes first");
-    let out = twin.commit();
+    assert!(ids.iter().all(|id| twin.stage(*id) == TransferStage::PersistingRetry));
+    assert_eq!((out.writes(), out.outbox_retries()), (0, 1));
+    assert!(out.replies(reply).is_empty());
+    assert!(out.submit_ops().is_empty());
+    let cycles = ids.iter().map(|id| (*id, 2)).collect();
+    let out = twin.post(TransferInput::RetryOutcome { cycles, result: Ok(2) });
     assert!(ids.iter().all(|id| twin.stage(*id) == TransferStage::Mutating));
-    assert_eq!(out.outbox_retries(), 1, "the saved mutation of the batch goes once");
+    assert_eq!(out.outbox_retries(), 0);
+    assert!(out.submit_ops().is_empty());
     assert!(matches!(out.replies(reply).as_slice(), [TransferAnswer::Receipt(receipt)] if receipt.cycle_id == 2));
 }
 
@@ -228,10 +319,11 @@ fn xfer_batch_removal_releases_mutation() {
     let (mut twin, ids) = batch(&[KEY, OTHER], 2, false);
     file_done(&mut twin, ids[0]);
     twin.cancel(OTHER);
+    twin.commit();
     let out = twin.commit();
     let ops = out.submit_ops();
     assert_eq!((twin.stage(ids[0]), ops.len()), (TransferStage::Mutating, 1), "the element that waited goes alone when the other leaves");
-    assert_eq!(ops[0].origin, OpSource::Transfer(KEY.into()));
+    assert_eq!(ops[0].origin, single(ids[0]));
 }
 
 #[test]
@@ -262,9 +354,13 @@ fn xfer_prop_batch_one_mutation() {
     assert_eq!([1, 2].iter().map(|index| alone.t(ids[*index]).confirmed_parts).collect::<Vec<_>>(), parts);
     file_done(&mut alone, ids[1]);
     let first = file_done(&mut alone, ids[2]);
-    assert_eq!(first.submit_ops().iter().map(|op| op.origin.clone()).collect::<Vec<_>>(), vec![OpSource::Transfer(OTHER.into())], "the first remaining element goes first");
-    let next = alone.mutation_outcome(OTHER, OutboxOutcome::Confirmed { revision: 3, result: None });
-    assert_eq!(next.submit_ops().iter().map(|op| op.origin.clone()).collect::<Vec<_>>(), vec![OpSource::Transfer(THIRD.into())]);
+    assert_eq!(first.submit_ops().iter().map(|op| op.origin.clone()).collect::<Vec<_>>(), vec![single(ids[1])], "the first remaining element goes first");
+    let pending = alone.mutation_outcome(OTHER, OutboxOutcome::Confirmed { revision: 3, result: None });
+    assert_eq!((alone.stage(ids[2]), pending.writes()), (TransferStage::PersistingBatchIntent, 2));
+    assert!(pending.submit_ops().is_empty());
+    assert!(alone.commit().submit_ops().is_empty());
+    let next = alone.commit();
+    assert_eq!(next.submit_ops().iter().map(|op| op.origin.clone()).collect::<Vec<_>>(), vec![single(ids[2])]);
 }
 
 /// P-XFER-32: after an element leaves, the remaining ones get positions `start..` and the size in the row and in the saved variables, below the minimum nothing changes, without `renumber` nothing changes.
@@ -292,8 +388,8 @@ fn xfer_batch_element_without_a_row_fails_before_the_batch_confirms() {
     let (mut twin, ids) = batch(&[KEY, OTHER], 2, false);
     file_done(&mut twin, ids[0]);
     file_done(&mut twin, ids[1]);
-    twin.mutation_outcome(OTHER, OutboxOutcome::Failed { error: "protocol".into() });
-    twin.mutation_outcome("batch:1", OutboxOutcome::Confirmed { revision: 9, result: None });
+    let outcomes = [(ids[0], OutboxOutcome::Confirmed { revision: 9, result: None }), (ids[1], OutboxOutcome::Failed { error: "protocol".into() })].into();
+    twin.post(TransferInput::MutationOutcomes { batch_id: 1, outcomes, intent_removed: true });
     assert_eq!(twin.stage(ids[1]), TransferStage::PersistingFailure, "the element the answer lacks keeps its failure, the confirmation of the batch skips it");
     assert_ne!(twin.stage(ids[0]), TransferStage::PersistingFailure, "the others are confirmed");
 }

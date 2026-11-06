@@ -229,9 +229,9 @@ fn refetch_names_a_scope_of_another_model_with_its_model() {
 
 #[test]
 fn insert_on_event_and_response_joins_events() {
-    let model = build_one("  scope :mine, insert_on: [:event, :response] do\n    parameter :ownerId, :id\n    where ownerId: :ownerId\n    query \"Mine\"\n  end\n  scope :other do\n    parameter :ownerId, :id\n    where ownerId: :ownerId\n    query \"Other\"\n  end");
-    let flags: Vec<bool> = model.relations.iter().map(|relation| relation.joins_events).collect();
-    assert_eq!(flags, [true, false]);
+    let model = build_one("  scope :mine, insert_on: [:event, :response] do\n    parameter :ownerId, :id\n    where ownerId: :ownerId\n    query \"Mine\"\n  end\n  scope :other, insert_on: [:create] do\n    query \"Other\"\n  end");
+    let flags: Vec<(bool, bool)> = model.relations.iter().map(|relation| (relation.joins_events, relation.joins_created)).collect();
+    assert_eq!(flags, [(true, false), (false, true)]);
 }
 
 #[test]

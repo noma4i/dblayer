@@ -34,7 +34,71 @@ fn inv_row_06_count_exists_and_first_follow_the_query() {
 
 fn intent(op_id: u64) -> StoreOp {
     let effects = IntentEffects { rows: vec![EffectRow { model: "moments".into(), row_id: "m1".into(), values: json!({"id": "m1", "userId": "u1", "text": "edit"}).to_string() }], ..Default::default() };
-    StoreOp::Intent { op_id, model: "moments".into(), row_id: "m1".into(), action: "update".into(), payload: "{}".into(), effects }
+    StoreOp::Intent { op_id, model: "moments".into(), row_id: "m1".into(), action: "update".into(), payload: "{}".into(), effects, origin: crate::owners::store::IntentOrigin::Api }
+}
+
+#[test]
+fn transfer_effects_become_intent_without_reapplying_or_losing_prior() {
+    let db = open();
+    put(&db, "moments", json!({"id": "m1", "userId": "u1", "text": "old"}));
+    let StoreOp::Intent { op_id, model, row_id, action, payload, effects, .. } = intent(5) else { unreachable!() };
+    write(&db, BatchAuthor::Transfer, Vec::new(), vec![StoreOp::Effects { op_id, model: model.clone(), row_id: row_id.clone(), action: action.clone(), payload: payload.clone(), effects }]);
+    let state: String = db.read_locked(|connection| connection.query_row("SELECT intent_state FROM op WHERE seq = 5", [], |row| row.get(0))).unwrap();
+    assert_eq!(state, "effects_only");
+    assert_eq!(texts(&db, &Query::new("moments")), vec![json!("edit")]);
+    write(&db, BatchAuthor::Transfer, Vec::new(), vec![StoreOp::Intent { op_id, model, row_id, action, payload, effects: Default::default(), origin: crate::owners::store::IntentOrigin::Transfer { transfer_id: 1 } }]);
+    let state: String = db.read_locked(|connection| connection.query_row("SELECT intent_state FROM op WHERE seq = 5", [], |row| row.get(0))).unwrap();
+    assert_eq!(state, "ready");
+    write(&db, BatchAuthor::Outbox, Vec::new(), vec![StoreOp::RollBack { op_id }]);
+    assert_eq!(texts(&db, &Query::new("moments")), vec![json!("old")]);
+}
+
+#[test]
+fn transfer_outcome_is_written_with_intent_removal() {
+    use crate::owners::write::outbox::OutboxOutcome;
+    let db = open();
+    put(&db, "moments", json!({"id": "m1", "userId": "u1", "text": "old"}));
+    write(&db, BatchAuthor::Outbox, Vec::new(), vec![intent(5)]);
+    write(&db, BatchAuthor::Outbox, Vec::new(), vec![
+        StoreOp::TransferOutcome { transfer_id: 3, cycle_id: 2, outcome: OutboxOutcome::Confirmed { revision: 0, result: None } },
+        StoreOp::RemoveIntent { op_id: 5 },
+    ]);
+    let (count, revision): (i64, i64) = db.read_locked(|connection| {
+        let count = connection.query_row("SELECT COUNT(*) FROM op WHERE seq = 5", [], |row| row.get(0))?;
+        let revision = connection.query_row("SELECT revision FROM transfer_outcome WHERE transfer_id = 3 AND cycle_id = 2 AND kind = 'confirmed'", [], |row| row.get(0))?;
+        Ok((count, revision))
+    }).unwrap();
+    assert_eq!(count, 0);
+    assert_eq!(revision, db.revision_seq().unwrap());
+}
+
+#[test]
+fn store_retry_preserves_transfer_outcome() {
+    use crate::owners::store::{IntentOrigin, UploadKind, UploadRow};
+    use crate::owners::write::outbox::OutboxOutcome;
+    use crate::schema::OnFailure;
+    let db = open();
+    put(&db, "moments", json!({"id":"m1", "userId":"u1", "text":"old"}));
+    let row = UploadRow {
+        key: "moments:m1:upload".into(), seq: 3, source: "/source".into(), parts: 1,
+        batch: None, fields: None, upload_id: None, confirmed_parts: 1, attempts: 1,
+        completed: true, failed: Some("refused".into()), created_at: 1, inline: false,
+        size: 3, sha256: "hash".into(), path: "/mutation".into(), body: "{}".into(),
+        on_failure: OnFailure::Keep, steps_path: "/steps".into(), steps_body: "{}".into(),
+        transfer_id: 3, cycle_id: 1, signed_id: Some("signed".into()), aborted: false,
+        op_id: Some(5), etags: vec![None],
+    };
+    write(&db, BatchAuthor::Transfer, Vec::new(), vec![StoreOp::Upload { row, kind: UploadKind::Failed }]);
+    let StoreOp::Intent { op_id, model, row_id, action, payload, effects, .. } = intent(5) else { unreachable!() };
+    write(&db, BatchAuthor::Outbox, Vec::new(), vec![StoreOp::Intent { op_id, model, row_id, action, payload, effects, origin: IntentOrigin::Transfer { transfer_id: 3 } }]);
+    let first = OutboxOutcome::Failed { error: "refused".into() };
+    write(&db, BatchAuthor::Outbox, Vec::new(), vec![StoreOp::TransferOutcome { transfer_id: 3, cycle_id: 1, outcome: first.clone() }]);
+    write(&db, BatchAuthor::Outbox, Vec::new(), vec![StoreOp::MarkError { op_id: 5, error: None }, StoreOp::Attempt { op_id: 5, attempts: 1, cycle_id: 2 }]);
+    let second = OutboxOutcome::Discarded;
+    write(&db, BatchAuthor::Outbox, Vec::new(), vec![StoreOp::TransferOutcome { transfer_id: 3, cycle_id: 2, outcome: second.clone() }]);
+    assert_eq!(db.read_restore().unwrap().transfer_outcomes.get(&3), Some(&[(1, first), (2, second)].into()));
+    write(&db, BatchAuthor::Transfer, Vec::new(), vec![StoreOp::RemoveUpload { key: "moments:m1:upload".into() }]);
+    assert!(!db.read_restore().unwrap().transfer_outcomes.contains_key(&3));
 }
 
 #[test]
@@ -308,7 +372,7 @@ fn inv_id_06_a_real_row_that_arrived_before_the_create_answer_leaves_one_row_aft
     let temp = crate::identity::RowId::generate_temp(None).to_string();
     let values = json!({"id": temp, "userId": "u1", "text": "a"}).to_string();
     let effects = IntentEffects { rows: vec![EffectRow { model: "moments".into(), row_id: temp.clone(), values }], ..Default::default() };
-    write(&db, BatchAuthor::Outbox, Vec::new(), vec![StoreOp::Intent { op_id: 1, model: "moments".into(), row_id: temp.clone(), action: "create".into(), payload: "{}".into(), effects }]);
+    write(&db, BatchAuthor::Outbox, Vec::new(), vec![StoreOp::Intent { op_id: 1, model: "moments".into(), row_id: temp.clone(), action: "create".into(), payload: "{}".into(), effects, origin: crate::owners::store::IntentOrigin::Api }]);
     put(&db, "moments", json!({"id": "m9", "userId": "u1", "text": "a"}));
     let answer = crate::owners::store::RowValue { row_id: "m9".into(), values: json!({"id": "m9", "userId": "u1", "text": "a"}).to_string() };
     write(&db, BatchAuthor::Outbox, Vec::new(), vec![
@@ -338,7 +402,7 @@ fn inv_order_04_restored_member_takes_a_free_key_when_its_old_key_was_reused() {
     append(&db, "b", &second);
     let leave = crate::owners::store::EffectMember { model: "moments".into(), list: "feed".into(), row_id: "b".into(), order_key: String::new(), leave: true };
     let effects = IntentEffects { tombstones: vec![crate::owners::store::EffectTombstone { model: "moments".into(), row_id: "b".into() }], members: vec![leave], ..Default::default() };
-    write(&db, BatchAuthor::LocalWrites, Vec::new(), vec![StoreOp::Intent { op_id: 3, model: "moments".into(), row_id: "b".into(), action: "destroy".into(), payload: "{}".into(), effects }]);
+    write(&db, BatchAuthor::LocalWrites, Vec::new(), vec![StoreOp::Intent { op_id: 3, model: "moments".into(), row_id: "b".into(), action: "destroy".into(), payload: "{}".into(), effects, origin: crate::owners::store::IntentOrigin::Api }]);
     put(&db, "moments", json!({"id": "x", "userId": "u1", "text": "x"}));
     append(&db, "x", &second);
     write(&db, BatchAuthor::LocalWrites, Vec::new(), vec![StoreOp::RollBack { op_id: 3 }, StoreOp::RemoveIntent { op_id: 3 }]);
@@ -358,7 +422,7 @@ fn inv_row_07_fsck_quarantines_temp_rows_without_an_operation_and_keeps_the_othe
         put(&db, "moments", json!({"id": "m1", "userId": "u1", "text": "server row"}));
         let values = json!({"id": kept, "userId": "u1", "text": "queued"}).to_string();
         let effects = IntentEffects { rows: vec![EffectRow { model: "moments".into(), row_id: kept.clone(), values }], ..Default::default() };
-        write(&db, BatchAuthor::Outbox, Vec::new(), vec![StoreOp::Intent { op_id: 1, model: "moments".into(), row_id: kept.clone(), action: "create".into(), payload: "{}".into(), effects }]);
+        write(&db, BatchAuthor::Outbox, Vec::new(), vec![StoreOp::Intent { op_id: 1, model: "moments".into(), row_id: kept.clone(), action: "create".into(), payload: "{}".into(), effects, origin: crate::owners::store::IntentOrigin::Api }]);
     }
     let db = Arc::new(Store::open_models(Some(&path), all_specs(), None).unwrap());
     let present = |id: &str| db.read(&["moments"], |reader| reader.point("moments", id)).unwrap().is_some();

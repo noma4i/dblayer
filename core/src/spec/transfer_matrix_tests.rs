@@ -5,7 +5,7 @@ use std::collections::BTreeMap;
 use super::transfer_harness::*;
 use crate::owners::contract::{EpochStarted, ModelsReset, Online, RejectReason};
 use crate::owners::store::UploadKind;
-use crate::owners::write::outbox::{Fault, OutboxOutcome};
+use crate::owners::write::outbox::{Fault, OutboxOutcome, ReserveTarget};
 use crate::owners::write::transfer::{Shown, TransferAnswer, TransferId, TransferInput, TransferStage};
 use crate::runtime::Time;
 
@@ -150,6 +150,7 @@ fn xfer_completing_power_saving_urgent() {
     urgent.urgent = true;
     twin.post(TransferInput::Accept { epoch: EPOCH, item: Box::new(urgent), reply, now: Time(0) });
     let id = twin.state().open_id(KEY).expect("an urgent transfer");
+    twin.post(TransferInput::OpReserved { target: ReserveTarget::Transfer(id), result: Ok(id) });
     twin.commit();
     twin.copy_done(id);
     twin.commit();

@@ -23,7 +23,7 @@ const STEP_SECS: u64 = 25;
 pub(super) enum Reply { Ok, Temp, Refuse, NotFound }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum Kind { Mutate = 0, Put = 1 }
+pub(super) enum Kind { Mutate = 0, Put = 1, Query = 2 }
 
 #[derive(Clone, Debug)]
 pub(super) struct Seen { pub kind: Kind, pub operation: String, pub variables: Value }
@@ -31,10 +31,10 @@ pub(super) struct Seen { pub kind: Kind, pub operation: String, pub variables: V
 #[derive(Default)]
 struct State {
     seen: Vec<Seen>,
-    held: [VecDeque<(String, oneshot::Sender<Reply>)>; 2],
-    hold: [bool; 2],
+    held: [VecDeque<(String, oneshot::Sender<Reply>)>; 3],
+    hold: [bool; 3],
     hold_ops: Vec<String>,
-    auto: [VecDeque<Reply>; 2],
+    auto: [VecDeque<Reply>; 3],
     script: HashMap<String, VecDeque<Reply>>,
     cancelled: usize,
     next: u64,
@@ -61,7 +61,7 @@ impl Server {
     pub fn hold(&self, kind: Kind, on: bool) { self.state.lock().unwrap().hold[kind as usize] = on; }
     pub fn release_all(&self) {
         let mut state = self.state.lock().unwrap();
-        state.hold = [false, false];
+        state.hold = [false, false, false];
         state.hold_ops.clear();
         state.held = Default::default();
     }
@@ -169,7 +169,10 @@ impl Transport for Wire {
     async fn cable_send(&self, _: String, _: String) -> Result<(), DbError> { Err(DbError::Network { detail: "no cable".into() }) }
     async fn cable_next(&self, _: String) -> Option<EncryptedSocketEvent> { None }
     async fn cable_close(&self, _: String) {}
-    async fn query(&self, _: TransportRequest) -> Result<String, DbError> { Ok(json!({"data":{"moments":[]}}).to_string()) }
+    async fn query(&self, request: TransportRequest) -> Result<String, DbError> {
+        self.0.state.lock().unwrap().seen.push(Seen { kind: Kind::Query, operation: request.operation_name, variables: serde_json::from_str(&request.variables_json)? });
+        Ok(json!({"data":{"moments":[]}}).to_string())
+    }
     async fn mutate(&self, request: TransportRequest) -> Result<String, DbError> {
         let variables: Value = serde_json::from_str(&request.variables_json).unwrap_or(Value::Null);
         let reply = self.0.decide(Kind::Mutate, &request.operation_name, variables.clone()).await;
@@ -198,6 +201,10 @@ impl EncryptedHttp for Wire {
     async fn post(&self, path: String, body: String, _: crate::transport::NetworkPurpose) -> Result<EncryptedReply, DbError> {
         let request = decrypt_request(&body).unwrap();
         let sequence = request["sequence"].as_i64();
+        if request["body"]["operationName"] == "Feed" {
+            self.0.state.lock().unwrap().seen.push(Seen { kind: Kind::Query, operation: "Feed".into(), variables: request["body"]["variables"].clone() });
+            return Ok(EncryptedReply { status: 200, body: seal_response(&request, sequence, json!({"data":{"moments":[]}})) });
+        }
         let answer = match path.as_str() {
             "/api/auth/login_link" => json!({"sessionId": request["body"]["account"]}),
             "/api/logout" => json!({"revoked": true}),
@@ -289,6 +296,10 @@ impl Rig {
 
     pub async fn open_at(on_failure: OnFailure, path: Option<String>, server: Arc<Server>) -> Rig {
         let models = moment_models(on_failure);
+        Self::open_models(models, path, server).await
+    }
+
+    pub async fn open_models(models: String, path: Option<String>, server: Arc<Server>) -> Rig {
         let clock = TestClock::new(1_000_000);
         let mut encrypted = crate::transport::encrypted::protocol_tests::config();
         encrypted.endpoints.session_operations.insert("login_link".into(), crate::ffi::EncryptedSessionOperation { path: "/api/auth/login_link".into(), class: crate::transport::EncryptedOperationClass::Authenticated });

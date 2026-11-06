@@ -364,6 +364,7 @@ pub(crate) fn record_transfer_aborts(connection: &Connection, seq: i64, position
 }
 
 pub fn delete_operation(connection: &Connection, seq: i64) -> Result<usize> {
+    connection.execute("DELETE FROM op_transfer WHERE op_id = ?1", [seq])?;
     connection.execute("DELETE FROM file WHERE id IN (SELECT file_id FROM op_item WHERE seq = ?1) AND field LIKE 'op_item.%' AND NOT EXISTS (SELECT 1 FROM op_item WHERE op_item.file_id = file.id AND seq != ?1)", [seq])?;
     for table in ["op_row", "op_value", "op_error", "op_part", "op_item_header", "op_item_retry", "op_item", "op_effect_value", "op_effect"] {
         connection.prepare_cached(&format!("DELETE FROM {table} WHERE seq = ?1"))?.execute([seq])?;

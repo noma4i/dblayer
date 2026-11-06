@@ -229,6 +229,7 @@ pub struct BatchPlan {
     pub node_reread: bool,
     /// The rows come from an event or from an answer of the server: relations that `joins_events` take them into their windows.
     pub server_rows: bool,
+    pub response_rows: bool,
     pub pending_locals: Vec<PendingLocal>,
     pub network: Option<NetworkAdmission>,
 }
@@ -273,6 +274,7 @@ impl BatchPlan {
             writes_local: false,
             node_reread: false,
             server_rows: false,
+            response_rows: false,
             pending_locals: Vec::new(),
             network: None,
         }

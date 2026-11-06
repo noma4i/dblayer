@@ -185,7 +185,7 @@ impl ModelSpec {
     pub fn list_scopes(&self, row: &Map<String, Value>) -> Vec<ListKey> {
         self.relations
             .iter()
-            .filter(|relation| relation.lists_every_row_of_its_params() || relation.takes_created_rows())
+            .filter(|relation| relation.lists_every_row_of_its_params())
             .flat_map(|relation| relation.row_params(row).into_iter().filter_map(|params| self.selection_key(&relation.name, &params).ok()))
             .collect()
     }

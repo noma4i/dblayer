@@ -18,7 +18,7 @@ fn rig(kind: Kind) -> Rig {
     let log = new_log();
     let deliveries = add_deliveries(&mut det, &log);
     det.start_epoch(EPOCH);
-    det.post(deliveries, EpochStamp::Control, d::DeliveryInput::Open { stream: STREAM, view: view(kind), epoch: EPOCH, identity: true, valid: true, now: 1_000_000 });
+    det.post(deliveries, EpochStamp::Control, d::DeliveryInput::Open { stream: STREAM, view: view(kind), epoch: EPOCH, identity: true, valid: true, now: 1_000_000, revision: 0 });
     if kind == Kind::Events {
         det.post(deliveries, EpochStamp::Control, d::DeliveryInput::Joined { stream: STREAM, position: 0 });
         det.post(deliveries, EpochStamp::Control, d::DeliveryInput::ModelReady { stream: STREAM });
@@ -309,7 +309,7 @@ fn dlv_prop_delta_size() {
 fn dlv_prop_dictionary_bounded() {
     let mut rig = rig(Kind::List);
     for stream in 2..=40u64 {
-        rig.det.post(rig.deliveries, EpochStamp::Control, d::DeliveryInput::Open { stream, view: view(Kind::Events), epoch: EPOCH, identity: true, valid: true, now: 1_000_000 });
+        rig.det.post(rig.deliveries, EpochStamp::Control, d::DeliveryInput::Open { stream, view: view(Kind::Events), epoch: EPOCH, identity: true, valid: true, now: 1_000_000, revision: 0 });
         rig.det.post(rig.deliveries, EpochStamp::Epoch(EPOCH), d::DeliveryInput::Release { stream });
         rig.det.post(rig.deliveries, EpochStamp::Epoch(EPOCH), d::DeliveryInput::SinkClosed { stream });
     }
@@ -396,7 +396,7 @@ fn dlv_prop_delta_order() {
     let log: Spied = new_log();
     let addr = add_deliveries(&mut det, &log);
     det.start_epoch(EPOCH);
-    det.post(addr, EpochStamp::Control, d::DeliveryInput::Open { stream: STREAM, view: view(Kind::List), epoch: EPOCH, identity: true, valid: true, now: 1_000_000 });
+    det.post(addr, EpochStamp::Control, d::DeliveryInput::Open { stream: STREAM, view: view(Kind::List), epoch: EPOCH, identity: true, valid: true, now: 1_000_000, revision: 0 });
     det.post(addr, EpochStamp::Epoch(EPOCH), d::DeliveryInput::WindowState { stream: STREAM, state: window_state(&Ws::idle()) });
     let mut seed = 12_345u64;
     let mut next = move |bound: u64| {

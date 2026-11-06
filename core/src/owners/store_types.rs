@@ -98,6 +98,13 @@ pub struct UploadRow {
     pub etags: Vec<Option<String>>,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum IntentOrigin {
+    Api,
+    Transfer { transfer_id: u64 },
+    TransferGroup { batch_id: u64, transfer_ids: Vec<u64> },
+}
+
 /// One write of a batch, by value (R3). The writer executor turns it into SQL.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum StoreOp {
@@ -115,7 +122,9 @@ pub enum StoreOp {
     /// `encrypted_session`: `digest = None` keeps the stored digest, `sequence = None` keeps the stored sequence.
     Session { digest: Option<String>, sequence: Option<u64> },
     /// The intent of an operation with its optimistic `effects`.
-    Intent { op_id: u64, model: String, row_id: String, action: String, payload: String, effects: IntentEffects },
+    Intent { op_id: u64, model: String, row_id: String, action: String, payload: String, effects: IntentEffects, origin: IntentOrigin },
+    Effects { op_id: u64, model: String, row_id: String, action: String, payload: String, effects: IntentEffects },
+    TransferOutcome { transfer_id: u64, cycle_id: u64, outcome: crate::owners::write::outbox::OutboxOutcome },
     /// The durable attempt counter and the cycle of an operation: written before the `Mutate` of that attempt.
     Attempt { op_id: u64, attempts: u32, cycle_id: u64 },
     /// A `create` with a temporary id landed: the row `temp` becomes `real` with its references and membership.
@@ -151,7 +160,7 @@ pub enum StoreOp {
     UploadOrphan { upload_id: String, key: String },
     RemoveOrphan { upload_id: String },
     /// How the elements of a batch go out together: `joint` is the text `Joint::to_text` gives.
-    UploadBatch { batch_id: u64, joint: String },
+    UploadBatch { batch_id: u64, op_id: u64, joint: String },
     /// Integer fields of a row set to numbers (the position and the size of an element of a batch): `writes` are paths with their values.
     Numbers { model: String, row_id: String, writes: Vec<(String, i64)> },
     /// The server blob of a file with this content: a later upload of the same bytes skips the steps while the blob lives.

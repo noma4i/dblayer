@@ -31,10 +31,24 @@ pub struct OutboxPeers {
 
 pub type OpId = u64;
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ReserveTarget {
+    Transfer(u64),
+    Group(u64),
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum OpSource {
     Api,
-    Transfer(String),
+    Transfer { transfer_id: u64, cycle_id: u64 },
+    TransferGroup { batch_id: u64, members: Vec<TransferMember> },
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TransferMember {
+    pub transfer_id: u64,
+    pub cycle_id: u64,
+    pub row_id: String,
 }
 
 /// The action of a call: the row it changes and the rule on refusal.
@@ -135,7 +149,7 @@ pub enum LocalWriteKind {
 pub enum OutboxInput {
     Submit { epoch: Epoch, op: NewOp, reply: ReplyId },
     /// Transfer asks for the `op_id` of the optimistic effects it writes with the acceptance (`out_reserve_op`).
-    ReserveOp { epoch: Epoch, transfer_id: u64 },
+    ReserveOp { epoch: Epoch, target: ReserveTarget },
     /// The final mutation of a transfer whose intent the batch of Transfer wrote under `op_id` (`out_submit_intent_written`).
     SubmitReserved { epoch: Epoch, op_id: OpId, op: NewOp },
     /// The highest `op_id` a restored transfer holds: `ReserveOp` gives only higher ones.
@@ -157,6 +171,7 @@ pub enum OutboxInput {
     Refused { op_id: OpId, temporary: bool, detail: String },
     Dropped { op_id: OpId },
     Retry { model: String, row_id: String, reply: ReplyId },
+    RetryTransfer { model: String, row_id: String, reply: ReplyId, uploads: Vec<crate::owners::store::UploadRow> },
     Discard { model: String, row_id: String, reply: ReplyId },
     /// The platform discards the element `(table, key)` of `restore_failed`: its operation `Failed{RestoreFailed}` ends like a `Discard`.
     DiscardRestoreFailed { table: String, key: String, reply: ReplyId },
@@ -274,6 +289,7 @@ pub struct QueuedOperation {
     pub error: Option<String>,
     /// The error of each cycle that ended with `Failed` (the outcome of a receipt is immutable).
     pub failed_errors: BTreeMap<u64, String>,
+    pub retry_uploads: Vec<crate::owners::store::UploadRow>,
     pub reject_error: Option<String>,
     /// A `destroy` that waits for the rollback of the unsent `create` it cancels.
     pub cancels: Option<OpId>,

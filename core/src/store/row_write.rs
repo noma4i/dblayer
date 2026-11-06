@@ -31,7 +31,7 @@ pub(super) struct RowWrite<'a> {
 }
 
 impl RowWrite<'_> {
-    pub fn upsert(&mut self, model: &str, row: &RowValue, local: bool) -> Result<Option<CommitResult>, StoreError> {
+    pub fn upsert(&mut self, model: &str, row: &RowValue, local: bool, response: bool) -> Result<Option<CommitResult>, StoreError> {
         let spec = &self.models.get(model).ok_or_else(|| StoreError::UnknownModel(model.to_string()))?.spec;
         let id = RowId::new(&row.row_id).map_err(|error| StoreError::Constraint(error.to_string()))?;
         let value: Value = serde_json::from_str(&row.values)?;
@@ -40,7 +40,8 @@ impl RowWrite<'_> {
         let reader = Reader::new(self.connection, self.models);
         let guards = self.guards.get(model).map(Vec::as_slice).unwrap_or_default();
         let Some(row) = admitted(&reader, kind, Admission { base: None, closing: self.closing }, model, patch, spec, guards)? else { return Ok(None) };
-        let mut envelope = if local { BatchPlan::new(self.generation) } else { BatchPlan::from_server(self.generation) };
+        let mut envelope = BatchPlan::new(self.generation);
+        envelope.response_rows = response;
         envelope.writes_local = local;
         envelope.entity_ops.push(EntityOp::Upsert { model: ModelKey::new(model), id, row });
         envelope.validate(self.generation)?;

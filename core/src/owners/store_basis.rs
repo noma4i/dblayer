@@ -19,7 +19,7 @@ impl StoreBatch {
                     models.extend(related.iter().map(|(model, _)| model.clone()));
                 }
                 StoreOp::WindowMarker { model, .. } => { models.insert(model.clone()); }
-                StoreOp::Intent { model, effects, .. } => {
+                StoreOp::Intent { model, effects, .. } | StoreOp::Effects { model, effects, .. } => {
                     models.insert(model.clone());
                     effect_models(&mut models, effects);
                 }

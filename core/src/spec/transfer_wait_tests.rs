@@ -36,6 +36,8 @@ fn xfer_wait_accept_batch() {
     };
     let mut ok = Twin::offline();
     batch(&mut ok);
+    let ids = [ok.state().open_id(KEY).unwrap(), ok.state().open_id(OTHER).unwrap()];
+    ok.reserve_batch(&ids);
     ok.commit();
     for key in [KEY, OTHER] {
         let id = ok.state().open_id(key).expect("an element");
@@ -48,6 +50,8 @@ fn xfer_wait_accept_batch() {
     assert_eq!(ended.end_epoch().replies(5), interrupted(), "one answer for the batch");
     let mut closing = Twin::new();
     batch(&mut closing);
+    let ids = [closing.state().open_id(KEY).unwrap(), closing.state().open_id(OTHER).unwrap()];
+    closing.reserve_batch(&ids);
     closing.commit();
     assert_eq!(closing.close().replies(5), interrupted());
 }

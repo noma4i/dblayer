@@ -3,7 +3,7 @@
 use super::transfer_harness::*;
 use crate::owners::contract::{Online, RejectReason};
 use crate::owners::store::{EffectRow, IntentEffects, StoreOp};
-use crate::owners::write::outbox::{Fault, OutboxInput, OutboxOutcome};
+use crate::owners::write::outbox::{Fault, OutboxInput, OutboxOutcome, ReserveTarget};
 use crate::owners::write::transfer::{TransferAnswer, TransferId, TransferInput, TransferStage};
 use crate::runtime::Time;
 
@@ -27,7 +27,7 @@ fn reserving(twin: &mut Twin) -> (TransferId, u64, Out) {
 
 fn reserved(twin: &mut Twin) -> (TransferId, u64) {
     let (id, reply, _) = reserving(twin);
-    twin.post(TransferInput::OpReserved { transfer_id: id, result: Ok(OP_ID) });
+    twin.post(TransferInput::OpReserved { target: ReserveTarget::Transfer(id), result: Ok(OP_ID) });
     (id, reply)
 }
 
@@ -43,14 +43,14 @@ fn ready(twin: &mut Twin) -> TransferId {
 
 fn rolled_back(out: &Out) -> Vec<u64> { out.batches.iter().flat_map(|batch| batch.ops.iter()).filter_map(|op| if let StoreOp::RollBack { op_id } = op { Some(*op_id) } else { None }).collect() }
 
-fn intents(out: &Out) -> Vec<(u64, IntentEffects)> { out.batches.iter().flat_map(|batch| batch.ops.iter()).filter_map(|op| if let StoreOp::Intent { op_id, effects, .. } = op { Some((*op_id, effects.clone())) } else { None }).collect() }
+fn intents(out: &Out) -> Vec<(u64, IntentEffects)> { out.batches.iter().flat_map(|batch| batch.ops.iter()).filter_map(|op| if let StoreOp::Effects { op_id, effects, .. } = op { Some((*op_id, effects.clone())) } else { None }).collect() }
 
 #[test]
 fn xfer_accept_reserve_op() {
     let mut twin = Twin::new();
     let (id, reply, out) = reserving(&mut twin);
     assert_eq!(twin.stage(id), TransferStage::Reserving);
-    assert!(matches!(out.outbox.as_slice(), [OutboxInput::ReserveOp { transfer_id, .. }] if *transfer_id == id), "{:?}", out.outbox);
+    assert!(matches!(out.outbox.as_slice(), [OutboxInput::ReserveOp { target: ReserveTarget::Transfer(found), .. }] if *found == id), "{:?}", out.outbox);
     assert_eq!((out.writes(), out.all_replies(), out.shows().len()), (0, 0, 0), "nothing is written or shown before the op_id");
     assert!(out.replies(reply).is_empty());
 }
@@ -59,7 +59,7 @@ fn xfer_accept_reserve_op() {
 fn xfer_accept_optimistic_row() {
     let mut twin = Twin::new();
     let (id, reply, _) = reserving(&mut twin);
-    let out = twin.post(TransferInput::OpReserved { transfer_id: id, result: Ok(OP_ID) });
+    let out = twin.post(TransferInput::OpReserved { target: ReserveTarget::Transfer(id), result: Ok(OP_ID) });
     assert_eq!(twin.stage(id), TransferStage::Accepting);
     assert_eq!(out.writes(), 1, "the effects and the row of the upload are one transaction");
     assert_eq!(intents(&out), vec![(OP_ID, effects())]);
@@ -68,10 +68,31 @@ fn xfer_accept_optimistic_row() {
 }
 
 #[test]
+fn xfer_reserving_batch_wait() {
+    let mut twin = Twin::new();
+    let mut first = item(KEY, 2);
+    first.mutation.effects = effects();
+    let mut second = item("Message:m2:send", 2);
+    second.mutation.effects = effects();
+    let reply = twin.reply();
+    twin.post(TransferInput::AcceptBatch { epoch: EPOCH, items: vec![first, second], joint: Box::new(joint()), reply, now: Time(0) });
+    let first = twin.state().open_id(KEY).unwrap();
+    let second = twin.state().open_id("Message:m2:send").unwrap();
+    let out = twin.post(TransferInput::OpReserved { target: ReserveTarget::Transfer(first), result: Ok(7) });
+    assert_eq!((twin.stage(first), twin.stage(second), out.writes()), (TransferStage::Reserving, TransferStage::Reserving, 0));
+    let out = twin.post(TransferInput::OpReserved { target: ReserveTarget::Transfer(second), result: Ok(8) });
+    assert_eq!(out.writes(), 0);
+    let group = twin.t(first).batch_id.unwrap();
+    let out = twin.post(TransferInput::OpReserved { target: ReserveTarget::Group(group), result: Ok(9) });
+    assert_eq!((twin.stage(first), twin.stage(second), out.writes()), (TransferStage::Accepting, TransferStage::Accepting, 1));
+    assert_eq!(out.rows().len(), 2);
+}
+
+#[test]
 fn xfer_reserving_refused() {
     let mut twin = Twin::new();
     let (id, reply, _) = reserving(&mut twin);
-    let out = twin.post(TransferInput::OpReserved { transfer_id: id, result: Err(Fault::Interrupted) });
+    let out = twin.post(TransferInput::OpReserved { target: ReserveTarget::Transfer(id), result: Err(Fault::Interrupted) });
     assert_eq!(twin.stage(id), TransferStage::Done);
     assert_eq!(Twin::fault(&out, reply), Some(Fault::Interrupted));
     assert_eq!(out.writes(), 0);
@@ -86,7 +107,7 @@ fn xfer_reserving_end() {
         assert_eq!(twin.stage(id), TransferStage::Done);
         assert_eq!(Twin::fault(&out, reply), Some(Fault::Interrupted), "epoch_end {epoch_end}");
         assert_eq!(out.drained(), usize::from(!epoch_end));
-        let late = twin.post(TransferInput::OpReserved { transfer_id: id, result: Ok(OP_ID) });
+        let late = twin.post(TransferInput::OpReserved { target: ReserveTarget::Transfer(id), result: Ok(OP_ID) });
         assert!(Twin::quiet(&late), "a late OpReserved is foreign: {late:?}");
     }
 }

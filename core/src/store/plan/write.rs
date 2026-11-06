@@ -71,9 +71,21 @@ impl Store {
         };
         values.insert("id".to_string(), Value::String(id.to_string()));
         reject_invalid_values(spec, model, &values)?;
+        let mut local = Row::new();
+        if let Some(create) = spec.actions.iter().find(|action| action.name == "create") {
+            for name in create.local_from.keys() {
+                let Some(value) = values.get(name).filter(|value| !value.is_null()) else { continue };
+                let field = spec.field(name).ok_or_else(|| DbError::UnknownField { model: model.to_string(), field: name.clone() })?;
+                if let Some(fault) = field.fault(value, name, true, &mut Vec::new()) { return Err(super::outbox_entry::fault_error(model, fault)); }
+                let decoded = field.decode(value).ok_or_else(|| crate::schema::SchemaError::InvalidValue(name.clone()))?;
+                local.insert(name.clone(), decoded);
+            }
+        }
+        self.decode_values(model, &mut local, |source, key| source.get(key))?;
         self.decode_values(model, &mut values, |source, key| source.get(key))?;
         let now_ms = self.lock().now_ms();
-        let data = spec.normalize_local(&values, now_ms)?;
+        let mut data = spec.normalize_local(&values, now_ms)?;
+        data.extend(local);
         let own = RowRef::new(ModelKey::new(model), id.clone());
         let input = Value::Object(data.iter().chain(&args).map(|(name, value)| (name.clone(), value.clone())).collect());
         let effects = self.read_models(&[model], |reader| {

@@ -136,17 +136,22 @@ impl Delivery {
         if read_id != self.read_id || !self.view.kind.reads_rows() {
             return;
         }
+        if self.stage == DeliveryStage::Live && revision < self.read_seen { return; }
         if self.stage == DeliveryStage::Opening && self.interested && self.view.remote && self.held_state.is_none() {
             self.pending_read = Some((read_id, revision, data));
             return;
         }
         self.read_position = if revision > self.read_seen { self.reading_position } else { self.read_position.max(self.reading_position) };
         self.read_seen = self.read_seen.max(revision);
-        if self.stage == DeliveryStage::Live && (revision > self.revision || self.resync_pending) && self.read_error {
+        if self.stage == DeliveryStage::Live && self.read_error {
             self.read_error = false;
             self.window.error = None;
             self.window.phase = WindowPhase::Loaded;
-            if !self.resync_pending && matches!(&data, ReadData::Rows { rows, .. } if *rows == self.rows) {
+            let unchanged = match &data {
+                ReadData::Rows { rows, total, .. } => *rows == self.rows && *total == self.total,
+                ReadData::Count(count) => self.count == Some(*count),
+            };
+            if !self.resync_pending && unchanged {
                 self.push(Value::State { revision: self.revision, state: self.window.clone() }, fx);
             }
         }
@@ -179,7 +184,7 @@ impl Delivery {
                 self.push(Value::Snapshot { revision, rows, state }, fx);
             }
             (DeliveryStage::Live, ReadData::Rows { rows, replaced, total }) if self.view.kind != Kind::Count => self.live_rows(revision, rows, replaced, total, fx),
-            (DeliveryStage::Live, ReadData::Count(now)) if self.view.kind == Kind::Count && revision > self.revision => {
+            (DeliveryStage::Live, ReadData::Count(now)) if self.view.kind == Kind::Count => {
                 if self.count != Some(now) {
                     let state = self.state_at(revision);
                     let shown = self.shown_revision(revision);
@@ -205,12 +210,8 @@ impl Delivery {
     pub(super) fn shown_revision(&self, seen: i64) -> i64 { if self.read_revision > self.revision { self.read_revision.min(seen) } else { seen } }
 
     pub(super) fn live_rows(&mut self, seen: i64, rows: Vec<StreamRow>, replaced: Vec<(String, String)>, total: Option<u64>, fx: &mut Vec<Emit>) {
-        if seen < self.revision || (seen == self.revision && self.reading_position <= self.shown_position) {
-            return;
-        }
-        self.shown_position = if seen > self.revision { self.reading_position } else { self.reading_position.max(self.shown_position) };
         let revision = self.shown_revision(seen);
-        if rows == self.rows {
+        if rows == self.rows && total == self.total {
             self.same_rows(seen, fx);
             return;
         }

@@ -3,11 +3,10 @@ use std::collections::BTreeMap;
 use rusqlite::params;
 
 use crate::ddl::{create_model_tables, fingerprint_key, manifest_stamp, manifest_verify, models_statements, rebuild_cache_tables, table_name, ManifestVerdict};
-use crate::operation::QuarantineReason;
 use crate::schema::ModelSpec;
 
 use super::reset::{
-    clear_intent, current_fingerprints, finish_interrupted_reset, models_to_reset, restore_local_values, retire_operations, stash_local_values, wipe_all_cache,
+    clear_intent, current_fingerprints, finish_interrupted_reset, models_to_reset, restore_local_values, stash_local_values, wipe_all_cache,
     wipe_model_cache, write_intent,
 };
 use super::tombstones::{prune_tombstones, TombstoneRetention};
@@ -89,7 +88,6 @@ impl Store {
                     }
                 }
                 restore_local_values(&transaction, &stash)?;
-                retire_operations(&transaction, Some(&reset), Some(QuarantineReason::SchemaChanged))?;
                 transaction.commit()?;
                 create_model_tables(&inner.connection, models)?;
                 let transaction = inner.connection.unchecked_transaction()?;
@@ -100,10 +98,9 @@ impl Store {
             ManifestVerdict::Mismatch => {
                 write_intent(&inner.connection, "mismatched", &[], now)?;
                 let transaction = inner.connection.unchecked_transaction()?;
-                wipe_all_cache(&transaction, true)?;
+                wipe_all_cache(&transaction, true, true)?;
                 reset_models = models.iter().filter(|spec| !spec.is_memory()).map(|spec| spec.key.as_str().to_string()).collect();
                 rebuild_cache_tables(&transaction)?;
-                retire_operations(&transaction, None, Some(QuarantineReason::SchemaChanged))?;
                 transaction.execute("DELETE FROM manifest WHERE key LIKE 'fingerprint:%'", [])?;
                 transaction.commit()?;
                 create_model_tables(&inner.connection, models)?;

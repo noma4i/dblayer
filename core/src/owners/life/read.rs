@@ -124,7 +124,7 @@ pub(super) fn add(builder: &mut RuntimeBuilder, wiring: &Arc<Wiring>, ports: &Po
             DeliveryEffect::Stream { .. } => {}
         }),
     ).counted_by(handle.clone());
-    builder.install(deliveries_at, "deliveries", DeliveriesState::new(0, DeliveryPeers { windows: windows_at, feed: feed_at }, db.published_revision()), delivery_io);
+    builder.install(deliveries_at, "deliveries", DeliveriesState::new(0, DeliveryPeers { windows: windows_at, feed: feed_at }), delivery_io);
     let feed_wiring = wiring.clone();
     let feed_rest: Rest<FeedEffect> = Box::new(move |_stamp, effect| match effect {
         FeedEffect::Drained(done) => drained(&feed_wiring, done),
@@ -205,9 +205,9 @@ impl super::Life {
 
     pub fn request_snapshot(&self, stream: StreamId) { self.wiring.to_deliveries(DeliveryInput::Resync { stream }); }
 
-    pub fn open_stream(&self, stream: StreamId, view: View, epoch: Epoch, valid: bool) {
+    pub fn open_stream(&self, stream: StreamId, view: View, epoch: Epoch, valid: bool, revision: i64) {
         let identity = self.published().identity.is_some();
-        self.wiring.to_deliveries(DeliveryInput::Open { stream, view, epoch, identity, valid, now: (self.wiring.now)() });
+        self.wiring.to_deliveries(DeliveryInput::Open { stream, view, epoch, identity, valid, now: (self.wiring.now)(), revision });
     }
 
     /// The next value of a stream: the answer comes with the next value of the journal.
@@ -219,6 +219,10 @@ impl super::Life {
             self.wiring.to_deliveries(DeliveryInput::Pull { stream, outcome: waiter.id() });
         }
         waiter
+    }
+
+    pub fn cancel_pull(&self, stream: StreamId, outcome: OutcomeId) {
+        self.wiring.to_deliveries(DeliveryInput::PullCancelled { stream, outcome });
     }
 
     /// The streams of Deliveries and the channels of Feed now, read from the fields of the owners: `(observed_queries, subscriptions, retained_observers)`.

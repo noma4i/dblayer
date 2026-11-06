@@ -12,7 +12,7 @@ impl TransferState {
         let item = BatchItem { key: row.key.clone(), fields: row.fields.clone(), urgent: false, source: row.source.clone(), mutation: row.mutation.clone(), steps: row.steps.clone() };
         let id = row.transfer_id;
         self.next_id = self.next_id.max(id + 1);
-        let created = self.create(item, row.batch.filter(|group| !row.completed && self.groups.contains_key(group)), row.created_at, stage);
+        let created = self.create(item, row.batch.filter(|group| self.groups.contains_key(group)), row.created_at, stage);
         if let Some(mut transfer) = self.transfers.remove(&created) {
             transfer.transfer_id = id;
             transfer.seq = row.seq;
@@ -24,7 +24,8 @@ impl TransferState {
             transfer.signed_id = row.signed_id.clone();
             transfer.aborted = row.aborted;
             transfer.op_id = row.op_id;
-            transfer.submitted = row.completed;
+            transfer.submitted = row.completed && !row.batch.and_then(|group| self.groups.get(&group)).is_some_and(|group| group.phase == BatchPhase::Mutating);
+            transfer.intent_live = row.has_intent;
             transfer.place = Some(row.place);
             transfer.size = row.size;
             transfer.sha256 = row.sha256.clone();
@@ -42,18 +43,19 @@ impl TransferState {
 
     /// The element is in the group once, in the order of `seq`.
     fn rejoin(&mut self, id: TransferId, group: u64) {
-        let seqs: BTreeMap<TransferId, u64> = self.transfers.values().map(|transfer| (transfer.transfer_id, transfer.seq)).collect();
         if let Some(entry) = self.groups.get_mut(&group) {
             entry.ids.retain(|found| *found != id);
-            entry.ids.push(id);
-            entry.ids.sort_by_key(|found| seqs.get(found).copied().unwrap_or(u64::MAX));
+            let seq = self.transfers.get(&id).map(|transfer| transfer.seq).unwrap_or(u64::MAX);
+            let at = entry.ids.partition_point(|found| self.transfers.get(found).is_some_and(|transfer| transfer.seq <= seq));
+            entry.ids.insert(at, id);
         }
     }
 
-    pub(super) fn restore_groups(&mut self, batches: BTreeMap<u64, Joint>) {
-        for (group, joint) in batches {
+    pub(super) fn restore_groups(&mut self, batches: BTreeMap<u64, StoredGroup>) {
+        for (group, stored) in batches {
             self.next_group = self.next_group.max(group + 1);
-            self.groups.insert(group, Group { ids: Vec::new(), reply: None, ready: BTreeSet::new(), joint, phase: BatchPhase::Collecting, op_row: None });
+            let phase = if stored.intent_members.is_empty() { BatchPhase::Collecting } else { BatchPhase::Mutating };
+            self.groups.insert(group, Group { ids: Vec::new(), op_id: stored.op_id, reply: None, ready: BTreeSet::new(), joint: stored.joint, pending_op: None, phase, op_row: None });
         }
     }
 
@@ -68,7 +70,7 @@ impl TransferState {
     }
 
     /// Every restored row has exactly one class.
-    pub(super) fn classify(&mut self, row: StoredTransfer, outcomes: &BTreeMap<TransferId, OutboxOutcome>, fx: &mut Fx) {
+    pub(super) fn classify(&mut self, row: StoredTransfer, outcomes: &TransferOutcomes, fx: &mut Fx) {
         if let Some(error) = row.restore_failed.clone() {
             let id = self.insert_restored(&row, TransferStage::Failed);
             let _ = error;
@@ -82,13 +84,31 @@ impl TransferState {
         self.classify_declared(row, outcomes, fx);
     }
 
-    fn classify_declared(&mut self, row: StoredTransfer, outcomes: &BTreeMap<TransferId, OutboxOutcome>, fx: &mut Fx) {
+    fn classify_declared(&mut self, row: StoredTransfer, outcomes: &TransferOutcomes, fx: &mut Fx) {
         let id = self.insert_restored(&row, TransferStage::Ready);
+        if let Some(saved) = outcomes.get(&id) {
+            if let Some(transfer) = self.transfers.get_mut(&id) { transfer.outcomes = saved.clone(); }
+        }
         if row.copying {
             return self.restore_copy(id, &row, fx);
         }
         if row.completed {
-            return self.restore_completed(id, &row, outcomes.get(&id), fx);
+            if let Some(saved) = outcomes.get(&id).and_then(|cycles| cycles.get(&row.cycle_id.max(1))) {
+                return self.restore_completed(id, &row, Some(saved), fx);
+            }
+            if let Some(error) = row.failed.clone() {
+                return self.failed_restored(id, error, fx);
+            }
+            if !row.has_intent && outcomes.get(&id).is_some_and(|cycles| cycles.keys().any(|cycle| *cycle < row.cycle_id)) {
+                if let Some(group) = row.batch.and_then(|group| self.groups.get_mut(&group)) {
+                    group.phase = BatchPhase::Singles;
+                    self.set(id, TransferStage::BatchReady);
+                    return self.show(id, Shown::Uploading { progress: 100 }, fx);
+                }
+                self.set(id, TransferStage::PersistingBatchIntent);
+                return self.show(id, Shown::Uploading { progress: 100 }, fx);
+            }
+            return self.restore_completed(id, &row, None, fx);
         }
         if let Some(error) = row.failed.clone() {
             return self.failed_restored(id, error, fx);
@@ -134,7 +154,17 @@ impl TransferState {
                 self.begin_failure(id, error.clone(), false, fx);
             }
             Some(OutboxOutcome::Interrupted) | None => {
-                let group = row.batch.filter(|group| self.open_groups.contains(group) && self.groups.contains_key(group));
+                if row.has_intent {
+                    if let Some(group) = row.batch.and_then(|group| self.groups.get_mut(&group)) {
+                        if group.phase == BatchPhase::Collecting { group.phase = BatchPhase::Singles; }
+                        if group.op_row.is_none() { group.op_row = Some((row.mutation.model.clone(), row.mutation.row_id.clone())); }
+                    }
+                    self.set(id, TransferStage::Mutating);
+                    self.show(id, Shown::Uploading { progress: 100 }, fx);
+                    self.rounds_needed(vec![id], fx);
+                    return;
+                }
+                let group = row.batch.filter(|group| self.open_groups.contains(group) && self.groups.get(group).is_some_and(|entry| entry.op_id.is_some() && entry.phase == BatchPhase::Collecting));
                 if let Some(group) = group {
                     if let Some(transfer) = self.transfers.get_mut(&id) {
                         transfer.batch_id = Some(group);
@@ -143,20 +173,18 @@ impl TransferState {
                     self.rejoin(id, group);
                     return self.show(id, Shown::Uploading { progress: 100 }, fx);
                 }
-                self.set(id, TransferStage::Mutating);
-                self.show(id, Shown::Uploading { progress: 100 }, fx);
-                if !row.has_intent {
-                    self.submit_mutation(id, fx);
-                }
-                self.rounds_needed(vec![id], fx);
+                self.failed_restored(id, "RestoreFailed".into(), fx);
             }
         }
     }
 
-    pub(super) fn restored(&mut self, mut uploads: Vec<StoredTransfer>, outcomes: BTreeMap<TransferId, OutboxOutcome>, fx: &mut Fx) {
+    pub(super) fn restored(&mut self, mut uploads: Vec<StoredTransfer>, outcomes: TransferOutcomes, fx: &mut Fx) {
         uploads.sort_by_key(|row| row.seq);
-        self.open_groups = uploads.iter().filter(|row| !row.completed).filter_map(|row| row.batch).collect();
-        for row in uploads {
+        self.open_groups = uploads.iter().filter_map(|row| row.batch).collect();
+        for mut row in uploads {
+            if row.batch.is_some_and(|group| self.groups.get(&group).is_none_or(|entry| entry.op_id.is_none())) {
+                row.restore_failed = Some("invalid batch provenance".into());
+            }
             self.classify(row, &outcomes, fx);
         }
         self.phase = Phase::Classified;
@@ -189,6 +217,13 @@ impl TransferState {
         }
         self.phase = Phase::Ready;
         self.send_orphans(fx);
+        let groups: Vec<_> = self.groups.keys().copied().collect();
+        for group in groups {
+            if self.phase_of(group) == Some(BatchPhase::Singles) { self.single_next(group, fx); }
+            else { self.batch_release(group, fx); }
+        }
+        let singles: Vec<_> = self.transfers.values().filter(|transfer| transfer.batch_id.is_none() && transfer.stage == TransferStage::PersistingBatchIntent).map(|transfer| transfer.transfer_id).collect();
+        for id in singles { self.store(&[id], StoreKind::BatchIntent, fx); }
         self.start_in_order(fx);
     }
 }

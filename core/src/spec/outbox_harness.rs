@@ -25,6 +25,7 @@ pub(super) enum OutboxEffect {
     CancelRequest { op_id: OpId },
     Reply { reply: ReplyId, answer: OutboxAnswer },
     TransferOutcome { outcome: o::OutboxOutcome },
+    TransferOutcomes { input: String },
     Schedule,
     Drained,
     Copy { id: u64, source: String },
@@ -72,6 +73,7 @@ pub(super) fn lower(emitted: Emitted<Run>, state: Option<&OutboxState>) -> Optio
             let operation = state.and_then(|state| state.ops.values().find(|operation| operation.request_id == request_id));
             OutboxEffect::Send { op_id: operation.map_or(request_id, |operation| operation.op_id), request_id, sequence: operation.map_or(0, |operation| operation.sequence) }
         }
+        Emitted::Send { to: TRANSFER_AT, input } if input.starts_with("MutationOutcomes") => OutboxEffect::TransferOutcomes { input },
         Emitted::Send { to: TRANSFER_AT, input } => OutboxEffect::TransferOutcome { outcome: outcome_named(&input) },
         Emitted::Send { to, .. } => panic!("a send to the slot {to}"),
         Emitted::Schedule { .. } => OutboxEffect::Schedule,
@@ -167,7 +169,7 @@ pub(super) fn model_op(row: &str, policy: Policy, transfer: bool) -> NewOp {
         row_id: row.into(),
         action: "update".into(),
         on_failure: if policy == Policy::Keep { OnFailure::Keep } else { OnFailure::Rollback },
-        origin: if transfer { OpSource::Transfer("k".into()) } else { OpSource::Api },
+        origin: if transfer { OpSource::Transfer { transfer_id: 1, cycle_id: 1 } } else { OpSource::Api },
         durable: true,
         path: format!("/moments/{row}"),
         body: format!("{{\"row\":\"{row}\"}}"),
@@ -373,6 +375,7 @@ pub(super) fn translate(twin: &Twin, id: OpId, effects: Vec<OutboxEffect>, sched
             }
             OutboxEffect::Schedule => {}
             OutboxEffect::TransferOutcome { outcome, .. } => eff.push(Eff::TransferOutcome(out_of(&outcome))),
+            OutboxEffect::TransferOutcomes { .. } => {}
             OutboxEffect::Drained => eff.push(Eff::Drained),
             OutboxEffect::Copy { .. } => {}
         }

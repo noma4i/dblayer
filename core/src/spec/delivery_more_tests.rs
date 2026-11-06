@@ -6,10 +6,9 @@ fn dlv_force_load_uses_committed_revision() {
     let log = new_log();
     det.add::<Sink<Windows>>("windows", new_log(), Discard);
     det.add::<Sink<Feed>>("feed", new_log(), Discard);
-    let revision = std::sync::Arc::new(std::sync::atomic::AtomicI64::new(37));
-    let addr = det.add::<Spy<Deliveries>>("deliveries", SpyState::new(d::DeliveriesState::new(EPOCH, peers(), revision), &log), Discard);
+    let addr = det.add::<Spy<Deliveries>>("deliveries", SpyState::new(d::DeliveriesState::new(EPOCH, peers()), &log), Discard);
     det.start_epoch(EPOCH);
-    det.post(addr, EpochStamp::Control, d::DeliveryInput::Open { stream: STREAM, view: view(Kind::Entity(Fetch::Force)), epoch: EPOCH, identity: true, valid: true, now: 1_000_000 });
+    det.post(addr, EpochStamp::Control, d::DeliveryInput::Open { stream: STREAM, view: view(Kind::Entity(Fetch::Force)), epoch: EPOCH, identity: true, valid: true, now: 1_000_000, revision: 37 });
     det.run_until_quiet(100).unwrap();
     assert!(snapshot(&log).iter().any(|entry| matches!(entry, Emitted::Send { to: WINDOWS, input } if input.starts_with("Load") && input.contains("store_revision: 37"))));
 }
@@ -103,11 +102,22 @@ fn dlv_live_resync() {
 
 #[test]
 fn dlv_live_read_recovered() {
-    let mut twin = live_rows();
+    for revision in [1, 2] {
+        let mut twin = live_rows();
+        twin.step(Input::ReadFailed { revision: 2 });
+        twin.read_all();
+        let id = twin.read_id();
+        twin.post(d::DeliveryInput::ReadDone { stream: STREAM, read_id: id, revision, data: d::ReadData::Rows { rows: rows_of(&rows(&["r1"])), replaced: vec![], total: None } });
+        assert!(matches!(twin.state().journal(STREAM).first(), Some(d::Value::State { state, .. }) if state.error.is_none()));
+    }
+    let mut twin = open_as(Kind::Count);
+    twin.step(Input::WindowState(Ws::idle()));
+    twin.step(Input::CountDone { revision: 1, count: 3 });
+    twin.read_all();
     twin.step(Input::ReadFailed { revision: 2 });
     twin.read_all();
-    let id = twin.read_id();
-    twin.post(d::DeliveryInput::ReadDone { stream: STREAM, read_id: id, revision: 2, data: d::ReadData::Rows { rows: rows_of(&rows(&["r1"])), replaced: vec![], total: None } });
+    let read_id = twin.read_id();
+    twin.post(d::DeliveryInput::ReadDone { stream: STREAM, read_id, revision: 1, data: d::ReadData::Count(3) });
     assert!(matches!(twin.state().journal(STREAM).first(), Some(d::Value::State { state, .. }) if state.error.is_none()));
 }
 

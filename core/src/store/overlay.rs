@@ -64,6 +64,17 @@ pub(super) struct Overlays {
     versions: ArcSwap<VecDeque<Arc<OverlaySnapshot>>>,
 }
 
+struct Prepared<'a> {
+    overlays: &'a Overlays,
+    previous: Option<Arc<VecDeque<Arc<OverlaySnapshot>>>>,
+}
+
+impl Drop for Prepared<'_> {
+    fn drop(&mut self) {
+        if let Some(previous) = self.previous.take() { self.overlays.versions.store(previous); }
+    }
+}
+
 impl Overlays {
     pub fn new(revision: i64) -> Self {
         let snapshot = Arc::new(OverlaySnapshot { revision, ..OverlaySnapshot::default() });
@@ -96,5 +107,19 @@ impl Overlays {
         versions.push_back(Arc::new(snapshot));
         while versions.len() > VERSIONS { versions.pop_front(); }
         self.versions.store(Arc::new(versions));
+    }
+
+    pub fn commit(&self, snapshot: OverlaySnapshot, transaction: rusqlite::Transaction<'_>) -> rusqlite::Result<()> {
+        let previous = self.versions.load_full();
+        let mut versions = previous.as_ref().clone();
+        versions.push_back(Arc::new(snapshot));
+        self.versions.store(Arc::new(versions));
+        let mut prepared = Prepared { overlays: self, previous: Some(previous) };
+        transaction.commit()?;
+        prepared.previous = None;
+        let mut versions = self.versions.load_full().as_ref().clone();
+        while versions.len() > VERSIONS { versions.pop_front(); }
+        self.versions.store(Arc::new(versions));
+        Ok(())
     }
 }

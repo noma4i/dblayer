@@ -67,7 +67,7 @@ fn moment_text(db: &Store) -> Value {
 fn out_prop_other_model_same_id() {
     let db = open_moments();
     let effects = crate::owners::store::IntentEffects { rows: vec![crate::owners::store::EffectRow { model: "vibes".into(), row_id: "m1".into(), values: json!({"id": "m1", "momentId": "m1", "kind": "wow"}).to_string() }], ..Default::default() };
-    write(&db, BatchAuthor::Outbox, Vec::new(), vec![StoreOp::Intent { op_id: 3, model: "vibes".into(), row_id: "m1".into(), action: "react".into(), payload: "{}".into(), effects }]);
+    write(&db, BatchAuthor::Outbox, Vec::new(), vec![StoreOp::Intent { op_id: 3, model: "vibes".into(), row_id: "m1".into(), action: "react".into(), payload: "{}".into(), effects, origin: crate::owners::store::IntentOrigin::Api }]);
     write(&db, BatchAuthor::Window, Vec::new(), vec![moment_page(&db, "new")]);
     assert_eq!(moment_text(&db), json!("new"), "an open operation of vibes does not protect the moment with the same id");
 }
@@ -77,7 +77,7 @@ fn out_prop_destroy_hides_row() {
     let effects = || crate::owners::store::IntentEffects { tombstones: vec![crate::owners::store::EffectTombstone { model: "moments".into(), row_id: "m1".into() }], ..Default::default() };
     for via_event in [false, true] {
         let db = open_moments();
-        write(&db, BatchAuthor::Outbox, Vec::new(), vec![StoreOp::Intent { op_id: 4, model: "moments".into(), row_id: "m1".into(), action: "destroy".into(), payload: "{}".into(), effects: effects() }]);
+        write(&db, BatchAuthor::Outbox, Vec::new(), vec![StoreOp::Intent { op_id: 4, model: "moments".into(), row_id: "m1".into(), action: "destroy".into(), payload: "{}".into(), effects: effects(), origin: crate::owners::store::IntentOrigin::Api }]);
         assert_eq!(moment_text(&db), Value::Null, "the destroy hides the row at once");
         if via_event {
             let event = json!({"op": "upsert", "id": "m1", "row": {"id": "m1", "userId": "u1", "text": "again"}}).to_string();
@@ -93,7 +93,7 @@ fn out_prop_destroy_hides_row() {
 fn out_server_removed_row() {
     let db = open_moments();
     let effects = crate::owners::store::IntentEffects { rows: vec![crate::owners::store::EffectRow { model: "moments".into(), row_id: "m1".into(), values: json!({"id": "m1", "userId": "u1", "text": "edit"}).to_string() }], ..Default::default() };
-    write(&db, BatchAuthor::Outbox, Vec::new(), vec![StoreOp::Intent { op_id: 7, model: "moments".into(), row_id: "m1".into(), action: "update".into(), payload: "{}".into(), effects }]);
+    write(&db, BatchAuthor::Outbox, Vec::new(), vec![StoreOp::Intent { op_id: 7, model: "moments".into(), row_id: "m1".into(), action: "update".into(), payload: "{}".into(), effects, origin: crate::owners::store::IntentOrigin::Api }]);
     let open = |db: &Store| db.lock().connection.query_row("SELECT COUNT(*) FROM op", [], |row| row.get::<_, i64>(0)).unwrap();
     assert_eq!(open(&db), 1);
     let event = json!({"op": "delete", "id": "m1"}).to_string();

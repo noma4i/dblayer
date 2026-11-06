@@ -230,7 +230,7 @@ fn xfer_removing_committed_copy_failed() {
     twin.copy_failed(id);
     let out = twin.commit();
     assert_eq!((Twin::fault(&out, reply), twin.stage(id), out.deletes()), (Some(Fault::Copy("unreadable".into())), TransferStage::Done, 1), "the partial file goes");
-    assert!(twin.t(id).outcomes.is_empty(), "a transfer that was never accepted has no outcome");
+    assert!(!twin.state().completed.contains_key(&id), "a transfer that was never accepted has no outcome");
 }
 
 #[test]
@@ -303,7 +303,7 @@ fn xfer_failed_other() {
     inputs.extend([
         TransferInput::StepOk { transfer_id: id, attempt_id, part: Some(1), upload_id: None, etag: None },
         TransferInput::Completed { transfer_id: id, attempt_id, signed_id: None },
-        TransferInput::MutationOutcome { key: KEY.into(), outcome: OutboxOutcome::Confirmed { revision: 1, result: None } },
+        TransferInput::MutationOutcome { transfer_id: id, outcome: OutboxOutcome::Confirmed { revision: 1, result: None } },
         TransferInput::Online(Online(false)),
         TransferInput::PowerSaving(true),
         TransferInput::SlotFreed,
@@ -335,8 +335,9 @@ fn xfer_closing_copying() {
     assert_eq!(out.replies(reply), vec![TransferAnswer::Err(Fault::Interrupted)]);
     let mut batch = Twin::new();
     batch.post(TransferInput::AcceptBatch { joint: Box::new(joint()), epoch: EPOCH, items: vec![item(KEY, 2), item(OTHER, 2)], reply: 5, now: Time(0) });
-    batch.commit();
     let ids = [batch.state().open_id(KEY).expect("first"), batch.state().open_id(OTHER).expect("second")];
+    batch.reserve_batch(&ids);
+    batch.commit();
     batch.copy_done(ids[0]);
     assert_eq!(batch.stage(ids[0]), TransferStage::CopyReady);
     let out = batch.close();

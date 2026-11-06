@@ -157,6 +157,7 @@ impl OutboxState {
                 outcome: None,
                 error: None,
                 failed_errors: BTreeMap::new(),
+                retry_uploads: Vec::new(),
                 reject_error: None,
                 cancels: None,
                 restore_element: None,
@@ -171,7 +172,7 @@ impl OutboxState {
         operation.sends += 1;
         operation.sent = true;
         operation.waiting_retry = false;
-        let purpose = if matches!(operation.op.origin, OpSource::Transfer(_)) { PURPOSE_TRANSFER } else { PURPOSE_STANDARD };
+        let purpose = if matches!(operation.op.origin, OpSource::Transfer { .. } | OpSource::TransferGroup { .. }) { PURPOSE_TRANSFER } else { PURPOSE_STANDARD };
         let owner = Some(crate::transport::RequestOwner::Operation { seq: i64::try_from(op_id).unwrap_or(i64::MAX) });
         let mutate = SessionInput::Mutate { author: OUTBOX_AUTHOR, owner, req_id: operation.request_id, epoch: self.epoch, path: operation.op.path.clone(), body: operation.op.body.clone(), purpose };
         if let Some(session) = self.peers.session { fx.push(Effect::Send(Outbound::new(session, mutate))); }
@@ -181,7 +182,7 @@ impl OutboxState {
         let Some(operation) = self.ops.get(&op_id) else { return };
         let generation = self.generation_of(&operation.op.model);
         let attempt = StoreOp::Attempt { op_id, attempts: if kind == CommitKind::ClearMark { 1 } else { operation.attempts + 1 }, cycle_id: operation.cycle_id };
-        let ops = match kind {
+        let mut ops: Vec<StoreOp> = match kind {
             CommitKind::Intent => vec![StoreOp::Intent {
                 op_id,
                 model: operation.op.model.clone(),
@@ -189,6 +190,11 @@ impl OutboxState {
                 action: operation.op.action.clone(),
                 payload: operation.op.body.clone(),
                 effects: operation.op.effects.clone(),
+                origin: match &operation.op.origin {
+                    OpSource::Api => crate::owners::store::IntentOrigin::Api,
+                    OpSource::Transfer { transfer_id, .. } => crate::owners::store::IntentOrigin::Transfer { transfer_id: *transfer_id },
+                    OpSource::TransferGroup { batch_id, members } => crate::owners::store::IntentOrigin::TransferGroup { batch_id: *batch_id, transfer_ids: members.iter().map(|member| member.transfer_id).collect() },
+                },
             }],
             CommitKind::Attempt => vec![attempt],
             CommitKind::Land => operation
@@ -202,9 +208,18 @@ impl OutboxState {
             CommitKind::Rollback if operation.restore_element.is_some() => operation.restore_element.iter().map(|(table, key)| StoreOp::DiscardRestoreFailed { table: table.clone(), key: key.clone() }).chain([StoreOp::RemoveIntent { op_id }]).collect(),
             CommitKind::Rollback => vec![StoreOp::RollBack { op_id }, StoreOp::RemoveIntent { op_id }, StoreOp::RemoveAnswer { request_id: operation.request_id }],
             CommitKind::ErrorMark => vec![StoreOp::MarkError { op_id, error: Some(operation.error.clone().unwrap_or_else(|| "refused".into())) }, StoreOp::RemoveAnswer { request_id: operation.request_id }],
-            CommitKind::ClearMark => vec![StoreOp::MarkError { op_id, error: None }, attempt],
+            CommitKind::ClearMark => std::iter::once(StoreOp::MarkError { op_id, error: None }).chain(std::iter::once(attempt)).chain(operation.retry_uploads.iter().cloned().map(|row| StoreOp::Upload { row, kind: crate::owners::store::UploadKind::Retrying })).collect(),
             CommitKind::LocalWrite | CommitKind::RemoveRow => Vec::new(),
         };
+        let terminal = match kind {
+            CommitKind::Land => Some(OutboxOutcome::Confirmed { revision: 0, result: operation.result.clone() }),
+            CommitKind::Rollback => Some(if operation.stage == Stage::RollingBack(Why::Discarded) { OutboxOutcome::Discarded } else { OutboxOutcome::Rejected { error: operation.reject_error.clone().unwrap_or_else(|| "refused".into()) } }),
+            CommitKind::ErrorMark => Some(OutboxOutcome::Failed { error: operation.error.clone().unwrap_or_else(|| "refused".into()) }),
+            _ => None,
+        };
+        if let Some(outcome) = terminal.filter(|_| kind != CommitKind::Rollback || !operation.failed_errors.contains_key(&operation.cycle_id)) {
+            ops.extend(Self::transfer_outcomes(operation, &outcome).into_iter().map(|(transfer_id, cycle_id, outcome)| StoreOp::TransferOutcome { transfer_id, cycle_id, outcome }));
+        }
         let intents = u64::from(kind == CommitKind::Intent);
         let basis = BTreeMap::from([(operation.op.model.clone(), generation)]);
         let batch = self.next_batch;
@@ -245,10 +260,38 @@ impl OutboxState {
 
     pub(super) fn receipt(&self, op_id: OpId, revision: i64) -> Receipt { Receipt { epoch: self.epoch, op_id, cycle_id: self.ops.get(&op_id).map_or(0, |operation| operation.cycle_id), revision } }
 
-    pub(super) fn tell_transfer(&self, op_id: OpId, outcome: &OutboxOutcome, fx: &mut Effects<Outbox>) {
+    pub(super) fn retry_transfer_answer(&self, cycles: Vec<(u64, u64)>, result: Result<i64, Fault>, fx: &mut Effects<Outbox>) {
+        if let Some(transfer) = self.peers.transfer {
+            fx.push(Effect::Send(Outbound::new(transfer, TransferInput::RetryOutcome { cycles, result })));
+        }
+    }
+
+    pub(super) fn tell_transfer(&self, op_id: OpId, outcome: &OutboxOutcome, intent_removed: bool, fx: &mut Effects<Outbox>) {
         let Some(operation) = self.ops.get(&op_id) else { return };
-        if let (OpSource::Transfer(key), Some(transfer)) = (&operation.op.origin, self.peers.transfer) {
-            fx.push(Effect::Send(Outbound::new(transfer, TransferInput::MutationOutcome { key: key.clone(), outcome: outcome.clone() })));
+        let Some(transfer) = self.peers.transfer else { return };
+        let outcomes = Self::transfer_outcomes(operation, outcome);
+        match &operation.op.origin {
+            OpSource::Api => {}
+            OpSource::Transfer { .. } => if let Some((transfer_id, _, outcome)) = outcomes.into_iter().next() {
+                fx.push(Effect::Send(Outbound::new(transfer, TransferInput::MutationOutcome { transfer_id, outcome })));
+            },
+            OpSource::TransferGroup { batch_id, .. } => {
+                let outcomes = outcomes.into_iter().map(|(id, _, outcome)| (id, outcome)).collect();
+                fx.push(Effect::Send(Outbound::new(transfer, TransferInput::MutationOutcomes { batch_id: *batch_id, outcomes, intent_removed })));
+            }
+        }
+    }
+
+    fn transfer_outcomes(operation: &QueuedOperation, outcome: &OutboxOutcome) -> Vec<(u64, u64, OutboxOutcome)> {
+        match &operation.op.origin {
+            OpSource::Api => Vec::new(),
+            OpSource::Transfer { transfer_id, cycle_id } => vec![(*transfer_id, *cycle_id, outcome.clone())],
+            OpSource::TransferGroup { members, .. } => members.iter().map(|member| {
+                let outcome = if matches!(outcome, OutboxOutcome::Confirmed { .. }) && operation.missing.contains(&member.row_id) {
+                    OutboxOutcome::Failed { error: super::failure::protocol("the answer has no row for the element") }
+                } else { outcome.clone() };
+                (member.transfer_id, member.cycle_id, outcome)
+            }).collect(),
         }
     }
 
@@ -258,7 +301,7 @@ impl OutboxState {
         operation.stage = Stage::Done;
         operation.outcome = Some(outcome.clone());
         let (model, row) = (operation.op.model.clone(), operation.op.row_id.clone());
-        self.tell_transfer(op_id, &outcome, fx);
+        self.tell_transfer(op_id, &outcome, next_goes, fx);
         self.give_outcome(op_id, &outcome, fx);
         if next_goes {
             self.kick_row(&model, &row, fx);
@@ -324,7 +367,7 @@ impl OutboxState {
         let cycle = operation.cycle_id;
         operation.failed_errors.insert(cycle, error.clone());
         let failed = OutboxOutcome::Failed { error };
-        self.tell_transfer(op_id, &failed, fx);
+        self.tell_transfer(op_id, &failed, false, fx);
         self.give_outcome(op_id, &failed, fx);
     }
 
@@ -361,6 +404,8 @@ impl OutboxState {
         let open: Vec<OpId> = self.ops.values().filter(|operation| operation.stage != Stage::Done).map(|operation| operation.op_id).collect();
         for op_id in open {
             let Some(stage) = self.stage_of(op_id) else { continue };
+            let transfer_ids: Vec<_> = self.ops.get_mut(&op_id).map(|operation| std::mem::take(&mut operation.retry_uploads).into_iter().map(|row| (row.transfer_id, row.cycle_id)).collect()).unwrap_or_default();
+            if !transfer_ids.is_empty() { self.retry_transfer_answer(transfer_ids, Err(Fault::Interrupted), fx); }
             if stage == Stage::Sending {
                 let req_id = self.ops[&op_id].request_id;
                 if let Some(session) = self.peers.session { fx.push(Effect::Send(Outbound::new(session, SessionInput::Cancel { req_id }))); }
@@ -371,7 +416,7 @@ impl OutboxState {
                 operation.outcome = Some(OutboxOutcome::Interrupted);
             }
             if !closing {
-                self.tell_transfer(op_id, &OutboxOutcome::Interrupted, fx);
+                self.tell_transfer(op_id, &OutboxOutcome::Interrupted, false, fx);
             }
             self.give_outcome(op_id, &OutboxOutcome::Interrupted, fx);
         }
@@ -379,15 +424,19 @@ impl OutboxState {
     }
 
     pub(super) fn handle(&mut self, input: OutboxInput, fx: &mut Effects<Outbox>) {
-        if let (Some(error), OutboxInput::ReserveOp { transfer_id, .. }) = (&self.queue_error, &input) {
-            return self.opened(fx, *transfer_id, Err(Fault::Rejected(RejectReason::Storage(error.clone()))));
+        if let (Some(error), OutboxInput::ReserveOp { target, .. }) = (&self.queue_error, &input) {
+            return self.opened(fx, *target, Err(Fault::Rejected(RejectReason::Storage(error.clone()))));
+        }
+        if let (Some(error), OutboxInput::RetryTransfer { uploads, .. }) = (&self.queue_error, &input) {
+            self.retry_transfer_answer(uploads.iter().map(|row| (row.transfer_id, row.cycle_id)).collect(), Err(Fault::Rejected(RejectReason::Storage(error.clone()))), fx);
+            return;
         }
         if let (Some(error), OutboxInput::Submit { reply, .. } | OutboxInput::Retry { reply, .. } | OutboxInput::Discard { reply, .. } | OutboxInput::DiscardRestoreFailed { reply, .. } | OutboxInput::Outcome { reply, .. }) = (&self.queue_error, &input) {
             return Self::reply(fx, *reply, OutboxAnswer::Err(Fault::Rejected(RejectReason::Storage(error.clone()))));
         }
         match input {
             OutboxInput::Submit { epoch, op, reply } => self.submit(epoch, op, reply, fx),
-            OutboxInput::ReserveOp { epoch, transfer_id } => self.reserve_op(epoch, transfer_id, fx),
+            OutboxInput::ReserveOp { epoch, target } => self.reserve_op(epoch, target, fx),
             OutboxInput::SubmitReserved { epoch, op_id, op } => self.submit_reserved(epoch, op_id, op, fx),
             OutboxInput::Restored { .. } | OutboxInput::RestoreFailed { .. } | OutboxInput::ReservedFloor { .. } => {}
             OutboxInput::OrphanAnswers { request_ids } => self.remove_orphan_answers(request_ids, fx),
@@ -408,6 +457,7 @@ impl OutboxState {
                 }
             }
             OutboxInput::Retry { model, row_id, reply } => self.retry(&model, &row_id, reply, fx),
+            OutboxInput::RetryTransfer { model, row_id, reply, uploads } => self.retry_transfer(&model, &row_id, reply, uploads, fx),
             OutboxInput::Discard { model, row_id, reply } => self.discard(&model, &row_id, reply, fx),
             OutboxInput::DiscardRestoreFailed { table, key, reply } => self.discard_restore_failed(&table, &key, reply, fx),
             OutboxInput::Outcome { receipt, reply } => self.outcome(receipt, reply, fx),

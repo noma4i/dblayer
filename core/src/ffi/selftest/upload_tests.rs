@@ -17,11 +17,26 @@ use crate::ffi::session_guards_tests::{Rig as SessionRig, SOCIAL_BODY};
 use crate::ffi::upload_wire::WireUploadRequest;
 use crate::ffi::{ByteProgress, CableLease, Config, Database, DbError, EncryptedConfig, EncryptedSocketEvent, PutReply, SubscriptionSink, Transport, TransportRequest, WireOperationOutcome};
 use crate::transport::encrypted::vectors_tests::{origin, pin, public_key_der_b64};
+use crate::transport::encrypted::fake_server_tests::{decrypt_request, seal_response, FakeServer};
+use crate::transport::NetworkPurpose;
 use crate::upload::{UploadFile, MEBIBYTE};
 
 /// A transport that only takes the PUTs of the file steps: it records each range and answers with an etag.
 #[derive(Default)]
 struct Puts(Mutex<Vec<(u64, u64)>>);
+
+struct UploadHttp(Arc<FakeServer>);
+
+#[async_trait]
+impl crate::ffi::EncryptedHttp for UploadHttp {
+    async fn post(&self, path: String, body: String, purpose: NetworkPurpose) -> Result<crate::ffi::EncryptedReply, DbError> {
+        let request = decrypt_request(&body).unwrap();
+        if request["body"]["operationName"] == "Feed" {
+            return Ok(crate::ffi::EncryptedReply { status: 200, body: seal_response(&request, request["sequence"].as_i64(), json!({"data":{"moments":[]}})) });
+        }
+        crate::ffi::EncryptedHttp::post(&ThroughServer(self.0.clone()), path, body, purpose).await
+    }
+}
 
 #[async_trait]
 impl Transport for Puts {
@@ -44,7 +59,11 @@ fn executed(rig: &SessionRig, operation: &str) -> Vec<serde_json::Value> {
 }
 
 async fn opened(rig: &SessionRig, puts: Arc<Puts>) -> Arc<Database> {
-    let database = Database::open(Config { path: None, data_version: None, cache_rows: 8 }, serde_json::to_string(&vec![moment_spec()]).unwrap(), crate::ffi::OpenPorts { transport: Some(puts), encrypted: Some(EncryptedConfig { origin: origin().into(), server_key: public_key_der_b64().into(), pin: pin().into(), ..crate::transport::encrypted::protocol_tests::config() }), credentials: Some(rig.credentials.clone()), http: Some(Arc::new(ThroughServer(rig.server.clone()))), ..Default::default() }).await.unwrap();
+    opened_with_model(rig, puts, moment_spec()).await
+}
+
+async fn opened_with_model(rig: &SessionRig, puts: Arc<Puts>, model: crate::schema::ModelSpec) -> Arc<Database> {
+    let database = Database::open(Config { path: None, data_version: None, cache_rows: 8 }, serde_json::to_string(&vec![model]).unwrap(), crate::ffi::OpenPorts { transport: Some(puts), encrypted: Some(EncryptedConfig { origin: origin().into(), server_key: public_key_der_b64().into(), pin: pin().into(), ..crate::transport::encrypted::protocol_tests::config() }), credentials: Some(rig.credentials.clone()), http: Some(Arc::new(UploadHttp(rig.server.clone()))), ..Default::default() }).await.unwrap();
     let registered: Vec<_> = [("CreateBlob", "createBlob"), ("MakeMoment", "makeMoment"), ("InitMultipart", "initMultipart"), ("PresignParts", "presignParts"), ("CompleteMultipart", "completeMultipart"), ("AbortMultipart", "abortMultipart")].into_iter().map(|(name, root)| {
         let document = format!("mutation {name} {{ {root} {{ id }} }}");
         rig.server.register(&document);
@@ -62,6 +81,30 @@ async fn opened(rig: &SessionRig, puts: Arc<Puts>) -> Arc<Database> {
         "makeMoment": {"id": "42", "text": "clip"},
     }));
     database
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_send_with_a_file_joins_a_loaded_create_window() {
+    let rig = SessionRig::new();
+    let mut model = moment_spec();
+    model.relations.iter_mut().find(|relation| relation.name == "feed").unwrap().joins_created = true;
+    let database = opened_with_model(&rig, Arc::new(Puts::default()), model).await;
+    let document = "query Feed { moments { id text } }";
+    rig.server.register(document);
+    database.register_operations(json!([{"name":"Feed", "document":document, "rootPath":"moments"}]).to_string()).unwrap();
+    let epoch = database.session_epoch();
+    let load = database.begin_load(epoch, "Moment".into(), "feed".into(), "{}".into()).unwrap();
+    bound(load.result()).await.unwrap();
+    database.set_online(false).unwrap();
+    let directory = tempfile::tempdir().unwrap();
+    let source = directory.path().join("clip.mp4");
+    std::fs::write(&source, b"abc").unwrap();
+    let receipt = bound(database.send(crate::ffi::CommandRequest { epoch, model: "Moment".into(), values_json: r#"{"text":"clip"}"#.into(), args_json: "{}".into(), upload: Some(crate::ffi::command::CommandUpload { action: "upload".into(), request: request(&source) }) })).await.unwrap();
+    let id = receipt.optimistic_value.unwrap().id;
+    let query = json!({"model":"Moment", "relation":"feed", "params":{}}).to_string();
+    let rows = bound(database.read_query(epoch, query)).await.unwrap();
+    assert_eq!(rows.into_iter().map(|row| row.id).collect::<Vec<_>>(), [id]);
+    database.close_now();
 }
 
 fn request(path: &std::path::Path) -> WireUploadRequest { WireUploadRequest::of(&UploadFile::new(path.to_str().unwrap())) }

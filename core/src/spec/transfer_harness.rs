@@ -7,7 +7,7 @@ use crate::files::Location;
 use crate::owners::contract::{BatchId, Committed, Online, RejectReason, Rejected, ReplyId};
 use crate::owners::store::{StoreBatch, StoreInput, StoreOp, StoreWriter, UploadKind, UploadRow};
 use crate::owners::support::{new_log, take, Discard, Emitted, Log, NoEffect, Silent, Spy, SpyState};
-use crate::owners::write::outbox::{Fault, NewOp, Outbox, OutboxInput, OutboxOutcome, OpSource, Receipt};
+use crate::owners::write::outbox::{Fault, NewOp, Outbox, OutboxInput, OutboxOutcome, OpSource, Receipt, ReserveTarget};
 use crate::owners::write::rounds::{Rounds, RoundsInput};
 use crate::owners::write::transfer::{BatchItem, Joint, NextStep, Shown, Source, Steps, StoredTransfer, Transfer, TransferAnswer, TransferEffect as Run, TransferId, TransferInput, TransferPeers, TransferStage, TransferState, TransferTick, Transfers};
 use crate::runtime::{Address, Cause, DetScheduler, Effects, Epoch, EpochStamp, StateOwner, Time};
@@ -98,13 +98,13 @@ impl Out {
     /// The final mutations handed to Outbox: of a batch, of a single element, reserved or not.
     pub fn submit_ops(&self) -> Vec<&NewOp> { self.outbox.iter().filter_map(|input| match input { OutboxInput::Submit { op, .. } | OutboxInput::SubmitReserved { op, .. } => Some(op), _ => None }).collect() }
 
-    pub fn outbox_retries(&self) -> usize { self.outbox.iter().filter(|input| matches!(input, OutboxInput::Retry { .. })).count() }
+    pub fn outbox_retries(&self) -> usize { self.outbox.iter().filter(|input| matches!(input, OutboxInput::RetryTransfer { .. })).count() }
 
     pub fn numbers(&self) -> Vec<(String, Vec<(String, i64)>)> { self.batches.iter().flat_map(|batch| batch.ops.iter()).filter_map(|op| if let StoreOp::Numbers { row_id, writes, .. } = op { Some((row_id.clone(), writes.clone())) } else { None }).collect() }
 
     pub fn rolled_back(&self) -> Vec<u64> { self.batches.iter().flat_map(|batch| batch.ops.iter()).filter_map(|op| if let StoreOp::RollBack { op_id } = op { Some(*op_id) } else { None }).collect() }
 
-    pub fn submits(&self) -> usize { self.outbox.iter().filter(|input| matches!(input, OutboxInput::Submit { .. })).count() }
+    pub fn submits(&self) -> usize { self.outbox.iter().filter(|input| matches!(input, OutboxInput::Submit { .. } | OutboxInput::SubmitReserved { .. })).count() }
 
     pub fn outbox_discards(&self) -> usize { self.outbox.iter().filter(|input| matches!(input, OutboxInput::Discard { .. })).count() }
 
@@ -150,7 +150,7 @@ pub(super) fn stored(id: TransferId, key: &str, parts: u32) -> StoredTransfer {
         signed_id: None,
         failed: None,
         aborted: false,
-        op_id: None,
+        op_id: Some(id),
         copying: false,
         file_present: true,
         created_at: Time(0),
@@ -173,6 +173,7 @@ pub(super) struct Twin {
     rounds: Log<RoundsInput>,
     reply: ReplyId,
     unanswered: Vec<BatchId>,
+    seen_ids: std::collections::BTreeMap<String, TransferId>,
 }
 
 impl Twin {
@@ -187,7 +188,7 @@ impl Twin {
         assert_eq!(det.add::<Spy<Transfers>>("transfer", SpyState::new(TransferState::new(EPOCH, slots, peers), &log), Discard).index(), TRANSFER_AT);
         assert_eq!(det.add::<Tap<Rounds>>("rounds", rounds.clone(), Silent).index(), ROUNDS_AT);
         det.start_epoch(EPOCH);
-        Self { det, log, store, outbox, rounds, reply: 100, unanswered: Vec::new() }
+        Self { det, log, store, outbox, rounds, reply: 100, unanswered: Vec::new(), seen_ids: Default::default() }
     }
 
     /// The owner after `Restored` of `rows`: the operations of the rows are declared, the network has not spoken yet.
@@ -198,6 +199,8 @@ impl Twin {
         let mut twin = Self::bare(1);
         let declarations = rows.iter().map(|row| (row.mutation.model.clone(), row.mutation.action.clone())).collect();
         twin.post(TransferInput::RegisterOperations { declarations });
+        let outcomes = outcomes.into_iter().map(|(id, outcome)| (id, [(1, outcome)].into())).collect();
+        let batches = batches.into_iter().map(|(id, joint)| (id, crate::owners::write::transfer::StoredGroup { joint, op_id: Some(1_000_000 + id), intent_members: Vec::new() })).collect();
         let out = twin.post(TransferInput::Restored { uploads: rows, outcomes, orphans: Vec::new(), batches });
         (twin, out)
     }
@@ -243,6 +246,8 @@ impl Twin {
     }
 
     fn collect(&mut self) -> Out {
+        let seen: Vec<_> = self.state().transfers.values().map(|transfer| (transfer.key.clone(), transfer.transfer_id)).collect();
+        self.seen_ids.extend(seen);
         let mut out = Out::default();
         for emitted in take(&self.log) {
             match emitted {
@@ -272,7 +277,13 @@ impl Twin {
 
     pub fn t(&self, id: TransferId) -> &Transfer { &self.state().transfers[&id] }
 
-    pub fn stage(&self, id: TransferId) -> TransferStage { self.t(id).stage }
+    pub fn stage(&self, id: TransferId) -> TransferStage {
+        match self.state().transfers.get(&id) {
+            Some(transfer) => transfer.stage,
+            None if self.seen_ids.values().any(|seen| *seen == id) => TransferStage::Done,
+            None => panic!("unknown transfer {id}"),
+        }
+    }
 
     pub fn reply(&mut self) -> ReplyId {
         self.reply += 1;
@@ -295,8 +306,10 @@ impl Twin {
 
     pub fn accepting(&mut self, key: &str, parts: u32) -> (TransferId, ReplyId, Out) {
         let reply = self.reply();
-        let out = self.post(TransferInput::Accept { epoch: EPOCH, item: Box::new(item(key, parts)), reply, now: Time(0) });
+        let initial = self.post(TransferInput::Accept { epoch: EPOCH, item: Box::new(item(key, parts)), reply, now: Time(0) });
         let id = self.state().open_id(key).expect("an accepting transfer");
+        assert!(matches!(initial.outbox.as_slice(), [OutboxInput::ReserveOp { target: ReserveTarget::Transfer(found), .. }] if *found == id));
+        let out = self.post(TransferInput::OpReserved { target: ReserveTarget::Transfer(id), result: Ok(id) });
         (id, reply, out)
     }
 
@@ -379,7 +392,15 @@ impl Twin {
         (reply, self.post(TransferInput::Outcome { receipt, reply }))
     }
 
-    pub fn mutation_outcome(&mut self, key: &str, outcome: OutboxOutcome) -> Out { self.post(TransferInput::MutationOutcome { key: key.into(), outcome }) }
+    pub fn mutation_outcome(&mut self, key: &str, outcome: OutboxOutcome) -> Out {
+        if let Some(group) = key.strip_prefix("batch:").and_then(|value| value.parse::<u64>().ok()) {
+            let outcomes = self.state().transfers.values().filter(|transfer| transfer.batch_id == Some(group) && transfer.stage == TransferStage::Mutating).map(|transfer| (transfer.transfer_id, outcome.clone())).collect();
+            let intent_removed = matches!(outcome, OutboxOutcome::Confirmed { .. } | OutboxOutcome::Rejected { .. } | OutboxOutcome::Discarded);
+            return self.post(TransferInput::MutationOutcomes { batch_id: group, outcomes, intent_removed });
+        }
+        let id = *self.seen_ids.get(key).expect("transfer for outcome");
+        self.post(TransferInput::MutationOutcome { transfer_id: id, outcome })
+    }
 
     pub fn end_epoch(&mut self) -> Out {
         self.det.end_epoch(EPOCH, Cause::SessionReset);
@@ -451,12 +472,21 @@ impl Twin {
         let keys: Vec<String> = items.iter().map(|item| item.key.clone()).collect();
         self.post(TransferInput::AcceptBatch { joint: Box::new(joint), epoch: EPOCH, items, reply, now: Time(0) });
         let ids: Vec<TransferId> = keys.iter().map(|key| self.state().open_id(key).expect("an element")).collect();
+        self.reserve_batch(&ids);
         self.commit();
         for id in &ids {
             self.copy_done(*id);
         }
         self.commit();
         ids
+    }
+
+    pub fn reserve_batch(&mut self, ids: &[TransferId]) -> Out {
+        for id in ids {
+            self.post(TransferInput::OpReserved { target: ReserveTarget::Transfer(*id), result: Ok(*id) });
+        }
+        let group = self.t(ids[0]).batch_id.expect("group id");
+        self.post(TransferInput::OpReserved { target: ReserveTarget::Group(group), result: Ok(1_000_000 + group) })
     }
 
     /// `Mutating` of every element of a batch: all files are on the server and the mutation of the batch is on its way. The owner has a slot for each element.

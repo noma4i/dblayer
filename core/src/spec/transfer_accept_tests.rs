@@ -3,7 +3,7 @@
 use super::transfer_harness::*;
 use crate::owners::contract::{Online, RejectReason};
 use crate::owners::store::UploadKind;
-use crate::owners::write::outbox::{Fault, OutboxOutcome};
+use crate::owners::write::outbox::{Fault, OutboxInput, OutboxOutcome, ReserveTarget};
 use crate::owners::write::transfer::{Shown, TransferAnswer, TransferId, TransferInput, TransferStage};
 use crate::runtime::Time;
 
@@ -21,6 +21,7 @@ fn accepting_batch(twin: &mut Twin, keys: &[&str]) -> (Vec<TransferId>, u64, Out
 
 fn copying_batch(twin: &mut Twin, keys: &[&str]) -> (Vec<TransferId>, u64) {
     let (ids, reply, _) = accepting_batch(twin, keys);
+    twin.reserve_batch(&ids);
     twin.commit();
     (ids, reply)
 }
@@ -39,17 +40,19 @@ fn xfer_accept_while_restoring() {
     let out = twin.post(TransferInput::Accept { epoch: EPOCH, item: Box::new(item(KEY, 2)), reply, now: Time(0) });
     assert!(Twin::quiet(&out), "the call waits for the rows of the base: {out:?}");
     let out = twin.post(TransferInput::Restored { uploads: Vec::new(), outcomes: Default::default(), orphans: Vec::new(), batches: Default::default() });
-    assert_eq!((out.writes(), out.classified(), out.all_replies()), (1, 1, 0), "the held call is accepted after Restored");
-    assert_eq!(out.kinds(), vec![UploadKind::SyncUpload]);
+    assert_eq!((out.writes(), out.classified(), out.all_replies()), (0, 1, 0));
+    assert_eq!(out.outbox.len(), 1);
 }
 
 #[test]
 fn xfer_accept() {
     let mut twin = Twin::new();
-    let (id, reply, out) = twin.accepting(KEY, 3);
-    assert_eq!(twin.stage(id), TransferStage::Accepting);
-    assert_eq!((out.writes(), out.kinds(), out.all_replies(), out.shows().len()), (1, vec![UploadKind::SyncUpload], 0, 0), "nothing is observable before the write");
-    assert_eq!(out.rows()[0].0.key, KEY);
+    let reply = twin.reply();
+    let out = twin.post(TransferInput::Accept { epoch: EPOCH, item: Box::new(item(KEY, 3)), reply, now: Time(0) });
+    let id = twin.state().open_id(KEY).unwrap();
+    assert_eq!(twin.stage(id), TransferStage::Reserving);
+    assert!(matches!(out.outbox.as_slice(), [OutboxInput::ReserveOp { target: ReserveTarget::Transfer(found), .. }] if *found == id));
+    assert_eq!((out.writes(), out.all_replies(), out.shows().len()), (0, 0, 0));
     assert!(out.replies(reply).is_empty());
 }
 
@@ -77,8 +80,10 @@ fn xfer_accept_invalid() {
 fn xfer_accept_batch() {
     let mut twin = Twin::new();
     let (ids, reply, out) = accepting_batch(&mut twin, &[KEY, OTHER]);
-    assert_eq!((out.writes(), out.rows().len(), out.all_replies()), (1, 2, 0), "the rows of all elements go in one transaction, no receipt yet");
-    assert!(ids.iter().all(|id| twin.stage(*id) == TransferStage::Accepting));
+    assert_eq!((out.writes(), out.outbox.len(), out.all_replies()), (0, 3, 0));
+    assert!(ids.iter().all(|id| twin.stage(*id) == TransferStage::Reserving));
+    let out = twin.reserve_batch(&ids);
+    assert_eq!((out.writes(), out.rows().len()), (1, 2));
     assert!(out.replies(reply).is_empty());
 }
 
@@ -113,6 +118,7 @@ fn xfer_accepting_rejected() {
     assert_eq!(Twin::fault(&out, reply), Some(Fault::Rejected(RejectReason::Storage("disk".into()))));
     assert_eq!((twin.stage(id), out.copies(), out.shows().len()), (TransferStage::Done, 0, 0));
     let (ids, batch_reply, _) = accepting_batch(&mut twin, &[OTHER, "Moment:r3:upload"]);
+    twin.reserve_batch(&ids);
     let out = twin.reject(RejectReason::NoSession);
     assert_eq!(out.all_replies(), 1, "a batch has one answer and no receipt");
     assert_eq!(Twin::fault(&out, batch_reply), Some(Fault::Rejected(RejectReason::NoSession)));
@@ -248,7 +254,7 @@ fn xfer_copy_ready_other() {
     twin.copy_done(ids[0]);
     let mut inputs = twin.stray_results(ids[0]);
     inputs.extend([
-        TransferInput::MutationOutcome { key: KEY.into(), outcome: OutboxOutcome::Confirmed { revision: 1, result: None } },
+        TransferInput::MutationOutcome { transfer_id: ids[0], outcome: OutboxOutcome::Confirmed { revision: 1, result: None } },
         TransferInput::Online(Online(true)),
         TransferInput::PowerSaving(true),
         TransferInput::SlotFreed,
@@ -278,7 +284,7 @@ fn xfer_copy_other() {
     let id = twin.copying(KEY, 2);
     let mut inputs = twin.stray_results(id);
     inputs.extend([
-        TransferInput::MutationOutcome { key: KEY.into(), outcome: OutboxOutcome::Confirmed { revision: 1, result: None } },
+        TransferInput::MutationOutcome { transfer_id: id, outcome: OutboxOutcome::Confirmed { revision: 1, result: None } },
         TransferInput::Online(Online(true)),
         TransferInput::PowerSaving(true),
         TransferInput::SlotFreed,

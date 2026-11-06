@@ -102,6 +102,53 @@ impl OutboxState {
         }
     }
 
+    pub(super) fn retry_transfer(&mut self, model: &str, row: &str, reply: ReplyId, uploads: Vec<crate::owners::store::UploadRow>, fx: &mut Effects<Outbox>) {
+        let ids: Vec<_> = uploads.iter().map(|upload| (upload.transfer_id, upload.cycle_id)).collect();
+        let Some(op_id) = self.open_on_row(model, row) else {
+            self.retry_transfer_answer(ids, Err(Fault::NotFound), fx);
+            return;
+        };
+        if self.ops[&op_id].stage != Stage::Failed {
+            self.retry_transfer_answer(ids, Err(Fault::InFlight), fx);
+            return;
+        }
+        if matches!(self.ops[&op_id].error.as_deref(), Some("RestoreFailed" | "StateLost")) {
+            let error = if self.ops[&op_id].error.as_deref() == Some("StateLost") { Fault::StateLost } else { Fault::RestoreFailed };
+            self.retry_transfer_answer(ids, Err(error), fx);
+            return;
+        }
+        let supplied: std::collections::BTreeMap<_, _> = uploads.iter().map(|upload| (upload.transfer_id, upload.cycle_id)).collect();
+        let valid = supplied.len() == uploads.len() && match &self.ops[&op_id].op.origin {
+            OpSource::Api => false,
+            OpSource::Transfer { transfer_id, cycle_id } => supplied.len() == 1 && supplied.get(transfer_id).copied() == cycle_id.checked_add(1),
+            OpSource::TransferGroup { members, .. } => supplied.len() == members.len() && members.iter().all(|member| supplied.get(&member.transfer_id).copied() == member.cycle_id.checked_add(1)),
+        };
+        if !valid { self.retry_transfer_answer(ids, Err(Fault::Invalid), fx); return; }
+        let Some(operation) = self.ops.get(&op_id) else {
+            self.retry_transfer_answer(ids, Err(Fault::NotFound), fx);
+            return;
+        };
+        let mut origin = operation.op.origin.clone();
+        match &mut origin {
+            OpSource::Api => { self.retry_transfer_answer(ids, Err(Fault::Invalid), fx); return; }
+            OpSource::Transfer { transfer_id, cycle_id } => {
+                let Some(next) = supplied.get(&*transfer_id) else { self.retry_transfer_answer(ids, Err(Fault::Invalid), fx); return };
+                *cycle_id = *next;
+            }
+            OpSource::TransferGroup { members, .. } => for member in members {
+                let Some(next) = supplied.get(&member.transfer_id) else { self.retry_transfer_answer(ids, Err(Fault::Invalid), fx); return };
+                member.cycle_id = *next;
+            },
+        }
+        let Some(operation) = self.ops.get_mut(&op_id) else {
+            self.retry_transfer_answer(ids, Err(Fault::NotFound), fx);
+            return;
+        };
+        operation.op.origin = origin;
+        operation.retry_uploads = uploads;
+        self.retry(model, row, reply, fx);
+    }
+
     pub(super) fn retry(&mut self, model: &str, row: &str, reply: ReplyId, fx: &mut Effects<Outbox>) {
         let Some(op_id) = self.open_on_row(model, row) else {
             return Self::reply(fx, reply, OutboxAnswer::Err(Fault::NotFound));
@@ -216,19 +263,19 @@ impl OutboxState {
     }
 
     /// `ReserveOp`: the next `op_id` of the sequence, nothing is written. A reserved `op_id` that is not used is not given again.
-    pub(super) fn reserve_op(&mut self, epoch: Epoch, transfer_id: u64, fx: &mut Effects<Outbox>) {
+    pub(super) fn reserve_op(&mut self, epoch: Epoch, target: ReserveTarget, fx: &mut Effects<Outbox>) {
         let result = if epoch == self.epoch {
             self.next_op += 1;
             Ok(self.next_op - 1)
         } else {
             Err(Fault::NoSession)
         };
-        self.opened(fx, transfer_id, result);
+        self.opened(fx, target, result);
     }
 
-    pub(super) fn opened(&self, fx: &mut Effects<Outbox>, transfer_id: u64, result: Result<OpId, Fault>) {
+    pub(super) fn opened(&self, fx: &mut Effects<Outbox>, target: ReserveTarget, result: Result<OpId, Fault>) {
         if let Some(transfer) = self.peers.transfer {
-            fx.push(Effect::Send(Outbound::new(transfer, super::transfer::TransferInput::OpReserved { transfer_id, result })));
+            fx.push(Effect::Send(Outbound::new(transfer, super::transfer::TransferInput::OpReserved { target, result })));
         }
     }
 
@@ -264,7 +311,7 @@ impl OutboxState {
     pub(super) fn decode_answer(&self, op_id: OpId, body: String, fx: &mut Effects<Outbox>) {
         let operation = &self.ops[&op_id];
         let temp = Some(operation.op.row_id.clone()).filter(|row| crate::identity::is_temp_id(row)).or_else(|| operation.op.effects.rows.iter().find(|row| row.model == operation.op.model && crate::identity::is_temp_id(&row.row_id)).map(|row| row.row_id.clone()));
-        let batch = match &operation.op.origin { OpSource::Transfer(key) => key.strip_prefix("batch:").and_then(|group| group.parse().ok()), OpSource::Api => None };
+        let batch = match &operation.op.origin { OpSource::TransferGroup { batch_id, .. } => Some(*batch_id), _ => None };
         fx.push(Effect::Run(OutboxEffect::Decode(super::answer::DecodeJob { op_id, model: operation.op.model.clone(), action: operation.op.action.clone(), temp, batch, body })));
     }
 

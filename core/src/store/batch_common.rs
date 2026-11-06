@@ -5,12 +5,12 @@ use super::file_write::PreparedFile;
 use super::row_write::RowWrite;
 use super::StoreError;
 
-pub(super) fn apply_common(writer: &mut RowWrite<'_>, op: &StoreOp, index: usize, files: &[PreparedFile], results: &mut Vec<CommitResult>) -> Result<bool, StoreError> {
+pub(super) fn apply_common(writer: &mut RowWrite<'_>, op: &StoreOp, index: usize, files: &[PreparedFile], results: &mut Vec<CommitResult>, response: bool) -> Result<bool, StoreError> {
     match op {
         StoreOp::Rows { model, rows } | StoreOp::LocalRows { model, rows } => {
             let local = matches!(op, StoreOp::LocalRows { .. });
             for row in rows {
-                if let Some(result) = writer.upsert(model, row, local)? { results.push(result); }
+                if let Some(result) = writer.upsert(model, row, local, response && !local)? { results.push(result); }
             }
         }
         StoreOp::RemoveRows { model, ids } => {
@@ -39,7 +39,15 @@ pub(super) fn apply_common(writer: &mut RowWrite<'_>, op: &StoreOp, index: usize
             results.push(writer.transitions(vec![transition])?);
         }
         StoreOp::Planned { effects } => results.push(super::intent_write::planned(writer, effects)?),
-        StoreOp::Intent { op_id, model, row_id, action, payload, effects } => results.push(super::intent_write::intent(writer, *op_id, model, row_id, action, payload, effects)?),
+        StoreOp::Intent { op_id, model, row_id, action, payload, effects, origin } => {
+            results.push(super::intent_write::intent(writer, *op_id, model, row_id, action, payload, effects)?);
+            super::upload_ops::put_intent_origin(writer.connection, *op_id, origin)?;
+        }
+        StoreOp::Effects { op_id, model, row_id, action, payload, effects } => {
+            results.push(super::intent_write::intent(writer, *op_id, model, row_id, action, payload, effects)?);
+            writer.connection.execute("UPDATE op SET intent_state = 'effects_only' WHERE seq = ?1", [i64::try_from(*op_id).map_err(|_| StoreError::Constraint("operation id is too large".into()))?])?;
+        }
+        StoreOp::TransferOutcome { transfer_id, cycle_id, outcome } => super::upload_ops::put_outcome(writer.connection, *transfer_id, *cycle_id, outcome, writer.revision)?,
         StoreOp::RollBack { op_id } => results.push(super::rollback::apply(writer, *op_id)?),
         StoreOp::Window { key, model, page, replace_all, cursor, roots, related, total, base_revision } => {
             let key = crate::owners::read::windows::WindowKey { model: model.clone(), name: key.clone() };

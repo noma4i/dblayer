@@ -2,7 +2,7 @@
 
 use std::collections::BTreeSet;
 
-use super::outbox::{Fault, OutboxInput};
+use super::outbox::{Fault, OutboxInput, ReserveTarget};
 use super::transfer::{reply, run, Fx, TransferState};
 use super::transfer_types::*;
 use crate::owners::contract::{RejectReason, ReplyId};
@@ -46,6 +46,7 @@ impl TransferState {
             urgent,
             op_id: None,
             submitted: false,
+            intent_live: false,
             from_cache: false,
             cache_stale: false,
             round_error: None,
@@ -84,14 +85,12 @@ impl TransferState {
         if items.iter().any(|item| self.open_id(&item.key).is_some()) {
             return reply(fx, rep, TransferAnswer::Err(Fault::InFlight));
         }
-        let reserving = items.iter().any(|item| !item.mutation.effects.is_empty());
         let ids: Vec<TransferId> = items.into_iter().map(|item| {
-            let stage = if reserving && !item.mutation.effects.is_empty() { TransferStage::Reserving } else { TransferStage::Accepting };
-            self.create(item, group, now, stage)
+            self.create(item, group, now, TransferStage::Reserving)
         }).collect();
         match (group, joint) {
             (Some(group), Some(joint)) => {
-                self.groups.insert(group, Group { ids: ids.clone(), reply: Some(rep), ready: BTreeSet::new(), joint, phase: BatchPhase::Collecting, op_row: None });
+                self.groups.insert(group, Group { ids: ids.clone(), op_id: None, reply: Some(rep), ready: BTreeSet::new(), joint, pending_op: None, phase: BatchPhase::Collecting, op_row: None });
             }
             _ => {
                 if let Some(transfer) = self.transfers.get_mut(&ids[0]) {
@@ -100,41 +99,42 @@ impl TransferState {
             }
         }
         for &id in &ids {
-            if self.stage_of(id) == Some(TransferStage::Reserving) {
-                fx.push(Effect::Send(Outbound::new(self.peers.outbox, OutboxInput::ReserveOp { epoch: self.epoch, transfer_id: id })));
-            }
+            fx.push(Effect::Send(Outbound::new(self.peers.outbox, OutboxInput::ReserveOp { epoch: self.epoch, target: ReserveTarget::Transfer(id) })));
         }
-        if !reserving {
-            self.store(&ids, StoreKind::SyncUpload, fx);
+        if let Some(group) = group {
+            fx.push(Effect::Send(Outbound::new(self.peers.outbox, OutboxInput::ReserveOp { epoch: self.epoch, target: ReserveTarget::Group(group) })));
         }
     }
 
     /// `Reserving x OpReserved`: the batch of the acceptance writes the optimistic effects under the reserved `op_id`s. An answer of a transfer that is not `Reserving` is foreign.
-    pub(super) fn op_reserved(&mut self, id: TransferId, result: Result<u64, Fault>, fx: &mut Fx) {
-        if self.stage_of(id) != Some(TransferStage::Reserving) {
-            return;
-        }
-        let ids = match self.group_of(id) {
-            Some(group) => self.groups.get(&group).map(|group| group.ids.clone()).unwrap_or_default(),
-            None => vec![id],
+    pub(super) fn op_reserved(&mut self, target: ReserveTarget, result: Result<u64, Fault>, fx: &mut Fx) {
+        let group = match target {
+            ReserveTarget::Transfer(id) if self.stage_of(id) == Some(TransferStage::Reserving) && self.transfers.get(&id).is_some_and(|transfer| transfer.op_id.is_none()) => self.group_of(id),
+            ReserveTarget::Group(id) if self.groups.get(&id).is_some_and(|group| group.op_id.is_none() && group.ids.iter().any(|member| self.stage_of(*member) == Some(TransferStage::Reserving))) => Some(id),
+            _ => return,
         };
+        let ids = group.and_then(|group| self.groups.get(&group).map(|group| group.ids.clone())).unwrap_or_else(|| match target { ReserveTarget::Transfer(id) => vec![id], ReserveTarget::Group(_) => Vec::new() });
         match result {
             Ok(op_id) => {
-                if let Some(transfer) = self.transfers.get_mut(&id) {
-                    transfer.op_id = Some(op_id);
-                    transfer.stage = TransferStage::Accepting;
+                match target {
+                    ReserveTarget::Transfer(id) => if let Some(transfer) = self.transfers.get_mut(&id) { transfer.op_id = Some(op_id); },
+                    ReserveTarget::Group(id) => if let Some(group) = self.groups.get_mut(&id) { group.op_id = Some(op_id); },
                 }
-                if ids.iter().all(|member| self.stage_of(*member) != Some(TransferStage::Reserving)) {
+                let group_ready = group.is_none_or(|group| self.groups.get(&group).is_some_and(|group| group.op_id.is_some()));
+                if group_ready && ids.iter().all(|member| self.transfers.get(member).is_some_and(|transfer| transfer.op_id.is_some())) {
+                    for member in &ids {
+                        self.set(*member, TransferStage::Accepting);
+                    }
                     self.store(&ids, StoreKind::SyncUpload, fx);
                 }
             }
             Err(fault) => {
-                let group = self.transfers.get(&id).and_then(|transfer| transfer.batch_id).and_then(|group| self.groups.get_mut(&group).and_then(|group| group.reply.take()));
-                let own = self.transfers.get_mut(&id).and_then(|transfer| transfer.accept_reply.take());
+                let group_reply = group.and_then(|group| self.groups.get_mut(&group).and_then(|group| group.reply.take()));
+                let own = ids.first().and_then(|id| self.transfers.get_mut(id)).and_then(|transfer| transfer.accept_reply.take());
                 for member in ids {
                     self.set(member, TransferStage::Done);
                 }
-                if let Some(rep) = own.or(group) {
+                if let Some(rep) = own.or(group_reply) {
                     reply(fx, rep, TransferAnswer::Err(fault));
                 }
             }
@@ -260,6 +260,7 @@ impl TransferState {
             transfer.etags.clear();
             let cached = transfer.from_cache;
             transfer.stage = if cached { TransferStage::Mutating } else { TransferStage::Ready };
+            transfer.intent_live = cached;
             receipts.push(self.receipt(id));
             if cached {
                 self.show(id, Shown::Uploading { progress: 100 }, fx);

@@ -25,8 +25,10 @@ fn element(id: u64, key: &str, completed: bool) -> crate::owners::write::transfe
 fn xfer_batch_rule_is_written_with_the_acceptance() {
     let mut twin = Twin::new();
     let reply = twin.reply();
-    let out = twin.post(TransferInput::AcceptBatch { joint: Box::new(joint()), epoch: EPOCH, items: vec![item(FIRST, 1), item(SECOND, 1)], reply, now: Time(0) });
-    let rules: Vec<(u64, String)> = out.batches.iter().flat_map(|batch| batch.ops.iter()).filter_map(|op| if let StoreOp::UploadBatch { batch_id, joint } = op { Some((*batch_id, joint.clone())) } else { None }).collect();
+    twin.post(TransferInput::AcceptBatch { joint: Box::new(joint()), epoch: EPOCH, items: vec![item(FIRST, 1), item(SECOND, 1)], reply, now: Time(0) });
+    let ids = [twin.state().open_id(FIRST).unwrap(), twin.state().open_id(SECOND).unwrap()];
+    let out = twin.reserve_batch(&ids);
+    let rules: Vec<(u64, String)> = out.batches.iter().flat_map(|batch| batch.ops.iter()).filter_map(|op| if let StoreOp::UploadBatch { batch_id, joint, .. } = op { Some((*batch_id, joint.clone())) } else { None }).collect();
     assert_eq!(rules.len(), 1, "one rule for the two elements");
     let back = Joint::from_text(&rules[0].1).expect("the text reads back");
     assert_eq!((back.minimum, back.maximum, back.items_key.as_str(), back.mutation.body.as_str()), (2, 10, "items", joint().mutation.body.as_str()));
@@ -45,10 +47,11 @@ fn xfer_batch_restored_goes_out_as_one_mutation() {
     twin.commit();
     twin.commit();
     twin.completed(1);
+    twin.commit();
     let out = twin.commit();
     let ops = out.submit_ops();
     assert_eq!(ops.len(), 1, "{out:?}");
-    assert_eq!(ops[0].origin, OpSource::Transfer("batch:7".into()));
+    assert!(matches!(&ops[0].origin, OpSource::TransferGroup { batch_id: 7, members } if members.iter().map(|member| member.transfer_id).collect::<Vec<_>>() == [1, 2]));
     let body: serde_json::Value = serde_json::from_str(&ops[0].body).expect("a body");
     let names: Vec<&str> = body["variables"]["items"].as_array().expect("the items").iter().filter_map(|item| item["name"].as_str()).collect();
     assert_eq!(names, vec![FIRST, SECOND], "the elements keep their fields and their order");

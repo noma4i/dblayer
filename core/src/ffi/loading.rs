@@ -207,6 +207,7 @@ impl Database {
         let (db, found, name, text) = (self.db.clone(), model.to_string(), relation.to_string(), params_json.to_string());
         let prepared = super::database::blocking(move || {
             let params: Map<String, Value> = serde_json::from_str(&text)?;
+            let params = db.spec(&found)?.selection_values(&name, &params).map_err(crate::store::DbError::from)?;
             db.window_record(&found, &name, &params)?;
             let now = db.lock().now_ms();
             let force = force || (goal == Goal::First && !db.window_is_fresh(&found, &name, &params, now)?);

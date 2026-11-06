@@ -272,7 +272,7 @@ The final content mutation does not hold a file permit.
 
 An upload of a local record starts as `waiting` with `totalBytes` set from the file size and `sentBytes` and `fraction` at zero. When the `create` is confirmed the real id replaces the local id in the upload variables and the status moves on through `preparing` or `queued` to `uploading`, `sending` and the end. If the `create` is refused the upload is discarded with the record. Every change of status, stage, bytes or reason reaches observers as a new row.
 
-A finished upload closes its operation and removes its entry from `uploads`. The record becomes `synced` when no other operation remains open. Progress ticks are limited to one per 100 ms and never go down inside a phase. A restarted phase starts again from the bytes of its finished parts.
+A finished upload closes its operation and removes its entry from `uploads`. The record becomes `synced` when no other operation remains open. Progress advances when a part is confirmed and never decreases within a phase. A restarted phase begins with its confirmed parts.
 
 ### Rules
 

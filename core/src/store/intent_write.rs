@@ -33,6 +33,23 @@ fn effects(reader: &Reader<'_>, writes: &IntentEffects, writer: &RowWrite<'_>) -
             }
             None => {
                 prior.rows.push(PriorRow::Created { model: model.clone(), id: row_id.clone() });
+                let spec = &writer.models.get(model).ok_or_else(|| StoreError::UnknownModel(model.clone()))?.spec;
+                for relation in spec.relations.iter().filter(|relation| relation.takes_created_rows()) {
+                    for params in relation.row_params(&fields) {
+                        let key = spec.selection_key(&relation.name, &params).map_err(|error| StoreError::Constraint(error.to_string()))?;
+                        let direction = match relation.remote.as_ref().map(|remote| &remote.shape) {
+                            Some(crate::schema::RemoteShape::Connection { direction, .. }) => *direction,
+                            _ => crate::schema::PageDirection::Forward,
+                        };
+                        let window = super::window_key(key.as_str(), direction);
+                        let loaded: bool = reader.connection().query_row("SELECT EXISTS(SELECT 1 FROM query_window WHERE key = ?1)", [&window], |row| row.get(0))?;
+                        if !loaded { continue; }
+                        let first = reader.scope_first_key(model, key.as_str())?;
+                        let order_key = crate::value::fractional_between(None, first.as_deref()).map_err(|error| StoreError::Constraint(error.to_string()))?;
+                        envelope.scope_ops.push(ScopeOp::Append { scope: ScopeRef::new(ModelKey::new(model), key.clone()), row: id(row_id)?, order_key });
+                        prior.rows.push(PriorRow::Join { model: model.clone(), id: row_id.clone(), scope_key: key.to_string(), before: None, owned: writer.revision });
+                    }
+                }
                 fields
             }
         };
@@ -71,6 +88,8 @@ pub(super) fn planned(writer: &mut RowWrite<'_>, writes: &IntentEffects) -> Resu
 pub(super) fn intent(writer: &mut RowWrite<'_>, op_id: u64, model: &str, row_id: &str, action: &str, payload: &str, writes: &IntentEffects) -> Result<CommitResult, StoreError> {
     let reader = Reader::new(writer.connection, writer.models);
     let (mut envelope, prior) = effects(&reader, writes, writer)?;
+    let seq = i64::try_from(op_id).map_err(|_| StoreError::Constraint("operation id is too large".into()))?;
+    let prior = crate::store::plan::op_effect::read_prior(writer.connection, seq)?.unwrap_or(serde_json::to_value(prior)?);
     let row_id = id(row_id)?;
     envelope.snapshot = Some(RowRef::new(ModelKey::new(model), row_id.clone()));
     envelope.operation_transitions.push(OperationTransition::Begin(Box::new(OperationRecord {
@@ -84,7 +103,7 @@ pub(super) fn intent(writer: &mut RowWrite<'_>, op_id: u64, model: &str, row_id:
         base_revision: Some(writer.revision - 1),
         created_at: writer.now,
         dedupe_key: None,
-        rollback: Some(serde_json::to_value(prior)?),
+        rollback: Some(prior),
         upload: None,
     })));
     envelope.validate(writer.generation)?;

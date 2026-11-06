@@ -88,11 +88,10 @@ fn attempt(store: &Store, inner: &Inner, envelope: &BatchPlan, now_ms: i64) -> R
     let outcome = apply_envelope(&transaction, &inner.models, envelope, now_ms)?;
     if outcome.is_noop() && envelope.window.is_none() && envelope.window_debts.is_empty() && envelope.pending_locals.is_empty() {
         transaction.rollback()?;
+    } else if let Some(revision) = outcome.revision {
+        let snapshot = store.overlays.next(revision - 1, true).ok_or_else(|| StoreError::Constraint("overlay revision is unavailable".into()))?;
+        store.overlays.commit(snapshot, transaction)?;
     } else {
-        if let Some(revision) = outcome.revision {
-            let snapshot = store.overlays.next(revision - 1, true).ok_or_else(|| StoreError::Constraint("overlay revision is unavailable".into()))?;
-            store.overlays.publish(snapshot);
-        }
         transaction.commit()?;
     }
     let acks = outcome.unknown_operation_acks;

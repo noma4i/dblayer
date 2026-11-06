@@ -38,15 +38,21 @@ fn out_open_format_change() { open_check(Restored::FormatChange, ready(), false)
 fn out_open_restores_pending() { open_check(Restored::Pending, ready(), true); }
 
 fn restored(kind: Restored, ctx: &Ctx) -> (Twin, OpId) {
+    restored_with_origin(kind, ctx, None)
+}
+
+fn restored_with_origin(kind: Restored, ctx: &Ctx, origin: Option<o::OpSource>) -> (Twin, OpId) {
     let mut twin = Twin::bare();
     twin.post(OutboxInput::RegisterOperations { declarations: vec![("Moment".into(), "update".into())] });
     if !ctx.online {
         twin.post(OutboxInput::Online(Online(false)));
     }
+    let mut op = model_op("r", Policy::Rollback, kind == Restored::Transfer);
+    if let Some(origin) = origin { op.origin = origin; }
     let stored = StoredOp {
         answered: None,
         op_id: 7,
-        op: model_op("r", Policy::Rollback, kind == Restored::Transfer),
+        op,
         error_mark: kind == Restored::ErrorMark,
         pending: (kind == Restored::Pending).then_some((41, 42)),
         attempts: 1,
@@ -207,10 +213,14 @@ fn out_prop_server_removed_row_discards() {
 
 #[test]
 fn out_sending_response_batch_items_missing_element() {
-    let (mut twin, id) = restored(Restored::Transfer, &ready());
+    let origin = o::OpSource::TransferGroup { batch_id: 1, members: vec![
+        o::TransferMember { transfer_id: 1, cycle_id: 1, row_id: "r".into() },
+        o::TransferMember { transfer_id: 2, cycle_id: 1, row_id: "temp-b".into() },
+    ] };
+    let (mut twin, id) = restored_with_origin(Restored::Transfer, &ready(), Some(origin));
     twin.committed(id);
     twin.post(OutboxInput::Response { op_id: id, rows: server_rows(), swaps: Vec::new(), stale: Vec::new(), result: None, missing: vec!["temp-b".into()], errors: None });
     let effects = twin.committed(id);
-    let outcomes: Vec<_> = effects.iter().filter_map(|effect| match effect { OutboxEffect::TransferOutcome { outcome } => Some(outcome.clone()), _ => None }).collect();
-    assert!(matches!(outcomes.as_slice(), [o::OutboxOutcome::Failed { .. }, o::OutboxOutcome::Confirmed { .. }]), "the element without a row fails first, then the batch is confirmed: {outcomes:?}");
+    let outcomes: Vec<_> = effects.iter().filter_map(|effect| match effect { OutboxEffect::TransferOutcomes { input } => Some(input), _ => None }).collect();
+    assert!(matches!(outcomes.as_slice(), [input] if input.contains("1: Confirmed") && input.contains("2: Failed")), "the batch carries both element outcomes: {outcomes:?}");
 }

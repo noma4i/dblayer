@@ -31,6 +31,40 @@ fn completed(id: u64, key: &str) -> StoredTransfer {
 
 fn outcomes(id: u64, outcome: OutboxOutcome) -> BTreeMap<u64, OutboxOutcome> { BTreeMap::from([(id, outcome)]) }
 
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn xfer_prop_saved_outcome_reopens_sqlite() {
+    use crate::ffi::upload_wire::WireUploadRequest;
+    use crate::schema::OnFailure;
+    use crate::upload::UploadFile;
+    use super::rig::{Kind, Rig, Server, within};
+
+    let directory = tempfile::tempdir().unwrap();
+    let database_path = directory.path().join("outcome.sqlite");
+    let path = database_path.to_str().unwrap().to_string();
+    let source = directory.path().join("upload.bin");
+    std::fs::write(&source, b"bytes").unwrap();
+    let server = Server::new();
+    server.hold(Kind::Put, true);
+    let rig = Rig::open_at(OnFailure::Keep, Some(path.clone()), server.clone()).await;
+    let request = WireUploadRequest::of(&UploadFile::new(source.to_str().unwrap()));
+    within(rig.db.upload(rig.epoch(), "Moment".into(), "42".into(), "upload".into(), request)).await.unwrap();
+    server.wait_held(Kind::Put, 1).await;
+    let sqlite = rusqlite::Connection::open(&database_path).unwrap();
+    sqlite.execute_batch("CREATE TRIGGER hold_upload_removal BEFORE DELETE ON sync_upload BEGIN SELECT RAISE(ABORT, 'hold removal'); END;").unwrap();
+    server.answer(Kind::Put, super::rig::Reply::Ok);
+    crate::test_wait::yield_until("the confirmed outcome is durable", || sqlite.query_row("SELECT COUNT(*) FROM transfer_outcome WHERE kind = 'confirmed'", [], |row| row.get::<_, i64>(0)).unwrap_or(0) == 1).await;
+    assert_eq!(server.count("MakeMoment"), 1);
+    assert_eq!(sqlite.query_row("SELECT COUNT(*) FROM sync_upload", [], |row| row.get::<_, i64>(0)).unwrap(), 1);
+    within(rig.db.close_database()).await.unwrap();
+    drop(rig);
+    sqlite.execute_batch("DROP TRIGGER hold_upload_removal").unwrap();
+    let reopened = Rig::open_at(OnFailure::Keep, Some(path), server.clone()).await;
+    crate::test_wait::yield_until("the restored upload is removed", || sqlite.query_row("SELECT COUNT(*) FROM sync_upload", [], |row| row.get::<_, i64>(0)).unwrap_or(1) == 0).await;
+    assert_eq!(server.count("MakeMoment"), 1);
+    assert_eq!(sqlite.query_row("SELECT COUNT(*) FROM transfer_outcome", [], |row| row.get::<_, i64>(0)).unwrap(), 0);
+    within(reopened.db.close_database()).await.unwrap();
+}
+
 /// The owner after `Restored` of `rows` with no declaration: every row waits for it.
 fn undeclared(rows: Vec<StoredTransfer>) -> (Twin, Out) {
     let mut twin = Twin::bare(1);
@@ -147,6 +181,34 @@ fn xfer_attempt_close() {
     assert_eq!((out.steps().len(), out.cancel_steps(), out.drained()), (0, 0, 1));
 }
 
+#[test]
+fn xfer_step_temp_offline() {
+    let mut twin = Twin::new();
+    let id = twin.uploading(KEY, 2);
+    let attempt_id = twin.attempt(id);
+    twin.online(false);
+    let out = twin.post(TransferInput::StepError { transfer_id: id, attempt_id, temporary: true });
+    assert_eq!(twin.stage(id), TransferStage::Ready);
+    assert!(Twin::quiet(&out));
+    let out = twin.online(true);
+    assert!(out.steps().is_empty());
+    assert_eq!(twin.commit().steps().len(), 1);
+}
+
+#[test]
+fn xfer_complete_temp_offline() {
+    let mut twin = Twin::new();
+    let id = twin.completing(KEY);
+    let attempt_id = twin.attempt(id);
+    twin.online(false);
+    let out = twin.post(TransferInput::CompleteError { transfer_id: id, attempt_id, temporary: true });
+    assert_eq!(twin.stage(id), TransferStage::Ready);
+    assert!(Twin::quiet(&out));
+    let out = twin.online(true);
+    assert_eq!(out.completes(), 0);
+    assert_eq!(twin.commit().completes(), 1);
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn xfer_attempt_reopen_file() {
     use crate::ffi::upload_wire::WireUploadRequest;
@@ -176,6 +238,37 @@ async fn xfer_attempt_reopen_file() {
     server.wait_held(Kind::Put, 1).await;
     assert_eq!(attempts(), 2);
     server.release_all();
+    drop(reopened);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn xfer_upload_survives_model_fingerprint_change() {
+    use crate::ffi::upload_wire::WireUploadRequest;
+    use crate::schema::OnFailure;
+    use crate::upload::UploadFile;
+    use super::rig::{moment_models, Kind, Rig, Server, within};
+
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("database.sqlite").to_str().unwrap().to_string();
+    let source = directory.path().join("upload.bin");
+    std::fs::write(&source, b"bytes").unwrap();
+    let server = Server::new();
+    server.hold(Kind::Put, true);
+    let models = moment_models(OnFailure::Keep);
+    let rig = Rig::open_models(models.clone(), Some(path.clone()), server.clone()).await;
+    let request = WireUploadRequest::of(&UploadFile::new(source.to_str().unwrap()));
+    within(rig.db.upload(rig.epoch(), "Moment".into(), "42".into(), "upload".into(), request)).await.unwrap();
+    server.wait_held(Kind::Put, 1).await;
+    within(rig.db.close_database()).await.unwrap();
+    drop(rig);
+    let mut changed: Vec<crate::schema::ModelSpec> = serde_json::from_str(&models).unwrap();
+    changed[0].fields.push(crate::schema::FieldSpec::scalar("added", crate::value::ScalarKind::Str).optional());
+    server.hold(Kind::Put, true);
+    let reopened = Rig::open_models(serde_json::to_string(&changed).unwrap(), Some(path), server.clone()).await;
+    server.wait_held(Kind::Put, 1).await;
+    server.answer(Kind::Put, super::rig::Reply::Ok);
+    server.wait_seen("MakeMoment", 1).await;
+    assert_eq!(server.count("MakeMoment"), 1);
     drop(reopened);
 }
 
@@ -238,7 +331,7 @@ fn xfer_waiting_declaration_other() {
         TransferInput::Online(Online(true)),
         TransferInput::PowerSaving(true),
         TransferInput::SlotFreed,
-        TransferInput::MutationOutcome { key: KEY.into(), outcome: OutboxOutcome::Confirmed { revision: 1, result: None } },
+        TransferInput::MutationOutcome { transfer_id: 1, outcome: OutboxOutcome::Confirmed { revision: 1, result: None } },
         TransferInput::Tick { now: Time(1), kind: crate::owners::write::transfer::TransferTick::Expire },
     ]);
     twin.ignores(1, inputs);
@@ -347,5 +440,13 @@ fn xfer_open_missing_file() {
 #[test]
 fn xfer_open_completed_no_intent() {
     let (twin, out) = Twin::opened(vec![completed(1, KEY)], Default::default());
-    assert_eq!((twin.stage(1), out.submits(), out.shows()), (TransferStage::Mutating, 1, vec![Shown::Uploading { progress: 100 }]), "the mutation never left: it is handed to Outbox again");
+    assert_eq!((twin.stage(1), out.submits(), out.shows()), (TransferStage::Failed, 0, vec![Shown::Failed { error: "RestoreFailed".into() }]));
+}
+
+#[test]
+fn xfer_open_saved_outcome_failed() {
+    let (mut twin, out) = Twin::opened(vec![completed(1, KEY)], outcomes(1, OutboxOutcome::Failed { error: "server".into() }));
+    assert_eq!((twin.stage(1), out.submits(), out.shows()), (TransferStage::PersistingFailure, 0, Vec::new()));
+    assert_eq!(out.rows()[0].0.failed.as_deref(), Some("server"));
+    assert_eq!(twin.commit().shows(), vec![Shown::Failed { error: "server".into() }]);
 }

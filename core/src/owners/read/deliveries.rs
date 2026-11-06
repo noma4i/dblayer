@@ -138,6 +138,7 @@ pub enum PullAnswer {
     Value(Box<Value>),
     Done,
     Invalid,
+    Interrupted,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -176,7 +177,7 @@ pub enum DeliveryEffect {
 
 #[derive(Clone, Debug)]
 pub enum DeliveryInput {
-    Open { stream: StreamId, view: View, epoch: Epoch, identity: bool, valid: bool, now: i64 },
+    Open { stream: StreamId, view: View, epoch: Epoch, identity: bool, valid: bool, now: i64, revision: i64 },
     Committed(Committed),
     ReadDone { stream: StreamId, read_id: u64, revision: i64, data: ReadData },
     ReadFailed { stream: StreamId, read_id: u64, revision: i64, error: String },
@@ -191,6 +192,7 @@ pub enum DeliveryInput {
     TransferStatus { stream: StreamId, blob: BlobStatus },
     RetryState { stream: StreamId, retry: RetryStatus },
     Pull { stream: StreamId, outcome: OutcomeId },
+    PullCancelled { stream: StreamId, outcome: OutcomeId },
     Census { reply: ReplyId },
     Resync { stream: StreamId },
     Cancel { stream: StreamId, reply: ReplyId },
@@ -230,7 +232,6 @@ struct Delivery {
     /// The revision of the last read that finished: the rows of the stream are current up to it, `revision` is the revision of the last value of rows.
     read_seen: i64,
     read_position: u64,
-    shown_position: u64,
     reading_position: u64,
     revision: i64,
     acknowledged: Option<i64>,
@@ -291,7 +292,6 @@ impl Delivery {
             read_id: 0,
             read_seen: 0,
             read_position: 0,
-            shown_position: 0,
             reading_position: 0,
             revision: 0,
             acknowledged: None,
@@ -374,13 +374,13 @@ pub struct DeliveriesState {
     epoch: Epoch,
     streams: BTreeMap<StreamId, Delivery>,
     peers: DeliveryPeers,
-    revision: std::sync::Arc<std::sync::atomic::AtomicI64>,
+    revision: i64,
     closing: bool,
     drained: bool,
 }
 
 impl DeliveriesState {
-    pub fn new(epoch: Epoch, peers: DeliveryPeers, revision: std::sync::Arc<std::sync::atomic::AtomicI64>) -> Self { Self { epoch, streams: BTreeMap::new(), peers, revision, closing: false, drained: false } }
+    pub fn new(epoch: Epoch, peers: DeliveryPeers) -> Self { Self { epoch, streams: BTreeMap::new(), peers, revision: 0, closing: false, drained: false } }
 
     pub fn stage(&self, stream: StreamId) -> Option<DeliveryStage> { self.streams.get(&stream).map(|machine| machine.stage) }
 
@@ -397,13 +397,13 @@ impl DeliveriesState {
 
 pub struct Deliveries;
 
-fn lower(peers: DeliveryPeers, revision: &std::sync::atomic::AtomicI64, stream: StreamId, machine: &Delivery, emits: Vec<Emit>, out: &mut Effects<Deliveries>) {
+fn lower(peers: DeliveryPeers, revision: i64, stream: StreamId, machine: &Delivery, emits: Vec<Emit>, out: &mut Effects<Deliveries>) {
     for emit in emits {
         let effect = match emit {
             Emit::Run(effect) => Effect::Run(DeliveryEffect::Stream { stream, effect }),
             Emit::InterestPlus => Effect::Send(Outbound::new(peers.windows, WindowsInput::InterestPlus { key: machine.view.window.clone(), id: stream, now: machine.opened_at })),
             Emit::ReloadOnConnect => Effect::Send(Outbound::new(peers.windows, WindowsInput::ReloadOnConnect { key: machine.view.window.clone(), id: stream })),
-            Emit::Load { force } => Effect::Send(Outbound::new(peers.windows, WindowsInput::Load { key: machine.view.window.clone(), id: stream, goal: Goal::First, force, store_revision: revision.load(std::sync::atomic::Ordering::Acquire), now: machine.opened_at })),
+            Emit::Load { force } => Effect::Send(Outbound::new(peers.windows, WindowsInput::Load { key: machine.view.window.clone(), id: stream, goal: Goal::First, force, store_revision: revision, now: machine.opened_at })),
             Emit::InterestMinus => Effect::Send(Outbound::new(peers.windows, WindowsInput::InterestMinus { key: machine.view.window.clone(), id: stream })),
             Emit::WantPlus => Effect::Send(Outbound::new(peers.feed, FeedInput::WantPlus { model: machine.view.model.clone(), id: stream, stream: machine.view.kind == Kind::Events })),
             Emit::WantMinus => Effect::Send(Outbound::new(peers.feed, FeedInput::WantMinus { model: machine.view.model.clone(), id: stream })),
@@ -422,24 +422,26 @@ impl StateOwner for Deliveries {
     fn step(state: &mut DeliveriesState, input: DeliveryInput) -> Effects<Self> {
         let mut out: Effects<Self> = Vec::new();
         match input {
-            DeliveryInput::Open { stream, view, epoch, identity, valid, now } => {
+            DeliveryInput::Open { stream, view, epoch, identity, valid, now, revision } => {
                 if state.streams.contains_key(&stream) {
                     return out;
                 }
+                state.revision = state.revision.max(revision);
                 let mut fx = Vec::new();
                 let machine = if !valid {
                     Delivery::ended(view, epoch, EndCause::Invalid, &mut fx)
                 } else if epoch != state.epoch || (!identity && !view.local && !matches!(view.kind, Kind::Blob | Kind::RetryStatus)) {
                     Delivery::ended(view, epoch, EndCause::SessionEnded, &mut fx)
                 } else {
-                    Delivery::open(view, epoch, 0, &mut fx)
+                    Delivery::open(view, epoch, revision, &mut fx)
                 };
                 let mut machine = machine;
                 machine.opened_at = now;
-                lower(state.peers, &state.revision, stream, &machine, fx, &mut out);
+                lower(state.peers, state.revision, stream, &machine, fx, &mut out);
                 state.streams.insert(stream, machine);
             }
             DeliveryInput::ReadDone { stream, read_id, revision, data } => on(state, stream, &mut out, |machine, fx| machine.read_done(read_id, revision, data, fx)),
+            DeliveryInput::PullCancelled { stream, outcome } => on(state, stream, &mut out, |machine, fx| machine.pull_cancelled(outcome, fx)),
             DeliveryInput::ReadFailed { stream, read_id, revision, error } => on(state, stream, &mut out, |machine, fx| machine.read_failed(read_id, revision, error, fx)),
             DeliveryInput::WindowState { stream, state: window } => on(state, stream, &mut out, |machine, fx| machine.window_state(window, fx)),
             DeliveryInput::Joined { stream, position } => on(state, stream, &mut out, |machine, fx| machine.joined(position, fx)),
@@ -472,7 +474,10 @@ impl StateOwner for Deliveries {
                 out.push(Effect::Run(DeliveryEffect::Census { reply, observed, retained }));
             }
             DeliveryInput::Resync { stream } => on(state, stream, &mut out, |machine, fx| machine.resync(fx)),
-            DeliveryInput::Committed(committed) => every(state, &mut out, |machine, fx| machine.committed(&committed, fx)),
+            DeliveryInput::Committed(committed) => {
+                state.revision = state.revision.max(committed.revision);
+                every(state, &mut out, |machine, fx| machine.committed(&committed, fx));
+            }
             DeliveryInput::ModelsReset(reset) => every(state, &mut out, |machine, fx| machine.models_reset(&reset, fx)),
             DeliveryInput::EpochEnded(ended) => every(state, &mut out, |machine, fx| machine.epoch_ended(&ended, fx)),
             DeliveryInput::EpochStarted(started) => state.epoch = started.epoch,
@@ -502,7 +507,7 @@ fn on(state: &mut DeliveriesState, stream: StreamId, out: &mut Effects<Deliverie
     let Some(machine) = state.streams.get_mut(&stream) else { return };
     let mut fx = Vec::new();
     apply(machine, &mut fx);
-    lower(peers, &state.revision, stream, machine, fx, out);
+    lower(peers, state.revision, stream, machine, fx, out);
 }
 
 fn every(state: &mut DeliveriesState, out: &mut Effects<Deliveries>, mut apply: impl FnMut(&mut Delivery, &mut Vec<Emit>)) {
@@ -510,6 +515,6 @@ fn every(state: &mut DeliveriesState, out: &mut Effects<Deliveries>, mut apply: 
     for (stream, machine) in state.streams.iter_mut() {
         let mut fx = Vec::new();
         apply(machine, &mut fx);
-        lower(peers, &state.revision, *stream, machine, fx, out);
+        lower(peers, state.revision, *stream, machine, fx, out);
     }
 }

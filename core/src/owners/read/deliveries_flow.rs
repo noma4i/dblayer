@@ -53,11 +53,18 @@ impl Delivery {
                 self.revision = revision;
                 self.rows = Vec::new();
                 self.stage = DeliveryStage::Live;
-                self.push(Value::Snapshot { revision, rows: Vec::new(), state }, fx);
-            }
-            DeliveryStage::Live if revision > self.revision => {
                 self.read_error = true;
-                let phase = if self.rows.is_empty() { WindowPhase::Failed } else { WindowPhase::Loaded };
+                if self.view.kind == Kind::Count {
+                    self.count = Some(0);
+                    self.push(Value::Count { revision, count: 0, state }, fx);
+                } else {
+                    self.push(Value::Snapshot { revision, rows: Vec::new(), state }, fx);
+                }
+            }
+            DeliveryStage::Live => {
+                self.read_error = true;
+                let empty = if self.view.kind == Kind::Count { self.count.unwrap_or(0) == 0 } else { self.rows.is_empty() };
+                let phase = if empty { WindowPhase::Failed } else { WindowPhase::Loaded };
                 let state = WindowState { phase, error: Some(crate::ffi::DbError::Database { detail: error }), loaded: self.window.loaded, has_more: self.window.has_more, settled: true, total: None };
                 self.window = state.clone();
                 self.push(Value::State { revision: self.revision, state }, fx);
@@ -223,6 +230,20 @@ impl Delivery {
             Some(answer) => fx.push(Emit::Run(StreamEffect::Answer { outcome, answer })),
             None if self.stage == DeliveryStage::Ended => fx.push(Emit::Run(StreamEffect::Answer { outcome, answer: PullAnswer::Done })),
             None => self.waiting = Some(outcome),
+        }
+    }
+
+    pub(super) fn pull_cancelled(&mut self, outcome: OutcomeId, fx: &mut Vec<Emit>) {
+        if self.waiting != Some(outcome) { return; }
+        self.waiting = None;
+        fx.push(Emit::Run(StreamEffect::Answer { outcome, answer: PullAnswer::Interrupted }));
+        if matches!(self.stage, DeliveryStage::Opening | DeliveryStage::Live) {
+            fx.extend(self.leave());
+            fx.extend(self.unwant());
+            self.stage = DeliveryStage::Cancelling;
+            self.cause = EndCause::Cancelled;
+            self.journal.clear();
+            fx.push(Emit::Run(StreamEffect::CloseSink));
         }
     }
 

@@ -15,7 +15,17 @@ pub enum EffectSource {
 }
 
 impl ModelSpec {
+    pub(crate) fn selection_values(&self, relation: &str, params: &Map<String, Value>) -> Result<Map<String, Value>, SelectionKeyError> {
+        let declared = self.relations.iter().find(|candidate| candidate.name == relation).ok_or_else(|| SelectionKeyError::UnknownRelation(relation.to_string()))?;
+        let mut values = params.clone();
+        for (name, value) in &declared.text_defaults {
+            values.entry(name.clone()).or_insert_with(|| Value::String(value.clone()));
+        }
+        Ok(values)
+    }
+
     pub fn selection_key(&self, relation: &str, params: &Map<String, Value>) -> Result<ListKey, SelectionKeyError> {
+        let params = self.selection_values(relation, params)?;
         let declared = self.relations.iter().find(|candidate| candidate.name == relation).ok_or_else(|| SelectionKeyError::UnknownRelation(relation.to_string()))?;
         let kinds = self.param_kinds(declared)?;
         let mut scope_params = Map::new();

@@ -1,6 +1,6 @@
 use rusqlite::{params, Connection};
 
-use crate::owners::store::{StoreOp, UploadKind, UploadRow};
+use crate::owners::store::{IntentOrigin, StoreOp, UploadKind, UploadRow};
 use crate::schema::OnFailure;
 
 use super::StoreError;
@@ -11,6 +11,22 @@ fn key_parts(key: &str) -> Result<[&str; 3], StoreError> {
         (Some(model), Some(id), Some(action)) => Ok([model, id, action]),
         _ => Err(StoreError::Constraint(format!("invalid transfer key: {key}"))),
     }
+}
+
+pub(super) fn put_intent_origin(connection: &Connection, op_id: u64, origin: &IntentOrigin) -> Result<(), StoreError> {
+    let id = i64::try_from(op_id).map_err(|_| StoreError::Constraint("operation id is too large".into()))?;
+    let (kind, transfer, group, members) = match origin {
+        IntentOrigin::Api => ("api", None, None, &[][..]),
+        IntentOrigin::Transfer { transfer_id } => ("transfer", Some(i64::try_from(*transfer_id).map_err(|_| StoreError::Constraint("transfer id is too large".into()))?), None, &[][..]),
+        IntentOrigin::TransferGroup { batch_id, transfer_ids } => ("transfer_group", None, Some(i64::try_from(*batch_id).map_err(|_| StoreError::Constraint("batch id is too large".into()))?), transfer_ids.as_slice()),
+    };
+    connection.execute("UPDATE op SET intent_state = 'ready', origin_kind = ?2, transfer_id = ?3, batch_id = ?4 WHERE seq = ?1", params![id, kind, transfer, group])?;
+    connection.execute("DELETE FROM op_transfer WHERE op_id = ?1", [id])?;
+    for (position, transfer_id) in members.iter().enumerate() {
+        let transfer_id = i64::try_from(*transfer_id).map_err(|_| StoreError::Constraint("transfer id is too large".into()))?;
+        connection.execute("INSERT INTO op_transfer (op_id, position, transfer_id) VALUES (?1, ?2, ?3)", params![id, position as i64, transfer_id])?;
+    }
+    Ok(())
 }
 
 pub(super) fn put_upload(connection: &Connection, row: &UploadRow, kind: UploadKind) -> Result<(), StoreError> {
@@ -40,9 +56,25 @@ pub(super) fn put_upload(connection: &Connection, row: &UploadRow, kind: UploadK
 
 pub(super) fn remove_upload(connection: &Connection, key: &str) -> Result<(), StoreError> {
     let [model, id, action] = key_parts(key)?;
+    connection.execute("DELETE FROM transfer_outcome WHERE transfer_id IN (SELECT transfer_id FROM sync_upload WHERE model = ?1 AND row_id = ?2 AND action = ?3)", params![model, id, action])?;
     connection.execute("DELETE FROM sync_upload WHERE model = ?1 AND row_id = ?2 AND action = ?3", params![model, id, action])?;
     connection.execute("DELETE FROM sync_upload_part WHERE model = ?1 AND row_id = ?2 AND action = ?3", params![model, id, action])?;
     connection.execute("DELETE FROM sync_upload_batch WHERE batch_id NOT IN (SELECT batch FROM sync_upload WHERE batch IS NOT NULL)", [])?;
+    Ok(())
+}
+
+pub(super) fn put_outcome(connection: &Connection, transfer_id: u64, cycle_id: u64, outcome: &crate::owners::write::outbox::OutboxOutcome, revision: i64) -> Result<(), StoreError> {
+    use crate::owners::write::outbox::OutboxOutcome;
+    let id = i64::try_from(transfer_id).map_err(|_| StoreError::Constraint("transfer id is too large".into()))?;
+    let cycle = i64::try_from(cycle_id).map_err(|_| StoreError::Constraint("cycle id is too large".into()))?;
+    let (kind, rev, value) = match outcome {
+        OutboxOutcome::Confirmed { result, .. } => ("confirmed", Some(revision), result.as_deref()),
+        OutboxOutcome::Rejected { error } => ("rejected", None, Some(error.as_str())),
+        OutboxOutcome::Failed { error } => ("failed", None, Some(error.as_str())),
+        OutboxOutcome::Discarded => ("discarded", None, None),
+        OutboxOutcome::Interrupted => return Err(StoreError::Constraint("interrupted outcome is not durable".into())),
+    };
+    connection.execute("INSERT INTO transfer_outcome (transfer_id, cycle_id, kind, revision, value) VALUES (?1, ?2, ?3, ?4, ?5)", params![id, cycle, kind, rev, value])?;
     Ok(())
 }
 
@@ -50,8 +82,8 @@ pub(super) fn apply_upload(connection: &Connection, op: &StoreOp) -> Result<bool
     match op {
         StoreOp::Upload { row, kind } => put_upload(connection, row, *kind)?,
         StoreOp::RemoveUpload { key } => remove_upload(connection, key)?,
-        StoreOp::UploadBatch { batch_id, joint } => {
-            connection.execute("INSERT OR REPLACE INTO sync_upload_batch (batch_id, joint) VALUES (?1, ?2)", params![i64::try_from(*batch_id).unwrap_or(i64::MAX), joint])?;
+        StoreOp::UploadBatch { batch_id, op_id, joint } => {
+            connection.execute("INSERT OR REPLACE INTO sync_upload_batch (batch_id, op_id, joint) VALUES (?1, ?2, ?3)", params![i64::try_from(*batch_id).unwrap_or(i64::MAX), i64::try_from(*op_id).unwrap_or(i64::MAX), joint])?;
         }
         StoreOp::UploadOrphan { upload_id, key } => {
             connection.execute("INSERT OR REPLACE INTO upload_orphan (upload_id, key) VALUES (?1, ?2)", params![upload_id, key])?;

@@ -69,6 +69,39 @@ fn store_prop_overlay_snapshot() {
 }
 
 #[test]
+fn store_overlay_survives_failed_sql_commits() {
+    let directory = tempfile::tempdir().unwrap();
+    let mut specs = all_specs();
+    let field = crate::schema::FieldSpec::scalar("typing", crate::value::ScalarKind::Bool).with_default(serde_json::json!(false));
+    specs.iter_mut().find(|spec| spec.key.as_str() == "moments").unwrap().ephemeral.push(crate::schema::EphemeralSpec::new(field));
+    let database = Store::open_models(Some(&directory.path().join("data.sqlite")), specs, None).map(std::sync::Arc::new).unwrap();
+    write(&database, vec![StoreOp::Rows { model: "moments".into(), rows: vec![RowValue { row_id: "m1".into(), values: r#"{"id":"m1","text":"before"}"#.into() }] }]).unwrap();
+    let event = StoreBatch { author: BatchAuthor::Feed, id: 1, epoch: 1, basis: Default::default(), rows: vec![("moments".into(), serde_json::json!({"op":"ephemeral","id":"m1","values":{"typing":true}}).to_string())], intents: 0, credential: None, ops: Vec::new() };
+    database.write_batch(&event, database.files(), database.pointer_guards(), None).unwrap();
+    let before = database.revision_seq().unwrap();
+    let attempts = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let reached = attempts.clone();
+    database.lock().connection.commit_hook(Some(move || {
+        reached.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        true
+    })).unwrap();
+    for _ in 0..65 {
+        let row = RowValue { row_id: "m1".into(), values: r#"{"id":"m1","text":"rejected"}"#.into() };
+        assert!(matches!(write(&database, vec![StoreOp::Rows { model: "moments".into(), rows: vec![row] }]), Err(super::StoreError::Constraint(_))));
+        assert!(database.overlays.get(before).is_some(), "the committed overlay must remain available");
+        assert!(database.overlays.get(before + 1).is_none(), "the aborted overlay must not remain published");
+    }
+    assert_eq!(attempts.load(std::sync::atomic::Ordering::Relaxed), 65);
+    database.lock().connection.commit_hook(None::<fn() -> bool>).unwrap();
+    let row = database.find("moments", &rid("m1")).unwrap().unwrap();
+    assert_eq!(database.revision_seq().unwrap(), before);
+    assert_eq!(row.get("text"), Some(&serde_json::json!("before")));
+    assert_eq!(row.get("typing"), Some(&serde_json::json!(true)));
+    write(&database, vec![StoreOp::Rows { model: "moments".into(), rows: vec![RowValue { row_id: "m1".into(), values: r#"{"id":"m1","text":"after"}"#.into() }] }]).unwrap();
+    assert_eq!(database.revision_seq().unwrap(), before + 1);
+}
+
+#[test]
 fn store_prop_atomic() {
     let directory = tempfile::tempdir().unwrap();
     let database = Store::open_models(Some(&directory.path().join("data.sqlite")), all_specs(), None).map(std::sync::Arc::new).unwrap();

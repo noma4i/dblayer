@@ -69,13 +69,13 @@ fn cache_counts(store: &Store) -> Vec<i64> {
 }
 
 #[test]
-fn cache_only_clears_one_model_closes_operations_and_clears_intent() {
+fn cache_only_clears_one_model_and_keeps_operations() {
     let (store, _) = booted_store();
     seed_two_models(&store);
     user_tables(&store);
     store.erase_models(store.generation().next(), &["messages"].map(String::from)).unwrap();
     assert_eq!(cache_counts(&store), vec![0, 1, 0, 1, 0, 1, 1]);
-    assert_eq!(count(&store, "SELECT COUNT(*) FROM op"), 0);
+    assert_eq!(count(&store, "SELECT COUNT(*) FROM op"), 1);
     assert_eq!(store.reset_intent().unwrap(), None);
 }
 

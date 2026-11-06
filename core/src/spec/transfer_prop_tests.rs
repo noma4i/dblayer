@@ -242,10 +242,14 @@ fn xfer_prop_batch_all_or_none() {
     assert_eq!((count(&ok), ids.iter().all(|id| ok.stage(*id) == TransferStage::Ready)), (3, true));
     let mut rejected = Twin::new();
     rejected.post(TransferInput::AcceptBatch { joint: Box::new(joint()), epoch: EPOCH, items: keys.iter().map(|key| item(key, 2)).collect(), reply: 5, now: Time(0) });
+    let ids: Vec<_> = keys.iter().map(|key| rejected.state().open_id(key).unwrap()).collect();
+    rejected.reserve_batch(&ids);
     rejected.reject(RejectReason::Storage("disk".into()));
     assert_eq!(count(&rejected), 0);
     let mut failed = Twin::new();
     failed.post(TransferInput::AcceptBatch { joint: Box::new(joint()), epoch: EPOCH, items: keys.iter().map(|key| item(key, 2)).collect(), reply: 5, now: Time(0) });
+    let ids: Vec<_> = keys.iter().map(|key| failed.state().open_id(key).unwrap()).collect();
+    failed.reserve_batch(&ids);
     failed.commit();
     let id = failed.state().open_id(KEY).expect("an element");
     failed.copy_failed(id);
@@ -340,8 +344,9 @@ fn xfer_prop_batch_after_all_copies() {
     let mut twin = Twin::new();
     let reply = twin.reply();
     twin.post(TransferInput::AcceptBatch { joint: Box::new(joint()), epoch: EPOCH, items: vec![item(KEY, 2), item(OTHER, 2)], reply, now: Time(0) });
-    twin.commit();
     let ids = [twin.state().open_id(KEY).expect("first"), twin.state().open_id(OTHER).expect("second")];
+    twin.reserve_batch(&ids);
+    twin.commit();
     let first = twin.copy_done(ids[0]);
     assert_eq!((first.all_replies(), first.steps().len(), first.writes()), (0, 0, 0), "one copy is not enough");
     let second = twin.copy_done(ids[1]);
@@ -351,6 +356,8 @@ fn xfer_prop_batch_after_all_copies() {
     assert_eq!(twin.commit().steps().len(), 1);
     let mut failing = Twin::new();
     failing.post(TransferInput::AcceptBatch { joint: Box::new(joint()), epoch: EPOCH, items: vec![item(KEY, 2), item(OTHER, 2)], reply: 9, now: Time(0) });
+    let ids = [failing.state().open_id(KEY).unwrap(), failing.state().open_id(OTHER).unwrap()];
+    failing.reserve_batch(&ids);
     failing.commit();
     let id = failing.state().open_id(KEY).expect("first");
     let out = failing.copy_failed(id);
@@ -375,7 +382,7 @@ fn xfer_prop_saved_outcome() {
     let mut row = stored(1, KEY, 2);
     row.completed = true;
     let (twin, out) = Twin::opened(vec![row], Default::default());
-    assert_eq!((twin.stage(1), out.submits()), (TransferStage::Mutating, 1));
+    assert_eq!((twin.stage(1), out.submits()), (TransferStage::Failed, 0));
 }
 
 #[test]

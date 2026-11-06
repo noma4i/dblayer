@@ -531,7 +531,7 @@ end
 
 `insert_on: [:event, :response]` adds event and operation response rows to matching loaded windows, including cached rows absent from those windows.
 Add `:node` to include node rereads started by `changed_by`. A manual node read does not acquire this insertion intent.
-Every parameter needs `where` or `membership`. Hidden server parameters still prohibit automatic insertion.
+Every parameter needs `where`, `membership`, or a `greater_than` match. Hidden server parameters still prohibit automatic insertion.
 Use `membership list: { contains: :lists }` when a row belongs to several lists.
 Use `membership list: { equals: :status }` for scalar membership.
 Rules combine with AND. The parameter type must match the scalar field or array element, including the enum name.

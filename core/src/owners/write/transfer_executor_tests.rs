@@ -12,7 +12,7 @@ use std::sync::{Arc, Mutex, PoisonError};
 use async_trait::async_trait;
 use serde_json::json;
 
-use super::outbox::{Fault, NewOp, OpSource, OutboxOutcome};
+use super::outbox::{Fault, NewOp, OpSource, OutboxOutcome, ReserveTarget};
 use super::rig::{open_gate, peer, settle, Act, ManualSpawn, Stub};
 use crate::owners::support::{StoreStub, StoreStubState};
 use super::transfer::{file_id, BatchItem, Shown, Source, Steps, TransferAnswer, TransferInput, TransferPeers, TransferStage, TransferState, Transfers};
@@ -131,6 +131,8 @@ impl World {
     fn accept(&mut self, key: &str, path: PathBuf, parts: u32) {
         let input = self.accept_input(key, path, parts);
         self.post(input);
+        let id = self.det.state(self.transfers).unwrap().open_id(key).unwrap();
+        self.post(TransferInput::OpReserved { target: ReserveTarget::Transfer(id), result: Ok(id) });
     }
 
     /// The id of the copy of the transfer of `key` in the file directory.
@@ -173,11 +175,14 @@ fn exec_xfer_copy_cancel_leaves_nothing() {
     let accept = w.accept_input(KEY, path, 1);
     w.det.post(w.transfers, EpochStamp::Epoch(EPOCH), accept);
     while w.det.step() {}
+    let id = w.det.state(w.transfers).unwrap().open_id(KEY).unwrap();
+    w.det.post(w.transfers, EpochStamp::Epoch(EPOCH), TransferInput::OpReserved { target: ReserveTarget::Transfer(id), result: Ok(id) });
+    while w.det.step() {}
     assert_eq!((w.stage(KEY), w.spawn.pending()), (Some(TransferStage::Copying), 1));
     w.det.post(w.transfers, EpochStamp::Epoch(EPOCH), TransferInput::Cancel { key: KEY.into(), reply: 2 });
     while w.det.step() {}
     w.settle();
-    assert_eq!((w.stage(KEY), w.spawn.pending()), (Some(TransferStage::Done), 0));
+    assert_eq!((w.stage(KEY), w.spawn.pending()), (None, 0));
     assert!(w.files.directory_entries().expect("entries").is_empty());
     assert_eq!(w.late(&["CopyDone", "CopyFailed"]), 0);
     assert!(lock(&w.answers).contains(&(2, TransferAnswer::Cancelled(true))));
@@ -188,7 +193,7 @@ fn exec_xfer_copy_failed_removes_transfer() {
     let mut w = world();
     let missing = w.dir.path().join("missing");
     w.accept(KEY, missing, 1);
-    assert_eq!(w.stage(KEY), Some(TransferStage::Done));
+    assert_eq!(w.stage(KEY), None);
     assert!(lock(&w.answers).iter().any(|(reply, answer)| *reply == 1 && matches!(answer, TransferAnswer::Err(Fault::Copy(_)))));
     assert_eq!(lock(&w.shown).last(), Some(&Shown::Gone));
     assert!(w.files.directory_entries().expect("entries").is_empty());
@@ -246,10 +251,15 @@ fn exec_xfer_view_and_local_copy() {
     w.accept(KEY, path, 1);
     assert_eq!(w.stage(KEY), Some(TransferStage::Mutating));
     assert_eq!(lock(&w.shown).first(), Some(&Shown::Copying));
-    assert!(w.files.read(&w.copy(KEY)).is_ok(), "the local copy is on disk before Confirmed");
-    w.post(TransferInput::MutationOutcome { key: KEY.into(), outcome: OutboxOutcome::Confirmed { revision: 3, result: None } });
-    assert_eq!(w.stage(KEY), Some(TransferStage::Done));
-    assert!(w.files.read(&w.copy(KEY)).is_err(), "the local copy is deleted after Confirmed");
+    let copy = w.copy(KEY);
+    let receipt = lock(&w.answers).iter().find_map(|(reply, answer)| match (reply, answer) { (1, TransferAnswer::Receipt(receipt)) => Some(receipt.clone()), _ => None }).expect("receipt");
+    assert!(w.files.read(&copy).is_ok(), "the local copy is on disk before Confirmed");
+    let id = w.det.state(w.transfers).unwrap().open_id(KEY).unwrap();
+    w.post(TransferInput::MutationOutcome { transfer_id: id, outcome: OutboxOutcome::Confirmed { revision: 3, result: None } });
+    assert_eq!(w.stage(KEY), None);
+    assert!(w.files.read(&copy).is_err(), "the local copy is deleted after Confirmed");
+    w.post(TransferInput::Outcome { receipt, reply: 2 });
+    assert!(lock(&w.answers).contains(&(2, TransferAnswer::Outcome(OutboxOutcome::Confirmed { revision: 3, result: None }))));
 }
 
 #[test]

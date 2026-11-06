@@ -69,12 +69,13 @@ fn committed_work_survives_dropping_the_store_without_checkpoint() {
 }
 
 #[test]
-fn fingerprint_change_clears_every_server_model_and_quarantines_its_operations() {
+fn fingerprint_change_clears_cache_and_keeps_intents() {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("a.sqlite");
     {
         let (store, _) = reopen(&path, &[messages_spec(), items_spec()], None);
         seed(&store);
+        exec(&store, "INSERT INTO sync_upload (model, row_id, action, status, stage, sent, total, attempts, seq, source, transfer_id) VALUES ('messages', 'm1', 'upload', 'queued', 'prepare', 0, 1, 3, 7, 'source', 9)");
     }
     let changed = ModelSpec::new(
         "messages",
@@ -91,8 +92,9 @@ fn fingerprint_change_clears_every_server_model_and_quarantines_its_operations()
     assert_eq!(store.row_count("messages").unwrap(), 0);
     assert_eq!(store.row_count("items").unwrap(), 0);
     assert_eq!(count(&store, "SELECT COUNT(*) FROM scope_member"), 0);
-    assert_eq!(count(&store, "SELECT COUNT(*) FROM op"), 0);
-    assert_eq!(count(&store, "SELECT COUNT(*) FROM quarantine WHERE reason = 'schema-changed' AND model = 'messages'"), 1);
+    assert_eq!(count(&store, "SELECT COUNT(*) FROM op WHERE action_key = 'messages:send'"), 1);
+    assert_eq!(count(&store, "SELECT COUNT(*) FROM quarantine WHERE reason = 'schema-changed' AND model = 'messages'"), 0);
+    assert_eq!(count(&store, "SELECT COUNT(*) FROM sync_upload WHERE model = 'messages' AND row_id = 'm1' AND attempts = 3 AND seq = 7 AND transfer_id = 9"), 1);
     assert_eq!(store.reset_intent().unwrap(), None);
     store.commit(envelope(&store, vec![upsert("messages", message("m2", "c1"))], vec![])).unwrap();
 }
@@ -145,7 +147,7 @@ fn removed_model_clears_every_server_model_and_its_fingerprint() {
 }
 
 #[test]
-fn mismatched_manifests_wipe_cache_and_quarantine_operations() {
+fn mismatched_manifests_wipe_cache_and_keep_operations() {
     type Case = (&'static str, Option<&'static str>, Option<&'static str>, Option<&'static str>);
     let cases: [Case; 2] = [
         ("data version changed", Some("v1"), Some("v2"), None),
@@ -166,9 +168,9 @@ fn mismatched_manifests_wipe_cache_and_quarantine_operations() {
         assert_eq!(report.verdict, ManifestVerdict::Mismatch, "{case}");
         assert_eq!(store.row_count("messages").unwrap(), 0, "{case}: rows");
         assert_eq!(count(&store, "SELECT COUNT(*) FROM scope_member"), 0, "{case}: membership");
-        assert_eq!(count(&store, "SELECT COUNT(*) FROM op"), 0, "{case}: operations");
-        assert_eq!(count(&store, "SELECT COUNT(*) FROM quarantine"), 2, "{case}: quarantine");
-        assert_eq!(count(&store, "SELECT COUNT(*) FROM quarantine WHERE reason = 'schema-changed'"), 1, "{case}: retired operation");
+        assert_eq!(count(&store, "SELECT COUNT(*) FROM op"), 1, "{case}: operations");
+        assert_eq!(count(&store, "SELECT COUNT(*) FROM quarantine"), 1, "{case}: quarantine");
+        assert_eq!(count(&store, "SELECT COUNT(*) FROM quarantine WHERE reason = 'schema-changed'"), 0, "{case}: operations stay out of quarantine");
         if let Some(version) = after {
             assert_eq!(count(&store, &format!("SELECT COUNT(*) FROM manifest WHERE key = 'data_version' AND value = '{version}'")), 1, "{case}: stamped version");
         }
@@ -192,7 +194,7 @@ fn interrupted_cache_only_reset_is_completed_before_manifest_check() {
     assert!(report.finished_interrupted_reset);
     assert_eq!(store.row_count("messages").unwrap(), 0);
     assert_eq!(store.row_count("items").unwrap(), 1);
-    assert_eq!(count(&store, "SELECT COUNT(*) FROM op"), 0);
+    assert_eq!(count(&store, "SELECT COUNT(*) FROM op"), 1);
     assert_eq!(store.reset_intent().unwrap(), None);
 }
 
@@ -228,7 +230,7 @@ fn interrupted_mismatched_reset_is_completed_idempotently() {
     let (store, report) = reopen(&path, &models, None);
     assert!(report.finished_interrupted_reset);
     assert_eq!(store.row_count("items").unwrap(), 0);
-    assert_eq!(count(&store, "SELECT COUNT(*) FROM op"), 0);
+    assert_eq!(count(&store, "SELECT COUNT(*) FROM op"), 1);
     assert_eq!(store.reset_intent().unwrap(), None);
 }
 

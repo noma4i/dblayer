@@ -129,6 +129,7 @@ pub(crate) fn retire_operations(connection: &Connection, models: Option<&[String
         Some(models) => models.iter().try_for_each(|model| clear_sync(connection, Some(model)))?,
         None => {
             connection.execute("DELETE FROM transfer_abort", [])?;
+            connection.execute("DELETE FROM transfer_outcome", [])?;
             connection.execute("DELETE FROM upload_orphan", [])?;
             connection.execute("DELETE FROM sync_upload_batch", [])?;
             clear_sync(connection, None)?;
@@ -137,7 +138,7 @@ pub(crate) fn retire_operations(connection: &Connection, models: Option<&[String
     Ok(())
 }
 
-pub(crate) fn wipe_all_cache(connection: &Connection, drop_tables: bool) -> Result<(), StoreError> {
+pub(crate) fn wipe_all_cache(connection: &Connection, drop_tables: bool, keep_intents: bool) -> Result<(), StoreError> {
     for name in fts_tables(connection)? {
         connection.execute_batch(&format!("{} {name}", if drop_tables { "DROP TABLE IF EXISTS" } else { "DELETE FROM" }))?;
     }
@@ -149,8 +150,12 @@ pub(crate) fn wipe_all_cache(connection: &Connection, drop_tables: bool) -> Resu
         }
     }
     connection.execute_batch("DELETE FROM scope_member; DELETE FROM scope_revision; DELETE FROM tombstone; DELETE FROM window_marker; DELETE FROM query_window; DELETE FROM local_pending;")?;
-    clear_sync(connection, None)?;
-    clear_all(connection)?;
+    if keep_intents {
+        connection.execute_batch("DELETE FROM sync_action; DELETE FROM sync_field; DELETE FROM row_sync; DELETE FROM sync_row_error; DELETE FROM file WHERE id NOT IN (SELECT 'transfers/' || transfer_id FROM sync_upload WHERE transfer_id IS NOT NULL);")?;
+    } else {
+        clear_sync(connection, None)?;
+        clear_all(connection)?;
+    }
     Ok(())
 }
 
@@ -248,7 +253,7 @@ pub(crate) fn current_fingerprints(inner: &Inner) -> BTreeMap<String, String> {
 pub(crate) fn finish_interrupted_reset(inner: &mut Inner) -> Result<bool, StoreError> {
     let Some(mode) = pending_intent(&inner.connection)? else { return Ok(false) };
     let models: Vec<String> = inner.connection.prepare("SELECT model FROM reset_intent_model ORDER BY pos")?.query_map([], |row| row.get(0))?.collect::<Result<_, _>>()?;
-    if !matches!(mode.as_str(), "cache_only" | "mismatched" | "session_end") {
+    if !matches!(mode.as_str(), "cache_only" | "mismatched" | "account" | "session_end") {
         let transaction = inner.connection.unchecked_transaction()?;
         quarantine_add(&transaction, None, &serde_json::json!({ "mode": mode }), QuarantineReason::CorruptResetIntent)?;
         clear_intent(&transaction)?;
@@ -262,11 +267,11 @@ pub(crate) fn finish_interrupted_reset(inner: &mut Inner) -> Result<bool, StoreE
                 let table = crate::ddl::table_name(model);
                 wipe_model_cache(&transaction, model, &table, true)?;
             }
-            retire_operations(&transaction, Some(&models), None)?;
         }
-        _ => {
-            wipe_all_cache(&transaction, true)?;
-            retire_operations(&transaction, None, None)?;
+        mode => {
+            let keep_intents = mode == "mismatched";
+            wipe_all_cache(&transaction, true, keep_intents)?;
+            if !keep_intents { retire_operations(&transaction, None, None)?; }
             let data_version = inner.data_version.clone();
             manifest_stamp(&transaction, data_version.as_deref(), &current_fingerprints(inner))?;
         }
@@ -328,9 +333,9 @@ impl Store {
         inner.generation = generation;
         self.generation_now.store(generation.value(), std::sync::atomic::Ordering::SeqCst);
         let now = inner.now_ms();
-        write_intent(&inner.connection, if erase_encrypted { "session_end" } else { "mismatched" }, &[], now)?;
+        write_intent(&inner.connection, if erase_encrypted { "session_end" } else { "account" }, &[], now)?;
         let transaction = inner.connection.unchecked_transaction()?;
-        wipe_all_cache(&transaction, false)?;
+        wipe_all_cache(&transaction, false, false)?;
         retire_operations(&transaction, None, None)?;
         if erase_encrypted {
             transaction.execute_batch("DELETE FROM encrypted_pending; DELETE FROM encrypted_answer; DELETE FROM encrypted_session; DELETE FROM restore_failed WHERE source_table = 'encrypted_pending';")?;
@@ -340,8 +345,7 @@ impl Store {
         clear_intent(&transaction)?;
         let mut snapshot = self.overlays.next(revision - 1, true).ok_or_else(|| StoreError::Constraint("overlay revision is unavailable".into()))?;
         snapshot.clear_models(None);
-        self.overlays.publish(snapshot);
-        transaction.commit()?;
+        self.overlays.commit(snapshot, transaction)?;
         self.publish_revision(revision);
         *inner.poison.lock().unwrap_or_else(|error| error.into_inner()) = None;
         drop(readers);
@@ -366,13 +370,11 @@ impl Store {
         for (model, table) in &tables {
             wipe_model_cache(&transaction, model, table, false)?;
         }
-        retire_operations(&transaction, Some(models), None)?;
         let revision = bump_revision(&transaction)?;
         clear_intent(&transaction)?;
         let mut snapshot = self.overlays.next(revision - 1, true).ok_or_else(|| StoreError::Constraint("overlay revision is unavailable".into()))?;
         snapshot.clear_models(Some(models));
-        self.overlays.publish(snapshot);
-        transaction.commit()?;
+        self.overlays.commit(snapshot, transaction)?;
         self.publish_revision(revision);
         *inner.poison.lock().unwrap_or_else(|error| error.into_inner()) = None;
         drop(readers);
@@ -396,7 +398,7 @@ pub(crate) enum RowOp {
     PutSession { digest: Option<String>, sequence: Option<i64> },
     DiscardRestoreFailed { table: String, key: String },
     /// The durable attempt counter of an operation of the queue.
-    PutAttempts { op_id: i64, attempts: i64 },
+    PutAttempts { op_id: i64, attempts: i64, cycle_id: i64 },
 }
 
 pub(crate) fn row_op(op: &crate::owners::store::StoreOp) -> Option<RowOp> {
@@ -418,7 +420,7 @@ pub(crate) fn row_op(op: &crate::owners::store::StoreOp) -> Option<RowOp> {
         StoreOp::Answer { request_id, operation, result } => RowOp::PutAnswer { request_id: *request_id, operation: *operation, answer: result.clone() },
         StoreOp::RemoveAnswer { request_id } => RowOp::RemoveAnswer { request_id: *request_id },
         StoreOp::DiscardRestoreFailed { table, key } => RowOp::DiscardRestoreFailed { table: table.clone(), key: key.clone() },
-        StoreOp::Attempt { op_id, attempts, .. } => RowOp::PutAttempts { op_id: i64::try_from(*op_id).unwrap_or(i64::MAX), attempts: i64::from(*attempts) },
+        StoreOp::Attempt { op_id, attempts, cycle_id } => RowOp::PutAttempts { op_id: i64::try_from(*op_id).unwrap_or(i64::MAX), attempts: i64::from(*attempts), cycle_id: i64::try_from(*cycle_id).unwrap_or(i64::MAX) },
         StoreOp::Session { digest, sequence } => RowOp::PutSession { digest: digest.clone(), sequence: sequence.map(|sequence| i64::try_from(sequence).unwrap_or(i64::MAX)) },
         _ => return None,
     })
@@ -432,8 +434,7 @@ impl Store {
         apply_row_ops(&transaction, ops)?;
         let revision = bump_revision(&transaction)?;
         let snapshot = self.overlays.next(revision - 1, true).ok_or_else(|| StoreError::Constraint("overlay revision is unavailable".into()))?;
-        self.overlays.publish(snapshot);
-        transaction.commit()?;
+        self.overlays.commit(snapshot, transaction)?;
         self.publish_revision(revision);
         Ok(revision)
     }
@@ -450,7 +451,7 @@ pub(super) fn apply_row_ops(transaction: &Connection, ops: Vec<RowOp>) -> Result
             RowOp::RemoveSession => { transaction.execute("DELETE FROM encrypted_session", [])?; }
             RowOp::PutAnswer { request_id, operation, answer } => state::store_answer(transaction, request_id, operation, &answer)?,
             RowOp::RemoveAnswer { request_id } => state::remove_answer(transaction, request_id)?,
-            RowOp::PutAttempts { op_id, attempts } => { transaction.execute("UPDATE op SET attempts = ?2 WHERE seq = ?1", params![op_id, attempts])?; }
+            RowOp::PutAttempts { op_id, attempts, cycle_id } => { transaction.execute("UPDATE op SET attempts = ?2, cycle_id = ?3 WHERE seq = ?1", params![op_id, attempts, cycle_id])?; }
             RowOp::DiscardRestoreFailed { table, key } => { transaction.execute("DELETE FROM restore_failed WHERE source_table = ?1 AND key = ?2", params![table, key])?; }
             RowOp::PutSession { digest, sequence } => {
                 let stored = state::session(transaction)?;

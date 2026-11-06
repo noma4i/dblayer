@@ -20,11 +20,11 @@ impl Delivery {
     pub(super) fn shown_revision(&self, seen: i64) -> i64 { if self.read_revision > self.revision { self.read_revision.min(seen) } else { seen } }
 
     pub(super) fn live_rows(&mut self, seen: i64, rows: Vec<Row>, fx: &mut Vec<Effect>) {
-        if seen <= self.revision { return; }
-        if rows == self.rows { self.same_rows(seen, fx); return; }
+        if rows == self.rows && self.incoming_total == self.total { self.same_rows(seen, fx); return; }
         let state = self.state_at(seen);
         let revision = self.shown_revision(seen);
         let old = std::mem::replace(&mut self.rows, rows.clone());
+        self.total = self.incoming_total;
         self.revision = revision;
         let unread_snapshot = self.journal.iter().any(|kept| matches!(kept, Val::Snapshot { .. }));
         let ids: Vec<String> = rows.iter().map(|(id, _)| id.clone()).collect();

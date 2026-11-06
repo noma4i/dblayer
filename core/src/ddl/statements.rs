@@ -89,7 +89,7 @@ END",
 ) STRICT, WITHOUT ROWID",
 ];
 
-pub(super) const CORE_STATEMENTS: [&str; 48] = [
+pub(super) const CORE_STATEMENTS: [&str; 50] = [
     "CREATE TABLE IF NOT EXISTS blob_upload (
   id TEXT PRIMARY KEY NOT NULL,
   name TEXT NOT NULL,
@@ -128,10 +128,29 @@ pub(super) const CORE_STATEMENTS: [&str; 48] = [
   dedupe_key TEXT,
   client_mutation_id TEXT NOT NULL DEFAULT (lower(hex(randomblob(16)))),
   attempts INTEGER NOT NULL DEFAULT 0,
+  cycle_id INTEGER NOT NULL DEFAULT 1,
   since INTEGER NOT NULL,
   error_kind TEXT,
-  error_message TEXT
+  error_message TEXT,
+  intent_state TEXT NOT NULL DEFAULT 'ready' CHECK (intent_state IN ('effects_only', 'ready')),
+  origin_kind TEXT NOT NULL DEFAULT 'api' CHECK (origin_kind IN ('api', 'transfer', 'transfer_group')),
+  transfer_id INTEGER,
+  batch_id INTEGER
 ) STRICT",
+    "CREATE TABLE IF NOT EXISTS op_transfer (
+  op_id INTEGER NOT NULL,
+  position INTEGER NOT NULL,
+  transfer_id INTEGER NOT NULL,
+  PRIMARY KEY (op_id, position)
+) STRICT, WITHOUT ROWID",
+    "CREATE TABLE IF NOT EXISTS transfer_outcome (
+  transfer_id INTEGER NOT NULL,
+  cycle_id INTEGER NOT NULL,
+  kind TEXT NOT NULL CHECK (kind IN ('confirmed', 'rejected', 'failed', 'discarded')),
+  revision INTEGER,
+  value TEXT,
+  PRIMARY KEY (transfer_id, cycle_id)
+) STRICT, WITHOUT ROWID",
     "CREATE TABLE IF NOT EXISTS op_effect (
   seq INTEGER NOT NULL,
   position INTEGER NOT NULL,
@@ -300,6 +319,7 @@ pub(super) const CORE_STATEMENTS: [&str; 48] = [
 ) STRICT, WITHOUT ROWID",
     "CREATE TABLE IF NOT EXISTS sync_upload_batch (
   batch_id INTEGER NOT NULL PRIMARY KEY,
+  op_id INTEGER,
   joint TEXT NOT NULL
 ) STRICT, WITHOUT ROWID",
     "CREATE TABLE IF NOT EXISTS upload_orphan (

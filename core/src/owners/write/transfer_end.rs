@@ -63,10 +63,26 @@ impl TransferState {
     pub(super) fn retry(&mut self, key: &str, source: Option<Source>, rep: ReplyId, fx: &mut Fx) {
         let Some(id) = self.open_id(key) else { return Self::refuse(fx, rep, Fault::NotFound) };
         let mutation_failed = self.transfers.get(&id).is_some_and(|transfer| transfer.stage == TransferStage::Failed && transfer.signed_id.is_some() && transfer.error.as_deref() != Some("missing_file") && transfer.error.as_deref() != Some("RestoreFailed"));
+        if mutation_failed && self.transfers.get(&id).is_some_and(|transfer| !transfer.intent_live) {
+            if let Some(transfer) = self.transfers.get_mut(&id) {
+                transfer.next_step = NextStep::Mutation;
+                transfer.stage = TransferStage::PersistingRetry;
+                transfer.retry_reply = Some(rep);
+            }
+            self.store(&[id], StoreKind::Retrying, fx);
+            return;
+        }
         if mutation_failed && self.batch_retry_mutation(id, rep, fx) {
             return;
         }
         let Some(transfer) = self.transfers.get_mut(&id) else { return };
+        if mutation_failed {
+            transfer.next_step = NextStep::Mutation;
+            transfer.stage = TransferStage::PersistingRetry;
+            transfer.retry_reply = Some(rep);
+            self.request_mutation_retry(&[id], fx);
+            return;
+        }
         match transfer.stage {
             TransferStage::Ready | TransferStage::Uploading | TransferStage::Completing | TransferStage::BatchReady | TransferStage::Mutating => {
                 let receipt = self.receipt(id);
@@ -119,6 +135,19 @@ impl TransferState {
         self.show(id, Shown::Queued, fx);
         self.rounds_needed(vec![id], fx);
         self.start_in_order(fx);
+    }
+
+    pub(super) fn retry_recreate_committed(&mut self, id: TransferId, fx: &mut Fx) {
+        let group = self.group_entry(id);
+        let Some(transfer) = self.transfers.get_mut(&id) else { return };
+        transfer.cycle_id += 1;
+        transfer.stage = if group.is_some() { TransferStage::BatchReady } else { TransferStage::PersistingBatchIntent };
+        transfer.error = None;
+        let rep = transfer.retry_reply.take();
+        if let Some(entry) = group.and_then(|group| self.groups.get_mut(&group)) { entry.phase = BatchPhase::Singles; }
+        if let Some(rep) = rep { reply(fx, rep, TransferAnswer::Receipt(self.receipt(id))); }
+        if let Some(group) = group { self.single_next(group, fx); }
+        else { self.store(&[id], StoreKind::BatchIntent, fx); }
     }
 
     pub(super) fn retry_rejected(&mut self, id: TransferId, reason: RejectReason, fx: &mut Fx) {
@@ -204,6 +233,14 @@ impl TransferState {
             }
             self.finish(id, fx);
             self.batch_after_removal(id, fx);
+            if let Some(transfer) = self.transfers.remove(&id) {
+                if !transfer.outcomes.is_empty() { self.completed.insert(id, transfer.outcomes); }
+                if let Some(group_id) = transfer.batch_id {
+                    if let Some(group) = self.groups.get_mut(&group_id) { group.ids.retain(|member| *member != id); }
+                    if self.groups.get(&group_id).is_some_and(|group| group.ids.is_empty()) { self.groups.remove(&group_id); }
+                }
+                self.subscribers.remove(&id);
+            }
         }
         self.send_orphans(fx);
         self.start_in_order(fx);
@@ -260,6 +297,9 @@ impl TransferState {
     }
 
     pub(super) fn outcome(&mut self, receipt: Receipt, rep: ReplyId, fx: &mut Fx) {
+        if let Some(outcome) = self.completed.get(&receipt.op_id).and_then(|cycles| cycles.get(&receipt.cycle_id)) {
+            return reply(fx, rep, TransferAnswer::Outcome(outcome.clone()));
+        }
         let Some(transfer) = self.transfers.get_mut(&receipt.op_id) else { return Self::refuse(fx, rep, Fault::NotFound) };
         if let Some(found) = transfer.outcomes.get(&receipt.cycle_id) {
             return reply(fx, rep, TransferAnswer::Outcome(found.clone()));

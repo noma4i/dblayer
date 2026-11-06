@@ -121,6 +121,7 @@ impl Store {
         let mut query: Query = serde_json::from_value(description.clone()).map_err(fault)?;
         let remote = description["relation"].as_str().map(|name| -> Result<_, DbError> {
             let params: Map<String, Value> = description.get("params").map(|value| serde_json::from_value(value.clone())).transpose().map_err(fault)?.unwrap_or_default();
+            let params = self.spec(query.model.as_str())?.selection_values(name, &params)?;
             let relation_query = self.remote_relation_query(query.model.as_str(), name, &params)?;
             let watch = relation_query.is_some() || self.spec(query.model.as_str())?.relations.iter().any(|relation| relation.name == name && !relation.updates.is_empty());
             if let Some(relation_query) = relation_query {

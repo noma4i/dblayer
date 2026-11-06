@@ -15,6 +15,8 @@ use crate::runtime::{explore, Address, Cause as Ended, DetScheduler, EpochStamp,
 
 #[path = "delivery_more_tests.rs"]
 mod delivery_more_tests;
+#[path = "delivery_revision_cells.rs"]
+mod delivery_revision_cells;
 
 const STREAM: d::StreamId = 1;
 const EPOCH: u64 = 1;
@@ -30,7 +32,7 @@ fn window() -> WindowKey { WindowKey { model: "Moment".into(), name: "list".into
 fn add_deliveries(det: &mut DetScheduler, log: &Spied) -> Address<Spy<Deliveries>> {
     det.add::<Sink<Windows>>("windows", new_log(), Discard);
     det.add::<Sink<Feed>>("feed", new_log(), Discard);
-    det.add::<Spy<Deliveries>>("deliveries", SpyState::new(d::DeliveriesState::new(EPOCH, peers(), Default::default()), log), Discard)
+    det.add::<Spy<Deliveries>>("deliveries", SpyState::new(d::DeliveriesState::new(EPOCH, peers()), log), Discard)
 }
 
 fn inner(det: &DetScheduler, address: Address<Spy<Deliveries>>) -> &d::DeliveriesState { &det.state(address).expect("the owner state").inner }
@@ -95,6 +97,7 @@ fn pulled_of(answer: &PullAnswer) -> Pulled {
         PullAnswer::Value(value) => Pulled::Value(val_of(value)),
         PullAnswer::Done => Pulled::Done,
         PullAnswer::Invalid => Pulled::Invalid,
+        PullAnswer::Interrupted => Pulled::Interrupted,
     }
 }
 
@@ -106,6 +109,7 @@ struct Twin {
     reference: Delivery,
     /// The total the reads of this twin give with their rows.
     total: Option<u64>,
+    pull: Option<crate::runtime::OutcomeId>,
 }
 
 impl Twin {
@@ -114,7 +118,7 @@ impl Twin {
         let log = new_log();
         let addr = add_deliveries(&mut det, &log);
         det.start_epoch(EPOCH);
-        Self { det, addr, log, answers: Outcomes::new(), reference: Delivery::new(), total: None }
+        Self { det, addr, log, answers: Outcomes::new(), reference: Delivery::new(), total: None, pull: None }
     }
 
     fn run(&mut self) { self.det.run_until_quiet(10_000).expect("the owner is quiet"); }
@@ -166,15 +170,15 @@ impl Twin {
         match &input {
             Input::Open { kind, epoch_current } => {
                 let epoch = if *epoch_current { EPOCH } else { EPOCH + 1 };
-                self.det.post(self.addr, EpochStamp::Control, d::DeliveryInput::Open { stream, view: view(*kind), epoch, identity: true, valid: true, now: 1_000_000 });
+                self.det.post(self.addr, EpochStamp::Control, d::DeliveryInput::Open { stream, view: view(*kind), epoch, identity: true, valid: true, now: 1_000_000, revision: 0 });
                 self.run();
             }
             Input::OpenNoSession => {
-                self.det.post(self.addr, EpochStamp::Control, d::DeliveryInput::Open { stream, view: view(Kind::List), epoch: EPOCH, identity: false, valid: true, now: 1_000_000 });
+                self.det.post(self.addr, EpochStamp::Control, d::DeliveryInput::Open { stream, view: view(Kind::List), epoch: EPOCH, identity: false, valid: true, now: 1_000_000, revision: 0 });
                 self.run();
             }
             Input::OpenInvalid => {
-                self.det.post(self.addr, EpochStamp::Control, d::DeliveryInput::Open { stream, view: view(Kind::List), epoch: EPOCH, identity: true, valid: false, now: 1_000_000 });
+                self.det.post(self.addr, EpochStamp::Control, d::DeliveryInput::Open { stream, view: view(Kind::List), epoch: EPOCH, identity: true, valid: false, now: 1_000_000, revision: 0 });
                 self.run();
             }
             Input::Committed { revision, touches } => {
@@ -185,6 +189,7 @@ impl Twin {
             Input::CountDone { revision, count } => self.post(d::DeliveryInput::ReadDone { stream, read_id: self.read_id(), revision: *revision, data: d::ReadData::Count(*count) }),
             Input::ReadStale { revision, rows } => self.post(d::DeliveryInput::ReadDone { stream, read_id: self.read_id() + 100, revision: *revision, data: d::ReadData::Rows { rows: rows_of(rows), replaced: Vec::new(), total: None } }),
             Input::ReadFailed { revision } => self.post(d::DeliveryInput::ReadFailed { stream, read_id: self.read_id(), revision: *revision, error: "e".into() }),
+            Input::ReadFailedStale => self.post(d::DeliveryInput::ReadFailed { stream, read_id: self.read_id() + 100, revision: 2, error: "e".into() }),
             Input::WindowState(state) => self.post(d::DeliveryInput::WindowState { stream, state: window_state(state) }),
             Input::Joined { position } => self.post(d::DeliveryInput::Joined { stream, position: *position }),
             Input::ModelReady => self.post(d::DeliveryInput::ModelReady { stream }),
@@ -196,13 +201,22 @@ impl Twin {
             Input::Retry { attempts } => self.post(d::DeliveryInput::RetryState { stream, retry: d::RetryStatus { attempts: *attempts, phase: "idle".into() } }),
             Input::Pull => {
                 let outcome = self.answers.register(EPOCH).id();
+                if !self.reference.waiting() { self.pull = Some(outcome); }
                 self.call(d::DeliveryInput::Pull { stream, outcome });
+            }
+            Input::PullCancelled { matched } => {
+                let outcome = if *matched { self.pull.unwrap() } else { crate::runtime::OutcomeId::from_raw(u64::MAX) };
+                self.call(d::DeliveryInput::PullCancelled { stream, outcome });
             }
             Input::Cancel { reply } => self.call(d::DeliveryInput::Cancel { stream, reply: *reply }),
             Input::Release => self.call(d::DeliveryInput::Release { stream }),
             Input::SinkClosed => self.call(d::DeliveryInput::SinkClosed { stream }),
             Input::EpochEnded { own } => {
                 self.det.end_epoch(if *own { EPOCH } else { EPOCH + 1 }, Ended::SessionReset);
+                self.run();
+            }
+            Input::EpochClosed => {
+                self.det.end_epoch(EPOCH, Ended::Close);
                 self.run();
             }
             Input::ModelsReset { own_model } => {
@@ -215,6 +229,7 @@ impl Twin {
             }
         }
         let got = Self::modelled(take(&self.log));
+        self.reference.next_total(self.total);
         let want = self.reference.step(input);
         assert_eq!(got, want, "the owner and the reference give the same effects");
         if !self.reference.gone {
@@ -457,6 +472,9 @@ fn dlv_opening_read_failed() {
     let mut twin = open_rows();
     let (_, values) = twin.step_read(Input::ReadFailed { revision: 1 });
     assert_eq!(values, [snap(1, &[], Ws { phase: Phase::Failed, error: true, loaded: None })], "a failed first read has no rows and Failed");
+    let mut count = open_as(Kind::Count);
+    let (_, values) = count.step_read(Input::ReadFailed { revision: 1 });
+    assert_eq!(values, [Val::Count { revision: 1, count: 0, state: Ws { phase: Phase::Failed, error: true, loaded: None } }]);
 }
 
 #[test]
@@ -482,7 +500,7 @@ fn dlv_opening_unrelated() {
 fn dlv_open_rows_without_a_window_asks_for_nothing() {
     let mut twin = Twin::new();
     take(&twin.log);
-    twin.call(d::DeliveryInput::Open { stream: STREAM, view: d::View { remote: false, ..view(Kind::List) }, epoch: EPOCH, identity: true, valid: true, now: 1_000_000 });
+    twin.call(d::DeliveryInput::Open { stream: STREAM, view: d::View { remote: false, ..view(Kind::List) }, epoch: EPOCH, identity: true, valid: true, now: 1_000_000, revision: 0 });
     assert_eq!(Twin::modelled(take(&twin.log)), [Effect::Read(0)]);
 }
 
@@ -491,7 +509,7 @@ fn dlv_open_rows_without_a_window_asks_for_nothing() {
 fn dlv_open_live() {
     let mut twin = Twin::new();
     take(&twin.log);
-    twin.call(d::DeliveryInput::Open { stream: STREAM, view: d::View { live: true, ..view(Kind::List) }, epoch: EPOCH, identity: true, valid: true, now: 1_000_000 });
+    twin.call(d::DeliveryInput::Open { stream: STREAM, view: d::View { live: true, ..view(Kind::List) }, epoch: EPOCH, identity: true, valid: true, now: 1_000_000, revision: 0 });
     assert!(Twin::modelled(take(&twin.log)).contains(&Effect::WantPlus));
 }
 

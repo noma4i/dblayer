@@ -17,6 +17,11 @@
 - The local values of a temporary row move to the row that replaces it.
 
 ### Fixed
+- Preserve validated local fields copied from singleton rows during creation.
+- Preserve queued operations and uploads when model caches are reset.
+- Keep readable snapshots after a failed database commit.
+- Insert created and response rows into matching loaded windows.
+- Share the same window for omitted and explicit enum defaults.
 - Preserve upload attempt limits across restarts and network changes.
 - Restore interrupted first logins and report damaged saved session requests until reset.
 

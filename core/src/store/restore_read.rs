@@ -1,7 +1,7 @@
 //! The intents of the queue as `Restored` gives them to the owner Outbox.
 
 use crate::operation::OperationStatus;
-use crate::owners::write::outbox::{NewOp, OpSource, StoredOp};
+use crate::owners::write::outbox::{NewOp, OpSource, StoredOp, TransferMember};
 use crate::schema::OnFailure;
 use crate::transport::RequestOwner;
 
@@ -10,13 +10,63 @@ use super::plan::read_outbox;
 use super::Store;
 use super::upload_rows::UploadRaw;
 
+#[derive(Default)]
+struct Origins {
+    valid: std::collections::BTreeMap<i64, OpSource>,
+    invalid_ops: std::collections::BTreeSet<i64>,
+    invalid_transfers: std::collections::BTreeSet<u64>,
+    invalid_groups: std::collections::BTreeSet<u64>,
+}
+
+fn read_origins(connection: &rusqlite::Connection) -> Result<Origins, super::StoreError> {
+    let rows = connection.prepare("SELECT seq, origin_kind, transfer_id, batch_id FROM op WHERE intent_state = 'ready'")?.query_map([], |row| Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?, row.get::<_, Option<i64>>(2)?, row.get::<_, Option<i64>>(3)?)))?.collect::<rusqlite::Result<Vec<_>>>()?;
+    let mut origins = Origins::default();
+    for (seq, kind, transfer, batch) in rows {
+        let member = |id: i64| -> Result<TransferMember, super::StoreError> {
+            let (cycle, row_id): (i64, String) = connection.query_row("SELECT cycle_id, row_id FROM sync_upload WHERE transfer_id = ?1", [id], |row| Ok((row.get(0)?, row.get(1)?)))?;
+            Ok(TransferMember { transfer_id: u64::try_from(id).map_err(|_| super::StoreError::Constraint("invalid transfer id".into()))?, cycle_id: u64::try_from(cycle).map_err(|_| super::StoreError::Constraint("invalid transfer cycle".into()))?, row_id })
+        };
+        let origin = match (kind.as_str(), transfer, batch) {
+            ("api", None, None) => Some(OpSource::Api),
+            ("transfer", Some(id), None) => match member(id) {
+                Ok(found) => Some(OpSource::Transfer { transfer_id: found.transfer_id, cycle_id: found.cycle_id }),
+                Err(_) => { if let Ok(id) = u64::try_from(id) { origins.invalid_transfers.insert(id); } None },
+            },
+            ("transfer_group", None, Some(batch_id)) => {
+                let entries = connection.prepare("SELECT position, transfer_id FROM op_transfer WHERE op_id = ?1 ORDER BY position")?.query_map([seq], |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?)))?.collect::<rusqlite::Result<Vec<_>>>()?;
+                let ordered = entries.iter().enumerate().all(|(index, (position, _))| *position == index as i64);
+                let ids: Vec<_> = entries.into_iter().map(|(_, id)| id).collect();
+                let found = ids.iter().map(|id| member(*id)).collect::<Result<Vec<_>, _>>();
+                let valid_group: bool = connection.query_row("SELECT EXISTS(SELECT 1 FROM sync_upload_batch WHERE batch_id = ?1 AND op_id = ?2)", rusqlite::params![batch_id, seq], |row| row.get(0))?;
+                let mut belongs = true;
+                for id in &ids {
+                    let matched: bool = connection.query_row("SELECT EXISTS(SELECT 1 FROM sync_upload WHERE transfer_id = ?1 AND batch = ?2)", rusqlite::params![id, batch_id], |row| row.get(0))?;
+                    belongs &= matched;
+                }
+                match (u64::try_from(batch_id), found) {
+                    (Ok(batch_id), Ok(members)) if valid_group && belongs && ordered && !members.is_empty() && members.iter().map(|member| member.transfer_id).collect::<std::collections::BTreeSet<_>>().len() == members.len() => Some(OpSource::TransferGroup { batch_id, members }),
+                    (group, _) => {
+                        if let Ok(group) = group { origins.invalid_groups.insert(group); }
+                        origins.invalid_transfers.extend(ids.into_iter().filter_map(|id| u64::try_from(id).ok()));
+                        None
+                    }
+                }
+            }
+            _ => None,
+        };
+        if let Some(origin) = origin { origins.valid.insert(seq, origin); } else { origins.invalid_ops.insert(seq); }
+    }
+    Ok(origins)
+}
+
 pub(crate) struct Restore {
     pub ops: Result<Vec<StoredOp>, DbError>,
     pub transfers: Result<Vec<crate::owners::write::transfer::StoredTransfer>, DbError>,
+    pub transfer_outcomes: std::collections::BTreeMap<u64, std::collections::BTreeMap<u64, crate::owners::write::outbox::OutboxOutcome>>,
     /// `(upload_id, key)` of the multipart uploads of removed transfers that wait for the answer of `abort`.
     pub orphans: Vec<(String, String)>,
     /// The rule of every batch that still has an element in the base.
-    pub batches: std::collections::BTreeMap<u64, crate::owners::write::transfer::Joint>,
+    pub batches: std::collections::BTreeMap<u64, crate::owners::write::transfer::StoredGroup>,
     /// The highest `op_id` a transfer reserved: Outbox gives no `op_id` at or below it.
     pub reserved: Option<u64>,
     /// The saved answers that no operation of the queue owns.
@@ -30,27 +80,60 @@ impl Store {
 
 
     pub(crate) fn read_restore(&self) -> Result<Restore, DbError> {
-        let (entries, pending, uploads, answers, orphans, batches, orphan_answers) = self.read_models(&[], |reader| {
+        let (entries, origins, cycles, effects_only, pending, uploads, outcomes, answers, orphans, batches, orphan_answers) = self.read_models(&[], |reader| {
             let connection = reader.connection();
             let pending = crate::transport::encrypted::state::pending(connection).map_err(crate::store::StoreError::from)?;
             let answers = crate::transport::encrypted::state::answers_of_operations(connection).map_err(crate::store::StoreError::from)?;
+            let effects_only = connection.prepare("SELECT seq FROM op WHERE intent_state = 'effects_only'").and_then(|mut statement| statement.query_map([], |row| row.get::<_, i64>(0))?.collect::<rusqlite::Result<Vec<_>>>()).map_err(crate::store::StoreError::from)?;
+            let cycles = connection.prepare("SELECT seq, cycle_id FROM op").and_then(|mut statement| statement.query_map([], |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?)))?.collect::<rusqlite::Result<std::collections::BTreeMap<_, _>>>()).map_err(crate::store::StoreError::from)?;
             let uploads = super::upload_rows::upload_rows(connection).map_err(crate::store::StoreError::from)?;
+            let origins = read_origins(connection)?;
+            let outcomes = connection.prepare("SELECT transfer_id, cycle_id, kind, revision, value FROM transfer_outcome ORDER BY transfer_id, cycle_id").and_then(|mut statement| statement.query_map([], |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?, row.get::<_, String>(2)?, row.get::<_, Option<i64>>(3)?, row.get::<_, Option<String>>(4)?)))?.collect::<rusqlite::Result<Vec<_>>>()).map_err(crate::store::StoreError::from)?;
             let orphans = connection.prepare("SELECT upload_id, key FROM upload_orphan ORDER BY upload_id").and_then(|mut statement| statement.query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)))?.collect::<rusqlite::Result<Vec<_>>>()).map_err(crate::store::StoreError::from)?;
-            let batches = connection.prepare("SELECT batch_id, joint FROM sync_upload_batch").and_then(|mut statement| statement.query_map([], |row| Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?)))?.collect::<rusqlite::Result<Vec<_>>>()).map_err(crate::store::StoreError::from)?;
+            let batches = connection.prepare("SELECT batch_id, joint, op_id FROM sync_upload_batch").and_then(|mut statement| statement.query_map([], |row| Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?, row.get::<_, Option<i64>>(2)?)))?.collect::<rusqlite::Result<Vec<_>>>()).map_err(crate::store::StoreError::from)?;
             let orphan_answers = connection.prepare("SELECT request_id FROM encrypted_answer WHERE operation_id IS NULL OR operation_id NOT IN (SELECT seq FROM op) ORDER BY request_id").and_then(|mut statement| statement.query_map([], |row| row.get::<_, i64>(0))?.collect::<rusqlite::Result<Vec<_>>>()).map_err(crate::store::StoreError::from)?;
-            Ok((read_outbox(reader)?, pending, uploads, answers, orphans, batches, orphan_answers))
+            Ok((read_outbox(reader)?, origins, cycles, effects_only, pending, uploads, outcomes, answers, orphans, batches, orphan_answers))
         })?;
         let owned: Vec<i64> = uploads.iter().filter_map(UploadRaw::owned_op).collect();
-        let reserved = uploads.iter().filter_map(UploadRaw::reserved_op).max().and_then(|op| u64::try_from(op).ok());
-        let entries = entries.into_iter().filter(|entry| !owned.contains(&entry.operation.id.0)).collect();
-        let ops = self.stored_intents(entries, pending.clone(), answers);
-        let transfers = self.stored_transfers(uploads);
-        let batches = batches.into_iter().filter_map(|(id, text)| Some((u64::try_from(id).ok()?, crate::owners::write::transfer::Joint::from_text(&text)?))).collect();
+        let reserved = uploads.iter().filter_map(UploadRaw::reserved_op).chain(batches.iter().filter_map(|(_, _, op)| *op)).max().and_then(|op| u64::try_from(op).ok());
+        let entries = entries.into_iter().filter(|entry| !effects_only.contains(&entry.operation.id.0) && !owned.contains(&entry.operation.id.0)).collect();
+        let ops = self.stored_intents(entries, pending.clone(), answers, &origins.valid, &origins.invalid_ops, &cycles);
+        let intent_ids: std::collections::BTreeSet<u64> = origins.valid.values().flat_map(|origin| match origin {
+            OpSource::Transfer { transfer_id, .. } => vec![*transfer_id],
+            OpSource::TransferGroup { members, .. } => members.iter().map(|member| member.transfer_id).collect(),
+            OpSource::Api => Vec::new(),
+        }).collect();
+        let transfers = self.stored_transfers(uploads).map(|mut rows| {
+            for row in &mut rows {
+                row.has_intent = intent_ids.contains(&row.transfer_id);
+                if origins.invalid_transfers.contains(&row.transfer_id) || row.batch.is_some_and(|group| origins.invalid_groups.contains(&group)) { row.restore_failed = Some("invalid intent origin".into()); }
+            }
+            rows
+        });
+        let mut transfer_outcomes = std::collections::BTreeMap::<u64, std::collections::BTreeMap<u64, crate::owners::write::outbox::OutboxOutcome>>::new();
+        for (id, cycle, kind, revision, value) in outcomes {
+            use crate::owners::write::outbox::OutboxOutcome;
+            let id = u64::try_from(id).map_err(|_| DbError::Internal("invalid transfer outcome id".into()))?;
+            let cycle = u64::try_from(cycle).map_err(|_| DbError::Internal("invalid transfer outcome cycle".into()))?;
+            let outcome = match (kind.as_str(), revision, value) {
+                ("confirmed", Some(revision), result) => OutboxOutcome::Confirmed { revision, result },
+                ("rejected", None, Some(error)) => OutboxOutcome::Rejected { error },
+                ("failed", None, Some(error)) => OutboxOutcome::Failed { error },
+                ("discarded", None, None) => OutboxOutcome::Discarded,
+                _ => return Err(DbError::Internal("invalid transfer outcome".into())),
+            };
+            transfer_outcomes.entry(id).or_default().insert(cycle, outcome);
+        }
+        let batches = batches.into_iter().filter_map(|(id, text, op_id)| {
+            let id = u64::try_from(id).ok()?;
+            let intent_members = origins.valid.values().find_map(|origin| match origin { OpSource::TransferGroup { batch_id, members } if *batch_id == id => Some(members.iter().map(|member| member.transfer_id).collect()), _ => None }).unwrap_or_default();
+            Some((id, crate::owners::write::transfer::StoredGroup { joint: crate::owners::write::transfer::Joint::from_text(&text)?, op_id: op_id.and_then(|op| u64::try_from(op).ok()), intent_members }))
+        }).collect();
         let orphan_answers = orphan_answers.into_iter().filter_map(|id| u64::try_from(id).ok()).collect();
-        Ok(Restore { ops, transfers, orphans, batches, reserved, orphan_answers })
+        Ok(Restore { ops, transfers, transfer_outcomes, orphans, batches, reserved, orphan_answers })
     }
 
-    fn stored_intents(&self, entries: Vec<super::plan::OutboxOperation>, pending: Option<crate::transport::encrypted::state::Pending>, mut answers: std::collections::BTreeMap<i64, (u64, crate::transport::encrypted::state::StoredAnswer)>) -> Result<Vec<StoredOp>, DbError> {
+    fn stored_intents(&self, entries: Vec<super::plan::OutboxOperation>, pending: Option<crate::transport::encrypted::state::Pending>, mut answers: std::collections::BTreeMap<i64, (u64, crate::transport::encrypted::state::StoredAnswer)>, origins: &std::collections::BTreeMap<i64, OpSource>, invalid: &std::collections::BTreeSet<i64>, cycles: &std::collections::BTreeMap<i64, i64>) -> Result<Vec<StoredOp>, DbError> {
         let mut stored = Vec::with_capacity(entries.len());
         for entry in entries {
             let operation = &entry.operation;
@@ -70,7 +153,7 @@ impl Store {
                 row_id: row_id.as_str().to_string(),
                 action: action.to_string(),
                 on_failure: declared.map_or(OnFailure::Rollback, |declaration| declaration.on_failure),
-                origin: OpSource::Api,
+                origin: if invalid.contains(&operation.id.0) { OpSource::Api } else { origins.get(&operation.id.0).cloned().ok_or_else(|| DbError::Internal("missing intent origin".into()))? },
                 path: String::new(),
                 body: entry.input.to_string(),
                 effects: Default::default(),
@@ -79,7 +162,10 @@ impl Store {
             let seq = operation.id.0;
             let resume = pending.as_ref().filter(|pending| pending.owner == Some(RequestOwner::Operation { seq })).and_then(|pending| Some((pending.req_id, u64::try_from(pending.sequence).ok()?)));
             let answered = answers.remove(&seq);
-            stored.push(StoredOp { answered, op_id: u64::try_from(seq).map_err(|_| DbError::UnknownOperation(seq))?, op, error_mark: operation.status == OperationStatus::Failed, pending: resume, attempts: operation.attempts, cycle_id: 0, restore_failed: None, restore_element: None });
+            let restore_failed = invalid.contains(&seq).then(|| "invalid intent origin".to_string());
+            let restore_element = restore_failed.as_ref().map(|_| ("op".to_string(), seq.to_string()));
+            let cycle_id = cycles.get(&seq).copied().and_then(|cycle| u64::try_from(cycle).ok()).ok_or_else(|| DbError::Internal("invalid operation cycle".into()))?;
+            stored.push(StoredOp { answered, op_id: u64::try_from(seq).map_err(|_| DbError::UnknownOperation(seq))?, op, error_mark: operation.status == OperationStatus::Failed, pending: resume, attempts: operation.attempts, cycle_id, restore_failed, restore_element });
         }
         stored.extend(self.dropped_intents()?);
         Ok(stored)

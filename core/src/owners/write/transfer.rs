@@ -20,7 +20,7 @@ impl TransferState {
             TransferStage::Accepting | TransferStage::Copying | TransferStage::CopyReady => Shown::Copying,
             TransferStage::Failed => Shown::Failed { error: transfer.error.clone().unwrap_or_default() },
             TransferStage::Done => Shown::Gone,
-            TransferStage::Completing | TransferStage::PersistingComplete | TransferStage::BatchReady | TransferStage::Mutating => Shown::Uploading { progress: 100 },
+            TransferStage::Completing | TransferStage::PersistingComplete | TransferStage::BatchReady | TransferStage::PersistingBatchIntent | TransferStage::Mutating => Shown::Uploading { progress: 100 },
             TransferStage::Uploading | TransferStage::PersistingPart => Shown::Uploading { progress },
             _ => Shown::Queued,
         }
@@ -46,12 +46,18 @@ impl TransferState {
 
     /// The same batch again with the generations the Store named (`Rejected(StaleGeneration)`).
     fn store_basis(&mut self, ids: &[TransferId], kind: StoreKind, basis: BTreeMap<String, u64>, fx: &mut Fx) {
+        if kind == StoreKind::BatchIntent {
+            return self.store_batch_intent(ids, basis, fx);
+        }
         let leaving: Vec<TransferId> = if kind == StoreKind::Removed { ids.iter().copied().filter(|id| matches!(self.transfers.get(id).and_then(|transfer| transfer.removal.as_ref()), Some(Removal::Cancel))).collect() } else { Vec::new() };
         let numbers: Vec<StoreOp> = leaving.into_iter().flat_map(|id| self.renumber_after(id)).collect();
         let ops: Vec<StoreOp> = ids
             .iter()
             .filter_map(|id| self.transfers.get(id))
             .flat_map(|transfer| {
+                let kind = if kind == StoreKind::MixedOutcomes {
+                    if transfer.stage == TransferStage::Removing { StoreKind::Removed } else { StoreKind::Failed }
+                } else { kind };
                 let own = transfer.op_id.filter(|_| !transfer.submitted);
                 let mut ops = Vec::new();
                 if kind == StoreKind::Removed {
@@ -59,7 +65,7 @@ impl TransferState {
                     if let (Some(Removal::Cancel), Some(upload_id)) = (&transfer.removal, Self::orphan_of(transfer)) {
                         ops.push(StoreOp::UploadOrphan { upload_id, key: transfer.key.clone() });
                     }
-                    if let Some(op_id) = own {
+                    if let Some(op_id) = own.filter(|_| !transfer.mutation.effects.is_empty()) {
                         match transfer.removal {
                             Some(Removal::Confirmed { .. }) if transfer.batch_id.is_some() => ops.push(StoreOp::RemoveIntent { op_id }),
                             Some(Removal::Confirmed { .. }) => {}
@@ -83,11 +89,18 @@ impl TransferState {
                     }
                     if let (StoreKind::SyncUpload, TransferStage::Accepting, Some(group)) = (kind, transfer.stage, transfer.batch_id) {
                         if let Some(entry) = self.groups.get(&group).filter(|entry| entry.ids.first() == Some(&transfer.transfer_id)) {
-                            ops.push(StoreOp::UploadBatch { batch_id: group, joint: entry.joint.to_text() });
+                            if let Some(op_id) = entry.op_id {
+                                ops.push(StoreOp::UploadBatch { batch_id: group, op_id, joint: entry.joint.to_text() });
+                            }
                         }
                     }
                     if let (Some(op_id), StoreKind::SyncUpload, TransferStage::Accepting, None) = (own, kind, transfer.stage, transfer.prior) {
-                        ops.push(StoreOp::Intent { op_id, model: transfer.mutation.model.clone(), row_id: transfer.mutation.row_id.clone(), action: transfer.mutation.action.clone(), payload: transfer.mutation.body.clone(), effects: transfer.mutation.effects.clone() });
+                        if !transfer.mutation.effects.is_empty() {
+                            ops.push(StoreOp::Effects { op_id, model: transfer.mutation.model.clone(), row_id: transfer.mutation.row_id.clone(), action: transfer.mutation.action.clone(), payload: transfer.mutation.body.clone(), effects: transfer.mutation.effects.clone() });
+                        }
+                    }
+                    if let (Some(op_id), StoreKind::Completed, None, Some(signed)) = (own, kind, transfer.batch_id, transfer.signed_id.as_ref()) {
+                        ops.push(StoreOp::Intent { op_id, model: transfer.mutation.model.clone(), row_id: transfer.mutation.row_id.clone(), action: transfer.mutation.action.clone(), payload: transfer.mutation.body.replace(SIGNED_ID_SENTINEL, signed), effects: Default::default(), origin: crate::owners::store::IntentOrigin::Transfer { transfer_id: transfer.transfer_id } });
                     }
                 }
                 ops
@@ -230,13 +243,26 @@ impl TransferState {
 
     fn committed(&mut self, batch: crate::owners::contract::BatchId, fx: &mut Fx) {
         let Some(pending) = self.pending.remove(&batch) else { return };
+        if pending.kind == StoreKind::MixedOutcomes {
+            for &id in &pending.ids {
+                match self.stage_of(id) {
+                    Some(TransferStage::Removing) => self.removing_committed(&[id], fx),
+                    Some(TransferStage::PersistingFailure) => self.failure_committed(id, fx),
+                    _ => {}
+                }
+            }
+            self.maybe_drained(fx);
+            return;
+        }
         let stage = pending.ids.first().and_then(|id| self.stage_of(*id));
         match stage {
             Some(TransferStage::Accepting) => self.accepting_committed(&pending.ids, fx),
             Some(TransferStage::PersistingCopy) => self.copy_committed(&pending.ids, fx),
             Some(TransferStage::PersistingAttempt) => self.attempt_committed(pending.ids[0], fx),
+            Some(TransferStage::PersistingBatchIntent) => self.batch_intent_committed(&pending.ids, fx),
             Some(TransferStage::PersistingPart) => self.part_committed(pending.ids[0], fx),
             Some(TransferStage::PersistingComplete) => self.complete_committed(pending.ids[0], fx),
+            Some(TransferStage::PersistingRetry) if self.transfers.get(&pending.ids[0]).is_some_and(|transfer| transfer.next_step == NextStep::Mutation && !transfer.intent_live) => self.retry_recreate_committed(pending.ids[0], fx),
             Some(TransferStage::PersistingRetry) if self.transfers.get(&pending.ids[0]).is_some_and(|transfer| transfer.next_step == NextStep::Mutation) => self.retry_mutation_committed(&pending.ids, fx),
             Some(TransferStage::PersistingRetry) => self.retry_committed(pending.ids[0], fx),
             Some(TransferStage::PersistingFailure) => {
@@ -252,15 +278,24 @@ impl TransferState {
 
     fn rejected(&mut self, rejected: crate::owners::contract::Rejected, fx: &mut Fx) {
         let Some(pending) = self.pending.remove(&rejected.batch) else { return };
+        if pending.kind == StoreKind::MixedOutcomes && matches!(&rejected.reason, RejectReason::Storage(_)) {
+            self.schedule_retry(pending.ids[0], fx);
+            return;
+        }
         let stage = pending.ids.first().and_then(|id| self.stage_of(*id));
         let interrupts = !matches!(rejected.reason, RejectReason::Storage(_));
-        let persisting = matches!(stage, Some(TransferStage::PersistingCopy | TransferStage::PersistingAttempt | TransferStage::PersistingRetry | TransferStage::PersistingPart | TransferStage::PersistingComplete | TransferStage::PersistingFailure | TransferStage::Removing));
+        let persisting = matches!(stage, Some(TransferStage::PersistingCopy | TransferStage::PersistingAttempt | TransferStage::PersistingBatchIntent | TransferStage::PersistingRetry | TransferStage::PersistingPart | TransferStage::PersistingComplete | TransferStage::PersistingFailure | TransferStage::Removing));
         if let (RejectReason::StaleGeneration { models, generation }, true) = (&rejected.reason, persisting) {
             for model in models { self.generations.insert(model.clone(), *generation); }
             let basis = models.iter().map(|model| (model.clone(), *generation)).collect();
             return self.store_basis(&pending.ids, pending.kind, basis, fx);
         }
         if let (RejectReason::Invalid, true) = (&rejected.reason, persisting) {
+            if stage == Some(TransferStage::PersistingBatchIntent) {
+                for &id in &pending.ids { self.mark_failure(id, "Internal(Invalid)".into()); }
+                self.store(&pending.ids, StoreKind::Failed, fx);
+                return;
+            }
             self.invalid_write(&pending.ids, stage == Some(TransferStage::PersistingFailure), fx);
             self.start_in_order(fx);
             return;
@@ -269,6 +304,7 @@ impl TransferState {
             (Some(TransferStage::Accepting), _) => self.accepting_rejected(&pending.ids, rejected.reason, fx),
             (Some(TransferStage::Removing), _) => self.removing_rejected(&pending.ids, rejected.reason, fx),
             (Some(TransferStage::PersistingRetry), false) => self.retry_rejected(pending.ids[0], rejected.reason, fx),
+            (Some(TransferStage::PersistingBatchIntent), false) => self.schedule_retry(pending.ids[0], fx),
             (Some(TransferStage::PersistingFailure), false) => self.failure_rejected(pending.ids[0], fx),
             (Some(TransferStage::PersistingCopy), false) => self.copy_rejected(&pending.ids, fx),
             (Some(TransferStage::PersistingAttempt | TransferStage::PersistingPart | TransferStage::PersistingComplete), false) => {
@@ -316,12 +352,14 @@ impl TransferState {
             TransferInput::RoundStatus { epoch, transfer_ids, refused } => self.round_status(epoch, &transfer_ids, refused, fx),
             TransferInput::CopyDone { transfer_id, attempt_id, size, sha256, place, cached } => self.copy_done(transfer_id, attempt_id, CopiedBlob { size, sha256, place, cached }, fx),
             TransferInput::CopyFailed { transfer_id, attempt_id, error } => self.copy_failed(transfer_id, attempt_id, error, fx),
-            TransferInput::OpReserved { transfer_id, result } => self.op_reserved(transfer_id, result, fx),
+            TransferInput::OpReserved { target, result } => self.op_reserved(target, result, fx),
             TransferInput::StepOk { transfer_id, attempt_id, part, upload_id, etag } => self.step_ok(transfer_id, attempt_id, part, upload_id, etag, fx),
             TransferInput::StepError { transfer_id, attempt_id, temporary } => self.step_error(transfer_id, attempt_id, temporary, fx),
             TransferInput::Completed { transfer_id, attempt_id, signed_id } => self.completed(transfer_id, attempt_id, signed_id, fx),
             TransferInput::CompleteError { transfer_id, attempt_id, temporary } => self.complete_error(transfer_id, attempt_id, temporary, fx),
-            TransferInput::MutationOutcome { key, outcome } => self.mutation_outcome(&key, outcome, fx),
+            TransferInput::MutationOutcome { transfer_id, outcome } => self.mutation_outcome(transfer_id, outcome, fx),
+            TransferInput::MutationOutcomes { batch_id, outcomes, intent_removed } => self.finish_batch(batch_id, outcomes, intent_removed, fx),
+            TransferInput::RetryOutcome { cycles, result } => self.retry_mutation_outcome(&cycles, result, fx),
             TransferInput::DiscardOutcome { key, result } => self.discard_outcome(&key, result, fx),
             TransferInput::Outcome { receipt, reply } => self.outcome(receipt, reply, fx),
             TransferInput::InterestPlus { transfer_id, stream_id } => self.interest_plus(transfer_id, stream_id, fx),
@@ -412,7 +450,7 @@ impl TransferState {
         let Some(transfer) = self.transfers.get_mut(&id) else { return };
         transfer.submitted = true;
         let signed = transfer.signed_id.clone().unwrap_or_default();
-        let mut op = NewOp { origin: OpSource::Transfer(transfer.key.clone()), body: transfer.mutation.body.replace(SIGNED_ID_SENTINEL, &signed), ..transfer.mutation.clone() };
+        let mut op = NewOp { origin: OpSource::Transfer { transfer_id: transfer.transfer_id, cycle_id: transfer.cycle_id }, body: transfer.mutation.body.replace(SIGNED_ID_SENTINEL, &signed), ..transfer.mutation.clone() };
         let input = match transfer.op_id {
             Some(op_id) => {
                 op.effects = Default::default();
@@ -455,7 +493,7 @@ impl StateOwner for Transfers {
 
 pub(super) fn upload_kind(kind: StoreKind) -> UploadKind {
     match kind {
-        StoreKind::SyncUpload | StoreKind::Removed => UploadKind::SyncUpload,
+        StoreKind::SyncUpload | StoreKind::Removed | StoreKind::BatchIntent | StoreKind::MixedOutcomes => UploadKind::SyncUpload,
         StoreKind::ConfirmedParts => UploadKind::ConfirmedParts,
         StoreKind::Completed => UploadKind::Completed,
         StoreKind::Failed => UploadKind::Failed,

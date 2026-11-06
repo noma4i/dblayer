@@ -180,7 +180,7 @@ pub struct BatchItem {
 pub enum TransferInput {
     Accept { epoch: Epoch, item: Box<BatchItem>, reply: ReplyId, now: Time },
     AcceptBatch { epoch: Epoch, items: Vec<BatchItem>, joint: Box<Joint>, reply: ReplyId, now: Time },
-    Restored { uploads: Vec<StoredTransfer>, outcomes: BTreeMap<TransferId, OutboxOutcome>, orphans: Vec<(String, String)>, batches: BTreeMap<u64, Joint> },
+    Restored { uploads: Vec<StoredTransfer>, outcomes: TransferOutcomes, orphans: Vec<(String, String)>, batches: BTreeMap<u64, StoredGroup> },
     /// The answer to `abort` of a removed transfer: `answered` is false for a temporary failure.
     AbortDone { upload_id: String, answered: bool },
     RestoreFailed { error: String },
@@ -190,12 +190,14 @@ pub enum TransferInput {
     CopyDone { transfer_id: TransferId, attempt_id: AttemptId, size: u64, sha256: String, place: Location, cached: CachedBlob },
     CopyFailed { transfer_id: TransferId, attempt_id: AttemptId, error: String },
     /// The answer of Outbox to `ReserveOp`.
-    OpReserved { transfer_id: TransferId, result: Result<OpId, Fault> },
+    OpReserved { target: super::outbox::ReserveTarget, result: Result<OpId, Fault> },
     StepOk { transfer_id: TransferId, attempt_id: AttemptId, part: Option<u32>, upload_id: Option<String>, etag: Option<String> },
     StepError { transfer_id: TransferId, attempt_id: AttemptId, temporary: bool },
     Completed { transfer_id: TransferId, attempt_id: AttemptId, signed_id: Option<String> },
     CompleteError { transfer_id: TransferId, attempt_id: AttemptId, temporary: bool },
-    MutationOutcome { key: Key, outcome: OutboxOutcome },
+    MutationOutcome { transfer_id: TransferId, outcome: OutboxOutcome },
+    MutationOutcomes { batch_id: BatchId, outcomes: BTreeMap<TransferId, OutboxOutcome>, intent_removed: bool },
+    RetryOutcome { cycles: Vec<(TransferId, CycleId)>, result: Result<i64, Fault> },
     DiscardOutcome { key: Key, result: Result<(), Fault> },
     Outcome { receipt: Receipt, reply: ReplyId },
     InterestPlus { transfer_id: TransferId, stream_id: StreamId },
@@ -244,6 +246,8 @@ pub enum StoreKind {
     Completed,
     Failed,
     Retrying,
+    BatchIntent,
+    MixedOutcomes,
     /// Remove the row of `sync_upload`, the parts, the saved outcome and the inline bytes.
     Removed,
 }
@@ -292,6 +296,7 @@ pub enum TransferStage {
     Completing,
     PersistingComplete,
     BatchReady,
+    PersistingBatchIntent,
     Mutating,
     Failed,
     Done,
@@ -349,6 +354,7 @@ pub struct Transfer {
     pub op_id: Option<OpId>,
     /// The final mutation left for Outbox: Outbox owns the operation, a removal does not roll it back.
     pub submitted: bool,
+    pub intent_live: bool,
     /// The file is already on the server: the cache of blobs gave its `signed_id` (the steps are skipped).
     pub from_cache: bool,
     /// The cache entry of the content is old: the write of the copy removes it.
@@ -358,7 +364,7 @@ pub struct Transfer {
     pub prior: Option<TransferStage>,
     /// A batch of the Store for the failure mark carries `abort`.
     pub failure_abort: bool,
-    pub outcomes: BTreeMap<CycleId, OutboxOutcome>,
+    pub outcomes: CycleOutcomes,
     pub outcome_waiters: Vec<(CycleId, ReplyId)>,
     pub accept_reply: Option<ReplyId>,
     pub cancel_reply: Option<(ReplyId, bool)>,
@@ -373,13 +379,25 @@ pub struct Transfer {
 #[derive(Clone, Debug)]
 pub struct Group {
     pub ids: Vec<TransferId>,
+    pub op_id: Option<OpId>,
     pub reply: Option<ReplyId>,
     pub ready: BTreeSet<TransferId>,
     pub joint: Joint,
+    pub pending_op: Option<NewOp>,
     pub phase: BatchPhase,
     /// The row the mutation of the batch was submitted for: `Retry` names the operation by it.
     pub op_row: Option<(String, String)>,
 }
+
+#[derive(Clone, Debug)]
+pub struct StoredGroup {
+    pub joint: Joint,
+    pub op_id: Option<OpId>,
+    pub intent_members: Vec<TransferId>,
+}
+
+pub type CycleOutcomes = BTreeMap<CycleId, OutboxOutcome>;
+pub type TransferOutcomes = BTreeMap<TransferId, CycleOutcomes>;
 
 #[derive(Clone, Debug)]
 pub(super) struct Pending {
@@ -398,6 +416,7 @@ pub struct TransferState {
     pub slots: u32,
     pub phase: Phase,
     pub transfers: BTreeMap<TransferId, Transfer>,
+    pub completed: std::collections::HashMap<TransferId, CycleOutcomes>,
     pub(super) groups: BTreeMap<u64, Group>,
     pub(super) pending: BTreeMap<BatchId, Pending>,
     pub(super) subscribers: BTreeMap<TransferId, BTreeSet<StreamId>>,
@@ -408,7 +427,7 @@ pub struct TransferState {
     /// The restored groups that still have an element without its file on the server.
     pub(super) open_groups: BTreeSet<u64>,
     pub(super) held: Vec<TransferInput>,
-    pub(super) waiting: BTreeMap<TransferId, (StoredTransfer, BTreeMap<TransferId, OutboxOutcome>)>,
+    pub(super) waiting: BTreeMap<TransferId, (StoredTransfer, TransferOutcomes)>,
     pub next_id: TransferId,
     pub next_seq: u64,
     pub next_group: u64,
@@ -434,6 +453,7 @@ impl TransferState {
             slots,
             phase: Phase::Restoring,
             transfers: BTreeMap::new(),
+            completed: std::collections::HashMap::new(),
             groups: BTreeMap::new(),
             pending: BTreeMap::new(),
             subscribers: BTreeMap::new(),
@@ -486,7 +506,7 @@ pub(super) fn upload_row(transfer: &Transfer, kind: StoreKind) -> UploadRow {
         upload_id: if kind == StoreKind::Failed && transfer.failure_abort { None } else { transfer.upload_id.clone() },
         confirmed_parts: if kind == StoreKind::Failed && transfer.failure_abort { 0 } else { transfer.confirmed_parts },
         attempts: transfer.attempts,
-        completed: matches!(kind, StoreKind::Completed) || transfer.stage == TransferStage::Mutating,
+        completed: matches!(kind, StoreKind::Completed) || transfer.signed_id.is_some(),
         failed: if kind == StoreKind::Failed { transfer.error.clone().or_else(|| Some("failed".into())) } else { transfer.error.clone().filter(|_| kind != StoreKind::Retrying) },
         created_at: transfer.created_at.0,
         inline: transfer.place == Some(Location::Table),
@@ -498,7 +518,7 @@ pub(super) fn upload_row(transfer: &Transfer, kind: StoreKind) -> UploadRow {
         steps_path: transfer.steps.path.clone(),
         steps_body: transfer.steps.body.clone(),
         transfer_id: transfer.transfer_id,
-        cycle_id: transfer.cycle_id,
+        cycle_id: transfer.cycle_id + u64::from(kind == StoreKind::Retrying && transfer.stage == TransferStage::PersistingRetry),
         signed_id: transfer.signed_id.clone(),
         aborted: transfer.aborted,
         op_id: transfer.op_id,

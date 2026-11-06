@@ -187,7 +187,7 @@ fn xfer_ready_retry() {
 fn xfer_ready_other() {
     let (mut twin, id) = ready(2);
     let mut inputs = twin.stray_results(id);
-    inputs.push(TransferInput::MutationOutcome { key: KEY.into(), outcome: OutboxOutcome::Confirmed { revision: 1, result: None } });
+    inputs.push(TransferInput::MutationOutcome { transfer_id: id, outcome: OutboxOutcome::Confirmed { revision: 1, result: None } });
     twin.ignores(id, inputs);
 }
 
@@ -366,7 +366,7 @@ fn xfer_uploading_other() {
         vec![
             TransferInput::Completed { transfer_id: id, attempt_id, signed_id: None },
             TransferInput::CompleteError { transfer_id: id, attempt_id, temporary: false },
-            TransferInput::MutationOutcome { key: KEY.into(), outcome: OutboxOutcome::Confirmed { revision: 1, result: None } },
+            TransferInput::MutationOutcome { transfer_id: id, outcome: OutboxOutcome::Confirmed { revision: 1, result: None } },
         ],
     );
 }
@@ -539,7 +539,7 @@ fn xfer_completing_other() {
         vec![
             TransferInput::StepOk { transfer_id: id, attempt_id, part: Some(1), upload_id: None, etag: None },
             TransferInput::StepError { transfer_id: id, attempt_id, temporary: false },
-            TransferInput::MutationOutcome { key: KEY.into(), outcome: OutboxOutcome::Confirmed { revision: 1, result: None } },
+            TransferInput::MutationOutcome { transfer_id: id, outcome: OutboxOutcome::Confirmed { revision: 1, result: None } },
             TransferInput::SlotFreed,
             TransferInput::Online(Online(true)),
             TransferInput::PowerSaving(false),
@@ -553,7 +553,7 @@ fn xfer_persisting_complete_committed() {
     let id = twin.persisting_complete(KEY);
     let out = twin.commit();
     assert_eq!((twin.stage(id), out.submits(), out.shows()), (TransferStage::Mutating, 1, vec![Shown::Uploading { progress: 100 }]));
-    assert!(matches!(&out.outbox[0], crate::owners::write::outbox::OutboxInput::Submit { op, .. } if op.origin == crate::owners::write::outbox::OpSource::Transfer(KEY.into())));
+    assert!(matches!(&out.outbox[0], crate::owners::write::outbox::OutboxInput::SubmitReserved { op, .. } if op.origin == (crate::owners::write::outbox::OpSource::Transfer { transfer_id: id, cycle_id: 1 })));
 }
 
 #[test]

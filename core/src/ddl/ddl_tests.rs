@@ -269,9 +269,14 @@ fn core_table_columns_match_spec() {
         "dedupe_key",
         "client_mutation_id",
         "attempts",
+        "cycle_id",
         "since",
         "error_kind",
         "error_message",
+        "intent_state",
+        "origin_kind",
+        "transfer_id",
+        "batch_id",
     ];
     assert_eq!(op_names, expected_op.into_iter().collect());
     assert!(!op["dedupe_key"].1 && !op["temp_id"].1 && !op["base_revision"].1 && !op["error_kind"].1);

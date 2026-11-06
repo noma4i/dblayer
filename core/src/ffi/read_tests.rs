@@ -21,6 +21,19 @@ async fn next(stream: &ReadStream) -> ReadValue { tokio::time::timeout(LIMIT, st
 fn ids(rows: &[super::WireRow]) -> Vec<&str> { rows.iter().map(|row| row.id.as_str()).collect() }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn dropping_a_pending_pull_cancels_the_stream() {
+    let db = open().await;
+    let stream = db.subscribe_values(db.session_epoch(), ReadRequest::List { query_json: r#"{"model":"Note"}"#.into() });
+    assert!(matches!(crate::test_wait::within(stream.pull()).await.unwrap(), Some(ReadValue::Snapshot { .. })));
+    let mut pending = Box::pin(stream.pull());
+    assert!(std::future::poll_fn(|cx| std::task::Poll::Ready(std::future::Future::poll(pending.as_mut(), cx).is_pending())).await);
+    drop(pending);
+    assert!(matches!(crate::test_wait::within(stream.pull()).await.unwrap(), Some(ReadValue::Ended { cause: ReadEnd::Cancelled })));
+    assert!(crate::test_wait::within(stream.pull()).await.unwrap().is_none());
+    crate::test_wait::within(db.close_database()).await.unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn dlv_prop_first_value_off_caller() {
     let db = open().await;
     let epoch = db.session_epoch();

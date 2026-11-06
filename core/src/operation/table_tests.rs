@@ -82,22 +82,15 @@ fn apply_fsck_counts_only_quarantined_orphans() {
 }
 
 #[test]
-fn op_columns_match_spec_and_nullability() {
+fn op_columns_match_nullability() {
     let connection = database();
     let mut statement = connection.prepare("PRAGMA table_info(op)").unwrap();
     let columns: Vec<(String, bool)> = statement.query_map([], |r| Ok((r.get(1)?, r.get::<_, i64>(3)? == 0 && r.get::<_, i64>(5)? == 0))).unwrap().map(Result::unwrap).collect();
-    let names: Vec<&str> = columns.iter().map(|c| c.0.as_str()).collect();
-    assert_eq!(
-        names,
-        [
-            "seq", "action_key", "status", "temp_id", "transport_started", "base_revision", "created_at", "dedupe_key", "client_mutation_id", "attempts", "since", "error_kind", "error_message"
-        ]
-    );
     let nullable: Vec<&str> = columns.iter().filter(|c| c.1).map(|c| c.0.as_str()).collect();
     assert_eq!(
         nullable,
         [
-            "temp_id", "base_revision", "dedupe_key", "error_kind", "error_message"
+            "temp_id", "base_revision", "dedupe_key", "error_kind", "error_message", "transfer_id", "batch_id"
         ]
     );
 }

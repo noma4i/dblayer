@@ -167,17 +167,26 @@ impl TransferState {
     }
 
     fn tick_retry(&mut self, id: TransferId, attempt_id: AttemptId, fx: &mut Fx) {
-        let Some(transfer) = self.transfers.get_mut(&id) else { return };
+        let Some(transfer) = self.transfers.get(&id) else { return };
         if transfer.attempt_id != attempt_id {
             return;
         }
         match transfer.stage {
             TransferStage::Uploading | TransferStage::Completing if transfer.waiting_retry => {
+                let Some(transfer) = self.transfers.get_mut(&id) else { return };
                 transfer.stage = TransferStage::Ready;
                 transfer.waiting_retry = false;
                 self.start_in_order(fx);
             }
+            TransferStage::PersistingFailure | TransferStage::Removing if self.group_entry(id).is_some_and(|group| self.phase_of(group) == Some(BatchPhase::Mutating)) => {
+                let ids = self.group_entry(id).map(|group| self.groups[&group].ids.iter().copied().filter(|member| matches!(self.stage_of(*member), Some(TransferStage::Removing | TransferStage::PersistingFailure))).collect::<Vec<_>>()).unwrap_or_default();
+                self.store(&ids, StoreKind::MixedOutcomes, fx);
+            }
             TransferStage::PersistingFailure => self.store(&[id], StoreKind::Failed, fx),
+            TransferStage::PersistingBatchIntent => {
+                let ids = self.group_entry(id).map(|group| self.remaining(group).into_iter().filter(|member| self.stage_of(*member) == Some(TransferStage::PersistingBatchIntent)).collect::<Vec<_>>()).unwrap_or_else(|| vec![id]);
+                self.store(&ids, StoreKind::BatchIntent, fx);
+            }
             _ => {}
         }
     }
@@ -197,6 +206,7 @@ impl TransferState {
             return self.start_in_order(fx);
         }
         self.set(id, TransferStage::Mutating);
+        if let Some(transfer) = self.transfers.get_mut(&id) { transfer.intent_live = true; }
         self.show(id, Shown::Uploading { progress: 100 }, fx);
         self.submit_mutation(id, fx);
         self.start_in_order(fx);
@@ -222,13 +232,8 @@ impl TransferState {
         }
     }
 
-    fn mutating(&self, key: &str) -> Option<TransferId> { self.open_id(key).filter(|id| self.stage_of(*id) == Some(TransferStage::Mutating)) }
-
-    pub(super) fn mutation_outcome(&mut self, key: &str, outcome: OutboxOutcome, fx: &mut Fx) {
-        if let Some(group) = key.strip_prefix("batch:").and_then(|group| group.parse().ok()) {
-            return self.finish_batch(group, outcome, fx);
-        }
-        let Some(id) = self.mutating(key) else { return };
+    pub(super) fn mutation_outcome(&mut self, id: TransferId, outcome: OutboxOutcome, fx: &mut Fx) {
+        if self.stage_of(id) != Some(TransferStage::Mutating) { return; }
         let waiting = self.transfers.get(&id).is_some_and(|transfer| !transfer.discard_waiters.is_empty());
         let next_single = (!matches!(outcome, OutboxOutcome::Interrupted) && !(waiting && matches!(outcome, OutboxOutcome::Failed { .. }))).then(|| self.group_entry(id)).flatten().filter(|group| self.phase_of(*group) == Some(BatchPhase::Singles));
         match outcome {
@@ -243,7 +248,11 @@ impl TransferState {
             OutboxOutcome::Discarded => self.remove_with_batch(id, Removal::Discarded, fx),
             OutboxOutcome::Rejected { .. } if waiting => self.remove_with_batch(id, Removal::Discarded, fx),
             OutboxOutcome::Failed { .. } if waiting => {}
-            OutboxOutcome::Rejected { error } | OutboxOutcome::Failed { error } => self.begin_failure(id, error, false, fx),
+            OutboxOutcome::Rejected { error } => {
+                if let Some(transfer) = self.transfers.get_mut(&id) { transfer.intent_live = false; }
+                self.begin_failure(id, error, false, fx);
+            }
+            OutboxOutcome::Failed { error } => self.begin_failure(id, error, false, fx),
             OutboxOutcome::Interrupted => {
                 self.interrupt(id, fx);
                 self.rounds_idle(id, fx);
@@ -260,7 +269,7 @@ impl TransferState {
     }
 
     pub(super) fn discard_outcome(&mut self, key: &str, result: Result<(), Fault>, fx: &mut Fx) {
-        let Some(id) = self.mutating(key) else { return };
+        let Some(id) = self.open_id(key).filter(|id| self.stage_of(*id) == Some(TransferStage::Mutating)) else { return };
         let Some(transfer) = self.transfers.get_mut(&id) else { return };
         if result.is_ok() {
             return;

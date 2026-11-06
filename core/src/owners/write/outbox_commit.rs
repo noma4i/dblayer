@@ -7,8 +7,7 @@ use super::outbox_types::*;
 use crate::owners::contract::{Committed, RejectReason, Rejected};
 
 
-use crate::runtime::{Effect, Effects, Outbound, ScheduleId};
-use super::transfer::TransferInput;
+use crate::runtime::{Effect, Effects, ScheduleId};
 
 
 
@@ -65,7 +64,6 @@ impl OutboxState {
                 if let Some(operation) = self.ops.get(&op_id).filter(|operation| !operation.stale.is_empty()) {
                     fx.push(Effect::Run(OutboxEffect::Stale { families: operation.stale.clone(), revision }));
                 }
-                self.tell_missing_elements(op_id, fx);
                 let result = self.ops.get(&op_id).and_then(|operation| operation.result.clone());
                 self.finish(op_id, OutboxOutcome::Confirmed { revision, result }, true, fx);
             }
@@ -86,9 +84,12 @@ impl OutboxState {
                 self.failed(op_id, error, fx);
             }
             (CommitKind::ClearMark, Stage::MarkingRetry) => {
+                let mut transfer_ids = Vec::new();
                 if let Some(operation) = self.ops.get_mut(&op_id) {
                     operation.error = None;
+                    transfer_ids = std::mem::take(&mut operation.retry_uploads).into_iter().map(|row| (row.transfer_id, row.cycle_id)).collect();
                 }
+                if !transfer_ids.is_empty() { self.retry_transfer_answer(transfer_ids, Ok(revision), fx); }
                 let receipt = OutboxAnswer::Receipt(self.receipt(op_id, revision));
                 for reply in Self::take_waiters(&mut self.retry_waiters, op_id) {
                     Self::reply(fx, reply, receipt.clone());
@@ -100,17 +101,6 @@ impl OutboxState {
                 }
             }
             _ => {}
-        }
-    }
-
-    /// After the batch landed: each element the answer has no row for gets `Failed{Protocol}` before the outcome of the batch reaches the others.
-    pub(super) fn tell_missing_elements(&self, op_id: OpId, fx: &mut Effects<Outbox>) {
-        let Some(operation) = self.ops.get(&op_id) else { return };
-        let (OpSource::Transfer(_), Some(transfer)) = (&operation.op.origin, self.peers.transfer) else { return };
-        let error = super::failure::protocol("the answer has no row for the element");
-        for temp in &operation.missing {
-            let key = format!("{}:{}:{}", operation.op.model, temp, operation.op.action);
-            fx.push(Effect::Send(Outbound::new(transfer, TransferInput::MutationOutcome { key, outcome: OutboxOutcome::Failed { error: error.clone() } })));
         }
     }
 
@@ -181,7 +171,9 @@ impl OutboxState {
             RejectReason::StaleGeneration { .. } => self.store(op_id, kind, fx),
             RejectReason::Storage(_) if stage == Stage::Submitting => self.submit_refused(op_id, reason, fx),
             RejectReason::Storage(_) if stage == Stage::MarkingRetry => {
-                if let Some(operation) = self.ops.get_mut(&op_id) { operation.stage = Stage::Failed; }
+                let transfer_ids = self.take_retry_uploads(op_id);
+                self.revert_retry(op_id, !transfer_ids.is_empty());
+                if !transfer_ids.is_empty() { self.retry_transfer_answer(transfer_ids, Err(Fault::Rejected(reason.clone())), fx); }
                 for reply in Self::take_waiters(&mut self.retry_waiters, op_id) {
                     Self::reply(fx, reply, OutboxAnswer::Err(Fault::Rejected(reason.clone())));
                 }
@@ -189,13 +181,17 @@ impl OutboxState {
             RejectReason::Storage(_) => self.retry_timer(op_id, fx),
             RejectReason::NoSession | RejectReason::Closed if stage == Stage::Submitting => self.submit_refused(op_id, reason, fx),
             RejectReason::NoSession | RejectReason::Closed => {
+                let transfer_ids = self.take_retry_uploads(op_id);
+                if !transfer_ids.is_empty() { self.retry_transfer_answer(transfer_ids, Err(Fault::Rejected(reason.clone())), fx); }
                 self.answer_waiters(op_id, &OutboxAnswer::Err(Fault::Interrupted), fx);
                 self.finish(op_id, OutboxOutcome::Interrupted, false, fx);
             }
             RejectReason::Invalid => match stage {
                 Stage::Submitting => self.submit_refused(op_id, reason, fx),
                 Stage::MarkingRetry => {
-                    if let Some(operation) = self.ops.get_mut(&op_id) { operation.stage = Stage::Failed; }
+                    let transfer_ids = self.take_retry_uploads(op_id);
+                    self.revert_retry(op_id, !transfer_ids.is_empty());
+                    if !transfer_ids.is_empty() { self.retry_transfer_answer(transfer_ids, Err(Fault::Internal), fx); }
                     for reply in Self::take_waiters(&mut self.retry_waiters, op_id) {
                         Self::reply(fx, reply, OutboxAnswer::Err(Fault::Internal));
                     }
@@ -220,6 +216,22 @@ impl OutboxState {
             operation.stage = Stage::Done;
             operation.outcome = Some(OutboxOutcome::Interrupted);
         }
+    }
+
+    fn revert_retry(&mut self, op_id: OpId, transfer_retry: bool) {
+        let Some(operation) = self.ops.get_mut(&op_id) else { return };
+        operation.stage = Stage::Failed;
+        operation.cycle_id = operation.cycle_id.saturating_sub(1);
+        if !transfer_retry { return; }
+        match &mut operation.op.origin {
+            OpSource::Api => {}
+            OpSource::Transfer { cycle_id, .. } => *cycle_id = cycle_id.saturating_sub(1),
+            OpSource::TransferGroup { members, .. } => for member in members { member.cycle_id = member.cycle_id.saturating_sub(1); },
+        }
+    }
+
+    fn take_retry_uploads(&mut self, op_id: OpId) -> Vec<(u64, u64)> {
+        self.ops.get_mut(&op_id).map(|operation| std::mem::take(&mut operation.retry_uploads).into_iter().map(|row| (row.transfer_id, row.cycle_id)).collect()).unwrap_or_default()
     }
 
 }

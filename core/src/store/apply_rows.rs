@@ -281,7 +281,7 @@ pub(crate) fn remove_row(connection: &Connection, info: &ModelInfo, id: &str) ->
 }
 
 fn membership_moves(info: &ModelInfo, model: &ModelKey, id: &str, old: &Map<String, Value>, new: &Map<String, Value>, moves: &mut Vec<ScopeOp>, heads: &mut Vec<(ScopeRef, crate::identity::RowId)>) {
-    let selections = |row: &Map<String, Value>| info.spec.relations.iter().filter(|relation| relation.membership.is_empty() && !relation.joins_node && (relation.lists_every_row_of_its_params() || relation.takes_created_rows())).flat_map(|relation| relation.row_params(row).into_iter().filter_map(|params| info.spec.selection_key(&relation.name, &params).ok())).collect::<Vec<_>>();
+    let selections = |row: &Map<String, Value>| info.spec.relations.iter().filter(|relation| relation.membership.is_empty() && !relation.joins_node && relation.lists_every_row_of_its_params()).flat_map(|relation| relation.row_params(row).into_iter().filter_map(|params| info.spec.selection_key(&relation.name, &params).ok())).collect::<Vec<_>>();
     let before = selections(old);
     let after = selections(new);
     let Ok(row) = crate::identity::RowId::new(id) else { return };
@@ -304,12 +304,21 @@ struct MembershipLog<'a> {
 fn declared_membership(connection: &Connection, info: &ModelInfo, model: &ModelKey, id: &str, versions: RowVersions<'_>, envelope: &BatchPlan, log: MembershipLog<'_>) -> Result<(), StoreError> {
     let RowVersions { old, new } = versions;
     let MembershipLog { moves, heads } = log;
-    use crate::schema::{Membership, RemoteShape, PageDirection};
+    use crate::schema::{RemoteShape, PageDirection};
     let row = crate::identity::RowId::new(id).map_err(|error| StoreError::Constraint(error.to_string()))?;
-    for relation in info.spec.relations.iter().filter(|relation| (!relation.membership.is_empty() || relation.has_threshold() || envelope.node_reread) && relation.constants_described() && (if envelope.node_reread { relation.joins_node } else { relation.joins_events && envelope.server_rows })) {
-        for rule in relation.membership.values() {
-            let field = match rule { Membership::Contains(field) | Membership::Equals(field) => field };
-            if !new.contains_key(field) { return Err(StoreError::Constraint(format!("missing membership field {field}"))); }
+    for relation in info.spec.relations.iter().filter(|relation| relation.constants_described()) {
+        let event = relation.joins_events && envelope.server_rows && (!relation.membership.is_empty() || relation.has_threshold());
+        let bound = relation.text_params.iter().all(|parameter| {
+            relation.membership.contains_key(parameter) || relation.row_rules.iter().any(|rule| matches!(&rule.test, crate::schema::RowTest::GreaterThan { parameter: bound } if bound == parameter))
+        });
+        let response = relation.joins_events && envelope.response_rows && bound;
+        let joins = event || response || envelope.node_reread && relation.joins_node;
+        if !joins && !(old.is_some() && bound && !relation.row_rules.is_empty()) { continue; }
+        if event || envelope.node_reread && relation.joins_node {
+            for rule in relation.membership.values() {
+                let field = match rule { crate::schema::Membership::Contains(field) | crate::schema::Membership::Equals(field) => field };
+                if !new.contains_key(field) { return Err(StoreError::Constraint(format!("missing membership field {field}"))); }
+            }
         }
         let keys = |values: &Map<String, Value>| if relation.has_threshold() {
             loaded_threshold_scopes(connection, info, relation, values)
@@ -319,6 +328,7 @@ fn declared_membership(connection: &Connection, info: &ModelInfo, model: &ModelK
         let before = old.map(keys).transpose()?.unwrap_or_default();
         let after = keys(new)?;
         moves.extend(before.difference(&after).map(|key| ScopeOp::Detach { scope: ScopeRef::new(model.clone(), key.clone()), row: row.clone() }));
+        if !joins { continue; }
         let direction = match relation.remote.as_ref().map(|remote| &remote.shape) { Some(RemoteShape::Connection { direction, .. }) => *direction, _ => PageDirection::Forward };
         for key in after {
             let window = super::windows::window_key(key.as_str(), direction);

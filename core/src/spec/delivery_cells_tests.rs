@@ -30,6 +30,73 @@ fn dlv_pull_twice() {
 }
 
 #[test]
+fn dlv_pull_cancelled() {
+    for mut twin in [open_rows(), live_rows()] {
+        twin.step(Input::Pull);
+        assert_eq!(twin.step(Input::PullCancelled { matched: true }), [Effect::Answer(Pulled::Interrupted), Effect::InterestMinus, Effect::CloseSink]);
+        twin.step(Input::SinkClosed);
+        assert_eq!(twin.read_all(), [Val::Ended(Cause::Cancelled)]);
+    }
+}
+
+#[test]
+fn dlv_cancelling_pull_cancelled() {
+    let mut twin = live_rows();
+    twin.step(Input::Cancel { reply: 7 });
+    twin.step(Input::Pull);
+    assert_eq!(twin.step(Input::PullCancelled { matched: true }), [Effect::Answer(Pulled::Interrupted)]);
+    assert_eq!(twin.step(Input::SinkClosed), [Effect::Cancelled(7)]);
+    assert_eq!(twin.read_all(), [Val::Ended(Cause::Cancelled)]);
+}
+
+#[test]
+fn dlv_pull_cancelled_stale() {
+    let mut twin = live_rows();
+    twin.step(Input::Pull);
+    assert!(twin.step(Input::PullCancelled { matched: false }).is_empty());
+    twin.step(Input::ReadDone { revision: 2, rows: rows(&["r1", "r2"]) });
+    assert!(twin.step(Input::PullCancelled { matched: true }).is_empty());
+}
+
+#[test]
+fn dlv_epoch_closed() {
+    for mut twin in [open_rows(), live_rows()] {
+        twin.step(Input::EpochClosed);
+        assert_eq!(twin.read_all(), [Val::Ended(Cause::Closed)]);
+    }
+}
+
+#[test]
+fn dlv_live_read_failed_old() {
+    let mut twin = live_rows();
+    assert!(twin.step(Input::ReadFailedStale).is_empty());
+    assert!(twin.read_all().is_empty());
+}
+
+#[test]
+fn dlv_live_count_same() {
+    let mut twin = open_as(Kind::Count);
+    twin.step(Input::WindowState(Ws::idle()));
+    twin.step(Input::CountDone { revision: 1, count: 1 });
+    twin.read_all();
+    assert!(twin.step(Input::CountDone { revision: 2, count: 1 }).is_empty());
+    assert!(twin.read_all().is_empty());
+}
+
+#[test]
+fn dlv_live_read_total_only() {
+    let mut twin = open_rows();
+    twin.total = Some(2);
+    twin.step(Input::ReadDone { revision: 1, rows: rows(&["r1"]) });
+    twin.read_all();
+    twin.total = Some(3);
+    TOTALS.with(|totals| totals.borrow_mut().clear());
+    let (_, values) = twin.step_read(Input::ReadDone { revision: 2, rows: rows(&["r1"]) });
+    assert!(matches!(values.as_slice(), [Val::Delta { base: 1, revision: 2, size: 1, upserted, removed, .. }] if upserted.is_empty() && removed.is_empty()));
+    assert_eq!(TOTALS.with(|totals| totals.borrow().clone()), [Some(3)]);
+}
+
+#[test]
 fn dlv_opening_models_reset() {
     let mut twin = open_rows();
     twin.step(Input::Committed { revision: 2, touches: true });
@@ -257,7 +324,7 @@ fn dlv_live_read_same() {
 #[test]
 fn dlv_live_read_old() {
     let mut twin = live_rows();
-    for input in [Input::ReadStale { revision: 2, rows: rows(&["rX"]) }, Input::ReadDone { revision: 1, rows: rows(&["rY"]) }, Input::ReadDone { revision: 0, rows: rows(&["rZ"]) }] {
+    for input in [Input::ReadStale { revision: 2, rows: rows(&["rX"]) }, Input::ReadDone { revision: 0, rows: rows(&["rZ"]) }] {
         let (effects, values) = twin.step_read(input);
         assert!(effects.is_empty() && values.is_empty());
     }
@@ -273,8 +340,6 @@ fn dlv_live_read_failed() {
     empty.read_all();
     let (_, values) = empty.step_read(Input::ReadFailed { revision: 2 });
     assert_eq!(values, [Val::State { revision: 1, state: Ws { phase: Phase::Failed, error: true, loaded: None } }]);
-    let (effects, values) = twin.step_read(Input::ReadFailed { revision: 1 });
-    assert!(effects.is_empty() && values.is_empty(), "an old failure is dropped");
 }
 
 #[test]

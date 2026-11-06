@@ -191,13 +191,30 @@ impl ReadStream {
     }
 }
 
+struct PullWait<'a> {
+    life: &'a Life,
+    stream: u64,
+    outcome: crate::runtime::OutcomeId,
+    armed: bool,
+}
+
+impl Drop for PullWait<'_> {
+    fn drop(&mut self) {
+        if self.armed { self.life.cancel_pull(self.stream, self.outcome); }
+    }
+}
+
 #[uniffi::export]
 impl ReadStream {
     pub fn resync(&self) { self.life.request_snapshot(self.stream); }
 
     /// The next value of the stream, `None` once the stream ended and its last value was taken.
     pub async fn pull(&self) -> Result<Option<ReadValue>, DbError> {
-        match self.life.pull(self.stream).wait().await {
+        let waiter = self.life.pull(self.stream);
+        let mut waiting = PullWait { life: &self.life, stream: self.stream, outcome: waiter.id(), armed: true };
+        let answer = waiter.wait().await;
+        waiting.armed = false;
+        match answer {
             Outcome::Value(PullAnswer::Value(value)) => {
                 let value = *value;
                 if matches!(value, Value::Ended(_)) {
@@ -209,6 +226,7 @@ impl ReadStream {
             Outcome::EpochEnded(_) => Ok(self.finished(ReadEnd::SessionEnded)),
             Outcome::Internal => Err(DbError::Database { detail: "the answer of the owner was lost".into() }),
             Outcome::Value(PullAnswer::Invalid) => Err(DbError::Invalid { detail: "a pull of this stream is waiting already".into() }),
+            Outcome::Value(PullAnswer::Interrupted) => Err(DbError::Interrupted { detail: "the pull was cancelled".into() }),
         }
     }
 
@@ -315,7 +333,8 @@ impl Database {
             Ok(view) => (view, true),
             Err(_) => (View { kind: Kind::List, model: String::new(), tables: Vec::new(), local: true, remote: false, live: false, reload: false, window: WindowKey { model: String::new(), name: String::new() }, subject: String::new() }, false),
         };
-        self.life.open_stream(stream, view, epoch, valid);
+        let revision = self.db.published_revision().load(std::sync::atomic::Ordering::Acquire);
+        self.life.open_stream(stream, view, epoch, valid, revision);
         let status = match (&request, valid) {
             (ReadRequest::Blob { key }, true) => self.watch_status(stream, key),
             _ => None,
