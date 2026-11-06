@@ -184,7 +184,7 @@ fn effect_of(effect: &SessionEffect) -> Option<RefEffect> {
         SessionEffect::Answer { author, req_id, outcome } => RefEffect::Answer { author: *author, req_id: *req_id, outcome: outcome_of(outcome) },
         SessionEffect::RetryState { stream_id, attempts, phase } => RefEffect::RetryState { stream: *stream_id, attempts: *attempts, phase: retry_phase(*phase) },
         SessionEffect::Drained(_) => RefEffect::Drained,
-        SessionEffect::Reply { .. } | SessionEffect::ResumeReply { .. } => return None,
+        SessionEffect::Reply { .. } | SessionEffect::ResumeReply { .. } | SessionEffect::ExecutorFailed => return None,
     })
 }
 

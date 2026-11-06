@@ -119,3 +119,21 @@ fn sess_calling_too_large() {
     let db = open();
     assert_eq!(state::answers(&db.shared.store.lock().connection).unwrap().get(&11), Some(&answer));
 }
+
+#[test]
+fn http_failure_reports_after_its_answer_is_committed() {
+    let mut det = DetScheduler::new(2);
+    let log = new_log();
+    let address = det.add::<SessionCalls>("session", SessionState::new(&[], true), Recorder::<SessionCalls>::new(&log));
+    send(&mut det, address, &log, SessionInput::Published(Published { epoch: 3, identity: Some(4), generation: 0, state: PublishedState::Session, closed: false }));
+    send(&mut det, address, &log, SessionInput::Open { credential: Some(Credential { digest: 4, sequence: 0 }), pending: None, dropped_pending: false, secret: SecretState::Present(4) });
+    let effects = send(&mut det, address, &log, SessionInput::Mutate { author: 7, owner: None, req_id: 11, epoch: 3, path: "/graphql".into(), body: "{}".into(), purpose: 0 });
+    let batch = effects.iter().find_map(|effect| match effect { SessionEffect::CommitPending { batch, .. } => Some(*batch), _ => None }).unwrap();
+    let effects = send(&mut det, address, &log, SessionInput::Committed(Committed { batch, revision: 1, tables: vec![], models: Default::default() }));
+    let attempt = effects.iter().find_map(|effect| match effect { SessionEffect::HttpRequest { attempt_id, .. } => Some(*attempt_id), _ => None }).unwrap();
+    let effects = send(&mut det, address, &log, SessionInput::HttpFailed { attempt_id: attempt });
+    assert!(!effects.iter().any(|effect| matches!(effect, SessionEffect::Answer { .. } | SessionEffect::ExecutorFailed)));
+    let batch = effects.iter().find_map(|effect| match effect { SessionEffect::CommitLanding { batch, .. } => Some(*batch), _ => None }).unwrap();
+    let effects = send(&mut det, address, &log, SessionInput::Committed(Committed { batch, revision: 2, tables: vec![], models: Default::default() }));
+    assert!(matches!(&effects[..], [SessionEffect::Answer { author: 7, req_id: 11, outcome: AuthorOutcome::Error { error: SessionError::Http { status: 0 }, .. } }, SessionEffect::ExecutorFailed]));
+}

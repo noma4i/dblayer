@@ -326,6 +326,7 @@ impl EffectRunner<SessionCalls> for SessionRunner {
             SessionEffect::ResumeReply { id, answer } => {
                 self.wiring.outcomes.settle(OutcomeId::from_raw(id), LifeReply::SessionResume(answer));
             }
+            SessionEffect::ExecutorFailed => self.wiring.to_lifecycle(LifecycleInput::ExecutorFailed { executor: "session".into() }),
             SessionEffect::Answer { author, req_id, outcome } => self.wiring.answer_author(author, req_id, outcome),
             SessionEffect::Drained(drained) => self.wiring.to_lifecycle(LifecycleInput::Drained(drained)),
         }

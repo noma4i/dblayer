@@ -212,6 +212,7 @@ pub enum SessionEffect {
     RestoreClassified { epoch: Epoch },
     Reply { id: ReplyId, answer: SessionAnswer },
     ResumeReply { id: ReplyId, answer: Result<Option<String>, SessionError> },
+    ExecutorFailed,
     Answer { author: AuthorId, req_id: RequestId, outcome: AuthorOutcome },
     RetryState { stream_id: StreamId, attempts: u64, phase: RetryPhase },
     Drained(Drained),
@@ -271,6 +272,7 @@ pub struct SessionState {
     resume_waiters: Vec<ReplyId>,
     resume_published: Option<String>,
     resume_clearing: Option<SessionError>,
+    failed_batch: Option<BatchId>,
     operations: Vec<SessionOperation>,
     next_request: RequestId,
     next_batch: BatchId,
@@ -374,6 +376,8 @@ impl StateOwner for SessionCalls {
     fn closing() -> SessionInput { SessionInput::Closing }
 
     fn effect_id(effect: &SessionEffect) -> Option<EffectId> { effect.io_id() }
+
+    fn defer_executor_failure(pending: &[EffectId]) -> bool { pending.iter().any(|id| id & HTTP_ID != 0) }
 
     fn executor_failed(_executor: &str, pending: Vec<EffectId>) -> Vec<SessionInput> { pending.into_iter().filter_map(SessionInput::io_failed).collect() }
 }

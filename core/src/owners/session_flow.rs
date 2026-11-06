@@ -7,7 +7,7 @@ impl SessionState {
     }
 
     pub fn with_operations(operations: Vec<SessionOperation>, online: Option<bool>) -> Self {
-        Self { phase: SessionPhase::Idle, credential: None, queue: VecDeque::new(), online, epoch: 0, published: PublishedState::Session, after_publish: None, subscribers: BTreeSet::new(), restored_direct: None, restored_active: None, restored_answer: None, resume_waiters: Vec::new(), resume_published: None, resume_clearing: None, operations, next_request: 1, next_batch: 1, next_attempt: 1, next_secret: 1, restore_ready: false, restore_floor: 0, adopt: false, held: None, reported: (0, RetryPhase::Idle) }
+        Self { phase: SessionPhase::Idle, credential: None, queue: VecDeque::new(), online, epoch: 0, published: PublishedState::Session, after_publish: None, subscribers: BTreeSet::new(), restored_direct: None, restored_active: None, restored_answer: None, resume_waiters: Vec::new(), resume_published: None, resume_clearing: None, failed_batch: None, operations, next_request: 1, next_batch: 1, next_attempt: 1, next_secret: 1, restore_ready: false, restore_floor: 0, adopt: false, held: None, reported: (0, RetryPhase::Idle) }
     }
 
     pub fn phase(&self) -> &SessionPhase { &self.phase }
@@ -179,6 +179,10 @@ impl SessionState {
         self.resume_published = None;
         self.resume_clearing = None;
         for id in self.resume_waiters.drain(..) { fx.push(SessionEffect::ResumeReply { id, answer: Err(error.clone()) }); }
+    }
+
+    pub(super) fn report_failed(&mut self, fx: &mut Vec<SessionEffect>) {
+        if self.failed_batch.take().is_some() { fx.push(SessionEffect::ExecutorFailed); }
     }
 
     pub(super) fn land(&mut self, pending: PendingCall, answer: SessionAnswer, identity: Option<Digest>, sequence: Option<u64>, server_ended: bool, fx: &mut Vec<SessionEffect>) {

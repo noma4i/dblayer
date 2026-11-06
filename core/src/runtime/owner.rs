@@ -61,6 +61,7 @@ pub trait StateOwner: Sized + 'static {
     fn epoch_ended(epoch: Epoch, cause: Cause) -> Self::Input;
     fn closing() -> Self::Input;
     fn effect_id(_effect: &Self::Effect) -> Option<EffectId> { None }
+    fn defer_executor_failure(_pending: &[EffectId]) -> bool { false }
     /// The inputs that apply the failure cell of each pending effect id, and of the executor itself.
     fn executor_failed(_executor: &str, _pending: Vec<EffectId>) -> Vec<Self::Input> { Vec::new() }
 }

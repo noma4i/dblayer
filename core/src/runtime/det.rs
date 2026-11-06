@@ -90,8 +90,9 @@ impl<O: StateOwner> ErasedSlot for Slot<O> {
         match arrived {
             Some(Arrival::Input(stamp, input)) => self.cell.push(stamp, input),
             Some(Arrival::Failed(pending)) => {
+                let deferred = O::defer_executor_failure(&pending);
                 self.cell.apply_failure(self.name, pending);
-                return true;
+                return !deferred;
             }
             None => {}
         }

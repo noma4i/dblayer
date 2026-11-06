@@ -8,9 +8,17 @@ impl SessionState {
                 SessionInput::SessionCall { reply: id, .. } => reply(fx, id, Err(SessionError::Closed)),
                 SessionInput::SessionResume { reply: id } => fx.push(SessionEffect::ResumeReply { id, answer: Err(SessionError::Closed) }),
                 SessionInput::Mutate { author, req_id, .. } => author_error(fx, author, req_id, ErrorClass::Permanent, SessionError::Closed),
+                SessionInput::HttpFailed { .. } => fx.push(SessionEffect::ExecutorFailed),
                 _ => {}
             }
             return;
+        }
+        if let SessionInput::HttpFailed { attempt_id } = &input {
+            if !matches!(&phase, SessionPhase::Calling { phase: AttemptPhase::InFlight(id), .. } if id == attempt_id) {
+                self.phase = phase;
+                fx.push(SessionEffect::ExecutorFailed);
+                return;
+            }
         }
         match input {
             SessionInput::Closing => self.closing(phase, fx),
@@ -77,6 +85,7 @@ impl SessionState {
                     self.held = None;
                 }
                 self.on_epoch_ended(phase, epoch, cause, fx);
+                if is_ended(cause) { self.report_failed(fx); }
             }
             input => self.by_phase(phase, input, fx),
         }
@@ -145,6 +154,7 @@ impl SessionState {
             }
             _ => {}
         }
+        self.report_failed(fx);
         self.drained(fx);
     }
 
@@ -303,10 +313,12 @@ impl SessionState {
                     AfterClear::Idle => {
                         if let (Some(call), Some(reason)) = (call, reason) { refuse(fx, call, reason); }
                         if let Some(error) = self.resume_clearing.take() { self.deliver_resume(Err(error), fx); }
+                        self.report_failed(fx);
                         self.idle(fx);
                     }
                     AfterClear::Drain => {
                         if let Some(call) = call { refuse(fx, call, SessionError::Closed); }
+                        self.report_failed(fx);
                         self.drained(fx);
                     }
                 }
@@ -384,10 +396,12 @@ impl SessionState {
                         self.resume_finish(&pending, answer, fx);
                     }
                 }
+                if self.failed_batch == Some(batch) { self.report_failed(fx); }
                 self.idle(fx);
             }
             (SessionPhase::Landing { pending, batch, .. }, SessionInput::Rejected(Rejected { batch: rejected, reason })) if rejected == batch => {
                 self.resume_finish(&pending, Err(SessionError::Rejected(reason)), fx);
+                if self.failed_batch == Some(batch) { self.report_failed(fx); }
                 self.phase = SessionPhase::Blocked { pending: Some(PendingCall { reply: None, ..pending }), reason: Block::Storage };
             }
             (phase, _) => self.phase = phase,
@@ -396,10 +410,11 @@ impl SessionState {
 
     pub(super) fn calling(&mut self, pending: PendingCall, attempts: u64, phase: AttemptPhase, document_sent: bool, input: SessionInput, fx: &mut Vec<SessionEffect>) {
         let mine = |request_id: RequestId, attempt_id: AttemptId| pending.request_id == request_id && phase == AttemptPhase::InFlight(attempt_id);
-        let input = match input {
-            SessionInput::HttpFailed { attempt_id } if mine(pending.request_id, attempt_id) => SessionInput::HttpError { request_id: pending.request_id, attempt_id, temporary: false, auth: false, persisted_missing: false, status: 0, too_large: None },
-            other => other,
-        };
+        if matches!(&input, SessionInput::HttpFailed { attempt_id } if mine(pending.request_id, *attempt_id)) {
+            self.land(pending, Err(SessionError::Http { status: 0 }), None, None, false, fx);
+            if let SessionPhase::Landing { batch, .. } = &self.phase { self.failed_batch = Some(*batch); }
+            return;
+        }
         match input {
             SessionInput::Response { request_id, attempt_id, body, sequence, refusal } if mine(request_id, attempt_id) => {
                 if let Some(code) = refusal {

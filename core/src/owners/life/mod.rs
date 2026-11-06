@@ -17,6 +17,8 @@ pub(crate) mod session_runner;
 mod life_tests;
 #[cfg(test)]
 mod session_exchange_tests;
+#[cfg(test)]
+mod session_panic_tests;
 
 pub use observers::{ObserverPort, StopDone};
 

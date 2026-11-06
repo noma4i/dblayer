@@ -440,8 +440,9 @@ fn run_owner<O: StateOwner>(mut owner: OwnerThread<O>, router: Arc<Router>, time
                 Command::Deliver(stamp, payload) => owner.cell.push_message(stamp, payload),
                 Command::Control(control) => owner.cell.push_control(control),
                 Command::Failed(pending) => {
+                    let deferred = O::defer_executor_failure(&pending);
                     owner.cell.apply_failure(owner.name, pending);
-                    router.report_failure(owner.name);
+                    if !deferred { router.report_failure(owner.name); }
                 }
                 Command::Wake => {}
                 Command::Stop => return,
