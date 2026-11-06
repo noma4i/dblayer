@@ -39,7 +39,6 @@ mod query;
 #[cfg(test)]
 #[path = "tape_tests.rs"]
 pub(crate) mod tape;
-pub use query::CachedQuery;
 mod command;
 mod loading;
 mod write;

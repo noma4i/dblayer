@@ -79,12 +79,6 @@ public struct Query<Model: DBModel>: Sendable {
     get throws { try relation.map { ValueStream.LoadTarget(model: Model.modelName, relation: $0, paramsJson: try JSONValue.object(params).text) } }
   }
 
-  @concurrent public func cached(in scope: AccountScope? = nil) async throws -> Cached<[Model]>? {
-    let (database, epoch) = try DB.admitted(scope)
-    guard let peeked = try await database.peekQuery(epoch: epoch, queryJson: json) else { return nil }
-    return Cached(value: try peeked.rows.map { try Model.decode($0) }, revision: peeked.revision)
-  }
-
   @concurrent public func cachedRow(_ id: String, in scope: AccountScope? = nil) async throws -> Model? {
     let (database, epoch) = try DB.admitted(scope)
     guard let row = try database.peekRow(epoch: epoch, model: Model.modelName, rowId: id) else { return nil }
@@ -143,9 +137,4 @@ public struct Query<Model: DBModel>: Sendable {
 public struct Association<Owner: DBModel, Target: DBModel>: Sendable {
   public let name: String
   public init(_ name: String) { self.name = name }
-}
-
-public struct Cached<Value: Sendable>: Sendable {
-  public let value: Value
-  public let revision: Int64
 }

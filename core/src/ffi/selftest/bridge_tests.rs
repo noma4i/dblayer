@@ -1407,7 +1407,6 @@ async fn every_entry_of_a_left_account_is_refused_and_reaches_nothing() {
         case("node", |db, old| Box::pin(async move { bound(db.node(old, "User".into(), "node".into(), "user".into(), true)).await.map(drop) })),
         case("nodes", |db, old| Box::pin(async move { bound(db.nodes(old, "User".into(), "nodes".into(), vec!["user".into()])).await.map(drop) })),
         case("edge_values", |db, old| Box::pin(async move { bound(db.edge_values(old, "User".into(), "all".into(), "{}".into(), vec!["user".into()])).await.map(drop) })),
-        case("peek_query", |db, old| Box::pin(async move { bound(db.peek_query(old, r#"{"model":"User"}"#.into())).await.map(drop) })),
         case("peek_row", |db, old| Box::pin(async move { db.peek_row(old, "User".into(), "user".into()).map(drop) })),
         case("cancel_upload", |db, old| Box::pin(async move { bound(db.cancel_upload(old, "User".into(), "user".into(), "upload".into())).await.map(drop) })),
     ];

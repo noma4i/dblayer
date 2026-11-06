@@ -54,16 +54,13 @@ A delta whose base is not the held revision asks for one new snapshot. The delta
 
 ## Reading before the first delivery
 
-`query.cached()` reads the rows the core already holds and sends no request. It is `nil` when the core holds nothing for the query.
-`query.cachedRow(id)` does the same for one row. The first value of a stream comes from the same cache.
+`query.cachedRow(id)` reads one row the core already holds and sends no request. The first value of a stream comes from the same cache.
 
 ```swift
-let rows = try await Moment.recent.cached()?.value ?? []
 let row = try await Moment.recent.cachedRow(id)
 ```
 
 ```kotlin
-val rows = Moment.recent.cached()?.value ?: emptyList()
 val row = Moment.recent.cachedRow(id)
 ```
 

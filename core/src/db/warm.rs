@@ -98,16 +98,6 @@ impl Db {
         Ok(warmed)
     }
 
-    pub fn peek_query(&self, query: &Query) -> Option<Peeked> {
-        let key = Subject::Rows(query.clone()).key();
-        let found = locked(&self.shared.warm).touch(&key).and_then(|warmed| {
-            let peek = locked(&warmed.peek.peek);
-            peek.ready.then(|| Peeked { revision: peek.revision, rows: peek.rows.clone() })
-        });
-        self.count_peek(found.is_some());
-        found
-    }
-
     /// The row from the row cache, or `None` when it is not cached (which does not mean that it does not exist).
     pub fn peek_row(&self, model: &str, id: &RowId) -> Option<Row> {
         let found = locked(&self.shared.cache).get(model, id.as_str());

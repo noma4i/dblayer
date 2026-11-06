@@ -95,9 +95,6 @@ class Query<Model : DBModel>(
         relation?.let { put("relation", it); put("params", params) }
     }.jsonText()
 
-    suspend fun cached(account: AccountScope? = null): Cached<List<Model>>? =
-        onAccount(account) { database, epoch -> database.peekQuery(epoch, json)?.let { change -> Cached(change.rows.map(decoder::read), change.revision) } }
-
     /** The rows of this query read from storage once. It sends no request and keeps no stream. */
     suspend fun read(account: AccountScope? = null): List<Model> = onAccount(account) { database, epoch -> database.readQuery(epoch, json).map(decoder::read) }
 
@@ -134,8 +131,6 @@ class Query<Model : DBModel>(
     }
     suspend fun loadMore(account: AccountScope? = null): LoadMoreResult = onAccount(account) { database, epoch -> database.loadMore(epoch, modelName, relation.orEmpty(), params.jsonText()) }
 }
-
-data class Cached<Value>(val value: Value, val revision: Long)
 
 fun <Model : DBModel> idsQuery(modelName: String, decoder: ModelDecoder<Model>, ids: List<String>): Query<Model> =
     Query(modelName, decoder).where(Condition.inList("id", ids.map { JsonPrimitive(it) }))
