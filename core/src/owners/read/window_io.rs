@@ -44,7 +44,7 @@ impl WindowIo {
         Self { transport, codec, admit, handle, counted: None, current: None, open: Open::default(), rest }
     }
 
-    /// The epoch the database publishes now: a request of an older epoch does not start.
+    /// The epoch of the session now, `Epoch::MAX` while there is none: a request of another epoch does not start.
     pub fn current_epoch_by(mut self, current: Arc<dyn Fn() -> Epoch + Send + Sync>) -> Self {
         self.current = Some(current);
         self

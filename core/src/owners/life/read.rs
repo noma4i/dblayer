@@ -114,7 +114,7 @@ pub(super) fn add(builder: &mut RuntimeBuilder, wiring: &Arc<Wiring>, ports: &Po
             WindowsEffect::Window { .. } => {}
         }),
     );
-    let windows = builder.add::<Windows>("windows", state, windows_io.counted_by(handle.clone()).current_epoch_by({ let published = wiring.clone(); Arc::new(move || published.published.get().map_or(0, |published| published.epoch)) }));
+    let windows = builder.add::<Windows>("windows", state, windows_io.counted_by(handle.clone()).current_epoch_by({ let published = wiring.clone(); Arc::new(move || published.published.get().filter(|published| published.identity.is_some()).map_or(Epoch::MAX, |published| published.epoch)) }));
 
     let deliveries_wiring = wiring.clone();
     let delivery_io = DeliveryIo::new(
