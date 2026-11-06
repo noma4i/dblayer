@@ -173,14 +173,21 @@ extension BridgeProbeTests {
     clock.advance(by: 2)
     try await Moment.feed.load()
     #expect(transport.calls.filter { $0.operationName == "MomentsFeed" }.count == 2)
+    transport.enqueue("MomentsFeed", reply: #"{"data":{"feed":{"nodes":[{"__typename":"Moment","id":"1","uuid":"a","likedByMe":false,"media":{},"createdAt":"2026-10-08T00:00:00.000Z"}],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}"#)
+    transport.enqueue("MomentsFeed", reply: #"{"data":{"feed":{"nodes":[{"__typename":"Moment","id":"1","uuid":"a","likedByMe":false,"media":{},"createdAt":"2026-10-08T00:00:00.000Z"}],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}"#)
     clock.advance(by: 5 * 60 + 1)
     let failing = Task { try await Moment.feed.load() }
+    let finished = Done()
+    let watcher = Task { _ = await failing.result; finished.set() }
+    defer { watcher.cancel() }
     try await networkDrops(during: down)
-    do { try await valueBeforeDeadline(failing) { down.release() } } catch DbError.Network {} catch { Issue.record("unexpected error: \(error)") }
-    guard await observe("the network error arrives", { held.error != nil }) else { return }
-    #expect(transport.calls.filter { $0.operationName == "MomentsFeed" }.count == 3)
+    down.release()
+    await eventually("the third request answered") { transport.calls.filter { $0.operationName == "MomentsFeed" }.count == 3 }
+    #expect(!finished.value, "a load without network keeps waiting")
+    try DB.database.setOnline(online: true)
+    try await valueBeforeDeadline(failing) {}
+    guard await observe("the window shows the loaded rows", { held.phase == .loaded && held.error == nil }) else { return }
+    #expect(transport.calls.filter { $0.operationName == "MomentsFeed" }.count >= 4)
     #expect(held.rows.map(\.id) == ["1"])
-    #expect(held.phase == .loaded)
-    if case .Network? = held.error {} else { Issue.record("the network error is missing") }
   }
 }

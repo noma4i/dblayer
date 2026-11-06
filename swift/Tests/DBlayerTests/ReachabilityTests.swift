@@ -3,10 +3,12 @@ import Foundation
 import Testing
 @testable import DBlayer
 
-private final class PathCredential: CredentialStore, Sendable {
-  func get() throws -> String? { nil }
-  func set(credential: String) throws {}
-  func clear() throws {}
+private final class PathCredential: CredentialStore, @unchecked Sendable {
+  private let lock = NSLock()
+  private var value: String?
+  func get() throws -> String? { lock.withLock { value } }
+  func set(credential: String) throws { lock.withLock { value = credential } }
+  func clear() throws { lock.withLock { value = nil } }
 }
 
 private enum PathProbe: GraphQLOperation {
@@ -14,6 +16,14 @@ private enum PathProbe: GraphQLOperation {
   static let operationName = "PathProbe"
   static let document = "query PathProbe { __typename }"
 }
+
+private enum SessionProbe: GraphQLOperation {
+  typealias Variables = String
+  static let operationName = "SessionProfile"
+  static let document = "query SessionProfile { sessionProfile { id } }"
+}
+
+private struct PathLogin: Encodable, Sendable { let account: String }
 
 private final class RefusingHttp: EncryptedHttp, Sendable {
   let posts: AsyncStream<Void>.Continuation
@@ -35,13 +45,24 @@ struct ReachabilityTests {
     let fixture = try JSONDecoder().decode([String: String].self, from: Data(contentsOf: url))
     let encrypted = EncryptedConfig(origin: "https://example.com", serverKey: try #require(fixture["PUBLIC_KEY_DER_B64"]), pin: try #require(fixture["PIN"]), endpoints: EncryptedEndpoints(graphql: "/graphql", cable: "/cable", logout: "/logout", bootstrap: "/bootstrap", sessionOperations: [:]), protocolLabel: "test-v1", cablePurpose: "hello", cableChannel: "TestChannel")
     let (posts, continuation) = AsyncStream<Void>.makeStream()
-    let http = RefusingHttp(continuation)
-    try await Reachability.$source.withValue(path) {
-      try await DB.open(encrypted: encrypted, credentials: PathCredential(), transport: MockTransport(), modelsJSON: "[]", operations: [PathProbe.self], http: http)
+    let bootstrapHttp = RefusingHttp(continuation)
+    let server = try SealedServer { requestPath, body in
+      if requestPath == "/api/auth/login_link" { return ["sessionId": "stand"] }
+      if body["operationName"] as? String == "SessionProfile" { return ["data": ["sessionProfile": ["id": "stand"]]] }
+      return ["data": [String: Any]()]
     }
+    let signedIn = EncryptedConfig(origin: encrypted.origin, serverKey: encrypted.serverKey, pin: encrypted.pin, endpoints: EncryptedEndpoints(graphql: "/graphql", cable: "/cable", logout: "/logout", bootstrap: "/bootstrap", sessionOperations: ["login_link": EncryptedSessionOperation(path: "/api/auth/login_link", class: .authenticated)]), protocolLabel: "test-v1", cablePurpose: "hello", cableChannel: "TestChannel")
+    try await Reachability.$source.withValue(path) {
+      try await DB.open(encrypted: signedIn, credentials: PathCredential(), transport: MockTransport(), modelsJSON: "[]", operations: [PathProbe.self, SessionProbe.self], http: server)
+    }
+    path.set(true)
+    try await DB.sessionCall("login_link", body: PathLogin(account: "A"))
+    try await DB.run("SessionProfile", variables: [:])
+    #expect(!(await refusal().contains("needs the network")))
 
+    path.set(false)
     #expect(await refusal().contains("needs the network"))
-    let bootstrap = Task { try? await Reachability.$source.withValue(path) { try await DB.serverConfig(encrypted: encrypted, platform: .ios, version: "1.2", http: http) } }
+    let bootstrap = Task { try? await Reachability.$source.withValue(path) { try await DB.serverConfig(encrypted: encrypted, platform: .ios, version: "1.2", http: bootstrapHttp) } }
     path.set(true)
     #expect(await Cursor(posts).next("the bootstrap request after the path became satisfied") != nil)
     bootstrap.cancel()

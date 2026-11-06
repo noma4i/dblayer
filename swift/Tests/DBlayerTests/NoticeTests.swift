@@ -11,6 +11,7 @@ extension BridgeProbeTests {
     let events = Cursor(try DB.account().events(ChatActivityNotice.self))
     let actions = Cursor(try await ChatAction.byChat("c").live.stream())
     #expect(await actions.next()?.isEmpty == true)
+    await eventually("the signal subscription opens") { transport.calls.count == 1 }
     try transport.emit("ChatActionSignal", json: #"{"data":{"chatActionSignal":{"chatId":"c","userId":"u","kind":"TYPING","active":true}}}"#)
     #expect(await actions.first("typing") { !$0.isEmpty }?.first?.kind == "TYPING")
     try transport.emit("ChatActionSignal", json: #"{"data":{"chatActionSignal":{"chatId":"c","userId":"u","kind":"SCREENSHOT","active":true}}}"#)

@@ -116,14 +116,21 @@ extension BridgeProbeTests {
     let held = Projected<MediaMessage>(try DB.account().stream(failedQuery))
     try await held.loaded()
     let down = transport.hold("ChatMedia", failure: .Network(detail: "down"))
-    async let failing: Void = failedQuery.loadAll()
+    transport.enqueue("ChatMedia", reply: empty)
+    let failing = Task { try await failedQuery.loadAll() }
+    let finished = Done()
+    let watcher = Task { _ = await failing.result; finished.set() }
+    defer { watcher.cancel() }
     try await networkDrops(during: down)
-    do { try await failing; Issue.record("the failed page returned successfully") }
-    catch DbError.Network {} catch { Issue.record("unexpected error: \(error)") }
-    guard await observe("the failed media page arrives", { held.error != nil }) else { return }
+    down.release()
+    await eventually("the held page reached the transport") { transport.calls.filter { $0.operationName == "ChatMedia" }.count == 8 }
+    #expect(!finished.value, "a media load without network keeps waiting")
+    try DB.database.setOnline(online: true)
+    try await valueBeforeDeadline(failing) {}
+    #expect(transport.calls.filter { $0.operationName == "ChatMedia" }.count == 9)
+    guard await observe("the media window is complete", { held.state?.complete == true }) else { return }
     #expect(held.rows.map(\.id) == ["x1"])
     #expect(held.phase == .loaded)
-    #expect(held.state?.complete == false)
-    if case .Network? = held.error {} else { Issue.record("the network error is missing") }
+    #expect(held.error == nil)
   }
 }

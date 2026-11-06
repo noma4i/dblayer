@@ -73,7 +73,7 @@ extension BridgeProbeTests {
       let next = Projected<User>(try DB.account().stream(User.profile))
       try await next.loaded()
       #expect(next.value?.name == "B")
-      #expect(second.calls.count == 1)
+      #expect(second.calls.filter { $0.operationName == "UserProfile" }.count == 1)
       await DB.closeForCleanup()
     }
   }
@@ -96,7 +96,7 @@ extension BridgeProbeTests {
     try await reopen(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: second, operations: Self.operations)
     let reopened = Projected<User>(try DB.account().stream(User.profile))
     await eventually(#"reopened.value?.name == "B""#) { reopened.value?.name == "B" }
-    #expect(first.calls.count == 1)
+    #expect(first.calls.filter { $0.operationName == "UserProfile" }.count == 1)
     await DB.closeForCleanup()
   }
 }

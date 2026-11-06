@@ -58,14 +58,23 @@ let sendMoment = #"[{"name":"CreateMoment","document":"mutation CreateMoment($te
 private let sessionProfile = #"{"name":"SessionProfile","document":"query SessionProfile { sessionProfile { id } }"}"#
 
 /// The HTTP of the encrypted session answers from the mock transport, so the test database signs in the real way and every request still reaches the mock.
-private func bridgeToTransport(_ transport: Transport) -> @Sendable (String, [String: Any]) async throws -> [String: Any] {
-  { path, body in
+private func mutationNames(_ operations: String) throws -> Set<String> {
+  let listed = try JSONSerialization.jsonObject(with: Data(operations.utf8)) as? [[String: Any]] ?? []
+  return Set(listed.compactMap { ($0["document"] as? String)?.hasPrefix("mutation") == true ? $0["name"] as? String : nil })
+}
+
+private func bridgeToTransport(_ transport: Transport, operations: String) throws -> @Sendable (String, [String: Any]) async throws -> [String: Any] {
+  let mutations = try mutationNames(operations)
+  return { path, body in
     if path == "/api/auth/login_link" { return ["sessionId": "stand"] }
     if path == "/api/logout" { return ["revoked": true] }
     let operation = body["operationName"] as? String ?? ""
     if operation == "SessionProfile" { return ["data": ["sessionProfile": ["id": "stand"]]] }
     let variables = (body["variables"] as? [String: Any]).flatMap { try? JSONSerialization.data(withJSONObject: $0, options: [.sortedKeys]) }.flatMap { String(data: $0, encoding: .utf8) } ?? "{}"
-    let text = try await transport.query(request: TransportRequest(document: body["query"] as? String ?? "", operationName: operation, variablesJson: variables, purpose: .standard))
+    let document = body["query"] as? String ?? ""
+    let request = TransportRequest(document: document, operationName: operation, variablesJson: variables, purpose: SealedServer.purpose)
+    let text: String
+    if mutations.contains(operation) { text = try await transport.mutate(request: request) } else { text = try await transport.query(request: request) }
     return try JSONSerialization.jsonObject(with: Data(text.utf8)) as? [String: Any] ?? [:]
   }
 }
@@ -96,7 +105,7 @@ func reopen(config: Config, modelsJson: String, transport: Transport?, operation
   guard let mock = transport else {
     return try await adopt(try await openDatabase(config: config, modelsJson: modelsJson, transport: transport, operations: operations))
   }
-  let server = try SealedServer(bridge: bridgeToTransport(mock))
+  let server = try SealedServer(bridge: try bridgeToTransport(mock, operations: withUploadSteps(operations, models: modelsJson)))
   (mock as? MockTransport ?? (mock as? any WrapsMock)?.base)?.cable = EncryptedCablePeer(server: server)
   let held = credential(of: config)
   let restored = (try? held.get()) != nil
@@ -108,7 +117,7 @@ func reopen(config: Config, modelsJson: String, transport: Transport?, operation
 /// The same session stand on a clock that only `advance(by:)` moves.
 @MainActor @discardableResult
 func reopenClocked(modelsJson: String, transport: MockTransport, operations: String = "[]", path: String? = nil, startingAt start: Date = Date()) async throws -> TestClock {
-  let server = try SealedServer(bridge: bridgeToTransport(transport))
+  let server = try SealedServer(bridge: try bridgeToTransport(transport, operations: withUploadSteps(operations, models: modelsJson)))
   transport.cable = EncryptedCablePeer(server: server)
   await DB.closeForCleanup()
   let held = path.map { credential(of: Config(path: $0, dataVersion: nil, cacheRows: 0)) } ?? HeldCredential()

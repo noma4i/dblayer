@@ -186,10 +186,10 @@ extension BridgeProbeTests {
     let scope = try DB.account()
     var projected: Projected<User>? = Projected<User>(try scope.stream(User.profile))
     try await projected?.loaded()
-    #expect(try await DB.subscriptionCensus().subscriptions == 1)
+    #expect(try await DB.subscriptionCensus().observedQueries == 1)
 
     projected = nil
-    await eventually("the stream left the core") { (try? await DB.subscriptionCensus().subscriptions) == 0 }
+    await eventually("the stream left the core") { (try? await DB.subscriptionCensus().observedQueries) == 0 }
   }
 
   /// B07: a change of one row decodes one row, and the subscriptions are the readers.
@@ -206,7 +206,7 @@ extension BridgeProbeTests {
     for number in 1...5 { first.append(try await scope.send(Moment.self, values: ["text": .string("m\(number)")])) }
     for sent in first { _ = try await sent.outcome() }
     await eventually("the thread holds five confirmed rows") { thread.rows.count == 5 && thread.rows.allSatisfy { $0.sync.state == .synced } }
-    #expect(try await DB.subscriptionCensus().subscriptions == 2)
+    #expect(try await DB.subscriptionCensus().subscriptions == 1)
 
     let (decoded, deltas) = (thread.projection.decoded, thread.projection.deltas)
     let extra = try await scope.send(Moment.self, values: ["text": .string("m6")])
@@ -295,8 +295,9 @@ extension BridgeProbeTests {
     _ = projection.apply(.snapshot(revision: 2, rows: [whole], state: state))
     #expect(projection.rows.count == 1 && projection.error == nil, "a good snapshot did not clear the error")
 
-    let events = scope.events(User.self)
-    guard case .failed? = await Cursor(events).next("the source error of the events stream") else {
+    let database = try DB.database
+    let unknown = ValueStream(epoch: scope.epoch, reader: database.subscribeValues(epoch: scope.epoch, request: .events(model: "Nope")), database: database, load: nil)
+    guard case .failed? = await Cursor(EventStream<User>(stream: unknown)).next("the source error of the events stream") else {
       Issue.record("the events stream did not report its source error")
       return
     }

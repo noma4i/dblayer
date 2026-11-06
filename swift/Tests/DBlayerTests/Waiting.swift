@@ -294,7 +294,7 @@ func opened<Model: DBModel>(_ events: EventStream<Model>, sourceLocation: Source
   return cursor
 }
 
-/// The network goes away while the held request is at the server: the load ends with the network error at once. The test clock never moves by itself, so a network error the server returns would wait for a retry without end.
+/// The network goes away while the held request is at the server: the load waits (Loading x Online(false) is Waiting) until the test sets the network online again.
 @MainActor
 func networkDrops(during held: Hold) async throws {
   await held.entered()

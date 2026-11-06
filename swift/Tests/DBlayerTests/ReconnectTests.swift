@@ -25,7 +25,7 @@ extension BridgeProbeTests {
     try DB.database.setOnline(online: true)
     await eventually("the list loaded again") { loads() == 2 }
     try await list.loaded()
-    #expect(loads() == 2, "the list loaded more or less than once on reconnect")
+    #expect(loads() == 2, "the list loaded more or less than once on reconnect: \(transport.calls.map(\.operationName))")
   }
 
   /// K11: while the network is away `refresh` and `loadMore` fail at once with the network error, and the stream shows the error. Nothing reaches the transport.

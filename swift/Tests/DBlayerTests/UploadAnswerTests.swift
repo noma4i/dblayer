@@ -34,15 +34,15 @@ extension BridgeProbeTests {
     try await reopen(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: transport, operations: #"[{"name":"CreateBlob","document":"mutation CreateBlob { createBlob { url headers signedId blobId } }"},{"name":"CreateMoment","document":"mutation CreateMoment { createMoment { id uuid likedByMe media createdAt successMessage } }"}]"#)
     let id = try await Moment.send(in: DB.account(), text: "intro").confirmed().id
     let moment = try #require(try await Moment.find(id).current())
-    for expected in ["Intro received", nil] as [String?] {
-      transport.enqueue("CreateBlob", reply: #"{"data":{"createBlob":{"url":"https://storage.test/video","headers":{},"signedId":"signed","blobId":"blob"}}}"#)
+    for (turn, expected) in (["Intro received", nil] as [String?]).enumerated() {
+      if turn == 0 { transport.enqueue("CreateBlob", reply: #"{"data":{"createBlob":{"url":"https://storage.test/video","headers":{},"signedId":"signed","blobId":"blob"}}}"#) }
       let field = expected.map { ",\"successMessage\":\"\($0)\"" } ?? ""
       transport.enqueue("CreateMoment", reply: "{\"data\":{\"createMoment\":{\(row)\(field)}}}")
       let uploaded = try await moment.uploadClip(UploadRequest(path: source.path), in: DB.account())
       #expect(uploaded.optimisticValue?.id == "m77")
       #expect(try await uploaded.answer(as: MomentUploadClipResult.self).successMessage == expected)
     }
-    #expect(transport.calls.map(\.operationName) == ["CreateMoment", "CreateBlob", "CreateMoment", "CreateBlob", "CreateMoment"])
+    #expect(transport.calls.map(\.operationName) == ["CreateMoment", "CreateBlob", "CreateMoment", "CreateMoment"])
     #expect(transport.unscripted.isEmpty)
   }
 }

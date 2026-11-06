@@ -46,6 +46,7 @@ extension BridgeProbeTests {
     let failure = DbError.Session(code: code, detail: "\(code)")
 
     transport.enqueue("MomentsFeed", failure: failure)
+    if code == .replayedRequest { transport.enqueue("MomentsFeed", failure: failure) }
     do {
       try await Moment.feed.load()
       Issue.record("\(code): the load did not throw")

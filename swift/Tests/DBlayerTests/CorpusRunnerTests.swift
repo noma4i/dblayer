@@ -499,24 +499,49 @@ private func corpusFiles() throws -> [URL] {
   try FileManager.default.contentsOfDirectory(at: corpusDirectory(), includingPropertiesForKeys: nil).filter { $0.pathExtension == "jsonl" }.sorted { $0.lastPathComponent < $1.lastPathComponent }
 }
 
+private struct CorpusStepInvalid: Error {}
+
+private func runCorpus(_ file: URL) async throws -> String? {
+  let lines = try String(contentsOf: file, encoding: .utf8).split(separator: "\n").filter { !$0.allSatisfy(\.isWhitespace) }
+  let runner = DatabaseRunner()
+  var mismatch: String?
+  for (index, line) in lines.dropFirst().enumerated() {
+    guard let step = try JSONSerialization.jsonObject(with: Data(line.utf8)) as? [String: Any] else { throw CorpusStepInvalid() }
+    let got = "[" + (await runner.apply(step)).joined(separator: ",") + "]"
+    let expected = canonical(step["out"] ?? [])
+    if got != expected {
+      mismatch = "\(file.lastPathComponent) step \(index + 1) input \(canonical(step["in"] ?? "")) expected \(expected) got \(got)"
+      break
+    }
+  }
+  runner.mock.releaseAll()
+  if let database = runner.database { try? await database.closeDatabase() }
+  return mismatch
+}
+
 @Suite(.serialized)
 struct CorpusRunnerTests {
-  @Test(.timeLimit(.minutes(5)))
+  @Test(.timeLimit(.minutes(1)))
   func theSharedCorpusIsGreenThroughTheSwiftWrapper() async throws {
     let files = try corpusFiles()
     #expect(!files.isEmpty)
-    for file in files {
-      let lines = try String(contentsOf: file, encoding: .utf8).split(separator: "\n").filter { !$0.allSatisfy(\.isWhitespace) }
-      let runner = DatabaseRunner()
-      for (index, line) in lines.dropFirst().enumerated() {
-        let step = try #require(try JSONSerialization.jsonObject(with: Data(line.utf8)) as? [String: Any])
-        let got = "[" + (await runner.apply(step)).joined(separator: ",") + "]"
-        let expected = canonical(step["out"] ?? [])
-        #expect(got == expected, "\(file.lastPathComponent) step \(index + 1) input \(canonical(step["in"] ?? "")) expected \(expected) got \(got)")
-        if got != expected { break }
+    var mismatches: [String] = []
+    try await withThrowingTaskGroup(of: String?.self) { group in
+      var next = 0
+      while next < min(6, files.count) {
+        let file = files[next]
+        group.addTask { try await runCorpus(file) }
+        next += 1
       }
-      runner.mock.releaseAll()
-      if let database = runner.database { try? await database.closeDatabase() }
+      while let result = try await group.next() {
+        if let result { mismatches.append(result) }
+        if next < files.count {
+          let file = files[next]
+          group.addTask { try await runCorpus(file) }
+          next += 1
+        }
+      }
     }
+    #expect(mismatches.isEmpty, "\(mismatches)")
   }
 }

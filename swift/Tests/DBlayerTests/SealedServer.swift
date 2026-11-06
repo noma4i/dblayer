@@ -26,6 +26,7 @@ final class SealedServer: EncryptedHttp, @unchecked Sendable {
   private var lost = false
   private let answer: @Sendable (String, [String: Any]) -> [String: Any]
   private let bridge: (@Sendable (String, [String: Any]) async throws -> [String: Any])?
+  @TaskLocal static var purpose: NetworkPurpose = .standard
 
   /// `answer` maps the path and the request body of a signed-in request to the answer body.
   init(deduplicate: Bool = false, answer: @escaping @Sendable (String, [String: Any]) -> [String: Any]) throws {
@@ -100,7 +101,7 @@ final class SealedServer: EncryptedHttp, @unchecked Sendable {
     }
     let reply: [String: Any]
     if let bridge {
-      do { reply = try await bridge(path, sent) } catch let error as DbError {
+      do { reply = try await Self.$purpose.withValue(purpose) { try await bridge(path, sent) } } catch let error as DbError {
         switch error {
         case .Http(let status, _): return EncryptedReply(status: status, body: "")
         case .Session(let code, _): reply = ["error": Self.wireName(code)]
