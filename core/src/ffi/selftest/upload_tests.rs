@@ -136,7 +136,8 @@ async fn a_send_with_a_file_confirms_the_row_the_server_answers() {
     std::fs::write(&source, b"abc").unwrap();
     let epoch = database.session_epoch();
     let receipt = named_bound("send", database.send(crate::ffi::CommandRequest { epoch, model: "Moment".into(), values_json: r#"{"text":"clip"}"#.into(), args_json: "{}".into(), upload: Some(crate::ffi::command::CommandUpload { action: "upload".into(), request: request(&source) }) })).await.unwrap();
-    assert!(receipt.optimistic_value.is_some());
+    let shown = receipt.optimistic_value.clone().expect("the receipt carries the row");
+    assert_eq!(shown.uploads.iter().map(|entry| entry.action.as_str()).collect::<Vec<_>>(), ["upload"], "the row shows the transfer of its action at once");
     let outcome = named_bound("outcome", database.outcome(receipt)).await.unwrap();
     let WireOperationOutcome::Confirmed { value, .. } = outcome else { panic!("{outcome:?}") };
     assert_eq!(value.map(|row| row.id), Some("42".to_string()));

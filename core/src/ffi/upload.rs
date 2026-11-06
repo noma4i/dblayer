@@ -190,12 +190,15 @@ impl Database {
         let epoch = request.epoch;
         self.account_call(epoch)?;
         let Some(upload) = request.upload else { return Err(invalid("a command without a file goes through the owners")) };
+        let action = upload.action.clone();
         let (db, name, texts) = (self.db.clone(), request.model.clone(), (request.values_json.clone(), request.args_json.clone()));
         let (file, planned) = self.offload(move || Ok((upload.request.into_file()?, db.plan_create(&name, serde_json::from_str(&texts.0)?, serde_json::from_str(&texts.1)?)?))).await?;
         let item = self.single_upload(&request.model, planned.row_id.as_str(), &upload.action, &file, planned.effects.clone())?;
         let waiter = self.life.accept_upload(epoch, item, self.now());
         let TransferAnswer::Receipt(held) = self.transfer_answer(waiter, "send").await? else { return Err(DbError::Database { detail: "the owner answered a send with no receipt".into() }) };
-        let record = Record { id: planned.row_id.clone(), revision: 0, data: planned.input.as_object().cloned().unwrap_or_default(), sync: Default::default(), ephemeral: 0 };
+        let queued = crate::upload::UploadInfo { status: crate::upload::UploadStatus::Queued, stage: crate::upload::UploadStage::Prepare, sent_bytes: 0, total_bytes: 0, wait_reason: None, attempts: 0, error: None };
+        let sync = crate::syncstate::SyncInfo { uploads: std::collections::BTreeMap::from([(action, queued)]), ..Default::default() };
+        let record = Record { id: planned.row_id.clone(), revision: 0, data: planned.input.as_object().cloned().unwrap_or_default(), sync, ephemeral: 0 };
         let value = self.wire(&request.model)?.row(&record);
         Ok(self.transfer_receipt(epoch, request.model, held, Some(value)))
     }
