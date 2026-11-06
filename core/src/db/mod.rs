@@ -34,7 +34,6 @@ pub(crate) use plan_write::{LocalPlan, MutationCall, Planned};
 mod upload_rows;
 #[cfg(test)]
 mod queue_write_tests;
-mod merge;
 mod lookup;
 pub(crate) mod nested_ref;
 pub(crate) mod op_effect;
@@ -61,8 +60,7 @@ pub use error::DbError;
 pub use local_write::{Acted, OutboxOperation};
 pub use open::{Db, DbConfig, DroppedRecord, OpenReport};
 pub use row::{Record, Row};
-#[cfg(test)]
-pub(crate) use prior::Prior;
+pub(crate) use prior::{Prior, PriorRow};
 pub(crate) use open::locked;
 #[cfg(test)]
 pub(crate) use open::Shared;

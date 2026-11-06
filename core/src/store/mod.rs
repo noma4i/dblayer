@@ -17,6 +17,7 @@ pub(crate) mod blob;
 mod boot;
 mod error;
 mod file_ops;
+pub(crate) mod merge;
 mod open;
 mod restore;
 #[cfg(test)]

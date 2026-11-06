@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, BTreeSet, HashSet};
+use std::collections::{BTreeMap, BTreeSet};
 
 use rusqlite::params;
 use serde::{Deserialize, Serialize};
@@ -80,7 +80,7 @@ impl PriorRow {
 }
 
 impl Prior {
-    fn decode(value: Value) -> Result<Self, StoreError> {
+    pub(crate) fn decode(value: Value) -> Result<Self, StoreError> {
         let prior: Self = serde_json::from_value(value)?;
         for row in &prior.rows {
             RowId::new(row.id()).map_err(|error| StoreError::Constraint(error.to_string()))?;
@@ -102,22 +102,6 @@ impl Prior {
 
     pub fn of(entry: &OutboxOperation) -> Result<Option<Prior>, StoreError> {
         entry.rollback.clone().map(Self::decode).transpose()
-    }
-
-    pub fn unconfirmed_fields(reader: &Reader<'_>, closing: Option<i64>, model: &str, id: &str) -> Result<HashSet<String>, StoreError> {
-        let sql = format!("SELECT DISTINCT e.seq FROM op_effect e JOIN op ON op.seq = e.seq WHERE e.model = ?1 AND e.row_id = ?2 AND e.kind = 'edit' AND op.status IN {}", crate::operation::OPEN_STATUSES);
-        let mut statement = reader.connection().prepare_cached(&sql)?;
-        let sequences = statement.query_map(params![model, id], |row| row.get::<_, i64>(0))?.collect::<Result<Vec<_>, _>>()?;
-        let mut fields = HashSet::new();
-        for seq in sequences.into_iter().filter(|seq| Some(*seq) != closing) {
-            let prior = super::op_effect::read_prior(reader.connection(), seq)?.map(Self::decode).transpose()?;
-            for row in prior.into_iter().flat_map(|prior| prior.rows) {
-                if let PriorRow::Edited { model: owner, id: row_id, owned, .. } = row {
-                    if owner == model && row_id == id { fields.extend(owned.into_keys()); }
-                }
-            }
-        }
-        Ok(fields)
     }
 
     pub fn created_rows(reader: &Reader<'_>, seq: i64) -> Result<Vec<(String, String)>, StoreError> {

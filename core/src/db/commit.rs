@@ -6,7 +6,7 @@ use crate::lifecycle::authority::Authority;
 use crate::store::{Committed, PlanCommitError, Reader, TombstonePrune};
 
 use super::error::DbError;
-use super::merge::Admission;
+use crate::store::merge::{admitted, Admission};
 use super::open::Db;
 use super::parent_pointer::Followed;
 
@@ -73,7 +73,7 @@ impl Db {
             for op in &mut envelope.entity_ops {
                 if let EntityOp::Upsert { model, id, row } = op {
                     row.insert("id".into(), serde_json::Value::String(id.to_string()));
-                    if let Some(admitted) = self.admitted(reader, envelope.origin, Admission::default(), model.as_str(), row, &mut 0)? { *row = admitted; }
+                    if let Some(admitted) = admitted(reader, envelope.origin, Admission::default(), model.as_str(), row, &mut 0, self.shared.spec(model.as_str())?, self.shared.pointer_guards.get(model.as_str()).map(Vec::as_slice).unwrap_or_default())? { *row = admitted; }
                 }
             }
         }

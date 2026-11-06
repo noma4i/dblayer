@@ -17,7 +17,7 @@ fn corrupt_or_unreadable_prior_rejects_the_transaction() {
         let entry = db.outbox().unwrap().remove(0);
         assert!(Prior::of(&entry).is_err());
         assert!(db.shared.read(&[], |reader| Ok(Prior::created_rows(reader, seq)?)).is_err());
-        assert!(db.shared.read(&[], |reader| Ok(Prior::unconfirmed_fields(reader, None, "moments", "m1")?)).is_err());
+        assert!(db.shared.read(&[], |reader| Ok(crate::store::merge::unconfirmed_fields(reader, None, "moments", "m1")?)).is_err());
         assert!(db.shared.read(&[], |reader| Ok(Prior::with_edits(json!({"rows": [corrupt.clone()]}), reader, &[])?)).is_err());
         assert!(db.roll_back(&db.admit().unwrap(), seq).is_err());
         assert_eq!(db.find("moments", &rid("m1")).unwrap().unwrap().text("text"), Some("after"));

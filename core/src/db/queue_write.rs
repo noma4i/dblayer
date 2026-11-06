@@ -11,7 +11,7 @@ use crate::owners::store::{EffectRow, IntentEffects, RowValue, StoreOp};
 use crate::lifecycle::authority::Authority;
 use super::error::DbError;
 use super::local_write::{plan_fault, read_outbox};
-use super::merge::Admission;
+use crate::store::merge::{admitted, Admission};
 use super::swap::TempReplacement;
 use super::open::Db;
 use super::prior::{Prior, PriorRow};
@@ -155,7 +155,7 @@ impl Db {
                 for op in std::mem::take(&mut planned.entity_ops) {
                     match op {
                         EntityOp::Upsert { model, id, row } => {
-                            if let Some(row) = self.admitted(reader, WriteOrigin::Response, Admission { base: None, closing }, model.as_str(), &row, &mut drops)? {
+                            if let Some(row) = admitted(reader, WriteOrigin::Response, Admission { base: None, closing }, model.as_str(), &row, &mut drops, self.shared.spec(model.as_str())?, self.shared.pointer_guards.get(model.as_str()).map(Vec::as_slice).unwrap_or_default())? {
                                 merged.push(EntityOp::Upsert { model, id, row });
                             }
                         }

@@ -10,7 +10,7 @@ use crate::value::read_id;
 
 use super::error::DbError;
 use super::local_write::plan_fault;
-use super::merge::Admission;
+use crate::store::merge::{admitted as admit_row, Admission};
 use super::open::Db;
 
 impl Db {
@@ -37,7 +37,7 @@ impl Db {
             }
             let origin = if closing.is_some() { WriteOrigin::Response } else { WriteOrigin::Snapshot };
             let before = *drops;
-            match self.admitted(reader, origin, Admission { base: Some(base), closing }, model, row, drops)? {
+            match admit_row(reader, origin, Admission { base: Some(base), closing }, model, row, drops, self.shared.spec(model)?, self.shared.pointer_guards.get(model).map(Vec::as_slice).unwrap_or_default())? {
                 Some(row) => admitted.rows.push(row),
                 None if *drops == before => admitted.invalid += 1,
                 None => {}

@@ -14,7 +14,7 @@ use crate::value::{fractional_between, read_id};
 
 use super::error::DbError;
 use super::local_write::plan_fault;
-use super::merge::Admission;
+use crate::store::merge::{admitted, Admission};
 use super::open::Db;
 
 struct Upsert {
@@ -108,7 +108,7 @@ impl Db {
                 let spec = self.shared.spec(&upsert.model)?;
                 let key = (upsert.model.clone(), upsert.id.to_string());
                 let Some(patch) = parsed.patches.get(&key) else { continue };
-                let Some(row) = self.admitted(reader, WriteOrigin::Event, Admission::default(), &upsert.model, patch, &mut 0)? else { continue };
+                let Some(row) = admitted(reader, WriteOrigin::Event, Admission::default(), &upsert.model, patch, &mut 0, self.shared.spec(&upsert.model)?, self.shared.pointer_guards.get(&upsert.model).map(Vec::as_slice).unwrap_or_default())? else { continue };
                 let stored = reader.point(&upsert.model, upsert.id.as_str())?;
                 let entry = seen.entry((upsert.model.clone(), upsert.id.to_string())).or_insert_with(|| (stored.clone(), None));
                 entry.1 = Some(row.clone());
@@ -118,7 +118,7 @@ impl Db {
                 for (related_model, related_id) in &upsert.related {
                     let related_key = (related_model.clone(), related_id.clone());
                     let Some(patch) = parsed.patches.get(&related_key) else { continue };
-                    let Some(related_row) = self.admitted(reader, WriteOrigin::Event, Admission::default(), related_model, patch, &mut 0)? else { continue };
+                    let Some(related_row) = admitted(reader, WriteOrigin::Event, Admission::default(), related_model, patch, &mut 0, self.shared.spec(related_model)?, self.shared.pointer_guards.get(related_model).map(Vec::as_slice).unwrap_or_default())? else { continue };
                     let Some(id) = related_row.get("id").and_then(read_id) else { continue };
                     operations.insert((related_model.clone(), id.to_string()), EntityOp::Upsert { model: ModelKey::new(related_model), id, row: related_row });
                 }
