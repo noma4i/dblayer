@@ -40,6 +40,7 @@ async fn feed_database_with_listen(listen: Option<serde_json::Value>) -> (Arc<Da
     let mut revision = FieldSpec::scalar("serverRevision", ScalarKind::Int);
     revision.from = Some("revision".into());
     let mut chat = ModelSpec::new("Chat", vec![FieldSpec::scalar("id", ScalarKind::Id), FieldSpec::scalar("title", ScalarKind::Str), revision, FieldSpec::list("lists", ScalarKind::Str)]);
+    chat.ephemeral.push(crate::schema::EphemeralSpec::new(FieldSpec::scalar("typing", ScalarKind::Bool).with_default(json!(false))));
     chat.server_revision = Some("serverRevision".into());
     let mut node = RelationSpec::new("node", &[]);
     node.text_params = vec![NODE_PARAM.into()];
@@ -164,6 +165,63 @@ async fn feed_composite_id_missing() {
     assert_eq!(bound(database.subscription_census()).await.unwrap().refused_events, 1);
     bound(database.close_database()).await.unwrap();
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn feed_apply_values() {
+    let listen = json!({"subscription":"RecordEvents", "root":"recordEvents.item", "set":{"typing":true}, "apply":{"effect":"upsert"}});
+    let (database, transport, stream, token) = feed_listen_events(listen).await;
+    let entity = database.subscribe_values(database.session_epoch(), ReadRequest::Entity { model: "Chat".into(), id: "c1".into(), fetch: ReadFetch::Never });
+    assert!(matches!(bound(entity.pull()).await.unwrap(), Some(ReadValue::Snapshot { rows, .. }) if rows.is_empty()));
+    assert!(transport.cable.event(&token, json!({"data":{"recordEvents":{"item":{"id":"c1","title":"after","revision":1,"lists":[]}}}})));
+    assert!(matches!(bound(stream.pull()).await.unwrap(), Some(ReadValue::Event { id, .. }) if id == "c1"));
+    assert!(matches!(bound(entity.pull()).await.unwrap(), Some(ReadValue::Delta { rows, .. }) if rows.len() == 1 && rows[0].cells.contains(&Cell::Bool { value: true })));
+    bound(database.close_database()).await.unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn feed_apply_values_on_delete() {
+    let listen = json!({"subscription":"RecordEvents", "root":"recordEvents.item", "set":{"typing":true}, "deleted_by":"deleted", "apply":{"effect":"upsert"}});
+    let (database, transport, stream, token) = feed_listen_events(listen).await;
+    assert!(transport.cable.event(&token, json!({"data":{"recordEvents":{"item":{"id":"c1","deleted":true}}}})));
+    assert!(matches!(bound(stream.pull()).await.unwrap(), Some(ReadValue::Event { id, after: None, .. }) if id == "c1"));
+    assert!(transport.cable.event(&token, json!({"data":{"recordEvents":{"entries":[{"topic":"MESSAGE","action":"UPDATED","recordId":"c1","chat":{"id":"c1","title":"after","revision":1,"lists":[]}}]}}})));
+    assert!(matches!(bound(stream.pull()).await.unwrap(), Some(ReadValue::Event { after: Some(_), .. })));
+    let entity = database.subscribe_values(database.session_epoch(), ReadRequest::Entity { model: "Chat".into(), id: "c1".into(), fetch: ReadFetch::Never });
+    assert!(matches!(bound(entity.pull()).await.unwrap(), Some(ReadValue::Snapshot { rows, .. }) if rows.len() == 1 && rows[0].cells.contains(&Cell::Bool { value: false })));
+    bound(database.close_database()).await.unwrap();
+}
+
+async fn feed_conditional_delete(listen: serde_json::Value, field: &'static str, value: serde_json::Value) {
+    let (database, transport, stream, token) = feed_listen_events(listen).await;
+    assert!(transport.cable.event(&token, json!({"data":{"recordEvents":{"entries":[{"topic":"MESSAGE","action":"UPDATED","recordId":"c1","chat":{"id":"c1","title":"before","revision":1,"lists":[]}}]}}})));
+    assert!(matches!(bound(stream.pull()).await.unwrap(), Some(ReadValue::Event { after: Some(_), .. })));
+    let mut item = json!({"id":"c1"});
+    item[field] = value;
+    assert!(transport.cable.event(&token, json!({"data":{"recordEvents":{"item":item}}})));
+    assert!(matches!(bound(stream.pull()).await.unwrap(), Some(ReadValue::Event { id, before: Some(_), after: None, .. }) if id == "c1"));
+    bound(database.close_database()).await.unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn feed_apply_delete_if() {
+    feed_conditional_delete(json!({"subscription":"RecordEvents", "root":"recordEvents.item", "deleted_by":"gone", "apply":{"effect":"upsert"}}), "gone", json!(true)).await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn feed_apply_delete_unless() {
+    feed_conditional_delete(json!({"subscription":"RecordEvents", "root":"recordEvents.item", "deleted_unless":"active", "apply":{"effect":"upsert"}}), "active", json!(false)).await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn feed_apply_ephemeral_missing() {
+    let listen = json!({"subscription":"RecordEvents", "root":"recordEvents.item", "apply":{"effect":"ephemeral", "fields":{"typing":"active"}}});
+    let (database, transport, stream, token) = feed_listen_events(listen).await;
+    assert!(transport.cable.event(&token, json!({"data":{"recordEvents":{"item":{"id":"c1"}}}})));
+    assert!(matches!(bound(stream.pull()).await.unwrap(), Some(ReadValue::Lost { first: 1, last: 1 })));
+    assert_eq!(bound(database.subscription_census()).await.unwrap().refused_events, 1);
+    bound(database.close_database()).await.unwrap();
+}
+
 
 async fn next_rows(rig: &Rig, stream: &ReadStream, expected: i64) -> i64 {
     let value = bound(stream.pull()).await.unwrap().unwrap();
