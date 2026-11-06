@@ -67,6 +67,7 @@ impl SessionState {
                 phase => self.phase = phase,
             },
             SessionInput::EpochEnded(EpochEnded { epoch, cause }) => {
+                if epoch != self.epoch { self.phase = phase; return; }
                 self.end_resume(SessionError::Interrupted, fx);
                 self.restored_direct = None;
                 self.restore_ready = false;

@@ -90,6 +90,7 @@ fn sess_resume_end() {
     rig.restore();
     rig.start();
     rig.send(resume(1));
+    assert!(rig.send(SessionInput::EpochEnded(EpochEnded { epoch: 2, cause: Cause::SessionReset })).is_empty());
     let effects = rig.send(SessionInput::EpochEnded(EpochEnded { epoch: 3, cause: Cause::SessionReset }));
     assert!(effects.contains(&answer(1, Err(SessionError::Interrupted))));
     assert_eq!(rig.send(resume(2)), [answer(2, Ok(None))]);
@@ -98,6 +99,17 @@ fn sess_resume_end() {
     closed.send(resume(3));
     assert!(closed.send(SessionInput::Closing).contains(&answer(3, Err(SessionError::Closed))));
     assert_eq!(closed.send(resume(4)), [answer(4, Err(SessionError::Closed))]);
+}
+
+#[test]
+fn sess_epoch_ended_stale() {
+    let mut rig = Rig::new();
+    rig.restore();
+    let attempt = rig.start();
+    rig.send(resume(1));
+    assert!(rig.send(SessionInput::EpochEnded(EpochEnded { epoch: 2, cause: Cause::SessionReset })).is_empty());
+    assert_eq!(rig.refuse(attempt), [answer(1, Err(too_large()))]);
+    assert_eq!(rig.det.state(rig.address).unwrap().credential().unwrap().digest, 4);
 }
 
 #[test]
