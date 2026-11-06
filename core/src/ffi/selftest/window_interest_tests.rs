@@ -32,7 +32,7 @@ async fn cancelling_one_load_interest_keeps_the_other_call_alive() {
     first.cancel();
     held.release();
     bound(second.result()).await.unwrap();
-    assert_eq!(feed_requests(&rig), 1, "the second call sent a request of its own");
+    assert_eq!(feed_requests(&rig), 1, "the second call sent a request of its own: {:?}", rig.world.log());
     rig.database.close_now();
 }
 
@@ -48,6 +48,6 @@ async fn a_list_that_refreshes_on_connect_loads_again_once_when_the_network_retu
     rig.database.set_online(true).unwrap();
     yield_until("the list loaded again", || feed_requests(&rig) >= 2).await;
     for _ in 0..200 { tokio::task::yield_now().await; }
-    assert_eq!(feed_requests(&rig), 2, "the list loaded more or less than once on reconnect");
+    assert_eq!(feed_requests(&rig), 2, "the list loaded more or less than once on reconnect: {:?}", rig.world.log());
     rig.database.close_now();
 }
