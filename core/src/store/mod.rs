@@ -288,6 +288,9 @@ impl Store {
         Committed { result, turn: Some((self, ticket)) }
     }
 
+    /// The generation the boot opened the database with: the envelopes of the writes name it, and a database that boots in a later generation must accept them.
+    pub(crate) fn adopt_generation(&self, generation: Generation) { self.lock().generation = generation; }
+
     pub fn generation(&self) -> Generation {
         self.lifecycle.snapshot().generation
     }

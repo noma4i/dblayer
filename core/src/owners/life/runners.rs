@@ -144,6 +144,7 @@ impl EffectRunner<StoreWriter> for StoreRunner {
         match effect {
             StoreEffect::Prepare { .. } => {}
             StoreEffect::OpenLifecycle(message) => {
+                store.adopt_generation(Generation::from_value(message.saved_generation));
                 wiring.open_session();
                 wiring.to_lifecycle(LifecycleInput::Open {
                     saved_epoch: message.saved_epoch,

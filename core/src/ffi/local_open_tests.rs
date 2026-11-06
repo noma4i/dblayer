@@ -30,3 +30,20 @@ async fn a_call_that_needs_the_server_still_fails_without_a_transport() {
     let refused = database.refresh(database.session_epoch(), "Note".into(), String::new(), "{}".into()).await;
     assert!(matches!(refused, Err(super::DbError::NoSession { .. })));
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_write_after_a_boot_that_raised_the_generation_is_not_stale() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("generation.sqlite").to_string_lossy().into_owned();
+    let mut model = ModelSpec::new("Note", vec![FieldSpec::scalar("id", ScalarKind::Id), FieldSpec::scalar("text", ScalarKind::Str)]);
+    model.storage = Storage::Local;
+    let models = serde_json::to_string(&vec![model]).unwrap();
+    let config = || Config { path: Some(path.clone()), data_version: None, cache_rows: 16 };
+    let first = Database::open(config(), models.clone(), None, None, None, None, None, None).await.unwrap();
+    first.close_database().await.unwrap();
+    drop(first);
+    rusqlite::Connection::open(&path).unwrap().execute("UPDATE manifest SET value = '2' WHERE key = 'saved_generation'", []).unwrap();
+    let second = Database::open(config(), models, None, None, None, None, None, None).await.unwrap();
+    let created = crate::test_wait::within(second.create_row(second.session_epoch(), "Note".into(), serde_json::from_str(r#"{"text":"kept"}"#).unwrap(), Default::default())).await;
+    assert!(created.is_ok(), "{created:?}");
+}
