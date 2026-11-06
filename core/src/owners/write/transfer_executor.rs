@@ -91,6 +91,7 @@ pub(crate) enum LifeSignal {
     Started(Epoch),
     SnapshotRequest(Epoch),
     RestoreClassified(Epoch),
+    ReleaseStep(u64),
 }
 
 pub(crate) struct TransferExecutor {
@@ -289,6 +290,7 @@ impl EffectRunner<Transfers> for TransferExecutor {
             TransferEffect::Abort { key, upload_id, .. } => self.drop_upload(key, upload_id),
             TransferEffect::AbortOrphan { key, upload_id } => self.abort_orphan(stamp, back, key, upload_id),
             TransferEffect::CancelStep { transfer_id } => self.steps.cancel(&transfer_id),
+            TransferEffect::ReleaseStep { request_id } => (self.signal)(LifeSignal::ReleaseStep(request_id)),
             TransferEffect::DeleteFile { path } => self.delete_file(path),
             TransferEffect::Reply { reply, answer } => (self.settle)(reply, answer),
             TransferEffect::Shows { key, shown } => (self.shows)(&key, shown),

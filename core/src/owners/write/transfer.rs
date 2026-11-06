@@ -35,6 +35,16 @@ impl TransferState {
         }
     }
 
+    pub(super) fn release_step(&mut self, id: TransferId, fx: &mut Fx) {
+        if let Some(request_id) = self.transfers.get_mut(&id).and_then(|transfer| transfer.pending_step.take()) {
+            run(fx, TransferEffect::ReleaseStep { request_id });
+        }
+    }
+
+    pub(super) fn step_answered(&mut self, id: TransferId) {
+        if let Some(transfer) = self.transfers.get_mut(&id) { transfer.pending_step = None; }
+    }
+
     pub(super) fn set(&mut self, id: TransferId, stage: TransferStage) {
         if let Some(transfer) = self.transfers.get_mut(&id) {
             transfer.stage = stage;
@@ -226,6 +236,7 @@ impl TransferState {
 
     /// Everything that waits for the call answers `answer`; `Interrupted` for the end of the epoch and for the close.
     pub(super) fn interrupt(&mut self, id: TransferId, fx: &mut Fx) {
+        self.release_step(id, fx);
         let Some(transfer) = self.transfers.get_mut(&id) else { return };
         let fault = |fault: Fault| TransferAnswer::Err(fault);
         let mut replies: Vec<ReplyId> = Vec::new();
@@ -304,7 +315,7 @@ impl TransferState {
         }
         if let (RejectReason::Invalid, true) = (&rejected.reason, persisting) {
             if stage == Some(TransferStage::PersistingBatchIntent) {
-                for &id in &pending.ids { self.mark_failure(id, "Internal(Invalid)".into()); }
+                for &id in &pending.ids { self.mark_failure(id, "Internal(Invalid)".into(), fx); }
                 self.store(&pending.ids, StoreKind::Failed, fx);
                 return;
             }

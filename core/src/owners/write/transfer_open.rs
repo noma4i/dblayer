@@ -17,6 +17,7 @@ impl TransferState {
             transfer.transfer_id = id;
             transfer.seq = row.seq;
             transfer.restored = true;
+            transfer.pending_step = row.pending_step;
             transfer.upload_id = row.upload_id.clone();
             transfer.confirmed_parts = row.confirmed_parts;
             transfer.attempts = row.attempts;
@@ -142,11 +143,11 @@ impl TransferState {
     fn restore_completed(&mut self, id: TransferId, row: &StoredTransfer, saved: Option<&OutboxOutcome>, fx: &mut Fx) {
         match saved {
             Some(OutboxOutcome::Confirmed { revision, result }) => {
-                self.remove_with(id, Removal::Confirmed { revision: *revision, result: result.clone() });
+                self.remove_with(id, Removal::Confirmed { revision: *revision, result: result.clone() }, fx);
                 self.store(&[id], StoreKind::Removed, fx);
             }
             Some(OutboxOutcome::Discarded) => {
-                self.remove_with(id, Removal::Discarded);
+                self.remove_with(id, Removal::Discarded, fx);
                 self.store(&[id], StoreKind::Removed, fx);
             }
             Some(OutboxOutcome::Rejected { error } | OutboxOutcome::Failed { error }) => {

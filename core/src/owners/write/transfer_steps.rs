@@ -89,6 +89,7 @@ impl TransferState {
         if !self.live(id, TransferStage::Uploading, attempt_id) {
             return;
         }
+        self.step_answered(id);
         let Some(transfer) = self.transfers.get_mut(&id) else { return };
         if part.is_some_and(|part| part != transfer.confirmed_parts + 1) {
             return;
@@ -107,7 +108,8 @@ impl TransferState {
     }
 
     /// A permanent error or the last attempt: the failure is written, `abort` goes out when a multipart upload exists.
-    pub(super) fn mark_failure(&mut self, id: TransferId, error: String) {
+    pub(super) fn mark_failure(&mut self, id: TransferId, error: String, fx: &mut Fx) {
+        self.release_step(id, fx);
         let Some(transfer) = self.transfers.get_mut(&id) else { return };
         transfer.stage = TransferStage::PersistingFailure;
         transfer.removal = None;
@@ -117,7 +119,7 @@ impl TransferState {
     }
 
     pub(super) fn begin_failure(&mut self, id: TransferId, error: String, abort: bool, fx: &mut Fx) {
-        self.mark_failure(id, error);
+        self.mark_failure(id, error, fx);
         let Some(transfer) = self.transfers.get_mut(&id) else { return };
         transfer.failure_abort = abort;
         self.store(&[id], StoreKind::Failed, fx);
@@ -136,6 +138,7 @@ impl TransferState {
         if !self.live(id, TransferStage::Uploading, attempt_id) {
             return;
         }
+        self.step_answered(id);
         let Some(transfer) = self.transfers.get_mut(&id) else { return };
         if temporary && transfer.attempts < ATTEMPT_LIMIT {
             self.schedule_retry(id, fx);
@@ -149,6 +152,7 @@ impl TransferState {
         if !self.live(id, TransferStage::Completing, attempt_id) {
             return;
         }
+        self.step_answered(id);
         if let Some(transfer) = self.transfers.get_mut(&id) {
             transfer.signed_id = signed_id;
             transfer.in_flight = false;
@@ -162,6 +166,7 @@ impl TransferState {
         if !self.live(id, TransferStage::Completing, attempt_id) {
             return;
         }
+        self.step_answered(id);
         if temporary && self.transfers.get(&id).is_some_and(|transfer| transfer.attempts < ATTEMPT_LIMIT) {
             self.schedule_retry(id, fx);
         } else {
@@ -281,7 +286,7 @@ impl TransferState {
     }
 
     fn remove_with_batch(&mut self, id: TransferId, removal: Removal, fx: &mut Fx) {
-        self.remove_with(id, removal);
+        self.remove_with(id, removal, fx);
         self.store(&[id], StoreKind::Removed, fx);
     }
 

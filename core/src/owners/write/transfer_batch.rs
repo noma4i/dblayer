@@ -172,10 +172,10 @@ impl TransferState {
         if ids.len() != outcomes.len() || ids.iter().any(|id| !outcomes.contains_key(id)) { return; }
         for &id in &ids {
             match &outcomes[&id] {
-                OutboxOutcome::Confirmed { revision, result } => self.remove_with(id, Removal::Confirmed { revision: *revision, result: result.clone() }),
-                OutboxOutcome::Discarded => self.remove_with(id, Removal::Discarded),
+                OutboxOutcome::Confirmed { revision, result } => self.remove_with(id, Removal::Confirmed { revision: *revision, result: result.clone() }, fx),
+                OutboxOutcome::Discarded => self.remove_with(id, Removal::Discarded, fx),
                 OutboxOutcome::Rejected { error } | OutboxOutcome::Failed { error } => {
-                    self.mark_failure(id, error.clone());
+                    self.mark_failure(id, error.clone(), fx);
                     if intent_removed {
                         if let Some(transfer) = self.transfers.get_mut(&id) { transfer.intent_live = false; }
                     }

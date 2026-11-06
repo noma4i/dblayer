@@ -459,6 +459,7 @@ impl Life {
                             LifeSignal::Started(epoch) => signal_wiring.to_lifecycle(LifecycleInput::Started { owner: Peer::Transfer, epoch }),
                             LifeSignal::SnapshotRequest(epoch) => signal_wiring.to_network(NetworkInput::SnapshotRequest { owner: Peer::Transfer, epoch }),
                             LifeSignal::RestoreClassified(epoch) => signal_wiring.to_lifecycle(LifecycleInput::RestoreClassified { owner: Peer::Transfer, epoch }),
+                            LifeSignal::ReleaseStep(req_id) => signal_wiring.to_session(SessionInput::Release { req_id }),
                         }),
                     },
                     { let db = ports.db.clone(); Arc::new(move |sha256: &str| db.blob_cache_lookup(sha256)) },

@@ -137,6 +137,7 @@ impl Store {
             aborted: raw.aborted,
             op_id: raw.op_id.map(|op| unsigned(op, "op_id")).transpose()?,
             copying,
+            pending_step: None,
             file_present,
             created_at: Time(unsigned(raw.created_at, "created_at")?),
             place,

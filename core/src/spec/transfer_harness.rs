@@ -79,6 +79,8 @@ impl Out {
 
     pub fn delete_paths(&self) -> Vec<String> { self.runs.iter().filter_map(|run| if let Run::DeleteFile { path } = run { Some(path.clone()) } else { None }).collect() }
 
+    pub fn releases(&self) -> Vec<u64> { self.runs.iter().filter_map(|run| if let Run::ReleaseStep { request_id } = run { Some(*request_id) } else { None }).collect() }
+
     pub fn cancel_steps(&self) -> usize { self.count(|run| matches!(run, Run::CancelStep { .. })) }
 
     pub fn copies(&self) -> usize { self.count(|run| matches!(run, Run::Copy { .. })) }
@@ -164,6 +166,7 @@ pub(super) fn stored(id: TransferId, key: &str, parts: u32) -> StoredTransfer {
         mutation: mutation(key),
         steps: Steps { path: "/upload".into(), body: String::new() },
         restore_failed: None,
+        pending_step: None,
     }
 }
 

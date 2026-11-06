@@ -97,6 +97,7 @@ pub struct StoredTransfer {
     pub steps: Steps,
     /// The row was dropped by the layout move or cannot be read.
     pub restore_failed: Option<String>,
+    pub pending_step: Option<u64>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -265,6 +266,7 @@ pub enum TransferEffect {
     /// `abort` of an upload whose transfer is gone: the answer comes back as `AbortDone`.
     AbortOrphan { key: Key, upload_id: String },
     CancelStep { transfer_id: TransferId },
+    ReleaseStep { request_id: u64 },
     DeleteFile { path: String },
     Reply { reply: ReplyId, answer: TransferAnswer },
     /// `uploads[action]`.
@@ -350,6 +352,7 @@ pub struct Transfer {
     pub fields: serde_json::Map<String, serde_json::Value>,
     pub steps: Steps,
     pub restored: bool,
+    pub pending_step: Option<u64>,
     pub urgent: bool,
     /// The operation of the optimistic effects written with the acceptance (`ReserveOp`).
     pub op_id: Option<OpId>,

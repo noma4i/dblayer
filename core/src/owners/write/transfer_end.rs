@@ -10,7 +10,7 @@ impl TransferState {
     fn refuse(fx: &mut Fx, rep: ReplyId, fault: Fault) { reply(fx, rep, TransferAnswer::Err(fault)); }
 
     fn begin_cancel(&mut self, id: TransferId, cancel: Option<(ReplyId, bool)>, prior: Option<TransferStage>, fx: &mut Fx) {
-        self.remove_with(id, Removal::Cancel);
+        self.remove_with(id, Removal::Cancel, fx);
         if let Some(transfer) = self.transfers.get_mut(&id) {
             transfer.cancel_reply = cancel;
             transfer.prior = prior;

@@ -74,10 +74,10 @@ pub(crate) struct Restore {
     pub transfer_pending_orphan: bool,
 }
 
-fn transfer_asks_again(rows: &[crate::owners::write::transfer::StoredTransfer], owner: &crate::transport::RequestOwner) -> bool {
+fn transfer_asking_again<'a>(rows: &'a [crate::owners::write::transfer::StoredTransfer], owner: &crate::transport::RequestOwner) -> Option<&'a crate::owners::write::transfer::StoredTransfer> {
     use crate::owners::write::upload::UploadStage;
-    let crate::transport::RequestOwner::Transfer { item_id, step, .. } = owner else { return true };
-    rows.iter().any(|row| {
+    let crate::transport::RequestOwner::Transfer { item_id, step, .. } = owner else { return None };
+    rows.iter().find(|row| {
         let open = row.restore_failed.is_none() && row.failed.is_none() && !row.completed && !row.aborted && !row.copying;
         match step {
             UploadStage::Create | UploadStage::Init | UploadStage::Presign => open && row.confirmed_parts < row.source.parts && serde_json::from_str::<crate::owners::write::upload_codec::StepsBody>(&row.steps.body).is_ok_and(|body| body.item == *item_id),
@@ -145,9 +145,16 @@ impl Store {
         }).collect();
         let orphan_answers = orphan_answers.into_iter().filter_map(|id| u64::try_from(id).ok()).collect();
         let transfer_pending_orphan = match (&pending, &transfers) {
-            (Some(held), Ok(rows)) => held.owner.as_ref().is_some_and(|owner| matches!(owner, crate::transport::RequestOwner::Transfer { .. }) && !transfer_asks_again(rows, owner)),
+            (Some(held), Ok(rows)) => held.owner.as_ref().is_some_and(|owner| matches!(owner, crate::transport::RequestOwner::Transfer { .. }) && transfer_asking_again(rows, owner).is_none()),
             _ => false,
         };
+        let transfers = transfers.map(|mut rows| {
+            let asking = pending.as_ref().and_then(|held| held.owner.as_ref().and_then(|owner| transfer_asking_again(&rows, owner)).map(|row| (row.transfer_id, held.req_id)));
+            if let Some((id, req_id)) = asking {
+                if let Some(row) = rows.iter_mut().find(|row| row.transfer_id == id) { row.pending_step = Some(req_id); }
+            }
+            rows
+        });
         Ok(Restore { ops, transfers, transfer_outcomes, orphans, batches, reserved, orphan_answers, transfer_pending_orphan })
     }
 

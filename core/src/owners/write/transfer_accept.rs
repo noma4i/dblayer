@@ -43,6 +43,7 @@ impl TransferState {
             fields,
             steps,
             restored: false,
+            pending_step: None,
             urgent,
             op_id: None,
             submitted: false,
@@ -233,13 +234,14 @@ impl TransferState {
             if member != id && self.stage_of(member) == Some(TransferStage::Copying) {
                 run(fx, TransferEffect::CopyCancel { transfer_id: member });
             }
-            self.remove_with(member, Removal::CopyFailed { error: error.clone() });
+            self.remove_with(member, Removal::CopyFailed { error: error.clone() }, fx);
         }
         self.store(&ids, StoreKind::Removed, fx);
     }
 
     /// The transfer waits in `Removing` for the batch of its removal.
-    pub(super) fn remove_with(&mut self, id: TransferId, removal: Removal) {
+    pub(super) fn remove_with(&mut self, id: TransferId, removal: Removal, fx: &mut Fx) {
+        self.release_step(id, fx);
         if let Some(transfer) = self.transfers.get_mut(&id) {
             transfer.stage = TransferStage::Removing;
             transfer.removal = Some(removal);
@@ -288,7 +290,7 @@ impl TransferState {
     /// `PersistingCopy x Rejected(Storage)`: the copy is not durable, the whole batch is removed.
     pub(super) fn copy_rejected(&mut self, ids: &[TransferId], fx: &mut Fx) {
         for &id in ids {
-            self.remove_with(id, Removal::Storage);
+            self.remove_with(id, Removal::Storage, fx);
         }
         self.store(ids, StoreKind::Removed, fx);
     }
