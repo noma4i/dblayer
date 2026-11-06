@@ -12,6 +12,8 @@ impl TransferState {
     /// Transfers in the network: only a physical attempt in flight holds a slot.
     pub fn active(&self) -> u32 { self.scan().filter(|transfer| transfer.in_flight).count() as u32 }
 
+    fn operation_of(&self, transfer: &Transfer) -> u64 { transfer.batch_id.and_then(|batch| self.groups.get(&batch)).and_then(|group| group.op_id).or(transfer.op_id).unwrap_or(0) }
+
     fn progress(transfer: &Transfer) -> u32 { transfer.confirmed_parts * 100 / transfer.source.parts.max(1) }
 
     fn can_start(&self, transfer: &Transfer) -> bool {
@@ -20,9 +22,9 @@ impl TransferState {
         opened && allowed && transfer.stage == TransferStage::Ready
     }
 
-    fn step_effect(transfer: &Transfer) -> TransferEffect {
+    fn step_effect(transfer: &Transfer, operation: u64) -> TransferEffect {
         let NextStep::Part(part) = transfer.next_step else { return Self::complete_effect(transfer) };
-        TransferEffect::Step { transfer_id: transfer.transfer_id, attempt_id: transfer.attempt_id, key: transfer.key.clone(), part: Some(part), purpose: NetworkPurpose::Transfer, upload_id: transfer.upload_id.clone(), source: transfer.source.clone(), steps: transfer.steps.clone(), place: transfer.place }
+        TransferEffect::Step { transfer_id: transfer.transfer_id, attempt_id: transfer.attempt_id, operation, part: Some(part), purpose: NetworkPurpose::Transfer, upload_id: transfer.upload_id.clone(), source: transfer.source.clone(), steps: transfer.steps.clone(), place: transfer.place }
     }
 
     fn complete_effect(transfer: &Transfer) -> TransferEffect {
@@ -51,6 +53,7 @@ impl TransferState {
     }
 
     pub(super) fn attempt_committed(&mut self, id: TransferId, fx: &mut Fx) {
+        let Some(operation) = self.transfers.get(&id).map(|transfer| self.operation_of(transfer)) else { return };
         let Some(transfer) = self.transfers.get_mut(&id) else { return };
         if self.online != Some(true) || (self.saving && !transfer.urgent) {
             transfer.stage = TransferStage::Ready;
@@ -59,7 +62,7 @@ impl TransferState {
             return;
         }
         transfer.stage = if transfer.next_step == NextStep::Complete { TransferStage::Completing } else { TransferStage::Uploading };
-        let (effect, shown) = (Self::step_effect(transfer), if transfer.stage == TransferStage::Completing { Shown::Uploading { progress: 100 } } else { Shown::Uploading { progress: Self::progress(transfer) } });
+        let (effect, shown) = (Self::step_effect(transfer, operation), if transfer.stage == TransferStage::Completing { Shown::Uploading { progress: 100 } } else { Shown::Uploading { progress: Self::progress(transfer) } });
         self.show(id, shown, fx);
         run(fx, effect);
     }
@@ -118,6 +121,15 @@ impl TransferState {
         let Some(transfer) = self.transfers.get_mut(&id) else { return };
         transfer.failure_abort = abort;
         self.store(&[id], StoreKind::Failed, fx);
+    }
+
+    pub(super) fn upload_minted(&mut self, id: TransferId, attempt_id: AttemptId, upload_id: String) {
+        if !self.live(id, TransferStage::Uploading, attempt_id) {
+            return;
+        }
+        if let Some(transfer) = self.transfers.get_mut(&id) {
+            transfer.upload_id.get_or_insert(upload_id);
+        }
     }
 
     pub(super) fn step_error(&mut self, id: TransferId, attempt_id: AttemptId, temporary: bool, fx: &mut Fx) {

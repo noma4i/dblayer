@@ -21,7 +21,7 @@ pub struct StepsBody {
     pub multipart: bool,
     pub name: String,
     pub mime: String,
-    pub signed_variable: String,
+    pub signed_variable: String, pub item: String,
 }
 
 impl StepsBody {
@@ -61,12 +61,12 @@ impl UploadCodec {
         answered(name, &root, response)
     }
 
-    async fn put(&self, link: &Link, (url, headers): (&str, Vec<(String, String)>), file: PutFile, step: TransferStep, key: &str) -> Result<Option<String>, TransportError> {
+    async fn put(&self, link: &Link, (url, headers): (&str, Vec<(String, String)>), file: PutFile, (step, identity): (TransferStep, (u64, &str))) -> Result<Option<String>, TransportError> {
         let request = PutRequest {
             url: url.to_string(),
             headers,
             file,
-            identity: TransferIdentity { operation_id: 0, item_id: key.to_string(), step },
+            identity: TransferIdentity { operation_id: i64::try_from(identity.0).unwrap_or(i64::MAX), item_id: identity.1.to_string(), step },
             cancel: CancelToken::new(),
             sent: Arc::new(|_| {}),
         };
@@ -78,7 +78,7 @@ impl UploadCodec {
         }
     }
 
-    async fn single(&self, link: &Link, key: &str, body: &StepsBody, source: &Source, total: u64) -> Result<StepDone, TransportError> {
+    async fn single(&self, link: &Link, operation: u64, body: &StepsBody, source: &Source, total: u64) -> Result<StepDone, TransportError> {
         let create = self.operations.create_blob.as_ref().ok_or_else(|| rejected("the upload has no createBlob operation"))?;
         let checksum = md5_base64(Path::new(&source.path), &CancelToken::new()).await.map_err(unreadable)?;
         let variables = json!({"filename": body.name, "contentType": body.mime, "byteSize": total, "checksum": checksum});
@@ -86,11 +86,11 @@ impl UploadCodec {
         let (url, signed) = (text(&data, "url")?, text(&data, "signedId")?);
         let headers = parse_headers(data.get("headers")).map_err(TransportError::Decode)?;
         let file = PutFile { path: source.path.clone(), offset: 0, length: total };
-        self.put(link, (&url, headers), file, TransferStep::Put, key).await?;
+        self.put(link, (&url, headers), file, (TransferStep::Put, (operation, &body.item))).await?;
         Ok(StepDone { upload_id: Some(Held::Blob { signed_id: signed }.text()), etag: None })
     }
 
-    async fn part(&self, link: &Link, key: &str, part: u32, held: Option<&str>, (body, source, total): (&StepsBody, &Source, u64)) -> Result<StepDone, TransportError> {
+    async fn part(&self, link: &Link, operation: u64, part: u32, held: Option<&str>, (body, source, total): (&StepsBody, &Source, u64)) -> Result<StepDone, TransportError> {
         let steps = self.operations.multipart.as_ref().ok_or_else(|| rejected("the upload has no multipart operations"))?;
         let (blob, minted) = match held {
             Some(text) => (Held::read(Some(text))?, None),
@@ -99,6 +99,7 @@ impl UploadCodec {
                 let variables = json!({"filename": body.name, "contentType": body.mime, "byteSize": total, "checksum": checksum});
                 let data = self.graphql(link, &steps.initiate.name, variables).await?;
                 let created = Held::Multipart { key: text(&data, "key")?, id: text(&data, "uploadId")? };
+                link.minted(created.text());
                 (created.clone(), Some(created.text()))
             }
         };
@@ -108,7 +109,7 @@ impl UploadCodec {
         let url = target.get("url").and_then(Value::as_str).ok_or_else(|| TransportError::Decode("the presign answer has no url".into()))?;
         let headers = parse_headers(target.get("headers")).map_err(TransportError::Decode)?;
         let (offset, length) = part_range(total, self.config.part_size, part);
-        let etag = self.put(link, (url, headers), PutFile { path: source.path.clone(), offset, length }, TransferStep::Part { number: part }, key).await?;
+        let etag = self.put(link, (url, headers), PutFile { path: source.path.clone(), offset, length }, (TransferStep::Part { number: part }, (operation, &body.item))).await?;
         let etag = etag.ok_or_else(|| TransportError::Decode("the part answer has no etag".into()))?;
         Ok(StepDone { upload_id: minted, etag: Some(etag) })
     }
@@ -133,12 +134,12 @@ fn answered(name: &str, root: &str, response: Response) -> Result<Value, Transpo
 
 #[async_trait]
 impl StepCodec for UploadCodec {
-    async fn step(&self, link: &Link, key: &str, part: Option<u32>, upload_id: Option<&str>, source: &Source, steps: &Steps) -> Result<StepDone, TransportError> {
+    async fn step(&self, link: &Link, operation: u64, part: Option<u32>, upload_id: Option<&str>, source: &Source, steps: &Steps) -> Result<StepDone, TransportError> {
         let body = StepsBody::of(steps)?;
         let total = std::fs::metadata(&source.path).map_err(unreadable)?.len();
         match (body.multipart, part) {
-            (false, _) => self.single(link, key, &body, source, total).await,
-            (true, Some(part)) => self.part(link, key, part, upload_id, (&body, source, total)).await,
+            (false, _) => self.single(link, operation, &body, source, total).await,
+            (true, Some(part)) => self.part(link, operation, part, upload_id, (&body, source, total)).await,
             (true, None) => Err(rejected("a multipart step needs a part")),
         }
     }

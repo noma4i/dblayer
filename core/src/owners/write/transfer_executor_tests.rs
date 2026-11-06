@@ -41,7 +41,7 @@ struct Codec {
 
 #[async_trait]
 impl StepCodec for Codec {
-    async fn step(&self, link: &Link, _key: &str, part: Option<u32>, upload_id: Option<&str>, source: &Source, _steps: &Steps) -> Result<StepDone, TransportError> {
+    async fn step(&self, link: &Link, _operation: u64, part: Option<u32>, upload_id: Option<&str>, source: &Source, _steps: &Steps) -> Result<StepDone, TransportError> {
         lock(&self.asked).push(("Step".into(), part, upload_id.map(str::to_string), source.path.clone()));
         if self.put.load(std::sync::atomic::Ordering::SeqCst) {
             let request = PutRequest { url: "https://storage/part".into(), headers: Vec::new(), file: PutFile { path: source.path.clone(), offset: 0, length: 1 }, identity: TransferIdentity { operation_id: 0, item_id: "k".into(), step: TransferStep::Put }, cancel: CancelToken::new(), sent: Arc::new(|_| {}) };

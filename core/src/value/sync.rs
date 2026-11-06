@@ -148,6 +148,39 @@ impl SyncEntry {
     }
 }
 
+fn rank(state: SyncState) -> u8 {
+    match state {
+        SyncState::Failed => 3,
+        SyncState::Sending => 2,
+        SyncState::Pending => 1,
+        SyncState::Synced => 0,
+    }
+}
+
+impl SyncInfo {
+    pub fn fold_transfers(&mut self, batched: &std::collections::BTreeSet<String>) {
+        let behind_create = self.actions.iter().any(|action| action == "create") && self.state != SyncState::Synced;
+        let shown = self.uploads.iter_mut().map(|(action, upload)| {
+            if behind_create && upload.status == UploadStatus::Queued {
+                upload.status = UploadStatus::Waiting;
+                upload.wait_reason = Some(WaitReason::CreateUnconfirmed);
+            }
+            match upload.status {
+                UploadStatus::Failed => SyncState::Failed,
+                UploadStatus::Uploading | UploadStatus::Sending => SyncState::Sending,
+                UploadStatus::Waiting => SyncState::Pending,
+                _ if batched.contains(action) => SyncState::Sending,
+                _ => SyncState::Pending,
+            }
+        }).max_by_key(|state| rank(*state));
+        let Some(shown) = shown.filter(|shown| rank(*shown) > rank(self.state)) else { return };
+        self.state = shown;
+        if shown == SyncState::Failed && self.error.is_none() {
+            self.error = self.uploads.values().find(|upload| upload.status == UploadStatus::Failed).and_then(|upload| upload.error.clone());
+        }
+    }
+}
+
 const PRECEDENCE: [SyncState; 3] = [SyncState::Failed, SyncState::Sending, SyncState::Pending];
 
 pub fn fold_entries(entries: &[SyncEntry]) -> Option<SyncInfo> {

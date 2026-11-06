@@ -23,6 +23,7 @@ pub struct Link {
     cancel: CancelToken,
     gate: Arc<crate::runtime::EpochGate>,
     epoch: Option<Epoch>,
+    minted: Option<Arc<dyn Fn(String) + Send + Sync>>,
 }
 
 impl Drop for Link {
@@ -33,6 +34,12 @@ impl Link {
     pub async fn mutate(&self, mut request: GraphQLRequest) -> Result<Response, TransportError> {
         request.purpose = NetworkPurpose::Transfer;
         crate::runtime::send_in_epoch(&self.gate, self.epoch, || self.transport.mutate(request)).await
+    }
+
+    pub fn minted(&self, upload_id: String) {
+        if let Some(report) = &self.minted {
+            report(upload_id);
+        }
     }
 
     pub async fn put(&self, mut request: PutRequest) -> Result<PutResponse, TransportError> {
@@ -52,7 +59,7 @@ pub struct StepDone {
 #[async_trait]
 pub(crate) trait StepCodec: Send + Sync + 'static {
     /// Step `part` (`None` = a single PUT). The first step of a multipart upload creates it and returns `upload_id`.
-    async fn step(&self, link: &Link, key: &str, part: Option<u32>, upload_id: Option<&str>, source: &Source, steps: &Steps) -> Result<StepDone, TransportError>;
+    async fn step(&self, link: &Link, operation: u64, part: Option<u32>, upload_id: Option<&str>, source: &Source, steps: &Steps) -> Result<StepDone, TransportError>;
     /// The answer of `complete` carries `signed_id` of the file on the server.
     async fn complete(&self, link: &Link, key: &str, upload_id: Option<&str>, parts: &[(u32, Option<String>)]) -> Result<Option<String>, TransportError>;
     async fn discard_upload(&self, link: &Link, key: &str, upload_id: Option<&str>) -> Result<(), TransportError>;
@@ -71,7 +78,7 @@ type Call<T> = Pin<Box<dyn Future<Output = Result<T, TransportError>> + Send>>;
 
 /// What a step asks of the codec.
 struct StepAsk {
-    key: String,
+    operation: u64,
     part: Option<u32>,
     upload_id: Option<String>,
     source: Source,
@@ -159,7 +166,7 @@ impl TransferExecutor {
             EpochStamp::Control => None,
         };
         if epoch.is_some_and(|epoch| !self.wire.gate.admits(epoch)) { return None; }
-        Some(Link { transport: self.wire.transport.clone(), cancel: CancelToken::new(), gate: self.wire.gate.clone(), epoch })
+        Some(Link { transport: self.wire.transport.clone(), cancel: CancelToken::new(), gate: self.wire.gate.clone(), epoch, minted: None })
     }
 
     /// Runs `call` as the task of `transfer_id`: its result becomes `input_of(result)` for the owner, unless the task is cancelled first.
@@ -190,14 +197,18 @@ impl TransferExecutor {
     }
 
     fn step(&self, stamp: EpochStamp, back: &Back<Transfers>, (transfer_id, attempt_id): (TransferId, u64), ask: StepAsk) {
-        let StepAsk { key, part, upload_id, source, steps } = ask;
+        let StepAsk { operation, part, upload_id, source, steps } = ask;
         let source = self.local(transfer_id, source);
+        let report = { let back = back.clone(); move |upload_id| back.reply(stamp, TransferInput::UploadMinted { transfer_id, attempt_id, upload_id }) };
         self.task(
             stamp,
             back,
             transfer_id,
             TransferInput::StepError { transfer_id, attempt_id, temporary: true },
-            move |codec, link| Box::pin(async move { codec.step(&link, &key, part, upload_id.as_deref(), &source, &steps).await }),
+            move |codec, mut link| {
+                link.minted = Some(Arc::new(report));
+                Box::pin(async move { codec.step(&link, operation, part, upload_id.as_deref(), &source, &steps).await })
+            },
             move |result| match result {
                 Ok(done) => TransferInput::StepOk { transfer_id, attempt_id, part, upload_id: done.upload_id, etag: done.etag },
                 Err(error) => TransferInput::StepError { transfer_id, attempt_id, temporary: temporary(&error) },
@@ -270,9 +281,9 @@ impl EffectRunner<Transfers> for TransferExecutor {
         match effect {
             TransferEffect::Copy { transfer_id, attempt_id, source, .. } => self.copy(stamp, back, transfer_id, attempt_id, source),
             TransferEffect::CopyCancel { transfer_id } => self.copies.cancel(&transfer_id),
-            TransferEffect::Step { transfer_id, attempt_id, key, part, purpose, upload_id, source, steps, .. } => {
+            TransferEffect::Step { transfer_id, attempt_id, operation, part, purpose, upload_id, source, steps, .. } => {
                 debug_assert_eq!(purpose, NetworkPurpose::Transfer);
-                self.step(stamp, back, (transfer_id, attempt_id), StepAsk { key, part, upload_id, source, steps });
+                self.step(stamp, back, (transfer_id, attempt_id), StepAsk { operation, part, upload_id, source, steps });
             }
             TransferEffect::Complete { transfer_id, attempt_id, key, upload_id, parts, .. } => self.complete(stamp, back, (transfer_id, attempt_id), key, upload_id, parts),
             TransferEffect::Abort { key, upload_id, .. } => self.drop_upload(key, upload_id),

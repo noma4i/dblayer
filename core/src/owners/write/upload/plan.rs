@@ -19,6 +19,14 @@ pub fn part_range(total: u64, part_size: u64, number: u32) -> (u64, u64) {
     (offset, part_size.min(total.saturating_sub(offset)))
 }
 
+pub fn bytes_sent(info: &super::state::UploadInfo, size: u64) -> u64 {
+    match info.status {
+        super::state::UploadStatus::Sending | super::state::UploadStatus::Done => size,
+        _ if info.total_bytes > 1 => (1..=info.sent_bytes).map(|number| part_range(size, super::config::UploadConfig::default().part_size, u32::try_from(number).unwrap_or(u32::MAX)).1).sum(),
+        _ => 0,
+    }
+}
+
 pub fn mime_of(name: &str) -> &'static str {
     let extension = name.rsplit_once('.').map(|(_, extension)| extension.to_ascii_lowercase()).unwrap_or_default();
     match extension.as_str() {

@@ -8,7 +8,7 @@ use super::receipt::{receipt_of_transfer, ItemId, WireBatchReceipt, WireItemRece
 use super::upload_wire::{WireUploadBatch, WireUploadItem, WireUploadRequest};
 use super::write::refused;
 use super::{Database, DbError};
-use crate::store::{Planned, Record};
+use crate::store::Planned;
 use crate::owners::life::LifeReply;
 use crate::owners::store::IntentEffects;
 use crate::owners::write::outbox::{Fault, NewOp, OpSource, OutboxOutcome, Receipt};
@@ -61,10 +61,10 @@ impl Database {
         Ok(NewOp { model: plan.model.to_string(), row_id: plan.row.to_string(), action: plan.action.to_string(), on_failure: crate::schema::OnFailure::Keep, origin: OpSource::Api, path: path.to_string(), body, effects: plan.effects.clone(), durable: true })
     }
 
-    fn upload_item(&self, plan: &Plan<'_>, mutation: &str, fields: Map<String, Value>) -> Result<BatchItem, DbError> {
+    fn upload_item(&self, plan: &Plan<'_>, mutation: &str, (fields, item): (Map<String, Value>, &str)) -> Result<BatchItem, DbError> {
         let (source, multipart) = self.source_of(&plan.file.path)?;
         let name = file_name(plan.file);
-        let steps = StepsBody { multipart, mime: plan.file.mime.clone().unwrap_or_else(|| mime_of(&name).to_string()), name, signed_variable: "signedId".into() }.steps();
+        let steps = StepsBody { multipart, mime: plan.file.mime.clone().unwrap_or_else(|| mime_of(&name).to_string()), name, signed_variable: "signedId".into(), item: item.to_string() }.steps();
         Ok(BatchItem { key: key_of(plan.model, plan.row, plan.action), fields, urgent: false, source, mutation: self.upload_mutation(plan, mutation)?, steps })
     }
 
@@ -74,7 +74,7 @@ impl Database {
         let mutation = declaration.mutation.clone().ok_or_else(|| invalid(format!("{model} {action} declares no mutation")))?;
         let mut variables = file.variables.clone();
         variables.insert("signedId".into(), Value::String(SIGNED_ID_SENTINEL.into()));
-        self.upload_item(&Plan { model, row, action, declaration, variables, file, effects }, &mutation, Map::new())
+        self.upload_item(&Plan { model, row, action, declaration, variables, file, effects }, &mutation, (Map::new(), row))
     }
 
     /// One item of a batch: the row of the item is planned like a `create`, its final mutation carries the item alone.
@@ -88,6 +88,7 @@ impl Database {
         fields.insert("signedId".into(), Value::String(SIGNED_ID_SENTINEL.into()));
         let shown = fields.clone();
         let single = spec.actions.iter().find(|declared| declared.name == batch.single && declared.mutation.is_some()).filter(|_| batch.min > 1);
+        let single_name = single.map(|declared| declared.name.clone());
         let (declaration, mutation, variables) = match single {
             Some(single) => {
                 let mut variables = request.variables.clone();
@@ -101,7 +102,10 @@ impl Database {
             }
         };
         let file = UploadFile { path: item.path.clone(), name: item.name.clone(), mime: item.mime.clone(), variables: Map::new() };
-        self.upload_item(&Plan { model, row: planned.row_id.as_str(), action, declaration, variables, file: &file, effects: planned.effects.clone() }, &mutation, shown)
+        let correlate = spec.actions.iter().find(|declared| declared.name == action).and_then(|declared| declared.correlate.first()).and_then(|field| item.values.get(field)).and_then(Value::as_str).unwrap_or(planned.row_id.as_str()).to_string();
+        let mut built = self.upload_item(&Plan { model, row: planned.row_id.as_str(), action, declaration, variables, file: &file, effects: planned.effects.clone() }, &mutation, (shown, &correlate))?;
+        if let Some(name) = single_name { built.mutation.action = name; }
+        Ok(built)
     }
 
     /// How the elements of a batch go out together: at least `min` of them in one request of the batch action, fewer one by one.
@@ -121,6 +125,10 @@ impl Database {
             Renumber { position: fields.position.clone(), size: fields.size.clone(), position_target: target(&fields.position), size_target: target(&fields.size), start: fields.position_from }
         });
         Ok(Joint { minimum: batch.min, maximum: batch.max, items_key, mutation: template, renumber })
+    }
+
+    fn accepted_row(&self, model: &str, row: &crate::identity::RowId) -> Result<super::wire::WireRow, DbError> {
+        self.optimistic(model, row)?.ok_or_else(|| DbError::Database { detail: format!("the accepted row {row} of {model} is not stored") })
     }
 
     async fn transfer_answer(&self, waiter: crate::runtime::Waiter<LifeReply>, what: &str) -> Result<TransferAnswer, DbError> {
@@ -189,13 +197,11 @@ impl Database {
         let joint = self.joint_of(&model, &request)?;
         let waiter = self.life.accept_upload_batch(epoch, built, joint, self.now());
         let TransferAnswer::Receipts(held) = self.transfer_answer(waiter, "upload batch").await? else { return Err(DbError::Database { detail: "the owner answered a batch with no receipts".into() }) };
-        let wire = self.wire(&model)?.clone();
         let items = planned.into_iter().zip(held).map(|((item, planned, _), held)| {
             let key = item.values.get(&field).and_then(Value::as_str).unwrap_or_default().to_string();
-            let record = Record { id: planned.row_id.clone(), revision: 0, data: planned.input.as_object().cloned().unwrap_or_default(), sync: Default::default() };
-            let value = wire.row(&record);
-            WireItemReceipt { item: ItemId { value: key }, optimistic_value: value.clone(), receipt: self.transfer_receipt(epoch, model.clone(), held, Some(value)) }
-        }).collect();
+            let value = self.accepted_row(&model, &planned.row_id)?;
+            Ok(WireItemReceipt { item: ItemId { value: key }, optimistic_value: value.clone(), receipt: self.transfer_receipt(epoch, model.clone(), held, Some(value)) })
+        }).collect::<Result<Vec<_>, DbError>>()?;
         Ok(WireBatchReceipt { epoch, items })
     }
 
@@ -217,16 +223,12 @@ impl Database {
         let epoch = request.epoch;
         self.account_call(epoch)?;
         let Some(upload) = request.upload else { return Err(invalid("a command without a file goes through the owners")) };
-        let action = upload.action.clone();
         let (db, name, texts) = (self.db.clone(), request.model.clone(), (request.values_json.clone(), request.args_json.clone()));
         let (file, planned) = self.offload(move || Ok((upload.request.into_file()?, db.plan_create(&name, serde_json::from_str(&texts.0)?, serde_json::from_str(&texts.1)?)?))).await?;
         let item = self.single_upload(&request.model, planned.row_id.as_str(), &upload.action, &file, planned.effects.clone())?;
         let waiter = self.life.accept_upload(epoch, item, self.now());
         let TransferAnswer::Receipt(held) = self.transfer_answer(waiter, "send").await? else { return Err(DbError::Database { detail: "the owner answered a send with no receipt".into() }) };
-        let queued = crate::owners::write::upload::UploadInfo { status: crate::owners::write::upload::UploadStatus::Queued, stage: crate::owners::write::upload::UploadStage::Prepare, sent_bytes: 0, total_bytes: 0, wait_reason: None, attempts: 0, error: None, local_url: None, processing: None, copy_file: None };
-        let sync = crate::value::sync::SyncInfo { uploads: std::collections::BTreeMap::from([(action, queued)]), ..Default::default() };
-        let record = Record { id: planned.row_id.clone(), revision: 0, data: planned.input.as_object().cloned().unwrap_or_default(), sync };
-        let value = self.wire(&request.model)?.row(&record);
+        let value = self.accepted_row(&request.model, &planned.row_id)?;
         Ok(self.transfer_receipt(epoch, request.model, held, Some(value)))
     }
 
@@ -305,13 +307,13 @@ impl Database {
             Err(error) => return Err(error),
         };
         Ok(match answer {
-            OutboxOutcome::Confirmed { .. } => {
+            OutboxOutcome::Confirmed { result, .. } => {
                 let row = receipt.optimistic_value.as_ref().map(|row| row.id.clone());
                 let value = match row {
                     Some(row) => self.transfer_value(receipt.epoch, &receipt.model, &row).await?,
                     None => None,
                 };
-                WireOperationOutcome::Confirmed { value: value.or(receipt.optimistic_value), answer_json: None }
+                WireOperationOutcome::Confirmed { value: value.or(receipt.optimistic_value), answer_json: result }
             }
             OutboxOutcome::Rejected { error } | OutboxOutcome::Failed { error } => WireOperationOutcome::Rejected { failure: super::write::failure_of(&error) },
             OutboxOutcome::Discarded | OutboxOutcome::Interrupted => WireOperationOutcome::Interrupted,

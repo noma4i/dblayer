@@ -192,6 +192,7 @@ pub enum TransferInput {
     /// The answer of Outbox to `ReserveOp`.
     OpReserved { target: super::outbox::ReserveTarget, result: Result<OpId, Fault> },
     StepOk { transfer_id: TransferId, attempt_id: AttemptId, part: Option<u32>, upload_id: Option<String>, etag: Option<String> },
+    UploadMinted { transfer_id: TransferId, attempt_id: AttemptId, upload_id: String },
     StepError { transfer_id: TransferId, attempt_id: AttemptId, temporary: bool },
     Completed { transfer_id: TransferId, attempt_id: AttemptId, signed_id: Option<String> },
     CompleteError { transfer_id: TransferId, attempt_id: AttemptId, temporary: bool },
@@ -258,7 +259,7 @@ pub enum TransferEffect {
     Copy { transfer_id: TransferId, attempt_id: AttemptId, key: Key, source: Source },
     CopyCancel { transfer_id: TransferId },
     /// A step of the file (`part`, `blob`) with `NetworkPurpose::Transfer`.
-    Step { transfer_id: TransferId, attempt_id: AttemptId, key: Key, part: Option<u32>, purpose: NetworkPurpose, upload_id: Option<String>, source: Source, steps: Steps, place: Option<Location> },
+    Step { transfer_id: TransferId, attempt_id: AttemptId, operation: u64, part: Option<u32>, purpose: NetworkPurpose, upload_id: Option<String>, source: Source, steps: Steps, place: Option<Location> },
     Complete { transfer_id: TransferId, attempt_id: AttemptId, key: Key, upload_id: Option<String>, parts: Vec<(u32, Option<String>)>, place: Option<Location> },
     Abort { transfer_id: TransferId, attempt_id: AttemptId, key: Key, upload_id: String },
     /// `abort` of an upload whose transfer is gone: the answer comes back as `AbortDone`.

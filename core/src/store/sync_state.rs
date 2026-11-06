@@ -90,8 +90,10 @@ fn stored_info(connection: &Connection, key: &SyncKey, row: &Row<'_>, first: usi
     Ok(info)
 }
 
-fn read_uploads(connection: &Connection, model: &str, ids: &[String]) -> rusqlite::Result<HashMap<String, std::collections::BTreeMap<String, crate::owners::write::upload::UploadInfo>>> {
-    let mut found: HashMap<String, std::collections::BTreeMap<String, crate::owners::write::upload::UploadInfo>> = HashMap::new();
+type Uploads = std::collections::BTreeMap<String, crate::owners::write::upload::UploadInfo>;
+
+fn read_uploads(connection: &Connection, model: &str, ids: &[String]) -> rusqlite::Result<HashMap<String, (Uploads, BTreeSet<String>)>> {
+    let mut found: HashMap<String, (Uploads, BTreeSet<String>)> = HashMap::new();
     for chunk in ids.chunks(CHUNK) {
         let marks = vec!["?"; chunk.len()].join(", ");
         let mut statement = connection.prepare_cached(&format!(include_str!("sql/sync_state/read_uploads.sql"), INFO_COLUMNS = INFO_COLUMNS, marks = marks))?;
@@ -100,18 +102,25 @@ fn read_uploads(connection: &Connection, model: &str, ids: &[String]) -> rusqlit
         while let Some(row) = rows.next()? {
             if let Some(mut info) = info_at(row, 2)? {
                 let (id, action): (String, String) = (row.get(0)?, row.get(1)?);
-                if let (Some(size), Some(transfer_id)) = (row.get::<_, Option<i64>>(10)?, row.get::<_, Option<i64>>(11)?) {
+                let size = row.get::<_, Option<i64>>(10)?.and_then(|size| u64::try_from(size).ok()).unwrap_or(0);
+                if let Some(transfer_id) = row.get::<_, Option<i64>>(11)? {
                     if size > 0 {
                         info.copy_file = Some(crate::owners::write::transfer::file_id(u64::try_from(transfer_id).unwrap_or_default()));
                     }
+                    info.sent_bytes = crate::owners::write::upload::bytes_sent(&info, size);
+                    info.total_bytes = size;
                 }
-                found.entry(id).or_default().insert(action, info);
+                let entry = found.entry(id).or_default();
+                if row.get::<_, Option<i64>>(12)?.is_some() {
+                    entry.1.insert(action.clone());
+                }
+                entry.0.insert(action, info);
             }
         }
         let owner = std::iter::once(SqlValue::Text(model.to_string())).chain(chunk.iter().cloned().map(SqlValue::Text)).collect::<Vec<_>>();
         for (key, extensions) in read_extensions(connection, "sync_upload_error", &["model", "row_id", "action"], &format!("model = ? AND row_id IN ({marks})"), &owner)? {
             if let [_, SqlValue::Text(id), SqlValue::Text(action)] = key.as_slice() {
-                if let Some(info) = found.get_mut(id).and_then(|uploads| uploads.get_mut(action)) {
+                if let Some(info) = found.get_mut(id).and_then(|(uploads, _)| uploads.get_mut(action)) {
                     attach_extensions(&mut info.error, Some(extensions));
                 }
             }
@@ -134,8 +143,10 @@ pub fn read_sync(connection: &Connection, model: &str, ids: &[String]) -> rusqli
             found.insert(id, info);
         }
     }
-    for (id, uploads) in read_uploads(connection, model, ids)? {
-        found.entry(id).or_default().uploads = uploads;
+    for (id, (uploads, batched)) in read_uploads(connection, model, ids)? {
+        let info = found.entry(id).or_default();
+        info.uploads = uploads;
+        info.fold_transfers(&batched);
     }
     Ok(found)
 }
@@ -147,7 +158,12 @@ fn stored(connection: &Connection, key: &SyncKey) -> rusqlite::Result<Option<Syn
     let uploads = read_uploads(connection, &key.0, std::slice::from_ref(&key.1))?.remove(&key.1);
     Ok(match (info, uploads) {
         (None, None) => None,
-        (info, uploads) => Some(SyncInfo { uploads: uploads.unwrap_or_default(), ..info.unwrap_or_default() }),
+        (info, uploads) => {
+            let (uploads, batched) = uploads.unwrap_or_default();
+            let mut folded = SyncInfo { uploads, ..info.unwrap_or_default() };
+            folded.fold_transfers(&batched);
+            Some(folded)
+        }
     })
 }
 

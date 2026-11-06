@@ -58,7 +58,7 @@ impl TransferState {
                 let kind = if kind == StoreKind::MixedOutcomes {
                     if transfer.stage == TransferStage::Removing { StoreKind::Removed } else { StoreKind::Failed }
                 } else { kind };
-                let own = transfer.op_id.filter(|_| !transfer.submitted);
+                let own = transfer.op_id.filter(|_| !transfer.submitted || transfer.prior == Some(TransferStage::Failed));
                 let mut ops = Vec::new();
                 if kind == StoreKind::Removed {
                     ops.push(StoreOp::RemoveUpload { key: transfer.key.clone() });
@@ -354,6 +354,7 @@ impl TransferState {
             TransferInput::CopyFailed { transfer_id, attempt_id, error } => self.copy_failed(transfer_id, attempt_id, error, fx),
             TransferInput::OpReserved { target, result } => self.op_reserved(target, result, fx),
             TransferInput::StepOk { transfer_id, attempt_id, part, upload_id, etag } => self.step_ok(transfer_id, attempt_id, part, upload_id, etag, fx),
+            TransferInput::UploadMinted { transfer_id, attempt_id, upload_id } => self.upload_minted(transfer_id, attempt_id, upload_id),
             TransferInput::StepError { transfer_id, attempt_id, temporary } => self.step_error(transfer_id, attempt_id, temporary, fx),
             TransferInput::Completed { transfer_id, attempt_id, signed_id } => self.completed(transfer_id, attempt_id, signed_id, fx),
             TransferInput::CompleteError { transfer_id, attempt_id, temporary } => self.complete_error(transfer_id, attempt_id, temporary, fx),
