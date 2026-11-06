@@ -26,12 +26,14 @@ async fn flow_user_everywhere() {
     bound(rig.database.refresh(epoch, "User".into(), "all".into(), "{}".into())).await.unwrap();
     held.shows("A2").await;
     held.lists_show("A2").await;
+    yield_until("all four places show the answer", || [&held.single, &held.entity, &held.rows, &held.window_rows].iter().all(|rows| first_named(rows, "A2").is_some())).await;
     let revisions: Vec<_> = [&held.single, &held.entity, &held.rows, &held.window_rows].iter().map(|rows| first_named(rows, "A2")).collect();
     assert!(revisions.iter().all(|revision| *revision == revisions[0] && revision.is_some()), "the places showed the answer at different revisions: {revisions:?}");
 
     land_event(&rig, "User", json!({"id": "user", "name": "A3"}));
     held.shows("A3").await;
     held.lists_show("A3").await;
+    yield_until("all four places show the event", || [&held.single, &held.entity, &held.rows, &held.window_rows].iter().all(|rows| first_named(rows, "A3").is_some())).await;
     let revisions: Vec<_> = [&held.single, &held.entity, &held.rows, &held.window_rows].iter().map(|rows| first_named(rows, "A3")).collect();
     assert!(revisions.iter().all(|revision| *revision == revisions[0] && revision.is_some()), "the places showed the event at different revisions: {revisions:?}");
     rig.database.close_now();
