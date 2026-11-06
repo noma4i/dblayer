@@ -35,6 +35,7 @@ pub(crate) struct BatchWritten {
     pub stale_parents: Vec<String>,
     pub removed_operations: Vec<u64>,
     pub resets: Vec<crate::owners::store::EphemeralReset>,
+    pub rows: crate::owners::contract::ChangedRows,
 }
 
 impl Store {
@@ -60,8 +61,9 @@ impl Store {
                     if let Err(error) = files.discard(std::slice::from_ref(&id)) { faults.push(format!("remove file {id}: {error}")); }
                 }
                 let revision = result.result().revision.unwrap_or_default();
+                let rows = Some(super::changed_log::table_rows(result.result()));
                 result.publish();
-                Ok(BatchWritten { revision: u64::try_from(revision).map_err(|_| StoreError::Constraint("negative revision".into()))?, position, observed, faults, expiring, removed_memory, stale_parents, removed_operations, resets })
+                Ok(BatchWritten { revision: u64::try_from(revision).map_err(|_| StoreError::Constraint("negative revision".into()))?, position, observed, faults, expiring, removed_memory, stale_parents, removed_operations, resets, rows })
             }
         }
     }

@@ -98,7 +98,7 @@ fn out_restoring_foreign() {
     let mut twin = Twin::bare();
     let inputs = vec![
         OutboxInput::RetryDue { op_id: 1, cycle_id: 1 },
-        OutboxInput::Committed(Committed { batch: 1, revision: 1, tables: Vec::new(), models: Default::default(), stale_parents: Vec::new(), position: 0 }),
+        OutboxInput::Committed(Committed { batch: 1, revision: 1, tables: Vec::new(), rows: None, models: Default::default(), stale_parents: Vec::new(), position: 0 }),
         OutboxInput::Rejected(Rejected { batch: 1, reason: RejectReason::Storage("disk".into()) }),
         OutboxInput::Response { op_id: 1, rows: Vec::new(), swaps: Vec::new(), stale: Vec::new(), result: None, missing: Vec::new(), errors: None },
         OutboxInput::TransportError { op_id: 1, temporary: true },

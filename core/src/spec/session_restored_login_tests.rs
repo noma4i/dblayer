@@ -6,7 +6,7 @@ fn restored_login(rig: &mut Rig) -> u64 {
 
 fn commit_landing(rig: &mut Rig, effects: &[SessionEffect]) -> Vec<SessionEffect> {
     let batch = effects.iter().find_map(|effect| match effect { SessionEffect::CommitLanding { batch, .. } => Some(*batch), _ => None }).unwrap();
-    rig.send(SessionInput::Committed(Committed { batch, revision: 1, tables: vec![], models: Default::default(), stale_parents: Vec::new(), position: 0 }))
+    rig.send(SessionInput::Committed(Committed { batch, revision: 1, tables: vec![], rows: None, models: Default::default(), stale_parents: Vec::new(), position: 0 }))
 }
 
 fn login_response(rig: &mut Rig, attempt: u64) -> Vec<SessionEffect> {

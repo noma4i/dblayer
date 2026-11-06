@@ -24,7 +24,7 @@ fn cause(cause: RefCause) -> Cause {
 
 fn action_of(effect: &StoreEffect) -> Option<Action> {
     Some(match effect {
-        StoreEffect::Reply { batch, reply: StoreReply::Committed { revision, .. }, .. } => Action::Committed { id: *batch, revision: *revision },
+        StoreEffect::Reply { batch, reply: StoreReply::Committed { revision, rows, .. }, .. } => Action::Committed { id: *batch, revision: *revision, rows: rows.clone() },
         StoreEffect::Reply { batch, reply: StoreReply::Rejected(reason), .. } => Action::Rejected {
             id: *batch,
             reason: match reason {
@@ -46,7 +46,7 @@ fn action_of(effect: &StoreEffect) -> Option<Action> {
         StoreEffect::ClearFailed { erase_id, error } => Action::ClearFailed { erase_id: *erase_id, closed: error == "closed" },
         StoreEffect::Saved { publication_id } => Action::Saved(*publication_id),
         StoreEffect::SaveFailed { publication_id, error } => Action::SaveFailed { publication_id: *publication_id, closed: error == "closed" },
-        StoreEffect::BroadcastCommitted { revision, models, .. } => Action::BroadcastCommitted { revision: *revision, all: models.is_none() },
+        StoreEffect::BroadcastCommitted { revision, models, rows, .. } => Action::BroadcastCommitted { revision: *revision, all: models.is_none(), rows: rows.clone() },
         StoreEffect::ReadIntents { epoch, direct } => Action::ReadIntents { epoch: *epoch, direct: *direct },
         StoreEffect::CloseReads => Action::CloseReads,
         StoreEffect::CloseConnections => Action::CloseConnections,
@@ -70,6 +70,8 @@ struct Twin {
     /// Each request with the actions the reference gave.
     steps: Vec<(Request, Vec<Action>)>,
     batch: u64,
+    /// The rows of each batch handed to the writer: the answer of SQLite names them.
+    committing: std::collections::BTreeMap<u64, BTreeSet<(String, String)>>,
     publication: u64,
     erase: u64,
 }
@@ -79,7 +81,7 @@ impl Twin {
         let mut det = DetScheduler::new(9);
         let log = new_log();
         let addr = det.add::<StoreWriter>("store", StoreState::new(), Recorder::<StoreWriter>::new(&log));
-        Self { det, addr, log, reference: Ref::new(), history: Vec::new(), written: Vec::new(), stale_writes: 0, generations: Vec::new(), steps: Vec::new(), batch: 0, publication: 0, erase: 0 }
+        Self { det, addr, log, reference: Ref::new(), history: Vec::new(), written: Vec::new(), stale_writes: 0, generations: Vec::new(), steps: Vec::new(), batch: 0, committing: Default::default(), publication: 0, erase: 0 }
     }
 
     /// An open store in the epoch 1 (`Published` saved).
@@ -121,7 +123,7 @@ impl Twin {
 
     fn state(&self) -> &StoreState { self.det.state(self.addr).expect("the owner state") }
 
-    fn input_of(request: &Request) -> StoreInput {
+    fn input_of(&self, request: &Request) -> StoreInput {
         match request.clone() {
             Request::Commit { id, batch } => StoreInput::Commit(StoreBatch { author: BatchAuthor::Outbox, id, epoch: batch.epoch, basis: batch.basis, rows: batch.rows, intents: batch.intents, credential: batch.credential, ops: Vec::new() }),
             Request::ClearAccount { epoch_old, cause: c, generation_new, erase_id } => StoreInput::ClearAccount { epoch_old, cause: cause(c), generation_new, erase_id },
@@ -130,7 +132,7 @@ impl Twin {
             Request::EpochEnded { epoch } => StoreInput::EpochEnded(EpochEnded { epoch, cause: Cause::SessionReset }),
             Request::ReadIntents { epoch } => StoreInput::ReadIntents { epoch },
             Request::Close => StoreInput::Close,
-            Request::Written { id, result } => StoreInput::Written { author: BatchAuthor::Outbox, batch: id, result: result.map(|revision| WriteDone { revision, ..WriteDone::default() }).map_err(|()| crate::owners::contract::RejectReason::Storage(DISK.into())) },
+            Request::Written { id, result } => StoreInput::Written { author: BatchAuthor::Outbox, batch: id, result: result.map(|revision| WriteDone { revision, rows: self.committing.get(&id).cloned(), ..WriteDone::default() }).map_err(|()| crate::owners::contract::RejectReason::Storage(DISK.into())) },
             Request::Erased { io_id, result } => StoreInput::Erased { io_id, result: result.map(|revision| Done { revision }).map_err(|()| DISK.into()) },
             Request::ReadsClosed(ids) => StoreInput::ReadsClosed { ids },
             Request::ReadFinished(read_id) => StoreInput::ReadFinished { read_id },
@@ -139,7 +141,8 @@ impl Twin {
 
     /// Feeds one request of the table to both sides and compares the actions, `revision`, `epoch`, the mode and the generations.
     fn feed(&mut self, request: Request) -> Vec<Action> {
-        let raw = self.send(Self::input_of(&request));
+        if let Request::Commit { id, batch } = &request { self.committing.insert(*id, batch.rows.iter().cloned().collect()); }
+        let raw = self.send(self.input_of(&request));
         let got: Vec<Action> = raw.iter().filter_map(action_of).collect();
         let want = self.reference.step(request.clone());
         assert_eq!(got, want, "the same actions for {request:?}");

@@ -40,16 +40,17 @@ pub(crate) struct CommitNotice {
     pub models: Vec<String>,
     pub all: bool,
     pub position: u64,
+    pub rows: crate::owners::contract::ChangedRows,
 }
 
 impl CommitNotice {
     fn of_commit(result: &CommitResult) -> Self {
         let models: std::collections::BTreeSet<&str> = result.rows.iter().map(|change| change.row.model.as_str()).chain(result.scopes.iter().map(|scope| scope.model.as_str())).chain(result.members.iter().map(|row| row.model.as_str())).collect();
-        Self { revision: result.revision.unwrap_or_default(), tables: models.iter().map(|model| table_name(model)).collect(), models: models.into_iter().map(str::to_string).collect(), all: false, position: result.position }
+        Self { revision: result.revision.unwrap_or_default(), tables: models.iter().map(|model| table_name(model)).collect(), models: models.into_iter().map(str::to_string).collect(), all: false, position: result.position, rows: Some(super::changed_log::table_rows(result)) }
     }
 
     fn of_reset(revision: i64, models: Option<&[String]>) -> Self {
-        Self { revision, tables: models.into_iter().flatten().map(|model| table_name(model)).collect(), models: models.map(<[String]>::to_vec).unwrap_or_default(), all: models.is_none(), position: 0 }
+        Self { revision, tables: models.into_iter().flatten().map(|model| table_name(model)).collect(), models: models.map(<[String]>::to_vec).unwrap_or_default(), all: models.is_none(), position: 0, rows: None }
     }
 }
 

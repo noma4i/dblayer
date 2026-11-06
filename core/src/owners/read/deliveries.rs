@@ -288,6 +288,10 @@ struct Delivery {
     pending_read: Option<(u64, i64, Whole)>,
 }
 
+fn entity_row(view: &View) -> Option<(String, &str)> {
+    matches!(view.kind, Kind::Entity { .. }).then(|| (crate::ddl::table_name(&view.model), view.subject.as_str()))
+}
+
 fn visible_after(state: &WindowState) -> i64 { state.loaded.unwrap_or(0) }
 
 fn shown_hash(row: &WireRow) -> u64 {
@@ -396,6 +400,7 @@ pub struct DeliveriesState {
     epoch: Epoch,
     streams: BTreeMap<StreamId, Delivery>,
     by_table: BTreeMap<String, BTreeSet<StreamId>>,
+    by_row: BTreeMap<String, BTreeMap<String, BTreeSet<StreamId>>>,
     examined: u64,
     peers: DeliveryPeers,
     revision: i64,
@@ -404,7 +409,7 @@ pub struct DeliveriesState {
 }
 
 impl DeliveriesState {
-    pub fn new(epoch: Epoch, peers: DeliveryPeers) -> Self { Self { epoch, streams: BTreeMap::new(), by_table: BTreeMap::new(), examined: 0, peers, revision: 0, closing: false, drained: false } }
+    pub fn new(epoch: Epoch, peers: DeliveryPeers) -> Self { Self { epoch, streams: BTreeMap::new(), by_table: BTreeMap::new(), by_row: BTreeMap::new(), examined: 0, peers, revision: 0, closing: false, drained: false } }
 
     pub fn stage(&self, stream: StreamId) -> Option<DeliveryStage> { self.streams.get(&stream).map(|machine| machine.stage) }
 
@@ -418,19 +423,35 @@ impl DeliveriesState {
 
     fn index(&mut self, stream: StreamId) {
         let Some(machine) = self.streams.get(&stream).filter(|machine| machine.view.kind.reads_rows() && matches!(machine.stage, DeliveryStage::Opening | DeliveryStage::Live)) else { return };
+        let own = entity_row(&machine.view);
         for table in &machine.view.tables {
-            self.by_table.entry(table.clone()).or_default().insert(stream);
+            match &own {
+                Some((own_table, row)) if table == own_table => { self.by_row.entry(table.clone()).or_default().entry(row.to_string()).or_default().insert(stream); }
+                _ => { self.by_table.entry(table.clone()).or_default().insert(stream); }
+            }
         }
     }
 
     fn settle(&mut self, stream: StreamId) {
         let Some(machine) = self.streams.get(&stream) else { return };
         if !matches!(machine.stage, DeliveryStage::Opening | DeliveryStage::Live) {
+            let own = entity_row(&machine.view);
             for table in &machine.view.tables {
                 if let Some(streams) = self.by_table.get_mut(table) {
                     streams.remove(&stream);
                     if streams.is_empty() {
                         self.by_table.remove(table);
+                    }
+                }
+                if let (Some((_, row)), Some(rows)) = (&own, self.by_row.get_mut(table)) {
+                    if let Some(streams) = rows.get_mut(*row) {
+                        streams.remove(&stream);
+                        if streams.is_empty() {
+                            rows.remove(*row);
+                        }
+                    }
+                    if rows.is_empty() {
+                        self.by_row.remove(table);
                     }
                 }
             }
@@ -442,8 +463,15 @@ impl DeliveriesState {
 
     fn affected(&self, committed: &Committed) -> BTreeSet<StreamId> {
         match &committed.models {
-            Models::All => self.by_table.values().flatten().copied().collect(),
-            Models::Set(_) => committed.tables.iter().filter_map(|table| self.by_table.get(table)).flatten().copied().collect(),
+            Models::All => self.by_table.values().flatten().chain(self.by_row.values().flat_map(BTreeMap::values).flatten()).copied().collect(),
+            Models::Set(_) => {
+                let tabled = committed.tables.iter().filter_map(|table| self.by_table.get(table)).flatten();
+                let rowed: Vec<&BTreeSet<StreamId>> = match &committed.rows {
+                    None => committed.tables.iter().filter_map(|table| self.by_row.get(table)).flat_map(BTreeMap::values).collect(),
+                    Some(rows) => rows.iter().filter(|(table, _)| committed.tables.contains(table)).filter_map(|(table, row)| self.by_row.get(table)?.get(row)).collect(),
+                };
+                tabled.chain(rowed.into_iter().flatten()).copied().collect()
+            }
         }
     }
 

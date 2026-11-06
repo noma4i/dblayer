@@ -213,7 +213,7 @@ pub struct OpenMessage {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum StoreReply {
-    Committed { revision: u64, stale_parents: Vec<String> },
+    Committed { revision: u64, stale_parents: Vec<String>, rows: crate::owners::contract::ChangedRows },
     Rejected(RejectReason),
 }
 
@@ -250,6 +250,7 @@ pub struct WriteDone {
     pub stale_parents: Vec<String>,
     pub removed_operations: Vec<u64>,
     pub resets: Vec<EphemeralReset>,
+    pub rows: crate::owners::contract::ChangedRows,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -276,7 +277,7 @@ pub enum StoreEffect {
     Saved { publication_id: u64 },
     SaveFailed { publication_id: u64, error: String },
     /// Broadcast `Committed{revision, tables, models}`; `None` = all tables and models.
-    BroadcastCommitted { revision: u64, position: u64, models: Option<Vec<String>> },
+    BroadcastCommitted { revision: u64, position: u64, models: Option<Vec<String>>, rows: crate::owners::contract::ChangedRows },
     Observed { epoch: Epoch, batch: BatchId, payloads: Vec<String> },
     ArmExpiry { epoch: Epoch, model: String, row_id: String, revision: u64, deadline: u64 },
     DisarmExpiry { epoch: Epoch, model: String, row_id: String },

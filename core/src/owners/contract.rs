@@ -62,12 +62,16 @@ pub struct Committed {
     pub batch: BatchId,
     pub revision: i64,
     pub tables: Vec<String>,
+    pub rows: ChangedRows,
     pub models: Models,
     /// Parent models whose `sets:` fields the batch did not write because the parent row is not in the base.
     pub stale_parents: Vec<String>,
     /// The version of the overlay of ephemeral values at `revision`.
     pub position: u64,
 }
+
+/// The `(table, row_id)` pairs a commit changed, from the Store journal of changed rows. `None` = every row of the tables.
+pub type ChangedRows = Option<std::collections::BTreeSet<(String, String)>>;
 
 /// The models a commit touched: `All` touches every stream, a `Set` touches the streams of its tables (the empty set touches none).
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -86,6 +90,7 @@ pub struct CommittedBroadcast {
     pub revision: u64,
     pub position: u64,
     pub tables: Vec<String>,
+    pub rows: ChangedRows,
     pub models: Models,
 }
 

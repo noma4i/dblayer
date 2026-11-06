@@ -9,6 +9,20 @@ const MAX_LOGGED_ROWS: usize = 8192;
 
 pub(crate) type ChangedRow = (String, String);
 
+fn changed_rows(result: &CommitResult) -> Vec<ChangedRow> {
+    let written = result.rows.iter().map(|change| &change.row).chain(result.members.iter()).chain(result.renewed.iter());
+    let replaced = result.replaced.iter().flat_map(|(from, to)| [(from.model.to_string(), from.id.to_string()), (from.model.to_string(), to.to_string())]);
+    let mut rows: Vec<ChangedRow> = written.map(|row| (row.model.to_string(), row.id.to_string())).chain(replaced).collect();
+    rows.sort();
+    rows.dedup();
+    rows
+}
+
+/// The changed rows of a commit as `(table, row_id)`: what `Committed.rows` carries.
+pub(crate) fn table_rows(result: &CommitResult) -> BTreeSet<(String, String)> {
+    changed_rows(result).into_iter().map(|(model, id)| (crate::ddl::table_name(&model), id)).collect()
+}
+
 #[derive(Default)]
 pub(crate) struct ChangedLog(Mutex<Entries>);
 
@@ -35,12 +49,7 @@ impl ChangedLog {
 
     pub(crate) fn log_commit(&self, result: &CommitResult) {
         let Some(revision) = result.revision else { return };
-        let written = result.rows.iter().map(|change| &change.row).chain(result.members.iter()).chain(result.renewed.iter());
-        let replaced = result.replaced.iter().flat_map(|(from, to)| [(from.model.to_string(), from.id.to_string()), (from.model.to_string(), to.to_string())]);
-        let mut rows: Vec<ChangedRow> = written.map(|row| (row.model.to_string(), row.id.to_string())).chain(replaced).collect();
-        rows.sort();
-        rows.dedup();
-        self.push(Entry { at: (revision, result.position), rows: Some(rows) });
+        self.push(Entry { at: (revision, result.position), rows: Some(changed_rows(result)) });
     }
 
     pub(crate) fn log_unknown(&self, revision: i64) { self.push(Entry { at: (revision, 0), rows: None }); }

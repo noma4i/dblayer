@@ -10,7 +10,7 @@ use super::windows::{WindowKey, Windows};
 use super::feed::Feed;
 use super::{DbSnapshots, Snapshots};
 use crate::ddl::table_name;
-use crate::owners::contract::{Committed, Models};
+use crate::owners::contract::{ChangedRows, Committed, Models};
 use crate::query::Query;
 use crate::runtime::{Address, Effect, Outcomes, StateOwner};
 use crate::schema::{FieldSpec, ModelSpec};
@@ -20,7 +20,7 @@ use crate::value::ScalarKind;
 
 const EPOCH: u64 = 1;
 
-type Notice = (i64, Vec<String>, u64);
+type Notice = (i64, Vec<String>, u64, ChangedRows);
 
 fn model(index: usize) -> String { format!("t{index}") }
 
@@ -54,7 +54,7 @@ impl Work {
         let db = Arc::new(Store::open_models(None, (0..models).map(spec).collect(), None).unwrap());
         let notices = Arc::new(Mutex::new(Vec::new()));
         let sink = notices.clone();
-        db.on_commit(move |notice| sink.lock().unwrap().push((notice.revision, notice.tables, notice.position)));
+        db.on_commit(move |notice| sink.lock().unwrap().push((notice.revision, notice.tables, notice.position, notice.rows)));
         let peers = DeliveryPeers { windows: Address::<Windows>::new(0), feed: Address::<Feed>::new(1) };
         Self { snapshots: DbSnapshots::new(db.clone()), db, state: DeliveriesState::new(EPOCH, peers), notices }
     }
@@ -81,14 +81,19 @@ impl Work {
     fn put(&self, index: usize, id: &str, text: &str) { put(&self.db, &model(index), json!({"id": id, "text": text})); }
 
     fn commit(&mut self) {
-        let (revision, tables, position) = self.notices.lock().unwrap().pop().expect("the write announced its commit");
-        self.feed(DeliveryInput::Committed(Committed { batch: 0, revision, tables, models: Models::default(), stale_parents: Vec::new(), position }));
+        let (revision, tables, position, rows) = self.notices.lock().unwrap().pop().expect("the write announced its commit");
+        self.feed(DeliveryInput::Committed(Committed { batch: 0, revision, tables, rows, models: Models::default(), stale_parents: Vec::new(), position }));
     }
 
     fn pull(&mut self, stream: StreamId) { self.feed(DeliveryInput::Pull { stream, outcome: Outcomes::<d::PullAnswer>::new().register(EPOCH).id() }); }
 }
 
-fn work_of_one_commit(streams: usize, window: usize) -> (u64, usize) {
+fn entity_view(index: usize, row: &str) -> View {
+    let name = model(index);
+    View { kind: Kind::Entity { fetch: d::Fetch::Never }, tables: vec![table_name(&name)], local: true, remote: false, live: false, reload: false, window: WindowKey { model: name.clone(), name: "entity".into() }, subject: row.into(), model: name }
+}
+
+fn work_of_one_commit(streams: usize, window: usize, others: usize) -> (u64, usize) {
     let mut work = Work::new(streams);
     for row in 0..window {
         work.put(0, &format!("r{row}"), "old");
@@ -98,6 +103,10 @@ fn work_of_one_commit(streams: usize, window: usize) -> (u64, usize) {
     }
     for index in 0..streams {
         work.feed(DeliveryInput::Open { stream: index as StreamId + 1, view: view(index), epoch: EPOCH, identity: true, valid: true, now: 0, revision: 0 });
+    }
+    work.feed(DeliveryInput::Open { stream: 999, view: entity_view(0, "r0"), epoch: EPOCH, identity: true, valid: true, now: 0, revision: 0 });
+    for other in 0..others {
+        work.feed(DeliveryInput::Open { stream: 1000 + other as StreamId, view: entity_view(0, &format!("x{other}")), epoch: EPOCH, identity: true, valid: true, now: 0, revision: 0 });
     }
     work.pull(1);
     let (examined, read) = (work.state.streams_examined(), work.db.counters().rows_read);
@@ -114,10 +123,10 @@ fn work_of_one_commit(streams: usize, window: usize) -> (u64, usize) {
 
 #[test]
 fn dlv_prop_work_by_affected() {
-    let (examined, read) = work_of_one_commit(2, 20);
-    assert_eq!((examined, read), (1, 1), "one stream is examined and one row is read");
-    assert_eq!(work_of_one_commit(4, 20), (examined, read), "2N open streams");
-    assert_eq!(work_of_one_commit(2, 40), (examined, read), "a window of 2M rows");
+    let (examined, read) = work_of_one_commit(2, 20, 4);
+    assert_eq!(examined, 2, "the list stream and the Entity stream of the changed row are examined");
+    assert_eq!(work_of_one_commit(4, 20, 8), (examined, read), "2N open streams and 2N Entity streams of other rows of the same table");
+    assert_eq!(work_of_one_commit(2, 40, 4), (examined, read), "a window of 2M rows");
 }
 
 #[test]
@@ -151,8 +160,8 @@ fn dlv_streams_of_one_commit_deliver_independently() {
     let (all_before, marked_before) = (work.state.journal_len(1), work.state.journal_len(2));
 
     work.put(0, "r0", "new");
-    let (revision, tables, position) = work.notices.lock().unwrap().pop().expect("the write announced its commit");
-    let reads = work.step(DeliveryInput::Committed(Committed { batch: 0, revision, tables, models: Models::default(), stale_parents: Vec::new(), position }));
+    let (revision, tables, position, rows) = work.notices.lock().unwrap().pop().expect("the write announced its commit");
+    let reads = work.step(DeliveryInput::Committed(Committed { batch: 0, revision, tables, rows, models: Models::default(), stale_parents: Vec::new(), position }));
     assert_eq!(reads.iter().map(|read| read.stream).collect::<Vec<_>>(), [1, 2], "one commit asks both streams to read");
     let mut reads = reads.into_iter();
     let (all_read, marked_read) = (reads.next().unwrap(), reads.next().unwrap());
@@ -163,4 +172,25 @@ fn dlv_streams_of_one_commit_deliver_independently() {
     let answered = work.answer(all_read);
     work.feed(answered);
     assert_eq!(work.state.journal_len(1), all_before + 1, "the list of all rows delivers it with its own read");
+}
+
+#[test]
+fn dlv_committed_rows_select_the_entity_streams_of_those_rows() {
+    let mut work = Work::new(1);
+    work.put(0, "a", "old");
+    work.put(0, "b", "old");
+    for (stream, row) in [(1, "a"), (2, "b")] {
+        work.feed(DeliveryInput::Open { stream, view: entity_view(0, row), epoch: EPOCH, identity: true, valid: true, now: 0, revision: 0 });
+        work.pull(stream);
+    }
+    let table = table_name(&model(0));
+    let committed = |revision: i64, rows: ChangedRows| DeliveryInput::Committed(Committed { batch: 0, revision, tables: vec![table.clone()], rows, models: Models::default(), stale_parents: Vec::new(), position: 0 });
+    let examined = work.state.streams_examined();
+
+    let reads = work.step(committed(100, Some([(table.clone(), "b".to_string())].into())));
+    assert_eq!(reads.iter().map(|read| read.stream).collect::<Vec<_>>(), [2], "only the Entity stream of the changed row reads");
+    assert_eq!(work.state.streams_examined() - examined, 1, "the other Entity stream of the table is not examined");
+
+    let reads = work.step(committed(101, None));
+    assert_eq!(reads.iter().map(|read| read.stream).collect::<Vec<_>>(), [1, 2], "a commit without a row list reads every Entity stream of its tables");
 }
