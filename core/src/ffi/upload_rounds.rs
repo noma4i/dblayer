@@ -51,7 +51,9 @@ impl Database {
         }
     }
 
-    pub fn round_started(&self, request_id: u64, round_id: u32, epoch: u64) { self.life.round_started(request_id, round_id, epoch); }
+    pub fn round_started(&self, request_id: u64, round_id: u32, epoch: u64) {
+        if self.life.has_rounds() { self.life.round_started(request_id, round_id, epoch); } else { RoundJobs::end_job(&*self.jobs, round_id); }
+    }
 
     pub fn round_refused(&self, request_id: u64, epoch: u64, reason: String) { self.life.round_refused(request_id, epoch, reason); }
 

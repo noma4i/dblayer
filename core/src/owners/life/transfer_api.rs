@@ -31,6 +31,8 @@ impl Life {
 
     pub fn jobs_sink_set(&self) { self.wiring.to_rounds(RoundsInput::JobsSinkSet); }
 
+    pub fn has_rounds(&self) -> bool { self.wiring.addresses().is_some_and(|addresses| addresses.rounds.is_some()) }
+
     pub fn round_started(&self, request_id: u64, round_id: u32, epoch: Epoch) { self.wiring.to_rounds(RoundsInput::RoundStarted { request_id, round_id, epoch }); }
 
     pub fn round_refused(&self, request_id: u64, epoch: Epoch, reason: String) { self.wiring.to_rounds(RoundsInput::RoundRefused { request_id, epoch, reason }); }
