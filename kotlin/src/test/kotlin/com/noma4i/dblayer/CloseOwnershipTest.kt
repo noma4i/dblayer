@@ -10,17 +10,6 @@ import java.util.concurrent.CopyOnWriteArrayList
 
 class CloseOwnershipTest {
     @Test
-    fun detachingTheSinkStopsDelivery() {
-        val seen = CopyOnWriteArrayList<Boolean>()
-        val relay = OnlineRelay { }
-        relay.attach { seen += it }
-        val before = seen.size
-        relay.detach()
-        relay.set(true)
-        assertEquals(before, seen.size)
-    }
-
-    @Test
     fun closingTheDatabaseEndsAWaitingChangesFlow() = bounded {
         reopenSigned(Config(null, null, 8u), modelsJSON)
         Moment.send(AccountScope.current(), text = "kept").optimisticValue!!

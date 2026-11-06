@@ -7,9 +7,10 @@ import android.net.NetworkCapabilities
 
 internal object Reachability {
     private val connectivity = Connectivity(false)
-    private val relay = OnlineRelay { connectivity.setOnline(it) }
     private val lock = Any()
     private var manager: ConnectivityManager? = null
+    private var online = false
+    private var sink: OnlineSink? = null
 
     fun start(context: Context): Connectivity {
         val made = synchronized(lock) {
@@ -17,19 +18,28 @@ internal object Reachability {
             val service = context.applicationContext.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
             manager = service
             service.registerDefaultNetworkCallback(object : ConnectivityManager.NetworkCallback() {
-                override fun onAvailable(network: Network) = relay.set(isOnline(service))
-                override fun onLost(network: Network) = relay.set(isOnline(service))
-                override fun onCapabilitiesChanged(network: Network, capabilities: NetworkCapabilities) = relay.set(isOnline(service))
+                override fun onAvailable(network: Network) = report(isOnline(service))
+                override fun onLost(network: Network) = report(isOnline(service))
+                override fun onCapabilitiesChanged(network: Network, capabilities: NetworkCapabilities) = report(isOnline(service))
             })
             service
         }
-        relay.set(isOnline(made))
+        report(isOnline(made))
         return connectivity
     }
 
-    fun connect(sink: OnlineSink) = relay.attach { sink.setOnline(it) }
+    fun connect(target: OnlineSink) {
+        val now = synchronized(lock) { sink = target; online }
+        target.setOnline(now)
+    }
 
-    fun disconnect() = relay.detach()
+    fun disconnect() = synchronized(lock) { sink = null }
+
+    private fun report(now: Boolean) {
+        val target = synchronized(lock) { online = now; sink }
+        connectivity.setOnline(now)
+        target?.setOnline(now)
+    }
 
     private fun isOnline(manager: ConnectivityManager): Boolean {
         val capabilities = manager.getNetworkCapabilities(manager.activeNetwork) ?: return false

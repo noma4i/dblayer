@@ -7,6 +7,7 @@ import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.delay
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
@@ -21,9 +22,28 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
-private class Heard : ValueSink {
+private class Heard {
     val count = AtomicLong()
-    override fun available() { count.incrementAndGet() }
+    fun add() { count.incrementAndGet() }
+}
+
+/** A stream the runner reads: a task pulls it into a queue, `pull` of the corpus takes the next value. */
+private class Pulled(val stream: ValueStream, heard: Heard, scope: CoroutineScope) {
+    private val queue = java.util.concurrent.ConcurrentLinkedQueue<ReadValue>()
+    private val position = AtomicLong()
+    private val job = scope.launch {
+        try {
+            stream.values.collect { value -> queue.add(value); heard.add() }
+        } catch (_: Exception) {
+        }
+    }
+
+    fun next(): Pair<ULong, ReadValue>? {
+        val value = queue.poll() ?: return null
+        return position.incrementAndGet().toULong() to value
+    }
+
+    fun stop() = job.cancel()
 }
 
 private class Credentials : CredentialStore {
@@ -43,40 +63,42 @@ private fun kindOf(error: DbException): String = when (error) {
     is DbException.Security -> "security"
     is DbException.Config -> "config"
     is DbException.Invalid -> "invalid"
+    is DbException.NotFound -> "not_found"
     is DbException.Database -> "database"
     is DbException.Sync -> "sync"
-    is DbException.Network -> "network"
+    is DbException.Network -> if (error.detail == "the operation needs the network") "offline" else "network"
     is DbException.Interrupted -> "interrupted"
-    is DbException.Http -> "http"
+    is DbException.Http -> if (error.status == 401.toUShort()) "unauthorized" else "http"
     is DbException.RequestTooLarge -> "request_too_large"
     is DbException.Graphql -> "graphql"
     is DbException.Session -> "session"
     is DbException.Closed -> "closed"
+    is DbException.CorruptManifest -> "corrupt_manifest"
 }
 
 private fun failed(error: Throwable): Done = Done(failure(if (error is DbException) kindOf(error) else "invalid"))
 
 private fun done(kind: String, value: Any? = null): Done = Done(listOf(if (value == null) observation(kind) else observation(kind, js(value))))
 
-private fun phaseName(phase: LivePhase): String = when (phase) {
-    LivePhase.NOT_LOADED, LivePhase.CLOSED -> "idle"
-    LivePhase.LOADING -> "loading"
-    LivePhase.LOADED, LivePhase.EMPTY -> "loaded"
-    LivePhase.FAILED -> "failed"
+private fun phaseName(phase: ReadPhase): String = when (phase) {
+    ReadPhase.IDLE -> "idle"
+    ReadPhase.LOADING -> "loading"
+    ReadPhase.LOADED -> "loaded"
+    ReadPhase.FAILED -> "failed"
 }
 
-private fun causeName(end: StreamEnd): String = when (end) {
-    StreamEnd.SESSION_ENDED -> "session_ended"
-    StreamEnd.CLOSED -> "closed"
-    StreamEnd.INVALID -> "invalid"
-    StreamEnd.OUT_OF_SYNC -> "out_of_sync"
+private fun causeName(end: ReadEnd): String = when (end) {
+    ReadEnd.SESSION_ENDED -> "session_ended"
+    ReadEnd.CLOSED -> "closed"
+    ReadEnd.CANCELLED -> "cancelled"
+    ReadEnd.INVALID -> "invalid"
 }
 
-private fun fetchOf(name: String?): EntityFetch? = when (name) {
-    "never" -> EntityFetch.NEVER
-    "stale" -> EntityFetch.STALE
-    "force" -> EntityFetch.FORCE
-    "if_missing" -> EntityFetch.IF_MISSING
+private fun fetchOf(name: String?): ReadFetch? = when (name) {
+    "never" -> ReadFetch.NEVER
+    "stale" -> ReadFetch.STALE
+    "force" -> ReadFetch.FORCE
+    "if_missing" -> ReadFetch.IF_MISSING
     else -> null
 }
 
@@ -106,7 +128,7 @@ private class DatabaseRunner {
     val rows = HashMap<String, String>()
     val receipts = HashMap<String, WireOperationReceipt>()
     val loads = HashMap<String, LoadRequest>()
-    val streams = HashMap<String, ULong>()
+    val streams = HashMap<String, Pulled>()
     var calls = ArrayList<Deferred<Done>>()
     val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
@@ -116,22 +138,25 @@ private class DatabaseRunner {
 
     fun names(list: List<WireRow>): List<String> = list.map { nameOf(it.id) }
 
-    fun stateFields(stream: String, state: StreamState): MutableMap<String, Any?> {
+    fun stateFields(stream: String, state: ReadState): MutableMap<String, Any?> {
         val out = mutableMapOf<String, Any?>("stream" to stream, "phase" to phaseName(state.phase))
-        state.errorKind?.let { out["error"] = it }
-        state.loadedAt?.let { out["loaded"] = it }
+        state.error?.let { out["error"] = it.toString() }
+        state.loaded?.let { out["loaded"] = it }
         return out
     }
 
-    fun value(stream: String, seq: ULong, value: StreamValue): JsonObject = when (value) {
-        is StreamValue.Snapshot -> observation("snapshot", js(stateFields(stream, value.state).also { it["revision"] = value.revision; it["rows"] = names(value.rows) }))
-        is StreamValue.Delta -> observation("delta", js(stateFields(stream, value.state).also { it["base"] = value.base; it["revision"] = value.revision; it["rows"] = names(value.rows); it["removed"] = value.removed.map(::nameOf) }))
-        is StreamValue.Count -> observation("count", js(stateFields(stream, value.state).also { it["revision"] = value.revision; it["count"] = value.count }))
-        is StreamValue.State -> observation("state", js(stateFields(stream, value.state)))
-        is StreamValue.Event -> obs("event", "stream" to stream, "position" to seq, "area" to value.event.area, "kind" to value.event.kind, "row" to nameOf(value.event.id))
-        is StreamValue.Lost -> obs("lost", "stream" to stream, "first" to value.first, "last" to value.last)
-        is StreamValue.Status -> observation("unsupported", JsonPrimitive("status"))
-        is StreamValue.Ended -> obs("ended", "stream" to stream, "cause" to causeName(value.reason))
+    fun value(stream: String, value: ReadValue): JsonObject = when (value) {
+        is ReadValue.Snapshot -> observation("snapshot", js(stateFields(stream, value.state).also { it["revision"] = value.revision; it["rows"] = names(value.rows) }))
+        is ReadValue.Delta -> observation("delta", js(stateFields(stream, value.state).also { it["base"] = value.base; it["revision"] = value.revision; it["rows"] = names(value.rows); it["removed"] = value.removed.map(::nameOf) }))
+        is ReadValue.Count -> observation("count", js(stateFields(stream, value.state).also { it["revision"] = value.revision; it["count"] = value.count }))
+        is ReadValue.State -> observation("state", js(stateFields(stream, value.state)))
+        ReadValue.Ready -> obs("ready", "stream" to stream)
+        ReadValue.Gap -> obs("gap", "stream" to stream)
+        is ReadValue.Retry -> observation("unsupported", JsonPrimitive("retry"))
+        is ReadValue.Event -> obs("event", "stream" to stream, "position" to value.position, "area" to value.area, "kind" to value.kind, "row" to nameOf(value.id))
+        is ReadValue.Lost -> obs("lost", "stream" to stream, "first" to value.first, "last" to value.last)
+        is ReadValue.Status -> observation("unsupported", JsonPrimitive("status"))
+        is ReadValue.Ended -> obs("ended", "stream" to stream, "cause" to causeName(value.cause))
     }
 
     fun spawn(work: suspend () -> Done) { calls.add(scope.async { try { work() } catch (error: Throwable) { failed(error) } }) }
@@ -164,7 +189,9 @@ private class DatabaseRunner {
         val session = if (encrypted) EncryptedConfig("https://api.example.com", SealedServer.SERVER_KEY, SealedServer.SERVER_PIN, EncryptedEndpoints("/api/graphql", "/api/cable", "/api/logout", "/api/bootstrap", mapOf("otp" to EncryptedSessionOperation("/api/auth/otp", EncryptedOperationClass.AUTHENTICATED), "confirm" to EncryptedSessionOperation("/api/auth/confirm", EncryptedOperationClass.AUTHENTICATED), "social" to EncryptedSessionOperation("/api/auth/social", EncryptedOperationClass.AUTHENTICATED), "ticket" to EncryptedSessionOperation("/api/ticket", EncryptedOperationClass.SESSIONLESS))), "example-ws-v1", "ws.hello", "EncryptedGraphqlChannel") else null
         val opened = OpenDatabase().openWithClock(Config(null, null, 32u), File(corpusDirectory, if (models == "events") "models_events.json" else "models.json").readText(), mock, null, clock, session, if (encrypted) Credentials() else null, if (encrypted) mock else null, null)
         opened.registerOperations(File(corpusDirectory, "operations.json").readText())
+        opened.setOnline(true)
         database = opened
+        settle()
         listOf(observation("opened"))
     } catch (error: Exception) { failure("open") }
 
@@ -324,16 +351,16 @@ private class DatabaseRunner {
         val key = args.text("as") ?: return failure("arguments")
         fun query(relation: String?): String = if (relation != null) JsonObject(mapOf("model" to JsonPrimitive("Moment"), "relation" to JsonPrimitive(relation), "params" to JsonObject(emptyMap()))).toString() else """{"model":"Moment"}"""
         val request = when (name) {
-            "open_list" -> StreamRequest.Query(query(args.text("relation")))
-            "open_count" -> StreamRequest.Count(query(args.text("relation")))
+            "open_list" -> ReadRequest.List(query(args.text("relation")))
+            "open_count" -> ReadRequest.Count(query(args.text("relation")))
             "open_entity" -> {
                 val row = args.text("row") ?: return failure("arguments")
                 val fetch = fetchOf(args.text("fetch")) ?: return failure("arguments")
-                StreamRequest.Entity("Moment", idOf(row), fetch)
+                ReadRequest.Entity("Moment", idOf(row), fetch)
             }
-            else -> StreamRequest.Events(args.text("model") ?: return failure("arguments"))
+            else -> ReadRequest.Events(args.text("model") ?: return failure("arguments"))
         }
-        streams[key] = database.subscribe(database.sessionEpoch(), request, heard)
+        streams[key] = Pulled(ValueStream(database.sessionEpoch(), database.subscribeValues(database.sessionEpoch(), request), database, null), heard, scope)
         return emptyList()
     }
 
@@ -367,15 +394,15 @@ private class DatabaseRunner {
             "open_list", "open_count", "open_entity", "open_events" -> observed.addAll(openStream(database, name, args))
             "pull" -> {
                 val key = args.text("stream") ?: return failure("arguments")
-                val id = streams[key] ?: return failure("unknown_stream")
-                val delivery = database.readStream(id)
-                observed.add(if (delivery != null) value(key, delivery.seq, delivery.value) else obs("empty", "stream" to key))
+                val pulled = streams[key] ?: return failure("unknown_stream")
+                val next = pulled.next()
+                observed.add(if (next != null) value(key, next.second) else obs("empty", "stream" to key))
             }
             "cancel" -> {
                 val target = args.text("target") ?: return failure("arguments")
                 val load = loads[target]
-                val id = streams[target]
-                if (load != null) load.cancel() else if (id != null) database.cancelStream(id) else return failure("unknown_target")
+                val pulled = streams[target]
+                if (load != null) load.cancel() else if (pulled != null) spawn { pulled.stream.cancel(); Done() } else return failure("unknown_target")
             }
             else -> observed.addAll(start(database, name, args) ?: return listOf(observation("unsupported", JsonPrimitive(name))))
         }

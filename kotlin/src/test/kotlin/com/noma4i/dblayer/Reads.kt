@@ -13,20 +13,22 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 
 object LoadPhase {
-    val Opening = LivePhase.NOT_LOADED
-    val Loaded = LivePhase.LOADED
-    val Failed = LivePhase.FAILED
+    val Opening = ReadPhase.IDLE
+    val Loaded = ReadPhase.LOADED
+    val Failed = ReadPhase.FAILED
 }
+
+/** The first load ended and the relation has no next page. */
+val ReadState.complete: Boolean get() = settled && !hasMore
 
 class Snapshot<M : DBModel>(
     val rows: List<M>,
-    val phase: LivePhase?,
+    val phase: ReadPhase?,
     val error: DbException?,
     val total: Long?,
     val hasMore: Boolean,
     val complete: Boolean,
-    val loadedAt: Long?,
-    val errorKind: String?,
+    val loaded: Long?,
 )
 
 suspend fun <M : DBModel> Query<M>.current(): List<M> = read()
@@ -47,12 +49,12 @@ class TestSnapshots<M : DBModel>(private val query: Query<M>) {
     val flow: Flow<Snapshot<M>> = flow {
         val stream = AccountScope.current().stream(query)
         var projection = ListProjection<M>()
-        stream.deliveries.collect { delivery ->
-            val step = projection.apply(delivery, query.decoder)
+        stream.values.collect { value ->
+            val step = projection.apply(value, query.decoder)
             projection = step.projection
             if (step.applied == Applied.Changed) {
                 val state = projection.state
-                emit(Snapshot(projection.rows, projection.phase, state?.error, state?.total, state?.hasMore ?: false, state?.complete ?: false, state?.loadedAt, state?.errorKind))
+                emit(Snapshot(projection.rows, projection.phase, state?.error, state?.total?.toLong(), state?.hasMore ?: false, state?.complete ?: false, state?.loaded))
             }
         }
     }
@@ -72,8 +74,8 @@ class ListReader<M : DBModel>(private val query: Query<M>, scope: CoroutineScope
     val ids: Flow<List<String>> = rows.map { list -> list.map { it.id } }
     val snapshot: StateFlow<Snapshot<M>> = projected.projection.map { projection ->
         val state = projection.state
-        Snapshot(projection.rows, projection.phase, state?.error, state?.total, state?.hasMore ?: false, state?.complete ?: false, state?.loadedAt, state?.errorKind)
-    }.stateIn(scope, SharingStarted.Eagerly, Snapshot(emptyList(), null, null, null, false, false, null, null))
+        Snapshot(projection.rows, projection.phase, state?.error, state?.total?.toLong(), state?.hasMore ?: false, state?.complete ?: false, state?.loaded)
+    }.stateIn(scope, SharingStarted.Eagerly, Snapshot(emptyList(), null, null, null, false, false, null))
 
     suspend fun waitForInitialLoad() = projected.loaded()
     suspend fun refresh() = projected.refresh()
@@ -86,11 +88,11 @@ fun heldUser(): Projected<User> = Projected(AccountScope.current().stream(User.p
 /** Returns when the projection shows a settled state, throws the failed state's error or `Interrupted` when the stream ended. Bounded by the hang guard. */
 suspend fun <M : DBModel> Projected<M>.loaded() {
     val shown = awaitWithin("the projection shows a settled state") { projection.first { it.state?.settled == true || it.ended != null } }
-    if (shown.ended != null && shown.ended != StreamEnd.INVALID) throw DbException.Interrupted("the stream ended before its rows were shown")
+    if (shown.ended != null && shown.ended != ReadEnd.INVALID) throw DbException.Interrupted("the stream ended before its rows were shown")
     val state = shown.state
     if (state?.settled == true) {
         val error = state.error ?: return
-        if (state.phase == LivePhase.FAILED) throw error
+        if (state.phase == ReadPhase.FAILED) throw error
         return
     }
     throw DbException.Interrupted("the stream ended before its rows were shown")

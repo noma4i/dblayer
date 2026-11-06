@@ -65,8 +65,6 @@ interface DBModel {
     val uploads: Map<String, UploadInfo>
 }
 
-val DBModel.needsAttention: Boolean get() = sync.state == SyncState.Failed || sync.state == SyncState.DeliveryUnknown
-val DBModel.canRetry: Boolean get() = needsAttention
 val DBModel.errorMessage: String? get() = sync.error?.message
 
 /** The database and the epoch a command belongs to: the pair the account holds, else the open database and the epoch of its session now. A command of an account that left is refused. */
@@ -116,16 +114,15 @@ class MutationReceipt<Model : DBModel>(private val database: Database, private v
     }
 }
 
-data class ItemReceipt<Model : DBModel>(val item: ItemId, val optimisticValue: Model)
+/** [receipt] is the receipt of this item: its own operation, revision and outcome. */
+data class ItemReceipt<Model : DBModel>(val item: ItemId, val optimisticValue: Model, val receipt: MutationReceipt<Model>)
 
 class OperationReceipt<Model : DBModel>(internal val database: Database, internal val decoder: ModelDecoder<Model>, internal val wire: WireBatchReceipt) {
     val epoch: ULong = wire.epoch
-    val operation: Long = wire.operation
-    val revision: Long = wire.revision
-    val items: List<ItemReceipt<Model>> = wire.items.map { ItemReceipt(it.item, decoder.read(it.optimisticValue)) }
+    val items: List<ItemReceipt<Model>> = wire.items.map { ItemReceipt(it.item, decoder.read(it.optimisticValue), MutationReceipt(database, decoder, it.receipt)) }
 }
 
-class ModelEvent<Model : DBModel>(val area: String, val kind: String, val id: String, val before: Model?, val after: Model?)
+class ModelEvent<Model : DBModel>(val position: ULong, val area: String, val kind: String, val id: String, val before: Model?, val after: Model?)
 
 sealed interface ModelEventItem<out Model : DBModel> {
     /** The source of the events is open: every event after this item reaches the stream. */
@@ -134,6 +131,9 @@ sealed interface ModelEventItem<out Model : DBModel> {
     class Event<Model : DBModel>(val event: ModelEvent<Model>) : ModelEventItem<Model>
     /** The events at these positions of the stream are lost. [first] and [last] are included. */
     class Lost(val first: ULong, val last: ULong) : ModelEventItem<Nothing>
+
+    /** The core lost the order of the events: the reader reads the rows again. */
+    data object Gap : ModelEventItem<Nothing>
 
     class Failed(val error: Throwable) : ModelEventItem<Nothing>
 }

@@ -1,6 +1,9 @@
 package com.noma4i.dblayer
 
+import com.noma4i.dblayer.models.Notice
 import com.noma4i.dblayer.models.modelsJSON
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.jsonObject
 import org.junit.Assert.assertEquals
@@ -31,20 +34,23 @@ class EncryptedOldSinkTest {
             DBlayer.openTesting(peer, modelsJSON, encrypted = encrypted, credentials = CableCredentials(), http = server)
             DBlayer.database.registerOperations("""[{"name":"BulletinAdded","document":"subscription BulletinAdded { bulletinAdded { body occurredAt } }","rootPath":"bulletinAdded"}]""")
             DBlayer.database.sessionCall("login_link", """{"account":"A"}""")
-            val query = """{"model":"Notice","relation":"recent","params":{}}"""
-            val sink = object : ValueSink { override fun available() {} }
-            val first = DBlayer.database.subscribe(DBlayer.database.sessionEpoch(), StreamRequest.Query(query), sink)
+            val query = Notice.recent.json
+            val first = AccountScope.current().stream(Notice.recent)
+            val firstReading = launch(Dispatchers.Default) { runCatching { first.values.collect { } } }
             val old = peer.subscribed.receive()
             DBlayer.sessionReset()
             assertEquals(old, peer.closed.receive())
             DBlayer.database.sessionCall("login_link", """{"account":"B"}""")
-            val second = DBlayer.database.subscribe(DBlayer.database.sessionEpoch(), StreamRequest.Query(query), sink)
+            val second = AccountScope.current().stream(Notice.recent)
+            val secondReading = launch(Dispatchers.Default) { runCatching { second.values.collect { } } }
             val current = peer.subscribed.receive()
             assertNotEquals(old, current)
             peer.emitOld(old)
             assertTrue(DBlayer.database.readQuery(DBlayer.database.sessionEpoch(), query).isEmpty())
-            DBlayer.database.cancelStream(first)
-            DBlayer.database.cancelStream(second)
+            firstReading.cancel()
+            secondReading.cancel()
+            first.cancel()
+            second.cancel()
         } finally {
             DBlayer.close()
         }

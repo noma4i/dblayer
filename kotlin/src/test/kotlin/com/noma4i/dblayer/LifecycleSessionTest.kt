@@ -6,7 +6,11 @@ import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.launch
@@ -34,15 +38,29 @@ private class LifecycleCredential : CredentialStore {
 private class RowHistory {
     val states = CopyOnWriteArrayList<List<String>>()
     private var projection = ListProjection<User>()
-    private var stream: ULong? = null
 
-    fun take(delivery: StreamDelivery) {
+    fun begin() = synchronized(this) { projection = ListProjection<User>() }
+
+    fun take(value: ReadValue) {
         synchronized(this) {
-            if (stream != delivery.stream) { stream = delivery.stream; projection = ListProjection<User>() }
-            val step = projection.apply(delivery, User)
+            val step = projection.apply(value, User)
             projection = step.projection
             if (step.applied == Applied.Changed) states.add(projection.rows.map { it.name })
         }
+    }
+}
+
+private class HeldList(val stream: ValueStream, history: RowHistory) {
+    private val reading: Job
+
+    init {
+        history.begin()
+        reading = CoroutineScope(SupervisorJob() + Dispatchers.Default).launch { runCatching { stream.values.collect { history.take(it) } } }
+    }
+
+    suspend fun cancel() {
+        reading.cancel()
+        stream.cancel()
     }
 }
 
@@ -51,10 +69,7 @@ class LifecycleSessionTest {
     private val account = AtomicReference<String?>(null)
     private val alreadyAuthenticated = java.util.concurrent.atomic.AtomicBoolean(false)
 
-    private fun holdList(history: RowHistory): ULong {
-        val pulled = PulledStream(history::take)
-        return DBlayer.database.subscribe(DBlayer.database.sessionEpoch(), StreamRequest.Query("""{"model":"User"}"""), pulled).also { pulled.bind(it, DBlayer.database) }
-    }
+    private suspend fun holdList(history: RowHistory): HeldList = HeldList(AccountScope.current().stream(Query(User.modelName, User)), history)
 
     private fun json(text: String): JsonObject = Json.parseToJsonElement(text).jsonObject
 
@@ -101,7 +116,7 @@ class LifecycleSessionTest {
             eventually("the held entity shows A") { entity.value?.name == "A" }
             val before = server.requests.size
             DBlayer.sessionReset()
-            assertEquals(StreamEnd.SESSION_ENDED, entity.projection.value.ended)
+            assertEquals(ReadEnd.SESSION_ENDED, entity.projection.value.ended)
             server.refuseEverything(true)
             assertEquals(before, server.requests.size)
             server.refuseEverything(false)
@@ -123,7 +138,7 @@ class LifecycleSessionTest {
             eventually("the held entity shows A") { entity.value?.name == "A" }
             DBlayer.database.sessionCall("logout", "{}")
             DBlayer.sessionReset()
-            assertEquals(StreamEnd.SESSION_ENDED, entity.projection.value.ended)
+            assertEquals(ReadEnd.SESSION_ENDED, entity.projection.value.ended)
             val before = server.requests.size
             server.refuseEverything(true)
             assertEquals(before, server.requests.size)
@@ -172,7 +187,7 @@ class LifecycleSessionTest {
                 val after = history.states.drop(seen)
                 assertTrue("account A came back after the logout: $after", after.none { "A" in it })
             } finally {
-                DBlayer.database.cancelStream(live)
+                live.cancel()
             }
         } finally {
             DBlayer.close()
@@ -197,16 +212,16 @@ class LifecycleSessionTest {
                 val pending = async(start = CoroutineStart.UNDISPATCHED) { runCatching { entity.loaded() } }
                 awaitWithin("the confirmed logout") { DBlayer.database.sessionCall("logout", "{}") }
                 DBlayer.sessionReset()
-                DBlayer.database.cancelStream(live)
+                live.cancel()
                 awaitWithin("the wait that was pending at the exit") { pending.await() }
-                assertEquals(StreamEnd.SESSION_ENDED, entity.projection.value.ended)
+                assertEquals(ReadEnd.SESSION_ENDED, entity.projection.value.ended)
                 server.hold(null)
                 assertTrue("the late answer reached the held entity", entity.value?.name != "B")
                 startSession("B")
                 entity = heldUser()
                 eventually("the held entity shows B") { entity.value?.name == "B" }
             } finally {
-                DBlayer.database.cancelStream(live)
+                live.cancel()
                 server.hold(null)
             }
         } finally {
@@ -232,7 +247,7 @@ class LifecycleSessionTest {
                     eventually("the reread waits at the server") { server.parkedCount > 0 }
                     awaitWithin("the confirmed logout") { DBlayer.database.sessionCall("logout", "{}") }
                     DBlayer.sessionReset()
-                    assertEquals(StreamEnd.SESSION_ENDED, entity.projection.value.ended)
+                    assertEquals(ReadEnd.SESSION_ENDED, entity.projection.value.ended)
                     val seen = history.states.size
                     server.hold(null)
                     startSession(next)
@@ -244,7 +259,7 @@ class LifecycleSessionTest {
                     assertTrue("$previous came back after its exit: $after", after.none { previous in it })
                 }
             } finally {
-                DBlayer.database.cancelStream(live)
+                live.cancel()
                 server.hold(null)
             }
         } finally {
@@ -263,7 +278,7 @@ class LifecycleSessionTest {
             val reads = server.operationRequests("UserProfile")
             DBlayer.database.sessionCall("logout", "{}")
             DBlayer.sessionReset()
-            assertEquals(StreamEnd.SESSION_ENDED, entity.projection.value.ended)
+            assertEquals(ReadEnd.SESSION_ENDED, entity.projection.value.ended)
             startSession("A")
             entity = heldUser()
             eventually("the held entity shows A again") { entity.value?.name == "A" }
@@ -282,7 +297,7 @@ class LifecycleSessionTest {
             var entity = heldUser()
             eventually("the held entity shows A") { entity.value?.name == "A" }
             DBlayer.sessionReset()
-            assertEquals(StreamEnd.SESSION_ENDED, entity.projection.value.ended)
+            assertEquals(ReadEnd.SESSION_ENDED, entity.projection.value.ended)
             val before = server.requests.size
             server.refuseEverything(true)
             assertEquals(before, server.requests.size)

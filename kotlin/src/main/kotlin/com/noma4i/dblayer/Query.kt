@@ -81,6 +81,8 @@ class Query<Model : DBModel>(
     fun order(vararg next: Order) = copy(orders = orders + next)
     fun limit(count: Int) = copy(limitCount = count)
 
+    internal val loadTarget: ValueStream.LoadTarget? get() = relation?.let { ValueStream.LoadTarget(modelName, it, params.jsonText()) }
+
     internal val json: String
         get() = json(false)
 

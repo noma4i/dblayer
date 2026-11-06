@@ -123,7 +123,7 @@ class MediaPreloadTest {
             assertTrue(failing.await() is DbException.Network)
             val failed = held.projection.first { it.error != null }
             assertEquals(listOf("x1"), failed.rows.map { it.id })
-            assertEquals(LivePhase.LOADED, failed.phase)
+            assertEquals(ReadPhase.LOADED, failed.phase)
             assertEquals(false, failed.state?.complete)
             assertTrue(failed.error is DbException.Network)
             held.close()

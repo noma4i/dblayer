@@ -35,6 +35,7 @@ class EncryptedCablePeer(private val server: SealedServer) : Transport {
     val subscribed = Channel<String>(Channel.UNLIMITED)
     val closed = Channel<String>(Channel.UNLIMITED)
     private val connections = ConcurrentHashMap<String, Connection>()
+    @Volatile var lastOpened: String? = null
     private val json = Json
     private fun encode(bytes: ByteArray) = Base64.getUrlEncoder().withoutPadding().encodeToString(bytes)
     private fun decode(value: String) = Base64.getUrlDecoder().decode(value)
@@ -47,6 +48,7 @@ class EncryptedCablePeer(private val server: SealedServer) : Transport {
         val token = UUID.randomUUID().toString()
         val connection = Connection()
         connections[token] = connection
+        lastOpened = token
         lease.opened(token)
         val challenge = buildJsonObject {
             put("type", "challenge")
@@ -117,6 +119,18 @@ class EncryptedCablePeer(private val server: SealedServer) : Transport {
         val sealed = cipher.doFinal(body.toString().toByteArray())
         val frame = "$header..${encode(iv)}.${encode(sealed.dropLast(16).toByteArray())}.${encode(sealed.takeLast(16).toByteArray())}"
         connection.events.send(EncryptedSocketEvent.Text(text(buildJsonObject { put("message", buildJsonObject { put("frame", frame) }) })))
+    }
+
+    /** A data event of the open subscription. False while no subscription is open. */
+    suspend fun event(token: String, result: JsonObject): Boolean {
+        val id = connections.getValue(token).subscription ?: return false
+        emit(token, buildJsonObject { put("t", "next"); put("id", id); put("result", result) })
+        return true
+    }
+
+    /** The socket breaks. */
+    suspend fun drop(token: String) {
+        connections.getValue(token).events.send(EncryptedSocketEvent.Closed(1006u, "dropped"))
     }
 
     suspend fun emitOld(token: String) {

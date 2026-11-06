@@ -115,7 +115,7 @@ class BridgeProbeTest {
 
         assertEquals(true, thrown is DbException)
         val failed = withTimeout(5000) { Moment.feed.snapshots.flow.first { it.phase == LoadPhase.Failed } }
-        assertEquals(true, failed.errorKind != null)
+        assertEquals(true, failed.error != null)
     }
 
     @Test
@@ -128,7 +128,7 @@ class BridgeProbeTest {
         val listScope = CoroutineScope(SupervisorJob())
         val list = ListReader(Moment.feed, listScope)
         withTimeout(5000) { list.rows.first { it.isNotEmpty() } }
-        val state = withTimeout(5000) { list.snapshot.first { it.loadedAt != null } }
+        val state = withTimeout(5000) { list.snapshot.first { it.loaded != null } }
         assertEquals("a", list.rows.value.first().uuid)
         assertEquals("MomentsFeed", transport.calls.first().operationName)
         assertEquals(true, state.hasMore)
@@ -159,7 +159,7 @@ class BridgeProbeTest {
                 if (index == 2) {
                     val failed = withTimeout(5000) { list.snapshot.first { it.error != null } }
                     assertEquals(true, failed.error is DbException.Http)
-                    assertEquals(LivePhase.LOADED, failed.phase)
+                    assertEquals(ReadPhase.LOADED, failed.phase)
                 }
                 assertEquals("a", withTimeout(5000) { list.rows.first { it.isNotEmpty() } }.first().uuid)
             } finally {

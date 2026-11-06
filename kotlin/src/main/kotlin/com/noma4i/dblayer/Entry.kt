@@ -110,7 +110,7 @@ object DBlayer {
         Reachability.connect(sink)
         ForegroundEvents.start(sink)
         PowerSaving.start(context, sink)
-        made.setUploadAcceptedSink(UploadAcceptedStart(context.applicationContext, made))
+        made.setRoundJobs(UploadRounds(context.applicationContext, made))
         database = made
         if (ready.isCompleted) ready = CompletableDeferred()
         ready.complete(made)

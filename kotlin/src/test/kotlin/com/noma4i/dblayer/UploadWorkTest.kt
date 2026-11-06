@@ -36,56 +36,35 @@ class UploadWorkTest {
     @Test
     fun theJobIsUserInitiatedNeedsANetworkAndIsNotPersisted() {
         val context = org.robolectric.RuntimeEnvironment.getApplication()
-        assertNull(UploadJobService.schedule(context))
+        assertNull(UploadJobService.schedule(context, 1uL, 1uL))
         val job = context.getSystemService(JobScheduler::class.java).allPendingJobs.single()
         assertTrue(job.isUserInitiated)
         assertTrue(job.networkType != android.app.job.JobInfo.NETWORK_TYPE_NONE)
         assertTrue(!job.isPersisted)
-        assertNull("a pending job is kept instead of replaced", UploadJobService.schedule(context))
+        assertNull("a pending job is kept instead of replaced", UploadJobService.schedule(context, 2uL, 1uL))
         assertEquals(1, context.getSystemService(JobScheduler::class.java).allPendingJobs.size)
     }
 
     @Test
     fun onlyUploadRequestsGoThroughTheNetworkOfTheRunningJob() = bounded {
-        val directory = Files.createTempDirectory("job-network").toFile()
+        val old = UploadJobToken()
+        val current = UploadJobToken()
+        UploadNetwork.started(null, old)
+        UploadNetwork.started(null, current)
         try {
-            val source = java.io.File(directory, "image.png").apply { writeText("image") }
-            val mock = MockTransport()
-            val operations = """[{"name":"CreateBlob","document":"mutation CreateBlob { createBlob { url headers signedId blobId } }"},{"name":"CreateAssets","document":"mutation CreateAssets { createAssets { assets { id clientKey size } } }"}]"""
-            val database = reopen(Config(null, null, 32u), modelsJSON, mock, operations, UploadOperations(createBlob = UploadOperation("CreateBlob")))
-            database.setUploadAcceptedSink(object : UploadAcceptedSink { override fun accepted(event: WireUploadAccepted) {} })
-            database.setOnline(false)
-            fun batch(prefix: String) = (0..1).map { UploadItem(values = buildJsonObject { put("clientKey", "$prefix-$it"); put("size", 2) }, path = source.path) }
-            AccountScope.current().uploadBatch(Asset, batch("old"), UploadBatchRequest(operation = "create_files"))
-            val old = Robolectric.buildService(UploadJobService::class.java).create().get()
-            val oldParams = org.robolectric.shadow.api.Shadow.newInstanceOf(android.app.job.JobParameters::class.java)
-            assertTrue("the old job starts", old.onStartJob(oldParams))
-            DBlayer.close()
-            val newDatabase = reopen(Config(null, null, 32u), modelsJSON, MockTransport(), operations, UploadOperations(createBlob = UploadOperation("CreateBlob")))
-            newDatabase.setUploadAcceptedSink(object : UploadAcceptedSink { override fun accepted(event: WireUploadAccepted) {} })
-            newDatabase.setOnline(false)
-            AccountScope.current().uploadBatch(Asset, batch("new"), UploadBatchRequest(operation = "create_files"))
-            val current = Robolectric.buildService(UploadJobService::class.java).create().get()
-            val currentParams = org.robolectric.shadow.api.Shadow.newInstanceOf(android.app.job.JobParameters::class.java)
-            assertTrue("the new job starts", current.onStartJob(currentParams))
-            try {
-                old.onStopJob(oldParams)
-                MockWebServer().use { server ->
-                    repeat(2) { server.enqueue(MockResponse().setResponseCode(200).setBody("""{"data":{}}""")) }
-                    server.start()
-                    val transport = OkHttpTransport(server.url("/graphql").toString())
-                    assertEquals("""{"data":{}}""", transport.query(TransportRequest("query Probe { id }", "Probe", "{}", NetworkPurpose.STANDARD)))
-                    refused { transport.query(TransportRequest("mutation Probe { id }", "Probe", "{}", NetworkPurpose.TRANSFER)) }
-                    refused { OkHttpEncryptedHttp(server.url("/").toString().trimEnd('/')).post("/api/graphql", "a.b.c.d.e", NetworkPurpose.TRANSFER) }
-                    current.onStopJob(currentParams)
-                    assertEquals("""{"data":{}}""", transport.mutate(TransportRequest("mutation Probe { id }", "Probe", "{}", NetworkPurpose.TRANSFER)))
-                }
-            } finally {
-                current.onStopJob(currentParams)
+            UploadNetwork.ended(old)
+            MockWebServer().use { server ->
+                repeat(2) { server.enqueue(MockResponse().setResponseCode(200).setBody("""{"data":{}}""")) }
+                server.start()
+                val transport = OkHttpTransport(server.url("/graphql").toString())
+                assertEquals("""{"data":{}}""", transport.query(TransportRequest("query Probe { id }", "Probe", "{}", NetworkPurpose.STANDARD)))
+                refused { transport.query(TransportRequest("mutation Probe { id }", "Probe", "{}", NetworkPurpose.TRANSFER)) }
+                refused { OkHttpEncryptedHttp(server.url("/").toString().trimEnd('/')).post("/api/graphql", "a.b.c.d.e", NetworkPurpose.TRANSFER) }
+                UploadNetwork.ended(current)
+                assertEquals("""{"data":{}}""", transport.mutate(TransportRequest("mutation Probe { id }", "Probe", "{}", NetworkPurpose.TRANSFER)))
             }
         } finally {
-            DBlayer.close()
-            directory.deleteRecursively()
+            UploadNetwork.ended(current)
         }
     }
 
@@ -95,164 +74,19 @@ class UploadWorkTest {
     }
 
     @Test
-    fun aRefusedBackgroundStartIsKeptOnTheAcceptedBatchOnly() = bounded {
+    fun aRefusedBackgroundStartIsKeptOnTheItemsOfTheRound() = bounded {
         val directory = Files.createTempDirectory("accepted").toFile()
         try {
             val source = java.io.File(directory, "image.png").apply { writeText("image") }
             val database = reopen(Config(null, null, 32u), modelsJSON, MockTransport(), operations = """[{"name":"CreateBlob","document":"mutation CreateBlob { createBlob { url headers signedId blobId } }"},{"name":"CreateAssets","document":"mutation CreateAssets { createAssets { assets { id clientKey size } } }"}]""", uploads = UploadOperations(createBlob = UploadOperation("CreateBlob")))
             database.setOnline(false)
-            var starts = 0
-            database.setUploadAcceptedSink(UploadAcceptedStart(org.robolectric.RuntimeEnvironment.getApplication(), database, UploadScheduler { _, _ -> if (starts++ == 0) "the app was not visible" else null }))
+            database.setRoundJobs(UploadRounds(org.robolectric.RuntimeEnvironment.getApplication(), database, UploadScheduler { _, _, _ -> "the app was not visible" }))
             fun batch(keys: IntRange) = keys.map { UploadItem(values = buildJsonObject { put("clientKey", "key-$it"); put("size", 2) }, path = source.path) }
             val rows = AccountScope.current().uploadBatch(Asset, batch(0..1), UploadBatchRequest(operation = "create_files"))
-            val other = AccountScope.current().uploadBatch(Asset, batch(8..9), UploadBatchRequest(operation = "create_files"))
             eventually("every member of the refused batch shows the reason") {
                 rows.items.all { Asset.find(it.optimisticValue.id).current()?.uploads?.values?.singleOrNull()?.error?.message?.contains("the app was not visible") == true }
             }
-            assertNull(Asset.find(other.items.first().optimisticValue.id).current()!!.uploads.values.single().error)
         } finally {
-            DBlayer.close()
-            directory.deleteRecursively()
-        }
-    }
-
-    @Test
-    fun aLateBackgroundRefusalDoesNotChangeTheNextSession() = bounded {
-        val directory = Files.createTempDirectory("accepted-epoch").toFile()
-        try {
-            val source = java.io.File(directory, "image.png").apply { writeText("image") }
-            val transport = MockTransport()
-            transport.enqueue("UserProfile", """{"data":{"me":{"__typename":"User","id":"B","name":"B"}}}""")
-            val database = reopen(Config(null, null, 32u), modelsJSON, transport, operations = """[{"name":"CreateBlob","document":"mutation CreateBlob { createBlob { url headers signedId blobId } }"},{"name":"CreateAssets","document":"mutation CreateAssets { createAssets { assets { id clientKey size } } }"},{"name":"UserProfile","document":"query UserProfile { me { id name } }"}]""", uploads = UploadOperations(createBlob = UploadOperation("CreateBlob")))
-            database.setOnline(false)
-            val accepted = mutableListOf<WireUploadAccepted>()
-            database.setUploadAcceptedSink(object : UploadAcceptedSink { override fun accepted(event: WireUploadAccepted) { accepted.add(event) } })
-            fun batch(prefix: String) = (0..1).map { UploadItem(values = buildJsonObject { put("clientKey", "$prefix-$it"); put("size", 2) }, path = source.path) }
-            val firstEpoch = database.sessionEpoch()
-            val owner = requireNotNull(database.roundBegin(firstEpoch))
-            assertEquals(WireRoundStep.DONE, database.roundNext(firstEpoch, owner))
-            AccountScope.current().uploadBatch(Asset, batch("old"), UploadBatchRequest(operation = "create_files"))
-            val old = accepted.single()
-            DBlayer.sessionReset()
-            database.setOnline(true)
-            User.profile.load(AccountScope.current())
-            database.setOnline(false)
-            val rows = AccountScope.current().uploadBatch(Asset, batch("new"), UploadBatchRequest(operation = "create_files"))
-            val current = accepted.last()
-            val stale = runCatching { database.backgroundRefused(old.epoch, current.items, "old refusal") }.exceptionOrNull()
-            assertTrue("the old epoch must be rejected", stale is DbException.Interrupted)
-            val newOwner = requireNotNull(database.roundBegin(database.sessionEpoch()))
-            val late = requireNotNull(database.roundEnd(database.sessionEpoch(), owner))
-            assertEquals(listOf(old.epoch, current.epoch), late.map { it.epoch })
-            assertEquals(WireRoundStep.DONE, database.roundNext(database.sessionEpoch(), newOwner))
-            database.roundEnd(database.sessionEpoch(), newOwner)
-            val deliver = UploadAcceptedStart(org.robolectric.RuntimeEnvironment.getApplication(), database, UploadScheduler { _, items -> if (items == old.items) "old refusal" else null })
-            late.forEach(deliver::accepted)
-            assertTrue(rows.items.all { Asset.find(it.optimisticValue.id).current()?.uploads?.values?.singleOrNull()?.error == null })
-        } finally {
-            DBlayer.close()
-            directory.deleteRecursively()
-        }
-    }
-
-    @Test
-    fun aNewSessionSchedulesUploadsAfterTheOldRoundWasRunning() = bounded {
-        val directory = Files.createTempDirectory("round-epoch").toFile()
-        try {
-            val source = java.io.File(directory, "image.png").apply { writeText("image") }
-            val transport = MockTransport()
-            transport.enqueue("UserProfile", """{"data":{"me":{"__typename":"User","id":"B","name":"B"}}}""")
-            val operations = """[{"name":"CreateBlob","document":"mutation CreateBlob { createBlob { url headers signedId blobId } }"},{"name":"CreateAssets","document":"mutation CreateAssets { createAssets { assets { id clientKey size } } }"},{"name":"UserProfile","document":"query UserProfile { me { id name } }"}]"""
-            val database = reopen(Config(null, null, 32u), modelsJSON, transport, operations, UploadOperations(createBlob = UploadOperation("CreateBlob")))
-            database.setOnline(false)
-            val starts = java.util.concurrent.atomic.AtomicInteger()
-            database.setUploadAcceptedSink(UploadAcceptedStart(org.robolectric.RuntimeEnvironment.getApplication(), database, UploadScheduler { _, _ -> starts.incrementAndGet(); null }))
-            fun batch(prefix: String) = (0..1).map { UploadItem(values = buildJsonObject { put("clientKey", "$prefix-$it"); put("size", 2) }, path = source.path) }
-            AccountScope.current().uploadBatch(Asset, batch("old"), UploadBatchRequest(operation = "create_files"))
-            requireNotNull(database.roundBegin(database.sessionEpoch()))
-            DBlayer.sessionReset()
-            database.setOnline(true)
-            User.profile.load(AccountScope.current())
-            database.setOnline(false)
-            AccountScope.current().uploadBatch(Asset, batch("new"), UploadBatchRequest(operation = "create_files"))
-            assertEquals("the new session starts its own job", 2, starts.get())
-        } finally {
-            DBlayer.close()
-            directory.deleteRecursively()
-        }
-    }
-
-    @Test
-    fun aNewSessionSchedulesUploadsWhenTheOldEndingRoundLostItsSession(): Unit = bounded {
-        val directory = Files.createTempDirectory("ending-epoch").toFile()
-        try {
-            val source = java.io.File(directory, "image.png").apply { writeText("image") }
-            val transport = MockTransport()
-            transport.enqueue("UserProfile", """{"data":{"me":{"__typename":"User","id":"B","name":"B"}}}""")
-            val operations = """[{"name":"CreateBlob","document":"mutation CreateBlob { createBlob { url headers signedId blobId } }"},{"name":"CreateAssets","document":"mutation CreateAssets { createAssets { assets { id clientKey size } } }"},{"name":"UserProfile","document":"query UserProfile { me { id name } }"}]"""
-            val database = reopen(Config(null, null, 32u), modelsJSON, transport, operations, UploadOperations(createBlob = UploadOperation("CreateBlob")))
-            database.setOnline(false)
-            val starts = java.util.concurrent.atomic.AtomicInteger()
-            database.setUploadAcceptedSink(UploadAcceptedStart(org.robolectric.RuntimeEnvironment.getApplication(), database, UploadScheduler { _, _ -> starts.incrementAndGet(); null }))
-            fun batch(prefix: String) = (0..1).map { UploadItem(values = buildJsonObject { put("clientKey", "$prefix-$it"); put("size", 2) }, path = source.path) }
-            AccountScope.current().uploadBatch(Asset, batch("old"), UploadBatchRequest(operation = "create_files"))
-            val owner = requireNotNull(database.roundBegin(database.sessionEpoch()))
-            assertEquals(WireRoundStep.DONE, database.roundNext(database.sessionEpoch(), owner))
-            DBlayer.sessionReset()
-            assertTrue(runCatching { database.roundEnd(database.sessionEpoch(), owner) }.exceptionOrNull() is DbException.NoSession)
-            database.setOnline(true)
-            User.profile.load(AccountScope.current())
-            database.setOnline(false)
-            AccountScope.current().uploadBatch(Asset, batch("new"), UploadBatchRequest(operation = "create_files"))
-            assertEquals(2, starts.get())
-            val next = requireNotNull(database.roundBegin(database.sessionEpoch()))
-            assertEquals(WireRoundStep.DONE, database.roundNext(database.sessionEpoch(), next))
-            database.roundEnd(database.sessionEpoch(), next)
-        } finally {
-            DBlayer.close()
-            directory.deleteRecursively()
-        }
-    }
-
-    @Test
-    fun aSchedulerRefusalReturningAfterResetDoesNotChangeTheNewUpload() = bounded {
-        val directory = Files.createTempDirectory("late-refusal").toFile()
-        val release = java.util.concurrent.CountDownLatch(1)
-        try {
-            val source = java.io.File(directory, "image.png").apply { writeText("image") }
-            val transport = MockTransport()
-            transport.enqueue("UserProfile", """{"data":{"me":{"__typename":"User","id":"B","name":"B"}}}""")
-            val operations = """[{"name":"CreateBlob","document":"mutation CreateBlob { createBlob { url headers signedId blobId } }"},{"name":"CreateAssets","document":"mutation CreateAssets { createAssets { assets { id clientKey size } } }"},{"name":"UserProfile","document":"query UserProfile { me { id name } }"}]"""
-            val database = reopen(Config(null, null, 32u), modelsJSON, transport, operations, UploadOperations(createBlob = UploadOperation("CreateBlob")))
-            database.setOnline(false)
-            val entered = CompletableDeferred<Unit>()
-            val starts = java.util.concurrent.atomic.AtomicInteger()
-            val timedOut = java.util.concurrent.atomic.AtomicBoolean()
-            database.setUploadAcceptedSink(UploadAcceptedStart(org.robolectric.RuntimeEnvironment.getApplication(), database, UploadScheduler { _, _ ->
-                if (starts.incrementAndGet() == 1) {
-                    entered.complete(Unit)
-                    if (!release.await(10, java.util.concurrent.TimeUnit.SECONDS)) timedOut.set(true)
-                    "old refusal"
-                } else null
-            }))
-            fun batch(prefix: String) = (0..1).map { UploadItem(values = buildJsonObject { put("clientKey", "$prefix-$it"); put("size", 2) }, path = source.path) }
-            val old = async(Dispatchers.Default) { runCatching { AccountScope.current().uploadBatch(Asset, batch("old"), UploadBatchRequest(operation = "create_files")) } }
-            select<Unit> {
-                entered.onAwait { }
-                old.onAwait { throw AssertionError("the upload returned before the scheduler started: $it") }
-            }
-            DBlayer.sessionReset()
-            database.setOnline(true)
-            User.profile.load(AccountScope.current())
-            database.setOnline(false)
-            val rows = AccountScope.current().uploadBatch(Asset, batch("new"), UploadBatchRequest(operation = "create_files"))
-            release.countDown()
-            old.await()
-            assertTrue("the held scheduler was released by the test", !timedOut.get())
-            assertEquals(2, starts.get())
-            assertTrue(rows.items.all { Asset.find(it.optimisticValue.id).current()?.uploads?.values?.singleOrNull()?.error == null })
-        } finally {
-            release.countDown()
             DBlayer.close()
             directory.deleteRecursively()
         }

@@ -16,6 +16,8 @@ class CorpusMock : Transport, EncryptedHttp {
     private val waitingHttp = ConcurrentHashMap<String, Pair<JsonObject, CompletableDeferred<EncryptedReply>>>()
     private val sealed = SealedServer { _, _ -> JsonObject(emptyMap()) }
     private val sinks = ConcurrentHashMap<String, SubscriptionSink>()
+    private val cables = ConcurrentHashMap<String, String>()
+    private val peer = EncryptedCablePeer(sealed)
 
     val count: Int get() = synchronized(seen) { seen.size }
 
@@ -67,6 +69,7 @@ class CorpusMock : Transport, EncryptedHttp {
         waitingPuts.remove(id)?.let { return it.completeExceptionally(error) }
         waitingHttp.remove(id)?.let { return it.second.completeExceptionally(error) }
         sinks.remove(id)?.let { it.failed(error); return true }
+        cables.remove(id)?.let { token -> kotlinx.coroutines.runBlocking { peer.drop(token) }; return true }
         return false
     }
 
@@ -77,9 +80,14 @@ class CorpusMock : Transport, EncryptedHttp {
         for (id in waitingHttp.keys.toList()) waitingHttp.remove(id)?.second?.completeExceptionally(DbException.Interrupted("closed"))
     }
 
-    fun ready(id: String): Boolean = sinks[id]?.let { it.ready(); true } ?: false
+    fun ready(id: String): Boolean = sinks[id]?.let { it.ready(); true } ?: cables.containsKey(id)
 
-    fun frame(id: String, event: String): Boolean = sinks[id]?.let { it.event(event); true } ?: false
+    fun frame(id: String, event: String): Boolean {
+        sinks[id]?.let { it.event(event); return true }
+        val token = cables[id] ?: return false
+        val result = kotlinx.serialization.json.Json.parseToJsonElement(event) as? JsonObject ?: return false
+        return kotlinx.coroutines.runBlocking { peer.event(token, result) }
+    }
 
     private suspend fun wait(kind: String, request: TransportRequest): String {
         val id = record(kind, request.purpose)
@@ -89,8 +97,9 @@ class CorpusMock : Transport, EncryptedHttp {
     }
 
     override suspend fun openCable(lease: CableLease, url: String) {
-        record("subscription", NetworkPurpose.STANDARD)
-        throw DbException.Network("no cable")
+        val id = record("subscription", NetworkPurpose.STANDARD)
+        peer.openCable(lease, url)
+        cables[id] = peer.lastOpened!!
     }
 
     override suspend fun post(path: String, body: String, purpose: NetworkPurpose): EncryptedReply {
@@ -100,9 +109,9 @@ class CorpusMock : Transport, EncryptedHttp {
         waitingHttp[id] = request to reply
         return reply.await()
     }
-    override suspend fun cableSend(token: String, text: String) { throw DbException.Network("no cable") }
-    override suspend fun cableNext(token: String): EncryptedSocketEvent? = null
-    override suspend fun cableClose(token: String) {}
+    override suspend fun cableSend(token: String, text: String) = peer.cableSend(token, text)
+    override suspend fun cableNext(token: String): EncryptedSocketEvent? = peer.cableNext(token)
+    override suspend fun cableClose(token: String) = peer.cableClose(token)
     override suspend fun query(request: TransportRequest): String = wait("query", request)
     override suspend fun mutate(request: TransportRequest): String = wait("mutation", request)
 

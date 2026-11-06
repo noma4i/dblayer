@@ -76,17 +76,9 @@ private class RefuseFirstFile(private val mock: MockTransport) : Transport by mo
     }
 }
 
-/** The item outcomes of a batch, read from the core: the API has no item outcome yet (`holes` of the d4 report). */
-internal suspend fun <Model : DBModel> confirmedPairs(receipt: OperationReceipt<Model>): List<Pair<String, String>?> {
-    val outcome = receipt.database.batchOutcome(receipt.wire)
-    assertEquals(WireBatchResult.Confirmed, outcome.result)
-    return outcome.items.map {
-        when (it) {
-            is WireItemOutcome.Confirmed -> it.item.value to receipt.decoder.read(it.value).id
-            is WireItemOutcome.Discarded -> null
-        }
-    }
-}
+/** The item outcomes of a batch: each item has its own receipt. */
+internal suspend fun <Model : DBModel> confirmedPairs(receipt: OperationReceipt<Model>): List<Pair<String, String>?> =
+    receipt.items.map { item -> (item.receipt.outcome() as? OperationOutcome.Confirmed<Model>)?.confirmedValue?.let { item.item.value to it.id } }
 
 private suspend fun <Model : DBModel> confirmedIds(receipt: OperationReceipt<Model>): List<String?> = confirmedPairs(receipt).map { it?.second }
 
@@ -187,35 +179,39 @@ class TransferTest {
         } finally { DBlayer.close(); directory.deleteRecursively() }
     }
 
+    private val expiryOperations = """[{"name":"CreateBlob","document":"mutation CreateBlob { createBlob { signedId } }"},{"name":"CreateMoment","document":"mutation CreateMoment { createMoment { id } }"}]"""
+
+    private suspend fun refusedUpload(transport: MockTransport, source: java.io.File): Moment {
+        transport.enqueue("CreateBlob", DbException.Http(422u, "rejected"))
+        val sent = AccountScope.current().send(Moment, buildJsonObject { put("text", "video") }, upload = UploadCommand("upload_clip", UploadRequest(source.path)))
+        val row = requireNotNull(sent.optimisticValue)
+        eventually("the refused upload failed") { Moment.find(row.id).current()?.sync?.state == SyncState.Failed }
+        return row
+    }
+
+    private suspend fun isGone(row: Moment): Boolean = DBlayer.database.readRow(DBlayer.database.sessionEpoch(), "Moment", row.id) == null
+
     @OptIn(DBlayerTestingApi::class)
     @Test
     fun reopeningAfterSevenDaysExpiresAFailedBlob() = bounded {
         val directory = Files.createTempDirectory("blob-reopen").toFile()
-        val scope = CoroutineScope(SupervisorJob())
         try {
             val source = directory.resolve("video").apply { writeText("video") }
             val path = directory.resolve("db.sqlite").path
             val uploads = UploadOperations(createBlob = UploadOperation("CreateBlob"))
-            val operations = """[{"name":"CreateBlob","document":"mutation CreateBlob { createBlob { signedId } }"}]"""
             DBlayer.close()
             val transport = MockTransport()
-            transport.enqueue("CreateBlob", DbException.Http(422u, "rejected"))
-            DBlayer.openTesting(transport, "[]", path = path, uploads = uploads, startMillis = 1_000_000L)
-            DBlayer.database.registerOperations(operations)
-            val blob = DBlayer.upload(BlobUpload("video", "CreateBlob"), UploadRequest(source.path), scope)
-            try { blob.waitUntilUploaded(); fail("the refused upload returned a signed ID") } catch (_: DbException) {}
-            val id = blob.id
-            blob.close()
+            DBlayer.openTesting(transport, modelsJSON, path = path, uploads = uploads, startMillis = 1_000_000L)
+            DBlayer.database.registerOperations(expiryOperations)
+            val row = refusedUpload(transport, source)
             DBlayer.close()
-            DBlayer.openTesting(transport, "[]", path = path, uploads = uploads, startMillis = 1_000_000L + 7L * 24 * 60 * 60 * 1000)
-            DBlayer.database.registerOperations(operations)
-            val restored = DBlayer.blob(id, scope)
-            val expired = restored.snapshot.first { it.state == BlobState.EXPIRED }
-            assertEquals(BlobState.EXPIRED, expired.state)
-            restored.close()
+            DBlayer.openTesting(transport, modelsJSON, path = path, uploads = uploads, startMillis = 1_000_000L + 7L * 24 * 60 * 60 * 1000)
+            DBlayer.database.registerOperations(expiryOperations)
+            eventually("the expired upload is discarded at the open") { isGone(row) }
             DBlayer.close()
-        } finally { DBlayer.close(); scope.cancel(); directory.deleteRecursively() }
+        } finally { DBlayer.close(); directory.deleteRecursively() }
     }
+
 
     @Test
     fun anHttpRefusalOfAPhotoKeepsTheFailedRecordUntilDiscard() = bounded {
@@ -311,7 +307,7 @@ class TransferTest {
             val rows = receipt.items.map { it.optimisticValue }
             eventually("the refused file failed") { Asset.find(rows[0].id).current()?.sync?.state == SyncState.Failed }
             assertEquals(SyncState.Failed, requireNotNull(Asset.find(rows[0].id).current()).sync.state)
-            assertEquals(receipt.operation, rows[0].retry("create_files").operation)
+            assertEquals(receipt.items[0].receipt.operation, rows[0].retry("create_files").operation)
             assertEquals(listOf("a0", "a1", "a2"), confirmedIds(receipt))
             val call = transport.calls.single { it.operationName == "CreateAssets" }
             val sent = Json.parseToJsonElement(call.variablesJson).jsonObject.getValue("items").jsonArray
@@ -359,24 +355,20 @@ class TransferTest {
     @Test
     fun aFailedBlobExpiresWhenTheNetworkReturnsAfterSevenDays() = bounded {
         val source = Files.createTempFile("blob-expiry", ".mp4").toFile().apply { writeText("video") }
-        val scope = CoroutineScope(SupervisorJob())
         try {
             DBlayer.close()
             val transport = MockTransport()
-            transport.enqueue("CreateBlob", DbException.Http(422u, "rejected"))
-            val clock = DBlayer.openTesting(transport, "[]", uploads = UploadOperations(createBlob = UploadOperation("CreateBlob")))
-            DBlayer.database.registerOperations("""[{"name":"CreateBlob","document":"mutation CreateBlob { createBlob { signedId } }"}]""")
-            val blob = DBlayer.upload(BlobUpload("video", "CreateBlob"), UploadRequest(source.path), scope)
-            try { blob.waitUntilUploaded(); fail("the refused upload returned a signed ID") } catch (_: DbException) {}
+            val clock = DBlayer.openTesting(transport, modelsJSON, uploads = UploadOperations(createBlob = UploadOperation("CreateBlob")))
+            DBlayer.database.registerOperations(expiryOperations)
+            val row = refusedUpload(transport, source)
             DBlayer.database.setOnline(false)
             clock.advance(7L * 24 * 60 * 60 * 1000)
             DBlayer.database.setOnline(true)
-            val expired = blob.snapshot.first { it.state == BlobState.EXPIRED }
-            assertEquals(BlobState.EXPIRED, expired.state)
-            blob.close()
+            eventually("the expired upload is discarded when the network returns") { isGone(row) }
             DBlayer.close()
-        } finally { DBlayer.close(); scope.cancel(); source.delete() }
+        } finally { DBlayer.close(); source.delete() }
     }
+
 
     @Test
     fun completeFailureThenRetryKeepsTheConfirmedParts() = bounded {
@@ -389,19 +381,20 @@ class TransferTest {
             transport.mock.enqueue("PresignParts", """{"data":{"presignParts":{"parts":[{"partNumber":1,"url":"https://storage/1"},{"partNumber":2,"url":"https://storage/2"},{"partNumber":3,"url":"https://storage/3"}]}}}""")
             transport.mock.enqueue("CompleteMultipart", DbException.Http(422u, "rejected"))
             transport.mock.enqueue("CompleteMultipart", """{"data":{"completeMultipart":{"signedId":"signed","blobId":"blob"}}}""")
-            val operations = """[{"name":"CreateBlob","document":"mutation CreateBlob { createBlob { signedId } }"},{"name":"InitMultipart","document":"mutation InitMultipart { initMultipart { key uploadId } }"},{"name":"PresignParts","document":"mutation PresignParts { presignParts { parts { partNumber url } } }"},{"name":"CompleteMultipart","document":"mutation CompleteMultipart { completeMultipart { signedId blobId } }"},{"name":"AbortMultipart","document":"mutation AbortMultipart { abortMultipart { ok } }"}]"""
+            val operations = """[{"name":"CreateMoment","document":"mutation CreateMoment { createMoment { id } }"},{"name":"CreateBlob","document":"mutation CreateBlob { createBlob { signedId } }"},{"name":"InitMultipart","document":"mutation InitMultipart { initMultipart { key uploadId } }"},{"name":"PresignParts","document":"mutation PresignParts { presignParts { parts { partNumber url } } }"},{"name":"CompleteMultipart","document":"mutation CompleteMultipart { completeMultipart { signedId blobId } }"},{"name":"AbortMultipart","document":"mutation AbortMultipart { abortMultipart { ok } }"}]"""
             val uploads = UploadOperations(multipart = UploadOperations.Multipart(UploadOperation("InitMultipart"), UploadOperation("PresignParts"), UploadOperation("CompleteMultipart"), UploadOperation("AbortMultipart")))
-            reopen(Config(null, null, 8u), "[]", transport, operations, uploads)
-            val blob = DBlayer.upload(BlobUpload("video", "CreateBlob"), UploadRequest(source.path), scope)
-            try { blob.waitUntilUploaded(); fail("the failed complete returned a signed ID") } catch (_: DbException) {}
-            blob.retry()
-            assertEquals("signed", blob.waitUntilUploaded())
+            transport.mock.enqueue("CreateMoment", """{"data":{"createMoment":{"__typename":"Moment","id":"m1","uuid":"u","likedByMe":false,"media":{},"createdAt":"2026-10-08T00:00:00.000Z"}}}""")
+            reopen(Config(null, null, 8u), modelsJSON, transport, operations, uploads)
+            val sent = AccountScope.current().send(Moment, buildJsonObject { put("text", "video") }, upload = UploadCommand("upload_clip", UploadRequest(source.path)))
+            val row = requireNotNull(sent.optimisticValue)
+            eventually("the refused complete fails the upload") { Moment.find(row.id).current()?.sync?.state == SyncState.Failed }
+            row.retry("upload_clip")
+            eventually("the retry confirms the upload") { Moment.find(row.id).current()?.sync?.state == SyncState.Synced }
             val names = transport.mock.calls.map { it.operationName }
             assertEquals(1, names.count { it == "InitMultipart" })
             assertEquals(1, names.count { it == "PresignParts" })
             assertEquals(2, names.count { it == "CompleteMultipart" })
             assertEquals(listOf("https://storage/1", "https://storage/2", "https://storage/3"), transport.puts.sorted())
-            blob.close()
             DBlayer.close()
         } finally { DBlayer.close(); scope.cancel(); directory.deleteRecursively() }
     }
@@ -447,21 +440,22 @@ class TransferTest {
         try {
             val source = directory.resolve("video").apply { writeBytes(ByteArray(11 * 1024 * 1024)) }
             val config = Config(directory.resolve("db.sqlite").path, null, 8u)
-            val operations = """[{"name":"CreateBlob","document":"mutation CreateBlob { createBlob { signedId } }"},{"name":"InitMultipart","document":"mutation InitMultipart { initMultipart { key uploadId } }"},{"name":"PresignParts","document":"mutation PresignParts { presignParts { parts { partNumber url } } }"},{"name":"CompleteMultipart","document":"mutation CompleteMultipart { completeMultipart { signedId blobId } }"},{"name":"AbortMultipart","document":"mutation AbortMultipart { abortMultipart { ok } }"}]"""
+            val operations = """[{"name":"CreateMoment","document":"mutation CreateMoment { createMoment { id } }"},{"name":"CreateBlob","document":"mutation CreateBlob { createBlob { signedId } }"},{"name":"InitMultipart","document":"mutation InitMultipart { initMultipart { key uploadId } }"},{"name":"PresignParts","document":"mutation PresignParts { presignParts { parts { partNumber url } } }"},{"name":"CompleteMultipart","document":"mutation CompleteMultipart { completeMultipart { signedId blobId } }"},{"name":"AbortMultipart","document":"mutation AbortMultipart { abortMultipart { ok } }"}]"""
             val uploads = UploadOperations(multipart = UploadOperations.Multipart(UploadOperation("InitMultipart"), UploadOperation("PresignParts"), UploadOperation("CompleteMultipart"), UploadOperation("AbortMultipart")))
-            val db = reopen(config, "[]", transport, operations, uploads)
-            val blob = DBlayer.upload(BlobUpload("video", "CreateBlob"), UploadRequest(source.path), scope)
+            transport.enqueue("CreateMoment", """{"data":{"createMoment":{"__typename":"Moment","id":"m1","uuid":"u","likedByMe":false,"media":{},"createdAt":"2026-10-08T00:00:00.000Z"}}}""")
+            val db = reopen(config, modelsJSON, transport, operations, uploads)
+            val sent = AccountScope.current().send(Moment, buildJsonObject { put("text", "video") }, upload = UploadCommand("upload_clip", UploadRequest(source.path)))
+            val row = requireNotNull(sent.optimisticValue)
             held.entered()
             val files = directory.resolve("db.sqlite.files")
             assertEquals(1, requireNotNull(files.list()).size)
             db.setOnline(false)
-            blob.discard()
+            row.discard("upload_clip")
             assertTrue(requireNotNull(files.list()).isEmpty())
             assertTrue(source.exists())
             held.release()
-            blob.close()
             DBlayer.close()
-            val reopened = reopen(config, "[]", transport, operations, uploads)
+            val reopened = reopen(config, modelsJSON, transport, operations, uploads)
             reopened.setOnline(false)
             reopened.setOnline(true)
             abort.entered()

@@ -13,58 +13,48 @@ import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.launch
 import kotlinx.serialization.json.JsonObject
 
-/** The deliveries of one stream in order, read from the journal of the stream in the core. Collecting it reads the stream, and a collector that stops or is cancelled ends the stream in the core. A stream that ends by itself delivers one `StreamValue.Ended` last. Values the core could not keep for a slow reader reach it as `StreamValue.Lost`. */
-class ValueStream internal constructor(val id: ULong, val epoch: ULong, private val database: Database, private val signal: Channel<Unit>) {
-    val deliveries: Flow<StreamDelivery> = flow {
-        try {
-            while (true) {
-                val delivery = database.readStream(id)
-                if (delivery != null) {
-                    emit(delivery)
-                    if (delivery.value is StreamValue.Ended) break
-                    continue
-                }
-                if (signal.receiveCatching().isClosed) break
-            }
-        } finally {
-            close()
+/** The values of one stream in order, taken from the core one by one. Collecting it reads the stream, and a collector that stops or is cancelled ends the stream in the core. A stream that ends by itself delivers one `ReadValue.Ended` last. */
+class ValueStream internal constructor(val epoch: ULong, private val reader: ReadStream, private val database: Database, private val load: LoadTarget?) {
+    internal class LoadTarget(val model: String, val relation: String, val paramsJson: String)
+
+    val values: Flow<ReadValue> = flow {
+        while (true) {
+            val value = reader.pull() ?: break
+            emit(value)
+            if (value is ReadValue.Ended) break
         }
     }
 
     /** Loads the relation of the stream again. Throws `Interrupted` when the session of the stream ended. */
-    suspend fun refresh() = offCaller { database.refreshStream(id) }
-
-    suspend fun loadMore(): LoadMoreResult = offCaller { database.loadMoreStream(id) }
-
-    /** Stops reading: the stream ends in the core and nothing is read after this returns. */
-    fun close() {
-        signal.close()
-        database.cancelStream(id)
+    suspend fun refresh() {
+        val target = requireTarget()
+        offCaller { database.refresh(epoch, target.model, target.relation, target.paramsJson) }
     }
-}
 
-/** Hears that the journal of a stream holds values. It carries no value: the reader takes them with `readStream`. */
-internal class Forward(private val signal: Channel<Unit>) : ValueSink {
-    override fun available() {
-        signal.trySend(Unit)
+    suspend fun loadMore(): LoadMoreResult {
+        val target = requireTarget()
+        return offCaller { database.loadMore(epoch, target.model, target.relation, target.paramsJson) }
     }
+
+    /** Stops reading: the stream ends in the core and nothing is delivered after this returns. */
+    suspend fun cancel() = reader.cancel()
+
+    fun close() = reader.close()
+
+    private fun requireTarget(): LoadTarget = load ?: throw DbException.Invalid("the stream has no relation to load")
 }
 
-internal fun Database.openValueStream(epoch: ULong, request: StreamRequest): ValueStream {
-    val signal = Channel<Unit>(Channel.CONFLATED)
-    val id = subscribe(epoch, request, Forward(signal))
-    return ValueStream(id, epoch, this, signal)
-}
+internal fun Database.openValueStream(epoch: ULong, request: ReadRequest, load: ValueStream.LoadTarget? = null): ValueStream =
+    ValueStream(epoch, subscribeValues(epoch, request), this, load)
 
 enum class Applied { Changed, Resync, Ignored }
 
 /** What a screen shows of a stream of rows: an immutable value built only from deliveries. It holds no lock and no reference to the core. */
 class ListProjection<Model : DBModel> private constructor(
     val rows: List<Model>,
-    val state: StreamState?,
+    val state: ReadState?,
     val revision: Long?,
-    val epoch: ULong?,
-    val ended: StreamEnd?,
+    val ended: ReadEnd?,
     val failure: String?,
     /** How many rows were decoded so far. A change of one row decodes one row. */
     val decoded: Int,
@@ -74,11 +64,10 @@ class ListProjection<Model : DBModel> private constructor(
     val lastEdits: List<ListEdit<Model>>?,
     /** Server id to the temporary id the row had when the screen first showed it. */
     val temporaryIds: Map<String, String>,
-    private val awaitingSnapshot: Boolean,
 ) {
-    constructor() : this(emptyList(), null, null, null, null, null, 0, 0, emptyList(), emptyMap(), false)
+    constructor() : this(emptyList(), null, null, null, null, 0, 0, emptyList(), emptyMap())
 
-    val phase: LivePhase? get() = state?.phase
+    val phase: ReadPhase? get() = state?.phase
 
     /** The error the screen shows: the one the core reports for the stream, else a row the platform could not decode. */
     val error: DbException? get() = state?.error ?: failure?.let { DbException.Invalid(it) }
@@ -86,13 +75,11 @@ class ListProjection<Model : DBModel> private constructor(
     class Step<Model : DBModel>(val projection: ListProjection<Model>, val applied: Applied)
 
     private fun copy(
-        rows: List<Model> = this.rows, state: StreamState? = this.state, revision: Long? = this.revision, epoch: ULong? = this.epoch, ended: StreamEnd? = this.ended, failure: String? = this.failure,
-        decoded: Int = this.decoded, deltas: Int = this.deltas, lastEdits: List<ListEdit<Model>>? = this.lastEdits, temporaryIds: Map<String, String> = this.temporaryIds, awaitingSnapshot: Boolean = this.awaitingSnapshot,
-    ) = ListProjection(rows, state, revision, epoch, ended, failure, decoded, deltas, lastEdits, temporaryIds, awaitingSnapshot)
+        rows: List<Model> = this.rows, state: ReadState? = this.state, revision: Long? = this.revision, ended: ReadEnd? = this.ended, failure: String? = this.failure,
+        decoded: Int = this.decoded, deltas: Int = this.deltas, lastEdits: List<ListEdit<Model>>? = this.lastEdits, temporaryIds: Map<String, String> = this.temporaryIds,
+    ) = ListProjection(rows, state, revision, ended, failure, decoded, deltas, lastEdits, temporaryIds)
 
-    fun apply(delivery: StreamDelivery, decoder: ModelDecoder<Model>): Step<Model> {
-        if (epoch != null && delivery.epoch != epoch) return Step(this, Applied.Ignored)
-        val held = delivery.epoch
+    fun apply(value: ReadValue, decoder: ModelDecoder<Model>): Step<Model> {
         var decoded = this.decoded
         var failure = this.failure
         fun decode(wire: List<WireRow>): List<Model?> = wire.map { row ->
@@ -103,30 +90,30 @@ class ListProjection<Model : DBModel> private constructor(
                 null
             }
         }
-        return when (val value = delivery.value) {
-            is StreamValue.Snapshot -> {
+        return when (value) {
+            is ReadValue.Snapshot -> {
                 failure = null
                 val whole = decode(value.rows).filterNotNull()
-                Step(copy(rows = whole, state = value.state, revision = value.revision, epoch = held, failure = failure, decoded = decoded, lastEdits = null, awaitingSnapshot = false), Applied.Changed)
+                Step(copy(rows = whole, state = value.state, revision = value.revision, failure = failure, decoded = decoded, lastEdits = null), Applied.Changed)
             }
-            is StreamValue.State -> Step(copy(state = value.state, epoch = held, lastEdits = emptyList()), Applied.Changed)
-            is StreamValue.Ended -> Step(copy(ended = value.reason, epoch = held, lastEdits = emptyList()), Applied.Changed)
-            is StreamValue.Delta -> {
-                if (awaitingSnapshot) return Step(copy(epoch = held), Applied.Ignored)
-                fun gap() = Step(copy(epoch = held, failure = failure, decoded = decoded, awaitingSnapshot = true), Applied.Resync)
-                if (value.base != revision) return gap()
+            is ReadValue.State -> Step(copy(state = value.state, lastEdits = emptyList()), Applied.Changed)
+            is ReadValue.Ended -> Step(copy(ended = value.cause, lastEdits = emptyList()), Applied.Changed)
+            is ReadValue.Delta -> {
+                val held = revision ?: return Step(this, Applied.Ignored)
+                fun gap() = Step(ListProjection(rows, state, null, ended, failure, decoded, deltas, lastEdits, temporaryIds), Applied.Resync)
+                if (value.base != held) return gap()
                 val carried = decode(value.rows)
                 if (carried.any { it == null }) return gap()
-                val result = rebuild(carried.filterNotNull().zip(value.rowIndexes.map { it.toInt() }), value.removed, value.placed, value.replaced, value.size.toInt()) ?: return gap()
+                val result = rebuild(carried.filterNotNull().zip(value.indexes.map { it.toInt() }), value.removed, value.placed, value.replaced, value.size.toInt()) ?: return gap()
                 val ids = HashMap(temporaryIds)
                 for (pair in value.renamed) { ids[pair.to] = ids[pair.from] ?: pair.from; ids.remove(pair.from) }
-                Step(copy(rows = result.first, state = value.state, revision = value.revision, epoch = held, failure = failure, decoded = decoded, deltas = deltas + 1, lastEdits = result.second.takeIf { it.size <= result.first.size }, temporaryIds = ids), Applied.Changed)
+                Step(copy(rows = result.first, state = value.state, revision = value.revision, failure = failure, decoded = decoded, deltas = deltas + 1, lastEdits = result.second.takeIf { it.size <= result.first.size }, temporaryIds = ids), Applied.Changed)
             }
             else -> Step(this, Applied.Ignored)
         }
     }
 
-    private fun rebuild(carried: List<Pair<Model, Int>>, removed: List<String>, placed: List<Placement>, replaced: List<Replacement>, size: Int): Pair<List<Model>, List<ListEdit<Model>>>? {
+    private fun rebuild(carried: List<Pair<Model, Int>>, removed: List<String>, placed: List<RowPlace>, replaced: List<RowRename>, size: Int): Pair<List<Model>, List<ListEdit<Model>>>? {
         if (removed.isEmpty() && placed.isEmpty() && replaced.isEmpty()) {
             if (size != rows.size || carried.any { (model, index) -> index >= rows.size || rows[index].id != model.id }) return null
             val next = rows.toMutableList()
@@ -186,8 +173,8 @@ class Projected<Model : DBModel>(val stream: ValueStream, decoder: ModelDecoder<
     val projection: StateFlow<ListProjection<Model>> = held.asStateFlow()
     private val pending = java.util.concurrent.atomic.AtomicReference<List<ListEdit<Model>>?>(null)
     private val reading: Job = scope.launch(start = CoroutineStart.ATOMIC) {
-        stream.deliveries.collect { delivery ->
-            val step = held.value.apply(delivery, decoder)
+        stream.values.collect { value ->
+            val step = held.value.apply(value, decoder)
             held.value = step.projection
             if (step.applied == Applied.Changed) pending.updateAndGet { ListEdit.composing(it, step.projection.lastEdits, step.projection.rows.size) }
         }
@@ -212,18 +199,18 @@ class Projected<Model : DBModel>(val stream: ValueStream, decoder: ModelDecoder<
 class ProjectedCount(val stream: ValueStream, scope: CoroutineScope) {
     private val held = MutableStateFlow<Long?>(null)
     val count: StateFlow<Long?> = held.asStateFlow()
-    private val shown = MutableStateFlow<StreamState?>(null)
+    private val shown = MutableStateFlow<ReadState?>(null)
     /** The state of the stream with its error. */
-    val state: StateFlow<StreamState?> = shown.asStateFlow()
-    private val over = MutableStateFlow<StreamEnd?>(null)
+    val state: StateFlow<ReadState?> = shown.asStateFlow()
+    private val over = MutableStateFlow<ReadEnd?>(null)
     /** Why the stream ended by itself. */
-    val ended: StateFlow<StreamEnd?> = over.asStateFlow()
+    val ended: StateFlow<ReadEnd?> = over.asStateFlow()
     private val reading: Job = scope.launch(start = CoroutineStart.ATOMIC) {
-        stream.deliveries.collect { delivery ->
-            when (val value = delivery.value) {
-                is StreamValue.Count -> { held.value = value.count; shown.value = value.state }
-                is StreamValue.State -> shown.value = value.state
-                is StreamValue.Ended -> over.value = value.reason
+        stream.values.collect { value ->
+            when (value) {
+                is ReadValue.Count -> { held.value = value.count.toLong(); shown.value = value.state }
+                is ReadValue.State -> shown.value = value.state
+                is ReadValue.Ended -> over.value = value.cause
                 else -> {}
             }
         }
@@ -237,30 +224,30 @@ class ProjectedCount(val stream: ValueStream, scope: CoroutineScope) {
 
 /** The events of a model after the stream opened. The flow ends when the collector stops or the session of the account ends. */
 fun <Model : DBModel> ValueStream.events(decoder: ModelDecoder<Model>): Flow<ModelEventItem<Model>> = flow {
-    var failed = false
-    var opened = false
-    deliveries.collect { delivery ->
-        when (val value = delivery.value) {
-            is StreamValue.Lost -> emit(ModelEventItem.Lost(value.first, value.last))
-            is StreamValue.Event -> try {
-                emit(ModelEventItem.Event(ModelEvent(value.event.area, value.event.kind, value.event.id, value.event.before?.let(decoder::read), value.event.after?.let(decoder::read))))
+    values.collect { value ->
+        when (value) {
+            is ReadValue.Ready -> emit(ModelEventItem.Ready)
+            is ReadValue.Lost -> emit(ModelEventItem.Lost(value.first, value.last))
+            is ReadValue.Gap -> emit(ModelEventItem.Gap)
+            is ReadValue.Event -> try {
+                emit(ModelEventItem.Event(ModelEvent(value.position, value.area, value.kind, value.id, value.before?.let(decoder::read), value.after?.let(decoder::read))))
             } catch (error: kotlinx.coroutines.CancellationException) { throw error } catch (error: Throwable) {
                 emit(ModelEventItem.Failed(error))
                 close()
             }
-            is StreamValue.State -> when (val error = value.state.error) {
-                null -> if (value.state.settled && !opened) { opened = true; emit(ModelEventItem.Ready) }
-                else -> if (!failed) { failed = true; emit(ModelEventItem.Failed(error)) }
-            }
-            is StreamValue.Ended -> if (value.reason == StreamEnd.INVALID && !failed) { failed = true; emit(ModelEventItem.Failed(DbException.Invalid("the events stream could not open"))) }
+            is ReadValue.State -> value.state.error?.let { emit(ModelEventItem.Failed(it)) }
+            is ReadValue.Ended -> if (value.cause == ReadEnd.INVALID) emit(ModelEventItem.Failed(DbException.Invalid("the events stream could not open")))
             else -> {}
         }
     }
 }
 
-/** The status of a media upload while it runs. */
-val ValueStream.uploadStatus: Flow<WireBlobSnapshot>
-    get() = flow { deliveries.collect { delivery -> (delivery.value as? StreamValue.Status)?.let { emit(it.blob) } } }
+/** The status of a transfer at one change. */
+data class TransferProgress(val revision: Long, val state: String, val progress: ULong, val error: String?)
+
+/** The status of a transfer while it runs, by the key `model:row:action`. */
+val ValueStream.uploadStatus: Flow<TransferProgress>
+    get() = flow { values.collect { value -> (value as? ReadValue.Status)?.let { emit(TransferProgress(it.revision, it.state, it.progress, it.error)) } } }
 
 /** The file of a media command and the declared upload action that sends it. */
 class UploadCommand(val action: String, val request: UploadRequest)
@@ -268,18 +255,17 @@ class UploadCommand(val action: String, val request: UploadRequest)
 /** The streams and commands of one signed-in account. The root of the app makes one after the sign-in and recreates its screens when the account changes: a scope whose session ended opens streams that end at once. */
 class AccountScope private constructor(val epoch: ULong, internal val database: Database) {
     /** [refreshOnConnect] loads the relation again when the stream opens, also when it is fresh. The first rows stay visible. */
-    fun <Model : DBModel> stream(query: Query<Model>, refreshOnConnect: Boolean = false): ValueStream = database.openValueStream(epoch, StreamRequest.Query(query.json(refreshOnConnect)))
+    fun <Model : DBModel> stream(query: Query<Model>, refreshOnConnect: Boolean = false): ValueStream = database.openValueStream(epoch, ReadRequest.List(query.json(refreshOnConnect)), query.loadTarget)
 
-    fun <Model : DBModel> count(query: Query<Model>): ValueStream = database.openValueStream(epoch, StreamRequest.Count(query.json))
-
-    fun <Model : DBModel, Target : DBModel> related(query: Query<Model>, association: Association<Model, Target>): ValueStream = database.openValueStream(epoch, StreamRequest.Related(query.json, association.name))
+    fun <Model : DBModel> count(query: Query<Model>): ValueStream = database.openValueStream(epoch, ReadRequest.Count(query.json))
 
     /** One row by id. [fetch] tells when the library loads it from the server. */
-    fun <Model : DBModel> entity(decoder: ModelDecoder<Model>, id: String, fetch: EntityFetch = EntityFetch.NEVER): ValueStream = database.openValueStream(epoch, StreamRequest.Entity(decoder.modelName, id, fetch))
+    fun <Model : DBModel> entity(decoder: ModelDecoder<Model>, id: String, fetch: ReadFetch = ReadFetch.NEVER): ValueStream = database.openValueStream(epoch, ReadRequest.Entity(decoder.modelName, id, fetch))
 
-    fun <Model : DBModel> events(decoder: ModelDecoder<Model>): ValueStream = database.openValueStream(epoch, StreamRequest.Events(decoder.modelName))
+    fun <Model : DBModel> events(decoder: ModelDecoder<Model>): ValueStream = database.openValueStream(epoch, ReadRequest.Events(decoder.modelName))
 
-    fun uploadStatus(id: String): ValueStream = database.openValueStream(epoch, StreamRequest.Blob(id))
+    /** The status of the transfer of `uploads[action]` of a row. */
+    fun uploadStatus(row: DBModel, action: String): ValueStream = database.openValueStream(epoch, ReadRequest.Blob("${row.modelName}:${row.id}:$action"))
 
     /** Writes the model locally and queues it for the server. It works without a network and after the app closed. Only a durable create action (sending a message) and a declared upload action work this way; another model is refused. Throws `Interrupted` when the session of this scope ended. */
     suspend fun <Model : DBModel> send(decoder: ModelDecoder<Model>, values: JsonObject, args: JsonObject = JsonObject(emptyMap()), upload: UploadCommand? = null): MutationReceipt<Model> {
@@ -303,5 +289,3 @@ class AccountScope private constructor(val epoch: ULong, internal val database: 
         }
     }
 }
-
-fun streamCensus(): StreamCensus = DBlayer.database.streamCensus()

@@ -1,5 +1,6 @@
 package com.noma4i.dblayer
 
+import com.noma4i.dblayer.models.Chat
 import com.noma4i.dblayer.models.Presence
 import com.noma4i.dblayer.models.User
 import com.noma4i.dblayer.models.modelsJSON
@@ -7,93 +8,60 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Test
 
-/** Keeps the first value of a stream with the thread that first heard values wait: the calling thread means the core produced the value inside the opening call. */
-private class FirstFrameSink(private val caller: Thread) : ValueSink {
-    class Frame(val onCaller: Boolean, val seq: ULong, val revision: Long?, val ids: List<String>?)
-
-    @Volatile var first: Frame? = null
-    private var heardOnCaller: Boolean? = null
-    private var bound: Pair<ULong, Database>? = null
-
-    @Synchronized
-    fun bind(stream: ULong, database: Database) {
-        bound = stream to database
-        read()
-    }
-
-    @Synchronized
-    override fun available() {
-        if (heardOnCaller == null) heardOnCaller = Thread.currentThread() === caller
-        read()
-    }
-
-    private fun read() {
-        if (first != null) return
-        val (stream, database) = bound ?: return
-        val delivery = database.readStream(stream) ?: return
-        val snapshot = delivery.value as? StreamValue.Snapshot
-        first = Frame(heardOnCaller ?: true, delivery.seq, snapshot?.revision, snapshot?.rows?.map { it.id })
-    }
-}
-
-/** Spec B, first frame: the cached rows come with the first delivery, read off the calling thread. Related queries: the target rows of a link follow a change of the target and of the link. */
+/** Spec B, first frame: the cached rows come with the first value, read off the calling thread. Related queries: a stream over a server relation follows a change of its rows and of the link. */
 class FirstFrameAndRelatedTest {
-    private fun names(projected: Projected<User>) = projected.projection.value.rows.map { it.name }
+    private fun titles(projected: Projected<Chat>) = projected.projection.value.rows.map { it.title }
 
-    /** Requirement: a stream opened over cached rows delivers them in its very first delivery, off the calling thread, so never inside the opening call. Observable: the sequence number, the thread and the snapshot content of the first delivery, whatever its kind. */
+    /** Requirement: a stream opened over cached rows delivers them in its very first value, which the reader takes off the calling thread. Observable: the kind, the rows and the revision of the first value, and the thread that took it. */
     @Test
     fun theFirstFrameOfAWarmStreamArrivesOffTheCallingThreadWithTheCachedRows() = bounded {
         reopen(Config(null, null, 32u), modelsJSON, MockTransport())
         val ann = User.create(name = "Ann").optimisticValue!!
         val seats = listOf(Presence.create(userId = ann.id, room = "r").optimisticValue!!, Presence.create(userId = ann.id, room = "r").optimisticValue!!)
-        val scope = AccountScope.current()
-        val sink = FirstFrameSink(Thread.currentThread())
+        val stream = AccountScope.current().stream(Presence.where(Condition.equal("room", jsonValue("r"))))
+        val caller = Thread.currentThread()
         try {
-            val stream = DBlayer.database.subscribe(scope.epoch, StreamRequest.Query(Presence.where(Condition.equal("room", jsonValue("r"))).json), sink)
-            sink.bind(stream, DBlayer.database)
-            try {
-                eventually("the first frame arrives") { sink.first != null }
-                val frame = sink.first
-                assertNotNull(frame)
-                assertEquals(1uL, frame!!.seq)
-                assertFalse("the core produced the first value on the calling thread, inside the opening call", frame.onCaller)
-                assertNotNull("the first delivery was not a snapshot with a revision", frame.revision)
-                assertEquals("the first delivery lacked the cached rows: ${frame.ids}", seats.map { it.id }.toSet(), frame.ids?.toSet())
-            } finally {
-                DBlayer.database.cancelStream(stream)
-            }
+            val (onCaller, first) = withContext(Dispatchers.Default) { (Thread.currentThread() === caller) to stream.values.first() }
+            assertFalse("the first value was taken on the calling thread", onCaller)
+            val snapshot = first as? ReadValue.Snapshot
+            assertNotNull("the first value was not a snapshot with a revision", snapshot)
+            assertEquals("the first value lacked the cached rows: ${snapshot?.rows?.map { it.id }}", seats.map { it.id }.toSet(), snapshot!!.rows.map { it.id }.toSet())
         } finally {
+            stream.cancel()
             DBlayer.close()
         }
     }
 
-    /** Requirement: a related query returns the target rows of the link, and follows a change of a target row and a change of the link. Observable: the names the projection shows after each step. */
+    /** Requirement: a stream over a server relation shows the rows of the relation, follows a change of one of its rows and a change of the link that moves a row out of it. Observable: the titles the projection shows after each step. */
     @Test
     fun aRelatedQueryReturnsTheLinkedRowsAndFollowsATargetChangeAndALinkChange() = bounded {
-        reopen(Config(null, null, 32u), modelsJSON, MockTransport())
+        val transport = MockTransport()
+        reopen(Config(null, null, 32u), modelsJSON, transport)
+        DBlayer.database.registerOperations("""[{"name":"ChatList","document":"query ChatList { chats { id title revision lists } }"},{"name":"RecordEvents","document":"subscription RecordEvents { recordEvents { entries { topic action recordId chat { id title revision lists } message { id text chatId } } } }"}]""")
         val screen = CoroutineScope(SupervisorJob() + Dispatchers.Default)
         try {
-            val ann = User.create(name = "Ann").optimisticValue!!
-            val bob = User.create(name = "Bob").optimisticValue!!
-            val seat = Presence.create(userId = ann.id, room = "r").optimisticValue!!
-            val related = Projected(AccountScope.current().related(Presence.where(Condition.equal("room", jsonValue("r"))), Presence.Relations.user), User, screen)
-            related.loaded()
+            val scope = AccountScope.current()
+            val events = scope.events(Chat)
+            screen.launch { runCatching { events.values.collect { } } }
+            eventually("the events subscription opens") { transport.calls.size == 1 }
+            transport.enqueue("ChatList", """{"data":{"chats":[{"__typename":"Chat","id":"c1","title":"before","revision":1,"lists":["SECONDARY"]}]}}""")
+            val related = Projected(scope.stream(Chat.list("SECONDARY")), Chat, screen)
+            Chat.list("SECONDARY").load()
+            eventually("the linked row shows") { titles(related) == listOf("before") }
 
-            eventually("the linked row shows") { names(related) == listOf("Ann") }
+            transport.emit("RecordEvents", """{"data":{"recordEvents":{"entries":[{"topic":"MESSAGE","action":"UPDATED","recordId":"m1","chat":{"id":"c1","title":"after","revision":2,"lists":["SECONDARY"]},"message":{"id":"m1","text":"x","chatId":"c1"}}]}}}""")
+            eventually("a change of the row shows") { titles(related) == listOf("after") }
 
-            ann.update(name = "Anna")
-            eventually("a change of the target shows") { names(related) == listOf("Anna") }
-
-            seat.update(userId = bob.id)
-            eventually("a change of the link moves the target") { names(related) == listOf("Bob") }
-
-            Presence.create(userId = ann.id, room = "r")
-            eventually("a second link adds its target") { names(related).let { it.size == 2 && it.toSet() == setOf("Anna", "Bob") } }
+            transport.emit("RecordEvents", """{"data":{"recordEvents":{"entries":[{"topic":"MESSAGE","action":"UPDATED","recordId":"m1","chat":{"id":"c1","title":"after","revision":3,"lists":["PRIMARY"]},"message":{"id":"m1","text":"x","chatId":"c1"}}]}}}""")
+            eventually("a change of the link moves the row out of the relation") { titles(related).isEmpty() }
         } finally {
             screen.cancel()
             DBlayer.close()

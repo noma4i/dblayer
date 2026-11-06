@@ -41,32 +41,6 @@ suspend inline fun <reified Answer> MutationReceipt<*>.answer(): Answer {
 
 suspend fun MutationReceipt<*>.refusal(): WireFailure = (outcome() as? OperationOutcome.Rejected)?.failure ?: error("the operation was not refused")
 
-/** Reads the journal of a stream the way `ValueStream` does and hands each value to [take]. A test makes it the sink of `subscribe`, then binds the stream number it got. */
-class PulledStream(private val take: (StreamDelivery) -> Unit) : ValueSink {
-    @Volatile private var bound: Pair<ULong, Database>? = null
-    private val reading = Any()
-
-    fun bind(stream: ULong, database: Database) {
-        bound = stream to database
-        available()
-    }
-
-    override fun available() {
-        val (stream, database) = bound ?: return
-        synchronized(reading) {
-            while (true) take(database.readStream(stream) ?: break)
-        }
-    }
-}
-
-fun stateOf(delivery: StreamDelivery): StreamState? = when (val value = delivery.value) {
-    is StreamValue.Snapshot -> value.state
-    is StreamValue.Delta -> value.state
-    is StreamValue.Count -> value.state
-    is StreamValue.State -> value.state
-    else -> null
-}
-
 /** The network goes away while the held request is at the server: the load ends with the network error at once. The test clock never moves by itself, so a network error the server returns would wait for a retry without end. */
 suspend fun networkDrops(during: Hold) {
     during.entered()

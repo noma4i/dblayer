@@ -179,7 +179,7 @@ class TestClockTest {
             val state = held.projection.first { it.error != null }
             assertEquals(3, transport.calls.count { it.operationName == "MomentsFeed" })
             assertEquals(listOf("1"), state.rows.map { it.id })
-            assertEquals(LivePhase.LOADED, state.phase)
+            assertEquals(ReadPhase.LOADED, state.phase)
             assertTrue(state.error is DbException.Network)
             held.close()
         } finally {

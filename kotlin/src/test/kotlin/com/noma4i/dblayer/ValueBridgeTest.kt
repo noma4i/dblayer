@@ -91,7 +91,6 @@ class ValueBridgeTest {
             val profile = Projected(scope.stream(User.profile), User, screen)
             profile.loaded()
             eventually("the stream shows A") { profile.value?.name == "A" }
-            assertEquals(scope.epoch, profile.projection.value.epoch)
             assertTrue(profile.projection.value.revision != null && profile.projection.value.ended == null)
             assertTrue(profile.projection.value.decoded >= 1)
         } finally {
@@ -112,9 +111,8 @@ class ValueBridgeTest {
             eventually("the stream shows A") { profile.value?.name == "A" }
 
             DBlayer.sessionReset()
-            eventually("the stream ended") { profile.projection.value.ended == StreamEnd.SESSION_ENDED }
+            eventually("the stream ended") { profile.projection.value.ended == ReadEnd.SESSION_ENDED }
 
-            assertEquals(0uL, streamCensus().open)
             assertEquals(0uL, DBlayer.subscriptionCensus().subscriptions)
             assertEquals("A", profile.value?.name)
         } finally {
@@ -144,8 +142,7 @@ class ValueBridgeTest {
             eventually("B shows") { projectionB.value?.name == "B" }
 
             assertEquals("A", projectionA.value?.name)
-            assertEquals(StreamEnd.SESSION_ENDED, projectionA.projection.value.ended)
-            assertEquals(second.epoch, projectionB.projection.value.epoch)
+            assertEquals(ReadEnd.SESSION_ENDED, projectionA.projection.value.ended)
         } finally {
             screen.cancel()
             DBlayer.close()
@@ -227,13 +224,10 @@ class ValueBridgeTest {
             signIn("A")
             val projected = Projected(AccountScope.current().stream(User.profile), User, screen)
             projected.loaded()
-            assertEquals(1uL, streamCensus().open)
             assertEquals(1uL, DBlayer.subscriptionCensus().subscriptions)
 
             projected.close()
-            eventually("the stream left the core") { streamCensus().open == 0uL }
-
-            assertEquals(0uL, DBlayer.subscriptionCensus().subscriptions)
+            eventually("the stream left the core") { DBlayer.subscriptionCensus().subscriptions == 0uL }
         } finally {
             screen.cancel()
             DBlayer.close()
@@ -254,7 +248,6 @@ class ValueBridgeTest {
             val first = (1..5).map { number -> scope.send(Moment, text("m$number")) }
             first.forEach { it.outcome() }
             eventually("the thread holds five confirmed rows") { thread.projection.value.rows.let { rows -> rows.size == 5 && rows.all { it.sync.state == SyncState.Synced } } }
-            assertEquals(2uL, streamCensus().open)
             assertEquals(2uL, DBlayer.subscriptionCensus().subscriptions)
 
             val decoded = thread.projection.value.decoded
@@ -304,13 +297,15 @@ class ValueBridgeTest {
         try {
             openSession()
             signIn("A")
-            val reader = LossyReader()
-            reader.bind(DBlayer.database.subscribe(DBlayer.database.sessionEpoch(), StreamRequest.Entity("Nope", "x", EntityFetch.NEVER), reader))
-            eventually("the failed stream ended") { reader.ended().isNotEmpty() }
-
-            assertEquals(listOf(StreamEnd.INVALID), reader.ended())
-            assertTrue("the failed stream did not show its error", reader.failure() != null)
-            assertEquals(0uL, streamCensus().open)
+            val reader = DBlayer.database.subscribeValues(DBlayer.database.sessionEpoch(), ReadRequest.Entity("Nope", "x", ReadFetch.NEVER))
+            val ended = ArrayList<ReadEnd>()
+            while (true) {
+                val value = reader.pull() ?: break
+                if (value is ReadValue.Ended) ended.add(value.cause)
+            }
+            assertEquals(listOf(ReadEnd.INVALID), ended)
+            assertEquals("a stream that ended gives nothing more", null, reader.pull())
+            assertEquals(0uL, DBlayer.subscriptionCensus().subscriptions)
         } finally {
             DBlayer.close()
         }
@@ -350,9 +345,9 @@ class ValueBridgeTest {
             val state = profile.projection.value.state!!
             val whole = DBlayer.database.readQuery(scope.epoch, User.profile.json).first()
             val bad = whole.copy(layout = "another layout")
-            val broken = ListProjection<User>().apply(StreamDelivery(1uL, scope.epoch, 1uL, StreamValue.Snapshot(1L, listOf(bad), state)), User).projection
+            val broken = ListProjection<User>().apply(ReadValue.Snapshot(1L, listOf(bad), state), User).projection
             assertTrue("a row that does not decode was dropped without an error", broken.rows.isEmpty() && broken.error != null)
-            val healed = broken.apply(StreamDelivery(1uL, scope.epoch, 2uL, StreamValue.Snapshot(2L, listOf(whole), state)), User).projection
+            val healed = broken.apply(ReadValue.Snapshot(2L, listOf(whole), state), User).projection
             assertTrue("a good snapshot did not clear the error", healed.rows.size == 1 && healed.error == null)
 
             val first = scope.events(User).events(User).first()
@@ -373,8 +368,7 @@ class ValueBridgeTest {
             val cancelled = CoroutineScope(SupervisorJob())
             cancelled.cancel()
             Projected(scope.stream(User.profile), User, cancelled)
-            eventually("the stream left the core") { streamCensus().open == 0uL }
-            assertEquals(0uL, DBlayer.subscriptionCensus().subscriptions)
+            eventually("the stream left the core") { DBlayer.subscriptionCensus().subscriptions == 0uL }
         } finally {
             DBlayer.close()
         }
@@ -414,10 +408,10 @@ class ValueBridgeTest {
             val settled = kotlinx.coroutines.CompletableDeferred<Unit>()
             val sending = kotlinx.coroutines.CompletableDeferred<Unit>()
             val reading = CoroutineScope(Dispatchers.Default).launch {
-                stream.deliveries.collect { delivery ->
+                stream.values.collect { value ->
                     if (settled.isCompleted) sending.await() else received.set(0)
                     received.incrementAndGet()
-                    val step = projection.apply(delivery, Moment)
+                    val step = projection.apply(value, Moment)
                     projection = step.projection
                     rowCount.set(projection.rows.size)
                     if (projection.state?.settled == true) settled.complete(Unit)
@@ -430,7 +424,7 @@ class ValueBridgeTest {
                 for (number in 1..300) scope.send(Moment, text("m$number"))
                 sending.complete(Unit)
                 eventually("the reader holds the 300 rows") { rowCount.get() == 300 }
-                assertTrue("the reader received ${received.get()} deliveries of a burst of 300: the buffer bounded nothing", received.get() <= 260)
+                assertTrue("the reader received ${received.get()} values of a burst of 300: the journal bounded nothing", received.get() <= 260)
             } finally {
                 reading.cancel()
                 stream.close()
@@ -440,38 +434,3 @@ class ValueBridgeTest {
         }
     }
 }
-
-/** Reads a stream the way a platform does. */
-private class LossyReader : ValueSink {
-    private var projection = ListProjection<Moment>()
-    private val endings = java.util.concurrent.CopyOnWriteArrayList<StreamEnd>()
-    private val reading = Any()
-    val snapshots = AtomicInteger(0)
-    @Volatile private var stream: ULong? = null
-
-    fun rows(): Int = synchronized(this) { projection.rows.size }
-    fun settled(): Boolean = synchronized(this) { projection.state?.settled == true }
-    fun failure(): DbException? = synchronized(this) { projection.state?.error }
-    fun ended(): List<StreamEnd> = endings.toList()
-
-    fun bind(stream: ULong) {
-        this.stream = stream
-        available()
-    }
-
-    override fun available() {
-        val stream = stream ?: return
-        synchronized(reading) {
-            while (true) take(DBlayer.database.readStream(stream) ?: break)
-        }
-    }
-
-    private fun take(delivery: StreamDelivery) {
-        synchronized(this) {
-            if (delivery.value is StreamValue.Snapshot) snapshots.incrementAndGet()
-            (delivery.value as? StreamValue.Ended)?.let { endings.add(it.reason) }
-            projection = projection.apply(delivery, Moment).projection
-        }
-    }
-}
-

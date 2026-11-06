@@ -1,5 +1,6 @@
 package com.noma4i.dblayer
 
+import com.noma4i.dblayer.models.Moment
 import com.noma4i.dblayer.models.modelsJSON
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -30,10 +31,9 @@ class MockTransportStrictTest {
         fun loadsWithoutAReply() = bounded {
             Assume.assumeTrue(System.getProperty("dblayer.unansweredLoad") == "run")
             val transport = MockTransport()
-            val database = openDatabase(Config(null, null, 8u), modelsJSON, transport)
-            database.registerOperations("""[{"name":"documentBySlug","document":"query documentBySlug(${'$'}slug: String!, ${'$'}source: String!) { documentBySlug(slug: ${'$'}slug, source: ${'$'}source) { id slug } }","rootPath":"documentBySlug"},{"name":"documentUpdated","document":"subscription documentUpdated(${'$'}slug: String!, ${'$'}source: String!) { documentUpdated(slug: ${'$'}slug, source: ${'$'}source) { id slug } }","rootPath":"documentUpdated"}]""")
-            val live = database.subscribe(database.sessionEpoch(), StreamRequest.Query("""{"model":"Document","relation":"bySlug","params":{"slug":"a","source":"web"}}"""), object : ValueSink { override fun available() {} })
-            try { eventually("the load reaches the mock", 5000) { transport.unscripted.isNotEmpty() } } finally { database.cancelStream(live) }
+            reopen(Config(null, null, 8u), modelsJSON, transport, """[{"name":"MomentsFeed","document":"query MomentsFeed(${'$'}first: Int, ${'$'}after: String) { feed(first: ${'$'}first, after: ${'$'}after) { nodes { id uuid likedByMe media createdAt } pageInfo { hasNextPage endCursor } } }"}]""")
+            runCatching { Moment.feed.refresh() }
+            eventually("the load reaches the mock", 5000) { transport.unscripted.isNotEmpty() }
         }
     }
 
@@ -45,7 +45,7 @@ class MockTransportStrictTest {
             assertEquals(result.failures.toString(), 0, result.failureCount)
         } finally { System.clearProperty("dblayer.unansweredLoad") }
         val error = try { MockTransport(); null } catch (error: AssertionError) { error }
-        assertTrue(error.toString(), error?.message?.contains("documentBySlug") == true && error.message?.contains("UnansweredLoad") == true)
+        assertTrue(error.toString(), error?.message?.contains("MomentsFeed") == true && error.message?.contains("UnansweredLoad") == true)
         MockTransport()
     }
 
