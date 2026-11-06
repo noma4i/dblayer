@@ -171,3 +171,32 @@ async fn inv_loadm_16_a_refresh_that_only_changes_a_related_row_still_shows_its_
     let shown = loaded_state(&stream, first_loaded).await;
     assert_eq!(shown.phase, ReadPhase::Loaded);
 }
+
+async fn open_file(path: &str, replies: &[&str], clock: Arc<TestClock>) -> Arc<Database> {
+    let mut model = ModelSpec::new("Moment", vec![FieldSpec::scalar("id", ScalarKind::Id), FieldSpec::scalar("text", ScalarKind::Str).optional()]);
+    model.relations.push(relation("feed", "5.minutes"));
+    let transport = Arc::new(Replying(Mutex::new(replies.iter().map(|reply| reply.to_string()).collect())));
+    let db = Database::open_with_clock(Config { path: Some(path.to_string()), data_version: None, cache_rows: 8 }, serde_json::to_string(&vec![model]).unwrap(), Some(transport), clock, None, None, None, None).await.unwrap();
+    db.register_operations(r#"[{"name":"Feed","document":"query Feed { moments { id text } }","rootPath":"moments"}]"#.into()).unwrap();
+    db.set_online(true).unwrap();
+    db
+}
+
+#[tokio::test]
+async fn win_prop_reopen_lands() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("db.sqlite").to_string_lossy().to_string();
+    let clock = TestClock::new(1_000_000);
+    let first = open_file(&path, &[ONE_ROW], clock.clone()).await;
+    first.load(first.session_epoch(), "Moment".into(), "feed".into(), "{}".into()).await.unwrap();
+    first.close_database().await.unwrap();
+    clock.advance(6 * 60_000);
+    let second = open_file(&path, &[NO_ROWS], clock.clone()).await;
+    second.load(second.session_epoch(), "Moment".into(), "feed".into(), "{}".into()).await.unwrap();
+    let listener = tape();
+    let live = second.watch_query(FEED, listener.clone());
+    live.wait_for_initial_load().await.unwrap();
+    let last = heard(&listener).pop().unwrap();
+    assert_eq!((last.phase, last.size, last.error.is_none()), (Some(ReadPhase::Loaded), 0, true), "the first load after the reopen of an expired window landed its answer");
+    second.close_database().await.unwrap();
+}

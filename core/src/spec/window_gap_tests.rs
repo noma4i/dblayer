@@ -459,3 +459,4 @@ include!("window_gap_landing_tests.rs");
 include!("window_gap_property_tests.rs");
 include!("window_fresh_tests.rs");
 include!("window_saving_tests.rs");
+include!("window_pages_tests.rs");

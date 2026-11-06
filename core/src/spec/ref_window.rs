@@ -466,6 +466,14 @@ impl Window {
                 self.interest.insert(id);
                 vec![Effect::WindowState]
             }
+            Input::Load { id, goal: Goal::First, force: true } if page > 1 => {
+                self.join_load(id, Goal::First, page);
+                let (new_request, new_attempt) = self.request_ids();
+                self.state = State::Loading { request: new_request, attempt: new_attempt, retry: false, page: 1, force: true, attempts: 0 };
+                let mut effects = if retry { Vec::new() } else { vec![Effect::Cancel { request, attempt }] };
+                effects.extend([Effect::Request { request: new_request, attempt: new_attempt, page: 1 }, Effect::WindowState]);
+                effects
+            }
             Input::Load { id, goal, force: wider } => {
                 self.join_load(id, goal, page);
                 self.state = State::Loading { request, attempt, retry, page, force: force || (wider && goal != Goal::Next), attempts };

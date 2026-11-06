@@ -67,6 +67,18 @@ impl Facts {
                 self.announce();
                 Handled
             }
+            Ev::Load { id, goal: Goal::First, force: true, .. } if load.page > 1 => {
+                self.join_load(*id, Goal::First, load.page);
+                let (request, attempt) = context.request();
+                if !load.retry {
+                    self.push_fx(WindowEffect::Cancel { request: load.request, attempt: load.attempt });
+                }
+                self.emit(Emit::CancelRetry { request: load.request });
+                self.emit(Emit::Pin { epoch: self.epoch, request });
+                *load = Load::issued(request, attempt, 1, true, self.basis());
+                self.announce();
+                Handled
+            }
             Ev::Load { id, goal, force: wider, .. } => {
                 self.join_load(*id, *goal, load.page);
                 load.force |= *wider && *goal != Goal::Next;
