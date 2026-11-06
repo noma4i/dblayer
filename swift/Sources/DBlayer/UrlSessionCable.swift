@@ -44,19 +44,22 @@ private final class SocketOpening: NSObject, URLSessionWebSocketDelegate, @unche
   }
 }
 
-final class UrlSessionCable: @unchecked Sendable {
+private actor OpenSockets {
+  private var sockets: [String: any CableWebSocket] = [:]
+
+  func add(_ token: String, _ socket: any CableWebSocket) { sockets[token] = socket }
+  func socket(_ token: String) -> (any CableWebSocket)? { sockets[token] }
+  func remove(_ token: String) -> (any CableWebSocket)? { sockets.removeValue(forKey: token) }
+}
+
+final class UrlSessionCable: Sendable {
   private let headers: @Sendable () -> [String: String]
   private let makeSocket: @Sendable (URLRequest) -> any CableWebSocket
-  private let lock = NSLock()
-  private var sockets: [String: any CableWebSocket] = [:]
+  private let sockets = OpenSockets()
 
   init(headers: @escaping @Sendable () -> [String: String] = { [:] }, makeSocket: @escaping @Sendable (URLRequest) -> any CableWebSocket) {
     self.headers = headers
     self.makeSocket = makeSocket
-  }
-
-  deinit {
-    for socket in sockets.values { socket.cancel(with: .goingAway, reason: nil) }
   }
 
   func open(url: String) async throws -> String {
@@ -67,49 +70,52 @@ final class UrlSessionCable: @unchecked Sendable {
     request.setUserAgent()
     let socket = makeSocket(request)
     let token = UUID().uuidString
-    lock.withLock { sockets[token] = socket }
+    await sockets.add(token, socket)
     do {
       try await socket.open()
       try Task.checkCancellation()
       return token
     } catch {
-      remove(token)?.cancel(with: .goingAway, reason: nil)
+      await sockets.remove(token)?.cancel(with: .goingAway, reason: nil)
       throw TransportFailure.classifySocket(error)
     }
   }
 
   func send(token: String, text: String) async throws {
-    guard let socket = lock.withLock({ sockets[token] }) else {
+    guard let socket = await sockets.socket(token) else {
       throw DbError.Interrupted(detail: "cable socket is closed")
     }
     do {
       try await withTaskCancellationHandler {
         try Task.checkCancellation()
         try await socket.send(.string(text))
-      } onCancel: { self.remove(token)?.cancel(with: .normalClosure, reason: nil) }
-    } catch { throw TransportFailure.classifySocket(error) }
+      } onCancel: { socket.cancel(with: .normalClosure, reason: nil) }
+    } catch {
+      if Task.isCancelled { await sockets.remove(token) }
+      throw TransportFailure.classifySocket(error)
+    }
   }
 
   func next(token: String) async -> EncryptedSocketEvent? {
-    guard let socket = lock.withLock({ sockets[token] }) else { return nil }
+    guard let socket = await sockets.socket(token) else { return nil }
     do {
       let message = try await withTaskCancellationHandler {
         try Task.checkCancellation()
         return try await socket.receive()
-      } onCancel: { self.remove(token)?.cancel(with: .normalClosure, reason: nil) }
-      guard lock.withLock({ sockets[token] != nil }) else { return nil }
+      } onCancel: { socket.cancel(with: .normalClosure, reason: nil) }
+      guard await sockets.socket(token) != nil else { return nil }
       switch message {
       case let .string(text): return .text(text: text)
       case .data:
         let reason = "binary cable frames are not supported"
-        remove(token)?.cancel(with: .unsupportedData, reason: Data(reason.utf8))
+        await sockets.remove(token)?.cancel(with: .unsupportedData, reason: Data(reason.utf8))
         return .closed(code: 1003, reason: reason)
       @unknown default:
-        remove(token)?.cancel(with: .protocolError, reason: nil)
+        await sockets.remove(token)?.cancel(with: .protocolError, reason: nil)
         return .closed(code: 1002, reason: "unknown cable frame")
       }
     } catch {
-      guard remove(token) != nil else { return nil }
+      guard await sockets.remove(token) != nil else { return nil }
       let code = socket.closeCode == .invalid ? 1006 : UInt16(clamping: socket.closeCode.rawValue)
       let reason = socket.closeReason.map { String(decoding: $0, as: UTF8.self) } ?? error.localizedDescription
       socket.cancel(with: .goingAway, reason: nil)
@@ -118,10 +124,6 @@ final class UrlSessionCable: @unchecked Sendable {
   }
 
   func close(token: String) async {
-    remove(token)?.cancel(with: .normalClosure, reason: nil)
-  }
-
-  private func remove(_ token: String) -> (any CableWebSocket)? {
-    lock.withLock { sockets.removeValue(forKey: token) }
+    await sockets.remove(token)?.cancel(with: .normalClosure, reason: nil)
   }
 }

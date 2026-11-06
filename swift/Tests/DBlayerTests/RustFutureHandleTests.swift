@@ -8,7 +8,6 @@ private final class HandleCalls: @unchecked Sendable {
   private var queued: [@Sendable () -> Void] = []
   private var reenter: (@Sendable () -> Void)?
   var calls: [String] { lock.withLock { recorded } }
-  var queuedCount: Int { lock.withLock { queued.count } }
   func onCancel(_ body: @escaping @Sendable () -> Void) { lock.withLock { reenter = body } }
   func cancel(_ handle: UInt64) {
     lock.withLock { recorded.append("cancel:\(handle)") }
@@ -24,7 +23,7 @@ private final class HandleCalls: @unchecked Sendable {
 
 struct RustFutureHandleTests {
   @Test
-  func aFreeRequestedWhileACancelIsQueuedWaitsForItAndRunsOnce() {
+  func cancelsAndFreesQueuedOnTheLaneReachTheFutureInOrderAndOnce() {
     let calls = HandleCalls()
     let handle = RustFutureHandle(42, cancel: calls.cancel, free: calls.free, lane: calls.lane)
     handle.cancel()
@@ -32,7 +31,6 @@ struct RustFutureHandleTests {
     handle.free()
     handle.free()
     #expect(calls.calls == [])
-    #expect(calls.queuedCount == 1)
     calls.drainLane()
     handle.cancel()
     handle.free()
@@ -41,13 +39,13 @@ struct RustFutureHandleTests {
   }
 
   @Test
-  func aCancelAfterTheFreeNeverReachesTheFutureAndCancelAndFreeNeedNoWrapperLock() {
+  func aCancelAfterTheFreeNeverReachesTheFutureAndAFreeInsideACancelRunsOnce() {
     let calls = HandleCalls()
     let handle = RustFutureHandle(7, cancel: calls.cancel, free: calls.free, lane: calls.lane)
     handle.free()
     handle.cancel()
     handle.free()
-    #expect(calls.queuedCount == 0)
+    calls.drainLane()
     #expect(calls.calls == ["free:7"])
 
     let reentrant = HandleCalls()
@@ -58,16 +56,17 @@ struct RustFutureHandleTests {
   }
 
   @Test
-  func concurrentCancelsAndFreesCallTheFutureOnceEach() async {
+  func concurrentCancelsAndFreesOnTheRuntimeLaneCallTheFutureOnceEach() async {
     let calls = HandleCalls()
-    let handle = RustFutureHandle(42, cancel: calls.cancel, free: calls.free, lane: { $0() })
+    let handle = RustFutureHandle(42, cancel: calls.cancel, free: calls.free)
     await withTaskGroup(of: Void.self) { group in
       for index in 0..<64 {
         group.addTask { if index.isMultiple(of: 3) { handle.free() } else { handle.cancel() } }
       }
     }
+    await withCheckedContinuation { continuation in RuntimeLane.run { continuation.resume() } }
     #expect(calls.calls.filter { $0 == "free:42" }.count == 1)
     #expect(calls.calls.filter { $0 == "cancel:42" }.count <= 1)
-    #expect(calls.calls.last == "free:42")
+    #expect(calls.calls.first != "free:42" || !calls.calls.contains("cancel:42"))
   }
 }

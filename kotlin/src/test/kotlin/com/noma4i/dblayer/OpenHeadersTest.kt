@@ -12,9 +12,6 @@ class OpenHeadersTest {
     @Test
     fun openReadsTheHeadersAgainForEveryRequest() = bounded {
         closeForCleanup()
-        for (name in listOf("manager")) {
-            Reachability::class.java.getDeclaredField(name).apply { isAccessible = true }.set(null, null)
-        }
         MockWebServer().use { server ->
             repeat(2) { server.enqueue(MockResponse().setResponseCode(400).setBody("busy")) }
             server.start()

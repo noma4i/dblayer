@@ -1,5 +1,4 @@
 import Foundation
-import os
 
 final class Opened: Sendable {
   let database: Database
@@ -15,13 +14,13 @@ final class Opened: Sendable {
 }
 
 public enum DB {
-  private static let slot = OSAllocatedUnfairLock<Opened?>(initialState: nil)
+  private static var slot: Opened?
   private static let opener = OpenDatabase()
   private static let cacheRows: UInt32 = 2000
 
   static var database: Database {
     get throws {
-      guard let opened = slot.withLock({ $0 }) else { throw DatabaseNotOpen() }
+      guard let opened = slot else { throw DatabaseNotOpen() }
       return opened.database
     }
   }
@@ -35,7 +34,7 @@ public enum DB {
 
   /// Closes the database. Every request, load and subscription ends, and the call returns after the library released its resources. A call on the closed database, a second close included, gets the closed error of the core.
   @MainActor public static func close() async throws {
-    guard let opened = slot.withLock({ $0 }) else { return }
+    guard let opened = slot else { return }
     opened.stopObservers()
     try await opened.database.closeDatabase()
   }
@@ -99,7 +98,7 @@ public enum DB {
 
   /// Hands a stand-in database to the calls and keeps the observers of the open one.
   static func use(_ database: Database) {
-    slot.withLock { $0 = $0?.standingIn(database) ?? Opened(database: database, stops: []) }
+    slot = slot?.standingIn(database) ?? Opened(database: database, stops: [])
   }
 
   private static func attach(_ database: Database) throws {
@@ -109,10 +108,8 @@ public enum DB {
       ForegroundEvents.observe { sink.enterForeground() },
       PowerSaving.observe { sink.setPowerSaving(saving: $0) }
     ])
-    let previous = slot.withLock { current -> Opened? in
-      defer { current = opened }
-      return current
-    }
+    let previous = slot
+    slot = opened
     previous?.stopObservers()
   }
 }

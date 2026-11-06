@@ -106,7 +106,7 @@ final class EncryptedCablePeer: CablePeer, @unchecked Sendable {
     body["n"] = connection.sequence
     connection.sequence += 1
     let header = encode(Data(#"{"alg":"dir","enc":"A256GCM"}"#.utf8))
-    let nonce = try AES.GCM.Nonce(data: Data(repeating: UInt8(connection.sequence), count: 12))
+    let nonce = AES.GCM.Nonce()
     let box = try AES.GCM.seal(JSONSerialization.data(withJSONObject: body), using: connection.sendKey!, nonce: nonce, authenticating: Data(header.utf8))
     let frame = "\(header)..\(encode(Data(box.nonce))).\(encode(box.ciphertext)).\(encode(box.tag))"
     connection.events.continuation.yield(.text(text: try text(["message": ["frame": frame]])))

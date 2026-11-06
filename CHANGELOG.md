@@ -24,6 +24,7 @@
 - A refused sessionless call reports a network error without the HTTP status.
 - `UrlSessionTransport` and `OkHttpTransport` have no `cablePath`. `Transport.openCable` receives the WebSocket address built by the core.
 - `EntityFetch.none` is `EntityFetch.never` in Swift and `EntityFetch.NEVER` in Kotlin.
+- `UrlSessionTransport` and `OkHttpTransport` refuse `subscribe`: server events arrive on the encrypted cable.
 
 ### Fixed
 - Preserve validated local fields copied from singleton rows during creation.

@@ -12,26 +12,24 @@ import okhttp3.WebSocketListener
 import okio.ByteString
 import java.io.IOException
 import java.util.UUID
-import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicReference
 
 internal class OkHttpEncryptedSocket(private val client: OkHttpClient, private val headers: () -> Map<String, String> = { emptyMap() }) {
     private class Connection {
         val opened = CompletableDeferred<Unit>()
         val events = Channel<EncryptedSocketEvent>(Channel.UNLIMITED)
         lateinit var socket: WebSocket
-        private var ended = false
+        private val ended = AtomicBoolean(false)
 
         fun finish(event: EncryptedSocketEvent.Closed? = null) {
-            synchronized(this) {
-                if (ended) return
-                ended = true
-            }
+            if (!ended.compareAndSet(false, true)) return
             event?.let { events.trySend(it) }
             events.close()
         }
     }
 
-    private val connections = ConcurrentHashMap<String, Connection>()
+    private val connections = AtomicReference<Map<String, Connection>>(emptyMap())
 
     suspend fun open(address: String): String {
         val url = try {
@@ -73,7 +71,7 @@ internal class OkHttpEncryptedSocket(private val client: OkHttpClient, private v
                     connection.finish(EncryptedSocketEvent.Closed(1006u, error.message ?: "cable connection lost"))
                 }
             })
-            connections[token] = connection
+            connections.updateAndGet { it + (token to connection) }
             connection.opened.await()
             return token
         } catch (error: CancellationException) {
@@ -87,7 +85,7 @@ internal class OkHttpEncryptedSocket(private val client: OkHttpClient, private v
 
     fun send(token: String, text: String) {
         try {
-            val connection = connections[token] ?: throw IOException("cable socket is closed")
+            val connection = connections.get()[token] ?: throw IOException("cable socket is closed")
             if (!connection.socket.send(text)) throw IOException("cable socket refused the text frame")
         } catch (error: Exception) {
             throw classifyTransportFailure(error, GraphQLOperationKind.Query)
@@ -95,10 +93,11 @@ internal class OkHttpEncryptedSocket(private val client: OkHttpClient, private v
     }
 
     suspend fun next(token: String): EncryptedSocketEvent? =
-        connections[token]?.events?.receiveCatching()?.getOrNull()
+        connections.get()[token]?.events?.receiveCatching()?.getOrNull()
 
     fun close(token: String) {
-        val connection = connections.remove(token) ?: return
+        val connection = connections.get()[token] ?: return
+        connections.updateAndGet { it - token }
         connection.finish()
         connection.socket.cancel()
     }

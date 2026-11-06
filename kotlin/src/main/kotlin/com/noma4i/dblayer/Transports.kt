@@ -1,22 +1,17 @@
 package com.noma4i.dblayer
 
-import kotlinx.serialization.json.JsonObject
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
-import okhttp3.Headers.Companion.toHeaders
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
-import java.util.UUID
-import java.util.concurrent.ConcurrentHashMap
 
-/** A plain GraphQL endpoint over HTTP with `graphql-transport-ws` subscriptions. */
+/** A plain GraphQL endpoint over HTTP. */
 class OkHttpTransport(
     private val endpoint: String,
     private val headers: () -> Map<String, String> = { emptyMap() },
     client: OkHttpClient = OkHttpClient(),
 ) : Transport {
     private val client = client.newBuilder().retryOnConnectionFailure(false).build()
-    private val sockets = ConcurrentHashMap<String, okhttp3.WebSocket>()
     private val encryptedSocket = OkHttpEncryptedSocket(client, headers)
     override suspend fun openCable(lease: CableLease, url: String) = lease.opened(encryptedSocket.open(url))
     override suspend fun cableSend(token: String, text: String) = encryptedSocket.send(token, text)
@@ -49,60 +44,10 @@ class OkHttpTransport(
     override suspend fun mutate(request: TransportRequest): String = post(request, GraphQLOperationKind.Mutation)
 
     override suspend fun subscribe(request: TransportRequest, sink: SubscriptionSink) {
-        val token = UUID.randomUUID().toString()
-        val url = endpoint.replaceFirst("https", "wss").replaceFirst("http", "ws")
-        val payload = body(request)
-        val socket = client.newWebSocket(
-            Request.Builder().url(url).apply { headers().toHeaders()["User-Agent"]?.let { header("User-Agent", it) } }
-                .header("Sec-WebSocket-Protocol", "graphql-transport-ws").build().withUserAgent(),
-            object : okhttp3.WebSocketListener() {
-                override fun onOpen(webSocket: okhttp3.WebSocket, response: okhttp3.Response) {
-                    webSocket.send(kotlinx.serialization.json.buildJsonObject {
-                        put("type", kotlinx.serialization.json.JsonPrimitive("connection_init"))
-                        put("payload", JsonObject(headers().mapValues { kotlinx.serialization.json.JsonPrimitive(it.value) }))
-                    }.toString())
-                }
-
-                override fun onMessage(webSocket: okhttp3.WebSocket, text: String) {
-                    val message = parseJson(text) as? JsonObject ?: return
-                    when ((message["type"] as? kotlinx.serialization.json.JsonPrimitive)?.content) {
-                        "connection_ack" -> {
-                            webSocket.send(kotlinx.serialization.json.buildJsonObject {
-                                put("id", kotlinx.serialization.json.JsonPrimitive(token))
-                                put("type", kotlinx.serialization.json.JsonPrimitive("subscribe"))
-                                put("payload", parseJson(payload))
-                            }.toString())
-                            sink.ready()
-                        }
-                        "next" -> message["payload"]?.let { sink.event(it.toString()) }
-                        "error" -> sink.event(JsonObject(mapOf("errors" to (message["payload"] ?: kotlinx.serialization.json.JsonArray(emptyList())))).toString())
-                        "complete" -> { sink.closed(); webSocket.close(1000, null) }
-                        "ping" -> webSocket.send("""{"type":"pong"}""")
-                    }
-                }
-
-                override fun onClosing(webSocket: okhttp3.WebSocket, code: Int, reason: String) {
-                    sink.closed()
-                    webSocket.close(code, reason)
-                }
-
-                override fun onClosed(webSocket: okhttp3.WebSocket, code: Int, reason: String) {
-                    sink.closed()
-                }
-
-                override fun onFailure(webSocket: okhttp3.WebSocket, t: Throwable, response: okhttp3.Response?) {
-                    sink.failed(classifyTransportFailure(java.io.IOException(t), GraphQLOperationKind.Query))
-                    sink.closed()
-                }
-            },
-        )
-        sockets[token] = socket
-        sink.opened(token)
+        throw DbException.Invalid("server events arrive on the encrypted cable")
     }
 
-    override fun unsubscribe(token: String) {
-        sockets.remove(token)?.close(1000, null)
-    }
+    override fun unsubscribe(token: String) {}
 
     override suspend fun put(url: String, headers: Map<String, String>, file: PutFile, identity: TransferIdentity, progress: ByteProgress): PutReply =
         putFile(client, url, headers, file, progress, routed = true)

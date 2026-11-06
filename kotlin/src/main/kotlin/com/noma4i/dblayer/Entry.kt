@@ -1,23 +1,16 @@
 package com.noma4i.dblayer
 
 import android.content.Context
-import kotlinx.coroutines.CompletableDeferred
 import kotlinx.serialization.KSerializer
 import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
-import kotlinx.coroutines.sync.Mutex
-import kotlinx.coroutines.sync.withLock
 
 object DBlayer {
-    private val opening = Mutex()
     private val opener = OpenDatabase()
     @Volatile private var opened: Database? = null
-    @Volatile private var ready = CompletableDeferred<Database>()
-
-    internal suspend fun awaitDatabase(): Database = ready.await()
 
     internal fun openedDatabase(): Database? = opened
 
@@ -35,13 +28,10 @@ object DBlayer {
 
     /** Closes the database. Every request, load and subscription ends, and the call returns after the library released its resources. */
     suspend fun close() {
-        val closing = opening.withLock {
-            ForegroundEvents.stop()
-            PowerSaving.stop()
-            Reachability.disconnect()
-            opened
-        }
-        closing?.let { offCaller { it.closeDatabase() } }
+        ForegroundEvents.stop()
+        PowerSaving.stop()
+        Reachability.disconnect()
+        opened?.let { offCaller { it.closeDatabase() } }
     }
 
     suspend fun subscriptionCensus(): SubscriptionCensus = database.subscriptionCensus()
@@ -75,28 +65,6 @@ object DBlayer {
         http: EncryptedHttp? = null,
         retries: RetryProgress? = null,
         uploadNotification: UploadNotification,
-    ) = opening.withLock {
-        try {
-            openLocked(context, endpoint, headers, encrypted, credentials, transport, modelsJson, path, operations, http, retries, uploadNotification)
-        } catch (error: Throwable) {
-            if (ready.completeExceptionally(error)) ready = CompletableDeferred()
-            throw error
-        }
-    }
-
-    private suspend fun openLocked(
-        context: Context,
-        endpoint: String?,
-        headers: () -> Map<String, String>,
-        encrypted: EncryptedConfig?,
-        credentials: CredentialStore?,
-        transport: Transport?,
-        modelsJson: String,
-        path: String?,
-        operations: List<GraphQLOperation>,
-        http: EncryptedHttp?,
-        retries: RetryProgress?,
-        uploadNotification: UploadNotification,
     ) {
         checkUploadPermission(android.os.Build.VERSION.SDK_INT) { context.packageManager.getPackageInfo(context.packageName, android.content.pm.PackageManager.GET_PERMISSIONS).requestedPermissions.orEmpty().toList() }
         UploadNotifications.store(context, uploadNotification)
@@ -111,11 +79,9 @@ object DBlayer {
         PowerSaving.start(context, sink)
         made.setRoundJobs(UploadRounds(context.applicationContext, made))
         database = made
-        if (ready.isCompleted) ready = CompletableDeferred()
-        ready.complete(made)
     }
 
-    internal suspend fun openOnClock(config: Config, modelsJson: String, transport: Transport?, clock: TestClock, encrypted: EncryptedConfig? = null, credentials: CredentialStore? = null, http: EncryptedHttp? = null, retries: RetryProgress? = null): Database = opening.withLock { opener.openWithClock(config, modelsJson, OpenPorts(transport, encrypted, credentials, http, retries), clock) }
+    internal suspend fun openOnClock(config: Config, modelsJson: String, transport: Transport?, clock: TestClock, encrypted: EncryptedConfig? = null, credentials: CredentialStore? = null, http: EncryptedHttp? = null, retries: RetryProgress? = null): Database = opener.openWithClock(config, modelsJson, OpenPorts(transport, encrypted, credentials, http, retries), clock)
 
     internal fun install(opened: Database, transport: Transport?, operations: List<GraphQLOperation>) {
         val definitions = operations.map { JsonObject(mapOf("name" to JsonPrimitive(it.operationName), "document" to JsonPrimitive(it.document))) }

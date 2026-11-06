@@ -5,13 +5,10 @@ enum RuntimeLane {
   static func run(_ work: @escaping @Sendable () -> Void) { queue.async(execute: work) }
 }
 
-/// One Rust future. Cancel and free reserve their operation under the lock and run the FFI call after the lock is released. A free requested while a cancel is queued or running waits for that cancel, so the handle is never cancelled after it is freed and is freed exactly once.
 final class RustFutureHandle: @unchecked Sendable {
   let value: UInt64
-  private let lock = NSLock()
-  private var cancelRequested = false
-  private var cancelRunning = false
-  private var freeRequested = false
+  private var cancelled = false
+  private var freed = false
   private let cancelCall: ((UInt64) -> Void)?
   private let freeCall: (UInt64) -> Void
   private let lane: (@escaping @Sendable () -> Void) -> Void
@@ -24,30 +21,19 @@ final class RustFutureHandle: @unchecked Sendable {
   }
 
   func cancel() {
-    guard let cancelCall else { return }
-    let reserved = lock.withLock { () -> Bool in
-      guard !freeRequested, !cancelRequested else { return false }
-      cancelRequested = true
-      cancelRunning = true
-      return true
-    }
-    guard reserved else { return }
+    guard cancelCall != nil else { return }
     lane { [self] in
+      guard !freed, !cancelled, let cancelCall else { return }
+      cancelled = true
       cancelCall(value)
-      let freeNow = lock.withLock { () -> Bool in
-        cancelRunning = false
-        return freeRequested
-      }
-      if freeNow { freeCall(value) }
     }
   }
 
   func free() {
-    let freeNow = lock.withLock { () -> Bool in
-      guard !freeRequested else { return false }
-      freeRequested = true
-      return !cancelRunning
+    lane { [self] in
+      guard !freed else { return }
+      freed = true
+      freeCall(value)
     }
-    if freeNow { freeCall(value) }
   }
 }

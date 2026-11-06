@@ -3,16 +3,6 @@ import Foundation
 import Testing
 @testable import DBlayer
 
-private final class AgentSink: SubscriptionSink, @unchecked Sendable {
-  private let lock = NSLock()
-  private var opened: String?
-  var token: String? { lock.withLock { opened } }
-  override func ready() {}
-  override func failed(error: DbError) {}
-  override func closed() {}
-  override func opened(token: String) throws { lock.withLock { opened = token } }
-}
-
 private final class ChangingHeaders: @unchecked Sendable {
   private let lock = NSLock()
   private var current = "first"
@@ -26,7 +16,7 @@ private final class PutBytes: ByteProgress, @unchecked Sendable {
 }
 
 struct UserAgentTests {
-  @Test(arguments: ["encrypted", "graphql", "encryptedSocket", "graphqlSocket"], [nil, "", "Reader"] as [String?])
+  @Test(arguments: ["encrypted", "graphql", "encryptedSocket"], [nil, "", "Reader"] as [String?])
   func life_prop_user_agent(path: String, application: String?) async throws {
     let server = try BootstrapListener(responseStatus: "400 Bad Request")
     defer { server.listener.cancel() }
@@ -43,11 +33,6 @@ struct UserAgentTests {
       _ = try? await transport.query(request: operation)
     case "encryptedSocket":
       _ = try? await transport.openCable(lease: RecordingLease(noHandle: .init()), url: cableURL(origin))
-    case "graphqlSocket":
-      let sink = AgentSink(noHandle: .init())
-      _ = try? await transport.subscribe(request: operation, sink: sink)
-      await eventually("GraphQL handshake received") { !server.requests.isEmpty }
-      if let token = sink.token { transport.unsubscribe(token: token) }
     default: break
     }
     let request = try #require(server.requests.first)

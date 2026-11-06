@@ -10,18 +10,10 @@ import org.junit.Test
 @org.robolectric.annotation.Config(sdk = [35])
 class UserAgentTest {
 
-    private class Sink : SubscriptionSink(NoHandle) {
-        @Volatile var token: String? = null
-        override fun ready() {}
-        override fun failed(error: DbException) {}
-        override fun closed() {}
-        override fun opened(token: String) { this.token = token }
-    }
-
     @Test
     fun life_prop_user_agent() = bounded {
         val failures = mutableListOf<String>()
-        for (path in listOf("encrypted", "graphql", "encryptedSocket", "graphqlSocket")) {
+        for (path in listOf("encrypted", "graphql", "encryptedSocket")) {
             for (application in listOf(null, "", "Reader")) {
                 MockWebServer().use { server ->
                     server.enqueue(MockResponse().setResponseCode(400).setBody("busy"))
@@ -35,12 +27,6 @@ class UserAgentTest {
                         "encrypted" -> OkHttpEncryptedHttp(origin, client) { headers }.post("/api/session", "jwe", NetworkPurpose.STANDARD)
                         "graphql" -> runCatching { transport.query(operation) }
                         "encryptedSocket" -> runCatching { transport.openCable(RecordingLease(), origin.replaceFirst("http", "ws") + "api/cable") }
-                        "graphqlSocket" -> {
-                            val sink = Sink()
-                            transport.subscribe(operation, sink)
-                            eventually("GraphQL handshake received") { server.requestCount == 1 }
-                            transport.unsubscribe(requireNotNull(sink.token))
-                        }
                         else -> error("unexpected request kind")
                     }
                     val request = server.takeRequest()

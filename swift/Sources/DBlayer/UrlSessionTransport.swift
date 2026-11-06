@@ -5,9 +5,6 @@ public final class UrlSessionTransport: Transport, @unchecked Sendable {
   private let headers: @Sendable () -> [String: String]
   private let session: URLSession
   private let encryptedCable: UrlSessionCable
-  private let lock = NSLock()
-  private var sockets: [String: URLSessionWebSocketTask] = [:]
-  var openSocketCount: Int { lock.withLock { sockets.count } }
 
   public init(endpoint: URL, headers: @escaping @Sendable () -> [String: String] = { [:] }, session: URLSession = .shared) {
     self.endpoint = endpoint
@@ -45,57 +42,10 @@ public final class UrlSessionTransport: Transport, @unchecked Sendable {
   }
 
   public func subscribe(request: TransportRequest, sink: SubscriptionSink) async throws {
-    var components = URLComponents(url: endpoint, resolvingAgainstBaseURL: false)
-    components?.scheme = endpoint.scheme == "http" ? "ws" : "wss"
-    guard let url = components?.url else { throw DbError.Invalid(detail: "bad subscription url") }
-    let payload = try body(request)
-    let initial = try JSONSerialization.data(withJSONObject: ["type": "connection_init", "payload": headers()])
-    var urlRequest = URLRequest(url: url)
-    urlRequest.setValue(headers().first { $0.key.caseInsensitiveCompare("User-Agent") == .orderedSame }?.value, forHTTPHeaderField: "User-Agent")
-    urlRequest.setUserAgent()
-    urlRequest.setValue("graphql-transport-ws", forHTTPHeaderField: "Sec-WebSocket-Protocol")
-    let socket = session.webSocketTask(with: urlRequest)
-    let token = UUID().uuidString
-    lock.withLock { sockets[token] = socket }
-    socket.resume()
-    do { try await socket.send(.string(String(decoding: initial, as: UTF8.self))) } catch {
-      lock.withLock { sockets.removeValue(forKey: token) }?.cancel(with: .normalClosure, reason: nil)
-      throw error
-    }
-    try sink.opened(token: token)
-    Task { await self.pump(socket, token: token, payload: payload, sink: sink) }
+    throw DbError.Invalid(detail: "server events arrive on the encrypted cable")
   }
 
-  private func pump(_ socket: URLSessionWebSocketTask, token: String, payload: [String: Any], sink: SubscriptionSink) async {
-    do {
-      while true {
-        let message = try await socket.receive()
-        guard case .string(let text) = message, let object = try JSONSerialization.jsonObject(with: Data(text.utf8)) as? [String: Any] else { continue }
-        switch object["type"] as? String {
-        case "connection_ack":
-          let start = try JSONSerialization.data(withJSONObject: ["id": token, "type": "subscribe", "payload": payload])
-          try await socket.send(.string(String(decoding: start, as: UTF8.self)))
-          sink.ready()
-        case "next":
-          if let next = object["payload"] { try sink.event(json: String(decoding: try JSONSerialization.data(withJSONObject: next), as: UTF8.self)) }
-        case "error":
-          if let errors = object["payload"] { try sink.event(json: String(decoding: try JSONSerialization.data(withJSONObject: ["errors": errors]), as: UTF8.self)) }
-        case "complete":
-          sink.closed(); return
-        case "ping":
-          try await socket.send(.string(#"{"type":"pong"}"#))
-        default: break
-        }
-      }
-    } catch {
-      sink.failed(error: TransportFailure.classifySubscription(error))
-      sink.closed()
-    }
-  }
-
-  public func unsubscribe(token: String) {
-    lock.withLock { sockets.removeValue(forKey: token) }?.cancel(with: .normalClosure, reason: nil)
-  }
+  public func unsubscribe(token: String) {}
 
   public func put(url: String, headers: [String: String], file: PutFile, identity: TransferIdentity, progress: ByteProgress) async throws -> PutReply {
     guard let target = URL(string: url) else { throw DbError.Invalid(detail: "bad upload url") }
