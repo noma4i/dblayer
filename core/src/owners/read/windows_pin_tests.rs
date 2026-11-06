@@ -36,4 +36,8 @@ fn win_pinned_stray() {
     let mut state = state();
     let stray = Windows::step(&mut state, WindowsInput::Pinned { request_id: 7, base_revision: 2 });
     assert!(matches!(store_inputs(stray).as_slice(), [StoreInput::Unpin { request_id: 7 }]));
+    let _ = load(&mut state);
+    let _ = Windows::step(&mut state, WindowsInput::Pinned { request_id: 1, base_revision: 2 });
+    let duplicate = Windows::step(&mut state, WindowsInput::Pinned { request_id: 1, base_revision: 3 });
+    assert!(duplicate.is_empty());
 }

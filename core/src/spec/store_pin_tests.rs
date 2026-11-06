@@ -48,6 +48,13 @@ fn store_pin_deferred_while_writing() {
     let effects = step(&mut state, StoreInput::Written { author: BatchAuthor::Outbox, batch: 1, result: Ok(Done { revision: 5 }) });
     assert!(effects.contains(&StoreEffect::Pinned { epoch: 0, request_id: 1, base_revision: 5 }));
     assert_eq!(limit(&step(&mut state, batch(2))), Some(Some(5)));
+
+    let mut state = self::state(4);
+    let effects = step(&mut state, StoreInput::ClearModels { epoch: 0, generation_new: 1, models: ["Item".to_string()].into_iter().collect(), erase_id: 1 });
+    let io_id = effects.iter().find_map(|effect| match effect { StoreEffect::EraseModels { io_id, .. } => Some(*io_id), _ => None }).unwrap();
+    assert!(pin(&mut state, 0, 2).is_empty());
+    let effects = step(&mut state, StoreInput::Erased { io_id, result: Ok(Done { revision: 5 }) });
+    assert!(effects.contains(&StoreEffect::Pinned { epoch: 0, request_id: 2, base_revision: 5 }));
 }
 
 #[test]
