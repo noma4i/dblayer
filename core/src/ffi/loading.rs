@@ -204,13 +204,15 @@ impl Database {
         self.remote()?;
         let _kept = crate::runtime::hold_until_woken(self.life.launch());
         let (db, found, name, text) = (self.db.clone(), model.to_string(), relation.to_string(), params_json.to_string());
-        let (params, force) = super::database::blocking(move || {
+        let prepared = super::database::blocking(move || {
             let params: Map<String, Value> = serde_json::from_str(&text)?;
             db.window_record(&found, &name, &params)?;
             let now = db.shared.store.lock().now_ms();
             let force = force || (goal == Goal::First && !db.window_is_fresh(&found, &name, &params, now)?);
             Ok((params, force))
-        }).await?;
+        }).await;
+        crate::runtime::release_held();
+        let (params, force) = prepared?;
         self.start_window(epoch, WindowKey::relation(model, relation, &params), goal, force)
     }
 

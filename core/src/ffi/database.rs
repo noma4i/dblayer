@@ -342,7 +342,9 @@ impl Database {
         let _closing = crate::runtime::hold_until_woken(self.life.launch());
         let answered = on_executor(crate::runtime::counted(Some(self.life.launch()), async move {
             tokio::time::timeout(Duration::from_secs(10), async { waiter.wait().await }).await.map_err(|_| DbError::Invalid { detail: "close timed out while the owners were closing".into() })
-        })).await.and_then(|outcome| match outcome {
+        })).await;
+        crate::runtime::release_held();
+        let answered = answered.and_then(|outcome| match outcome {
             crate::runtime::Outcome::Value(LifeReply::Life(Err(crate::owners::lifecycle::LifecycleError::Closed))) => Err(super::command::closed()),
             _ => Ok(()),
         });
@@ -351,9 +353,11 @@ impl Database {
         let drained = on_executor(crate::runtime::counted(Some(self.life.launch()), async move {
             tokio::time::timeout(Duration::from_secs(10), leases.settled()).await.map_err(|_| DbError::Invalid { detail: format!("close timed out while leases were still held: {}", leases.held().join("; ")) })
         })).await;
+        crate::runtime::release_held();
         let (db, life) = (self.db.clone(), self.life.clone());
         let _shutting = crate::runtime::hold_until_woken(self.life.launch());
         let ended = blocking(move || { life.shutdown(); Ok(db.close()?) }).await;
+        crate::runtime::release_held();
         if let Some(lease) = self.lease.get() { lease.release(); }
         answered.and(drained).and(ended)
     }
@@ -364,6 +368,7 @@ impl Database {
     pub(super) async fn offload<T: Send + 'static>(&self, work: impl FnOnce() -> Result<T, DbError> + Send + 'static) -> Result<T, DbError> {
         let kept = crate::runtime::hold_until_woken(self.life.launch());
         let value = blocking(work).await;
+        crate::runtime::release_held();
         drop(kept);
         value
     }

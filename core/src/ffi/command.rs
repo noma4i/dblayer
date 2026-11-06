@@ -66,6 +66,7 @@ impl Database {
         let answer = this.clone();
         let work = async move { super::database::blocking(move || read(&this)).await };
         let value = self.in_epoch(epoch, target, work).await;
+        crate::runtime::release_held();
         drop(kept);
         let value = value?;
         if !answer.admits(epoch) { return Err(ended()); }

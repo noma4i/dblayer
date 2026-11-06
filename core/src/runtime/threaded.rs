@@ -209,6 +209,11 @@ pub fn polling<R>(holds: &Arc<Holds>, poll: impl FnOnce() -> R) -> R {
     result
 }
 
+/// The awaited work of the polled call ended: the counts it held end with it, also when no wake came.
+pub fn release_held() {
+    if let Some(holds) = POLLED.with(|polled| polled.borrow().clone()) { holds.release(); }
+}
+
 /// Counts work started by the polled call until the call wakes. Outside a polled call the launch comes back and the caller keeps it.
 pub fn hold_until_woken(launch: Launch) -> Option<Launch> {
     match POLLED.with(|polled| polled.borrow().clone()) {
