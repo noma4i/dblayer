@@ -24,7 +24,7 @@ class ReadmeExamplesTest {
         val scope = AccountScope.current()
         val screen = CoroutineScope(SupervisorJob() + Dispatchers.Default)
         try {
-            val query = Moment.where(Moment.userId eq "u1").order(Moment.createdAt.desc()).limit(20)
+            val query = Moment.where(Moment.userId eq "u1").order(Moment.createdAt.desc).limit(20)
             val moments = Projected(scope.stream(query), query.decoder, screen)
             val moment = Moment.send(scope, text = "hello").optimisticValue
             assertEquals("hello", moment?.text)

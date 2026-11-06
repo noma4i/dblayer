@@ -127,7 +127,7 @@ try await user.attach(.avatar, data: bytes, name: "a.png", mime: "image/png")   
 
 ```kotlin
 class FeedModel(me: User, scope: AccountScope) : ViewModel() {
-  private val query = Moment.where(Moment.userId eq me.id).order(Moment.createdAt.desc()).limit(20)
+  private val query = Moment.where(Moment.userId eq me.id).order(Moment.createdAt.desc).limit(20)
   val moments = Projected(scope.stream(query), query.decoder, viewModelScope)   // rows: moments.projection
 }
 
