@@ -47,11 +47,11 @@ fn sess_prop_idle() {
 fn sess_prop_unauthorized_keeps_session() {
     let mut twin = landing(1);
     twin.feed(committed());
-    let before = twin.reference.credential.clone();
+    let before = twin.reference.credential;
     twin.feed_all([call(2), committed()]);
     let input = twin.http_error(false, true);
     twin.feed_all([input, committed()]);
-    assert_eq!(twin.reference.credential, before.map(|credential| credential), "the credential is the same");
+    assert_eq!(twin.reference.credential, before, "the credential is the same");
     assert!(!twin.history.iter().any(|e| matches!(e, RefEffect::ServerEnded { .. } | RefEffect::SessionReset)));
 }
 

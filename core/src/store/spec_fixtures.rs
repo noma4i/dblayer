@@ -3,7 +3,7 @@
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use serde_json::{json, Map, Value};
+use serde_json::{Map, Value};
 
 use crate::commit::{CommitEnvelope, EntityOp, WriteOrigin};
 use crate::identity::{ModelKey, RowId};
@@ -126,15 +126,6 @@ pub fn put(db: &Store, model: &str, value: Value) {
     db.commit_as(&crate::lifecycle::authority::Authority::Internal(crate::lifecycle::authority::Internal::for_tests()), envelope).unwrap();
 }
 
-pub fn seed_tree(db: &Store) {
-    put(db, "users", json!({"id": "u1", "name": "Ann"}));
-    put(db, "users", json!({"id": "u2", "name": "Bob"}));
-    put(db, "moments", json!({"id": "m1", "userId": "u1", "text": "one"}));
-    put(db, "moments", json!({"id": "m2", "userId": "u2", "text": "two"}));
-    put(db, "vibes", json!({"id": "v1", "momentId": "m1", "kind": "like"}));
-    put(db, "vibes", json!({"id": "v2", "momentId": "m1", "kind": "wow"}));
-}
-
 impl Store {
     pub fn execute_for_test(&self, sql: &str) {
         self.lock().connection.execute_batch(sql).unwrap();
@@ -148,11 +139,11 @@ impl Store {
         self.commit_as(&crate::lifecycle::authority::Authority::Internal(crate::lifecycle::authority::Internal::for_tests()), envelope)
     }
 
-    pub fn write_queue_ops(&self, ops: &[crate::owners::store::StoreOp]) -> Result<super::batch_write::BatchWritten, super::StoreError> {
+    pub(crate) fn write_queue_ops(&self, ops: &[crate::owners::store::StoreOp]) -> Result<super::batch_write::BatchWritten, super::StoreError> {
         self.write_queue_ops_with_pin(ops, None)
     }
 
-    pub fn write_queue_ops_with_pin(&self, ops: &[crate::owners::store::StoreOp], min_pin_revision: Option<u64>) -> Result<super::batch_write::BatchWritten, super::StoreError> {
+    pub(crate) fn write_queue_ops_with_pin(&self, ops: &[crate::owners::store::StoreOp], min_pin_revision: Option<u64>) -> Result<super::batch_write::BatchWritten, super::StoreError> {
         let batch = crate::owners::store::StoreBatch { author: crate::owners::contract::BatchAuthor::Outbox, id: 1, epoch: 1, basis: Default::default(), rows: Vec::new(), intents: 0, credential: None, ops: ops.to_vec() };
         self.write_batch(&batch, self.files(), self.pointer_guards(), min_pin_revision)
     }
@@ -160,7 +151,7 @@ impl Store {
 
 impl Store {
     /// Lands feed events the way the owner Feed hands them to Store.
-    pub fn land_events_with_pin(&self, events: &[(String, String)], min_pin_revision: Option<u64>) -> Result<super::batch_write::BatchWritten, super::StoreError> {
+    pub(crate) fn land_events_with_pin(&self, events: &[(String, String)], min_pin_revision: Option<u64>) -> Result<super::batch_write::BatchWritten, super::StoreError> {
         let batch = crate::owners::store::StoreBatch { author: crate::owners::contract::BatchAuthor::Feed, id: 1, epoch: 1, basis: Default::default(), rows: events.to_vec(), intents: 0, credential: None, ops: Vec::new() };
         self.write_batch(&batch, self.files(), self.pointer_guards(), min_pin_revision)
     }

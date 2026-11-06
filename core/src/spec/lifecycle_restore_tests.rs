@@ -16,7 +16,7 @@ fn restore_ended(saved: bool, expected: Result<(), LifecycleError>) {
         step(&mut state, LifecycleInput::Open { saved_epoch: 0, saved_generation: 0, saved_identity: Some(9), reply: Some(7) });
         if saved { step(&mut state, LifecycleInput::Saved { publication_id: 1 }); }
         let effects = step(&mut state, input);
-        assert_eq!(effects.iter().filter_map(|effect| match effect { LifecycleEffect::Reply { id: 7, result } => Some(result.clone()), _ => None }).collect::<Vec<_>>(), [expected.clone()]);
+        assert_eq!(effects.iter().filter_map(|effect| match effect { LifecycleEffect::Reply { id: 7, result } => Some(*result), _ => None }).collect::<Vec<_>>(), [expected]);
         assert!(state.restoring().is_none());
     }
 }
@@ -35,6 +35,6 @@ fn life_closing_executor_failed() {
     step(&mut state, LifecycleInput::SessionReset { reply: Some(7) });
     step(&mut state, LifecycleInput::Close { reply: 8 });
     let effects = step(&mut state, LifecycleInput::ExecutorFailed { executor: "store".into() });
-    assert_eq!(effects.iter().filter_map(|effect| match effect { LifecycleEffect::Reply { id, result } => Some((*id, result.clone())), _ => None }).collect::<Vec<_>>(), [(7, Err(LifecycleError::Runtime))]);
+    assert_eq!(effects.iter().filter_map(|effect| match effect { LifecycleEffect::Reply { id, result } => Some((*id, *result)), _ => None }).collect::<Vec<_>>(), [(7, Err(LifecycleError::Runtime))]);
     assert!(matches!(state.phase(), crate::owners::lifecycle::LifecyclePhase::Closing { close_replies, .. } if close_replies == &[8]));
 }

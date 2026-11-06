@@ -25,7 +25,6 @@ pub(crate) struct Client {
     pub(crate) secret: Arc<Secret>,
     pub(crate) db: Arc<Store>,
     pub(crate) clock: Arc<dyn Clock>,
-    pub(crate) credentials: Arc<dyn CredentialSlot>,
     rest: Arc<dyn Transport>,
     life: OnceLock<Arc<crate::owners::life::Life>>,
 }
@@ -35,7 +34,7 @@ impl Client {
         let exchange = Arc::new(Exchange::new(config, http, clock.clone())?);
         let secret = Arc::new(Secret::new(credentials.clone()));
         super::credential::finish_session_end(&db, &secret)?;
-        Ok(Arc::new(Self { exchange, secret, db, clock, credentials, rest, life: OnceLock::new() }))
+        Ok(Arc::new(Self { exchange, secret, db, clock, rest, life: OnceLock::new() }))
     }
 
     /// Lifecycle, Store, Network, Calls and Session on the threads of the core.
@@ -65,7 +64,6 @@ impl Client {
         }
     }
 
-    pub(crate) fn credential(&self) -> Result<String, TransportError> { self.secret.read(&self.db) }
 }
 
 pub(crate) fn memory_db() -> Arc<Store> {
@@ -121,7 +119,7 @@ async fn a_request_over_256_kib_is_refused_without_being_sent() {
     let server = FakeServer::new(clock.clone());
     let exchange = Exchange::new(&config(), server.clone(), clock).unwrap();
 
-    let outcome = exchange.send_once(Some("credential"), "request", "key", None, "/api/graphql", &json!({ "query": "q".repeat(300 * 1024) }), NetworkPurpose::Standard).await;
+    let outcome = exchange.send_once(SendOnce { credential: Some("credential"), request_id: "request", response_key: "key", sequence: None, path: "/api/graphql", body: &json!({ "query": "q".repeat(300 * 1024) }), purpose: NetworkPurpose::Standard }).await;
 
     assert!(matches!(outcome, Err(TransportError::RequestTooLarge { size, limit }) if size > limit && limit == 256 * 1024));
     assert!(server.seen().is_empty());

@@ -281,7 +281,7 @@ fn out_prop_dropped_resent() {
     }
     assert!(sends <= 40, "{sends} Send");
     assert_ne!(twin.stage(id), Some(St::Sending), "the attempts run out");
-    assert!(twin.state().ops[&id].outcome.as_ref().map_or(true, |outcome| !matches!(outcome, o::OutboxOutcome::Interrupted)));
+    assert!(twin.state().ops[&id].outcome.as_ref().is_none_or(|outcome| !matches!(outcome, o::OutboxOutcome::Interrupted)));
 }
 
 #[test]

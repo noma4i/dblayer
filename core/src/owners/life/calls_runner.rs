@@ -7,7 +7,6 @@ use serde_json::Value;
 use tokio::task::AbortHandle;
 
 use super::{LifeReply, Ports, Wiring};
-use crate::store::Store;
 use crate::owners::calls::{CallError, CallKind, Calls, CallsEffect, CallsInput};
 use crate::owners::contract::RequestId;
 use crate::owners::lifecycle::LifecycleInput;
@@ -23,7 +22,6 @@ pub(super) struct CallsRunner {
     session: Option<Arc<crate::transport::Exchange>>,
     executor: tokio::runtime::Handle,
     operations: super::OperationLookup,
-    db: std::sync::Arc<Store>,
     running: HashMap<u64, AbortHandle>,
     roots: Roots,
 }
@@ -70,6 +68,17 @@ fn answer_input(call_id: u64, root: &str, outcome: AuthorOutcome) -> CallsInput 
     }
 }
 
+struct CallRequest {
+    call_id: u64,
+    request_id: RequestId,
+    epoch: crate::runtime::Epoch,
+    operation: String,
+    variables: String,
+    document: String,
+    root: String,
+    kind: CallKind,
+}
+
 impl CallsRunner {
     pub fn new(wiring: Arc<Wiring>, ports: &Ports) -> Self {
         let roots = Roots::default();
@@ -78,10 +87,11 @@ impl CallsRunner {
             let Some(root) = sink_roots.lock().unwrap_or_else(PoisonError::into_inner).remove(&request_id) else { return };
             sink_wiring.to_calls(answer_input(request_id, &root, outcome));
         });
-        Self { wiring, transport: ports.transport.clone(), session: ports.exchange.clone(), executor: ports.executor.clone(), operations: ports.operations.clone(), db: ports.db.clone(), running: HashMap::new(), roots }
+        Self { wiring, transport: ports.transport.clone(), session: ports.exchange.clone(), executor: ports.executor.clone(), operations: ports.operations.clone(), running: HashMap::new(), roots }
     }
 
-    fn query(&mut self, call_id: u64, request_id: RequestId, epoch: crate::runtime::Epoch, operation: String, variables: String, document: String, root: String, back: &Back<Calls>) {
+    fn query(&mut self, call: CallRequest, back: &Back<Calls>) {
+        let CallRequest { call_id, request_id, epoch, operation, variables, document, root, kind } = call;
         let Some(transport) = self.transport.clone() else { return back.reply(EpochStamp::Control, CallsInput::TransportError { call_id, error: CallError::Invalid }) };
         let back = back.clone();
         if !self.wiring.admits_epoch(epoch) { return back.reply(EpochStamp::Control, CallsInput::TransportError { call_id, error: CallError::Interrupted }); }
@@ -94,14 +104,15 @@ impl CallsRunner {
             let variables: Value = serde_json::from_str(&variables).unwrap_or(Value::Null);
             let request = GraphQLRequest::new(document.clone(), operation, variables);
             crate::lock::assert_no_library_lock("Transport::request");
-            let result = if document.trim_start().starts_with("mutation") { transport.mutate(request).await } else { transport.query(request).await };
+            let result = match kind { CallKind::Mutate => transport.mutate(request).await, CallKind::Query => transport.query(request).await };
             back.reply(EpochStamp::Control, input_of(call_id, &root, result));
         }));
         self.running.insert(request_id, task.abort_handle());
     }
 
-    fn mutate(&mut self, call_id: u64, request_id: RequestId, epoch: crate::runtime::Epoch, operation: String, variables: String, document: String, root: String, back: &Back<Calls>) {
-        let Some(client) = self.session.clone() else { return self.query(call_id, request_id, epoch, operation, variables, document, root, back) };
+    fn mutate(&mut self, call: CallRequest, back: &Back<Calls>) {
+        let Some(client) = self.session.clone() else { return self.query(call, back) };
+        let CallRequest { request_id, epoch, operation, variables, document, root, .. } = call;
         let variables: Value = serde_json::from_str(&variables).unwrap_or(Value::Null);
         let body = crate::transport::encrypted::graphql_body(&GraphQLRequest::new(document, operation, variables), true);
         self.roots.lock().unwrap_or_else(PoisonError::into_inner).insert(request_id, root);
@@ -117,9 +128,10 @@ impl EffectRunner<Calls> for CallsRunner {
                     back.reply(EpochStamp::Control, CallsInput::TransportError { call_id, error: CallError::Invalid });
                     return;
                 };
+                let call = CallRequest { call_id, request_id, epoch, operation, variables, document, root, kind };
                 match kind {
-                    CallKind::Query => self.query(call_id, request_id, epoch, operation, variables, document, root, back),
-                    CallKind::Mutate => self.mutate(call_id, request_id, epoch, operation, variables, document, root, back),
+                    CallKind::Query => self.query(call, back),
+                    CallKind::Mutate => self.mutate(call, back),
                 };
             }
             CallsEffect::Cancel { request_id, kind } => match kind {

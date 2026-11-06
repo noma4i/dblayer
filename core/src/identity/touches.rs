@@ -22,8 +22,3 @@ pub(crate) fn read_members(_count: usize) {}
 #[cfg(not(test))]
 #[inline(always)]
 pub(crate) fn touch(_count: usize) {}
-
-#[cfg(test)]
-pub(crate) fn total() -> usize {
-    TOUCHED.with(std::cell::Cell::get)
-}

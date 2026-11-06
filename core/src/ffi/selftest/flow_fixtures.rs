@@ -25,12 +25,9 @@ pub(super) fn chat_spec() -> ModelSpec {
         action.mutation = Some(mutation.into());
         action.root = Some(root.into());
         action.variables.insert("id".into(), "id".into());
-        match arg {
-            Some(arg) => {
-                action.args.insert(arg.into(), "bool".into());
-                action.variables.insert(arg.into(), arg.into());
-            }
-            None => {}
+        if let Some(arg) = arg {
+            action.args.insert(arg.into(), "bool".into());
+            action.variables.insert(arg.into(), arg.into());
         }
         chat.actions.push(action);
     }
@@ -93,7 +90,7 @@ pub(super) fn land_owned(rig: &Rig, model: &str, row: Value) {
 /// The cell of a field of a row of `model`.
 pub(super) fn cell(rig: &Rig, model: &str, row: &WireRow, field: &str) -> Cell {
     let spec = rig.database.db.spec(model).unwrap();
-    let at = wire_fields(&spec).iter().position(|declared| declared.name == field).unwrap_or_else(|| panic!("{model} has no field {field}"));
+    let at = wire_fields(spec).iter().position(|declared| declared.name == field).unwrap_or_else(|| panic!("{model} has no field {field}"));
     row.cells[at].clone()
 }
 
@@ -139,7 +136,8 @@ pub(super) fn add_profile(models: &mut Value) {
     let chat = models.iter_mut().find(|model| model["key"] == "Chat").unwrap();
     chat["fields"].as_array_mut().unwrap().push(serde_json::to_value(optional("connectionStatus", ScalarKind::Str)).unwrap());
     let user = models.iter_mut().find(|model| model["key"] == "User").unwrap();
-    for name in ["connectionStatus"] { user["fields"].as_array_mut().unwrap().push(serde_json::to_value(optional(name, ScalarKind::Str)).unwrap()); }
+    {
+    let name = "connectionStatus"; user["fields"].as_array_mut().unwrap().push(serde_json::to_value(optional(name, ScalarKind::Str)).unwrap()); }
     for name in ["unreadChatsCount", "secondaryChatsCount", "premiumSecondaryChatsCount", "unreadSecondaryChatsCount"] { user["fields"].as_array_mut().unwrap().push(serde_json::to_value(optional(name, ScalarKind::Int)).unwrap()); }
     let mut blocked = user["relations"].as_array().unwrap().iter().find(|relation| relation["name"] == "all").unwrap().clone();
     blocked["name"] = json!("blocked");

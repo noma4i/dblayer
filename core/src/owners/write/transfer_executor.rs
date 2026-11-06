@@ -98,17 +98,17 @@ pub(crate) struct TransferExecutor {
     cache: Arc<dyn Fn(&str) -> CachedBlob + Send + Sync>,
 }
 
+/// Where the executor reports to.
+pub struct TransferSinks {
+    pub settle: Arc<dyn Fn(ReplyId, TransferAnswer) + Send + Sync>,
+    pub shows: ShowSink,
+    pub drained: Arc<dyn Fn(Drained) + Send + Sync>,
+    pub signal: Arc<dyn Fn(LifeSignal) + Send + Sync>,
+}
+
 impl TransferExecutor {
-    pub fn new(
-        wire: Wire,
-        codec: Arc<dyn StepCodec>,
-        files: Arc<FileDirectories>,
-        settle: Arc<dyn Fn(ReplyId, TransferAnswer) + Send + Sync>,
-        shows: ShowSink,
-        drained: Arc<dyn Fn(Drained) + Send + Sync>,
-        signal: Arc<dyn Fn(LifeSignal) + Send + Sync>,
-        cache: Arc<dyn Fn(&str) -> CachedBlob + Send + Sync>,
-    ) -> Self {
+    pub fn new(wire: Wire, codec: Arc<dyn StepCodec>, files: Arc<FileDirectories>, sinks: TransferSinks, cache: Arc<dyn Fn(&str) -> CachedBlob + Send + Sync>) -> Self {
+        let TransferSinks { settle, shows, drained, signal } = sinks;
         Self { wire, codec, files, settle, shows, drained, signal, copies: Flights::default(), steps: Flights::default(), cache }
     }
 

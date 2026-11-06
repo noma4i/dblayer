@@ -33,7 +33,7 @@ pub(super) fn descendants(models: &BTreeMap<String, ModelInfo>, reader: &Reader<
 /// A destroyed row takes the rows of its `dependent: :destroy` children with it, in the same batch and for the same reason.
 pub(super) fn follow_destroys(connection: &Connection, models: &BTreeMap<String, ModelInfo>, envelope: &mut CommitEnvelope) -> Result<(), StoreError> {
     let reader = Reader::new(connection, models);
-    let mut seen: HashSet<RowRef> = envelope.entity_ops.iter().filter_map(|op| matches!(op, EntityOp::Destroy { .. }).then(|| op.row_ref())).collect();
+    let mut seen: HashSet<RowRef> = envelope.entity_ops.iter().filter(|&op| matches!(op, EntityOp::Destroy { .. })).map(|op| op.row_ref()).collect();
     let parents: Vec<(RowRef, DestroyReason)> = envelope.entity_ops.iter().filter_map(|op| match op {
         EntityOp::Destroy { model, id, reason } if !matches!(reason, DestroyReason::Replaced { .. }) => Some((RowRef::new(model.clone(), id.clone()), reason.clone())),
         _ => None,

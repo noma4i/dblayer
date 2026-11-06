@@ -11,7 +11,6 @@ use crate::transport::{SessionCode, TransportError};
 use crate::transport::retry::RetryClass;
 
 const MAX_REQUEST_BYTES: usize = 256 * 1024;
-const REPLAYED: &str = "REPLAYED_REQUEST";
 const PERMANENT_HTTP_REFUSALS: [u16; 6] = [400, 404, 405, 413, 415, 422];
 
 pub(crate) fn permanently_refused(error: &TransportError) -> bool {
@@ -129,8 +128,15 @@ pub(super) fn session_failure(error: crate::owners::session::SessionError) -> Tr
     }
 }
 
-fn confirmed_error(body: &Value) -> Option<&str> {
-    body.get("error").and_then(Value::as_str)
+/// One request of `send_once`.
+pub(crate) struct SendOnce<'a> {
+    pub credential: Option<&'a str>,
+    pub request_id: &'a str,
+    pub response_key: &'a str,
+    pub sequence: Option<i64>,
+    pub path: &'a str,
+    pub body: &'a Value,
+    pub purpose: crate::transport::NetworkPurpose,
 }
 
 pub(crate) fn temporary_error(body: &Value) -> Option<TransportError> {
@@ -159,7 +165,8 @@ impl Exchange {
     pub(crate) fn logout_path(&self) -> &str { &self.config.endpoints.logout }
 
     /// One request of the executor of Session: seals `body` for `path` and posts it once. No retry and no state: the owner Session keeps both.
-    pub(crate) async fn send_once(&self, credential: Option<&str>, request_id: &str, response_key: &str, sequence: Option<i64>, path: &str, body: &Value, purpose: crate::transport::NetworkPurpose) -> Result<Answer, TransportError> {
+    pub(crate) async fn send_once(&self, request: SendOnce<'_>) -> Result<Answer, TransportError> {
+        let SendOnce { credential, request_id, response_key, sequence, path, body, purpose } = request;
         check_path(path)?;
         let session = credential.map(|credential| RequestSession { credential: credential.into(), sequence });
         let token = self.request_token(session, request_id, response_key, path, body)?;

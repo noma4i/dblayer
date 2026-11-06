@@ -10,6 +10,9 @@ use super::{Reader, Store, StoreError, TombstoneRetention};
 
 const OVERLAY_ROW_LIMIT: usize = 1024;
 
+type ExpiryParts = (Vec<crate::owners::store::MemoryExpiry>, Vec<(String, String)>, Vec<String>);
+type ResetParts = (Vec<u64>, Vec<crate::owners::store::EphemeralReset>);
+
 pub(crate) struct BatchWritten {
     pub revision: u64,
     pub position: u64,
@@ -50,7 +53,7 @@ impl Store {
         }
     }
 
-    fn write_batch_prepared<'a>(&'a self, batch: &StoreBatch, guards: &BTreeMap<String, Vec<AssociationSpec>>, min_pin_revision: Option<u64>, now: i64, files: &[super::file_write::PreparedFile]) -> Result<(super::Committed<'a>, Vec<String>, std::collections::HashSet<String>, Vec<String>, (Vec<crate::owners::store::MemoryExpiry>, Vec<(String, String)>, Vec<String>), u64, (Vec<u64>, Vec<crate::owners::store::EphemeralReset>)), StoreError> {
+    fn write_batch_prepared<'a>(&'a self, batch: &StoreBatch, guards: &BTreeMap<String, Vec<AssociationSpec>>, min_pin_revision: Option<u64>, now: i64, files: &[super::file_write::PreparedFile]) -> Result<(super::Committed<'a>, Vec<String>, std::collections::HashSet<String>, Vec<String>, ExpiryParts, u64, ResetParts), StoreError> {
         let inner = self.lock();
         if !inner.ready { return Err(StoreError::Refused); }
         let transaction = inner.connection.unchecked_transaction()?;
@@ -101,7 +104,6 @@ impl Store {
             }
             if let crate::owners::store::StoreOp::RollBack { op_id } = op { rolled_back.insert(*op_id); }
         }
-        drop(writer);
         let mut live_files = std::collections::HashSet::new();
         for file in files {
             let present: bool = transaction.query_row("SELECT EXISTS(SELECT 1 FROM file WHERE id = ?1)", [&file.record.id], |row| row.get(0))?;

@@ -16,7 +16,7 @@ use super::outbox::{Fault, NewOp, OpSource, OutboxOutcome};
 use super::rig::{admit, peer, settle, Act, ManualSpawn, Stub};
 use crate::owners::support::{StoreStub, StoreStubState};
 use super::transfer::{file_id, BatchItem, Shown, Source, Steps, TransferAnswer, TransferInput, TransferPeers, TransferStage, TransferState, Transfers};
-use super::transfer_executor::{Link, StepCodec, StepDone, TransferExecutor};
+use super::transfer_executor::{Link, StepCodec, StepDone, TransferExecutor, TransferSinks};
 use super::wire::Wire;
 use crate::files::FileDirectories;
 use crate::owners::contract::{Online, ReplyId};
@@ -90,10 +90,12 @@ fn world() -> World {
         Wire { transport: Arc::new(stub.clone()), admit: Arc::new(admit), tasks: Arc::new(spawn.clone()) },
         codec.clone(),
         files.clone(),
-        Arc::new(move |reply, answer| lock(&to_answers).push((reply, answer))),
-        Arc::new(move |_key, shown| lock(&to_shown).push(shown)),
-        Arc::new(|_| {}),
-        Arc::new(|_| {}),
+        TransferSinks {
+            settle: Arc::new(move |reply, answer| lock(&to_answers).push((reply, answer))),
+            shows: Arc::new(move |_key, shown| lock(&to_shown).push(shown)),
+            drained: Arc::new(|_| {}),
+            signal: Arc::new(|_| {}),
+        },
         Arc::new(|_| super::transfer::CachedBlob::Miss),
     );
     let mut det = DetScheduler::new(13);

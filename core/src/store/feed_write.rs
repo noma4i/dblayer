@@ -1,17 +1,16 @@
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 
 use rusqlite::OptionalExtension;
-use serde_json::{json, Map, Value};
+use serde_json::{Map, Value};
 
 use crate::commit::{CommitEnvelope, CommitResult, DestroyReason, EntityOp, ScopeOp, ScopeRef, WriteOrigin};
 use crate::identity::{ModelKey, RowId, RowRef};
-use crate::query::{compile_keys, fetch_keys, Query, Where};
-use crate::schema::{AssociationKind, Dependent, PageDirection, RemoteShape};
+use crate::schema::{AssociationKind, PageDirection, RemoteShape};
 use crate::value::{fractional_between, read_id};
 
 use super::merge::{admitted, Admission};
 use super::row_write::RowWrite;
-use super::{Reader, StoreError, TombstonePrune};
+use super::{Reader, StoreError};
 
 type EventRows = BTreeMap<(String, String), Option<Map<String, Value>>>;
 pub(super) type OverlayWrites = Vec<(String, String, Map<String, Value>)>;
@@ -105,7 +104,7 @@ fn landing(writer: &mut RowWrite<'_>, model: &str, payload: &Value, overlay: &mu
     envelope.entity_ops.retain(|op| seen.insert(op.row_ref()));
     envelope.entity_ops.reverse();
     envelope.validate(writer.generation)?;
-    super::apply::apply_envelope_at(writer.connection, writer.models, &envelope, writer.now, TombstonePrune::Skip, writer.revision, Some(writer.originals)).map(Some)
+    super::apply::apply_envelope_at(writer.connection, writer.models, &envelope, writer.now, writer.revision, Some(writer.originals)).map(Some)
 }
 
 pub(super) fn land(writer: &mut RowWrite<'_>, events: &[(String, String)], overlay: &mut OverlayWrites, results: &mut Vec<CommitResult>) -> Result<Vec<String>, StoreError> {
@@ -116,7 +115,7 @@ pub(super) fn land(writer: &mut RowWrite<'_>, events: &[(String, String)], overl
         if payload.get("observe") != Some(&Value::Bool(true)) { continue; }
         let Some(id) = payload.get("id").and_then(Value::as_str) else { continue };
         let key = ((*model).clone(), id.to_string());
-        if !before.contains_key(&key) { before.insert(key, reader.point(model, id)?); }
+        if let std::collections::btree_map::Entry::Vacant(e) = before.entry(key) { e.insert(reader.point(model, id)?); }
     }
     for (model, payload) in &parsed {
         if let Some(result) = landing(writer, model, payload, overlay)? { results.push(result); }

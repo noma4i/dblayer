@@ -118,7 +118,7 @@ impl Facts {
             let (request, attempt) = ctx.request();
             self.phase = Phase::Loading;
             self.emit(Emit::Pin { epoch: self.epoch, request });
-            WinState::loading(request, attempt, false, true, page, force, 0, self.basis())
+            WinState::loading(Load::issued(request, attempt, page, force, self.basis()))
         } else {
             WinState::waiting(force, page)
         };

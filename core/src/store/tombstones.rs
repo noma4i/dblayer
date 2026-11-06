@@ -5,12 +5,6 @@ use rusqlite::{params, Connection};
 
 use super::{Store, StoreError};
 
-#[derive(Clone, Copy)]
-pub(crate) enum TombstonePrune {
-    Skip,
-    WithPins(Option<u64>),
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TombstoneRetention {
     pub ttl_ms: i64,

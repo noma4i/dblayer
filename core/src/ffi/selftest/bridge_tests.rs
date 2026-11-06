@@ -250,7 +250,7 @@ async fn a_cold_profile_delivers_a_complete_first_frame_when_empty_or_failed() {
         let last = reader.deliveries().into_iter().filter_map(|delivery| match delivery.value {
             ReadValue::Snapshot { state, .. } | ReadValue::Delta { state, .. } | ReadValue::State { state, .. } if state.settled() => Some(state),
             _ => None,
-        }).last().unwrap();
+        }).next_back().unwrap();
         assert_eq!(last.phase, if failed { ReadPhase::Failed } else { ReadPhase::Loaded });
         assert_eq!(last.error.is_some(), failed);
         rig.database.close_now();

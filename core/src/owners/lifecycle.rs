@@ -183,6 +183,10 @@ fn take_erase(erases: &mut Vec<Erase>, id: EraseId) -> Option<Erase> {
     Some(erases.remove(at))
 }
 
+impl Default for LifecycleState {
+    fn default() -> Self { Self::new() }
+}
+
 impl LifecycleState {
     /// Before `Open`: no session, epoch 0.
     pub fn new() -> Self {

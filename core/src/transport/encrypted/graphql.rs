@@ -68,7 +68,7 @@ impl EncryptedTransport {
         let mut retry = Retrying::new(self.clock.as_ref(), &self.progress, &self.online, RetryPolicy::Http);
         loop {
             self.online.online().await;
-            let result = self.exchange.send_once(Some(credential), &request_id, &response_key, None, path, body, crate::transport::NetworkPurpose::Standard).await.and_then(|answer| match temporary_error(&answer.body) { Some(error) => Err(error), None => Ok(answer) });
+            let result = self.exchange.send_once(super::SendOnce { credential: Some(credential), request_id: &request_id, response_key: &response_key, sequence: None, path, body, purpose: crate::transport::NetworkPurpose::Standard }).await.and_then(|answer| match temporary_error(&answer.body) { Some(error) => Err(error), None => Ok(answer) });
             match result { Ok(answer) => return Ok(answer), Err(error) => retry.failed(error).await? }
         }
     }

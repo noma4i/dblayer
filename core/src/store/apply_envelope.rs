@@ -3,10 +3,9 @@ pub(crate) fn apply_envelope(
     models: &BTreeMap<String, ModelInfo>,
     envelope: &CommitEnvelope,
     now_ms: i64,
-    prune: TombstonePrune,
 ) -> Result<CommitResult, StoreError> {
     let revision = Reader::new(connection, models).revision_seq()? + 1;
-    apply_envelope_at(connection, models, envelope, now_ms, prune, revision, None)
+    apply_envelope_at(connection, models, envelope, now_ms, revision, None)
 }
 
 pub(super) fn apply_envelope_at(
@@ -14,7 +13,6 @@ pub(super) fn apply_envelope_at(
     models: &BTreeMap<String, ModelInfo>,
     planned: &CommitEnvelope,
     now_ms: i64,
-    prune: TombstonePrune,
     revision: i64,
     mut originals: Option<&mut BTreeMap<RowRef, Option<Map<String, Value>>>>,
 ) -> Result<CommitResult, StoreError> {
@@ -81,7 +79,7 @@ pub(super) fn apply_envelope_at(
     stamp_confirmed_rows(connection, models, &envelope.operation_transitions, revision)?;
     let mut synced_keys: BTreeSet<SyncKey> = BTreeSet::new();
     wrote |= apply_transitions(connection, models, envelope.generation, &envelope.operation_transitions, now_ms, &mut synced_keys, &mut result)?;
-    if let Some(originals) = originals.as_deref_mut() {
+    if let Some(originals) = originals {
         let reader = Reader::new(connection, models);
         for (model, id) in &synced_keys {
             if !models.contains_key(model) { continue; }
@@ -158,17 +156,17 @@ pub(super) fn apply_envelope_at(
     if let Some(target) = &envelope.snapshot {
         let reader = Reader::new(connection, models);
         let id = target.id.to_string();
-        if let Some(stored) = reader.stored_rows(target.model.as_str(), &[id.clone()])?.remove(&id) {
-            let sync = crate::syncstate::read_sync(connection, target.model.as_str(), &[id.clone()])?.remove(&id).unwrap_or_default();
+        if let Some(stored) = reader.stored_rows(target.model.as_str(), std::slice::from_ref(&id))?.remove(&id) {
+            let sync = crate::syncstate::read_sync(connection, target.model.as_str(), std::slice::from_ref(&id))?.remove(&id).unwrap_or_default();
             result.snapshot = Some(std::sync::Arc::new(crate::store::Record { id: stored.id, revision: stored.revision, data: stored.row, sync }));
         }
     }
     for (item, target) in &envelope.item_snapshots {
         let reader = Reader::new(connection, models);
         let id = target.id.to_string();
-        let stored = reader.stored_rows(target.model.as_str(), &[id.clone()])?.remove(&id);
+        let stored = reader.stored_rows(target.model.as_str(), std::slice::from_ref(&id))?.remove(&id);
         let row = if let Some(stored) = stored {
-            let sync = crate::syncstate::read_sync(connection, target.model.as_str(), &[id.clone()])?.remove(&id).unwrap_or_default();
+            let sync = crate::syncstate::read_sync(connection, target.model.as_str(), std::slice::from_ref(&id))?.remove(&id).unwrap_or_default();
             Some(std::sync::Arc::new(crate::store::Record { id: stored.id, revision: stored.revision, data: stored.row, sync }))
         } else { None };
         result.item_snapshots.push((item.clone(), row));
@@ -199,9 +197,6 @@ pub(super) fn apply_envelope_at(
         }
         for seq in result.operations.iter().filter(|seq| !progress_only.contains(seq)) {
             result.queue_operations.insert(*seq, crate::operation::read_queue_operation(connection, *seq)?);
-        }
-        if let TombstonePrune::WithPins(min_pin_revision) = prune {
-            prune_tombstones(connection, now_ms, &TombstoneRetention::DEFAULT, min_pin_revision)?;
         }
     } else {
         result.scopes.clear();

@@ -45,6 +45,14 @@ pub struct Steps {
     pub body: String,
 }
 
+/// What the copy of the source produced.
+pub struct CopiedBlob {
+    pub size: u64,
+    pub sha256: String,
+    pub place: Location,
+    pub cached: CachedBlob,
+}
+
 /// What the cache of blobs holds for the content of a copy.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum CachedBlob {

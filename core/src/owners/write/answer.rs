@@ -158,8 +158,10 @@ fn correlation_key(paths: &[String], row: &serde_json::Map<String, Value>) -> Op
     values.map(|values| Value::Array(values).to_string())
 }
 
+type BatchSwaps = (Vec<(String, String)>, Vec<String>);
+
 /// The pairs (temporary id, real id) of a batch answer: the waiting elements of the group against the rows of the answer.
-fn batch_swaps(db: &Store, model: &str, declared: Option<&crate::schema::ActionDeclaration>, job: &DecodeJob, roots: &[serde_json::Map<String, Value>]) -> Result<(Vec<(String, String)>, Vec<String>), String> {
+fn batch_swaps(db: &Store, model: &str, declared: Option<&crate::schema::ActionDeclaration>, job: &DecodeJob, roots: &[serde_json::Map<String, Value>]) -> Result<BatchSwaps, String> {
     let Some(group) = job.batch else { return Err("the answer of a batch has no group".into()) };
     let (Some(declared), [path]) = (declared, declared.map_or(&[][..], |declared| &declared.correlate[..])) else { return Err("the batch has no single correlation field".into()) };
     let target = declared.batch.as_ref().and_then(|batch| batch.input.iter().find(|(_, source)| *source == path).map(|(target, _)| target.clone())).unwrap_or_else(|| path.clone());

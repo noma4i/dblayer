@@ -37,7 +37,7 @@ use super::write::outbox_executor::OutboxExecutor;
 use super::write::transfer::{TransferAnswer, TransferInput, TransferPeers, TransferState, Transfers};
 use super::write::rounds::{Rounds, RoundsInput, RoundsState};
 use super::write::rounds_executor::RoundsExecutor;
-use super::write::transfer_executor::{LifeSignal, TransferExecutor, TransferPort};
+use super::write::transfer_executor::{LifeSignal, TransferExecutor, TransferPort, TransferSinks};
 use super::store::{BootFound, StoreInput, StoreReply, StoreState, StoreWriter};
 use crate::store::Store;
 use crate::runtime::{Address, Epoch, EpochStamp, Handle, Outcomes, PublishedCell, Runtime, RuntimeBuilder, Waiter};
@@ -61,7 +61,7 @@ pub struct Ports {
     pub transport: Option<Arc<dyn crate::transport::Transport>>,
     pub executor: tokio::runtime::Handle,
     pub operations: OperationLookup,
-    pub secret: Option<Arc<crate::transport::encrypted::credential::Secret>>,
+    pub(crate) secret: Option<Arc<crate::transport::encrypted::credential::Secret>>,
     /// The encrypted exchange: Session installs only with it and `secret`. It does the encoding and the HTTP exchange, Session decides.
     pub exchange: Option<Arc<crate::transport::Exchange>>,
     pub(crate) seal: Option<Arc<super::session_seal::SealConfig>>,
@@ -107,14 +107,14 @@ pub(crate) struct Wiring {
     faults: Mutex<Vec<String>>,
     open_failed: Mutex<Option<(String, bool)>>,
     /// Where the answer to a `Mutate` goes, by author: `Transport{req_id, Response/Error}`.
-    mutate_sinks: Mutex<HashMap<AuthorId, Arc<dyn Fn(RequestId, AuthorOutcome) + Send + Sync>>>,
+    mutate_sinks: Mutex<HashMap<AuthorId, MutateSink>>,
     /// Where the answer of Store to a batch goes, by author: the `install` of Window, Feed, Outbox and Transfer registers its owner here.
-    store_sinks: Mutex<HashMap<BatchAuthor, Arc<dyn Fn(BatchId, StoreReply) + Send + Sync>>>,
+    store_sinks: Mutex<HashMap<BatchAuthor, StoreSink>>,
     /// The answer of a call that ended the session waits for the next epoch: a caller that heard it finds the new epoch.
     after_publish: Mutex<Vec<(Awaited, crate::runtime::OutcomeId, LifeReply)>>,
-    network_sinks: Mutex<Vec<(Peer, Arc<dyn Fn(NetworkEvent) + Send + Sync>)>>,
+    network_sinks: Mutex<Vec<(Peer, NetworkSink)>>,
     /// Every subscriber of the Store broadcast `Committed`, in the order of subscription.
-    committed_sinks: Mutex<Vec<Arc<dyn Fn(CommittedBroadcast) + Send + Sync>>>,
+    committed_sinks: Mutex<Vec<CommittedSink>>,
     session_open: Mutex<Option<SessionInput>>,
     restore_failures: Mutex<Vec<(Peer, String)>>,
 }
@@ -386,6 +386,11 @@ pub enum LifeError {
     CorruptManifest(String),
 }
 
+type MutateSink = Arc<dyn Fn(RequestId, AuthorOutcome) + Send + Sync>;
+type StoreSink = Arc<dyn Fn(BatchId, StoreReply) + Send + Sync>;
+type NetworkSink = Arc<dyn Fn(NetworkEvent) + Send + Sync>;
+type CommittedSink = Arc<dyn Fn(CommittedBroadcast) + Send + Sync>;
+
 pub struct Life {
     wiring: Arc<Wiring>,
     runtime: Mutex<Option<Runtime>>,
@@ -481,14 +486,16 @@ impl Life {
                     wire,
                     port.codec.clone(),
                     ports.db.files().clone(),
-                    Arc::new(move |reply, answer| { settle_wiring.outcomes.settle(crate::runtime::OutcomeId::from_raw(reply), LifeReply::Transfer(answer)); }),
-                    port.shows.clone(),
-                    Arc::new(move |drained| drained_wiring.to_lifecycle(LifecycleInput::Drained(drained))),
-                    Arc::new(move |signal| match signal {
-                        LifeSignal::Started(epoch) => signal_wiring.to_lifecycle(LifecycleInput::Started { owner: Peer::Transfer, epoch }),
-                        LifeSignal::SnapshotRequest(epoch) => signal_wiring.to_network(NetworkInput::SnapshotRequest { owner: Peer::Transfer, epoch }),
-                        LifeSignal::RestoreClassified(epoch) => signal_wiring.to_lifecycle(LifecycleInput::RestoreClassified { owner: Peer::Transfer, epoch }),
-                    }),
+                    TransferSinks {
+                        settle: Arc::new(move |reply, answer| { settle_wiring.outcomes.settle(crate::runtime::OutcomeId::from_raw(reply), LifeReply::Transfer(answer)); }),
+                        shows: port.shows.clone(),
+                        drained: Arc::new(move |drained| drained_wiring.to_lifecycle(LifecycleInput::Drained(drained))),
+                        signal: Arc::new(move |signal| match signal {
+                            LifeSignal::Started(epoch) => signal_wiring.to_lifecycle(LifecycleInput::Started { owner: Peer::Transfer, epoch }),
+                            LifeSignal::SnapshotRequest(epoch) => signal_wiring.to_network(NetworkInput::SnapshotRequest { owner: Peer::Transfer, epoch }),
+                            LifeSignal::RestoreClassified(epoch) => signal_wiring.to_lifecycle(LifecycleInput::RestoreClassified { owner: Peer::Transfer, epoch }),
+                        }),
+                    },
                     { let db = ports.db.clone(); Arc::new(move |sha256: &str| db.blob_cache_lookup(sha256)) },
                 );
                 let address = builder.add::<Transfers>("transfer", TransferState::new(0, port.slots, TransferPeers { store, outbox, rounds: rounds_at }), executor);

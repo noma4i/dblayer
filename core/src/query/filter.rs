@@ -238,7 +238,7 @@ pub(super) fn binding(field: &str, value: &Value) -> Result<SqlValue, QueryError
 }
 
 /// The words of a search text as FTS5 terms: every word quoted, the last one a prefix unless whole words are asked.
-pub(super) fn fts_expression(text: &str, whole_words: bool) -> Option<String> {
+pub(crate) fn fts_expression(text: &str, whole_words: bool) -> Option<String> {
     let words: Vec<String> = text.split_whitespace().map(|word| format!("\"{}\"", word.replace('"', "\"\""))).collect();
     let last = words.len().checked_sub(1)?;
     Some(words.into_iter().enumerate().map(|(index, word)| if index == last && !whole_words { word + "*" } else { word }).collect::<Vec<_>>().join(" "))

@@ -5,7 +5,6 @@ use crate::store::Reader;
 use crate::value::read_id;
 
 use crate::store::plan::{swap_id, OutboxOperation, Prior};
-use crate::store::DbError;
 use super::references::{references_to, rows_referencing, ReferencingRow};
 use super::StoreError;
 
@@ -107,5 +106,5 @@ pub(super) fn apply(writer: &mut super::row_write::RowWrite<'_>, model: &str, te
         let outbox = crate::store::plan::read_outbox(&reader)?;
         plan(&reader, &mut envelope, &outbox, TempReplacement { model, temp: &temp, real: &real }, own)?;
     }
-    super::apply::apply_envelope_at(writer.connection, writer.models, &envelope, writer.now, super::TombstonePrune::Skip, writer.revision, Some(writer.originals))
+    super::apply::apply_envelope_at(writer.connection, writer.models, &envelope, writer.now, writer.revision, Some(writer.originals))
 }

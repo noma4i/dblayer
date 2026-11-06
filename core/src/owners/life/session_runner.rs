@@ -308,7 +308,7 @@ impl EffectRunner<SessionCalls> for SessionRunner {
                         Ok(secret) => secret,
                         Err(failure) => return back.reply(EpochStamp::Control, SessionInput::SecretMissing { request_id, attempt_id, lost: matches!(failure, SecretFailure::Lost) }),
                     };
-                    let result = exchange.send_once(credential.as_deref(), &wire, &key, sequence, &pending.path, &body, purpose).await;
+                    let result = exchange.send_once(crate::transport::encrypted::SendOnce { credential: credential.as_deref(), request_id: &wire, response_key: &key, sequence, path: &pending.path, body: &body, purpose }).await;
                     back.reply(EpochStamp::Control, input_of(request_id, attempt_id, logout, result));
                 }));
                 if let Some(previous) = self.running.insert(attempt_id, task.abort_handle()) {

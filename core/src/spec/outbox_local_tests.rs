@@ -101,7 +101,7 @@ fn out_local_set_ephemeral() {
     assert!(twin.store_text.contains("EphemeralRows"), "{}", twin.store_text);
     let committed = commit_first(&mut twin);
     assert_eq!(answers(&committed, WRITE), vec![OutboxAnswer::Ok]);
-    assert!(committed.iter().any(|effect| matches!(effect, OutboxEffect::Schedule { .. })), "the reset timer: {committed:?}");
+    assert!(committed.iter().any(|effect| matches!(effect, OutboxEffect::Schedule)), "the reset timer: {committed:?}");
 }
 
 #[test]
@@ -224,7 +224,7 @@ fn out_local_write_memory_same() {
     assert_eq!(kinds(&again), vec![CommitKind::LocalWrite], "the same values commit again: the write renews the expiry");
     let committed = twin.post(OutboxInput::Committed(Committed { batch: 2, revision: 12, tables: vec!["moments".into()], models: Default::default(), stale_parents: Vec::new(), position: 0 }));
     assert_eq!(answers(&committed, WRITE + 1), vec![OutboxAnswer::Ok]);
-    assert!(committed.iter().any(|effect| matches!(effect, OutboxEffect::Schedule { .. })), "the new timer: {committed:?}");
+    assert!(committed.iter().any(|effect| matches!(effect, OutboxEffect::Schedule)), "the new timer: {committed:?}");
     let stale = twin.post(OutboxInput::Expire { model: "Moment".into(), row: "w".into(), due: Time(110) });
     assert!(stale.is_empty(), "the timer of the first write does not remove the row: {stale:?}");
     let due = twin.post(OutboxInput::Expire { model: "Moment".into(), row: "w".into(), due: Time(210) });

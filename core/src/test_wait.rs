@@ -102,14 +102,6 @@ pub(crate) async fn serving<T>(work: impl std::future::Future<Output = T>) -> T 
     work.await
 }
 
-pub(crate) fn spin_until(what: &str, mut ready: impl FnMut() -> bool) {
-    let deadline = Instant::now() + SPIN_LIMIT;
-    while !ready() {
-        assert!(Instant::now() < deadline, "{what}");
-        std::thread::yield_now();
-    }
-}
-
 pub(crate) async fn yield_until(what: &str, mut ready: impl FnMut() -> bool) {
     let deadline = Instant::now() + SPIN_LIMIT;
     while !ready() {

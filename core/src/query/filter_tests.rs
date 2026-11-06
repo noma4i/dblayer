@@ -108,3 +108,12 @@ fn clause_round_trips_through_json() {
     let missing_value: Where = serde_json::from_str(r#"{"type":"equal","field":"status"}"#).unwrap();
     assert_eq!(missing_value, Where::equal("status", json!(null)));
 }
+
+#[test]
+fn data_search_words() {
+    use super::filter::fts_expression;
+    assert_eq!(fts_expression("red apple pie", false).as_deref(), Some("\"red\" \"apple\" \"pie\"*"), "every word whole, the last a prefix");
+    assert_eq!(fts_expression("red apple", true).as_deref(), Some("\"red\" \"apple\""), "whole words: every word whole");
+    assert_eq!(fts_expression("a\"b OR *", true).as_deref(), Some("\"a\"\"b\" \"OR\" \"*\""), "the core quotes every word, FTS5 syntax stays out of reach");
+    assert_eq!(fts_expression("   ", false), None, "an empty text adds no search condition");
+}

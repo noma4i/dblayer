@@ -180,7 +180,7 @@ impl OutboxState {
             RejectReason::StaleGeneration { .. } => self.store(op_id, kind, fx),
             RejectReason::Storage(_) if stage == Stage::Submitting => self.submit_refused(op_id, reason, fx),
             RejectReason::Storage(_) if stage == Stage::MarkingRetry => {
-                self.ops.get_mut(&op_id).map(|operation| operation.stage = Stage::Failed);
+                if let Some(operation) = self.ops.get_mut(&op_id) { operation.stage = Stage::Failed; }
                 for reply in Self::take_waiters(&mut self.retry_waiters, op_id) {
                     Self::reply(fx, reply, OutboxAnswer::Err(Fault::Rejected(reason.clone())));
                 }
@@ -194,7 +194,7 @@ impl OutboxState {
             RejectReason::Invalid => match stage {
                 Stage::Submitting => self.submit_refused(op_id, reason, fx),
                 Stage::MarkingRetry => {
-                    self.ops.get_mut(&op_id).map(|operation| operation.stage = Stage::Failed);
+                    if let Some(operation) = self.ops.get_mut(&op_id) { operation.stage = Stage::Failed; }
                     for reply in Self::take_waiters(&mut self.retry_waiters, op_id) {
                         Self::reply(fx, reply, OutboxAnswer::Err(Fault::Internal));
                     }

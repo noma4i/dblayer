@@ -7,7 +7,7 @@ use crate::operation::{Operation, OperationStatus};
 use crate::owners::store::{EffectRow, IntentEffects};
 
 use super::row_write::RowWrite;
-use super::{Reader, StoreError, TombstonePrune};
+use super::{Reader, StoreError};
 
 fn id(value: &str) -> Result<RowId, StoreError> {
     RowId::new(value).map_err(|error| StoreError::Constraint(error.to_string()))
@@ -65,7 +65,7 @@ pub(super) fn planned(writer: &mut RowWrite<'_>, writes: &IntentEffects) -> Resu
     let (mut envelope, _) = effects(&reader, writes, writer)?;
     envelope.writes_local = true;
     envelope.validate(writer.generation)?;
-    super::apply::apply_envelope_at(writer.connection, writer.models, &envelope, writer.now, TombstonePrune::Skip, writer.revision, Some(writer.originals))
+    super::apply::apply_envelope_at(writer.connection, writer.models, &envelope, writer.now, writer.revision, Some(writer.originals))
 }
 
 pub(super) fn intent(writer: &mut RowWrite<'_>, op_id: u64, model: &str, row_id: &str, action: &str, payload: &str, writes: &IntentEffects) -> Result<CommitResult, StoreError> {
@@ -88,5 +88,5 @@ pub(super) fn intent(writer: &mut RowWrite<'_>, op_id: u64, model: &str, row_id:
         upload: None,
     })));
     envelope.validate(writer.generation)?;
-    super::apply::apply_envelope_at(writer.connection, writer.models, &envelope, writer.now, TombstonePrune::Skip, writer.revision, Some(writer.originals))
+    super::apply::apply_envelope_at(writer.connection, writer.models, &envelope, writer.now, writer.revision, Some(writer.originals))
 }

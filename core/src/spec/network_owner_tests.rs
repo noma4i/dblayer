@@ -152,8 +152,8 @@ fn random_inputs(seed: u64, len: usize) -> Vec<Input> {
             1 | 2 => Input::SetOnline(false),
             3 => snapshot(),
             4 => Input::Foreground,
-            5 => Input::PowerSaving((state >> 41) % 2 == 0),
-            _ => if (state >> 40) % 9 == 0 { Input::Closing } else { Input::SetOnline(true) },
+            5 => Input::PowerSaving((state >> 41).is_multiple_of(2)),
+            _ => if (state >> 40).is_multiple_of(9) { Input::Closing } else { Input::SetOnline(true) },
         }
     }).collect()
 }
@@ -227,7 +227,7 @@ fn orders(items: &[Input]) -> Vec<Vec<Input>> {
     (0..items.len()).flat_map(|at| {
         let mut rest = items.to_vec();
         let head = rest.remove(at);
-        orders(&rest).into_iter().map(move |mut tail| { tail.insert(0, head.clone()); tail })
+        orders(&rest).into_iter().map(move |mut tail| { tail.insert(0, head); tail })
     }).collect()
 }
 

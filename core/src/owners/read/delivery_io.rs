@@ -19,6 +19,13 @@ pub struct DeliveryIo {
     rest: Rest<DeliveryEffect>,
 }
 
+struct ReadRequest {
+    read_id: u64,
+    revision: i64,
+    after: i64,
+    view: View,
+}
+
 impl DeliveryIo {
     pub fn new(snapshots: Arc<dyn Snapshots>, answers: Outcomes<PullAnswer>, handle: Handle, rest: Rest<DeliveryEffect>) -> Self { Self { snapshots, answers, handle, counted: None, rest } }
 
@@ -28,7 +35,8 @@ impl DeliveryIo {
         self
     }
 
-    fn read(&self, stamp: EpochStamp, stream: StreamId, read_id: u64, revision: i64, after: i64, view: View, back: &Back<Deliveries>) {
+    fn read(&self, stamp: EpochStamp, stream: StreamId, request: ReadRequest, back: &Back<Deliveries>) {
+        let ReadRequest { read_id, revision, after, view } = request;
         let (snapshots, back) = (self.snapshots.clone(), back.clone());
         let launch = self.counted.as_ref().map(crate::runtime::Handle::launch);
         spawn_blocking_on(Carry::Detached, &self.handle, move || {
@@ -46,7 +54,7 @@ impl DeliveryIo {
 impl EffectRunner<Deliveries> for DeliveryIo {
     fn run(&mut self, stamp: EpochStamp, effect: DeliveryEffect, back: &Back<Deliveries>) {
         match effect {
-            DeliveryEffect::Stream { stream, effect: StreamEffect::Read { read_id, revision, after, view } } => self.read(stamp, stream, read_id, revision, after, view, back),
+            DeliveryEffect::Stream { stream, effect: StreamEffect::Read { read_id, revision, after, view } } => self.read(stamp, stream, ReadRequest { read_id, revision, after, view: *view }, back),
             DeliveryEffect::Stream { effect: StreamEffect::Answer { outcome, answer }, .. } => {
                 self.answers.settle(outcome, answer);
             }

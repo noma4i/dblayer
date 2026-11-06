@@ -70,6 +70,8 @@ impl fmt::Display for Observation {
     }
 }
 
+pub type PropertyRow = (&'static str, fn(&[Step]) -> Result<(), String>);
+
 /// An input with the observations expected right after it.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Step {

@@ -61,7 +61,7 @@ impl Database {
     pub(super) fn now(&self) -> Time { Time(u64::try_from(self.db.lock().now_ms()).unwrap_or(0)) }
 
     pub(super) fn optimistic(&self, model: &str, row: &crate::identity::RowId) -> Result<Option<super::wire::WireRow>, DbError> {
-        Ok(self.db.find(model, row)?.map(|found| self.wire(model).map(|wire| wire.row(&found))).transpose()?)
+        self.db.find(model, row)?.map(|found| self.wire(model).map(|wire| wire.row(&found))).transpose()
     }
 
     /// The path and the body of the request of a mutation: the registered document, the variables of the call.

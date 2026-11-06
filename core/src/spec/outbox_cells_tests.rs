@@ -14,7 +14,7 @@ fn kinds(effects: &[OutboxEffect]) -> Vec<CommitKind> {
 
 fn sends(effects: &[OutboxEffect]) -> usize { effects.iter().filter(|effect| matches!(effect, OutboxEffect::Send { .. })).count() }
 
-fn timers(effects: &[OutboxEffect]) -> usize { effects.iter().filter(|effect| matches!(effect, OutboxEffect::Schedule { .. })).count() }
+fn timers(effects: &[OutboxEffect]) -> usize { effects.iter().filter(|effect| matches!(effect, OutboxEffect::Schedule)).count() }
 
 fn answers(effects: &[OutboxEffect], reply: u64) -> Vec<OutboxAnswer> {
     effects.iter().filter_map(|effect| match effect { OutboxEffect::Reply { reply: found, answer } if *found == reply => Some(answer.clone()), _ => None }).collect()

@@ -6,7 +6,7 @@ use rusqlite::Connection;
 
 use crate::commit::CommitResult;
 use crate::ddl::{layout, table_name, Layout};
-use crate::identity::{Generation, RowRef};
+use crate::identity::Generation;
 use crate::pacing::{Clock, Counters, SystemClock};
 use crate::schema::{ModelSpec, SearchPath};
 
@@ -61,7 +61,7 @@ mod readers;
 mod references;
 pub(crate) mod reads;
 mod reset;
-pub(crate) use reset::{identity_of, row_op, RowOp};
+pub(crate) use reset::{identity_of, RowOp};
 mod rows;
 mod row_write;
 mod response;
@@ -79,14 +79,12 @@ mod write;
 
 pub use admission::{admit_upsert, UpsertAdmission};
 pub use context::{DroppedRecord, OpenReport};
-pub(crate) use context::{CommitNotice, Context};
+pub(crate) use context::Context;
 pub use db_error::DbError;
 pub use record::{Record, Row};
 pub(crate) use record::row_bytes;
 pub(crate) use lookup::{ParsedQuery, ViewRead};
 pub(crate) use plan::{Planned, LocalPlan, MutationCall};
-pub(crate) use restore_read::Restore;
-pub use apply::PlanCommitError;
 pub(crate) use apply::save_pending;
 pub use boot::BootReport;
 pub use error::StoreError;
@@ -95,7 +93,6 @@ pub(crate) use response::coalesce_rows;
 #[cfg(test)]
 pub use rows::ScopeRowsResult;
 pub use tombstones::TombstoneRetention;
-pub(crate) use tombstones::TombstonePrune;
 pub use windows::{family_prefix, window_key, PageInfo, WindowFreshness, WindowRecord};
 pub(crate) use windows::window_identity;
 
@@ -153,8 +150,8 @@ impl Inner {
 
 pub(crate) enum StoreEvent<'a> {
     Committed(&'a crate::commit::CommitResult),
-    Renewed(&'a [RowRef]),
-    Reset { revision: i64, models: Option<Vec<String>>, operations: Vec<crate::operation::QueueOperation> },
+    Renewed,
+    Reset { revision: i64, models: Option<Vec<String>> },
 }
 
 pub(crate) type StoreHook = Box<dyn Fn(StoreEvent<'_>) + Send + Sync>;
@@ -210,7 +207,7 @@ impl Committed<'_> {
     }
 
     fn event(result: &CommitResult) -> StoreEvent<'_> {
-        if result.is_noop() { StoreEvent::Renewed(&result.renewed) } else { StoreEvent::Committed(result) }
+        if result.is_noop() { StoreEvent::Renewed } else { StoreEvent::Committed(result) }
     }
 
     pub(crate) fn result(&self) -> &CommitResult {
@@ -256,10 +253,6 @@ pub struct Store {
     #[cfg(test)]
     pub(crate) require_unlocked_responses: std::sync::atomic::AtomicBool,
     #[cfg(test)]
-    pub(crate) before_write: Mutex<Option<Box<dyn FnOnce() + Send>>>,
-    #[cfg(test)]
-    pub(crate) after_epoch_check: Mutex<Option<Box<dyn FnOnce() + Send>>>,
-    #[cfg(test)]
     pub(crate) after_network_check: Mutex<Option<Box<dyn FnOnce() + Send>>>,
     #[cfg(test)]
     pub(crate) after_commit: Mutex<Option<CommitCallback>>,
@@ -298,9 +291,7 @@ impl Store {
             #[cfg(test)]
             require_unlocked_responses: std::sync::atomic::AtomicBool::new(false),
             #[cfg(test)]
-            before_write: Mutex::new(None),
             #[cfg(test)]
-            after_epoch_check: Mutex::new(None),
             #[cfg(test)]
             after_network_check: Mutex::new(None),
             #[cfg(test)]
@@ -384,11 +375,6 @@ impl Store {
         } else {
             required.iter().any(|key| models.get(*key).is_some_and(|model| model.spec.is_memory()))
         }
-    }
-
-    fn reads_off_writer(&self) -> bool {
-        let models = self.models.read().unwrap_or_else(|error| error.into_inner());
-        self.readers.is_some() && !Self::needs_writer(&models, &[])
     }
 
     pub(crate) fn reads(&self) -> &Arc<reads::Reads> { &self.reads }

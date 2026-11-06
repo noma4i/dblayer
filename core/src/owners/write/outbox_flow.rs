@@ -13,6 +13,15 @@ use crate::runtime::{Effect, Effects, Epoch, Outbound};
 
 
 
+/// What the decoded answer of a mutation carries.
+pub(super) struct Answered {
+    pub rows: Vec<(String, Vec<RowValue>)>,
+    pub swaps: Vec<(String, String)>,
+    pub stale: Vec<(String, String)>,
+    pub result: Option<String>,
+    pub missing: Vec<String>,
+}
+
 impl OutboxState {
     /// The rows of a saved answer arrived: the operation goes on as one whose live answer arrived.
     pub(super) fn rows_arrived(&mut self, op_id: OpId) {
@@ -22,7 +31,8 @@ impl OutboxState {
         }
     }
 
-    pub(super) fn on_response(&mut self, op_id: OpId, rows: Vec<(String, Vec<RowValue>)>, swaps: Vec<(String, String)>, stale: Vec<(String, String)>, result: Option<String>, missing: Vec<String>, errors: Option<bool>, fx: &mut Effects<Outbox>) {
+    pub(super) fn on_response(&mut self, op_id: OpId, answer: Answered, errors: Option<bool>, fx: &mut Effects<Outbox>) {
+        let Answered { rows, swaps, stale, result, missing } = answer;
         self.rows_arrived(op_id);
         if self.stage_of(op_id) != Some(Stage::Sending) {
             return;
@@ -82,7 +92,7 @@ impl OutboxState {
                 }
             }
             Some(Stage::Sending) => {
-                self.ops.get_mut(&op_id).map(|operation| operation.stage = Stage::Queued);
+                if let Some(operation) = self.ops.get_mut(&op_id) { operation.stage = Stage::Queued; }
             }
             Some(Stage::PersistingAttempt) => self.store(op_id, CommitKind::Attempt, fx),
             Some(Stage::Landing) => self.store(op_id, CommitKind::Land, fx),
@@ -132,7 +142,7 @@ impl OutboxState {
                     if let Some(session) = self.peers.session { fx.push(Effect::Send(Outbound::new(session, SessionInput::Release { req_id: self.ops[&op_id].request_id }))); }
                 }
                 self.discard_waiters.push((op_id, reply));
-                self.ops.get_mut(&op_id).map(|operation| operation.stage = Stage::RollingBack(Why::Discarded));
+                if let Some(operation) = self.ops.get_mut(&op_id) { operation.stage = Stage::RollingBack(Why::Discarded); }
                 self.store(op_id, CommitKind::Rollback, fx);
             }
             Stage::RollingBack(_) => self.discard_waiters.push((op_id, reply)),
@@ -197,8 +207,8 @@ impl OutboxState {
         self.add_operation(op_id, op, Stage::Submitting);
         self.submit_replies.insert(op_id, reply);
         if let Some(created) = unsent_create {
-            self.ops.get_mut(&op_id).map(|operation| operation.cancels = Some(created));
-            self.ops.get_mut(&created).map(|operation| operation.stage = Stage::RollingBack(Why::Discarded));
+            if let Some(operation) = self.ops.get_mut(&op_id) { operation.cancels = Some(created); }
+            if let Some(operation) = self.ops.get_mut(&created) { operation.stage = Stage::RollingBack(Why::Discarded); }
             self.store(created, CommitKind::Rollback, fx);
         } else {
             self.store(op_id, CommitKind::Intent, fx);

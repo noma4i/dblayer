@@ -152,7 +152,9 @@ impl Store {
                 touch_effects(&mut effects, self.touch_ops(reader, self.spec(&edited_model)?, &[&after, &before], &RowRef::new(ModelKey::new(&edited_model), RowId::new(&edited_id)?))?);
             }
             if let Some(declared) = &declared {
-                self.plan_closed_effect(reader, spec, declared, (&own, &args), now_ms, &mut effects, &mut shown)?;
+                if let Some(copy_id) = self.plan_closed_effect(reader, spec, declared, (&own, &args), now_ms, &mut effects)? {
+                    shown = Some(copy_id);
+                }
             }
             Ok(effects)
         })?;
@@ -172,12 +174,13 @@ impl Store {
         Ok(Planned { model: model.to_string(), row_id: id.clone(), shown: id.clone(), input: json!({ "id": id.as_str() }), effects, noop: false })
     }
 
-    fn plan_closed_effect(&self, reader: &Reader<'_>, spec: &ModelSpec, declared: &crate::schema::ActionDeclaration, (own, args): (&RowRef, &Map<String, Value>), now_ms: i64, effects: &mut IntentEffects, shown: &mut Option<RowId>) -> Result<(), DbError> {
+    fn plan_closed_effect(&self, reader: &Reader<'_>, spec: &ModelSpec, declared: &crate::schema::ActionDeclaration, (own, args): (&RowRef, &Map<String, Value>), now_ms: i64, effects: &mut IntentEffects) -> Result<Option<RowId>, DbError> {
         if declared.removes_receiver {
             for target in self.destroy_targets(reader, own)? {
                 effects.tombstones.push(EffectTombstone { model: target.model.to_string(), row_id: target.id.to_string() });
             }
         }
+        let mut copied = None;
         if let Some(copy) = &declared.copies_receiver_to {
             let target = args.get(&copy.arg).cloned().ok_or_else(|| DbError::Internal(format!("the argument {} of the copy is missing", copy.arg)))?;
             let mut values = reader.point(own.model.as_str(), own.id.as_str())?.ok_or_else(|| DbError::NotFound { model: own.model.to_string(), id: own.id.to_string() })?;
@@ -189,7 +192,7 @@ impl Store {
             let data = spec.normalize_local(&values, now_ms)?;
             member_effects(effects, local_scope_ops(reader, spec, &copy_id, &data)?);
             effects.rows.push(row_effect(own.model.as_str(), copy_id.as_str(), None, &data));
-            *shown = Some(copy_id);
+            copied = Some(copy_id);
         }
         let (mut scope_ops, mut joins) = (Vec::new(), Vec::new());
         for effect in &declared.scope_effects {
@@ -206,7 +209,7 @@ impl Store {
                 _ => {}
             }
         }
-        Ok(())
+        Ok(copied)
     }
 }
 

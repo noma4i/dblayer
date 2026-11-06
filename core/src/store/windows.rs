@@ -149,6 +149,13 @@ impl Store {
     }
 
     #[cfg(test)]
+    fn max_window_sequence(&self) -> Result<i64, StoreError> {
+        let inner = self.lock();
+        inner.ensure_healthy()?;
+        max_sequence(&inner.connection)
+    }
+
+    #[cfg(test)]
     pub(crate) fn invalidate_family_now(&self, model: &str, relation: &str) -> Result<usize, StoreError> {
         let since = self.max_window_sequence()? + 1;
         self.invalidate_family(&crate::lifecycle::authority::Authority::Internal(crate::lifecycle::authority::Internal::for_tests()), model, relation, since)
@@ -161,11 +168,5 @@ impl Store {
         let mut statement = inner.connection.prepare("SELECT key FROM query_window WHERE stale_since IS NOT NULL ORDER BY key")?;
         let keys = statement.query_map([], |row| row.get(0))?;
         Ok(keys.collect::<Result<_, _>>()?)
-    }
-
-    pub(crate) fn max_window_sequence(&self) -> Result<i64, StoreError> {
-        let inner = self.lock();
-        inner.ensure_healthy()?;
-        max_sequence(&inner.connection)
     }
 }

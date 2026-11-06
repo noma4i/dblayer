@@ -6,7 +6,7 @@ use serde_json::{Map, Value};
 
 use crate::commit::EdgeValue;
 use crate::schema::FieldKind;
-use crate::value::{read_id, ScalarKind};
+use crate::value::ScalarKind;
 
 use super::db_error::DbError;
 use super::{window_identity, Store};

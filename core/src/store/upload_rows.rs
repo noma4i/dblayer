@@ -12,6 +12,8 @@ use crate::schema::OnFailure;
 use super::db_error::DbError;
 use super::Store;
 
+type BatchRow = (crate::identity::RowId, serde_json::Map<String, serde_json::Value>);
+
 /// A row of `sync_upload` as the columns give it.
 pub(crate) struct UploadRaw {
     key: [String; 3],
@@ -171,7 +173,7 @@ impl Store {
     }
 
     /// The elements of the batch `group` that still wait for the answer: the row id and the fields the element sends.
-    pub(crate) fn batch_rows(&self, model: &str, action: &str, group: u64) -> Result<Vec<(crate::identity::RowId, serde_json::Map<String, serde_json::Value>)>, DbError> {
+    pub(crate) fn batch_rows(&self, model: &str, action: &str, group: u64) -> Result<Vec<BatchRow>, DbError> {
         let found = self
             .read_locked(|connection| {
                 let mut statement = connection.prepare_cached("SELECT row_id, fields FROM sync_upload WHERE model = ?1 AND action = ?2 AND batch = ?3 ORDER BY seq")?;

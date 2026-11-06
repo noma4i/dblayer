@@ -40,7 +40,7 @@ impl Life {
     }
 
     /// The rule of a call of account data for the epoch of the caller.
-    pub fn verdict(&self, epoch: Epoch) -> super::call_rule::CallVerdict {
+    pub(crate) fn verdict(&self, epoch: Epoch) -> super::call_rule::CallVerdict {
         if self.shut.load(Ordering::SeqCst) { return super::call_rule::CallVerdict::Closed; }
         let published = self.published();
         match super::call_rule::call_verdict(&published, epoch, self.with_session) {

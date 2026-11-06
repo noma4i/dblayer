@@ -51,7 +51,7 @@ impl EffectRunner<Lifecycle> for LifecycleRunner {
             }
             LifecycleEffect::EpochStarted { epoch, identity, generation } => {
                 wiring.handle.start_epoch(epoch);
-                let started = crate::owners::contract::EpochStarted { epoch, identity: identity.map(|identity| identity.into()), generation };
+                let started = crate::owners::contract::EpochStarted { epoch, identity, generation };
                 wiring.to_windows(WindowsInput::EpochStarted(started.clone()));
                 wiring.to_deliveries(DeliveryInput::EpochStarted(started.clone()));
                 wiring.to_feed(FeedInput::EpochStarted(started.clone()));

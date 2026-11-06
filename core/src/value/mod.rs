@@ -14,7 +14,7 @@ use crate::identity::{RowId, ListKey};
 mod fractional;
 mod numeric;
 
-pub(crate) use numeric::{compare_numbers, Numeric};
+pub(crate) use numeric::compare_numbers;
 
 pub use fractional::{fractional_between, fractional_keys_between, ORDER_KEY_LIMIT};
 

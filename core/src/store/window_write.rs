@@ -5,7 +5,6 @@ use serde_json::{Map, Value};
 use crate::commit::{CommitEnvelope, CommitResult, EntityOp, WindowSave, WindowTail, WriteOrigin};
 use crate::identity::{ModelKey, RowId};
 use crate::owners::read::windows::WindowKind;
-use crate::owners::store::RowValue;
 use crate::read::{incoming_ids, plan_landing, StoredScope, EDGE_KEY};
 use crate::schema::{Coverage, RemoteShape};
 use crate::value::read_id;
@@ -13,7 +12,7 @@ use crate::value::read_id;
 use super::merge::{admitted, Admission};
 use super::replace::{replace_plan, scope_membership, ReplaceRequest};
 use super::row_write::RowWrite;
-use super::{Reader, StoreError, TombstonePrune};
+use super::{Reader, StoreError};
 use super::window_values::{edge_writes, row_values, WindowPage};
 
 fn fault(error: impl std::fmt::Display) -> StoreError { StoreError::Constraint(error.to_string()) }
@@ -60,7 +59,7 @@ pub(super) fn land(writer: &mut RowWrite<'_>, page: &WindowPage<'_>) -> Result<C
         for row in accepted {
             if let Some(id) = row.get("id").and_then(read_id) { envelope.entity_ops.push(EntityOp::Upsert { model: ModelKey::new(model), id, row }); }
         }
-        return super::apply::apply_envelope_at(writer.connection, writer.models, &envelope, writer.now, TombstonePrune::Skip, writer.revision, Some(writer.originals));
+        return super::apply::apply_envelope_at(writer.connection, writer.models, &envelope, writer.now, writer.revision, Some(writer.originals));
     };
     let spec = &writer.models.get(model).ok_or_else(|| StoreError::UnknownModel(model.to_string()))?.spec;
     let declared = spec.relations.iter().find(|item| item.name == relation).ok_or_else(|| StoreError::Constraint(format!("{model} has no relation {relation}")))?;
@@ -107,5 +106,5 @@ pub(super) fn land(writer: &mut RowWrite<'_>, page: &WindowPage<'_>) -> Result<C
         tail, issued, applied, cleared_at: first.then_some(writer.now),
     });
     envelope.validate(writer.generation)?;
-    super::apply::apply_envelope_at(writer.connection, writer.models, &envelope, writer.now, TombstonePrune::Skip, writer.revision, Some(writer.originals))
+    super::apply::apply_envelope_at(writer.connection, writer.models, &envelope, writer.now, writer.revision, Some(writer.originals))
 }

@@ -8,7 +8,7 @@ use super::harness_life::{bounded, kind, timeout, Rig};
 use super::ref_lifecycle::LifecycleRef;
 use crate::check::explore::{all_traces, seeded};
 use crate::check::model::{run, Divergence, Owner, Property, RefModel, Sut};
-use crate::check::value::{Input, Observation, Step};
+use crate::check::value::{Input, Observation, PropertyRow, Step};
 use crate::ffi::DbError;
 
 pub fn input(name: &str) -> Input {
@@ -312,7 +312,7 @@ fn idle(steps: &[Step]) -> Result<(), String> {
     }
 }
 
-pub const PROPERTIES: [(&str, fn(&[Step]) -> Result<(), String>); 8] = [
+pub const PROPERTIES: [PropertyRow; 8] = [
     ("P-LIFE-01", epoch_monotonic),
     ("P-LIFE-02", no_work_after_end),
     ("P-LIFE-03", clear_before_start),

@@ -1,10 +1,9 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use super::fake_server_tests::{FakeServer, MemoryCredentials};
+use super::fake_server_tests::FakeServer;
 use super::vectors_tests::*;
 use super::*;
-use crate::store::Store;
 use crate::pacing::ManualClock;
 
 fn accepted(origin: &str) -> bool {

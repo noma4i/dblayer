@@ -8,7 +8,6 @@ mod prior;
 mod view;
 mod write;
 
-pub(crate) use outbox_entry::{plan_fault, read_outbox, OutboxOperation};
+pub(crate) use outbox_entry::{read_outbox, OutboxOperation};
 pub(crate) use prior::{swap_id, Prior, PriorRow};
 pub(crate) use write::{LocalPlan, MutationCall, Planned};
-pub(crate) use view::ReaderView;

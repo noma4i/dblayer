@@ -1,14 +1,13 @@
 use super::fixtures::*;
 use super::*;
 use crate::commit::{
-    CommitEnvelope, DestroyReason, EntityOp, EnvelopeFault, OperationRecord, OperationTransition, RowChangeKind, ScopeOp, ScopeRef, WriteOrigin,
+    DestroyReason, EntityOp, EnvelopeFault, OperationRecord, OperationTransition, RowChangeKind, ScopeOp, ScopeRef,
 };
 use crate::operation::OperationStatus;
 use crate::syncstate::{FailureKind, OperationFailure};
 use serde_json::json;
 use std::collections::HashSet;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use crate::test_wait::join_within;
 
 fn commit(store: &Store, entity_ops: Vec<EntityOp>, scope_ops: Vec<ScopeOp>) -> crate::commit::CommitResult {
     store.commit(envelope(store, entity_ops, scope_ops)).unwrap()
@@ -330,50 +329,6 @@ fn second_apply_failure_poisons_reads_until_reset() {
         assert!(store.apply_failure().is_none());
         assert!(store.point("items", "i1").unwrap().is_none());
     }
-}
-
-#[test]
-fn commit_with_plans_against_the_snapshot_of_the_same_transaction() {
-    let (store, _) = booted_store();
-    commit(&store, vec![upsert("messages", json!({"id": "m1", "chatId": "c1", "body": "a"}))], vec![]);
-    let result = store
-        .commit_prepared(store.generation(), |reader| {
-            let seen = reader.stored_row("messages", "m1").unwrap().unwrap();
-            let mut envelope = CommitEnvelope::new(WriteOrigin::Patch, store_generation());
-            envelope.entity_ops = vec![upsert("messages", json!({"id": "m1", "chatId": "c1", "body": format!("{}!", seen.row["body"].as_str().unwrap())}))];
-            Ok::<_, ()>(Some(envelope))
-        })
-        .unwrap();
-    assert_eq!(result.revision, Some(2));
-    assert_eq!(store.point("messages", "m1").unwrap().unwrap()["body"], json!("a!"));
-}
-
-fn store_generation() -> crate::identity::Generation {
-    crate::identity::Generation::INITIAL
-}
-
-#[test]
-fn commit_with_plan_error_writes_nothing_and_none_is_a_noop() {
-    let (store, _) = booted_store();
-    let failed = store.commit_prepared(store.generation(), |_| Err::<Option<CommitEnvelope>, _>("bad plan"));
-    assert!(matches!(failed, Err(PlanCommitError::Plan("bad plan"))));
-    let noop = store.commit_prepared(store.generation(), |_| Ok::<Option<CommitEnvelope>, ()>(None)).unwrap();
-    assert!(noop.is_noop());
-    assert_eq!(store.revision_seq().unwrap(), 0);
-}
-
-#[test]
-fn commit_with_rejects_stale_generation_before_planning() {
-    let (store, _) = booted_store();
-    let old = store.generation();
-    store.clear_account_in_tests().unwrap();
-    let mut planned = false;
-    let outcome = store.commit_prepared(old, |_| {
-        planned = true;
-        Ok::<Option<CommitEnvelope>, ()>(None)
-    });
-    assert!(matches!(outcome, Err(PlanCommitError::Store(StoreError::Envelope(EnvelopeFault::StaleGeneration)))));
-    assert!(!planned);
 }
 
 include!("apply_operations_tests.rs");

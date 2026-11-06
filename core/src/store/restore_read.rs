@@ -29,8 +29,6 @@ impl Store {
     }
 
 
-    /// The `on_failure` rule comes from the operation the model declares for `(model, action)`: the base has no column for it. An action that declares no mutation is an error that names it.
-
     pub(crate) fn read_restore(&self) -> Result<Restore, DbError> {
         let (entries, pending, uploads, answers, orphans, batches, orphan_answers) = self.read_models(&[], |reader| {
             let connection = reader.connection();

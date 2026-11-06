@@ -181,7 +181,8 @@ impl TransferState {
 
     fn group_of(&self, id: TransferId) -> Option<u64> { self.transfers.get(&id).and_then(|transfer| transfer.batch_id) }
 
-    pub(super) fn copy_done(&mut self, id: TransferId, attempt_id: AttemptId, size: u64, sha256: String, place: Location, cached: CachedBlob, fx: &mut Fx) {
+    pub(super) fn copy_done(&mut self, id: TransferId, attempt_id: AttemptId, copy: CopiedBlob, fx: &mut Fx) {
+        let CopiedBlob { size, sha256, place, cached } = copy;
         let Some(transfer) = self.transfers.get_mut(&id) else { return };
         if transfer.stage != TransferStage::Copying || transfer.attempt_id != attempt_id {
             return;

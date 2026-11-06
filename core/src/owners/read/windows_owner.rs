@@ -3,8 +3,17 @@ struct Window {
     machine: InitializedStateMachine<Facts>,
 }
 
+/// What a window knows of its owner when it opens.
+struct WindowBasis {
+    epoch: Epoch,
+    online: Option<bool>,
+    base_generation: u64,
+    generations: BTreeMap<String, u64>,
+}
+
 impl Window {
-    fn new(model: String, epoch: Epoch, online: Option<bool>, base_generation: u64, generations: BTreeMap<String, u64>, max_pages: u32, members_complete: bool, ids: (&mut RequestId, &mut u32)) -> Self {
+    fn new(model: String, basis: WindowBasis, max_pages: u32, members_complete: bool, ids: (&mut RequestId, &mut u32)) -> Self {
+        let WindowBasis { epoch, online, base_generation, generations } = basis;
         let facts = Facts {
             dependency_models: BTreeSet::from([model]),
             epoch,
@@ -51,7 +60,8 @@ impl Window {
 
     fn request_id(&self) -> Option<RequestId> {
         match self.machine.state() {
-            WinState::Loading { request, .. } | WinState::Landing { request, .. } => Some(*request),
+            WinState::Loading { load } => Some(load.request),
+            WinState::Landing { request, .. } => Some(*request),
             _ => None,
         }
     }
@@ -68,7 +78,8 @@ impl Window {
 
     fn owns(&self, id: RequestId) -> bool {
         match self.machine.state() {
-            WinState::Loading { request, .. } | WinState::Landing { request, .. } => *request == id,
+            WinState::Loading { load } => load.request == id,
+            WinState::Landing { request, .. } => *request == id,
             _ => false,
         }
     }
@@ -154,7 +165,7 @@ impl WindowsState {
     fn ensure(&mut self, key: &WindowKey) {
         if !self.windows.contains_key(key) {
             let ids = (&mut self.next_request, &mut self.next_attempt);
-            let window = Window::new(key.model.clone(), self.epoch, self.online, self.base_generation, self.generations.clone(), (self.max_pages)(key), (self.members_complete)(key), ids);
+            let window = Window::new(key.model.clone(), WindowBasis { epoch: self.epoch, online: self.online, base_generation: self.base_generation, generations: self.generations.clone() }, (self.max_pages)(key), (self.members_complete)(key), ids);
             self.windows.insert(key.clone(), window);
         }
     }

@@ -129,7 +129,7 @@ impl Store {
         store.set_hook(Box::new(move |event| match event {
             StoreEvent::Committed(result) => notified.notify(CommitNotice::of_commit(result)),
             StoreEvent::Reset { revision, models, .. } => notified.notify(CommitNotice::of_reset(revision, models.as_deref())),
-            StoreEvent::Renewed(_) => {}
+            StoreEvent::Renewed => {}
         }));
         store.context = Context {
             pointer_guards: pointer_guards(&models),

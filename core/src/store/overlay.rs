@@ -24,7 +24,6 @@ pub(super) struct OverlaySnapshot {
 #[derive(Clone)]
 pub(super) struct OverlayValue {
     pub value: Value,
-    pub revision: i64,
     pub position: u64,
 }
 
@@ -32,7 +31,7 @@ impl OverlaySnapshot {
     pub fn set(&mut self, row: RowKey, field: String, value: Value) -> u64 {
         self.next_token += 1;
         let mut fields = self.values.get(&row).cloned().unwrap_or_default();
-        fields.insert(field, OverlayValue { value, revision: self.revision, position: self.next_token });
+        fields.insert(field, OverlayValue { value, position: self.next_token });
         self.values.insert(row, fields);
         self.next_token
     }

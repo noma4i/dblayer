@@ -1,17 +1,13 @@
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::sync::{Arc, Mutex, Weak};
-use std::time::Duration;
 
 use super::credential::Secret;
 use super::exchange::digest_of;
-use super::fake_server_tests::{FakeServer, MemoryCredentials};
-use super::protocol_tests;
+use super::fake_server_tests::MemoryCredentials;
 use super::state;
-use super::vectors_tests::*;
-use super::{CredentialSlot, EncryptedConfig};
+use super::CredentialSlot;
 use crate::store::Store;
-use crate::pacing::ManualClock;
 use crate::test_wait::{join_within, recv_within};
 use crate::transport::TransportError;
 
@@ -73,12 +69,10 @@ struct Rig {
 }
 
 fn rig(mode: Mode) -> Rig {
-    let clock = Arc::new(ManualClock::new(Duration::from_secs(1_800_000_000)));
     let (entered_to, entered) = channel();
     let (release, release_from) = channel();
     let slot = Arc::new(Slot { memory: MemoryCredentials::default(), client: Mutex::new(Weak::new()), mode, fired: AtomicBool::new(false), sets: AtomicUsize::new(0), entered: Mutex::new(entered_to), release: Mutex::new(release_from) });
     let db = Store::open_models(None, Vec::new(), None).map(std::sync::Arc::new).unwrap();
-    let config = EncryptedConfig { origin: origin().to_string(), server_key: public_key_der_b64().to_string(), pin: pin().to_string(), ..protocol_tests::config() };
     let client = Held::new(slot.clone(), db.clone());
     *slot.client.lock().unwrap() = Arc::downgrade(&client);
     Rig { client, slot, db, entered, release }
@@ -121,9 +115,7 @@ fn credential_callback_asking_for_the_credential_is_refused() {
         fn set(&self, _: &str) -> Result<(), TransportError> { Ok(()) }
         fn clear(&self) -> Result<(), TransportError> { Ok(()) }
     }
-    let clock = Arc::new(ManualClock::new(Duration::from_secs(1_800_000_000)));
     let slot = Arc::new(Asks(Mutex::new(Weak::new()), Mutex::new(None)));
-    let config = EncryptedConfig { origin: origin().to_string(), server_key: public_key_der_b64().to_string(), pin: pin().to_string(), ..protocol_tests::config() };
     let client = Held::new(slot.clone(), Store::open_models(None, Vec::new(), None).map(std::sync::Arc::new).unwrap());
     *slot.0.lock().unwrap() = Arc::downgrade(&client);
 
@@ -140,9 +132,7 @@ fn sess_prop_credential_in_store() {
         fn set(&self, credential: &str) -> Result<(), TransportError> { self.memory.set(credential) }
         fn clear(&self) -> Result<(), TransportError> { self.clears.fetch_add(1, Ordering::SeqCst); self.memory.clear() }
     }
-    let clock = Arc::new(ManualClock::new(Duration::from_secs(1_800_000_000)));
     let slot = Arc::new(Counting { memory: MemoryCredentials::default(), gets: AtomicUsize::new(0), clears: AtomicUsize::new(0) });
-    let config = EncryptedConfig { origin: origin().to_string(), server_key: public_key_der_b64().to_string(), pin: pin().to_string(), ..protocol_tests::config() };
     let client = Held::new(slot.clone(), Store::open_models(None, Vec::new(), None).map(std::sync::Arc::new).unwrap());
 
     let first = client.credential().unwrap();

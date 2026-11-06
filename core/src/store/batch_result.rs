@@ -8,7 +8,9 @@ use crate::identity::RowRef;
 
 use super::{ModelInfo, Reader, StoreError};
 
-pub(super) fn expiry(connection: &Connection, models: &BTreeMap<String, ModelInfo>, results: &[CommitResult], now: i64) -> Result<(Vec<crate::owners::store::MemoryExpiry>, Vec<(String, String)>), StoreError> {
+pub(super) type MemoryExpiries = (Vec<crate::owners::store::MemoryExpiry>, Vec<(String, String)>);
+
+pub(super) fn expiry(connection: &Connection, models: &BTreeMap<String, ModelInfo>, results: &[CommitResult], now: i64) -> Result<MemoryExpiries, StoreError> {
     let reader = Reader::new(connection, models);
     let mut written = BTreeSet::new();
     let mut removed = BTreeSet::new();

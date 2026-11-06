@@ -12,7 +12,7 @@ pub(crate) use machine::OperationEvent;
 #[cfg(test)]
 pub(crate) use machine::OperationFacts;
 pub use outbox::*;
-pub(crate) use queue::{OperationQueues, QueueOperation};
+pub(crate) use queue::QueueOperation;
 pub use quarantine::*;
 pub use status::*;
 pub use stored::*;

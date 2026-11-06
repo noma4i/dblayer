@@ -143,7 +143,7 @@ fn dlv_prop_rows_visible() {
                     _ => {}
                 }
             }
-            let last = values.iter().filter_map(rows_revision).last().unwrap_or(0);
+            let last = values.iter().filter_map(rows_revision).next_back().unwrap_or(0);
             if last >= 2 && !(list.contains(&"r1".to_string()) && list.contains(&"r2".to_string())) {
                 return Err(format!("revision {last} shows {list:?}"));
             }

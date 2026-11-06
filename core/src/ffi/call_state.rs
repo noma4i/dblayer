@@ -27,10 +27,6 @@ impl CallState {
         self.state.store(Self::CANCELLED, Ordering::SeqCst);
     }
 
-    pub(crate) fn is_cancelled(&self) -> bool {
-        self.state.load(Ordering::SeqCst) == Self::CANCELLED
-    }
-
     pub(crate) fn call(&self, listener: impl FnOnce()) -> bool {
         #[cfg(test)]
         if let Some(hook) = self.before_enter.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).take() {

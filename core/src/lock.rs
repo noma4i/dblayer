@@ -55,10 +55,6 @@ mod debug {
         HELD.with(|held| assert!(held.borrow().is_empty(), "{boundary} under library locks: {:?}", *held.borrow()));
     }
 
-    pub(crate) fn holds<T>() -> bool {
-        HELD.with(|held| held.borrow().iter().any(|(_, class)| *class == std::any::type_name::<T>()))
-    }
-
     #[cfg(test)]
     pub(crate) fn is_empty() -> bool { HELD.with(|held| held.borrow().is_empty()) }
     #[cfg(test)]
@@ -81,19 +77,6 @@ mod debug {
         Guard { guard: Some(guard), instance, class }
     }
 
-    pub(crate) fn try_lock<T>(mutex: &Mutex<T>) -> Option<Guard<'_, T>> {
-        let instance = std::ptr::from_ref(mutex) as usize;
-        let class = std::any::type_name::<T>();
-        let guard = match mutex.try_lock() {
-            Ok(guard) => guard,
-            Err(std::sync::TryLockError::Poisoned(e)) => e.into_inner(),
-            Err(std::sync::TryLockError::WouldBlock) => return None,
-        };
-        before(instance, class);
-        enter(instance, class);
-        Some(Guard { guard: Some(guard), instance, class })
-    }
-
     pub(crate) fn wait<'a, T>(condition: &Condvar, mut guard: Guard<'a, T>) -> Guard<'a, T> {
         let raw = guard.guard.take().expect("tracked guard missing");
         leave(guard.instance);
@@ -104,35 +87,10 @@ mod debug {
         guard
     }
 
-    pub(crate) fn wait_timeout_while<'a, T>(condition: &Condvar, mut guard: Guard<'a, T>, duration: std::time::Duration, mut predicate: impl FnMut(&mut T) -> bool) -> (Guard<'a, T>, std::sync::WaitTimeoutResult) {
-        let raw = guard.guard.take().expect("tracked guard missing");
-        leave(guard.instance);
-        before(guard.instance, guard.class);
-        struct PredicateGuard(usize);
-        impl Drop for PredicateGuard { fn drop(&mut self) { leave(self.0); } }
-        let (raw, result) = crate::blocking::blocking_unit(|| condition.wait_timeout_while(raw, duration, |value| {
-            enter(guard.instance, guard.class);
-            let _entry = PredicateGuard(guard.instance);
-            predicate(value)
-        }).unwrap_or_else(|e| e.into_inner()));
-        enter(guard.instance, guard.class);
-        guard.guard = Some(raw);
-        (guard, result)
-    }
-
-    pub(crate) fn wait_timeout<'a, T>(condition: &Condvar, mut guard: Guard<'a, T>, duration: std::time::Duration) -> (Guard<'a, T>, std::sync::WaitTimeoutResult) {
-        let raw = guard.guard.take().expect("tracked guard missing");
-        leave(guard.instance);
-        before(guard.instance, guard.class);
-        let (raw, result) = crate::blocking::blocking_unit(|| condition.wait_timeout(raw, duration).unwrap_or_else(|e| e.into_inner()));
-        enter(guard.instance, guard.class);
-        guard.guard = Some(raw);
-        (guard, result)
-    }
 }
 
 #[cfg(any(debug_assertions, test))]
-pub(crate) use debug::{assert_no_library_lock, holds, lock, lock_as, try_lock, wait, wait_timeout, wait_timeout_while, Guard};
+pub(crate) use debug::{assert_no_library_lock, lock, wait};
 #[cfg(test)]
 pub(crate) use debug::{held_classes, is_empty};
 
@@ -150,26 +108,10 @@ pub(crate) fn lock<T>(mutex: &Mutex<T>) -> Guard<'_, T> { lock_as(mutex, std::an
 pub(crate) fn lock_as<'a, T>(mutex: &'a Mutex<T>, _: &'static str) -> Guard<'a, T> { acquire(mutex) }
 #[cfg(not(any(debug_assertions, test)))]
 #[inline(always)]
-pub(crate) fn try_lock<T>(mutex: &Mutex<T>) -> Option<Guard<'_, T>> {
-    match mutex.try_lock() { Ok(guard) => Some(guard), Err(std::sync::TryLockError::Poisoned(e)) => Some(e.into_inner()), Err(std::sync::TryLockError::WouldBlock) => None }
-}
-#[cfg(not(any(debug_assertions, test)))]
-#[inline(always)]
 pub(crate) fn wait<'a, T>(condition: &Condvar, guard: Guard<'a, T>) -> Guard<'a, T> { crate::blocking::blocking_unit(|| condition.wait(guard).unwrap_or_else(|e| e.into_inner())) }
 #[cfg(not(any(debug_assertions, test)))]
 #[inline(always)]
 pub(crate) fn assert_no_library_lock(_: &str) {}
-#[cfg(not(any(debug_assertions, test)))]
-#[inline(always)]
-pub(crate) fn wait_timeout_while<'a, T>(condition: &Condvar, guard: Guard<'a, T>, duration: std::time::Duration, predicate: impl FnMut(&mut T) -> bool) -> (Guard<'a, T>, std::sync::WaitTimeoutResult) {
-    crate::blocking::blocking_unit(|| condition.wait_timeout_while(guard, duration, predicate).unwrap_or_else(|e| e.into_inner()))
-}
-#[cfg(not(any(debug_assertions, test)))]
-#[inline(always)]
-pub(crate) fn wait_timeout<'a, T>(condition: &Condvar, guard: Guard<'a, T>, duration: std::time::Duration) -> (Guard<'a, T>, std::sync::WaitTimeoutResult) {
-    crate::blocking::blocking_unit(|| condition.wait_timeout(guard, duration).unwrap_or_else(|e| e.into_inner()))
-}
-
 #[cfg(test)]
 #[path = "lock_tests.rs"]
 mod tests;

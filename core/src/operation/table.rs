@@ -88,22 +88,6 @@ pub(crate) fn read_queue_operation(connection: &Connection, seq: i64) -> rusqlit
     Ok(Some(super::QueueOperation { operation, uploading }))
 }
 
-pub(crate) fn read_queue(connection: &Connection) -> rusqlite::Result<Vec<super::QueueOperation>> {
-    let sql = format!("SELECT {OPERATION_COLUMNS}, EXISTS (SELECT 1 FROM op_item WHERE op_item.seq = op.seq) FROM op WHERE status IN {OPEN_STATUSES} ORDER BY seq");
-    let mut rows_of = read_all_rows(connection)?;
-    let mut extensions = operation_extensions(connection, None)?;
-    let mut statement = connection.prepare(&sql)?;
-    let mut found = Vec::new();
-    for row in statement.query_map([], |row| Ok((operation_at(row)?, row.get::<_, bool>(13)?)))? {
-        if let (Some(mut operation), uploading) = row? {
-            operation.row_ids = rows_of.remove(&operation.id.0).unwrap_or_default();
-            attach_extensions(&mut operation.error, extensions.remove(&operation.id.0));
-            found.push(super::QueueOperation { operation, uploading });
-        }
-    }
-    Ok(found)
-}
-
 pub(crate) fn row_operation_sequences(connection: &Connection, keys: &BTreeSet<(String, String)>) -> rusqlite::Result<BTreeSet<i64>> {
     let sql = format!("SELECT seq FROM op WHERE seq IN (SELECT seq FROM op_row WHERE row_id = ?2 UNION SELECT seq FROM op WHERE temp_id = ?2) AND substr(action_key, 1, instr(action_key, ':') - 1) = ?1 AND status IN {OPEN_STATUSES}");
     let mut statement = connection.prepare_cached(&sql)?;

@@ -881,9 +881,9 @@ fn next(seed: &mut u64) -> u64 {
 fn random_event(seed: &mut u64, step: u64, twin: &Twin) -> Event {
     let identity = 1 + next(seed) % 2;
     let erases = twin.erases();
-    let erase = if erases.is_empty() || next(seed) % 5 == 0 { 999 } else { erases[(next(seed) as usize) % erases.len()].id };
+    let erase = if erases.is_empty() || next(seed).is_multiple_of(5) { 999 } else { erases[(next(seed) as usize) % erases.len()].id };
     let publications = twin.publications();
-    let publication = if publications.is_empty() || next(seed) % 6 == 0 { 999 } else { publications[(next(seed) as usize) % publications.len()] };
+    let publication = if publications.is_empty() || next(seed).is_multiple_of(6) { 999 } else { publications[(next(seed) as usize) % publications.len()] };
     match next(seed) % 22 {
         0 | 1 => Event::Credential(identity),
         2 => Event::SessionReset(Some(step)),
@@ -1105,11 +1105,8 @@ fn life_prop_publish_after_saved() {
         for (event, effects) in &twin.steps {
             if let Event::Saved(id) = event { saved.insert(*id); }
             for effect in effects {
-                match effect {
-                    LifecycleEffect::EpochStarted { epoch, .. } => {
-                        assert!(waiting.iter().any(|(id, e)| e == epoch && saved.contains(id)), "EpochStarted({epoch}) before its Saved");
-                    }
-                    _ => {}
+                if let LifecycleEffect::EpochStarted { epoch, .. } = effect {
+                    assert!(waiting.iter().any(|(id, e)| e == epoch && saved.contains(id)), "EpochStarted({epoch}) before its Saved");
                 }
             }
         }

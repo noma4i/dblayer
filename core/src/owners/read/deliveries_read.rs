@@ -4,7 +4,7 @@ impl Delivery {
     pub(super) fn new_read(&mut self, revision: i64) -> Emit {
         self.read_id += 1;
         self.read_revision = revision;
-        Emit::Run(StreamEffect::Read { read_id: self.read_id, revision, after: self.acknowledged.unwrap_or(0), view: self.view.clone() })
+        Emit::Run(StreamEffect::Read { read_id: self.read_id, revision, after: self.acknowledged.unwrap_or(0), view: Box::new(self.view.clone()) })
     }
 
     pub(super) fn sink_open(&self) -> bool { matches!(self.stage, DeliveryStage::Opening | DeliveryStage::Live) }

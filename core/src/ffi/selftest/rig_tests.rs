@@ -774,16 +774,6 @@ impl Held {
         }
     }
 
-    /// Every kept view shows the account: both entities and both lists.
-    pub(super) fn displays(&self, account: &str) -> bool {
-        Self::shown(&self.single, account) && Self::shown(&self.entity, account) && Self::shown(&self.rows, account) && Self::shown(&self.window_rows, account)
-    }
-
-    /// No kept view shows a row of an account: every stream ended with its account, was stopped, or has no row.
-    pub(super) fn is_clear(&self) -> bool {
-        self.stopped.load(Ordering::SeqCst) || [&self.single, &self.entity, &self.rows, &self.window_rows].iter().all(|rows| Self::over(rows))
-    }
-
     pub(super) fn deliveries(&self) -> (usize, usize, usize, usize) {
         let length = |rows: &Rows| rows.1.lock().unwrap().len();
         (length(&self.rows), length(&self.window_rows), length(&self.single), length(&self.entity))

@@ -8,16 +8,20 @@ use super::outbox::{Outbox, OutboxAnswer, OutboxEffect, OutboxInput};
 use crate::owners::contract::{Drained, ReplyId};
 use crate::runtime::{Back, EffectRunner, EpochStamp};
 
+pub type CopyFile = Arc<dyn Fn(&str) -> bool + Send + Sync>;
+pub type MarkStale = Arc<dyn Fn(Vec<(String, String)>, i64) + Send + Sync>;
+pub type DecodeAnswer = Arc<dyn Fn(&DecodeJob) -> Decoded + Send + Sync>;
+
 pub struct OutboxExecutor {
     pub settle: Arc<dyn Fn(ReplyId, OutboxAnswer) + Send + Sync>,
     /// `Drained` goes to Lifecycle.
     pub drained: Arc<dyn Fn(Drained) + Send + Sync>,
     /// Copies a file into the directory of the files; `None` fails every copy.
-    pub copy: Option<Arc<dyn Fn(&str) -> bool + Send + Sync>>,
+    pub copy: Option<CopyFile>,
     /// Marks the windows of the (model, relation) pairs stale in memory.
-    pub stale: Option<Arc<dyn Fn(Vec<(String, String)>, i64) + Send + Sync>>,
+    pub stale: Option<MarkStale>,
     /// Reads the answer of an operation; `None` refuses every answer. It runs on a thread of the executor, not on the actor.
-    pub decode: Option<(tokio::runtime::Handle, Arc<dyn Fn(&DecodeJob) -> Decoded + Send + Sync>)>,
+    pub decode: Option<(tokio::runtime::Handle, DecodeAnswer)>,
     /// The barrier of the owners waits for the jobs of this executor.
     pub counted: Option<crate::runtime::Handle>,
 }

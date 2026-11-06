@@ -4,7 +4,7 @@ use rusqlite::params;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
-use crate::commit::{DestroyReason, EntityOp, ScopeOp, ScopeRef};
+use crate::commit::{EntityOp, ScopeOp, ScopeRef};
 use crate::files::references_of_row;
 use crate::identity::{ModelKey, RowId, ListKey};
 use crate::store::{Reader, StoreError};
@@ -113,18 +113,6 @@ impl Prior {
     pub fn to_value(&self) -> Value {
         serde_json::to_value(self).unwrap_or(Value::Null)
     }
-
-
-    pub fn hiding(&self) -> Vec<EntityOp> {
-        self.rows
-            .iter()
-            .filter_map(|row| match row {
-                PriorRow::Destroyed { model, id, .. } => Some(EntityOp::Destroy { model: ModelKey::new(model), id: RowId::new(id).ok()?, reason: DestroyReason::Local }),
-                _ => None,
-            })
-            .collect()
-    }
-
 
     pub fn swap(&mut self, temp: &RowId, real: &RowId, parent: &str, references: &[(String, String)]) -> bool {
         let mut changed = false;

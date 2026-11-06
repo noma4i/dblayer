@@ -6,7 +6,7 @@ use serde_json::json;
 use super::lifecycle::{create, input, LifecycleSut};
 use super::ref_store::StoreRef;
 use crate::check::model::{Owner, Property, RefModel, Sut};
-use crate::check::value::{Input, Observation, Step};
+use crate::check::value::{Input, Observation, PropertyRow, Step};
 
 const SHOWN: [&str; 3] = ["created", "rows", "revision"];
 
@@ -115,7 +115,7 @@ fn reads_not_blocked(steps: &[Step]) -> Result<(), String> {
     Ok(())
 }
 
-pub const PROPERTIES: [(&str, fn(&[Step]) -> Result<(), String>); 6] = [
+pub const PROPERTIES: [PropertyRow; 6] = [
     ("P-STORE-01", revision_by_one),
     ("P-STORE-02", no_stale_rows),
     ("P-STORE-03", no_stale_epoch),

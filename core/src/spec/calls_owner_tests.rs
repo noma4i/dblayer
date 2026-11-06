@@ -266,7 +266,7 @@ fn random_trace(seed: u64) -> Twin {
             3 => response(call),
             4 => Input::Dropped { call_id: call },
             5 => Input::TransportError { call_id: call, error: Fail::Http },
-            6 => Input::Online(next(&mut s) % 2 == 0),
+            6 => Input::Online(next(&mut s).is_multiple_of(2)),
             7 => Input::EpochEnded,
             _ => Input::Closing,
         };

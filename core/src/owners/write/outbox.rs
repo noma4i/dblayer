@@ -387,7 +387,7 @@ impl OutboxState {
             OutboxInput::RegisterOperations { declarations } => self.register(declarations, fx),
             OutboxInput::Committed(committed) => self.committed(committed, fx),
             OutboxInput::Rejected(rejected) => self.rejected(rejected, fx),
-            OutboxInput::Response { op_id, rows, swaps, stale, result, missing, errors } => self.on_response(op_id, rows, swaps, stale, result, missing, errors, fx),
+            OutboxInput::Response { op_id, rows, swaps, stale, result, missing, errors } => self.on_response(op_id, super::outbox_flow::Answered { rows, swaps, stale, result, missing }, errors, fx),
             OutboxInput::TransportError { op_id, temporary } => self.transport_failed(op_id, temporary, fx),
             OutboxInput::Dropped { op_id } => self.transport_failed(op_id, true, fx),
             OutboxInput::Answered { req_id, outcome } => self.answered(req_id, outcome, fx),

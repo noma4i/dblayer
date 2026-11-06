@@ -243,6 +243,26 @@ impl Ctx<'_> {
     }
 }
 
+/// What the state of a window that loads keeps: the request in flight and how often it was tried.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Load {
+    pub request: RequestId,
+    pub attempt: u32,
+    pub retry: bool,
+    pub pinning: bool,
+    pub page: u32,
+    pub force: bool,
+    pub attempts: u32,
+    pub basis: GenerationsAtIssue,
+}
+
+impl Load {
+    /// A request that waits for its pin.
+    pub fn issued(request: RequestId, attempt: u32, page: u32, force: bool, basis: GenerationsAtIssue) -> Self {
+        Self { request, attempt, retry: false, pinning: true, page, force, attempts: 0, basis }
+    }
+}
+
 /// The generations of the models at the moment a request left.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct GenerationsAtIssue {

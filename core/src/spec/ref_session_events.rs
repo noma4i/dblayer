@@ -170,7 +170,7 @@ impl Session {
     }
 
     pub(super) fn open(&mut self, credential: Option<Credential>, pending: Option<Pending>, dropped_pending: bool, secret: Secret, out: &mut Out) {
-        self.credential = credential.clone();
+        self.credential = credential;
         if dropped_pending {
             self.state = State::Blocked { pending: None, reason: Block::StateLost };
             return;

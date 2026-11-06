@@ -21,6 +21,8 @@ const MODELS: &str = include_str!("../../tests/corpus/models.json");
 const EVENT_MODELS: &str = include_str!("../../tests/corpus/models_events.json");
 const OPERATIONS: &str = include_str!("../../tests/corpus/operations.json");
 
+type EncryptedParts = (Option<crate::ffi::EncryptedConfig>, Option<Arc<dyn crate::ffi::CredentialStore>>, Option<Arc<dyn crate::ffi::EncryptedHttp>>);
+
 #[derive(Default)]
 struct Heard(AtomicU64);
 
@@ -269,7 +271,7 @@ impl DatabaseSut {
     async fn open(&mut self, models: &str, encrypted: bool) -> Vec<Observation> {
         let config = Config { path: None, data_version: None, cache_rows: 32 };
         let transport: Arc<dyn crate::ffi::Transport> = self.mock.clone();
-        let (encrypted, credentials, http): (Option<crate::ffi::EncryptedConfig>, Option<Arc<dyn crate::ffi::CredentialStore>>, Option<Arc<dyn crate::ffi::EncryptedHttp>>) = if encrypted {
+        let (encrypted, credentials, http): EncryptedParts = if encrypted {
             (Some(crate::transport::encrypted::protocol_tests::config()), Some(Arc::new(Credentials::default())), Some(self.mock.clone()))
         } else {
             (None, None, None)

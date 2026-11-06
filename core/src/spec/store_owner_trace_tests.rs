@@ -123,13 +123,13 @@ fn random_trace(seed: u64) -> Twin {
     for step in 0..40u64 {
         match next(&mut seed) % 9 {
             0..=2 => {
-                let epoch = if next(&mut seed) % 5 == 0 { 7 } else { twin.reference.epoch };
+                let epoch = if next(&mut seed).is_multiple_of(5) { 7 } else { twin.reference.epoch };
                 let mut batch = Batch::rows(epoch, vec![("Moment".into(), format!("r{step}"))]);
                 batch.basis.insert("Moment".into(), next(&mut seed) % 3);
-                twin.commit_batch(batch, next(&mut seed) % 6 != 0);
+                twin.commit_batch(batch, !next(&mut seed).is_multiple_of(6));
             }
-            3 => { twin.clear_account(RefCause::IdentityChanged, twin.reference.generation("Moment") + 1 + next(&mut seed) % 2, next(&mut seed) % 4 != 0); }
-            4 => { twin.clear_models(twin.reference.generation("Moment") + next(&mut seed) % 3, &["Moment"], next(&mut seed) % 4 != 0); }
+            3 => { twin.clear_account(RefCause::IdentityChanged, twin.reference.generation("Moment") + 1 + next(&mut seed) % 2, !next(&mut seed).is_multiple_of(4)); }
+            4 => { twin.clear_models(twin.reference.generation("Moment") + next(&mut seed) % 3, &["Moment"], !next(&mut seed).is_multiple_of(4)); }
             5 => { let epoch = twin.reference.epoch; twin.publish(epoch + 1, twin.reference.saved_generation); }
             6 => { let epoch = twin.reference.epoch; twin.feed(Request::EpochEnded { epoch }); }
             7 => { twin.feed(Request::ReadIntents { epoch: twin.reference.epoch }); }

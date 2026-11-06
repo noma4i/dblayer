@@ -5,12 +5,10 @@ use serde_json::{Map, Value};
 use crate::commit::{CommitEnvelope, CommitResult, DestroyReason, EntityOp, OperationTransition, ScopeOp, WriteOrigin};
 use crate::operation::OperationStatus;
 use crate::files::references_of_row;
-use crate::identity::{Generation, ModelKey, RowId};
+use crate::identity::{ModelKey, RowId};
 use crate::store::{Reader, StoreError};
 
-use crate::lifecycle::authority::Authority;
-use crate::store::plan::{plan_fault, OutboxOperation, Prior, PriorRow};
-use crate::store::DbError;
+use crate::store::plan::{OutboxOperation, Prior, PriorRow};
 
 #[derive(Default)]
 struct Restore {
@@ -226,16 +224,5 @@ pub(super) fn apply(writer: &mut super::row_write::RowWrite<'_>, op_id: u64) -> 
     envelope.scope_ops = plan.scope_ops;
     envelope.operation_transitions = plan.transitions;
     envelope.operation_transitions.push(OperationTransition::Close { seq, status: OperationStatus::RolledBack });
-    super::apply::apply_envelope_at(writer.connection, writer.models, &envelope, writer.now, super::TombstonePrune::Skip, writer.revision, Some(writer.originals))
-}
-
-fn write_number(row: &mut Map<String, Value>, keys: &[&str], number: usize) {
-    let key = keys[0];
-    if keys.len() == 1 {
-        row.insert(key.to_string(), Value::from(number));
-        return;
-    }
-    let value = row.entry(key.to_string()).or_insert_with(|| Value::Object(Map::new()));
-    if !value.is_object() { *value = Value::Object(Map::new()); }
-    if let Value::Object(object) = value { write_number(object, &keys[1..], number); }
+    super::apply::apply_envelope_at(writer.connection, writer.models, &envelope, writer.now, writer.revision, Some(writer.originals))
 }

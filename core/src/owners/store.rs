@@ -93,6 +93,12 @@ impl StoreState {
     }
 }
 
+impl Default for StoreState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 pub struct StoreWriter;
 
 impl StateOwner for StoreWriter {

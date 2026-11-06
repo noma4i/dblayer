@@ -56,3 +56,11 @@ fn an_id_arg_travels_as_a_number_and_a_nullable_one_may_be_left_out() {
     let input = json!({"momentId": "427", "signedId": "12"});
     assert_eq!(mutation_variables(&declared, &input, None, &no_ids), json!({"momentId": 427, "signedId": "12"}));
 }
+
+#[test]
+fn data_operation_wrap() {
+    let mut wrapped = declaration(&[("momentId", "id"), ("note", "note")]);
+    wrapped.wrap = Some("input".into());
+    let variables = mutation_variables(&wrapped, &json!({"id": "m1", "note": "n", "text": "outside the pair"}), None, &no_ids);
+    assert_eq!(variables, json!({"input": {"momentId": "m1", "note": "n"}}), "the body wraps the variables under the key and variables outside the pair are absent");
+}

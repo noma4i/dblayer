@@ -142,7 +142,7 @@ pub enum PullAnswer {
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum StreamEffect {
-    Read { read_id: u64, revision: i64, after: i64, view: View },
+    Read { read_id: u64, revision: i64, after: i64, view: Box<View> },
     Answer { outcome: OutcomeId, answer: PullAnswer },
     Available,
     CloseSink,

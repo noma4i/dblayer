@@ -10,6 +10,8 @@ use crate::store::Reader;
 use crate::store::DbError;
 use crate::store::Store;
 
+type FetchedRow = Option<(Map<String, Value>, i64)>;
+
 fn stored_name(declared: &[&FieldSpec], name: &str) -> String { declared.iter().find(|field| field.name == name).and_then(|field| field.from.clone()).unwrap_or_else(|| name.to_string()) }
 
 fn targets_of(fields: &[FieldSpec], found: &mut BTreeSet<String>) {
@@ -73,7 +75,7 @@ impl Store {
         let mut fetched = Fetched::new();
         let snapshot_revision = reader.revision_seq()?;
         let mut newest = 0;
-        let mut fetch = |model: &str, id: &str| -> Result<Option<(Map<String, Value>, i64)>, DbError> {
+        let mut fetch = |model: &str, id: &str| -> Result<FetchedRow, DbError> {
             let key = (model.to_string(), id.to_string());
             if let Some(found) = fetched.get(&key) {
                 return Ok(found.clone());

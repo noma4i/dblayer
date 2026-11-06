@@ -1,4 +1,4 @@
-use std::collections::{HashSet, BTreeSet};
+use std::collections::HashSet;
 
 use rusqlite::OptionalExtension;
 use serde_json::{json, Map, Value};
@@ -9,7 +9,7 @@ use crate::identity::{ModelKey, RowId, RowRef};
 use crate::operation::Operation;
 use crate::query::{Query, Where};
 use crate::schema::{AssociationKind, Dependent, ModelSpec, SchemaError, ValueFault};
-use crate::store::{PlanCommitError, Reader, Store, StoreError, DbError};
+use crate::store::{Reader, Store, StoreError, DbError};
 use crate::value::{fractional_between, read_id};
 use crate::write::cascade_destroys;
 
@@ -23,10 +23,6 @@ pub struct OutboxOperation {
 }
 
 impl OutboxOperation {
-    pub(crate) fn for_rows(reader: &Reader<'_>, keys: &BTreeSet<(String, String)>) -> Result<Vec<Self>, StoreError> {
-        crate::operation::row_operation_sequences(reader.connection(), keys)?.into_iter().filter_map(|seq| Self::read(reader, seq).transpose()).collect()
-    }
-
     pub(crate) fn read(reader: &Reader<'_>, seq: i64) -> Result<Option<Self>, StoreError> {
         let Some(mut operation) = crate::operation::read_operation(reader.connection(), seq)? else { return Ok(None) };
         operation.upload = crate::operation::read_operation_uploads(reader.connection(), seq)?.into_iter().min_by_key(|(key, _)| *key).map(|(_, state)| state);
@@ -75,13 +71,6 @@ pub(super) fn local_scope_ops(reader: &Reader<'_>, spec: &ModelSpec, id: &RowId,
         operations.push(ScopeOp::Append { scope: ScopeRef::new(spec.key.clone(), key), row: id.clone(), order_key });
     }
     Ok(operations)
-}
-
-pub(crate) fn plan_fault(error: PlanCommitError<DbError>) -> DbError {
-    match error {
-        PlanCommitError::Plan(error) => error,
-        PlanCommitError::Store(error) => error.into(),
-    }
 }
 
 pub(super) fn is_resident(reader: &Reader<'_>, model: &ModelKey, id: &RowId) -> Result<bool, DbError> {

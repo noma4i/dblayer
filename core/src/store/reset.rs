@@ -21,7 +21,6 @@ pub(crate) struct ResetCommitted<'a> {
     ticket: Option<u64>,
     revision: i64,
     models: Option<Vec<String>>,
-    operations: Vec<crate::operation::QueueOperation>,
 }
 
 impl ResetCommitted<'_> {
@@ -31,7 +30,7 @@ impl ResetCommitted<'_> {
 
     fn announce(&mut self) {
         if let Some(ticket) = self.ticket.take() {
-            let event = StoreEvent::Reset { revision: self.revision, models: self.models.clone(), operations: std::mem::take(&mut self.operations) };
+            let event = StoreEvent::Reset { revision: self.revision, models: self.models.clone() };
             self.store.line.run(ticket, || self.store.announce(event));
         }
     }
@@ -364,7 +363,6 @@ impl Store {
         manifest_stamp(&transaction, inner.data_version.as_deref(), &current_fingerprints(&inner))?;
         let revision = bump_revision(&transaction)?;
         clear_intent(&transaction)?;
-        let operations = crate::operation::read_queue(&transaction)?;
         let mut snapshot = self.overlays.next(revision - 1, true).ok_or_else(|| StoreError::Constraint("overlay revision is unavailable".into()))?;
         snapshot.clear_models(None);
         self.overlays.publish(snapshot);
@@ -372,11 +370,11 @@ impl Store {
         self.publish_revision(revision);
         *inner.poison.lock().unwrap_or_else(|error| error.into_inner()) = None;
         drop(readers);
-        let event = StoreEvent::Reset { revision, models: None, operations: operations.clone() };
+        let event = StoreEvent::Reset { revision, models: None };
         if let Some(log) = self.commit_log.get() { log(&event); }
         let ticket = self.line.ticket();
         drop(inner);
-        ResetCommitted { store: self, ticket: Some(ticket), revision, models: None, operations }.run();
+        ResetCommitted { store: self, ticket: Some(ticket), revision, models: None }.run();
         Ok(revision)
     }
 
@@ -396,7 +394,6 @@ impl Store {
         retire_operations(&transaction, Some(models), None)?;
         let revision = bump_revision(&transaction)?;
         clear_intent(&transaction)?;
-        let operations = crate::operation::read_queue(&transaction)?;
         let mut snapshot = self.overlays.next(revision - 1, true).ok_or_else(|| StoreError::Constraint("overlay revision is unavailable".into()))?;
         snapshot.clear_models(Some(models));
         self.overlays.publish(snapshot);
@@ -404,11 +401,11 @@ impl Store {
         self.publish_revision(revision);
         *inner.poison.lock().unwrap_or_else(|error| error.into_inner()) = None;
         drop(readers);
-        let event = StoreEvent::Reset { revision, models: Some(models.to_vec()), operations: operations.clone() };
+        let event = StoreEvent::Reset { revision, models: Some(models.to_vec()) };
         if let Some(log) = self.commit_log.get() { log(&event); }
         let ticket = self.line.ticket();
         drop(inner);
-        ResetCommitted { store: self, ticket: Some(ticket), revision, models: Some(models.to_vec()), operations }.run();
+        ResetCommitted { store: self, ticket: Some(ticket), revision, models: Some(models.to_vec()) }.run();
         Ok(revision)
     }
 }

@@ -39,6 +39,10 @@ pub struct NetworkState {
     mode: NetworkMode,
 }
 
+impl Default for NetworkState {
+    fn default() -> Self { Self::new() }
+}
+
 impl NetworkState {
     /// `online = false` and `saving = false` until the first input.
     pub fn new() -> Self { Self { mode: NetworkMode::Open { online: false, foreground_seq: 0, saving: false } } }
