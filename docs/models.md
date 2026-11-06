@@ -1112,6 +1112,8 @@ A top-level `operation` outside a model takes only its name and block. Named opt
 
 For file uploads, name each operation and declare it with `operation :name, upload: true`. Each operation declares its own `response`, `upsert` and `parameter` lines. The sent mutation selects that declaration for the same response processing used by other actions. The generator emits `<operationName>Variables` on Swift and Kotlin when the operation has parameters. The steps of the upload (`createBlob`, multipart) are declared once per project in `uploads do ... end`, see [uploads](files.md#uploads).
 
+An upload operation can declare that the server works on the file after the transfer: `processing "status", done: ["READY"], progress: "percent"`. The first argument is the field of the model that holds the state, `done` lists its terminal values and `progress` names the field that holds the progress. While the field holds another value, the upload entry of the action carries the processing and its progress. A new value of the row, from an answer or an event, updates it. A terminal value removes it. A path or a `done` value that the model does not declare fails the generator with the file and line.
+
 ```ruby
 operation :answer_connection do
   mutation "ConnectionUpdate"

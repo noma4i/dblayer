@@ -1460,7 +1460,7 @@ fn operation(cx: &mut Cx, call: &Call) -> Option<OperationDecl> {
     line.finish(cx);
     let lines = block(cx, call)?;
     let mut decl = OperationDecl {
-        pos: line.pos, name: name.clone(), kind, upload, durable, mutation: None, parameters: Vec::new(), variables: None, local: None, local_from: Vec::new(), local_sites: Vec::new(), wrap: None, response: None, match_by: None,
+        pos: line.pos, name: name.clone(), kind, upload, durable, processing: None, mutation: None, parameters: Vec::new(), variables: None, local: None, local_from: Vec::new(), local_sites: Vec::new(), wrap: None, response: None, match_by: None,
         on_failure: None, optimistic: None, upserts: Vec::new(), refetch: Vec::new(), returns: None, batch: None, length: None,
         removes_receiver: None, copies_receiver_to: None, scope_effects: Vec::new(),
     };
@@ -1473,7 +1473,7 @@ fn operation(cx: &mut Cx, call: &Call) -> Option<OperationDecl> {
                 | (OperationKind::Create | OperationKind::Update | OperationKind::Custom, "parameter")
                 | (OperationKind::Create | OperationKind::Update, "local" | "refetch" | "match_by" | "on_failure")
                 | (OperationKind::Custom, "match_by" | "on_failure" | "optimistic" | "upsert" | "refetch" | "returns" | "batch" | "validates")
-                | (OperationKind::Custom, "removes_receiver" | "copies_receiver_to" | "joins_scope" | "leaves_scope")
+                | (OperationKind::Custom, "processing" | "removes_receiver" | "copies_receiver_to" | "joins_scope" | "leaves_scope")
         );
         if !allowed {
             cx.fail(Pos::of(item), format!("`{word}` does not apply to operation `{name}`"));
@@ -1547,6 +1547,18 @@ fn operation_line(cx: &mut Cx, call: &Call, decl: &mut OperationDecl) {
             line.no_options(cx);
             if let Some(arg) = exactly_one_arg(cx, &line, "a variable name like `wrap \"input\"`") {
                 decl.wrap = string(cx, arg, "the variable path");
+            }
+        }
+        "processing" => {
+            no_block(cx, call);
+            let done = line.opt(cx, "done").and_then(|pair| string_list(cx, &pair.value, "`done`"));
+            let progress = line.opt(cx, "progress").and_then(|pair| path(cx, &pair.value, "`progress`")).map(|found| found.item);
+            line.finish(cx);
+            let field = exactly_one_arg(cx, &line, "a field path like `processing \"status\", done: [\"READY\"]`").and_then(|arg| path(cx, arg, "the `processing` field")).map(|found| found.item);
+            if let (Some(field), Some(done)) = (field, done.filter(|done| !done.is_empty())) {
+                decl.processing = Some(ProcessingDecl { pos: line.pos, field, done, progress });
+            } else {
+                cx.fail(line.pos, "`processing` needs a field path and a non-empty `done: [...]`");
             }
         }
         "response" => decl.response = response(cx, call),
