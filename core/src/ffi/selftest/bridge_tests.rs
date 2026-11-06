@@ -613,6 +613,29 @@ async fn dlv_event_before_after() {
 }
 
 
+/// P-FEED-14: an event that creates a row puts it into the window with `joins_events` in the same batch, into no other window, and no window is read again.
+#[tokio::test(flavor = "multi_thread")]
+async fn feed_event_insert_on() {
+    let (database, transport, world) = chat_events().await;
+    let epoch = database.session_epoch();
+    let events = database.subscribe_values(epoch, ReadRequest::Events { model: "Chat".into() });
+    assert!(matches!(bound(events.pull()).await.unwrap(), Some(ReadValue::Ready)));
+    for list in ["PRIMARY", "SECONDARY"] { bound(database.load(epoch, "Chat".into(), "list".into(), json!({"list": list}).to_string())).await.unwrap(); }
+    let query = |list: &str| json!({"model":"Chat","relation":"list","params":{"list":list}}).to_string();
+    let before = (ids_of(bound(database.read_query(epoch, query("PRIMARY"))).await.unwrap()), ids_of(bound(database.read_query(epoch, query("SECONDARY"))).await.unwrap()));
+    let reads = world.count("ChatList");
+    transport.subscription().await;
+    transport.emit(json!({"data":{"recordEvents":{"entries":[{"topic":"MESSAGE","action":"UPDATED","recordId":"m9","chat":{"id":"c9","title":"new","revision":1,"lists":["PRIMARY"]}}]}}}));
+    loop {
+        if matches!(bound(events.pull()).await.unwrap(), Some(ReadValue::Event { id, .. }) if id == "c9") { break; }
+    }
+    let (primary, secondary) = (ids_of(bound(database.read_query(epoch, query("PRIMARY"))).await.unwrap()), ids_of(bound(database.read_query(epoch, query("SECONDARY"))).await.unwrap()));
+    assert!(primary.contains(&"c9".to_string()) && primary.len() == before.0.len() + 1, "the window of its list takes the row: {primary:?}");
+    assert_eq!(secondary, before.1, "another list does not");
+    assert_eq!(world.count("ChatList"), reads, "no window is read again");
+    database.close_now();
+}
+
 /// B01: after the login a stream delivers the account as one snapshot in the epoch of the session, in order, and the first value does not come from the calling thread.
 #[tokio::test(flavor = "multi_thread")]
 async fn a_stream_opened_after_the_login_starts_with_a_snapshot_of_the_account_in_its_epoch() {

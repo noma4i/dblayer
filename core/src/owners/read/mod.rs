@@ -29,6 +29,8 @@ mod delivery_io_tests;
 #[cfg(test)]
 mod feed_codec_tests;
 #[cfg(test)]
+mod feed_codec_changed_by_tests;
+#[cfg(test)]
 mod feed_io_tests;
 #[cfg(test)]
 mod rig;
