@@ -33,7 +33,10 @@ pub struct LoadRequest {
 struct ReleaseBarrier(Arc<Mutex<Option<crate::runtime::Launch>>>);
 
 impl Drop for ReleaseBarrier {
-    fn drop(&mut self) { drop(crate::db::locked(&self.0).take()); }
+    fn drop(&mut self) {
+        let held = crate::db::locked(&self.0).take();
+        drop(held);
+    }
 }
 
 fn load_cancelled() -> DbError { DbError::Interrupted { detail: "the load was cancelled".into() } }
@@ -51,9 +54,13 @@ impl LoadRequest {
     pub fn cancel(&self) {
         let held = crate::db::locked(&self.held).take();
         let Some(task) = held else { return };
-        *crate::db::locked(&self.dropping) = Some(self.life.launch());
+        let previous = crate::db::locked(&self.dropping).replace(self.life.launch());
+        drop(previous);
         crate::db::lock::effect(|| task.abort());
-        if task.is_finished() { drop(crate::db::locked(&self.dropping).take()); }
+        if task.is_finished() {
+            let held = crate::db::locked(&self.dropping).take();
+            drop(held);
+        }
     }
 }
 
