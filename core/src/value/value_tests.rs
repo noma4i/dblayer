@@ -186,7 +186,8 @@ fn relation_values_normalize_to_equal_params_and_keys() {
     assert_eq!(from_string, BTreeMap::from([("chatId".to_string(), "s:\"1\"".to_string())]));
     assert_eq!(from_number, from_string);
     let count = BTreeMap::from([("count".to_string(), ScalarKind::Int)]);
-    assert_eq!(normalize_relation_params(&object(json!({"count": "42"})), &count).unwrap()["count"], "d:42");
+    assert_eq!(normalize_relation_params(&object(json!({"count": 42})), &count).unwrap()["count"], "d:42");
+    assert!(normalize_relation_params(&object(json!({"count": "42"})), &count).is_err(), "a text is no number");
     let flag = BTreeMap::from([("flag".to_string(), ScalarKind::Bool)]);
     assert_eq!(normalize_relation_params(&object(json!({"flag": true})), &flag).unwrap()["flag"], "b:true");
     let text = BTreeMap::from([("q".to_string(), ScalarKind::Str), ("at".to_string(), ScalarKind::Date)]);

@@ -1600,6 +1600,8 @@ mod schema_tests;
 mod stable_order_tests;
 #[cfg(test)]
 mod union_tests;
+#[cfg(test)]
+mod scope_param_tests;
 
 #[cfg(test)]
 pub(crate) mod screens_fixture;

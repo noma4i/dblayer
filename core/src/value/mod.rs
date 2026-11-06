@@ -298,6 +298,14 @@ pub fn normalize_relation_params(
             result.insert(name.clone(), relation_param_text(value));
             continue;
         }
+        let typed = match kind {
+            ScalarKind::Int | ScalarKind::Num => value.is_number(),
+            ScalarKind::Bool => value.is_boolean(),
+            _ => true,
+        };
+        if !typed {
+            return Err(ScalarError::RejectedValue { context: name.clone() }.into());
+        }
         let value = Some(value);
         let normalized = match kind {
             ScalarKind::Id => Value::String(require(value, name, read_id)?.as_str().to_string()),
