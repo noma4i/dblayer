@@ -27,8 +27,10 @@ pub(super) fn apply(snapshot: &mut OverlaySnapshot, models: &BTreeMap<String, Mo
     let mut changed: BTreeMap<RowRef, BTreeSet<String>> = BTreeMap::new();
     for ((model, id, field), before) in before {
         let key = RowKey { model: model.clone(), row_id: id.clone() };
-        let after = &snapshot.values.get(&key).and_then(|fields| fields.get(&field)).expect("the field was written").value;
-        if &before != after {
+        let Some(slot) = snapshot.values.get(&key).and_then(|fields| fields.get(&field)) else {
+            return Err(StoreError::Constraint(format!("the written field {field} of {model} is missing")));
+        };
+        if before != slot.value {
             let id = RowId::new(&id).map_err(|error| StoreError::Constraint(error.to_string()))?;
             changed.entry(RowRef::new(ModelKey::new(&model), id)).or_default().insert(field);
         }

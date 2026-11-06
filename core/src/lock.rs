@@ -46,8 +46,9 @@ mod debug {
     fn leave(instance: usize) {
         HELD.with(|held| {
             let mut held = held.borrow_mut();
-            let position = held.iter().rposition(|(id, _)| *id == instance).expect("tracked lock missing");
-            held.remove(position);
+            if let Some(position) = held.iter().rposition(|(id, _)| *id == instance) {
+                held.remove(position);
+            }
         });
     }
 
@@ -60,10 +61,18 @@ mod debug {
     #[cfg(test)]
     pub(crate) fn held_classes() -> Vec<&'static str> { HELD.with(|held| held.borrow().iter().map(|(_, class)| *class).collect()) }
 
-    pub(crate) struct Guard<'a, T> { guard: Option<MutexGuard<'a, T>>, instance: usize, class: Class }
-    impl<T> Deref for Guard<'_, T> { type Target = T; fn deref(&self) -> &T { self.guard.as_deref().expect("tracked guard missing") } }
-    impl<T> DerefMut for Guard<'_, T> { fn deref_mut(&mut self) -> &mut T { self.guard.as_deref_mut().expect("tracked guard missing") } }
-    impl<T> Drop for Guard<'_, T> { fn drop(&mut self) { if self.guard.is_some() { leave(self.instance); } } }
+    struct Held { instance: usize, class: Class }
+    impl Held {
+        fn enter(instance: usize, class: Class) -> Self {
+            enter(instance, class);
+            Self { instance, class }
+        }
+    }
+    impl Drop for Held { fn drop(&mut self) { leave(self.instance); } }
+
+    pub(crate) struct Guard<'a, T> { held: Held, guard: MutexGuard<'a, T> }
+    impl<T> Deref for Guard<'_, T> { type Target = T; fn deref(&self) -> &T { &self.guard } }
+    impl<T> DerefMut for Guard<'_, T> { fn deref_mut(&mut self) -> &mut T { &mut self.guard } }
 
     pub(crate) fn lock<T>(mutex: &Mutex<T>) -> Guard<'_, T> {
         lock_as(mutex, std::any::type_name::<T>())
@@ -73,18 +82,16 @@ mod debug {
         let instance = std::ptr::from_ref(mutex) as usize;
         before(instance, class);
         let guard = super::acquire(mutex);
-        enter(instance, class);
-        Guard { guard: Some(guard), instance, class }
+        Guard { held: Held::enter(instance, class), guard }
     }
 
-    pub(crate) fn wait<'a, T>(condition: &Condvar, mut guard: Guard<'a, T>) -> Guard<'a, T> {
-        let raw = guard.guard.take().expect("tracked guard missing");
-        leave(guard.instance);
-        before(guard.instance, guard.class);
+    pub(crate) fn wait<'a, T>(condition: &Condvar, guard: Guard<'a, T>) -> Guard<'a, T> {
+        let Guard { held, guard: raw } = guard;
+        let (instance, class) = (held.instance, held.class);
+        drop(held);
+        before(instance, class);
         let raw = crate::blocking::blocking_unit(|| condition.wait(raw).unwrap_or_else(|e| e.into_inner()));
-        enter(guard.instance, guard.class);
-        guard.guard = Some(raw);
-        guard
+        Guard { held: Held::enter(instance, class), guard: raw }
     }
 
 }

@@ -168,12 +168,7 @@ impl Store {
 
     /// Reads with the models named, the failure as the error of the database.
     pub(crate) fn read_models<T>(&self, models: &[&str], run: impl FnOnce(&Reader<'_>) -> Result<T, DbError>) -> Result<T, DbError> {
-        let mut outcome = None;
-        self.read(models, |reader| {
-            outcome = Some(run(reader));
-            Ok(())
-        })?;
-        outcome.expect("read ran")
+        self.read(models, |reader| Ok(run(reader)))?
     }
 }
 
