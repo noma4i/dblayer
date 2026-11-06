@@ -52,6 +52,14 @@ internal enum class UploadMode { UserInitiatedJob, ForegroundService }
 
 internal fun uploadMode(sdk: Int): UploadMode = if (sdk >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) UploadMode.UserInitiatedJob else UploadMode.ForegroundService
 
+internal const val DATA_SYNC_PERMISSION = "android.permission.FOREGROUND_SERVICE_DATA_SYNC"
+
+/** Below API 34 the round runs in a foreground service of type `dataSync`: the manifest of the app has to request its permission. */
+internal fun checkUploadPermission(sdk: Int, requested: () -> Collection<String>) {
+    if (uploadMode(sdk) != UploadMode.ForegroundService || DATA_SYNC_PERMISSION in requested()) return
+    throw DbException.Config(ConfigCode.INVALID_REQUEST, "the manifest of the app lacks $DATA_SYNC_PERMISSION")
+}
+
 internal fun interface UploadScheduler {
     fun start(context: Context, requestId: ULong, epoch: ULong): String?
 }
