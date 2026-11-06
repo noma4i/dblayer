@@ -4,7 +4,7 @@ const MODEL: &str = "model Clip do\n  attribute :title, :string, null: true\n  o
 
 /// xfer_steps_declared_in_dbl: the steps come from one `uploads do` block and land on every model with an upload action.
 #[test]
-fn the_steps_of_uploads_are_declared_once_and_reach_the_models_with_an_upload_action() {
+fn xfer_steps_declared_in_dbl() {
     let both = "uploads do\n  create_blob :CreateBlob, root: \"blobCreate\"\n  multipart initiate: :Init, presign: :Presign, complete: :Complete, abort: :Abort\nend\n";
     let plain = "model Note do\n  attribute :body, :string, null: true\nend\n";
     let models = parse_models(&format!("{both}{MODEL}{plain}")).unwrap();
@@ -28,7 +28,7 @@ fn the_steps_of_uploads_are_declared_once_and_reach_the_models_with_an_upload_ac
 
 /// xfer_processing_by_event (M37): `processing` reaches the action and is checked against the attributes of the model.
 #[test]
-fn processing_of_an_upload_action_reaches_the_declaration_and_is_checked() {
+fn xfer_processing_by_event() {
     let steps = "uploads do\n  create_blob :CreateBlob, root: \"blobCreate\"\nend\n";
     let model = |processing: &str| format!("{steps}model Clip do\n  attribute :status, :enum, values: [\"WORKING\", \"READY\"]\n  attribute :percent, :num, null: true\n  operation :send, upload: true do\n    mutation \"ClipSend\"\n    optimistic false\n    response from: \"clipSend\"\n    {processing}\n  end\nend\n");
     let models = parse_models(&model("processing \"status\", done: [\"READY\"], progress: \"percent\"")).unwrap();

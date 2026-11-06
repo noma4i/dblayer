@@ -67,13 +67,30 @@ async fn flow_chat_photo_upload() {
     let receipt = bound(rig.database.upload(epoch, "Chat".into(), "c1".into(), "update_photo".into(), request(&path, json!({"id": "c1"})))).await.unwrap();
     hold.entered_for("the file in the network").await;
     yield_until("the chat shows the queued upload while the file is in the network", || status(&chat, "c1", "update_photo") == Some(WireUploadStatus::Queued)).await;
-    let url = local_url(&chat, "c1", "update_photo").expect("P-XFER-23: the copy has a URL from the end of the copy");
-    assert!(url.starts_with("file://") && std::path::Path::new(&url["file://".len()..]).exists(), "{url}");
     hold.release();
     assert!(matches!(bound(rig.database.outcome(receipt)).await.unwrap(), WireOperationOutcome::Confirmed { .. }));
     yield_until("the logo of the answer stands and the upload is gone", || cell(&rig, "Chat", &chat.0.lock().unwrap()[0], "logoUrl") == super::flow_fixtures::text("https://cdn/logo-sig1") && status(&chat, "c1", "update_photo").is_none()).await;
-    assert_eq!(local_url(&chat, "c1", "update_photo"), None, "the URL goes with the transfer");
     assert_eq!((rig.world.count("CreateBlob"), puts(&rig), rig.world.count("ChatUpdatePhoto")), (1, 1, 1), "one blob, one PUT, one mutation");
+    rig.database.close_now();
+}
+
+/// P-XFER-23: the row shows the file URL of the copy from the end of the copy until the transfer is removed.
+#[tokio::test(flavor = "multi_thread")]
+async fn xfer_prop_local_url() {
+    let rig = rig().await;
+    let chat = entity(&rig, "Chat", "c1");
+    yield_until("the chat shows", || chat.len() == 1).await;
+    let (_directory, path) = source("logo.jpg", b"jpeg");
+    let epoch = rig.database.session_epoch();
+    let hold = rig.world.hold_next("PUT");
+    let receipt = bound(rig.database.upload(epoch, "Chat".into(), "c1".into(), "update_photo".into(), request(&path, json!({"id": "c1"})))).await.unwrap();
+    hold.entered_for("the file in the network").await;
+    yield_until("the copy has a URL", || local_url(&chat, "c1", "update_photo").is_some()).await;
+    let url = local_url(&chat, "c1", "update_photo").unwrap();
+    assert!(url.starts_with("file://") && std::path::Path::new(&url["file://".len()..]).exists(), "{url}");
+    hold.release();
+    assert!(matches!(bound(rig.database.outcome(receipt)).await.unwrap(), WireOperationOutcome::Confirmed { .. }));
+    yield_until("the URL goes with the transfer", || local_url(&chat, "c1", "update_photo").is_none() && status(&chat, "c1", "update_photo").is_none()).await;
     rig.database.close_now();
 }
 

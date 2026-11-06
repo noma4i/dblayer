@@ -144,7 +144,7 @@ fn the_cache_of_blobs_gives_fresh_stale_and_missing_by_content() {
 
 /// xfer_processing_by_event: the processing of an upload action follows the row, a terminal value ends it, nothing polls (M37).
 #[test]
-fn the_processing_of_an_upload_action_follows_the_row() {
+fn xfer_processing_follows_row() {
     use crate::schema::{ActionDeclaration, FieldSpec, ProcessingDeclaration, RootShape};
     use crate::value::ScalarKind;
     let mut moments = moments_spec();
