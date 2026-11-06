@@ -4,7 +4,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use super::outbox::{Fault, NewOp, Outbox, OutboxOutcome, Receipt};
-use super::outbox_types::Phase;
+use super::outbox_types::{OpId, Phase};
 use super::rounds::Rounds;
 use crate::files::Location;
 use crate::owners::contract::{BatchId, Committed, Drained, EpochEnded, EpochStarted, Online, Rejected, ReplyId};
@@ -66,6 +66,7 @@ pub struct StoredTransfer {
     pub signed_id: Option<String>,
     pub failed: Option<String>,
     pub aborted: bool,
+    pub op_id: Option<OpId>,
     pub copying: bool,
     pub file_present: bool,
     pub created_at: Time,
@@ -105,6 +106,8 @@ pub enum TransferInput {
     RoundStatus { epoch: Epoch, transfer_ids: Vec<TransferId>, refused: Option<String> },
     CopyDone { transfer_id: TransferId, attempt_id: AttemptId, size: u64, sha256: String, place: Location },
     CopyFailed { transfer_id: TransferId, attempt_id: AttemptId, error: String },
+    /// The answer of Outbox to `ReserveOp`.
+    OpReserved { transfer_id: TransferId, result: Result<OpId, Fault> },
     StepOk { transfer_id: TransferId, attempt_id: AttemptId, part: Option<u32>, upload_id: Option<String>, etag: Option<String> },
     StepError { transfer_id: TransferId, attempt_id: AttemptId, temporary: bool },
     Completed { transfer_id: TransferId, attempt_id: AttemptId, signed_id: Option<String> },
@@ -188,6 +191,7 @@ pub enum TransferEffect {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TransferStage {
     WaitingDeclaration,
+    Reserving,
     Accepting,
     Copying,
     CopyReady,
@@ -252,6 +256,10 @@ pub struct Transfer {
     pub steps: Steps,
     pub restored: bool,
     pub urgent: bool,
+    /// The operation of the optimistic effects written with the acceptance (`ReserveOp`).
+    pub op_id: Option<OpId>,
+    /// The final mutation left for Outbox: Outbox owns the operation, a removal does not roll it back.
+    pub submitted: bool,
     pub round_error: Option<String>,
     pub removal: Option<Removal>,
     pub prior: Option<TransferStage>,
@@ -381,6 +389,7 @@ pub(super) fn upload_row(transfer: &Transfer, kind: StoreKind) -> UploadRow {
         cycle_id: transfer.cycle_id,
         signed_id: transfer.signed_id.clone(),
         aborted: transfer.aborted,
+        op_id: transfer.op_id,
         etags: transfer.etags.clone(),
     }
 }

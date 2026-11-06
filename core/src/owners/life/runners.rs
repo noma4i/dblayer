@@ -210,6 +210,9 @@ impl EffectRunner<StoreWriter> for StoreRunner {
                 match restore {
                     Err(error) => fail(wiring, error.to_string()),
                     Ok(restore) => {
+                        if let Some(op_id) = restore.reserved {
+                            wiring.to_outbox(OutboxInput::ReservedFloor { op_id });
+                        }
                         match restore.ops {
                             Ok(mut stored) => {
                                 if let Some(client) = &self.client {

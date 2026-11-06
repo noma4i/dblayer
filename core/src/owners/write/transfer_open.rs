@@ -22,6 +22,8 @@ impl TransferState {
             transfer.etags = row.etags.clone();
             transfer.signed_id = row.signed_id.clone();
             transfer.aborted = row.aborted;
+            transfer.op_id = row.op_id;
+            transfer.submitted = row.completed;
             transfer.place = Some(row.place);
             transfer.size = row.size;
             transfer.sha256 = row.sha256.clone();

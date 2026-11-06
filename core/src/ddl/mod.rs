@@ -315,6 +315,7 @@ const CORE_STATEMENTS: [&str; 45] = [
   cycle_id INTEGER,
   signed_id TEXT,
   aborted INTEGER,
+  op_id INTEGER,
   PRIMARY KEY (model, row_id, action)
 ) STRICT, WITHOUT ROWID",
     "CREATE TABLE IF NOT EXISTS sync_upload_part (

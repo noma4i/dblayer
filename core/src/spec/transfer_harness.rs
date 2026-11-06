@@ -127,6 +127,7 @@ pub(super) fn stored(id: TransferId, key: &str, parts: u32) -> StoredTransfer {
         signed_id: None,
         failed: None,
         aborted: false,
+        op_id: None,
         copying: false,
         file_present: true,
         created_at: Time(0),

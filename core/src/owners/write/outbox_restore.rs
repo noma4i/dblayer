@@ -119,6 +119,7 @@ impl OutboxState {
             match input {
                 OutboxInput::Submit { reply, .. } | OutboxInput::Retry { reply, .. } | OutboxInput::Discard { reply, .. } => Self::reply(fx, reply, OutboxAnswer::Err(Fault::Interrupted)),
                 OutboxInput::Outcome { reply, .. } => Self::reply(fx, reply, OutboxAnswer::Outcome(OutboxOutcome::Interrupted)),
+                OutboxInput::ReserveOp { transfer_id, .. } => self.opened(fx, transfer_id, Err(Fault::Interrupted)),
                 _ => {}
             }
         }
@@ -134,6 +135,8 @@ impl OutboxState {
                     Self::reply(fx, reply, OutboxAnswer::Err(Fault::NoSession));
                 }
             }
+            OutboxInput::ReservedFloor { op_id } => self.next_op = self.next_op.max(op_id + 1),
+            held @ (OutboxInput::ReserveOp { .. } | OutboxInput::SubmitReserved { .. }) => self.held.push(held),
             held @ (OutboxInput::Retry { .. } | OutboxInput::Discard { .. } | OutboxInput::Outcome { .. }) => self.held.push(held),
             OutboxInput::Online(Online(on)) => self.online = on,
             OutboxInput::ModelsReset(reset) => {

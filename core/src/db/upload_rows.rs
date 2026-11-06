@@ -37,7 +37,15 @@ pub(crate) struct UploadRaw {
     cycle_id: Option<i64>,
     signed_id: Option<String>,
     aborted: bool,
+    op_id: Option<i64>,
     etags: Vec<Option<String>>,
+}
+
+impl UploadRaw {
+    /// The operation of the optimistic effects of a transfer that has not handed its final mutation to Outbox: Transfer owns it.
+    pub(crate) fn owned_op(&self) -> Option<i64> { self.op_id.filter(|_| !self.completed) }
+
+    pub(crate) fn reserved_op(&self) -> Option<i64> { self.op_id }
 }
 
 pub(crate) fn upload_rows(connection: &rusqlite::Connection) -> rusqlite::Result<Vec<UploadRaw>> {
@@ -49,7 +57,7 @@ pub(crate) fn upload_rows(connection: &rusqlite::Connection) -> rusqlite::Result
     }
     let mut statement = connection.prepare(
         "SELECT model, row_id, action, seq, source, total, batch, upload_id, sent, completed, error_message, created_at, inline, size, sha256, mutation_path, mutation_body, on_failure, steps_path, steps_body, \
-         transfer_id, cycle_id, signed_id, aborted FROM sync_upload WHERE seq IS NOT NULL ORDER BY seq",
+         transfer_id, cycle_id, signed_id, aborted, op_id FROM sync_upload WHERE seq IS NOT NULL ORDER BY seq",
     )?;
     let rows = statement.query_map([], |row| {
         let key = [row.get::<_, String>(0)?, row.get(1)?, row.get(2)?];
@@ -77,6 +85,7 @@ pub(crate) fn upload_rows(connection: &rusqlite::Connection) -> rusqlite::Result
             cycle_id: row.get(21)?,
             signed_id: row.get(22)?,
             aborted: row.get::<_, Option<bool>>(23)?.unwrap_or(false),
+            op_id: row.get(24)?,
         })
     })?;
     rows.collect()
@@ -116,13 +125,13 @@ impl Db {
             .store
             .write_store(&Authority::Owner, |stored| {
                 stored.connection.execute(
-                    "INSERT OR REPLACE INTO sync_upload (model, row_id, action, status, stage, sent, total, wait, attempts, error_kind, error_message, seq, source, batch, upload_id, completed, created_at, inline, size, sha256, mutation_path, mutation_body, on_failure, steps_path, steps_body, transfer_id, cycle_id, signed_id, aborted) \
-                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, NULL, 0, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27)",
+                    "INSERT OR REPLACE INTO sync_upload (model, row_id, action, status, stage, sent, total, wait, attempts, error_kind, error_message, seq, source, batch, upload_id, completed, created_at, inline, size, sha256, mutation_path, mutation_body, on_failure, steps_path, steps_body, transfer_id, cycle_id, signed_id, aborted, op_id) \
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, NULL, 0, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?28)",
                     rusqlite::params![
                         model, id, action, status, stage, row.confirmed_parts, row.parts, row.failed.as_ref().map(|_| "unrecognized"), row.failed,
                         i64::try_from(row.seq).unwrap_or(i64::MAX), row.source, row.batch, row.upload_id, row.completed, i64::try_from(row.created_at).unwrap_or(i64::MAX), row.inline,
                         i64::try_from(row.size).unwrap_or(i64::MAX), row.sha256, row.path, row.body, on_failure, row.steps_path, row.steps_body,
-                        i64::try_from(row.transfer_id).unwrap_or(i64::MAX), i64::try_from(row.cycle_id).unwrap_or(i64::MAX), row.signed_id, row.aborted
+                        i64::try_from(row.transfer_id).unwrap_or(i64::MAX), i64::try_from(row.cycle_id).unwrap_or(i64::MAX), row.signed_id, row.aborted, row.op_id.and_then(|op| i64::try_from(op).ok())
                     ],
                 )?;
                 stored.connection.execute("DELETE FROM sync_upload_part WHERE model = ?1 AND row_id = ?2 AND action = ?3", rusqlite::params![model, id, action])?;
@@ -174,6 +183,7 @@ impl Db {
             signed_id: raw.signed_id,
             failed: raw.failed,
             aborted: raw.aborted,
+            op_id: raw.op_id.map(|op| unsigned(op, "op_id")).transpose()?,
             copying,
             file_present,
             created_at: Time(unsigned(raw.created_at, "created_at")?),

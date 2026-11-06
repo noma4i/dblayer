@@ -53,6 +53,7 @@ fn the_base_keeps_the_whole_value_of_a_transfer() {
         cycle_id: 2,
         signed_id: Some("sig".into()),
         aborted: true,
+        op_id: None,
         etags: vec![Some("e1".into()), None],
     };
     db.write_queue_ops(&[StoreOp::Upload { row, kind: UploadKind::SyncUpload }]).unwrap();

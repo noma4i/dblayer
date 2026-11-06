@@ -42,6 +42,7 @@ fn call_inputs() -> Vec<OutboxInput> {
 #[test]
 fn out_submit_while_restoring() {
     let mut twin = Twin::bare();
+    declare(&mut twin);
     let held = submit(&mut twin, 40);
     assert!(kinds(&held).is_empty() && answers(&held, 40).is_empty() && twin.state().ops.is_empty(), "nothing is written before Restored: {held:?}");
     let restored = restore(&mut twin, Vec::new());

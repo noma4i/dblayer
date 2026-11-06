@@ -8,10 +8,13 @@ use crate::transport::RequestOwner;
 use super::error::DbError;
 use super::local_write::read_outbox;
 use super::open::Db;
+use super::upload_rows::UploadRaw;
 
 pub(crate) struct Restore {
     pub ops: Result<Vec<StoredOp>, DbError>,
     pub transfers: Result<Vec<crate::owners::write::transfer::StoredTransfer>, DbError>,
+    /// The highest `op_id` a transfer reserved: Outbox gives no `op_id` at or below it.
+    pub reserved: Option<u64>,
 }
 
 impl Db {
@@ -33,9 +36,12 @@ impl Db {
             let uploads = super::upload_rows::upload_rows(connection).map_err(crate::store::StoreError::from)?;
             Ok((read_outbox(reader)?, pending, uploads, answers))
         })?;
+        let owned: Vec<i64> = uploads.iter().filter_map(UploadRaw::owned_op).collect();
+        let reserved = uploads.iter().filter_map(UploadRaw::reserved_op).max().and_then(|op| u64::try_from(op).ok());
+        let entries = entries.into_iter().filter(|entry| !owned.contains(&entry.operation.id.0)).collect();
         let ops = self.stored_intents(entries, pending.clone(), answers);
         let transfers = self.stored_transfers(uploads);
-        Ok(Restore { ops, transfers })
+        Ok(Restore { ops, transfers, reserved })
     }
 
     fn stored_intents(&self, entries: Vec<super::local_write::OutboxOperation>, pending: Option<crate::transport::encrypted::state::Pending>, mut answers: std::collections::BTreeMap<i64, (u64, crate::transport::encrypted::state::StoredAnswer)>) -> Result<Vec<StoredOp>, DbError> {

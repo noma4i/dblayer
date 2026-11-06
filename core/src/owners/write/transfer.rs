@@ -46,7 +46,22 @@ impl TransferState {
         let ops: Vec<StoreOp> = ids
             .iter()
             .filter_map(|id| self.transfers.get(id))
-            .map(|transfer| if kind == StoreKind::Removed { StoreOp::RemoveUpload { key: transfer.key.clone() } } else { StoreOp::Upload { row: upload_row(transfer, kind), kind: upload_kind(kind) } })
+            .flat_map(|transfer| {
+                let own = transfer.op_id.filter(|_| !transfer.submitted);
+                let mut ops = Vec::new();
+                if kind == StoreKind::Removed {
+                    ops.push(StoreOp::RemoveUpload { key: transfer.key.clone() });
+                    if let Some(op_id) = own.filter(|_| !matches!(transfer.removal, Some(Removal::Confirmed { .. }))) {
+                        ops.extend([StoreOp::RollBack { op_id }, StoreOp::RemoveIntent { op_id }]);
+                    }
+                } else {
+                    ops.push(StoreOp::Upload { row: upload_row(transfer, kind), kind: upload_kind(kind) });
+                    if let (Some(op_id), StoreKind::SyncUpload, TransferStage::Accepting, None) = (own, kind, transfer.stage, transfer.prior) {
+                        ops.push(StoreOp::Intent { op_id, model: transfer.mutation.model.clone(), row_id: transfer.mutation.row_id.clone(), action: transfer.mutation.action.clone(), payload: transfer.mutation.body.clone(), effects: transfer.mutation.effects.clone() });
+                    }
+                }
+                ops
+            })
             .collect();
         let id = self.next_batch;
         self.next_batch += 1;
@@ -217,6 +232,7 @@ impl TransferState {
             TransferInput::RoundStatus { epoch, transfer_ids, refused } => self.round_status(epoch, &transfer_ids, refused, fx),
             TransferInput::CopyDone { transfer_id, attempt_id, size, sha256, place } => self.copy_done(transfer_id, attempt_id, size, sha256, place, fx),
             TransferInput::CopyFailed { transfer_id, attempt_id, error } => self.copy_failed(transfer_id, attempt_id, error, fx),
+            TransferInput::OpReserved { transfer_id, result } => self.op_reserved(transfer_id, result, fx),
             TransferInput::StepOk { transfer_id, attempt_id, part, upload_id, etag } => self.step_ok(transfer_id, attempt_id, part, upload_id, etag, fx),
             TransferInput::StepError { transfer_id, attempt_id, temporary } => self.step_error(transfer_id, attempt_id, temporary, fx),
             TransferInput::Completed { transfer_id, attempt_id, signed_id } => self.completed(transfer_id, attempt_id, signed_id, fx),
@@ -299,11 +315,19 @@ impl TransferState {
     }
 
     /// The final mutation goes to Outbox as an operation of the origin `Transfer{key}`.
-    pub(super) fn submit_mutation(&self, id: TransferId, fx: &mut Fx) {
-        let Some(transfer) = self.transfers.get(&id) else { return };
+    pub(super) fn submit_mutation(&mut self, id: TransferId, fx: &mut Fx) {
+        let Some(transfer) = self.transfers.get_mut(&id) else { return };
+        transfer.submitted = true;
         let signed = transfer.signed_id.clone().unwrap_or_default();
-        let op = NewOp { origin: Origin::Transfer(transfer.key.clone()), body: transfer.mutation.body.replace(SIGNED_ID_SENTINEL, &signed), ..transfer.mutation.clone() };
-        fx.push(Effect::Send(Outbound::new(self.peers.outbox, OutboxInput::Submit { epoch: self.epoch, op, reply: NO_REPLY })));
+        let mut op = NewOp { origin: Origin::Transfer(transfer.key.clone()), body: transfer.mutation.body.replace(SIGNED_ID_SENTINEL, &signed), ..transfer.mutation.clone() };
+        let input = match transfer.op_id {
+            Some(op_id) => {
+                op.effects = Default::default();
+                OutboxInput::SubmitReserved { epoch: self.epoch, op_id, op }
+            }
+            None => OutboxInput::Submit { epoch: self.epoch, op, reply: NO_REPLY },
+        };
+        fx.push(Effect::Send(Outbound::new(self.peers.outbox, input)));
     }
 }
 

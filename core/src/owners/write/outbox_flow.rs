@@ -152,6 +152,9 @@ impl OutboxState {
         if epoch != self.epoch {
             return Self::reply(fx, reply, OutboxAnswer::Err(Fault::NoSession));
         }
+        if !self.declarations.contains(&(op.model.clone(), op.action.clone())) {
+            return Self::reply(fx, reply, OutboxAnswer::Err(Fault::Invalid));
+        }
         if !op.durable && !self.online {
             return Self::reply(fx, reply, OutboxAnswer::Err(Fault::Offline));
         }
@@ -169,6 +172,32 @@ impl OutboxState {
         } else {
             self.store(op_id, CommitKind::Intent, fx);
         }
+    }
+
+    /// `ReserveOp`: the next `op_id` of the sequence, nothing is written. A reserved `op_id` that is not used is not given again.
+    pub(super) fn reserve_op(&mut self, epoch: Epoch, transfer_id: u64, fx: &mut Effects<Outbox>) {
+        let result = if epoch == self.epoch {
+            self.next_op += 1;
+            Ok(self.next_op - 1)
+        } else {
+            Err(Fault::NoSession)
+        };
+        self.opened(fx, transfer_id, result);
+    }
+
+    pub(super) fn opened(&self, fx: &mut Effects<Outbox>, transfer_id: u64, result: Result<OpId, Fault>) {
+        if let Some(transfer) = self.peers.transfer {
+            fx.push(Effect::Send(Outbound::new(transfer, super::transfer::TransferInput::OpReserved { transfer_id, result })));
+        }
+    }
+
+    /// `Submit` with the intent written by the batch of Transfer: the operation goes out as after `Submitting x Committed`, with no write and no receipt.
+    pub(super) fn submit_reserved(&mut self, epoch: Epoch, op_id: OpId, op: NewOp, fx: &mut Effects<Outbox>) {
+        if epoch != self.epoch {
+            return;
+        }
+        self.add_operation(op_id, op, Stage::Submitting);
+        self.operation_committed(op_id, CommitKind::Intent, 0, fx);
     }
 
     pub(super) fn online_changed(&mut self, on: bool, fx: &mut Effects<Outbox>) {

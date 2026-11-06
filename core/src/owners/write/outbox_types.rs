@@ -132,6 +132,12 @@ pub enum LocalWriteKind {
 #[derive(Clone, Debug)]
 pub enum OutboxInput {
     Submit { epoch: Epoch, op: NewOp, reply: ReplyId },
+    /// Transfer asks for the `op_id` of the optimistic effects it writes with the acceptance (`out_reserve_op`).
+    ReserveOp { epoch: Epoch, transfer_id: u64 },
+    /// The final mutation of a transfer whose intent the batch of Transfer wrote under `op_id` (`out_submit_intent_written`).
+    SubmitReserved { epoch: Epoch, op_id: OpId, op: NewOp },
+    /// The highest `op_id` a restored transfer holds: `ReserveOp` gives only higher ones.
+    ReservedFloor { op_id: OpId },
     Restored { ops: Vec<StoredOp>, pending_lost: bool },
     RestoreFailed { error: String },
     RestoreReady { epoch: Epoch },

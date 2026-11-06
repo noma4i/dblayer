@@ -102,7 +102,9 @@ impl OutboxState {
 
     /// A new epoch: a fresh instance. The platform call gate keeps calls out of an epoch without an identity.
     pub(super) fn begin_epoch(&mut self, epoch: Epoch) {
+        let declarations = std::mem::take(&mut self.declarations);
         *self = if self.author == BatchAuthor::LocalWrites { Self::local_writes(epoch, self.peers.store) } else { Self::new(epoch, self.peers) };
+        self.declarations = declarations;
     }
 
     pub fn stage_of(&self, op_id: OpId) -> Option<Stage> { self.ops.get(&op_id).map(|operation| operation.stage) }
@@ -355,12 +357,17 @@ impl OutboxState {
     }
 
     pub(super) fn handle(&mut self, input: OutboxInput, fx: &mut Effects<Outbox>) {
+        if let (Some(error), OutboxInput::ReserveOp { transfer_id, .. }) = (&self.queue_error, &input) {
+            return self.opened(fx, *transfer_id, Err(Fault::Rejected(RejectReason::Storage(error.clone()))));
+        }
         if let (Some(error), OutboxInput::Submit { reply, .. } | OutboxInput::Retry { reply, .. } | OutboxInput::Discard { reply, .. } | OutboxInput::Outcome { reply, .. }) = (&self.queue_error, &input) {
             return Self::reply(fx, *reply, OutboxAnswer::Err(Fault::Rejected(RejectReason::Storage(error.clone()))));
         }
         match input {
             OutboxInput::Submit { epoch, op, reply } => self.submit(epoch, op, reply, fx),
-            OutboxInput::Restored { .. } | OutboxInput::RestoreFailed { .. } => {}
+            OutboxInput::ReserveOp { epoch, transfer_id } => self.reserve_op(epoch, transfer_id, fx),
+            OutboxInput::SubmitReserved { epoch, op_id, op } => self.submit_reserved(epoch, op_id, op, fx),
+            OutboxInput::Restored { .. } | OutboxInput::RestoreFailed { .. } | OutboxInput::ReservedFloor { .. } => {}
             OutboxInput::RestoreReady { epoch } if epoch == self.epoch => self.restore_ready(fx),
             OutboxInput::RestoreReady { .. } => {}
             OutboxInput::RegisterOperations { declarations } => self.register(declarations, fx),

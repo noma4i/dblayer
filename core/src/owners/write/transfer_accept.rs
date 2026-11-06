@@ -2,12 +2,12 @@
 
 use std::collections::BTreeSet;
 
-use super::outbox::Fault;
+use super::outbox::{Fault, OutboxInput};
 use super::transfer::{reply, run, Fx, TransferState};
 use super::transfer_types::*;
 use crate::files::Location;
 use crate::owners::contract::{RejectReason, ReplyId};
-use crate::runtime::{Epoch, Time};
+use crate::runtime::{Effect, Epoch, Outbound, Time};
 
 impl TransferState {
     pub(super) fn create(&mut self, item: BatchItem, batch_id: Option<u64>, now: Time, stage: TransferStage) -> TransferId {
@@ -45,6 +45,8 @@ impl TransferState {
             steps,
             restored: false,
             urgent: false,
+            op_id: None,
+            submitted: false,
             round_error: None,
             removal: None,
             prior: None,
@@ -66,7 +68,7 @@ impl TransferState {
     fn valid(item: &BatchItem) -> bool { !item.source.path.is_empty() && item.source.parts > 0 }
 
     /// `Accept` and `AcceptBatch`: every element is checked before the transaction, the rows of all N elements go in one batch.
-    pub(super) fn accept(&mut self, epoch: Epoch, items: Vec<BatchItem>, batch: bool, rep: ReplyId, now: Time, fx: &mut Fx) {
+    pub(super) fn accept(&mut self, epoch: Epoch, mut items: Vec<BatchItem>, batch: bool, rep: ReplyId, now: Time, fx: &mut Fx) {
         if epoch != self.epoch || self.closing || self.ended {
             return reply(fx, rep, TransferAnswer::Err(if self.closing { Fault::Interrupted } else { Fault::NoSession }));
         }
@@ -78,6 +80,18 @@ impl TransferState {
             self.next_group += 1;
             self.next_group - 1
         });
+        if items.iter().any(|item| self.open_id(&item.key).is_some()) {
+            return reply(fx, rep, TransferAnswer::Err(Fault::InFlight));
+        }
+        if !batch && !items[0].mutation.effects.is_empty() {
+            let item = items.remove(0);
+            let id = self.create(item, None, now, TransferStage::Reserving);
+            if let Some(transfer) = self.transfers.get_mut(&id) {
+                transfer.accept_reply = Some(rep);
+            }
+            fx.push(Effect::Send(Outbound::new(self.peers.outbox, OutboxInput::ReserveOp { epoch: self.epoch, transfer_id: id })));
+            return;
+        }
         let ids: Vec<TransferId> = items.into_iter().map(|item| self.create(item, group, now, TransferStage::Accepting)).collect();
         match group {
             Some(group) => {
@@ -90,6 +104,24 @@ impl TransferState {
             }
         }
         self.store(&ids, StoreKind::SyncUpload, fx);
+    }
+
+    /// `Reserving x OpReserved`: the batch of the acceptance writes the optimistic effects under the reserved `op_id`. An answer of a transfer that is not `Reserving` is foreign.
+    pub(super) fn op_reserved(&mut self, id: TransferId, result: Result<u64, Fault>, fx: &mut Fx) {
+        let Some(transfer) = self.transfers.get_mut(&id).filter(|transfer| transfer.stage == TransferStage::Reserving) else { return };
+        match result {
+            Ok(op_id) => {
+                transfer.op_id = Some(op_id);
+                transfer.stage = TransferStage::Accepting;
+                self.store(&[id], StoreKind::SyncUpload, fx);
+            }
+            Err(fault) => {
+                transfer.stage = TransferStage::Done;
+                if let Some(rep) = transfer.accept_reply.take() {
+                    reply(fx, rep, TransferAnswer::Err(fault));
+                }
+            }
+        }
     }
 
     /// `Accepting x Committed`: the copy starts, the round is asked for.

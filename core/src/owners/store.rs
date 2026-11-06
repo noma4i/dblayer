@@ -52,6 +52,10 @@ pub struct IntentEffects {
     pub touches: Vec<EffectTouch>,
 }
 
+impl IntentEffects {
+    pub fn is_empty(&self) -> bool { self.rows.is_empty() && self.members.is_empty() && self.tombstones.is_empty() && self.touches.is_empty() }
+}
+
 /// A row of the server answer or of a local write.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RowValue {
@@ -97,6 +101,8 @@ pub struct UploadRow {
     pub cycle_id: u64,
     pub signed_id: Option<String>,
     pub aborted: bool,
+    /// The operation the optimistic effects of the transfer belong to (`ReserveOp`).
+    pub op_id: Option<u64>,
     /// The etag of each confirmed part, in the order of the parts (`sync_upload_part`).
     pub etags: Vec<Option<String>>,
 }
