@@ -258,12 +258,14 @@ fn fetch_keys_returns_ids_and_revisions_in_row_order() {
 }
 
 #[test]
-fn a_direction_can_place_missing_values_first_or_last() {
+fn data_order_nulls() {
     let connection = seeded();
     let ordered = |direction: &str| {
         let order = Order { field: "age".to_string(), direction: serde_json::from_value(json!(direction)).unwrap() };
         query_ids(&connection, &Query::new("people").ordered(vec![order]))
     };
+    assert_eq!(ordered("asc"), ["p3", "p6", "p2", "p4", "p1", "p5"], "asc puts null first");
+    assert_eq!(ordered("desc"), ["p5", "p1", "p4", "p2", "p3", "p6"], "desc puts null last");
     assert_eq!(ordered("asc_nulls_last"), ["p2", "p4", "p1", "p5", "p3", "p6"]);
     assert_eq!(ordered("desc_nulls_first"), ["p3", "p6", "p5", "p1", "p4", "p2"]);
 }
