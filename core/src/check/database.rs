@@ -24,10 +24,15 @@ const OPERATIONS: &str = include_str!("../../tests/corpus/operations.json");
 #[derive(Default)]
 struct Heard(AtomicU64);
 
-/// A stream the runner reads: a call of the runner pulls it into a queue, `read` takes the next value.
+/// A stream the runner reads: a task counted by the owners barrier pulls it into a queue, `read` takes the next value.
 struct Pulled {
     stream: Arc<ReadStream>,
     queue: Arc<std::sync::Mutex<std::collections::VecDeque<(u64, ReadValue)>>>,
+    task: tokio::task::JoinHandle<()>,
+}
+
+impl Drop for Pulled {
+    fn drop(&mut self) { self.task.abort(); }
 }
 
 /// What a finished call hands back to the runner: what to observe and what to remember under a name.
@@ -513,16 +518,16 @@ impl DatabaseSut {
         let stream = database.subscribe_values(database.session_epoch(), request);
         let queue: Arc<std::sync::Mutex<std::collections::VecDeque<(u64, ReadValue)>>> = Arc::default();
         let (pulling, kept, heard) = (stream.clone(), queue.clone(), self.heard.clone());
-        self.launch(async move {
+        let launch = database.life_handle().launch();
+        let task = crate::task::spawn(crate::task::Carry::here(), crate::runtime::counted(Some(launch), async move {
             let mut seq = 0;
             while let Ok(Some(value)) = pulling.pull().await {
                 seq += 1;
                 kept.lock().unwrap().push_back((seq, value));
                 heard.0.fetch_add(1, Ordering::SeqCst);
             }
-            Done::default()
-        });
-        self.streams.insert(name.into(), Pulled { stream, queue });
+        }));
+        self.streams.insert(name.into(), Pulled { stream, queue, task });
         Vec::new()
     }
 }
