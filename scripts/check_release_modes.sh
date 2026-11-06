@@ -3,6 +3,7 @@ set -euo pipefail
 
 root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)"
 python3 - "$root" <<'PY'
+from concurrent.futures import ThreadPoolExecutor
 import io
 import json
 import os
@@ -18,6 +19,7 @@ release_script = source / "scripts/release.sh"
 version = "1.2.3"
 attachments = ["DBlayerFFI.xcframework.zip", "dblayer.swift", "dblayer-android.zip", "dblayer-gen-macos-universal"]
 real_git = shutil.which("git")
+pool = ThreadPoolExecutor(max_workers=4)
 
 
 def run(command, cwd, env, expected=0, contains=None):
@@ -251,7 +253,15 @@ with tempfile.TemporaryDirectory(prefix="dblayer-release-modes-") as directory:
         subprocess.run([real_git, "-C", str(repo), "add", name], check=True)
         subprocess.run([real_git, "-C", str(repo), "commit", "-q", "--amend", "--no-edit"], check=True, capture_output=True)
 
-    for label, name, text, message in (
+    def legacy_case(case):
+        label, name, text, message = case
+        repo_red, env_red = fixture(base / ("red-" + name.replace("/", "-")))
+        amend_with(repo_red, name, text)
+        run(["bash", "scripts/release.sh", version], repo_red, env_red, expected=1, contains=message)
+        assert not (repo_red / "target/release-1.2.3").exists(), f"{label}: the stage was built after a red check_legacy"
+        return f"ok release refuses {label} before any build"
+
+    for line in pool.map(legacy_case, (
         ("a legacy line", "core/src/extra.rs", "// one legacy line\n", "1 legacy lines or files, 0 development-file references or files"),
         ("a legacy file name", "core/src/shim.rs", "pub fn a() {}\n", "1 legacy lines or files, 0 development-file references or files"),
         ("a development file", "CLAUDE.md", "notes\n", "0 legacy lines or files, 1 development-file references or files"),
@@ -262,12 +272,8 @@ with tempfile.TemporaryDirectory(prefix="dblayer-release-modes-") as directory:
         ("COMPAT", "core/src/c.rs", "// COMPAT\n", "1 legacy lines or files, 0 development-file references or files"),
         ("a spaced flush", "core/src/f.rs", "pub fn flush () {}\n", "1 legacy lines or files, 0 development-file references or files"),
         ("a sync root import", "core/src/s.rs", "use crate::sync;\n", "1 legacy lines or files, 0 development-file references or files"),
-    ):
-        repo_red, env_red = fixture(base / ("red-" + name.replace("/", "-")))
-        amend_with(repo_red, name, text)
-        run(["bash", "scripts/release.sh", version], repo_red, env_red, expected=1, contains=message)
-        assert not (repo_red / "target/release-1.2.3").exists(), f"{label}: the stage was built after a red check_legacy"
-        print(f"ok release refuses {label} before any build")
+    )):
+        print(line)
     compatible, compatible_env = fixture(base / "compatible")
     amend_with(compatible, "core/src/ok.rs", "// Compatible with the server\n")
     run(["bash", "scripts/release.sh", version], compatible, compatible_env, contains="check_legacy: ok")
@@ -275,13 +281,16 @@ with tempfile.TemporaryDirectory(prefix="dblayer-release-modes-") as directory:
     broken, broken_env = fixture(base / "broken")
     run(["bash", "scripts/check_legacy.sh", "count", str(broken), "no-such-ref"], broken, broken_env, expected=2, contains="git grep failed")
     print("ok a git failure is not a zero count")
-    for failing in ("grep", "ls-tree"):
+    def git_failure_case(failing):
         git_red, git_red_env = fixture(base / f"git-{failing}")
         run(["bash", "scripts/release.sh", version], git_red, dict(git_red_env, STUB_GIT_FAIL=failing), expected=1, contains="check_legacy failed")
         assert not (git_red / "target/release-1.2.3").exists(), f"git {failing} failure: the stage was built after a failed check_legacy"
         git_events = (base / f"git-{failing}/events").read_text().splitlines()
         assert not any(line.startswith("gh ") or line.startswith("git push ") for line in git_events), git_events
-        print(f"ok release refuses when git {failing} fails inside check_legacy")
+        return f"ok release refuses when git {failing} fails inside check_legacy"
+
+    for line in pool.map(git_failure_case, ("grep", "ls-tree")):
+        print(line)
     incomplete, incomplete_env = fixture(base / "incomplete")
     stage = incomplete / "target/release-1.2.3"
     stage.mkdir(parents=True)
@@ -327,28 +336,36 @@ with tempfile.TemporaryDirectory(prefix="dblayer-release-modes-") as directory:
     assert any(line.startswith("check_consumers ") and "--maven " in line and "--package-swift " in line for line in green_events), green_events
     assert subprocess.check_output([real_git, "-C", str(green), "cat-file", "-t", version], text=True).strip() == "commit"
     print("ok green sequences and app suites tag the release and record the receipt")
-    for kind, variable, modes, touch in (
-        ("sequences", "STUB_REPORT", ("missing-file", "missing-lane", "partial", "zero", "rc"), None),
-        ("consumers", "STUB_CONSUMER_REPORT", ("missing-file", "missing-lane", "rc"), boundary),
-    ):
-        for mode in modes:
-            bad, bad_env = fixture(base / f"report-{kind}-{mode}", touch=touch)
-            text = f"release: {kind}.tsv is missing or empty" if mode == "missing-file" else "lane reports are missing or incomplete"
-            run(["bash", "scripts/release.sh", version, "--publish"], bad, dict(bad_env, **{variable: mode}), expected=1, contains=text)
-            assert_no_release(bad, bad_env, base / f"report-{kind}-{mode}/events")
-            assert not (bad / "target/release-1.2.3/RECEIPT.json").exists()
-            print(f"ok {kind} report {mode} refuses the tag")
-    for mode, variables, text in (
-        ("another-sha", {"STUB_SHA": "0" * 40}, "lane reports are missing or incomplete"),
-        ("another-run", {"STUB_RUN": "another-run"}, "lane reports are missing or incomplete"),
-        ("head-moved", {"STUB_MOVE_HEAD": "1"}, "source commit changed during the run"),
-        ("foreign-package-commit", {"STUB_MOVE_HEAD": "1", "STUB_MOVE_SUBJECT": f"Package release {version}"}, "source commit changed during the run"),
-    ):
+    def report_case(case):
+        kind, variable, mode, touch = case
+        bad, bad_env = fixture(base / f"report-{kind}-{mode}", touch=touch)
+        text = f"release: {kind}.tsv is missing or empty" if mode == "missing-file" else "lane reports are missing or incomplete"
+        run(["bash", "scripts/release.sh", version, "--publish"], bad, dict(bad_env, **{variable: mode}), expected=1, contains=text)
+        assert_no_release(bad, bad_env, base / f"report-{kind}-{mode}/events")
+        assert not (bad / "target/release-1.2.3/RECEIPT.json").exists()
+        return f"ok {kind} report {mode} refuses the tag"
+
+    for line in pool.map(report_case, (
+        *(("sequences", "STUB_REPORT", mode, None) for mode in ("missing-file", "missing-lane", "partial", "zero", "rc")),
+        *(("consumers", "STUB_CONSUMER_REPORT", mode, boundary) for mode in ("missing-file", "missing-lane", "rc")),
+    )):
+        print(line)
+
+    def identity_case(case):
+        mode, variables, text = case
         bad, bad_env = fixture(base / f"identity-{mode}", touch=boundary)
         run(["bash", "scripts/release.sh", version, "--publish"], bad, dict(bad_env, **variables), expected=1, contains=text)
         assert_no_release(bad, bad_env, base / f"identity-{mode}/events", foreign=int(mode == "foreign-package-commit"))
         assert not (bad / "target/release-1.2.3/RECEIPT.json").exists()
-        print(f"ok {mode} refuses the receipt, the package commit and the tag")
+        return f"ok {mode} refuses the receipt, the package commit and the tag"
+
+    for line in pool.map(identity_case, (
+        ("another-sha", {"STUB_SHA": "0" * 40}, "lane reports are missing or incomplete"),
+        ("another-run", {"STUB_RUN": "another-run"}, "lane reports are missing or incomplete"),
+        ("head-moved", {"STUB_MOVE_HEAD": "1"}, "source commit changed during the run"),
+        ("foreign-package-commit", {"STUB_MOVE_HEAD": "1", "STUB_MOVE_SUBJECT": f"Package release {version}"}, "source commit changed during the run"),
+    )):
+        print(line)
     dry, dry_env = fixture(base / "identity-foreign-package-commit-dry", touch=boundary)
     run(["bash", "scripts/release.sh", version], dry, dict(dry_env, STUB_MOVE_HEAD="1", STUB_MOVE_SUBJECT=f"Package release {version}"), expected=1, contains="source commit changed during the run")
     assert_no_release(dry, dry_env, base / "identity-foreign-package-commit-dry/events", foreign=1)
@@ -368,22 +385,25 @@ with tempfile.TemporaryDirectory(prefix="dblayer-release-modes-") as directory:
         ("extra", ("Package.swift", "swift/Sources/DBlayer/dblayer.swift", "core/src/extra.rs")),
         ("only-binding", ("swift/Sources/DBlayer/dblayer.swift",)),
     )
-    for case, files in package_cases:
-        for mode_args, label in (([], "dry run"), (["--publish"], "publish")):
-            name = f"package-{case}-{label.replace(' ', '-')}"
-            bad, bad_env = fixture(base / name)
-            for file in files:
-                (bad / file).parent.mkdir(parents=True, exist_ok=True)
-                (bad / file).write_text("changed\n")
-            subprocess.run([real_git, "-C", str(bad), "add", "-f", *files], check=True)
-            subprocess.run([real_git, "-C", str(bad), "commit", "-m", f"Package release {version}"], check=True, capture_output=True)
-            run(["bash", "scripts/release.sh", version, *mode_args], bad, bad_env, expected=1, contains="must change")
-            bad_events = (base / name / "events").read_text().splitlines() if (base / name / "events").exists() else []
-            assert not any(line.startswith("gh ") or line.startswith("git push ") for line in bad_events), bad_events
-            assert subprocess.check_output([real_git, "-C", str(bad), "tag", "--list", version], text=True).strip() == ""
-            assert not (bad / "target/release-1.2.3").exists()
-            assert not (bad / "target/release.lock").exists()
-            print(f"ok a Package release commit with {case} files is refused in the {label}")
+    def package_case(case):
+        (case, files), (mode_args, label) = case
+        name = f"package-{case}-{label.replace(' ', '-')}"
+        bad, bad_env = fixture(base / name)
+        for file in files:
+            (bad / file).parent.mkdir(parents=True, exist_ok=True)
+            (bad / file).write_text("changed\n")
+        subprocess.run([real_git, "-C", str(bad), "add", "-f", *files], check=True)
+        subprocess.run([real_git, "-C", str(bad), "commit", "-m", f"Package release {version}"], check=True, capture_output=True)
+        run(["bash", "scripts/release.sh", version, *mode_args], bad, bad_env, expected=1, contains="must change")
+        bad_events = (base / name / "events").read_text().splitlines() if (base / name / "events").exists() else []
+        assert not any(line.startswith("gh ") or line.startswith("git push ") for line in bad_events), bad_events
+        assert subprocess.check_output([real_git, "-C", str(bad), "tag", "--list", version], text=True).strip() == ""
+        assert not (bad / "target/release-1.2.3").exists()
+        assert not (bad / "target/release.lock").exists()
+        return f"ok a Package release commit with {case} files is refused in the {label}"
+
+    for line in pool.map(package_case, [(case, mode) for case in package_cases for mode in (([], "dry run"), (["--publish"], "publish"))]):
+        print(line)
     unchanged, unchanged_env = fixture(base / "package-unchanged-binding")
     (unchanged / "Package.swift").write_text("changed\n")
     subprocess.run([real_git, "-C", str(unchanged), "add", "Package.swift"], check=True)
@@ -429,7 +449,7 @@ with tempfile.TemporaryDirectory(prefix="dblayer-release-modes-") as directory:
     print("ok an existing lock refuses the run, is never replaced, and a finished run releases it")
     import signal
     import time
-    for sig in (signal.SIGHUP, signal.SIGINT, signal.SIGTERM):
+    def signal_case(sig):
         sig_repo, sig_env = fixture(base / f"signal-{sig.name}")
         (sig_repo / "scripts/check_docs.sh").write_text("#!/bin/sh\nmkdir -p \"$TEST_ROOT/target\"; touch \"$TEST_ROOT/target/started\"\nsleep 2\n")
         subprocess.run([real_git, "-C", str(sig_repo), "commit", "-aq", "--amend", "--no-edit"], check=True, capture_output=True)
@@ -443,7 +463,10 @@ with tempfile.TemporaryDirectory(prefix="dblayer-release-modes-") as directory:
         assert proc.wait(timeout=60) == 128 + sig.value, proc.returncode
         assert not (sig_repo / "target/release.lock").exists(), f"the lock stayed after {sig.name}"
         run(["bash", "scripts/release.sh", version], sig_repo, sig_env, contains="Package.swift to be written:")
-        print(f"ok {sig.name} releases the lock")
+        return f"ok {sig.name} releases the lock"
+
+    for line in pool.map(signal_case, (signal.SIGHUP, signal.SIGINT, signal.SIGTERM)):
+        print(line)
     dry, dry_env = fixture(base / "report-dry")
     run(["bash", "scripts/release.sh", version], dry, dict(dry_env, STUB_REPORT="partial"), expected=1, contains="lane reports are missing or incomplete")
     assert not (dry / "target/release-1.2.3/RECEIPT.json").exists()
