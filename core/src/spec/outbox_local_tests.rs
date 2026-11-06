@@ -82,6 +82,19 @@ fn out_local_attach_copy_waits() {
 }
 
 #[test]
+fn out_local_attach_copy_other() {
+    let mut twin = Twin::new();
+    let copy = twin.post(write(LocalWriteKind::Attach { source: Some("/tmp/a.bin".into()) }));
+    let id = copy.iter().find_map(|effect| match effect { OutboxEffect::Copy { id, .. } => Some(*id), _ => None }).expect("the copy");
+    for input in [OutboxInput::Online(Online(false)), OutboxInput::Online(Online(true)), OutboxInput::ModelsReset(ModelsReset { epoch: EPOCH, models: vec!["Moment".into()], generation: 9 }), OutboxInput::Tick(Time(5))] {
+        let label = format!("{input:?}");
+        let effects = twin.post(input);
+        assert!(effects.is_empty(), "{label}: {effects:?}");
+    }
+    assert_eq!(kinds(&twin.post(OutboxInput::CopyDone { id })), vec![CommitKind::LocalWrite], "the copy still ends the write");
+}
+
+#[test]
 fn out_local_set_ephemeral() {
     let mut twin = Twin::new();
     twin.post(write(LocalWriteKind::SetEphemeral { expire_after: Some(10) }));

@@ -260,6 +260,9 @@ fn out_open_waiting_declaration() {
 }
 
 #[test]
+fn out_failed_retry_state_lost() { out_open_restores_state_lost(); }
+
+#[test]
 fn out_open_restores_state_lost() {
     let mut twin = Twin::bare();
     declare(&mut twin);
