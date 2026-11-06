@@ -65,7 +65,7 @@ impl Life {
             return self.settled(LifeReply::Closed);
         }
         if self.wiring.addresses().is_none_or(|addresses| addresses.session.is_none()) {
-            return self.settled(LifeReply::Session(Err(crate::owners::session::SessionError::NoSession)));
+            return self.settled(LifeReply::Session(Err(crate::owners::session::SessionError::Invalid)));
         }
         let waiter = self.wiring.outcomes.register(Epoch::MAX);
         self.wiring.to_session(SessionInput::SessionCall { operation, body, reply: waiter.id().raw() });
