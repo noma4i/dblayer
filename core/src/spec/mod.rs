@@ -15,6 +15,7 @@ mod ref_window;
 
 mod lifecycle_tests;
 mod lifecycle_owner_tests;
+mod lifecycle_restore_tests;
 mod network_owner_tests;
 mod store_owner_tests;
 mod store_pin_tests;
@@ -35,6 +36,7 @@ mod outbox_tests;
 mod outbox_trace_tests;
 mod outbox_harness;
 mod outbox_owner_tests;
+mod outbox_discard_tests;
 mod outbox_open_tests;
 mod outbox_cells_tests;
 mod outbox_reserve_tests;
