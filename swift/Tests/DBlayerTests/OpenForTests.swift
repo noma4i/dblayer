@@ -111,9 +111,11 @@ func reopenClocked(modelsJson: String, transport: MockTransport, operations: Str
   let server = try SealedServer(bridge: bridgeToTransport(transport))
   transport.cable = EncryptedCablePeer(server: server)
   await DB.closeForCleanup()
-  let clock = try await DB.openTesting(transport: transport, modelsJSON: modelsJson, path: path, startingAt: start, encrypted: standEncrypted(), credentials: HeldCredential(), http: server)
+  let held = path.map { credential(of: Config(path: $0, dataVersion: nil, cacheRows: 0)) } ?? HeldCredential()
+  let restored = (try? held.get()) != nil
+  let clock = try await DB.openTesting(transport: transport, modelsJSON: modelsJson, path: path, startingAt: start, encrypted: standEncrypted(), credentials: held, http: server)
   try DB.database.registerOperations(defsJson: withSessionProfile(operations))
-  try await signIn()
+  try await signIn(restored: restored)
   return clock
 }
 

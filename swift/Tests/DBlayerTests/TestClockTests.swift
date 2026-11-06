@@ -11,8 +11,7 @@ extension BridgeProbeTests {
     let transport = MockTransport()
     let hold = transport.hold("MomentsFeed", reply: #"{"data":{"feed":{"nodes":[{"__typename":"Moment","id":"1","uuid":"a","likedByMe":false,"media":{},"createdAt":"2026-10-08T00:00:00.000Z"}],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}"#)
     defer { hold.release() }
-    try await DB.openTesting(transport: transport, modelsJSON: modelsJSON)
-    try DB.database.registerOperations(defsJson: #"[{"name":"MomentsFeed","document":"query MomentsFeed($first: Int, $after: String) { feed(first: $first, after: $after) { nodes { id uuid likedByMe media createdAt } pageInfo { hasNextPage endCursor } } }"}]"#)
+    try await reopenClocked(modelsJson: modelsJSON, transport: transport, operations: #"[{"name":"MomentsFeed","document":"query MomentsFeed($first: Int, $after: String) { feed(first: $first, after: $after) { nodes { id uuid likedByMe media createdAt } pageInfo { hasNextPage endCursor } } }"}]"#)
     let (signals, signal) = AsyncStream<Int>.makeStream()
     let cursor = Cursor(signals)
     defer { signal.finish() }
@@ -47,8 +46,7 @@ extension BridgeProbeTests {
     transport.enqueue("MomentsFeed", reply: page(row2, false, "fresh"))
     transport.enqueue("LikeMoment", reply: #"{"data":{"likeMoment":{"__typename":"Moment","id":"1","uuid":"a","likedByMe":true,"media":{},"createdAt":"2026-10-08T00:00:00.000Z"}}}"#)
     let definitions = #"[{"name":"MomentsFeed","document":"query MomentsFeed($first: Int, $after: String) { feed(first: $first, after: $after) { nodes { id uuid likedByMe media createdAt } pageInfo { hasNextPage endCursor } } }"},{"name":"LikeMoment","document":"mutation LikeMoment($momentId: ID!) { likeMoment(momentId: $momentId) { id uuid likedByMe media createdAt } }"}]"#
-    try await DB.openTesting(transport: transport, modelsJSON: modelsJSON)
-    try DB.database.registerOperations(defsJson: definitions)
+    try await reopenClocked(modelsJson: modelsJSON, transport: transport, operations: definitions)
     let (signals, signal) = AsyncStream<Int>.makeStream()
     let cursor = Cursor(signals)
     defer { signal.finish(); firstPage.release() }
@@ -95,8 +93,7 @@ extension BridgeProbeTests {
     }
     transport.enqueue("LikeMoment", reply: #"{"data":{"likeMoment":{"__typename":"Moment","id":"1","uuid":"a","likedByMe":true,"media":{},"createdAt":"2026-10-08T00:00:00.000Z"}}}"#)
     let definitions = #"[{"name":"MomentsFeed","document":"query MomentsFeed($first: Int, $after: String) { feed(first: $first, after: $after) { nodes { id uuid likedByMe media createdAt } pageInfo { hasNextPage endCursor } } }"},{"name":"LikeMoment","document":"mutation LikeMoment($momentId: ID!) { likeMoment(momentId: $momentId) { id uuid likedByMe media createdAt } }"}]"#
-    try await DB.openTesting(transport: transport, modelsJSON: modelsJSON, path: path, startingAt: Date(timeIntervalSince1970: 1_000))
-    try DB.database.registerOperations(defsJson: definitions)
+    try await reopenClocked(modelsJson: modelsJSON, transport: transport, operations: definitions, path: path, startingAt: Date(timeIntervalSince1970: 1_000))
     let (events, signal) = AsyncStream<Int>.makeStream()
     let cursor = Cursor(events)
     defer { signal.finish() }
@@ -117,8 +114,7 @@ extension BridgeProbeTests {
     guard await cursor.next("the mutation is confirmed") == 2 else { Issue.record("the mutation was not confirmed"); return }
     try #require(transport.calls.filter { $0.operationName == "MomentsFeed" }.count == 1)
     await DB.closeForCleanup()
-    try await DB.openTesting(transport: transport, modelsJSON: modelsJSON, path: path, startingAt: Date(timeIntervalSince1970: 1_000))
-    try DB.database.registerOperations(defsJson: definitions)
+    try await reopenClocked(modelsJson: modelsJSON, transport: transport, operations: definitions, path: path, startingAt: Date(timeIntervalSince1970: 1_000))
     let secondLoad = Task { do { try await Moment.feed.load(); signal.yield(3) } catch { signal.yield(9) } }
     defer { secondLoad.cancel() }
     guard await cursor.next("the reopened load finishes") == 3 else { Issue.record("the reopened load failed"); return }
@@ -136,8 +132,7 @@ extension BridgeProbeTests {
     transport.enqueue("CurrentUserQuery", reply: #"{"data":{"user":{"id":"u1","name":"A"}}}"#)
     transport.enqueue("CurrentUserQuery", reply: #"{"data":{"user":{"id":"u1","name":"B"}}}"#)
     let definitions = #"[{"name":"CurrentUserQuery","document":"query CurrentUserQuery { user { id name } }"}]"#
-    try await DB.openTesting(transport: transport, modelsJSON: modelsJSON, path: path, startingAt: Date(timeIntervalSince1970: 1_000))
-    try DB.database.registerOperations(defsJson: definitions)
+    try await reopenClocked(modelsJson: modelsJSON, transport: transport, operations: definitions, path: path, startingAt: Date(timeIntervalSince1970: 1_000))
     let (events, signal) = AsyncStream<Int>.makeStream()
     let cursor = Cursor(events)
     defer { signal.finish() }
@@ -150,8 +145,7 @@ extension BridgeProbeTests {
     await first.stream.cancel()
     await DB.closeForCleanup()
 
-    try await DB.openTesting(transport: transport, modelsJSON: modelsJSON, path: path, startingAt: Date(timeIntervalSince1970: 1))
-    try DB.database.registerOperations(defsJson: definitions)
+    try await reopenClocked(modelsJson: modelsJSON, transport: transport, operations: definitions, path: path, startingAt: Date(timeIntervalSince1970: 1))
     let secondRefresh = Task { do { try await CurrentUser.current.refresh(); signal.yield(2) } catch { signal.yield(9) } }
     defer { secondRefresh.cancel() }
     guard await cursor.next("the reopened refresh finishes") == 2 else { Issue.record("the reopened refresh failed"); return }
@@ -168,8 +162,7 @@ extension BridgeProbeTests {
     let transport = MockTransport()
     for _ in 0 ..< 2 { transport.enqueue("MomentsFeed", reply: #"{"data":{"feed":{"nodes":[{"__typename":"Moment","id":"1","uuid":"a","likedByMe":false,"media":{},"createdAt":"2026-10-08T00:00:00.000Z"}],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}"#) }
     let down = transport.hold("MomentsFeed", failure: .Network(detail: "down"))
-    let clock = try await DB.openTesting(transport: transport, modelsJSON: modelsJSON)
-    try DB.database.registerOperations(defsJson: #"[{"name":"MomentsFeed","document":"query MomentsFeed($first: Int, $after: String) { feed(first: $first, after: $after) { nodes { id uuid likedByMe media createdAt } pageInfo { hasNextPage endCursor } } }"}]"#)
+    let clock = try await reopenClocked(modelsJson: modelsJSON, transport: transport, operations: #"[{"name":"MomentsFeed","document":"query MomentsFeed($first: Int, $after: String) { feed(first: $first, after: $after) { nodes { id uuid likedByMe media createdAt } pageInfo { hasNextPage endCursor } } }"}]"#)
 
     try await Moment.feed.load()
     let held = Projected<Moment>(try DB.account().stream(Moment.feed))
@@ -181,9 +174,9 @@ extension BridgeProbeTests {
     try await Moment.feed.load()
     #expect(transport.calls.filter { $0.operationName == "MomentsFeed" }.count == 2)
     clock.advance(by: 5 * 60 + 1)
-    async let failing: Void = Moment.feed.load()
+    let failing = Task { try await Moment.feed.load() }
     try await networkDrops(during: down)
-    do { try await failing } catch DbError.Network {} catch { Issue.record("unexpected error: \(error)") }
+    do { try await valueBeforeDeadline(failing) { down.release() } } catch DbError.Network {} catch { Issue.record("unexpected error: \(error)") }
     guard await observe("the network error arrives", { held.error != nil }) else { return }
     #expect(transport.calls.filter { $0.operationName == "MomentsFeed" }.count == 3)
     #expect(held.rows.map(\.id) == ["1"])

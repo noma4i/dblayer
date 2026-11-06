@@ -6,6 +6,7 @@ mod encrypted_cable_tests;
 mod harness_tests;
 mod manifest_tests;
 mod media_preload_tests;
+mod offline_load_tests;
 mod files_tests;
 mod recovery_tests;
 mod delivery_reactivity_tests;

@@ -40,14 +40,14 @@ struct ReachabilityTests {
       try await DB.open(encrypted: encrypted, credentials: PathCredential(), transport: MockTransport(), modelsJSON: "[]", operations: [PathProbe.self], http: http)
     }
 
-    #expect(await refusal().contains("offline"))
+    #expect(await refusal().contains("needs the network"))
     let bootstrap = Task { try? await Reachability.$source.withValue(path) { try await DB.serverConfig(encrypted: encrypted, platform: .ios, version: "1.2", http: http) } }
     path.set(true)
     #expect(await Cursor(posts).next("the bootstrap request after the path became satisfied") != nil)
     bootstrap.cancel()
-    #expect(!(await refusal().contains("offline")))
+    #expect(!(await refusal().contains("needs the network")))
     path.set(false)
-    #expect(await refusal().contains("offline"))
+    #expect(await refusal().contains("needs the network"))
   }
 
   private func refusal() async -> String {

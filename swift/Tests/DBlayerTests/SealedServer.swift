@@ -100,8 +100,14 @@ final class SealedServer: EncryptedHttp, @unchecked Sendable {
     }
     let reply: [String: Any]
     if let bridge {
-      do { reply = try await bridge(path, sent) } catch DbError.Http(let status, _) where status == 401 {
-        return EncryptedReply(status: 401, body: "")
+      do { reply = try await bridge(path, sent) } catch let error as DbError {
+        switch error {
+        case .Http(let status, _): return EncryptedReply(status: status, body: "")
+        case .Session(let code, _): reply = ["error": Self.wireName(code)]
+        case .Graphql(let messages, let extensions):
+          reply = ["errors": messages.map { ["message": $0, "extensions": extensions?.code.map { ["code": $0] } ?? [:]] as [String: Any] }]
+        default: throw error
+        }
       }
     } else {
       reply = answer(path, sent)
@@ -129,6 +135,10 @@ final class SealedServer: EncryptedHttp, @unchecked Sendable {
     }
     if lose { lostAnswers.continuation.yield(()); throw DbError.Network(detail: "lost answer") }
     return EncryptedReply(status: 200, body: sealed)
+  }
+
+  private static func wireName(_ code: SessionCode) -> String {
+    "\(code)".map { $0.isUppercase ? "_\($0)" : String($0).uppercased() }.joined()
   }
 
   func open(_ token: String) throws -> [String: Any] {

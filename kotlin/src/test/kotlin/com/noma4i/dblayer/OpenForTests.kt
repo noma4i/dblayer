@@ -52,15 +52,7 @@ private fun bridgeToTransport(transport: Transport): suspend (String, kotlinx.se
             } else {
                 val variables = body["variables"]?.toString() ?: "{}"
                 val document = (body["query"] as? kotlinx.serialization.json.JsonPrimitive)?.content ?: ""
-                try {
-                    json.parseToJsonElement(transport.query(TransportRequest(document, operation, variables, NetworkPurpose.STANDARD))) as kotlinx.serialization.json.JsonObject
-                } catch (failure: DbException.Session) {
-                    json.parseToJsonElement("""{"error":"${failure.code.name}"}""") as kotlinx.serialization.json.JsonObject
-                } catch (failure: DbException.Graphql) {
-                    kotlinx.serialization.json.buildJsonObject {
-                        put("errors", kotlinx.serialization.json.JsonArray(failure.messages.map { text -> kotlinx.serialization.json.buildJsonObject { put("message", kotlinx.serialization.json.JsonPrimitive(text)) } }))
-                    }
-                }
+                json.parseToJsonElement(transport.query(TransportRequest(document, operation, variables, NetworkPurpose.STANDARD))) as kotlinx.serialization.json.JsonObject
             }
         }
     }

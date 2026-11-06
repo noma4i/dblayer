@@ -205,12 +205,10 @@ class TransferTest {
             val path = directory.resolve("db.sqlite").path
             closeForCleanup()
             val transport = MockTransport()
-            DBlayer.openTesting(transport, modelsJSON, path = path, startMillis = 1_000_000L)
-            DBlayer.database.registerOperations(expiryOperations)
+            reopenClocked(modelsJSON, transport, expiryOperations, path = path, startMillis = 1_000_000L)
             val row = refusedUpload(transport, source)
             closeForCleanup()
-            DBlayer.openTesting(transport, modelsJSON, path = path, startMillis = 1_000_000L + 7L * 24 * 60 * 60 * 1000)
-            DBlayer.database.registerOperations(expiryOperations)
+            reopenClocked(modelsJSON, transport, expiryOperations, path = path, startMillis = 1_000_000L + 7L * 24 * 60 * 60 * 1000)
             eventually("the expired upload is discarded at the open") { isGone(row) }
             closeForCleanup()
         } finally { closeForCleanup(); directory.deleteRecursively() }
@@ -361,8 +359,7 @@ class TransferTest {
         try {
             closeForCleanup()
             val transport = MockTransport()
-            val clock = DBlayer.openTesting(transport, modelsJSON)
-            DBlayer.database.registerOperations(expiryOperations)
+            val clock = reopenClocked(modelsJSON, transport, expiryOperations)
             val row = refusedUpload(transport, source)
             DBlayer.database.setOnline(false)
             clock.advance(7L * 24 * 60 * 60 * 1000)

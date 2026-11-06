@@ -11,6 +11,7 @@ import kotlinx.serialization.json.JsonPrimitive
 object DBlayer {
     private val opener = OpenDatabase()
     @Volatile private var opened: Database? = null
+    @Volatile private var powerSaving: PowerSaving.Registration? = null
 
     internal fun openedDatabase(): Database? = opened
 
@@ -29,7 +30,8 @@ object DBlayer {
     /** Closes the database. Every request, load and subscription ends, and the call returns after the library released its resources. */
     suspend fun close() {
         ForegroundEvents.stop()
-        PowerSaving.stop()
+        powerSaving?.stop()
+        powerSaving = null
         Reachability.disconnect()
         opened?.let { offCaller { it.closeDatabase() } }
     }
@@ -76,7 +78,7 @@ object DBlayer {
         val sink = made.onlineSink()
         Reachability.connect(sink)
         ForegroundEvents.start(sink)
-        PowerSaving.start(context, sink)
+        powerSaving = PowerSaving.start(context, sink)
         made.setRoundJobs(UploadRounds(context.applicationContext, made))
         database = made
     }

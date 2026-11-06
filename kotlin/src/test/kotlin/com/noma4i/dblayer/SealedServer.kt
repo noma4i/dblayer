@@ -3,6 +3,7 @@ package com.noma4i.dblayer
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
@@ -86,7 +87,23 @@ class SealedServer(private val deduplicate: Boolean = false, private val answer:
             if (it.first != stable) throw DbException.Invalid("request ID reused with different content")
             return EncryptedReply(200u, it.second)
         }
-        val reply = try { answer(path, sent) } catch (failure: DbException.Http) { return EncryptedReply(failure.status, "") }
+        val reply = try { answer(path, sent) } catch (failure: DbException) {
+            when (failure) {
+                is DbException.Http -> return EncryptedReply(failure.status, "")
+                is DbException.Session -> buildJsonObject { put("error", failure.code.name) }
+                is DbException.Graphql -> buildJsonObject {
+                    put("errors", buildJsonArray {
+                        failure.messages.forEach { message ->
+                            add(buildJsonObject {
+                                put("message", message)
+                                put("extensions", buildJsonObject { failure.extensions?.code?.let { put("code", it) } })
+                            })
+                        }
+                    })
+                }
+                else -> throw failure
+            }
+        }
         effects.add(sent)
         val operation = sent["operationName"]?.jsonPrimitive?.content
         if (operation != null && holding.get() == operation) {
