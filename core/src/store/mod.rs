@@ -19,6 +19,8 @@ mod error;
 mod file_ops;
 mod open;
 mod restore;
+#[cfg(test)]
+mod restore_tests;
 pub(crate) use open::{is_unreadable, remove_database};
 pub use open::DroppedRow;
 mod readers;

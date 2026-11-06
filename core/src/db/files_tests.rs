@@ -107,12 +107,15 @@ fn memory_database_keeps_large_files_in_the_table() {
 }
 
 #[test]
-fn small_file_url_is_created_on_demand_and_kept_until_detach() {
-    let db = seeded();
-    attach(&db, "m1", "media", SMALL);
+fn store_url_small_file_cached() {
+    let (root, db) = on_disk();
+    seed_tree(&db);
+    let descriptor = attach(&db, "m1", "media", SMALL);
+    let expected = root.path().join("42.sqlite.files/cache").join(descriptor.id);
+    assert!(!expected.exists());
     let path = db.url("moments", &rid("m1"), "media").unwrap().unwrap();
     assert_eq!(std::fs::read(&path).unwrap(), SMALL);
-    assert!(path.ends_with("a.png"));
+    assert_eq!(path, expected);
     assert_eq!(db.url("moments", &rid("m1"), "media").unwrap().unwrap(), path);
     assert!(db.detach(&db.admit().unwrap(), "moments", &rid("m1"), "media").unwrap());
     assert!(!path.exists());
@@ -131,7 +134,7 @@ fn inv_file_02_attaching_again_replaces_the_file_and_its_leftovers() {
     assert_eq!(db.file("moments", &rid("m1"), "media").unwrap().unwrap().id, second.id);
     assert_eq!(db.shared.files.directory_entries().unwrap(), vec![second.id.clone()]);
     assert!(!cached.exists());
-    assert_eq!(std::fs::read_dir(root.path().join("42.sqlite.files")).unwrap().count(), 1);
+    assert_eq!(std::fs::read_dir(root.path().join("42.sqlite.files")).unwrap().count(), 2);
 }
 
 #[test]

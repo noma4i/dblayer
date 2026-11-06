@@ -43,20 +43,20 @@ fn memory_database_has_no_directory_and_cleans_its_scratch_cache_on_drop() {
     assert!(!directories.has_directory());
     let path = directories.materialize("f1", "clip.mp4", b"video").unwrap();
     assert_eq!(fs::read(&path).unwrap(), b"video");
-    assert!(path.ends_with("f1/clip.mp4"));
+    assert!(path.ends_with("f1"));
     drop(directories);
     assert!(!path.exists());
 }
 
 #[test]
-fn materialize_is_stable_and_strips_path_parts_from_the_name() {
+fn materialize_is_stable_for_each_id() {
     let (_root, directories) = beside_database();
     let first = directories.materialize("f1", "../../evil.png", b"png").unwrap();
     let second = directories.materialize("f1", "../../evil.png", b"png").unwrap();
     assert_eq!(first, second);
-    assert!(first.ends_with("f1/evil.png"));
+    assert!(first.ends_with("cache/f1"));
     let blank = directories.materialize("f2", "", b"x").unwrap();
-    assert!(blank.ends_with("f2/file"));
+    assert!(blank.ends_with("cache/f2"));
 }
 
 #[test]

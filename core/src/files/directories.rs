@@ -45,7 +45,8 @@ fn names(directory: &Path) -> io::Result<Vec<String>> {
 
 impl FileDirectories {
     pub(crate) fn beside(database: &Path) -> Self {
-        Self { directory: Some(suffixed(database, ".files")), cache: suffixed(database, ".cache"), scratch: false }
+        let directory = suffixed(database, ".files");
+        Self { cache: directory.join("cache"), directory: Some(directory), scratch: false }
     }
 
     pub(crate) fn remove_all(&self) -> io::Result<()> {
@@ -131,9 +132,8 @@ impl FileDirectories {
         fs::read(path)
     }
 
-    pub(crate) fn cache_target(&self, id: &str, name: &str) -> PathBuf {
-        let leaf = Path::new(name).file_name().and_then(|leaf| leaf.to_str()).filter(|leaf| !leaf.is_empty()).unwrap_or("file");
-        self.cache.join(id).join(leaf)
+    pub(crate) fn cache_target(&self, id: &str, _name: &str) -> PathBuf {
+        self.cache.join(id)
     }
 
     pub(crate) fn materialize(&self, id: &str, name: &str, bytes: &[u8]) -> io::Result<PathBuf> {
@@ -154,14 +154,14 @@ impl FileDirectories {
                 ignore_missing(fs::remove_file(suffixed(&path, PART_SUFFIX)))?;
                 ignore_missing(fs::remove_file(path))?;
             }
-            ignore_missing(fs::remove_dir_all(self.cache.join(id)))?;
+            ignore_missing(fs::remove_file(self.cache.join(id)))?;
         }
         Ok(())
     }
 
     #[cfg(test)]
     pub(crate) fn directory_entries(&self) -> io::Result<Vec<String>> {
-        self.directory.as_deref().map(names).unwrap_or_else(|| Ok(Vec::new()))
+        self.directory.as_deref().map(names).unwrap_or_else(|| Ok(Vec::new())).map(|entries| entries.into_iter().filter(|entry| entry != "cache").collect())
     }
 
     #[cfg(test)]
