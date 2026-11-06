@@ -38,6 +38,7 @@ mod query;
 #[path = "tape_tests.rs"]
 pub(crate) mod tape;
 mod command;
+mod load_order;
 mod loading;
 mod write;
 mod read;

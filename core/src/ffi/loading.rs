@@ -85,6 +85,7 @@ struct LoadCall {
 
 struct LeaveLoad {
     life: Arc<crate::owners::life::Life>,
+    order: Arc<super::load_order::LoadOrder>,
     key: WindowKey,
     id: u64,
     settled: bool,
@@ -92,7 +93,15 @@ struct LeaveLoad {
 
 impl Drop for LeaveLoad {
     fn drop(&mut self) {
-        if !self.settled { self.life.leave_load(self.key.clone(), self.id); }
+        if self.settled { return; }
+        let issued = self.order.issued();
+        let Ok(runtime) = executor() else { return self.life.leave_load(self.key.clone(), self.id) };
+        if self.order.registered_through(issued) { return self.life.leave_load(self.key.clone(), self.id); }
+        let (life, order, key, id) = (self.life.clone(), self.order.clone(), self.key.clone(), self.id);
+        crate::task::spawn_on(crate::task::Carry::here(), runtime.handle(), async move {
+            order.wait_through(issued).await;
+            life.leave_load(key, id);
+        });
     }
 }
 
@@ -170,6 +179,7 @@ impl Database {
         let (sender, outcome) = tokio::sync::watch::channel(None);
         let this = self.clone();
         let launch = self.life.launch();
+        let turn = self.loads.begin();
         let dropping: Arc<Mutex<Option<crate::runtime::Launch>>> = Arc::default();
         let release = ReleaseBarrier(dropping.clone());
         let task = crate::task::spawn_on(crate::task::Carry::here(), executor()?.handle(), crate::runtime::counted(Some(launch), async move {
@@ -177,7 +187,14 @@ impl Database {
             let sender = sender;
             let this = this;
             let LoadArgs { epoch, model, relation, params_json, goal, force } = args;
-            let started = this.start_load(epoch, &model, &relation, &params_json, goal, force).await;
+            let started = match this.prepare_load(&model, &relation, &params_json, goal, force).await {
+                Ok((params, force)) => {
+                    turn.wait().await;
+                    this.start_window(epoch, WindowKey::relation(&model, &relation, &params), goal, force)
+                }
+                Err(error) => Err(error),
+            };
+            drop(turn);
             let result = match started {
                 Ok(call) => this.finish_load(call).await.map(drop),
                 Err(error) => Err(error),
@@ -202,6 +219,11 @@ impl Database {
 
     /// Registers a call that waits for a load of the window of a relation. The window keeps the request while this call or another one waits for it.
     async fn start_load(&self, epoch: u64, model: &str, relation: &str, params_json: &str, goal: Goal, force: bool) -> Result<LoadCall, DbError> {
+        let (params, force) = self.prepare_load(model, relation, params_json, goal, force).await?;
+        self.start_window(epoch, WindowKey::relation(model, relation, &params), goal, force)
+    }
+
+    async fn prepare_load(&self, model: &str, relation: &str, params_json: &str, goal: Goal, force: bool) -> Result<(Map<String, Value>, bool), DbError> {
         self.remote()?;
         let _kept = crate::runtime::hold_until_woken(self.life.launch());
         let (db, found, name, text) = (self.db.clone(), model.to_string(), relation.to_string(), params_json.to_string());
@@ -214,8 +236,7 @@ impl Database {
             Ok((params, force))
         }).await;
         crate::runtime::release_holds();
-        let (params, force) = prepared?;
-        self.start_window(epoch, WindowKey::relation(model, relation, &params), goal, force)
+        prepared
     }
 
     fn start_window(&self, epoch: u64, key: WindowKey, goal: Goal, force: bool) -> Result<LoadCall, DbError> {
@@ -225,7 +246,7 @@ impl Database {
         if published.epoch != epoch { return Err(super::command::ended()); }
         if published.identity.is_none() { return Err(DbError::NoSession { detail: "the database has no session in this epoch".into() }); }
         let (waiter, id) = self.life.load(epoch, key.clone(), goal, force, self.db.revision_seq()?);
-        Ok(LoadCall { epoch, waiter, leave: LeaveLoad { life: self.life.clone(), key, id, settled: false } })
+        Ok(LoadCall { epoch, waiter, leave: LeaveLoad { life: self.life.clone(), order: self.loads.clone(), key, id, settled: false } })
     }
 
     async fn finish_load(&self, mut call: LoadCall) -> Result<LoadMoreResult, DbError> {
