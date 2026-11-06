@@ -57,6 +57,22 @@ async fn dlv_prop_one_change_every_view() {
     let count_revision = match crate::test_wait::within(count.pull()).await.unwrap().unwrap() { ReadValue::Count { revision, count: 1, .. } => revision, value => panic!("{value:?}") };
     let entity_revision = match crate::test_wait::within(entity.pull()).await.unwrap().unwrap() { ReadValue::Delta { revision, .. } | ReadValue::Snapshot { revision, .. } => revision, value => panic!("{value:?}") };
     assert_eq!((count_revision, entity_revision), (list_revision, list_revision));
+    let first_revision = list_revision;
+    db.update(epoch, "Note".into(), "n1".into(), r#"{"text":"two"}"#.into(), "{}".into()).await.unwrap();
+    let list_revision = match crate::test_wait::within(list.pull()).await.unwrap().unwrap() { ReadValue::Delta { revision, rows, .. } | ReadValue::Snapshot { revision, rows, .. } => { assert_eq!(ids(&rows), ["n1"]); revision }, value => panic!("{value:?}") };
+    let entity_revision = match crate::test_wait::within(entity.pull()).await.unwrap().unwrap() { ReadValue::Delta { revision, rows, .. } | ReadValue::Snapshot { revision, rows, .. } => { assert_eq!(ids(&rows), ["n1"]); revision }, value => panic!("{value:?}") };
+    assert!(list_revision > first_revision);
+    assert_eq!(entity_revision, list_revision);
+    let mut pull = Box::pin(count.pull());
+    assert!(std::future::poll_fn(|cx| std::task::Poll::Ready(std::future::Future::poll(pull.as_mut(), cx).is_pending())).await);
+    let life = db.life_handle();
+    assert!(crate::test_wait::within(tokio::task::spawn_blocking(move || life.barrier(Duration::from_secs(5)))).await.unwrap());
+    assert!(std::future::poll_fn(|cx| std::task::Poll::Ready(std::future::Future::poll(pull.as_mut(), cx).is_pending())).await);
+    db.destroy(epoch, "Note".into(), "n1".into()).await.unwrap();
+    let count_revision = match crate::test_wait::within(pull).await.unwrap().unwrap() { ReadValue::Count { revision, count: 0, .. } => revision, value => panic!("{value:?}") };
+    let list_revision = match crate::test_wait::within(list.pull()).await.unwrap().unwrap() { ReadValue::Delta { revision, size: 0, .. } => revision, ReadValue::Snapshot { revision, rows, .. } if rows.is_empty() => revision, value => panic!("{value:?}") };
+    let entity_revision = match crate::test_wait::within(entity.pull()).await.unwrap().unwrap() { ReadValue::Delta { revision, size: 0, .. } => revision, ReadValue::Snapshot { revision, rows, .. } if rows.is_empty() => revision, value => panic!("{value:?}") };
+    assert_eq!((list_revision, entity_revision), (count_revision, count_revision));
 }
 
 #[tokio::test(flavor = "multi_thread")]

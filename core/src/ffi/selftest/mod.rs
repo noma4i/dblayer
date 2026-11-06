@@ -9,6 +9,7 @@ mod manifest_tests;
 mod media_preload_tests;
 mod files_tests;
 mod recovery_tests;
+mod delivery_reactivity_tests;
 mod refetch_tests;
 mod upload_tests;
 mod rig_tests;
