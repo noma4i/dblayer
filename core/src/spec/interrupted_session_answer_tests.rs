@@ -28,6 +28,11 @@ impl Rig {
         self.send(SessionInput::Restored { epoch: 3, pending: Some(pending), answers: Default::default(), pending_lost: false });
     }
 
+    fn restore_detached(&mut self) {
+        let pending = PendingCall { request_id: 11, sequence: 1, class: OperationClass::Authenticated, operation: String::new(), path: "/read".into(), body: "{}".into(), credential: None, purpose: 0, author: None, owner: Some(crate::transport::RequestOwner::Detached), epoch: 3, reply: None };
+        self.send(SessionInput::Restored { epoch: 3, pending: Some(pending), answers: Default::default(), pending_lost: false });
+    }
+
     fn start(&mut self) -> u64 {
         self.send(SessionInput::RestoreReady { epoch: 3 }).iter().find_map(|effect| match effect { SessionEffect::HttpRequest { attempt_id, .. } => Some(*attempt_id), _ => None }).unwrap()
     }
@@ -45,6 +50,18 @@ fn answer(id: u64, result: Result<Option<String>, SessionError>) -> SessionEffec
 
 #[test]
 fn sess_resume_none() { assert_eq!(Rig::new().send(ask_answer(1)), [answer(1, Ok(None))]); }
+
+#[test]
+fn sess_restored_detached_answer() {
+    let mut rig = Rig::new();
+    rig.restore_detached();
+    let attempt = rig.start();
+    assert_eq!(rig.send(ask_answer(1)), [answer(1, Ok(None))], "the outcome of a detached pair is not the outcome of SessionResume");
+    let effects = rig.refuse(attempt);
+    assert!(!effects.iter().any(|effect| matches!(effect, SessionEffect::ResumeReply { .. } | SessionEffect::Answer { .. } | SessionEffect::Reply { .. })), "{effects:?}");
+    assert_eq!(rig.send(ask_answer(2)), [answer(2, Ok(None))], "nothing was kept for a later SessionResume");
+    assert!(matches!(rig.det.state(rig.address).unwrap().phase(), crate::owners::session::SessionPhase::Idle));
+}
 
 #[test]
 fn sess_resume_waits() {

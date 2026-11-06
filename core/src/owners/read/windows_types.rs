@@ -145,6 +145,15 @@ pub enum WindowEffect {
 
 pub use crate::store::SavedWindow;
 
+const REQUEST_TASK: EffectId = 1 << 62;
+const READ_TASK: EffectId = 1 << 61;
+
+pub fn request_task(request: RequestId, attempt: u32) -> EffectId { REQUEST_TASK | (request << 20) | u64::from(attempt) }
+
+fn task_request(id: EffectId) -> (RequestId, u32) { ((id & !REQUEST_TASK) >> 20, (id & 0xF_FFFF) as u32) }
+
+pub fn read_task(read_id: u64) -> EffectId { READ_TASK | read_id }
+
 /// What a machine gives out: an effect of the runner, or an input for another owner or a timer that the owner `Windows` turns into `Effect`.
 enum Emit {
     Run(WindowEffect),
@@ -228,6 +237,7 @@ pub enum WindowsInput {
     Foreground(u64),
     /// The answer of `ReadWindow`: the saved window of a key that had no machine.
     WindowRead { key: WindowKey, read_id: u64, result: Result<Option<SavedWindow>, String> },
+    TaskFailed { id: EffectId },
     EpochStarted(EpochStarted),
     EpochEnded(EpochEnded),
     ModelsReset(ModelsReset),

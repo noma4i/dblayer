@@ -10,7 +10,7 @@ use super::deliveries::{self as d, Deliveries, DeliveryInput, Kind, PullAnswer, 
 use super::rig::{collector, pump, runtime, saw_input};
 use super::feed::Feed;
 use super::windows::{WindowKey, Windows};
-use super::{DeliveryIo, SnapshotStatements, SqliteSnapshots};
+use super::{DeliveryIo, SnapshotStatements, Snapshots, SqliteSnapshots};
 use crate::ddl::{create_model_tables, manifest_write, migrate_core, REVISION_SEQ_KEY};
 use crate::owners::contract::{WindowPhase, WindowState};
 use crate::query::{compile_keys, CompiledStatement, Query};
@@ -51,7 +51,9 @@ struct Rig {
     _runtime: tokio::runtime::Runtime,
 }
 
-fn rig() -> Rig {
+fn rig() -> Rig { rig_with(|path| Arc::new(SqliteSnapshots::new(path, Arc::new(People)))) }
+
+fn rig_with(snapshots: impl FnOnce(std::path::PathBuf) -> Arc<dyn Snapshots>) -> Rig {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("snapshot.db");
     let writer = Connection::open(&path).unwrap();
@@ -60,7 +62,7 @@ fn rig() -> Rig {
     let runtime = runtime();
     let answers = Outcomes::new();
     let (rest, take_rest) = collector();
-    let io = DeliveryIo::new(Arc::new(SqliteSnapshots::new(path, Arc::new(People))), answers.clone(), runtime.handle().clone(), take_rest);
+    let io = DeliveryIo::new(snapshots(path), answers.clone(), runtime.handle().clone(), take_rest);
     let mut det = DetScheduler::new(1);
     let windows = new_log();
     let windows_slot = det.add::<Sink<Windows>>("windows", windows.clone(), Discard);
@@ -117,4 +119,27 @@ fn delivery_io_read_older_snapshot() {
     assert!(rows.is_empty(), "no rows of a snapshot older than the revision");
     assert_eq!(state.phase, WindowPhase::Failed);
     assert!(state.error.as_ref().is_some_and(|error| error.to_string().contains("older than 2")), "the error of the read reaches the stream: {state:?}");
+}
+
+struct Panicking;
+
+impl Snapshots for Panicking {
+    fn read(&self, _: &View, _: i64, _: i64) -> Result<(i64, d::ReadData), String> { panic!("the snapshot read failed") }
+}
+
+#[test]
+fn rt_prop_task_panic_fails() {
+    use super::window_io_tests::{panicked_read, panicked_request, read_id, request_id};
+    let requested = panicked_request();
+    assert!((0..4).any(|attempt| requested == [request_id(1, attempt)]), "the query task reports its request: {requested:?}");
+    assert_eq!(panicked_read(), [read_id(1)], "the read task reports its read");
+    let mut rig = rig_with(|_| Arc::new(Panicking));
+    open(&mut rig, 1);
+    let owner = rig.owner;
+    pump(&mut rig.det, owner, |det| saw_input(det, "TaskFailed") > 0);
+    let failed: Vec<String> = rig.det.trace().iter().filter(|entry| entry.input.starts_with("TaskFailed")).map(|entry| entry.input.clone()).collect();
+    assert!(failed.contains(&format!("TaskFailed {{ id: {} }}", d::read_task(STREAM, 1))), "the snapshot read reports its stream and read");
+    let journal = rig.det.state(owner).unwrap().journal(STREAM);
+    let Some(Value::Snapshot { rows, state, .. }) = journal.first() else { panic!("a panicked first read gives a Snapshot without rows: {journal:?}") };
+    assert!(rows.is_empty() && state.phase == WindowPhase::Failed, "the stream ends its wait with an error: {state:?}");
 }

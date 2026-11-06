@@ -15,9 +15,15 @@ use crate::identity::RowId;
 use crate::owners::contract::{Committed, Drained, EpochEnded, EpochStarted, Models, ModelsReset, ReplyId, WindowPhase, WindowState};
 use crate::owners::read::feed::{Feed, FeedInput};
 use crate::owners::read::windows::{Goal, WindowKey, Windows, WindowsInput};
-use crate::runtime::{Address, Cause, Effect, Effects, Epoch, Outbound, OutcomeId, StateOwner, Time};
+use crate::runtime::{Address, Cause, Effect, EffectId, Effects, Epoch, Outbound, OutcomeId, StateOwner, Time};
 
 pub const JOURNAL_LIMIT: usize = 256;
+
+const READ_TASK: EffectId = 1 << 62;
+
+pub fn read_task(stream: StreamId, read_id: u64) -> EffectId { READ_TASK | (stream << 32) | (read_id & 0xFFFF_FFFF) }
+
+fn task_read(id: EffectId) -> (StreamId, u64) { ((id & !READ_TASK) >> 32, id & 0xFFFF_FFFF) }
 pub const DELTA_LIMIT: usize = 256;
 
 pub type StreamId = u64;
@@ -181,6 +187,7 @@ pub enum DeliveryInput {
     Committed(Committed),
     ReadDone { stream: StreamId, read_id: u64, revision: i64, data: ReadData },
     ReadFailed { stream: StreamId, read_id: u64, revision: i64, error: String },
+    TaskFailed { id: EffectId },
     WindowState { stream: StreamId, state: WindowState },
     Joined { stream: StreamId, position: u64 },
     ModelReady { stream: StreamId },
@@ -441,6 +448,10 @@ impl StateOwner for Deliveries {
                 state.streams.insert(stream, machine);
             }
             DeliveryInput::ReadDone { stream, read_id, revision, data } => on(state, stream, &mut out, |machine, fx| machine.read_done(read_id, revision, data, fx)),
+            DeliveryInput::TaskFailed { id } => {
+                let ((stream, read_id), revision) = (task_read(id), state.revision);
+                on(state, stream, &mut out, |machine, fx| machine.read_failed(read_id, revision, "the read task failed".into(), fx));
+            }
             DeliveryInput::PullCancelled { stream, outcome } => on(state, stream, &mut out, |machine, fx| machine.pull_cancelled(outcome, fx)),
             DeliveryInput::ReadFailed { stream, read_id, revision, error } => on(state, stream, &mut out, |machine, fx| machine.read_failed(read_id, revision, error, fx)),
             DeliveryInput::WindowState { stream, state: window } => on(state, stream, &mut out, |machine, fx| machine.window_state(window, fx)),
@@ -494,6 +505,8 @@ impl StateOwner for Deliveries {
         }
         out
     }
+
+    fn executor_failed(_executor: &str, pending: Vec<EffectId>) -> Vec<DeliveryInput> { pending.into_iter().map(|id| DeliveryInput::TaskFailed { id }).collect() }
 
     fn tick(now: Time) -> DeliveryInput { DeliveryInput::Tick(now) }
 

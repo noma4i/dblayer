@@ -26,6 +26,7 @@ const PERSISTED_QUERY_NOT_FOUND: &str = "PERSISTED_QUERY_NOT_FOUND";
 struct Wire {
     id: String,
     key: String,
+    cut: u64,
 }
 
 enum SecretFailure {
@@ -64,7 +65,7 @@ pub(crate) struct Restored {
 
 impl SessionRunner {
     pub fn new(wiring: Arc<Wiring>, (exchange, secret, store): (Arc<Exchange>, Arc<Secret>, Arc<Store>), seal: Arc<crate::owners::session_seal::SealConfig>, executor: tokio::runtime::Handle, restored: &Restored) -> Self {
-        let wires = restored.wire.iter().map(|(request_id, wire)| (*request_id, Wire { id: wire.id.clone(), key: wire.key.clone() })).collect();
+        let wires = restored.wire.iter().map(|(request_id, wire)| (*request_id, Wire { id: wire.id.clone(), key: wire.key.clone(), cut: wiring.gate.cut() })).collect();
         let digests = Arc::new(Mutex::new(restored.digest.iter().cloned().collect()));
         let operations = restored.pending.iter().filter_map(|pending| match pending.owner { Some(crate::transport::RequestOwner::Operation { seq }) => Some((pending.request_id, seq)), _ => None }).collect();
         Self { wiring, exchange, secret, store, seal, executor, running: HashMap::new(), digests, generated: Arc::default(), wires, operations }
@@ -85,7 +86,7 @@ impl SessionRunner {
                     let sequence = u64::try_from(session.sequence).map_err(|_| TransportError::Decode(format!("the stored session has the sequence {}", session.sequence)))?;
                     Ok::<_, TransportError>(crate::store::identity_of(&session.credential_digest).map(|digest| Credential { digest, sequence }))
                 }).transpose()?.flatten();
-                let unowned_pending = store.read_locked(|connection| connection.query_row("SELECT EXISTS (SELECT 1 FROM encrypted_pending WHERE owner_kind IS NULL)", [], |row| row.get(0))).map_err(|error| TransportError::Network(format!("session storage: {error}")))?;
+                let unowned_pending = store.read_locked(|connection| connection.query_row("SELECT EXISTS (SELECT 1 FROM encrypted_pending WHERE owner_kind IS NULL OR owner_kind = 'detached')", [], |row| row.get(0))).map_err(|error| TransportError::Network(format!("session storage: {error}")))?;
                 Ok(Restored { credential, pending: None, dropped_pending: false, answers: Default::default(), secret, restore_error: Some(error.to_string()), unowned_pending, wire: None, digest: None })
             }
         }
@@ -125,14 +126,14 @@ impl SessionRunner {
             body: row.body,
             credential: identity,
             purpose: u8::from(row.purpose == NetworkPurpose::Transfer),
-            author: row.owner.as_ref().map(crate::owners::session::author_of),
+            author: row.owner.as_ref().and_then(crate::owners::session::author_of),
             owner: row.owner,
             epoch: 0,
             reply: None,
         };
         let digest = identity.map(|identity| (identity, row.credential_digest));
-        let unowned_pending = pending.owner.is_none();
-        Ok(Restored { credential, pending: Some(pending), dropped_pending: false, answers, secret, restore_error: None, unowned_pending, wire: Some((request_id, Wire { id: row.request_id, key: row.response_key })), digest })
+        let unowned_pending = pending.author.is_none();
+        Ok(Restored { credential, pending: Some(pending), dropped_pending: false, answers, secret, restore_error: None, unowned_pending, wire: Some((request_id, Wire { id: row.request_id, key: row.response_key, cut: 0 })), digest })
     }
 
     fn commit(&self, batch: u64, epoch: u64, ops: Vec<StoreOp>) {
@@ -273,7 +274,7 @@ impl EffectRunner<SessionCalls> for SessionRunner {
                     Ok(digest) => digest,
                     Err(error) => return back.reply(control, SessionInput::Rejected(Rejected { batch, reason: RejectReason::Storage(error.to_string()) })),
                 };
-                let wire = Wire { id: uuid::Uuid::new_v4().to_string(), key: random_token() };
+                let wire = Wire { id: uuid::Uuid::new_v4().to_string(), key: random_token(), cut: self.wiring.gate.cut() };
                 let mut ops = vec![StoreOp::Pending { pending: pending.clone(), credential_digest: credential_digest.clone(), wire_id: wire.id.clone(), response_key: wire.key.clone() }];
                 if session.is_some() { ops.push(StoreOp::Session { digest: Some(credential_digest), sequence: Some(0) }); }
                 self.wires.clear();
@@ -296,7 +297,7 @@ impl EffectRunner<SessionCalls> for SessionRunner {
                 let Some(wire) = self.wires.get(&request_id) else {
                     return back.reply(control, SessionInput::SecretMissing { request_id, attempt_id, lost: true });
                 };
-                let (wire, key) = (wire.id.clone(), wire.key.clone());
+                let (wire, key, cut) = (wire.id.clone(), wire.key.clone(), wire.cut);
                 let expected = if pending.class == OperationClass::Sessionless { None } else {
                     match self.digest_for(&pending) {
                         Ok(digest) => Some(digest),
@@ -310,6 +311,7 @@ impl EffectRunner<SessionCalls> for SessionRunner {
                 let sequence = (pending.class != OperationClass::Sessionless).then_some(i64::try_from(pending.sequence).unwrap_or(i64::MAX));
                 let watch = back.watch(crate::owners::session::http_id(attempt_id));
                 let launch = self.wiring.handle.launch();
+                let gate = self.wiring.gate.clone();
                 let task = crate::task::spawn_on(crate::task::Carry::Detached, &self.executor, crate::runtime::counted(Some(launch), async move {
                     let _watch = watch;
                     crate::lock::assert_no_library_lock("HttpExchange::post");
@@ -317,8 +319,11 @@ impl EffectRunner<SessionCalls> for SessionRunner {
                         Ok(secret) => secret,
                         Err(failure) => return back.reply(EpochStamp::Control, SessionInput::SecretMissing { request_id, attempt_id, lost: matches!(failure, SecretFailure::Lost) }),
                     };
-                    let result = exchange.send_once(crate::transport::encrypted::SendOnce { credential: credential.as_deref(), request_id: &wire, response_key: &key, sequence, path: &pending.path, body: &body, purpose }).await;
-                    back.reply(EpochStamp::Control, input_of(request_id, attempt_id, logout, result));
+                    let sent = crate::runtime::send_in_cut(&gate, cut, || exchange.send_once(crate::transport::encrypted::SendOnce { credential: credential.as_deref(), request_id: &wire, response_key: &key, sequence, path: &pending.path, body: &body, purpose })).await;
+                    back.reply(EpochStamp::Control, match sent {
+                        Ok(result) => input_of(request_id, attempt_id, logout, result),
+                        Err(_) => SessionInput::GateClosed { request_id, attempt_id },
+                    });
                 }));
                 if let Some(previous) = self.running.insert(attempt_id, task.abort_handle()) {
                     crate::lock::effect(|| previous.abort());

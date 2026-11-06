@@ -67,7 +67,7 @@ impl EffectRunner<Lifecycle> for LifecycleRunner {
             }
             LifecycleEffect::ReadIntents { epoch } => self.held_read = Some(epoch),
             LifecycleEffect::EpochEnded { epoch, cause } => {
-                wiring.gate.close(epoch);
+                wiring.gate.end(epoch, cause);
                 wiring.to_rounds(RoundsInput::EpochEnded(crate::owners::contract::EpochEnded { epoch, cause }));
                 wiring.handle.end_epoch(epoch, cause);
                 wiring.outcomes.end_epoch(epoch, cause);
@@ -83,6 +83,7 @@ impl EffectRunner<Lifecycle> for LifecycleRunner {
                 wiring.to_transfer(TransferInput::ModelsReset(reset));
             }
             LifecycleEffect::Closing => {
+                wiring.gate.shutdown();
                 wiring.handle.close();
                 for peer in &self.absent {
                     wiring.to_lifecycle(LifecycleInput::Drained(Drained { owner: peer.name() }));

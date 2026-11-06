@@ -56,18 +56,18 @@ impl Session {
                 self.state = state;
                 out.effects.push(Effect::RestoreClassified { epoch });
                 if let (Some(pending), true) = (pending, epoch == self.epoch && self.current(epoch)) {
-                    if pending.owner.is_none() { self.restored_direct = Some(Pending { epoch, ..pending }); }
+                    match pending.owner {
+                        None => self.restored_direct = Some(Pending { epoch, ..pending }),
+                        Some(Owner::Detached) => self.restored_detached = Some(Pending { epoch, ..pending }),
+                        Some(_) => {}
+                    }
                 }
-                if self.restore_ready && matches!(self.state, State::Idle) {
-                    if let Some(pending) = self.restored_direct.take() { self.start_calling(pending, out); }
-                }
+                if self.restore_ready && matches!(self.state, State::Idle) { self.start_restored(out); }
             }
             Input::RestoreReady { epoch } => {
                 self.state = state;
                 if epoch == self.epoch && self.current(epoch) { self.restore_ready = true; }
-                if self.restore_ready && matches!(self.state, State::Idle) {
-                    if let Some(pending) = self.restored_direct.take() { self.start_calling(pending, out); }
-                }
+                if self.restore_ready && matches!(self.state, State::Idle) { self.start_restored(out); }
             }
             Input::RestoreFailed { epoch, error } => {
                 self.state = state;
@@ -91,6 +91,7 @@ impl Session {
             Input::EpochEnded { epoch, cause } => {
                 if epoch != self.epoch { self.state = state; return; }
                 self.restored_direct = None;
+                self.restored_detached = None;
                 self.restore_ready = false;
                 self.restore_floor = epoch + 1;
                 self.restore_error = None;
@@ -218,8 +219,8 @@ impl Session {
             (Some(credential), Secret::Present(digest)) if digest != credential.digest => self.state = State::SecretMismatch,
             (Some(_), _) => {
                 match pending {
-                    Some(pending) if pending.owner.is_some() => {
-                        let author = pending.owner.as_ref().map(author_of).or(pending.author);
+                    Some(pending) if pending.owner.as_ref().and_then(author_of).is_some() => {
+                        let author = pending.owner.as_ref().and_then(author_of).or(pending.author);
                         self.adopt = true;
                         self.state = State::PendingHeld { pending: Pending { reply: None, author, ..pending } };
                     }

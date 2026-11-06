@@ -455,6 +455,16 @@ impl StateOwner for Windows {
                 let emits = window.opened(saved, (&mut state.next_request, &mut state.next_attempt));
                 Self::emitted(state, &key, emits, &mut out);
             }
+            WindowsInput::TaskFailed { id } if id & REQUEST_TASK != 0 => {
+                let (request, attempt) = task_request(id);
+                let error = RequestError { message: "the request task failed".into(), class: ErrorClass::Permanent, source: None };
+                return Self::step(state, WindowsInput::Failure { request, attempt, error });
+            }
+            WindowsInput::TaskFailed { id } => {
+                let read_id = id & !READ_TASK;
+                let Some(key) = state.windows.iter().find(|(_, window)| window.reading(read_id)).map(|(key, _)| key.clone()) else { return out };
+                return Self::step(state, WindowsInput::WindowRead { key, read_id, result: Err("the read task failed".into()) });
+            }
             WindowsInput::EpochStarted(started) => {
                 state.epoch = started.epoch;
                 state.base_generation = started.generation;
@@ -490,6 +500,8 @@ impl StateOwner for Windows {
         }
         out
     }
+
+    fn executor_failed(_executor: &str, pending: Vec<EffectId>) -> Vec<WindowsInput> { pending.into_iter().map(|id| WindowsInput::TaskFailed { id }).collect() }
 
     fn tick(now: Time) -> WindowsInput { WindowsInput::Tick(now) }
 

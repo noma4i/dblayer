@@ -19,6 +19,8 @@ mod life_tests;
 mod session_exchange_tests;
 #[cfg(test)]
 mod session_panic_tests;
+#[cfg(test)]
+mod session_cut_tests;
 
 pub use observers::{ObserverPort, StopDone};
 

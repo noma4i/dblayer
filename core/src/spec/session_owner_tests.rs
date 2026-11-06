@@ -305,6 +305,7 @@ impl Twin {
         assert_eq!(state.subscribers(), self.reference.subscribers.len(), "the same subscribers");
         assert_eq!(state.awaiting_publication().map(|(reply, wait)| (reply, match wait { crate::owners::session::PublishWait::EpochAfter(epoch) => Some(epoch), crate::owners::session::PublishWait::Identity => None })), self.reference.awaiting(), "the same answer after publish");
         assert_eq!(state.restored_direct().map(pending_of), self.reference.restored_direct, "the same restored direct pending");
+        assert_eq!(state.restored_detached().map(pending_of), self.reference.restored_detached, "the same restored detached pending");
         want.effects
     }
 
@@ -419,7 +420,7 @@ fn blocked_storage() -> Twin {
 }
 
 fn stored(owner: Option<crate::transport::RequestOwner>, request_id: u64, sequence: u64) -> RefPending {
-    let author = owner.as_ref().map(super::ref_session::author_of);
+    let author = owner.as_ref().and_then(super::ref_session::author_of);
     RefPending { request_id, sequence, class: Class::Authenticated, operation: String::new(), path: OTP.into(), body: "{}".into(), credential: None, purpose: 0, author, owner, epoch: 0, reply: None }
 }
 
@@ -438,3 +439,4 @@ include!("session_owner_http_tests.rs");
 include!("session_owner_restore_tests.rs");
 include!("session_owner_props_tests.rs");
 include!("session_owner_release_tests.rs");
+include!("session_owner_detached_tests.rs");

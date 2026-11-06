@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 use tokio::runtime::Handle;
 
-use super::deliveries::{Deliveries, DeliveryEffect, DeliveryInput, PullAnswer, StreamEffect, StreamId, View};
+use super::deliveries::{read_task, Deliveries, DeliveryEffect, DeliveryInput, PullAnswer, StreamEffect, StreamId, View};
 use super::ports::Rest;
 use super::snapshots::Snapshots;
 use crate::runtime::{Back, EffectRunner, EpochStamp, Outcomes};
@@ -41,6 +41,7 @@ impl DeliveryIo {
         let launch = self.counted.as_ref().map(crate::runtime::Handle::launch);
         spawn_blocking_on(Carry::Detached, &self.handle, move || {
             let _launch = launch;
+            let _watch = back.watch(read_task(stream, read_id));
             let answer = match snapshots.read(&view, revision, after) {
                 Ok((seen, data)) => DeliveryInput::ReadDone { stream, read_id, revision: seen, data },
                 Err(error) => DeliveryInput::ReadFailed { stream, read_id, revision, error },

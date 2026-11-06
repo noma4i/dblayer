@@ -82,3 +82,24 @@ async fn an_open_gate_of_the_epoch_sends_and_a_later_epoch_does_not() {
     assert!(matches!(send_in_epoch(&gate, Some(1), || transport.query(graphql())).await, Err(TransportError::Interrupted(_))));
     assert_eq!(transport.0.load(Ordering::SeqCst), 1);
 }
+
+#[tokio::test]
+async fn the_cut_of_a_session_request_grows_with_a_reset_a_server_end_and_the_close_but_not_with_a_login() {
+    let gate = EpochGate::default();
+    let transport = Counting::default();
+    let cut = gate.cut();
+    gate.open(1);
+    gate.end(1, crate::runtime::Cause::SessionStarted);
+    assert!(matches!(super::send_in_cut(&gate, cut, || transport.query(graphql())).await, Ok(Err(TransportError::Network(_)))), "the login of the epoch does not cut the request");
+    for (epoch, cause) in [(2, crate::runtime::Cause::SessionReset), (3, crate::runtime::Cause::ServerEnded)] {
+        let before = gate.cut();
+        gate.open(epoch);
+        gate.end(epoch, cause);
+        assert_eq!(gate.cut(), before + 1, "{cause:?}");
+        assert!(matches!(super::send_in_cut(&gate, before, || transport.query(graphql())).await, Err(super::GateClosed)));
+    }
+    let before = gate.cut();
+    gate.shutdown();
+    assert!(matches!(super::send_in_cut(&gate, before, || transport.query(graphql())).await, Err(super::GateClosed)));
+    assert_eq!(transport.0.load(Ordering::SeqCst), 1, "only the first request reached the transport");
+}

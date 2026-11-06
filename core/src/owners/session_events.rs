@@ -71,18 +71,18 @@ impl SessionState {
                 self.phase = phase;
                 fx.push(SessionEffect::RestoreClassified { epoch });
                 if let (Some(pending), true) = (pending, epoch == self.epoch && self.current(epoch)) {
-                    if pending.owner.is_none() && pending.author.is_none() { self.restored_direct = Some(PendingCall { epoch, ..pending }); }
+                    match pending.owner {
+                        None if pending.author.is_none() => self.restored_direct = Some(PendingCall { epoch, ..pending }),
+                        Some(MutateOwner::Detached) => self.restored_detached = Some(PendingCall { epoch, ..pending }),
+                        _ => {}
+                    }
                 }
-                if self.restore_ready && matches!(self.phase, SessionPhase::Idle) {
-                    if let Some(pending) = self.restored_direct.take() { self.start_restored(pending, fx); }
-                }
+                if self.restore_ready && matches!(self.phase, SessionPhase::Idle) { self.start_restored(fx); }
             }
             SessionInput::RestoreReady { epoch } => {
                 self.phase = phase;
                 if epoch == self.epoch && self.current(epoch) { self.restore_ready = true; }
-                if self.restore_ready && matches!(self.phase, SessionPhase::Idle) {
-                    if let Some(pending) = self.restored_direct.take() { self.start_restored(pending, fx); }
-                }
+                if self.restore_ready && matches!(self.phase, SessionPhase::Idle) { self.start_restored(fx); }
             }
             SessionInput::RestoreFailed { epoch, error } => {
                 self.phase = phase;
@@ -109,6 +109,7 @@ impl SessionState {
                     self.end_resume(SessionError::Interrupted, fx);
                 }
                 self.restored_direct = None;
+                self.restored_detached = None;
                 self.restore_ready = false;
                 self.restore_floor = epoch + 1;
                 self.restore_error = None;
@@ -239,8 +240,8 @@ impl SessionState {
             (Some(credential), SecretState::Present(digest)) if digest != credential.digest => self.phase = SessionPhase::SecretMismatch,
             (Some(_), _) => {
                 match pending {
-                    Some(pending) if pending.owner.is_some() => {
-                        let author = pending.owner.as_ref().map(author_of).or(pending.author);
+                    Some(pending) if pending.owner.as_ref().and_then(author_of).is_some() => {
+                        let author = pending.owner.as_ref().and_then(author_of).or(pending.author);
                         self.adopt = true;
                         self.phase = SessionPhase::PendingHeld { pending: PendingCall { reply: None, author, ..pending } };
                     }

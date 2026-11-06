@@ -24,6 +24,7 @@ struct Pages {
     count: AtomicUsize,
     last_page: AtomicUsize,
     response: Mutex<Option<String>>,
+    panics: std::sync::atomic::AtomicBool,
 }
 
 #[async_trait::async_trait]
@@ -34,6 +35,7 @@ impl Transport for Pages {
     async fn cable_close(&self, _: String) {}
     async fn query(&self, request: super::TransportRequest) -> Result<String, DbError> {
         let number = self.count.fetch_add(1, Ordering::SeqCst);
+        assert!(!self.panics.load(Ordering::SeqCst), "the transport failed");
         self.asked.lock().unwrap().push(request.variables_json);
         if self.gated { self.gate.acquire().await.unwrap().forget(); }
         if let Some(response) = self.response.lock().unwrap().clone() { return Ok(response); }
@@ -58,7 +60,7 @@ async fn open(gated: bool) -> (Arc<Database>, Arc<Pages>) {
         stale_time: "5.minutes".into(), empty_stale_time: None, selects_page_info: true, page_size: None, variables: Default::default(), root: None, total_from: None,
     });
     model.relations.push(feed);
-    let transport = Arc::new(Pages { asked: Mutex::new(Vec::new()), gate: Arc::new(Semaphore::new(0)), gated, count: AtomicUsize::new(0), last_page: AtomicUsize::new(1), response: Mutex::new(None) });
+    let transport = Arc::new(Pages { asked: Mutex::new(Vec::new()), gate: Arc::new(Semaphore::new(0)), gated, count: AtomicUsize::new(0), last_page: AtomicUsize::new(1), response: Mutex::new(None), panics: std::sync::atomic::AtomicBool::new(false) });
     let db = Database::open_with_clock(Config { path: None, data_version: None, cache_rows: 8 }, serde_json::to_string(&vec![model]).unwrap(), crate::ffi::OpenPorts { transport: Some(transport.clone()), ..Default::default() }, TestClock::new(1_000_000)).await.unwrap();
     db.register_operations(r#"[{"name":"Feed","document":"query Feed { feed { nodes { id text } pageInfo { hasNextPage endCursor } } }","rootPath":"feed"}]"#.into()).unwrap();
     db.set_online(true).unwrap();
@@ -175,4 +177,13 @@ async fn a_load_without_the_network_waits_and_asks_when_the_network_returns_whil
     db.set_online(true).unwrap();
     tokio::time::timeout(LIMIT, call.result()).await.expect("the load ends within 5 s").unwrap();
     assert_eq!(transport.requests(), 1);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_panic_in_the_window_transport_ends_the_refresh_with_an_error_and_closes_the_database() {
+    let (db, transport) = open(false).await;
+    transport.panics.store(true, Ordering::SeqCst);
+    let result = crate::test_wait::within(refresh(&db)).await;
+    assert!(result.is_err(), "{result:?}");
+    crate::test_wait::yield_until("Lifecycle did not close after the task panic", || db.life.published().closed).await;
 }

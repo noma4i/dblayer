@@ -20,10 +20,11 @@ pub const CALLS_AUTHOR: AuthorId = 3;
 /// The owner of a `Mutate`: `encrypted_pending` keeps it, and a pending restored at open answers the author this owner names.
 pub type MutateOwner = crate::transport::RequestOwner;
 
-pub fn author_of(owner: &MutateOwner) -> AuthorId {
+pub fn author_of(owner: &MutateOwner) -> Option<AuthorId> {
     match owner {
-        MutateOwner::Operation { .. } | MutateOwner::Unmatched { .. } => OUTBOX_AUTHOR,
-        MutateOwner::Transfer { .. } => TRANSFER_AUTHOR,
+        MutateOwner::Operation { .. } | MutateOwner::Unmatched { .. } => Some(OUTBOX_AUTHOR),
+        MutateOwner::Transfer { .. } => Some(TRANSFER_AUTHOR),
+        MutateOwner::Detached => None,
     }
 }
 
@@ -300,6 +301,7 @@ pub struct SessionState {
     after_publish: Option<AnswerAfterPublish>,
     subscribers: BTreeSet<StreamId>,
     restored_direct: Option<PendingCall>,
+    restored_detached: Option<PendingCall>,
     restored_active: Option<RequestId>,
     restored_answer: Option<SessionAnswer>,
     restore_error: Option<String>,

@@ -11,13 +11,13 @@ const NOW: i64 = 1_000_000;
 use serde_json::json;
 
 use super::rig::{admit, open_gate, collector, pump, pump_for, runtime, saw_input, BatchPeer, Batches};
-use super::{WindowCodec, WindowIo};
+use super::{WindowCodec, WindowIo, WindowReader};
 use crate::owners::read::deliveries::Deliveries;
 use crate::owners::read::windows::{self as w, AnswerPage, WindowEffect, WindowKey, WindowOutcome, Windows, WindowsEffect, WindowsInput};
 use crate::owners::store::{RowValue, StoreInput, StoreOp, StoreWriter};
 use crate::owners::support::Sink;
 use crate::runtime::{Address, Cause, DetScheduler, Effect, Effects, EpochStamp, Outbound, StateOwner, Time};
-use crate::transport::{GraphQLRequest, MockTransport, Reply, Response, TransportError};
+use crate::transport::{GraphQLRequest, MockTransport, PutRequest, PutResponse, Reply, Response, ServerSubscription, Transport, TransportError};
 
 const EPOCH: u64 = 1;
 
@@ -73,11 +73,16 @@ struct Rig {
 }
 
 fn rig() -> Rig {
-    let runtime = runtime();
     let mock = MockTransport::new();
+    rig_with(mock.clone(), Arc::new(mock), None)
+}
+
+fn rig_with(mock: MockTransport, transport: Arc<dyn Transport>, reader: Option<WindowReader>) -> Rig {
+    let runtime = runtime();
     let batches = Batches::default();
     let (rest, take_rest) = collector();
-    let io = WindowIo::new(Some(Arc::new(mock.clone())), Arc::new(Pages), (admit(), open_gate(EPOCH)), (runtime.handle().clone(), Arc::new(|| NOW)), take_rest);
+    let io = WindowIo::new(Some(transport), Arc::new(Pages), (admit(), open_gate(EPOCH)), (runtime.handle().clone(), Arc::new(|| NOW)), take_rest);
+    let io = match reader { Some(reader) => io.reading(reader), None => io };
     let mut det = DetScheduler::new(1);
     let store = det.add::<WindowStore>("store", batches.clone(), crate::owners::support::Discard);
     let deliveries = det.add::<Sink<Deliveries>>("deliveries", Default::default(), crate::owners::support::Discard);
@@ -163,3 +168,36 @@ fn sess_prop_transport_classify() {
     }
     assert!(matches!(super::window_io::failure::<()>(&TransportError::Interrupted("cancelled".into())), TransportOutcome::Dropped), "only the core sets Interrupted, and it is Dropped everywhere");
 }
+
+type Sent<'a, T> = std::pin::Pin<Box<dyn std::future::Future<Output = Result<T, TransportError>> + Send + 'a>>;
+
+struct Panicking;
+
+impl Transport for Panicking {
+    fn query<'a, 'b>(&'a self, _: GraphQLRequest) -> Sent<'b, Response> where 'a: 'b, Self: 'b { panic!("the transport failed") }
+    fn mutate<'a, 'b>(&'a self, _: GraphQLRequest) -> Sent<'b, Response> where 'a: 'b, Self: 'b { panic!("the transport failed") }
+    fn subscribe<'a, 'b>(&'a self, _: GraphQLRequest) -> Sent<'b, ServerSubscription> where 'a: 'b, Self: 'b { panic!("the transport failed") }
+    fn put<'a, 'b>(&'a self, _: PutRequest) -> Sent<'b, PutResponse> where 'a: 'b, Self: 'b { panic!("the transport failed") }
+}
+
+fn task_failed(det: &DetScheduler) -> Vec<String> { det.trace().iter().filter(|entry| entry.input.starts_with("TaskFailed")).map(|entry| entry.input.clone()).collect() }
+
+pub(super) fn panicked_request() -> Vec<String> {
+    let mut rig = rig_with(MockTransport::new(), Arc::new(Panicking), None);
+    rig.watch(1);
+    let rest = rig.rest.clone();
+    pump(&mut rig.det, rig.windows, |_| rest.lock().unwrap().iter().any(|effect| matches!(effect, WindowsEffect::Window { effect: WindowEffect::Outcome { outcome: WindowOutcome::Failed { .. }, .. }, .. })));
+    task_failed(&rig.det)
+}
+
+pub(super) fn panicked_read() -> Vec<String> {
+    let reader: WindowReader = Arc::new(|_| panic!("the read failed"));
+    let mut rig = rig_with(MockTransport::new(), Arc::new(MockTransport::new()), Some(reader));
+    rig.det.post(rig.windows, EpochStamp::Epoch(EPOCH), interest(1));
+    pump(&mut rig.det, rig.windows, |det| saw_input(det, "Pin") > 0 && saw_input(det, "TaskFailed") > 0);
+    task_failed(&rig.det)
+}
+
+pub(super) fn request_id(request: u64, attempt: u32) -> String { format!("TaskFailed {{ id: {} }}", w::request_task(request, attempt)) }
+
+pub(super) fn read_id(read: u64) -> String { format!("TaskFailed {{ id: {} }}", w::read_task(read)) }

@@ -8,7 +8,7 @@ use tokio::runtime::Handle;
 
 use super::ports::{Admit, Rest};
 use crate::owners::contract::{ErrorClass, RequestError, RequestId, TransportOutcome};
-use crate::owners::read::windows::{AnswerPage, RequestKind, WindowEffect, WindowKey, Windows, WindowsEffect, WindowsInput};
+use crate::owners::read::windows::{request_task, read_task, AnswerPage, RequestKind, SavedWindow, WindowEffect, WindowKey, Windows, WindowsEffect, WindowsInput};
 use crate::runtime::{Back, EffectRunner, Epoch, EpochStamp};
 use crate::task::{spawn_on, Carry};
 use crate::transport::{CancelToken, GraphQLRequest, Response, RetryClass, Transport, TransportError};
@@ -28,6 +28,8 @@ pub trait WindowCodec: Send + Sync + 'static {
 
 type Open = Arc<Mutex<HashMap<(RequestId, u32), CancelToken>>>;
 
+pub type WindowReader = Arc<dyn Fn(&WindowKey) -> Result<Option<SavedWindow>, String> + Send + Sync>;
+
 pub struct WindowIo {
     transport: Option<Arc<dyn Transport>>,
     codec: Arc<dyn WindowCodec>,
@@ -37,6 +39,7 @@ pub struct WindowIo {
     now: Arc<dyn Fn() -> i64 + Send + Sync>,
     counted: Option<crate::runtime::Handle>,
     open: Open,
+    reader: Option<WindowReader>,
     rest: Rest<WindowsEffect>,
     #[cfg(test)]
     flights: Option<super::ports::Flights>,
@@ -44,12 +47,17 @@ pub struct WindowIo {
 
 impl WindowIo {
     pub fn new(transport: Option<Arc<dyn Transport>>, codec: Arc<dyn WindowCodec>, (admit, gate): (Admit, Arc<crate::runtime::EpochGate>), (handle, now): (Handle, Arc<dyn Fn() -> i64 + Send + Sync>), rest: Rest<WindowsEffect>) -> Self {
-        Self { transport, codec, admit, gate, handle, now, counted: None, open: Open::default(), rest, #[cfg(test)] flights: None }
+        Self { transport, codec, admit, gate, handle, now, counted: None, open: Open::default(), reader: None, rest, #[cfg(test)] flights: None }
     }
 
     #[cfg(test)]
     pub fn flights_in(mut self, flights: super::ports::Flights) -> Self {
         self.flights = Some(flights);
+        self
+    }
+
+    pub fn reading(mut self, reader: WindowReader) -> Self {
+        self.reader = Some(reader);
         self
     }
 
@@ -70,6 +78,7 @@ impl WindowIo {
         #[cfg(test)]
         let flight = self.flights.as_ref().map(super::ports::InFlight::start);
         spawn_on(Carry::Detached, &self.handle, crate::runtime::counted(launch, async move {
+            let _watch = back.watch(request_task(request, attempt));
             #[cfg(test)]
             let _flight = flight;
             let outcome = tokio::select! {
@@ -91,6 +100,19 @@ impl WindowIo {
         }));
     }
 
+    fn read(&self, stamp: EpochStamp, (key, read_id): (WindowKey, u64), back: &Back<Windows>) -> Option<(WindowKey, u64)> {
+        let Some(reader) = self.reader.clone() else { return Some((key, read_id)) };
+        let back = back.clone();
+        let launch = self.counted.as_ref().map(crate::runtime::Handle::launch);
+        crate::task::spawn_blocking_on(Carry::Detached, &self.handle, move || {
+            let _launch = launch;
+            let _watch = back.watch(read_task(read_id));
+            let result = reader(&key);
+            back.reply(stamp, WindowsInput::WindowRead { key, read_id, result });
+        });
+        None
+    }
+
     fn cancel(&self, request: RequestId, attempt: u32) {
         let token = self.open.lock().unwrap_or_else(PoisonError::into_inner).remove(&(request, attempt));
         if let Some(token) = token {
@@ -104,6 +126,9 @@ impl EffectRunner<Windows> for WindowIo {
         match effect {
             WindowsEffect::Window { key, effect: WindowEffect::Request { request, attempt, page, cursor, epoch, kind } } => self.request(stamp, key, (request, attempt), (page, epoch, kind), cursor, back),
             WindowsEffect::Window { effect: WindowEffect::Cancel { request, attempt }, .. } => self.cancel(request, attempt),
+            WindowsEffect::ReadWindow { key, read_id } => {
+                if let Some((key, read_id)) = self.read(stamp, (key, read_id), back) { (self.rest)(stamp, WindowsEffect::ReadWindow { key, read_id }); }
+            }
             other => (self.rest)(stamp, other),
         }
     }

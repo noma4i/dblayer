@@ -7,7 +7,7 @@ impl SessionState {
     }
 
     pub fn with_operations(operations: Vec<SessionOperation>, online: Option<bool>) -> Self {
-        Self { phase: SessionPhase::Idle, credential: None, queue: VecDeque::new(), online, epoch: 0, published: PublishedState::Session, after_publish: None, subscribers: BTreeSet::new(), restored_direct: None, restored_active: None, restored_answer: None, restore_error: None, resume_waiters: Vec::new(), resume_published: None, resume_clearing: None, failed_batch: None, operations, next_request: 1, next_batch: 1, next_attempt: 1, next_secret: 1, restore_ready: false, restore_floor: 0, adopt: false, held: None, reported: (0, RetryPhase::Idle) }
+        Self { phase: SessionPhase::Idle, credential: None, queue: VecDeque::new(), online, epoch: 0, published: PublishedState::Session, after_publish: None, subscribers: BTreeSet::new(), restored_direct: None, restored_detached: None, restored_active: None, restored_answer: None, restore_error: None, resume_waiters: Vec::new(), resume_published: None, resume_clearing: None, failed_batch: None, operations, next_request: 1, next_batch: 1, next_attempt: 1, next_secret: 1, restore_ready: false, restore_floor: 0, adopt: false, held: None, reported: (0, RetryPhase::Idle) }
     }
 
     pub fn phase(&self) -> &SessionPhase { &self.phase }
@@ -21,6 +21,8 @@ impl SessionState {
     pub fn awaiting_publication(&self) -> Option<(ReplyId, PublishWait)> { self.after_publish.as_ref().map(|held| (held.reply, held.wait)) }
 
     pub fn restored_direct(&self) -> Option<&PendingCall> { self.restored_direct.as_ref() }
+
+    pub fn restored_detached(&self) -> Option<&PendingCall> { self.restored_detached.as_ref() }
 
     pub(super) fn batch(&mut self) -> BatchId {
         self.next_batch += 1;
@@ -70,12 +72,7 @@ impl SessionState {
             self.phase = held;
             return;
         }
-        if self.restore_ready {
-            if let Some(pending) = self.restored_direct.take() {
-                self.start_restored(pending, fx);
-                return;
-            }
-        }
+        if self.restore_ready && self.start_restored(fx) { return; }
         self.drain(fx);
     }
 
@@ -162,9 +159,15 @@ impl SessionState {
         }
     }
 
-    pub(super) fn start_restored(&mut self, pending: PendingCall, fx: &mut Vec<SessionEffect>) {
-        self.restored_active = Some(pending.request_id);
+    pub(super) fn start_restored(&mut self, fx: &mut Vec<SessionEffect>) -> bool {
+        if let Some(pending) = self.restored_direct.take() {
+            self.restored_active = Some(pending.request_id);
+            self.start_calling(pending, fx);
+            return true;
+        }
+        let Some(pending) = self.restored_detached.take() else { return false };
         self.start_calling(pending, fx);
+        true
     }
 
     pub(super) fn resume_finish(&mut self, pending: &PendingCall, result: SessionAnswer, fx: &mut Vec<SessionEffect>) {
@@ -217,6 +220,7 @@ impl SessionState {
         self.refuse_queue(fx, SessionError::Closed);
         self.held = None;
         self.restored_direct = None;
+        self.restored_detached = None;
         self.phase = SessionPhase::Closed;
         fx.push(SessionEffect::Drained(Drained { owner: "session" }));
     }
@@ -242,7 +246,7 @@ impl SessionState {
     }
 
     pub(super) fn adopt_epoch(&mut self, epoch: Epoch) {
-        if let Some(pending) = &mut self.restored_direct { pending.epoch = epoch; }
+        if let Some(pending) = self.restored_direct.as_mut().or(self.restored_detached.as_mut()) { pending.epoch = epoch; }
         if let SessionPhase::PendingHeld { pending } | SessionPhase::Calling { pending, .. } = &mut self.phase { pending.epoch = epoch; }
     }
 

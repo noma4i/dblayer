@@ -14,6 +14,7 @@ pub enum RequestOwner {
     Operation { seq: i64 },
     Transfer { operation_id: i64, item_id: String, step: crate::upload::UploadStage },
     Unmatched { operation_id: i64 },
+    Detached,
 }
 
 #[derive(Debug, Clone, PartialEq)]

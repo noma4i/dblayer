@@ -15,10 +15,11 @@ pub type Owner = crate::transport::RequestOwner;
 pub const OUTBOX_AUTHOR: AuthorId = 1;
 pub const TRANSFER_AUTHOR: AuthorId = 2;
 
-pub fn author_of(owner: &Owner) -> AuthorId {
+pub fn author_of(owner: &Owner) -> Option<AuthorId> {
     match owner {
-        Owner::Operation { .. } | Owner::Unmatched { .. } => OUTBOX_AUTHOR,
-        Owner::Transfer { .. } => TRANSFER_AUTHOR,
+        Owner::Operation { .. } | Owner::Unmatched { .. } => Some(OUTBOX_AUTHOR),
+        Owner::Transfer { .. } => Some(TRANSFER_AUTHOR),
+        Owner::Detached => None,
     }
 }
 
@@ -271,6 +272,7 @@ pub struct Session {
     pub after_publish: Option<(ReplyId, Answer, Option<u64>)>,
     pub subscribers: BTreeSet<StreamId>,
     pub restored_direct: Option<Pending>,
+    pub restored_detached: Option<Pending>,
     restore_error: Option<String>,
     operations: Vec<Operation>,
     next_request: RequestId,
@@ -308,7 +310,7 @@ fn is_ended(cause: EndCause) -> bool { cause != EndCause::Other }
 
 impl Session {
     pub fn new(operations: Vec<Operation>, online: Option<bool>) -> Self {
-        Self { state: State::Idle, credential: None, queue: VecDeque::new(), online, epoch: 0, pub_state: PubState::Session, after_publish: None, subscribers: BTreeSet::new(), restored_direct: None, restore_error: None, operations, next_request: 1, next_batch: 1, next_attempt: 1, next_secret: 1, restore_ready: false, restore_floor: 0, adopt: false, held: None, reported: (0, RetryPhase::Idle) }
+        Self { state: State::Idle, credential: None, queue: VecDeque::new(), online, epoch: 0, pub_state: PubState::Session, after_publish: None, subscribers: BTreeSet::new(), restored_direct: None, restored_detached: None, restore_error: None, operations, next_request: 1, next_batch: 1, next_attempt: 1, next_secret: 1, restore_ready: false, restore_floor: 0, adopt: false, held: None, reported: (0, RetryPhase::Idle) }
     }
 
     fn batch(&mut self) -> BatchId {
@@ -373,13 +375,14 @@ impl Session {
             self.state = held;
             return;
         }
-        if self.restore_ready {
-            if let Some(pending) = self.restored_direct.take() {
-                self.start_calling(pending, out);
-                return;
-            }
-        }
+        if self.restore_ready && self.start_restored(out) { return; }
         self.drain(out);
+    }
+
+    pub(super) fn start_restored(&mut self, out: &mut Out) -> bool {
+        let Some(pending) = self.restored_direct.take().or_else(|| self.restored_detached.take()) else { return false };
+        self.start_calling(pending, out);
+        true
     }
 
     fn drain(&mut self, out: &mut Out) {
@@ -488,6 +491,7 @@ impl Session {
         self.refuse_queue(out, Fail::Closed);
         self.held = None;
         self.restored_direct = None;
+        self.restored_detached = None;
         self.state = State::Closed;
         out.effects.push(Effect::Drained);
     }
@@ -508,7 +512,7 @@ impl Session {
     }
 
     fn adopt_epoch(&mut self, epoch: u64) {
-        if let Some(pending) = &mut self.restored_direct { pending.epoch = epoch; }
+        if let Some(pending) = self.restored_direct.as_mut().or(self.restored_detached.as_mut()) { pending.epoch = epoch; }
         if let State::PendingHeld { pending } | State::Calling { pending, .. } = &mut self.state { pending.epoch = epoch; }
     }
 

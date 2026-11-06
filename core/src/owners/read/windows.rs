@@ -15,7 +15,7 @@ use crate::owners::read::deliveries::{DeliveryInput, Deliveries};
 use crate::owners::store::{StoreBatch, StoreInput, StoreOp, StoreWriter};
 use crate::pacing::RetryPolicy;
 use crate::owners::contract::{BatchAuthor, Committed, Drained, EpochEnded, EpochStarted, ErrorClass, ModelsReset, Online, RejectReason, Rejected, RequestError, RequestId, WindowPhase as Phase, WindowState};
-use crate::runtime::{Address, Cause, Effect, Effects, Epoch, Outbound, ScheduleId, StateOwner, Time};
+use crate::runtime::{Address, Cause, Effect, EffectId, Effects, Epoch, Outbound, ScheduleId, StateOwner, Time};
 
 include!("windows_types.rs");
 

@@ -15,7 +15,7 @@ mod threaded;
 pub use cell::EffectRunner;
 pub use det::{Choice, DetScheduler, Lane, TraceEntry};
 pub use flights::{Flights, Running};
-pub use gate::{send_in_epoch, EpochGate};
+pub use gate::{send_in_cut, send_in_epoch, EpochGate};
 pub use open_slot::{OpenLease, OpenSlot};
 pub use published::PublishedCell;
 pub use explore::{explore, Limits, Report, Violation};
@@ -41,6 +41,8 @@ mod outcomes_tests;
 mod threaded_tests;
 #[cfg(test)]
 mod props_tests;
+#[cfg(test)]
+mod overload_tests;
 #[cfg(test)]
 mod mailbox_tests;
 #[cfg(test)]

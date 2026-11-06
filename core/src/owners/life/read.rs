@@ -65,7 +65,7 @@ pub(super) fn add(builder: &mut RuntimeBuilder, wiring: &Arc<Wiring>, ports: &Po
     let state = WindowsState::new(0, None, WindowsPeers { store, deliveries: deliveries_at }).with_preload(preload).with_sources(preload_sources(&db)).with_lifetimes(lifetimes(db.clone())).with_max_pages(max_pages(db.clone())).with_members_complete(members_complete(db.clone())).with_media(has_media(db.clone())).with_foreground(refreshes_on_foreground(db.clone()));
     let windows_wiring = wiring.clone();
     let (derive_db, derive_executor, derive_handle) = (db.clone(), ports.executor.clone(), handle.clone());
-    let (read_db, read_executor, read_handle) = (db.clone(), ports.executor.clone(), handle.clone());
+    let read_db = db.clone();
     let windows_io = WindowIo::new(
         transport,
         codec,
@@ -83,25 +83,16 @@ pub(super) fn add(builder: &mut RuntimeBuilder, wiring: &Arc<Wiring>, ports: &Po
                     Err(error) => wiring.fault(format!("the derived preload is invalid: {error}")),
                 } });
             }
-            WindowsEffect::ReadWindow { key, read_id } => {
-                let (db, handle) = (read_db.clone(), read_handle.clone());
-                let launch = read_handle.launch();
-                crate::task::spawn_blocking_on(crate::task::Carry::Detached, &read_executor, move || {
-                    let _launch = launch;
-                    let result = match key.kind() {
-                        crate::owners::read::windows::WindowKind::Relation { relation, params } => db.window_saved(&key.model, &relation, &params).map_err(|error| error.to_string()),
-                        crate::owners::read::windows::WindowKind::Nodes { .. } => Ok(None),
-                    };
-                    handle.post(windows_at, stamp, WindowsInput::WindowRead { key, read_id, result });
-                });
-            }
             WindowsEffect::SnapshotRequest { epoch } => windows_wiring.to_network(NetworkInput::SnapshotRequest { owner: Peer::Windows, epoch }),
             WindowsEffect::Drained(done) => drained(&windows_wiring, done),
-            WindowsEffect::Window { .. } => {}
+            WindowsEffect::Window { .. } | WindowsEffect::ReadWindow { .. } => {}
         }),
     );
     builder.install(windows_at, "windows", state, {
-        let io = windows_io.counted_by(handle.clone());
+        let io = windows_io.reading(Arc::new(move |key| match key.kind() {
+            crate::owners::read::windows::WindowKind::Relation { relation, params } => read_db.window_saved(&key.model, &relation, &params).map_err(|error| error.to_string()),
+            crate::owners::read::windows::WindowKind::Nodes { .. } => Ok(None),
+        })).counted_by(handle.clone());
         #[cfg(test)]
         let io = io.flights_in(wiring.flights.clone());
         io
