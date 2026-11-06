@@ -242,8 +242,8 @@ impl DatabaseSut {
             self.calls.iter_mut().for_each(Call::poll_woken);
             if let Some(database) = self.database.clone() {
                 let owners = database.life_handle();
-                let (idle, held) = tokio::task::spawn_blocking(move || (owners.barrier(Duration::from_secs(15)), owners.pending())).await.unwrap_or((false, 0));
-                assert!(idle, "the owners still hold {held} inputs or started effect tasks after 15 s");
+                let (idle, held, holders) = tokio::task::spawn_blocking(move || (owners.barrier(Duration::from_secs(15)), owners.pending(), owners.holders())).await.unwrap_or((false, 0, String::new()));
+                assert!(idle, "the owners still hold {held} inputs or started effect tasks after 15 s: {holders}");
             }
             if !self.calls.iter().any(Call::is_woken) { break; }
         }

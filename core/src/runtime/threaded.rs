@@ -26,10 +26,22 @@ type FailureRoute = Box<dyn Fn(&str) -> Vec<(usize, Box<dyn Message>)> + Send + 
 struct Inflight {
     count: Mutex<usize>,
     idle: Condvar,
+    /// Who holds the barrier outside the mailboxes: the place that took each count.
+    #[cfg(test)]
+    holders: Mutex<std::collections::HashMap<u64, &'static std::panic::Location<'static>>>,
 }
 
 impl Inflight {
     fn add(&self) { *lock(&self.count) += 1; }
+
+    #[cfg(test)]
+    fn hold(&self, id: u64, place: &'static std::panic::Location<'static>) { lock(&self.holders).insert(id, place); }
+
+    #[cfg(test)]
+    fn release(&self, id: u64) { lock(&self.holders).remove(&id); }
+
+    #[cfg(test)]
+    fn report(&self) -> String { lock(&self.holders).values().map(|place| format!("{}:{}", place.file(), place.line())).collect::<Vec<_>>().join(", ") }
 
     fn done(&self, handled: usize) {
         let mut count = lock(&self.count);
@@ -148,10 +160,31 @@ impl Handle {
     pub fn pending(&self) -> usize { self.router().map_or(0, |router| *lock(&router.inflight.count)) }
 
     /// Counts an effect task as in flight from its spawn until its first poll, so the barrier covers the request it is about to make.
-    pub fn launch(&self) -> Launch { Launch(self.router().cloned().inspect(|router| router.inflight.add())) }
+    #[track_caller]
+    pub fn launch(&self) -> Launch {
+        let place = std::panic::Location::caller();
+        let id = NEXT_HOLDER.fetch_add(1, Ordering::SeqCst) as u64;
+        #[cfg(not(test))]
+        let _ = place;
+        Launch { router: self.router().cloned().inspect(|router| {
+            router.inflight.add();
+            #[cfg(test)]
+            router.inflight.hold(id, place);
+        }), id, place }
+    }
+
+    /// Who holds the barrier now, as `file:line` of the places that took the counts.
+    #[cfg(test)]
+    pub fn holders(&self) -> String { self.router().map_or_else(String::new, |router| router.inflight.report()) }
 }
 
-pub struct Launch(Option<Arc<Router>>);
+pub struct Launch {
+    router: Option<Arc<Router>>,
+    id: u64,
+    place: &'static std::panic::Location<'static>,
+}
+
+static NEXT_HOLDER: AtomicUsize = AtomicUsize::new(1);
 
 /// The counts a polled call holds while work started for it runs off its thread. The wake of the call lets them go.
 #[derive(Default)]
@@ -190,17 +223,29 @@ pub fn hold_until_woken(launch: Launch) -> Option<Launch> {
 /// The count of one effect task in the barrier: held while the task can run (spawned, woken or polled), released while it waits for the outside.
 struct Gate {
     router: Arc<Router>,
+    #[cfg_attr(not(test), allow(dead_code))]
+    id: u64,
+    #[cfg_attr(not(test), allow(dead_code))]
+    place: &'static std::panic::Location<'static>,
     held: std::sync::atomic::AtomicBool,
     woken: std::sync::atomic::AtomicBool,
 }
 
 impl Gate {
     fn arm(&self) {
-        if !self.held.swap(true, Ordering::SeqCst) { self.router.inflight.add(); }
+        if !self.held.swap(true, Ordering::SeqCst) {
+            self.router.inflight.add();
+            #[cfg(test)]
+            self.router.inflight.hold(self.id, self.place);
+        }
     }
 
     fn disarm(&self) {
-        if self.held.swap(false, Ordering::SeqCst) { self.router.inflight.done(1); }
+        if self.held.swap(false, Ordering::SeqCst) {
+            #[cfg(test)]
+            self.router.inflight.release(self.id);
+            self.router.inflight.done(1);
+        }
     }
 }
 
@@ -250,15 +295,19 @@ impl<F> Drop for Counted<F> {
 
 /// Wraps `work` so the barrier counts it whenever it can run. The launch taken before the spawn covers the time until the first poll.
 pub fn counted<F: std::future::Future>(launch: Option<Launch>, work: F) -> Counted<F> {
-    let gate = launch.and_then(|mut launch| launch.0.take()).map(|router| {
-        Arc::new(Gate { router, held: std::sync::atomic::AtomicBool::new(true), woken: std::sync::atomic::AtomicBool::new(false) })
+    let gate = launch.and_then(|mut launch| launch.router.take().map(|router| (router, launch.id, launch.place))).map(|(router, id, place)| {
+        Arc::new(Gate { router, id, place, held: std::sync::atomic::AtomicBool::new(true), woken: std::sync::atomic::AtomicBool::new(false) })
     });
     Counted { work: Box::pin(work), gate }
 }
 
 impl Drop for Launch {
     fn drop(&mut self) {
-        if let Some(router) = self.0.take() { router.inflight.done(1); }
+        if let Some(router) = self.router.take() {
+            #[cfg(test)]
+            router.inflight.release(self.id);
+            router.inflight.done(1);
+        }
     }
 }
 

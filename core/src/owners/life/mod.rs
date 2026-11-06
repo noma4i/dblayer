@@ -561,11 +561,16 @@ impl Life {
     pub fn barrier(&self, limit: std::time::Duration) -> bool { self.wiring.handle.barrier(limit) }
 
     /// Counts a platform call as in flight until it registered with the owners.
+    #[track_caller]
     pub fn launch(&self) -> crate::runtime::Launch { self.wiring.handle.launch() }
 
     /// The inputs and started effect tasks that still hold the barrier.
     #[cfg(test)]
     pub fn pending(&self) -> usize { self.wiring.handle.pending() }
+
+    /// The places that hold the barrier now.
+    #[cfg(test)]
+    pub fn holders(&self) -> String { self.wiring.handle.holders() }
 
     /// Whether `shutdown` ran: the database is closed for good.
     pub fn is_shut(&self) -> bool { self.shut.load(Ordering::SeqCst) }
