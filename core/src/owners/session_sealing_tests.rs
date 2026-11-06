@@ -42,7 +42,7 @@ fn sess_idle_call_too_large() {
 fn sess_idle_mutate_too_large() {
     let mut state = setup();
     let id = begin(&mut state, true);
-    assert!(matches!(step(&mut state, SessionInput::Sealed { seal_id: id, size: 262145 }).as_slice(), [SessionEffect::Answer { author: 5, req_id: 8, outcome: AuthorOutcome::Error { class: ErrorClass::Permanent, error: SessionError::TooLarge { size: 262145, limit: 262144 } } }]));
+    assert!(matches!(step(&mut state, SessionInput::Sealed { seal_id: id, size: 262145 }).as_slice(), [SessionEffect::Answer { author: 5, req_id: 8, outcome: AuthorOutcome::Error { class: ErrorClass::Permanent, error: SessionError::TooLarge { size: 262145, limit: 262144 }, .. } }]));
     assert_eq!(state.credential().unwrap().sequence, 7);
 }
 

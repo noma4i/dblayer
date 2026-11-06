@@ -68,6 +68,7 @@ impl OutboxState {
             if let Some(operation) = self.ops.get_mut(&op_id) {
                 operation.request_id = request_id;
                 operation.sequence = sequence;
+                operation.pending_owned = true;
             }
         }
         let _ = held_pair;

@@ -63,6 +63,7 @@ pub(super) fn lower(emitted: Emitted<Run>, state: Option<&OutboxState>) -> Optio
             let generation = number_after(&input, "\"Moment\": ").unwrap_or(0);
             OutboxEffect::Store { op_id, batch: number_after(&input, "id: ")?, kind, generation }
         }
+        Emitted::Send { to: SESSION_AT, input } if input.starts_with("Release") => return None,
         Emitted::Send { to: SESSION_AT, input } if input.starts_with("Cancel") => {
             let request_id = number_after(&input, "req_id: ")?;
             let operation = state.and_then(|state| state.ops.values().find(|operation| operation.request_id == request_id));
@@ -190,6 +191,8 @@ pub(super) struct Twin {
     pub(super) follower: Option<OpId>,
     /// The typed text of the last inputs the Store received (`StoreOp` names).
     pub(super) store_text: String,
+    /// The typed text of the last inputs Session received from the owner.
+    pub(super) session_text: String,
 }
 
 impl Twin {
@@ -197,7 +200,7 @@ impl Twin {
     pub(super) fn bare() -> Self {
         let (mut det, log, _) = world(7);
         det.start_epoch(EPOCH);
-        Self { det, log, kept: Vec::new(), batches: BTreeMap::new(), first_pair: BTreeMap::new(), revision: 10, reply: 10, follower: None, store_text: String::new() }
+        Self { det, log, kept: Vec::new(), batches: BTreeMap::new(), first_pair: BTreeMap::new(), revision: 10, reply: 10, follower: None, store_text: String::new(), session_text: String::new() }
     }
 
     /// The owner in the phase `Ready` with an empty queue.
@@ -226,6 +229,7 @@ impl Twin {
         self.det.post(Address::<Outbox>::new(OUTBOX_AT), EpochStamp::Epoch(EPOCH), input);
         self.run();
         self.store_text = crate::owners::support::snapshot(&self.log).into_iter().filter_map(|emitted| match emitted { Emitted::Send { to: STORE_AT, input } => Some(input), _ => None }).collect::<Vec<_>>().join("\n");
+        self.session_text = crate::owners::support::snapshot(&self.log).into_iter().filter_map(|emitted| match emitted { Emitted::Send { to: SESSION_AT, input } => Some(input), _ => None }).collect::<Vec<_>>().join("\n");
         let effects = take_fx(&self.log, state_of(&self.det));
         self.note(&effects);
         effects

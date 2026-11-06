@@ -189,7 +189,7 @@ pub struct Landed {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum AuthorOutcome {
     Response(String),
-    Error { class: ErrorClass, error: SessionError },
+    Error { class: ErrorClass, error: SessionError, pending_retained: bool },
     Dropped,
 }
 
@@ -325,7 +325,11 @@ pub struct SessionState {
 fn is_ended(cause: Cause) -> bool { matches!(cause, Cause::SessionReset | Cause::ServerEnded) }
 
 fn author_error(fx: &mut Vec<SessionEffect>, author: AuthorId, req_id: RequestId, class: ErrorClass, error: SessionError) {
-    fx.push(SessionEffect::Answer { author, req_id, outcome: AuthorOutcome::Error { class, error } });
+    author_error_retained(fx, author, req_id, class, error, false);
+}
+
+fn author_error_retained(fx: &mut Vec<SessionEffect>, author: AuthorId, req_id: RequestId, class: ErrorClass, error: SessionError, pending_retained: bool) {
+    fx.push(SessionEffect::Answer { author, req_id, outcome: AuthorOutcome::Error { class, error, pending_retained } });
 }
 
 /// A sign-in that the server did not accept: the credential its call issued goes, the server did not end the session.
@@ -352,12 +356,14 @@ fn pending_of(phase: &SessionPhase) -> Option<PendingCall> {
 }
 
 /// The result of the pending request goes to its call (`reply`) and to its `Mutate` author.
-fn finish(fx: &mut Vec<SessionEffect>, pending: &PendingCall, result: SessionAnswer) {
+fn finish(fx: &mut Vec<SessionEffect>, pending: &PendingCall, result: SessionAnswer) { finish_retained(fx, pending, result, false); }
+
+fn finish_retained(fx: &mut Vec<SessionEffect>, pending: &PendingCall, result: SessionAnswer, pending_retained: bool) {
     if let Some(id) = pending.reply { reply(fx, id, result.clone()); }
     if let Some(author) = pending.author {
         let outcome = match result {
             Ok(body) => AuthorOutcome::Response(body),
-            Err(error) => AuthorOutcome::Error { class: ErrorClass::Permanent, error },
+            Err(error) => AuthorOutcome::Error { class: ErrorClass::Permanent, error, pending_retained },
         };
         fx.push(SessionEffect::Answer { author, req_id: pending.request_id, outcome });
     }

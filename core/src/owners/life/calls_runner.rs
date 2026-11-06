@@ -118,8 +118,13 @@ impl CallsRunner {
         let variables: Value = serde_json::from_str(&variables).unwrap_or(Value::Null);
         let body = crate::transport::encrypted::graphql_body(&GraphQLRequest::new(document, operation, variables), true);
         self.roots.lock().unwrap_or_else(PoisonError::into_inner).insert(request_id, root);
-        self.wiring.to_session(SessionInput::Mutate { author: CALLS_AUTHOR, owner: None, req_id: request_id, epoch, path: client.graphql_path().to_string(), body: body.to_string(), purpose: 0 });
+        self.wiring.to_session(mutate_input(request_id, epoch, client.graphql_path().to_string(), body.to_string()));
     }
+}
+
+/// The first `Mutate` of a call: its pair is written with `owner = Detached`, no author waits for it after a restart.
+pub(super) fn mutate_input(req_id: RequestId, epoch: crate::runtime::Epoch, path: String, body: String) -> SessionInput {
+    SessionInput::Mutate { author: CALLS_AUTHOR, owner: Some(crate::owners::session::MutateOwner::Detached), req_id, epoch, path, body, purpose: 0 }
 }
 
 impl EffectRunner<Calls> for CallsRunner {

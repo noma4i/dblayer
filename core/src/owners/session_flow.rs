@@ -170,10 +170,12 @@ impl SessionState {
         true
     }
 
-    pub(super) fn resume_finish(&mut self, pending: &PendingCall, result: SessionAnswer, fx: &mut Vec<SessionEffect>) {
+    pub(super) fn resume_finish(&mut self, pending: &PendingCall, result: SessionAnswer, fx: &mut Vec<SessionEffect>) { self.resume_finish_retained(pending, result, false, fx); }
+
+    pub(super) fn resume_finish_retained(&mut self, pending: &PendingCall, result: SessionAnswer, pending_retained: bool, fx: &mut Vec<SessionEffect>) {
         if self.restored_active == Some(pending.request_id) {
             self.deliver_resume(result, fx);
-        } else { finish(fx, pending, result); }
+        } else { finish_retained(fx, pending, result, pending_retained); }
     }
 
     pub(super) fn deliver_resume(&mut self, result: SessionAnswer, fx: &mut Vec<SessionEffect>) {

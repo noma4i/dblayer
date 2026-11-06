@@ -57,7 +57,7 @@ async fn sess_prop_security_code_kept() {
     let tx = std::sync::Mutex::new(Some(tx));
     database.life.on_mutate_answer(1 << 32, move |_, result| { if let Some(tx) = tx.lock().unwrap().take() { let _ = tx.send(result); } });
     database.life.mutate(1 << 32, None, 42, "/api/auth/confirm".into(), "{}".into(), 0);
-    assert!(matches!(within(rx).await.unwrap(), AuthorOutcome::Error { class: ErrorClass::Permanent, error: SessionError::Security { code: SecurityCode::TlsTrust, detail } } if detail == "platform trust refused"));
+    assert!(matches!(within(rx).await.unwrap(), AuthorOutcome::Error { class: ErrorClass::Permanent, error: SessionError::Security { code: SecurityCode::TlsTrust, detail }, pending_retained: false } if detail == "platform trust refused"));
     assert_eq!(http.requests.load(std::sync::atomic::Ordering::SeqCst), before + 2);
     let answers = crate::transport::encrypted::state::answers(&database.db.lock().connection).unwrap();
     assert_eq!(answers.get(&42), Some(&crate::transport::encrypted::state::StoredAnswer::Security { code: SecurityCode::TlsTrust, detail: "platform trust refused".into() }));

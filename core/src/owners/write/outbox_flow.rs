@@ -185,9 +185,6 @@ impl OutboxState {
                 Self::reply(fx, reply, OutboxAnswer::Err(Fault::InFlight));
             }
             Stage::Queued | Stage::Failed => {
-                if self.ops[&op_id].sent && self.ops[&op_id].stage == Stage::Queued {
-                    if let Some(session) = self.peers.session { fx.push(Effect::Send(Outbound::new(session, SessionInput::Release { req_id: self.ops[&op_id].request_id }))); }
-                }
                 self.discard_waiters.push((op_id, reply));
                 if let Some(operation) = self.ops.get_mut(&op_id) { operation.stage = Stage::RollingBack(Why::Discarded); }
                 self.store(op_id, CommitKind::Rollback, fx);
@@ -321,12 +318,21 @@ impl OutboxState {
         use crate::owners::session::AuthorOutcome;
         let Some(op_id) = self.ops.values().find(|operation| operation.request_id == req_id && operation.stage == Stage::Sending).map(|operation| operation.op_id) else { return };
         match outcome {
-            AuthorOutcome::Response(body) => self.decode_answer(op_id, body, fx),
-            AuthorOutcome::Error { class, error } => {
-                if let Some(operation) = self.ops.get_mut(&op_id) { operation.reject_error = Some(super::failure::of_session(&error, class)); }
+            AuthorOutcome::Response(body) => {
+                if let Some(operation) = self.ops.get_mut(&op_id) { operation.pending_owned = false; }
+                self.decode_answer(op_id, body, fx);
+            }
+            AuthorOutcome::Error { class, error, pending_retained } => {
+                if let Some(operation) = self.ops.get_mut(&op_id) {
+                    operation.pending_owned = pending_retained;
+                    operation.reject_error = Some(super::failure::of_session(&error, class));
+                }
                 self.transport_failed(op_id, matches!(class, ErrorClass::Network | ErrorClass::Server), fx);
             }
-            AuthorOutcome::Dropped => self.transport_failed(op_id, true, fx),
+            AuthorOutcome::Dropped => {
+                if let Some(operation) = self.ops.get_mut(&op_id) { operation.pending_owned = true; }
+                self.transport_failed(op_id, true, fx);
+            }
         }
     }
 }

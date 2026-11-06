@@ -147,6 +147,7 @@ impl OutboxState {
                 sequence,
                 sends: 0,
                 sent: false,
+                pending_owned: false,
                 waiting_retry: false,
                 landing: Vec::new(),
                 swaps: Vec::new(),
@@ -206,7 +207,10 @@ impl OutboxState {
                 .chain([StoreOp::RemoveIntent { op_id }, StoreOp::RemoveAnswer { request_id: operation.request_id }])
                 .collect(),
             CommitKind::Rollback if operation.restore_element.is_some() => operation.restore_element.iter().map(|(table, key)| StoreOp::DiscardRestoreFailed { table: table.clone(), key: key.clone() }).chain([StoreOp::RemoveIntent { op_id }]).collect(),
-            CommitKind::Rollback => vec![StoreOp::RollBack { op_id }, StoreOp::RemoveIntent { op_id }, StoreOp::RemoveAnswer { request_id: operation.request_id }],
+            CommitKind::Rollback => [StoreOp::RollBack { op_id }, StoreOp::RemoveIntent { op_id }, StoreOp::RemoveAnswer { request_id: operation.request_id }]
+                .into_iter()
+                .chain((operation.pending_owned && operation.stage == Stage::RollingBack(Why::Discarded)).then_some(StoreOp::ReleasePendingOwner { request_id: operation.request_id }))
+                .collect(),
             CommitKind::ErrorMark => vec![StoreOp::MarkError { op_id, error: Some(operation.error.clone().unwrap_or_else(|| "refused".into())) }, StoreOp::RemoveAnswer { request_id: operation.request_id }],
             CommitKind::ClearMark => std::iter::once(StoreOp::MarkError { op_id, error: None }).chain(std::iter::once(attempt)).chain(operation.retry_uploads.iter().cloned().map(|row| StoreOp::Upload { row, kind: crate::owners::store::UploadKind::Retrying })).collect(),
             CommitKind::LocalWrite | CommitKind::RemoveRow => Vec::new(),

@@ -38,6 +38,6 @@ async fn sess_calling_http_panic() {
     http.panic.store(true, Ordering::SeqCst);
     life.mutate(7, None, 11, "/api/auth/otp".into(), "{}".into(), 0);
     let outcome = within(receiver).await.unwrap();
-    assert!(matches!(outcome, AuthorOutcome::Error { class: ErrorClass::Permanent, error: SessionError::Http { status: 0 } }), "{outcome:?}");
+    assert!(matches!(outcome, AuthorOutcome::Error { class: ErrorClass::Permanent, error: SessionError::Http { status: 0 }, pending_retained: false }), "{outcome:?}");
     yield_until("Lifecycle did not close after HTTP panic", || life.published().closed).await;
 }

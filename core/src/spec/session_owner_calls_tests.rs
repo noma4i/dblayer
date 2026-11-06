@@ -418,7 +418,7 @@ fn sess_calling_sequence_conflict() {
     twin.feed_all([mutate(7, 11), committed()]);
     let input = twin.response(9);
     let effects = twin.feed(input);
-    assert_eq!(effects, vec![answer(7, 11, permanent(Fail::SequenceConflict))]);
+    assert_eq!(effects, vec![answer(7, 11, retained(Fail::SequenceConflict))], "the author learns the pair stays saved");
     assert!(matches!(twin.reference.state, RefState::Blocked { reason: Block::SequenceConflict, .. }));
     assert_eq!(twin.reference.credential, Some(RefCredential { digest: CRED, sequence: 0 }));
 }
@@ -429,6 +429,9 @@ fn sess_calling_no_sequence() {
     let input = Input::Response { request_id: twin.rid(), attempt_id: twin.aid(), body: "{}".into(), sequence: None, refusal: None };
     twin.feed(input);
     assert_eq!(twin.replies, vec![(1, Err(Fail::Protocol))]);
+    let mut author = calling_mutate();
+    let input = Input::Response { request_id: author.rid(), attempt_id: author.aid(), body: "{}".into(), sequence: None, refusal: None };
+    assert_eq!(author.feed(input), vec![answer(7, 11, retained(Fail::Protocol))], "the author learns the pair stays saved");
     assert!(matches!(twin.reference.state, RefState::Blocked { reason: Block::Protocol, .. }));
 }
 

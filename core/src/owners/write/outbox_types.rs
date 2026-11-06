@@ -272,6 +272,8 @@ pub struct QueuedOperation {
     pub sends: u32,
     /// A `Mutate` of this operation left in this cycle.
     pub sent: bool,
+    /// An unresolved `encrypted_pending` of `request_id` exists: `Restored.pending` and `pending_retained = true` set it, `pending_retained = false` clears it.
+    pub pending_owned: bool,
     /// `Sending` after a temporary failure: the backoff timer is set.
     pub waiting_retry: bool,
     /// The rows of the server answer, kept for every attempt to land them.

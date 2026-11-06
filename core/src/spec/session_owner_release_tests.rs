@@ -29,7 +29,7 @@ fn sess_blocked_release() {
     let mut twin = blocked_with_author();
     let RefState::Blocked { pending: Some(before), reason, landing } = twin.reference.state.clone() else { panic!("blocked") };
     assert!(twin.feed(Input::Release { req_id: before.request_id }).is_empty(), "the removed author hears nothing");
-    assert_eq!(twin.reference.state, RefState::Blocked { pending: Some(RefPending { author: None, ..before }), reason, landing: landing.clone() }, "the reason, the pair and the landing stay");
+    assert_eq!(twin.reference.state, RefState::Blocked { pending: Some(RefPending { author: None, owner: Some(crate::transport::RequestOwner::Detached), ..before }), reason, landing: landing.clone() }, "the reason, the pair and the landing stay");
     let effects = twin.feed(Input::Tick);
     assert!(matches!(&effects[..], [RefEffect::CommitLanding { answer: None, sequence: Some(1), .. }]), "the landing commits with no Answer of the removed author: {effects:?}");
 }
@@ -51,7 +51,7 @@ fn sess_landing_release() {
     let mut twin = rejected_landing(1);
     let RefState::Landing { pending, batch, answer, identity, sequence, server_ended } = twin.reference.state.clone() else { panic!("landing") };
     assert!(twin.feed(Input::Release { req_id: pending.request_id }).is_empty());
-    assert_eq!(twin.reference.state, RefState::Landing { pending: RefPending { author: None, ..pending }, batch, answer, identity, sequence, server_ended }, "the stored result and the batch stay");
+    assert_eq!(twin.reference.state, RefState::Landing { pending: RefPending { author: None, owner: Some(crate::transport::RequestOwner::Detached), ..pending }, batch, answer, identity, sequence, server_ended }, "the stored result and the batch stay");
     assert!(twin.feed(committed()).is_empty(), "the removed author hears nothing");
     assert_eq!(twin.reference.credential.map(|credential| credential.sequence), Some(1));
 }
@@ -70,12 +70,12 @@ fn sess_blocked_released_mutate() {
     let mut storage = blocked_with_author();
     storage.feed(Input::Release { req_id: 11 });
     let before = storage.reference.state.clone();
-    assert_eq!(storage.feed(mutate(9, 11)), vec![answer(9, 11, permanent(Fail::Storage))], "the removed author is not bound again");
+    assert_eq!(storage.feed(mutate(9, 11)), vec![answer(9, 11, retained(Fail::Storage))], "the removed author is not bound again");
     assert_eq!(storage.reference.state, before);
     let mut conflict = rejected_landing(5);
     assert!(matches!(conflict.reference.state, RefState::Blocked { reason: Block::SequenceConflict, .. }));
     conflict.feed(Input::Release { req_id: 11 });
-    assert_eq!(conflict.feed(mutate(9, 11)), vec![answer(9, 11, permanent(Fail::SequenceConflict))]);
+    assert_eq!(conflict.feed(mutate(9, 11)), vec![answer(9, 11, retained(Fail::SequenceConflict))]);
 }
 
 #[test]

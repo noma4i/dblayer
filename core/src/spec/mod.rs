@@ -45,6 +45,8 @@ mod outbox_plan_tests;
 mod outbox_cells_tests;
 mod outbox_reserve_tests;
 mod outbox_restore_tests;
+#[cfg(test)]
+mod outbox_release_tests;
 mod outbox_local_tests;
 mod outbox_wait_tests;
 mod transfer_harness;

@@ -394,6 +394,7 @@ pub(crate) enum RowOp {
     RemoveSession,
     PutAnswer { request_id: u64, operation: Option<i64>, answer: state::StoredAnswer },
     RemoveAnswer { request_id: u64 },
+    ReleasePendingOwner { request_id: u64 },
     /// `digest = None` keeps the stored digest, `sequence = None` keeps the stored sequence.
     PutSession { digest: Option<String>, sequence: Option<i64> },
     DiscardRestoreFailed { table: String, key: String },
@@ -419,6 +420,7 @@ pub(crate) fn row_op(op: &crate::owners::store::StoreOp) -> Option<RowOp> {
         StoreOp::EraseSession => RowOp::RemoveSession,
         StoreOp::Answer { request_id, operation, result } => RowOp::PutAnswer { request_id: *request_id, operation: *operation, answer: result.clone() },
         StoreOp::RemoveAnswer { request_id } => RowOp::RemoveAnswer { request_id: *request_id },
+        StoreOp::ReleasePendingOwner { request_id } => RowOp::ReleasePendingOwner { request_id: *request_id },
         StoreOp::DiscardRestoreFailed { table, key } => RowOp::DiscardRestoreFailed { table: table.clone(), key: key.clone() },
         StoreOp::Attempt { op_id, attempts, cycle_id } => RowOp::PutAttempts { op_id: i64::try_from(*op_id).unwrap_or(i64::MAX), attempts: i64::from(*attempts), cycle_id: i64::try_from(*cycle_id).unwrap_or(i64::MAX) },
         StoreOp::Session { digest, sequence } => RowOp::PutSession { digest: digest.clone(), sequence: sequence.map(|sequence| i64::try_from(sequence).unwrap_or(i64::MAX)) },
@@ -451,6 +453,7 @@ pub(super) fn apply_row_ops(transaction: &Connection, ops: Vec<RowOp>) -> Result
             RowOp::RemoveSession => { transaction.execute("DELETE FROM encrypted_session", [])?; }
             RowOp::PutAnswer { request_id, operation, answer } => state::store_answer(transaction, request_id, operation, &answer)?,
             RowOp::RemoveAnswer { request_id } => state::remove_answer(transaction, request_id)?,
+            RowOp::ReleasePendingOwner { request_id } => state::release_pending_owner(transaction, request_id)?,
             RowOp::PutAttempts { op_id, attempts, cycle_id } => { transaction.execute("UPDATE op SET attempts = ?2, cycle_id = ?3 WHERE seq = ?1", params![op_id, attempts, cycle_id])?; }
             RowOp::DiscardRestoreFailed { table, key } => { transaction.execute("DELETE FROM restore_failed WHERE source_table = ?1 AND key = ?2", params![table, key])?; }
             RowOp::PutSession { digest, sequence } => {

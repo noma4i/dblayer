@@ -164,7 +164,7 @@ pub enum Kind {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Outcome {
     Response(String),
-    Error(Kind, Fail),
+    Error(Kind, Fail, bool),
     Dropped,
 }
 
@@ -286,8 +286,10 @@ pub struct Session {
     reported: (u64, RetryPhase),
 }
 
-fn author_error(author: AuthorId, req_id: RequestId, kind: Kind, fail: Fail) -> Effect {
-    Effect::Answer { author, req_id, outcome: Outcome::Error(kind, fail) }
+fn author_error(author: AuthorId, req_id: RequestId, kind: Kind, fail: Fail) -> Effect { author_error_retained(author, req_id, kind, fail, false) }
+
+fn author_error_retained(author: AuthorId, req_id: RequestId, kind: Kind, fail: Fail, retained: bool) -> Effect {
+    Effect::Answer { author, req_id, outcome: Outcome::Error(kind, fail, retained) }
 }
 
 fn blocked_fail(reason: Block) -> Fail {
@@ -335,10 +337,12 @@ impl Session {
 
     fn is_online(&self) -> bool { self.online == Some(true) }
 
-    fn finish(out: &mut Out, pending: &Pending, result: Answer) {
+    fn finish(out: &mut Out, pending: &Pending, result: Answer) { Self::finish_retained(out, pending, result, false); }
+
+    fn finish_retained(out: &mut Out, pending: &Pending, result: Answer, retained: bool) {
         if let Some(reply) = pending.reply { out.replies.push((reply, result.clone())); }
         if let Some(author) = pending.author {
-            out.effects.push(Effect::Answer { author, req_id: pending.request_id, outcome: match result { Ok(body) => Outcome::Response(body), Err(fail) => Outcome::Error(Kind::Permanent, fail) } });
+            out.effects.push(Effect::Answer { author, req_id: pending.request_id, outcome: match result { Ok(body) => Outcome::Response(body), Err(fail) => Outcome::Error(Kind::Permanent, fail, retained) } });
         }
     }
 

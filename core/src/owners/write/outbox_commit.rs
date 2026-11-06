@@ -7,7 +7,8 @@ use super::outbox_types::*;
 use crate::owners::contract::{Committed, RejectReason, Rejected};
 
 
-use crate::runtime::{Effect, Effects, ScheduleId};
+use crate::owners::session::SessionInput;
+use crate::runtime::{Effect, Effects, Outbound, ScheduleId};
 
 
 
@@ -70,6 +71,10 @@ impl OutboxState {
             (CommitKind::Rollback, Stage::RollingBack(why)) => {
                 for reply in Self::take_waiters(&mut self.discard_waiters, op_id) {
                     Self::reply(fx, reply, OutboxAnswer::Ok);
+                }
+                if why == Why::Discarded && self.ops[&op_id].pending_owned {
+                    if let Some(operation) = self.ops.get_mut(&op_id) { operation.pending_owned = false; }
+                    if let Some(session) = self.peers.session { fx.push(Effect::Send(Outbound::new(session, SessionInput::Release { req_id: self.ops[&op_id].request_id }))); }
                 }
                 let outcome = if why == Why::Discarded {
                     OutboxOutcome::Discarded

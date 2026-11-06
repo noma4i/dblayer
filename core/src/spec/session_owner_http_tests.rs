@@ -65,7 +65,7 @@ fn sess_calling_temporary() {
 fn sess_calling_temporary_mutate() {
     let mut twin = calling_mutate();
     let input = twin.http_error(true, false);
-    assert_eq!(twin.feed(input), vec![answer(7, 11, Outcome::Error(Kind::Temporary, Fail::Http))]);
+    assert_eq!(twin.feed(input), vec![answer(7, 11, Outcome::Error(Kind::Temporary, Fail::Http, true))]);
     assert!(matches!(twin.reference.state, RefState::PendingHeld { .. }));
 }
 
@@ -223,7 +223,7 @@ fn sess_landing_rejected() {
     let input = twin.response(1);
     twin.feed(input);
     let effects = twin.feed(rejected(Reason::Storage));
-    assert_eq!(effects, vec![answer(7, 11, permanent(Fail::Reason(Reason::Storage)))]);
+    assert_eq!(effects, vec![answer(7, 11, retained(Fail::Reason(Reason::Storage)))]);
     assert!(matches!(twin.reference.state, RefState::Blocked { reason: Block::Storage, pending: Some(_), landing: Some(_) }), "the stored pending and the unapplied landing stay");
 }
 
@@ -246,7 +246,7 @@ fn sess_blocked_mutate() {
     twin.feed_all([mutate(7, 11), committed()]);
     let input = twin.response(5);
     twin.feed(input);
-    assert_eq!(twin.feed(mutate(7, 12)), vec![answer(7, 12, permanent(Fail::StateLost))]);
+    assert_eq!(twin.feed(mutate(7, 12)), vec![answer(7, 12, permanent(Fail::SequenceConflict))], "another pair: the blocking reason, nothing retained for it");
 }
 
 #[test]
@@ -267,7 +267,7 @@ fn sess_blocked_mutate_refused() {
     twin.feed_all([mutate(7, 11), committed()]);
     let input = twin.response(5);
     twin.feed(input);
-    assert_eq!(twin.feed(mutate(7, 11)), vec![answer(7, 11, permanent(Fail::SequenceConflict))], "the request does not leave");
+    assert_eq!(twin.feed(mutate(7, 11)), vec![answer(7, 11, retained(Fail::SequenceConflict))], "the request does not leave, the pair stays saved");
 }
 
 #[test]

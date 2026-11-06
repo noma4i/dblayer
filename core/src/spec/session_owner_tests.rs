@@ -119,7 +119,7 @@ fn queued_of(queued: &Queued) -> RefQueued {
 fn outcome_of(outcome: &AuthorOutcome) -> Outcome {
     match outcome {
         AuthorOutcome::Response(body) => Outcome::Response(body.clone()),
-        AuthorOutcome::Error { class, error } => Outcome::Error(if *class == ErrorClass::Permanent { Kind::Permanent } else { Kind::Temporary }, fail_of(error)),
+        AuthorOutcome::Error { class, error, pending_retained } => Outcome::Error(if *class == ErrorClass::Permanent { Kind::Permanent } else { Kind::Temporary }, fail_of(error), *pending_retained),
         AuthorOutcome::Dropped => Outcome::Dropped,
     }
 }
@@ -352,7 +352,8 @@ fn rejected(reason: Reason) -> Input { Input::Rejected(0, reason) }
 fn published(state: PubState) -> Input { Input::Published { epoch: EPOCH, identity: None, state } }
 fn ended(cause: EndCause) -> Input { Input::EpochEnded { epoch: EPOCH, cause } }
 fn answer(author: u64, req_id: u64, outcome: Outcome) -> RefEffect { RefEffect::Answer { author, req_id, outcome } }
-fn permanent(fail: Fail) -> Outcome { Outcome::Error(Kind::Permanent, fail) }
+fn permanent(fail: Fail) -> Outcome { Outcome::Error(Kind::Permanent, fail, false) }
+fn retained(fail: Fail) -> Outcome { Outcome::Error(Kind::Permanent, fail, true) }
 
 fn persisting() -> Twin {
     let mut twin = Twin::new();

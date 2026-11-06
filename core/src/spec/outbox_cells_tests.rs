@@ -609,7 +609,7 @@ fn out_sending_answered_too_large() {
     let id = sending(&mut twin, Policy::Keep, false);
     twin.waiter(id);
     let request_id = twin.state().ops[&id].request_id;
-    twin.post(OutboxInput::Answered { req_id: request_id, outcome: AuthorOutcome::Error { class: ErrorClass::Permanent, error: SessionError::TooLarge { size: 300_000, limit: 262_144 } } });
+    twin.post(OutboxInput::Answered { req_id: request_id, outcome: AuthorOutcome::Error { class: ErrorClass::Permanent, error: SessionError::TooLarge { size: 300_000, limit: 262_144 }, pending_retained: false } });
     let effects = twin.committed(id);
     let failed = answers(&effects, WAITER).into_iter().find_map(|answer| match answer { OutboxAnswer::Outcome(OutboxOutcome::Failed { error }) => Some(error), _ => None }).expect("a failed outcome");
     let failure = crate::owners::write::failure::parse(&failed);

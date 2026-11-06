@@ -315,7 +315,7 @@ fn sess_unavailable_call() {
 #[test]
 fn sess_unavailable_mutate() {
     let mut twin = opened(open(Some((CRED, 6)), None, false, Secret::Error("locked".into())));
-    assert_eq!(twin.feed(mutate(7, 11)), vec![answer(7, 11, Outcome::Error(Kind::Temporary, Fail::Storage))]);
+    assert_eq!(twin.feed(mutate(7, 11)), vec![answer(7, 11, Outcome::Error(Kind::Temporary, Fail::Storage, false))]);
 }
 
 fn unavailable_reading() -> Twin {
@@ -416,7 +416,7 @@ fn sess_held_release() {
     let rid = twin.rid();
     let effects = twin.feed(Input::Release { req_id: rid });
     assert!(matches!(twin.reference.state, RefState::Calling { .. }), "the pair goes on after the release");
-    assert!(matches!(effects.as_slice(), [RefEffect::HttpRequest { pending, .. }] if pending.request_id == rid && pending.author.is_none()), "the same pair goes out with no author: {effects:?}");
+    assert!(matches!(effects.as_slice(), [RefEffect::HttpRequest { pending, .. }] if pending.request_id == rid && pending.author.is_none() && pending.owner == Some(crate::transport::RequestOwner::Detached)), "the same pair goes out with no author: {effects:?}");
 }
 
 #[test]

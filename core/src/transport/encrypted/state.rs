@@ -128,6 +128,12 @@ pub fn store_answer(connection: &Connection, request_id: u64, operation: Option<
     Ok(())
 }
 
+pub fn release_pending_owner(connection: &Connection, req_id: u64) -> rusqlite::Result<()> {
+    let req_id = i64::try_from(req_id).map_err(|_| rusqlite::Error::IntegralValueOutOfRange(0, i64::MAX))?;
+    connection.execute("UPDATE encrypted_pending SET owner_kind = 'detached', owner_operation_id = NULL, owner_item_id = NULL, owner_step = NULL WHERE id = 1 AND req_id = ?1", [req_id])?;
+    Ok(())
+}
+
 pub fn remove_answer(connection: &Connection, request_id: u64) -> rusqlite::Result<()> {
     let request_id = i64::try_from(request_id).map_err(|_| rusqlite::Error::IntegralValueOutOfRange(0, i64::MAX))?;
     connection.execute("DELETE FROM encrypted_answer WHERE request_id = ?1", [request_id])?;

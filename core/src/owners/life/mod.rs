@@ -11,6 +11,8 @@ mod call_rule_tests;
 mod api;
 mod transfer_api;
 mod calls_runner;
+#[cfg(test)]
+mod calls_runner_tests;
 mod runners;
 pub(crate) mod session_runner;
 #[cfg(test)]
