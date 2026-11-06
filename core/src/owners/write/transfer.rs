@@ -93,7 +93,12 @@ impl TransferState {
         self.next_batch += 1;
         self.pending.insert(id, Pending { ids: ids.to_vec(), kind });
         let intents = if kind == StoreKind::SyncUpload { ids.len() as u64 } else { 0 };
-        let batch = StoreBatch { author: BatchAuthor::Transfer, id, epoch: self.epoch, basis, rows: Vec::new(), intents, credential: None, ops };
+        let mut batch = StoreBatch { author: BatchAuthor::Transfer, id, epoch: self.epoch, basis, rows: Vec::new(), intents, credential: None, ops };
+        let entries = batch.models().into_iter().map(|model| {
+            let generation = batch.basis.get(&model).copied().or_else(|| self.generations.get(&model).copied()).unwrap_or(self.base_generation);
+            (model, generation)
+        }).chain(batch.basis.clone());
+        batch.basis = crate::owners::store::basis_for(entries);
         fx.push(Effect::Send(Outbound::new(self.peers.store, StoreInput::Commit(batch))));
     }
 
@@ -246,6 +251,7 @@ impl TransferState {
         let interrupts = !matches!(rejected.reason, RejectReason::Storage(_));
         let persisting = matches!(stage, Some(TransferStage::PersistingCopy | TransferStage::PersistingRetry | TransferStage::PersistingPart | TransferStage::PersistingComplete | TransferStage::PersistingFailure | TransferStage::Removing));
         if let (RejectReason::StaleGeneration { models, generation }, true) = (&rejected.reason, persisting) {
+            for model in models { self.generations.insert(model.clone(), *generation); }
             let basis = models.iter().map(|model| (model.clone(), *generation)).collect();
             return self.store_basis(&pending.ids, pending.kind, basis, fx);
         }
@@ -318,7 +324,11 @@ impl TransferState {
             TransferInput::SlotFreed => self.start_in_order(fx),
             TransferInput::Online(Online(on)) => self.network_changed(Some(on), None, fx),
             TransferInput::PowerSaving(saving) => self.network_changed(None, Some(saving), fx),
-            TransferInput::EpochStarted(started) => self.epoch = started.epoch,
+            TransferInput::EpochStarted(started) => { self.epoch = started.epoch; self.base_generation = started.generation; },
+            TransferInput::ModelsReset(reset) if reset.epoch == self.epoch => {
+                for model in reset.models { self.generations.insert(model, reset.generation); }
+            }
+            TransferInput::ModelsReset(_) => {}
             TransferInput::Tick { now, kind } => self.tick(now, kind, fx),
             TransferInput::EpochEnded(_) => self.epoch_ended(fx),
             TransferInput::Closing => self.close(fx),
@@ -344,6 +354,7 @@ impl TransferState {
             held @ (TransferInput::Cancel { .. } | TransferInput::Retry { .. } | TransferInput::Discard { .. } | TransferInput::Outcome { .. }) => self.held.push(held),
             TransferInput::EpochStarted(started) => {
                 self.epoch = started.epoch;
+                self.base_generation = started.generation;
                 run(fx, TransferEffect::Started { epoch: started.epoch });
                 run(fx, TransferEffect::SnapshotRequest { epoch: started.epoch });
             }

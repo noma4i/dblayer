@@ -173,9 +173,8 @@ impl Windows {
                 Emit::Pin { epoch, request } => out.push(Effect::Send(Outbound::new(peers.store, StoreInput::Pin { epoch, request_id: request }))),
                 Emit::Unpin { request } => out.push(Effect::Send(Outbound::new(peers.store, StoreInput::Unpin { request_id: request }))),
                 Emit::Commit { request, basis, page, number, replace_all, base_revision } => {
-                    let rows: Vec<(String, String)> = page.payload.roots.iter().map(|row| (key.model.clone(), row.row_id.clone())).chain(page.payload.related.iter().map(|(model, row)| (model.clone(), row.row_id.clone()))).collect();
                     let op = StoreOp::Window { key: key.name.clone(), model: key.model.clone(), page: number, replace_all, cursor: page.cursor.clone(), roots: page.payload.roots.clone(), related: page.payload.related.clone(), total: page.payload.total, base_revision };
-                    let batch = StoreBatch { author: BatchAuthor::Window, id: request, epoch, basis, rows, intents: 0, credential: None, ops: vec![op] };
+                    let batch = StoreBatch { author: BatchAuthor::Window, id: request, epoch, basis, rows: Vec::new(), intents: 0, credential: None, ops: vec![op] };
                     out.push(Effect::Send(Outbound::new(peers.store, StoreInput::Commit(batch))));
                 }
                 Emit::Retry { request, attempt, class } => {

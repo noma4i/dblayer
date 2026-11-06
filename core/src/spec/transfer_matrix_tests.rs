@@ -3,13 +3,41 @@
 use std::collections::BTreeMap;
 
 use super::transfer_harness::*;
-use crate::owners::contract::{Online, RejectReason};
+use crate::owners::contract::{EpochStarted, ModelsReset, Online, RejectReason};
 use crate::owners::store::UploadKind;
 use crate::owners::write::outbox::{Fault, OutboxOutcome};
 use crate::owners::write::transfer::{Shown, TransferAnswer, TransferId, TransferInput, TransferStage};
 use crate::runtime::Time;
 
 const KEY: &str = "Moment:r1:upload";
+
+fn generation_twin() -> Twin {
+    let mut twin = Twin::bare(1);
+    twin.post(TransferInput::EpochStarted(EpochStarted { epoch: EPOCH, identity: Some(1), generation: 5 }));
+    twin.post(TransferInput::Restored { uploads: Vec::new(), outcomes: Default::default(), orphans: Vec::new(), batches: Default::default() });
+    twin.post(TransferInput::RestoreReady { epoch: EPOCH });
+    twin.post(TransferInput::Online(Online(true)));
+    twin
+}
+
+#[test]
+fn xfer_epoch_started_generation() {
+    let mut twin = generation_twin();
+    let (_, _, out) = twin.accepting(KEY, 2);
+    assert_eq!(out.batches[0].basis.get("Moment"), Some(&5));
+}
+
+#[test]
+fn xfer_models_reset_generation() {
+    let mut twin = generation_twin();
+    let (id, _, out) = twin.accepting(KEY, 2);
+    assert_eq!(out.batches[0].basis.get("Moment"), Some(&5));
+    twin.commit();
+    twin.post(TransferInput::ModelsReset(ModelsReset { epoch: EPOCH, generation: 6, models: vec!["Moment".into()] }));
+    assert_eq!(twin.stage(id), TransferStage::Copying);
+    let out = twin.copy_done(id);
+    assert_eq!(out.batches[0].basis.get("Moment"), Some(&6));
+}
 
 fn stale() -> RejectReason { RejectReason::StaleGeneration { models: vec!["Moment".into()], generation: 5 } }
 

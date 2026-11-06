@@ -293,11 +293,7 @@ impl Feed {
     }
 
     fn commit_batch(state: &FeedState, batch: BatchId, events: Vec<FeedEvent>) -> StoreBatch {
-        let mut basis = BTreeMap::new();
-        for event in &events {
-            let entry = basis.entry(event.model.clone()).or_insert(event.basis);
-            *entry = (*entry).min(event.basis);
-        }
+        let basis = crate::owners::store::basis_for(events.iter().map(|event| (event.model.clone(), event.basis)));
         let rows = events.into_iter().map(|event| {
             let observed = state.want.get(&event.model).is_some_and(|ids| ids.iter().any(|id| state.streams.contains(id)));
             (event.model, if observed { with_observe(&event.payload) } else { event.payload })

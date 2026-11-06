@@ -200,7 +200,12 @@ impl OutboxState {
     }
 
     pub(super) fn commit(&self, id: BatchId, basis: BTreeMap<String, u64>, ops: Vec<StoreOp>, intents: u64, fx: &mut Effects<Outbox>) {
-        let batch = StoreBatch { author: self.author, id, epoch: self.epoch, basis, rows: Vec::new(), intents, credential: None, ops };
+        let mut batch = StoreBatch { author: self.author, id, epoch: self.epoch, basis, rows: Vec::new(), intents, credential: None, ops };
+        let entries = batch.models().into_iter().map(|model| {
+            let generation = batch.basis.get(&model).copied().unwrap_or_else(|| self.generation_of(&model));
+            (model, generation)
+        }).chain(batch.basis.clone());
+        batch.basis = crate::owners::store::basis_for(entries);
         fx.push(Effect::Send(Outbound::new(self.peers.store, StoreInput::Commit(batch))));
     }
 

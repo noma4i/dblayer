@@ -87,7 +87,7 @@ impl Facts {
             Ev::Response { request: got, attempt: got_attempt, page: answer } if mine(got, got_attempt) => {
                 self.page_count = if *page == 1 { 1 } else { self.page_count + 1 };
                 let models: BTreeSet<&String> = self.dependency_models.iter().chain(&answer.dependency_models).chain(answer.payload.related.iter().map(|(model, _)| model)).collect();
-                let basis = models.into_iter().map(|model| (model.clone(), basis.of(model))).collect();
+                let basis = crate::owners::store::basis_for(models.into_iter().map(|model| (model.clone(), basis.of(model))));
                 self.emit(Emit::Commit { request: *request, basis, page: answer.clone(), number: *page, replace_all: self.replace_all, base_revision: self.request_base.get() });
                 Transition(WinState::landing(*request, *page, answer.cursor.clone(), !answer.rows.is_empty(), answer.dependency_models.clone()))
             }

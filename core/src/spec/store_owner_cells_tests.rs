@@ -85,6 +85,12 @@ fn store_commit_no_basis() {
     let actions = twin.commit_batch(batch, true);
     assert_eq!(Twin::rejected(&actions), Some(Reason::Invalid));
     assert_eq!(twin.state().revision(), 0);
+    let effects = twin.send(StoreInput::Commit(StoreBatch {
+        author: BatchAuthor::Window, id: 2, epoch: 1, basis: BTreeMap::new(), rows: Vec::new(), intents: 0, credential: None,
+        ops: vec![crate::owners::store::StoreOp::Rows { model: "Moment".into(), rows: vec![crate::owners::store::RowValue { row_id: "b".into(), values: "{}".into() }] }],
+    }));
+    assert!(effects.iter().any(|effect| matches!(effect, StoreEffect::Reply { reply: StoreReply::Rejected(RejectReason::Invalid), .. })));
+    assert!(!effects.iter().any(|effect| matches!(effect, StoreEffect::Write { .. })));
 }
 
 #[test]

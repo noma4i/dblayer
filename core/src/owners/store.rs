@@ -12,6 +12,7 @@ use crate::runtime::{Cause, Effect, Effects, Epoch, StateOwner, Time};
 use super::lifecycle::Identity;
 
 include!("store_types.rs");
+include!("store_basis.rs");
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum StoreMode {
     Open,
@@ -198,7 +199,7 @@ impl StoreState {
                     self.deferred.push_back(StoreInput::Commit(batch));
                 } else if batch.epoch != self.epoch {
                     fx.push(StoreEffect::Reply { author: batch.author, batch: batch.id, epoch: batch.epoch, reply: StoreReply::Rejected(RejectReason::NoSession) });
-                } else if batch.rows.iter().any(|(model, _)| !batch.basis.contains_key(model)) {
+                } else if batch.models().iter().any(|model| !batch.basis.contains_key(model)) {
                     fx.push(StoreEffect::Reply { author: batch.author, batch: batch.id, epoch: batch.epoch, reply: StoreReply::Rejected(RejectReason::Invalid) });
                 } else if !self.stale_models(&batch).is_empty() {
                     let models = self.stale_models(&batch);
@@ -229,7 +230,7 @@ impl StoreState {
                     Err(error) => fx.push(StoreEffect::Reply { author, batch, epoch: written.epoch, reply: StoreReply::Rejected(RejectReason::Storage(error)) }),
                     Ok(Done { revision }) => {
                         self.revision = revision;
-                        let models: Vec<String> = written.rows.iter().map(|(model, _)| model.clone()).collect::<BTreeSet<_>>().into_iter().collect();
+                        let models: Vec<String> = written.models().into_iter().collect();
                         fx.push(StoreEffect::Reply { author, batch, epoch: written.epoch, reply: StoreReply::Committed { revision } });
                         fx.push(StoreEffect::BroadcastCommitted { revision, models: Some(models) });
                     }

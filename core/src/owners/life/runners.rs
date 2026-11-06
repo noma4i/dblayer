@@ -81,7 +81,8 @@ impl EffectRunner<Lifecycle> for LifecycleRunner {
                 wiring.to_deliveries(DeliveryInput::ModelsReset(reset.clone()));
                 wiring.to_feed(FeedInput::ModelsReset(reset.clone()));
                 wiring.to_outbox(OutboxInput::ModelsReset(reset.clone()));
-                wiring.to_local_writes(OutboxInput::ModelsReset(reset));
+                wiring.to_local_writes(OutboxInput::ModelsReset(reset.clone()));
+                wiring.to_transfer(TransferInput::ModelsReset(reset));
             }
             LifecycleEffect::Closing => {
                 wiring.release_held();
