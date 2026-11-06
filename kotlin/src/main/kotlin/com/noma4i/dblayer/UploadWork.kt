@@ -74,16 +74,12 @@ internal class UploadRounds(private val context: Context, private val database: 
         if (refused != null) database.roundRefused(requestId, epoch, refused)
     }
 
-    override fun endJob(roundId: UInt) = RunningRounds.finish(roundId)
-}
-
-/** The stop of each running job by the id of its round. */
-internal object RunningRounds {
-    private val stops = java.util.concurrent.ConcurrentHashMap<UInt, () -> Unit>()
-
-    fun started(roundId: UInt, stop: () -> Unit) { stops[roundId] = stop }
-    fun finish(roundId: UInt) { stops.remove(roundId)?.invoke() }
-    fun ended(roundId: UInt) { stops.remove(roundId) }
+    override fun endJob(roundId: UInt) {
+        when (uploadMode(Build.VERSION.SDK_INT)) {
+            UploadMode.UserInitiatedJob -> context.getSystemService(JobScheduler::class.java).cancel(UploadJobService.JOB_ID)
+            UploadMode.ForegroundService -> context.stopService(Intent(context, UploadService::class.java))
+        }
+    }
 }
 
 private const val REQUEST = "request"
@@ -123,11 +119,6 @@ internal class UploadJobService : JobService() {
         val token = UploadJobToken()
         running = Triple(roundId, epoch, token)
         UploadNetwork.started(params.network, token)
-        RunningRounds.started(roundId) {
-            UploadNetwork.ended(token)
-            running = null
-            jobFinished(params, false)
-        }
         database.roundStarted(requestId, roundId, epoch)
         return true
     }
@@ -141,7 +132,6 @@ internal class UploadJobService : JobService() {
         val (roundId, epoch, token) = running ?: return true
         UploadNetwork.ended(token)
         running = null
-        RunningRounds.ended(roundId)
         DBlayer.openedDatabase()?.roundEnded(roundId, epoch)
         return true
     }
@@ -174,7 +164,6 @@ internal class UploadService : Service() {
         val epoch = intent.getLongExtra(EPOCH, 0).toULong()
         val roundId = roundIdOf(requestId)
         running = roundId to epoch
-        RunningRounds.started(roundId) { stopSelf(startId) }
         DBlayer.openedDatabase()?.roundStarted(requestId, roundId, epoch)
         return START_STICKY
     }
@@ -182,7 +171,6 @@ internal class UploadService : Service() {
     override fun onDestroy() {
         val (roundId, epoch) = running ?: return
         running = null
-        RunningRounds.ended(roundId)
         DBlayer.openedDatabase()?.roundEnded(roundId, epoch)
     }
 
