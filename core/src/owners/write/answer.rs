@@ -91,7 +91,7 @@ pub fn decode_answer(db: &Db, root_of: &dyn Fn(&str) -> Option<String>, job: &De
     }
     normalized.coalesce(&job.model);
     let swaps = if batch {
-        match batch_swaps(db, &job.model, declared.map_or(&[][..], |declared| &declared.correlate), job, &normalized.roots) {
+        match batch_swaps(db, &job.model, declared, job, &normalized.roots) {
             Ok(swaps) => swaps,
             Err(detail) => return refused(detail),
         }
@@ -158,10 +158,13 @@ fn correlation_key(paths: &[String], row: &serde_json::Map<String, Value>) -> Op
 }
 
 /// The pairs (temporary id, real id) of a batch answer: the waiting elements of the group against the rows of the answer.
-fn batch_swaps(db: &Db, model: &str, correlate: &[String], job: &DecodeJob, roots: &[serde_json::Map<String, Value>]) -> Result<Vec<(String, String)>, String> {
+fn batch_swaps(db: &Db, model: &str, declared: Option<&crate::schema::ActionDeclaration>, job: &DecodeJob, roots: &[serde_json::Map<String, Value>]) -> Result<Vec<(String, String)>, String> {
     let Some(group) = job.batch else { return Err("the answer of a batch has no group".into()) };
+    let (Some(declared), [path]) = (declared, declared.map_or(&[][..], |declared| &declared.correlate[..])) else { return Err("the batch has no single correlation field".into()) };
+    let target = declared.batch.as_ref().and_then(|batch| batch.input.iter().find(|(_, source)| *source == path).map(|(target, _)| target.clone())).unwrap_or_else(|| path.clone());
     let waiting = db.batch_rows(model, &job.action, group).map_err(|error| format!("{error:?}"))?;
-    Ok(pair_by_key(correlate, &waiting.iter().map(|(id, data)| (id.to_string(), data.clone())).collect::<Vec<_>>(), roots))
+    let keyed: Vec<(String, serde_json::Map<String, Value>)> = waiting.into_iter().map(|(id, fields)| (id.to_string(), fields.get(&target).map(|value| serde_json::Map::from_iter([(path.clone(), value.clone())])).unwrap_or_default())).collect();
+    Ok(pair_by_key(&declared.correlate, &keyed, roots))
 }
 
 /// Each row of the answer replaces the single waiting temporary row with its correlation key (P-DATA-23), in the order of the answer. An element without a row of the answer keeps its temporary row.
