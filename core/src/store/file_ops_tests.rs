@@ -1,6 +1,6 @@
 use super::fixtures::*;
 use super::*;
-use crate::commit::{CommitEnvelope, DestroyReason, EntityOp, FileOp};
+use crate::commit::{BatchPlan, DestroyReason, EntityOp, FileOp};
 use crate::files::{find, FileDescriptor, FileRecord, Location};
 
 fn file(id: &str, row: &str, field: &str, data: &[u8]) -> FileRecord {
@@ -20,7 +20,7 @@ fn stored(store: &Store, row: &str, field: &str) -> Option<FileRecord> {
     find(&store.lock().connection, "messages", row, field).unwrap()
 }
 
-fn with_files(store: &Store, ops: Vec<EntityOp>, files: Vec<FileOp>) -> CommitEnvelope {
+fn with_files(store: &Store, ops: Vec<EntityOp>, files: Vec<FileOp>) -> BatchPlan {
     let mut envelope = envelope(store, ops, vec![]);
     envelope.file_ops = files;
     envelope

@@ -1,4 +1,3 @@
-use dblayer::db::Db;
 use dblayer::schema::{generated_member_names, reserved_member_names};
 use dblayer_gen::parse_files;
 use std::path::PathBuf;
@@ -51,5 +50,5 @@ fn a_relation_named_like_a_reserved_member_is_refused_naming_the_dbl_name() {
 fn every_schema_the_generator_accepts_opens() {
     let models = parse_files(&fixtures()).unwrap();
     assert!(models.len() > 20, "the fixtures declare models: {}", models.len());
-    Db::open_in_memory(models, None).unwrap();
+    dblayer::store::Store::open_models(None, models, None).unwrap();
 }

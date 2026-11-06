@@ -2,14 +2,14 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use serde_json::{Map, Value};
 
-use crate::commit::{CommitEnvelope, CommitResult, EntityOp, WindowMarker, WindowSave, WindowTail, WriteOrigin};
+use crate::commit::{BatchPlan, CommitResult, EntityOp, WindowMarker, WindowSave, WindowTail};
 use crate::identity::{ModelKey, RowId};
 use crate::owners::read::windows::WindowKind;
 use crate::read::{incoming_ids, plan_landing, StoredScope, EDGE_KEY};
 use crate::schema::{Coverage, RemoteShape};
 use crate::value::read_id;
 
-use super::merge::{admitted, Admission};
+use super::merge::{admitted, Admission, RowKind};
 use super::replace::{replace_plan, scope_membership, ReplaceRequest};
 use super::row_write::RowWrite;
 use super::{Reader, StoreError};
@@ -23,7 +23,7 @@ fn admitted_rows(writer: &RowWrite<'_>, model: &str, rows: &[Map<String, Value>]
     let guards = writer.guards.get(model).map(Vec::as_slice).unwrap_or_default();
     let mut accepted = Vec::new();
     for row in rows {
-        if let Some(row) = admitted(&reader, WriteOrigin::Snapshot, Admission { base: Some(base_revision), closing: None }, model, row, &mut 0, spec, guards)? {
+        if let Some(row) = admitted(&reader, RowKind::Server, Admission { base: Some(base_revision), closing: None }, model, row, &mut 0, spec, guards)? {
             accepted.push(row);
         }
     }
@@ -53,7 +53,7 @@ pub(super) fn land(writer: &mut RowWrite<'_>, page: &WindowPage<'_>) -> Result<C
     }
     let related = page.related.iter().map(|(model, row)| Ok((model.clone(), row_values(row).map_err(fault)?))).collect::<Result<Vec<_>, StoreError>>()?;
     let accepted = admitted_rows(writer, model, &roots, page.base_revision)?;
-    let mut envelope = CommitEnvelope::new(WriteOrigin::Snapshot, writer.generation);
+    let mut envelope = BatchPlan::new(writer.generation);
     let WindowKind::Relation { relation, params } = page.key.kind() else {
         envelope.entity_ops = related_rows(writer, &related, &BTreeSet::new(), page.base_revision)?;
         for row in accepted {

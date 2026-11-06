@@ -5,7 +5,7 @@ use std::time::Duration;
 
 use serde_json::{Map, Value};
 
-use crate::commit::{CommitEnvelope, EntityOp, WriteOrigin};
+use crate::commit::{BatchPlan, EntityOp};
 use crate::identity::{ModelKey, RowId};
 use crate::pacing::ManualClock;
 use crate::schema::{ActionDeclaration, RootShape, AssociationKind, AssociationSpec, Dependent, FieldSpec, ModelSpec, Newer};
@@ -121,7 +121,7 @@ pub fn rid(text: &str) -> RowId {
 pub fn put(db: &Store, model: &str, value: Value) {
     let row = obj(value);
     let id = rid(row["id"].as_str().unwrap());
-    let mut envelope = CommitEnvelope::new(WriteOrigin::Event, db.generation());
+    let mut envelope = BatchPlan::from_server(db.generation());
     envelope.entity_ops.push(EntityOp::Upsert { model: ModelKey::new(model), id, row });
     db.commit(envelope).unwrap();
 }

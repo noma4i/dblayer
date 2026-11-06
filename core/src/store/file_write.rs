@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 
-use crate::commit::{CommitEnvelope, EntityOp, FileOp};
+use crate::commit::{BatchPlan, EntityOp, FileOp};
 use crate::files::{placement, sha256_hex, FileDescriptor, FileDirectories, FileRecord, Location};
 use crate::identity::{ModelKey, RowId};
 use crate::owners::store::StoreOp;
@@ -31,7 +31,7 @@ pub(super) fn prepare_files(files: &FileDirectories, ops: &[StoreOp], now: i64) 
     Ok(prepared)
 }
 
-pub(super) fn attach(reader: &Reader<'_>, models: &BTreeMap<String, ModelInfo>, envelope: &mut CommitEnvelope, record: &FileRecord) -> Result<(), StoreError> {
+pub(super) fn attach(reader: &Reader<'_>, models: &BTreeMap<String, ModelInfo>, envelope: &mut BatchPlan, record: &FileRecord) -> Result<(), StoreError> {
     let info = models.get(&record.model).ok_or_else(|| StoreError::UnknownModel(record.model.clone()))?;
     if !info.spec.field(&record.field).is_some_and(|field| field.kind == FieldKind::File) {
         return Err(StoreError::Constraint(format!("{} is not a file field", record.field)));
@@ -53,7 +53,7 @@ pub(super) fn attach(reader: &Reader<'_>, models: &BTreeMap<String, ModelInfo>, 
     Ok(())
 }
 
-pub(super) fn detach(reader: &Reader<'_>, models: &BTreeMap<String, ModelInfo>, envelope: &mut CommitEnvelope, model: &str, row_id: &str, field: &str) -> Result<(), StoreError> {
+pub(super) fn detach(reader: &Reader<'_>, models: &BTreeMap<String, ModelInfo>, envelope: &mut BatchPlan, model: &str, row_id: &str, field: &str) -> Result<(), StoreError> {
     let info = models.get(model).ok_or_else(|| StoreError::UnknownModel(model.to_string()))?;
     let spec = info.spec.field(field).filter(|spec| spec.kind == FieldKind::File).ok_or_else(|| StoreError::Constraint(format!("{field} is not a file field")))?;
     let id = RowId::new(row_id).map_err(|error| StoreError::Constraint(error.to_string()))?;

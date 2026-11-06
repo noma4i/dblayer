@@ -322,7 +322,7 @@ fn inv_id_06_a_real_row_that_arrived_before_the_create_answer_leaves_one_row_aft
 
 #[test]
 fn inv_order_04_restored_member_takes_a_free_key_when_its_old_key_was_reused() {
-    use crate::commit::{CommitEnvelope, ScopeOp, ScopeRef, WriteOrigin};
+    use crate::commit::{BatchPlan, ScopeOp, ScopeRef};
     use crate::identity::{ListKey, ModelKey};
     let db = open();
     let scope = ScopeRef::new(ModelKey::new("moments"), ListKey::from_raw("feed"));
@@ -330,7 +330,7 @@ fn inv_order_04_restored_member_takes_a_free_key_when_its_old_key_was_reused() {
     let first = crate::value::fractional_between(None, None).unwrap();
     let second = crate::value::fractional_between(Some(&first), None).unwrap();
     let append = |db: &Store, id: &str, key: &str| {
-        let mut envelope = CommitEnvelope::new(WriteOrigin::Event, db.generation());
+        let mut envelope = BatchPlan::from_server(db.generation());
         envelope.scope_ops.push(ScopeOp::Append { scope: scope.clone(), row: crate::store::spec_fixtures::rid(id), order_key: key.into() });
         db.commit(envelope).unwrap();
     };

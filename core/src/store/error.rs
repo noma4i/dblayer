@@ -1,4 +1,4 @@
-use crate::commit::EnvelopeFault;
+use crate::commit::PlanFault;
 use crate::ddl::DdlError;
 
 #[derive(Debug, thiserror::Error)]
@@ -8,7 +8,7 @@ pub enum StoreError {
     #[error(transparent)]
     Ddl(#[from] DdlError),
     #[error(transparent)]
-    Envelope(#[from] EnvelopeFault),
+    Plan(#[from] PlanFault),
     #[error("json: {0}")]
     Json(#[from] serde_json::Error),
     #[error("io: {0}")]

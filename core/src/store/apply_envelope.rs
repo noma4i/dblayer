@@ -1,7 +1,7 @@
 pub(crate) fn apply_envelope(
     connection: &Connection,
     models: &BTreeMap<String, ModelInfo>,
-    envelope: &CommitEnvelope,
+    envelope: &BatchPlan,
     now_ms: i64,
 ) -> Result<CommitResult, StoreError> {
     let revision = Reader::new(connection, models).revision_seq()? + 1;
@@ -11,7 +11,7 @@ pub(crate) fn apply_envelope(
 pub(super) fn apply_envelope_at(
     connection: &Connection,
     models: &BTreeMap<String, ModelInfo>,
-    planned: &CommitEnvelope,
+    planned: &BatchPlan,
     now_ms: i64,
     revision: i64,
     mut originals: Option<&mut BTreeMap<RowRef, Option<Map<String, Value>>>>,

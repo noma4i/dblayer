@@ -1,7 +1,7 @@
 use super::fixtures::*;
 use super::*;
 use crate::commit::{
-    DestroyReason, EntityOp, EnvelopeFault, OperationRecord, OperationTransition, RowChangeKind, ScopeOp, ScopeRef,
+    DestroyReason, EntityOp, PlanFault, OperationRecord, OperationTransition, RowChangeKind, ScopeOp, ScopeRef,
 };
 use crate::operation::OperationStatus;
 use crate::syncstate::{FailureKind, OperationFailure};
@@ -297,7 +297,7 @@ fn stale_generation_envelope_is_rejected_before_any_write() {
     let stale = envelope(&store, vec![upsert("messages", message("m1", "c1"))], vec![]);
     store.erase_account(store.generation().next(), false).unwrap();
     let error = store.commit(stale).unwrap_err();
-    assert!(matches!(error, StoreError::Envelope(EnvelopeFault::StaleGeneration)));
+    assert!(matches!(error, StoreError::Plan(PlanFault::StaleGeneration)));
     assert_eq!(count(&store, "SELECT COUNT(*) FROM row_messages"), 0);
 }
 

@@ -3,7 +3,7 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use rusqlite::Connection;
 use serde_json::{json, Map, Value};
 
-use crate::commit::{CommitEnvelope, DestroyReason, EntityOp};
+use crate::commit::{BatchPlan, DestroyReason, EntityOp};
 use crate::identity::{ModelKey, RowId, RowRef};
 use crate::query::{compile_keys, fetch_keys, Order, Query, Where};
 use crate::schema::{AssociationKind, AssociationSpec};
@@ -54,7 +54,7 @@ fn pointer_associations(models: &BTreeMap<String, ModelInfo>, model: &ModelKey) 
 }
 
 /// A parent row names its newest child in `sets`: a landing child advances the pointer, a replaced child renames it, a destroyed child hands it to the previous sibling.
-pub(super) fn follow_parent_pointers(connection: &Connection, models: &BTreeMap<String, ModelInfo>, envelope: &mut CommitEnvelope) -> Result<(), StoreError> {
+pub(super) fn follow_parent_pointers(connection: &Connection, models: &BTreeMap<String, ModelInfo>, envelope: &mut BatchPlan) -> Result<(), StoreError> {
     let reader = Reader::new(connection, models);
     let mut parents = Parents::default();
     let written = envelope.entity_ops.iter().enumerate().filter(|(_, op)| matches!(op, EntityOp::Upsert { .. })).map(|(index, op)| (op.row_ref(), index)).collect();

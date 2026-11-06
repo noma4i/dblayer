@@ -127,7 +127,7 @@ fn apply_upsert(
     info: &ModelInfo,
     model: &ModelKey,
     row: &Map<String, Value>,
-    envelope: &CommitEnvelope,
+    envelope: &BatchPlan,
     landing: Landing<'_>,
 ) -> Result<(), StoreError> {
     let Landing { revision, hidden, prefetched, result, moves, heads } = landing;
@@ -301,12 +301,12 @@ struct MembershipLog<'a> {
     heads: &'a mut Vec<(ScopeRef, crate::identity::RowId)>,
 }
 
-fn declared_membership(connection: &Connection, info: &ModelInfo, model: &ModelKey, id: &str, versions: RowVersions<'_>, envelope: &CommitEnvelope, log: MembershipLog<'_>) -> Result<(), StoreError> {
+fn declared_membership(connection: &Connection, info: &ModelInfo, model: &ModelKey, id: &str, versions: RowVersions<'_>, envelope: &BatchPlan, log: MembershipLog<'_>) -> Result<(), StoreError> {
     let RowVersions { old, new } = versions;
     let MembershipLog { moves, heads } = log;
     use crate::schema::{Membership, RemoteShape, PageDirection};
     let row = crate::identity::RowId::new(id).map_err(|error| StoreError::Constraint(error.to_string()))?;
-    for relation in info.spec.relations.iter().filter(|relation| (!relation.membership.is_empty() || relation.has_threshold() || envelope.node_reread) && relation.constants_described() && (if envelope.node_reread { relation.joins_node } else { relation.joins_events && matches!(envelope.origin, WriteOrigin::Event | WriteOrigin::Response) })) {
+    for relation in info.spec.relations.iter().filter(|relation| (!relation.membership.is_empty() || relation.has_threshold() || envelope.node_reread) && relation.constants_described() && (if envelope.node_reread { relation.joins_node } else { relation.joins_events && envelope.server_rows })) {
         for rule in relation.membership.values() {
             let field = match rule { Membership::Contains(field) | Membership::Equals(field) => field };
             if !new.contains_key(field) { return Err(StoreError::Constraint(format!("missing membership field {field}"))); }

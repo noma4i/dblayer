@@ -3,12 +3,12 @@ use std::collections::{BTreeMap, BTreeSet, HashSet};
 use rusqlite::OptionalExtension;
 use serde_json::{Map, Value};
 
-use crate::commit::{CommitEnvelope, CommitResult, DestroyReason, EntityOp, ScopeOp, ScopeRef, WriteOrigin};
+use crate::commit::{BatchPlan, CommitResult, DestroyReason, EntityOp, ScopeOp, ScopeRef};
 use crate::identity::{ModelKey, RowId, RowRef};
 use crate::schema::{AssociationKind, PageDirection, RemoteShape};
 use crate::value::{fractional_between, read_id};
 
-use super::merge::{admitted, Admission};
+use super::merge::{admitted, Admission, RowKind};
 use super::row_write::RowWrite;
 use super::{Reader, StoreError};
 
@@ -65,7 +65,7 @@ fn landing(writer: &mut RowWrite<'_>, model: &str, payload: &Value, overlay: &mu
         return Ok(None);
     }
     let reader = Reader::new(writer.connection, writer.models);
-    let mut envelope = CommitEnvelope::new(WriteOrigin::Event, writer.generation);
+    let mut envelope = BatchPlan::from_server(writer.generation);
     if op == "delete" {
         let owner = RowRef::new(ModelKey::new(model), id);
         let mut children = Vec::new();
@@ -79,7 +79,7 @@ fn landing(writer: &mut RowWrite<'_>, model: &str, payload: &Value, overlay: &mu
         let spec = &writer.models.get(model).ok_or_else(|| StoreError::UnknownModel(model.to_string()))?.spec;
         let patch = payload.get("row").and_then(Value::as_object).ok_or_else(|| StoreError::Constraint("event has no row".into()))?;
         let guards = writer.guards.get(model).map(Vec::as_slice).unwrap_or_default();
-        let Some(row) = admitted(&reader, WriteOrigin::Event, Admission::default(), model, patch, &mut 0, spec, guards)? else { return Ok(None) };
+        let Some(row) = admitted(&reader, RowKind::Server, Admission::default(), model, patch, &mut 0, spec, guards)? else { return Ok(None) };
         let old = reader.point(model, id.as_str())?;
         let owner = RowRef::new(ModelKey::new(model), id.clone());
         let rows: Vec<_> = std::iter::once(&row).chain(old.as_ref()).collect();
@@ -89,7 +89,7 @@ fn landing(writer: &mut RowWrite<'_>, model: &str, payload: &Value, overlay: &mu
             let Some(patch) = related.get("row").and_then(Value::as_object) else { continue };
             let spec = &writer.models.get(related_model).ok_or_else(|| StoreError::UnknownModel(related_model.to_string()))?.spec;
             let guards = writer.guards.get(related_model).map(Vec::as_slice).unwrap_or_default();
-            let Some(row) = admitted(&reader, WriteOrigin::Event, Admission::default(), related_model, patch, &mut 0, spec, guards)? else { continue };
+            let Some(row) = admitted(&reader, RowKind::Server, Admission::default(), related_model, patch, &mut 0, spec, guards)? else { continue };
             if let Some(id) = row.get("id").and_then(read_id) { envelope.entity_ops.push(EntityOp::Upsert { model: ModelKey::new(related_model), id, row }); }
         }
         let wanted = payload.get("joins").and_then(Value::as_array).map(Vec::as_slice).unwrap_or_default();

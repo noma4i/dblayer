@@ -1,6 +1,5 @@
 use std::collections::{BTreeMap, BTreeSet};
 
-use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use uuid::Uuid;
 
@@ -10,18 +9,6 @@ use crate::operation::OperationStatus;
 use crate::syncstate::OperationFailure;
 use crate::upload::UploadState;
 use crate::value::duplicates;
-
-pub const ENVELOPE_VERSION: u32 = 1;
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum WriteOrigin {
-    Snapshot,
-    Event,
-    Response,
-    Patch,
-    Optimistic,
-}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DestroyReason {
@@ -226,8 +213,7 @@ impl PartialEq for NetworkAdmission {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct CommitEnvelope {
-    pub schema_version: u32,
+pub struct BatchPlan {
     pub tx_id: Uuid,
     pub entity_ops: Vec<EntityOp>,
     pub scope_ops: Vec<ScopeOp>,
@@ -238,10 +224,11 @@ pub struct CommitEnvelope {
     pub window_debts: Vec<WindowDebt>,
     pub snapshot: Option<RowRef>,
     pub item_snapshots: Vec<(String, RowRef)>,
-    pub origin: WriteOrigin,
     pub generation: Generation,
     pub writes_local: bool,
     pub node_reread: bool,
+    /// The rows come from an event or from an answer of the server: relations that `joins_events` take them into their windows.
+    pub server_rows: bool,
     pub pending_locals: Vec<PendingLocal>,
     pub network: Option<NetworkAdmission>,
 }
@@ -256,9 +243,7 @@ pub struct PendingLocal {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
-pub enum EnvelopeFault {
-    #[error("envelope schema version mismatch")]
-    SchemaVersionMismatch,
+pub enum PlanFault {
     #[error("envelope generation is stale")]
     StaleGeneration,
     #[error("the network moved between the plan and the commit")]
@@ -271,10 +256,9 @@ pub enum EnvelopeFault {
     RowIdMismatch,
 }
 
-impl CommitEnvelope {
-    pub fn new(origin: WriteOrigin, generation: Generation) -> Self {
+impl BatchPlan {
+    pub fn new(generation: Generation) -> Self {
         Self {
-            schema_version: ENVELOPE_VERSION,
             tx_id: Uuid::new_v4(),
             entity_ops: Vec::new(),
             scope_ops: Vec::new(),
@@ -285,36 +269,35 @@ impl CommitEnvelope {
             window_debts: Vec::new(),
             snapshot: None,
             item_snapshots: Vec::new(),
-            origin,
             generation,
             writes_local: false,
             node_reread: false,
+            server_rows: false,
             pending_locals: Vec::new(),
             network: None,
         }
     }
 
+    pub fn from_server(generation: Generation) -> Self { Self { server_rows: true, ..Self::new(generation) } }
+
     pub fn is_empty(&self) -> bool {
         self.entity_ops.is_empty() && self.scope_ops.is_empty() && self.edge_writes.is_empty() && self.file_ops.is_empty() && self.operation_transitions.is_empty() && self.window.is_none() && self.window_debts.is_empty() && self.pending_locals.is_empty()
     }
 
-    pub fn validate(&self, current: Generation) -> Result<(), EnvelopeFault> {
-        if self.schema_version != ENVELOPE_VERSION {
-            return Err(EnvelopeFault::SchemaVersionMismatch);
-        }
+    pub fn validate(&self, current: Generation) -> Result<(), PlanFault> {
         if self.generation != current {
-            return Err(EnvelopeFault::StaleGeneration);
+            return Err(PlanFault::StaleGeneration);
         }
         let upsert_mismatch = self.entity_ops.iter().any(|operation| match operation {
             EntityOp::Upsert { id, row, .. } => row.get("id").and_then(Value::as_str) != Some(id.as_str()),
             _ => false,
         });
         if upsert_mismatch {
-            return Err(EnvelopeFault::RowIdMismatch);
+            return Err(PlanFault::RowIdMismatch);
         }
         let row_keys: Vec<(ModelKey, RowId)> = self.touched_row_keys();
         if !duplicates(&row_keys).is_empty() {
-            return Err(EnvelopeFault::ConflictingRowOps);
+            return Err(PlanFault::ConflictingRowOps);
         }
         let member_keys: Vec<(ScopeRef, RowId)> = self
             .scope_ops
@@ -326,7 +309,7 @@ impl CommitEnvelope {
             })
             .collect();
         if !duplicates(&member_keys).is_empty() {
-            return Err(EnvelopeFault::DuplicateScopeOps);
+            return Err(PlanFault::DuplicateScopeOps);
         }
         Ok(())
     }

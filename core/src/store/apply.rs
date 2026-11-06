@@ -4,10 +4,9 @@ use rusqlite::{params, params_from_iter, Connection, OptionalExtension};
 use serde_json::{Map, Value};
 
 use crate::commit::{
-    CommitEnvelope, CommitResult, DestroyReason, EntityOp, OperationRecord, OperationTransition, EdgeValue, EdgeWrite, RowChange, RowChangeKind, ScopeOp, ScopeRef, WindowSave,
+    BatchPlan, CommitResult, DestroyReason, EntityOp, OperationRecord, OperationTransition, EdgeValue, EdgeWrite, RowChange, RowChangeKind, ScopeOp, ScopeRef, WindowSave,
 };
 use crate::operation::OperationStatus;
-use crate::commit::WriteOrigin;
 use crate::ddl::{manifest_write, REVISION_SEQ_KEY};
 use crate::identity::{Generation, ModelKey, RowRef};
 use crate::operation::{delete_operation, OperationEvent, failure_cells, write_operation_error, read_rows, stored_row_id, write_rows, write_value};
@@ -27,23 +26,23 @@ use super::{Committed, Inner, ModelInfo, Store, StoreError};
 
 impl Store {
     #[cfg(test)]
-    pub(crate) fn commit_deferred(&self, envelope: CommitEnvelope) -> Result<Committed<'_>, StoreError> {
+    pub(crate) fn commit_deferred(&self, envelope: BatchPlan) -> Result<Committed<'_>, StoreError> {
         let inner = self.lock();
         inner.ensure_healthy()?;
         inner.ensure_generation(envelope.generation)?;
         self.write_envelope(inner, envelope)
     }
 
-    pub(crate) fn commit(&self, envelope: CommitEnvelope) -> Result<CommitResult, StoreError> {
+    pub(crate) fn commit(&self, envelope: BatchPlan) -> Result<CommitResult, StoreError> {
         let inner = self.lock();
         inner.ensure_healthy()?;
         inner.ensure_generation(envelope.generation)?;
         self.write_envelope(inner, envelope).map(Committed::publish)
     }
 
-    fn write_envelope<'a>(&'a self, inner: std::sync::MutexGuard<'_, Inner>, envelope: CommitEnvelope) -> Result<Committed<'a>, StoreError> {
+    fn write_envelope<'a>(&'a self, inner: std::sync::MutexGuard<'_, Inner>, envelope: BatchPlan) -> Result<Committed<'a>, StoreError> {
         let now_ms = inner.now_ms();
-        envelope.validate(inner.generation).map_err(StoreError::Envelope)?;
+        envelope.validate(inner.generation).map_err(StoreError::Plan)?;
         if envelope.is_empty() {
             return Ok(Committed::unannounced(CommitResult::noop(envelope.tx_id)));
         }
@@ -63,9 +62,9 @@ impl Store {
     }
 
     /// The SQL commit of a write that belongs to a session epoch: the epoch check and the commit happen while the lifecycle holds its commit line, so a transition either comes before the check and refuses the write, or waits for the commit.
-    fn attempt_in_epoch(&self, inner: &Inner, envelope: &CommitEnvelope, now_ms: i64) -> Result<(CommitResult, u32), StoreError> {
+    fn attempt_in_epoch(&self, inner: &Inner, envelope: &BatchPlan, now_ms: i64) -> Result<(CommitResult, u32), StoreError> {
         let _network = envelope.network.as_ref().map(|network| network.enter());
-        if envelope.network.as_ref().is_some_and(|network| !network.holds()) { return Err(StoreError::Envelope(crate::commit::EnvelopeFault::NetworkMoved)); }
+        if envelope.network.as_ref().is_some_and(|network| !network.holds()) { return Err(StoreError::Plan(crate::commit::PlanFault::NetworkMoved)); }
         #[cfg(test)]
         if envelope.network.is_some() {
             let hook = self.after_network_check.lock().unwrap_or_else(|error| error.into_inner()).take();
@@ -84,7 +83,7 @@ impl Store {
     }
 }
 
-fn attempt(store: &Store, inner: &Inner, envelope: &CommitEnvelope, now_ms: i64) -> Result<(CommitResult, u32), StoreError> {
+fn attempt(store: &Store, inner: &Inner, envelope: &BatchPlan, now_ms: i64) -> Result<(CommitResult, u32), StoreError> {
     let transaction = inner.connection.unchecked_transaction()?;
     let outcome = apply_envelope(&transaction, &inner.models, envelope, now_ms)?;
     if outcome.is_noop() && envelope.window.is_none() && envelope.window_debts.is_empty() && envelope.pending_locals.is_empty() {

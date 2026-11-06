@@ -2,7 +2,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use serde_json::{Map, Value};
 
-use crate::commit::{CommitEnvelope, CommitResult, DestroyReason, EntityOp, OperationTransition, ScopeOp, WriteOrigin};
+use crate::commit::{BatchPlan, CommitResult, DestroyReason, EntityOp, OperationTransition, ScopeOp};
 use crate::operation::OperationStatus;
 use crate::files::references_of_row;
 use crate::identity::{ModelKey, RowId};
@@ -219,7 +219,7 @@ pub(super) fn apply(writer: &mut super::row_write::RowWrite<'_>, op_id: u64) -> 
     let reader = Reader::new(writer.connection, writer.models);
     let entry = OutboxOperation::read(&reader, seq)?.ok_or_else(|| StoreError::Constraint(format!("operation {seq} does not exist")))?;
     let plan = restore(&reader, &Prior::related_operations(&reader, &entry)?, &entry, writer.revision)?;
-    let mut envelope = CommitEnvelope::new(WriteOrigin::Optimistic, writer.generation);
+    let mut envelope = BatchPlan::new(writer.generation);
     envelope.entity_ops = plan.entity_ops;
     envelope.scope_ops = plan.scope_ops;
     envelope.operation_transitions = plan.transitions;

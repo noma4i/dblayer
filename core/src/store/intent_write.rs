@@ -1,6 +1,6 @@
 use serde_json::{Map, Value};
 
-use crate::commit::{CommitEnvelope, CommitResult, DestroyReason, EntityOp, OperationRecord, OperationTransition, ScopeOp, ScopeRef, WriteOrigin};
+use crate::commit::{BatchPlan, CommitResult, DestroyReason, EntityOp, OperationRecord, OperationTransition, ScopeOp, ScopeRef};
 use crate::store::plan::{Prior, PriorRow};
 use crate::identity::{ListKey, ModelKey, RowId, RowRef};
 use crate::operation::{Operation, OperationStatus};
@@ -17,8 +17,8 @@ fn values(text: &str) -> Result<Map<String, Value>, StoreError> {
     serde_json::from_str::<Value>(text)?.as_object().cloned().ok_or_else(|| StoreError::Constraint("row values must be an object".into()))
 }
 
-fn effects(reader: &Reader<'_>, writes: &IntentEffects, writer: &RowWrite<'_>) -> Result<(CommitEnvelope, Prior), StoreError> {
-    let mut envelope = CommitEnvelope::new(WriteOrigin::Optimistic, writer.generation);
+fn effects(reader: &Reader<'_>, writes: &IntentEffects, writer: &RowWrite<'_>) -> Result<(BatchPlan, Prior), StoreError> {
+    let mut envelope = BatchPlan::new(writer.generation);
     let mut prior = Prior::default();
     for EffectRow { model, row_id, values: text } in &writes.rows {
         let fields = values(text)?;

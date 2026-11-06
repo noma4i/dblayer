@@ -1,4 +1,4 @@
-use crate::commit::{CommitEnvelope, DestroyReason, EntityOp, OperationTransition};
+use crate::commit::{BatchPlan, DestroyReason, EntityOp, OperationTransition};
 use crate::identity::{ModelKey, RowId};
 use crate::operation::Operation;
 use crate::store::Reader;
@@ -45,7 +45,7 @@ pub(crate) struct TempReplacement<'a> {
     pub real: &'a RowId,
 }
 
-fn plan(reader: &Reader<'_>, envelope: &mut CommitEnvelope, outbox: &[OutboxOperation], replacement: TempReplacement<'_>, own: i64) -> Result<(), StoreError> {
+fn plan(reader: &Reader<'_>, envelope: &mut BatchPlan, outbox: &[OutboxOperation], replacement: TempReplacement<'_>, own: i64) -> Result<(), StoreError> {
         let TempReplacement { model, temp, real } = replacement;
         let followed = |other: &&OutboxOperation| other.operation.id.0 != own && other.operation.row_ids.contains(temp);
         if outbox.iter().filter(followed).any(|follower| follower.operation.action_key.ends_with(":destroy")) {
@@ -79,7 +79,7 @@ fn plan(reader: &Reader<'_>, envelope: &mut CommitEnvelope, outbox: &[OutboxOper
 }
 
     /// The `local` fields of the temporary row go to the row of the answer unless the answer brings its own value (P-OUT-22).
-fn carry_locals(reader: &Reader<'_>, envelope: &mut CommitEnvelope, model: &str, temp: &RowId, real: &RowId) -> Result<(), StoreError> {
+fn carry_locals(reader: &Reader<'_>, envelope: &mut BatchPlan, model: &str, temp: &RowId, real: &RowId) -> Result<(), StoreError> {
         let Some(held) = reader.point(model, temp.as_str())? else { return Ok(()) };
         let spec = &reader.models().get(model).ok_or_else(|| StoreError::UnknownModel(model.to_string()))?.spec;
         for field in spec.fields.iter().filter(|field| matches!(field.merge, Some(crate::schema::MergeRule::Local))) {
@@ -101,7 +101,7 @@ pub(super) fn apply(writer: &mut super::row_write::RowWrite<'_>, model: &str, te
     let temp = RowId::new(temp).map_err(|error| StoreError::Constraint(error.to_string()))?;
     let real = RowId::new(real).map_err(|error| StoreError::Constraint(error.to_string()))?;
     let reader = Reader::new(writer.connection, writer.models);
-    let mut envelope = CommitEnvelope::new(crate::commit::WriteOrigin::Optimistic, writer.generation);
+    let mut envelope = BatchPlan::new(writer.generation);
     if reader.point(model, temp.as_str())?.is_some() {
         let outbox = crate::store::plan::read_outbox(&reader)?;
         plan(&reader, &mut envelope, &outbox, TempReplacement { model, temp: &temp, real: &real }, own)?;

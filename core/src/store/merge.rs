@@ -3,7 +3,6 @@ use std::collections::HashSet;
 use rusqlite::params;
 use serde_json::{Map, Value};
 
-use crate::commit::WriteOrigin;
 use crate::store::plan::{Prior, PriorRow};
 use crate::schema::{AssociationSpec, ModelSpec};
 use crate::value::read_id;
@@ -32,10 +31,17 @@ pub(crate) fn unconfirmed_fields(reader: &Reader<'_>, closing: Option<i64>, mode
     Ok(fields)
 }
 
+/// A row written by the device (`Local`) or one the server sent: a server row is checked against the stored revision.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum RowKind {
+    Local,
+    Server,
+}
+
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn admitted(reader: &Reader<'_>, origin: WriteOrigin, admission: Admission, model: &str, patch: &Map<String, Value>, drops: &mut usize, spec: &ModelSpec, guards: &[AssociationSpec]) -> Result<Option<Map<String, Value>>, StoreError> {
+pub(crate) fn admitted(reader: &Reader<'_>, kind: RowKind, admission: Admission, model: &str, patch: &Map<String, Value>, drops: &mut usize, spec: &ModelSpec, guards: &[AssociationSpec]) -> Result<Option<Map<String, Value>>, StoreError> {
     let Some(id) = patch.get("id").and_then(read_id) else { return Ok(None) };
-    if origin == WriteOrigin::Optimistic { return Ok(Some(patch.clone())); }
+    if kind == RowKind::Local { return Ok(Some(patch.clone())); }
     let stored = reader.stored_row(model, id.as_str())?;
     let versioned = spec.server_revision.as_ref().and_then(|field| patch.get(field)).and_then(Value::as_i64);
     let current = spec.server_revision.as_ref().and_then(|field| stored.as_ref()?.row.get(field)).and_then(Value::as_i64);

@@ -1256,11 +1256,11 @@ pub(super) fn member_list(rig: &Rig, group: &str, order: &str) -> Vec<String> {
 
 /// The members u1 u2 u3 of the group in both lists (JOINED: u1 u2 u3, OWNER_FIRST: u2 u1 u3) and the row u4 that is in neither list.
 pub(super) fn seed_members(rig: &Rig, group: &str) {
-    use crate::commit::{CommitEnvelope, EntityOp, ScopeOp, ScopeRef, WriteOrigin};
+    use crate::commit::{BatchPlan, EntityOp, ScopeOp, ScopeRef};
     use crate::identity::{ModelKey, RowId};
     let db = &rig.database.db;
     let spec = db.spec("Member").unwrap();
-    let mut envelope = CommitEnvelope::new(WriteOrigin::Event, db.generation());
+    let mut envelope = BatchPlan::from_server(db.generation());
     for id in ["u1", "u2", "u3", "u4"] {
         let row = json!({"id": id, "name": id}).as_object().unwrap().clone();
         envelope.entity_ops.push(EntityOp::Upsert { model: ModelKey::new("Member"), id: RowId::new(id).unwrap(), row });

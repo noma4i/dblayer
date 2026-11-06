@@ -4,7 +4,7 @@ use std::collections::{BTreeMap, HashSet};
 use std::path::Path;
 use std::sync::{Arc, OnceLock};
 
-use crate::commit::{CommitEnvelope, CommitResult, EntityOp, WriteOrigin};
+use crate::commit::{BatchPlan, CommitResult, EntityOp};
 use crate::ddl::{table_name, ManifestVerdict, RecreateReason};
 use crate::files::FileDirectories;
 use crate::identity::{ModelKey, RowRef};
@@ -213,7 +213,7 @@ fn recover_operations(store: &Store, models: &[ModelSpec], restore_rows: bool) -
     if rebuilt.is_empty() {
         return Ok(());
     }
-    let mut envelope = CommitEnvelope::new(WriteOrigin::Optimistic, store.generation());
+    let mut envelope = BatchPlan::new(store.generation());
     envelope.entity_ops = rebuilt.into_iter().map(|row| EntityOp::Upsert { model: ModelKey::new(&row.model), id: row.id, row: row.row }).collect();
     store.commit(envelope)?;
     Ok(())

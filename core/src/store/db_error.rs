@@ -1,4 +1,3 @@
-use crate::commit::WriteOrigin;
 use crate::identity::IdentityError;
 use crate::query::QueryError;
 use crate::schema::{ModelFault, SchemaError};
@@ -40,8 +39,6 @@ pub enum DbError {
     LocalValue { model: String, path: String },
     #[error("row {id} of {model} does not exist")]
     NotFound { model: String, id: String },
-    #[error("origin {0:?} cannot be landed")]
-    OriginNotLandable(WriteOrigin),
     #[error("row {id} of {model} already exists")]
     AlreadyExists { model: String, id: String },
     #[error("row {id} of {model} has an operation in flight")]

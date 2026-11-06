@@ -3,7 +3,7 @@ use std::time::Duration;
 
 use serde_json::{json, Map, Value};
 
-use crate::commit::{CommitEnvelope, DestroyReason, EntityOp, ScopeOp, ScopeRef, WriteOrigin};
+use crate::commit::{BatchPlan, DestroyReason, EntityOp, ScopeOp, ScopeRef};
 use crate::identity::{ModelKey, RowId, ListKey};
 use crate::pacing::ManualClock;
 use crate::schema::{FieldSpec, ModelSpec};
@@ -69,8 +69,8 @@ pub fn append(target: &ScopeRef, row_id: &str, order_key: &str) -> ScopeOp {
     ScopeOp::Append { scope: target.clone(), row: id(row_id), order_key: order_key.to_string() }
 }
 
-pub fn envelope(store: &Store, entity_ops: Vec<EntityOp>, scope_ops: Vec<ScopeOp>) -> CommitEnvelope {
-    let mut envelope = CommitEnvelope::new(WriteOrigin::Event, store.generation());
+pub fn envelope(store: &Store, entity_ops: Vec<EntityOp>, scope_ops: Vec<ScopeOp>) -> BatchPlan {
+    let mut envelope = BatchPlan::from_server(store.generation());
     envelope.entity_ops = entity_ops;
     envelope.scope_ops = scope_ops;
     envelope

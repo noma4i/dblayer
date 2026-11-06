@@ -3,7 +3,7 @@ use std::collections::{BTreeMap, HashSet};
 use rusqlite::Connection;
 use serde_json::json;
 
-use crate::commit::{CommitEnvelope, DestroyReason, EntityOp};
+use crate::commit::{BatchPlan, DestroyReason, EntityOp};
 use crate::identity::{RowId, RowRef};
 use crate::query::{compile_keys, fetch_keys, Query, Where};
 use crate::schema::Dependent;
@@ -31,7 +31,7 @@ pub(super) fn descendants(models: &BTreeMap<String, ModelInfo>, reader: &Reader<
 }
 
 /// A destroyed row takes the rows of its `dependent: :destroy` children with it, in the same batch and for the same reason.
-pub(super) fn follow_destroys(connection: &Connection, models: &BTreeMap<String, ModelInfo>, envelope: &mut CommitEnvelope) -> Result<(), StoreError> {
+pub(super) fn follow_destroys(connection: &Connection, models: &BTreeMap<String, ModelInfo>, envelope: &mut BatchPlan) -> Result<(), StoreError> {
     let reader = Reader::new(connection, models);
     let mut seen: HashSet<RowRef> = envelope.entity_ops.iter().filter(|&op| matches!(op, EntityOp::Destroy { .. })).map(|op| op.row_ref()).collect();
     let parents: Vec<(RowRef, DestroyReason)> = envelope.entity_ops.iter().filter_map(|op| match op {
