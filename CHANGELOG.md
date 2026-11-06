@@ -27,6 +27,7 @@
 - `UrlSessionTransport` and `OkHttpTransport` refuse `subscribe`: server events arrive on the encrypted cable.
 
 ### Fixed
+- `discard` of an upload whose final mutation failed removes its operation and its optimistic row.
 - Preserve validated local fields copied from singleton rows during creation.
 - Preserve queued operations and uploads when model caches are reset.
 - Keep readable snapshots after a failed database commit.

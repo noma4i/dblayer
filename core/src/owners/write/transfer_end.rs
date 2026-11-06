@@ -44,19 +44,24 @@ impl TransferState {
                 self.begin_cancel(id, Some((rep, cancel)), Some(TransferStage::Ready), fx);
                 self.start_in_order(fx);
             }
+            TransferStage::Failed if !cancel && transfer.intent_live && transfer.signed_id.is_some() && !matches!(transfer.error.as_deref(), Some("missing_file" | "RestoreFailed")) => self.discard_through_outbox(id, rep, fx),
             TransferStage::Failed => {
                 self.begin_cancel(id, Some((rep, cancel)), Some(TransferStage::Failed), fx);
             }
             TransferStage::BatchReady => self.begin_cancel(id, Some((rep, cancel)), Some(TransferStage::BatchReady), fx),
             TransferStage::Mutating if cancel => reply(fx, rep, if batched { TransferAnswer::Err(Fault::InFlight) } else { TransferAnswer::Cancelled(false) }),
-            TransferStage::Mutating => {
-                transfer.discard_waiters.push(rep);
-                if !std::mem::replace(&mut transfer.discard_sent, true) {
-                    let (model, row_id) = (transfer.mutation.model.clone(), transfer.mutation.row_id.clone());
-                    fx.push(Effect::Send(Outbound::new(self.peers.outbox, OutboxInput::Discard { model, row_id, reply: NO_REPLY })));
-                }
-            }
+            TransferStage::Mutating => self.discard_through_outbox(id, rep, fx),
             _ => Self::refuse(fx, rep, Fault::InFlight),
+        }
+    }
+
+    /// The Outbox owns the live intent of the final mutation: it rolls the row back and answers with `MutationOutcome(Discarded)`.
+    fn discard_through_outbox(&mut self, id: TransferId, rep: ReplyId, fx: &mut Fx) {
+        let Some(transfer) = self.transfers.get_mut(&id) else { return };
+        transfer.discard_waiters.push(rep);
+        if !std::mem::replace(&mut transfer.discard_sent, true) {
+            let (model, row_id) = (transfer.mutation.model.clone(), transfer.mutation.row_id.clone());
+            fx.push(Effect::Send(Outbound::new(self.peers.outbox, OutboxInput::Discard { model, row_id, reply: NO_REPLY })));
         }
     }
 

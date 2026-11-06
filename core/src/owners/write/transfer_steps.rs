@@ -244,8 +244,12 @@ impl TransferState {
         }
     }
 
+    fn waits_for_discard(&self, id: TransferId) -> bool {
+        self.transfers.get(&id).is_some_and(|transfer| transfer.stage == TransferStage::Mutating || (transfer.stage == TransferStage::Failed && transfer.discard_sent))
+    }
+
     pub(super) fn mutation_outcome(&mut self, id: TransferId, outcome: OutboxOutcome, fx: &mut Fx) {
-        if self.stage_of(id) != Some(TransferStage::Mutating) { return; }
+        if !self.waits_for_discard(id) { return; }
         let waiting = self.transfers.get(&id).is_some_and(|transfer| !transfer.discard_waiters.is_empty());
         let next_single = (!matches!(outcome, OutboxOutcome::Interrupted) && !(waiting && matches!(outcome, OutboxOutcome::Failed { .. }))).then(|| self.group_entry(id)).flatten().filter(|group| self.phase_of(*group) == Some(BatchPhase::Singles));
         match outcome {
@@ -281,7 +285,7 @@ impl TransferState {
     }
 
     pub(super) fn discard_outcome(&mut self, key: &str, result: Result<(), Fault>, fx: &mut Fx) {
-        let Some(id) = self.open_id(key).filter(|id| self.stage_of(*id) == Some(TransferStage::Mutating)) else { return };
+        let Some(id) = self.open_id(key).filter(|id| self.waits_for_discard(*id)) else { return };
         let Some(transfer) = self.transfers.get_mut(&id) else { return };
         if result.is_ok() {
             return;

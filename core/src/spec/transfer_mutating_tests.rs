@@ -3,7 +3,7 @@
 use super::transfer_harness::*;
 use crate::owners::contract::Online;
 use crate::owners::write::outbox::{Fault, OutboxOutcome};
-use crate::owners::write::transfer::{Shown, TransferAnswer, TransferInput, TransferStage};
+use crate::owners::write::transfer::{Shown, TransferAnswer, TransferId, TransferInput, TransferStage};
 
 const KEY: &str = "Moment:r1:upload";
 const OTHER: &str = "Moment:r2:upload";
@@ -56,6 +56,38 @@ fn xfer_mutation_failed_discard_waiting() {
     let out = twin.mutation_outcome(KEY, failed("e"));
     assert!(Twin::quiet(&out), "the discard sent to Outbox decides: {out:?}");
     assert_eq!(twin.stage(id), TransferStage::Mutating);
+}
+
+fn failed_mutation(twin: &mut Twin) -> TransferId {
+    let id = twin.mutating(KEY);
+    twin.mutation_outcome(KEY, failed("e"));
+    twin.commit();
+    assert_eq!(twin.stage(id), TransferStage::Failed);
+    id
+}
+
+#[test]
+fn xfer_failed_discard_live_intent() {
+    let mut twin = Twin::new();
+    let id = failed_mutation(&mut twin);
+    let (reply, out) = twin.discard(KEY);
+    assert_eq!((out.outbox_discards(), out.all_replies(), out.removed(), twin.stage(id)), (1, 0, Vec::<String>::new(), TransferStage::Failed), "the live intent is discarded by Outbox, Transfer does not remove it behind its back");
+    let out = twin.post(TransferInput::DiscardOutcome { key: KEY.into(), result: Ok(()) });
+    assert!(Twin::quiet(&out), "{out:?}");
+    let out = twin.mutation_outcome(KEY, OutboxOutcome::Discarded);
+    assert_eq!((twin.stage(id), out.removed()), (TransferStage::Removing, vec![KEY.to_string()]));
+    assert_eq!((twin.commit().replies(reply), twin.stage(id)), (vec![TransferAnswer::Ok], TransferStage::Done));
+}
+
+#[test]
+fn xfer_failed_discard_live_intent_refused() {
+    let mut twin = Twin::new();
+    let id = failed_mutation(&mut twin);
+    let (reply, _) = twin.discard(KEY);
+    let out = twin.post(TransferInput::DiscardOutcome { key: KEY.into(), result: Err(Fault::InFlight) });
+    assert_eq!((out.replies(reply), twin.stage(id)), (vec![TransferAnswer::Err(Fault::InFlight)], TransferStage::Failed));
+    let (_, out) = twin.discard(KEY);
+    assert_eq!(out.outbox_discards(), 1, "a new discard goes to Outbox again");
 }
 
 #[test]
