@@ -71,6 +71,7 @@ impl Db {
             self.follow_correlations(reader, &mut envelope)?;
         }
         self.follow_removed_by(reader, &mut envelope)?;
+        self.follow_destroys(reader, &mut envelope)?;
         let followed = self.follow_parent_pointers(reader, &mut envelope)?;
         let changed_uploads: HashSet<i64> = envelope.operation_transitions.iter().filter_map(|transition| match transition {
             OperationTransition::RemoveUploadItem { seq, .. } => Some(*seq),

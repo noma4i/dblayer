@@ -1,4 +1,7 @@
 mod cache;
+mod cascade;
+#[cfg(test)]
+mod cascade_tests;
 pub(crate) use cache::row_bytes;
 mod warm;
 mod commit;
