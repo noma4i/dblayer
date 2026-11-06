@@ -53,7 +53,7 @@ pub(super) fn add(builder: &mut RuntimeBuilder, wiring: &Arc<Wiring>, ports: &Po
     let handle = builder.handle();
     let transport: Option<Arc<dyn Transport>> = ports.transport.clone();
     let admit_wiring = wiring.clone();
-    let admit: crate::owners::read::Admit = Arc::new(move |epoch| if admit_wiring.admits_epoch(epoch) { Ok(()) } else { Err(crate::owners::read::Refused("the epoch of the request ended".into())) });
+    let admit: crate::owners::read::Admit = Arc::new(move |epoch| if admit_wiring.admits_session(epoch) { Ok(()) } else { Err(crate::owners::read::Refused("the epoch of the request ended".into())) });
     let feed_admit = admit.clone();
     let codec = Arc::new(SchemaWindowCodec::new(db.clone(), ports.read_operations.clone().unwrap_or_default()));
 

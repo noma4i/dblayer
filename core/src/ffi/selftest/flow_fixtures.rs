@@ -80,6 +80,16 @@ pub(super) fn land_event(rig: &Rig, model: &str, row: Value) {
     db.land_in_tests(envelope).unwrap();
 }
 
+/// Lands a row through the owner Store, as a batch of the owners does: the expiry of a memory row arms.
+pub(super) fn land_owned(rig: &Rig, model: &str, row: Value) {
+    use crate::owners::contract::BatchAuthor;
+    use crate::owners::store::StoreBatch;
+    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1 << 40);
+    let event = serde_json::json!({"op": "upsert", "id": row["id"], "row": row}).to_string();
+    let batch = StoreBatch { author: BatchAuthor::Feed, id: NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed), epoch: rig.database.session_epoch(), basis: [(model.to_string(), 0)].into(), rows: vec![(model.to_string(), event)], intents: 0, credential: None, ops: Vec::new() };
+    rig.database.life_handle().commit_for_tests(batch);
+}
+
 /// The cell of a field of a row of `model`.
 pub(super) fn cell(rig: &Rig, model: &str, row: &WireRow, field: &str) -> Cell {
     let spec = rig.database.db.spec(model).unwrap();

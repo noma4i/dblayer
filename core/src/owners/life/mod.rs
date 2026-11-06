@@ -134,6 +134,9 @@ enum Awaited {
 impl Wiring {
     pub(crate) fn admits_epoch(&self, epoch: Epoch) -> bool { self.published.read(|published| published.is_some_and(|published| published.epoch == epoch && !published.closed)) }
 
+    /// The epoch is the published one, open, and has an identity: a request to the server needs a session.
+    pub(crate) fn admits_session(&self, epoch: Epoch) -> bool { self.published.read(|published| published.is_some_and(|published| published.epoch == epoch && !published.closed && published.identity.is_some())) }
+
     fn new(handle: Handle) -> Self {
         Self {
             addresses: OnceLock::new(),
@@ -559,6 +562,9 @@ impl Life {
     }
 
     /// Returns once every input posted to an owner was handled, or false after `limit`.
+    #[cfg(test)]
+    pub fn commit_for_tests(&self, batch: crate::owners::store::StoreBatch) { self.wiring.to_store(StoreInput::Commit(batch)); }
+
     #[cfg(test)]
     pub fn barrier(&self, limit: std::time::Duration) -> bool { self.wiring.handle.barrier(limit) }
 
