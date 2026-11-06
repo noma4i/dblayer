@@ -142,8 +142,7 @@ final class EncryptedCablePeer: CablePeer, @unchecked Sendable {
 
   func cableNext(token: String) async -> EncryptedSocketEvent? {
     guard let connection = try? connection(token) else { return nil }
-    var events = connection.events.stream.makeAsyncIterator()
-    return await events.next()
+    return await nextElement(of: connection.events.stream)
   }
   func cableClose(token: String) async {
     lock.withLock { connections[token] }?.events.continuation.finish()

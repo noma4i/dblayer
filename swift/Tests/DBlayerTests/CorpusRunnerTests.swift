@@ -207,15 +207,7 @@ private final class DatabaseRunner {
   }
 
   func settle() async -> [String] {
-    var quiet = 0
-    var last = (-1, -1, UInt64.max)
-    for _ in 0..<600 {
-      try? await Task.sleep(for: .milliseconds(10))
-      let now = (mock.count, calls.filter { $0.done != nil }.count, heard.count)
-      quiet = now == last ? quiet + 1 : 0
-      last = now
-      if quiet >= 25 { break }
-    }
+    await quiesce("the corpus run to go quiet") { [mock.count, calls.filter { $0.done != nil }.count, Int(heard.count)] }
     var observed: [String] = []
     var waiting: [CallBox] = []
     for call in calls {
@@ -525,23 +517,7 @@ struct CorpusRunnerTests {
   func theSharedCorpusIsGreenThroughTheSwiftWrapper() async throws {
     let files = try corpusFiles()
     #expect(!files.isEmpty)
-    var mismatches: [String] = []
-    try await withThrowingTaskGroup(of: String?.self) { group in
-      var next = 0
-      while next < min(6, files.count) {
-        let file = files[next]
-        group.addTask { try await runCorpus(file) }
-        next += 1
-      }
-      while let result = try await group.next() {
-        if let result { mismatches.append(result) }
-        if next < files.count {
-          let file = files[next]
-          group.addTask { try await runCorpus(file) }
-          next += 1
-        }
-      }
-    }
+    let mismatches = try await parallel(files, limit: 6) { try await runCorpus($0) }.compactMap { $0 }
     #expect(mismatches.isEmpty, "\(mismatches)")
   }
 }

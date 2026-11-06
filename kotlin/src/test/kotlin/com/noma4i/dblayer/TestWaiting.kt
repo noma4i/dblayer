@@ -22,6 +22,17 @@ suspend fun eventually(what: String, timeoutMillis: Long = HANG_GUARD_MILLIS, co
         delay(5)
     }
 }
+suspend fun <State> quiesce(what: String, timeoutMillis: Long = 6_000L, samples: Int = 25, state: suspend () -> State) {
+    val deadline = System.nanoTime() + timeoutMillis * 1_000_000
+    var last: State? = null
+    var quiet = 0
+    while (System.nanoTime() < deadline && quiet < samples) {
+        delay(10)
+        val now = state()
+        quiet = if (now == last) quiet + 1 else 0
+        last = now
+    }
+}
 fun eventuallyBlocking(what: String, timeoutMillis: Long = HANG_GUARD_MILLIS, condition: () -> Boolean) = bounded(timeoutMillis + 2_000) { eventually(what, timeoutMillis) { condition() } }
 suspend fun <T> awaitWithin(what: String, block: suspend () -> T): T = try {
     withTimeout(HANG_GUARD_MILLIS) { block() }

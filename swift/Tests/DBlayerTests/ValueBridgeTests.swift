@@ -246,9 +246,9 @@ extension BridgeProbeTests {
     try await Self.signIn("A")
     let database = try DB.database
     let reader = database.subscribeValues(epoch: database.sessionEpoch(), request: .entity(model: "Nope", id: "x", fetch: .never))
-    var ended: [ReadEnd] = []
-    while let value = try await reader.pull() {
-      if case let .ended(cause) = value { ended.append(cause) }
+    let ended: [ReadEnd] = try await drained("the stream that cannot connect to end", reader).compactMap {
+      if case let .ended(cause) = $0 { return cause }
+      return nil
     }
     #expect(ended == [.invalid])
     #expect(try await reader.pull() == nil, "a stream that ended gives nothing more")

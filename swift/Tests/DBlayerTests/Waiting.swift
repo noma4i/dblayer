@@ -72,6 +72,64 @@ func finishes(
   await eventually("\(what) to return", timeout: timeout, isolation: isolation, sourceLocation: sourceLocation) { done.value }
   return done.value
 }
+func quiesce<State: Equatable>(_ what: String, timeout: Duration = .seconds(6), samples: Int = 25, _ state: () async -> State) async {
+  let deadline = ContinuousClock.now + timeout
+  var last: State?
+  var quiet = 0
+  while ContinuousClock.now < deadline, quiet < samples {
+    try? await Task.sleep(for: .milliseconds(10))
+    let now = await state()
+    quiet = now == last ? quiet + 1 : 0
+    last = now
+  }
+}
+
+func parallel<Item: Sendable, Result: Sendable>(_ items: [Item], limit: Int, _ work: @escaping @Sendable (Item) async throws -> Result) async throws -> [Result] {
+  try await withThrowingTaskGroup(of: (Int, Result).self) { group in
+    var results: [(Int, Result)] = []
+    var next = 0
+    while next < min(limit, items.count) {
+      let at = next
+      group.addTask { (at, try await work(items[at])) }
+      next += 1
+    }
+    while let done = try await group.next() {
+      results.append(done)
+      if next < items.count {
+        let at = next
+        group.addTask { (at, try await work(items[at])) }
+        next += 1
+      }
+    }
+    return results.sorted { $0.0 < $1.0 }.map(\.1)
+  }
+}
+
+func drained(_ what: String, _ reader: ReadStream, timeout: Duration = hangGuard, sourceLocation: SourceLocation = #_sourceLocation) async throws -> [ReadValue] {
+  let values = Collected()
+  let finished = await finishes(what, timeout: timeout, sourceLocation: sourceLocation) {
+    do {
+      while let value = try await reader.pull() { values.append(value) }
+    } catch {
+      Issue.record("\(what) failed: \(error)", sourceLocation: sourceLocation)
+    }
+  }
+  if !finished { await reader.cancel() }
+  return values.all
+}
+
+final class Collected: @unchecked Sendable {
+  private let lock = NSLock()
+  private var values: [ReadValue] = []
+  var all: [ReadValue] { lock.withLock { values } }
+  func append(_ value: ReadValue) { lock.withLock { values.append(value) } }
+}
+
+func nextElement<Element: Sendable>(of stream: AsyncStream<Element>) async -> Element? {
+  var iterator = stream.makeAsyncIterator()
+  return await iterator.next()
+}
+
 func parkUntilCancelled() async throws {
   try await Task.sleep(for: .seconds(3600))
 }

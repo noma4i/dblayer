@@ -69,7 +69,7 @@ class CorpusMock : Transport, EncryptedHttp {
         waitingPuts.remove(id)?.let { return it.completeExceptionally(error) }
         waitingHttp.remove(id)?.let { return it.second.completeExceptionally(error) }
         sinks.remove(id)?.let { it.failed(error); return true }
-        cables.remove(id)?.let { token -> kotlinx.coroutines.runBlocking { peer.drop(token) }; return true }
+        cables.remove(id)?.let { token -> bounded { peer.drop(token) }; return true }
         return false
     }
 

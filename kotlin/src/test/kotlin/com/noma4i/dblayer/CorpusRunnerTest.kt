@@ -165,15 +165,7 @@ private class DatabaseRunner {
     fun spawn(work: suspend () -> Done) { calls.add(scope.async { try { work() } catch (error: Throwable) { failed(error) } }) }
 
     suspend fun settle(): List<JsonObject> {
-        var quiet = 0
-        var last = Triple(-1, -1, -1L)
-        for (round in 0 until 600) {
-            delay(10)
-            val now = Triple(mock.count, calls.count { it.isCompleted }, heard.count.get())
-            quiet = if (now == last) quiet + 1 else 0
-            last = now
-            if (quiet >= 25) break
-        }
+        quiesce("the corpus run to go quiet") { listOf(mock.count.toLong(), calls.count { it.isCompleted }.toLong(), heard.count.get().toLong()) }
         val observed = ArrayList<JsonObject>()
         val waiting = ArrayList<Deferred<Done>>()
         for (call in calls) {
