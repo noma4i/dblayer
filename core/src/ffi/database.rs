@@ -277,6 +277,7 @@ impl Database {
         self.read_in_epoch(epoch, "file url", move |database| Ok(database.db.url(&model, &row_id, &field)?.map(|path| path.to_string_lossy().into_owned()))).await
     }
     pub fn register_operations(&self, defs_json: String) -> Result<(), DbError> {
+        if self.life.published().closed { return Err(super::command::closed()); }
         let defs: Vec<Value> = serde_json::from_str(&defs_json)?;
         self.remote()?;
         let mut names = Vec::new();
@@ -288,7 +289,10 @@ impl Database {
                 Some(root) => crate::owners::read::ReadOperation::new(&name, &document, root),
                 None => crate::owners::read::ReadOperation::from_document(&name, &document).ok_or_else(|| DbError::Invalid { detail: format!("operation {name} has no root field") })?,
             };
-            if let Some(size) = def["pageSize"].as_u64() { operation = operation.paged(u32::try_from(size).map_err(|error| DbError::Invalid { detail: error.to_string() })?); }
+            if let Some(size) = def.get("pageSize") {
+                let size = size.as_u64().and_then(|size| u32::try_from(size).ok()).ok_or_else(|| DbError::Invalid { detail: format!("operation {name} has invalid pageSize") })?;
+                operation = operation.paged(size);
+            }
             names.push((name.clone(), if document.trim_start().starts_with("mutation") { crate::owners::calls::CallKind::Mutate } else { crate::owners::calls::CallKind::Query }));
             declared.push(operation);
         }

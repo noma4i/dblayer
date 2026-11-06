@@ -39,6 +39,42 @@ async fn life_open_concurrent() {
 }
 
 #[tokio::test]
+async fn life_register_no_transport() {
+    let slot = OpenDatabase::new();
+    let database = open(&slot).await.unwrap();
+    let result = database.register_operations(r#"[{"name":"Query","document":"query Query { items }"}]"#.into());
+    assert!(matches!(result, Err(DbError::NoSession { .. })));
+    database.close_database().await.unwrap();
+}
+
+#[tokio::test]
+async fn life_register_closed() {
+    use super::super::database_tests::Plain;
+    let slot = OpenDatabase::new();
+    let database = slot.open(config(), "[]".into(), options(), Some(Arc::new(Plain)), None, None, None, None).await.unwrap();
+    database.close_database().await.unwrap();
+    let result = database.register_operations(r#"[{"name":"Query","document":"query Query { items }"}]"#.into());
+    assert!(matches!(result, Err(DbError::Closed { .. })));
+}
+
+#[tokio::test]
+async fn life_register_invalid() {
+    use super::super::database_tests::Plain;
+    let slot = OpenDatabase::new();
+    let database = slot.open(config(), "[]".into(), options(), Some(Arc::new(Plain)), None, None, None, None).await.unwrap();
+    for definitions in [
+        r#"[{"document":"query Query { items }"}]"#,
+        r#"[{"name":"Query"}]"#,
+        r#"[{"name":"Query","document":"query Query"}]"#,
+        r#"[{"name":"Query","document":"query Query { items }","pageSize":4294967296}]"#,
+        r#"[{"name":"Query","document":"query Query { items }","pageSize":-1}]"#,
+    ] {
+        assert!(matches!(database.register_operations(definitions.into()), Err(DbError::Invalid { .. })), "{definitions}");
+    }
+    database.close_database().await.unwrap();
+}
+
+#[tokio::test]
 async fn an_open_that_fails_leaves_the_slot_free() {
     let slot = OpenDatabase::new();
     assert!(slot.open(config(), "invalid".into(), options(), None, None, None, None, None).await.is_err());

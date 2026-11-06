@@ -39,7 +39,7 @@ impl EncryptedHttp for Unused {
 fn config() -> Config { Config { path: None, data_version: None, cache_rows: 8 } }
 
 #[tokio::test]
-async fn unified_open_without_encryption_sends_plain_graphql_through_the_transport() {
+async fn life_register_ok() {
     let database = Database::open(config(), "[]".into(), Some(Arc::new(Plain)), None, None, None, None).await.unwrap();
     database.register_operations(r#"[{"name":"Greeting","document":"query Greeting($name: String!) { greeting(name: $name) }"}]"#.into()).unwrap();
     database.set_online(true).unwrap();
