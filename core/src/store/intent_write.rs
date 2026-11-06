@@ -1,7 +1,7 @@
 use serde_json::{Map, Value};
 
 use crate::commit::{CommitEnvelope, CommitResult, DestroyReason, EntityOp, OperationRecord, OperationTransition, ScopeOp, ScopeRef, WriteOrigin};
-use crate::db::{Prior, PriorRow};
+use crate::store::plan::{Prior, PriorRow};
 use crate::identity::{ListKey, ModelKey, RowId, RowRef};
 use crate::operation::{Operation, OperationStatus};
 use crate::owners::store::{EffectRow, IntentEffects};

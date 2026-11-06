@@ -13,7 +13,7 @@ pub const LIMIT: Duration = Duration::from_secs(10);
 
 pub fn runtime() -> tokio::runtime::Runtime { tokio::runtime::Builder::new_multi_thread().worker_threads(2).enable_all().build().expect("a runtime") }
 
-pub fn admit() -> Admit { Arc::new(|_| crate::transport::test_admission().map_err(|error| super::Refused(format!("{error:?}")))) }
+pub fn admit() -> Admit { Arc::new(|_| Ok(())) }
 
 /// A Store peer: it keeps the batches of `Commit`.
 #[derive(Clone, Default)]

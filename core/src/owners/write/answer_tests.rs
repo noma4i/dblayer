@@ -1,5 +1,5 @@
 use super::answer::{decode_answer, pair_by_key, DecodeJob, Decoded};
-use crate::db::Db;
+use crate::store::Store;
 use crate::schema_fixtures::{moments_spec, users_spec};
 
 fn job(body: &str) -> DecodeJob { DecodeJob { op_id: 1, model: "moments".into(), action: "star".into(), temp: None, batch: None, body: body.into() } }

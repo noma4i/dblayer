@@ -129,7 +129,7 @@ fn full_row(row: &StreamRow) -> Result<WireRow, DbError> {
 fn event_row(wire: Option<&WireModel>, id: &str, value: Option<&serde_json::Value>) -> Option<WireRow> {
     let (wire, data) = (wire?, value?.as_object()?);
     let id = crate::identity::RowId::new(id).ok()?;
-    Some(wire.row(&crate::db::Record { id, revision: 0, data: data.clone(), sync: Default::default(), ephemeral: 0 }))
+    Some(wire.row(&crate::store::Record { id, revision: 0, data: data.clone(), sync: Default::default() }))
 }
 
 fn event_of(position: u64, payload: &str, wire: Option<&WireModel>) -> ReadValue {
@@ -227,8 +227,8 @@ impl Drop for ReadStream {
 }
 
 /// The tables a stream of `model` reads: its own and those of the rows its nested references read.
-fn read_tables(db: &crate::db::Db, model: &str) -> Vec<String> {
-    let linked = db.shared.spec(model).map(crate::db::nested_ref::link_targets).unwrap_or_default();
+fn read_tables(db: &crate::store::Store, model: &str) -> Vec<String> {
+    let linked = db.spec(model).map(crate::store::plan::nested_ref::link_targets).unwrap_or_default();
     std::iter::once(model.to_string()).chain(linked).map(|name| crate::ddl::table_name(&name)).collect()
 }
 

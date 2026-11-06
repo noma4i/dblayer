@@ -1,6 +1,7 @@
 //! Reads of the SQLite snapshot for `Deliveries`: a reader connection (WAL) sees a commit once its revision is stored.
 //! The pool keeps connections for the next read; a read holds no lock of the library.
 
+use crate::store::Store;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, PoisonError};
 
@@ -64,14 +65,14 @@ impl Snapshots for SqliteSnapshots {
 
 /// Reads of the snapshot through `Db`: the query of the view runs in the read pool, the rows of the answer are ids with their stamps.
 pub struct DbSnapshots {
-    db: crate::db::Db,
+    db: std::sync::Arc<Store>,
     windows: crate::runtime::Address<super::windows::Windows>,
     owners: crate::runtime::Handle,
     wires: Mutex<std::collections::HashMap<String, Arc<crate::ffi::wire::WireModel>>>,
 }
 
 impl DbSnapshots {
-    pub fn new(db: crate::db::Db, windows: crate::runtime::Address<super::windows::Windows>, owners: crate::runtime::Handle) -> Self { Self { db, windows, owners, wires: Mutex::new(std::collections::HashMap::new()) } }
+    pub fn new(db: std::sync::Arc<Store>, windows: crate::runtime::Address<super::windows::Windows>, owners: crate::runtime::Handle) -> Self { Self { db, windows, owners, wires: Mutex::new(std::collections::HashMap::new()) } }
 
     fn wire(&self, model: &str) -> Result<Arc<crate::ffi::wire::WireModel>, String> {
         if let Some(wire) = self.wires.lock().unwrap_or_else(PoisonError::into_inner).get(model) {
@@ -87,7 +88,7 @@ impl Snapshots for DbSnapshots {
     fn opening(&self, view: &View, stamp: crate::runtime::EpochStamp) {
         if !view.remote { return; }
         let super::windows::WindowKind::Relation { relation, params } = view.window.kind() else { return };
-        let now = self.db.shared.store.lock().now_ms();
+        let now = self.db.lock().now_ms();
         if self.db.window_expired(&view.model, &relation, &params, now).unwrap_or(false) {
             let keys = super::windows::StaleKeys::Set(std::collections::BTreeSet::from([view.window.clone()]));
             self.owners.post(self.windows, stamp, super::windows::WindowsInput::Stale { model: view.model.clone(), keys });
@@ -103,10 +104,10 @@ impl Snapshots for DbSnapshots {
         };
         let (seen, read) = self.db.read_view(&query, count, revision, view.remote.then_some(&view.window)).map_err(|error| error.to_string())?;
         Ok((seen, match read {
-            crate::db::ViewRead::Count(count) => ReadData::Count(u64::try_from(count).unwrap_or(0)),
-            crate::db::ViewRead::Rows(rows, total) => {
+            crate::store::ViewRead::Count(count) => ReadData::Count(u64::try_from(count).unwrap_or(0)),
+            crate::store::ViewRead::Rows(rows, total) => {
                 let wire = self.wire(&view.model)?;
-                let replaced = self.db.shared.replaced.replaced_between(after, seen).into_iter().map(|(from, to)| (from.to_string(), to.to_string())).collect();
+                let replaced = self.db.replaced().replaced_between(after, seen).into_iter().map(|(from, to)| (from.to_string(), to.to_string())).collect();
                 ReadData::Rows { rows: rows.into_iter().map(|(id, stamp, row)| StreamRow { id, stamp, row: Some(wire.row(&row)) }).collect(), replaced, total }
             }
         }))

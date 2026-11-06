@@ -49,7 +49,7 @@ impl Store {
             let outbox = recreated_layout.files_kept;
             dropped = recreated_layout.dropped;
             for statement in models_statements(models) { transaction.execute_batch(&statement)?; }
-            crate::db::op_effect::rebuild_open_effects(&transaction, &inner.models)?;
+            crate::store::plan::op_effect::rebuild_open_effects(&transaction, &inner.models)?;
             let after: std::collections::HashSet<String> = transaction.prepare("SELECT id FROM file")?.query_map([], |row| row.get(0))?.collect::<rusqlite::Result<_>>()?;
             manifest_stamp(&transaction, data_version, &fingerprints)?;
             transaction.commit()?;

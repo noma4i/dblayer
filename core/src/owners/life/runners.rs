@@ -4,7 +4,7 @@
 use std::sync::Arc;
 
 use super::{LifeReply, Wiring};
-use crate::db::Db;
+use crate::store::Store;
 use crate::identity::Generation;
 use crate::owners::calls::CallsInput;
 use crate::owners::contract::{Drained, NetworkEvent, Online, PublishedState};
@@ -24,9 +24,8 @@ const ALL_PEERS: [Peer; 10] = crate::owners::lifecycle::ALL_OWNERS;
 
 pub(super) struct LifecycleRunner {
     pub wiring: Arc<Wiring>,
-    pub leases: Arc<crate::ffi::admission::Leases>,
     pub absent: Vec<Peer>,
-    pub db: Db,
+    pub db: std::sync::Arc<Store>,
     /// The published value and the answers of one step wait for `step_done`: a caller that sees a new epoch finds every owner already in it.
     pub held_published: Option<crate::owners::contract::Published>,
     pub held_replies: Vec<(u64, Result<(), crate::owners::lifecycle::LifecycleError>)>,
@@ -66,14 +65,12 @@ impl EffectRunner<Lifecycle> for LifecycleRunner {
             }
             LifecycleEffect::ReadIntents { epoch } => wiring.to_store(StoreInput::ReadIntents { epoch }),
             LifecycleEffect::EpochEnded { epoch, cause } => {
-                self.leases.epoch_ended(cause);
                 wiring.to_rounds(RoundsInput::EpochEnded(crate::owners::contract::EpochEnded { epoch, cause }));
                 wiring.handle.end_epoch(epoch, cause);
                 wiring.outcomes.end_epoch(epoch, cause);
             }
             LifecycleEffect::ModelsReset { epoch, generation, models } => {
                 let models: Vec<String> = models.into_iter().collect();
-                self.leases.models_reset(generation);
                 let reset = crate::owners::contract::ModelsReset { epoch, generation, models };
                 wiring.to_windows(WindowsInput::ModelsReset(reset.clone()));
                 wiring.to_deliveries(DeliveryInput::ModelsReset(reset.clone()));
@@ -91,7 +88,7 @@ impl EffectRunner<Lifecycle> for LifecycleRunner {
             }
             LifecycleEffect::StopObserving => {
                 let done = super::StopDone::new(wiring.clone());
-                match self.db.shared.os_observers.get() {
+                match self.db.observers().get() {
                     Some(port) => crate::lock::effect(|| port.stop(done)),
                     None => done.finish(),
                 }
@@ -105,7 +102,6 @@ impl EffectRunner<Lifecycle> for LifecycleRunner {
 
     fn step_done(&mut self) {
         if let Some(published) = self.held_published.take() {
-            self.leases.published(&published);
             self.wiring.publish(published.clone());
             self.wiring.to_session(SessionInput::Published(published));
         }
@@ -121,9 +117,9 @@ fn revision_of(revision: i64) -> Result<u64, String> { u64::try_from(revision).m
 
 pub(super) struct StoreRunner {
     pub wiring: Arc<Wiring>,
-    pub db: Db,
-    pub credentials: Option<Arc<dyn crate::transport::CredentialSlot>>,
-    pub client: Option<Arc<crate::transport::EncryptedClient>>,
+    pub db: std::sync::Arc<Store>,
+    pub secret: Option<Arc<crate::transport::encrypted::credential::Secret>>,
+    pub exchange: Option<Arc<crate::transport::Exchange>>,
     pub executor: tokio::runtime::Handle,
 }
 
@@ -133,13 +129,13 @@ impl StoreRunner {
         back.reply(EpochStamp::Control, StoreInput::Erased { io_id, result });
     }
 
-    fn revision(&self) -> Result<u64, String> { self.db.shared.store.revision_seq().map_err(|error| error.to_string()).and_then(revision_of) }
+    fn revision(&self) -> Result<u64, String> { self.db.revision_seq().map_err(|error| error.to_string()).and_then(revision_of) }
 }
 
 impl EffectRunner<StoreWriter> for StoreRunner {
     fn run(&mut self, _stamp: EpochStamp, effect: StoreEffect, back: &Back<StoreWriter>) {
         let wiring = &self.wiring;
-        let store = &self.db.shared.store;
+        let store = &*self.db;
         match effect {
             StoreEffect::Prepare { .. } => {}
             StoreEffect::OpenLifecycle(message) => {
@@ -155,7 +151,7 @@ impl EffectRunner<StoreWriter> for StoreRunner {
             StoreEffect::OpenFailed(error) => wiring.open_failed(error, false),
             StoreEffect::OpenCorrupt(error) => wiring.open_failed(error, true),
             StoreEffect::Write { batch, min_pin_revision } => {
-                let result = store.write_batch(&batch, &self.db.shared.files, &self.db.shared.pointer_guards, min_pin_revision).map(|written| {
+                let result = store.write_batch(&batch, self.db.files(), self.db.pointer_guards(), min_pin_revision).map(|written| {
                     for fault in written.faults { wiring.fault(fault); }
                     WriteDone { revision: written.revision, position: written.position, observed: written.observed, expiring: written.expiring, removed_memory: written.removed_memory }
                 }).map_err(|error| error.to_string());
@@ -170,13 +166,12 @@ impl EffectRunner<StoreWriter> for StoreRunner {
                 self.erased(back, io_id, store.erase_models(Generation::from_value(generation_new), &models));
             }
             StoreEffect::ClearSecret { io_id } => {
-                let (client, credentials, wiring, back) = (self.client.clone(), self.credentials.clone(), wiring.clone(), back.clone());
+                let (secret, wiring, back) = (self.secret.clone(), wiring.clone(), back.clone());
                 let launch = wiring.handle.launch();
                 drop(crate::task::spawn_blocking_on(crate::task::Carry::Detached, &self.executor, move || {
-                    let cleared = match (&client, &credentials) {
-                        (Some(client), _) => client.erase_credential(),
-                        (None, Some(credentials)) => credentials.clear(),
-                        (None, None) => Ok(()),
+                    let cleared = match &secret {
+                        Some(secret) => secret.erase(),
+                        None => Ok(()),
                     };
                     if let Err(error) = &cleared {
                         wiring.fault(format!("clear secret: {error}"));
@@ -225,8 +220,8 @@ impl EffectRunner<StoreWriter> for StoreRunner {
                         }
                         match restore.ops {
                             Ok(mut stored) => {
-                                if let Some(client) = &self.client {
-                                    for item in &mut stored { item.op.path = client.graphql_path().to_string(); }
+                                if let Some(exchange) = &self.exchange {
+                                    for item in &mut stored { item.op.path = exchange.graphql_path().to_string(); }
                                 }
                                 wiring.to_outbox(OutboxInput::RegisterOperations { declarations: stored.iter().map(|item| (item.op.model.clone(), item.op.action.clone())).collect() });
                                 wiring.to_outbox(OutboxInput::Restored { ops: stored, pending_lost: false });
@@ -248,20 +243,16 @@ impl EffectRunner<StoreWriter> for StoreRunner {
                         }
                     }
                 }
-                match &self.client {
-                    Some(client) => match super::session_runner::SessionRunner::rows(client) {
+                match &self.exchange {
+                    Some(exchange) => match super::session_runner::SessionRunner::rows(exchange, &self.db) {
                         Ok(stored) => wiring.to_session(SessionInput::Restored { epoch, pending: stored.pending, answers: stored.answers, pending_lost: stored.dropped_pending }),
                         Err(error) => wiring.restore_failed_for(Peer::Session, error.to_string()),
                     },
                     None => wiring.to_lifecycle(LifecycleInput::RestoreClassified { owner: Peer::Session, epoch }),
                 }
             }
-            StoreEffect::CloseReads => self.db.shared.store.reads().close(),
-            StoreEffect::CloseConnections => {
-                if let Err(error) = self.db.close() {
-                    wiring.fault(format!("close: {error}"));
-                }
-            }
+            StoreEffect::CloseReads => self.db.reads().close(),
+            StoreEffect::CloseConnections => self.db.close_connections(),
             StoreEffect::StoreClosed => wiring.to_lifecycle(LifecycleInput::StoreClosed),
         }
     }
@@ -269,7 +260,7 @@ impl EffectRunner<StoreWriter> for StoreRunner {
 
 pub(super) struct NetworkRunner {
     pub wiring: Arc<Wiring>,
-    pub db: Db,
+    pub db: std::sync::Arc<Store>,
     /// The answer of `set_online` waits for `step_done`: a caller that heard it finds `Online` already queued for every owner.
     pub held_replies: Vec<(u64, bool)>,
 }

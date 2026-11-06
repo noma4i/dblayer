@@ -20,7 +20,7 @@ const LIMIT: Duration = Duration::from_secs(5);
 const DIGEST: &str = "00000000000000010000000000000000000000000000000000000000000000ff";
 const IDENTITY: u64 = 1;
 
-fn ports(db: Db, transport: Arc<MockTransport>) -> Ports {
+fn ports(db: std::sync::Arc<Store>, transport: Arc<MockTransport>) -> Ports {
     Ports {
         db,
         transport: Some(transport),
@@ -39,14 +39,14 @@ fn moments_spec() -> ModelSpec { ModelSpec::new("moments", vec![FieldSpec::scala
 
 fn open(path: &std::path::Path) -> Db { Db::open_with(Some(path), vec![moments_spec()], None, DbConfig::default()).unwrap() }
 
-fn session_row(db: &Db) {
-    let inner = db.shared.store.lock();
+fn session_row(db: &Store) {
+    let inner = db.lock();
     crate::transport::encrypted::state::start(&inner.connection, DIGEST).unwrap();
     crate::transport::encrypted::state::commit(&inner.connection, 1).unwrap();
 }
 
-fn stored_digest(db: &Db) -> Option<String> {
-    let inner = db.shared.store.lock();
+fn stored_digest(db: &Store) -> Option<String> {
+    let inner = db.lock();
     crate::transport::encrypted::state::session(&inner.connection).unwrap().map(|session| session.credential_digest)
 }
 
@@ -57,7 +57,7 @@ async fn answer(waiter: Waiter<Reply>) -> Reply {
     }
 }
 
-async fn start(db: &Db, transport: &Arc<MockTransport>) -> Life {
+async fn start(db: &Store, transport: &Arc<MockTransport>) -> Life {
     let (db, transport) = (db.clone(), transport.clone());
     tokio::task::spawn_blocking(move || Life::start(ports(db, transport)).expect("the first publish comes")).await.unwrap()
 }
@@ -393,12 +393,12 @@ async fn the_rows_of_a_batch_land_through_the_common_path() {
     let (id, reply) = receiver.recv_timeout(LIMIT).expect("the store answered");
     assert_eq!(id, 1);
     assert!(matches!(reply, StoreReply::Committed { .. }), "{reply:?}");
-    assert_eq!(db.shared.store.row_count("moments").unwrap(), 1);
+    assert_eq!(db.row_count("moments").unwrap(), 1);
     life.wiring.to_store(StoreInput::Commit(batch(2, r#"{"name":"no id"}"#)));
     let (id, reply) = receiver.recv_timeout(LIMIT).expect("the store answered");
     assert_eq!(id, 2);
     assert!(matches!(reply, StoreReply::Rejected(_)), "a row without an id is refused: {reply:?}");
-    assert_eq!(db.shared.store.row_count("moments").unwrap(), 1);
+    assert_eq!(db.row_count("moments").unwrap(), 1);
     closed(&life).await;
 }
 
@@ -434,7 +434,7 @@ async fn an_unreadable_queue_is_reported_for_outbox_and_open_still_ends() {
     let db = Db::open_in_memory(vec![moments_spec()], None).unwrap();
     session_row(&db);
     {
-        let inner = db.shared.store.lock();
+        let inner = db.lock();
         inner.connection.execute_batch("INSERT INTO op (action_key, status, created_at, since) VALUES ('moments:send', 'pending', 1, 1)").unwrap();
     }
     let life = start(&db, &transport).await;

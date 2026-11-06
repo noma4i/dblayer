@@ -5,7 +5,7 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use super::{Addresses, LifeReply, Ports, Wiring};
-use crate::db::Db;
+use crate::store::Store;
 use crate::owners::contract::{BatchAuthor, Committed, Drained, Models, Rejected};
 use crate::owners::lifecycle::{LifecycleInput, Peer};
 use crate::owners::network::NetworkInput;
@@ -30,8 +30,8 @@ impl EffectRunner<Feed> for FeedWithoutIo {
 }
 
 /// `updates.debounce` of each model, in milliseconds.
-fn debounce_of(db: &Db) -> BTreeMap<String, u64> {
-    db.shared.specs.values().filter_map(|spec| {
+fn debounce_of(db: &Store) -> BTreeMap<String, u64> {
+    db.specs().values().filter_map(|spec| {
         let declared = spec.relations.iter().flat_map(|relation| &relation.updates).chain(&spec.listens);
         let longest = declared.filter_map(|updates| updates.debounce.as_deref().and_then(crate::pacing::parse_duration)).max()?;
         Some((spec.key.to_string(), u64::try_from(longest.as_millis()).unwrap_or(u64::MAX)))
@@ -49,11 +49,11 @@ fn drained(wiring: &Wiring, drained: Drained) { wiring.to_lifecycle(LifecycleInp
 /// Adds the owners at the indexes `base`, `base + 1`, `base + 2`; each owner holds the addresses of the others.
 pub(super) fn add(builder: &mut RuntimeBuilder, wiring: &Arc<Wiring>, ports: &Ports, store: Address<StoreWriter>, base: usize) -> ReadAt {
     let (windows_at, deliveries_at, feed_at) = (Address::<Windows>::new(base), Address::<Deliveries>::new(base + 1), Address::<Feed>::new(base + 2));
-    let db: Db = ports.db.clone();
+    let db: std::sync::Arc<Store> = ports.db.clone();
     let handle = builder.handle();
     let transport: Option<Arc<dyn Transport>> = ports.transport.clone();
-    let admit_db = db.clone();
-    let admit: crate::owners::read::Admit = Arc::new(move |epoch| admit_db.admit_in(crate::ffi::admission::Origin::Session, "window request", epoch).map_err(|error| crate::owners::read::Refused(error.to_string())));
+    let admit_wiring = wiring.clone();
+    let admit: crate::owners::read::Admit = Arc::new(move |epoch| if admit_wiring.admits_epoch(epoch) { Ok(()) } else { Err(crate::owners::read::Refused("the epoch of the request ended".into())) });
     let feed_admit = admit.clone();
     let codec = Arc::new(SchemaWindowCodec::new(db.clone(), ports.read_operations.clone().unwrap_or_default()));
 
@@ -105,7 +105,7 @@ pub(super) fn add(builder: &mut RuntimeBuilder, wiring: &Arc<Wiring>, ports: &Po
             DeliveryEffect::Stream { .. } => {}
         }),
     ).counted_by(handle.clone());
-    let deliveries = builder.add::<Deliveries>("deliveries", DeliveriesState::new(0, DeliveryPeers { windows: windows_at, feed: feed_at }, db.shared.store.published_revision()), delivery_io);
+    let deliveries = builder.add::<Deliveries>("deliveries", DeliveriesState::new(0, DeliveryPeers { windows: windows_at, feed: feed_at }, db.published_revision()), delivery_io);
     let feed_wiring = wiring.clone();
     let feed_rest: Rest<FeedEffect> = Box::new(move |_stamp, effect| match effect {
         FeedEffect::Drained(done) => drained(&feed_wiring, done),

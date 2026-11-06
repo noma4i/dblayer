@@ -1,7 +1,7 @@
 use serde_json::{Map, Value};
 use sha2::{Digest, Sha256};
 
-use crate::db::Record;
+use crate::store::Record;
 use crate::operation::enum_text;
 use crate::schema::{FieldKind, FieldSpec, ModelSpec, TYPENAME};
 use crate::syncstate::{OperationFailure, SyncInfo, SyncState};
@@ -283,7 +283,7 @@ impl WireModel {
         WireRow {
             id: record.id.to_string(),
             revision: record.revision,
-            estimated_bytes: crate::db::row_bytes("", record) as u64,
+            estimated_bytes: crate::store::row_bytes("", record) as u64,
             layout: self.layout.clone(),
             cells: self.fields.iter().map(|field| cell(field, record.data.get(&field.name), &mut types)).collect(),
             sync: sync(&record.sync),

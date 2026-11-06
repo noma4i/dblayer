@@ -155,7 +155,7 @@ pub(super) fn apply_envelope_at(
         let id = target.id.to_string();
         if let Some(stored) = reader.stored_rows(target.model.as_str(), &[id.clone()])?.remove(&id) {
             let sync = crate::syncstate::read_sync(connection, target.model.as_str(), &[id.clone()])?.remove(&id).unwrap_or_default();
-            result.snapshot = Some(std::sync::Arc::new(crate::db::Record { id: stored.id, revision: stored.revision, data: stored.row, sync, ephemeral: 0 }));
+            result.snapshot = Some(std::sync::Arc::new(crate::store::Record { id: stored.id, revision: stored.revision, data: stored.row, sync }));
         }
     }
     for (item, target) in &envelope.item_snapshots {
@@ -164,7 +164,7 @@ pub(super) fn apply_envelope_at(
         let stored = reader.stored_rows(target.model.as_str(), &[id.clone()])?.remove(&id);
         let row = if let Some(stored) = stored {
             let sync = crate::syncstate::read_sync(connection, target.model.as_str(), &[id.clone()])?.remove(&id).unwrap_or_default();
-            Some(std::sync::Arc::new(crate::db::Record { id: stored.id, revision: stored.revision, data: stored.row, sync, ephemeral: 0 }))
+            Some(std::sync::Arc::new(crate::store::Record { id: stored.id, revision: stored.revision, data: stored.row, sync }))
         } else { None };
         result.item_snapshots.push((item.clone(), row));
     }
@@ -380,7 +380,7 @@ fn stamp_confirmed_rows(
 ) -> Result<(), StoreError> {
     for transition in transitions {
         let OperationTransition::Close { seq, status: OperationStatus::Committed, .. } = transition else { continue };
-        let Some(snapshot) = crate::db::op_effect::read_prior(connection, *seq)? else { continue };
+        let Some(snapshot) = crate::store::plan::op_effect::read_prior(connection, *seq)? else { continue };
         for item in snapshot.get("rows").and_then(Value::as_array).into_iter().flatten() {
             let (Some(kind), Some(model), Some(id)) =
                 (item.get("kind").and_then(Value::as_str), item.get("model").and_then(Value::as_str), item.get("id").and_then(Value::as_str))

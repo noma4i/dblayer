@@ -71,13 +71,9 @@ impl FeedIo {
     }
 
     fn connect(&self, stamp: EpochStamp, connection: ConnectionId, back: &Back<Feed>) {
-        let admitted = match (&self.admit, stamp) {
-            (Some(admit), EpochStamp::Epoch(epoch)) => match admit(epoch) {
-                Ok(admitted) => Some(admitted),
-                Err(_) => return back.reply(stamp, FeedInput::SubscriptionEnded { connection_id: connection }),
-            },
-            _ => None,
-        };
+        if let (Some(admit), EpochStamp::Epoch(epoch)) = (&self.admit, stamp) {
+            if admit(epoch).is_err() { return back.reply(stamp, FeedInput::SubscriptionEnded { connection_id: connection }); }
+        }
         let cancel = CancelToken::new();
         let attempt = self.attempts.fetch_add(1, Ordering::SeqCst);
         let open = self.open.clone();
@@ -94,10 +90,7 @@ impl FeedIo {
         let launch = self.counted.as_ref().map(crate::runtime::Handle::launch);
         spawn_on(Carry::Detached, &self.handle, crate::runtime::counted(launch, async move {
             let running = Self::run(lines, codec, connection, (cancel, closing, established), queued, reply);
-            match admitted {
-                Some(admitted) => drop(admitted.run(running).await),
-                None => running.await,
-            }
+            running.await;
             let mut open = open.lock().unwrap_or_else(PoisonError::into_inner);
             if open.get(&connection).is_some_and(|entry| entry.attempt == attempt) {
                 open.remove(&connection);

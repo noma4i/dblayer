@@ -9,9 +9,8 @@ use crate::identity::{Generation, ModelKey, RowId};
 use crate::store::{Reader, StoreError};
 
 use crate::lifecycle::authority::Authority;
-use crate::db::{plan_fault, Db, DbError, OutboxOperation, Prior, PriorRow};
-
-pub(crate) type Still<'a> = dyn Fn(&Reader<'_>, &OutboxOperation) -> Result<bool, StoreError> + 'a;
+use crate::store::plan::{plan_fault, OutboxOperation, Prior, PriorRow};
+use crate::store::DbError;
 
 #[derive(Default)]
 struct Restore {
@@ -215,109 +214,6 @@ fn restore_edit(
         }
     }
     Ok(())
-}
-
-impl Db {
-    pub(crate) fn remove_upload_item(&self, admitted: &crate::ffi::admission::Admitted, model: &str, id: &RowId, seq: i64, remove_row: bool) -> Result<bool, DbError> {
-        self.remove_upload_item_if(admitted, model, id, seq, remove_row, None)
-    }
-
-    pub(crate) fn remove_upload_item_if(&self, admitted: &crate::ffi::admission::Admitted, model: &str, id: &RowId, seq: i64, remove_row: bool, still: Option<&Still<'_>>) -> Result<bool, DbError> {
-        let generation = self.generation();
-        let spec = self.spec(model)?;
-        let mut removed = false;
-        self.commit_following(&admitted.authority(), generation, |reader| {
-            removed = false;
-            let Some(entry) = OutboxOperation::read(reader, seq)? else { return Ok(None) };
-            if let Some(still) = still { if !still(reader, &entry)? { return Ok(None); } }
-            if entry.operation.transport_started && entry.operation.status == OperationStatus::Pending { return Err(DbError::InFlight { model: model.into(), id: id.to_string() }); }
-            let position = reader.connection().query_row("SELECT position FROM op_item WHERE seq = ?1 AND row_id = ?2", rusqlite::params![seq, id.as_str()], |row| row.get(0))?;
-            let mut envelope = CommitEnvelope::new(WriteOrigin::Optimistic, generation);
-            let mut prior = Prior::of(&entry)?.unwrap_or_default();
-            if remove_row {
-                let mut selected = entry.clone();
-                selected.rollback = Some(Prior { rows: prior.rows.iter().filter(|row| row.id() == id.as_str()).cloned().collect() }.to_value());
-                let plan = restore(reader, &Prior::related_operations(reader, &selected)?, &selected, reader.revision_seq()? + 1)?;
-                envelope.entity_ops = plan.entity_ops;
-                envelope.scope_ops = plan.scope_ops;
-                envelope.operation_transitions = plan.transitions;
-            }
-            prior.rows.retain(|row| row.id() != id.as_str());
-            let rows: Vec<_> = entry.operation.row_ids.iter().filter(|row| *row != id).cloned().collect();
-            let mut inputs = Vec::new();
-            if let Some(batch) = crate::operation::Operation::upload_action(&entry.operation.action_key).and_then(|(_, name)| spec.upload_action(&name)).and_then(|action| action.batch.as_ref()).filter(|batch| rows.len() >= batch.min) {
-                if let Some(fields) = &batch.renumber {
-                    let position = spec.integer_path(&fields.position).ok_or_else(|| DbError::InvalidUpload(fields.position.clone()))?;
-                    let size = spec.integer_path(&fields.size).ok_or_else(|| DbError::InvalidUpload(fields.size.clone()))?;
-                    for (index, row_id) in rows.iter().enumerate() {
-                        if let Some(stored) = reader.stored_row(model, row_id.as_str())? {
-                            let mut row = stored.row;
-                            write_number(&mut row, &position, index + fields.position_from);
-                            write_number(&mut row, &size, rows.len());
-                            let item_position: i64 = reader.connection().query_row("SELECT position FROM op_item WHERE seq = ?1 AND row_id = ?2", rusqlite::params![seq, row_id.as_str()], |row| row.get(0))?;
-                            let value = crate::operation::read_item_value(reader.connection(), seq, item_position, "input")?.ok_or_else(|| DbError::InvalidUpload("upload input is missing".into()))?;
-                            let mut input: crate::upload::UploadInput = serde_json::from_value(value).map_err(|error| DbError::InvalidUpload(error.to_string()))?;
-                            for (target, source) in &batch.input {
-                                input.variables.insert(target.clone(), row.get(source).cloned().unwrap_or(Value::Null));
-                            }
-                            inputs.push((item_position, input));
-                            envelope.entity_ops.push(EntityOp::Upsert { model: ModelKey::new(model), id: row_id.clone(), row });
-                        }
-                    }
-                }
-            }
-            envelope.operation_transitions.push(entry.rewritten(rows, entry.input.clone(), Some(prior.to_value())));
-            envelope.operation_transitions.push(OperationTransition::RemoveUploadItem { seq, position, inputs });
-            removed = true;
-            Ok(Some(envelope))
-        }).map_err(plan_fault)?;
-        Ok(removed)
-    }
-
-    pub fn roll_back(&self, admitted: &crate::ffi::admission::Admitted, seq: i64) -> Result<CommitResult, DbError> {
-        self.roll_back_at(admitted, seq, self.generation())
-    }
-
-    pub(crate) fn roll_back_at(&self, admitted: &crate::ffi::admission::Admitted, seq: i64, generation: Generation) -> Result<CommitResult, DbError> {
-        self.roll_back_if(admitted, seq, generation, None)
-    }
-
-    pub(crate) fn roll_back_if(&self, admitted: &crate::ffi::admission::Admitted, seq: i64, generation: Generation, still: Option<&Still<'_>>) -> Result<CommitResult, DbError> {
-        self.roll_back_gated(&admitted.authority(), seq, generation, still)
-    }
-
-    pub(crate) fn roll_back_gated(&self, authority: &Authority, seq: i64, generation: Generation, still: Option<&Still<'_>>) -> Result<CommitResult, DbError> {
-        self.roll_back_with_pin(authority, seq, generation, still, crate::store::TombstonePrune::Skip)
-    }
-
-    pub(crate) fn roll_back_with_pin(&self, authority: &Authority, seq: i64, generation: Generation, still: Option<&Still<'_>>, prune: crate::store::TombstonePrune) -> Result<CommitResult, DbError> {
-        let mut discarded = Vec::new();
-        let (result, _) = self.commit_following_with_pin(authority, generation, prune, |reader| {
-                discarded = Vec::new();
-                let found = OutboxOperation::read(reader, seq)?;
-                let entry = match (found, still) {
-                    (Some(entry), None) => entry,
-                    (Some(entry), Some(still)) => {
-                        if !still(reader, &entry)? { return Ok(None); }
-                        entry
-                    }
-                    (None, None) => return Err(DbError::UnknownOperation(seq)),
-                    (None, Some(_)) => return Ok(None),
-                };
-                let plan = restore(reader, &Prior::related_operations(reader, &entry)?, &entry, reader.revision_seq()? + 1)?;
-                let mut envelope = CommitEnvelope::new(WriteOrigin::Optimistic, generation);
-                envelope.entity_ops = plan.entity_ops;
-                envelope.scope_ops = plan.scope_ops;
-                envelope.operation_transitions = plan.transitions;
-                envelope.operation_transitions.push(OperationTransition::Close { seq, status: OperationStatus::RolledBack });
-                discarded = plan.discarded_files;
-                Ok(Some(envelope))
-            })
-            .map_err(plan_fault)?;
-        let result = result.publish();
-        self.shared.files.discard(&discarded).map_err(|error| DbError::Store(StoreError::from(error)))?;
-        Ok(result)
-    }
 }
 
 pub(super) fn apply(writer: &mut super::row_write::RowWrite<'_>, op_id: u64) -> Result<CommitResult, StoreError> {

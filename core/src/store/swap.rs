@@ -4,7 +4,8 @@ use crate::operation::Operation;
 use crate::store::Reader;
 use crate::value::read_id;
 
-use crate::db::{swap_id, Db, DbError, OutboxOperation, Prior};
+use crate::store::plan::{swap_id, OutboxOperation, Prior};
+use crate::store::DbError;
 use super::references::{references_to, rows_referencing, ReferencingRow};
 use super::StoreError;
 
@@ -43,12 +44,6 @@ pub(crate) struct TempReplacement<'a> {
     pub model: &'a str,
     pub temp: &'a RowId,
     pub real: &'a RowId,
-}
-
-impl Db {
-    pub(crate) fn swap_temp(&self, reader: &Reader<'_>, envelope: &mut CommitEnvelope, outbox: &[OutboxOperation], replacement: TempReplacement<'_>, own: i64) -> Result<(), DbError> {
-        plan(reader, envelope, outbox, replacement, own).map_err(DbError::from)
-    }
 }
 
 fn plan(reader: &Reader<'_>, envelope: &mut CommitEnvelope, outbox: &[OutboxOperation], replacement: TempReplacement<'_>, own: i64) -> Result<(), StoreError> {
@@ -109,7 +104,7 @@ pub(super) fn apply(writer: &mut super::row_write::RowWrite<'_>, model: &str, te
     let reader = Reader::new(writer.connection, writer.models);
     let mut envelope = CommitEnvelope::new(crate::commit::WriteOrigin::Optimistic, writer.generation);
     if reader.point(model, temp.as_str())?.is_some() {
-        let outbox = crate::db::read_outbox(&reader)?;
+        let outbox = crate::store::plan::read_outbox(&reader)?;
         plan(&reader, &mut envelope, &outbox, TempReplacement { model, temp: &temp, real: &real }, own)?;
     }
     super::apply::apply_envelope_at(writer.connection, writer.models, &envelope, writer.now, super::TombstonePrune::Skip, writer.revision, Some(writer.originals))

@@ -176,7 +176,7 @@ async fn inv_fresh_12_load_requests_only_a_window_that_is_not_fresh() {
     load(&db, "quick").await.unwrap();
     assert_eq!(queries(&transport), 3, "fresh_for elapsed");
 
-    db.db.shared.store.invalidate_family_now("Moment", "feed").unwrap();
+    db.db.invalidate_family_now("Moment", "feed").unwrap();
     load(&db, "feed").await.unwrap();
     assert_eq!(queries(&transport), 4, "marked stale");
 }

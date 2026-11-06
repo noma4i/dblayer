@@ -1,4 +1,5 @@
 mod database;
+mod lease;
 mod receipt;
 #[cfg(test)]
 pub(crate) use database::NEEDS_NETWORK;
@@ -21,6 +22,8 @@ pub(crate) async fn settled(database: &Database) -> Result<(), DbError> {
 }
 #[cfg(test)]
 mod close_tests;
+#[cfg(test)]
+mod lease_tests;
 mod call_state;
 pub(crate) use call_state::CallState;
 mod foreign_future;
@@ -111,31 +114,35 @@ pub enum DbError {
     CorruptManifest { detail: String },
 }
 
-impl From<crate::db::DbError> for DbError {
-    fn from(error: crate::db::DbError) -> Self {
+impl From<crate::store::DbError> for DbError {
+    fn from(error: crate::store::DbError) -> Self {
         match error {
-            crate::db::DbError::NoSession { detail } => Self::NoSession { detail },
-            crate::db::DbError::Store(crate::store::StoreError::CorruptManifest(detail)) => Self::CorruptManifest { detail },
-            error @ (crate::db::DbError::InvalidUpload(_)
-                | crate::db::DbError::Schema(_)
-                | crate::db::DbError::Identity(_)
-                | crate::db::DbError::Invalid(_)
-                | crate::db::DbError::UnknownModel(_)
-                | crate::db::DbError::UnknownAction { .. }
-                | crate::db::DbError::UnknownAssociation { .. }
-                | crate::db::DbError::UnknownField { .. }
-                | crate::db::DbError::NotFileField { .. }
-                | crate::db::DbError::NotEphemeralField { .. }
-                | crate::db::DbError::InvalidEphemeralValue { .. }
-                | crate::db::DbError::NotLocalField { .. }
-                | crate::db::DbError::LocalValue { .. }
-                | crate::db::DbError::Selection(_)
-                | crate::db::DbError::Store(crate::store::StoreError::UnknownModel(_))) => Self::Invalid { detail: error.to_string() },
-            crate::db::DbError::Query(crate::query::QueryError::Sqlite(detail)) => Self::Database { detail },
-            error @ crate::db::DbError::Query(_) => Self::Invalid { detail: error.to_string() },
+            crate::store::DbError::NoSession { detail } => Self::NoSession { detail },
+            crate::store::DbError::Store(crate::store::StoreError::CorruptManifest(detail)) => Self::CorruptManifest { detail },
+            error @ (crate::store::DbError::InvalidUpload(_)
+                | crate::store::DbError::Schema(_)
+                | crate::store::DbError::Identity(_)
+                | crate::store::DbError::Invalid(_)
+                | crate::store::DbError::UnknownModel(_)
+                | crate::store::DbError::UnknownAction { .. }
+                | crate::store::DbError::UnknownAssociation { .. }
+                | crate::store::DbError::UnknownField { .. }
+                | crate::store::DbError::NotFileField { .. }
+                | crate::store::DbError::NotEphemeralField { .. }
+                | crate::store::DbError::InvalidEphemeralValue { .. }
+                | crate::store::DbError::NotLocalField { .. }
+                | crate::store::DbError::LocalValue { .. }
+                | crate::store::DbError::Selection(_)
+                | crate::store::DbError::Store(crate::store::StoreError::UnknownModel(_))) => Self::Invalid { detail: error.to_string() },
+            crate::store::DbError::Query(crate::query::QueryError::Sqlite(detail)) => Self::Database { detail },
+            error @ crate::store::DbError::Query(_) => Self::Invalid { detail: error.to_string() },
             other => Self::Database { detail: other.to_string() },
         }
     }
+}
+
+impl From<crate::store::StoreError> for DbError {
+    fn from(error: crate::store::StoreError) -> Self { crate::store::DbError::from(error).into() }
 }
 
 impl From<crate::transport::TransportError> for DbError {

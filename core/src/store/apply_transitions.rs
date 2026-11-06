@@ -261,7 +261,7 @@ pub(super) fn begin_operation(connection: &Connection, record: &OperationRecord)
     write_rows(connection, seq, &record.row_ids)?;
     write_value(connection, seq, "input", Some(&record.input))?;
     let revision = connection.query_row("SELECT COALESCE((SELECT CAST(value AS INTEGER) FROM manifest WHERE key = 'revision_seq'), 0) + 1", [], |row| row.get(0))?;
-    crate::db::op_effect::write_prior(connection, seq, revision, record.rollback.as_ref())?;
+    crate::store::plan::op_effect::write_prior(connection, seq, revision, record.rollback.as_ref())?;
     if let Some(state) = &record.upload {
         crate::operation::write_upload(connection, seq, 0, state)?;
     }

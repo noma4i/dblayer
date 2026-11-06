@@ -207,7 +207,7 @@ impl Database {
         let prepared = super::database::blocking(move || {
             let params: Map<String, Value> = serde_json::from_str(&text)?;
             db.window_record(&found, &name, &params)?;
-            let now = db.shared.store.lock().now_ms();
+            let now = db.lock().now_ms();
             let force = force || (goal == Goal::First && !db.window_is_fresh(&found, &name, &params, now)?);
             Ok((params, force))
         }).await;

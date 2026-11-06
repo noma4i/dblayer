@@ -304,17 +304,13 @@ impl Store {
         let generation = self.generation().next();
         let names: Vec<String> = models.iter().map(|model| model.to_string()).collect();
         self.erase_models(generation, &names)?;
-        self.lifecycle.models_reset(generation.value());
         Ok(())
     }
 
     /// The clearing the executor does for `ClearAccount` without the credential tables, for the tests that run without the owners: the epoch ends and the next one starts without a session.
     pub(crate) fn clear_account_in_tests(&self) -> Result<(), StoreError> {
         let generation = self.generation().next();
-        self.lifecycle.epoch_ended(crate::runtime::Cause::IdentityChanged);
         self.erase_account(generation, false)?;
-        let epoch = self.lifecycle.snapshot().session_epoch + 1;
-        self.lifecycle.published(&crate::owners::contract::Published { epoch, identity: None, generation: generation.value(), state: crate::owners::contract::PublishedState::NoSession, closed: false });
         Ok(())
     }
 }

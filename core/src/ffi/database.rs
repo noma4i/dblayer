@@ -8,12 +8,12 @@ use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 use serde_json::Value;
 use tokio::runtime::Runtime;
-use crate::db::{Db, DbConfig, OpenReport};
+use crate::store::{OpenReport, Store};
 use crate::identity::RowId;
 use crate::pacing::{Clock, ManualClock, SystemClock};
 use crate::query::Query;
 use crate::schema::ModelSpec;
-use crate::transport::{self as core, EncryptedClient};
+use crate::transport::{self as core, EncryptedTransport, Exchange};
 use crate::upload::UploadOperations;
 use super::open_slot::OpenLease;
 use super::transport::ForeignTransport;
@@ -115,9 +115,21 @@ impl TestClock {
 }
 
 #[derive(Clone, uniffi::Object)]
-pub struct Database { pub(super) lease: Arc<OnceLock<Arc<OpenLease>>>, pub(super) life: Arc<crate::owners::life::Life>, pub(super) streams: Arc<crate::ffi::admission::Leases>, pub(super) db: Db, pub(super) remote: bool, pub(super) session: Option<Arc<EncryptedClient>>, pub(super) reads: crate::owners::read::ReadOperations, pub(super) uploads: Option<UploadOperations>, pub(super) jobs: Arc<super::upload_rounds::RoundJobsSlot>, pub(super) shows: Arc<super::transfer_status::Shows>, pub(super) outcomes: Arc<Mutex<HashMap<(u64, u64, u64), WireOperationOutcome>>>, wires: Arc<HashMap<String, Arc<WireModel>>> }
+pub struct Database { pub(super) lease: Arc<OnceLock<Arc<OpenLease>>>, pub(super) life: Arc<crate::owners::life::Life>, pub(super) db: Arc<Store>, pub(super) remote: bool, pub(super) reads: crate::owners::read::ReadOperations, pub(super) uploads: Option<UploadOperations>, pub(super) jobs: Arc<super::upload_rounds::RoundJobsSlot>, pub(super) shows: Arc<super::transfer_status::Shows>, pub(super) outcomes: Arc<Mutex<HashMap<(u64, u64, u64), WireOperationOutcome>>>, wires: Arc<HashMap<String, Arc<WireModel>>> }
 
-pub(super) type Wiring = (Option<Arc<dyn core::Transport>>, Option<Arc<EncryptedClient>>, Option<Arc<dyn core::CableLines>>, Option<Arc<crate::owners::session_seal::SealConfig>>);
+pub(super) struct Wiring {
+    pub transport: Option<Arc<dyn core::Transport>>,
+    pub encrypted: Option<Encrypted>,
+    pub cable: Option<Arc<dyn core::CableLines>>,
+    pub seal: Option<Arc<crate::owners::session_seal::SealConfig>>,
+}
+
+/// What the encrypted session needs besides the transport: the exchange, the secret and the transport that joins the owners.
+pub(super) struct Encrypted {
+    pub exchange: Arc<Exchange>,
+    pub secret: Arc<crate::transport::encrypted::credential::Secret>,
+    pub transport: Arc<EncryptedTransport>,
+}
 
 impl Database {
     fn start(config: Config, models_json: String, transport: Option<Arc<dyn Transport>>, clock: Arc<dyn Clock>) -> Result<Arc<Self>, DbError> {
@@ -125,7 +137,7 @@ impl Database {
             #[cfg(test)]
             if transport.is_some() { super::signed_session_tests::signed_session(db); }
             let _ = db;
-            Ok((transport.map(|transport| Arc::new(ForeignTransport(transport)) as Arc<dyn core::Transport>), None, None, None))
+            Ok(Wiring { transport: transport.map(|transport| Arc::new(ForeignTransport(transport)) as Arc<dyn core::Transport>), encrypted: None, cable: None, seal: None })
         })
     }
 
@@ -133,25 +145,22 @@ impl Database {
         config: Config,
         models_json: String,
         clock: Arc<dyn Clock>,
-        wire: impl FnOnce(&Db, &Arc<dyn Clock>) -> Result<Wiring, DbError>,
+        wire: impl FnOnce(&Arc<Store>, &Arc<dyn Clock>) -> Result<Wiring, DbError>,
     ) -> Result<Arc<Self>, DbError> {
         let models: Vec<ModelSpec> = serde_json::from_str(&models_json)?;
         let uploads = upload_steps_of(&models)?;
         let keys: Vec<String> = models.iter().map(|model| model.key.to_string()).collect();
-        let db = Db::open_with(config.path.as_deref().map(Path::new), models, config.data_version.as_deref(), DbConfig { cache_rows: config.cache_rows as usize })?;
+        let db = Arc::new(Store::open_models(config.path.as_deref().map(Path::new), models, config.data_version.as_deref())?);
         db.set_clock(clock.clone());
-        let opening = db.admit()?;
-        db.expire_blobs_before_use(&opening)?;
-        drop(opening);
-        let (transport, session, cable, seal) = wire(&db, &clock)?;
+        db.expire_blobs_before_use()?;
+        let Wiring { transport, encrypted, cable, seal } = wire(&db, &clock)?;
         let reads = crate::owners::read::ReadOperations::default();
         let jobs: Arc<super::upload_rounds::RoundJobsSlot> = Arc::default();
         let shows: Arc<super::transfer_status::Shows> = Arc::default();
-        let life = Self::build_life(&db, transport.clone(), &session, cable, seal, reads.clone(), (uploads.clone(), jobs.clone(), shows.clone()))?;
+        let life = Self::build_life(&db, transport.clone(), encrypted.as_ref(), cable, seal, reads.clone(), (uploads.clone(), jobs.clone(), shows.clone()))?;
         let remote = transport.is_some();
         let wires = keys.into_iter().map(|key| db.spec(&key).map(|spec| (key, Arc::new(WireModel::of(spec)))).map_err(DbError::from)).collect::<Result<_, _>>()?;
-        let streams = db.shared.store.lifecycle.clone();
-        Ok(Arc::new(Self { lease: Arc::new(OnceLock::new()), life, streams, db, remote, session, reads, uploads, jobs, shows, outcomes: Arc::default(), wires: Arc::new(wires) }))
+        Ok(Arc::new(Self { lease: Arc::new(OnceLock::new()), life, db, remote, reads, uploads, jobs, shows, outcomes: Arc::default(), wires: Arc::new(wires) }))
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -196,11 +205,11 @@ impl Database {
         }).await
     }
 
-    /// F1: the owners of direction A on the threads of the core, started from the booted `Db`. It returns after the first `Publish`.
-    fn build_life(db: &Db, transport: Option<Arc<dyn core::Transport>>, session: &Option<Arc<EncryptedClient>>, cable: Option<Arc<dyn core::CableLines>>, seal: Option<Arc<crate::owners::session_seal::SealConfig>>, read_operations: crate::owners::read::ReadOperations, (uploads, jobs, shows): (Option<UploadOperations>, Arc<super::upload_rounds::RoundJobsSlot>, Arc<super::transfer_status::Shows>)) -> Result<Arc<crate::owners::life::Life>, DbError> {
+    /// F1: the owners of direction A on the threads of the core, started from the booted `Store`. It returns after the first `Publish`.
+    fn build_life(db: &Arc<Store>, transport: Option<Arc<dyn core::Transport>>, encrypted: Option<&Encrypted>, cable: Option<Arc<dyn core::CableLines>>, seal: Option<Arc<crate::owners::session_seal::SealConfig>>, read_operations: crate::owners::read::ReadOperations, (uploads, jobs, shows): (Option<UploadOperations>, Arc<super::upload_rounds::RoundJobsSlot>, Arc<super::transfer_status::Shows>)) -> Result<Arc<crate::owners::life::Life>, DbError> {
         let executor = executor()?.handle().clone();
         let operations = operations_lookup(&read_operations);
-        let transfer = uploads.filter(|_| session.is_some()).map(|operations| crate::owners::write::transfer_executor::TransferPort {
+        let transfer = uploads.filter(|_| encrypted.is_some()).map(|operations| crate::owners::write::transfer_executor::TransferPort {
             codec: Arc::new(crate::owners::write::upload_codec::UploadCodec::new(operations, operations_lookup(&read_operations), crate::upload::UploadConfig::default())),
             jobs,
             shows: Arc::new(move |key, shown| shows.put(key, shown)),
@@ -211,8 +220,8 @@ impl Database {
             transport,
             executor,
             operations,
-            credentials: session.as_ref().map(|client| client.credential_slot()),
-            session: session.clone(),
+            secret: encrypted.map(|encrypted| encrypted.secret.clone()),
+            exchange: encrypted.map(|encrypted| encrypted.exchange.clone()),
             seal,
             transfer,
             cable,
@@ -223,7 +232,7 @@ impl Database {
             crate::owners::life::LifeError::CorruptManifest(detail) => DbError::CorruptManifest { detail },
             other => DbError::Database { detail: format!("the owners did not start: {other:?}") },
         })?);
-        if let Some(client) = session { client.attach(&life); }
+        if let Some(encrypted) = encrypted { encrypted.transport.attach(&life); }
         Ok(life)
     }
 
@@ -259,8 +268,8 @@ impl Database {
         }).await
     }
     pub fn open_report(&self) -> OpenReport { self.db.open_report().clone() }
-    pub fn restore_failed(&self) -> Result<Vec<crate::db::DroppedRecord>, DbError> { Ok(self.db.restore_failed()?) }
-    pub fn discard_restore_failed(&self, table: String, key: String) -> Result<bool, DbError> { Ok(self.db.discard_restore_failed(&table, &key)?) }
+    pub fn restore_failed(&self) -> Result<Vec<crate::store::DroppedRecord>, DbError> { Ok(self.db.failed_restores()?) }
+    pub fn discard_restore_failed(&self, table: String, key: String) -> Result<bool, DbError> { Ok(self.db.discard_restore_failed(&table, &key).map_err(crate::store::DbError::from)?) }
     pub async fn subscription_census(&self) -> Result<SubscriptionCensus, DbError> {
         let (observed, subscriptions, retained, refused_events) = self.life.subscription_census().await.map_err(|_| DbError::Interrupted { detail: "the census was interrupted".into() })?;
         Ok(SubscriptionCensus { observed_queries: observed as u64, subscriptions: subscriptions as u64, retained_observers: retained as u64, refused_events })
@@ -271,7 +280,7 @@ impl Database {
     }
     pub async fn read(&self, epoch: u64, model: String, row_id: String, field: String) -> Result<Option<Vec<u8>>, DbError> {
         let row_id = id(&row_id)?;
-        self.read_in_epoch(epoch, "read file", move |database| Ok(database.db.read(&model, &row_id, &field)?)).await
+        self.read_in_epoch(epoch, "read file", move |database| Ok(database.db.read_file(&model, &row_id, &field)?)).await
     }
     pub async fn url(&self, epoch: u64, model: String, row_id: String, field: String) -> Result<Option<String>, DbError> {
         let row_id = id(&row_id)?;
@@ -297,7 +306,7 @@ impl Database {
             names.push((name.clone(), if document.trim_start().starts_with("mutation") { crate::owners::calls::CallKind::Mutate } else { crate::owners::calls::CallKind::Query }));
             declared.push(operation);
         }
-        let registered: Vec<(String, String)> = self.db.shared.specs.values().flat_map(|spec| spec.actions.iter().filter_map(|action| action.mutation.as_ref().filter(|mutation| names.iter().any(|(name, _)| name == *mutation)).map(|_| (spec.key.to_string(), action.name.clone())))).collect();
+        let registered: Vec<(String, String)> = self.db.specs().values().flat_map(|spec| spec.actions.iter().filter_map(|action| action.mutation.as_ref().filter(|mutation| names.iter().any(|(name, _)| name == *mutation)).map(|_| (spec.key.to_string(), action.name.clone())))).collect();
         let keys = crate::owners::read::preload_keys(&self.db, false).map_err(|error| DbError::Invalid { detail: format!("the preload of the schema is invalid: {error}") })?;
         self.reads.declare(declared);
         self.life.declare(names);
@@ -347,18 +356,11 @@ impl Database {
             crate::runtime::Outcome::Value(LifeReply::Life(Err(crate::owners::lifecycle::LifecycleError::Closed))) => Err(super::command::closed()),
             _ => Ok(()),
         });
-        let leases = self.streams.clone();
-        let _draining = crate::runtime::hold_until_woken(self.life.launch());
-        let drained = on_executor(crate::runtime::counted(Some(self.life.launch()), async move {
-            tokio::time::timeout(Duration::from_secs(10), leases.settled()).await.map_err(|_| DbError::Invalid { detail: format!("close timed out while leases were still held: {}", leases.held().join("; ")) })
-        })).await;
-        crate::runtime::release_held();
-        let (db, life) = (self.db.clone(), self.life.clone());
-        let _shutting = crate::runtime::hold_until_woken(self.life.launch());
-        let ended = blocking(move || { life.shutdown(); Ok(db.close()?) }).await;
+        let (life, _closing) = (self.life.clone(), crate::runtime::hold_until_woken(self.life.launch()));
+        let ended = blocking(move || { life.shutdown(); Ok(()) }).await;
         crate::runtime::release_held();
         if let Some(lease) = self.lease.get() { lease.release(); }
-        answered.and(drained).and(ended)
+        answered.and(ended)
     }
 }
 
@@ -392,7 +394,7 @@ impl Database {
         Err(DbError::Network { detail: format!("{what} needs the network") })
     }
 
-    pub(super) fn parsed_query(&self, json: &str) -> Result<crate::db::ParsedQuery, DbError> {
+    pub(super) fn parsed_query(&self, json: &str) -> Result<crate::store::ParsedQuery, DbError> {
         serde_json::from_str::<Query>(json)?;
         Ok(self.db.parse_query(json)?)
     }

@@ -11,6 +11,16 @@ use crate::pacing::{Clock, Counters, SystemClock};
 use crate::schema::{ModelSpec, SearchPath};
 
 mod admission;
+mod context;
+mod file_read;
+mod lookup;
+pub(crate) mod plan;
+mod restore_read;
+mod upload_rows;
+mod window_read;
+mod db_error;
+mod record;
+pub(crate) mod replaced_log;
 #[cfg(test)]
 mod atomic_tests;
 mod apply;
@@ -57,6 +67,14 @@ pub(crate) mod window_values;
 mod write;
 
 pub use admission::{admit_upsert, UpsertAdmission};
+pub use context::{DroppedRecord, OpenReport};
+pub(crate) use context::{CommitNotice, Context};
+pub use db_error::DbError;
+pub use record::{Record, Row};
+pub(crate) use record::row_bytes;
+pub(crate) use lookup::{ParsedQuery, ViewRead};
+pub(crate) use plan::{Planned, LocalPlan, MutationCall};
+pub(crate) use restore_read::Restore;
 pub use apply::PlanCommitError;
 pub(crate) use apply::save_pending;
 pub use boot::BootReport;
@@ -99,9 +117,7 @@ pub(crate) struct Inner {
 
 impl Inner {
     pub(crate) fn ensure_generation(&self, authority: &crate::lifecycle::authority::Authority, generation: Generation) -> Result<(), StoreError> {
-        if let crate::lifecycle::authority::Authority::Admitted(admitted) = authority {
-            if !admitted.life().admits_epoch(admitted.value()) { return Err(StoreError::Envelope(crate::commit::EnvelopeFault::StaleGeneration)); }
-        }
+        let _ = authority;
         if generation != self.generation {
             return Err(StoreError::Envelope(crate::commit::EnvelopeFault::StaleGeneration));
         }
@@ -211,7 +227,7 @@ impl Drop for Committed<'_> {
 
 pub struct Store {
     inner: Mutex<Inner>,
-    pub(crate) lifecycle: Arc<crate::ffi::admission::Leases>,
+    pub(crate) context: Context,
     models: RwLock<Arc<BTreeMap<String, ModelInfo>>>,
     poison: Arc<Mutex<Option<String>>>,
     readers: Option<readers::Readers>,
@@ -253,7 +269,7 @@ impl Store {
         };
         Self {
             inner: Mutex::new(inner),
-            lifecycle: Arc::default(),
+            context: Context::empty(),
             models: RwLock::new(models),
             poison,
             readers: None,
@@ -320,7 +336,7 @@ impl Store {
     pub(crate) fn adopt_generation(&self, generation: Generation) { self.lock().generation = generation; }
 
     pub fn generation(&self) -> Generation {
-        self.lifecycle.snapshot().generation
+        self.lock().generation
     }
 
     #[cfg(test)]
@@ -360,6 +376,18 @@ impl Store {
     }
 
     pub(crate) fn reads(&self) -> &Arc<reads::Reads> { &self.reads }
+
+    /// Lets go of the file: the writer and the readers swap their connections for empty in-memory ones, so the same file opens again at once.
+    pub(crate) fn close_connections(&self) {
+        if let Some(readers) = &self.readers { readers.close(); }
+        let mut inner = self.lock();
+        inner.ready = false;
+        if let Ok(memory) = Connection::open_in_memory() {
+            let old = std::mem::replace(&mut inner.connection, memory);
+            drop(inner);
+            let _ = old.close();
+        }
+    }
 
     pub fn read<T>(&self, required: &[&str], run: impl FnOnce(&Reader<'_>) -> Result<T, StoreError>) -> Result<T, StoreError> {
         let _admitted = self.reads.admit().ok_or(StoreError::Refused)?;

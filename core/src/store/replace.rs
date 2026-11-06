@@ -3,7 +3,8 @@ use std::collections::{HashMap, HashSet};
 use serde_json::{Map, Value};
 
 use crate::commit::{EntityOp, ScopeOp, ScopeRef};
-use crate::db::{longest_increasing, DbError};
+use crate::read::longest_increasing;
+use crate::store::DbError;
 use crate::identity::RowId;
 use crate::read::LandingPlan;
 use crate::schema::Coverage;
@@ -29,7 +30,7 @@ struct Member {
 
 pub(crate) fn scope_membership(reader: &Reader<'_>, model: &str, scope_key: &str, base_revision: i64) -> Result<HashMap<String, bool>, DbError> {
     let mut membership: HashMap<String, bool> = reader.scope_changes_since(model, scope_key, base_revision)?.into_iter().map(|(id, order)| (id, order.is_some())).collect();
-    for (id, joined) in crate::db::op_effect::open_scope_effects(reader.connection(), model, scope_key)? { membership.insert(id, joined); }
+    for (id, joined) in crate::store::plan::op_effect::open_scope_effects(reader.connection(), model, scope_key)? { membership.insert(id, joined); }
     Ok(membership)
 }
 

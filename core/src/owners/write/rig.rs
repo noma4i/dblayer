@@ -144,13 +144,13 @@ impl Stub {
 
 #[async_trait]
 impl Transport for Stub {
-    async fn query(&self, _admitted: &crate::lifecycle::Admitted, request: GraphQLRequest) -> Result<Response, TransportError> { self.answer(request).await }
+    async fn query(&self, request: GraphQLRequest) -> Result<Response, TransportError> { self.answer(request).await }
 
-    async fn mutate(&self, _admitted: &crate::lifecycle::Admitted, request: GraphQLRequest) -> Result<Response, TransportError> { self.answer(request).await }
+    async fn mutate(&self, request: GraphQLRequest) -> Result<Response, TransportError> { self.answer(request).await }
 
-    async fn subscribe(&self, _admitted: &crate::lifecycle::Admitted, request: GraphQLRequest) -> Result<ServerSubscription, TransportError> { Err(TransportError::Unscripted(request.operation_name)) }
+    async fn subscribe(&self, request: GraphQLRequest) -> Result<ServerSubscription, TransportError> { Err(TransportError::Unscripted(request.operation_name)) }
 
-    async fn put(&self, _admitted: &crate::lifecycle::Admitted, request: PutRequest) -> Result<PutResponse, TransportError> {
+    async fn put(&self, request: PutRequest) -> Result<PutResponse, TransportError> {
         lock(&self.puts).push(request.cancel.clone());
         if self.hang_puts.load(Ordering::SeqCst) {
             let _waiting = Waiting(self.dropped.clone());
@@ -160,7 +160,7 @@ impl Transport for Stub {
     }
 }
 
-pub(super) fn admit(_: Option<crate::runtime::Epoch>) -> Option<crate::lifecycle::Admitted> { crate::transport::test_admission().ok() }
+pub(super) fn admit(_: Option<crate::runtime::Epoch>) -> bool { true }
 
 /// Runs tasks and jobs until nothing moves, with the owners between. `wake` posts a no-op input: the scheduler takes what a task
 /// replied only after a step, so a reply from a task needs one step to be seen. A run that does not settle is a failure.

@@ -16,7 +16,7 @@ mod subscription;
 
 pub use cancel::CancelToken;
 pub use encrypted::cable::{CableConnect, CableCredential, CableError, CableKeys, CableLine, CableLines, CableLink, CableSocket, CableSubscriptions, EncryptedLines, Incoming, SocketEvent};
-pub use encrypted::{missing_from_registry, repeats, response_of, Answer, AppPlatform, ConfigCode, Country, CredentialSlot, EncryptedClient, EncryptedConfig, EncryptedEndpoints, EncryptedOperationClass, EncryptedSessionOperation, EncryptedTransport, HttpExchange, HttpReply, SecurityCode, ServerConfig};
+pub use encrypted::{missing_from_registry, repeats, response_of, Answer, AppPlatform, ConfigCode, Country, CredentialSlot, EncryptedConfig, EncryptedEndpoints, EncryptedOperationClass, EncryptedSessionOperation, EncryptedTransport, Exchange, HttpExchange, HttpReply, SecurityCode, ServerConfig};
 pub use error::TransportError;
 pub use extensions::{graphql_extensions, GraphqlExtensions, TransactionDisposition};
 #[cfg(test)]
@@ -41,15 +41,10 @@ pub trait Transport: Send + Sync {
     async fn open_cable(&self, _url: &str) -> Result<std::sync::Arc<dyn CableSocket>, TransportError> {
         Err(TransportError::Network("encrypted cable socket is not connected".into()))
     }
-    async fn query(&self, admitted: &crate::ffi::admission::Admitted, request: GraphQLRequest) -> Result<Response, TransportError>;
-    async fn mutate(&self, admitted: &crate::ffi::admission::Admitted, request: GraphQLRequest) -> Result<Response, TransportError>;
-    async fn subscribe(&self, admitted: &crate::ffi::admission::Admitted, request: GraphQLRequest) -> Result<ServerSubscription, TransportError>;
-    async fn put(&self, admitted: &crate::ffi::admission::Admitted, request: PutRequest) -> Result<PutResponse, TransportError>;
-}
-
-#[cfg(test)]
-pub(crate) fn test_admission() -> Result<crate::ffi::admission::Admitted, crate::ffi::admission::Ended> {
-    std::sync::Arc::new(crate::ffi::admission::Leases::default()).admit(crate::ffi::admission::Origin::Explicit, "test transport")
+    async fn query(&self, request: GraphQLRequest) -> Result<Response, TransportError>;
+    async fn mutate(&self, request: GraphQLRequest) -> Result<Response, TransportError>;
+    async fn subscribe(&self, request: GraphQLRequest) -> Result<ServerSubscription, TransportError>;
+    async fn put(&self, request: PutRequest) -> Result<PutResponse, TransportError>;
 }
 
 #[cfg(test)]

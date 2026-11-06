@@ -58,7 +58,7 @@ async fn sess_prop_security_code_kept() {
     database.life.mutate(1 << 32, None, 42, "/api/auth/confirm".into(), "{}".into(), 0);
     assert!(matches!(within(rx).await.unwrap(), AuthorOutcome::Error { class: ErrorClass::Permanent, error: SessionError::Security { code: SecurityCode::TlsTrust, detail } } if detail == "platform trust refused"));
     assert_eq!(http.requests.load(std::sync::atomic::Ordering::SeqCst), before + 2);
-    let answers = crate::transport::encrypted::state::answers(&database.db.shared.store.lock().connection).unwrap();
+    let answers = crate::transport::encrypted::state::answers(&database.db.lock().connection).unwrap();
     assert_eq!(answers.get(&42), Some(&crate::transport::encrypted::state::StoredAnswer::Security { code: SecurityCode::TlsTrust, detail: "platform trust refused".into() }));
     within(database.close_database()).await.unwrap();
 }
@@ -140,7 +140,7 @@ async fn interrupted_session_answer_returns_the_restored_call_once() {
     let request_id = "3f1c2a52-9d3e-4b7a-8a11-0123456789ab";
     {
         let db = crate::db::Db::open(&path, vec![], None).unwrap();
-        let inner = db.shared.store.lock();
+        let inner = db.lock();
         let session = state::session(&inner.connection).unwrap().unwrap();
         let pending = state::Pending { credential_digest: session.credential_digest, request_id: request_id.into(), response_key: jwe::random_token(), sequence: session.sequence + 1, path: "/api/auth/otp".into(), body: "{}".into(), owner: None, purpose: crate::transport::NetworkPurpose::Standard, req_id: 11 };
         state::store_pending(&inner.connection, &pending).unwrap();
@@ -292,7 +292,7 @@ async fn sessionless_calls_leave_no_session_state_even_when_refused() {
         if status == 200 { assert_eq!(second.unwrap(), "{}"); }
         else { assert!(matches!(second, Err(DbError::Http { status: s, .. }) if s == status), "{second:?}"); }
         {
-            let inner = database.db.shared.store.lock();
+            let inner = database.db.lock();
             let counts: (i64, i64) = inner.connection.query_row("SELECT (SELECT count(*) FROM encrypted_session), (SELECT count(*) FROM encrypted_pending)", [], |row| Ok((row.get(0)?, row.get(1)?))).unwrap();
             assert_eq!(counts, (0, 0), "status {status}");
             assert_eq!(credentials.value(), None);

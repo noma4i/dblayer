@@ -1,0 +1,191 @@
+//! The rows of `sync_upload` and `sync_upload_part`: the whole value of a transfer, read back for `Restored`.
+
+use std::collections::BTreeMap;
+
+use crate::files::Location;
+use crate::owners::store::IntentEffects;
+use crate::owners::write::outbox::{NewOp, OpSource};
+use crate::owners::write::transfer::{Source, Steps, StoredTransfer};
+use crate::runtime::Time;
+use crate::schema::OnFailure;
+
+use super::db_error::DbError;
+use super::Store;
+
+/// A row of `sync_upload` as the columns give it.
+pub(crate) struct UploadRaw {
+    key: [String; 3],
+    seq: i64,
+    source: String,
+    total: i64,
+    batch: Option<i64>,
+    upload_id: Option<String>,
+    sent: i64,
+    completed: bool,
+    failed: Option<String>,
+    created_at: i64,
+    inline: bool,
+    size: i64,
+    sha256: String,
+    path: String,
+    body: String,
+    on_failure: String,
+    steps_path: String,
+    steps_body: String,
+    transfer_id: Option<i64>,
+    cycle_id: Option<i64>,
+    signed_id: Option<String>,
+    aborted: bool,
+    op_id: Option<i64>,
+    fields: Option<String>,
+    etags: Vec<Option<String>>,
+}
+
+impl UploadRaw {
+    /// The operation of the optimistic effects of a transfer that has not handed its final mutation to Outbox: Transfer owns it.
+    pub(crate) fn owned_op(&self) -> Option<i64> { self.op_id.filter(|_| !self.completed) }
+
+    pub(crate) fn reserved_op(&self) -> Option<i64> { self.op_id }
+}
+
+pub(crate) fn upload_rows(connection: &rusqlite::Connection) -> rusqlite::Result<Vec<UploadRaw>> {
+    let mut parts: BTreeMap<[String; 3], Vec<Option<String>>> = BTreeMap::new();
+    let mut statement = connection.prepare("SELECT model, row_id, action, etag FROM sync_upload_part ORDER BY model, row_id, action, number")?;
+    for found in statement.query_map([], |row| Ok(([row.get::<_, String>(0)?, row.get(1)?, row.get(2)?], row.get::<_, Option<String>>(3)?)))? {
+        let (key, etag) = found?;
+        parts.entry(key).or_default().push(etag);
+    }
+    let mut statement = connection.prepare(
+        "SELECT model, row_id, action, seq, source, total, batch, upload_id, sent, completed, error_message, created_at, inline, size, sha256, mutation_path, mutation_body, on_failure, steps_path, steps_body, \
+         transfer_id, cycle_id, signed_id, aborted, op_id, fields FROM sync_upload WHERE seq IS NOT NULL ORDER BY seq",
+    )?;
+    let rows = statement.query_map([], |row| {
+        let key = [row.get::<_, String>(0)?, row.get(1)?, row.get(2)?];
+        Ok(UploadRaw {
+            etags: parts.get(&key).cloned().unwrap_or_default(),
+            key,
+            seq: row.get(3)?,
+            source: row.get(4)?,
+            total: row.get(5)?,
+            batch: row.get(6)?,
+            upload_id: row.get(7)?,
+            sent: row.get(8)?,
+            completed: row.get(9)?,
+            failed: row.get(10)?,
+            created_at: row.get(11)?,
+            inline: row.get(12)?,
+            size: row.get(13)?,
+            sha256: row.get(14)?,
+            path: row.get(15)?,
+            body: row.get(16)?,
+            on_failure: row.get(17)?,
+            steps_path: row.get(18)?,
+            steps_body: row.get(19)?,
+            transfer_id: row.get(20)?,
+            cycle_id: row.get(21)?,
+            signed_id: row.get(22)?,
+            aborted: row.get::<_, Option<bool>>(23)?.unwrap_or(false),
+            op_id: row.get(24)?,
+            fields: row.get(25)?,
+        })
+    })?;
+    rows.collect()
+}
+
+fn unsigned<T: TryFrom<i64>>(value: i64, column: &str) -> Result<T, DbError> { T::try_from(value).map_err(|_| DbError::Internal(format!("sync_upload.{column} holds {value}"))) }
+
+
+impl Store {
+    fn file_present(&self, transfer_id: u64, place: Location) -> Result<bool, DbError> {
+        let file_id = crate::owners::write::transfer::file_id(transfer_id);
+        match place {
+            Location::Table => self.read_locked(|connection| connection.query_row("SELECT COUNT(*) FROM file WHERE id = ?1", [&file_id], |row| row.get::<_, i64>(0))).map(|count| count > 0),
+            Location::Directory => Ok(self.files().path(&file_id).is_some_and(|path| path.exists())),
+        }
+        .map_err(|error| DbError::Internal(error.to_string()))
+    }
+
+    pub(crate) fn stored_transfers(&self, rows: Vec<UploadRaw>) -> Result<Vec<StoredTransfer>, DbError> {
+        rows.into_iter().map(|raw| self.stored_transfer(raw)).collect()
+    }
+
+    fn stored_transfer(&self, raw: UploadRaw) -> Result<StoredTransfer, DbError> {
+        let [model, id, action] = raw.key;
+        let key = format!("{model}:{id}:{action}");
+        let place = if raw.inline { Location::Table } else { Location::Directory };
+        let copying = raw.size == 0;
+        let seq: u64 = unsigned(raw.seq, "seq")?;
+        let transfer_id: u64 = raw.transfer_id.map_or(Ok(seq), |value| unsigned(value, "transfer_id"))?;
+        let file_present = if copying { std::path::Path::new(&raw.source).exists() } else { self.file_present(transfer_id, place)? };
+        Ok(StoredTransfer {
+            transfer_id,
+            key,
+            seq,
+            source: Source { path: raw.source, parts: unsigned(raw.total, "total")? },
+            batch: raw.batch.and_then(|group| u64::try_from(group).ok()).filter(|group| *group > 0),
+            upload_id: raw.upload_id,
+            fields: raw.fields.and_then(|text| serde_json::from_str::<serde_json::Value>(&text).ok()).and_then(|value| value.as_object().cloned()).unwrap_or_default(),
+            confirmed_parts: unsigned(raw.sent, "sent")?,
+            etags: raw.etags,
+            completed: raw.completed,
+            signed_id: raw.signed_id,
+            failed: raw.failed,
+            aborted: raw.aborted,
+            op_id: raw.op_id.map(|op| unsigned(op, "op_id")).transpose()?,
+            copying,
+            file_present,
+            created_at: Time(unsigned(raw.created_at, "created_at")?),
+            place,
+            size: unsigned(raw.size, "size")?,
+            sha256: raw.sha256,
+            cycle_id: raw.cycle_id.map_or(Ok(1), |value| unsigned(value, "cycle_id"))?,
+            has_intent: false,
+            mutation: NewOp {
+                model: model.clone(),
+                row_id: id.clone(),
+                action: action.clone(),
+                on_failure: if raw.on_failure == "keep" { OnFailure::Keep } else { OnFailure::Rollback },
+                origin: OpSource::Api,
+                path: raw.path,
+                body: raw.body,
+                effects: IntentEffects::default(),
+                durable: true,
+            },
+            steps: Steps { path: raw.steps_path, body: raw.steps_body },
+            restore_failed: None,
+        })
+    }
+
+    /// The cache entry of a file with this content: `Fresh` while the blob of the server lives (7 days from `createBlob`), `Stale` after it.
+    pub(crate) fn blob_cache_lookup(&self, content_sha256: &str) -> crate::owners::write::transfer::CachedBlob {
+        use crate::owners::write::transfer::{CachedBlob, EXPIRY_MS};
+        let now = u64::try_from(self.lock().now_ms()).unwrap_or(0);
+        let found = self.read_locked(|connection| {
+            rusqlite::OptionalExtension::optional(connection.query_row("SELECT blob_id, created_at FROM blob_cache WHERE content_sha256 = ?1", [content_sha256], |row| Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))))
+        });
+        match found {
+            Ok(Some((blob_id, created_at))) if now < u64::try_from(created_at).unwrap_or(0).saturating_add(EXPIRY_MS) => CachedBlob::Fresh { blob_id },
+            Ok(Some(_)) => CachedBlob::Stale,
+            _ => CachedBlob::Miss,
+        }
+    }
+
+    /// The elements of the batch `group` that still wait for the answer: the row id and the fields the element sends.
+    pub(crate) fn batch_rows(&self, model: &str, action: &str, group: u64) -> Result<Vec<(crate::identity::RowId, serde_json::Map<String, serde_json::Value>)>, DbError> {
+        let found = self
+            .read_locked(|connection| {
+                let mut statement = connection.prepare_cached("SELECT row_id, fields FROM sync_upload WHERE model = ?1 AND action = ?2 AND batch = ?3 ORDER BY seq")?;
+                let rows = statement.query_map(rusqlite::params![model, action, i64::try_from(group).unwrap_or(i64::MAX)], |row| Ok((row.get::<_, String>(0)?, row.get::<_, Option<String>>(1)?)))?.collect::<Result<Vec<_>, _>>();
+                rows
+            })
+            .map_err(|error| DbError::Internal(error.to_string()))?;
+        Ok(found
+            .into_iter()
+            .filter_map(|(id, fields)| {
+                let fields = fields.and_then(|text| serde_json::from_str::<serde_json::Value>(&text).ok()).and_then(|value| value.as_object().cloned())?;
+                Some((crate::identity::RowId::new(&id).ok()?, fields))
+            })
+            .collect())
+    }
+
+}

@@ -101,14 +101,14 @@ fn store_prop_tombstone_flight() {
     assert_eq!(pin(&mut owner, 0, 7), vec![StoreEffect::Pinned { epoch: 0, request_id: 7, base_revision: base }]);
     let min = limit(&step(&mut owner, batch(1))).unwrap();
     db.land_events_with_pin(&[("moments".into(), r#"{"op":"delete","id":"m1"}"#.into())], min).unwrap();
-    assert!(db.shared.store.is_tombstoned("moments", "m1").unwrap());
+    assert!(db.is_tombstoned("moments", "m1").unwrap());
     clock.advance(Duration::from_secs(86_401));
     db.write_queue_ops_with_pin(&[StoreOp::Rows { model: "moments".into(), rows: vec![row("m2")] }], min).unwrap();
-    assert!(db.shared.store.is_tombstoned("moments", "m1").unwrap());
+    assert!(db.is_tombstoned("moments", "m1").unwrap());
     db.write_queue_ops_with_pin(&[StoreOp::AttachFile { model: "moments".into(), row_id: "m2".into(), field: "media".into(), bytes: b"file".to_vec(), name: "file.txt".into(), mime: "text/plain".into() }], min).unwrap();
-    assert!(db.shared.store.is_tombstoned("moments", "m1").unwrap());
+    assert!(db.is_tombstoned("moments", "m1").unwrap());
     db.attach(&db.admit().unwrap(), "moments", &RowId::new("m2").unwrap(), "cover", b"other", "other.txt", "text/plain").unwrap();
-    assert!(db.shared.store.is_tombstoned("moments", "m1").unwrap());
+    assert!(db.is_tombstoned("moments", "m1").unwrap());
     let key = WindowKey::nodes("moments", &["m1"]);
     db.write_queue_ops_with_pin(&[StoreOp::Window { key: key.name, model: key.model, page: 1, replace_all: false, cursor: None, roots: vec![row("m1")], related: vec![], total: None, base_revision: i64::try_from(base).unwrap() }], min).unwrap();
     assert!(db.find("moments", &RowId::new("m1").unwrap()).unwrap().is_none());
@@ -116,5 +116,5 @@ fn store_prop_tombstone_flight() {
     step(&mut owner, StoreInput::Unpin { request_id: 7 });
     let min = limit(&step(&mut owner, batch(2))).unwrap();
     db.write_queue_ops_with_pin(&[StoreOp::Rows { model: "moments".into(), rows: vec![row("m3")] }], min).unwrap();
-    assert!(!db.shared.store.is_tombstoned("moments", "m1").unwrap());
+    assert!(!db.is_tombstoned("moments", "m1").unwrap());
 }

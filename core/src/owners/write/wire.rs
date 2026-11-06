@@ -5,7 +5,6 @@ use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
 
-use crate::lifecycle::Admitted;
 use crate::transport::Transport;
 
 pub type Task = Pin<Box<dyn Future<Output = ()> + Send>>;
@@ -44,7 +43,7 @@ impl Tasks for TokioTasks {
 pub struct Wire {
     pub transport: Arc<dyn Transport>,
     /// The admission of the epoch the step was decided in (`None` for a step without an epoch).
-    pub admit: Arc<dyn Fn(Option<crate::runtime::Epoch>) -> Option<Admitted> + Send + Sync>,
+    pub admit: Arc<dyn Fn(Option<crate::runtime::Epoch>) -> bool + Send + Sync>,
     pub tasks: Arc<dyn Tasks>,
 }
 

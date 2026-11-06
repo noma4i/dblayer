@@ -13,7 +13,6 @@ use async_trait::async_trait;
 use super::transfer::{file_id, CachedBlob, ShowSink, Shown, Source, Steps, TransferAnswer, TransferEffect, TransferId, TransferInput, Transfers};
 use super::wire::{Flights, Running, Wire};
 use crate::files::{CopiedSource, FileDirectories};
-use crate::lifecycle::Admitted;
 use crate::owners::contract::{Drained, ReplyId};
 use crate::runtime::{Back, EffectRunner, Epoch, EpochStamp};
 use crate::transport::{CancelToken, GraphQLRequest, NetworkPurpose, PutRequest, PutResponse, Response, RetryClass, Transport, TransportError};
@@ -21,7 +20,6 @@ use crate::transport::{CancelToken, GraphQLRequest, NetworkPurpose, PutRequest, 
 /// The requests of one step. Every request goes out with `NetworkPurpose::Transfer` and stops with the step.
 pub struct Link {
     transport: Arc<dyn Transport>,
-    admitted: Admitted,
     cancel: CancelToken,
 }
 
@@ -32,12 +30,12 @@ impl Drop for Link {
 impl Link {
     pub async fn mutate(&self, mut request: GraphQLRequest) -> Result<Response, TransportError> {
         request.purpose = NetworkPurpose::Transfer;
-        self.transport.mutate(&self.admitted, request).await
+        self.transport.mutate(request).await
     }
 
     pub async fn put(&self, mut request: PutRequest) -> Result<PutResponse, TransportError> {
         request.cancel = self.cancel.clone();
-        self.transport.put(&self.admitted, request).await
+        self.transport.put(request).await
     }
 }
 
@@ -158,8 +156,8 @@ impl TransferExecutor {
             EpochStamp::Epoch(epoch) => Some(epoch),
             EpochStamp::Control => None,
         };
-        let admitted = (self.wire.admit)(epoch)?;
-        Some(Link { transport: self.wire.transport.clone(), admitted, cancel: CancelToken::new() })
+        if !(self.wire.admit)(epoch) { return None; }
+        Some(Link { transport: self.wire.transport.clone(), cancel: CancelToken::new() })
     }
 
     /// Runs `call` as the task of `transfer_id`: its result becomes `input_of(result)` for the owner, unless the task is cancelled first.

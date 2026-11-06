@@ -13,7 +13,7 @@ async fn a_write_yields_while_sqlite_is_busy_and_finishes_after_release() {
     let mut model = ModelSpec::new("Note", vec![FieldSpec::scalar("id", ScalarKind::Id), FieldSpec::scalar("text", ScalarKind::Str)]);
     model.storage = Storage::Local;
     let database = Database::open(Config { path: None, data_version: None, cache_rows: 16 }, serde_json::to_string(&vec![model]).unwrap(), None, None, None, None, None).await.unwrap();
-    let writer = database.db.shared.store.lock();
+    let writer = database.db.lock();
     let writing = Arc::clone(&database);
     let (sent, received) = mpsc::channel();
     let thread = std::thread::spawn(move || {

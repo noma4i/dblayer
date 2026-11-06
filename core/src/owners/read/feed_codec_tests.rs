@@ -18,7 +18,7 @@ use super::feed::FramedEvent;
 use super::windows::{StaleKeys, WindowKey};
 use super::{FeedCodec, SchemaFeedCodec};
 use crate::db::fixtures::{chats_spec, messages_spec};
-use crate::db::Db;
+use crate::store::Store;
 use crate::schema::{ChangeFeed, Coverage, ModelSpec, RelationSpec, RemoteShape, UpdatesSpec};
 use super::ReadOperation;
 use crate::transport::Response;

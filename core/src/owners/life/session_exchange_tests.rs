@@ -7,7 +7,7 @@ use std::time::Duration;
 use serde_json::{json, Value};
 
 use super::LifeReply;
-use crate::db::Db;
+use crate::store::Store;
 use crate::pacing::ManualClock;
 use crate::transport::encrypted::fake_server_tests::{FakeServer, MemoryCredentials};
 use crate::transport::encrypted::state;
@@ -39,7 +39,7 @@ impl World {
         Self { server: FakeServer::new(clock.clone()), credentials: Arc::new(MemoryCredentials::default()), clock }
     }
 
-    async fn open(&self, db: &Db) -> (Arc<EncryptedClient>, Arc<crate::owners::life::Life>) {
+    async fn open(&self, db: &Store) -> (Arc<EncryptedClient>, Arc<crate::owners::life::Life>) {
         let client = Arc::new(EncryptedClient::new(&config(), self.server.clone(), self.credentials.clone(), db.clone(), self.clock.clone()).unwrap());
         let life = client.start_owners_in_tests(db);
         life.set_online(true).wait().await;
@@ -47,8 +47,8 @@ impl World {
     }
 }
 
-fn rows(db: &Db) -> (Option<state::Session>, Option<state::Pending>) {
-    let inner = db.shared.store.lock();
+fn rows(db: &Store) -> (Option<state::Session>, Option<state::Pending>) {
+    let inner = db.lock();
     (state::session(&inner.connection).unwrap(), state::pending(&inner.connection).unwrap())
 }
 
@@ -146,7 +146,7 @@ async fn the_answer_of_a_mutate_is_stored_with_the_removal_of_its_pending() {
     let crate::owners::life::LifeReply::Mutated(crate::owners::session::AuthorOutcome::Response(body)) = reply else { panic!("{reply:?}") };
     let (_, pending) = rows(&db);
     let answers = {
-        let inner = db.shared.store.lock();
+        let inner = db.lock();
         state::answers(&inner.connection).unwrap()
     };
     assert!(pending.is_none());
@@ -232,7 +232,7 @@ async fn a_stored_request_of_an_older_format_is_sent_again_with_the_request_id_a
         let db = Db::open(&path, Vec::new(), None).unwrap();
         let digest = rows(&db).0.unwrap().credential_digest;
         let pending = state::Pending { credential_digest: digest, request_id: old_id.into(), response_key: crate::transport::encrypted::jwe::random_token(), sequence: 2, path: OTP.into(), body: json!({}).to_string(), owner: None, purpose: crate::transport::NetworkPurpose::Standard, req_id: 2 };
-        let inner = db.shared.store.lock();
+        let inner = db.lock();
         state::store_pending(&inner.connection, &pending).unwrap();
     }
     let db = Db::open(&path, Vec::new(), None).unwrap();
@@ -254,7 +254,7 @@ async fn an_unreadable_stored_request_fails_the_open_with_a_storage_error() {
     let db = Db::open_in_memory(Vec::new(), None).unwrap();
     let client = Arc::new(EncryptedClient::new(&config(), world.server.clone(), world.credentials.clone(), db.clone(), world.clock.clone()).unwrap());
     {
-        let inner = db.shared.store.lock();
+        let inner = db.lock();
         inner.connection.execute("INSERT INTO encrypted_pending (id, credential_digest, request_id, response_key, sequence, path, body, purpose, req_id) VALUES (1, 'd', 'r', 'k', 1, '/p', 'not json', 0, 1)", []).unwrap();
     }
     let credentials: Arc<dyn crate::transport::CredentialSlot> = world.credentials.clone();
@@ -278,14 +278,14 @@ async fn a_pending_dropped_by_a_format_change_blocks_new_requests_until_the_rese
     let path = directory.path().join("session.sqlite");
     signed_in_file(&world, &path).await;
     let db = Db::open(&path, Vec::new(), None).unwrap();
-    db.shared.store.lock().connection.execute("INSERT INTO restore_failed (source_table, key, reason, columns) VALUES ('encrypted_pending', 'k', 'missing_column', '{}')", []).unwrap();
+    db.lock().connection.execute("INSERT INTO restore_failed (source_table, key, reason, columns) VALUES ('encrypted_pending', 'k', 'missing_column', '{}')", []).unwrap();
     let sent = world.server.seen().len();
     let (_client, life) = world.open(&db).await;
     let reply = attempt(&life, 1 << 41, json!({}).to_string()).await;
     assert!(matches!(reply, LifeReply::Mutated(AuthorOutcome::Error { error: SessionError::StateLost, .. })), "{reply:?}");
     assert_eq!(world.server.seen().len(), sent, "no request left");
     let _ = answer(life.session_reset()).await;
-    let left: i64 = db.shared.store.lock().connection.query_row("SELECT COUNT(*) FROM restore_failed WHERE source_table = 'encrypted_pending'", [], |row| row.get(0)).unwrap();
+    let left: i64 = db.lock().connection.query_row("SELECT COUNT(*) FROM restore_failed WHERE source_table = 'encrypted_pending'", [], |row| row.get(0)).unwrap();
     assert_eq!(left, 0, "the reset ends the block");
 }
 
@@ -296,7 +296,7 @@ async fn a_negative_stored_sequence_fails_the_open() {
     let path = directory.path().join("session.sqlite");
     signed_in_file(&world, &path).await;
     let db = Db::open(&path, Vec::new(), None).unwrap();
-    db.shared.store.lock().connection.execute("UPDATE encrypted_session SET sequence = -1", []).unwrap();
+    db.lock().connection.execute("UPDATE encrypted_session SET sequence = -1", []).unwrap();
     let client = Arc::new(EncryptedClient::new(&config(), world.server.clone(), world.credentials.clone(), db.clone(), world.clock.clone()).unwrap());
     let credentials: Arc<dyn crate::transport::CredentialSlot> = world.credentials.clone();
     let seal = Arc::new(crate::owners::session_seal::SealConfig::new(&config(), world.clock.clone()).unwrap());
@@ -368,7 +368,7 @@ impl CredentialSlot for ProbeSlot {
     }
 }
 
-fn open_with(world: &World, slot: Arc<ProbeSlot>, db: &Db) -> (Arc<EncryptedClient>, Arc<crate::owners::life::Life>) {
+fn open_with(world: &World, slot: Arc<ProbeSlot>, db: &Store) -> (Arc<EncryptedClient>, Arc<crate::owners::life::Life>) {
     *slot.db.lock().unwrap() = Some(db.clone());
     let client = Arc::new(EncryptedClient::new(&config(), world.server.clone(), slot, db.clone(), world.clock.clone()).unwrap());
     let life = client.start_owners_in_tests(db);
@@ -469,7 +469,7 @@ async fn a_secret_left_by_a_crash_is_erased_and_the_session_rows_go_before_the_s
         let _ = tokio::time::timeout(LIMIT, life.close().wait()).await;
     }
     let db = Db::open(&path, Vec::new(), None).unwrap();
-    db.shared.store.mark_session_end_in_tests().unwrap();
+    db.mark_session_end_in_tests().unwrap();
     drop(db);
     let slot = Arc::new(ProbeSlot::default());
     slot.memory.set(&world.credentials.value().unwrap()).unwrap();
@@ -568,14 +568,14 @@ fn the_answer_stays_when_the_landing_of_its_batch_fails_and_goes_with_the_landin
     use crate::owners::store::{StoreBatch, StoreOp};
     let db = Db::open_in_memory(Vec::new(), None).unwrap();
     {
-        let inner = db.shared.store.lock();
+        let inner = db.lock();
         state::store_answer(&inner.connection, 7, None, &state::StoredAnswer::Ok("{}".into())).unwrap();
     }
-    let answers = |db: &Db| state::answers(&db.shared.store.lock().connection).unwrap().len();
+    let answers = |db: &Store| state::answers(&db.lock().connection).unwrap().len();
     let batch = |rows: Vec<(String, String)>| StoreBatch { author: BatchAuthor::Outbox, id: 1, epoch: 1, basis: Default::default(), rows, intents: 0, credential: None, ops: vec![StoreOp::RemoveAnswer { request_id: 7 }] };
-    assert!(db.shared.store.write_batch(&batch(vec![("Task".into(), "not json".into())]), &db.shared.files, &db.shared.pointer_guards, None).is_err());
+    assert!(db.write_batch(&batch(vec![("Task".into(), "not json".into())]), &db.files(), &db.pointer_guards(), None).is_err());
     assert_eq!(answers(&db), 1);
-    db.shared.store.write_batch(&batch(Vec::new()), &db.shared.files, &db.shared.pointer_guards, None).unwrap();
+    db.write_batch(&batch(Vec::new()), &db.files(), &db.pointer_guards(), None).unwrap();
     assert_eq!(answers(&db), 0);
 }
 
@@ -587,9 +587,9 @@ async fn store_read_intents_queue_failed() {
     let path = directory.path().join("session.sqlite");
     signed_in_file(&world, &path).await;
     let db = Db::open(&path, Vec::new(), None).unwrap();
-    db.shared.store.lock().connection.execute_batch("ALTER TABLE op RENAME TO op_unreadable").unwrap();
+    db.lock().connection.execute_batch("ALTER TABLE op RENAME TO op_unreadable").unwrap();
     let (_client, life) = world.open(&db).await;
     assert!(life.restore_failures().iter().any(|(owner, _)| *owner == crate::owners::lifecycle::Peer::Outbox), "the queue failure reaches Outbox: {:?}", life.restore_failures());
     assert!(life.published().identity.is_some(), "open went on with the session");
-    assert!(db.shared.store.saved().is_ok(), "the base answers reads after the failure");
+    assert!(db.saved().is_ok(), "the base answers reads after the failure");
 }

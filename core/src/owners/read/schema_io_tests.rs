@@ -6,7 +6,7 @@ use super::window_io::WindowCodec;
 use super::windows::WindowKey;
 use super::{ReadOperation, ReadOperations, SchemaWindowCodec};
 use crate::db::fixtures::{all_specs, moments_spec, obj};
-use crate::db::Db;
+use crate::store::Store;
 use crate::schema::{Coverage, PageDirection, RelationSpec, RemoteShape, RemoteSpec};
 
 fn codec(page_size: Option<u32>) -> SchemaWindowCodec {

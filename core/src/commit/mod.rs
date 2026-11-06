@@ -370,8 +370,8 @@ pub struct CommitResult {
     pub(crate) queue_operations: BTreeMap<i64, Option<crate::operation::QueueOperation>>,
     pub replaced: Vec<(RowRef, RowId)>,
     pub unknown_operation_acks: u32,
-    pub(crate) snapshot: Option<crate::db::Row>,
-    pub(crate) item_snapshots: Vec<(String, Option<crate::db::Row>)>,
+    pub(crate) snapshot: Option<crate::store::Row>,
+    pub(crate) item_snapshots: Vec<(String, Option<crate::store::Row>)>,
     pub(crate) ended_uploads: Vec<(i64, crate::upload::UploadStatus, Option<crate::syncstate::OperationFailure>)>,
     pub(crate) discarded_items: Vec<(i64, String)>,
 }

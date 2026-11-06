@@ -7,7 +7,7 @@ use serde_json::Value;
 use tokio::task::AbortHandle;
 
 use super::{LifeReply, Ports, Wiring};
-use crate::db::Db;
+use crate::store::Store;
 use crate::owners::calls::{CallError, CallKind, Calls, CallsEffect, CallsInput};
 use crate::owners::contract::RequestId;
 use crate::owners::lifecycle::LifecycleInput;
@@ -20,10 +20,10 @@ type Roots = Arc<Mutex<HashMap<RequestId, String>>>;
 pub(super) struct CallsRunner {
     wiring: Arc<Wiring>,
     transport: Option<Arc<dyn crate::transport::Transport>>,
-    session: Option<Arc<crate::transport::EncryptedClient>>,
+    session: Option<Arc<crate::transport::Exchange>>,
     executor: tokio::runtime::Handle,
     operations: super::OperationLookup,
-    db: Db,
+    db: std::sync::Arc<Store>,
     running: HashMap<u64, AbortHandle>,
     roots: Roots,
 }
@@ -78,28 +78,19 @@ impl CallsRunner {
             let Some(root) = sink_roots.lock().unwrap_or_else(PoisonError::into_inner).remove(&request_id) else { return };
             sink_wiring.to_calls(answer_input(request_id, &root, outcome));
         });
-        Self { wiring, transport: ports.transport.clone(), session: ports.session.clone(), executor: ports.executor.clone(), operations: ports.operations.clone(), db: ports.db.clone(), running: HashMap::new(), roots }
+        Self { wiring, transport: ports.transport.clone(), session: ports.exchange.clone(), executor: ports.executor.clone(), operations: ports.operations.clone(), db: ports.db.clone(), running: HashMap::new(), roots }
     }
 
     fn query(&mut self, call_id: u64, request_id: RequestId, epoch: crate::runtime::Epoch, operation: String, variables: String, document: String, root: String, back: &Back<Calls>) {
         let Some(transport) = self.transport.clone() else { return back.reply(EpochStamp::Control, CallsInput::TransportError { call_id, error: CallError::Invalid }) };
         let back = back.clone();
-        let admitted = match self.db.admit_in(crate::ffi::admission::Origin::Explicit, "run", epoch) {
-            Ok(admitted) => admitted,
-            Err(_) => return back.reply(EpochStamp::Control, CallsInput::TransportError { call_id, error: CallError::Interrupted }),
-        };
+        if !self.wiring.admits_epoch(epoch) { return back.reply(EpochStamp::Control, CallsInput::TransportError { call_id, error: CallError::Interrupted }); }
         let launch = self.wiring.handle.launch();
         let task = crate::task::spawn_on(crate::task::Carry::Detached, &self.executor, crate::runtime::counted(Some(launch), async move {
             let variables: Value = serde_json::from_str(&variables).unwrap_or(Value::Null);
             let request = GraphQLRequest::new(document.clone(), operation, variables);
             crate::lock::assert_no_library_lock("Transport::request");
-            let result = admitted.run(async {
-                if document.trim_start().starts_with("mutation") { transport.mutate(&admitted, request).await } else { transport.query(&admitted, request).await }
-            }).await;
-            let result = match result {
-                Ok(result) => result,
-                Err(_) => Err(TransportError::Interrupted("the call was cancelled".into())),
-            };
+            let result = if document.trim_start().starts_with("mutation") { transport.mutate(request).await } else { transport.query(request).await };
             back.reply(EpochStamp::Control, input_of(call_id, &root, result));
         }));
         self.running.insert(request_id, task.abort_handle());

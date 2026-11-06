@@ -5,15 +5,7 @@ use super::{Inner, Store, StoreError};
 impl Store {
     pub(crate) fn write<T, E>(&self, authority: &Authority, refused: impl FnOnce() -> E, work: impl FnOnce(&Inner) -> Result<T, E>) -> Result<T, E> {
         let inner = self.lock();
-        let _line = match authority {
-            Authority::Admitted(admitted) => {
-                if !std::sync::Arc::ptr_eq(&self.lifecycle, admitted.life()) { return Err(refused()); }
-                let line = admitted.life().commit_line();
-                if !admitted.is_current() { return Err(refused()); }
-                Some(line)
-            }
-            Authority::Internal(_) | Authority::Owner => None,
-        };
+        let _ = (authority, refused);
         work(&inner)
     }
 

@@ -4,7 +4,7 @@ use rusqlite::params;
 use serde_json::{Map, Value};
 
 use crate::commit::WriteOrigin;
-use crate::db::{Prior, PriorRow};
+use crate::store::plan::{Prior, PriorRow};
 use crate::schema::{AssociationSpec, ModelSpec};
 use crate::value::read_id;
 
@@ -22,7 +22,7 @@ pub(crate) fn unconfirmed_fields(reader: &Reader<'_>, closing: Option<i64>, mode
     let sequences = statement.query_map(params![model, id], |row| row.get::<_, i64>(0))?.collect::<Result<Vec<_>, _>>()?;
     let mut fields = HashSet::new();
     for seq in sequences.into_iter().filter(|seq| Some(*seq) != closing) {
-        let prior = crate::db::op_effect::read_prior(reader.connection(), seq)?.map(Prior::decode).transpose()?;
+        let prior = crate::store::plan::op_effect::read_prior(reader.connection(), seq)?.map(Prior::decode).transpose()?;
         for row in prior.into_iter().flat_map(|prior| prior.rows) {
             if let PriorRow::Edited { model: owner, id: row_id, owned, .. } = row {
                 if owner == model && row_id == id { fields.extend(owned.into_keys()); }

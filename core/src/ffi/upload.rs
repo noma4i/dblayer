@@ -8,7 +8,7 @@ use super::receipt::{receipt_of_transfer, ItemId, WireBatchReceipt, WireItemRece
 use super::upload_wire::{WireUploadBatch, WireUploadItem, WireUploadRequest};
 use super::write::refused;
 use super::{Database, DbError};
-use crate::db::{Planned, Record};
+use crate::store::{Planned, Record};
 use crate::owners::life::LifeReply;
 use crate::owners::store::IntentEffects;
 use crate::owners::write::outbox::{Fault, NewOp, OpSource, OutboxOutcome, Receipt};
@@ -156,7 +156,7 @@ impl Database {
         let (db, name, verb, target, args) = (self.db.clone(), model.clone(), action.clone(), row.clone(), file.variables.clone());
         let effects = self.offload(move || match db.plan_act(&name, &verb, &target, Map::new(), args) {
             Ok(planned) => Ok(planned.effects),
-            Err(crate::db::DbError::NotFound { .. }) => Ok(IntentEffects::default()),
+            Err(crate::store::DbError::NotFound { .. }) => Ok(IntentEffects::default()),
             Err(error) => Err(error.into()),
         }).await?;
         let item = self.single_upload(&model, row.as_str(), &action, &file, effects)?;
@@ -192,7 +192,7 @@ impl Database {
         let wire = self.wire(&model)?.clone();
         let items = planned.into_iter().zip(held).map(|((item, planned, _), held)| {
             let key = item.values.get(&field).and_then(Value::as_str).unwrap_or_default().to_string();
-            let record = Record { id: planned.row_id.clone(), revision: 0, data: planned.input.as_object().cloned().unwrap_or_default(), sync: Default::default(), ephemeral: 0 };
+            let record = Record { id: planned.row_id.clone(), revision: 0, data: planned.input.as_object().cloned().unwrap_or_default(), sync: Default::default() };
             let value = wire.row(&record);
             WireItemReceipt { item: ItemId { value: key }, optimistic_value: value.clone(), receipt: self.transfer_receipt(epoch, model.clone(), held, Some(value)) }
         }).collect();
@@ -225,7 +225,7 @@ impl Database {
         let TransferAnswer::Receipt(held) = self.transfer_answer(waiter, "send").await? else { return Err(DbError::Database { detail: "the owner answered a send with no receipt".into() }) };
         let queued = crate::upload::UploadInfo { status: crate::upload::UploadStatus::Queued, stage: crate::upload::UploadStage::Prepare, sent_bytes: 0, total_bytes: 0, wait_reason: None, attempts: 0, error: None, local_url: None, processing: None, copy_file: None };
         let sync = crate::syncstate::SyncInfo { uploads: std::collections::BTreeMap::from([(action, queued)]), ..Default::default() };
-        let record = Record { id: planned.row_id.clone(), revision: 0, data: planned.input.as_object().cloned().unwrap_or_default(), sync, ephemeral: 0 };
+        let record = Record { id: planned.row_id.clone(), revision: 0, data: planned.input.as_object().cloned().unwrap_or_default(), sync };
         let value = self.wire(&request.model)?.row(&record);
         Ok(self.transfer_receipt(epoch, request.model, held, Some(value)))
     }

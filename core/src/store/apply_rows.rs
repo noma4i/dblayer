@@ -48,7 +48,7 @@ fn hidden_rows(connection: &Connection, transitions: &[OperationTransition]) -> 
             None => read_rows(connection, seq)?.into_iter().map(|id| id.to_string()).collect(),
         };
         hidden.extend(ids.into_iter().map(|id| (model.clone(), id)));
-        let snapshot = crate::db::op_effect::read_prior(connection, seq)?;
+        let snapshot = crate::store::plan::op_effect::read_prior(connection, seq)?;
         let rows = snapshot.as_ref().and_then(|snapshot| snapshot.get("rows")).and_then(Value::as_array);
         for item in rows.into_iter().flatten() {
             let owner = item.get("model").and_then(Value::as_str);

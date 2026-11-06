@@ -12,7 +12,6 @@ const PONG_WAIT: Duration = Duration::from_secs(20);
 pub(super) struct Entry {
     pub(super) request: GraphQLRequest,
     pub(super) events: crate::transport::SubscriptionSender,
-    pub(super) admitted: crate::ffi::admission::Admitted,
 }
 
 pub(super) struct Core {

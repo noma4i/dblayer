@@ -4,6 +4,8 @@ use async_trait::async_trait;
 use super::error::TransportError;
 
 pub mod cable;
+pub(crate) mod credential;
+pub(crate) mod exchange;
 mod config;
 pub(crate) mod bootstrap;
 #[cfg(test)]
@@ -16,7 +18,7 @@ pub(crate) mod state;
 #[cfg(test)]
 pub(crate) mod vectors_tests;
 
-pub use client::{Answer, EncryptedClient, EncryptedConfig, EncryptedEndpoints, EncryptedOperationClass, EncryptedSessionOperation};
+pub use exchange::{Answer, EncryptedConfig, EncryptedEndpoints, EncryptedOperationClass, EncryptedSessionOperation, Exchange};
 pub use config::{AppPlatform, ConfigCode, Country, SecurityCode, ServerConfig};
 pub use graphql::{graphql_body, missing_from_registry, repeats, response_of, EncryptedTransport};
 #[cfg(test)]

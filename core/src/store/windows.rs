@@ -37,8 +37,8 @@ pub(super) fn max_sequence(connection: &Connection) -> Result<i64, StoreError> {
     Ok(connection.query_row("SELECT COALESCE(MAX(MAX(issued, applied, COALESCE(stale_since, 0))), 0) FROM query_window", [], |row| row.get(0))?)
 }
 
-pub(crate) fn window_identity(spec: &crate::schema::ModelSpec, model: &str, relation: &str, remote: &crate::schema::RemoteSpec, params: &serde_json::Map<String, serde_json::Value>) -> Result<(crate::commit::ScopeRef, String), crate::db::DbError> {
-    let scope_key = spec.selection_key(relation, params).map_err(|error| crate::db::DbError::Internal(error.to_string()))?;
+pub(crate) fn window_identity(spec: &crate::schema::ModelSpec, model: &str, relation: &str, remote: &crate::schema::RemoteSpec, params: &serde_json::Map<String, serde_json::Value>) -> Result<(crate::commit::ScopeRef, String), crate::store::DbError> {
+    let scope_key = spec.selection_key(relation, params).map_err(|error| crate::store::DbError::Internal(error.to_string()))?;
     let direction = match remote.shape {
         crate::schema::RemoteShape::Connection { direction, .. } => direction,
         _ => PageDirection::Forward,
@@ -144,18 +144,14 @@ impl Store {
     #[cfg(test)]
     pub(crate) fn invalidate_family(&self, authority: &crate::lifecycle::authority::Authority, model: &str, relation: &str, since: i64) -> Result<usize, StoreError> {
         self.write_store(authority, |inner| {
-            if let crate::lifecycle::authority::Authority::Admitted(admitted) = authority {
-                if !admitted.is_current() { return Err(StoreError::Envelope(crate::commit::EnvelopeFault::StaleGeneration)); }
-            }
             mark_families(&inner.connection, &[(model.to_string(), relation.to_string())], since)
         })
     }
 
     #[cfg(test)]
     pub(crate) fn invalidate_family_now(&self, model: &str, relation: &str) -> Result<usize, StoreError> {
-        let admitted = self.lifecycle.admit(crate::ffi::admission::Origin::Explicit, "test invalidate").map_err(|_| StoreError::Refused)?;
         let since = self.max_window_sequence()? + 1;
-        self.invalidate_family(&admitted.authority(), model, relation, since)
+        self.invalidate_family(&crate::lifecycle::authority::Authority::Internal(crate::lifecycle::authority::Internal::for_tests()), model, relation, since)
     }
 
     #[cfg(test)]

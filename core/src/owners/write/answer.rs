@@ -5,7 +5,7 @@ use std::collections::BTreeMap;
 
 use serde_json::Value;
 
-use crate::db::Db;
+use crate::store::Store;
 use crate::identity::ModelKey;
 use crate::owners::read::codec::{extract, normalize_nodes, root_value};
 use crate::owners::store::RowValue;
@@ -36,7 +36,7 @@ pub enum Decoded {
 fn refused(detail: impl Into<String>) -> Decoded { Decoded::Refused { temporary: false, detail: super::failure::of_graphql(detail.into(), None) } }
 
 /// `root_of` gives the root field of a registered mutation.
-pub fn decode_answer(db: &Db, root_of: &dyn Fn(&str) -> Option<String>, job: &DecodeJob) -> Decoded {
+pub fn decode_answer(db: &Store, root_of: &dyn Fn(&str) -> Option<String>, job: &DecodeJob) -> Decoded {
     if let Some(code) = serde_json::from_str::<Value>(&job.body).ok().and_then(|body| body.get("error").and_then(Value::as_str).map(str::to_string)) {
         return refused(code);
     }
@@ -158,7 +158,7 @@ fn correlation_key(paths: &[String], row: &serde_json::Map<String, Value>) -> Op
 }
 
 /// The pairs (temporary id, real id) of a batch answer: the waiting elements of the group against the rows of the answer.
-fn batch_swaps(db: &Db, model: &str, declared: Option<&crate::schema::ActionDeclaration>, job: &DecodeJob, roots: &[serde_json::Map<String, Value>]) -> Result<Vec<(String, String)>, String> {
+fn batch_swaps(db: &Store, model: &str, declared: Option<&crate::schema::ActionDeclaration>, job: &DecodeJob, roots: &[serde_json::Map<String, Value>]) -> Result<Vec<(String, String)>, String> {
     let Some(group) = job.batch else { return Err("the answer of a batch has no group".into()) };
     let (Some(declared), [path]) = (declared, declared.map_or(&[][..], |declared| &declared.correlate[..])) else { return Err("the batch has no single correlation field".into()) };
     let target = declared.batch.as_ref().and_then(|batch| batch.input.iter().find(|(_, source)| *source == path).map(|(target, _)| target.clone())).unwrap_or_else(|| path.clone());

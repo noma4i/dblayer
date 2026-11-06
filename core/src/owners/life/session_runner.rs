@@ -1,4 +1,4 @@
-//! Executor of the effects of Session: the HTTP exchange of `EncryptedClient` (encoding only), the random credential,
+//! Executor of the effects of Session: the HTTP exchange of `Exchange` (encoding only), the random credential,
 //! the `CredentialStore` calls and the writes of `encrypted_*` that go to Store as batches by value. It does IO and returns the result as an input; it takes no transition.
 
 use std::collections::HashMap;
@@ -13,9 +13,11 @@ use crate::owners::lifecycle::{LifecycleInput, Peer};
 use crate::owners::session::{secret_id, stored_answer, AttemptId, Credential, OperationClass, PendingCall, SecretState, SessionCalls, SessionEffect, SessionInput};
 use crate::owners::store::{StoreBatch, StoreInput, StoreOp};
 use crate::runtime::{Back, EffectRunner, EpochStamp, OutcomeId};
-use crate::transport::encrypted::client::{digest_of, permanently_refused, temporary_error};
+use crate::transport::encrypted::credential::{dropped_pending, stored_answers, stored_pending, stored_session, Secret};
+use crate::transport::encrypted::exchange::{digest_of, permanently_refused, temporary_error, Exchange};
+use crate::store::Store;
 use crate::transport::encrypted::jwe::random_token;
-use crate::transport::encrypted::{CredentialSlot, EncryptedClient};
+use crate::transport::encrypted::CredentialSlot;
 use crate::transport::{NetworkPurpose, SessionCode, TransportError};
 
 const PERSISTED_QUERY_NOT_FOUND: &str = "PERSISTED_QUERY_NOT_FOUND";
@@ -32,8 +34,9 @@ enum SecretFailure {
 
 pub(super) struct SessionRunner {
     wiring: Arc<Wiring>,
-    client: Arc<EncryptedClient>,
-    credentials: Arc<dyn CredentialSlot>,
+    exchange: Arc<Exchange>,
+    secret: Arc<Secret>,
+    store: Arc<Store>,
     seal: Arc<crate::owners::session_seal::SealConfig>,
     executor: tokio::runtime::Handle,
     running: HashMap<AttemptId, AbortHandle>,
@@ -59,26 +62,26 @@ pub(crate) struct Restored {
 }
 
 impl SessionRunner {
-    pub fn new(wiring: Arc<Wiring>, client: Arc<EncryptedClient>, credentials: Arc<dyn CredentialSlot>, seal: Arc<crate::owners::session_seal::SealConfig>, executor: tokio::runtime::Handle, restored: &Restored) -> Self {
+    pub fn new(wiring: Arc<Wiring>, (exchange, secret, store): (Arc<Exchange>, Arc<Secret>, Arc<Store>), seal: Arc<crate::owners::session_seal::SealConfig>, executor: tokio::runtime::Handle, restored: &Restored) -> Self {
         let wires = restored.wire.iter().map(|(request_id, wire)| (*request_id, Wire { id: wire.id.clone(), key: wire.key.clone() })).collect();
         let digests = Arc::new(Mutex::new(restored.digest.iter().cloned().collect()));
         let operations = restored.pending.iter().filter_map(|pending| match pending.owner { Some(crate::transport::RequestOwner::Operation { seq }) => Some((pending.request_id, seq)), _ => None }).collect();
-        Self { wiring, client, credentials, seal, executor, running: HashMap::new(), digests, generated: Arc::default(), wires, operations, ending: None }
+        Self { wiring, exchange, secret, store, seal, executor, running: HashMap::new(), digests, generated: Arc::default(), wires, operations, ending: None }
     }
 
     /// What `Open` of the owner takes: the rows and what `CredentialStore.get` found.
-    pub fn stored(client: &EncryptedClient) -> Result<Restored, TransportError> {
-        let secret = match crate::blocking::blocking_unit(|| client.credential_slot().get()) {
+    pub fn stored(exchange: &Exchange, secret: &Secret, store: &Store) -> Result<Restored, TransportError> {
+        let secret = match crate::blocking::blocking_unit(|| secret.slot().get()) {
             Ok(Some(secret)) => crate::store::identity_of(&digest_of(&secret)).map_or(SecretState::Missing, SecretState::Present),
             Ok(None) => SecretState::Missing,
             Err(error) => SecretState::Error(error.to_string()),
         };
-        Ok(Restored { secret, ..Self::rows(client)? })
+        Ok(Restored { secret, ..Self::rows(exchange, store)? })
     }
 
     /// The stored `encrypted_session`, `encrypted_pending` and `encrypted_answer`: the snapshot of `ReadIntents` reads no secret.
-    pub(super) fn rows(client: &EncryptedClient) -> Result<Restored, TransportError> {
-        let session = client.stored_session()?;
+    pub(super) fn rows(exchange: &Exchange, store: &Store) -> Result<Restored, TransportError> {
+        let session = stored_session(store)?;
         let credential = match &session {
             Some(session) => {
                 let sequence = u64::try_from(session.sequence).map_err(|_| TransportError::Decode(format!("the stored session has the sequence {}", session.sequence)))?;
@@ -87,9 +90,9 @@ impl SessionRunner {
             None => None,
         };
         let secret = SecretState::Missing;
-        let answers = client.stored_answers()?;
-        let dropped_pending = client.dropped_pending()?;
-        let row = if dropped_pending { None } else { client.stored_pending()? };
+        let answers = stored_answers(store)?;
+        let dropped_pending = dropped_pending(store)?;
+        let row = if dropped_pending { None } else { stored_pending(store)? };
         let Some(row) = row else {
             return Ok(Restored { credential, pending: None, dropped_pending, answers, secret, wire: None, digest: None });
         };
@@ -97,9 +100,9 @@ impl SessionRunner {
         let sessionless = row.credential_digest.is_empty();
         let first_sign_in = !sessionless && sequence == 1 && credential.as_ref().is_some_and(|credential| credential.sequence == 0);
         let identity = first_sign_in.then(|| crate::store::identity_of(&row.credential_digest)).flatten();
-        let operations = client.session_operations();
+        let operations = exchange.session_operations();
         let operation = operations.iter().find(|def| def.path == row.path && row.owner.is_none()).map_or_else(String::new, |def| def.name.clone());
-        let class = if sessionless { OperationClass::Sessionless } else if row.path == client.logout_path() { OperationClass::Logout } else if first_sign_in { OperationClass::Login } else { OperationClass::Authenticated };
+        let class = if sessionless { OperationClass::Sessionless } else if row.path == exchange.logout_path() { OperationClass::Logout } else if first_sign_in { OperationClass::Login } else { OperationClass::Authenticated };
         let request_id = row.req_id;
         let pending = PendingCall {
             request_id,
@@ -129,7 +132,7 @@ impl SessionRunner {
         }
         match pending.credential {
             Some(identity) => self.digests.lock().unwrap_or_else(PoisonError::into_inner).get(&identity).cloned().ok_or_else(|| TransportError::Decode(format!("no digest for the identity {identity}"))),
-            None => Ok(self.client.stored_session()?.map_or_else(String::new, |session| session.credential_digest)),
+            None => Ok(stored_session(&self.store)?.map_or_else(String::new, |session| session.credential_digest)),
         }
     }
 
@@ -216,7 +219,7 @@ impl EffectRunner<SessionCalls> for SessionRunner {
         let control = EpochStamp::Control;
         match effect {
             SessionEffect::SealProbe { seal_id, pending, credential } => {
-                let (seal, credentials) = (self.seal.clone(), self.credentials.clone());
+                let (seal, credentials) = (self.seal.clone(), self.secret.slot());
                 self.off_thread(back, crate::owners::session::seal_id(seal_id), move || match seal.probe(credentials.as_ref(), credential, &pending) {
                     Ok(size) => SessionInput::Sealed { seal_id, size },
                     Err(error) => SessionInput::SealFailed { seal_id, error },
@@ -234,7 +237,7 @@ impl EffectRunner<SessionCalls> for SessionRunner {
                 });
             }
             SessionEffect::StoreSecret { credential, secret_op_id } => {
-                let (generated, credentials) = (self.generated.clone(), self.credentials.clone());
+                let (generated, credentials) = (self.generated.clone(), self.secret.slot());
                 self.off_thread(back, secret_id(1, secret_op_id), move || {
                     let secret = generated.lock().unwrap_or_else(PoisonError::into_inner).remove(&credential);
                     let ok = secret.is_some_and(|secret| credentials.set(&secret).is_ok());
@@ -242,11 +245,11 @@ impl EffectRunner<SessionCalls> for SessionRunner {
                 });
             }
             SessionEffect::ClearSecret { secret_op_id } => {
-                let client = self.client.clone();
-                self.off_thread(back, secret_id(2, secret_op_id), move || SessionInput::SecretCleared { secret_op_id, ok: client.erase_credential().is_ok() });
+                let secret = self.secret.clone();
+                self.off_thread(back, secret_id(2, secret_op_id), move || SessionInput::SecretCleared { secret_op_id, ok: secret.erase().is_ok() });
             }
             SessionEffect::ReadSecret { secret_op_id } => {
-                let credentials = self.credentials.clone();
+                let credentials = self.secret.slot();
                 self.off_thread(back, secret_id(3, secret_op_id), move || {
                     let read = match credentials.get() {
                         Ok(Some(secret)) => crate::store::identity_of(&digest_of(&secret)).map_or(SecretState::Missing, SecretState::Present),
@@ -291,7 +294,7 @@ impl EffectRunner<SessionCalls> for SessionRunner {
                         Err(_) => return back.reply(control, SessionInput::SecretMissing { request_id, attempt_id, lost: false }),
                     }
                 };
-                let (client, back, credentials) = (self.client.clone(), back.clone(), self.credentials.clone());
+                let (exchange, back, credentials) = (self.exchange.clone(), back.clone(), self.secret.slot());
                 let logout = pending.class == OperationClass::Logout;
                 let body = body_of(&pending.body, full_document);
                 let purpose = if pending.purpose == 0 { NetworkPurpose::Standard } else { NetworkPurpose::Transfer };
@@ -305,7 +308,7 @@ impl EffectRunner<SessionCalls> for SessionRunner {
                         Ok(secret) => secret,
                         Err(failure) => return back.reply(EpochStamp::Control, SessionInput::SecretMissing { request_id, attempt_id, lost: matches!(failure, SecretFailure::Lost) }),
                     };
-                    let result = client.send_once(credential.as_deref(), &wire, &key, sequence, &pending.path, &body, purpose).await;
+                    let result = exchange.send_once(credential.as_deref(), &wire, &key, sequence, &pending.path, &body, purpose).await;
                     back.reply(EpochStamp::Control, input_of(request_id, attempt_id, logout, result));
                 }));
                 if let Some(previous) = self.running.insert(attempt_id, task.abort_handle()) {

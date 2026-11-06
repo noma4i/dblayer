@@ -25,11 +25,11 @@ async fn dlv_prop_first_value_off_caller() {
     let db = open().await;
     let epoch = db.session_epoch();
     db.create(epoch, "Note".into(), r#"{"id":"n1"}"#.into(), "{}".into()).await.unwrap();
-    assert_eq!(db.db.shared.store.published_revision().load(std::sync::atomic::Ordering::Acquire), db.db.revision_seq().unwrap());
+    assert_eq!(db.db.published_revision().load(std::sync::atomic::Ordering::Acquire), db.db.revision_seq().unwrap());
     let caller = std::thread::current().id();
-    db.db.shared.store.read_threads.lock().unwrap().clear();
+    db.db.read_threads.lock().unwrap().clear();
     let stream = db.subscribe_values(epoch, ReadRequest::List { query_json: r#"{"model":"Note"}"#.into() });
-    let reads = db.db.shared.store.read_threads.lock().unwrap().clone();
+    let reads = db.db.read_threads.lock().unwrap().clone();
     assert!(!reads.contains(&caller), "SQLite reads must run outside the caller");
     assert!(matches!(crate::test_wait::within(stream.pull()).await.unwrap(), Some(ReadValue::Snapshot { .. })));
 }

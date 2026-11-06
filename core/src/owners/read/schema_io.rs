@@ -8,7 +8,7 @@ use serde_json::{json, Map, Value};
 
 use super::windows::{AnswerPage, MaxPages, MembersComplete, OnForeground, PageRows, WindowKey, WindowKind};
 use super::WindowCodec;
-use crate::db::Db;
+use crate::store::Store;
 use crate::identity::RowId;
 use crate::owners::store::RowValue;
 use crate::read::EDGE_KEY;
@@ -72,12 +72,12 @@ impl ReadOperations {
 }
 
 pub struct SchemaWindowCodec {
-    db: Db,
+    db: std::sync::Arc<Store>,
     operations: ReadOperations,
 }
 
 impl SchemaWindowCodec {
-    pub fn new(db: Db, operations: ReadOperations) -> Self { Self { db, operations } }
+    pub fn new(db: std::sync::Arc<Store>, operations: ReadOperations) -> Self { Self { db, operations } }
 
     fn operation(&self, name: &str) -> Result<Arc<ReadOperation>, String> { self.operations.get(name).ok_or_else(|| format!("operation {name} is not registered")) }
 
@@ -159,7 +159,7 @@ impl WindowCodec for SchemaWindowCodec {
 }
 
 /// How many pages a key may land at most: `max_pages` of the connection in the `.dbl`.
-pub fn max_pages(db: Db) -> MaxPages {
+pub fn max_pages(db: std::sync::Arc<Store>) -> MaxPages {
     Arc::new(move |key| match key.kind() {
         WindowKind::Relation { relation, .. } => db
             .spec(&key.model)
@@ -176,7 +176,7 @@ pub fn max_pages(db: Db) -> MaxPages {
 }
 
 /// The keys of the relations the `.dbl` declares `members_complete`.
-pub fn members_complete(db: Db) -> MembersComplete {
+pub fn members_complete(db: std::sync::Arc<Store>) -> MembersComplete {
     Arc::new(move |key| match key.kind() {
         WindowKind::Relation { relation, .. } => db.spec(&key.model).ok().and_then(|spec| spec.relations.iter().find(|candidate| candidate.name == relation)).is_some_and(|declared| declared.members_complete),
         WindowKind::Nodes { .. } => false,
@@ -184,7 +184,7 @@ pub fn members_complete(db: Db) -> MembersComplete {
 }
 
 /// The keys of the relations the `.dbl` declares `refresh: foreground`.
-pub fn refreshes_on_foreground(db: Db) -> OnForeground {
+pub fn refreshes_on_foreground(db: std::sync::Arc<Store>) -> OnForeground {
     Arc::new(move |key| match key.kind() {
         WindowKind::Relation { relation, .. } => db.spec(&key.model).ok().and_then(|spec| spec.relations.iter().find(|candidate| candidate.name == relation)).is_some_and(|declared| declared.refresh_on_foreground),
         WindowKind::Nodes { .. } => false,
@@ -193,9 +193,9 @@ pub fn refreshes_on_foreground(db: Db) -> OnForeground {
 
 /// The keys of the relations declared `preload`. `derived = false`: only the relations whose every choice is listed (known at `EpochStarted`).
 /// `derived = true`: every relation, the choices `RowsOf` read the first ids of their source scope.
-pub fn preload_keys(db: &Db, derived: bool) -> Result<Vec<WindowKey>, String> {
+pub fn preload_keys(db: &Store, derived: bool) -> Result<Vec<WindowKey>, String> {
     let mut keys = Vec::new();
-    for (model, spec) in &db.shared.specs {
+    for (model, spec) in db.specs() {
         for relation in &spec.relations {
             let Some(values) = &relation.preload else { continue };
             let declared = spec.selection_params(&relation.name);
@@ -230,7 +230,7 @@ pub fn preload_keys(db: &Db, derived: bool) -> Result<Vec<WindowKey>, String> {
                         }
                         let source = db.spec(&from.model).map_err(|error| error.to_string())?;
                         let scope = source.selection_key(&from.relation, &Map::new()).map_err(|error| error.to_string())?;
-                        let ids = db.shared.store.read(&[from.model.as_str()], |reader| reader.scope_first_ids(&from.model, scope.as_str(), limit)).map_err(|error| error.to_string())?;
+                        let ids = db.read(&[from.model.as_str()], |reader| reader.scope_first_ids(&from.model, scope.as_str(), limit)).map_err(|error| error.to_string())?;
                         ids.into_iter().map(Value::String).collect()
                     }
                 };
@@ -245,10 +245,9 @@ pub fn preload_keys(db: &Db, derived: bool) -> Result<Vec<WindowKey>, String> {
 }
 
 /// The keys whose rows name other keys to preload: the sources of the choices `RowsOf`.
-pub fn preload_sources(db: &Db) -> Vec<WindowKey> {
+pub fn preload_sources(db: &Store) -> Vec<WindowKey> {
     let sources: BTreeSet<(String, String)> = db
-        .shared
-        .specs
+        .specs()
         .values()
         .flat_map(|spec| &spec.relations)
         .filter_map(|relation| relation.preload.as_ref())

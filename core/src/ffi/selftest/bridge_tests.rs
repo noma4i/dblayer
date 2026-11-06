@@ -1025,7 +1025,7 @@ async fn a_send_needs_a_session_and_a_plain_action_never_waits_for_the_network()
     assert!(matches!(plain, Err(DbError::Network { .. })), "a plain action was not refused while the network was away: {plain:?}");
     settle(&rig).await;
     assert!(crate::ffi::queue_view_tests::queued(&rig.database).is_empty(), "a plain action stayed queued while the network was away");
-    assert_eq!(rig.database.db.shared.store.row_count("Group").unwrap(), 0, "the row of the refused action stayed");
+    assert_eq!(rig.database.db.row_count("Group").unwrap(), 0, "the row of the refused action stayed");
     rig.database.set_online(true).unwrap();
     settle(&rig).await;
     assert_eq!(rig.world.count("CreateGroup"), 0, "a plain action went out after the network returned");
@@ -1229,7 +1229,7 @@ pub(super) fn member_list(rig: &Rig, group: &str, order: &str) -> Vec<String> {
     let spec = rig.database.db.spec("Member").unwrap();
     let params = json!({"groupId": group, "order": order}).as_object().unwrap().clone();
     let key = spec.selection_key("group_members", &params).unwrap();
-    rig.database.db.shared.store.scope_members("Member", key.as_str()).unwrap().into_iter().map(|(id, _)| id).collect()
+    rig.database.db.scope_members("Member", key.as_str()).unwrap().into_iter().map(|(id, _)| id).collect()
 }
 
 /// The members u1 u2 u3 of the group in both lists (JOINED: u1 u2 u3, OWNER_FIRST: u2 u1 u3) and the row u4 that is in neither list.
@@ -1512,7 +1512,7 @@ async fn an_accepted_request_whose_answer_lands_after_the_next_account_started_w
     let result = bound(running).await.unwrap();
     assert!(matches!(result, Err(DbError::Interrupted { .. } | DbError::NoSession { .. })), "the request of the epoch that left ended with {result:?}");
     settle(&rig).await;
-    assert_eq!(rig.database.db.shared.store.row_count("User").unwrap(), 0, "the answer of the epoch that left was written");
+    assert_eq!(rig.database.db.row_count("User").unwrap(), 0, "the answer of the epoch that left was written");
     rig.database.close_now();
 }
 

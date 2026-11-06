@@ -1,11 +1,12 @@
 use std::sync::Arc;
 use async_trait::async_trait;
 use serde_json::Value;
-use crate::transport::{self as core, EncryptedClient, EncryptedConfig, EncryptedTransport, ServerConfig, SessionCode};
-use super::database::{cancellable, Database, Wiring};
+use crate::transport::{self as core, EncryptedConfig, EncryptedTransport, Exchange, ServerConfig, SessionCode};
+use super::database::{cancellable, Database, Encrypted, Wiring};
 use crate::owners::life::LifeReply;
 use super::transport::{transport_error, ForeignTransport};
 use super::{DbError, Transport};
+use crate::store::Store;
 
 #[derive(uniffi::Record)]
 pub struct EncryptedReply { pub status: u16, pub body: String }
@@ -66,7 +67,7 @@ fn refused(answer: core::Answer) -> Result<core::Answer, DbError> {
 }
 
 pub(super) fn wire(
-    db: &crate::db::Db,
+    db: &Arc<Store>,
     clock: &Arc<dyn crate::pacing::Clock>,
     encrypted: EncryptedConfig,
     http: Arc<dyn EncryptedHttp>,
@@ -75,16 +76,14 @@ pub(super) fn wire(
     retries: Option<Arc<RetryProgress>>,
 ) -> Result<Wiring, DbError> {
     let seal = crate::owners::session_seal::SealConfig::new(&encrypted, clock.clone()).map_err(|error| DbError::Invalid { detail: format!("{error:?}") })?;
-    let client = EncryptedClient::new(&encrypted, Arc::new(ForeignHttp(http)), Arc::new(ForeignCredentials(credentials)), db.clone(), clock.clone())
-        .map_err(|error| DbError::Invalid { detail: error.to_string() })?;
-    let client = match retries {
-        Some(retries) => client.observed_by(retries.inner.clone()),
-        None => client,
-    };
-    let client = Arc::new(client);
+    let exchange = Arc::new(Exchange::new(&encrypted, Arc::new(ForeignHttp(http)), clock.clone()).map_err(|error| DbError::Invalid { detail: error.to_string() })?);
+    let secret = Arc::new(crate::transport::encrypted::credential::Secret::new(Arc::new(ForeignCredentials(credentials))));
+    crate::transport::encrypted::credential::finish_session_end(db, &secret).map_err(|error| DbError::Invalid { detail: error.to_string() })?;
+    let progress = retries.map(|retries| retries.inner.clone()).unwrap_or_default();
     let rest: Arc<dyn core::Transport> = Arc::new(ForeignTransport(transport));
-    let cable = client.cable_lines(rest.clone());
-    Ok((Some(Arc::new(EncryptedTransport::new(client.clone(), rest))), Some(client), Some(cable), Some(Arc::new(seal))))
+    let encrypted_transport = Arc::new(EncryptedTransport::new(exchange.clone(), secret.clone(), db.clone(), clock.clone(), progress, rest));
+    let cable = encrypted_transport.cable_lines();
+    Ok(Wiring { transport: Some(encrypted_transport.clone()), encrypted: Some(Encrypted { exchange, secret, transport: encrypted_transport }), cable: Some(cable), seal: Some(Arc::new(seal)) })
 }
 
 #[uniffi::export(rust, foreign)]

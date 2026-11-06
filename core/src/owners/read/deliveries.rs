@@ -9,7 +9,7 @@ mod deliveries_read;
 
 use std::collections::{BTreeMap, VecDeque};
 
-use crate::db::{Diff, Entry, Stamp};
+use crate::read::{Diff, Entry, Stamp};
 use crate::ffi::WireRow;
 use crate::identity::RowId;
 use crate::owners::contract::{Committed, Drained, EpochEnded, EpochStarted, Models, ModelsReset, ReplyId, WindowPhase, WindowState};

@@ -39,7 +39,7 @@ use super::write::rounds::{Rounds, RoundsInput, RoundsState};
 use super::write::rounds_executor::RoundsExecutor;
 use super::write::transfer_executor::{LifeSignal, TransferExecutor, TransferPort};
 use super::store::{BootFound, StoreInput, StoreReply, StoreState, StoreWriter};
-use crate::db::Db;
+use crate::store::Store;
 use crate::runtime::{Address, Epoch, EpochStamp, Handle, Outcomes, PublishedCell, Runtime, RuntimeBuilder, Waiter};
 
 mod reply;
@@ -57,13 +57,13 @@ const WAITER_AUTHORS: AuthorId = 1 << 32;
 pub type OperationLookup = Arc<dyn Fn(&str) -> Option<(String, String)> + Send + Sync>;
 
 pub struct Ports {
-    pub db: Db,
+    pub db: std::sync::Arc<Store>,
     pub transport: Option<Arc<dyn crate::transport::Transport>>,
     pub executor: tokio::runtime::Handle,
     pub operations: OperationLookup,
-    pub credentials: Option<Arc<dyn crate::transport::CredentialSlot>>,
-    /// The encrypted client: Session installs only with it and `credentials`. It does the encoding and the HTTP exchange, Session decides.
-    pub session: Option<Arc<crate::transport::EncryptedClient>>,
+    pub secret: Option<Arc<crate::transport::encrypted::credential::Secret>>,
+    /// The encrypted exchange: Session installs only with it and `secret`. It does the encoding and the HTTP exchange, Session decides.
+    pub exchange: Option<Arc<crate::transport::Exchange>>,
     pub(crate) seal: Option<Arc<super::session_seal::SealConfig>>,
     /// Transfer installs only with the session and this port.
     pub(crate) transfer: Option<TransferPort>,
@@ -130,6 +130,8 @@ enum Awaited {
 }
 
 impl Wiring {
+    pub(crate) fn admits_epoch(&self, epoch: Epoch) -> bool { self.published.read(|published| published.is_some_and(|published| published.epoch == epoch && !published.closed)) }
+
     fn new(handle: Handle) -> Self {
         Self {
             addresses: OnceLock::new(),
@@ -411,20 +413,20 @@ impl Life {
     /// Builds the owners, boots the Store from the booted `Db` and returns after the first `Publish`.
     pub fn start(ports: Ports) -> Result<Self, LifeError> {
         let found = boot_found(&ports.db)?;
-        let session = ports.session.clone().zip(ports.credentials.clone()).zip(ports.seal.clone()).map(|((client, credentials), seal)| (client, credentials, seal));
-        let restored = session.as_ref().map(|(client, _, _)| session_runner::SessionRunner::stored(client)).transpose().map_err(|error| LifeError::Storage(error.to_string()))?;
+        let session = ports.exchange.clone().zip(ports.secret.clone()).zip(ports.seal.clone()).map(|((exchange, secret), seal)| (exchange, secret, seal));
+        let restored = session.as_ref().map(|(exchange, secret, _)| session_runner::SessionRunner::stored(exchange, secret, &ports.db)).transpose().map_err(|error| LifeError::Storage(error.to_string()))?;
         let mut builder = RuntimeBuilder::new();
-        builder.with_clock(ports.db.shared.store.lock().clock.clone());
+        builder.with_clock(ports.db.lock().clock.clone());
         let wiring = Arc::new(Wiring::new(builder.handle()));
         let open_wait = wiring.outcomes.register(Epoch::MAX);
-        let lifecycle = builder.add::<Lifecycle>("lifecycle", LifecycleState::new().with_restore_participants(restore_participants(session.is_some())), runners::LifecycleRunner { wiring: wiring.clone(), leases: ports.db.shared.store.lifecycle.clone(), absent: absent(session.is_some(), session.is_some() && ports.transfer.is_some()), db: ports.db.clone(), held_published: None, held_replies: Vec::new() });
+        let lifecycle = builder.add::<Lifecycle>("lifecycle", LifecycleState::new().with_restore_participants(restore_participants(session.is_some())), runners::LifecycleRunner { wiring: wiring.clone(), absent: absent(session.is_some(), session.is_some() && ports.transfer.is_some()), db: ports.db.clone(), held_published: None, held_replies: Vec::new() });
         builder.on_executor_failed(lifecycle);
-        let store = builder.add::<StoreWriter>("store", StoreState::new(), runners::StoreRunner { wiring: wiring.clone(), db: ports.db.clone(), credentials: ports.credentials.clone(), client: ports.session.clone(), executor: ports.executor.clone() });
+        let store = builder.add::<StoreWriter>("store", StoreState::new(), runners::StoreRunner { wiring: wiring.clone(), db: ports.db.clone(), secret: ports.secret.clone(), exchange: ports.exchange.clone(), executor: ports.executor.clone() });
         let network = builder.add::<Network>("network", NetworkState::new(), runners::NetworkRunner { wiring: wiring.clone(), db: ports.db.clone(), held_replies: Vec::new() });
         let calls = builder.add::<Calls>("calls", CallsState::new(0, None, &[]), calls_runner::CallsRunner::new(wiring.clone(), &ports));
-        let session_address = session.as_ref().zip(restored).map(|((client, credentials, seal), restored)| {
-            let state = SessionState::with_operations(client.session_operations(), None);
-            let address = builder.add::<SessionCalls>("session", state, session_runner::SessionRunner::new(wiring.clone(), client.clone(), credentials.clone(), seal.clone(), ports.executor.clone(), &restored));
+        let session_address = session.as_ref().zip(restored).map(|((exchange, secret, seal), restored)| {
+            let state = SessionState::with_operations(exchange.session_operations(), None);
+            let address = builder.add::<SessionCalls>("session", state, session_runner::SessionRunner::new(wiring.clone(), (exchange.clone(), secret.clone(), ports.db.clone()), seal.clone(), ports.executor.clone(), &restored));
             (address, restored)
         });
         let transfer_at = session_address.as_ref().zip(ports.transfer.as_ref()).map(|((session, _), _)| Address::<Transfers>::new(session.index() + 2));
@@ -458,22 +460,20 @@ impl Life {
         });
         let transfer = match (outbox, ports.transfer.as_ref(), ports.transport.as_ref()) {
             (Some(outbox), Some(port), Some(transport)) => {
-                let (settle_wiring, drained_wiring, admit_db, admit_wiring, signal_wiring) = (wiring.clone(), wiring.clone(), ports.db.clone(), wiring.clone(), wiring.clone());
+                let (settle_wiring, drained_wiring, admit_wiring, signal_wiring) = (wiring.clone(), wiring.clone(), wiring.clone(), wiring.clone());
                 let wire = super::write::wire::Wire {
                     transport: transport.clone(),
-                    admit: Arc::new(move |epoch| match epoch.map_or_else(|| admit_db.admit(), |epoch| admit_db.admit_in(crate::ffi::admission::Origin::Explicit, "transfer step", epoch)) {
-                        Ok(admitted) => Some(admitted),
-                        Err(error) => {
-                            admit_wiring.fault(format!("a step of a transfer found no session to run in: {error}"));
-                            None
-                        }
+                    admit: Arc::new(move |epoch| {
+                        let admitted = epoch.is_none_or(|epoch| admit_wiring.admits_epoch(epoch));
+                        if !admitted { admit_wiring.fault("a step of a transfer found no session to run in".into()); }
+                        admitted
                     }),
                     tasks: Arc::new(super::write::wire::TokioTasks(ports.executor.clone(), Some(builder.handle()))),
                 };
                 let executor = TransferExecutor::new(
                     wire,
                     port.codec.clone(),
-                    ports.db.shared.files.clone(),
+                    ports.db.files().clone(),
                     Arc::new(move |reply, answer| { settle_wiring.outcomes.settle(crate::runtime::OutcomeId::from_raw(reply), LifeReply::Transfer(answer)); }),
                     port.shows.clone(),
                     Arc::new(move |drained| drained_wiring.to_lifecycle(LifecycleInput::Drained(drained))),
@@ -511,7 +511,7 @@ impl Life {
         };
         {
             let reads_wiring = wiring.clone();
-            ports.db.shared.store.reads().attach(move |event| reads_wiring.to_store(match event {
+            ports.db.reads().attach(move |event| reads_wiring.to_store(match event {
                 crate::store::reads::ReadEvent::Closed(ids) => StoreInput::ReadsClosed { ids },
                 crate::store::reads::ReadEvent::Finished(read_id) => StoreInput::ReadFinished { read_id },
             }));
@@ -544,7 +544,7 @@ impl Life {
         };
         answer.map_err(|error| LifeError::Storage(format!("the first publication was not saved: {error:?}")))?;
         let alive = runtime.alive();
-        Ok(Self { wiring, runtime: Mutex::new(Some(runtime)), shut: AtomicBool::new(false), with_session: session.is_some(), graphql_path: session.as_ref().map(|client| client.0.graphql_path().to_string()), alive })
+        Ok(Self { wiring, runtime: Mutex::new(Some(runtime)), shut: AtomicBool::new(false), with_session: session.is_some(), graphql_path: session.as_ref().map(|session| session.0.graphql_path().to_string()), alive })
     }
 
     /// Stops the owner threads and joins them. The caller is not an owner thread. A second call does nothing.

@@ -5,7 +5,7 @@ use std::time::Duration;
 use async_trait::async_trait;
 use serde_json::json;
 
-use crate::db::Db;
+use crate::store::Store;
 use crate::owners::contract::ErrorClass;
 use crate::owners::session::{AuthorOutcome, SessionError};
 use crate::pacing::ManualClock;

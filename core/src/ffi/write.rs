@@ -3,12 +3,13 @@
 
 use std::sync::Arc;
 
-use serde_json::{Map, Value};
+use serde_json::{json, Map, Value};
+use crate::owners::store::{EffectRow, IntentEffects};
 
 use super::database::id;
 use super::receipt::{receipt_of, Ticket, WireOperationOutcome, WireOperationReceipt};
 use super::{Database, DbError};
-use crate::db::Planned;
+use crate::store::Planned;
 use crate::owners::life::LifeReply;
 use crate::owners::write::outbox::{Fault, LocalWriteKind, NewOp, OpSource, OutboxAnswer, OutboxOutcome, Receipt};
 use crate::runtime::Time;
@@ -57,14 +58,14 @@ impl Database {
         }
     }
 
-    pub(super) fn now(&self) -> Time { Time(u64::try_from(self.db.shared.store.lock().now_ms()).unwrap_or(0)) }
+    pub(super) fn now(&self) -> Time { Time(u64::try_from(self.db.lock().now_ms()).unwrap_or(0)) }
 
     pub(super) fn optimistic(&self, model: &str, row: &crate::identity::RowId) -> Result<Option<super::wire::WireRow>, DbError> {
         Ok(self.db.find(model, row)?.map(|found| self.wire(model).map(|wire| wire.row(&found))).transpose()?)
     }
 
     /// The path and the body of the request of a mutation: the registered document, the variables of the call.
-    fn mutation_request(&self, call: &crate::db::MutationCall) -> Result<(String, String), DbError> {
+    fn mutation_request(&self, call: &crate::store::MutationCall) -> Result<(String, String), DbError> {
         let path = self.life.graphql_path().ok_or_else(|| DbError::NoSession { detail: "transport is required for server operations".into() })?;
         let operation = self.reads.get(&call.mutation).ok_or_else(|| DbError::Invalid { detail: format!("operation {} is not registered", call.mutation) })?;
         let request = GraphQLRequest::new(operation.document.clone(), call.mutation.clone(), call.variables.clone());
@@ -78,7 +79,11 @@ impl Database {
         let row = planned.row_id.clone();
         let shown = planned.shown.clone();
         if planned.noop {
-            self.db.renew_ephemeral(&model, &shown);
+            if self.db.spec(&model)?.is_memory() {
+                let renewal = IntentEffects { rows: vec![EffectRow { model: model.clone(), row_id: shown.to_string(), values: json!({ "id": shown.as_str() }).to_string() }], ..Default::default() };
+                let waiter = self.life.local_write(epoch, model.clone(), LocalWriteKind::Model(renewal), row.to_string(), String::new(), self.now());
+                self.outbox_answer(waiter, action).await?;
+            }
             let value = self.optimistic(&model, &shown)?;
             return Ok(receipt_of(epoch, model, None, self.db.revision_seq()?, value, None, self.life.clone()));
         }
@@ -146,8 +151,8 @@ impl Database {
         let (db, name, field) = (self.db.clone(), model.clone(), path.clone());
         let plan = self.offload(move || Ok(db.plan_set_local(&name, &row, &field, value)?)).await?;
         let (kind, row, values) = match plan {
-            crate::db::LocalPlan::Row { row_id, values } => (LocalWriteKind::SetLocal, row_id, Value::Object(values).to_string()),
-            crate::db::LocalPlan::Pending { row_id, path, value } => (LocalWriteKind::SetLocalPending, row_id, serde_json::json!({ "path": path, "value": value }).to_string()),
+            crate::store::LocalPlan::Row { row_id, values } => (LocalWriteKind::SetLocal, row_id, Value::Object(values).to_string()),
+            crate::store::LocalPlan::Pending { row_id, path, value } => (LocalWriteKind::SetLocalPending, row_id, serde_json::json!({ "path": path, "value": value }).to_string()),
         };
         let waiter = self.life.local_write(epoch, model, kind, row.to_string(), values, self.now());
         self.outbox_answer(waiter, "set local").await.map(drop)

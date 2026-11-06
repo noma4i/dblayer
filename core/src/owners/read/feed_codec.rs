@@ -9,7 +9,7 @@ use serde_json::{json, Map, Value};
 use super::feed::FramedEvent;
 use super::feed_io::FeedCodec;
 use super::windows::{StaleKeys, WindowKey};
-use crate::db::Db;
+use crate::store::Store;
 use crate::identity::RowId;
 use crate::schema::{ChangeFeed, ChangeRead, ModelSpec, NodeRead, SubscriptionAction, UpdatesSpec, NODE_PARAM};
 use super::codec::{normalize_nodes, root_value};
@@ -19,7 +19,7 @@ use crate::value::read_id;
 pub type Operations = super::ReadOperations;
 
 pub struct SchemaFeedCodec {
-    db: Db,
+    db: std::sync::Arc<Store>,
     operations: Operations,
 }
 
@@ -40,11 +40,11 @@ fn invalid(model: &str, reason: impl std::fmt::Display) -> FramedEvent { FramedE
 fn delete(model: &str, id: &RowId) -> FramedEvent { event(model, json!({"op":"delete", "model":model, "id":id.as_str()}), StaleKeys::none()) }
 
 impl SchemaFeedCodec {
-    pub fn new(db: Db, operations: Operations) -> Self { Self { db, operations } }
+    pub fn new(db: std::sync::Arc<Store>, operations: Operations) -> Self { Self { db, operations } }
 
     fn feed(&self) -> Option<ChangeFeed> { self.specs().find_map(|spec| spec.change_feed.clone()) }
 
-    fn specs(&self) -> impl Iterator<Item = &ModelSpec> { self.db.shared.specs.values() }
+    fn specs(&self) -> impl Iterator<Item = &ModelSpec> { self.db.specs().values() }
 
     fn change_events(&self, data: &Value) -> Vec<FramedEvent> {
         let Some(feed) = self.feed() else { return Vec::new() };
@@ -234,9 +234,9 @@ impl FeedCodec for SchemaFeedCodec {
 }
 
 /// The channels each model reads: the change feed of the project when the model declares `changed_by`, the subscription of each `listens` and each relation `updates`.
-pub fn channels_of(db: &Db) -> BTreeMap<String, Vec<String>> {
-    let feed = db.shared.specs.values().find_map(|spec| spec.change_feed.as_ref().map(|feed| feed.subscription.clone()));
-    db.shared.specs.values().filter_map(|spec| {
+pub fn channels_of(db: &Store) -> BTreeMap<String, Vec<String>> {
+    let feed = db.specs().values().find_map(|spec| spec.change_feed.as_ref().map(|feed| feed.subscription.clone()));
+    db.specs().values().filter_map(|spec| {
         let mut channels: BTreeSet<String> = spec.listens.iter().chain(spec.relations.iter().flat_map(|relation| &relation.updates)).map(|updates| updates.subscription.clone()).collect();
         if let Some(feed) = feed.as_ref().filter(|_| !spec.changes.is_empty()) {
             channels.insert(feed.clone());

@@ -3,7 +3,7 @@ use super::normalize::*;
 use serde_json::{Map, Value};
 use crate::schema_fixtures::specs;
 use serde_json::json;
-use crate::db::Db;
+use crate::store::Store;
 use crate::schema::{AssociationKind, AssociationSpec, FieldSpec, ModelSpec};
 use crate::value::ScalarKind;
 
