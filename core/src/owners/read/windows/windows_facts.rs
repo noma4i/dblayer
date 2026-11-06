@@ -42,6 +42,7 @@ pub(super) struct Facts {
     pub(super) landed_revision: i64,
     pub(super) store_seen: i64,
     pub(super) request_base: std::cell::Cell<i64>,
+    pub(super) stale_marked: std::cell::Cell<bool>,
     /// The window has a marker and a tail (`media` in the `.dbl`).
     pub(super) media: bool,
     pub(super) marker: Option<Marker>,
@@ -89,6 +90,7 @@ impl Facts {
                 self.marker.clone_from(&saved.marker);
                 self.members = saved.members;
             }
+            Ev::Stale => self.stale_marked.set(true),
             Ev::Load { store_revision, .. } => self.store_seen = self.store_seen.max(*store_revision),
             Ev::StoreSeen { revision } => self.store_seen = self.store_seen.max(*revision),
             _ => {}
@@ -184,7 +186,7 @@ impl Facts {
         let load = Load::issued(request, attempt, page, force, self.basis());
         if !(self.media && page == 1) { return load; }
         let up_to = self.marker.as_ref().map_or(0, |marker| marker.sequence);
-        Load { chain: Some(Chain { phase: MediaPhase::MarkerCheck { up_to }, cursor: None, ids: Vec::new(), rows: PageRows::default(), models: BTreeSet::new(), latest: 0, base: 0 }), ..load }
+        Load { chain: Some(Chain { phase: MediaPhase::MarkerCheck { up_to }, cursor: None, ids: Vec::new(), rows: PageRows::default(), models: BTreeSet::new(), latest: 0, stale: self.stale_marked.take(), base: 0 }), ..load }
     }
 
     pub(super) fn request_effect(&self, load: &Load) -> WindowEffect {
@@ -231,7 +233,7 @@ impl Facts {
             MediaPhase::MarkerCheck { up_to } => {
                 let Some(found) = answer.marker.clone() else { return self.fail("InvalidResponse", None) };
                 chain.latest = found.sequence;
-                let prefix = self.marker.as_ref().is_some_and(|saved| saved.values == found.values && saved.sequence == up_to);
+                let prefix = !chain.stale && self.marker.as_ref().is_some_and(|saved| saved.values == found.values && saved.sequence == up_to);
                 if prefix && found.sequence == up_to {
                     return self.land_chain(load, &chain, found, true);
                 }

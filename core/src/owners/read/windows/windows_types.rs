@@ -115,6 +115,7 @@ pub struct Chain {
     pub rows: PageRows,
     pub models: BTreeSet<String>,
     pub latest: i64,
+    pub stale: bool,
     /// The members the chain keeps: all of the saved window for a tail, none for a full read.
     pub base: i64,
 }

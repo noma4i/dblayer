@@ -57,6 +57,7 @@ impl Window {
             landed_revision: 0,
             store_seen: 0,
             request_base: std::cell::Cell::new(0),
+            stale_marked: std::cell::Cell::new(false),
             media,
             marker: None,
             members: 0,
