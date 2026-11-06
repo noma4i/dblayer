@@ -375,6 +375,15 @@ fn xfer_open_ready() {
 }
 
 #[test]
+fn xfer_open_pending_step() {
+    let (mut twin, out) = Twin::opened(vec![row(1, KEY)], Default::default());
+    assert_eq!((twin.stage(1), twin.next_step(1), out.shows(), out.round_needed(), out.steps().len()), (TransferStage::Ready, NextStep::Part(1), vec![Shown::Queued], vec![vec![1]], 0), "the opening asks for no step: the step of the saved pair runs once, after the round");
+    twin.online(true);
+    assert!(twin.post(TransferInput::RestoreReady { epoch: EPOCH }).steps().is_empty());
+    assert_eq!(twin.commit().steps().iter().map(|step| step.0).collect::<Vec<_>>(), vec![Some(1)], "one step request, which carries the owner of its saved pair");
+}
+
+#[test]
 fn xfer_open_completing() {
     let mut found = row(1, KEY);
     found.confirmed_parts = 2;

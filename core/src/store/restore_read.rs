@@ -71,6 +71,22 @@ pub(crate) struct Restore {
     pub reserved: Option<u64>,
     /// The saved answers that no operation of the queue owns.
     pub orphan_answers: Vec<u64>,
+    /// `encrypted_pending` is the pair of a transfer step that no restored transfer asks for again.
+    pub transfer_pending_orphan: bool,
+}
+
+/// A step of a restored transfer sends the pair of `owner` again: the row is unfinished and the step is one that the row still has to run.
+fn transfer_asks_again(rows: &[crate::owners::write::transfer::StoredTransfer], owner: &crate::transport::RequestOwner) -> bool {
+    use crate::owners::write::upload::UploadStage;
+    let crate::transport::RequestOwner::Transfer { item_id, step, .. } = owner else { return true };
+    rows.iter().any(|row| {
+        let open = row.restore_failed.is_none() && row.failed.is_none() && !row.completed && !row.aborted && !row.copying;
+        match step {
+            UploadStage::Create | UploadStage::Init | UploadStage::Presign => open && row.confirmed_parts < row.source.parts && serde_json::from_str::<crate::owners::write::upload_codec::StepsBody>(&row.steps.body).is_ok_and(|body| body.item == *item_id),
+            UploadStage::Complete => open && row.confirmed_parts >= row.source.parts && row.key == *item_id,
+            UploadStage::Prepare | UploadStage::Put | UploadStage::Part | UploadStage::Abort | UploadStage::Mutation => false,
+        }
+    })
 }
 
 impl Store {
@@ -130,7 +146,11 @@ impl Store {
             Some((id, crate::owners::write::transfer::StoredGroup { joint: crate::owners::write::transfer::Joint::from_text(&text)?, op_id: op_id.and_then(|op| u64::try_from(op).ok()), intent_members }))
         }).collect();
         let orphan_answers = orphan_answers.into_iter().filter_map(|id| u64::try_from(id).ok()).collect();
-        Ok(Restore { ops, transfers, transfer_outcomes, orphans, batches, reserved, orphan_answers })
+        let transfer_pending_orphan = match (&pending, &transfers) {
+            (Some(held), Ok(rows)) => held.owner.as_ref().is_some_and(|owner| matches!(owner, crate::transport::RequestOwner::Transfer { .. }) && !transfer_asks_again(rows, owner)),
+            _ => false,
+        };
+        Ok(Restore { ops, transfers, transfer_outcomes, orphans, batches, reserved, orphan_answers, transfer_pending_orphan })
     }
 
     fn stored_intents(&self, entries: Vec<super::plan::OutboxOperation>, pending: Option<crate::store::session_state::Pending>, mut answers: std::collections::BTreeMap<i64, (u64, crate::store::session_state::StoredAnswer)>, origins: &std::collections::BTreeMap<i64, OpSource>, invalid: &std::collections::BTreeSet<i64>, cycles: &std::collections::BTreeMap<i64, i64>) -> Result<Vec<StoredOp>, DbError> {

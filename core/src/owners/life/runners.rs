@@ -13,7 +13,7 @@ use crate::owners::network::{Network, NetworkEffect, NetworkInput};
 use crate::owners::read::deliveries::DeliveryInput;
 use crate::owners::read::feed::FeedInput;
 use crate::owners::read::windows::WindowsInput;
-use crate::owners::session::SessionInput;
+use crate::owners::session::{PendingCall, SessionInput};
 use crate::owners::store::{Done, StoreEffect, StoreInput, StoreWriter, WriteDone};
 use crate::owners::write::outbox::OutboxInput;
 use crate::owners::write::rounds::RoundsInput;
@@ -215,6 +215,7 @@ impl EffectRunner<StoreWriter> for StoreRunner {
             StoreEffect::SaveFailed { publication_id, error } => wiring.to_lifecycle(LifecycleInput::SaveFailed { publication_id, error }),
             StoreEffect::ReadIntents { epoch, direct } => {
                 let restore = if direct { Ok(None) } else { self.db.read_restore().map(Some) };
+                let orphan_pending = restore.as_ref().is_ok_and(|read| read.as_ref().is_some_and(|read| read.transfer_pending_orphan));
                 let fail = |wiring: &Wiring, error: String| {
                     wiring.restore_failed_for(Peer::Outbox, error.clone());
                     wiring.to_outbox(OutboxInput::RestoreFailed { error: error.clone() });
@@ -261,7 +262,7 @@ impl EffectRunner<StoreWriter> for StoreRunner {
                 }
                 match &self.exchange {
                     Some(exchange) => match super::session_runner::SessionRunner::rows(exchange, &self.db) {
-                        Ok(stored) => wiring.to_session(SessionInput::Restored { epoch, pending: stored.pending, answers: stored.answers, pending_lost: stored.dropped_pending }),
+                        Ok(stored) => wiring.to_session(SessionInput::Restored { epoch, pending: stored.pending.map(|pending| if orphan_pending { PendingCall { author: None, owner: Some(crate::owners::session::MutateOwner::Detached), ..pending } } else { pending }), answers: stored.answers, pending_lost: stored.dropped_pending }),
                         Err(error) => wiring.to_session(SessionInput::RestoreFailed { epoch, error: error.to_string() }),
                     },
                     None => wiring.to_lifecycle(LifecycleInput::RestoreClassified { owner: Peer::Session, epoch }),

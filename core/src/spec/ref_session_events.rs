@@ -55,7 +55,10 @@ impl Session {
             Input::Restored { epoch, pending } => {
                 self.state = state;
                 out.effects.push(Effect::RestoreClassified { epoch });
-                if let (Some(pending), true) = (pending, epoch == self.epoch && self.current(epoch)) {
+                let released = matches!((&self.state, &pending), (State::PendingHeld { pending: held }, Some(saved)) if held.request_id == saved.request_id && saved.owner == Some(Owner::Detached) && held.owner != saved.owner);
+                if let (State::PendingHeld { pending: held }, true) = (self.state.clone(), released) {
+                    self.start_calling(Pending { author: None, owner: Some(Owner::Detached), ..held }, out);
+                } else if let (Some(pending), true) = (pending, epoch == self.epoch && self.current(epoch)) {
                     match pending.owner {
                         None => self.restored_direct = Some(Pending { epoch, ..pending }),
                         Some(Owner::Detached) => self.restored_detached = Some(Pending { epoch, ..pending }),
@@ -361,6 +364,7 @@ impl Session {
                 self.queue.push_back(Queued::Mutate { author, owner, req_id, epoch, path, body, purpose });
             }
             (State::PendingHeld { pending }, Input::Mutate { req_id, .. }) if req_id == pending.request_id => self.start_calling(pending, out),
+            (State::PendingHeld { pending }, Input::Mutate { author, owner: Some(owner @ Owner::Transfer { .. }), .. }) if pending.owner.as_ref() == Some(&owner) => self.start_calling(Pending { author: Some(author), ..pending }, out),
             (State::PendingHeld { pending }, Input::SessionCall { operation, body, reply }) => {
                 self.queue.push_back(Queued::Call { operation, body, reply });
                 self.state = State::PendingHeld { pending };

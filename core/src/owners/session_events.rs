@@ -70,7 +70,10 @@ impl SessionState {
             SessionInput::Restored { epoch, pending, .. } => {
                 self.phase = phase;
                 fx.push(SessionEffect::RestoreClassified { epoch });
-                if let (Some(pending), true) = (pending, epoch == self.epoch && self.current(epoch)) {
+                let released = matches!((&self.phase, &pending), (SessionPhase::PendingHeld { pending: held }, Some(saved)) if held.request_id == saved.request_id && saved.owner == Some(MutateOwner::Detached) && held.owner != saved.owner);
+                if let (SessionPhase::PendingHeld { pending: held }, true) = (self.phase.clone(), released) {
+                    self.start_calling(PendingCall { author: None, owner: Some(MutateOwner::Detached), ..held }, fx);
+                } else if let (Some(pending), true) = (pending, epoch == self.epoch && self.current(epoch)) {
                     match pending.owner {
                         None if pending.author.is_none() => self.restored_direct = Some(PendingCall { epoch, ..pending }),
                         Some(MutateOwner::Detached) => self.restored_detached = Some(PendingCall { epoch, ..pending }),
@@ -387,6 +390,7 @@ impl SessionState {
                 self.queue.push_back(Queued::Mutate { author, owner, req_id, epoch, path, body, purpose });
             }
             (SessionPhase::PendingHeld { pending }, SessionInput::Mutate { req_id, .. }) if req_id == pending.request_id => self.start_calling(pending, fx),
+            (SessionPhase::PendingHeld { pending }, SessionInput::Mutate { author, owner: Some(owner @ MutateOwner::Transfer { .. }), .. }) if pending.owner.as_ref() == Some(&owner) => self.start_calling(PendingCall { author: Some(author), ..pending }, fx),
             (SessionPhase::PendingHeld { pending }, SessionInput::SessionCall { operation, body, reply: id }) => {
                 self.queue.push_back(Queued::Call { operation, body, reply: id });
                 self.phase = SessionPhase::PendingHeld { pending };
