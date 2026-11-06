@@ -22,4 +22,5 @@ mod v3_message_tests;
 mod v3_moment_tests;
 mod v3_profile_tests;
 mod v3_user_tests;
+mod v3_wallet_search_tests;
 mod windows_tests;

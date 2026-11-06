@@ -196,3 +196,33 @@ pub(super) fn add_moment(models: &mut Value) {
     moment.actions.extend([react, read, create, destroy]);
     models.push(serde_json::to_value(moment).unwrap());
 }
+
+/// The balance of the account, the history of the wallet and the gift that moves both and posts a message.
+pub(super) fn add_wallet(models: &mut Value) {
+    let models = models.as_array_mut().unwrap();
+    let user = models.iter_mut().find(|model| model["key"] == "User").unwrap();
+    user["fields"].as_array_mut().unwrap().push(serde_json::to_value(optional("balance", ScalarKind::Int)).unwrap());
+    let mut gift = ActionDeclaration::new("send_gift", RootShape::Upsert);
+    gift.mutation = Some("SendGift".into());
+    gift.root = Some("sendGift.user".into());
+    gift.variables.insert("chatId".into(), "chatId".into());
+    gift.variables.insert("amount".into(), "amount".into());
+    gift.args.insert("chatId".into(), "id".into());
+    gift.args.insert("amount".into(), "int".into());
+    gift.lands.push(crate::schema::ActionLanding { model: "WalletTransaction".into(), root: "sendGift.transaction".into() });
+    gift.lands.push(crate::schema::ActionLanding { model: "Message".into(), root: "sendGift.message".into() });
+    user["actions"].as_array_mut().unwrap().push(serde_json::to_value(gift).unwrap());
+    let mut transaction = ModelSpec::new("WalletTransaction", vec![FieldSpec::scalar("id", ScalarKind::Id), optional("amount", ScalarKind::Int)]);
+    transaction.relations.push(RelationSpec::global("history"));
+    models.push(serde_json::to_value(transaction).unwrap());
+}
+
+/// The search of chats returns rows of the chat model itself.
+pub(super) fn add_search(models: &mut Value) {
+    let models = models.as_array_mut().unwrap();
+    let chat = models.iter_mut().find(|model| model["key"] == "Chat").unwrap();
+    let mut search = RelationSpec::new("search", &[]);
+    search.text_params = vec!["query".to_string()];
+    search.remote = Some(crate::schema_fixtures::remote("ChatSearch", crate::schema::RemoteShape::List { coverage: crate::schema::Coverage::Complete }, "1.minute"));
+    chat["relations"].as_array_mut().unwrap().push(serde_json::to_value(search).unwrap());
+}

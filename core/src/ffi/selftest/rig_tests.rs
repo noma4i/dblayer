@@ -224,6 +224,7 @@ impl World {
             }
             "BlockedUsers" => json!({"data":{"blockedUsers":state.blocked.iter().map(|id| json!({"__typename":"User","id":id,"name":id})).collect::<Vec<_>>()}}),
             "MomentReact" | "MomentReadCompass" | "MomentCreate" | "MomentDelete" => json!({"data":{"moment":{"__typename":"Moment","id":"m1"}}}),
+            "SendGift" | "ChatSearch" => json!({"data":{"sendGift":null,"chatSearch":[]}}),
             "ChatPin" => json!({"data":{"chatPin":{"__typename":"Chat","id":body["variables"]["id"],"pinned":body["variables"]["pinned"]}}}),
             "ChatMute" => json!({"data":{"chatMute":{"__typename":"Chat","id":body["variables"]["id"],"muted":body["variables"]["muted"]}}}),
             "ChatMarkRead" => json!({"data":{"chatMarkRead":{"__typename":"Chat","id":body["variables"]["id"],"unreadCount":0}}}),
@@ -404,6 +405,8 @@ const OPERATIONS: &str = r#"[
     {"name":"MomentReadCompass","document":"mutation MomentReadCompass($id: ID!) { momentReadCompass(id: $id) { id unreadSimilarMomentsCount } }"},
     {"name":"MomentCreate","document":"mutation MomentCreate($userId: ID!, $text: String!) { momentCreate(userId: $userId, text: $text) { id userId text } }"},
     {"name":"MomentDelete","document":"mutation MomentDelete($id: ID!) { momentDelete(id: $id) { id } }"},
+    {"name":"SendGift","document":"mutation SendGift($chatId: ID!, $amount: Int!) { sendGift(chatId: $chatId, amount: $amount) { user { id balance } transaction { id amount } message { id chatId text at } } }"},
+    {"name":"ChatSearch","document":"query ChatSearch($query: String!) { chatSearch(query: $query) { id name pinned } }"},
     {"name":"ChatPin","document":"mutation ChatPin($id: ID!, $pinned: Boolean!) { chatPin(id: $id, pinned: $pinned) { id pinned } }"},
     {"name":"ChatMute","document":"mutation ChatMute($id: ID!, $muted: Boolean!) { chatMute(id: $id, muted: $muted) { id muted } }"},
     {"name":"ChatMarkRead","document":"mutation ChatMarkRead($id: ID!) { chatMarkRead(id: $id) { id unreadCount } }"},
