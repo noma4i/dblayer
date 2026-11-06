@@ -7,16 +7,15 @@ use crate::operation::OperationStatus;
 use crate::identity::RowId;
 use crate::operation::{attach_extensions, read_extensions, write_extensions, failure_at, failure_cells, info_at, info_cells, read_operation, read_operation_uploads, read_fields, row_operation_sequences, Operation, INFO_COLUMNS, OPEN_STATUSES};
 
-use super::derive::{fold_entries, SyncEntry};
-use super::info::{SyncInfo, SyncState};
+use crate::value::sync::{fold_entries, SyncEntry, SyncInfo, SyncState};
 
 pub type SyncKey = (String, String);
 
 const CHUNK: usize = 500;
 
-const SELECT_STORED_WITH_ID: &str = include_str!("../store/sql/sync_state/statement_select_row_sync.sql");
+const SELECT_STORED_WITH_ID: &str = include_str!("sql/sync_state/statement_select_row_sync.sql");
 
-const SELECT_STORED: &str = include_str!("../store/sql/sync_state/statement_select_row_sync_2.sql");
+const SELECT_STORED: &str = include_str!("sql/sync_state/statement_select_row_sync_2.sql");
 
 pub fn operation_keys(action_key: &str, row_ids: &[RowId], temp_id: Option<&RowId>) -> Vec<SyncKey> {
     let Some((model, _)) = Operation::split_action_key(action_key) else { return Vec::new() };
@@ -30,7 +29,7 @@ fn open_entries(connection: &Connection, keys: Option<&BTreeSet<SyncKey>>, batch
     let sequences = match keys {
         Some(keys) => row_operation_sequences(connection, keys)?,
         None => {
-            let mut statement = connection.prepare_cached(&format!(include_str!("../store/sql/sync_state/open_entries_select_op.sql"), OPEN_STATUSES = OPEN_STATUSES))?;
+            let mut statement = connection.prepare_cached(&format!(include_str!("sql/sync_state/open_entries_select_op.sql"), OPEN_STATUSES = OPEN_STATUSES))?;
             let rows = statement.query_map([], |row| row.get::<_, i64>(0))?.collect::<rusqlite::Result<BTreeSet<_>>>()?;
             rows
         }
@@ -39,7 +38,7 @@ fn open_entries(connection: &Connection, keys: Option<&BTreeSet<SyncKey>>, batch
     for seq in sequences {
         let Some(operation) = read_operation(connection, seq)? else { continue };
         let uploads = read_operation_uploads(connection, seq)?;
-        let mut statement = connection.prepare_cached(include_str!("../store/sql/sync_state/open_entries_select_op_item.sql"))?;
+        let mut statement = connection.prepare_cached(include_str!("sql/sync_state/open_entries_select_op_item.sql"))?;
         let positions = statement.query_map([seq], |row| Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?)))?.collect::<rusqlite::Result<HashMap<_, _>>>()?;
         let Some((_, action)) = Operation::split_action_key(&operation.action_key) else { continue };
         let fields = if action == "update" { read_fields(connection, seq)? } else { Vec::new() };
@@ -69,7 +68,7 @@ fn open_entries(connection: &Connection, keys: Option<&BTreeSet<SyncKey>>, batch
 }
 
 fn names_of(connection: &Connection, table: &str, key: &SyncKey) -> rusqlite::Result<Vec<String>> {
-    let mut statement = connection.prepare_cached(&format!(include_str!("../store/sql/sync_state/names_of.sql"), table = table))?;
+    let mut statement = connection.prepare_cached(&format!(include_str!("sql/sync_state/names_of.sql"), table = table))?;
     let names = statement.query_map(params![key.0, key.1], |row| row.get(0))?;
     names.collect()
 }
@@ -94,7 +93,7 @@ fn read_uploads(connection: &Connection, model: &str, ids: &[String]) -> rusqlit
     let mut found: HashMap<String, std::collections::BTreeMap<String, crate::upload::UploadInfo>> = HashMap::new();
     for chunk in ids.chunks(CHUNK) {
         let marks = vec!["?"; chunk.len()].join(", ");
-        let mut statement = connection.prepare_cached(&format!(include_str!("../store/sql/sync_state/read_uploads.sql"), INFO_COLUMNS = INFO_COLUMNS, marks = marks))?;
+        let mut statement = connection.prepare_cached(&format!(include_str!("sql/sync_state/read_uploads.sql"), INFO_COLUMNS = INFO_COLUMNS, marks = marks))?;
         let arguments = std::iter::once(model).chain(chunk.iter().map(String::as_str));
         let mut rows = statement.query(params_from_iter(arguments))?;
         while let Some(row) = rows.next()? {
@@ -154,8 +153,8 @@ fn stored(connection: &Connection, key: &SyncKey) -> rusqlite::Result<Option<Syn
 pub fn clear_sync(connection: &Connection, model: Option<&str>) -> rusqlite::Result<()> {
     for table in ["sync_action", "sync_field", "sync_upload", "sync_upload_error", "row_sync", "sync_row_error"] {
         match model {
-            Some(model) => connection.execute(&format!(include_str!("../store/sql/sync_state/clear_sync_delete_table.sql"), table = table), [model])?,
-            None => connection.execute(&format!(include_str!("../store/sql/sync_state/clear_sync_delete_table_2.sql"), table = table), [])?,
+            Some(model) => connection.execute(&format!(include_str!("sql/sync_state/clear_sync_delete_table.sql"), table = table), [model])?,
+            None => connection.execute(&format!(include_str!("sql/sync_state/clear_sync_delete_table_2.sql"), table = table), [])?,
         };
     }
     Ok(())
@@ -167,7 +166,7 @@ fn write(connection: &Connection, key: &SyncKey, info: &SyncInfo) -> rusqlite::R
     let cells: Vec<SqlValue> = vec![key.0.clone().into(), key.1.clone().into(), info.state.as_sql().to_string().into(), kind, message, i64::from(info.attempts).into(), info.since.into()];
     let marks = vec!["?"; cells.len()].join(", ");
     connection
-        .prepare_cached(&format!(include_str!("../store/sql/sync_state/write_insert_row_sync.sql"), marks = marks))?
+        .prepare_cached(&format!(include_str!("sql/sync_state/write_insert_row_sync.sql"), marks = marks))?
         .execute(params_from_iter(cells))?;
     write_extensions(connection, "sync_row_error", &["model", "row_id"], &[SqlValue::Text(key.0.clone()), SqlValue::Text(key.1.clone())], info.error.as_ref())?;
     for (action, upload) in &info.uploads {
@@ -175,10 +174,10 @@ fn write(connection: &Connection, key: &SyncKey, info: &SyncInfo) -> rusqlite::R
         let mut cells: Vec<SqlValue> = vec![key.0.clone().into(), key.1.clone().into(), action.clone().into()];
         cells.extend(info_cells(Some(upload))?);
         let marks = vec!["?"; cells.len()].join(", ");
-        connection.prepare_cached(&format!(include_str!("../store/sql/sync_state/write_insert_sync_upload.sql"), INFO_COLUMNS = INFO_COLUMNS, marks = marks))?.execute(params_from_iter(cells))?;
+        connection.prepare_cached(&format!(include_str!("sql/sync_state/write_insert_sync_upload.sql"), INFO_COLUMNS = INFO_COLUMNS, marks = marks))?.execute(params_from_iter(cells))?;
     }
     for (table, names) in [("sync_action", &info.actions), ("sync_field", &info.dirty_fields)] {
-        let mut insert = connection.prepare_cached(&format!(include_str!("../store/sql/sync_state/write_insert_table.sql"), table = table))?;
+        let mut insert = connection.prepare_cached(&format!(include_str!("sql/sync_state/write_insert_table.sql"), table = table))?;
         for (pos, name) in names.iter().enumerate() {
             insert.execute(params![key.0, key.1, pos as i64, name])?;
         }
@@ -188,9 +187,9 @@ fn write(connection: &Connection, key: &SyncKey, info: &SyncInfo) -> rusqlite::R
 
 fn remove(connection: &Connection, key: &SyncKey) -> rusqlite::Result<()> {
     for table in ["sync_action", "sync_field", "sync_upload_error", "row_sync", "sync_row_error"] {
-        connection.prepare_cached(&format!(include_str!("../store/sql/sync_state/remove_delete_table.sql"), table = table))?.execute(params![key.0, key.1])?;
+        connection.prepare_cached(&format!(include_str!("sql/sync_state/remove_delete_table.sql"), table = table))?.execute(params![key.0, key.1])?;
     }
-    connection.prepare_cached(include_str!("../store/sql/sync_state/remove_delete_sync_upload.sql"))?.execute(params![key.0, key.1])?;
+    connection.prepare_cached(include_str!("sql/sync_state/remove_delete_sync_upload.sql"))?.execute(params![key.0, key.1])?;
     Ok(())
 }
 
@@ -225,9 +224,14 @@ pub fn rebuild_sync(connection: &Connection) -> rusqlite::Result<usize> {
 
 pub fn rebuild_sync_with(connection: &Connection, batch: &dyn Fn(&str) -> bool) -> rusqlite::Result<usize> {
     let mut keys: BTreeSet<SyncKey> = open_entries(connection, None, batch)?.into_keys().collect();
-    let mut statement = connection.prepare(include_str!("../store/sql/sync_state/rebuild_sync_with.sql"))?;
+    let mut statement = connection.prepare(include_str!("sql/sync_state/rebuild_sync_with.sql"))?;
     for key in statement.query_map([], |row| Ok((row.get(0)?, row.get(1)?)))? {
         keys.insert(key?);
     }
     Ok(recompute_sync_with(connection, &keys, batch)?.len())
 }
+
+#[cfg(test)]
+mod table_tests;
+#[cfg(test)]
+mod upload_tests;

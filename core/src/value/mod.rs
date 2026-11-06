@@ -13,6 +13,7 @@ use crate::identity::{RowId, ListKey};
 
 mod fractional;
 mod numeric;
+pub mod sync;
 
 pub(crate) use numeric::compare_numbers;
 
@@ -363,3 +364,5 @@ pub fn same_fields(left: &Map<String, Value>, right: &Map<String, Value>) -> boo
     let present = |row: &Map<String, Value>| row.values().filter(|value| !value.is_null()).count();
     present(left) == present(right) && left.iter().filter(|(_, value)| !value.is_null()).all(|(key, value)| right.get(key) == Some(value))
 }
+#[cfg(test)]
+mod sync_tests;

@@ -4,7 +4,7 @@ use std::sync::Arc;
 use serde_json::{Map, Value};
 
 use crate::identity::RowId;
-use crate::syncstate::SyncInfo;
+use crate::value::sync::SyncInfo;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Record {

@@ -604,7 +604,7 @@ fn out_landing_committed_result_no_root() {
 fn out_sending_answered_too_large() {
     use crate::owners::contract::ErrorClass;
     use crate::owners::session::{AuthorOutcome, SessionError};
-    use crate::syncstate::FailureKind;
+    use crate::value::sync::FailureKind;
     let mut twin = Twin::new();
     let id = sending(&mut twin, Policy::Keep, false);
     twin.waiter(id);

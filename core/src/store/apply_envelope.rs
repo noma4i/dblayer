@@ -157,7 +157,7 @@ pub(super) fn apply_envelope_at(
         let reader = Reader::new(connection, models);
         let id = target.id.to_string();
         if let Some(stored) = reader.stored_rows(target.model.as_str(), std::slice::from_ref(&id))?.remove(&id) {
-            let sync = crate::syncstate::read_sync(connection, target.model.as_str(), std::slice::from_ref(&id))?.remove(&id).unwrap_or_default();
+            let sync = crate::store::sync_state::read_sync(connection, target.model.as_str(), std::slice::from_ref(&id))?.remove(&id).unwrap_or_default();
             result.snapshot = Some(std::sync::Arc::new(crate::store::Record { id: stored.id, revision: stored.revision, data: stored.row, sync }));
         }
     }
@@ -166,7 +166,7 @@ pub(super) fn apply_envelope_at(
         let id = target.id.to_string();
         let stored = reader.stored_rows(target.model.as_str(), std::slice::from_ref(&id))?.remove(&id);
         let row = if let Some(stored) = stored {
-            let sync = crate::syncstate::read_sync(connection, target.model.as_str(), std::slice::from_ref(&id))?.remove(&id).unwrap_or_default();
+            let sync = crate::store::sync_state::read_sync(connection, target.model.as_str(), std::slice::from_ref(&id))?.remove(&id).unwrap_or_default();
             Some(std::sync::Arc::new(crate::store::Record { id: stored.id, revision: stored.revision, data: stored.row, sync }))
         } else { None };
         result.item_snapshots.push((item.clone(), row));

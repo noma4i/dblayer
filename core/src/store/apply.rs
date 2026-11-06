@@ -10,7 +10,8 @@ use crate::operation::OperationStatus;
 use crate::store::ddl::{manifest_write, REVISION_SEQ_KEY};
 use crate::identity::{Generation, ModelKey, RowRef};
 use crate::operation::{delete_operation, OperationEvent, failure_cells, write_operation_error, read_rows, stored_row_id, write_rows, write_value};
-use crate::syncstate::{operation_keys, recompute_sync_with, OperationFailure, SyncKey};
+use crate::store::sync_state::{operation_keys, recompute_sync_with, SyncKey};
+use crate::value::sync::OperationFailure;
 
 use super::file_ops::{apply_file_ops, release_files};
 use super::rows::{column_value, fetch_stored, placeholders, Reader, StoredRow, CHUNK};

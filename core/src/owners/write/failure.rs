@@ -2,7 +2,7 @@
 
 use crate::owners::contract::ErrorClass;
 use crate::owners::session::SessionError;
-use crate::syncstate::{FailureKind, OperationFailure};
+use crate::value::sync::{FailureKind, OperationFailure};
 use crate::transport::{GraphqlExtensions, SessionCode};
 
 fn text(failure: &OperationFailure) -> String { serde_json::to_string(failure).unwrap_or_else(|_| failure.message.clone()) }

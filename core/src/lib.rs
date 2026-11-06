@@ -7,7 +7,6 @@ pub mod transport;
 pub mod value;
 pub mod schema;
 pub mod operation;
-pub mod syncstate;
 pub mod write;
 pub mod store;
 pub mod query;

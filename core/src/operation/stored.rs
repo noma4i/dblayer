@@ -8,7 +8,7 @@ use serde_json::Value;
 
 use crate::identity::RowId;
 use crate::store::nodes::{delete_trees, read_trees, write_tree};
-use crate::syncstate::OperationFailure;
+use crate::value::sync::OperationFailure;
 use crate::transport::GraphqlExtensions;
 use crate::upload::{UploadInfo, UploadPart, UploadRequest, UploadRetry, UploadState};
 

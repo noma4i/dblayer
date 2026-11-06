@@ -110,7 +110,7 @@ fn apply_transitions(
                 }
                 if *status == OperationStatus::Failed {
                     connection.execute(include_str!("sql/apply_transitions/apply_transitions_update_blob_upload_5.sql"), params![now_ms, seq])?;
-                    if failure.kind == crate::syncstate::FailureKind::Rejected { super::blob::release(connection, *seq, false)?; }
+                    if failure.kind == crate::value::sync::FailureKind::Rejected { super::blob::release(connection, *seq, false)?; }
                 }
                 result.operations.insert(*seq);
                 wrote = true;

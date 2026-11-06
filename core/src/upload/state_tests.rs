@@ -1,5 +1,5 @@
 use crate::operation::OperationStatus;
-use crate::syncstate::{FailureKind, OperationFailure};
+use crate::value::sync::{FailureKind, OperationFailure};
 
 use super::*;
 

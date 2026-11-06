@@ -4,7 +4,7 @@ use sha2::{Digest, Sha256};
 use crate::store::Record;
 use crate::operation::enum_text;
 use crate::schema::{FieldKind, FieldSpec, ModelSpec, TYPENAME};
-use crate::syncstate::{OperationFailure, SyncInfo, SyncState};
+use crate::value::sync::{OperationFailure, SyncInfo, SyncState};
 use crate::upload::{UploadInfo, UploadStatus};
 
 #[derive(Clone, Debug, PartialEq, uniffi::Enum)]
@@ -223,8 +223,8 @@ fn cell<'a>(field: &'a FieldSpec, value: Option<&Value>, types: &mut Types<'a>) 
 }
 
 pub(super) fn failure(failure: &OperationFailure) -> WireFailure {
-    let session_code = match failure.kind { crate::syncstate::FailureKind::Session(code) => Some(code), _ => None };
-    let (request_size, request_limit) = match failure.kind { crate::syncstate::FailureKind::RequestTooLarge { size, limit } => (Some(size), Some(limit)), _ => (None, None) };
+    let session_code = match failure.kind { crate::value::sync::FailureKind::Session(code) => Some(code), _ => None };
+    let (request_size, request_limit) = match failure.kind { crate::value::sync::FailureKind::RequestTooLarge { size, limit } => (Some(size), Some(limit)), _ => (None, None) };
     let kind = if request_size.is_some() { "request_too_large".to_string() } else { enum_text(&failure.kind).unwrap_or_default() };
     WireFailure { kind, session_code, request_size, request_limit, message: failure.message.clone(), extensions: failure.extensions.clone() }
 }

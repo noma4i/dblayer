@@ -6,7 +6,7 @@ use uuid::Uuid;
 use crate::store::files::FileRecord;
 use crate::identity::{Generation, ModelKey, RowId, RowRef, ListKey};
 use crate::operation::OperationStatus;
-use crate::syncstate::OperationFailure;
+use crate::value::sync::OperationFailure;
 use crate::upload::UploadState;
 use crate::value::duplicates;
 
@@ -357,7 +357,7 @@ pub struct CommitResult {
     pub unknown_operation_acks: u32,
     pub(crate) snapshot: Option<crate::store::Row>,
     pub(crate) item_snapshots: Vec<(String, Option<crate::store::Row>)>,
-    pub(crate) ended_uploads: Vec<(i64, crate::upload::UploadStatus, Option<crate::syncstate::OperationFailure>)>,
+    pub(crate) ended_uploads: Vec<(i64, crate::upload::UploadStatus, Option<crate::value::sync::OperationFailure>)>,
     pub(crate) discarded_items: Vec<(i64, String)>,
     /// The version of the overlay of ephemeral values the commit published at its revision.
     pub position: u64,

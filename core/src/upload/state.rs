@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::operation::OperationStatus;
-use crate::syncstate::OperationFailure;
+use crate::value::sync::OperationFailure;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -191,6 +191,6 @@ impl UploadInfo {
 
     #[cfg(test)]
     pub fn is_retryable(&self) -> bool {
-        self.error.as_ref().is_some_and(|error| !matches!(error.kind, crate::syncstate::FailureKind::Rejected | crate::syncstate::FailureKind::MissingFile))
+        self.error.as_ref().is_some_and(|error| !matches!(error.kind, crate::value::sync::FailureKind::Rejected | crate::value::sync::FailureKind::MissingFile))
     }
 }

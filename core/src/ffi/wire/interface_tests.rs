@@ -2,7 +2,7 @@ use super::*;
 use crate::store::Record;
 use crate::identity::RowId;
 use crate::schema::screens_fixture::screens_spec;
-use crate::syncstate::SyncInfo;
+use crate::value::sync::SyncInfo;
 use serde_json::{json, Value};
 use std::sync::Arc;
 

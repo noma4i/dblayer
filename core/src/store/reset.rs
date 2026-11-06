@@ -9,7 +9,7 @@ use crate::identity::ListKey;
 use crate::store::nodes::read_trees;
 use crate::operation::{delete_operation, quarantine_add, read_value, Operation, QuarantineReason};
 use crate::schema::MergeRule;
-use crate::syncstate::clear_sync;
+use crate::store::sync_state::clear_sync;
 
 use super::rows::fetch_stored;
 use super::shape::leaf_value;

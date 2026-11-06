@@ -4,6 +4,7 @@ use rusqlite::Connection;
 
 use super::*;
 use crate::store::ddl::migrate_core;
+use crate::value::sync::{FailureKind, OperationFailure};
 use crate::operation::{delete_operation, failure_cells, write_rows};
 use crate::upload::{UploadStage, UploadState, UploadStatus};
 

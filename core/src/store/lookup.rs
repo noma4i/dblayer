@@ -9,7 +9,7 @@ use crate::identity::touches::touch;
 use crate::identity::RowId;
 use crate::query::{compile_count, compile_keys, fetch_count, fetch_keys, Order, Query};
 use crate::schema::Sort;
-use crate::syncstate::read_sync;
+use crate::store::sync_state::read_sync;
 
 use super::db_error::DbError;
 use super::record::{Record, Row};
@@ -57,7 +57,7 @@ impl Store {
     }
 
     /// `uploads[action]` of a row: the file URL of the copy while the transfer holds one, and the processing the server reports in the row after the transfer.
-    fn finish_uploads(&self, spec: &crate::schema::ModelSpec, data: &Map<String, Value>, sync: &mut crate::syncstate::SyncInfo) {
+    fn finish_uploads(&self, spec: &crate::schema::ModelSpec, data: &Map<String, Value>, sync: &mut crate::value::sync::SyncInfo) {
         let files = self.files();
         for info in sync.uploads.values_mut() {
             if let Some(id) = info.copy_file.take() {

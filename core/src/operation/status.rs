@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::identity::RowId;
-use crate::syncstate::OperationFailure;
+use crate::value::sync::OperationFailure;
 use crate::upload::UploadState;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]

@@ -8,7 +8,7 @@ use crate::identity::{ModelKey, RowId, RowRef};
 use crate::owners::store::{EffectMember, EffectRow, EffectTombstone, EffectTouch, IntentEffects};
 use crate::schema::ModelSpec;
 use crate::store::Reader;
-use crate::syncstate::read_sync;
+use crate::store::sync_state::read_sync;
 use crate::value::{read_id, same_fields};
 
 use super::effects::Edits;

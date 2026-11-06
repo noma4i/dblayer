@@ -1,6 +1,6 @@
 use crate::owners::contract::ErrorClass;
 use crate::owners::session::SessionError;
-use crate::syncstate::FailureKind;
+use crate::value::sync::FailureKind;
 use crate::transport::{GraphqlExtensions, SessionCode, TransactionDisposition};
 
 use super::failure::{network, of_graphql, of_session, parse};

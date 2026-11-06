@@ -1,4 +1,4 @@
-use super::*;
+use super::sync::*;
 use crate::operation::OperationStatus;
 
 fn entry(action: &str, status: OperationStatus, started: bool, since: i64) -> SyncEntry {

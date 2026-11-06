@@ -3,7 +3,7 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 
 use crate::identity::{RowId, RowRef};
 use crate::store::Row;
-use crate::syncstate::SyncInfo;
+use crate::value::sync::SyncInfo;
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct Stamp {

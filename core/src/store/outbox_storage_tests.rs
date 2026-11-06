@@ -2,7 +2,7 @@ use super::fixtures::*;
 use super::*;
 use crate::store::{OperationRecord, OperationTransition};
 use crate::operation::OperationStatus;
-use crate::syncstate::{FailureKind, OperationFailure};
+use crate::value::sync::{FailureKind, OperationFailure};
 use crate::upload::{UploadPart, UploadScenario, UploadStage, UploadState, UploadStatus};
 use serde_json::json;
 
@@ -120,7 +120,7 @@ fn graphql_extensions_survive_reopen_in_every_error_owner_and_leave_with_it() {
             assert_eq!(stored.len(), 2);
             assert!(stored.iter().all(|operation| operation.error.as_ref() == Some(&failure)), "op");
             assert_eq!(stored.iter().find(|operation| operation.id.0 == upload_seq).unwrap().upload.as_ref().unwrap().error.as_ref(), Some(&item), "op_item");
-            let rows = crate::syncstate::read_sync(reader.connection(), "messages", &["m1".into(), "m2".into()])?;
+            let rows = crate::store::sync_state::read_sync(reader.connection(), "messages", &["m1".into(), "m2".into()])?;
             assert_eq!(rows.len(), 2);
             assert!(rows.values().all(|row| row.error.as_ref() == Some(&failure)), "row_sync");
             assert!(rows.values().all(|row| row.uploads["file"].error.as_ref() == Some(&failure)), "sync_upload");

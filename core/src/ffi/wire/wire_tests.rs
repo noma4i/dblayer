@@ -2,7 +2,7 @@ use super::*;
 use crate::store::Record;
 use crate::identity::RowId;
 use crate::schema::{resolve_types, EphemeralSpec, FieldSpec, ModelSpec};
-use crate::syncstate::SyncInfo;
+use crate::value::sync::SyncInfo;
 use crate::value::ScalarKind;
 use serde_json::{json, Value};
 use std::sync::Arc;
@@ -126,10 +126,10 @@ fn null_and_absent_are_the_same_cell() {
 #[test]
 fn the_row_carries_its_id_sync_state_and_upload() {
     let mut data = record(json!({"title": "t"}));
-    data.sync.state = crate::syncstate::SyncState::Failed;
+    data.sync.state = crate::value::sync::SyncState::Failed;
     data.sync.actions = vec!["update".to_string()];
     data.sync.dirty_fields = vec!["title".to_string()];
-    data.sync.error = Some(crate::syncstate::OperationFailure::new(crate::syncstate::FailureKind::Server, "http 503"));
+    data.sync.error = Some(crate::value::sync::OperationFailure::new(crate::value::sync::FailureKind::Server, "http 503"));
     data.sync.attempts = 2;
     data.sync.since = 7;
     data.sync.uploads.insert("upload".to_string(), crate::upload::UploadInfo {

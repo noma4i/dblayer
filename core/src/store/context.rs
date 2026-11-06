@@ -10,7 +10,7 @@ use crate::store::files::FileDirectories;
 use crate::identity::{ModelKey, RowRef};
 use crate::operation::{apply_fsck, fsck_plan, open_operations, rebuilt_rows, FsckAction, Orphan, Orphans, OutboxQueue};
 use crate::schema::{reserved_member_names, resolve_types, validate_models, AssociationKind, AssociationSpec, ModelSpec};
-use crate::syncstate::rebuild_sync_with;
+use crate::store::sync_state::rebuild_sync_with;
 
 use super::db_error::DbError;
 use super::changed_log::ChangedLog;
