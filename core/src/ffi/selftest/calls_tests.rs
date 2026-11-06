@@ -78,8 +78,16 @@ async fn late_answer_case(call: Call, transition: Transition, refusal: bool) {
     rig.settle().await;
     let gate = if refusal { rig.world.hold_then(call.operation(), Fault::Refuse { code: "UNAUTHENTICATED", confirmed: false }) } else { rig.world.hold_next(call.operation()) };
     gate.as_account("late");
-    let running = call.start(rig.database.clone());
-    gate.entered_for(&case).await;
+    let mut running = call.start(rig.database.clone());
+    let arrival_gate = gate.clone();
+    let arrival = tokio::spawn(async move { crate::test_wait::within_secs(BOUND, arrival_gate.entered()).await });
+    tokio::select! {
+        result = arrival => if result.is_err() {
+            let outcome = if running.is_finished() { Some((&mut running).await) } else { None };
+            panic!("{case}: the request never reached the transport; call: {outcome:?}; requests: {:?}", rig.world.log());
+        },
+        result = &mut running => panic!("{case}: the call ended before reaching the transport: {result:?}; requests: {:?}", rig.world.log()),
+    }
     rig.world.set_account("B");
 
     transition.apply(&rig.database).await;
