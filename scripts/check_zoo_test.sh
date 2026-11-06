@@ -32,6 +32,14 @@ expect_green 'fn read(inner: &Inner) { let count = inner.connection.query_row("S
 fn guarded(store: &Store) { store.write(&epoch, |connection| { connection.execute("DELETE FROM t", []) }); }
 fn waits(rx: &mut Rx) { let event = rx.recv().await; let unit = blocking_unit(|| condition.wait(guard)); }'
 
+expect_green '#[uniffi::export(with_foreign)]
+pub trait Sink {}
+#[derive(Default, uniffi::Record)]
+pub struct Ports { pub sink: Option<Arc<dyn Sink>> }'
+expect_red '#[uniffi::export(with_foreign)]
+pub trait Sink {}
+pub struct Holder { pub sink: Option<Arc<dyn Sink>> }'
+
 expect_red 'fn bypass(inner: &Inner) { inner.connection.execute("DELETE FROM t", []); }'
 expect_red 'fn bypass(inner: &Inner) { let connection = &inner.connection; connection.execute("DELETE FROM t", []); }'
 expect_red 'fn prune(connection: &Connection) { connection.execute("DELETE FROM t", []); }

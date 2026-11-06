@@ -16,7 +16,7 @@ fn config() -> Config { Config { path: None, data_version: None, cache_rows: 8 }
 async fn local_notes() -> Arc<Database> {
     let mut model = ModelSpec::new("Note", vec![FieldSpec::scalar("id", ScalarKind::Id), FieldSpec::scalar("text", ScalarKind::Str)]);
     model.storage = Storage::Local;
-    Database::open(config(), serde_json::to_string(&vec![model]).unwrap(), None, None, None, None, None).await.unwrap()
+    Database::open(config(), serde_json::to_string(&vec![model]).unwrap(), crate::ffi::OpenPorts::default()).await.unwrap()
 }
 
 fn with_transport(clock: Arc<dyn Clock>) -> (Arc<Database>, Arc<MockTransport>) {

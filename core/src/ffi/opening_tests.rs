@@ -3,7 +3,7 @@ use super::*;
 fn config() -> Config { Config { path: None, data_version: None, cache_rows: 8 } }
 fn options() -> OpenOptions { OpenOptions { operations: "[]".into(), power_saving: false, low_ram: false } }
 async fn open(slot: &OpenDatabase) -> Result<Arc<Database>, DbError> {
-    slot.open(config(), "[]".into(), options(), None, None, None, None, None).await
+    slot.open(config(), "[]".into(), options(), crate::ffi::OpenPorts::default()).await
 }
 
 #[tokio::test]
@@ -51,7 +51,7 @@ async fn life_register_no_transport() {
 async fn life_register_closed() {
     use super::super::database_tests::Plain;
     let slot = OpenDatabase::new();
-    let database = slot.open(config(), "[]".into(), options(), Some(Arc::new(Plain)), None, None, None, None).await.unwrap();
+    let database = slot.open(config(), "[]".into(), options(), crate::ffi::OpenPorts { transport: Some(Arc::new(Plain)), ..Default::default() }).await.unwrap();
     database.close_database().await.unwrap();
     let result = database.register_operations(r#"[{"name":"Query","document":"query Query { items }"}]"#.into());
     assert!(matches!(result, Err(DbError::Closed { .. })));
@@ -61,7 +61,7 @@ async fn life_register_closed() {
 async fn life_register_invalid() {
     use super::super::database_tests::Plain;
     let slot = OpenDatabase::new();
-    let database = slot.open(config(), "[]".into(), options(), Some(Arc::new(Plain)), None, None, None, None).await.unwrap();
+    let database = slot.open(config(), "[]".into(), options(), crate::ffi::OpenPorts { transport: Some(Arc::new(Plain)), ..Default::default() }).await.unwrap();
     for definitions in [
         r#"[{"document":"query Query { items }"}]"#,
         r#"[{"name":"Query"}]"#,
@@ -87,7 +87,7 @@ async fn life_register_bad_preload() {
         selection.preload = Some([(if bad_source { "category" } else { "unknown" }.to_string(), choice)].into());
         selection.preload_limit = Some(1);
         model.relations.push(selection);
-        let database = Database::open(config(), serde_json::to_string(&vec![model]).unwrap(), Some(Arc::new(Plain)), None, None, None, None).await.unwrap();
+        let database = Database::open(config(), serde_json::to_string(&vec![model]).unwrap(), crate::ffi::OpenPorts { transport: Some(Arc::new(Plain)), ..Default::default() }).await.unwrap();
         let definitions = r#"[{"name":"Greeting","document":"query Greeting($name: String!) { greeting(name: $name) }"}]"#;
         assert!(matches!(database.register_operations(definitions.into()), Err(DbError::Invalid { .. })));
         database.set_online(true).unwrap();
@@ -100,7 +100,7 @@ async fn life_register_bad_preload() {
 #[tokio::test]
 async fn an_open_that_fails_leaves_the_slot_free() {
     let slot = OpenDatabase::new();
-    assert!(slot.open(config(), "invalid".into(), options(), None, None, None, None, None).await.is_err());
+    assert!(slot.open(config(), "invalid".into(), options(), crate::ffi::OpenPorts::default()).await.is_err());
     assert!(open(&slot).await.is_ok());
 }
 
@@ -116,7 +116,7 @@ async fn open_carries_the_upload_declaration_and_frees_the_slot_when_it_is_refus
     let slot = OpenDatabase::new();
     for (name, accepted) in [("Missing", false), ("CreateBlob", true)] {
         let options = OpenOptions { operations: r#"[{"name":"CreateBlob","document":"mutation CreateBlob { createBlob { url } }"}]"#.into(), power_saving: false, low_ram: false };
-        let opened = slot.open(config(), clip_with_blob(name), options, Some(Arc::new(Plain)), None, None, None, None).await;
+        let opened = slot.open(config(), clip_with_blob(name), options, crate::ffi::OpenPorts { transport: Some(Arc::new(Plain)), ..Default::default() }).await;
         match opened {
             Ok(_) => assert!(accepted, "{name} was opened"),
             Err(error) => assert!(!accepted && error.to_string().ends_with("invalid: upload operation Missing is not registered"), "{name}: {error}"),
@@ -129,7 +129,7 @@ async fn open_carries_the_upload_declaration_and_frees_the_slot_when_it_is_refus
 async fn inv_upload_22_uploads_with_empty_operations_explain_the_cause_and_the_fix() {
     use super::super::database_tests::Plain;
     let slot = OpenDatabase::new();
-    let opened = slot.open(config(), clip_with_blob("CreateBlob"), options(), Some(Arc::new(Plain)), None, None, None, None).await;
+    let opened = slot.open(config(), clip_with_blob("CreateBlob"), options(), crate::ffi::OpenPorts { transport: Some(Arc::new(Plain)), ..Default::default() }).await;
     let error = match opened {
         Err(error) => error.to_string(),
         Ok(_) => panic!("uploads with empty operations were accepted"),

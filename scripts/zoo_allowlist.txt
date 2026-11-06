@@ -72,7 +72,3 @@ z27:CLOSE_DRAIN   # owner constant missing from design.md 1a, open finding (line
 z27:OPEN_WAIT   # owner constant missing from design.md 1a, open finding (line D)
 z27:CALL   # owner constant missing from design.md 1a, open finding (line D)
 
-z29:ffi/database.rs:clippy::too_many_arguments   # the open of the bridge takes the ports one by one until the platforms take them as one record
-z29:ffi/opening.rs:clippy::too_many_arguments   # the same open as the bridge exports it
-z29:ffi/write.rs:clippy::too_many_arguments   # attach takes the name and the mime beside the bytes until the platforms take one record
-z29:ffi/read.rs:clippy::large_enum_variant   # the delta of the bridge enum carries its lists until the platforms take it as one record

@@ -40,7 +40,7 @@ fn config() -> Config { Config { path: None, data_version: None, cache_rows: 8 }
 
 #[tokio::test]
 async fn life_register_ok() {
-    let database = Database::open(config(), "[]".into(), Some(Arc::new(Plain)), None, None, None, None).await.unwrap();
+    let database = Database::open(config(), "[]".into(), crate::ffi::OpenPorts { transport: Some(Arc::new(Plain)), ..Default::default() }).await.unwrap();
     database.register_operations(r#"[{"name":"Greeting","document":"query Greeting($name: String!) { greeting(name: $name) }"}]"#.into()).unwrap();
     database.set_online(true).unwrap();
     assert_eq!(database.run(database.session_epoch(), "Greeting".into(), r#"{"name":"Ada"}"#.into()).await.unwrap(), r#""Hello Ada""#);
@@ -59,7 +59,7 @@ async fn unified_open_rejects_incomplete_or_unencrypted_session_arguments() {
         (true, true, true, false),
     ] {
         let encrypted = encrypted.then(|| EncryptedConfig { origin: origin().into(), server_key: public_key_der_b64().into(), pin: pin().into(), ..crate::transport::encrypted::protocol_tests::config() });
-        let result = Database::open(config(), "[]".into(), transport.then(|| Arc::new(Plain) as Arc<dyn Transport>), encrypted, credentials.then(|| Arc::new(Unused) as Arc<dyn CredentialStore>), http.then(|| Arc::new(Unused) as Arc<dyn EncryptedHttp>), None).await;
+        let result = Database::open(config(), "[]".into(), crate::ffi::OpenPorts { transport: transport.then(|| Arc::new(Plain) as Arc<dyn Transport>), encrypted, credentials: credentials.then(|| Arc::new(Unused) as Arc<dyn CredentialStore>), http: http.then(|| Arc::new(Unused) as Arc<dyn EncryptedHttp>), ..Default::default() }).await;
         rejected.push(matches!(result, Err(DbError::Invalid { .. })));
     }
     assert_eq!(rejected, [true; 6]);

@@ -64,7 +64,8 @@ pub fn user_agent(application: Option<String>) -> String {
 
 pub use database::{Config, Database, SubscriptionCensus, TestClock};
 pub use receipt::{ItemId, WireBatchReceipt, WireItemReceipt, WireOperationOutcome, WireOperationReceipt, WireReceiptTicket};
-pub use opening::{OpenDatabase, OpenOptions};
+pub use opening::{OpenDatabase, OpenOptions, OpenPorts};
+pub use write::FileBytes;
 pub use encrypted::{fetch_server_config, CredentialStore, EncryptedHttp, EncryptedReply, RetryProgress, RetryProgressListener, RetrySubscription};
 pub use crate::transport::SessionCode;
 pub use crate::transport::{AppPlatform, ConfigCode, EncryptedConfig, EncryptedEndpoints, EncryptedOperationClass, EncryptedSessionOperation, SecurityCode, ServerConfig};

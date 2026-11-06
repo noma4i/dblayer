@@ -152,7 +152,7 @@ impl crate::ffi::Transport for CancelledLoadTransport {
 #[tokio::test(flavor = "multi_thread")]
 async fn cancelling_the_last_load_interest_cancels_the_request() {
     let transport = Arc::new(CancelledLoadTransport::default());
-    let database = bound(Database::open(crate::ffi::Config { path: None, data_version: None, cache_rows: 32 }, crate::ffi::lifecycle_tests::models(), Some(transport.clone()), None, None, None, None)).await.unwrap();
+    let database = bound(Database::open(crate::ffi::Config { path: None, data_version: None, cache_rows: 32 }, crate::ffi::lifecycle_tests::models(), crate::ffi::OpenPorts { transport: Some(transport.clone()), ..Default::default() })).await.unwrap();
     database.register_operations(json!([{"name":"Users","document":"query Users { users { id name } }"}]).to_string()).unwrap();
     database.set_online(true).unwrap();
     let request = database.begin_load(database.session_epoch(), "User".into(), "all".into(), "{}".into()).unwrap();
@@ -174,7 +174,7 @@ async fn a_refresh_after_reopen_and_clock_rollback_keeps_the_new_response() {
     let opener = crate::ffi::OpenDatabase::new();
     let world_a = World::new("server", "A", true);
     let switch = Switchable::new(Some(world_a.clone()), false);
-    let first = bound(opener.open_with_clock(config.clone(), plain_models(), Some(switch.clone()), crate::ffi::TestClock::new(1_000_000), None, None, None, None)).await.unwrap();
+    let first = bound(opener.open_with_clock(config.clone(), plain_models(), crate::ffi::OpenPorts { transport: Some(switch.clone()), ..Default::default() }, crate::ffi::TestClock::new(1_000_000))).await.unwrap();
     first.register_operations(plain_operations()).unwrap();
     first.set_online(true).unwrap();
     bound(first.refresh(first.session_epoch(), "User".into(), "profile".into(), "{}".into())).await.unwrap();
@@ -184,7 +184,7 @@ async fn a_refresh_after_reopen_and_clock_rollback_keeps_the_new_response() {
     bound(first.close_database()).await.unwrap();
     let world_b = World::new("server", "B", true);
     switch.set(Some(world_b.clone()));
-    let second = bound(opener.open_with_clock(config, plain_models(), Some(switch), crate::ffi::TestClock::new(100), None, None, None, None)).await.unwrap();
+    let second = bound(opener.open_with_clock(config, plain_models(), crate::ffi::OpenPorts { transport: Some(switch), ..Default::default() }, crate::ffi::TestClock::new(100))).await.unwrap();
     second.register_operations(plain_operations()).unwrap();
     second.set_online(true).unwrap();
     bound(second.refresh(second.session_epoch(), "User".into(), "profile".into(), "{}".into())).await.unwrap();
@@ -542,7 +542,7 @@ async fn chat_events() -> (Arc<Database>, Arc<CableTransport>, Arc<World>) {
     let mut encrypted = crate::transport::encrypted::protocol_tests::config();
     encrypted.endpoints.session_operations.insert("login_link".into(), crate::ffi::EncryptedSessionOperation { path: "/api/auth/login_link".into(), class: crate::transport::EncryptedOperationClass::Authenticated });
     let transport = Arc::new(CableTransport::new(encrypted.clone()));
-    let database = bound(Database::open_with_clock(crate::ffi::Config { path: None, data_version: None, cache_rows: 32 }, serde_json::to_string(&vec![chat]).unwrap(), Some(transport.clone()), crate::ffi::TestClock::new(1_000_000), Some(encrypted), Some(Arc::new(crate::ffi::session_guards_tests::WatchedHeld::default())), Some(world.clone()), None)).await.unwrap();
+    let database = bound(Database::open_with_clock(crate::ffi::Config { path: None, data_version: None, cache_rows: 32 }, serde_json::to_string(&vec![chat]).unwrap(), crate::ffi::OpenPorts { transport: Some(transport.clone()), encrypted: Some(encrypted), credentials: Some(Arc::new(crate::ffi::session_guards_tests::WatchedHeld::default())), http: Some(world.clone()), ..Default::default() }, crate::ffi::TestClock::new(1_000_000))).await.unwrap();
     database.register_operations(json!([
         {"name":"ChatList","document":"query ChatList($list: String) { chats(list: $list) { id title revision lists } }"},
         {"name":"ChatNode","document":"query ChatNode($id: ID!) { node(id: $id) { ... on Chat { id title revision lists } } }"},

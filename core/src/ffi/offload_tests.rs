@@ -78,7 +78,7 @@ type FileCall = Box<dyn FnOnce(std::sync::Arc<super::Database>) -> std::pin::Pin
 fn file_calls() -> Vec<(&'static str, FileCall)> {
     let ids = || ("Moment".to_string(), "r1".to_string(), "photo".to_string());
     vec![
-        ("attach", Box::new(move |db| Box::pin(async move { let (m, r, f) = ids(); let _ = db.attach(db.session_epoch(), m, r, f, vec![1], "n".into(), "image/png".into()).await; }))),
+        ("attach", Box::new(move |db| Box::pin(async move { let (m, r, f) = ids(); let _ = db.attach(db.session_epoch(), m, r, f, crate::ffi::FileBytes { bytes: vec![1], name: "n".into(), mime: "image/png".into() }).await; }))),
         ("file", Box::new(move |db| Box::pin(async move { let (m, r, f) = ids(); let _ = db.file(db.session_epoch(), m, r, f).await; }))),
         ("read", Box::new(move |db| Box::pin(async move { let (m, r, f) = ids(); let _ = db.read(db.session_epoch(), m, r, f).await; }))),
         ("url", Box::new(move |db| Box::pin(async move { let (m, r, f) = ids(); let _ = db.url(db.session_epoch(), m, r, f).await; }))),

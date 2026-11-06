@@ -129,6 +129,8 @@ for path in files:
             traits.discard("Transport")
         if not traits.intersection(foreign_traits):
             continue
+        if re.search(r"#\[derive\([^\]]*uniffi::Record[^\]]*\)\]\s*(?:#\[[^\]]*\]\s*)*(?:pub(?:\([^)]*\))?\s+)?$", code[:match.start()]):
+            continue
         destructor = re.search(r"impl Drop for " + match[1] + r"\s*\{", code)
         body = code[destructor.end():end_of(code, destructor.end() - 1, "{", "}")] if destructor else ""
         if not re.search(r"\block::assert_no_library_lock\s*\(", body):

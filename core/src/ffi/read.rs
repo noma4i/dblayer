@@ -56,7 +56,6 @@ pub struct RowRename {
 }
 
 #[derive(Clone, Debug, PartialEq, uniffi::Enum)]
-#[allow(clippy::large_enum_variant)]
 pub enum ReadValue {
     /// The whole result at a revision: the first value of a stream of rows.
     Snapshot { revision: i64, rows: Vec<WireRow>, state: ReadState },
@@ -66,7 +65,7 @@ pub enum ReadValue {
     State { revision: i64, state: ReadState },
     Ready,
     /// One event of a model: the rows before and after its landing, read only while a stream of events is open.
-    Event { position: u64, area: String, kind: String, id: String, before: Option<WireRow>, after: Option<WireRow> },
+    Event { position: u64, area: String, kind: String, id: String, before: Option<Box<WireRow>>, after: Option<Box<WireRow>> },
     Lost { first: u64, last: u64 },
     Gap,
     Status { revision: i64, state: String, progress: u64, error: Option<String> },
@@ -126,10 +125,10 @@ fn full_row(row: &StreamRow) -> Result<WireRow, DbError> {
     row.row.clone().ok_or_else(|| DbError::Database { detail: format!("the read gave row {} without its values", row.id) })
 }
 
-fn event_row(wire: Option<&WireModel>, id: &str, value: Option<&serde_json::Value>) -> Option<WireRow> {
+fn event_row(wire: Option<&WireModel>, id: &str, value: Option<&serde_json::Value>) -> Option<Box<WireRow>> {
     let (wire, data) = (wire?, value?.as_object()?);
     let id = crate::identity::RowId::new(id).ok()?;
-    Some(wire.row(&crate::store::Record { id, revision: 0, data: data.clone(), sync: Default::default() }))
+    Some(Box::new(wire.row(&crate::store::Record { id, revision: 0, data: data.clone(), sync: Default::default() })))
 }
 
 fn event_of(position: u64, payload: &str, wire: Option<&WireModel>) -> ReadValue {

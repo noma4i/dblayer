@@ -25,7 +25,7 @@ data class FileInfo(val id: String, val size: Long, val name: String?, val mime:
 class FileField<Model : DBModel>(val name: String)
 
 suspend fun <Model : DBModel> Model.attach(field: FileField<Model>, data: ByteArray, name: String, mime: String, account: AccountScope? = null): FileInfo {
-    return onAccount(account) { database, epoch -> FileInfo.parse(database.attach(epoch, modelName, id, field.name, data, name, mime)) }
+    return onAccount(account) { database, epoch -> FileInfo.parse(database.attach(epoch, modelName, id, field.name, FileBytes(data, name, mime))) }
 }
 
 suspend fun <Model : DBModel> Model.file(field: FileField<Model>, account: AccountScope? = null): FileInfo? {

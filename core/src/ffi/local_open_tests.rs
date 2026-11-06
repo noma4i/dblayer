@@ -7,7 +7,7 @@ use crate::value::ScalarKind;
 async fn local() -> Arc<Database> {
     let mut model = ModelSpec::new("Note", vec![FieldSpec::scalar("id", ScalarKind::Id), FieldSpec::scalar("text", ScalarKind::Str)]);
     model.storage = Storage::Local;
-    Database::open(Config { path: None, data_version: None, cache_rows: 16 }, serde_json::to_string(&vec![model]).unwrap(), None, None, None, None, None).await.unwrap()
+    Database::open(Config { path: None, data_version: None, cache_rows: 16 }, serde_json::to_string(&vec![model]).unwrap(), crate::ffi::OpenPorts::default()).await.unwrap()
 }
 
 #[tokio::test]
@@ -39,11 +39,11 @@ async fn a_write_after_a_boot_that_raised_the_generation_is_not_stale() {
     model.storage = Storage::Local;
     let models = serde_json::to_string(&vec![model]).unwrap();
     let config = || Config { path: Some(path.clone()), data_version: None, cache_rows: 16 };
-    let first = Database::open(config(), models.clone(), None, None, None, None, None).await.unwrap();
+    let first = Database::open(config(), models.clone(), crate::ffi::OpenPorts::default()).await.unwrap();
     first.close_database().await.unwrap();
     drop(first);
     rusqlite::Connection::open(&path).unwrap().execute("UPDATE manifest SET value = '2' WHERE key = 'saved_generation'", []).unwrap();
-    let second = Database::open(config(), models, None, None, None, None, None).await.unwrap();
+    let second = Database::open(config(), models, crate::ffi::OpenPorts::default()).await.unwrap();
     let created = crate::test_wait::within(second.create_row(second.session_epoch(), "Note".into(), serde_json::from_str(r#"{"text":"kept"}"#).unwrap(), Default::default())).await;
     assert!(created.is_ok(), "{created:?}");
 }

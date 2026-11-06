@@ -15,6 +15,14 @@ use crate::owners::write::outbox::{Fault, LocalWriteKind, NewOp, OpSource, Outbo
 use crate::runtime::Time;
 use crate::transport::GraphQLRequest;
 
+/// The bytes of a file with the name and the mime that `attach` stores in the field.
+#[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
+pub struct FileBytes {
+    pub bytes: Vec<u8>,
+    pub name: String,
+    pub mime: String,
+}
+
 /// The error of a call that an owner refused.
 pub(super) fn refused(fault: Fault, what: &str) -> DbError {
     use crate::owners::contract::RejectReason;
@@ -165,8 +173,8 @@ impl Database {
         self.outbox_answer(waiter, "set ephemeral").await.map(drop)
     }
 
-    #[allow(clippy::too_many_arguments)]
-    pub async fn attach(&self, epoch: u64, model: String, row_id: String, field: String, bytes: Vec<u8>, name: String, mime: String) -> Result<String, DbError> {
+    pub async fn attach(&self, epoch: u64, model: String, row_id: String, field: String, file: FileBytes) -> Result<String, DbError> {
+        let FileBytes { bytes, name, mime } = file;
         self.account_call(epoch)?;
         let row = id(&row_id)?;
         let (checked_model, checked_field) = (model.clone(), field.clone());

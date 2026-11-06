@@ -165,25 +165,16 @@ impl Database {
         Ok(Arc::new(Self { lease: Arc::new(OnceLock::new()), life, db, remote, reads, uploads, jobs, shows, outcomes: Arc::default(), wires: Arc::new(wires) }))
     }
 
-    pub async fn open(
-        config: Config,
-        models_json: String,
-        transport: Option<Arc<dyn Transport>>,
-        encrypted: Option<super::EncryptedConfig>,
-        credentials: Option<Arc<dyn super::CredentialStore>>,
-        http: Option<Arc<dyn super::EncryptedHttp>>,
-        retries: Option<Arc<super::RetryProgress>>,
-    ) -> Result<Arc<Self>, DbError> {
-        Self::open_at(config, models_json, transport, encrypted, credentials, http, retries, Arc::new(SystemClock)).await
+    pub async fn open(config: Config, models_json: String, ports: super::OpenPorts) -> Result<Arc<Self>, DbError> {
+        Self::open_at(config, models_json, ports, Arc::new(SystemClock)).await
     }
 
-    #[allow(clippy::too_many_arguments)]
-    pub async fn open_with_clock(config: Config, models_json: String, transport: Option<Arc<dyn Transport>>, clock: Arc<TestClock>, encrypted: Option<super::EncryptedConfig>, credentials: Option<Arc<dyn super::CredentialStore>>, http: Option<Arc<dyn super::EncryptedHttp>>, retries: Option<Arc<super::RetryProgress>>) -> Result<Arc<Self>, DbError> {
-        Self::open_at(config, models_json, transport, encrypted, credentials, http, retries, clock.clock.clone()).await
+    pub async fn open_with_clock(config: Config, models_json: String, ports: super::OpenPorts, clock: Arc<TestClock>) -> Result<Arc<Self>, DbError> {
+        Self::open_at(config, models_json, ports, clock.clock.clone()).await
     }
 
-    #[allow(clippy::too_many_arguments)]
-    async fn open_at(config: Config, models_json: String, transport: Option<Arc<dyn Transport>>, encrypted: Option<super::EncryptedConfig>, credentials: Option<Arc<dyn super::CredentialStore>>, http: Option<Arc<dyn super::EncryptedHttp>>, retries: Option<Arc<super::RetryProgress>>, clock: Arc<dyn Clock>) -> Result<Arc<Self>, DbError> {
+    async fn open_at(config: Config, models_json: String, ports: super::OpenPorts, clock: Arc<dyn Clock>) -> Result<Arc<Self>, DbError> {
+        let super::OpenPorts { transport, encrypted, credentials, http, retries } = ports;
         blocking(move || {
             let database = match encrypted {
                 Some(encrypted) => {

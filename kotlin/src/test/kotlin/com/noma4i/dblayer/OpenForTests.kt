@@ -4,7 +4,7 @@ package com.noma4i.dblayer
 interface WrapsMock { val base: MockTransport }
 
 suspend fun openDatabase(config: Config, modelsJson: String, transport: Transport? = null, encrypted: EncryptedConfig? = null, credentials: CredentialStore? = null, http: EncryptedHttp? = null, operations: String = "[]"): Database =
-    OpenDatabase().open(config, modelsJson, OpenOptions(withUploadSteps(operations, modelsJson), false, false), transport, encrypted, credentials, http, null)
+    OpenDatabase().open(config, modelsJson, OpenOptions(withUploadSteps(operations, modelsJson), false, false), OpenPorts(transport, encrypted, credentials, http, null))
 
 /** A cleanup close: a database that is already closed stays closed. */
 suspend fun closeForCleanup() {

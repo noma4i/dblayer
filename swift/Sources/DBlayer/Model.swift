@@ -45,7 +45,7 @@ extension DBModel {
   }
   @concurrent public func attach(_ field: Files, data: Data, name: String, mime: String, in scope: AccountScope? = nil) async throws -> FileInfo {
     let (database, epoch) = try DB.admitted(scope)
-    return try FileInfo.parse(try await database.attach(epoch: epoch, model: Self.modelName, rowId: id, field: field.rawValue, bytes: data, name: name, mime: mime))
+    return try FileInfo.parse(try await database.attach(epoch: epoch, model: Self.modelName, rowId: id, field: field.rawValue, file: FileBytes(bytes: data, name: name, mime: mime)))
   }
   @concurrent public func file(_ field: Files, in scope: AccountScope? = nil) async throws -> FileInfo? {
     let (database, epoch) = try DB.admitted(scope)
