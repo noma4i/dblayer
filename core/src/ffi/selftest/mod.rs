@@ -24,6 +24,8 @@ mod message_reactions_flow_tests;
 mod message_flow_tests;
 mod moment_flow_tests;
 mod profile_flow_tests;
+mod upload_fixtures;
+mod upload_flow_tests;
 mod user_flow_tests;
 mod wallet_search_flow_tests;
 mod windows_tests;

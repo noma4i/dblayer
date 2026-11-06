@@ -255,6 +255,23 @@ impl World {
                 };
                 json!({"data":{ root: {"__typename":"Group","id":body["variables"]["groupId"],"name":"friends","left":left,"membership":membership}}})
             }
+            "CreateBlob" | "InitMultipart" | "PresignParts" | "CompleteMultipart" | "AbortMultipart" => {
+                let number = state.calls.get(operation).copied().unwrap_or(0) + 1;
+                match operation {
+                    "CreateBlob" => json!({"data":{"createBlob":{"url":format!("https://put.invalid/{number}"),"headers":[],"signedId":format!("sig{number}"),"blobId":format!("blob{number}")}}}),
+                    "InitMultipart" => json!({"data":{"initMultipart":{"key":"k1","uploadId":"u1"}}}),
+                    "PresignParts" => {
+                        let parts: Vec<Value> = body["variables"]["partNumbers"].as_array().cloned().unwrap_or_default().into_iter().map(|part| json!({"partNumber":part,"url":format!("https://put.invalid/part/{part}"),"headers":[]})).collect();
+                        json!({"data":{"presignParts":{"parts":parts}}})
+                    }
+                    "CompleteMultipart" => json!({"data":{"completeMultipart":{"signedId":"sigm","blobId":"blobm"}}}),
+                    _ => json!({"data":{"abortMultipart":{"ok":true}}}),
+                }
+            }
+            "ChatUpdatePhoto" => {
+                let variables = &body["variables"];
+                json!({"data":{"chatUpdatePhoto":{"__typename":"Chat","id":variables["id"],"logoUrl":format!("https://cdn/logo-{}", variables["signedId"].as_str().unwrap_or_default())}}})
+            }
             "PUT" => json!({}),
             other if other.starts_with("subscribe:") => json!({}),
             other => panic!("unexpected operation {other}"),
@@ -416,7 +433,13 @@ const OPERATIONS: &str = r#"[
     {"name":"ChatMarkRead","document":"mutation ChatMarkRead($id: ID!) { chatMarkRead(id: $id) { id unreadCount } }"},
     {"name":"MessageEdit","document":"mutation MessageEdit($id: ID!, $text: String!) { messageEdit(id: $id, text: $text) { id chatId text at } }"},
     {"name":"MessageDelete","document":"mutation MessageDelete($id: ID!) { messageDelete(id: $id) { id } }"},
-    {"name":"DeleteGroup","document":"mutation DeleteGroup($id: ID!) { deleteGroup(id: $id) { id } }"}
+    {"name":"DeleteGroup","document":"mutation DeleteGroup($id: ID!) { deleteGroup(id: $id) { id } }"},
+    {"name":"CreateBlob","document":"mutation CreateBlob { createBlob { url headers signedId blobId } }","rootPath":"createBlob"},
+    {"name":"InitMultipart","document":"mutation InitMultipart { initMultipart { key uploadId } }","rootPath":"initMultipart"},
+    {"name":"PresignParts","document":"mutation PresignParts { presignParts { parts { partNumber url headers } } }","rootPath":"presignParts"},
+    {"name":"CompleteMultipart","document":"mutation CompleteMultipart { completeMultipart { signedId blobId } }","rootPath":"completeMultipart"},
+    {"name":"AbortMultipart","document":"mutation AbortMultipart { abortMultipart { ok } }","rootPath":"abortMultipart"},
+    {"name":"ChatUpdatePhoto","document":"mutation ChatUpdatePhoto($id: ID!, $signedId: String!) { chatUpdatePhoto(id: $id, signedId: $signedId) { id logoUrl } }","rootPath":"chatUpdatePhoto"}
 ]"#;
 
 /// The plain harness also holds a memory model that a server subscription feeds.

@@ -84,8 +84,14 @@ impl Db {
                     envelope.window_debts.extend(families.iter().map(|(model, relation)| crate::commit::WindowDebt { model: model.clone(), relation: relation.clone(), since }));
                 }
                 StoreOp::Swap { model, temp, real } => swaps.push((model.as_str(), row_id(temp)?, row_id(real)?)),
-                StoreOp::Upload { row, kind } => self.write_upload_row(row, *kind)?,
-                StoreOp::RemoveUpload { key } => self.remove_upload_row(key)?,
+                StoreOp::Upload { row, kind } => {
+                    self.write_upload_row(row, *kind)?;
+                    envelope.entity_ops.push(self.upload_touch(&row.key)?);
+                }
+                StoreOp::RemoveUpload { key } => {
+                    self.remove_upload_row(key)?;
+                    envelope.entity_ops.push(self.upload_touch(key)?);
+                }
                 StoreOp::Planned { effects } => return self.write_planned(effects),
                 StoreOp::Intent { op_id, model, row_id: id, action, payload, effects } => return self.write_intent(*op_id, (model, id, action), payload, effects),
                 StoreOp::Window { key, model, page, replace_all, cursor, roots, related, total, base_revision } => {

@@ -84,7 +84,7 @@ pub(crate) fn upload_rows(connection: &rusqlite::Connection) -> rusqlite::Result
 
 fn unsigned<T: TryFrom<i64>>(value: i64, column: &str) -> Result<T, DbError> { T::try_from(value).map_err(|_| DbError::Internal(format!("sync_upload.{column} holds {value}"))) }
 
-fn key_parts(key: &str) -> Result<[&str; 3], DbError> {
+pub(super) fn key_parts(key: &str) -> Result<[&str; 3], DbError> {
     let mut parts = key.splitn(3, ':');
     match (parts.next(), parts.next(), parts.next()) {
         (Some(model), Some(id), Some(action)) => Ok([model, id, action]),
@@ -93,6 +93,12 @@ fn key_parts(key: &str) -> Result<[&str; 3], DbError> {
 }
 
 impl Db {
+    /// The row of a transfer shows `uploads[action]`: a write of the transfer touches it, so its streams carry the new state.
+    pub(super) fn upload_touch(&self, key: &str) -> Result<crate::commit::EntityOp, DbError> {
+        let [model, id, _] = key_parts(key)?;
+        Ok(crate::commit::EntityOp::Touch { model: crate::identity::ModelKey::new(model), id: crate::identity::RowId::new(id).map_err(|error| DbError::InvalidUpload(error.to_string()))? })
+    }
+
     /// `Upload{row, kind}`: the whole value of a transfer in `sync_upload` for the key `model:row_id:action`, and its confirmed parts. The kind of the batch names the status.
     pub(super) fn write_upload_row(&self, row: &UploadRow, kind: UploadKind) -> Result<(), DbError> {
         let [model, id, action] = key_parts(&row.key)?;
@@ -113,7 +119,7 @@ impl Db {
                     "INSERT OR REPLACE INTO sync_upload (model, row_id, action, status, stage, sent, total, wait, attempts, error_kind, error_message, seq, source, batch, upload_id, completed, created_at, inline, size, sha256, mutation_path, mutation_body, on_failure, steps_path, steps_body, transfer_id, cycle_id, signed_id, aborted) \
                      VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, NULL, 0, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27)",
                     rusqlite::params![
-                        model, id, action, status, stage, row.confirmed_parts, row.parts, row.failed.as_ref().map(|_| "failed"), row.failed,
+                        model, id, action, status, stage, row.confirmed_parts, row.parts, row.failed.as_ref().map(|_| "unrecognized"), row.failed,
                         i64::try_from(row.seq).unwrap_or(i64::MAX), row.source, row.batch, row.upload_id, row.completed, i64::try_from(row.created_at).unwrap_or(i64::MAX), row.inline,
                         i64::try_from(row.size).unwrap_or(i64::MAX), row.sha256, row.path, row.body, on_failure, row.steps_path, row.steps_body,
                         i64::try_from(row.transfer_id).unwrap_or(i64::MAX), i64::try_from(row.cycle_id).unwrap_or(i64::MAX), row.signed_id, row.aborted

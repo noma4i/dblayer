@@ -128,9 +128,8 @@ pub fn read_sync(connection: &Connection, model: &str, ids: &[String]) -> rusqli
             found.insert(id, info);
         }
     }
-    let ids: Vec<String> = found.keys().cloned().collect();
-    for (id, uploads) in read_uploads(connection, model, &ids)? {
-        if let Some(info) = found.get_mut(&id) { info.uploads = uploads; }
+    for (id, uploads) in read_uploads(connection, model, ids)? {
+        found.entry(id).or_default().uploads = uploads;
     }
     Ok(found)
 }
@@ -138,9 +137,12 @@ pub fn read_sync(connection: &Connection, model: &str, ids: &[String]) -> rusqli
 fn stored(connection: &Connection, key: &SyncKey) -> rusqlite::Result<Option<SyncInfo>> {
     let mut statement = connection.prepare_cached(&format!("{SELECT_STORED} WHERE model = ?1 AND row_id = ?2"))?;
     let mut rows = statement.query(params![key.0, key.1])?;
-    let Some(mut info) = rows.next()?.map(|row| stored_info(connection, key, row, 0)).transpose()? else { return Ok(None) };
-    info.uploads = read_uploads(connection, &key.0, std::slice::from_ref(&key.1))?.remove(&key.1).unwrap_or_default();
-    Ok(Some(info))
+    let info = rows.next()?.map(|row| stored_info(connection, key, row, 0)).transpose()?;
+    let uploads = read_uploads(connection, &key.0, std::slice::from_ref(&key.1))?.remove(&key.1);
+    Ok(match (info, uploads) {
+        (None, None) => None,
+        (info, uploads) => Some(SyncInfo { uploads: uploads.unwrap_or_default(), ..info.unwrap_or_default() }),
+    })
 }
 
 pub fn clear_sync(connection: &Connection, model: Option<&str>) -> rusqlite::Result<()> {
