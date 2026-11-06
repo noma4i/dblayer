@@ -65,7 +65,7 @@ impl Database {
         let (source, multipart) = self.source_of(&plan.file.path)?;
         let name = file_name(plan.file);
         let steps = StepsBody { multipart, mime: plan.file.mime.clone().unwrap_or_else(|| mime_of(&name).to_string()), name, signed_variable: "signedId".into() }.steps();
-        Ok(BatchItem { key: key_of(plan.model, plan.row, plan.action), source, mutation: self.upload_mutation(plan, mutation)?, steps })
+        Ok(BatchItem { key: key_of(plan.model, plan.row, plan.action), urgent: false, source, mutation: self.upload_mutation(plan, mutation)?, steps })
     }
 
     fn single_upload(&self, model: &str, row: &str, action: &str, file: &UploadFile, effects: IntentEffects) -> Result<BatchItem, DbError> {

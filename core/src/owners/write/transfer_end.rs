@@ -86,6 +86,7 @@ impl TransferState {
                 transfer.etags.clear();
                 self.store(&[id], StoreKind::Retrying, fx);
             }
+            TransferStage::Failed if transfer.error.as_deref() == Some("RestoreFailed") => Self::refuse(fx, rep, Fault::RestoreFailed),
             TransferStage::Failed => {
                 let all = transfer.confirmed_parts >= transfer.source.parts;
                 if transfer.aborted {

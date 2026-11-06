@@ -90,6 +90,8 @@ pub enum TransferTick {
 #[derive(Clone, Debug)]
 pub struct BatchItem {
     pub key: Key,
+    /// The action asks to go on in power saving.
+    pub urgent: bool,
     pub source: Source,
     pub mutation: NewOp,
     pub steps: Steps,
@@ -287,6 +289,7 @@ pub struct Group {
 #[derive(Clone, Debug)]
 pub(super) struct Pending {
     pub ids: Vec<TransferId>,
+    pub kind: StoreKind,
 }
 
 #[derive(Debug)]

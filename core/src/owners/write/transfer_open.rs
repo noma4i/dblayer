@@ -9,7 +9,7 @@ use super::transfer_types::*;
 
 impl TransferState {
     fn insert_restored(&mut self, row: &StoredTransfer, stage: TransferStage) -> TransferId {
-        let item = BatchItem { key: row.key.clone(), source: row.source.clone(), mutation: row.mutation.clone(), steps: row.steps.clone() };
+        let item = BatchItem { key: row.key.clone(), urgent: false, source: row.source.clone(), mutation: row.mutation.clone(), steps: row.steps.clone() };
         let id = row.transfer_id;
         self.next_id = self.next_id.max(id + 1);
         let created = self.create(item, row.batch.then_some(0), row.created_at, stage);

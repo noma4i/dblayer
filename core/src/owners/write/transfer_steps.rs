@@ -96,6 +96,7 @@ impl TransferState {
         let attempt_id = self.attempt();
         let Some(transfer) = self.transfers.get_mut(&id) else { return };
         transfer.stage = TransferStage::PersistingFailure;
+        transfer.removal = None;
         transfer.in_flight = false;
         transfer.waiting_retry = false;
         transfer.error = Some(error);
@@ -197,13 +198,31 @@ impl TransferState {
         self.begin_failure(id, error, false, fx);
     }
 
+    /// `Rejected(Invalid)`: the write is wrong, no retry helps. `Failed` is written; the write of `Failed` that is invalid stays in memory.
+    pub(super) fn invalid_write(&mut self, ids: &[TransferId], marking: bool, fx: &mut Fx) {
+        for &id in ids {
+            if marking {
+                self.failure_committed(id, fx);
+            } else {
+                self.begin_failure(id, "Internal(Invalid)".into(), false, fx);
+            }
+        }
+    }
+
     fn mutating(&self, key: &str) -> Option<TransferId> { self.open_id(key).filter(|id| self.stage_of(*id) == Some(TransferStage::Mutating)) }
 
     pub(super) fn mutation_outcome(&mut self, key: &str, outcome: OutboxOutcome, fx: &mut Fx) {
         let Some(id) = self.mutating(key) else { return };
         let waiting = self.transfers.get(&id).is_some_and(|transfer| !transfer.discard_waiters.is_empty());
         match outcome {
-            OutboxOutcome::Confirmed { revision, .. } => self.remove_with_batch(id, Removal::Confirmed { revision }, fx),
+            OutboxOutcome::Confirmed { revision, .. } => {
+                if let Some(transfer) = self.transfers.get_mut(&id) {
+                    for waiter in std::mem::take(&mut transfer.discard_waiters) {
+                        reply(fx, waiter, TransferAnswer::Err(Fault::NotFound));
+                    }
+                }
+                self.remove_with_batch(id, Removal::Confirmed { revision }, fx)
+            }
             OutboxOutcome::Discarded => self.remove_with_batch(id, Removal::Discarded, fx),
             OutboxOutcome::Rejected { .. } if waiting => self.remove_with_batch(id, Removal::Discarded, fx),
             OutboxOutcome::Failed { .. } if waiting => {}

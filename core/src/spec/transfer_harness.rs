@@ -111,7 +111,7 @@ pub(super) fn mutation(key: &str) -> NewOp {
     NewOp { model: model.into(), row_id: row.into(), action: action.into(), on_failure: OnFailure::Keep, origin: Origin::Api, path: "/moments".into(), body: String::new(), effects: Default::default(), durable: true }
 }
 
-pub(super) fn item(key: &str, parts: u32) -> BatchItem { BatchItem { key: key.into(), source: Source { path: format!("/src/{key}"), parts }, mutation: mutation(key), steps: Steps { path: "/upload".into(), body: String::new() } } }
+pub(super) fn item(key: &str, parts: u32) -> BatchItem { BatchItem { key: key.into(), urgent: false, source: Source { path: format!("/src/{key}"), parts }, mutation: mutation(key), steps: Steps { path: "/upload".into(), body: String::new() } } }
 
 pub(super) fn stored(id: TransferId, key: &str, parts: u32) -> StoredTransfer {
     StoredTransfer {

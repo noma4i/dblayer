@@ -138,6 +138,7 @@ impl RoundsState {
         match self.round {
             Round::Requested { epoch: found, .. } | Round::Refused { epoch: found } | Round::Stopped { epoch: found } if found == epoch => self.round = Round::None,
             Round::Running { round_id, epoch: found, next, .. } if found == epoch => self.round = Round::Running { round_id, epoch, next, ended: true },
+            Round::Running { round_id, epoch: found, next: Some(next), ended } if next == epoch => self.round = Round::Running { round_id, epoch: found, next: None, ended },
             _ => {}
         }
     }

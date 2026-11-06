@@ -14,7 +14,7 @@ impl TransferState {
         let (transfer_id, seq) = (self.next_id, self.next_seq);
         self.next_id += 1;
         self.next_seq += 1;
-        let BatchItem { key, source, mutation, steps } = item;
+        let BatchItem { key, urgent, source, mutation, steps } = item;
         let transfer = Transfer {
             transfer_id,
             key,
@@ -44,7 +44,7 @@ impl TransferState {
             mutation,
             steps,
             restored: false,
-            urgent: false,
+            urgent,
             op_id: None,
             submitted: false,
             round_error: None,

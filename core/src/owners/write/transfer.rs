@@ -42,7 +42,10 @@ impl TransferState {
     }
 
     /// One Store batch for `ids`: a row of `sync_upload` per transfer, or its removal.
-    pub(super) fn store(&mut self, ids: &[TransferId], kind: StoreKind, fx: &mut Fx) {
+    pub(super) fn store(&mut self, ids: &[TransferId], kind: StoreKind, fx: &mut Fx) { self.store_basis(ids, kind, BTreeMap::new(), fx); }
+
+    /// The same batch again with the generations the Store named (`Rejected(StaleGeneration)`).
+    fn store_basis(&mut self, ids: &[TransferId], kind: StoreKind, basis: BTreeMap<String, u64>, fx: &mut Fx) {
         let ops: Vec<StoreOp> = ids
             .iter()
             .filter_map(|id| self.transfers.get(id))
@@ -65,9 +68,9 @@ impl TransferState {
             .collect();
         let id = self.next_batch;
         self.next_batch += 1;
-        self.pending.insert(id, Pending { ids: ids.to_vec() });
+        self.pending.insert(id, Pending { ids: ids.to_vec(), kind });
         let intents = if kind == StoreKind::SyncUpload { ids.len() as u64 } else { 0 };
-        let batch = StoreBatch { author: BatchAuthor::Transfer, id, epoch: self.epoch, basis: BTreeMap::new(), rows: Vec::new(), intents, credential: None, ops };
+        let batch = StoreBatch { author: BatchAuthor::Transfer, id, epoch: self.epoch, basis, rows: Vec::new(), intents, credential: None, ops };
         fx.push(Effect::Send(Outbound::new(self.peers.store, StoreInput::Commit(batch))));
     }
 
@@ -186,6 +189,14 @@ impl TransferState {
         let Some(pending) = self.pending.remove(&rejected.batch) else { return };
         let stage = pending.ids.first().and_then(|id| self.stage_of(*id));
         let interrupts = !matches!(rejected.reason, RejectReason::Storage(_));
+        let persisting = matches!(stage, Some(TransferStage::PersistingCopy | TransferStage::PersistingRetry | TransferStage::PersistingPart | TransferStage::PersistingComplete | TransferStage::PersistingFailure | TransferStage::Removing));
+        if let (RejectReason::StaleGeneration { models, generation }, true) = (&rejected.reason, persisting) {
+            let basis = models.iter().map(|model| (model.clone(), *generation)).collect();
+            return self.store_basis(&pending.ids, pending.kind, basis, fx);
+        }
+        if let (RejectReason::Invalid, true) = (&rejected.reason, persisting) {
+            return self.invalid_write(&pending.ids, stage == Some(TransferStage::PersistingFailure), fx);
+        }
         match (stage, interrupts) {
             (Some(TransferStage::Accepting), _) => self.accepting_rejected(&pending.ids, rejected.reason, fx),
             (Some(TransferStage::Removing), _) => self.removing_rejected(&pending.ids, rejected.reason, fx),
