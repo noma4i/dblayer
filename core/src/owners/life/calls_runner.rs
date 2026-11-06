@@ -58,7 +58,7 @@ fn answer_input(call_id: u64, root: &str, outcome: AuthorOutcome) -> CallsInput 
         AuthorOutcome::Error { error, .. } => CallsInput::TransportError { call_id, error: match error {
             SessionError::NoSession => CallError::NoSession,
             SessionError::Interrupted | SessionError::Closed => CallError::Interrupted,
-            SessionError::Http => CallError::Http { status: 0, detail: "the server refused the request".into() },
+            SessionError::Http { status } => CallError::Http { status, detail: "the server refused the request".into() },
             SessionError::Unauthorized => CallError::Http { status: 401, detail: String::new() },
             SessionError::Session(code) => session_call_error(code),
             SessionError::Revoked => session_call_error(SessionCode::SessionEnded),

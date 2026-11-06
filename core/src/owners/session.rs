@@ -40,7 +40,8 @@ pub enum SessionError {
     SequenceConflict,
     Protocol,
     Unauthorized,
-    Http,
+    Http { status: u16 },
+    TooLarge { size: u64, limit: u64 },
     Interrupted,
     NoSession,
     Closed,
@@ -52,7 +53,7 @@ pub type SessionAnswer = Result<String, SessionError>;
 pub fn stored_answer(answer: &SessionAnswer) -> Option<StoredAnswer> {
     match answer {
         Ok(body) => Some(StoredAnswer::Ok(body.clone())),
-        Err(SessionError::Http) => Some(StoredAnswer::Http),
+        Err(SessionError::Http { status }) => Some(StoredAnswer::Http { status: *status }),
         Err(SessionError::Unauthorized) => Some(StoredAnswer::Unauthorized),
         Err(SessionError::Revoked) => Some(StoredAnswer::Revoked),
         Err(SessionError::Session(code)) => Some(StoredAnswer::Session(*code)),
@@ -236,7 +237,7 @@ pub enum SessionInput {
     Restored { epoch: Epoch, pending: Option<PendingCall>, answers: std::collections::BTreeMap<RequestId, StoredAnswer>, pending_lost: bool },
     Response { request_id: RequestId, attempt_id: AttemptId, body: String, sequence: Option<u64>, refusal: Option<crate::transport::SessionCode> },
     Revoked { request_id: RequestId, attempt_id: AttemptId, body: String },
-    HttpError { request_id: RequestId, attempt_id: AttemptId, temporary: bool, auth: bool, persisted_missing: bool },
+    HttpError { request_id: RequestId, attempt_id: AttemptId, temporary: bool, auth: bool, persisted_missing: bool, status: u16, too_large: Option<(u64, u64)> },
     Dropped { request_id: RequestId, attempt_id: AttemptId },
     /// The executor of the HTTP exchange of `attempt_id` died.
     HttpFailed { attempt_id: AttemptId },
@@ -1003,7 +1004,7 @@ impl SessionState {
     fn calling(&mut self, pending: PendingCall, attempts: u64, phase: AttemptPhase, document_sent: bool, input: SessionInput, fx: &mut Vec<SessionEffect>) {
         let mine = |request_id: RequestId, attempt_id: AttemptId| pending.request_id == request_id && phase == AttemptPhase::InFlight(attempt_id);
         let input = match input {
-            SessionInput::HttpFailed { attempt_id } if mine(pending.request_id, attempt_id) => SessionInput::HttpError { request_id: pending.request_id, attempt_id, temporary: false, auth: false, persisted_missing: false },
+            SessionInput::HttpFailed { attempt_id } if mine(pending.request_id, attempt_id) => SessionInput::HttpError { request_id: pending.request_id, attempt_id, temporary: false, auth: false, persisted_missing: false, status: 0, too_large: None },
             other => other,
         };
         match input {
@@ -1028,9 +1029,9 @@ impl SessionState {
                 self.land(pending, answer, None, None, true, fx);
             }
             SessionInput::HttpError { request_id, attempt_id, persisted_missing: true, .. } if mine(request_id, attempt_id) && !document_sent => self.request_http(pending, attempts, true, fx),
-            SessionInput::HttpError { request_id, attempt_id, temporary: true, persisted_missing: false, .. } if mine(request_id, attempt_id) => {
+            SessionInput::HttpError { request_id, attempt_id, temporary: true, persisted_missing: false, status, .. } if mine(request_id, attempt_id) => {
                 if let Some(author) = pending.author {
-                    author_error(fx, author, pending.request_id, ErrorClass::Network, SessionError::Http);
+                    author_error(fx, author, pending.request_id, ErrorClass::Network, SessionError::Http { status });
                     self.phase = SessionPhase::PendingHeld { pending };
                 } else if self.is_online() {
                     fx.push(SessionEffect::ScheduleTick { attempts: attempts + 1 });
@@ -1039,8 +1040,12 @@ impl SessionState {
                     self.phase = SessionPhase::Calling { pending, attempts, phase: AttemptPhase::WaitingNetwork, document_sent };
                 }
             }
-            SessionInput::HttpError { request_id, attempt_id, auth, .. } if mine(request_id, attempt_id) => {
-                let error = if auth { SessionError::Unauthorized } else { SessionError::Http };
+            SessionInput::HttpError { request_id, attempt_id, auth, status, too_large, .. } if mine(request_id, attempt_id) => {
+                let error = match (auth, too_large) {
+                    (true, _) => SessionError::Unauthorized,
+                    (false, Some((size, limit))) => SessionError::TooLarge { size, limit },
+                    (false, None) => SessionError::Http { status },
+                };
                 self.land(pending, Err(error), None, None, false, fx);
             }
             SessionInput::Dropped { request_id, attempt_id } if mine(request_id, attempt_id) => {

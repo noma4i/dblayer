@@ -178,23 +178,30 @@ pub(super) fn input_of(request_id: RequestId, attempt_id: AttemptId, logout: boo
     match result {
         Ok(answer) => {
             if persisted_query_missing(&answer.body) {
-                return SessionInput::HttpError { request_id, attempt_id, temporary: false, auth: false, persisted_missing: true };
+                return SessionInput::HttpError { request_id, attempt_id, temporary: false, auth: false, persisted_missing: true, status: 0, too_large: None };
             }
             if let Some(code) = refusal_of(&answer.body) {
                 return SessionInput::Response { request_id, attempt_id, body: answer.body.to_string(), sequence: answer.sequence.and_then(|sequence| u64::try_from(sequence).ok()), refusal: Some(code) };
             }
             if temporary_error(&answer.body).is_some() {
-                return SessionInput::HttpError { request_id, attempt_id, temporary: true, auth: false, persisted_missing: false };
+                return SessionInput::HttpError { request_id, attempt_id, temporary: true, auth: false, persisted_missing: false, status: 0, too_large: None };
             }
             if logout && answer.body.get("revoked") == Some(&Value::Bool(true)) {
                 return SessionInput::Revoked { request_id, attempt_id, body: answer.body.to_string() };
             }
             SessionInput::Response { request_id, attempt_id, body: answer.body.to_string(), sequence: answer.sequence.and_then(|sequence| u64::try_from(sequence).ok()), refusal: None }
         }
-        Err(TransportError::Http { status: 401 | 403, .. }) => SessionInput::HttpError { request_id, attempt_id, temporary: false, auth: true, persisted_missing: false },
-        Err(error) if permanently_refused(&error) || matches!(error, TransportError::RequestTooLarge { .. } | TransportError::Decode(_) | TransportError::Graphql { .. }) => SessionInput::HttpError { request_id, attempt_id, temporary: false, auth: false, persisted_missing: false },
+        Err(TransportError::Http { status: 401 | 403, .. }) => SessionInput::HttpError { request_id, attempt_id, temporary: false, auth: true, persisted_missing: false, status: 0, too_large: None },
+        Err(error) if permanently_refused(&error) || matches!(error, TransportError::RequestTooLarge { .. } | TransportError::Decode(_) | TransportError::Graphql { .. }) => {
+            let (status, too_large) = match &error {
+                TransportError::Http { status, .. } => (*status, None),
+                TransportError::RequestTooLarge { size, limit } => (0, Some((*size, *limit))),
+                _ => (0, None),
+            };
+            SessionInput::HttpError { request_id, attempt_id, temporary: false, auth: false, persisted_missing: false, status, too_large }
+        }
         Err(TransportError::Interrupted(_)) => SessionInput::Dropped { request_id, attempt_id },
-        Err(_) => SessionInput::HttpError { request_id, attempt_id, temporary: true, auth: false, persisted_missing: false },
+        Err(_) => SessionInput::HttpError { request_id, attempt_id, temporary: true, auth: false, persisted_missing: false, status: 0, too_large: None },
     }
 }
 

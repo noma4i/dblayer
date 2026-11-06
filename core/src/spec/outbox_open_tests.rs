@@ -64,7 +64,7 @@ fn restored(kind: Restored, ctx: &Ctx) -> (Twin, OpId) {
 /// Observable: the effects of `Restored`. Assert: no `Send`, the batch of the end of the operation (`Land` for `Ok`, `Rollback` for a refusal) and the removal of the saved answer in it.
 #[test]
 fn out_open_saved_answer_ends_the_operation_without_a_send() {
-    for (answer, kind) in [(crate::owners::session::StoredAnswer::Ok("{}".into()), CommitKind::Land), (crate::owners::session::StoredAnswer::Http, CommitKind::Rollback)] {
+    for (answer, kind) in [(crate::owners::session::StoredAnswer::Ok("{}".into()), CommitKind::Land), (crate::owners::session::StoredAnswer::Http { status: 422 }, CommitKind::Rollback)] {
         let mut twin = Twin::bare();
         twin.post(OutboxInput::RegisterOperations { declarations: vec![("Moment".into(), "update".into())] });
         let stored = StoredOp { answered: Some((41, answer)), op_id: 7, op: model_op("r", Policy::Rollback, false), error_mark: false, pending: None, attempts: 1, cycle_id: 1, restore_failed: None };

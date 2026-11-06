@@ -285,7 +285,7 @@ fn out_open_restores_answered_error() {
     for (policy, stage, kind) in [(Policy::Rollback, St::RollingBack(super::ref_outbox::Why::Rejected), CommitKind::Rollback), (Policy::Keep, St::MarkingFailed, CommitKind::ErrorMark)] {
         let mut twin = Twin::bare();
         declare(&mut twin);
-        let item = StoredOp { answered: Some((41, StoredAnswer::Http)), op: model_op("r", policy, false), ..stored(7, "r") };
+        let item = StoredOp { answered: Some((41, StoredAnswer::Http { status: 422 })), op: model_op("r", policy, false), ..stored(7, "r") };
         let effects = restore(&mut twin, vec![item]);
         assert_eq!((twin.stage(7), kinds(&effects), sends(&effects)), (Some(stage), vec![kind], 0));
     }

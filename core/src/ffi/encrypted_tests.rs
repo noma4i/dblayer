@@ -177,10 +177,10 @@ async fn sessionless_calls_leave_no_session_state_even_when_refused() {
         database.set_online(true).unwrap();
         let result = database.session_call("ticket".into(), "{}".into()).await;
         if status == 200 { assert_eq!(result.unwrap(), "{}"); }
-        else { assert!(matches!(result, Err(DbError::Network { .. })), "{result:?}"); }
+        else { assert!(matches!(result, Err(DbError::Http { status: s, .. }) if s == status), "{result:?}"); }
         let second = database.session_call("ticket".into(), "{}".into()).await;
         if status == 200 { assert_eq!(second.unwrap(), "{}"); }
-        else { assert!(matches!(second, Err(DbError::Network { .. })), "{second:?}"); }
+        else { assert!(matches!(second, Err(DbError::Http { status: s, .. }) if s == status), "{second:?}"); }
         {
             let inner = database.db.shared.store.lock();
             let counts: (i64, i64) = inner.connection.query_row("SELECT (SELECT count(*) FROM encrypted_session), (SELECT count(*) FROM encrypted_pending)", [], |row| Ok((row.get(0)?, row.get(1)?))).unwrap();
@@ -311,4 +311,5 @@ fn a_session_failure_keeps_its_own_error() {
     assert!(matches!(super::encrypted::session_failure(Failed::Closed), DbError::Closed { .. }));
     assert!(matches!(super::encrypted::session_failure(Failed::SessionExists), DbError::Session { code: SessionCode::AlreadyAuthenticated, .. }));
     assert!(matches!(super::encrypted::session_failure(Failed::Unauthorized), DbError::Http { status: 401, .. }));
+    assert!(matches!(super::encrypted::session_failure(Failed::Http { status: 422 }), DbError::Http { status: 422, .. }));
 }

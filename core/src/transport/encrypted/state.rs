@@ -24,7 +24,7 @@ pub struct Pending {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum StoredAnswer {
     Ok(String),
-    Http,
+    Http { status: u16 },
     Unauthorized,
     Revoked,
     Session(crate::transport::SessionCode),
@@ -111,11 +111,11 @@ pub fn clear(connection: &Connection) -> rusqlite::Result<()> {
 
 pub fn store_answer(connection: &Connection, request_id: u64, operation: Option<i64>, answer: &StoredAnswer) -> rusqlite::Result<()> {
     let (outcome, detail) = match answer {
-        StoredAnswer::Ok(body) => ("ok", Some(body.as_str())),
-        StoredAnswer::Http => ("http", None),
+        StoredAnswer::Ok(body) => ("ok", Some(body.clone())),
+        StoredAnswer::Http { status } => ("http", Some(status.to_string())),
         StoredAnswer::Unauthorized => ("unauthorized", None),
         StoredAnswer::Revoked => ("revoked", None),
-        StoredAnswer::Session(code) => ("session", Some(code.name())),
+        StoredAnswer::Session(code) => ("session", Some(code.name().to_string())),
     };
     let request_id = i64::try_from(request_id).map_err(|_| rusqlite::Error::IntegralValueOutOfRange(0, i64::MAX))?;
     connection.execute("INSERT OR REPLACE INTO encrypted_answer (request_id, outcome, detail, operation_id) VALUES (?1, ?2, ?3, ?4)", params![request_id, outcome, detail, operation])?;
@@ -146,7 +146,7 @@ fn answer_rows(connection: &Connection) -> rusqlite::Result<Vec<(u64, Option<i64
         let invalid = |what: &str| rusqlite::Error::FromSqlConversionFailure(2, rusqlite::types::Type::Text, Box::new(std::io::Error::new(std::io::ErrorKind::InvalidData, format!("the stored answer {request_id} has {what}"))));
         let answer = match (outcome.as_str(), detail) {
             ("ok", Some(body)) => StoredAnswer::Ok(body),
-            ("http", None) => StoredAnswer::Http,
+            ("http", Some(status)) => StoredAnswer::Http { status: status.parse().map_err(|_| invalid("a status that is not a number"))? },
             ("unauthorized", None) => StoredAnswer::Unauthorized,
             ("revoked", None) => StoredAnswer::Revoked,
             ("session", Some(name)) => StoredAnswer::Session(crate::transport::SessionCode::from_wire(&name).ok_or_else(|| invalid("an unknown session code"))?),
