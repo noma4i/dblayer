@@ -45,7 +45,7 @@ pub(crate) struct TempReplacement<'a> {
     pub real: &'a RowId,
 }
 
-fn plan(reader: &Reader<'_>, envelope: &mut BatchPlan, outbox: &[OutboxOperation], replacement: TempReplacement<'_>, own: i64) -> Result<(), StoreError> {
+pub(super) fn plan(reader: &Reader<'_>, envelope: &mut BatchPlan, outbox: &[OutboxOperation], replacement: TempReplacement<'_>, own: i64) -> Result<(), StoreError> {
         let TempReplacement { model, temp, real } = replacement;
         let followed = |other: &&OutboxOperation| other.operation.id.0 != own && other.operation.row_ids.contains(temp);
         if outbox.iter().filter(followed).any(|follower| follower.operation.action_key.ends_with(":destroy")) {

@@ -124,14 +124,37 @@ impl Store {
         let tombstone_drops = prune_tombstones(&inner.connection, now, &TombstoneRetention::DEFAULT, None)?;
         let database: String = inner.connection.query_row("SELECT file FROM pragma_database_list WHERE name = 'main'", [], |row| row.get(0))?;
         let files: std::collections::HashSet<String> = inner.connection.prepare("SELECT id FROM file")?.query_map([], |row| row.get(0))?.collect::<rusqlite::Result<_>>()?;
+        let transfer_holders: std::collections::HashSet<String> = inner.connection.prepare("SELECT COALESCE(transfer_id, seq) FROM sync_upload WHERE COALESCE(transfer_id, seq) IS NOT NULL")?.query_map([], |row| row.get::<_, i64>(0).map(|id| id.to_string()))?.collect::<rusqlite::Result<_>>()?;
         self.overlays.reset(super::rows::read_revision(&inner.connection)?);
         drop(inner);
         drop(reading_models);
         if let Some((database, files)) = removed_files { crate::files::FileDirectories::beside(std::path::Path::new(&database)).discard(&files)?; }
         if let Some(database) = remove_all_files { crate::files::FileDirectories::beside(std::path::Path::new(&database)).remove_all()?; }
-        if !database.is_empty() { crate::files::FileDirectories::beside(std::path::Path::new(&database)).recover_partials(&files)?; }
+        if !database.is_empty() {
+            let directories = crate::files::FileDirectories::beside(std::path::Path::new(&database));
+            directories.recover_partials(&files)?;
+            remove_unheld_transfer_copies(&directories, &transfer_holders)?;
+        }
         Ok(BootReport { recreated, verdict, finished_interrupted_reset, tombstone_drops, reset_models, dropped })
     }
+}
+
+fn remove_unheld_transfer_copies(directories: &crate::files::FileDirectories, holders: &std::collections::HashSet<String>) -> std::io::Result<()> {
+    let Some(copies) = directories.path("transfers") else { return Ok(()) };
+    let entries = match std::fs::read_dir(&copies) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(error),
+    };
+    for entry in entries {
+        let entry = entry?;
+        let name = entry.file_name();
+        let transfer_id = name.to_str().and_then(|name| name.split('.').next());
+        if entry.file_type()?.is_file() && !transfer_id.is_some_and(|id| holders.contains(id)) {
+            std::fs::remove_file(entry.path())?;
+        }
+    }
+    Ok(())
 }
 
 fn verify_saved(connection: &rusqlite::Connection) -> Result<(), StoreError> {

@@ -55,6 +55,7 @@ mod error;
 mod file_ops;
 mod file_write;
 mod feed_write;
+mod correlate;
 mod intent_write;
 pub(crate) mod merge;
 mod overlay;
@@ -436,6 +437,10 @@ mod apply_tests;
 mod batch_tests;
 #[cfg(test)]
 mod members_among_tests;
+#[cfg(test)]
+mod stable_tests;
+#[cfg(test)]
+mod progress_tests;
 #[cfg(test)]
 mod boot_tests;
 #[cfg(test)]

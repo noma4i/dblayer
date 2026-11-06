@@ -60,6 +60,7 @@ pub enum TypeKind {
 pub struct Schema {
     pub types: HashMap<String, TypeKind>,
     pub query: String,
+    pub mutation: String,
     pub subscription: String,
     pub implementers: HashMap<String, Vec<String>>,
     pub one_of: std::collections::HashSet<String>,
@@ -69,13 +70,14 @@ impl Schema {
     pub fn load(path: &Path) -> Result<Self, String> {
         let text = fs::read_to_string(path).map_err(|error| error.to_string())?;
         let document = schema::parse_schema::<String>(&text).map_err(|error| error.to_string())?;
-        let mut loaded = Self { query: "Query".to_string(), subscription: "Subscription".to_string(), ..Self::default() };
+        let mut loaded = Self { query: "Query".to_string(), mutation: "Mutation".to_string(), subscription: "Subscription".to_string(), ..Self::default() };
         for definition in &document.definitions {
             match definition {
                 Definition::SchemaDefinition(declared) => {
                     if let Some(name) = &declared.query {
                         loaded.query = name.clone();
                     }
+                    if let Some(name) = &declared.mutation { loaded.mutation = name.clone(); }
                     if let Some(name) = &declared.subscription { loaded.subscription = name.clone(); }
                 }
                 Definition::TypeDefinition(declared) => loaded.add(declared),
@@ -173,6 +175,7 @@ pub struct Operations {
 
 #[derive(Debug)]
 pub struct Operation {
+    pub file: String,
     pub kind: &'static str,
     pub root: Option<Root>,
     pub variables: HashMap<String, Ty>,
@@ -298,7 +301,7 @@ impl Operations {
                 Root { key, field: field.name.clone() }
             });
             let variables = variables.iter().map(|variable| (variable.name.clone(), Ty { has_default: variable.default_value.is_some(), ..Ty::of(&variable.var_type) })).collect();
-            if self.named.insert(name.clone(), Operation { kind, root, variables, select: select_of(selection) }).is_some() {
+            if self.named.insert(name.clone(), Operation { file: path.display().to_string(), kind, root, variables, select: select_of(selection) }).is_some() {
                 return Err(format!("operation `{name}` is declared twice in operation documents"));
             }
         }

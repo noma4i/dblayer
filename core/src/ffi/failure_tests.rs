@@ -6,7 +6,8 @@ use crate::schema::{Coverage, FieldSpec, ModelSpec, RelationSpec, RemoteShape, R
 use crate::value::ScalarKind;
 
 pub(super) struct Refusing {
-    calls: AtomicUsize,
+    pub(super) calls: AtomicUsize,
+    pub(super) variables: std::sync::Mutex<Vec<String>>,
     answer: Result<&'static str, fn() -> DbError>,
 }
 
@@ -16,7 +17,8 @@ impl Transport for Refusing {
     async fn cable_send(&self, _: String, _: String) -> Result<(), DbError> { unreachable!() }
     async fn cable_next(&self, _: String) -> Option<crate::ffi::EncryptedSocketEvent> { unreachable!() }
     async fn cable_close(&self, _: String) {}
-    async fn query(&self, _: super::TransportRequest) -> Result<String, DbError> {
+    async fn query(&self, request: super::TransportRequest) -> Result<String, DbError> {
+        self.variables.lock().unwrap_or_else(std::sync::PoisonError::into_inner).push(request.variables_json);
         self.calls.fetch_add(1, Ordering::SeqCst);
         self.answer.map(str::to_string).map_err(|make| make())
     }
@@ -34,7 +36,7 @@ pub(super) async fn rig(answer: Result<&'static str, fn() -> DbError>) -> (Arc<D
         empty_stale_time: None, selects_page_info: false, page_size: None, variables: Default::default(), root: None, total_from: None,
     });
     model.relations.push(relation);
-    let transport = Arc::new(Refusing { calls: AtomicUsize::new(0), answer });
+    let transport = Arc::new(Refusing { calls: AtomicUsize::new(0), variables: Default::default(), answer });
     let models = serde_json::to_string(&vec![model]).unwrap();
     let db = Database::open(Config { path: None, data_version: None, cache_rows: 8 }, models, crate::ffi::OpenPorts { transport: Some(transport.clone() as Arc<dyn Transport>), ..Default::default() }).await.unwrap();
     db.register_operations(r#"[{"name":"Feed","document":"query Feed { moments { id } }","rootPath":"moments"}]"#.into()).unwrap();

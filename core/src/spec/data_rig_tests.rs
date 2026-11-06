@@ -1,7 +1,7 @@
 //! Cells of `data.md` through the public API of `Database` on the rig with a mock server.
 
 use super::rig::{bounded, within, Rig};
-use crate::ffi::{DbError, WireOperationOutcome};
+use crate::ffi::{Cell, DbError, ReadRequest, ReadValue, WireOperationOutcome, WireRow};
 use crate::schema::OnFailure;
 use serde_json::json;
 
@@ -89,4 +89,48 @@ async fn inv_row_05_run() {
     let changed = rig.update("srv1", "changed").await.unwrap();
     assert!(matches!(rig.outcome(&changed).await, WireOperationOutcome::Confirmed { .. }));
     assert!(rig.row("srv1").await.unwrap().revision > revision, "a real change commits");
+}
+
+async fn observed_texts(rig: &Rig) -> Vec<String> {
+    let stream = rig.db.subscribe_values(rig.epoch(), ReadRequest::List { query_json: r#"{"model":"Moment"}"#.into() });
+    let Some(ReadValue::Snapshot { rows, .. }) = within(stream.pull()).await.unwrap() else { panic!("the first value of a list is a snapshot") };
+    within(stream.cancel()).await;
+    rows.iter().map(|row| match &row.cells[..] { [Cell::Text { value }] => value.clone(), other => panic!("{other:?}") }).collect()
+}
+
+fn text_of(row: Option<WireRow>) -> Option<Vec<Cell>> { row.map(|row| row.cells) }
+
+#[test]
+fn inv_row_09_inv_dsl_01_every_accepted_model_survives_create_find_observe_update_destroy_and_rollback() { bounded("inv_row_09", inv_row_09_run) }
+
+async fn inv_row_09_run() {
+    let rig = Rig::open(OnFailure::Rollback).await;
+    let text = |value: &str| Some(vec![Cell::Text { value: value.into() }]);
+
+    let created = rig.create("hello").await;
+    let temp = created.optimistic_value.clone().expect("create returns the optimistic row").id;
+    assert_eq!(text_of(rig.row(&temp).await), text("hello"), "an Ok create finds its row at once");
+    assert!(matches!(rig.outcome(&created).await, WireOperationOutcome::Confirmed { .. }));
+    assert_eq!(text_of(rig.row("srv1").await), text("hello"), "find after the answer");
+    assert_eq!(observed_texts(&rig).await, ["hello"], "observe");
+
+    let updated = rig.update("srv1", "changed").await.unwrap();
+    assert!(matches!(rig.outcome(&updated).await, WireOperationOutcome::Confirmed { .. }));
+    assert_eq!(observed_texts(&rig).await, ["changed"], "observe after update");
+
+    rig.server.script("UpdateMoment", super::rig::Reply::Refuse);
+    let refused = rig.update("srv1", "worse").await.unwrap();
+    assert!(matches!(rig.outcome(&refused).await, WireOperationOutcome::Rejected { .. }));
+    assert_eq!(text_of(rig.row("srv1").await), text("changed"), "a refused update rolls back to the values before it");
+
+    rig.server.script("MakeMoment", super::rig::Reply::Refuse);
+    let refused = rig.create("bad").await;
+    let bad_temp = refused.optimistic_value.clone().expect("the optimistic row").id;
+    assert!(matches!(rig.outcome(&refused).await, WireOperationOutcome::Rejected { .. }));
+    assert!(rig.row(&bad_temp).await.is_none(), "a refused create leaves no row");
+    assert_eq!(observed_texts(&rig).await, ["changed"]);
+
+    let destroyed = within(rig.db.destroy(rig.epoch(), "Moment".into(), "srv1".into())).await.unwrap();
+    assert!(matches!(rig.outcome(&destroyed).await, WireOperationOutcome::Confirmed { .. }));
+    assert!(rig.row("srv1").await.is_none() && observed_texts(&rig).await.is_empty(), "destroy");
 }

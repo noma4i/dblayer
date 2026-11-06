@@ -13,6 +13,8 @@ use super::{ModelInfo, StoreError};
 
 const REBALANCE_SPAN: usize = 8;
 const PARKED: &str = "~parked~";
+pub(super) const LOWER_NEIGHBOUR_SQL: &str = "SELECT order_key FROM scope_member WHERE model = ?1 AND scope_key = ?2 AND place IS NOT NULL AND (place, row_id) < (?3, ?4) \
+             ORDER BY place DESC, row_id DESC LIMIT 1";
 
 fn orders_of(fields: &[SortField]) -> Vec<Order> {
     fields.iter().map(|field| Order::new(&field.column, field.direction)).collect()
@@ -43,10 +45,7 @@ fn neighbours(connection: &Connection, scope: &ScopeRef, row: &RowId, place: Opt
         return Ok((key_text(connection, "SELECT MAX(order_key) FROM scope_member WHERE model = ?1 AND scope_key = ?2", scope, None)?, None));
     };
     let lower: Option<String> = connection
-        .prepare_cached(
-            "SELECT order_key FROM scope_member WHERE model = ?1 AND scope_key = ?2 AND place IS NOT NULL AND (place, row_id) < (?3, ?4) \
-             ORDER BY place DESC, row_id DESC LIMIT 1",
-        )?
+        .prepare_cached(LOWER_NEIGHBOUR_SQL)?
         .query_row(params![scope.model.as_str(), scope.key.as_str(), place, row.as_str()], |found| found.get(0))
         .optional()?;
     let upper = match &lower {

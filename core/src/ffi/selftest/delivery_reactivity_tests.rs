@@ -257,6 +257,22 @@ async fn feed_apply_delete_unless() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn feed_apply_ephemeral() {
+    let listen = json!({"subscription":"RecordEvents", "root":"recordEvents.item", "apply":{"effect":"ephemeral", "fields":{"typing":"active"}}});
+    let (database, transport, stream, token) = feed_listen_events(listen).await;
+    assert!(transport.cable.event(&token, json!({"data":{"recordEvents":{"entries":[{"topic":"MESSAGE","action":"UPDATED","recordId":"c1","chat":{"id":"c1","title":"before","revision":1,"lists":[]}}]}}})));
+    assert!(matches!(bound(stream.pull()).await.unwrap(), Some(ReadValue::Event { position: 1, .. })));
+    let entity = database.subscribe_values(database.session_epoch(), ReadRequest::Entity { model: "Chat".into(), id: "c1".into(), fetch: ReadFetch::Never });
+    assert!(matches!(bound(entity.pull()).await.unwrap(), Some(ReadValue::Snapshot { rows, .. }) if rows.len() == 1 && rows[0].cells.contains(&Cell::Bool { value: false })));
+    assert!(transport.cable.event(&token, json!({"data":{"recordEvents":{"item":{"id":"c1","active":true}}}})));
+    assert!(matches!(bound(stream.pull()).await.unwrap(), Some(ReadValue::Event { position: 2, id, .. }) if id == "c1"));
+    let Some(ReadValue::Delta { rows, .. }) = bound(entity.pull()).await.unwrap() else { panic!("the overlay did not reach the row") };
+    assert!(rows.len() == 1 && rows[0].cells.contains(&Cell::Bool { value: true }) && crate::ffi::lifecycle_tests::named(&rows[0], "before"), "the ephemeral value shows and the columns stay: {rows:?}");
+    assert_eq!(bound(database.subscription_census()).await.unwrap().refused_events, 0);
+    bound(database.close_database()).await.unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn feed_apply_ephemeral_missing() {
     let listen = json!({"subscription":"RecordEvents", "root":"recordEvents.item", "apply":{"effect":"ephemeral", "fields":{"typing":"active"}}});
     let (database, transport, stream, token) = feed_listen_events(listen).await;

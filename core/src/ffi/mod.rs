@@ -194,6 +194,8 @@ mod failure_tests;
 #[cfg(test)]
 mod offload_tests;
 #[cfg(test)]
+mod input_encoding_tests;
+#[cfg(test)]
 mod load_tests;
 #[cfg(test)]
 mod session_restore_tests;

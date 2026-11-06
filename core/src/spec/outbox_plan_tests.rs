@@ -188,3 +188,18 @@ fn out_optimistic_include_at_least() {
     let missing = plan(&spec, &base, &current, patch(), json!({"on": true, "who": "u8"}));
     assert_eq!(missing["recent"], json!(["u9"]), "a row that is not in the base is not included");
 }
+
+#[test]
+fn inv_merge_keyed_nested_path() {
+    let messages = ModelSpec::new("messages", vec![FieldSpec::scalar("id", ScalarKind::Id), FieldSpec::array("reactions").optional()]);
+    let base = seeded().row("messages", json!({"id": "m1", "reactions": [{"body": "bare"}, {"user": {"id": "u2"}, "body": "x"}]}));
+    let current = base.rows[&("messages".into(), "m1".into())].clone();
+    let patch = || object(json!({"reactions": {"$keyed": {"by": "user.id", "element": {"user": {"$arg": "user"}, "body": {"$arg": "body"}}}}}));
+    let step = |current: &Row, user: &str, body: &str| plan(&messages, &base, current, patch(), json!({"user": {"id": user}, "body": body}));
+    let added = step(&current, "u1", "a");
+    assert_eq!(added["reactions"], json!([{"body": "bare"}, {"user": {"id": "u2"}, "body": "x"}, {"user": {"id": "u1"}, "body": "a"}]), "an element without the path is a different element, a missing key is appended");
+    let replaced = step(&added, "u2", "y");
+    assert_eq!(replaced["reactions"], json!([{"body": "bare"}, {"user": {"id": "u2"}, "body": "y"}, {"user": {"id": "u1"}, "body": "a"}]), "the element is matched by the nested field");
+    let removed = step(&replaced, "u2", "");
+    assert_eq!(removed["reactions"], json!([{"body": "bare"}, {"user": {"id": "u1"}, "body": "a"}]), "every field but the key blank: the element goes");
+}

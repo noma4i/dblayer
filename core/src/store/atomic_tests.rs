@@ -171,15 +171,36 @@ fn store_boot_finishes_file_rename() {
     std::fs::write(files.join("orphan"), b"orphan").unwrap();
     std::fs::create_dir_all(files.join("cache")).unwrap();
     std::fs::write(files.join("cache/orphan"), b"orphan").unwrap();
-    std::fs::create_dir_all(files.join("transfers")).unwrap();
-    std::fs::write(files.join("transfers/1"), b"transfer").unwrap();
     let reopened = Store::open_models(Some(&path), all_specs(), None).map(std::sync::Arc::new).unwrap();
     assert_eq!(reopened.read_file("moments", &rid("m1"), "media").unwrap(), Some(bytes));
     assert!(!partial.exists());
     assert!(!files.join("orphan.partial").exists());
     assert!(!files.join("orphan").exists());
     assert!(!files.join("cache/orphan").exists());
-    assert!(files.join("transfers/1").exists());
+}
+
+#[test]
+fn store_boot_transfer_file_ownership() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("data.sqlite");
+    let database = Store::open_models(Some(&path), all_specs(), None).map(std::sync::Arc::new).unwrap();
+    for (transfer_id, size) in [(1, 10), (3, 0)] {
+        database.lock().connection.execute(
+            "INSERT INTO sync_upload (model, row_id, action, status, stage, sent, total, attempts, seq, source, size, transfer_id) VALUES ('moments', ?1, 'upload', 'queued', 'prepare', 0, 1, 0, ?2, 'source', ?3, ?2)",
+            rusqlite::params![format!("m{transfer_id}"), transfer_id, size],
+        ).unwrap();
+    }
+    drop(database);
+    let copies = directory.path().join("data.sqlite.files/transfers");
+    std::fs::create_dir_all(&copies).unwrap();
+    for name in ["1", "2", "3.part", "4.part"] {
+        std::fs::write(copies.join(name), b"copy").unwrap();
+    }
+    let reopened = Store::open_models(Some(&path), all_specs(), None).map(std::sync::Arc::new).unwrap();
+    let mut left: Vec<String> = std::fs::read_dir(&copies).unwrap().map(|entry| entry.unwrap().file_name().into_string().unwrap()).collect();
+    left.sort();
+    assert_eq!(left, ["1", "3.part"], "a copy with a sync_upload row stays, also while it is still copying, a copy without a holder goes");
+    drop(reopened);
 }
 
 #[test]

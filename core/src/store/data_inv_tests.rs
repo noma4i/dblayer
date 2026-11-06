@@ -384,6 +384,41 @@ fn inv_id_06_a_real_row_that_arrived_before_the_create_answer_leaves_one_row_aft
     assert_eq!(db.count(&Query::new("moments")).unwrap(), 1, "one row stays");
 }
 
+fn sent_create(db: &Store, op_id: u64, text: &str) -> String {
+    let temp = crate::identity::RowId::generate_temp(None).to_string();
+    let values = json!({"id": temp, "userId": "u1", "text": text}).to_string();
+    let effects = IntentEffects { rows: vec![EffectRow { model: "moments".into(), row_id: temp.clone(), values }], ..Default::default() };
+    write(db, BatchAuthor::Outbox, Vec::new(), vec![StoreOp::Intent { op_id, model: "moments".into(), row_id: temp.clone(), action: "create".into(), payload: "{}".into(), effects, origin: crate::owners::store::IntentOrigin::Api }]);
+    temp
+}
+
+fn event_row(db: &Store, id: &str, text: &str) {
+    write(db, BatchAuthor::Feed, vec![("moments".into(), json!({"op": "upsert", "id": id, "row": {"id": id, "userId": "u1", "text": text}}).to_string())], Vec::new());
+}
+
+#[test]
+fn inv_id_08_one_matching_candidate_is_replaced_by_the_row_of_the_event_and_several_are_not() {
+    use crate::schema::{ActionDeclaration, RootShape};
+    let mut specs = all_specs();
+    let mut create = ActionDeclaration::new("create", RootShape::Upsert);
+    create.correlate = vec!["userId".into(), "text".into()];
+    specs.iter_mut().find(|spec| spec.key.as_str() == "moments").unwrap().actions.push(create);
+    let db = Arc::new(Store::open_models(None, specs, None).unwrap());
+    let gone = |temp: &str| db.read(&["moments"], |reader| reader.point("moments", temp)).unwrap().is_none();
+    let single = sent_create(&db, 1, "one");
+    event_row(&db, "m1", "one");
+    assert!(gone(&single), "the temp row of the single sent record is replaced");
+    assert_eq!(db.count(&Query::new("moments")).unwrap(), 1, "one row stays: the row of the event");
+    let (first, second) = (sent_create(&db, 2, "two"), sent_create(&db, 3, "two"));
+    event_row(&db, "m2", "two");
+    assert!(!gone(&first) && !gone(&second), "two candidates match: both temp rows stay");
+    assert_eq!(db.count(&Query::new("moments")).unwrap(), 4, "the row of the event is stored as a new row");
+    let blank = sent_create(&db, 4, "");
+    event_row(&db, "m3", "");
+    assert!(!gone(&blank), "an empty named field never matches");
+    assert_eq!(db.count(&Query::new("moments")).unwrap(), 6);
+}
+
 #[test]
 fn inv_order_04_restored_member_takes_a_free_key_when_its_old_key_was_reused() {
     use crate::store::{BatchPlan, ScopeOp, ScopeRef};

@@ -8,6 +8,9 @@ use dblayer::schema::NodeRead;
 use dblayer::value::ScalarKind;
 use crate::{FileError, ParseError};
 
+mod documents;
+#[cfg(test)]
+mod documents_tests;
 mod fields;
 mod graphql;
 mod operation;
@@ -49,6 +52,10 @@ pub fn check_schema(schema: &Schema, scalars: &Scalars, operations: &[PathBuf], 
     }
     if let Some(spread) = documents.missing_spreads().into_iter().next() {
         return Err(vec![FileError { file: "operation documents".to_string(), error: ParseError::new(0, 0, format!("fragment `{spread}` is not in the operation documents")) }]);
+    }
+    let mismatched = documents.check_against(schema);
+    if !mismatched.is_empty() {
+        return Err(mismatched);
     }
     let mut declared = Declared::new();
     for node in nodes {
