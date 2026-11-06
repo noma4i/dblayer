@@ -18,7 +18,7 @@ pub enum LifeReply {
     /// `Deliveries` counted its streams for `subscription_census`.
     Streams { observed: usize, retained: usize },
     /// `Feed` counted its channels for `subscription_census`.
-    Channels(usize),
+    Channels { subscriptions: usize, refused: u64 },
     Closed,
 }
 

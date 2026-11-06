@@ -36,7 +36,7 @@ impl FeedCodec for Models {
     fn events(&self, _channel: &str, response: Response) -> Vec<FramedEvent> {
         let Some(data) = response.data else { return Vec::new() };
         match (data["model"].as_str(), data["payload"].as_str()) {
-            (Some(model), Some(payload)) => vec![FramedEvent { model: model.into(), payload: payload.into(), reread: StaleKeys::none() }],
+            (Some(model), Some(payload)) => vec![FramedEvent { model: model.into(), payload: payload.into(), reread: StaleKeys::none(), refused: false }],
             _ => Vec::new(),
         }
     }

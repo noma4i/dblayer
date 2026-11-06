@@ -3,6 +3,7 @@
 ## Unreleased
 
 ### Added
+- `subscriptionCensus` reports refused subscription events.
 - `ReadState` carries `hasMore`, `settled` and the server `total` of the window.
 - `ModelEvent` carries `position` and the rows `before` and `after`.
 - `ModelEventItem` has a `gap` item for a lost order of events.

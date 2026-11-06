@@ -52,7 +52,7 @@ async fn feed_database() -> (Arc<Database>, Arc<FeedTransport>) {
     remote.variables.insert("list".into(), VariableSource::Param { name: "list".into() });
     list.remote = Some(remote);
     chat.relations.extend([node, list]);
-    chat.changes.push(serde_json::from_value(json!({"area":"MESSAGE","relation":"node","payload":"chat"})).unwrap());
+    chat.changes.push(serde_json::from_value(json!({"area":"MESSAGE","relation":"node","payload":"chat","removes_on":["DELETED"]})).unwrap());
     chat.change_feed = Some(crate::schema::ChangeFeed { subscription: "RecordEvents".into(), root: "recordEvents.entries".into(), area: "topic".into(), kind: "action".into(), id: "recordId".into() });
     let world = World::new("server", "A", true);
     let mut encrypted = crate::transport::encrypted::protocol_tests::config();
@@ -67,6 +67,43 @@ async fn feed_database() -> (Arc<Database>, Arc<FeedTransport>) {
     database.set_online(true).unwrap();
     bound(database.session_call("login_link".into(), json!({"account":"A"}).to_string())).await.unwrap();
     (database, transport)
+}
+
+async fn feed_events() -> (Arc<Database>, Arc<FeedTransport>, Arc<ReadStream>, String) {
+    let (database, transport) = feed_database().await;
+    let stream = database.subscribe_values(database.session_epoch(), ReadRequest::Events { model: "Chat".into() });
+    assert!(matches!(bound(stream.pull()).await.unwrap(), Some(ReadValue::Ready)));
+    let token = transport.token.lock().unwrap().clone().unwrap();
+    (database, transport, stream, token)
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn feed_payload_lands() {
+    let (database, transport, stream, token) = feed_events().await;
+    assert!(transport.cable.event(&token, json!({"data":{"recordEvents":{"entries":[{"topic":"MESSAGE","action":"UPDATED","recordId":"c1","chat":{"id":"c1","title":"after","revision":2,"lists":["PRIMARY"]}}]}}})));
+    let value = bound(stream.pull()).await.unwrap().unwrap();
+    assert!(matches!(value, ReadValue::Event { position: 1, area, kind, id, before: None, after: Some(row) } if area == "MESSAGE" && kind == "UPDATED" && id == "c1" && crate::ffi::lifecycle_tests::named(&row, "after")));
+    bound(database.close_database()).await.unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn feed_payload_incomplete() {
+    let (database, transport, stream, token) = feed_events().await;
+    assert_eq!(bound(database.subscription_census()).await.unwrap().refused_events, 0);
+    assert!(transport.cable.event(&token, json!({"data":{"recordEvents":{"entries":[{"topic":"MESSAGE","action":"UPDATED","recordId":"c1","chat":{"id":"c1"}}]}}})));
+    assert!(matches!(bound(stream.pull()).await.unwrap(), Some(ReadValue::Lost { first: 1, last: 1 })));
+    assert_eq!(bound(database.subscription_census()).await.unwrap().refused_events, 1);
+    bound(database.close_database()).await.unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn feed_payload_removes() {
+    let (database, transport, stream, token) = feed_events().await;
+    assert!(transport.cable.event(&token, json!({"data":{"recordEvents":{"entries":[{"topic":"MESSAGE","action":"UPDATED","recordId":"c1","chat":{"id":"c1","title":"before","revision":2,"lists":["PRIMARY"]}}]}}})));
+    assert!(matches!(bound(stream.pull()).await.unwrap(), Some(ReadValue::Event { after: Some(_), .. })));
+    assert!(transport.cable.event(&token, json!({"data":{"recordEvents":{"entries":[{"topic":"MESSAGE","action":"DELETED","recordId":"c1"}]}}})));
+    assert!(matches!(bound(stream.pull()).await.unwrap(), Some(ReadValue::Event { id, before: Some(_), after: None, .. }) if id == "c1"));
+    bound(database.close_database()).await.unwrap();
 }
 
 async fn next_rows(rig: &Rig, stream: &ReadStream, expected: i64) -> i64 {

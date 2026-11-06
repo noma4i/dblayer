@@ -102,7 +102,7 @@ pub(super) async fn blocking<T: Send + 'static>(work: impl FnOnce() -> Result<T,
 pub struct Config { pub path: Option<String>, pub data_version: Option<String>, pub cache_rows: u32 }
 
 #[derive(uniffi::Record)]
-pub struct SubscriptionCensus { pub observed_queries: u64, pub subscriptions: u64, pub retained_observers: u64 }
+pub struct SubscriptionCensus { pub observed_queries: u64, pub subscriptions: u64, pub retained_observers: u64, pub refused_events: u64 }
 
 #[derive(uniffi::Object)]
 pub struct TestClock { clock: Arc<ManualClock> }
@@ -262,8 +262,8 @@ impl Database {
     pub fn restore_failed(&self) -> Result<Vec<crate::db::DroppedRecord>, DbError> { Ok(self.db.restore_failed()?) }
     pub fn discard_restore_failed(&self, table: String, key: String) -> Result<bool, DbError> { Ok(self.db.discard_restore_failed(&table, &key)?) }
     pub async fn subscription_census(&self) -> Result<SubscriptionCensus, DbError> {
-        let (observed, subscriptions, retained) = self.life.subscription_census().await.map_err(|_| DbError::Interrupted { detail: "the census was interrupted".into() })?;
-        Ok(SubscriptionCensus { observed_queries: observed as u64, subscriptions: subscriptions as u64, retained_observers: retained as u64 })
+        let (observed, subscriptions, retained, refused_events) = self.life.subscription_census().await.map_err(|_| DbError::Interrupted { detail: "the census was interrupted".into() })?;
+        Ok(SubscriptionCensus { observed_queries: observed as u64, subscriptions: subscriptions as u64, retained_observers: retained as u64, refused_events })
     }
     pub async fn file(&self, epoch: u64, model: String, row_id: String, field: String) -> Result<Option<String>, DbError> {
         let row_id = id(&row_id)?;

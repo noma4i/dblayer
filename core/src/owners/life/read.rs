@@ -109,8 +109,8 @@ pub(super) fn add(builder: &mut RuntimeBuilder, wiring: &Arc<Wiring>, ports: &Po
     let feed_wiring = wiring.clone();
     let feed_rest: Rest<FeedEffect> = Box::new(move |_stamp, effect| match effect {
         FeedEffect::Drained(done) => drained(&feed_wiring, done),
-        FeedEffect::Census { reply, subscriptions } => {
-            feed_wiring.outcomes.settle(OutcomeId::from_raw(reply), LifeReply::Channels(subscriptions));
+        FeedEffect::Census { reply, subscriptions, refused } => {
+            feed_wiring.outcomes.settle(OutcomeId::from_raw(reply), LifeReply::Channels { subscriptions, refused });
         }
         FeedEffect::SnapshotRequest { epoch } => feed_wiring.to_network(NetworkInput::SnapshotRequest { owner: Peer::Feed, epoch }),
         _ => {}
@@ -211,17 +211,17 @@ impl super::Life {
     }
 
     /// The streams of Deliveries and the channels of Feed now, read from the fields of the owners: `(observed_queries, subscriptions, retained_observers)`.
-    pub async fn subscription_census(&self) -> Result<(usize, usize, usize), LifeReply> {
+    pub async fn subscription_census(&self) -> Result<(usize, usize, usize, u64), LifeReply> {
         if self.is_shut() {
-            return Ok((0, 0, 0));
+            return Ok((0, 0, 0, 0));
         }
         let streams = self.wiring.outcomes.register(Epoch::MAX);
         let channels = self.wiring.outcomes.register(Epoch::MAX);
         self.wiring.to_deliveries(DeliveryInput::Census { reply: streams.id().raw() });
         self.wiring.to_feed(FeedInput::Census { reply: channels.id().raw() });
         match (streams.wait().await, channels.wait().await) {
-            (Outcome::Value(LifeReply::Streams { observed, retained }), Outcome::Value(LifeReply::Channels(subscriptions))) => Ok((observed, subscriptions, retained)),
-            (Outcome::Closing, _) | (_, Outcome::Closing) => Ok((0, 0, 0)),
+            (Outcome::Value(LifeReply::Streams { observed, retained }), Outcome::Value(LifeReply::Channels { subscriptions, refused })) => Ok((observed, subscriptions, retained, refused)),
+            (Outcome::Closing, _) | (_, Outcome::Closing) => Ok((0, 0, 0, 0)),
             _ => Err(LifeReply::Closed),
         }
     }

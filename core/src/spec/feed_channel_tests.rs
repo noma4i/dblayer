@@ -88,7 +88,7 @@ impl Rig {
     fn confirm(&mut self, channel: &str) -> Vec<String> { self.post(FeedInput::ChannelConfirmed { connection_id: FIRST, channel: channel.into() }) }
 
     fn event(&mut self, channel: &str, model: &str, payload: &str) -> Vec<String> {
-        self.post(FeedInput::Event { connection_id: FIRST, channel: channel.into(), event: FramedEvent { model: model.into(), payload: payload.into(), reread: StaleKeys::none() } })
+        self.post(FeedInput::Event { connection_id: FIRST, channel: channel.into(), event: FramedEvent { model: model.into(), payload: payload.into(), reread: StaleKeys::none(), refused: false } })
     }
 
     /// Chat and Post are wanted, the connection is open and every channel of them is confirmed.

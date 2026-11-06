@@ -33,9 +33,9 @@ fn truthy(value: &Value) -> bool {
     }
 }
 
-fn event(model: &str, payload: Value, reread: StaleKeys) -> FramedEvent { FramedEvent { model: model.into(), payload: payload.to_string(), reread } }
+fn event(model: &str, payload: Value, reread: StaleKeys) -> FramedEvent { FramedEvent { model: model.into(), payload: payload.to_string(), reread, refused: false } }
 
-fn invalid(model: &str, reason: impl std::fmt::Display) -> FramedEvent { event(model, json!({"op":"invalid", "model":model, "reason":reason.to_string()}), StaleKeys::none()) }
+fn invalid(model: &str, reason: impl std::fmt::Display) -> FramedEvent { FramedEvent { refused: true, ..event(model, json!({"op":"invalid", "model":model, "reason":reason.to_string()}), StaleKeys::none()) } }
 
 fn delete(model: &str, id: &RowId) -> FramedEvent { event(model, json!({"op":"delete", "model":model, "id":id.as_str()}), StaleKeys::none()) }
 
@@ -92,6 +92,9 @@ impl SchemaFeedCodec {
         }
         let path = read.payload.as_deref().unwrap_or_default();
         let Some(node) = root_value(change, path).and_then(Value::as_object) else { return invalid(model, format!("missing full payload {model}.{path}")) };
+        if let Err(error) = self.specs().find(|spec| spec.key.as_str() == model).ok_or_else(|| format!("unknown model {model}")).and_then(|spec| spec.normalize(node).map_err(|error| error.to_string())) {
+            return invalid(model, error);
+        }
         match self.upsert(model, node.clone(), &Map::new()) {
             Ok(Some(mut payload)) => {
                 payload["area"] = json!(read.area);
