@@ -5,11 +5,10 @@ use super::sync::{Arc, AtomicBool, Ordering};
 use super::PublishedCell;
 
 #[test]
-fn a_waiter_gets_the_change_made_after_it_started_and_the_timeout_when_nothing_changes() {
+fn a_waiter_gets_the_change_made_after_it_started() {
     let cell = Arc::new(PublishedCell::<u32>::default());
     let flag = Arc::new(AtomicBool::new(false));
     assert_eq!(cell.get(), None);
-    assert_eq!(cell.wait_for(Duration::from_millis(20), || None::<u32>), None);
     let changer = {
         let (cell, flag) = (cell.clone(), flag.clone());
         std::thread::spawn(move || {
@@ -18,7 +17,7 @@ fn a_waiter_gets_the_change_made_after_it_started_and_the_timeout_when_nothing_c
             cell.notify();
         })
     };
-    assert_eq!(cell.wait_for(Duration::from_secs(5), || flag.load(Ordering::SeqCst).then_some(9)), Some(9));
+    assert_eq!(cell.wait_until(|| flag.load(Ordering::SeqCst).then_some(9)), 9);
     join_within(changer);
     cell.publish(4);
     assert_eq!(cell.read(|value| value.copied()), Some(4));
@@ -42,9 +41,9 @@ mod model {
                     cell.notify();
                 })
             };
-            let found = cell.wait_for(Duration::from_secs(3600), || flag.load(Ordering::SeqCst).then_some(1));
+            let found = cell.wait_until(|| flag.load(Ordering::SeqCst).then_some(1));
             join_within(changer);
-            assert_eq!(found, Some(1));
+            assert_eq!(found, 1);
         });
     }
 
@@ -61,9 +60,9 @@ mod model {
                     cell.publish(2);
                 })
             };
-            let found = cell.wait_for(Duration::from_secs(3600), || flag.load(Ordering::SeqCst).then_some(()));
+            let found = cell.wait_until(|| flag.load(Ordering::SeqCst).then_some(()));
             join_within(publisher);
-            assert_eq!(found, Some(()));
+            assert_eq!(found, ());
             assert_eq!(cell.get(), Some(2));
         });
     }

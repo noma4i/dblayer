@@ -158,7 +158,7 @@ impl Database {
         let reads = crate::owners::read::ReadOperations::default();
         let jobs: Arc<super::upload_rounds::RoundJobsSlot> = Arc::default();
         let shows: Arc<super::transfer_status::Shows> = Arc::default();
-        let life = Self::build_life(&db, transport.clone(), encrypted.as_ref(), cable, seal, reads.clone(), (uploads.clone(), jobs.clone(), shows.clone()))?;
+        let life = Self::build_life(&db, transport.clone(), encrypted.as_ref(), cable, seal, reads.clone(), (uploads.clone(), jobs.clone(), shows.clone(), clock.clone()))?;
         let remote = transport.is_some();
         let wires = keys.into_iter().map(|key| db.spec(&key).map(|spec| (key, Arc::new(WireModel::of(spec)))).map_err(DbError::from)).collect::<Result<_, _>>()?;
         Ok(Arc::new(Self { lease: Arc::new(OnceLock::new()), life, db, remote, reads, uploads, jobs, shows, outcomes: Arc::default(), loads: Arc::default(), wires: Arc::new(wires) }))
@@ -197,11 +197,11 @@ impl Database {
     }
 
     /// F1: the owners of direction A on the threads of the core, started from the booted `Store`. It returns after the first `Publish`.
-    fn build_life(db: &Arc<Store>, transport: Option<Arc<dyn core::Transport>>, encrypted: Option<&Encrypted>, cable: Option<Arc<dyn core::CableLines>>, seal: Option<Arc<crate::owners::session_seal::SealConfig>>, read_operations: crate::owners::read::ReadOperations, (uploads, jobs, shows): (Option<UploadOperations>, Arc<super::upload_rounds::RoundJobsSlot>, Arc<super::transfer_status::Shows>)) -> Result<Arc<crate::owners::life::Life>, DbError> {
+    fn build_life(db: &Arc<Store>, transport: Option<Arc<dyn core::Transport>>, encrypted: Option<&Encrypted>, cable: Option<Arc<dyn core::CableLines>>, seal: Option<Arc<crate::owners::session_seal::SealConfig>>, read_operations: crate::owners::read::ReadOperations, (uploads, jobs, shows, clock): (Option<UploadOperations>, Arc<super::upload_rounds::RoundJobsSlot>, Arc<super::transfer_status::Shows>, Arc<dyn Clock>)) -> Result<Arc<crate::owners::life::Life>, DbError> {
         let executor = executor()?.handle().clone();
         let operations = operations_lookup(&read_operations);
         let transfer = uploads.filter(|_| encrypted.is_some()).map(|operations| crate::owners::write::transfer_executor::TransferPort {
-            codec: Arc::new(crate::owners::write::upload_codec::UploadCodec::new(operations, operations_lookup(&read_operations), crate::owners::write::upload::UploadConfig::default())),
+            codec: Arc::new(crate::owners::write::upload_codec::UploadCodec::new(operations, operations_lookup(&read_operations), crate::owners::write::upload::UploadConfig::default(), clock)),
             jobs,
             shows: Arc::new(move |key, shown| shows.put(key, shown)),
             slots: 1,

@@ -29,7 +29,6 @@ pub use observers::{ObserverPort, StopDone};
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock, PoisonError};
-use std::time::Duration;
 
 use super::calls::{CallAnswer, Calls, CallsInput, CallsState};
 use super::contract::{BatchAuthor, BatchId, Committed, CommittedBroadcast, NetworkEvent, Published, Rejected, RequestId};
@@ -52,7 +51,6 @@ pub use reply::LifeReply;
 pub(crate) use call_rule::CallVerdict;
 use boot::boot_found;
 
-const OPEN_WAIT: Duration = Duration::from_secs(365 * 24 * 3600);
 
 /// The first author id of the calls that the old stack makes: below it the ids of Outbox, Transfer and Session.
 const WAITER_AUTHORS: AuthorId = 1 << 32;
@@ -504,16 +502,15 @@ impl Life {
         }
         wiring.open.lock().unwrap_or_else(PoisonError::into_inner).id = Some(open_wait.id().raw());
         wiring.to_store(StoreInput::Boot(found));
-        let settled = wiring.published.wait_for(OPEN_WAIT, || {
+        let settled = wiring.published.wait_until(|| {
             if let Some(answer) = wiring.open.lock().unwrap_or_else(PoisonError::into_inner).answer {
                 return Some(Ok(answer));
             }
             wiring.open_failed.lock().unwrap_or_else(PoisonError::into_inner).clone().map(Err)
         });
         let answer = match settled {
-            Some(Ok(answer)) => answer,
-            Some(Err((error, corrupt))) => return Err(if corrupt { LifeError::CorruptManifest(error) } else { LifeError::Storage(error) }),
-            None => return Err(LifeError::Storage("the first publication did not come".to_string())),
+            Ok(answer) => answer,
+            Err((error, corrupt)) => return Err(if corrupt { LifeError::CorruptManifest(error) } else { LifeError::Storage(error) }),
         };
         answer.map_err(|error| LifeError::Storage(format!("the first publication was not saved: {error:?}")))?;
         let alive = runtime.alive();

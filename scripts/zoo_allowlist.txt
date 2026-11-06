@@ -1,17 +1,7 @@
 type:DbError        # the ffi error mirrors core errors for the foreign bindings
 type:PutReply       # the ffi reply is the foreign-binding form of the core reply
 type:Transport      # the ffi trait is implemented by Swift and Kotlin, the core trait by the mock
-commit:core/src/db/open.rs   # rows rebuilt from the queue at open run before any Db exists
-z20:db/open.rs:recover_operations   # the repair of the outbox at open runs before any session exists and takes the one opening token
 
-panic:core/src/db/dispatch.rs:pending.events.pop_front().expect("queue is not empty")   # the queue holds more than MAX_PENDING (256) events, checked on the line above
-panic:core/src/db/dispatch.rs:pending.events.pop_front().expect("queue holds two events")   # same check, MAX_PENDING is at least 2
-panic:core/src/db/watch.rs:expect("a placed row is known")   # the id was placed from the same row list one step earlier
-panic:core/src/db/watch.rs:serde_json::to_string(query).expect("query serializes")   # Query is a plain Serialize tree with string keys
-panic:core/src/db/open.rs:panic!("injected panic for {key}")   # compiled for tests only, armed by a test to fail one group
-panic:core/src/sync/load_owner.rs:panic!("injected panic for a window event")   # compiled for tests only, armed by a test to fail one window
-panic:core/src/db/cache.rs:expect("capacity is positive")   # capacity.max(1) is never zero
-panic:core/src/db/open.rs:outcome.expect("read ran")   # Store::read returns Ok only after it ran the closure
 panic:core/src/value/mod.rs:value.unwrap(), expected.unwrap()   # the match arm proves both options are Some
 panic:core/src/value/mod.rs:expect("string map serializes")   # a map of strings always serializes
 panic:core/src/store/ddl/mod.rs:expect("fingerprint serializes")   # own Serialize type, string keys
@@ -36,29 +26,5 @@ z25:ffi/write.rs:create   # public call parses JSON on the caller thread, open f
 z25:ffi/write.rs:update   # public call parses JSON on the caller thread, open finding (line D)
 z25:ffi/write.rs:act   # public call parses JSON on the caller thread, open finding (line D)
 z25:ffi/write.rs:set_local   # public call parses JSON on the caller thread, open finding (line D)
-z26:runtime/threaded.rs:373   # time read outside Clock, open finding (line D)
-z26:runtime/published.rs:31   # time read outside Clock, open finding (line D)
-z26:runtime/published.rs:37   # time read outside Clock, open finding (line D)
-z26:ffi/database.rs:343   # time read outside Clock, open finding (line D)
-z26:ffi/database.rs:353   # time read outside Clock, open finding (line D)
-z26:owners/write/upload_codec.rs:73   # time read outside Clock, open finding (line B)
-z26:owners/read/feed_io.rs:136   # time read outside Clock, open finding (line C)
-z27:MEBIBYTE   # owner constant missing from design.md 1a, open finding (line B)
-z27:PURPOSE_STANDARD   # owner constant missing from design.md 1a, open finding (line B)
-z27:PURPOSE_TRANSFER   # owner constant missing from design.md 1a, open finding (line B)
-z27:EXPIRE_TIMER   # owner constant missing from design.md 1a, open finding (line B)
-z27:ATTEMPT_LIMIT   # owner constant missing from design.md 1a, open finding (line B)
-z27:EXPIRY_MS   # owner constant missing from design.md 1a, open finding (line B)
-z27:RETRY_TIMER   # owner constant missing from design.md 1a, open finding (line B)
-z27:HANDSHAKE_DEADLINE   # owner constant missing from design.md 1a, open finding (line C)
-z27:HANDSHAKE_SCHEDULE   # owner constant missing from design.md 1a, open finding (line C)
-z27:CHANNEL_SCHEDULE   # owner constant missing from design.md 1a, open finding (line C)
-z27:FIRST_SEND_COUNTER   # owner constant missing from design.md 1a, open finding (line C)
-z27:FIRST_RECV_COUNTER   # owner constant missing from design.md 1a, open finding (line C)
-z27:DEFAULT_PAGE_SIZE   # owner constant missing from design.md 1a, open finding (line C)
-z27:JOURNAL_LIMIT   # owner constant missing from design.md 1a, open finding (line C)
-z27:DELTA_LIMIT   # owner constant missing from design.md 1a, open finding (line C)
-z27:CLOSE_DRAIN   # owner constant missing from design.md 1a, open finding (line C)
-z27:OPEN_WAIT   # owner constant missing from design.md 1a, open finding (line D)
-z27:CALL   # owner constant missing from design.md 1a, open finding (line D)
 
+z26:runtime/threaded.rs:373   # the Timeline maps Clock to a monotonic origin once at start, every later read goes through Clock

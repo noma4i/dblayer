@@ -1,5 +1,3 @@
-use std::time::{Duration, Instant};
-
 use super::sync::{lock, Condvar, Mutex, PoisonError};
 use crate::blocking::blocking_unit;
 
@@ -27,18 +25,13 @@ impl<T: Clone> PublishedCell<T> {
         crate::lock::effect(|| self.changed.notify_all());
     }
 
-    pub fn wait_for<R>(&self, limit: Duration, mut ready: impl FnMut() -> Option<R>) -> Option<R> {
-        let deadline = Instant::now() + limit;
+    pub fn wait_until<R>(&self, mut ready: impl FnMut() -> Option<R>) -> R {
         let mut guard = lock(&self.value);
         loop {
             if let Some(found) = ready() {
-                return Some(found);
+                return found;
             }
-            let left = deadline.saturating_duration_since(Instant::now());
-            if left.is_zero() {
-                return None;
-            }
-            guard = blocking_unit(|| self.changed.wait_timeout(guard, left).unwrap_or_else(PoisonError::into_inner).0);
+            guard = blocking_unit(|| self.changed.wait(guard).unwrap_or_else(PoisonError::into_inner));
         }
     }
 }
