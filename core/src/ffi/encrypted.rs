@@ -105,7 +105,7 @@ impl RetryProgress {
     pub fn subscribe(&self, listener: Arc<dyn RetryProgressListener>) -> Result<Arc<RetrySubscription>, DbError> {
         let mut changes = self.inner.watch();
         let runtime = super::database::executor()?;
-        let calls = Arc::new(crate::db::CallState::new());
+        let calls = Arc::new(crate::ffi::CallState::new());
         let task = crate::task::spawn_on(crate::task::Carry::Detached, runtime.handle(), {
             let calls = calls.clone();
             async move {
@@ -125,7 +125,7 @@ impl RetryProgress {
 }
 
 #[derive(uniffi::Object)]
-pub struct RetrySubscription { task: tokio::task::AbortHandle, pub(crate) calls: Arc<crate::db::CallState> }
+pub struct RetrySubscription { task: tokio::task::AbortHandle, pub(crate) calls: Arc<crate::ffi::CallState> }
 
 #[uniffi::export]
 impl RetrySubscription {

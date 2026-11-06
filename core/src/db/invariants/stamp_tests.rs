@@ -58,28 +58,3 @@ const CAUSES: [Cause; 5] = [
     }),
 ];
 
-#[test]
-fn inv_observe_01_every_stamp_field_change_reaches_the_row_observer_and_the_list_observer() {
-    for (cause, setup, change) in CAUSES {
-        let db = booted();
-        put(&db, "users", json!({"id": "u1", "name": "Ann"}));
-        put(&db, "moments", json!({"id": "m1", "userId": "u1", "text": "one"}));
-        setup(&db);
-        let (row_log, row_listener) = recorder();
-        let (list_log, list_listener) = recorder();
-        let _row = db.observe_row("moments", &rid("m1"), row_listener).unwrap();
-        let _list = db.observe(crate::query::Query::new("moments").including(&["author"]), list_listener).unwrap();
-        db.await_revision(db.revision_seq().unwrap());
-        let (row_before, list_before) = (changes(&row_log).len(), changes(&list_log).len());
-        change(&db);
-        db.await_revision(db.revision_seq().unwrap());
-        let row_after = changes(&row_log);
-        if cause != "included row sync" {
-            assert!(row_after.len() > row_before, "{cause}: the row observer heard nothing");
-            assert!(row_after.last().unwrap().diff.updated.contains(&rid("m1")), "{cause}: the row is not in updated");
-        }
-        let list_after = changes(&list_log);
-        assert!(list_after.len() > list_before, "{cause}: the list observer heard nothing");
-        assert!(list_after.last().unwrap().diff.updated.contains(&rid("m1")), "{cause}: the row is not in the list updates");
-    }
-}

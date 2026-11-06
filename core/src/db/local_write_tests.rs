@@ -154,21 +154,6 @@ fn inv_cascade_03_update_touches_the_parent_of_the_row() {
     assert!(db.find("chats", &rid("c1")).unwrap().unwrap().revision > before);
 }
 
-#[test]
-fn inv_row_05_update_with_unchanged_values_writes_nothing() {
-    let db = booted();
-    put(&db, "moments", json!({"id": "m1", "userId": "u1", "text": "one"}));
-    let (log, callback) = recorder();
-    let _subscription = db.observe(Query::new("moments"), callback).unwrap();
-    db.await_revision(db.revision_seq().unwrap());
-    let delivered = calls(&log).len();
-    let before = db.find("moments", &rid("m1")).unwrap().unwrap().revision;
-    let row = db.update(&db.admit().unwrap(), "moments", &rid("m1"), obj(json!({"text": "one"}))).unwrap();
-    db.await_revision(db.revision_seq().unwrap());
-    assert_eq!(row.revision, before);
-    assert!(db.outbox().unwrap().is_empty());
-    assert_eq!(calls(&log).len(), delivered);
-}
 
 #[test]
 fn update_of_a_missing_row_fails() {
@@ -258,38 +243,7 @@ fn scope_of(relation: &str, chat: &str) -> ListKey {
     relation_scope_key("messages", relation, &[("chatId".to_string(), crate::value::relation_param_text(&json!(chat)))].into()).unwrap()
 }
 
-#[test]
-fn create_lands_the_temp_row_in_the_unfiltered_scope_of_its_params() {
-    let db = threaded_db();
-    let (log, callback) = recorder();
-    let _subscription = db.observe(Query::new("messages").in_scope(scope_of("thread", "c1")), callback).unwrap();
-    db.await_revision(db.revision_seq().unwrap());
-    let row = db.create(&db.admit().unwrap(), "messages", obj(json!({"chatId": "c1", "body": "yo"}))).unwrap();
-    db.await_revision(db.revision_seq().unwrap());
-    assert_eq!(ids(changes(&log).last().unwrap()), [row.id.to_string()]);
-    let other = db.create(&db.admit().unwrap(), "messages", obj(json!({"chatId": "c2", "body": "elsewhere"}))).unwrap();
-    db.await_revision(db.revision_seq().unwrap());
-    assert_eq!(ids(changes(&log).last().unwrap()), [row.id.to_string()]);
-    assert_eq!(db.shared.store.scope_members("messages", scope_of("media", "c1").as_str()).unwrap(), vec![]);
-    assert!(db.shared.store.scope_members("messages", scope_of("thread", "c2").as_str()).unwrap().iter().any(|(id, _)| id == other.id.as_str()));
-}
 
-#[test]
-fn changing_a_by_column_moves_the_row_between_the_unfiltered_scopes() {
-    let db = threaded_db();
-    put(&db, "chats", json!({"id": "c1", "title": "one"}));
-    put(&db, "chats", json!({"id": "c2", "title": "two"}));
-    let row = db.create(&db.admit().unwrap(), "messages", obj(json!({"chatId": "c1", "body": "yo"}))).unwrap();
-    let (first, first_callback) = recorder();
-    let (second, second_callback) = recorder();
-    let _one = db.observe(Query::new("messages").in_scope(scope_of("thread", "c1")), first_callback).unwrap();
-    let _two = db.observe(Query::new("messages").in_scope(scope_of("thread", "c2")), second_callback).unwrap();
-    db.await_revision(db.revision_seq().unwrap());
-    db.update(&db.admit().unwrap(), "messages", &row.id, obj(json!({"chatId": "c2"}))).unwrap();
-    db.await_revision(db.revision_seq().unwrap());
-    assert_eq!(ids(changes(&first).last().unwrap()), Vec::<String>::new());
-    assert_eq!(ids(changes(&second).last().unwrap()), [row.id.to_string()]);
-}
 
 #[test]
 fn a_remote_relation_lists_its_scope_in_the_relation_order() {

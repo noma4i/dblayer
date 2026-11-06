@@ -10,9 +10,8 @@ use crate::test_wait::join_within;
 fn assert_send_sync<T: Send + Sync>() {}
 
 #[test]
-fn db_and_subscription_are_send_and_sync() {
+fn db_is_send_and_sync() {
     assert_send_sync::<Db>();
-    assert_send_sync::<ObserverHandle>();
 }
 
 #[test]
@@ -139,7 +138,7 @@ fn inv_row_07_fsck_quarantines_temp_rows_without_an_operation_and_keeps_the_othe
 
 #[test]
 fn inv_panic_01_open_reports_a_thread_that_cannot_start_and_leaves_no_open_handle() {
-    for refused_name in ["dblayer-dispatch", "dblayer-read", "dblayer-ephemeral"] {
+    for refused_name in ["dblayer-ephemeral"] {
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("db.sqlite");
         super::threads::refuse_spawn_here(refused_name);

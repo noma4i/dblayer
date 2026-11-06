@@ -92,7 +92,6 @@ fn a_search_follows_updates_and_deletes() {
     assert_eq!(found(&db, "hello", false), Vec::<String>::new());
     assert_eq!(found(&db, "moon", false), ["n1"]);
     db.destroy(&db.admit().unwrap(), "notes", &rid("n3")).unwrap();
-    db.await_revision(db.revision_seq().unwrap());
     assert_eq!(found(&db, "submarine", false), Vec::<String>::new());
 }
 
@@ -145,17 +144,6 @@ fn a_search_on_a_model_without_searchable_fields_or_with_two_searches_is_refused
     assert!(matches!(twice, Err(DbError::Query(QueryError::SeveralSearches))), "{twice:?}");
 }
 
-#[test]
-fn an_observed_search_reports_a_row_when_its_text_starts_to_match() {
-    let db = opened(Storage::Disk);
-    put(&db, "notes", json!({"id": "n1", "chatId": "c1", "body": "nothing"}));
-    let (log, listener) = recorder();
-    let _handle = db.observe(Query::new("notes").filtered(Where::search("rocket", false)), listener).unwrap();
-    db.await_revision(db.revision_seq().unwrap());
-    put(&db, "notes", json!({"id": "n1", "chatId": "c1", "body": "rocket science"}));
-    db.await_revision(db.revision_seq().unwrap());
-    assert_eq!(changes(&log).last().map(ids), Some(vec!["n1".to_string()]));
-}
 
 #[test]
 fn searchable_is_only_for_text() {

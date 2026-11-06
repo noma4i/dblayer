@@ -302,7 +302,7 @@ async fn retry_progress_delivers_the_current_snapshot_to_each_reader_and_a_slow_
 
 const HOLD_WAIT: std::time::Duration = std::time::Duration::from_secs(10);
 
-fn hold_before_the_call(call_state: &crate::db::CallState) -> (std::sync::mpsc::Receiver<()>, std::sync::mpsc::Sender<()>) {
+fn hold_before_the_call(call_state: &crate::ffi::CallState) -> (std::sync::mpsc::Receiver<()>, std::sync::mpsc::Sender<()>) {
     let (reached, at_the_call) = std::sync::mpsc::channel();
     let (release, released) = std::sync::mpsc::channel::<()>();
     *call_state.before_enter.lock().unwrap() = Some(Box::new(move || {

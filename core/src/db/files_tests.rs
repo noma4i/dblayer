@@ -193,17 +193,6 @@ fn inv_file_01_failed_attach_leaves_neither_a_file_nor_a_description() {
     assert_eq!(db.shared.files.directory_entries().unwrap(), vec![before.id]);
 }
 
-#[test]
-fn attach_notifies_observers_of_the_row_and_refreshes_the_cache() {
-    let db = seeded();
-    let (log, callback) = recorder();
-    let _subscription = db.observe(crate::query::Query::new("moments"), callback).unwrap();
-    db.await_revision(db.revision_seq().unwrap());
-    attach(&db, "m1", "media", SMALL);
-    db.await_revision(db.revision_seq().unwrap());
-    assert_eq!(calls(&log), vec![2, 2]);
-    assert!(media(&db, "m1").is_some());
-}
 
 #[test]
 fn inv_file_04_temp_row_files_follow_the_row_to_its_real_id() {

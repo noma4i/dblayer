@@ -107,24 +107,6 @@ fn inv_rollback_04_rolling_back_a_create_removes_the_row_with_its_edits_file_and
     }
 }
 
-#[test]
-fn inv_rollback_06_rolling_back_a_destroy_of_a_row_with_a_child_is_one_commit_and_one_delivery_per_observer() {
-    let db = booted();
-    put(&db, "moments", json!({"id": "m1", "userId": "u1", "text": "one"}));
-    put(&db, "vibes", json!({"id": "v1", "momentId": "m1"}));
-    db.destroy(&db.admit().unwrap(), "moments", &rid("m1")).unwrap();
-    let (moments, on_moments) = recorder();
-    let (vibes, on_vibes) = recorder();
-    let _moments = db.observe(Query::new("moments"), on_moments).unwrap();
-    let _vibes = db.observe(Query::new("vibes"), on_vibes).unwrap();
-    db.await_revision(db.revision_seq().unwrap());
-    let before = (db.revision_seq().unwrap(), moments.lock().unwrap().len(), vibes.lock().unwrap().len());
-    db.roll_back(&db.admit().unwrap(), only_seq(&db)).unwrap();
-    db.await_revision(db.revision_seq().unwrap());
-    let after = (db.revision_seq().unwrap(), moments.lock().unwrap().len(), vibes.lock().unwrap().len());
-    assert_eq!((after.0 - before.0, after.1 - before.1, after.2 - before.2), (1, 1, 1), "before {before:?}, after {after:?}");
-    assert!(db.find("moments", &rid("m1")).unwrap().is_some() && db.find("vibes", &rid("v1")).unwrap().is_some());
-}
 
 #[test]
 fn inv_rollback_10_rolling_back_an_action_patch_gives_way_to_a_newer_edit_of_the_same_field() {

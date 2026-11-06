@@ -121,3 +121,17 @@ impl RowCache {
         }
     }
 }
+
+impl super::open::Db {
+    /// The row from the row cache, or `None` when it is not cached (which does not mean that it does not exist).
+    pub fn peek_row(&self, model: &str, id: &crate::identity::RowId) -> Option<Row> {
+        let found = super::open::locked(&self.shared.cache).get(model, id.as_str());
+        let mut counters = super::open::locked(&self.shared.counters);
+        if found.is_some() {
+            counters.peek_hits += 1;
+        } else {
+            counters.peek_misses += 1;
+        }
+        found
+    }
+}

@@ -8,8 +8,6 @@ mod discard_tests;
 #[cfg(test)]
 mod fixtures;
 #[cfg(test)]
-mod mailbox_tests;
-#[cfg(test)]
 mod reset_tests;
 #[cfg(test)]
 mod rollback_tests;

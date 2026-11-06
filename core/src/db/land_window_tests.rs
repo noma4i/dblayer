@@ -1,4 +1,4 @@
-use super::fixtures::{calls, obj, recorder, rid};
+use super::fixtures::{obj, rid};
 use crate::owners::read::windows::WindowKey;
 use crate::owners::store::{RowValue, StoreOp};
 use serde_json::{json, Value};
@@ -21,28 +21,6 @@ fn database() -> super::Db {
     super::Db::open_in_memory(crate::schema_fixtures::specs(), None).unwrap()
 }
 
-#[test]
-fn store_prop_edge_values() {
-    let db = database();
-    db.write_queue_ops(&[page("feed", &[("m1", json!({"impressionUuid": "a", "impressionScore": 2})), ("m2", json!({"impressionUuid": "b"}))], true, 0)]).unwrap();
-    let before = db.shared.store.read(&["moments"], |reader| reader.stored_row("moments", "m1")).unwrap().unwrap();
-    let (log, callback) = recorder();
-    let _subscription = db.observe(crate::query::Query::new("moments"), callback).unwrap();
-    db.await_revision(db.revision_seq().unwrap());
-    let revision = db.revision_seq().unwrap();
-    db.write_queue_ops(&[page("foreground_feed", &[("m1", json!({"impressionUuid": "other"}))], true, revision)]).unwrap();
-    assert_eq!(edges(&db, "feed", &["m1"])["m1"]["impressionUuid"], "a");
-    let revision = db.revision_seq().unwrap();
-    db.write_queue_ops(&[page("feed", &[("m1", json!({"impressionUuid": null, "impressionScore": 3}))], true, revision)]).unwrap();
-    assert_eq!(edges(&db, "feed", &["m1", "m2"]), json!({"m1": {"impressionUuid": null, "impressionScore": 3}}));
-    assert_eq!(edges(&db, "foreground_feed", &["m1"])["m1"]["impressionUuid"], "other");
-    db.await_revision(db.revision_seq().unwrap());
-    assert_eq!(calls(&log), vec![2]);
-    let after = db.shared.store.read(&["moments"], |reader| reader.stored_row("moments", "m1")).unwrap().unwrap();
-    assert_eq!(before.row, after.row);
-    assert_eq!(before.revision, after.revision);
-    assert!(db.find("moments", &rid("m2")).unwrap().is_some());
-}
 
 #[test]
 fn store_prop_edge_read() {

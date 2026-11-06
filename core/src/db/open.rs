@@ -14,14 +14,10 @@ use crate::schema::{reserved_member_names, resolve_types, validate_models, Assoc
 use crate::store::{Reader, Store, StoreError, StoreEvent};
 
 use super::cache::RowCache;
-use super::warm::Warm;
-use super::dispatch::{on_owner_thread, Dispatch, Event};
 use super::ephemeral::Ephemerals;
 use super::error::DbError;
-use super::listeners::Executor;
 use super::prior::Prior;
-use super::observe::{ObserverCensus, Observers};
-use super::reads::ReadPool;
+use super::replaced_log::ReplacedLog;
 
 #[cfg(test)]
 type RowBuildHook = std::sync::Arc<dyn Fn(&str) + Send + Sync>;
@@ -43,19 +39,14 @@ pub(crate) struct Shared {
     pub specs: BTreeMap<String, ModelSpec>,
     pub pointer_guards: BTreeMap<String, Vec<AssociationSpec>>,
     pub cache: Arc<Mutex<RowCache>>,
-    pub observers: Mutex<Observers>,
-    pub observer_commands: Mutex<Vec<super::observe::ObserverCommand>>,
-    pub warm: Mutex<Warm>,
     #[cfg(test)]
     pub row_build_hook: Mutex<Option<RowBuildHook>>,
     pub counters: Arc<Mutex<Counters>>,
-    pub dispatch: Arc<Dispatch>,
+    pub replaced: Arc<ReplacedLog>,
     pub commits: Arc<CommitSink>,
     pub outbox_changes: Arc<tokio::sync::watch::Sender<u64>>,
     pub connectivity: Arc<crate::transport::Connectivity>,
     pub ephemeral: Arc<Ephemerals>,
-    pub executor: Arc<Executor>,
-    pub reads: Arc<ReadPool>,
     pub threads: Arc<super::threads::LiveThreads>,
     pub files: Arc<FileDirectories>,
     pub files_gate: Mutex<()>,
@@ -70,61 +61,6 @@ pub(crate) struct Shared {
 
 pub(crate) use super::lock::lock as locked;
 
-#[cfg(not(any(debug_assertions, test)))]
-thread_local! {
-    static OBSERVERS_HELD: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
-}
-
-pub(crate) struct ObserversGuard<'a> {
-    guard: super::lock::Guard<'a, Observers>,
-    retired: Vec<super::observe::Retired>,
-}
-
-impl<'a> ObserversGuard<'a> {
-    fn try_new(mutex: &'a Mutex<Observers>) -> Option<Self> {
-        let guard = super::lock::try_lock(mutex)?;
-        #[cfg(not(any(debug_assertions, test)))]
-        OBSERVERS_HELD.with(|held| held.set(held.get() + 1));
-        Some(Self { guard, retired: Vec::new() })
-    }
-
-    fn new(mutex: &'a Mutex<Observers>) -> Self {
-        let guard = super::lock::lock_as(mutex, std::any::type_name::<Observers>());
-        #[cfg(not(any(debug_assertions, test)))]
-        OBSERVERS_HELD.with(|held| held.set(held.get() + 1));
-        Self { guard, retired: Vec::new() }
-    }
-}
-
-impl Drop for ObserversGuard<'_> {
-    fn drop(&mut self) {
-        self.retired = self.guard.take_retired();
-        #[cfg(not(any(debug_assertions, test)))]
-        OBSERVERS_HELD.with(|held| held.set(held.get() - 1));
-    }
-}
-
-impl std::ops::Deref for ObserversGuard<'_> {
-    type Target = Observers;
-
-    fn deref(&self) -> &Observers {
-        &self.guard
-    }
-}
-
-impl std::ops::DerefMut for ObserversGuard<'_> {
-    fn deref_mut(&mut self) -> &mut Observers {
-        &mut self.guard
-    }
-}
-
-pub(crate) fn observers_held() -> bool {
-    #[cfg(any(debug_assertions, test))]
-    { super::lock::holds::<Observers>() }
-    #[cfg(not(any(debug_assertions, test)))]
-    OBSERVERS_HELD.with(|held| held.get() > 0)
-}
-
 impl Drop for Shared {
     fn drop(&mut self) {
         self.stop_threads();
@@ -133,10 +69,7 @@ impl Drop for Shared {
 
 impl Shared {
     fn stop_threads(&self) {
-        self.dispatch.close();
         self.ephemeral.close();
-        self.executor.close();
-        self.reads.close();
     }
 
     pub(crate) fn spec(&self, model: &str) -> Result<&ModelSpec, DbError> {
@@ -153,22 +86,7 @@ impl Shared {
         }
     }
 
-    pub(crate) fn observers(&self) -> ObserversGuard<'_> {
-        let mut guard = ObserversGuard::new(&self.observers);
-        self.run_observer_commands(&mut guard);
-        guard
-    }
-
-    pub(crate) fn try_observers(&self) -> Option<ObserversGuard<'_>> {
-        let mut guard = ObserversGuard::try_new(&self.observers)?;
-        self.run_observer_commands(&mut guard);
-        Some(guard)
-    }
-
     pub(crate) fn read<T>(&self, models: &[&str], run: impl FnOnce(&Reader<'_>) -> Result<T, DbError>) -> Result<T, DbError> {
-        if on_owner_thread() || observers_held() {
-            locked(&self.counters).sql_under_owner += 1;
-        }
         let mut outcome = None;
         self.store.read(models, |reader| {
             outcome = Some(run(reader));
@@ -246,35 +164,29 @@ impl Db {
         let pointer_guards = pointer_guards(&models);
         let specs = models.into_iter().map(|spec| (spec.key.as_str().to_string(), spec)).collect();
         let cache = Arc::new(Mutex::new(RowCache::new(config.cache_rows)));
-        let dispatch = Arc::new(Dispatch::new());
-        let threads = super::threads::LiveThreads::new(dispatch.progress.clone());
-        let reads = ReadPool::new(dispatch.clone(), threads.clone());
+        let threads = super::threads::LiveThreads::new();
         let commits = Arc::new(CommitSink::default());
         let outbox_changes = Arc::new(tokio::sync::watch::channel(0).0);
         let operation_queues = Arc::new(crate::operation::OperationQueues::default());
-        let replaced_log = dispatch.clone();
+        let replaced = Arc::new(ReplacedLog::default());
+        let replaced_log = replaced.clone();
         store.set_commit_log(Box::new(move |event| {
             if let StoreEvent::Committed(result) = event {
                 replaced_log.log_replaced(result.revision.unwrap_or_default(), result.replaced.iter().map(|(from, to)| (from.id.clone(), to.clone())));
             }
         }));
-        store.set_hook(commit_hook(CommitTargets { cache: cache.clone(), dispatch: dispatch.clone(), commits: commits.clone(), ephemeral: ephemeral.clone(), outbox_changes: outbox_changes.clone(), operation_queues: operation_queues.clone() }));
+        store.set_hook(commit_hook(CommitTargets { cache: cache.clone(), commits: commits.clone(), ephemeral: ephemeral.clone(), outbox_changes: outbox_changes.clone(), operation_queues: operation_queues.clone() }));
         let shared = Arc::new(Shared {
             store,
             opened,
             specs,
             pointer_guards,
             cache,
-            observers: Mutex::new(Observers::default()),
-            observer_commands: Mutex::new(Vec::new()),
-            warm: Mutex::new(Warm::default()),
             #[cfg(test)]
             row_build_hook: Mutex::new(None),
             counters: Arc::new(Mutex::new(Counters::default())),
-            executor: Executor::new(threads.clone()),
-            reads: reads.clone(),
             threads,
-            dispatch: dispatch.clone(),
+            replaced,
             commits,
             outbox_changes,
             connectivity: crate::transport::Connectivity::new(true),
@@ -288,8 +200,6 @@ impl Db {
             #[cfg(test)]
             panic_key: Mutex::new(None),
         });
-        Dispatch::start(&shared.threads, dispatch, Arc::downgrade(&shared))?;
-        ReadPool::start(&shared.threads, &reads, Arc::downgrade(&shared))?;
         Ephemerals::start(&shared.threads, ephemeral, Arc::downgrade(&shared))?;
         Ok(Db { shared })
     }
@@ -341,15 +251,6 @@ impl Db {
         self.shared.store.counters() + locked(&self.shared.counters).clone() + locked(&self.shared.cache).counters()
     }
 
-    #[cfg(test)]
-    pub(crate) fn keyed_rows(&self) -> usize {
-        self.shared.observers().keyed_rows()
-    }
-
-    pub fn observer_census(&self) -> ObserverCensus {
-        let observers = self.shared.observers();
-        ObserverCensus { observed_queries: observers.query_count(), subscriptions: observers.subscription_count(), retained: observers.warm_ids.len() }
-    }
 }
 
 /// A commit as the owners of reading hear it: the revision and the tables it touched, or every table.
@@ -384,7 +285,6 @@ impl CommitSink {
 
 struct CommitTargets {
     cache: Arc<Mutex<RowCache>>,
-    dispatch: Arc<Dispatch>,
     commits: Arc<CommitSink>,
     ephemeral: Arc<Ephemerals>,
     outbox_changes: Arc<tokio::sync::watch::Sender<u64>>,
@@ -392,7 +292,7 @@ struct CommitTargets {
 }
 
 fn commit_hook(targets: CommitTargets) -> crate::store::StoreHook {
-    let CommitTargets { cache, dispatch, commits, ephemeral, outbox_changes, operation_queues } = targets;
+    let CommitTargets { cache, commits, ephemeral, outbox_changes, operation_queues } = targets;
     Box::new(move |event| match event {
         StoreEvent::Committed(result) => {
             operation_queues.changed(&result.queue_operations);
@@ -426,7 +326,6 @@ fn commit_hook(targets: CommitTargets) -> crate::store::StoreHook {
                 crate::db::lock::effect(|| outbox_changes.send_modify(|version| *version += 1));
             }
             ephemeral.nudge();
-            dispatch.push(Event::of_commit(result));
             commits.notify(CommitNotice::of_commit(result));
         }
         StoreEvent::Renewed(rows) => {
@@ -450,7 +349,6 @@ fn commit_hook(targets: CommitTargets) -> crate::store::StoreHook {
             }
             ephemeral.lock().clear(models.as_deref());
             crate::db::lock::effect(|| outbox_changes.send_modify(|version| *version += 1));
-            dispatch.push(Event::of_reset(revision, models.as_deref()));
             commits.notify(CommitNotice::of_reset(revision, models.as_deref()));
         }
     })

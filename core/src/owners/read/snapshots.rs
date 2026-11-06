@@ -106,7 +106,7 @@ impl Snapshots for DbSnapshots {
             crate::db::ViewRead::Count(count) => ReadData::Count(u64::try_from(count).unwrap_or(0)),
             crate::db::ViewRead::Rows(rows, total) => {
                 let wire = self.wire(&view.model)?;
-                let replaced = self.db.shared.dispatch.replaced_between(after, seen).into_iter().map(|(from, to)| (from.to_string(), to.to_string())).collect();
+                let replaced = self.db.shared.replaced.replaced_between(after, seen).into_iter().map(|(from, to)| (from.to_string(), to.to_string())).collect();
                 ReadData::Rows { rows: rows.into_iter().map(|(id, stamp, row)| StreamRow { id, stamp, row: Some(wire.row(&row)) }).collect(), replaced, total }
             }
         }))

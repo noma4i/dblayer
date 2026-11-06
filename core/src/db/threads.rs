@@ -1,8 +1,6 @@
 use std::cell::Cell;
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 
-use super::dispatch::Progress;
 use super::DbError;
 
 thread_local! {
@@ -12,17 +10,6 @@ thread_local! {
 pub(crate) struct LiveThreads {
     count: Mutex<usize>,
     ended: Condvar,
-    busy: AtomicUsize,
-    progress: Arc<Progress>,
-}
-
-pub(crate) struct Busy(Arc<LiveThreads>);
-
-impl Drop for Busy {
-    fn drop(&mut self) {
-        self.0.busy.fetch_sub(1, Ordering::AcqRel);
-        self.0.progress.advance();
-    }
 }
 
 struct Leave(Arc<LiveThreads>);
@@ -35,18 +22,8 @@ impl Drop for Leave {
 }
 
 impl LiveThreads {
-    pub(crate) fn new(progress: Arc<Progress>) -> Arc<Self> {
-        Arc::new(Self { count: Mutex::new(0), ended: Condvar::new(), busy: AtomicUsize::new(0), progress })
-    }
-
-    pub(crate) fn busy(self: &Arc<Self>) -> Busy {
-        self.busy.fetch_add(1, Ordering::AcqRel);
-        Busy(self.clone())
-    }
-
-    #[cfg(test)]
-    pub(crate) fn idle(&self) -> bool {
-        self.busy.load(Ordering::Acquire) == 0
+    pub(crate) fn new() -> Arc<Self> {
+        Arc::new(Self { count: Mutex::new(0), ended: Condvar::new() })
     }
 
     pub(crate) fn start(self: &Arc<Self>, carry: crate::task::Carry, name: &'static str, body: impl FnOnce() + Send + 'static) -> Result<(), DbError> {

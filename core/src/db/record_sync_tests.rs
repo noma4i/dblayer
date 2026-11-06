@@ -27,22 +27,6 @@ fn state_of(db: &Db, model: &str, id: &str) -> SyncState {
     db.sync_info(model, &rid(id)).unwrap().state
 }
 
-#[test]
-fn a_list_step_reads_sync_changes_committed_after_its_event_batch() {
-    for query in [Query::new("moments"), Query::new("moments").filtered(Where::equal("userId", json!("u1")))] {
-        let db = booted();
-        put(&db, "moments", json!({"id": "m1", "userId": "u1", "text": "one"}));
-        put(&db, "moments", json!({"id": "m2", "userId": "u1", "text": "two"}));
-        db.update(&db.admit().unwrap(), "moments", &rid("m1"), obj(json!({"text": "edited"}))).unwrap();
-        let previous = db.shared.evaluate(&super::watch::Subject::Rows(query.clone())).unwrap().version;
-        put(&db, "moments", json!({"id": "m2", "userId": "u1", "text": "changed"}));
-        let horizon = db.shared.evaluate(&super::watch::Subject::Rows(query.clone())).unwrap().version.position();
-        rejected(&db, only_seq(&db));
-        let evaluated = db.shared.evaluate_step(&query, &previous, &std::collections::HashSet::from(["m2".to_string()]), horizon).unwrap();
-        let super::watch::Body::Rows(rows) = evaluated.version.body else { panic!("expected rows") };
-        assert_eq!(rows.entry("m1").unwrap().stamp.sync, db.find("moments", &rid("m1")).unwrap().unwrap().sync);
-    }
-}
 
 #[test]
 fn created_record_is_pending_local_and_names_its_action() {
@@ -82,37 +66,7 @@ fn state_walks_pending_sending_failed_pending_with_attempts_and_error() {
     assert_eq!(db.find("moments", &rid("m1")).unwrap().unwrap().sync, again);
 }
 
-#[test]
-fn state_change_without_a_data_change_reaches_a_row_observer_as_updated() {
-    let db = booted();
-    put(&db, "moments", json!({"id": "m1", "userId": "u1", "text": "one"}));
-    db.update(&db.admit().unwrap(), "moments", &rid("m1"), obj(json!({"text": "two"}))).unwrap();
-    let (log, callback) = recorder();
-    let _subscription = db.observe_row("moments", &rid("m1"), callback).unwrap();
-    db.await_revision(db.revision_seq().unwrap());
-    apply(&db, OperationTransition::Start { seq: only_seq(&db) });
-    db.await_revision(db.revision_seq().unwrap());
-    let seen = changes(&log);
-    assert_eq!(seen.len(), 2);
-    assert_eq!(seen[0].rows[0].revision, seen[1].rows[0].revision);
-    assert_eq!((seen[1].rows[0].sync.state, seen[1].diff.updated.clone()), (SyncState::Sending, vec![rid("m1")]));
-}
 
-#[test]
-fn inv_sync_02_state_change_reaches_a_list_observer_and_a_scope_free_query() {
-    let db = booted();
-    put(&db, "moments", json!({"id": "m1", "userId": "u1", "text": "one"}));
-    put(&db, "moments", json!({"id": "m2", "userId": "u1", "text": "two"}));
-    db.update(&db.admit().unwrap(), "moments", &rid("m2"), obj(json!({"text": "deux"}))).unwrap();
-    let (log, callback) = recorder();
-    let _subscription = db.observe(Query::new("moments").ordered(vec![Order::new("id", SortDirection::Asc)]), callback).unwrap();
-    db.await_revision(db.revision_seq().unwrap());
-    rejected(&db, only_seq(&db));
-    db.await_revision(db.revision_seq().unwrap());
-    let last = changes(&log).pop().unwrap();
-    assert_eq!(last.diff.updated, vec![rid("m2")]);
-    assert_eq!(last.rows.iter().map(|row| row.sync.state).collect::<Vec<_>>(), [SyncState::Synced, SyncState::Failed]);
-}
 
 #[test]
 fn inv_sync_02_queries_filter_by_sync_state_and_count_matches_rows() {
@@ -197,32 +151,5 @@ fn a_field_named_sync_and_an_action_named_like_a_record_gesture_are_rejected() {
     }
 }
 
-#[test]
-fn a_new_action_on_a_pending_row_reaches_its_observer() {
-    let db = booted();
-    put(&db, "moments", json!({"id": "m1", "userId": "u1", "text": "one"}));
-    db.update(&db.admit().unwrap(), "moments", &rid("m1"), obj(json!({"text": "two"}))).unwrap();
-    let (log, callback) = recorder();
-    let _subscription = db.observe_row("moments", &rid("m1"), callback).unwrap();
-    db.await_revision(db.revision_seq().unwrap());
-    db.act(&db.admit().unwrap(), "moments", "like", &rid("m1"), serde_json::Map::new(), serde_json::Map::new()).unwrap();
-    db.await_revision(db.revision_seq().unwrap());
-    let last = changes(&log).pop().unwrap();
-    assert_eq!(last.rows[0].sync.actions, vec!["update".to_string(), "like".to_string()]);
-}
 
-#[test]
-fn a_state_change_of_an_included_row_reaches_the_parent_observer() {
-    let db = booted();
-    put(&db, "users", json!({"id": "u1", "name": "Ann"}));
-    put(&db, "moments", json!({"id": "m1", "userId": "u1", "text": "one"}));
-    db.update(&db.admit().unwrap(), "users", &rid("u1"), obj(json!({"name": "Anna"}))).unwrap();
-    let (log, callback) = recorder();
-    let _subscription = db.observe(Query::new("moments").including(&["author"]), callback).unwrap();
-    db.await_revision(db.revision_seq().unwrap());
-    apply(&db, OperationTransition::Start { seq: only_seq(&db) });
-    db.await_revision(db.revision_seq().unwrap());
-    let last = changes(&log).pop().unwrap();
-    assert_eq!(last.diff.updated, vec![rid("m1")]);
-}
 

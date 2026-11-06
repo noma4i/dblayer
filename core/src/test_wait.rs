@@ -180,7 +180,7 @@ pub(crate) fn paused(test: impl std::future::Future<Output = ()>) {
     WORLD.with(|world| *world.borrow_mut() = Some(World { clock: clock.clone(), dbs: Vec::new() }));
     let _leave = Leave;
     runtime.block_on(async move {
-        let driver = tokio::spawn(async move { clock.drive(|| world_dbs().iter().map(crate::db::Db::quiet_mark).sum::<Option<u64>>(), || for db in world_dbs() { db.await_quiet(); }).await });
+        let driver = tokio::spawn(async move { clock.drive(|| Some(0), || {}).await });
         test.await;
         driver.abort();
     });

@@ -8,8 +8,8 @@ use crate::identity::{ModelKey, RowId};
 use crate::pacing::ManualClock;
 use crate::schema::{ActionDeclaration, RootShape, AssociationKind, AssociationSpec, Dependent, FieldSpec, ModelSpec, Newer};
 use crate::value::ScalarKind;
+use super::{Db, Row};
 
-use super::{Change, Db, Row};
 
 pub fn users_spec() -> ModelSpec {
     let mut spec = ModelSpec::new(
@@ -122,43 +122,6 @@ pub fn put(db: &Db, model: &str, value: Value) {
     let mut envelope = CommitEnvelope::new(WriteOrigin::Event, db.generation());
     envelope.entity_ops.push(EntityOp::Upsert { model: ModelKey::new(model), id, row });
     db.land(&db.admit().unwrap(), envelope).unwrap();
-    db.await_revision(db.revision_seq().unwrap());
-}
-
-pub type ChangeLog = Arc<Mutex<Vec<Change>>>;
-
-#[derive(Default)]
-pub struct Whole(Mutex<Vec<Row>>);
-
-impl Whole {
-    pub fn of(&self, change: &Change) -> Vec<Row> {
-        let mut rows = self.0.lock().unwrap();
-        change.apply_to(&mut rows);
-        rows.clone()
-    }
-}
-
-pub fn recorder() -> (ChangeLog, impl Fn(&Change) + Send + Sync + 'static) {
-    let log: ChangeLog = Arc::new(Mutex::new(Vec::new()));
-    let sink = log.clone();
-    let whole = Whole::default();
-    (log, move |change: &Change| sink.lock().unwrap().push(Change { rows: whole.of(change), full: true, ..change.clone() }))
-}
-
-pub fn calls(log: &ChangeLog) -> Vec<usize> {
-    log.lock().unwrap().iter().map(|change| change.rows.len()).collect()
-}
-
-pub fn changes(log: &ChangeLog) -> Vec<Change> {
-    log.lock().unwrap().clone()
-}
-
-pub fn texts(change: &Change) -> Vec<String> {
-    change.rows.iter().filter_map(|row| row.text("text")).map(str::to_string).collect()
-}
-
-pub fn ids(change: &Change) -> Vec<String> {
-    change.rows.iter().map(|row| row.id.to_string()).collect()
 }
 
 pub fn seed_tree(db: &Db) {

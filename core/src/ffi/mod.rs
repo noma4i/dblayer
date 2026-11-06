@@ -5,15 +5,13 @@ pub(crate) mod admission;
 pub(crate) use database::NEEDS_NETWORK;
 #[cfg(test)]
 pub(crate) async fn settled(database: &Database) -> Result<(), DbError> {
-    let (lifecycle, db) = (database.streams.clone(), database.db.clone());
+    let lifecycle = database.streams.clone();
     let quiet = async {
         loop {
             lifecycle.settled().await;
             database.operations_quiet().await;
             let owners = database.life.clone();
             database::blocking(move || { owners.barrier(std::time::Duration::from_secs(5)); Ok(()) }).await?;
-            let listeners = db.clone();
-            database::blocking(move || { listeners.await_revision(listeners.revision_seq()?); Ok(()) }).await?;
             if lifecycle.quiet() { return Ok::<(), DbError>(()); }
         }
     };
@@ -24,6 +22,8 @@ pub(crate) async fn settled(database: &Database) -> Result<(), DbError> {
 }
 #[cfg(test)]
 mod close_tests;
+mod call_state;
+pub(crate) use call_state::CallState;
 mod foreign_future;
 mod lease;
 mod open_slot;

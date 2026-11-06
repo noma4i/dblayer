@@ -10,7 +10,6 @@ use crate::commit::ScopeRef;
 use crate::pacing::{Clock, SystemClock};
 use crate::schema::ModelSpec;
 
-use super::dispatch::Event;
 use super::error::DbError;
 use super::local_write::plan_fault;
 use super::open::{locked, Db, Shared};
@@ -255,7 +254,7 @@ impl Ephemerals {
 }
 
 impl Shared {
-    pub(crate) fn publish_overlay(&self, touched: &[RowKey], epoch: u64) -> Result<(), DbError> {
+    pub(crate) fn publish_overlay(&self, touched: &[RowKey]) -> Result<(), DbError> {
         if touched.is_empty() {
             return Ok(());
         }
@@ -265,19 +264,6 @@ impl Shared {
                 cache.evict(model, id);
             }
         }
-        let mut event = Event { epoch, ..Event::default() };
-        self.read(&[], |reader| {
-            event.revision = reader.revision_seq()?;
-            for (model, id) in touched {
-                event.models.insert(ModelKey::new(model));
-                event.rows.insert(RowRef::new(ModelKey::new(model), RowId::new(id)?));
-                for key in reader.scopes_of(model, id)? {
-                    event.scopes.insert(ScopeRef::new(ModelKey::new(model), ListKey::from_raw(&key)));
-                }
-            }
-            Ok(())
-        })?;
-        self.dispatch.push(event);
         Ok(())
     }
 }
@@ -295,7 +281,7 @@ impl Db {
         let changed = self.shared.ephemeral.lock().write(spec, id.as_str(), values)?;
         self.shared.ephemeral.nudge();
         match changed {
-            Some(epoch) => self.shared.publish_overlay(&[(model.to_string(), id.to_string())], epoch),
+            Some(_) => self.shared.publish_overlay(&[(model.to_string(), id.to_string())]),
             None => Ok(()),
         }
     }
@@ -312,22 +298,21 @@ impl Db {
         };
         self.shared.ephemeral.nudge();
         match changed {
-            Some(epoch) => self.shared.publish_overlay(&[(model.to_string(), id.to_string())], epoch),
+            Some(_) => self.shared.publish_overlay(&[(model.to_string(), id.to_string())]),
             None => Ok(()),
         }
     }
 
     pub fn expire_ephemeral(&self, admitted: &crate::ffi::admission::Admitted) -> Result<usize, DbError> {
         let _gate = self.shared.expiry_gate.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-        let (due, epoch) = {
+        let due = {
             let life = &self.shared.store.lifecycle;
             let _line = life.commit_line();
             if !Arc::ptr_eq(life, admitted.life()) || !admitted.is_current() { return Err(DbError::NoSession { detail: "the session of this expiry ended".into() }); }
             let mut state = self.shared.ephemeral.lock();
-            let due = state.take_due();
-            (due, state.epoch)
+            state.take_due()
         };
-        self.shared.publish_overlay(&due.reset, epoch)?;
+        self.shared.publish_overlay(&due.reset)?;
         Ok(due.reset.len() + self.destroy_expired(admitted, &due.expired)?)
     }
 
