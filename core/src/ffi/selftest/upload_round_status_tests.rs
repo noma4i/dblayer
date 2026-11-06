@@ -8,11 +8,12 @@ use crate::test_wait::yield_until;
 #[derive(Default)]
 struct Jobs {
     asked: Mutex<Vec<(u64, u64)>>,
+    ended: Mutex<Vec<u32>>,
 }
 
 impl RoundJobsSink for Jobs {
     fn schedule_job(&self, request_id: u64, epoch: u64) { self.asked.lock().unwrap().push((request_id, epoch)); }
-    fn end_job(&self, _: u32) {}
+    fn end_job(&self, round_id: u32) { self.ended.lock().unwrap().push(round_id); }
 }
 
 fn refusal(rows: &crate::ffi::tape::Rows) -> Option<String> {
@@ -40,5 +41,32 @@ async fn a_refused_round_shows_its_reason_on_the_upload_until_the_next_round_is_
     yield_until("the row shows the refusal", || refusal(&rows).is_some_and(|message| message.contains("the app was not visible"))).await;
     crate::ffi::OnlineSink { life: Arc::downgrade(&database.life) }.enter_foreground();
     yield_until("the next round clears the refusal", || refusal(&rows).is_none()).await;
+    database.close_now();
+}
+
+const STEPS: [(&str, &str); 6] = [
+    ("CreateBlob", "mutation CreateBlob { createBlob { url headers signedId blobId } }"),
+    ("InitMultipart", "mutation InitMultipart { initMultipart { key uploadId } }"),
+    ("PresignParts", "mutation PresignParts { presignParts { parts { partNumber url } } }"),
+    ("CompleteMultipart", "mutation CompleteMultipart { completeMultipart { signedId blobId } }"),
+    ("AbortMultipart", "mutation AbortMultipart { abortMultipart { ok } }"),
+    ("CreateAsset", "mutation CreateAsset { createAsset { asset { id clientKey size position } } }"),
+];
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_round_that_starts_with_nothing_unfinished_is_ended_at_once_before_any_session() {
+    let stand = Stand::new();
+    let models = include_str!("upload_wrapper_models.json").to_string();
+    let ports = crate::ffi::OpenPorts { transport: Some(stand.puts.clone()), ..Default::default() };
+    let database = crate::ffi::Database::open(crate::ffi::Config { path: None, data_version: None, cache_rows: 32 }, models, ports).await.unwrap();
+    let declared: Vec<_> = STEPS.iter().map(|(name, document)| serde_json::json!({"name": name, "document": document})).collect();
+    database.register_operations(serde_json::Value::Array(declared).to_string()).unwrap();
+    let jobs = Arc::new(Jobs::default());
+    database.set_round_jobs(jobs.clone());
+
+    database.round_started(0, 0, database.session_epoch());
+
+    yield_until("the job of the empty round ends", || jobs.ended.lock().unwrap().contains(&0)).await;
+    assert!(jobs.asked.lock().unwrap().is_empty(), "an idle database asked for a job");
     database.close_now();
 }
