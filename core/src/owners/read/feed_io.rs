@@ -50,13 +50,15 @@ pub struct FeedIo {
     open: Connections,
     attempts: AtomicU64,
     rest: Rest<FeedEffect>,
+    clock: Arc<dyn crate::pacing::Clock>,
+    gate: Arc<crate::runtime::EpochGate>,
 }
 
 /// The codes of a closing server that no retry changes: the session is over.
 fn session_closed(code: u16, reason: &str) -> bool { matches!(code, 4401 | 4403) || matches!(reason, "LOGGED_OUT" | "ACCOUNT_LOCKED") }
 
 impl FeedIo {
-    pub fn new(lines: Arc<dyn CableLines>, codec: Arc<dyn FeedCodec>, handle: Handle, rest: Rest<FeedEffect>) -> Self { Self { lines, codec, handle, counted: None, admit: None, open: Connections::default(), attempts: AtomicU64::new(0), rest } }
+    pub fn new(lines: Arc<dyn CableLines>, codec: Arc<dyn FeedCodec>, handle: Handle, rest: Rest<FeedEffect>, (clock, gate): (Arc<dyn crate::pacing::Clock>, Arc<crate::runtime::EpochGate>)) -> Self { Self { lines, codec, handle, clock, gate, counted: None, admit: None, open: Connections::default(), attempts: AtomicU64::new(0), rest } }
 
     /// A connection starts with the admission of the epoch it was decided in, and its end cancels it.
     pub fn admitted_by(mut self, admit: Admit) -> Self {
@@ -80,7 +82,8 @@ impl FeedIo {
         let (closing, established) = (CancelToken::new(), Arc::new(AtomicBool::new(false)));
         let (frames, queued) = mpsc::unbounded_channel::<(u64, Value)>();
         self.open.lock().unwrap_or_else(PoisonError::into_inner).insert(connection, Open { frames, cancel: cancel.clone(), closing: closing.clone(), established: established.clone(), attempt });
-        let (lines, codec, back) = (self.lines.clone(), self.codec.clone(), back.clone());
+        let (lines, codec, back, clock, gate) = (self.lines.clone(), self.codec.clone(), back.clone(), self.clock.clone(), self.gate.clone());
+        let epoch = match stamp { EpochStamp::Epoch(epoch) => Some(epoch), EpochStamp::Control => None };
         let token = cancel.clone();
         let reply = move |input: FeedInput| {
             if !token.is_cancelled() {
@@ -89,7 +92,7 @@ impl FeedIo {
         };
         let launch = self.counted.as_ref().map(crate::runtime::Handle::launch);
         spawn_on(Carry::Detached, &self.handle, crate::runtime::counted(launch, async move {
-            let running = Self::run(lines, codec, connection, (cancel, closing, established), queued, reply);
+            let running = Self::run(lines, codec, (clock, gate, epoch), connection, (cancel, closing, established), queued, reply);
             running.await;
             let mut open = open.lock().unwrap_or_else(PoisonError::into_inner);
             if open.get(&connection).is_some_and(|entry| entry.attempt == attempt) {
@@ -98,12 +101,12 @@ impl FeedIo {
         }));
     }
 
-    async fn run(lines: Arc<dyn CableLines>, codec: Arc<dyn FeedCodec>, connection: ConnectionId, (cancel, closing, established): (CancelToken, CancelToken, Arc<AtomicBool>), mut queued: mpsc::UnboundedReceiver<(u64, Value)>, reply: impl Fn(FeedInput) + Clone + Send + 'static) {
+    async fn run(lines: Arc<dyn CableLines>, codec: Arc<dyn FeedCodec>, (clock, gate, epoch): (Arc<dyn crate::pacing::Clock>, Arc<crate::runtime::EpochGate>, Option<crate::runtime::Epoch>), connection: ConnectionId, (cancel, closing, established): (CancelToken, CancelToken, Arc<AtomicBool>), mut queued: mpsc::UnboundedReceiver<(u64, Value)>, reply: impl Fn(FeedInput) + Clone + Send + 'static) {
         {
             let line = tokio::select! {
                 biased;
                 () = cancel.cancelled() => return,
-                line = lines.connect() => line,
+                line = crate::runtime::send_in_epoch(&gate, epoch, lines.connect()) => line,
             };
             let line = match line {
                 Ok(line) => line,
@@ -126,7 +129,7 @@ impl FeedIo {
             let reader = Self::read(line.clone(), codec, connection, reply);
             tokio::select! {
                 () = cancel.cancelled() => {}
-                () = async { closing.cancelled().await; tokio::time::sleep(CLOSE_DRAIN).await } => {}
+                () = async { closing.cancelled().await; clock.sleep(CLOSE_DRAIN).await } => {}
                 () = writer => cancel.cancel(),
                 () = reader => {}
             }

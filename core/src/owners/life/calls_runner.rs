@@ -94,8 +94,7 @@ impl CallsRunner {
         let CallRequest { call_id, request_id, epoch, operation, variables, document, root, kind } = call;
         let Some(transport) = self.transport.clone() else { return back.reply(EpochStamp::Control, CallsInput::TransportError { call_id, error: CallError::Invalid }) };
         let back = back.clone();
-        if !self.wiring.admits_epoch(epoch) { return back.reply(EpochStamp::Control, CallsInput::TransportError { call_id, error: CallError::Interrupted }); }
-        let launch = self.wiring.handle.launch();
+        let (launch, gate) = (self.wiring.handle.launch(), self.wiring.gate.clone());
         #[cfg(test)]
         let flight = crate::owners::read::InFlight::start(&self.wiring.flights);
         let task = crate::task::spawn_on(crate::task::Carry::Detached, &self.executor, crate::runtime::counted(Some(launch), async move {
@@ -104,7 +103,10 @@ impl CallsRunner {
             let variables: Value = serde_json::from_str(&variables).unwrap_or(Value::Null);
             let request = GraphQLRequest::new(document.clone(), operation, variables);
             crate::lock::assert_no_library_lock("Transport::request");
-            let result = match kind { CallKind::Mutate => transport.mutate(request).await, CallKind::Query => transport.query(request).await };
+            let result = match kind {
+                CallKind::Mutate => crate::runtime::send_in_epoch(&gate, Some(epoch), transport.mutate(request)).await,
+                CallKind::Query => crate::runtime::send_in_epoch(&gate, Some(epoch), transport.query(request)).await,
+            };
             back.reply(EpochStamp::Control, input_of(call_id, &root, result));
         }));
         self.running.insert(request_id, task.abort_handle());

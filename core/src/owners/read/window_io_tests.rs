@@ -8,7 +8,7 @@ use std::time::Duration;
 
 use serde_json::json;
 
-use super::rig::{admit, collector, pump, pump_for, runtime, saw_input, BatchPeer, Batches};
+use super::rig::{admit, open_gate, collector, pump, pump_for, runtime, saw_input, BatchPeer, Batches};
 use super::{WindowCodec, WindowIo};
 use crate::owners::read::deliveries::Deliveries;
 use crate::owners::read::windows::{self as w, AnswerPage, WindowEffect, WindowKey, WindowOutcome, Windows, WindowsEffect, WindowsInput};
@@ -75,7 +75,7 @@ fn rig() -> Rig {
     let mock = MockTransport::new();
     let batches = Batches::default();
     let (rest, take_rest) = collector();
-    let io = WindowIo::new(Some(Arc::new(mock.clone())), Arc::new(Pages), admit(), runtime.handle().clone(), take_rest);
+    let io = WindowIo::new(Some(Arc::new(mock.clone())), Arc::new(Pages), (admit(), open_gate(EPOCH)), runtime.handle().clone(), take_rest);
     let mut det = DetScheduler::new(1);
     let store = det.add::<WindowStore>("store", batches.clone(), crate::owners::support::Discard);
     let deliveries = det.add::<Sink<Deliveries>>("deliveries", Default::default(), crate::owners::support::Discard);

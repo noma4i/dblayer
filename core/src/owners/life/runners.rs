@@ -50,6 +50,7 @@ impl EffectRunner<Lifecycle> for LifecycleRunner {
                 wiring.to_session(SessionInput::RestoreReady { epoch });
             }
             LifecycleEffect::EpochStarted { epoch, identity, generation } => {
+                wiring.gate.open(epoch);
                 wiring.handle.start_epoch(epoch);
                 let started = crate::owners::contract::EpochStarted { epoch, identity, generation };
                 wiring.to_windows(WindowsInput::EpochStarted(started.clone()));
@@ -65,6 +66,7 @@ impl EffectRunner<Lifecycle> for LifecycleRunner {
             }
             LifecycleEffect::ReadIntents { epoch } => wiring.to_store(StoreInput::ReadIntents { epoch }),
             LifecycleEffect::EpochEnded { epoch, cause } => {
+                wiring.gate.close(epoch);
                 wiring.to_rounds(RoundsInput::EpochEnded(crate::owners::contract::EpochEnded { epoch, cause }));
                 wiring.handle.end_epoch(epoch, cause);
                 wiring.outcomes.end_epoch(epoch, cause);

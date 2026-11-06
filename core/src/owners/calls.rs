@@ -32,6 +32,27 @@ pub enum CallKind {
     Mutate,
 }
 
+impl CallKind {
+    /// The operation type a GraphQL document declares: `query`, `mutation` or the anonymous selection `{`.
+    pub fn declared_by(document: &str) -> Option<Self> {
+        let mut rest = document;
+        loop {
+            rest = rest.trim_start_matches(|character: char| character.is_whitespace() || character == ',' || character == '\u{feff}');
+            match rest.strip_prefix('#') {
+                Some(comment) => rest = comment.split_once('\n').map_or("", |(_, after)| after),
+                None => break,
+            }
+        }
+        let word_end = rest.find(|character: char| !(character.is_alphanumeric() || character == '_')).unwrap_or(rest.len());
+        match &rest[..word_end] {
+            "query" => Some(Self::Query),
+            "mutation" => Some(Self::Mutate),
+            "" if rest.starts_with('{') => Some(Self::Query),
+            _ => None,
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CallPhase {
     Sending { request_id: RequestId, kind: CallKind, generation: u64 },

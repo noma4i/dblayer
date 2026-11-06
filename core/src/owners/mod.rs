@@ -1,4 +1,6 @@
 pub mod calls;
+#[cfg(test)]
+mod calls_kind_tests;
 pub mod contract;
 pub mod life;
 pub mod lifecycle;

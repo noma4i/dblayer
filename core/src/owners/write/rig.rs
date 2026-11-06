@@ -160,7 +160,11 @@ impl Transport for Stub {
     }
 }
 
-pub(super) fn admit(_: Option<crate::runtime::Epoch>) -> bool { true }
+pub(super) fn open_gate(epoch: u64) -> Arc<crate::runtime::EpochGate> {
+    let gate = Arc::new(crate::runtime::EpochGate::default());
+    gate.open(epoch);
+    gate
+}
 
 /// Runs tasks and jobs until nothing moves, with the owners between. `wake` posts a no-op input: the scheduler takes what a task
 /// replied only after a step, so a reply from a task needs one step to be seen. A run that does not settle is a failure.

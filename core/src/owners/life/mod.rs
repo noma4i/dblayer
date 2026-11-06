@@ -100,6 +100,8 @@ pub(crate) struct Wiring {
     /// The ids of streams: they stay below the bit that marks the waiters of platform calls in `Windows`.
     pub next_stream: std::sync::atomic::AtomicU64,
     published: PublishedCell<Published>,
+    /// The epoch the requests to the network may leave in: it closes before any owner steps on `EpochEnded`.
+    pub(crate) gate: Arc<crate::runtime::EpochGate>,
     #[cfg(test)]
     pub(crate) flights: super::read::Flights,
     /// The id of the wait of `open` and its answer, set at `Saved` of the first publication.
@@ -132,8 +134,6 @@ enum Awaited {
 }
 
 impl Wiring {
-    pub(crate) fn admits_epoch(&self, epoch: Epoch) -> bool { self.published.read(|published| published.is_some_and(|published| published.epoch == epoch && !published.closed)) }
-
     /// The epoch is the published one, open, and has an identity: a request to the server needs a session.
     pub(crate) fn admits_session(&self, epoch: Epoch) -> bool { self.published.read(|published| published.is_some_and(|published| published.epoch == epoch && !published.closed && published.identity.is_some())) }
 
@@ -145,6 +145,7 @@ impl Wiring {
             handle,
             next_stream: std::sync::atomic::AtomicU64::new(1),
             published: PublishedCell::default(),
+            gate: Arc::default(),
             #[cfg(test)]
             flights: Default::default(),
             open: Mutex::new(OpenWait::default()),
@@ -472,14 +473,10 @@ impl Life {
         });
         let transfer = match (outbox, ports.transfer.as_ref(), ports.transport.as_ref()) {
             (Some(outbox), Some(port), Some(transport)) => {
-                let (settle_wiring, drained_wiring, admit_wiring, signal_wiring) = (wiring.clone(), wiring.clone(), wiring.clone(), wiring.clone());
+                let (settle_wiring, drained_wiring, signal_wiring) = (wiring.clone(), wiring.clone(), wiring.clone());
                 let wire = super::write::wire::Wire {
                     transport: transport.clone(),
-                    admit: Arc::new(move |epoch| {
-                        let admitted = epoch.is_none_or(|epoch| admit_wiring.admits_epoch(epoch));
-                        if !admitted { admit_wiring.fault("a step of a transfer found no session to run in".into()); }
-                        admitted
-                    }),
+                    gate: wiring.gate.clone(),
                     tasks: Arc::new(super::write::wire::TokioTasks(ports.executor.clone(), Some(builder.handle()))),
                 };
                 let executor = TransferExecutor::new(

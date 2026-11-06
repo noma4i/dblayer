@@ -38,12 +38,11 @@ impl Tasks for TokioTasks {
     }
 }
 
-/// The network of an executor: the transport and the admission of the epoch it works in.
+/// The network of an executor: the transport and the gate of the epoch it works in.
 #[derive(Clone)]
 pub struct Wire {
     pub transport: Arc<dyn Transport>,
-    /// The admission of the epoch the step was decided in (`None` for a step without an epoch).
-    pub admit: Arc<dyn Fn(Option<crate::runtime::Epoch>) -> bool + Send + Sync>,
+    pub gate: Arc<crate::runtime::EpochGate>,
     pub tasks: Arc<dyn Tasks>,
 }
 

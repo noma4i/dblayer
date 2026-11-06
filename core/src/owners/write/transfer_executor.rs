@@ -21,6 +21,8 @@ use crate::transport::{CancelToken, GraphQLRequest, NetworkPurpose, PutRequest, 
 pub struct Link {
     transport: Arc<dyn Transport>,
     cancel: CancelToken,
+    gate: Arc<crate::runtime::EpochGate>,
+    epoch: Option<Epoch>,
 }
 
 impl Drop for Link {
@@ -30,12 +32,12 @@ impl Drop for Link {
 impl Link {
     pub async fn mutate(&self, mut request: GraphQLRequest) -> Result<Response, TransportError> {
         request.purpose = NetworkPurpose::Transfer;
-        self.transport.mutate(request).await
+        crate::runtime::send_in_epoch(&self.gate, self.epoch, self.transport.mutate(request)).await
     }
 
     pub async fn put(&self, mut request: PutRequest) -> Result<PutResponse, TransportError> {
         request.cancel = self.cancel.clone();
-        self.transport.put(request).await
+        crate::runtime::send_in_epoch(&self.gate, self.epoch, self.transport.put(request)).await
     }
 }
 
@@ -156,8 +158,8 @@ impl TransferExecutor {
             EpochStamp::Epoch(epoch) => Some(epoch),
             EpochStamp::Control => None,
         };
-        if !(self.wire.admit)(epoch) { return None; }
-        Some(Link { transport: self.wire.transport.clone(), cancel: CancelToken::new() })
+        if epoch.is_some_and(|epoch| !self.wire.gate.admits(epoch)) { return None; }
+        Some(Link { transport: self.wire.transport.clone(), cancel: CancelToken::new(), gate: self.wire.gate.clone(), epoch })
     }
 
     /// Runs `call` as the task of `transfer_id`: its result becomes `input_of(result)` for the owner, unless the task is cancelled first.

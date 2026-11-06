@@ -13,7 +13,7 @@ use async_trait::async_trait;
 use serde_json::json;
 
 use super::outbox::{Fault, NewOp, OpSource, OutboxOutcome};
-use super::rig::{admit, peer, settle, Act, ManualSpawn, Stub};
+use super::rig::{open_gate, peer, settle, Act, ManualSpawn, Stub};
 use crate::owners::support::{StoreStub, StoreStubState};
 use super::transfer::{file_id, BatchItem, Shown, Source, Steps, TransferAnswer, TransferInput, TransferPeers, TransferStage, TransferState, Transfers};
 use super::transfer_executor::{Link, StepCodec, StepDone, TransferExecutor, TransferSinks};
@@ -87,7 +87,7 @@ fn world() -> World {
     let (answers, shown) = (Arc::new(Mutex::new(Vec::new())), Arc::new(Mutex::new(Vec::new())));
     let (to_answers, to_shown) = (answers.clone(), shown.clone());
     let executor = TransferExecutor::new(
-        Wire { transport: Arc::new(stub.clone()), admit: Arc::new(admit), tasks: Arc::new(spawn.clone()) },
+        Wire { transport: Arc::new(stub.clone()), gate: open_gate(EPOCH), tasks: Arc::new(spawn.clone()) },
         codec.clone(),
         files.clone(),
         TransferSinks {

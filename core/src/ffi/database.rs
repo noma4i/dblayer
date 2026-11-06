@@ -305,7 +305,9 @@ impl Database {
                 let size = size.as_u64().and_then(|size| u32::try_from(size).ok()).ok_or_else(|| DbError::Invalid { detail: format!("operation {name} has invalid pageSize") })?;
                 operation = operation.paged(size);
             }
-            names.push((name.clone(), if document.trim_start().starts_with("mutation") { crate::owners::calls::CallKind::Mutate } else { crate::owners::calls::CallKind::Query }));
+            if let Some(kind) = crate::owners::calls::CallKind::declared_by(&document) {
+                names.push((name.clone(), kind));
+            }
             declared.push(operation);
         }
         let registered: Vec<(String, String)> = self.db.specs().values().flat_map(|spec| spec.actions.iter().filter_map(|action| action.mutation.as_ref().filter(|mutation| names.iter().any(|(name, _)| name == *mutation)).map(|_| (spec.key.to_string(), action.name.clone())))).collect();
@@ -350,8 +352,12 @@ impl Database {
         if self.life.is_shut() { return Err(super::command::closed()); }
         let waiter = self.life.close();
         let _closing = crate::runtime::hold_until_woken(self.life.launch());
+        let clock = self.db.lock().clock.clone();
         let answered = on_executor(crate::runtime::counted(Some(self.life.launch()), async move {
-            tokio::time::timeout(Duration::from_secs(10), async { waiter.wait().await }).await.map_err(|_| DbError::Invalid { detail: "close timed out while the owners were closing".into() })
+            tokio::select! {
+                outcome = waiter.wait() => Ok(outcome),
+                () = clock.sleep(Duration::from_secs(10)) => Err(DbError::Invalid { detail: "close timed out while the owners were closing".into() }),
+            }
         })).await;
         crate::runtime::release_held();
         let answered = answered.and_then(|outcome| match outcome {

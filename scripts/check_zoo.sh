@@ -69,10 +69,10 @@ for path in files:
 
 for path in files:
     relative = str(path.relative_to(root))
-    if relative.endswith(("db/swap.rs", "commit/mod.rs")):
+    if relative.endswith(("store/swap.rs", "commit/mod.rs")):
         continue
     if re.search(r"Replaced \{ by:", contents[path]):
-        findings.append(f"Z9 a temp row is replaced in db/swap.rs only: {relative}")
+        findings.append(f"Z9 a temp row is replaced in core/src/store/swap.rs only: {relative}")
 
 for path in files:
     relative = str(path.relative_to(root))
@@ -161,7 +161,6 @@ for path in files:
             number = text.count("\n", 0, match.start()) + 1
             findings.append(f"Z19 a task boundary goes through crate::task, which carries the epoch: {path.relative_to(root)}:{number}: {match.group().strip()}")
 
-writer_files = ("store/write.rs", "store/apply.rs", "store/reset.rs", "store/boot.rs", "store/open.rs")
 write_methods = r"(?:execute|execute_batch|unchecked_transaction|transaction)\b"
 connection_write = re.compile(r"\.connection\s*\.\s*" + write_methods + r"|\.connection\s*\.\s*prepare(?:_cached)?\([^;]*?\)\??\s*\.\s*execute\b")
 connection_alias = re.compile(r"\blet\s+(?:mut\s+)?(\w+)\s*=\s*&(?:mut\s+)?[\w.]*\.connection\b")
@@ -197,7 +196,7 @@ for path in files:
                 writing_helpers.add(head.group(1))
 for path in files:
     relative = str(path.relative_to(source))
-    if relative in writer_files or any(marker in "/" + relative for marker in z20_exempt):
+    if relative.startswith("store/") or any(marker in "/" + relative for marker in z20_exempt):
         continue
     code = code_only(contents[path])
     for offset, chunk in chunks_of(code):
@@ -304,19 +303,27 @@ for directory, suffix, generated in [("swift/Sources/DBlayer", "*.swift", "dblay
                 number = text.count("\n", 0, match.start()) + 1
                 findings.append(f"{label}: {relative}:{number}: {match.group()}")
 
-admitted_argument = re.compile(r"\(\s*&?\s*(?:self\s*\.\s*)?(?:admitted|admission)\b")
-network_call = re.compile(r"\b(?:transport|http|client)\s*\.\s*(?:query|mutate|subscribe|put)\s*\(")
+network_call = re.compile(r"\b(?:transport|http|client|lines)\s*\.\s*(?:query|mutate|subscribe|put|connect)\s*\(")
+sending = re.compile(r"\bsend_in_epoch\s*\(")
+kind_from_text = re.compile(r'starts_with\(\s*"(?:mutation|query|subscription)\b')
 for path in files:
     relative = str(path.relative_to(source))
-    if any(marker in "/" + relative for marker in task_support) or relative.startswith("transport/encrypted/"):
+    if any(marker in "/" + relative for marker in task_support) or relative.startswith(("transport/", "runtime/gate")):
         continue
     text = contents[path]
     code = code_only(text)
-    for match in network_call.finditer(code):
-        if admitted_argument.match(code[match.end() - 1:]) or f"z23:{relative}" in allowed:
+    inside = test_regions(code)
+    spans = [(match.end(), end_of(code, match.end() - 1, "(", ")")) for match in sending.finditer(code)]
+    for match in kind_from_text.finditer(text):
+        if code[match.start():match.start() + 11] != "starts_with" or any(begin < match.start() < finish for begin, finish in inside) or f"z23:{relative}" in allowed:
             continue
         number = text.count("\n", 0, match.start()) + 1
-        findings.append(f"Z23 a request goes to the network with an epoch permit: {path.relative_to(root)}:{number}: {text.splitlines()[number - 1].strip()}")
+        findings.append(f"Z23 the kind of a request comes from the input of its owner, not from the text of the document: {path.relative_to(root)}:{number}")
+    for match in network_call.finditer(code):
+        if any(begin <= match.start() < finish for begin, finish in spans) or any(begin < match.start() < finish for begin, finish in inside) or f"z23:{relative}" in allowed:
+            continue
+        number = text.count("\n", 0, match.start()) + 1
+        findings.append(f"Z23 a request goes to the network through send_in_epoch: {path.relative_to(root)}:{number}: {text.splitlines()[number - 1].strip()}")
 
 for path in files:
     relative = str(path.relative_to(source))

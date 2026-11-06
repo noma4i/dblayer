@@ -15,6 +15,12 @@ pub fn runtime() -> tokio::runtime::Runtime { tokio::runtime::Builder::new_multi
 
 pub fn admit() -> Admit { Arc::new(|_| Ok(())) }
 
+pub fn open_gate(epoch: u64) -> Arc<crate::runtime::EpochGate> {
+    let gate = Arc::new(crate::runtime::EpochGate::default());
+    gate.open(epoch);
+    gate
+}
+
 /// A Store peer: it keeps the batches of `Commit`.
 #[derive(Clone, Default)]
 pub struct Batches(pub Arc<Mutex<Vec<StoreBatch>>>);

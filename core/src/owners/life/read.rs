@@ -67,7 +67,7 @@ pub(super) fn add(builder: &mut RuntimeBuilder, wiring: &Arc<Wiring>, ports: &Po
     let windows_io = WindowIo::new(
         transport,
         codec,
-        admit,
+        (admit, wiring.gate.clone()),
         ports.executor.clone(),
         Box::new(move |stamp, effect| match effect {
             WindowsEffect::Window { effect: WindowEffect::Outcome { id, outcome }, .. } if id & CALL != 0 => {
@@ -124,7 +124,7 @@ pub(super) fn add(builder: &mut RuntimeBuilder, wiring: &Arc<Wiring>, ports: &Po
     let feed = match &ports.cable {
         Some(lines) => {
             let codec = Arc::new(SchemaFeedCodec::new(db.clone(), ports.read_operations.clone().unwrap_or_default()));
-            builder.add::<Feed>("feed", feed_state, FeedIo::new(lines.clone(), codec, ports.executor.clone(), feed_rest).counted_by(handle.clone()).admitted_by(feed_admit.clone()))
+            builder.add::<Feed>("feed", feed_state, FeedIo::new(lines.clone(), codec, ports.executor.clone(), feed_rest, (ports.db.lock().clock.clone(), wiring.gate.clone())).counted_by(handle.clone()).admitted_by(feed_admit.clone()))
         }
         None => builder.add::<Feed>("feed", feed_state, FeedWithoutIo { rest: feed_rest }),
     };
