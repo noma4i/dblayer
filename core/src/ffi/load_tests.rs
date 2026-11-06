@@ -223,9 +223,9 @@ async fn cancelling_a_live_query_finishes_its_initial_wait() {
 #[tokio::test]
 async fn inv_fresh_14_load_keeps_no_subscription() {
     let (db, _transport) = rig().await;
-    let before = db.subscription_census();
+    let before = db.subscription_census().await.unwrap();
     load(&db, "feed").await.unwrap();
-    let after = db.subscription_census();
+    let after = db.subscription_census().await.unwrap();
     assert_eq!((after.observed_queries, after.subscriptions), (before.observed_queries, before.subscriptions));
 }
 

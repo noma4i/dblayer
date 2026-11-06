@@ -9,7 +9,7 @@ use super::rig_tests::{bound, Fault, Rig, Switchable, World};
 use crate::ffi::lifecycle_tests::named;
 use crate::ffi::tape::StreamDelivery;
 use crate::ffi::{CommandRequest, Database, DbError, ReadEnd, ReadFetch, ReadPhase, ReadRequest, ReadValue, RowPlace, RowRename, WireOperationOutcome, WireRow, WireSyncState};
-use crate::test_wait::yield_until;
+use crate::test_wait::{within, yield_until};
 
 /// What a platform reader holds: the deliveries in order, replayed into the rows its screen shows.
 #[derive(Default)]
@@ -651,7 +651,7 @@ async fn the_session_reset_ends_every_stream_with_one_outcome_and_no_account_val
         assert!(matches!(log.deliveries().last().unwrap().value, ReadValue::Ended { .. }), "nothing follows the outcome");
     }
     assert_eq!(rig.database.stream_census().open, 0);
-    assert_eq!(rig.database.subscription_census().subscriptions, 0);
+    assert_eq!(rig.database.subscription_census().await.unwrap().subscriptions, 0);
     let marks = (profile_log.len(), users_log.len());
     rig.world.forbid(true);
     settle(&rig).await;
@@ -777,7 +777,7 @@ async fn the_reader_that_cancels_ends_the_stream_and_the_core_keeps_nothing() {
     rig.database.cancel_stream(stream);
 
     yield_until("the stream left the census", || rig.database.stream_census().open == 0).await;
-    assert_eq!(rig.database.subscription_census().subscriptions, 0);
+    assert_eq!(rig.database.subscription_census().await.unwrap().subscriptions, 0);
     assert!(reader.ended().is_empty(), "a cancelled stream delivers no outcome");
     let mark = reader.len();
     rig.world.set_account("A2");
@@ -1153,7 +1153,14 @@ async fn a_cancelled_list_stream_leaves_no_observer_and_a_later_write_does_no_re
     let stream = rig.database.subscribe_reading(epoch, thread(), reader.clone());
     bound(rig.database.loaded(stream)).await.unwrap();
     rig.database.cancel_stream(stream);
-    let census = rig.database.subscription_census();
+    rig.database.release_stream(stream);
+    let census = within(async {
+        loop {
+            let census = rig.database.subscription_census().await.unwrap();
+            if (census.subscriptions, census.observed_queries, census.retained_observers) == (0, 0, 0) { return census; }
+            tokio::task::yield_now().await;
+        }
+    }).await;
     assert_eq!((census.subscriptions, census.observed_queries, census.retained_observers), (0, 0, 0), "a left list stream kept an observer");
     let reads = rig.database.db.counters().observation_reads;
     rig.database.set_online(false).unwrap();

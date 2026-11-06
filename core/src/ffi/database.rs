@@ -260,9 +260,9 @@ impl Database {
     pub fn open_report(&self) -> OpenReport { self.db.open_report().clone() }
     pub fn restore_failed(&self) -> Result<Vec<crate::db::DroppedRecord>, DbError> { Ok(self.db.restore_failed()?) }
     pub fn discard_restore_failed(&self, table: String, key: String) -> Result<bool, DbError> { Ok(self.db.discard_restore_failed(&table, &key)?) }
-    pub fn subscription_census(&self) -> SubscriptionCensus {
-        let census = self.db.observer_census();
-        SubscriptionCensus { observed_queries: census.observed_queries as u64, subscriptions: census.subscriptions as u64, retained_observers: census.retained as u64 }
+    pub async fn subscription_census(&self) -> Result<SubscriptionCensus, DbError> {
+        let (observed, subscriptions, retained) = self.life.subscription_census().await.map_err(|_| DbError::Interrupted { detail: "the census was interrupted".into() })?;
+        Ok(SubscriptionCensus { observed_queries: observed as u64, subscriptions: subscriptions as u64, retained_observers: retained as u64 })
     }
     pub async fn file(&self, epoch: u64, model: String, row_id: String, field: String) -> Result<Option<String>, DbError> {
         let row_id = id(&row_id)?;

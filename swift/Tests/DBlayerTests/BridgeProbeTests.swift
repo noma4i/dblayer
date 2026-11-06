@@ -52,13 +52,14 @@ struct BridgeProbeTests {
     transport.enqueue("MomentsFeed", reply: #"{"data":{"feed":{"nodes":[{"__typename":"Moment","id":"1","uuid":"a","likedByMe":false,"media":{},"createdAt":"2026-10-08T00:00:00.000Z"}],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}"#)
     try await reopen(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: transport)
     try DB.database.registerOperations(defsJson: #"[{"name":"MomentsFeed","document":"query MomentsFeed($first: Int, $after: String) { feed(first: $first, after: $after) { nodes { id uuid likedByMe media createdAt } pageInfo { hasNextPage endCursor } } }"}]"#)
-    let before = try DB.subscriptionCensus()
+    let before = try await DB.subscriptionCensus()
 
     try await Moment.feed.load()
     try await Moment.feed.load()
 
     #expect(transport.calls.count == 1)
-    #expect(try DB.subscriptionCensus().subscriptions == before.subscriptions && DB.subscriptionCensus().observedQueries == before.observedQueries)
+    let after = try await DB.subscriptionCensus()
+    #expect(after.subscriptions == before.subscriptions && after.observedQueries == before.observedQueries)
   }
 
   @MainActor

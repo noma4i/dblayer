@@ -255,6 +255,11 @@ impl Database {
         if let Some(watched) = self.watched_by(id) { watched.cancel(); }
     }
 
+    /// The platform lets go of the stream: its handle drops and Deliveries gets the `Release`.
+    pub(crate) fn release_stream(&self, id: u64) {
+        registry().lock().unwrap().remove(&(Arc::as_ptr(&self.life) as usize, id));
+    }
+
     /// The streams of this database that did not end.
     pub(crate) fn stream_census(&self) -> StreamCensus {
         let mine = Arc::as_ptr(&self.life) as usize;

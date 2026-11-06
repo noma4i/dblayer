@@ -14,7 +14,7 @@ use crate::owners::read::feed::{Feed, FeedEffect, FeedInput, FeedPeers, FeedStat
 use crate::owners::read::windows::{Goal, Windows, WindowEffect, WindowKey, WindowsEffect, WindowsInput, WindowsPeers, WindowsState};
 use crate::owners::read::{channels_of, max_pages, members_complete, preload_keys, preload_sources, refreshes_on_foreground, DbSnapshots, DeliveryIo, FeedIo, Rest, SchemaFeedCodec, SchemaWindowCodec, WindowIo};
 use crate::owners::store::{StoreReply, StoreWriter};
-use crate::runtime::{Address, Back, EffectRunner, Epoch, EpochStamp, OutcomeId, RuntimeBuilder, Waiter};
+use crate::runtime::{Address, Back, EffectRunner, Epoch, EpochStamp, Outcome, OutcomeId, RuntimeBuilder, Waiter};
 use crate::transport::Transport;
 
 /// The ids of waiters that platform calls register in `Windows` carry this bit, the ids of streams stay below it.
@@ -99,6 +99,9 @@ pub(super) fn add(builder: &mut RuntimeBuilder, wiring: &Arc<Wiring>, ports: &Po
                 deliveries_wiring.outcomes.settle(OutcomeId::from_raw(reply), LifeReply::Cancelled);
             }
             DeliveryEffect::Drained(done) => drained(&deliveries_wiring, done),
+            DeliveryEffect::Census { reply, observed, retained } => {
+                deliveries_wiring.outcomes.settle(OutcomeId::from_raw(reply), LifeReply::Streams { observed, retained });
+            }
             DeliveryEffect::Stream { .. } => {}
         }),
     ).counted_by(handle.clone());
@@ -106,6 +109,9 @@ pub(super) fn add(builder: &mut RuntimeBuilder, wiring: &Arc<Wiring>, ports: &Po
     let feed_wiring = wiring.clone();
     let feed_rest: Rest<FeedEffect> = Box::new(move |_stamp, effect| match effect {
         FeedEffect::Drained(done) => drained(&feed_wiring, done),
+        FeedEffect::Census { reply, subscriptions } => {
+            feed_wiring.outcomes.settle(OutcomeId::from_raw(reply), LifeReply::Channels(subscriptions));
+        }
         FeedEffect::SnapshotRequest { epoch } => feed_wiring.to_network(NetworkInput::SnapshotRequest { owner: Peer::Feed, epoch }),
         _ => {}
     });
@@ -202,6 +208,22 @@ impl super::Life {
             self.wiring.to_deliveries(DeliveryInput::Pull { stream, outcome: waiter.id() });
         }
         waiter
+    }
+
+    /// The streams of Deliveries and the channels of Feed now, read from the fields of the owners: `(observed_queries, subscriptions, retained_observers)`.
+    pub async fn subscription_census(&self) -> Result<(usize, usize, usize), LifeReply> {
+        if self.is_shut() {
+            return Ok((0, 0, 0));
+        }
+        let streams = self.wiring.outcomes.register(Epoch::MAX);
+        let channels = self.wiring.outcomes.register(Epoch::MAX);
+        self.wiring.to_deliveries(DeliveryInput::Census { reply: streams.id().raw() });
+        self.wiring.to_feed(FeedInput::Census { reply: channels.id().raw() });
+        match (streams.wait().await, channels.wait().await) {
+            (Outcome::Value(LifeReply::Streams { observed, retained }), Outcome::Value(LifeReply::Channels(subscriptions))) => Ok((observed, subscriptions, retained)),
+            (Outcome::Closing, _) | (_, Outcome::Closing) => Ok((0, 0, 0)),
+            _ => Err(LifeReply::Closed),
+        }
     }
 
     /// `cancel` of a stream returns once no callback of its sink can run.

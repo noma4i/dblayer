@@ -15,6 +15,10 @@ pub enum LifeReply {
     Window(crate::owners::read::windows::WindowOutcome),
     /// `Deliveries` closed the sink of a stream: the `cancel` of the platform returns.
     Cancelled,
+    /// `Deliveries` counted its streams for `subscription_census`.
+    Streams { observed: usize, retained: usize },
+    /// `Feed` counted its channels for `subscription_census`.
+    Channels(usize),
     Closed,
 }
 

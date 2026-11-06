@@ -247,6 +247,7 @@ impl Twin {
                 Emitted::Run(FeedEffect::Close { .. }) => modelled.push(Effect::Close),
                 Emitted::Run(FeedEffect::SnapshotRequest { .. }) => self.snapshots += 1,
                 Emitted::Run(FeedEffect::Drained(_)) => modelled.push(Effect::Drained),
+                Emitted::Run(FeedEffect::Census { .. }) => {}
                 Emitted::Schedule { after, input, .. } if input.starts_with("Tick") => {
                     assert_eq!(after, std::time::Duration::from_millis(self.debounce_ms), "the debounce is the delay of the Schedule");
                     modelled.push(Effect::ScheduleTick);
@@ -871,6 +872,29 @@ fn feed_wait_ready() {
     assert_eq!(opening.step(plus("Chat")), [Effect::Joined(CHAT), Effect::Connect]);
     assert_eq!(opening.step(Input::HandshakeDone), [Effect::SealSubscribe, Effect::ModelReady(CHAT)], "Ready comes with the handshake of the connection");
     assert_eq!(opening.step(plus("Chat")), [Effect::Joined(CHAT), Effect::ModelReady(CHAT)], "a live subscription answers at once");
+}
+
+/// The channels the models of `want` read on the active connection, asked of the owner.
+fn census_of(twin: &mut Twin) -> usize {
+    twin.post(FeedInput::Census { reply: 7 });
+    take(&twin.log).into_iter().find_map(|entry| match entry {
+        Emitted::Run(FeedEffect::Census { reply: 7, subscriptions }) => Some(subscriptions),
+        _ => None,
+    }).expect("the owner answers the census")
+}
+
+#[test]
+fn feed_wait_subscription_census() {
+    let mut twin = Twin::new();
+    assert_eq!(census_of(&mut twin), 0, "no model wanted, no channel");
+    twin.step(plus("Chat"));
+    assert_eq!(census_of(&mut twin), 0, "a connection in its handshake is not active");
+    twin.step(Input::HandshakeDone);
+    twin.step(plus("Post"));
+    assert_eq!(census_of(&mut twin), 1, "two models on one channel count it once");
+    twin.step(minus("Chat"));
+    twin.step(minus("Post"));
+    assert_eq!(census_of(&mut twin), 0, "after the last Want- no channel stays wanted");
 }
 
 // Properties.

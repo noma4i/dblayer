@@ -24,6 +24,7 @@
 - `OpenOptions` has no `preload` and no `listening`. `openTesting` and `openOnClock` have no `preload` and no `listening` parameter. A scope declared with `preload` loads on a test clock like it does in production.
 
 ### Changed
+- `subscriptionCensus` is async and reads the streams and channels of the owners.
 - `ReadState.error` is the typed `DbError`.
 - `open` takes the upload steps from the models: `UploadOperations` and the `uploads` parameter are gone.
 - `OperationReceipt.items` carry one `MutationReceipt` each.

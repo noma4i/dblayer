@@ -40,7 +40,7 @@ public enum DB {
     try await opened.database.closeDatabase()
   }
 
-  public static func subscriptionCensus() throws -> SubscriptionCensus { try database.subscriptionCensus() }
+  public static func subscriptionCensus() async throws -> SubscriptionCensus { try await database.subscriptionCensus() }
 
   public static func openReport() throws -> OpenReport { try database.openReport() }
 

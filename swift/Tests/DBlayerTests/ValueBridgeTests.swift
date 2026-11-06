@@ -96,7 +96,7 @@ extension BridgeProbeTests {
     try await DB.sessionReset()
     await eventually("the stream ended") { profile.projection.ended == .sessionEnded }
 
-    #expect(try DB.subscriptionCensus().subscriptions == 0)
+    #expect(try await DB.subscriptionCensus().subscriptions == 0)
     #expect(profile.value?.name == "A", "the ended projection keeps the last value it was given and no new one")
   }
 
@@ -184,10 +184,10 @@ extension BridgeProbeTests {
     let scope = try DB.account()
     var projected: Projected<User>? = Projected<User>(try scope.stream(User.profile))
     try await projected?.loaded()
-    #expect(try DB.subscriptionCensus().subscriptions == 1)
+    #expect(try await DB.subscriptionCensus().subscriptions == 1)
 
     projected = nil
-    await eventually("the stream left the core") { (try? DB.subscriptionCensus().subscriptions) == 0 }
+    await eventually("the stream left the core") { (try? await DB.subscriptionCensus().subscriptions) == 0 }
   }
 
   /// B07: a change of one row decodes one row, and the subscriptions are the readers.
@@ -204,7 +204,7 @@ extension BridgeProbeTests {
     for number in 1...5 { first.append(try await scope.send(Moment.self, values: ["text": .string("m\(number)")])) }
     for sent in first { _ = try await sent.outcome() }
     await eventually("the thread holds five confirmed rows") { thread.rows.count == 5 && thread.rows.allSatisfy { $0.sync.state == .synced } }
-    #expect(try DB.subscriptionCensus().subscriptions == 2)
+    #expect(try await DB.subscriptionCensus().subscriptions == 2)
 
     let (decoded, deltas) = (thread.projection.decoded, thread.projection.deltas)
     let extra = try await scope.send(Moment.self, values: ["text": .string("m6")])
@@ -250,7 +250,7 @@ extension BridgeProbeTests {
     }
     #expect(ended == [.invalid])
     #expect(try await reader.pull() == nil, "a stream that ended gives nothing more")
-    #expect(try DB.subscriptionCensus().subscriptions == 0)
+    #expect(try await DB.subscriptionCensus().subscriptions == 0)
   }
 
   /// K02: a command and a one-off read that carry the scope of A are refused after the next sign-in and change nothing for B.

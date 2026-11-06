@@ -44,7 +44,7 @@ object DBlayer {
         closing?.let { offCaller { it.closeDatabase() } }
     }
 
-    fun subscriptionCensus(): SubscriptionCensus = database.subscriptionCensus()
+    suspend fun subscriptionCensus(): SubscriptionCensus = database.subscriptionCensus()
 
     fun openReport(): OpenReport = database.openReport()
 

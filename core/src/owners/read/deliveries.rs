@@ -170,6 +170,8 @@ pub struct DeliveryPeers {
 pub enum DeliveryEffect {
     Stream { stream: StreamId, effect: StreamEffect },
     Drained(Drained),
+    /// The answer of `Census`: the streams that read a window and the streams that ended without a `Release`.
+    Census { reply: ReplyId, observed: usize, retained: usize },
 }
 
 #[derive(Clone, Debug)]
@@ -189,6 +191,7 @@ pub enum DeliveryInput {
     TransferStatus { stream: StreamId, blob: BlobStatus },
     RetryState { stream: StreamId, retry: RetryStatus },
     Pull { stream: StreamId, outcome: OutcomeId },
+    Census { reply: ReplyId },
     Resync { stream: StreamId },
     Cancel { stream: StreamId, reply: ReplyId },
     Release { stream: StreamId },
@@ -444,6 +447,11 @@ impl StateOwner for Deliveries {
                 } else {
                     out.push(Effect::Run(DeliveryEffect::Stream { stream, effect: StreamEffect::Answer { outcome, answer: PullAnswer::Done } }));
                 }
+            }
+            DeliveryInput::Census { reply } => {
+                let observed = state.streams.values().filter(|machine| machine.view.remote && machine.stage != DeliveryStage::Ended).count();
+                let retained = state.streams.values().filter(|machine| machine.stage == DeliveryStage::Ended && !machine.released).count();
+                out.push(Effect::Run(DeliveryEffect::Census { reply, observed, retained }));
             }
             DeliveryInput::Resync { stream } => on(state, stream, &mut out, |machine, fx| machine.resync(fx)),
             DeliveryInput::Committed(committed) => every(state, &mut out, |machine, fx| machine.committed(&committed, fx)),

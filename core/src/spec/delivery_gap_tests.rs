@@ -276,6 +276,26 @@ fn live_rows() -> Twin {
     twin
 }
 
+/// The streams that read a window and the streams that ended without a `Release`, asked of the owner.
+fn census_of(twin: &mut Twin) -> (usize, usize) {
+    take(&twin.log);
+    twin.call(d::DeliveryInput::Census { reply: 7 });
+    take(&twin.log).into_iter().find_map(|entry| match entry {
+        Emitted::Run(DeliveryEffect::Census { reply: 7, observed, retained }) => Some((observed, retained)),
+        _ => None,
+    }).expect("the owner answers the census")
+}
+
+#[test]
+fn dlv_wait_subscription_census() {
+    let mut twin = open_rows();
+    assert_eq!(census_of(&mut twin), (1, 0), "an open stream of a window is observed");
+    twin.step(Input::EpochEnded { own: true });
+    assert_eq!(census_of(&mut twin), (0, 1), "an ended stream stays retained until its Release");
+    twin.call(d::DeliveryInput::Release { stream: STREAM });
+    assert_eq!(census_of(&mut twin), (0, 0), "a released stream leaves the census");
+}
+
 fn ended_by_epoch() -> Twin {
     let mut twin = live_rows();
     twin.step(Input::EpochEnded { own: true });

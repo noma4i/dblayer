@@ -8,7 +8,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::time::Duration;
 
-use crate::owners::contract::{BatchAuthor, BatchId, Committed, ConnectionId, Drained, EpochEnded, EpochStarted, ModelsReset, Online, RejectReason, Rejected};
+use crate::owners::contract::{BatchAuthor, BatchId, Committed, ConnectionId, Drained, EpochEnded, EpochStarted, ModelsReset, Online, RejectReason, Rejected, ReplyId};
 use crate::owners::read::deliveries::{Deliveries, DeliveryInput};
 use crate::owners::read::windows::{StaleKeys, Windows, WindowsInput};
 use crate::owners::store::{StoreBatch, StoreInput, StoreWriter};
@@ -121,6 +121,8 @@ pub enum FeedEffect {
     Drained(Drained),
     /// `SnapshotRequest{Feed, epoch}` to Network: the first `Online` of the epoch comes back addressed to Feed.
     SnapshotRequest { epoch: Epoch },
+    /// The answer of `Census`: the channels the models of `want` read on the active connection.
+    Census { reply: ReplyId, subscriptions: usize },
 }
 
 /// What the steps give out: an effect of the runner, a timer, or an input for another owner.
@@ -175,6 +177,7 @@ pub enum FeedInput {
     EpochStarted(EpochStarted),
     EpochEnded(EpochEnded),
     Closing,
+    Census { reply: ReplyId },
 }
 
 /// The owners `Feed` sends inputs to.
@@ -292,6 +295,14 @@ impl FeedState {
     }
 
     pub fn mode(&self) -> Mode { self.mode }
+
+    /// The channels that the models of `want` read, counted while a connection is active.
+    fn census(&self) -> usize {
+        if self.mode == Mode::Ended || self.active.is_none() {
+            return 0;
+        }
+        self.want.iter().filter(|(_, ids)| !ids.is_empty()).filter_map(|(model, _)| self.channels.get(model)).flatten().collect::<BTreeSet<_>>().len()
+    }
 
     pub fn online(&self) -> Option<bool> { self.online }
 
@@ -1003,6 +1014,10 @@ impl StateOwner for Feed {
 
     fn step(state: &mut FeedState, input: FeedInput) -> Effects<Self> {
         let mut fx = Vec::new();
+        if let FeedInput::Census { reply } = input {
+            fx.push(Fx::Run(FeedEffect::Census { reply, subscriptions: state.census() }));
+            return Self::lower(state, fx);
+        }
         if state.mode == Mode::Ended {
             if matches!(input, FeedInput::Closing) && !std::mem::replace(&mut state.drained, true) {
                 fx.push(Fx::Run(FeedEffect::Drained(Drained { owner: "feed" })));
@@ -1021,6 +1036,7 @@ impl StateOwner for Feed {
                 }
             }
             FeedInput::Closing => state.end(true, &mut fx),
+            FeedInput::Census { .. } => {}
             FeedInput::WantPlus { model, id, stream } => state.want_plus(model, id, stream, &mut fx),
             FeedInput::WantMinus { model, id } => state.want_minus(&model, id, &mut fx),
             FeedInput::HandshakeDone { connection_id, key_id } => state.handshake_done(connection_id, key_id, &mut fx),
