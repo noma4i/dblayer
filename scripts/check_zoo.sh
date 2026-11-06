@@ -62,10 +62,10 @@ for path in files:
 
 for path in files:
     relative = str(path.relative_to(root))
-    if relative.endswith("db/merge.rs") or "/schema/" in relative:
+    if relative.endswith("store/merge.rs") or "/schema/" in relative:
         continue
     if re.search(r"(?<!\bdb)(?<!\bself)\.merged\(", contents[path]):
-        findings.append(f"Z8 server rows merge through Db::merged only: {relative}")
+        findings.append(f"Z8 server rows merge through store/merge.rs only: {relative}")
 
 for path in files:
     relative = str(path.relative_to(root))
