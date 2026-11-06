@@ -13,6 +13,9 @@ func adopt(_ database: Database) async throws -> Database {
   return database
 }
 
+/// A test transport that forwards to a `MockTransport`: the session cable of the stand goes to that mock.
+protocol WrapsMock { var base: MockTransport { get } }
+
 private final class HeldCredential: CredentialStore, @unchecked Sendable {
   private let lock = NSLock()
   private var value: String?
@@ -40,6 +43,20 @@ private func bridgeToTransport(_ transport: Transport) -> @Sendable (String, [St
   }
 }
 
+private func standEncrypted() -> EncryptedConfig {
+  EncryptedConfig(origin: SealedServer.origin, serverKey: SealedServer.serverKey, pin: SealedServer.pin, endpoints: EncryptedEndpoints(graphql: "/api/graphql", cable: "/api/cable", logout: "/api/logout", bootstrap: "/api/bootstrap", sessionOperations: ["login_link": EncryptedSessionOperation(path: "/api/auth/login_link", class: .authenticated)]), protocolLabel: "example-ws-v1", cablePurpose: "ws.hello", cableChannel: "EncryptedGraphqlChannel")
+}
+
+private func withSessionProfile(_ operations: String) -> String {
+  operations.trimmingCharacters(in: .whitespaces) == "[]" ? "[\(sessionProfile)]" : String(operations.dropLast()) + ",\(sessionProfile)]"
+}
+
+private func signIn() async throws {
+  try DB.database.setOnline(online: true)
+  try await DB.sessionCall("login_link", body: StandLogin(account: "stand"))
+  try await DB.run("SessionProfile", variables: [:])
+}
+
 /// A transport signs in through the real session path, and its queries and mutations ride the session HTTP.
 @MainActor @discardableResult
 func reopen(config: Config, modelsJson: String, transport: Transport?, operations: String = "[]", uploads: UploadOperations? = nil) async throws -> Database {
@@ -47,13 +64,22 @@ func reopen(config: Config, modelsJson: String, transport: Transport?, operation
     return try await adopt(try await openDatabase(config: config, modelsJson: modelsJson, transport: transport, operations: operations, uploads: uploads))
   }
   let server = try SealedServer(bridge: bridgeToTransport(mock))
-  let encrypted = EncryptedConfig(origin: SealedServer.origin, serverKey: SealedServer.serverKey, pin: SealedServer.pin, endpoints: EncryptedEndpoints(graphql: "/api/graphql", cable: "/api/cable", logout: "/api/logout", bootstrap: "/api/bootstrap", sessionOperations: ["login_link": EncryptedSessionOperation(path: "/api/auth/login_link", class: .authenticated)]), protocolLabel: "example-ws-v1", cablePurpose: "ws.hello", cableChannel: "EncryptedGraphqlChannel")
-  let withProfile = operations.trimmingCharacters(in: .whitespaces) == "[]" ? "[\(sessionProfile)]" : String(operations.dropLast()) + ",\(sessionProfile)]"
-  let database = try await adopt(try await openDatabase(config: config, modelsJson: modelsJson, transport: mock, encrypted: encrypted, credentials: HeldCredential(), http: server, operations: withProfile, uploads: uploads))
-  try database.setOnline(online: true)
-  try await DB.sessionCall("login_link", body: StandLogin(account: "stand"))
-  try await DB.run("SessionProfile", variables: [:])
+  (mock as? MockTransport ?? (mock as? any WrapsMock)?.base)?.cable = EncryptedCablePeer(server: server)
+  let database = try await adopt(try await openDatabase(config: config, modelsJson: modelsJson, transport: mock, encrypted: standEncrypted(), credentials: HeldCredential(), http: server, operations: withSessionProfile(operations), uploads: uploads))
+  try await signIn()
   return database
+}
+
+/// The same session stand on a clock that only `advance(by:)` moves.
+@MainActor @discardableResult
+func reopenClocked(modelsJson: String, transport: MockTransport, operations: String = "[]", path: String? = nil) async throws -> TestClock {
+  let server = try SealedServer(bridge: bridgeToTransport(transport))
+  transport.cable = EncryptedCablePeer(server: server)
+  await DB.closeForCleanup()
+  let clock = try await DB.openTesting(transport: transport, modelsJSON: modelsJson, path: path, encrypted: standEncrypted(), credentials: HeldCredential(), http: server)
+  try DB.database.registerOperations(defsJson: withSessionProfile(operations))
+  try await signIn()
+  return clock
 }
 
 /// A database whose plain transport holds a session and sees no network: a sent row stays queued. A send needs a session.

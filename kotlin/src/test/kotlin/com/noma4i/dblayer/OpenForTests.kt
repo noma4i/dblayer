@@ -1,5 +1,8 @@
 package com.noma4i.dblayer
 
+/** A test transport that forwards to a `MockTransport`: the session cable of the stand goes to that mock. */
+interface WrapsMock { val base: MockTransport }
+
 suspend fun openDatabase(config: Config, modelsJson: String, transport: Transport? = null, encrypted: EncryptedConfig? = null, credentials: CredentialStore? = null, http: EncryptedHttp? = null, operations: String = "[]", uploads: UploadOperations? = null): Database =
     OpenDatabase().open(config, modelsJson, OpenOptions(operations, uploads?.wire(), false, false), transport, encrypted, credentials, http, null)
 
@@ -42,17 +45,40 @@ private fun bridgeToTransport(transport: Transport): suspend (String, kotlinx.se
     }
 }
 
+private fun standEncrypted() = EncryptedConfig("https://api.example.com", SealedServer.SERVER_KEY, SealedServer.SERVER_PIN, EncryptedEndpoints("/api/graphql", "/api/cable", "/api/logout", "/api/bootstrap", mapOf("login_link" to EncryptedSessionOperation("/api/auth/login_link", EncryptedOperationClass.AUTHENTICATED))), "example-ws-v1", "ws.hello", "EncryptedGraphqlChannel")
+
+private fun withSessionProfile(operations: String) = if (operations.trim() == "[]") "[$SESSION_PROFILE]" else operations.dropLast(1) + ",$SESSION_PROFILE]"
+
+private suspend fun signIn(database: Database) {
+    database.setOnline(true)
+    database.sessionCall("login_link", """{"account":"stand"}""")
+    DBlayer.run("SessionProfile", kotlinx.serialization.json.JsonObject(emptyMap()))
+}
+
 /** A transport signs in through the real session path, and its queries and mutations ride the session HTTP. */
 suspend fun reopen(config: Config, modelsJson: String, transport: Transport? = null, operations: String = "[]", uploads: UploadOperations? = null): Database {
     val mock = transport ?: return adopt(openDatabase(config, modelsJson, transport, operations = operations, uploads = uploads))
     val server = SealedServer(answer = bridgeToTransport(mock))
-    val encrypted = EncryptedConfig("https://api.example.com", SealedServer.SERVER_KEY, SealedServer.SERVER_PIN, EncryptedEndpoints("/api/graphql", "/api/cable", "/api/logout", "/api/bootstrap", mapOf("login_link" to EncryptedSessionOperation("/api/auth/login_link", EncryptedOperationClass.AUTHENTICATED))), "example-ws-v1", "ws.hello", "EncryptedGraphqlChannel")
-    val withProfile = if (operations.trim() == "[]") "[$SESSION_PROFILE]" else operations.dropLast(1) + ",$SESSION_PROFILE]"
-    val database = adopt(openDatabase(config, modelsJson, mock, encrypted, StandCredential(), server, withProfile, uploads))
-    database.setOnline(true)
-    database.sessionCall("login_link", """{"account":"stand"}""")
-    DBlayer.run("SessionProfile", kotlinx.serialization.json.JsonObject(emptyMap()))
+    val host = mock as? MockTransport ?: (mock as? WrapsMock)?.base
+    host?.cable = EncryptedCablePeer(server)
+    val database = adopt(openDatabase(config, modelsJson, mock, standEncrypted(), StandCredential(), server, withSessionProfile(operations), uploads))
+    signIn(database)
     return database
+}
+
+/** The same session stand on a clock that only `advance` moves. */
+@OptIn(DBlayerTestingApi::class)
+suspend fun reopenClocked(modelsJson: String, transport: MockTransport, operations: String = "[]", path: String? = null): TestClock {
+    val server = SealedServer(answer = bridgeToTransport(transport))
+    transport.cable = EncryptedCablePeer(server)
+    try {
+        DBlayer.close()
+    } catch (_: DbException.Closed) {
+    }
+    val clock = DBlayer.openTesting(transport, modelsJson, path = path, encrypted = standEncrypted(), credentials = StandCredential(), http = server)
+    DBlayer.database.registerOperations(withSessionProfile(operations))
+    signIn(DBlayer.database)
+    return clock
 }
 
 /** A database whose plain transport holds a session and sees no network: a sent row stays queued. A send needs a session. */

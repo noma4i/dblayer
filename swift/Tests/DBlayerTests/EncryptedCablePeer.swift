@@ -1,9 +1,10 @@
 import CryptoKit
 import Foundation
+import DBlayerTesting
 import Testing
 @testable import DBlayer
 
-final class EncryptedCablePeer: Transport, @unchecked Sendable {
+final class EncryptedCablePeer: CablePeer, @unchecked Sendable {
   final class Connection: @unchecked Sendable {
     let events = AsyncStream<EncryptedSocketEvent>.makeStream()
     let secret = Curve25519.KeyAgreement.PrivateKey()
@@ -11,10 +12,12 @@ final class EncryptedCablePeer: Transport, @unchecked Sendable {
     var sendKey: SymmetricKey?
     var receiveKey: SymmetricKey?
     var sequence = 0
-    var subscription: String?
+    var subscriptions: [String: String] = [:]
+    let order = NSLock()
   }
 
   let server: SealedServer
+  var onSubscribe: (@Sendable (TransportRequest) -> Void)?
   let opened = AsyncStream<String>.makeStream()
   let subscribed = AsyncStream<String>.makeStream()
   let closed = AsyncStream<String>.makeStream()
@@ -80,9 +83,11 @@ final class EncryptedCablePeer: Transport, @unchecked Sendable {
     let body = try openFrame(frame, key: connection.receiveKey!)
     if body["t"] as? String == "subscribe" {
       let id = body["id"] as! String
-      connection.subscription = id
+      connection.subscriptions[body["operationName"] as? String ?? ""] = id
       try emit(token: token, body: ["t": "subscribed", "id": id])
       subscribed.continuation.yield(token)
+      let variables = (body["variables"] as? [String: Any]).flatMap { try? JSONSerialization.data(withJSONObject: $0, options: [.sortedKeys]) }.flatMap { String(data: $0, encoding: .utf8) } ?? "{}"
+      onSubscribe?(TransportRequest(document: body["query"] as? String ?? "", operationName: body["operationName"] as? String ?? "", variablesJson: variables, purpose: .standard))
     }
   }
 
@@ -95,6 +100,8 @@ final class EncryptedCablePeer: Transport, @unchecked Sendable {
 
   func emit(token: String, body: [String: Any]) throws {
     let connection = try connection(token)
+    connection.order.lock()
+    defer { connection.order.unlock() }
     var body = body
     body["n"] = connection.sequence
     connection.sequence += 1
@@ -106,10 +113,21 @@ final class EncryptedCablePeer: Transport, @unchecked Sendable {
   }
 
   /// A data event of the open subscription. False while no subscription is open.
-  func event(token: String, result: [String: Any]) throws -> Bool {
-    guard let id = try connection(token).subscription else { return false }
+  func event(token: String, operation: String, result: [String: Any]) throws -> Bool {
+    guard let id = try connection(token).subscriptions[operation] else { return false }
     try emit(token: token, body: ["t": "next", "id": id, "result": result])
     return true
+  }
+
+  func event(operation: String, result: String) throws -> Bool {
+    guard let token = lastOpened, let value = try JSONSerialization.jsonObject(with: Data(result.utf8)) as? [String: Any] else { return false }
+    return try event(token: token, operation: operation, result: value)
+  }
+
+  /// A data event of the first open subscription.
+  func event(token: String, result: [String: Any]) throws -> Bool {
+    guard let operation = try connection(token).subscriptions.keys.sorted().first else { return false }
+    return try event(token: token, operation: operation, result: result)
   }
 
   /// The socket breaks.
@@ -118,15 +136,19 @@ final class EncryptedCablePeer: Transport, @unchecked Sendable {
   }
 
   func emitOld(token: String) throws {
-    let id = try connection(token).subscription!
+    let id = try connection(token).subscriptions.values.first!
     try emit(token: token, body: ["t": "next", "id": id, "result": ["data": ["bulletinAdded": ["body": "old", "occurredAt": "2026-10-18T00:00:00Z"]]]])
   }
 
   func cableNext(token: String) async -> EncryptedSocketEvent? {
     guard let connection = try? connection(token) else { return nil }
-    return await Cursor(connection.events.stream).next("the cable event")
+    var events = connection.events.stream.makeAsyncIterator()
+    return await events.next()
   }
-  func cableClose(token: String) async { closed.continuation.yield(token) }
+  func cableClose(token: String) async {
+    lock.withLock { connections[token] }?.events.continuation.finish()
+    closed.continuation.yield(token)
+  }
   func query(request: TransportRequest) async throws -> String { throw DbError.Invalid(detail: "unexpected plain query") }
   func mutate(request: TransportRequest) async throws -> String { throw DbError.Invalid(detail: "unexpected plain mutation") }
   func subscribe(request: TransportRequest, sink: SubscriptionSink) async throws { throw DbError.Invalid(detail: "unexpected plain subscription") }

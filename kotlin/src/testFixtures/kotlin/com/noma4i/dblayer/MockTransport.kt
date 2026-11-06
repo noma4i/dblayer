@@ -10,6 +10,15 @@ import java.util.concurrent.CopyOnWriteArrayList
 /** What a call without a queued reply gets: `Strict` fails it with `Invalid`, records it in `unscripted` and fails the test thread with `AssertionError` at its next touch of any mock, `NetworkError` throws the retried network error. */
 enum class Unanswered { Strict, NetworkError }
 
+/** The server end of the encrypted session cable. `MockTransport` hands the cable calls of the session to it and pushes model events through it. */
+interface CablePeer : Transport {
+    /** Called with the request of every subscription the session opens on the cable. */
+    var onSubscribe: ((TransportRequest) -> Unit)?
+
+    /** A data event of the open subscription of that operation. False while it is not open. */
+    fun event(operation: String, result: String): Boolean
+}
+
 class MockTransport(private val unanswered: Unanswered = Unanswered.Strict) : Transport {
     private class Missed(val owner: MockTransport, val message: String)
 
@@ -49,20 +58,29 @@ class MockTransport(private val unanswered: Unanswered = Unanswered.Strict) : Tr
     private val sentFrames = CopyOnWriteArrayList<Pair<String, String>>()
     val cableFrames: List<Pair<String, String>> get() { failTestThread(); return sentFrames.toList() }
 
+    /** The cable of the session: events a test pushes with `emit` for an operation without a plain subscription go through it, and the cable calls of the session go to it. */
+    @Volatile var cable: CablePeer? = null
+        set(value) {
+            value?.onSubscribe = { request -> recorded.add(request) }
+            field = value
+        }
+
     override suspend fun openCable(lease: CableLease, url: String) {
+        cable?.let { return it.openCable(lease, url) }
         val token = UUID.randomUUID().toString()
         cableEvents[token] = Channel(Channel.UNLIMITED)
         lease.opened(token)
     }
 
     override suspend fun cableSend(token: String, text: String) {
+        cable?.let { return it.cableSend(token, text) }
         if (!cableEvents.containsKey(token)) throw DbException.Network("cable socket is closed")
         sentFrames.add(token to text)
     }
 
-    override suspend fun cableNext(token: String): EncryptedSocketEvent? = cableEvents[token]?.receiveCatching()?.getOrNull()
+    override suspend fun cableNext(token: String): EncryptedSocketEvent? = cable?.cableNext(token) ?: cableEvents[token]?.receiveCatching()?.getOrNull()
 
-    override suspend fun cableClose(token: String) { cableEvents.remove(token)?.close() }
+    override suspend fun cableClose(token: String) { cable?.cableClose(token); cableEvents.remove(token)?.close() }
 
     fun emitCable(token: String, event: EncryptedSocketEvent) {
         val events = cableEvents[token] ?: throw DbException.Network("cable socket is closed")
@@ -95,7 +113,11 @@ class MockTransport(private val unanswered: Unanswered = Unanswered.Strict) : Tr
         synchronized(replies) { replies.getOrPut(operation) { java.util.ArrayDeque() }.add(reply) }
     }
 
-    fun emit(operation: String, json: String) { failTestThread(); sinks[operation]?.event(json) }
+    fun emit(operation: String, json: String) {
+        failTestThread()
+        val sink = sinks[operation]
+        if (sink != null) sink.event(json) else cable?.event(operation, json)
+    }
 
     fun breakSubscription(operation: String) { failTestThread(); sinks.remove(operation)?.failed(DbException.Network("connection lost")) }
 

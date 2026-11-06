@@ -5,6 +5,14 @@ import Testing
 /// What a call without a queued reply gets: `.strict` fails it with `Invalid`, records it in `unscripted` and records a Swift Testing issue on the test that created the mock, `.networkError` throws the retried network error.
 public enum Unanswered: Sendable { case strict, networkError }
 
+/// The server end of the encrypted session cable. `MockTransport` hands the cable calls of the session to it and pushes model events through it.
+public protocol CablePeer: Transport {
+  /// Called with the request of every subscription the session opens on the cable.
+  var onSubscribe: (@Sendable (TransportRequest) -> Void)? { get set }
+  /// A data event of the open subscription of that operation. False while it is not open.
+  func event(operation: String, result: String) throws -> Bool
+}
+
 /// Answers by operation name, can delay or fail answers, and lets a test push or break a subscription.
 public final class MockTransport: Transport, @unchecked Sendable {
   private struct Reply {
@@ -46,10 +54,27 @@ public final class MockTransport: Transport, @unchecked Sendable {
 
   deinit { reports.finish() }
 
-  public func openCable(lease: CableLease, url: String) async throws { throw DbError.Invalid(detail: "MockTransport does not support WebSocket connections") }
-  public func cableSend(token: String, text: String) async throws { throw DbError.Interrupted(detail: "mock cable socket is closed") }
-  public func cableNext(token: String) async -> EncryptedSocketEvent? { nil }
-  public func cableClose(token: String) async {}
+  private var peer: (any CablePeer)?
+
+  /// The cable of the session: events a test pushes with `emit` for an operation without a plain subscription go through it.
+  public var cable: (any CablePeer)? {
+    get { lock.withLock { peer } }
+    set {
+      newValue?.onSubscribe = { [unowned self] request in lock.withLock { recorded.append(request) } }
+      lock.withLock { peer = newValue }
+    }
+  }
+
+  public func openCable(lease: CableLease, url: String) async throws {
+    guard let peer = cable else { throw DbError.Invalid(detail: "MockTransport has no cable peer") }
+    try await peer.openCable(lease: lease, url: url)
+  }
+  public func cableSend(token: String, text: String) async throws {
+    guard let peer = cable else { throw DbError.Interrupted(detail: "mock cable socket is closed") }
+    try await peer.cableSend(token: token, text: text)
+  }
+  public func cableNext(token: String) async -> EncryptedSocketEvent? { await cable?.cableNext(token: token) }
+  public func cableClose(token: String) async { await cable?.cableClose(token: token) }
 
   public var calls: [TransportRequest] { lock.withLock { recorded } }
   public var unknownTokens: [String] { lock.withLock { unknown } }
@@ -70,7 +95,8 @@ public final class MockTransport: Transport, @unchecked Sendable {
   }
 
   public func emit(_ operation: String, json: String) throws {
-    try lock.withLock { sinks[operation] }?.event(json: json)
+    if let sink = lock.withLock({ sinks[operation] }) { try sink.event(json: json); return }
+    _ = try cable?.event(operation: operation, result: json)
   }
 
   public func breakSubscription(_ operation: String) {

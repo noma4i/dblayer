@@ -86,7 +86,7 @@ class CorpusMock : Transport, EncryptedHttp {
         sinks[id]?.let { it.event(event); return true }
         val token = cables[id] ?: return false
         val result = kotlinx.serialization.json.Json.parseToJsonElement(event) as? JsonObject ?: return false
-        return kotlinx.coroutines.runBlocking { peer.event(token, result) }
+        return peer.event(token, result)
     }
 
     private suspend fun wait(kind: String, request: TransportRequest): String {
