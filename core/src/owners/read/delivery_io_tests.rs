@@ -10,10 +10,10 @@ use super::deliveries::{self as d, Deliveries, DeliveryInput, Kind, PullAnswer, 
 use super::rig::{collector, pump, runtime};
 use super::feed::Feed;
 use super::windows::{WindowKey, Windows};
-use super::{DeliveryIo, SnapshotStatements, Snapshots, SqliteSnapshots};
-use crate::ddl::{create_model_tables, manifest_write, migrate_core, REVISION_SEQ_KEY};
+use super::{DeliveryIo, Snapshots};
+use crate::ddl::{create_model_tables, manifest_read, manifest_write, migrate_core, REVISION_SEQ_KEY};
 use crate::owners::contract::{WindowPhase, WindowState};
-use crate::query::{compile_keys, CompiledStatement, Query};
+use crate::query::{compile_keys, fetch_keys, Query};
 use crate::owners::support::{new_log, Discard, Log, Sink};
 use crate::runtime::{Address, DetScheduler, EpochStamp, Outcome, Outcomes, Waiter};
 use crate::schema::{FieldSpec, ModelSpec};
@@ -26,10 +26,25 @@ fn people() -> ModelSpec { ModelSpec::new("people", vec![FieldSpec::scalar("id",
 
 fn view() -> View { View { kind: Kind::List, model: "people".into(), tables: vec!["row_people".into()], local: false, remote: true, live: false, reload: false, window: WindowKey { model: "people".into(), name: "list".into() }, subject: String::new() } }
 
-struct People;
+struct SqliteSnapshots {
+    path: std::path::PathBuf,
+}
 
-impl SnapshotStatements for People {
-    fn statement(&self, _view: &View) -> Result<CompiledStatement, String> { compile_keys(&Query::new("people"), &people()).map_err(|error| error.to_string()) }
+impl Snapshots for SqliteSnapshots {
+    fn read(&self, _: &View, revision: i64, _: i64, mode: d::ReadMode) -> Result<(i64, d::ReadData), String> {
+        if mode != d::ReadMode::Snapshot { return Err("the rig keeps no journal of changes".into()); }
+        let statement = compile_keys(&Query::new("people"), &people()).map_err(|error| error.to_string())?;
+        let connection = Connection::open_with_flags(&self.path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY).map_err(|error| error.to_string())?;
+        let snapshot = connection.unchecked_transaction().map_err(|error| error.to_string())?;
+        let stored = manifest_read(&connection, REVISION_SEQ_KEY).map_err(|error| error.to_string())?;
+        let seen = stored.map_or(Ok(0), |text| text.parse::<i64>().map_err(|error| error.to_string()))?;
+        if seen < revision {
+            return Err(format!("the snapshot is at revision {seen}, older than {revision}"));
+        }
+        let rows = fetch_keys(&connection, &statement).map_err(|error| error.to_string())?.into_iter().map(|(id, stamp)| d::StreamRow { id, stamp, row: None }).collect();
+        drop(snapshot);
+        Ok((seen, d::ReadData::Rows { rows, replaced: Vec::new(), total: None }))
+    }
 }
 
 /// Commit `revision`: the row and the revision of the manifest in one transaction, like the writer of the Store.
@@ -51,7 +66,7 @@ struct Rig {
     _runtime: tokio::runtime::Runtime,
 }
 
-fn rig() -> Rig { rig_with(|path| Arc::new(SqliteSnapshots::new(path, Arc::new(People)))) }
+fn rig() -> Rig { rig_with(|path| Arc::new(SqliteSnapshots { path })) }
 
 fn rig_with(snapshots: impl FnOnce(std::path::PathBuf) -> Arc<dyn Snapshots>) -> Rig {
     let dir = tempfile::tempdir().unwrap();

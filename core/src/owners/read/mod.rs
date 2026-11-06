@@ -21,7 +21,7 @@ pub use ports::{Admit, Refused, Rest};
 #[cfg(test)]
 pub(crate) use ports::{Flights, InFlight};
 pub use schema_io::{has_media, lifetimes, max_pages, members_complete, DEFAULT_PAGE_SIZE, preload_keys, preload_sources, refreshes_on_foreground, ReadOperation, ReadOperations, SchemaWindowCodec};
-pub use snapshots::{DbSnapshots, SnapshotStatements, Snapshots, SqliteSnapshots};
+pub use snapshots::{DbSnapshots, Snapshots};
 pub use window_io::{WindowCodec, WindowIo, WindowReader};
 
 #[cfg(test)]

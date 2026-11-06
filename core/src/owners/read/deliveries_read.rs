@@ -19,16 +19,17 @@ impl Delivery {
         self.start_read(revision, mode)
     }
 
-    fn whole(&self, data: ReadData) -> Option<ReadData> {
+    fn whole(&self, data: ReadData) -> Option<Whole> {
         match data {
             ReadData::Overflow => None,
+            ReadData::Rows { rows, replaced, total } => Some(Whole::Rows { rows, replaced, total }),
+            ReadData::Count(count) => Some(Whole::Count(count)),
             ReadData::Changes { keys, rows, replaced, total } => {
                 let changed: HashMap<&str, &StreamRow> = rows.iter().map(|row| (row.id.as_str(), row)).collect();
                 let held: HashMap<&str, &StreamRow> = self.rows.iter().map(|row| (row.id.as_str(), row)).collect();
                 let rows = keys.iter().map(|(id, _)| changed.get(id.as_str()).or_else(|| held.get(id.as_str())).map(|row| (*row).clone())).collect::<Option<Vec<_>>>()?;
-                Some(ReadData::Rows { rows, replaced, total })
+                Some(Whole::Rows { rows, replaced, total })
             }
-            other => Some(other),
         }
     }
 
@@ -166,6 +167,10 @@ impl Delivery {
             }
             return;
         };
+        self.settle_read(read_id, revision, data, fx);
+    }
+
+    pub(super) fn settle_read(&mut self, read_id: u64, revision: i64, data: Whole, fx: &mut Vec<Emit>) {
         if self.stage == DeliveryStage::Opening && self.interested && self.view.remote && self.held_state.is_none() {
             self.pending_read = Some((read_id, revision, data));
             return;
@@ -177,16 +182,15 @@ impl Delivery {
             self.window.error = None;
             self.window.phase = WindowPhase::Loaded;
             let unchanged = match &data {
-                ReadData::Rows { rows, total, .. } => *rows == self.rows && *total == self.total,
-                ReadData::Count(count) => self.count == Some(*count),
-                ReadData::Changes { .. } | ReadData::Overflow => false,
+                Whole::Rows { rows, total, .. } => *rows == self.rows && *total == self.total,
+                Whole::Count(count) => self.count == Some(*count),
             };
             if !self.resync_pending && unchanged {
                 self.push(Value::State { revision: self.revision, state: self.window.clone() }, fx);
             }
         }
         match (self.stage, data) {
-            (DeliveryStage::Opening, ReadData::Rows { rows, total, .. }) if self.view.kind != Kind::Count => {
+            (DeliveryStage::Opening, Whole::Rows { rows, total, .. }) if self.view.kind != Kind::Count => {
                 self.total = total;
                 let missing = rows.is_empty() && self.view.kind == (Kind::Entity { fetch: Fetch::IfMissing });
                 let state = self.state_at(revision);
@@ -198,14 +202,14 @@ impl Delivery {
                     fx.push(Emit::Load { force: false });
                 }
             }
-            (DeliveryStage::Opening, ReadData::Count(now)) if self.view.kind == Kind::Count => {
+            (DeliveryStage::Opening, Whole::Count(now)) if self.view.kind == Kind::Count => {
                 let state = self.state_at(revision);
                 self.count = Some(now);
                 self.revision = revision;
                 self.stage = DeliveryStage::Live;
                 self.push(Value::Count { revision, count: now, state }, fx);
             }
-            (DeliveryStage::Live, ReadData::Rows { rows, total, .. }) if self.resync_pending => {
+            (DeliveryStage::Live, Whole::Rows { rows, total, .. }) if self.resync_pending => {
                 self.resync_pending = false;
                 self.total = total;
                 self.rows = rows.clone();
@@ -213,8 +217,8 @@ impl Delivery {
                 let state = self.state_at(revision);
                 self.push(Value::Snapshot { revision, rows, state }, fx);
             }
-            (DeliveryStage::Live, ReadData::Rows { rows, replaced, total }) if self.view.kind != Kind::Count => self.live_rows(revision, rows, replaced, total, fx),
-            (DeliveryStage::Live, ReadData::Count(now)) if self.view.kind == Kind::Count => {
+            (DeliveryStage::Live, Whole::Rows { rows, replaced, total }) if self.view.kind != Kind::Count => self.live_rows(revision, rows, replaced, total, fx),
+            (DeliveryStage::Live, Whole::Count(now)) if self.view.kind == Kind::Count => {
                 if self.count != Some(now) {
                     let state = self.state_at(revision);
                     let shown = self.shown_revision(revision);

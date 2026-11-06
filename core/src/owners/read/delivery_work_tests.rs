@@ -33,6 +33,15 @@ fn view_of(query: &Query) -> View {
     View { kind: Kind::List, tables: vec![table_name(&name)], local: true, remote: false, live: false, reload: false, window: WindowKey { model: name.clone(), name: "list".into() }, subject: serde_json::to_string(query).unwrap(), model: name }
 }
 
+struct PendingRead {
+    stream: StreamId,
+    read_id: u64,
+    revision: i64,
+    after: i64,
+    view: View,
+    mode: d::ReadMode,
+}
+
 struct Work {
     db: Arc<Store>,
     snapshots: DbSnapshots,
@@ -53,13 +62,20 @@ impl Work {
     fn feed(&mut self, input: DeliveryInput) {
         let mut queue = vec![input];
         while let Some(input) = queue.pop() {
-            for effect in Deliveries::step(&mut self.state, input) {
-                if let Effect::Run(DeliveryEffect::Stream { stream, effect: StreamEffect::Read { read_id, revision, after, view, mode } }) = effect {
-                    let (seen, data) = self.snapshots.read(&view, revision, after, mode).unwrap();
-                    queue.push(DeliveryInput::ReadDone { stream, read_id, revision: seen, data });
-                }
-            }
+            queue.extend(self.step(input).into_iter().map(|read| self.answer(read)));
         }
+    }
+
+    fn step(&mut self, input: DeliveryInput) -> Vec<PendingRead> {
+        Deliveries::step(&mut self.state, input).into_iter().filter_map(|effect| match effect {
+            Effect::Run(DeliveryEffect::Stream { stream, effect: StreamEffect::Read { read_id, revision, after, view, mode } }) => Some(PendingRead { stream, read_id, revision, after, view, mode }),
+            _ => None,
+        }).collect()
+    }
+
+    fn answer(&self, read: PendingRead) -> DeliveryInput {
+        let (seen, data) = self.snapshots.read(&read.view, read.revision, read.after, read.mode).unwrap();
+        DeliveryInput::ReadDone { stream: read.stream, read_id: read.read_id, revision: seen, data }
     }
 
     fn put(&self, index: usize, id: &str, text: &str) { put(&self.db, &model(index), json!({"id": id, "text": text})); }
@@ -121,4 +137,30 @@ fn inv_observe_16_a_row_that_cannot_enter_the_list_costs_no_read_and_no_delivery
     work.put(0, "c", "keep");
     work.commit();
     assert_eq!(cost(&work), (before.0 + 1, before.1 + 1), "a row inside the filter is read once and delivered once");
+}
+
+#[test]
+fn dlv_streams_of_one_commit_deliver_independently() {
+    let mut work = Work::new(1);
+    work.put(0, "r0", "old");
+    let marked = Query::new(&model(0)).filtered(crate::query::Where::equal("text", json!("new")));
+    work.feed(DeliveryInput::Open { stream: 1, view: view(0), epoch: EPOCH, identity: true, valid: true, now: 0, revision: 0 });
+    work.feed(DeliveryInput::Open { stream: 2, view: view_of(&marked), epoch: EPOCH, identity: true, valid: true, now: 0, revision: 0 });
+    work.pull(1);
+    work.pull(2);
+    let (all_before, marked_before) = (work.state.journal_len(1), work.state.journal_len(2));
+
+    work.put(0, "r0", "new");
+    let (revision, tables, position) = work.notices.lock().unwrap().pop().expect("the write announced its commit");
+    let reads = work.step(DeliveryInput::Committed(Committed { batch: 0, revision, tables, models: Models::default(), stale_parents: Vec::new(), position }));
+    assert_eq!(reads.iter().map(|read| read.stream).collect::<Vec<_>>(), [1, 2], "one commit asks both streams to read");
+    let mut reads = reads.into_iter();
+    let (all_read, marked_read) = (reads.next().unwrap(), reads.next().unwrap());
+
+    let answered = work.answer(marked_read);
+    work.feed(answered);
+    assert_eq!((work.state.journal_len(2), work.state.journal_len(1)), (marked_before + 1, all_before), "the marked stream shows the change while the list of all rows has not delivered it yet");
+    let answered = work.answer(all_read);
+    work.feed(answered);
+    assert_eq!(work.state.journal_len(1), all_before + 1, "the list of all rows delivers it with its own read");
 }

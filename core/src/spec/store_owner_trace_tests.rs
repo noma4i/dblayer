@@ -28,7 +28,7 @@ fn store_epoch_ended_late() {
 #[test]
 fn store_read_intents() {
     let mut twin = Twin::live();
-    assert_eq!(twin.feed(Request::ReadIntents { epoch: 1 }), vec![Action::ReadIntents(1)]);
+    assert_eq!(twin.feed(Request::ReadIntents { epoch: 1 }), vec![Action::ReadIntents { epoch: 1, direct: false }]);
 }
 
 #[test]

@@ -77,8 +77,8 @@ impl Delivery {
         match self.stage {
             DeliveryStage::Opening => {
                 self.held_state = Some(state);
-                if let Some((read_id, revision, data)) = self.pending_read.take() {
-                    self.read_done(read_id, revision, data, fx);
+                if let Some((read_id, revision, data)) = self.pending_read.take().filter(|(read_id, ..)| *read_id == self.read_id) {
+                    self.settle_read(read_id, revision, data, fx);
                 }
             }
             DeliveryStage::Live if self.view.kind.reads_rows() => {

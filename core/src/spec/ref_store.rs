@@ -68,7 +68,7 @@ pub enum Action {
     Saved(u64),
     SaveFailed { publication_id: u64, closed: bool },
     BroadcastCommitted { revision: u64, all: bool },
-    ReadIntents(u64),
+    ReadIntents { epoch: u64, direct: bool },
     CloseReads,
     CloseConnections,
     StoreClosed,
@@ -359,7 +359,7 @@ impl Store {
                     self.epoch = epoch + 1;
                 }
             }
-            Request::ReadIntents { epoch } => out.push(Action::ReadIntents(epoch)),
+            Request::ReadIntents { epoch } => out.push(Action::ReadIntents { epoch, direct: self.credential.is_none() && self.pending }),
             Request::Close => {
                 if self.busy() {
                     self.deferred.push_back(Request::Close);

@@ -47,7 +47,7 @@ fn action_of(effect: &StoreEffect) -> Option<Action> {
         StoreEffect::Saved { publication_id } => Action::Saved(*publication_id),
         StoreEffect::SaveFailed { publication_id, error } => Action::SaveFailed { publication_id: *publication_id, closed: error == "closed" },
         StoreEffect::BroadcastCommitted { revision, models, .. } => Action::BroadcastCommitted { revision: *revision, all: models.is_none() },
-        StoreEffect::ReadIntents { epoch, .. } => Action::ReadIntents(*epoch),
+        StoreEffect::ReadIntents { epoch, direct } => Action::ReadIntents { epoch: *epoch, direct: *direct },
         StoreEffect::CloseReads => Action::CloseReads,
         StoreEffect::CloseConnections => Action::CloseConnections,
         StoreEffect::StoreClosed => Action::StoreClosed,
@@ -210,11 +210,11 @@ impl Twin {
         let want = self.reference.boot(found.clone());
         let input = match found {
             Boot::New => BootFound::Fresh,
-            Boot::Same => BootFound::Same { saved_epoch: saved.0, saved_generation: saved.1, saved_identity: saved.2, saved_unowned_pending: false, revision: self.reference.saved_revision },
-            Boot::ChangedModels => BootFound::ChangedModels { saved_epoch: saved.0, saved_generation: saved.1, saved_identity: saved.2, saved_unowned_pending: false, revision: self.reference.saved_revision },
-            Boot::LocalModelChanged => BootFound::LocalModelChanged { saved_epoch: saved.0, saved_generation: saved.1, saved_identity: saved.2, saved_unowned_pending: false, revision: self.reference.saved_revision },
+            Boot::Same => BootFound::Same { saved_epoch: saved.0, saved_generation: saved.1, saved_identity: saved.2, saved_unowned_pending: self.reference.pending, revision: self.reference.saved_revision },
+            Boot::ChangedModels => BootFound::ChangedModels { saved_epoch: saved.0, saved_generation: saved.1, saved_identity: saved.2, saved_unowned_pending: self.reference.pending, revision: self.reference.saved_revision },
+            Boot::LocalModelChanged => BootFound::LocalModelChanged { saved_epoch: saved.0, saved_generation: saved.1, saved_identity: saved.2, saved_unowned_pending: self.reference.pending, revision: self.reference.saved_revision },
             Boot::CorruptManifest => BootFound::CorruptManifest(DISK.into()),
-            Boot::FormatChange => BootFound::FormatChange { saved_epoch: saved.0, saved_generation: saved.1, saved_identity: saved.2, saved_unowned_pending: false, revision: self.reference.saved_revision },
+            Boot::FormatChange => BootFound::FormatChange { saved_epoch: saved.0, saved_generation: saved.1, saved_identity: saved.2, saved_unowned_pending: self.reference.pending, revision: self.reference.saved_revision },
             Boot::SqliteError => BootFound::SqliteError(DISK.into()),
         };
         let raw = self.send(StoreInput::Boot(input));

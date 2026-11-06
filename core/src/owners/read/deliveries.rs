@@ -60,6 +60,12 @@ pub enum ReadData {
     Overflow,
 }
 
+#[derive(Clone, Debug, PartialEq)]
+pub(super) enum Whole {
+    Rows { rows: Vec<StreamRow>, replaced: Vec<(String, String)>, total: Option<u64> },
+    Count(u64),
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ReadMode {
     Snapshot,
@@ -279,7 +285,7 @@ struct Delivery {
     /// A read stream of a live model holds a `Want+` of the Feed.
     wants: bool,
     /// The first read of a watched window waits for the first `WindowState`: the first value holds the phase of the window.
-    pending_read: Option<(u64, i64, ReadData)>,
+    pending_read: Option<(u64, i64, Whole)>,
 }
 
 fn visible_after(state: &WindowState) -> i64 { state.loaded.unwrap_or(0) }
