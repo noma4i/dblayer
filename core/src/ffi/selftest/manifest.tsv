@@ -306,3 +306,4 @@ S219	A3-events	kotlin	com.noma4i.dblayer.EventPayloadTest.chatEventPayloadPlatfo
 S316	replaced-pair	core	a_server_id_that_replaces_a_temporary_row_of_a_held_list_arrives_as_a_replaced_pair	unrun	-	coordinator replaced pair
 S316	replaced-pair	swift	BridgeProbeTests.aSnapshotCarriesTheTemporaryIdThatTheServerIdReplaced	unrun	-	coordinator replaced pair
 S316	replaced-pair	kotlin	com.noma4i.dblayer.BridgeProbeTest.aSnapshotCarriesTheTemporaryIdThatTheServerIdReplaced	unrun	-	coordinator replaced pair
+S317	interrupted-answer	core	interrupted_session_answer_without_restored_call_returns_none	green	core-only: no swift or kotlin wrapper of the interrupted session answer yet	coordinator D-72
