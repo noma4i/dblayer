@@ -40,23 +40,10 @@ use super::store::{BootFound, StoreInput, StoreReply, StoreState, StoreWriter};
 use crate::db::Db;
 use crate::runtime::{Address, Epoch, EpochStamp, Handle, Outcomes, PublishedCell, Runtime, RuntimeBuilder, Waiter};
 
-/// The result of a platform call, the payload of `Outcomes`.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum LifeReply {
-    Life(Result<(), LifecycleError>),
-    Online { closed: bool },
-    Call(CallAnswer),
-    Session(SessionAnswer),
-    SessionResume(Result<Option<String>, super::session::SessionError>),
-    Mutated(AuthorOutcome),
-    Outbox(OutboxAnswer),
-    Transfer(TransferAnswer),
-    /// The outcome of a load that a platform call waited for in `Windows`.
-    Window(super::read::windows::WindowOutcome),
-    /// `Deliveries` closed the sink of a stream: the `cancel` of the platform returns.
-    Cancelled,
-    Closed,
-}
+mod reply;
+mod boot;
+pub use reply::LifeReply;
+use boot::boot_found;
 
 const OPEN_WAIT: Duration = Duration::from_secs(365 * 24 * 3600);
 
@@ -81,7 +68,6 @@ pub struct Ports {
     /// The operations of the schema by name, for the requests of the windows.
     pub read_operations: Option<super::read::ReadOperations>,
 }
-
 #[derive(Clone, Copy)]
 pub(crate) struct Addresses {
     pub lifecycle: Address<Lifecycle>,
@@ -598,25 +584,4 @@ impl Life {
         self.wiring.outcomes.settle(waiter.id(), reply);
         waiter
     }
-}
-
-fn boot_found(db: &Db) -> Result<BootFound, LifeError> {
-    let (saved_epoch, saved_generation, saved_identity) = db.shared.store.saved().map_err(|error| match error {
-        crate::store::StoreError::CorruptManifest(detail) => LifeError::CorruptManifest(detail),
-        other => LifeError::Storage(other.to_string()),
-    })?;
-    let revision = db.shared.store.revision_seq().ok().and_then(|revision| u64::try_from(revision).ok()).ok_or_else(|| LifeError::Storage("the stored revision is not a revision".into()))?;
-    let report = db.open_report();
-    let server_model_changed = report.changed_models.iter().any(|model| db.shared.specs.get(model).is_none_or(|spec| !spec.is_local()));
-    Ok(if report.recreated == Some(crate::ddl::RecreateReason::UnreadableFile) {
-        BootFound::Fresh
-    } else if report.recreated.is_some() {
-        BootFound::FormatChange { saved_epoch, saved_generation, saved_identity, revision }
-    } else if server_model_changed {
-        BootFound::ChangedModels { saved_epoch, saved_generation, saved_identity, revision }
-    } else if !report.changed_models.is_empty() {
-        BootFound::LocalModelChanged { saved_epoch, saved_generation, saved_identity, revision }
-    } else {
-        BootFound::Same { saved_epoch, saved_generation, saved_identity, revision }
-    })
 }
