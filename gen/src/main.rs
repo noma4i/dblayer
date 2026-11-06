@@ -44,14 +44,14 @@ fn main() -> ExitCode {
         }
     }
     match compile_files(files, options.schema.as_deref(), &options.operations) {
-        Ok(Declarations { models, operations, inputs, notes, blob_uploads, .. }) => {
+        Ok(Declarations { models, operations, inputs, notes, .. }) => {
             for note in notes {
                 eprintln!("note: {note}");
             }
             let Some(command) = command else { return ExitCode::SUCCESS };
             let output = match command {
-                "swift" => emit_swift_with(&models, &operations, &inputs, options.access) + &dblayer_gen::emit_blob_swift(&blob_uploads),
-                "kotlin" => emit_kotlin(&models, &operations, &inputs) + &dblayer_gen::emit_blob_kotlin(&blob_uploads),
+                "swift" => emit_swift_with(&models, &operations, &inputs, options.access),
+                "kotlin" => emit_kotlin(&models, &operations, &inputs),
                 "explain" => match explain::report(&models) {
                     Ok(report) => report,
                     Err(error) => { eprintln!("explain: {error}"); return ExitCode::from(1); }

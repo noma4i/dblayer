@@ -528,7 +528,7 @@ fn check_operation(node: &ModelDecl, all: &[ModelDecl], operation: &OperationDec
             OptimisticValue::Include { when, .. } | OptimisticValue::AtLeast { when, .. } => *when == parameter.name,
             OptimisticValue::Literal(_) => false,
         }));
-        let implicit = operation.upload.is_some() && operation.variables.is_none() || parameter.ty.base == ParamBase::Blob;
+        let implicit = operation.upload.is_some() && operation.variables.is_none();
         if !(in_variables || in_optimistic || implicit) {
             report(parameter.pos, format!("parameter `{}` is used by neither `variables` nor `optimistic`", parameter.name));
         }

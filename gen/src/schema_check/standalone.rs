@@ -2,7 +2,6 @@ use super::*;
 
 impl Run<'_> {
     pub(super) fn check_standalone(&mut self, node: &CallDecl) {
-        if node.parameters.iter().any(|parameter| parameter.ty.base == ParamBase::Blob) { self.fail(node.file, node.pos, "Blob parameters belong to durable model operations".into()); }
         let Some((kind, name, pos)) = &node.kind else { return };
         let (name, pos) = (name.as_str(), *pos);
         let word = if *kind == CallKind::Query { "query" } else { "mutation" };

@@ -1,57 +1,6 @@
 import Foundation
 import DBlayer
 
-public struct BlobProfile: DBSingleton {
-    public static let modelName = "BlobProfile"
-    public let id: String
-    public let label: String?
-    public let sync: SyncInfo
-    public let uploads: [String: UploadInfo]
-
-    public init(id: String, label: String? = nil, sync: SyncInfo = SyncInfo(), uploads: [String: UploadInfo] = [:]) {
-        self.id = id
-        self.label = label
-        self.sync = sync
-        self.uploads = uploads
-    }
-
-    public static let wireLayout = "cae70f3b4f7f7821a632570ad1a489bc597e5b848b1ccc6df664113173d98031"
-
-    public init(wire row: WireRow) throws {
-        let r = CellReader(row.cells)
-        self.id = row.id
-        self.label = try r.opt(0, \.asText)
-        self.sync = SyncInfo(wire: row.sync)
-        self.uploads = Dictionary(uniqueKeysWithValues: row.uploads.map { ($0.action, UploadInfo(wire: $0.upload)) })
-    }
-
-    public static let label = Column<BlobProfile, String?>("label")
-    public static func `where`(_ condition: Condition) -> Query<Self> { Query<Self>().where(condition) }
-    public static var current: Query<Self> {
-        let built_ = Query<Self>(relation: "current", params: [:])
-        return built_
-    }
-    public static var singleton: Query<Self> { Self.current }
-    @concurrent public static func create(label: String? = nil, in scope_: AccountScope? = nil) async throws -> MutationReceipt<Self> {
-        var values_: [String: JSONValue] = [:]
-        if let value = label { values_["label"] = try JSONValue.encode(value) }
-        return try await Self.create(values: values_, in: scope_)
-    }
-    @concurrent public func update(label: String?? = nil, in scope_: AccountScope? = nil) async throws -> MutationReceipt<Self> {
-        var values_: [String: JSONValue] = [:]
-        if let value = label { values_["label"] = try JSONValue.encode(value) }
-        return try await self.update(values: values_, in: scope_)
-    }
-    @concurrent public func setVideo(video: Blob, in scope_: AccountScope? = nil) async throws -> MutationReceipt<Self> {
-        let values_ = try JSONValue.read(#"{}"#).objectValue
-        return try await self.act("set_video", values: values_, args: ["video": try JSONValue.encode(video)], in: scope_)
-    }
-    @concurrent public static func setVideo(video: Blob, in scope_: AccountScope? = nil) async throws -> MutationReceipt<Self> {
-        guard let current_ = try await Self.singleton.read(in: scope_).first else { throw DecodingError.valueNotFound(Self.self, .init(codingPath: [], debugDescription: "singleton is missing")) }
-        return try await current_.setVideo(video: video, in: scope_)
-    }
-}
-
 public struct Clip: DBModel {
     public static let modelName = "Clip"
     public let id: String
@@ -976,9 +925,4 @@ public enum Operations {
         if let value = upToSequence { variables_["upToSequence"] = try JSONValue.encode(value) }
         return try await DB.run("containerMedia", variables: variables_, as: ContainerMediaLoadResult.self, in: scope_)
     }
-}
-
-
-public extension BlobUpload {
-    static let videoIntro = BlobUpload(name: "video_intro", create: "BlobCreate")
 }

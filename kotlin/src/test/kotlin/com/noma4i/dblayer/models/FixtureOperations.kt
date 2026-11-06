@@ -16,53 +16,6 @@ import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.*
 
 @Immutable
-data class BlobProfile(
-    override val id: String,
-    val label: String? = null,
-    override val sync: SyncInfo = SyncInfo(),
-    override val uploads: Map<String, UploadInfo> = emptyMap()
-) : DBModel {
-    override val modelName get() = "BlobProfile"
-    companion object : ModelDecoder<BlobProfile> {
-        override val layout = "cae70f3b4f7f7821a632570ad1a489bc597e5b848b1ccc6df664113173d98031"
-        override val modelName = "BlobProfile"
-        override fun decode(row: WireRow): BlobProfile {
-            val r = CellReader(row.cells)
-            return BlobProfile(
-                id = row.id,
-                label = r.opt(0, Cell::asText),
-                sync = SyncInfo.of(row.sync),
-                uploads = row.uploads.associate { it.action to UploadInfo.of(it.upload) },
-            )
-        }
-
-        val label = Column<BlobProfile, String?>("label")
-        fun where(condition: Condition) = Query("BlobProfile", this).where(condition)
-        fun ids(ids: List<String>) = idsQuery("BlobProfile", this, ids)
-        val current: Query<BlobProfile> get() {
-            var built_ = Query("BlobProfile", this, relation = "current", params = buildJsonObject {  })
-            return built_
-        }
-        suspend fun setVideo(video: Blob, account: AccountScope? = null) = requireNotNull(BlobProfile.current.read(account).firstOrNull()) { "singleton is missing" }.setVideo(video, account)
-        suspend fun create(label: String? = null, account: AccountScope? = null): MutationReceipt<BlobProfile> = onAccount(account) { database_, epoch_ ->
-            val values_ = buildJsonObject {
-                label?.let { this.put("label", jsonValue(it)) }
-            }
-            MutationReceipt(database_, BlobProfile, database_.create(epoch_, "BlobProfile", values_.jsonText(), "{}"))
-        }
-    }
-    suspend fun update(label: GraphQLNullable<String> = GraphQLNullable.Omitted, account: AccountScope? = null): MutationReceipt<BlobProfile> = onAccount(account) { database_, epoch_ ->
-        val values_ = buildJsonObject {
-            this.put("label", label)
-        }
-        MutationReceipt(database_, BlobProfile, database_.update(epoch_, this.modelName, this.id, values_.jsonText(), "{}"))
-    }
-    suspend fun retry(action: String?, source: UploadRequest? = null, account: AccountScope? = null): MutationReceipt<BlobProfile> = BlobProfile.retry(id, action, source, account)
-    suspend fun destroy(account: AccountScope? = null): MutationReceipt<BlobProfile> = BlobProfile.destroy(id, account)
-    suspend fun setVideo(video: Blob, account: AccountScope? = null): MutationReceipt<BlobProfile> = this.act("set_video", JsonObject(parseJsonObject("""{}""") + mapOf()), JsonObject(mapOf("video" to jsonValue(video))), BlobProfile, account)
-}
-
-@Immutable
 data class Clip(
     override val id: String,
     val title: String? = null,
@@ -586,6 +539,3 @@ object Operations {
         return DBlayer.run("containerMedia", JsonObject(variables_), ContainerMediaLoadResult.serializer(), account)
     }
 }
-
-
-val BlobUpload.Companion.VideoIntro: BlobUpload get() = BlobUpload("video_intro", "BlobCreate")

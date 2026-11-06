@@ -2,7 +2,6 @@ use crate::parser::{Node, Value};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ParamBase {
-    Blob,
     Bool,
     Int,
     Long,
@@ -19,7 +18,7 @@ pub struct ParamType {
     pub null_items: bool,
 }
 
-pub(crate) const PARAM_TYPES: &str = "parameter type must be :bool, :int, :long, :num, :string, :id, :blob, the name of a schema input object or enum like QrCodeInput, [:id], or a list of schema inputs or enums like [WidgetInput]";
+pub(crate) const PARAM_TYPES: &str = "parameter type must be :bool, :int, :long, :num, :string, :id, the name of a schema input object or enum like QrCodeInput, [:id], or a list of schema inputs or enums like [WidgetInput]";
 
 impl ParamType {
     pub fn scalar(base: ParamBase) -> Self {
@@ -55,7 +54,6 @@ impl ParamType {
                     ParamBase::Num => "num".to_string(),
                     ParamBase::String => "string".to_string(),
                     ParamBase::Id => "id".to_string(),
-                    ParamBase::Blob => "blob".to_string(),
                     ParamBase::Named(name) => name.clone(),
                 };
                 if list { format!("[{name}{}]", if self.null_items { "?" } else { "" }) } else { name }
@@ -73,7 +71,6 @@ fn scalar_base(name: &str) -> Option<ParamBase> {
         "num" => ParamBase::Num,
         "string" => ParamBase::String,
         "id" => ParamBase::Id,
-        "blob" => ParamBase::Blob,
         _ => return None,
     })
 }

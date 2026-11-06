@@ -70,7 +70,6 @@ pub struct ScalarNode {
 }
 
 pub struct Parsed {
-    pub blob_uploads: Vec<(usize, Call)>,
     pub models: Vec<ModelNode>,
     pub operations: Vec<OperationNode>,
     pub scalars: Vec<ScalarNode>,
@@ -148,16 +147,14 @@ fn describe(kind: &Kind) -> String {
 
 pub fn parse(tokens: &[Token], file: usize) -> Result<Parsed, ParseError> {
     let mut reader = Reader { tokens, index: 0 };
-    let mut parsed = Parsed { models: Vec::new(), operations: Vec::new(), scalars: Vec::new(), blob_uploads: Vec::new() };
+    let mut parsed = Parsed { models: Vec::new(), operations: Vec::new(), scalars: Vec::new() };
     loop {
         reader.skip_newlines();
         if reader.peek().is_none() {
             return Ok(parsed);
         }
         let call = parse_call(&mut reader)?;
-        if call.word == "blob_upload" {
-            parsed.blob_uploads.push((file, call));
-        } else if call.word == "operation" {
+        if call.word == "operation" {
             parsed.operations.push(operation_from(call, file)?);
         } else if call.word == "scalar" {
             parsed.scalars.push(scalar_from(call, file)?);

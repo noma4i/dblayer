@@ -15,10 +15,6 @@ mod emit;
 mod members;
 mod enums;
 mod scalars;
-mod blob;
-#[cfg(test)]
-mod blob_tests;
-pub use blob::{emit_blob_swift, emit_blob_kotlin};
 mod unions;
 pub use emit::{emit_swift, emit_swift_with, emit_kotlin, Access};
 pub use enums::EnumDecl;
@@ -69,7 +65,6 @@ pub fn parse_models(source: &str) -> Result<Vec<ModelSpec>, Vec<ParseError>> {
 
 #[derive(Debug)]
 pub struct Declarations {
-    pub blob_uploads: Vec<dblayer::upload::BlobUploadDeclaration>,
     pub models: Vec<ModelSpec>,
     pub operations: Vec<OperationCall>,
     pub inputs: SchemaTypes,
@@ -88,7 +83,6 @@ pub fn compile_files(paths: &[impl AsRef<Path>], schema: Option<&Path>, operatio
         found.into_iter().map(|(file, error)| FileError { file: names[file].clone(), error }).collect::<Vec<_>>()
     };
     let parsed = parse_tree(&sources).map_err(locate)?;
-    let blob_uploads = blob::lower(&parsed.blob_uploads).map_err(locate)?;
     let scalars = scalars::build(&parsed.scalars).map_err(locate)?;
     let loaded = schema.map(schema_check::Schema::load).transpose().map_err(|message| vec![FileError {
         file: schema.unwrap().display().to_string(), error: ParseError::new(0, 0, message),
@@ -103,12 +97,7 @@ pub fn compile_files(paths: &[impl AsRef<Path>], schema: Option<&Path>, operatio
         return Err(locate(call_errors));
     }
     let checked = loaded.as_ref().map(|schema| schema_check::check_schema(schema, &scalars, operations, &names, &models, &calls)).transpose()?;
-    if !blob_uploads.is_empty() {
-        let Some(schema) = &loaded else { return Err(vec![FileError { file: names[0].clone(), error: ParseError::new(1, 1, "blob_upload requires --schema and operation documents") }]); };
-        schema_check::check_blob_uploads(schema, operations, &blob_uploads).map_err(|message| vec![FileError { file: names[0].clone(), error: ParseError::new(1, 1, message) }])?;
-    }
     let mut declared = build_declarations(&models, &calls).map_err(locate)?;
-    declared.blob_uploads = blob_uploads;
     if let Some(checked) = &checked {
         for media in declared.models.iter_mut().flat_map(|model| &mut model.relations).filter_map(|scope| scope.media.as_mut()) {
             media.marker_variables.retain(|name, _| checked.variables.get(&media.marker).is_some_and(|variables| variables.contains(name)));
@@ -168,7 +157,6 @@ fn parse_sources(sources: &[&str]) -> Result<Vec<ModelSpec>, Vec<(usize, ParseEr
 
 fn parse_all(sources: &[&str]) -> Result<Declarations, Vec<(usize, ParseError)>> {
     let parsed = parse_tree(sources)?;
-    let blob_uploads = blob::lower(&parsed.blob_uploads)?;
     let scalars = scalars::build(&parsed.scalars)?;
     let models = decl::lower_models(&parsed.models, None)?;
     let mut call_errors = Vec::new();
@@ -177,7 +165,6 @@ fn parse_all(sources: &[&str]) -> Result<Declarations, Vec<(usize, ParseError)>>
         return Err(call_errors);
     }
     let mut declared = build_declarations(&models, &calls)?;
-    declared.blob_uploads = blob_uploads;
     let clashes = name_clash_errors(&declared, &models, &calls);
     if !clashes.is_empty() { return Err(clashes); }
     let clashes = output_clash_errors(&declared, &models);
@@ -190,7 +177,6 @@ fn parse_tree(sources: &[&str]) -> Result<parser::Parsed, Vec<(usize, ParseError
     let mut nodes = Vec::new();
     let mut operation_nodes = Vec::new();
     let mut scalar_nodes = Vec::new();
-    let mut blob_uploads = Vec::new();
     let mut errors = Vec::new();
     for (file, source) in sources.iter().enumerate() {
         match lexer::lex(source).and_then(|tokens| parser::parse(&tokens, file)) {
@@ -198,7 +184,6 @@ fn parse_tree(sources: &[&str]) -> Result<parser::Parsed, Vec<(usize, ParseError
                 nodes.extend(parsed.models);
                 operation_nodes.extend(parsed.operations);
                 scalar_nodes.extend(parsed.scalars);
-                blob_uploads.extend(parsed.blob_uploads);
             }
             Err(error) => errors.push((file, error)),
         }
@@ -206,7 +191,7 @@ fn parse_tree(sources: &[&str]) -> Result<parser::Parsed, Vec<(usize, ParseError
     if !errors.is_empty() {
         return Err(errors);
     }
-    Ok(parser::Parsed { models: nodes, operations: operation_nodes, scalars: scalar_nodes, blob_uploads })
+    Ok(parser::Parsed { models: nodes, operations: operation_nodes, scalars: scalar_nodes })
 }
 
 fn build_declarations(declared_models: &[decl::ModelDecl], calls: &[decl::CallDecl]) -> Result<Declarations, Vec<(usize, ParseError)>> {
@@ -219,7 +204,7 @@ fn build_declarations(declared_models: &[decl::ModelDecl], calls: &[decl::CallDe
             return Err(errors);
         }
     };
-    if errors.is_empty() { Ok(Declarations { models, operations, inputs: SchemaTypes::default(), scalars: Scalars::new(), notes: Vec::new(), blob_uploads: Vec::new() }) } else { Err(errors) }
+    if errors.is_empty() { Ok(Declarations { models, operations, inputs: SchemaTypes::default(), scalars: Scalars::new(), notes: Vec::new() }) } else { Err(errors) }
 }
 
 fn name_clash_errors(declared: &Declarations, declared_models: &[decl::ModelDecl], calls: &[decl::CallDecl]) -> Vec<(usize, ParseError)> {
@@ -230,8 +215,8 @@ fn name_clash_errors(declared: &Declarations, declared_models: &[decl::ModelDecl
 }
 
 fn output_clash_errors(declared: &Declarations, declared_models: &[decl::ModelDecl]) -> Vec<(usize, ParseError)> {
-    let swift = emit_swift(&declared.models, &declared.operations, &declared.inputs) + &emit_blob_swift(&declared.blob_uploads);
-    let kotlin = emit_kotlin(&declared.models, &declared.operations, &declared.inputs) + &emit_blob_kotlin(&declared.blob_uploads);
+    let swift = emit_swift(&declared.models, &declared.operations, &declared.inputs);
+    let kotlin = emit_kotlin(&declared.models, &declared.operations, &declared.inputs);
     let mut errors = Vec::new();
     for (platform, source) in [(members::Platform::Swift, swift), (members::Platform::Kotlin, kotlin)] {
         for again in members::redeclared(&source, platform) {

@@ -397,9 +397,6 @@ fn build_operation(operation: &OperationDecl, owner: &str) -> ActionDeclaration 
     if operation.kind == OperationKind::Custom && action.variables.is_empty() {
         action.variables.insert(format!("{}Id", lower(owner)), "id".into());
     }
-    for parameter in operation.parameters.iter().filter(|parameter| parameter.ty.base == ParamBase::Blob) {
-        if !action.variables.values().any(|source| source == &parameter.name) { action.variables.insert("signedId".into(), parameter.name.clone()); }
-    }
     action
 }
 
