@@ -76,10 +76,10 @@ step_runner_the_wait_for_a_build_slot_is_not_test_time() {
   root="$work/engine"
   mkdir -p "$root/target"
   changed_files() { echo "$CHANGED"; }
-  steps=("final|queued|1|-|echo build-slot > /dev/null; sleep 3" "cheap|plain|1|*|sleep 3")
+  steps=("final|queued|1|-|echo build-slot > /dev/null; sleep 2" "cheap|plain|1|*|sleep 2")
   (run_checks --only final) > "$work/engine.out" 2>&1 \
     || { echo "FAIL expected green: a step with a build slot must get the limit plus the queue allowance"; failed=1; }
-  steps=("cheap|plain|1|*|sleep 3")
+  steps=("cheap|plain|1|*|sleep 2")
   (run_checks) > "$work/engine.out" 2>&1 && { echo "FAIL expected red: a step without a slot must stop at its limit"; failed=1; }
 }
 
@@ -170,7 +170,7 @@ step_runner_the_limit_kills_the_processes_of_every_lane() {
   changed_files() { echo "$CHANGED"; }
   steps=("a|a1|280|-|sleep 603 & echo \$! > $work/pid-lane-a; wait" "b|b1|280|-|sleep 604 & echo \$! > $work/pid-lane-b; wait")
   local code=0 pid
-  (run_bounded 5 selftest run_checks) > "$work/engine.out" 2>&1 || code=$?
+  (run_bounded 3 selftest run_checks) > "$work/engine.out" 2>&1 || code=$?
   [ "$code" -eq 124 ] || { echo "FAIL expected the limit (124), got $code"; failed=1; }
   for pid in "$work"/pid-lane-a "$work"/pid-lane-b; do
     [ -s "$pid" ] && wait_until_gone "$(cat "$pid")" || { echo "FAIL a lane left a process after the limit: $pid"; failed=1; }

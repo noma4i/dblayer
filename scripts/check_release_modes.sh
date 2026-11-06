@@ -19,7 +19,7 @@ release_script = source / "scripts/release.sh"
 version = "1.2.3"
 attachments = ["DBlayerFFI.xcframework.zip", "dblayer.swift", "dblayer-android.zip", "dblayer-gen-macos-universal"]
 real_git = shutil.which("git")
-pool = ThreadPoolExecutor(max_workers=4)
+pool = ThreadPoolExecutor(max_workers=8)
 
 
 def run(command, cwd, env, expected=0, contains=None):

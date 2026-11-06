@@ -211,9 +211,11 @@ run_lane_group() {
     ( run_lane "$lane" ) > "$logdir/lane-$lane.out" 2>&1 &
     pids+=("$!")
   done
+  trap 'for lane in "${group[@]}"; do tee -a "$logdir/summary.txt" < "$logdir/lane-$lane.out"; done; exit 143' TERM
   for index in "${!group[@]}"; do
     wait "${pids[$index]}" || code=1
   done
+  trap - TERM
   for lane in "${group[@]}"; do
     tee -a "$logdir/summary.txt" < "$logdir/lane-$lane.out"
   done
