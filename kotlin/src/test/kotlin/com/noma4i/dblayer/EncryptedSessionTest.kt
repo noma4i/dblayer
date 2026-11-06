@@ -51,7 +51,8 @@ class EncryptedSessionTest {
     @Test
     fun oversizedSessionCallsFailLocallyAndLeaveTheNextCallAvailable() = bounded {
         val http = RecordedHttp(400u)
-        val database = openDatabase(config = Config(null, null, 32u), modelsJson = modelsJSON, transport = MockTransport(), encrypted = EncryptedConfig("https://api.example.com", SERVER_KEY, SERVER_PIN, EncryptedEndpoints("/api/graphql", "/api/cable", "/api/logout", "/api/bootstrap", mapOf("otp" to EncryptedSessionOperation("/api/auth/otp", EncryptedOperationClass.AUTHENTICATED), "confirm" to EncryptedSessionOperation("/api/auth/confirm", EncryptedOperationClass.AUTHENTICATED), "social" to EncryptedSessionOperation("/api/auth/social", EncryptedOperationClass.AUTHENTICATED), "ticket" to EncryptedSessionOperation("/api/ticket", EncryptedOperationClass.SESSIONLESS))), "example-ws-v1", "ws.hello", "EncryptedGraphqlChannel"), credentials = HeldCredential(), http = http)
+        val database = openDatabase(config = Config(null, null, 32u), modelsJson = modelsJSON, transport = MockTransport(), encrypted = EncryptedConfig("https://api.example.com", SERVER_KEY, SERVER_PIN, EncryptedEndpoints("/api/graphql", "/api/cable", "/api/logout", "/api/bootstrap", mapOf("otp" to EncryptedSessionOperation("/api/auth/otp", EncryptedOperationClass.SESSIONLESS), "confirm" to EncryptedSessionOperation("/api/auth/confirm", EncryptedOperationClass.SESSIONLESS), "social" to EncryptedSessionOperation("/api/auth/social", EncryptedOperationClass.SESSIONLESS), "ticket" to EncryptedSessionOperation("/api/ticket", EncryptedOperationClass.SESSIONLESS))), "example-ws-v1", "ws.hello", "EncryptedGraphqlChannel"), credentials = HeldCredential(), http = http)
+        database.setOnline(true)
         try {
             database.sessionCall("otp", """{"phone":"${"x".repeat(260_000)}"}""")
             throw AssertionError("expected a local size refusal")
@@ -101,7 +102,8 @@ class EncryptedSessionTest {
     fun theCoreSendsSealedRequestsThroughTheAppHooksAndKeepsTheCredentialInTheAppStore() = bounded {
         val http = RecordedHttp(400u)
         val credentials = HeldCredential()
-        val database = openDatabase(config = Config(null, null, 32u), modelsJson = modelsJSON, transport = MockTransport(), encrypted = EncryptedConfig("https://api.example.com", SERVER_KEY, SERVER_PIN, EncryptedEndpoints("/api/graphql", "/api/cable", "/api/logout", "/api/bootstrap", mapOf("otp" to EncryptedSessionOperation("/api/auth/otp", EncryptedOperationClass.AUTHENTICATED), "confirm" to EncryptedSessionOperation("/api/auth/confirm", EncryptedOperationClass.AUTHENTICATED), "social" to EncryptedSessionOperation("/api/auth/social", EncryptedOperationClass.AUTHENTICATED), "ticket" to EncryptedSessionOperation("/api/ticket", EncryptedOperationClass.SESSIONLESS))), "example-ws-v1", "ws.hello", "EncryptedGraphqlChannel"), credentials = credentials, http = http)
+        val database = openDatabase(config = Config(null, null, 32u), modelsJson = modelsJSON, transport = MockTransport(), encrypted = EncryptedConfig("https://api.example.com", SERVER_KEY, SERVER_PIN, EncryptedEndpoints("/api/graphql", "/api/cable", "/api/logout", "/api/bootstrap", mapOf("otp" to EncryptedSessionOperation("/api/auth/otp", EncryptedOperationClass.SESSIONLESS), "confirm" to EncryptedSessionOperation("/api/auth/confirm", EncryptedOperationClass.SESSIONLESS), "social" to EncryptedSessionOperation("/api/auth/social", EncryptedOperationClass.SESSIONLESS), "ticket" to EncryptedSessionOperation("/api/ticket", EncryptedOperationClass.SESSIONLESS))), "example-ws-v1", "ws.hello", "EncryptedGraphqlChannel"), credentials = credentials, http = http)
+        database.setOnline(true)
 
         failsWith<DbException.Http> { database.sessionCall("ticket", "{}") }
         assertNull(credentials.current)
