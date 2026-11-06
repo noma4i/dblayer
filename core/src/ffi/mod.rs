@@ -119,6 +119,23 @@ impl From<crate::db::DbError> for DbError {
         match error {
             crate::db::DbError::NoSession { detail } => Self::NoSession { detail },
             crate::db::DbError::Store(crate::store::StoreError::CorruptManifest(detail)) => Self::CorruptManifest { detail },
+            error @ (crate::db::DbError::InvalidUpload(_)
+                | crate::db::DbError::Schema(_)
+                | crate::db::DbError::Identity(_)
+                | crate::db::DbError::Invalid(_)
+                | crate::db::DbError::UnknownModel(_)
+                | crate::db::DbError::UnknownAction { .. }
+                | crate::db::DbError::UnknownAssociation { .. }
+                | crate::db::DbError::UnknownField { .. }
+                | crate::db::DbError::NotFileField { .. }
+                | crate::db::DbError::NotEphemeralField { .. }
+                | crate::db::DbError::InvalidEphemeralValue { .. }
+                | crate::db::DbError::NotLocalField { .. }
+                | crate::db::DbError::LocalValue { .. }
+                | crate::db::DbError::Selection(_)
+                | crate::db::DbError::Store(crate::store::StoreError::UnknownModel(_))) => Self::Invalid { detail: error.to_string() },
+            crate::db::DbError::Query(crate::query::QueryError::Sqlite(detail)) => Self::Database { detail },
+            error @ crate::db::DbError::Query(_) => Self::Invalid { detail: error.to_string() },
             other => Self::Database { detail: other.to_string() },
         }
     }
