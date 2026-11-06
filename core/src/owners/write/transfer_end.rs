@@ -32,6 +32,10 @@ impl TransferState {
         let Some(id) = self.open_id(key) else { return Self::refuse(fx, rep, Fault::NotFound) };
         let Some(transfer) = self.transfers.get_mut(&id) else { return };
         let (stage, batched) = (transfer.stage, transfer.batch_id.is_some());
+        if self.group_entry(id).is_some_and(|group| self.phase_of(group) == Some(BatchPhase::Mutating)) {
+            return Self::refuse(fx, rep, Fault::InFlight);
+        }
+        let Some(transfer) = self.transfers.get_mut(&id) else { return };
         match stage {
             TransferStage::Copying if !batched => {
                 run(fx, TransferEffect::CopyCancel { transfer_id: id });
@@ -41,7 +45,7 @@ impl TransferState {
                 self.begin_cancel(id, Some((rep, cancel)), Some(TransferStage::Ready), fx);
                 self.start_in_order(fx);
             }
-            TransferStage::Uploading | TransferStage::Completing if !(cancel && batched) => {
+            TransferStage::Uploading | TransferStage::Completing => {
                 transfer.next_step = if stage == TransferStage::Completing { NextStep::Complete } else { NextStep::Part(transfer.confirmed_parts + 1) };
                 if std::mem::replace(&mut transfer.in_flight, false) {
                     run(fx, TransferEffect::CancelStep { transfer_id: id });
@@ -54,6 +58,7 @@ impl TransferState {
                 self.send_abort(id, fx);
                 self.begin_cancel(id, Some((rep, cancel)), Some(TransferStage::Failed), fx);
             }
+            TransferStage::BatchReady => self.begin_cancel(id, Some((rep, cancel)), Some(TransferStage::BatchReady), fx),
             TransferStage::Mutating if cancel => reply(fx, rep, if batched { TransferAnswer::Err(Fault::InFlight) } else { TransferAnswer::Cancelled(false) }),
             TransferStage::Mutating => {
                 transfer.discard_waiters.push(rep);
@@ -68,9 +73,13 @@ impl TransferState {
 
     pub(super) fn retry(&mut self, key: &str, source: Option<Source>, rep: ReplyId, fx: &mut Fx) {
         let Some(id) = self.open_id(key) else { return Self::refuse(fx, rep, Fault::NotFound) };
+        let mutation_failed = self.transfers.get(&id).is_some_and(|transfer| transfer.stage == TransferStage::Failed && transfer.signed_id.is_some() && transfer.error.as_deref() != Some("missing_file") && transfer.error.as_deref() != Some("RestoreFailed"));
+        if mutation_failed && self.batch_retry_mutation(id, rep, fx) {
+            return;
+        }
         let Some(transfer) = self.transfers.get_mut(&id) else { return };
         match transfer.stage {
-            TransferStage::Ready | TransferStage::Uploading | TransferStage::Completing | TransferStage::Mutating => {
+            TransferStage::Ready | TransferStage::Uploading | TransferStage::Completing | TransferStage::BatchReady | TransferStage::Mutating => {
                 let receipt = self.receipt(id);
                 reply(fx, rep, TransferAnswer::Receipt(receipt));
             }
@@ -137,6 +146,7 @@ impl TransferState {
         self.settle(id, OutboxOutcome::Failed { error: error.clone() }, fx);
         self.show(id, Shown::Failed { error }, fx);
         self.rounds_idle(id, fx);
+        self.batch_after_removal(id, fx);
     }
 
     pub(super) fn failure_rejected(&mut self, id: TransferId, fx: &mut Fx) { self.schedule_retry(id, fx); }
@@ -188,6 +198,7 @@ impl TransferState {
                 self.delete_copy(id, fx);
             }
             self.finish(id, fx);
+            self.batch_after_removal(id, fx);
         }
         self.start_in_order(fx);
     }
@@ -210,6 +221,9 @@ impl TransferState {
                     }
                     if prior == TransferStage::Ready {
                         self.show(id, Shown::Queued, fx);
+                    }
+                    if prior == TransferStage::BatchReady {
+                        self.show(id, Shown::Uploading { progress: 100 }, fx);
                     }
                 }
                 (None, Some(Removal::Confirmed { .. } | Removal::Discarded)) => self.begin_failure(id, "storage".into(), false, fx),

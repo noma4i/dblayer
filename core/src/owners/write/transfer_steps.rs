@@ -92,14 +92,19 @@ impl TransferState {
     }
 
     /// A permanent error or the last attempt: the failure is written, `abort` goes out when a multipart upload exists.
-    pub(super) fn begin_failure(&mut self, id: TransferId, error: String, abort: bool, fx: &mut Fx) {
-        let attempt_id = self.attempt();
+    pub(super) fn mark_failure(&mut self, id: TransferId, error: String) {
         let Some(transfer) = self.transfers.get_mut(&id) else { return };
         transfer.stage = TransferStage::PersistingFailure;
         transfer.removal = None;
         transfer.in_flight = false;
         transfer.waiting_retry = false;
         transfer.error = Some(error);
+    }
+
+    pub(super) fn begin_failure(&mut self, id: TransferId, error: String, abort: bool, fx: &mut Fx) {
+        let attempt_id = self.attempt();
+        self.mark_failure(id, error);
+        let Some(transfer) = self.transfers.get_mut(&id) else { return };
         transfer.failure_abort = abort;
         if let (true, Some(upload_id)) = (abort, transfer.upload_id.clone()) {
             transfer.aborted = true;
@@ -183,6 +188,10 @@ impl TransferState {
     }
 
     pub(super) fn complete_committed(&mut self, id: TransferId, fx: &mut Fx) {
+        if let Some(group) = self.group_entry(id) {
+            self.batch_ready(id, group, fx);
+            return self.start_in_order(fx);
+        }
         self.set(id, TransferStage::Mutating);
         self.show(id, Shown::Uploading { progress: 100 }, fx);
         self.submit_mutation(id, fx);
@@ -212,8 +221,12 @@ impl TransferState {
     fn mutating(&self, key: &str) -> Option<TransferId> { self.open_id(key).filter(|id| self.stage_of(*id) == Some(TransferStage::Mutating)) }
 
     pub(super) fn mutation_outcome(&mut self, key: &str, outcome: OutboxOutcome, fx: &mut Fx) {
+        if let Some(group) = key.strip_prefix("batch:").and_then(|group| group.parse().ok()) {
+            return self.batch_outcome(group, outcome, fx);
+        }
         let Some(id) = self.mutating(key) else { return };
         let waiting = self.transfers.get(&id).is_some_and(|transfer| !transfer.discard_waiters.is_empty());
+        let next_single = (!matches!(outcome, OutboxOutcome::Interrupted) && !(waiting && matches!(outcome, OutboxOutcome::Failed { .. }))).then(|| self.group_entry(id)).flatten().filter(|group| self.phase_of(*group) == Some(BatchPhase::Singles));
         match outcome {
             OutboxOutcome::Confirmed { revision, .. } => {
                 if let Some(transfer) = self.transfers.get_mut(&id) {
@@ -231,6 +244,9 @@ impl TransferState {
                 self.interrupt(id, fx);
                 self.rounds_idle(id, fx);
             }
+        }
+        if let Some(group) = next_single {
+            self.single_next(group, fx);
         }
     }
 

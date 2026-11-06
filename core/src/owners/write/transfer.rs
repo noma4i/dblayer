@@ -20,7 +20,7 @@ impl TransferState {
             TransferStage::Accepting | TransferStage::Copying | TransferStage::CopyReady => Shown::Copying,
             TransferStage::Failed => Shown::Failed { error: transfer.error.clone().unwrap_or_default() },
             TransferStage::Done => Shown::Gone,
-            TransferStage::Completing | TransferStage::PersistingComplete | TransferStage::Mutating => Shown::Uploading { progress: 100 },
+            TransferStage::Completing | TransferStage::PersistingComplete | TransferStage::BatchReady | TransferStage::Mutating => Shown::Uploading { progress: 100 },
             TransferStage::Uploading | TransferStage::PersistingPart => Shown::Uploading { progress },
             _ => Shown::Queued,
         }
@@ -46,6 +46,8 @@ impl TransferState {
 
     /// The same batch again with the generations the Store named (`Rejected(StaleGeneration)`).
     fn store_basis(&mut self, ids: &[TransferId], kind: StoreKind, basis: BTreeMap<String, u64>, fx: &mut Fx) {
+        let leaving: Vec<TransferId> = if kind == StoreKind::Removed { ids.iter().copied().filter(|id| matches!(self.transfers.get(id).and_then(|transfer| transfer.removal.as_ref()), Some(Removal::Cancel))).collect() } else { Vec::new() };
+        let numbers: Vec<StoreOp> = leaving.into_iter().flat_map(|id| self.renumber_after(id)).collect();
         let ops: Vec<StoreOp> = ids
             .iter()
             .filter_map(|id| self.transfers.get(id))
@@ -54,8 +56,12 @@ impl TransferState {
                 let mut ops = Vec::new();
                 if kind == StoreKind::Removed {
                     ops.push(StoreOp::RemoveUpload { key: transfer.key.clone() });
-                    if let Some(op_id) = own.filter(|_| !matches!(transfer.removal, Some(Removal::Confirmed { .. }))) {
-                        ops.extend([StoreOp::RollBack { op_id }, StoreOp::RemoveIntent { op_id }]);
+                    if let Some(op_id) = own {
+                        match transfer.removal {
+                            Some(Removal::Confirmed { .. }) if transfer.batch_id.is_some() => ops.push(StoreOp::RemoveIntent { op_id }),
+                            Some(Removal::Confirmed { .. }) => {}
+                            _ => ops.extend([StoreOp::RollBack { op_id }, StoreOp::RemoveIntent { op_id }]),
+                        }
                     }
                 } else {
                     let cached_copy = kind == StoreKind::SyncUpload && transfer.stage == TransferStage::PersistingCopy && transfer.from_cache;
@@ -73,6 +79,7 @@ impl TransferState {
                 }
                 ops
             })
+            .chain(numbers)
             .collect();
         let id = self.next_batch;
         self.next_batch += 1;
@@ -185,8 +192,13 @@ impl TransferState {
             Some(TransferStage::PersistingCopy) => self.copy_committed(&pending.ids, fx),
             Some(TransferStage::PersistingPart) => self.part_committed(pending.ids[0], fx),
             Some(TransferStage::PersistingComplete) => self.complete_committed(pending.ids[0], fx),
+            Some(TransferStage::PersistingRetry) if self.transfers.get(&pending.ids[0]).is_some_and(|transfer| transfer.next_step == NextStep::Mutation) => self.retry_mutation_committed(&pending.ids, fx),
             Some(TransferStage::PersistingRetry) => self.retry_committed(pending.ids[0], fx),
-            Some(TransferStage::PersistingFailure) => self.failure_committed(pending.ids[0], fx),
+            Some(TransferStage::PersistingFailure) => {
+                for &id in &pending.ids {
+                    self.failure_committed(id, fx);
+                }
+            }
             Some(TransferStage::Removing) => self.removing_committed(&pending.ids, fx),
             _ => {}
         }
@@ -243,8 +255,8 @@ impl TransferState {
             return reply(fx, *id, TransferAnswer::Err(Fault::Rejected(RejectReason::Storage(error.clone()))));
         }
         match input {
-            TransferInput::Accept { epoch, item, reply, now } => self.accept(epoch, vec![*item], false, reply, now, fx),
-            TransferInput::AcceptBatch { epoch, items, reply, now } => self.accept(epoch, items, true, reply, now, fx),
+            TransferInput::Accept { epoch, item, reply, now } => self.accept(epoch, vec![*item], None, reply, now, fx),
+            TransferInput::AcceptBatch { epoch, items, joint, reply, now } => self.accept(epoch, items, Some(joint), reply, now, fx),
             TransferInput::Restored { .. } | TransferInput::RestoreFailed { .. } => {}
             TransferInput::RegisterOperations { declarations } => self.register(declarations, fx),
             TransferInput::RestoreReady { epoch } => self.restore_ready(epoch, fx),

@@ -14,7 +14,7 @@ impl TransferState {
         let (transfer_id, seq) = (self.next_id, self.next_seq);
         self.next_id += 1;
         self.next_seq += 1;
-        let BatchItem { key, urgent, source, mutation, steps } = item;
+        let BatchItem { key, fields, urgent, source, mutation, steps } = item;
         let transfer = Transfer {
             transfer_id,
             key,
@@ -42,6 +42,7 @@ impl TransferState {
             size: 0,
             sha256: String::new(),
             mutation,
+            fields,
             steps,
             restored: false,
             urgent,
@@ -70,56 +71,72 @@ impl TransferState {
     fn valid(item: &BatchItem) -> bool { !item.source.path.is_empty() && item.source.parts > 0 }
 
     /// `Accept` and `AcceptBatch`: every element is checked before the transaction, the rows of all N elements go in one batch.
-    pub(super) fn accept(&mut self, epoch: Epoch, mut items: Vec<BatchItem>, batch: bool, rep: ReplyId, now: Time, fx: &mut Fx) {
+    pub(super) fn accept(&mut self, epoch: Epoch, items: Vec<BatchItem>, joint: Option<Joint>, rep: ReplyId, now: Time, fx: &mut Fx) {
         if epoch != self.epoch || self.closing || self.ended {
             return reply(fx, rep, TransferAnswer::Err(if self.closing { Fault::Interrupted } else { Fault::NoSession }));
         }
-        if items.is_empty() || !items.iter().all(Self::valid) {
+        if items.is_empty() || !items.iter().all(Self::valid) || joint.as_ref().is_some_and(|joint| items.len() < joint.minimum || items.len() > joint.maximum) {
             return reply(fx, rep, TransferAnswer::Err(Fault::Invalid));
         }
         self.now = self.now.max(now);
-        let group = batch.then(|| {
+        let group = joint.as_ref().map(|_| {
             self.next_group += 1;
             self.next_group - 1
         });
         if items.iter().any(|item| self.open_id(&item.key).is_some()) {
             return reply(fx, rep, TransferAnswer::Err(Fault::InFlight));
         }
-        if !batch && !items[0].mutation.effects.is_empty() {
-            let item = items.remove(0);
-            let id = self.create(item, None, now, TransferStage::Reserving);
-            if let Some(transfer) = self.transfers.get_mut(&id) {
-                transfer.accept_reply = Some(rep);
+        let reserving = items.iter().any(|item| !item.mutation.effects.is_empty());
+        let ids: Vec<TransferId> = items.into_iter().map(|item| {
+            let stage = if reserving && !item.mutation.effects.is_empty() { TransferStage::Reserving } else { TransferStage::Accepting };
+            self.create(item, group, now, stage)
+        }).collect();
+        match (group, joint) {
+            (Some(group), Some(joint)) => {
+                self.groups.insert(group, Group { ids: ids.clone(), reply: Some(rep), ready: BTreeSet::new(), joint, phase: BatchPhase::Collecting, op_row: None });
             }
-            fx.push(Effect::Send(Outbound::new(self.peers.outbox, OutboxInput::ReserveOp { epoch: self.epoch, transfer_id: id })));
-            return;
-        }
-        let ids: Vec<TransferId> = items.into_iter().map(|item| self.create(item, group, now, TransferStage::Accepting)).collect();
-        match group {
-            Some(group) => {
-                self.groups.insert(group, Group { ids: ids.clone(), reply: Some(rep), ready: BTreeSet::new() });
-            }
-            None => {
+            _ => {
                 if let Some(transfer) = self.transfers.get_mut(&ids[0]) {
                     transfer.accept_reply = Some(rep);
                 }
             }
         }
-        self.store(&ids, StoreKind::SyncUpload, fx);
+        for &id in &ids {
+            if self.stage_of(id) == Some(TransferStage::Reserving) {
+                fx.push(Effect::Send(Outbound::new(self.peers.outbox, OutboxInput::ReserveOp { epoch: self.epoch, transfer_id: id })));
+            }
+        }
+        if !reserving {
+            self.store(&ids, StoreKind::SyncUpload, fx);
+        }
     }
 
-    /// `Reserving x OpReserved`: the batch of the acceptance writes the optimistic effects under the reserved `op_id`. An answer of a transfer that is not `Reserving` is foreign.
+    /// `Reserving x OpReserved`: the batch of the acceptance writes the optimistic effects under the reserved `op_id`s. An answer of a transfer that is not `Reserving` is foreign.
     pub(super) fn op_reserved(&mut self, id: TransferId, result: Result<u64, Fault>, fx: &mut Fx) {
-        let Some(transfer) = self.transfers.get_mut(&id).filter(|transfer| transfer.stage == TransferStage::Reserving) else { return };
+        if self.stage_of(id) != Some(TransferStage::Reserving) {
+            return;
+        }
+        let ids = match self.group_of(id) {
+            Some(group) => self.groups.get(&group).map(|group| group.ids.clone()).unwrap_or_default(),
+            None => vec![id],
+        };
         match result {
             Ok(op_id) => {
-                transfer.op_id = Some(op_id);
-                transfer.stage = TransferStage::Accepting;
-                self.store(&[id], StoreKind::SyncUpload, fx);
+                if let Some(transfer) = self.transfers.get_mut(&id) {
+                    transfer.op_id = Some(op_id);
+                    transfer.stage = TransferStage::Accepting;
+                }
+                if ids.iter().all(|member| self.stage_of(*member) != Some(TransferStage::Reserving)) {
+                    self.store(&ids, StoreKind::SyncUpload, fx);
+                }
             }
             Err(fault) => {
-                transfer.stage = TransferStage::Done;
-                if let Some(rep) = transfer.accept_reply.take() {
+                let group = self.transfers.get(&id).and_then(|transfer| transfer.batch_id).and_then(|group| self.groups.get_mut(&group).and_then(|group| group.reply.take()));
+                let own = self.transfers.get_mut(&id).and_then(|transfer| transfer.accept_reply.take());
+                for member in ids {
+                    self.set(member, TransferStage::Done);
+                }
+                if let Some(rep) = own.or(group) {
                     reply(fx, rep, TransferAnswer::Err(fault));
                 }
             }

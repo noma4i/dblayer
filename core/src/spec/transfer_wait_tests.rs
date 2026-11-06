@@ -32,7 +32,7 @@ fn xfer_wait_accept() {
 #[test]
 fn xfer_wait_accept_batch() {
     let batch = |twin: &mut Twin| {
-        twin.post(TransferInput::AcceptBatch { epoch: EPOCH, items: vec![item(KEY, 2), item(OTHER, 2)], reply: 5, now: Time(0) });
+        twin.post(TransferInput::AcceptBatch { joint: joint(), epoch: EPOCH, items: vec![item(KEY, 2), item(OTHER, 2)], reply: 5, now: Time(0) });
     };
     let mut ok = Twin::offline();
     batch(&mut ok);

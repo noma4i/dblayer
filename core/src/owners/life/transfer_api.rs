@@ -5,7 +5,7 @@ use std::sync::atomic::Ordering;
 use super::{Life, LifeReply};
 use crate::owners::write::outbox::{Fault, Receipt};
 use crate::owners::write::rounds::RoundsInput;
-use crate::owners::write::transfer::{BatchItem, Source, TransferAnswer, TransferInput};
+use crate::owners::write::transfer::{BatchItem, Joint, Source, TransferAnswer, TransferInput};
 use crate::runtime::{Epoch, EpochStamp, Time, Waiter};
 
 impl Life {
@@ -19,7 +19,7 @@ impl Life {
 
     pub fn accept_upload(&self, epoch: Epoch, item: BatchItem, now: Time) -> Waiter<LifeReply> { self.transfer_call(epoch, |reply| TransferInput::Accept { epoch, item: Box::new(item), reply, now }) }
 
-    pub fn accept_upload_batch(&self, epoch: Epoch, items: Vec<BatchItem>, now: Time) -> Waiter<LifeReply> { self.transfer_call(epoch, |reply| TransferInput::AcceptBatch { epoch, items, reply, now }) }
+    pub fn accept_upload_batch(&self, epoch: Epoch, items: Vec<BatchItem>, joint: Joint, now: Time) -> Waiter<LifeReply> { self.transfer_call(epoch, |reply| TransferInput::AcceptBatch { epoch, items, joint, reply, now }) }
 
     pub fn cancel_upload(&self, epoch: Epoch, key: String) -> Waiter<LifeReply> { self.transfer_call(epoch, |reply| TransferInput::Cancel { key, reply }) }
 

@@ -10,7 +10,7 @@ use crate::runtime::Time;
 const KEY: &str = "Moment:r1:upload";
 const OTHER: &str = "Moment:r2:upload";
 
-fn batch_input(keys: &[&str], reply: u64) -> TransferInput { TransferInput::AcceptBatch { epoch: EPOCH, items: keys.iter().map(|key| item(key, 2)).collect(), reply, now: Time(0) } }
+fn batch_input(keys: &[&str], reply: u64) -> TransferInput { TransferInput::AcceptBatch { joint: joint(), epoch: EPOCH, items: keys.iter().map(|key| item(key, 2)).collect(), reply, now: Time(0) } }
 
 fn accepting_batch(twin: &mut Twin, keys: &[&str]) -> (Vec<TransferId>, u64, Out) {
     let reply = twin.reply();
@@ -87,10 +87,10 @@ fn xfer_accept_batch_invalid() {
     let mut twin = Twin::new();
     let mut broken = item(OTHER, 2);
     broken.source.parts = 0;
-    let out = twin.post(TransferInput::AcceptBatch { epoch: EPOCH, items: vec![item(KEY, 2), broken], reply: 9, now: Time(0) });
+    let out = twin.post(TransferInput::AcceptBatch { joint: joint(), epoch: EPOCH, items: vec![item(KEY, 2), broken], reply: 9, now: Time(0) });
     assert_eq!(Twin::fault(&out, 9), Some(Fault::Invalid));
     assert_eq!((out.writes(), twin.state().open_id(KEY), twin.state().open_id(OTHER)), (0, None, None), "no element is accepted");
-    let out = twin.post(TransferInput::AcceptBatch { epoch: EPOCH + 1, items: vec![item(KEY, 2)], reply: 10, now: Time(0) });
+    let out = twin.post(TransferInput::AcceptBatch { joint: joint(), epoch: EPOCH + 1, items: vec![item(KEY, 2)], reply: 10, now: Time(0) });
     assert_eq!(Twin::fault(&out, 10), Some(Fault::NoSession));
 }
 

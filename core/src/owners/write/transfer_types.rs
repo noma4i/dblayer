@@ -95,9 +95,42 @@ pub enum TransferTick {
     Expire,
 }
 
+/// The position and the size of the batch a row of an element carries: `renumber` rewrites them when an element leaves.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Renumber {
+    /// The paths in the row of the element.
+    pub position: String,
+    pub size: String,
+    /// The keys in the fields of the element.
+    pub position_target: String,
+    pub size_target: String,
+    pub start: usize,
+}
+
+/// What the owner needs to send the elements of a batch as one mutation: the call with at least `minimum` elements goes in one request, fewer go one by one.
+#[derive(Clone, Debug)]
+pub struct Joint {
+    pub minimum: usize,
+    pub maximum: usize,
+    /// The variable of the mutation that holds the list of the element fields.
+    pub items_key: String,
+    /// The request of the mutation of the batch: the body holds the variables of the batch without the list.
+    pub mutation: NewOp,
+    pub renumber: Option<Renumber>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BatchPhase {
+    Collecting,
+    Mutating,
+    Singles,
+}
+
 #[derive(Clone, Debug)]
 pub struct BatchItem {
     pub key: Key,
+    /// The fields of the element in the list of the mutation of the batch: `SIGNED_ID_SENTINEL` stands for the signed id.
+    pub fields: serde_json::Map<String, serde_json::Value>,
     /// The action asks to go on in power saving.
     pub urgent: bool,
     pub source: Source,
@@ -108,7 +141,7 @@ pub struct BatchItem {
 #[derive(Clone, Debug)]
 pub enum TransferInput {
     Accept { epoch: Epoch, item: Box<BatchItem>, reply: ReplyId, now: Time },
-    AcceptBatch { epoch: Epoch, items: Vec<BatchItem>, reply: ReplyId, now: Time },
+    AcceptBatch { epoch: Epoch, items: Vec<BatchItem>, joint: Joint, reply: ReplyId, now: Time },
     Restored { uploads: Vec<StoredTransfer>, outcomes: BTreeMap<TransferId, OutboxOutcome> },
     RestoreFailed { error: String },
     RegisterOperations { declarations: Vec<(String, String)> },
@@ -214,6 +247,7 @@ pub enum TransferStage {
     PersistingPart,
     Completing,
     PersistingComplete,
+    BatchReady,
     Mutating,
     Failed,
     Done,
@@ -232,6 +266,8 @@ pub enum Removal {
 pub enum NextStep {
     Part(u32),
     Complete,
+    /// Every part is on the server and the mutation is what failed.
+    Mutation,
 }
 
 #[derive(Clone, Debug)]
@@ -263,6 +299,7 @@ pub struct Transfer {
     pub size: u64,
     pub sha256: String,
     pub mutation: NewOp,
+    pub fields: serde_json::Map<String, serde_json::Value>,
     pub steps: Steps,
     pub restored: bool,
     pub urgent: bool,
@@ -296,6 +333,10 @@ pub struct Group {
     pub ids: Vec<TransferId>,
     pub reply: Option<ReplyId>,
     pub ready: BTreeSet<TransferId>,
+    pub joint: Joint,
+    pub phase: BatchPhase,
+    /// The row the mutation of the batch was submitted for: `Retry` names the operation by it.
+    pub op_row: Option<(String, String)>,
 }
 
 #[derive(Clone, Debug)]

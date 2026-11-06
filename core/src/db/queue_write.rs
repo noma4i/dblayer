@@ -27,6 +27,21 @@ fn values(text: &str) -> Result<Map<String, Value>, DbError> {
     }
 }
 
+fn write_number(row: &mut Map<String, Value>, keys: &[&str], number: i64) {
+    let Some((key, rest)) = keys.split_first() else { return };
+    if rest.is_empty() {
+        row.insert((*key).to_string(), Value::from(number));
+        return;
+    }
+    let value = row.entry((*key).to_string()).or_insert_with(|| Value::Object(Map::new()));
+    if !value.is_object() {
+        *value = Value::Object(Map::new());
+    }
+    if let Value::Object(object) = value {
+        write_number(object, rest, number);
+    }
+}
+
 fn upserts(model: &str, rows: &[RowValue]) -> Result<Vec<EntityOp>, DbError> {
     rows.iter().map(|row| Ok(EntityOp::Upsert { model: ModelKey::new(model), id: row_id(&row.row_id)?, row: values(&row.values)? })).collect()
 }
@@ -87,6 +102,16 @@ impl Db {
                 StoreOp::Upload { row, kind } => {
                     self.write_upload_row(row, *kind)?;
                     envelope.entity_ops.push(self.upload_touch(&row.key)?);
+                }
+                StoreOp::Numbers { model, row_id: id, writes } => {
+                    let row = row_id(id)?;
+                    if let Some(record) = self.find(model, &row)? {
+                        let mut data = record.data.clone();
+                        for (path, number) in writes {
+                            write_number(&mut data, &path.split('.').collect::<Vec<_>>(), *number);
+                        }
+                        envelope.entity_ops.push(EntityOp::Upsert { model: ModelKey::new(model), id: row, row: data });
+                    }
                 }
                 StoreOp::RemoveUpload { key } => {
                     self.remove_upload_row(key)?;

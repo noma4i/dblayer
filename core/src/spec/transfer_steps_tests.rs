@@ -236,15 +236,6 @@ fn xfer_uploading_cancel() {
 }
 
 #[test]
-fn xfer_uploading_cancel_batch() {
-    let mut twin = Twin::new();
-    let ids = twin.accepted_batch(&[KEY, OTHER], 2);
-    assert_eq!(twin.stage(ids[0]), TransferStage::Uploading);
-    let (reply, out) = twin.cancel(KEY);
-    assert_eq!((Twin::fault(&out, reply), twin.stage(ids[0])), (Some(Fault::InFlight), TransferStage::Uploading));
-}
-
-#[test]
 fn xfer_uploading_discard() {
     let mut twin = Twin::new();
     let ids = twin.accepted_batch(&[KEY, OTHER], 2);
@@ -427,17 +418,6 @@ fn xfer_completing_cancel() {
     let (reply, out) = twin.cancel(KEY);
     assert_eq!((twin.stage(id), out.cancel_steps(), out.aborts(), out.removed()), (TransferStage::Removing, 1, 1, vec![KEY.to_string()]));
     assert_eq!(twin.commit().replies(reply), vec![TransferAnswer::Cancelled(true)]);
-}
-
-#[test]
-fn xfer_completing_cancel_batch() {
-    let mut twin = Twin::with_slots(2);
-    let ids = twin.accepted_batch(&[KEY, OTHER], 1);
-    twin.step_ok(ids[0], 1, None);
-    twin.commit();
-    assert_eq!(twin.stage(ids[0]), TransferStage::Completing);
-    let (reply, out) = twin.cancel(KEY);
-    assert_eq!(Twin::fault(&out, reply), Some(Fault::InFlight));
 }
 
 #[test]

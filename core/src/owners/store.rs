@@ -151,6 +151,8 @@ pub enum StoreOp {
     RemoveRows { model: String, ids: Vec<String> },
     Upload { row: UploadRow, kind: UploadKind },
     RemoveUpload { key: String },
+    /// Integer fields of a row set to numbers (the position and the size of an element of a batch): `writes` are paths with their values.
+    Numbers { model: String, row_id: String, writes: Vec<(String, i64)> },
     /// The server blob of a file with this content: a later upload of the same bytes skips the steps while the blob lives.
     BlobCachePut { content_sha256: String, blob_id: String, created_at: u64 },
     BlobCacheRemove { content_sha256: String },

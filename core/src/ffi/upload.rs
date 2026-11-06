@@ -12,7 +12,7 @@ use crate::db::{Planned, Record};
 use crate::owners::life::LifeReply;
 use crate::owners::store::IntentEffects;
 use crate::owners::write::outbox::{Fault, NewOp, Origin, OutboxOutcome, Receipt};
-use crate::owners::write::transfer::{BatchItem, Source, TransferAnswer, SIGNED_ID_SENTINEL};
+use crate::owners::write::transfer::{BatchItem, Joint, Renumber, Source, TransferAnswer, SIGNED_ID_SENTINEL};
 use crate::owners::write::upload_codec::StepsBody;
 use crate::schema::ActionDeclaration;
 use crate::transport::GraphQLRequest;
@@ -61,11 +61,11 @@ impl Database {
         Ok(NewOp { model: plan.model.to_string(), row_id: plan.row.to_string(), action: plan.action.to_string(), on_failure: plan.declaration.on_failure, origin: Origin::Api, path: client.graphql_path().to_string(), body, effects: plan.effects.clone(), durable: true })
     }
 
-    fn upload_item(&self, plan: &Plan<'_>, mutation: &str) -> Result<BatchItem, DbError> {
+    fn upload_item(&self, plan: &Plan<'_>, mutation: &str, fields: Map<String, Value>) -> Result<BatchItem, DbError> {
         let (source, multipart) = self.source_of(&plan.file.path)?;
         let name = file_name(plan.file);
         let steps = StepsBody { multipart, mime: plan.file.mime.clone().unwrap_or_else(|| mime_of(&name).to_string()), name, signed_variable: "signedId".into() }.steps();
-        Ok(BatchItem { key: key_of(plan.model, plan.row, plan.action), urgent: false, source, mutation: self.upload_mutation(plan, mutation)?, steps })
+        Ok(BatchItem { key: key_of(plan.model, plan.row, plan.action), fields, urgent: false, source, mutation: self.upload_mutation(plan, mutation)?, steps })
     }
 
     fn single_upload(&self, model: &str, row: &str, action: &str, file: &UploadFile, effects: IntentEffects) -> Result<BatchItem, DbError> {
@@ -74,7 +74,7 @@ impl Database {
         let mutation = declaration.mutation.clone().ok_or_else(|| invalid(format!("{model} {action} declares no mutation")))?;
         let mut variables = file.variables.clone();
         variables.insert("signedId".into(), Value::String(SIGNED_ID_SENTINEL.into()));
-        self.upload_item(&Plan { model, row, action, declaration, variables, file, effects }, &mutation)
+        self.upload_item(&Plan { model, row, action, declaration, variables, file, effects }, &mutation, Map::new())
     }
 
     /// One item of a batch: the row of the item is planned like a `create`, its final mutation carries the item alone.
@@ -86,6 +86,7 @@ impl Database {
         let data = planned.input.as_object().cloned().unwrap_or_default();
         for (target, source) in &batch.input { fields.insert(target.clone(), data.get(source).cloned().unwrap_or(Value::Null)); }
         fields.insert("signedId".into(), Value::String(SIGNED_ID_SENTINEL.into()));
+        let shown = fields.clone();
         let single = spec.actions.iter().find(|declared| declared.name == batch.single && declared.mutation.is_some()).filter(|_| batch.min > 1);
         let (declaration, mutation, variables) = match single {
             Some(single) => {
@@ -100,7 +101,26 @@ impl Database {
             }
         };
         let file = UploadFile { path: item.path.clone(), name: item.name.clone(), mime: item.mime.clone(), variables: Map::new() };
-        self.upload_item(&Plan { model, row: planned.row_id.as_str(), action, declaration, variables, file: &file, effects: planned.effects.clone() }, &mutation)
+        self.upload_item(&Plan { model, row: planned.row_id.as_str(), action, declaration, variables, file: &file, effects: planned.effects.clone() }, &mutation, shown)
+    }
+
+    /// How the elements of a batch go out together: at least `min` of them in one request of the batch action, fewer one by one.
+    fn joint_of(&self, model: &str, request: &crate::upload::UploadBatchInput) -> Result<Joint, DbError> {
+        let spec = self.db.spec(model)?;
+        let declaration = spec.actions.iter().find(|declared| declared.name == request.operation).ok_or_else(|| invalid("unknown upload operation"))?;
+        let batch = declaration.batch.as_ref().ok_or_else(|| DbError::Sync { detail: "operation has no upload batch declaration".into() })?;
+        let mutation = declaration.mutation.clone().ok_or_else(|| invalid("upload mutation is missing"))?;
+        let plan = Plan { model, row: "", action: &request.operation, declaration, variables: request.variables.clone(), file: &UploadFile::new(""), effects: IntentEffects::default() };
+        let template = self.upload_mutation(&plan, &mutation)?;
+        let items_key = match &declaration.wrap {
+            Some(wrap) => format!("{wrap}.{}", batch.items),
+            None => batch.items.clone(),
+        };
+        let renumber = batch.renumber.as_ref().map(|fields| {
+            let target = |path: &str| batch.input.iter().find(|(_, source)| source.as_str() == path).map(|(target, _)| target.clone()).unwrap_or_else(|| path.to_string());
+            Renumber { position: fields.position.clone(), size: fields.size.clone(), position_target: target(&fields.position), size_target: target(&fields.size), start: fields.position_from }
+        });
+        Ok(Joint { minimum: batch.min, maximum: batch.max, items_key, mutation: template, renumber })
     }
 
     async fn transfer_answer(&self, waiter: crate::runtime::Waiter<LifeReply>, what: &str) -> Result<TransferAnswer, DbError> {
@@ -134,8 +154,12 @@ impl Database {
         let file = self.offload(move || request.into_file()).await?;
         let row = self.resolved(epoch, &model, id(&row_id)?).await?;
         let (db, name, verb, target, args) = (self.db.clone(), model.clone(), action.clone(), row.clone(), file.variables.clone());
-        let planned = self.offload(move || Ok(db.plan_act(&name, &verb, &target, Map::new(), args)?)).await?;
-        let item = self.single_upload(&model, row.as_str(), &action, &file, planned.effects)?;
+        let effects = self.offload(move || match db.plan_act(&name, &verb, &target, Map::new(), args) {
+            Ok(planned) => Ok(planned.effects),
+            Err(crate::db::DbError::NotFound { .. }) => Ok(IntentEffects::default()),
+            Err(error) => Err(error.into()),
+        }).await?;
+        let item = self.single_upload(&model, row.as_str(), &action, &file, effects)?;
         let waiter = self.life.accept_upload(epoch, item, self.now());
         let TransferAnswer::Receipt(held) = self.transfer_answer(waiter, "upload").await? else { return Err(DbError::Database { detail: "the owner answered an upload with no receipt".into() }) };
         let value = self.optimistic(&model, &row)?;
@@ -162,7 +186,8 @@ impl Database {
             Ok((item, planned, built))
         }).collect::<Result<Vec<_>, DbError>>()?;
         let built: Vec<BatchItem> = planned.iter().map(|(_, _, built)| built.clone()).collect();
-        let waiter = self.life.accept_upload_batch(epoch, built, self.now());
+        let joint = self.joint_of(&model, &request)?;
+        let waiter = self.life.accept_upload_batch(epoch, built, joint, self.now());
         let TransferAnswer::Receipts(held) = self.transfer_answer(waiter, "upload batch").await? else { return Err(DbError::Database { detail: "the owner answered a batch with no receipts".into() }) };
         let wire = self.wire(&model)?.clone();
         let items = planned.into_iter().zip(held).map(|((item, planned, _), held)| {

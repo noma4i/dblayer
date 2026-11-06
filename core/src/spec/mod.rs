@@ -40,6 +40,7 @@ mod outbox_local_tests;
 mod outbox_wait_tests;
 mod transfer_harness;
 mod transfer_accept_tests;
+mod transfer_batch_tests;
 mod transfer_reserve_tests;
 mod transfer_matrix_tests;
 mod transfer_cache_tests;

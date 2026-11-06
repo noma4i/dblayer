@@ -9,7 +9,7 @@ use crate::owners::store::{StoreBatch, StoreInput, StoreOp, StoreWriter, UploadK
 use crate::owners::support::{new_log, take, Discard, Emitted, Log, NoEffect, Silent, Spy, SpyState};
 use crate::owners::write::outbox::{Fault, NewOp, Outbox, OutboxInput, OutboxOutcome, Origin, Receipt};
 use crate::owners::write::rounds::{Rounds, RoundsInput};
-use crate::owners::write::transfer::{BatchItem, NextStep, Shown, Source, Steps, StoredTransfer, Transfer, TransferAnswer, TransferEffect as Run, TransferId, TransferInput, TransferPeers, TransferStage, TransferState, TransferTick, Transfers};
+use crate::owners::write::transfer::{BatchItem, Joint, NextStep, Shown, Source, Steps, StoredTransfer, Transfer, TransferAnswer, TransferEffect as Run, TransferId, TransferInput, TransferPeers, TransferStage, TransferState, TransferTick, Transfers};
 use crate::runtime::{Address, Cause, DetScheduler, Effects, Epoch, EpochStamp, StateOwner, Time};
 use crate::schema::OnFailure;
 
@@ -86,6 +86,15 @@ impl Out {
 
     pub fn statuses(&self) -> Vec<(u64, Shown)> { self.runs.iter().filter_map(|run| if let Run::Status { stream_id, shown, .. } = run { Some((*stream_id, shown.clone())) } else { None }).collect() }
 
+    /// The final mutations handed to Outbox: of a batch, of a single element, reserved or not.
+    pub fn submit_ops(&self) -> Vec<&NewOp> { self.outbox.iter().filter_map(|input| match input { OutboxInput::Submit { op, .. } | OutboxInput::SubmitReserved { op, .. } => Some(op), _ => None }).collect() }
+
+    pub fn outbox_retries(&self) -> usize { self.outbox.iter().filter(|input| matches!(input, OutboxInput::Retry { .. })).count() }
+
+    pub fn numbers(&self) -> Vec<(String, Vec<(String, i64)>)> { self.batches.iter().flat_map(|batch| batch.ops.iter()).filter_map(|op| if let StoreOp::Numbers { row_id, writes, .. } = op { Some((row_id.clone(), writes.clone())) } else { None }).collect() }
+
+    pub fn rolled_back(&self) -> Vec<u64> { self.batches.iter().flat_map(|batch| batch.ops.iter()).filter_map(|op| if let StoreOp::RollBack { op_id } = op { Some(*op_id) } else { None }).collect() }
+
     pub fn submits(&self) -> usize { self.outbox.iter().filter(|input| matches!(input, OutboxInput::Submit { .. })).count() }
 
     pub fn outbox_discards(&self) -> usize { self.outbox.iter().filter(|input| matches!(input, OutboxInput::Discard { .. })).count() }
@@ -111,7 +120,10 @@ pub(super) fn mutation(key: &str) -> NewOp {
     NewOp { model: model.into(), row_id: row.into(), action: action.into(), on_failure: OnFailure::Keep, origin: Origin::Api, path: "/moments".into(), body: String::new(), effects: Default::default(), durable: true }
 }
 
-pub(super) fn item(key: &str, parts: u32) -> BatchItem { BatchItem { key: key.into(), urgent: false, source: Source { path: format!("/src/{key}"), parts }, mutation: mutation(key), steps: Steps { path: "/upload".into(), body: String::new() } } }
+pub(super) fn item(key: &str, parts: u32) -> BatchItem { BatchItem { key: key.into(), fields: Default::default(), urgent: false, source: Source { path: format!("/src/{key}"), parts }, mutation: mutation(key), steps: Steps { path: "/upload".into(), body: String::new() } } }
+
+/// The batch of the tests: two to ten elements go in one mutation.
+pub(super) fn joint() -> Joint { Joint { minimum: 2, maximum: 10, items_key: "items".into(), mutation: mutation("Batch:r:upload"), renumber: None } }
 
 pub(super) fn stored(id: TransferId, key: &str, parts: u32) -> StoredTransfer {
     StoredTransfer {
@@ -411,9 +423,13 @@ impl Twin {
     }
 
     /// The elements of a batch of `parts` parts each, copied and written. The first one starts, the others are `Ready`.
-    pub fn accepted_batch(&mut self, keys: &[&str], parts: u32) -> Vec<TransferId> {
+    pub fn accepted_batch(&mut self, keys: &[&str], parts: u32) -> Vec<TransferId> { self.accepted_items(keys.iter().map(|key| item(key, parts)).collect(), joint()) }
+
+    /// The same for ready made elements and the rules of the batch.
+    pub fn accepted_items(&mut self, items: Vec<BatchItem>, joint: Joint) -> Vec<TransferId> {
         let reply = self.reply();
-        self.post(TransferInput::AcceptBatch { epoch: EPOCH, items: keys.iter().map(|key| item(key, parts)).collect(), reply, now: Time(0) });
+        let keys: Vec<String> = items.iter().map(|item| item.key.clone()).collect();
+        self.post(TransferInput::AcceptBatch { joint, epoch: EPOCH, items, reply, now: Time(0) });
         let ids: Vec<TransferId> = keys.iter().map(|key| self.state().open_id(key).expect("an element")).collect();
         self.commit();
         for id in &ids {
@@ -423,14 +439,16 @@ impl Twin {
         ids
     }
 
-    /// `Mutating` of the first element of a batch: the owner has at least two slots.
+    /// `Mutating` of every element of a batch: all files are on the server and the mutation of the batch is on its way. The owner has a slot for each element.
     pub fn batch_mutating(&mut self, keys: &[&str]) -> Vec<TransferId> {
         let ids = self.accepted_batch(keys, 1);
-        self.step_ok(ids[0], 1, None);
-        self.commit();
-        self.completed(ids[0]);
-        self.commit();
-        assert_eq!(self.stage(ids[0]), TransferStage::Mutating);
+        for id in &ids {
+            self.step_ok(*id, 1, None);
+            self.commit();
+            self.completed(*id);
+            self.commit();
+        }
+        assert!(ids.iter().all(|id| self.stage(*id) == TransferStage::Mutating));
         ids
     }
 
