@@ -5,7 +5,7 @@ use uuid::Uuid;
 
 use crate::store::files::FileRecord;
 use crate::identity::{Generation, ModelKey, RowId, RowRef, ListKey};
-use crate::operation::OperationStatus;
+use crate::owners::write::operation_status::OperationStatus;
 use crate::value::sync::OperationFailure;
 use crate::upload::UploadState;
 use crate::value::duplicates;
@@ -352,7 +352,7 @@ pub struct CommitResult {
     pub scopes: BTreeSet<ScopeRef>,
     pub members: BTreeSet<RowRef>,
     pub operations: BTreeSet<i64>,
-    pub(crate) queue_operations: BTreeMap<i64, Option<crate::operation::QueueOperation>>,
+    pub(crate) queue_operations: BTreeMap<i64, Option<crate::store::operation::QueueOperation>>,
     pub replaced: Vec<(RowRef, RowId)>,
     pub unknown_operation_acks: u32,
     pub(crate) snapshot: Option<crate::store::Row>,

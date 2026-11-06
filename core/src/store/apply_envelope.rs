@@ -90,7 +90,7 @@ pub(super) fn apply_envelope_at(
             }
         }
     }
-    let is_batch = |key: &str| crate::operation::Operation::upload_action(key).is_some_and(|(model, action)| models.get(model.as_str()).is_some_and(|info| info.spec.upload_action(&action).is_some_and(|declared| declared.batch.is_some())));
+    let is_batch = |key: &str| crate::owners::write::operation_status::Operation::upload_action(key).is_some_and(|(model, action)| models.get(model.as_str()).is_some_and(|info| info.spec.upload_action(&action).is_some_and(|declared| declared.batch.is_some())));
     for (model, id) in recompute_sync_with(connection, &synced_keys, &is_batch)? {
         let touched = changes.changes.iter().any(|change| change.row.model.as_str() == model && change.row.id.as_str() == id);
         if !touched {
@@ -196,7 +196,7 @@ pub(super) fn apply_envelope_at(
             if let Some(seq) = seq { progress_only.remove(&seq); }
         }
         for seq in result.operations.iter().filter(|seq| !progress_only.contains(seq)) {
-            result.queue_operations.insert(*seq, crate::operation::read_queue_operation(connection, *seq)?);
+            result.queue_operations.insert(*seq, crate::store::operation::read_queue_operation(connection, *seq)?);
         }
     } else {
         result.scopes.clear();

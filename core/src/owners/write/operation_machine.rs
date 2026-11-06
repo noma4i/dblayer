@@ -1,6 +1,6 @@
 use statig::prelude::*;
 
-use crate::operation::OperationStatus;
+use crate::owners::write::operation_status::OperationStatus;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct OperationFacts {

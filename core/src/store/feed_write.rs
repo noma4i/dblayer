@@ -72,7 +72,7 @@ fn landing(writer: &mut RowWrite<'_>, model: &str, payload: &Value, overlay: &mu
         super::follow_cascade::descendants(writer.models, &reader, &owner, &mut HashSet::from([owner.clone()]), &mut children)?;
         envelope.entity_ops = crate::write::cascade_destroys(&owner, &children, true).into_iter().map(|row| EntityOp::Destroy { model: row.model, id: row.id, reason: DestroyReason::Server }).collect();
         let keys: BTreeSet<(String, String)> = envelope.entity_ops.iter().map(|op| (op.row_ref().model.to_string(), op.row_ref().id.to_string())).collect();
-        for seq in crate::operation::row_operation_sequences(writer.connection, &keys)? {
+        for seq in crate::store::operation::row_operation_sequences(writer.connection, &keys)? {
             envelope.operation_transitions.push(crate::store::OperationTransition::Remove { seq, expected: None });
         }
     } else if op == "upsert" {

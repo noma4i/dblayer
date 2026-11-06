@@ -3,7 +3,7 @@ use super::*;
 use crate::store::{
     DestroyReason, EntityOp, PlanFault, OperationRecord, OperationTransition, RowChangeKind, ScopeOp, ScopeRef,
 };
-use crate::operation::OperationStatus;
+use crate::owners::write::operation_status::OperationStatus;
 use crate::value::sync::{FailureKind, OperationFailure};
 use serde_json::json;
 use std::collections::HashSet;

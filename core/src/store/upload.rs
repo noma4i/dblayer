@@ -1,11 +1,11 @@
 use rusqlite::{params, Connection};
 
-use crate::operation::{read_value, write_value};
+use crate::store::operation::{read_value, write_value};
 
 use super::StoreError;
 
 pub(super) fn remove_item(connection: &Connection, seq: i64, position: i64) -> Result<(), StoreError> {
-    crate::operation::record_transfer_aborts(connection, seq, Some(position))?;
+    crate::store::operation::record_transfer_aborts(connection, seq, Some(position))?;
     connection.execute(include_str!("sql/upload/remove_item.sql"), params![seq, position])?;
     erase_item(connection, seq, position)
 }

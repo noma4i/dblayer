@@ -91,7 +91,7 @@ impl Prior {
         let keys: BTreeSet<_> = Self::of(entry)?.into_iter().flat_map(|prior| prior.rows).map(|row| match row {
             PriorRow::Created { model, id } | PriorRow::Edited { model, id, .. } | PriorRow::Destroyed { model, id, .. } | PriorRow::Join { model, id, .. } | PriorRow::Leave { model, id, .. } => (model, id),
         }).collect();
-        let mut sequences = crate::operation::row_operation_sequences(reader.connection(), &keys)?;
+        let mut sequences = crate::store::operation::row_operation_sequences(reader.connection(), &keys)?;
         let mut statement = reader.connection().prepare_cached(include_str!("../sql/plan/related_operations.sql"))?;
         for (model, id) in keys {
             sequences.extend(statement.query_map(params![model, id], |row| row.get::<_, i64>(0))?.collect::<Result<Vec<_>, _>>()?);

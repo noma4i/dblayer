@@ -16,7 +16,7 @@ pub(crate) struct Admission {
 }
 
 pub(crate) fn unconfirmed_fields(reader: &Reader<'_>, closing: Option<i64>, model: &str, id: &str) -> Result<HashSet<String>, StoreError> {
-    let sql = format!(include_str!("sql/merge/unconfirmed_fields.sql"), crate::operation::OPEN_STATUSES);
+    let sql = format!(include_str!("sql/merge/unconfirmed_fields.sql"), crate::store::operation::OPEN_STATUSES);
     let mut statement = reader.connection().prepare_cached(&sql)?;
     let sequences = statement.query_map(params![model, id], |row| row.get::<_, i64>(0))?.collect::<Result<Vec<_>, _>>()?;
     let mut fields = HashSet::new();

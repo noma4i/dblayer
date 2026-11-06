@@ -7,7 +7,8 @@ use crate::store::ddl::{fingerprint, fts_tables, manifest_stamp, manifest_write,
 use crate::store::files::{clear_all, clear_model};
 use crate::identity::ListKey;
 use crate::store::nodes::read_trees;
-use crate::operation::{delete_operation, quarantine_add, read_value, Operation, QuarantineReason};
+use crate::store::operation::{delete_operation, quarantine_add, read_value, QuarantineReason};
+use crate::owners::write::operation_status::Operation;
 use crate::schema::MergeRule;
 use crate::store::sync_state::clear_sync;
 

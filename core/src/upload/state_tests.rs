@@ -1,4 +1,4 @@
-use crate::operation::OperationStatus;
+use crate::owners::write::operation_status::OperationStatus;
 use crate::value::sync::{FailureKind, OperationFailure};
 
 use super::*;

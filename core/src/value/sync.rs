@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use crate::operation::OperationStatus;
+use crate::owners::write::operation_status::OperationStatus;
 use crate::transport::SessionCode;
 use crate::upload::{UploadInfo, UploadState, UploadStatus, WaitReason};
 

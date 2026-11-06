@@ -8,7 +8,8 @@ use crate::store::{BatchPlan, CommitResult, EntityOp};
 use crate::store::ddl::{table_name, ManifestVerdict, RecreateReason};
 use crate::store::files::FileDirectories;
 use crate::identity::{ModelKey, RowRef};
-use crate::operation::{apply_fsck, fsck_plan, open_operations, rebuilt_rows, FsckAction, Orphan, Orphans, OutboxQueue};
+use crate::store::operation::{apply_fsck, fsck_plan, open_operations, rebuilt_rows, FsckAction, Orphan, Orphans};
+use crate::owners::write::operation_outbox::OutboxQueue;
 use crate::schema::{reserved_member_names, resolve_types, validate_models, AssociationKind, AssociationSpec, ModelSpec};
 use crate::store::sync_state::rebuild_sync_with;
 
@@ -196,14 +197,14 @@ fn recover_operations(store: &Store, models: &[ModelSpec], restore_rows: bool) -
             let mut statement = inner.connection.prepare(&format!(include_str!("sql/context/recover_operations.sql"), crate::identity::TEMP_ID_PREFIX, table = table))?;
             let ids = statement.query_map([], |row| row.get::<_, String>(0))?;
             for id in ids {
-                temp_rows.insert(RowRef::new(spec.key.clone(), crate::operation::stored_row_id(&id?)?));
+                temp_rows.insert(RowRef::new(spec.key.clone(), crate::store::operation::stored_row_id(&id?)?));
             }
             open_row_ids.extend(queue.open_row_ids(&spec.key).into_iter().map(|id| RowRef::new(spec.key.clone(), id)));
         }
         let reader = Reader::new(&inner.connection, &inner.models);
         for operation in &operations {
             for (model, id) in super::plan::Prior::created_rows(&reader, operation.id.0)? {
-                open_row_ids.insert(RowRef::new(ModelKey::new(&model), crate::operation::stored_row_id(&id)?));
+                open_row_ids.insert(RowRef::new(ModelKey::new(&model), crate::store::operation::stored_row_id(&id)?));
             }
         }
         let plan = fsck_plan(&operations, &temp_rows, &temp_rows, &open_row_ids);
@@ -218,7 +219,7 @@ fn recover_operations(store: &Store, models: &[ModelSpec], restore_rows: bool) -
             }
         }
         apply_fsck(&inner.connection, &plan, &orphans)?;
-        rebuild_sync_with(&inner.connection, &|key| crate::operation::Operation::upload_action(key).is_some_and(|(model, action)| inner.models.get(model.as_str()).is_some_and(|info| info.spec.upload_action(&action).is_some_and(|declared| declared.batch.is_some()))))?;
+        rebuild_sync_with(&inner.connection, &|key| crate::owners::write::operation_status::Operation::upload_action(key).is_some_and(|(model, action)| inner.models.get(model.as_str()).is_some_and(|info| info.spec.upload_action(&action).is_some_and(|declared| declared.batch.is_some()))))?;
         if restore_rows { rebuilt_rows(&inner.connection, &plan, &operations, &known)? } else { Vec::new() }
     };
     if rebuilt.is_empty() {

@@ -5,7 +5,7 @@ use rusqlite::Connection;
 use super::*;
 use crate::store::ddl::migrate_core;
 use crate::value::sync::{FailureKind, OperationFailure};
-use crate::operation::{delete_operation, failure_cells, write_rows};
+use crate::store::operation::{delete_operation, failure_cells, write_rows};
 use crate::upload::{UploadStage, UploadState, UploadStatus};
 
 fn database() -> Connection {
@@ -34,7 +34,7 @@ fn insert_action_upload(connection: &Connection, action: &str, status: &str, sta
 }
 
 fn set_upload(connection: &Connection, seq: i64, state: &UploadState) {
-    crate::operation::write_upload(connection, seq, 0, state).unwrap();
+    crate::store::operation::write_upload(connection, seq, 0, state).unwrap();
 }
 
 fn state(phase: UploadStatus, sent: u64) -> UploadState {

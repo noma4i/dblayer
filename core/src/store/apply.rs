@@ -6,10 +6,11 @@ use serde_json::{Map, Value};
 use crate::store::{
     BatchPlan, CommitResult, DestroyReason, EntityOp, OperationRecord, OperationTransition, EdgeValue, EdgeWrite, RowChange, RowChangeKind, ScopeOp, ScopeRef, WindowSave,
 };
-use crate::operation::OperationStatus;
+use crate::owners::write::operation_status::OperationStatus;
 use crate::store::ddl::{manifest_write, REVISION_SEQ_KEY};
 use crate::identity::{Generation, ModelKey, RowRef};
-use crate::operation::{delete_operation, OperationEvent, failure_cells, write_operation_error, read_rows, stored_row_id, write_rows, write_value};
+use crate::store::operation::{delete_operation, failure_cells, write_operation_error, read_rows, stored_row_id, write_rows, write_value};
+use crate::owners::write::operation_machine::OperationEvent;
 use crate::store::sync_state::{operation_keys, recompute_sync_with, SyncKey};
 use crate::value::sync::OperationFailure;
 

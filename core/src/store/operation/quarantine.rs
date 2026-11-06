@@ -26,7 +26,7 @@ impl QuarantineReason {
 }
 
 pub fn quarantine_add(connection: &Connection, model: Option<&str>, payload: &Value, reason: QuarantineReason) -> rusqlite::Result<i64> {
-    connection.execute(include_str!("../store/sql/operation/quarantine_add.sql"), params![model, reason.as_str()])?;
+    connection.execute(include_str!("../sql/operation/quarantine_add.sql"), params![model, reason.as_str()])?;
     let seq = connection.last_insert_rowid();
     write_tree(connection, "quarantine_value", &["seq"], &[SqlValue::Integer(seq)], payload)?;
     Ok(seq)
@@ -35,7 +35,7 @@ pub fn quarantine_add(connection: &Connection, model: Option<&str>, payload: &Va
 #[cfg(test)]
 pub fn quarantine_counts(connection: &Connection) -> rusqlite::Result<HashMap<String, usize>> {
     connection
-        .prepare(include_str!("../store/sql/operation/quarantine_counts.sql"))?
+        .prepare(include_str!("../sql/operation/quarantine_counts.sql"))?
         .query_map([], |row| Ok((row.get(0)?, row.get::<_, i64>(1)? as usize)))?
         .collect()
 }

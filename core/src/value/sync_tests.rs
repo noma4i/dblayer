@@ -1,5 +1,5 @@
 use super::sync::*;
-use crate::operation::OperationStatus;
+use crate::owners::write::operation_status::OperationStatus;
 
 fn entry(action: &str, status: OperationStatus, started: bool, since: i64) -> SyncEntry {
     SyncEntry { action: action.to_string(), status, transport_started: started, attempts: 0, error: None, since, fields: Vec::new(), upload: None, batch: false }

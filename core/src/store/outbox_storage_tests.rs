@@ -1,7 +1,7 @@
 use super::fixtures::*;
 use super::*;
 use crate::store::{OperationRecord, OperationTransition};
-use crate::operation::OperationStatus;
+use crate::owners::write::operation_status::OperationStatus;
 use crate::value::sync::{FailureKind, OperationFailure};
 use crate::upload::{UploadPart, UploadScenario, UploadStage, UploadState, UploadStatus};
 use serde_json::json;
@@ -116,7 +116,7 @@ fn graphql_extensions_survive_reopen_in_every_error_owner_and_leave_with_it() {
         store.boot(&[messages_spec(), items_spec()], None).unwrap();
         store.mark_ready();
         store.read(&[], |reader| {
-            let stored = crate::operation::open_operations(reader.connection())?;
+            let stored = crate::store::operation::open_operations(reader.connection())?;
             assert_eq!(stored.len(), 2);
             assert!(stored.iter().all(|operation| operation.error.as_ref() == Some(&failure)), "op");
             assert_eq!(stored.iter().find(|operation| operation.id.0 == upload_seq).unwrap().upload.as_ref().unwrap().error.as_ref(), Some(&item), "op_item");

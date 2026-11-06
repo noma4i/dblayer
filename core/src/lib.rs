@@ -6,7 +6,6 @@ pub mod pacing;
 pub mod transport;
 pub mod value;
 pub mod schema;
-pub mod operation;
 pub mod write;
 pub mod store;
 pub mod query;

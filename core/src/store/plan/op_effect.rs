@@ -56,7 +56,7 @@ pub(crate) fn remove_operation_effects(connection: &Connection, sequence: i64) -
 }
 
 pub(crate) fn open_scope_effects(connection: &Connection, model: &str, scope_key: &str) -> Result<Vec<(String, bool)>, StoreError> {
-    let sql = format!(include_str!("../sql/plan/open_scope_effects.sql"), crate::operation::OPEN_STATUSES);
+    let sql = format!(include_str!("../sql/plan/open_scope_effects.sql"), crate::store::operation::OPEN_STATUSES);
     let mut statement = connection.prepare_cached(&sql)?;
     let rows = statement.query_map(params![model, scope_key], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)? == "join")))?;
     Ok(rows.collect::<Result<Vec<_>, _>>()?)
@@ -97,14 +97,14 @@ pub(crate) fn write_prior(connection: &Connection, sequence: i64, revision: i64,
 pub(crate) fn rebuild_open_effects(connection: &Connection, models: &std::collections::BTreeMap<String, crate::store::ModelInfo>) -> Result<(), StoreError> {
     let reader = crate::store::Reader::new(connection, models);
     let revision = reader.revision_seq()? + 1;
-    let operations: Vec<(i64, String)> = connection.prepare(&format!(include_str!("../sql/plan/rebuild_open_effects.sql"), crate::operation::OPEN_STATUSES))?.query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?.collect::<Result<_, _>>()?;
+    let operations: Vec<(i64, String)> = connection.prepare(&format!(include_str!("../sql/plan/rebuild_open_effects.sql"), crate::store::operation::OPEN_STATUSES))?.query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?.collect::<Result<_, _>>()?;
     let spec = |name: &str| models.get(name).map(|info| &info.spec);
     let mut written = false;
     for (seq, action_key) in operations {
-        let Some((model, action)) = crate::operation::Operation::split_action_key(&action_key) else { continue };
+        let Some((model, action)) = crate::owners::write::operation_status::Operation::split_action_key(&action_key) else { continue };
         let Some(declared) = spec(&model).and_then(|owner| owner.actions.iter().find(|declared| declared.name == action)) else { continue };
         if declared.scope_effects.is_empty() { continue }
-        let Some(Value::Object(args)) = crate::operation::read_value(connection, seq, "input")? else { continue };
+        let Some(Value::Object(args)) = crate::store::operation::read_value(connection, seq, "input")? else { continue };
         let Some(id) = args.get("id").and_then(Value::as_str).and_then(|id| crate::identity::RowId::new(id).ok()) else { continue };
         let own = crate::identity::RowRef::new(crate::identity::ModelKey::new(&model), id);
         let mut rows = Vec::new();

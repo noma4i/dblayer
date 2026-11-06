@@ -187,7 +187,7 @@ pub(crate) fn read_operation_uploads(connection: &Connection, seq: i64) -> Resul
 fn upload_items(connection: &Connection, seq: Option<i64>) -> Result<HashMap<(i64, i64), UploadState>> {
     let mut parts = read_parts(connection, seq)?;
     let filter = if seq.is_some() { "WHERE seq = ?1" } else { "" };
-    let mut statement = connection.prepare(&format!(include_str!("../store/sql/operation/upload_items_select_op_item.sql"), UPLOAD_COLUMNS = UPLOAD_COLUMNS, filter = filter))?;
+    let mut statement = connection.prepare(&format!(include_str!("../sql/operation/upload_items_select_op_item.sql"), UPLOAD_COLUMNS = UPLOAD_COLUMNS, filter = filter))?;
     let mut found = HashMap::new();
     let mut extensions = item_extensions(connection, seq)?;
     for item in statement.query_map(rusqlite::params_from_iter(seq), |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?, upload_at(row, 2)?, row.get::<_, Option<String>>(2 + UPLOAD_COLUMNS.split(", ").count())?)))? {
@@ -195,10 +195,10 @@ fn upload_items(connection: &Connection, seq: Option<i64>) -> Result<HashMap<(i6
         if let Some(mut state) = state {
             state.background_refused = refused;
             attach_extensions(&mut state.error, extensions.remove(&(seq, position)));
-            let mut headers = connection.prepare_cached(include_str!("../store/sql/operation/upload_items_select_op_item_header.sql"))?;
+            let mut headers = connection.prepare_cached(include_str!("../sql/operation/upload_items_select_op_item_header.sql"))?;
             state.headers = headers.query_map(params![seq, position], |row| Ok((row.get(0)?, row.get(1)?)))?.collect::<Result<Vec<_>>>()?;
             state.parts = parts.remove(&(seq, position)).unwrap_or_default();
-            let mut retries = connection.prepare_cached(include_str!("../store/sql/operation/upload_items_select_op_item_retry.sql"))?;
+            let mut retries = connection.prepare_cached(include_str!("../sql/operation/upload_items_select_op_item_retry.sql"))?;
             state.retries = retries.query_map(params![seq, position], |row| {
                 let stage: String = row.get(0)?;
                 Ok(UploadRetry {
@@ -229,15 +229,15 @@ pub fn write_upload(connection: &Connection, seq: i64, position: i64, state: &Up
     let assignments = columns.iter().map(|name| format!("{name} = excluded.{name}")).collect::<Vec<_>>().join(", ");
     let mut values = vec![SqlValue::Integer(seq), SqlValue::Integer(position)];
     values.extend(upload_cells(Some(state))?);
-    let saved = connection.execute(&format!(include_str!("../store/sql/operation/write_upload_insert_op_item.sql"), UPLOAD_COLUMNS = UPLOAD_COLUMNS, marks = marks, assignments = assignments), rusqlite::params_from_iter(values))?;
+    let saved = connection.execute(&format!(include_str!("../sql/operation/write_upload_insert_op_item.sql"), UPLOAD_COLUMNS = UPLOAD_COLUMNS, marks = marks, assignments = assignments), rusqlite::params_from_iter(values))?;
     if saved > 0 {
-        connection.execute(include_str!("../store/sql/operation/write_upload_delete_op_item_retry.sql"), params![seq, position])?;
+        connection.execute(include_str!("../sql/operation/write_upload_delete_op_item_retry.sql"), params![seq, position])?;
         for retry in &state.retries {
-            connection.execute(include_str!("../store/sql/operation/write_upload_insert_op_item_retry.sql"), params![seq, position, enum_text(&retry.stage), retry.part_number, retry.attempts, retry.retry_at.map(|time| time as i64)])?;
+            connection.execute(include_str!("../sql/operation/write_upload_insert_op_item_retry.sql"), params![seq, position, enum_text(&retry.stage), retry.part_number, retry.attempts, retry.retry_at.map(|time| time as i64)])?;
         }
-        connection.execute(include_str!("../store/sql/operation/write_upload_delete_op_item_header.sql"), params![seq, position])?;
+        connection.execute(include_str!("../sql/operation/write_upload_delete_op_item_header.sql"), params![seq, position])?;
         for (name, value) in &state.headers {
-            connection.execute(include_str!("../store/sql/operation/write_upload_insert_op_item_header.sql"), params![seq, position, name, value])?;
+            connection.execute(include_str!("../sql/operation/write_upload_insert_op_item_header.sql"), params![seq, position, name, value])?;
         }
         write_extensions(connection, "op_error", &["seq", "item_position"], &[SqlValue::Integer(seq), SqlValue::Integer(position)], state.error.as_ref())?;
         write_parts(connection, seq, position, &state.parts)?;
@@ -279,8 +279,8 @@ pub fn info_at(row: &Row<'_>, first: usize) -> Result<Option<UploadInfo>> {
 }
 
 pub fn write_rows(connection: &Connection, seq: i64, row_ids: &[RowId]) -> Result<()> {
-    connection.prepare_cached(include_str!("../store/sql/operation/write_rows_delete_op_row.sql"))?.execute([seq])?;
-    let mut insert = connection.prepare_cached(include_str!("../store/sql/operation/write_rows_insert_op_row.sql"))?;
+    connection.prepare_cached(include_str!("../sql/operation/write_rows_delete_op_row.sql"))?.execute([seq])?;
+    let mut insert = connection.prepare_cached(include_str!("../sql/operation/write_rows_insert_op_row.sql"))?;
     for (pos, id) in row_ids.iter().enumerate() {
         insert.execute(params![seq, pos as i64, id.as_str()])?;
     }
@@ -298,8 +298,8 @@ pub fn write_item_value(connection: &Connection, seq: i64, position: i64, part: 
 }
 
 pub fn write_parts(connection: &Connection, seq: i64, position: i64, parts: &[UploadPart]) -> Result<()> {
-    connection.prepare_cached(include_str!("../store/sql/operation/write_parts_delete_op_part.sql"))?.execute(params![seq, position])?;
-    let mut insert = connection.prepare_cached(include_str!("../store/sql/operation/write_parts_insert_op_part.sql"))?;
+    connection.prepare_cached(include_str!("../sql/operation/write_parts_delete_op_part.sql"))?.execute(params![seq, position])?;
+    let mut insert = connection.prepare_cached(include_str!("../sql/operation/write_parts_insert_op_part.sql"))?;
     for part in parts {
         insert.execute(params![seq, position, i64::from(part.number), part.etag, part.confirmed_bytes as i64])?;
     }
@@ -316,7 +316,7 @@ pub fn read_item_value(connection: &Connection, seq: i64, position: i64, part: &
 }
 
 pub fn read_rows(connection: &Connection, seq: i64) -> Result<Vec<RowId>> {
-    let mut statement = connection.prepare_cached(include_str!("../store/sql/operation/read_rows.sql"))?;
+    let mut statement = connection.prepare_cached(include_str!("../sql/operation/read_rows.sql"))?;
     let ids = statement.query_map([seq], |row| row.get::<_, String>(0))?;
     ids.map(|id| stored_row_id(&id?)).collect()
 }
@@ -326,7 +326,7 @@ pub fn stored_row_id(text: &str) -> Result<RowId> {
 }
 
 pub fn read_all_rows(connection: &Connection) -> Result<HashMap<i64, Vec<RowId>>> {
-    let mut statement = connection.prepare_cached(include_str!("../store/sql/operation/read_all_rows.sql"))?;
+    let mut statement = connection.prepare_cached(include_str!("../sql/operation/read_all_rows.sql"))?;
     let mut found: HashMap<i64, Vec<RowId>> = HashMap::new();
     for item in statement.query_map([], |row| Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?)))? {
         let (seq, id) = item?;
@@ -337,7 +337,7 @@ pub fn read_all_rows(connection: &Connection) -> Result<HashMap<i64, Vec<RowId>>
 
 fn read_parts(connection: &Connection, seq: Option<i64>) -> Result<HashMap<(i64, i64), Vec<UploadPart>>> {
     let filter = if seq.is_some() { "WHERE seq = ?1" } else { "" };
-    let mut statement = connection.prepare_cached(&format!(include_str!("../store/sql/operation/read_parts.sql"), filter = filter))?;
+    let mut statement = connection.prepare_cached(&format!(include_str!("../sql/operation/read_parts.sql"), filter = filter))?;
     let mut found: HashMap<(i64, i64), Vec<UploadPart>> = HashMap::new();
     for item in statement.query_map(rusqlite::params_from_iter(seq), |row| Ok(((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?), UploadPart { number: row.get::<_, i64>(2)? as u32, etag: row.get(3)?, confirmed_bytes: row.get::<_, i64>(4)? as u64 })))? {
         let (owner, part) = item?;
@@ -347,27 +347,27 @@ fn read_parts(connection: &Connection, seq: Option<i64>) -> Result<HashMap<(i64,
 }
 
 pub(crate) fn read_fields(connection: &Connection, seq: i64) -> Result<Vec<String>> {
-    let mut statement = connection.prepare_cached(include_str!("../store/sql/operation/read_fields.sql"))?;
+    let mut statement = connection.prepare_cached(include_str!("../sql/operation/read_fields.sql"))?;
     let fields = statement.query_map([seq], |row| row.get(0))?.collect();
     fields
 }
 
 pub(crate) fn record_transfer_aborts(connection: &Connection, seq: i64, position: Option<i64>) -> Result<()> {
-    let mut statement = connection.prepare_cached(include_str!("../store/sql/operation/record_transfer_aborts_select_op_item.sql"))?;
+    let mut statement = connection.prepare_cached(include_str!("../sql/operation/record_transfer_aborts_select_op_item.sql"))?;
     let pending = statement.query_map(params![seq, position], |row| Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?, row.get::<_, String>(2)?, row.get::<_, i64>(3)?, row.get::<_, String>(4)?)))?.collect::<Result<Vec<_>>>()?;
     for (item, key, upload_id, operation_id, item_id) in pending {
         let input = read_item_value(connection, seq, item, "input")?.map(serde_json::from_value::<crate::upload::UploadInput>).transpose().map_err(from_sql_error)?;
         let Some(steps) = input.and_then(|input| input.steps.multipart) else { continue };
-        connection.prepare_cached(include_str!("../store/sql/operation/record_transfer_aborts_insert_transfer_abort.sql"))?.execute(params![operation_id, item_id, key, upload_id, steps.abort])?;
+        connection.prepare_cached(include_str!("../sql/operation/record_transfer_aborts_insert_transfer_abort.sql"))?.execute(params![operation_id, item_id, key, upload_id, steps.abort])?;
     }
     Ok(())
 }
 
 pub fn delete_operation(connection: &Connection, seq: i64) -> Result<usize> {
-    connection.execute(include_str!("../store/sql/operation/delete_operation_delete_op_transfer.sql"), [seq])?;
-    connection.execute(include_str!("../store/sql/operation/delete_operation_delete_file.sql"), [seq])?;
+    connection.execute(include_str!("../sql/operation/delete_operation_delete_op_transfer.sql"), [seq])?;
+    connection.execute(include_str!("../sql/operation/delete_operation_delete_file.sql"), [seq])?;
     for table in ["op_row", "op_value", "op_error", "op_part", "op_item_header", "op_item_retry", "op_item", "op_effect_value", "op_effect"] {
-        connection.prepare_cached(&format!(include_str!("../store/sql/operation/delete_operation_delete_table.sql"), table = table))?.execute([seq])?;
+        connection.prepare_cached(&format!(include_str!("../sql/operation/delete_operation_delete_table.sql"), table = table))?.execute([seq])?;
     }
-    connection.prepare_cached(include_str!("../store/sql/operation/delete_operation_delete_op.sql"))?.execute([seq])
+    connection.prepare_cached(include_str!("../sql/operation/delete_operation_delete_op.sql"))?.execute([seq])
 }

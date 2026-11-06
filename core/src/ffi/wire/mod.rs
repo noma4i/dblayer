@@ -2,7 +2,7 @@ use serde_json::{Map, Value};
 use sha2::{Digest, Sha256};
 
 use crate::store::Record;
-use crate::operation::enum_text;
+use crate::store::operation::enum_text;
 use crate::schema::{FieldKind, FieldSpec, ModelSpec, TYPENAME};
 use crate::value::sync::{OperationFailure, SyncInfo, SyncState};
 use crate::upload::{UploadInfo, UploadStatus};

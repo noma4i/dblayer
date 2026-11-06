@@ -28,12 +28,12 @@ pub(super) fn apply_common(writer: &mut RowWrite<'_>, op: &StoreOp, index: usize
         }
         StoreOp::RemoveIntent { op_id } => {
             let seq = i64::try_from(*op_id).map_err(|_| StoreError::Constraint("operation id is too large".into()))?;
-            results.push(writer.transitions(vec![crate::store::OperationTransition::Close { seq, status: crate::operation::OperationStatus::Committed }])?);
+            results.push(writer.transitions(vec![crate::store::OperationTransition::Close { seq, status: crate::owners::write::operation_status::OperationStatus::Committed }])?);
         }
         StoreOp::MarkError { op_id, error } => {
             let seq = i64::try_from(*op_id).map_err(|_| StoreError::Constraint("operation id is too large".into()))?;
             let transition = match error {
-                Some(message) => crate::store::OperationTransition::Fail { seq, status: crate::operation::OperationStatus::Failed, failure: crate::owners::write::failure::parse(message) },
+                Some(message) => crate::store::OperationTransition::Fail { seq, status: crate::owners::write::operation_status::OperationStatus::Failed, failure: crate::owners::write::failure::parse(message) },
                 None => crate::store::OperationTransition::Retry { seq },
             };
             results.push(writer.transitions(vec![transition])?);

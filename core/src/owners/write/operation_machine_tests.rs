@@ -1,6 +1,7 @@
+use crate::owners::write::operation_status::OperationStatus;
 use OperationStatus::*;
 
-use super::*;
+use super::operation_machine::*;
 
 fn facts(status: OperationStatus, transport_started: bool) -> OperationFacts {
     OperationFacts { status, transport_started }

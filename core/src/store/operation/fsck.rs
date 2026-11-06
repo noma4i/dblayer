@@ -1,6 +1,6 @@
 use std::collections::HashSet;
 
-use super::status::{removes_row, Operation, OperationId};
+use crate::owners::write::operation_status::{removes_row, Operation, OperationId};
 use crate::identity::{ModelKey, RowRef};
 
 #[derive(Debug, Clone, PartialEq, Eq)]

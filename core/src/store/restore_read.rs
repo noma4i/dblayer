@@ -1,6 +1,6 @@
 //! The intents of the queue as `Restored` gives them to the owner Outbox.
 
-use crate::operation::OperationStatus;
+use crate::owners::write::operation_status::OperationStatus;
 use crate::owners::write::outbox::{NewOp, OpSource, StoredOp, TransferMember};
 use crate::schema::OnFailure;
 use crate::transport::RequestOwner;

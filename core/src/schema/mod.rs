@@ -132,7 +132,7 @@ impl ModelSpec {
     }
 
     pub fn is_batch_upload(&self, action_key: &str) -> bool {
-        crate::operation::Operation::upload_action(action_key).and_then(|(_, name)| self.upload_action(&name)).is_some_and(|action| action.batch.is_some())
+        crate::owners::write::operation_status::Operation::upload_action(action_key).and_then(|(_, name)| self.upload_action(&name)).is_some_and(|action| action.batch.is_some())
     }
 
     pub fn new(key: &str, fields: Vec<FieldSpec>) -> Self {

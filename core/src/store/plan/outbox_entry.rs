@@ -6,7 +6,7 @@ use serde_json::{json, Map, Value};
 use crate::store::{EntityOp, OperationRecord, OperationTransition, ScopeOp, ScopeRef};
 use crate::store::ddl::table_name;
 use crate::identity::{ModelKey, RowId, RowRef};
-use crate::operation::Operation;
+use crate::owners::write::operation_status::Operation;
 use crate::query::{Query, Where};
 use crate::schema::{AssociationKind, Dependent, ModelSpec, SchemaError, ValueFault};
 use crate::store::{Reader, Store, StoreError, DbError};
@@ -24,13 +24,13 @@ pub struct OutboxOperation {
 
 impl OutboxOperation {
     pub(crate) fn read(reader: &Reader<'_>, seq: i64) -> Result<Option<Self>, StoreError> {
-        let Some(mut operation) = crate::operation::read_operation(reader.connection(), seq)? else { return Ok(None) };
-        operation.upload = crate::operation::read_operation_uploads(reader.connection(), seq)?.into_iter().min_by_key(|(key, _)| *key).map(|(_, state)| state);
+        let Some(mut operation) = crate::store::operation::read_operation(reader.connection(), seq)? else { return Ok(None) };
+        operation.upload = crate::store::operation::read_operation_uploads(reader.connection(), seq)?.into_iter().min_by_key(|(key, _)| *key).map(|(_, state)| state);
         Self::from_operation(reader, operation).map(Some)
     }
 
     fn from_operation(reader: &Reader<'_>, operation: Operation) -> Result<Self, StoreError> {
-        let input = crate::operation::read_value(reader.connection(), operation.id.0, "input")?.unwrap_or(Value::Null);
+        let input = crate::store::operation::read_value(reader.connection(), operation.id.0, "input")?.unwrap_or(Value::Null);
         let rollback = super::op_effect::read_prior(reader.connection(), operation.id.0)?;
         Ok(Self { operation, input, rollback })
     }
@@ -55,7 +55,7 @@ impl OutboxOperation {
 }
 
 pub(crate) fn read_outbox(reader: &Reader<'_>) -> Result<Vec<OutboxOperation>, StoreError> {
-    let operations = crate::operation::open_operations(reader.connection())?;
+    let operations = crate::store::operation::open_operations(reader.connection())?;
     let mut entries = Vec::with_capacity(operations.len());
     for operation in operations {
         entries.push(OutboxOperation::from_operation(reader, operation)?);

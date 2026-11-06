@@ -1,6 +1,6 @@
 use crate::store::{BatchPlan, DestroyReason, EntityOp, OperationTransition};
 use crate::identity::{ModelKey, RowId};
-use crate::operation::Operation;
+use crate::owners::write::operation_status::Operation;
 use crate::store::Reader;
 use crate::value::read_id;
 

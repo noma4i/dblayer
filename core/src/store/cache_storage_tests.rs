@@ -1,6 +1,6 @@
 use super::*;
 use fixtures::*;
-use crate::operation::QuarantineReason;
+use crate::store::operation::QuarantineReason;
 use serde_json::json;
 
 #[test]
@@ -13,7 +13,7 @@ fn no_table_keeps_a_blob_column_except_the_file_bytes() {
 #[test]
 fn a_quarantined_payload_is_kept_as_value_rows() {
     let (store, _) = booted_store();
-    let seq = crate::operation::quarantine_add(&store.lock().connection, Some("messages"), &json!({"a": [1, "x"]}), QuarantineReason::SchemaChanged).unwrap();
+    let seq = crate::store::operation::quarantine_add(&store.lock().connection, Some("messages"), &json!({"a": [1, "x"]}), QuarantineReason::SchemaChanged).unwrap();
     assert_eq!(count(&store, &format!("SELECT COUNT(*) FROM quarantine_value WHERE seq = {seq}")), 4);
 }
 

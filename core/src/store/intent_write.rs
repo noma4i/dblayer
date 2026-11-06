@@ -3,7 +3,7 @@ use serde_json::{Map, Value};
 use crate::store::{BatchPlan, CommitResult, DestroyReason, EntityOp, OperationRecord, OperationTransition, ScopeOp, ScopeRef};
 use crate::store::plan::{Prior, PriorRow};
 use crate::identity::{ListKey, ModelKey, RowId, RowRef};
-use crate::operation::{Operation, OperationStatus};
+use crate::owners::write::operation_status::{Operation, OperationStatus};
 use crate::owners::store::{EffectRow, IntentEffects};
 
 use super::row_write::RowWrite;

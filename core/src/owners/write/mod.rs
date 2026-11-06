@@ -9,6 +9,9 @@ mod outbox_local;
 pub mod outbox_plan;
 mod outbox_restore;
 pub mod outbox_types;
+pub(crate) mod operation_machine;
+pub mod operation_outbox;
+pub mod operation_status;
 pub mod outbox_executor;
 pub mod transfer;
 mod transfer_accept;
@@ -33,3 +36,9 @@ mod outbox_executor_tests;
 mod transfer_executor_tests;
 #[cfg(test)]
 mod failure_tests;
+#[cfg(test)]
+mod operation_machine_tests;
+#[cfg(test)]
+mod operation_outbox_tests;
+#[cfg(test)]
+mod operation_status_tests;

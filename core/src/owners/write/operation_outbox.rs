@@ -1,6 +1,6 @@
 use std::collections::HashSet;
 
-use super::status::{is_open, Operation};
+use super::operation_status::{is_open, Operation};
 use crate::identity::{ModelKey, RowId};
 
 #[derive(Debug, Clone)]
