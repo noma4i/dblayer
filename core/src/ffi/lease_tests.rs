@@ -3,7 +3,7 @@ use std::time::Duration;
 
 use super::*;
 
-fn handle() -> Handle { super::super::database::executor().unwrap().handle().clone() }
+fn handle() -> Handle { crate::ffi::database::executor().unwrap().handle().clone() }
 
 #[derive(Clone, Copy)]
 enum Step {

@@ -154,7 +154,6 @@ pub(crate) fn mutex_free<T>(mutex: &Mutex<T>) -> bool {
 
 struct World {
     clock: crate::pacing::TestClock,
-    dbs: Vec<std::sync::Weak<crate::db::Shared>>,
 }
 
 thread_local! { static WORLD: std::cell::RefCell<Option<World>> = const { std::cell::RefCell::new(None) }; }
@@ -177,7 +176,7 @@ pub(crate) fn limited(limit: Duration, test: impl std::future::Future<Output = (
 pub(crate) fn paused(test: impl std::future::Future<Output = ()>) {
     let runtime = tokio::runtime::Builder::new_current_thread().enable_all().start_paused(true).build().expect("test runtime");
     let clock = crate::pacing::TestClock::stopped(Duration::from_millis(1_000_000));
-    WORLD.with(|world| *world.borrow_mut() = Some(World { clock: clock.clone(), dbs: Vec::new() }));
+    WORLD.with(|world| *world.borrow_mut() = Some(World { clock: clock.clone() }));
     let _leave = Leave;
     runtime.block_on(async move {
         let driver = tokio::spawn(async move { clock.drive(|| Some(0), || {}).await });
@@ -185,11 +184,6 @@ pub(crate) fn paused(test: impl std::future::Future<Output = ()>) {
         driver.abort();
     });
 }
-
-fn world_dbs() -> Vec<crate::db::Db> {
-    WORLD.with(|world| world.borrow().as_ref().map(|world| world.dbs.iter().filter_map(std::sync::Weak::upgrade).map(|shared| crate::db::Db { shared }).collect()).unwrap_or_default())
-}
-
 
 pub(crate) fn world_clock() -> Option<crate::pacing::TestClock> {
     WORLD.with(|world| world.borrow().as_ref().map(|world| world.clock.clone()))

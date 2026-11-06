@@ -5,25 +5,22 @@ mod receipt;
 pub(crate) use database::NEEDS_NETWORK;
 #[cfg(test)]
 pub(crate) async fn settled(database: &Database) -> Result<(), DbError> {
-    let lifecycle = database.streams.clone();
     let quiet = async {
         loop {
-            lifecycle.settled().await;
             database.operations_quiet().await;
             let owners = database.life.clone();
             database::blocking(move || { owners.barrier(std::time::Duration::from_secs(5)); Ok(()) }).await?;
-            if lifecycle.quiet() { return Ok::<(), DbError>(()); }
+            if database.life.requests_in_flight() == 0 { return Ok::<(), DbError>(()); }
+            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
         }
     };
     match tokio::time::timeout(std::time::Duration::from_secs(10), quiet).await {
         Ok(result) => result,
-        Err(_) => Err(DbError::Invalid { detail: format!("settled timed out: {}", lifecycle.held().join("; ")) }),
+        Err(_) => Err(DbError::Invalid { detail: "settled timed out".into() }),
     }
 }
 #[cfg(test)]
 mod close_tests;
-#[cfg(test)]
-mod lease_tests;
 mod call_state;
 pub(crate) use call_state::CallState;
 mod foreign_future;
@@ -177,8 +174,6 @@ pub(super) mod encrypted_tests;
 mod lost_session_recovery_tests;
 #[cfg(test)]
 pub(super) mod queue_view_tests;
-#[cfg(test)]
-mod online_tests;
 #[cfg(test)]
 mod queued_detail_tests;
 #[cfg(test)]

@@ -252,7 +252,7 @@ impl EffectRunner<StoreWriter> for StoreRunner {
                 }
             }
             StoreEffect::CloseReads => self.db.reads().close(),
-            StoreEffect::CloseConnections => self.db.close_connections(),
+            StoreEffect::CloseConnections => {}
             StoreEffect::StoreClosed => wiring.to_lifecycle(LifecycleInput::StoreClosed),
         }
     }

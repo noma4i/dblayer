@@ -1,3 +1,4 @@
+use crate::store::Store;
 use crate::owners::contract::{Committed, EpochEnded, Online, Published, PublishedState, RejectReason, Rejected};
 use crate::owners::session::{AuthorOutcome, Credential, OperationClass, SecretState, SessionCalls, SessionEffect, SessionError, SessionInput, SessionOperation, SessionPhase, SessionState};
 use crate::owners::support::{new_log, take, Log, Recorder};
@@ -120,7 +121,7 @@ fn sess_calling_too_large() {
     calling_error(Some((262145, 262144)), None, SessionError::TooLarge { size: 262145, limit: 262144 });
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("db.sqlite");
-    let open = || crate::db::Db::open_with(Some(&path), vec![], None, crate::db::DbConfig::default()).unwrap();
+    let open = || Store::open_models(Some(&path), vec![], None).map(std::sync::Arc::new).unwrap();
     let db = open();
     db.lock().connection.execute_batch("DROP TABLE encrypted_answer; CREATE TABLE encrypted_answer (request_id INTEGER PRIMARY KEY, outcome TEXT NOT NULL CHECK (outcome IN ('ok', 'http', 'unauthorized', 'revoked', 'session')), detail TEXT, operation_id INTEGER) STRICT; INSERT INTO encrypted_answer VALUES (10, 'http', '422', 6); UPDATE manifest SET value = 'old' WHERE key = 'format_version';").unwrap();
     drop(db);

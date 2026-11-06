@@ -36,7 +36,7 @@ fn system_clock_reports_time_since_epoch() {
 #[test]
 fn inv_panic_01_a_manual_clock_survives_a_poisoned_lock() {
     let clock = ManualClock::new(Duration::from_secs(10));
-    crate::db::fixtures::poison(&clock.now);
+    crate::store::spec_fixtures::poison(&clock.now);
     clock.advance(Duration::from_secs(5));
     clock.set(Duration::from_secs(20));
     assert_eq!(clock.now(), Duration::from_secs(20));

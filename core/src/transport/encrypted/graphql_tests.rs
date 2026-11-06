@@ -3,30 +3,31 @@ use std::time::Duration;
 
 use serde_json::json;
 
+use super::exchange_tests::Client;
 use super::fake_server_tests::{FakeServer, MemoryCredentials};
 use super::graphql::{graphql_body, response_of};
 use super::vectors_tests::*;
 use super::*;
-use crate::db::Db;
+use crate::store::Store;
 use crate::pacing::ManualClock;
 use crate::transport::{GraphQLRequest, MockTransport, Transport};
 
-async fn transport(rest: MockTransport) -> (EncryptedTransport, Arc<FakeServer>) {
+async fn transport(rest: MockTransport) -> (Arc<EncryptedTransport>, Arc<FakeServer>) {
     let clock = Arc::new(ManualClock::new(Duration::from_secs(1_800_000_000)));
     let server = FakeServer::new(clock.clone());
     let config = EncryptedConfig { origin: origin().to_string(), server_key: public_key_der_b64().to_string(), pin: pin().to_string(), ..crate::transport::encrypted::protocol_tests::config() };
-    let db = Db::open_in_memory(Vec::new(), None).unwrap();
-    let client = Arc::new(EncryptedClient::new(&config, server.clone(), Arc::new(MemoryCredentials::default()), db.clone(), clock).unwrap());
-    client.start_owners_in_tests(&db);
-    client.session_call_in_tests("social", json!({ "provider": "google", "idToken": "t" })).await.unwrap();
-    (EncryptedTransport::new(client, Arc::new(rest)), server)
+    let db = Store::open_models(None, Vec::new(), None).map(std::sync::Arc::new).unwrap();
+    let client = Client::new(&config, server.clone(), Arc::new(MemoryCredentials::default()), db, clock, Arc::new(rest)).unwrap();
+    client.start_owners();
+    client.session_call("social", json!({ "provider": "google", "idToken": "t" })).await.unwrap();
+    (client.transport(), server)
 }
 
 #[tokio::test]
 async fn encrypted_subscriptions_do_not_send_credentials_or_queries_to_v2() {
     let rest = MockTransport::new();
     let (transport, _) = transport(rest.clone()).await;
-    let _subscription = transport.subscribe(&transport.test_admission().unwrap(), GraphQLRequest::new("subscription Changes { recordEvents { changes { entityId } } }", "Changes", json!({}))).await.unwrap();
+    let _subscription = transport.subscribe(GraphQLRequest::new("subscription Changes { recordEvents { changes { entityId } } }", "Changes", json!({}))).await.unwrap();
     assert_eq!(rest.call_count("Changes"), 0);
 }
 
@@ -63,8 +64,8 @@ async fn queries_and_mutations_use_the_encrypted_client() {
     server.register("query Q { q }");
     server.register("mutation M { m }");
 
-    let read = transport.query(&transport.test_admission().unwrap(), GraphQLRequest::new("query Q { q }", "Q", json!({}))).await.unwrap();
-    let written = transport.mutate(&transport.test_admission().unwrap(), GraphQLRequest::new("mutation M { m }", "M", json!({}))).await.unwrap();
+    let read = transport.query(GraphQLRequest::new("query Q { q }", "Q", json!({}))).await.unwrap();
+    let written = transport.mutate(GraphQLRequest::new("mutation M { m }", "M", json!({}))).await.unwrap();
 
     assert_eq!(read.data, Some(json!({ "read": "query Q { q }" })));
     assert_eq!(written.data, Some(json!({ "done": "mutation M { m }" })));

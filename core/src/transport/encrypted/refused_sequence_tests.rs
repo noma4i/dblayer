@@ -3,25 +3,26 @@ use std::time::Duration;
 
 use serde_json::json;
 
+use super::exchange_tests::Client;
 use super::fake_server_tests::{FakeServer, MemoryCredentials};
 use super::vectors_tests::*;
 use super::*;
-use crate::db::Db;
+use crate::store::Store;
 use crate::pacing::ManualClock;
 use crate::transport::{GraphQLRequest, MockTransport, SessionCode, Transport, TransportError};
 
 const WRITE: &str = "mutation Rename { rename { id } }";
 
-async fn signed_in() -> (Arc<FakeServer>, EncryptedTransport) {
+async fn signed_in() -> (Arc<FakeServer>, Arc<EncryptedTransport>) {
     let clock = Arc::new(ManualClock::new(Duration::from_secs(1_800_000_000)));
     let server = FakeServer::new(clock.clone());
     let config = EncryptedConfig { origin: origin().to_string(), server_key: public_key_der_b64().to_string(), pin: pin().to_string(), ..crate::transport::encrypted::protocol_tests::config() };
-    let db = Db::open_in_memory(Vec::new(), None).unwrap();
-    let client = Arc::new(EncryptedClient::new(&config, server.clone(), Arc::new(MemoryCredentials::default()), db.clone(), clock).unwrap());
-    client.start_owners_in_tests(&db);
-    client.session_call_in_tests("social", json!({ "provider": "google", "idToken": "t" })).await.unwrap();
+    let db = Store::open_models(None, Vec::new(), None).map(std::sync::Arc::new).unwrap();
+    let client = Client::new(&config, server.clone(), Arc::new(MemoryCredentials::default()), db, clock, Arc::new(MockTransport::new())).unwrap();
+    client.start_owners();
+    client.session_call("social", json!({ "provider": "google", "idToken": "t" })).await.unwrap();
     server.register(WRITE);
-    (server, EncryptedTransport::new(client, Arc::new(MockTransport::new())))
+    (server, client.transport())
 }
 
 #[tokio::test]
@@ -30,9 +31,9 @@ async fn a_confirmed_refusal_spends_its_sequence_and_the_next_mutation_is_accept
     let request = GraphQLRequest::new(WRITE, "", json!({}));
     server.refuse_next("RATE_LIMITED", true);
 
-    let refused = transport.mutate(&transport.test_admission().unwrap(), request.clone()).await.unwrap_err();
+    let refused = transport.mutate(request.clone()).await.unwrap_err();
     let executed_before = server.executed().len();
-    let accepted = transport.mutate(&transport.test_admission().unwrap(), request).await;
+    let accepted = transport.mutate(request).await;
 
     assert!(matches!(refused, TransportError::Session { code: SessionCode::RateLimited, .. }), "{refused:?}");
     assert!(accepted.is_ok(), "{accepted:?}");

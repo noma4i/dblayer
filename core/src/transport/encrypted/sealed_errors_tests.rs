@@ -3,11 +3,12 @@ use std::time::Duration;
 
 use serde_json::json;
 
+use super::exchange_tests::Client;
 use super::fake_server_tests::{FakeServer, MemoryCredentials};
 use super::state;
 use super::vectors_tests::*;
 use super::*;
-use crate::db::Db;
+use crate::store::Store;
 use crate::pacing::ManualClock;
 use crate::transport::{GraphQLRequest, MockTransport, SessionCode, Transport, TransportError};
 
@@ -26,28 +27,28 @@ const TABLE: [(&str, SessionCode); 11] = [
 ];
 
 struct Rig {
-    transport: EncryptedTransport,
+    transport: Arc<EncryptedTransport>,
     server: Arc<FakeServer>,
     credentials: Arc<MemoryCredentials>,
-    db: Db,
+    db: Arc<Store>,
 }
 
 async fn rig() -> Rig {
     let clock = Arc::new(ManualClock::new(Duration::from_secs(1_800_000_000)));
     let server = FakeServer::new(clock.clone());
     let credentials = Arc::new(MemoryCredentials::default());
-    let db = Db::open_in_memory(Vec::new(), None).unwrap();
+    let db = Store::open_models(None, Vec::new(), None).map(std::sync::Arc::new).unwrap();
     let config = EncryptedConfig { origin: origin().to_string(), server_key: public_key_der_b64().to_string(), pin: pin().to_string(), ..crate::transport::encrypted::protocol_tests::config() };
-    let client = Arc::new(EncryptedClient::new(&config, server.clone(), credentials.clone(), db.clone(), clock).unwrap());
-    client.start_owners_in_tests(&db);
-    client.session_call_in_tests("social", json!({ "provider": "google", "idToken": "t" })).await.unwrap();
+    let client = Client::new(&config, server.clone(), credentials.clone(), db.clone(), clock, Arc::new(MockTransport::new())).unwrap();
+    client.start_owners();
+    client.session_call("social", json!({ "provider": "google", "idToken": "t" })).await.unwrap();
     server.register("query Q { q }");
     server.register("mutation M { m }");
-    Rig { transport: EncryptedTransport::new(client, Arc::new(MockTransport::new())), server, credentials, db }
+    Rig { transport: client.transport(), server, credentials, db }
 }
 
-fn pending(db: &Db) -> bool {
-    state::pending(&db.shared.store.lock().connection).unwrap().is_some()
+fn pending(db: &Store) -> bool {
+    state::pending(&db.lock().connection).unwrap().is_some()
 }
 
 #[tokio::test]
@@ -63,8 +64,8 @@ async fn a_session_code_in_a_sealed_answer_is_a_typed_error_and_keeps_the_creden
                 rig.server.refuse_next(wire, confirmed);
 
                 let outcome = match mutation {
-                    true => rig.transport.mutate(&rig.db.admit().unwrap(), GraphQLRequest::new("mutation M { m }", "M", json!({}))).await,
-                    false => rig.transport.query(&rig.db.admit().unwrap(), GraphQLRequest::new("query Q { q }", "Q", json!({}))).await,
+                    true => rig.transport.mutate(GraphQLRequest::new("mutation M { m }", "M", json!({}))).await,
+                    false => rig.transport.query(GraphQLRequest::new("query Q { q }", "Q", json!({}))).await,
                 };
 
                 let case = format!("{wire} mutation={mutation} confirmed={confirmed}");
@@ -81,7 +82,7 @@ async fn a_code_outside_the_session_table_stays_a_graphql_error_in_the_response(
         let rig = rig().await;
         rig.server.refuse_next(wire, true);
 
-        let response = rig.transport.query(&rig.db.admit().unwrap(), GraphQLRequest::new("query Q { q }", "Q", json!({}))).await.unwrap();
+        let response = rig.transport.query(GraphQLRequest::new("query Q { q }", "Q", json!({}))).await.unwrap();
 
         assert_eq!((response.data, response.errors[0].code()), (None, Some(wire)));
     }

@@ -86,7 +86,12 @@ pub(super) fn add(builder: &mut RuntimeBuilder, wiring: &Arc<Wiring>, ports: &Po
             WindowsEffect::Window { .. } => {}
         }),
     );
-    let windows = builder.add::<Windows>("windows", state, windows_io.counted_by(handle.clone()));
+    let windows = builder.add::<Windows>("windows", state, {
+        let io = windows_io.counted_by(handle.clone());
+        #[cfg(test)]
+        let io = io.flights_in(wiring.flights.clone());
+        io
+    });
 
     let deliveries_wiring = wiring.clone();
     let delivery_io = DeliveryIo::new(

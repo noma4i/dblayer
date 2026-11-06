@@ -12,7 +12,8 @@ use crate::pacing::ManualClock;
 use crate::transport::encrypted::fake_server_tests::{FakeServer, MemoryCredentials};
 use crate::transport::encrypted::state;
 use crate::transport::encrypted::vectors_tests::{origin, pin, public_key_der_b64};
-use crate::transport::{EncryptedClient, EncryptedConfig};
+use crate::transport::EncryptedConfig;
+use crate::transport::encrypted::exchange_tests::Client;
 
 const LIMIT: Duration = Duration::from_secs(10);
 const OTP: &str = "/api/auth/otp";
@@ -39,9 +40,9 @@ impl World {
         Self { server: FakeServer::new(clock.clone()), credentials: Arc::new(MemoryCredentials::default()), clock }
     }
 
-    async fn open(&self, db: &Store) -> (Arc<EncryptedClient>, Arc<crate::owners::life::Life>) {
-        let client = Arc::new(EncryptedClient::new(&config(), self.server.clone(), self.credentials.clone(), db.clone(), self.clock.clone()).unwrap());
-        let life = client.start_owners_in_tests(db);
+    async fn open(&self, db: &Arc<Store>) -> (Arc<Client>, Arc<crate::owners::life::Life>) {
+        let client = Client::new(&config(), self.server.clone(), self.credentials.clone(), db.clone(), self.clock.clone(), Arc::new(crate::transport::MockTransport::new())).unwrap();
+        let life = client.start_owners();
         life.set_online(true).wait().await;
         (client, life)
     }
@@ -86,14 +87,14 @@ async fn mutate_retrying(life: &crate::owners::life::Life, body: String) -> Life
     panic!("the request was still dropped after 20 attempts");
 }
 
-async fn sign_in(client: &EncryptedClient) {
-    client.session_call_in_tests("social", json!({ "provider": "google", "idToken": "t" })).await.unwrap();
+async fn sign_in(client: &Client) {
+    client.session_call("social", json!({ "provider": "google", "idToken": "t" })).await.unwrap();
 }
 
 #[tokio::test(flavor = "multi_thread")]
 async fn sign_in_saves_the_credential_before_the_request_and_publishes_its_identity() {
     let world = World::new();
-    let db = Db::open_in_memory(Vec::new(), None).unwrap();
+    let db = Store::open_models(None, Vec::new(), None).map(std::sync::Arc::new).unwrap();
     let (client, life) = world.open(&db).await;
     let before = life.published();
     assert_eq!(before.identity, None);
@@ -101,7 +102,7 @@ async fn sign_in_saves_the_credential_before_the_request_and_publishes_its_ident
     let credential = world.credentials.value().expect("the credential was saved");
     let (session, pending) = rows(&db);
     let session = session.expect("the session row");
-    assert_eq!(session.credential_digest, crate::transport::encrypted::client::digest_of(&credential));
+    assert_eq!(session.credential_digest, crate::transport::encrypted::exchange::digest_of(&credential));
     assert_eq!((session.sequence, pending.is_none()), (1, true));
     let seen = world.server.seen();
     assert_eq!(seen.len(), 1, "one request in the network");
@@ -114,11 +115,11 @@ async fn sign_in_saves_the_credential_before_the_request_and_publishes_its_ident
 #[tokio::test(flavor = "multi_thread")]
 async fn a_login_class_call_with_a_session_fails_without_a_request() {
     let world = World::new();
-    let db = Db::open_in_memory(Vec::new(), None).unwrap();
+    let db = Store::open_models(None, Vec::new(), None).map(std::sync::Arc::new).unwrap();
     let (client, _life) = world.open(&db).await;
     sign_in(&client).await;
     let sent = world.server.seen().len();
-    let error = client.session_call_in_tests("first_login", json!({ "provider": "google", "idToken": "t" })).await.unwrap_err();
+    let error = client.session_call("first_login", json!({ "provider": "google", "idToken": "t" })).await.unwrap_err();
     assert!(matches!(error, TransportError::Session { code: crate::transport::SessionCode::AlreadyAuthenticated, .. }), "{error:?}");
     assert_eq!(world.server.seen().len(), sent);
 }
@@ -126,7 +127,7 @@ async fn a_login_class_call_with_a_session_fails_without_a_request() {
 #[tokio::test(flavor = "multi_thread")]
 async fn a_mutate_goes_out_once_with_the_next_sequence_and_its_answer_reaches_the_author() {
     let world = World::new();
-    let db = Db::open_in_memory(Vec::new(), None).unwrap();
+    let db = Store::open_models(None, Vec::new(), None).map(std::sync::Arc::new).unwrap();
     let (client, life) = world.open(&db).await;
     sign_in(&client).await;
     let reply = mutate_retrying(&life, json!({}).to_string()).await;
@@ -139,7 +140,7 @@ async fn a_mutate_goes_out_once_with_the_next_sequence_and_its_answer_reaches_th
 #[tokio::test(flavor = "multi_thread")]
 async fn the_answer_of_a_mutate_is_stored_with_the_removal_of_its_pending() {
     let world = World::new();
-    let db = Db::open_in_memory(Vec::new(), None).unwrap();
+    let db = Store::open_models(None, Vec::new(), None).map(std::sync::Arc::new).unwrap();
     let (client, life) = world.open(&db).await;
     sign_in(&client).await;
     let reply = mutate_retrying(&life, json!({}).to_string()).await;
@@ -156,7 +157,7 @@ async fn the_answer_of_a_mutate_is_stored_with_the_removal_of_its_pending() {
 #[tokio::test(flavor = "multi_thread")]
 async fn a_lost_answer_is_repeated_with_the_same_request_id_and_executes_once() {
     let world = World::new();
-    let db = Db::open_in_memory(Vec::new(), None).unwrap();
+    let db = Store::open_models(None, Vec::new(), None).map(std::sync::Arc::new).unwrap();
     let (client, life) = world.open(&db).await;
     sign_in(&client).await;
     world.server.lose_next_answer();
@@ -171,7 +172,7 @@ async fn a_lost_answer_is_repeated_with_the_same_request_id_and_executes_once() 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_request_over_the_size_limit_is_refused_and_spends_no_sequence() {
     let world = World::new();
-    let db = Db::open_in_memory(Vec::new(), None).unwrap();
+    let db = Store::open_models(None, Vec::new(), None).map(std::sync::Arc::new).unwrap();
     let (client, life) = world.open(&db).await;
     sign_in(&client).await;
     let reply = mutate_retrying(&life, json!({ "text": "x".repeat(300_000) }).to_string()).await;
@@ -188,7 +189,7 @@ async fn a_pending_request_stored_before_the_close_is_sent_again_when_the_owners
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("session.sqlite");
     let (request_id, key) = {
-        let db = Db::open(&path, Vec::new(), None).unwrap();
+        let db = Store::open_models(Some(&path), Vec::new(), None).map(std::sync::Arc::new).unwrap();
         let (client, life) = world.open(&db).await;
         sign_in(&client).await;
         world.server.drop_next_request();
@@ -205,7 +206,7 @@ async fn a_pending_request_stored_before_the_close_is_sent_again_when_the_owners
         (pending.request_id, pending.response_key)
     };
     assert!(!key.is_empty());
-    let db = Db::open(&path, Vec::new(), None).unwrap();
+    let db = Store::open_models(Some(&path), Vec::new(), None).map(std::sync::Arc::new).unwrap();
     let (_client, _life) = world.open(&db).await;
     let started = std::time::Instant::now();
     while rows(&db).1.is_some() {
@@ -223,19 +224,19 @@ async fn a_stored_request_of_an_older_format_is_sent_again_with_the_request_id_a
     let path = directory.path().join("session.sqlite");
     let old_id = "3f1c2a52-9d3e-4b7a-8a11-0123456789ab";
     {
-        let db = Db::open(&path, Vec::new(), None).unwrap();
+        let db = Store::open_models(Some(&path), Vec::new(), None).map(std::sync::Arc::new).unwrap();
         let (client, life) = world.open(&db).await;
         sign_in(&client).await;
         let _ = tokio::time::timeout(LIMIT, life.close().wait()).await;
     }
     {
-        let db = Db::open(&path, Vec::new(), None).unwrap();
+        let db = Store::open_models(Some(&path), Vec::new(), None).map(std::sync::Arc::new).unwrap();
         let digest = rows(&db).0.unwrap().credential_digest;
         let pending = state::Pending { credential_digest: digest, request_id: old_id.into(), response_key: crate::transport::encrypted::jwe::random_token(), sequence: 2, path: OTP.into(), body: json!({}).to_string(), owner: None, purpose: crate::transport::NetworkPurpose::Standard, req_id: 2 };
         let inner = db.lock();
         state::store_pending(&inner.connection, &pending).unwrap();
     }
-    let db = Db::open(&path, Vec::new(), None).unwrap();
+    let db = Store::open_models(Some(&path), Vec::new(), None).map(std::sync::Arc::new).unwrap();
     let (_client, _life) = world.open(&db).await;
     let started = std::time::Instant::now();
     while rows(&db).1.is_some() {
@@ -251,21 +252,21 @@ async fn a_stored_request_of_an_older_format_is_sent_again_with_the_request_id_a
 #[tokio::test(flavor = "multi_thread")]
 async fn an_unreadable_stored_request_fails_the_open_with_a_storage_error() {
     let world = World::new();
-    let db = Db::open_in_memory(Vec::new(), None).unwrap();
-    let client = Arc::new(EncryptedClient::new(&config(), world.server.clone(), world.credentials.clone(), db.clone(), world.clock.clone()).unwrap());
+    let db = Store::open_models(None, Vec::new(), None).map(std::sync::Arc::new).unwrap();
+    let client = Client::new(&config(), world.server.clone(), world.credentials.clone(), db.clone(), world.clock.clone(), Arc::new(crate::transport::MockTransport::new())).unwrap();
     {
         let inner = db.lock();
         inner.connection.execute("INSERT INTO encrypted_pending (id, credential_digest, request_id, response_key, sequence, path, body, purpose, req_id) VALUES (1, 'd', 'r', 'k', 1, '/p', 'not json', 0, 1)", []).unwrap();
     }
     let credentials: Arc<dyn crate::transport::CredentialSlot> = world.credentials.clone();
     let seal = Arc::new(crate::owners::session_seal::SealConfig::new(&config(), world.clock.clone()).unwrap());
-    let ports = super::Ports { db: db.clone(), transport: None, executor: tokio::runtime::Handle::current(), operations: Arc::new(|_| None), credentials: Some(credentials), session: Some(client), seal: Some(seal), transfer: None, cable: None, read_operations: None };
+    let ports = super::Ports { db: db.clone(), transport: None, executor: tokio::runtime::Handle::current(), operations: Arc::new(|_| None), secret: Some(client.secret.clone()), exchange: Some(client.exchange.clone()), seal: Some(seal), transfer: None, cable: None, read_operations: None };
     let error = super::Life::start(ports).err().expect("the open fails");
     assert!(matches!(error, super::LifeError::Storage(_)), "the read error reaches the caller: {error:?}");
 }
 
 async fn signed_in_file(world: &World, path: &std::path::Path) {
-    let db = Db::open(path, Vec::new(), None).unwrap();
+    let db = Store::open_models(Some(&path), Vec::new(), None).map(std::sync::Arc::new).unwrap();
     let (client, life) = world.open(&db).await;
     sign_in(&client).await;
     let _ = tokio::time::timeout(LIMIT, life.close().wait()).await;
@@ -277,7 +278,7 @@ async fn a_pending_dropped_by_a_format_change_blocks_new_requests_until_the_rese
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("session.sqlite");
     signed_in_file(&world, &path).await;
-    let db = Db::open(&path, Vec::new(), None).unwrap();
+    let db = Store::open_models(Some(&path), Vec::new(), None).map(std::sync::Arc::new).unwrap();
     db.lock().connection.execute("INSERT INTO restore_failed (source_table, key, reason, columns) VALUES ('encrypted_pending', 'k', 'missing_column', '{}')", []).unwrap();
     let sent = world.server.seen().len();
     let (_client, life) = world.open(&db).await;
@@ -295,12 +296,12 @@ async fn a_negative_stored_sequence_fails_the_open() {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("session.sqlite");
     signed_in_file(&world, &path).await;
-    let db = Db::open(&path, Vec::new(), None).unwrap();
+    let db = Store::open_models(Some(&path), Vec::new(), None).map(std::sync::Arc::new).unwrap();
     db.lock().connection.execute("UPDATE encrypted_session SET sequence = -1", []).unwrap();
-    let client = Arc::new(EncryptedClient::new(&config(), world.server.clone(), world.credentials.clone(), db.clone(), world.clock.clone()).unwrap());
+    let client = Client::new(&config(), world.server.clone(), world.credentials.clone(), db.clone(), world.clock.clone(), Arc::new(crate::transport::MockTransport::new())).unwrap();
     let credentials: Arc<dyn crate::transport::CredentialSlot> = world.credentials.clone();
     let seal = Arc::new(crate::owners::session_seal::SealConfig::new(&config(), world.clock.clone()).unwrap());
-    let ports = super::Ports { db: db.clone(), transport: None, executor: tokio::runtime::Handle::current(), operations: Arc::new(|_| None), credentials: Some(credentials), session: Some(client), seal: Some(seal), transfer: None, cable: None, read_operations: None };
+    let ports = super::Ports { db: db.clone(), transport: None, executor: tokio::runtime::Handle::current(), operations: Arc::new(|_| None), secret: Some(client.secret.clone()), exchange: Some(client.exchange.clone()), seal: Some(seal), transfer: None, cable: None, read_operations: None };
     let error = super::Life::start(ports).err().expect("the open fails");
     assert!(matches!(error, super::LifeError::Storage(_)), "{error:?}");
 }
@@ -312,7 +313,7 @@ async fn the_pending_of_an_author_is_restored_with_its_request_id_and_owner() {
     let path = directory.path().join("session.sqlite");
     let (req_id, owner) = (1 << 41, Some(crate::transport::RequestOwner::Operation { seq: 7 }));
     {
-        let db = Db::open(&path, Vec::new(), None).unwrap();
+        let db = Store::open_models(Some(&path), Vec::new(), None).map(std::sync::Arc::new).unwrap();
         let (client, life) = world.open(&db).await;
         sign_in(&client).await;
         world.server.drop_next_request();
@@ -321,15 +322,15 @@ async fn the_pending_of_an_author_is_restored_with_its_request_id_and_owner() {
         until("the pending request was never stored", || rows(&db).1.is_some()).await;
         let _ = tokio::time::timeout(LIMIT, life.close().wait()).await;
     }
-    let db = Db::open(&path, Vec::new(), None).unwrap();
-    let client = EncryptedClient::new(&config(), world.server.clone(), world.credentials.clone(), db.clone(), world.clock.clone()).unwrap();
-    let restored = super::session_runner::SessionRunner::stored(&client).unwrap();
+    let db = Store::open_models(Some(&path), Vec::new(), None).map(std::sync::Arc::new).unwrap();
+    let client = Client::new(&config(), world.server.clone(), world.credentials.clone(), db.clone(), world.clock.clone(), Arc::new(crate::transport::MockTransport::new())).unwrap();
+    let restored = super::session_runner::SessionRunner::stored(&client.exchange, &client.secret, &client.db).unwrap();
     let pending = restored.pending.expect("the pending is restored");
     assert_eq!((pending.request_id, pending.owner), (req_id, owner));
 }
 
 use crate::owners::session::{AuthorOutcome, SessionError};
-use crate::transport::encrypted::client::digest_of;
+use crate::transport::encrypted::exchange::digest_of;
 use crate::transport::{CredentialSlot, TransportError};
 
 #[derive(Default)]
@@ -340,7 +341,7 @@ struct ProbeSlot {
     fail_get: std::sync::atomic::AtomicBool,
     get_count: std::sync::atomic::AtomicUsize,
     fail_at: std::sync::atomic::AtomicUsize,
-    db: std::sync::Mutex<Option<Db>>,
+    db: std::sync::Mutex<Option<Arc<Store>>>,
     session_at_clear: std::sync::Mutex<Vec<bool>>,
     threads: std::sync::Mutex<Vec<(&'static str, Option<String>)>>,
 }
@@ -368,10 +369,10 @@ impl CredentialSlot for ProbeSlot {
     }
 }
 
-fn open_with(world: &World, slot: Arc<ProbeSlot>, db: &Store) -> (Arc<EncryptedClient>, Arc<crate::owners::life::Life>) {
+fn open_with(world: &World, slot: Arc<ProbeSlot>, db: &Arc<Store>) -> (Arc<Client>, Arc<crate::owners::life::Life>) {
     *slot.db.lock().unwrap() = Some(db.clone());
-    let client = Arc::new(EncryptedClient::new(&config(), world.server.clone(), slot, db.clone(), world.clock.clone()).unwrap());
-    let life = client.start_owners_in_tests(db);
+    let client = Client::new(&config(), world.server.clone(), slot, db.clone(), world.clock.clone(), Arc::new(crate::transport::MockTransport::new())).unwrap();
+    let life = client.start_owners();
     drop(life.set_online(true));
     (client, life)
 }
@@ -387,7 +388,7 @@ async fn until(what: &str, mut done: impl FnMut() -> bool) {
 #[tokio::test(flavor = "multi_thread")]
 async fn the_credential_store_is_called_off_the_threads_of_the_owners() {
     let world = World::new();
-    let db = Db::open_in_memory(Vec::new(), None).unwrap();
+    let db = Store::open_models(None, Vec::new(), None).map(std::sync::Arc::new).unwrap();
     let slot = Arc::new(ProbeSlot::default());
     let (client, life) = open_with(&world, slot.clone(), &db);
     sign_in(&client).await;
@@ -405,7 +406,7 @@ async fn request_ids_are_random_uuid_v4_and_do_not_repeat_after_a_reopen() {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("session.sqlite");
     for _ in 0..2 {
-        let db = Db::open(&path, Vec::new(), None).unwrap();
+        let db = Store::open_models(Some(&path), Vec::new(), None).map(std::sync::Arc::new).unwrap();
         let (client, life) = world.open(&db).await;
         if rows(&db).0.is_none() { sign_in(&client).await; }
         let reply = mutate_retrying(&life, json!({}).to_string()).await;
@@ -430,7 +431,7 @@ async fn a_first_sign_in_stored_before_a_crash_lands_its_digest_after_the_reopen
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("session.sqlite");
     {
-        let db = Db::open(&path, Vec::new(), None).unwrap();
+        let db = Store::open_models(Some(&path), Vec::new(), None).map(std::sync::Arc::new).unwrap();
         let (client, life) = world.open(&db).await;
         world.server.interrupt_next_answer();
         let call = tokio::spawn({ let client = client.clone(); async move { sign_in(&client).await } });
@@ -440,7 +441,7 @@ async fn a_first_sign_in_stored_before_a_crash_lands_its_digest_after_the_reopen
         let _ = tokio::time::timeout(LIMIT, life.close().wait()).await;
         call.abort();
     }
-    let db = Db::open(&path, Vec::new(), None).unwrap();
+    let db = Store::open_models(Some(&path), Vec::new(), None).map(std::sync::Arc::new).unwrap();
     let (_client, life) = world.open(&db).await;
     until("the stored sign-in did not land", || rows(&db).1.is_none() && rows(&db).0.is_some()).await;
     let secret = world.credentials.value().expect("the secret stays");
@@ -457,25 +458,25 @@ async fn a_secret_left_by_a_crash_is_erased_and_the_session_rows_go_before_the_s
     let path = directory.path().join("session.sqlite");
     world.credentials.set("left-by-generate").unwrap();
     {
-        let db = Db::open(&path, Vec::new(), None).unwrap();
+        let db = Store::open_models(Some(&path), Vec::new(), None).map(std::sync::Arc::new).unwrap();
         let (_client, life) = world.open(&db).await;
         until("GenerateCredential crashed before the pending: the secret is not erased", || world.credentials.value().is_none()).await;
         let _ = tokio::time::timeout(LIMIT, life.close().wait()).await;
     }
     {
-        let db = Db::open(&path, Vec::new(), None).unwrap();
+        let db = Store::open_models(Some(&path), Vec::new(), None).map(std::sync::Arc::new).unwrap();
         let (client, life) = world.open(&db).await;
         sign_in(&client).await;
         let _ = tokio::time::timeout(LIMIT, life.close().wait()).await;
     }
-    let db = Db::open(&path, Vec::new(), None).unwrap();
+    let db = Store::open_models(Some(&path), Vec::new(), None).map(std::sync::Arc::new).unwrap();
     db.mark_session_end_in_tests().unwrap();
     drop(db);
     let slot = Arc::new(ProbeSlot::default());
     slot.memory.set(&world.credentials.value().unwrap()).unwrap();
-    let db = Db::open(&path, Vec::new(), None).unwrap();
+    let db = Store::open_models(Some(&path), Vec::new(), None).map(std::sync::Arc::new).unwrap();
     *slot.db.lock().unwrap() = Some(db.clone());
-    let client = EncryptedClient::new(&config(), world.server.clone(), slot.clone(), db.clone(), world.clock.clone()).unwrap();
+    let client = Client::new(&config(), world.server.clone(), slot.clone(), db.clone(), world.clock.clone(), Arc::new(crate::transport::MockTransport::new())).unwrap();
     drop(client);
     assert_eq!(*slot.session_at_clear.lock().unwrap(), vec![false], "the session rows were erased before the secret");
     assert_eq!((rows(&db).0, slot.memory.value()), (None, None));
@@ -484,7 +485,7 @@ async fn a_secret_left_by_a_crash_is_erased_and_the_session_rows_go_before_the_s
 #[tokio::test(flavor = "multi_thread")]
 async fn a_session_reset_erases_the_digest_before_the_secret() {
     let world = World::new();
-    let db = Db::open_in_memory(Vec::new(), None).unwrap();
+    let db = Store::open_models(None, Vec::new(), None).map(std::sync::Arc::new).unwrap();
     let slot = Arc::new(ProbeSlot::default());
     let (client, life) = open_with(&world, slot.clone(), &db);
     sign_in(&client).await;
@@ -497,11 +498,11 @@ async fn a_session_reset_erases_the_digest_before_the_secret() {
 #[tokio::test(flavor = "multi_thread")]
 async fn a_credential_store_that_cannot_save_ends_the_sign_in_with_an_error() {
     let world = World::new();
-    let db = Db::open_in_memory(Vec::new(), None).unwrap();
+    let db = Store::open_models(None, Vec::new(), None).map(std::sync::Arc::new).unwrap();
     let slot = Arc::new(ProbeSlot::default());
     slot.fail_set.store(true, std::sync::atomic::Ordering::SeqCst);
     let (client, _life) = open_with(&world, slot.clone(), &db);
-    let outcome = tokio::time::timeout(LIMIT, client.session_call_in_tests("social", json!({ "provider": "google", "idToken": "t" }))).await.expect("the call has an outcome");
+    let outcome = tokio::time::timeout(LIMIT, client.session_call("social", json!({ "provider": "google", "idToken": "t" }))).await.expect("the call has an outcome");
     assert!(outcome.is_err(), "{outcome:?}");
     assert_eq!(world.server.seen().len(), 0, "nothing left the device");
     assert_eq!(rows(&db), (None, None));
@@ -511,11 +512,11 @@ async fn a_credential_store_that_cannot_save_ends_the_sign_in_with_an_error() {
 #[tokio::test(flavor = "multi_thread")]
 async fn a_credential_store_that_panics_fails_the_sign_in_and_closes_the_database() {
     let world = World::new();
-    let db = Db::open_in_memory(Vec::new(), None).unwrap();
+    let db = Store::open_models(None, Vec::new(), None).map(std::sync::Arc::new).unwrap();
     let slot = Arc::new(ProbeSlot::default());
     slot.panic_set.store(true, std::sync::atomic::Ordering::SeqCst);
     let (client, life) = open_with(&world, slot.clone(), &db);
-    let outcome = tokio::time::timeout(LIMIT, client.session_call_in_tests("social", json!({ "provider": "google", "idToken": "t" }))).await.expect("the call has an outcome, it does not wait for ever");
+    let outcome = tokio::time::timeout(LIMIT, client.session_call("social", json!({ "provider": "google", "idToken": "t" }))).await.expect("the call has an outcome, it does not wait for ever");
     assert!(outcome.is_err(), "{outcome:?}");
     until("Lifecycle never heard the executor failure", || life.published().closed).await;
     assert_eq!(world.server.seen().len(), 0, "nothing left the device");
@@ -524,7 +525,7 @@ async fn a_credential_store_that_panics_fails_the_sign_in_and_closes_the_databas
 #[tokio::test(flavor = "multi_thread")]
 async fn a_locked_secret_waits_for_the_foreground_and_a_foreign_secret_ends_the_request_before_the_network() {
     let world = World::new();
-    let db = Db::open_in_memory(Vec::new(), None).unwrap();
+    let db = Store::open_models(None, Vec::new(), None).map(std::sync::Arc::new).unwrap();
     let slot = Arc::new(ProbeSlot::default());
     let (client, life) = open_with(&world, slot.clone(), &db);
     sign_in(&client).await;
@@ -566,16 +567,16 @@ fn only_a_revoked_logout_answer_is_revoked() {
 fn the_answer_stays_when_the_landing_of_its_batch_fails_and_goes_with_the_landing() {
     use crate::owners::contract::BatchAuthor;
     use crate::owners::store::{StoreBatch, StoreOp};
-    let db = Db::open_in_memory(Vec::new(), None).unwrap();
+    let db = Store::open_models(None, Vec::new(), None).map(std::sync::Arc::new).unwrap();
     {
         let inner = db.lock();
         state::store_answer(&inner.connection, 7, None, &state::StoredAnswer::Ok("{}".into())).unwrap();
     }
     let answers = |db: &Store| state::answers(&db.lock().connection).unwrap().len();
     let batch = |rows: Vec<(String, String)>| StoreBatch { author: BatchAuthor::Outbox, id: 1, epoch: 1, basis: Default::default(), rows, intents: 0, credential: None, ops: vec![StoreOp::RemoveAnswer { request_id: 7 }] };
-    assert!(db.write_batch(&batch(vec![("Task".into(), "not json".into())]), &db.files(), &db.pointer_guards(), None).is_err());
+    assert!(db.write_batch(&batch(vec![("Task".into(), "not json".into())]), db.files(), db.pointer_guards(), None).is_err());
     assert_eq!(answers(&db), 1);
-    db.write_batch(&batch(Vec::new()), &db.files(), &db.pointer_guards(), None).unwrap();
+    db.write_batch(&batch(Vec::new()), db.files(), db.pointer_guards(), None).unwrap();
     assert_eq!(answers(&db), 0);
 }
 
@@ -586,7 +587,7 @@ async fn store_read_intents_queue_failed() {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("session.sqlite");
     signed_in_file(&world, &path).await;
-    let db = Db::open(&path, Vec::new(), None).unwrap();
+    let db = Store::open_models(Some(&path), Vec::new(), None).map(std::sync::Arc::new).unwrap();
     db.lock().connection.execute_batch("ALTER TABLE op RENAME TO op_unreadable").unwrap();
     let (_client, life) = world.open(&db).await;
     assert!(life.restore_failures().iter().any(|(owner, _)| *owner == crate::owners::lifecycle::Peer::Outbox), "the queue failure reaches Outbox: {:?}", life.restore_failures());

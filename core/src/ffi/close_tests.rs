@@ -26,7 +26,7 @@ fn with_transport(clock: Arc<dyn Clock>) -> (Arc<Database>, Arc<MockTransport>) 
     let wired = transport.clone();
     let database = Database::start_with(config(), serde_json::to_string(&vec![notice]).unwrap(), clock, move |db, _| {
         super::signed_session_tests::signed_session(db);
-        Ok((Some(wired), None, None, None))
+        Ok(super::database::Wiring { transport: Some(wired), encrypted: None, cable: None, seal: None })
     }).unwrap();
     database.register_operations(r#"[{"name":"Signal","document":"subscription Signal { signal { id } }","rootPath":"signal"}]"#.into()).unwrap();
     (database, transport)

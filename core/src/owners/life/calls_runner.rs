@@ -86,7 +86,11 @@ impl CallsRunner {
         let back = back.clone();
         if !self.wiring.admits_epoch(epoch) { return back.reply(EpochStamp::Control, CallsInput::TransportError { call_id, error: CallError::Interrupted }); }
         let launch = self.wiring.handle.launch();
+        #[cfg(test)]
+        let flight = crate::owners::read::InFlight::start(&self.wiring.flights);
         let task = crate::task::spawn_on(crate::task::Carry::Detached, &self.executor, crate::runtime::counted(Some(launch), async move {
+            #[cfg(test)]
+            let _flight = flight;
             let variables: Value = serde_json::from_str(&variables).unwrap_or(Value::Null);
             let request = GraphQLRequest::new(document.clone(), operation, variables);
             crate::lock::assert_no_library_lock("Transport::request");

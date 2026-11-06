@@ -23,18 +23,6 @@ impl Readers {
         Ok(Self { connections, idle, available: Condvar::new() })
     }
 
-    /// Lets go of the file: every connection of the pool becomes an empty in-memory one once its reader is done.
-    pub(super) fn close(&self) {
-        for slot in &self.connections {
-            let mut guard = crate::lock::acquire(slot);
-            if let Ok(memory) = Connection::open_in_memory() {
-                let old = std::mem::replace(&mut *guard, memory);
-                drop(guard);
-                let _ = old.close();
-            }
-        }
-    }
-
     pub(super) fn lease(&self) -> Lease<'_> {
         let mut idle = crate::lock::acquire(&self.idle);
         loop {

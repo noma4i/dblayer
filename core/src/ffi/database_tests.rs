@@ -81,3 +81,10 @@ impl Database {
         if let Some(lease) = self.lease.get() { lease.release(); }
     }
 }
+
+impl Database {
+    /// The digest of the stored session once it signed in: `None` before the first sign-in and after the session ended.
+    pub(crate) fn signed_in_digest(&self) -> Option<String> {
+        crate::transport::encrypted::credential::stored_session(&self.db).unwrap().filter(|session| session.sequence > 0).map(|session| session.credential_digest)
+    }
+}

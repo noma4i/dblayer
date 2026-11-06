@@ -1,5 +1,5 @@
 use super::*;
-use crate::db::Record;
+use crate::store::Record;
 use crate::identity::RowId;
 use crate::schema::{FieldSpec, ModelSpec};
 use crate::syncstate::SyncInfo;
@@ -16,7 +16,7 @@ fn spec(second: &str) -> ModelSpec {
 }
 
 fn cells(attachment: Value) -> Cell {
-    let record = Record { id: RowId::new("w1").unwrap(), revision: 1, data: json!({"id": "w1", "attachment": attachment}).as_object().unwrap().clone(), sync: SyncInfo::default(), ephemeral: 0 };
+    let record = Record { id: RowId::new("w1").unwrap(), revision: 1, data: json!({"id": "w1", "attachment": attachment}).as_object().unwrap().clone(), sync: SyncInfo::default() };
     WireModel::of(&spec("ReactionAttachment")).row(&Arc::new(record)).cells.remove(0)
 }
 

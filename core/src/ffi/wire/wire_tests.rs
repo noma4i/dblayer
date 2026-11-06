@@ -1,5 +1,5 @@
 use super::*;
-use crate::db::Record;
+use crate::store::Record;
 use crate::identity::RowId;
 use crate::schema::{resolve_types, EphemeralSpec, FieldSpec, ModelSpec};
 use crate::syncstate::SyncInfo;
@@ -48,7 +48,7 @@ fn spec() -> ModelSpec {
 }
 
 fn record(data: Value) -> Record {
-    Record { id: RowId::new("w1").unwrap(), revision: 1, data: data.as_object().unwrap().clone(), sync: SyncInfo::default(), ephemeral: 0 }
+    Record { id: RowId::new("w1").unwrap(), revision: 1, data: data.as_object().unwrap().clone(), sync: SyncInfo::default() }
 }
 
 fn text(value: &str) -> Cell {

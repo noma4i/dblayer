@@ -2,7 +2,9 @@
 
 use serde_json::json;
 
-use crate::db::fixtures::{booted, put};
+use crate::store::Store;
+
+use crate::store::spec_fixtures::{booted, put};
 use crate::owners::contract::BatchAuthor;
 use crate::owners::store::{EffectRow, IntentEffects, StoreBatch, StoreOp};
 
@@ -19,6 +21,6 @@ fn the_attempt_counter_is_stored_with_the_operation() {
     db.write_queue_ops(&[StoreOp::Intent { op_id: 1, model: "moments".into(), row_id: "m1".into(), action: "update".into(), payload: "{}".into(), effects }]).unwrap();
     assert_eq!(attempts_of(&db, 1), 0);
     let batch = StoreBatch { author: BatchAuthor::Outbox, id: 1, epoch: 1, basis: Default::default(), rows: Vec::new(), intents: 0, credential: None, ops: vec![StoreOp::Attempt { op_id: 1, attempts: 3, cycle_id: 2 }] };
-    db.write_batch(&batch, &db.files(), &db.pointer_guards(), None).unwrap();
+    db.write_batch(&batch, db.files(), db.pointer_guards(), None).unwrap();
     assert_eq!(attempts_of(&db, 1), 3);
 }

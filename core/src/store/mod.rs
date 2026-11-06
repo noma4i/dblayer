@@ -377,18 +377,6 @@ impl Store {
 
     pub(crate) fn reads(&self) -> &Arc<reads::Reads> { &self.reads }
 
-    /// Lets go of the file: the writer and the readers swap their connections for empty in-memory ones, so the same file opens again at once.
-    pub(crate) fn close_connections(&self) {
-        if let Some(readers) = &self.readers { readers.close(); }
-        let mut inner = self.lock();
-        inner.ready = false;
-        if let Ok(memory) = Connection::open_in_memory() {
-            let old = std::mem::replace(&mut inner.connection, memory);
-            drop(inner);
-            let _ = old.close();
-        }
-    }
-
     pub fn read<T>(&self, required: &[&str], run: impl FnOnce(&Reader<'_>) -> Result<T, StoreError>) -> Result<T, StoreError> {
         let _admitted = self.reads.admit().ok_or(StoreError::Refused)?;
         let models = self.models.read().unwrap_or_else(|error| error.into_inner());
@@ -429,6 +417,8 @@ impl Store {
 #[cfg(test)]
 mod fixtures;
 #[cfg(test)]
+pub(crate) mod spec_fixtures;
+#[cfg(test)]
 mod admission_tests;
 #[cfg(test)]
 mod apply_tests;
@@ -439,7 +429,6 @@ mod members_among_tests;
 #[cfg(test)]
 mod boot_tests;
 #[cfg(test)]
-mod write_tests;
 #[cfg(test)]
 mod file_ops_tests;
 #[cfg(test)]

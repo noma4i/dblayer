@@ -13,7 +13,7 @@ fn nodes(value: Value) -> Vec<Map<String, Value>> {
 
 #[test]
 fn inv_merge_06_nested_author_becomes_user_row_and_sets_foreign_key() {
-    let db = crate::db::Db::open_in_memory(specs(), None).unwrap();
+    let db = Store::open_models(None, specs(), None).map(std::sync::Arc::new).unwrap();
     let input = nodes(json!([{"id": "m1", "text": "hi", "author": {"id": "u1", "name": "Ann", "ignored": 1}}]));
     let normalized = normalize_nodes(&db, "moments", &input).unwrap();
     assert_eq!(normalized.roots.len(), 1);
@@ -29,7 +29,7 @@ fn nested_author_with_only_an_id_still_sets_the_foreign_key_when_the_user_row_ne
     let users = ModelSpec::new("users", vec![FieldSpec::scalar("id", ScalarKind::Id), FieldSpec::scalar("fullName", ScalarKind::Str)]);
     let mut moments = ModelSpec::new("moments", vec![FieldSpec::scalar("id", ScalarKind::Id), FieldSpec::scalar("userId", ScalarKind::Id).nullable().indexed()]);
     moments.associations.push(AssociationSpec::new("author", AssociationKind::BelongsTo, "users", "userId"));
-    let db = Db::open_in_memory(vec![users, moments], None).unwrap();
+    let db = Store::open_models(None, vec![users, moments], None).map(std::sync::Arc::new).unwrap();
     let input = nodes(json!([{"id": "m1", "text": "hi", "author": {"id": "u7"}}]));
     let normalized = normalize_nodes(&db, "moments", &input).unwrap();
     assert_eq!(normalized.roots[0]["userId"], json!("u7"));
@@ -45,7 +45,7 @@ fn data_id_from_parent() {
     let mut hit = hit;
     hit.associations.push(AssociationSpec::new("chat", AssociationKind::BelongsTo, "chats", "chatId"));
     let chats = ModelSpec::new("chats", vec![FieldSpec::scalar("id", ScalarKind::Id), FieldSpec::scalar("title", ScalarKind::Str).optional()]);
-    let db = Db::open_in_memory(vec![hit, chats], None).unwrap();
+    let db = Store::open_models(None, vec![hit, chats], None).map(std::sync::Arc::new).unwrap();
     let input = nodes(json!([{"chat": {"id": "c7", "title": "Ann"}}]));
     let normalized = normalize_nodes(&db, "hits", &input).unwrap();
     assert_eq!(normalized.roots.len(), 1);
@@ -55,7 +55,7 @@ fn data_id_from_parent() {
 
 #[test]
 fn shared_author_is_reported_once() {
-    let db = crate::db::Db::open_in_memory(specs(), None).unwrap();
+    let db = Store::open_models(None, specs(), None).map(std::sync::Arc::new).unwrap();
     let input = nodes(json!([
         {"id": "m1", "author": {"id": "u1", "name": "Ann"}},
         {"id": "m2", "author": {"id": "u1", "name": "Ann B"}}
@@ -68,7 +68,7 @@ fn shared_author_is_reported_once() {
 
 #[test]
 fn row_without_id_is_dropped_and_counted() {
-    let db = crate::db::Db::open_in_memory(specs(), None).unwrap();
+    let db = Store::open_models(None, specs(), None).map(std::sync::Arc::new).unwrap();
     let input = nodes(json!([{"text": "no id"}, {"id": "m2", "text": "ok"}]));
     let normalized = normalize_nodes(&db, "moments", &input).unwrap();
     assert_eq!(normalized.roots.len(), 1);
@@ -77,7 +77,7 @@ fn row_without_id_is_dropped_and_counted() {
 
 #[test]
 fn inv_merge_06_invalid_author_is_skipped_but_moment_stays() {
-    let db = crate::db::Db::open_in_memory(specs(), None).unwrap();
+    let db = Store::open_models(None, specs(), None).map(std::sync::Arc::new).unwrap();
     let input = nodes(json!([{"id": "m1", "userId": "u9", "author": {"name": "no id"}}]));
     let normalized = normalize_nodes(&db, "moments", &input).unwrap();
     assert_eq!(normalized.roots[0]["userId"], json!("u9"));
@@ -86,11 +86,11 @@ fn inv_merge_06_invalid_author_is_skipped_but_moment_stays() {
 
 #[test]
 fn unknown_model_is_an_error() {
-    let db = crate::db::Db::open_in_memory(specs(), None).unwrap();
+    let db = Store::open_models(None, specs(), None).map(std::sync::Arc::new).unwrap();
     assert_eq!(normalize_nodes(&db, "ghosts", &[]), Err(CodecError::UnknownModel("ghosts".to_string())));
 }
 
-fn nesting_db() -> crate::db::Db {
+fn nesting_db() -> std::sync::Arc<crate::store::Store> {
     use crate::schema::{AssociationKind, AssociationSpec, FieldSpec};
     use crate::value::ScalarKind;
     let mut specs = crate::schema_fixtures::specs();
@@ -102,7 +102,7 @@ fn nesting_db() -> crate::db::Db {
     specs[1].fields.push(FieldSpec::list("mentionIds", ScalarKind::Id).optional());
     specs[1].fields.push(FieldSpec::list("similarIds", ScalarKind::Id).optional());
     specs[1].associations.extend([mentions, similar]);
-    crate::db::Db::open_in_memory(specs, None).unwrap()
+    Store::open_models(None, specs, None).map(std::sync::Arc::new).unwrap()
 }
 
 #[test]
@@ -163,7 +163,7 @@ fn repeated_roots_and_nested_rows_merge_selected_fields_once() {
 
 #[test]
 fn inv_id_01_a_number_and_the_same_id_as_text_become_the_same_text_id() {
-    let db = crate::db::Db::open_in_memory(specs(), None).unwrap();
+    let db = Store::open_models(None, specs(), None).map(std::sync::Arc::new).unwrap();
     let normalized = normalize_nodes(&db, "users", &nodes(json!([{"id": 54, "name": "Ann"}, {"id": "54", "name": "Bob"}]))).unwrap();
     assert_eq!(normalized.roots.iter().map(|row| row["id"].clone()).collect::<Vec<_>>(), [json!("54")], "a number and its text are one row");
     assert!(normalize_nodes(&db, "users", &nodes(json!([{"id": "", "name": "Ann"}]))).map_or(true, |normalized| normalized.roots.is_empty()), "an empty id is refused");

@@ -87,8 +87,7 @@ impl super::Transport for FloodSubscription {
 async fn subscription_overflow_reports_the_lost_range_before_failure() {
     use crate::transport::Transport;
     let transport = super::ForeignTransport(Arc::new(FloodSubscription));
-    let admitted = test_admission();
-    let mut subscription = within(transport.subscribe(&admitted, request())).await.unwrap();
+    let mut subscription = within(transport.subscribe(request())).await.unwrap();
     assert_eq!(within(subscription.next()).await, Some(SubscriptionEvent::Ready));
     for number in 1..=255 {
         let Some(SubscriptionEvent::Next(response)) = within(subscription.next()).await else { panic!("missing event {number}") };
@@ -147,7 +146,7 @@ fn a_frame_without_data_fails_the_subscription_as_internal_and_an_enveloped_fram
 #[test]
 fn inv_panic_01_a_subscription_sink_survives_a_poisoned_lock() {
     let (sink, mut receiver) = sink();
-    crate::db::fixtures::poison(&sink.sender);
+    crate::store::spec_fixtures::poison(&sink.sender);
     sink.ready();
     assert!(matches!(receiver.try_recv().map(|(event, _)| event), Ok(SubscriptionEvent::Ready)));
     sink.closed();
@@ -176,7 +175,7 @@ impl super::Transport for EarlyFailure {
 async fn a_failure_the_platform_reports_before_subscribe_returns_reaches_the_subscription() {
     use crate::transport::Transport;
     let transport = super::ForeignTransport(Arc::new(EarlyFailure));
-    let mut subscription = transport.subscribe(&test_admission(), crate::transport::GraphQLRequest::new("subscription { x }", "X", serde_json::json!({}))).await.unwrap();
+    let mut subscription = transport.subscribe(crate::transport::GraphQLRequest::new("subscription { x }", "X", serde_json::json!({}))).await.unwrap();
     let Some(SubscriptionEvent::Failed(failure)) = within(subscription.next()).await else { panic!("the early failure was lost") };
     assert!(failure.is_terminal());
 }
@@ -235,10 +234,6 @@ fn pending<F: Future>(call: &mut Pin<Box<F>>) -> bool {
     call.as_mut().poll(&mut std::task::Context::from_waker(std::task::Waker::noop())).is_pending()
 }
 
-fn test_admission() -> crate::ffi::admission::Admitted {
-    Arc::new(crate::ffi::admission::Leases::default()).admit(crate::ffi::admission::Origin::Explicit, "test transport").unwrap()
-}
-
 fn opened_then_stuck() -> Script<super::SubscriptionSink> {
     Box::new(|sink| boxed(async move { sink.opened("t1".into())?; std::future::pending::<()>().await; Ok(()) }))
 }
@@ -256,8 +251,7 @@ fn opened_after_a_gate() -> (Script<super::SubscriptionSink>, std::sync::mpsc::S
 fn a_subscription_token_opened_before_the_call_is_dropped_is_unsubscribed() {
     use crate::transport::Transport;
     let (transport, events) = ordered(Some(opened_then_stuck()), None);
-    let admitted = test_admission();
-    let mut call = Box::pin(transport.subscribe(&admitted, request()));
+    let mut call = Box::pin(transport.subscribe(request()));
     assert!(pending(&mut call));
     drop(call);
     assert_eq!(heard(&events), "unsubscribe:t1");
@@ -268,8 +262,7 @@ fn a_subscription_token_opened_after_the_call_was_dropped_is_unsubscribed() {
     use crate::transport::Transport;
     let (script, go) = opened_after_a_gate();
     let (transport, events) = ordered(Some(script), None);
-    let admitted = test_admission();
-    let mut call = Box::pin(transport.subscribe(&admitted, request()));
+    let mut call = Box::pin(transport.subscribe(request()));
     assert!(pending(&mut call));
     drop(call);
     go.send(()).unwrap();
@@ -280,7 +273,7 @@ fn a_subscription_token_opened_after_the_call_was_dropped_is_unsubscribed() {
 async fn a_cancelled_subscription_unsubscribes_its_token() {
     use crate::transport::Transport;
     let (transport, events) = ordered(Some(Box::new(|sink| boxed(async move { sink.opened("t1".into())?; sink.ready(); Ok(()) }))), None);
-    let subscription = transport.subscribe(&test_admission(), request()).await.unwrap();
+    let subscription = transport.subscribe(request()).await.unwrap();
     drop(subscription);
     assert_eq!(heard(&events), "unsubscribe:t1");
 }
@@ -289,7 +282,7 @@ async fn a_cancelled_subscription_unsubscribes_its_token() {
 async fn a_call_that_fails_after_opened_still_unsubscribes_its_token() {
     use crate::transport::Transport;
     let (transport, events) = ordered(Some(Box::new(|sink| boxed(async move { sink.opened("t1".into())?; Err(super::DbError::Network { detail: "refused".into() }) }))), None);
-    assert!(transport.subscribe(&test_admission(), request()).await.is_err());
+    assert!(transport.subscribe(request()).await.is_err());
     assert_eq!(heard(&events), "unsubscribe:t1");
 }
 
@@ -298,7 +291,7 @@ async fn a_call_that_finishes_without_opened_fails_and_unsubscribes_a_late_token
     use crate::transport::Transport;
     let (kept, sinks) = std::sync::mpsc::channel();
     let (transport, events) = ordered(Some(Box::new(move |sink| boxed(async move { kept.send(sink).unwrap(); Ok(()) }))), None);
-    assert!(transport.subscribe(&test_admission(), request()).await.is_err());
+    assert!(transport.subscribe(request()).await.is_err());
     recv_within(&sinks).opened("late".into()).unwrap();
     assert_eq!(heard(&events), "unsubscribe:late");
 }

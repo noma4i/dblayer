@@ -77,7 +77,7 @@ pub(super) fn land_event(rig: &Rig, model: &str, row: Value) {
     let id = RowId::new(row["id"].as_str().unwrap()).unwrap();
     let mut envelope = CommitEnvelope::new(Source::Event, db.generation());
     envelope.entity_ops.push(EntityOp::Upsert { model: ModelKey::new(model), id, row });
-    db.land(&db.admit().unwrap(), envelope).unwrap();
+    db.land_in_tests(envelope).unwrap();
 }
 
 /// The cell of a field of a row of `model`.
@@ -100,7 +100,7 @@ pub(super) fn land_delete(rig: &Rig, model: &str, id: &str) {
     let db = &rig.database.db;
     let mut envelope = CommitEnvelope::new(Source::Event, db.generation());
     envelope.entity_ops.push(EntityOp::Destroy { model: ModelKey::new(model), id: RowId::new(id).unwrap(), reason: DestroyReason::Server });
-    db.land(&db.admit().unwrap(), envelope).unwrap();
+    db.land_in_tests(envelope).unwrap();
 }
 
 /// The reactor of a reaction is the row of a user: the nested `user` links to `User` by `userId`.

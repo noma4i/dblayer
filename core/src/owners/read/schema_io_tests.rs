@@ -5,7 +5,7 @@ use serde_json::json;
 use super::window_io::WindowCodec;
 use super::windows::WindowKey;
 use super::{ReadOperation, ReadOperations, SchemaWindowCodec};
-use crate::db::fixtures::{all_specs, moments_spec, obj};
+use crate::store::spec_fixtures::{all_specs, moments_spec, obj};
 use crate::store::Store;
 use crate::schema::{Coverage, PageDirection, RelationSpec, RemoteShape, RemoteSpec};
 
@@ -27,7 +27,7 @@ fn codec(page_size: Option<u32>) -> SchemaWindowCodec {
     let specs = all_specs().into_iter().map(|spec| if spec.key.as_str() == "moments" { moments.clone() } else { spec }).collect();
     let operations = ReadOperations::default();
     operations.declare([ReadOperation { name: "Mine".into(), document: "query Mine($first: Int) { moments { id } }".into(), root_path: "moments".into(), page_size: 20 }]);
-    SchemaWindowCodec::new(Db::open_in_memory(specs, None).unwrap(), operations)
+    SchemaWindowCodec::new(Store::open_models(None, specs, None).map(std::sync::Arc::new).unwrap(), operations)
 }
 
 #[test]

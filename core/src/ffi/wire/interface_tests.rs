@@ -1,5 +1,5 @@
 use super::*;
-use crate::db::Record;
+use crate::store::Record;
 use crate::identity::RowId;
 use crate::schema::screens_fixture::screens_spec;
 use crate::syncstate::SyncInfo;
@@ -12,7 +12,7 @@ fn text(value: &str) -> Cell {
 
 fn spec_cell(elements: Value) -> Cell {
     let data = json!({"id": "s1", "spec": {"root": "r", "elements": elements}});
-    let record = Record { id: RowId::new("s1").unwrap(), revision: 1, data: data.as_object().unwrap().clone(), sync: SyncInfo::default(), ephemeral: 0 };
+    let record = Record { id: RowId::new("s1").unwrap(), revision: 1, data: data.as_object().unwrap().clone(), sync: SyncInfo::default() };
     WireModel::of(&screens_spec()).row(&Arc::new(record)).cells.remove(1)
 }
 

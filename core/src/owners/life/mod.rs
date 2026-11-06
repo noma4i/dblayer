@@ -100,6 +100,8 @@ pub(crate) struct Wiring {
     /// The ids of streams: they stay below the bit that marks the waiters of platform calls in `Windows`.
     pub next_stream: std::sync::atomic::AtomicU64,
     published: PublishedCell<Published>,
+    #[cfg(test)]
+    pub(crate) flights: super::read::Flights,
     /// The id of the wait of `open` and its answer, set at `Saved` of the first publication.
     open: Mutex<OpenWait>,
     faults: Mutex<Vec<String>>,
@@ -140,6 +142,8 @@ impl Wiring {
             handle,
             next_stream: std::sync::atomic::AtomicU64::new(1),
             published: PublishedCell::default(),
+            #[cfg(test)]
+            flights: Default::default(),
             open: Mutex::new(OpenWait::default()),
             faults: Mutex::new(Vec::new()),
             open_failed: Mutex::new(None),
@@ -579,6 +583,10 @@ impl Life {
     pub fn published(&self) -> Published {
         self.wiring.published.get().unwrap_or_else(Published::initial)
     }
+
+    /// The requests of the network that are on their way.
+    #[cfg(test)]
+    pub fn requests_in_flight(&self) -> usize { self.wiring.flights.load(Ordering::SeqCst) }
 
     pub fn faults(&self) -> Vec<String> { self.wiring.faults.lock().unwrap_or_else(PoisonError::into_inner).clone() }
 

@@ -32,7 +32,7 @@ fn plant_older_layout(path: &std::path::Path, digest: &str) {
 async fn a_database_of_an_older_layout_opens_with_its_session_and_without_pending() {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("older.sqlite");
-    let digest = crate::transport::encrypted::client::digest_of(SECRET);
+    let digest = crate::transport::encrypted::exchange::digest_of(SECRET);
     plant_older_layout(&path, &digest);
     let credentials = Arc::new(MemoryCredentials::default());
     credentials.set(SECRET).unwrap();
@@ -42,5 +42,5 @@ async fn a_database_of_an_older_layout_opens_with_its_session_and_without_pendin
     let database = Database::open(Config { path: Some(path.to_string_lossy().into_owned()), data_version: None, cache_rows: 8 }, "[]".to_string(), Some(Arc::new(SubscriptionsOnly)), Some(encrypted), Some(Arc::new(Held(credentials))), Some(Arc::new(ThroughServer(server))), None).await.expect("the database opens");
 
     assert_eq!(database.life.published().identity, crate::store::identity_of(&digest), "the session identity is published");
-    assert_eq!(database.session.as_ref().unwrap().stored_pending().unwrap(), None, "no pending request");
+    assert_eq!(crate::transport::encrypted::credential::stored_pending(&database.db).unwrap(), None, "no pending request");
 }

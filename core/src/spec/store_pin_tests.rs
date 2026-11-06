@@ -1,3 +1,4 @@
+use crate::store::Store;
 use std::collections::BTreeMap;
 
 use crate::owners::contract::{BatchAuthor, EpochEnded};
@@ -91,7 +92,7 @@ fn store_prop_tombstone_flight() {
     use crate::owners::read::windows::WindowKey;
     use crate::owners::store::{RowValue, StoreOp};
 
-    let db = crate::db::Db::open_in_memory(crate::db::fixtures::all_specs(), None).unwrap();
+    let db = Store::open_models(None, crate::store::spec_fixtures::all_specs(), None).map(std::sync::Arc::new).unwrap();
     let clock = Arc::new(crate::pacing::ManualClock::new(Duration::from_secs(1)));
     db.set_clock(clock.clone());
     let row = |id: &str| RowValue { row_id: id.into(), values: format!(r#"{{"id":"{id}","text":"value"}}"#) };
@@ -107,7 +108,7 @@ fn store_prop_tombstone_flight() {
     assert!(db.is_tombstoned("moments", "m1").unwrap());
     db.write_queue_ops_with_pin(&[StoreOp::AttachFile { model: "moments".into(), row_id: "m2".into(), field: "media".into(), bytes: b"file".to_vec(), name: "file.txt".into(), mime: "text/plain".into() }], min).unwrap();
     assert!(db.is_tombstoned("moments", "m1").unwrap());
-    db.attach(&db.admit().unwrap(), "moments", &RowId::new("m2").unwrap(), "cover", b"other", "other.txt", "text/plain").unwrap();
+    db.write_queue_ops_with_pin(&[StoreOp::AttachFile { model: "moments".into(), row_id: "m2".into(), field: "cover".into(), bytes: b"other".to_vec(), name: "other.txt".into(), mime: "text/plain".into() }], min).unwrap();
     assert!(db.is_tombstoned("moments", "m1").unwrap());
     let key = WindowKey::nodes("moments", &["m1"]);
     db.write_queue_ops_with_pin(&[StoreOp::Window { key: key.name, model: key.model, page: 1, replace_all: false, cursor: None, roots: vec![row("m1")], related: vec![], total: None, base_revision: i64::try_from(base).unwrap() }], min).unwrap();

@@ -36,11 +36,19 @@ pub struct WindowIo {
     counted: Option<crate::runtime::Handle>,
     open: Open,
     rest: Rest<WindowsEffect>,
+    #[cfg(test)]
+    flights: Option<super::ports::Flights>,
 }
 
 impl WindowIo {
     pub fn new(transport: Option<Arc<dyn Transport>>, codec: Arc<dyn WindowCodec>, admit: Admit, handle: Handle, rest: Rest<WindowsEffect>) -> Self {
-        Self { transport, codec, admit, handle, counted: None, open: Open::default(), rest }
+        Self { transport, codec, admit, handle, counted: None, open: Open::default(), rest, #[cfg(test)] flights: None }
+    }
+
+    #[cfg(test)]
+    pub fn flights_in(mut self, flights: super::ports::Flights) -> Self {
+        self.flights = Some(flights);
+        self
     }
 
     /// The barrier of the owners waits for the requests this executor starts.
@@ -57,7 +65,11 @@ impl WindowIo {
         self.open.lock().unwrap_or_else(PoisonError::into_inner).insert((request, attempt), token.clone());
         let (transport, codec, open, back) = (self.transport.clone(), self.codec.clone(), self.open.clone(), back.clone());
         let launch = self.counted.as_ref().map(crate::runtime::Handle::launch);
+        #[cfg(test)]
+        let flight = self.flights.as_ref().map(super::ports::InFlight::start);
         spawn_on(Carry::Detached, &self.handle, crate::runtime::counted(launch, async move {
+            #[cfg(test)]
+            let _flight = flight;
             let outcome = tokio::select! {
                 biased;
                 () = token.cancelled() => None,

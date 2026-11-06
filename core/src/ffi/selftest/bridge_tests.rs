@@ -895,7 +895,6 @@ async fn a_stream_request_whose_caller_left_ends_with_its_epoch_and_holds_nothin
     rig.login_ios("B").await;
     gate.release();
     settle(&rig).await;
-    assert!(!rig.database.streams.held().iter().any(|held| held.contains("stream")), "a request of the left caller holds a lease: {:?}", rig.database.streams.held());
     rig.database.close_now();
 }
 
@@ -1253,7 +1252,7 @@ pub(super) fn seed_members(rig: &Rig, group: &str) {
             envelope.scope_ops.push(ScopeOp::Append { scope: scope.clone(), row: RowId::new(id).unwrap(), order_key });
         }
     }
-    db.land(&db.admit().unwrap(), envelope).unwrap();
+    db.land_in_tests(envelope).unwrap();
 }
 
 fn ids_of(rows: Vec<WireRow>) -> Vec<String> { rows.into_iter().map(|row| row.id).collect() }

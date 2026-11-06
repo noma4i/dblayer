@@ -163,7 +163,7 @@ async fn session_reset_and_close_reject_answers_started_before_the_transition() 
         pause.release.add_permits(1);
         assert!(within(work).await.unwrap().is_err(), "old response was accepted: session_call={session_call}, end={end}");
         if !close {
-            if end == "session_reset" { assert!(database.session.as_ref().unwrap().signed_in().unwrap().is_none()); }
+            if end == "session_reset" { assert!(database.signed_in_digest().is_none()); }
             server.forbid(true);
             within(crate::ffi::settled(&database)).await.unwrap();
             assert!(server.violations().is_empty(), "{end}: {:?}", server.violations());
@@ -206,7 +206,7 @@ async fn a_call_waiting_in_a_retry_or_a_queue_ends_with_the_session_reset_and_th
     database.session_reset().await.unwrap();
     assert!(within(running).await.unwrap().is_err());
     assert!(within(queued).await.unwrap().is_err(), "a call queued behind another one ran after the session reset");
-    assert!(database.session.as_ref().unwrap().signed_in().unwrap().is_none());
+    assert!(database.signed_in_digest().is_none());
     database.close_now();
 }
 
@@ -223,7 +223,7 @@ async fn a_confirmed_logout_that_reaches_the_commit_after_the_close_clears_nothi
     database.close_now();
     pause.release.add_permits(1);
     assert!(within(work).await.unwrap().is_err(), "the revoked answer of the closed database was accepted");
-    assert!(database.session.as_ref().unwrap().signed_in().unwrap().is_some(), "the answer cleared the session after the database closed");
+    assert!(database.signed_in_digest().is_some(), "the answer cleared the session after the database closed");
 }
 
 #[tokio::test(flavor = "multi_thread")]
