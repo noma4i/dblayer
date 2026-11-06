@@ -109,7 +109,7 @@ expect_green_engine() {
   engine "$@" || { echo "FAIL expected green: $label"; cat "$work/engine.out"; failed=1; }
 }
 
-step_runner_fast_and_full_fail_on_the_same_step_and_cheap_runs_first() {
+step_runner_fast_and_full_fail_on_the_same_step_and_a_red_cheap_lane_does_not_stop_the_others() {
   c1=true; k1=true; s1=true; f1=true; CHANGED="core/a.rs"
   expect_green_engine "all steps pass in full"
   [ -e "$work/engine/ran-f1" ] || { echo "FAIL expect_green: the final lane did not run"; failed=1; }
@@ -124,7 +124,8 @@ step_runner_fast_and_full_fail_on_the_same_step_and_cheap_runs_first() {
   c1=false
   expect_red_engine "cheap step fails in full"
   expect_red_engine "cheap step fails in fast" --fast
-  [ -e "$work/engine/ran-k1" ] && { echo "FAIL expect_red: a build step ran after a cheap failure"; failed=1; }
+  [ -e "$work/engine/ran-k1" ] || { echo "FAIL expect_red: a red cheap lane stopped the other lanes"; failed=1; }
+  [ ! -e "$work/engine/ran-f1" ] || { echo "FAIL expect_red: final ran after a red cheap lane"; failed=1; }
   c1=true; k1=false
   expect_red_engine "core step fails in full"
   expect_red_engine "core step fails in fast" --fast
@@ -145,21 +146,24 @@ step_runner_lanes_run_at_the_same_time_and_a_red_lane_does_not_hide_the_others()
   changed_files() { echo "$CHANGED"; }
   local meet='touch met-NAME; n=0; until [ -e met-OTHER ] || [ "$n" -ge 100 ]; do sleep 0.1; n=$((n + 1)); done; [ -e met-OTHER ]'
   steps=(
+    "cheap|c0|20|-|${meet//NAME/cheap}; touch ran-c0"
     "a|a1|20|-|${meet//NAME/a}"
     "b|b1|20|-|${meet//NAME/b}"
     "c|c1|20|-|touch ran-c1; false"
     "c|c2|20|-|touch ran-c2"
-    "d|d1|20|-|sleep 1; touch ran-d1"
+    "d|d1|20|-|${meet//NAME/d}; touch ran-d1"
     "final|f1|20|-|touch ran-f1"
   )
-  steps[0]="${steps[0]//OTHER/b}"
-  steps[1]="${steps[1]//OTHER/a}"
+  steps[0]="${steps[0]//OTHER/d}"
+  steps[1]="${steps[1]//OTHER/b}"
+  steps[2]="${steps[2]//OTHER/a}"
+  steps[5]="${steps[5]//OTHER/cheap}"
   (run_checks) > "$work/engine.out" 2>&1
-  [ -e "$root/met-a" ] && [ -e "$root/met-b" ] && ! grep -q 'FAIL' <(grep -E '^(a|b) ' "$work/engine.out") || { echo "FAIL expect_green: lanes a and b did not run at the same time"; failed=1; }
+  [ -e "$root/met-a" ] && [ -e "$root/met-b" ] && [ -e "$root/met-cheap" ] && [ -e "$root/met-d" ] && ! grep -q 'FAIL' <(grep -E '^(cheap|a|b|d) ' "$work/engine.out") || { echo "FAIL expect_green: the lanes cheap, a, b and d did not run at the same time"; failed=1; }
   [ -e "$root/ran-c1" ] && [ ! -e "$root/ran-c2" ] || { echo "FAIL expect_red: a step ran after a red step of its lane"; failed=1; }
   [ -e "$root/ran-d1" ] || { echo "FAIL expect_red: a red lane hid the lane d"; failed=1; }
   [ ! -e "$root/ran-f1" ] || { echo "FAIL expect_red: final ran after a red lane"; failed=1; }
-  [ "$(grep -E '^[a-d] ' "$work/engine.out" | awk '{print $1 $2}' | paste -sd, -)" = "aa1,bb1,cc1,dd1" ] || { echo "FAIL the summary is not in table order"; cat "$work/engine.out"; failed=1; }
+  [ "$(grep -E '^(cheap|[a-d]) ' "$work/engine.out" | awk '{print $1 $2}' | paste -sd, -)" = "cheapc0,aa1,bb1,cc1,dd1" ] || { echo "FAIL the summary is not in table order"; cat "$work/engine.out"; failed=1; }
   grep -q '^check: FAILED' "$work/engine.out" || { echo "FAIL the run did not end red"; failed=1; }
 }
 

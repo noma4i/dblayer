@@ -95,7 +95,7 @@ Typical scenarios to cover:
 
 ## In this repository
 
-`scripts/check_dblayer.sh` runs the cheap lane first, then the cargo, swift and kotlin lanes at the same time (the steps of one lane run in order, each takes its own build slot), then the ship and final lanes, all within a 300 s limit.
+`scripts/check_dblayer.sh` runs the cheap, cargo, swift and kotlin lanes at the same time (the steps of one lane run in order, each takes its own build slot), then the ship and final lanes when all of them passed, all within a 300 s limit.
 
 | Check | Command |
 | ----- | ------- |
