@@ -44,6 +44,8 @@ mod write;
 mod read;
 #[cfg(test)]
 mod read_tests;
+#[cfg(test)]
+mod read_cancel_tests;
 mod transport;
 mod upload;
 mod upload_rounds;
