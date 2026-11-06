@@ -314,7 +314,7 @@ async fn network_events_reach_the_listeners_with_the_snapshot_of_the_epoch() {
     let life = start(&db, &transport).await;
     assert!(life.barrier(std::time::Duration::from_secs(5)), "the owners handled the snapshots of the first epoch");
     let heard: Arc<Mutex<Vec<(Peer, NetworkEvent)>>> = Arc::default();
-    for owner in [Peer::Rounds, Peer::Session, Peer::Transfer, Peer::Windows] {
+    for owner in [Peer::Rounds, Peer::Session, Peer::Transfer, Peer::Windows, Peer::Calls] {
         let heard = heard.clone();
         life.on_network(owner, move |event| heard.lock().unwrap().push((owner, event)));
     }
@@ -344,12 +344,12 @@ async fn network_events_reach_the_listeners_with_the_snapshot_of_the_epoch() {
         tokio::time::sleep(Duration::from_millis(5)).await;
     };
     let started = std::time::Instant::now();
-    while !heard.lock().unwrap().iter().any(|(owner, event)| *owner == Peer::Session && matches!(event, NetworkEvent::Online { epoch: Some(_), .. })) {
-        assert!(started.elapsed() < LIMIT, "the snapshot of the new epoch reached Session");
+    while !heard.lock().unwrap().iter().any(|(owner, event)| *owner == Peer::Calls && matches!(event, NetworkEvent::Online { epoch: Some(_), .. })) {
+        assert!(started.elapsed() < LIMIT, "the snapshot of the new epoch reached Calls");
         tokio::time::sleep(Duration::from_millis(5)).await;
     }
     let heard = heard.lock().unwrap().clone();
-    assert!(heard.contains(&(Peer::Session, NetworkEvent::Online { online: false, epoch: Some(epoch) })));
+    assert!(heard.contains(&(Peer::Calls, NetworkEvent::Online { online: false, epoch: Some(epoch) })));
     closed(&life).await;
 }
 

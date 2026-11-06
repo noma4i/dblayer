@@ -41,7 +41,7 @@ fn sess_open_direct_login_pending() {
 #[test]
 fn sess_open_pending_lost() {
     let mut twin = opened(open(Some((CRED, 6)), None, true, Secret::Present(CRED)));
-    assert!(matches!(twin.reference.state, RefState::Blocked { pending: None, reason: Block::StateLost }));
+    assert!(matches!(twin.reference.state, RefState::Blocked { pending: None, reason: Block::StateLost, landing: None }));
     twin.feed(call(1));
     assert_eq!(twin.replies, vec![(1, Err(Fail::StateLost))]);
 }
@@ -185,7 +185,7 @@ fn sess_snapshot_late_epoch() {
     twin.feed(ended(EndCause::SessionReset));
     twin.feed(Input::Published { epoch: EPOCH + 1, identity: None, state: PubState::NoSession });
     assert!(twin.feed(Input::Snapshot { epoch: EPOCH, online: true }).is_empty());
-    assert_eq!(twin.reference.online, Some(false), "the snapshot of the ended epoch changes nothing");
+    assert_eq!(twin.reference.online, None, "the snapshot of the ended epoch changes nothing");
     twin.feed(Input::Snapshot { epoch: EPOCH + 1, online: true });
     assert_eq!(twin.reference.online, Some(true));
 }

@@ -36,10 +36,15 @@ impl Session {
                 self.subscribers.remove(&stream);
                 self.state = state;
             }
-            Input::Online(online) => self.online_changed(state, online, out),
-            Input::Snapshot { epoch, online } if self.current(epoch) => self.online_changed(state, online, out),
+            Input::Online(online) if self.online.is_some() => self.online_changed(state, online, out),
+            Input::Online(_) => self.state = state,
+            Input::Snapshot { epoch, online } if epoch == self.epoch && self.current(epoch) => self.online_changed(state, online, out),
             Input::Snapshot { .. } => self.state = state,
             Input::Published { epoch, identity, state: published } => {
+                if epoch != self.epoch && matches!(published, PubState::Session | PubState::NoSession) {
+                    self.online = None;
+                    out.effects.push(Effect::SnapshotRequest { epoch });
+                }
                 self.epoch = epoch;
                 self.pub_state = published;
                 self.state = state;
@@ -79,6 +84,8 @@ impl Session {
             }
             Input::Release { req_id } => match state {
                 State::PendingHeld { pending } if pending.request_id == req_id => self.start_calling(Pending { author: None, ..pending }, out),
+                State::Landing { pending, batch, answer, identity, sequence, server_ended } if pending.request_id == req_id => self.state = State::Landing { pending: Pending { author: None, ..pending }, batch, answer, identity, sequence, server_ended },
+                State::Blocked { pending: Some(pending), reason, landing } if pending.request_id == req_id => self.state = State::Blocked { pending: Some(Pending { author: None, ..pending }), reason, landing },
                 state => self.state = state,
             },
             Input::EpochEnded { epoch, cause } => {
@@ -185,7 +192,7 @@ impl Session {
                 }
             }
             State::Calling { pending, attempts, phase: CallPhase::WaitingNetwork, document_sent } if online => self.send(pending, attempts, document_sent, out),
-            State::Blocked { pending: Some(pending), reason: Block::Storage } if online && pending.author.is_none() => self.send(pending, 0, false, out),
+            State::Blocked { pending: Some(pending), reason: Block::Storage, landing: Some(landed) } if online && pending.author.is_none() => self.land_again(pending, landed, out),
             other => self.state = other,
         }
     }
@@ -193,7 +200,7 @@ impl Session {
     pub(super) fn open(&mut self, credential: Option<Credential>, pending: Option<Pending>, dropped_pending: bool, secret: Secret, out: &mut Out) {
         self.credential = credential;
         if dropped_pending {
-            self.state = State::Blocked { pending: None, reason: Block::StateLost };
+            self.state = State::Blocked { pending: None, reason: Block::StateLost, landing: None };
             return;
         }
         let secret = match secret {
@@ -361,25 +368,25 @@ impl Session {
                 self.state = State::PendingHeld { pending };
                 self.queue_mutate(Queued::Mutate { author, owner, req_id, epoch, path, body, purpose });
             }
-            (State::Blocked { pending, reason }, Input::SessionCall { reply, .. }) => {
-                self.state = State::Blocked { pending, reason };
+            (State::Blocked { pending, reason, landing }, Input::SessionCall { reply, .. }) => {
+                self.state = State::Blocked { pending, reason, landing };
                 out.replies.push((reply, Err(Fail::StateLost)));
             }
-            (State::Blocked { pending, reason }, Input::Mutate { author, req_id, .. }) => {
+            (State::Blocked { pending, reason, landing }, Input::Mutate { author, req_id, .. }) => {
                 let same = pending.as_ref().is_some_and(|pending| pending.request_id == req_id);
-                match (same, pending, reason) {
-                    (true, Some(pending), Block::Storage) => self.start_calling(pending, out),
-                    (true, pending, reason) => {
+                match (same, pending, reason, landing) {
+                    (true, Some(pending), Block::Storage, Some(landed)) if pending.author.is_some() => self.land_again(pending, landed, out),
+                    (true, pending, reason, landing) => {
                         out.effects.push(author_error(author, req_id, Kind::Permanent, blocked_fail(reason)));
-                        self.state = State::Blocked { pending, reason };
+                        self.state = State::Blocked { pending, reason, landing };
                     }
-                    (false, pending, reason) => {
+                    (false, pending, reason, landing) => {
                         out.effects.push(author_error(author, req_id, Kind::Permanent, Fail::StateLost));
-                        self.state = State::Blocked { pending, reason };
+                        self.state = State::Blocked { pending, reason, landing };
                     }
                 }
             }
-            (State::Blocked { pending: Some(pending), reason: Block::Storage }, Input::Tick) if self.is_online() && pending.author.is_none() => self.send(pending, 0, false, out),
+            (State::Blocked { pending: Some(pending), reason: Block::Storage, landing: Some(landed) }, Input::Tick) if self.is_online() && pending.author.is_none() => self.land_again(pending, landed, out),
             (State::Persisting { pending, batch }, Input::Committed(committed)) if committed == batch => self.start_calling(pending, out),
             (State::Persisting { pending, batch }, Input::Rejected(rejected, reason)) if rejected == batch => {
                 Self::finish(out, &pending, Err(Fail::Reason(reason)));
@@ -424,9 +431,9 @@ impl Session {
                 }
                 self.idle(out);
             }
-            (State::Landing { pending, batch, .. }, Input::Rejected(rejected, reason)) if rejected == batch => {
+            (State::Landing { pending, batch, answer, identity, sequence, server_ended }, Input::Rejected(rejected, reason)) if rejected == batch => {
                 Self::finish(out, &pending, Err(Fail::Reason(reason)));
-                self.state = State::Blocked { pending: Some(Pending { reply: None, ..pending }), reason: Block::Storage };
+                self.state = State::Blocked { pending: Some(Pending { reply: None, ..pending }), reason: Block::Storage, landing: Some(Landed { answer, identity, sequence, server_ended }) };
             }
             (state, _) => self.state = state,
         }
@@ -442,6 +449,9 @@ impl Session {
     pub(super) fn calling(&mut self, pending: Pending, attempts: u64, phase: CallPhase, document_sent: bool, input: Input, out: &mut Out) {
         let mine = |request_id: RequestId, attempt_id: AttemptId| pending.request_id == request_id && phase == CallPhase::InFlight(attempt_id);
         match input {
+            Input::GateClosed { request_id, attempt_id } if mine(request_id, attempt_id) => {
+                self.state = State::Calling { pending, attempts, phase: CallPhase::WaitingNetwork, document_sent };
+            }
             Input::Response { request_id, attempt_id, body, sequence, refusal } if mine(request_id, attempt_id) => {
                 if let Some(code) = refusal {
                     let confirmed = (pending.class != Class::Sessionless && sequence == Some(pending.sequence)).then_some(pending.sequence);
@@ -455,7 +465,7 @@ impl Session {
                 } else {
                     let (reason, fail) = if sequence.is_none() { (Block::Protocol, Fail::Protocol) } else { (Block::SequenceConflict, Fail::SequenceConflict) };
                     Self::finish(out, &pending, Err(fail));
-                    self.state = State::Blocked { pending: Some(Pending { reply: None, ..pending }), reason };
+                    self.state = State::Blocked { pending: Some(Pending { reply: None, ..pending }), reason, landing: None };
                 }
             }
             Input::Revoked { request_id, attempt_id, body } if mine(request_id, attempt_id) => {

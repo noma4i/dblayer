@@ -275,6 +275,7 @@ fn sess_dequeue_stale_mutate() {
     let mut twin = persisting();
     twin.feed(mutate(7, 11));
     twin.feed(Input::Published { epoch: EPOCH + 1, identity: None, state: PubState::Session });
+    twin.feed(Input::Snapshot { epoch: EPOCH + 1, online: true });
     twin.feed(committed());
     let input = twin.response(1);
     twin.feed(input);

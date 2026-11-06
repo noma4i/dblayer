@@ -224,7 +224,7 @@ fn sess_landing_rejected() {
     twin.feed(input);
     let effects = twin.feed(rejected(Reason::Storage));
     assert_eq!(effects, vec![answer(7, 11, permanent(Fail::Reason(Reason::Storage)))]);
-    assert!(matches!(twin.reference.state, RefState::Blocked { reason: Block::Storage, pending: Some(_) }), "the stored pending stays");
+    assert!(matches!(twin.reference.state, RefState::Blocked { reason: Block::Storage, pending: Some(_), landing: Some(_) }), "the stored pending and the unapplied landing stay");
 }
 
 #[test]
@@ -256,7 +256,9 @@ fn sess_blocked_attempt_pending() {
     let input = twin.response(1);
     twin.feed_all([input, rejected(Reason::Storage)]);
     let effects = twin.feed(mutate(7, 11));
-    assert!(matches!(&effects[..], [RefEffect::HttpRequest { pending, .. }] if pending.request_id == 11 && pending.sequence == 1));
+    assert!(matches!(&effects[..], [RefEffect::CommitLanding { answer: Some((11, Ok(_))), sequence: Some(1), .. }]), "the saved landing commits again, no request goes out: {effects:?}");
+    assert!(matches!(twin.reference.state, RefState::Landing { .. }));
+    assert_eq!(twin.feed(committed()), vec![answer(7, 11, Outcome::Response("{}".into()))]);
 }
 
 #[test]
@@ -272,10 +274,10 @@ fn sess_blocked_mutate_refused() {
 fn sess_blocked_retry() {
     let mut twin = blocked_storage();
     let effects = twin.feed(Input::Tick);
-    assert!(matches!(&effects[..], [RefEffect::HttpRequest { pending, .. }] if pending.sequence == 1), "the same pair goes again: {effects:?}");
+    assert!(matches!(&effects[..], [RefEffect::CommitLanding { answer: None, sequence: Some(1), .. }]), "the saved landing commits again with no Answer of the released author: {effects:?}");
     let mut again = blocked_storage();
     let effects = again.feed(Input::Online(true));
-    assert!(matches!(&effects[..], [RefEffect::HttpRequest { .. }]));
+    assert!(matches!(&effects[..], [RefEffect::CommitLanding { .. }]));
 }
 
 #[test]

@@ -12,6 +12,7 @@ impl Rig {
         let address = det.add::<SessionCalls>("session", SessionState::new(&[], true), Recorder::<SessionCalls>::new(&log));
         let mut rig = Self { det, address, log };
         rig.send(SessionInput::Published(Published { epoch: 3, identity: Some(4), generation: 0, state: PublishedState::Session, closed: false }));
+        rig.send(SessionInput::Snapshot { epoch: 3, online: true });
         rig.send(SessionInput::Open { credential: Some(Credential { digest: 4, sequence: 0 }), pending: None, dropped_pending: false, secret: SecretState::Present(4) });
         rig
     }
@@ -95,7 +96,7 @@ fn sess_resume_login_epoch_started() {
     let batch = effects.iter().find_map(|effect| match effect { SessionEffect::CommitLanding { batch, .. } => Some(*batch), _ => None }).unwrap();
     rig.send(SessionInput::Committed(Committed { batch, revision: 1, tables: vec![], models: Default::default(), stale_parents: Vec::new(), position: 0 }));
     assert!(rig.send(SessionInput::EpochEnded(EpochEnded { epoch: 3, cause: Cause::SessionStarted })).is_empty());
-    assert_eq!(rig.send(SessionInput::Published(Published { epoch: 4, identity: Some(4), generation: 0, state: PublishedState::Session, closed: false })), [answer(1, Ok(Some("{}".into())))]);
+    assert_eq!(rig.send(SessionInput::Published(Published { epoch: 4, identity: Some(4), generation: 0, state: PublishedState::Session, closed: false })), [SessionEffect::SnapshotRequest { epoch: 4 }, answer(1, Ok(Some("{}".into())))]);
 }
 
 #[test]
@@ -141,3 +142,4 @@ fn sess_prop_resume_once() {
     assert_eq!(rig.send(ask_answer(2)), [answer(2, Ok(None))]);
     assert_eq!(rig.det.state(rig.address).unwrap().credential().unwrap().sequence, 1);
 }
+include!("session_restored_login_tests.rs");

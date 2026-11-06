@@ -133,6 +133,7 @@ pub enum Input {
     SecretCleared { op: SecretOpId, ok: bool },
     SecretRead { op: SecretOpId, read: Secret },
     SecretMissing { request_id: RequestId, attempt_id: AttemptId, lost: bool },
+    GateClosed { request_id: RequestId, attempt_id: AttemptId },
     Foreground,
     InterestPlus(StreamId),
     InterestMinus(StreamId),
@@ -193,6 +194,7 @@ pub enum Effect {
     ServerEnded { epoch: u64 },
     SessionReset,
     RestoreClassified { epoch: u64 },
+    SnapshotRequest { epoch: u64 },
     Answer { author: AuthorId, req_id: RequestId, outcome: Outcome },
     RetryState { stream: StreamId, attempts: u64, phase: RetryPhase },
     Drained,
@@ -240,8 +242,16 @@ pub enum State {
     Persisting { pending: Pending, batch: BatchId },
     Calling { pending: Pending, attempts: u64, phase: CallPhase, document_sent: bool },
     Landing { pending: Pending, batch: BatchId, answer: Answer, identity: Option<Digest>, sequence: Option<u64>, server_ended: bool },
-    Blocked { pending: Option<Pending>, reason: Block },
+    Blocked { pending: Option<Pending>, reason: Block, landing: Option<Landed> },
     Closed,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Landed {
+    pub answer: Answer,
+    pub identity: Option<Digest>,
+    pub sequence: Option<u64>,
+    pub server_ended: bool,
 }
 
 #[derive(Debug, Default, PartialEq, Eq)]
@@ -468,6 +478,10 @@ impl Session {
         let op = self.secret_op();
         out.effects.push(Effect::ClearSecret { op });
         self.state = State::ClearingSecret { call, reason, op, after };
+    }
+
+    fn land_again(&mut self, pending: Pending, landed: Landed, out: &mut Out) {
+        self.land(pending, landed.answer, landed.identity, landed.sequence, landed.server_ended, out);
     }
 
     fn drained(&mut self, out: &mut Out) {

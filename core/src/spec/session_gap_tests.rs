@@ -25,6 +25,7 @@ fn sess_epoch_ended_kept() {
             let operations = vec![SessionOperation { name: "login".into(), path: "/login".into(), class: OperationClass::Login }];
             let address = det.add::<SessionCalls>("session", SessionState::with_operations(operations, Some(true)), Recorder::<SessionCalls>::new(&log));
             send(&mut det, address, &log, SessionInput::Published(Published { epoch: 3, identity: None, generation: 0, state: PublishedState::Session, closed: false }));
+            send(&mut det, address, &log, SessionInput::Snapshot { epoch: 3, online: true });
             let credential = (phase >= 2).then_some(Credential { digest: 4, sequence: 0 });
             let secret = if credential.is_some() { SecretState::Present(4) } else { SecretState::Missing };
             send(&mut det, address, &log, SessionInput::Open { credential, pending: None, dropped_pending: false, secret });
@@ -57,6 +58,7 @@ fn sess_generating_other() {
         let address = det.add::<SessionCalls>("session", SessionState::with_operations(operations, Some(true)), Recorder::<SessionCalls>::new(&log));
         let published = Published { epoch: 3, identity: None, generation: 0, state: PublishedState::Session, closed: false };
         send(&mut det, address, &log, SessionInput::Published(published.clone()));
+        send(&mut det, address, &log, SessionInput::Snapshot { epoch: 3, online: true });
         send(&mut det, address, &log, SessionInput::Open { credential: None, pending: None, dropped_pending: false, secret: SecretState::Missing });
         let effects = send(&mut det, address, &log, SessionInput::SessionCall { operation: "login".into(), body: "{}".into(), reply: 1 });
         let op = match effects.as_slice() { [SessionEffect::GenerateCredential { secret_op_id }] => *secret_op_id, other => panic!("{other:?}") };
@@ -86,6 +88,7 @@ fn calling_error(too_large: Option<(u64, u64)>, security: Option<(crate::transpo
         let operations = vec![SessionOperation { name: "read".into(), path: "/read".into(), class: OperationClass::Authenticated }];
         let address = det.add::<SessionCalls>("session", SessionState::with_operations(operations, Some(true)), Recorder::<SessionCalls>::new(&log));
         send(&mut det, address, &log, SessionInput::Published(Published { epoch: 3, identity: Some(4), generation: 0, state: PublishedState::Session, closed: false }));
+        send(&mut det, address, &log, SessionInput::Snapshot { epoch: 3, online: true });
         send(&mut det, address, &log, SessionInput::Open { credential: Some(Credential { digest: 4, sequence: 0 }), pending: None, dropped_pending: false, secret: SecretState::Present(4) });
         let input = if author { SessionInput::Mutate { author: 7, owner: None, req_id: 11, epoch: 3, path: "/graphql".into(), body: "{}".into(), purpose: 0 } } else { SessionInput::SessionCall { operation: "read".into(), body: "{}".into(), reply: 1 } };
         let effects = send(&mut det, address, &log, input);
@@ -140,6 +143,7 @@ fn http_failure_reports_after_its_answer_is_committed() {
     let log = new_log();
     let address = det.add::<SessionCalls>("session", SessionState::new(&[], true), Recorder::<SessionCalls>::new(&log));
     send(&mut det, address, &log, SessionInput::Published(Published { epoch: 3, identity: Some(4), generation: 0, state: PublishedState::Session, closed: false }));
+    send(&mut det, address, &log, SessionInput::Snapshot { epoch: 3, online: true });
     send(&mut det, address, &log, SessionInput::Open { credential: Some(Credential { digest: 4, sequence: 0 }), pending: None, dropped_pending: false, secret: SecretState::Present(4) });
     let effects = send(&mut det, address, &log, SessionInput::Mutate { author: 7, owner: None, req_id: 11, epoch: 3, path: "/graphql".into(), body: "{}".into(), purpose: 0 });
     let batch = effects.iter().find_map(|effect| match effect { SessionEffect::CommitPending { batch, .. } => Some(*batch), _ => None }).unwrap();

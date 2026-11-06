@@ -10,6 +10,7 @@ use tokio::task::AbortHandle;
 use super::{LifeReply, Wiring};
 use crate::owners::contract::{BatchAuthor, RejectReason, Rejected, ReplyId, RequestId};
 use crate::owners::lifecycle::{LifecycleInput, Peer};
+use crate::owners::network::NetworkInput;
 use crate::owners::session::{secret_id, stored_answer, AttemptId, Credential, OperationClass, PendingCall, SecretState, SessionCalls, SessionEffect, SessionInput};
 use crate::owners::store::{StoreBatch, StoreInput, StoreOp};
 use crate::runtime::{Back, EffectRunner, EpochStamp, OutcomeId};
@@ -333,6 +334,7 @@ impl EffectRunner<SessionCalls> for SessionRunner {
             SessionEffect::ServerEnded(ended) => self.wiring.to_lifecycle(LifecycleInput::ServerEnded(ended)),
             SessionEffect::SessionReset => self.wiring.to_lifecycle(LifecycleInput::SessionReset { reply: None }),
             SessionEffect::RestoreClassified { epoch } => self.wiring.to_lifecycle(LifecycleInput::RestoreClassified { owner: Peer::Session, epoch }),
+            SessionEffect::SnapshotRequest { epoch } => self.wiring.to_network(NetworkInput::SnapshotRequest { owner: Peer::Session, epoch }),
             SessionEffect::Reply { id, answer } => {
                 let (id, reply) = (OutcomeId::from_raw(id as ReplyId), LifeReply::Session(answer));
                 self.wiring.outcomes.settle(id, reply);

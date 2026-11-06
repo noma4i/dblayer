@@ -203,6 +203,10 @@ impl SessionState {
         self.phase = SessionPhase::Landing { pending, batch, answer, identity, sequence, server_ended };
     }
 
+    pub(super) fn land_again(&mut self, pending: PendingCall, landed: Landed, fx: &mut Vec<SessionEffect>) {
+        self.land(pending, landed.answer, landed.identity, landed.sequence, landed.server_ended, fx);
+    }
+
     pub(super) fn clearing(&mut self, call: Option<Queued>, reason: Option<SessionError>, after: AfterClear, fx: &mut Vec<SessionEffect>) {
         let op = self.secret_op();
         fx.push(SessionEffect::ClearSecret { secret_op_id: op });

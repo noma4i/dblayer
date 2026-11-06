@@ -171,8 +171,17 @@ pub enum SessionPhase {
     Persisting { pending: PendingCall, batch: BatchId },
     Calling { pending: PendingCall, attempts: u64, phase: AttemptPhase, document_sent: bool },
     Landing { pending: PendingCall, batch: BatchId, answer: SessionAnswer, identity: Option<Digest>, sequence: Option<u64>, server_ended: bool },
-    Blocked { pending: Option<PendingCall>, reason: Block },
+    Blocked { pending: Option<PendingCall>, reason: Block, landing: Option<Landed> },
     Closed,
+}
+
+/// The answer of a landing that the store refused: the same batch commits again.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Landed {
+    pub answer: SessionAnswer,
+    pub identity: Option<Digest>,
+    pub sequence: Option<u64>,
+    pub server_ended: bool,
 }
 
 /// What the author of a `Mutate` hears: `Transport{req_id, Response(body) / Error{class, X} / Dropped}`.
@@ -214,6 +223,8 @@ pub enum SessionEffect {
     SessionReset,
     /// Lifecycle `RestoreClassified{Session, epoch}`.
     RestoreClassified { epoch: Epoch },
+    /// Network `SnapshotRequest{Session, epoch}`.
+    SnapshotRequest { epoch: Epoch },
     Reply { id: ReplyId, answer: SessionAnswer },
     ResumeReply { id: ReplyId, answer: Result<Option<String>, SessionError> },
     ExecutorFailed,
@@ -239,6 +250,8 @@ pub enum SessionInput {
     SecretCleared { secret_op_id: SecretOpId, ok: bool },
     SecretRead { secret_op_id: SecretOpId, read: SecretState },
     SecretMissing { request_id: RequestId, attempt_id: AttemptId, lost: bool },
+    /// The gate of the epoch refused the request before the transport call.
+    GateClosed { request_id: RequestId, attempt_id: AttemptId },
     Foreground { seq: u64 },
     InterestPlus { stream_id: StreamId },
     InterestMinus { stream_id: StreamId },

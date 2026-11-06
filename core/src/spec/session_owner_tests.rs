@@ -1,8 +1,9 @@
 //! Owner-level tests of the owner `Session` in the `lifecycle` machine: the owner on `DetScheduler` against `ref_session.rs`. Names are the `Test` column.
 
-use super::ref_session::{AfterClear, AfterStore, Block, CallPhase, Class, Credential as RefCredential, Effect as RefEffect, EndCause, Fail, Input, Kind, Operation, Outcome, Pending as RefPending, PubState, Queued as RefQueued, Reason, RetryPhase, Secret, Session as Ref, State as RefState};
+use super::ref_session::{AfterClear, AfterStore, Block, CallPhase, Class, Credential as RefCredential, Effect as RefEffect, EndCause, Fail, Input, Kind, Landed as RefLanded, Operation, Outcome, Pending as RefPending, PubState, Queued as RefQueued, Reason, RetryPhase, Secret, Session as Ref, State as RefState};
 use crate::owners::contract::{Committed, EpochEnded, ErrorClass, Online, Published, PublishedState, RejectReason, Rejected};
 use crate::owners::session::{self as owner, AuthorOutcome, Credential, OperationClass, PendingCall, Queued, SecretState, SessionCalls, SessionEffect, SessionError, SessionInput, SessionPhase, SessionState};
+use crate::owners::session::Landed;
 use crate::owners::support::{new_log, take, Log, Recorder};
 use crate::runtime::{Address, Cause, DetScheduler, EpochStamp, Time};
 use crate::transport::SessionCode;
@@ -149,7 +150,7 @@ fn phase_of(phase: &SessionPhase) -> RefState {
         SessionPhase::Persisting { pending, batch } => RefState::Persisting { pending: pending_of(pending), batch: *batch },
         SessionPhase::Calling { pending, attempts, phase, document_sent } => RefState::Calling { pending: pending_of(pending), attempts: *attempts, phase: call_phase(phase), document_sent: *document_sent },
         SessionPhase::Landing { pending, batch, answer, identity, sequence, server_ended } => RefState::Landing { pending: pending_of(pending), batch: *batch, answer: answer.clone().map_err(|error| fail_of(&error)), identity: *identity, sequence: *sequence, server_ended: *server_ended },
-        SessionPhase::Blocked { pending, reason } => RefState::Blocked { pending: pending.as_ref().map(pending_of), reason: match reason {
+        SessionPhase::Blocked { pending, reason, landing } => RefState::Blocked { pending: pending.as_ref().map(pending_of), landing: landing.as_ref().map(|Landed { answer, identity, sequence, server_ended }| RefLanded { answer: answer.clone().map_err(|error| fail_of(&error)), identity: *identity, sequence: *sequence, server_ended: *server_ended }), reason: match reason {
             owner::Block::Storage => Block::Storage,
             owner::Block::SequenceConflict => Block::SequenceConflict,
             owner::Block::Protocol => Block::Protocol,
@@ -185,6 +186,7 @@ fn effect_of(effect: &SessionEffect) -> Option<RefEffect> {
         SessionEffect::ServerEnded(ended) => RefEffect::ServerEnded { epoch: ended.epoch },
         SessionEffect::SessionReset => RefEffect::SessionReset,
         SessionEffect::RestoreClassified { epoch } => RefEffect::RestoreClassified { epoch: *epoch },
+        SessionEffect::SnapshotRequest { epoch } => RefEffect::SnapshotRequest { epoch: *epoch },
         SessionEffect::Answer { author, req_id, outcome } => RefEffect::Answer { author: *author, req_id: *req_id, outcome: outcome_of(outcome) },
         SessionEffect::RetryState { stream_id, attempts, phase } => RefEffect::RetryState { stream: *stream_id, attempts: *attempts, phase: retry_phase(*phase) },
         SessionEffect::Drained(_) => RefEffect::Drained,
@@ -216,8 +218,10 @@ impl Twin {
         let addr = det.add::<SessionCalls>("session", SessionState::with_operations(owner_operations(), online), Recorder::<SessionCalls>::new(&log));
         let mut twin = Self { det, addr, log, reference: Ref::new(operations(), online), history: Vec::new(), replies: Vec::new() };
         twin.feed(Input::Published { epoch: EPOCH, identity: None, state: PubState::Session });
+        if let Some(online) = online { twin.feed(Input::Snapshot { epoch: EPOCH, online }); }
         let secret = credential.as_ref().map_or(Secret::Missing, |credential| Secret::Present(credential.digest));
         twin.feed(Input::Open { credential, pending: None, dropped_pending: false, secret });
+        twin.history.retain(|effect| !matches!(effect, RefEffect::SnapshotRequest { .. }));
         twin
     }
 
@@ -246,6 +250,7 @@ impl Twin {
             Input::SecretCleared { op, ok } => SessionInput::SecretCleared { secret_op_id: op, ok },
             Input::SecretRead { op, read } => SessionInput::SecretRead { secret_op_id: op, read: secret_state(&read) },
             Input::SecretMissing { request_id, attempt_id, lost } => SessionInput::SecretMissing { request_id, attempt_id, lost },
+            Input::GateClosed { request_id, attempt_id } => SessionInput::GateClosed { request_id, attempt_id },
             Input::Foreground => SessionInput::Foreground { seq: 1 },
             Input::InterestPlus(stream_id) => SessionInput::InterestPlus { stream_id },
             Input::InterestMinus(stream_id) => SessionInput::InterestMinus { stream_id },
@@ -432,3 +437,4 @@ include!("session_owner_calls_tests.rs");
 include!("session_owner_http_tests.rs");
 include!("session_owner_restore_tests.rs");
 include!("session_owner_props_tests.rs");
+include!("session_owner_release_tests.rs");

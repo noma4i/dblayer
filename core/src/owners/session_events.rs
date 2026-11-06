@@ -51,10 +51,15 @@ impl SessionState {
                 self.subscribers.remove(&stream_id);
                 self.phase = phase;
             }
-            SessionInput::Online(Online(online)) => self.online_changed(phase, online, fx),
-            SessionInput::Snapshot { epoch, online } if self.current(epoch) => self.online_changed(phase, online, fx),
+            SessionInput::Online(Online(online)) if self.online.is_some() => self.online_changed(phase, online, fx),
+            SessionInput::Online(_) => self.phase = phase,
+            SessionInput::Snapshot { epoch, online } if epoch == self.epoch && self.current(epoch) => self.online_changed(phase, online, fx),
             SessionInput::Snapshot { .. } => self.phase = phase,
             SessionInput::Published(Published { epoch, identity, state, .. }) => {
+                if epoch != self.epoch && matches!(state, PublishedState::Session | PublishedState::NoSession) {
+                    self.online = None;
+                    fx.push(SessionEffect::SnapshotRequest { epoch });
+                }
                 self.epoch = epoch;
                 self.published = state;
                 self.phase = phase;
@@ -94,6 +99,8 @@ impl SessionState {
             }
             SessionInput::Release { req_id } => match phase {
                 SessionPhase::PendingHeld { pending } if pending.request_id == req_id => self.start_calling(PendingCall { author: None, ..pending }, fx),
+                SessionPhase::Landing { pending, batch, answer, identity, sequence, server_ended } if pending.request_id == req_id => self.phase = SessionPhase::Landing { pending: PendingCall { author: None, ..pending }, batch, answer, identity, sequence, server_ended },
+                SessionPhase::Blocked { pending: Some(pending), reason, landing } if pending.request_id == req_id => self.phase = SessionPhase::Blocked { pending: Some(PendingCall { author: None, ..pending }), reason, landing },
                 phase => self.phase = phase,
             },
             SessionInput::EpochEnded(EpochEnded { epoch, cause }) => {
@@ -206,7 +213,7 @@ impl SessionState {
                 }
             }
             SessionPhase::Calling { pending, attempts, phase: AttemptPhase::WaitingNetwork, document_sent } if online => self.request_http(pending, attempts, document_sent, fx),
-            SessionPhase::Blocked { pending: Some(pending), reason: Block::Storage } if online && pending.author.is_none() => self.request_http(pending, 0, false, fx),
+            SessionPhase::Blocked { pending: Some(pending), reason: Block::Storage, landing: Some(landed) } if online && pending.author.is_none() => self.land_again(pending, landed, fx),
             other => self.phase = other,
         }
     }
@@ -214,7 +221,7 @@ impl SessionState {
     pub(super) fn open(&mut self, credential: Option<Credential>, pending: Option<PendingCall>, dropped_pending: bool, secret: SecretState, fx: &mut Vec<SessionEffect>) {
         self.credential = credential.clone();
         if dropped_pending {
-            self.phase = SessionPhase::Blocked { pending: None, reason: Block::StateLost };
+            self.phase = SessionPhase::Blocked { pending: None, reason: Block::StateLost, landing: None };
             return;
         }
         let secret = match secret {
@@ -387,25 +394,25 @@ impl SessionState {
                 self.phase = SessionPhase::PendingHeld { pending };
                 self.queue_mutate(Queued::Mutate { author, owner, req_id, epoch, path, body, purpose });
             }
-            (SessionPhase::Blocked { pending, reason }, SessionInput::SessionCall { reply: id, .. }) => {
-                self.phase = SessionPhase::Blocked { pending, reason };
+            (SessionPhase::Blocked { pending, reason, landing }, SessionInput::SessionCall { reply: id, .. }) => {
+                self.phase = SessionPhase::Blocked { pending, reason, landing };
                 reply(fx, id, Err(SessionError::StateLost));
             }
-            (SessionPhase::Blocked { pending, reason }, SessionInput::Mutate { author, req_id, .. }) => {
+            (SessionPhase::Blocked { pending, reason, landing }, SessionInput::Mutate { author, req_id, .. }) => {
                 let same = pending.as_ref().is_some_and(|pending| pending.request_id == req_id);
-                match (same, pending, reason) {
-                    (true, Some(pending), Block::Storage) => self.start_calling(pending, fx),
-                    (true, pending, reason) => {
+                match (same, pending, reason, landing) {
+                    (true, Some(pending), Block::Storage, Some(landed)) if pending.author.is_some() => self.land_again(pending, landed, fx),
+                    (true, pending, reason, landing) => {
                         author_error(fx, author, req_id, ErrorClass::Permanent, blocked_error(reason));
-                        self.phase = SessionPhase::Blocked { pending, reason };
+                        self.phase = SessionPhase::Blocked { pending, reason, landing };
                     }
-                    (false, pending, reason) => {
+                    (false, pending, reason, landing) => {
                         author_error(fx, author, req_id, ErrorClass::Permanent, SessionError::StateLost);
-                        self.phase = SessionPhase::Blocked { pending, reason };
+                        self.phase = SessionPhase::Blocked { pending, reason, landing };
                     }
                 }
             }
-            (SessionPhase::Blocked { pending: Some(pending), reason: Block::Storage }, SessionInput::Tick(_)) if self.is_online() && pending.author.is_none() => self.request_http(pending, 0, false, fx),
+            (SessionPhase::Blocked { pending: Some(pending), reason: Block::Storage, landing: Some(landed) }, SessionInput::Tick(_)) if self.is_online() && pending.author.is_none() => self.land_again(pending, landed, fx),
             (SessionPhase::Persisting { pending, batch }, SessionInput::Committed(Committed { batch: committed, .. })) if committed == batch => self.start_calling(pending, fx),
             (SessionPhase::Persisting { pending, batch }, SessionInput::Rejected(Rejected { batch: rejected, reason })) if rejected == batch => {
                 self.resume_finish(&pending, Err(SessionError::Rejected(reason)), fx);
@@ -453,10 +460,10 @@ impl SessionState {
                 if self.failed_batch == Some(batch) { self.report_failed(fx); }
                 self.idle(fx);
             }
-            (SessionPhase::Landing { pending, batch, .. }, SessionInput::Rejected(Rejected { batch: rejected, reason })) if rejected == batch => {
+            (SessionPhase::Landing { pending, batch, answer, identity, sequence, server_ended }, SessionInput::Rejected(Rejected { batch: rejected, reason })) if rejected == batch => {
                 self.resume_finish(&pending, Err(SessionError::Rejected(reason)), fx);
                 if self.failed_batch == Some(batch) { self.report_failed(fx); }
-                self.phase = SessionPhase::Blocked { pending: Some(PendingCall { reply: None, ..pending }), reason: Block::Storage };
+                self.phase = SessionPhase::Blocked { pending: Some(PendingCall { reply: None, ..pending }), reason: Block::Storage, landing: Some(Landed { answer, identity, sequence, server_ended }) };
             }
             (phase, _) => self.phase = phase,
         }
@@ -470,6 +477,9 @@ impl SessionState {
             return;
         }
         match input {
+            SessionInput::GateClosed { request_id, attempt_id } if mine(request_id, attempt_id) => {
+                self.phase = SessionPhase::Calling { pending, attempts, phase: AttemptPhase::WaitingNetwork, document_sent };
+            }
             SessionInput::Response { request_id, attempt_id, body, sequence, refusal } if mine(request_id, attempt_id) => {
                 if let Some(code) = refusal {
                     let confirmed = (pending.class != OperationClass::Sessionless && sequence == Some(pending.sequence)).then_some(pending.sequence);
@@ -483,7 +493,7 @@ impl SessionState {
                 } else {
                     let (reason, error) = if sequence.is_none() { (Block::Protocol, SessionError::Protocol) } else { (Block::SequenceConflict, SessionError::SequenceConflict) };
                     self.resume_finish(&pending, Err(error), fx);
-                    self.phase = SessionPhase::Blocked { pending: Some(PendingCall { reply: None, ..pending }), reason };
+                    self.phase = SessionPhase::Blocked { pending: Some(PendingCall { reply: None, ..pending }), reason, landing: None };
                 }
             }
             SessionInput::Revoked { request_id, attempt_id, body } if mine(request_id, attempt_id) => {

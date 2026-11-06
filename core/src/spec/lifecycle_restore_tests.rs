@@ -38,3 +38,21 @@ fn life_closing_executor_failed() {
     assert_eq!(effects.iter().filter_map(|effect| match effect { LifecycleEffect::Reply { id, result } => Some((*id, *result)), _ => None }).collect::<Vec<_>>(), [(7, Err(LifecycleError::Runtime))]);
     assert!(matches!(state.phase(), crate::owners::lifecycle::LifecyclePhase::Closing { close_replies, .. } if close_replies == &[8]));
 }
+
+fn direct_restore_ended(saved: bool, expected: Result<(), LifecycleError>) {
+    for input in [LifecycleInput::SessionReset { reply: Some(8) }, LifecycleInput::Close { reply: 9 }] {
+        let mut state = LifecycleState::new();
+        step(&mut state, LifecycleInput::Open { saved_epoch: 0, saved_generation: 0, saved_identity: None, saved_unowned_pending: true, reply: Some(7) });
+        assert!(state.restoring().is_some());
+        if saved { step(&mut state, LifecycleInput::Saved { publication_id: 1 }); }
+        let effects = step(&mut state, input);
+        assert_eq!(effects.iter().filter_map(|effect| match effect { LifecycleEffect::Reply { id: 7, result } => Some(*result), _ => None }).collect::<Vec<_>>(), [expected]);
+        assert!(state.restoring().is_none());
+    }
+}
+
+#[test]
+fn life_direct_restoring_ended_saved() { direct_restore_ended(true, Ok(())); }
+
+#[test]
+fn life_direct_restoring_ended_unsaved() { direct_restore_ended(false, Err(LifecycleError::Interrupted)); }
