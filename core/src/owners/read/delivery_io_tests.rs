@@ -7,7 +7,7 @@ use std::sync::{Arc, Mutex};
 use rusqlite::{params, Connection};
 
 use super::deliveries::{self as d, Deliveries, DeliveryInput, Kind, PullAnswer, Value, View};
-use super::rig::{collector, pump, runtime, saw_input};
+use super::rig::{collector, pump, runtime};
 use super::feed::Feed;
 use super::windows::{WindowKey, Windows};
 use super::{DeliveryIo, SnapshotStatements, Snapshots, SqliteSnapshots};
@@ -113,7 +113,7 @@ fn delivery_io_read_older_snapshot() {
     commit(&rig.writer, "p1", 1);
     open(&mut rig, 2);
     let owner = rig.owner;
-    pump(&mut rig.det, owner, |det| saw_input(det, "ReadFailed") > 0);
+    pump(&mut rig.det, owner, |det| det.state(owner).is_some_and(|state| !state.journal(STREAM).is_empty()));
     let journal = rig.det.state(owner).unwrap().journal(STREAM);
     let Some(Value::Snapshot { rows, state, .. }) = journal.first() else { panic!("a failed first read gives a Snapshot without rows: {journal:?}") };
     assert!(rows.is_empty(), "no rows of a snapshot older than the revision");

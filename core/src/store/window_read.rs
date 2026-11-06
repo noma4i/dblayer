@@ -25,6 +25,8 @@ impl Store {
 
     /// The saved window of a relation with params, `None` before its first page.
     pub(crate) fn window_saved(&self, model: &str, relation: &str, params: &Map<String, Value>) -> Result<Option<crate::store::SavedWindow>, DbError> {
+        #[cfg(test)]
+        assert!(self.panic_reads.load(std::sync::atomic::Ordering::SeqCst) & super::PANIC_WINDOW_READ == 0, "the window read failed");
         let spec = self.spec(model)?;
         let declared = spec.relations.iter().find(|candidate| candidate.name == relation).ok_or_else(|| DbError::Internal(format!("{model} has no relation {relation}")))?;
         let remote = declared.remote.as_ref().ok_or_else(|| DbError::Internal(format!("{model}.{relation} is no remote relation")))?;

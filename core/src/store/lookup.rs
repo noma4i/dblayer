@@ -144,6 +144,8 @@ impl Store {
 
     /// Reads `query` in one snapshot that is not older than `floor`; gives the revision of the snapshot.
     pub(crate) fn read_view(&self, query: &Query, count: bool, floor: i64, window: Option<&crate::owners::read::windows::WindowKey>, held: Option<HeldVersion>) -> Result<(i64, ViewRead), DbError> {
+        #[cfg(test)]
+        assert!(self.panic_reads.load(std::sync::atomic::Ordering::SeqCst) & super::PANIC_VIEW_READ == 0, "the snapshot read failed");
         let model = query.model.as_str();
         self.read_models(&[model], |reader| {
             let seen = reader.revision_seq()?;

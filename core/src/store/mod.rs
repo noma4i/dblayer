@@ -243,6 +243,11 @@ impl Drop for Committed<'_> {
     }
 }
 
+#[cfg(test)]
+pub(crate) const PANIC_VIEW_READ: u8 = 1;
+#[cfg(test)]
+pub(crate) const PANIC_WINDOW_READ: u8 = 2;
+
 pub struct Store {
     inner: Mutex<Inner>,
     pub(crate) context: Context,
@@ -263,6 +268,8 @@ pub struct Store {
     pub(crate) read_threads: Mutex<Vec<std::thread::ThreadId>>,
     #[cfg(test)]
     pub(crate) require_unlocked_responses: std::sync::atomic::AtomicBool,
+    #[cfg(test)]
+    pub(crate) panic_reads: std::sync::atomic::AtomicU8,
     #[cfg(test)]
     pub(crate) after_network_check: Mutex<Option<Box<dyn FnOnce() + Send>>>,
     #[cfg(test)]
@@ -304,6 +311,7 @@ impl Store {
             require_unlocked_responses: std::sync::atomic::AtomicBool::new(false),
             #[cfg(test)]
             #[cfg(test)]
+            panic_reads: std::sync::atomic::AtomicU8::new(0),
             #[cfg(test)]
             after_network_check: Mutex::new(None),
             #[cfg(test)]

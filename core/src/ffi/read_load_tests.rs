@@ -187,3 +187,23 @@ async fn a_panic_in_the_window_transport_ends_the_refresh_with_an_error_and_clos
     assert!(result.is_err(), "{result:?}");
     crate::test_wait::yield_until("Lifecycle did not close after the task panic", || db.life.published().closed).await;
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_panic_in_the_window_read_ends_the_refresh_with_an_error_and_closes_the_database() {
+    let (db, transport) = open(false).await;
+    db.db.panic_reads.store(crate::store::PANIC_WINDOW_READ, Ordering::SeqCst);
+    let result = crate::test_wait::within(refresh(&db)).await;
+    assert!(result.is_err(), "{result:?}");
+    assert_eq!(transport.requests(), 0, "the failed window read sent nothing");
+    crate::test_wait::yield_until("Lifecycle did not close after the window read panic", || db.life.published().closed).await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_panic_in_the_snapshot_read_ends_the_wait_of_the_stream_with_an_error_and_closes_the_database() {
+    let (db, _transport) = open(false).await;
+    db.db.panic_reads.store(crate::store::PANIC_VIEW_READ, Ordering::SeqCst);
+    let stream = db.subscribe_values(db.session_epoch(), ReadRequest::List { query_json: LIST.into() });
+    let value = crate::test_wait::within(stream.pull()).await;
+    assert!(matches!(&value, Ok(Some(ReadValue::Snapshot { state, .. })) if state.phase == ReadPhase::Failed) || value.is_err(), "the stream ends its wait with an error: {value:?}");
+    crate::test_wait::yield_until("Lifecycle did not close after the snapshot read panic", || db.life.published().closed).await;
+}
