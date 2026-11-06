@@ -265,7 +265,7 @@ for path in files:
         number = code.count("\n", 0, match.start()) + 1
         findings.append(f"Z21 a blocking wait runs inside blocking_unit, so it never parks a worker of the shared executor: {path.relative_to(root)}:{number}: {contents[path].splitlines()[number - 1].strip()}")
 
-test_only = ("/fixtures.rs", "/spec_fixtures.rs", "/rig.rs", "/stress/", "/transport/mock.rs", "/invariants/", "/bin/", "/test_wait.rs")
+test_only = ("/fixtures.rs", "/spec_fixtures.rs", "/rig.rs", "/stress/", "/transport/mock.rs", "/invariants/", "/bin/", "/test_wait.rs", "/ffi/selftest/")
 panic_call = re.compile(r"\b(?:expect|unwrap)\(|\b(?:panic|unreachable|todo|unimplemented)!\(")
 panic_allowed = [entry[len("panic:"):] for entry in allowed if entry.startswith("panic:")]
 for path in files:
