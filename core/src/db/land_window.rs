@@ -111,17 +111,19 @@ impl Db {
     /// The edge values of the rows of a relation window, by row id.
     pub(crate) fn edge_values(&self, model: &str, relation: &str, params: &Map<String, Value>, ids: &[String]) -> Result<BTreeMap<String, Map<String, Value>>, DbError> {
         let spec = self.spec(model)?;
-        let declared = spec.relations.iter().find(|candidate| candidate.name == relation).ok_or_else(|| DbError::Internal(format!("{model} has no relation {relation}")))?;
-        let scope = spec.selection_key(relation, params).map_err(json_fault)?;
+        let declared = spec.relations.iter().find(|candidate| candidate.name == relation).ok_or_else(|| DbError::UnknownAssociation { model: model.to_string(), name: relation.to_string() })?;
+        let scope = spec.selection_key(relation, params)?;
         let wanted: Vec<&str> = ids.iter().map(String::as_str).collect();
         let read = self.shared.store.read(&[model], |reader| reader.scope_edges(model, scope.as_str(), &wanted))?;
         self.shared.counters.lock().unwrap_or_else(std::sync::PoisonError::into_inner).edge_read_steps += read.steps;
         self.shared.counters.lock().unwrap_or_else(std::sync::PoisonError::into_inner).edge_read_scans += read.scans;
         Ok(read.members.into_iter().map(|(id, stored)| {
-            let values = stored.into_iter().filter_map(|(name, value)| {
-                let field = declared.edge_fields.iter().find(|field| field.name == name)?;
-                Some((name, edge_json(&field.kind, value)))
-            }).collect();
+            let mut values: Map<String, Value> = declared.edge_fields.iter().map(|field| (field.name.clone(), Value::Null)).collect();
+            for (name, value) in stored {
+                if let Some(field) = declared.edge_fields.iter().find(|field| field.name == name) {
+                    values.insert(name, edge_json(&field.kind, value));
+                }
+            }
             (id, values)
         }).collect())
     }

@@ -13,6 +13,8 @@ mod files;
 mod land;
 mod land_event;
 mod land_window;
+#[cfg(test)]
+mod land_window_tests;
 mod read_view;
 pub(crate) use read_view::{ParsedQuery, ViewRead};
 mod listeners;
