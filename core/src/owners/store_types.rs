@@ -182,12 +182,12 @@ pub struct StoreBatch {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum BootFound {
     Fresh,
-    Same { saved_epoch: Epoch, saved_generation: u64, saved_identity: Option<Identity>, revision: u64 },
+    Same { saved_epoch: Epoch, saved_generation: u64, saved_identity: Option<Identity>, saved_unowned_pending: bool, revision: u64 },
     /// The fingerprint of a server model changed: the cache is erased in the `Boot` transaction and the generation grows.
-    ChangedModels { saved_epoch: Epoch, saved_generation: u64, saved_identity: Option<Identity>, revision: u64 },
-    FormatChange { saved_epoch: Epoch, saved_generation: u64, saved_identity: Option<Identity>, revision: u64 },
+    ChangedModels { saved_epoch: Epoch, saved_generation: u64, saved_identity: Option<Identity>, saved_unowned_pending: bool, revision: u64 },
+    FormatChange { saved_epoch: Epoch, saved_generation: u64, saved_identity: Option<Identity>, saved_unowned_pending: bool, revision: u64 },
     /// The fingerprint of a `storage: local` model changed, the server models match: only that model is rebuilt.
-    LocalModelChanged { saved_epoch: Epoch, saved_generation: u64, saved_identity: Option<Identity>, revision: u64 },
+    LocalModelChanged { saved_epoch: Epoch, saved_generation: u64, saved_identity: Option<Identity>, saved_unowned_pending: bool, revision: u64 },
     SqliteError(String),
     /// `saved_epoch` or `saved_generation` is not a u64.
     CorruptManifest(String),
@@ -198,6 +198,7 @@ pub struct OpenMessage {
     pub saved_epoch: Epoch,
     pub saved_generation: u64,
     pub saved_identity: Option<Identity>,
+    pub saved_unowned_pending: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

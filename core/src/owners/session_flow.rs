@@ -7,7 +7,7 @@ impl SessionState {
     }
 
     pub fn with_operations(operations: Vec<SessionOperation>, online: Option<bool>) -> Self {
-        Self { phase: SessionPhase::Idle, credential: None, queue: VecDeque::new(), online, epoch: 0, published: PublishedState::Session, after_publish: None, subscribers: BTreeSet::new(), restored_direct: None, restored_active: None, restored_answer: None, resume_waiters: Vec::new(), resume_published: None, resume_clearing: None, failed_batch: None, operations, next_request: 1, next_batch: 1, next_attempt: 1, next_secret: 1, restore_ready: false, restore_floor: 0, adopt: false, held: None, reported: (0, RetryPhase::Idle) }
+        Self { phase: SessionPhase::Idle, credential: None, queue: VecDeque::new(), online, epoch: 0, published: PublishedState::Session, after_publish: None, subscribers: BTreeSet::new(), restored_direct: None, restored_active: None, restored_answer: None, restore_error: None, resume_waiters: Vec::new(), resume_published: None, resume_clearing: None, failed_batch: None, operations, next_request: 1, next_batch: 1, next_attempt: 1, next_secret: 1, restore_ready: false, restore_floor: 0, adopt: false, held: None, reported: (0, RetryPhase::Idle) }
     }
 
     pub fn phase(&self) -> &SessionPhase { &self.phase }
@@ -176,7 +176,11 @@ impl SessionState {
     pub(super) fn deliver_resume(&mut self, result: SessionAnswer, fx: &mut Vec<SessionEffect>) {
         self.restored_active = None;
         if self.resume_waiters.is_empty() { self.restored_answer = Some(result); }
-        else { for id in self.resume_waiters.drain(..) { fx.push(SessionEffect::ResumeReply { id, answer: result.clone().map(Some) }); } }
+        else {
+            for (index, id) in self.resume_waiters.drain(..).enumerate() {
+                fx.push(SessionEffect::ResumeReply { id, answer: if index == 0 { result.clone().map(Some) } else { Ok(None) } });
+            }
+        }
     }
 
     pub(super) fn end_resume(&mut self, error: SessionError, fx: &mut Vec<SessionEffect>) {

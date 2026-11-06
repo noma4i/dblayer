@@ -351,13 +351,13 @@ impl StoreState {
     }
 
     fn boot(&mut self, found: BootFound, fx: &mut Vec<StoreEffect>) {
-        let open = |saved_epoch, saved_generation, saved_identity| StoreEffect::OpenLifecycle(OpenMessage { saved_epoch, saved_generation, saved_identity });
+        let open = |saved_epoch, saved_generation, saved_identity, saved_unowned_pending| StoreEffect::OpenLifecycle(OpenMessage { saved_epoch, saved_generation, saved_identity, saved_unowned_pending });
         match found {
             BootFound::Fresh => {
                 fx.push(StoreEffect::Prepare { format_change: false });
-                fx.push(open(0, 0, None));
+                fx.push(open(0, 0, None, false));
             }
-            BootFound::Same { saved_epoch, saved_generation, saved_identity, revision } | BootFound::LocalModelChanged { saved_epoch, saved_generation, saved_identity, revision } => {
+            BootFound::Same { saved_epoch, saved_generation, saved_identity, saved_unowned_pending, revision } | BootFound::LocalModelChanged { saved_epoch, saved_generation, saved_identity, saved_unowned_pending, revision } => {
                 if matches!(found, BootFound::LocalModelChanged { .. }) {
                     fx.push(StoreEffect::Prepare { format_change: false });
                 }
@@ -366,16 +366,16 @@ impl StoreState {
                 self.saved_generation = saved_generation;
                 self.base_generation = saved_generation;
                 self.generations.clear();
-                fx.push(open(saved_epoch, saved_generation, saved_identity));
+                fx.push(open(saved_epoch, saved_generation, saved_identity, saved_unowned_pending));
             }
-            BootFound::ChangedModels { saved_epoch, saved_generation, saved_identity, revision } | BootFound::FormatChange { saved_epoch, saved_generation, saved_identity, revision } => {
+            BootFound::ChangedModels { saved_epoch, saved_generation, saved_identity, saved_unowned_pending, revision } | BootFound::FormatChange { saved_epoch, saved_generation, saved_identity, saved_unowned_pending, revision } => {
                 self.revision = revision + 1;
                 self.saved_epoch = saved_epoch;
                 self.saved_generation = saved_generation + 1;
                 self.base_generation = saved_generation + 1;
                 self.generations.clear();
                 fx.push(StoreEffect::Prepare { format_change: true });
-                fx.push(open(saved_epoch, saved_generation + 1, saved_identity));
+                fx.push(open(saved_epoch, saved_generation + 1, saved_identity, saved_unowned_pending));
             }
             BootFound::SqliteError(error) => {
                 self.mode = StoreMode::Closed;

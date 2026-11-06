@@ -29,6 +29,7 @@ pub(super) struct LifecycleRunner {
     /// The published value and the answers of one step wait for `step_done`: a caller that sees a new epoch finds every owner already in it.
     pub held_published: Option<crate::owners::contract::Published>,
     pub held_replies: Vec<(u64, Result<(), crate::owners::lifecycle::LifecycleError>)>,
+    pub held_read: Option<crate::runtime::Epoch>,
 }
 
 impl EffectRunner<Lifecycle> for LifecycleRunner {
@@ -64,7 +65,7 @@ impl EffectRunner<Lifecycle> for LifecycleRunner {
                     wiring.to_network(NetworkInput::SnapshotRequest { owner, epoch });
                 }
             }
-            LifecycleEffect::ReadIntents { epoch } => wiring.to_store(StoreInput::ReadIntents { epoch }),
+            LifecycleEffect::ReadIntents { epoch } => self.held_read = Some(epoch),
             LifecycleEffect::EpochEnded { epoch, cause } => {
                 wiring.gate.close(epoch);
                 wiring.to_rounds(RoundsInput::EpochEnded(crate::owners::contract::EpochEnded { epoch, cause }));
@@ -106,6 +107,9 @@ impl EffectRunner<Lifecycle> for LifecycleRunner {
             self.wiring.publish(published.clone());
             self.wiring.to_session(SessionInput::Published(published));
         }
+        if let Some(epoch) = self.held_read.take() {
+            self.wiring.to_store(StoreInput::ReadIntents { epoch });
+        }
         for (id, result) in self.held_replies.drain(..) {
             if !self.wiring.open_answered(id, result) {
                 self.wiring.outcomes.settle(OutcomeId::from_raw(id), LifeReply::Life(result));
@@ -122,6 +126,7 @@ pub(super) struct StoreRunner {
     pub secret: Option<Arc<crate::transport::encrypted::credential::Secret>>,
     pub exchange: Option<Arc<crate::transport::Exchange>>,
     pub executor: tokio::runtime::Handle,
+    pub restore_error: Option<String>,
 }
 
 impl StoreRunner {
@@ -146,6 +151,7 @@ impl EffectRunner<StoreWriter> for StoreRunner {
                     saved_epoch: message.saved_epoch,
                     saved_generation: message.saved_generation,
                     saved_identity: message.saved_identity,
+                    saved_unowned_pending: message.saved_unowned_pending,
                     reply: wiring.open_reply(),
                 });
             }
@@ -246,10 +252,14 @@ impl EffectRunner<StoreWriter> for StoreRunner {
                         }
                     }
                 }
+                if let Some(error) = self.restore_error.take() {
+                    wiring.to_session(SessionInput::RestoreFailed { epoch, error });
+                    return;
+                }
                 match &self.exchange {
                     Some(exchange) => match super::session_runner::SessionRunner::rows(exchange, &self.db) {
                         Ok(stored) => wiring.to_session(SessionInput::Restored { epoch, pending: stored.pending, answers: stored.answers, pending_lost: stored.dropped_pending }),
-                        Err(error) => wiring.restore_failed_for(Peer::Session, error.to_string()),
+                        Err(error) => wiring.to_session(SessionInput::RestoreFailed { epoch, error: error.to_string() }),
                     },
                     None => wiring.to_lifecycle(LifecycleInput::RestoreClassified { owner: Peer::Session, epoch }),
                 }

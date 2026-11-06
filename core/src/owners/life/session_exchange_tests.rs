@@ -249,21 +249,6 @@ async fn a_stored_request_of_an_older_format_is_sent_again_with_the_request_id_a
     assert_eq!(rows(&db).0.unwrap().sequence, 2);
 }
 
-#[tokio::test(flavor = "multi_thread")]
-async fn an_unreadable_stored_request_fails_the_open_with_a_storage_error() {
-    let world = World::new();
-    let db = Store::open_models(None, Vec::new(), None).map(std::sync::Arc::new).unwrap();
-    let client = Client::new(&config(), world.server.clone(), world.credentials.clone(), db.clone(), world.clock.clone(), Arc::new(crate::transport::MockTransport::new())).unwrap();
-    {
-        let inner = db.lock();
-        inner.connection.execute("INSERT INTO encrypted_pending (id, credential_digest, request_id, response_key, sequence, path, body, purpose, req_id) VALUES (1, 'd', 'r', 'k', 1, '/p', 'not json', 0, 1)", []).unwrap();
-    }
-    let seal = Arc::new(crate::owners::session_seal::SealConfig::new(&config(), world.clock.clone()).unwrap());
-    let ports = super::Ports { db: db.clone(), transport: None, executor: tokio::runtime::Handle::current(), operations: Arc::new(|_| None), secret: Some(client.secret.clone()), exchange: Some(client.exchange.clone()), seal: Some(seal), transfer: None, cable: None, read_operations: None };
-    let error = super::Life::start(ports).err().expect("the open fails");
-    assert!(matches!(error, super::LifeError::Storage(_)), "the read error reaches the caller: {error:?}");
-}
-
 async fn signed_in_file(world: &World, path: &std::path::Path) {
     let db = Store::open_models(Some(path), Vec::new(), None).map(std::sync::Arc::new).unwrap();
     let (client, life) = world.open(&db).await;

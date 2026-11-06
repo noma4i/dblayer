@@ -243,6 +243,7 @@ pub enum SessionInput {
     InterestPlus { stream_id: StreamId },
     InterestMinus { stream_id: StreamId },
     RestoreReady { epoch: Epoch },
+    RestoreFailed { epoch: Epoch, error: String },
     /// The snapshot of `ReadIntents`: Session classifies `pending`; `answers` go to the authors, `pending_lost` is the dropped `encrypted_pending` (also `Open.dropped_pending`).
     Restored { epoch: Epoch, pending: Option<PendingCall>, answers: std::collections::BTreeMap<RequestId, StoredAnswer>, pending_lost: bool },
     Response { request_id: RequestId, attempt_id: AttemptId, body: String, sequence: Option<u64>, refusal: Option<crate::transport::SessionCode> },
@@ -288,6 +289,7 @@ pub struct SessionState {
     restored_direct: Option<PendingCall>,
     restored_active: Option<RequestId>,
     restored_answer: Option<SessionAnswer>,
+    restore_error: Option<String>,
     resume_waiters: Vec<ReplyId>,
     resume_published: Option<String>,
     resume_clearing: Option<SessionError>,

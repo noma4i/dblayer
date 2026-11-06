@@ -107,6 +107,8 @@ A schema or internal format change recreates the tables in one transaction. The 
 
 An unreadable or damaged file is deleted and created empty. Its WAL and shared-memory files are removed too. Every recreation removes the adjacent `.files` and `.cache` directories. Unsent model writes in a recreated database are lost. A surviving credential without matching sequence state produces a visible error, without replacing the credential or sending a request. See [encrypted sessions](server-sync.md#encrypted-session).
 
+A damaged saved session request or answer lets the database open, but session calls report a storage error. `sessionReset()` clears that error and the saved session. A valid interrupted first login resumes after opening. `interruptedSessionAnswer()` returns its answer once.
+
 `openReport` names what the open discarded. `changedModels` lists changed declarations, and `resetModels` lists cleared models.
 
 ```swift

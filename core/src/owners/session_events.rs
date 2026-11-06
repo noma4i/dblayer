@@ -13,15 +13,26 @@ impl SessionState {
             }
             return;
         }
-        if matches!(phase, SessionPhase::Sealing { .. }) && matches!(input, SessionInput::Restored { .. } | SessionInput::RestoreReady { .. }) {
-            self.phase = phase;
-            return;
-        }
         if let SessionInput::HttpFailed { attempt_id } = &input {
             if !matches!(&phase, SessionPhase::Calling { phase: AttemptPhase::InFlight(id), .. } if id == attempt_id) {
                 self.phase = phase;
                 fx.push(SessionEffect::ExecutorFailed);
                 return;
+            }
+        }
+        if let Some(error) = self.restore_error.clone() {
+            match &input {
+                SessionInput::SessionCall { reply: id, .. } => {
+                    self.phase = phase;
+                    reply(fx, *id, Err(SessionError::Storage(error)));
+                    return;
+                }
+                SessionInput::Mutate { author, req_id, epoch, .. } if *epoch == self.epoch => {
+                    self.phase = phase;
+                    author_error(fx, *author, *req_id, ErrorClass::Permanent, SessionError::Storage(error));
+                    return;
+                }
+                _ => {}
             }
         }
         match input {
@@ -54,7 +65,7 @@ impl SessionState {
             SessionInput::Restored { epoch, pending, .. } => {
                 self.phase = phase;
                 fx.push(SessionEffect::RestoreClassified { epoch });
-                if let (SessionPhase::Idle, Some(pending), true) = (&self.phase, pending, self.current(epoch)) {
+                if let (Some(pending), true) = (pending, epoch == self.epoch && self.current(epoch)) {
                     if pending.owner.is_none() && pending.author.is_none() { self.restored_direct = Some(PendingCall { epoch, ..pending }); }
                 }
                 if self.restore_ready && matches!(self.phase, SessionPhase::Idle) {
@@ -63,9 +74,16 @@ impl SessionState {
             }
             SessionInput::RestoreReady { epoch } => {
                 self.phase = phase;
-                self.restore_ready = self.restore_ready || self.current(epoch);
-                if matches!(self.phase, SessionPhase::Idle) {
+                if epoch == self.epoch && self.current(epoch) { self.restore_ready = true; }
+                if self.restore_ready && matches!(self.phase, SessionPhase::Idle) {
                     if let Some(pending) = self.restored_direct.take() { self.start_restored(pending, fx); }
+                }
+            }
+            SessionInput::RestoreFailed { epoch, error } => {
+                self.phase = phase;
+                if epoch == self.epoch {
+                    self.restore_error = Some(error);
+                    fx.push(SessionEffect::RestoreClassified { epoch });
                 }
             }
             SessionInput::Cancel { req_id } => {
@@ -80,10 +98,13 @@ impl SessionState {
             },
             SessionInput::EpochEnded(EpochEnded { epoch, cause }) => {
                 if epoch != self.epoch { self.phase = phase; return; }
-                self.end_resume(SessionError::Interrupted, fx);
+                if cause != Cause::SessionStarted || self.resume_published.is_none() {
+                    self.end_resume(SessionError::Interrupted, fx);
+                }
                 self.restored_direct = None;
                 self.restore_ready = false;
                 self.restore_floor = epoch + 1;
+                self.restore_error = None;
                 if is_ended(cause) {
                     if self.after_publish.as_ref().is_some_and(|held| held.wait == PublishWait::Identity) {
                         if let Some(held) = self.after_publish.take() { reply(fx, held.reply, Err(SessionError::Interrupted)); }
@@ -215,10 +236,6 @@ impl SessionState {
                         let author = pending.owner.as_ref().map(author_of).or(pending.author);
                         self.adopt = true;
                         self.phase = SessionPhase::PendingHeld { pending: PendingCall { reply: None, author, ..pending } };
-                    }
-                    Some(pending) if pending.class == OperationClass::Login => {
-                        self.adopt = true;
-                        self.start_restored(PendingCall { reply: None, ..pending }, fx);
                     }
                     _ => {}
                 }

@@ -17,7 +17,7 @@ impl Lifecycle {
     }
 
     /// `Open` rows: the initial state, the first publication, `EpochStarted` and the wait of `open` held for `Saved`.
-    pub fn open(saved_epoch: u64, saved_generation: u64, saved_identity: Option<Identity>, reply: Option<Id>) -> (Self, Out) {
+    pub fn open(saved_epoch: u64, saved_generation: u64, saved_identity: Option<Identity>, saved_unowned_pending: bool, reply: Option<Id>) -> (Self, Out) {
         let mut life = Self::blank();
         life.allocated = saved_generation;
         let epoch = saved_epoch + 1;
@@ -30,6 +30,9 @@ impl Lifecycle {
         let mut out = Out::default();
         if saved_identity.is_some() {
             life.restoring = Some(Restoring { epoch, start_waiting: [Owner::Outbox, Owner::Transfer].into(), restore_waiting: [Owner::Outbox, Owner::Transfer, Owner::Session].into(), open_reply: reply });
+            life.publish(&mut out, Some((epoch, saved_identity, saved_generation)), Vec::new());
+        } else if saved_unowned_pending {
+            life.restoring = Some(Restoring { epoch, start_waiting: Default::default(), restore_waiting: [Owner::Session].into(), open_reply: reply });
             life.publish(&mut out, Some((epoch, saved_identity, saved_generation)), Vec::new());
         } else {
             life.publish(&mut out, Some((epoch, saved_identity, saved_generation)), reply.into_iter().collect());
@@ -446,6 +449,9 @@ impl Lifecycle {
             answer_all(out, publication.replies, Answer::Ok);
             if let Some((epoch, identity, generation)) = publication.epoch_started {
                 out.effects.push(Effect::EpochStarted(epoch, identity, generation));
+                if self.restoring.as_ref().is_some_and(|restoring| restoring.epoch == epoch && restoring.start_waiting.is_empty()) {
+                    out.effects.push(Effect::ReadIntents(epoch));
+                }
             }
             return;
         }

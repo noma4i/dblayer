@@ -4,13 +4,16 @@ impl LifecycleState {
     /// One row of the table per match arm, in table order.
     pub(super) fn run(&mut self, input: LifecycleInput, fx: &mut Vec<LifecycleEffect>) {
         match input {
-            LifecycleInput::Open { saved_epoch, saved_generation, saved_identity, reply } => {
+            LifecycleInput::Open { saved_epoch, saved_generation, saved_identity, saved_unowned_pending, reply } => {
                 self.allocated = saved_generation;
                 let epoch = saved_epoch + 1;
                 self.phase = settled(epoch, saved_identity);
                 self.set_published(epoch, saved_identity, saved_generation, settled_state(saved_identity));
                 if saved_identity.is_some() {
                     self.restoring = Some(self.new_restoring(epoch, reply));
+                    self.publish(Some(Started { epoch, identity: saved_identity, generation: saved_generation }), Vec::new(), fx);
+                } else if saved_unowned_pending && self.restore_participants.contains(&Peer::Session) {
+                    self.restoring = Some(Restoring { epoch, start_waiting: Default::default(), restore_waiting: [Peer::Session].into(), open_reply: reply });
                     self.publish(Some(Started { epoch, identity: saved_identity, generation: saved_generation }), Vec::new(), fx);
                 } else {
                     self.publish(Some(Started { epoch, identity: saved_identity, generation: saved_generation }), reply.into_iter().collect(), fx);

@@ -385,17 +385,19 @@ fn absent(session: bool, transfer: bool) -> Vec<Peer> {
 impl Life {
     /// Builds the owners, boots the Store from the booted `Db` and returns after the first `Publish`.
     pub fn start(ports: Ports) -> Result<Self, LifeError> {
-        let found = boot_found(&ports.db)?;
         let session = ports.exchange.clone().zip(ports.secret.clone()).zip(ports.seal.clone()).map(|((exchange, secret), seal)| (exchange, secret, seal));
         let restored = session.as_ref().map(|(exchange, secret, _)| session_runner::SessionRunner::stored(exchange, secret, &ports.db)).transpose().map_err(|error| LifeError::Storage(error.to_string()))?;
+        let saved_unowned_pending = restored.as_ref().is_some_and(|state| state.unowned_pending);
+        let restore_error = restored.as_ref().and_then(|state| state.restore_error.clone());
+        let found = boot_found(&ports.db, saved_unowned_pending)?;
         let mut builder = RuntimeBuilder::new();
         builder.with_clock(ports.db.lock().clock.clone());
         let clock = ports.db.lock().clock.clone();
         let wiring = Arc::new(Wiring::new(builder.handle(), Arc::new(move || i64::try_from(clock.now().as_millis()).unwrap_or(i64::MAX))));
         let open_wait = wiring.outcomes.register(Epoch::MAX);
-        let lifecycle = builder.add::<Lifecycle>("lifecycle", LifecycleState::new().with_restore_participants(restore_participants(session.is_some())), runners::LifecycleRunner { wiring: wiring.clone(), absent: absent(session.is_some(), session.is_some() && ports.transfer.is_some()), db: ports.db.clone(), held_published: None, held_replies: Vec::new() });
+        let lifecycle = builder.add::<Lifecycle>("lifecycle", LifecycleState::new().with_restore_participants(restore_participants(session.is_some())), runners::LifecycleRunner { wiring: wiring.clone(), absent: absent(session.is_some(), session.is_some() && ports.transfer.is_some()), db: ports.db.clone(), held_published: None, held_replies: Vec::new(), held_read: None });
         builder.on_executor_failed(lifecycle);
-        let store = builder.add::<StoreWriter>("store", StoreState::new(), runners::StoreRunner { wiring: wiring.clone(), db: ports.db.clone(), secret: ports.secret.clone(), exchange: ports.exchange.clone(), executor: ports.executor.clone() });
+        let store = builder.add::<StoreWriter>("store", StoreState::new(), runners::StoreRunner { wiring: wiring.clone(), db: ports.db.clone(), secret: ports.secret.clone(), exchange: ports.exchange.clone(), executor: ports.executor.clone(), restore_error });
         let network = builder.add::<Network>("network", NetworkState::new(), runners::NetworkRunner { wiring: wiring.clone(), db: ports.db.clone(), held_replies: Vec::new() });
         let calls = builder.add::<Calls>("calls", CallsState::new(0, None, &[]), calls_runner::CallsRunner::new(wiring.clone(), &ports));
         let session_address = session.as_ref().zip(restored).map(|((exchange, secret, seal), restored)| {

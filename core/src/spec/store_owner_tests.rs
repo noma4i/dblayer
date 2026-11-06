@@ -210,11 +210,11 @@ impl Twin {
         let want = self.reference.boot(found.clone());
         let input = match found {
             Boot::New => BootFound::Fresh,
-            Boot::Same => BootFound::Same { saved_epoch: saved.0, saved_generation: saved.1, saved_identity: saved.2, revision: self.reference.saved_revision },
-            Boot::ChangedModels => BootFound::ChangedModels { saved_epoch: saved.0, saved_generation: saved.1, saved_identity: saved.2, revision: self.reference.saved_revision },
-            Boot::LocalModelChanged => BootFound::LocalModelChanged { saved_epoch: saved.0, saved_generation: saved.1, saved_identity: saved.2, revision: self.reference.saved_revision },
+            Boot::Same => BootFound::Same { saved_epoch: saved.0, saved_generation: saved.1, saved_identity: saved.2, saved_unowned_pending: false, revision: self.reference.saved_revision },
+            Boot::ChangedModels => BootFound::ChangedModels { saved_epoch: saved.0, saved_generation: saved.1, saved_identity: saved.2, saved_unowned_pending: false, revision: self.reference.saved_revision },
+            Boot::LocalModelChanged => BootFound::LocalModelChanged { saved_epoch: saved.0, saved_generation: saved.1, saved_identity: saved.2, saved_unowned_pending: false, revision: self.reference.saved_revision },
             Boot::CorruptManifest => BootFound::CorruptManifest(DISK.into()),
-            Boot::FormatChange => BootFound::FormatChange { saved_epoch: saved.0, saved_generation: saved.1, saved_identity: saved.2, revision: self.reference.saved_revision },
+            Boot::FormatChange => BootFound::FormatChange { saved_epoch: saved.0, saved_generation: saved.1, saved_identity: saved.2, saved_unowned_pending: false, revision: self.reference.saved_revision },
             Boot::SqliteError => BootFound::SqliteError(DISK.into()),
         };
         let raw = self.send(StoreInput::Boot(input));

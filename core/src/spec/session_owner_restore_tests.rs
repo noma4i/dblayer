@@ -35,7 +35,7 @@ fn sess_open_direct_pending() {
 fn sess_open_direct_login_pending() {
     let login = RefPending { class: Class::Login, credential: Some(CRED), sequence: 1, ..stored(None, 5, 1) };
     let twin = opened(open(Some((CRED, 0)), Some(login), false, Secret::Present(CRED)));
-    assert!(matches!(&twin.history[..], [RefEffect::HttpRequest { pending, .. }] if pending.request_id == 5 && pending.credential == Some(CRED)), "a sign-in stored before a crash goes again at once: {:?}", twin.history);
+    assert!(matches!(twin.reference.state, RefState::Idle) && twin.history.is_empty());
 }
 
 #[test]
@@ -77,6 +77,39 @@ fn sess_open_digest_mismatch() {
 }
 
 #[test]
+fn sess_restore_failed() {
+    let mut twin = Twin::new();
+    assert_eq!(twin.feed(Input::RestoreFailed { epoch: EPOCH, error: "disk".into() }), vec![RefEffect::RestoreClassified { epoch: EPOCH }]);
+    twin.feed(call(1));
+    assert_eq!(twin.replies, vec![(1, Err(Fail::Storage))]);
+}
+
+#[test]
+fn sess_restore_failed_refuses() {
+    let mut twin = Twin::new();
+    twin.feed(Input::RestoreFailed { epoch: EPOCH, error: "disk".into() });
+    assert_eq!(twin.feed(mutate(7, 11)), vec![answer(7, 11, permanent(Fail::Storage))]);
+    assert_eq!(twin.reference.credential.map(|credential| credential.sequence), Some(0));
+}
+
+#[test]
+fn sess_restore_failed_stale() {
+    let mut twin = Twin::new();
+    assert!(twin.feed(Input::RestoreFailed { epoch: EPOCH - 1, error: "disk".into() }).is_empty());
+    assert!(twin.feed(Input::RestoreFailed { epoch: EPOCH + 1, error: "disk".into() }).is_empty());
+    assert!(matches!(twin.feed(call(1)).as_slice(), [RefEffect::SealProbe { .. }]));
+}
+
+#[test]
+fn sess_restore_failed_reset() {
+    let mut twin = Twin::new();
+    twin.feed(Input::RestoreFailed { epoch: EPOCH, error: "disk".into() });
+    twin.feed(ended(EndCause::SessionReset));
+    twin.feed(Input::Published { epoch: EPOCH + 1, identity: None, state: PubState::NoSession });
+    assert!(matches!(twin.feed(call(1)).as_slice(), [RefEffect::GenerateCredential { .. }]));
+}
+
+#[test]
 fn sess_restored_direct_pending() {
     let mut twin = Twin::new();
     let effects = twin.feed(Input::Restored { epoch: EPOCH, pending: Some(stored(None, 5, 1)) });
@@ -103,20 +136,23 @@ fn sess_restore_ready_other() {
     assert!(twin.feed(Input::RestoreReady { epoch: EPOCH }).is_empty());
     let mut idle = Twin::new();
     assert!(idle.feed(Input::RestoreReady { epoch: EPOCH }).is_empty());
+    let mut stale = Twin::new();
+    stale.feed(Input::Restored { epoch: EPOCH, pending: Some(stored(None, 5, 1)) });
+    assert!(stale.feed(Input::RestoreReady { epoch: EPOCH - 1 }).is_empty());
+    assert!(stale.feed(Input::RestoreReady { epoch: EPOCH + 1 }).is_empty());
+    assert!(stale.reference.restored_direct.is_some());
+    assert!(matches!(stale.feed(Input::RestoreReady { epoch: EPOCH }).as_slice(), [RefEffect::HttpRequest { .. }]));
 }
 
 #[test]
 fn sess_restored_direct_on_idle() {
-    let mut twin = Twin::new();
-    twin.feed_all([call(1), Input::Restored { epoch: EPOCH, pending: None }]);
-    twin.feed(Input::RestoreReady { epoch: EPOCH });
-    assert!(twin.reference.restored_direct.is_none());
     let mut busy = persisting();
-    busy.feed_all([Input::RestoreReady { epoch: EPOCH }, Input::Restored { epoch: EPOCH, pending: None }]);
+    busy.feed_all([Input::RestoreReady { epoch: EPOCH }, Input::Restored { epoch: EPOCH, pending: Some(stored(None, 5, 2)) }]);
     busy.feed(committed());
     let input = busy.response(1);
-    busy.feed_all([input, committed()]);
-    assert!(matches!(busy.reference.state, RefState::Idle));
+    busy.feed(input);
+    let effects = busy.feed(committed());
+    assert!(effects.iter().any(|effect| matches!(effect, RefEffect::HttpRequest { pending, .. } if pending.request_id == 5 && pending.sequence == 2)));
 }
 
 #[test]
@@ -175,7 +211,7 @@ fn sess_restored_other() {
     for mut twin in [persisting(), generating(), held(), blocked_storage(), opened(open(Some((CRED, 6)), None, false, Secret::Present(9)))] {
         let effects = twin.feed(Input::Restored { epoch: EPOCH, pending: Some(stored(None, 5, 1)) });
         assert_eq!(effects, vec![RefEffect::RestoreClassified { epoch: EPOCH }]);
-        assert!(twin.reference.restored_direct.is_none());
+        assert_eq!(twin.reference.restored_direct.as_ref().map(|pending| pending.request_id), Some(5));
     }
 }
 

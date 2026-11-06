@@ -218,7 +218,7 @@ pub struct LifecycleRef {
 
 impl LifecycleRef {
     pub fn new(full: bool) -> Self {
-        let (machine, out) = Lifecycle::open(0, 0, None, None);
+        let (machine, out) = Lifecycle::open(0, 0, None, false, None);
         let mut model = Self { machine, full, held: false, store: Default::default(), store_close: false, owners: Default::default(), rows: BTreeSet::new(), step: 0 };
         model.absorb(out);
         model.pump(&mut Vec::new());

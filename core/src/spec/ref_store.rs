@@ -407,7 +407,7 @@ pub struct StoreRef {
 
 impl StoreRef {
     pub fn new(full: bool) -> Self {
-        let (life, out) = Lifecycle::open(0, 0, None, None);
+        let (life, out) = Lifecycle::open(0, 0, None, false, None);
         let mut model = Self { life, store: Store::new(), full, fail_commit: false, fail_clear: false, held: false, waiting: VecDeque::new(), batch: 0 };
         model.route(out.effects);
         model

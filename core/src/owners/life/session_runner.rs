@@ -55,6 +55,8 @@ pub(crate) struct Restored {
     pub dropped_pending: bool,
     pub answers: std::collections::BTreeMap<RequestId, crate::owners::session::StoredAnswer>,
     pub secret: SecretState,
+    pub restore_error: Option<String>,
+    pub unowned_pending: bool,
     wire: Option<(RequestId, Wire)>,
     digest: Option<(u64, String)>,
 }
@@ -74,7 +76,18 @@ impl SessionRunner {
             Ok(None) => SecretState::Missing,
             Err(error) => SecretState::Error(error.to_string()),
         };
-        Ok(Restored { secret, ..Self::rows(exchange, store)? })
+        match Self::rows(exchange, store) {
+            Ok(rows) => Ok(Restored { secret, ..rows }),
+            Err(error) => {
+                let session = stored_session(store)?;
+                let credential = session.as_ref().map(|session| {
+                    let sequence = u64::try_from(session.sequence).map_err(|_| TransportError::Decode(format!("the stored session has the sequence {}", session.sequence)))?;
+                    Ok::<_, TransportError>(crate::store::identity_of(&session.credential_digest).map(|digest| Credential { digest, sequence }))
+                }).transpose()?.flatten();
+                let unowned_pending = store.read_locked(|connection| connection.query_row("SELECT EXISTS (SELECT 1 FROM encrypted_pending WHERE owner_kind IS NULL)", [], |row| row.get(0))).map_err(|error| TransportError::Network(format!("session storage: {error}")))?;
+                Ok(Restored { credential, pending: None, dropped_pending: false, answers: Default::default(), secret, restore_error: Some(error.to_string()), unowned_pending, wire: None, digest: None })
+            }
+        }
     }
 
     /// The stored `encrypted_session`, `encrypted_pending` and `encrypted_answer`: the snapshot of `ReadIntents` reads no secret.
@@ -92,7 +105,7 @@ impl SessionRunner {
         let dropped_pending = dropped_pending(store)?;
         let row = if dropped_pending { None } else { stored_pending(store)? };
         let Some(row) = row else {
-            return Ok(Restored { credential, pending: None, dropped_pending, answers, secret, wire: None, digest: None });
+            return Ok(Restored { credential, pending: None, dropped_pending, answers, secret, restore_error: None, unowned_pending: false, wire: None, digest: None });
         };
         let sequence = u64::try_from(row.sequence).map_err(|_| TransportError::Decode(format!("the stored pending has the sequence {}", row.sequence)))?;
         let sessionless = row.credential_digest.is_empty();
@@ -117,7 +130,8 @@ impl SessionRunner {
             reply: None,
         };
         let digest = identity.map(|identity| (identity, row.credential_digest));
-        Ok(Restored { credential, pending: Some(pending), dropped_pending: false, answers, secret, wire: Some((request_id, Wire { id: row.request_id, key: row.response_key })), digest })
+        let unowned_pending = pending.owner.is_none();
+        Ok(Restored { credential, pending: Some(pending), dropped_pending: false, answers, secret, restore_error: None, unowned_pending, wire: Some((request_id, Wire { id: row.request_id, key: row.response_key })), digest })
     }
 
     fn commit(&self, batch: u64, epoch: u64, ops: Vec<StoreOp>) {

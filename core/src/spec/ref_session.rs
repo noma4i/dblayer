@@ -137,6 +137,7 @@ pub enum Input {
     InterestPlus(StreamId),
     InterestMinus(StreamId),
     RestoreReady { epoch: u64 },
+    RestoreFailed { epoch: u64, error: String },
     Restored { epoch: u64, pending: Option<Pending> },
     Response { request_id: RequestId, attempt_id: AttemptId, body: String, sequence: Option<u64>, refusal: Option<crate::transport::SessionCode> },
     Revoked { request_id: RequestId, attempt_id: AttemptId, body: String },
@@ -260,6 +261,7 @@ pub struct Session {
     pub after_publish: Option<(ReplyId, Answer, Option<u64>)>,
     pub subscribers: BTreeSet<StreamId>,
     pub restored_direct: Option<Pending>,
+    restore_error: Option<String>,
     operations: Vec<Operation>,
     next_request: RequestId,
     next_batch: BatchId,
@@ -296,7 +298,7 @@ fn is_ended(cause: EndCause) -> bool { cause != EndCause::Other }
 
 impl Session {
     pub fn new(operations: Vec<Operation>, online: Option<bool>) -> Self {
-        Self { state: State::Idle, credential: None, queue: VecDeque::new(), online, epoch: 0, pub_state: PubState::Session, after_publish: None, subscribers: BTreeSet::new(), restored_direct: None, operations, next_request: 1, next_batch: 1, next_attempt: 1, next_secret: 1, restore_ready: false, restore_floor: 0, adopt: false, held: None, reported: (0, RetryPhase::Idle) }
+        Self { state: State::Idle, credential: None, queue: VecDeque::new(), online, epoch: 0, pub_state: PubState::Session, after_publish: None, subscribers: BTreeSet::new(), restored_direct: None, restore_error: None, operations, next_request: 1, next_batch: 1, next_attempt: 1, next_secret: 1, restore_ready: false, restore_floor: 0, adopt: false, held: None, reported: (0, RetryPhase::Idle) }
     }
 
     fn batch(&mut self) -> BatchId {

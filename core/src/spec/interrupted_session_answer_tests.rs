@@ -61,7 +61,7 @@ fn sess_resume_waiter_answered() {
     let attempt = rig.start();
     rig.send(ask_answer(1));
     rig.send(ask_answer(2));
-    assert_eq!(rig.refuse(attempt), [answer(1, Err(too_large())), answer(2, Err(too_large()))]);
+    assert_eq!(rig.refuse(attempt), [answer(1, Err(too_large())), answer(2, Ok(None))]);
     assert_eq!(rig.send(ask_answer(3)), [answer(3, Ok(None))]);
 }
 
@@ -82,6 +82,20 @@ fn sess_resume_takes_answer() {
     rig.refuse(attempt);
     assert_eq!(rig.send(ask_answer(1)), [answer(1, Err(too_large()))]);
     assert_eq!(rig.send(ask_answer(2)), [answer(2, Ok(None))]);
+}
+
+#[test]
+fn sess_resume_login_epoch_started() {
+    let mut rig = Rig::new();
+    let pending = PendingCall { request_id: 11, sequence: 1, class: OperationClass::Login, operation: "login".into(), path: "/login".into(), body: "{}".into(), credential: Some(4), purpose: 0, author: None, owner: None, epoch: 3, reply: None };
+    rig.send(SessionInput::Restored { epoch: 3, pending: Some(pending), answers: Default::default(), pending_lost: false });
+    let attempt = rig.start();
+    rig.send(ask_answer(1));
+    let effects = rig.send(SessionInput::Response { request_id: 11, attempt_id: attempt, body: "{}".into(), sequence: Some(1), refusal: None });
+    let batch = effects.iter().find_map(|effect| match effect { SessionEffect::CommitLanding { batch, .. } => Some(*batch), _ => None }).unwrap();
+    rig.send(SessionInput::Committed(Committed { batch, revision: 1, tables: vec![], models: Default::default(), stale_parents: Vec::new(), position: 0 }));
+    assert!(rig.send(SessionInput::EpochEnded(EpochEnded { epoch: 3, cause: Cause::SessionStarted })).is_empty());
+    assert_eq!(rig.send(SessionInput::Published(Published { epoch: 4, identity: Some(4), generation: 0, state: PublishedState::Session, closed: false })), [answer(1, Ok(Some("{}".into())))]);
 }
 
 #[test]

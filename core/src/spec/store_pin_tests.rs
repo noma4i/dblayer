@@ -11,7 +11,7 @@ fn step(state: &mut StoreState, input: StoreInput) -> Vec<StoreEffect> {
 
 fn state(revision: u64) -> StoreState {
     let mut state = StoreState::new();
-    step(&mut state, StoreInput::Boot(BootFound::Same { saved_epoch: 0, saved_generation: 0, saved_identity: None, revision }));
+    step(&mut state, StoreInput::Boot(BootFound::Same { saved_epoch: 0, saved_generation: 0, saved_identity: None, saved_unowned_pending: false, revision }));
     state
 }
 

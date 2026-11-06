@@ -154,6 +154,80 @@ async fn interrupted_session_answer_returns_the_restored_call_once() {
     within(database.close_database()).await.unwrap();
 }
 
+#[tokio::test(flavor = "multi_thread")]
+async fn restored_first_login_finishes_after_open() {
+    use crate::test_wait::within;
+    use crate::transport::encrypted::{exchange::digest_of, jwe, state};
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("session.sqlite");
+    let server = FakeServer::new(Arc::new(SystemClock));
+    let credentials = Arc::new(MemoryCredentials::default());
+    let config = || Config { path: Some(path.to_string_lossy().into_owned()), data_version: None, cache_rows: 8 };
+    let open = || Database::open(config(), "[]".into(), crate::ffi::OpenPorts { transport: Some(Arc::new(SubscriptionsOnly)), encrypted: Some(crate::transport::encrypted::protocol_tests::config()), credentials: Some(Arc::new(Held(credentials.clone()))), http: Some(Arc::new(ThroughServer(server.clone()))), ..Default::default() });
+    let database = within(open()).await.unwrap();
+    within(database.close_database()).await.unwrap();
+    drop(database);
+    let credential = jwe::random_token();
+    credentials.set(&credential).unwrap();
+    let request_id = "3f1c2a52-9d3e-4b7a-8a11-0123456789ab";
+    {
+        let db = Store::open_models(Some(&path), vec![], None).map(Arc::new).unwrap();
+        let inner = db.lock();
+        let digest = digest_of(&credential);
+        state::start(&inner.connection, &digest).unwrap();
+        let pending = state::Pending { credential_digest: digest, request_id: request_id.into(), response_key: jwe::random_token(), sequence: 1, path: "/api/auth/social".into(), body: "{}".into(), owner: None, purpose: crate::transport::NetworkPurpose::Standard, req_id: 11 };
+        state::store_pending(&inner.connection, &pending).unwrap();
+    }
+    let database = within(open()).await.unwrap();
+    database.set_online(true).unwrap();
+    assert_eq!(within(database.interrupted_session_answer()).await.unwrap(), Some(r#"{"nextStep":"authenticated"}"#.into()));
+    assert_eq!(within(database.interrupted_session_answer()).await.unwrap(), None);
+    let requests: Vec<_> = server.seen().into_iter().filter(|request| request["requestId"] == request_id).collect();
+    assert_eq!(requests.len(), 1);
+    assert_eq!(requests[0]["sequence"], 1);
+    within(database.close_database()).await.unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn failed_session_restore_opens_and_refuses_calls_until_reset() {
+    use crate::test_wait::within;
+    use crate::transport::encrypted::{exchange::digest_of, jwe, state};
+    for broken in ["pending", "answer"] {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("session.sqlite");
+        let server = FakeServer::new(Arc::new(SystemClock));
+        let credentials = Arc::new(MemoryCredentials::default());
+        let config = || Config { path: Some(path.to_string_lossy().into_owned()), data_version: None, cache_rows: 8 };
+        let open = || Database::open(config(), "[]".into(), crate::ffi::OpenPorts { transport: Some(Arc::new(SubscriptionsOnly)), encrypted: Some(crate::transport::encrypted::protocol_tests::config()), credentials: Some(Arc::new(Held(credentials.clone()))), http: Some(Arc::new(ThroughServer(server.clone()))), ..Default::default() });
+        let database = within(open()).await.unwrap();
+        within(database.close_database()).await.unwrap();
+        drop(database);
+        let credential = jwe::random_token();
+        credentials.set(&credential).unwrap();
+        {
+            let db = Store::open_models(Some(&path), vec![], None).map(Arc::new).unwrap();
+            let inner = db.lock();
+            let digest = digest_of(&credential);
+            state::start(&inner.connection, &digest).unwrap();
+            let pending = state::Pending { credential_digest: digest, request_id: "3f1c2a52-9d3e-4b7a-8a11-0123456789ab".into(), response_key: jwe::random_token(), sequence: 1, path: "/api/auth/social".into(), body: "{}".into(), owner: None, purpose: crate::transport::NetworkPurpose::Standard, req_id: 11 };
+            state::store_pending(&inner.connection, &pending).unwrap();
+            if broken == "pending" {
+                inner.connection.execute("UPDATE encrypted_pending SET body = 'invalid'", []).unwrap();
+            } else {
+                inner.connection.execute("INSERT INTO encrypted_answer (request_id, outcome, detail) VALUES (12, 'http', 'invalid')", []).unwrap();
+            }
+        }
+        let database = within(open()).await.unwrap();
+        database.set_online(true).unwrap();
+        assert!(matches!(within(database.session_call("social".into(), "{}".into())).await, Err(DbError::Database { .. })), "{broken}");
+        assert!(server.seen().is_empty());
+        within(database.session_reset()).await.unwrap();
+        assert!(within(database.session_call("social".into(), "{}".into())).await.is_ok());
+        assert_eq!(server.seen().len(), 1);
+        within(database.close_database()).await.unwrap();
+    }
+}
+
 pub(super) fn code(error: DbError) -> SessionCode {
     let DbError::Session { code, .. } = error else { panic!("expected a session error, got {error:?}") };
     code

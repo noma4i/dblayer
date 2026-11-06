@@ -11,9 +11,20 @@ impl Session {
             }
             return;
         }
-        if matches!(state, State::Sealing { .. }) && matches!(input, Input::Restored { .. } | Input::RestoreReady { .. }) {
-            self.state = state;
-            return;
+        if self.restore_error.is_some() {
+            match &input {
+                Input::SessionCall { reply, .. } => {
+                    self.state = state;
+                    out.replies.push((*reply, Err(Fail::Storage)));
+                    return;
+                }
+                Input::Mutate { author, req_id, epoch, .. } if *epoch == self.epoch => {
+                    self.state = state;
+                    out.effects.push(author_error(*author, *req_id, Kind::Permanent, Fail::Storage));
+                    return;
+                }
+                _ => {}
+            }
         }
         match input {
             Input::Closing => self.closing(state, out),
@@ -39,7 +50,7 @@ impl Session {
             Input::Restored { epoch, pending } => {
                 self.state = state;
                 out.effects.push(Effect::RestoreClassified { epoch });
-                if let (State::Idle, Some(pending), true) = (&self.state, pending, self.current(epoch)) {
+                if let (Some(pending), true) = (pending, epoch == self.epoch && self.current(epoch)) {
                     if pending.owner.is_none() { self.restored_direct = Some(Pending { epoch, ..pending }); }
                 }
                 if self.restore_ready && matches!(self.state, State::Idle) {
@@ -48,9 +59,16 @@ impl Session {
             }
             Input::RestoreReady { epoch } => {
                 self.state = state;
-                self.restore_ready = self.restore_ready || self.current(epoch);
-                if matches!(self.state, State::Idle) {
+                if epoch == self.epoch && self.current(epoch) { self.restore_ready = true; }
+                if self.restore_ready && matches!(self.state, State::Idle) {
                     if let Some(pending) = self.restored_direct.take() { self.start_calling(pending, out); }
+                }
+            }
+            Input::RestoreFailed { epoch, error } => {
+                self.state = state;
+                if epoch == self.epoch {
+                    self.restore_error = Some(error);
+                    out.effects.push(Effect::RestoreClassified { epoch });
                 }
             }
             Input::Cancel { req_id } => {
@@ -68,6 +86,7 @@ impl Session {
                 self.restored_direct = None;
                 self.restore_ready = false;
                 self.restore_floor = epoch + 1;
+                self.restore_error = None;
                 if is_ended(cause) {
                     if self.after_publish.as_ref().is_some_and(|held| held.2.is_none()) {
                         if let Some((reply, ..)) = self.after_publish.take() { out.replies.push((reply, Err(Fail::Interrupted))); }
@@ -196,10 +215,6 @@ impl Session {
                         let author = pending.owner.as_ref().map(author_of).or(pending.author);
                         self.adopt = true;
                         self.state = State::PendingHeld { pending: Pending { reply: None, author, ..pending } };
-                    }
-                    Some(pending) if pending.class == Class::Login => {
-                        self.adopt = true;
-                        self.start_calling(Pending { reply: None, ..pending }, out);
                     }
                     _ => {}
                 }

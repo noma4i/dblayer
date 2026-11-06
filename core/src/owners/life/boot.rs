@@ -1,6 +1,6 @@
 use super::*;
 
-pub(super) fn boot_found(db: &Store) -> Result<BootFound, LifeError> {
+pub(super) fn boot_found(db: &Store, saved_unowned_pending: bool) -> Result<BootFound, LifeError> {
     let (saved_epoch, saved_generation, saved_identity) = db.saved().map_err(|error| match error {
         crate::store::StoreError::CorruptManifest(detail) => LifeError::CorruptManifest(detail),
         other => LifeError::Storage(other.to_string()),
@@ -11,12 +11,12 @@ pub(super) fn boot_found(db: &Store) -> Result<BootFound, LifeError> {
     Ok(if report.recreated == Some(crate::ddl::RecreateReason::UnreadableFile) {
         BootFound::Fresh
     } else if report.recreated.is_some() {
-        BootFound::FormatChange { saved_epoch, saved_generation, saved_identity, revision }
+        BootFound::FormatChange { saved_epoch, saved_generation, saved_identity, saved_unowned_pending, revision }
     } else if server_model_changed {
-        BootFound::ChangedModels { saved_epoch, saved_generation, saved_identity, revision }
+        BootFound::ChangedModels { saved_epoch, saved_generation, saved_identity, saved_unowned_pending, revision }
     } else if !report.changed_models.is_empty() {
-        BootFound::LocalModelChanged { saved_epoch, saved_generation, saved_identity, revision }
+        BootFound::LocalModelChanged { saved_epoch, saved_generation, saved_identity, saved_unowned_pending, revision }
     } else {
-        BootFound::Same { saved_epoch, saved_generation, saved_identity, revision }
+        BootFound::Same { saved_epoch, saved_generation, saved_identity, saved_unowned_pending, revision }
     })
 }

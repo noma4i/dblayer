@@ -18,6 +18,7 @@
 
 ### Fixed
 - Preserve upload attempt limits across restarts and network changes.
+- Restore interrupted first logins and report damaged saved session requests until reset.
 
 ### Removed
 - `scope.related` is gone: read a server relation with a query.

@@ -475,7 +475,7 @@ fn open_waits_for_restore_classified_of_the_installed_session() {
     assert!(restore_participants(false).is_empty());
     let mut state = LifecycleState::new().with_restore_participants(restore_participants(true));
     let run = |state: &mut LifecycleState, input| Lifecycle::step(state, input).into_iter().filter_map(|effect| if let Effect::Run(run) = effect { Some(run) } else { None }).collect::<Vec<_>>();
-    let published = run(&mut state, LifecycleInput::Open { saved_epoch: 4, saved_generation: 2, saved_identity: Some(9), reply: Some(7) });
+    let published = run(&mut state, LifecycleInput::Open { saved_epoch: 4, saved_generation: 2, saved_identity: Some(9), saved_unowned_pending: false, reply: Some(7) });
     let publication_id = state.publishing().first().expect("a publication waits for Saved").id;
     assert!(published.iter().all(|effect| !matches!(effect, LifecycleEffect::RestoreReady { .. })));
     let after_saved = run(&mut state, LifecycleInput::Saved { publication_id });

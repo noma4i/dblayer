@@ -126,7 +126,7 @@ pub enum LifecycleEffect {
 
 #[derive(Clone, Debug)]
 pub enum LifecycleInput {
-    Open { saved_epoch: Epoch, saved_generation: u64, saved_identity: Option<Identity>, reply: Option<ReplyId> },
+    Open { saved_epoch: Epoch, saved_generation: u64, saved_identity: Option<Identity>, saved_unowned_pending: bool, reply: Option<ReplyId> },
     CredentialCommitted(CredentialCommitted),
     SessionReset { reply: Option<ReplyId> },
     ServerEnded(ServerEnded),
