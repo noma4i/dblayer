@@ -10,7 +10,7 @@ impl Window {
             return Effect::Request { request, attempt, page };
         }
         let up_to = self.marker.map_or(0, |marker| marker.sequence);
-        self.chain = Some(Chain3 { stage: Stage3::MarkerCheck { up_to }, cursor: None, rows: 0, latest: 0, base: 0 });
+        self.chain = Some(Chain3 { stage: Stage3::MarkerCheck { up_to }, cursor: None, rows: 0, latest: 0, base: 0, stale: std::mem::take(&mut self.stale_marked) });
         Effect::Marker { request, attempt, up_to }
     }
 
@@ -46,7 +46,7 @@ impl Window {
         match chain.stage {
             Stage3::MarkerCheck { up_to } => {
                 chain.latest = marker.sequence;
-                let prefix = self.marker.is_some_and(|saved| saved.revision == marker.revision && saved.count == marker.count && saved.sequence == up_to);
+                let prefix = !chain.stale && self.marker.is_some_and(|saved| saved.revision == marker.revision && saved.count == marker.count && saved.sequence == up_to);
                 if prefix && marker.sequence == up_to {
                     return self.land_chain(request, chain, marker, true);
                 }

@@ -64,6 +64,16 @@ fn win_media_marker_same() {
 }
 
 #[test]
+fn win_media_marker_does_not_prove_a_window_that_opened_stale() {
+    let mut twin = Twin::media();
+    twin.hold.store(true, Ordering::SeqCst);
+    twin.watch();
+    twin.step(Input::Read(Read::MediaMarked { marker: SAVED, members: 3 }));
+    let effects = answer_marker(&mut twin, SAVED);
+    assert!(matches!(&effects[..], [Effect::Request { page: 1, .. }]), "the marker proved a window that opened with a refetch debt: {effects:?}");
+}
+
+#[test]
 fn win_media_tail() {
     let mut twin = media_checking();
     let effects = answer_marker(&mut twin, marker(9, 1, 3));

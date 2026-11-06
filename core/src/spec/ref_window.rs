@@ -43,6 +43,7 @@ impl Window {
             marker: None,
             members: 0,
             chain: None,
+            stale_marked: false,
             landing_marker: None,
         }
     }
@@ -176,11 +177,12 @@ impl Window {
         match input {
             Input::Read(Read::Stray) => Vec::new(),
             Input::Read(read) => {
-                if let Read::Media { marker, members } = read {
+                if let Read::Media { marker, members } | Read::MediaMarked { marker, members } = read {
                     if !self.held.iter().any(|held| matches!(held, Input::ModelsReset { own_model: true })) {
                         self.marker = Some(marker);
                         self.members = members;
                         self.has_rows = true;
+                        self.stale_marked = matches!(read, Read::MediaMarked { .. });
                     }
                 }
                 if let Read::Saved { landed_at, fresh_until, stale, generation_ok: true } = read {

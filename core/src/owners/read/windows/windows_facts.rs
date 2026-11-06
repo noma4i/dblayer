@@ -81,6 +81,7 @@ impl Facts {
             }
             Ev::Saved(Some(saved)) => {
                 self.fresh = !saved.stale;
+                if saved.stale { self.stale_marked.set(true); }
                 self.landed_at = saved.landed_at;
                 self.fresh_until = saved.fresh_until;
                 self.cursor.clone_from(&saved.cursor);

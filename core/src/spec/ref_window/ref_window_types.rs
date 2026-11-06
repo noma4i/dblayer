@@ -92,6 +92,7 @@ pub(in super::super) struct Chain3 {
     pub(super) rows: i64,
     pub(super) latest: i64,
     pub(super) base: i64,
+    pub(super) stale: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -129,6 +130,8 @@ pub(in super::super) enum Read {
     Saved { landed_at: i64, fresh_until: i64, stale: bool, generation_ok: bool },
     /// A saved media window that is not fresh: its marker and its member count.
     Media { marker: Marker3, members: i64 },
+    /// A saved media window that still owes a refetch (`stale_since`): its marker and its member count.
+    MediaMarked { marker: Marker3, members: i64 },
     None,
     Failed,
     Stray,
@@ -198,5 +201,6 @@ pub(in super::super) struct Window {
     pub(in super::super) marker: Option<Marker3>,
     pub(in super::super) members: i64,
     pub(in super::super) chain: Option<Chain3>,
+    pub(in super::super) stale_marked: bool,
     pub(in super::super) landing_marker: Option<(Marker3, i64)>,
 }
