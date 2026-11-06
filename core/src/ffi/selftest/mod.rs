@@ -30,3 +30,4 @@ mod upload_flow_tests;
 mod user_flow_tests;
 mod wallet_search_flow_tests;
 mod windows_tests;
+mod write_cells_tests;
