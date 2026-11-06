@@ -3,7 +3,7 @@ use serde_json::json;
 use super::fixtures::*;
 use super::Db;
 use crate::owners::store::{EffectRow, IntentEffects, StoreOp};
-use crate::owners::write::outbox::Origin;
+use crate::owners::write::outbox::OpOrigin;
 use crate::schema::{ActionDeclaration, OnFailure, RootShape};
 
 fn intent(op_id: u64, action: &str) -> StoreOp {
@@ -26,7 +26,7 @@ fn a_restored_intent_takes_its_path_from_the_declared_operation_of_its_action() 
     assert_eq!(stored.len(), 1);
     let declared = &stored[0];
     assert_eq!((declared.op_id, declared.op.path.as_str(), declared.op.on_failure, declared.error_mark), (1, "", OnFailure::Keep, false));
-    assert_eq!((declared.op.model.as_str(), declared.op.row_id.as_str(), declared.op.action.as_str(), declared.op.origin.clone()), ("moments", "m1", "publish", Origin::Api));
+    assert_eq!((declared.op.model.as_str(), declared.op.row_id.as_str(), declared.op.action.as_str(), declared.op.origin.clone()), ("moments", "m1", "publish", OpOrigin::Api));
     assert_eq!(declared.op.body, json!({"text": "x"}).to_string());
     db.write_queue_ops(&[intent(2, "update")]).unwrap();
     let refused = db.read_intents().unwrap_err().to_string();

@@ -11,7 +11,7 @@ use super::{Database, DbError};
 use crate::db::{Planned, Record};
 use crate::owners::life::LifeReply;
 use crate::owners::store::IntentEffects;
-use crate::owners::write::outbox::{Fault, NewOp, Origin, OutboxOutcome, Receipt};
+use crate::owners::write::outbox::{Fault, NewOp, OpOrigin, OutboxOutcome, Receipt};
 use crate::owners::write::transfer::{BatchItem, Joint, Renumber, Source, TransferAnswer, SIGNED_ID_SENTINEL};
 use crate::owners::write::upload_codec::StepsBody;
 use crate::schema::ActionDeclaration;
@@ -58,7 +58,7 @@ impl Database {
         let variables = crate::write::variables::upload_variables(plan.declaration, Value::Object(plan.variables.clone()), &uuid::Uuid::new_v4().to_string());
         let request = GraphQLRequest::new(operation.document.clone(), mutation.to_string(), variables);
         let body = crate::transport::encrypted::graphql_body(&request, true).to_string();
-        Ok(NewOp { model: plan.model.to_string(), row_id: plan.row.to_string(), action: plan.action.to_string(), on_failure: plan.declaration.on_failure, origin: Origin::Api, path: client.graphql_path().to_string(), body, effects: plan.effects.clone(), durable: true })
+        Ok(NewOp { model: plan.model.to_string(), row_id: plan.row.to_string(), action: plan.action.to_string(), on_failure: plan.declaration.on_failure, origin: OpOrigin::Api, path: client.graphql_path().to_string(), body, effects: plan.effects.clone(), durable: true })
     }
 
     fn upload_item(&self, plan: &Plan<'_>, mutation: &str, fields: Map<String, Value>) -> Result<BatchItem, DbError> {

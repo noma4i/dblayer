@@ -12,7 +12,7 @@ use std::sync::{Arc, Mutex, PoisonError};
 use async_trait::async_trait;
 use serde_json::json;
 
-use super::outbox::{Fault, NewOp, Origin, OutboxOutcome};
+use super::outbox::{Fault, NewOp, OpOrigin, OutboxOutcome};
 use super::rig::{admit, peer, settle, Act, ManualSpawn, Stub};
 use crate::owners::support::{StoreStub, StoreStubState};
 use super::transfer::{file_id, BatchItem, Shown, Source, Steps, TransferAnswer, TransferInput, TransferPeers, TransferStage, TransferState, Transfers};
@@ -69,7 +69,7 @@ struct World {
 }
 
 fn mutation() -> NewOp {
-    NewOp { model: "Moment".into(), row_id: "r1".into(), action: "upload".into(), on_failure: OnFailure::Keep, origin: Origin::Api, path: "/moments/r1".into(), body: String::new(), effects: Default::default(), durable: true }
+    NewOp { model: "Moment".into(), row_id: "r1".into(), action: "upload".into(), on_failure: OnFailure::Keep, origin: OpOrigin::Api, path: "/moments/r1".into(), body: String::new(), effects: Default::default(), durable: true }
 }
 
 fn world() -> World {

@@ -1,7 +1,7 @@
 //! The intents of the queue as `Restored` gives them to the owner Outbox.
 
 use crate::operation::OperationStatus;
-use crate::owners::write::outbox::{NewOp, Origin, StoredOp};
+use crate::owners::write::outbox::{NewOp, OpOrigin, StoredOp};
 use crate::schema::OnFailure;
 use crate::transport::RequestOwner;
 
@@ -64,7 +64,7 @@ impl Db {
                 row_id: row_id.as_str().to_string(),
                 action: action.to_string(),
                 on_failure: declared.map_or(OnFailure::Rollback, |declaration| declaration.on_failure),
-                origin: Origin::Api,
+                origin: OpOrigin::Api,
                 path: String::new(),
                 body: entry.input.to_string(),
                 effects: Default::default(),

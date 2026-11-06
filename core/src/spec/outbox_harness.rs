@@ -7,7 +7,7 @@ use crate::owners::contract::{BatchId, Committed, ModelsReset, Online, RejectRea
 use crate::owners::session::SessionCalls;
 use crate::owners::store::StoreWriter;
 use crate::owners::support::{new_log, number_after, Discard, Emitted, Log, Sink, Spy, SpyState};
-use crate::owners::write::outbox::{self as o, CommitKind, Fault, NewOp, OpId, Origin, Outbox, OutboxAnswer, OutboxEffect as Run, OutboxInput, OutboxPeers, OutboxState, Receipt, Stage, Why};
+use crate::owners::write::outbox::{self as o, CommitKind, Fault, NewOp, OpId, OpOrigin, Outbox, OutboxAnswer, OutboxEffect as Run, OutboxInput, OutboxPeers, OutboxState, Receipt, Stage, Why};
 use crate::owners::write::transfer::Transfers;
 use crate::runtime::{Address, Cause, DetScheduler, EpochStamp};
 /// The slots of the peers and of the owner in every test: the peers first.
@@ -167,7 +167,7 @@ pub(super) fn model_op(row: &str, policy: Policy, transfer: bool) -> NewOp {
         row_id: row.into(),
         action: "update".into(),
         on_failure: if policy == Policy::Keep { OnFailure::Keep } else { OnFailure::Rollback },
-        origin: if transfer { Origin::Transfer("k".into()) } else { Origin::Api },
+        origin: if transfer { OpOrigin::Transfer("k".into()) } else { OpOrigin::Api },
         durable: true,
         path: format!("/moments/{row}"),
         body: format!("{{\"row\":\"{row}\"}}"),

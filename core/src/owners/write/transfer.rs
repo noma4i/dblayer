@@ -4,7 +4,7 @@
 use std::collections::BTreeMap;
 
 pub use super::transfer_types::*;
-use super::outbox::{Fault, NewOp, Origin, OutboxInput, OutboxOutcome, Receipt};
+use super::outbox::{Fault, NewOp, OpOrigin, OutboxInput, OutboxOutcome, Receipt};
 use super::outbox_types::Phase;
 use super::rounds::RoundsInput;
 use crate::owners::contract::{BatchAuthor, Drained, EpochEnded, Online, RejectReason, ReplyId};
@@ -350,7 +350,7 @@ impl TransferState {
         let Some(transfer) = self.transfers.get_mut(&id) else { return };
         transfer.submitted = true;
         let signed = transfer.signed_id.clone().unwrap_or_default();
-        let mut op = NewOp { origin: Origin::Transfer(transfer.key.clone()), body: transfer.mutation.body.replace(SIGNED_ID_SENTINEL, &signed), ..transfer.mutation.clone() };
+        let mut op = NewOp { origin: OpOrigin::Transfer(transfer.key.clone()), body: transfer.mutation.body.replace(SIGNED_ID_SENTINEL, &signed), ..transfer.mutation.clone() };
         let input = match transfer.op_id {
             Some(op_id) => {
                 op.effects = Default::default();

@@ -222,7 +222,7 @@ impl TransferState {
 
     pub(super) fn mutation_outcome(&mut self, key: &str, outcome: OutboxOutcome, fx: &mut Fx) {
         if let Some(group) = key.strip_prefix("batch:").and_then(|group| group.parse().ok()) {
-            return self.batch_outcome(group, outcome, fx);
+            return self.finish_batch(group, outcome, fx);
         }
         let Some(id) = self.mutating(key) else { return };
         let waiting = self.transfers.get(&id).is_some_and(|transfer| !transfer.discard_waiters.is_empty());

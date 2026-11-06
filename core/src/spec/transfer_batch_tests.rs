@@ -5,7 +5,7 @@ use serde_json::{json, Value};
 use super::transfer_harness::*;
 use crate::owners::contract::Online;
 use crate::owners::store::{EffectRow, IntentEffects};
-use crate::owners::write::outbox::{Fault, Origin, OutboxOutcome};
+use crate::owners::write::outbox::{Fault, OpOrigin, OutboxOutcome};
 use crate::owners::write::transfer::{BatchItem, Joint, Renumber, Shown, TransferAnswer, TransferId, TransferInput, TransferStage, SIGNED_ID_SENTINEL};
 use crate::runtime::Time;
 
@@ -58,7 +58,7 @@ fn xfer_batch_mutation() {
     assert!(ids.iter().all(|id| twin.stage(*id) == TransferStage::Mutating));
     let ops = out.submit_ops();
     assert_eq!(ops.len(), 1, "one request for the batch");
-    assert_eq!(ops[0].origin, Origin::Transfer("batch:1".into()));
+    assert_eq!(ops[0].origin, OpOrigin::Transfer("batch:1".into()));
     assert_eq!(variables(ops[0])["items"], json!([{"name": KEY, "position": 0, "size": 0, "signedId": "signed"}, {"name": OTHER, "position": 0, "size": 0, "signedId": "signed"}]), "the elements in the original order with the signed ids");
 }
 
@@ -71,7 +71,7 @@ fn xfer_batch_singles() {
     let out = file_done(&mut twin, ids[0]);
     let ops = out.submit_ops();
     assert_eq!((twin.stage(ids[0]), ops.len()), (TransferStage::Mutating, 1), "fewer than the minimum remain: the element goes alone");
-    assert_eq!(ops[0].origin, Origin::Transfer(KEY.into()));
+    assert_eq!(ops[0].origin, OpOrigin::Transfer(KEY.into()));
 }
 
 #[test]
@@ -82,11 +82,11 @@ fn xfer_batch_singles_next() {
     file_done(&mut twin, ids[0]);
     let out = file_done(&mut twin, ids[1]);
     assert_eq!((twin.stage(ids[0]), twin.stage(ids[1])), (TransferStage::Mutating, TransferStage::BatchReady));
-    assert_eq!(out.submit_ops().iter().map(|op| op.origin.clone()).collect::<Vec<_>>(), vec![Origin::Transfer(KEY.into())], "the first element goes alone");
+    assert_eq!(out.submit_ops().iter().map(|op| op.origin.clone()).collect::<Vec<_>>(), vec![OpOrigin::Transfer(KEY.into())], "the first element goes alone");
     let out = twin.mutation_outcome(KEY, OutboxOutcome::Confirmed { revision: 5, result: None });
     let ops = out.submit_ops();
     assert_eq!((twin.stage(ids[1]), ops.len()), (TransferStage::Mutating, 1), "the next element goes when the previous one ended");
-    assert_eq!(ops[0].origin, Origin::Transfer(OTHER.into()));
+    assert_eq!(ops[0].origin, OpOrigin::Transfer(OTHER.into()));
 }
 
 #[test]
@@ -224,7 +224,7 @@ fn xfer_batch_removal_releases_mutation() {
     let out = twin.commit();
     let ops = out.submit_ops();
     assert_eq!((twin.stage(ids[0]), ops.len()), (TransferStage::Mutating, 1), "the element that waited goes alone when the other leaves");
-    assert_eq!(ops[0].origin, Origin::Transfer(KEY.into()));
+    assert_eq!(ops[0].origin, OpOrigin::Transfer(KEY.into()));
 }
 
 #[test]
@@ -255,9 +255,9 @@ fn xfer_prop_batch_one_mutation() {
     assert_eq!([1, 2].iter().map(|index| alone.t(ids[*index]).confirmed_parts).collect::<Vec<_>>(), parts);
     file_done(&mut alone, ids[1]);
     let first = file_done(&mut alone, ids[2]);
-    assert_eq!(first.submit_ops().iter().map(|op| op.origin.clone()).collect::<Vec<_>>(), vec![Origin::Transfer(OTHER.into())], "the first remaining element goes first");
+    assert_eq!(first.submit_ops().iter().map(|op| op.origin.clone()).collect::<Vec<_>>(), vec![OpOrigin::Transfer(OTHER.into())], "the first remaining element goes first");
     let next = alone.mutation_outcome(OTHER, OutboxOutcome::Confirmed { revision: 3, result: None });
-    assert_eq!(next.submit_ops().iter().map(|op| op.origin.clone()).collect::<Vec<_>>(), vec![Origin::Transfer(THIRD.into())]);
+    assert_eq!(next.submit_ops().iter().map(|op| op.origin.clone()).collect::<Vec<_>>(), vec![OpOrigin::Transfer(THIRD.into())]);
 }
 
 /// P-XFER-32: after an element leaves, the remaining ones get positions `start..` and the size in the row and in the saved variables, below the minimum nothing changes, without `renumber` nothing changes.

@@ -32,7 +32,7 @@ pub struct OutboxPeers {
 pub type OpId = u64;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub enum Origin {
+pub enum OpOrigin {
     Api,
     Transfer(String),
 }
@@ -44,7 +44,7 @@ pub struct NewOp {
     pub row_id: String,
     pub action: String,
     pub on_failure: OnFailure,
-    pub origin: Origin,
+    pub origin: OpOrigin,
     /// The request of the mutation.
     pub path: String,
     pub body: String,
