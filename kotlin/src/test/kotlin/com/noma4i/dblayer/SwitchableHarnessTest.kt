@@ -36,8 +36,7 @@ class SwitchableHarnessTest {
                 val first = MockTransport(Unanswered.NetworkError)
                 first.enqueue("UserProfile", profile("A"))
                 val switchable = SwitchableTransport(first, unset)
-                DBlayer.openTesting(switchable, modelsJSON)
-                DBlayer.database.registerOperations(operations)
+                reopen(Config(null, null, 32u), modelsJSON, switchable, operations)
                 val entity = heldUser()
                 eventually("the held entity shows A") { entity.value?.name == "A" }
                 val before = first.calls.size
@@ -49,8 +48,7 @@ class SwitchableHarnessTest {
                 assertEquals("work of the close reached the old transport", before, first.calls.size)
                 assertTrue("work of the close reached the next transport", second.calls.isEmpty())
                 switchable.target = second
-                DBlayer.openTesting(switchable, modelsJSON)
-                DBlayer.database.registerOperations(operations)
+                reopen(Config(null, null, 32u), modelsJSON, switchable, operations)
 
                 val next = heldUser()
                 next.loaded()
@@ -69,8 +67,7 @@ class SwitchableHarnessTest {
         try {
             val first = MockTransport(Unanswered.NetworkError)
             first.enqueue("UserProfile", profile("A"))
-            DBlayer.openTesting(first, modelsJSON)
-            DBlayer.database.registerOperations(operations)
+            reopen(Config(null, null, 32u), modelsJSON, first, operations)
             val entity = heldUser()
             eventually("the held entity shows A") { entity.value?.name == "A" }
             closeForCleanup()
@@ -80,8 +77,7 @@ class SwitchableHarnessTest {
 
             val second = MockTransport(Unanswered.NetworkError)
             second.enqueue("UserProfile", profile("B"))
-            DBlayer.openTesting(second, modelsJSON)
-            DBlayer.database.registerOperations(operations)
+            reopen(Config(null, null, 32u), modelsJSON, second, operations)
             val reopened = heldUser()
             eventually("the reopened entity shows B") { reopened.value?.name == "B" }
             assertEquals(1, first.calls.size)

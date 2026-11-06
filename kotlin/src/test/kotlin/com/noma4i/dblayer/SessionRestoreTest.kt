@@ -12,7 +12,7 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
-private class HeldProfileTransport(val base: MockTransport = MockTransport()) : Transport by base {
+private class HeldProfileTransport(override val base: MockTransport = MockTransport()) : Transport by base, WrapsMock {
     val arrived = CompletableDeferred<Unit>()
     val released = CompletableDeferred<Unit>()
     val ended = CompletableDeferred<Unit>()
@@ -38,12 +38,12 @@ class SessionRestoreTest {
         try {
             closeForCleanup()
             transport.base.enqueue("UserProfile", """{"data":{"me":{"__typename":"User","id":"1","name":"B"}}}""")
-            DBlayer.openTesting(transport, modelsJSON)
-            DBlayer.database.registerOperations("""[{"name":"UserProfile","document":"query UserProfile { me { id name } }"}]""")
+            reopen(Config(null, null, 32u), modelsJSON, transport, """[{"name":"UserProfile","document":"query UserProfile { me { id name } }"}]""")
             val oldScope = AccountScope.current()
             val old = async { runCatching { User.profile.load(oldScope) } }
             transport.arrived.await()
             DBlayer.sessionReset()
+            loginAgain()
             assertTrue(old.await().exceptionOrNull() is DbException.Interrupted)
             User.profile.load(AccountScope.current())
             transport.released.complete(Unit)
@@ -64,14 +64,14 @@ class SessionRestoreTest {
             for (name in listOf("A", "B")) {
                 transport.enqueue("UserProfile", """{"data":{"me":{"__typename":"User","id":"1","name":"$name"}}}""")
             }
-            DBlayer.openTesting(transport, modelsJSON)
-            DBlayer.database.registerOperations("""[{"name":"UserProfile","document":"query UserProfile { me { id name } }"}]""")
+            reopen(Config(null, null, 32u), modelsJSON, transport, """[{"name":"UserProfile","document":"query UserProfile { me { id name } }"}]""")
             User.profile.load(AccountScope.current())
             val old = User.profile.read(AccountScope.current()).single()
             old.set(typing = true, account = AccountScope.current())
             assertTrue(User.profile.read(AccountScope.current()).single().typing)
 
             DBlayer.sessionReset()
+            loginAgain()
             User.profile.load(AccountScope.current())
             val current = User.profile.read(AccountScope.current()).single()
 
@@ -92,13 +92,13 @@ class SessionRestoreTest {
                 transport.enqueue("CurrentUserQuery", """{"data":{"user":{"id":"$user","name":"$user"}}}""")
                 transport.enqueue("CurrentRegionQuery", """{"data":{"region":{"id":"$region","name":"$region"}}}""")
             }
-            DBlayer.openTesting(transport, modelsJSON)
-            DBlayer.database.registerOperations("""[{"name":"CurrentUserQuery","document":"query CurrentUserQuery { user { id name } }"},{"name":"CurrentRegionQuery","document":"query CurrentRegionQuery { region { id name } }"}]""")
+            reopen(Config(null, null, 32u), modelsJSON, transport, """[{"name":"CurrentUserQuery","document":"query CurrentUserQuery { user { id name } }"},{"name":"CurrentRegionQuery","document":"query CurrentRegionQuery { region { id name } }"}]""")
             CurrentUser.current.load(AccountScope.current())
             CurrentRegion.current.load(AccountScope.current())
             assertEquals(listOf("u1"), CurrentUser.current.read(AccountScope.current()).map { it.id })
 
             DBlayer.sessionReset()
+            loginAgain()
             CurrentUser.current.load(AccountScope.current())
             CurrentRegion.current.load(AccountScope.current())
 

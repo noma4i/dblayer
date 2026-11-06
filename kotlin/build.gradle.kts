@@ -37,6 +37,7 @@ android {
     unitTests.isIncludeAndroidResources = true
     unitTests.all {
       it.forkEvery = 1
+      it.maxParallelForks = (Runtime.getRuntime().availableProcessors() / 3).coerceIn(1, 6)
       it.extensions.configure(org.gradle.testing.jacoco.plugins.JacocoTaskExtension::class.java) { isIncludeNoLocationClasses = true; excludes = listOf("jdk.internal.*") }
       it.systemProperty("jna.library.path", file("../target/debug").absolutePath)
     }

@@ -3,7 +3,7 @@ import Foundation
 import Testing
 @testable import DBlayer
 
-private final class HeldProfileTransport: Transport, @unchecked Sendable {
+private final class HeldProfileTransport: Transport, WrapsMock, @unchecked Sendable {
   let base = MockTransport()
   let arrived = AsyncStream<Void>.makeStream()
   let released = AsyncStream<Void>.makeStream()
@@ -36,8 +36,7 @@ extension BridgeProbeTests {
     let transport = HeldProfileTransport()
     defer { transport.released.continuation.yield(()) }
     transport.base.enqueue("UserProfile", reply: #"{"data":{"me":{"__typename":"User","id":"1","name":"B"}}}"#)
-    try await DB.openTesting(transport: transport, modelsJSON: modelsJSON)
-    try DB.database.registerOperations(defsJson: #"[{"name":"UserProfile","document":"query UserProfile { me { id name } }"}]"#)
+    try await reopen(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: transport, operations: #"[{"name":"UserProfile","document":"query UserProfile { me { id name } }"}]"#)
     let oldScope = try DB.account()
     let result = AsyncStream<Bool>.makeStream()
     Task {
@@ -47,6 +46,7 @@ extension BridgeProbeTests {
     }
     _ = try #require(await Cursor(transport.arrived.stream).next("the old request"))
     try await DB.sessionReset()
+    try await loginAgain()
     #expect(await Cursor(result.stream).next("the old load ends") == true)
     try await User.profile.load(in: DB.account())
     transport.released.continuation.yield(())
@@ -63,14 +63,14 @@ extension BridgeProbeTests {
     for name in ["A", "B"] {
       transport.enqueue("UserProfile", reply: #"{"data":{"me":{"__typename":"User","id":"1","name":"\#(name)"}}}"#)
     }
-    try await DB.openTesting(transport: transport, modelsJSON: modelsJSON)
-    try DB.database.registerOperations(defsJson: #"[{"name":"UserProfile","document":"query UserProfile { me { id name } }"}]"#)
+    try await reopen(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: transport, operations: #"[{"name":"UserProfile","document":"query UserProfile { me { id name } }"}]"#)
     try await User.profile.load(in: DB.account())
     let old = try #require(try await User.profile.read(in: DB.account()).first)
     try await old.set(typing: true, in: DB.account())
     #expect(try await User.profile.read(in: DB.account()).first?.typing == true)
 
     try await DB.sessionReset()
+    try await loginAgain()
     try await User.profile.load(in: DB.account())
     let current = try #require(try await User.profile.read(in: DB.account()).first)
 
@@ -86,13 +86,13 @@ extension BridgeProbeTests {
       transport.enqueue("CurrentUserQuery", reply: #"{"data":{"user":{"id":"\#(user)","name":"\#(user)"}}}"#)
       transport.enqueue("CurrentRegionQuery", reply: #"{"data":{"region":{"id":"\#(region)","name":"\#(region)"}}}"#)
     }
-    try await DB.openTesting(transport: transport, modelsJSON: modelsJSON)
-    try DB.database.registerOperations(defsJson: #"[{"name":"CurrentUserQuery","document":"query CurrentUserQuery { user { id name } }"},{"name":"CurrentRegionQuery","document":"query CurrentRegionQuery { region { id name } }"}]"#)
+    try await reopen(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: transport, operations: #"[{"name":"CurrentUserQuery","document":"query CurrentUserQuery { user { id name } }"},{"name":"CurrentRegionQuery","document":"query CurrentRegionQuery { region { id name } }"}]"#)
     try await CurrentUser.current.load(in: DB.account())
     try await CurrentRegion.current.load(in: DB.account())
     #expect(try await CurrentUser.current.read(in: DB.account()).map(\.id) == ["u1"])
 
     try await DB.sessionReset()
+    try await loginAgain()
     try await CurrentUser.current.load(in: DB.account())
     try await CurrentRegion.current.load(in: DB.account())
 

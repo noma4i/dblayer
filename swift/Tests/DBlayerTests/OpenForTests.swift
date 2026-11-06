@@ -83,6 +83,12 @@ private func signIn(restored: Bool = false) async throws {
   try await DB.run("SessionProfile", variables: [:])
 }
 
+/// After a session reset the account signs in again through the same stand.
+@MainActor
+func loginAgain() async throws {
+  try await signIn()
+}
+
 /// A transport signs in through the real session path, and its queries and mutations ride the session HTTP.
 @MainActor @discardableResult
 func reopen(config: Config, modelsJson: String, transport: Transport?, operations: String = "[]") async throws -> Database {

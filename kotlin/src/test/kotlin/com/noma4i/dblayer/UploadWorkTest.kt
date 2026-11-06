@@ -101,7 +101,7 @@ class UploadWorkTest {
         controller.startCommand(0, 1)
         assertNotNull("the foreground notification is shown before open ran", shadowOf(controller.get()).lastForegroundNotification)
         assertTrue(!shadowOf(controller.get()).isStoppedBySelf)
-        DBlayer.open(context, transport = MockTransport(), modelsJson = modelsJSON, uploadNotification = notification)
+        DBlayer.open(context, transport = MockTransport(), modelsJson = "[]", uploadNotification = notification)
         eventually("the service stops by itself when no upload is unfinished") { shadowOf(controller.get()).isStoppedBySelf }
         closeForCleanup()
     }

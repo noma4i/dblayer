@@ -68,6 +68,11 @@ private suspend fun signIn(database: Database, restored: Boolean = false) {
     DBlayer.run("SessionProfile", kotlinx.serialization.json.JsonObject(emptyMap()))
 }
 
+/** After a session reset the account signs in again through the same stand. */
+suspend fun loginAgain() {
+    signIn(DBlayer.database)
+}
+
 /** A transport signs in through the real session path, and its queries and mutations ride the session HTTP. */
 suspend fun reopen(config: Config, modelsJson: String, transport: Transport? = null, operations: String = "[]"): Database {
     val mock = transport ?: return adopt(openDatabase(config, modelsJson, transport, operations = operations))
@@ -83,16 +88,18 @@ suspend fun reopen(config: Config, modelsJson: String, transport: Transport? = n
 
 /** The same session stand on a clock that only `advance` moves. */
 @OptIn(DBlayerTestingApi::class)
-suspend fun reopenClocked(modelsJson: String, transport: MockTransport, operations: String = "[]", path: String? = null): TestClock {
+suspend fun reopenClocked(modelsJson: String, transport: MockTransport, operations: String = "[]", path: String? = null, startMillis: Long = System.currentTimeMillis()): TestClock {
     val server = SealedServer(answer = bridgeToTransport(transport))
     transport.cable = EncryptedCablePeer(server)
     try {
         DBlayer.close()
     } catch (_: DbException.Closed) {
     }
-    val clock = DBlayer.openTesting(transport, modelsJson, path = path, encrypted = standEncrypted(), credentials = StandCredential(), http = server)
+    val credential = credentialOf(Config(path, null, 2000u))
+    val restored = credential.get() != null
+    val clock = DBlayer.openTesting(transport, modelsJson, path = path, startMillis = startMillis, encrypted = standEncrypted(), credentials = credential, http = server)
     DBlayer.database.registerOperations(withSessionProfile(operations))
-    signIn(DBlayer.database)
+    signIn(DBlayer.database, restored)
     return clock
 }
 
