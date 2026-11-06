@@ -155,7 +155,7 @@ Below the declared minimum, these fields stay unchanged and the application deci
 Without `renumber:`, the library preserves these attributes.
 
 During the final mutation, changing membership returns `InFlight`.
-After `deliveryUnknown`, retrying any member repeats the complete saved request with the same operation key.
+A send without an answer repeats the complete saved request with the same operation key, and so does retrying any member.
 Discarding any member then rolls back the entire uncertain operation.
 
 ```ruby
@@ -179,7 +179,7 @@ end
 `renumber:` names distinct integer attributes and accepts dotted paths inside declared objects, such as `position: "object.position", size: "object.size"`.
 Nested writes preserve other object values and use canonical stored attribute names, including names declared with `from`.
 The rewrite changes local row values without queuing another mutation, and the correlated server response replaces them as usual.
-Only an unsent final mutation permits membership changes, and `deliveryUnknown` never renumbers records.
+Only an unsent final mutation permits membership changes, and a repeated send never renumbers records.
 The limits of `validates :items, length:` must fit within 2 through 10, and `minimum` may not exceed `maximum`. Only an upload operation declares `batch`.
 The GraphQL mutation accepts an input object list containing the correlation key and `signedId`.
 Its response includes every created record with the same correlation key, in any order.
@@ -263,7 +263,7 @@ The final content mutation does not hold a file permit.
 
 | Field | Meaning |
 | ----- | ------- |
-| `status` | `waiting`, `preparing`, `queued`, `uploading`, `sending`, `failed`, `deliveryUnknown` |
+| `status` | `waiting`, `preparing`, `queued`, `uploading`, `sending`, `failed` |
 | `waitReason` | why a `waiting` upload does not run yet: `createUnconfirmed` (the record is still local, its `create` has no answer) or `offline` (the step waits for the network and sends no request, `record.sync.state` stays `pending`). The upload leaves `offline` when the network returns. `nil` in every other status |
 | `stage` | `prepare`, `create`, `put`, `init`, `presign`, `part`, `complete`, `abort`, `mutation` |
 | `sentBytes`, `totalBytes`, `fraction` | for multipart the sum over all parts divided by the file size |

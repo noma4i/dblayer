@@ -334,7 +334,7 @@ Queued mutations retain optimistic edits for these codes on both transports.
 Resetting an unrelated model preserves the attempt budget and its final Failed result.
 An owned encrypted mutation returns each temporary failure to its durable owner without starting another HTTP retry loop.
 An unconfirmed encrypted HTTP failure retains Pending, allowing the owner to repeat the same request safely.
-Plain mutations without a confirmed answer retain `deliveryUnknown` for interrupted transfers, unreadable responses and HTTP 5xx.
+Plain mutations without a confirmed answer are sent again with the same request id after interrupted transfers, unreadable responses and HTTP 5xx.
 The delay ceilings are 1, 2, 4, 8, 16 and 30 seconds, then 30 seconds for subsequent attempts.
 Each request gets an independent random seed. Jitter subtracts up to 20% from each delay.
 Upload steps cap delays at 15 seconds with 50% jitter and preserve their attempt count and deadline across restarts.

@@ -15,11 +15,6 @@ fn row_in_state(state: &str) -> Db {
     match state {
         "sending" => start(&db, only_seq(&db)),
         "failed" => fail(&db, only_seq(&db), OperationStatus::Failed),
-        "delivery_unknown" => {
-            let seq = only_seq(&db);
-            start(&db, seq);
-            fail(&db, seq, OperationStatus::DeliveryUnknown);
-        }
         "hidden" => {
             db.destroy(&db.admit().unwrap(), "moments", &rid("m1")).unwrap();
         }
@@ -30,7 +25,7 @@ fn row_in_state(state: &str) -> Db {
 
 #[test]
 fn inv_op_19_create_with_an_existing_id_is_an_error_and_writes_nothing() {
-    for state in ["synced", "pending", "sending", "failed", "delivery_unknown", "hidden"] {
+    for state in ["synced", "pending", "sending", "failed", "hidden"] {
         let db = row_in_state(state);
         let before = snapshot(&db);
         let outcome = db.create(&db.admit().unwrap(), "moments", obj(json!({"id": "m1", "userId": "u1", "text": "other"})));

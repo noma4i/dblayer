@@ -13,7 +13,6 @@ pub enum UploadStatus {
     Sending,
     Done,
     Failed,
-    DeliveryUnknown,
     Cancelled,
 }
 
@@ -174,7 +173,6 @@ impl UploadInfo {
         let wait_reason = wait_reason.or(state.offline.then_some(WaitReason::Offline));
         let shown = match (status, transport_started) {
             (OperationStatus::Failed, _) => UploadStatus::Failed,
-            (OperationStatus::DeliveryUnknown, _) => UploadStatus::DeliveryUnknown,
             (_, true) => UploadStatus::Sending,
             _ if wait_reason.is_some() => UploadStatus::Waiting,
             _ => state.phase,

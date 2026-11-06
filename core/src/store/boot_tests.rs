@@ -388,6 +388,20 @@ fn store_boot_layout_mismatch_row() {
 }
 
 #[test]
+fn store_boot_layout_retired_status_goes_out_again() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("a.sqlite");
+    plant_old_layout(
+        &path,
+        "DROP TABLE op; CREATE TABLE op (seq INTEGER PRIMARY KEY AUTOINCREMENT, action_key TEXT NOT NULL, status TEXT NOT NULL, created_at INTEGER NOT NULL, since INTEGER NOT NULL);\
+         INSERT INTO op VALUES (7, 'messages:send', 'delivery_unknown', 1, 1);",
+    );
+    let (store, report) = reopen(&path, &[messages_spec()], None);
+    assert!(report.dropped.is_empty(), "{:?}", report.dropped);
+    assert_eq!(text(&store, "SELECT status FROM op WHERE seq = 7").as_deref(), Some("pending"));
+}
+
+#[test]
 fn store_prop_boot_reopen() {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("a.sqlite");

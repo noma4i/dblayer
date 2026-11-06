@@ -100,7 +100,7 @@ It works without a network and after the app closed.
 The row shows in the stream with its sync state.
 The server confirms it and the temporary id becomes the real id at the same position.
 The receipt carries the optimistic row and the revision of the local commit.
-`outcome()` waits for the one result of that operation: confirmed, rejected, delivery unknown or interrupted.
+`outcome()` waits for the one result of that operation: confirmed, rejected or interrupted.
 
 ```swift
 let sent = try await scope.send(Message.self, values: ["text": .string("hi")])

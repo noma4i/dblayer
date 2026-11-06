@@ -14,7 +14,6 @@ fn status_follows_the_operation_before_the_phase() {
     assert_eq!(show(OperationStatus::Pending, false), UploadStatus::Uploading);
     assert_eq!(show(OperationStatus::Pending, true), UploadStatus::Sending);
     assert_eq!(show(OperationStatus::Failed, false), UploadStatus::Failed);
-    assert_eq!(show(OperationStatus::DeliveryUnknown, true), UploadStatus::DeliveryUnknown);
 }
 
 #[test]

@@ -52,6 +52,11 @@ pub(super) fn recreate(connection: &Connection) -> Result<Recreated, StoreError>
     for (key, value) in &manifest {
         crate::ddl::manifest_write(connection, key, value)?;
     }
+    for (table, column, retired, instead) in RETIRED_WORDS {
+        if carried.contains(&table) && columns_of(connection, &carry_name(table))?.iter().any(|(name, _)| name == column) {
+            connection.execute_batch(&format!("UPDATE {} SET {column} = '{instead}' WHERE {column} = '{retired}'", sql_ident(&carry_name(table))))?;
+        }
+    }
     let mut dropped = Vec::new();
     for table in &carried {
         dropped.extend(carry_rows(connection, table)?);
@@ -81,6 +86,14 @@ fn carried_manifest(connection: &Connection, tables: &[String]) -> Result<Vec<(S
     }
     Ok(found)
 }
+
+/// The state of a send with no known answer is gone: a stored operation in it goes out again with its saved request.
+const RETIRED_WORDS: [(&str, &str, &str, &str); 4] = [
+    ("op", "status", "delivery_unknown", "pending"),
+    ("row_sync", "state", "delivery_unknown", "pending"),
+    ("sync_upload", "status", "delivery_unknown", "queued"),
+    ("op_item", "phase", "delivery_unknown", "queued"),
+];
 
 fn carry_name(table: &str) -> String { format!("carry_{table}") }
 

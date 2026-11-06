@@ -41,7 +41,7 @@ fn inv_open_04_a_reopen_with_the_same_schema_keeps_rows_and_operations() {
 }
 
 #[test]
-fn fsck_keeps_unsent_operations_and_marks_started_ones_unknown_on_open() {
+fn fsck_keeps_unsent_and_started_operations_pending_on_open() {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("db.sqlite");
     {
@@ -55,7 +55,7 @@ fn fsck_keeps_unsent_operations_and_marks_started_ones_unknown_on_open() {
     }
     let db = Db::open(&path, all_specs(), None).unwrap();
     let statuses: Vec<OperationStatus> = db.outbox().unwrap().iter().map(|entry| entry.operation.status).collect();
-    assert_eq!(statuses, vec![OperationStatus::Pending, OperationStatus::DeliveryUnknown, OperationStatus::Pending]);
+    assert_eq!(statuses, vec![OperationStatus::Pending, OperationStatus::Pending, OperationStatus::Pending]);
 }
 
 #[test]

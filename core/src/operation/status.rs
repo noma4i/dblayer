@@ -12,7 +12,6 @@ pub struct OperationId(pub i64);
 pub enum OperationStatus {
     Pending,
     Failed,
-    DeliveryUnknown,
     Committed,
     RolledBack,
 }
@@ -22,7 +21,6 @@ impl OperationStatus {
         match self {
             OperationStatus::Pending => "pending",
             OperationStatus::Failed => "failed",
-            OperationStatus::DeliveryUnknown => "delivery_unknown",
             OperationStatus::Committed => "committed",
             OperationStatus::RolledBack => "rolledback",
         }
@@ -32,7 +30,6 @@ impl OperationStatus {
         match text {
             "pending" => Some(OperationStatus::Pending),
             "failed" => Some(OperationStatus::Failed),
-            "delivery_unknown" => Some(OperationStatus::DeliveryUnknown),
             "committed" => Some(OperationStatus::Committed),
             "rolledback" => Some(OperationStatus::RolledBack),
             _ => None,

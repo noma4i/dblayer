@@ -21,7 +21,6 @@ impl SyncEntry {
     fn state(&self) -> SyncState {
         match (self.status, self.transport_started) {
             (OperationStatus::Failed, _) => SyncState::Failed,
-            (OperationStatus::DeliveryUnknown, _) => SyncState::DeliveryUnknown,
             (OperationStatus::Pending, true) => SyncState::Sending,
             (OperationStatus::Pending, false) if self.upload.as_ref().is_some_and(|state| state.offline) => SyncState::Pending,
             (OperationStatus::Pending, false) if self.upload.as_ref().is_some_and(|state| state.phase == UploadStatus::Uploading || self.batch) => {
@@ -32,7 +31,7 @@ impl SyncEntry {
     }
 }
 
-const PRECEDENCE: [SyncState; 4] = [SyncState::Failed, SyncState::DeliveryUnknown, SyncState::Sending, SyncState::Pending];
+const PRECEDENCE: [SyncState; 3] = [SyncState::Failed, SyncState::Sending, SyncState::Pending];
 
 pub fn fold_entries(entries: &[SyncEntry]) -> Option<SyncInfo> {
     let decisive = PRECEDENCE.iter().find_map(|state| entries.iter().find(|entry| entry.state() == *state))?;

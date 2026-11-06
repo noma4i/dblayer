@@ -122,25 +122,6 @@ fn retry_does_nothing_for_a_record_without_stuck_operations() {
 }
 
 #[test]
-fn inv_op_07_restart_turns_an_interrupted_send_into_delivery_unknown_and_repairs_row_sync() {
-    let directory = tempfile::tempdir().unwrap();
-    let path = directory.path().join("db.sqlite");
-    {
-        let db = Db::open(&path, all_specs(), None).unwrap();
-        put(&db, "moments", json!({"id": "m1", "userId": "u1", "text": "one"}));
-        db.update(&db.admit().unwrap(), "moments", &rid("m1"), obj(json!({"text": "two"}))).unwrap();
-        apply(&db, OperationTransition::Start { seq: only_seq(&db) });
-        assert_eq!(state_of(&db, "moments", "m1"), SyncState::Sending);
-        db.execute_for_test("UPDATE row_sync SET state = 'pending', attempts = 7; INSERT INTO row_sync (model, row_id, state, attempts, since) VALUES ('moments', 'ghost', 'failed', 0, 1);");
-    }
-    let db = Db::open(&path, all_specs(), None).unwrap();
-    let info = db.sync_info("moments", &rid("m1")).unwrap();
-    assert_eq!((info.state, info.attempts), (SyncState::DeliveryUnknown, 1));
-    assert_eq!(state_of(&db, "moments", "ghost"), SyncState::Synced);
-    assert_eq!(db.outbox().unwrap()[0].operation.status, OperationStatus::DeliveryUnknown);
-}
-
-#[test]
 fn a_field_named_sync_and_an_action_named_like_a_record_gesture_are_rejected() {
     let field = ModelSpec::new("notes", vec![FieldSpec::scalar("id", ScalarKind::Id), FieldSpec::scalar("sync", ScalarKind::Str).optional()]);
     assert!(matches!(Db::open_in_memory(vec![field], None), Err(DbError::Invalid(_))));

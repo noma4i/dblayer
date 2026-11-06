@@ -120,7 +120,7 @@ pub(super) const CORE_STATEMENTS: [&str; 48] = [
     "CREATE TABLE IF NOT EXISTS op (
   seq INTEGER PRIMARY KEY AUTOINCREMENT,
   action_key TEXT NOT NULL,
-  status TEXT NOT NULL CHECK (status IN ('pending', 'failed', 'delivery_unknown', 'committed', 'rolledback')),
+  status TEXT NOT NULL CHECK (status IN ('pending', 'failed', 'committed', 'rolledback')),
   temp_id TEXT,
   transport_started INTEGER NOT NULL DEFAULT 0,
   base_revision INTEGER,
@@ -252,7 +252,7 @@ pub(super) const CORE_STATEMENTS: [&str; 48] = [
     "CREATE TABLE IF NOT EXISTS row_sync (
   model TEXT NOT NULL,
   row_id TEXT NOT NULL,
-  state TEXT NOT NULL CHECK (state IN ('pending', 'sending', 'failed', 'delivery_unknown')),
+  state TEXT NOT NULL CHECK (state IN ('pending', 'sending', 'failed')),
   error_kind TEXT,
   error_message TEXT,
   attempts INTEGER NOT NULL,
@@ -331,7 +331,7 @@ pub(super) const CORE_STATEMENTS: [&str; 48] = [
     "CREATE INDEX IF NOT EXISTS op_open ON op (action_key, status)",
     "CREATE INDEX IF NOT EXISTS op_temp ON op (temp_id)",
     "CREATE UNIQUE INDEX IF NOT EXISTS op_open_dedupe ON op (action_key, dedupe_key)
-  WHERE dedupe_key IS NOT NULL AND status IN ('pending', 'delivery_unknown')",
+  WHERE dedupe_key IS NOT NULL AND status = 'pending'",
     "CREATE TABLE IF NOT EXISTS op_error (
   seq INTEGER NOT NULL,
   item_position INTEGER NOT NULL,

@@ -378,7 +378,7 @@ fn recover_operations(store: &Store, models: &[ModelSpec], restore_rows: bool) -
                 open_row_ids.insert(RowRef::new(ModelKey::new(&model), crate::operation::stored_row_id(&id)?));
             }
         }
-        let plan = fsck_plan(&operations, &known, &temp_rows, &temp_rows, &open_row_ids);
+        let plan = fsck_plan(&operations, &temp_rows, &temp_rows, &open_row_ids);
         let mut orphans = Orphans::new();
         for row in plan.iter().filter_map(|action| match action { FsckAction::QuarantineOrphan(row) => Some(row), _ => None }) {
             if let Some(stored) = reader.stored_row(row.model.as_str(), row.id.as_str())? {

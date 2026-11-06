@@ -16,7 +16,6 @@ pub(crate) enum OperationEvent {
     Fail(OperationStatus),
     Retry,
     Close(OperationStatus),
-    Recover,
 }
 
 struct Flow {
@@ -35,7 +34,6 @@ impl OperationFlow {
                 (OperationStatus::Pending, false) => State::idle(),
                 (OperationStatus::Pending, true) => State::sending(),
                 (OperationStatus::Failed, _) => State::failed(),
-                (OperationStatus::DeliveryUnknown, _) => State::delivery_unknown(),
                 (OperationStatus::Committed, _) => State::committed(),
                 (OperationStatus::RolledBack, _) => State::rolled_back(),
             }),
@@ -51,7 +49,6 @@ impl OperationFlow {
     fn live(event: &OperationEvent) -> Outcome<State> {
         match event {
             OperationEvent::Fail(OperationStatus::Failed) => Transition(State::failed()),
-            OperationEvent::Fail(OperationStatus::DeliveryUnknown) => Transition(State::delivery_unknown()),
             OperationEvent::Close(OperationStatus::Committed) => Transition(State::committed()),
             _ => Super,
         }
@@ -64,7 +61,6 @@ impl OperationFlow {
                 context.facts.transport_started = true;
                 Transition(State::sending())
             }
-            OperationEvent::Recover => Handled,
             _ => Super,
         }
     }
@@ -76,7 +72,6 @@ impl OperationFlow {
                 context.facts.transport_started = false;
                 Transition(State::idle())
             }
-            OperationEvent::Recover => Transition(State::delivery_unknown()),
             _ => Super,
         }
     }
@@ -88,19 +83,6 @@ impl OperationFlow {
                 context.facts.transport_started = false;
                 Transition(State::idle())
             }
-            OperationEvent::Recover => Handled,
-            _ => Super,
-        }
-    }
-
-    #[state(superstate = "open")]
-    fn delivery_unknown(context: &mut Flow, event: &OperationEvent) -> Outcome<State> {
-        match event {
-            OperationEvent::Retry => {
-                context.facts.transport_started = false;
-                Transition(State::idle())
-            }
-            OperationEvent::Recover => Handled,
             _ => Super,
         }
     }
@@ -122,7 +104,6 @@ fn status_of(state: &State) -> OperationStatus {
     match state {
         State::Idle {} | State::Sending {} => OperationStatus::Pending,
         State::Failed {} => OperationStatus::Failed,
-        State::DeliveryUnknown {} => OperationStatus::DeliveryUnknown,
         State::Committed {} => OperationStatus::Committed,
         State::RolledBack {} => OperationStatus::RolledBack,
     }
@@ -140,13 +121,9 @@ impl OperationFacts {
         }
         Some(OperationFacts { status: status_of(machine.state()), transport_started: flow.facts.transport_started })
     }
-
-    pub(crate) fn recovered(self) -> OperationStatus {
-        self.next(OperationEvent::Recover).map_or(self.status, |facts| facts.status)
-    }
 }
 
-const ALL: [OperationStatus; 5] = [OperationStatus::Pending, OperationStatus::Failed, OperationStatus::DeliveryUnknown, OperationStatus::Committed, OperationStatus::RolledBack];
+const ALL: [OperationStatus; 4] = [OperationStatus::Pending, OperationStatus::Failed, OperationStatus::Committed, OperationStatus::RolledBack];
 
 impl OperationEvent {
     pub(crate) fn guard_sql(self) -> Option<String> {

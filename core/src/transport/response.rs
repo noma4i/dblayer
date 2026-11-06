@@ -11,7 +11,6 @@ pub enum ResponseShape {
 pub enum ResponseOutcome {
     Commit,
     MarkFailed,
-    MarkDeliveryUnknown,
 }
 
 impl ResponseShape {
@@ -30,10 +29,9 @@ impl ResponseShape {
     pub fn outcome(self) -> ResponseOutcome {
         match self {
             ResponseShape::DataOnly => ResponseOutcome::Commit,
-            ResponseShape::DataWithErrors | ResponseShape::ErrorsOnly | ResponseShape::Empty => {
+            ResponseShape::DataWithErrors | ResponseShape::ErrorsOnly | ResponseShape::Empty | ResponseShape::Thrown => {
                 ResponseOutcome::MarkFailed
             }
-            ResponseShape::Thrown => ResponseOutcome::MarkDeliveryUnknown,
         }
     }
 }

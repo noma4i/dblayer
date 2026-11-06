@@ -104,10 +104,10 @@ fn rebuild_repairs_missing_extra_and_stale_rows() {
 #[test]
 fn read_returns_only_rows_that_exist() {
     let connection = database();
-    insert(&connection, "moments:update", "delivery_unknown", 1, r#"["m1"]"#, r#"{"id":"m1","text":"a"}"#);
+    insert(&connection, "moments:update", "failed", 1, r#"["m1"]"#, r#"{"id":"m1","text":"a"}"#);
     recompute_sync(&connection, &keys(&[key("moments", "m1")])).unwrap();
     let found = read_sync(&connection, "moments", &["m1".to_string(), "m9".to_string()]).unwrap();
     assert_eq!(found.keys().collect::<Vec<_>>(), ["m1"]);
-    assert_eq!(found["m1"].state, SyncState::DeliveryUnknown);
+    assert_eq!(found["m1"].state, SyncState::Failed);
     assert!(read_sync(&connection, "chats", &["m1".to_string()]).unwrap().is_empty());
 }

@@ -246,7 +246,6 @@ fn inv_op_10_open_dedupe_key_is_unique_only_while_open() {
 
     assert!(insert("pending", Some("k")).is_ok());
     assert!(insert("pending", Some("k")).is_err());
-    assert!(insert("delivery_unknown", Some("k")).is_err());
     assert!(insert("failed", Some("k")).is_ok());
     assert!(insert("pending", None).is_ok());
     assert!(insert("pending", None).is_ok());

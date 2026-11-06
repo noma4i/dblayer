@@ -423,7 +423,6 @@ fn closing_an_operation_follows_its_status() {
     let cases = [
         ("committed", OperationStatus::Committed, "SELECT COUNT(*) FROM op", 0),
         ("failed", OperationStatus::Failed, "SELECT COUNT(*) FROM op WHERE status = 'failed' AND dedupe_key IS NULL", 1),
-        ("delivery unknown", OperationStatus::DeliveryUnknown, "SELECT COUNT(*) FROM op WHERE status = 'delivery_unknown' AND dedupe_key = 'k'", 1),
     ];
     for (case, status, operations_sql, operations) in cases {
         let (store, _) = booted_store();
@@ -448,8 +447,8 @@ fn operation_transitions_apply_only_from_the_statuses_the_machine_accepts() {
     assert_eq!(refused(OperationTransition::Start { seq }), 0);
     assert_eq!(row(), "pending:1:1");
     assert_eq!(refused(OperationTransition::Start { seq }), 1);
-    assert_eq!(refused(OperationTransition::Fail { seq, status: OperationStatus::DeliveryUnknown, failure: rejected() }), 0);
-    assert_eq!(row(), "delivery_unknown:1:1");
+    assert_eq!(refused(OperationTransition::Fail { seq, status: OperationStatus::Failed, failure: rejected() }), 0);
+    assert_eq!(row(), "failed:1:1");
     assert_eq!(refused(OperationTransition::Retry { seq }), 0);
     assert_eq!(row(), "pending:0:0");
     let mut misuse = envelope(&store, vec![], vec![]);
@@ -602,8 +601,8 @@ fn inv_op_12_start_fail_and_retry_rewrite_row_sync_and_each_commit_reports_the_r
     let started = transitions(&store, vec![OperationTransition::Start { seq }]);
     assert_eq!((sync_row(&store, "temp-1"), synced_rows(&started)), (Some("sending:1".into()), vec![("temp-1".to_string(), RowChangeKind::Synced)]));
     let failure = OperationFailure::new(FailureKind::Server, "http 503");
-    let failed = transitions(&store, vec![OperationTransition::Fail { seq, status: OperationStatus::DeliveryUnknown, failure: failure.clone() }]);
-    assert_eq!((sync_row(&store, "temp-1"), synced_rows(&failed).len()), (Some("delivery_unknown:1".into()), 1));
+    let failed = transitions(&store, vec![OperationTransition::Fail { seq, status: OperationStatus::Failed, failure: failure.clone() }]);
+    assert_eq!((sync_row(&store, "temp-1"), synced_rows(&failed).len()), (Some("failed:1".into()), 1));
     assert_eq!(text(&store, "SELECT error_kind || ':' || error_message FROM row_sync WHERE row_id = 'temp-1'"), Some("server:http 503".to_string()));
     transitions(&store, vec![OperationTransition::Retry { seq }]);
     assert_eq!(sync_row(&store, "temp-1"), Some("pending:0".into()));

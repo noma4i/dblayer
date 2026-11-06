@@ -36,7 +36,7 @@ impl OperationQueue {
         let Some(entry) = entry else { return };
         let operation = &entry.operation;
         for row in row_keys(operation) {
-            if matches!(operation.status, OperationStatus::Failed | OperationStatus::DeliveryUnknown) { self.blocked.entry(row.clone()).or_default().insert(seq); }
+            if operation.status == OperationStatus::Failed { self.blocked.entry(row.clone()).or_default().insert(seq); }
             if self.attempted.contains(&seq) { self.held.entry(row).or_default().insert(seq); }
         }
         if operation.status == OperationStatus::Pending && !operation.transport_started {

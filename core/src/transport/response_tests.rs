@@ -22,7 +22,7 @@ fn errors_only_empty_and_thrown_never_commit() {
     assert_eq!(empty.outcome(), ResponseOutcome::MarkFailed);
     assert_eq!(thrown_with_data, ResponseShape::Thrown);
     assert_eq!(thrown_without_data, ResponseShape::Thrown);
-    assert_eq!(thrown_with_data.outcome(), ResponseOutcome::MarkDeliveryUnknown);
+    assert_eq!(thrown_with_data.outcome(), ResponseOutcome::MarkFailed);
 }
 
 #[test]

@@ -98,7 +98,6 @@ fn sent_message(db: &Db, seq: u64, body: &str) -> RowId {
     db.write_queue_ops(&[StoreOp::Intent { op_id: seq, model: "messages".into(), row_id: temp.to_string(), action: "send".into(), payload: "{}".into(), effects }]).unwrap();
     let seq = i64::try_from(seq).unwrap();
     apply(db, OperationTransition::Start { seq });
-    apply(db, OperationTransition::Fail { seq, status: crate::operation::OperationStatus::DeliveryUnknown, failure: crate::syncstate::OperationFailure::new(crate::syncstate::FailureKind::Rejected, "no") });
     temp
 }
 

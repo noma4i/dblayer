@@ -72,15 +72,13 @@ fn input_is_stored_and_read_back() {
 }
 
 #[test]
-fn apply_fsck_counts_only_status_actions() {
+fn apply_fsck_counts_only_quarantined_orphans() {
     let connection = database();
     assert_eq!(apply_fsck(&connection, &[], &Orphans::new()).unwrap(), 0);
     let seq = append_operation(&connection, &mut operation("row-1", OperationStatus::Pending), &json!({})).unwrap();
     let skipped = [FsckAction::Keep(OperationId(seq)), FsckAction::QuarantineOrphan(RowRef::new(ModelKey::new("messages"), RowId::new("orphan-1").unwrap()))];
     assert_eq!(apply_fsck(&connection, &skipped, &Orphans::new()).unwrap(), 0);
     assert_eq!(open_operations(&connection).unwrap()[0].status, OperationStatus::Pending);
-    assert_eq!(apply_fsck(&connection, &[FsckAction::SetStatus(OperationId(seq), OperationStatus::Failed)], &Orphans::new()).unwrap(), 1);
-    assert_eq!(open_operations(&connection).unwrap()[0].status, OperationStatus::Failed);
 }
 
 #[test]

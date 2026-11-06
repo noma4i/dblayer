@@ -22,7 +22,6 @@ pub(super) fn kind_of(outcome: &WireOperationOutcome) -> &'static str {
         WireOperationOutcome::Confirmed { .. } => "Confirmed",
         WireOperationOutcome::Rejected { .. } => "Rejected",
         WireOperationOutcome::Interrupted => "Interrupted",
-        WireOperationOutcome::DeliveryUnknown => "DeliveryUnknown",
     }
 }
 

@@ -35,7 +35,7 @@ fn hidden_rows(connection: &Connection, transitions: &[OperationTransition]) -> 
             _ => {}
         }
     }
-    let mut statement = connection.prepare_cached("SELECT seq, action_key FROM op WHERE status IN ('pending', 'delivery_unknown') AND action_key LIKE '%:destroy'")?;
+    let mut statement = connection.prepare_cached("SELECT seq, action_key FROM op WHERE status = 'pending' AND action_key LIKE '%:destroy'")?;
     let open: Vec<OpenDestroy> = statement.query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?.collect::<Result<_, _>>()?;
     let mut hidden = HiddenRows::new();
     for (seq, action_key) in open {

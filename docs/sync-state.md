@@ -6,10 +6,10 @@ Every record knows whether the server has seen it. The state is live like everyt
 
 | Property | Meaning |
 | -------- | ------- |
-| `sync.state` | `synced`, `pending`, `sending`, `failed` or `deliveryUnknown` |
+| `sync.state` | `synced`, `pending`, `sending` or `failed` |
 | `sync.actions` | actions waiting for the server, in order (`create`, `update`, `destroy`, custom actions) |
 | `sync.dirtyFields` | fields changed locally and not yet confirmed |
-| `sync.error` | the last error (`kind`, `message` and optional GraphQL `extensions`) when the state is `failed` or `deliveryUnknown` |
+| `sync.error` | the last error (`kind`, `message` and optional GraphQL `extensions`) when the state is `failed` |
 | `sync.attempts` | how many times sending was tried since the last `retry(action)` |
 | `sync.since` | when the record entered this state |
 | `uploads` | one entry per declared upload action with its status, stage, bytes and error, empty when nothing is uploading |
@@ -21,7 +21,6 @@ Every record knows whether the server has seen it. The state is live like everyt
 | `pending` | a change is queued and sending has not started, or an upload of the record waits for the network (`uploads[action].waitReason == offline`) |
 | `sending` | the request is on its way and no answer has arrived |
 | `failed` | the server refused the change and the record is kept for you to decide |
-| `deliveryUnknown` | the request was sent and no answer was seen: the connection broke, the server returned an error status, or the answer could not be understood |
 
 The error `kind` is `network`, `server`, `rejected`, `unrecognized` or `session:<CODE>`. A sealed session refusal of the encrypted session gives the wire name of its code, for example `session:UNAUTHENTICATED`, and `message` holds the detail text.
 
@@ -42,7 +41,7 @@ struct MomentRow: View {
     HStack {
       Text(moment.text)
       if moment.sync.state == .pending || moment.sync.state == .sending { ProgressView() }
-      if moment.sync.state == .failed || moment.sync.state == .deliveryUnknown {
+      if moment.sync.state == .failed {
         Button("Retry") { Task { try await moment.retry(action: nil) } }
       }
     }
@@ -56,7 +55,7 @@ fun MomentRow(moment: Moment) {
   Row {
     Text(moment.text)
     if (moment.sync.state == SyncState.Pending || moment.sync.state == SyncState.Sending) CircularProgressIndicator()
-    if (moment.sync.state == SyncState.Failed || moment.sync.state == SyncState.DeliveryUnknown) {
+    if (moment.sync.state == SyncState.Failed) {
       Button(onClick = { scope.launch { moment.retry(null) } }) { Text("Retry") }
     }
   }
@@ -93,7 +92,7 @@ The network decides what happens to a mutation that did not get an answer:
 
 Later changes to the same record wait behind it.
 - Offline (`setOnline(false)`): the change waits and spends no attempts. When `setOnline(true)` is called, waiting changes are sent by themselves.
-- A plain transfer started without a confirmed answer, or the app stopped while sending: the record enters `deliveryUnknown` and waits for `retry(action)`.
+- A plain transfer started without a confirmed answer, or the app stopped while sending: the library sends the same saved request again with the same request id, and the record stays `sending` until the server answers or the retries end in `failed`.
 - Encrypted requests with saved Pending repeat temporary failures using the saved identity. See [Retries](server-sync.md#retries).
 
 The pause uses Clock and the stored attempt count, so restarting preserves the count.
@@ -107,7 +106,7 @@ Temporary GraphQL codes keep optimistic changes pending on both transports.
 | A temporary GraphQL code, HTTP 408 or HTTP 429 | `pending` until the outbox budget is exhausted | the optimistic edit remains and sending resumes after a pause |
 | Unreachable before the transfer starts | `pending`, then `failed` after 40 attempts | retains the edit and encrypted Pending owner for retry or discard |
 | The action names a mutation that is not registered in `open(operations:)` | `failed` whatever `on_failure` says, error `operation <name> is not registered` | nothing is sent, the record keeps its change, register the operation and call `retry(action)` |
-| No answer after a plain transfer started, including HTTP 5xx | `deliveryUnknown` | the record keeps its edit because the server may have applied it |
+| No answer after a plain transfer started, including HTTP 5xx | `sending` | the library repeats the saved request, the server answers it once |
 | Temporary encrypted HTTP failure with saved Pending | `pending` until the outbox budget is exhausted | the next attempt uses the saved request identity |
 
 ## What happens when the server refuses
@@ -135,7 +134,7 @@ end
 
 `destroy` has no `on_failure`: the record is hidden at once, and if the destroy fails for good (a refusal or 40 unreached attempts) the record comes back with its files and list positions, `state = failed` and the error, attempts and time in `sync`. `retry(action)` hides the record again and sends the destroy. `discard(action)` keeps the record and drops the destroy. Declaring `on_failure` on `destroy` is an error.
 
-A record in `failed` or `deliveryUnknown` has two gestures:
+A record in `failed` has two gestures:
 
 ```swift
 try await message.retry(action: nil)     // back to pending, attempts reset, sent again
@@ -147,7 +146,7 @@ message.retry(null)     // back to pending, attempts reset, sent again
 message.discard(null)   // roll back the local change and drop it from the queue
 ```
 
-Later changes to the same record wait behind a `failed` or `deliveryUnknown` change and are sent after `retry(action)`. Other records are not blocked. `discard(action)` of a created record also drops the changes queued on it.
+Later changes to the same record wait behind a `failed` change and are sent after `retry(action)`. Other records are not blocked. `discard(action)` of a created record also drops the changes queued on it.
 
 ## Online and offline
 
@@ -176,7 +175,7 @@ When a mutation reloads watched lists, its result reports all failed reloads and
 
 - The whole `sync` value is part of every delivery: a change of `state`, `actions`, `dirtyFields` or `error` without a data change still reaches observers, in order. The parent of an included row is delivered when the sync of that row changes.
 - The state is written in the same commit that changes the queue, so a reader never sees a queued change without its state.
-- Every queued change is durable: a record created offline stays `pending` across restarts and is sent when the queue next runs, for example after a reconnect. A change that was `sending` when the app stopped is `deliveryUnknown` after the restart.
+- Every queued change is durable: a record created offline stays `pending` across restarts and is sent when the queue next runs, for example after a reconnect. A change that was `sending` when the app stopped is sent again with the same request id after the restart.
 - When the server answers, the temporary id is replaced by the real one in one commit and the state becomes `synced`. Observers see the swap as `replaced`.
 - Rows and queued changes of other models that point at the temporary id through a declared association are updated in the same commit.
 - A rollback restores the state saved in the change itself and only the parts the change still owns, see [writing data](writing-data.md#rolling-back).

@@ -94,9 +94,6 @@ fn apply_transitions(
                     continue;
                 }
                 synced.extend(op_keys_of(connection, *seq)?);
-                if *status == OperationStatus::RolledBack && connection.query_row("SELECT EXISTS (SELECT 1 FROM blob_upload b JOIN op o ON o.seq = b.consumer_seq WHERE o.seq = ?1 AND o.status = 'delivery_unknown')", [seq], |row| row.get::<_, bool>(0))? {
-                    return Err(StoreError::Constraint("Blob owner has an unknown outcome".into()));
-                }
                 result.operations.extend(super::blob::release(connection, *seq, *status == OperationStatus::Committed)?);
                 if *status == OperationStatus::RolledBack {
                     crate::operation::record_transfer_aborts(connection, *seq, None)?;
@@ -161,8 +158,8 @@ fn apply_transitions(
                     result.unknown_operation_acks += 1;
                     continue;
                 }
-                if matches!(state.phase, crate::upload::UploadStatus::Failed | crate::upload::UploadStatus::Cancelled | crate::upload::UploadStatus::DeliveryUnknown) {
-                    let open: bool = connection.query_row("SELECT EXISTS (SELECT 1 FROM op_item WHERE seq = ?1 AND phase NOT IN ('failed', 'cancelled', 'delivery_unknown'))", [seq], |row| row.get(0))?;
+                if matches!(state.phase, crate::upload::UploadStatus::Failed | crate::upload::UploadStatus::Cancelled) {
+                    let open: bool = connection.query_row("SELECT EXISTS (SELECT 1 FROM op_item WHERE seq = ?1 AND phase NOT IN ('failed', 'cancelled'))", [seq], |row| row.get(0))?;
                     if !open { result.ended_uploads.push((*seq, state.phase, state.error.clone())); }
                 }
                 result.operations.insert(*seq);
@@ -207,9 +204,6 @@ fn apply_transitions(
                     None => true,
                 };
                 if matches {
-                    if connection.query_row("SELECT EXISTS (SELECT 1 FROM blob_upload b JOIN op o ON o.seq = b.consumer_seq WHERE o.seq = ?1 AND o.status = 'delivery_unknown')", [seq], |row| row.get::<_, bool>(0))? {
-                        return Err(StoreError::Constraint("Blob owner has an unknown outcome".into()));
-                    }
                     super::blob::release(connection, *seq, false)?;
                     crate::operation::record_transfer_aborts(connection, *seq, None)?;
                 }

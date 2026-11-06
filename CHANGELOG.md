@@ -18,6 +18,7 @@
 - `needsAttention`, `canRetry`, `loadedAt` and `errorKind` are gone: read `sync.state` and `ReadState.error`.
 - `ValueSink`, `readStream` and `cancelStream` are gone: read a value stream.
 - `Query.cached()` and `Database.peekQuery` are gone: read rows with `read()` or a stream.
+- `deliveryUnknown` is gone from `SyncState`, `UploadStatus` and `OperationOutcome`: a send without an answer repeats with the same request id.
 - `Database.flush`, `resume`, `resumeUploads`, `retryAll`, `refreshPreloads`, `warm`, `maintain` and `setListening` are gone from the bridge on both platforms. The library sends, resumes and maintains by itself.
 - `sessionResume` is gone from Swift, Kotlin and the core. Opening the database with a session sends a request stored before the close.
 - `enterForegroundForTesting` is gone. The foreground notice comes from the system.

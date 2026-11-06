@@ -69,7 +69,7 @@ fn a_failure_and_the_upload_progress_are_columns() {
     let (store, seq) = begun();
     let failure = OperationFailure::new(FailureKind::Server, "http 503");
     send(&store, vec![OperationTransition::Start { seq }]);
-    send(&store, vec![OperationTransition::Fail { seq, status: OperationStatus::DeliveryUnknown, failure }]);
+    send(&store, vec![OperationTransition::Fail { seq, status: OperationStatus::Failed, failure }]);
     send(&store, vec![OperationTransition::Progress { seq, item_position: 0, state: Box::new(upload()) }]);
     assert_eq!(count(&store, "SELECT COUNT(*) FROM pragma_table_info('op') WHERE name LIKE 'up_%'"), 0);
     assert_eq!(count(&store, "SELECT COUNT(*) FROM op JOIN op_item USING (seq) WHERE op.error_kind = 'server' AND op.error_message = 'http 503' AND position = 0 AND phase = 'uploading' AND sent_bytes = 40"), 1);

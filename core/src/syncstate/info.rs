@@ -11,12 +11,10 @@ pub enum SyncState {
     Pending,
     Sending,
     Failed,
-    DeliveryUnknown,
 }
 
 impl SyncState {
-    pub const ALL: [SyncState; 5] =
-        [SyncState::Synced, SyncState::Pending, SyncState::Sending, SyncState::Failed, SyncState::DeliveryUnknown];
+    pub const ALL: [SyncState; 4] = [SyncState::Synced, SyncState::Pending, SyncState::Sending, SyncState::Failed];
 
     pub fn as_sql(self) -> &'static str {
         match self {
@@ -24,7 +22,6 @@ impl SyncState {
             SyncState::Pending => "pending",
             SyncState::Sending => "sending",
             SyncState::Failed => "failed",
-            SyncState::DeliveryUnknown => "delivery_unknown",
         }
     }
 

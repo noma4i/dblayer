@@ -89,7 +89,7 @@ A parameter goes into the queued change and is never stored in the row, so no re
 
 `update` keeps attributes you did not mention. A patch that changes nothing creates no commit and no queue entry.
 
-Every record carries its sync state (`pending`, `sending`, `synced`, `failed`, `deliveryUnknown`), so you can show that a new moment is still being sent. See [sync state](sync-state.md).
+Every record carries its sync state (`pending`, `sending`, `synced`, `failed`), so you can show that a new moment is still being sent. See [sync state](sync-state.md).
 
 ## Temporary ids
 
@@ -148,12 +148,12 @@ With `on_failure: :keep`, the errors `IN_PROGRESS` and `DUPLICATE_CLIENT_KEY` ke
 The server defines how long it keeps the result. After that period, the key no longer guarantees a repeated successful response.
 
 - If the network is unreachable before the transfer starts (no connection, connection refused, offline), the record stays `pending` and is sent again by itself with a growing pause, up to 40 attempts. Offline spends no attempts: the change waits for `setOnline(true)`. `on_failure: :rollback` applies only to confirmed server refusals, while 40 undelivered attempts always retain `failed` and the edit.
-- If the connection breaks after the transfer started, or no readable answer arrives, the record is marked `deliveryUnknown` and is never sent again by itself, because the server may have applied it.
+- If the connection breaks after the transfer started, or no readable answer arrives, the library sends the same saved request again with the same request id, so the server applies it once.
 - A server refusal rolls the local change back with a commit and reports the error, observers see the reverse transition. With `on_failure: :keep` the record stays as `failed` and waits for you.
 - A destroyed record disappears at once. If the destroy fails for good (a refusal or 40 unreached attempts), the record comes back with `state = failed` and the error, like a kept update. `retry(action)` hides it again and sends the destroy, `discard(action)` keeps the record and drops the destroy. `discard(action)` also takes back changes that are still `pending`, and refuses with `InFlight` while one of the changes is being sent. `on_failure: :keep` is not allowed on `destroy`.
-- A `failed` or `deliveryUnknown` record is sent again only by `retry(action)`, or rolled back by `discard(action)` ([sync state](sync-state.md)).
+- A `failed` record is sent again only by `retry(action)`, or rolled back by `discard(action)` ([sync state](sync-state.md)).
 - Responses that cannot be understood are moved to quarantine instead of being lost.
-- The queue lives in the database and every queued write is durable, so pending writes survive restarts and are sent when the queue next runs. A write that was `sending` when the app stopped is `deliveryUnknown` after the restart.
+- The queue lives in the database and every queued write is durable, so pending writes survive restarts and are sent when the queue next runs. A write that was `sending` when the app stopped is sent again with the same request id after the restart.
 
 ```swift
 try await message.retry(action: nil)      // send the same change again
@@ -300,12 +300,12 @@ end
 
 ```swift
 let sent = try await Message.send(in: scope, chatId: chat.id, text: "hi")
-let outcome = try await sent.outcome()   // .confirmed, .rejected, .deliveryUnknown, .interrupted
+let outcome = try await sent.outcome()   // .confirmed, .rejected, .interrupted
 ```
 
 ```kotlin
 val sent = Message.send(scope, chatId = chat.id, text = "hi")
-val outcome = sent.outcome()             // Confirmed, Rejected, DeliveryUnknown, Interrupted
+val outcome = sent.outcome()             // Confirmed, Rejected, Interrupted
 ```
 
 `outcome()` waits for the one final value, also while the network is away. A command of an ended session ends with it and does not go to the next account.

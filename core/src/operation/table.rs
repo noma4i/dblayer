@@ -9,7 +9,7 @@ use super::quarantine::{quarantine_add, QuarantineReason};
 use super::status::{Operation, OperationId, OperationStatus};
 use crate::identity::{RowId, RowRef};
 
-pub(crate) const OPEN_STATUSES: &str = "('pending', 'failed', 'delivery_unknown')";
+pub(crate) const OPEN_STATUSES: &str = "('pending', 'failed')";
 const OPERATION_COLUMNS: &str = "seq, action_key, status, temp_id, transport_started, base_revision, created_at, dedupe_key, attempts, error_kind, error_message, since, client_mutation_id";
 
 #[cfg(test)]
@@ -118,10 +118,6 @@ pub fn apply_fsck(connection: &Connection, actions: &[FsckAction], orphans: &Orp
     let mut applied = 0;
     for action in actions {
         match action {
-            FsckAction::SetStatus(id, status) => {
-                set_status(&transaction, id.0, *status)?;
-                applied += 1;
-            }
             FsckAction::QuarantineOrphan(id) => {
                 if quarantine_row(&transaction, id, orphans)? {
                     applied += 1;

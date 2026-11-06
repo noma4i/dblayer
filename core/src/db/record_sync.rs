@@ -11,7 +11,7 @@ use super::local_write::{plan_fault, OutboxOperation};
 use super::open::Db;
 
 fn is_stuck(entry: &OutboxOperation) -> bool {
-    matches!(entry.operation.status, OperationStatus::Failed | OperationStatus::DeliveryUnknown)
+    matches!(entry.operation.status, OperationStatus::Failed)
 }
 
 fn is_sending(entry: &OutboxOperation) -> bool {
@@ -66,7 +66,7 @@ impl Db {
         let mut discarded = 0;
         while let Some(entry) = self.record_operations(model, id, key.as_deref())?.first() {
             let batched = self.spec(model)?.is_batch_upload(&entry.operation.action_key);
-            if batched && entry.operation.status != OperationStatus::DeliveryUnknown {
+            if batched {
                 self.remove_upload_item(admitted, model, id, entry.operation.id.0, true)?;
             } else {
                 self.roll_back(admitted, entry.operation.id.0)?;

@@ -50,9 +50,9 @@ impl Db {
                 if !candidates.contains_key(&key) {
                     let mut indexed: HashMap<String, Vec<(i64, RowId)>> = HashMap::new();
                     let sql = if action.batch.is_some() {
-                        "SELECT op.seq, op_row.row_id FROM op JOIN op_row USING (seq) WHERE op.action_key = ?1 AND op.status IN ('pending', 'delivery_unknown') AND op.transport_started = 1"
+                        "SELECT op.seq, op_row.row_id FROM op JOIN op_row USING (seq) WHERE op.action_key = ?1 AND op.status = 'pending' AND op.transport_started = 1"
                     } else {
-                        "SELECT seq, temp_id FROM op WHERE action_key = ?1 AND status IN ('pending', 'delivery_unknown') AND transport_started = 1 AND temp_id IS NOT NULL"
+                        "SELECT seq, temp_id FROM op WHERE action_key = ?1 AND status = 'pending' AND transport_started = 1 AND temp_id IS NOT NULL"
                     };
                     let mut statement = reader.connection().prepare_cached(sql)?;
                     let rows = statement.query_map([&key], |row| Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?)))?.collect::<Result<Vec<_>, _>>()?;

@@ -30,7 +30,6 @@ pub enum WireSyncState {
     Pending,
     Sending,
     Failed,
-    DeliveryUnknown,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, uniffi::Enum)]
@@ -42,7 +41,6 @@ pub enum WireUploadStatus {
     Sending,
     Done,
     Failed,
-    DeliveryUnknown,
     Cancelled,
 }
 
@@ -241,7 +239,6 @@ fn upload(info: &UploadInfo) -> WireUpload {
             UploadStatus::Sending => WireUploadStatus::Sending,
             UploadStatus::Done => WireUploadStatus::Done,
             UploadStatus::Failed => WireUploadStatus::Failed,
-            UploadStatus::DeliveryUnknown => WireUploadStatus::DeliveryUnknown,
             UploadStatus::Cancelled => WireUploadStatus::Cancelled,
         },
         stage: enum_text(&info.stage).unwrap_or_default(),
@@ -262,7 +259,6 @@ fn sync(info: &SyncInfo) -> WireSync {
             SyncState::Pending => WireSyncState::Pending,
             SyncState::Sending => WireSyncState::Sending,
             SyncState::Failed => WireSyncState::Failed,
-            SyncState::DeliveryUnknown => WireSyncState::DeliveryUnknown,
         },
         actions: info.actions.clone(),
         dirty_fields: info.dirty_fields.clone(),

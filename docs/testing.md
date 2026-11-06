@@ -88,7 +88,7 @@ Typical scenarios to cover:
 - first page, next page, refresh
 - fresh data is not requested again, parallel loads become one request
 - a failed load is retried, a fatal failure is reported
-- a mutation that gets no answer becomes `deliveryUnknown` and is sent again only by `retry(action)`
+- a mutation that gets no answer is sent again by the library with the same request id
 - optimistic create is replaced by the server row, refusal rolls it back
 - a subscription event changes a row and your live result updates
 - a dropped subscription reconnects and the relation is refetched
