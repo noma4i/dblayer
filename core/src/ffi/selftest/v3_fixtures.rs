@@ -70,12 +70,12 @@ pub(super) fn add_chat(models: &mut Value) {
 
 /// A row of the server arrives as an event: it lands the way a change of the feed does.
 pub(super) fn land_event(rig: &Rig, model: &str, row: Value) {
-    use crate::commit::{CommitEnvelope, EntityOp, WriteOrigin};
+    use crate::commit::{CommitEnvelope, EntityOp, WriteOrigin as Source};
     use crate::identity::{ModelKey, RowId};
     let db = &rig.database.db;
     let row = row.as_object().unwrap().clone();
     let id = RowId::new(row["id"].as_str().unwrap()).unwrap();
-    let mut envelope = CommitEnvelope::new(WriteOrigin::Event, db.generation());
+    let mut envelope = CommitEnvelope::new(Source::Event, db.generation());
     envelope.entity_ops.push(EntityOp::Upsert { model: ModelKey::new(model), id, row });
     db.land(&db.admit().unwrap(), envelope).unwrap();
 }
@@ -95,10 +95,10 @@ pub(super) fn chat_row(id: &str, last_message_at: i64) -> Value { json!({"id": i
 
 /// A row of the server is deleted by an event.
 pub(super) fn land_delete(rig: &Rig, model: &str, id: &str) {
-    use crate::commit::{CommitEnvelope, DestroyReason, EntityOp, WriteOrigin};
+    use crate::commit::{CommitEnvelope, DestroyReason, EntityOp, WriteOrigin as Source};
     use crate::identity::{ModelKey, RowId};
     let db = &rig.database.db;
-    let mut envelope = CommitEnvelope::new(WriteOrigin::Event, db.generation());
+    let mut envelope = CommitEnvelope::new(Source::Event, db.generation());
     envelope.entity_ops.push(EntityOp::Destroy { model: ModelKey::new(model), id: RowId::new(id).unwrap(), reason: DestroyReason::Server });
     db.land(&db.admit().unwrap(), envelope).unwrap();
 }
