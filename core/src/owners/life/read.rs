@@ -82,7 +82,7 @@ pub(super) fn add(builder: &mut RuntimeBuilder, wiring: &Arc<Wiring>, ports: &Po
     let handle = builder.handle();
     let transport: Option<Arc<dyn Transport>> = ports.transport.clone();
     let admit_db = db.clone();
-    let admit: crate::owners::read::Admit = Arc::new(move || admit_db.admit().map_err(|error| crate::owners::read::Refused(error.to_string())));
+    let admit: crate::owners::read::Admit = Arc::new(move |epoch| admit_db.admit_at(epoch).map_err(|error| crate::owners::read::Refused(error.to_string())));
     let codec = Arc::new(SchemaWindowCodec::new(db.clone(), ports.read_operations.clone().unwrap_or_default()));
 
     let preload = preload_keys(&db, false).unwrap_or_else(|error| {
@@ -114,7 +114,7 @@ pub(super) fn add(builder: &mut RuntimeBuilder, wiring: &Arc<Wiring>, ports: &Po
             WindowsEffect::Window { .. } => {}
         }),
     );
-    let windows = builder.add::<Windows>("windows", state, windows_io.counted_by(handle.clone()).current_epoch_by({ let published = wiring.clone(); Arc::new(move || published.published.get().filter(|published| published.identity.is_some()).map_or(Epoch::MAX, |published| published.epoch)) }));
+    let windows = builder.add::<Windows>("windows", state, windows_io.counted_by(handle.clone()));
 
     let deliveries_wiring = wiring.clone();
     let delivery_io = DeliveryIo::new(

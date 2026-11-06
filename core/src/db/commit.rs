@@ -11,6 +11,11 @@ use super::open::Db;
 use super::parent_pointer::Followed;
 
 impl Db {
+    pub fn admit_at(&self, epoch: u64) -> Result<crate::ffi::admission::Admitted, DbError> {
+        self.shared.store.lifecycle.admit_at("window request", epoch)
+            .map_err(|_| DbError::NoSession { detail: "the epoch of the request ended or has no session".into() })
+    }
+
     pub fn admit(&self) -> Result<crate::ffi::admission::Admitted, DbError> {
         self.shared.store.lifecycle.admit(crate::ffi::admission::Origin::Explicit, "core call")
             .map_err(|_| DbError::NoSession { detail: "the database does not admit work".into() })

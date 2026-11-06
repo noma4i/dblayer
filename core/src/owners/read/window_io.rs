@@ -34,20 +34,13 @@ pub struct WindowIo {
     admit: Admit,
     handle: Handle,
     counted: Option<crate::runtime::Handle>,
-    current: Option<Arc<dyn Fn() -> Epoch + Send + Sync>>,
     open: Open,
     rest: Rest<WindowsEffect>,
 }
 
 impl WindowIo {
     pub fn new(transport: Option<Arc<dyn Transport>>, codec: Arc<dyn WindowCodec>, admit: Admit, handle: Handle, rest: Rest<WindowsEffect>) -> Self {
-        Self { transport, codec, admit, handle, counted: None, current: None, open: Open::default(), rest }
-    }
-
-    /// The epoch of the session now, `Epoch::MAX` while there is none: a request of another epoch does not start.
-    pub fn current_epoch_by(mut self, current: Arc<dyn Fn() -> Epoch + Send + Sync>) -> Self {
-        self.current = Some(current);
-        self
+        Self { transport, codec, admit, handle, counted: None, open: Open::default(), rest }
     }
 
     /// The barrier of the owners waits for the requests this executor starts.
@@ -57,16 +50,19 @@ impl WindowIo {
     }
 
     fn request(&self, stamp: EpochStamp, key: WindowKey, (request, attempt): (RequestId, u32), (page, epoch): (u32, Epoch), cursor: Option<String>, back: &Back<Windows>) {
+        let admitted = match (self.admit)(epoch) {
+            Ok(admitted) => admitted,
+            Err(refused) => return back.reply(stamp, WindowsInput::Failure { request, attempt, error: RequestError { message: refused.0, class: ErrorClass::Permanent, source: None } }),
+        };
         let token = CancelToken::new();
         self.open.lock().unwrap_or_else(PoisonError::into_inner).insert((request, attempt), token.clone());
-        let (transport, codec, admit, open, back) = (self.transport.clone(), self.codec.clone(), self.admit.clone(), self.open.clone(), back.clone());
+        let (transport, codec, open, back) = (self.transport.clone(), self.codec.clone(), self.open.clone(), back.clone());
         let launch = self.counted.as_ref().map(crate::runtime::Handle::launch);
-        let current = self.current.clone();
         spawn_on(Carry::Detached, &self.handle, crate::runtime::counted(launch, async move {
             let outcome = tokio::select! {
                 biased;
                 () = token.cancelled() => None,
-                outcome = ask(transport.as_deref(), codec.as_ref(), &admit, current.as_deref().map(|current| (epoch, current)), &key, page, cursor.as_deref()) => Some(outcome),
+                outcome = ask(transport.as_deref(), codec.as_ref(), &admitted, &key, page, cursor.as_deref()) => Some(outcome),
             };
             open.lock().unwrap_or_else(PoisonError::into_inner).remove(&(request, attempt));
             if let Some(outcome) = outcome.filter(|_| !token.is_cancelled()) {
@@ -97,12 +93,7 @@ impl EffectRunner<Windows> for WindowIo {
     }
 }
 
-async fn ask(transport: Option<&dyn Transport>, codec: &dyn WindowCodec, admit: &Admit, epoch: Option<(Epoch, &(dyn Fn() -> Epoch + Send + Sync))>, key: &WindowKey, page: u32, cursor: Option<&str>) -> TransportOutcome<AnswerPage> {
-    let admitted = match admit() {
-        Ok(admitted) => admitted,
-        Err(refused) => return TransportOutcome::Error(RequestError { message: refused.0, class: ErrorClass::Permanent, source: None }),
-    };
-    if epoch.is_some_and(|(epoch, current)| epoch != current()) { return TransportOutcome::Dropped; }
+async fn ask(transport: Option<&dyn Transport>, codec: &dyn WindowCodec, admitted: &crate::ffi::admission::Admitted, key: &WindowKey, page: u32, cursor: Option<&str>) -> TransportOutcome<AnswerPage> {
     let request = match codec.request(key, page, cursor) {
         Ok(request) => request,
         Err(message) => return TransportOutcome::Error(RequestError { message, class: ErrorClass::Permanent, source: None }),
@@ -110,7 +101,7 @@ async fn ask(transport: Option<&dyn Transport>, codec: &dyn WindowCodec, admit: 
     let Some(transport) = transport else {
         return TransportOutcome::Error(RequestError { message: "the database has no transport".into(), class: ErrorClass::Network, source: None });
     };
-    match transport.query(&admitted, request).await {
+    match transport.query(admitted, request).await {
         Ok(response) => match codec.refusal(&response) {
             Some(error) => TransportOutcome::Error(error),
             None => match codec.answer(key, page, response) {
