@@ -194,7 +194,7 @@ impl ReadStream {
 
 #[uniffi::export]
 impl ReadStream {
-    pub fn resync(&self) { self.life.resync_stream(self.stream); }
+    pub fn resync(&self) { self.life.request_snapshot(self.stream); }
 
     /// The next value of the stream, `None` once the stream ended and its last value was taken.
     pub async fn pull(&self) -> Result<Option<ReadValue>, DbError> {

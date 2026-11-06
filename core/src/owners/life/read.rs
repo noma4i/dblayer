@@ -186,7 +186,7 @@ impl super::Life {
 
     pub fn next_stream_id(&self) -> StreamId { self.wiring.next_stream.fetch_add(1, std::sync::atomic::Ordering::SeqCst) }
 
-    pub fn resync_stream(&self, stream: StreamId) { self.wiring.to_deliveries(DeliveryInput::Resync { stream }); }
+    pub fn request_snapshot(&self, stream: StreamId) { self.wiring.to_deliveries(DeliveryInput::Resync { stream }); }
 
     pub fn open_stream(&self, stream: StreamId, view: View, epoch: Epoch, valid: bool) {
         let identity = self.published().identity.is_some();
