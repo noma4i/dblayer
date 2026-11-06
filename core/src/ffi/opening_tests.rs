@@ -75,6 +75,29 @@ async fn life_register_invalid() {
 }
 
 #[tokio::test]
+async fn life_register_bad_preload() {
+    use super::super::database_tests::Plain;
+    use crate::schema::{FieldSpec, ModelSpec, PreloadChoice, PreloadSource, RelationSpec};
+    use crate::value::ScalarKind;
+    for bad_source in [false, true] {
+        let mut model = ModelSpec::new("Item", vec![FieldSpec::scalar("id", ScalarKind::Id)]);
+        let mut selection = RelationSpec::new("all", &[]);
+        selection.text_params.push("category".into());
+        let choice = if bad_source { PreloadChoice::RowsOf { from: PreloadSource { model: "Item".into(), relation: "missing".into() } } } else { PreloadChoice::Listed(vec![serde_json::json!("x")]) };
+        selection.preload = Some([(if bad_source { "category" } else { "unknown" }.to_string(), choice)].into());
+        selection.preload_limit = Some(1);
+        model.relations.push(selection);
+        let database = Database::open(config(), serde_json::to_string(&vec![model]).unwrap(), Some(Arc::new(Plain)), None, None, None, None).await.unwrap();
+        let definitions = r#"[{"name":"Greeting","document":"query Greeting($name: String!) { greeting(name: $name) }"}]"#;
+        assert!(matches!(database.register_operations(definitions.into()), Err(DbError::Invalid { .. })));
+        database.set_online(true).unwrap();
+        let answer = crate::test_wait::within(database.run(database.session_epoch(), "Greeting".into(), r#"{"name":"Ada"}"#.into())).await;
+        assert!(matches!(answer, Err(DbError::Invalid { .. })));
+        database.close_database().await.unwrap();
+    }
+}
+
+#[tokio::test]
 async fn an_open_that_fails_leaves_the_slot_free() {
     let slot = OpenDatabase::new();
     assert!(slot.open(config(), "invalid".into(), options(), None, None, None, None, None).await.is_err());

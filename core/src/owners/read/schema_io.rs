@@ -198,6 +198,19 @@ pub fn preload_keys(db: &Db, derived: bool) -> Result<Vec<WindowKey>, String> {
     for (model, spec) in &db.shared.specs {
         for relation in &spec.relations {
             let Some(values) = &relation.preload else { continue };
+            let declared = spec.selection_params(&relation.name);
+            for (name, choice) in values {
+                if !declared.contains(name) { return Err(format!("unknown preload parameter {model}.{}.{name}", relation.name)); }
+                if let PreloadChoice::RowsOf { from } = choice {
+                    let source = db.spec(&from.model).map_err(|error| error.to_string())?;
+                    if !source.relations.iter().any(|candidate| candidate.name == from.relation) {
+                        return Err(format!("unknown preload selection {}.{}", from.model, from.relation));
+                    }
+                }
+            }
+            if relation.preload_order.iter().any(|name| !values.contains_key(name)) {
+                return Err(format!("unknown preload parameter in {model}.{}", relation.name));
+            }
             let has_source = values.values().any(|choice| matches!(choice, PreloadChoice::RowsOf { .. }));
             if has_source != derived {
                 continue;
