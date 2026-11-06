@@ -140,6 +140,9 @@ fn the_row_carries_its_id_sync_state_and_upload() {
         wait_reason: Some(crate::upload::WaitReason::CreateUnconfirmed),
         attempts: 1,
         error: None,
+        local_url: Some("file:///copy".to_string()),
+        processing: Some(crate::upload::UploadProcessing { progress: Some(0.5) }),
+        copy_file: None,
     });
     let wire = WireModel::of(&spec()).row(&Arc::new(data));
     assert_eq!(wire.id, "w1");
@@ -166,6 +169,8 @@ fn the_row_carries_its_id_sync_state_and_upload() {
                 wait_reason: Some("create_unconfirmed".into()),
                 attempts: 1,
                 error: None,
+                local_url: Some("file:///copy".into()),
+                processing: Some(WireProcessing { progress: Some(0.5) }),
             },
         }]
     );

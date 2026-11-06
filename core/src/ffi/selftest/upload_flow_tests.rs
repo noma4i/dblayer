@@ -47,6 +47,11 @@ fn status(rows: &Rows, id: &str, action: &str) -> Option<WireUploadStatus> {
     rows.0.lock().unwrap().iter().find(|row| row.id == id).and_then(|row| row.uploads.iter().find(|entry| entry.action == action).map(|entry| entry.upload.status))
 }
 
+/// The file URL of the copy of the library `uploads[action]` of a row shows.
+fn local_url(rows: &Rows, id: &str, action: &str) -> Option<String> {
+    rows.0.lock().unwrap().iter().find(|row| row.id == id).and_then(|row| row.uploads.iter().find(|entry| entry.action == action).and_then(|entry| entry.upload.local_url.clone()))
+}
+
 fn puts(rig: &Rig) -> usize { rig.world.log().iter().filter(|entry| entry.operation == "PUT").count() }
 
 /// P-APP-08: the photo of a group goes through the steps of the project, the chat shows `uploads["update_photo"]` from the commit that queued it until the commit that ends it, and the logo of the answer after it.
@@ -62,9 +67,12 @@ async fn flow_chat_photo_upload() {
     let receipt = bound(rig.database.upload(epoch, "Chat".into(), "c1".into(), "update_photo".into(), request(&path, json!({"id": "c1"})))).await.unwrap();
     hold.entered_for("the file in the network").await;
     yield_until("the chat shows the queued upload while the file is in the network", || status(&chat, "c1", "update_photo") == Some(WireUploadStatus::Queued)).await;
+    let url = local_url(&chat, "c1", "update_photo").expect("P-XFER-23: the copy has a URL from the end of the copy");
+    assert!(url.starts_with("file://") && std::path::Path::new(&url["file://".len()..]).exists(), "{url}");
     hold.release();
     assert!(matches!(bound(rig.database.outcome(receipt)).await.unwrap(), WireOperationOutcome::Confirmed { .. }));
     yield_until("the logo of the answer stands and the upload is gone", || cell(&rig, "Chat", &chat.0.lock().unwrap()[0], "logoUrl") == super::flow_fixtures::text("https://cdn/logo-sig1") && status(&chat, "c1", "update_photo").is_none()).await;
+    assert_eq!(local_url(&chat, "c1", "update_photo"), None, "the URL goes with the transfer");
     assert_eq!((rig.world.count("CreateBlob"), puts(&rig), rig.world.count("ChatUpdatePhoto")), (1, 1, 1), "one blob, one PUT, one mutation");
     rig.database.close_now();
 }
@@ -86,8 +94,9 @@ async fn flow_chat_photo_retry_and_discard() {
     assert!(matches!(bound(rig.database.outcome(again)).await.unwrap(), WireOperationOutcome::Confirmed { .. }));
     yield_until("the retry delivered the logo", || cell(&rig, "Chat", &chat.0.lock().unwrap()[0], "logoUrl") != Cell::Null && status(&chat, "c1", "update_photo").is_none()).await;
 
+    let (_other_directory, other) = source("logo2.jpg", b"another jpeg");
     rig.world.fail_next("PUT", Fault::Http(403));
-    bound(rig.database.upload(epoch, "Chat".into(), "c1".into(), "update_photo".into(), request(&path, json!({"id": "c1"})))).await.unwrap();
+    bound(rig.database.upload(epoch, "Chat".into(), "c1".into(), "update_photo".into(), request(&other, json!({"id": "c1"})))).await.unwrap();
     yield_until("the second upload failed", || status(&chat, "c1", "update_photo") == Some(WireUploadStatus::Failed)).await;
     bound(rig.database.discard(epoch, "Chat".into(), "c1".into(), Some("update_photo".into()))).await.unwrap();
     yield_until("the discard removed the upload", || status(&chat, "c1", "update_photo").is_none()).await;

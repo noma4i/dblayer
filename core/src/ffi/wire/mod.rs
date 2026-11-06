@@ -63,7 +63,19 @@ pub struct WireUpload {
     pub wait_reason: Option<String>,
     pub attempts: u32,
     pub error: Option<WireFailure>,
+    /// The file URL of the copy of the library while the transfer holds it.
+    pub local_url: Option<String>,
+    /// The server works on the file after the transfer: the progress it reports.
+    pub processing: Option<WireProcessing>,
 }
+
+#[derive(Clone, Debug, PartialEq, uniffi::Record)]
+pub struct WireProcessing {
+    pub progress: Option<f64>,
+}
+
+/// The progress is a finite number read from JSON, so equality is total.
+impl Eq for WireProcessing {}
 
 #[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
 pub struct WireUploadEntry {
@@ -233,6 +245,8 @@ fn upload(info: &UploadInfo) -> WireUpload {
         wait_reason: info.wait_reason.and_then(|reason| enum_text(&reason)),
         attempts: info.attempts,
         error: info.error.as_ref().map(failure),
+        local_url: info.local_url.clone(),
+        processing: info.processing.as_ref().map(|processing| WireProcessing { progress: processing.progress }),
     }
 }
 

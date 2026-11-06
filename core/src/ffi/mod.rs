@@ -75,7 +75,7 @@ pub use loading::{LoadMoreResult, LoadRequest};
 pub use command::CommandRequest;
 pub use read::{ReadEnd, ReadFetch, ReadPhase, ReadRequest, ReadState, ReadStream, ReadValue, RowPlace, RowRename};
 pub use upload_rounds::RoundJobsSink;
-pub use wire::{Cell, CellEntry, WireFailure, WireModel, WireRow, WireSync, WireSyncState, WireUpload, WireUploadStatus};
+pub use wire::{Cell, CellEntry, WireFailure, WireModel, WireRow, WireSync, WireSyncState, WireProcessing, WireUpload, WireUploadStatus};
 pub use crate::transport::PutFile;
 pub use transport::{ByteProgress, CableLease, EncryptedSocketEvent, OnlineSink, PutReply, SubscriptionSink, Transport, TransportRequest};
 
