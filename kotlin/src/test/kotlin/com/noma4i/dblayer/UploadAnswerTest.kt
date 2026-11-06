@@ -40,15 +40,15 @@ class UploadAnswerTest {
             transport.enqueue("CreateMoment", """{"data":{"createMoment":{$row}}}""")
             reopen(Config(null, null, 32u), modelsJSON, transport, operations = """[{"name":"CreateBlob","document":"mutation CreateBlob { createBlob { url headers signedId blobId } }"},{"name":"CreateMoment","document":"mutation CreateMoment { createMoment { id uuid likedByMe media createdAt successMessage } }"}]""")
             val moment = requireNotNull(Moment.find(Moment.send(AccountScope.current(), text = "intro").confirmed().id).current())
-            for (expected in listOf("Intro received", null)) {
-                transport.enqueue("CreateBlob", """{"data":{"createBlob":{"url":"https://storage.test/video","headers":{},"signedId":"signed","blobId":"blob"}}}""")
+            for ((turn, expected) in listOf("Intro received", null).withIndex()) {
+                if (turn == 0) transport.enqueue("CreateBlob", """{"data":{"createBlob":{"url":"https://storage.test/video","headers":{},"signedId":"signed","blobId":"blob"}}}""")
                 val field = expected?.let { ",\"successMessage\":\"$it\"" } ?: ""
                 transport.enqueue("CreateMoment", """{"data":{"createMoment":{$row$field}}}""")
                 val uploaded = moment.uploadClip(AccountScope.current(), UploadRequest(source.path))
                 assertEquals("m77", uploaded.optimisticValue?.id)
                 assertEquals(expected, uploaded.answer<MomentUploadClipResult>().successMessage)
             }
-            assertEquals(listOf("CreateMoment", "CreateBlob", "CreateMoment", "CreateBlob", "CreateMoment"), transport.calls.map { it.operationName })
+            assertEquals(listOf("CreateMoment", "CreateBlob", "CreateMoment", "CreateMoment"), transport.calls.map { it.operationName })
             assertTrue(transport.unscripted.isEmpty())
         } finally {
             closeForCleanup()

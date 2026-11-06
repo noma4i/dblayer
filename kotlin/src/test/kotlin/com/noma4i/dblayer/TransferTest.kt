@@ -109,7 +109,7 @@ class TransferTest {
             val receipt = AccountScope.current().uploadBatch(Asset, items, UploadBatchRequest(operation = "create_files"))
             assertEquals(listOf("a0", "a1"), confirmedIds(receipt))
             assertEquals(3, transport.identities.count { it.itemId == "../../../outside" })
-            val ranges = directory.resolve("db.sqlite.cache/ranges").canonicalFile.toPath()
+            val ranges = directory.resolve("db.sqlite.files/transfers").canonicalFile.toPath()
             assertTrue(transport.paths.filter { it.first == "../../../outside" }.all { it.second.startsWith(ranges) })
         } finally {
             closeForCleanup()
@@ -208,8 +208,8 @@ class TransferTest {
             reopenClocked(modelsJSON, transport, expiryOperations, path = path, startMillis = 1_000_000L)
             val row = refusedUpload(transport, source)
             closeForCleanup()
-            reopenClocked(modelsJSON, transport, expiryOperations, path = path, startMillis = 1_000_000L + 7L * 24 * 60 * 60 * 1000)
-            eventually("the expired upload is discarded at the open") { isGone(row) }
+            val reopened = reopenClocked(modelsJSON, transport, expiryOperations, path = path, startMillis = 1_000_000L + 7L * 24 * 60 * 60 * 1000 + 1)
+            eventually("the expired upload is discarded at the open") { reopened.advance(1); isGone(row) }
             closeForCleanup()
         } finally { closeForCleanup(); directory.deleteRecursively() }
     }
@@ -240,7 +240,7 @@ class TransferTest {
         val directory = Files.createTempDirectory("photo").toFile()
         val transport = MockTransport()
         transport.enqueue("InitMultipart", """{"data":{"initMultipart":{"key":"key","uploadId":"upload"}}}""")
-        val held = transport.hold("PresignParts")
+        val held = transport.hold("PresignParts", reply = """{"data":{"presignParts":{"parts":[{"partNumber":1,"url":"https://storage/1"},{"partNumber":2,"url":"https://storage/2"},{"partNumber":3,"url":"https://storage/3"}]}}}""")
         val abort = transport.hold("AbortMultipart", reply = """{"data":{"abortMultipart":{"ok":true}}}""")
         try {
             val source = directory.resolve("photo").apply { writeBytes(ByteArray(11 * 1024 * 1024)) }
@@ -308,8 +308,10 @@ class TransferTest {
             val rows = receipt.items.map { it.optimisticValue }
             eventually("the refused file failed") { Asset.find(rows[0].id).current()?.sync?.state == SyncState.Failed }
             assertEquals(SyncState.Failed, requireNotNull(Asset.find(rows[0].id).current()).sync.state)
-            assertEquals(receipt.items[0].receipt.operation, rows[0].retry("create_files").operation)
-            assertEquals(listOf("a0", "a1", "a2"), confirmedIds(receipt))
+            val retried = rows[0].retry("create_files")
+            assertTrue(receipt.items[0].receipt.outcome() is OperationOutcome.Rejected)
+            assertEquals("a0", retried.confirmed().id)
+            assertEquals(listOf("a1", "a2"), confirmedIds(receipt).drop(1))
             val call = transport.calls.single { it.operationName == "CreateAssets" }
             val sent = Json.parseToJsonElement(call.variablesJson).jsonObject.getValue("items").jsonArray
             assertEquals(listOf("key-0", "key-1", "key-2"), sent.map { it.jsonObject.getValue("clientKey").jsonPrimitive.content })
@@ -362,9 +364,9 @@ class TransferTest {
             val clock = reopenClocked(modelsJSON, transport, expiryOperations)
             val row = refusedUpload(transport, source)
             DBlayer.database.setOnline(false)
-            clock.advance(7L * 24 * 60 * 60 * 1000)
+            clock.advance(7L * 24 * 60 * 60 * 1000 + 1)
             DBlayer.database.setOnline(true)
-            eventually("the expired upload is discarded when the network returns") { isGone(row) }
+            eventually("the expired upload is discarded when the network returns") { clock.advance(1); isGone(row) }
             closeForCleanup()
         } finally { closeForCleanup(); source.delete() }
     }
@@ -387,8 +389,9 @@ class TransferTest {
             val sent = AccountScope.current().send(Moment, buildJsonObject { put("text", "video") }, upload = UploadCommand("upload_clip", UploadRequest(source.path)))
             val row = requireNotNull(sent.optimisticValue)
             eventually("the refused complete fails the upload") { Moment.find(row.id).current()?.sync?.state == SyncState.Failed }
-            row.retry("upload_clip")
-            eventually("the retry confirms the upload") { Moment.find(row.id).current()?.sync?.state == SyncState.Synced }
+            val retried = row.retry("upload_clip")
+            assertEquals("m1", retried.confirmed().id)
+            assertEquals(SyncState.Synced, Moment.find("m1").current()?.sync?.state)
             val names = transport.mock.calls.map { it.operationName }
             assertEquals(1, names.count { it == "InitMultipart" })
             assertEquals(3, names.count { it == "PresignParts" })
@@ -403,9 +406,13 @@ class TransferTest {
         val directory = Files.createTempDirectory("files").toFile()
         try {
             val config = Config(directory.resolve("files.sqlite").path, null, 32u)
-            reopen(config, modelsJSON, null)
-            val first = requireNotNull(User.create(name = "first").optimisticValue)
-            val second = requireNotNull(User.create(name = "second").optimisticValue)
+            val members = """[{"name":"ContainerMembers","document":"query ContainerMembers(${'$'}containerId: ID!, ${'$'}first: Int, ${'$'}after: Cursor) { node(id: ${'$'}containerId) { ... on Container { membersCount members(first: ${'$'}first, after: ${'$'}after) { edges { cursor node { id name } } pageInfo { hasNextPage endCursor } } } } }"}]"""
+            val transport = MockTransport()
+            transport.enqueue("ContainerMembers", """{"data":{"node":{"membersCount":2,"members":{"edges":[{"cursor":"u1","node":{"id":"u1","name":"first"}},{"cursor":"u2","node":{"id":"u2","name":"second"}}],"pageInfo":{"hasNextPage":false,"endCursor":"u2"}}}}}""")
+            reopen(config, modelsJSON, transport, members)
+            User.containerMembers("c1").loadAll()
+            val first = requireNotNull(User.find("u1").current())
+            val second = requireNotNull(User.find("u2").current())
             val large = ByteArray(300 * 1024) { 9 }
             first.attach(User.avatar, byteArrayOf(1, 2, 3), "small", "image/png")
             second.attach(User.avatar, large, "large", "image/png")
@@ -416,7 +423,7 @@ class TransferTest {
             val firstId = first.id
             val secondId = second.id
             closeForCleanup()
-            reopen(config, modelsJSON, null)
+            reopen(config, modelsJSON, MockTransport(), members)
             val restoredFirst = requireNotNull(User.find(firstId).current())
             val restoredSecond = requireNotNull(User.find(secondId).current())
             assertNull(restoredFirst.read(User.avatar))
@@ -434,7 +441,7 @@ class TransferTest {
         val scope = CoroutineScope(SupervisorJob())
         val transport = MockTransport()
         transport.enqueue("InitMultipart", """{"data":{"initMultipart":{"key":"key","uploadId":"upload"}}}""")
-        val held = transport.hold("PresignParts")
+        val held = transport.hold("PresignParts", reply = """{"data":{"presignParts":{"parts":[{"partNumber":1,"url":"https://storage/1"},{"partNumber":2,"url":"https://storage/2"},{"partNumber":3,"url":"https://storage/3"}]}}}""")
         val abort = transport.hold("AbortMultipart", reply = """{"data":{"abortMultipart":{"ok":true}}}""")
         try {
             val source = directory.resolve("video").apply { writeBytes(ByteArray(11 * 1024 * 1024)) }
@@ -445,11 +452,12 @@ class TransferTest {
             val sent = AccountScope.current().send(Moment, buildJsonObject { put("text", "video") }, upload = UploadCommand("upload_clip", UploadRequest(source.path)))
             val row = requireNotNull(sent.optimisticValue)
             held.entered()
-            val files = directory.resolve("db.sqlite.files")
-            assertEquals(1, requireNotNull(files.list()).size)
+            val copies = directory.resolve("db.sqlite.files/transfers")
+            fun copyCount() = copies.list()?.size ?: 0
+            assertEquals(1, copyCount())
             db.setOnline(false)
             row.discard("upload_clip")
-            assertTrue(requireNotNull(files.list()).isEmpty())
+            assertEquals(0, copyCount())
             assertTrue(source.exists())
             held.release()
             closeForCleanup()

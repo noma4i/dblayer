@@ -47,6 +47,7 @@ class SealedErrorsTest {
             val failure = DbException.Session(code, code.name)
 
             transport.enqueue("MomentsFeed", failure)
+            if (code == SessionCode.REPLAYED_REQUEST) transport.enqueue("MomentsFeed", failure)
             assertEquals(code, codeOf(runCatching { withTimeout(5000) { Moment.feed.load() } }.exceptionOrNull(), "load $code"))
 
             transport.enqueue("QrCodeCreate", failure)

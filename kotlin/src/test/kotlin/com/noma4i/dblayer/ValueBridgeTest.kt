@@ -227,10 +227,10 @@ class ValueBridgeTest {
             signIn("A")
             val projected = Projected(AccountScope.current().stream(User.profile), User, screen)
             projected.loaded()
-            assertEquals(1uL, DBlayer.subscriptionCensus().subscriptions)
+            assertEquals(1uL, DBlayer.subscriptionCensus().observedQueries)
 
             projected.close()
-            eventually("the stream left the core") { DBlayer.subscriptionCensus().subscriptions == 0uL }
+            eventually("the stream left the core") { DBlayer.subscriptionCensus().observedQueries == 0uL }
         } finally {
             screen.cancel()
             closeForCleanup()
@@ -251,7 +251,7 @@ class ValueBridgeTest {
             val first = (1..5).map { number -> scope.send(Moment, text("m$number")) }
             first.forEach { it.outcome() }
             eventually("the thread holds five confirmed rows") { thread.projection.value.rows.let { rows -> rows.size == 5 && rows.all { it.sync.state == SyncState.Synced } } }
-            assertEquals(2uL, DBlayer.subscriptionCensus().subscriptions)
+            assertEquals(1uL, DBlayer.subscriptionCensus().subscriptions)
 
             val decoded = thread.projection.value.decoded
             val deltas = thread.projection.value.deltas
@@ -325,9 +325,9 @@ class ValueBridgeTest {
             DBlayer.sessionReset()
             signIn("B")
 
-            assertTrue(runCatching { row.update(name = "hijacked", account = scopeA) }.exceptionOrNull() is DbException.Interrupted)
-            assertTrue(runCatching { User.profile.read(scopeA) }.exceptionOrNull() is DbException.Interrupted)
-            assertTrue(runCatching { User.profile.readRow(row.id, scopeA) }.exceptionOrNull() is DbException.Interrupted)
+            assertTrue(runCatching { row.update(name = "hijacked", account = scopeA) }.exceptionOrNull() is DbException.NoSession)
+            assertTrue(runCatching { User.profile.read(scopeA) }.exceptionOrNull() is DbException.NoSession)
+            assertTrue(runCatching { User.profile.readRow(row.id, scopeA) }.exceptionOrNull() is DbException.NoSession)
             assertEquals("a command of A changed the row of B", "B", User.profile.read().first().name)
         } finally {
             closeForCleanup()
@@ -353,7 +353,7 @@ class ValueBridgeTest {
             val healed = broken.apply(ReadValue.Snapshot(2L, listOf(whole), state), User).projection
             assertTrue("a good snapshot did not clear the error", healed.rows.size == 1 && healed.error == null)
 
-            val first = scope.events(User).events(User).first()
+            val first = DBlayer.database.openValueStream(scope.epoch, ReadRequest.Events("Nope")).events(User).first()
             assertTrue("the events stream did not report its source error: $first", first is ModelEventItem.Failed)
         } finally {
             screen.cancel()

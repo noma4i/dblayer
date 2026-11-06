@@ -84,7 +84,8 @@ class MediaPreloadTest {
         val preload = transport.hold("PresenceOnline", """{"data":{"presenceOnline":[]}}""")
         val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
         try {
-            DBlayer.openTesting(transport, modelsJSON, operations = listOf(PresenceOnline, ChatMedia))
+            val operations = listOf(PresenceOnline, ChatMedia).joinToString(",", "[", "]") { """{"name":"${it.operationName}","document":${kotlinx.serialization.json.JsonPrimitive(it.document)}}""" }
+            reopen(Config(null, null, 32u), modelsJSON, transport, operations)
             awaitWithin("the preload request") { preload.entered() }
             preload.release()
             val empty = """{"data":{"node":{"messages":{"edges":[],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}}"""
@@ -117,14 +118,19 @@ class MediaPreloadTest {
             val held = Projected(AccountScope.current().stream(failedQuery), MediaMessage, scope)
             held.loaded()
             val down = transport.hold("ChatMedia", failure = DbException.Network("down"))
-            val failing = async { runCatching { failedQuery.loadAll() }.exceptionOrNull() }
+            transport.enqueue("ChatMedia", empty)
+            val failing = async { failedQuery.loadAll() }
             networkDrops(during = down)
-            assertTrue(failing.await() is DbException.Network)
-            val failed = held.projection.first { it.error != null }
-            assertEquals(listOf("x1"), failed.rows.map { it.id })
-            assertEquals(ReadPhase.LOADED, failed.phase)
-            assertEquals(false, failed.state?.complete)
-            assertTrue(failed.error is DbException.Network)
+            down.release()
+            eventually("the held page reached the transport") { transport.calls.count { it.operationName == "ChatMedia" } == 7 }
+            assertTrue("a media load without network keeps waiting", !failing.isCompleted)
+            DBlayer.database.setOnline(true)
+            awaitWithin("the media load after the network returned") { failing.await() }
+            assertEquals(8, transport.calls.count { it.operationName == "ChatMedia" })
+            val complete = held.projection.first { it.state?.complete == true }
+            assertEquals(listOf("x1"), complete.rows.map { it.id })
+            assertEquals(ReadPhase.LOADED, complete.phase)
+            assertEquals(null, complete.error)
             held.close()
         } finally {
             preload.release()

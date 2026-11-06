@@ -22,6 +22,10 @@ import javax.crypto.spec.OAEPParameterSpec
 import javax.crypto.spec.PSource
 import javax.crypto.spec.SecretKeySpec
 
+internal class RequestPurpose(val value: NetworkPurpose) : kotlin.coroutines.AbstractCoroutineContextElement(Key) {
+    companion object Key : kotlin.coroutines.CoroutineContext.Key<RequestPurpose>
+}
+
 /** An encrypted server that opens every sealed request with the fixture key and seals the answer, so tests run the real encrypted session path and fake only the HTTP exchange. */
 class SealedServer(private val deduplicate: Boolean = false, private val answer: suspend (path: String, body: JsonObject) -> JsonObject) : EncryptedHttp {
     companion object {
@@ -87,7 +91,7 @@ class SealedServer(private val deduplicate: Boolean = false, private val answer:
             if (it.first != stable) throw DbException.Invalid("request ID reused with different content")
             return EncryptedReply(200u, it.second)
         }
-        val reply = try { answer(path, sent) } catch (failure: DbException) {
+        val reply = try { kotlinx.coroutines.withContext(RequestPurpose(purpose)) { answer(path, sent) } } catch (failure: DbException) {
             when (failure) {
                 is DbException.Http -> return EncryptedReply(failure.status, "")
                 is DbException.Session -> buildJsonObject { put("error", failure.code.name) }

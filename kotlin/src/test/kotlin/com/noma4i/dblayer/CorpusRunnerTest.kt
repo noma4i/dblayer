@@ -9,6 +9,8 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.sync.withPermit
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
@@ -413,24 +415,28 @@ private class DatabaseRunner {
     }
 }
 
+private suspend fun runCorpus(file: java.io.File): String? {
+    val runner = DatabaseRunner()
+    val lines = file.readLines().filter { it.isNotBlank() }.drop(1)
+    var red: String? = null
+    for ((index, line) in lines.withIndex()) {
+        val step = Json.parseToJsonElement(line).jsonObject
+        val expected: JsonElement = step["out"] ?: JsonArray(emptyList())
+        val got = JsonArray(runner.apply(step))
+        if (expected != got) { red = "${file.name} step ${index + 1} input ${step["in"]} expected $expected got $got"; break }
+    }
+    runner.mock.releaseAll()
+    runner.database?.closeDatabase()
+    return red
+}
+
 class CorpusRunnerTest {
     @Test
-    fun theSharedCorpusIsGreenThroughTheKotlinWrapper() = bounded(timeoutMillis = 300_000) {
+    fun theSharedCorpusIsGreenThroughTheKotlinWrapper() = bounded {
         val files = corpusDirectory.listFiles { file -> file.extension == "jsonl" }!!.sortedBy { it.name }
         assertTrue(files.isNotEmpty())
-        val red = ArrayList<String>()
-        for (file in files) {
-            val runner = DatabaseRunner()
-            val lines = file.readLines().filter { it.isNotBlank() }.drop(1)
-            for ((index, line) in lines.withIndex()) {
-                val step = Json.parseToJsonElement(line).jsonObject
-                val expected: JsonElement = step["out"] ?: JsonArray(emptyList())
-                val got = JsonArray(runner.apply(step))
-                if (expected != got) { red.add("${file.name} step ${index + 1} input ${step["in"]} expected $expected got $got"); break }
-            }
-            runner.mock.releaseAll()
-            runner.database?.closeDatabase()
-        }
+        val gate = kotlinx.coroutines.sync.Semaphore(6)
+        val red = files.map { file -> async(kotlinx.coroutines.Dispatchers.Default) { gate.withPermit { runCorpus(file) } } }.awaitAll().filterNotNull()
         assertTrue("red traces:\n" + red.joinToString("\n"), red.isEmpty())
     }
 }

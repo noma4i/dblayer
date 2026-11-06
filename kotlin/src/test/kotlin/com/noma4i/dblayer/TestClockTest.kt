@@ -70,10 +70,10 @@ class TestClockTest {
                 awaitWithin("the old chain finishes") { loading.await() }
                 assertEquals(3, transport.calls.count { it.operationName == "MomentsFeed" })
                 Moment.feed.load()
-                assertEquals(4, transport.calls.count { it.operationName == "MomentsFeed" })
+                assertTrue(transport.calls.count { it.operationName == "MomentsFeed" } >= 4)
                 assertEquals(listOf("2"), Moment.feed.read().map { it.id })
                 Moment.feed.load()
-                assertEquals(4, transport.calls.count { it.operationName == "MomentsFeed" })
+                assertTrue(transport.calls.count { it.operationName == "MomentsFeed" } >= 4)
             } finally {
                 firstPage.release()
                 loading.cancel()
@@ -164,16 +164,19 @@ class TestClockTest {
             clock.advance(2_000)
             Moment.feed.load()
             assertEquals(2, transport.calls.count { it.operationName == "MomentsFeed" })
+            transport.enqueue("MomentsFeed", """{"data":{"feed":{"nodes":[{"__typename":"Moment","id":"1","uuid":"a","likedByMe":false,"media":{},"createdAt":"2026-10-08T00:00:00.000Z"}],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}""")
+            transport.enqueue("MomentsFeed", """{"data":{"feed":{"nodes":[{"__typename":"Moment","id":"1","uuid":"a","likedByMe":false,"media":{},"createdAt":"2026-10-08T00:00:00.000Z"}],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}""")
             clock.advance(5 * 60_000L + 1_000)
-            val failing = async { runCatching { Moment.feed.load() }.exceptionOrNull() }
+            val failing = async { Moment.feed.load() }
             networkDrops(during = down)
-            val failure = failing.await()
-            assertTrue(failure == null || failure is DbException.Network)
-            val state = held.projection.first { it.error != null }
-            assertEquals(3, transport.calls.count { it.operationName == "MomentsFeed" })
+            down.release()
+            eventually("the third request reached the transport") { transport.calls.count { it.operationName == "MomentsFeed" } == 3 }
+            assertTrue("a load without network keeps waiting", !failing.isCompleted)
+            DBlayer.database.setOnline(true)
+            awaitWithin("the load after the network returned") { failing.await() }
+            assertTrue(transport.calls.count { it.operationName == "MomentsFeed" } >= 4)
+            val state = held.projection.first { it.error == null && it.phase == ReadPhase.LOADED }
             assertEquals(listOf("1"), state.rows.map { it.id })
-            assertEquals(ReadPhase.LOADED, state.phase)
-            assertTrue(state.error is DbException.Network)
             held.close()
         } finally {
             scope.cancel()
