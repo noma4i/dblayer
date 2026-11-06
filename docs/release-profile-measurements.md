@@ -114,7 +114,7 @@ Android reductions are 39.1% and 38.4%. The iOS archive reduction is 24.1%.
 The selected Android `.text` sections occupy 6008576 and 5115332 bytes.
 The Android source hash check passes, and archive-generated Kotlin has the same SHA256 as the host-generated bindings used by the JVM tests.
 
-## Build compatibility
+## Build result
 
 The selected manifest produced a 31139208-byte iOS device archive with `strip=symbols`.
 Generating Swift from that archive produced a nonempty 287719-byte source file.

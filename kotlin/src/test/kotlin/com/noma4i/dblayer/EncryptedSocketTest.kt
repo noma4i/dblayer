@@ -53,7 +53,7 @@ class EncryptedSocketTest {
     }
 
     @Test
-    fun exchangesTextOnTheConfiguredPathWithoutLegacyAuthentication() = bounded {
+    fun exchangesTextOnTheConfiguredPathWithoutAuthorizationHeaders() = bounded {
             MockWebServer().use { server ->
                 val received = CompletableDeferred<String>()
                 server.enqueue(MockResponse().withWebSocketUpgrade(object : WebSocketListener() {

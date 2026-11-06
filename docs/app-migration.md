@@ -106,12 +106,8 @@ The platform wrappers no longer expose these calls. Each one has an outcome in t
 | --- | --- |
 | `DB.resume()` / `DBlayer.resume()` | Nothing. The core reloads stale relations on foreground, on network return and after sign-in. |
 | `flush` | Nothing. The queue of writes is sent by the core. Read the outcome of each write from its receipt. |
-| `resumeUploads` | Nothing. The core resumes uploads. |
 | `Query.warm()` | Nothing. Reads and streams fill the memory themselves. |
 | `ValueStream.reach(revision)` / `Projected.shown(revision)` | Read the outcome of the receipt of the write. |
 | `ValueStream.resync()` | Nothing. A projection that meets a delta it cannot apply waits for the next snapshot. |
-| `DB.refreshPreloads()` | Nothing. Declare `preload` scopes in the `.dbl` file. The core loads them. |
-| `DB.retryAll()` | Nothing. The queue repeats by itself. Use `retry(action)` for one record. |
 | `OperationReceipt.outcome()` (batch outcome) | Read the outcome of the receipt of each item. |
 | `Projected.loaded()` | Read the result of `begin_load()` for the relation. |
-| `DB.setListening(_:)` and the `listening` argument of `open` | Nothing. The subscription of the server lives only while a reader wants it. |

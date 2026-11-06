@@ -34,7 +34,7 @@ private fun enqueuePresigns(mock: MockTransport) {
     }
 }
 
-internal interface LegacySqlite : Library {
+internal interface Sqlite3Library : Library {
     fun sqlite3_open(path: String, database: PointerByReference): Int
     fun sqlite3_exec(database: Pointer, sql: String, callback: Pointer?, context: Pointer?, error: Pointer?): Int
     fun sqlite3_close(database: Pointer): Int

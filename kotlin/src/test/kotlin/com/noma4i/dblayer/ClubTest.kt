@@ -119,7 +119,7 @@ class ClubTest {
                 val receipt = Letter.send(AccountScope.current(), chatId = "c1", text = "held", at = 1)
                 val id = requireNotNull(receipt.optimisticValue).id
                 closeForCleanup()
-                val sqlite = Native.load("sqlite3", LegacySqlite::class.java)
+                val sqlite = Native.load("sqlite3", Sqlite3Library::class.java)
                 val handle = PointerByReference()
                 check(sqlite.sqlite3_open(requireNotNull(config.path), handle) == 0)
                 val changed = sqlite.sqlite3_exec(handle.value, "DROP TABLE IF EXISTS op_effect_value; DROP TABLE IF EXISTS op_effect; DROP TABLE IF EXISTS scope_revision; UPDATE manifest SET value = 'old' WHERE key = 'format_version'", null, null, null)
