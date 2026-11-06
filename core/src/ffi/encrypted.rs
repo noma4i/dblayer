@@ -74,7 +74,7 @@ pub(super) fn wire(
     transport: Arc<dyn Transport>,
     retries: Option<Arc<RetryProgress>>,
 ) -> Result<Wiring, DbError> {
-    let seal = crate::owners::session_seal::SealConfig::new(&encrypted, clock.clone()).map_err(session_failure)?;
+    let seal = crate::owners::session_seal::SealConfig::new(&encrypted, clock.clone()).map_err(|error| DbError::Invalid { detail: format!("{error:?}") })?;
     let client = EncryptedClient::new(&encrypted, Arc::new(ForeignHttp(http)), Arc::new(ForeignCredentials(credentials)), db.clone(), clock.clone())
         .map_err(|error| DbError::Invalid { detail: error.to_string() })?;
     let client = match retries {
