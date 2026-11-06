@@ -20,19 +20,7 @@ A query is plain data that the core compiles to SQL. Rows cross as cells, not as
 
 The core hands a row to Swift and Kotlin as a `WireRow`: the id, a layout hash, one cell per field, the sync state and the upload state. A cell is null, a bool, an int, a real, a text, a sequence or a keyed list. An object with a declared type is a sequence of its members in declared order, an array of such objects is a sequence of sequences, and a field without a declared shape (`raw`, an untyped object, a file) is a keyed list or a sequence. A null value and an absent value are the same cell.
 
-Each `WireRow` carries the revision of its stored value, including rows returned by `peekRow`. Compare revisions before replacing a newer value with a cached row.
-
-```swift
-let cached = try DB.database.peekRow(model: "User", rowId: userId)
-let revision = cached?.revision
-```
-
-```kotlin
-val cached = DBlayer.database.peekRow("User", userId)
-val revision = cached?.revision
-```
-
-The generated model reads the cells by position and builds itself once per revision. The layout hash comes from the declared fields (names, keys, shapes, order), and the generated model carries the same hash. A row with another hash is refused with `Invalid`, so an app built from an older `.dbl` never reads cells in the wrong order. A numeric id inside a free-shaped value reads as text.
+Each `WireRow` carries the revision of its stored value. The generated model reads cells by position and checks the layout hash against its declaration.
 
 ## Parts of the core
 
@@ -40,38 +28,35 @@ The generated model reads the cells by position and builds itself once per revis
 | ---- | -------------- |
 | `identity`, `value` | Row ids, list keys, scalar kinds, null rules, order keys |
 | `schema`, `ddl` | Model specification, validation, tables and indexes |
-| `store`, `commit` | SQLite storage, atomic commits, revisions, tombstones, query windows |
+| `owners` | Execution and state for lifecycle, session, network, calls, reads, writes, and Store |
+| `store` | SQLite storage, atomic commits, revisions, tombstones, query windows |
 | `query` | Conditions, ordering and SQL compilation |
 | `read` | Landing plans for server data, reading of connection payloads, load-more verdicts |
-| `write`, `operation` | Write plans, cascade envelopes, the durable outbox, quarantine |
+| `write`, `operation` | Write values, cascade plans, and stored operation data |
 | `syncstate` | The stored sync state of every unconfirmed record, derived from the outbox |
-| `db` | The database object: reads, writes, cache, live results, files |
+| `ffi` | Database entry points, platform transport, streams, and value records |
 | `files` | Attachment storage |
-| `sync` | Loading, pagination, mutations, subscriptions, refetching |
-| `transport`, `pacing` | The transport interface, retry rules, event specs, the scripted mock (tests and stress runs only), clocks, backoff, throttling, debouncing, fetch coalescing, counters |
+| `upload` | Upload declarations and values |
+| `transport`, `pacing` | Network transport, clocks, and retry timing |
+| `lifecycle` | Session admission |
+
+The schema groups model declarations by responsibility: fields and associations, relations, actions, and validation errors.
+The model specification remains in `schema/mod.rs` and exports these declarations.
+The generator groups declaration parsing and validation by fields, selections, and operations.
 
 ## Key ideas
 
-- **One way to change data.** Every change is a commit: one SQLite transaction, one revision. Caches, the queue and files change only inside commits.
-- **Live reads.** Observers depend on models, lists and rows. A commit wakes only observers whose dependencies it touched. A query for a set of ids depends on those rows and is found by a reverse index from row to query, so a commit costs work in proportion to the rows it touched and the queries that depend on the whole model, not to every query of the model. The rule is in [live data](live-data.md#what-a-query-depends-on).
-- **Value bridge.** A stream sends a snapshot, then deltas keyed by id, in the epoch of the session. The screen keeps its own projection, see [value bridge](value-bridge.md).
-- **One owner per stream.** A stream is owned by the core. The wrappers hold a projection of its values and no registry, see [live data](live-data.md).
-- **Normalized storage.** No table holds JSON text or a blob. Scalars are columns, lists and arrays are child tables, and values without a declared shape are rows of a node table. The outbox keeps its row ids, input, prior values and upload parts in child tables, its error kind and message and upload progress in columns, and the error extensions of an operation, an upload item, a record's sync state and an upload in node tables (`op_error`, `sync_row_error`, `sync_upload_error`). Query windows keep their ids in a child table, quarantined payloads are node rows, a pending reset is stored in columns, and model fingerprints are hashes.
-
-Typed members keep their columns when another member contains unrestricted data. Only that unrestricted subtree uses a node table. Model fingerprints include generated table and index statements. A change to a server model recreates the cache of all server models on opening.
-- **Sync state is stored.** The state of every unconfirmed record lives in a small table written by the same commit that changes the queue, so it is cheap to read and to query.
+- **Store commits.** The Store applies batches in SQLite transactions and assigns revisions.
+- **Live reads.** Streams deliver values from the core. See [live data](live-data.md).
+- **Value bridge.** List streams send snapshots and deltas in a session epoch. The screen keeps its own projection. See [value bridge](value-bridge.md).
+- **Normalized storage.** Model scalars use columns, lists and arrays use child tables, and unrestricted values use node tables.
+- **Sync state is stored.** Tables hold operation and upload state alongside model data.
 - **Local first.** Reads come from SQLite. The network only fills it.
 - **One mechanism per question.** Duplicate mechanisms and duplicate names are treated as defects and checked by `scripts/check_zoo.sh`.
 
 ## Database tables
 
-A file the build does not recognise is dropped and created again when the database opens, so there is no migration. Row data, search, outbox and caches all use typed columns.
-
-A reset records its complete model list in one transaction before clearing data. An interrupted reset resumes from that complete list when the database opens.
-
-Row identity includes the model and id. Pending writes, recovery and temporary-id replacement keep records of different models separate, even with identical ids.
-
-The store assigns list order keys while it writes. Removed members release their keys before additions, regardless of position. A requested key that another member holds moves to the next free key, so concurrent writers and rows joining one list in a single commit never collide.
+SQLite stores model data, window membership, operations, and upload state. The file table can also hold attachment bytes.
 
 | Table | Holds |
 | ----- | ----- |

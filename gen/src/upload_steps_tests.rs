@@ -13,7 +13,7 @@ fn xfer_steps_declared_in_dbl() {
     assert!(models[1].upload_steps.is_none(), "a model without an upload action carries no steps");
 
     let cases = [
-        ("upload action without the block", format!("{MODEL}"), "3:", "declare the steps of the upload once"),
+        ("upload action without the block", MODEL.to_string(), "3:", "declare the steps of the upload once"),
         ("second block", format!("uploads do\n  create_blob :A\nend\nuploads do\n  create_blob :B\nend\n{MODEL}"), "4:", "declared once per project"),
         ("empty block", format!("uploads do\nend\n{MODEL}"), "1:", "declares neither `create_blob` nor `multipart`"),
         ("unknown step", format!("uploads do\n  presign :A\nend\n{MODEL}"), "2:", "knows `create_blob` and `multipart`"),

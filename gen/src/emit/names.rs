@@ -45,7 +45,7 @@ fn typed_fields<'a>(root: &'a FieldSpec, out: &mut Vec<&'a FieldSpec>) {
     root.fields.iter().for_each(|inner| typed_fields(inner, out));
 }
 
-fn declared_in_results<'a>(operations: &'a [OperationCall]) -> Vec<&'a FieldSpec> {
+fn declared_in_results(operations: &[OperationCall]) -> Vec<&FieldSpec> {
     let mut out = Vec::new();
     operations.iter().filter_map(|operation| operation.result.as_ref()).for_each(|root| typed_fields(root, &mut out));
     out

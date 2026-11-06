@@ -173,7 +173,7 @@ fn container(line: &str) -> Option<(String, bool)> {
     if word == "companion" { return Some(("companion".to_string(), false)); }
     let word = if word == "enum" && rest.split_whitespace().nth(1) == Some("class") { words.next(); "class" } else { word };
     if !["struct", "enum", "class", "extension", "object", "interface", "protocol", "actor"].contains(&word) { return None; }
-    let named = words.next().map(|next| member_name(next)).filter(|name| !name.is_empty());
+    let named = words.next().map(member_name).filter(|name| !name.is_empty());
     Some(named.map_or_else(|| (word.to_string(), true), |name| (name, false)))
 }
 
