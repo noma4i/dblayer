@@ -128,8 +128,25 @@ impl RoundsState {
 
     fn started(&mut self, request_id: RequestId, round_id: RoundId, epoch: Epoch, fx: &mut Fx) {
         match self.round {
-            Round::Requested { epoch: asked, request_id: current } if current == request_id && asked == epoch => self.round = Round::Running { round_id, epoch, next: None, ended: false },
+            Round::Requested { epoch: asked, request_id: current } if current == request_id && asked == epoch => {
+                self.round = Round::Running { round_id, epoch, next: None, ended: false };
+                if !self.busy(epoch) {
+                    fx.push(Effect::Run(RoundsEffect::EndJob { round_id }));
+                }
+            }
             _ => fx.push(Effect::Run(RoundsEffect::EndJob { round_id })),
+        }
+    }
+
+    fn idle(&mut self, epoch: Epoch, transfer_id: TransferId, fx: &mut Fx) {
+        let Some(ids) = self.active.get_mut(&epoch) else { return };
+        if !ids.remove(&transfer_id) || !ids.is_empty() {
+            return;
+        }
+        if let Round::Running { round_id, epoch: running, ended: false, .. } = self.round {
+            if running == epoch {
+                fx.push(Effect::Run(RoundsEffect::EndJob { round_id }));
+            }
         }
     }
 
@@ -194,11 +211,7 @@ impl StateOwner for Rounds {
         }
         match input {
             RoundsInput::Needed { epoch, ids } => state.needed(epoch, ids, &mut fx),
-            RoundsInput::Idle { epoch, transfer_id } => {
-                if let Some(ids) = state.active.get_mut(&epoch) {
-                    ids.remove(&transfer_id);
-                }
-            }
+            RoundsInput::Idle { epoch, transfer_id } => state.idle(epoch, transfer_id, &mut fx),
             RoundsInput::Foreground => state.foreground(&mut fx),
             RoundsInput::JobsSinkSet => state.sink_set(&mut fx),
             RoundsInput::RoundStarted { request_id, round_id, epoch } => state.started(request_id, round_id, epoch, &mut fx),

@@ -397,3 +397,22 @@ fn xfer_round_sink_set_idle() {
     let (runs, _) = step(&mut set, RoundsInput::JobsSinkSet);
     assert_eq!((runs.len(), set.round), (0, Round::Requested { epoch: 1, request_id }), "a second call changes nothing");
 }
+
+#[test]
+fn a_running_round_ends_its_job_when_the_last_transfer_of_its_epoch_goes_idle() {
+    let mut state = state(1);
+    running(&mut state, 1, 5);
+    busy(&mut state, 1, &[10, 11]);
+    let (first, _) = step(&mut state, RoundsInput::Idle { epoch: 1, transfer_id: 10 });
+    let (last, _) = step(&mut state, RoundsInput::Idle { epoch: 1, transfer_id: 11 });
+    assert_eq!((ended_jobs(&first), ended_jobs(&last)), (Vec::<u32>::new(), vec![5]));
+}
+
+#[test]
+fn a_job_that_starts_with_nothing_unfinished_ends_at_once() {
+    let mut state = state(1);
+    let request_id = requested(&mut state, 1, &[10]);
+    step(&mut state, RoundsInput::Idle { epoch: 1, transfer_id: 10 });
+    let (runs, _) = step(&mut state, RoundsInput::RoundStarted { request_id, round_id: 5, epoch: 1 });
+    assert_eq!(ended_jobs(&runs), vec![5]);
+}
