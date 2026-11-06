@@ -10,5 +10,11 @@ codegen-units = 1
 strip = "symbols"
 panic = "unwind"
 
+[profile.dev.package.rsa]
+opt-level = 3
+
+[profile.dev.package.num-bigint-dig]
+opt-level = 3
+
 [patch.crates-io]
 statig_macro = { path = "core/vendor/statig_macro" }
