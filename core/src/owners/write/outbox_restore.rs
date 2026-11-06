@@ -46,7 +46,13 @@ impl OutboxState {
                 operation.stage = Stage::Sending;
             }
             return match answer {
-                crate::owners::session::StoredAnswer::Ok(_) => self.on_response(op_id, Vec::new(), None, Vec::new(), None, None, fx),
+                crate::owners::session::StoredAnswer::Ok(body) => {
+                    if let Some(operation) = self.ops.get_mut(&op_id) {
+                        operation.stage = Stage::Landing;
+                        operation.rows_pending = true;
+                    }
+                    self.decode_answer(op_id, body, fx)
+                }
                 _ => self.transport_failed(op_id, false, fx),
             };
         }

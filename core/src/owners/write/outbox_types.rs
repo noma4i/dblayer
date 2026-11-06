@@ -269,4 +269,6 @@ pub struct QueuedOperation {
     /// A `destroy` that waits for the rollback of the unsent `create` it cancels.
     pub cancels: Option<OpId>,
     pub restore_element: Option<(String, String)>,
+    /// A saved answer was restored: the operation is `Landing` and waits for the rows the codec reads from the saved body.
+    pub rows_pending: bool,
 }

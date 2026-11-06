@@ -212,3 +212,36 @@ fn out_prop_discard_outcome_once() {
     let outcomes = done.iter().filter(|effect| matches!(effect, OutboxEffect::TransferOutcome { outcome: OutboxOutcome::Discarded, .. })).count();
     assert_eq!((answers(&done, 801), answers(&done, 802), outcomes), (vec![OutboxAnswer::Ok], vec![OutboxAnswer::Ok], 1));
 }
+
+/// A write of the values a memory row already holds still commits and renews the expiry: the earlier timer finds a newer write and leaves the row.
+#[test]
+fn out_local_write_memory_same() {
+    let mut twin = Twin::new();
+    let first = twin.post(write(LocalWriteKind::SetEphemeral { expire_after: Some(10) }));
+    assert_eq!(kinds(&first), vec![CommitKind::LocalWrite]);
+    commit_first(&mut twin);
+    let again = twin.post(OutboxInput::LocalWrite { model: "Moment".into(), epoch: EPOCH, write: LocalWriteKind::SetEphemeral { expire_after: Some(10) }, row: "w".into(), values: "{}".into(), reply: WRITE + 1, now: Time(200) });
+    assert_eq!(kinds(&again), vec![CommitKind::LocalWrite], "the same values commit again: the write renews the expiry");
+    let committed = twin.post(OutboxInput::Committed(Committed { batch: 2, revision: 12, tables: vec!["moments".into()], models: Default::default() }));
+    assert_eq!(answers(&committed, WRITE + 1), vec![OutboxAnswer::Ok]);
+    assert!(committed.iter().any(|effect| matches!(effect, OutboxEffect::Schedule { .. })), "the new timer: {committed:?}");
+    let stale = twin.post(OutboxInput::Expire { model: "Moment".into(), row: "w".into(), due: Time(110) });
+    assert!(stale.is_empty(), "the timer of the first write does not remove the row: {stale:?}");
+    let due = twin.post(OutboxInput::Expire { model: "Moment".into(), row: "w".into(), due: Time(210) });
+    assert_eq!(kinds(&due), vec![CommitKind::RemoveRow]);
+}
+
+/// P-OUT-30: the answer of a `create` or a `destroy` without `refetch` marks no window stale, with `refetch` it marks exactly the declared pairs.
+#[test]
+fn out_prop_landing_no_stale() {
+    for (stale, marks) in [(Vec::new(), false), (vec![("Moment".to_string(), "feed".to_string())], true)] {
+        let mut twin = Twin::new();
+        let id = twin.submit("r", Policy::Rollback, false);
+        twin.committed(id);
+        twin.post(OutboxInput::Response { op_id: id, rows: server_rows(), swap: None, stale, result: None, errors: None });
+        assert_eq!(twin.store_text.contains("StaleFamilies"), marks, "{}", twin.store_text);
+        twin.committed(id);
+        let announced = twin.det.trace().iter().any(|entry| entry.effects.contains("Stale"));
+        assert_eq!(announced, marks, "the windows turn stale only for a declared refetch");
+    }
+}

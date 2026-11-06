@@ -146,6 +146,7 @@ impl OutboxState {
                 reject_error: None,
                 cancels: None,
                 restore_element: None,
+                rows_pending: false,
             },
         );
         self.next_op = self.next_op.max(op_id + 1);
@@ -381,6 +382,7 @@ impl OutboxState {
             OutboxInput::Dropped { op_id } => self.transport_failed(op_id, true, fx),
             OutboxInput::Answered { req_id, outcome } => self.answered(req_id, outcome, fx),
             OutboxInput::Refused { op_id, temporary, detail } => {
+                self.rows_arrived(op_id);
                 if self.stage_of(op_id) == Some(Stage::Sending) {
                     if let Some(operation) = self.ops.get_mut(&op_id) { operation.reject_error = Some(detail); }
                     self.transport_failed(op_id, temporary, fx);

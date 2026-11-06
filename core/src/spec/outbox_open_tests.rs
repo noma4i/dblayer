@@ -65,7 +65,7 @@ fn restored(kind: Restored, ctx: &Ctx) -> (Twin, OpId) {
 /// Observable: the effects of `Restored`. Assert: no `Send`, the batch of the end of the operation (`Land` for `Ok`, `Rollback` for a refusal) and the removal of the saved answer in it.
 #[test]
 fn out_open_saved_answer_ends_the_operation_without_a_send() {
-    for (answer, kind) in [(crate::owners::session::StoredAnswer::Ok("{}".into()), CommitKind::Land), (crate::owners::session::StoredAnswer::Http { status: 422 }, CommitKind::Rollback)] {
+    for (answer, kind) in [(crate::owners::session::StoredAnswer::Http { status: 422 }, CommitKind::Rollback)] {
         let mut twin = Twin::bare();
         twin.post(OutboxInput::RegisterOperations { declarations: vec![("Moment".into(), "update".into())] });
         let stored = StoredOp { answered: Some((41, answer)), op_id: 7, op: model_op("r", Policy::Rollback, false), error_mark: false, pending: None, attempts: 1, cycle_id: 1, restore_failed: None, restore_element: None };
@@ -177,3 +177,19 @@ fn out_ephemeral_expire() { write_check(WSt::None, WCtx::ready(), WIn::Expire); 
 
 #[test]
 fn out_ephemeral_expire_renewed() { write_check(WSt::None, WCtx { renewed: true, ..WCtx::ready() }, WIn::Expire); }
+
+/// P-OUT-20: the saved `Ok(body)` is read by the codec of the operation like a live answer, and the rows it reads land with the end of the operation.
+#[test]
+fn out_prop_restored_answer_rows() {
+    let mut twin = Twin::bare();
+    twin.post(OutboxInput::RegisterOperations { declarations: vec![("Moment".into(), "update".into())] });
+    let body = "{\"data\":{\"row\":\"saved\"}}";
+    let stored = StoredOp { answered: Some((41, crate::owners::session::StoredAnswer::Ok(body.into()))), op_id: 7, op: model_op("r", Policy::Rollback, false), error_mark: false, pending: None, attempts: 1, cycle_id: 1, restore_failed: None, restore_element: None };
+    let effects = twin.post(OutboxInput::Restored { ops: vec![stored], pending_lost: false });
+    assert!(effects.iter().all(|effect| !matches!(effect, OutboxEffect::Send { .. } | OutboxEffect::Store { .. })), "nothing lands before the body is read: {effects:?}");
+    let decoded = twin.det.trace().iter().any(|entry| entry.effects.contains("Decode") && entry.effects.contains("saved"));
+    assert!(decoded, "the saved body goes to the codec of the operation");
+    let landed = twin.post(OutboxInput::Response { op_id: 7, rows: server_rows(), swap: None, stale: Vec::new(), result: None, errors: None });
+    assert!(landed.iter().any(|effect| matches!(effect, OutboxEffect::Store { op_id: Some(7), kind: CommitKind::Land, .. })), "{landed:?}");
+    assert!(twin.store_text.contains("Rows { model: \"Moment\""), "the rows of the answer land in the batch: {}", twin.store_text);
+}

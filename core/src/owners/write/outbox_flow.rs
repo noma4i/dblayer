@@ -14,7 +14,16 @@ use crate::runtime::{Effect, Effects, Epoch, Outbound};
 
 
 impl OutboxState {
+    /// The rows of a saved answer arrived: the operation goes on as one whose live answer arrived.
+    pub(super) fn rows_arrived(&mut self, op_id: OpId) {
+        if let Some(operation) = self.ops.get_mut(&op_id).filter(|operation| operation.rows_pending && operation.stage == Stage::Landing) {
+            operation.rows_pending = false;
+            operation.stage = Stage::Sending;
+        }
+    }
+
     pub(super) fn on_response(&mut self, op_id: OpId, rows: Vec<(String, Vec<RowValue>)>, swap: Option<(String, String)>, stale: Vec<(String, String)>, result: Option<String>, errors: Option<bool>, fx: &mut Effects<Outbox>) {
+        self.rows_arrived(op_id);
         if self.stage_of(op_id) != Some(Stage::Sending) {
             return;
         }
@@ -228,17 +237,20 @@ impl OutboxState {
 }
 
 impl OutboxState {
+    /// The answer of the server is read into rows outside the actor: the codec of the operation is the same for a live and a saved answer.
+    pub(super) fn decode_answer(&self, op_id: OpId, body: String, fx: &mut Effects<Outbox>) {
+        let operation = &self.ops[&op_id];
+        let temp = Some(operation.op.row_id.clone()).filter(|row| crate::identity::is_temp_id(row)).or_else(|| operation.op.effects.rows.iter().find(|row| row.model == operation.op.model && crate::identity::is_temp_id(&row.row_id)).map(|row| row.row_id.clone()));
+        fx.push(Effect::Run(OutboxEffect::Decode(super::answer::DecodeJob { op_id, model: operation.op.model.clone(), action: operation.op.action.clone(), temp, body })));
+    }
+
     /// A `Mutate` of this owner got its answer. An answer of an operation that is not in flight (a late one) is dropped.
     pub(super) fn answered(&mut self, req_id: RequestId, outcome: crate::owners::session::AuthorOutcome, fx: &mut Effects<Outbox>) {
         use crate::owners::contract::ErrorClass;
         use crate::owners::session::AuthorOutcome;
         let Some(op_id) = self.ops.values().find(|operation| operation.request_id == req_id && operation.stage == Stage::Sending).map(|operation| operation.op_id) else { return };
         match outcome {
-            AuthorOutcome::Response(body) => {
-                let operation = &self.ops[&op_id];
-                let temp = Some(operation.op.row_id.clone()).filter(|row| crate::identity::is_temp_id(row)).or_else(|| operation.op.effects.rows.iter().find(|row| row.model == operation.op.model && crate::identity::is_temp_id(&row.row_id)).map(|row| row.row_id.clone()));
-                fx.push(Effect::Run(OutboxEffect::Decode(super::answer::DecodeJob { op_id, model: operation.op.model.clone(), action: operation.op.action.clone(), temp, body })));
-            }
+            AuthorOutcome::Response(body) => self.decode_answer(op_id, body, fx),
             AuthorOutcome::Error { class, error } => {
                 if let Some(operation) = self.ops.get_mut(&op_id) { operation.reject_error = Some(super::failure::of_session(&error, class)); }
                 self.transport_failed(op_id, matches!(class, ErrorClass::Network | ErrorClass::Server), fx);

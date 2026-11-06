@@ -281,7 +281,10 @@ fn out_open_restores_answered() {
     let answered = StoredOp { answered: Some((41, StoredAnswer::Ok("{}".into()))), ..stored(7, "r") };
     let effects = restore(&mut twin, vec![blocker, answered]);
     assert_eq!(twin.stage(7), Some(St::Landing), "the row is not awaited: the server applied the operation");
-    assert!(kinds(&effects).contains(&CommitKind::Land) && sends(&effects) == 0, "{effects:?}");
+    assert!(kinds(&effects).is_empty() && sends(&effects) == 0, "the rows are read first: {effects:?}");
+    let landed = twin.post(OutboxInput::Response { op_id: 7, rows: server_rows(), swap: None, stale: Vec::new(), result: None, errors: None });
+    assert!(kinds(&landed).contains(&CommitKind::Land) && sends(&landed) == 0, "{landed:?}");
+    assert_eq!(twin.stage(7), Some(St::Landing));
 }
 
 #[test]
@@ -346,5 +349,6 @@ fn out_prop_restore_answer() {
     effects.extend(ready(&mut twin));
     effects.extend(twin.post(OutboxInput::Online(Online(true))));
     effects.extend(twin.post(OutboxInput::Tick(crate::runtime::Time(5))));
+    effects.extend(twin.post(OutboxInput::Response { op_id: 7, rows: server_rows(), swap: None, stale: Vec::new(), result: None, errors: None }));
     assert_eq!((sends(&effects), kinds(&effects)), (0, vec![CommitKind::Land]));
 }
