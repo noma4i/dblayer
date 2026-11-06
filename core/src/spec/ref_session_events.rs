@@ -55,6 +55,7 @@ impl Session {
             Input::Restored { epoch, pending } => {
                 self.state = state;
                 out.effects.push(Effect::RestoreClassified { epoch });
+                self.restored = true;
                 let early = std::mem::take(&mut self.released);
                 let released = matches!((&self.state, &pending), (State::PendingHeld { pending: held }, Some(saved)) if held.request_id == saved.request_id && (early.contains(&saved.request_id) || saved.owner == Some(Owner::Detached) && held.owner != saved.owner));
                 if let (State::PendingHeld { pending: held }, true) = (self.state.clone(), released) {
@@ -90,7 +91,7 @@ impl Session {
                 State::PendingHeld { pending } if pending.request_id == req_id => self.start_calling(Pending { author: None, owner: Some(Owner::Detached), ..pending }, out),
                 State::Landing { pending, batch, answer, identity, sequence, server_ended } if pending.request_id == req_id => self.state = State::Landing { pending: Pending { author: None, owner: Some(Owner::Detached), ..pending }, batch, answer, identity, sequence, server_ended },
                 State::Blocked { pending: Some(pending), reason, landing } if pending.request_id == req_id => self.state = State::Blocked { pending: Some(Pending { author: None, owner: Some(Owner::Detached), ..pending }), reason, landing },
-                State::Idle => {
+                State::Idle if !self.restored => {
                     self.released.insert(req_id);
                     self.state = State::Idle;
                 }

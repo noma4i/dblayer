@@ -274,6 +274,7 @@ pub struct Session {
     pub restored_direct: Option<Pending>,
     pub restored_detached: Option<Pending>,
     pub released: BTreeSet<RequestId>,
+    pub restored: bool,
     restore_error: Option<String>,
     operations: Vec<Operation>,
     next_request: RequestId,
@@ -313,7 +314,7 @@ fn is_ended(cause: EndCause) -> bool { cause != EndCause::Other }
 
 impl Session {
     pub fn new(operations: Vec<Operation>, online: Option<bool>) -> Self {
-        Self { state: State::Idle, credential: None, queue: VecDeque::new(), online, epoch: 0, pub_state: PubState::Session, after_publish: None, subscribers: BTreeSet::new(), restored_direct: None, restored_detached: None, released: BTreeSet::new(), restore_error: None, operations, next_request: 1, next_batch: 1, next_attempt: 1, next_secret: 1, restore_ready: false, restore_floor: 0, adopt: false, held: None, reported: (0, RetryPhase::Idle) }
+        Self { state: State::Idle, credential: None, queue: VecDeque::new(), online, epoch: 0, pub_state: PubState::Session, after_publish: None, subscribers: BTreeSet::new(), restored_direct: None, restored_detached: None, released: BTreeSet::new(), restored: false, restore_error: None, operations, next_request: 1, next_batch: 1, next_attempt: 1, next_secret: 1, restore_ready: false, restore_floor: 0, adopt: false, held: None, reported: (0, RetryPhase::Idle) }
     }
 
     fn batch(&mut self) -> BatchId {

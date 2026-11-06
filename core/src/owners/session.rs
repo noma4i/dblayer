@@ -303,6 +303,7 @@ pub struct SessionState {
     restored_direct: Option<PendingCall>,
     restored_detached: Option<PendingCall>,
     released: BTreeSet<RequestId>,
+    restored: bool,
     restored_active: Option<RequestId>,
     restored_answer: Option<SessionAnswer>,
     restore_error: Option<String>,

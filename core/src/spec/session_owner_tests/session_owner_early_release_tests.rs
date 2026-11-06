@@ -30,6 +30,8 @@ fn sess_release_before_restored() {
     let mut cleared = Twin::new();
     cleared.feed(Input::Release { req_id: 3 });
     cleared.feed(Input::Restored { epoch: EPOCH, pending: None });
+    assert!(cleared.feed(Input::Release { req_id: 5 }).is_empty());
+    assert!(cleared.reference.released.is_empty(), "a Release in Idle after Restored is not remembered");
     cleared.feed(open(Some((CRED, 6)), Some(transfer_pair()), false, Secret::Present(CRED)));
     assert!(matches!(cleared.reference.state, RefState::PendingHeld { .. }), "a Release cleared at Restored does not outlive it");
 }

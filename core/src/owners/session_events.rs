@@ -70,6 +70,7 @@ impl SessionState {
             SessionInput::Restored { epoch, pending, .. } => {
                 self.phase = phase;
                 fx.push(SessionEffect::RestoreClassified { epoch });
+                self.restored = true;
                 let early = std::mem::take(&mut self.released);
                 let released = matches!((&self.phase, &pending), (SessionPhase::PendingHeld { pending: held }, Some(saved)) if held.request_id == saved.request_id && (early.contains(&saved.request_id) || saved.owner == Some(MutateOwner::Detached) && held.owner != saved.owner));
                 if let (SessionPhase::PendingHeld { pending: held }, true) = (self.phase.clone(), released) {
@@ -105,7 +106,7 @@ impl SessionState {
                 SessionPhase::PendingHeld { pending } if pending.request_id == req_id => self.start_calling(PendingCall { author: None, owner: Some(MutateOwner::Detached), ..pending }, fx),
                 SessionPhase::Landing { pending, batch, answer, identity, sequence, server_ended } if pending.request_id == req_id => self.phase = SessionPhase::Landing { pending: PendingCall { author: None, owner: Some(MutateOwner::Detached), ..pending }, batch, answer, identity, sequence, server_ended },
                 SessionPhase::Blocked { pending: Some(pending), reason, landing } if pending.request_id == req_id => self.phase = SessionPhase::Blocked { pending: Some(PendingCall { author: None, owner: Some(MutateOwner::Detached), ..pending }), reason, landing },
-                SessionPhase::Idle => {
+                SessionPhase::Idle if !self.restored => {
                     self.released.insert(req_id);
                     self.phase = SessionPhase::Idle;
                 }
