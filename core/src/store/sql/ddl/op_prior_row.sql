@@ -1,1 +1,1 @@
-CREATE INDEX IF NOT EXISTS op_prior_row ON op_value (name, text, seq, parent) WHERE item_position = -1 AND part = 'prior'
+CREATE INDEX IF NOT EXISTS op_prior_row ON op_value (name, text, seq, parent) WHERE part = 'prior'

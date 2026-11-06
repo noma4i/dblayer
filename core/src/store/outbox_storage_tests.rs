@@ -104,12 +104,12 @@ fn graphql_extensions_survive_reopen_in_every_error_owner_and_leave_with_it() {
         }
         let fields = extensions.as_ref().map(|value| value["fields"].clone()).unwrap_or_default();
         if fields.get("context").is_some() {
-            assert_eq!(count(&store, &format!("SELECT COUNT(*) FROM op_error WHERE seq = {seq} AND item_position = -1 AND name = 'detail' AND kind = 4 AND text = 'refused'")), 1, "a string field has no JSON quotes");
-            assert_eq!(count(&store, &format!("SELECT COUNT(*) FROM op_error WHERE seq = {seq} AND item_position = -1 AND name = 'limit' AND kind = 2 AND whole = 3")), 1);
-            assert_eq!(count(&store, &format!("SELECT COUNT(*) FROM op_error AS context JOIN op_error AS values_node ON values_node.seq = context.seq AND values_node.item_position = context.item_position AND values_node.parent = context.node WHERE context.seq = {seq} AND context.item_position = -1 AND context.name = 'context' AND context.kind = 5 AND values_node.name = 'values' AND values_node.kind = 6")), 1, "an object field holds typed child nodes");
+            assert_eq!(count(&store, &format!("SELECT COUNT(*) FROM op_error WHERE seq = {seq} AND name = 'detail' AND kind = 4 AND text = 'refused'")), 1, "a string field has no JSON quotes");
+            assert_eq!(count(&store, &format!("SELECT COUNT(*) FROM op_error WHERE seq = {seq} AND name = 'limit' AND kind = 2 AND whole = 3")), 1);
+            assert_eq!(count(&store, &format!("SELECT COUNT(*) FROM op_error AS context JOIN op_error AS values_node ON values_node.seq = context.seq AND values_node.parent = context.node WHERE context.seq = {seq} AND context.name = 'context' AND context.kind = 5 AND values_node.name = 'values' AND values_node.kind = 6")), 1, "an object field holds typed child nodes");
         }
         if fields.get("nothing").is_some() {
-            assert_eq!(count(&store, &format!("SELECT COUNT(*) FROM op_error WHERE seq = {seq} AND item_position = -1 AND name = 'nothing' AND kind = 0 AND text IS NULL")), 1, "a null field stays null");
+            assert_eq!(count(&store, &format!("SELECT COUNT(*) FROM op_error WHERE seq = {seq} AND name = 'nothing' AND kind = 0 AND text IS NULL")), 1, "a null field stays null");
         }
         assert_eq!(nodes(&store, "sync_row_error") > 0, extensions.is_some(), "sync_row_error");
         send(&store, vec![OperationTransition::Retry { seq }]);

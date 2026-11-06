@@ -88,15 +88,15 @@ pub fn attach_extensions(error: &mut Option<OperationFailure>, extensions: Optio
 }
 
 pub fn write_operation_error(connection: &Connection, seq: i64, failure: Option<&OperationFailure>) -> Result<()> {
-    write_extensions(connection, "op_error", &["seq", "item_position"], &[SqlValue::Integer(seq), SqlValue::Integer(-1)], failure)
+    write_extensions(connection, "op_error", &["seq"], &[SqlValue::Integer(seq)], failure)
 }
 
 pub fn operation_extensions(connection: &Connection, seq: Option<i64>) -> Result<HashMap<i64, GraphqlExtensions>> {
     let (filter, params) = match seq {
-        Some(seq) => ("seq = ?1 AND item_position = -1", vec![SqlValue::Integer(seq)]),
-        None => ("item_position = -1", Vec::new()),
+        Some(seq) => ("seq = ?1", vec![SqlValue::Integer(seq)]),
+        None => ("seq IS NOT NULL", Vec::new()),
     };
-    Ok(read_extensions(connection, "op_error", &["seq", "item_position"], filter, &params)?.into_iter()
+    Ok(read_extensions(connection, "op_error", &["seq"], filter, &params)?.into_iter()
         .filter_map(|(owner, extensions)| match owner.first() {
             Some(SqlValue::Integer(seq)) => Some((*seq, extensions)),
             _ => None,
@@ -131,22 +131,14 @@ pub fn write_rows(connection: &Connection, seq: i64, row_ids: &[RowId]) -> Resul
 }
 
 pub fn write_value(connection: &Connection, seq: i64, part: &str, value: Option<&Value>) -> Result<()> {
-    write_item_value(connection, seq, -1, part, value)
-}
-
-pub fn write_item_value(connection: &Connection, seq: i64, position: i64, part: &str, value: Option<&Value>) -> Result<()> {
-    let owner = [SqlValue::Integer(seq), SqlValue::Integer(position), SqlValue::Text(part.to_string())];
-    delete_trees(connection, "op_value", "seq = ?1 AND item_position = ?2 AND part = ?3", &owner)?;
-    value.map_or(Ok(()), |value| write_tree(connection, "op_value", &["seq", "item_position", "part"], &owner, value))
+    let owner = [SqlValue::Integer(seq), SqlValue::Text(part.to_string())];
+    delete_trees(connection, "op_value", "seq = ?1 AND part = ?2", &owner)?;
+    value.map_or(Ok(()), |value| write_tree(connection, "op_value", &["seq", "part"], &owner, value))
 }
 
 pub fn read_value(connection: &Connection, seq: i64, part: &str) -> Result<Option<Value>> {
-    read_item_value(connection, seq, -1, part)
-}
-
-pub fn read_item_value(connection: &Connection, seq: i64, position: i64, part: &str) -> Result<Option<Value>> {
-    let owner = [SqlValue::Integer(seq), SqlValue::Integer(position), SqlValue::Text(part.to_string())];
-    Ok(read_trees(connection, "op_value", &["seq", "item_position", "part"], "seq = ?1 AND item_position = ?2 AND part = ?3", &owner)?.into_iter().next().map(|(_, value)| value))
+    let owner = [SqlValue::Integer(seq), SqlValue::Text(part.to_string())];
+    Ok(read_trees(connection, "op_value", &["seq", "part"], "seq = ?1 AND part = ?2", &owner)?.into_iter().next().map(|(_, value)| value))
 }
 
 pub fn read_rows(connection: &Connection, seq: i64) -> Result<Vec<RowId>> {

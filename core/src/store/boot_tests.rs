@@ -493,11 +493,19 @@ fn a_format_change_carries_queued_operations_transfers_and_the_session_and_drops
             CREATE TABLE op_item (seq INTEGER NOT NULL, position INTEGER NOT NULL); \
             INSERT INTO blob_upload (id, seq) VALUES ('b1', 1); \
             INSERT INTO op_item (seq, position) VALUES (1, 0); \
+            DROP TABLE op_value; DROP TABLE op_error; \
+            CREATE TABLE op_value (seq INTEGER NOT NULL, item_position INTEGER NOT NULL DEFAULT -1, part TEXT NOT NULL, node INTEGER NOT NULL, parent INTEGER NOT NULL, pos INTEGER NOT NULL, name TEXT, kind INTEGER NOT NULL, whole INTEGER, fraction REAL, text TEXT, PRIMARY KEY (seq, item_position, part, node)) STRICT, WITHOUT ROWID; \
+            CREATE TABLE op_error (seq INTEGER NOT NULL, item_position INTEGER NOT NULL, node INTEGER NOT NULL, parent INTEGER NOT NULL, pos INTEGER NOT NULL, name TEXT, kind INTEGER NOT NULL, whole INTEGER, fraction REAL, text TEXT, PRIMARY KEY (seq, item_position, node)) STRICT, WITHOUT ROWID; \
+            INSERT INTO op_value (seq, item_position, part, node, parent, pos, name, kind, text) VALUES (1, -1, 'input', 0, 0, 0, 'text', 4, 'hello'); \
+            INSERT INTO op_error (seq, item_position, node, parent, pos, name, kind, text) VALUES (1, -1, 0, 0, 0, 'detail', 4, 'refused'); \
             UPDATE manifest SET value = 'old' WHERE key = 'format_version'");
     }
     let (store, report) = reopen(&path, &[messages_spec()], None);
     assert_eq!(report.recreated, Some(crate::store::ddl::RecreateReason::CoreFormat));
     assert_eq!(count(&store, "SELECT COUNT(*) FROM op WHERE action_key = 'messages:send' AND status = 'pending'"), 1, "the queued operation is carried");
+    assert_eq!(count(&store, "SELECT COUNT(*) FROM op_value WHERE seq = 1 AND part = 'input' AND name = 'text' AND text = 'hello'"), 1, "the operation input is carried without the old item column");
+    assert_eq!(count(&store, "SELECT COUNT(*) FROM op_error WHERE seq = 1 AND name = 'detail' AND text = 'refused'"), 1, "the operation error is carried without the old item column");
+    assert_eq!(count(&store, "SELECT COUNT(*) FROM pragma_table_info('op_value') WHERE name = 'item_position'") + count(&store, "SELECT COUNT(*) FROM pragma_table_info('op_error') WHERE name = 'item_position'"), 0);
     assert_eq!(count(&store, "SELECT COUNT(*) FROM sync_upload WHERE row_id = 'm1' AND transfer_id = 7 AND sent = 2 AND total = 5"), 1, "the transfer row is carried");
     assert_eq!(count(&store, "SELECT COUNT(*) FROM encrypted_session WHERE credential_digest = 'digest' AND sequence = 41"), 1, "the saved session is carried");
     for table in ["blob_upload", "blob_use", "op_item"] {
