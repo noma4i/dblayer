@@ -136,7 +136,7 @@ fn rt_prop_task_panic_fails() {
     let mut rig = rig_with(|_| Arc::new(Panicking));
     open(&mut rig, 1);
     let owner = rig.owner;
-    pump(&mut rig.det, owner, |det| saw_input(det, "TaskFailed") > 0);
+    pump(&mut rig.det, owner, |det| det.state(owner).is_some_and(|state| !state.journal(STREAM).is_empty()));
     let failed: Vec<String> = rig.det.trace().iter().filter(|entry| entry.input.starts_with("TaskFailed")).map(|entry| entry.input.clone()).collect();
     assert!(failed.contains(&format!("TaskFailed {{ id: {} }}", d::read_task(STREAM, 1))), "the snapshot read reports its stream and read");
     let journal = rig.det.state(owner).unwrap().journal(STREAM);
