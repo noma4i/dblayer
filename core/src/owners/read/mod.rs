@@ -34,3 +34,5 @@ mod rig;
 mod schema_io_tests;
 #[cfg(test)]
 mod window_io_tests;
+#[cfg(test)]
+mod windows_pin_tests;

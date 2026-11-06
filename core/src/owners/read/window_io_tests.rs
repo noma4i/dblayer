@@ -12,9 +12,9 @@ use super::rig::{admit, collector, pump, pump_for, runtime, saw_input, BatchPeer
 use super::{WindowCodec, WindowIo};
 use crate::owners::read::deliveries::Deliveries;
 use crate::owners::read::windows::{self as w, AnswerPage, WindowEffect, WindowKey, WindowOutcome, Windows, WindowsEffect, WindowsInput};
-use crate::owners::store::{RowValue, StoreWriter};
+use crate::owners::store::{RowValue, StoreInput, StoreWriter};
 use crate::owners::support::Sink;
-use crate::runtime::{Address, DetScheduler, EpochStamp};
+use crate::runtime::{Address, Cause, DetScheduler, Effect, Effects, EpochStamp, Outbound, StateOwner, Time};
 use crate::transport::{GraphQLRequest, MockTransport, Reply, Response, TransportError};
 
 const EPOCH: u64 = 1;
@@ -37,6 +37,30 @@ fn key() -> WindowKey { WindowKey { model: "Moment".into(), name: "list".into() 
 
 fn interest(id: u64) -> WindowsInput { WindowsInput::Load { key: key(), id, goal: w::Goal::First, force: false, store_revision: 0 } }
 
+struct WindowStore;
+
+impl StateOwner for WindowStore {
+    const EPOCHED: bool = false;
+    type State = Batches;
+    type Input = StoreInput;
+    type Effect = crate::owners::support::NoEffect;
+
+    fn step(state: &mut Batches, input: StoreInput) -> Effects<Self> {
+        if let StoreInput::Pin { request_id, .. } = input {
+            return vec![Effect::Send(Outbound::new(Address::<Windows>::new(2), WindowsInput::Pinned { request_id, base_revision: 0 }))];
+        }
+        BatchPeer::step(state, input).into_iter().map(|effect| match effect {
+            Effect::Send(outbound) => Effect::Send(outbound),
+            Effect::Run(effect) => match effect {},
+            _ => unreachable!(),
+        }).collect()
+    }
+
+    fn tick(_: Time) -> StoreInput { StoreInput::Idle }
+    fn epoch_ended(epoch: u64, cause: Cause) -> StoreInput { StoreWriter::epoch_ended(epoch, cause) }
+    fn closing() -> StoreInput { StoreInput::Idle }
+}
+
 struct Rig {
     det: DetScheduler,
     windows: Address<Windows>,
@@ -53,7 +77,7 @@ fn rig() -> Rig {
     let (rest, take_rest) = collector();
     let io = WindowIo::new(Some(Arc::new(mock.clone())), Arc::new(Pages), admit(), runtime.handle().clone(), take_rest);
     let mut det = DetScheduler::new(1);
-    let store = det.add::<BatchPeer>("store", batches.clone(), crate::owners::support::Discard);
+    let store = det.add::<WindowStore>("store", batches.clone(), crate::owners::support::Discard);
     let deliveries = det.add::<Sink<Deliveries>>("deliveries", Default::default(), crate::owners::support::Discard);
     let peers = w::WindowsPeers { store: Address::<StoreWriter>::new(store.index()), deliveries: Address::<Deliveries>::new(deliveries.index()) };
     let windows = det.add::<Windows>("windows", w::WindowsState::new(EPOCH, Some(true), peers), io);
