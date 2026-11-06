@@ -84,6 +84,7 @@ private func kind(of error: DbError) -> String {
   case .Session: return "session"
   case .Closed: return "closed"
   case .CorruptManifest: return "corrupt_manifest"
+  case .AlreadyExists: return "already_exists"
   }
 }
 

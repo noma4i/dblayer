@@ -38,6 +38,7 @@ mod outbox_harness;
 mod outbox_owner_tests;
 mod outbox_discard_tests;
 mod outbox_open_tests;
+mod data_rig_tests;
 mod outbox_plan_tests;
 mod outbox_cells_tests;
 mod outbox_reserve_tests;

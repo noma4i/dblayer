@@ -8,6 +8,8 @@ use crate::schema::AssociationSpec;
 use super::row_write::RowWrite;
 use super::{Reader, Store, StoreError, TombstoneRetention};
 
+const OVERLAY_ROW_LIMIT: usize = 1024;
+
 pub(crate) struct BatchWritten {
     pub revision: u64,
     pub position: u64,
@@ -116,7 +118,11 @@ impl Store {
         let mut snapshot = if writes_database || !overlay.is_empty() || !resets.is_empty() { self.overlays.next(base_revision, writes_database).ok_or_else(|| StoreError::Constraint("overlay revision is unavailable".into()))? } else { current.as_ref().clone() };
         let (changes, arms) = super::overlay_write::apply(&mut snapshot, &inner.models, overlay)?;
         combined.rows.extend(changes);
+        for change in combined.rows.iter().filter(|change| change.kind == crate::commit::RowChangeKind::Destroyed) {
+            snapshot.remove_row(&super::overlay::RowKey { model: change.row.model.to_string(), row_id: change.row.id.to_string() });
+        }
         combined.rows.extend(super::overlay_write::reset(&mut snapshot, &inner.models, &resets)?);
+        snapshot.prune_missing(OVERLAY_ROW_LIMIT, |row| Reader::new(&transaction, &inner.models).stored_row(&row.model, &row.row_id).ok().flatten().is_some());
         let position = snapshot.position;
         combined.position = position;
         if writes_database {

@@ -238,7 +238,7 @@ fn out_prop_landing_no_stale() {
         let mut twin = Twin::new();
         let id = twin.submit("r", Policy::Rollback, false);
         twin.committed(id);
-        twin.post(OutboxInput::Response { op_id: id, rows: server_rows(), swaps: Vec::new(), stale, result: None, errors: None });
+        twin.post(OutboxInput::Response { op_id: id, rows: server_rows(), swaps: Vec::new(), stale, result: None, missing: Vec::new(), errors: None });
         assert_eq!(twin.store_text.contains("StaleFamilies"), marks, "{}", twin.store_text);
         twin.committed(id);
         let announced = twin.det.trace().iter().any(|entry| entry.effects.contains("Stale"));

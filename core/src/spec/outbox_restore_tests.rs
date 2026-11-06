@@ -100,7 +100,7 @@ fn out_restoring_foreign() {
         OutboxInput::RetryDue { op_id: 1, cycle_id: 1 },
         OutboxInput::Committed(Committed { batch: 1, revision: 1, tables: Vec::new(), models: Default::default(), stale_parents: Vec::new(), position: 0 }),
         OutboxInput::Rejected(Rejected { batch: 1, reason: RejectReason::Storage("disk".into()) }),
-        OutboxInput::Response { op_id: 1, rows: Vec::new(), swaps: Vec::new(), stale: Vec::new(), result: None, errors: None },
+        OutboxInput::Response { op_id: 1, rows: Vec::new(), swaps: Vec::new(), stale: Vec::new(), result: None, missing: Vec::new(), errors: None },
         OutboxInput::TransportError { op_id: 1, temporary: true },
         OutboxInput::Dropped { op_id: 1 },
     ];
@@ -208,7 +208,7 @@ fn out_waiting_declaration_other() {
     let inputs = vec![
         OutboxInput::Online(Online(true)),
         OutboxInput::ModelsReset(ModelsReset { epoch: EPOCH, generation: 2, models: vec!["Moment".into()] }),
-        OutboxInput::Response { op_id: 7, rows: Vec::new(), swaps: Vec::new(), stale: Vec::new(), result: None, errors: None },
+        OutboxInput::Response { op_id: 7, rows: Vec::new(), swaps: Vec::new(), stale: Vec::new(), result: None, missing: Vec::new(), errors: None },
         OutboxInput::TransportError { op_id: 7, temporary: true },
         OutboxInput::Dropped { op_id: 7 },
         OutboxInput::RetryDue { op_id: 7, cycle_id: 1 },
@@ -282,7 +282,7 @@ fn out_open_restores_answered() {
     let effects = restore(&mut twin, vec![blocker, answered]);
     assert_eq!(twin.stage(7), Some(St::Landing), "the row is not awaited: the server applied the operation");
     assert!(kinds(&effects).is_empty() && sends(&effects) == 0, "the rows are read first: {effects:?}");
-    let landed = twin.post(OutboxInput::Response { op_id: 7, rows: server_rows(), swaps: Vec::new(), stale: Vec::new(), result: None, errors: None });
+    let landed = twin.post(OutboxInput::Response { op_id: 7, rows: server_rows(), swaps: Vec::new(), stale: Vec::new(), result: None, missing: Vec::new(), errors: None });
     assert!(kinds(&landed).contains(&CommitKind::Land) && sends(&landed) == 0, "{landed:?}");
     assert_eq!(twin.stage(7), Some(St::Landing));
 }
@@ -349,6 +349,6 @@ fn out_prop_restore_answer() {
     effects.extend(ready(&mut twin));
     effects.extend(twin.post(OutboxInput::Online(Online(true))));
     effects.extend(twin.post(OutboxInput::Tick(crate::runtime::Time(5))));
-    effects.extend(twin.post(OutboxInput::Response { op_id: 7, rows: server_rows(), swaps: Vec::new(), stale: Vec::new(), result: None, errors: None }));
+    effects.extend(twin.post(OutboxInput::Response { op_id: 7, rows: server_rows(), swaps: Vec::new(), stale: Vec::new(), result: None, missing: Vec::new(), errors: None }));
     assert_eq!((sends(&effects), kinds(&effects)), (0, vec![CommitKind::Land]));
 }

@@ -42,6 +42,8 @@ pub enum FailureKind {
     /// The sealed request was above the limit of the transport: the size and the limit in bytes.
     RequestTooLarge { size: u64, limit: u64 },
     Unrecognized,
+    /// The answer of the server breaks the contract of the action: a batch answer lacks the row of an element.
+    Protocol,
 }
 
 const SESSION_PREFIX: &str = "session:";
@@ -57,6 +59,7 @@ impl FailureKind {
             FailureKind::Session(code) => format!("{SESSION_PREFIX}{}", code.name()),
             FailureKind::RequestTooLarge { size, limit } => format!("{TOO_LARGE_PREFIX}{size}:{limit}"),
             FailureKind::Unrecognized => "unrecognized".into(),
+            FailureKind::Protocol => "protocol".into(),
         }
     }
 
@@ -67,6 +70,7 @@ impl FailureKind {
             "rejected" => Some(FailureKind::Rejected),
             "missing_file" => Some(FailureKind::MissingFile),
             "unrecognized" => Some(FailureKind::Unrecognized),
+            "protocol" => Some(FailureKind::Protocol),
             _ => text.strip_prefix(TOO_LARGE_PREFIX).and_then(|numbers| numbers.split_once(':')).and_then(|(size, limit)| Some(FailureKind::RequestTooLarge { size: size.parse().ok()?, limit: limit.parse().ok()? })).or_else(|| text.strip_prefix(SESSION_PREFIX).and_then(SessionCode::named).map(FailureKind::Session)),
         }
     }

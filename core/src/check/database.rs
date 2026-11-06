@@ -51,6 +51,7 @@ fn error_kind(error: &DbError) -> &'static str {
         DbError::Config { .. } => "config",
         DbError::Invalid { .. } => "invalid",
         DbError::NotFound { .. } => "not_found",
+        DbError::AlreadyExists { .. } => "already_exists",
         DbError::Database { .. } => "database",
         DbError::Sync { .. } => "sync",
         DbError::Network { detail } if detail == crate::ffi::NEEDS_NETWORK => "offline",

@@ -3,6 +3,9 @@
 ## Unreleased
 
 ### Added
+- `DbError.AlreadyExists` reports a `create` with an id that exists.
+- A batch element without a row in the answer fails with the kind `protocol`.
+- Ephemeral fields with `reset_after` return to their default after the window.
 - `subscriptionCensus` reports refused subscription events.
 - `ReadState` carries `hasMore`, `settled` and the server `total` of the window.
 - `ModelEvent` carries `position` and the rows `before` and `after`.

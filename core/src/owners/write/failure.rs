@@ -41,6 +41,9 @@ pub fn parse(error: &str) -> OperationFailure {
     serde_json::from_str(error).unwrap_or_else(|_| OperationFailure::new(FailureKind::Rejected, error))
 }
 
+/// The answer lacks what the action promised.
+pub fn protocol(message: &str) -> String { text(&OperationFailure::new(FailureKind::Protocol, message)) }
+
 /// The request never reached the server and the action does not wait for the network.
 pub fn network() -> String { NETWORK.into() }
 

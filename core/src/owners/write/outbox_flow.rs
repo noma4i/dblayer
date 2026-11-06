@@ -22,7 +22,7 @@ impl OutboxState {
         }
     }
 
-    pub(super) fn on_response(&mut self, op_id: OpId, rows: Vec<(String, Vec<RowValue>)>, swaps: Vec<(String, String)>, stale: Vec<(String, String)>, result: Option<String>, errors: Option<bool>, fx: &mut Effects<Outbox>) {
+    pub(super) fn on_response(&mut self, op_id: OpId, rows: Vec<(String, Vec<RowValue>)>, swaps: Vec<(String, String)>, stale: Vec<(String, String)>, result: Option<String>, missing: Vec<String>, errors: Option<bool>, fx: &mut Effects<Outbox>) {
         self.rows_arrived(op_id);
         if self.stage_of(op_id) != Some(Stage::Sending) {
             return;
@@ -35,6 +35,7 @@ impl OutboxState {
             operation.landed = swaps.iter().find(|(temp, _)| *temp == operation.op.row_id).or(swaps.first()).map(|(_, real)| real.clone()).or_else(|| rows.iter().find(|(model, _)| *model == operation.op.model).and_then(|(_, rows)| rows.last()).map(|row| row.row_id.clone()));
             operation.landing = rows;
             operation.swaps = swaps;
+            operation.missing = missing;
             operation.stale = stale;
             operation.result = result;
         }

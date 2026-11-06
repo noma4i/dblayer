@@ -7,7 +7,8 @@ use super::outbox_types::*;
 use crate::owners::contract::{Committed, RejectReason, Rejected};
 
 
-use crate::runtime::{Effect, Effects, ScheduleId};
+use crate::runtime::{Effect, Effects, Outbound, ScheduleId};
+use super::transfer::TransferInput;
 
 
 
@@ -63,6 +64,7 @@ impl OutboxState {
                 if let Some(operation) = self.ops.get(&op_id).filter(|operation| !operation.stale.is_empty()) {
                     fx.push(Effect::Run(OutboxEffect::Stale { families: operation.stale.clone(), revision }));
                 }
+                self.tell_missing_elements(op_id, fx);
                 let result = self.ops.get(&op_id).and_then(|operation| operation.result.clone());
                 self.finish(op_id, OutboxOutcome::Confirmed { revision, result }, true, fx);
             }
@@ -97,6 +99,17 @@ impl OutboxState {
                 }
             }
             _ => {}
+        }
+    }
+
+    /// After the batch landed: each element the answer has no row for gets `Failed{Protocol}` before the outcome of the batch reaches the others.
+    pub(super) fn tell_missing_elements(&self, op_id: OpId, fx: &mut Effects<Outbox>) {
+        let Some(operation) = self.ops.get(&op_id) else { return };
+        let (OpSource::Transfer(_), Some(transfer)) = (&operation.op.origin, self.peers.transfer) else { return };
+        let error = super::failure::protocol("the answer has no row for the element");
+        for temp in &operation.missing {
+            let key = format!("{}:{}:{}", operation.op.model, temp, operation.op.action);
+            fx.push(Effect::Send(Outbound::new(transfer, TransferInput::MutationOutcome { key, outcome: OutboxOutcome::Failed { error: error.clone() } })));
         }
     }
 

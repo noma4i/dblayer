@@ -88,6 +88,8 @@ pub enum DbError {
     Invalid { detail: String },
     #[error("not found: {detail}")]
     NotFound { detail: String },
+    #[error("row {id} of {model} already exists")]
+    AlreadyExists { model: String, id: String },
     #[error("database: {detail}")]
     Database { detail: String },
     #[error("sync: {detail}")]
@@ -115,6 +117,7 @@ impl From<crate::store::DbError> for DbError {
     fn from(error: crate::store::DbError) -> Self {
         match error {
             crate::store::DbError::NoSession { detail } => Self::NoSession { detail },
+            crate::store::DbError::AlreadyExists { model, id } => Self::AlreadyExists { model, id },
             crate::store::DbError::Store(crate::store::StoreError::CorruptManifest(detail)) => Self::CorruptManifest { detail },
             error @ (crate::store::DbError::InvalidUpload(_)
                 | crate::store::DbError::Schema(_)

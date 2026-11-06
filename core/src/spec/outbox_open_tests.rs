@@ -26,7 +26,7 @@ fn out_open_restores_transfer() {
     open_check(Restored::Transfer, ready(), false);
     let (mut twin, id) = restored(Restored::Transfer, &ready());
     twin.committed(id);
-    twin.post(OutboxInput::Response { op_id: id, rows: server_rows(), swaps: Vec::new(), stale: Vec::new(), result: None, errors: None });
+    twin.post(OutboxInput::Response { op_id: id, rows: server_rows(), swaps: Vec::new(), stale: Vec::new(), result: None, missing: Vec::new(), errors: None });
     let effects = twin.committed(id);
     assert!(effects.iter().any(|effect| matches!(effect, OutboxEffect::TransferOutcome { outcome: o::OutboxOutcome::Confirmed { .. }, .. })), "{effects:?}");
 }
@@ -189,7 +189,7 @@ fn out_prop_restored_answer_rows() {
     assert!(effects.iter().all(|effect| !matches!(effect, OutboxEffect::Send { .. } | OutboxEffect::Store { .. })), "nothing lands before the body is read: {effects:?}");
     let decoded = twin.det.trace().iter().any(|entry| entry.effects.contains("Decode") && entry.effects.contains("saved"));
     assert!(decoded, "the saved body goes to the codec of the operation");
-    let landed = twin.post(OutboxInput::Response { op_id: 7, rows: server_rows(), swaps: Vec::new(), stale: Vec::new(), result: None, errors: None });
+    let landed = twin.post(OutboxInput::Response { op_id: 7, rows: server_rows(), swaps: Vec::new(), stale: Vec::new(), result: None, missing: Vec::new(), errors: None });
     assert!(landed.iter().any(|effect| matches!(effect, OutboxEffect::Store { op_id: Some(7), kind: CommitKind::Land, .. })), "{landed:?}");
     assert!(twin.store_text.contains("Rows { model: \"Moment\""), "the rows of the answer land in the batch: {}", twin.store_text);
 }
@@ -202,4 +202,14 @@ fn out_prop_server_removed_row_discards() {
     assert!(effects.iter().any(|effect| matches!(effect, OutboxEffect::Reply { reply: WAITER, answer: OutboxAnswer::Outcome(o::OutboxOutcome::Discarded) })), "{effects:?}");
     assert!(effects.iter().all(|effect| !matches!(effect, OutboxEffect::Store { .. })), "no rollback batch: {effects:?}");
     assert_eq!(twin.stage(id), Some(super::ref_outbox::St::Done));
+}
+
+#[test]
+fn out_sending_response_batch_items_missing_element() {
+    let (mut twin, id) = restored(Restored::Transfer, &ready());
+    twin.committed(id);
+    twin.post(OutboxInput::Response { op_id: id, rows: server_rows(), swaps: Vec::new(), stale: Vec::new(), result: None, missing: vec!["temp-b".into()], errors: None });
+    let effects = twin.committed(id);
+    let outcomes: Vec<_> = effects.iter().filter_map(|effect| match effect { OutboxEffect::TransferOutcome { outcome } => Some(outcome.clone()), _ => None }).collect();
+    assert!(matches!(outcomes.as_slice(), [o::OutboxOutcome::Failed { .. }, o::OutboxOutcome::Confirmed { .. }]), "the element without a row fails first, then the batch is confirmed: {outcomes:?}");
 }

@@ -64,6 +64,7 @@ private fun kindOf(error: DbException): String = when (error) {
     is DbException.Config -> "config"
     is DbException.Invalid -> "invalid"
     is DbException.NotFound -> "not_found"
+    is DbException.AlreadyExists -> "already_exists"
     is DbException.Database -> "database"
     is DbException.Sync -> "sync"
     is DbException.Network -> if (error.detail == "the operation needs the network") "offline" else "network"

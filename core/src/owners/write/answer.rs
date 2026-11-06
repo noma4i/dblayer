@@ -28,7 +28,7 @@ pub struct DecodeJob {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Decoded {
     /// The rows of the answer by model and the pair of a swap.
-    Land { rows: Vec<(String, Vec<RowValue>)>, swaps: Vec<(String, String)>, stale: Vec<(String, String)>, result: Option<String> },
+    Land { rows: Vec<(String, Vec<RowValue>)>, swaps: Vec<(String, String)>, stale: Vec<(String, String)>, result: Option<String>, missing: Vec<String> },
     /// The server refused or the answer cannot be read. A temporary refusal is sent again.
     Refused { temporary: bool, detail: String },
 }
@@ -43,7 +43,7 @@ pub fn decode_answer(db: &Store, root_of: &dyn Fn(&str) -> Option<String>, job: 
     let Ok(answer) = serde_json::from_str::<crate::transport::Response>(&job.body) else { return refused("the answer is not a GraphQL response") };
     if !answer.errors.is_empty() && job.action == "destroy" && answer.errors.iter().all(|error| error.code() == Some("NOT_FOUND")) {
         let stale = db.spec(&job.model).map(|spec| spec.relations.iter().filter(|relation| relation.remote.is_some()).map(|relation| (job.model.clone(), relation.name.clone())).collect()).unwrap_or_default();
-        return Decoded::Land { rows: Vec::new(), swaps: Vec::new(), stale, result: None };
+        return Decoded::Land { rows: Vec::new(), swaps: Vec::new(), stale, result: None, missing: Vec::new() };
     }
     if !answer.errors.is_empty() {
         let messages: Vec<&str> = answer.errors.iter().map(|error| error.message.as_str()).collect();
@@ -54,7 +54,7 @@ pub fn decode_answer(db: &Store, root_of: &dyn Fn(&str) -> Option<String>, job: 
     let declared = spec.actions.iter().find(|declared| declared.name == job.action);
     let stale: Vec<(String, String)> = declared.iter().flat_map(|declared| &declared.refetch).map(|name| name.split_once('.').map_or_else(|| (job.model.clone(), name.clone()), |(model, relation)| (model.to_string(), relation.to_string()))).collect();
     if job.action == "destroy" || declared.is_some_and(|declared| declared.ignore_response) {
-        return Decoded::Land { rows: Vec::new(), swaps: Vec::new(), stale, result: None };
+        return Decoded::Land { rows: Vec::new(), swaps: Vec::new(), stale, result: None, missing: Vec::new() };
     }
     let default_root = declared.and_then(|declared| declared.mutation.as_deref()).and_then(root_of);
     let Some(root) = declared.and_then(|declared| declared.root.clone()).or(default_root) else { return refused(format!("{}.{} has no answer root", job.model, job.action)) };
@@ -62,7 +62,7 @@ pub fn decode_answer(db: &Store, root_of: &dyn Fn(&str) -> Option<String>, job: 
     if let Some(declared) = declared.filter(|declared| !declared.result.is_empty()) {
         if root_value(&data, root).is_none_or(Value::is_null) {
             let result = returns_of(&data, default_root_of(declared.mutation.as_deref().and_then(root_of), root), &declared.result);
-            return Decoded::Land { rows: Vec::new(), swaps: Vec::new(), stale, result: Some(result) };
+            return Decoded::Land { rows: Vec::new(), swaps: Vec::new(), stale, result: Some(result), missing: Vec::new() };
         }
     }
     if !root_value(&data, root).is_some_and(|value| value.is_object() || value.is_array()) {
@@ -90,9 +90,10 @@ pub fn decode_answer(db: &Store, root_of: &dyn Fn(&str) -> Option<String>, job: 
         }
     }
     normalized.coalesce(&job.model);
+    let mut missing = Vec::new();
     let swaps = if batch {
         match batch_swaps(db, &job.model, declared, job, &normalized.roots) {
-            Ok(swaps) => swaps,
+            Ok((swaps, absent)) => { missing = absent; swaps }
             Err(detail) => return refused(detail),
         }
     } else {
@@ -111,7 +112,7 @@ pub fn decode_answer(db: &Store, root_of: &dyn Fn(&str) -> Option<String>, job: 
         by_model.entry(model).or_default().push(RowValue { row_id: id.to_string(), values: Value::Object(row.clone()).to_string() });
     }
     let result = declared.filter(|declared| !declared.result.is_empty()).map(|declared| returns_of(&data, default_root_of(declared.mutation.as_deref().and_then(root_of), root), &declared.result));
-    Decoded::Land { rows: by_model.into_iter().collect(), swaps, stale, result }
+    Decoded::Land { rows: by_model.into_iter().collect(), swaps, stale, result, missing }
 }
 
 /// The object that carries the `returns` fields: the root field of the mutation, else the parent of the row root.
@@ -158,13 +159,15 @@ fn correlation_key(paths: &[String], row: &serde_json::Map<String, Value>) -> Op
 }
 
 /// The pairs (temporary id, real id) of a batch answer: the waiting elements of the group against the rows of the answer.
-fn batch_swaps(db: &Store, model: &str, declared: Option<&crate::schema::ActionDeclaration>, job: &DecodeJob, roots: &[serde_json::Map<String, Value>]) -> Result<Vec<(String, String)>, String> {
+fn batch_swaps(db: &Store, model: &str, declared: Option<&crate::schema::ActionDeclaration>, job: &DecodeJob, roots: &[serde_json::Map<String, Value>]) -> Result<(Vec<(String, String)>, Vec<String>), String> {
     let Some(group) = job.batch else { return Err("the answer of a batch has no group".into()) };
     let (Some(declared), [path]) = (declared, declared.map_or(&[][..], |declared| &declared.correlate[..])) else { return Err("the batch has no single correlation field".into()) };
     let target = declared.batch.as_ref().and_then(|batch| batch.input.iter().find(|(_, source)| *source == path).map(|(target, _)| target.clone())).unwrap_or_else(|| path.clone());
     let waiting = db.batch_rows(model, &job.action, group).map_err(|error| format!("{error:?}"))?;
     let keyed: Vec<(String, serde_json::Map<String, Value>)> = waiting.into_iter().map(|(id, fields)| (id.to_string(), fields.get(&target).map(|value| serde_json::Map::from_iter([(path.clone(), value.clone())])).unwrap_or_default())).collect();
-    Ok(pair_by_key(&declared.correlate, &keyed, roots))
+    let answered: Vec<String> = roots.iter().filter_map(|root| correlation_key(&declared.correlate, root)).collect();
+    let absent = keyed.iter().filter(|(_, data)| correlation_key(&declared.correlate, data).is_none_or(|key| !answered.contains(&key))).map(|(id, _)| id.clone()).collect();
+    Ok((pair_by_key(&declared.correlate, &keyed, roots), absent))
 }
 
 /// Each row of the answer replaces the single waiting temporary row with its correlation key (P-DATA-23), in the order of the answer. An element without a row of the answer keeps its temporary row.

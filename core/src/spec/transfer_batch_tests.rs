@@ -279,3 +279,14 @@ fn xfer_prop_batch_renumber() {
     let (_, out) = plain.cancel(OTHER);
     assert!(out.numbers().is_empty(), "no renumber declared");
 }
+
+#[test]
+fn xfer_batch_element_without_a_row_fails_before_the_batch_confirms() {
+    let (mut twin, ids) = batch(&[KEY, OTHER], 2, false);
+    file_done(&mut twin, ids[0]);
+    file_done(&mut twin, ids[1]);
+    twin.mutation_outcome(OTHER, OutboxOutcome::Failed { error: "protocol".into() });
+    twin.mutation_outcome("batch:1", OutboxOutcome::Confirmed { revision: 9, result: None });
+    assert_eq!(twin.stage(ids[1]), TransferStage::PersistingFailure, "the element the answer lacks keeps its failure, the confirmation of the batch skips it");
+    assert_ne!(twin.stage(ids[0]), TransferStage::PersistingFailure, "the others are confirmed");
+}
