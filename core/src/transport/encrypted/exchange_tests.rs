@@ -8,7 +8,7 @@ use super::fake_server_tests::FakeServer;
 use super::state;
 use super::vectors_tests::*;
 use super::*;
-use crate::pacing::{Clock, ManualClock};
+use crate::runtime::{Clock, ManualClock};
 use crate::store::Store;
 use crate::transport::retry::RetryCalls;
 use crate::transport::{NetworkPurpose, Transport};

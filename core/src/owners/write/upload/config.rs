@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use crate::pacing::{Backoff, RetryPolicy};
+use crate::runtime::{Backoff, RetryPolicy};
 
 pub const MEBIBYTE: u64 = 1024 * 1024;
 

@@ -4,7 +4,7 @@ use std::marker::PhantomData;
 use std::sync::Arc;
 use std::time::Duration;
 
-use crate::pacing::Backoff;
+use crate::runtime::Backoff;
 
 pub type Epoch = u64;
 

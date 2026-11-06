@@ -33,7 +33,7 @@ impl EffectRunner<Feed> for FeedWithoutIo {
 fn debounce_of(db: &Store) -> BTreeMap<String, u64> {
     db.specs().values().filter_map(|spec| {
         let declared = spec.relations.iter().flat_map(|relation| &relation.updates).chain(&spec.listens);
-        let longest = declared.filter_map(|updates| updates.debounce.as_deref().and_then(crate::pacing::parse_duration)).max()?;
+        let longest = declared.filter_map(|updates| updates.debounce.as_deref().and_then(crate::runtime::parse_duration)).max()?;
         Some((spec.key.to_string(), u64::try_from(longest.as_millis()).unwrap_or(u64::MAX)))
     }).collect()
 }

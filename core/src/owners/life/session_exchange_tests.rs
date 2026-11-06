@@ -8,7 +8,7 @@ use serde_json::{json, Value};
 
 use super::LifeReply;
 use crate::store::Store;
-use crate::pacing::ManualClock;
+use crate::runtime::ManualClock;
 use crate::transport::encrypted::fake_server_tests::{FakeServer, MemoryCredentials};
 use crate::transport::encrypted::state;
 use crate::transport::encrypted::vectors_tests::{origin, pin, public_key_der_b64};

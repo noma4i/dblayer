@@ -5,7 +5,7 @@ use serde_json::json;
 use super::open_slot::OpenSlot;
 use super::tape::Rows;
 use super::{Config, Database, DbError, ReadEnd};
-use crate::pacing::{Clock, ManualClock};
+use crate::runtime::{Clock, ManualClock};
 use crate::schema::{FieldSpec, ModelSpec, Storage};
 use crate::test_wait::yield_until;
 use crate::transport::MockTransport;

@@ -9,7 +9,7 @@ use super::outbox_types::Phase;
 use super::rounds::RoundsInput;
 use crate::owners::contract::{BatchAuthor, Drained, EpochEnded, Online, RejectReason, ReplyId};
 use crate::owners::store::{StoreBatch, StoreInput, StoreOp, UploadKind};
-use crate::pacing::RetryPolicy;
+use crate::runtime::RetryPolicy;
 use crate::runtime::{Cause, Effect, Effects, Epoch, Outbound, ScheduleId, StateOwner, Time};
 
 impl TransferState {

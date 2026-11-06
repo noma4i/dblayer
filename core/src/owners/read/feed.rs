@@ -12,7 +12,7 @@ use crate::owners::contract::{BatchAuthor, BatchId, Committed, ConnectionId, Dra
 use crate::owners::read::deliveries::{Deliveries, DeliveryInput};
 use crate::owners::read::windows::{StaleKeys, Windows, WindowsInput};
 use crate::owners::store::{StoreBatch, StoreInput, StoreWriter};
-use crate::pacing::RetryPolicy;
+use crate::runtime::RetryPolicy;
 use crate::runtime::{Address, Cause, Effect, Effects, Epoch, Outbound, ScheduleId, StateOwner, Time};
 
 /// The id a `Want+` carries: a stream `Events` of Deliveries or a window with `live`.

@@ -68,7 +68,7 @@ fn refused(answer: core::Answer) -> Result<core::Answer, DbError> {
 
 pub(super) fn wire(
     db: &Arc<Store>,
-    clock: &Arc<dyn crate::pacing::Clock>,
+    clock: &Arc<dyn crate::runtime::Clock>,
     encrypted: EncryptedConfig,
     http: Arc<dyn EncryptedHttp>,
     credentials: Arc<dyn CredentialStore>,
@@ -203,6 +203,6 @@ pub(super) fn session_failure(error: crate::owners::session::SessionError) -> Db
 pub async fn fetch_server_config(encrypted: EncryptedConfig, platform: core::AppPlatform, version: String, build: Option<String>, http: Arc<dyn EncryptedHttp>, retries: Option<Arc<RetryProgress>>, connectivity: Arc<core::Connectivity>) -> Result<ServerConfig, DbError> {
     cancellable(async move {
         let progress = retries.map(|retries| retries.inner.clone()).unwrap_or_default();
-        core::encrypted::bootstrap::fetch(&encrypted, &core::encrypted::bootstrap::AppRelease { platform, version: &version, build: build.as_deref() }, Arc::new(ForeignHttp(http)), &crate::pacing::SystemClock, &progress, &connectivity).await.map_err(typed)
+        core::encrypted::bootstrap::fetch(&encrypted, &core::encrypted::bootstrap::AppRelease { platform, version: &version, build: build.as_deref() }, Arc::new(ForeignHttp(http)), &crate::runtime::SystemClock, &progress, &connectivity).await.map_err(typed)
     }).await?
 }

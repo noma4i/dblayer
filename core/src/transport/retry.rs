@@ -1,5 +1,5 @@
 use super::error::TransportError;
-use crate::pacing::{Backoff, Clock, RetryPolicy};
+use crate::runtime::{Backoff, Clock, RetryPolicy};
 use super::Connectivity;
 
 const RETRIABLE_CODES: [&str; 4] = ["INTERNAL_SERVER_ERROR", "TIMEOUT", "SERVICE_UNAVAILABLE", "DATABASE_ERROR"];
@@ -89,7 +89,7 @@ impl RetryCalls {
 }
 
 pub(crate) struct Retrying<'a> {
-    clock: &'a dyn crate::pacing::Clock,
+    clock: &'a dyn crate::runtime::Clock,
     progress: &'a RetryCalls,
     backoff: Backoff,
     attempt: u64,

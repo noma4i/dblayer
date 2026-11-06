@@ -6,7 +6,7 @@ use sha2::{Digest, Sha256};
 use super::jwe::{open_response, seal_request, RequestPlain, RequestSession};
 use super::key::ServerKey;
 use super::HttpExchange;
-use crate::pacing::Clock;
+use crate::runtime::Clock;
 use crate::transport::{SessionCode, TransportError};
 use crate::transport::retry::RetryClass;
 

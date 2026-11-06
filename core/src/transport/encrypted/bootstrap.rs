@@ -1,7 +1,7 @@
 use std::sync::Arc;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
-use crate::pacing::Clock;
+use crate::runtime::Clock;
 use super::{AppPlatform, ConfigCode, EncryptedConfig, HttpExchange, SecurityCode, ServerConfig, TransportError};
 use super::jwe::{open_plain, random_token, seal_plain};
 use super::key::ServerKey;
@@ -68,7 +68,7 @@ pub(crate) async fn fetch(config: &EncryptedConfig, release: &AppRelease<'_>, ht
     let audience = config.origin.trim_end_matches('/');
     if !super::origin::allowed(audience) { return Err(invalid("the origin must be https or a development host without a path")); }
     let key = ServerKey::parse(&config.server_key, &config.pin).map_err(|error| TransportError::Security { code: SecurityCode::ServerKeyMismatch, detail: error.to_string() })?;
-    let mut retry = Retrying::new(clock, progress, online, crate::pacing::RetryPolicy::Http);
+    let mut retry = Retrying::new(clock, progress, online, crate::runtime::RetryPolicy::Http);
     loop {
         online.online().await;
         let request_id = uuid::Uuid::new_v4().to_string();

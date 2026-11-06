@@ -7,7 +7,7 @@ use serde_json::{json, Value};
 use sha1::Sha1;
 use super::*;
 use super::bootstrap::{fetch, request_plain, request_text, request_digest, accept};
-use crate::pacing::ManualClock;
+use crate::runtime::ManualClock;
 
 fn kat() -> Value { serde_json::from_str(include_str!("../../../../fixtures/bootstrap-config/bootstrap_kat.json")).unwrap() }
 
@@ -150,7 +150,7 @@ impl HttpExchange for Reconnecting {
 fn life_prop_bootstrap_bound() { crate::test_wait::paused(async {
   for fault in ["network", "408", "429", "500", "503", "599", "TIMEOUT", "SERVICE_UNAVAILABLE", "INTERNAL_SERVER_ERROR", "DATABASE_ERROR"] {
     let http = Arc::new(Reconnecting { calls: AtomicUsize::new(0), requests: std::sync::Mutex::new(Vec::new()), fault });
-    let result = fetch_with(&configuration(), AppPlatform::Ios, "1.2", None, http.clone(), &crate::pacing::TestClock::new(Duration::from_secs(1_800_000_000))).await;
+    let result = fetch_with(&configuration(), AppPlatform::Ios, "1.2", None, http.clone(), &crate::runtime::TestClock::new(Duration::from_secs(1_800_000_000))).await;
     assert!(result.is_ok(), "{result:?}");
     let requests = http.requests.lock().unwrap();
     assert_eq!(requests.len(), 2);
@@ -207,6 +207,6 @@ async fn fetch_needs_no_database_validates_before_http_and_distinguishes_service
     }
 }
 
-async fn fetch_with(config: &EncryptedConfig, platform: AppPlatform, version: &str, build: Option<&str>, http: Arc<dyn HttpExchange>, clock: &dyn crate::pacing::Clock) -> Result<ServerConfig, TransportError> {
+async fn fetch_with(config: &EncryptedConfig, platform: AppPlatform, version: &str, build: Option<&str>, http: Arc<dyn HttpExchange>, clock: &dyn crate::runtime::Clock) -> Result<ServerConfig, TransportError> {
     fetch(config, &super::bootstrap::AppRelease { platform, version, build }, http, clock, &crate::transport::retry::RetryCalls::default(), &crate::transport::Connectivity::new(true)).await
 }

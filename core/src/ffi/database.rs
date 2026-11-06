@@ -10,7 +10,7 @@ use serde_json::Value;
 use tokio::runtime::Runtime;
 use crate::store::{OpenReport, Store};
 use crate::identity::RowId;
-use crate::pacing::{Clock, ManualClock, SystemClock};
+use crate::runtime::{Clock, ManualClock, SystemClock};
 use crate::store::query::Query;
 use crate::schema::ModelSpec;
 use crate::transport::{self as core, EncryptedTransport, Exchange};

@@ -4,7 +4,7 @@ use super::*;
 
 pub const CLOSED: u32 = u32::MAX;
 pub const BOOM: u64 = 13;
-pub const RETRY: crate::pacing::Backoff = crate::pacing::Backoff::new(std::time::Duration::from_millis(1000), std::time::Duration::from_millis(30_000)).with_jitter(0.2, 0);
+pub const RETRY: crate::runtime::Backoff = crate::runtime::Backoff::new(std::time::Duration::from_millis(1000), std::time::Duration::from_millis(30_000)).with_jitter(0.2, 0);
 
 pub type ParkedBacks = Arc<Mutex<Vec<(Back<Toy>, EpochStamp, ToyInput)>>>;
 

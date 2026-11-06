@@ -90,7 +90,7 @@ fn rig(lines: Vec<Arc<Line>>) -> (DetScheduler, Address<Feed>, Batches, tokio::r
     let runtime = runtime();
     let batches = Batches::default();
     let (_, rest) = collector();
-    let io = FeedIo::new(Arc::new(Lines(Mutex::new(lines.into()))), Arc::new(Models), runtime.handle().clone(), rest, (Arc::new(crate::pacing::SystemClock), super::rig::open_gate(1)));
+    let io = FeedIo::new(Arc::new(Lines(Mutex::new(lines.into()))), Arc::new(Models), runtime.handle().clone(), rest, (Arc::new(crate::runtime::SystemClock), super::rig::open_gate(1)));
     let mut det = DetScheduler::new(1);
     let store = det.add::<BatchPeer>("store", batches.clone(), Discard);
     let windows = det.add::<Sink<Windows>>("windows", Default::default(), Discard);
@@ -212,7 +212,7 @@ fn feed_io_close_cancels_handshake() {
     let runtime = runtime();
     let (dropped, started) = (Arc::new(AtomicUsize::new(0)), Arc::new(AtomicUsize::new(0)));
     let (_, rest) = collector();
-    let io = FeedIo::new(Arc::new(Hanging(dropped.clone(), started.clone())), Arc::new(Models), runtime.handle().clone(), rest, (Arc::new(crate::pacing::SystemClock), super::rig::open_gate(1)));
+    let io = FeedIo::new(Arc::new(Hanging(dropped.clone(), started.clone())), Arc::new(Models), runtime.handle().clone(), rest, (Arc::new(crate::runtime::SystemClock), super::rig::open_gate(1)));
     let mut det = DetScheduler::new(1);
     let store = det.add::<BatchPeer>("store", Batches::default(), Discard);
     let windows = det.add::<Sink<Windows>>("windows", Default::default(), Discard);

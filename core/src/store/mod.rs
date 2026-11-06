@@ -6,7 +6,7 @@ use rusqlite::Connection;
 
 use crate::store::ddl::{layout, table_name, Layout};
 use crate::identity::Generation;
-use crate::pacing::{Clock, Counters, SystemClock};
+use crate::runtime::{Clock, Counters, SystemClock};
 use crate::schema::{ModelSpec, SearchPath};
 
 pub mod ddl;

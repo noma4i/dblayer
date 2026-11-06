@@ -4,7 +4,7 @@ use serde_json::Value;
 use sha2::{Digest, Sha256};
 
 use crate::owners::session::{OperationClass, PendingCall, SessionError};
-use crate::pacing::Clock;
+use crate::runtime::Clock;
 use crate::transport::encrypted::jwe::{random_token, seal_request, RequestPlain, RequestSession};
 use crate::transport::encrypted::key::ServerKey;
 use crate::transport::{CredentialSlot, EncryptedConfig};

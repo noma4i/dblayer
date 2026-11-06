@@ -8,7 +8,7 @@ use super::fake_server_tests::{FakeServer, MemoryCredentials};
 use super::vectors_tests::*;
 use super::*;
 use crate::store::Store;
-use crate::pacing::ManualClock;
+use crate::runtime::ManualClock;
 use crate::transport::{GraphQLRequest, MockTransport, SessionCode, Transport, TransportError};
 
 const WRITE: &str = "mutation Rename { rename { id } }";

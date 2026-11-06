@@ -140,7 +140,7 @@ fn duration(cx: &mut Cx, node: &Node<Value>, what: &str) -> Option<String> {
     match &node.item {
         Value::Duration { amount, unit } => {
             let text = format!("{amount}.{unit}");
-            if dblayer::pacing::parse_duration(&text).is_none() {
+            if dblayer::runtime::parse_duration(&text).is_none() {
                 cx.fail(at(node), format!("{what} duration exceeds supported milliseconds"));
                 return None;
             }

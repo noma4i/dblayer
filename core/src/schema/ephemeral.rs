@@ -3,7 +3,7 @@ use std::time::Duration;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::pacing::parse_duration;
+use crate::runtime::parse_duration;
 
 use crate::value::duplicates;
 

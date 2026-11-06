@@ -5,7 +5,7 @@ use std::time::Duration;
 
 use serde_json::json;
 
-use crate::pacing::ManualClock;
+use crate::runtime::ManualClock;
 use crate::store::Store;
 use crate::test_wait::{within, yield_until};
 use crate::transport::encrypted::exchange_tests::Client;

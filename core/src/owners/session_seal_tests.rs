@@ -5,7 +5,7 @@ use serde_json::json;
 use sha2::{Digest, Sha256};
 
 use super::*;
-use crate::pacing::ManualClock;
+use crate::runtime::ManualClock;
 use crate::transport::encrypted::fake_server_tests::MemoryCredentials;
 
 fn pending(body: Value, class: OperationClass) -> PendingCall {

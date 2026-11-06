@@ -5,7 +5,7 @@ use tokio::sync::mpsc;
 use crate::transport::{Connectivity, GraphQLRequest, ServerSubscription, SubscriptionEvent, SubscriptionFailure, SubscriptionFailureKind, ServerSubscriptionHandle};
 use super::CableError;
 use super::lifecycle::{Entry, Event, Heard, Lifecycle};
-use crate::pacing::Clock;
+use crate::runtime::Clock;
 
 pub struct CableSession {
     lifecycle: Lifecycle,

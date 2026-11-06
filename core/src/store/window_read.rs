@@ -33,8 +33,8 @@ impl Store {
         let (scope, key) = window_identity(spec, model, relation, remote, params)?;
         let (Some(record), Some(freshness)) = (self.window(&key)?, self.window_freshness(&key)?) else { return Ok(None) };
         let has_rows = self.read(&[model], |reader| reader.scope_last_id(model, scope.key.as_str()))?.is_some();
-        let policy = crate::pacing::selected_policy(!has_rows, &remote.stale_time, remote.empty_stale_time.as_deref());
-        let lifetime = crate::pacing::parse_duration(policy).map_or(i64::MAX / 4, |window| i64::try_from(window.as_millis()).unwrap_or(i64::MAX / 4));
+        let policy = crate::runtime::selected_policy(!has_rows, &remote.stale_time, remote.empty_stale_time.as_deref());
+        let lifetime = crate::runtime::parse_duration(policy).map_or(i64::MAX / 4, |window| i64::try_from(window.as_millis()).unwrap_or(i64::MAX / 4));
         Ok(Some(crate::store::SavedWindow { landed_at: freshness.landed_at, fresh_until: freshness.landed_at.saturating_add(lifetime), stale: freshness.stale_since.is_some(), cursor: record.cursor, pages: u32::try_from(record.pages).unwrap_or(u32::MAX), has_rows, generation: u64::try_from(record.generation).unwrap_or(0), marker: super::windows::read_marker(&self.lock().connection, &key)?, members: self.read(&[model], |reader| reader.scope_member_count(model, scope.key.as_str()))? }))
     }
 
@@ -50,8 +50,8 @@ impl Store {
         let (scope, key) = window_identity(spec, model, relation, remote, params)?;
         let Some(freshness) = self.window_freshness(&key)? else { return Ok(None) };
         let is_empty = self.read(&[model], |reader| reader.scope_last_id(model, scope.key.as_str()))?.is_none();
-        let policy = crate::pacing::selected_policy(is_empty, &remote.stale_time, remote.empty_stale_time.as_deref());
-        let window = crate::pacing::parse_duration(policy).ok_or_else(|| DbError::Internal(format!("unknown freshness {policy}")))?;
+        let policy = crate::runtime::selected_policy(is_empty, &remote.stale_time, remote.empty_stale_time.as_deref());
+        let window = crate::runtime::parse_duration(policy).ok_or_else(|| DbError::Internal(format!("unknown freshness {policy}")))?;
         Ok(Some(freshness.is_fresh(now_ms, i64::try_from(window.as_millis()).unwrap_or(i64::MAX))))
     }
 

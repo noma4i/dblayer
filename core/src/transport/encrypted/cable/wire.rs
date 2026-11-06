@@ -4,7 +4,7 @@ use std::time::Duration;
 use async_trait::async_trait;
 use serde_json::{json, Value};
 use tokio::sync::{mpsc, oneshot};
-use crate::pacing::{Clock, timeout};
+use crate::runtime::{Clock, timeout};
 use crate::transport::{Connectivity, GraphQLRequest, ServerSubscription, TransportError};
 use super::{CableLink, CableSession, EncryptedConfig};
 

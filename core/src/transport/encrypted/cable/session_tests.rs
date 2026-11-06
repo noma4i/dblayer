@@ -6,7 +6,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 fn new_session() -> CableSession {
-    CableSession::new(Arc::new(crate::pacing::TestClock::default()), Connectivity::new(true))
+    CableSession::new(Arc::new(crate::runtime::TestClock::default()), Connectivity::new(true))
 }
 
 fn request() -> GraphQLRequest {
@@ -51,7 +51,7 @@ fn inv_wait_05_frames_postpone_the_single_deadline_without_timer_wakes() { crate
     let socket = Arc::new(FakeSocket { incoming: tokio::sync::Mutex::new(receiver), outgoing, closes: AtomicUsize::new(0) });
     let connect = Arc::new(FakeConnect { socket, opens: AtomicUsize::new(0) });
     let (kat, config, challenge, credential) = super::link_tests::inputs();
-    let cable = CableSubscriptions::new(config.clone(), Arc::new(move || Ok(credential.clone())), connect, crate::transport::Connectivity::new(true), Arc::new(crate::pacing::TestClock::default()));
+    let cable = CableSubscriptions::new(config.clone(), Arc::new(move || Ok(credential.clone())), connect, crate::transport::Connectivity::new(true), Arc::new(crate::runtime::TestClock::default()));
     let mut subscription = cable.subscribe(GraphQLRequest::new("subscription { sample { id } }", "Sample", json!({}))).await.unwrap();
     let mut peer = Peer { incoming, outgoing: sent, send_key: [0; 32], receive_key: [0; 32], sequence: 0 };
     peer.handshake(&kat, &config, challenge).await;
@@ -191,7 +191,7 @@ fn revoke_finishes_every_subscription_and_unavailable_keeps_them_for_retry() { c
 #[test]
 fn offline_creates_no_work_and_online_resumes_the_demanded_connection() { crate::test_wait::paused(async {
     let online = Connectivity::new(false);
-    let mut session = CableSession::new(Arc::new(crate::pacing::TestClock::default()), online.clone());
+    let mut session = CableSession::new(Arc::new(crate::runtime::TestClock::default()), online.clone());
     let _subscription = session.subscribe(request());
     assert!(!session.is_connecting() && session.deadline().is_none());
     online.set_online(true);
@@ -209,7 +209,7 @@ fn offline_creates_no_work_and_online_resumes_the_demanded_connection() { crate:
 #[test]
 fn failed_openings_increase_backoff_only_with_online_subscribers() { crate::test_wait::paused(async {
     let online = Connectivity::new(true);
-    let mut retry = CableSession::new(Arc::new(crate::pacing::TestClock::default()), online.clone());
+    let mut retry = CableSession::new(Arc::new(crate::runtime::TestClock::default()), online.clone());
     retry.open_failed();
     assert_eq!(retry.deadline(), None);
     let (_, subscription) = retry.subscribe(request());

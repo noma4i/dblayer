@@ -381,7 +381,7 @@ const RETRY_TICK: ScheduleId = ScheduleId(1);
 
 /// Backoff of Http for the attempt number `attempts` (>= 1).
 fn http_delay(attempts: u64) -> Duration {
-    crate::pacing::RetryPolicy::Http.backoff().delay(u32::try_from(attempts.saturating_sub(1)).unwrap_or(u32::MAX))
+    crate::runtime::RetryPolicy::Http.backoff().delay(u32::try_from(attempts.saturating_sub(1)).unwrap_or(u32::MAX))
 }
 
 pub struct SessionCalls;

@@ -2,7 +2,6 @@
 uniffi::setup_scaffolding!();
 
 pub mod identity;
-pub mod pacing;
 pub mod transport;
 pub mod value;
 pub mod schema;

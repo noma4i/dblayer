@@ -36,7 +36,7 @@ async fn a_database_of_an_older_layout_opens_with_its_session_and_without_pendin
     plant_older_layout(&path, &digest);
     let credentials = Arc::new(MemoryCredentials::default());
     credentials.set(SECRET).unwrap();
-    let server = FakeServer::new(Arc::new(crate::pacing::SystemClock));
+    let server = FakeServer::new(Arc::new(crate::runtime::SystemClock));
     let encrypted = EncryptedConfig { origin: origin().to_string(), server_key: public_key_der_b64().to_string(), pin: pin().to_string(), ..crate::transport::encrypted::protocol_tests::config() };
 
     let database = Database::open(Config { path: Some(path.to_string_lossy().into_owned()), data_version: None, cache_rows: 8 }, "[]".to_string(), crate::ffi::OpenPorts { transport: Some(Arc::new(SubscriptionsOnly)), encrypted: Some(encrypted), credentials: Some(Arc::new(Held(credentials))), http: Some(Arc::new(ThroughServer(server))), ..Default::default() }).await.expect("the database opens");

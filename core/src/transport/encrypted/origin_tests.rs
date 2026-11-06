@@ -4,7 +4,7 @@ use std::time::Duration;
 use super::fake_server_tests::FakeServer;
 use super::vectors_tests::*;
 use super::*;
-use crate::pacing::ManualClock;
+use crate::runtime::ManualClock;
 
 fn accepted(origin: &str) -> bool {
     let config = EncryptedConfig { origin: origin.to_string(), server_key: public_key_der_b64().to_string(), pin: pin().to_string(), ..crate::transport::encrypted::protocol_tests::config() };

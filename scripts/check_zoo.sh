@@ -365,7 +365,7 @@ for relative in sorted(str(path.relative_to(source)) for path in files if str(pa
 clock_forms = re.compile(r"\btokio::time\b|\bInstant::now\b|\bSystemTime::now\b|\bUNIX_EPOCH\b")
 for path in files:
     relative = str(path.relative_to(source))
-    if relative.startswith(("pacing/", "bin/")) or any(marker in "/" + relative for marker in task_support):
+    if relative in ("runtime/clock.rs", "runtime/test_clock.rs") or relative.startswith("bin/") or any(marker in "/" + relative for marker in task_support):
         continue
     code = code_only(contents[path])
     inside = test_regions(code)

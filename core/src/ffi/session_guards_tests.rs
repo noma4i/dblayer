@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use super::encrypted_tests::{code, failure, SubscriptionsOnly, ThroughServer};
 use super::{Config, CredentialStore, Database, DbError, EncryptedConfig, SessionCode};
-use crate::pacing::SystemClock;
+use crate::runtime::SystemClock;
 use crate::transport::encrypted::fake_server_tests::{FakeServer, MemoryCredentials};
 use crate::transport::encrypted::vectors_tests::{origin, pin, public_key_der_b64, short_key_pin};
 use crate::transport::{CredentialSlot as CoreCredentials};

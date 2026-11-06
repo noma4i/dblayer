@@ -115,7 +115,7 @@ struct MockState {
     responder: Option<Responder>,
     put_progress: Option<Arc<dyn Fn() + Send + Sync>>,
     session: Option<Result<Option<String>, TransportError>>,
-    clock: Option<Arc<dyn crate::pacing::Clock>>,
+    clock: Option<Arc<dyn crate::runtime::Clock>>,
 }
 
 struct Stream {

@@ -1,18 +1,35 @@
 
+mod backoff;
 mod cell;
+mod clock;
+mod counters;
 mod det;
+mod duration;
 mod explore;
 mod flights;
+mod freshness;
 mod gate;
 mod mailbox;
 mod open_slot;
 mod outcomes;
 mod owner;
 mod published;
+mod retry;
 mod sync;
 mod threaded;
+#[cfg(test)]
+mod test_clock;
 
+pub use backoff::Backoff;
 pub use cell::EffectRunner;
+pub use clock::{Clock, ManualClock, SystemClock};
+pub(crate) use clock::timeout;
+pub use counters::Counters;
+pub use duration::parse_duration;
+pub use freshness::selected_policy;
+pub use retry::RetryPolicy;
+#[cfg(test)]
+pub(crate) use test_clock::TestClock;
 pub use det::{Choice, DetScheduler, Lane, TraceEntry};
 pub use flights::{Flights, Running};
 pub use gate::{send_in_cut, send_in_epoch, EpochGate};
@@ -57,3 +74,13 @@ mod ref_runtime;
 #[cfg(test)]
 #[path = "../spec/ref_runtime_tests.rs"]
 mod ref_runtime_tests;
+#[cfg(test)]
+mod backoff_tests;
+#[cfg(test)]
+mod clock_tests;
+#[cfg(test)]
+mod counters_tests;
+#[cfg(test)]
+mod duration_tests;
+#[cfg(test)]
+mod freshness_tests;

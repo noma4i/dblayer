@@ -9,7 +9,7 @@ use super::graphql::{graphql_body, response_of};
 use super::vectors_tests::*;
 use super::*;
 use crate::store::Store;
-use crate::pacing::ManualClock;
+use crate::runtime::ManualClock;
 use crate::transport::{GraphQLRequest, MockTransport, Transport};
 
 async fn transport(rest: MockTransport) -> (Arc<EncryptedTransport>, Arc<FakeServer>, Arc<Client>) {

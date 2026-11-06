@@ -43,7 +43,7 @@ impl Connectivity {
         let _ = receiver.wait_for(|online| *online).await;
     }
 
-    pub(crate) async fn wait(&self, clock: &dyn crate::pacing::Clock, delay: std::time::Duration) {
+    pub(crate) async fn wait(&self, clock: &dyn crate::runtime::Clock, delay: std::time::Duration) {
         let deadline = clock.now().saturating_add(delay);
         loop {
             self.online().await;

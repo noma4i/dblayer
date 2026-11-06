@@ -9,7 +9,7 @@ use super::state;
 use super::vectors_tests::*;
 use super::*;
 use crate::store::Store;
-use crate::pacing::ManualClock;
+use crate::runtime::ManualClock;
 use crate::transport::{GraphQLRequest, MockTransport, SessionCode, Transport, TransportError};
 
 const TABLE: [(&str, SessionCode); 11] = [

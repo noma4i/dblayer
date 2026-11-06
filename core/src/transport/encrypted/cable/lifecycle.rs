@@ -3,7 +3,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use serde_json::{json, Value};
 use statig::prelude::*;
-use crate::pacing::{Backoff, Clock, RetryPolicy};
+use crate::runtime::{Backoff, Clock, RetryPolicy};
 use crate::transport::{Connectivity, GraphQLRequest, SessionCode, SubscriptionClose, SubscriptionEvent, SubscriptionFailure, TransportError};
 
 const SILENCE: Duration = Duration::from_secs(25);

@@ -6,7 +6,7 @@ use async_trait::async_trait;
 use serde_json::json;
 
 use crate::ffi::{ByteProgress, CableLease, CommandRequest, Config, CredentialStore, Database, DbError, EncryptedConfig, EncryptedHttp, EncryptedReply, EncryptedSocketEvent, PutReply, SubscriptionSink, Transport, TransportRequest};
-use crate::pacing::SystemClock;
+use crate::runtime::SystemClock;
 use crate::schema::{ActionDeclaration, FieldSpec, ModelSpec, OnFailure, RootShape};
 use crate::transport::encrypted::fake_server_tests::{FakeServer, MemoryCredentials};
 use crate::transport::encrypted::vectors_tests::{origin, pin, public_key_der_b64};

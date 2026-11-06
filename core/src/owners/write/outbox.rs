@@ -8,7 +8,7 @@ use super::transfer::TransferInput;
 use crate::owners::contract::{BatchAuthor, BatchId, EpochEnded, Online, RejectReason, ReplyId};
 use crate::owners::session::{SessionInput, OUTBOX_AUTHOR};
 use crate::owners::store::{StoreBatch, StoreInput, StoreOp};
-use crate::pacing::RetryPolicy;
+use crate::runtime::RetryPolicy;
 use crate::schema::OnFailure;
 use crate::owners::store::StoreWriter;
 use crate::runtime::{Address, Cause, Effect, Effects, Epoch, Outbound, ScheduleId, StateOwner, Time};

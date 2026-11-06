@@ -98,7 +98,7 @@ impl Router {
 
 /// The time of the owners: ms since the runtime started, from the clock of the database or from the process.
 pub(super) struct Timeline {
-    clock: Option<Arc<dyn crate::pacing::Clock>>,
+    clock: Option<Arc<dyn crate::runtime::Clock>>,
     base: Duration,
     origin: Instant,
 }
@@ -123,7 +123,7 @@ pub struct RuntimeBuilder {
     failure: Option<FailureRoute>,
     record: bool,
     handle: Handle,
-    clock: Option<Arc<dyn crate::pacing::Clock>>,
+    clock: Option<Arc<dyn crate::runtime::Clock>>,
 }
 
 /// A clonable address book of the running owners. An effect runner takes it before `start` and uses it after.
@@ -358,7 +358,7 @@ impl RuntimeBuilder {
     pub fn record(&mut self) { self.record = true; }
 
     /// The timers of the owners follow this clock.
-    pub fn with_clock(&mut self, clock: Arc<dyn crate::pacing::Clock>) { self.clock = Some(clock); }
+    pub fn with_clock(&mut self, clock: Arc<dyn crate::runtime::Clock>) { self.clock = Some(clock); }
 
     pub fn handle(&self) -> Handle { self.handle.clone() }
 

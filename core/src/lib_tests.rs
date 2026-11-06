@@ -45,24 +45,24 @@ fn inv_fresh_09_a_freshness_window_is_a_duration_and_no_policy_table_resolves_na
         assert_eq!(mentions(word), Vec::<String>::new(), "{word} is still defined or used");
     }
     for name in ["default", "short", "5minutes", "expires_in"] {
-        assert!(crate::pacing::parse_duration(name).is_none(), "{name} resolved as a freshness policy");
+        assert!(crate::runtime::parse_duration(name).is_none(), "{name} resolved as a freshness policy");
     }
     let mut declared = Vec::new();
     declared_freshness(&crate::test_wait::package_dir().join("..").join("fixtures"), &mut declared);
     assert!(declared.len() >= 2, "no freshness declarations found: {declared:?}");
     for (place, value) in declared {
-        assert!(crate::pacing::parse_duration(&value).is_some(), "{place} is not a duration: {value:?}");
+        assert!(crate::runtime::parse_duration(&value).is_some(), "{place} is not a duration: {value:?}");
     }
 }
 
 #[test]
 fn inv_time_01_only_the_clock_module_and_the_stress_rigs_read_the_wall_clock() {
-    let allowed = ["runtime/threaded.rs", "runtime/published.rs", "spec/rig.rs", "owners/read/rig.rs", "pacing/clock.rs", "pacing/test_clock.rs", "bin/stress.rs", "bin/rowbench.rs", "sync/stress/mod.rs", "sync/stress/watchdog.rs", "test_wait.rs"];
+    let allowed = ["runtime/threaded.rs", "runtime/published.rs", "spec/rig.rs", "owners/read/rig.rs", "runtime/clock.rs", "runtime/test_clock.rs", "bin/stress.rs", "bin/rowbench.rs", "sync/stress/mod.rs", "sync/stress/watchdog.rs", "test_wait.rs"];
     for word in ["SystemTime::now", "Instant::now", "OffsetDateTime::now"] {
         let strays: Vec<String> = mentions(word).into_iter().filter(|file| !allowed.contains(&file.as_str())).collect();
         assert_eq!(strays, Vec::<String>::new(), "{word} reads the wall clock outside the clock module");
     }
-    let defaults: Vec<String> = mentions("SystemClock").into_iter().filter(|file| !file.starts_with("spec/") && !["pacing/clock.rs", "pacing/mod.rs", "store/mod.rs", "db/ephemeral.rs", "ffi/database.rs", "ffi/encrypted.rs"].contains(&file.as_str())).collect();
+    let defaults: Vec<String> = mentions("SystemClock").into_iter().filter(|file| !file.starts_with("spec/") && !["runtime/clock.rs", "runtime/mod.rs", "store/mod.rs", "db/ephemeral.rs", "ffi/database.rs", "ffi/encrypted.rs"].contains(&file.as_str())).collect();
     assert_eq!(defaults, Vec::<String>::new(), "a path builds its own system clock instead of taking the one given at open");
 }
 

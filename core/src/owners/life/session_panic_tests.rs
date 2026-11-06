@@ -8,7 +8,7 @@ use serde_json::json;
 use crate::store::Store;
 use crate::owners::contract::ErrorClass;
 use crate::owners::session::{AuthorOutcome, SessionError};
-use crate::pacing::ManualClock;
+use crate::runtime::ManualClock;
 use crate::test_wait::{within, yield_until};
 use crate::transport::encrypted::fake_server_tests::{FakeServer, MemoryCredentials};
 use crate::transport::encrypted::exchange_tests::Client;

@@ -176,7 +176,7 @@ impl Store {
 
     pub(crate) fn on_commit(&self, sink: impl Fn(CommitNotice) + Send + Sync + 'static) { let _ = self.context.commits.0.set(Arc::new(sink)); }
 
-    pub fn set_clock(&self, clock: Arc<dyn crate::pacing::Clock>) { self.lock().clock = clock; }
+    pub fn set_clock(&self, clock: Arc<dyn crate::runtime::Clock>) { self.lock().clock = clock; }
 
     /// Reads with the models named, the failure as the error of the database.
     pub(crate) fn read_models<T>(&self, models: &[&str], run: impl FnOnce(&Reader<'_>) -> Result<T, DbError>) -> Result<T, DbError> {

@@ -50,7 +50,7 @@ pub struct FeedIo {
     open: Connections,
     attempts: AtomicU64,
     rest: Rest<FeedEffect>,
-    clock: Arc<dyn crate::pacing::Clock>,
+    clock: Arc<dyn crate::runtime::Clock>,
     gate: Arc<crate::runtime::EpochGate>,
 }
 
@@ -58,7 +58,7 @@ pub struct FeedIo {
 fn session_closed(code: u16, reason: &str) -> bool { matches!(code, 4401 | 4403) || matches!(reason, "LOGGED_OUT" | "ACCOUNT_LOCKED") }
 
 impl FeedIo {
-    pub fn new(lines: Arc<dyn CableLines>, codec: Arc<dyn FeedCodec>, handle: Handle, rest: Rest<FeedEffect>, (clock, gate): (Arc<dyn crate::pacing::Clock>, Arc<crate::runtime::EpochGate>)) -> Self { Self { lines, codec, handle, clock, gate, counted: None, admit: None, open: Connections::default(), attempts: AtomicU64::new(0), rest } }
+    pub fn new(lines: Arc<dyn CableLines>, codec: Arc<dyn FeedCodec>, handle: Handle, rest: Rest<FeedEffect>, (clock, gate): (Arc<dyn crate::runtime::Clock>, Arc<crate::runtime::EpochGate>)) -> Self { Self { lines, codec, handle, clock, gate, counted: None, admit: None, open: Connections::default(), attempts: AtomicU64::new(0), rest } }
 
     /// A connection starts with the admission of the epoch it was decided in, and its end cancels it.
     pub fn admitted_by(mut self, admit: Admit) -> Self {
@@ -101,7 +101,7 @@ impl FeedIo {
         }));
     }
 
-    async fn run(lines: Arc<dyn CableLines>, codec: Arc<dyn FeedCodec>, (clock, gate, epoch): (Arc<dyn crate::pacing::Clock>, Arc<crate::runtime::EpochGate>, Option<crate::runtime::Epoch>), connection: ConnectionId, (cancel, closing, established): (CancelToken, CancelToken, Arc<AtomicBool>), mut queued: mpsc::UnboundedReceiver<(u64, Value)>, reply: impl Fn(FeedInput) + Clone + Send + 'static) {
+    async fn run(lines: Arc<dyn CableLines>, codec: Arc<dyn FeedCodec>, (clock, gate, epoch): (Arc<dyn crate::runtime::Clock>, Arc<crate::runtime::EpochGate>, Option<crate::runtime::Epoch>), connection: ConnectionId, (cancel, closing, established): (CancelToken, CancelToken, Arc<AtomicBool>), mut queued: mpsc::UnboundedReceiver<(u64, Value)>, reply: impl Fn(FeedInput) + Clone + Send + 'static) {
         {
             let line = tokio::select! {
                 biased;

@@ -4,7 +4,7 @@ use async_trait::async_trait;
 
 use crate::store::Store;
 use super::{Config, CredentialStore, Database, DbError, EncryptedConfig, EncryptedHttp, EncryptedReply, SessionCode, Transport};
-use crate::pacing::SystemClock;
+use crate::runtime::SystemClock;
 use crate::transport::encrypted::fake_server_tests::{FakeServer, MemoryCredentials};
 use crate::transport::encrypted::vectors_tests::{origin, pin, public_key_der_b64};
 use crate::transport::{CredentialSlot as CoreCredentials, HttpExchange, TransportError};
@@ -248,11 +248,11 @@ fn cancel_on_retry_waits_for_a_retry_that_the_executor_reaches_late() { crate::t
     use crate::transport::retry::Retrying;
     let retries = super::RetryProgress::new();
     let progress = retries.inner.clone();
-    let clock = crate::pacing::ManualClock::new(std::time::Duration::ZERO);
+    let clock = crate::runtime::ManualClock::new(std::time::Duration::ZERO);
     let online = crate::transport::Connectivity::new(true);
     let call = async {
         super::database::executor().unwrap().spawn_blocking(|| std::thread::sleep(std::time::Duration::from_millis(300))).await.unwrap();
-        let _ = Retrying::new(&clock, &progress, &online, crate::pacing::RetryPolicy::Http).failed(TransportError::Network("down".into())).await;
+        let _ = Retrying::new(&clock, &progress, &online, crate::runtime::RetryPolicy::Http).failed(TransportError::Network("down".into())).await;
     };
     cancel_on_retry(&retries, call).await;
 }) }
@@ -472,9 +472,9 @@ async fn inv_observe_08_a_retry_progress_call_that_passed_the_cancel_check_does_
     let (at_the_call, release) = hold_before_the_call(&subscription.calls);
     let progress = retries.inner.clone();
     let retrying = tokio::spawn(async move {
-        let clock = crate::pacing::ManualClock::new(std::time::Duration::ZERO);
+        let clock = crate::runtime::ManualClock::new(std::time::Duration::ZERO);
         let online = crate::transport::Connectivity::new(true);
-        let _ = Retrying::new(&clock, &progress, &online, crate::pacing::RetryPolicy::Http).failed(TransportError::Network("down".into())).await;
+        let _ = Retrying::new(&clock, &progress, &online, crate::runtime::RetryPolicy::Http).failed(TransportError::Network("down".into())).await;
     });
     at_the_call.recv_timeout(HOLD_WAIT).unwrap();
     subscription.cancel();

@@ -9,7 +9,7 @@ use std::sync::{OnceLock, Weak};
 use super::credential::Secret;
 use super::exchange::{session_failure, temporary_error, Answer, EncryptedConfig, Exchange};
 use super::jwe::random_token;
-use crate::pacing::{Clock, RetryPolicy};
+use crate::runtime::{Clock, RetryPolicy};
 use crate::store::Store;
 use crate::transport::retry::{RetryCalls, Retrying};
 use crate::transport::{CableConnect, CableSocket, CableSubscriptions, Connectivity};

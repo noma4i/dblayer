@@ -145,7 +145,7 @@ pub(crate) fn mutex_free<T>(mutex: &Mutex<T>) -> bool {
 }
 
 struct World {
-    clock: crate::pacing::TestClock,
+    clock: crate::runtime::TestClock,
 }
 
 thread_local! { static WORLD: std::cell::RefCell<Option<World>> = const { std::cell::RefCell::new(None) }; }
@@ -167,7 +167,7 @@ pub(crate) fn limited(limit: Duration, test: impl std::future::Future<Output = (
 
 pub(crate) fn paused(test: impl std::future::Future<Output = ()>) {
     let runtime = tokio::runtime::Builder::new_current_thread().enable_all().start_paused(true).build().expect("test runtime");
-    let clock = crate::pacing::TestClock::stopped(Duration::from_millis(1_000_000));
+    let clock = crate::runtime::TestClock::stopped(Duration::from_millis(1_000_000));
     WORLD.with(|world| *world.borrow_mut() = Some(World { clock: clock.clone() }));
     let _leave = Leave;
     runtime.block_on(async move {
@@ -177,14 +177,14 @@ pub(crate) fn paused(test: impl std::future::Future<Output = ()>) {
     });
 }
 
-pub(crate) fn world_clock() -> Option<crate::pacing::TestClock> {
+pub(crate) fn world_clock() -> Option<crate::runtime::TestClock> {
     WORLD.with(|world| world.borrow().as_ref().map(|world| world.clock.clone()))
 }
 
 
 pub(crate) async fn pass(duration: Duration) {
     match world_clock() {
-        Some(clock) => crate::pacing::Clock::sleep(&clock, duration).await,
+        Some(clock) => crate::runtime::Clock::sleep(&clock, duration).await,
         None => tokio::time::sleep(duration).await,
     }
 }

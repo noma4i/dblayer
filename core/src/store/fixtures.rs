@@ -5,7 +5,7 @@ use serde_json::{json, Map, Value};
 
 use crate::store::{BatchPlan, DestroyReason, EntityOp, ScopeOp, ScopeRef};
 use crate::identity::{ModelKey, RowId, ListKey};
-use crate::pacing::ManualClock;
+use crate::runtime::ManualClock;
 use crate::schema::{FieldSpec, ModelSpec};
 use crate::value::ScalarKind;
 

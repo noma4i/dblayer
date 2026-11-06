@@ -12,7 +12,7 @@ fn write(database: &std::sync::Arc<crate::store::Store>, ops: Vec<StoreOp>) -> R
 fn store_prop_expiry_any_author() {
     let spec = crate::schema::ModelSpec { storage: crate::schema::Storage::Memory, expire_after: Some("30.seconds".into()), ..crate::schema::ModelSpec::new("presence", vec![crate::schema::FieldSpec::scalar("id", crate::value::ScalarKind::Id), crate::schema::FieldSpec::scalar("room", crate::value::ScalarKind::Str).optional()]) };
     let database = Store::open_models(None, vec![spec], None).map(std::sync::Arc::new).unwrap();
-    let clock = std::sync::Arc::new(crate::pacing::ManualClock::new(std::time::Duration::from_millis(1000)));
+    let clock = std::sync::Arc::new(crate::runtime::ManualClock::new(std::time::Duration::from_millis(1000)));
     database.set_clock(clock.clone());
     let row = RowValue { row_id: "p1".into(), values: r#"{"id":"p1","room":"r1"}"#.into() };
     let mut previous = None;
