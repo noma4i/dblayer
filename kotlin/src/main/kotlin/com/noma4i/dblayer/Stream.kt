@@ -236,7 +236,7 @@ fun <Model : DBModel> ValueStream.events(decoder: ModelDecoder<Model>): Flow<Mod
                 close()
             }
             is ReadValue.State -> value.state.error?.let { emit(ModelEventItem.Failed(it)) }
-            is ReadValue.Ended -> if (value.cause == ReadEnd.INVALID) emit(ModelEventItem.Failed(DbException.Invalid("the events stream could not open")))
+            is ReadValue.Ended -> if (value.cause == ReadEnd.Invalid) emit(ModelEventItem.Failed(DbException.Invalid("the events stream could not open")))
             else -> {}
         }
     }

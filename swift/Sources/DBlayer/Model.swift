@@ -91,7 +91,6 @@ extension DBModel {
 public enum OperationOutcome<Model: DBModel>: Sendable {
   case confirmed(value: Model?, answerJSON: String?)
   case rejected(failure: WireFailure)
-  case deliveryUnknown
   case interrupted
 
   public var confirmedValue: Model? {
@@ -121,7 +120,6 @@ public struct MutationReceipt<Model: DBModel>: Sendable {
     switch try await database.outcome(receipt: wire) {
     case let .confirmed(value, answerJSON): return .confirmed(value: try value.map(Model.decode), answerJSON: answerJSON)
     case let .rejected(failure): return .rejected(failure: failure)
-    case .deliveryUnknown: return .deliveryUnknown
     case .interrupted: return .interrupted
     }
   }

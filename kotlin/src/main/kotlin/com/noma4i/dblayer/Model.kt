@@ -12,7 +12,6 @@ enum class SyncState {
     @SerialName("pending") Pending,
     @SerialName("sending") Sending,
     @SerialName("failed") Failed,
-    @SerialName("delivery_unknown") DeliveryUnknown,
 }
 
 @Serializable
@@ -39,7 +38,6 @@ enum class UploadStatus {
     @SerialName("sending") Sending,
     @SerialName("done") Done,
     @SerialName("failed") Failed,
-    @SerialName("delivery_unknown") DeliveryUnknown,
     @SerialName("cancelled") Cancelled,
 }
 
@@ -94,7 +92,6 @@ sealed interface OperationOutcome<out Model : DBModel> {
     val confirmedValue: Model? get() = null
     class Confirmed<Model : DBModel>(override val confirmedValue: Model?, val answerJson: String?) : OperationOutcome<Model>
     class Rejected(val failure: WireFailure) : OperationOutcome<Nothing>
-    data object DeliveryUnknown : OperationOutcome<Nothing>
     data object Interrupted : OperationOutcome<Nothing>
 }
 
@@ -108,7 +105,6 @@ class MutationReceipt<Model : DBModel>(private val database: Database, private v
         when (val result = database.outcome(wire)) {
             is WireOperationOutcome.Confirmed -> OperationOutcome.Confirmed(result.value?.let(decoder::read), result.answerJson)
             is WireOperationOutcome.Rejected -> OperationOutcome.Rejected(result.failure)
-            WireOperationOutcome.DeliveryUnknown -> OperationOutcome.DeliveryUnknown
             WireOperationOutcome.Interrupted -> OperationOutcome.Interrupted
         }
     }

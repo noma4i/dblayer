@@ -88,10 +88,11 @@ private fun phaseName(phase: ReadPhase): String = when (phase) {
 }
 
 private fun causeName(end: ReadEnd): String = when (end) {
-    ReadEnd.SESSION_ENDED -> "session_ended"
-    ReadEnd.CLOSED -> "closed"
-    ReadEnd.CANCELLED -> "cancelled"
-    ReadEnd.INVALID -> "invalid"
+    ReadEnd.SessionEnded -> "session_ended"
+    ReadEnd.Closed -> "closed"
+    ReadEnd.Cancelled -> "cancelled"
+    ReadEnd.Invalid -> "invalid"
+    is ReadEnd.Storage -> "storage"
 }
 
 private fun fetchOf(name: String?): ReadFetch? = when (name) {
@@ -105,7 +106,6 @@ private fun fetchOf(name: String?): ReadFetch? = when (name) {
 private fun outcomeName(outcome: WireOperationOutcome): String = when (outcome) {
     is WireOperationOutcome.Confirmed -> "confirmed"
     is WireOperationOutcome.Rejected -> "rejected"
-    WireOperationOutcome.DeliveryUnknown -> "delivery_unknown"
     WireOperationOutcome.Interrupted -> "interrupted"
 }
 

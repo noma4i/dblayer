@@ -124,7 +124,6 @@ private func outcomeName(_ outcome: WireOperationOutcome) -> String {
   switch outcome {
   case .confirmed: return "confirmed"
   case .rejected: return "rejected"
-  case .deliveryUnknown: return "delivery_unknown"
   case .interrupted: return "interrupted"
   }
 }

@@ -1,6 +1,6 @@
 import Foundation
 
-public enum SyncState: String, Codable, Sendable { case synced, pending, sending, failed, deliveryUnknown = "delivery_unknown" }
+public enum SyncState: String, Codable, Sendable { case synced, pending, sending, failed }
 
 public struct OperationFailure: Codable, Sendable, Equatable {
   public let kind: String
@@ -18,7 +18,7 @@ public struct SyncInfo: Codable, Sendable, Equatable {
   public init() {}
 }
 
-public enum UploadStatus: String, Codable, Sendable { case waiting, preparing, queued, uploading, sending, done, failed, deliveryUnknown = "delivery_unknown", cancelled }
+public enum UploadStatus: String, Codable, Sendable { case waiting, preparing, queued, uploading, sending, done, failed, cancelled }
 
 public struct UploadInfo: Codable, Sendable, Equatable {
   public let status: UploadStatus
@@ -45,7 +45,6 @@ extension SyncState {
     case .pending: self = .pending
     case .sending: self = .sending
     case .failed: self = .failed
-    case .deliveryUnknown: self = .deliveryUnknown
     }
   }
 }
@@ -60,7 +59,6 @@ extension UploadStatus {
     case .sending: self = .sending
     case .done: self = .done
     case .failed: self = .failed
-    case .deliveryUnknown: self = .deliveryUnknown
     case .cancelled: self = .cancelled
     }
   }

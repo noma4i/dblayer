@@ -97,7 +97,6 @@ fun SyncInfo.Companion.of(wire: WireSync): SyncInfo = SyncInfo(
         WireSyncState.PENDING -> SyncState.Pending
         WireSyncState.SENDING -> SyncState.Sending
         WireSyncState.FAILED -> SyncState.Failed
-        WireSyncState.DELIVERY_UNKNOWN -> SyncState.DeliveryUnknown
     },
     actions = wire.actions,
     dirtyFields = wire.dirtyFields,
@@ -115,7 +114,6 @@ fun UploadInfo.Companion.of(wire: WireUpload): UploadInfo = UploadInfo(
         WireUploadStatus.SENDING -> UploadStatus.Sending
         WireUploadStatus.DONE -> UploadStatus.Done
         WireUploadStatus.FAILED -> UploadStatus.Failed
-        WireUploadStatus.DELIVERY_UNKNOWN -> UploadStatus.DeliveryUnknown
         WireUploadStatus.CANCELLED -> UploadStatus.Cancelled
     },
     stage = wire.stage,

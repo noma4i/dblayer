@@ -112,7 +112,7 @@ class ValueBridgeTest {
             eventually("the stream shows A") { profile.value?.name == "A" }
 
             DBlayer.sessionReset()
-            eventually("the stream ended") { profile.projection.value.ended == ReadEnd.SESSION_ENDED }
+            eventually("the stream ended") { profile.projection.value.ended == ReadEnd.SessionEnded }
 
             assertEquals(0uL, DBlayer.subscriptionCensus().subscriptions)
             assertEquals("A", profile.value?.name)
@@ -143,7 +143,7 @@ class ValueBridgeTest {
             eventually("B shows") { projectionB.value?.name == "B" }
 
             assertEquals("A", projectionA.value?.name)
-            assertEquals(ReadEnd.SESSION_ENDED, projectionA.projection.value.ended)
+            assertEquals(ReadEnd.SessionEnded, projectionA.projection.value.ended)
         } finally {
             screen.cancel()
             closeForCleanup()
@@ -304,7 +304,7 @@ class ValueBridgeTest {
                 val value = reader.pull() ?: break
                 if (value is ReadValue.Ended) ended.add(value.cause)
             }
-            assertEquals(listOf(ReadEnd.INVALID), ended)
+            assertEquals(listOf(ReadEnd.Invalid), ended)
             assertEquals("a stream that ended gives nothing more", null, reader.pull())
             assertEquals(0uL, DBlayer.subscriptionCensus().subscriptions)
         } finally {
