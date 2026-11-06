@@ -6,6 +6,7 @@ pub mod outbox;
 mod outbox_commit;
 mod outbox_flow;
 mod outbox_local;
+pub mod outbox_plan;
 mod outbox_restore;
 pub mod outbox_types;
 pub mod outbox_executor;

@@ -22,7 +22,7 @@ use crate::write::{cascade_destroys, cascade_envelope, WritePlan};
 
 use super::error::DbError;
 use super::open::Db;
-use super::effects::{Call, Edits};
+use super::effects::Edits;
 use super::prior::{Prior, PriorRow};
 use super::row::Row;
 
@@ -104,7 +104,6 @@ impl Action {
 }
 
 /// The lists a scope effect changes (scope and key text) and the ids of the rows it moves.
-type EffectLists = (Vec<(ScopeRef, String)>, Vec<String>);
 
 struct Queued {
     action: Action,
@@ -316,17 +315,9 @@ impl Db {
         let mut unannounced = None;
         let committed = self.commit_local_optional(admitted, spec, &mut queued, None, Some(&mut unannounced), |reader, plan, queued| {
             let current = reader.point(model, id.as_str())?.ok_or_else(|| DbError::NotFound { model: model.to_string(), id: id.to_string() })?;
-            let mut merged = current.clone();
-            merged.extend(patch.clone());
-            for (field, op) in &keyed {
-                let Some(declared) = spec.field(field) else { continue };
-                let target_row = |model: &str, id: &str| Ok::<_, DbError>(reader.point(model, id)?);
-                if let Some(next) = crate::schema::keyed::apply(declared, current.get(field), op, &input_args, target_row)? {
-                    merged.insert(field.clone(), next);
-                }
-            }
-            let mut edits = Edits::of_owner(model, id, current, merged);
-            self.apply_flagged(reader, &mut edits, &Call { owner: &own, args: &input_args }, &flagged)?;
+            let view = super::plan_view::ReaderView { reader, specs: &|name| self.shared.spec(name).ok(), db: Some(self) };
+            let merged = crate::owners::write::outbox_plan::optimistic_row(spec, &view, &current, &patch, &keyed, &flagged, &input_args, (model, id.as_str())).map_err(|error| DbError::Internal(error.0))?;
+            let edits = Edits::of_owner(model, id, current, merged);
             let mut rows = Vec::new();
             let mut touches = Vec::new();
             let removes = declared.as_ref().is_some_and(|declared| declared.removes_receiver);
@@ -379,7 +370,7 @@ impl Db {
             self.copy_receiver(reader, spec, copy, (own, args), now_ms, plan, rows, queued)?;
         }
         for effect in &declared.scope_effects {
-            plan_scope_effect(reader, self.shared.spec(&effect.model)?, effect, (own, args), rows, &mut queued.scope_ops)?;
+            plan_scope_effect(reader, &|name| self.shared.spec(name).ok(), self.shared.spec(&effect.model)?, effect, (own, args), rows, &mut queued.scope_ops)?;
         }
         Ok(())
     }
@@ -421,52 +412,25 @@ impl Db {
 
 }
 
-fn effect_lists(target: &ModelSpec, effect: &crate::schema::ScopeEffect, (own, args): (&RowRef, &Map<String, Value>)) -> Result<EffectLists, DbError> {
-        let mut ids: Vec<String> = match args.get(&effect.rows) {
-            Some(Value::Array(items)) => items.iter().filter_map(|item| item.as_str().map(str::to_string)).collect(),
-            Some(Value::String(one)) => vec![one.clone()],
-            _ => return Err(DbError::Internal(format!("the argument {} of the scope effect is missing", effect.rows))),
-        };
-        let mut seen = HashSet::new();
-        ids.retain(|id| seen.insert(id.clone()));
-        let mut lists = Vec::new();
-        for order in &effect.orders {
-            let mut params = Map::new();
-            for (name, source) in &effect.with {
-                let value = if source == "id" { Value::String(own.id.to_string()) } else { args.get(source).cloned().ok_or_else(|| DbError::Internal(format!("the argument {source} of the scope effect is missing")))? };
-                params.insert(name.clone(), value);
-            }
-            params.insert(effect.order_param.clone(), Value::String(order.clone()));
-            let key = target.selection_key(&effect.scope, &params)?;
-            lists.push((ScopeRef::new(ModelKey::new(&effect.model), key.clone()), key.to_string()));
-        }
-        Ok((lists, ids))
-    }
-
-pub(super) fn plan_scope_effect(reader: &Reader<'_>, target: &ModelSpec, effect: &crate::schema::ScopeEffect, call: (&RowRef, &Map<String, Value>), rows: &mut Vec<PriorRow>, scope_ops: &mut Vec<ScopeOp>) -> Result<(), DbError> {
-        let (lists, ids) = effect_lists(target, effect, call)?;
-        let owned = reader.revision_seq()? + 1;
-        for (scope, key) in lists {
-            let mut last = reader.scope_last_key(&effect.model, &key)?;
-            for id in &ids {
-                let before = reader.scope_member_key(&effect.model, &key, id)?;
-                match effect.kind {
-                    crate::schema::ScopeEffectKind::Join => {
-                        if before.is_none() && reader.point(&effect.model, id)?.is_some() {
-                            let order_key = fractional_between(last.as_deref(), None).map_err(|_| crate::read::LandingError::InvalidOrderBounds)?;
-                            last = Some(order_key.clone());
-                            scope_ops.push(ScopeOp::Append { scope: scope.clone(), row: RowId::new(id)?, order_key });
-                        }
-                        rows.push(PriorRow::Join { model: effect.model.clone(), id: id.clone(), scope_key: key.clone(), before, owned });
-                    }
-                    crate::schema::ScopeEffectKind::Leave => {
-                        if before.is_some() { scope_ops.push(ScopeOp::Detach { scope: scope.clone(), row: RowId::new(id)? }); }
-                        rows.push(PriorRow::Leave { model: effect.model.clone(), id: id.clone(), scope_key: key.clone(), before, owned });
-                    }
+pub(super) fn plan_scope_effect<'a>(reader: &'a Reader<'_>, specs: &'a dyn Fn(&str) -> Option<&'a ModelSpec>, target: &ModelSpec, effect: &crate::schema::ScopeEffect, call: (&RowRef, &Map<String, Value>), rows: &mut Vec<PriorRow>, scope_ops: &mut Vec<ScopeOp>) -> Result<(), DbError> {
+    use crate::owners::write::outbox_plan::{scope_changes, ListChange};
+    let view = super::plan_view::ReaderView { reader, specs, db: None };
+    let owned = reader.revision_seq()? + 1;
+    for change in scope_changes(&view, target, effect, call.0.id.as_str(), call.1).map_err(|error| DbError::Internal(error.0))? {
+        match change {
+            ListChange::Join { model, list, id, before, order_key } => {
+                if let Some(order_key) = order_key {
+                    scope_ops.push(ScopeOp::Append { scope: ScopeRef::new(ModelKey::new(&model), list.clone()), row: RowId::new(&id)?, order_key });
                 }
+                rows.push(PriorRow::Join { model, id, scope_key: list.to_string(), before, owned });
+            }
+            ListChange::Leave { model, list, id, before } => {
+                if before.is_some() { scope_ops.push(ScopeOp::Detach { scope: ScopeRef::new(ModelKey::new(&model), list.clone()), row: RowId::new(&id)? }); }
+                rows.push(PriorRow::Leave { model, id, scope_key: list.to_string(), before, owned });
             }
         }
-        Ok(())
+    }
+    Ok(())
 }
 
 impl Db {

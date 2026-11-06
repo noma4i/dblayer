@@ -28,6 +28,7 @@ mod queue_read;
 #[cfg(test)]
 mod queue_read_tests;
 mod queue_write;
+mod plan_view;
 mod plan_write;
 #[cfg(test)]
 mod plan_write_tests;

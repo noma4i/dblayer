@@ -110,7 +110,7 @@ pub(crate) fn rebuild_open_effects(connection: &Connection, models: &std::collec
         let mut rows = Vec::new();
         for effect in &declared.scope_effects {
             let target = spec(&effect.model).ok_or_else(|| StoreError::UnknownModel(effect.model.clone()))?;
-            super::local_write::plan_scope_effect(&reader, target, effect, (&own, &args), &mut rows, &mut Vec::new()).map_err(|error| StoreError::Constraint(error.to_string()))?;
+            super::local_write::plan_scope_effect(&reader, &spec, target, effect, (&own, &args), &mut rows, &mut Vec::new()).map_err(|error| StoreError::Constraint(error.to_string()))?;
         }
         write_prior(connection, seq, revision, Some(&Prior { rows }.to_value()))?;
         written = true;

@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 
 use serde_json::{Map, Value};
 
-use crate::identity::{RowId, RowRef};
+use crate::identity::RowId;
 use crate::schema::EffectSource;
 use crate::store::Reader;
 use crate::value::read_id;
@@ -25,43 +25,16 @@ impl Edits {
         self.rows.into_iter()
     }
 
-    fn row_mut(&mut self, reader: &Reader<'_>, model: &str, id: &str) -> Result<Option<&mut Row>, DbError> {
-        let key = (model.to_string(), id.to_string());
-        if !self.rows.contains_key(&key) {
-            let Some(current) = reader.point(model, id)? else { return Ok(None) };
-            self.rows.insert(key.clone(), (current.clone(), current));
-        }
-        Ok(self.rows.get_mut(&key).map(|(_, merged)| merged))
-    }
-}
-
-pub(crate) struct Call<'a> {
-    pub owner: &'a RowRef,
-    pub args: &'a Map<String, Value>,
 }
 
 impl Db {
-    pub(crate) fn apply_flagged(&self, reader: &Reader<'_>, edits: &mut Edits, call: &Call<'_>, flagged: &[(String, String, crate::schema::keyed::Flagged)]) -> Result<(), DbError> {
-        use crate::schema::keyed::{include_flagged, raise_to, Flagged};
-        for (field, when, kind) in flagged {
-            let Some(flag) = call.args.get(when).and_then(Value::as_bool) else { continue };
-            let next = match kind {
-                Flagged::Include(source) => {
-                    let Some(value) = self.source_value(reader, edits, call, source)? else { continue };
-                    let current = edits.row_mut(reader, call.owner.model.as_str(), call.owner.id.as_str())?.and_then(|row| row.get(field).cloned());
-                    include_flagged(current.as_ref(), value, flag)
-                }
-                Flagged::AtLeast(_) if !flag => continue,
-                Flagged::AtLeast(min) => {
-                    let current = edits.row_mut(reader, call.owner.model.as_str(), call.owner.id.as_str())?.and_then(|row| row.get(field).cloned());
-                    raise_to(current.as_ref(), *min)
-                }
-            };
-            if let Some(row) = edits.row_mut(reader, call.owner.model.as_str(), call.owner.id.as_str())? {
-                row.insert(field.clone(), next);
-            }
+    fn effect_row(&self, reader: &Reader<'_>, args: &Map<String, Value>, model: &str, row: Option<&str>) -> Result<Option<RowId>, DbError> {
+        if let Some(name) = row {
+            return Ok(args.get(name).and_then(read_id));
         }
-        Ok(())
+        let Some(relation) = self.shared.spec(model)?.singleton_relation() else { return Ok(None) };
+        let key = self.shared.spec(model)?.selection_key(&relation.name, &Map::new())?;
+        reader.scope_members(model, key.as_str())?.into_iter().next().map(|(id, _)| Ok(RowId::new(&id)?)).transpose()
     }
 
     pub(crate) fn fill_local_sources(&self, model: &str, values: &mut Map<String, Value>) -> Result<(), DbError> {
@@ -117,29 +90,5 @@ impl Db {
             values.insert(field.clone(), value);
         }
         Ok(())
-    }
-
-    fn effect_row(&self, reader: &Reader<'_>, args: &Map<String, Value>, model: &str, row: Option<&str>) -> Result<Option<RowId>, DbError> {
-        if let Some(name) = row {
-            return Ok(args.get(name).and_then(read_id));
-        }
-        let Some(relation) = self.shared.spec(model)?.singleton_relation() else { return Ok(None) };
-        let key = self.shared.spec(model)?.selection_key(&relation.name, &Map::new())?;
-        reader.scope_members(model, key.as_str())?.into_iter().next().map(|(id, _)| Ok(RowId::new(&id)?)).transpose()
-    }
-
-    fn source_value(&self, reader: &Reader<'_>, edits: &mut Edits, call: &Call<'_>, source: &EffectSource) -> Result<Option<Value>, DbError> {
-        Ok(match source {
-            EffectSource::Owner(field) if field == "id" => Some(Value::String(call.owner.id.to_string())),
-            EffectSource::Owner(field) => edits.row_mut(reader, call.owner.model.as_str(), call.owner.id.as_str())?.and_then(|row| row.get(field).filter(|value| !value.is_null()).cloned()),
-            EffectSource::Row { model, row, field } => {
-                let Some(id) = self.effect_row(reader, call.args, model, row.as_deref())? else { return Ok(None) };
-                if field == "id" {
-                    Some(Value::String(id.to_string()))
-                } else {
-                    edits.row_mut(reader, model, id.as_str())?.and_then(|row| row.get(field).filter(|value| !value.is_null()).cloned())
-                }
-            }
-        })
     }
 }

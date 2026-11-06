@@ -11,7 +11,7 @@ use crate::store::Reader;
 use crate::syncstate::read_sync;
 use crate::value::{read_id, same_fields};
 
-use super::effects::{Call, Edits};
+use super::effects::Edits;
 use super::error::DbError;
 use super::local_write::{local_scope_ops, plan_scope_effect, reject_invalid_values, reject_unknown_fields};
 use super::open::Db;
@@ -138,17 +138,9 @@ impl Db {
         if let Some(copy) = declared.as_ref().and_then(|declared| declared.copies_receiver_to.as_ref()) { read_models.extend(Self::copy_source_models(copy)); }
         let effects = self.shared.read(&read_models, |reader| {
             let current = reader.point(model, id.as_str())?.ok_or_else(|| DbError::NotFound { model: model.to_string(), id: id.to_string() })?;
-            let mut merged = current.clone();
-            merged.extend(patch.clone());
-            for (field, op) in &keyed {
-                let Some(declared) = spec.field(field) else { continue };
-                let target_row = |model: &str, id: &str| Ok::<_, DbError>(reader.point(model, id)?);
-                if let Some(next) = crate::schema::keyed::apply(declared, current.get(field), op, &args, target_row)? {
-                    merged.insert(field.clone(), next);
-                }
-            }
-            let mut edits = Edits::of_owner(model, id, current, merged);
-            self.apply_flagged(reader, &mut edits, &Call { owner: &own, args: &args }, &flagged)?;
+            let view = super::plan_view::ReaderView { reader, specs: &|name| self.shared.spec(name).ok(), db: Some(self) };
+            let merged = crate::owners::write::outbox_plan::optimistic_row(spec, &view, &current, &patch, &keyed, &flagged, &args, (model, id.as_str())).map_err(|error| DbError::Internal(error.0))?;
+            let edits = Edits::of_owner(model, id, current, merged);
             let mut effects = IntentEffects::default();
             let removes = declared.as_ref().is_some_and(|declared| declared.removes_receiver);
             for ((edited_model, edited_id), (before, after)) in edits.into_rows() {
@@ -201,7 +193,7 @@ impl Db {
         }
         let (mut scope_ops, mut joins) = (Vec::new(), Vec::new());
         for effect in &declared.scope_effects {
-            plan_scope_effect(reader, self.shared.spec(&effect.model)?, effect, (own, args), &mut joins, &mut scope_ops)?;
+            plan_scope_effect(reader, &|name| self.shared.spec(name).ok(), self.shared.spec(&effect.model)?, effect, (own, args), &mut joins, &mut scope_ops)?;
         }
         let order_of = |model: &str, list: &str, row: &str| scope_ops.iter().find_map(|operation| match operation {
             ScopeOp::Append { scope, row: appended, order_key } if scope.model.as_str() == model && scope.key.as_str() == list && appended.as_str() == row => Some(order_key.clone()),
