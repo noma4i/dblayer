@@ -40,6 +40,12 @@ struct Facts {
     landed_revision: i64,
     store_seen: i64,
     request_base: std::cell::Cell<i64>,
+    /// The window has a marker and a tail (`media` in the `.dbl`).
+    media: bool,
+    marker: Option<Marker>,
+    members: i64,
+    /// The marker and the member count that the landing in flight makes the saved ones.
+    landing_marker: Option<(Marker, i64)>,
     fx: RefCell<Vec<Emit>>,
 }
 
@@ -65,6 +71,10 @@ impl Facts {
                 for model in models {
                     self.generations.insert(model.clone(), *generation);
                 }
+                if self.depends_on(models) {
+                    self.marker = None;
+                    self.members = 0;
+                }
             }
             Ev::Saved(Some(saved)) => {
                 self.fresh = !saved.stale;
@@ -74,6 +84,8 @@ impl Facts {
                 self.page = saved.pages;
                 self.page_count = saved.pages;
                 self.has_rows = saved.has_rows;
+                self.marker.clone_from(&saved.marker);
+                self.members = saved.members;
             }
             Ev::Load { store_revision, .. } => self.store_seen = self.store_seen.max(*store_revision),
             Ev::StoreSeen { revision } => self.store_seen = self.store_seen.max(*revision),
@@ -146,7 +158,7 @@ impl Facts {
             let (request, attempt) = ctx.request();
             self.phase = Phase::Loading;
             self.emit(Emit::Pin { epoch: self.epoch, request });
-            WinState::loading(Load::issued(request, attempt, page, force, self.basis()))
+            WinState::loading(self.issue(request, attempt, page, force))
         } else {
             WinState::waiting(force, page)
         };
@@ -162,7 +174,105 @@ impl Facts {
         self.phase = Phase::Loading;
         self.emit(Emit::Pin { epoch: self.epoch, request });
         self.announce();
-        Transition(WinState::loading(Load::issued(request, attempt, page, force, self.basis())))
+        Transition(WinState::loading(self.issue(request, attempt, page, force)))
+    }
+
+    /// A load of the first page of a media window starts with a check of its marker; every other load asks for a page.
+    fn issue(&self, request: RequestId, attempt: u32, page: u32, force: bool) -> Load {
+        let load = Load::issued(request, attempt, page, force, self.basis());
+        if !(self.media && page == 1) { return load; }
+        let up_to = self.marker.as_ref().map_or(0, |marker| marker.sequence);
+        Load { chain: Some(Chain { phase: MediaPhase::MarkerCheck { up_to }, cursor: None, ids: Vec::new(), rows: PageRows::default(), models: BTreeSet::new(), latest: 0, base: 0 }), ..load }
+    }
+
+    fn request_effect(&self, load: &Load) -> WindowEffect {
+        let (cursor, kind) = match &load.chain {
+            Some(chain) => (chain.cursor.clone(), chain.kind()),
+            None => (self.page_cursor(load.page), RequestKind::Page),
+        };
+        WindowEffect::Request { request: load.request, attempt: load.attempt, page: load.page, cursor, epoch: self.epoch, kind }
+    }
+
+    /// The next request of the chain: a new attempt of the same load.
+    fn chain_request(&mut self, context: &mut Ctx<'_>, load: &mut Load, chain: Chain) -> Outcome<WinState> {
+        load.attempt = context.attempt();
+        load.attempts = 0;
+        load.chain = Some(chain);
+        let effect = self.request_effect(load);
+        self.push_fx(effect);
+        Handled
+    }
+
+    /// The chain ends: its rows and its marker land in 1 batch, or only the marker when the rows stay.
+    fn land_chain(&mut self, load: &Load, chain: &Chain, marker: Marker, keep_rows: bool) -> Outcome<WinState> {
+        let related = chain.rows.related.iter().map(|(model, _)| model.clone());
+        let models: BTreeSet<String> = self.dependency_models.iter().cloned().chain(chain.models.iter().cloned()).chain(related).collect();
+        let basis = crate::owners::store::basis_for(models.iter().map(|model| (model.clone(), load.basis.of(model))));
+        let members = if keep_rows { self.members } else { chain.base + i64::try_from(chain.ids.len()).unwrap_or(i64::MAX) };
+        let mut page = AnswerPage::new(1, chain.ids.clone(), None);
+        page.payload = chain.rows.clone();
+        page.dependency_models = chain.models.clone();
+        let number = if chain.base > 0 { 2 } else { 1 };
+        self.page_count = 1;
+        self.emit(Emit::Commit { request: load.request, basis, page, number, replace_all: false, base_revision: self.request_base.get(), marker: Some(marker.clone()), keep_rows });
+        self.landing_marker = Some((marker, members));
+        let cursor = if keep_rows { self.cursor.clone() } else { None };
+        Transition(WinState::landing(load.request, 1, cursor, keep_rows && self.has_rows || !chain.ids.is_empty(), chain.models.clone()))
+    }
+
+    /// The answer of a request of a media chain, by the phase of the chain.
+    fn media_response(&mut self, context: &mut Ctx<'_>, load: &mut Load, answer: &AnswerPage, now: i64) -> Outcome<WinState> {
+        self.answered_at = now;
+        let Some(mut chain) = load.chain.take() else { return Handled };
+        chain.models.extend(answer.dependency_models.iter().cloned());
+        match chain.phase {
+            MediaPhase::MarkerCheck { up_to } => {
+                let Some(found) = answer.marker.clone() else { return self.fail("InvalidResponse", None) };
+                chain.latest = found.sequence;
+                let prefix = self.marker.as_ref().is_some_and(|saved| saved.values == found.values && saved.sequence == up_to);
+                if prefix && found.sequence == up_to {
+                    return self.land_chain(load, &chain, found, true);
+                }
+                if prefix && found.sequence > up_to {
+                    chain.phase = MediaPhase::Tail { after: up_to };
+                    chain.base = self.members;
+                } else {
+                    chain.phase = MediaPhase::Full;
+                }
+                self.chain_request(context, load, chain)
+            }
+            MediaPhase::Tail { .. } | MediaPhase::Full => {
+                chain.ids.extend(answer.rows.iter().cloned());
+                chain.rows.roots.extend(answer.payload.roots.iter().cloned());
+                chain.rows.related.extend(answer.payload.related.iter().cloned());
+                chain.rows.total = answer.payload.total.or(chain.rows.total);
+                if !answer.more {
+                    chain.phase = MediaPhase::Confirm { up_to: chain.latest };
+                    chain.cursor = None;
+                } else {
+                    match &answer.cursor {
+                        Some(next) if chain.cursor.as_ref() != Some(next) => chain.cursor = Some(next.clone()),
+                        _ => return self.fail("InvalidResponse", None),
+                    }
+                }
+                self.chain_request(context, load, chain)
+            }
+            MediaPhase::Confirm { .. } => {
+                let Some(found) = answer.marker.clone() else { return self.fail("InvalidResponse", None) };
+                let counted: i64 = found.values.iter().filter(|(field, _)| field.as_str() != "revision").map(|(_, count)| *count).sum();
+                if counted == chain.base + i64::try_from(chain.ids.len()).unwrap_or(i64::MAX) {
+                    return self.land_chain(load, &chain, Marker { sequence: chain.latest, values: found.values }, false);
+                }
+                if load.attempts + 1 < attempt_limit(ErrorClass::Server) {
+                    load.attempts += 1;
+                    load.retry = true;
+                    load.chain = Some(chain);
+                    self.emit(Emit::Retry { request: load.request, attempt: load.attempts, class: ErrorClass::Server });
+                    return Handled;
+                }
+                self.fail("InvalidResponse", None)
+            }
+        }
     }
 
     fn finish(&mut self, request: Option<(RequestId, u32)>) -> Outcome<WinState> {
@@ -174,6 +284,7 @@ impl Facts {
     }
 
     fn fail(&mut self, message: &str, source: Option<crate::transport::TransportError>) -> Outcome<WinState> {
+        self.landing_marker = None;
         self.fresh = false;
         self.reread_due = false;
         self.set_phase(self.failed_phase());
@@ -232,6 +343,10 @@ impl Facts {
 
     fn landed(&mut self, ctx: &mut Ctx<'_>, page: u32, cursor: Option<String>, rows: bool, dependency_models: &BTreeSet<String>, revision: i64) -> Outcome<WinState> {
         self.has_rows |= rows;
+        if let Some((marker, members)) = self.landing_marker.take() {
+            self.marker = Some(marker);
+            self.members = members;
+        }
         self.cursor = cursor;
         self.page = page;
         self.landed_revision = revision;

@@ -20,7 +20,7 @@ struct WindowBasis {
 }
 
 impl Window {
-    fn new(model: String, basis: WindowBasis, (max_pages, members_complete, lifetime): (u32, bool, (i64, i64)), read_id: Option<u64>, ids: (&mut RequestId, &mut u32)) -> Self {
+    fn new(model: String, basis: WindowBasis, (max_pages, members_complete, lifetime, media): (u32, bool, (i64, i64), bool), read_id: Option<u64>, ids: (&mut RequestId, &mut u32)) -> Self {
         let WindowBasis { epoch, online, saving, base_generation, generations } = basis;
         let opening = read_id.map(|read_id| Opening { read_id, basis: generations.get(&model).copied().unwrap_or(base_generation), held: Vec::new() });
         let facts = Facts {
@@ -55,6 +55,10 @@ impl Window {
             landed_revision: 0,
             store_seen: 0,
             request_base: std::cell::Cell::new(0),
+            media,
+            marker: None,
+            members: 0,
+            landing_marker: None,
             fx: RefCell::new(Vec::new()),
         };
         let mut ctx = Ctx { next_request: ids.0, next_attempt: ids.1 };
@@ -175,6 +179,9 @@ pub type Lifetimes = Arc<dyn Fn(&WindowKey) -> (i64, i64) + Send + Sync>;
 /// Whether the `.dbl` declares `members_complete` for the relation of a key.
 pub type MembersComplete = Arc<dyn Fn(&WindowKey) -> bool + Send + Sync>;
 
+/// Whether the `.dbl` declares `media` (a marker and a tail) for the relation of a key.
+pub type HasMedia = Arc<dyn Fn(&WindowKey) -> bool + Send + Sync>;
+
 /// Whether the `.dbl` declares `refresh: foreground` for the relation of a key.
 pub type OnForeground = Arc<dyn Fn(&WindowKey) -> bool + Send + Sync>;
 
@@ -193,6 +200,7 @@ pub struct WindowsState {
     max_pages: MaxPages,
     members_complete: MembersComplete,
     lifetimes: Lifetimes,
+    media: HasMedia,
     next_read: u64,
     on_foreground: OnForeground,
     foreground_seen: u64,
@@ -209,7 +217,7 @@ pub struct WindowsPeers {
 impl WindowsState {
     /// `online` is the value of the first addressed `Online`, `None` before it.
     pub fn new(epoch: Epoch, online: Option<bool>, peers: WindowsPeers) -> Self {
-        Self { epoch, online, saving: false, generations: BTreeMap::new(), base_generation: 0, preload: Vec::new(), sources: BTreeSet::new(), next_request: 1, next_attempt: 1, windows: BTreeMap::new(), max_pages: Arc::new(|_| u32::MAX), members_complete: Arc::new(|_| false), lifetimes: Arc::new(|_| (300_000, 300_000)), next_read: 1, on_foreground: Arc::new(|_| false), foreground_seen: 0, peers }
+        Self { epoch, online, saving: false, generations: BTreeMap::new(), base_generation: 0, preload: Vec::new(), sources: BTreeSet::new(), next_request: 1, next_attempt: 1, windows: BTreeMap::new(), max_pages: Arc::new(|_| u32::MAX), members_complete: Arc::new(|_| false), lifetimes: Arc::new(|_| (300_000, 300_000)), media: Arc::new(|_| false), next_read: 1, on_foreground: Arc::new(|_| false), foreground_seen: 0, peers }
     }
 
     /// Keys that `EpochStarted` loads with `Interest+(PRELOAD)`.
@@ -226,6 +234,11 @@ impl WindowsState {
 
     pub fn with_members_complete(mut self, members_complete: MembersComplete) -> Self {
         self.members_complete = members_complete;
+        self
+    }
+
+    pub fn with_media(mut self, media: HasMedia) -> Self {
+        self.media = media;
         self
     }
 
@@ -270,7 +283,7 @@ impl WindowsState {
     /// A machine of the preload interest starts not fresh: there is no saved window to read.
     fn create(&mut self, key: &WindowKey, read_id: Option<u64>) {
         let ids = (&mut self.next_request, &mut self.next_attempt);
-        let window = Window::new(key.model.clone(), WindowBasis { epoch: self.epoch, online: self.online, saving: self.saving, base_generation: self.base_generation, generations: self.generations.clone() }, ((self.max_pages)(key), (self.members_complete)(key), (self.lifetimes)(key)), read_id, ids);
+        let window = Window::new(key.model.clone(), WindowBasis { epoch: self.epoch, online: self.online, saving: self.saving, base_generation: self.base_generation, generations: self.generations.clone() }, ((self.max_pages)(key), (self.members_complete)(key), (self.lifetimes)(key), (self.media)(key)), read_id, ids);
         self.windows.insert(key.clone(), window);
     }
 }
@@ -293,9 +306,15 @@ impl Windows {
                 Emit::Run(effect) => out.push(Effect::Run(WindowsEffect::Window { key: key.clone(), effect })),
                 Emit::Pin { epoch, request } => out.push(Effect::Send(Outbound::new(peers.store, StoreInput::Pin { epoch, request_id: request }))),
                 Emit::Unpin { request } => out.push(Effect::Send(Outbound::new(peers.store, StoreInput::Unpin { request_id: request }))),
-                Emit::Commit { request, basis, page, number, replace_all, base_revision } => {
-                    let op = StoreOp::Window { key: key.name.clone(), model: key.model.clone(), page: number, replace_all, cursor: page.cursor.clone(), roots: page.payload.roots.clone(), related: page.payload.related.clone(), total: page.payload.total, base_revision };
-                    let batch = StoreBatch { author: BatchAuthor::Window, id: request, epoch, basis, rows: Vec::new(), intents: 0, credential: None, ops: vec![op] };
+                Emit::Commit { request, basis, page, number, replace_all, base_revision, marker, keep_rows } => {
+                    let mut ops = Vec::new();
+                    if !keep_rows {
+                        ops.push(StoreOp::Window { key: key.name.clone(), model: key.model.clone(), page: number, replace_all, cursor: page.cursor.clone(), roots: page.payload.roots.clone(), related: page.payload.related.clone(), total: page.payload.total, base_revision });
+                    }
+                    if let Some(marker) = marker {
+                        ops.push(StoreOp::WindowMarker { key: key.name.clone(), model: key.model.clone(), marker });
+                    }
+                    let batch = StoreBatch { author: BatchAuthor::Window, id: request, epoch, basis, rows: Vec::new(), intents: 0, credential: None, ops };
                     out.push(Effect::Send(Outbound::new(peers.store, StoreInput::Commit(batch))));
                 }
                 Emit::Retry { request, attempt, class } => {

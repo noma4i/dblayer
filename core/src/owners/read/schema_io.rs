@@ -6,14 +6,14 @@ use std::sync::Arc;
 
 use serde_json::{json, Map, Value};
 
-use super::windows::{AnswerPage, Lifetimes, MaxPages, MembersComplete, OnForeground, PageRows, WindowKey, WindowKind};
+use super::windows::{AnswerPage, HasMedia, Lifetimes, Marker, MaxPages, MembersComplete, OnForeground, PageRows, RequestKind, WindowKey, WindowKind};
 use super::WindowCodec;
 use crate::store::Store;
 use crate::identity::RowId;
 use crate::owners::store::RowValue;
 use crate::read::EDGE_KEY;
 use crate::schema::{Coverage, NodeRead, PreloadChoice, RemoteShape};
-use super::codec::{extract, limited_combinations, load_variables, normalize_nodes, stamp_scope_values, Normalized};
+use super::codec::{declared_variables, extract, limited_combinations, load_variables, normalize_nodes, root_value, stamp_scope_values, Normalized};
 use crate::transport::{GraphQLRequest, Response, ResponseOutcome};
 use crate::value::read_id;
 
@@ -105,15 +105,33 @@ fn page_rows(normalized: Normalized, total: Option<i64>) -> (Vec<String>, PageRo
 }
 
 impl WindowCodec for SchemaWindowCodec {
-    fn request(&self, key: &WindowKey, _page: u32, cursor: Option<&str>) -> Result<GraphQLRequest, String> {
+    fn request(&self, key: &WindowKey, _page: u32, cursor: Option<&str>, kind: RequestKind) -> Result<GraphQLRequest, String> {
         match key.kind() {
             WindowKind::Relation { relation, params } => {
                 let spec = self.db.spec(&key.model).map_err(|error| error.to_string())?;
                 let declared = spec.relations.iter().find(|candidate| candidate.name == relation).ok_or_else(|| format!("{} has no relation {relation}", key.model))?;
                 let remote = declared.remote.as_ref().ok_or_else(|| format!("{}.{relation} is no remote relation", key.model))?;
-                let operation = self.operation(&remote.operation)?;
+                let media = || declared.media.as_ref().ok_or_else(|| format!("{}.{relation} declares no media", key.model));
+                let operation = self.operation(match kind {
+                    RequestKind::Page => &remote.operation,
+                    RequestKind::Marker { .. } => &media()?.marker,
+                    RequestKind::Tail { .. } => &media()?.tail,
+                })?;
                 let page_size = remote.page_size.unwrap_or(operation.page_size);
-                Ok(GraphQLRequest::new(&operation.document, &operation.name, load_variables(&params, &remote.shape, page_size, cursor, &remote.variables)))
+                match kind {
+                    RequestKind::Page => Ok(GraphQLRequest::new(&operation.document, &operation.name, load_variables(&params, &remote.shape, page_size, cursor, &remote.variables))),
+                    RequestKind::Marker { up_to } => {
+                        let mut variables = declared_variables(&params, &media()?.marker_variables);
+                        variables.insert("upToSequence".into(), json!(up_to));
+                        Ok(GraphQLRequest::new(&operation.document, &operation.name, Value::Object(variables)))
+                    }
+                    RequestKind::Tail { after } => {
+                        let media = media()?;
+                        let mut tail_params = declared_variables(&params, &media.tail_variables);
+                        tail_params.insert(media.after.clone(), json!(after));
+                        Ok(GraphQLRequest::new(&operation.document, &operation.name, load_variables(&tail_params, &remote.shape, page_size, cursor, &BTreeMap::new())))
+                    }
+                }
             }
             WindowKind::Nodes { ids } => {
                 let remote = self.nodes_relation(&key.model)?.remote.as_ref().ok_or_else(|| format!("the nodes read of {} is no remote relation", key.model))?;
@@ -123,7 +141,7 @@ impl WindowCodec for SchemaWindowCodec {
         }
     }
 
-    fn answer(&self, key: &WindowKey, page: u32, response: Response) -> Result<AnswerPage, String> {
+    fn answer(&self, key: &WindowKey, page: u32, kind: RequestKind, response: Response) -> Result<AnswerPage, String> {
         if response.shape().outcome() != ResponseOutcome::Commit {
             let messages: Vec<String> = response.errors.iter().map(|error| error.message.clone()).collect();
             return Err(if messages.is_empty() { "empty response".to_string() } else { messages.join("; ") });
@@ -131,11 +149,17 @@ impl WindowCodec for SchemaWindowCodec {
         let data = response.data.ok_or("response has no data")?;
         let model = key.model.as_str();
         let spec = self.db.spec(model).map_err(|error| error.to_string())?;
+        if matches!(kind, RequestKind::Marker { .. }) {
+            return marker_answer(spec, key, &data).map(AnswerPage::marked);
+        }
         let (declared, params, shape, root, total_from) = match key.kind() {
             WindowKind::Relation { relation, params } => {
                 let declared = spec.relations.iter().find(|candidate| candidate.name == relation).ok_or_else(|| format!("{model} has no relation {relation}"))?;
                 let remote = declared.remote.as_ref().ok_or_else(|| format!("{model}.{relation} is no remote relation"))?;
-                let operation = self.operation(&remote.operation)?;
+                let operation = self.operation(match (&kind, &declared.media) {
+                    (RequestKind::Tail { .. }, Some(media)) => &media.tail,
+                    _ => &remote.operation,
+                })?;
                 (declared, params, remote.shape.clone(), remote.root.clone().unwrap_or_else(|| operation.root_path.clone()), remote.total_from.clone())
             }
             WindowKind::Nodes { .. } => {
@@ -151,11 +175,36 @@ impl WindowCodec for SchemaWindowCodec {
         let normalized = normalize_nodes(&self.db, model, &stamped).map_err(|error| error.to_string())?;
         let mut dependency_models: BTreeSet<String> = normalized.related.iter().map(|(related, _)| related.as_str().to_string()).collect();
         dependency_models.insert(model.to_string());
+        let more = extracted.page_info.as_ref().is_some_and(|info| info.has_next_page);
         let cursor = extracted.page_info.as_ref().filter(|info| info.has_next_page).and_then(|info| info.end_cursor.clone());
         let total = extracted.page_info.as_ref().and_then(|info| info.total);
         let (rows, payload) = page_rows(normalized, total);
-        Ok(AnswerPage { page, rows, cursor, dependency_models, payload })
+        Ok(AnswerPage { page, rows, cursor, dependency_models, payload, marker: None, more })
     }
+}
+
+fn media_integer(value: &Value, field: &str) -> Result<i64, String> {
+    value.as_i64().or_else(|| value.as_str().and_then(|text| text.parse().ok())).ok_or_else(|| format!("marker {field} must be an integer"))
+}
+
+/// The marker of a media window from the answer of its marker operation: the newest sequence and the counts the fields name.
+fn marker_answer(spec: &crate::schema::ModelSpec, key: &WindowKey, data: &Value) -> Result<Marker, String> {
+    let WindowKind::Relation { relation, .. } = key.kind() else { return Err("a marker belongs to a relation window".into()) };
+    let media = spec.relations.iter().find(|candidate| candidate.name == relation).and_then(|declared| declared.media.as_ref()).ok_or("the relation declares no media")?;
+    let row = root_value(data, &media.from).and_then(Value::as_object).ok_or_else(|| format!("marker {} is not an object", media.from))?;
+    let get = |name: &str| media_integer(row.get(name).ok_or_else(|| format!("marker has no {name}"))?, name);
+    let sequence = get(&media.sequence)?;
+    if sequence < 0 { return Err("marker sequence must not be negative".into()); }
+    let values = media.fields.iter().map(|field| Ok((field.clone(), get(field)?))).collect::<Result<_, String>>()?;
+    Ok(Marker { sequence, values })
+}
+
+/// The keys of the relations the `.dbl` declares with `media`.
+pub fn has_media(db: std::sync::Arc<Store>) -> HasMedia {
+    Arc::new(move |key| match key.kind() {
+        WindowKind::Relation { relation, .. } => db.spec(&key.model).ok().and_then(|spec| spec.relations.iter().find(|candidate| candidate.name == relation)).is_some_and(|declared| declared.media.is_some()),
+        WindowKind::Nodes { .. } => false,
+    })
 }
 
 /// How many pages a key may land at most: `max_pages` of the connection in the `.dbl`.

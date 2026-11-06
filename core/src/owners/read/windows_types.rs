@@ -73,10 +73,58 @@ pub struct AnswerPage {
     pub cursor: Option<String>,
     pub dependency_models: BTreeSet<String>,
     pub payload: PageRows,
+    /// The answer of a marker request: `sequence` is the newest sequence of the server, `values` are `revision` and the counts of the prefix.
+    pub marker: Option<Marker>,
+    /// `pageInfo.hasNextPage`: a page of a media chain that has more pages but names no cursor is an invalid answer.
+    pub more: bool,
 }
 
 impl AnswerPage {
-    pub fn new(page: u32, rows: Vec<String>, cursor: Option<String>) -> Self { Self { page, rows, cursor, dependency_models: BTreeSet::new(), payload: PageRows::default() } }
+    pub fn new(page: u32, rows: Vec<String>, cursor: Option<String>) -> Self { let more = cursor.is_some(); Self { page, rows, cursor, dependency_models: BTreeSet::new(), payload: PageRows::default(), marker: None, more } }
+
+    pub fn marked(marker: Marker) -> Self { Self { marker: Some(marker), ..Self::new(1, Vec::new(), None) } }
+}
+
+/// The marker of a media window: `revision`, the counts of its rows by kind and the sequence they stand for.
+pub use crate::commit::WindowMarker as Marker;
+
+/// What a request of a window asks: a page, the marker of the media chain up to a sequence, or the tail after a sequence.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RequestKind {
+    Page,
+    Marker { up_to: i64 },
+    Tail { after: i64 },
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MediaPhase {
+    MarkerCheck { up_to: i64 },
+    Tail { after: i64 },
+    Full,
+    Confirm { up_to: i64 },
+}
+
+/// The pages of one load of a media window: they land in 1 batch after the marker of the end of the chain confirmed them.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Chain {
+    pub phase: MediaPhase,
+    pub cursor: Option<String>,
+    pub ids: Vec<String>,
+    pub rows: PageRows,
+    pub models: BTreeSet<String>,
+    pub latest: i64,
+    /// The members the chain keeps: all of the saved window for a tail, none for a full read.
+    pub base: i64,
+}
+
+impl Chain {
+    pub fn kind(&self) -> RequestKind {
+        match self.phase {
+            MediaPhase::MarkerCheck { up_to } | MediaPhase::Confirm { up_to } => RequestKind::Marker { up_to },
+            MediaPhase::Tail { after } => RequestKind::Tail { after },
+            MediaPhase::Full => RequestKind::Page,
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -89,7 +137,7 @@ pub enum WindowOutcome {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum WindowEffect {
-    Request { request: RequestId, attempt: u32, page: u32, cursor: Option<String>, epoch: Epoch },
+    Request { request: RequestId, attempt: u32, page: u32, cursor: Option<String>, epoch: Epoch, kind: RequestKind },
     Cancel { request: RequestId, attempt: u32 },
     Outcome { id: InterestId, outcome: WindowOutcome },
     DerivePreload { revision: i64 },
@@ -102,7 +150,7 @@ enum Emit {
     Run(WindowEffect),
     Pin { epoch: Epoch, request: RequestId },
     Unpin { request: RequestId },
-    Commit { request: RequestId, basis: BTreeMap<String, u64>, page: AnswerPage, number: u32, replace_all: bool, base_revision: i64 },
+    Commit { request: RequestId, basis: BTreeMap<String, u64>, page: AnswerPage, number: u32, replace_all: bool, base_revision: i64, marker: Option<Marker>, keep_rows: bool },
     Retry { request: RequestId, attempt: u32, class: ErrorClass },
     CancelRetry { request: RequestId },
     Announce { state: WindowState, streams: Vec<InterestId> },
@@ -266,12 +314,14 @@ pub struct Load {
     pub force: bool,
     pub attempts: u32,
     pub basis: GenerationsAtIssue,
+    pub chain: Option<Chain>,
+    pub confirms: u32,
 }
 
 impl Load {
     /// A request that waits for its pin.
     pub fn issued(request: RequestId, attempt: u32, page: u32, force: bool, basis: GenerationsAtIssue) -> Self {
-        Self { request, attempt, retry: false, pinning: true, page, force, attempts: 0, basis }
+        Self { request, attempt, retry: false, pinning: true, page, force, attempts: 0, basis, chain: None, confirms: 0 }
     }
 }
 

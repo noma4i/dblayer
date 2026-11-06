@@ -11,7 +11,7 @@ use std::sync::{Arc, PoisonError};
 const NOW: i64 = 1_000_000;
 
 use super::ref_window::Phase;
-use super::ref_window::{Effect, Failure, Goal, Input, Read, Reject, Result3, State, Window, PRELOAD};
+use super::ref_window::{Effect, Failure, Goal, Input, Marker3, Read, Reject, Result3, State, Window, PRELOAD};
 use crate::owners::contract::{Committed, EpochStarted, ErrorClass, ModelsReset, Online, RejectReason, Rejected, RequestError};
 use crate::owners::contract::WindowPhase as OwnerPhase;
 use crate::owners::support::{new_log, number_after, snapshot, take, Discard, Emitted, Landing, Log, Reset, ResetState, Silent, Sink, Source, SourceInput, SourceState, Spy, SpyState, StoreGeneration, StoreStub, StoreStubState};
@@ -151,6 +151,8 @@ struct Twin {
     now: i64,
     held: HeldReads,
     hold: Arc<std::sync::atomic::AtomicBool>,
+    /// The text of the last batch the owner sent to the Store.
+    commit: String,
 }
 
 impl Twin {
@@ -166,10 +168,15 @@ impl Twin {
 
     fn with_preload() -> Self { Self::build(Some(true), u32::MAX, vec![key()], Vec::new(), false) }
 
-    fn build(online: Option<bool>, max: u32, preload: Vec<WindowKey>, sources: Vec<WindowKey>, members_complete: bool) -> Self {
+    /// A window of a key with `media`: a marker and a tail.
+    fn media() -> Self { Self::assemble(Some(true), u32::MAX, (Vec::new(), Vec::new()), (false, true)) }
+
+    fn build(online: Option<bool>, max: u32, preload: Vec<WindowKey>, sources: Vec<WindowKey>, members_complete: bool) -> Self { Self::assemble(online, max, (preload, sources), (members_complete, false)) }
+
+    fn assemble(online: Option<bool>, max: u32, (preload, sources): (Vec<WindowKey>, Vec<WindowKey>), (members_complete, media): (bool, bool)) -> Self {
         let mut det = DetScheduler::new(3);
         let log = new_log();
-        let state = w::WindowsState::new(EPOCH, online, peers()).with_preload(preload).with_sources(sources).with_max_pages(Arc::new(move |_| max)).with_members_complete(Arc::new(move |_| members_complete)).with_foreground(Arc::new(|_| true)).with_lifetimes(Arc::new(|_| (300_000, 60_000)));
+        let state = w::WindowsState::new(EPOCH, online, peers()).with_preload(preload).with_sources(sources).with_max_pages(Arc::new(move |_| max)).with_members_complete(Arc::new(move |_| members_complete)).with_media(Arc::new(move |_| media)).with_foreground(Arc::new(|_| true)).with_lifetimes(Arc::new(|_| (300_000, 60_000)));
         let pin_revision = Arc::new(AtomicU64::new(0));
         let reads = Reads::auto();
         let (held, hold) = (reads.held.clone(), reads.hold.clone());
@@ -179,7 +186,8 @@ impl Twin {
         reference.online = online;
         reference.max_pages = max;
         reference.members_complete = members_complete;
-        Self { det, addr, log, reference, revision: 10, generation: 0, pin_revision, now: NOW, held, hold }
+        reference.media = media;
+        Self { det, addr, log, reference, revision: 10, generation: 0, pin_revision, now: NOW, held, hold, commit: String::new() }
     }
 
     fn state(&self) -> &w::WindowsState { inner(&self.det, self.addr) }
@@ -230,6 +238,15 @@ impl Twin {
             Input::TransportError { request, attempt, failure } => {
                 self.post(w::WindowsInput::Failure { request: *request, attempt: *attempt, error: RequestError { message: "e".to_string(), class: class_of(*failure), source: None } });
             }
+            Input::MarkerAnswer { request, attempt, marker } => {
+                let page = AnswerPage::marked(w::Marker { sequence: marker.sequence, values: [("revision".to_string(), marker.revision), ("count".to_string(), marker.count)].into() });
+                self.post(w::WindowsInput::Response { request: *request, attempt: *attempt, page, now: self.now });
+            }
+            Input::MoreWithoutCursor { request, attempt } => {
+                let mut page = AnswerPage::new(1, Vec::new(), None);
+                page.more = true;
+                self.post(w::WindowsInput::Response { request: *request, attempt: *attempt, page, now: self.now });
+            }
             Input::Dropped { request, attempt } => self.post(w::WindowsInput::Dropped { request: *request, attempt: *attempt }),
             Input::Retry { request } => self.post(w::WindowsInput::RetryDue { request: *request }),
             Input::Committed { request, revision } => self.post(w::WindowsInput::Committed(Committed { batch: *request, revision: *revision, tables: Vec::new(), models: Default::default(), stale_parents: Vec::new(), position: 0 })),
@@ -270,9 +287,10 @@ impl Twin {
                     let mut held = self.held.lock().unwrap_or_else(PoisonError::into_inner);
                     if *read == Read::Stray { held.last().cloned() } else { held.pop() }
                 }.expect("a read waits");
-                let saved = |landed_at: i64, fresh_until: i64, stale: bool, generation: u64| w::SavedWindow { landed_at, fresh_until, stale, cursor: None, pages: 1, has_rows: true, generation };
+                let saved = |landed_at: i64, fresh_until: i64, stale: bool, generation: u64| w::SavedWindow { landed_at, fresh_until, stale, cursor: None, pages: 1, has_rows: true, generation, marker: None, members: 0 };
                 let (read_id, result) = match read {
                     Read::Saved { landed_at, fresh_until, stale, generation_ok } => (read_id, Ok(Some(saved(*landed_at, *fresh_until, *stale, if *generation_ok { 0 } else { 7 })))),
+                    Read::Media { marker, members } => (read_id, Ok(Some(w::SavedWindow { marker: Some(w::Marker { sequence: marker.sequence, values: [("revision".to_string(), marker.revision), ("count".to_string(), marker.count)].into() }), members: *members, ..saved(NOW - 1_000, NOW - 1_000, true, 0) }))),
                     Read::None => (read_id, Ok(None)),
                     Read::Failed => (read_id, Err("disk".to_string())),
                     Read::Stray => (read_id + 50, Ok(None)),
@@ -281,6 +299,7 @@ impl Twin {
             }
         }
         let emitted = take(&self.log);
+        if let Some(Emitted::Send { input, .. }) = emitted.iter().rev().find(|entry| matches!(entry, Emitted::Send { to: STORE, input } if input.contains("author: Window"))) { self.commit.clone_from(input); }
         let pin_sent = emitted.iter().any(|entry| matches!(entry, Emitted::Send { to: STORE, input } if input.starts_with("Pin {")));
         self.reference.now = self.now;
         let mut want = self.reference.step(input);
@@ -293,7 +312,7 @@ impl Twin {
         let expected: Vec<Effect> = want.iter().filter(|effect| watched || **effect != Effect::WindowState).cloned().collect();
         let mut ordered = expected.clone();
         if pin_sent {
-            if let Some(index) = ordered.iter().position(|effect| matches!(effect, Effect::Request { .. })) {
+            if let Some(index) = ordered.iter().position(|effect| matches!(effect, Effect::Request { .. } | Effect::Marker { .. } | Effect::Tail { .. })) {
                 let request = ordered.remove(index);
                 ordered.push(request);
             }
@@ -335,6 +354,8 @@ impl Twin {
         for entry in emitted {
             match entry {
                 Emitted::Run(WindowsEffect::Window { effect, .. }) => match effect {
+                    WindowEffect::Request { request, attempt, kind: w::RequestKind::Marker { up_to }, .. } => modelled.push(Effect::Marker { request, attempt, up_to }),
+                    WindowEffect::Request { request, attempt, kind: w::RequestKind::Tail { after }, .. } => modelled.push(Effect::Tail { request, attempt, after }),
                     WindowEffect::Request { request, attempt, page, .. } => modelled.push(Effect::Request { request, attempt, page }),
                     WindowEffect::Cancel { request, attempt } => modelled.push(Effect::Cancel { request, attempt }),
                     WindowEffect::DerivePreload { revision } => modelled.push(Effect::DerivePreload { revision }),
@@ -460,3 +481,4 @@ include!("window_gap_property_tests.rs");
 include!("window_fresh_tests.rs");
 include!("window_saving_tests.rs");
 include!("window_pages_tests.rs");
+include!("window_media_tests.rs");

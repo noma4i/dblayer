@@ -33,6 +33,6 @@ fn codec(page_size: Option<u32>) -> SchemaWindowCodec {
 #[test]
 fn inv_dsl_03_the_declared_page_size_reaches_the_request_and_the_operation_size_is_the_default() {
     let key = WindowKey::relation("moments", "mine", &obj(json!({"userId": "u1"})));
-    assert_eq!(codec(Some(7)).request(&key, 1, None).unwrap().variables["first"], json!(7));
-    assert_eq!(codec(None).request(&key, 1, None).unwrap().variables["first"], json!(20));
+    assert_eq!(codec(Some(7)).request(&key, 1, None, crate::owners::read::windows::RequestKind::Page).unwrap().variables["first"], json!(7));
+    assert_eq!(codec(None).request(&key, 1, None, crate::owners::read::windows::RequestKind::Page).unwrap().variables["first"], json!(20));
 }

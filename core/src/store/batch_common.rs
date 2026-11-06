@@ -46,6 +46,10 @@ pub(super) fn apply_common(writer: &mut RowWrite<'_>, op: &StoreOp, index: usize
             let page = super::window_values::WindowPage { key: &key, page: *page, replace_all: *replace_all, cursor: cursor.as_deref(), roots, related, total: *total, base_revision: *base_revision };
             results.push(super::window_write::land(writer, &page)?);
         }
+        StoreOp::WindowMarker { key, model, marker } => {
+            let key = crate::owners::read::windows::WindowKey { model: model.clone(), name: key.clone() };
+            results.push(super::window_write::mark(writer, &key, marker)?);
+        }
         StoreOp::AttachFile { .. } => {
             let record = files.iter().find(|file| file.index == index).ok_or_else(|| StoreError::Constraint("prepared file is missing".into()))?;
             results.push(writer.attach(&record.record)?);

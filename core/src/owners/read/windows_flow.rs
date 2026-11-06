@@ -59,7 +59,8 @@ impl Facts {
             Ev::Pinned { request: got, base_revision } if *got == load.request && load.pinning => {
                 self.request_base.set(i64::try_from(*base_revision).unwrap_or(i64::MAX));
                 load.pinning = false;
-                self.push_fx(WindowEffect::Request { request: load.request, attempt: load.attempt, page: load.page, cursor: self.page_cursor(load.page), epoch: self.epoch });
+                let effect = self.request_effect(load);
+                self.push_fx(effect);
                 Handled
             }
             Ev::InterestPlus { id, .. } => {
@@ -75,7 +76,7 @@ impl Facts {
                 }
                 self.emit(Emit::CancelRetry { request: load.request });
                 self.emit(Emit::Pin { epoch: self.epoch, request });
-                *load = Load::issued(request, attempt, 1, true, self.basis());
+                *load = self.issue(request, attempt, 1, true);
                 self.announce();
                 Handled
             }
@@ -95,12 +96,13 @@ impl Facts {
                 self.emit(Emit::CancelRetry { request: load.request });
                 Transition(WinState::idle())
             }
+            Ev::Response { request: got, attempt: got_attempt, page: answer, now } if mine(got, got_attempt) && load.chain.is_some() => self.media_response(context, load, answer, *now),
             Ev::Response { request: got, attempt: got_attempt, page: answer, now } if mine(got, got_attempt) => {
                 self.answered_at = *now;
                 self.page_count = if load.page == 1 { 1 } else { self.page_count + 1 };
                 let models: BTreeSet<&String> = self.dependency_models.iter().chain(&answer.dependency_models).chain(answer.payload.related.iter().map(|(model, _)| model)).collect();
                 let basis = crate::owners::store::basis_for(models.into_iter().map(|model| (model.clone(), load.basis.of(model))));
-                self.emit(Emit::Commit { request: load.request, basis, page: answer.clone(), number: load.page, replace_all: self.replace_all, base_revision: self.request_base.get() });
+                self.emit(Emit::Commit { request: load.request, basis, page: answer.clone(), number: load.page, replace_all: self.replace_all, base_revision: self.request_base.get(), marker: None, keep_rows: false });
                 Transition(WinState::landing(load.request, load.page, answer.cursor.clone(), !answer.rows.is_empty(), answer.dependency_models.clone()))
             }
             Ev::Failure { request: got, attempt: got_attempt, error } if mine(got, got_attempt) => {
@@ -109,7 +111,7 @@ impl Facts {
                     self.cursor_reset_used = true;
                     self.replace_all = true;
                     self.emit(Emit::Pin { epoch: self.epoch, request: new_request });
-                    return Transition(WinState::loading(Load::issued(new_request, new_attempt, 1, load.force, self.basis())));
+                    return Transition(WinState::loading(self.issue(new_request, new_attempt, 1, load.force)));
                 }
                 let class = if error.class == ErrorClass::InvalidCursor { ErrorClass::Permanent } else { error.class };
                 if class != ErrorClass::Permanent && load.attempts + 1 < attempt_limit(class) {
@@ -123,7 +125,8 @@ impl Facts {
             Ev::RetryDue { request: got } if *got == load.request && load.retry && self.is_online() => {
                 load.attempt = context.attempt();
                 load.retry = false;
-                self.push_fx(WindowEffect::Request { request: load.request, attempt: load.attempt, page: load.page, cursor: self.page_cursor(load.page), epoch: self.epoch });
+                let effect = self.request_effect(load);
+                self.push_fx(effect);
                 Handled
             }
             Ev::Online { online: false, .. } => {

@@ -154,7 +154,7 @@ pub struct WindowTail {
     pub has_next: bool,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WindowMarker {
     pub sequence: i64,
     pub values: BTreeMap<String, i64>,

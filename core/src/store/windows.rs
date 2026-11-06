@@ -27,6 +27,9 @@ pub struct SavedWindow {
     pub pages: u32,
     pub has_rows: bool,
     pub generation: u64,
+    /// The marker of a media window and the number of its members: what `MarkerCheck` compares the answer with.
+    pub marker: Option<crate::commit::WindowMarker>,
+    pub members: i64,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -43,6 +46,17 @@ pub(super) fn read_window(connection: &Connection, key: &str) -> Result<Option<W
     ).optional()?;
     let Some((key, cursor, has_next, issued, applied, generation, total, pages)) = found else { return Ok(None) };
     Ok(Some(WindowRecord { key, cursor, has_next: has_next != 0, total, pages, issued, applied, generation }))
+}
+
+pub(super) fn read_marker(connection: &Connection, key: &str) -> Result<Option<crate::commit::WindowMarker>, StoreError> {
+    let mut statement = connection.prepare_cached("SELECT sequence, field, value FROM window_marker WHERE window_key = ?1")?;
+    let rows = statement.query_map(params![key], |row| Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?, row.get::<_, i64>(2)?)))?;
+    let mut marker: Option<crate::commit::WindowMarker> = None;
+    for row in rows {
+        let (sequence, field, value) = row?;
+        marker.get_or_insert_with(|| crate::commit::WindowMarker { sequence, values: Default::default() }).values.insert(field, value);
+    }
+    Ok(marker)
 }
 
 pub(super) fn max_sequence(connection: &Connection) -> Result<i64, StoreError> {

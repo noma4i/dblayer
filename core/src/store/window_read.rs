@@ -33,7 +33,7 @@ impl Store {
         let has_rows = self.read(&[model], |reader| reader.scope_last_id(model, scope.key.as_str()))?.is_some();
         let policy = crate::pacing::selected_policy(!has_rows, &remote.stale_time, remote.empty_stale_time.as_deref());
         let lifetime = crate::pacing::parse_duration(policy).map_or(i64::MAX / 4, |window| i64::try_from(window.as_millis()).unwrap_or(i64::MAX / 4));
-        Ok(Some(crate::store::SavedWindow { landed_at: freshness.landed_at, fresh_until: freshness.landed_at.saturating_add(lifetime), stale: freshness.stale_since.is_some(), cursor: record.cursor, pages: u32::try_from(record.pages).unwrap_or(u32::MAX), has_rows, generation: u64::try_from(record.generation).unwrap_or(0) }))
+        Ok(Some(crate::store::SavedWindow { landed_at: freshness.landed_at, fresh_until: freshness.landed_at.saturating_add(lifetime), stale: freshness.stale_since.is_some(), cursor: record.cursor, pages: u32::try_from(record.pages).unwrap_or(u32::MAX), has_rows, generation: u64::try_from(record.generation).unwrap_or(0), marker: super::windows::read_marker(&self.lock().connection, &key)?, members: self.read(&[model], |reader| reader.scope_member_count(model, scope.key.as_str()))? }))
     }
 
     /// Whether the window landed within the stale time of its relation and nothing marked it stale since (`now_ms` is the clock of the database).

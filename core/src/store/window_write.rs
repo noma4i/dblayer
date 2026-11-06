@@ -2,7 +2,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use serde_json::{Map, Value};
 
-use crate::commit::{CommitEnvelope, CommitResult, EntityOp, WindowSave, WindowTail, WriteOrigin};
+use crate::commit::{CommitEnvelope, CommitResult, EntityOp, WindowMarker, WindowSave, WindowTail, WriteOrigin};
 use crate::identity::{ModelKey, RowId};
 use crate::owners::read::windows::WindowKind;
 use crate::read::{incoming_ids, plan_landing, StoredScope, EDGE_KEY};
@@ -107,4 +107,22 @@ pub(super) fn land(writer: &mut RowWrite<'_>, page: &WindowPage<'_>) -> Result<C
     });
     envelope.validate(writer.generation)?;
     super::apply::apply_envelope_at(writer.connection, writer.models, &envelope, writer.now, writer.revision, Some(writer.originals))
+}
+
+/// The marker of a media window replaces the stored one in the same transaction as the rows of its chain; the window lands now and no debt stays.
+pub(super) fn mark(writer: &mut RowWrite<'_>, key: &crate::owners::read::windows::WindowKey, marker: &WindowMarker) -> Result<CommitResult, StoreError> {
+    let model = key.model.as_str();
+    let WindowKind::Relation { relation, params } = key.kind() else { return Err(fault("a marker belongs to a relation window")) };
+    let spec = &writer.models.get(model).ok_or_else(|| StoreError::UnknownModel(model.to_string()))?.spec;
+    let declared = spec.relations.iter().find(|item| item.name == relation).ok_or_else(|| fault(format!("{model} has no relation {relation}")))?;
+    let remote = declared.remote.as_ref().ok_or_else(|| fault(format!("{model}.{relation} is not remote")))?;
+    let (_, window_key) = super::windows::window_identity(spec, model, &relation, remote, &params).map_err(fault)?;
+    let generation = writer.generation.value() as i64;
+    writer.connection.execute("DELETE FROM window_marker WHERE window_key = ?1", [&window_key])?;
+    let mut insert = writer.connection.prepare_cached("INSERT INTO window_marker (window_key, generation, sequence, field, value) VALUES (?1, ?2, ?3, ?4, ?5)")?;
+    for (field, value) in &marker.values {
+        insert.execute(rusqlite::params![window_key, generation, marker.sequence, field, value])?;
+    }
+    writer.connection.execute("UPDATE query_window SET stale_since = NULL, landed_at = ?1 WHERE key = ?2", rusqlite::params![writer.now, window_key])?;
+    Ok(CommitResult::noop(uuid::Uuid::new_v4()))
 }

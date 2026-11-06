@@ -3,165 +3,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 
-/// Observables shared by the references and the core.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum Phase {
-    Idle,
-    Loading,
-    Loaded,
-    Failed,
-}
-
-pub(super) const PRELOAD: u32 = u32::MAX;
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum Result3 {
-    Loaded,
-    Failed,
-    PageLimit,
-    Interrupted,
-}
-
-/// Failure classes of a transport error: the first two are temporary and retried up to `retry_limit`.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum Failure {
-    Network,
-    Server,
-    Permanent,
-    InvalidCursor,
-}
-
-impl Failure {
-    /// Attempts of a window per class.
-    pub(super) fn retry_limit(self) -> u32 {
-        match self {
-            Failure::Network => 3,
-            Failure::Server => 2,
-            Failure::Permanent | Failure::InvalidCursor => 0,
-        }
-    }
-
-    fn temporary(self) -> bool { matches!(self, Failure::Network | Failure::Server) }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum Reject {
-    StaleGeneration,
-    NoSession,
-    Closed,
-    Storage,
-    Invalid,
-}
-
-/// What a `Load` asks for: the first page, the page after the last one the caller saw, or every page.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum Goal {
-    First,
-    Next,
-    All,
-}
-
-/// A stored goal: `Next(c)` waits for the landing of the page `c`.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum Want {
-    First,
-    Next(u32),
-    All,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(super) enum Input {
-    InterestPlus { id: u32 },
-    InterestPassive { id: u32 },
-    InterestMinus { id: u32 },
-    Load { id: u32, goal: Goal, force: bool },
-    Response { request: u64, attempt: u32, cursor: Option<u32>, rows: bool },
-    TransportError { request: u64, attempt: u32, failure: Failure },
-    Dropped { request: u64, attempt: u32 },
-    Retry { request: u64 },
-    Committed { request: u64, revision: i64 },
-    Rejected { request: u64, reason: Reject },
-    Stale { in_keys: bool },
-    Foreground { seq: u64 },
-    SourceChanged { revision: i64 },
-    Online(bool),
-    EpochEnded,
-    ModelsReset { own_model: bool },
-    Closing,
-    /// The answer of the read pool for the saved window of the key.
-    Read(Read),
-    PowerSaving(bool),
-    OfflineRefused,
-}
-
-/// What the read pool answers: the saved window (`generation_ok` = the generation did not change), nothing, an error, or the answer of another read.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum Read {
-    Saved { landed_at: i64, fresh_until: i64, stale: bool, generation_ok: bool },
-    None,
-    Failed,
-    Stray,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(super) enum Effect {
-    ReadWindow,
-    Request { request: u64, attempt: u32, page: u32 },
-    Cancel { request: u64, attempt: u32 },
-    Commit { request: u64, replace_all: bool },
-    ScheduleRetry { request: u64 },
-    WindowState,
-    Drained,
-    DerivePreload { revision: i64 },
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum State {
-    Opening,
-    Idle,
-    Loading { request: u64, attempt: u32, retry: bool, page: u32, force: bool, attempts: u32 },
-    Landing { request: u64, page: u32, cursor: Option<u32>, rows: bool },
-    Waiting { force: bool, page: u32 },
-    Ended,
-}
-
-pub(super) struct Window {
-    pub(super) state: State,
-    pub(super) online: Option<bool>,
-    pub(super) fresh: bool,
-    /// The page the next cursor points at, `None` = no more pages.
-    pub(super) cursor: Option<u32>,
-    pub(super) last_error: Option<bool>,
-    pub(super) interest: BTreeSet<u32>,
-    pub(super) waiters: BTreeMap<u32, Want>,
-    pub(super) reread_due: bool,
-    /// The last page that landed.
-    pub(super) page: u32,
-    pub(super) page_count: u32,
-    pub(super) max_pages: u32,
-    pub(super) members_complete: bool,
-    pub(super) cursor_reset_used: bool,
-    pub(super) replace_all: bool,
-    pub(super) has_rows: bool,
-    pub(super) landed_revision: i64,
-    pub(super) foreground_seen: u64,
-    pub(super) phase: Phase,
-    pub(super) settled: bool,
-    pub(super) outcomes: Vec<(u32, Result3)>,
-    /// The `now` of the input, set by the test before every step.
-    pub(super) now: i64,
-    pub(super) landed_at: i64,
-    pub(super) fresh_until: i64,
-    answered_at: i64,
-    /// `expires_in` and `empty_in`.
-    pub(super) lifetime: (i64, i64),
-    pub(super) saving: bool,
-    /// The key has had no machine: its first creating input reads the saved window.
-    unread: bool,
-    held: Vec<Input>,
-    next_request: u64,
-    next_attempt: u32,
-}
+include!("ref_window_types.rs");
 
 impl Window {
     pub(super) fn new() -> Self {
@@ -196,6 +38,11 @@ impl Window {
             held: Vec::new(),
             next_request: 1,
             next_attempt: 1,
+            media: false,
+            marker: None,
+            members: 0,
+            chain: None,
+            landing_marker: None,
         }
     }
 
@@ -251,7 +98,7 @@ impl Window {
             let (request, attempt) = self.request_ids();
             self.state = State::Loading { request, attempt, retry: false, page, force, attempts: 0 };
             self.phase = Phase::Loading;
-            effects.push(Effect::Request { request, attempt, page });
+            effects.push(self.issue_effect(request, attempt, page));
         } else {
             self.state = State::Waiting { force, page };
         }
@@ -328,6 +175,13 @@ impl Window {
         match input {
             Input::Read(Read::Stray) => Vec::new(),
             Input::Read(read) => {
+                if let Read::Media { marker, members } = read {
+                    if !self.held.iter().any(|held| matches!(held, Input::ModelsReset { own_model: true })) {
+                        self.marker = Some(marker);
+                        self.members = members;
+                        self.has_rows = true;
+                    }
+                }
                 if let Read::Saved { landed_at, fresh_until, stale, generation_ok: true } = read {
                     if !self.held.iter().any(|held| matches!(held, Input::ModelsReset { own_model: true })) {
                         self.fresh = !stale;
@@ -471,7 +325,7 @@ impl Window {
                 let (new_request, new_attempt) = self.request_ids();
                 self.state = State::Loading { request: new_request, attempt: new_attempt, retry: false, page: 1, force: true, attempts: 0 };
                 let mut effects = if retry { Vec::new() } else { vec![Effect::Cancel { request, attempt }] };
-                effects.extend([Effect::Request { request: new_request, attempt: new_attempt, page: 1 }, Effect::WindowState]);
+                effects.extend([self.issue_effect(new_request, new_attempt, 1), Effect::WindowState]);
                 effects
             }
             Input::Load { id, goal, force: wider } => {
@@ -494,6 +348,9 @@ impl Window {
                     vec![Effect::Cancel { request, attempt }]
                 }
             }
+            Input::MarkerAnswer { request: got, attempt: got_attempt, marker } if mine(got, got_attempt) && self.chain.is_some() => self.media_marker(request, attempt, (force, attempts), marker),
+            Input::Response { request: got, attempt: got_attempt, cursor, rows } if mine(got, got_attempt) && self.chain.is_some() => self.media_page(request, force, cursor, rows, false),
+            Input::MoreWithoutCursor { request: got, attempt: got_attempt } if mine(got, got_attempt) && self.chain.is_some() => self.media_page(request, force, None, false, true),
             Input::Response { request: got, attempt: got_attempt, cursor, rows } if mine(got, got_attempt) => {
                 self.answered_at = self.now;
                 self.page_count = if page == 1 { 1 } else { self.page_count + 1 };
@@ -505,7 +362,7 @@ impl Window {
             Input::Retry { request: got } if got == request && retry && self.is_online() => {
                 let attempt = self.attempt_id();
                 self.state = State::Loading { request, attempt, retry: false, page, force, attempts };
-                vec![Effect::Request { request, attempt, page }]
+                vec![self.current_effect(request, attempt, page)]
             }
             Input::Online(false) => {
                 self.state = State::Waiting { force, page };
@@ -530,7 +387,7 @@ impl Window {
             self.cursor_reset_used = true;
             self.replace_all = true;
             self.state = State::Loading { request: new_request, attempt: new_attempt, retry: false, page: 1, force, attempts: 0 };
-            return vec![Effect::Request { request: new_request, attempt: new_attempt, page: 1 }];
+            return vec![self.issue_effect(new_request, new_attempt, 1)];
         }
         if failure.temporary() && attempts + 1 < failure.retry_limit() {
             let State::Loading { attempt, .. } = self.state else { return Vec::new() };
@@ -541,6 +398,8 @@ impl Window {
     }
 
     fn fail(&mut self, network: bool) -> Vec<Effect> {
+        self.landing_marker = None;
+        self.chain = None;
         self.state = State::Idle;
         self.fresh = false;
         self.last_error = Some(network);
@@ -580,6 +439,10 @@ impl Window {
 
     fn landed(&mut self, page: u32, cursor: Option<u32>, rows: bool, revision: i64) -> Vec<Effect> {
         self.has_rows |= rows;
+        if let Some((marker, members)) = self.landing_marker.take() {
+            self.marker = Some(marker);
+            self.members = members;
+        }
         self.cursor = cursor;
         self.page = page;
         self.landed_revision = revision;
@@ -735,7 +598,7 @@ impl Window {
         let (request, attempt) = self.request_ids();
         self.state = State::Loading { request, attempt, retry: false, page, force, attempts: 0 };
         self.phase = Phase::Loading;
-        vec![Effect::Request { request, attempt, page }, Effect::WindowState]
+        vec![self.issue_effect(request, attempt, page), Effect::WindowState]
     }
 
     /// Rows `win_epoch_ended` and `win_closing`.
@@ -749,3 +612,5 @@ impl Window {
         effects
     }
 }
+
+include!("ref_window_media.rs");

@@ -24,9 +24,9 @@ const EPOCH: u64 = 1;
 struct Pages;
 
 impl WindowCodec for Pages {
-    fn request(&self, _key: &WindowKey, page: u32, cursor: Option<&str>) -> Result<GraphQLRequest, String> { Ok(GraphQLRequest::new("query Page", "Page", json!({ "page": page, "cursor": cursor }))) }
+    fn request(&self, _key: &WindowKey, page: u32, cursor: Option<&str>, _kind: w::RequestKind) -> Result<GraphQLRequest, String> { Ok(GraphQLRequest::new("query Page", "Page", json!({ "page": page, "cursor": cursor }))) }
 
-    fn answer(&self, _key: &WindowKey, page: u32, response: Response) -> Result<AnswerPage, String> {
+    fn answer(&self, _key: &WindowKey, page: u32, _kind: w::RequestKind, response: Response) -> Result<AnswerPage, String> {
         let data = response.data.ok_or("no data")?;
         let rows = data["rows"].as_array().ok_or("no rows")?.iter().filter_map(|row| row.as_str().map(str::to_string)).collect();
         let mut answer = AnswerPage::new(page, rows, data["cursor"].as_str().map(str::to_string));

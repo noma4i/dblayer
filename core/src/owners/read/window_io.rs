@@ -8,15 +8,15 @@ use tokio::runtime::Handle;
 
 use super::ports::{Admit, Rest};
 use crate::owners::contract::{ErrorClass, RequestError, RequestId, TransportOutcome};
-use crate::owners::read::windows::{AnswerPage, WindowEffect, WindowKey, Windows, WindowsEffect, WindowsInput};
+use crate::owners::read::windows::{AnswerPage, RequestKind, WindowEffect, WindowKey, Windows, WindowsEffect, WindowsInput};
 use crate::runtime::{Back, EffectRunner, Epoch, EpochStamp};
 use crate::task::{spawn_on, Carry};
 use crate::transport::{CancelToken, GraphQLRequest, Response, RetryClass, Transport, TransportError};
 
 /// The wire form of a window: how a page is asked and how its answer reads.
 pub trait WindowCodec: Send + Sync + 'static {
-    fn request(&self, key: &WindowKey, page: u32, cursor: Option<&str>) -> Result<GraphQLRequest, String>;
-    fn answer(&self, key: &WindowKey, page: u32, response: Response) -> Result<AnswerPage, String>;
+    fn request(&self, key: &WindowKey, page: u32, cursor: Option<&str>, kind: RequestKind) -> Result<GraphQLRequest, String>;
+    fn answer(&self, key: &WindowKey, page: u32, kind: RequestKind, response: Response) -> Result<AnswerPage, String>;
 
     fn refusal(&self, response: &Response) -> Option<RequestError> {
         if response.errors.is_empty() { return None; }
@@ -59,7 +59,7 @@ impl WindowIo {
         self
     }
 
-    fn request(&self, stamp: EpochStamp, key: WindowKey, (request, attempt): (RequestId, u32), (page, epoch): (u32, Epoch), cursor: Option<String>, back: &Back<Windows>) {
+    fn request(&self, stamp: EpochStamp, key: WindowKey, (request, attempt): (RequestId, u32), (page, epoch, kind): (u32, Epoch, RequestKind), cursor: Option<String>, back: &Back<Windows>) {
         if let Err(refused) = (self.admit)(epoch) {
             return back.reply(stamp, WindowsInput::Failure { request, attempt, error: RequestError { message: refused.0, class: ErrorClass::Permanent, source: None } });
         }
@@ -77,7 +77,7 @@ impl WindowIo {
                 () = token.cancelled() => None,
                 outcome = async {
                     if let Err(refused) = admit(epoch) { return TransportOutcome::Error(RequestError { message: refused.0, class: ErrorClass::Permanent, source: None }); }
-                    ask(transport.as_deref(), (&gate, epoch), codec.as_ref(), &key, page, cursor.as_deref()).await
+                    ask(transport.as_deref(), (&gate, epoch), codec.as_ref(), (&key, page, kind), cursor.as_deref()).await
                 } => Some(outcome),
             };
             open.lock().unwrap_or_else(PoisonError::into_inner).remove(&(request, attempt));
@@ -102,15 +102,15 @@ impl WindowIo {
 impl EffectRunner<Windows> for WindowIo {
     fn run(&mut self, stamp: EpochStamp, effect: WindowsEffect, back: &Back<Windows>) {
         match effect {
-            WindowsEffect::Window { key, effect: WindowEffect::Request { request, attempt, page, cursor, epoch } } => self.request(stamp, key, (request, attempt), (page, epoch), cursor, back),
+            WindowsEffect::Window { key, effect: WindowEffect::Request { request, attempt, page, cursor, epoch, kind } } => self.request(stamp, key, (request, attempt), (page, epoch, kind), cursor, back),
             WindowsEffect::Window { effect: WindowEffect::Cancel { request, attempt }, .. } => self.cancel(request, attempt),
             other => (self.rest)(stamp, other),
         }
     }
 }
 
-async fn ask(transport: Option<&dyn Transport>, (gate, epoch): (&crate::runtime::EpochGate, Epoch), codec: &dyn WindowCodec, key: &WindowKey, page: u32, cursor: Option<&str>) -> TransportOutcome<AnswerPage> {
-    let request = match codec.request(key, page, cursor) {
+async fn ask(transport: Option<&dyn Transport>, (gate, epoch): (&crate::runtime::EpochGate, Epoch), codec: &dyn WindowCodec, (key, page, kind): (&WindowKey, u32, RequestKind), cursor: Option<&str>) -> TransportOutcome<AnswerPage> {
+    let request = match codec.request(key, page, cursor, kind) {
         Ok(request) => request,
         Err(message) => return TransportOutcome::Error(RequestError { message, class: ErrorClass::Permanent, source: None }),
     };
@@ -120,7 +120,7 @@ async fn ask(transport: Option<&dyn Transport>, (gate, epoch): (&crate::runtime:
     match crate::runtime::send_in_epoch(gate, Some(epoch), || transport.query(request)).await {
         Ok(response) => match codec.refusal(&response) {
             Some(error) => TransportOutcome::Error(error),
-            None => match codec.answer(key, page, response) {
+            None => match codec.answer(key, page, kind, response) {
                 Ok(answer) => TransportOutcome::Response(answer),
                 Err(message) => TransportOutcome::Error(RequestError { message, class: ErrorClass::Permanent, source: None }),
             },
