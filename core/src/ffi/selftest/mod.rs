@@ -12,4 +12,5 @@ mod recovery_tests;
 mod refetch_tests;
 mod upload_tests;
 mod rig_tests;
+mod v3_group_members_tests;
 mod windows_tests;

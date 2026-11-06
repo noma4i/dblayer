@@ -95,7 +95,7 @@ impl Database {
         let waiter = self.life.submit(epoch, op);
         let OutboxAnswer::Receipt(held) = self.outbox_answer(waiter, action).await? else { return Err(DbError::Database { detail: "the owner answered a call with no receipt".into() }) };
         let value = if destroyed { None } else { self.optimistic(&model, &shown)? };
-        Ok(receipt_of(epoch, model, Some(i64::try_from(held.op_id).unwrap_or(i64::MAX)), value.as_ref().map_or(held.revision, |row| row.revision), value, Some(held), self.streams.clone()))
+        Ok(receipt_of(epoch, model, Some(i64::try_from(held.op_id).unwrap_or(i64::MAX)), held.revision, value, Some(held), self.streams.clone()))
     }
 
     pub(super) async fn create_row(&self, epoch: u64, model: String, values: Map<String, Value>, args: Map<String, Value>) -> Result<WireOperationReceipt, DbError> {
