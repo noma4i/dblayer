@@ -45,6 +45,17 @@ pub(super) fn add_chat(models: &mut Value) {
     let mut chat = AssociationSpec::new("chat", AssociationKind::BelongsTo, "Chat", "chatId");
     chat.sets = [("lastMessageId", "id"), ("lastMessageAt", "at"), ("lastActivityAt", "at")].map(|(parent, child)| (parent.to_string(), child.to_string())).into();
     chat.newer = vec![Newer { child: "at".to_string(), parent: "lastMessageAt".to_string() }];
+    message["fields"].as_array_mut().unwrap().push(serde_json::to_value(optional("status", ScalarKind::Str)).unwrap());
+    let mut edit = ActionDeclaration::new("update", RootShape::Upsert);
+    edit.mutation = Some("MessageEdit".into());
+    edit.root = Some("messageEdit".into());
+    edit.variables.insert("id".into(), "id".into());
+    edit.variables.insert("text".into(), "text".into());
+    edit.args.insert("text".into(), "string".into());
+    let mut destroy = ActionDeclaration::new("destroy", RootShape::Destroy);
+    destroy.mutation = Some("MessageDelete".into());
+    destroy.variables.insert("id".into(), "id".into());
+    message["actions"].as_array_mut().unwrap().extend([serde_json::to_value(edit).unwrap(), serde_json::to_value(destroy).unwrap()]);
     message["associations"].as_array_mut().unwrap().push(serde_json::to_value(chat).unwrap());
 }
 
@@ -72,3 +83,13 @@ pub(super) fn text(value: &str) -> Cell { Cell::Text { value: value.into() } }
 pub(super) fn int(value: i64) -> Cell { Cell::Int { value } }
 
 pub(super) fn chat_row(id: &str, last_message_at: i64) -> Value { json!({"id": id, "name": id, "lastMessageId": null, "lastMessageAt": last_message_at, "lastActivityAt": last_message_at, "unreadCount": 0, "pinned": false, "muted": false}) }
+
+/// A row of the server is deleted by an event.
+pub(super) fn land_delete(rig: &Rig, model: &str, id: &str) {
+    use crate::commit::{CommitEnvelope, DestroyReason, EntityOp, WriteOrigin};
+    use crate::identity::{ModelKey, RowId};
+    let db = &rig.database.db;
+    let mut envelope = CommitEnvelope::new(WriteOrigin::Event, db.generation());
+    envelope.entity_ops.push(EntityOp::Destroy { model: ModelKey::new(model), id: RowId::new(id).unwrap(), reason: DestroyReason::Server });
+    db.land(&db.admit().unwrap(), envelope).unwrap();
+}

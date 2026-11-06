@@ -198,6 +198,12 @@ impl World {
             "ChatPin" => json!({"data":{"chatPin":{"__typename":"Chat","id":body["variables"]["id"],"pinned":body["variables"]["pinned"]}}}),
             "ChatMute" => json!({"data":{"chatMute":{"__typename":"Chat","id":body["variables"]["id"],"muted":body["variables"]["muted"]}}}),
             "ChatMarkRead" => json!({"data":{"chatMarkRead":{"__typename":"Chat","id":body["variables"]["id"],"unreadCount":0}}}),
+            "MessageEdit" => {
+                let variables = &body["variables"];
+                let found = state.messages.iter().find(|(_, message)| message["id"] == variables["id"]).map(|(_, message)| message.clone()).unwrap_or(json!({}));
+                json!({"data":{"messageEdit":{"__typename":"Message","id":variables["id"],"chatId":found["chatId"],"text":variables["text"],"at":found["at"]}}})
+            }
+            "MessageDelete" => json!({"data":{"messageDelete":{"id":body["variables"]["id"]}}}),
             "MessageReact" => json!({"data":{"messageReact":{"__typename":"Message","id":"m1","chatId":"c1","text":"hello","at":1}}}),
             "DeleteGroup" => json!({"data":{"deleteGroup":{"id":body["variables"]["id"]}}}),
             "CreateGroup" => {
@@ -363,6 +369,8 @@ const OPERATIONS: &str = r#"[
     {"name":"ChatPin","document":"mutation ChatPin($id: ID!, $pinned: Boolean!) { chatPin(id: $id, pinned: $pinned) { id pinned } }"},
     {"name":"ChatMute","document":"mutation ChatMute($id: ID!, $muted: Boolean!) { chatMute(id: $id, muted: $muted) { id muted } }"},
     {"name":"ChatMarkRead","document":"mutation ChatMarkRead($id: ID!) { chatMarkRead(id: $id) { id unreadCount } }"},
+    {"name":"MessageEdit","document":"mutation MessageEdit($id: ID!, $text: String!) { messageEdit(id: $id, text: $text) { id chatId text at } }"},
+    {"name":"MessageDelete","document":"mutation MessageDelete($id: ID!) { messageDelete(id: $id) { id } }"},
     {"name":"DeleteGroup","document":"mutation DeleteGroup($id: ID!) { deleteGroup(id: $id) { id } }"}
 ]"#;
 
