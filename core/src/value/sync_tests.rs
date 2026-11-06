@@ -2,7 +2,7 @@ use super::sync::*;
 use crate::owners::write::operation_status::OperationStatus;
 
 fn entry(action: &str, status: OperationStatus, started: bool, since: i64) -> SyncEntry {
-    SyncEntry { action: action.to_string(), status, transport_started: started, attempts: 0, error: None, since, fields: Vec::new(), upload: None, batch: false }
+    SyncEntry { action: action.to_string(), status, transport_started: started, attempts: 0, error: None, since, fields: Vec::new(), batch: false }
 }
 
 fn failure(text: &str) -> Option<OperationFailure> {
@@ -85,23 +85,15 @@ fn state_names_round_trip_through_sql() {
 
 #[test]
 fn inv_upload_14_an_upload_behind_an_open_create_folds_to_waiting_and_stops_waiting_without_it() {
-    use crate::owners::write::upload::{UploadState, UploadStatus, WaitReason};
-    let upload = SyncEntry { upload: Some(UploadState::queued()), ..entry("upload:upload", OperationStatus::Pending, false, 2) };
-    let behind = fold_entries(&[entry("create", OperationStatus::Pending, false, 1), upload.clone()]).unwrap().uploads.get("upload").cloned().unwrap();
+    use crate::owners::write::upload::{UploadInfo, UploadStage, UploadStatus, WaitReason};
+    let queued = || UploadInfo { status: UploadStatus::Queued, stage: UploadStage::Prepare, sent_bytes: 0, total_bytes: 0, wait_reason: None, attempts: 0, error: None, local_url: None, processing: None, copy_file: None };
+    let folded = |actions: &[&str]| {
+        let mut info = SyncInfo { state: SyncState::Pending, actions: actions.iter().map(|action| action.to_string()).collect(), uploads: [("upload".to_string(), queued())].into(), ..SyncInfo::default() };
+        info.fold_transfers(&Default::default());
+        info.uploads["upload"].clone()
+    };
+    let behind = folded(&["create"]);
     assert_eq!((behind.status, behind.wait_reason), (UploadStatus::Waiting, Some(WaitReason::CreateUnconfirmed)));
-    let alone = fold_entries(&[upload]).unwrap().uploads.get("upload").cloned().unwrap();
+    let alone = folded(&[]);
     assert_eq!((alone.status, alone.wait_reason), (UploadStatus::Queued, None));
-}
-
-#[test]
-fn an_offline_upload_folds_to_waiting_offline_and_the_row_stays_pending() {
-    use crate::owners::write::upload::{UploadState, UploadStage, UploadStatus, WaitReason};
-    let state = UploadState { phase: UploadStatus::Uploading, stage: UploadStage::Create, offline: true, ..UploadState::queued() };
-    let upload = SyncEntry { upload: Some(state.clone()), ..entry("upload:upload", OperationStatus::Pending, false, 1) };
-    let info = fold_entries(&[upload]).unwrap();
-    let shown = info.uploads.get("upload").cloned().unwrap();
-    assert_eq!((info.state, shown.status, shown.wait_reason), (SyncState::Pending, UploadStatus::Waiting, Some(WaitReason::Offline)));
-    let online = SyncEntry { upload: Some(UploadState { offline: false, ..state }), ..entry("upload:upload", OperationStatus::Pending, false, 1) };
-    let info = fold_entries(&[online]).unwrap();
-    assert_eq!((info.state, info.uploads.get("upload").unwrap().status), (SyncState::Sending, UploadStatus::Uploading));
 }

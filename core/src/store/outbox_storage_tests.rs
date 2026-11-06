@@ -123,11 +123,10 @@ fn graphql_extensions_survive_reopen_in_every_error_owner_and_leave_with_it() {
             let rows = crate::store::sync_state::read_sync(reader.connection(), "messages", &["m1".into(), "m2".into()])?;
             assert_eq!(rows.len(), 2);
             assert!(rows.values().all(|row| row.error.as_ref() == Some(&failure)), "row_sync");
-            assert!(rows.values().all(|row| row.uploads["file"].error.as_ref() == Some(&failure)), "sync_upload");
             Ok(())
         }).unwrap();
         assert!(nodes(&store, "op_error") > 0);
-        for table in ["op_error", "sync_row_error", "sync_upload_error"] {
+        for table in ["op_error", "sync_row_error"] {
             assert_eq!(count(&store, &format!("SELECT COUNT(*) FROM {table} WHERE kind = 4 AND (text LIKE '[%' OR text LIKE '{{%' OR text LIKE '\"%')")), 0, "{table} keeps JSON text");
         }
         assert_eq!(count(&store, "SELECT COUNT(*) FROM op_error AS list JOIN op_error AS leaf ON leaf.seq = list.seq AND leaf.item_position = list.item_position WHERE list.item_position = 0 AND list.name = 'list' AND list.kind = 6 AND leaf.name = 'b' AND leaf.kind = 0"), 1, "item list is child nodes with a null leaf");
@@ -140,9 +139,7 @@ fn graphql_extensions_survive_reopen_in_every_error_owner_and_leave_with_it() {
         if fields.get("nothing").is_some() {
             assert_eq!(count(&store, &format!("SELECT COUNT(*) FROM op_error WHERE seq = {seq} AND item_position = -1 AND name = 'nothing' AND kind = 0 AND text IS NULL")), 1, "a null field stays null");
         }
-        for table in ["sync_row_error", "sync_upload_error"] {
-            assert_eq!(nodes(&store, table) > 0, extensions.is_some(), "{table}");
-        }
+        assert_eq!(nodes(&store, "sync_row_error") > 0, extensions.is_some(), "sync_row_error");
         send(&store, vec![OperationTransition::Retry { seq }]);
         assert_eq!(count(&store, &format!("SELECT COUNT(*) FROM op_error WHERE seq = {seq}")), 0, "retry clears the operation tree");
         assert!(count(&store, &format!("SELECT COUNT(*) FROM op_error WHERE seq = {upload_seq} AND item_position = 0")) > 0);
@@ -150,7 +147,7 @@ fn graphql_extensions_survive_reopen_in_every_error_owner_and_leave_with_it() {
             let status = if seq == upload_seq { OperationStatus::RolledBack } else { OperationStatus::Committed };
             send(&store, vec![OperationTransition::Close { seq, status }]);
         }
-        for table in ["op_error", "sync_row_error", "sync_upload_error"] {
+        for table in ["op_error", "sync_row_error"] {
             assert_eq!(nodes(&store, table), 0, "{table} after close");
         }
     }
@@ -183,7 +180,7 @@ fn closing_an_operation_removes_its_child_rows() {
     let (store, seq) = begun();
     send(&store, vec![OperationTransition::Progress { seq, item_position: 0, state: Box::new(upload()) }]);
     send(&store, vec![OperationTransition::Close { seq, status: OperationStatus::Committed }]);
-    for table in ["op", "op_row", "op_value", "op_error", "op_item", "op_part", "row_sync", "sync_row_error", "sync_upload_error", "sync_action", "sync_field"] {
+    for table in ["op", "op_row", "op_value", "op_error", "op_item", "op_part", "row_sync", "sync_row_error", "sync_action", "sync_field"] {
         assert_eq!(count(&store, &format!("SELECT COUNT(*) FROM {table}")), 0, "{table}");
     }
 }

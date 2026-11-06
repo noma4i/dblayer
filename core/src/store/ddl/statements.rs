@@ -19,7 +19,7 @@ pub(super) const CACHE_STATEMENTS: [&str; 18] = [
     include_str!("../sql/ddl/window_marker.sql"),
 ];
 
-pub(super) const CORE_STATEMENTS: [&str; 50] = [
+pub(super) const CORE_STATEMENTS: [&str; 49] = [
     include_str!("../sql/ddl/blob_upload.sql"),
     include_str!("../sql/ddl/blob_expiry.sql"),
     include_str!("../sql/ddl/blob_failed_expiry.sql"),
@@ -57,7 +57,6 @@ pub(super) const CORE_STATEMENTS: [&str; 50] = [
     include_str!("../sql/ddl/op_open_dedupe.sql"),
     include_str!("../sql/ddl/op_error.sql"),
     include_str!("../sql/ddl/sync_row_error.sql"),
-    include_str!("../sql/ddl/sync_upload_error.sql"),
     include_str!("../sql/ddl/quarantine.sql"),
     include_str!("../sql/ddl/quarantine_value.sql"),
     include_str!("../sql/ddl/reset_intent.sql"),

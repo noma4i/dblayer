@@ -60,7 +60,7 @@ SQLite stores model data, window membership, operations, and upload state. The f
 | `fts_row_<model>` | Full-text index of the fields selected by `search` |
 | `scope_member`, `tombstone`, `query_window` | List membership and order, deleted rows, page cursors, fetched page count and freshness |
 | `op`, `op_row`, `op_value`, `op_error`, `op_part` | The outbox: status, error kind and message columns, the rows of an operation, its input and prior values, the error extensions, the parts of an upload |
-| `row_sync`, `sync_row_error`, `sync_upload_error`, `sync_action`, `sync_field` | The stored sync state of every unconfirmed record, with its error extensions, actions and dirty fields |
+| `row_sync`, `sync_row_error`, `sync_action`, `sync_field` | The stored sync state of every unconfirmed record, with its error extensions, actions and dirty fields |
 | `local_pending` | Values written to a local field before its row exists, as a tree of rows |
 | `file` | Small file bytes and file descriptors; larger files live in a directory next to the database |
 | `quarantine`, `quarantine_value` | Payloads the core refused, with the reason |

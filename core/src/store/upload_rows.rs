@@ -35,7 +35,7 @@ pub(crate) struct UploadRaw {
     on_failure: String,
     steps_path: String,
     steps_body: String,
-    transfer_id: Option<i64>,
+    transfer_id: i64,
     cycle_id: Option<i64>,
     signed_id: Option<String>,
     aborted: bool,
@@ -118,7 +118,7 @@ impl Store {
         let place = if raw.inline { Location::Table } else { Location::Directory };
         let copying = raw.size == 0;
         let seq: u64 = unsigned(raw.seq, "seq")?;
-        let transfer_id: u64 = raw.transfer_id.map_or(Ok(seq), |value| unsigned(value, "transfer_id"))?;
+        let transfer_id: u64 = unsigned(raw.transfer_id, "transfer_id")?;
         let file_present = if copying { std::path::Path::new(&raw.source).exists() } else { self.file_present(transfer_id, place)? };
         Ok(StoredTransfer {
             transfer_id,

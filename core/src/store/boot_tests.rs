@@ -454,3 +454,27 @@ fn store_prop_boot_atomic() {
     assert_eq!(text(&store, "SELECT request_id FROM encrypted_pending").as_deref(), Some("req-1"), "the kept intent stays where it was");
     assert_eq!(count(&store, "SELECT COUNT(*) FROM restore_failed"), 0, "nothing of the transfer is half done");
 }
+
+const PREVIOUS_UPLOAD_TABLE: &str = "CREATE TABLE sync_upload (model TEXT NOT NULL, row_id TEXT NOT NULL, action TEXT NOT NULL, status TEXT NOT NULL, stage TEXT NOT NULL, sent INTEGER NOT NULL, total INTEGER NOT NULL, wait TEXT, attempts INTEGER NOT NULL, error_kind TEXT, error_message TEXT, seq INTEGER, source TEXT, batch INTEGER, upload_id TEXT, completed INTEGER, created_at INTEGER, inline INTEGER, size INTEGER, sha256 TEXT, mutation_path TEXT, mutation_body TEXT, on_failure TEXT, steps_path TEXT, steps_body TEXT, transfer_id INTEGER, cycle_id INTEGER, signed_id TEXT, aborted INTEGER, op_id INTEGER, fields TEXT, PRIMARY KEY (model, row_id, action)) STRICT, WITHOUT ROWID";
+
+const PREVIOUS_UPLOAD_ERROR_TABLE: &str = "CREATE TABLE sync_upload_error (model TEXT NOT NULL, row_id TEXT NOT NULL, action TEXT NOT NULL, node INTEGER NOT NULL, parent INTEGER NOT NULL, pos INTEGER NOT NULL, name TEXT, kind INTEGER NOT NULL, whole INTEGER, fraction REAL, text TEXT, PRIMARY KEY (model, row_id, action, node)) STRICT, WITHOUT ROWID";
+
+/// The transfer rows of `sync_upload` survive a format change with their values, a row that only the old fold wrote is not carried and is not reported as a lost intent.
+#[test]
+fn a_format_change_carries_the_transfer_rows_of_sync_upload_and_not_the_folded_ones() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("a.sqlite");
+    {
+        let (store, _) = reopen(&path, &[messages_spec()], None);
+        exec(&store, &format!("DROP TABLE sync_upload; {PREVIOUS_UPLOAD_TABLE}; {PREVIOUS_UPLOAD_ERROR_TABLE}; \
+            INSERT INTO sync_upload (model, row_id, action, status, stage, sent, total, attempts, seq, transfer_id, size) VALUES ('messages', 'm1', 'photo', 'uploading', 'part', 2, 5, 1, 7, 7, 40); \
+            INSERT INTO sync_upload (model, row_id, action, status, stage, sent, total, attempts) VALUES ('messages', 'm2', 'photo', 'uploading', 'put', 10, 100, 0); \
+            UPDATE manifest SET value = 'old' WHERE key = 'format_version'"));
+    }
+    let (store, report) = reopen(&path, &[messages_spec()], None);
+    assert_eq!(report.recreated, Some(crate::store::ddl::RecreateReason::CoreFormat));
+    assert_eq!(count(&store, "SELECT COUNT(*) FROM sync_upload WHERE row_id = 'm1' AND seq = 7 AND transfer_id = 7 AND sent = 2 AND total = 5 AND size = 40 AND status = 'uploading'"), 1, "the transfer row is carried with its values");
+    assert_eq!(count(&store, "SELECT COUNT(*) FROM sync_upload"), 1, "the folded row is not carried");
+    assert_eq!(count(&store, "SELECT COUNT(*) FROM restore_failed"), 0, "the folded row is not reported as a lost intent");
+    assert!(!store.table_exists("sync_upload_error").unwrap());
+}

@@ -1,6 +1,5 @@
 use serde::{Deserialize, Serialize};
 
-use crate::owners::write::operation_status::OperationStatus;
 use crate::value::sync::OperationFailure;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -168,29 +167,3 @@ pub struct UploadInfo {
     pub copy_file: Option<String>,
 }
 
-impl UploadInfo {
-    pub fn of(status: OperationStatus, transport_started: bool, state: &UploadState, wait_reason: Option<WaitReason>, error: Option<OperationFailure>) -> Self {
-        let wait_reason = wait_reason.or(state.offline.then_some(WaitReason::Offline));
-        let shown = match (status, transport_started) {
-            (OperationStatus::Failed, _) => UploadStatus::Failed,
-            (_, true) => UploadStatus::Sending,
-            _ if wait_reason.is_some() => UploadStatus::Waiting,
-            _ => state.phase,
-        };
-        let wait_reason = (shown == UploadStatus::Waiting).then_some(wait_reason).flatten();
-        Self { status: shown, stage: state.stage, sent_bytes: state.sent_bytes, total_bytes: state.total_bytes, wait_reason, attempts: state.attempts(), error, local_url: None, processing: None, copy_file: None }
-    }
-
-    #[cfg(test)]
-    pub fn fraction(&self) -> f64 {
-        if self.total_bytes == 0 {
-            return 0.0;
-        }
-        (self.sent_bytes as f64 / self.total_bytes as f64).min(1.0)
-    }
-
-    #[cfg(test)]
-    pub fn is_retryable(&self) -> bool {
-        self.error.as_ref().is_some_and(|error| !matches!(error.kind, crate::value::sync::FailureKind::Rejected | crate::value::sync::FailureKind::MissingFile))
-    }
-}

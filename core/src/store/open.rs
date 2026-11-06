@@ -42,7 +42,14 @@ pub(super) fn recreate(connection: &Connection) -> Result<Recreated, StoreError>
     let carried: Vec<&str> = CARRIED_TABLES.iter().copied().filter(|table| tables.iter().any(|found| found == table)).collect();
     let manifest = carried_manifest(connection, &tables)?;
     for table in &carried {
-        let filter = if *table == "file" && columns_of(connection, table)?.iter().any(|(name, _)| name == "field") { " WHERE field LIKE 'op_item.%'" } else { "" };
+        let columns = columns_of(connection, table)?;
+        let has = |wanted: &str| columns.iter().any(|(name, _)| name == wanted);
+        let filter = match *table {
+            "file" if has("field") => " WHERE field LIKE 'op_item.%'",
+            "sync_upload" if has("seq") && has("transfer_id") => " WHERE seq IS NOT NULL AND transfer_id IS NOT NULL",
+            "sync_upload" => " WHERE 0",
+            _ => "",
+        };
         connection.execute_batch(&format!(include_str!("sql/open/recreate_create_table.sql"), sql_ident(&carry_name(table)), sql_ident(table), filter = filter))?;
     }
     for table in &tables {

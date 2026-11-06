@@ -22,5 +22,3 @@ mod config_tests;
 mod plan_tests;
 #[cfg(test)]
 mod source_tests;
-#[cfg(test)]
-mod state_tests;

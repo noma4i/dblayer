@@ -13,7 +13,6 @@ use crate::transport::GraphqlExtensions;
 use crate::owners::write::upload::{UploadInfo, UploadPart, UploadRequest, UploadRetry, UploadState};
 
 pub const UPLOAD_COLUMNS: &str = "phase, stage, scenario, total_bytes, sent_bytes, storage_key, upload_id, signed_id, blob_id, document, operation, transferred, confirmed_bytes, checksum, put_url, url_issued_at, failed_at, error_kind, error_message, offline";
-pub const INFO_COLUMNS: &str = "status, stage, sent, total, wait, attempts, error_kind, error_message";
 
 pub fn enum_text<T: Serialize>(value: &T) -> Option<String> {
     match serde_json::to_value(value) {
@@ -244,21 +243,6 @@ pub fn write_upload(connection: &Connection, seq: i64, position: i64, state: &Up
         write_item_value(connection, seq, position, "request", state.request.as_ref().map(|request| &request.variables))?;
     }
     Ok(saved)
-}
-
-pub fn info_cells(info: Option<&UploadInfo>) -> Result<Vec<SqlValue>> {
-    let Some(info) = info else { return Ok(vec![SqlValue::Null; 8]) };
-    let [kind, message] = failure_cells(info.error.as_ref());
-    Ok(vec![
-        text_cell(enum_text(&info.status)),
-        text_cell(enum_text(&info.stage)),
-        SqlValue::Integer(info.sent_bytes as i64),
-        SqlValue::Integer(info.total_bytes as i64),
-        text_cell(info.wait_reason.and_then(|reason| enum_text(&reason))),
-        SqlValue::Integer(i64::from(info.attempts)),
-        kind,
-        message,
-    ])
 }
 
 pub fn info_at(row: &Row<'_>, first: usize) -> Result<Option<UploadInfo>> {

@@ -1,1 +1,0 @@
-DELETE FROM sync_upload WHERE model = ?1 AND row_id = ?2 AND seq IS NULL

@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::owners::write::operation_status::OperationStatus;
 use crate::transport::SessionCode;
-use crate::owners::write::upload::{UploadInfo, UploadState, UploadStatus, WaitReason};
+use crate::owners::write::upload::{UploadInfo, UploadStatus, WaitReason};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -130,7 +130,6 @@ pub struct SyncEntry {
     pub error: Option<OperationFailure>,
     pub since: i64,
     pub fields: Vec<String>,
-    pub upload: Option<UploadState>,
     pub batch: bool,
 }
 
@@ -139,10 +138,7 @@ impl SyncEntry {
         match (self.status, self.transport_started) {
             (OperationStatus::Failed, _) => SyncState::Failed,
             (OperationStatus::Pending, true) => SyncState::Sending,
-            (OperationStatus::Pending, false) if self.upload.as_ref().is_some_and(|state| state.offline) => SyncState::Pending,
-            (OperationStatus::Pending, false) if self.upload.as_ref().is_some_and(|state| state.phase == UploadStatus::Uploading || self.batch) => {
-                SyncState::Sending
-            }
+            (OperationStatus::Pending, false) if self.batch => SyncState::Sending,
             _ => SyncState::Pending,
         }
     }
@@ -191,22 +187,13 @@ pub fn fold_entries(entries: &[SyncEntry]) -> Option<SyncInfo> {
             dirty_fields.push(field.clone());
         }
     }
-    let waiting = entries.iter().any(|entry| entry.action == "create").then_some(WaitReason::CreateUnconfirmed);
-    let uploads = entries
-        .iter()
-        .filter_map(|entry| {
-            let action = entry.action.strip_prefix("upload:")?;
-            let state = entry.upload.as_ref()?;
-            Some((action.to_string(), UploadInfo::of(entry.status, entry.transport_started, state, waiting, entry.error.clone().or_else(|| state.background_refused.as_ref().map(|detail| OperationFailure::new(crate::value::sync::FailureKind::Unrecognized, format!("background transfer was not started: {detail}")))))))
-        })
-        .collect();
     Some(SyncInfo {
         state: decisive.state(),
-        actions: entries.iter().filter(|entry| entry.upload.is_none()).map(|entry| entry.action.clone()).collect(),
+        actions: entries.iter().map(|entry| entry.action.clone()).collect(),
         dirty_fields,
         error: decisive.error.clone(),
         attempts: decisive.attempts,
         since: decisive.since,
-        uploads,
+        uploads: std::collections::BTreeMap::new(),
     })
 }
