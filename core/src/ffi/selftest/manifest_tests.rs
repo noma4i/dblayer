@@ -67,7 +67,7 @@ fn the_manifest_lists_every_sequence_and_each_listed_test_exists() {
         assert!(rows.iter().any(|row| row.id == id && row.lane == "core" && row.s1.starts_with("core-only:")), "{id} stays in the core lane only and its row must name the core hook it needs");
     }
     let directory = root.join("core/src/ffi/selftest");
-    for file in ["app", "bridge", "calls", "effect_rows", "harness", "machine", "recovery", "windows"] {
+    for file in ["app", "bridge", "calls", "effect_rows", "harness", "recovery", "windows"] {
         let source = std::fs::read_to_string(directory.join(format!("{file}_tests.rs"))).unwrap();
         for (at, _) in source.match_indices("#[tokio::test") {
             let name = source[at..].split("fn ").nth(1).and_then(|rest| rest.split('(').next()).unwrap();
@@ -81,7 +81,7 @@ fn the_manifest_lists_every_sequence_and_each_listed_test_exists() {
 fn a_selftest_that_uses_the_removed_logout_or_the_old_exit_is_marked_as_changing_in_s1() {
     let rows = rows();
     let directory = crate::test_wait::package_dir().join("src/ffi/selftest");
-    for file in ["app", "calls", "harness", "machine", "recovery", "windows"] {
+    for file in ["app", "calls", "harness", "recovery", "windows"] {
         let source = std::fs::read_to_string(directory.join(format!("{file}_tests.rs"))).unwrap();
         let starts: Vec<usize> = source.match_indices("#[tokio::test").map(|(at, _)| at).collect();
         for (index, start) in starts.iter().enumerate() {

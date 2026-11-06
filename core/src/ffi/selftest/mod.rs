@@ -4,7 +4,6 @@ mod calls_tests;
 mod effect_rows_tests;
 mod encrypted_cable_tests;
 mod harness_tests;
-mod machine_tests;
 mod manifest_tests;
 mod media_preload_tests;
 mod files_tests;

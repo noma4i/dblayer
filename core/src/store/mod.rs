@@ -238,6 +238,7 @@ pub struct Store {
     hook: OnceLock<StoreHook>,
     commit_log: OnceLock<CommitLog>,
     newest_operation: std::sync::atomic::AtomicI64,
+    generation_now: std::sync::atomic::AtomicU64,
     committed_revision: Arc<std::sync::atomic::AtomicI64>,
     line: AnnounceLine,
     session_end_replay: std::sync::atomic::AtomicBool,
@@ -280,6 +281,7 @@ impl Store {
             hook: OnceLock::new(),
             commit_log: OnceLock::new(),
             newest_operation: std::sync::atomic::AtomicI64::new(0),
+            generation_now: std::sync::atomic::AtomicU64::new(Generation::INITIAL.value()),
             committed_revision: Arc::new(std::sync::atomic::AtomicI64::new(0)),
             line: AnnounceLine::default(),
             #[cfg(test)]
@@ -335,10 +337,13 @@ impl Store {
     }
 
     /// The generation the boot opened the database with: the envelopes of the writes name it, and a database that boots in a later generation must accept them.
-    pub(crate) fn adopt_generation(&self, generation: Generation) { self.lock().generation = generation; }
+    pub(crate) fn adopt_generation(&self, generation: Generation) {
+        self.lock().generation = generation;
+        self.generation_now.store(generation.value(), std::sync::atomic::Ordering::SeqCst);
+    }
 
     pub fn generation(&self) -> Generation {
-        self.lock().generation
+        Generation::from_value(self.generation_now.load(std::sync::atomic::Ordering::SeqCst))
     }
 
     #[cfg(test)]

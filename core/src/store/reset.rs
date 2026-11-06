@@ -352,6 +352,7 @@ impl Store {
         let readers = self.models.write().unwrap_or_else(|error| error.into_inner());
         let mut inner = self.lock();
         inner.generation = generation;
+        self.generation_now.store(generation.value(), std::sync::atomic::Ordering::SeqCst);
         let now = inner.now_ms();
         write_intent(&inner.connection, if erase_encrypted { "session_end" } else { "mismatched" }, &[], now)?;
         let transaction = inner.connection.unchecked_transaction()?;
@@ -385,6 +386,7 @@ impl Store {
         let mut inner = self.lock();
         let tables: Vec<(String, String)> = models.iter().map(|model| inner.model(model).map(|info| (model.clone(), info.table.clone()))).collect::<Result<_, _>>()?;
         inner.generation = generation;
+        self.generation_now.store(generation.value(), std::sync::atomic::Ordering::SeqCst);
         let now = inner.now_ms();
         write_intent(&inner.connection, "cache_only", models, now)?;
         let transaction = inner.connection.unchecked_transaction()?;
