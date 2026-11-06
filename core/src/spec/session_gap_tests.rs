@@ -1,5 +1,5 @@
 use crate::owners::contract::{Committed, EpochEnded, Online, Published, PublishedState, RejectReason, Rejected};
-use crate::owners::session::{Credential, OperationClass, SecretState, SessionCalls, SessionEffect, SessionInput, SessionOperation, SessionPhase, SessionState};
+use crate::owners::session::{AuthorOutcome, Credential, OperationClass, SecretState, SessionCalls, SessionEffect, SessionError, SessionInput, SessionOperation, SessionPhase, SessionState};
 use crate::owners::support::{new_log, take, Log, Recorder};
 use crate::runtime::{Address, Cause, DetScheduler, EpochStamp, Time};
 
@@ -71,3 +71,35 @@ fn sess_generating_other() {
         }
     }
 }
+
+fn calling_error(too_large: Option<(u64, u64)>, expected: SessionError) {
+    for author in [false, true] {
+        let mut det = DetScheduler::new(2);
+        let log = new_log();
+        let operations = vec![SessionOperation { name: "read".into(), path: "/read".into(), class: OperationClass::Authenticated }];
+        let address = det.add::<SessionCalls>("session", SessionState::with_operations(operations, Some(true)), Recorder::<SessionCalls>::new(&log));
+        send(&mut det, address, &log, SessionInput::Published(Published { epoch: 3, identity: Some(4), generation: 0, state: PublishedState::Session, closed: false }));
+        send(&mut det, address, &log, SessionInput::Open { credential: Some(Credential { digest: 4, sequence: 0 }), pending: None, dropped_pending: false, secret: SecretState::Present(4) });
+        let input = if author { SessionInput::Mutate { author: 7, owner: None, req_id: 11, epoch: 3, path: "/graphql".into(), body: "{}".into(), purpose: 0 } } else { SessionInput::SessionCall { operation: "read".into(), body: "{}".into(), reply: 1 } };
+        let effects = send(&mut det, address, &log, input);
+        let (batch, request) = effects.iter().find_map(|effect| match effect { SessionEffect::CommitPending { batch, pending, .. } => Some((*batch, pending.request_id)), _ => None }).unwrap();
+        let effects = send(&mut det, address, &log, SessionInput::Committed(Committed { batch, revision: 1, tables: vec![], models: Default::default() }));
+        let attempt = effects.iter().find_map(|effect| match effect { SessionEffect::HttpRequest { attempt_id, .. } => Some(*attempt_id), _ => None }).unwrap();
+        let effects = send(&mut det, address, &log, SessionInput::HttpError { request_id: request, attempt_id: attempt, temporary: false, auth: false, persisted_missing: false, status: 0, too_large });
+        let (batch, answer) = effects.iter().find_map(|effect| match effect { SessionEffect::CommitLanding { batch, answer, .. } => Some((*batch, answer.clone())), _ => None }).unwrap();
+        assert_eq!(answer, author.then(|| (request, Err(expected.clone()))));
+        assert!(!effects.iter().any(|effect| matches!(effect, SessionEffect::Reply { .. } | SessionEffect::Answer { .. })));
+        let effects = send(&mut det, address, &log, SessionInput::Committed(Committed { batch, revision: 2, tables: vec![], models: Default::default() }));
+        if author {
+            assert!(effects.iter().any(|effect| matches!(effect, SessionEffect::Answer { author: 7, req_id: 11, outcome: AuthorOutcome::Error { error, .. } } if error == &expected)));
+        } else {
+            assert!(effects.contains(&SessionEffect::Reply { id: 1, answer: Err(expected.clone()) }));
+        }
+    }
+}
+
+#[test]
+fn sess_calling_status_zero() { calling_error(None, SessionError::Http { status: 0 }); }
+
+#[test]
+fn sess_calling_too_large() { calling_error(Some((262145, 262144)), SessionError::TooLarge { size: 262145, limit: 262144 }); }
