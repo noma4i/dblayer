@@ -340,7 +340,7 @@ fn store_prop_boot_any_layout() {
         assert_eq!(count(&store, "SELECT COUNT(*) FROM encrypted_pending"), pending_rows, "{case}: pending rows");
         {
             let inner = store.lock();
-            crate::transport::encrypted::state::pending(&inner.connection).unwrap_or_else(|error| panic!("{case}: reading pending: {error}"));
+            crate::store::session_state::pending(&inner.connection).unwrap_or_else(|error| panic!("{case}: reading pending: {error}"));
         }
         assert_eq!(store.saved().unwrap().2, crate::store::identity_of(SESSION_DIGEST), "{case}: the identity is published");
     }

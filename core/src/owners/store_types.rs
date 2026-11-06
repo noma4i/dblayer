@@ -115,7 +115,7 @@ pub enum StoreOp {
     /// Remove the row `encrypted_session` (a sign-in that the server refused).
     EraseSession,
     /// `encrypted_answer`: the terminal outcome of the `Mutate` of `request_id`, written with `RemovePending` and kept until `RemoveAnswer`.
-    Answer { request_id: u64, operation: Option<i64>, result: crate::transport::encrypted::state::StoredAnswer },
+    Answer { request_id: u64, operation: Option<i64>, result: crate::store::session_state::StoredAnswer },
     RemoveAnswer { request_id: u64 },
     ReleasePendingOwner { request_id: u64 },
     /// The element of `restore_failed` that an operation ended with `Failed{RestoreFailed}` leaves with its discard.

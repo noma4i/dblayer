@@ -34,10 +34,18 @@ pub enum StoredAnswer {
 
 pub fn session(connection: &Connection) -> rusqlite::Result<Option<Session>> {
     connection
-        .query_row(include_str!("../../store/sql/session_state/session.sql"), [], |row| {
+        .query_row(include_str!("sql/session_state/session.sql"), [], |row| {
             Ok(Session { credential_digest: row.get(0)?, sequence: row.get(1)? })
         })
         .optional()
+}
+
+pub fn dropped_pending(connection: &Connection) -> rusqlite::Result<bool> {
+    connection.query_row(include_str!("sql/session_state/dropped_pending.sql"), [], |row| row.get(0))
+}
+
+pub fn unowned_pending(connection: &Connection) -> rusqlite::Result<bool> {
+    connection.query_row(include_str!("sql/session_state/unowned_pending.sql"), [], |row| row.get(0))
 }
 
 pub fn start(connection: &Connection, credential_digest: &str) -> rusqlite::Result<()> {
@@ -45,9 +53,9 @@ pub fn start(connection: &Connection, credential_digest: &str) -> rusqlite::Resu
     if session(&transaction)?.is_some_and(|session| session.credential_digest == credential_digest) {
         return transaction.commit();
     }
-    transaction.execute_batch(include_str!("../../store/sql/session_state/start_delete_encrypted_pending.sql"))?;
+    transaction.execute_batch(include_str!("sql/session_state/start_delete_encrypted_pending.sql"))?;
     transaction.execute(
-        include_str!("../../store/sql/session_state/start_insert_encrypted_session.sql"),
+        include_str!("sql/session_state/start_insert_encrypted_session.sql"),
         [credential_digest],
     )?;
     transaction.commit()
@@ -55,7 +63,7 @@ pub fn start(connection: &Connection, credential_digest: &str) -> rusqlite::Resu
 
 pub fn pending(connection: &Connection) -> rusqlite::Result<Option<Pending>> {
     connection
-        .query_row(include_str!("../../store/sql/session_state/pending.sql"), [], |row| {
+        .query_row(include_str!("sql/session_state/pending.sql"), [], |row| {
             Ok(Pending {
                 credential_digest: row.get(0)?,
                 request_id: row.get(1)?,
@@ -91,7 +99,7 @@ pub fn store_pending(connection: &Connection, pending: &Pending) -> rusqlite::Re
         None => (None, None, None, None),
     };
     connection.execute(
-        include_str!("../../store/sql/session_state/store_pending.sql"),
+        include_str!("sql/session_state/store_pending.sql"),
         params![pending.credential_digest, pending.request_id, pending.response_key, pending.sequence, pending.path, pending.body, kind, operation_id, item_id, step, match pending.purpose { crate::transport::NetworkPurpose::Standard => 0, crate::transport::NetworkPurpose::Transfer => 1 }, i64::try_from(pending.req_id).map_err(|_| rusqlite::Error::IntegralValueOutOfRange(11, i64::MAX))?],
     )?;
     Ok(())
@@ -100,15 +108,15 @@ pub fn store_pending(connection: &Connection, pending: &Pending) -> rusqlite::Re
 #[cfg(test)]
 pub fn commit(connection: &Connection, sequence: i64) -> rusqlite::Result<()> {
     let transaction = connection.unchecked_transaction()?;
-    transaction.execute(include_str!("../../store/sql/session_state/commit_update_encrypted_session.sql"), [sequence])?;
-    transaction.execute(include_str!("../../store/sql/session_state/commit_delete_encrypted_pending.sql"), [])?;
+    transaction.execute(include_str!("sql/session_state/commit_update_encrypted_session.sql"), [sequence])?;
+    transaction.execute(include_str!("sql/session_state/commit_delete_encrypted_pending.sql"), [])?;
     transaction.commit()
 }
 
 pub fn clear(connection: &Connection) -> rusqlite::Result<()> {
     let transaction = connection.unchecked_transaction()?;
-    transaction.execute_batch(include_str!("../../store/sql/session_state/start_delete_encrypted_pending.sql"))?;
-    transaction.execute(include_str!("../../store/sql/session_state/clear.sql"), [])?;
+    transaction.execute_batch(include_str!("sql/session_state/start_delete_encrypted_pending.sql"))?;
+    transaction.execute(include_str!("sql/session_state/clear.sql"), [])?;
     transaction.commit()
 }
 
@@ -123,19 +131,19 @@ pub fn store_answer(connection: &Connection, request_id: u64, operation: Option<
         StoredAnswer::Session(code) => ("session", Some(code.name().to_string())),
     };
     let request_id = i64::try_from(request_id).map_err(|_| rusqlite::Error::IntegralValueOutOfRange(0, i64::MAX))?;
-    connection.execute(include_str!("../../store/sql/session_state/store_answer.sql"), params![request_id, outcome, detail, operation])?;
+    connection.execute(include_str!("sql/session_state/store_answer.sql"), params![request_id, outcome, detail, operation])?;
     Ok(())
 }
 
 pub fn release_pending_owner(connection: &Connection, req_id: u64) -> rusqlite::Result<()> {
     let req_id = i64::try_from(req_id).map_err(|_| rusqlite::Error::IntegralValueOutOfRange(0, i64::MAX))?;
-    connection.execute(include_str!("../../store/sql/session_state/release_pending_owner.sql"), [req_id])?;
+    connection.execute(include_str!("sql/session_state/release_pending_owner.sql"), [req_id])?;
     Ok(())
 }
 
 pub fn remove_answer(connection: &Connection, request_id: u64) -> rusqlite::Result<()> {
     let request_id = i64::try_from(request_id).map_err(|_| rusqlite::Error::IntegralValueOutOfRange(0, i64::MAX))?;
-    connection.execute(include_str!("../../store/sql/session_state/remove_answer.sql"), [request_id])?;
+    connection.execute(include_str!("sql/session_state/remove_answer.sql"), [request_id])?;
     Ok(())
 }
 
@@ -149,7 +157,7 @@ pub fn answers_of_operations(connection: &Connection) -> rusqlite::Result<std::c
 }
 
 fn answer_rows(connection: &Connection) -> rusqlite::Result<Vec<(u64, Option<i64>, StoredAnswer)>> {
-    let mut statement = connection.prepare(include_str!("../../store/sql/session_state/answer_rows.sql"))?;
+    let mut statement = connection.prepare(include_str!("sql/session_state/answer_rows.sql"))?;
     let rows = statement.query_map([], |row| Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?, row.get::<_, Option<String>>(2)?, row.get::<_, Option<i64>>(3)?)))?;
     let mut found = Vec::new();
     for row in rows {

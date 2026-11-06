@@ -82,8 +82,8 @@ impl Store {
     pub(crate) fn read_restore(&self) -> Result<Restore, DbError> {
         let (entries, origins, cycles, effects_only, pending, uploads, outcomes, answers, orphans, batches, orphan_answers) = self.read_models(&[], |reader| {
             let connection = reader.connection();
-            let pending = crate::transport::encrypted::state::pending(connection).map_err(crate::store::StoreError::from)?;
-            let answers = crate::transport::encrypted::state::answers_of_operations(connection).map_err(crate::store::StoreError::from)?;
+            let pending = crate::store::session_state::pending(connection).map_err(crate::store::StoreError::from)?;
+            let answers = crate::store::session_state::answers_of_operations(connection).map_err(crate::store::StoreError::from)?;
             let effects_only = connection.prepare(include_str!("sql/restore_read/read_restore_select_op.sql")).and_then(|mut statement| statement.query_map([], |row| row.get::<_, i64>(0))?.collect::<rusqlite::Result<Vec<_>>>()).map_err(crate::store::StoreError::from)?;
             let cycles = connection.prepare(include_str!("sql/restore_read/read_restore_select_op_2.sql")).and_then(|mut statement| statement.query_map([], |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?)))?.collect::<rusqlite::Result<std::collections::BTreeMap<_, _>>>()).map_err(crate::store::StoreError::from)?;
             let uploads = super::upload_rows::upload_rows(connection).map_err(crate::store::StoreError::from)?;
@@ -133,7 +133,7 @@ impl Store {
         Ok(Restore { ops, transfers, transfer_outcomes, orphans, batches, reserved, orphan_answers })
     }
 
-    fn stored_intents(&self, entries: Vec<super::plan::OutboxOperation>, pending: Option<crate::transport::encrypted::state::Pending>, mut answers: std::collections::BTreeMap<i64, (u64, crate::transport::encrypted::state::StoredAnswer)>, origins: &std::collections::BTreeMap<i64, OpSource>, invalid: &std::collections::BTreeSet<i64>, cycles: &std::collections::BTreeMap<i64, i64>) -> Result<Vec<StoredOp>, DbError> {
+    fn stored_intents(&self, entries: Vec<super::plan::OutboxOperation>, pending: Option<crate::store::session_state::Pending>, mut answers: std::collections::BTreeMap<i64, (u64, crate::store::session_state::StoredAnswer)>, origins: &std::collections::BTreeMap<i64, OpSource>, invalid: &std::collections::BTreeSet<i64>, cycles: &std::collections::BTreeMap<i64, i64>) -> Result<Vec<StoredOp>, DbError> {
         let mut stored = Vec::with_capacity(entries.len());
         for entry in entries {
             let operation = &entry.operation;

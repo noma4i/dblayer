@@ -15,7 +15,7 @@ use crate::store::sync_state::clear_sync;
 use super::rows::fetch_stored;
 use super::shape::leaf_value;
 use super::{save_pending, Inner, ModelInfo, Store, StoreError, StoreEvent};
-use crate::transport::encrypted::state::{self, Pending};
+use crate::store::session_state::{self, Pending};
 
 pub(crate) struct ResetCommitted<'a> {
     store: &'a Store,
@@ -312,7 +312,7 @@ impl Store {
                 Some(value) => value.parse().map_err(|_| StoreError::CorruptManifest(format!("{key} = {value:?} is not a u64"))),
             }
         };
-        let identity = crate::transport::encrypted::state::session(&inner.connection)?.filter(|session| session.sequence > 0).and_then(|session| identity_of(&session.credential_digest));
+        let identity = crate::store::session_state::session(&inner.connection)?.filter(|session| session.sequence > 0).and_then(|session| identity_of(&session.credential_digest));
         Ok((read(SAVED_EPOCH_KEY)?, read(SAVED_GENERATION_KEY)?, identity))
     }
 
@@ -392,7 +392,7 @@ pub(crate) enum RowOp {
     PutPending(Pending),
     RemovePending,
     RemoveSession,
-    PutAnswer { request_id: u64, operation: Option<i64>, answer: state::StoredAnswer },
+    PutAnswer { request_id: u64, operation: Option<i64>, answer: session_state::StoredAnswer },
     RemoveAnswer { request_id: u64 },
     ReleasePendingOwner { request_id: u64 },
     /// `digest = None` keeps the stored digest, `sequence = None` keeps the stored sequence.
@@ -447,17 +447,17 @@ pub(super) fn apply_row_ops(transaction: &Connection, ops: Vec<RowOp>) -> Result
         match op {
             RowOp::PutPending(pending) => {
                 transaction.execute(include_str!("sql/reset/apply_row_ops_delete_encrypted_pending.sql"), [])?;
-                state::store_pending(transaction, &pending)?;
+                session_state::store_pending(transaction, &pending)?;
             }
             RowOp::RemovePending => { transaction.execute(include_str!("sql/reset/apply_row_ops_delete_encrypted_pending.sql"), [])?; }
             RowOp::RemoveSession => { transaction.execute(include_str!("sql/reset/apply_row_ops_delete_encrypted_session.sql"), [])?; }
-            RowOp::PutAnswer { request_id, operation, answer } => state::store_answer(transaction, request_id, operation, &answer)?,
-            RowOp::RemoveAnswer { request_id } => state::remove_answer(transaction, request_id)?,
-            RowOp::ReleasePendingOwner { request_id } => state::release_pending_owner(transaction, request_id)?,
+            RowOp::PutAnswer { request_id, operation, answer } => session_state::store_answer(transaction, request_id, operation, &answer)?,
+            RowOp::RemoveAnswer { request_id } => session_state::remove_answer(transaction, request_id)?,
+            RowOp::ReleasePendingOwner { request_id } => session_state::release_pending_owner(transaction, request_id)?,
             RowOp::PutAttempts { op_id, attempts, cycle_id } => { transaction.execute(include_str!("sql/reset/apply_row_ops_update_op.sql"), params![op_id, attempts, cycle_id])?; }
             RowOp::DiscardRestoreFailed { table, key } => { transaction.execute(include_str!("sql/reset/apply_row_ops_delete_restore_failed.sql"), params![table, key])?; }
             RowOp::PutSession { digest, sequence } => {
-                let stored = state::session(transaction)?;
+                let stored = session_state::session(transaction)?;
                 let digest = digest.or_else(|| stored.as_ref().map(|session| session.credential_digest.clone())).ok_or(rusqlite::Error::QueryReturnedNoRows)?;
                 let sequence = sequence.or_else(|| stored.as_ref().map(|session| session.sequence)).unwrap_or(0);
                 transaction.execute(

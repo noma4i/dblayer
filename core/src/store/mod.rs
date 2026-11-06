@@ -12,6 +12,7 @@ use crate::schema::{ModelSpec, SearchPath};
 pub mod ddl;
 pub mod files;
 pub mod nodes;
+pub(crate) mod session_state;
 pub mod query;
 pub mod operation;
 pub mod sync_state;

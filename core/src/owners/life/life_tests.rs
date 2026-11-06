@@ -41,13 +41,13 @@ fn open(path: &std::path::Path) -> Arc<Store> { Store::open_models(Some(path), v
 
 fn session_row(db: &Store) {
     let inner = db.lock();
-    crate::transport::encrypted::state::start(&inner.connection, DIGEST).unwrap();
-    crate::transport::encrypted::state::commit(&inner.connection, 1).unwrap();
+    crate::store::session_state::start(&inner.connection, DIGEST).unwrap();
+    crate::store::session_state::commit(&inner.connection, 1).unwrap();
 }
 
 fn stored_digest(db: &Store) -> Option<String> {
     let inner = db.lock();
-    crate::transport::encrypted::state::session(&inner.connection).unwrap().map(|session| session.credential_digest)
+    crate::store::session_state::session(&inner.connection).unwrap().map(|session| session.credential_digest)
 }
 
 async fn answer(waiter: Waiter<Reply>) -> Reply {

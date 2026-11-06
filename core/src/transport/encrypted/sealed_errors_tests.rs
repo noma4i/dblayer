@@ -5,7 +5,7 @@ use serde_json::json;
 
 use super::exchange_tests::Client;
 use super::fake_server_tests::{FakeServer, MemoryCredentials};
-use super::state;
+use crate::store::session_state;
 use super::vectors_tests::*;
 use super::*;
 use crate::store::Store;
@@ -49,7 +49,7 @@ async fn rig() -> Rig {
 }
 
 fn pending(db: &Store) -> bool {
-    state::pending(&db.lock().connection).unwrap().is_some()
+    session_state::pending(&db.lock().connection).unwrap().is_some()
 }
 
 #[tokio::test]

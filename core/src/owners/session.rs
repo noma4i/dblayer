@@ -5,7 +5,7 @@ use std::time::Duration;
 
 use super::contract::{BatchId, Committed, CredentialCommitted, Drained, EpochEnded, ErrorClass, Online, Published, PublishedState, RejectReason, Rejected, ReplyId, RequestId, ServerEnded};
 use super::read::deliveries::StreamId;
-pub use crate::transport::encrypted::state::StoredAnswer;
+pub use crate::store::session_state::StoredAnswer;
 use crate::runtime::{Cause, Effect, EffectId, Effects, Epoch, ScheduleId, StateOwner, Time};
 
 pub type Digest = u64;

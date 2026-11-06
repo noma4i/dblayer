@@ -14,7 +14,6 @@ mod graphql;
 pub(crate) mod jwe;
 pub(crate) mod key;
 mod origin;
-pub(crate) mod state;
 #[cfg(test)]
 pub(crate) mod vectors_tests;
 

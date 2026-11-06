@@ -10,7 +10,7 @@ use super::LifeReply;
 use crate::store::Store;
 use crate::runtime::ManualClock;
 use crate::transport::encrypted::fake_server_tests::{FakeServer, MemoryCredentials};
-use crate::transport::encrypted::state;
+use crate::store::session_state;
 use crate::transport::encrypted::vectors_tests::{origin, pin, public_key_der_b64};
 use crate::transport::EncryptedConfig;
 use crate::transport::encrypted::exchange_tests::Client;
@@ -48,9 +48,9 @@ impl World {
     }
 }
 
-fn rows(db: &Store) -> (Option<state::Session>, Option<state::Pending>) {
+fn rows(db: &Store) -> (Option<session_state::Session>, Option<session_state::Pending>) {
     let inner = db.lock();
-    (state::session(&inner.connection).unwrap(), state::pending(&inner.connection).unwrap())
+    (session_state::session(&inner.connection).unwrap(), session_state::pending(&inner.connection).unwrap())
 }
 
 async fn answer(waiter: crate::runtime::Waiter<LifeReply>) -> LifeReply {
@@ -148,10 +148,10 @@ async fn the_answer_of_a_mutate_is_stored_with_the_removal_of_its_pending() {
     let (_, pending) = rows(&db);
     let answers = {
         let inner = db.lock();
-        state::answers(&inner.connection).unwrap()
+        session_state::answers(&inner.connection).unwrap()
     };
     assert!(pending.is_none());
-    assert_eq!(answers.values().collect::<Vec<_>>(), [&state::StoredAnswer::Ok(body)], "the sign-in is a call without an author and leaves no answer");
+    assert_eq!(answers.values().collect::<Vec<_>>(), [&session_state::StoredAnswer::Ok(body)], "the sign-in is a call without an author and leaves no answer");
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -232,9 +232,9 @@ async fn a_stored_request_of_an_older_format_is_sent_again_with_the_request_id_a
     {
         let db = Store::open_models(Some(&path), Vec::new(), None).map(std::sync::Arc::new).unwrap();
         let digest = rows(&db).0.unwrap().credential_digest;
-        let pending = state::Pending { credential_digest: digest, request_id: old_id.into(), response_key: crate::transport::encrypted::jwe::random_token(), sequence: 2, path: OTP.into(), body: json!({}).to_string(), owner: None, purpose: crate::transport::NetworkPurpose::Standard, req_id: 2 };
+        let pending = session_state::Pending { credential_digest: digest, request_id: old_id.into(), response_key: crate::transport::encrypted::jwe::random_token(), sequence: 2, path: OTP.into(), body: json!({}).to_string(), owner: None, purpose: crate::transport::NetworkPurpose::Standard, req_id: 2 };
         let inner = db.lock();
-        state::store_pending(&inner.connection, &pending).unwrap();
+        session_state::store_pending(&inner.connection, &pending).unwrap();
     }
     let db = Store::open_models(Some(&path), Vec::new(), None).map(std::sync::Arc::new).unwrap();
     let (_client, _life) = world.open(&db).await;
@@ -553,9 +553,9 @@ fn the_answer_stays_when_the_landing_of_its_batch_fails_and_goes_with_the_landin
     let db = Store::open_models(None, Vec::new(), None).map(std::sync::Arc::new).unwrap();
     {
         let inner = db.lock();
-        state::store_answer(&inner.connection, 7, None, &state::StoredAnswer::Ok("{}".into())).unwrap();
+        session_state::store_answer(&inner.connection, 7, None, &session_state::StoredAnswer::Ok("{}".into())).unwrap();
     }
-    let answers = |db: &Store| state::answers(&db.lock().connection).unwrap().len();
+    let answers = |db: &Store| session_state::answers(&db.lock().connection).unwrap().len();
     let batch = |rows: Vec<(String, String)>| StoreBatch { author: BatchAuthor::Outbox, id: 1, epoch: 1, basis: Default::default(), rows, intents: 0, credential: None, ops: vec![StoreOp::RemoveAnswer { request_id: 7 }] };
     assert!(db.write_batch(&batch(vec![("Task".into(), "not json".into())]), db.files(), db.pointer_guards(), None).is_err());
     assert_eq!(answers(&db), 1);

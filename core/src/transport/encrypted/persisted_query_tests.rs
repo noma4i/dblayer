@@ -49,7 +49,7 @@ impl Rig {
 
     pub(super) fn pending_sequence(&self) -> Option<i64> {
         let inner = self.db.lock();
-        state::pending(&inner.connection).unwrap().map(|pending| pending.sequence)
+        crate::store::session_state::pending(&inner.connection).unwrap().map(|pending| pending.sequence)
     }
 }
 

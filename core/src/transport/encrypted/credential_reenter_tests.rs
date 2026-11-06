@@ -5,7 +5,7 @@ use std::sync::{Arc, Mutex, Weak};
 use super::credential::Secret;
 use super::exchange::digest_of;
 use super::fake_server_tests::MemoryCredentials;
-use super::state;
+use crate::store::session_state;
 use super::CredentialSlot;
 use crate::store::Store;
 use crate::test_wait::{join_within, recv_within};
@@ -80,7 +80,7 @@ fn rig(mode: Mode) -> Rig {
 
 fn session_digest(db: &Store) -> Option<String> {
     let inner = db.lock();
-    state::session(&inner.connection).unwrap().map(|session| session.credential_digest)
+    session_state::session(&inner.connection).unwrap().map(|session| session.credential_digest)
 }
 
 fn load_on_thread(client: &Arc<Held>) -> std::thread::JoinHandle<Result<String, TransportError>> {

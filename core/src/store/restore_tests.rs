@@ -25,9 +25,9 @@ fn pending_call(request_id: u64, owner: crate::transport::RequestOwner) -> crate
     crate::owners::session::PendingCall { request_id, sequence: 4, class: crate::owners::session::OperationClass::Authenticated, operation: String::new(), path: "/graphql".into(), body: "{}".into(), credential: None, purpose: 0, author: None, owner: Some(owner), epoch: 1, reply: None }
 }
 
-fn pending_row(store: &Store) -> crate::transport::encrypted::state::Pending {
+fn pending_row(store: &Store) -> crate::store::session_state::Pending {
     let inner = store.lock();
-    crate::transport::encrypted::state::pending(&inner.connection).unwrap().expect("a pending row")
+    crate::store::session_state::pending(&inner.connection).unwrap().expect("a pending row")
 }
 
 #[test]

@@ -5,7 +5,7 @@ use serde_json::{json, Value};
 
 use super::credential::{stored_pending, Secret};
 use super::fake_server_tests::FakeServer;
-use super::state;
+use crate::store::session_state;
 use super::vectors_tests::*;
 use super::*;
 use crate::runtime::{Clock, ManualClock};
@@ -81,7 +81,7 @@ fn pending_reads_distinguish_missing_corrupt_and_sqlite_failure() {
             if case == "sqlite" {
                 stored.connection.execute_batch("DROP TABLE encrypted_pending").unwrap();
             } else if case != "missing" {
-                state::store_pending(&stored.connection, &state::Pending {
+                session_state::store_pending(&stored.connection, &session_state::Pending {
                     credential_digest: "digest".into(), request_id: "request".into(), response_key: "response".into(), sequence: 1,
                     path: "/graphql".into(), body: if case == "corrupt" { "{".into() } else { "{}".into() },
                     owner: Some(crate::transport::RequestOwner::Transfer { operation_id: 7, item_id: "item".into(), step: crate::owners::write::upload::UploadStage::Put }), purpose: NetworkPurpose::Transfer, req_id: 1,
