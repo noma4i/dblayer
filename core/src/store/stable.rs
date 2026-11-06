@@ -2,7 +2,7 @@ use std::collections::BTreeSet;
 
 use rusqlite::{params, Connection, OptionalExtension};
 
-use crate::commit::{RowChange, RowChangeKind, ScopeRef};
+use crate::store::{RowChange, RowChangeKind, ScopeRef};
 use crate::identity::RowId;
 use crate::query::{compile_ranked, fetch_ranked, place_of, Order, Query};
 use crate::schema::SortField;

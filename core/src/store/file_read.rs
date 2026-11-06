@@ -61,8 +61,8 @@ impl Store {
         let ready_due = now.saturating_sub(crate::upload::BLOB_LIFETIME_MS);
         let due = self.read_models(&[], |reader| Ok(super::blob::due(reader.connection(), ready_due, failed_due)?))?;
         if due.is_empty() { return Ok(()); }
-        let mut envelope = crate::commit::BatchPlan::from_server(self.generation());
-        envelope.operation_transitions.extend(due.iter().map(|(id, _)| crate::commit::OperationTransition::RetireBlob { id: id.clone(), expired: true }));
+        let mut envelope = crate::store::BatchPlan::from_server(self.generation());
+        envelope.operation_transitions.extend(due.iter().map(|(id, _)| crate::store::OperationTransition::RetireBlob { id: id.clone(), expired: true }));
         self.commit(envelope)?;
         let files: Vec<String> = self.read_models(&[], |reader| {
             Ok(due.iter().filter_map(|(_, file)| file.as_ref()).filter_map(|id| match reader.connection().query_row("SELECT EXISTS (SELECT 1 FROM file WHERE id = ?1)", [id], |row| row.get::<_, bool>(0)) { Ok(false) => Some(Ok(id.clone())), Ok(true) => None, Err(error) => Some(Err(StoreError::from(error))) }).collect::<Result<Vec<_>, _>>()?)

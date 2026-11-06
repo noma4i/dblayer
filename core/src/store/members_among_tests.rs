@@ -1,7 +1,7 @@
 use rusqlite::StatementStatus;
 use serde_json::json;
 
-use crate::commit::{BatchPlan, EntityOp, ScopeOp, ScopeRef};
+use crate::store::{BatchPlan, EntityOp, ScopeOp, ScopeRef};
 use crate::store::Store;
 use crate::identity::{ModelKey, RowId};
 use crate::schema_fixtures::{messages_spec, CHAT};

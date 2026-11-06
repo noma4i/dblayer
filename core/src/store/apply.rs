@@ -3,7 +3,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use rusqlite::{params, params_from_iter, Connection, OptionalExtension};
 use serde_json::{Map, Value};
 
-use crate::commit::{
+use crate::store::{
     BatchPlan, CommitResult, DestroyReason, EntityOp, OperationRecord, OperationTransition, EdgeValue, EdgeWrite, RowChange, RowChangeKind, ScopeOp, ScopeRef, WindowSave,
 };
 use crate::operation::OperationStatus;
@@ -64,7 +64,7 @@ impl Store {
     /// The SQL commit of a write that belongs to a session epoch: the epoch check and the commit happen while the lifecycle holds its commit line, so a transition either comes before the check and refuses the write, or waits for the commit.
     fn attempt_in_epoch(&self, inner: &Inner, envelope: &BatchPlan, now_ms: i64) -> Result<(CommitResult, u32), StoreError> {
         let _network = envelope.network.as_ref().map(|network| network.enter());
-        if envelope.network.as_ref().is_some_and(|network| !network.holds()) { return Err(StoreError::Plan(crate::commit::PlanFault::NetworkMoved)); }
+        if envelope.network.as_ref().is_some_and(|network| !network.holds()) { return Err(StoreError::Plan(crate::store::PlanFault::NetworkMoved)); }
         #[cfg(test)]
         if envelope.network.is_some() {
             let hook = self.after_network_check.lock().unwrap_or_else(|error| error.into_inner()).take();

@@ -3,7 +3,7 @@
 
 use serde_json::{json, Map, Value};
 
-use crate::commit::{EntityOp, ScopeOp};
+use crate::store::{EntityOp, ScopeOp};
 use crate::identity::{ModelKey, RowId, RowRef};
 use crate::owners::store::{EffectMember, EffectRow, EffectTombstone, EffectTouch, IntentEffects};
 use crate::schema::ModelSpec;

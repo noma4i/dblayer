@@ -1,6 +1,6 @@
 use super::fixtures::*;
 use super::*;
-use crate::commit::{
+use crate::store::{
     DestroyReason, EntityOp, PlanFault, OperationRecord, OperationTransition, RowChangeKind, ScopeOp, ScopeRef,
 };
 use crate::operation::OperationStatus;
@@ -9,7 +9,7 @@ use serde_json::json;
 use std::collections::HashSet;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-fn commit(store: &Store, entity_ops: Vec<EntityOp>, scope_ops: Vec<ScopeOp>) -> crate::commit::CommitResult {
+fn commit(store: &Store, entity_ops: Vec<EntityOp>, scope_ops: Vec<ScopeOp>) -> crate::store::CommitResult {
     store.commit(envelope(store, entity_ops, scope_ops)).unwrap()
 }
 

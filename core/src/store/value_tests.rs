@@ -1,6 +1,6 @@
 use super::fixtures::*;
 use super::*;
-use crate::commit::DestroyReason;
+use crate::store::DestroyReason;
 use crate::schema::{FieldSpec, ModelSpec};
 use crate::value::ScalarKind;
 use serde_json::json;

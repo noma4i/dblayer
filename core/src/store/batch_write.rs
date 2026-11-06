@@ -131,7 +131,7 @@ impl Store {
         let mut snapshot = if writes_database || !overlay.is_empty() || !resets.is_empty() { self.overlays.next(base_revision, writes_database).ok_or_else(|| StoreError::Constraint("overlay revision is unavailable".into()))? } else { current.as_ref().clone() };
         let (changes, arms) = super::overlay_write::apply(&mut snapshot, &inner.models, overlay)?;
         combined.rows.extend(changes);
-        for change in combined.rows.iter().filter(|change| change.kind == crate::commit::RowChangeKind::Destroyed) {
+        for change in combined.rows.iter().filter(|change| change.kind == crate::store::RowChangeKind::Destroyed) {
             snapshot.remove_row(&super::overlay::RowKey { model: change.row.model.to_string(), row_id: change.row.id.to_string() });
         }
         combined.rows.extend(super::overlay_write::reset(&mut snapshot, &inner.models, &resets)?);

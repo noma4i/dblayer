@@ -3,7 +3,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use rusqlite::trace::{TraceEvent, TraceEventCodes};
 use serde_json::json;
 
-use crate::commit::EntityOp;
+use crate::store::EntityOp;
 use super::fixtures::*;
 
 static OLD_ROW_READS: AtomicUsize = AtomicUsize::new(0);

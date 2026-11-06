@@ -3,7 +3,7 @@ use std::collections::{BTreeMap, BTreeSet, HashSet};
 use rusqlite::OptionalExtension;
 use serde_json::{Map, Value};
 
-use crate::commit::{BatchPlan, CommitResult, DestroyReason, EntityOp, ScopeOp, ScopeRef};
+use crate::store::{BatchPlan, CommitResult, DestroyReason, EntityOp, ScopeOp, ScopeRef};
 use crate::identity::{ModelKey, RowId, RowRef};
 use crate::schema::{AssociationKind, PageDirection, RemoteShape};
 use crate::value::{fractional_between, read_id};
@@ -73,7 +73,7 @@ fn landing(writer: &mut RowWrite<'_>, model: &str, payload: &Value, overlay: &mu
         envelope.entity_ops = crate::write::cascade_destroys(&owner, &children, true).into_iter().map(|row| EntityOp::Destroy { model: row.model, id: row.id, reason: DestroyReason::Server }).collect();
         let keys: BTreeSet<(String, String)> = envelope.entity_ops.iter().map(|op| (op.row_ref().model.to_string(), op.row_ref().id.to_string())).collect();
         for seq in crate::operation::row_operation_sequences(writer.connection, &keys)? {
-            envelope.operation_transitions.push(crate::commit::OperationTransition::Remove { seq, expected: None });
+            envelope.operation_transitions.push(crate::store::OperationTransition::Remove { seq, expected: None });
         }
     } else if op == "upsert" {
         let spec = &writer.models.get(model).ok_or_else(|| StoreError::UnknownModel(model.to_string()))?.spec;

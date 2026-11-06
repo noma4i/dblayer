@@ -159,7 +159,7 @@ pub enum StoreOp {
     /// A page of a window: the rows of the answer, the window record (`page`, `cursor`) and whether it replaces the rows of the window.
     Window { key: String, model: String, page: u32, replace_all: bool, cursor: Option<String>, roots: Vec<RowValue>, related: Vec<(String, RowValue)>, total: Option<i64>, base_revision: i64 },
     /// The marker of a media window: it replaces the stored one and moves `landed_at` of the window, the rows stay.
-    WindowMarker { key: String, model: String, marker: crate::commit::WindowMarker },
+    WindowMarker { key: String, model: String, marker: crate::store::WindowMarker },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

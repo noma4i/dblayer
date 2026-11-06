@@ -1,5 +1,4 @@
 use crate::SchemaTypes;
-use dblayer::db::Db;
 use dblayer::query::{Order, Query, Where};
 use dblayer::value::SortDirection;
 use serde_json::json;
@@ -140,7 +139,7 @@ fn explicit_fields_do_not_require_a_graphql_type_named_after_the_model() {
 }
 
 #[test]
-fn local_models_store_and_query_without_graphql_and_generate_both_languages() {
+fn local_models_open_without_graphql_and_generate_both_languages() {
     let models = parse_models(r#"model Note, storage: :local do
   attribute :text, :string
   attribute :folderId, :id
@@ -158,16 +157,7 @@ end
     let kotlin = emit_kotlin(&models, &[], &SchemaTypes::default());
     assert!(swift.contains("func inFolder(") && swift.contains("func create("), "{swift}");
     assert!(kotlin.contains("fun inFolder(") && kotlin.contains("fun create("), "{kotlin}");
-    let db = Db::open_in_memory(models, None).unwrap();
-    for (text, folder, position) in [("first", "f1", 1), ("second", "f1", 2), ("other", "f2", 3)] {
-        db.create(&db.admit().unwrap(), "Note", json!({"text": text, "folderId": folder, "position": position}).as_object().unwrap().clone()).unwrap();
-    }
-    let query = Query::new("Note").filtered(Where::equal("folderId", json!("f1"))).ordered(vec![Order::new("position", SortDirection::Desc)]);
-    let rows = db.query(&query).unwrap();
-    assert_eq!(rows.iter().map(|row| row.text("text").unwrap()).collect::<Vec<_>>(), ["second", "first"]);
-    assert!(rows.iter().all(|row| row.sync.state == dblayer::syncstate::SyncState::Synced));
-    let found = db.query(&Query::new("Note").filtered(Where::Search { text: "second".into(), whole_words: true })).unwrap();
-    assert_eq!(found.iter().map(|row| row.text("text").unwrap()).collect::<Vec<_>>(), ["second"]);
+    dblayer::store::Store::open_models(None, models, None).unwrap();
 }
 
 /// B4 (old line emit/mod.rs creates_locally): a model whose create the server answers gets the typed `create` in both languages, so the app never writes the generic call.

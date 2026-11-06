@@ -2,7 +2,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use serde_json::Value;
 
-use crate::commit::{RowChange, RowChangeKind};
+use crate::store::{RowChange, RowChangeKind};
 use crate::identity::{ModelKey, RowId, RowRef};
 
 use super::overlay::{OverlaySnapshot, RowKey};

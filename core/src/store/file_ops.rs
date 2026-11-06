@@ -1,6 +1,6 @@
 use rusqlite::Connection;
 
-use crate::commit::{DestroyReason, FileOp};
+use crate::store::{DestroyReason, FileOp};
 use crate::files::{move_row, put, remove_pair, remove_row};
 use crate::identity::{ModelKey, RowId};
 

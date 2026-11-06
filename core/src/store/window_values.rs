@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 
 use serde_json::{Map, Value};
 
-use crate::commit::{EdgeValue, EdgeWrite, ScopeRef};
+use crate::store::{EdgeValue, EdgeWrite, ScopeRef};
 use crate::store::DbError;
 use crate::owners::read::windows::WindowKey;
 use crate::owners::store::RowValue;

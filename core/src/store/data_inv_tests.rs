@@ -322,7 +322,7 @@ fn inv_id_06_a_real_row_that_arrived_before_the_create_answer_leaves_one_row_aft
 
 #[test]
 fn inv_order_04_restored_member_takes_a_free_key_when_its_old_key_was_reused() {
-    use crate::commit::{BatchPlan, ScopeOp, ScopeRef};
+    use crate::store::{BatchPlan, ScopeOp, ScopeRef};
     use crate::identity::{ListKey, ModelKey};
     let db = open();
     let scope = ScopeRef::new(ModelKey::new("moments"), ListKey::from_raw("feed"));

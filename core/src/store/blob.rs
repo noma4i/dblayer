@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 use rusqlite::{params, Connection, OptionalExtension};
 use serde_json::Value;
-use crate::commit::OperationRecord;
+use crate::store::OperationRecord;
 use crate::operation::Operation;
 use crate::upload::{BlobSnapshot, BlobState, UploadState, BLOB_LIFETIME_MS};
 use super::{ModelInfo, StoreError};

@@ -1,4 +1,4 @@
-use crate::commit::{BatchPlan, DestroyReason, EntityOp, OperationTransition};
+use crate::store::{BatchPlan, DestroyReason, EntityOp, OperationTransition};
 use crate::identity::{ModelKey, RowId};
 use crate::operation::Operation;
 use crate::store::Reader;
@@ -91,13 +91,13 @@ fn carry_locals(reader: &Reader<'_>, envelope: &mut BatchPlan, model: &str, temp
             match landing {
                 Some(row) if row.get(&field.name).is_some_and(|brought| !brought.is_null()) => {}
                 Some(row) => { row.insert(field.name.clone(), value.clone()); }
-                None => envelope.pending_locals.push(crate::commit::PendingLocal { model: model.to_string(), row_id: real.to_string(), path: field.name.clone(), value: value.clone() }),
+                None => envelope.pending_locals.push(crate::store::PendingLocal { model: model.to_string(), row_id: real.to_string(), path: field.name.clone(), value: value.clone() }),
             }
         }
         Ok(())
 }
 
-pub(super) fn apply(writer: &mut super::row_write::RowWrite<'_>, model: &str, temp: &str, real: &str, own: i64) -> Result<crate::commit::CommitResult, StoreError> {
+pub(super) fn apply(writer: &mut super::row_write::RowWrite<'_>, model: &str, temp: &str, real: &str, own: i64) -> Result<crate::store::CommitResult, StoreError> {
     let temp = RowId::new(temp).map_err(|error| StoreError::Constraint(error.to_string()))?;
     let real = RowId::new(real).map_err(|error| StoreError::Constraint(error.to_string()))?;
     let reader = Reader::new(writer.connection, writer.models);

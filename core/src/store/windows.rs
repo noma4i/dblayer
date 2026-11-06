@@ -28,7 +28,7 @@ pub struct SavedWindow {
     pub has_rows: bool,
     pub generation: u64,
     /// The marker of a media window and the number of its members: what `MarkerCheck` compares the answer with.
-    pub marker: Option<crate::commit::WindowMarker>,
+    pub marker: Option<crate::store::WindowMarker>,
     pub members: i64,
 }
 
@@ -48,13 +48,13 @@ pub(super) fn read_window(connection: &Connection, key: &str) -> Result<Option<W
     Ok(Some(WindowRecord { key, cursor, has_next: has_next != 0, total, pages, issued, applied, generation }))
 }
 
-pub(super) fn read_marker(connection: &Connection, key: &str) -> Result<Option<crate::commit::WindowMarker>, StoreError> {
+pub(super) fn read_marker(connection: &Connection, key: &str) -> Result<Option<crate::store::WindowMarker>, StoreError> {
     let mut statement = connection.prepare_cached("SELECT sequence, field, value FROM window_marker WHERE window_key = ?1")?;
     let rows = statement.query_map(params![key], |row| Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?, row.get::<_, i64>(2)?)))?;
-    let mut marker: Option<crate::commit::WindowMarker> = None;
+    let mut marker: Option<crate::store::WindowMarker> = None;
     for row in rows {
         let (sequence, field, value) = row?;
-        marker.get_or_insert_with(|| crate::commit::WindowMarker { sequence, values: Default::default() }).values.insert(field, value);
+        marker.get_or_insert_with(|| crate::store::WindowMarker { sequence, values: Default::default() }).values.insert(field, value);
     }
     Ok(marker)
 }
@@ -63,14 +63,14 @@ pub(super) fn max_sequence(connection: &Connection) -> Result<i64, StoreError> {
     Ok(connection.query_row("SELECT COALESCE(MAX(MAX(issued, applied, COALESCE(stale_since, 0))), 0) FROM query_window", [], |row| row.get(0))?)
 }
 
-pub(crate) fn window_identity(spec: &crate::schema::ModelSpec, model: &str, relation: &str, remote: &crate::schema::RemoteSpec, params: &serde_json::Map<String, serde_json::Value>) -> Result<(crate::commit::ScopeRef, String), crate::store::DbError> {
+pub(crate) fn window_identity(spec: &crate::schema::ModelSpec, model: &str, relation: &str, remote: &crate::schema::RemoteSpec, params: &serde_json::Map<String, serde_json::Value>) -> Result<(crate::store::ScopeRef, String), crate::store::DbError> {
     let scope_key = spec.selection_key(relation, params).map_err(|error| crate::store::DbError::Internal(error.to_string()))?;
     let direction = match remote.shape {
         crate::schema::RemoteShape::Connection { direction, .. } => direction,
         _ => PageDirection::Forward,
     };
     let key = window_key(scope_key.as_str(), direction);
-    Ok((crate::commit::ScopeRef::new(crate::identity::ModelKey::new(model), scope_key), key))
+    Ok((crate::store::ScopeRef::new(crate::identity::ModelKey::new(model), scope_key), key))
 }
 
 impl WindowFreshness {

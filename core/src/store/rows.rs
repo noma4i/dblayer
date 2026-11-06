@@ -6,7 +6,7 @@ use rusqlite::types::Value as SqlValue;
 use rusqlite::{params, params_from_iter, Connection, OptionalExtension, StatementStatus};
 use serde_json::{Map, Value};
 
-use crate::commit::EdgeValue;
+use crate::store::EdgeValue;
 use crate::ddl::{manifest_read, ColumnType, REVISION_SEQ_KEY};
 use crate::identity::touches::read_members;
 use crate::identity::RowId;

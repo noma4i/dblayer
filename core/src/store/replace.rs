@@ -2,7 +2,7 @@ use std::collections::{HashMap, HashSet};
 
 use serde_json::{Map, Value};
 
-use crate::commit::{EntityOp, ScopeOp, ScopeRef};
+use crate::store::{EntityOp, ScopeOp, ScopeRef};
 use crate::read::longest_increasing;
 use crate::store::DbError;
 use crate::identity::RowId;

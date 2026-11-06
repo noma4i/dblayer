@@ -67,7 +67,7 @@ pub(super) fn add_chat(models: &mut Value) {
 
 /// A row of the server arrives as an event: it lands the way a change of the feed does.
 pub(super) fn land_event(rig: &Rig, model: &str, row: Value) {
-    use crate::commit::{BatchPlan, EntityOp};
+    use crate::store::{BatchPlan, EntityOp};
     use crate::identity::{ModelKey, RowId};
     let db = &rig.database.db;
     let row = row.as_object().unwrap().clone();
@@ -102,7 +102,7 @@ pub(super) fn chat_row(id: &str, last_message_at: i64) -> Value { json!({"id": i
 
 /// A row of the server is deleted by an event.
 pub(super) fn land_delete(rig: &Rig, model: &str, id: &str) {
-    use crate::commit::{BatchPlan, DestroyReason, EntityOp};
+    use crate::store::{BatchPlan, DestroyReason, EntityOp};
     use crate::identity::{ModelKey, RowId};
     let db = &rig.database.db;
     let mut envelope = BatchPlan::from_server(db.generation());

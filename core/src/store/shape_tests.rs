@@ -211,7 +211,7 @@ fn changing_one_list_rewrites_only_that_list() {
 fn destroying_a_row_removes_its_child_rows() {
     let store = store_with_gifts();
     put(&store, json!({"id": "g1", "labels": ["a"], "items": [{"title": "t", "tags": ["z"], "size": {"w": 1, "h": 1}}], "tree": tree()}));
-    store.commit(envelope(&store, vec![destroy("gifts", "g1", crate::commit::DestroyReason::Local)], vec![])).unwrap();
+    store.commit(envelope(&store, vec![destroy("gifts", "g1", crate::store::DestroyReason::Local)], vec![])).unwrap();
     for table in ["row_gifts__labels", "row_gifts__items", "row_gifts__items__tags", "row_gifts__tree__children"] {
         assert_eq!(count(&store, &format!("SELECT COUNT(*) FROM {table}")), 0, "{table}");
     }

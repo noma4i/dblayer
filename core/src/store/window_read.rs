@@ -4,7 +4,7 @@ use std::collections::BTreeMap;
 
 use serde_json::{Map, Value};
 
-use crate::commit::EdgeValue;
+use crate::store::EdgeValue;
 use crate::schema::FieldKind;
 use crate::value::ScalarKind;
 

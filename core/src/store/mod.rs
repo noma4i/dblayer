@@ -4,7 +4,6 @@ use std::sync::{Arc, Condvar, Mutex, MutexGuard, OnceLock, RwLock};
 
 use rusqlite::Connection;
 
-use crate::commit::CommitResult;
 use crate::ddl::{layout, table_name, Layout};
 use crate::identity::Generation;
 use crate::pacing::{Clock, Counters, SystemClock};
@@ -40,6 +39,10 @@ mod data_nested_tests;
 mod nodes_answer_tests;
 #[cfg(test)]
 mod data_decode_tests;
+mod batch_plan;
+pub use batch_plan::*;
+#[cfg(test)]
+mod batch_plan_tests;
 mod apply;
 mod batch_common;
 mod batch_result;
@@ -103,7 +106,7 @@ pub use windows::{family_prefix, window_key, PageInfo, SavedWindow, WindowFreshn
 pub(crate) use windows::window_identity;
 
 #[cfg(test)]
-type CommitCallback = Box<dyn Fn(&crate::commit::CommitResult) + Send + Sync>;
+type CommitCallback = Box<dyn Fn(&crate::store::CommitResult) + Send + Sync>;
 
 pub(crate) struct ModelInfo {
     pub table: String,
@@ -132,7 +135,7 @@ pub(crate) struct Inner {
 impl Inner {
     pub(crate) fn ensure_generation(&self, generation: Generation) -> Result<(), StoreError> {
         if generation != self.generation {
-            return Err(StoreError::Plan(crate::commit::PlanFault::StaleGeneration));
+            return Err(StoreError::Plan(crate::store::PlanFault::StaleGeneration));
         }
         Ok(())
     }
@@ -154,7 +157,7 @@ impl Inner {
 }
 
 pub(crate) enum StoreEvent<'a> {
-    Committed(&'a crate::commit::CommitResult),
+    Committed(&'a crate::store::CommitResult),
     Renewed,
     Reset { revision: i64, models: Option<Vec<String>> },
 }

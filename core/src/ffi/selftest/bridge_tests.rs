@@ -1255,7 +1255,7 @@ pub(super) fn member_list(rig: &Rig, group: &str, order: &str) -> Vec<String> {
 
 /// The members u1 u2 u3 of the group in both lists (JOINED: u1 u2 u3, OWNER_FIRST: u2 u1 u3) and the row u4 that is in neither list.
 pub(super) fn seed_members(rig: &Rig, group: &str) {
-    use crate::commit::{BatchPlan, EntityOp, ScopeOp, ScopeRef};
+    use crate::store::{BatchPlan, EntityOp, ScopeOp, ScopeRef};
     use crate::identity::{ModelKey, RowId};
     let db = &rig.database.db;
     let spec = db.spec("Member").unwrap();

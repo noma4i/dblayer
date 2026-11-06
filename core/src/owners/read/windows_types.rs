@@ -86,7 +86,7 @@ impl AnswerPage {
 }
 
 /// The marker of a media window: `revision`, the counts of its rows by kind and the sequence they stand for.
-pub use crate::commit::WindowMarker as Marker;
+pub use crate::store::WindowMarker as Marker;
 
 /// What a request of a window asks: a page, the marker of the media chain up to a sequence, or the tail after a sequence.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

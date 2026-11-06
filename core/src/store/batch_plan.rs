@@ -385,11 +385,4 @@ impl CommitResult {
     pub fn is_noop(&self) -> bool {
         self.revision.is_none()
     }
-
-    pub fn changed_models(&self) -> BTreeSet<ModelKey> {
-        self.rows.iter().map(|change| change.row.model.clone()).collect()
-    }
 }
-
-#[cfg(test)]
-mod commit_tests;

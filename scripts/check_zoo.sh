@@ -69,7 +69,7 @@ for path in files:
 
 for path in files:
     relative = str(path.relative_to(root))
-    if relative.endswith(("store/swap.rs", "commit/mod.rs")):
+    if relative.endswith(("store/swap.rs", "store/batch_plan.rs")):
         continue
     if re.search(r"Replaced \{ by:", contents[path]):
         findings.append(f"Z9 a temp row is replaced in core/src/store/swap.rs only: {relative}")

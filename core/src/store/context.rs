@@ -4,7 +4,7 @@ use std::collections::{BTreeMap, HashSet};
 use std::path::Path;
 use std::sync::{Arc, OnceLock};
 
-use crate::commit::{BatchPlan, CommitResult, EntityOp};
+use crate::store::{BatchPlan, CommitResult, EntityOp};
 use crate::ddl::{table_name, ManifestVerdict, RecreateReason};
 use crate::files::FileDirectories;
 use crate::identity::{ModelKey, RowRef};

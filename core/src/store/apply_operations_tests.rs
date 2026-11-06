@@ -15,7 +15,7 @@ fn record(seq: Option<i64>, status: OperationStatus, dedupe: Option<&str>) -> Op
     }
 }
 
-fn transitions(store: &Store, items: Vec<OperationTransition>) -> crate::commit::CommitResult {
+fn transitions(store: &Store, items: Vec<OperationTransition>) -> crate::store::CommitResult {
     let mut envelope = envelope(store, vec![], vec![]);
     envelope.operation_transitions = items;
     store.commit(envelope).unwrap()
@@ -191,7 +191,7 @@ fn sync_row(store: &Store, id: &str) -> Option<String> {
     text(store, &format!("SELECT state || ':' || attempts FROM row_sync WHERE model = 'messages' AND row_id = '{id}'"))
 }
 
-fn synced_rows(result: &crate::commit::CommitResult) -> Vec<(String, RowChangeKind)> {
+fn synced_rows(result: &crate::store::CommitResult) -> Vec<(String, RowChangeKind)> {
     result.rows.iter().map(|change| (change.row.id.to_string(), change.kind)).collect()
 }
 

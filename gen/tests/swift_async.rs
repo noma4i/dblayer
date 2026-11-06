@@ -2,7 +2,7 @@ use std::path::PathBuf;
 use std::process::Command;
 
 fn fixtures(pattern_dir: &str) -> Vec<PathBuf> {
-    let directory = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../fixtures").join(pattern_dir);
+    let directory = PathBuf::from(".").join("../fixtures").join(pattern_dir);
     let mut files: Vec<PathBuf> = std::fs::read_dir(directory).unwrap().map(|entry| entry.unwrap().path()).filter(|path| path.extension().is_some_and(|extension| extension == "dbl")).collect();
     files.sort();
     files
@@ -16,7 +16,7 @@ fn generate(arguments: &[&str], sources: &[PathBuf]) -> String {
 
 #[test]
 fn every_generated_swift_async_entry_is_declared_concurrent() {
-    let schema = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../fixtures/operations/schema.graphql");
+    let schema = PathBuf::from(".").join("../fixtures/operations/schema.graphql");
     let models = generate(&["swift"], &fixtures(""));
     let operations = generate(&["--schema", schema.to_str().unwrap(), "swift"], &fixtures("operations"));
     for (label, source) in [("models", models), ("operations", operations)] {

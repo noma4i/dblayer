@@ -2,7 +2,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use serde_json::{Map, Value};
 
-use crate::commit::{BatchPlan, CommitResult, DestroyReason, EntityOp, OperationTransition, ScopeOp};
+use crate::store::{BatchPlan, CommitResult, DestroyReason, EntityOp, OperationTransition, ScopeOp};
 use crate::operation::OperationStatus;
 use crate::files::references_of_row;
 use crate::identity::{ModelKey, RowId};
@@ -166,7 +166,7 @@ fn restore_member(reader: &Reader<'_>, chain: &mut Chain<'_>, own: i64, (model, 
     )?;
     if !owns { return Ok(()); }
     let (Ok(row), key) = (RowId::new(id), crate::identity::ListKey::from_raw(scope_key)) else { return Ok(()) };
-    let scope = crate::commit::ScopeRef::new(ModelKey::new(model), key);
+    let scope = crate::store::ScopeRef::new(ModelKey::new(model), key);
     let present = reader.scope_has_member(model, scope_key, id)?;
     chain.reown_member(own, (model, id, scope_key), revision);
     match (before, present) {

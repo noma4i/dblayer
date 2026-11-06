@@ -3,7 +3,7 @@ use std::collections::HashSet;
 use rusqlite::OptionalExtension;
 use serde_json::{json, Map, Value};
 
-use crate::commit::{EntityOp, OperationRecord, OperationTransition, ScopeOp, ScopeRef};
+use crate::store::{EntityOp, OperationRecord, OperationTransition, ScopeOp, ScopeRef};
 use crate::ddl::table_name;
 use crate::identity::{ModelKey, RowId, RowRef};
 use crate::operation::Operation;

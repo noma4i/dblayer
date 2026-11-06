@@ -268,7 +268,7 @@ pub(super) fn begin_operation(connection: &Connection, record: &OperationRecord)
     Ok(seq)
 }
 
-fn write_item_source(connection: &Connection, seq: i64, position: i64, item: &crate::commit::UploadAdmission) -> Result<(), StoreError> {
+fn write_item_source(connection: &Connection, seq: i64, position: i64, item: &crate::store::UploadAdmission) -> Result<(), StoreError> {
     let (file_id, error) = match &item.source {
         Ok(file) => {
             let mut file = file.clone();

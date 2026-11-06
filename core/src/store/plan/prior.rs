@@ -4,7 +4,7 @@ use rusqlite::params;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
-use crate::commit::{EntityOp, ScopeOp, ScopeRef};
+use crate::store::{EntityOp, ScopeOp, ScopeRef};
 use crate::files::references_of_row;
 use crate::identity::{ModelKey, RowId, ListKey};
 use crate::store::{Reader, StoreError};

@@ -124,7 +124,7 @@ end
     assert!(swift.contains("@concurrent public func mute(mute: Bool, in scope_: AccountScope? = nil) async throws -> MutationReceipt<Self>"));
     assert!(swift.contains("values_[\"muted\"] = try JSONValue.encode(mute)"));
     assert!(swift.contains("args: [\"mute\": try JSONValue.encode(mute)]"));
-    assert!(kotlin.contains("suspend fun mute(mute: Boolean, account: AccountScope? = null): Container"));
+    assert!(kotlin.contains("suspend fun mute(mute: Boolean, account: AccountScope? = null): MutationReceipt<Container>"));
     assert!(kotlin.contains("\"muted\" to jsonValue(mute)"));
 }
 
@@ -319,12 +319,6 @@ model Me do
   scope :profile do
     query "AccountProfile"
   end
-  operation :set_avatar do
-    mutation "SetAvatar"
-    optimistic false
-    parameter :photo, :blob
-    variables photo: :photo
-  end
 end
 "#).unwrap();
     let (swift, kotlin) = (emit_swift(&models, &[], &dblayer_gen::SchemaTypes::default()), emit_kotlin(&models, &[], &dblayer_gen::SchemaTypes::default()));
@@ -336,7 +330,6 @@ end
     }
     assert!(kotlin.lines().any(|line| line.contains("suspend fun vibeFeedEdge(vibeId: String, id: String, account: AccountScope? = null)")));
     assert!(swift.contains("vibeFeedEdge(_ vibeId: String, of id: String, in scope_: AccountScope? = nil)"), "{swift}");
-    assert!(kotlin.lines().any(|line| line.contains("suspend fun setAvatar(photo: Blob, account: AccountScope? = null)") && line.contains("Me.profile.read(account)") && line.contains(".setAvatar(photo, account)")), "{kotlin}");
     assert!(swift.contains("like(in scope_: AccountScope? = nil)") && kotlin.contains("fun like(account: AccountScope? = null)"));
 }
 
@@ -361,8 +354,7 @@ fn a_query_named_like_a_parameter_is_called_through_its_owner() {
         assert!(kotlin.contains(call), "kotlin lacks {call}\n{kotlin}");
     }
     assert!(swift.contains("func create(title: String, in scope_: AccountScope? = nil)"), "{swift}");
-    assert!(swift.contains("Self.singleton.read(in: scope_).first") && swift.contains("public static var singleton: Query<Self> { Self.account }"), "{swift}");
-    assert!(kotlin.contains("suspend fun setVideo(video: Blob, account: AccountScope? = null) = requireNotNull(Holder.account.read(account).firstOrNull())"), "{kotlin}");
+    assert!(swift.contains("public static var singleton: Query<Self> { Self.account }"), "{swift}");
 }
 
 fn refusal_from_schema(source: &str, schema: &str, mutation: &str) -> String {

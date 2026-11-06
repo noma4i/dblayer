@@ -2,7 +2,7 @@ use std::collections::BTreeSet;
 
 use serde_json::{Map, Value};
 
-use crate::commit::{EntityOp, ScopeOp, ScopeRef};
+use crate::store::{EntityOp, ScopeOp, ScopeRef};
 use crate::identity::{ModelKey, RowId};
 use crate::value::{fractional_between, read_id};
 

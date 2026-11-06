@@ -3,7 +3,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use rusqlite::Connection;
 use serde_json::{Map, Value};
 
-use crate::commit::{CommitResult, RowChange, RowChangeKind};
+use crate::store::{CommitResult, RowChange, RowChangeKind};
 use crate::identity::RowRef;
 
 use super::{ModelInfo, Reader, StoreError};

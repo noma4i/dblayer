@@ -3,7 +3,7 @@ use std::time::Duration;
 
 use serde_json::{json, Map, Value};
 
-use crate::commit::{BatchPlan, DestroyReason, EntityOp, ScopeOp, ScopeRef};
+use crate::store::{BatchPlan, DestroyReason, EntityOp, ScopeOp, ScopeRef};
 use crate::identity::{ModelKey, RowId, ListKey};
 use crate::pacing::ManualClock;
 use crate::schema::{FieldSpec, ModelSpec};

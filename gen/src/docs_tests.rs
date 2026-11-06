@@ -1,5 +1,4 @@
 use std::fs;
-use std::path::Path;
 
 use crate::check::check_source;
 

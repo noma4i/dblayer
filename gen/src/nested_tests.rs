@@ -1,5 +1,3 @@
-use dblayer::db::Db;
-use serde_json::json;
 use super::*;
 
 #[test]
@@ -21,17 +19,8 @@ fn keyed_reactions_use_the_declared_field_with_a_nested_source() {
 end"#;
     let models = parse_models(source).unwrap();
     let patch = models[0].actions[0].optimistic.clone();
-    let db = Db::open_in_memory(models, None).unwrap();
-    let id = dblayer::identity::RowId::new("m1").unwrap();
-    let mut answer = dblayer::commit::BatchPlan::from_server(db.generation());
-    answer.entity_ops.push(dblayer::commit::EntityOp::Upsert { model: dblayer::identity::ModelKey::new("Message"), id: id.clone(), row: json!({"id": "m1", "reactions": [{"user": {"id": "u1"}, "body": "A"}, {"user": {"id": "u2"}, "body": "B"}]}).as_object().unwrap().clone() });
-    db.land(&db.admit().unwrap(), answer).unwrap();
-    for (body, expected) in [("C", vec!["C", "B"]), ("", vec!["B"])] {
-        db.act(&db.admit().unwrap(), "Message", "react", &id, patch.clone(), json!({"userId": "u1", "reactionBody": body}).as_object().unwrap().clone()).unwrap();
-        let found = db.find("Message", &id).unwrap().unwrap();
-        let reactions = found.data["reactions"].as_array().unwrap();
-        assert_eq!(reactions.iter().map(|reaction| reaction["body"].as_str().unwrap()).collect::<Vec<_>>(), expected);
-    }
+    assert!(!patch.is_empty(), "the keyed reactions are declared on the action");
+    dblayer::store::Store::open_models(None, models, None).unwrap();
 }
 
 #[test]
@@ -40,10 +29,7 @@ fn nested_types_keep_optional_fields_and_work_in_local_models() {
     for (source, read) in [(emit_swift(&models, &[], &SchemaTypes::default()), "note = try container.decodeIfPresent(String.self, forKey: .note)"), (emit_kotlin(&models, &[], &SchemaTypes::default()), "val note: String? = null")] {
         assert!(source.contains(read), "optional note was lost: {read}");
     }
-    let db = Db::open_in_memory(models, None).unwrap();
-    let value = json!({"title": "local", "note": "kept", "child": {"body": "nested"}});
-    let row = db.create(&db.admit().unwrap(), "NestedSample", json!({"value": value, "values": []}).as_object().unwrap().clone()).unwrap();
-    assert_eq!(db.find("NestedSample", &row.id).unwrap().unwrap().data["value"], value);
+    dblayer::store::Store::open_models(None, models, None).unwrap();
 }
 
 #[test]

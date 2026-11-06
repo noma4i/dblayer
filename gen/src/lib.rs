@@ -269,8 +269,6 @@ mod members_tests;
 #[cfg(test)]
 mod lib_tests;
 
-#[cfg(test)]
-mod roundtrip_tests;
 
 #[cfg(test)]
 mod docs_tests;

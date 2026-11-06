@@ -8,7 +8,7 @@ use crate::schema::PageDirection;
 fn saving_a_page_has_constant_sql_work() {
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Arc;
-    use crate::commit::{WindowSave, WindowTail};
+    use crate::store::{WindowSave, WindowTail};
     let measure = |size| {
         let (store, _) = booted_store();
         let target = scope("messages", "thread");

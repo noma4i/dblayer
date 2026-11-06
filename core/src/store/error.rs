@@ -1,4 +1,4 @@
-use crate::commit::PlanFault;
+use crate::store::PlanFault;
 use crate::ddl::DdlError;
 
 #[derive(Debug, thiserror::Error)]

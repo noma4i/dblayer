@@ -1,6 +1,6 @@
 use serde_json::{Map, Value};
 
-use crate::commit::{BatchPlan, CommitResult, DestroyReason, EntityOp, OperationRecord, OperationTransition, ScopeOp, ScopeRef};
+use crate::store::{BatchPlan, CommitResult, DestroyReason, EntityOp, OperationRecord, OperationTransition, ScopeOp, ScopeRef};
 use crate::store::plan::{Prior, PriorRow};
 use crate::identity::{ListKey, ModelKey, RowId, RowRef};
 use crate::operation::{Operation, OperationStatus};

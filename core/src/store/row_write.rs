@@ -3,7 +3,7 @@ use std::collections::BTreeMap;
 use rusqlite::Connection;
 use serde_json::{Map, Value};
 
-use crate::commit::{BatchPlan, CommitResult, DestroyReason, EntityOp, OperationTransition, PendingLocal, WindowDebt};
+use crate::store::{BatchPlan, CommitResult, DestroyReason, EntityOp, OperationTransition, PendingLocal, WindowDebt};
 use crate::identity::{Generation, ModelKey, RowId, RowRef};
 use crate::owners::store::RowValue;
 use crate::schema::AssociationSpec;

@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 
-use crate::commit::{BatchPlan, EntityOp, FileOp};
+use crate::store::{BatchPlan, EntityOp, FileOp};
 use crate::files::{placement, sha256_hex, FileDescriptor, FileDirectories, FileRecord, Location};
 use crate::identity::{ModelKey, RowId};
 use crate::owners::store::StoreOp;
