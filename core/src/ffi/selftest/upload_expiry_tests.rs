@@ -19,7 +19,7 @@ async fn failed_upload(stand: &Stand, database: &Database, source: &std::path::P
 
 async fn until_gone(database: &Database, id: &str) {
     let rows = watched(database, "Moment", id);
-    yield_until("the expired row is gone", || rows.len() == 0).await;
+    yield_until("the expired row is gone", || rows.last().is_some() && rows.len() == 0).await;
 }
 
 #[tokio::test(flavor = "multi_thread")]

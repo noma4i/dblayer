@@ -69,6 +69,7 @@
 - A rejected landing keeps the stored request and repeats it with the same request id.
 - Only a `logout` answer with `revoked` ends the session.
 - The session end erases the digest rows before the credential; a credential left by a crash is erased at open.
+- A failed upload older than 7 days is removed when the network returns, without a reopen.
 
 ### Removed
 - `scope.related` is gone: read a server relation with a query.

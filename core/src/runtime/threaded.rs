@@ -96,20 +96,13 @@ impl Router {
     fn broadcast(&self, control: Control) { (0..self.boxes.len()).for_each(|to| self.push(to, Command::Control(control))); }
 }
 
-/// The time of the owners: ms since the runtime started, from the clock of the database or from the process.
+/// The time of the owners: ms of the clock of the database, the same scale as the saved times.
 pub(super) struct Timeline {
-    clock: Option<Arc<dyn crate::runtime::Clock>>,
-    base: Duration,
-    origin: Instant,
+    clock: Arc<dyn crate::runtime::Clock>,
 }
 
 impl Timeline {
-    fn now(&self) -> Time {
-        match &self.clock {
-            Some(clock) => Time(clock.now().saturating_sub(self.base).as_millis() as u64),
-            None => Time(self.origin.elapsed().as_millis() as u64),
-        }
-    }
+    fn now(&self) -> Time { Time(self.clock.now().as_millis() as u64) }
 }
 
 type Body = Box<dyn FnOnce(Arc<Router>, Arc<Timeline>) + Send>;
@@ -370,13 +363,12 @@ impl RuntimeBuilder {
         }
         let router = Arc::new(Router { boxes: self.boxes, inflight: Inflight::default(), failure: self.failure, history: self.history, record: self.record });
         let _ = self.handle.router.set(router.clone());
-        let timeline = Arc::new(Timeline { base: self.clock.as_ref().map_or(Duration::ZERO, |clock| clock.now()), clock: self.clock.clone(), origin: Instant::now() });
-        if let Some(clock) = &self.clock {
-            let weak = Arc::downgrade(&router);
-            clock.on_advance(Arc::new(move || {
-                if let Some(router) = weak.upgrade() { (0..router.boxes.len()).for_each(|to| router.push(to, Command::Wake)); }
-            }));
-        }
+        let clock = self.clock.unwrap_or_else(|| Arc::new(crate::runtime::SystemClock));
+        let timeline = Arc::new(Timeline { clock: clock.clone() });
+        let weak = Arc::downgrade(&router);
+        clock.on_advance(Arc::new(move || {
+            if let Some(router) = weak.upgrade() { (0..router.boxes.len()).for_each(|to| router.push(to, Command::Wake)); }
+        }));
         let mut joins = Vec::new();
         let alive = Arc::new(AtomicUsize::new(0));
         for (name, body) in self.bodies.into_iter().flatten() {
