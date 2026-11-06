@@ -79,6 +79,8 @@ pub fn resolve_maps(patch: &mut Map<String, Value>, args: &Map<String, Value>) {
     }
 }
 
+fn stored_at<'a>(object: &'a Map<String, Value>, path: &str) -> Option<&'a Value> { object.get(path).or_else(|| super::read_path(object, path)) }
+
 fn resolved(value: &Value, args: &Map<String, Value>) -> Value {
     match value.get("$arg").and_then(Value::as_str) {
         Some(name) => args.get(name).cloned().unwrap_or(Value::Null),
@@ -98,10 +100,10 @@ pub fn apply<E>(
     let Some(by) = op.get("by").and_then(Value::as_str).map(stored_name) else { return Ok(None) };
     let Some(spec) = op.get("element").and_then(Value::as_object) else { return Ok(None) };
     let mut element: Map<String, Value> = spec.iter().map(|(name, value)| (stored_name(name), resolved(value, args))).collect();
-    let Some(key) = super::read_path(&element, &by).cloned() else { return Ok(None) };
-    let key_field = by.split('.').next().unwrap_or(&by);
+    let Some(key) = stored_at(&element, &by).cloned() else { return Ok(None) };
+    let key_field = if element.contains_key(&by) { by.as_str() } else { by.split('.').next().unwrap_or(&by) };
     let mut items: Vec<Value> = current.and_then(Value::as_array).cloned().unwrap_or_default();
-    let at = items.iter().position(|item| item.as_object().and_then(|stored| super::read_path(stored, &by)) == Some(&key));
+    let at = items.iter().position(|item| item.as_object().and_then(|stored| stored_at(stored, &by)) == Some(&key));
     let removes = element.iter().filter(|(name, _)| name.as_str() != key_field).all(|(_, value)| is_blank(value));
     if !removes {
         let missing: Vec<(&FieldSpec, &FieldLink)> = declared().filter(|nested| nested.kind == FieldKind::Object && !element.contains_key(&stored_name(&nested.name))).filter_map(|nested| nested.link.as_ref().map(|link| (nested, link))).collect();

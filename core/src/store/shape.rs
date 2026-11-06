@@ -46,7 +46,7 @@ fn normalize_members(members: &[Member], layout: &Layout, source: &Map<String, V
 }
 
 fn normalize_each<'a>(members: impl Iterator<Item = &'a Member>, layout: &Layout, source: &Map<String, Value>, read: ReadValue, parse_text: bool) -> Map<String, Value> {
-    members.filter_map(|member| read(source, member.key()).and_then(|value| normalize_with(member, layout, value, read, parse_text)).map(|value| (member.key().to_string(), value))).collect()
+    members.filter_map(|member| read(source, member.key()).or_else(|| source.get(member.name())).and_then(|value| normalize_with(member, layout, value, read, parse_text)).map(|value| (member.key().to_string(), value))).collect()
 }
 
 fn normalize_nested_leaf(leaf: &Leaf, value: &Value) -> Option<Value> {
