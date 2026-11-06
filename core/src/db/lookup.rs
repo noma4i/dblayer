@@ -30,20 +30,25 @@ impl Shared {
         let stored = reader.stored_rows(model, ids)?;
         let mut syncs = read_sync(reader.connection(), model, ids).map_err(StoreError::from)?;
         let spec = self.spec(model)?;
+        let linked = !super::nested_ref::link_targets(spec).is_empty();
         let mut built: Vec<(String, Row)> = Vec::with_capacity(stored.len());
         {
             let overlay = (!spec.ephemeral.is_empty()).then(|| self.ephemeral.lock());
             for (id, record) in stored {
                 let mut data = record.row;
                 let ephemeral = overlay.as_ref().map_or(0, |state| state.overlay(spec, &id, &mut data));
-                built.push((id.clone(), Arc::new(Record { id: record.id, revision: record.revision, data, sync: syncs.remove(&id).unwrap_or_default(), ephemeral })));
+                let mut stamp = record.revision;
+                if linked {
+                    stamp = stamp.max(self.resolve_nested_refs(reader, spec, &mut data)?);
+                }
+                built.push((id.clone(), Arc::new(Record { id: record.id, revision: stamp, data, sync: syncs.remove(&id).unwrap_or_default(), ephemeral })));
             }
         }
         #[cfg(test)]
         if let Some(hook) = locked(&self.row_build_hook).clone() {
             built.iter().for_each(|(id, _)| hook(id));
         }
-        let sized: Vec<(Row, usize)> = built.iter().map(|(_, row)| (row.clone(), super::cache::row_bytes(model, row))).collect();
+        let sized: Vec<(Row, usize)> = built.iter().filter(|_| !linked).map(|(_, row)| (row.clone(), super::cache::row_bytes(model, row))).collect();
         {
             let mut cache = locked(&self.cache);
             for (row, bytes) in sized {

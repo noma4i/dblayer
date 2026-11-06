@@ -32,6 +32,7 @@ mod upload_rows;
 mod queue_write_tests;
 mod merge;
 mod lookup;
+pub(crate) mod nested_ref;
 mod observe;
 pub(crate) mod op_effect;
 mod open;

@@ -222,6 +222,12 @@ impl Drop for ReadStream {
     }
 }
 
+/// The tables a stream of `model` reads: its own and those of the rows its nested references read.
+fn read_tables(db: &crate::db::Db, model: &str) -> Vec<String> {
+    let linked = db.shared.spec(model).map(crate::db::nested_ref::link_targets).unwrap_or_default();
+    std::iter::once(model.to_string()).chain(linked).map(|name| crate::ddl::table_name(&name)).collect()
+}
+
 fn fetch_of(fetch: ReadFetch) -> Fetch {
     match fetch {
         ReadFetch::Never => Fetch::Never,
@@ -246,7 +252,7 @@ impl Database {
                     Some((relation, params)) => WindowKey::relation(&model, relation, params),
                     None => WindowKey { model: model.clone(), name: String::new() },
                 };
-                Ok(View { kind, model: model.clone(), tables: vec![crate::ddl::table_name(&model)], local: spec.is_local(), remote: remote.is_some(), live, reload: serde_json::from_str::<serde_json::Value>(query_json).ok().and_then(|query| query.get("refreshOnConnect").and_then(serde_json::Value::as_bool)).unwrap_or(false), window, subject: query_json.clone() })
+                Ok(View { kind, model: model.clone(), tables: read_tables(&self.db, &model), local: spec.is_local(), remote: remote.is_some(), live, reload: serde_json::from_str::<serde_json::Value>(query_json).ok().and_then(|query| query.get("refreshOnConnect").and_then(serde_json::Value::as_bool)).unwrap_or(false), window, subject: query_json.clone() })
             }
             ReadRequest::Events { model } => {
                 self.db.spec(model)?;
@@ -264,7 +270,7 @@ impl Database {
                     Some(relation) => WindowKey::relation(model, &relation.name, &serde_json::Map::from_iter([(crate::schema::NODE_PARAM.to_string(), serde_json::Value::String(id.clone()))])),
                     None => WindowKey { model: model.clone(), name: String::new() },
                 };
-                Ok(View { kind: Kind::Entity { fetch }, model: model.clone(), tables: vec![crate::ddl::table_name(model)], local: spec.is_local(), remote: fetch != Fetch::Never, live: fetch != Fetch::Never && spec.is_live(), reload: false, window, subject: id.clone() })
+                Ok(View { kind: Kind::Entity { fetch }, model: model.clone(), tables: read_tables(&self.db, model), local: spec.is_local(), remote: fetch != Fetch::Never, live: fetch != Fetch::Never && spec.is_live(), reload: false, window, subject: id.clone() })
             }
         }
     }

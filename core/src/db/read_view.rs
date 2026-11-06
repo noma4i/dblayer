@@ -67,7 +67,7 @@ impl Db {
                 }
                 _ => None,
             };
-            Ok((seen, ViewRead::Rows(keys.into_iter().zip(rows).map(|((id, stamp), row)| (id, stamp, row)).collect(), total)))
+            Ok((seen, ViewRead::Rows(keys.into_iter().zip(rows).map(|((id, stamp), row)| (id, stamp.max(row.revision), row)).collect(), total)))
         })
     }
 }

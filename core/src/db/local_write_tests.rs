@@ -361,7 +361,7 @@ fn a_keyed_element_carries_the_nested_record_of_the_local_row_it_references() {
     assert_eq!(react_as(&db, "u1"), json!([{"user.id": "u1", "body": "x", "user": {"id": "u1", "name": "Ada"}}]));
     put(&db, "messages", json!({"id": "m1", "chatId": "c1", "reactions": [{"user.id": "u1", "body": "x", "user": {"id": "u1", "name": "Ada Server"}}]}));
     let reactions = db.find("messages", &rid("m1")).unwrap().unwrap().get("reactions").cloned().unwrap();
-    assert_eq!(reactions, json!([{"user.id": "u1", "body": "x", "user": {"id": "u1", "name": "Ada Server"}}]));
+    assert_eq!(reactions, json!([{"user.id": "u1", "body": "x", "user": {"id": "u1", "name": "Ada"}}]), "a read gives the row of the user, not the record the server wrote (D-76)");
 }
 
 #[test]

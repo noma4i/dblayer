@@ -3,7 +3,7 @@ use std::sync::Arc;
 use serde_json::{json, Value};
 
 use super::rig_tests::{add_reactions, bound, Fault, Rig, World};
-use super::flow_fixtures::{add_chat, add_reactor_user, cell, chat_row, land_event, texts};
+use super::flow_fixtures::{add_chat, add_reactor_user, cell, chat_row, land_delete, land_event, texts};
 use crate::ffi::tape::Rows;
 use crate::ffi::{ReadFetch, ReadRequest, WireOperationOutcome};
 use crate::test_wait::yield_until;
@@ -52,5 +52,28 @@ async fn flow_message_reactions() {
 
     land_event(&rig, "Message", json!({"id": "m1", "chatId": "c1", "text": "hello", "at": 1, "reactions": [{"body": "B", "userId": "u2", "user": {"name": "Bob"}}, {"body": "A", "userId": "u1", "user": {"name": "Ann"}}, {"body": "C", "userId": "u3", "user": {"name": "Cy"}}]}));
     yield_until("the event reaction shows in both places", || has(&rig, &thread, &["C"]) && has(&rig, &entity, &["C"])).await;
+    rig.database.close_now();
+}
+
+/// P-DLV-19: the name of the reactor is read from the row of the user, a change of that row reaches the thread and the entity.
+#[tokio::test(flavor = "multi_thread")]
+async fn dlv_prop_nested_ref_follows_row() {
+    let rig = Rig::signed_as(World::new("server", "A", true), false, |models| { add_chat(models); add_reactions(models); add_reactor_user(models); }).await;
+    land_event(&rig, "Chat", chat_row("c1", 0));
+    land_event(&rig, "User", json!({"id": "u2", "name": "Bob"}));
+    land_event(&rig, "Message", json!({"id": "m1", "chatId": "c1", "text": "hello", "at": 1, "reactions": [{"body": "B", "userId": "u2", "user": {"name": "Old"}}]}));
+    let thread = Arc::new(Rows::default());
+    let stream = rig.database.watch_query(THREAD, thread.clone());
+    bound(stream.wait_for_initial_load()).await.unwrap();
+    let entity = Arc::new(Rows::default());
+    drop(rig.database.watch(ReadRequest::Entity { model: "Message".into(), id: "m1".into(), fetch: ReadFetch::Never }, entity.clone()));
+    yield_until("both places read the name from the row of the user", || has(&rig, &thread, &["Bob"]) && has(&rig, &entity, &["Bob"])).await;
+    assert!(!has(&rig, &thread, &["Old"]), "the record written with the message is not what the read gives");
+    land_event(&rig, "User", json!({"id": "u2", "name": "Robert"}));
+    yield_until("a commit of the user row changes every stream that references it", || has(&rig, &thread, &["Robert"]) && has(&rig, &entity, &["Robert"])).await;
+    land_event(&rig, "User", json!({"id": "u2", "name": "Rob"}));
+    land_delete(&rig, "User", "u2");
+    land_event(&rig, "Message", json!({"id": "m1", "chatId": "c1", "text": "hello", "at": 1, "reactions": [{"body": "B", "userId": "u2", "user": {"name": "Kept"}}]}));
+    yield_until("without the row of the user the nested value is as written", || has(&rig, &thread, &["Kept"]) && has(&rig, &entity, &["Kept"])).await;
     rig.database.close_now();
 }
