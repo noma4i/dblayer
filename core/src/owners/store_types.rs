@@ -52,6 +52,7 @@ pub struct RowValue {
 }
 
 /// Why the batch writes the row of `sync_upload`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum UploadKind {
     SyncUpload,
     ConfirmedParts,
@@ -250,5 +251,3 @@ pub enum StoreInput {
     ReadFinished { read_id: u64 },
     Idle,
 }
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
