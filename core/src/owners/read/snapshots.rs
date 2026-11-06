@@ -16,8 +16,8 @@ pub trait SnapshotStatements: Send + Sync + 'static {
 }
 
 pub trait Snapshots: Send + Sync + 'static {
-    /// The data of `view` in the snapshot of the read and the revision of that snapshot, never older than `revision`.
-    fn read(&self, view: &View, revision: i64) -> Result<(i64, ReadData), String>;
+    /// The data of `view` in the snapshot of the read and the revision of that snapshot, never older than `revision`. `replaced` lists the temporary ids swapped for server ids after the revision `after`.
+    fn read(&self, view: &View, revision: i64, after: i64) -> Result<(i64, ReadData), String>;
 }
 
 pub struct SqliteSnapshots {
@@ -38,7 +38,7 @@ impl SqliteSnapshots {
 }
 
 impl Snapshots for SqliteSnapshots {
-    fn read(&self, view: &View, revision: i64) -> Result<(i64, ReadData), String> {
+    fn read(&self, view: &View, revision: i64, _after: i64) -> Result<(i64, ReadData), String> {
         let statement = self.statements.statement(view)?;
         let connection = self.take()?;
         let result = (|| {
@@ -81,7 +81,7 @@ impl DbSnapshots {
 }
 
 impl Snapshots for DbSnapshots {
-    fn read(&self, view: &View, revision: i64) -> Result<(i64, ReadData), String> {
+    fn read(&self, view: &View, revision: i64, after: i64) -> Result<(i64, ReadData), String> {
         let (query, count) = match view.kind {
             Kind::List => (self.db.parse_query(&view.subject).map_err(|error| error.to_string())?.0, false),
             Kind::Count => (self.db.parse_query(&view.subject).map_err(|error| error.to_string())?.0, true),
@@ -93,7 +93,8 @@ impl Snapshots for DbSnapshots {
             crate::db::ViewRead::Count(count) => ReadData::Count(u64::try_from(count).unwrap_or(0)),
             crate::db::ViewRead::Rows(rows, total) => {
                 let wire = self.wire(&view.model)?;
-                ReadData::Rows { rows: rows.into_iter().map(|(id, stamp, row)| StreamRow { id, stamp, row: Some(wire.row(&row)) }).collect(), replaced: Vec::new(), total }
+                let replaced = self.db.shared.dispatch.replaced_between(after, seen).into_iter().map(|(from, to)| (from.to_string(), to.to_string())).collect();
+                ReadData::Rows { rows: rows.into_iter().map(|(id, stamp, row)| StreamRow { id, stamp, row: Some(wire.row(&row)) }).collect(), replaced, total }
             }
         }))
     }

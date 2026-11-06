@@ -136,7 +136,7 @@ pub enum PullAnswer {
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum StreamEffect {
-    Read { read_id: u64, revision: i64, view: View },
+    Read { read_id: u64, revision: i64, after: i64, view: View },
     Answer { outcome: OutcomeId, answer: PullAnswer },
     Available,
     CloseSink,
@@ -339,7 +339,7 @@ impl Delivery {
     fn new_read(&mut self, revision: i64) -> Emit {
         self.read_id += 1;
         self.read_revision = revision;
-        Emit::Run(StreamEffect::Read { read_id: self.read_id, revision, view: self.view.clone() })
+        Emit::Run(StreamEffect::Read { read_id: self.read_id, revision, after: self.acknowledged.unwrap_or(0), view: self.view.clone() })
     }
 
     fn sink_open(&self) -> bool { matches!(self.stage, DeliveryStage::Opening | DeliveryStage::Live) }

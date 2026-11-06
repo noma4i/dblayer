@@ -407,3 +407,31 @@ async fn a_command_read_between_its_confirming_commit_and_the_announcement_is_de
     *shared.store.after_commit.lock().unwrap() = None;
     rig.database.close_now();
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_server_id_that_replaces_a_temporary_row_of_a_held_list_arrives_as_a_replaced_pair() {
+    let rig = Rig::encrypted().await;
+    rig.login_ios("A").await;
+    let epoch = rig.database.session_epoch();
+    let (sender, mut deliveries) = tokio::sync::mpsc::unbounded_channel();
+    let stream = rig.database.subscribe_reading(epoch, crate::ffi::ReadRequest::List { query_json: r#"{"model":"Group"}"#.into() }, Arc::new(Deliveries(sender)));
+    bound(rig.database.loaded(stream)).await.unwrap();
+    let hold = rig.world.hold_next("CreateGroup");
+    let (values, args) = group("friends");
+    let receipt = bound(rig.database.create(epoch, "Group".into(), values, args)).await.unwrap();
+    hold.entered_for("the create").await;
+    hold.release();
+    assert!(matches!(bound(rig.database.outcome(receipt)).await.unwrap(), crate::ffi::WireOperationOutcome::Confirmed { .. }));
+    let pair = crate::test_wait::within_secs(20, async {
+        while let Some(delivery) = deliveries.recv().await {
+            if let crate::ffi::ReadValue::Delta { replaced, renamed, .. } = delivery.value {
+                if let Some(pair) = replaced.into_iter().chain(renamed).next() { return Some(pair); }
+            }
+        }
+        None
+    }).await;
+    let pair = pair.expect("a delta named the swap of the temporary id");
+    assert!(pair.from.starts_with("temp") && !pair.to.starts_with("temp"), "{pair:?}");
+    rig.database.cancel_stream(stream);
+    rig.database.close_now();
+}
