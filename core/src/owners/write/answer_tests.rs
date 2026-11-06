@@ -1,8 +1,8 @@
-use super::answer::{decode_answer, DecodeJob, Decoded};
+use super::answer::{decode_answer, pair_by_key, DecodeJob, Decoded};
 use crate::db::Db;
 use crate::schema_fixtures::{moments_spec, users_spec};
 
-fn job(body: &str) -> DecodeJob { DecodeJob { op_id: 1, model: "moments".into(), action: "star".into(), temp: None, body: body.into() } }
+fn job(body: &str) -> DecodeJob { DecodeJob { op_id: 1, model: "moments".into(), action: "star".into(), temp: None, batch: None, body: body.into() } }
 
 fn decoded(body: &str) -> Decoded {
     let db = Db::open_in_memory(vec![moments_spec(), users_spec()], None).unwrap();
@@ -17,4 +17,20 @@ fn the_returns_block_is_read_from_the_root_of_the_answer() {
     let Decoded::Land { rows, result, .. } = decoded(r#"{"data":{"starMoment":{"moment":null,"viewer":null,"successMessage":null,"copies":null}}}"#) else { panic!("the answer lands") };
     assert!(rows.is_empty());
     assert_eq!(serde_json::from_str::<serde_json::Value>(&result.unwrap()).unwrap(), serde_json::json!({"successMessage": null, "copies": null}));
+}
+
+fn object(text: &str) -> serde_json::Map<String, serde_json::Value> { serde_json::from_str(text).unwrap() }
+
+/// out_sending_response_batch_items: every element row of the answer replaces the one waiting temporary row with its key, in the order of the answer; an element the answer lacks and an ambiguous key keep their temporary rows.
+#[test]
+fn the_rows_of_a_batch_answer_replace_the_temporary_rows_by_key() {
+    let waiting = vec![
+        ("temp-a".to_string(), object(r#"{"clientKey":"a"}"#)),
+        ("temp-b".to_string(), object(r#"{"clientKey":"b"}"#)),
+        ("temp-c".to_string(), object(r#"{"clientKey":"c"}"#)),
+        ("temp-d".to_string(), object(r#"{"clientKey":"c"}"#)),
+    ];
+    let correlate = vec!["clientKey".to_string()];
+    let answer = vec![object(r#"{"id":"2","clientKey":"b"}"#), object(r#"{"id":"1","clientKey":"a"}"#), object(r#"{"id":"3","clientKey":"c"}"#), object(r#"{"id":"9","clientKey":"zz"}"#)];
+    assert_eq!(pair_by_key(&correlate, &waiting, &answer), vec![("temp-b".to_string(), "2".to_string()), ("temp-a".to_string(), "1".to_string())]);
 }

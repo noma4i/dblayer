@@ -149,7 +149,7 @@ pub enum OutboxInput {
     Committed(Committed),
     Rejected(Rejected),
     /// `errors = Some(temporary)`: the answer carries errors, the codec classified them.
-    Response { op_id: OpId, rows: Vec<(String, Vec<RowValue>)>, swap: Option<(String, String)>, stale: Vec<(String, String)>, result: Option<String>, errors: Option<bool> },
+    Response { op_id: OpId, rows: Vec<(String, Vec<RowValue>)>, swaps: Vec<(String, String)>, stale: Vec<(String, String)>, result: Option<String>, errors: Option<bool> },
     TransportError { op_id: OpId, temporary: bool },
     /// The answer of Session to the `Mutate` with `req_id`: Outbox finds its operation and has the answer read.
     Answered { req_id: RequestId, outcome: crate::owners::session::AuthorOutcome },
@@ -253,7 +253,7 @@ pub struct QueuedOperation {
     pub waiting_retry: bool,
     /// The rows of the server answer, kept for every attempt to land them.
     pub landing: Vec<(String, Vec<RowValue>)>,
-    pub swap: Option<(String, String)>,
+    pub swaps: Vec<(String, String)>,
     /// The fields of the `returns` block of the answer, as a JSON object.
     pub result: Option<String>,
     /// The (model, relation) pairs the action refetches: their windows turn stale when the answer lands.

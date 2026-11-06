@@ -297,14 +297,14 @@ pub(super) fn reach(state: St, ctx: &Ctx) -> (Twin, OpId) {
                 }
             }
             match state {
-                St::Landing => { twin.post(OutboxInput::Response { op_id: id, rows: server_rows(), swap: None, stale: Vec::new(), result: None, errors: None }); }
+                St::Landing => { twin.post(OutboxInput::Response { op_id: id, rows: server_rows(), swaps: Vec::new(), stale: Vec::new(), result: None, errors: None }); }
                 St::RollingBack(RWhy::Rejected) => { twin.post(OutboxInput::TransportError { op_id: id, temporary: false }); }
                 St::Failed => {
                     twin.post(OutboxInput::TransportError { op_id: id, temporary: false });
                     twin.committed(id);
                 }
                 St::Done => {
-                    twin.post(OutboxInput::Response { op_id: id, rows: server_rows(), swap: None, stale: Vec::new(), result: None, errors: None });
+                    twin.post(OutboxInput::Response { op_id: id, rows: server_rows(), swaps: Vec::new(), stale: Vec::new(), result: None, errors: None });
                     twin.committed(id);
                 }
                 _ => {}
@@ -409,7 +409,7 @@ pub(super) fn input_of(twin: &mut Twin, id: OpId, ctx: &Ctx, input: In) -> Vec<O
         In::Rejected(reason) => twin.rejected(id, reason),
         In::RowFreed => {
             let blocker = 1;
-            twin.post(OutboxInput::Response { op_id: blocker, rows: server_rows(), swap: None, stale: Vec::new(), result: None, errors: None });
+            twin.post(OutboxInput::Response { op_id: blocker, rows: server_rows(), swaps: Vec::new(), stale: Vec::new(), result: None, errors: None });
             twin.committed(blocker)
         }
         In::Online(on) => twin.post(OutboxInput::Online(Online(on))),
@@ -417,7 +417,7 @@ pub(super) fn input_of(twin: &mut Twin, id: OpId, ctx: &Ctx, input: In) -> Vec<O
         In::Retry => twin.post(OutboxInput::Retry { model: "Moment".into(), row_id: "r".into(), reply: 802 }),
         In::Outcome => twin.post(OutboxInput::Outcome { receipt: twin.receipt(id, epoch), reply: 803 }),
         In::ModelsReset => twin.post(OutboxInput::ModelsReset(ModelsReset { epoch: EPOCH, generation: 1, models: vec![if ctx.owns_model { "Moment".into() } else { "Chat".into() }] })),
-        In::Response => twin.post(OutboxInput::Response { op_id, rows: server_rows(), swap: None, stale: Vec::new(), result: None, errors: None }),
+        In::Response => twin.post(OutboxInput::Response { op_id, rows: server_rows(), swaps: Vec::new(), stale: Vec::new(), result: None, errors: None }),
         In::TransportError { temporary } => twin.post(OutboxInput::TransportError { op_id, temporary }),
         In::Dropped => twin.post(OutboxInput::Dropped { op_id }),
         In::Tick => twin.post(OutboxInput::RetryDue { op_id, cycle_id: 1 }),

@@ -154,7 +154,7 @@ fn api_script(rows: &[&str]) -> Vec<OutboxInput> {
 
 fn net_script() -> Vec<OutboxInput> {
     vec![
-        OutboxInput::Response { op_id: 1, rows: server_rows(), swap: None, stale: Vec::new(), result: None, errors: None },
+        OutboxInput::Response { op_id: 1, rows: server_rows(), swaps: Vec::new(), stale: Vec::new(), result: None, errors: None },
         OutboxInput::TransportError { op_id: 2, temporary: false },
         OutboxInput::Dropped { op_id: 2 },
         OutboxInput::Online(Online(false)),
@@ -226,7 +226,7 @@ fn out_prop_intent_kept() {
 fn out_prop_idle() {
     let mut det = scripted(vec![api_script(&["r"]), store_script()]);
     det.run_until_quiet(10_000).unwrap();
-    det.post(Address::<Outbox>::new(OUTBOX_AT), EpochStamp::Epoch(EPOCH), OutboxInput::Response { op_id: 1, rows: server_rows(), swap: None, stale: Vec::new(), result: None, errors: None });
+    det.post(Address::<Outbox>::new(OUTBOX_AT), EpochStamp::Epoch(EPOCH), OutboxInput::Response { op_id: 1, rows: server_rows(), swaps: Vec::new(), stale: Vec::new(), result: None, errors: None });
     det.run_until_quiet(10_000).unwrap();
     det.post(Address::<Outbox>::new(OUTBOX_AT), EpochStamp::Epoch(EPOCH), OutboxInput::Committed(Committed { batch: 2, revision: 20, tables: vec![], models: Default::default() }));
     det.run_until_quiet(10_000).unwrap();

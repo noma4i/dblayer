@@ -263,6 +263,27 @@ impl Db {
         }
     }
 
+    /// The rows of the elements of the batch `group` that still wait for the answer: the row id and the stored values.
+    pub(crate) fn batch_rows(&self, model: &str, action: &str, group: u64) -> Result<Vec<(crate::identity::RowId, serde_json::Map<String, serde_json::Value>)>, DbError> {
+        let ids: Vec<String> = self
+            .shared
+            .store
+            .read_locked(|connection| {
+                let mut statement = connection.prepare_cached("SELECT row_id FROM sync_upload WHERE model = ?1 AND action = ?2 AND batch = ?3 ORDER BY seq")?;
+                let found = statement.query_map(rusqlite::params![model, action, i64::try_from(group).unwrap_or(i64::MAX)], |row| row.get::<_, String>(0))?.collect::<Result<Vec<_>, _>>();
+                found
+            })
+            .map_err(|error| DbError::Internal(error.to_string()))?;
+        let mut rows = Vec::new();
+        for id in ids {
+            let Ok(id) = crate::identity::RowId::new(&id) else { continue };
+            if let Some(row) = self.find(model, &id)? {
+                rows.push((id, row.data.clone()));
+            }
+        }
+        Ok(rows)
+    }
+
     pub(super) fn remove_upload_row(&self, key: &str) -> Result<(), DbError> {
         let [model, id, action] = key_parts(key)?;
         self.shared

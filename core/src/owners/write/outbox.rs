@@ -136,7 +136,7 @@ impl OutboxState {
                 sent: false,
                 waiting_retry: false,
                 landing: Vec::new(),
-                swap: None,
+                swaps: Vec::new(),
                 result: None,
                 stale: Vec::new(),
                 landed: None,
@@ -178,7 +178,7 @@ impl OutboxState {
             }],
             CommitKind::Attempt => vec![attempt],
             CommitKind::Land => operation
-                .swap
+                .swaps
                 .iter()
                 .map(|(temp, real)| StoreOp::Swap { model: operation.op.model.clone(), temp: temp.clone(), real: real.clone() })
                 .chain(operation.landing.iter().map(|(model, rows)| StoreOp::Rows { model: model.clone(), rows: rows.clone() }))
@@ -377,7 +377,7 @@ impl OutboxState {
             OutboxInput::RegisterOperations { declarations } => self.register(declarations, fx),
             OutboxInput::Committed(committed) => self.committed(committed, fx),
             OutboxInput::Rejected(rejected) => self.rejected(rejected, fx),
-            OutboxInput::Response { op_id, rows, swap, stale, result, errors } => self.on_response(op_id, rows, swap, stale, result, errors, fx),
+            OutboxInput::Response { op_id, rows, swaps, stale, result, errors } => self.on_response(op_id, rows, swaps, stale, result, errors, fx),
             OutboxInput::TransportError { op_id, temporary } => self.transport_failed(op_id, temporary, fx),
             OutboxInput::Dropped { op_id } => self.transport_failed(op_id, true, fx),
             OutboxInput::Answered { req_id, outcome } => self.answered(req_id, outcome, fx),

@@ -57,7 +57,7 @@ impl OutboxState {
                 }
             }
             (CommitKind::Land, Stage::Landing) => {
-                if let Some((temp, real)) = self.ops.get(&op_id).and_then(|operation| operation.swap.clone()) {
+                for (temp, real) in self.ops.get(&op_id).map(|operation| operation.swaps.clone()).unwrap_or_default() {
                     self.swap_row(op_id, &temp, &real);
                 }
                 if let Some(operation) = self.ops.get(&op_id).filter(|operation| !operation.stale.is_empty()) {

@@ -20,13 +20,15 @@ pub struct DecodeJob {
     pub action: String,
     /// The temporary id of a `create`: the answer must name the real row.
     pub temp: Option<String>,
+    /// The group of a batch mutation: the answer lists its elements, each one replaces the temporary row with the same correlation key.
+    pub batch: Option<u64>,
     pub body: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Decoded {
     /// The rows of the answer by model and the pair of a swap.
-    Land { rows: Vec<(String, Vec<RowValue>)>, swap: Option<(String, String)>, stale: Vec<(String, String)>, result: Option<String> },
+    Land { rows: Vec<(String, Vec<RowValue>)>, swaps: Vec<(String, String)>, stale: Vec<(String, String)>, result: Option<String> },
     /// The server refused or the answer cannot be read. A temporary refusal is sent again.
     Refused { temporary: bool, detail: String },
 }
@@ -41,7 +43,7 @@ pub fn decode_answer(db: &Db, root_of: &dyn Fn(&str) -> Option<String>, job: &De
     let Ok(answer) = serde_json::from_str::<crate::transport::Response>(&job.body) else { return refused("the answer is not a GraphQL response") };
     if !answer.errors.is_empty() && job.action == "destroy" && answer.errors.iter().all(|error| error.code() == Some("NOT_FOUND")) {
         let stale = db.spec(&job.model).map(|spec| spec.relations.iter().filter(|relation| relation.remote.is_some()).map(|relation| (job.model.clone(), relation.name.clone())).collect()).unwrap_or_default();
-        return Decoded::Land { rows: Vec::new(), swap: None, stale, result: None };
+        return Decoded::Land { rows: Vec::new(), swaps: Vec::new(), stale, result: None };
     }
     if !answer.errors.is_empty() {
         let messages: Vec<&str> = answer.errors.iter().map(|error| error.message.as_str()).collect();
@@ -52,7 +54,7 @@ pub fn decode_answer(db: &Db, root_of: &dyn Fn(&str) -> Option<String>, job: &De
     let declared = spec.actions.iter().find(|declared| declared.name == job.action);
     let stale: Vec<(String, String)> = declared.iter().flat_map(|declared| &declared.refetch).map(|name| name.split_once('.').map_or_else(|| (job.model.clone(), name.clone()), |(model, relation)| (model.to_string(), relation.to_string()))).collect();
     if job.action == "destroy" || declared.is_some_and(|declared| declared.ignore_response) {
-        return Decoded::Land { rows: Vec::new(), swap: None, stale, result: None };
+        return Decoded::Land { rows: Vec::new(), swaps: Vec::new(), stale, result: None };
     }
     let default_root = declared.and_then(|declared| declared.mutation.as_deref()).and_then(root_of);
     let Some(root) = declared.and_then(|declared| declared.root.clone()).or(default_root) else { return refused(format!("{}.{} has no answer root", job.model, job.action)) };
@@ -60,7 +62,7 @@ pub fn decode_answer(db: &Db, root_of: &dyn Fn(&str) -> Option<String>, job: &De
     if let Some(declared) = declared.filter(|declared| !declared.result.is_empty()) {
         if root_value(&data, root).is_none_or(Value::is_null) {
             let result = returns_of(&data, default_root_of(declared.mutation.as_deref().and_then(root_of), root), &declared.result);
-            return Decoded::Land { rows: Vec::new(), swap: None, stale, result: Some(result) };
+            return Decoded::Land { rows: Vec::new(), swaps: Vec::new(), stale, result: Some(result) };
         }
     }
     if !root_value(&data, root).is_some_and(|value| value.is_object() || value.is_array()) {
@@ -88,11 +90,18 @@ pub fn decode_answer(db: &Db, root_of: &dyn Fn(&str) -> Option<String>, job: &De
         }
     }
     normalized.coalesce(&job.model);
-    let real = normalized.roots.first().and_then(|row| row.get("id")).and_then(read_id);
-    let swap = match (&job.temp, real) {
-        (Some(temp), Some(real)) if normalized.roots.len() == 1 && real.as_str() != temp => Some((temp.clone(), real.to_string())),
-        (Some(_), _) => return refused("the answer does not name the created row"),
-        (None, _) => None,
+    let swaps = if batch {
+        match batch_swaps(db, &job.model, declared.map_or(&[][..], |declared| &declared.correlate), job, &normalized.roots) {
+            Ok(swaps) => swaps,
+            Err(detail) => return refused(detail),
+        }
+    } else {
+        let real = normalized.roots.first().and_then(|row| row.get("id")).and_then(read_id);
+        match (&job.temp, real) {
+            (Some(temp), Some(real)) if normalized.roots.len() == 1 && real.as_str() != temp => vec![(temp.clone(), real.to_string())],
+            (Some(_), _) => return refused("the answer does not name the created row"),
+            (None, _) => Vec::new(),
+        }
     };
     let mut by_model: BTreeMap<String, Vec<RowValue>> = BTreeMap::new();
     let related = normalized.related.iter().map(|(model, row)| (model.to_string(), row));
@@ -102,7 +111,7 @@ pub fn decode_answer(db: &Db, root_of: &dyn Fn(&str) -> Option<String>, job: &De
         by_model.entry(model).or_default().push(RowValue { row_id: id.to_string(), values: Value::Object(row.clone()).to_string() });
     }
     let result = declared.filter(|declared| !declared.result.is_empty()).map(|declared| returns_of(&data, default_root_of(declared.mutation.as_deref().and_then(root_of), root), &declared.result));
-    Decoded::Land { rows: by_model.into_iter().collect(), swap, stale, result }
+    Decoded::Land { rows: by_model.into_iter().collect(), swaps, stale, result }
 }
 
 /// The object that carries the `returns` fields: the root field of the mutation, else the parent of the row root.
@@ -125,4 +134,50 @@ fn returns_of(data: &Value, container: String, fields: &BTreeMap<String, String>
         })
         .collect();
     Value::Object(values).to_string()
+}
+
+fn at<'a>(row: &'a serde_json::Map<String, Value>, path: &str) -> Option<&'a Value> {
+    let mut segments = path.split('.');
+    let mut value = row.get(segments.next()?)?;
+    for segment in segments {
+        value = value.as_object()?.get(segment)?;
+    }
+    let empty = match value {
+        Value::Null => true,
+        Value::String(text) => text.is_empty(),
+        Value::Array(items) => items.is_empty(),
+        Value::Object(fields) => fields.is_empty(),
+        _ => false,
+    };
+    (!empty).then_some(value)
+}
+
+fn correlation_key(paths: &[String], row: &serde_json::Map<String, Value>) -> Option<String> {
+    let values: Option<Vec<Value>> = paths.iter().map(|path| at(row, path).cloned()).collect();
+    values.map(|values| Value::Array(values).to_string())
+}
+
+/// The pairs (temporary id, real id) of a batch answer: the waiting elements of the group against the rows of the answer.
+fn batch_swaps(db: &Db, model: &str, correlate: &[String], job: &DecodeJob, roots: &[serde_json::Map<String, Value>]) -> Result<Vec<(String, String)>, String> {
+    let Some(group) = job.batch else { return Err("the answer of a batch has no group".into()) };
+    let waiting = db.batch_rows(model, &job.action, group).map_err(|error| format!("{error:?}"))?;
+    Ok(pair_by_key(correlate, &waiting.iter().map(|(id, data)| (id.to_string(), data.clone())).collect::<Vec<_>>(), roots))
+}
+
+/// Each row of the answer replaces the single waiting temporary row with its correlation key (P-DATA-23), in the order of the answer. An element without a row of the answer keeps its temporary row.
+pub(super) fn pair_by_key(correlate: &[String], waiting: &[(String, serde_json::Map<String, Value>)], roots: &[serde_json::Map<String, Value>]) -> Vec<(String, String)> {
+    let keyed: Vec<(&str, Option<String>)> = waiting.iter().map(|(id, data)| (id.as_str(), correlation_key(correlate, data))).collect();
+    let mut taken: Vec<&str> = Vec::new();
+    let mut swaps = Vec::new();
+    for root in roots {
+        let (Some(real), Some(incoming)) = (root.get("id").and_then(read_id), correlation_key(correlate, root)) else { continue };
+        let mut found = keyed.iter().filter(|(temp, key)| key.as_deref() == Some(incoming.as_str()) && !taken.contains(temp));
+        if let (Some((temp, _)), None) = (found.next(), found.next()) {
+            if *temp != real.as_str() {
+                taken.push(temp);
+                swaps.push(((*temp).to_string(), real.to_string()));
+            }
+        }
+    }
+    swaps
 }
