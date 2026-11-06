@@ -478,13 +478,21 @@ fn xfer_persisting_complete_refuses() {
 fn inv_upload_08_a_restarted_part_never_lowers_the_total_inside_a_phase() {
     let mut twin = Twin::new();
     let id = twin.uploading(KEY, 4);
-    let mut shown = twin.step_ok(id, 1, None).shows();
-    shown.extend(twin.commit().shows());
-    shown.extend(twin.step_error(id, true).shows());
-    shown.extend(twin.tick_retry(id).shows());
-    shown.extend(twin.step_ok(id, 2, None).shows());
-    shown.extend(twin.commit().shows());
-    let levels: Vec<u32> = shown.iter().filter_map(|show| if let Shown::Uploading { progress } = show { Some(*progress) } else { None }).collect();
-    assert!(!levels.is_empty() && levels.windows(2).all(|pair| pair[0] <= pair[1]), "{levels:?}");
-    assert_eq!(levels.last(), Some(&50), "{levels:?}");
+    let levels = |out: Out| -> Vec<u32> { out.shows().into_iter().filter_map(|show| if let Shown::Uploading { progress } = show { Some(progress) } else { None }).collect() };
+    let mut committed = 0;
+    let commit = |twin: &mut Twin, committed: &mut u32| {
+        let shown = levels(twin.commit());
+        assert!(shown.iter().all(|level| level >= committed), "a committed part never lowers the value: {shown:?} after {committed}");
+        *committed = shown.last().copied().unwrap_or(*committed);
+    };
+    let before = levels(twin.step_ok(id, 1, None));
+    assert!(before.is_empty(), "a step result changes no value: {before:?}");
+    commit(&mut twin, &mut committed);
+    assert_eq!(committed, 25);
+    for outs in [levels(twin.step_error(id, true)), levels(twin.tick_retry(id))] {
+        assert!(outs.iter().all(|level| *level == committed), "an error and a restart show only the committed value: {outs:?}");
+    }
+    assert!(levels(twin.step_ok(id, 2, None)).is_empty());
+    commit(&mut twin, &mut committed);
+    assert_eq!(committed, 50);
 }
