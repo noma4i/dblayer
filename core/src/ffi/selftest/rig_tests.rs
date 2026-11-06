@@ -434,6 +434,8 @@ const OPERATIONS: &str = r#"[
     {"name":"MessageEdit","document":"mutation MessageEdit($id: ID!, $text: String!) { messageEdit(id: $id, text: $text) { id chatId text at } }"},
     {"name":"MessageDelete","document":"mutation MessageDelete($id: ID!) { messageDelete(id: $id) { id } }"},
     {"name":"DeleteGroup","document":"mutation DeleteGroup($id: ID!) { deleteGroup(id: $id) { id } }"},
+    {"name":"SendMessageFile","document":"mutation SendMessageFile($chatId: ID!, $text: String!, $at: Int!, $signedId: String!) { sendMessageFile(chatId: $chatId, text: $text, at: $at, signedId: $signedId) { id chatId text at } }","rootPath":"sendMessageFile"},
+    {"name":"MomentCreateFile","document":"mutation MomentCreateFile($userId: ID!, $text: String!, $signedId: String!) { momentCreateFile(userId: $userId, text: $text, signedId: $signedId) { id userId text } }","rootPath":"momentCreateFile"},
     {"name":"CreateBlob","document":"mutation CreateBlob { createBlob { url headers signedId blobId } }","rootPath":"createBlob"},
     {"name":"InitMultipart","document":"mutation InitMultipart { initMultipart { key uploadId } }","rootPath":"initMultipart"},
     {"name":"PresignParts","document":"mutation PresignParts { presignParts { parts { partNumber url headers } } }","rootPath":"presignParts"},

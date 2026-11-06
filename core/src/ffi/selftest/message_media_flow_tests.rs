@@ -5,6 +5,11 @@ use serde_json::{json, Value};
 use super::bridge_tests::message;
 use super::rig_tests::{bound, Rig, World};
 use super::flow_fixtures::{add_chat, add_media, cell, chat_row, int, land_event, text, texts};
+use super::upload_fixtures::add_message_file;
+use crate::ffi::command::{CommandRequest, CommandUpload};
+use crate::ffi::upload_wire::WireUploadRequest;
+use crate::ffi::wire::WireUploadStatus;
+use crate::upload::UploadFile;
 use crate::ffi::tape::Rows;
 use crate::ffi::wire::Cell;
 use crate::ffi::{ReadFetch, ReadRequest};
@@ -13,7 +18,7 @@ use crate::test_wait::yield_until;
 const THREAD: &str = r#"{"model":"Message","where":{"type":"equal","field":"chatId","value":"c1"}}"#;
 
 async fn rig() -> Rig {
-    let rig = Rig::signed_as(World::new("server", "A", true), false, |models| { add_chat(models); add_media(models); }).await;
+    let rig = Rig::signed_as(World::new("server", "A", true), false, |models| { add_chat(models); add_media(models); add_message_file(models); }).await;
     land_event(&rig, "Chat", chat_row("c1", 0));
     rig
 }
@@ -43,24 +48,41 @@ fn event(id: &str, extra: Value) -> Value {
     row
 }
 
-/// P-APP-14: the local preview of a sent message stands at once and survives events of the server, the URL of the server is never emptied and the progress of the transcode never falls, in the thread and in the entity.
+fn status(rows: &Rows, id: &str) -> Option<WireUploadStatus> {
+    rows.0.lock().unwrap().iter().find(|row| row.id == id).and_then(|row| row.uploads.iter().find(|entry| entry.action == "send_file").map(|entry| entry.upload.status))
+}
+
+fn send_file(epoch: u64, path: &str) -> CommandRequest {
+    let values = json!({"chatId": "c1", "text": "clip", "at": 10});
+    let mut file = UploadFile::new(path);
+    file.variables = values.as_object().unwrap().clone();
+    CommandRequest { epoch, model: "Message".into(), values_json: values.to_string(), args_json: "{}".into(), upload: Some(CommandUpload { action: "send_file".into(), request: WireUploadRequest::of(&file) }) }
+}
+
+/// P-APP-14: a sent file stands in the thread at once with `uploads["send_file"]`, its local preview survives events of the server, the URL of the server is never emptied and the progress of the transcode never falls, in the thread and in the entity.
 #[tokio::test(flavor = "multi_thread")]
 async fn flow_message_media_upload() {
     let rig = rig().await;
+    rig.world.answer_with("SendMessageFile", json!({"data":{"sendMessageFile":{"__typename":"Message","id":"m1","chatId":"c1","text":"clip","at":10}}}));
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("clip.jpg");
+    std::fs::write(&path, b"jpeg").unwrap();
     let (rows, last) = (thread(&rig).await, entity(&rig, "Message", "m1"));
     let epoch = rig.database.session_epoch();
-    let hold = rig.world.hold_next("SendMessage");
+    let hold = rig.world.hold_next("PUT");
 
-    let receipt = bound(rig.database.send(message(epoch, "clip", 10))).await.unwrap();
-    hold.entered_for("the send").await;
+    let receipt = bound(rig.database.send(send_file(epoch, path.to_str().unwrap()))).await.unwrap();
+    hold.entered_for("the file in the network").await;
     let temporary = receipt.optimistic_value.clone().unwrap().id;
+    yield_until("the bubble stands with its upload", || rows.len() == 1 && status(&rows, &temporary).is_some()).await;
     bound(rig.database.set_local(epoch, "Message".into(), temporary, "localPreviewUrl".into(), json!("file:///clip.jpg").to_string())).await.unwrap();
-    yield_until("the preview stands at once", || rows.len() == 1 && rows.0.lock().unwrap().iter().all(|row| cell(&rig, "Message", row, "localPreviewUrl") == text("file:///clip.jpg"))).await;
+    yield_until("the preview stands at once", || rows.0.lock().unwrap().iter().all(|row| cell(&rig, "Message", row, "localPreviewUrl") == text("file:///clip.jpg"))).await;
     hold.release();
-    bound(rig.database.outcome(receipt)).await.unwrap();
+    assert!(matches!(bound(rig.database.outcome(receipt)).await.unwrap(), crate::ffi::WireOperationOutcome::Confirmed { .. }));
     yield_until("the answer replaced the bubble", || rows.0.lock().unwrap().iter().map(|row| row.id.clone()).collect::<Vec<_>>() == ["m1"]).await;
     yield_until("the entity of the answer shows", || last.len() == 1).await;
     yield_until("the preview stands on the row of the server", || field(&rig, "Message", &rows, "m1", "localPreviewUrl") == Some(text("file:///clip.jpg"))).await;
+    assert_eq!(status(&rows, "m1"), None, "the upload ended with the answer");
 
     for (url, progress, shown_url, shown_progress) in [("", 40, "", 40), ("https://cdn/a", 80, "https://cdn/a", 80), ("", 30, "https://cdn/a", 80)] {
         land_event(&rig, "Message", event("m1", json!({"media": media(url, progress)})));

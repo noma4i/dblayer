@@ -4,6 +4,10 @@ use serde_json::{json, Value};
 
 use super::rig_tests::{bound, Fault, Rig};
 use super::flow_fixtures::{add_chat, add_moment, add_profile, cell, int, land_delete, land_event};
+use super::upload_fixtures::add_moment_file;
+use crate::ffi::command::{CommandRequest, CommandUpload};
+use crate::ffi::upload_wire::WireUploadRequest;
+use crate::upload::UploadFile;
 use crate::ffi::tape::Rows;
 use crate::ffi::wire::Cell;
 use crate::ffi::WireOperationOutcome;
@@ -14,7 +18,7 @@ const BY_USER: &str = r#"{"model":"Moment","where":{"type":"equal","field":"user
 const COMPASS: &str = r#"{"model":"Moment","order":[{"field":"unreadSimilarMomentsCount","direction":"desc"}]}"#;
 
 async fn rig() -> Rig {
-    Rig::encrypted_edited(false, false, false, |models| { add_chat(models); add_profile(models); add_moment(models); }).await
+    Rig::encrypted_edited(false, false, false, |models| { add_chat(models); add_profile(models); add_moment(models); add_moment_file(models); }).await
 }
 
 async fn watch(rig: &Rig, query: &str) -> Arc<Rows> {
@@ -107,14 +111,22 @@ async fn flow_moment_publish_delete() {
     let (feed, by_user) = (watch(&rig, FEED).await, watch(&rig, BY_USER).await);
     let places = [&feed, &by_user];
     let epoch = rig.database.session_epoch();
-    rig.world.answer_with("MomentCreate", json!({"data":{"momentCreate":{"__typename":"Moment","id":"m9","userId":"u1","text":"new"}}}));
-    let hold = rig.world.hold_next("MomentCreate");
+    rig.world.answer_with("MomentCreateFile", json!({"data":{"momentCreateFile":{"__typename":"Moment","id":"m9","userId":"u1","text":"new"}}}));
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("moment.jpg");
+    std::fs::write(&path, b"jpeg").unwrap();
+    let values = json!({"userId": "u1", "text": "new"});
+    let mut file = UploadFile::new(path.to_str().unwrap());
+    file.variables = values.as_object().unwrap().clone();
+    let publish = CommandRequest { epoch, model: "Moment".into(), values_json: values.to_string(), args_json: "{}".into(), upload: Some(CommandUpload { action: "create_file".into(), request: WireUploadRequest::of(&file) }) };
+    let hold = rig.world.hold_next("PUT");
 
-    let receipt = bound(rig.database.create(epoch, "Moment".into(), json!({"userId": "u1", "text": "new"}).to_string(), "{}".into())).await.unwrap();
-    hold.entered_for("the answer").await;
+    let receipt = bound(rig.database.send(publish)).await.unwrap();
+    hold.entered_for("the file in the network").await;
     yield_until("the new moment stands in every list", || places.iter().all(|rows| rows.len() == 1)).await;
     let temporary = receipt.optimistic_value.clone().unwrap().id;
     assert!(places.iter().all(|rows| ids(rows) == [temporary.clone()]));
+    assert!(places.iter().all(|rows| rows.0.lock().unwrap().iter().all(|row| row.uploads.iter().any(|entry| entry.action == "create_file"))), "the card shows its upload");
     hold.release();
     assert!(matches!(bound(rig.database.outcome(receipt)).await.unwrap(), WireOperationOutcome::Confirmed { .. }));
     yield_until("the answer replaced the card", || places.iter().all(|rows| ids(rows) == ["m9"])).await;

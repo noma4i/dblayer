@@ -133,7 +133,9 @@ impl Database {
         self.account_call(epoch)?;
         let file = self.offload(move || request.into_file()).await?;
         let row = self.resolved(epoch, &model, id(&row_id)?).await?;
-        let item = self.single_upload(&model, row.as_str(), &action, &file, IntentEffects::default())?;
+        let (db, name, verb, target, args) = (self.db.clone(), model.clone(), action.clone(), row.clone(), file.variables.clone());
+        let planned = self.offload(move || Ok(db.plan_act(&name, &verb, &target, Map::new(), args)?)).await?;
+        let item = self.single_upload(&model, row.as_str(), &action, &file, planned.effects)?;
         let waiter = self.life.accept_upload(epoch, item, self.now());
         let TransferAnswer::Receipt(held) = self.transfer_answer(waiter, "upload").await? else { return Err(DbError::Database { detail: "the owner answered an upload with no receipt".into() }) };
         let value = self.optimistic(&model, &row)?;
