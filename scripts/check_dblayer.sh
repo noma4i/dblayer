@@ -48,5 +48,5 @@ step_artifacts() {
 }
 
 if [ "${BASH_SOURCE[0]}" = "$0" ]; then
-  run_bounded 2400 check-dblayer run_checks "$@"
+  run_bounded 300 check-dblayer run_checks "$@"
 fi
