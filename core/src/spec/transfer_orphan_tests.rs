@@ -146,3 +146,23 @@ fn xfer_restart_stale_presign() {
     let out = twin.online(true);
     assert_eq!(out.steps().iter().map(|(part, _)| *part).collect::<Vec<_>>(), vec![Some(3)], "the first step after a restart asks only for the unfinished part");
 }
+
+#[test]
+fn xfer_singleton_row_upload() {
+    use crate::owners::write::outbox::OutboxOutcome;
+    use crate::owners::write::transfer::TransferAnswer;
+    let key = "Profile:main:avatar";
+    let mut twin = Twin::new();
+    let id = twin.mutating(key);
+    twin.mutation_outcome(key, OutboxOutcome::Confirmed { revision: 3, result: Some(r#"{"avatarUrl":"u"}"#.into()) });
+    twin.commit();
+    let (reply, out) = twin.outcome(id, 1);
+    assert_eq!(out.replies(reply), vec![TransferAnswer::Outcome(OutboxOutcome::Confirmed { revision: 3, result: Some(r#"{"avatarUrl":"u"}"#.into()) })], "the outcome carries the returns of the final mutation");
+    let failed_key = "Profile:main:cover";
+    let failed = twin.mutating(failed_key);
+    let error = r#"{"kind":"Rejected","message":"no","extensions":{"code":"BAD"}}"#;
+    twin.mutation_outcome(failed_key, OutboxOutcome::Rejected { error: error.into() });
+    twin.commit();
+    let (reply, out) = twin.outcome(failed, 1);
+    assert_eq!(out.replies(reply), vec![TransferAnswer::Outcome(OutboxOutcome::Failed { error: error.into() })], "the error and its extensions reach the outcome");
+}

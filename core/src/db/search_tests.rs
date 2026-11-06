@@ -52,7 +52,7 @@ fn seed(db: &Db) {
 }
 
 #[test]
-fn the_last_word_matches_as_a_prefix_and_the_others_as_whole_words() {
+fn data_search_words() {
     let db = opened(Storage::Disk);
     seed(&db);
     assert_eq!(found(&db, "hel", false), ["n1", "n2"]);

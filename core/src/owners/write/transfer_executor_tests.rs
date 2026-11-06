@@ -261,7 +261,7 @@ fn exec_xfer_key_path_chars() {
 }
 
 #[test]
-fn exec_xfer_put_cancelled() {
+fn xfer_put_cancelled() {
     let mut w = world();
     w.codec.put.store(true, std::sync::atomic::Ordering::SeqCst);
     w.stub.hang_puts();
@@ -275,7 +275,7 @@ fn exec_xfer_put_cancelled() {
 }
 
 #[test]
-fn exec_xfer_prop_put_cancel() {
+fn xfer_prop_put_cancel() {
     for cause in ["offline", "saving", "discard"] {
         let mut w = world();
         w.codec.put.store(true, std::sync::atomic::Ordering::SeqCst);

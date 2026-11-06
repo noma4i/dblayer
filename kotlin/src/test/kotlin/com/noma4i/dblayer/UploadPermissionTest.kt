@@ -7,7 +7,7 @@ import org.junit.Test
 
 class UploadPermissionTest {
     @Test
-    fun api33WithoutTheDataSyncPermissionFailsOpenNamingIt() {
+    fun xfer_android_permission_checked_at_open() {
         try {
             checkUploadPermission(33) { listOf("android.permission.INTERNET") }
             fail("open has to refuse")

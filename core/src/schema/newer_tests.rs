@@ -15,7 +15,7 @@ fn row(value: Value) -> Map<String, Value> {
 }
 
 #[test]
-fn a_child_moves_the_parent_pointer_only_when_it_is_newer_by_the_tuple() {
+fn data_newer_tuple() {
     let chat = chat_link();
     let parent = row(json!({"lastMessageId": "7", "lastSequenceNumber": 10, "lastMessageAt": "2026-01-03T00:00:05.000Z"}));
     let cases = [

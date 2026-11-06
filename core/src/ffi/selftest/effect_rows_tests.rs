@@ -221,7 +221,7 @@ async fn a_later_confirmed_membership_change_survives_an_earlier_refusal() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn a_refused_membership_change_restores_both_public_lists() {
+async fn out_leave_rows_orders() {
     for removing in [false, true] {
         let rig = Rig::encrypted().await;
         rig.login_ios("A").await;
@@ -361,7 +361,7 @@ async fn an_acknowledged_membership_change_survives_an_older_list_answer() {
 
 /// A member whose row is not cached is skipped by the optimistic join: the call reaches the server and ends with the answer, never with a missing-row error.
 #[tokio::test(flavor = "multi_thread")]
-async fn adding_a_member_whose_row_is_not_cached_ends_with_the_answer() {
+async fn out_join_rows_orders() {
     let rig = Rig::encrypted().await;
     rig.login_ios("A").await;
     let epoch = rig.database.session_epoch();
