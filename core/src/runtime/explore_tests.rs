@@ -45,6 +45,7 @@ fn async_reply() -> (DetScheduler, Address<Toy>) {
     let ledger = det.add::<Toy>("ledger", ToyState { pump: Some(pump), ..ToyState::default() }, runner());
     let sender = det.add::<Toy>("sender", ToyState { on_go: Some((ledger, ToyInput::Note(9))), ..ToyState::default() }, ToyRunner::default());
     det.start_epoch(1);
+    det.run_until_quiet(10).unwrap();
     det.post(ledger, EpochStamp::Epoch(1), ToyInput::WorkAsync(3));
     det.post(sender, EpochStamp::Epoch(1), ToyInput::Go);
     (det, ledger)
