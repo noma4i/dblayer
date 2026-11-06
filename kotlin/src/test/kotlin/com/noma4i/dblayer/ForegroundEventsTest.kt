@@ -27,7 +27,7 @@ class ForegroundEventsTest {
     fun aReturnToTheForegroundReachesTheCoreUntilTheRegistrationEnds() = bounded {
         val transport = MockTransport()
         repeat(8) { transport.enqueue("MomentsFeed", DbException.Http(400u, "bad request")) }
-        reopen(Config(null, null, 32u), modelsJSON, transport)
+        reopen(Config(null, null, 32u), modelsJSON.replace("\"name\":\"feed\",\"updates\"", "\"name\":\"feed\",\"refresh_on_foreground\":true,\"updates\""), transport)
         DBlayer.database.registerOperations("""[{"name":"MomentsFeed","document":"query MomentsFeed(${'$'}first: Int, ${'$'}after: String) { feed(first: ${'$'}first, after: ${'$'}after) { nodes { id uuid likedByMe media createdAt } pageInfo { hasNextPage endCursor } } }"}]""")
         val scope = CoroutineScope(SupervisorJob())
         val list = ListReader(Moment.feed, scope)

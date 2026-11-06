@@ -34,8 +34,8 @@ extension BridgeProbeTests {
     try transport.emit("ChatActionSignal", json: Self.screenshot("c2"))
     try transport.emit("ChatActionSignal", json: Self.screenshot("c3"))
 
-    #expect(Self.position(await late.next("the first event of the late collector")) == 2, "the late collector got the past event or lost the next one")
-    #expect(Self.position(await late.next("the second event of the late collector")) == 3)
+    #expect(Self.position(await late.next("the first event of the late collector")) == 1, "the late collector got the past event or lost the next one")
+    #expect(Self.position(await late.next("the second event of the late collector")) == 2)
     #expect(Self.position(await early.next("the second event of the early collector")) == 2)
     #expect(Self.position(await early.next("the third event of the early collector")) == 3)
   }

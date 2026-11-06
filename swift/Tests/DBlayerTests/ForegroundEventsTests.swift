@@ -11,13 +11,15 @@ private final class Delivered: @unchecked Sendable {
 }
 
 extension BridgeProbeTests {
+  static let reloadingOnForeground = modelsJSON.replacingOccurrences(of: #""name":"feed","updates""#, with: #""name":"feed","refresh_on_foreground":true,"updates""#)
+
   @MainActor
   @Test(.timeLimit(.minutes(1)))
   func aForegroundNotificationReachesTheCoreUntilTheRegistrationEnds() async throws {
     let name = Notification.Name("DBlayerTestForeground")
     let transport = MockTransport()
     for _ in 0..<8 { transport.enqueue("MomentsFeed", failure: .Http(status: 400, detail: "bad request")) }
-    try await reopen(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: transport)
+    try await reopen(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: Self.reloadingOnForeground, transport: transport)
     try DB.database.registerOperations(defsJson: #"[{"name":"MomentsFeed","document":"query MomentsFeed($first: Int, $after: String) { feed(first: $first, after: $after) { nodes { id uuid likedByMe media createdAt } pageInfo { hasNextPage endCursor } } }"}]"#)
     let list = ListReader(Moment.feed)
     await eventually("the relation fails") { list.snapshot.phase == .failed }
