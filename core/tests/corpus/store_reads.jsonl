@@ -9,5 +9,5 @@
 {"args":{"id":"r2","json":{"data":{"feed":{"nodes":[{"__typename":"Moment","createdAt":"2026-10-08T00:00:00.000Z","id":"1","likedByMe":false,"media":{},"text":"t1","uuid":"u1"},{"__typename":"Moment","createdAt":"2026-10-08T00:00:01.000Z","id":"2","likedByMe":false,"media":{},"text":"t2","uuid":"u2"}],"pageInfo":{"endCursor":"c","hasNextPage":true}}}}},"in":"answer","out":[{"o":"loaded","v":{"load":"l1"}}]}
 {"args":{"row":"1"},"in":"peek_row","out":[{"o":"peeked","v":{"present":true,"row":"1"}}]}
 {"args":{"row":"ghost"},"in":"peek_row","out":[{"o":"peeked","v":{"present":false,"row":"ghost"}}]}
-{"args":{"relation":"feed","rows":["1","2","ghost"]},"in":"edge_values","out":[{"o":"edges","v":{"relation":"feed","values":{"1":{},"2":{}}}}]}
+{"args":{"relation":"feed","rows":["1","2","ghost"]},"in":"edge_values","out":[{"o":"edges","v":{"relation":"feed","values":{"1":{"impressionScore":null,"impressionUuid":null},"2":{"impressionScore":null,"impressionUuid":null}}}}]}
 {"in":"close","out":[{"o":"closed"}]}
