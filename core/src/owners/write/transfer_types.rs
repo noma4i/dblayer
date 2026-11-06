@@ -355,6 +355,7 @@ pub struct Transfer {
     /// The final mutation left for Outbox: Outbox owns the operation, a removal does not roll it back.
     pub submitted: bool,
     pub intent_live: bool,
+    pub waits_outbox: bool,
     /// The file is already on the server: the cache of blobs gave its `signed_id` (the steps are skipped).
     pub from_cache: bool,
     /// The cache entry of the content is old: the write of the copy removes it.
@@ -439,6 +440,7 @@ pub struct TransferState {
     pub closing: bool,
     pub(super) ended: bool,
     pub(super) queue_error: Option<String>,
+    pub examined: std::sync::atomic::AtomicU64,
 }
 
 impl TransferState {
@@ -467,6 +469,7 @@ impl TransferState {
             next_seq: 1,
             next_group: 1,
             next_batch: 1,
+            examined: std::sync::atomic::AtomicU64::new(0),
             next_attempt: 1,
             next_timer: 1,
             now: Time(0),
@@ -477,10 +480,14 @@ impl TransferState {
         }
     }
 
+    pub(super) fn scan(&self) -> impl Iterator<Item = &Transfer> + '_ {
+        self.transfers.values().inspect(|_| { self.examined.fetch_add(1, std::sync::atomic::Ordering::Relaxed); })
+    }
+
     pub fn stage_of(&self, id: TransferId) -> Option<TransferStage> { self.transfers.get(&id).map(|transfer| transfer.stage) }
 
     /// The open transfer of `key`: a `Done` transfer keeps only its outcomes.
-    pub fn open_id(&self, key: &str) -> Option<TransferId> { self.transfers.values().find(|transfer| transfer.key == key && transfer.stage != TransferStage::Done).map(|transfer| transfer.transfer_id) }
+    pub fn open_id(&self, key: &str) -> Option<TransferId> { self.scan().find(|transfer| transfer.key == key && transfer.stage != TransferStage::Done).map(|transfer| transfer.transfer_id) }
 
     pub(super) fn attempt(&mut self) -> AttemptId {
         self.next_attempt += 1;

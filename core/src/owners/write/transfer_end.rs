@@ -283,14 +283,14 @@ impl TransferState {
 
     /// `Online(true)` asks for the check of the `Failed` transfers at once.
     pub(super) fn expire_failed(&mut self, fx: &mut Fx) {
-        if self.transfers.values().any(|transfer| transfer.stage == TransferStage::Failed) {
+        if self.scan().any(|transfer| transfer.stage == TransferStage::Failed) {
             self.schedule_expire(fx);
         }
     }
 
     /// `Tick(expire)`: a `Failed` transfer older than 7 days is discarded.
     pub(super) fn expire(&mut self, fx: &mut Fx) {
-        let old: Vec<TransferId> = self.transfers.values().filter(|transfer| transfer.stage == TransferStage::Failed && self.now.0.saturating_sub(transfer.created_at.0) > EXPIRY_MS).map(|transfer| transfer.transfer_id).collect();
+        let old: Vec<TransferId> = self.scan().filter(|transfer| transfer.stage == TransferStage::Failed && self.now.0.saturating_sub(transfer.created_at.0) > EXPIRY_MS).map(|transfer| transfer.transfer_id).collect();
         for id in old {
             self.begin_cancel(id, None, Some(TransferStage::Failed), fx);
         }
@@ -343,7 +343,7 @@ impl TransferState {
         }
     }
 
-    fn open_ids(&self) -> Vec<TransferId> { self.transfers.values().filter(|transfer| transfer.stage != TransferStage::Done).map(|transfer| transfer.transfer_id).collect() }
+    fn open_ids(&self) -> Vec<TransferId> { self.scan().filter(|transfer| transfer.stage != TransferStage::Done).map(|transfer| transfer.transfer_id).collect() }
 
     pub(super) fn epoch_ended(&mut self, fx: &mut Fx) {
         self.ended = true;

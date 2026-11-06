@@ -47,6 +47,7 @@ impl TransferState {
             op_id: None,
             submitted: false,
             intent_live: false,
+            waits_outbox: false,
             from_cache: false,
             cache_stale: false,
             round_error: None,

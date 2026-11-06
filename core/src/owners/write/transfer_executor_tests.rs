@@ -304,3 +304,27 @@ fn xfer_prop_put_cancel() {
         assert!(lock(&w.shown).iter().all(|shown| !matches!(shown, Shown::Uploading { progress } if *progress > 0)), "{cause}: the bytes of a cancelled attempt raise no progress");
     }
 }
+
+#[test]
+fn xfer_prop_table_file_off_async() {
+    let mut w = world();
+    let path = w.source(KEY, &vec![3u8; 2 * MIB]);
+    w.stub.script([Act::Hang]);
+    let accept = w.accept_input(KEY, path, 1);
+    w.det.post(w.transfers, EpochStamp::Epoch(EPOCH), accept);
+    while w.det.step() {}
+    let id = w.det.state(w.transfers).unwrap().open_id(KEY).unwrap();
+    w.det.post(w.transfers, EpochStamp::Epoch(EPOCH), TransferInput::OpReserved { target: ReserveTarget::Transfer(id), result: Ok(id) });
+    while w.det.step() {}
+    assert_eq!((w.stage(KEY), w.spawn.pending()), (Some(TransferStage::Copying), 1), "the copy waits as a blocking job");
+    assert!(w.files.directory_entries().expect("entries").is_empty(), "the owner thread wrote no byte");
+    w.settle();
+    assert_eq!(w.stage(KEY), Some(TransferStage::Uploading));
+    let copy = w.copy(KEY);
+    assert_eq!(w.files.read(&copy).expect("copy").len(), 2 * MIB);
+    w.det.post(w.transfers, EpochStamp::Epoch(EPOCH), TransferInput::Cancel { key: KEY.into(), reply: 2 });
+    while w.det.step() {}
+    assert!(w.files.read(&copy).is_ok(), "the delete of the copy is a pending job, not a call of the owner thread");
+    w.settle();
+    assert!(w.files.read(&copy).is_err(), "the pending job removed the copy");
+}

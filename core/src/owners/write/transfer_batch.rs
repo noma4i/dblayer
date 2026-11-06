@@ -241,6 +241,9 @@ impl TransferState {
 
     pub(super) fn request_mutation_retry(&mut self, ids: &[TransferId], fx: &mut Fx) {
         let Some(&first) = ids.first() else { return };
+        for id in ids {
+            if let Some(transfer) = self.transfers.get_mut(id) { transfer.waits_outbox = true; }
+        }
         let Some(transfer) = self.transfers.get(&first) else { return };
         let (model, row_id) = self.groups.get(&transfer.batch_id.unwrap_or(0)).filter(|entry| entry.phase == BatchPhase::Mutating).and_then(|entry| entry.op_row.clone()).unwrap_or((transfer.mutation.model.clone(), transfer.mutation.row_id.clone()));
         let uploads = ids.iter().filter_map(|id| self.transfers.get(id)).map(|transfer| upload_row(transfer, StoreKind::Retrying)).collect();
@@ -248,8 +251,11 @@ impl TransferState {
     }
 
     pub(super) fn retry_mutation_outcome(&mut self, cycles: &[(TransferId, CycleId)], result: Result<i64, super::outbox::Fault>, fx: &mut Fx) {
-        if cycles.is_empty() || cycles.iter().any(|(id, cycle)| self.transfers.get(id).is_none_or(|transfer| transfer.stage != TransferStage::PersistingRetry || transfer.cycle_id.checked_add(1) != Some(*cycle))) { return; }
+        if cycles.is_empty() || cycles.iter().any(|(id, cycle)| self.transfers.get(id).is_none_or(|transfer| transfer.stage != TransferStage::PersistingRetry || !transfer.waits_outbox || transfer.cycle_id.checked_add(1) != Some(*cycle))) { return; }
         let ids: Vec<_> = cycles.iter().map(|(id, _)| *id).collect();
+        for id in &ids {
+            if let Some(transfer) = self.transfers.get_mut(id) { transfer.waits_outbox = false; }
+        }
         match result {
             Ok(_) => self.retry_mutation_committed(&ids, fx),
             Err(fault) => for id in ids {

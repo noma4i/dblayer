@@ -222,7 +222,7 @@ impl TransferState {
             if self.phase_of(group) == Some(BatchPhase::Singles) { self.single_next(group, fx); }
             else { self.batch_release(group, fx); }
         }
-        let singles: Vec<_> = self.transfers.values().filter(|transfer| transfer.batch_id.is_none() && transfer.stage == TransferStage::PersistingBatchIntent).map(|transfer| transfer.transfer_id).collect();
+        let singles: Vec<_> = self.scan().filter(|transfer| transfer.batch_id.is_none() && transfer.stage == TransferStage::PersistingBatchIntent).map(|transfer| transfer.transfer_id).collect();
         for id in singles { self.store(&[id], StoreKind::BatchIntent, fx); }
         self.start_in_order(fx);
     }

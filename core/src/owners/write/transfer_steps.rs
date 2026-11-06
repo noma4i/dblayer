@@ -10,7 +10,7 @@ use crate::transport::NetworkPurpose;
 
 impl TransferState {
     /// Transfers in the network: only a physical attempt in flight holds a slot.
-    pub fn active(&self) -> u32 { self.transfers.values().filter(|transfer| transfer.in_flight).count() as u32 }
+    pub fn active(&self) -> u32 { self.scan().filter(|transfer| transfer.in_flight).count() as u32 }
 
     fn progress(transfer: &Transfer) -> u32 { transfer.confirmed_parts * 100 / transfer.source.parts.max(1) }
 
@@ -33,7 +33,7 @@ impl TransferState {
     /// Ready transfers start by `(seq, position)` while a slot is free, the network is up and `saving` allows. A due retry competes in the same order.
     pub(super) fn start_in_order(&mut self, fx: &mut Fx) {
         while self.online == Some(true) && self.active() < self.slots {
-            let next = self.transfers.values().filter(|transfer| self.can_start(transfer)).min_by_key(|transfer| transfer.seq).map(|transfer| transfer.transfer_id);
+            let next = self.scan().filter(|transfer| self.can_start(transfer)).min_by_key(|transfer| transfer.seq).map(|transfer| transfer.transfer_id);
             let Some(id) = next else { return };
             if let Some(abort) = self.transfers.get(&id).filter(|transfer| transfer.attempts >= ATTEMPT_LIMIT).map(|transfer| transfer.confirmed_parts < transfer.source.parts) {
                 self.begin_failure(id, "Exhausted".into(), abort, fx);
@@ -67,7 +67,7 @@ impl TransferState {
     /// `Online(false)` and `PowerSaving(true)` of a transfer that is not urgent: the steps in the network go back to `Ready`.
     pub(super) fn leave_network(&mut self, fx: &mut Fx) {
         let blocked = self.online != Some(true);
-        let ids: Vec<TransferId> = self.transfers.values().filter(|transfer| matches!(transfer.stage, TransferStage::Uploading | TransferStage::Completing) && (blocked || (self.saving && !transfer.urgent))).map(|transfer| transfer.transfer_id).collect();
+        let ids: Vec<TransferId> = self.scan().filter(|transfer| matches!(transfer.stage, TransferStage::Uploading | TransferStage::Completing) && (blocked || (self.saving && !transfer.urgent))).map(|transfer| transfer.transfer_id).collect();
         for id in ids {
             let Some(transfer) = self.transfers.get_mut(&id) else { continue };
             transfer.next_step = if transfer.stage == TransferStage::Completing { NextStep::Complete } else { NextStep::Part(transfer.confirmed_parts + 1) };

@@ -235,7 +235,7 @@ impl TransferState {
     }
 
     pub(super) fn maybe_drained(&mut self, fx: &mut Fx) {
-        let accepting = self.transfers.values().any(|transfer| transfer.stage == TransferStage::Accepting);
+        let accepting = self.scan().any(|transfer| transfer.stage == TransferStage::Accepting);
         if self.closing && !accepting && !std::mem::replace(&mut self.drained, true) {
             run(fx, TransferEffect::Drained(Drained { owner: "transfer" }));
         }
