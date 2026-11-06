@@ -147,3 +147,16 @@ fn feed_codec_channels_of_model() {
     assert_eq!(channels.get("chats"), Some(&vec!["Changes".to_string()]));
     assert_eq!(channels.get("messages"), Some(&vec!["Changes".to_string()]));
 }
+
+#[test]
+fn feed_codec_memory_event_without_id_gets_a_uuid() {
+    let mut notices = ModelSpec::new("notices", vec![crate::schema::FieldSpec::scalar("id", crate::value::ScalarKind::Id), crate::schema::FieldSpec::scalar("body", crate::value::ScalarKind::Str)]);
+    notices.storage = crate::schema::Storage::Memory;
+    notices.listens.push(updates(json!({"subscription":"MessageChanged"})));
+    let codec = SchemaFeedCodec::new(Db::open_in_memory(vec![notices], None).unwrap(), operations());
+    let first = payloads(&codec.events("MessageChanged", frame(json!({"messageChanged":{"body":"a"}}))));
+    let second = payloads(&codec.events("MessageChanged", frame(json!({"messageChanged":{"body":"a"}}))));
+    assert_eq!(first[0]["op"], "upsert");
+    assert_ne!(first[0]["id"], second[0]["id"], "each event without an id is a new row");
+    assert!(uuid::Uuid::parse_str(first[0]["id"].as_str().unwrap()).is_ok());
+}

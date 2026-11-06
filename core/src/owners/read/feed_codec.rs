@@ -150,6 +150,7 @@ impl SchemaFeedCodec {
         let removed = removing
             || updates.deleted_by.as_ref().and_then(|field| root_value(node, field)).is_some_and(truthy)
             || updates.deleted_unless.as_ref().and_then(|field| root_value(node, field)).is_some_and(|value| !truthy(value));
+        let id = id.or_else(|| spec.is_memory().then(|| RowId::new(&uuid::Uuid::new_v4().to_string()).ok()).flatten());
         let Some(id) = id else { return Some(invalid(model, "event without id")) };
         Some(match updates.apply.as_ref().map(|apply| &apply.action) {
             Some(SubscriptionAction::Ephemeral { fields }) => {
