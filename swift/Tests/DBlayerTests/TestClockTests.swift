@@ -187,7 +187,7 @@ extension BridgeProbeTests {
     try DB.database.setOnline(online: true)
     try await valueBeforeDeadline(failing) {}
     guard await observe("the window shows the loaded rows", { held.phase == .loaded && held.error == nil }) else { return }
-    #expect(transport.calls.filter { $0.operationName == "MomentsFeed" }.count >= 4)
+    #expect(transport.calls.filter { $0.operationName == "MomentsFeed" }.count == 4, "the load that waited for the network was read once more, not once per cause")
     #expect(held.rows.map(\.id) == ["1"])
   }
 }

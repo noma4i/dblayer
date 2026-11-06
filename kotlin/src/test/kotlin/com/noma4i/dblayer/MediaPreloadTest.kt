@@ -122,11 +122,11 @@ class MediaPreloadTest {
             val failing = async { failedQuery.loadAll() }
             networkDrops(during = down)
             down.release()
-            eventually("the held page reached the transport") { transport.calls.count { it.operationName == "ChatMedia" } == 7 }
+            eventually("the held page reached the transport") { transport.calls.count { it.operationName == "ChatMedia" } == 8 }
             assertTrue("a media load without network keeps waiting", !failing.isCompleted)
             DBlayer.database.setOnline(true)
             awaitWithin("the media load after the network returned") { failing.await() }
-            assertEquals(8, transport.calls.count { it.operationName == "ChatMedia" })
+            assertEquals(9, transport.calls.count { it.operationName == "ChatMedia" })
             val complete = held.projection.first { it.state?.complete == true }
             assertEquals(listOf("x1"), complete.rows.map { it.id })
             assertEquals(ReadPhase.LOADED, complete.phase)

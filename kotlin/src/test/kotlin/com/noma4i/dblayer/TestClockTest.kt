@@ -70,10 +70,10 @@ class TestClockTest {
                 awaitWithin("the old chain finishes") { loading.await() }
                 assertEquals(3, transport.calls.count { it.operationName == "MomentsFeed" })
                 Moment.feed.load()
-                assertTrue(transport.calls.count { it.operationName == "MomentsFeed" } >= 4)
+                assertEquals(4, transport.calls.count { it.operationName == "MomentsFeed" })
                 assertEquals(listOf("2"), Moment.feed.read().map { it.id })
                 Moment.feed.load()
-                assertTrue(transport.calls.count { it.operationName == "MomentsFeed" } >= 4)
+                assertEquals(4, transport.calls.count { it.operationName == "MomentsFeed" })
             } finally {
                 firstPage.release()
                 loading.cancel()
@@ -174,7 +174,7 @@ class TestClockTest {
             assertTrue("a load without network keeps waiting", !failing.isCompleted)
             DBlayer.database.setOnline(true)
             awaitWithin("the load after the network returned") { failing.await() }
-            assertTrue(transport.calls.count { it.operationName == "MomentsFeed" } >= 4)
+            assertEquals(4, transport.calls.count { it.operationName == "MomentsFeed" })
             val state = held.projection.first { it.error == null && it.phase == ReadPhase.LOADED }
             assertEquals(listOf("1"), state.rows.map { it.id })
             held.close()

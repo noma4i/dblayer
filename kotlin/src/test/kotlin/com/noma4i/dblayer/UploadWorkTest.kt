@@ -102,7 +102,7 @@ class UploadWorkTest {
         assertNotNull("the foreground notification is shown before open ran", shadowOf(controller.get()).lastForegroundNotification)
         assertTrue(!shadowOf(controller.get()).isStoppedBySelf)
         try {
-            DBlayer.open(context, transport = MockTransport(), modelsJson = "[]", uploadNotification = notification)
+            DBlayer.open(context, transport = MockTransport(), modelsJson = modelsJSON, operations = UPLOAD_STEP_OPERATIONS.map { (name, text) -> object : GraphQLOperation { override val operationName = name; override val document = text } }, uploadNotification = notification)
             eventually("the service stops by itself when no upload is unfinished") { shadowOf(controller.get()).isStoppedBySelf }
         } finally {
             closeForCleanup()

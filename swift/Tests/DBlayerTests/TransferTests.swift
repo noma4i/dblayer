@@ -178,6 +178,7 @@ extension BridgeProbeTests {
         await DB.closeForCleanup()
         _ = try await DB.openTesting(transport: transport, modelsJSON: modelsJSON, path: path, encrypted: encrypted, credentials: credential, http: server)
         try DB.database.registerOperations(defsJson: operations)
+        try DB.database.setOnline(online: true)
         await eventually("both assets are stored") {
           let a1 = (try? await Asset.find("a1").current()) ?? nil
           let a2 = (try? await Asset.find("a2").current()) ?? nil
@@ -194,7 +195,8 @@ extension BridgeProbeTests {
       #expect(attempts.count == (lose ? 2 : 1))
       #expect(server.routes.filter { $0.operation == "CreateBlob" }.allSatisfy { $0.purpose == .transfer })
       let puts = transport.identities.filter { $0.step == .put }
-      #expect(puts.count == 2 && puts[0].operationId == puts[1].operationId && Set(puts.map(\.itemId)).count == 2, "puts: \(puts.map { ($0.operationId, $0.itemId) })")
+      #expect(puts.count == 3 && Set(puts.map(\.operationId)).count == 1 && Set(puts.map(\.itemId)).count == 3, "puts: \(puts.map { ($0.operationId, $0.itemId) })")
+      #expect(server.requests.filter { $0.body["operationName"] as? String == "CreateAssets" }.count == 1)
       let final = try #require(server.requests.first { $0.body["operationName"] as? String == "CreateAssets" })
       let variables = try #require(final.body["variables"] as? [String: Any])
       let sent = try #require(variables["items"] as? [[String: Any]])
@@ -237,6 +239,7 @@ extension BridgeProbeTests {
     transport.enqueue("InitMultipart", reply: #"{"data":{"initMultipart":{"key":"key","uploadId":"upload"}}}"#)
     let held = transport.hold("PresignParts", reply: #"{"data":{"presignParts":{"parts":[{"partNumber":1,"url":"https://storage/1"},{"partNumber":2,"url":"https://storage/2"},{"partNumber":3,"url":"https://storage/3"}]}}}"#)
     let abort = transport.hold("AbortMultipart", reply: #"{"data":{"abortMultipart":{"ok":true}}}"#)
+    transport.enqueue("PresignParts", reply: #"{"data":{"presignParts":{"parts":[{"partNumber":1,"url":"https://storage/1"}]}}}"#)
     let db = try await reopen(config: config, modelsJson: modelsJSON, transport: transport, operations: operations)
     let queued = try #require(try await DB.account().send(Moment.self, values: ["text": .string("group")], upload: UploadCommand(action: "upload_clip", request: UploadRequest(path: source.path))).optimisticValue)
     await held.entered()
@@ -252,6 +255,7 @@ extension BridgeProbeTests {
     abort.release()
     try reopened.setOnline(online: false)
     try reopened.setOnline(online: true)
+    #expect(transport.calls.filter { $0.operationName == "PresignParts" }.count == 2, "the saved pair of the held step is sent once more")
     let aborts = transport.calls.filter { $0.operationName == "AbortMultipart" }
     #expect(aborts.count == 1 && aborts.first?.purpose == .transfer)
     await DB.closeForCleanup()
@@ -442,6 +446,7 @@ extension BridgeProbeTests {
     transport.enqueue("InitMultipart", reply: #"{"data":{"initMultipart":{"key":"key","uploadId":"upload"}}}"#)
     let held = transport.hold("PresignParts", reply: #"{"data":{"presignParts":{"parts":[{"partNumber":1,"url":"https://storage/1"},{"partNumber":2,"url":"https://storage/2"},{"partNumber":3,"url":"https://storage/3"}]}}}"#)
     let abort = transport.hold("AbortMultipart", reply: #"{"data":{"abortMultipart":{"ok":true}}}"#)
+    transport.enqueue("PresignParts", reply: #"{"data":{"presignParts":{"parts":[{"partNumber":1,"url":"https://storage/1"}]}}}"#)
     let db = try await reopen(config: config, modelsJson: modelsJSON, transport: transport, operations: operations)
     let sent = try await DB.account().send(Moment.self, values: ["text": .string("video")], upload: UploadCommand(action: "upload_clip", request: UploadRequest(path: source.path)))
     let row = try #require(sent.optimisticValue)
@@ -465,6 +470,7 @@ extension BridgeProbeTests {
     abort.release()
     try reopened.setOnline(online: false)
     try reopened.setOnline(online: true)
+    #expect(transport.calls.filter { $0.operationName == "PresignParts" }.count == 2, "the saved pair of the held step is sent once more")
     let aborts = transport.calls.filter { $0.operationName == "AbortMultipart" }
     #expect(aborts.count == 1)
     #expect(aborts.first?.purpose == .transfer)

@@ -144,20 +144,22 @@ class TransferTest {
                     closeForCleanup()
                     DBlayer.openTesting(transport, modelsJSON, path = path, encrypted = encrypted, credentials = credential, http = server)
                     DBlayer.database.registerOperations(operations)
+                    DBlayer.database.setOnline(true)
                     DBlayer.database.sessionCall("login_link", """{"account":"A"}""")
                     val files = (0..2).map { index -> directory.resolve("$index.jpg").apply { writeText("image-$index") } }
                     val items = files.mapIndexed { index, file -> UploadItem(values = buildJsonObject { put("clientKey", "key-$index"); put("size", 3); put("position", index) }, path = file.path) }
                     val receipt = AccountScope.current().uploadBatch(Asset, items, UploadBatchRequest(operation = "create_files"))
                     val rows = receipt.items.map { it.optimisticValue }
-                    server.heldRequest()
-                    rows[0].discard("create_files")
+                    awaitWithin("the held request reaches the server") { server.heldRequest() }
+                    awaitWithin("the discard of the first file") { rows[0].discard("create_files") }
                     if (lose) { DBlayer.database.setOnline(false); server.loseAnswer("1.jpg") }
                     server.hold(null)
                     if (lose) {
-                        server.lostAnswer()
+                        awaitWithin("the answer is lost") { server.lostAnswer() }
                         closeForCleanup()
                         DBlayer.openTesting(transport, modelsJSON, path = path, encrypted = encrypted, credentials = credential, http = server)
                         DBlayer.database.registerOperations(operations)
+                        DBlayer.database.setOnline(true)
                         eventually("both assets are stored") { Asset.find("a1").current() != null && Asset.find("a2").current() != null }
                         assertEquals(listOf("a1", "a2"), listOf("a1", "a2").filter { Asset.find(it).current() != null })
                     } else {
@@ -169,11 +171,9 @@ class TransferTest {
                     assertEquals(if (lose) 2 else 1, attempts)
                     assertTrue(server.routes.filter { it.first == "CreateBlob" }.all { it.second == NetworkPurpose.TRANSFER })
                     val identities = synchronized(transport.identities) { transport.identities.toList() }
-                    val second = identities.single { it.itemId == "key-1" }
-                    val third = identities.single { it.itemId == "key-2" }
-                    assertEquals(second.operationId, third.operationId)
-                    assertEquals(TransferStep.Put, second.step)
-                    assertEquals(TransferStep.Put, third.step)
+                    val puts = identities.filter { it.step == TransferStep.Put }
+                    assertEquals(listOf("key-0", "key-1", "key-2"), puts.map { it.itemId }.sorted())
+                    assertEquals(1, puts.map { it.operationId }.toSet().size)
                     val final = server.requests.map { it.second }.single { it["operationName"]?.jsonPrimitive?.content == "CreateAssets" }
                     val sent = final.getValue("variables").jsonObject.getValue("items").jsonArray
                     assertEquals(listOf("key-1", "key-2"), sent.map { it.jsonObject.getValue("clientKey").jsonPrimitive.content })
@@ -242,6 +242,7 @@ class TransferTest {
         transport.enqueue("InitMultipart", """{"data":{"initMultipart":{"key":"key","uploadId":"upload"}}}""")
         val held = transport.hold("PresignParts", reply = """{"data":{"presignParts":{"parts":[{"partNumber":1,"url":"https://storage/1"},{"partNumber":2,"url":"https://storage/2"},{"partNumber":3,"url":"https://storage/3"}]}}}""")
         val abort = transport.hold("AbortMultipart", reply = """{"data":{"abortMultipart":{"ok":true}}}""")
+        transport.enqueue("PresignParts", """{"data":{"presignParts":{"parts":[{"partNumber":1,"url":"https://storage/1"}]}}}""")
         try {
             val source = directory.resolve("photo").apply { writeBytes(ByteArray(11 * 1024 * 1024)) }
             val config = Config(directory.resolve("db.sqlite").path, null, 32u)
@@ -261,6 +262,7 @@ class TransferTest {
             abort.release()
             reopened.setOnline(false)
             reopened.setOnline(true)
+            assertEquals("the saved pair of the held step is sent once more", 2, transport.calls.count { it.operationName == "PresignParts" })
             val aborts = transport.calls.filter { it.operationName == "AbortMultipart" }
             assertEquals(1, aborts.size)
             assertEquals(NetworkPurpose.TRANSFER, aborts.single().purpose)
@@ -443,6 +445,7 @@ class TransferTest {
         transport.enqueue("InitMultipart", """{"data":{"initMultipart":{"key":"key","uploadId":"upload"}}}""")
         val held = transport.hold("PresignParts", reply = """{"data":{"presignParts":{"parts":[{"partNumber":1,"url":"https://storage/1"},{"partNumber":2,"url":"https://storage/2"},{"partNumber":3,"url":"https://storage/3"}]}}}""")
         val abort = transport.hold("AbortMultipart", reply = """{"data":{"abortMultipart":{"ok":true}}}""")
+        transport.enqueue("PresignParts", """{"data":{"presignParts":{"parts":[{"partNumber":1,"url":"https://storage/1"}]}}}""")
         try {
             val source = directory.resolve("video").apply { writeBytes(ByteArray(11 * 1024 * 1024)) }
             val config = Config(directory.resolve("db.sqlite").path, null, 8u)
@@ -468,6 +471,7 @@ class TransferTest {
             abort.release()
             reopened.setOnline(false)
             reopened.setOnline(true)
+            assertEquals("the saved pair of the held step is sent once more", 2, transport.calls.count { it.operationName == "PresignParts" })
             val aborts = transport.calls.filter { it.operationName == "AbortMultipart" }
             assertEquals(1, aborts.size)
             assertEquals(NetworkPurpose.TRANSFER, aborts.single().purpose)

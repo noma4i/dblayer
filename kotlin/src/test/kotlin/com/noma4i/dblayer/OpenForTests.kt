@@ -134,7 +134,7 @@ fun schema(onlySubscription: String, source: String = com.noma4i.dblayer.models.
     }).toString()
 }
 
-private val UPLOAD_STEP_OPERATIONS = listOf(
+val UPLOAD_STEP_OPERATIONS = listOf(
     "CreateBlob" to "mutation CreateBlob { createBlob { url headers signedId blobId } }",
     "InitMultipart" to "mutation InitMultipart { initMultipart { key uploadId } }",
     "PresignParts" to "mutation PresignParts { presignParts { parts { partNumber url } } }",
