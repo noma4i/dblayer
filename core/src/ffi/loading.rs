@@ -53,6 +53,7 @@ impl LoadRequest {
         let Some(task) = held else { return };
         *crate::db::locked(&self.dropping) = Some(self.life.launch());
         crate::db::lock::effect(|| task.abort());
+        if task.is_finished() { drop(crate::db::locked(&self.dropping).take()); }
     }
 }
 
