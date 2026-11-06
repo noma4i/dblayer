@@ -39,9 +39,21 @@ impl Window {
     }
 
     fn handle(&mut self, event: Ev, ids: (&mut RequestId, &mut u32)) -> Vec<Emit> {
+        let previous = self.request_id();
         let mut ctx = Ctx { next_request: ids.0, next_attempt: ids.1 };
         self.machine.handle_with_context(&event, &mut ctx);
-        self.machine.fx.take()
+        let mut effects = self.machine.fx.take();
+        if let Some(request) = previous.filter(|request| Some(*request) != self.request_id()) {
+            effects.insert(0, Emit::Unpin { request });
+        }
+        effects
+    }
+
+    fn request_id(&self) -> Option<RequestId> {
+        match self.machine.state() {
+            WinState::Loading { request, .. } | WinState::Landing { request, .. } => Some(*request),
+            _ => None,
+        }
     }
 
     fn stage(&self) -> WindowStage {
@@ -158,6 +170,8 @@ impl Windows {
         for emit in window.handle(event, (&mut state.next_request, &mut state.next_attempt)) {
             match emit {
                 Emit::Run(effect) => out.push(Effect::Run(WindowsEffect::Window { key: key.clone(), effect })),
+                Emit::Pin { epoch, request } => out.push(Effect::Send(Outbound::new(peers.store, StoreInput::Pin { epoch, request_id: request }))),
+                Emit::Unpin { request } => out.push(Effect::Send(Outbound::new(peers.store, StoreInput::Unpin { request_id: request }))),
                 Emit::Commit { request, basis, page, number, replace_all, base_revision } => {
                     let rows: Vec<(String, String)> = page.payload.roots.iter().map(|row| (key.model.clone(), row.row_id.clone())).chain(page.payload.related.iter().map(|(model, row)| (model.clone(), row.row_id.clone()))).collect();
                     let op = StoreOp::Window { key: key.name.clone(), model: key.model.clone(), page: number, replace_all, cursor: page.cursor.clone(), roots: page.payload.roots.clone(), related: page.payload.related.clone(), total: page.payload.total, base_revision };
@@ -233,6 +247,13 @@ impl StateOwner for Windows {
             WindowsInput::OfflineRefused { key, message } => Self::on(state, &key, Ev::OfflineRefused { message }, &mut out),
             WindowsInput::InterestMinus { key, id } => Self::on(state, &key, Ev::InterestMinus { id }, &mut out),
             WindowsInput::Load { key, id, goal, force, store_revision } => Self::load(state, key, id, goal, force, store_revision, &mut out),
+            WindowsInput::Pinned { request_id, base_revision } => {
+                if state.windows.values().any(|window| window.owns(request_id)) {
+                    Self::by_request(state, request_id, Ev::Pinned { request: request_id, base_revision }, &mut out);
+                } else {
+                    out.push(Effect::Send(Outbound::new(state.peers.store, StoreInput::Unpin { request_id })));
+                }
+            }
             WindowsInput::Response { request, attempt, page } => Self::by_request(state, request, Ev::Response { request, attempt, page }, &mut out),
             WindowsInput::Failure { request, attempt, error } => Self::by_request(state, request, Ev::Failure { request, attempt, error: error.clone() }, &mut out),
             WindowsInput::Dropped { request, attempt } => Self::by_request(state, request, Ev::Failure { request, attempt, error: RequestError { message: "dropped".into(), class: ErrorClass::Network, source: None } }, &mut out),

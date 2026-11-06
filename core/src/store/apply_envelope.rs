@@ -3,6 +3,7 @@ pub(crate) fn apply_envelope(
     models: &BTreeMap<String, ModelInfo>,
     envelope: &CommitEnvelope,
     now_ms: i64,
+    min_pin_revision: Option<u64>,
 ) -> Result<CommitResult, StoreError> {
     let reader = Reader::new(connection, models);
     let revision = reader.revision_seq()? + 1;
@@ -163,9 +164,7 @@ pub(crate) fn apply_envelope(
         for seq in result.operations.iter().filter(|seq| !progress_only.contains(seq)) {
             result.queue_operations.insert(*seq, crate::operation::read_queue_operation(connection, *seq)?);
         }
-        if tombstoned {
-            prune_tombstones(connection, now_ms, &TombstoneRetention::DEFAULT)?;
-        }
+        prune_tombstones(connection, now_ms, &TombstoneRetention::DEFAULT, min_pin_revision)?;
     } else {
         result.scopes.clear();
         result.members.clear();

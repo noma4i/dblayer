@@ -53,10 +53,16 @@ impl Facts {
 
     #[state]
     #[allow(clippy::too_many_arguments)]
-    fn loading(&mut self, context: &mut Ctx<'_>, request: &mut RequestId, attempt: &mut u32, retry: &mut bool, page: &mut u32, force: &mut bool, attempts: &mut u32, basis: &mut GenerationsAtIssue, event: &Ev) -> Outcome<WinState> {
+    fn loading(&mut self, context: &mut Ctx<'_>, request: &mut RequestId, attempt: &mut u32, retry: &mut bool, pinning: &mut bool, page: &mut u32, force: &mut bool, attempts: &mut u32, basis: &mut GenerationsAtIssue, event: &Ev) -> Outcome<WinState> {
         self.env(event);
         let mine = |got: &RequestId, got_attempt: &u32| got == request && got_attempt == attempt && !*retry;
         match event {
+            Ev::Pinned { request: got, base_revision } if got == request && *pinning => {
+                self.request_base.set(i64::try_from(*base_revision).unwrap_or(i64::MAX));
+                *pinning = false;
+                self.push_fx(WindowEffect::Request { request: *request, attempt: *attempt, page: *page, cursor: self.page_cursor(*page), epoch: self.epoch });
+                Handled
+            }
             Ev::InterestPlus { id } => {
                 self.interest.insert(*id);
                 self.announce();
@@ -90,8 +96,8 @@ impl Facts {
                     let (new_request, new_attempt) = context.request();
                     self.cursor_reset_used = true;
                     self.replace_all = true;
-                    self.push_fx(WindowEffect::Request { request: new_request, attempt: new_attempt, page: 1, cursor: None, epoch: self.epoch });
-                    return Transition(WinState::loading(new_request, new_attempt, false, 1, *force, 0, self.basis()));
+                    self.emit(Emit::Pin { epoch: self.epoch, request: new_request });
+                    return Transition(WinState::loading(new_request, new_attempt, false, true, 1, *force, 0, self.basis()));
                 }
                 let class = if error.class == ErrorClass::InvalidCursor { ErrorClass::Permanent } else { error.class };
                 if class != ErrorClass::Permanent && *attempts + 1 < attempt_limit(class) {
@@ -127,10 +133,11 @@ impl Facts {
                 let (new_request, new_attempt) = context.request();
                 self.push_fx(WindowEffect::Cancel { request: *request, attempt: *attempt });
                 self.emit(Emit::CancelRetry { request: *request });
-                self.push_fx(WindowEffect::Request { request: new_request, attempt: new_attempt, page: *page, cursor: self.page_cursor(*page), epoch: self.epoch });
+                self.emit(Emit::Pin { epoch: self.epoch, request: new_request });
                 *request = new_request;
                 *attempt = new_attempt;
                 *retry = false;
+                *pinning = true;
                 *attempts = 0;
                 *basis = self.basis();
                 Handled
@@ -201,9 +208,9 @@ impl Facts {
             Ev::Online(true) => {
                 let (request, attempt) = context.request();
                 self.phase = Phase::Loading;
-                self.push_fx(WindowEffect::Request { request, attempt, page: *page, cursor: self.page_cursor(*page), epoch: self.epoch });
+                self.emit(Emit::Pin { epoch: self.epoch, request });
                 self.announce();
-                Transition(WinState::loading(request, attempt, false, *page, *force, 0, self.basis()))
+                Transition(WinState::loading(request, attempt, false, true, *page, *force, 0, self.basis()))
             }
             Ev::InterestPlus { id } => {
                 self.interest.insert(*id);

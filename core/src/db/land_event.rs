@@ -91,11 +91,16 @@ fn observed(events: &[(String, String)], seen: &BTreeMap<(String, String), (Opti
 
 impl Db {
     /// Lands the events of one batch in one commit. A failing event rejects the batch. An event marked `observe` comes back with the row before and the row after the landing, read in the same transaction.
+    #[cfg(test)]
     pub(crate) fn land_events(&self, events: &[(String, String)]) -> Result<Vec<String>, DbError> {
+        self.land_events_with_pin(events, None)
+    }
+
+    pub(crate) fn land_events_with_pin(&self, events: &[(String, String)], min_pin_revision: Option<u64>) -> Result<Vec<String>, DbError> {
         let parsed = parse(events)?;
         let generation = self.generation();
         let mut seen: BTreeMap<(String, String), (Option<Map<String, Value>>, Option<Map<String, Value>>)> = BTreeMap::new();
-        self.commit_following(&Authority::Owner, generation, |reader| {
+        let (committed, _) = self.commit_following_with_pin(&Authority::Owner, generation, min_pin_revision, |reader| {
             let mut operations: BTreeMap<(String, String), EntityOp> = BTreeMap::new();
             let mut touches: Vec<EntityOp> = Vec::new();
             let mut joins: Vec<ScopeOp> = Vec::new();
@@ -137,6 +142,7 @@ impl Db {
             envelope.scope_ops = joins;
             Ok::<_, DbError>(Some(envelope))
         }).map_err(plan_fault)?;
+        committed.publish();
         if !parsed.ephemeral.is_empty() {
             let admitted = self.admit()?;
             for (model, id, values) in parsed.ephemeral {

@@ -17,6 +17,7 @@ mod lifecycle_tests;
 mod lifecycle_owner_tests;
 mod network_owner_tests;
 mod store_owner_tests;
+mod store_pin_tests;
 mod session_owner_tests;
 mod calls_owner_tests;
 mod store_tests;

@@ -412,6 +412,8 @@ mod cache_storage_tests;
 #[cfg(test)]
 mod tombstones_tests;
 #[cfg(test)]
+mod tombstones_pin_tests;
+#[cfg(test)]
 mod windows_tests;
 #[cfg(test)]
 mod interface_tests;

@@ -212,7 +212,8 @@ pub enum StoreEffect {
     OpenFailed(String),
     OpenCorrupt(String),
     /// One transaction: `rows`, `intents`, `files`.
-    Write { batch: StoreBatch },
+    Write { batch: StoreBatch, min_pin_revision: Option<u64> },
+    Pinned { epoch: Epoch, request_id: u64, base_revision: u64 },
     /// One transaction: erase the account (`erase_encrypted` for `SessionReset` and `ServerEnded`).
     EraseAccount { io_id: u64, generation_new: u64, erase_encrypted: bool },
     EraseModels { io_id: u64, generation_new: u64, models: BTreeSet<String> },
@@ -239,6 +240,8 @@ pub enum StoreEffect {
 pub enum StoreInput {
     Boot(BootFound),
     Commit(StoreBatch),
+    Pin { epoch: Epoch, request_id: u64 },
+    Unpin { request_id: u64 },
     Written { author: BatchAuthor, batch: BatchId, result: Result<Done, String> },
     ClearAccount { epoch_old: Epoch, cause: Cause, generation_new: u64, erase_id: u64 },
     ClearModels { epoch: Epoch, generation_new: u64, models: BTreeSet<String>, erase_id: u64 },

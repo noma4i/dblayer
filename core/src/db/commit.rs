@@ -45,10 +45,20 @@ impl Db {
         &self,
         authority: &Authority,
         generation: Generation,
+        plan: impl FnMut(&Reader<'_>) -> Result<Option<CommitEnvelope>, E>,
+    ) -> Result<(Committed<'_>, Followed), PlanCommitError<E>> {
+        self.commit_following_with_pin(authority, generation, None, plan)
+    }
+
+    pub(crate) fn commit_following_with_pin<E: From<DbError>>(
+        &self,
+        authority: &Authority,
+        generation: Generation,
+        min_pin_revision: Option<u64>,
         mut plan: impl FnMut(&Reader<'_>) -> Result<Option<CommitEnvelope>, E>,
     ) -> Result<(Committed<'_>, Followed), PlanCommitError<E>> {
         let mut followed = Followed::default();
-        let result = self.shared.store.commit_prepared_deferred(authority, generation, |reader| {
+        let result = self.shared.store.commit_prepared_with_pin(authority, generation, min_pin_revision, |reader| {
             followed = Followed::default();
             let Some(envelope) = plan(reader)? else { return Ok(None) };
             let (envelope, found) = self.follow(reader, envelope)?;

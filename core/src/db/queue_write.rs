@@ -48,7 +48,12 @@ fn upserts(model: &str, rows: &[RowValue]) -> Result<Vec<EntityOp>, DbError> {
 
 impl Db {
     /// Applies the ops of one batch. The batch of an operation holds the ops of one commit kind, so each op is one commit.
+    #[cfg(test)]
     pub(crate) fn write_queue_ops(&self, ops: &[StoreOp]) -> Result<(), DbError> {
+        self.write_queue_ops_with_pin(ops, None)
+    }
+
+    pub(crate) fn write_queue_ops_with_pin(&self, ops: &[StoreOp], min_pin_revision: Option<u64>) -> Result<(), DbError> {
         let generation = self.generation();
         let mut envelope = CommitEnvelope::new(WriteOrigin::Optimistic, generation);
         let mut rolled_back = Vec::new();
@@ -122,11 +127,11 @@ impl Db {
                 StoreOp::RemoveOrphan { upload_id } => self.write_orphan(upload_id, None)?,
                 StoreOp::BlobCachePut { content_sha256, blob_id, created_at } => self.write_blob_cache(content_sha256, Some((blob_id, *created_at)))?,
                 StoreOp::BlobCacheRemove { content_sha256 } => self.write_blob_cache(content_sha256, None)?,
-                StoreOp::Planned { effects } => return self.write_planned(effects),
-                StoreOp::Intent { op_id, model, row_id: id, action, payload, effects } => return self.write_intent(*op_id, (model, id, action), payload, effects),
+                StoreOp::Planned { effects } => return self.write_planned(effects, min_pin_revision),
+                StoreOp::Intent { op_id, model, row_id: id, action, payload, effects } => return self.write_intent(*op_id, (model, id, action), payload, effects, min_pin_revision),
                 StoreOp::Window { key, model, page, replace_all, cursor, roots, related, total, base_revision } => {
                     let key = crate::owners::read::windows::WindowKey { model: model.clone(), name: key.clone() };
-                    self.land_window_page(&super::land_window::WindowPage { key: &key, page: *page, replace_all: *replace_all, cursor: cursor.as_deref(), roots, related, total: *total, base_revision: *base_revision })?;
+                    self.land_window_page(&super::land_window::WindowPage { key: &key, page: *page, replace_all: *replace_all, cursor: cursor.as_deref(), roots, related, total: *total, base_revision: *base_revision }, min_pin_revision)?;
                     for landed in roots.iter().filter_map(|row| row_id(&row.row_id).ok()) {
                         let _ = self.find(model, &landed);
                     }
@@ -136,12 +141,12 @@ impl Db {
             }
         }
         for seq in rolled_back {
-            self.roll_back_gated(&Authority::Owner, seq, generation, None)?;
+            self.roll_back_with_pin(&Authority::Owner, seq, generation, None, min_pin_revision)?;
         }
         if envelope.entity_ops.is_empty() && envelope.operation_transitions.is_empty() && envelope.window_debts.is_empty() && swaps.is_empty() {
             return Ok(());
         }
-        self.commit_following(&Authority::Owner, generation, |reader| {
+        let (committed, _) = self.commit_following_with_pin(&Authority::Owner, generation, min_pin_revision, |reader| {
             let mut planned = envelope.clone();
             if planned.origin == WriteOrigin::Response {
                 let closing = (landed_op >= 0).then_some(landed_op);
@@ -169,18 +174,19 @@ impl Db {
             }
             Ok::<_, DbError>(Some(planned))
         }).map_err(plan_fault)?;
+        committed.publish();
         Ok(())
     }
 
     /// `Intent`: the optimistic rows, the membership, the tombstones and the operation, in one commit. The prior state the rollback restores is read here.
-    fn write_intent(&self, op_id: u64, (model, id, action): (&str, &str, &str), payload: &str, effects: &IntentEffects) -> Result<(), DbError> {
+    fn write_intent(&self, op_id: u64, (model, id, action): (&str, &str, &str), payload: &str, effects: &IntentEffects, min_pin_revision: Option<u64>) -> Result<(), DbError> {
         let generation = self.generation();
         let seq = i64::try_from(op_id).map_err(|_| DbError::UnknownOperation(i64::MAX))?;
         let created_at = self.shared.store.lock().now_ms();
         let input: Value = serde_json::from_str(payload).map_err(json_fault)?;
         let owner = row_id(id)?;
         let (result, _) = self
-            .commit_following_deferred(&Authority::Owner, generation, |reader| {
+            .commit_following_with_pin(&Authority::Owner, generation, min_pin_revision, |reader| {
                 let (mut envelope, prior) = effects_envelope(reader, effects, generation)?;
                 envelope.snapshot = Some(crate::identity::RowRef::new(ModelKey::new(model), owner.clone()));
                 envelope.operation_transitions.push(OperationTransition::Begin(Box::new(OperationRecord {
@@ -205,10 +211,10 @@ impl Db {
     }
 
     /// `Planned`: a write without an operation (a local model, an action without a mutation): the rows are final, nothing is queued and nothing is rolled back.
-    fn write_planned(&self, effects: &IntentEffects) -> Result<(), DbError> {
+    fn write_planned(&self, effects: &IntentEffects, min_pin_revision: Option<u64>) -> Result<(), DbError> {
         let generation = self.generation();
         let (result, _) = self
-            .commit_following_deferred(&Authority::Owner, generation, |reader| {
+            .commit_following_with_pin(&Authority::Owner, generation, min_pin_revision, |reader| {
                 let (mut envelope, _) = effects_envelope(reader, effects, generation)?;
                 envelope.writes_local = true;
                 Ok::<_, DbError>(Some(envelope))

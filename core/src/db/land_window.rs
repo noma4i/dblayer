@@ -135,7 +135,7 @@ impl Db {
     }
 
     /// `StoreOp::Window`: the rows of a node or nodes key land as plain rows, the page of a relation key also plans the membership of its scope and saves the window record.
-    pub(crate) fn land_window_page(&self, page: &WindowPage<'_>) -> Result<(), DbError> {
+    pub(crate) fn land_window_page(&self, page: &WindowPage<'_>, min_pin_revision: Option<u64>) -> Result<(), DbError> {
         let model = page.key.model.as_str();
         let generation = self.generation();
         let mut roots = Vec::with_capacity(page.roots.len());
@@ -153,7 +153,7 @@ impl Db {
         }
         let (relation, params) = match page.key.kind() {
             WindowKind::Relation { relation, params } => (relation, params),
-            WindowKind::Nodes { .. } => return self.land_loose_rows(model, &roots, &related, page.base_revision),
+            WindowKind::Nodes { .. } => return self.land_loose_rows(model, &roots, &related, page.base_revision, min_pin_revision),
         };
         let spec = self.spec(model)?;
         let declared = spec.relations.iter().find(|candidate| candidate.name == relation).ok_or_else(|| DbError::Internal(format!("{model} has no relation {relation}")))?;
@@ -184,7 +184,7 @@ impl Db {
         let model_key = ModelKey::new(model);
         let mut drops = 0;
         let (committed, _) = self
-            .commit_following_deferred(&Authority::Owner, generation, |reader| {
+            .commit_following_with_pin(&Authority::Owner, generation, min_pin_revision, |reader| {
                 drops = 0;
                 let admitted = self.admit_rows(reader, base_revision, None, model, &roots, &mut drops)?.rows;
                 let plan = if plans_as_first {
@@ -235,12 +235,12 @@ impl Db {
     }
 
     /// The rows of `node` and `nodes` keys: no scope, no window record.
-    fn land_loose_rows(&self, model: &str, roots: &[Map<String, Value>], related: &[(ModelKey, Map<String, Value>)], base_revision: i64) -> Result<(), DbError> {
+    fn land_loose_rows(&self, model: &str, roots: &[Map<String, Value>], related: &[(ModelKey, Map<String, Value>)], base_revision: i64, min_pin_revision: Option<u64>) -> Result<(), DbError> {
         let generation = self.generation();
         let model_key = ModelKey::new(model);
         let mut drops = 0;
         let (committed, _) = self
-            .commit_following_deferred(&Authority::Owner, generation, |reader| {
+            .commit_following_with_pin(&Authority::Owner, generation, min_pin_revision, |reader| {
                 drops = 0;
                 let admitted = self.admit_rows(reader, base_revision, None, model, roots, &mut drops)?.rows;
                 let mut envelope = CommitEnvelope::new(WriteOrigin::Snapshot, generation);

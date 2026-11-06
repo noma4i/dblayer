@@ -67,9 +67,6 @@ impl Facts {
     fn watched(&self) -> bool { !self.interest.is_empty() || !self.waiters.is_empty() }
 
     fn push_fx(&self, effect: WindowEffect) {
-        if matches!(effect, WindowEffect::Request { .. }) {
-            self.request_base.set(self.store_seen.max(self.landed_revision));
-        }
         self.fx.borrow_mut().push(Emit::Run(effect));
     }
 
@@ -120,8 +117,8 @@ impl Facts {
         let next = if self.is_online() {
             let (request, attempt) = ctx.request();
             self.phase = Phase::Loading;
-            self.push_fx(WindowEffect::Request { request, attempt, page, cursor: self.page_cursor(page), epoch: self.epoch });
-            WinState::loading(request, attempt, false, page, force, 0, self.basis())
+            self.emit(Emit::Pin { epoch: self.epoch, request });
+            WinState::loading(request, attempt, false, true, page, force, 0, self.basis())
         } else {
             WinState::waiting(force, page)
         };

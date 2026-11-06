@@ -291,8 +291,12 @@ impl Db {
     }
 
     pub(crate) fn roll_back_gated(&self, authority: &Authority, seq: i64, generation: Generation, still: Option<&Still<'_>>) -> Result<CommitResult, DbError> {
+        self.roll_back_with_pin(authority, seq, generation, still, None)
+    }
+
+    pub(crate) fn roll_back_with_pin(&self, authority: &Authority, seq: i64, generation: Generation, still: Option<&Still<'_>>, min_pin_revision: Option<u64>) -> Result<CommitResult, DbError> {
         let mut discarded = Vec::new();
-        let result = self.commit_following(authority, generation, |reader| {
+        let (result, _) = self.commit_following_with_pin(authority, generation, min_pin_revision, |reader| {
                 discarded = Vec::new();
                 let found = OutboxOperation::read(reader, seq)?;
                 let entry = match (found, still) {
@@ -314,6 +318,7 @@ impl Db {
                 Ok(Some(envelope))
             })
             .map_err(plan_fault)?;
+        let result = result.publish();
         self.shared.files.discard(&discarded).map_err(super::files::io_fault)?;
         Ok(result)
     }

@@ -47,6 +47,7 @@ pub struct StoreState {
     io: VecDeque<Io>,
     next_io: u64,
     deferred: VecDeque<StoreInput>,
+    pins: BTreeMap<u64, (Epoch, u64)>,
     reads: BTreeSet<u64>,
     reads_closed: bool,
 }
@@ -66,6 +67,7 @@ impl StoreState {
             io: VecDeque::new(),
             next_io: 1,
             deferred: VecDeque::new(),
+            pins: BTreeMap::new(),
             reads: BTreeSet::new(),
             reads_closed: false,
         }
@@ -204,9 +206,20 @@ impl StoreState {
                     fx.push(StoreEffect::Reply { author: batch.author, batch: batch.id, epoch: batch.epoch, reply: StoreReply::Rejected(RejectReason::StaleGeneration { models, generation }) });
                 } else {
                     self.writing = Some(batch.clone());
-                    fx.push(StoreEffect::Write { batch });
+                    fx.push(StoreEffect::Write { batch, min_pin_revision: self.pins.values().map(|(_, revision)| *revision).min() });
                 }
             }
+            StoreInput::Pin { epoch, request_id } => {
+                if epoch != self.epoch {
+                    fx.push(StoreEffect::Pinned { epoch, request_id, base_revision: self.revision });
+                } else if self.busy() {
+                    self.deferred.push_back(StoreInput::Pin { epoch, request_id });
+                } else {
+                    self.pins.insert(request_id, (epoch, self.revision));
+                    fx.push(StoreEffect::Pinned { epoch, request_id, base_revision: self.revision });
+                }
+            }
+            StoreInput::Unpin { request_id } => { self.pins.remove(&request_id); }
             StoreInput::Written { author, batch, result } => {
                 if !self.writing.as_ref().is_some_and(|writing| writing.author == author && writing.id == batch) {
                     return;
@@ -299,8 +312,9 @@ impl StoreState {
             StoreInput::EpochEnded(EpochEnded { epoch, cause }) => {
                 if self.busy() {
                     self.deferred.push_back(StoreInput::EpochEnded(EpochEnded { epoch, cause }));
-                } else if epoch + 1 > self.epoch {
-                    self.epoch = epoch + 1;
+                } else {
+                    self.pins.retain(|_, (pin_epoch, _)| *pin_epoch != epoch);
+                    if epoch + 1 > self.epoch { self.epoch = epoch + 1; }
                 }
             }
             StoreInput::ReadIntents { epoch } => fx.push(StoreEffect::ReadIntents { epoch }),

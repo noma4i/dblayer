@@ -155,10 +155,11 @@ impl EffectRunner<StoreWriter> for StoreRunner {
             }
             StoreEffect::OpenFailed(error) => wiring.open_failed(error, false),
             StoreEffect::OpenCorrupt(error) => wiring.open_failed(error, true),
-            StoreEffect::Write { batch } => {
-                let result = write_batch(&self.db, &batch).and_then(|()| self.revision()).map(|revision| Done { revision });
+            StoreEffect::Write { batch, min_pin_revision } => {
+                let result = write_batch(&self.db, &batch, min_pin_revision).and_then(|()| self.revision()).map(|revision| Done { revision });
                 back.reply(EpochStamp::Control, StoreInput::Written { author: batch.author, batch: batch.id, result });
             }
+            StoreEffect::Pinned { epoch, request_id, base_revision } => wiring.to_windows_in(epoch, WindowsInput::Pinned { request_id, base_revision }),
             StoreEffect::EraseAccount { io_id, generation_new, erase_encrypted } => {
                 self.erased(back, io_id, store.erase_account(Generation::from_value(generation_new), erase_encrypted));
             }
@@ -315,11 +316,11 @@ impl EffectRunner<Network> for NetworkRunner {
 }
 
 /// One transaction per kind of ops: the tables `encrypted_*` through the store, the queue through the commit path of `Db`.
-pub(super) fn write_batch(db: &Db, batch: &crate::owners::store::StoreBatch) -> Result<(), String> {
+pub(super) fn write_batch(db: &Db, batch: &crate::owners::store::StoreBatch, min_pin_revision: Option<u64>) -> Result<(), String> {
     let (encrypted, queue): (Vec<&StoreOp>, Vec<&StoreOp>) = batch.ops.iter().partition(|op| matches!(op, StoreOp::Pending { .. } | StoreOp::RemovePending | StoreOp::EraseSession | StoreOp::Answer { .. } | StoreOp::RemoveAnswer { .. } | StoreOp::Attempt { .. } | StoreOp::Session { .. }));
     let (removals, encrypted): (Vec<&StoreOp>, Vec<&StoreOp>) = encrypted.into_iter().partition(|op| matches!(op, StoreOp::RemoveAnswer { .. }));
     if batch.author == crate::owners::contract::BatchAuthor::Feed && !batch.rows.is_empty() {
-        let payloads = db.land_events(&batch.rows).map_err(|error| error.to_string())?;
+        let payloads = db.land_events_with_pin(&batch.rows, min_pin_revision).map_err(|error| error.to_string())?;
         crate::db::lock::lock(&db.shared.landed_events).insert(batch.id, payloads);
     }
     let row_ops = if batch.author == crate::owners::contract::BatchAuthor::Feed || batch.ops.iter().any(|op| matches!(op, StoreOp::Window { .. })) { Vec::new() } else { row_ops(&batch.rows)? };
@@ -328,7 +329,7 @@ pub(super) fn write_batch(db: &Db, batch: &crate::owners::store::StoreBatch) -> 
     }
     if !queue.is_empty() || !row_ops.is_empty() {
         let ops: Vec<StoreOp> = row_ops.into_iter().chain(queue.into_iter().cloned()).collect();
-        db.write_queue_ops(&ops).map_err(|error| error.to_string())?;
+        db.write_queue_ops_with_pin(&ops, min_pin_revision).map_err(|error| error.to_string())?;
     }
     if removals.is_empty() {
         return Ok(());

@@ -98,6 +98,8 @@ pub enum WindowEffect {
 /// What a machine gives out: an effect of the runner, or an input for another owner or a timer that the owner `Windows` turns into `Effect`.
 enum Emit {
     Run(WindowEffect),
+    Pin { epoch: Epoch, request: RequestId },
+    Unpin { request: RequestId },
     Commit { request: RequestId, basis: BTreeMap<String, u64>, page: AnswerPage, number: u32, replace_all: bool, base_revision: i64 },
     Retry { request: RequestId, attempt: u32, class: ErrorClass },
     CancelRetry { request: RequestId },
@@ -155,6 +157,7 @@ pub enum WindowsInput {
     InterestMinus { key: WindowKey, id: InterestId },
     /// `begin_load`, `begin_load_all`, `refresh`, `load_more`, `node`, `nodes`. `store_revision` is the Published revision of the Store at the entry.
     Load { key: WindowKey, id: InterestId, goal: Goal, force: bool, store_revision: i64 },
+    Pinned { request_id: RequestId, base_revision: u64 },
     Response { request: RequestId, attempt: u32, page: AnswerPage },
     Failure { request: RequestId, attempt: u32, error: RequestError },
     Dropped { request: RequestId, attempt: u32 },
@@ -179,6 +182,7 @@ pub enum WindowsInput {
 /// An input of one machine.
 #[derive(Clone, Debug)]
 enum Ev {
+    Pinned { request: RequestId, base_revision: u64 },
     InterestPlus { id: InterestId },
     InterestPassive { id: InterestId },
     ReloadOnConnect { id: InterestId },
