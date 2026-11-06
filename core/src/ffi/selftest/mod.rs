@@ -18,6 +18,7 @@ mod v3_chat_typing_tests;
 mod v3_fixtures;
 mod v3_group_members_tests;
 mod v3_message_forward_tests;
+mod v3_message_media_tests;
 mod v3_message_reactions_tests;
 mod v3_message_tests;
 mod v3_moment_tests;

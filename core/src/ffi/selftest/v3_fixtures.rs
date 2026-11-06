@@ -234,3 +234,27 @@ pub(super) fn add_typing(models: &mut Value) {
     action.expire_after = Some("8.seconds".into());
     models.as_array_mut().unwrap().push(serde_json::to_value(action).unwrap());
 }
+
+/// Media of a message with merge rules (a server URL is never emptied, progress never falls), a local preview, a gift with a local opened flag, and the local media counters of a chat.
+pub(super) fn add_media(models: &mut Value) {
+    use crate::schema::MergeRule;
+    let models = models.as_array_mut().unwrap();
+    let chat = models.iter_mut().find(|model| model["key"] == "Chat").unwrap();
+    for name in ["mediaSequence", "mediaPhotoCount"] {
+        let local = FieldSpec { merge: Some(MergeRule::Local), ..optional(name, ScalarKind::Int) };
+        chat["fields"].as_array_mut().unwrap().push(serde_json::to_value(local).unwrap());
+    }
+    let message = models.iter_mut().find(|model| model["key"] == "Message").unwrap();
+    let mut media = FieldSpec::object("media").nullable().optional();
+    media.fields = vec![optional("fileUrl", ScalarKind::Str), optional("transcodeProgress", ScalarKind::Int)];
+    media.merge = Some(MergeRule::Keys { keys: [("fileUrl".to_string(), MergeRule::NonEmpty), ("transcodeProgress".to_string(), MergeRule::Monotonic)].into() });
+    let mut gift = FieldSpec::object("gift").nullable().optional();
+    gift.fields = vec![optional("status", ScalarKind::Str)];
+    let fields = [
+        media,
+        gift,
+        FieldSpec { merge: Some(MergeRule::Local), ..optional("localPreviewUrl", ScalarKind::Str) },
+        FieldSpec { merge: Some(MergeRule::Local), ..optional("giftOpened", ScalarKind::Bool) },
+    ];
+    message["fields"].as_array_mut().unwrap().extend(fields.map(|field| serde_json::to_value(field).unwrap()));
+}
