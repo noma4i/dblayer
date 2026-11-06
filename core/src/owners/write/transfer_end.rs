@@ -180,7 +180,7 @@ impl TransferState {
             self.removal_replies(id, &removal, fx);
             match removal {
                 Removal::Cancel | Removal::Discarded => self.settle(id, OutboxOutcome::Discarded, fx),
-                Removal::Confirmed { revision } => self.settle(id, OutboxOutcome::Confirmed { revision }, fx),
+                Removal::Confirmed { revision } => self.settle(id, OutboxOutcome::Confirmed { revision, result: None }, fx),
                 Removal::CopyFailed { .. } | Removal::Storage => run(fx, TransferEffect::DeleteFile { path: file_id(&self.transfers[&id].key) }),
             }
             if matches!(removal, Removal::Cancel | Removal::Discarded | Removal::Confirmed { .. }) {

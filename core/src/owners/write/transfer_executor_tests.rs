@@ -234,7 +234,7 @@ fn exec_xfer_view_and_local_copy() {
     assert_eq!(w.stage(KEY), Some(TransferStage::Mutating));
     assert_eq!(lock(&w.shown).first(), Some(&Shown::Copying));
     assert!(w.files.read(&file_id(KEY)).is_ok(), "the local copy is on disk before Confirmed");
-    w.post(TransferInput::MutationOutcome { key: KEY.into(), outcome: OutboxOutcome::Confirmed { revision: 3 } });
+    w.post(TransferInput::MutationOutcome { key: KEY.into(), outcome: OutboxOutcome::Confirmed { revision: 3, result: None } });
     assert_eq!(w.stage(KEY), Some(TransferStage::Done));
     assert!(w.files.read(&file_id(KEY)).is_err(), "the local copy is deleted after Confirmed");
 }

@@ -43,7 +43,7 @@ impl EffectRunner<Outbox> for OutboxExecutor {
                 drop(crate::task::spawn_blocking_on(crate::task::Carry::Detached, &handle, move || {
                     let _launch = launch;
                     let input = match decode(&job) {
-                        Decoded::Land { rows, swap, stale } => OutboxInput::Response { op_id: job.op_id, rows, swap, stale, errors: None },
+                        Decoded::Land { rows, swap, stale, result } => OutboxInput::Response { op_id: job.op_id, rows, swap, stale, result, errors: None },
                         Decoded::Refused { temporary, detail } => OutboxInput::Refused { op_id: job.op_id, temporary, detail },
                     };
                     back.reply(stamp, input);

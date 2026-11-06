@@ -30,7 +30,7 @@ fn terminal_traces() -> Vec<(&'static str, Twin, TransferId, OutboxOutcome)> {
     let mut interrupted = Twin::new();
     let interrupted_id = interrupted.uploading(KEY, 2);
     vec![
-        ("confirmed", confirmed, id, OutboxOutcome::Confirmed { revision: 4 }),
+        ("confirmed", confirmed, id, OutboxOutcome::Confirmed { revision: 4, result: None }),
         ("discarded", discarded, discarded_id, OutboxOutcome::Discarded),
         ("failed", failed, failed_id, OutboxOutcome::Failed { error: "failed".into() }),
         ("interrupted", interrupted, interrupted_id, OutboxOutcome::Interrupted),
@@ -40,7 +40,7 @@ fn terminal_traces() -> Vec<(&'static str, Twin, TransferId, OutboxOutcome)> {
 fn finish(name: &str, twin: &mut Twin) -> Out {
     match name {
         "confirmed" => {
-            twin.mutation_outcome(KEY, OutboxOutcome::Confirmed { revision: 4 });
+            twin.mutation_outcome(KEY, OutboxOutcome::Confirmed { revision: 4, result: None });
             twin.commit()
         }
         "discarded" => {
@@ -141,7 +141,7 @@ fn xfer_prop_round_covers() {
     twin.completed(id);
     twin.commit();
     assert_eq!(covered.remove(0), vec![id], "the round is asked for at the commit of the acceptance");
-    let idle = twin.mutation_outcome(KEY, OutboxOutcome::Confirmed { revision: 1 });
+    let idle = twin.mutation_outcome(KEY, OutboxOutcome::Confirmed { revision: 1, result: None });
     assert!(idle.round_idle().is_empty(), "a transfer in Mutating keeps its round");
     let out = twin.commit();
     assert_eq!(out.round_idle(), vec![id], "the round is released at Done");
@@ -187,7 +187,7 @@ fn xfer_prop_idle() {
     }
     let mut done = Twin::new();
     let id = done.mutating(KEY);
-    done.mutation_outcome(KEY, OutboxOutcome::Confirmed { revision: 1 });
+    done.mutation_outcome(KEY, OutboxOutcome::Confirmed { revision: 1, result: None });
     done.commit();
     assert_eq!(done.stage(id), TransferStage::Done);
     for out in [done.post(TransferInput::SlotFreed), done.online(true), done.post(TransferInput::Tick { now: Time(1), kind: TransferTick::Expire })] {
@@ -339,7 +339,7 @@ fn xfer_prop_batch_after_all_copies() {
 #[test]
 fn xfer_prop_saved_outcome() {
     let cases: Vec<(OutboxOutcome, TransferStage)> = vec![
-        (OutboxOutcome::Confirmed { revision: 2 }, TransferStage::Removing),
+        (OutboxOutcome::Confirmed { revision: 2, result: None }, TransferStage::Removing),
         (OutboxOutcome::Discarded, TransferStage::Removing),
         (OutboxOutcome::Rejected { error: "e".into() }, TransferStage::PersistingFailure),
         (OutboxOutcome::Failed { error: "e".into() }, TransferStage::PersistingFailure),

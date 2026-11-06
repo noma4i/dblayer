@@ -128,7 +128,7 @@ fn xfer_waiting_declaration_other() {
         TransferInput::Online(Online(true)),
         TransferInput::PowerSaving(true),
         TransferInput::SlotFreed,
-        TransferInput::MutationOutcome { key: KEY.into(), outcome: OutboxOutcome::Confirmed { revision: 1 } },
+        TransferInput::MutationOutcome { key: KEY.into(), outcome: OutboxOutcome::Confirmed { revision: 1, result: None } },
         TransferInput::Tick { now: Time(1), kind: crate::owners::write::transfer::TransferTick::Expire },
     ]);
     twin.ignores(1, inputs);
@@ -182,11 +182,11 @@ fn xfer_open_completing() {
 
 #[test]
 fn xfer_open_saved_outcome() {
-    let (mut twin, out) = Twin::opened(vec![completed(1, KEY)], outcomes(1, OutboxOutcome::Confirmed { revision: 5 }));
+    let (mut twin, out) = Twin::opened(vec![completed(1, KEY)], outcomes(1, OutboxOutcome::Confirmed { revision: 5, result: None }));
     assert_eq!((twin.stage(1), out.removed()), (TransferStage::Removing, vec![KEY.to_string()]));
     twin.commit();
     let (reply, out) = twin.outcome(1, 1);
-    assert_eq!((twin.stage(1), out.replies(reply)), (TransferStage::Done, vec![TransferAnswer::Outcome(OutboxOutcome::Confirmed { revision: 5 })]));
+    assert_eq!((twin.stage(1), out.replies(reply)), (TransferStage::Done, vec![TransferAnswer::Outcome(OutboxOutcome::Confirmed { revision: 5, result: None })]));
 }
 
 #[test]

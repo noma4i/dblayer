@@ -119,8 +119,8 @@ fn xfer_wait_outcome() {
     let mut twin = Twin::new();
     let id = twin.mutating(KEY);
     let (reply, _) = twin.outcome(id, 1);
-    twin.mutation_outcome(KEY, OutboxOutcome::Confirmed { revision: 2 });
-    assert_eq!(twin.commit().replies(reply), vec![TransferAnswer::Outcome(OutboxOutcome::Confirmed { revision: 2 })], "Confirmed at Done");
+    twin.mutation_outcome(KEY, OutboxOutcome::Confirmed { revision: 2, result: None });
+    assert_eq!(twin.commit().replies(reply), vec![TransferAnswer::Outcome(OutboxOutcome::Confirmed { revision: 2, result: None })], "Confirmed at Done");
     let mut failed = Twin::new();
     let id = failed.uploading(KEY, 2);
     let (reply, _) = failed.outcome(id, 1);

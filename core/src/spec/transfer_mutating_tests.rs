@@ -8,7 +8,7 @@ use crate::owners::write::transfer::{Shown, TransferAnswer, TransferInput, Trans
 const KEY: &str = "Moment:r1:upload";
 const OTHER: &str = "Moment:r2:upload";
 
-fn confirmed(revision: i64) -> OutboxOutcome { OutboxOutcome::Confirmed { revision } }
+fn confirmed(revision: i64) -> OutboxOutcome { OutboxOutcome::Confirmed { revision, result: None } }
 
 fn failed(error: &str) -> OutboxOutcome { OutboxOutcome::Failed { error: error.into() } }
 

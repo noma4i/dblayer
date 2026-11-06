@@ -198,11 +198,11 @@ fn xfer_removing_committed_cancel() {
 fn xfer_removing_committed_confirmed() {
     let mut twin = Twin::new();
     let id = twin.mutating(KEY);
-    twin.mutation_outcome(KEY, OutboxOutcome::Confirmed { revision: 7 });
+    twin.mutation_outcome(KEY, OutboxOutcome::Confirmed { revision: 7, result: None });
     let out = twin.commit();
     assert_eq!((twin.stage(id), out.deletes(), out.round_idle()), (TransferStage::Done, 1, vec![id]), "the local copy goes after the write");
     let (reply, out) = twin.outcome(id, 1);
-    assert_eq!(out.replies(reply), vec![TransferAnswer::Outcome(OutboxOutcome::Confirmed { revision: 7 })]);
+    assert_eq!(out.replies(reply), vec![TransferAnswer::Outcome(OutboxOutcome::Confirmed { revision: 7, result: None })]);
 }
 
 #[test]
@@ -297,7 +297,7 @@ fn xfer_failed_other() {
     inputs.extend([
         TransferInput::StepOk { transfer_id: id, attempt_id, part: Some(1), upload_id: None, etag: None },
         TransferInput::Completed { transfer_id: id, attempt_id, signed_id: None },
-        TransferInput::MutationOutcome { key: KEY.into(), outcome: OutboxOutcome::Confirmed { revision: 1 } },
+        TransferInput::MutationOutcome { key: KEY.into(), outcome: OutboxOutcome::Confirmed { revision: 1, result: None } },
         TransferInput::Online(Online(false)),
         TransferInput::PowerSaving(true),
         TransferInput::SlotFreed,

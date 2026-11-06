@@ -203,7 +203,7 @@ impl TransferState {
         let Some(id) = self.mutating(key) else { return };
         let waiting = self.transfers.get(&id).is_some_and(|transfer| !transfer.discard_waiters.is_empty());
         match outcome {
-            OutboxOutcome::Confirmed { revision } => self.remove_with_batch(id, Removal::Confirmed { revision }, fx),
+            OutboxOutcome::Confirmed { revision, .. } => self.remove_with_batch(id, Removal::Confirmed { revision }, fx),
             OutboxOutcome::Discarded => self.remove_with_batch(id, Removal::Discarded, fx),
             OutboxOutcome::Rejected { .. } if waiting => self.remove_with_batch(id, Removal::Discarded, fx),
             OutboxOutcome::Failed { .. } if waiting => {}

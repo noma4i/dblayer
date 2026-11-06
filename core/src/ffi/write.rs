@@ -241,7 +241,7 @@ impl Database {
             Err(error) => return Err(error),
         };
         Ok(match answer {
-            OutboxOutcome::Confirmed { .. } => {
+            OutboxOutcome::Confirmed { result, .. } => {
                 let landed = match self.await_life(self.life.landed_row(receipt.epoch, ticket.op_id)).await {
                     Ok(LifeReply::Outbox(OutboxAnswer::Resolved(row))) => id(&row).ok(),
                     _ => None,
@@ -254,7 +254,7 @@ impl Database {
                     }
                     _ => None,
                 };
-                WireOperationOutcome::Confirmed { value: value.or(receipt.optimistic_value), answer_json: None }
+                WireOperationOutcome::Confirmed { value: value.or(receipt.optimistic_value), answer_json: result }
             }
             OutboxOutcome::Rejected { error } | OutboxOutcome::Failed { error } => WireOperationOutcome::Rejected { failure: failure_of(&error) },
             OutboxOutcome::Discarded | OutboxOutcome::Interrupted => WireOperationOutcome::Interrupted,

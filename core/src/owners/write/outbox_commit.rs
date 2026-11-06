@@ -63,7 +63,8 @@ impl OutboxState {
                 if let Some(operation) = self.ops.get(&op_id).filter(|operation| !operation.stale.is_empty()) {
                     fx.push(Effect::Run(OutboxEffect::Stale { families: operation.stale.clone(), revision }));
                 }
-                self.finish(op_id, OutboxOutcome::Confirmed { revision }, true, fx);
+                let result = self.ops.get(&op_id).and_then(|operation| operation.result.clone());
+                self.finish(op_id, OutboxOutcome::Confirmed { revision, result }, true, fx);
             }
             (CommitKind::Rollback, Stage::RollingBack(why)) => {
                 for reply in Self::take_waiters(&mut self.discard_waiters, op_id) {
@@ -107,7 +108,7 @@ impl OutboxState {
                 let receipt = self.receipt(op_id, revision);
                 Self::reply(fx, reply, OutboxAnswer::Receipt(receipt));
             }
-            self.finish(op_id, OutboxOutcome::Confirmed { revision }, false, fx);
+            self.finish(op_id, OutboxOutcome::Confirmed { revision, result: None }, false, fx);
         }
     }
 

@@ -26,7 +26,7 @@ pub struct DecodeJob {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Decoded {
     /// The rows of the answer by model and the pair of a swap.
-    Land { rows: Vec<(String, Vec<RowValue>)>, swap: Option<(String, String)>, stale: Vec<(String, String)> },
+    Land { rows: Vec<(String, Vec<RowValue>)>, swap: Option<(String, String)>, stale: Vec<(String, String)>, result: Option<String> },
     /// The server refused or the answer cannot be read. A temporary refusal is sent again.
     Refused { temporary: bool, detail: String },
 }
@@ -41,7 +41,7 @@ pub fn decode_answer(db: &Db, root_of: &dyn Fn(&str) -> Option<String>, job: &De
     let Ok(answer) = serde_json::from_str::<crate::transport::Response>(&job.body) else { return refused("the answer is not a GraphQL response") };
     if !answer.errors.is_empty() && job.action == "destroy" && answer.errors.iter().all(|error| error.code() == Some("NOT_FOUND")) {
         let stale = db.spec(&job.model).map(|spec| spec.relations.iter().filter(|relation| relation.remote.is_some()).map(|relation| (job.model.clone(), relation.name.clone())).collect()).unwrap_or_default();
-        return Decoded::Land { rows: Vec::new(), swap: None, stale };
+        return Decoded::Land { rows: Vec::new(), swap: None, stale, result: None };
     }
     if !answer.errors.is_empty() {
         let messages: Vec<&str> = answer.errors.iter().map(|error| error.message.as_str()).collect();
@@ -52,7 +52,7 @@ pub fn decode_answer(db: &Db, root_of: &dyn Fn(&str) -> Option<String>, job: &De
     let declared = spec.actions.iter().find(|declared| declared.name == job.action);
     let stale: Vec<(String, String)> = declared.iter().flat_map(|declared| &declared.refetch).map(|name| name.split_once('.').map_or_else(|| (job.model.clone(), name.clone()), |(model, relation)| (model.to_string(), relation.to_string()))).collect();
     if job.action == "destroy" || declared.is_some_and(|declared| declared.ignore_response) {
-        return Decoded::Land { rows: Vec::new(), swap: None, stale };
+        return Decoded::Land { rows: Vec::new(), swap: None, stale, result: None };
     }
     let default_root = declared.and_then(|declared| declared.mutation.as_deref()).and_then(root_of);
     let Some(root) = declared.and_then(|declared| declared.root.clone()).or(default_root) else { return refused(format!("{}.{} has no answer root", job.model, job.action)) };
@@ -95,5 +95,28 @@ pub fn decode_answer(db: &Db, root_of: &dyn Fn(&str) -> Option<String>, job: &De
         let Some(id) = row.get("id").and_then(read_id) else { continue };
         by_model.entry(model).or_default().push(RowValue { row_id: id.to_string(), values: Value::Object(row.clone()).to_string() });
     }
-    Decoded::Land { rows: by_model.into_iter().collect(), swap, stale }
+    let result = declared.filter(|declared| !declared.result.is_empty()).map(|declared| returns_of(&data, default_root_of(declared.mutation.as_deref().and_then(root_of), root), &declared.result));
+    Decoded::Land { rows: by_model.into_iter().collect(), swap, stale, result }
+}
+
+/// The object that carries the `returns` fields: the root field of the mutation, else the parent of the row root.
+fn default_root_of(mutation_root: Option<String>, row_root: &str) -> String {
+    mutation_root.unwrap_or_else(|| row_root.rsplit_once('.').map_or_else(|| row_root.to_string(), |(parent, _)| parent.to_string()))
+}
+
+/// The fields of the `returns` block read from the root of the answer: a field the answer lacks is null, an `id` is text.
+fn returns_of(data: &Value, container: String, fields: &BTreeMap<String, String>) -> String {
+    let source = root_value(data, &container);
+    let values: serde_json::Map<String, Value> = fields
+        .iter()
+        .map(|(name, kind)| {
+            let value = source.and_then(|root| root.get(name)).cloned().unwrap_or(Value::Null);
+            let value = match (kind.as_str(), &value) {
+                ("id", Value::Number(number)) => Value::String(number.to_string()),
+                _ => value,
+            };
+            (name.clone(), value)
+        })
+        .collect();
+    Value::Object(values).to_string()
 }
