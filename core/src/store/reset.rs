@@ -367,6 +367,7 @@ impl Store {
         clear_intent(&transaction)?;
         let operations = crate::operation::read_queue(&transaction)?;
         transaction.commit()?;
+        self.publish_revision(revision);
         *inner.poison.lock().unwrap_or_else(|error| error.into_inner()) = None;
         drop(readers);
         let event = StoreEvent::Reset { revision, models: None, operations: operations.clone() };
@@ -394,6 +395,7 @@ impl Store {
         clear_intent(&transaction)?;
         let operations = crate::operation::read_queue(&transaction)?;
         transaction.commit()?;
+        self.publish_revision(revision);
         *inner.poison.lock().unwrap_or_else(|error| error.into_inner()) = None;
         drop(readers);
         let event = StoreEvent::Reset { revision, models: Some(models.to_vec()), operations: operations.clone() };
@@ -457,6 +459,7 @@ impl Store {
         }
         let revision = bump_revision(&transaction)?;
         transaction.commit()?;
+        self.publish_revision(revision);
         Ok(revision)
     }
 }

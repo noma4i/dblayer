@@ -1,6 +1,9 @@
 //! The `delivery` machine as code: one match arm per table row. No library code.
 //! A row is `(id, stamp)`: the stamp changes when the content of the row changes. The reference gives an effect list, a value a `Pull` reads is the effect `Answer`.
 
+#[path = "ref_delivery_tail.rs"]
+mod ref_delivery_tail;
+
 use std::collections::VecDeque;
 
 pub(super) const JOURNAL_LIMIT: usize = 256;
@@ -37,6 +40,7 @@ pub(super) enum Cause {
     Closed,
     Cancelled,
     Invalid,
+    Storage,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -83,6 +87,7 @@ pub(super) enum Input {
     ModelEvent { position: u64, payload: String },
     ModelLost { first: u64, last: u64 },
     ModelGap,
+    Resync,
     Transfer { state: String },
     Retry { attempts: u32 },
     Pull,
@@ -158,6 +163,8 @@ pub(super) struct Delivery {
     pub(super) journal: VecDeque<Val>,
     revision: i64,
     acknowledged: Option<i64>,
+    resync_pending: bool,
+    resync_failed: bool,
     rows: Vec<Row>,
     acked_rows: Vec<Row>,
     count: Option<u64>,
@@ -193,6 +200,8 @@ impl Delivery {
             journal: VecDeque::new(),
             revision: 0,
             acknowledged: None,
+            resync_pending: false,
+            resync_failed: false,
             rows: Vec::new(),
             acked_rows: Vec::new(),
             count: None,
@@ -420,6 +429,14 @@ impl Delivery {
             }
             (Stage::Live, Input::ReadDone { revision, rows }) if self.kind.reads_rows() && self.kind != Kind::Count => {
                 self.read_seen = self.read_seen.max(revision);
+                if self.resync_pending {
+                    self.resync_pending = false;
+                    self.rows = rows.clone();
+                    self.revision = revision;
+                    let state = self.state_at(revision);
+                    self.append(Val::Snapshot { revision, rows: rows.into_iter().map(|(id, _)| id).collect(), state }, fx);
+                    return;
+                }
                 self.live_rows(revision, rows, fx)
             }
             (Stage::Live, Input::CountDone { revision, count }) if self.kind == Kind::Count => {
@@ -433,6 +450,15 @@ impl Delivery {
                 self.append(Val::Count { revision: shown, count, state }, fx);
             }
             (Stage::Live, Input::ReadFailed { revision }) if self.kind.reads_rows() => {
+                if self.resync_pending {
+                    if self.resync_failed { self.end_now(Cause::Storage, fx); return; }
+                    self.resync_failed = true;
+                    let phase = if self.rows.is_empty() { Phase::Failed } else { Phase::Loaded };
+                    self.window = Ws { phase, error: true, loaded: self.window.loaded };
+                    self.append(Val::State { revision: self.revision, state: self.window.clone() }, fx);
+                    fx.push(Effect::Read(self.revision));
+                    return;
+                }
                 if revision <= self.revision { return; }
                 let phase = if self.rows.is_empty() { Phase::Failed } else { Phase::Loaded };
                 let state = Ws { phase, error: true, loaded: self.window.loaded };
@@ -465,6 +491,13 @@ impl Delivery {
             (Stage::Live, Input::Retry { attempts }) if self.kind == Kind::Retry => self.retry(attempts, fx),
             (Stage::Live, Input::ModelsReset { own_model }) => {
                 if own_model && self.kind.reads_rows() { fx.push(Effect::Read(self.revision)); }
+            }
+            (Stage::Live, Input::Resync) if matches!(self.kind, Kind::List | Kind::Entity(_)) => {
+                self.acknowledged = None;
+                self.resync_failed = false;
+                self.resync_pending = true;
+                self.journal.retain(|v| !matches!(v, Val::Snapshot { .. } | Val::Delta { .. } | Val::State { .. }));
+                fx.push(Effect::Read(self.revision));
             }
             (Stage::Live, Input::Pull) => {
                 if self.waiting { fx.push(Effect::Answer(Pulled::Invalid)); }
@@ -507,91 +540,4 @@ impl Delivery {
         }
     }
 
-    fn dead_on_open(&mut self, cause: Cause, fx: &mut Vec<Effect>) {
-        self.stage = Stage::Ended;
-        self.cause = cause;
-        self.sink_closed = true;
-        self.journal.push_back(Val::Ended(cause));
-        fx.push(Effect::Available);
-    }
-
-    fn same_rows(&mut self, read: i64, fx: &mut Vec<Effect>) {
-        if self.held_state.as_ref().is_some_and(|held| held.visible_after() <= read) {
-            let state = self.state_at(read);
-            self.append(Val::State { revision: self.revision, state }, fx);
-        }
-    }
-
-    /// D-73: the value carries the revision of the last commit that touched the stream; a read nobody asked a commit for carries what it saw.
-    fn shown_revision(&self, seen: i64) -> i64 { if self.read_revision > self.revision { self.read_revision.min(seen) } else { seen } }
-
-    fn live_rows(&mut self, seen: i64, rows: Vec<Row>, fx: &mut Vec<Effect>) {
-        if seen <= self.revision { return; }
-        if rows == self.rows { self.same_rows(seen, fx); return; }
-        let state = self.state_at(seen);
-        let revision = self.shown_revision(seen);
-        let old = std::mem::replace(&mut self.rows, rows.clone());
-        self.revision = revision;
-        let unread_snapshot = self.journal.iter().any(|kept| matches!(kept, Val::Snapshot { .. }));
-        let ids: Vec<String> = rows.iter().map(|(id, _)| id.clone()).collect();
-        let Some(base) = self.acknowledged.filter(|_| !unread_snapshot) else {
-            self.append(Val::Snapshot { revision, rows: ids, state }, fx);
-            return;
-        };
-        let base_rows = if self.acked_rows.is_empty() && old.is_empty() { Vec::new() } else { self.acked_rows.clone() };
-        let upserted: Vec<String> = rows.iter().filter(|row| !base_rows.contains(row)).map(|(id, _)| id.clone()).collect();
-        let removed: Vec<String> = base_rows.iter().filter(|(id, _)| !rows.iter().any(|(now, _)| now == id)).map(|(id, _)| id.clone()).collect();
-        if upserted.len() + removed.len() > DELTA_LIMIT {
-            self.append(Val::Snapshot { revision, rows: ids, state }, fx);
-        } else {
-            self.append(Val::Delta { base, revision, size: rows.len(), upserted, removed, state }, fx);
-        }
-    }
-
-    fn replay(&mut self, fx: &mut Vec<Effect>) {
-        for held in std::mem::take(&mut self.held_events) {
-            match held {
-                Held::Event(position, payload) => self.event(position, payload, fx),
-                Held::Lost(first, last) => self.lost(first, last, fx),
-                Held::Gap => if self.next_feed.is_none() || !self.ready { self.held_events.push(Held::Gap); } else { self.append(Val::Gap, fx); },
-            }
-        }
-    }
-
-    fn event(&mut self, position: u64, payload: String, fx: &mut Vec<Effect>) {
-        let Some(next) = self.next_feed.filter(|_| self.ready) else { self.held_events.push(Held::Event(position, payload)); return; };
-        if position < next { return; }
-        if position > next {
-            let gap = position - next;
-            self.append(Val::Lost { first: self.position + 1, last: self.position + gap }, fx);
-            self.position += gap;
-        }
-        self.position += 1;
-        self.append(Val::Event { position: self.position, payload }, fx);
-        self.next_feed = Some(position + 1);
-    }
-
-    fn lost(&mut self, first: u64, last: u64, fx: &mut Vec<Effect>) {
-        let Some(next) = self.next_feed.filter(|_| self.ready) else { self.held_events.push(Held::Lost(first, last)); return; };
-        if last < next { return; }
-        let count = last - first.max(next) + 1;
-        self.append(Val::Lost { first: self.position + 1, last: self.position + count }, fx);
-        self.position += count;
-        self.next_feed = Some(last + 1);
-    }
-
-    fn status(&mut self, state: String, fx: &mut Vec<Effect>) {
-        if self.last_status.as_ref() == Some(&state) { return; }
-        self.stage = Stage::Live;
-        self.status_revision += 1;
-        self.last_status = Some(state.clone());
-        self.append(Val::Status { revision: self.status_revision, state }, fx);
-    }
-
-    fn retry(&mut self, attempts: u32, fx: &mut Vec<Effect>) {
-        if self.last_retry == Some(attempts) { return; }
-        self.stage = Stage::Live;
-        self.last_retry = Some(attempts);
-        self.append(Val::Retry { attempts }, fx);
-    }
 }

@@ -66,13 +66,14 @@ fn rig() -> Rig {
     let windows_slot = det.add::<Sink<Windows>>("windows", windows.clone(), Discard);
     let feed_slot = det.add::<Sink<Feed>>("feed", new_log(), Discard);
     let peers = d::DeliveryPeers { windows: Address::<Windows>::new(windows_slot.index()), feed: Address::<Feed>::new(feed_slot.index()) };
-    let owner = det.add::<Deliveries>("deliveries", d::DeliveriesState::new(EPOCH, peers), io);
+    let owner = det.add::<Deliveries>("deliveries", d::DeliveriesState::new(EPOCH, peers, Default::default()), io);
     det.start_epoch(EPOCH);
     Rig { det, owner, answers, windows, rest, writer, _dir: dir, _runtime: runtime }
 }
 
 fn open(rig: &mut Rig, revision: i64) {
-    rig.det.post(rig.owner, EpochStamp::Epoch(EPOCH), DeliveryInput::Open { stream: STREAM, view: view(), epoch: EPOCH, revision, identity: true, valid: true });
+    rig.det.post(rig.owner, EpochStamp::Epoch(EPOCH), DeliveryInput::Open { stream: STREAM, view: view(), epoch: EPOCH, identity: true, valid: true });
+    rig.det.post(rig.owner, EpochStamp::Epoch(EPOCH), DeliveryInput::Committed(crate::owners::contract::Committed { batch: 0, revision, tables: vec!["row_people".into()], models: Default::default() }));
     let loaded = WindowState { phase: WindowPhase::Loaded, error: None, loaded: Some(revision), has_more: false, settled: true, total: None };
     rig.det.post(rig.owner, EpochStamp::Epoch(EPOCH), DeliveryInput::WindowState { stream: STREAM, state: loaded });
 }

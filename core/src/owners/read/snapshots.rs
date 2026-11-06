@@ -16,6 +16,7 @@ pub trait SnapshotStatements: Send + Sync + 'static {
 }
 
 pub trait Snapshots: Send + Sync + 'static {
+    fn opening(&self, _view: &View, _stamp: crate::runtime::EpochStamp) {}
     /// The data of `view` in the snapshot of the read and the revision of that snapshot, never older than `revision`. `replaced` lists the temporary ids swapped for server ids after the revision `after`.
     fn read(&self, view: &View, revision: i64, after: i64) -> Result<(i64, ReadData), String>;
 }
@@ -64,11 +65,13 @@ impl Snapshots for SqliteSnapshots {
 /// Reads of the snapshot through `Db`: the query of the view runs in the read pool, the rows of the answer are ids with their stamps.
 pub struct DbSnapshots {
     db: crate::db::Db,
+    windows: crate::runtime::Address<super::windows::Windows>,
+    owners: crate::runtime::Handle,
     wires: Mutex<std::collections::HashMap<String, Arc<crate::ffi::wire::WireModel>>>,
 }
 
 impl DbSnapshots {
-    pub fn new(db: crate::db::Db) -> Self { Self { db, wires: Mutex::new(std::collections::HashMap::new()) } }
+    pub fn new(db: crate::db::Db, windows: crate::runtime::Address<super::windows::Windows>, owners: crate::runtime::Handle) -> Self { Self { db, windows, owners, wires: Mutex::new(std::collections::HashMap::new()) } }
 
     fn wire(&self, model: &str) -> Result<Arc<crate::ffi::wire::WireModel>, String> {
         if let Some(wire) = self.wires.lock().unwrap_or_else(PoisonError::into_inner).get(model) {
@@ -81,6 +84,16 @@ impl DbSnapshots {
 }
 
 impl Snapshots for DbSnapshots {
+    fn opening(&self, view: &View, stamp: crate::runtime::EpochStamp) {
+        if !view.remote { return; }
+        let super::windows::WindowKind::Relation { relation, params } = view.window.kind() else { return };
+        let now = self.db.shared.store.lock().now_ms();
+        if self.db.window_expired(&view.model, &relation, &params, now).unwrap_or(false) {
+            let keys = super::windows::StaleKeys::Set(std::collections::BTreeSet::from([view.window.clone()]));
+            self.owners.post(self.windows, stamp, super::windows::WindowsInput::Stale { model: view.model.clone(), keys });
+        }
+    }
+
     fn read(&self, view: &View, revision: i64, after: i64) -> Result<(i64, ReadData), String> {
         let (query, count) = match view.kind {
             Kind::List => (self.db.parse_query(&view.subject).map_err(|error| error.to_string())?.0, false),

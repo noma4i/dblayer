@@ -240,6 +240,7 @@ impl Db {
         let dropped = boot.dropped.into_iter().map(|row| DroppedRecord { table: row.table, key: row.key, reason: row.reason.to_string() }).collect();
         let opened = OpenReport { recreated: if unreadable { Some(RecreateReason::UnreadableFile) } else { boot.recreated }, changed_models, reset_models, dropped };
         recover_operations(&store, &models, opened.recreated.is_none())?;
+        store.publish_revision(store.revision_seq()?);
         store.mark_ready();
         let ephemeral = Ephemerals::new(&models);
         let pointer_guards = pointer_guards(&models);

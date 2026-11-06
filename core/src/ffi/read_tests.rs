@@ -21,6 +21,45 @@ async fn next(stream: &ReadStream) -> ReadValue { tokio::time::timeout(LIMIT, st
 fn ids(rows: &[super::WireRow]) -> Vec<&str> { rows.iter().map(|row| row.id.as_str()).collect() }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn dlv_prop_first_value_off_caller() {
+    let db = open().await;
+    let epoch = db.session_epoch();
+    db.create(epoch, "Note".into(), r#"{"id":"n1"}"#.into(), "{}".into()).await.unwrap();
+    assert_eq!(db.db.shared.store.published_revision().load(std::sync::atomic::Ordering::Acquire), db.db.revision_seq().unwrap());
+    let caller = std::thread::current().id();
+    db.db.shared.store.read_threads.lock().unwrap().clear();
+    let stream = db.subscribe_values(epoch, ReadRequest::List { query_json: r#"{"model":"Note"}"#.into() });
+    let reads = db.db.shared.store.read_threads.lock().unwrap().clone();
+    assert!(!reads.contains(&caller), "SQLite reads must run outside the caller");
+    assert!(matches!(crate::test_wait::within(stream.pull()).await.unwrap(), Some(ReadValue::Snapshot { .. })));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn dlv_prop_resync_ends() {
+    let db = open().await;
+    let stream = db.subscribe_values(db.session_epoch(), ReadRequest::List { query_json: r#"{"model":"Note"}"#.into() });
+    let ReadValue::Snapshot { revision, .. } = crate::test_wait::within(stream.pull()).await.unwrap().unwrap() else { panic!("first snapshot") };
+    stream.resync();
+    let ReadValue::Snapshot { revision: recovered, .. } = crate::test_wait::within(stream.pull()).await.unwrap().unwrap() else { panic!("resync snapshot") };
+    assert!(recovered >= revision);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn dlv_prop_one_change_every_view() {
+    let db = open().await;
+    let epoch = db.session_epoch();
+    let list = db.subscribe_values(epoch, ReadRequest::List { query_json: r#"{"model":"Note"}"#.into() });
+    let count = db.subscribe_values(epoch, ReadRequest::Count { query_json: r#"{"model":"Note"}"#.into() });
+    let entity = db.subscribe_values(epoch, ReadRequest::Entity { model: "Note".into(), id: "n1".into(), fetch: super::ReadFetch::Never });
+    for stream in [&list, &count, &entity] { crate::test_wait::within(stream.pull()).await.unwrap().unwrap(); }
+    db.create(epoch, "Note".into(), r#"{"id":"n1","text":"one"}"#.into(), "{}".into()).await.unwrap();
+    let list_revision = match crate::test_wait::within(list.pull()).await.unwrap().unwrap() { ReadValue::Delta { revision, .. } | ReadValue::Snapshot { revision, .. } => revision, value => panic!("{value:?}") };
+    let count_revision = match crate::test_wait::within(count.pull()).await.unwrap().unwrap() { ReadValue::Count { revision, count: 1, .. } => revision, value => panic!("{value:?}") };
+    let entity_revision = match crate::test_wait::within(entity.pull()).await.unwrap().unwrap() { ReadValue::Delta { revision, .. } | ReadValue::Snapshot { revision, .. } => revision, value => panic!("{value:?}") };
+    assert_eq!((count_revision, entity_revision), (list_revision, list_revision));
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn a_list_stream_gives_a_snapshot_then_a_delta_with_the_final_order() {
     let db = open().await;
     let epoch = db.session_epoch();

@@ -34,12 +34,13 @@ pub struct ReadState {
     pub total: Option<u64>,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, uniffi::Enum)]
+#[derive(Clone, Debug, PartialEq, Eq, uniffi::Enum)]
 pub enum ReadEnd {
     SessionEnded,
     Closed,
     Cancelled,
     Invalid,
+    Storage { error: String },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
@@ -117,6 +118,7 @@ fn end_of(cause: EndCause) -> ReadEnd {
         EndCause::Closed => ReadEnd::Closed,
         EndCause::Cancelled => ReadEnd::Cancelled,
         EndCause::Invalid => ReadEnd::Invalid,
+        EndCause::Storage { error } => ReadEnd::Storage { error },
     }
 }
 
@@ -192,6 +194,8 @@ impl ReadStream {
 
 #[uniffi::export]
 impl ReadStream {
+    pub fn resync(&self) { self.life.resync_stream(self.stream); }
+
     /// The next value of the stream, `None` once the stream ended and its last value was taken.
     pub async fn pull(&self) -> Result<Option<ReadValue>, DbError> {
         match self.life.pull(self.stream).wait().await {
@@ -277,16 +281,6 @@ impl Database {
 }
 
 impl Database {
-    /// A remote window older than its `stale_time` loads again when a stream opens on it.
-    fn stale_before_open(&self, view: &View) {
-        if !view.remote { return; }
-        let crate::owners::read::windows::WindowKind::Relation { relation, params } = view.window.kind() else { return };
-        let now = self.db.shared.store.lock().now_ms();
-        if self.db.window_expired(&view.model, &relation, &params, now).unwrap_or(false) {
-            self.life.stale_window(view.window.clone());
-        }
-    }
-
     /// Hands the status of the transfer of `key` to the stream at each change.
     fn watch_status(&self, stream: u64, key: &str) -> Option<tokio::task::AbortHandle> {
         let (shows, life, key) = (self.shows.clone(), Arc::downgrade(&self.life), key.to_string());
@@ -317,13 +311,11 @@ impl Database {
 
     pub fn subscribe_values(&self, epoch: u64, request: ReadRequest) -> Arc<ReadStream> {
         let stream = self.life.next_stream_id();
-        let opened = self.view_of(&request).and_then(|view| Ok((view, self.db.revision_seq()?)));
-        let (view, revision, valid) = match opened {
-            Ok((view, revision)) => (view, revision, true),
-            Err(_) => (View { kind: Kind::List, model: String::new(), tables: Vec::new(), local: true, remote: false, live: false, reload: false, window: WindowKey { model: String::new(), name: String::new() }, subject: String::new() }, 0, false),
+        let (view, valid) = match self.view_of(&request) {
+            Ok(view) => (view, true),
+            Err(_) => (View { kind: Kind::List, model: String::new(), tables: Vec::new(), local: true, remote: false, live: false, reload: false, window: WindowKey { model: String::new(), name: String::new() }, subject: String::new() }, false),
         };
-        if valid { self.stale_before_open(&view); }
-        self.life.open_stream(stream, view, epoch, revision, valid);
+        self.life.open_stream(stream, view, epoch, valid);
         let status = match (&request, valid) {
             (ReadRequest::Blob { key }, true) => self.watch_status(stream, key),
             _ => None,

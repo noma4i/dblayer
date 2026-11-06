@@ -90,7 +90,7 @@ pub(super) fn add(builder: &mut RuntimeBuilder, wiring: &Arc<Wiring>, ports: &Po
 
     let deliveries_wiring = wiring.clone();
     let delivery_io = DeliveryIo::new(
-        Arc::new(DbSnapshots::new(db.clone())),
+        Arc::new(DbSnapshots::new(db.clone(), windows_at, handle.clone())),
         wiring.pulls.clone(),
         ports.executor.clone(),
         Box::new(move |_stamp, effect| match effect {
@@ -102,7 +102,7 @@ pub(super) fn add(builder: &mut RuntimeBuilder, wiring: &Arc<Wiring>, ports: &Po
             DeliveryEffect::Stream { .. } => {}
         }),
     ).counted_by(handle.clone());
-    let deliveries = builder.add::<Deliveries>("deliveries", DeliveriesState::new(0, DeliveryPeers { windows: windows_at, feed: feed_at }), delivery_io);
+    let deliveries = builder.add::<Deliveries>("deliveries", DeliveriesState::new(0, DeliveryPeers { windows: windows_at, feed: feed_at }, db.shared.store.published_revision()), delivery_io);
     let feed_wiring = wiring.clone();
     let feed_rest: Rest<FeedEffect> = Box::new(move |_stamp, effect| match effect {
         FeedEffect::Drained(done) => drained(&feed_wiring, done),
@@ -174,12 +174,6 @@ impl super::Life {
     /// The keys of the schema declared `preload` start loading once their operations are registered.
     pub fn preload(&self, keys: Vec<WindowKey>) { self.wiring.to_windows(WindowsInput::PreloadKeys { keys }); }
 
-    /// The window of a stream that is about to open outlived its `stale_time`: Windows loads it again for the new interest.
-    pub fn stale_window(&self, key: WindowKey) {
-        let model = key.model.clone();
-        self.wiring.to_windows(WindowsInput::Stale { model, keys: crate::owners::read::windows::StaleKeys::Set(std::collections::BTreeSet::from([key])) });
-    }
-
     /// The platform calls that wait for an outcome of `Windows` now.
     #[cfg(test)]
     pub fn waiting_calls(&self) -> usize { self.wiring.outcomes.waiting() }
@@ -192,9 +186,11 @@ impl super::Life {
 
     pub fn next_stream_id(&self) -> StreamId { self.wiring.next_stream.fetch_add(1, std::sync::atomic::Ordering::SeqCst) }
 
-    pub fn open_stream(&self, stream: StreamId, view: View, epoch: Epoch, revision: i64, valid: bool) {
+    pub fn resync_stream(&self, stream: StreamId) { self.wiring.to_deliveries(DeliveryInput::Resync { stream }); }
+
+    pub fn open_stream(&self, stream: StreamId, view: View, epoch: Epoch, valid: bool) {
         let identity = self.published().identity.is_some();
-        self.wiring.to_deliveries(DeliveryInput::Open { stream, view, epoch, revision, identity, valid });
+        self.wiring.to_deliveries(DeliveryInput::Open { stream, view, epoch, identity, valid });
     }
 
     /// The next value of a stream: the answer comes with the next value of the journal.

@@ -196,6 +196,7 @@ pub struct Store {
     hook: OnceLock<StoreHook>,
     commit_log: OnceLock<CommitLog>,
     newest_operation: std::sync::atomic::AtomicI64,
+    committed_revision: Arc<std::sync::atomic::AtomicI64>,
     line: AnnounceLine,
     session_end_replay: std::sync::atomic::AtomicBool,
     #[cfg(test)]
@@ -236,6 +237,7 @@ impl Store {
             hook: OnceLock::new(),
             commit_log: OnceLock::new(),
             newest_operation: std::sync::atomic::AtomicI64::new(0),
+            committed_revision: Arc::new(std::sync::atomic::AtomicI64::new(0)),
             line: AnnounceLine::default(),
             #[cfg(test)]
             read_threads: Mutex::new(Vec::new()),
@@ -276,6 +278,7 @@ impl Store {
     }
 
     fn commit_announcement(&self, inner: MutexGuard<'_, Inner>, result: CommitResult) -> Committed<'_> {
+        if let Some(revision) = result.revision { self.committed_revision.store(revision, std::sync::atomic::Ordering::Release); }
         let renewal = result.is_noop();
         if renewal && result.renewed.is_empty() {
             return Committed::unannounced(result);
@@ -358,6 +361,10 @@ impl Store {
     pub fn revision_seq(&self) -> Result<i64, StoreError> {
         self.read(&[], |reader| reader.revision_seq())
     }
+
+    pub(crate) fn published_revision(&self) -> Arc<std::sync::atomic::AtomicI64> { self.committed_revision.clone() }
+
+    pub(crate) fn publish_revision(&self, revision: i64) { self.committed_revision.store(revision, std::sync::atomic::Ordering::Release); }
 }
 
 #[cfg(test)]
