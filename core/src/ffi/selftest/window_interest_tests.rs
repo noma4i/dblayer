@@ -27,10 +27,9 @@ async fn cancelling_one_load_interest_keeps_the_other_call_alive() {
     let first = rig.database.begin_load(epoch, "Moment".into(), "feed".into(), "{}".into()).unwrap();
     held.entered_for("the shared load").await;
     let second = rig.database.begin_load(epoch, "Moment".into(), "feed".into(), "{}".into()).unwrap();
-    for _ in 0..50 { tokio::task::yield_now().await; }
+    let issued = rig.database.loads.issued();
+    yield_until("the second interest is registered in the window", || rig.database.loads.registered_through(issued)).await;
     first.cancel();
-    for _ in 0..50 { tokio::task::yield_now().await; }
-    assert_eq!(feed_requests(&rig), 1, "the cancel of one interest sent a request");
     held.release();
     bound(second.result()).await.unwrap();
     assert_eq!(feed_requests(&rig), 1, "the second call sent a request of its own");
