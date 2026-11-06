@@ -10,6 +10,7 @@ use crate::runtime::{Address, Cause, Effect, StateOwner};
 fn state(epoch: u64) -> RoundsState {
     let mut state = RoundsState::new(Address::<Transfers>::new(2));
     state.current_epoch = epoch;
+    state.sink = true;
     state
 }
 
@@ -355,4 +356,44 @@ fn xfer_round_epoch_ended_other() {
     let (runs, sends) = step(&mut state, RoundsInput::EpochEnded(EpochEnded { epoch: 3, cause: Cause::SessionReset }));
     assert_eq!((runs.len(), sends.len(), state.active.contains_key(&3)), (0, 0, false), "the ids of the other epoch go");
     assert_eq!(state.round, Round::Running { round_id: 3, epoch: 2, next: None, ended: false }, "the next epoch that ended is not asked for");
+}
+
+#[test]
+fn xfer_round_no_sink() {
+    let mut state = RoundsState::new(Address::<Transfers>::new(2));
+    state.current_epoch = 1;
+    let (runs, sends) = step(&mut state, RoundsInput::Needed { epoch: 1, ids: vec![10] });
+    assert_eq!((runs.len(), sends.len(), state.round, state.active[&1].len()), (0, 0, Round::None, 1), "the need is kept, no job is asked for");
+}
+
+#[test]
+fn xfer_round_foreground_no_sink() {
+    let mut state = RoundsState::new(Address::<Transfers>::new(2));
+    state.current_epoch = 1;
+    busy(&mut state, 1, &[10]);
+    let (runs, _) = step(&mut state, RoundsInput::Foreground);
+    assert_eq!((runs.len(), state.round), (0, Round::None));
+}
+
+#[test]
+fn xfer_round_sink_set() {
+    let mut state = RoundsState::new(Address::<Transfers>::new(2));
+    state.current_epoch = 1;
+    step(&mut state, RoundsInput::Needed { epoch: 1, ids: vec![10] });
+    let (runs, _) = step(&mut state, RoundsInput::JobsSinkSet);
+    assert!(state.sink);
+    let asked = jobs(&runs);
+    assert_eq!((asked.len(), asked[0].1, state.round), (1, 1, Round::Requested { epoch: 1, request_id: asked[0].0 }));
+}
+
+#[test]
+fn xfer_round_sink_set_idle() {
+    let mut idle = RoundsState::new(Address::<Transfers>::new(2));
+    idle.current_epoch = 1;
+    let (runs, _) = step(&mut idle, RoundsInput::JobsSinkSet);
+    assert_eq!((runs.len(), idle.sink, idle.round), (0, true, Round::None), "nothing waits");
+    let mut set = state(1);
+    let request_id = requested(&mut set, 1, &[10]);
+    let (runs, _) = step(&mut set, RoundsInput::JobsSinkSet);
+    assert_eq!((runs.len(), set.round), (0, Round::Requested { epoch: 1, request_id }), "a second call changes nothing");
 }

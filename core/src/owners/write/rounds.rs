@@ -16,6 +16,8 @@ pub enum RoundsInput {
     Needed { epoch: Epoch, ids: Vec<TransferId> },
     Idle { epoch: Epoch, transfer_id: TransferId },
     Foreground,
+    /// The platform gave the sink of the jobs (`set_round_jobs`).
+    JobsSinkSet,
     RoundStarted { request_id: RequestId, round_id: RoundId, epoch: Epoch },
     RoundRefused { request_id: RequestId, epoch: Epoch, reason: String },
     RoundEnded { round_id: RoundId, epoch: Epoch },
@@ -48,6 +50,8 @@ pub struct RoundsState {
     pub current_epoch: Epoch,
     pub active: BTreeMap<Epoch, BTreeSet<TransferId>>,
     pub round: Round,
+    /// False until the platform sets the sink of the jobs: no job is asked for before.
+    pub sink: bool,
     next_request: RequestId,
     drained: bool,
 }
@@ -55,7 +59,7 @@ pub struct RoundsState {
 type Fx = Effects<Rounds>;
 
 impl RoundsState {
-    pub fn new(transfer: Address<Transfers>) -> Self { Self { transfer, current_epoch: 0, active: BTreeMap::new(), round: Round::None, next_request: 1, drained: false } }
+    pub fn new(transfer: Address<Transfers>) -> Self { Self { transfer, current_epoch: 0, active: BTreeMap::new(), round: Round::None, sink: false, next_request: 1, drained: false } }
 
     fn busy(&self, epoch: Epoch) -> bool { self.active.get(&epoch).is_some_and(|ids| !ids.is_empty()) }
 
@@ -84,6 +88,9 @@ impl RoundsState {
             return;
         }
         self.active.entry(epoch).or_default().extend(ids);
+        if !self.sink {
+            return;
+        }
         match self.round {
             Round::None => self.request(epoch, fx),
             Round::Requested { epoch: asked, .. } if asked != epoch => self.request(epoch, fx),
@@ -94,6 +101,9 @@ impl RoundsState {
     }
 
     fn foreground(&mut self, fx: &mut Fx) {
+        if !self.sink {
+            return;
+        }
         let epoch = self.current_epoch;
         let waits = match self.round {
             Round::None => true,
@@ -102,6 +112,17 @@ impl RoundsState {
         };
         if waits && self.busy(epoch) {
             self.resume(epoch, fx);
+        }
+    }
+
+    /// `JobsSinkSet`: the work that waited for the sink asks for its job now.
+    fn sink_set(&mut self, fx: &mut Fx) {
+        if std::mem::replace(&mut self.sink, true) {
+            return;
+        }
+        let epoch = self.current_epoch;
+        if self.round == Round::None && self.busy(epoch) {
+            self.request(epoch, fx);
         }
     }
 
@@ -179,6 +200,7 @@ impl StateOwner for Rounds {
                 }
             }
             RoundsInput::Foreground => state.foreground(&mut fx),
+            RoundsInput::JobsSinkSet => state.sink_set(&mut fx),
             RoundsInput::RoundStarted { request_id, round_id, epoch } => state.started(request_id, round_id, epoch, &mut fx),
             RoundsInput::RoundRefused { request_id, epoch, reason } => state.refused(request_id, epoch, reason, &mut fx),
             RoundsInput::RoundEnded { round_id, epoch } => state.ended(round_id, epoch, &mut fx),

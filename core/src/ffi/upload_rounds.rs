@@ -46,7 +46,10 @@ impl RoundJobsSlot {
 
 #[uniffi::export]
 impl Database {
-    pub fn set_round_jobs(&self, sink: Arc<dyn RoundJobsSink>) { let _ = self.jobs.set(sink); }
+    pub fn set_round_jobs(&self, sink: Arc<dyn RoundJobsSink>) { if self.jobs.set(sink) {
+            self.life.jobs_sink_set();
+        }
+    }
 
     pub fn round_started(&self, request_id: u64, round_id: u32, epoch: u64) { self.life.round_started(request_id, round_id, epoch); }
 

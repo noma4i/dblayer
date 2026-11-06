@@ -29,6 +29,8 @@ impl Life {
 
     pub fn upload_outcome(&self, epoch: Epoch, receipt: Receipt) -> Waiter<LifeReply> { self.transfer_call(epoch, |reply| TransferInput::Outcome { receipt, reply }) }
 
+    pub fn jobs_sink_set(&self) { self.wiring.to_rounds(RoundsInput::JobsSinkSet); }
+
     pub fn round_started(&self, request_id: u64, round_id: u32, epoch: Epoch) { self.wiring.to_rounds(RoundsInput::RoundStarted { request_id, round_id, epoch }); }
 
     pub fn round_refused(&self, request_id: u64, epoch: Epoch, reason: String) { self.wiring.to_rounds(RoundsInput::RoundRefused { request_id, epoch, reason }); }
