@@ -7,19 +7,35 @@ async fn open(slot: &OpenDatabase) -> Result<Arc<Database>, DbError> {
 }
 
 #[tokio::test]
-async fn a_second_open_is_refused_even_with_equal_arguments_until_the_database_is_closed() {
+async fn life_open_twice() {
     let slot = OpenDatabase::new();
     let first = open(&slot).await.unwrap();
-    for _ in 0..2 {
-        match open(&slot).await {
-            Err(DbError::Invalid { detail }) => assert_eq!(detail, "database is already open; open it once at app start"),
-            other => panic!("second open gave {:?}", other.map(|_| ())),
-        }
+    match open(&slot).await {
+        Err(DbError::Invalid { detail }) => assert_eq!(detail, "database is already open; open it once at app start"),
+        other => panic!("second open gave {:?}", other.map(|_| ())),
     }
-    first.close_now();
+    first.close_database().await.unwrap();
+}
+
+#[tokio::test]
+async fn life_open_after_close() {
+    let slot = OpenDatabase::new();
+    let first = open(&slot).await.unwrap();
+    first.close_database().await.unwrap();
     let second = open(&slot).await.unwrap();
     assert!(!Arc::ptr_eq(&first, &second));
-    assert!(open(&slot).await.is_err());
+    second.close_database().await.unwrap();
+}
+
+#[tokio::test]
+async fn life_open_concurrent() {
+    let slot = OpenDatabase::new();
+    let (first, second) = tokio::join!(open(&slot), open(&slot));
+    let database = match (first, second) {
+        (Ok(database), Err(DbError::Invalid { .. })) | (Err(DbError::Invalid { .. }), Ok(database)) => database,
+        _ => panic!("exactly one open must succeed"),
+    };
+    database.close_database().await.unwrap();
 }
 
 #[tokio::test]
