@@ -274,6 +274,7 @@ async fn network_events_reach_the_listeners_with_the_snapshot_of_the_epoch() {
     let db = Db::open_in_memory(vec![moments_spec()], None).unwrap();
     let transport = Arc::new(MockTransport::new());
     let life = start(&db, &transport).await;
+    assert!(life.barrier(std::time::Duration::from_secs(5)), "the owners handled the snapshots of the first epoch");
     let heard: Arc<Mutex<Vec<(Peer, NetworkEvent)>>> = Arc::default();
     for owner in [Peer::Rounds, Peer::Session, Peer::Transfer] {
         let heard = heard.clone();
