@@ -59,6 +59,37 @@ pub(super) async fn rig(server_key: &str, pin: &str) -> (Arc<Database>, Arc<Fake
     (database, server, credentials)
 }
 
+#[tokio::test(flavor = "multi_thread")]
+async fn session_resume_returns_the_restored_call_once() {
+    use crate::test_wait::within;
+    use crate::transport::encrypted::{jwe, state};
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("session.sqlite");
+    let server = FakeServer::new(Arc::new(SystemClock));
+    let credentials = Arc::new(MemoryCredentials::default());
+    let config = || Config { path: Some(path.to_string_lossy().into_owned()), data_version: None, cache_rows: 8 };
+    let open = || Database::open(config(), "[]".into(), Some(Arc::new(SubscriptionsOnly)), Some(crate::transport::encrypted::protocol_tests::config()), Some(Arc::new(Held(credentials.clone()))), Some(Arc::new(ThroughServer(server.clone()))), None);
+    let database = within(open()).await.unwrap();
+    database.set_online(true).unwrap();
+    within(database.session_call("social".into(), "{}".into())).await.unwrap();
+    within(database.close_database()).await.unwrap();
+    drop(database);
+    let request_id = "3f1c2a52-9d3e-4b7a-8a11-0123456789ab";
+    {
+        let db = crate::db::Db::open(&path, vec![], None).unwrap();
+        let inner = db.shared.store.lock();
+        let session = state::session(&inner.connection).unwrap().unwrap();
+        let pending = state::Pending { credential_digest: session.credential_digest, request_id: request_id.into(), response_key: jwe::random_token(), sequence: session.sequence + 1, path: "/api/auth/otp".into(), body: "{}".into(), owner: None, purpose: crate::transport::NetworkPurpose::Standard, req_id: 11 };
+        state::store_pending(&inner.connection, &pending).unwrap();
+    }
+    let database = within(open()).await.unwrap();
+    database.set_online(true).unwrap();
+    assert_eq!(within(database.session_resume()).await.unwrap(), Some(r#"{"nextStep":"authenticated"}"#.into()));
+    assert_eq!(within(database.session_resume()).await.unwrap(), None);
+    assert_eq!(server.seen().iter().filter(|request| request["requestId"] == request_id).count(), 1);
+    within(database.close_database()).await.unwrap();
+}
+
 pub(super) fn code(error: DbError) -> SessionCode {
     let DbError::Session { code, .. } = error else { panic!("expected a session error, got {error:?}") };
     code

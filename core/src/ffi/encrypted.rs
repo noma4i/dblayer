@@ -155,6 +155,19 @@ impl Database {
         }
     }
 
+    pub async fn session_resume(&self) -> Result<Option<String>, DbError> {
+        self.session()?;
+        match self.await_life(self.life.session_resume()).await? {
+            LifeReply::SessionResume(Ok(Some(body))) => {
+                let answer = core::Answer { sequence: None, body: serde_json::from_str(&body)? };
+                Ok(Some(refused(answer)?.body.to_string()))
+            }
+            LifeReply::SessionResume(Ok(None)) => Ok(None),
+            LifeReply::SessionResume(Err(error)) => Err(session_failure(error)),
+            _ => Err(super::command::ended()),
+        }
+    }
+
     /// Ends the session: the old work ends, the credential and the data of the account go. Returns after the clearing. The same call ends a plain or local database too.
     pub async fn session_reset(&self) -> Result<(), DbError> {
         match self.await_life(self.life.session_reset()).await? {

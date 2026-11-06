@@ -122,6 +122,13 @@ async fn every_explicit_call_survives_every_transition_with_a_late_sealed_refusa
     every_explicit_call_survives_every_transition_with_a_late_answer(true).await;
 }
 
+#[tokio::test(flavor = "multi_thread")]
+async fn session_resume_without_restored_call_returns_none() {
+    let rig = Rig::encrypted().await;
+    assert_eq!(bound(rig.database.session_resume()).await.unwrap(), None);
+    rig.database.close_database().await.unwrap();
+}
+
 /// C11, I24: a call that the server never answers ends when the database closes, without the answer, and a second close returns.
 #[tokio::test(flavor = "multi_thread")]
 async fn a_call_that_is_never_answered_ends_when_the_database_closes() {
