@@ -233,7 +233,6 @@ extension BridgeProbeTests {
     try await Self.removeMemberConfirmed(club)
     try #require(try await joined.read().allSatisfy { $0.id != "u4" })
     let stream = try DB.account().stream(joined)
-    defer { stream.cancel() }
     let cursor = Cursor(stream)
     var projection = ListProjection<Person>()
     await eventually("the first settled list", timeout: .seconds(10)) {

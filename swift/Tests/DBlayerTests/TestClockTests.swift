@@ -147,7 +147,7 @@ extension BridgeProbeTests {
     let first = Projected<CurrentUser>(try DB.account().stream(CurrentUser.current))
     guard await observe("the initial profile", { first.value != nil }) else { return }
     try #require(first.value?.name == "A")
-    first.stream.cancel()
+    await first.stream.cancel()
     await DB.closeForCleanup()
 
     try await DB.openTesting(transport: transport, modelsJSON: modelsJSON, path: path, startingAt: Date(timeIntervalSince1970: 1))

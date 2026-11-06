@@ -20,6 +20,8 @@ final class EncryptedCablePeer: Transport, @unchecked Sendable {
   let closed = AsyncStream<String>.makeStream()
   private let lock = NSLock()
   private var connections: [String: Connection] = [:]
+  private var latest: String?
+  var lastOpened: String? { lock.withLock { latest } }
 
   init(server: SealedServer) { self.server = server }
 
@@ -44,7 +46,7 @@ final class EncryptedCablePeer: Transport, @unchecked Sendable {
   func openCable(lease: CableLease, url: String) async throws {
     let token = UUID().uuidString
     let connection = Connection()
-    lock.withLock { connections[token] = connection }
+    lock.withLock { connections[token] = connection; latest = token }
     try lease.opened(token: token)
     let challenge: [String: Any] = ["type": "challenge", "v": 1, "kid": SealedServer.pin, "challenge": encode(connection.salt), "x25519": encode(connection.secret.publicKey.rawRepresentation)]
     connection.events.continuation.yield(.text(text: try text(challenge)))
@@ -101,6 +103,18 @@ final class EncryptedCablePeer: Transport, @unchecked Sendable {
     let box = try AES.GCM.seal(JSONSerialization.data(withJSONObject: body), using: connection.sendKey!, nonce: nonce, authenticating: Data(header.utf8))
     let frame = "\(header)..\(encode(Data(box.nonce))).\(encode(box.ciphertext)).\(encode(box.tag))"
     connection.events.continuation.yield(.text(text: try text(["message": ["frame": frame]])))
+  }
+
+  /// A data event of the open subscription. False while no subscription is open.
+  func event(token: String, result: [String: Any]) throws -> Bool {
+    guard let id = try connection(token).subscription else { return false }
+    try emit(token: token, body: ["t": "next", "id": id, "result": result])
+    return true
+  }
+
+  /// The socket breaks.
+  func drop(token: String) throws {
+    try connection(token).events.continuation.yield(.closed(code: 1006, reason: "dropped"))
   }
 
   func emitOld(token: String) throws {

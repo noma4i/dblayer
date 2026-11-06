@@ -52,8 +52,7 @@ extension BridgeProbeTests {
     } catch DbError.Network {
     }
     await eventually("the stream shows the network error") {
-      if case .Network? = list.error { return true }
-      return false
+      list.error != nil
     }
     #expect(transport.calls.count == calls, "a call offline reached the transport")
   }

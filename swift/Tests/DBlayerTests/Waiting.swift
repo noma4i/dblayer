@@ -29,7 +29,7 @@ func valueBeforeDeadline<Value: Sendable>(_ task: Task<Value, any Error>, releas
     return try await group.next()!
   }
 }
-let hangGuard: Duration = .seconds(60)
+let hangGuard: Duration = .seconds(20)
 func eventually(
   _ what: String = "the condition",
   timeout: Duration = hangGuard,
@@ -135,8 +135,8 @@ final class Cursor<Sequence: AsyncSequence & SendableMetatype>: @unchecked Senda
   }
 }
 
-func carriesRows(_ delivery: StreamDelivery) -> Bool {
-  switch delivery.value {
+func carriesRows(_ value: ReadValue) -> Bool {
+  switch value {
   case .snapshot, .delta: return true
   default: return false
   }
@@ -166,14 +166,6 @@ extension DBModel {
   static func find(_ id: String) -> RowRead<Self> { RowRead(id: id) }
 }
 
-struct TestSnapshot<Model: DBModel>: Sendable {
-  let rows: [Model]
-  let phase: LivePhase?
-  let error: DbError?
-  let total: Int?
-  let hasMore: Bool
-}
-
 struct TestLive<Model: DBModel>: Sendable {
   let query: Query<Model>
 
@@ -184,15 +176,29 @@ struct TestLive<Model: DBModel>: Sendable {
     return AsyncStream { continuation in
       let task = Task {
         var projection = ListProjection<Model>()
-        for await delivery in value {
-          let applied = projection.apply(delivery)
-          if applied == .changed, carriesRows(delivery) { continuation.yield(projection.rows) }
-        }
+        do {
+          for try await next in value {
+            let applied = projection.apply(next)
+            if applied == .changed, carriesRows(next) { continuation.yield(projection.rows) }
+          }
+        } catch {}
         continuation.finish()
       }
-      continuation.onTermination = { _ in task.cancel(); value.cancel() }
+      continuation.onTermination = { _ in task.cancel() }
     }
   }
+}
+
+extension Query {
+  var live: TestLive<Model> { TestLive(query: self) }
+}
+
+struct TestSnapshot<Model: DBModel>: Sendable {
+  let rows: [Model]
+  let phase: ReadPhase?
+  let error: DbError?
+  let total: Int?
+  let hasMore: Bool
 }
 
 struct TestSnapshots<Model: DBModel>: Sendable {
@@ -203,19 +209,19 @@ struct TestSnapshots<Model: DBModel>: Sendable {
     return AsyncStream { continuation in
       let task = Task {
         var projection = ListProjection<Model>()
-        for await delivery in value {
-          let applied = projection.apply(delivery)
-          if applied == .changed { continuation.yield(TestSnapshot(rows: projection.rows, phase: projection.phase, error: projection.state?.error, total: projection.state?.total.map { Int($0) }, hasMore: projection.state?.hasMore ?? false)) }
-        }
+        do {
+          for try await next in value {
+            if projection.apply(next) == .changed { continuation.yield(TestSnapshot(rows: projection.rows, phase: projection.phase, error: projection.state?.error, total: projection.state?.total.map { Int($0) }, hasMore: projection.state?.hasMore ?? false)) }
+          }
+        } catch {}
         continuation.finish()
       }
-      continuation.onTermination = { _ in task.cancel(); value.cancel() }
+      continuation.onTermination = { _ in task.cancel() }
     }
   }
 }
 
 extension Query {
-  var live: TestLive<Model> { TestLive(query: self) }
   var snapshots: TestSnapshots<Model> { TestSnapshots(query: self) }
 }
 
@@ -228,12 +234,15 @@ extension Query {
   var count: TestCount<Model> { TestCount(query: self) }
 }
 
+extension ReadState {
+  /// The first load ended and the relation has no next page.
+  var complete: Bool { settled && !hasMore }
+}
+
 struct TestListState<Model: DBModel>: Sendable {
-  let phase: LivePhase?
+  let phase: ReadPhase?
   let total: Int?
   let hasMore: Bool
-  let loadedAt: UInt64?
-  let errorKind: String?
   let complete: Bool
   let error: DbError?
   let rows: [Model]
@@ -251,7 +260,7 @@ final class ListReader<Model: DBModel> {
   var ids: [String] { projected.rows.map(\.id) }
   var snapshot: TestListState<Model> {
     let state = projected.state
-    return TestListState(phase: state?.phase, total: state?.total.map { Int($0) }, hasMore: state?.hasMore ?? false, loadedAt: state?.loadedAt.map { UInt64($0) }, errorKind: state?.errorKind, complete: state?.complete ?? false, error: state?.error, rows: projected.rows)
+    return TestListState(phase: state?.phase, total: state?.total.map { Int($0) }, hasMore: state?.hasMore ?? false, complete: state?.complete ?? false, error: state?.error, rows: projected.rows)
   }
   func refresh() async throws { try await projected.refresh() }
   func waitForInitialLoad() async throws { try await projected.loaded() }
@@ -272,36 +281,6 @@ extension MutationReceipt {
   func refusal() async throws -> WireFailure {
     guard case let .rejected(failure) = try await outcome() else { throw WaitFailure.unexpectedOutcome }
     return failure
-  }
-}
-
-/// Reads the journal of a stream the way `ValueStream` does and hands each value to `take`. A test makes it the sink of `subscribe`, then binds the stream number it got.
-final class PulledStream: ValueSink, @unchecked Sendable {
-  private let lock = NSLock()
-  private let reading = NSLock()
-  private var bound: (stream: UInt64, database: Database)?
-  private let take: @Sendable (StreamDelivery) -> Void
-
-  init(_ take: @escaping @Sendable (StreamDelivery) -> Void) { self.take = take }
-
-  func bind(_ stream: UInt64, _ database: Database) {
-    lock.withLock { bound = (stream, database) }
-    available()
-  }
-
-  func available() {
-    guard let bound = lock.withLock({ bound }) else { return }
-    reading.withLock {
-      while let delivery = bound.database.readStream(stream: bound.stream) { take(delivery) }
-    }
-  }
-}
-
-func stateOf(_ delivery: StreamDelivery) -> StreamState? {
-  switch delivery.value {
-  case let .snapshot(_, _, state), let .count(_, _, state), let .state(state): return state
-  case let .delta(_, _, _, _, _, _, _, _, _, state): return state
-  default: return nil
   }
 }
 

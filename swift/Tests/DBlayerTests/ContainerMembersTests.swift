@@ -85,6 +85,7 @@ extension BridgeProbeTests {
     #expect(transport.mock.calls.filter { $0.operationName == "ContainerMembers" }.count == 6)
   }
 
+  @MainActor
   @Test(.timeLimit(.minutes(1)))
   func containerMembersPassesArgumentsAndDecodesTypedSnapshots() async throws {
     let transport = MockTransport()
@@ -95,12 +96,12 @@ extension BridgeProbeTests {
 
     let first = try User.containerMembers("c1")
     try await first.load()
-    let counted = try await Cursor(await first.snapshots.stream()).first("the member count") { $0.total == 53 }
-    let total: Int? = counted?.total
-    #expect(total == 53)
-    #expect(counted?.rows.map(\.id) == ["a0"])
-    #expect(counted?.rows.first?.name == "Member")
-    #expect(counted?.hasMore == true)
+    let held = Projected<User>(try DB.account().stream(first))
+    await eventually("the member count") { held.state?.total == 53 }
+    #expect(held.state?.total == 53)
+    #expect(held.rows.map(\.id) == ["a0"])
+    #expect(held.rows.first?.name == "Member")
+    #expect(held.state?.hasMore == true)
     #expect(try await first.loadMore() == .loaded(hasMore: false))
     let calls = transport.calls.filter { $0.operationName == "ContainerMembers" }
     let variables = try calls.map { try JSONDecoder().decode(JSONValue.self, from: Data($0.variablesJson.utf8)) }

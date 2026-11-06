@@ -3,82 +3,49 @@ import Foundation
 import Testing
 @testable import DBlayer
 
-/// Keeps the first value of a stream with the thread that first heard values wait: the main thread means the core produced the value inside the opening call.
-private final class FirstFrameSink: ValueSink, @unchecked Sendable {
-  struct Frame { let onMain: Bool; let seq: UInt64; let ids: [String]?; let revision: Int64? }
-
-  private let lock = NSLock()
-  private var frame: Frame?
-  private var heardOnMain: Bool?
-  private var bound: (stream: UInt64, database: Database)?
-
-  var first: Frame? { lock.withLock { frame } }
-
-  func bind(_ stream: UInt64, _ database: Database) {
-    lock.withLock { bound = (stream, database) }
-    read()
-  }
-
-  func available() {
-    lock.withLock { if heardOnMain == nil { heardOnMain = Thread.isMainThread } }
-    read()
-  }
-
-  private func read() {
-    guard let bound = lock.withLock({ frame == nil ? bound : nil }), let delivery = bound.database.readStream(stream: bound.stream) else { return }
-    var ids: [String]?
-    var revision: Int64?
-    if case let .snapshot(rev, rows, _) = delivery.value { ids = rows.map(\.id); revision = rev }
-    lock.withLock { if frame == nil { frame = Frame(onMain: heardOnMain ?? true, seq: delivery.seq, ids: ids, revision: revision) } }
-  }
-}
-
-@MainActor private func names(_ projected: Projected<User>) -> [String] { projected.rows.map(\.name) }
-
-/// Spec B, first frame: the cached rows come with the first delivery, read off the calling thread. Related queries: the target rows of a link follow a change of the target and of the link.
+/// Spec B, first frame: the cached rows come with the first value, read off the calling thread. Related queries: a stream over a server relation follows a change of its rows and of the link.
 extension BridgeProbeTests {
-  /// Requirement: a stream opened from the main thread over cached rows delivers them in its very first delivery, off the calling thread, so never inside the opening call. Observable: the sequence number, the thread and the snapshot content of the first delivery, whatever its kind.
+  /// Requirement: a stream opened over cached rows delivers them in its very first value, which the reader takes off the main thread. Observable: the kind, the rows and the revision of the first value, and the thread that took it.
   @MainActor
   @Test(.timeLimit(.minutes(1)))
   func theFirstFrameOfAWarmStreamArrivesOffTheCallingThreadWithTheCachedRows() async throws {
     try await reopen(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: MockTransport())
     let ann = try await User.create(name: "Ann").optimisticValue!
     let seats = [try await Presence.create(userId: ann.id, room: "r").optimisticValue!, try await Presence.create(userId: ann.id, room: "r").optimisticValue!]
-    let scope = try DB.account()
-    let sink = FirstFrameSink()
+    let stream = try DB.account().stream(Presence.where(.equal("room", .string("r"))))
 
-    let stream = try DB.database.subscribe(epoch: scope.epoch, request: .query(queryJson: try Presence.where(.equal("room", .string("r"))).json), sink: sink)
-    defer { try? DB.database.cancelStream(stream: stream) }
-    sink.bind(stream, try DB.database)
+    let first = await Task.detached { () -> (onMain: Bool, ids: [String]?, revision: Int64?) in
+      var iterator = stream.makeAsyncIterator()
+      guard let value = try? await iterator.next(), case let .snapshot(revision, rows, _) = value else { return ((pthread_main_np() == 1), nil, nil) }
+      return ((pthread_main_np() == 1), rows.map(\.id), revision)
+    }.value
+    await stream.cancel()
 
-    await eventually("the first frame arrives") { sink.first != nil }
-    let frame = try #require(sink.first)
-    #expect(frame.seq == 1)
-    #expect(!frame.onMain, "the core produced the first value on the calling thread, inside the opening call")
-    #expect(frame.revision != nil, "the first delivery was not a snapshot with a revision")
-    #expect(Set(frame.ids ?? []) == Set(seats.map(\.id)), "the first delivery lacked the cached rows: \(String(describing: frame.ids))")
+    #expect(!first.onMain, "the first value was taken on the calling thread")
+    #expect(first.revision != nil, "the first value was not a snapshot with a revision")
+    #expect(Set(first.ids ?? []) == Set(seats.map(\.id)), "the first value lacked the cached rows: \(String(describing: first.ids))")
   }
 
-  /// Requirement: a related query returns the target rows of the link, and follows a change of a target row and a change of the link. Observable: the names the projection shows after each step.
+  /// Requirement: a stream over a server relation shows the rows of the relation, follows a change of one of its rows and a change of the link that moves a row out of it. Observable: the titles the projection shows after each step.
   @MainActor
   @Test(.timeLimit(.minutes(1)))
   func aRelatedQueryReturnsTheLinkedRowsAndFollowsATargetChangeAndALinkChange() async throws {
-    try await reopen(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: MockTransport())
-    let ann = try await User.create(name: "Ann").optimisticValue!
-    let bob = try await User.create(name: "Bob").optimisticValue!
-    let seat = try await Presence.create(userId: ann.id, room: "r").optimisticValue!
-    let related = Projected<User>(try DB.account().related(Presence.where(.equal("room", .string("r"))), Presence.Relations.user))
-    try await related.loaded()
+    let transport = MockTransport()
+    try await reopen(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: transport)
+    try DB.database.registerOperations(defsJson: #"[{"name":"ChatList","document":"query ChatList { chats { id title revision lists } }"},{"name":"RecordEvents","document":"subscription RecordEvents { recordEvents { entries { topic action recordId chat { id title revision lists } message { id text chatId } } } }"}]"#)
+    let scope = try DB.account()
+    let chats = await opened(scope.events(Chat.self))
+    await eventually("the events subscription opens") { transport.calls.count == 1 }
+    transport.enqueue("ChatList", reply: #"{"data":{"chats":[{"__typename":"Chat","id":"c1","title":"before","revision":1,"lists":["SECONDARY"]}]}}"#)
+    let related = Projected<Chat>(try scope.stream(try Chat.list("SECONDARY")))
+    try await Chat.list("SECONDARY").load()
+    await eventually("the linked row shows") { related.rows.map(\.title) == ["before"] }
 
-    await eventually("the linked row shows") { names(related) == ["Ann"] }
+    try transport.emit("RecordEvents", json: #"{"data":{"recordEvents":{"entries":[{"topic":"MESSAGE","action":"UPDATED","recordId":"m1","chat":{"id":"c1","title":"after","revision":2,"lists":["SECONDARY"]},"message":{"id":"m1","text":"x","chatId":"c1"}}]}}}"#)
+    await eventually("a change of the row shows") { related.rows.map(\.title) == ["after"] }
 
-    _ = try await ann.update(name: "Anna")
-    await eventually("a change of the target shows") { names(related) == ["Anna"] }
-
-    _ = try await seat.update(userId: bob.id)
-    await eventually("a change of the link moves the target") { names(related) == ["Bob"] }
-
-    _ = try await Presence.create(userId: ann.id, room: "r")
-    await eventually("a second link adds its target") { Set(names(related)) == ["Anna", "Bob"] && names(related).count == 2 }
+    try transport.emit("RecordEvents", json: #"{"data":{"recordEvents":{"entries":[{"topic":"MESSAGE","action":"UPDATED","recordId":"m1","chat":{"id":"c1","title":"after","revision":3,"lists":["PRIMARY"]},"message":{"id":"m1","text":"x","chatId":"c1"}}]}}}"#)
+    await eventually("a change of the link moves the row out of the relation") { related.rows.isEmpty }
+    withExtendedLifetime(chats) {}
   }
 }

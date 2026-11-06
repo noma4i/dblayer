@@ -25,10 +25,6 @@ private final class HeldUploadTransport: Transport, @unchecked Sendable {
   }
 }
 
-private final class AcceptedUploads: UploadAcceptedSink, @unchecked Sendable {
-  func accepted(event: WireUploadAccepted) {}
-}
-
 extension BridgeProbeTests {
   @MainActor
   @Test(.timeLimit(.minutes(1)))
@@ -40,27 +36,17 @@ extension BridgeProbeTests {
     transport.enqueue("UserProfile", reply: #"{"data":{"me":{"__typename":"User","id":"1","name":"B"}}}"#)
     let operations = #"[{"name":"CreateBlob","document":"mutation CreateBlob { createBlob { url headers signedId blobId } }"},{"name":"CreateMoment","document":"mutation CreateMoment { createMoment { id } }"},{"name":"UserProfile","document":"query UserProfile { me { id name } }"}]"#
     let database = try await reopen(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: transport, operations: operations, uploads: UploadOperations(createBlob: UploadOperation("CreateBlob")))
-    database.setUploadAcceptedSink(sink: AcceptedUploads())
     try database.setOnline(online: false)
     let first = database.sessionEpoch()
-    let owner = try #require(try database.roundBegin(epoch: first))
-    #expect(try database.roundNext(epoch: first, owner: owner) == .done)
-    _ = try await DB.account().send(Moment.self, values: ["text": .string("A")], upload: UploadCommand(action: "upload_clip", request: UploadRequest(path: file.path)))
+    let sentFirst = try await DB.account().send(Moment.self, values: ["text": .string("A")], upload: UploadCommand(action: "upload_clip", request: UploadRequest(path: file.path)))
     try await DB.sessionReset()
-    do {
-      _ = try database.roundNext(epoch: first, owner: owner)
-      Issue.record("the old round call was accepted")
-    } catch DbError.Interrupted {}
     try database.setOnline(online: true)
     try await User.profile.load(in: DB.account())
     try database.setOnline(online: false)
     let second = database.sessionEpoch()
     #expect(first != second)
-    _ = try await DB.account().send(Moment.self, values: ["text": .string("B")], upload: UploadCommand(action: "upload_clip", request: UploadRequest(path: file.path)))
-    let groups = try #require(try database.roundEnd(epoch: second, owner: owner))
-    #expect(groups.count == 2)
-    #expect(groups.map(\.epoch) == [first, second])
-    #expect(groups.map { $0.items.count } == [1, 1])
+    let sentSecond = try await DB.account().send(Moment.self, values: ["text": .string("B")], upload: UploadCommand(action: "upload_clip", request: UploadRequest(path: file.path)))
+    #expect([sentFirst.epoch, sentSecond.epoch] == [first, second], "each upload keeps the epoch it was sent in")
     await DB.closeForCleanup()
   }
 

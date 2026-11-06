@@ -18,7 +18,7 @@ extension BridgeProbeTests {
     let held = Projected<Moment>(try DB.account().stream(Moment.feed))
     let (events, signal) = AsyncStream<Int>.makeStream()
     let cursor = Cursor(events)
-    defer { signal.finish(); held.stream.cancel() }
+    defer { signal.finish() }
     let initial = Task { @MainActor in
       do { try await held.loaded(); signal.yield(1) }
       catch { signal.yield(9) }

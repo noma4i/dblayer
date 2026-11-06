@@ -3,11 +3,42 @@ import Foundation
 import Testing
 @testable import DBlayer
 
-private final class Heard: ValueSink, @unchecked Sendable {
+private final class Heard: @unchecked Sendable {
   private let lock = NSLock()
   private var heard: UInt64 = 0
   var count: UInt64 { lock.withLock { heard } }
-  func available() { lock.withLock { heard += 1 } }
+  func add() { lock.withLock { heard += 1 } }
+}
+
+/// A stream the runner reads: a task pulls it into a queue, `pull` of the corpus takes the next value.
+private final class Pulled: @unchecked Sendable {
+  let stream: ValueStream
+  private let lock = NSLock()
+  private var queue: [ReadValue] = []
+  private var position: UInt64 = 0
+  private var task: Task<Void, Never>?
+
+  init(_ stream: ValueStream, heard: Heard) {
+    self.stream = stream
+    task = Task { [self] in
+      do {
+        for try await value in stream {
+          lock.withLock { queue.append(value) }
+          heard.add()
+        }
+      } catch {}
+    }
+  }
+
+  deinit { task?.cancel() }
+
+  func next() -> (UInt64, ReadValue)? {
+    lock.withLock {
+      guard !queue.isEmpty else { return nil }
+      position += 1
+      return (position, queue.removeFirst())
+    }
+  }
 }
 
 private final class Credentials: CredentialStore, @unchecked Sendable {
@@ -42,15 +73,17 @@ private func kind(of error: DbError) -> String {
   case .Security: return "security"
   case .Config: return "config"
   case .Invalid: return "invalid"
+  case .NotFound: return "not_found"
   case .Database: return "database"
   case .Sync: return "sync"
-  case .Network: return "network"
+  case .Network(let detail): return detail == "the operation needs the network" ? "offline" : "network"
   case .Interrupted: return "interrupted"
-  case .Http: return "http"
+  case .Http(let status, _): return status == 401 ? "unauthorized" : "http"
   case .RequestTooLarge: return "request_too_large"
   case .Graphql: return "graphql"
   case .Session: return "session"
   case .Closed: return "closed"
+  case .CorruptManifest: return "corrupt_manifest"
   }
 }
 
@@ -58,27 +91,27 @@ private func done(_ kind: String, _ value: Any? = nil) -> CallResult { CallResul
 
 private func failed(_ error: Error) -> CallResult { (error as? DbError).map(fail) ?? CallResult(observed: failure("invalid")) }
 
-private func phaseName(_ phase: LivePhase) -> String {
+private func phaseName(_ phase: ReadPhase) -> String {
   switch phase {
-  case .notLoaded, .closed: return "idle"
+  case .idle: return "idle"
   case .loading: return "loading"
-  case .loaded, .empty: return "loaded"
+  case .loaded: return "loaded"
   case .failed: return "failed"
   }
 }
 
-private func causeName(_ end: StreamEnd) -> String {
+private func causeName(_ end: ReadEnd) -> String {
   switch end {
   case .sessionEnded: return "session_ended"
   case .closed: return "closed"
+  case .cancelled: return "cancelled"
   case .invalid: return "invalid"
-  case .outOfSync: return "out_of_sync"
   }
 }
 
-private func fetchOf(_ name: String) -> EntityFetch? {
+private func fetchOf(_ name: String) -> ReadFetch? {
   switch name {
-  case "never": return EntityFetch.never
+  case "never": return ReadFetch.never
   case "stale": return .stale
   case "force": return .force
   case "if_missing": return .ifMissing
@@ -120,7 +153,7 @@ private final class DatabaseRunner {
   var rows: [String: String] = [:]
   var receipts: [String: WireOperationReceipt] = [:]
   var loads: [String: LoadRequest] = [:]
-  var streams: [String: UInt64] = [:]
+  var streams: [String: Pulled] = [:]
   var calls: [CallBox] = []
 
   func idOf(_ name: String) -> String { rows[name] ?? name }
@@ -129,14 +162,14 @@ private final class DatabaseRunner {
 
   func names(_ list: [WireRow]) -> [String] { list.map { nameOf($0.id) } }
 
-  func stateFields(_ stream: String, _ state: StreamState) -> [String: Any] {
+  func stateFields(_ stream: String, _ state: ReadState) -> [String: Any] {
     var out: [String: Any] = ["stream": stream, "phase": phaseName(state.phase)]
-    if let kind = state.errorKind { out["error"] = kind }
-    if let at = state.loadedAt { out["loaded"] = at }
+    if let error = state.error { out["error"] = "\(error)" }
+    if let at = state.loaded { out["loaded"] = at }
     return out
   }
 
-  func value(_ stream: String, _ seq: UInt64, _ value: StreamValue) -> String {
+  func value(_ stream: String, _ seq: UInt64, _ value: ReadValue) -> String {
     switch value {
     case .snapshot(let revision, let list, let state):
       var out = stateFields(stream, state); out["revision"] = revision; out["rows"] = names(list)
@@ -147,10 +180,16 @@ private final class DatabaseRunner {
     case .count(let revision, let count, let state):
       var out = stateFields(stream, state); out["revision"] = revision; out["count"] = count
       return observation("count", out)
-    case .state(let state):
+    case .state(_, let state):
       return observation("state", stateFields(stream, state))
-    case .event(let event):
-      return observation("event", ["stream": stream, "position": seq, "area": event.area, "kind": event.kind, "row": nameOf(event.id)])
+    case .ready:
+      return observation("ready", ["stream": stream])
+    case .gap:
+      return observation("gap", ["stream": stream])
+    case .retry:
+      return observation("unsupported", "retry")
+    case .event(let position, let area, let kind, let id, _, _):
+      return observation("event", ["stream": stream, "position": position, "area": area, "kind": kind, "row": nameOf(id)])
     case .lost(let first, let last):
       return observation("lost", ["stream": stream, "first": first, "last": last])
     case .status:
@@ -194,7 +233,9 @@ private final class DatabaseRunner {
       let opened = try await OpenDatabase().openWithClock(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: try modelsText(models == "events" ? "models_events.json" : "models.json"), transport: mock, uploads: nil, clock: clock, encrypted: session, credentials: encrypted ? Credentials() : nil, http: encrypted ? mock : nil, retries: nil)
       let operations = try String(contentsOf: corpusDirectory().appendingPathComponent("operations.json"), encoding: .utf8)
       try opened.registerOperations(defsJson: operations)
+      try opened.setOnline(online: true)
       database = opened
+      _ = await settle()
       return [observation("opened")]
     } catch { return failure("open") }
   }
@@ -379,9 +420,9 @@ private final class DatabaseRunner {
       if let relation { return canonical(["model": "Moment", "relation": relation, "params": [String: Any]()] as [String: Any]) }
       return canonical(["model": "Moment"])
     }
-    let request: StreamRequest
+    let request: ReadRequest
     switch name {
-    case "open_list": request = .query(queryJson: query(args["relation"] as? String))
+    case "open_list": request = .list(queryJson: query(args["relation"] as? String))
     case "open_count": request = .count(queryJson: query(args["relation"] as? String))
     case "open_entity":
       guard let row = args["row"] as? String, let fetch = (args["fetch"] as? String).flatMap(fetchOf) else { return failure("arguments") }
@@ -390,7 +431,7 @@ private final class DatabaseRunner {
       guard let model = args["model"] as? String else { return failure("arguments") }
       request = .events(model: model)
     }
-    streams[label] = database.subscribe(epoch: database.sessionEpoch(), request: request, sink: heard)
+    streams[label] = Pulled(ValueStream(epoch: database.sessionEpoch(), reader: database.subscribeValues(epoch: database.sessionEpoch(), request: request), database: database, load: nil), heard: heard)
     return []
   }
 
@@ -437,11 +478,11 @@ private final class DatabaseRunner {
       observed = openStream(database, name, args)
     case "pull":
       guard let label = args["stream"] as? String else { return failure("arguments") }
-      guard let id = streams[label] else { return failure("unknown_stream") }
-      if let delivery = database.readStream(stream: id) { observed = [value(label, delivery.seq, delivery.value)] } else { observed = [observation("empty", ["stream": label])] }
+      guard let pulled = streams[label] else { return failure("unknown_stream") }
+      if let (position, next) = pulled.next() { observed = [value(label, position, next)] } else { observed = [observation("empty", ["stream": label])] }
     case "cancel":
       guard let target = args["target"] as? String else { return failure("arguments") }
-      if let load = loads[target] { load.cancel() } else if let id = streams[target] { database.cancelStream(stream: id) } else { return failure("unknown_target") }
+      if let load = loads[target] { load.cancel() } else if let pulled = streams[target] { let stream = pulled.stream; spawn { await stream.cancel(); return CallResult() } } else { return failure("unknown_target") }
       observed = []
     default:
       guard let immediate = start(database, name, args) else { return [observation("unsupported", name)] }

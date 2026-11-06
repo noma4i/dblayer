@@ -79,7 +79,6 @@ extension BridgeProbeTests {
     try await profile.loaded()
     await eventually("the stream shows A") { profile.value?.name == "A" }
 
-    #expect(profile.projection.epoch == scope.epoch)
     #expect(profile.projection.revision != nil && profile.projection.ended == nil)
     #expect(profile.projection.decoded >= 1)
   }
@@ -97,7 +96,6 @@ extension BridgeProbeTests {
     try await DB.sessionReset()
     await eventually("the stream ended") { profile.projection.ended == .sessionEnded }
 
-    #expect(try DB.streamCensus().open == 0)
     #expect(try DB.subscriptionCensus().subscriptions == 0)
     #expect(profile.value?.name == "A", "the ended projection keeps the last value it was given and no new one")
   }
@@ -122,7 +120,6 @@ extension BridgeProbeTests {
     await eventually("B shows") { projectionB.value?.name == "B" }
 
     #expect(projectionA.value?.name == "A" && projectionA.projection.ended == .sessionEnded)
-    #expect(projectionB.projection.epoch == second.epoch)
   }
 
   /// B04: a message sent offline shows at once, goes out once when the network returns, and keeps its position when the server confirms it.
@@ -187,13 +184,10 @@ extension BridgeProbeTests {
     let scope = try DB.account()
     var projected: Projected<User>? = Projected<User>(try scope.stream(User.profile))
     try await projected?.loaded()
-    #expect(try DB.streamCensus().open == 1)
     #expect(try DB.subscriptionCensus().subscriptions == 1)
 
     projected = nil
-    await eventually("the stream left the core") { (try? DB.streamCensus().open) == 0 }
-
-    #expect(try DB.subscriptionCensus().subscriptions == 0)
+    await eventually("the stream left the core") { (try? DB.subscriptionCensus().subscriptions) == 0 }
   }
 
   /// B07: a change of one row decodes one row, and the subscriptions are the readers.
@@ -210,7 +204,6 @@ extension BridgeProbeTests {
     for number in 1...5 { first.append(try await scope.send(Moment.self, values: ["text": .string("m\(number)")])) }
     for sent in first { _ = try await sent.outcome() }
     await eventually("the thread holds five confirmed rows") { thread.rows.count == 5 && thread.rows.allSatisfy { $0.sync.state == .synced } }
-    #expect(try DB.streamCensus().open == 2)
     #expect(try DB.subscriptionCensus().subscriptions == 2)
 
     let (decoded, deltas) = (thread.projection.decoded, thread.projection.deltas)
@@ -249,14 +242,15 @@ extension BridgeProbeTests {
   func aStreamThatCannotConnectEndsOnceAndLeavesTheTable() async throws {
     _ = try await Self.openBridgeSession()
     try await Self.signIn("A")
-    let reader = LossyReader()
-    let stream = try DB.database.subscribe(epoch: DB.database.sessionEpoch(), request: .entity(model: "Nope", id: "x", fetch: .never), sink: reader)
-    reader.bind(stream)
-    await eventually("the failed stream ended") { !reader.ended.isEmpty }
-
-    #expect(reader.ended == [.invalid])
-    #expect(reader.failure != nil, "the failed stream did not show its error")
-    #expect(try DB.streamCensus().open == 0)
+    let database = try DB.database
+    let reader = database.subscribeValues(epoch: database.sessionEpoch(), request: .entity(model: "Nope", id: "x", fetch: .never))
+    var ended: [ReadEnd] = []
+    while let value = try await reader.pull() {
+      if case let .ended(cause) = value { ended.append(cause) }
+    }
+    #expect(ended == [.invalid])
+    #expect(try await reader.pull() == nil, "a stream that ended gives nothing more")
+    #expect(try DB.subscriptionCensus().subscriptions == 0)
   }
 
   /// K02: a command and a one-off read that carry the scope of A are refused after the next sign-in and change nothing for B.
@@ -293,58 +287,19 @@ extension BridgeProbeTests {
     let state = try #require(profile.state)
     var bad = try #require(try await DB.database.readQuery(epoch: scope.epoch, queryJson: User.profile.json).first)
     bad.layout = "another layout"
-    _ = projection.apply(StreamDelivery(stream: 1, epoch: scope.epoch, seq: 1, value: .snapshot(revision: 1, rows: [bad], state: state)))
+    _ = projection.apply(.snapshot(revision: 1, rows: [bad], state: state))
     #expect(projection.rows.isEmpty && projection.error != nil, "a row that does not decode was dropped without an error")
     let whole = try #require(try await DB.database.readQuery(epoch: scope.epoch, queryJson: User.profile.json).first)
-    _ = projection.apply(StreamDelivery(stream: 1, epoch: scope.epoch, seq: 2, value: .snapshot(revision: 2, rows: [whole], state: state)))
+    _ = projection.apply(.snapshot(revision: 2, rows: [whole], state: state))
     #expect(projection.rows.count == 1 && projection.error == nil, "a good snapshot did not clear the error")
 
     let events = scope.events(User.self)
-    defer { events.stream.cancel() }
     guard case .failed? = await Cursor(events).next("the source error of the events stream") else {
       Issue.record("the events stream did not report its source error")
       return
     }
   }
 }
-
-/// Reads a stream the way a platform does.
-private final class LossyReader: ValueSink, @unchecked Sendable {
-  private let lock = NSLock()
-  private let reading = NSLock()
-  private var projection = ListProjection<Moment>()
-  private var endings: [StreamEnd] = []
-  private var snapshotCount = 0
-  private var stream: UInt64?
-
-  var snapshots: Int { lock.withLock { snapshotCount } }
-  var settled: Bool { lock.withLock { projection.state?.settled ?? false } }
-  var failure: DbError? { lock.withLock { projection.state?.error } }
-
-  var rows: Int { lock.withLock { projection.rows.count } }
-  var ended: [StreamEnd] { lock.withLock { endings } }
-
-  func bind(_ stream: UInt64) {
-    lock.withLock { self.stream = stream }
-    available()
-  }
-
-  func available() {
-    guard let stream = lock.withLock({ self.stream }) else { return }
-    reading.withLock {
-      for delivery in AnyIterator({ try? DB.database.readStream(stream: stream) }) { take(delivery) }
-    }
-  }
-
-  private func take(_ delivery: StreamDelivery) {
-    lock.withLock {
-      if case .snapshot = delivery.value { snapshotCount += 1 }
-      if case let .ended(reason) = delivery.value { endings.append(reason) }
-      _ = projection.apply(delivery)
-    }
-  }
-}
-
 
 extension BridgeProbeTests {
   /// K21 (C02): a scope keeps the database it was made for. After that database closed and another one opened with the same epoch number, a command and a read of the old scope are refused and the new database does not change.
@@ -374,45 +329,23 @@ extension BridgeProbeTests {
     let scope = try DB.account()
     let stream = try scope.stream(Moment.recent)
     let cursor = Cursor(stream)
-    let seen = BufferedDeliveries()
+    var projection = ListProjection<Moment>()
+    var received = 0
     await eventually("the first settled snapshot") {
-      if seen.settled { return true }
-      if let delivery = await cursor.next("the first settled snapshot") { seen.apply(delivery, stream: stream) }
-      return seen.settled
+      if projection.state?.settled == true { return true }
+      if let value = await cursor.next("the first settled snapshot") { _ = projection.apply(value) }
+      return projection.state?.settled == true
     }
     try DB.database.setOnline(online: false)
     for number in 1...300 { _ = try await scope.send(Moment.self, values: ["text": .string("m\(number)")]) }
     for _ in 0..<400 {
-      if seen.rows == 300 { break }
-      guard let delivery = await cursor.next("a delivery of the burst") else { break }
-      seen.apply(delivery, stream: stream)
-    }
-    #expect(seen.rows == 300, "the reader did not end with the whole list")
-    #expect(seen.received <= 260, "the reader received \(seen.received) deliveries of a burst of 300: the buffer bounded nothing")
-    #expect(seen.inOrder, "the reader kept deliveries out of order")
-    stream.cancel()
-  }
-
-}
-
-private final class BufferedDeliveries: @unchecked Sendable {
-  private let lock = NSLock()
-  private var projection = ListProjection<Moment>()
-  private(set) var received = 0
-  private(set) var kept: UInt64 = 0
-  private(set) var lastSeq: UInt64 = 0
-  private(set) var inOrder = true
-
-  var rows: Int { lock.withLock { projection.rows.count } }
-  var settled: Bool { lock.withLock { projection.state?.settled ?? false } }
-
-  func apply(_ delivery: StreamDelivery, stream: ValueStream) {
-    lock.withLock {
+      if projection.rows.count == 300 { break }
+      guard let value = await cursor.next("a value of the burst") else { break }
       received += 1
-      kept += 1
-      if delivery.seq <= lastSeq { inOrder = false }
-      lastSeq = max(lastSeq, delivery.seq)
-      _ = projection.apply(delivery)
+      _ = projection.apply(value)
     }
+    #expect(projection.rows.count == 300, "the reader did not end with the whole list")
+    #expect(received <= 260, "the reader received \(received) values of a burst of 300: the journal bounded nothing")
+    await stream.cancel()
   }
 }

@@ -99,7 +99,7 @@ extension BridgeProbeTests {
       let held = Projected<MediaMessage>(try DB.account().stream(query))
       try await held.loaded()
       #expect(held.state?.complete == true)
-      held.stream.cancel()
+      await held.stream.cancel()
     }
     let calls = transport.calls.filter { $0.operationName == "ChatMedia" }
     #expect(calls.count == 6)
@@ -114,7 +114,6 @@ extension BridgeProbeTests {
     transport.enqueue("ChatMedia", reply: #"{"data":{"node":{"messages":{"edges":[{"cursor":"x1","node":{"__typename":"MediaMessage","id":"x1","chatId":"c2","kind":"GIFT","mediaKind":null,"sequenceNumber":1}}],"pageInfo":{"hasNextPage":true,"endCursor":"x1"}}}}}"#)
     let failedQuery = try MediaMessage.giftMedia("c2")
     let held = Projected<MediaMessage>(try DB.account().stream(failedQuery))
-    defer { held.stream.cancel() }
     try await held.loaded()
     let down = transport.hold("ChatMedia", failure: .Network(detail: "down"))
     async let failing: Void = failedQuery.loadAll()

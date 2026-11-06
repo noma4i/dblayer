@@ -11,10 +11,6 @@ private final class CableCredentials: CredentialStore, @unchecked Sendable {
   func clear() throws { lock.withLock { value = nil } }
 }
 
-private final class CableRows: ValueSink {
-  func available() {}
-}
-
 private struct CableLogin: Encodable, Sendable { let account: String }
 
 extension BridgeProbeTests {
@@ -31,20 +27,24 @@ extension BridgeProbeTests {
     try await DB.openTesting(transport: peer, modelsJSON: modelsJSON, encrypted: encrypted, credentials: CableCredentials(), http: server)
     try DB.database.registerOperations(defsJson: #"[{"name":"BulletinAdded","document":"subscription BulletinAdded { bulletinAdded { body occurredAt } }","rootPath":"bulletinAdded"}]"#)
     try await DB.sessionCall("login_link", body: CableLogin(account: "A"))
-    let query = #"{"model":"Notice","relation":"recent","params":{}}"#
-    let first = try DB.database.subscribe(epoch: DB.database.sessionEpoch(), request: .query(queryJson: query), sink: CableRows())
+    let query = try Notice.recent.json
+    let first = try DB.account().stream(Notice.recent)
+    let firstReading = Task { do { for try await _ in first {} } catch {} }
     let subscriptions = Cursor(peer.subscribed.stream)
     let old = try #require(await subscriptions.next("the first subscription"))
     try await DB.sessionReset()
     #expect(await Cursor(peer.closed.stream).next("the first socket closes") == old)
     try await DB.sessionCall("login_link", body: CableLogin(account: "B"))
-    let second = try DB.database.subscribe(epoch: DB.database.sessionEpoch(), request: .query(queryJson: query), sink: CableRows())
+    let second = try DB.account().stream(Notice.recent)
+    let secondReading = Task { do { for try await _ in second {} } catch {} }
     let current = try #require(await subscriptions.next("the second subscription"))
     #expect(current != old)
     try peer.emitOld(token: old)
     let rows = try await DB.database.readQuery(epoch: DB.database.sessionEpoch(), queryJson: query)
     #expect(rows.isEmpty)
-    try DB.database.cancelStream(stream: first)
-    try DB.database.cancelStream(stream: second)
+    firstReading.cancel()
+    secondReading.cancel()
+    await first.cancel()
+    await second.cancel()
   }
 }

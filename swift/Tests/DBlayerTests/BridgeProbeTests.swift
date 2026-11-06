@@ -45,8 +45,6 @@ struct BridgeProbeTests {
     #expect(await changes.first("the empty list") { $0.isEmpty } != nil)
   }
 
-
-
   @MainActor
   @Test(.timeLimit(.minutes(1)))
   func loadRequestsOnlyAWindowThatIsNotFreshAndKeepsNoSubscription() async throws {
@@ -83,7 +81,7 @@ struct BridgeProbeTests {
     await eventually("the relation fails") { list.phase == .failed }
 
     #expect(list.phase == .failed)
-    #expect(list.state?.errorKind != nil)
+    #expect(list.state?.error != nil)
   }
 
   @MainActor
@@ -95,7 +93,7 @@ struct BridgeProbeTests {
     try DB.database.registerOperations(defsJson: #"[{"name":"MomentsFeed","document":"query MomentsFeed($first: Int, $after: String) { feed(first: $first, after: $after) { nodes { id uuid likedByMe media createdAt } pageInfo { hasNextPage endCursor } } }"}]"#)
 
     let list = Projected<Moment>(try AccountScope().stream(Moment.feed))
-    await eventually("the rows and the load time arrive") { !(list.rows.isEmpty || list.state?.loadedAt == nil) }
+    await eventually("the rows and the load time arrive") { !(list.rows.isEmpty || list.state?.loaded == nil) }
 
     #expect(list.rows.first?.uuid == "a")
     #expect(transport.calls.first?.operationName == "MomentsFeed")

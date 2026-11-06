@@ -24,16 +24,34 @@ private final class SignedAccount: @unchecked Sendable {
 private final class RowHistory: @unchecked Sendable {
   private let lock = NSLock()
   private var projection = ListProjection<User>()
-  private var stream: UInt64?
   private var history: [[String]] = []
 
   var states: [[String]] { lock.withLock { history } }
 
-  func take(_ delivery: StreamDelivery) {
+  func begin() { lock.withLock { projection = ListProjection<User>() } }
+
+  func take(_ value: ReadValue) {
     lock.withLock {
-      if stream != delivery.stream { stream = delivery.stream; projection = ListProjection<User>() }
-      if projection.apply(delivery) == .changed { history.append(projection.rows.map(\.name)) }
+      if projection.apply(value) == .changed { history.append(projection.rows.map(\.name)) }
     }
+  }
+}
+
+private final class HeldList: @unchecked Sendable {
+  let stream: ValueStream
+  let reading: Task<Void, Never>
+
+  init(_ stream: ValueStream, _ history: RowHistory) {
+    self.stream = stream
+    history.begin()
+    reading = Task {
+      do { for try await value in stream { history.take(value) } } catch {}
+    }
+  }
+
+  func cancel() async {
+    reading.cancel()
+    await stream.cancel()
   }
 }
 
@@ -88,12 +106,8 @@ extension BridgeProbeTests {
     return server
   }
 
-  fileprivate static func holdList(_ history: RowHistory) throws -> UInt64 {
-    let database = try DB.database
-    let pulled = PulledStream { history.take($0) }
-    let stream = database.subscribe(epoch: database.sessionEpoch(), request: .query(queryJson: #"{"model":"User"}"#), sink: pulled)
-    pulled.bind(stream, database)
-    return stream
+  fileprivate static func holdList(_ history: RowHistory) throws -> HeldList {
+    HeldList(try DB.account().stream(Query<User>()), history)
   }
 
   /// The order of the app: sign-in call, session profile, profile refresh.
@@ -164,7 +178,7 @@ extension BridgeProbeTests {
     try await Self.startSealedSession("A")
     let history = RowHistory()
     let live = try Self.holdList(history)
-    defer { _ = try? DB.database.cancelStream(stream: live) }
+    defer { live.reading.cancel() }
     await eventually("the held list shows A") { history.states.last?.contains("A") == true }
     try await DB.sessionReset()
     let seen = history.states.count
@@ -185,7 +199,7 @@ extension BridgeProbeTests {
     await eventually(#"entity.value?.name == "A""#) { entity.value?.name == "A" }
     let history = RowHistory()
     let live = try Self.holdList(history)
-    defer { _ = try? DB.database.cancelStream(stream: live) }
+    defer { live.reading.cancel() }
     await eventually("the held list shows A") { history.states.last?.contains("A") == true }
     server.hold(operation: "UserProfile")
     Task { @MainActor in _ = try? await User.profile.refresh() }
@@ -198,7 +212,7 @@ extension BridgeProbeTests {
 
     await finishes("the confirmed logout") { try? await DB.sessionCall("logout", body: NoBody()) }
     try await DB.sessionReset()
-    try DB.database.cancelStream(stream: live)
+    await live.cancel()
 
     await eventually("the wait that was pending at the exit ended") { pending.isDone }
     #expect(entity.projection.ended == .sessionEnded)
@@ -219,7 +233,7 @@ extension BridgeProbeTests {
     await eventually(#"entity.value?.name == "A""#) { entity.value?.name == "A" }
     let history = RowHistory()
     let live = try Self.holdList(history)
-    defer { _ = try? DB.database.cancelStream(stream: live) }
+    defer { live.reading.cancel() }
     await eventually("the held list shows A") { history.states.last?.contains("A") == true }
     for (next, previous) in [("B", "A"), ("A", "B")] {
       server.hold(operation: "UserProfile")

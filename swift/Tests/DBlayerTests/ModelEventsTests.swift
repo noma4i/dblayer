@@ -16,9 +16,9 @@ extension BridgeProbeTests {
     return transport
   }
 
-  private static func chat(_ item: ModelEventItem<ChatActivityNotice>?) -> String? {
+  private static func position(_ item: ModelEventItem<ChatActivityNotice>?) -> UInt64? {
     guard case .event(let event)? = item else { return nil }
-    return event.after?.chatId
+    return event.position
   }
 
   /// Requirement: a collector hears every event after it started, in the order the server sent them, and none from before. Observable: the chat ids the collector received.
@@ -29,16 +29,16 @@ extension BridgeProbeTests {
     let early = await opened(try DB.account().events(ChatActivityNotice.self))
     await eventually("the signal subscription opens") { transport.calls.count == 1 }
     try transport.emit("ChatActionSignal", json: Self.screenshot("c1"))
-    #expect(Self.chat(await early.next("the first event")) == "c1")
+    #expect(Self.position(await early.next("the first event")) == 1)
 
     let late = await opened(try DB.account().events(ChatActivityNotice.self))
     try transport.emit("ChatActionSignal", json: Self.screenshot("c2"))
     try transport.emit("ChatActionSignal", json: Self.screenshot("c3"))
 
-    #expect(Self.chat(await late.next("the first event of the late collector")) == "c2", "the late collector got the past event or lost the next one")
-    #expect(Self.chat(await late.next("the second event of the late collector")) == "c3")
-    #expect(Self.chat(await early.next("the second event of the early collector")) == "c2")
-    #expect(Self.chat(await early.next("the third event of the early collector")) == "c3")
+    #expect(Self.position(await late.next("the first event of the late collector")) == 2, "the late collector got the past event or lost the next one")
+    #expect(Self.position(await late.next("the second event of the late collector")) == 3)
+    #expect(Self.position(await early.next("the second event of the early collector")) == 2)
+    #expect(Self.position(await early.next("the third event of the early collector")) == 3)
   }
 
   /// S209: a collector that reads nothing while 400 events arrive takes the events the journal kept and lost ranges that add up to the 400 sent. Observed: the items of the collector. Breaks when the journal drops an event without keeping its position.
@@ -76,7 +76,7 @@ extension BridgeProbeTests {
     let first = await opened(try DB.account().events(ChatActivityNotice.self))
     await eventually("the signal subscription opens") { transport.calls.count == 1 }
     try transport.emit("ChatActionSignal", json: Self.screenshot("a1"))
-    #expect(Self.chat(await first.next("the event of the first session")) == "a1")
+    #expect(Self.position(await first.next("the event of the first session")) == 1)
 
     try await DB.sessionReset()
     let ended = await first.next("the end of the old stream", timeout: .seconds(10))

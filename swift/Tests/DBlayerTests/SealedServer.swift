@@ -25,11 +25,26 @@ final class SealedServer: EncryptedHttp, @unchecked Sendable {
   private var lostFile: String?
   private var lost = false
   private let answer: @Sendable (String, [String: Any]) -> [String: Any]
+  private let bridge: (@Sendable (String, [String: Any]) async throws -> [String: Any])?
 
   /// `answer` maps the path and the request body of a signed-in request to the answer body.
   init(deduplicate: Bool = false, answer: @escaping @Sendable (String, [String: Any]) -> [String: Any]) throws {
     self.deduplicate = deduplicate
     self.answer = answer
+    self.bridge = nil
+    let fixtureURL = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("fixtures/encrypted-http/kat.json")
+    let fixture = try JSONSerialization.jsonObject(with: Data(contentsOf: fixtureURL)) as! [String: Any]
+    let pem = (fixture["SERVER_PRIVATE_KEY_PEM"] as! String).split(separator: "\n").filter { !$0.hasPrefix("-----") }.joined()
+    var error: Unmanaged<CFError>?
+    let attributes: [CFString: Any] = [kSecAttrKeyType: kSecAttrKeyTypeRSA, kSecAttrKeyClass: kSecAttrKeyClassPrivate]
+    privateKey = SecKeyCreateWithData(Data(base64Encoded: pem)! as CFData, attributes as CFDictionary, &error)!
+  }
+
+  /// A server whose answers come from an async closure, such as a mock transport behind the encrypted session.
+  init(bridge: @escaping @Sendable (String, [String: Any]) async throws -> [String: Any]) throws {
+    self.deduplicate = false
+    self.answer = { _, _ in [:] }
+    self.bridge = bridge
     let fixtureURL = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("fixtures/encrypted-http/kat.json")
     let fixture = try JSONSerialization.jsonObject(with: Data(contentsOf: fixtureURL)) as! [String: Any]
     let pem = (fixture["SERVER_PRIVATE_KEY_PEM"] as! String).split(separator: "\n").filter { !$0.hasPrefix("-----") }.joined()
@@ -83,7 +98,14 @@ final class SealedServer: EncryptedHttp, @unchecked Sendable {
       guard prior.0 == digest else { throw DbError.Invalid(detail: "request ID reused with different content") }
       return EncryptedReply(status: 200, body: prior.1)
     }
-    let reply = answer(path, sent)
+    let reply: [String: Any]
+    if let bridge {
+      do { reply = try await bridge(path, sent) } catch DbError.Http(let status, _) where status == 401 {
+        return EncryptedReply(status: 401, body: "")
+      }
+    } else {
+      reply = answer(path, sent)
+    }
     lock.withLock { executed.append(sent) }
     if let operation = sent["operationName"] as? String, lock.withLock({ holding == operation }) {
       await withCheckedContinuation { continuation in

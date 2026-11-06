@@ -3,14 +3,10 @@ import Foundation
 import Testing
 @testable import DBlayer
 
-private final class SilentListener: ValueSink, @unchecked Sendable {
-  func available() {}
-}
-
 struct MockTransportStrictTests {
   private let request = TransportRequest(document: "query Ping { ping }", operationName: "Ping", variablesJson: #"{"page":2}"#, purpose: .standard)
 
-  @Test
+  @Test(.timeLimit(.minutes(1)))
   func aCallWithoutAReplyFailsNamingTheOperationAndVariables() async {
     await withKnownIssue {
       let transport = MockTransport()
@@ -25,20 +21,6 @@ struct MockTransportStrictTests {
       #expect(transport.unscripted.map(\.operationName) == ["Ping"])
       #expect(transport.calls.map(\.operationName) == ["Ping"])
     } matching: { "\($0.comments)".contains("no reply queued for Ping variables=") }
-  }
-
-  @Test
-  func aLoadOfTheCoreWithoutAReplyFailsTheTestThatCausedIt() async throws {
-    try await withKnownIssue {
-      let transport = MockTransport()
-      let database = try await openDatabase(config: Config(path: nil, dataVersion: nil, cacheRows: 8), modelsJson: modelsJSON, transport: transport)
-      try database.registerOperations(defsJson: #"[{"name":"documentBySlug","document":"query documentBySlug($slug: String!, $source: String!) { documentBySlug(slug: $slug, source: $source) { id slug } }","rootPath":"documentBySlug"},{"name":"documentUpdated","document":"subscription documentUpdated($slug: String!, $source: String!) { documentUpdated(slug: $slug, source: $source) { id slug } }","rootPath":"documentUpdated"}]"#)
-      let live = database.subscribe(epoch: database.sessionEpoch(), request: .query(queryJson: #"{"model":"Document","relation":"bySlug","params":{"slug":"a","source":"web"}}"#), sink: SilentListener())
-      defer { database.cancelStream(stream: live) }
-      await eventually("the load reaches the mock", timeout: .seconds(5)) { !transport.unscripted.isEmpty }
-    } matching: { issue in
-      "\(issue.comments)".contains("no reply queued for documentBySlug variables=")
-    }
   }
 
   @Test
@@ -59,5 +41,19 @@ struct MockTransportStrictTests {
     let transport = MockTransport()
     transport.unsubscribe(token: "never-issued")
     #expect(transport.unknownTokens == ["never-issued"])
+  }
+}
+
+extension BridgeProbeTests {
+  @Test @MainActor
+  func aLoadOfTheCoreWithoutAReplyFailsTheTestThatCausedIt() async throws {
+    try await withKnownIssue {
+      let transport = MockTransport()
+      try await reopen(config: Config(path: nil, dataVersion: nil, cacheRows: 8), modelsJson: modelsJSON, transport: transport, operations: #"[{"name":"MomentsFeed","document":"query MomentsFeed($first: Int, $after: String) { feed(first: $first, after: $after) { nodes { id uuid likedByMe media createdAt } pageInfo { hasNextPage endCursor } } }"}]"#)
+      _ = try? await Moment.feed.load()
+      #expect(!transport.unscripted.isEmpty)
+    } matching: { issue in
+      "\(issue.comments)".contains("no reply queued for MomentsFeed variables=")
+    }
   }
 }
