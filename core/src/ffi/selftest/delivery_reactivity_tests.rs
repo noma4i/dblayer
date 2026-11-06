@@ -106,6 +106,24 @@ async fn feed_payload_removes() {
     bound(database.close_database()).await.unwrap();
 }
 
+#[tokio::test(flavor = "multi_thread")]
+async fn feed_changes_not_list() {
+    let (database, transport, stream, token) = feed_events().await;
+    assert!(transport.cable.event(&token, json!({"data":{"recordEvents":{"entries":{}}}})));
+    assert!(matches!(bound(stream.pull()).await.unwrap(), Some(ReadValue::Lost { first: 1, last: 1 })));
+    assert_eq!(bound(database.subscription_census()).await.unwrap().refused_events, 1);
+    bound(database.close_database()).await.unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn feed_changes_entry_incomplete() {
+    let (database, transport, stream, token) = feed_events().await;
+    assert!(transport.cable.event(&token, json!({"data":{"recordEvents":{"entries":[{"topic":"MESSAGE","recordId":"c1"},{"topic":"MESSAGE","action":"UPDATED","recordId":"c2","chat":{"id":"c2","title":"after","revision":2,"lists":["PRIMARY"]}}]}}})));
+    assert!(matches!(bound(stream.pull()).await.unwrap(), Some(ReadValue::Event { position: 1, id, .. }) if id == "c2"));
+    assert_eq!(bound(database.subscription_census()).await.unwrap().refused_events, 1);
+    bound(database.close_database()).await.unwrap();
+}
+
 async fn next_rows(rig: &Rig, stream: &ReadStream, expected: i64) -> i64 {
     let value = bound(stream.pull()).await.unwrap().unwrap();
     let (revision, rows) = match value {
