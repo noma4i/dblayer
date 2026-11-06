@@ -38,20 +38,20 @@ impl Rig {
     }
 }
 
-fn resume(id: u64) -> SessionInput { SessionInput::SessionResume { reply: id } }
+fn ask_answer(id: u64) -> SessionInput { SessionInput::SessionResume { reply: id } }
 fn too_large() -> SessionError { SessionError::TooLarge { size: 262145, limit: 262144 } }
 fn answer(id: u64, result: Result<Option<String>, SessionError>) -> SessionEffect { SessionEffect::ResumeReply { id, answer: result } }
 
 #[test]
-fn sess_resume_none() { assert_eq!(Rig::new().send(resume(1)), [answer(1, Ok(None))]); }
+fn sess_resume_none() { assert_eq!(Rig::new().send(ask_answer(1)), [answer(1, Ok(None))]); }
 
 #[test]
 fn sess_resume_waits() {
     let mut rig = Rig::new();
     rig.restore();
-    assert!(rig.send(resume(1)).is_empty());
+    assert!(rig.send(ask_answer(1)).is_empty());
     rig.start();
-    assert!(rig.send(resume(2)).is_empty());
+    assert!(rig.send(ask_answer(2)).is_empty());
 }
 
 #[test]
@@ -59,10 +59,10 @@ fn sess_resume_waiter_answered() {
     let mut rig = Rig::new();
     rig.restore();
     let attempt = rig.start();
-    rig.send(resume(1));
-    rig.send(resume(2));
+    rig.send(ask_answer(1));
+    rig.send(ask_answer(2));
     assert_eq!(rig.refuse(attempt), [answer(1, Err(too_large())), answer(2, Err(too_large()))]);
-    assert_eq!(rig.send(resume(3)), [answer(3, Ok(None))]);
+    assert_eq!(rig.send(ask_answer(3)), [answer(3, Ok(None))]);
 }
 
 #[test]
@@ -71,7 +71,7 @@ fn sess_restored_answer_kept() {
     rig.restore();
     let attempt = rig.start();
     assert!(rig.refuse(attempt).is_empty());
-    assert_eq!(rig.send(resume(1)), [answer(1, Err(too_large()))]);
+    assert_eq!(rig.send(ask_answer(1)), [answer(1, Err(too_large()))]);
 }
 
 #[test]
@@ -80,8 +80,8 @@ fn sess_resume_takes_answer() {
     rig.restore();
     let attempt = rig.start();
     rig.refuse(attempt);
-    assert_eq!(rig.send(resume(1)), [answer(1, Err(too_large()))]);
-    assert_eq!(rig.send(resume(2)), [answer(2, Ok(None))]);
+    assert_eq!(rig.send(ask_answer(1)), [answer(1, Err(too_large()))]);
+    assert_eq!(rig.send(ask_answer(2)), [answer(2, Ok(None))]);
 }
 
 #[test]
@@ -89,16 +89,16 @@ fn sess_resume_end() {
     let mut rig = Rig::new();
     rig.restore();
     rig.start();
-    rig.send(resume(1));
+    rig.send(ask_answer(1));
     assert!(rig.send(SessionInput::EpochEnded(EpochEnded { epoch: 2, cause: Cause::SessionReset })).is_empty());
     let effects = rig.send(SessionInput::EpochEnded(EpochEnded { epoch: 3, cause: Cause::SessionReset }));
     assert!(effects.contains(&answer(1, Err(SessionError::Interrupted))));
-    assert_eq!(rig.send(resume(2)), [answer(2, Ok(None))]);
+    assert_eq!(rig.send(ask_answer(2)), [answer(2, Ok(None))]);
     let mut closed = Rig::new();
     closed.restore();
-    closed.send(resume(3));
+    closed.send(ask_answer(3));
     assert!(closed.send(SessionInput::Closing).contains(&answer(3, Err(SessionError::Closed))));
-    assert_eq!(closed.send(resume(4)), [answer(4, Err(SessionError::Closed))]);
+    assert_eq!(closed.send(ask_answer(4)), [answer(4, Err(SessionError::Closed))]);
 }
 
 #[test]
@@ -106,7 +106,7 @@ fn sess_epoch_ended_stale() {
     let mut rig = Rig::new();
     rig.restore();
     let attempt = rig.start();
-    rig.send(resume(1));
+    rig.send(ask_answer(1));
     assert!(rig.send(SessionInput::EpochEnded(EpochEnded { epoch: 2, cause: Cause::SessionReset })).is_empty());
     assert_eq!(rig.refuse(attempt), [answer(1, Err(too_large()))]);
     assert_eq!(rig.det.state(rig.address).unwrap().credential().unwrap().digest, 4);
@@ -123,7 +123,7 @@ fn sess_prop_resume_once() {
     assert!(!committed.iter().any(|effect| matches!(effect, SessionEffect::HttpRequest { .. } | SessionEffect::Reply { .. })));
     let published = rig.send(SessionInput::Published(Published { epoch: 3, identity: Some(4), generation: 0, state: PublishedState::Session, closed: false }));
     assert!(!published.iter().any(|effect| matches!(effect, SessionEffect::HttpRequest { .. } | SessionEffect::Reply { .. })));
-    assert_eq!(rig.send(resume(1)), [answer(1, Ok(Some("{\"ok\":true}".into())))]);
-    assert_eq!(rig.send(resume(2)), [answer(2, Ok(None))]);
+    assert_eq!(rig.send(ask_answer(1)), [answer(1, Ok(Some("{\"ok\":true}".into())))]);
+    assert_eq!(rig.send(ask_answer(2)), [answer(2, Ok(None))]);
     assert_eq!(rig.det.state(rig.address).unwrap().credential().unwrap().sequence, 1);
 }
