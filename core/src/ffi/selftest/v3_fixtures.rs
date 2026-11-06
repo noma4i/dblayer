@@ -2,7 +2,7 @@ use serde_json::{json, Value};
 
 use super::rig_tests::Rig;
 use crate::ffi::wire::{wire_fields, Cell, WireRow};
-use crate::schema::{AssociationKind, AssociationSpec, FieldSpec, ModelSpec, Newer, RelationSpec};
+use crate::schema::{ActionDeclaration, RootShape, AssociationKind, AssociationSpec, FieldSpec, ModelSpec, Newer, RelationSpec};
 use crate::value::ScalarKind;
 
 fn optional(name: &str, kind: ScalarKind) -> FieldSpec { FieldSpec::scalar(name, kind).nullable().optional() }
@@ -20,6 +20,20 @@ pub(super) fn chat_spec() -> ModelSpec {
         optional("muted", ScalarKind::Bool),
     ]);
     chat.relations.push(RelationSpec::global("all"));
+    for (name, mutation, root, arg) in [("pin", "ChatPin", "chatPin", Some("pinned")), ("mute", "ChatMute", "chatMute", Some("muted")), ("mark_read", "ChatMarkRead", "chatMarkRead", None)] {
+        let mut action = ActionDeclaration::new(name, RootShape::Upsert);
+        action.mutation = Some(mutation.into());
+        action.root = Some(root.into());
+        action.variables.insert("id".into(), "id".into());
+        match arg {
+            Some(arg) => {
+                action.args.insert(arg.into(), "bool".into());
+                action.variables.insert(arg.into(), arg.into());
+            }
+            None => {}
+        }
+        chat.actions.push(action);
+    }
     chat
 }
 

@@ -195,6 +195,9 @@ impl World {
                 if commits { state.messages.push((account.clone(), message.clone())); }
                 json!({"data":{"messageForward":{"message":message,"chat":{"id":input["chatId"],"updatedAt":"2026-11-04T00:00:00Z"}}}})
             }
+            "ChatPin" => json!({"data":{"chatPin":{"__typename":"Chat","id":body["variables"]["id"],"pinned":body["variables"]["pinned"]}}}),
+            "ChatMute" => json!({"data":{"chatMute":{"__typename":"Chat","id":body["variables"]["id"],"muted":body["variables"]["muted"]}}}),
+            "ChatMarkRead" => json!({"data":{"chatMarkRead":{"__typename":"Chat","id":body["variables"]["id"],"unreadCount":0}}}),
             "MessageReact" => json!({"data":{"messageReact":{"__typename":"Message","id":"m1","chatId":"c1","text":"hello","at":1}}}),
             "DeleteGroup" => json!({"data":{"deleteGroup":{"id":body["variables"]["id"]}}}),
             "CreateGroup" => {
@@ -357,6 +360,9 @@ const OPERATIONS: &str = r#"[
     {"name":"MessageForward","document":"mutation MessageForward($input: MessageForwardInput!) { messageForward(input: $input) { message { id chatId text at } chat { id updatedAt } } }"},
     {"name":"MessageReact","document":"mutation MessageReact($id: ID!, $body: String!, $userId: ID!) { messageReact(id: $id, body: $body, userId: $userId) { id chatId text at reactions { body userId } } }"},
     {"name":"MemberChanged","document":"subscription MemberChanged { memberChanged { id name } }"},
+    {"name":"ChatPin","document":"mutation ChatPin($id: ID!, $pinned: Boolean!) { chatPin(id: $id, pinned: $pinned) { id pinned } }"},
+    {"name":"ChatMute","document":"mutation ChatMute($id: ID!, $muted: Boolean!) { chatMute(id: $id, muted: $muted) { id muted } }"},
+    {"name":"ChatMarkRead","document":"mutation ChatMarkRead($id: ID!) { chatMarkRead(id: $id) { id unreadCount } }"},
     {"name":"DeleteGroup","document":"mutation DeleteGroup($id: ID!) { deleteGroup(id: $id) { id } }"}
 ]"#;
 
