@@ -3,10 +3,10 @@
 
 use std::sync::Arc;
 
-use serde_json::{json, Map, Value};
+use serde_json::{json, Value};
 use crate::owners::store::{EffectRow, IntentEffects};
 
-use super::database::id;
+use super::database::{id, parse_json};
 use super::receipt::{receipt_of, Ticket, WireOperationOutcome, WireOperationReceipt};
 use super::{Database, DbError};
 use crate::store::Planned;
@@ -117,11 +117,11 @@ impl Database {
         Ok(receipt_of(epoch, model, Some(i64::try_from(held.op_id).unwrap_or(i64::MAX)), held.revision, value, Some(held), self.life.clone()))
     }
 
-    pub(super) async fn create_row(&self, epoch: u64, model: String, values: Map<String, Value>, args: Map<String, Value>) -> Result<WireOperationReceipt, DbError> {
+    pub(super) async fn create_row(&self, epoch: u64, model: String, values_json: String, args_json: String) -> Result<WireOperationReceipt, DbError> {
         if self.life.is_shut() { return Err(super::command::closed()); }
         self.mutation_needs_transport(&model, "create")?;
         let db = self.db.clone();
-        let planned = self.offload(move || Ok(db.plan_create(&model, values, args)?)).await?;
+        let planned = self.offload(move || Ok(db.plan_create(&model, parse_json(&values_json)?, parse_json(&args_json)?)?)).await?;
         self.write_planned(epoch, "create", planned).await
     }
 }
@@ -133,24 +133,22 @@ impl Database {
         if declared.is_some_and(|action| action.durable) {
             return Err(DbError::Invalid { detail: format!("{model} sends its create as a durable command: use send") });
         }
-        self.create_row(epoch, model, serde_json::from_str(&values_json)?, serde_json::from_str(&args_json)?).await
+        self.create_row(epoch, model, values_json, args_json).await
     }
 
     pub async fn update(&self, epoch: u64, model: String, row_id: String, patch_json: String, args_json: String) -> Result<WireOperationReceipt, DbError> {
         self.mutation_needs_transport(&model, "update")?;
-        let (patch, args) = (serde_json::from_str(&patch_json)?, serde_json::from_str(&args_json)?);
         let row = self.resolved(epoch, &model, id(&row_id)?).await?;
         let (db, name) = (self.db.clone(), model.clone());
-        let planned = self.offload(move || Ok(db.plan_update(&name, &row, patch, args)?)).await?;
+        let planned = self.offload(move || Ok(db.plan_update(&name, &row, parse_json(&patch_json)?, parse_json(&args_json)?)?)).await?;
         self.write_planned(epoch, "update", planned).await
     }
 
     pub async fn act(&self, epoch: u64, model: String, row_id: String, action: String, patch_json: String, args_json: String) -> Result<WireOperationReceipt, DbError> {
         self.mutation_needs_transport(&model, &action)?;
-        let (patch, args) = (serde_json::from_str(&patch_json)?, serde_json::from_str(&args_json)?);
         let row = self.resolved(epoch, &model, id(&row_id)?).await?;
         let (db, name, verb) = (self.db.clone(), model.clone(), action.clone());
-        let planned = self.offload(move || Ok(db.plan_act(&name, &verb, &row, patch, args)?)).await?;
+        let planned = self.offload(move || Ok(db.plan_act(&name, &verb, &row, parse_json(&patch_json)?, parse_json(&args_json)?)?)).await?;
         self.write_planned(epoch, &action, planned).await
     }
 
@@ -164,10 +162,9 @@ impl Database {
 
     pub async fn set_local(&self, epoch: u64, model: String, row_id: String, path: String, value_json: String) -> Result<(), DbError> {
         self.account_call(epoch)?;
-        let value: Value = serde_json::from_str(&value_json)?;
         let row = self.resolved(epoch, &model, id(&row_id)?).await?;
         let (db, name, field) = (self.db.clone(), model.clone(), path.clone());
-        let plan = self.offload(move || Ok(db.plan_set_local(&name, &row, &field, value)?)).await?;
+        let plan = self.offload(move || Ok(db.plan_set_local(&name, &row, &field, parse_json::<Value>(&value_json)?)?)).await?;
         let (kind, row, values) = match plan {
             crate::store::LocalPlan::Unchanged => return Ok(()),
             crate::store::LocalPlan::Row { row_id, values } => (LocalWriteKind::SetLocal, row_id, Value::Object(values).to_string()),

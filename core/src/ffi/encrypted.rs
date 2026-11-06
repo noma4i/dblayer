@@ -2,7 +2,7 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use serde_json::Value;
 use crate::transport::{self as core, EncryptedConfig, EncryptedTransport, Exchange, ServerConfig, SessionCode};
-use super::database::{cancellable, Database, Encrypted, Wiring};
+use super::database::{cancellable, parse_json, Database, Encrypted, Wiring};
 use crate::owners::life::LifeReply;
 use super::transport::{transport_error, ForeignTransport};
 use super::{DbError, Transport};
@@ -139,15 +139,17 @@ impl Drop for RetrySubscription {
     fn drop(&mut self) { self.cancel(); }
 }
 
+fn session_body(body: &str) -> Result<String, DbError> {
+    let answer = core::Answer { sequence: None, body: parse_json(body)? };
+    Ok(refused(answer)?.body.to_string())
+}
+
 #[uniffi::export]
 impl Database {
     pub async fn session_call(&self, operation: String, body_json: String) -> Result<String, DbError> {
-        serde_json::from_str::<Value>(&body_json)?;
+        let body_json = self.offload(move || { parse_json::<Value>(&body_json)?; Ok(body_json) }).await?;
         match self.await_life(self.life.session_call(operation, body_json)).await? {
-            LifeReply::Session(Ok(body)) => {
-                let answer = core::Answer { sequence: None, body: serde_json::from_str(&body)? };
-                Ok(refused(answer)?.body.to_string())
-            }
+            LifeReply::Session(Ok(body)) => self.offload(move || session_body(&body)).await,
             LifeReply::Session(Err(error)) => Err(session_failure(error)),
             _ => Err(super::command::ended()),
         }
@@ -155,10 +157,7 @@ impl Database {
 
     pub async fn interrupted_session_answer(&self) -> Result<Option<String>, DbError> {
         match self.await_life(self.life.interrupted_session_answer()).await? {
-            LifeReply::SessionResume(Ok(Some(body))) => {
-                let answer = core::Answer { sequence: None, body: serde_json::from_str(&body)? };
-                Ok(Some(refused(answer)?.body.to_string()))
-            }
+            LifeReply::SessionResume(Ok(Some(body))) => self.offload(move || session_body(&body)).await.map(Some),
             LifeReply::SessionResume(Ok(None)) => Ok(None),
             LifeReply::SessionResume(Err(error)) => Err(session_failure(error)),
             _ => Err(super::command::ended()),

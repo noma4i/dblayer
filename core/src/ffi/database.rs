@@ -239,6 +239,10 @@ fn operations_lookup(reads: &crate::owners::read::ReadOperations) -> crate::owne
     Arc::new(move |name| reads.get(name).map(|operation| (operation.document.clone(), operation.root_path.clone())))
 }
 
+pub(super) fn parse_json<T: serde::de::DeserializeOwned>(text: &str) -> Result<T, DbError> {
+    Ok(serde_json::from_str(text)?)
+}
+
 pub(super) fn id(value: &str) -> Result<RowId, DbError> {
     RowId::new(value).map_err(|error| DbError::Invalid { detail: error.to_string() })
 }
@@ -254,7 +258,7 @@ impl Database {
     }
     pub async fn edge_values(&self, epoch: u64, model: String, relation: String, params_json: String, row_ids: Vec<String>) -> Result<String, DbError> {
         self.read_in_epoch(epoch, "edge values", move |database| {
-            let params = serde_json::from_str(&params_json)?;
+            let params = parse_json(&params_json)?;
             Ok(serde_json::to_string(&database.db.edge_values(&model, &relation, &params, &row_ids)?)?)
         }).await
     }
@@ -318,7 +322,7 @@ impl Database {
     }
     pub async fn run(&self, epoch: u64, operation: String, variables_json: String) -> Result<String, DbError> {
         self.remote()?;
-        let variables_json = self.offload(move || { serde_json::from_str::<Value>(&variables_json)?; Ok(variables_json) }).await?;
+        let variables_json = self.offload(move || { parse_json::<Value>(&variables_json)?; Ok(variables_json) }).await?;
         match self.await_life(self.life.run(epoch, operation, variables_json)).await? {
             LifeReply::Call(Ok(answer)) => Ok(answer),
             LifeReply::Call(Err(error)) => Err(call_failure(error)),

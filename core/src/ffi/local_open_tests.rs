@@ -44,6 +44,6 @@ async fn a_write_after_a_boot_that_raised_the_generation_is_not_stale() {
     drop(first);
     rusqlite::Connection::open(&path).unwrap().execute("UPDATE manifest SET value = '2' WHERE key = 'saved_generation'", []).unwrap();
     let second = Database::open(config(), models, crate::ffi::OpenPorts::default()).await.unwrap();
-    let created = crate::test_wait::within(second.create_row(second.session_epoch(), "Note".into(), serde_json::from_str(r#"{"text":"kept"}"#).unwrap(), Default::default())).await;
+    let created = crate::test_wait::within(second.create_row(second.session_epoch(), "Note".into(), r#"{"text":"kept"}"#.into(), "{}".into())).await;
     assert!(created.is_ok(), "{created:?}");
 }

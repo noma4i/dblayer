@@ -30,7 +30,7 @@ impl OpenDatabase {
     pub fn new() -> Arc<Self> { Arc::new(Self { slot: OpenSlot::new() }) }
 
     pub async fn open(&self, config: Config, models_json: String, options: OpenOptions, ports: OpenPorts) -> Result<Arc<Database>, DbError> {
-        serde_json::from_str::<serde_json::Value>(&options.operations)?;
+        let options = super::database::blocking(move || { super::database::parse_json::<serde_json::Value>(&options.operations)?; Ok(options) }).await?;
         let lease = self.slot.acquire()?;
         let remote = ports.transport.is_some();
         let database = Database::open(config, models_json, ports).await?;

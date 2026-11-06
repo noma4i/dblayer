@@ -91,7 +91,7 @@ impl Database {
         self.mutation_needs_transport(&request.model, "create")?;
         self.admit_command(&request)?;
         if request.upload.is_none() {
-            return self.create_row(request.epoch, request.model, serde_json::from_str(&request.values_json)?, serde_json::from_str(&request.args_json)?).await;
+            return self.create_row(request.epoch, request.model, request.values_json, request.args_json).await;
         }
         self.send_upload(request).await
     }
