@@ -20,6 +20,7 @@ pub(super) fn apply_envelope_at(
 ) -> Result<CommitResult, StoreError> {
     let mut followed = planned.clone();
     super::follow_removed::follow_removed_by(connection, models, &mut followed)?;
+    super::follow_cascade::follow_destroys(connection, models, &mut followed)?;
     super::follow_pointer::follow_parent_pointers(connection, models, &mut followed)?;
     let envelope = &followed;
     if let Some(originals) = originals.as_deref_mut() {

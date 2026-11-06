@@ -18,24 +18,6 @@ pub(super) type OverlayWrites = Vec<(String, String, Map<String, Value>)>;
 
 fn fault(error: impl std::fmt::Display) -> StoreError { StoreError::Constraint(error.to_string()) }
 
-fn descendants(writer: &RowWrite<'_>, reader: &Reader<'_>, parent: &RowRef, seen: &mut HashSet<RowRef>, result: &mut Vec<RowRef>) -> Result<(), StoreError> {
-    let spec = &writer.models.get(parent.model.as_str()).ok_or_else(|| StoreError::UnknownModel(parent.model.to_string()))?.spec;
-    for association in spec.associations.iter().filter(|association| association.owns_children() && association.dependent == Some(Dependent::Destroy)) {
-        let model = association.target.as_str();
-        let child_spec = &writer.models.get(model).ok_or_else(|| StoreError::UnknownModel(model.to_string()))?.spec;
-        let query = Query::new(model).filtered(Where::equal(&association.foreign_key, json!(parent.id.as_str())));
-        let statement = compile_keys(&query, child_spec).map_err(fault)?;
-        for (id, _) in fetch_keys(reader.connection(), &statement).map_err(fault)? {
-            let child = RowRef::new(association.target.clone(), RowId::new(&id).map_err(fault)?);
-            if seen.insert(child.clone()) {
-                descendants(writer, reader, &child, seen, result)?;
-                result.push(child);
-            }
-        }
-    }
-    Ok(())
-}
-
 fn touch_parents(writer: &RowWrite<'_>, reader: &Reader<'_>, owner: &RowRef, rows: &[&Map<String, Value>]) -> Result<Vec<EntityOp>, StoreError> {
     let spec = &writer.models.get(owner.model.as_str()).ok_or_else(|| StoreError::UnknownModel(owner.model.to_string()))?.spec;
     let mut seen = HashSet::from([owner.clone()]);
@@ -88,7 +70,7 @@ fn landing(writer: &mut RowWrite<'_>, model: &str, payload: &Value, overlay: &mu
     if op == "delete" {
         let owner = RowRef::new(ModelKey::new(model), id);
         let mut children = Vec::new();
-        descendants(writer, &reader, &owner, &mut HashSet::from([owner.clone()]), &mut children)?;
+        super::follow_cascade::descendants(writer.models, &reader, &owner, &mut HashSet::from([owner.clone()]), &mut children)?;
         envelope.entity_ops = crate::write::cascade_destroys(&owner, &children, true).into_iter().map(|row| EntityOp::Destroy { model: row.model, id: row.id, reason: DestroyReason::Server }).collect();
     } else if op == "upsert" {
         let spec = &writer.models.get(model).ok_or_else(|| StoreError::UnknownModel(model.to_string()))?.spec;

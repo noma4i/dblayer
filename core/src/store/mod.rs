@@ -13,6 +13,7 @@ use crate::schema::{ModelSpec, SearchPath};
 mod admission;
 mod context;
 mod file_read;
+mod follow_cascade;
 mod follow_pointer;
 mod follow_removed;
 mod lookup;
@@ -25,6 +26,8 @@ mod record;
 pub(crate) mod replaced_log;
 #[cfg(test)]
 mod atomic_tests;
+#[cfg(test)]
+mod cells_tests;
 mod apply;
 mod batch_common;
 mod batch_result;
