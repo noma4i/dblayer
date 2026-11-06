@@ -148,6 +148,21 @@ fn feed_chan_event_unwanted() {
 }
 
 #[test]
+fn feed_opening_event_unwatched() {
+    let mut rig = Rig::new();
+    rig.want("Chat", CHAT);
+    assert!(rig.event("A", "Post", "p1").is_empty());
+    assert_eq!(rig.state().position("Post"), 0);
+}
+
+#[test]
+fn feed_proto_handshake_deadline_after_done() {
+    let mut rig = Rig::live();
+    assert!(rig.post(FeedInput::HandshakeDeadline { connection_id: FIRST }).is_empty());
+    assert_eq!(rig.state().active_connection(), Some(FIRST));
+}
+
+#[test]
 fn feed_chan_event_before_confirm() {
     let mut rig = Rig::new();
     rig.want("Chat", CHAT);
