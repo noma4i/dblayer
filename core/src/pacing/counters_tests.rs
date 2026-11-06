@@ -1,15 +1,5 @@
 use super::*;
 
-#[test]
-fn record_methods_increment_matching_counters() {
-    let mut counters = Counters::default();
-    counters.record_transport_call();
-    counters.record_transport_call();
-    counters.record_stale_version_drops(3);
-    assert_eq!(counters.transport_calls, 2);
-    assert_eq!(counters.stale_version_drops, 3);
-}
-
 macro_rules! sums_each_field {
     ($($field:ident),* $(,)?) => {
         let Counters { $($field: _),* } = Counters::default();

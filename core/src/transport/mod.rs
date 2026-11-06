@@ -4,8 +4,6 @@ mod cancel;
 pub(crate) mod encrypted;
 mod error;
 mod extensions;
-mod events;
-mod fetch;
 #[cfg(test)]
 mod mock;
 mod online;
@@ -21,8 +19,6 @@ pub use encrypted::cable::{CableConnect, CableCredential, CableError, CableKeys,
 pub use encrypted::{missing_from_registry, repeats, response_of, Answer, AppPlatform, ConfigCode, Country, CredentialSlot, EncryptedClient, EncryptedConfig, EncryptedEndpoints, EncryptedOperationClass, EncryptedSessionOperation, EncryptedTransport, HttpExchange, HttpReply, SecurityCode, ServerConfig};
 pub use error::TransportError;
 pub use extensions::{graphql_extensions, GraphqlExtensions, TransactionDisposition};
-pub use events::{EventFault, EventSpec};
-pub use fetch::{FetchAttempt, FetchError, FetchReport};
 #[cfg(test)]
 pub use mock::{RecordedKind, MockTransport, PutReply, RecordedCall, RecordedPut, Reply};
 pub use online::Connectivity;
@@ -58,10 +54,6 @@ pub(crate) fn test_admission() -> Result<crate::ffi::admission::Admitted, crate:
 
 #[cfg(test)]
 mod cancel_tests;
-#[cfg(test)]
-mod events_tests;
-#[cfg(test)]
-mod fetch_tests;
 #[cfg(test)]
 mod mock_tests;
 #[cfg(test)]
