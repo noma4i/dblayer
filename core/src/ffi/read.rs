@@ -247,7 +247,7 @@ impl Drop for ReadStream {
 /// The tables a stream of `model` reads: its own and those of the rows its nested references read.
 fn read_tables(db: &crate::store::Store, model: &str) -> Vec<String> {
     let linked = db.spec(model).map(crate::store::plan::nested_ref::link_targets).unwrap_or_default();
-    std::iter::once(model.to_string()).chain(linked).map(|name| crate::ddl::table_name(&name)).collect()
+    std::iter::once(model.to_string()).chain(linked).map(|name| crate::store::ddl::table_name(&name)).collect()
 }
 
 fn fetch_of(fetch: ReadFetch) -> Fetch {

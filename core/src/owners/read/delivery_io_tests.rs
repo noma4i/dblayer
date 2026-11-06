@@ -11,7 +11,7 @@ use super::rig::{collector, pump, runtime};
 use super::feed::Feed;
 use super::windows::{WindowKey, Windows};
 use super::{DeliveryIo, Snapshots};
-use crate::ddl::{create_model_tables, manifest_read, manifest_write, migrate_core, REVISION_SEQ_KEY};
+use crate::store::ddl::{create_model_tables, manifest_read, manifest_write, migrate_core, REVISION_SEQ_KEY};
 use crate::owners::contract::{WindowPhase, WindowState};
 use crate::query::{compile_keys, fetch_keys, Query};
 use crate::owners::support::{new_log, Discard, Log, Sink};

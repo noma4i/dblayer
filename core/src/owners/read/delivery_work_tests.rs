@@ -9,7 +9,7 @@ use super::deliveries::{self as d, Deliveries, DeliveriesState, DeliveryEffect, 
 use super::windows::{WindowKey, Windows};
 use super::feed::Feed;
 use super::{DbSnapshots, Snapshots};
-use crate::ddl::table_name;
+use crate::store::ddl::table_name;
 use crate::owners::contract::{ChangedRows, Committed, Models};
 use crate::query::Query;
 use crate::runtime::{Address, Effect, Outcomes, StateOwner};

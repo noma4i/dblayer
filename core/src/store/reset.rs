@@ -3,10 +3,10 @@ use std::collections::{BTreeMap, BTreeSet};
 use rusqlite::{params, Connection, OptionalExtension};
 use serde_json::Value;
 
-use crate::ddl::{fingerprint, fts_tables, manifest_stamp, manifest_write, FieldPlan, REVISION_SEQ_KEY};
+use crate::store::ddl::{fingerprint, fts_tables, manifest_stamp, manifest_write, FieldPlan, REVISION_SEQ_KEY};
 use crate::files::{clear_all, clear_model};
 use crate::identity::ListKey;
-use crate::nodes::read_trees;
+use crate::store::nodes::read_trees;
 use crate::operation::{delete_operation, quarantine_add, read_value, Operation, QuarantineReason};
 use crate::schema::MergeRule;
 use crate::syncstate::clear_sync;
@@ -229,7 +229,7 @@ fn stash_surviving_columns(connection: &Connection, info: &ModelInfo, model: &st
         if !paths.contains(field) || columns.get(&leaf.column).is_none_or(|declared| !declared.eq_ignore_ascii_case(leaf.ty.as_sql())) {
             continue;
         }
-        let mut statement = connection.prepare(&format!(include_str!("sql/reset/stash_surviving_columns_select_table.sql"), column = crate::ddl::sql_ident(&leaf.column), table = info.table))?;
+        let mut statement = connection.prepare(&format!(include_str!("sql/reset/stash_surviving_columns_select_table.sql"), column = crate::store::ddl::sql_ident(&leaf.column), table = info.table))?;
         let cells = statement.query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, rusqlite::types::Value>(1)?)))?;
         for cell in cells {
             let (row_id, cell) = cell?;
@@ -263,7 +263,7 @@ pub(crate) fn finish_interrupted_reset(inner: &mut Inner) -> Result<bool, StoreE
     match mode.as_str() {
         "cache_only" => {
             for model in &models {
-                let table = crate::ddl::table_name(model);
+                let table = crate::store::ddl::table_name(model);
                 wipe_model_cache(&transaction, model, &table, true)?;
             }
         }
@@ -306,7 +306,7 @@ impl Store {
     pub(crate) fn saved(&self) -> Result<(u64, u64, Option<u64>), StoreError> {
         let inner = self.lock();
         let read = |key: &str| -> Result<u64, StoreError> {
-            match crate::ddl::manifest_read(&inner.connection, key)? {
+            match crate::store::ddl::manifest_read(&inner.connection, key)? {
                 None => Ok(0),
                 Some(value) => value.parse().map_err(|_| StoreError::CorruptManifest(format!("{key} = {value:?} is not a u64"))),
             }

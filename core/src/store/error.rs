@@ -1,5 +1,5 @@
 use crate::store::PlanFault;
-use crate::ddl::DdlError;
+use crate::store::ddl::DdlError;
 
 #[derive(Debug, thiserror::Error)]
 pub enum StoreError {

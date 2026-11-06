@@ -2,7 +2,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use serde_json::{json, Map, Value};
 
-use crate::ddl::{sql_ident, FieldPlan, Member};
+use crate::store::ddl::{sql_ident, FieldPlan, Member};
 use crate::identity::RowId;
 use crate::query::{compile_keys, fetch_keys, Query, Where};
 use crate::schema::AssociationKind;

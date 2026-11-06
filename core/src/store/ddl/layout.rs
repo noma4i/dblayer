@@ -343,17 +343,17 @@ impl Layout {
 
     pub fn table_statements(&self, temp: bool) -> Vec<String> {
         let temp = if temp { "TEMP " } else { "" };
-        let values = self.value_table.iter().map(|name| crate::nodes::node_table_statement(temp, name, &[("row_id", "TEXT"), ("field", "TEXT")]));
+        let values = self.value_table.iter().map(|name| crate::store::nodes::node_table_statement(temp, name, &[("row_id", "TEXT"), ("field", "TEXT")]));
         self.tables
             .iter()
             .map(|table| match &table.shape {
-                TableShape::Nodes => crate::nodes::node_table_statement(temp, &table.name, &[("row_id", "TEXT"), ("owner", "INTEGER")]),
-                TableShape::Values(value) => format!(include_str!("../store/sql/ddl/values_table.sql"), temp = temp, table = table.name, value_type = value.ty.as_sql()),
+                TableShape::Nodes => crate::store::nodes::node_table_statement(temp, &table.name, &[("row_id", "TEXT"), ("owner", "INTEGER")]),
+                TableShape::Values(value) => format!(include_str!("../sql/ddl/values_table.sql"), temp = temp, table = table.name, value_type = value.ty.as_sql()),
                 TableShape::Elements(members) => {
                     let mut columns = Vec::new();
                     members.iter().for_each(|member| member_columns(member, &mut columns));
                     let extra: String = columns.iter().map(|(name, ty)| format!(",\n  {} {}", super::sql_ident(name), ty.as_sql())).collect();
-                    format!(include_str!("../store/sql/ddl/elements_table.sql"), temp = temp, table = table.name, extra = extra)
+                    format!(include_str!("../sql/ddl/elements_table.sql"), temp = temp, table = table.name, extra = extra)
                 }
             })
             .chain(values)

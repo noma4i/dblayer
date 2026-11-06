@@ -398,7 +398,7 @@ fn stamp_confirmed_rows(
 
 fn stamp_owned_fields(connection: &Connection, info: &ModelInfo, id: &str, owned: &Map<String, Value>, revision: i64) -> Result<(), StoreError> {
     for (_, column) in info.layout.rev_columns().iter().filter(|(field, _)| owned.contains_key(field)) {
-        let column = crate::ddl::sql_ident(column);
+        let column = crate::store::ddl::sql_ident(column);
         connection.prepare_cached(&format!(include_str!("sql/apply_envelope/stamp_owned_fields.sql"), info.table, column = column))?.execute(params![revision, id])?;
     }
     Ok(())

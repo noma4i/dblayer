@@ -241,13 +241,13 @@ fn write_row(connection: &Connection, info: &ModelInfo, id: &str, row: &Map<Stri
         values.push(field_rev.get(field).map_or(rusqlite::types::Value::Null, |stamp| (*stamp).into()));
     }
     if exists {
-        let assignments: Vec<String> = names.iter().map(|name| format!("{} = ?", crate::ddl::sql_ident(name))).collect();
+        let assignments: Vec<String> = names.iter().map(|name| format!("{} = ?", crate::store::ddl::sql_ident(name))).collect();
         values.push(id.to_string().into());
         connection.prepare_cached(&format!(include_str!("sql/apply_rows/write_row_update.sql"), info.table, assignments.join(", ")))?.execute(params_from_iter(values))?;
     } else {
         names.splice(0..0, ["id".to_string(), "born_rev".to_string()]);
         values.splice(0..0, [id.to_string().into(), born_rev.into()]);
-        connection.prepare_cached(&format!(include_str!("sql/apply_rows/write_row_insert.sql"), info.table, names.iter().map(|name| crate::ddl::sql_ident(name)).collect::<Vec<_>>().join(", "), placeholders(names.len())))?.execute(params_from_iter(values))?;
+        connection.prepare_cached(&format!(include_str!("sql/apply_rows/write_row_insert.sql"), info.table, names.iter().map(|name| crate::store::ddl::sql_ident(name)).collect::<Vec<_>>().join(", "), placeholders(names.len())))?.execute(params_from_iter(values))?;
     }
     for plan in rewritten {
         let FieldPlan::Typed { field, member, tables } = plan else { continue };

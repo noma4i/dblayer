@@ -1,6 +1,6 @@
 use super::fixtures::*;
 use super::*;
-use crate::ddl::RecreateReason;
+use crate::store::ddl::RecreateReason;
 
 #[test]
 fn in_memory_store_creates_core_tables_at_boot() {
@@ -47,7 +47,7 @@ fn valid_file_with_marker(path: &std::path::Path, user_version: i64) {
 fn inv_open_01_a_file_that_does_not_fit_this_build_is_recreated_once() {
     type Plant = fn(&std::path::Path);
     let cases: [(&str, Plant, RecreateReason); 2] = [
-        ("newer schema version", |path| valid_file_with_marker(path, crate::ddl::SCHEMA_VERSION + 1), RecreateReason::SchemaVersion),
+        ("newer schema version", |path| valid_file_with_marker(path, crate::store::ddl::SCHEMA_VERSION + 1), RecreateReason::SchemaVersion),
         (
             "changed core format",
             |path| {
@@ -82,7 +82,7 @@ fn inv_open_02_recreate_removes_every_file_of_the_old_database() {
         connection.pragma_update_and_check(None, "journal_mode", "WAL", |_| Ok(())).unwrap();
         connection.pragma_update(None, "wal_autocheckpoint", 0).unwrap();
         connection.execute_batch("CREATE TABLE marker (value TEXT)").unwrap();
-        connection.pragma_update(None, "user_version", crate::ddl::SCHEMA_VERSION + 1).unwrap();
+        connection.pragma_update(None, "user_version", crate::store::ddl::SCHEMA_VERSION + 1).unwrap();
         for suffix in ["", "-wal", "-shm"] {
             std::fs::copy(directory.path().join(format!("source.sqlite{suffix}")), beside(suffix)).unwrap();
         }

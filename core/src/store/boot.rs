@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 
 use rusqlite::params;
 
-use crate::ddl::{create_model_tables, fingerprint_key, manifest_stamp, manifest_verify, models_statements, rebuild_cache_tables, table_name, ManifestVerdict};
+use crate::store::ddl::{create_model_tables, fingerprint_key, manifest_stamp, manifest_verify, models_statements, rebuild_cache_tables, table_name, ManifestVerdict};
 use crate::schema::ModelSpec;
 
 use super::reset::{
@@ -14,7 +14,7 @@ use super::{ModelInfo, Store, StoreError};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BootReport {
-    pub recreated: Option<crate::ddl::RecreateReason>,
+    pub recreated: Option<crate::store::ddl::RecreateReason>,
     pub verdict: ManifestVerdict,
     pub finished_interrupted_reset: bool,
     pub tombstone_drops: usize,
@@ -38,7 +38,7 @@ impl Store {
         let mut dropped = Vec::new();
 
         verify_saved(&inner.connection)?;
-        if let Some(reason) = crate::ddl::recreate_reason(&inner.connection)? {
+        if let Some(reason) = crate::store::ddl::recreate_reason(&inner.connection)? {
             let fingerprints = current_fingerprints(&inner);
             let transaction = inner.connection.unchecked_transaction()?;
             let database: String = transaction.query_row(include_str!("sql/boot/boot_select_pragma_database_list.sql"), [], |row| row.get(0))?;
@@ -59,7 +59,7 @@ impl Store {
             rebuilt = true;
             migrated_reset = Some(models.iter().filter(|spec| !spec.is_memory()).map(|spec| spec.key.as_str().to_string()).collect());
         } else {
-            crate::ddl::migrate_core(&inner.connection)?;
+            crate::store::ddl::migrate_core(&inner.connection)?;
         }
 
         self.session_end_replay.store(super::reset::pending_intent(&inner.connection)?.as_deref() == Some("session_end"), std::sync::atomic::Ordering::SeqCst);
@@ -163,7 +163,7 @@ fn verify_saved(connection: &rusqlite::Connection) -> Result<(), StoreError> {
         return Ok(());
     }
     for key in ["saved_epoch", "saved_generation"] {
-        if let Some(value) = crate::ddl::manifest_read(connection, key)? {
+        if let Some(value) = crate::store::ddl::manifest_read(connection, key)? {
             value.parse::<u64>().map_err(|_| StoreError::CorruptManifest(format!("{key} = {value:?} is not a u64")))?;
         }
     }

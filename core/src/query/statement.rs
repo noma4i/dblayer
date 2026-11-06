@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 #[cfg(test)]
 use serde_json::Value;
 
-use crate::ddl::{fts_name, table_name};
+use crate::store::ddl::{fts_name, table_name};
 use crate::identity::{permanent_row_flag, ModelKey, ListKey};
 use crate::schema::ModelSpec;
 use crate::value::SortDirection;

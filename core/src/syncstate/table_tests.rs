@@ -3,7 +3,7 @@ use std::collections::BTreeSet;
 use rusqlite::Connection;
 
 use super::*;
-use crate::ddl::migrate_core;
+use crate::store::ddl::migrate_core;
 
 fn database() -> Connection {
     let connection = Connection::open_in_memory().unwrap();

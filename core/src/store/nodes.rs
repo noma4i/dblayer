@@ -75,7 +75,7 @@ pub fn write_tree(connection: &Connection, table: &str, keys: &[&str], owner: &[
     let mut nodes = Vec::new();
     flatten(value, -1, 0, None, &mut nodes);
     let names: Vec<&str> = keys.iter().copied().chain(["node", "parent", "pos", "name", "kind", "whole", "fraction", "text"]).collect();
-    let mut statement = connection.prepare_cached(&format!(include_str!("../store/sql/nodes/write_tree.sql"), names.join(", "), vec!["?"; names.len()].join(", "), table = table))?;
+    let mut statement = connection.prepare_cached(&format!(include_str!("sql/nodes/write_tree.sql"), names.join(", "), vec!["?"; names.len()].join(", "), table = table))?;
     for entry in nodes {
         let cells = owner.iter().cloned().chain([
             SqlValue::Integer(entry.node),
@@ -93,13 +93,13 @@ pub fn write_tree(connection: &Connection, table: &str, keys: &[&str], owner: &[
 }
 
 pub fn delete_trees(connection: &Connection, table: &str, filter: &str, params: &[SqlValue]) -> Result<()> {
-    connection.prepare_cached(&format!(include_str!("../store/sql/nodes/delete_trees.sql"), table = table, filter = filter))?.execute(params_from_iter(params.iter()))?;
+    connection.prepare_cached(&format!(include_str!("sql/nodes/delete_trees.sql"), table = table, filter = filter))?.execute(params_from_iter(params.iter()))?;
     Ok(())
 }
 
 pub fn read_trees(connection: &Connection, table: &str, keys: &[&str], filter: &str, params: &[SqlValue]) -> Result<Vec<(Vec<SqlValue>, Value)>> {
     let order = keys.join(", ");
-    let sql = format!(include_str!("../store/sql/nodes/read_trees.sql"), order = order, table = table, filter = filter);
+    let sql = format!(include_str!("sql/nodes/read_trees.sql"), order = order, table = table, filter = filter);
     let mut statement = connection.prepare_cached(&sql)?;
     let count = keys.len();
     let rows = statement.query_map(params_from_iter(params.iter()), |row| {
@@ -130,7 +130,7 @@ pub fn read_trees(connection: &Connection, table: &str, keys: &[&str], filter: &
 pub fn node_table_statement(temp: &str, name: &str, keys: &[(&str, &str)]) -> String {
     let owner: String = keys.iter().map(|(key, ty)| format!("  {key} {ty} NOT NULL,\n")).collect();
     let names: Vec<&str> = keys.iter().map(|(key, _)| *key).collect();
-    format!(include_str!("../store/sql/ddl/node_table.sql"), temp = temp, name = name, owner = owner, keys = names.join(", "))
+    format!(include_str!("sql/ddl/node_table.sql"), temp = temp, name = name, owner = owner, keys = names.join(", "))
 }
 
 pub fn texts(parts: &[&str]) -> Vec<SqlValue> {

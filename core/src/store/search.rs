@@ -1,7 +1,7 @@
 use rusqlite::{params, params_from_iter, Connection};
 use serde_json::{Map, Value};
 
-use crate::ddl::fts_name;
+use crate::store::ddl::fts_name;
 use crate::schema::search_text;
 
 use super::rows::placeholders;

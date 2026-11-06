@@ -5,7 +5,7 @@ use std::path::Path;
 use std::sync::{Arc, OnceLock};
 
 use crate::store::{BatchPlan, CommitResult, EntityOp};
-use crate::ddl::{table_name, ManifestVerdict, RecreateReason};
+use crate::store::ddl::{table_name, ManifestVerdict, RecreateReason};
 use crate::files::FileDirectories;
 use crate::identity::{ModelKey, RowRef};
 use crate::operation::{apply_fsck, fsck_plan, open_operations, rebuilt_rows, FsckAction, Orphan, Orphans, OutboxQueue};
@@ -213,7 +213,7 @@ fn recover_operations(store: &Store, models: &[ModelSpec], restore_rows: bool) -
                 let payload = serde_json::Value::Object(stored.row.clone());
                 let info = inner.models.get(row.model.as_str()).ok_or_else(|| StoreError::UnknownModel(row.model.as_str().to_string()))?;
                 let tables = info.layout.child_tables().into_iter().chain([table_name(row.model.as_str())]).collect();
-                let search = (!info.search.is_empty()).then(|| crate::ddl::fts_name(row.model.as_str()));
+                let search = (!info.search.is_empty()).then(|| crate::store::ddl::fts_name(row.model.as_str()));
                 orphans.insert(row.clone(), Orphan { tables, search, payload });
             }
         }

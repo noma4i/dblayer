@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 
-use dblayer::ddl;
+use dblayer::store::ddl;
 use dblayer::query::{compile_keys, Order, Query, Where};
 use dblayer::schema::{ModelSpec, Sort};
 use rusqlite::Connection;

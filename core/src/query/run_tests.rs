@@ -1,5 +1,5 @@
 use super::*;
-use crate::ddl::{create_model_tables, migrate_core};
+use crate::store::ddl::{create_model_tables, migrate_core};
 use crate::identity::ListKey;
 use crate::schema::{FieldSpec, ModelSpec};
 use crate::value::{null_compare, null_equals, null_is_in, null_is_not_in, null_not_equals, ScalarKind, SortDirection};

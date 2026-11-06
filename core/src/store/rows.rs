@@ -7,17 +7,17 @@ use rusqlite::{params, params_from_iter, Connection, OptionalExtension, Statemen
 use serde_json::{Map, Value};
 
 use crate::store::EdgeValue;
-use crate::ddl::{manifest_read, ColumnType, REVISION_SEQ_KEY};
+use crate::store::ddl::{manifest_read, ColumnType, REVISION_SEQ_KEY};
 use crate::identity::touches::read_members;
 use crate::identity::RowId;
 use crate::value::fractional_between;
 
 #[cfg(test)]
 use super::Store;
-use crate::nodes::read_trees;
+use crate::store::nodes::read_trees;
 use super::shape::{assemble, read_cells, read_tables, take_leaf};
 use super::{ModelInfo, StoreError};
-use crate::ddl::FieldPlan;
+use crate::store::ddl::FieldPlan;
 
 pub(crate) const CHUNK: usize = 500;
 

@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 
 use rusqlite::{Connection, ErrorCode};
 
-use crate::ddl::{create_core_tables, prepare_connection, sql_ident, DdlError, CARRIED_TABLES};
+use crate::store::ddl::{create_core_tables, prepare_connection, sql_ident, DdlError, CARRIED_TABLES};
 use crate::files::FileDirectories;
 
 use super::{Store, StoreError};
@@ -50,7 +50,7 @@ pub(super) fn recreate(connection: &Connection) -> Result<Recreated, StoreError>
     }
     create_core_tables(connection)?;
     for (key, value) in &manifest {
-        crate::ddl::manifest_write(connection, key, value)?;
+        crate::store::ddl::manifest_write(connection, key, value)?;
     }
     let mut dropped = Vec::new();
     for table in &carried {
@@ -74,8 +74,8 @@ fn carried_manifest(connection: &Connection, tables: &[String]) -> Result<Vec<(S
         return Ok(Vec::new());
     }
     let mut found = Vec::new();
-    for key in crate::ddl::CARRIED_MANIFEST_KEYS {
-        if let Some(value) = crate::ddl::manifest_read(connection, key)? {
+    for key in crate::store::ddl::CARRIED_MANIFEST_KEYS {
+        if let Some(value) = crate::store::ddl::manifest_read(connection, key)? {
             found.push((key.to_string(), value));
         }
     }

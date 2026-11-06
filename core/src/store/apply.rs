@@ -7,7 +7,7 @@ use crate::store::{
     BatchPlan, CommitResult, DestroyReason, EntityOp, OperationRecord, OperationTransition, EdgeValue, EdgeWrite, RowChange, RowChangeKind, ScopeOp, ScopeRef, WindowSave,
 };
 use crate::operation::OperationStatus;
-use crate::ddl::{manifest_write, REVISION_SEQ_KEY};
+use crate::store::ddl::{manifest_write, REVISION_SEQ_KEY};
 use crate::identity::{Generation, ModelKey, RowRef};
 use crate::operation::{delete_operation, OperationEvent, failure_cells, write_operation_error, read_rows, stored_row_id, write_rows, write_value};
 use crate::syncstate::{operation_keys, recompute_sync_with, OperationFailure, SyncKey};
@@ -16,9 +16,9 @@ use super::file_ops::{apply_file_ops, release_files};
 use super::rows::{column_value, fetch_stored, placeholders, Reader, StoredRow, CHUNK};
 use super::search::{reindex, touches_search, unindex};
 use super::stable;
-use crate::nodes::{delete_trees, read_trees, texts, write_tree};
+use crate::store::nodes::{delete_trees, read_trees, texts, write_tree};
 use super::shape::{delete_tables, insert_children, member_values, normalize, normalize_leaf, null_marker};
-use crate::ddl::FieldPlan;
+use crate::store::ddl::FieldPlan;
 use super::windows::{upsert_window, WindowRecord};
 use super::tombstones::write_tombstone;
 

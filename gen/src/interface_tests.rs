@@ -170,7 +170,7 @@ fn catalog_widths_fit_until_expanded_and_raw_elements_keep_a_constant_width() {
     let shared = (0..13).map(|i| format!("attribute :common{i}, :string\n")).collect::<String>();
     let source = |copies| format!("model Sample do\nattribute :items, [Item] do\nshared do\n{shared}end\n{}end\nend\n", variants(copies));
     let models = parse_models(&source(1)).unwrap();
-    assert_eq!(dblayer::ddl::table_widths(&models[0]).into_iter().find(|(name,_)| name == "row_Sample__items").unwrap().1, 957);
+    assert_eq!(dblayer::store::ddl::table_widths(&models[0]).into_iter().find(|(name,_)| name == "row_Sample__items").unwrap().1, 957);
     let errors = parse_models(&source(3)).unwrap_err();
     let expected = "model Sample: table row_Sample__items would have 2835 columns, above the SQLite limit of 2000. A union stores its variants in the columns of one table: declare fewer variants or fields, or split the model";
     assert!(errors.iter().any(|e| e.message == expected), "{errors:?}");
@@ -179,6 +179,6 @@ fn catalog_widths_fit_until_expanded_and_raw_elements_keep_a_constant_width() {
     assert_eq!(elements.kind, FieldKind::Array);
     assert_eq!(elements.fields.iter().find(|f| f.name == "props").unwrap().kind, FieldKind::Raw);
     assert!(elements.fields.iter().find(|f| f.name == "props").unwrap().parse_json);
-    assert_eq!(dblayer::ddl::table_widths(&models[0]).into_iter().find(|(name,_)| name == "row_CustomScreen__spec__elements").unwrap().1, 19);
-    assert_eq!(dblayer::ddl::table_widths(&models[0]).into_iter().find(|(name,_)| name == "row_CustomScreen__spec__state").unwrap().1, 6);
+    assert_eq!(dblayer::store::ddl::table_widths(&models[0]).into_iter().find(|(name,_)| name == "row_CustomScreen__spec__elements").unwrap().1, 19);
+    assert_eq!(dblayer::store::ddl::table_widths(&models[0]).into_iter().find(|(name,_)| name == "row_CustomScreen__spec__state").unwrap().1, 6);
 }

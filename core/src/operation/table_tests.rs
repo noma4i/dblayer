@@ -1,5 +1,5 @@
 use super::*;
-use crate::ddl::{create_model_tables, migrate_core};
+use crate::store::ddl::{create_model_tables, migrate_core};
 use crate::schema::{FieldSpec, ModelSpec};
 use crate::value::ScalarKind;
 use std::collections::HashSet;
@@ -133,7 +133,7 @@ fn apply_fsck_quarantines_and_removes_orphan_temp_rows() {
     let entry: (String, String) = connection.query_row("SELECT reason, model FROM quarantine", [], |r| Ok((r.get(0)?, r.get(1)?))).unwrap();
     assert_eq!((entry.0.as_str(), entry.1.as_str()), ("orphan-temp-row", "messages"));
     let seq: i64 = connection.query_row("SELECT seq FROM quarantine", [], |r| r.get(0)).unwrap();
-    let kept = crate::nodes::read_trees(&connection, "quarantine_value", &["seq"], "seq = ?1", &[rusqlite::types::Value::Integer(seq)]).unwrap();
+    let kept = crate::store::nodes::read_trees(&connection, "quarantine_value", &["seq"], "seq = ?1", &[rusqlite::types::Value::Integer(seq)]).unwrap();
     assert_eq!(kept.into_iter().map(|(_, value)| value).collect::<Vec<_>>(), [json!({"id": "temp-orphan"})]);
 }
 

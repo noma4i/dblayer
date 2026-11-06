@@ -103,8 +103,8 @@ fn filtered_ordered_query_uses_one_index_without_a_temporary_sort() {
     for direction in [SortDirection::Asc, SortDirection::Desc, SortDirection::AscNullsLast, SortDirection::DescNullsFirst] {
     let models = parse_models(&format!("model Note, storage: :local do\n attribute :folderId, :id\n attribute :position, :int, null: true\n scope :in_folder do\n parameter :folderId, :id\n where folderId: :folderId\n order position: :{}\n end\nend\n", direction.name())).unwrap();
     let db = rusqlite::Connection::open_in_memory().unwrap();
-    db.execute_batch(&dblayer::ddl::create_table_statement(&models[0])).unwrap();
-    for sql in dblayer::ddl::create_index_statements(&models[0]) { db.execute_batch(&sql).unwrap(); }
+    db.execute_batch(&dblayer::store::ddl::create_table_statement(&models[0])).unwrap();
+    for sql in dblayer::store::ddl::create_index_statements(&models[0]) { db.execute_batch(&sql).unwrap(); }
     let query = Query::new("Note").filtered(Where::equal("folderId", json!("folder"))).ordered(vec![Order::new("position", direction)]);
     let statement = dblayer::query::compile_keys(&query, &models[0]).unwrap();
     let mut explain = db.prepare(&format!("EXPLAIN QUERY PLAN {}", statement.sql)).unwrap();

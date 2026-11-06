@@ -3,7 +3,7 @@ use std::collections::{BTreeMap, BTreeSet, HashSet};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
-use crate::ddl::{column_name, column_type, SERVICE_COLUMNS};
+use crate::store::ddl::{column_name, column_type, SERVICE_COLUMNS};
 use crate::identity::{ModelKey, ListKey};
 use crate::value::{
     duplicates, read_array, read_enum, read_raw, read_scalar, relation_scope_key, ScalarKind, ListKeyError,
@@ -315,7 +315,7 @@ impl ModelSpec {
                 }
             }
         }
-        match crate::ddl::table_widths(self).into_iter().find(|(_, count)| *count > COLUMN_LIMIT) {
+        match crate::store::ddl::table_widths(self).into_iter().find(|(_, count)| *count > COLUMN_LIMIT) {
             Some((table, count)) => Err(DeclarationError::TooManyColumns { table, count }),
             None => Ok(()),
         }

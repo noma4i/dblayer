@@ -4,11 +4,13 @@ use std::sync::{Arc, Condvar, Mutex, MutexGuard, OnceLock, RwLock};
 
 use rusqlite::Connection;
 
-use crate::ddl::{layout, table_name, Layout};
+use crate::store::ddl::{layout, table_name, Layout};
 use crate::identity::Generation;
 use crate::pacing::{Clock, Counters, SystemClock};
 use crate::schema::{ModelSpec, SearchPath};
 
+pub mod ddl;
+pub mod nodes;
 mod admission;
 mod context;
 mod file_read;

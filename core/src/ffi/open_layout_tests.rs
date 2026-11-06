@@ -24,7 +24,7 @@ fn plant_older_layout(path: &std::path::Path, digest: &str) {
          CREATE TABLE sync_field (id INTEGER PRIMARY KEY);
          CREATE TABLE tombstone (id INTEGER PRIMARY KEY);
          PRAGMA user_version = {};",
-        crate::ddl::SCHEMA_VERSION
+        crate::store::ddl::SCHEMA_VERSION
     )).unwrap();
 }
 

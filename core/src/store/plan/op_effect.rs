@@ -44,7 +44,7 @@ fn write_operation_effects(connection: &Connection, sequence: i64, effects: &[Op
             include_str!("../sql/plan/write_operation_effects.sql"),
             params![sequence, position, effect.model, effect.row_id, effect.scope_key, effect.kind.as_sql(), effect.revision],
         )?;
-        crate::nodes::write_tree(connection, "op_effect_value", &["seq", "position"], &[SqlValue::Integer(sequence), SqlValue::Integer(position)], &effect.before)?;
+        crate::store::nodes::write_tree(connection, "op_effect_value", &["seq", "position"], &[SqlValue::Integer(sequence), SqlValue::Integer(position)], &effect.before)?;
     }
     Ok(())
 }
@@ -115,12 +115,12 @@ pub(crate) fn rebuild_open_effects(connection: &Connection, models: &std::collec
         write_prior(connection, seq, revision, Some(&Prior { rows }.to_value()))?;
         written = true;
     }
-    if written { crate::ddl::manifest_write(connection, crate::ddl::REVISION_SEQ_KEY, &revision.to_string())?; }
+    if written { crate::store::ddl::manifest_write(connection, crate::store::ddl::REVISION_SEQ_KEY, &revision.to_string())?; }
     Ok(())
 }
 
 pub(crate) fn read_prior(connection: &Connection, sequence: i64) -> Result<Option<Value>, StoreError> {
-    let rows = crate::nodes::read_trees(connection, "op_effect_value", &["seq", "position"], "seq = ?1", &[SqlValue::Integer(sequence)])?;
+    let rows = crate::store::nodes::read_trees(connection, "op_effect_value", &["seq", "position"], "seq = ?1", &[SqlValue::Integer(sequence)])?;
     if rows.is_empty() { return Ok(None) }
     Ok(Some(serde_json::json!({ "rows": rows.into_iter().map(|(_, value)| value).collect::<Vec<_>>() })))
 }

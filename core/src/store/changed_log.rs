@@ -20,7 +20,7 @@ fn changed_rows(result: &CommitResult) -> Vec<ChangedRow> {
 
 /// The changed rows of a commit as `(table, row_id)`: what `Committed.rows` carries.
 pub(crate) fn table_rows(result: &CommitResult) -> BTreeSet<(String, String)> {
-    changed_rows(result).into_iter().map(|(model, id)| (crate::ddl::table_name(&model), id)).collect()
+    changed_rows(result).into_iter().map(|(model, id)| (crate::store::ddl::table_name(&model), id)).collect()
 }
 
 #[derive(Default)]

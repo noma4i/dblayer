@@ -4,7 +4,7 @@ use rusqlite::types::{Value as SqlValue, ValueRef};
 use rusqlite::{params_from_iter, Connection};
 use serde_json::{Map, Number, Value};
 
-use crate::ddl::{FieldPlan, Layout, Leaf, Member, NullColumn, Table, TableShape, Variant};
+use crate::store::ddl::{FieldPlan, Layout, Leaf, Member, NullColumn, Table, TableShape, Variant};
 use crate::value::{read_array, read_enum, read_scalar, ScalarKind};
 use crate::schema::{FieldKind, TYPENAME};
 
@@ -167,7 +167,7 @@ pub(crate) fn delete_tables(connection: &Connection, layout: &Layout, tables: &[
 
 fn insert_element(connection: &Connection, table: &str, columns: Vec<(String, SqlValue)>, head: [SqlValue; 4]) -> Result<(), StoreError> {
     let names: Vec<&str> = ["row_id", "node", "owner", "pos"].into_iter().chain(columns.iter().map(|(name, _)| name.as_str())).collect();
-    let sql = format!(include_str!("sql/shape/insert_element.sql"), names.iter().map(|name| crate::ddl::sql_ident(name)).collect::<Vec<_>>().join(", "), placeholders(names.len()), table = table);
+    let sql = format!(include_str!("sql/shape/insert_element.sql"), names.iter().map(|name| crate::store::ddl::sql_ident(name)).collect::<Vec<_>>().join(", "), placeholders(names.len()), table = table);
     connection.prepare_cached(&sql)?.execute(params_from_iter(head.into_iter().chain(columns.into_iter().map(|(_, value)| value))))?;
     Ok(())
 }
@@ -185,7 +185,7 @@ pub(crate) fn insert_children(
         Member::Leaf(_) => {}
         Member::Raw { table, .. } => {
             if let Some(value) = value {
-                crate::nodes::write_tree(connection, &layout.tables[*table].name, &["row_id", "owner"], &[SqlValue::Text(row_id.to_string()), SqlValue::Integer(owner)], value)?;
+                crate::store::nodes::write_tree(connection, &layout.tables[*table].name, &["row_id", "owner"], &[SqlValue::Text(row_id.to_string()), SqlValue::Integer(owner)], value)?;
             }
         }
         Member::Object { members, .. } => {
@@ -345,7 +345,7 @@ fn read_table(connection: &Connection, table: &Table, ids: &[String]) -> Result<
         TableShape::Nodes => {
             let filter = format!("row_id IN ({})", placeholders(ids.len()));
             let values: Vec<_> = ids.iter().cloned().map(SqlValue::Text).collect();
-            for (key, value) in crate::nodes::read_trees(connection, &table.name, &["row_id", "owner"], &filter, &values)? {
+            for (key, value) in crate::store::nodes::read_trees(connection, &table.name, &["row_id", "owner"], &filter, &values)? {
                 if let [SqlValue::Text(row_id), SqlValue::Integer(owner)] = key.as_slice() {
                     found.entry(row_id.clone()).or_default().nodes.insert(*owner, value);
                 }
@@ -362,9 +362,9 @@ fn read_table(connection: &Connection, table: &Table, ids: &[String]) -> Result<
         }
         TableShape::Elements(members) => {
             let mut columns = Vec::new();
-            members.iter().for_each(|member| crate::ddl::member_columns(member, &mut columns));
+            members.iter().for_each(|member| crate::store::ddl::member_columns(member, &mut columns));
             let names: Vec<String> = columns.into_iter().map(|(name, _)| name).collect();
-            let list: String = names.iter().map(|name| format!(", {}", crate::ddl::sql_ident(name))).collect();
+            let list: String = names.iter().map(|name| format!(", {}", crate::store::ddl::sql_ident(name))).collect();
             let sql = format!(include_str!("sql/shape/read_table_select_2.sql"), table.name, placeholders(ids.len()), list = list);
             let mut statement = connection.prepare_cached(&sql)?;
             let rows = statement.query_map(params_from_iter(ids.iter()), |row| Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?, row.get::<_, i64>(2)?, row.get::<_, i64>(3)?, read_cells(row, names.len(), 4)?)))?;

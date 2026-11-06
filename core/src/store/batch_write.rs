@@ -145,7 +145,7 @@ impl Store {
         combined.position = position;
         if writes_database {
             super::tombstones::prune_tombstones(&transaction, now, &TombstoneRetention::DEFAULT, min_pin_revision)?;
-            crate::ddl::manifest_write(&transaction, crate::ddl::REVISION_SEQ_KEY, &revision.to_string())?;
+            crate::store::ddl::manifest_write(&transaction, crate::store::ddl::REVISION_SEQ_KEY, &revision.to_string())?;
             self.overlays.commit(snapshot, transaction)?;
         } else {
             transaction.rollback()?;

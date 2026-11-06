@@ -8,7 +8,7 @@ pub(super) fn boot_found(db: &Store, saved_unowned_pending: bool) -> Result<Boot
     let revision = db.revision_seq().ok().and_then(|revision| u64::try_from(revision).ok()).ok_or_else(|| LifeError::Storage("the stored revision is not a revision".into()))?;
     let report = db.open_report();
     let server_model_changed = report.changed_models.iter().any(|model| db.specs().get(model).is_none_or(|spec| !spec.is_local()));
-    Ok(if report.recreated == Some(crate::ddl::RecreateReason::UnreadableFile) {
+    Ok(if report.recreated == Some(crate::store::ddl::RecreateReason::UnreadableFile) {
         BootFound::Fresh
     } else if report.recreated.is_some() {
         BootFound::FormatChange { saved_epoch, saved_generation, saved_identity, saved_unowned_pending, revision }

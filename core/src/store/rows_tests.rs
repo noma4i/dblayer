@@ -4,7 +4,7 @@ use rusqlite::types::Value as SqlValue;
 use serde_json::json;
 
 use super::rows::column_value;
-use crate::ddl::ColumnType;
+use crate::store::ddl::ColumnType;
 
 #[test]
 fn revision_reads_and_resets_distinguish_missing_corrupt_and_unreadable_values() {
@@ -12,9 +12,9 @@ fn revision_reads_and_resets_distinguish_missing_corrupt_and_unreadable_values()
         let (store, _) = booted_store();
         {
             let inner = store.lock();
-            inner.connection.execute("DELETE FROM manifest WHERE key = ?1", [crate::ddl::REVISION_SEQ_KEY]).unwrap();
+            inner.connection.execute("DELETE FROM manifest WHERE key = ?1", [crate::store::ddl::REVISION_SEQ_KEY]).unwrap();
             if let Some(value) = value {
-                crate::ddl::manifest_write(&inner.connection, crate::ddl::REVISION_SEQ_KEY, value).unwrap();
+                crate::store::ddl::manifest_write(&inner.connection, crate::store::ddl::REVISION_SEQ_KEY, value).unwrap();
             }
         }
         if value == Some("17") { store.overlays.reset(17); }

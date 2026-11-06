@@ -3,7 +3,7 @@ use std::collections::BTreeSet;
 use rusqlite::Connection;
 
 use super::*;
-use crate::ddl::migrate_core;
+use crate::store::ddl::migrate_core;
 use crate::operation::{delete_operation, failure_cells, write_rows};
 use crate::upload::{UploadStage, UploadState, UploadStatus};
 

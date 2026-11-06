@@ -289,7 +289,7 @@ struct Delivery {
 }
 
 fn entity_row(view: &View) -> Option<(String, &str)> {
-    matches!(view.kind, Kind::Entity { .. }).then(|| (crate::ddl::table_name(&view.model), view.subject.as_str()))
+    matches!(view.kind, Kind::Entity { .. }).then(|| (crate::store::ddl::table_name(&view.model), view.subject.as_str()))
 }
 
 fn visible_after(state: &WindowState) -> i64 { state.loaded.unwrap_or(0) }

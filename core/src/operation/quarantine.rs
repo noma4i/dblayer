@@ -2,7 +2,7 @@ use rusqlite::types::Value as SqlValue;
 use rusqlite::{params, Connection};
 use serde_json::Value;
 
-use crate::nodes::write_tree;
+use crate::store::nodes::write_tree;
 #[cfg(test)]
 use std::collections::HashMap;
 

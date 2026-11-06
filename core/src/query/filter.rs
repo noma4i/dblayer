@@ -2,7 +2,7 @@ use rusqlite::types::Value as SqlValue;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::ddl::{column_name, column_type, layout, member_present, FieldPlan};
+use crate::store::ddl::{column_name, column_type, layout, member_present, FieldPlan};
 use crate::schema::ModelSpec;
 
 use super::statement::QueryError;
@@ -206,10 +206,10 @@ pub(super) fn column_sql(model: &ModelSpec, field: &str) -> Result<String, Query
     }
     let spec = model.field(field).ok_or_else(|| QueryError::UnknownField(field.to_string()))?;
     if column_type(&spec.kind).is_some() {
-        return Ok(format!("r.{}", crate::ddl::sql_ident(&column_name(field))));
+        return Ok(format!("r.{}", crate::store::ddl::sql_ident(&column_name(field))));
     }
     match layout(model).plan(field) {
-        Some(FieldPlan::Typed { member, .. }) => Ok(format!("r.{}", crate::ddl::sql_ident(member_present(member)))),
+        Some(FieldPlan::Typed { member, .. }) => Ok(format!("r.{}", crate::store::ddl::sql_ident(member_present(member)))),
         Some(FieldPlan::Rest { .. }) => {
             let table = layout(model).value_table.unwrap_or_default();
             Ok(format!("(SELECT CASE kind WHEN 5 THEN 1 WHEN 6 THEN 1 ELSE COALESCE(whole, fraction, text) END FROM {table} WHERE row_id = r.id AND field = '{field}' AND node = 0)"))
