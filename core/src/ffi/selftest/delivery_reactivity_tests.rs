@@ -35,6 +35,10 @@ async fn feed_database() -> (Arc<Database>, Arc<FeedTransport>) {
 }
 
 async fn feed_database_with_listen(listen: Option<serde_json::Value>) -> (Arc<Database>, Arc<FeedTransport>) {
+    feed_database_with_models(listen, false).await
+}
+
+async fn feed_database_with_models(listen: Option<serde_json::Value>, fanout: bool) -> (Arc<Database>, Arc<FeedTransport>) {
     use crate::schema::{Coverage, FieldSpec, Membership, ModelSpec, NodeRead, RelationSpec, RemoteShape, VariableSource, NODE_PARAM};
     use crate::value::ScalarKind;
     let mut revision = FieldSpec::scalar("serverRevision", ScalarKind::Int);
@@ -60,11 +64,16 @@ async fn feed_database_with_listen(listen: Option<serde_json::Value>) -> (Arc<Da
     chat.changes.push(serde_json::from_value(json!({"area":"MESSAGE","relation":"node","payload":"chat","removes_on":["DELETED"]})).unwrap());
     if let Some(listen) = listen { chat.listens.push(serde_json::from_value(listen).unwrap()); }
     chat.change_feed = Some(crate::schema::ChangeFeed { subscription: "RecordEvents".into(), root: "recordEvents.entries".into(), area: "topic".into(), kind: "action".into(), id: "recordId".into() });
+    let models = if fanout {
+        let mut room = chat.clone();
+        room.key = crate::identity::ModelKey::new("Room");
+        vec![chat, room]
+    } else { vec![chat] };
     let world = World::new("server", "A", true);
     let mut encrypted = crate::transport::encrypted::protocol_tests::config();
     encrypted.endpoints.session_operations.insert("login_link".into(), crate::ffi::EncryptedSessionOperation { path: "/api/auth/login_link".into(), class: crate::ffi::EncryptedOperationClass::Authenticated });
     let transport = Arc::new(FeedTransport { cable: crate::transport::encrypted::cable::peer_tests::CablePeer::new(encrypted.clone()), token: Mutex::new(None), opened: tokio::sync::Notify::new() });
-    let database = bound(Database::open_with_clock(crate::ffi::Config { path: None, data_version: None, cache_rows: 32 }, serde_json::to_string(&vec![chat]).unwrap(), Some(transport.clone()), crate::ffi::TestClock::new(1_000_000), Some(encrypted), Some(Arc::new(crate::ffi::session_guards_tests::WatchedHeld::default())), Some(world), None)).await.unwrap();
+    let database = bound(Database::open_with_clock(crate::ffi::Config { path: None, data_version: None, cache_rows: 32 }, serde_json::to_string(&models).unwrap(), Some(transport.clone()), crate::ffi::TestClock::new(1_000_000), Some(encrypted), Some(Arc::new(crate::ffi::session_guards_tests::WatchedHeld::default())), Some(world), None)).await.unwrap();
     database.register_operations(json!([
         {"name":"ChatList","document":"query ChatList($list: String) { chats(list: $list) { id title revision lists } }"},
         {"name":"ChatNode","document":"query ChatNode($id: ID!) { node(id: $id) { ... on Chat { id title revision lists } } }"},
@@ -135,6 +144,21 @@ async fn feed_changes_entry_incomplete() {
     assert!(transport.cable.event(&token, json!({"data":{"recordEvents":{"entries":[{"topic":"MESSAGE","recordId":"c1"},{"topic":"MESSAGE","action":"UPDATED","recordId":"c2","chat":{"id":"c2","title":"after","revision":2,"lists":["PRIMARY"]}}]}}})));
     assert!(matches!(bound(stream.pull()).await.unwrap(), Some(ReadValue::Event { position: 1, id, .. }) if id == "c2"));
     assert_eq!(bound(database.subscription_census()).await.unwrap().refused_events, 1);
+    bound(database.close_database()).await.unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn feed_changes_area_fanout() {
+    let (database, transport) = feed_database_with_models(None, true).await;
+    let chat = database.subscribe_values(database.session_epoch(), ReadRequest::Events { model: "Chat".into() });
+    let room = database.subscribe_values(database.session_epoch(), ReadRequest::Events { model: "Room".into() });
+    assert!(matches!(bound(chat.pull()).await.unwrap(), Some(ReadValue::Ready)));
+    assert!(matches!(bound(room.pull()).await.unwrap(), Some(ReadValue::Ready)));
+    let token = transport.token.lock().unwrap().clone().unwrap();
+    assert!(transport.cable.event(&token, json!({"data":{"recordEvents":{"entries":[{"topic":"MESSAGE","action":"UPDATED","recordId":"c1","chat":{"id":"c1","title":"after","revision":2,"lists":[]}}]}}})));
+    for stream in [&chat, &room] {
+        assert!(matches!(bound(stream.pull()).await.unwrap(), Some(ReadValue::Event { position: 1, id, after: Some(row), .. }) if id == "c1" && crate::ffi::lifecycle_tests::named(&row, "after")));
+    }
     bound(database.close_database()).await.unwrap();
 }
 
