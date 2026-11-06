@@ -160,3 +160,39 @@ pub(super) fn add_profile(models: &mut Value) {
     }
     user["actions"].as_array_mut().unwrap().extend(actions.into_iter().map(|action| serde_json::to_value(action).unwrap()));
 }
+
+/// A moment with a reaction counter, an unread counter of the compass, and the actions on them.
+pub(super) fn add_moment(models: &mut Value) {
+    let models = models.as_array_mut().unwrap();
+    let user = models.iter_mut().find(|model| model["key"] == "User").unwrap();
+    user["fields"].as_array_mut().unwrap().push(serde_json::to_value(optional("unreadCompassCount", ScalarKind::Int)).unwrap());
+    let mut moment = ModelSpec::new("Moment", vec![
+        FieldSpec::scalar("id", ScalarKind::Id),
+        FieldSpec::scalar("userId", ScalarKind::Id).indexed(),
+        FieldSpec::scalar("text", ScalarKind::Str).optional(),
+        optional("reacted", ScalarKind::Bool),
+        optional("visitsCount", ScalarKind::Int),
+        optional("unreadSimilarMomentsCount", ScalarKind::Int),
+    ]);
+    moment.relations.push(RelationSpec::global("feed"));
+    let mut react = ActionDeclaration::new("react", RootShape::Upsert);
+    react.mutation = Some("MomentReact".into());
+    react.root = Some("momentReact".into());
+    react.variables.insert("id".into(), "id".into());
+    let mut read = ActionDeclaration::new("read_compass", RootShape::Upsert);
+    read.mutation = Some("MomentReadCompass".into());
+    read.root = Some("momentReadCompass".into());
+    read.variables.insert("id".into(), "id".into());
+    read.refetch.push("User.profile".into());
+    let mut create = ActionDeclaration::new("create", RootShape::Upsert);
+    create.mutation = Some("MomentCreate".into());
+    create.root = Some("momentCreate".into());
+    create.has_optimistic = true;
+    create.has_temp_row_retention = true;
+    for name in ["userId", "text"] { create.variables.insert(name.into(), name.into()); }
+    let mut destroy = ActionDeclaration::new("destroy", RootShape::Destroy);
+    destroy.mutation = Some("MomentDelete".into());
+    destroy.variables.insert("id".into(), "id".into());
+    moment.actions.extend([react, read, create, destroy]);
+    models.push(serde_json::to_value(moment).unwrap());
+}

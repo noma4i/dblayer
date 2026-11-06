@@ -88,6 +88,7 @@ struct State {
     group_members: BTreeMap<String, Vec<String>>,
     profile: Map<String, Value>,
     blocked: Vec<String>,
+    canned: BTreeMap<String, Value>,
 }
 
 /// A held request first waits at its gate, then ends in the inner fault, if any.
@@ -122,6 +123,8 @@ impl World {
     pub(super) fn seed_message(&self, account: &str, id: &str, text: &str, at: i64) {
         self.state.lock().unwrap().messages.push((account.into(), json!({"__typename":"Message","id":id,"chatId":"c1","text":text,"at":at})));
     }
+    /// The answer of `operation` from now on, whatever its variables.
+    pub(super) fn answer_with(&self, operation: &str, answer: Value) { self.state.lock().unwrap().canned.insert(operation.into(), answer); }
     pub(super) fn set_profile(&self, fields: Value) { self.state.lock().unwrap().profile.extend(fields.as_object().unwrap().clone()); }
     pub(super) fn seed_authored_message(&self, account: &str, id: &str, text: &str, at: i64, author: &str) {
         self.state.lock().unwrap().messages.push((account.into(), json!({"__typename":"Message","id":id,"chatId":"c1","text":text,"at":at,"authorId":author})));
@@ -178,6 +181,7 @@ impl World {
                 json!({"revoked": true})
             }
             "otp" => json!({"sent": true}),
+            _ if state.canned.contains_key(operation) => state.canned[operation].clone(),
             _ if !state.signed => json!({"error": "UNAUTHENTICATED"}),
             "SessionProfile" => json!({"data":{"sessionProfile":{"id":account}}}),
             "UserNode" => json!({"data":{"node":row}}),
@@ -219,6 +223,7 @@ impl World {
                 json!({"data":{"blockUser":{"id":id}}})
             }
             "BlockedUsers" => json!({"data":{"blockedUsers":state.blocked.iter().map(|id| json!({"__typename":"User","id":id,"name":id})).collect::<Vec<_>>()}}),
+            "MomentReact" | "MomentReadCompass" | "MomentCreate" | "MomentDelete" => json!({"data":{"moment":{"__typename":"Moment","id":"m1"}}}),
             "ChatPin" => json!({"data":{"chatPin":{"__typename":"Chat","id":body["variables"]["id"],"pinned":body["variables"]["pinned"]}}}),
             "ChatMute" => json!({"data":{"chatMute":{"__typename":"Chat","id":body["variables"]["id"],"muted":body["variables"]["muted"]}}}),
             "ChatMarkRead" => json!({"data":{"chatMarkRead":{"__typename":"Chat","id":body["variables"]["id"],"unreadCount":0}}}),
@@ -395,6 +400,10 @@ const OPERATIONS: &str = r#"[
     {"name":"BlockUser","document":"mutation BlockUser($id: ID!) { blockUser(id: $id) { id } }"},
     {"name":"UnblockUser","document":"mutation UnblockUser($id: ID!) { unblockUser(id: $id) { id } }"},
     {"name":"BlockedUsers","document":"query BlockedUsers { blockedUsers { id name } }"},
+    {"name":"MomentReact","document":"mutation MomentReact($id: ID!) { momentReact(id: $id) { id reacted visitsCount } }"},
+    {"name":"MomentReadCompass","document":"mutation MomentReadCompass($id: ID!) { momentReadCompass(id: $id) { id unreadSimilarMomentsCount } }"},
+    {"name":"MomentCreate","document":"mutation MomentCreate($userId: ID!, $text: String!) { momentCreate(userId: $userId, text: $text) { id userId text } }"},
+    {"name":"MomentDelete","document":"mutation MomentDelete($id: ID!) { momentDelete(id: $id) { id } }"},
     {"name":"ChatPin","document":"mutation ChatPin($id: ID!, $pinned: Boolean!) { chatPin(id: $id, pinned: $pinned) { id pinned } }"},
     {"name":"ChatMute","document":"mutation ChatMute($id: ID!, $muted: Boolean!) { chatMute(id: $id, muted: $muted) { id muted } }"},
     {"name":"ChatMarkRead","document":"mutation ChatMarkRead($id: ID!) { chatMarkRead(id: $id) { id unreadCount } }"},
