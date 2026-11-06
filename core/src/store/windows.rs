@@ -23,6 +23,16 @@ pub struct WindowFreshness {
     pub stale_since: Option<i64>,
 }
 
+pub(crate) fn window_identity(spec: &crate::schema::ModelSpec, model: &str, relation: &str, remote: &crate::schema::RemoteSpec, params: &serde_json::Map<String, serde_json::Value>) -> Result<(crate::commit::ScopeRef, String), crate::db::DbError> {
+    let scope_key = spec.selection_key(relation, params).map_err(|error| crate::db::DbError::Internal(error.to_string()))?;
+    let direction = match remote.shape {
+        crate::schema::RemoteShape::Connection { direction, .. } => direction,
+        _ => PageDirection::Forward,
+    };
+    let key = window_key(scope_key.as_str(), direction);
+    Ok((crate::commit::ScopeRef::new(crate::identity::ModelKey::new(model), scope_key), key))
+}
+
 impl WindowFreshness {
     pub fn is_fresh(&self, now: i64, window: i64) -> bool {
         self.stale_since.is_none() && now - self.landed_at < window

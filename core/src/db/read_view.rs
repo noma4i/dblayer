@@ -59,7 +59,7 @@ impl Db {
                     let remote = spec.relations.iter().find(|declared| declared.name == relation).and_then(|declared| declared.remote.as_ref());
                     match remote {
                         Some(remote) => {
-                            let (_, key) = super::land_window::window_identity(spec, model, &relation, remote, &params)?;
+                            let (_, key) = crate::store::window_identity(spec, model, &relation, remote, &params)?;
                             rusqlite::OptionalExtension::optional(reader.connection().query_row("SELECT total FROM query_window WHERE key = ?1", [key], |row| row.get::<_, Option<i64>>(0)))?.flatten().and_then(|total| u64::try_from(total).ok())
                         }
                         None => None,

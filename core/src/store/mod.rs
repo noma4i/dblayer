@@ -40,6 +40,7 @@ mod stable;
 pub(crate) mod swap;
 mod tombstones;
 mod windows;
+pub(crate) mod window_values;
 mod write;
 
 pub use admission::{admit_upsert, UpsertAdmission};
@@ -54,6 +55,7 @@ pub use rows::ScopeRowsResult;
 pub use tombstones::TombstoneRetention;
 pub(crate) use tombstones::TombstonePrune;
 pub use windows::{family_prefix, window_key, PageInfo, WindowFreshness, WindowRecord};
+pub(crate) use windows::window_identity;
 
 #[cfg(test)]
 type CommitCallback = Box<dyn Fn(&crate::commit::CommitResult) + Send + Sync>;

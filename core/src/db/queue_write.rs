@@ -131,7 +131,7 @@ impl Db {
                 StoreOp::Intent { op_id, model, row_id: id, action, payload, effects } => return self.write_intent(*op_id, (model, id, action), payload, effects, min_pin_revision),
                 StoreOp::Window { key, model, page, replace_all, cursor, roots, related, total, base_revision } => {
                     let key = crate::owners::read::windows::WindowKey { model: model.clone(), name: key.clone() };
-                    self.land_window_page(&super::land_window::WindowPage { key: &key, page: *page, replace_all: *replace_all, cursor: cursor.as_deref(), roots, related, total: *total, base_revision: *base_revision }, min_pin_revision)?;
+                    self.land_window_page(&crate::store::window_values::WindowPage { key: &key, page: *page, replace_all: *replace_all, cursor: cursor.as_deref(), roots, related, total: *total, base_revision: *base_revision }, min_pin_revision)?;
                     for landed in roots.iter().filter_map(|row| row_id(&row.row_id).ok()) {
                         let _ = self.find(model, &landed);
                     }

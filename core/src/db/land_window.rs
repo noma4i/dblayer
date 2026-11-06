@@ -5,14 +5,14 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use serde_json::{Map, Value};
 
-use crate::commit::{CommitEnvelope, EdgeValue, EdgeWrite, EntityOp, ScopeRef, WindowSave, WindowTail, WriteOrigin};
+use crate::commit::{CommitEnvelope, EdgeValue, EntityOp, WindowSave, WindowTail, WriteOrigin};
 use crate::identity::{ModelKey, RowId};
 use crate::lifecycle::authority::Authority;
-use crate::owners::read::windows::{WindowKind, WindowKey};
-use crate::owners::store::RowValue;
+use crate::owners::read::windows::WindowKind;
 use crate::read::{incoming_ids, plan_landing, StoredScope, EDGE_KEY};
-use crate::schema::{Coverage, FieldKind, FieldSpec, RemoteShape};
-use crate::store::window_key;
+use crate::schema::{Coverage, FieldKind, RemoteShape};
+use crate::store::window_identity;
+use crate::store::window_values::{edge_writes, row_values, WindowPage};
 use crate::value::{read_id, ScalarKind};
 
 use super::error::DbError;
@@ -20,61 +20,7 @@ use super::local_write::plan_fault;
 use super::open::Db;
 use crate::store::replace::{replace_plan, scope_membership, ReplaceRequest};
 
-/// One page of a window as `StoreOp::Window` carries it.
-pub(crate) struct WindowPage<'a> {
-    pub key: &'a WindowKey,
-    pub page: u32,
-    pub replace_all: bool,
-    pub cursor: Option<&'a str>,
-    pub roots: &'a [RowValue],
-    pub related: &'a [(String, RowValue)],
-    pub total: Option<i64>,
-    pub base_revision: i64,
-}
-
 fn json_fault(error: impl std::fmt::Display) -> DbError { DbError::Internal(error.to_string()) }
-
-fn row_values(row: &RowValue) -> Result<Map<String, Value>, DbError> {
-    match serde_json::from_str(&row.values).map_err(json_fault)? {
-        Value::Object(map) => Ok(map),
-        _ => Err(DbError::Internal("the values of a row are not an object".into())),
-    }
-}
-
-fn edge_value(kind: &FieldKind, value: &Value) -> Option<EdgeValue> {
-    match kind {
-        FieldKind::Scalar { kind: ScalarKind::Int } => value.as_i64().map(EdgeValue::Whole),
-        FieldKind::Scalar { kind: ScalarKind::Num } => value.as_f64().map(EdgeValue::Fraction),
-        FieldKind::Scalar { kind: ScalarKind::Bool } => value.as_bool().map(|flag| EdgeValue::Whole(i64::from(flag))),
-        FieldKind::Scalar { .. } | FieldKind::Enum { .. } => value.as_str().map(|text| EdgeValue::Text(text.to_string())),
-        _ => None,
-    }
-}
-
-fn edge_writes(scope: &ScopeRef, fields: &[FieldSpec], roots: &[Map<String, Value>], edges: &BTreeMap<String, Map<String, Value>>) -> Vec<EdgeWrite> {
-    if fields.is_empty() {
-        return Vec::new();
-    }
-    roots.iter().filter_map(|root| root.get("id").and_then(read_id)).map(|row| {
-        let edge = edges.get(row.as_str());
-        let values = fields.iter().filter_map(|field| {
-            let value = field.decode(&field.read(edge?)?)?;
-            Some((field.name.clone(), edge_value(&field.kind, &value)?))
-        }).collect();
-        EdgeWrite { scope: scope.clone(), row, values }
-    }).collect()
-}
-
-/// The scope of a relation with params and the key of its window record.
-pub(super) fn window_identity(spec: &crate::schema::ModelSpec, model: &str, relation: &str, remote: &crate::schema::RemoteSpec, params: &Map<String, Value>) -> Result<(ScopeRef, String), DbError> {
-    let scope_key = spec.selection_key(relation, params).map_err(json_fault)?;
-    let direction = match remote.shape {
-        RemoteShape::Connection { direction, .. } => direction,
-        _ => crate::schema::PageDirection::Forward,
-    };
-    let key = window_key(scope_key.as_str(), direction);
-    Ok((ScopeRef::new(ModelKey::new(model), scope_key), key))
-}
 
 impl Db {
     /// The stored record of the window of a relation, `None` before its first page.
