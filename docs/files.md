@@ -264,7 +264,7 @@ The final content mutation does not hold a file permit.
 | Field | Meaning |
 | ----- | ------- |
 | `status` | `waiting`, `preparing`, `queued`, `uploading`, `sending`, `failed` |
-| `waitReason` | why a `waiting` upload does not run yet: `createUnconfirmed` (the record is still local, its `create` has no answer) or `offline` (the step waits for the network and sends no request, `record.sync.state` stays `pending`). The upload leaves `offline` when the network returns. `nil` in every other status |
+| `waitReason` | why a `waiting` upload does not run yet: `createUnconfirmed` (the record is still local, its `create` has no answer). A step that waits for the network or for power saving to end is `queued` |
 | `stage` | `prepare`, `create`, `put`, `init`, `presign`, `part`, `complete`, `abort`, `mutation` |
 | `sentBytes`, `totalBytes`, `fraction` | for multipart the sum over all parts divided by the file size |
 | `attempts` | saved attempts for the current unfinished step, preserved across restarts |
