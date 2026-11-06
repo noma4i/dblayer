@@ -284,6 +284,12 @@ impl Shared {
 
 impl Db {
     /// The write of the owner LocalWrites: the epoch was checked by the owner.
+    /// An update that changes nothing still renews the expiry of a memory row: the write counts as the last write of the row.
+    pub(crate) fn renew_ephemeral(&self, model: &str, id: &RowId) {
+        self.shared.ephemeral.lock().track(model, id.as_str(), i64::MAX);
+        self.shared.ephemeral.nudge();
+    }
+
     pub(crate) fn write_ephemeral(&self, model: &str, id: &RowId, values: &Map<String, Value>) -> Result<(), DbError> {
         let spec = self.shared.spec(model)?;
         let changed = self.shared.ephemeral.lock().write(spec, id.as_str(), values)?;

@@ -78,6 +78,7 @@ impl Database {
         let row = planned.row_id.clone();
         let shown = planned.shown.clone();
         if planned.noop {
+            self.db.renew_ephemeral(&model, &shown);
             let value = self.optimistic(&model, &shown)?;
             return Ok(receipt_of(epoch, model, None, self.db.revision_seq()?, value, None, self.streams.clone()));
         }
