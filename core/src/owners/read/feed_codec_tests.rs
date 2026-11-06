@@ -61,6 +61,12 @@ fn specs(with_feed: bool) -> Vec<ModelSpec> {
 
 fn codec(with_feed: bool) -> SchemaFeedCodec { SchemaFeedCodec::new(Db::open_in_memory(specs(with_feed), None).unwrap(), operations()) }
 
+fn codec_for_apply(apply: Value) -> SchemaFeedCodec {
+    let mut messages = messages_spec();
+    messages.listens.push(updates(json!({"subscription":"MessageChanged", "apply":apply})));
+    SchemaFeedCodec::new(Db::open_in_memory(vec![chats_spec(), messages], None).unwrap(), operations())
+}
+
 fn frame(data: Value) -> Response { Response::data(data) }
 
 fn payloads(events: &[FramedEvent]) -> Vec<Value> { events.iter().map(|event| serde_json::from_str(&event.payload).unwrap()).collect() }
@@ -105,6 +111,24 @@ fn feed_codec_listens() {
     assert_eq!((live[0]["op"].as_str(), live[0]["id"].as_str()), (Some("upsert"), Some("m2")));
     assert_eq!(gone, [json!({"op":"delete", "model":"messages", "id":"m2"})]);
     assert!(codec.events("MessageChanged", frame(json!({"other":1}))).is_empty(), "a frame of another root has no event");
+}
+
+#[test]
+fn feed_apply_ignore() {
+    let codec = codec_for_apply(json!({"effect":"ignore"}));
+    assert!(codec.events("MessageChanged", frame(json!({"messageChanged":{"id":"m1", "body":"hello"}}))).is_empty());
+}
+
+#[test]
+fn feed_apply_matches_skip() {
+    let codec = codec_for_apply(json!({"effect":"upsert", "matches":{"kind":["created"], "source":{"not":["hidden"]}}}));
+    for value in [json!({}), json!({"kind":null}), json!({"kind":1}), json!({"kind":"updated"}), json!({"kind":"created", "source":"hidden"})] {
+        let mut event = json!({"id":"m1", "chatId":"c1", "body":"hello", "source":"public"});
+        event.as_object_mut().unwrap().extend(value.as_object().unwrap().clone());
+        assert!(codec.events("MessageChanged", frame(json!({"messageChanged":event}))).is_empty());
+    }
+    let accepted = codec.events("MessageChanged", frame(json!({"messageChanged":{"id":"m1", "chatId":"c1", "body":"hello", "kind":"created", "source":"public"}})));
+    assert_eq!(payloads(&accepted)[0]["op"], "upsert");
 }
 
 #[test]
