@@ -304,6 +304,80 @@ for directory, suffix, generated in [("swift/Sources/DBlayer", "*.swift", "dblay
                 number = text.count("\n", 0, match.start()) + 1
                 findings.append(f"{label}: {relative}:{number}: {match.group()}")
 
+admitted_argument = re.compile(r"\(\s*&?\s*(?:self\s*\.\s*)?(?:admitted|admission)\b")
+network_call = re.compile(r"\b(?:transport|http|client)\s*\.\s*(?:query|mutate|subscribe|put)\s*\(")
+for path in files:
+    relative = str(path.relative_to(source))
+    if any(marker in "/" + relative for marker in task_support) or relative.startswith("transport/encrypted/"):
+        continue
+    text = contents[path]
+    code = code_only(text)
+    for match in network_call.finditer(code):
+        if admitted_argument.match(code[match.end() - 1:]) or f"z23:{relative}" in allowed:
+            continue
+        number = text.count("\n", 0, match.start()) + 1
+        findings.append(f"Z23 a request goes to the network with an Admitted epoch permit: {path.relative_to(root)}:{number}: {text.splitlines()[number - 1].strip()}")
+
+for path in files:
+    relative = str(path.relative_to(source))
+    if not relative.startswith("owners/") or any(marker in "/" + relative for marker in task_support):
+        continue
+    code = code_only(contents[path])
+    hits = [match for match in re.finditer(r"\b(?:Mutex|RwLock)\b|\bparking_lot\b", code)]
+    if hits and f"z24:{relative}" not in allowed:
+        number = contents[path].count("\n", 0, hits[0].start()) + 1
+        findings.append(f"Z24 an owner changes its state on its executor, no Mutex or RwLock: {path.relative_to(root)}:{number}: {len(hits)} use(s)")
+
+json_parse = re.compile(r"\bserde_json::from_(?:str|slice)\b")
+for relative in sorted(str(path.relative_to(source)) for path in files if str(path.relative_to(source)).startswith("ffi/")):
+    path = source / relative
+    if any(marker in "/" + relative for marker in test_only) or f"z25:{relative}" in allowed:
+        continue
+    code = code_only(contents[path])
+    for offset, chunk in chunks_of(code):
+        head = re.match(r"\s*fn\s+(\w+)", chunk)
+        if not head:
+            continue
+        before = code[:offset]
+        if not re.search(r"\bpub\s+(?:async\s+)?$", before[-20:]) and not re.search(r"#\[uniffi::export", before[-300:]):
+            continue
+        if f"z25:{relative}:{head.group(1)}" in allowed:
+            continue
+        call = json_parse.search(chunk)
+        if call:
+            number = code.count("\n", 0, offset + call.start()) + 1
+            findings.append(f"Z25 a public call hands the string to its owner, it parses no JSON on the caller thread: {path.relative_to(root)}:{number}: {head.group(1)}")
+
+clock_forms = re.compile(r"\btokio::time\b|\bInstant::now\b|\bSystemTime::now\b|\bUNIX_EPOCH\b")
+for path in files:
+    relative = str(path.relative_to(source))
+    if relative.startswith(("pacing/", "bin/")) or any(marker in "/" + relative for marker in task_support):
+        continue
+    code = code_only(contents[path])
+    inside = test_regions(code)
+    for match in clock_forms.finditer(code):
+        if any(begin < match.start() < finish for begin, finish in inside):
+            continue
+        number = contents[path].count("\n", 0, match.start()) + 1
+        if f"z26:{relative}:{number}" in allowed or f"z26:{relative}" in allowed:
+            continue
+        findings.append(f"Z26 time goes through Clock: {path.relative_to(root)}:{number}: {match.group()}")
+
+design = root / "specs" / "machines" / "design.md"
+if design.exists():
+    table = design.read_text()
+    start = table.find("## 1a.")
+    end = table.find("\n## ", start + 5)
+    section = table[start:end if end != -1 else len(table)]
+    constant = re.compile(r"^\s*(?:pub(?:\([^)]*\))?\s+)?const\s+([A-Z][A-Z0-9_]*)\s*:\s*(?:u8|u16|u32|u64|usize|i32|i64|f64|Duration)\b", re.M)
+    for path in files:
+        relative = str(path.relative_to(source))
+        if not (relative.startswith("owners/") or relative == "upload/config.rs") or any(marker in "/" + relative for marker in task_support):
+            continue
+        for name in constant.findall(contents[path]):
+            if name not in section and f"z27:{name}" not in allowed:
+                findings.append(f"Z27 an owner constant is listed in design.md section 1a with its file: {path.relative_to(root)}: {name}")
+
 if findings:
     print("zoo check found", len(findings), "problem(s):")
     for finding in findings:

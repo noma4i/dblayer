@@ -48,6 +48,23 @@ expect_red '#[cfg(test)]
 fn probe() {}
 fn parked(rx: &Receiver) { rx.recv(); }'
 
+expect_green 'fn go(transport: &T, admitted: &A) { transport.query(&admitted, request); }'
+expect_red 'fn go(transport: &T) { transport.query(request); }'
+expect_green 'fn tick(clock: &Clock) { clock.now(); }'
+expect_red 'fn tick() { let at = std::time::Instant::now(); }'
+
+mkdir -p "$work/core/src/owners" "$work/core/src/ffi"
+: > "$probe"
+printf 'struct Owner { state: Mutex<u8> }\n' > "$work/core/src/owners/probe.rs"
+if run; then echo "check_zoo_test: a lock in an owner was not caught" >&2; exit 1; fi
+printf 'struct Owner { state: u8 }\n' > "$work/core/src/owners/probe.rs"
+run || { echo "check_zoo_test: a clean owner failed" >&2; exit 1; }
+printf 'impl Database { pub async fn create(&self, values: String) { let v = serde_json::from_str(&values); } }\n' > "$work/core/src/ffi/probe.rs"
+if run; then echo "check_zoo_test: JSON parsed on the caller thread was not caught" >&2; exit 1; fi
+printf 'impl Database { pub async fn create(&self, values: String) { self.owner.hand(values); } }\n' > "$work/core/src/ffi/probe.rs"
+run || { echo "check_zoo_test: a clean public call failed" >&2; exit 1; }
+/bin/rm -f "$work/core/src/owners/probe.rs" "$work/core/src/ffi/probe.rs"
+
 mkdir -p "$work/core/src/zoo_probe"
 printf '#[cfg(test)]\nmod zoo_probe;\n' > "$work/core/src/lib.rs"
 printf 'fn fixture() { Some(1).unwrap(); }\n' > "$work/core/src/zoo_probe/harness.rs"
