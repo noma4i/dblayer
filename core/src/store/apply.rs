@@ -100,6 +100,9 @@ fn attempt(store: &Store, inner: &Inner, envelope: &BatchPlan, now_ms: i64) -> R
     Ok((outcome, acks))
 }
 
-include!("apply_rows.rs");
-include!("apply_envelope.rs");
-include!("apply_transitions.rs");
+mod apply_rows;
+pub(crate) use apply_rows::*;
+mod apply_envelope;
+pub(crate) use apply_envelope::*;
+mod apply_transitions;
+pub(crate) use apply_transitions::*;

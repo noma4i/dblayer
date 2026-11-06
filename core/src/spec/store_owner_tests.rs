@@ -247,5 +247,5 @@ impl Twin {
 
 fn names(items: &[&str]) -> BTreeSet<String> { items.iter().map(|item| item.to_string()).collect() }
 
-include!("store_owner_cells_tests.rs");
-include!("store_owner_trace_tests.rs");
+mod store_owner_cells_tests;
+mod store_owner_trace_tests;

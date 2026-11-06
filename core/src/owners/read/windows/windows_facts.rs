@@ -1,0 +1,417 @@
+use super::*;
+
+/// The values every state of the machine shares.
+pub(super) struct Facts {
+    pub(super) epoch: Epoch,
+    pub(super) online: Option<bool>,
+    pub(super) base_generation: u64,
+    pub(super) generations: BTreeMap<String, u64>,
+    pub(super) dependency_models: BTreeSet<String>,
+    pub(super) interest: BTreeSet<InterestId>,
+    /// Interests that load the window again each time the network returns.
+    pub(super) reload: BTreeSet<InterestId>,
+    /// The network was away since the last `Online(true)`; the last `Online(true)` ended such a gap.
+    pub(super) dropped: bool,
+    pub(super) reconnected: bool,
+    pub(super) waiters: BTreeMap<InterestId, Want>,
+    /// The first page landed and nothing marked the window stale since.
+    pub(super) fresh: bool,
+    /// The device saves power (`saving` of the dictionary).
+    pub(super) saving: bool,
+    pub(super) landed_at: i64,
+    pub(super) fresh_until: i64,
+    /// `expires_in` and `empty_in` of the relation in ms.
+    pub(super) lifetime: (i64, i64),
+    /// The `now` of the response that is landing.
+    pub(super) answered_at: i64,
+    pub(super) cursor: Option<String>,
+    /// The last page that landed.
+    pub(super) page: u32,
+    pub(super) page_count: u32,
+    pub(super) max_pages: u32,
+    pub(super) members_complete: bool,
+    pub(super) cursor_reset_used: bool,
+    pub(super) replace_all: bool,
+    pub(super) reread_due: bool,
+    pub(super) has_rows: bool,
+    pub(super) phase: Phase,
+    /// The first load of the interest now held ended with an outcome.
+    pub(super) settled: bool,
+    pub(super) error: Option<crate::ffi::DbError>,
+    /// The revision of the last `Committed` of a landing of this machine, 0 before the first.
+    pub(super) landed_revision: i64,
+    pub(super) store_seen: i64,
+    pub(super) request_base: std::cell::Cell<i64>,
+    /// The window has a marker and a tail (`media` in the `.dbl`).
+    pub(super) media: bool,
+    pub(super) marker: Option<Marker>,
+    pub(super) members: i64,
+    /// The marker and the member count that the landing in flight makes the saved ones.
+    pub(super) landing_marker: Option<(Marker, i64)>,
+    pub(super) fx: RefCell<Vec<Emit>>,
+}
+
+impl Facts {
+    pub(super) fn env(&mut self, event: &Ev) {
+        match event {
+            Ev::Online { online, .. } => {
+                self.online = Some(*online);
+                if *online {
+                    self.reconnected = std::mem::take(&mut self.dropped);
+                } else {
+                    self.dropped = true;
+                }
+            }
+            Ev::PowerSaving { saving } => self.saving = *saving,
+            Ev::ReloadOnConnect { id } => {
+                self.reload.insert(*id);
+            }
+            Ev::InterestMinus { id } => {
+                self.reload.remove(id);
+            }
+            Ev::ModelsReset { generation, models } => {
+                for model in models {
+                    self.generations.insert(model.clone(), *generation);
+                }
+                if self.depends_on(models) {
+                    self.marker = None;
+                    self.members = 0;
+                }
+            }
+            Ev::Saved(Some(saved)) => {
+                self.fresh = !saved.stale;
+                self.landed_at = saved.landed_at;
+                self.fresh_until = saved.fresh_until;
+                self.cursor.clone_from(&saved.cursor);
+                self.page = saved.pages;
+                self.page_count = saved.pages;
+                self.has_rows = saved.has_rows;
+                self.marker.clone_from(&saved.marker);
+                self.members = saved.members;
+            }
+            Ev::Load { store_revision, .. } => self.store_seen = self.store_seen.max(*store_revision),
+            Ev::StoreSeen { revision } => self.store_seen = self.store_seen.max(*revision),
+            _ => {}
+        }
+    }
+
+    /// Loaded, not marked stale, and `now` inside `landed_at <= now < fresh_until`: a clock that went back makes the window stale.
+    pub(super) fn is_fresh(&self, now: i64) -> bool { self.fresh && self.landed_at <= now && now < self.fresh_until }
+
+    /// Only the preload watches the window.
+    pub(super) fn preload_only(&self) -> bool { self.waiters.is_empty() && self.interest.len() == 1 && self.interest.contains(&PRELOAD) }
+
+    /// A load waits for the end of power saving: no reader and no waiter asked for it.
+    pub(super) fn deferred(&self) -> bool { self.saving && self.preload_only() }
+
+    pub(super) fn is_online(&self) -> bool { self.online == Some(true) }
+
+    pub(super) fn watched(&self) -> bool { !self.interest.is_empty() || !self.waiters.is_empty() }
+
+    pub(super) fn push_fx(&self, effect: WindowEffect) {
+        self.fx.borrow_mut().push(Emit::Run(effect));
+    }
+
+    pub(super) fn emit(&self, emit: Emit) { self.fx.borrow_mut().push(emit); }
+
+    /// The generation of every model when the request leaves: the answer may name models the window did not know before.
+    pub(super) fn basis(&self) -> GenerationsAtIssue { GenerationsAtIssue { base: self.base_generation, generations: self.generations.clone() } }
+
+    pub(super) fn depends_on(&self, models: &[String]) -> bool { models.iter().any(|model| self.dependency_models.contains(model)) }
+
+    pub(super) fn load_state(&self) -> WindowState { WindowState { phase: self.phase, error: self.error.clone(), loaded: (self.landed_revision != 0 || self.phase == Phase::Loaded).then_some(self.landed_revision), has_more: self.cursor.is_some(), settled: self.settled, total: None } }
+
+    pub(super) fn set_phase(&mut self, phase: Phase) {
+        self.phase = phase;
+        self.settled |= matches!(phase, Phase::Loaded | Phase::Failed);
+    }
+
+    pub(super) fn drop_interest(&mut self, id: &InterestId) {
+        self.interest.remove(id);
+        self.waiters.remove(id);
+        if self.interest.is_empty() {
+            self.settled = false;
+        }
+    }
+
+    pub(super) fn announce(&mut self) {
+        let streams = self.interest.iter().copied().filter(|id| *id != PRELOAD).collect();
+        self.emit(Emit::Announce { state: self.load_state(), streams });
+    }
+
+    pub(super) fn answer(&mut self, id: InterestId, outcome: WindowOutcome) { self.push_fx(WindowEffect::Outcome { id, outcome }); }
+
+    pub(super) fn answer_all(&mut self, outcome: &WindowOutcome) {
+        for id in std::mem::take(&mut self.waiters).into_keys() {
+            self.answer(id, outcome.clone());
+        }
+    }
+
+    pub(super) fn failed_phase(&self) -> Phase { if self.has_rows { Phase::Loaded } else { Phase::Failed } }
+
+    pub(super) fn page_cursor(&self, page: u32) -> Option<String> { if page > 1 { self.cursor.clone() } else { None } }
+
+    pub(super) fn page_limit_reached(&self) -> bool { self.page_count >= self.max_pages }
+
+    /// A load of `page`: a request when online, `Waiting` otherwise. `announce` adds the window state.
+    pub(super) fn begin(&mut self, ctx: &mut Ctx<'_>, page: u32, force: bool, announce: bool) -> Outcome<WinState> {
+        self.replace_all = false;
+        let next = if self.is_online() && !self.deferred() {
+            let (request, attempt) = ctx.request();
+            self.phase = Phase::Loading;
+            self.emit(Emit::Pin { epoch: self.epoch, request });
+            WinState::loading(self.issue(request, attempt, page, force))
+        } else {
+            WinState::waiting(force, page)
+        };
+        if announce {
+            self.announce();
+        }
+        Transition(next)
+    }
+
+    /// A window that waited goes to the network: `Loading` with a new request.
+    pub(super) fn leave_waiting(&mut self, ctx: &mut Ctx<'_>, force: bool, page: u32) -> Outcome<WinState> {
+        let (request, attempt) = ctx.request();
+        self.phase = Phase::Loading;
+        self.emit(Emit::Pin { epoch: self.epoch, request });
+        self.announce();
+        Transition(WinState::loading(self.issue(request, attempt, page, force)))
+    }
+
+    /// A load of the first page of a media window starts with a check of its marker; every other load asks for a page.
+    pub(super) fn issue(&self, request: RequestId, attempt: u32, page: u32, force: bool) -> Load {
+        let load = Load::issued(request, attempt, page, force, self.basis());
+        if !(self.media && page == 1) { return load; }
+        let up_to = self.marker.as_ref().map_or(0, |marker| marker.sequence);
+        Load { chain: Some(Chain { phase: MediaPhase::MarkerCheck { up_to }, cursor: None, ids: Vec::new(), rows: PageRows::default(), models: BTreeSet::new(), latest: 0, base: 0 }), ..load }
+    }
+
+    pub(super) fn request_effect(&self, load: &Load) -> WindowEffect {
+        let (cursor, kind) = match &load.chain {
+            Some(chain) => (chain.cursor.clone(), chain.kind()),
+            None => (self.page_cursor(load.page), RequestKind::Page),
+        };
+        WindowEffect::Request { request: load.request, attempt: load.attempt, page: load.page, cursor, epoch: self.epoch, kind }
+    }
+
+    /// The next request of the chain: a new attempt of the same load.
+    pub(super) fn chain_request(&mut self, context: &mut Ctx<'_>, load: &mut Load, chain: Chain) -> Outcome<WinState> {
+        load.attempt = context.attempt();
+        load.attempts = 0;
+        load.chain = Some(chain);
+        let effect = self.request_effect(load);
+        self.push_fx(effect);
+        Handled
+    }
+
+    /// The chain ends: its rows and its marker land in 1 batch, or only the marker when the rows stay.
+    pub(super) fn land_chain(&mut self, load: &Load, chain: &Chain, marker: Marker, keep_rows: bool) -> Outcome<WinState> {
+        let related = chain.rows.related.iter().map(|(model, _)| model.clone());
+        let models: BTreeSet<String> = self.dependency_models.iter().cloned().chain(chain.models.iter().cloned()).chain(related).collect();
+        let basis = crate::owners::store::basis_for(models.iter().map(|model| (model.clone(), load.basis.of(model))));
+        let members = if keep_rows { self.members } else { chain.base + i64::try_from(chain.ids.len()).unwrap_or(i64::MAX) };
+        let mut page = AnswerPage::new(1, chain.ids.clone(), None);
+        page.payload = chain.rows.clone();
+        page.dependency_models = chain.models.clone();
+        let number = if chain.base > 0 { 2 } else { 1 };
+        self.page_count = 1;
+        self.emit(Emit::Commit { request: load.request, basis, page, number, replace_all: false, base_revision: self.request_base.get(), marker: Some(marker.clone()), keep_rows });
+        self.landing_marker = Some((marker, members));
+        let cursor = if keep_rows { self.cursor.clone() } else { None };
+        Transition(WinState::landing(Landing { request: load.request, page: 1, cursor, rows: keep_rows && self.has_rows || !chain.ids.is_empty(), models: chain.models.clone() }))
+    }
+
+    /// The answer of a request of a media chain, by the phase of the chain.
+    pub(super) fn media_response(&mut self, context: &mut Ctx<'_>, load: &mut Load, answer: &AnswerPage, now: i64) -> Outcome<WinState> {
+        self.answered_at = now;
+        let Some(mut chain) = load.chain.take() else { return Handled };
+        chain.models.extend(answer.dependency_models.iter().cloned());
+        match chain.phase {
+            MediaPhase::MarkerCheck { up_to } => {
+                let Some(found) = answer.marker.clone() else { return self.fail("InvalidResponse", None) };
+                chain.latest = found.sequence;
+                let prefix = self.marker.as_ref().is_some_and(|saved| saved.values == found.values && saved.sequence == up_to);
+                if prefix && found.sequence == up_to {
+                    return self.land_chain(load, &chain, found, true);
+                }
+                if prefix && found.sequence > up_to {
+                    chain.phase = MediaPhase::Tail { after: up_to };
+                    chain.base = self.members;
+                } else {
+                    chain.phase = MediaPhase::Full;
+                }
+                self.chain_request(context, load, chain)
+            }
+            MediaPhase::Tail { .. } | MediaPhase::Full => {
+                chain.ids.extend(answer.rows.iter().cloned());
+                chain.rows.roots.extend(answer.payload.roots.iter().cloned());
+                chain.rows.related.extend(answer.payload.related.iter().cloned());
+                chain.rows.total = answer.payload.total.or(chain.rows.total);
+                if !answer.more {
+                    chain.phase = MediaPhase::Confirm { up_to: chain.latest };
+                    chain.cursor = None;
+                } else {
+                    match &answer.cursor {
+                        Some(next) if chain.cursor.as_ref() != Some(next) => chain.cursor = Some(next.clone()),
+                        _ => return self.fail("InvalidResponse", None),
+                    }
+                }
+                self.chain_request(context, load, chain)
+            }
+            MediaPhase::Confirm { .. } => {
+                let Some(found) = answer.marker.clone() else { return self.fail("InvalidResponse", None) };
+                let counted: i64 = found.values.iter().filter(|(field, _)| field.as_str() != "revision").map(|(_, count)| *count).sum();
+                if counted == chain.base + i64::try_from(chain.ids.len()).unwrap_or(i64::MAX) {
+                    return self.land_chain(load, &chain, Marker { sequence: chain.latest, values: found.values }, false);
+                }
+                if load.attempts + 1 < attempt_limit(ErrorClass::Server) {
+                    load.attempts += 1;
+                    load.retry = true;
+                    load.chain = Some(chain);
+                    self.emit(Emit::Retry { request: load.request, attempt: load.attempts, class: ErrorClass::Server });
+                    return Handled;
+                }
+                self.fail("InvalidResponse", None)
+            }
+        }
+    }
+
+    pub(super) fn finish(&mut self, request: Option<(RequestId, u32)>) -> Outcome<WinState> {
+        self.answer_all(&WindowOutcome::Interrupted);
+        if let Some((request, attempt)) = request {
+            self.push_fx(WindowEffect::Cancel { request, attempt });
+        }
+        Transition(WinState::ended())
+    }
+
+    pub(super) fn fail(&mut self, message: &str, source: Option<crate::transport::TransportError>) -> Outcome<WinState> {
+        self.landing_marker = None;
+        self.fresh = false;
+        self.reread_due = false;
+        self.set_phase(self.failed_phase());
+        self.error = Some(source.clone().map_or_else(|| crate::ffi::DbError::Database { detail: message.to_string() }, crate::ffi::DbError::from));
+        self.answer_all(&WindowOutcome::Failed { error: message.to_string(), source });
+        self.announce();
+        Transition(WinState::idle())
+    }
+
+    pub(super) fn join_load(&mut self, id: InterestId, goal: Goal, page: u32) {
+        let want = match goal {
+            Goal::First => Want::First,
+            Goal::All => Want::All,
+            Goal::Next => Want::Next(page + 1),
+        };
+        self.waiters.insert(id, want);
+    }
+
+    pub(super) fn immediate(&mut self, id: InterestId, outcome: WindowOutcome) -> Outcome<WinState> {
+        self.answer(id, outcome);
+        Handled
+    }
+
+    pub(super) fn idle_load(&mut self, ctx: &mut Ctx<'_>, (id, now): (InterestId, i64), goal: Goal, force: bool) -> Outcome<WinState> {
+        let fresh = self.is_fresh(now);
+        let loaded = WindowOutcome::Loaded { revision: self.landed_revision, has_more: self.cursor.is_some(), fetched: false };
+        let next_page = self.page + 1;
+        match goal {
+            Goal::First if fresh && !force => self.immediate(id, loaded),
+            Goal::All if fresh && !force => {
+                if self.cursor.is_none() {
+                    self.immediate(id, loaded)
+                } else if self.page_limit_reached() {
+                    self.immediate(id, WindowOutcome::PageLimit)
+                } else {
+                    self.waiters.insert(id, Want::All);
+                    self.begin(ctx, next_page, false, true)
+                }
+            }
+            Goal::First | Goal::All => {
+                self.waiters.insert(id, if goal == Goal::All { Want::All } else { Want::First });
+                self.begin(ctx, 1, force, true)
+            }
+            Goal::Next => {
+                if self.cursor.is_none() {
+                    self.immediate(id, loaded)
+                } else if self.page_limit_reached() {
+                    self.immediate(id, WindowOutcome::PageLimit)
+                } else {
+                    self.waiters.insert(id, Want::Next(next_page));
+                    self.begin(ctx, next_page, false, true)
+                }
+            }
+        }
+    }
+
+    pub(super) fn landed(&mut self, ctx: &mut Ctx<'_>, page: u32, cursor: Option<String>, rows: bool, dependency_models: &BTreeSet<String>, revision: i64) -> Outcome<WinState> {
+        self.has_rows |= rows;
+        if let Some((marker, members)) = self.landing_marker.take() {
+            self.marker = Some(marker);
+            self.members = members;
+        }
+        self.cursor = cursor;
+        self.page = page;
+        self.landed_revision = revision;
+        if page == 1 {
+            self.landed_at = self.answered_at;
+            self.fresh_until = self.answered_at + if rows { self.lifetime.0 } else { self.lifetime.1 };
+        }
+        self.error = None;
+        self.cursor_reset_used = false;
+        self.replace_all = false;
+        let chain = self.members_complete && self.cursor.is_some();
+        let settled = self.settled;
+        self.set_phase(Phase::Loaded);
+        if !dependency_models.is_empty() {
+            self.dependency_models = dependency_models.clone();
+        }
+        if chain {
+            self.settled = settled;
+            if self.watched() {
+                let loaded = WindowOutcome::Loaded { revision, has_more: true, fetched: true };
+                let wants_next = |want: &Want| matches!(want, Want::All) || matches!(want, Want::Next(c) if *c > page);
+                let finished: Vec<InterestId> = self.waiters.iter().filter(|(_, want)| !wants_next(want)).map(|(id, _)| *id).collect();
+                for id in finished {
+                    self.waiters.remove(&id);
+                    self.answer(id, loaded.clone());
+                }
+                return self.begin(ctx, page + 1, false, true);
+            }
+            self.answer_all(&WindowOutcome::Loaded { revision, has_more: true, fetched: true });
+            self.fresh = false;
+            self.announce();
+            return Transition(WinState::idle());
+        }
+        let wants_next = |want: &Want| matches!(want, Want::All) || matches!(want, Want::Next(c) if *c > page);
+        let loaded = WindowOutcome::Loaded { revision, has_more: self.cursor.is_some(), fetched: true };
+        if self.cursor.is_some() && self.waiters.values().any(wants_next) {
+            if self.page_limit_reached() {
+                for (id, want) in std::mem::take(&mut self.waiters) {
+                    self.answer(id, if wants_next(&want) { WindowOutcome::PageLimit } else { loaded.clone() });
+                }
+                self.announce();
+                self.fresh = true;
+                return Transition(WinState::idle());
+            }
+            let finished: Vec<InterestId> = self.waiters.iter().filter(|(_, want)| !wants_next(want)).map(|(id, _)| *id).collect();
+            for id in finished {
+                self.waiters.remove(&id);
+                self.answer(id, loaded.clone());
+            }
+            return self.begin(ctx, page + 1, false, true);
+        }
+        self.answer_all(&loaded);
+        if !self.reread_due {
+            self.fresh = true;
+            self.announce();
+            return Transition(WinState::idle());
+        }
+        self.reread_due = false;
+        if !self.watched() {
+            self.fresh = false;
+            self.announce();
+            return Transition(WinState::idle());
+        }
+        self.begin(ctx, 1, false, true)
+    }
+}

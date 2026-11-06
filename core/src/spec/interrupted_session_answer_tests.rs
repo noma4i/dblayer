@@ -159,4 +159,4 @@ fn sess_prop_resume_once() {
     assert_eq!(rig.send(ask_answer(2)), [answer(2, Ok(None))]);
     assert_eq!(rig.det.state(rig.address).unwrap().credential().unwrap().sequence, 1);
 }
-include!("session_restored_login_tests.rs");
+mod session_restored_login_tests;

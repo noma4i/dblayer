@@ -11,8 +11,10 @@ use crate::runtime::{Cause, Effect, Effects, Epoch, StateOwner, Time};
 
 use super::lifecycle::Identity;
 
-include!("store_types.rs");
-include!("store_basis.rs");
+mod store_types;
+pub use store_types::*;
+mod store_basis;
+pub(crate) use store_basis::*;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum StoreMode {
     Open,

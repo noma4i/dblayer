@@ -331,4 +331,4 @@ fn second_apply_failure_poisons_reads_until_reset() {
     }
 }
 
-include!("apply_operations_tests.rs");
+mod apply_operations_tests;

@@ -317,5 +317,5 @@ fn live() -> Twin { live_with(Twin::new()) }
 
 fn live_immediate() -> Twin { live_with(Twin::immediate()) }
 
-include!("feed_cells_tests.rs");
-include!("feed_props_tests.rs");
+mod feed_cells_tests;
+mod feed_props_tests;

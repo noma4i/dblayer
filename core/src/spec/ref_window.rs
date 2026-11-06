@@ -3,7 +3,8 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 
-include!("ref_window_types.rs");
+mod ref_window_types;
+pub(super) use ref_window_types::*;
 
 impl Window {
     pub(super) fn new() -> Self {
@@ -612,4 +613,4 @@ impl Window {
     }
 }
 
-include!("ref_window_media.rs");
+mod ref_window_media;

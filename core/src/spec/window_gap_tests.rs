@@ -474,11 +474,12 @@ fn failed_watched() -> Twin {
 
 // Dictionary rows.
 
-include!("window_gap_cells_tests.rs");
-include!("window_gap_loading_tests.rs");
-include!("window_gap_landing_tests.rs");
-include!("window_gap_property_tests.rs");
-include!("window_fresh_tests.rs");
-include!("window_saving_tests.rs");
-include!("window_pages_tests.rs");
-include!("window_media_tests.rs");
+mod window_gap_cells_tests;
+mod window_gap_loading_tests;
+mod window_gap_landing_tests;
+use window_gap_landing_tests::*;
+mod window_gap_property_tests;
+mod window_fresh_tests;
+mod window_saving_tests;
+mod window_pages_tests;
+mod window_media_tests;

@@ -425,5 +425,5 @@ fn life_ending_credential_after_failure() {
     assert_eq!(twin.published().identity, Some(2), "the committed credential is not lost");
 }
 
-include!("lifecycle_ending_tests.rs");
-include!("lifecycle_closing_tests.rs");
+mod lifecycle_ending_tests;
+mod lifecycle_closing_tests;

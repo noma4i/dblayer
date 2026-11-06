@@ -435,9 +435,10 @@ fn opened(input: Input) -> Twin {
     twin
 }
 
-include!("session_owner_calls_tests.rs");
-include!("session_owner_http_tests.rs");
-include!("session_owner_restore_tests.rs");
-include!("session_owner_props_tests.rs");
-include!("session_owner_release_tests.rs");
-include!("session_owner_detached_tests.rs");
+mod session_owner_calls_tests;
+mod session_owner_http_tests;
+mod session_owner_restore_tests;
+use session_owner_restore_tests::*;
+mod session_owner_props_tests;
+mod session_owner_release_tests;
+mod session_owner_detached_tests;
