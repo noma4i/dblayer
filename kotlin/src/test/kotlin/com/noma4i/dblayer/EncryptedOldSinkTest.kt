@@ -33,6 +33,7 @@ class EncryptedOldSinkTest {
             val encrypted = EncryptedConfig("https://api.example.com", SealedServer.SERVER_KEY, SealedServer.SERVER_PIN, EncryptedEndpoints("/api/graphql", "/api/cable", "/api/logout", "/api/bootstrap", mapOf("login_link" to EncryptedSessionOperation("/api/auth/login_link", EncryptedOperationClass.AUTHENTICATED))), "example-ws-v1", "ws.hello", "EncryptedGraphqlChannel")
             DBlayer.openTesting(peer, modelsJSON, encrypted = encrypted, credentials = CableCredentials(), http = server)
             DBlayer.database.registerOperations("""[{"name":"BulletinAdded","document":"subscription BulletinAdded { bulletinAdded { body occurredAt } }","rootPath":"bulletinAdded"}]""")
+            DBlayer.database.setOnline(true)
             DBlayer.database.sessionCall("login_link", """{"account":"A"}""")
             val query = Notice.recent.json
             val first = AccountScope.current().stream(Notice.recent)

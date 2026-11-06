@@ -31,7 +31,7 @@ class ClosedDatabaseTest {
         val closes = List(2) { async(Dispatchers.Default) { runCatching { DBlayer.close() } } }
         val results = awaitWithin("both closes to return") { closes.awaitAll() }
         for (result in results) {
-            assertTrue(result.isSuccess)
+            assertTrue("${result.exceptionOrNull()}", result.isSuccess)
         }
         assertTrue(refusal { DBlayer.sessionReset() } is DbException.Closed)
     }

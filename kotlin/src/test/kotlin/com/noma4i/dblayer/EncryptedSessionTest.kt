@@ -112,7 +112,7 @@ class EncryptedSessionTest {
 
         assertEquals(listOf("/api/ticket", "/api/auth/otp", "/api/auth/otp"), http.posts.map { it.first })
         assertEquals(5, http.posts[0].second.split(".").size)
-        assertEquals(43, credentials.current?.length)
+        assertNull(credentials.current)
         database.sessionReset()
         assertNull(credentials.current)
     }
