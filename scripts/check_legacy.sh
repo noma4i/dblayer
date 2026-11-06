@@ -4,7 +4,7 @@
 #   check_legacy.sh check               exits 1 when either number is above 0 on HEAD, 2 when git fails
 set -euo pipefail
 
-LEGACY_RE='[Ll]egacy|LEGACY|[Cc]ompat([^i]|$|i[^b]|ib[^l]|ibl[^e])|COMPAT|Leases|Admitted|Origin::|DeliveryUnknown|DELIVERY_UNKNOWN|deliveryUnknown|delivery_unknown|_for_testing|reach_stream|resync_stream|reachStream|resyncStream|session_resume|sessionResume|set_listening|setListening|retry_all|retryAll|batch_outcome|batchOutcome|refresh_preloads|refreshPreloads|resume_uploads|resumeUploads|round_(begin|next|leave|abandon)|round(Begin|Next|Leave|Abandon)|awaitingSnapshot|mutate_wait|forget_credential|start_session_in_tests|fn[[:space:]]+(flush|resume|maintain|warm)[[:space:]]*\(|crate::sync([^_[:alnum:]]|$)|ffi::stream|ffi/stream|ffi/live'
+LEGACY_RE='[Ll]egacy|LEGACY|[Cc]ompat([^i]|$|i[^b]|ib[^l]|ibl[^e])|COMPAT|Leases|Admitted|(^|[^A-Za-z])Origin::|DeliveryUnknown|DELIVERY_UNKNOWN|deliveryUnknown|delivery_unknown|_for_testing|reach_stream|resync_stream|reachStream|resyncStream|session_resume|sessionResume|set_listening|setListening|retry_all|retryAll|batch_outcome|batchOutcome|refresh_preloads|refreshPreloads|resume_uploads|resumeUploads|round_(begin|next|leave|abandon)|round(Begin|Next|Leave|Abandon)|awaitingSnapshot|mutate_wait|forget_credential|start_session_in_tests|fn[[:space:]]+(flush|resume|maintain|warm)[[:space:]]*\(|crate::sync([^_[:alnum:]]|$)|ffi::stream|ffi/stream|ffi/live'
 LEGACY_PATHS='core/src gen/src swift/Sources swift/Tests kotlin/src scripts docs README.md fixtures Makefile'
 DEV_RE='specs/|CLAUDE\.md|AGENTS\.md|\.orca-artifacts|(^|[^/])\.claude/'
 LEGACY_NAME_RE='(^|[/._-])(legacy|compat|old|v1|shim|adapter)([/._-]|$)'
