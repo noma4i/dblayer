@@ -10,10 +10,10 @@ use crate::ffi::session_guards_tests::{Rig, SOCIAL_BODY};
 use crate::ffi::{ByteProgress, CableLease, Config, Database, DbError, EncryptedSocketEvent, PutReply, ReadRequest, SubscriptionSink, Transport, TransportRequest};
 use crate::transport::encrypted::cable::peer_tests::CablePeer;
 
-struct Peer {
-    cable: CablePeer,
-    subscribed: mpsc::UnboundedSender<String>,
-    closed: mpsc::UnboundedSender<String>,
+pub(super) struct Peer {
+    pub(super) cable: CablePeer,
+    pub(super) subscribed: mpsc::UnboundedSender<String>,
+    pub(super) closed: mpsc::UnboundedSender<String>,
 }
 
 #[async_trait]
