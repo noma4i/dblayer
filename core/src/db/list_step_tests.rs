@@ -119,9 +119,12 @@ fn skipped_cost(size: usize) -> usize {
 #[test]
 fn one_step_touches_the_same_ids_at_every_list_size() {
     let cases: [(&str, Edit); 4] = [("update", update), ("insert", insert), ("move", relocate), ("remove", remove)];
-    for (name, edit) in cases {
-        assert_eq!(step_cost(SMALL, edit), step_cost(LARGE, edit), "id touches for one {name} step at {SMALL} and {LARGE} rows");
-    }
+    std::thread::scope(|scope| {
+        let runs: Vec<_> = cases.into_iter().map(|(name, edit)| scope.spawn(move || assert_eq!(step_cost(SMALL, edit), step_cost(LARGE, edit), "id touches for one {name} step at {SMALL} and {LARGE} rows"))).collect();
+        for run in runs {
+            run.join().unwrap();
+        }
+    });
 }
 
 #[test]

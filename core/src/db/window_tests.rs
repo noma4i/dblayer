@@ -50,13 +50,16 @@ fn expected_ids(db: &Db, query: &Query, size: usize) -> Vec<String> {
 
 #[test]
 fn members_bounded_rows() {
-    let db = seeded(100_000);
+    let db = booted();
     let scope = crate::commit::ScopeRef::new(ModelKey::new("users"), crate::identity::ListKey::compose(&["users", "members"]));
     let mut envelope = CommitEnvelope::new(WriteOrigin::Event, db.generation());
     for n in 0..100_000 {
-        envelope.scope_ops.push(crate::commit::ScopeOp::Append { scope: scope.clone(), row: rid(&format!("u{n:06}")), order_key: format!("k{n:06}") });
+        let id = format!("u{n:06}");
+        envelope.entity_ops.push(EntityOp::Upsert { model: ModelKey::new("users"), id: rid(&id), row: obj(json!({"id": id, "name": name_at(n)})) });
+        envelope.scope_ops.push(crate::commit::ScopeOp::Append { scope: scope.clone(), row: rid(&id), order_key: format!("k{n:06}") });
     }
     db.land(&db.admit().unwrap(), envelope).unwrap();
+    db.await_revision(db.revision_seq().unwrap());
     let query = Query { stable: true, ..query().in_scope(scope.key) };
     let subject = Subject::window(query.clone(), WindowSpec::Members { size: 50, max: 200 });
     let before = total();
