@@ -49,20 +49,16 @@ impl WindowIo {
         self
     }
 
-    fn request(&self, stamp: EpochStamp, key: WindowKey, (request, attempt): (RequestId, u32), page: u32, cursor: Option<String>, back: &Back<Windows>) {
+    fn request(&self, stamp: EpochStamp, key: WindowKey, (request, attempt): (RequestId, u32), (page, epoch): (u32, Epoch), cursor: Option<String>, back: &Back<Windows>) {
         let token = CancelToken::new();
         self.open.lock().unwrap_or_else(PoisonError::into_inner).insert((request, attempt), token.clone());
         let (transport, codec, admit, open, back) = (self.transport.clone(), self.codec.clone(), self.admit.clone(), self.open.clone(), back.clone());
         let launch = self.counted.as_ref().map(crate::runtime::Handle::launch);
-        let epoch = match stamp {
-            EpochStamp::Epoch(epoch) => Some(epoch),
-            EpochStamp::Control => None,
-        };
         spawn_on(Carry::Detached, &self.handle, crate::runtime::counted(launch, async move {
             let outcome = tokio::select! {
                 biased;
                 () = token.cancelled() => None,
-                outcome = ask(transport.as_deref(), codec.as_ref(), &admit, epoch, &key, page, cursor.as_deref()) => Some(outcome),
+                outcome = ask(transport.as_deref(), codec.as_ref(), &admit, Some(epoch), &key, page, cursor.as_deref()) => Some(outcome),
             };
             open.lock().unwrap_or_else(PoisonError::into_inner).remove(&(request, attempt));
             if let Some(outcome) = outcome.filter(|_| !token.is_cancelled()) {
@@ -86,7 +82,7 @@ impl WindowIo {
 impl EffectRunner<Windows> for WindowIo {
     fn run(&mut self, stamp: EpochStamp, effect: WindowsEffect, back: &Back<Windows>) {
         match effect {
-            WindowsEffect::Window { key, effect: WindowEffect::Request { request, attempt, page, cursor } } => self.request(stamp, key, (request, attempt), page, cursor, back),
+            WindowsEffect::Window { key, effect: WindowEffect::Request { request, attempt, page, cursor, epoch } } => self.request(stamp, key, (request, attempt), (page, epoch), cursor, back),
             WindowsEffect::Window { effect: WindowEffect::Cancel { request, attempt }, .. } => self.cancel(request, attempt),
             other => (self.rest)(stamp, other),
         }

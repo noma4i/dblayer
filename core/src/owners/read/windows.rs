@@ -108,7 +108,7 @@ pub enum WindowOutcome {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum WindowEffect {
-    Request { request: RequestId, attempt: u32, page: u32, cursor: Option<String> },
+    Request { request: RequestId, attempt: u32, page: u32, cursor: Option<String>, epoch: Epoch },
     Cancel { request: RequestId, attempt: u32 },
     Outcome { id: InterestId, outcome: WindowOutcome },
     DerivePreload { revision: i64 },
@@ -375,7 +375,7 @@ impl Facts {
         let next = if self.is_online() {
             let (request, attempt) = ctx.request();
             self.phase = Phase::Loading;
-            self.push_fx(WindowEffect::Request { request, attempt, page, cursor: self.page_cursor(page) });
+            self.push_fx(WindowEffect::Request { request, attempt, page, cursor: self.page_cursor(page), epoch: self.epoch });
             WinState::loading(request, attempt, false, page, force, 0, self.basis())
         } else {
             WinState::waiting(force, page)
@@ -590,7 +590,7 @@ impl Facts {
                     let (new_request, new_attempt) = context.request();
                     self.cursor_reset_used = true;
                     self.replace_all = true;
-                    self.push_fx(WindowEffect::Request { request: new_request, attempt: new_attempt, page: 1, cursor: None });
+                    self.push_fx(WindowEffect::Request { request: new_request, attempt: new_attempt, page: 1, cursor: None, epoch: self.epoch });
                     return Transition(WinState::loading(new_request, new_attempt, false, 1, *force, 0, self.basis()));
                 }
                 let class = if error.class == ErrorClass::InvalidCursor { ErrorClass::Permanent } else { error.class };
@@ -605,7 +605,7 @@ impl Facts {
             Ev::RetryDue { request: got } if got == request && *retry && self.is_online() => {
                 *attempt = context.attempt();
                 *retry = false;
-                self.push_fx(WindowEffect::Request { request: *request, attempt: *attempt, page: *page, cursor: self.page_cursor(*page) });
+                self.push_fx(WindowEffect::Request { request: *request, attempt: *attempt, page: *page, cursor: self.page_cursor(*page), epoch: self.epoch });
                 Handled
             }
             Ev::Online(false) => {
@@ -627,7 +627,7 @@ impl Facts {
                 let (new_request, new_attempt) = context.request();
                 self.push_fx(WindowEffect::Cancel { request: *request, attempt: *attempt });
                 self.emit(Emit::CancelRetry { request: *request });
-                self.push_fx(WindowEffect::Request { request: new_request, attempt: new_attempt, page: *page, cursor: self.page_cursor(*page) });
+                self.push_fx(WindowEffect::Request { request: new_request, attempt: new_attempt, page: *page, cursor: self.page_cursor(*page), epoch: self.epoch });
                 *request = new_request;
                 *attempt = new_attempt;
                 *retry = false;
@@ -702,7 +702,7 @@ impl Facts {
             Ev::Online(true) => {
                 let (request, attempt) = context.request();
                 self.phase = Phase::Loading;
-                self.push_fx(WindowEffect::Request { request, attempt, page: *page, cursor: self.page_cursor(*page) });
+                self.push_fx(WindowEffect::Request { request, attempt, page: *page, cursor: self.page_cursor(*page), epoch: self.epoch });
                 self.announce();
                 Transition(WinState::loading(request, attempt, false, *page, *force, 0, self.basis()))
             }
