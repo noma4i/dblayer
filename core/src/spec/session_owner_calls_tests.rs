@@ -435,7 +435,7 @@ fn sess_calling_stray() {
         Input::Response { request_id: rid + 50, attempt_id: aid, body: "{}".into(), sequence: Some(1), refusal: None },
         Input::Response { request_id: rid, attempt_id: aid + 50, body: "{}".into(), sequence: Some(1), refusal: None },
         Input::Revoked { request_id: rid, attempt_id: aid + 50, body: "{}".into() },
-        Input::HttpError { request_id: rid, attempt_id: aid + 50, temporary: false, auth: true, persisted_missing: false },
+        Input::HttpError { request_id: rid, attempt_id: aid + 50, temporary: false, auth: true, persisted_missing: false, security: None },
         Input::Dropped { request_id: rid + 50, attempt_id: aid },
     ]);
     assert!(matches!(twin.reference.state, RefState::Calling { phase: CallPhase::InFlight(a), .. } if a == aid));

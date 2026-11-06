@@ -11,6 +11,50 @@ use crate::test_wait::recv_within;
 
 pub(super) struct ThroughServer(pub(super) Arc<FakeServer>);
 
+struct SecurityHttp {
+    server: Arc<FakeServer>,
+    refused: std::sync::atomic::AtomicBool,
+    requests: std::sync::atomic::AtomicUsize,
+}
+
+#[async_trait]
+impl EncryptedHttp for SecurityHttp {
+    async fn post(&self, path: String, body: String, purpose: crate::transport::NetworkPurpose) -> Result<EncryptedReply, DbError> {
+        self.requests.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        if self.refused.load(std::sync::atomic::Ordering::SeqCst) {
+            return Err(DbError::Security { code: crate::transport::SecurityCode::TlsTrust, detail: "platform trust refused".into() });
+        }
+        let reply = self.server.post(&path, body, purpose).await.map_err(failure)?;
+        Ok(EncryptedReply { status: reply.status, body: reply.body })
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn sess_prop_security_code_kept() {
+    use crate::test_wait::within;
+    use crate::owners::contract::ErrorClass;
+    use crate::owners::session::{AuthorOutcome, SessionError};
+    use crate::transport::SecurityCode;
+    let server = FakeServer::new(Arc::new(SystemClock));
+    let credentials = Arc::new(MemoryCredentials::default());
+    let http = Arc::new(SecurityHttp { server, refused: false.into(), requests: 0.into() });
+    let database = within(Database::open(Config { path: None, data_version: None, cache_rows: 8 }, "[]".into(), Some(Arc::new(SubscriptionsOnly)), Some(crate::transport::encrypted::protocol_tests::config()), Some(Arc::new(Held(credentials))), Some(http.clone()), None)).await.unwrap();
+    database.set_online(true).unwrap();
+    within(database.session_call("social".into(), "{}".into())).await.unwrap();
+    http.refused.store(true, std::sync::atomic::Ordering::SeqCst);
+    let before = http.requests.load(std::sync::atomic::Ordering::SeqCst);
+    assert!(matches!(within(database.session_call("confirm".into(), "{}".into())).await, Err(DbError::Security { code: SecurityCode::TlsTrust, detail }) if detail == "platform trust refused"));
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    let tx = std::sync::Mutex::new(Some(tx));
+    database.life.on_mutate_answer(1 << 32, move |_, result| { if let Some(tx) = tx.lock().unwrap().take() { let _ = tx.send(result); } });
+    database.life.mutate(1 << 32, None, 42, "/api/auth/confirm".into(), "{}".into(), 0);
+    assert!(matches!(within(rx).await.unwrap(), AuthorOutcome::Error { class: ErrorClass::Permanent, error: SessionError::Security { code: SecurityCode::TlsTrust, detail } } if detail == "platform trust refused"));
+    assert_eq!(http.requests.load(std::sync::atomic::Ordering::SeqCst), before + 2);
+    let answers = crate::transport::encrypted::state::answers(&database.db.shared.store.lock().connection).unwrap();
+    assert_eq!(answers.get(&42), Some(&crate::transport::encrypted::state::StoredAnswer::Security { code: SecurityCode::TlsTrust, detail: "platform trust refused".into() }));
+    within(database.close_database()).await.unwrap();
+}
+
 pub(super) fn failure(error: TransportError) -> DbError {
     match error {
         TransportError::Interrupted(detail) => DbError::Interrupted { detail },

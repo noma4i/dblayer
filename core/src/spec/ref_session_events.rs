@@ -438,6 +438,7 @@ impl Session {
                 let answer = if pending.class == Class::Logout { Ok(body) } else { Err(Fail::Revoked) };
                 self.land(pending, answer, None, None, true, out);
             }
+            Input::HttpError { request_id, attempt_id, security: Some((code, detail)), .. } if mine(request_id, attempt_id) => self.land(pending, Err(Fail::Security { code, detail }), None, None, false, out),
             Input::HttpError { request_id, attempt_id, persisted_missing: true, .. } if mine(request_id, attempt_id) && !document_sent => self.send(pending, attempts, true, out),
             Input::HttpError { request_id, attempt_id, temporary: true, persisted_missing: false, .. } if mine(request_id, attempt_id) => {
                 if let Some(author) = pending.author {

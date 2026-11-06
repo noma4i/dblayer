@@ -66,7 +66,7 @@ fn sess_generating_other() {
             SessionInput::Online(Online(false)), SessionInput::Published(published), SessionInput::Tick(Time(0)),
             SessionInput::Response { request_id: 9, attempt_id: 9, body: "{}".into(), sequence: None, refusal: None },
             SessionInput::Revoked { request_id: 9, attempt_id: 9, body: "{}".into() },
-            SessionInput::HttpError { request_id: 9, attempt_id: 9, temporary: false, auth: false, persisted_missing: false, status: 0, too_large: None },
+            SessionInput::HttpError { request_id: 9, attempt_id: 9, temporary: false, auth: false, persisted_missing: false, status: 0, too_large: None, security: None },
             SessionInput::Dropped { request_id: 9, attempt_id: 9 },
             SessionInput::Committed(Committed { batch: 9, revision: 1, tables: vec![], models: Default::default() }),
             SessionInput::Rejected(Rejected { batch: 9, reason: RejectReason::NoSession }),
@@ -78,7 +78,7 @@ fn sess_generating_other() {
     }
 }
 
-fn calling_error(too_large: Option<(u64, u64)>, expected: SessionError) {
+fn calling_error(too_large: Option<(u64, u64)>, security: Option<(crate::transport::SecurityCode, String)>, expected: SessionError) {
     for author in [false, true] {
         let mut det = DetScheduler::new(2);
         let log = new_log();
@@ -91,7 +91,7 @@ fn calling_error(too_large: Option<(u64, u64)>, expected: SessionError) {
         let (batch, request) = effects.iter().find_map(|effect| match effect { SessionEffect::CommitPending { batch, pending, .. } => Some((*batch, pending.request_id)), _ => None }).unwrap();
         let effects = send(&mut det, address, &log, SessionInput::Committed(Committed { batch, revision: 1, tables: vec![], models: Default::default() }));
         let attempt = effects.iter().find_map(|effect| match effect { SessionEffect::HttpRequest { attempt_id, .. } => Some(*attempt_id), _ => None }).unwrap();
-        let effects = send(&mut det, address, &log, SessionInput::HttpError { request_id: request, attempt_id: attempt, temporary: false, auth: false, persisted_missing: false, status: 0, too_large });
+        let effects = send(&mut det, address, &log, SessionInput::HttpError { request_id: request, attempt_id: attempt, temporary: false, auth: false, persisted_missing: false, status: 0, too_large, security: security.clone() });
         let (batch, answer) = effects.iter().find_map(|effect| match effect { SessionEffect::CommitLanding { batch, answer, .. } => Some((*batch, answer.clone())), _ => None }).unwrap();
         assert_eq!(answer, author.then(|| (request, Err(expected.clone()))));
         assert!(!effects.iter().any(|effect| matches!(effect, SessionEffect::Reply { .. } | SessionEffect::Answer { .. })));
@@ -105,12 +105,19 @@ fn calling_error(too_large: Option<(u64, u64)>, expected: SessionError) {
 }
 
 #[test]
-fn sess_calling_status_zero() { calling_error(None, SessionError::Http { status: 0 }); }
+fn sess_calling_status_zero() { calling_error(None, None, SessionError::Http { status: 0 }); }
+
+#[test]
+fn sess_calling_security() {
+    let code = crate::transport::SecurityCode::TlsTrust;
+    let detail = "platform trust refused".to_string();
+    calling_error(None, Some((code, detail.clone())), SessionError::Security { code, detail });
+}
 
 #[test]
 fn sess_calling_too_large() {
     use crate::transport::encrypted::state;
-    calling_error(Some((262145, 262144)), SessionError::TooLarge { size: 262145, limit: 262144 });
+    calling_error(Some((262145, 262144)), None, SessionError::TooLarge { size: 262145, limit: 262144 });
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("db.sqlite");
     let open = || crate::db::Db::open_with(Some(&path), vec![], None, crate::db::DbConfig::default()).unwrap();

@@ -464,6 +464,7 @@ impl SessionState {
                 let answer = if pending.class == OperationClass::Logout { Ok(body) } else { Err(SessionError::Revoked) };
                 self.land(pending, answer, None, None, true, fx);
             }
+            SessionInput::HttpError { request_id, attempt_id, security: Some((code, detail)), .. } if mine(request_id, attempt_id) => self.land(pending, Err(SessionError::Security { code, detail }), None, None, false, fx),
             SessionInput::HttpError { request_id, attempt_id, persisted_missing: true, .. } if mine(request_id, attempt_id) && !document_sent => self.request_http(pending, attempts, true, fx),
             SessionInput::HttpError { request_id, attempt_id, temporary: true, persisted_missing: false, status, .. } if mine(request_id, attempt_id) => {
                 if let Some(author) = pending.author {

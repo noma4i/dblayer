@@ -27,6 +27,7 @@ pub enum StoredAnswer {
     Http { status: u16 },
     TooLarge { size: u64, limit: u64 },
     Unauthorized,
+    Security { code: crate::transport::SecurityCode, detail: String },
     Revoked,
     Session(crate::transport::SessionCode),
 }
@@ -116,6 +117,7 @@ pub fn store_answer(connection: &Connection, request_id: u64, operation: Option<
         StoredAnswer::Http { status } => ("http", Some(status.to_string())),
         StoredAnswer::TooLarge { size, limit } => ("too_large", Some(format!("{size}:{limit}"))),
         StoredAnswer::Unauthorized => ("unauthorized", None),
+        StoredAnswer::Security { code, detail } => ("security", Some(format!("{}:{detail}", match code { crate::transport::SecurityCode::ServerKeyMismatch => "server_key_mismatch", crate::transport::SecurityCode::ResponseAuthentication => "response_authentication", crate::transport::SecurityCode::TlsTrust => "tls_trust" }))),
         StoredAnswer::Revoked => ("revoked", None),
         StoredAnswer::Session(code) => ("session", Some(code.name().to_string())),
     };
@@ -154,6 +156,11 @@ fn answer_rows(connection: &Connection) -> rusqlite::Result<Vec<(u64, Option<i64
                 StoredAnswer::TooLarge { size: size.parse().map_err(|_| invalid("an invalid size"))?, limit: limit.parse().map_err(|_| invalid("an invalid limit"))? }
             }
             ("unauthorized", None) => StoredAnswer::Unauthorized,
+            ("security", Some(detail)) => {
+                let (code, detail) = detail.split_once(':').ok_or_else(|| invalid("an invalid security outcome"))?;
+                let code = match code { "server_key_mismatch" => crate::transport::SecurityCode::ServerKeyMismatch, "response_authentication" => crate::transport::SecurityCode::ResponseAuthentication, "tls_trust" => crate::transport::SecurityCode::TlsTrust, _ => return Err(invalid("an unknown security code")) };
+                StoredAnswer::Security { code, detail: detail.into() }
+            }
             ("revoked", None) => StoredAnswer::Revoked,
             ("session", Some(name)) => StoredAnswer::Session(crate::transport::SessionCode::from_wire(&name).ok_or_else(|| invalid("an unknown session code"))?),
             _ => return Err(invalid("an outcome that does not match its detail")),

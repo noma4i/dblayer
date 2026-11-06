@@ -187,6 +187,7 @@ pub(super) fn session_failure(error: crate::owners::session::SessionError) -> Db
         Failed::Revoked => DbError::Session { code: SessionCode::SessionEnded, detail: "the session was ended by the server".into() },
         Failed::SequenceConflict => DbError::Session { code: SessionCode::SequenceConflict, detail: "the sequence of the request conflicts with the server".into() },
         Failed::Unauthorized => DbError::Http { status: 401, detail: String::new() },
+        Failed::Security { code, detail } => DbError::Security { code, detail },
         Failed::Http { status } => DbError::Http { status, detail: "the request was refused".into() },
         Failed::TooLarge { size, limit } => DbError::RequestTooLarge { size, limit },
         Failed::Rejected(reason) => DbError::Database { detail: format!("the request was not stored: {reason:?}") },

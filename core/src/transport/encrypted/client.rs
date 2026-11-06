@@ -157,6 +157,7 @@ pub(super) fn session_failure(error: crate::owners::session::SessionError) -> Tr
         Failed::SequenceConflict => TransportError::Session { code: SessionCode::SequenceConflict, detail: "the sequence of the request conflicts with the server".into() },
         Failed::Protocol | Failed::Invalid => TransportError::Decode("the answer does not confirm the sequence".into()),
         Failed::Unauthorized => TransportError::Http { status: 401, body: String::new() },
+        Failed::Security { code, detail } => TransportError::Security { code, detail },
         Failed::Http { status } => TransportError::Http { status, body: "the request was refused".into() },
         Failed::TooLarge { size, limit } => TransportError::RequestTooLarge { size, limit },
         Failed::Rejected(reason) => TransportError::Network(format!("the request was not stored: {reason:?}")),

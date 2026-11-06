@@ -84,16 +84,17 @@ fn sess_prop_mutate_stamp() {
 
 #[test]
 fn sess_prop_durable_answer() {
-    let outcomes: [(Input, Fail); 3] = [
-        (Input::HttpError { request_id: 11, attempt_id: 0, temporary: false, auth: false, persisted_missing: false }, Fail::Http),
-        (Input::HttpError { request_id: 11, attempt_id: 0, temporary: false, auth: true, persisted_missing: false }, Fail::Unauthorized),
+    let outcomes: [(Input, Fail); 4] = [
+        (Input::HttpError { request_id: 11, attempt_id: 0, temporary: false, auth: false, persisted_missing: false, security: None }, Fail::Http),
+        (Input::HttpError { request_id: 11, attempt_id: 0, temporary: false, auth: true, persisted_missing: false, security: None }, Fail::Unauthorized),
+        (Input::HttpError { request_id: 11, attempt_id: 0, temporary: false, auth: false, persisted_missing: false, security: Some((crate::transport::SecurityCode::TlsTrust, "trust".into())) }, Fail::Security { code: crate::transport::SecurityCode::TlsTrust, detail: "trust".into() }),
         (Input::Revoked { request_id: 11, attempt_id: 0, body: "{}".into() }, Fail::Revoked),
     ];
     for (input, fail) in outcomes {
         let mut twin = calling_mutate();
         let aid = twin.aid();
         let input = match input {
-            Input::HttpError { request_id, temporary, auth, persisted_missing, .. } => Input::HttpError { request_id, attempt_id: aid, temporary, auth, persisted_missing },
+            Input::HttpError { request_id, temporary, auth, persisted_missing, security, .. } => Input::HttpError { request_id, attempt_id: aid, temporary, auth, persisted_missing, security },
             Input::Revoked { request_id, body, .. } => Input::Revoked { request_id, attempt_id: aid, body },
             other => other,
         };
