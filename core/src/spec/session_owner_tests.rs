@@ -62,7 +62,8 @@ fn fail_of(error: &SessionError) -> Fail {
         SessionError::SequenceConflict => Fail::SequenceConflict,
         SessionError::Protocol => Fail::Protocol,
         SessionError::Unauthorized => Fail::Unauthorized,
-        SessionError::Http { .. } | SessionError::TooLarge { .. } => Fail::Http,
+        SessionError::Http { .. } => Fail::Http,
+        SessionError::TooLarge { size, limit } => Fail::TooLarge { size: *size, limit: *limit },
         SessionError::Interrupted => Fail::Interrupted,
         SessionError::NoSession => Fail::NoSession,
         SessionError::Closed => Fail::Closed,
@@ -130,6 +131,7 @@ fn phase_of(phase: &SessionPhase) -> RefState {
     };
     match phase {
         SessionPhase::Idle => RefState::Idle,
+        SessionPhase::Sealing { pending, seal_id } => RefState::Sealing { pending: pending_of(pending), seal_id: *seal_id },
         SessionPhase::Generating { call, op } => RefState::Generating { call: queued_of(&call.clone().into()), op: *op },
         SessionPhase::Storing { call, credential_new, op, after } => RefState::Storing { call: queued_of(&call.clone().into()), credential_new: *credential_new, op: *op, after: match after {
             owner::AfterStore::Persist => AfterStore::Persist,
@@ -168,6 +170,7 @@ fn retry_phase(phase: owner::RetryPhase) -> RetryPhase {
 
 fn effect_of(effect: &SessionEffect) -> Option<RefEffect> {
     Some(match effect {
+        SessionEffect::SealProbe { seal_id, pending, credential } => RefEffect::SealProbe { seal_id: *seal_id, pending: pending_of(pending), credential: *credential },
         SessionEffect::CommitPending { batch, epoch, pending, session } => RefEffect::CommitPending { batch: *batch, epoch: *epoch, pending: pending_of(pending), session: *session },
         SessionEffect::CommitLanding { batch, epoch, digest, sequence, answer, erase_session } => RefEffect::CommitLanding { batch: *batch, epoch: *epoch, digest: *digest, sequence: *sequence, answer: answer.as_ref().map(|(id, answer)| (*id, answer.clone().map_err(|error| fail_of(&error)))), erase_session: *erase_session },
         SessionEffect::HttpRequest { pending, attempt_id, full_document } => RefEffect::HttpRequest { pending: pending_of(pending), attempt_id: *attempt_id, full_document: *full_document },
@@ -218,6 +221,11 @@ impl Twin {
     }
 
     fn feed(&mut self, input: Input) -> Vec<RefEffect> {
+        if let RefState::Sealing { seal_id, .. } = self.reference.state {
+            if !matches!(input, Input::Sealed { .. } | Input::SealFailed { .. }) {
+                self.feed(Input::Sealed { seal_id, size: 1 });
+            }
+        }
         let batch_of = |state: &RefState| match state {
             RefState::Persisting { batch, .. } | RefState::Landing { batch, .. } => *batch,
             _ => 9_999,
@@ -225,6 +233,8 @@ impl Twin {
         let current = batch_of(&self.reference.state);
         let resolve = |batch: u64| if batch == 0 { current } else { batch };
         let owner_input = match input.clone() {
+            Input::Sealed { seal_id, size } => SessionInput::Sealed { seal_id, size },
+            Input::SealFailed { seal_id, error } => SessionInput::SealFailed { seal_id, error: match error { Fail::StateLost => SessionError::StateLost, _ => SessionError::Storage("seal failed".into()) } },
             Input::Open { credential, pending, dropped_pending, secret } => SessionInput::Open { credential: credential.map(|c| Credential { digest: c.digest, sequence: c.sequence }), pending: pending.map(owner_pending), dropped_pending, secret: secret_state(&secret) },
             Input::SessionCall { operation, body, reply } => SessionInput::SessionCall { operation, body, reply },
             Input::Mutate { author, owner, req_id, epoch, path, body, purpose } => SessionInput::Mutate { author, owner, req_id, epoch, path, body, purpose },
@@ -295,7 +305,7 @@ impl Twin {
 
     fn pending(&self) -> RefPending {
         match &self.reference.state {
-            RefState::Persisting { pending, .. } | RefState::Calling { pending, .. } | RefState::Landing { pending, .. } | RefState::PendingHeld { pending } | RefState::Blocked { pending: Some(pending), .. } => pending.clone(),
+            RefState::Sealing { pending, .. } | RefState::Persisting { pending, .. } | RefState::Calling { pending, .. } | RefState::Landing { pending, .. } | RefState::PendingHeld { pending } | RefState::Blocked { pending: Some(pending), .. } => pending.clone(),
             other => panic!("no pending request in {other:?}"),
         }
     }
@@ -339,7 +349,12 @@ fn permanent(fail: Fail) -> Outcome { Outcome::Error(Kind::Permanent, fail) }
 fn persisting() -> Twin {
     let mut twin = Twin::new();
     twin.feed(call(1));
+    if let RefState::Sealing { seal_id, .. } = twin.reference.state { twin.feed(Input::Sealed { seal_id, size: 1 }); }
     twin
+}
+
+fn finish_seal(twin: &mut Twin) {
+    if let RefState::Sealing { seal_id, .. } = twin.reference.state { twin.feed(Input::Sealed { seal_id, size: 1 }); }
 }
 
 fn calling() -> Twin {

@@ -14,7 +14,7 @@ fn sess_open_empty() {
 #[test]
 fn sess_open_restored() {
     let mut twin = opened(open(Some((CRED, 6)), None, false, Secret::Present(CRED)));
-    assert!(matches!(&twin.feed(call(1))[..], [RefEffect::CommitPending { pending, .. }] if pending.sequence == 7));
+    assert!(matches!(&twin.feed(call(1))[..], [RefEffect::SealProbe { pending, .. }] if pending.sequence == 7));
 }
 
 #[test]
@@ -227,7 +227,7 @@ fn sess_mismatch_sessionless() {
         let mut twin = opened(open(Some((CRED, 6)), None, false, secret));
         let before = twin.reference.state.clone();
         let effects = twin.feed(call_of("visit", 1));
-        assert!(matches!(&effects[..], [RefEffect::CommitPending { pending, .. }] if pending.class == Class::Sessionless));
+        assert!(matches!(&effects[..], [RefEffect::SealProbe { pending, .. }] if pending.class == Class::Sessionless));
         twin.feed(committed());
         let input = Input::Response { request_id: twin.rid(), attempt_id: twin.aid(), body: "{}".into(), sequence: None, refusal: None };
         twin.feed_all([input, committed()]);
@@ -436,7 +436,7 @@ fn trace(seed: u64, steps: usize, mut check: impl FnMut(&Twin, &Input, &[RefEffe
     let mut reply = 0;
     for _ in 0..steps {
         let (request, sequence) = match &twin.reference.state {
-            RefState::Persisting { pending, .. } | RefState::Calling { pending, .. } | RefState::Landing { pending, .. } | RefState::PendingHeld { pending } | RefState::Blocked { pending: Some(pending), .. } => (pending.request_id, pending.sequence),
+            RefState::Sealing { pending, .. } | RefState::Persisting { pending, .. } | RefState::Calling { pending, .. } | RefState::Landing { pending, .. } | RefState::PendingHeld { pending } | RefState::Blocked { pending: Some(pending), .. } => (pending.request_id, pending.sequence),
             _ => (1, 1),
         };
         let attempt = match &twin.reference.state {

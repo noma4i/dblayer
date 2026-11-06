@@ -11,6 +11,10 @@ impl Session {
             }
             return;
         }
+        if matches!(state, State::Sealing { .. }) && matches!(input, Input::Restored { .. } | Input::RestoreReady { .. }) {
+            self.state = state;
+            return;
+        }
         match input {
             Input::Closing => self.closing(state, out),
             Input::InterestPlus(stream) => {
@@ -76,6 +80,13 @@ impl Session {
 
     pub(super) fn on_epoch_ended(&mut self, state: State, epoch: u64, cause: EndCause, out: &mut Out) {
         match state {
+            State::Sealing { pending, .. } => {
+                let error = if pending.author.is_some() { Fail::NoSession } else { Fail::Interrupted };
+                Self::finish(out, &pending, Err(error));
+                self.refuse_queue(out, Fail::NoSession);
+                if is_ended(cause) { self.credential = None; }
+                self.state = State::Idle;
+            }
             State::Idle => {
                 if is_ended(cause) { self.credential = None; }
                 self.state = State::Idle;
@@ -118,6 +129,7 @@ impl Session {
     pub(super) fn closing(&mut self, state: State, out: &mut Out) {
         if let Some((reply, _)) = self.after_publish.take() { out.replies.push((reply, Err(Fail::Closed))); }
         match state {
+            State::Sealing { pending, .. } => Self::finish(out, &pending, Err(Fail::Closed)),
             State::Persisting { pending, .. } | State::Landing { pending, .. } => Self::finish(out, &pending, Err(Fail::Closed)),
             State::Calling { pending, phase, .. } => {
                 Self::finish(out, &pending, Err(Fail::Closed));
@@ -232,6 +244,22 @@ impl Session {
 
     pub(super) fn by_state(&mut self, state: State, input: Input, out: &mut Out) {
         match (state, input) {
+            (State::Sealing { pending, seal_id }, Input::Sealed { seal_id: id, size }) if id == seal_id => {
+                if size > 262144 { Self::finish(out, &pending, Err(Fail::TooLarge { size, limit: 262144 })); self.idle(out); }
+                else { self.persist(pending, None, out); }
+            }
+            (State::Sealing { pending, seal_id }, Input::SealFailed { seal_id: id, error }) if id == seal_id => {
+                Self::finish(out, &pending, Err(error));
+                self.idle(out);
+            }
+            (state @ State::Sealing { .. }, Input::SessionCall { operation, body, reply }) => {
+                self.state = state;
+                self.queue.push_back(Queued::Call { operation, body, reply });
+            }
+            (state @ State::Sealing { .. }, Input::Mutate { author, owner, req_id, epoch, path, body, purpose }) => {
+                self.state = state;
+                self.queue_mutate(Queued::Mutate { author, owner, req_id, epoch, path, body, purpose });
+            }
             (State::Idle, Input::Open { credential, pending, dropped_pending, secret }) => self.open(credential, pending, dropped_pending, secret, out),
             (state, Input::Open { .. }) => self.state = state,
             (State::Idle, Input::SessionCall { operation, body, reply }) => self.idle_call(operation, body, reply, out),

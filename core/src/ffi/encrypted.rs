@@ -74,6 +74,7 @@ pub(super) fn wire(
     transport: Arc<dyn Transport>,
     retries: Option<Arc<RetryProgress>>,
 ) -> Result<Wiring, DbError> {
+    let seal = crate::owners::session_seal::SealConfig::new(&encrypted, clock.clone()).map_err(session_failure)?;
     let client = EncryptedClient::new(&encrypted, Arc::new(ForeignHttp(http)), Arc::new(ForeignCredentials(credentials)), db.clone(), clock.clone())
         .map_err(|error| DbError::Invalid { detail: error.to_string() })?;
     let client = match retries {
@@ -83,7 +84,7 @@ pub(super) fn wire(
     let client = Arc::new(client);
     let rest: Arc<dyn core::Transport> = Arc::new(ForeignTransport(transport));
     let cable = client.cable_lines(rest.clone());
-    Ok((Some(Arc::new(EncryptedTransport::new(client.clone(), rest))), Some(client), Some(cable)))
+    Ok((Some(Arc::new(EncryptedTransport::new(client.clone(), rest))), Some(client), Some(cable), Some(Arc::new(seal))))
 }
 
 #[uniffi::export(rust, foreign)]

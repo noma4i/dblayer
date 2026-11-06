@@ -1,4 +1,13 @@
 #[test]
+fn sess_sealing_failed() {
+    let mut twin = Twin::new();
+    let effects = twin.feed(call(1));
+    let [RefEffect::SealProbe { seal_id, .. }] = effects.as_slice() else { panic!("{effects:?}") };
+    twin.feed(Input::SealFailed { seal_id: *seal_id, error: Fail::StateLost });
+    assert_eq!(twin.replies, [(1, Err(Fail::StateLost))]);
+}
+
+#[test]
 fn sess_idle_unknown_call() {
     let mut twin = Twin::new();
     twin.feed(call_of("nope", 1));
@@ -43,14 +52,14 @@ fn sess_idle_login_generate() {
 fn sess_idle_call() {
     let mut twin = Twin::new();
     let effects = twin.feed(call(1));
-    assert!(matches!(&effects[..], [RefEffect::CommitPending { pending, session: None, .. }] if pending.sequence == 1 && pending.class == Class::Authenticated && pending.epoch == EPOCH));
+    assert!(matches!(&effects[..], [RefEffect::SealProbe { pending, .. }] if pending.sequence == 1 && pending.class == Class::Authenticated && pending.epoch == EPOCH));
 }
 
 #[test]
 fn sess_idle_call_sessionless() {
     let mut twin = Twin::new();
     let effects = twin.feed(call_of("visit", 1));
-    assert!(matches!(&effects[..], [RefEffect::CommitPending { pending, .. }] if pending.sequence == 0 && pending.class == Class::Sessionless));
+    assert!(matches!(&effects[..], [RefEffect::SealProbe { pending, .. }] if pending.sequence == 0 && pending.class == Class::Sessionless));
 }
 
 #[test]
@@ -64,7 +73,7 @@ fn sess_idle_call_no_credential() {
 fn sess_idle_logout() {
     let mut twin = Twin::new();
     let effects = twin.feed(call_of("logout", 1));
-    assert!(matches!(&effects[..], [RefEffect::CommitPending { pending, .. }] if pending.class == Class::Logout && pending.sequence == 1));
+    assert!(matches!(&effects[..], [RefEffect::SealProbe { pending, .. }] if pending.class == Class::Logout && pending.sequence == 1));
 }
 
 #[test]
@@ -231,7 +240,7 @@ fn sess_idle_mutate_no_session() {
 fn sess_idle_mutate() {
     let mut twin = Twin::new();
     let effects = twin.feed(mutate(7, 11));
-    assert!(matches!(&effects[..], [RefEffect::CommitPending { pending, .. }] if pending.request_id == 11 && pending.sequence == 1 && pending.author == Some(7) && pending.reply.is_none() && pending.epoch == EPOCH));
+    assert!(matches!(&effects[..], [RefEffect::SealProbe { pending, .. }] if pending.request_id == 11 && pending.sequence == 1 && pending.author == Some(7) && pending.reply.is_none() && pending.epoch == EPOCH));
 }
 
 #[test]
@@ -321,7 +330,7 @@ fn sess_persisting_rejected() {
     twin.feed_all([mutate(7, 11), call(2)]);
     let effects = twin.feed(rejected(Reason::Storage));
     assert!(effects.contains(&answer(7, 11, permanent(Fail::Reason(Reason::Storage)))));
-    assert!(matches!(twin.reference.state, RefState::Persisting { .. }), "the next entry of the queue starts");
+    assert!(matches!(twin.reference.state, RefState::Sealing { .. }), "the next entry of the queue starts");
 }
 
 #[test]

@@ -34,6 +34,7 @@ pub(super) struct SessionRunner {
     wiring: Arc<Wiring>,
     client: Arc<EncryptedClient>,
     credentials: Arc<dyn CredentialSlot>,
+    seal: Arc<crate::owners::session_seal::SealConfig>,
     executor: tokio::runtime::Handle,
     running: HashMap<AttemptId, AbortHandle>,
     /// The identity of a credential to its full digest.
@@ -58,11 +59,11 @@ pub(crate) struct Restored {
 }
 
 impl SessionRunner {
-    pub fn new(wiring: Arc<Wiring>, client: Arc<EncryptedClient>, credentials: Arc<dyn CredentialSlot>, executor: tokio::runtime::Handle, restored: &Restored) -> Self {
+    pub fn new(wiring: Arc<Wiring>, client: Arc<EncryptedClient>, credentials: Arc<dyn CredentialSlot>, seal: Arc<crate::owners::session_seal::SealConfig>, executor: tokio::runtime::Handle, restored: &Restored) -> Self {
         let wires = restored.wire.iter().map(|(request_id, wire)| (*request_id, Wire { id: wire.id.clone(), key: wire.key.clone() })).collect();
         let digests = Arc::new(Mutex::new(restored.digest.iter().cloned().collect()));
         let operations = restored.pending.iter().filter_map(|pending| match pending.owner { Some(crate::transport::RequestOwner::Operation { seq }) => Some((pending.request_id, seq)), _ => None }).collect();
-        Self { wiring, client, credentials, executor, running: HashMap::new(), digests, generated: Arc::default(), wires, operations, ending: None }
+        Self { wiring, client, credentials, seal, executor, running: HashMap::new(), digests, generated: Arc::default(), wires, operations, ending: None }
     }
 
     /// What `Open` of the owner takes: the rows and what `CredentialStore.get` found.
@@ -213,6 +214,13 @@ impl EffectRunner<SessionCalls> for SessionRunner {
     fn run(&mut self, _stamp: EpochStamp, effect: SessionEffect, back: &Back<SessionCalls>) {
         let control = EpochStamp::Control;
         match effect {
+            SessionEffect::SealProbe { seal_id, pending, credential } => {
+                let (seal, credentials) = (self.seal.clone(), self.credentials.clone());
+                self.off_thread(back, crate::owners::session::seal_id(seal_id), move || match seal.probe(credentials.as_ref(), credential, &pending) {
+                    Ok(size) => SessionInput::Sealed { seal_id, size },
+                    Err(error) => SessionInput::SealFailed { seal_id, error },
+                });
+            }
             SessionEffect::GenerateCredential { secret_op_id } => {
                 let (digests, generated) = (self.digests.clone(), self.generated.clone());
                 self.off_thread(back, secret_id(0, secret_op_id), move || {

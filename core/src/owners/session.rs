@@ -159,6 +159,7 @@ pub enum AfterClear {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum SessionPhase {
     Idle,
+    Sealing { pending: PendingCall, seal_id: u64 },
     Generating { call: LoginCall, op: SecretOpId },
     Storing { call: LoginCall, credential_new: Digest, op: SecretOpId, after: AfterStore },
     ClearingSecret { call: Option<Queued>, reason: Option<SessionError>, op: SecretOpId, after: AfterClear },
@@ -191,6 +192,7 @@ pub enum RetryPhase {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum SessionEffect {
+    SealProbe { seal_id: u64, pending: PendingCall, credential: Option<Digest> },
     /// Store `Commit{encrypted_pending = pending}`, with `Session{digest, 0}` at the first sign-in.
     CommitPending { batch: BatchId, epoch: Epoch, pending: PendingCall, session: Option<Digest> },
     /// Store `Commit{Session{digest or the previous one, sequence}, RemovePending, Answer}`; no `sequence` for a call without a session.
@@ -220,6 +222,8 @@ pub enum SessionEffect {
 
 #[derive(Clone, Debug)]
 pub enum SessionInput {
+    Sealed { seal_id: u64, size: u64 },
+    SealFailed { seal_id: u64, error: SessionError },
     Open { credential: Option<Credential>, pending: Option<PendingCall>, dropped_pending: bool, secret: SecretState },
     SessionCall { operation: String, body: String, reply: ReplyId },
     SessionResume { reply: ReplyId },
@@ -353,7 +357,7 @@ impl StateOwner for SessionCalls {
 
     fn step(state: &mut SessionState, input: SessionInput) -> Effects<Self> {
         let mut fx = Vec::new();
-        let interest = if let SessionInput::InterestPlus { stream_id } = &input { Some(*stream_id) } else { None };
+        let interest = if let SessionInput::InterestPlus { stream_id } = &input { (!matches!(state.phase, SessionPhase::Sealing { .. })).then_some(*stream_id) } else { None };
         state.run(input, &mut fx);
         let view = state.view();
         if view != state.reported {
@@ -384,6 +388,9 @@ impl StateOwner for SessionCalls {
 
 const HTTP_ID: EffectId = 1 << 63;
 const SECRET_ID: EffectId = 1 << 62;
+const SEAL_ID: EffectId = 1 << 61;
+
+pub fn seal_id(id: u64) -> EffectId { SEAL_ID | id }
 
 /// The id of the HTTP exchange of the attempt.
 pub fn http_id(attempt_id: AttemptId) -> EffectId { HTTP_ID | attempt_id }
@@ -395,6 +402,7 @@ impl SessionEffect {
     /// The id of an effect that does IO: a batch, an HTTP attempt or a secret operation. The other effects answer or notify and need no executor.
     pub fn io_id(&self) -> Option<EffectId> {
         match self {
+            Self::SealProbe { seal_id: id, .. } => Some(seal_id(*id)),
             Self::CommitPending { batch, .. } | Self::CommitLanding { batch, .. } => Some(*batch),
             Self::HttpRequest { attempt_id, .. } => Some(http_id(*attempt_id)),
             Self::GenerateCredential { secret_op_id } => Some(secret_id(0, *secret_op_id)),
@@ -412,6 +420,7 @@ impl SessionInput {
         let detail = "the executor of Session failed".to_string();
         Some(match id {
             id if id & HTTP_ID != 0 => SessionInput::HttpFailed { attempt_id: id & !HTTP_ID },
+            id if id & SEAL_ID != 0 => SessionInput::SealFailed { seal_id: id & !SEAL_ID, error: SessionError::Storage(detail) },
             id if id & SECRET_ID != 0 => {
                 let secret_op_id = id & ((1 << 56) - 1);
                 match (id >> 56) & 0x3 {
@@ -427,5 +436,8 @@ impl SessionInput {
 
 #[path = "session_flow.rs"]
 mod flow;
+#[cfg(test)]
+#[path = "session_sealing_tests.rs"]
+mod sealing_tests;
 #[path = "session_events.rs"]
 mod events;

@@ -186,6 +186,22 @@ async fn a_sessionless_operation_posts_all_fields_without_a_session() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn sess_prop_too_large_keeps_sequence() {
+    use crate::test_wait::within;
+    let (database, server, _) = rig(public_key_der_b64(), pin()).await;
+    within(database.session_call("otp".into(), r#"{"phone":"+61400000000"}"#.into())).await.unwrap();
+    let before = server.seen();
+    let body = serde_json::json!({"code":"x".repeat(262144)}).to_string();
+    assert!(matches!(within(database.session_call("confirm".into(), body)).await, Err(DbError::RequestTooLarge { size, limit: 262144 }) if size > 262144));
+    assert_eq!(server.seen().len(), before.len());
+    assert!(matches!(within(database.session_call("confirm".into(), r#"{"code":"1"}"#.into())).await, Err(DbError::Session { code: SessionCode::InvalidCode, .. })));
+    let after = server.seen();
+    assert_eq!(after.len(), before.len() + 1);
+    assert_eq!(after.last().unwrap()["sequence"].as_i64(), before.last().unwrap()["sequence"].as_i64().map(|value| value + 1));
+    within(database.close_database()).await.unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn a_sequence_conflict_is_a_typed_code_and_the_credential_stays() {
     let (database, server, credentials) = rig(public_key_der_b64(), pin()).await;
     database.session_call("otp".into(), r#"{"phone":"+61400000000"}"#.into()).await.unwrap();

@@ -6,7 +6,13 @@ use crate::runtime::{Address, Cause, DetScheduler, EpochStamp, Time};
 fn send(det: &mut DetScheduler, address: Address<SessionCalls>, log: &Log<SessionEffect>, input: SessionInput) -> Vec<SessionEffect> {
     det.post(address, EpochStamp::Control, input);
     det.run_until_quiet(100).unwrap();
-    take(log)
+    let effects = take(log);
+    if let [SessionEffect::SealProbe { seal_id, .. }] = effects.as_slice() {
+        det.post(address, EpochStamp::Control, SessionInput::Sealed { seal_id: *seal_id, size: 1 });
+        det.run_until_quiet(100).unwrap();
+        return take(log);
+    }
+    effects
 }
 
 #[test]

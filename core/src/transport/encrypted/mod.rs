@@ -11,7 +11,7 @@ pub(crate) mod bootstrap;
 pub(crate) mod fake_server_tests;
 mod graphql;
 pub(crate) mod jwe;
-mod key;
+pub(crate) mod key;
 mod origin;
 pub(crate) mod state;
 #[cfg(test)]

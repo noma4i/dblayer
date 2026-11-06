@@ -13,6 +13,10 @@ impl SessionState {
             }
             return;
         }
+        if matches!(phase, SessionPhase::Sealing { .. }) && matches!(input, SessionInput::Restored { .. } | SessionInput::RestoreReady { .. }) {
+            self.phase = phase;
+            return;
+        }
         if let SessionInput::HttpFailed { attempt_id } = &input {
             if !matches!(&phase, SessionPhase::Calling { phase: AttemptPhase::InFlight(id), .. } if id == attempt_id) {
                 self.phase = phase;
@@ -93,6 +97,13 @@ impl SessionState {
 
     pub(super) fn on_epoch_ended(&mut self, phase: SessionPhase, epoch: Epoch, cause: Cause, fx: &mut Vec<SessionEffect>) {
         match phase {
+            SessionPhase::Sealing { pending, .. } => {
+                let error = if pending.author.is_some() { SessionError::NoSession } else { SessionError::Interrupted };
+                finish(fx, &pending, Err(error));
+                self.refuse_queue(fx, SessionError::NoSession);
+                if is_ended(cause) { self.credential = None; }
+                self.phase = SessionPhase::Idle;
+            }
             SessionPhase::Idle => {
                 if is_ended(cause) { self.credential = None; }
                 self.phase = SessionPhase::Idle;
@@ -136,6 +147,7 @@ impl SessionState {
         self.end_resume(SessionError::Closed, fx);
         if let Some((id, _)) = self.after_publish.take() { reply(fx, id, Err(SessionError::Closed)); }
         match phase {
+            SessionPhase::Sealing { pending, .. } => finish(fx, &pending, Err(SessionError::Closed)),
             SessionPhase::Persisting { pending, .. } | SessionPhase::Landing { pending, .. } => finish(fx, &pending, Err(SessionError::Closed)),
             SessionPhase::Calling { pending, phase, .. } => {
                 finish(fx, &pending, Err(SessionError::Closed));
@@ -251,6 +263,22 @@ impl SessionState {
 
     pub(super) fn by_phase(&mut self, phase: SessionPhase, input: SessionInput, fx: &mut Vec<SessionEffect>) {
         match (phase, input) {
+            (SessionPhase::Sealing { pending, seal_id }, SessionInput::Sealed { seal_id: id, size }) if id == seal_id => {
+                if size > 262144 { finish(fx, &pending, Err(SessionError::TooLarge { size, limit: 262144 })); self.idle(fx); }
+                else { self.persist(pending, None, fx); }
+            }
+            (SessionPhase::Sealing { pending, seal_id }, SessionInput::SealFailed { seal_id: id, error }) if id == seal_id => {
+                finish(fx, &pending, Err(error));
+                self.idle(fx);
+            }
+            (phase @ SessionPhase::Sealing { .. }, SessionInput::SessionCall { operation, body, reply }) => {
+                self.phase = phase;
+                self.queue.push_back(Queued::Call { operation, body, reply });
+            }
+            (phase @ SessionPhase::Sealing { .. }, SessionInput::Mutate { author, owner, req_id, epoch, path, body, purpose }) => {
+                self.phase = phase;
+                self.queue_mutate(Queued::Mutate { author, owner, req_id, epoch, path, body, purpose });
+            }
             (SessionPhase::Idle, SessionInput::Open { credential, pending, dropped_pending, secret }) => self.open(credential, pending, dropped_pending, secret, fx),
             (phase, SessionInput::Open { .. }) => self.phase = phase,
             (SessionPhase::Idle, SessionInput::SessionCall { operation, body, reply: id }) => self.idle_call(operation, body, id, fx),

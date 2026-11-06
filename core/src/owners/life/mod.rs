@@ -63,6 +63,7 @@ pub struct Ports {
     pub credentials: Option<Arc<dyn crate::transport::CredentialSlot>>,
     /// The encrypted client: Session installs only with it and `credentials`. It does the encoding and the HTTP exchange, Session decides.
     pub session: Option<Arc<crate::transport::EncryptedClient>>,
+    pub(crate) seal: Option<Arc<super::session_seal::SealConfig>>,
     /// Transfer installs only with the session and this port.
     pub(crate) transfer: Option<TransferPort>,
     /// Feed opens its connections through the cable; without it the owner runs no connection.
@@ -403,8 +404,8 @@ impl Life {
     /// Builds the owners, boots the Store from the booted `Db` and returns after the first `Publish`.
     pub fn start(ports: Ports) -> Result<Self, LifeError> {
         let found = boot_found(&ports.db)?;
-        let session = ports.session.clone().zip(ports.credentials.clone());
-        let restored = session.as_ref().map(|(client, _)| session_runner::SessionRunner::stored(client)).transpose().map_err(|error| LifeError::Storage(error.to_string()))?;
+        let session = ports.session.clone().zip(ports.credentials.clone()).zip(ports.seal.clone()).map(|((client, credentials), seal)| (client, credentials, seal));
+        let restored = session.as_ref().map(|(client, _, _)| session_runner::SessionRunner::stored(client)).transpose().map_err(|error| LifeError::Storage(error.to_string()))?;
         let mut builder = RuntimeBuilder::new();
         builder.with_clock(ports.db.shared.store.lock().clock.clone());
         let wiring = Arc::new(Wiring::new(builder.handle()));
@@ -414,9 +415,9 @@ impl Life {
         let store = builder.add::<StoreWriter>("store", StoreState::new(), runners::StoreRunner { wiring: wiring.clone(), db: ports.db.clone(), credentials: ports.credentials.clone(), client: ports.session.clone(), executor: ports.executor.clone() });
         let network = builder.add::<Network>("network", NetworkState::new(), runners::NetworkRunner { wiring: wiring.clone(), db: ports.db.clone(), held_replies: Vec::new() });
         let calls = builder.add::<Calls>("calls", CallsState::new(0, None, &[]), calls_runner::CallsRunner::new(wiring.clone(), &ports));
-        let session_address = session.as_ref().zip(restored).map(|((client, credentials), restored)| {
+        let session_address = session.as_ref().zip(restored).map(|((client, credentials, seal), restored)| {
             let state = SessionState::with_operations(client.session_operations(), None);
-            let address = builder.add::<SessionCalls>("session", state, session_runner::SessionRunner::new(wiring.clone(), client.clone(), credentials.clone(), ports.executor.clone(), &restored));
+            let address = builder.add::<SessionCalls>("session", state, session_runner::SessionRunner::new(wiring.clone(), client.clone(), credentials.clone(), seal.clone(), ports.executor.clone(), &restored));
             (address, restored)
         });
         let transfer_at = session_address.as_ref().zip(ports.transfer.as_ref()).map(|((session, _), _)| Address::<Transfers>::new(session.index() + 2));

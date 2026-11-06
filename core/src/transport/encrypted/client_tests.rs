@@ -114,7 +114,8 @@ async fn a_request_over_256_kib_is_refused_without_being_sent() {
 impl EncryptedClient {
     /// The owners behind a client that was built without `Database`: Lifecycle, Store, Network, Calls and Session on the threads of the core.
     pub(crate) fn start_owners_in_tests(self: &Arc<Self>, db: &Db) -> Arc<crate::owners::life::Life> {
-        let ports = crate::owners::life::Ports { db: db.clone(), transport: None, executor: tokio::runtime::Handle::current(), operations: Arc::new(|_| None), credentials: Some(self.credentials.clone()), session: Some(self.clone()), transfer: None, cable: None, read_operations: None };
+        let seal = Arc::new(crate::owners::session_seal::SealConfig::new(&config(), self.clock.clone()).unwrap());
+        let ports = crate::owners::life::Ports { db: db.clone(), transport: None, executor: tokio::runtime::Handle::current(), operations: Arc::new(|_| None), credentials: Some(self.credentials.clone()), session: Some(self.clone()), seal: Some(seal), transfer: None, cable: None, read_operations: None };
         let life = Arc::new(crate::owners::life::Life::start(ports).expect("the owners started"));
         self.attach(&life);
         drop(life.set_online(true));

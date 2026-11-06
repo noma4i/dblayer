@@ -38,6 +38,7 @@ pub enum Reason {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Fail {
+    TooLarge { size: u64, limit: u64 },
     Invalid,
     Reason(Reason),
     Session(crate::transport::SessionCode),
@@ -119,6 +120,8 @@ pub enum Secret {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Input {
+    Sealed { seal_id: u64, size: u64 },
+    SealFailed { seal_id: u64, error: Fail },
     Open { credential: Option<Credential>, pending: Option<Pending>, dropped_pending: bool, secret: Secret },
     SessionCall { operation: String, body: String, reply: ReplyId },
     Mutate { author: AuthorId, owner: Option<Owner>, req_id: RequestId, epoch: u64, path: String, body: String, purpose: u8 },
@@ -172,6 +175,7 @@ pub enum RetryPhase {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Effect {
+    SealProbe { seal_id: u64, pending: Pending, credential: Option<Digest> },
     /// Store `Commit{encrypted_pending = pending}`, with `Session{digest, 0}` at the first sign-in.
     CommitPending { batch: BatchId, epoch: u64, pending: Pending, session: Option<Digest> },
     /// Store `Commit{Session{digest or the previous one, sequence}, RemovePending, Answer}`.
@@ -224,6 +228,7 @@ pub enum AfterClear {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum State {
     Idle,
+    Sealing { pending: Pending, seal_id: u64 },
     Generating { call: Queued, op: SecretOpId },
     Storing { call: Queued, credential_new: Digest, op: SecretOpId, after: AfterStore },
     ClearingSecret { call: Option<Queued>, reason: Option<Fail>, op: SecretOpId, after: AfterClear },
@@ -396,11 +401,11 @@ impl Session {
                     Class::Logout if self.credential.is_none() => out.replies.push((reply, Err(Fail::NoCredential))),
                     Class::Sessionless => {
                         let request_id = self.request();
-                        self.persist(Pending { request_id, sequence: 0, class: def.class, operation, path: def.path, body, credential: None, purpose: 0, author: None, owner: None, epoch, reply: Some(reply) }, None, out);
+                        self.seal(Pending { request_id, sequence: 0, class: def.class, operation, path: def.path, body, credential: None, purpose: 0, author: None, owner: None, epoch, reply: Some(reply) }, out);
                     }
                     Class::Authenticated | Class::Logout => {
                         let request_id = self.request();
-                        self.persist(Pending { request_id, sequence, class: def.class, operation, path: def.path, body, credential: None, purpose: 0, author: None, owner: None, epoch, reply: Some(reply) }, None, out);
+                        self.seal(Pending { request_id, sequence, class: def.class, operation, path: def.path, body, credential: None, purpose: 0, author: None, owner: None, epoch, reply: Some(reply) }, out);
                     }
                 }
             }
@@ -410,9 +415,15 @@ impl Session {
                     return;
                 }
                 let sequence = self.credential.as_ref().map_or(1, |credential| credential.sequence + 1);
-                self.persist(Pending { request_id: req_id, sequence, class: Class::Authenticated, operation: String::new(), path, body, credential: None, purpose, author: Some(author), owner, epoch, reply: None }, None, out);
+                self.seal(Pending { request_id: req_id, sequence, class: Class::Authenticated, operation: String::new(), path, body, credential: None, purpose, author: Some(author), owner, epoch, reply: None }, out);
             }
         }
+    }
+
+    fn seal(&mut self, pending: Pending, out: &mut Out) {
+        let seal_id = self.attempt();
+        out.effects.push(Effect::SealProbe { seal_id, pending: pending.clone(), credential: self.credential.as_ref().map(|credential| credential.digest) });
+        self.state = State::Sealing { pending, seal_id };
     }
 
     fn generate(&mut self, call: Queued, out: &mut Out) {
@@ -484,7 +495,7 @@ impl Session {
 
     pub fn step(&mut self, input: Input) -> Out {
         let mut out = Out::default();
-        let interest = if let Input::InterestPlus(stream) = &input { Some(*stream) } else { None };
+        let interest = if let Input::InterestPlus(stream) = &input { (!matches!(self.state, State::Sealing { .. })).then_some(*stream) } else { None };
         self.run(input, &mut out);
         let view = self.view();
         if view != self.reported {

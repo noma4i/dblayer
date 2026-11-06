@@ -117,7 +117,7 @@ impl TestClock {
 #[derive(Clone, uniffi::Object)]
 pub struct Database { pub(super) lease: Arc<OnceLock<Arc<OpenLease>>>, pub(super) life: Arc<crate::owners::life::Life>, pub(super) streams: Arc<crate::ffi::admission::Leases>, pub(super) db: Db, pub(super) remote: bool, pub(super) session: Option<Arc<EncryptedClient>>, pub(super) reads: crate::owners::read::ReadOperations, pub(super) uploads: Option<UploadOperations>, pub(super) jobs: Arc<super::upload_rounds::RoundJobsSlot>, pub(super) shows: Arc<super::transfer_status::Shows>, pub(super) outcomes: Arc<Mutex<HashMap<(u64, u64, u64), WireOperationOutcome>>>, wires: Arc<HashMap<String, Arc<WireModel>>> }
 
-pub(super) type Wiring = (Option<Arc<dyn core::Transport>>, Option<Arc<EncryptedClient>>, Option<Arc<dyn core::CableLines>>);
+pub(super) type Wiring = (Option<Arc<dyn core::Transport>>, Option<Arc<EncryptedClient>>, Option<Arc<dyn core::CableLines>>, Option<Arc<crate::owners::session_seal::SealConfig>>);
 
 impl Database {
     fn start(config: Config, models_json: String, transport: Option<Arc<dyn Transport>>, clock: Arc<dyn Clock>) -> Result<Arc<Self>, DbError> {
@@ -125,7 +125,7 @@ impl Database {
             #[cfg(test)]
             if transport.is_some() { super::signed_session_tests::signed_session(db); }
             let _ = db;
-            Ok((transport.map(|transport| Arc::new(ForeignTransport(transport)) as Arc<dyn core::Transport>), None, None))
+            Ok((transport.map(|transport| Arc::new(ForeignTransport(transport)) as Arc<dyn core::Transport>), None, None, None))
         })
     }
 
@@ -143,11 +143,11 @@ impl Database {
         let opening = db.admit()?;
         db.expire_blobs_before_use(&opening)?;
         drop(opening);
-        let (transport, session, cable) = wire(&db, &clock)?;
+        let (transport, session, cable, seal) = wire(&db, &clock)?;
         let reads = crate::owners::read::ReadOperations::default();
         let jobs: Arc<super::upload_rounds::RoundJobsSlot> = Arc::default();
         let shows: Arc<super::transfer_status::Shows> = Arc::default();
-        let life = Self::build_life(&db, transport.clone(), &session, cable, reads.clone(), (uploads.clone(), jobs.clone(), shows.clone()))?;
+        let life = Self::build_life(&db, transport.clone(), &session, cable, seal, reads.clone(), (uploads.clone(), jobs.clone(), shows.clone()))?;
         let remote = transport.is_some();
         let wires = keys.into_iter().map(|key| db.spec(&key).map(|spec| (key, Arc::new(WireModel::of(spec)))).map_err(DbError::from)).collect::<Result<_, _>>()?;
         let streams = db.shared.store.lifecycle.clone();
@@ -197,7 +197,7 @@ impl Database {
     }
 
     /// F1: the owners of direction A on the threads of the core, started from the booted `Db`. It returns after the first `Publish`.
-    fn build_life(db: &Db, transport: Option<Arc<dyn core::Transport>>, session: &Option<Arc<EncryptedClient>>, cable: Option<Arc<dyn core::CableLines>>, read_operations: crate::owners::read::ReadOperations, (uploads, jobs, shows): (Option<UploadOperations>, Arc<super::upload_rounds::RoundJobsSlot>, Arc<super::transfer_status::Shows>)) -> Result<Arc<crate::owners::life::Life>, DbError> {
+    fn build_life(db: &Db, transport: Option<Arc<dyn core::Transport>>, session: &Option<Arc<EncryptedClient>>, cable: Option<Arc<dyn core::CableLines>>, seal: Option<Arc<crate::owners::session_seal::SealConfig>>, read_operations: crate::owners::read::ReadOperations, (uploads, jobs, shows): (Option<UploadOperations>, Arc<super::upload_rounds::RoundJobsSlot>, Arc<super::transfer_status::Shows>)) -> Result<Arc<crate::owners::life::Life>, DbError> {
         let executor = executor()?.handle().clone();
         let operations = operations_lookup(&read_operations);
         let transfer = uploads.filter(|_| session.is_some()).map(|operations| crate::owners::write::transfer_executor::TransferPort {
@@ -213,6 +213,7 @@ impl Database {
             operations,
             credentials: session.as_ref().map(|client| client.credential_slot()),
             session: session.clone(),
+            seal,
             transfer,
             cable,
             read_operations: Some(read_operations),

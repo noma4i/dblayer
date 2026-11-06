@@ -258,7 +258,8 @@ async fn an_unreadable_stored_request_fails_the_open_with_a_storage_error() {
         inner.connection.execute("INSERT INTO encrypted_pending (id, credential_digest, request_id, response_key, sequence, path, body, purpose, req_id) VALUES (1, 'd', 'r', 'k', 1, '/p', 'not json', 0, 1)", []).unwrap();
     }
     let credentials: Arc<dyn crate::transport::CredentialSlot> = world.credentials.clone();
-    let ports = super::Ports { db: db.clone(), transport: None, executor: tokio::runtime::Handle::current(), operations: Arc::new(|_| None), credentials: Some(credentials), session: Some(client), transfer: None, cable: None, read_operations: None };
+    let seal = Arc::new(crate::owners::session_seal::SealConfig::new(&config(), world.clock.clone()).unwrap());
+    let ports = super::Ports { db: db.clone(), transport: None, executor: tokio::runtime::Handle::current(), operations: Arc::new(|_| None), credentials: Some(credentials), session: Some(client), seal: Some(seal), transfer: None, cable: None, read_operations: None };
     let error = super::Life::start(ports).err().expect("the open fails");
     assert!(matches!(error, super::LifeError::Storage(_)), "the read error reaches the caller: {error:?}");
 }
@@ -298,7 +299,8 @@ async fn a_negative_stored_sequence_fails_the_open() {
     db.shared.store.lock().connection.execute("UPDATE encrypted_session SET sequence = -1", []).unwrap();
     let client = Arc::new(EncryptedClient::new(&config(), world.server.clone(), world.credentials.clone(), db.clone(), world.clock.clone()).unwrap());
     let credentials: Arc<dyn crate::transport::CredentialSlot> = world.credentials.clone();
-    let ports = super::Ports { db: db.clone(), transport: None, executor: tokio::runtime::Handle::current(), operations: Arc::new(|_| None), credentials: Some(credentials), session: Some(client), transfer: None, cable: None, read_operations: None };
+    let seal = Arc::new(crate::owners::session_seal::SealConfig::new(&config(), world.clock.clone()).unwrap());
+    let ports = super::Ports { db: db.clone(), transport: None, executor: tokio::runtime::Handle::current(), operations: Arc::new(|_| None), credentials: Some(credentials), session: Some(client), seal: Some(seal), transfer: None, cable: None, read_operations: None };
     let error = super::Life::start(ports).err().expect("the open fails");
     assert!(matches!(error, super::LifeError::Storage(_)), "{error:?}");
 }
@@ -336,6 +338,8 @@ struct ProbeSlot {
     fail_set: std::sync::atomic::AtomicBool,
     panic_set: std::sync::atomic::AtomicBool,
     fail_get: std::sync::atomic::AtomicBool,
+    get_count: std::sync::atomic::AtomicUsize,
+    fail_at: std::sync::atomic::AtomicUsize,
     db: std::sync::Mutex<Option<Db>>,
     session_at_clear: std::sync::Mutex<Vec<bool>>,
     threads: std::sync::Mutex<Vec<(&'static str, Option<String>)>>,
@@ -344,6 +348,8 @@ struct ProbeSlot {
 impl CredentialSlot for ProbeSlot {
     fn get(&self) -> Result<Option<String>, TransportError> {
         self.threads.lock().unwrap().push(("get", std::thread::current().name().map(str::to_string)));
+        let count = self.get_count.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
+        if self.fail_at.load(std::sync::atomic::Ordering::SeqCst) == count { self.fail_get.store(true, std::sync::atomic::Ordering::SeqCst); }
         if self.fail_get.load(std::sync::atomic::Ordering::SeqCst) { return Err(TransportError::Network("keychain locked".into())); }
         self.memory.get()
     }
@@ -524,8 +530,14 @@ async fn a_locked_secret_waits_for_the_foreground_and_a_foreign_secret_ends_the_
     sign_in(&client).await;
     let sent = world.server.seen().len();
     slot.fail_get.store(true, std::sync::atomic::Ordering::SeqCst);
+    let refused = mutate_retrying(&life, json!({}).to_string()).await;
+    assert!(matches!(refused, LifeReply::Mutated(AuthorOutcome::Error { error: SessionError::Storage(_), .. })));
+    slot.fail_get.store(false, std::sync::atomic::Ordering::SeqCst);
+    let target = slot.get_count.load(std::sync::atomic::Ordering::SeqCst) + 2;
+    slot.fail_at.store(target, std::sync::atomic::Ordering::SeqCst);
     let waiting = tokio::spawn({ let life = life.clone(); async move { mutate_retrying(&life, json!({}).to_string()).await } });
-    tokio::time::sleep(Duration::from_millis(300)).await;
+    crate::test_wait::yield_until("the stored request reads the locked secret", || slot.fail_get.load(std::sync::atomic::Ordering::SeqCst)).await;
+    assert!(life.barrier(LIMIT));
     assert!(!waiting.is_finished(), "a locked store gives the author no answer");
     assert_eq!(world.server.seen().len(), sent, "and no request leaves the device");
     slot.fail_get.store(false, std::sync::atomic::Ordering::SeqCst);

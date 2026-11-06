@@ -137,6 +137,7 @@ fn sess_prop_held_slot() {
     twin.feed(mutate(7, 11));
     let input = twin.response(1);
     twin.feed_all([input, committed()]);
+    finish_seal(&mut twin);
     assert!(twin.history.iter().filter(|effect| matches!(effect, RefEffect::CommitPending { .. })).count() >= 2, "the slot goes on after the pair is resolved");
 }
 

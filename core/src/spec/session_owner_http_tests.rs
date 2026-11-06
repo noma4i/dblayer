@@ -343,6 +343,7 @@ fn sess_published_answers_login() {
     assert!(twin.replies.is_empty());
     twin.feed(Input::Published { epoch: EPOCH + 2, identity: Some(42), state: PubState::Session });
     assert_eq!(twin.replies, vec![(1, Ok("{}".into()))], "the answer follows the publication of the identity");
+    finish_seal(&mut twin);
     assert!(twin.history.iter().filter(|effect| matches!(effect, RefEffect::CommitPending { .. })).count() >= 2, "the queue goes on after the answer");
 }
 
@@ -398,7 +399,7 @@ fn sess_published_drains_queue() {
     twin.feed(published(PubState::Ending));
     twin.feed(call(1));
     let effects = twin.feed(published(PubState::Session));
-    assert!(matches!(&effects[..], [RefEffect::CommitPending { .. }]), "the call waited for the publication: {effects:?}");
+    assert!(matches!(&effects[..], [RefEffect::SealProbe { .. }]), "the call waited for the publication: {effects:?}");
 }
 
 #[test]

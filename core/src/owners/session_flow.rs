@@ -111,11 +111,11 @@ impl SessionState {
                     OperationClass::Logout if self.credential.is_none() => reply(fx, id, Err(SessionError::NoCredential)),
                     OperationClass::Sessionless => {
                         let request_id = self.request();
-                        self.persist(PendingCall { request_id, sequence: 0, class: def.class, operation, path: def.path, body, credential: None, purpose: 0, author: None, owner: None, epoch, reply: Some(id) }, None, fx);
+                        self.seal(PendingCall { request_id, sequence: 0, class: def.class, operation, path: def.path, body, credential: None, purpose: 0, author: None, owner: None, epoch, reply: Some(id) }, fx);
                     }
                     OperationClass::Authenticated | OperationClass::Logout => {
                         let request_id = self.request();
-                        self.persist(PendingCall { request_id, sequence, class: def.class, operation, path: def.path, body, credential: None, purpose: 0, author: None, owner: None, epoch, reply: Some(id) }, None, fx);
+                        self.seal(PendingCall { request_id, sequence, class: def.class, operation, path: def.path, body, credential: None, purpose: 0, author: None, owner: None, epoch, reply: Some(id) }, fx);
                     }
                 }
             }
@@ -125,9 +125,15 @@ impl SessionState {
                     return;
                 }
                 let sequence = self.credential.as_ref().map_or(1, |credential| credential.sequence + 1);
-                self.persist(PendingCall { request_id: req_id, sequence, class: OperationClass::Authenticated, operation: String::new(), path, body, credential: None, purpose, author: Some(author), owner, epoch, reply: None }, None, fx);
+                self.seal(PendingCall { request_id: req_id, sequence, class: OperationClass::Authenticated, operation: String::new(), path, body, credential: None, purpose, author: Some(author), owner, epoch, reply: None }, fx);
             }
         }
+    }
+
+    pub(super) fn seal(&mut self, pending: PendingCall, fx: &mut Vec<SessionEffect>) {
+        let seal_id = self.attempt();
+        fx.push(SessionEffect::SealProbe { seal_id, pending: pending.clone(), credential: self.credential.as_ref().map(|credential| credential.digest) });
+        self.phase = SessionPhase::Sealing { pending, seal_id };
     }
 
     pub(super) fn generate(&mut self, call: LoginCall, fx: &mut Vec<SessionEffect>) {
