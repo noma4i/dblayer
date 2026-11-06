@@ -31,6 +31,10 @@ impl crate::ffi::Transport for FeedTransport {
 }
 
 async fn feed_database() -> (Arc<Database>, Arc<FeedTransport>) {
+    feed_database_with_listen(None).await
+}
+
+async fn feed_database_with_listen(listen: Option<serde_json::Value>) -> (Arc<Database>, Arc<FeedTransport>) {
     use crate::schema::{Coverage, FieldSpec, Membership, ModelSpec, NodeRead, RelationSpec, RemoteShape, VariableSource, NODE_PARAM};
     use crate::value::ScalarKind;
     let mut revision = FieldSpec::scalar("serverRevision", ScalarKind::Int);
@@ -53,6 +57,7 @@ async fn feed_database() -> (Arc<Database>, Arc<FeedTransport>) {
     list.remote = Some(remote);
     chat.relations.extend([node, list]);
     chat.changes.push(serde_json::from_value(json!({"area":"MESSAGE","relation":"node","payload":"chat","removes_on":["DELETED"]})).unwrap());
+    if let Some(listen) = listen { chat.listens.push(serde_json::from_value(listen).unwrap()); }
     chat.change_feed = Some(crate::schema::ChangeFeed { subscription: "RecordEvents".into(), root: "recordEvents.entries".into(), area: "topic".into(), kind: "action".into(), id: "recordId".into() });
     let world = World::new("server", "A", true);
     let mut encrypted = crate::transport::encrypted::protocol_tests::config();
@@ -71,6 +76,14 @@ async fn feed_database() -> (Arc<Database>, Arc<FeedTransport>) {
 
 async fn feed_events() -> (Arc<Database>, Arc<FeedTransport>, Arc<ReadStream>, String) {
     let (database, transport) = feed_database().await;
+    let stream = database.subscribe_values(database.session_epoch(), ReadRequest::Events { model: "Chat".into() });
+    assert!(matches!(bound(stream.pull()).await.unwrap(), Some(ReadValue::Ready)));
+    let token = transport.token.lock().unwrap().clone().unwrap();
+    (database, transport, stream, token)
+}
+
+async fn feed_listen_events(listen: serde_json::Value) -> (Arc<Database>, Arc<FeedTransport>, Arc<ReadStream>, String) {
+    let (database, transport) = feed_database_with_listen(Some(listen)).await;
     let stream = database.subscribe_values(database.session_epoch(), ReadRequest::Events { model: "Chat".into() });
     assert!(matches!(bound(stream.pull()).await.unwrap(), Some(ReadValue::Ready)));
     let token = transport.token.lock().unwrap().clone().unwrap();
@@ -120,6 +133,34 @@ async fn feed_changes_entry_incomplete() {
     let (database, transport, stream, token) = feed_events().await;
     assert!(transport.cable.event(&token, json!({"data":{"recordEvents":{"entries":[{"topic":"MESSAGE","recordId":"c1"},{"topic":"MESSAGE","action":"UPDATED","recordId":"c2","chat":{"id":"c2","title":"after","revision":2,"lists":["PRIMARY"]}}]}}})));
     assert!(matches!(bound(stream.pull()).await.unwrap(), Some(ReadValue::Event { position: 1, id, .. }) if id == "c2"));
+    assert_eq!(bound(database.subscription_census()).await.unwrap().refused_events, 1);
+    bound(database.close_database()).await.unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn feed_event_without_id() {
+    let (database, transport, stream, token) = feed_listen_events(json!({"subscription":"RecordEvents", "root":"recordEvents.item"})).await;
+    assert!(transport.cable.event(&token, json!({"data":{"recordEvents":{"item":{"title":"missing","revision":1,"lists":[]}}}})));
+    assert!(matches!(bound(stream.pull()).await.unwrap(), Some(ReadValue::Lost { first: 1, last: 1 })));
+    assert_eq!(bound(database.subscription_census()).await.unwrap().refused_events, 1);
+    bound(database.close_database()).await.unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn feed_composite_id() {
+    let (database, transport, stream, token) = feed_listen_events(json!({"subscription":"RecordEvents", "root":"recordEvents.item", "id":["group", "entry"]})).await;
+    for (revision, title) in [(1, "first"), (2, "second")] {
+        assert!(transport.cable.event(&token, json!({"data":{"recordEvents":{"item":{"group":"g1","entry":"e1","title":title,"revision":revision,"lists":[]}}}})));
+        assert!(matches!(bound(stream.pull()).await.unwrap(), Some(ReadValue::Event { id, after: Some(row), .. }) if id == "g1:e1" && crate::ffi::lifecycle_tests::named(&row, title)));
+    }
+    bound(database.close_database()).await.unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn feed_composite_id_missing() {
+    let (database, transport, stream, token) = feed_listen_events(json!({"subscription":"RecordEvents", "root":"recordEvents.item", "id":["group", "entry"]})).await;
+    assert!(transport.cable.event(&token, json!({"data":{"recordEvents":{"item":{"group":"g1","title":"missing","revision":1,"lists":[]}}}})));
+    assert!(matches!(bound(stream.pull()).await.unwrap(), Some(ReadValue::Lost { first: 1, last: 1 })));
     assert_eq!(bound(database.subscription_census()).await.unwrap().refused_events, 1);
     bound(database.close_database()).await.unwrap();
 }
