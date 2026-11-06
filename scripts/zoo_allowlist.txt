@@ -18,7 +18,6 @@ panic:core/src/ddl/mod.rs:expect("fingerprint serializes")   # own Serialize typ
 wrapper-glue:UrlSessionTransport.swift   # the open sockets of the URLSession transport: platform I/O, no stream or list state
 wrapper-glue:UrlSessionCable.swift   # the open sockets of the cable: platform I/O, no stream or list state
 wrapper-glue:PowerSaving.kt   # one system observer token: platform I/O, no stream or list state
-wrapper-glue:OnlineRelay.kt   # the single online sink between the OS and the core: platform I/O, no stream or list state
 wrapper-glue:RustFutureHandle.swift   # the free of a foreign future handle: platform I/O, no stream or list state
 wrapper-glue:Reachability.kt   # the one network callback of the process: platform I/O, no stream or list state
 wrapper-glue:DB.swift   # the one open database of the process (one database per process): platform I/O, no stream or list state
