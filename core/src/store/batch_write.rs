@@ -10,6 +10,17 @@ use super::{Reader, Store, StoreError, TombstoneRetention};
 
 const OVERLAY_ROW_LIMIT: usize = 1024;
 
+/// What the transaction of a batch leaves for the steps after it.
+struct WrittenBatch<'a> {
+    committed: super::Committed<'a>,
+    observed: Vec<String>,
+    live_files: std::collections::HashSet<String>,
+    discarded: Vec<String>,
+    expiry: ExpiryParts,
+    position: u64,
+    resets: ResetParts,
+}
+
 type ExpiryParts = (Vec<crate::owners::store::MemoryExpiry>, Vec<(String, String)>, Vec<String>);
 type ResetParts = (Vec<u64>, Vec<crate::owners::store::EphemeralReset>);
 
@@ -37,7 +48,7 @@ impl Store {
                 }
                 Err(error)
             }
-            Ok((result, observed, live_files, discarded, (expiring, removed_memory, stale_parents), position, (removed_operations, resets))) => {
+            Ok(WrittenBatch { committed: result, observed, live_files, discarded, expiry: (expiring, removed_memory, stale_parents), position, resets: (removed_operations, resets) }) => {
                 let mut faults = Vec::new();
                 for file in prepared.iter().filter(|file| file.record.location == Location::Directory) {
                     let removed = if live_files.contains(&file.record.id) { files.finish(&file.record.id) } else { files.discard_partial(&file.record.id) };
@@ -53,7 +64,7 @@ impl Store {
         }
     }
 
-    fn write_batch_prepared<'a>(&'a self, batch: &StoreBatch, guards: &BTreeMap<String, Vec<AssociationSpec>>, min_pin_revision: Option<u64>, now: i64, files: &[super::file_write::PreparedFile]) -> Result<(super::Committed<'a>, Vec<String>, std::collections::HashSet<String>, Vec<String>, ExpiryParts, u64, ResetParts), StoreError> {
+    fn write_batch_prepared<'a>(&'a self, batch: &StoreBatch, guards: &BTreeMap<String, Vec<AssociationSpec>>, min_pin_revision: Option<u64>, now: i64, files: &[super::file_write::PreparedFile]) -> Result<WrittenBatch<'a>, StoreError> {
         let inner = self.lock();
         if !inner.ready { return Err(StoreError::Refused); }
         let transaction = inner.connection.unchecked_transaction()?;
@@ -136,6 +147,6 @@ impl Store {
             transaction.rollback()?;
             if position != current.position { self.overlays.publish(snapshot); }
         }
-        Ok((self.commit_announcement(inner, combined), observed, live_files, discarded, (expiring, removed_memory, stale_parents), position, (removed_operations, arms)))
+        Ok(WrittenBatch { committed: self.commit_announcement(inner, combined), observed, live_files, discarded, expiry: (expiring, removed_memory, stale_parents), position, resets: (removed_operations, arms) })
     }
 }

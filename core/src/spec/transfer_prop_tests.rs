@@ -223,11 +223,11 @@ fn xfer_prop_batch_all_or_none() {
     let ids = ok.accepted_batch(&keys, 2);
     assert_eq!((count(&ok), ids.iter().all(|id| ok.stage(*id) == TransferStage::Ready)), (3, true));
     let mut rejected = Twin::new();
-    rejected.post(TransferInput::AcceptBatch { joint: joint(), epoch: EPOCH, items: keys.iter().map(|key| item(key, 2)).collect(), reply: 5, now: Time(0) });
+    rejected.post(TransferInput::AcceptBatch { joint: Box::new(joint()), epoch: EPOCH, items: keys.iter().map(|key| item(key, 2)).collect(), reply: 5, now: Time(0) });
     rejected.reject(RejectReason::Storage("disk".into()));
     assert_eq!(count(&rejected), 0);
     let mut failed = Twin::new();
-    failed.post(TransferInput::AcceptBatch { joint: joint(), epoch: EPOCH, items: keys.iter().map(|key| item(key, 2)).collect(), reply: 5, now: Time(0) });
+    failed.post(TransferInput::AcceptBatch { joint: Box::new(joint()), epoch: EPOCH, items: keys.iter().map(|key| item(key, 2)).collect(), reply: 5, now: Time(0) });
     failed.commit();
     let id = failed.state().open_id(KEY).expect("an element");
     failed.copy_failed(id);
@@ -318,7 +318,7 @@ fn xfer_prop_provenance() {
 fn xfer_prop_batch_after_all_copies() {
     let mut twin = Twin::new();
     let reply = twin.reply();
-    twin.post(TransferInput::AcceptBatch { joint: joint(), epoch: EPOCH, items: vec![item(KEY, 2), item(OTHER, 2)], reply, now: Time(0) });
+    twin.post(TransferInput::AcceptBatch { joint: Box::new(joint()), epoch: EPOCH, items: vec![item(KEY, 2), item(OTHER, 2)], reply, now: Time(0) });
     twin.commit();
     let ids = [twin.state().open_id(KEY).expect("first"), twin.state().open_id(OTHER).expect("second")];
     let first = twin.copy_done(ids[0]);
@@ -328,7 +328,7 @@ fn xfer_prop_batch_after_all_copies() {
     let out = twin.commit();
     assert_eq!((out.all_replies(), out.steps().len()), (1, 1), "the receipts go together and then the first element starts");
     let mut failing = Twin::new();
-    failing.post(TransferInput::AcceptBatch { joint: joint(), epoch: EPOCH, items: vec![item(KEY, 2), item(OTHER, 2)], reply: 9, now: Time(0) });
+    failing.post(TransferInput::AcceptBatch { joint: Box::new(joint()), epoch: EPOCH, items: vec![item(KEY, 2), item(OTHER, 2)], reply: 9, now: Time(0) });
     failing.commit();
     let id = failing.state().open_id(KEY).expect("first");
     let out = failing.copy_failed(id);

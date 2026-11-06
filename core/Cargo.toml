@@ -17,6 +17,12 @@ path = "src/bin/uniffi-bindgen.rs"
 required-features = ["cli"]
 
 
+[lints.rust]
+warnings = "deny"
+
+[lints.clippy]
+all = { level = "deny", priority = -1 }
+
 [dependencies]
 aes-gcm = "0.10"
 arc-swap = "1.9.2"

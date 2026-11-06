@@ -178,7 +178,7 @@ pub struct BatchItem {
 #[derive(Clone, Debug)]
 pub enum TransferInput {
     Accept { epoch: Epoch, item: Box<BatchItem>, reply: ReplyId, now: Time },
-    AcceptBatch { epoch: Epoch, items: Vec<BatchItem>, joint: Joint, reply: ReplyId, now: Time },
+    AcceptBatch { epoch: Epoch, items: Vec<BatchItem>, joint: Box<Joint>, reply: ReplyId, now: Time },
     Restored { uploads: Vec<StoredTransfer>, outcomes: BTreeMap<TransferId, OutboxOutcome>, orphans: Vec<(String, String)>, batches: BTreeMap<u64, Joint> },
     /// The answer to `abort` of a removed transfer: `answered` is false for a temporary failure.
     AbortDone { upload_id: String, answered: bool },

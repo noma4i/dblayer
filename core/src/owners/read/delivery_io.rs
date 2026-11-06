@@ -54,7 +54,7 @@ impl DeliveryIo {
 impl EffectRunner<Deliveries> for DeliveryIo {
     fn run(&mut self, stamp: EpochStamp, effect: DeliveryEffect, back: &Back<Deliveries>) {
         match effect {
-            DeliveryEffect::Stream { stream, effect: StreamEffect::Read { read_id, revision, after, view } } => self.read(stamp, stream, ReadRequest { read_id, revision, after, view: *view }, back),
+            DeliveryEffect::Stream { stream, effect: StreamEffect::Read { read_id, revision, after, view } } => self.read(stamp, stream, ReadRequest { read_id, revision, after, view }, back),
             DeliveryEffect::Stream { effect: StreamEffect::Answer { outcome, answer }, .. } => {
                 self.answers.settle(outcome, answer);
             }

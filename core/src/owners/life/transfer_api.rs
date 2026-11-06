@@ -19,7 +19,7 @@ impl Life {
 
     pub fn accept_upload(&self, epoch: Epoch, item: BatchItem, now: Time) -> Waiter<LifeReply> { self.transfer_call(epoch, |reply| TransferInput::Accept { epoch, item: Box::new(item), reply, now }) }
 
-    pub fn accept_upload_batch(&self, epoch: Epoch, items: Vec<BatchItem>, joint: Joint, now: Time) -> Waiter<LifeReply> { self.transfer_call(epoch, |reply| TransferInput::AcceptBatch { epoch, items, joint, reply, now }) }
+    pub fn accept_upload_batch(&self, epoch: Epoch, items: Vec<BatchItem>, joint: Joint, now: Time) -> Waiter<LifeReply> { self.transfer_call(epoch, |reply| TransferInput::AcceptBatch { epoch, items, joint: Box::new(joint), reply, now }) }
 
     pub fn cancel_upload(&self, epoch: Epoch, key: String) -> Waiter<LifeReply> { self.transfer_call(epoch, |reply| TransferInput::Cancel { key, reply }) }
 

@@ -5,7 +5,6 @@ use std::collections::BTreeSet;
 use super::outbox::{Fault, OutboxInput};
 use super::transfer::{reply, run, Fx, TransferState};
 use super::transfer_types::*;
-use crate::files::Location;
 use crate::owners::contract::{RejectReason, ReplyId};
 use crate::runtime::{Effect, Epoch, Outbound, Time};
 

@@ -200,6 +200,7 @@ impl ReadStream {
     pub async fn pull(&self) -> Result<Option<ReadValue>, DbError> {
         match self.life.pull(self.stream).wait().await {
             Outcome::Value(PullAnswer::Value(value)) => {
+                let value = *value;
                 if matches!(value, Value::Ended(_)) {
                     self.ended.store(true, std::sync::atomic::Ordering::SeqCst);
                 }

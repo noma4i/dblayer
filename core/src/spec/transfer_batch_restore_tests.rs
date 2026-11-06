@@ -25,7 +25,7 @@ fn element(id: u64, key: &str, completed: bool) -> crate::owners::write::transfe
 fn xfer_batch_rule_is_written_with_the_acceptance() {
     let mut twin = Twin::new();
     let reply = twin.reply();
-    let out = twin.post(TransferInput::AcceptBatch { joint: joint(), epoch: EPOCH, items: vec![item(FIRST, 1), item(SECOND, 1)], reply, now: Time(0) });
+    let out = twin.post(TransferInput::AcceptBatch { joint: Box::new(joint()), epoch: EPOCH, items: vec![item(FIRST, 1), item(SECOND, 1)], reply, now: Time(0) });
     let rules: Vec<(u64, String)> = out.batches.iter().flat_map(|batch| batch.ops.iter()).filter_map(|op| if let StoreOp::UploadBatch { batch_id, joint } = op { Some((*batch_id, joint.clone())) } else { None }).collect();
     assert_eq!(rules.len(), 1, "one rule for the two elements");
     let back = Joint::from_text(&rules[0].1).expect("the text reads back");

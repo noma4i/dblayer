@@ -12,7 +12,7 @@ pub enum LifeReply {
     Outbox(OutboxAnswer),
     Transfer(TransferAnswer),
     /// The outcome of a load that a platform call waited for in `Windows`.
-    Window(crate::owners::read::windows::WindowOutcome),
+    Window(Box<crate::owners::read::windows::WindowOutcome>),
     /// `Deliveries` closed the sink of a stream: the `cancel` of the platform returns.
     Cancelled,
     /// `Deliveries` counted its streams for `subscription_census`.

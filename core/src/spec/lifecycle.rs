@@ -376,18 +376,18 @@ pub fn traces(alphabet: &[Input], depth: usize, seeds: &[u64], length: usize) ->
     picked
 }
 
-pub async fn explore(owner: &LifecycleOwner, depth: usize, seeds: &[u64], length: usize, required: &[Vec<Input>]) -> Result<(), Divergence> {
+pub async fn explore(owner: &LifecycleOwner, depth: usize, seeds: &[u64], length: usize, required: &[Vec<Input>]) -> Result<(), Box<Divergence>> {
     for inputs in required.iter().cloned().chain(traces(&owner.alphabet, depth, seeds, length)) {
-        run(owner, owner.name(), &inputs).await?;
+        run(owner, owner.name(), &inputs).await.map_err(Box::new)?;
     }
     Ok(())
 }
 
 
 /// The same walk for any owner: the required traces, then the thinned traces to depth 4 and the seeded long ones.
-pub async fn explore_inputs(owner: &super::store::StoreOwner, required: &[Vec<Input>]) -> Result<(), Divergence> {
+pub async fn explore_inputs(owner: &super::store::StoreOwner, required: &[Vec<Input>]) -> Result<(), Box<Divergence>> {
     for inputs in required.iter().cloned().chain(traces(&owner.alphabet, 4, &[1, 2], 30)) {
-        run(owner, owner.name(), &inputs).await?;
+        run(owner, owner.name(), &inputs).await.map_err(Box::new)?;
     }
     Ok(())
 }

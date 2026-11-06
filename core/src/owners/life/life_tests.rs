@@ -245,7 +245,7 @@ async fn a_loaded_page_lands_through_the_store_and_the_caller_hears_loaded() {
     assert!(matches!(crate::test_wait::within(stale.wait()).await, crate::runtime::Outcome::EpochEnded(_)));
     let (waiter, _) = life.load(life.published().epoch, key, crate::owners::read::windows::Goal::First, false, 0);
     let reply = answer(waiter).await;
-    assert!(matches!(reply, Reply::Window(crate::owners::read::windows::WindowOutcome::Loaded { .. })), "the load ends as loaded: {reply:?} {:?}", life.faults());
+    assert!(matches!(&reply, Reply::Window(outcome) if matches!(**outcome, crate::owners::read::windows::WindowOutcome::Loaded { .. })), "the load ends as loaded: {reply:?} {:?}", life.faults());
     let stored: Vec<_> = ["m1", "m2"].iter().map(|id| db.find("moments", &crate::identity::RowId::new(id).unwrap()).unwrap().map(|row| row.text("text").map(str::to_string))).collect();
     assert_eq!(stored, [Some(Some("one".to_string())), Some(Some("two".to_string()))]);
     assert_eq!(transport.calls().len(), 1, "the old epoch never starts a request in the new identity");

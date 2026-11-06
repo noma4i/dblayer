@@ -135,14 +135,14 @@ impl Value {
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum PullAnswer {
-    Value(Value),
+    Value(Box<Value>),
     Done,
     Invalid,
 }
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum StreamEffect {
-    Read { read_id: u64, revision: i64, after: i64, view: Box<View> },
+    Read { read_id: u64, revision: i64, after: i64, view: View },
     Answer { outcome: OutcomeId, answer: PullAnswer },
     Available,
     CloseSink,

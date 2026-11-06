@@ -114,7 +114,7 @@ fn xfer_accept_key_open() {
     let out = twin.post(accept_input(KEY, 90));
     assert_eq!(Twin::fault(&out, 90), Some(Fault::InFlight));
     assert_eq!((out.writes(), out.outbox.len()), (0, 0), "no new transfer, no reservation");
-    let out = twin.post(TransferInput::AcceptBatch { joint: joint(), epoch: EPOCH, items: vec![item("Message:m2:send", 2), item(KEY, 2)], reply: 91, now: Time(0) });
+    let out = twin.post(TransferInput::AcceptBatch { joint: Box::new(joint()), epoch: EPOCH, items: vec![item("Message:m2:send", 2), item(KEY, 2)], reply: 91, now: Time(0) });
     assert_eq!(Twin::fault(&out, 91), Some(Fault::InFlight), "one open key refuses the whole batch");
     assert_eq!((out.writes(), twin.state().open_id("Message:m2:send")), (0, None));
     assert_eq!(twin.stage(id), TransferStage::Uploading);

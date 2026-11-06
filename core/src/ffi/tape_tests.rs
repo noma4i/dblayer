@@ -39,7 +39,7 @@ pub(crate) struct Seen {
     pub(crate) loaded: Option<i64>,
 }
 
-fn seen_of(seq: u64, value: ReadValue, size: &mut u32) -> Result<Seen, ReadValue> {
+fn seen_of(seq: u64, value: ReadValue, size: &mut u32) -> Result<Seen, Option<ReadEnd>> {
     let blank = |revision: i64, state: ReadState, size: u32| Seen { full: false, rows: Vec::new(), row_indexes: Vec::new(), size, revision, seq, removed: Vec::new(), placed: Vec::new(), replaced: Vec::new(), count: None, phase: Some(state.phase), error: state.error, loaded: state.loaded };
     Ok(match value {
         ReadValue::Snapshot { revision, rows, state } => {
@@ -52,7 +52,8 @@ fn seen_of(seq: u64, value: ReadValue, size: &mut u32) -> Result<Seen, ReadValue
         }
         ReadValue::Count { revision, count, state } => Seen { count: Some(count), ..blank(revision, state, *size) },
         ReadValue::State { revision, state } => blank(revision, state, *size),
-        other => return Err(other),
+        ReadValue::Ended { cause } => return Err(Some(cause)),
+        _ => return Err(None),
     })
 }
 
@@ -96,8 +97,8 @@ impl Reader for Rows {
         kept.1.push(value.clone());
         match seen_of(seq, value, &mut kept.0) {
             Ok(seen) => self.1.lock().unwrap().push(seen),
-            Err(ReadValue::Ended { cause }) => self.2.lock().unwrap().push(cause),
-            Err(_) => {}
+            Err(Some(cause)) => self.2.lock().unwrap().push(cause),
+            Err(None) => {}
         }
     }
 }

@@ -273,7 +273,7 @@ impl Database {
     pub fn restore_failed(&self) -> Result<Vec<crate::store::DroppedRecord>, DbError> { Ok(self.db.failed_restores()?) }
     pub fn discard_restore_failed(&self, table: String, key: String) -> Result<bool, DbError> { Ok(self.db.discard_restore_failed(&table, &key).map_err(crate::store::DbError::from)?) }
     pub async fn subscription_census(&self) -> Result<SubscriptionCensus, DbError> {
-        let (observed, subscriptions, retained, refused_events) = self.life.subscription_census().await.map_err(|_| DbError::Interrupted { detail: "the census was interrupted".into() })?;
+        let (observed, subscriptions, retained, refused_events) = self.life.subscription_census().await.ok_or_else(|| DbError::Interrupted { detail: "the census was interrupted".into() })?;
         Ok(SubscriptionCensus { observed_queries: observed as u64, subscriptions: subscriptions as u64, retained_observers: retained as u64, refused_events })
     }
     pub async fn file(&self, epoch: u64, model: String, row_id: String, field: String) -> Result<Option<String>, DbError> {

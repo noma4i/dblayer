@@ -442,7 +442,7 @@ impl Twin {
     pub fn accepted_items(&mut self, items: Vec<BatchItem>, joint: Joint) -> Vec<TransferId> {
         let reply = self.reply();
         let keys: Vec<String> = items.iter().map(|item| item.key.clone()).collect();
-        self.post(TransferInput::AcceptBatch { joint, epoch: EPOCH, items, reply, now: Time(0) });
+        self.post(TransferInput::AcceptBatch { joint: Box::new(joint), epoch: EPOCH, items, reply, now: Time(0) });
         let ids: Vec<TransferId> = keys.iter().map(|key| self.state().open_id(key).expect("an element")).collect();
         self.commit();
         for id in &ids {

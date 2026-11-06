@@ -329,7 +329,7 @@ fn xfer_closing_copying() {
     assert_eq!((twin.stage(id), out.copy_cancels(), out.deletes(), out.drained()), (TransferStage::Done, 1, 1, 1));
     assert_eq!(out.replies(reply), vec![TransferAnswer::Err(Fault::Interrupted)]);
     let mut batch = Twin::new();
-    batch.post(TransferInput::AcceptBatch { joint: joint(), epoch: EPOCH, items: vec![item(KEY, 2), item(OTHER, 2)], reply: 5, now: Time(0) });
+    batch.post(TransferInput::AcceptBatch { joint: Box::new(joint()), epoch: EPOCH, items: vec![item(KEY, 2), item(OTHER, 2)], reply: 5, now: Time(0) });
     batch.commit();
     let ids = [batch.state().open_id(KEY).expect("first"), batch.state().open_id(OTHER).expect("second")];
     batch.copy_done(ids[0]);

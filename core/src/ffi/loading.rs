@@ -231,11 +231,12 @@ impl Database {
         call.leave.settled = true;
         let reply = reply?;
         if !self.admits(call.epoch) { return Err(super::command::ended()); }
-        match reply {
-            LifeReply::Window(WindowOutcome::Loaded { has_more, fetched, .. }) => Ok(if fetched { LoadMoreResult::Loaded { has_more } } else { LoadMoreResult::NoMore }),
-            LifeReply::Window(WindowOutcome::Failed { source: Some(source), .. }) => Err(DbError::from(source)),
-            LifeReply::Window(WindowOutcome::Failed { error, .. }) => Err(DbError::Database { detail: error }),
-            LifeReply::Window(WindowOutcome::PageLimit) => Err(DbError::Invalid { detail: "the window reached its page limit".into() }),
+        let LifeReply::Window(outcome) = reply else { return Err(super::command::ended()) };
+        match *outcome {
+            WindowOutcome::Loaded { has_more, fetched, .. } => Ok(if fetched { LoadMoreResult::Loaded { has_more } } else { LoadMoreResult::NoMore }),
+            WindowOutcome::Failed { source: Some(source), .. } => Err(DbError::from(source)),
+            WindowOutcome::Failed { error, .. } => Err(DbError::Database { detail: error }),
+            WindowOutcome::PageLimit => Err(DbError::Invalid { detail: "the window reached its page limit".into() }),
             _ => Err(super::command::ended()),
         }
     }

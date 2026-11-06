@@ -2,7 +2,7 @@ use super::*;
 
 fn delivered(log: &Spied) -> Vec<d::Value> {
     snapshot(log).into_iter().filter_map(|entry| match entry {
-        Emitted::Run(DeliveryEffect::Stream { effect: StreamEffect::Answer { answer: PullAnswer::Value(value), .. }, .. }) => Some(value),
+        Emitted::Run(DeliveryEffect::Stream { effect: StreamEffect::Answer { answer: PullAnswer::Value(value), .. }, .. }) => Some(*value),
         _ => None,
     }).collect()
 }
@@ -426,7 +426,7 @@ fn dlv_prop_delta_order() {
         det.run_until_quiet(1_000).expect("quiet");
         for entry in take(&log) {
             let Emitted::Run(DeliveryEffect::Stream { effect: StreamEffect::Answer { answer: PullAnswer::Value(value), .. }, .. }) = entry else { continue };
-            match value {
+            match *value {
                 d::Value::Snapshot { rows, .. } => platform = rows.iter().map(|row| row.id.clone()).collect(),
                 d::Value::Delta(delta) => {
                     platform = apply(platform.clone(), &delta);

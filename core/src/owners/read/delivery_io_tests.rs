@@ -97,7 +97,8 @@ fn delivery_io_read_sees_commit() {
         taken = taken.take().or_else(|| waiter.try_take());
         taken.is_some()
     });
-    let Some(Outcome::Value(PullAnswer::Value(Value::Snapshot { revision, rows, .. }))) = taken else { panic!("the first value is a Snapshot: {taken:?}") };
+    let Some(Outcome::Value(PullAnswer::Value(first))) = taken else { panic!("the first value is a value: {taken:?}") };
+    let Value::Snapshot { revision, rows, .. } = *first else { panic!("the first value is a Snapshot") };
     assert_eq!(revision, 2);
     assert_eq!(rows.iter().map(|row| row.id.as_str()).collect::<Vec<_>>(), ["p1", "p2"]);
     assert!(rig.windows.lock().unwrap().iter().any(|input| input.starts_with("InterestPlus")), "the window interest of a List is an input of the Windows");

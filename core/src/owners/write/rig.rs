@@ -3,7 +3,7 @@
 use std::collections::{BTreeMap, VecDeque};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
-use std::task::{Context, Poll, Wake, Waker};
+use std::task::{Context, Poll, Waker};
 
 use async_trait::async_trait;
 
@@ -23,11 +23,6 @@ pub(super) fn peer<P: StateOwner>(det: &mut DetScheduler, name: &'static str) ->
 
 fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> { mutex.lock().unwrap_or_else(PoisonError::into_inner) }
 
-struct Quiet;
-
-impl Wake for Quiet {
-    fn wake(self: Arc<Self>) {}
-}
 
 #[derive(Default)]
 struct Pool {
@@ -47,7 +42,7 @@ impl ManualSpawn {
     }
 
     fn poll_all(&self) -> bool {
-        let waker = Waker::from(Arc::new(Quiet));
+        let waker = Waker::noop().clone();
         let mut moved = false;
         let jobs = std::mem::take(&mut lock(&self.0).jobs);
         for (_, job) in jobs {

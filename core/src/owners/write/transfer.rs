@@ -298,7 +298,7 @@ impl TransferState {
         }
         match input {
             TransferInput::Accept { epoch, item, reply, now } => self.accept(epoch, vec![*item], None, reply, now, fx),
-            TransferInput::AcceptBatch { epoch, items, joint, reply, now } => self.accept(epoch, items, Some(joint), reply, now, fx),
+            TransferInput::AcceptBatch { epoch, items, joint, reply, now } => self.accept(epoch, items, Some(*joint), reply, now, fx),
             TransferInput::Restored { .. } | TransferInput::RestoreFailed { .. } => {}
             TransferInput::AbortDone { upload_id, answered } => self.abort_done(upload_id, answered, fx),
             TransferInput::RegisterOperations { declarations } => self.register(declarations, fx),

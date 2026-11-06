@@ -71,7 +71,7 @@ pub(super) fn add(builder: &mut RuntimeBuilder, wiring: &Arc<Wiring>, ports: &Po
         ports.executor.clone(),
         Box::new(move |stamp, effect| match effect {
             WindowsEffect::Window { effect: WindowEffect::Outcome { id, outcome }, .. } if id & CALL != 0 => {
-                windows_wiring.outcomes.settle(OutcomeId::from_raw(id & !CALL), LifeReply::Window(outcome));
+                windows_wiring.outcomes.settle(OutcomeId::from_raw(id & !CALL), LifeReply::Window(Box::new(outcome)));
             }
             WindowsEffect::Window { effect: WindowEffect::DerivePreload { .. }, .. } => {
                 let (db, handle, wiring) = (derive_db.clone(), derive_handle.clone(), windows_wiring.clone());
@@ -209,18 +209,18 @@ impl super::Life {
     }
 
     /// The streams of Deliveries and the channels of Feed now, read from the fields of the owners: `(observed_queries, subscriptions, retained_observers)`.
-    pub async fn subscription_census(&self) -> Result<(usize, usize, usize, u64), LifeReply> {
+    pub async fn subscription_census(&self) -> Option<(usize, usize, usize, u64)> {
         if self.is_shut() {
-            return Ok((0, 0, 0, 0));
+            return Some((0, 0, 0, 0));
         }
         let streams = self.wiring.outcomes.register(Epoch::MAX);
         let channels = self.wiring.outcomes.register(Epoch::MAX);
         self.wiring.to_deliveries(DeliveryInput::Census { reply: streams.id().raw() });
         self.wiring.to_feed(FeedInput::Census { reply: channels.id().raw() });
         match (streams.wait().await, channels.wait().await) {
-            (Outcome::Value(LifeReply::Streams { observed, retained }), Outcome::Value(LifeReply::Channels { subscriptions, refused })) => Ok((observed, subscriptions, retained, refused)),
-            (Outcome::Closing, _) | (_, Outcome::Closing) => Ok((0, 0, 0, 0)),
-            _ => Err(LifeReply::Closed),
+            (Outcome::Value(LifeReply::Streams { observed, retained }), Outcome::Value(LifeReply::Channels { subscriptions, refused })) => Some((observed, subscriptions, retained, refused)),
+            (Outcome::Closing, _) | (_, Outcome::Closing) => Some((0, 0, 0, 0)),
+            _ => None,
         }
     }
 

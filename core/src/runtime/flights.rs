@@ -42,4 +42,6 @@ impl<K: Ord> Flights<K> {
     }
 
     pub fn len(&self) -> usize { lock(&self.0).len() }
+
+    pub fn is_empty(&self) -> bool { lock(&self.0).is_empty() }
 }

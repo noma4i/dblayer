@@ -140,12 +140,16 @@ impl Drop for SubscriptionSender {
     }
 }
 
+/// The receiver of the subscription is gone.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ReceiverGone;
+
 impl SubscriptionSender {
-    pub fn send(&self, event: SubscriptionEvent) -> Result<(), ()> {
+    pub fn send(&self, event: SubscriptionEvent) -> Result<(), ReceiverGone> {
         let hold = crate::lock::lock(&self.0.queue).hold.clone();
         let mut lease = hold.and_then(|hold| hold());
         let mut queue = crate::lock::lock(&self.0.queue);
-        if !queue.receiving { drop(queue); drop(lease); return Err(()); }
+        if !queue.receiving { drop(queue); drop(lease); return Err(ReceiverGone); }
         if queue.failure.is_some() { drop(queue); drop(lease); return Ok(()); }
         if queue.held.is_none() { queue.held = lease.take(); }
         if matches!(event, SubscriptionEvent::Next(_)) { queue.ordinal += 1; }
