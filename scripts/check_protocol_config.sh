@@ -14,7 +14,7 @@ exceptions = {
     "fixtures/bootstrap-config/bootstrap_kat.json",
     "fixtures/encrypted-http/kat.json",
 }
-pattern = re.compile(r"/api/v3|[Yy][Uu][Pp][Ii]|[Zz]ooko|\bV3\b|\bv3[._:]")
+pattern = re.compile(r"/api/v[3]|[Yy][Uu][Pp][Ii]|[Zz]ooko|\bV[3]\b|\bv[3][._:]")
 
 def scan(directory):
     findings = []
@@ -36,7 +36,7 @@ if sys.argv[2] == "--selftest":
         probe = Path(temporary)
         (probe / "core/src").mkdir(parents=True)
         path = probe / "core/src/foreign.rs"
-        path.write_text('const PATH: &str = "/api/v3/graphql";\n')
+        path.write_text('const PATH: &str = "/api/v' + '3/graphql";\n')
         assert scan(probe) == ["core/src/foreign.rs:1"]
         print("protocol config selftest: forbidden foreign file is red")
         path.write_text('const PATH: &str = "/api/graphql";\n')

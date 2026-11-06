@@ -4,7 +4,7 @@ use serde_json::json;
 
 use super::bridge_tests::message;
 use super::rig_tests::{bound, Rig, World};
-use super::v3_fixtures::{add_chat, cell, chat_row, int, land_event, text};
+use super::flow_fixtures::{add_chat, cell, chat_row, int, land_event, text};
 use crate::ffi::tape::Rows;
 use crate::ffi::wire::Cell;
 use crate::ffi::WireOperationOutcome;
@@ -32,7 +32,7 @@ async fn send(rig: &Rig, at: i64) -> crate::ffi::WireOperationReceipt {
 
 /// P-APP-01, path Message.create and the answer: the chat row points at the new message at the revision of the receipt, the answer swaps the temporary id for the server id.
 #[tokio::test(flavor = "multi_thread")]
-async fn v3_chat_last_message_follows_a_sent_message_and_its_answer() {
+async fn flow_chat_last_message() {
     let (rig, rows) = rig_with_chat().await;
     let hold = rig.world.hold_next("SendMessage");
 
@@ -54,7 +54,7 @@ async fn v3_chat_last_message_follows_a_sent_message_and_its_answer() {
 
 /// P-APP-01, guard `newer:`: a message event older than the last one leaves the chat row alone in every delivery.
 #[tokio::test(flavor = "multi_thread")]
-async fn v3_chat_last_message_ignores_an_older_message_event() {
+async fn flow_chat_last_message_ignores_an_older_message_event() {
     let (rig, rows) = rig_with_chat().await;
     let receipt = send(&rig, 100).await;
     assert!(matches!(bound(rig.database.outcome(receipt)).await.unwrap(), WireOperationOutcome::Confirmed { .. }));
@@ -72,7 +72,7 @@ async fn v3_chat_last_message_ignores_an_older_message_event() {
 
 /// P-APP-01, path event: a newer message that arrives as an event moves the chat row.
 #[tokio::test(flavor = "multi_thread")]
-async fn v3_chat_last_message_follows_a_message_event() {
+async fn flow_chat_last_message_follows_a_message_event() {
     let (rig, rows) = rig_with_chat().await;
 
     land_event(&rig, "Message", json!({"id":"m9","chatId":"c1","text":"event","at":200}));

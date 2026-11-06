@@ -3,7 +3,7 @@ use std::sync::Arc;
 use serde_json::json;
 
 use super::rig_tests::{bound, Fault, Rig, World};
-use super::v3_fixtures::{add_chat, cell, chat_row, land_event, text};
+use super::flow_fixtures::{add_chat, cell, chat_row, land_event, text};
 use crate::ffi::tape::Rows;
 use crate::ffi::wire::Cell;
 use crate::ffi::{WireOperationOutcome, WireOperationReceipt};
@@ -49,7 +49,7 @@ fn forwarded_by_me(rig: &Rig, rows: &Rows, id: &str) -> bool {
 
 /// P-APP-16: the copy of a forward stands in the target thread at the revision of the receipt with the current user as author and the author of the source as origin, the target chat points at it, the answer replaces it without a second bubble, a refusal removes it and the pointer.
 #[tokio::test(flavor = "multi_thread")]
-async fn v3_message_forward_shows_the_copy_at_once_and_the_answer_replaces_it() {
+async fn flow_message_forward() {
     let rig = rig_with_source().await;
     let thread = watch(&rig, TARGET_THREAD, 0).await;
     let chats = watch(&rig, CHATS, 2).await;

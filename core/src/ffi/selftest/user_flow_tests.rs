@@ -3,7 +3,7 @@ use std::sync::Arc;
 use serde_json::json;
 
 use super::rig_tests::{bound, Held, Rig, World};
-use super::v3_fixtures::{add_chat, chat_row, land_event};
+use super::flow_fixtures::{add_chat, chat_row, land_event};
 use crate::ffi::tape::Rows;
 use crate::ffi::ReadEnd;
 use crate::test_wait::yield_until;
@@ -14,7 +14,7 @@ fn first_named(rows: &Rows, name: &str) -> Option<i64> {
 
 /// P-APP-18: one row of the user gives one name in every place that shows it, at one revision, whether it comes with an answer of the server or with an event.
 #[tokio::test(flavor = "multi_thread")]
-async fn v3_user_everywhere_shows_one_name_in_every_stream_at_one_revision() {
+async fn flow_user_everywhere() {
     let rig = Rig::encrypted().await;
     rig.login_ios("A").await;
     let held = Held::open(&rig.database);
@@ -39,7 +39,7 @@ async fn v3_user_everywhere_shows_one_name_in_every_stream_at_one_revision() {
 
 /// P-APP-28: after the exit every stream of the old account ends, and the next account sees no chat, no message and no user of the old one.
 #[tokio::test(flavor = "multi_thread")]
-async fn v3_account_switch_leaves_nothing_of_the_old_account() {
+async fn flow_account_switch_clean() {
     let rig = Rig::signed_as(World::new("server", "A", true), false, add_chat).await;
     land_event(&rig, "Chat", chat_row("c1", 0));
     land_event(&rig, "Message", json!({"id": "m1", "chatId": "c1", "text": "secret", "at": 3}));

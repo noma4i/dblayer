@@ -25,7 +25,7 @@ The script refuses the tag, in a dry run and in a publish run, when one of these
 
 1. The selftest sequence manifest (`manifest.tsv` in the FFI selftest directory of the core) must exist. It lists the sequence tests of the three lanes. A missing manifest stops the release before any build.
 2. `scripts/check_sequences.sh <stage>` runs the listed tests in the core, Swift and Kotlin lanes. It first compares the staged files with the built tree, so the tests run on the bytes that ship. Every listed test must run and pass, and a lane with no listed test is red. Logs and `sequences.tsv` go to the stage. Limits: `SEQ_CORE_LIMIT`, `SEQ_SWIFT_LIMIT`, `SEQ_KOTLIN_LIMIT` (seconds, default 900 each).
-3. `scripts/check_consumers.sh` runs the iOS and Android app suites, in parallel, on a local package built from the stage. The script runs when the files changed since the previous tag touch `core/src/{lifecycle,ffi,session,sync,store}/`, `gen/`, `swift/`, `kotlin/`, the root `Cargo.toml` or the build and check scripts of the release. `RELEASE_CONSUMERS=always` forces it. No setting skips it.
+3. `scripts/check_consumers.sh` runs the iOS and Android consumer suites, in parallel, on a local package built from the stage. The script runs when the files changed since the previous tag touch `core/src/{lifecycle,ffi,session,sync,store}/`, `gen/`, `swift/`, `kotlin/`, the root `Cargo.toml` or the build and check scripts of the release. `RELEASE_CONSUMERS=always` forces it. No setting skips it.
 4. Before the receipt and the tag, in the dry run too, `release.sh` requires fresh, non-empty `sequences.tsv` and `consumers.tsv` from this run. The sequence lanes are exactly `core`, `swift` and `kotlin`, each with rc 0, listed above 0 and equal to the manifest count of that lane, and passed equal to listed. When the app suites are required, the consumer lanes are exactly `ios` and `android`, each with rc 0. A missing file, a missing or extra lane or an incomplete result stops the release with no receipt and no tag. A failed write of either file fails the script that writes it.
 
 `release.sh` records the source commit and a run id before the build and exports them as `RELEASE_SOURCE_SHA` and `RELEASE_RUN_ID`. Every row of `sequences.tsv` and `consumers.tsv` ends with that SHA and run id. Before the receipt, the package commit and the tag, `release.sh` refuses the release when HEAD differs from the recorded SHA (the Package release commit directly on top of it is the only exception), when the tree is dirty, or when any report row has another SHA or run id.
@@ -35,13 +35,11 @@ Single run rule: one release run per checkout. `release.sh` holds the lock direc
 
 5. `RECEIPT.json` in the stage records the source commit, the manifest hash, the hash of each release file, the sequence results and the app suite results.
 
-`check_consumers.sh` makes a fresh worktree of the app repository from the app ref of each lane (default `master`; a missing ref fails with its name) and uses its own library cache. It never reads or writes the shared library caches. It removes the trees and caches when it ends. Required environment:
+`check_consumers.sh` makes a fresh worktree of the consumer repository from the ref of each lane (default `master`; a missing ref fails with its name) and runs the lane command in it. The commands live in the consumer repository. The script never reads or writes shared library caches and removes its trees when it ends.
 
-The script lists every required variable in its header and names every missing one in its error. They set the app repository checkout, the simulator name for `sim-run` (iOS lane), and the Android build host with its absolute library root (Android lane).
+Required environment: `CONSUMER_REPO` (the consumer checkout), `CONSUMER_IOS_COMMAND` (iOS lane) and `CONSUMER_ANDROID_COMMAND` (Android lane). The script names every missing variable in its error. Optional: `CONSUMER_IOS_REF`, `CONSUMER_ANDROID_REF`, `CONSUMER_WORK_ROOT`, `BUILD_SLOT`.
 
-Optional settings: the app ref of each lane, the library cache path of the Android lane, the read-only source of the MediaLayer entries, the work root, `SIM_RUN`, `BUILD_SLOT`, the iOS build and test limits and the Gradle timeout of the Android lane.
-
-The iOS lane generates the app project against the local package, builds the logic test scheme, then runs the whole bundle. Only exit code 0 of the app unit test script is a pass. The Android lane resolves the staged Maven files from its own cache, runs the debug unit tests and the native sandbox unit tests on the build host, and requires `rc=0`, executed JVM tests, no failures, no cached result and an executed native sandbox task. `scripts/check_release_modes.sh` tests the refusals with stub commands.
+A lane command receives `DBLAYER_PACKAGE` (local Swift package), `DBLAYER_MAVEN` (staged Maven directory), `DBLAYER_GEN` (staged generator), `DBLAYER_VERSION` and `DBLAYER_STAGE`. Only exit code 0 is a pass. `scripts/check_release_modes.sh` tests the refusals with stub commands.
 
 ## Release page
 

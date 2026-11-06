@@ -4,7 +4,7 @@ use serde_json::{json, Value};
 
 use super::bridge_tests::message;
 use super::rig_tests::{bound, Rig, World};
-use super::v3_fixtures::{add_chat, add_media, cell, chat_row, int, land_event, text, texts};
+use super::flow_fixtures::{add_chat, add_media, cell, chat_row, int, land_event, text, texts};
 use crate::ffi::tape::Rows;
 use crate::ffi::wire::Cell;
 use crate::ffi::{ReadFetch, ReadRequest};
@@ -45,7 +45,7 @@ fn event(id: &str, extra: Value) -> Value {
 
 /// P-APP-14: the local preview of a sent message stands at once and survives events of the server, the URL of the server is never emptied and the progress of the transcode never falls, in the thread and in the entity.
 #[tokio::test(flavor = "multi_thread")]
-async fn v3_message_media_keeps_the_preview_the_url_and_the_progress() {
+async fn flow_message_media_upload() {
     let rig = rig().await;
     let (rows, last) = (thread(&rig).await, entity(&rig, "Message", "m1"));
     let epoch = rig.database.session_epoch();
@@ -80,7 +80,7 @@ async fn v3_message_media_keeps_the_preview_the_url_and_the_progress() {
 
 /// P-APP-15: opening a gift sets the local flag in the thread and in the entity of the last message at once, and the event of the server that opens it does not clear the flag.
 #[tokio::test(flavor = "multi_thread")]
-async fn v3_message_gift_opened_flag_survives_the_event() {
+async fn flow_message_gift() {
     let rig = rig().await;
     land_event(&rig, "Message", event("g1", json!({"gift": {"status": "WRAPPED"}})));
     let (rows, last) = (thread(&rig).await, entity(&rig, "Message", "g1"));
@@ -98,7 +98,7 @@ async fn v3_message_gift_opened_flag_survives_the_event() {
 
 /// P-APP-17: the local media counters of a chat are written by the app, shown in the chat list, and neither an event nor an answer of the server clears them.
 #[tokio::test(flavor = "multi_thread")]
-async fn v3_chat_media_library_counters_survive_the_server() {
+async fn flow_chat_media_library() {
     let rig = rig().await;
     let chats = Arc::new(Rows::default());
     let stream = rig.database.watch_query(r#"{"model":"Chat","relation":"all","params":{}}"#, chats.clone());

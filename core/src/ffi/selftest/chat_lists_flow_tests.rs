@@ -3,7 +3,7 @@ use std::sync::Arc;
 use serde_json::json;
 
 use super::rig_tests::{bound, Rig, World};
-use super::v3_fixtures::{add_chat, add_lists, add_profile, cell, land_event, text};
+use super::flow_fixtures::{add_chat, add_lists, add_profile, cell, land_event, text};
 use crate::ffi::tape::Rows;
 use crate::ffi::wire::Cell;
 use crate::ffi::WireOperationOutcome;
@@ -30,7 +30,7 @@ fn names(rig: &Rig, rows: &Rows) -> Vec<(String, Cell)> { rows.0.lock().unwrap()
 
 /// P-APP-03: a chat that is not in the cache appears in its list by an event with the chat and by the answer of a request that lands it, without a reread of the list.
 #[tokio::test(flavor = "multi_thread")]
-async fn v3_chat_appears_in_its_list_on_every_path() {
+async fn flow_chat_appears_from_event() {
     let rig = rig().await;
     let (primary, secondary) = (watch(&rig, PRIMARY).await, watch(&rig, SECONDARY).await);
     let epoch = rig.database.session_epoch();
@@ -53,7 +53,7 @@ async fn v3_chat_appears_in_its_list_on_every_path() {
 
 /// P-APP-09: the forward picker reads the PRIMARY list: it holds the same chats with the same data as the inbox, also after a rename.
 #[tokio::test(flavor = "multi_thread")]
-async fn v3_forward_picker_shows_the_rows_of_the_inbox() {
+async fn flow_forward_picker() {
     let rig = rig().await;
     let (inbox, picker) = (watch(&rig, PRIMARY).await, watch(&rig, PRIMARY).await);
     land_event(&rig, "Chat", json!({"id": "c1", "name": "one", "lists": ["PRIMARY"]}));
@@ -67,7 +67,7 @@ async fn v3_forward_picker_shows_the_rows_of_the_inbox() {
 
 /// P-APP-08: a new name of a group shows in the list and in the entity of the chat at the revision of the receipt, the answer keeps it, and an event changes it.
 #[tokio::test(flavor = "multi_thread")]
-async fn v3_group_name_shows_in_every_place_on_every_path() {
+async fn flow_group_name_logo() {
     let rig = rig().await;
     let list = watch(&rig, PRIMARY).await;
     let entity = Arc::new(Rows::default());

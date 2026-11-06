@@ -3,7 +3,7 @@ use std::sync::Arc;
 use serde_json::json;
 
 use super::rig_tests::{bound, Fault, Held, Rig};
-use super::v3_fixtures::{add_chat, add_profile, cell, int, land_event, text};
+use super::flow_fixtures::{add_chat, add_profile, cell, int, land_event, text};
 use crate::ffi::tape::Rows;
 use crate::ffi::wire::Cell;
 use crate::ffi::WireOperationOutcome;
@@ -23,7 +23,7 @@ fn first_seen_at(rig: &Rig, rows: &Rows, id: &str, name: &str, value: Cell) -> i
 
 /// P-APP-21: a new name of the account shows in the profile, the entity and the user list at the revision of the receipt, the answer and its refetch keep it, an event changes it, a refusal brings the old name back.
 #[tokio::test(flavor = "multi_thread")]
-async fn v3_current_user_profile_shows_the_new_name_in_every_place() {
+async fn flow_current_user_profile() {
     let rig = rig().await;
     rig.login_ios("A").await;
     let held = Held::open(&rig.database);
@@ -59,7 +59,7 @@ async fn v3_current_user_profile_shows_the_new_name_in_every_place() {
 
 /// P-APP-19 and P-APP-05: accepting a request shows the user as connected at the revision of the receipt, the answer lands the chat as connected and the refetch of the profile lowers the counters, and a counters event sets them again.
 #[tokio::test(flavor = "multi_thread")]
-async fn v3_connection_accept_moves_the_user_the_chat_and_the_counters() {
+async fn flow_connection_accept() {
     let rig = rig().await;
     rig.world.set_profile(json!({"secondaryChatsCount": 3, "unreadSecondaryChatsCount": 2}));
     rig.login_ios("A").await;
@@ -99,7 +99,7 @@ async fn v3_connection_accept_moves_the_user_the_chat_and_the_counters() {
 
 /// P-APP-20: a block changes the blocked list only after the answer, an unblock takes the user out after its answer, a refused block changes nothing.
 #[tokio::test(flavor = "multi_thread")]
-async fn v3_user_block_changes_the_blocked_list_after_the_answer_only() {
+async fn flow_user_block() {
     let rig = rig().await;
     rig.login_ios("A").await;
     land_event(&rig, "User", json!({"id": "u5", "name": "Eve"}));

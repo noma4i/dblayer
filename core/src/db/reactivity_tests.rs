@@ -65,7 +65,7 @@ fn include_of_has_many_follows_new_children() {
     let _subscription = db.observe(Query::new("moments").including(&["vibes"]), callback).unwrap();
     db.await_revision(db.revision_seq().unwrap());
     assert_eq!(changes(&log)[0].related["vibes"][&rid("m1")].len(), 2);
-    put(&db, "vibes", json!({"id": "v3", "momentId": "m1", "kind": "fire"}));
+    put(&db, "vibes", json!({"id": "v9", "momentId": "m1", "kind": "fire"}));
     let all = changes(&log);
     assert_eq!(all[1].related["vibes"][&rid("m1")].len(), 3);
     assert_eq!(all[1].diff.updated, vec![rid("m1")]);

@@ -3,7 +3,7 @@ use std::sync::Arc;
 use serde_json::json;
 
 use super::rig_tests::{bound, Rig, World};
-use super::v3_fixtures::{add_chat, add_typing, land_event};
+use super::flow_fixtures::{add_chat, add_typing, land_event};
 use crate::ffi::tape::Rows;
 use crate::test_wait::yield_until;
 
@@ -19,7 +19,7 @@ async fn watch(rig: &Rig, query: &str) -> Arc<Rows> {
 
 /// P-APP-07: a typing row from a local write or an event of the server shows in the header and in the chat row at one revision, and every path ends it: a destroy, an event of the server and the expiry after 8 seconds.
 #[tokio::test(flavor = "multi_thread")]
-async fn v3_chat_typing_shows_in_both_places_and_ends_by_every_path() {
+async fn flow_chat_typing() {
     let rig = Rig::signed_as(World::new("server", "A", true), false, |models| { add_chat(models); add_typing(models); }).await;
     let (header, row) = (watch(&rig, HEADER).await, watch(&rig, ROW).await);
     let places = [&header, &row];

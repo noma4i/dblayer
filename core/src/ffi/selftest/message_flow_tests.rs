@@ -4,7 +4,7 @@ use serde_json::json;
 
 use super::bridge_tests::message;
 use super::rig_tests::{bound, Fault, Rig, World};
-use super::v3_fixtures::{add_chat, cell, chat_row, land_delete, land_event, text};
+use super::flow_fixtures::{add_chat, cell, chat_row, land_delete, land_event, text};
 use crate::ffi::tape::Rows;
 use crate::ffi::wire::Cell;
 use crate::ffi::{ReadFetch, ReadRequest, WireOperationOutcome, WireOperationReceipt};
@@ -54,7 +54,7 @@ async fn confirmed(rig: &Rig, receipt: WireOperationReceipt) {
 
 /// P-APP-11: an edit changes the text in the thread and in the entity of the last message at the revision of the receipt, the answer and an event of the server keep it.
 #[tokio::test(flavor = "multi_thread")]
-async fn v3_message_edit_shows_one_text_in_every_place_on_every_path() {
+async fn flow_message_edit() {
     let rig = rig_with_messages(&[("m1", "hello", 1)]).await;
     let thread = watch(&rig, THREAD, 1).await;
     let last = entity(&rig, "m1");
@@ -79,7 +79,7 @@ async fn v3_message_edit_shows_one_text_in_every_place_on_every_path() {
 
 /// P-APP-12: a delete takes the message out of the thread and moves the pointer of the chat to the previous message at the revision of the receipt, a refusal brings both back, an event of the server deletes it the same way.
 #[tokio::test(flavor = "multi_thread")]
-async fn v3_message_delete_leaves_the_thread_and_the_chat_row_together() {
+async fn flow_message_delete() {
     let rig = rig_with_messages(&[("m1", "first", 1), ("m2", "second", 2)]).await;
     let thread = watch(&rig, THREAD, 2).await;
     let chats = watch(&rig, CHATS, 1).await;
@@ -112,7 +112,7 @@ async fn v3_message_delete_leaves_the_thread_and_the_chat_row_together() {
 
 /// P-APP-13: a sent message is one bubble before and after the answer, never two. An event of the server with the status changes the bubble.
 #[tokio::test(flavor = "multi_thread")]
-async fn v3_message_status_keeps_one_bubble_across_the_answer_and_follows_events() {
+async fn flow_message_status() {
     let rig = rig_with_messages(&[]).await;
     let thread = watch(&rig, THREAD, 0).await;
     let epoch = rig.database.session_epoch();

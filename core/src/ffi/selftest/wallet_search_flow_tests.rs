@@ -3,7 +3,7 @@ use std::sync::Arc;
 use serde_json::json;
 
 use super::rig_tests::{bound, Fault, Rig};
-use super::v3_fixtures::{add_chat, add_profile, add_search, add_wallet, cell, chat_row, int, land_event, text};
+use super::flow_fixtures::{add_chat, add_profile, add_search, add_wallet, cell, chat_row, int, land_event, text};
 use crate::ffi::tape::Rows;
 use crate::ffi::wire::Cell;
 use crate::ffi::WireOperationOutcome;
@@ -26,7 +26,7 @@ fn first_seen_at(rig: &Rig, model: &str, rows: &Rows, id: &str, name: &str, valu
 
 /// P-APP-25: a gift lowers the balance at the revision of the receipt, and its answer adds the transaction to the history and the gift message to the thread and the chat row.
 #[tokio::test(flavor = "multi_thread")]
-async fn v3_wallet_gift_moves_the_balance_the_history_and_the_thread() {
+async fn flow_wallet_gift() {
     let rig = Rig::encrypted_edited(false, false, false, |models| { add_chat(models); add_profile(models); add_wallet(models); }).await;
     rig.world.set_profile(json!({"balance": 100}));
     rig.login_ios("A").await;
@@ -53,7 +53,7 @@ async fn v3_wallet_gift_moves_the_balance_the_history_and_the_thread() {
 
 /// P-APP-27: the row of a chat in the search is the row of the inbox: a local change and an event reach both lists at one revision.
 #[tokio::test(flavor = "multi_thread")]
-async fn v3_search_follows_the_rows_of_the_inbox() {
+async fn flow_search_follows_rows() {
     let rig = Rig::encrypted_edited(false, false, false, |models| { add_chat(models); add_search(models); }).await;
     rig.login_ios("A").await;
     land_event(&rig, "Chat", chat_row("c1", 0));

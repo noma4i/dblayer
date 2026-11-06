@@ -28,7 +28,7 @@ async fn chat_with_members() -> (Rig, WireRow, Arc<Rows>, serde_json::Value) {
 
 /// P-APP-26: the member list of a chat shows the added user at the revision of the receipt, before the server answers, and keeps the user after the answer.
 #[tokio::test(flavor = "multi_thread")]
-async fn v3_group_members_add_shows_the_user_at_the_receipt_revision_and_keeps_it_after_the_answer() {
+async fn flow_group_members() {
     let (rig, chat, rows, _) = chat_with_members().await;
     let epoch = rig.database.session_epoch();
     rig.world.set_members("JOINED", &["u1", "u2", "u3", "u4"]);
@@ -51,7 +51,7 @@ async fn v3_group_members_add_shows_the_user_at_the_receipt_revision_and_keeps_i
 
 /// P-APP-26: a refusal of the server removes the added user from the list.
 #[tokio::test(flavor = "multi_thread")]
-async fn v3_group_members_refused_add_removes_the_user_from_the_list() {
+async fn flow_group_members_refused_add_removes_the_user_from_the_list() {
     let (rig, chat, rows, _) = chat_with_members().await;
     let epoch = rig.database.session_epoch();
     let hold = rig.world.hold_then("AddMember", Fault::Business);

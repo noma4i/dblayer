@@ -7,7 +7,7 @@ use crate::value::ScalarKind;
 
 fn optional(name: &str, kind: ScalarKind) -> FieldSpec { FieldSpec::scalar(name, kind).nullable().optional() }
 
-/// A chat that points at its last message and keeps counters, as the chat rows of the V3 apps do.
+/// A chat that points at its last message and keeps counters, as chat rows of a messenger do.
 pub(super) fn chat_spec() -> ModelSpec {
     let mut chat = ModelSpec::new("Chat", vec![
         FieldSpec::scalar("id", ScalarKind::Id),

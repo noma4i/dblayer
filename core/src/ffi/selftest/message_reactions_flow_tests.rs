@@ -3,7 +3,7 @@ use std::sync::Arc;
 use serde_json::{json, Value};
 
 use super::rig_tests::{add_reactions, bound, Fault, Rig, World};
-use super::v3_fixtures::{add_chat, add_reactor_user, cell, chat_row, land_event, texts};
+use super::flow_fixtures::{add_chat, add_reactor_user, cell, chat_row, land_event, texts};
 use crate::ffi::tape::Rows;
 use crate::ffi::{ReadFetch, ReadRequest, WireOperationOutcome};
 use crate::test_wait::yield_until;
@@ -23,7 +23,7 @@ fn answer(reactions: Value) -> Fault { Fault::Answer(json!({"data":{"messageReac
 
 /// P-APP-10: a reaction shows in the thread and in the entity of the message at the revision of the receipt, the answer and an event keep it.
 #[tokio::test(flavor = "multi_thread")]
-async fn v3_message_reactions_show_one_set_everywhere_and_follow_the_reactor() {
+async fn flow_message_reactions() {
     let rig = Rig::signed_as(World::new("server", "A", true), false, |models| { add_chat(models); add_reactions(models); add_reactor_user(models); }).await;
     land_event(&rig, "Chat", chat_row("c1", 0));
     for (id, name) in [("u1", "Ann"), ("u2", "Bob")] { land_event(&rig, "User", json!({"id": id, "name": name})); }

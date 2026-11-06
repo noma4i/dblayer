@@ -4,7 +4,7 @@ use serde_json::{json, Value};
 
 use super::bridge_tests::message;
 use super::rig_tests::{bound, Fault, Rig, World};
-use super::v3_fixtures::{add_chat, cell, chat_row, int, land_event};
+use super::flow_fixtures::{add_chat, cell, chat_row, int, land_event};
 use crate::ffi::tape::Rows;
 use crate::ffi::wire::Cell;
 use crate::ffi::{WireOperationOutcome, WireOperationReceipt};
@@ -44,7 +44,7 @@ async fn act(rig: &Rig, action: &str, patch: Value, args: Value) -> WireOperatio
 
 /// P-APP-06: pin and mute change the row, the pinned list and the muted flag at the revision of the receipt, the answer keeps them, an event of the server changes them back, a refusal rolls them back.
 #[tokio::test(flavor = "multi_thread")]
-async fn v3_chat_pin_mute_changes_every_place_and_a_refusal_rolls_all_back() {
+async fn flow_chat_pin_mute() {
     for (action, name) in [("pin", "pinned"), ("mute", "muted")] {
         let query = format!(r#"{{"model":"Chat","relation":"all","params":{{}},"where":{{"type":"equal","field":"{name}","value":true}}}}"#);
         let rig = rig_with_chats(&[chat_row("c1", 10)]).await;
@@ -80,7 +80,7 @@ async fn v3_chat_pin_mute_changes_every_place_and_a_refusal_rolls_all_back() {
 
 /// P-APP-04: mark_read zeroes the badge of the row at the revision of the receipt, the answer keeps it, a counters event of the server sets a new value.
 #[tokio::test(flavor = "multi_thread")]
-async fn v3_chat_unread_counters_zero_the_badge_at_once_and_follow_events() {
+async fn flow_chat_unread_counters() {
     let mut chat = chat_row("c1", 10);
     chat["unreadCount"] = json!(5);
     let rig = rig_with_chats(&[chat]).await;
@@ -104,7 +104,7 @@ async fn v3_chat_unread_counters_zero_the_badge_at_once_and_follow_events() {
 
 /// P-APP-02: a new message lifts its chat to the head of the list at the revision of the receipt, an answer keeps the order, a message event of another chat lifts that chat.
 #[tokio::test(flavor = "multi_thread")]
-async fn v3_chat_list_order_lifts_the_chat_of_a_new_message_without_a_reload() {
+async fn flow_chat_list_order() {
     let rig = rig_with_chats(&[chat_row("c1", 10), chat_row("c2", 20)]).await;
     let rows = watch(&rig, BY_ACTIVITY, 2).await;
     assert_eq!(order(&rows), ["c2", "c1"]);

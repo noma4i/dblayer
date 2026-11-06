@@ -3,7 +3,7 @@ use std::sync::Arc;
 use serde_json::{json, Value};
 
 use super::rig_tests::{bound, Fault, Rig};
-use super::v3_fixtures::{add_chat, add_moment, add_profile, cell, int, land_delete, land_event};
+use super::flow_fixtures::{add_chat, add_moment, add_profile, cell, int, land_delete, land_event};
 use crate::ffi::tape::Rows;
 use crate::ffi::wire::Cell;
 use crate::ffi::WireOperationOutcome;
@@ -43,7 +43,7 @@ fn same_revision(rig: &Rig, places: &[&Arc<Rows>], id: &str, name: &str, value: 
 
 /// P-APP-22: a reaction changes the counter in every list of moments at one revision on the local write, the answer and an event.
 #[tokio::test(flavor = "multi_thread")]
-async fn v3_moment_reaction_shows_one_counter_in_every_list() {
+async fn flow_moment_reaction() {
     let rig = rig().await;
     rig.login_ios("A").await;
     land_event(&rig, "Moment", moment("m1", "u1", 2, 0));
@@ -71,7 +71,7 @@ async fn v3_moment_reaction_shows_one_counter_in_every_list() {
 
 /// P-APP-23: reading the compass zeroes the unread counter of a moment at once, the row drops down the compass order at the same revision, and the badge of the account falls after the refetch of the profile.
 #[tokio::test(flavor = "multi_thread")]
-async fn v3_compass_unread_lowers_the_row_and_the_badge() {
+async fn flow_compass_unread() {
     let rig = rig().await;
     rig.world.set_profile(json!({"unreadCompassCount": 4}));
     rig.login_ios("A").await;
@@ -101,7 +101,7 @@ async fn v3_compass_unread_lowers_the_row_and_the_badge() {
 
 /// P-APP-24: a published moment stands in the lists at the revision of the receipt and is replaced by the answer without a second card, a destroy and a delete event take it out of every list.
 #[tokio::test(flavor = "multi_thread")]
-async fn v3_moment_publish_and_delete_reach_every_list() {
+async fn flow_moment_publish_delete() {
     let rig = rig().await;
     rig.login_ios("A").await;
     let (feed, by_user) = (watch(&rig, FEED).await, watch(&rig, BY_USER).await);
