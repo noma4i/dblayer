@@ -26,19 +26,13 @@ Each `WireRow` carries the revision of its stored value. The generated model rea
 
 | Part | Responsibility |
 | ---- | -------------- |
-| `identity`, `value` | Row ids, list keys, scalar kinds, null rules, order keys |
-| `schema`, `ddl` | Model specification, validation, tables and indexes |
-| `owners` | Execution and state for lifecycle, session, network, calls, reads, writes, and Store |
-| `store` | SQLite storage, atomic commits, revisions, tombstones, query windows |
-| `query` | Conditions, ordering and SQL compilation |
-| `read` | Landing plans for server data, reading of connection payloads, load-more verdicts |
-| `write`, `operation` | Write values, cascade plans, and stored operation data |
-| `syncstate` | The stored sync state of every unconfirmed record, derived from the outbox |
+| `identity` | Row ids and list keys |
+| `schema` | Model specification and validation |
+| `owners` | Execution and state for lifecycle, session, network, calls, reads (`owners/read`), writes (`owners/write`: operation status, write plans, uploads), and Store |
+| `store` | SQLite storage: `ddl` tables and indexes, `sql` statement files, `query` compilation, `operation`, `sync_state`, `files`, `nodes`, `session_state`, atomic commits, revisions, tombstones, query windows |
+| `value` | Row values, sync state values (`value/sync.rs`), order keys |
 | `ffi` | Database entry points, platform transport, streams, and value records |
-| `files` | Attachment storage |
-| `upload` | Upload declarations and values |
-| `transport`, `pacing` | Network transport, clocks, and retry timing |
-| `lifecycle` | Session admission |
+| `transport` | Network transport, clocks, and retry timing |
 
 The schema groups model declarations by responsibility: fields and associations, relations, actions, and validation errors.
 The model specification remains in `schema/mod.rs` and exports these declarations.
