@@ -178,6 +178,27 @@ fn feed_chan_want_confirmed() {
 }
 
 #[test]
+fn feed_chan_want_pending_channels() {
+    let mut rig = Rig::new();
+    rig.want("Chat", CHAT);
+    rig.handshake();
+    rig.confirm("A");
+    assert_eq!(rig.want("Post", POST), ["joined:2"]);
+    let mut ready = rig.confirm("B");
+    ready.sort();
+    assert_eq!(ready, ["modelready:1", "modelready:2"]);
+}
+
+#[test]
+fn feed_chan_confirmed_unwanted() {
+    let mut rig = Rig::live();
+    rig.want("Third", THIRD);
+    assert_eq!(rig.unwant("Third", THIRD), ["unsubscribe:C"]);
+    assert!(rig.confirm("C").is_empty());
+    assert_eq!(rig.state().confirmed(), ["A", "B"]);
+}
+
+#[test]
 fn feed_chan_unwant_last_user() {
     let mut rig = Rig::live();
     rig.want("Third", THIRD);
@@ -207,6 +228,25 @@ fn feed_chan_ended_error() {
     assert_eq!(rig.state().wants(), ["Chat", "Post"], "the model of the refused channel left want");
     assert_eq!(rig.state().subscribed(), ["A", "B"]);
     assert!(rig.post(FeedInput::ChannelResubscribe { connection_id: FIRST, channel: "C".into() }).is_empty(), "no resubscribe after an error of the request");
+}
+
+#[test]
+fn feed_chan_resubscribe() {
+    let mut rig = Rig::live();
+    rig.post(FeedInput::ChannelEnded { connection_id: FIRST, channel: "B".into(), failed: false });
+    assert_eq!(rig.post(FeedInput::ChannelResubscribe { connection_id: FIRST, channel: "B".into() }), ["subscribe:B"]);
+}
+
+#[test]
+fn feed_chan_resubscribe_confirmed() {
+    let mut rig = Rig::live();
+    assert!(rig.post(FeedInput::ChannelResubscribe { connection_id: FIRST, channel: "B".into() }).is_empty());
+}
+
+#[test]
+fn feed_chan_resubscribe_unwanted() {
+    let mut rig = Rig::live();
+    assert!(rig.post(FeedInput::ChannelResubscribe { connection_id: FIRST, channel: "C".into() }).is_empty());
 }
 
 /// P-FEED-21: every channel of `wanted` gets exactly one subscribe on the connection, a channel outside it none, and without a wanted model no connection opens.
