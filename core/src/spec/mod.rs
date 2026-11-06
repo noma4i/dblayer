@@ -22,6 +22,7 @@ mod calls_owner_tests;
 mod store_tests;
 
 mod delivery_gap_tests;
+mod feed_channel_tests;
 mod feed_gap_tests;
 mod window_gap_tests;
 

@@ -6,10 +6,11 @@
 //! feed_codec_listens: `listens` -> `apply`, `deleted_by`, `deleted_unless`, `id`, `matches` decide the op of the event.
 //! feed_codec_invalid: a change that misses its kind -> an `invalid` event, never a silent drop.
 //! feed_codec_joins: an upserted row joins the relations `joins_events` by its columns.
-//! feed_codec_request: the request is the document of the declared subscription, an unregistered operation fails the codec.
+//! feed_codec_request: the request of a channel is the document of the declared subscription.
+//! feed_codec_relation_updates_channel: the `updates` of a relation read the frames of their own channel.
+//! feed_codec_channels_of_model: a model reads the change feed when it declares changes, and the subscription of each `listens` and relation `updates`.
 
 use std::collections::BTreeSet;
-
 
 use serde_json::{json, Map, Value};
 
@@ -32,6 +33,7 @@ fn operations() -> super::feed_codec::Operations {
     known.declare([
         declare("Changes", "subscription Changes { recordEvents { changes { topic action recordId message { id chatId body } } } }", "recordEvents"),
         declare("MessageChanged", "subscription MessageChanged { messageChanged { id chatId body deleted } }", "messageChanged"),
+        declare("RelationChanged", "subscription RelationChanged { relationChanged { id chatId body deleted } }", "relationChanged"),
     ]);
     known
 }
@@ -57,7 +59,7 @@ fn specs(with_feed: bool) -> Vec<ModelSpec> {
     vec![chats, messages]
 }
 
-fn codec(with_feed: bool) -> SchemaFeedCodec { SchemaFeedCodec::new(Db::open_in_memory(specs(with_feed), None).unwrap(), operations()).unwrap() }
+fn codec(with_feed: bool) -> SchemaFeedCodec { SchemaFeedCodec::new(Db::open_in_memory(specs(with_feed), None).unwrap(), operations()) }
 
 fn frame(data: Value) -> Response { Response::data(data) }
 
@@ -67,7 +69,7 @@ fn change(topic: &str, action: &str, id: &str, message: Value) -> Value { json!(
 
 #[test]
 fn feed_codec_payload_upsert() {
-    let events = codec(true).events(frame(change("MESSAGE", "UPDATED", "m1", json!({"id":"m1", "chatId":"c1", "body":"hi"}))));
+    let events = codec(true).events("Changes", frame(change("MESSAGE", "UPDATED", "m1", json!({"id":"m1", "chatId":"c1", "body":"hi"}))));
     assert_eq!(events.len(), 1);
     let upsert = payloads(&events).remove(0);
     assert_eq!((upsert["op"].as_str(), upsert["model"].as_str(), upsert["id"].as_str(), upsert["row"]["body"].as_str()), (Some("upsert"), Some("messages"), Some("m1"), Some("hi")));
@@ -76,38 +78,38 @@ fn feed_codec_payload_upsert() {
 
 #[test]
 fn feed_codec_removes_on() {
-    let events = codec(true).events(frame(change("MESSAGE", "DELETED", "m1", Value::Null)));
+    let events = codec(true).events("Changes", frame(change("MESSAGE", "DELETED", "m1", Value::Null)));
     assert_eq!(payloads(&events), [json!({"op":"delete", "model":"messages", "id":"m1"})]);
 }
 
 #[test]
 fn feed_codec_direct_reread() {
-    let events = codec(true).events(frame(change("CHAT", "UPDATED", "c1", Value::Null)));
+    let events = codec(true).events("Changes", frame(change("CHAT", "UPDATED", "c1", Value::Null)));
     let expected = StaleKeys::Set(BTreeSet::from([WindowKey::relation("chats", "list", &Map::from_iter([("list".to_string(), json!("c1"))]))]));
     assert_eq!((events.len(), events[0].model.as_str(), &events[0].reread), (1, "chats", &expected));
     assert_eq!(payloads(&events)[0]["op"], "reread");
-    assert_eq!(payloads(&codec(true).events(frame(change("CHAT", "DELETED", "c1", Value::Null)))), [json!({"op":"delete", "model":"chats", "id":"c1"})]);
+    assert_eq!(payloads(&codec(true).events("Changes", frame(change("CHAT", "DELETED", "c1", Value::Null)))), [json!({"op":"delete", "model":"chats", "id":"c1"})]);
 }
 
 #[test]
 fn feed_codec_observed_reread() {
-    let events = codec(true).events(frame(change("CHATSEEN", "UPDATED", "c1", Value::Null)));
+    let events = codec(true).events("Changes", frame(change("CHATSEEN", "UPDATED", "c1", Value::Null)));
     assert_eq!((events.len(), events[0].model.as_str(), &events[0].reread), (1, "chats", &StaleKeys::All));
 }
 
 #[test]
 fn feed_codec_listens() {
     let codec = codec(false);
-    let live = payloads(&codec.events(frame(json!({"messageChanged":{"id":"m2", "chatId":"c1", "body":"x", "deleted":false}}))));
-    let gone = payloads(&codec.events(frame(json!({"messageChanged":{"id":"m2", "chatId":"c1", "body":"x", "deleted":true}}))));
+    let live = payloads(&codec.events("MessageChanged", frame(json!({"messageChanged":{"id":"m2", "chatId":"c1", "body":"x", "deleted":false}}))));
+    let gone = payloads(&codec.events("MessageChanged", frame(json!({"messageChanged":{"id":"m2", "chatId":"c1", "body":"x", "deleted":true}}))));
     assert_eq!((live[0]["op"].as_str(), live[0]["id"].as_str()), (Some("upsert"), Some("m2")));
     assert_eq!(gone, [json!({"op":"delete", "model":"messages", "id":"m2"})]);
-    assert!(codec.events(frame(json!({"other":1}))).is_empty(), "a frame of another root has no event");
+    assert!(codec.events("MessageChanged", frame(json!({"other":1}))).is_empty(), "a frame of another root has no event");
 }
 
 #[test]
 fn feed_codec_invalid() {
-    let events = codec(true).events(frame(json!({"recordEvents":{"changes":[{"topic":"MESSAGE", "recordId":"m1"}]}})));
+    let events = codec(true).events("Changes", frame(json!({"recordEvents":{"changes":[{"topic":"MESSAGE", "recordId":"m1"}]}})));
     assert_eq!(payloads(&events)[0]["op"], "invalid");
 }
 
@@ -121,8 +123,27 @@ fn feed_codec_joins() {
 
 #[test]
 fn feed_codec_request() {
-    let request = codec(true).request(&["messages".to_string()]);
+    let request = codec(true).request("Changes");
     assert_eq!(request.operation_name.as_str(), "Changes");
     assert!(request.document.starts_with("subscription Changes"));
-    assert!(SchemaFeedCodec::new(Db::open_in_memory(vec![ModelSpec::new("things", vec![crate::schema::FieldSpec::scalar("id", crate::value::ScalarKind::Id)])], None).unwrap(), operations()).is_err(), "no declared subscription");
+}
+
+#[test]
+fn feed_codec_relation_updates_channel() {
+    let mut messages = messages_spec();
+    let mut by_chat = RelationSpec::new("by_chat", &["chatId"]);
+    by_chat.updates.push(updates(json!({"subscription":"RelationChanged", "deleted_by":"deleted"})));
+    messages.relations.push(by_chat);
+    messages.listens.push(updates(json!({"subscription":"MessageChanged"})));
+    let codec = SchemaFeedCodec::new(Db::open_in_memory(vec![chats_spec(), messages], None).unwrap(), operations());
+    let live = payloads(&codec.events("RelationChanged", frame(json!({"relationChanged":{"id":"m3", "chatId":"c1", "body":"y", "deleted":false}}))));
+    assert_eq!((live[0]["op"].as_str(), live[0]["model"].as_str(), live[0]["id"].as_str()), (Some("upsert"), Some("messages"), Some("m3")));
+    assert!(codec.events("MessageChanged", frame(json!({"relationChanged":{"id":"m3", "chatId":"c1"}}))).is_empty(), "an event is read by the channel it came on");
+}
+
+#[test]
+fn feed_codec_channels_of_model() {
+    let channels = super::channels_of(&Db::open_in_memory(specs(true), None).unwrap());
+    assert_eq!(channels.get("chats"), Some(&vec!["Changes".to_string()]));
+    assert_eq!(channels.get("messages"), Some(&vec!["Changes".to_string()]));
 }

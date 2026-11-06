@@ -2,7 +2,7 @@
 //! direct and `observed` reads), `listens` (`apply`, `deleted_by`, `deleted_unless`, `set`, `id`, `root`), the scope joins of an upserted row.
 //! The codec has no state. Its events carry the payload as JSON text with the field `op`: `upsert`, `delete`, `ephemeral`, `reread`, `invalid`.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use serde_json::{json, Map, Value};
 
@@ -11,7 +11,7 @@ use super::feed_io::FeedCodec;
 use super::windows::{StaleKeys, WindowKey};
 use crate::db::Db;
 use crate::identity::RowId;
-use crate::schema::{ChangeRead, ModelSpec, NodeRead, SubscriptionAction, UpdatesSpec, NODE_PARAM};
+use crate::schema::{ChangeFeed, ChangeRead, ModelSpec, NodeRead, SubscriptionAction, UpdatesSpec, NODE_PARAM};
 use super::codec::{normalize_nodes, root_value};
 use crate::transport::{GraphQLRequest, Response};
 use crate::value::read_id;
@@ -21,7 +21,6 @@ pub type Operations = super::ReadOperations;
 pub struct SchemaFeedCodec {
     db: Db,
     operations: Operations,
-    request: GraphQLRequest,
 }
 
 fn truthy(value: &Value) -> bool {
@@ -41,24 +40,14 @@ fn invalid(model: &str, reason: impl std::fmt::Display) -> FramedEvent { event(m
 fn delete(model: &str, id: &RowId) -> FramedEvent { event(model, json!({"op":"delete", "model":model, "id":id.as_str()}), StaleKeys::none()) }
 
 impl SchemaFeedCodec {
-    /// Fails when the schema declares no subscription or the operation of it is not registered.
-    pub fn new(db: Db, operations: Operations) -> Result<Self, String> {
-        let name = Self::subscription_of(&db).ok_or("the schema declares no subscription")?;
-        let operation = operations.get(&name).ok_or_else(|| format!("operation {name} is not registered"))?;
-        let request = GraphQLRequest::new(&operation.document, &operation.name, json!({}));
-        Ok(Self { db, operations, request })
-    }
+    pub fn new(db: Db, operations: Operations) -> Self { Self { db, operations } }
 
-    fn subscription_of(db: &Db) -> Option<String> {
-        let specs = db.shared.specs.values();
-        let mut feeds = specs.clone().filter_map(|spec| spec.change_feed.as_ref().map(|feed| feed.subscription.clone()));
-        feeds.next().or_else(|| specs.flat_map(|spec| &spec.listens).map(|updates| updates.subscription.clone()).next())
-    }
+    fn feed(&self) -> Option<ChangeFeed> { self.specs().find_map(|spec| spec.change_feed.clone()) }
 
     fn specs(&self) -> impl Iterator<Item = &ModelSpec> { self.db.shared.specs.values() }
 
     fn change_events(&self, data: &Value) -> Vec<FramedEvent> {
-        let Some(feed) = self.specs().find_map(|spec| spec.change_feed.clone()) else { return Vec::new() };
+        let Some(feed) = self.feed() else { return Vec::new() };
         let Some(changes) = root_value(data, &feed.root) else { return Vec::new() };
         let Some(changes) = changes.as_array() else { return vec![invalid("", format!("{} is no list", feed.root))] };
         let mut events = Vec::new();
@@ -137,10 +126,10 @@ impl SchemaFeedCodec {
         StaleKeys::Set(BTreeSet::from([WindowKey::relation(model, &read.relation, &params)]))
     }
 
-    fn listen_events(&self, data: &Value) -> Vec<FramedEvent> {
+    fn listen_events(&self, channel: &str, data: &Value) -> Vec<FramedEvent> {
         let mut events = Vec::new();
         for spec in self.specs() {
-            for updates in &spec.listens {
+            for updates in spec.listens.iter().chain(spec.relations.iter().flat_map(|relation| &relation.updates)).filter(|updates| updates.subscription == channel) {
                 let Some(operation) = self.operations.get(&updates.subscription) else { continue };
                 let root = updates.root.clone().unwrap_or_else(|| operation.root_path.clone());
                 let Some(node) = root_value(data, &root) else { continue };
@@ -224,12 +213,26 @@ impl SchemaFeedCodec {
 }
 
 impl FeedCodec for SchemaFeedCodec {
-    fn request(&self, _models: &[String]) -> GraphQLRequest { self.request.clone() }
+    fn request(&self, channel: &str) -> GraphQLRequest {
+        self.operations.get(channel).map_or_else(|| GraphQLRequest::new("", channel, json!({})), |operation| GraphQLRequest::new(&operation.document, &operation.name, json!({})))
+    }
 
-    fn events(&self, response: Response) -> Vec<FramedEvent> {
+    fn events(&self, channel: &str, response: Response) -> Vec<FramedEvent> {
         let Some(data) = response.data else { return Vec::new() };
-        let mut events = self.change_events(&data);
-        events.extend(self.listen_events(&data));
+        let mut events = if self.feed().is_some_and(|feed| feed.subscription == channel) { self.change_events(&data) } else { Vec::new() };
+        events.extend(self.listen_events(channel, &data));
         events
     }
+}
+
+/// The channels each model reads: the change feed of the project when the model declares `changed_by`, the subscription of each `listens` and each relation `updates`.
+pub fn channels_of(db: &Db) -> BTreeMap<String, Vec<String>> {
+    let feed = db.shared.specs.values().find_map(|spec| spec.change_feed.as_ref().map(|feed| feed.subscription.clone()));
+    db.shared.specs.values().filter_map(|spec| {
+        let mut channels: BTreeSet<String> = spec.listens.iter().chain(spec.relations.iter().flat_map(|relation| &relation.updates)).map(|updates| updates.subscription.clone()).collect();
+        if let Some(feed) = feed.as_ref().filter(|_| !spec.changes.is_empty()) {
+            channels.insert(feed.clone());
+        }
+        (!channels.is_empty()).then(|| (spec.key.to_string(), channels.into_iter().collect()))
+    }).collect()
 }

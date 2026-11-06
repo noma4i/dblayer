@@ -178,6 +178,8 @@ pub enum DeliveryInput {
     ModelEvent { stream: StreamId, position: u64, payload: String },
     ModelLost { stream: StreamId, first: u64, last: u64 },
     ModelGap { stream: StreamId },
+    /// The server refused the subscription of the model: the stream of events ends with `Invalid`.
+    ModelInvalid { stream: StreamId },
     TransferStatus { stream: StreamId, blob: BlobStatus },
     RetryState { stream: StreamId, retry: RetryStatus },
     Pull { stream: StreamId, outcome: OutcomeId },
@@ -692,6 +694,12 @@ impl Delivery {
         self.push(Value::Gap, fx);
     }
 
+    fn model_invalid(&mut self, fx: &mut Vec<Emit>) {
+        if self.events_open() {
+            self.finish(EndCause::Invalid, false, fx);
+        }
+    }
+
     fn status(&mut self, blob: BlobStatus, fx: &mut Vec<Emit>) {
         if self.view.kind != Kind::Blob || !self.sink_open() || self.blob.as_ref() == Some(&blob) {
             return;
@@ -914,6 +922,7 @@ impl StateOwner for Deliveries {
             DeliveryInput::ModelEvent { stream, position, payload } => on(state, stream, &mut out, |machine, fx| machine.model_event(position, payload, fx)),
             DeliveryInput::ModelLost { stream, first, last } => on(state, stream, &mut out, |machine, fx| machine.model_lost(first, last, fx)),
             DeliveryInput::ModelGap { stream } => on(state, stream, &mut out, |machine, fx| machine.model_gap(fx)),
+            DeliveryInput::ModelInvalid { stream } => on(state, stream, &mut out, |machine, fx| machine.model_invalid(fx)),
             DeliveryInput::TransferStatus { stream, blob } => on(state, stream, &mut out, |machine, fx| machine.status(blob, fx)),
             DeliveryInput::RetryState { stream, retry } => on(state, stream, &mut out, |machine, fx| machine.retry_state(retry, fx)),
             DeliveryInput::Cancel { stream, reply } => {

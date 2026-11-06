@@ -303,3 +303,6 @@ S209	A3-journal	kotlin	com.noma4i.dblayer.ModelEventsTest.aSlowCollectorReadsKep
 S219	A3-events	core	dlv_event_before_after	unrun	-	arch-audit astra A3
 S219	A3-events	swift	BridgeProbeTests.chatEventPayloadPlatforms	unrun	-	arch-audit astra A3
 S219	A3-events	kotlin	com.noma4i.dblayer.EventPayloadTest.chatEventPayloadPlatforms	unrun	-	arch-audit astra A3
+S316	replaced-pair	core	a_server_id_that_replaces_a_temporary_row_of_a_held_list_arrives_as_a_replaced_pair	unrun	-	coordinator replaced pair
+S316	replaced-pair	swift	BridgeProbeTests.aSnapshotCarriesTheTemporaryIdThatTheServerIdReplaced	unrun	-	coordinator replaced pair
+S316	replaced-pair	kotlin	com.noma4i.dblayer.BridgeProbeTest.aSnapshotCarriesTheTemporaryIdThatTheServerIdReplaced	unrun	-	coordinator replaced pair

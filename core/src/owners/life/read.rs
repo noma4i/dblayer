@@ -2,7 +2,7 @@
 //! An executor does IO and returns the result as an input; the platform side settles its waiters through `Outcomes`.
 
 use std::collections::BTreeMap;
-use std::sync::{Arc, OnceLock};
+use std::sync::Arc;
 
 use super::{Addresses, LifeReply, Ports, Wiring};
 use crate::db::Db;
@@ -10,12 +10,12 @@ use crate::owners::contract::{BatchAuthor, Committed, Drained, Models, Rejected}
 use crate::owners::lifecycle::{LifecycleInput, Peer};
 use crate::owners::network::NetworkInput;
 use crate::owners::read::deliveries::{DeliveriesState, Deliveries, DeliveryEffect, DeliveryInput, DeliveryPeers, PullAnswer, StreamEffect, StreamId, View};
-use crate::owners::read::feed::{Feed, FeedEffect, FeedInput, FeedPeers, FeedState, FramedEvent};
+use crate::owners::read::feed::{Feed, FeedEffect, FeedInput, FeedPeers, FeedState};
 use crate::owners::read::windows::{Goal, Windows, WindowEffect, WindowKey, WindowsEffect, WindowsInput, WindowsPeers, WindowsState};
-use crate::owners::read::{max_pages, members_complete, preload_keys, preload_sources, refreshes_on_foreground, DbSnapshots, DeliveryIo, FeedCodec, FeedIo, ReadOperations, Rest, SchemaFeedCodec, SchemaWindowCodec, WindowIo};
+use crate::owners::read::{channels_of, max_pages, members_complete, preload_keys, preload_sources, refreshes_on_foreground, DbSnapshots, DeliveryIo, FeedIo, Rest, SchemaFeedCodec, SchemaWindowCodec, WindowIo};
 use crate::owners::store::{StoreReply, StoreWriter};
 use crate::runtime::{Address, Back, EffectRunner, Epoch, EpochStamp, OutcomeId, RuntimeBuilder, Waiter};
-use crate::transport::{GraphQLRequest, Response, Transport};
+use crate::transport::Transport;
 
 /// The ids of waiters that platform calls register in `Windows` carry this bit, the ids of streams stay below it.
 pub(crate) const CALL: u64 = 1 << 62;
@@ -27,35 +27,6 @@ struct FeedWithoutIo {
 
 impl EffectRunner<Feed> for FeedWithoutIo {
     fn run(&mut self, stamp: EpochStamp, effect: FeedEffect, _back: &Back<Feed>) { (self.rest)(stamp, effect); }
-}
-
-/// The request and the events of the subscription come from the schema; the operation of the subscription is registered after the open.
-struct LazyFeedCodec {
-    db: Db,
-    operations: ReadOperations,
-    wiring: Arc<Wiring>,
-    built: OnceLock<Arc<SchemaFeedCodec>>,
-}
-
-impl LazyFeedCodec {
-    fn codec(&self) -> Option<&Arc<SchemaFeedCodec>> {
-        if let Some(codec) = self.built.get() { return Some(codec); }
-        match SchemaFeedCodec::new(self.db.clone(), self.operations.clone()) {
-            Ok(codec) => Some(self.built.get_or_init(|| Arc::new(codec))),
-            Err(error) => {
-                self.wiring.fault(format!("the subscription could not be built: {error}"));
-                None
-            }
-        }
-    }
-}
-
-impl FeedCodec for LazyFeedCodec {
-    fn request(&self, models: &[String]) -> GraphQLRequest {
-        self.codec().map_or_else(|| GraphQLRequest::new("", "", serde_json::json!({})), |codec| codec.request(models))
-    }
-
-    fn events(&self, response: Response) -> Vec<FramedEvent> { self.codec().map(|codec| codec.events(response)).unwrap_or_default() }
 }
 
 /// `updates.debounce` of each model, in milliseconds.
@@ -138,10 +109,10 @@ pub(super) fn add(builder: &mut RuntimeBuilder, wiring: &Arc<Wiring>, ports: &Po
         FeedEffect::SnapshotRequest { epoch } => feed_wiring.to_network(NetworkInput::SnapshotRequest { owner: Peer::Feed, epoch }),
         _ => {}
     });
-    let feed_state = FeedState::new(0, FeedPeers { store, windows: windows_at, deliveries: deliveries_at }, debounce_of(&db));
+    let feed_state = FeedState::new(0, FeedPeers { store, windows: windows_at, deliveries: deliveries_at }, debounce_of(&db), channels_of(&db));
     let feed = match &ports.cable {
         Some(lines) => {
-            let codec = Arc::new(LazyFeedCodec { db: db.clone(), operations: ports.read_operations.clone().unwrap_or_default(), wiring: wiring.clone(), built: OnceLock::new() });
+            let codec = Arc::new(SchemaFeedCodec::new(db.clone(), ports.read_operations.clone().unwrap_or_default()));
             builder.add::<Feed>("feed", feed_state, FeedIo::new(lines.clone(), codec, ports.executor.clone(), feed_rest).counted_by(handle.clone()).admitted_by(feed_admit.clone()))
         }
         None => builder.add::<Feed>("feed", feed_state, FeedWithoutIo { rest: feed_rest }),

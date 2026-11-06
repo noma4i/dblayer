@@ -34,6 +34,11 @@ type Spied = Log<Emitted<FeedEffect>>;
 
 fn peers() -> FeedPeers { FeedPeers { store: Address::<StoreWriter>::new(STORE), windows: Address::<Windows>::new(WINDOWS), deliveries: Address::<Deliveries>::new(DELIVERIES) } }
 
+/// The one channel every model reads in the row tests: a model is ready once it is confirmed.
+const CHANNEL: &str = "feed";
+
+fn channels() -> BTreeMap<String, Vec<String>> { ["Chat", "Post"].into_iter().map(|model| (model.to_string(), vec![CHANNEL.to_string()])).collect() }
+
 fn debounces(ms: u64) -> BTreeMap<String, u64> { ["Chat", "Post"].into_iter().map(|model| (model.to_string(), ms)).collect() }
 
 fn stream_of(model: &str) -> u64 {
@@ -98,7 +103,7 @@ impl Twin {
         let mut det = DetScheduler::new(11);
         let log = new_log();
         let ms = if debounce { DEBOUNCE_MS } else { 0 };
-        let addr = add_feed(&mut det, &log, f::FeedState::new(EPOCH, peers(), debounces(ms)), Discard);
+        let addr = add_feed(&mut det, &log, f::FeedState::new(EPOCH, peers(), debounces(ms), channels()), Discard);
         det.start_epoch(EPOCH);
         let mut reference = Ref::new();
         reference.debounce = debounce;
@@ -143,23 +148,27 @@ impl Twin {
         match input {
             Input::WantPlus { model, id, stream } => vec![FeedInput::WantPlus { model: model.clone(), id: *id, stream: *stream }],
             Input::WantMinus { model, id } => vec![FeedInput::WantMinus { model: model.clone(), id: *id }],
-            Input::HandshakeDone => vec![FeedInput::HandshakeDone { connection_id: self.connection(To::Opening), key_id: 7 }],
+            Input::HandshakeDone => {
+                let opening = self.connection(To::Opening);
+                self.post(FeedInput::HandshakeDone { connection_id: opening, key_id: 7 });
+                vec![FeedInput::ChannelConfirmed { connection_id: opening, channel: CHANNEL.into() }]
+            }
             Input::FrameOpened { to, counter, events } => {
                 let connection = self.connection(*to);
-                vec![FeedInput::FrameOpened { connection_id: connection, counter: self.counter(connection, *counter), frame: Frame::Events { id: f::SUBSCRIPTION.into(), events: events.iter().map(|(model, payload)| framed(model, payload, reread)).collect() } }]
+                vec![FeedInput::FrameOpened { connection_id: connection, counter: self.counter(connection, *counter), frame: Frame::Events { id: CHANNEL.into(), events: events.iter().map(|(model, payload)| framed(model, payload, reread)).collect() } }]
             }
             Input::Frame { to, counter, kind } => {
                 let connection = self.connection(*to);
                 let frame = match kind {
                     Kind::Ping => Frame::Ping { ts: 5.into() },
-                    Kind::Complete => Frame::Complete { id: f::SUBSCRIPTION.into() },
+                    Kind::Complete => Frame::Complete { id: CHANNEL.into() },
                     Kind::OtherId => Frame::Complete { id: "2".into() },
                     Kind::Quiet => Frame::Quiet,
                 };
                 vec![FeedInput::FrameOpened { connection_id: connection, counter: self.counter(connection, *counter), frame }]
             }
             Input::ProtocolError { to } => vec![FeedInput::ProtocolError { connection_id: self.connection(*to), reason: ProtocolReason::Decrypt }],
-            Input::Event { to, model, payload } => vec![FeedInput::Event { connection_id: self.connection(*to), event: framed(model, payload, reread) }],
+            Input::Event { to, model, payload } => vec![FeedInput::Event { connection_id: self.connection(*to), channel: CHANNEL.into(), event: framed(model, payload, reread) }],
             Input::ChannelLost { to, dropped } => vec![FeedInput::ChannelLost { connection_id: self.connection(*to), dropped: dropped.as_ref().map(|counts| counts.iter().cloned().collect::<BTreeMap<_, _>>()) }],
             Input::Dropped { to } => vec![FeedInput::Dropped { connection_id: self.connection(*to) }],
             Input::Ended { to } => vec![FeedInput::SubscriptionEnded { connection_id: self.connection(*to) }],
@@ -231,7 +240,7 @@ impl Twin {
                     self.sealed.push((connection, counter));
                     modelled.push(match frame {
                         Outgoing::Subscribe { .. } => Effect::SealSubscribe,
-                        Outgoing::Unsubscribe => Effect::SealUnsubscribe,
+                        Outgoing::Unsubscribe { .. } => Effect::SealUnsubscribe,
                         Outgoing::Pong { .. } => Effect::SealPong,
                     });
                 }
@@ -508,8 +517,9 @@ fn feed_opening_want() {
     let mut twin = opening();
     twin.step(event(To::Opening, "Chat", "c1"));
     let first = twin.state().opening_connection();
-    assert_eq!(twin.step(plus("Post")), [Effect::Joined(POST), Effect::Close, Effect::Connect, Effect::Stale { model: "Chat".into(), all: true }]);
-    assert_ne!(twin.state().opening_connection(), first, "a changed set subscribes on a new connection");
+    assert_eq!(twin.step(plus("Post")), [Effect::Joined(POST)]);
+    assert_eq!(twin.state().opening_connection(), first, "the channels are subscribed once the connection is ready: the same connection serves the new model");
+    assert_eq!(twin.state().held(), 1, "the held frame of Chat stays");
 }
 
 #[test]
@@ -692,14 +702,6 @@ fn feed_live_dropped() {
 }
 
 #[test]
-fn feed_live_opening_dropped() {
-    let mut twin = live();
-    twin.step(plus("Post"));
-    assert_eq!(twin.step(Input::Dropped { to: To::Opening }), [Effect::ScheduleResubscribe]);
-    assert_eq!(twin.state().mode(), f::Mode::Live, "the active connection is alive");
-}
-
-#[test]
 fn feed_live_offline() {
     let mut twin = live();
     twin.step(chat("c1"));
@@ -745,25 +747,8 @@ fn feed_live_unwant() {
 #[test]
 fn feed_live_want_more() {
     let mut twin = live();
-    assert_eq!(twin.step(plus("Post")), [Effect::Joined(POST), Effect::Connect]);
-    assert!(twin.state().opening_connection().is_some());
-}
-
-#[test]
-fn feed_live_want_more_replaces_opening() {
-    let mut twin = live();
-    twin.step(plus("Post"));
-    twin.step(Input::Dropped { to: To::Opening });
-    assert_eq!(twin.step(Input::WantPlus { model: "Third".into(), id: 3, stream: false }), [Effect::Close, Effect::Connect], "a new set replaces the connection that waits");
-}
-
-#[test]
-fn feed_live_resubscribe() {
-    let mut twin = live();
-    twin.step(plus("Post"));
-    twin.step(Input::Dropped { to: To::Opening });
-    assert_eq!(twin.step(Input::Resubscribe { to: To::Opening }), [Effect::Connect]);
-    assert_eq!(twin.state().mode(), f::Mode::Live);
+    assert_eq!(twin.step(plus("Post")), [Effect::Joined(POST), Effect::ModelReady(POST)], "the channel of the new model is confirmed already: no new connection");
+    assert!(twin.state().opening_connection().is_none());
 }
 
 #[test]
@@ -771,17 +756,6 @@ fn feed_live_want_same() {
     let mut twin = live();
     assert_eq!(twin.step(plus("Chat")), [Effect::Joined(CHAT), Effect::ModelReady(CHAT)]);
     assert!(twin.step(window("Chat")).is_empty(), "a window joins without an answer");
-}
-
-#[test]
-fn feed_live_ready_switch() {
-    let mut twin = live();
-    twin.step(plus("Post"));
-    assert_eq!(
-        twin.step(Input::HandshakeDone),
-        [Effect::SealUnsubscribe, Effect::Close, Effect::SealSubscribe, Effect::Stale { model: "Chat".into(), all: true }, Effect::Stale { model: "Post".into(), all: true }, Effect::ModelReady(CHAT), Effect::ModelReady(POST)]
-    );
-    assert_eq!(twin.state().opening_connection(), None);
 }
 
 #[test]
@@ -855,19 +829,8 @@ fn feed_proto_frame_kinds() {
     assert!(other.step(Input::Frame { to: To::Active, counter: Counter::Expected, kind: Kind::OtherId }).is_empty(), "a frame of another subscription id is not for Feed");
     let mut quiet = live();
     assert!(quiet.step(Input::Frame { to: To::Active, counter: Counter::Expected, kind: Kind::Quiet }).is_empty());
-    let mut complete = live();
-    assert_eq!(complete.step(Input::Frame { to: To::Active, counter: Counter::Expected, kind: Kind::Complete }), [Effect::Connect]);
     let mut replayed = live();
     assert_eq!(replayed.step(Input::Frame { to: To::Active, counter: Counter::Replayed, kind: Kind::Complete }), [Effect::Close, Effect::Connect], "the counter is checked before the meaning of the frame");
-}
-
-#[test]
-fn feed_live_dropped_closes_opening() {
-    let mut twin = live_immediate();
-    twin.step(plus("Post"));
-    let waiting = twin.state().opening_connection().expect("a connection waits for the new want");
-    assert_eq!(twin.step(Input::Dropped { to: To::Active }), [Effect::Close, Effect::Connect]);
-    assert_ne!(twin.state().opening_connection(), Some(waiting));
 }
 
 #[test]
@@ -903,10 +866,6 @@ fn feed_proto_handshake_timeout() {
     let mut established = live();
     assert!(established.step(Input::HandshakeDeadline { to: To::Active }).is_empty(), "an established connection has no deadline");
     assert!(established.step(Input::HandshakeDeadline { to: To::Stray }).is_empty());
-    let mut switching = live();
-    switching.step(plus("Post"));
-    assert_eq!(switching.step(Input::HandshakeDeadline { to: To::Opening }), [Effect::Close, Effect::ScheduleResubscribe]);
-    assert_eq!(switching.state().mode(), f::Mode::Live, "the active connection is alive");
 }
 
 #[test]
@@ -932,7 +891,6 @@ fn feed_wait_ready() {
 fn feed_prop_gap_visible() {
     let mut twin = live();
     twin.step(plus("Post"));
-    twin.step(Input::HandshakeDone);
     let before = (twin.state().position("Chat"), twin.state().position("Post"));
     twin.step(Input::Dropped { to: To::Active });
     assert_eq!(twin.step(Input::HandshakeDone), [Effect::SealSubscribe, Effect::Stale { model: "Chat".into(), all: true }, Effect::Stale { model: "Post".into(), all: true }, Effect::ModelReady(CHAT), Effect::ModelReady(POST)]);
@@ -940,7 +898,7 @@ fn feed_prop_gap_visible() {
     let after_break: Vec<&Obs> = twin.shown.iter().filter(|obs| !matches!(obs, Obs::Gap { .. })).collect();
     assert!(after_break.is_empty(), "the break shows no Lost: {after_break:?}");
     let gaps = |stream: u64| twin.shown.iter().filter(|obs| **obs == Obs::Gap { stream }).count();
-    assert_eq!((gaps(CHAT), gaps(POST)), (2, 2), "each model sees one gap at the switch of connections and one at the break");
+    assert_eq!((gaps(CHAT), gaps(POST)), (1, 1), "each model sees one gap at the break");
 }
 
 /// P-FEED-06: no reader or no frames: no request and no tick.
@@ -1100,7 +1058,7 @@ fn seen() -> Log<Saw> { (*SEEN.with(|slot| slot.borrow().clone()).expect("a rig 
 /// The active connection of the rig after its setup: the wants of Chat and Post opened the connections 1 and 2, the second one switched in.
 const ACTIVE: ConnectionId = 2;
 
-fn event_input(model: &str, payload: &str) -> FeedInput { FeedInput::Event { connection_id: ACTIVE, event: framed(model, payload, false) } }
+fn event_input(model: &str, payload: &str) -> FeedInput { FeedInput::Event { connection_id: ACTIVE, channel: CHANNEL.into(), event: framed(model, payload, false) } }
 
 fn rig(debounce_ms: u64, frames: Vec<FeedInput>, with_reset: bool) -> DetScheduler {
     let mut det = DetScheduler::new(1);
@@ -1122,7 +1080,7 @@ fn rig(debounce_ms: u64, frames: Vec<FeedInput>, with_reset: bool) -> DetSchedul
     }, Silent);
     det.add::<Sink<Windows>>("windows", new_log(), Discard);
     det.add::<Readers>("deliveries", log.clone(), Silent);
-    let feed = det.add::<Spy<Feed>>("feed", SpyState::new(f::FeedState::new(EPOCH, peers(), debounces(debounce_ms)), &new_log()), Answerer);
+    let feed = det.add::<Spy<Feed>>("feed", SpyState::new(f::FeedState::new(EPOCH, peers(), debounces(debounce_ms), channels()), &new_log()), Answerer);
     let feed = Address::<Feed>::new(feed.index());
     det.start_epoch(EPOCH);
     let setup = [FeedInput::Online(Online(true)), FeedInput::WantPlus { model: "Chat".into(), id: CHAT, stream: true }, FeedInput::WantPlus { model: "Post".into(), id: POST, stream: true }];
@@ -1227,7 +1185,7 @@ fn feed_prop_stale_connection() {
     let report = explore(
         || {
             let frames = vec![
-                FeedInput::Event { connection_id: 77, event: framed("Chat", "x", false) },
+                FeedInput::Event { connection_id: 77, channel: CHANNEL.into(), event: framed("Chat", "x", false) },
                 FeedInput::Dropped { connection_id: 77 },
                 FeedInput::ChannelLost { connection_id: 77, dropped: Some(BTreeMap::from([("Chat".to_string(), 3)])) },
             ];

@@ -3,6 +3,7 @@
 //! (`Commit`, `Stale`, `Joined`, `ModelReady`, `ModelEvent`, `ModelLost`, `ModelGap`) are `Effect::Send` to the addresses of the state.
 //! The executor opens connections, encrypts and decrypts: it answers with `HandshakeDone`, `FrameOpened` and `ProtocolError`. The inputs
 //! `Event` and `ChannelLost` of the data table also come from the transport; `FrameOpened` of an `Established` connection forwards its events as `Event`.
+//! A model reads one or more channels (subscriptions of the server) on the one connection: it is ready once every channel of it is confirmed.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::time::Duration;
@@ -22,6 +23,9 @@ pub const HANDSHAKE_DEADLINE: Duration = Duration::from_secs(10);
 
 /// The schedule ids of the handshake deadlines are above the connection ids that name the resubscribe timers.
 const HANDSHAKE_SCHEDULE: u64 = 1 << 40;
+
+/// The schedule ids of the channel resubscribe timers: the connection and the slot of the channel under this bit.
+const CHANNEL_SCHEDULE: u64 = 1 << 41;
 
 /// The first frame the client seals is number 0 (the hello is no sealed frame).
 pub const FIRST_SEND_COUNTER: u64 = 0;
@@ -65,20 +69,22 @@ pub enum ProtocolReason {
     Errors,
 }
 
-/// The id of the one subscription of a connection: the frames of any other id are not for Feed.
-pub const SUBSCRIPTION: &str = "1";
+/// The name of a channel: the subscription of the `.dbl` the server runs for a model. A frame carries it as its `id`.
+pub type Channel = String;
 
 /// What a decrypted frame of the server says, as the executor reads it. The owner checks the counter before it reads the meaning.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Frame {
     Ping { ts: serde_json::Number },
     Events { id: String, events: Vec<FramedEvent> },
+    /// The server confirmed the subscription of the channel `id`.
+    Confirmed { id: String },
     Complete { id: String },
     /// The server closes the connection.
     Ended,
     /// An `error` frame: `id` names the subscription it is for, none = the whole connection.
     Error { id: Option<String> },
-    /// `ready`, `subscribed`, `pong`: nothing for the owner.
+    /// `ready`, `pong`: nothing for the owner.
     Quiet,
 }
 
@@ -92,15 +98,13 @@ pub enum Protocol {
 struct Connection {
     id: ConnectionId,
     protocol: Protocol,
-    /// `want` at the `Subscribe`: what the subscribe frame names.
-    models: Vec<String>,
 }
 
 /// The frames Feed sends over an `Established` connection.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Outgoing {
-    Subscribe { models: Vec<String> },
-    Unsubscribe,
+    Subscribe { channel: Channel },
+    Unsubscribe { channel: Channel },
     /// The answer to a server `ping`.
     Pong { ts: serde_json::Number },
 }
@@ -109,7 +113,7 @@ pub enum Outgoing {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum FeedEffect {
     /// Transport `Subscribe(want)`: opens the connection and runs its handshake.
-    Connect { connection: ConnectionId, models: Vec<String> },
+    Connect { connection: ConnectionId },
     /// The executor encrypts `frame` with the key `key_id` and the counter, both given by value.
     Seal { connection: ConnectionId, key_id: u64, counter: u64, frame: Outgoing },
     /// Transport `Unsubscribe(connection)`.
@@ -126,6 +130,7 @@ enum Fx {
     CancelDebounce,
     Resubscribe { connection: ConnectionId, attempt: u32 },
     CancelResubscribe { connection: ConnectionId },
+    ResubscribeChannel { connection: ConnectionId, channel: Channel, attempt: u32 },
     HandshakeDeadline { connection: ConnectionId },
     CancelHandshake { connection: ConnectionId },
     Commit { batch: BatchId, events: Vec<FeedEvent> },
@@ -136,6 +141,8 @@ enum Fx {
     ModelEvent { model: String, position: u64, payload: String },
     ModelLost { model: String, first: u64, last: u64 },
     ModelGap { model: String },
+    /// The streams `ids` end with `Invalid`.
+    ModelInvalid { ids: Vec<SubscriptionId> },
 }
 
 #[derive(Clone, Debug)]
@@ -146,7 +153,11 @@ pub enum FeedInput {
     HandshakeDone { connection_id: ConnectionId, key_id: u64 },
     FrameOpened { connection_id: ConnectionId, counter: u64, frame: Frame },
     ProtocolError { connection_id: ConnectionId, reason: ProtocolReason },
-    Event { connection_id: ConnectionId, event: FramedEvent },
+    Event { connection_id: ConnectionId, channel: Channel, event: FramedEvent },
+    ChannelConfirmed { connection_id: ConnectionId, channel: Channel },
+    /// The server closed the subscription of one channel: `failed` = with an error of the request.
+    ChannelEnded { connection_id: ConnectionId, channel: Channel, failed: bool },
+    ChannelResubscribe { connection_id: ConnectionId, channel: Channel },
     /// `dropped` = the number of lost events per model, `None` = the number is unknown.
     ChannelLost { connection_id: ConnectionId, dropped: Option<BTreeMap<String, u64>> },
     Dropped { connection_id: ConnectionId },
@@ -221,6 +232,17 @@ pub struct FeedState {
     streams: BTreeSet<SubscriptionId>,
     /// `updates.debounce` of the models, from the schema at `install`.
     debounce: BTreeMap<String, u64>,
+    /// The channels each model reads, from the schema at `install`.
+    channels: BTreeMap<String, Vec<Channel>>,
+    /// Channels with a `Subscribe` on the active connection.
+    subscribed: BTreeSet<Channel>,
+    /// Channels the server confirmed on the active connection.
+    confirmed: BTreeSet<Channel>,
+    /// Models given `ModelReady` on the active connection.
+    announced: BTreeSet<String>,
+    /// Models that owe a `ModelGap` at their next readiness: a break came before their channels were confirmed.
+    gapped: BTreeSet<String>,
+    channel_attempts: BTreeMap<Channel, u32>,
     generation: BTreeMap<String, u64>,
     base_generation: u64,
     position: BTreeMap<String, u64>,
@@ -238,7 +260,7 @@ pub struct FeedState {
 }
 
 impl FeedState {
-    pub fn new(epoch: Epoch, peers: FeedPeers, debounce: BTreeMap<String, u64>) -> Self {
+    pub fn new(epoch: Epoch, peers: FeedPeers, debounce: BTreeMap<String, u64>, channels: BTreeMap<String, Vec<Channel>>) -> Self {
         Self {
             epoch,
             mode: Mode::Off { gap: false },
@@ -246,6 +268,12 @@ impl FeedState {
             want: BTreeMap::new(),
             streams: BTreeSet::new(),
             debounce,
+            channels,
+            subscribed: BTreeSet::new(),
+            confirmed: BTreeSet::new(),
+            announced: BTreeSet::new(),
+            gapped: BTreeSet::new(),
+            channel_attempts: BTreeMap::new(),
             generation: BTreeMap::new(),
             base_generation: 0,
             position: BTreeMap::new(),
@@ -289,6 +317,25 @@ impl FeedState {
 
     fn models(&self) -> Vec<String> { self.want.keys().cloned().collect() }
 
+    /// The place of a channel among all channels of the schema: a stable number for its timer id.
+    fn channel_slot(&self, channel: &str) -> u64 {
+        let all: BTreeSet<&Channel> = self.channels.values().flatten().collect();
+        all.iter().position(|own| own.as_str() == channel).map_or(0, |at| at as u64)
+    }
+
+    fn channels_of(&self, model: &str) -> &[Channel] { self.channels.get(model).map_or(&[], Vec::as_slice) }
+
+    /// The channels the models of `want` read.
+    pub fn wanted(&self) -> BTreeSet<Channel> { self.want.keys().flat_map(|model| self.channels_of(model).iter().cloned()).collect() }
+
+    pub fn confirmed(&self) -> Vec<Channel> { self.confirmed.iter().cloned().collect() }
+
+    pub fn subscribed(&self) -> Vec<Channel> { self.subscribed.iter().cloned().collect() }
+
+    fn model_is_ready(&self, model: &str) -> bool { self.channels_of(model).iter().all(|channel| self.confirmed.contains(channel)) }
+
+    fn models_of(&self, channel: &str) -> Vec<String> { self.want.keys().filter(|model| self.channels_of(model).iter().any(|own| own == channel)).cloned().collect() }
+
     fn debounce_of(&self, model: &str) -> u64 { self.debounce.get(model).copied().unwrap_or(0) }
 
     fn generation_of(&self, model: &str) -> u64 { self.generation.get(model).copied().unwrap_or(self.base_generation) }
@@ -298,13 +345,13 @@ impl FeedState {
     fn fresh_connection(&mut self) -> Connection {
         let id = self.next_connection;
         self.next_connection += 1;
-        Connection { id, protocol: Protocol::Handshake, models: self.models() }
+        Connection { id, protocol: Protocol::Handshake }
     }
 
     /// Transport `Subscribe(want)` on a new connection.
     fn open_connection(&mut self, fx: &mut Vec<Fx>) {
         let connection = self.fresh_connection();
-        fx.push(Fx::Run(FeedEffect::Connect { connection: connection.id, models: connection.models.clone() }));
+        fx.push(Fx::Run(FeedEffect::Connect { connection: connection.id }));
         fx.push(Fx::HandshakeDeadline { connection: connection.id });
         self.opening = Some(connection);
     }
@@ -329,9 +376,11 @@ impl FeedState {
     }
 
     /// Transport `Unsubscribe(connection)`: an established connection says goodbye, then closes.
-    fn close(connection: Option<Connection>, fx: &mut Vec<Fx>) {
+    fn close(connection: Option<Connection>, subscribed: &BTreeSet<Channel>, fx: &mut Vec<Fx>) {
         let Some(mut connection) = connection else { return };
-        Self::seal(&mut connection, Outgoing::Unsubscribe, fx);
+        for channel in subscribed {
+            Self::seal(&mut connection, Outgoing::Unsubscribe { channel: channel.clone() }, fx);
+        }
         fx.push(Fx::CancelResubscribe { connection: connection.id });
         fx.push(Fx::CancelHandshake { connection: connection.id });
         fx.push(Fx::Run(FeedEffect::Close { connection: connection.id }));
@@ -339,8 +388,8 @@ impl FeedState {
 
     /// Transport `Unsubscribe` of both connections, the active one first.
     fn close_all(&mut self, fx: &mut Vec<Fx>) {
-        Self::close(self.active.take(), fx);
-        Self::close(self.opening.take(), fx);
+        Self::close(self.active.take(), &self.subscribed, fx);
+        Self::close(self.opening.take(), &BTreeSet::new(), fx);
     }
 
     fn accept(&mut self, event: FramedEvent) -> FeedEvent {
@@ -480,10 +529,60 @@ impl FeedState {
         }
     }
 
-    fn ready_all(&self, fx: &mut Vec<Fx>) {
-        for model in self.models() {
-            fx.push(Fx::ModelReady { model, id: None });
+    /// The active connection starts: every wanted channel is subscribed, a model without a channel to wait for is ready at once.
+    fn begin_connection(&mut self, gap: bool, fx: &mut Vec<Fx>) {
+        self.confirmed.clear();
+        self.announced.clear();
+        self.subscribed.clear();
+        self.channel_attempts.clear();
+        self.gapped = if gap { self.want.keys().cloned().collect() } else { BTreeSet::new() };
+        self.subscribe_missing(fx);
+        self.announce_ready(fx);
+    }
+
+    /// `Subscribe` of every wanted channel the active connection has not subscribed yet.
+    fn subscribe_missing(&mut self, fx: &mut Vec<Fx>) {
+        let wanted = self.wanted();
+        let Some(connection) = self.active.as_mut() else { return };
+        for channel in wanted {
+            if self.subscribed.insert(channel.clone()) {
+                Self::seal(connection, Outgoing::Subscribe { channel }, fx);
+            }
         }
+    }
+
+    /// `Unsubscribe` of the channels no model of `want` reads.
+    fn narrow(&mut self, fx: &mut Vec<Fx>) {
+        let wanted = self.wanted();
+        let gone: Vec<Channel> = self.subscribed.iter().filter(|channel| !wanted.contains(*channel)).cloned().collect();
+        for channel in gone {
+            self.subscribed.remove(&channel);
+            self.confirmed.remove(&channel);
+            self.channel_attempts.remove(&channel);
+            if let Some(connection) = self.active.as_mut() {
+                Self::seal(connection, Outgoing::Unsubscribe { channel }, fx);
+            }
+        }
+    }
+
+    /// `ModelGap` and `Stale` of the models that owe a gap, then `ModelReady` of every model whose channels are all confirmed; the frames `held` for them sit.
+    fn announce_ready(&mut self, fx: &mut Vec<Fx>) {
+        let ready: Vec<String> = self.want.keys().filter(|model| !self.announced.contains(*model) && self.model_is_ready(model)).cloned().collect();
+        if ready.is_empty() {
+            return;
+        }
+        let gapped: Vec<String> = ready.iter().filter(|model| self.gapped.remove(*model)).cloned().collect();
+        for model in &gapped {
+            fx.push(Fx::ModelGap { model: model.clone() });
+        }
+        Self::stale_all(&gapped, fx);
+        for model in &ready {
+            fx.push(Fx::ModelReady { model: model.clone(), id: None });
+            self.announced.insert(model.clone());
+        }
+        let (mine, other): (Vec<FeedEvent>, Vec<FeedEvent>) = std::mem::take(&mut self.held).into_iter().partition(|event| ready.contains(&event.model));
+        self.held = other;
+        self.seat(mine, fx);
     }
 
     /// Every model of `want` has a break of unknown length: `ModelGap`, `Stale` of its windows.
@@ -521,34 +620,13 @@ impl FeedState {
                 self.active = self.opening.take();
                 self.mode = Mode::Live;
                 self.attempts = 0;
-                self.subscribe_frame(fx);
-                if gap {
-                    self.gap_all(fx);
-                }
-                self.ready_all(fx);
-                let held = std::mem::take(&mut self.held);
-                self.seat(held, fx);
-            }
-            Mode::Live if self.opening_connection() == Some(connection) => {
-                Self::close(self.active.take(), fx);
-                self.active = self.opening.take();
-                self.attempts = 0;
-                self.subscribe_frame(fx);
-                self.gap_all(fx);
-                self.ready_all(fx);
+                self.begin_connection(gap, fx);
             }
             _ => {}
         }
     }
 
-    fn subscribe_frame(&mut self, fx: &mut Vec<Fx>) {
-        if let Some(connection) = self.active.as_mut() {
-            let models = connection.models.clone();
-            Self::seal(connection, Outgoing::Subscribe { models }, fx);
-        }
-    }
-
-    fn event(&mut self, connection: ConnectionId, event: FramedEvent, fx: &mut Vec<Fx>) {
+    fn event(&mut self, connection: ConnectionId, channel: &str, event: FramedEvent, fx: &mut Vec<Fx>) {
         if !self.want.contains_key(&event.model) {
             return;
         }
@@ -557,11 +635,72 @@ impl FeedState {
                 let accepted = self.accept(event);
                 self.held.push(accepted);
             }
-            Mode::Live if self.active_connection() == Some(connection) => {
+            Mode::Live if self.active_connection() == Some(connection) && self.subscribed.contains(channel) => {
+                let ready = self.announced.contains(&event.model);
                 let accepted = self.accept(event);
-                self.seat(vec![accepted], fx);
+                if ready {
+                    self.seat(vec![accepted], fx);
+                } else {
+                    self.held.push(accepted);
+                }
             }
             _ => {}
+        }
+    }
+
+    fn channel_confirmed(&mut self, connection: ConnectionId, channel: Channel, fx: &mut Vec<Fx>) {
+        if self.mode != Mode::Live || self.active_connection() != Some(connection) || !self.subscribed.contains(&channel) || !self.confirmed.insert(channel.clone()) {
+            return;
+        }
+        let regapped: Vec<String> = self.models_of(&channel).into_iter().filter(|model| self.announced.contains(model) && self.gapped.remove(model)).collect();
+        for model in &regapped {
+            fx.push(Fx::ModelGap { model: model.clone() });
+        }
+        Self::stale_all(&regapped, fx);
+        self.announce_ready(fx);
+    }
+
+    /// The server closed one channel: without an error the channel subscribes again by the backoff, with an error its models leave `want`.
+    fn channel_ended(&mut self, connection: ConnectionId, channel: Channel, failed: bool, fx: &mut Vec<Fx>) {
+        if self.mode != Mode::Live || self.active_connection() != Some(connection) || !self.subscribed.contains(&channel) {
+            return;
+        }
+        let models = self.models_of(&channel);
+        self.confirmed.remove(&channel);
+        if !failed {
+            for model in models.into_iter().filter(|model| self.announced.contains(model)) {
+                self.gapped.insert(model);
+            }
+            let attempt = self.channel_attempts.entry(channel.clone()).or_insert(0);
+            *attempt += 1;
+            fx.push(Fx::ResubscribeChannel { connection, channel, attempt: *attempt });
+            return;
+        }
+        let mut ids: Vec<SubscriptionId> = Vec::new();
+        for model in models {
+            self.announced.remove(&model);
+            self.gapped.remove(&model);
+            ids.extend(self.want.remove(&model).unwrap_or_default().into_iter().filter(|id| self.streams.remove(id)));
+        }
+        self.subscribed.remove(&channel);
+        self.channel_attempts.remove(&channel);
+        if !ids.is_empty() {
+            fx.push(Fx::ModelInvalid { ids });
+        }
+        self.narrow(fx);
+        if self.want.is_empty() {
+            self.mode = Mode::Off { gap: false };
+            self.flush_pending(fx);
+            self.close_all(fx);
+        }
+    }
+
+    fn channel_resubscribe(&mut self, connection: ConnectionId, channel: Channel, fx: &mut Vec<Fx>) {
+        if self.mode != Mode::Live || self.active_connection() != Some(connection) || !self.subscribed.contains(&channel) || self.confirmed.contains(&channel) {
+            return;
+        }
+        if let Some(found) = self.active.as_mut() {
+            Self::seal(found, Outgoing::Subscribe { channel }, fx);
         }
     }
 
@@ -599,13 +738,13 @@ impl FeedState {
             }
             Mode::Live if self.active_connection() == Some(connection) => {
                 self.flush_pending(fx);
+                let lost = self.lose_held(None, fx);
                 self.active = None;
-                Self::close(self.opening.take(), fx);
                 self.mode = Mode::Opening { gap: true };
                 self.attempts = 0;
                 self.open_connection(fx);
+                Self::stale_all(&lost, fx);
             }
-            Mode::Live if self.opening_connection() == Some(connection) => self.wait_resubscribe(fx),
             _ => {}
         }
     }
@@ -650,28 +789,28 @@ impl FeedState {
                     Self::seal(found, Outgoing::Pong { ts }, fx);
                 }
             }
-            Frame::Events { id, events } if id == SUBSCRIPTION => {
+            Frame::Events { id, events } => {
                 for event in events {
-                    self.event(connection, event, fx);
+                    self.event(connection, &id, event, fx);
                 }
             }
-            Frame::Complete { id } if id == SUBSCRIPTION => self.dropped(connection, fx),
-            Frame::Ended => self.dropped(connection, fx),
-            Frame::Error { id } if id.as_deref().is_none_or(|id| id == SUBSCRIPTION) => self.dropped(connection, fx),
-            Frame::Events { .. } | Frame::Complete { .. } | Frame::Error { .. } | Frame::Quiet => {}
+            Frame::Confirmed { id } => self.channel_confirmed(connection, id, fx),
+            Frame::Complete { id } => self.channel_ended(connection, id, false, fx),
+            Frame::Error { id: Some(id) } => self.channel_ended(connection, id, true, fx),
+            Frame::Ended | Frame::Error { id: None } => self.dropped(connection, fx),
+            Frame::Quiet => {}
         }
     }
 
     fn resubscribe(&mut self, connection: ConnectionId, fx: &mut Vec<Fx>) {
-        let waiting = matches!(self.mode, Mode::Opening { .. } | Mode::Live) && self.is_online() && self.opening_connection() == Some(connection);
+        let waiting = matches!(self.mode, Mode::Opening { .. }) && self.is_online() && self.opening_connection() == Some(connection);
         if !waiting {
             return;
         }
-        let models = self.models();
         if let Some(found) = self.opening.as_mut() {
-            *found = Connection { id: connection, protocol: Protocol::Handshake, models: models.clone() };
+            *found = Connection { id: connection, protocol: Protocol::Handshake };
         }
-        fx.push(Fx::Run(FeedEffect::Connect { connection, models }));
+        fx.push(Fx::Run(FeedEffect::Connect { connection }));
         fx.push(Fx::HandshakeDeadline { connection });
     }
 
@@ -689,17 +828,14 @@ impl FeedState {
                 self.attempts = 0;
                 self.open_connection(fx);
             }
-            Mode::Opening { .. } if new => {
-                let lost = self.lose_held(None, fx);
-                Self::close(self.opening.take(), fx);
-                self.open_connection(fx);
-                Self::stale_all(&lost, fx);
+            Mode::Live => {
+                self.subscribe_missing(fx);
+                if new {
+                    self.announce_ready(fx);
+                } else if stream && self.announced.contains(&model) {
+                    fx.push(Fx::ModelReady { model, id: Some(id) });
+                }
             }
-            Mode::Live if new => {
-                Self::close(self.opening.take(), fx);
-                self.open_connection(fx);
-            }
-            Mode::Live if stream => fx.push(Fx::ModelReady { model, id: Some(id) }),
             _ => {}
         }
     }
@@ -714,7 +850,12 @@ impl FeedState {
             return;
         }
         self.want.remove(model);
+        self.announced.remove(model);
+        self.gapped.remove(model);
         if !self.want.is_empty() {
+            if self.mode == Mode::Live {
+                self.narrow(fx);
+            }
             return;
         }
         match self.mode {
@@ -832,6 +973,10 @@ impl Feed {
                     out.push(Effect::Schedule { id: ScheduleId(connection), after, input: FeedInput::Resubscribe { connection_id: connection } });
                 }
                 Fx::CancelResubscribe { connection } => out.push(Effect::Cancel(ScheduleId(connection))),
+                Fx::ResubscribeChannel { connection, channel, attempt } => {
+                    let after = RetryPolicy::Subscription.backoff().delay(attempt - 1);
+                    out.push(Effect::Schedule { id: ScheduleId(CHANNEL_SCHEDULE | (connection << 16) | state.channel_slot(&channel)), after, input: FeedInput::ChannelResubscribe { connection_id: connection, channel } });
+                }
                 Fx::HandshakeDeadline { connection } => out.push(Effect::Schedule { id: ScheduleId(HANDSHAKE_SCHEDULE | connection), after: HANDSHAKE_DEADLINE, input: FeedInput::HandshakeDeadline { connection_id: connection } }),
                 Fx::CancelHandshake { connection } => out.push(Effect::Cancel(ScheduleId(HANDSHAKE_SCHEDULE | connection))),
                 Fx::Commit { batch, events } => out.push(Effect::Send(Outbound::new(peers.store, StoreInput::Commit(Self::commit_batch(state, batch, events))))),
@@ -842,6 +987,7 @@ impl Feed {
                 Fx::ModelEvent { model, position, payload } => Self::to_streams(state, &model, &mut out, |stream| DeliveryInput::ModelEvent { stream, position, payload: payload.clone() }),
                 Fx::ModelLost { model, first, last } => Self::to_streams(state, &model, &mut out, |stream| DeliveryInput::ModelLost { stream, first, last }),
                 Fx::ModelGap { model } => Self::to_streams(state, &model, &mut out, |stream| DeliveryInput::ModelGap { stream }),
+                Fx::ModelInvalid { ids } => out.extend(ids.into_iter().map(|stream| Effect::Send(Outbound::new(peers.deliveries, DeliveryInput::ModelInvalid { stream })))),
             }
         }
         out
@@ -884,7 +1030,10 @@ impl StateOwner for Feed {
                     state.dropped(connection_id, &mut fx);
                 }
             }
-            FeedInput::Event { connection_id, event } => state.event(connection_id, event, &mut fx),
+            FeedInput::Event { connection_id, channel, event } => state.event(connection_id, &channel, event, &mut fx),
+            FeedInput::ChannelConfirmed { connection_id, channel } => state.channel_confirmed(connection_id, channel, &mut fx),
+            FeedInput::ChannelEnded { connection_id, channel, failed } => state.channel_ended(connection_id, channel, failed, &mut fx),
+            FeedInput::ChannelResubscribe { connection_id, channel } => state.channel_resubscribe(connection_id, channel, &mut fx),
             FeedInput::ChannelLost { connection_id, dropped } => state.channel_lost(connection_id, dropped, &mut fx),
             FeedInput::Dropped { connection_id } | FeedInput::SubscriptionEnded { connection_id } => state.dropped(connection_id, &mut fx),
             FeedInput::Resubscribe { connection_id } => state.resubscribe(connection_id, &mut fx),
@@ -903,7 +1052,7 @@ impl StateOwner for Feed {
         Self::lower(state, fx)
     }
 
-    fn epoch_started(state: &mut FeedState, epoch: Epoch) { *state = FeedState::new(epoch, state.peers, std::mem::take(&mut state.debounce)); }
+    fn epoch_started(state: &mut FeedState, epoch: Epoch) { *state = FeedState::new(epoch, state.peers, std::mem::take(&mut state.debounce), std::mem::take(&mut state.channels)); }
 
     fn tick(now: Time) -> FeedInput { FeedInput::Tick(now) }
 

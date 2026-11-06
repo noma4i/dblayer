@@ -349,7 +349,6 @@ impl Feed {
     }
 
     fn want_plus(&mut self, model: &str, id: u64, stream: bool) -> Vec<Effect> {
-        let new = !self.want.contains_key(model);
         self.want.entry(model.to_string()).or_default().insert(id);
         let mut effects = Vec::new();
         if stream {
@@ -359,18 +358,6 @@ impl Feed {
         match self.mode {
             Mode::Off { gap } if self.online() => {
                 self.mode = Mode::Opening { gap };
-                self.opening = Some(Proto::Handshake);
-                effects.push(Effect::Connect);
-            }
-            Mode::Opening { .. } if new => {
-                let lost = self.lose_held(None);
-                Self::goodbye(self.opening.take(), &mut effects);
-                self.opening = Some(Proto::Handshake);
-                effects.push(Effect::Connect);
-                Self::stale(&lost, &mut effects);
-            }
-            Mode::Live if new => {
-                Self::goodbye(self.opening.take(), &mut effects);
                 self.opening = Some(Proto::Handshake);
                 effects.push(Effect::Connect);
             }
@@ -428,14 +415,9 @@ impl Feed {
                     self.flush(&mut effects);
                 }
                 self.active = None;
-                Self::goodbye(self.opening.take(), &mut effects);
                 self.mode = Mode::Opening { gap: true };
                 self.opening = Some(Proto::Handshake);
                 effects.push(Effect::Connect);
-            }
-            (Mode::Live, To::Opening) => {
-                self.opening = Some(Proto::Handshake);
-                effects.push(Effect::ScheduleResubscribe);
             }
             _ => {}
         }
@@ -473,13 +455,6 @@ impl Feed {
                 self.ready_all(&mut effects);
                 let held = std::mem::take(&mut self.held);
                 self.seat(held, &mut effects);
-            }
-            Mode::Live if self.opening.is_some() => {
-                Self::goodbye(self.active.take(), &mut effects);
-                self.active = self.opening.take();
-                effects.push(Effect::SealSubscribe);
-                self.gap_all(&mut effects);
-                self.ready_all(&mut effects);
             }
             _ => {}
         }
@@ -593,7 +568,7 @@ impl Feed {
             }
             Input::Dropped { to } | Input::Ended { to } => return self.dropped(to),
             Input::Resubscribe { to } => {
-                if matches!(self.mode, Mode::Opening { .. } | Mode::Live) && self.online() && to == To::Opening && self.opening.is_some() {
+                if matches!(self.mode, Mode::Opening { .. }) && self.online() && to == To::Opening && self.opening.is_some() {
                     self.opening = Some(Proto::Handshake);
                     effects.push(Effect::Connect);
                 }

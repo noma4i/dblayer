@@ -11,7 +11,7 @@ use serde_json::{json, Value};
 use tokio::runtime::Handle;
 use tokio::sync::mpsc;
 
-use super::feed::{Frame, FramedEvent, Outgoing, ProtocolReason, SUBSCRIPTION};
+use super::feed::{Frame, FramedEvent, Outgoing, ProtocolReason};
 use super::ports::{Admit, Rest};
 use crate::owners::contract::ConnectionId;
 use crate::owners::read::feed::{Feed, FeedEffect, FeedInput};
@@ -21,9 +21,9 @@ use crate::transport::{CableLine, CableLines, CancelToken, GraphQLRequest, Incom
 
 /// The one reading of the frames: what the subscription asks and which events a response carries.
 pub trait FeedCodec: Send + Sync + 'static {
-    fn request(&self, models: &[String]) -> GraphQLRequest;
-    /// The events of a `next` response, none when it carries no model event.
-    fn events(&self, response: Response) -> Vec<FramedEvent>;
+    fn request(&self, channel: &str) -> GraphQLRequest;
+    /// The events of a `next` response of `channel`, none when it carries no model event.
+    fn events(&self, channel: &str, response: Response) -> Vec<FramedEvent>;
 }
 
 /// How long the queued frames of a closing established connection may still go out.
@@ -149,7 +149,7 @@ impl FeedIo {
                         Ok(frame) => frame,
                         Err(reason) => return reply(FeedInput::ProtocolError { connection_id: connection, reason }),
                     };
-                    let last = matches!(&frame, Frame::Ended) || matches!(&frame, Frame::Complete { id } if id == SUBSCRIPTION) || matches!(&frame, Frame::Error { id } if id.as_deref().is_none_or(|id| id == SUBSCRIPTION));
+                    let last = matches!(&frame, Frame::Ended | Frame::Error { id: None });
                     reply(FeedInput::FrameOpened { connection_id: connection, counter, frame });
                     if last {
                         return;
@@ -166,13 +166,12 @@ impl FeedIo {
     /// The meaning of a frame the cable already validated. A `next` that is no response is a broken frame.
     fn frame_of(codec: &Arc<dyn FeedCodec>, body: &Value) -> Result<Frame, ProtocolReason> {
         let id = body["id"].as_str().map(str::to_string);
-        let foreign = id.as_deref().is_some_and(|id| id != SUBSCRIPTION);
         Ok(match body["t"].as_str() {
             Some("ping") => Frame::Ping { ts: body["ts"].as_number().cloned().ok_or(ProtocolReason::Frame)? },
             Some("closing") => Frame::Ended,
             Some("error") => Frame::Error { id },
             Some("complete") => Frame::Complete { id: id.unwrap_or_default() },
-            Some("next") if foreign => Frame::Events { id: id.unwrap_or_default(), events: Vec::new() },
+            Some("subscribed") => Frame::Confirmed { id: id.unwrap_or_default() },
             Some("next") => {
                 let response = serde_json::from_value::<Response>(body["result"].clone()).map_err(|_| ProtocolReason::Frame)?;
                 match response.shape() {
@@ -180,7 +179,9 @@ impl FeedIo {
                     ResponseShape::ErrorsOnly | ResponseShape::DataWithErrors => return Err(ProtocolReason::Errors),
                     _ => {}
                 }
-                Frame::Events { id: id.unwrap_or_default(), events: codec.events(response) }
+                let id = id.unwrap_or_default();
+                let events = codec.events(&id, response);
+                Frame::Events { id, events }
             }
             _ => Frame::Quiet,
         })
@@ -188,11 +189,11 @@ impl FeedIo {
 
     fn body_of(&self, frame: Outgoing) -> Value {
         match frame {
-            Outgoing::Subscribe { models } => {
-                let request = self.codec.request(&models);
-                json!({"t":"subscribe", "id":SUBSCRIPTION, "query":request.document, "variables":request.variables, "operationName":request.operation_name})
+            Outgoing::Subscribe { channel } => {
+                let request = self.codec.request(&channel);
+                json!({"t":"subscribe", "id":channel, "query":request.document, "variables":request.variables, "operationName":request.operation_name})
             }
-            Outgoing::Unsubscribe => json!({"t":"unsubscribe", "id":SUBSCRIPTION}),
+            Outgoing::Unsubscribe { channel } => json!({"t":"unsubscribe", "id":channel}),
             Outgoing::Pong { ts } => json!({"t":"pong", "ts":ts}),
         }
     }
@@ -219,7 +220,7 @@ impl FeedIo {
 impl EffectRunner<Feed> for FeedIo {
     fn run(&mut self, stamp: EpochStamp, effect: FeedEffect, back: &Back<Feed>) {
         match effect {
-            FeedEffect::Connect { connection, .. } => self.connect(stamp, connection, back),
+            FeedEffect::Connect { connection } => self.connect(stamp, connection, back),
             FeedEffect::Seal { connection, counter, frame, .. } => self.seal(connection, counter, frame),
             FeedEffect::Close { connection } => self.close(connection),
             other => (self.rest)(stamp, other),

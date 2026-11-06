@@ -31,9 +31,9 @@ const EPOCH: u64 = 1;
 struct Models;
 
 impl FeedCodec for Models {
-    fn request(&self, models: &[String]) -> GraphQLRequest { GraphQLRequest::new("subscription Feed", "Feed", json!({ "models": models })) }
+    fn request(&self, channel: &str) -> GraphQLRequest { GraphQLRequest::new("subscription Feed", "Feed", json!({ "channel": channel })) }
 
-    fn events(&self, response: Response) -> Vec<FramedEvent> {
+    fn events(&self, _channel: &str, response: Response) -> Vec<FramedEvent> {
         let Some(data) = response.data else { return Vec::new() };
         match (data["model"].as_str(), data["payload"].as_str()) {
             (Some(model), Some(payload)) => vec![FramedEvent { model: model.into(), payload: payload.into(), reread: StaleKeys::none() }],
@@ -82,6 +82,8 @@ fn line() -> (Arc<Line>, Peer) {
     (Arc::new(Line { incoming: tokio::sync::Mutex::new(incoming), sent: sent.clone(), closed: closed.clone() }), Peer { frames, sent, closed })
 }
 
+fn confirmed(counter: u64) -> Incoming { Incoming::Frame { counter, body: json!({"t":"subscribed", "id":"1"}) } }
+
 fn next(counter: u64, payload: &str) -> Incoming { Incoming::Frame { counter, body: json!({"t":"next", "id":"1", "result":{"data":{"model":"Chat", "payload":payload}}}) } }
 
 fn rig(lines: Vec<Arc<Line>>) -> (DetScheduler, Address<Feed>, Batches, tokio::runtime::Runtime) {
@@ -94,7 +96,7 @@ fn rig(lines: Vec<Arc<Line>>) -> (DetScheduler, Address<Feed>, Batches, tokio::r
     let windows = det.add::<Sink<Windows>>("windows", Default::default(), Discard);
     let deliveries = det.add::<Sink<Deliveries>>("deliveries", Default::default(), Discard);
     let peers = f::FeedPeers { store: Address::<StoreWriter>::new(store.index()), windows: Address::<Windows>::new(windows.index()), deliveries: Address::<Deliveries>::new(deliveries.index()) };
-    let feed = det.add::<Feed>("feed", f::FeedState::new(EPOCH, peers, [("Chat".to_string(), 0)].into()), io);
+    let feed = det.add::<Feed>("feed", f::FeedState::new(EPOCH, peers, [("Chat".to_string(), 0)].into(), [("Chat".to_string(), vec!["1".to_string()])].into()), io);
     det.start_epoch(EPOCH);
     det.post(feed, EpochStamp::Epoch(EPOCH), FeedInput::Online(Online(true)));
     det.post(feed, EpochStamp::Epoch(EPOCH), FeedInput::WantPlus { model: "Chat".into(), id: 1, stream: false });
@@ -106,7 +108,8 @@ fn feed_io_frames_commit() {
     let (line, peer) = line();
     let (mut det, feed, batches, _runtime) = rig(vec![line]);
     pump(&mut det, feed, |det| det.state(feed).is_some_and(|state| state.mode() == Mode::Live));
-    peer.frames.send(next(1, "hello")).unwrap();
+    peer.frames.send(confirmed(1)).unwrap();
+    peer.frames.send(next(2, "hello")).unwrap();
     let seen = batches.clone();
     pump(&mut det, feed, |_| !seen.all().is_empty());
     let landed = batches.all();
@@ -115,7 +118,7 @@ fn feed_io_frames_commit() {
     assert_eq!(landed[0].epoch, EPOCH);
     let sent = peer.sent.lock().unwrap_or_else(PoisonError::into_inner).clone();
     assert_eq!(sent.len(), 1);
-    assert_eq!((sent[0].0, sent[0].1["t"].as_str(), sent[0].1["variables"]["models"][0].as_str()), (f::FIRST_SEND_COUNTER, Some("subscribe"), Some("Chat")), "the subscribe frame is sealed with the first send counter");
+    assert_eq!((sent[0].0, sent[0].1["t"].as_str(), sent[0].1["id"].as_str(), sent[0].1["variables"]["channel"].as_str()), (f::FIRST_SEND_COUNTER, Some("subscribe"), Some("1"), Some("1")), "the subscribe frame is sealed with the first send counter");
     assert!(saw_input(&det, "HandshakeDone") >= 1 && saw_input(&det, "FrameOpened") >= 1);
 }
 
@@ -173,7 +176,8 @@ fn feed_io_graphql_errors_drop() {
         let (second, _other) = line();
         let (mut det, feed, batches, _runtime) = rig(vec![first, second]);
         pump(&mut det, feed, |det| det.state(feed).is_some_and(|state| state.mode() == Mode::Live));
-        peer.frames.send(Incoming::Frame { counter: 1, body: json!({"t":"next", "id":"1", "result":result}) }).unwrap();
+        peer.frames.send(confirmed(1)).unwrap();
+        peer.frames.send(Incoming::Frame { counter: 2, body: json!({"t":"next", "id":"1", "result":result}) }).unwrap();
         if drops {
             pump(&mut det, feed, |det| det.state(feed).is_some_and(|state| matches!(state.mode(), Mode::Live | Mode::Opening { .. }) && state.active_connection() != Some(1)));
             assert!(saw_input(&det, "ProtocolError") >= 1, "{name}: the error frame is an explicit protocol error");
@@ -214,7 +218,7 @@ fn feed_io_close_cancels_handshake() {
     let windows = det.add::<Sink<Windows>>("windows", Default::default(), Discard);
     let deliveries = det.add::<Sink<Deliveries>>("deliveries", Default::default(), Discard);
     let peers = f::FeedPeers { store: Address::<StoreWriter>::new(store.index()), windows: Address::<Windows>::new(windows.index()), deliveries: Address::<Deliveries>::new(deliveries.index()) };
-    let feed = det.add::<Feed>("feed", f::FeedState::new(EPOCH, peers, [("Chat".to_string(), 0)].into()), io);
+    let feed = det.add::<Feed>("feed", f::FeedState::new(EPOCH, peers, [("Chat".to_string(), 0)].into(), [("Chat".to_string(), vec!["1".to_string()])].into()), io);
     det.start_epoch(EPOCH);
     det.post(feed, EpochStamp::Epoch(EPOCH), FeedInput::Online(Online(true)));
     det.post(feed, EpochStamp::Epoch(EPOCH), FeedInput::WantPlus { model: "Chat".into(), id: 1, stream: false });
@@ -231,12 +235,13 @@ fn feed_io_foreign_subscription_is_ignored() {
     let (line, peer) = line();
     let (mut det, feed, batches, _runtime) = rig(vec![line]);
     pump(&mut det, feed, |det| det.state(feed).is_some_and(|state| state.mode() == Mode::Live));
-    peer.frames.send(Incoming::Frame { counter: 1, body: json!({"t":"error", "id":"2", "code":"BAD", "retryable":false}) }).unwrap();
-    peer.frames.send(Incoming::Frame { counter: 2, body: json!({"t":"next", "id":"2", "result":{}}) }).unwrap();
-    peer.frames.send(Incoming::Frame { counter: 3, body: json!({"t":"complete", "id":"2"}) }).unwrap();
-    peer.frames.send(next(4, "mine")).unwrap();
+    peer.frames.send(confirmed(1)).unwrap();
+    peer.frames.send(Incoming::Frame { counter: 2, body: json!({"t":"error", "id":"2", "code":"BAD", "retryable":false}) }).unwrap();
+    peer.frames.send(Incoming::Frame { counter: 3, body: json!({"t":"next", "id":"2", "result":{"data":{"model":"Chat", "payload":"theirs"}}}) }).unwrap();
+    peer.frames.send(Incoming::Frame { counter: 4, body: json!({"t":"complete", "id":"2"}) }).unwrap();
+    peer.frames.send(next(5, "mine")).unwrap();
     let seen = batches.clone();
     pump(&mut det, feed, |_| !seen.all().is_empty());
     assert_eq!(batches.all()[0].rows, [("Chat".to_string(), "mine".to_string())]);
-    assert_eq!((saw_input(&det, "ProtocolError"), det.state(feed).map(|state| state.active_connection())), (0, Some(Some(1))), "frames of another subscription neither end nor break this one");
+    assert_eq!((saw_input(&det, "ProtocolError"), det.state(feed).map(|state| state.active_connection())), (0, Some(Some(1))), "frames of a channel this connection never subscribed neither end nor break it");
 }

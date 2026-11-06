@@ -15,7 +15,7 @@ mod snapshots;
 mod window_io;
 
 pub use delivery_io::DeliveryIo;
-pub use feed_codec::SchemaFeedCodec;
+pub use feed_codec::{channels_of, SchemaFeedCodec};
 pub use feed_io::{FeedCodec, FeedIo};
 pub use ports::{Admit, Refused, Rest};
 pub use schema_io::{max_pages, members_complete, DEFAULT_PAGE_SIZE, preload_keys, preload_sources, refreshes_on_foreground, ReadOperation, ReadOperations, SchemaWindowCodec};
