@@ -473,3 +473,18 @@ fn xfer_persisting_complete_refuses() {
     refuses_calls(&mut twin, KEY);
     assert_eq!(twin.stage(id), TransferStage::PersistingComplete);
 }
+
+#[test]
+fn inv_upload_08_a_restarted_part_never_lowers_the_total_inside_a_phase() {
+    let mut twin = Twin::new();
+    let id = twin.uploading(KEY, 4);
+    let mut shown = twin.step_ok(id, 1, None).shows();
+    shown.extend(twin.commit().shows());
+    shown.extend(twin.step_error(id, true).shows());
+    shown.extend(twin.tick_retry(id).shows());
+    shown.extend(twin.step_ok(id, 2, None).shows());
+    shown.extend(twin.commit().shows());
+    let levels: Vec<u32> = shown.iter().filter_map(|show| if let Shown::Uploading { progress } = show { Some(*progress) } else { None }).collect();
+    assert!(!levels.is_empty() && levels.windows(2).all(|pair| pair[0] <= pair[1]), "{levels:?}");
+    assert_eq!(levels.last(), Some(&50), "{levels:?}");
+}

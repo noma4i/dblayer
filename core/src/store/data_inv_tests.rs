@@ -7,7 +7,8 @@ use serde_json::{json, Value};
 use crate::owners::contract::BatchAuthor;
 use crate::owners::store::{EffectRow, IntentEffects, StoreBatch, StoreOp};
 use crate::query::{Order, Query, Where};
-use crate::store::spec_fixtures::{all_specs, put};
+use crate::owners::read::windows::WindowKey;
+use crate::store::spec_fixtures::{all_specs, moments_spec, obj, put};
 use crate::store::Store;
 use crate::value::SortDirection;
 
@@ -247,4 +248,122 @@ fn inv_file_07_the_bytes_read_back_the_same_on_both_sides_of_the_storage_thresho
         write(&db, BatchAuthor::LocalWrites, Vec::new(), vec![attach("m1", bytes.clone())]);
         assert_eq!(db.read_file("moments", &crate::identity::RowId::new("m1").unwrap(), "media").unwrap(), Some(bytes), "size {size}");
     }
+}
+
+fn paged_moments() -> Arc<Store> {
+    let mut moments = moments_spec();
+    let mut mine = crate::schema::RelationSpec::new("mine", &["userId"]);
+    mine.remote = Some(crate::schema::RemoteSpec {
+        shape: crate::schema::RemoteShape::Connection { direction: crate::schema::PageDirection::Forward, coverage: crate::schema::Coverage::Page, max_pages: None, cursor: None },
+        operation: "Mine".into(),
+        stale_time: "1.minute".into(),
+        empty_stale_time: None,
+        selects_page_info: true,
+        page_size: None,
+        variables: Default::default(),
+        root: None,
+        total_from: None,
+    });
+    moments.relations.push(mine);
+    let specs = all_specs().into_iter().map(|spec| if spec.key.as_str() == "moments" { moments.clone() } else { spec }).collect();
+    Arc::new(Store::open_models(None, specs, None).unwrap())
+}
+
+fn mine(user: &str) -> WindowKey { WindowKey::relation("moments", "mine", &obj(json!({"userId": user}))) }
+
+fn mine_page(db: &Store, user: &str, ids: &[&str], cursor: Option<&str>, replace_all: bool) -> StoreOp {
+    let key = mine(user);
+    let roots = ids.iter().map(|id| crate::owners::store::RowValue { row_id: (*id).into(), values: json!({"id": id, "userId": user, "text": id}).to_string() }).collect();
+    StoreOp::Window { key: key.name, model: key.model, page: 1, replace_all, cursor: cursor.map(str::to_string), roots, related: Vec::new(), total: None, base_revision: db.revision_seq().unwrap() }
+}
+
+fn members(db: &Store, user: &str) -> Vec<String> {
+    let scope = db.spec("moments").unwrap().selection_key("mine", &obj(json!({"userId": user}))).unwrap();
+    db.read(&["moments"], |reader| reader.scope_members("moments", scope.as_str())).unwrap().into_iter().map(|(id, _)| id).collect()
+}
+
+#[test]
+fn inv_merge_07_a_page_keeps_the_tail_after_a_found_anchor_and_drops_it_without_one() {
+    let db = paged_moments();
+    write(&db, BatchAuthor::Window, Vec::new(), vec![mine_page(&db, "u1", &["m1", "m2", "m3"], None, false)]);
+    write(&db, BatchAuthor::Window, Vec::new(), vec![mine_page(&db, "u1", &["m1", "m2"], Some("c1"), false)]);
+    assert_eq!(members(&db, "u1"), ["m1", "m2", "m3"], "the anchor m2 is found: the tail stays");
+    write(&db, BatchAuthor::Window, Vec::new(), vec![mine_page(&db, "u1", &["n1", "n2"], None, true)]);
+    assert_eq!(members(&db, "u1"), ["n1", "n2"], "the anchor n2 is not in the list: the tail goes");
+}
+
+#[test]
+fn inv_merge_08_a_landing_changes_only_the_list_of_its_own_selection() {
+    let db = paged_moments();
+    write(&db, BatchAuthor::Window, Vec::new(), vec![mine_page(&db, "u1", &["m1"], None, false)]);
+    write(&db, BatchAuthor::Window, Vec::new(), vec![mine_page(&db, "u2", &["m2"], None, false)]);
+    write(&db, BatchAuthor::Window, Vec::new(), vec![mine_page(&db, "u1", &["m3"], None, true)]);
+    assert_eq!(members(&db, "u1"), ["m3"]);
+    assert_eq!(members(&db, "u2"), ["m2"]);
+}
+
+#[test]
+fn inv_id_06_a_real_row_that_arrived_before_the_create_answer_leaves_one_row_after_it() {
+    let db = open();
+    let temp = crate::identity::RowId::generate_temp(None).to_string();
+    let values = json!({"id": temp, "userId": "u1", "text": "a"}).to_string();
+    let effects = IntentEffects { rows: vec![EffectRow { model: "moments".into(), row_id: temp.clone(), values }], ..Default::default() };
+    write(&db, BatchAuthor::Outbox, Vec::new(), vec![StoreOp::Intent { op_id: 1, model: "moments".into(), row_id: temp.clone(), action: "create".into(), payload: "{}".into(), effects }]);
+    put(&db, "moments", json!({"id": "m9", "userId": "u1", "text": "a"}));
+    let answer = crate::owners::store::RowValue { row_id: "m9".into(), values: json!({"id": "m9", "userId": "u1", "text": "a"}).to_string() };
+    write(&db, BatchAuthor::Outbox, Vec::new(), vec![
+        StoreOp::Rows { model: "moments".into(), rows: vec![answer] },
+        StoreOp::Swap { model: "moments".into(), temp: temp.clone(), real: "m9".into() },
+        StoreOp::RemoveIntent { op_id: 1 },
+    ]);
+    assert!(db.read(&["moments"], |reader| reader.point("moments", &temp)).unwrap().is_none(), "the temp row is gone");
+    assert_eq!(db.count(&Query::new("moments")).unwrap(), 1, "one row stays");
+}
+
+#[test]
+fn inv_order_04_restored_member_takes_a_free_key_when_its_old_key_was_reused() {
+    use crate::commit::{CommitEnvelope, ScopeOp, ScopeRef, WriteOrigin};
+    use crate::identity::{ListKey, ModelKey};
+    let db = open();
+    let scope = ScopeRef::new(ModelKey::new("moments"), ListKey::from_raw("feed"));
+    for id in ["a", "b"] { put(&db, "moments", json!({"id": id, "userId": "u1", "text": id})); }
+    let first = crate::value::fractional_between(None, None).unwrap();
+    let second = crate::value::fractional_between(Some(&first), None).unwrap();
+    let append = |db: &Store, id: &str, key: &str| {
+        let mut envelope = CommitEnvelope::new(WriteOrigin::Event, db.generation());
+        envelope.scope_ops.push(ScopeOp::Append { scope: scope.clone(), row: crate::store::spec_fixtures::rid(id), order_key: key.into() });
+        db.commit(envelope).unwrap();
+    };
+    append(&db, "a", &first);
+    append(&db, "b", &second);
+    let leave = crate::owners::store::EffectMember { model: "moments".into(), list: "feed".into(), row_id: "b".into(), order_key: String::new(), leave: true };
+    let effects = IntentEffects { tombstones: vec![crate::owners::store::EffectTombstone { model: "moments".into(), row_id: "b".into() }], members: vec![leave], ..Default::default() };
+    write(&db, BatchAuthor::LocalWrites, Vec::new(), vec![StoreOp::Intent { op_id: 3, model: "moments".into(), row_id: "b".into(), action: "destroy".into(), payload: "{}".into(), effects }]);
+    put(&db, "moments", json!({"id": "x", "userId": "u1", "text": "x"}));
+    append(&db, "x", &second);
+    write(&db, BatchAuthor::LocalWrites, Vec::new(), vec![StoreOp::RollBack { op_id: 3 }, StoreOp::RemoveIntent { op_id: 3 }]);
+    let members: Vec<String> = db.read(&["moments"], |reader| reader.scope_members("moments", "feed")).unwrap().into_iter().map(|(id, _)| id).collect();
+    assert_eq!(members.len(), 3, "{members:?}");
+    assert!(members.contains(&"b".to_string()), "{members:?}");
+}
+
+#[test]
+fn inv_row_07_fsck_quarantines_temp_rows_without_an_operation_and_keeps_the_others() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("db.sqlite");
+    let kept = crate::identity::RowId::generate_temp(None).to_string();
+    {
+        let db = Arc::new(Store::open_models(Some(&path), all_specs(), None).unwrap());
+        put(&db, "moments", json!({"id": "temp-orphan", "userId": "u1", "text": "orphan"}));
+        put(&db, "moments", json!({"id": "m1", "userId": "u1", "text": "server row"}));
+        let values = json!({"id": kept, "userId": "u1", "text": "queued"}).to_string();
+        let effects = IntentEffects { rows: vec![EffectRow { model: "moments".into(), row_id: kept.clone(), values }], ..Default::default() };
+        write(&db, BatchAuthor::Outbox, Vec::new(), vec![StoreOp::Intent { op_id: 1, model: "moments".into(), row_id: kept.clone(), action: "create".into(), payload: "{}".into(), effects }]);
+    }
+    let db = Arc::new(Store::open_models(Some(&path), all_specs(), None).unwrap());
+    let present = |id: &str| db.read(&["moments"], |reader| reader.point("moments", id)).unwrap().is_some();
+    assert!(!present("temp-orphan"), "a temp row without an operation goes");
+    assert!(present("m1") && present(&kept), "the server row and the row of a queued create stay");
+    let quarantined: i64 = db.lock().connection.query_row("SELECT COUNT(*) FROM quarantine WHERE reason = 'orphan-temp-row'", [], |row| row.get(0)).unwrap();
+    assert_eq!(quarantined, 1);
 }
