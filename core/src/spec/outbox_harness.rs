@@ -191,7 +191,6 @@ pub(super) struct Twin {
     pub(super) follower: Option<OpId>,
     /// The typed text of the last inputs the Store received (`StoreOp` names).
     pub(super) store_text: String,
-    /// The typed text of the last inputs Session received from the owner.
     pub(super) session_text: String,
 }
 

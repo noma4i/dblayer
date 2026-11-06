@@ -122,7 +122,6 @@ impl CallsRunner {
     }
 }
 
-/// The first `Mutate` of a call: its pair is written with `owner = Detached`, no author waits for it after a restart.
 pub(super) fn mutate_input(req_id: RequestId, epoch: crate::runtime::Epoch, path: String, body: String) -> SessionInput {
     SessionInput::Mutate { author: CALLS_AUTHOR, owner: Some(crate::owners::session::MutateOwner::Detached), req_id, epoch, path, body, purpose: 0 }
 }

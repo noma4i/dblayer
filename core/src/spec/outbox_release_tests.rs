@@ -1,5 +1,3 @@
-//! The release of an unresolved pending by a discard (`outbox.md`: `pending_owned`, RollingBack x Committed by Discard).
-
 use super::outbox_harness::*;
 use super::ref_outbox::Policy;
 use crate::owners::contract::{ErrorClass, Online, RequestId};
@@ -12,7 +10,6 @@ fn answered(twin: &mut Twin, req_id: RequestId, pending_retained: bool) {
     twin.post(OutboxInput::Answered { req_id, outcome: AuthorOutcome::Error { class: ErrorClass::Network, error: SessionError::Http { status: 0 }, pending_retained } });
 }
 
-/// The operation sent once, its answer a temporary error, then queued while offline.
 fn queued_after_answer(pending_retained: bool) -> (Twin, OpId, RequestId) {
     let mut twin = Twin::new();
     let id = twin.submit("r", Policy::Rollback, false);

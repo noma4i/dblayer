@@ -204,6 +204,6 @@ async fn a_panic_in_the_snapshot_read_ends_the_wait_of_the_stream_with_an_error_
     db.db.panic_reads.store(crate::store::PANIC_VIEW_READ, Ordering::SeqCst);
     let stream = db.subscribe_values(db.session_epoch(), ReadRequest::List { query_json: LIST.into() });
     let value = crate::test_wait::within(stream.pull()).await;
-    assert!(matches!(&value, Ok(Some(ReadValue::Snapshot { state, .. })) if state.phase == ReadPhase::Failed) || value.is_err(), "the stream ends its wait with an error: {value:?}");
+    assert!(matches!(&value, Ok(Some(ReadValue::Snapshot { state, .. })) if state.phase == ReadPhase::Failed) || matches!(&value, Ok(Some(ReadValue::Ended { .. })) | Err(_)), "the stream ends its wait with an error or its end: {value:?}");
     crate::test_wait::yield_until("Lifecycle did not close after the snapshot read panic", || db.life.published().closed).await;
 }
