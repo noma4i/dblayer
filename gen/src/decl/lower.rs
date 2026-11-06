@@ -1212,10 +1212,9 @@ fn copy_set(cx: &mut Cx, pair: &Pair) -> Vec<(String, CopySetDecl, Pos)> {
     for entry in pairs {
         let pos = pair_pos(entry);
         let value = match &entry.value.item {
-            Value::Hash(parts) if parts.len() == 1 && parts[0].key == "receiver" => symbol(cx, &parts[0].value, "`receiver:`").map(|field| CopySetDecl::Source(SourceDecl::Owner(field))),
             Value::Hash(parts) => source_hash(cx, parts, &entry.value).map(CopySetDecl::Source),
             Value::Array(_) | Value::OptionalArray(_) | Value::Duration { .. } => {
-                cx.fail(at(&entry.value), "`set` takes a literal, `{ receiver: :field }` or `{ of: Model, field: :name }`");
+                cx.fail(at(&entry.value), "`set` takes a literal, `{ owner: :field }` or `{ of: Model, field: :name }`");
                 None
             }
             other => Some(CopySetDecl::Literal(json_of(other))),

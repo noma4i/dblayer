@@ -1038,7 +1038,7 @@ end
 ```
 
 - `removes_receiver` takes the row out of every list before the answer. A refusal puts it back at its place.
-- `copies_receiver_to :target, field: :chatId, set: { isForwarded: true, authorId: { of: User, field: :id }, originId: { receiver: :authorId } }` adds a copy of the row with `chatId` set to the argument `target`. `set:` puts a literal, a field of the copied row (`receiver:`) or a field of the singleton row of a model (`of:`) on the copy. The answer row replaces the copy, a refusal removes it.
+- `copies_receiver_to :target, field: :chatId, set: { isForwarded: true, authorId: { of: User, field: :id }, originId: { owner: :authorId } }` adds a copy of the row with `chatId` set to the argument `target`. `set:` puts a literal, a field of the copied row (`owner:`) or a field of the singleton row of a model (`of:`) on the copy. The answer row replaces the copy, a refusal removes it.
 - `joins_scope` adds the rows named by `rows:` to the end of the scope list, and `leaves_scope` takes them out. A row that is not cached is skipped by both; the answer and the next read of the list bring it. `orders:` lists every value of the order parameter, so all sort orders of the list change together. A refusal restores the ids and the order of every list.
 - The call returns after the answer. A network error ends it with `Network` and restores the lists, and nothing sends it later.
 

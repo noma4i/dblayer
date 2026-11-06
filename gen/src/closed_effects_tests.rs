@@ -40,7 +40,7 @@ fn a_copy_sets_literals_and_sources_and_names_only_known_attributes() {
     let models = club(&copy("{ name: \"x\" }")).unwrap();
     let declared = models.iter().find(|model| model.key.as_str() == "Club").unwrap().actions.iter().find(|action| action.name == "copy").unwrap();
     assert_eq!(declared.copies_receiver_to.as_ref().unwrap().set.get("name"), Some(&CopyValue::Literal(serde_json::json!("x"))));
-    let models = club(&copy("{ name: { receiver: :name } }")).unwrap();
+    let models = club(&copy("{ name: { owner: :name } }")).unwrap();
     let declared = models.iter().find(|model| model.key.as_str() == "Club").unwrap().actions.iter().find(|action| action.name == "copy").unwrap();
     assert_eq!(declared.copies_receiver_to.as_ref().unwrap().set.get("name"), Some(&CopyValue::Source(EffectSource::Owner("name".into()))));
     let errors = club(&copy("{ nothing: true }")).unwrap_err();

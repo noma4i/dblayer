@@ -6,7 +6,7 @@
 - `ReadState` carries `hasMore`, `settled` and the server `total` of the window.
 - `ModelEvent` carries `position` and the rows `before` and `after`.
 - `ModelEventItem` has a `gap` item for a lost order of events.
-- `copies_receiver_to` takes `set:` for literals and fields of the copied row or a singleton row.
+- `copies_receiver_to` takes `set:` for literals and fields of the copied row (`owner:`) or a singleton row.
 
 ### Removed
 - `scope.related` is gone: read a server relation with a query.
