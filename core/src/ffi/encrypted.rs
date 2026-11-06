@@ -155,9 +155,9 @@ impl Database {
         }
     }
 
-    pub async fn session_resume(&self) -> Result<Option<String>, DbError> {
+    pub async fn interrupted_session_answer(&self) -> Result<Option<String>, DbError> {
         self.session()?;
-        match self.await_life(self.life.session_resume()).await? {
+        match self.await_life(self.life.interrupted_session_answer()).await? {
             LifeReply::SessionResume(Ok(Some(body))) => {
                 let answer = core::Answer { sequence: None, body: serde_json::from_str(&body)? };
                 Ok(Some(refused(answer)?.body.to_string()))

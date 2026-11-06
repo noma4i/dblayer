@@ -20,7 +20,7 @@ mod store_owner_tests;
 mod store_pin_tests;
 mod session_owner_tests;
 mod session_gap_tests;
-mod session_resume_tests;
+mod interrupted_session_answer_tests;
 mod calls_owner_tests;
 mod store_tests;
 

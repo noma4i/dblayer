@@ -123,9 +123,9 @@ async fn every_explicit_call_survives_every_transition_with_a_late_sealed_refusa
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn session_resume_without_restored_call_returns_none() {
+async fn interrupted_session_answer_without_restored_call_returns_none() {
     let rig = Rig::encrypted().await;
-    assert_eq!(bound(rig.database.session_resume()).await.unwrap(), None);
+    assert_eq!(bound(rig.database.interrupted_session_answer()).await.unwrap(), None);
     rig.database.close_database().await.unwrap();
 }
 

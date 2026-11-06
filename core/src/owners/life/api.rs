@@ -69,7 +69,7 @@ impl Life {
         waiter
     }
 
-    pub fn session_resume(&self) -> Waiter<LifeReply> {
+    pub fn interrupted_session_answer(&self) -> Waiter<LifeReply> {
         if self.shut.load(Ordering::SeqCst) || self.published().closed { return self.settled(LifeReply::Closed); }
         let waiter = self.wiring.outcomes.register(Epoch::MAX);
         self.wiring.to_session(SessionInput::SessionResume { reply: waiter.id().raw() });

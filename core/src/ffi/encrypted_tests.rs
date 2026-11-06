@@ -60,7 +60,7 @@ pub(super) async fn rig(server_key: &str, pin: &str) -> (Arc<Database>, Arc<Fake
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn session_resume_returns_the_restored_call_once() {
+async fn interrupted_session_answer_returns_the_restored_call_once() {
     use crate::test_wait::within;
     use crate::transport::encrypted::{jwe, state};
     let directory = tempfile::tempdir().unwrap();
@@ -84,8 +84,8 @@ async fn session_resume_returns_the_restored_call_once() {
     }
     let database = within(open()).await.unwrap();
     database.set_online(true).unwrap();
-    assert_eq!(within(database.session_resume()).await.unwrap(), Some(r#"{"nextStep":"authenticated"}"#.into()));
-    assert_eq!(within(database.session_resume()).await.unwrap(), None);
+    assert_eq!(within(database.interrupted_session_answer()).await.unwrap(), Some(r#"{"nextStep":"authenticated"}"#.into()));
+    assert_eq!(within(database.interrupted_session_answer()).await.unwrap(), None);
     assert_eq!(server.seen().iter().filter(|request| request["requestId"] == request_id).count(), 1);
     within(database.close_database()).await.unwrap();
 }
