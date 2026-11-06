@@ -96,7 +96,7 @@ impl CablePeer {
     /// The next event the client reads from the socket.
     pub(crate) async fn next(&self, token: &str) -> Option<EncryptedSocketEvent> {
         let connection = self.connection(token)?;
-        let event = connection.output.lock().await.recv().await;
+        let event = crate::test_wait::within(async { connection.output.lock().await.recv().await }).await;
         event
     }
 

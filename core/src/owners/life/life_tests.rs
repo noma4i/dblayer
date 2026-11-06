@@ -149,7 +149,7 @@ async fn call_run_answers_by_epoch_and_network() {
     };
     assert_eq!(published.epoch, 2);
     assert_eq!(answer(life.run(2, "Op".into(), "{}".into())).await, Reply::Call(Err(CallError::Offline)));
-    assert!(matches!(life.run(1, "Op".into(), "{}".into()).wait().await, crate::runtime::Outcome::EpochEnded(_)), "call_run_stale: the wait of an ended epoch ends with the end of the epoch");
+    assert!(matches!(crate::test_wait::within(life.run(1, "Op".into(), "{}".into()).wait()).await, crate::runtime::Outcome::EpochEnded(_)), "call_run_stale: the wait of an ended epoch ends with the end of the epoch");
     assert_eq!(answer(life.set_online(true)).await, Reply::Online { closed: false });
     transport.enqueue("Op", MockReply::data(json!({ "feed": [1, 2] })));
     assert_eq!(answer(life.run(2, "Op".into(), "{}".into())).await, Reply::Call(Ok("[1,2]".into())));

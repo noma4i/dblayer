@@ -17,6 +17,8 @@ fn the_slot_is_taken_until_the_lease_is_released_or_dropped() {
 mod model {
     use loom::thread;
 
+    use crate::test_wait::join_within;
+
     use super::*;
     use crate::runtime::sync::{Arc, AtomicUsize, Ordering};
 
@@ -37,7 +39,7 @@ mod model {
                     })
                 })
                 .collect();
-            let opened = opens.into_iter().map(|open| open.join().unwrap()).filter(|opened| *opened).count();
+            let opened = opens.into_iter().map(|open| join_within(open)).filter(|opened| *opened).count();
             assert!(opened >= 1, "a free slot was refused to everybody");
             assert!(slot.acquire().is_some(), "the slot came back after both opens");
         });
@@ -51,7 +53,7 @@ mod model {
             let again = lease.clone();
             let releasing = thread::spawn(move || again.release());
             drop(lease);
-            releasing.join().unwrap();
+            join_within(releasing);
             let next = slot.acquire();
             assert!(next.is_some());
             assert!(slot.acquire().is_none());

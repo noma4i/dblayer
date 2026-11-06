@@ -55,7 +55,7 @@ impl CableLine for Line {
         Ok(())
     }
 
-    async fn next(&self) -> Incoming { self.incoming.lock().await.recv().await.unwrap_or(Incoming::Closed { code: 1006, reason: String::new() }) }
+    async fn next(&self) -> Incoming { crate::test_wait::within(async { self.incoming.lock().await.recv().await }).await.unwrap_or(Incoming::Closed { code: 1006, reason: String::new() }) }
 
     async fn close(&self) { self.closed.fetch_add(1, Ordering::SeqCst); }
 }

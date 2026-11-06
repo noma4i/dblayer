@@ -23,7 +23,7 @@ impl Transport for Peer {
         if self.cable.receive(&token, &text)?.is_some() { let _ = self.subscribed.send(token); }
         Ok(())
     }
-    async fn cable_next(&self, token: String) -> Option<EncryptedSocketEvent> { self.cable.next(&token).await }
+    async fn cable_next(&self, token: String) -> Option<EncryptedSocketEvent> { crate::test_wait::within(self.cable.next(&token)).await }
     async fn cable_close(&self, token: String) { let _ = self.closed.send(token); }
     async fn query(&self, _: TransportRequest) -> Result<String, DbError> { unreachable!() }
     async fn mutate(&self, _: TransportRequest) -> Result<String, DbError> { unreachable!() }

@@ -43,7 +43,7 @@ impl World {
     async fn open(&self, db: &Arc<Store>) -> (Arc<Client>, Arc<crate::owners::life::Life>) {
         let client = Client::new(&config(), self.server.clone(), self.credentials.clone(), db.clone(), self.clock.clone(), Arc::new(crate::transport::MockTransport::new())).unwrap();
         let life = client.start_owners();
-        life.set_online(true).wait().await;
+        crate::test_wait::within(life.set_online(true).wait()).await;
         (client, life)
     }
 }

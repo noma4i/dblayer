@@ -1,5 +1,6 @@
 use std::time::Duration;
 
+use crate::test_wait::join_within;
 use super::sync::{Arc, AtomicBool, Ordering};
 use super::PublishedCell;
 
@@ -18,7 +19,7 @@ fn a_waiter_gets_the_change_made_after_it_started_and_the_timeout_when_nothing_c
         })
     };
     assert_eq!(cell.wait_for(Duration::from_secs(5), || flag.load(Ordering::SeqCst).then_some(9)), Some(9));
-    changer.join().unwrap();
+    join_within(changer);
     cell.publish(4);
     assert_eq!(cell.read(|value| value.copied()), Some(4));
 }
@@ -42,7 +43,7 @@ mod model {
                 })
             };
             let found = cell.wait_for(Duration::from_secs(3600), || flag.load(Ordering::SeqCst).then_some(1));
-            changer.join().unwrap();
+            join_within(changer);
             assert_eq!(found, Some(1));
         });
     }
@@ -61,7 +62,7 @@ mod model {
                 })
             };
             let found = cell.wait_for(Duration::from_secs(3600), || flag.load(Ordering::SeqCst).then_some(()));
-            publisher.join().unwrap();
+            join_within(publisher);
             assert_eq!(found, Some(()));
             assert_eq!(cell.get(), Some(2));
         });

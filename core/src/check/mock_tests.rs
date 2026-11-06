@@ -12,7 +12,7 @@ fn request() -> TransportRequest {
 async fn a_request_waits_until_the_trace_answers_it() {
     let mock = Mock::new();
     let waiting = { let mock = mock.clone(); tokio::spawn(async move { mock.query(request()).await }) };
-    while mock.count() == 0 { tokio::task::yield_now().await; }
+    crate::test_wait::yield_until("the request reached the mock", || mock.count() != 0).await;
     assert!(!waiting.is_finished());
     assert_eq!(mock.announce().len(), 1);
     assert!(mock.announce().is_empty());

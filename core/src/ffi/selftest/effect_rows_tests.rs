@@ -422,15 +422,12 @@ async fn a_server_id_that_replaces_a_temporary_row_of_a_held_list_arrives_as_a_r
     hold.entered_for("the create").await;
     hold.release();
     assert!(matches!(bound(rig.database.outcome(receipt)).await.unwrap(), crate::ffi::WireOperationOutcome::Confirmed { .. }));
-    let pair = crate::test_wait::within_secs(20, async {
-        while let Some(delivery) = deliveries.recv().await {
-            if let crate::ffi::ReadValue::Delta { replaced, renamed, .. } = delivery.value {
-                if let Some(pair) = replaced.into_iter().chain(renamed).next() { return Some(pair); }
-            }
+    let pair = loop {
+        let delivery = crate::test_wait::within_secs(20, deliveries.recv()).await.expect("a delta named the swap of the temporary id");
+        if let crate::ffi::ReadValue::Delta { replaced, renamed, .. } = delivery.value {
+            if let Some(pair) = replaced.into_iter().chain(renamed).next() { break pair; }
         }
-        None
-    }).await;
-    let pair = pair.expect("a delta named the swap of the temporary id");
+    };
     assert!(pair.from.starts_with("temp") && !pair.to.starts_with("temp"), "{pair:?}");
     rig.database.cancel_stream(stream);
     rig.database.close_now();

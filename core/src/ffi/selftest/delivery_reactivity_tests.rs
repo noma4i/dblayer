@@ -21,7 +21,7 @@ impl crate::ffi::Transport for FeedTransport {
         if self.cable.receive(&token, &text)?.is_some() { *self.token.lock().unwrap() = Some(token); self.opened.notify_one(); }
         Ok(())
     }
-    async fn cable_next(&self, token: String) -> Option<crate::ffi::EncryptedSocketEvent> { self.cable.next(&token).await }
+    async fn cable_next(&self, token: String) -> Option<crate::ffi::EncryptedSocketEvent> { crate::test_wait::within(self.cable.next(&token)).await }
     async fn cable_close(&self, _: String) {}
     async fn query(&self, _: crate::ffi::TransportRequest) -> Result<String, DbError> { unreachable!() }
     async fn mutate(&self, _: crate::ffi::TransportRequest) -> Result<String, DbError> { unreachable!() }

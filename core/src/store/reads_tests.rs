@@ -1,5 +1,6 @@
 use std::sync::{Arc, Mutex};
 
+use crate::test_wait::join_within;
 use super::reads::{ReadEvent, Reads};
 
 fn recording() -> (Arc<Reads>, Arc<Mutex<Vec<ReadEvent>>>) {
@@ -37,8 +38,8 @@ fn threads_that_finish_while_the_close_runs_keep_the_order_of_the_queue() {
         let guards: Vec<_> = (0..4).map(|_| reads.admit().unwrap()).collect();
         let closer = { let reads = reads.clone(); std::thread::spawn(move || reads.close()) };
         let finishers: Vec<_> = guards.into_iter().map(|guard| std::thread::spawn(move || drop(guard))).collect();
-        closer.join().unwrap();
-        finishers.into_iter().for_each(|finisher| finisher.join().unwrap());
+        join_within(closer);
+        finishers.into_iter().for_each(|finisher| join_within(finisher));
         let events = seen.lock().unwrap().clone();
         let Some(ReadEvent::Closed(named)) = events.first().cloned() else { panic!("Closed is first: {events:?}") };
         let finished: Vec<u64> = events[1..].iter().map(|event| match event { ReadEvent::Finished(id) => *id, ReadEvent::Closed(_) => panic!("one Closed") }).collect();

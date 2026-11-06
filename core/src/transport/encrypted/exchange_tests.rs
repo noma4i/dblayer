@@ -57,7 +57,7 @@ impl Client {
     /// A call of the application: the owner Session signs in when there is no credential.
     pub(crate) async fn session_call(&self, operation: &str, body: Value) -> Result<Answer, TransportError> {
         let life = self.life.get().expect("the owners are started");
-        match life.session_call(operation.to_string(), body.to_string()).wait().await {
+        match crate::test_wait::within(life.session_call(operation.to_string(), body.to_string()).wait()).await {
             crate::runtime::Outcome::Value(crate::owners::life::LifeReply::Session(Ok(text))) => Ok(Answer { sequence: None, body: serde_json::from_str(&text).map_err(|error| TransportError::Decode(error.to_string()))? }),
             crate::runtime::Outcome::Value(crate::owners::life::LifeReply::Session(Err(error))) => Err(super::exchange::session_failure(error)),
             other => Err(TransportError::Interrupted(format!("{other:?}"))),

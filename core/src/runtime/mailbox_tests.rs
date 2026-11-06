@@ -16,6 +16,8 @@ fn take_returns_at_once_when_the_schedule_is_due_and_keeps_the_order_of_pushes()
 mod model {
     use loom::thread;
 
+    use crate::test_wait::join_within;
+
     use super::*;
     use crate::runtime::sync::Arc;
 
@@ -34,7 +36,7 @@ mod model {
             while got.len() < 2 {
                 got.extend(mailbox.take(|| None));
             }
-            producer.join().unwrap();
+            join_within(producer);
             assert_eq!(got, vec![1, 2]);
         });
     }
@@ -57,7 +59,7 @@ mod model {
             while got.len() < 4 {
                 got.extend(mailbox.take(|| None));
             }
-            producers.into_iter().for_each(|producer| producer.join().unwrap());
+            producers.into_iter().for_each(|producer| join_within(producer));
             for base in [10, 20] {
                 let own: Vec<u32> = got.iter().copied().filter(|n| *n / 10 == base / 10).collect();
                 assert_eq!(own, vec![base, base + 1]);

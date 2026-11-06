@@ -266,7 +266,7 @@ async fn a_lost_wait_ends_with_internal_not_closing() {
     let outcomes = Outcomes::<u32>::new();
     let waiter = outcomes.register(1);
     drop(outcomes);
-    assert_eq!(waiter.wait().await, Outcome::Internal);
+    assert_eq!(crate::test_wait::within(waiter.wait()).await, Outcome::Internal);
 }
 
 fn fan() -> DetScheduler {

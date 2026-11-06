@@ -39,12 +39,14 @@ async fn wait_returns_the_terminal_outcome() {
     let outcomes = Outcomes::<u32>::new();
     let waiter = outcomes.register(1);
     outcomes.close();
-    assert_eq!(waiter.wait().await, Outcome::Closing);
+    assert_eq!(crate::test_wait::within(waiter.wait()).await, Outcome::Closing);
 }
 
 #[cfg(dblayer_loom)]
 mod model {
     use loom::thread;
+
+    use crate::test_wait::join_within;
 
     use super::*;
 
@@ -62,8 +64,8 @@ mod model {
                 let outcomes = outcomes.clone();
                 thread::spawn(move || outcomes.end_epoch(1, Cause::SessionReset))
             };
-            let settled = settling.join().unwrap();
-            ending.join().unwrap();
+            let settled = join_within(settling);
+            join_within(ending);
             let outcome = waiter.try_take().unwrap();
             assert_eq!(settled, outcome == Outcome::Value(7));
             assert!(matches!(outcome, Outcome::Value(7) | Outcome::EpochEnded(Cause::SessionReset)));
@@ -88,9 +90,9 @@ mod model {
                 let outcomes = outcomes.clone();
                 thread::spawn(move || outcomes.close())
             };
-            let mut waiter = registering.join().unwrap();
-            ending.join().unwrap();
-            closing.join().unwrap();
+            let mut waiter = join_within(registering);
+            join_within(ending);
+            join_within(closing);
             assert!(matches!(waiter.try_take(), Some(Outcome::EpochEnded(Cause::ServerEnded) | Outcome::Closing)));
             assert_eq!(waiter.try_take(), None);
             assert_eq!(outcomes.open_count(), 0);
@@ -111,8 +113,8 @@ mod model {
                 let outcomes = outcomes.clone();
                 thread::spawn(move || outcomes.settle(id, 5))
             };
-            ending.join().unwrap();
-            assert!(settling.join().unwrap());
+            join_within(ending);
+            assert!(join_within(settling));
             assert_eq!(later.try_take(), Some(Outcome::Value(5)));
         });
     }

@@ -38,14 +38,32 @@ pub(crate) fn recv_within<T>(receiver: &Receiver<T>) -> T {
 }
 
 
-#[track_caller]
-pub(crate) fn join_within<T>(handle: JoinHandle<T>) -> T {
-    let deadline = Instant::now() + BLOCK_LIMIT;
-    while !handle.is_finished() {
-        assert!(Instant::now() < deadline, "the thread did not finish");
-        std::thread::sleep(Duration::from_millis(1));
+pub(crate) trait Joinable<T> {
+    fn join_bounded(self) -> T;
+}
+
+impl<T> Joinable<T> for JoinHandle<T> {
+    #[track_caller]
+    fn join_bounded(self) -> T {
+        let deadline = Instant::now() + BLOCK_LIMIT;
+        while !self.is_finished() {
+            assert!(Instant::now() < deadline, "the thread did not finish");
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        self.join().unwrap()
     }
-    handle.join().unwrap()
+}
+
+#[cfg(dblayer_loom)]
+impl<T> Joinable<T> for loom::thread::JoinHandle<T> {
+    fn join_bounded(self) -> T {
+        self.join().unwrap()
+    }
+}
+
+#[track_caller]
+pub(crate) fn join_within<T>(handle: impl Joinable<T>) -> T {
+    handle.join_bounded()
 }
 
 pub(crate) struct Rendezvous {

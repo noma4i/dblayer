@@ -28,6 +28,8 @@ fn a_replaced_task_is_cancelled_once_and_a_finished_one_is_not_cancelled() {
 mod model {
     use loom::thread;
 
+    use crate::test_wait::join_within;
+
     use super::*;
 
     #[test]
@@ -51,8 +53,8 @@ mod model {
                 let flights = flights.clone();
                 thread::spawn(move || flights.cancel(&7))
             };
-            putting.into_iter().for_each(|put| put.join().unwrap());
-            cancelling.join().unwrap();
+            putting.into_iter().for_each(|put| join_within(put));
+            join_within(cancelling);
             let (first, second) = (first.load(Ordering::SeqCst), second.load(Ordering::SeqCst));
             assert!(first <= 1 && second <= 1, "a task was cancelled twice: {first} {second}");
             assert_eq!(first + second + flights.len(), 2, "every task is cancelled or still held");
@@ -74,8 +76,8 @@ mod model {
                 let flights = flights.clone();
                 thread::spawn(move || flights.cancel(&1))
             };
-            done.join().unwrap();
-            cancel.join().unwrap();
+            join_within(done);
+            join_within(cancel);
             assert!(cancelled.load(Ordering::SeqCst) <= 1);
             assert_eq!(flights.len(), 0);
         });
