@@ -233,7 +233,7 @@ impl StoreState {
                 }
                 let Some(written) = self.writing.take() else { return };
                 match result {
-                    Err(error) => fx.push(StoreEffect::Reply { author, batch, epoch: written.epoch, reply: StoreReply::Rejected(RejectReason::Storage(error)) }),
+                    Err(reason) => fx.push(StoreEffect::Reply { author, batch, epoch: written.epoch, reply: StoreReply::Rejected(reason) }),
                     Ok(WriteDone { revision, position, observed, expiring, removed_memory, stale_parents, removed_operations, resets }) => {
                         self.revision = revision;
                         let models: Vec<String> = written.models().into_iter().collect();

@@ -130,7 +130,7 @@ impl Twin {
             Request::EpochEnded { epoch } => StoreInput::EpochEnded(EpochEnded { epoch, cause: Cause::SessionReset }),
             Request::ReadIntents { epoch } => StoreInput::ReadIntents { epoch },
             Request::Close => StoreInput::Close,
-            Request::Written { id, result } => StoreInput::Written { author: BatchAuthor::Outbox, batch: id, result: result.map(|revision| WriteDone { revision, ..WriteDone::default() }).map_err(|()| DISK.into()) },
+            Request::Written { id, result } => StoreInput::Written { author: BatchAuthor::Outbox, batch: id, result: result.map(|revision| WriteDone { revision, ..WriteDone::default() }).map_err(|()| crate::owners::contract::RejectReason::Storage(DISK.into())) },
             Request::Erased { io_id, result } => StoreInput::Erased { io_id, result: result.map(|revision| Done { revision }).map_err(|()| DISK.into()) },
             Request::ReadsClosed(ids) => StoreInput::ReadsClosed { ids },
             Request::ReadFinished(read_id) => StoreInput::ReadFinished { read_id },

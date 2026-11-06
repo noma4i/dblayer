@@ -31,6 +31,17 @@ pub(crate) fn unconfirmed_fields(reader: &Reader<'_>, closing: Option<i64>, mode
     Ok(fields)
 }
 
+/// A server row with its nested members decoded by their declaration: a member that does not decode refuses the row and with it the batch.
+fn decode_nested(spec: &ModelSpec, patch: &Map<String, Value>) -> Result<Map<String, Value>, StoreError> {
+    let mut row = patch.clone();
+    for field in spec.fields.iter().filter(|field| field.is_nested()) {
+        if let Some(value) = patch.get(&field.name) {
+            row.insert(field.name.clone(), field.decode_nested(Some(value)).map_err(StoreError::Invalid)?);
+        }
+    }
+    Ok(row)
+}
+
 /// A row written by the device (`Local`) or one the server sent: a server row is checked against the stored revision.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum RowKind {
@@ -42,6 +53,8 @@ pub(crate) enum RowKind {
 pub(crate) fn admitted(reader: &Reader<'_>, kind: RowKind, admission: Admission, model: &str, patch: &Map<String, Value>, drops: &mut usize, spec: &ModelSpec, guards: &[AssociationSpec]) -> Result<Option<Map<String, Value>>, StoreError> {
     let Some(id) = patch.get("id").and_then(read_id) else { return Ok(None) };
     if kind == RowKind::Local { return Ok(Some(patch.clone())); }
+    let decoded = decode_nested(spec, patch)?;
+    let patch = &decoded;
     let stored = reader.stored_row(model, id.as_str())?;
     let versioned = spec.server_revision.as_ref().and_then(|field| patch.get(field)).and_then(Value::as_i64);
     let current = spec.server_revision.as_ref().and_then(|field| stored.as_ref()?.row.get(field)).and_then(Value::as_i64);

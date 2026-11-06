@@ -284,7 +284,7 @@ pub enum StoreInput {
     Commit(StoreBatch),
     Pin { epoch: Epoch, request_id: u64 },
     Unpin { request_id: u64 },
-    Written { author: BatchAuthor, batch: BatchId, result: Result<WriteDone, String> },
+    Written { author: BatchAuthor, batch: BatchId, result: Result<WriteDone, RejectReason> },
     ClearAccount { epoch_old: Epoch, cause: Cause, generation_new: u64, erase_id: u64 },
     ClearModels { epoch: Epoch, generation_new: u64, models: BTreeSet<String>, erase_id: u64 },
     Erased { io_id: u64, result: Result<Done, String> },

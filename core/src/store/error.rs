@@ -17,6 +17,8 @@ pub enum StoreError {
     UnknownModel(String),
     #[error("store is poisoned: {0}")]
     Poisoned(String),
+    #[error("the row does not decode: {0}")]
+    Invalid(String),
     #[error("constraint violated: {0}")]
     Constraint(String),
     #[error("the database is closed or its state moved")]

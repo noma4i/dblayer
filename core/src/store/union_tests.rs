@@ -53,7 +53,7 @@ fn variants() -> Vec<serde_json::Value> {
 }
 
 #[test]
-fn every_variant_reads_back_as_written() {
+fn data_union_variant() {
     let store = store_with_messages();
     for (at, attachment) in variants().into_iter().enumerate() {
         let id = format!("m{at}");
