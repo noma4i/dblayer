@@ -7,35 +7,99 @@ fn ladder() -> MergeRule {
     Ladder { tiers: vec![vec!["PENDING".into(), "PROGRESSING".into()], vec!["COMPLETED".into(), "FAILED".into()]] }
 }
 
-#[test]
-fn a_rule_decides_what_an_arriving_value_may_replace() {
-    let cases: Vec<(&str, MergeRule, Option<Value>, Value, Value)> = vec![
-        ("present keeps a value against null", Present, Some(json!("a")), Value::Null, json!("a")),
-        ("present takes a new value", Present, Some(json!("a")), json!("b"), json!("b")),
-        ("present takes null when nothing is stored", Present, None, Value::Null, Value::Null),
-        ("non_empty keeps a value against an empty string", NonEmpty, Some(json!("u")), json!(""), json!("u")),
-        ("non_empty keeps a list against an empty list", NonEmpty, Some(json!([1])), json!([]), json!([1])),
-        ("non_empty takes a value when the stored one is empty", NonEmpty, Some(json!("")), json!("u"), json!("u")),
-        ("positive keeps a size against zero", Positive, Some(json!(640)), json!(0), json!(640)),
-        ("positive takes a bigger size", Positive, Some(json!(640)), json!(720), json!(720)),
-        ("monotonic keeps a higher number", Monotonic, Some(json!(80)), json!(40), json!(80)),
-        ("monotonic takes a higher number", Monotonic, Some(json!(40)), json!(80), json!(80)),
-        ("monotonic keeps an exact large integer", Monotonic, Some(json!(9_007_199_254_740_993_i64)), json!(9_007_199_254_740_992_i64), json!(9_007_199_254_740_993_i64)),
-        ("monotonic takes an exact large integer", Monotonic, Some(json!(9_007_199_254_740_992_i64)), json!(9_007_199_254_740_993_i64), json!(9_007_199_254_740_993_i64)),
-        ("monotonic keeps a later date", Monotonic, Some(json!("2026-01-02T00:00:00.000Z")), json!("2026-01-01T00:00:00.000Z"), json!("2026-01-02T00:00:00.000Z")),
-        ("monotonic keeps a value against null", Monotonic, Some(json!(80)), Value::Null, json!(80)),
-        ("ladder never steps down a tier", ladder(), Some(json!("COMPLETED")), json!("PROGRESSING"), json!("COMPLETED")),
-        ("ladder moves inside a tier", ladder(), Some(json!("COMPLETED")), json!("FAILED"), json!("FAILED")),
-        ("ladder steps up", ladder(), Some(json!("PENDING")), json!("COMPLETED"), json!("COMPLETED")),
-        ("ladder accepts a value it does not know", ladder(), Some(json!("COMPLETED")), json!("SKIPPED"), json!("SKIPPED")),
-    ];
-    for (name, rule, stored, incoming, expected) in cases {
+type Case = (&'static str, Option<Value>, Value, Value);
+
+fn run(rule: &MergeRule, cases: Vec<Case>) {
+    for (name, stored, incoming, expected) in cases {
         assert_eq!(rule.apply(stored.as_ref(), incoming), expected, "{name}");
     }
 }
 
 #[test]
-fn keys_merge_an_object_key_by_key_and_keep_the_object_against_null() {
+fn data_merge_present() {
+    run(&Present, vec![
+        ("keeps a value against null", Some(json!("a")), Value::Null, json!("a")),
+        ("takes any other value", Some(json!("a")), json!(""), json!("")),
+        ("takes a new value", Some(json!("a")), json!("b"), json!("b")),
+        ("takes null when nothing is stored", None, Value::Null, Value::Null),
+    ]);
+}
+
+#[test]
+fn data_merge_non_empty() {
+    run(&NonEmpty, vec![
+        ("keeps a value against an empty string", Some(json!("u")), json!(""), json!("u")),
+        ("keeps a list against an empty list", Some(json!([1])), json!([]), json!([1])),
+        ("keeps an object against an empty object", Some(json!({"a": 1})), json!({}), json!({"a": 1})),
+        ("keeps a value against null", Some(json!("u")), Value::Null, json!("u")),
+        ("takes a value when the stored one is empty", Some(json!("")), json!("u"), json!("u")),
+        ("writes an empty value over an empty one", Some(json!([])), json!({}), json!({})),
+    ]);
+}
+
+#[test]
+fn data_merge_positive() {
+    run(&Positive, vec![
+        ("keeps a size against zero", Some(json!(640)), json!(0), json!(640)),
+        ("keeps a size against a negative number", Some(json!(640)), json!(-1), json!(640)),
+        ("keeps a size against null", Some(json!(640)), Value::Null, json!(640)),
+        ("takes a smaller positive size", Some(json!(640)), json!(320), json!(320)),
+        ("takes any value over zero", Some(json!(0)), json!(0), json!(0)),
+        ("takes a size over a negative one", Some(json!(-5)), json!(7), json!(7)),
+    ]);
+}
+
+#[test]
+fn data_merge_monotonic() {
+    run(&Monotonic, vec![
+        ("keeps a higher number", Some(json!(80)), json!(40), json!(80)),
+        ("takes a higher number", Some(json!(40)), json!(80), json!(80)),
+        ("takes an equal number", Some(json!(40)), json!(40), json!(40)),
+        ("keeps a value against null", Some(json!(80)), Value::Null, json!(80)),
+        ("keeps an exact large integer", Some(json!(9_007_199_254_740_993_i64)), json!(9_007_199_254_740_992_i64), json!(9_007_199_254_740_993_i64)),
+        ("takes an exact large integer", Some(json!(9_007_199_254_740_992_i64)), json!(9_007_199_254_740_993_i64), json!(9_007_199_254_740_993_i64)),
+        ("keeps a later date", Some(json!("2026-01-02T00:00:00.000Z")), json!("2026-01-01T00:00:00.000Z"), json!("2026-01-02T00:00:00.000Z")),
+        ("takes a later date", Some(json!("2026-01-01T00:00:00.000Z")), json!("2026-01-02T00:00:00.000Z"), json!("2026-01-02T00:00:00.000Z")),
+    ]);
+}
+
+#[test]
+fn data_merge_tiers() {
+    run(&ladder(), vec![
+        ("never steps down a tier", Some(json!("COMPLETED")), json!("PROGRESSING"), json!("COMPLETED")),
+        ("moves inside a tier", Some(json!("COMPLETED")), json!("FAILED"), json!("FAILED")),
+        ("moves inside the lowest tier", Some(json!("PROGRESSING")), json!("PENDING"), json!("PENDING")),
+        ("steps up", Some(json!("PENDING")), json!("COMPLETED"), json!("COMPLETED")),
+        ("ignores null", Some(json!("COMPLETED")), Value::Null, json!("COMPLETED")),
+        ("takes a value outside all tiers", Some(json!("COMPLETED")), json!("SKIPPED"), json!("SKIPPED")),
+        ("replaces a stored value outside all tiers", Some(json!("SKIPPED")), json!("PENDING"), json!("PENDING")),
+    ]);
+}
+
+#[test]
+fn data_merge_rule_fits_type() {
+    use crate::schema::{DeclarationError, FieldSpec, ModelSpec};
+    use crate::value::ScalarKind;
+    let declared = |field: FieldSpec| ModelSpec::new("things", vec![FieldSpec::scalar("id", ScalarKind::Id), field]).validate(&[]);
+    let with = |field: FieldSpec, rule: MergeRule| FieldSpec { merge: Some(rule), ..field };
+    assert!(declared(with(FieldSpec::scalar("n", ScalarKind::Int).optional(), Positive)).is_ok());
+    assert!(declared(with(FieldSpec::scalar("t", ScalarKind::Date).optional(), Monotonic)).is_ok());
+    for (field, rule) in [
+        (FieldSpec::scalar("s", ScalarKind::Str).optional(), Positive),
+        (FieldSpec::scalar("s", ScalarKind::Str).optional(), Monotonic),
+        (FieldSpec::file("f").optional(), Present),
+        (FieldSpec::file("f").optional(), NonEmpty),
+        (FieldSpec::scalar("s", ScalarKind::Str).optional(), StableList),
+        (FieldSpec::scalar("s", ScalarKind::Str).optional(), Keys { keys: Default::default() }),
+        (FieldSpec::scalar("s", ScalarKind::Int).optional(), ladder()),
+    ] {
+        let name = field.name.clone();
+        assert!(matches!(declared(with(field, rule.clone())), Err(DeclarationError::MergeRuleMismatch(found)) if found == name), "{rule:?} on {name}");
+    }
+}
+
+#[test]
+fn data_merge_keys() {
     let rule = Keys { keys: [("fileUrl".to_string(), NonEmpty), ("width".to_string(), Positive), ("transcodeStatus".to_string(), ladder()), ("transcodeProgress".to_string(), Monotonic)].into() };
     let stored = json!({"fileUrl": "f", "width": 640, "transcodeStatus": "COMPLETED", "transcodeProgress": 100, "kind": "video"});
     assert_eq!(rule.apply(Some(&stored), Value::Null), stored);
@@ -59,7 +123,7 @@ fn a_server_row_merges_by_the_rule_of_each_field() {
 }
 
 #[test]
-fn stable_list_keeps_the_stored_places_adds_new_ids_at_the_tail_and_drops_the_vanished() {
+fn data_merge_stable_list() {
     use crate::schema::{FieldSpec, ModelSpec};
     use crate::value::ScalarKind;
     let mut ids = FieldSpec::list("momentIds", ScalarKind::Id).nullable().optional();
