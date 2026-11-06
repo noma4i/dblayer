@@ -144,9 +144,6 @@ impl Database {
         db.expire_blobs_before_use(&opening)?;
         drop(opening);
         let (transport, session, cable) = wire(&db, &clock)?;
-        if uploads.is_some() && transport.is_none() {
-            return Err(DbError::Invalid { detail: "upload operations require a transport".into() });
-        }
         let reads = crate::owners::read::ReadOperations::default();
         let jobs: Arc<super::upload_rounds::RoundJobsSlot> = Arc::default();
         let shows: Arc<super::transfer_status::Shows> = Arc::default();
