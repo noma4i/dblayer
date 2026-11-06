@@ -142,6 +142,8 @@ pub(crate) struct Leases {
     /// Orders a pinned SQL commit against the end of an epoch: the epoch ends while this line is held, and a pinned write checks the epoch and commits while it holds it.
     commit_line: Mutex<()>,
     opening_issued: std::sync::atomic::AtomicBool,
+    /// Requests being handed to the network now: the end of an epoch waits for them, a request after it is refused.
+    sends: (std::sync::Mutex<usize>, std::sync::Condvar),
     effects: OrderedEffects,
     changed: watch::Sender<Snapshot>,
     activity: watch::Sender<Activity>,
@@ -158,6 +160,7 @@ impl Default for Leases {
             state: Mutex::new(State { snapshot: Snapshot::default(), holders: Holders::default(), leases: HashMap::new(), next_lease: 0, activity: 0, cleared_on_publish: false }),
             commit_line: Mutex::new(()),
             opening_issued: std::sync::atomic::AtomicBool::new(false),
+            sends: (std::sync::Mutex::new(0), std::sync::Condvar::new()),
             effects: OrderedEffects::default(),
             changed: watch::channel(Snapshot::default()).0,
             activity: watch::channel(Activity::default()).0,
@@ -192,6 +195,15 @@ impl Admitted {
         crate::task::scope(self.clone(), work)
     }
 
+    /// Starts handing a request to the network. Refused once the epoch ended. The epoch cannot end before the guard drops.
+    pub(crate) fn start_send(&self) -> Result<SendGuard, Ended> {
+        let life = &self.inner.life;
+        let mut sends = life.sends.0.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        if !self.is_current() { return Err(Ended); }
+        *sends += 1;
+        Ok(SendGuard(life.clone()))
+    }
+
     pub(crate) fn is_current(&self) -> bool {
         let state = crate::db::locked(&self.inner.life.state);
         let current = &state.snapshot;
@@ -207,6 +219,17 @@ impl Admitted {
             _ = async { changes.wait_for(|published| published.closed || published.ending || published.session_epoch != epoch).await.map(|_| ()) } => Err(Ended),
             result = self.scope(work) => Ok(result),
         }
+    }
+}
+
+/// A request being handed to the network: the end of its epoch waits for it.
+pub(crate) struct SendGuard(Arc<Leases>);
+
+impl Drop for SendGuard {
+    fn drop(&mut self) {
+        let mut sends = self.0.sends.0.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        *sends -= 1;
+        if *sends == 0 { self.0.sends.1.notify_all(); }
     }
 }
 
@@ -247,6 +270,14 @@ impl Leases {
         };
         self.publish_activity(activity);
         Ok(admitted)
+    }
+
+    /// Returns once every request that started its way to the network has been handed over.
+    fn wait_sends(&self) {
+        let mut sends = self.sends.0.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        while *sends > 0 {
+            sends = crate::blocking::blocking_unit(|| self.sends.1.wait(sends).unwrap_or_else(std::sync::PoisonError::into_inner));
+        }
     }
 
     pub(crate) fn snapshot(&self) -> Snapshot { crate::db::locked(&self.state).snapshot.clone() }
@@ -337,6 +368,12 @@ impl Leases {
             self.line_waits.1.notify_all();
         }
         let line = crate::db::locked(&self.commit_line);
+        {
+            let mut state = crate::db::locked(&self.state);
+            if state.snapshot.closed { return; }
+            state.snapshot.ending = true;
+        }
+        self.wait_sends();
         let (ticket, activity) = {
             let mut state = crate::db::locked(&self.state);
             if state.snapshot.closed { return; }

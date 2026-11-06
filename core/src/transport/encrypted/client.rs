@@ -341,10 +341,14 @@ impl EncryptedClient {
 
     async fn post(&self, path: &str, token: String, request_id: &str, response_key: &str, purpose: crate::transport::NetworkPurpose) -> Result<Answer, TransportError> {
         crate::db::lock::assert_no_library_lock("HttpExchange::post");
-        if crate::task::admitted().is_some_and(|admitted| !admitted.is_current()) {
-            return Err(TransportError::Interrupted("the epoch of the request ended".into()));
-        }
-        let reply = self.http.post(path, token, purpose).await?;
+        let send = crate::task::admitted().map(|admitted| admitted.start_send()).transpose().map_err(|_| TransportError::Interrupted("the epoch of the request ended".into()))?;
+        let mut call = self.http.post(path, token, purpose);
+        let first = std::future::poll_fn(|cx| std::task::Poll::Ready(std::future::Future::poll(call.as_mut(), cx))).await;
+        drop(send);
+        let reply = match first {
+            std::task::Poll::Ready(reply) => reply?,
+            std::task::Poll::Pending => call.await?,
+        };
         if reply.status != 200 {
             return Err(TransportError::Http { status: reply.status, body: reply.body });
         }
