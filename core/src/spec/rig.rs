@@ -338,8 +338,12 @@ pub async fn until(what: &str, mut condition: impl FnMut() -> bool) {
 }
 
 impl Rig {
-    /// Returns once the owners handled every input and every started effect task.
-    pub async fn quiet(&self) { within(crate::ffi::settled(&self.db)).await.unwrap(); }
+    /// Returns once the owners handled every input and every started effect task, also while a server request is held.
+    pub async fn quiet(&self) {
+        let owners = self.db.life_handle();
+        let idle = within(async { tokio::task::spawn_blocking(move || owners.barrier(Duration::from_secs(10))).await.unwrap() }).await;
+        assert!(idle, "the owners still hold inputs or started effect tasks");
+    }
 }
 
 struct Steps { count: AtomicU64, label: Mutex<String> }
