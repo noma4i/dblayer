@@ -282,8 +282,7 @@ pub enum StoreEffect {
     /// The server removed rows: their operations left the queue in the batch.
     ArmReset { epoch: Epoch, reset: EphemeralReset },
     OperationsGone { epoch: Epoch, ops: Vec<u64> },
-    /// The snapshot of the intents for Outbox, Transfer and Session.
-    ReadIntents { epoch: Epoch },
+    ReadIntents { epoch: Epoch, direct: bool },
     CloseReads,
     CloseConnections,
     StoreClosed,

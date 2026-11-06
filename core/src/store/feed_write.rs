@@ -95,9 +95,11 @@ fn landing(writer: &mut RowWrite<'_>, model: &str, payload: &Value, overlay: &mu
         let wanted = payload.get("joins").and_then(Value::as_array).map(Vec::as_slice).unwrap_or_default();
         envelope.scope_ops = joins(writer, &reader, model, &id, wanted)?;
         let arrives_new = old.is_none();
-        let correlated = if arrives_new { let outbox = crate::store::plan::read_outbox(&reader)?; super::correlate::correlated_temp(&reader, &outbox, model, &row)?.map(|found| (found, outbox)) } else { None };
+        let (correlated, looked_at) = if arrives_new { super::correlate::correlated_temp(&reader, model, &row)? } else { (None, 0) };
+        writer.candidates += looked_at;
         envelope.entity_ops.push(EntityOp::Upsert { model: ModelKey::new(model), id: id.clone(), row });
-        if let Some((found, outbox)) = correlated {
+        if let Some(found) = correlated {
+            let outbox = crate::store::plan::read_outbox(&reader)?;
             super::swap::plan(&reader, &mut envelope, &outbox, super::swap::TempReplacement { model, temp: &found.temp, real: &id }, found.operation)?;
         }
         if let Some(values) = payload.get("set").and_then(Value::as_object).filter(|values| !values.is_empty()) { overlay.push((model.to_string(), id.to_string(), values.clone())); }

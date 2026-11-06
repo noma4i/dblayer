@@ -212,8 +212,8 @@ impl EffectRunner<StoreWriter> for StoreRunner {
             StoreEffect::ClearFailed { erase_id, error } => wiring.to_lifecycle(LifecycleInput::ClearFailed { erase_id, error }),
             StoreEffect::Saved { publication_id } => wiring.to_lifecycle(LifecycleInput::Saved { publication_id }),
             StoreEffect::SaveFailed { publication_id, error } => wiring.to_lifecycle(LifecycleInput::SaveFailed { publication_id, error }),
-            StoreEffect::ReadIntents { epoch } => {
-                let restore = self.db.read_restore();
+            StoreEffect::ReadIntents { epoch, direct } => {
+                let restore = if direct { Ok(None) } else { self.db.read_restore().map(Some) };
                 let fail = |wiring: &Wiring, error: String| {
                     wiring.restore_failed_for(Peer::Outbox, error.clone());
                     wiring.to_outbox(OutboxInput::RestoreFailed { error: error.clone() });
@@ -224,7 +224,8 @@ impl EffectRunner<StoreWriter> for StoreRunner {
                 };
                 match restore {
                     Err(error) => fail(wiring, error.to_string()),
-                    Ok(restore) => {
+                    Ok(None) => {}
+                    Ok(Some(restore)) => {
                         if let Some(op_id) = restore.reserved {
                             wiring.to_outbox(OutboxInput::ReservedFloor { op_id });
                         }

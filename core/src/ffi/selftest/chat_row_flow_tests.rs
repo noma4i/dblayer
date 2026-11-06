@@ -56,7 +56,7 @@ async fn flow_chat_pin_mute() {
         let receipt = act(&rig, action, json!({ name: true }), json!({ name: true })).await;
         hold.entered_for("the answer").await;
         yield_until("the marked list shows the chat", || marked.len() == 1).await;
-        assert_eq!(field(&rig, &all, "c1", name), Some(on.clone()), "{action}: the row of the list");
+        yield_until("the row of the list shows the flag", || field(&rig, &all, "c1", name) == Some(on.clone())).await;
         assert_eq!(first_seen_at(&rig, &marked, "c1", name, on.clone()), receipt.revision, "{action}: the marked list changed at another revision than the receipt");
         hold.release();
         assert!(matches!(bound(rig.database.outcome(receipt)).await.unwrap(), WireOperationOutcome::Confirmed { .. }), "{action}");
@@ -64,8 +64,7 @@ async fn flow_chat_pin_mute() {
         assert_eq!((marked.len(), field(&rig, &all, "c1", name)), (1, Some(on.clone())), "{action}: the answer kept the flag");
 
         land_event(&rig, "Chat", json!({"id": "c1", name: false}));
-        yield_until("the event clears the flag", || marked.len() == 0).await;
-        assert_eq!(field(&rig, &all, "c1", name), Some(Cell::Bool { value: false }), "{action}: the event");
+        yield_until("the event clears the flag in both lists", || marked.len() == 0 && field(&rig, &all, "c1", name) == Some(Cell::Bool { value: false })).await;
 
         let refused = rig.world.hold_then(if action == "pin" { "ChatPin" } else { "ChatMute" }, Fault::Business);
         let receipt = act(&rig, action, json!({ name: true }), json!({ name: true })).await;

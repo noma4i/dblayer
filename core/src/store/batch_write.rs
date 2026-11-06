@@ -19,6 +19,7 @@ struct WrittenBatch<'a> {
     expiry: ExpiryParts,
     position: u64,
     resets: ResetParts,
+    candidates: usize,
 }
 
 type ExpiryParts = (Vec<crate::owners::store::MemoryExpiry>, Vec<(String, String)>, Vec<String>);
@@ -48,7 +49,8 @@ impl Store {
                 }
                 Err(error)
             }
-            Ok(WrittenBatch { committed: result, observed, live_files, discarded, expiry: (expiring, removed_memory, stale_parents), position, resets: (removed_operations, resets) }) => {
+            Ok(WrittenBatch { committed: result, observed, live_files, discarded, expiry: (expiring, removed_memory, stale_parents), position, resets: (removed_operations, resets), candidates }) => {
+                self.lock().counters.outbox_candidates += candidates;
                 let mut faults = Vec::new();
                 for file in prepared.iter().filter(|file| file.record.location == Location::Directory) {
                     let removed = if live_files.contains(&file.record.id) { files.finish(&file.record.id) } else { files.discard_partial(&file.record.id) };
@@ -74,7 +76,7 @@ impl Store {
         let own = batch.ops.iter().find_map(|op| match op { crate::owners::store::StoreOp::RemoveIntent { op_id } => i64::try_from(*op_id).ok(), _ => None }).unwrap_or(-1);
         let mut originals = BTreeMap::new();
         let mut results = Vec::new();
-        let mut writer = RowWrite { connection: &transaction, models: &inner.models, guards, generation: inner.generation, revision, now, originals: &mut originals, closing: (own >= 0).then_some(own) };
+        let mut writer = RowWrite { connection: &transaction, models: &inner.models, guards, generation: inner.generation, revision, now, originals: &mut originals, closing: (own >= 0).then_some(own), candidates: 0 };
         let mut overlay = Vec::new();
         let observed = if batch.author == BatchAuthor::Feed {
             super::feed_write::land(&mut writer, &batch.rows, &mut overlay, &mut results)?
@@ -115,6 +117,7 @@ impl Store {
             }
             if let crate::owners::store::StoreOp::RollBack { op_id } = op { rolled_back.insert(*op_id); }
         }
+        let candidates = writer.candidates;
         let mut live_files = std::collections::HashSet::new();
         for file in files {
             let present: bool = transaction.query_row("SELECT EXISTS(SELECT 1 FROM file WHERE id = ?1)", [&file.record.id], |row| row.get(0))?;
@@ -146,6 +149,6 @@ impl Store {
             transaction.rollback()?;
             if position != current.position { self.overlays.publish(snapshot); }
         }
-        Ok(WrittenBatch { committed: self.commit_announcement(inner, combined), observed, live_files, discarded, expiry: (expiring, removed_memory, stale_parents), position, resets: (removed_operations, arms) })
+        Ok(WrittenBatch { committed: self.commit_announcement(inner, combined), observed, live_files, discarded, expiry: (expiring, removed_memory, stale_parents), position, resets: (removed_operations, arms), candidates })
     }
 }

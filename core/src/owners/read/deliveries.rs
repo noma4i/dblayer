@@ -7,7 +7,7 @@ mod deliveries_flow;
 #[path = "deliveries_read.rs"]
 mod deliveries_read;
 
-use std::collections::{BTreeMap, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 use crate::read::{Diff, Entry, Stamp};
 use crate::ffi::WireRow;
@@ -54,7 +54,16 @@ impl Kind {
 pub enum ReadData {
     /// `total` = the total the server gave for the window, read in the same snapshot as the rows.
     Rows { rows: Vec<StreamRow>, replaced: Vec<(String, String)>, total: Option<u64> },
+    /// The membership in order with the stamp of each member, and the rows that changed after the version the owner holds: the others are the rows the owner holds.
+    Changes { keys: Vec<(String, i64)>, rows: Vec<StreamRow>, replaced: Vec<(String, String)>, total: Option<u64> },
     Count(u64),
+    Overflow,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ReadMode {
+    Snapshot,
+    Changes { from_revision: i64, from_position: u64, limit: usize },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -149,7 +158,7 @@ pub enum PullAnswer {
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum StreamEffect {
-    Read { read_id: u64, revision: i64, after: i64, view: View },
+    Read { read_id: u64, revision: i64, after: i64, view: View, mode: ReadMode },
     Answer { outcome: OutcomeId, answer: PullAnswer },
     Available,
     CloseSink,
@@ -380,6 +389,8 @@ impl Delivery {
 pub struct DeliveriesState {
     epoch: Epoch,
     streams: BTreeMap<StreamId, Delivery>,
+    by_table: BTreeMap<String, BTreeSet<StreamId>>,
+    examined: u64,
     peers: DeliveryPeers,
     revision: i64,
     closing: bool,
@@ -387,7 +398,7 @@ pub struct DeliveriesState {
 }
 
 impl DeliveriesState {
-    pub fn new(epoch: Epoch, peers: DeliveryPeers) -> Self { Self { epoch, streams: BTreeMap::new(), peers, revision: 0, closing: false, drained: false } }
+    pub fn new(epoch: Epoch, peers: DeliveryPeers) -> Self { Self { epoch, streams: BTreeMap::new(), by_table: BTreeMap::new(), examined: 0, peers, revision: 0, closing: false, drained: false } }
 
     pub fn stage(&self, stream: StreamId) -> Option<DeliveryStage> { self.streams.get(&stream).map(|machine| machine.stage) }
 
@@ -396,6 +407,39 @@ impl DeliveriesState {
     pub fn read_id(&self, stream: StreamId) -> u64 { self.streams.get(&stream).map_or(0, |machine| machine.read_id) }
 
     pub fn streams(&self) -> usize { self.streams.len() }
+
+    pub fn streams_examined(&self) -> u64 { self.examined }
+
+    fn index(&mut self, stream: StreamId) {
+        let Some(machine) = self.streams.get(&stream).filter(|machine| machine.view.kind.reads_rows() && matches!(machine.stage, DeliveryStage::Opening | DeliveryStage::Live)) else { return };
+        for table in &machine.view.tables {
+            self.by_table.entry(table.clone()).or_default().insert(stream);
+        }
+    }
+
+    fn settle(&mut self, stream: StreamId) {
+        let Some(machine) = self.streams.get(&stream) else { return };
+        if !matches!(machine.stage, DeliveryStage::Opening | DeliveryStage::Live) {
+            for table in &machine.view.tables {
+                if let Some(streams) = self.by_table.get_mut(table) {
+                    streams.remove(&stream);
+                    if streams.is_empty() {
+                        self.by_table.remove(table);
+                    }
+                }
+            }
+        }
+        if machine.gone() {
+            self.streams.remove(&stream);
+        }
+    }
+
+    fn affected(&self, committed: &Committed) -> BTreeSet<StreamId> {
+        match &committed.models {
+            Models::All => self.by_table.values().flatten().copied().collect(),
+            Models::Set(_) => committed.tables.iter().filter_map(|table| self.by_table.get(table)).flatten().copied().collect(),
+        }
+    }
 
     pub fn journal(&self, stream: StreamId) -> Vec<Value> { self.streams.get(&stream).map(|machine| machine.journal.iter().cloned().collect()).unwrap_or_default() }
 
@@ -446,6 +490,7 @@ impl StateOwner for Deliveries {
                 machine.opened_at = now;
                 lower(state.peers, state.revision, stream, &machine, fx, &mut out);
                 state.streams.insert(stream, machine);
+                state.index(stream);
             }
             DeliveryInput::ReadDone { stream, read_id, revision, data } => on(state, stream, &mut out, |machine, fx| machine.read_done(read_id, revision, data, fx)),
             DeliveryInput::TaskFailed { id } => {
@@ -487,7 +532,10 @@ impl StateOwner for Deliveries {
             DeliveryInput::Resync { stream } => on(state, stream, &mut out, |machine, fx| machine.resync(fx)),
             DeliveryInput::Committed(committed) => {
                 state.revision = state.revision.max(committed.revision);
-                every(state, &mut out, |machine, fx| machine.committed(&committed, fx));
+                for stream in state.affected(&committed) {
+                    state.examined += 1;
+                    on(state, stream, &mut out, |machine, fx| machine.committed(&committed, fx));
+                }
             }
             DeliveryInput::ModelsReset(reset) => every(state, &mut out, |machine, fx| machine.models_reset(&reset, fx)),
             DeliveryInput::EpochEnded(ended) => every(state, &mut out, |machine, fx| machine.epoch_ended(&ended, fx)),
@@ -498,7 +546,6 @@ impl StateOwner for Deliveries {
             }
             DeliveryInput::Tick(_) => {}
         }
-        state.streams.retain(|_, machine| !machine.gone());
         if state.closing && !state.drained && state.streams.values().all(Delivery::settled) {
             state.drained = true;
             out.push(Effect::Run(DeliveryEffect::Drained(Drained { owner: "deliveries" })));
@@ -521,13 +568,12 @@ fn on(state: &mut DeliveriesState, stream: StreamId, out: &mut Effects<Deliverie
     let mut fx = Vec::new();
     apply(machine, &mut fx);
     lower(peers, state.revision, stream, machine, fx, out);
+    state.settle(stream);
 }
 
 fn every(state: &mut DeliveriesState, out: &mut Effects<Deliveries>, mut apply: impl FnMut(&mut Delivery, &mut Vec<Emit>)) {
-    let peers = state.peers;
-    for (stream, machine) in state.streams.iter_mut() {
-        let mut fx = Vec::new();
-        apply(machine, &mut fx);
-        lower(peers, state.revision, *stream, machine, fx, out);
+    let streams: Vec<StreamId> = state.streams.keys().copied().collect();
+    for stream in streams {
+        on(state, stream, out, |machine, fx| apply(machine, fx));
     }
 }

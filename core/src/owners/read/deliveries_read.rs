@@ -1,10 +1,35 @@
+use std::collections::HashMap;
+
 use super::*;
 
 impl Delivery {
-    pub(super) fn new_read(&mut self, revision: i64) -> Emit {
+    pub(super) fn new_read(&mut self, revision: i64) -> Emit { self.start_read(revision, ReadMode::Snapshot) }
+
+    fn start_read(&mut self, revision: i64, mode: ReadMode) -> Emit {
         self.read_id += 1;
         self.read_revision = revision;
-        Emit::Run(StreamEffect::Read { read_id: self.read_id, revision, after: self.acknowledged.unwrap_or(0), view: self.view.clone() })
+        Emit::Run(StreamEffect::Read { read_id: self.read_id, revision, after: self.acknowledged.unwrap_or(0), view: self.view.clone(), mode })
+    }
+
+    fn after_commit(&mut self, revision: i64) -> Emit {
+        let mode = match self.stage {
+            DeliveryStage::Live => ReadMode::Changes { from_revision: self.read_seen, from_position: self.read_position, limit: DELTA_LIMIT },
+            _ => ReadMode::Snapshot,
+        };
+        self.start_read(revision, mode)
+    }
+
+    fn whole(&self, data: ReadData) -> Option<ReadData> {
+        match data {
+            ReadData::Overflow => None,
+            ReadData::Changes { keys, rows, replaced, total } => {
+                let changed: HashMap<&str, &StreamRow> = rows.iter().map(|row| (row.id.as_str(), row)).collect();
+                let held: HashMap<&str, &StreamRow> = self.rows.iter().map(|row| (row.id.as_str(), row)).collect();
+                let rows = keys.iter().map(|(id, _)| changed.get(id.as_str()).or_else(|| held.get(id.as_str())).map(|row| (*row).clone())).collect::<Option<Vec<_>>>()?;
+                Some(ReadData::Rows { rows, replaced, total })
+            }
+            other => Some(other),
+        }
     }
 
     pub(super) fn sink_open(&self) -> bool { matches!(self.stage, DeliveryStage::Opening | DeliveryStage::Live) }
@@ -119,16 +144,14 @@ impl Delivery {
         })
     }
 
-    pub(super) fn touches(&self, committed: &Committed) -> bool { committed.models == Models::All || committed.tables.iter().any(|table| self.view.tables.contains(table)) }
-
     pub(super) fn committed(&mut self, committed: &Committed, fx: &mut Vec<Emit>) {
-        if !self.view.kind.reads_rows() || !self.touches(committed) {
+        if !self.view.kind.reads_rows() {
             return;
         }
         if self.stage == DeliveryStage::Live && (committed.revision, committed.position) <= (self.read_seen, self.read_position) { return; }
         if matches!(self.stage, DeliveryStage::Opening | DeliveryStage::Live) {
             self.reading_position = committed.position;
-            fx.push(self.new_read(committed.revision));
+            fx.push(self.after_commit(committed.revision));
         }
     }
 
@@ -137,6 +160,12 @@ impl Delivery {
             return;
         }
         if self.stage == DeliveryStage::Live && revision < self.read_seen { return; }
+        let Some(data) = self.whole(data) else {
+            if self.stage == DeliveryStage::Live {
+                fx.push(self.new_read(self.read_revision));
+            }
+            return;
+        };
         if self.stage == DeliveryStage::Opening && self.interested && self.view.remote && self.held_state.is_none() {
             self.pending_read = Some((read_id, revision, data));
             return;
@@ -150,6 +179,7 @@ impl Delivery {
             let unchanged = match &data {
                 ReadData::Rows { rows, total, .. } => *rows == self.rows && *total == self.total,
                 ReadData::Count(count) => self.count == Some(*count),
+                ReadData::Changes { .. } | ReadData::Overflow => false,
             };
             if !self.resync_pending && unchanged {
                 self.push(Value::State { revision: self.revision, state: self.window.clone() }, fx);

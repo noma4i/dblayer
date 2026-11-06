@@ -466,3 +466,26 @@ fn inv_row_07_fsck_quarantines_temp_rows_without_an_operation_and_keeps_the_othe
     let quarantined: i64 = db.lock().connection.query_row("SELECT COUNT(*) FROM quarantine WHERE reason = 'orphan-temp-row'", [], |row| row.get(0)).unwrap();
     assert_eq!(quarantined, 1);
 }
+
+fn candidates_of_one_event_row(unrelated: u64) -> usize {
+    use crate::schema::{ActionDeclaration, RootShape};
+    let mut specs = all_specs();
+    let mut create = ActionDeclaration::new("create", RootShape::Upsert);
+    create.correlate = vec!["userId".into(), "text".into()];
+    specs.iter_mut().find(|spec| spec.key.as_str() == "moments").unwrap().actions.push(create);
+    let db = Arc::new(Store::open_models(None, specs, None).unwrap());
+    for op_id in 0..unrelated {
+        let intent = StoreOp::Intent { op_id: 100 + op_id, model: "users".into(), row_id: format!("u{op_id}"), action: "edit".into(), payload: "{}".into(), effects: IntentEffects::default(), origin: crate::owners::store::IntentOrigin::Api };
+        write(&db, BatchAuthor::Outbox, Vec::new(), vec![intent]);
+    }
+    sent_create(&db, 1, "one");
+    let before = db.counters().outbox_candidates;
+    event_row(&db, "m1", "one");
+    db.counters().outbox_candidates - before
+}
+
+#[test]
+fn an_event_row_that_arrives_new_looks_at_the_candidates_of_its_model_and_action_only() {
+    assert_eq!(candidates_of_one_event_row(2), 1, "the one sent create of the model is the only candidate");
+    assert_eq!(candidates_of_one_event_row(8), 1, "operations of other models are not looked at");
+}

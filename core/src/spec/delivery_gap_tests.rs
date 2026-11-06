@@ -15,6 +15,8 @@ use crate::runtime::{explore, Address, Cause as Ended, DetScheduler, EpochStamp,
 
 #[path = "delivery_more_tests.rs"]
 mod delivery_more_tests;
+#[path = "delivery_read_tests.rs"]
+mod delivery_read_tests;
 #[path = "delivery_revision_cells.rs"]
 mod delivery_revision_cells;
 
@@ -59,6 +61,10 @@ fn window_state(state: &Ws) -> WindowState {
 fn ws_of(state: &WindowState) -> Ws {
     let phase = match state.phase { WindowPhase::Idle => Phase::Idle, WindowPhase::Loading => Phase::Loading, WindowPhase::Loaded => Phase::Loaded, WindowPhase::Failed => Phase::Failed };
     Ws { phase, error: state.error.is_some(), loaded: state.loaded }
+}
+
+thread_local! {
+    static MODES: std::cell::RefCell<Vec<d::ReadMode>> = const { std::cell::RefCell::new(Vec::new()) };
 }
 
 thread_local! {
@@ -145,7 +151,10 @@ impl Twin {
                 Emitted::Run(DeliveryEffect::Stream { stream, effect }) => {
                     assert_eq!(stream, STREAM);
                     modelled.push(match effect {
-                        StreamEffect::Read { revision, .. } => Effect::Read(revision),
+                        StreamEffect::Read { revision, mode, .. } => {
+                            MODES.with(|modes| modes.borrow_mut().push(mode));
+                            Effect::Read(revision)
+                        }
                         StreamEffect::Answer { answer, .. } => Effect::Answer(pulled_of(&answer)),
                         StreamEffect::Available => Effect::Available,
                         StreamEffect::CloseSink => Effect::CloseSink,
@@ -186,6 +195,7 @@ impl Twin {
                 self.post(d::DeliveryInput::Committed(Committed { batch: 0, revision: *revision, tables: vec![table.into()], models: Default::default(), stale_parents: Vec::new(), position: 0 }));
             }
             Input::ReadDone { revision, rows } => self.post(d::DeliveryInput::ReadDone { stream, read_id: self.read_id(), revision: *revision, data: d::ReadData::Rows { rows: rows_of(rows), replaced: Vec::new(), total: self.total } }),
+            Input::ReadOverflow { revision } => self.post(d::DeliveryInput::ReadDone { stream, read_id: self.read_id(), revision: *revision, data: d::ReadData::Overflow }),
             Input::CountDone { revision, count } => self.post(d::DeliveryInput::ReadDone { stream, read_id: self.read_id(), revision: *revision, data: d::ReadData::Count(*count) }),
             Input::ReadStale { revision, rows } => self.post(d::DeliveryInput::ReadDone { stream, read_id: self.read_id() + 100, revision: *revision, data: d::ReadData::Rows { rows: rows_of(rows), replaced: Vec::new(), total: None } }),
             Input::ReadFailed { revision } => self.post(d::DeliveryInput::ReadFailed { stream, read_id: self.read_id(), revision: *revision, error: "e".into() }),

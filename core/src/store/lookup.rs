@@ -24,6 +24,14 @@ pub(crate) enum ViewRead {
     /// The rows and the total the server gave for their window.
     Rows(Vec<(String, i64, Row)>, Option<u64>),
     Count(i64),
+    Changes { keys: Vec<(String, i64)>, rows: Vec<(String, i64, Row)>, total: Option<u64> },
+    Overflow,
+}
+
+#[derive(Clone, Copy)]
+pub(crate) struct HeldVersion {
+    pub from: (i64, u64),
+    pub limit: usize,
 }
 
 fn fault(error: serde_json::Error) -> DbError { DbError::Internal(error.to_string()) }
@@ -135,7 +143,7 @@ impl Store {
     }
 
     /// Reads `query` in one snapshot that is not older than `floor`; gives the revision of the snapshot.
-    pub(crate) fn read_view(&self, query: &Query, count: bool, floor: i64, window: Option<&crate::owners::read::windows::WindowKey>) -> Result<(i64, ViewRead), DbError> {
+    pub(crate) fn read_view(&self, query: &Query, count: bool, floor: i64, window: Option<&crate::owners::read::windows::WindowKey>, held: Option<HeldVersion>) -> Result<(i64, ViewRead), DbError> {
         let model = query.model.as_str();
         self.read_models(&[model], |reader| {
             let seen = reader.revision_seq()?;
@@ -146,11 +154,23 @@ impl Store {
                 let statement = compile_count(query, self.spec(model)?)?;
                 return Ok((seen, ViewRead::Count(fetch_count(reader.connection(), &statement)?)));
             }
-            let keys = self.query_keys(reader, query)?;
-            let rows = self.rows_for_keys(reader, model, &keys)?;
-            if rows.len() != keys.len() {
-                return Err(DbError::Internal(format!("the snapshot at revision {seen} lost {} of {} rows of {model}", keys.len() - rows.len(), keys.len())));
+            let named = match held {
+                Some(held) if super::plan::nested_ref::link_targets(self.spec(model)?).is_empty() => self.context.changed.changed_between(held.from, seen, held.limit),
+                _ => None,
+            };
+            if held.is_some() && named.is_none() {
+                return Ok((seen, ViewRead::Overflow));
             }
+            let keys = self.query_keys(reader, query)?;
+            let wanted: Vec<RowKey> = match &named {
+                Some(named) => keys.iter().filter(|(id, _)| named.contains(&(model.to_string(), id.clone()))).cloned().collect(),
+                None => keys.clone(),
+            };
+            let rows = self.rows_for_keys(reader, model, &wanted)?;
+            if rows.len() != wanted.len() {
+                return Err(DbError::Internal(format!("the snapshot at revision {seen} lost {} of {} rows of {model}", wanted.len() - rows.len(), wanted.len())));
+            }
+            self.rows_read.fetch_add(rows.len(), std::sync::atomic::Ordering::Relaxed);
             let total = match window.map(crate::owners::read::windows::WindowKey::kind) {
                 Some(crate::owners::read::windows::WindowKind::Relation { relation, params }) => {
                     let spec = self.spec(model)?;
@@ -165,7 +185,8 @@ impl Store {
                 }
                 _ => None,
             };
-            Ok((seen, ViewRead::Rows(keys.into_iter().zip(rows).map(|((id, stamp), row)| (id, stamp.max(row.revision), row)).collect(), total)))
+            let stamped = wanted.into_iter().zip(rows).map(|((id, stamp), row)| (id, stamp.max(row.revision), row)).collect();
+            Ok((seen, if named.is_some() { ViewRead::Changes { keys, rows: stamped, total } } else { ViewRead::Rows(stamped, total) }))
         })
     }
 }

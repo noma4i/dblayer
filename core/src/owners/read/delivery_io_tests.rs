@@ -124,7 +124,7 @@ fn delivery_io_read_older_snapshot() {
 struct Panicking;
 
 impl Snapshots for Panicking {
-    fn read(&self, _: &View, _: i64, _: i64) -> Result<(i64, d::ReadData), String> { panic!("the snapshot read failed") }
+    fn read(&self, _: &View, _: i64, _: i64, _: d::ReadMode) -> Result<(i64, d::ReadData), String> { panic!("the snapshot read failed") }
 }
 
 #[test]

@@ -27,6 +27,8 @@ pub use window_io::{WindowCodec, WindowIo, WindowReader};
 #[cfg(test)]
 mod delivery_io_tests;
 #[cfg(test)]
+mod delivery_work_tests;
+#[cfg(test)]
 mod feed_codec_tests;
 #[cfg(test)]
 mod feed_codec_changed_by_tests;

@@ -304,3 +304,13 @@ fn store_epoch_save_failed() {
     assert_eq!(twin.state().epoch(), 0, "a failed save leaves the epoch of the Store");
 }
 
+
+#[test]
+fn store_read_direct_pending() {
+    for (identity, pending, direct) in [(None, true, true), (Some(7), true, false), (None, false, false)] {
+        let mut twin = Twin::new();
+        twin.send(StoreInput::Boot(BootFound::Same { saved_epoch: 4, saved_generation: 2, saved_identity: identity, saved_unowned_pending: pending, revision: 0 }));
+        let effects = twin.send(StoreInput::ReadIntents { epoch: 5 });
+        assert!(matches!(effects.as_slice(), [StoreEffect::ReadIntents { epoch: 5, direct: got }] if *got == direct), "{identity:?} {pending}: {effects:?}");
+    }
+}

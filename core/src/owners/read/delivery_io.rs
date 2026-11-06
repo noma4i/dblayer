@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 use tokio::runtime::Handle;
 
-use super::deliveries::{read_task, Deliveries, DeliveryEffect, DeliveryInput, PullAnswer, StreamEffect, StreamId, View};
+use super::deliveries::{read_task, Deliveries, DeliveryEffect, DeliveryInput, PullAnswer, ReadMode, StreamEffect, StreamId, View};
 use super::ports::Rest;
 use super::snapshots::Snapshots;
 use crate::runtime::{Back, EffectRunner, EpochStamp, Outcomes};
@@ -24,6 +24,7 @@ struct ReadRequest {
     revision: i64,
     after: i64,
     view: View,
+    mode: ReadMode,
 }
 
 impl DeliveryIo {
@@ -36,13 +37,13 @@ impl DeliveryIo {
     }
 
     fn read(&self, stamp: EpochStamp, stream: StreamId, request: ReadRequest, back: &Back<Deliveries>) {
-        let ReadRequest { read_id, revision, after, view } = request;
+        let ReadRequest { read_id, revision, after, view, mode } = request;
         let (snapshots, back) = (self.snapshots.clone(), back.clone());
         let launch = self.counted.as_ref().map(crate::runtime::Handle::launch);
         spawn_blocking_on(Carry::Detached, &self.handle, move || {
             let _launch = launch;
             let _watch = back.watch(read_task(stream, read_id));
-            let answer = match snapshots.read(&view, revision, after) {
+            let answer = match snapshots.read(&view, revision, after, mode) {
                 Ok((seen, data)) => DeliveryInput::ReadDone { stream, read_id, revision: seen, data },
                 Err(error) => DeliveryInput::ReadFailed { stream, read_id, revision, error },
             };
@@ -54,7 +55,7 @@ impl DeliveryIo {
 impl EffectRunner<Deliveries> for DeliveryIo {
     fn run(&mut self, stamp: EpochStamp, effect: DeliveryEffect, back: &Back<Deliveries>) {
         match effect {
-            DeliveryEffect::Stream { stream, effect: StreamEffect::Read { read_id, revision, after, view } } => self.read(stamp, stream, ReadRequest { read_id, revision, after, view }, back),
+            DeliveryEffect::Stream { stream, effect: StreamEffect::Read { read_id, revision, after, view, mode } } => self.read(stamp, stream, ReadRequest { read_id, revision, after, view, mode }, back),
             DeliveryEffect::Stream { effect: StreamEffect::Answer { outcome, answer }, .. } => {
                 self.answers.settle(outcome, answer);
             }

@@ -41,6 +41,8 @@ pub struct StoreState {
     epoch: Epoch,
     saved_epoch: Epoch,
     saved_generation: u64,
+    saved_identity: Option<Identity>,
+    saved_unowned_pending: bool,
     generations: BTreeMap<String, u64>,
     /// `model_generation[*]` of the models without an entry.
     base_generation: u64,
@@ -62,6 +64,8 @@ impl StoreState {
             epoch: 0,
             saved_epoch: 0,
             saved_generation: 0,
+            saved_identity: None,
+            saved_unowned_pending: false,
             generations: BTreeMap::new(),
             base_generation: 0,
             writing: None,
@@ -310,6 +314,8 @@ impl StoreState {
                         }
                         self.saved_epoch = published.epoch;
                         self.saved_generation = published.generation;
+                        self.saved_identity = published.identity;
+                        self.saved_unowned_pending &= published.identity.is_none();
                         fx.push(StoreEffect::Saved { publication_id });
                     }
                 }
@@ -329,7 +335,7 @@ impl StoreState {
                     if epoch + 1 > self.epoch { self.epoch = epoch + 1; }
                 }
             }
-            StoreInput::ReadIntents { epoch } => fx.push(StoreEffect::ReadIntents { epoch }),
+            StoreInput::ReadIntents { epoch } => fx.push(StoreEffect::ReadIntents { epoch, direct: self.saved_identity.is_none() && self.saved_unowned_pending }),
             StoreInput::Close => {
                 if self.busy() {
                     self.deferred.push_back(StoreInput::Close);
@@ -364,6 +370,8 @@ impl StoreState {
                 self.revision = revision;
                 self.saved_epoch = saved_epoch;
                 self.saved_generation = saved_generation;
+                self.saved_identity = saved_identity;
+                self.saved_unowned_pending = saved_unowned_pending;
                 self.base_generation = saved_generation;
                 self.generations.clear();
                 fx.push(open(saved_epoch, saved_generation, saved_identity, saved_unowned_pending));
@@ -372,6 +380,8 @@ impl StoreState {
                 self.revision = revision + 1;
                 self.saved_epoch = saved_epoch;
                 self.saved_generation = saved_generation + 1;
+                self.saved_identity = saved_identity;
+                self.saved_unowned_pending = saved_unowned_pending;
                 self.base_generation = saved_generation + 1;
                 self.generations.clear();
                 fx.push(StoreEffect::Prepare { format_change: true });

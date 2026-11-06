@@ -13,6 +13,7 @@ use crate::schema::{reserved_member_names, resolve_types, validate_models, Assoc
 use crate::syncstate::rebuild_sync_with;
 
 use super::db_error::DbError;
+use super::changed_log::ChangedLog;
 use super::replaced_log::ReplacedLog;
 use super::{Reader, Store, StoreError, StoreEvent};
 
@@ -69,6 +70,7 @@ pub(crate) struct Context {
     pub opened: OpenReport,
     pub connectivity: Arc<crate::transport::Connectivity>,
     pub replaced: Arc<ReplacedLog>,
+    pub changed: Arc<ChangedLog>,
     pub commits: Arc<CommitSink>,
     pub observers: OnceLock<Arc<dyn crate::owners::life::ObserverPort>>,
 }
@@ -82,6 +84,7 @@ impl Context {
             opened: OpenReport { recreated: None, changed_models: Vec::new(), reset_models: Vec::new(), dropped: Vec::new() },
             connectivity: crate::transport::Connectivity::new(true),
             replaced: Arc::default(),
+            changed: Arc::default(),
             commits: Arc::default(),
             observers: OnceLock::new(),
         }
@@ -120,15 +123,21 @@ impl Store {
         store.mark_ready();
         let replaced = Arc::new(ReplacedLog::default());
         let commits = Arc::new(CommitSink::default());
-        let (logged, notified) = (replaced.clone(), commits.clone());
+        let changed = Arc::new(ChangedLog::default());
+        changed.start(store.revision_seq()?);
+        let (logged, journal, notified, reset_journal) = (replaced.clone(), changed.clone(), commits.clone(), changed.clone());
         store.set_commit_log(Box::new(move |event| {
             if let StoreEvent::Committed(result) = event {
                 logged.log_replaced(result.revision.unwrap_or_default(), result.replaced.iter().map(|(from, to)| (from.id.clone(), to.clone())));
+                journal.log_commit(result);
             }
         }));
         store.set_hook(Box::new(move |event| match event {
             StoreEvent::Committed(result) => notified.notify(CommitNotice::of_commit(result)),
-            StoreEvent::Reset { revision, models, .. } => notified.notify(CommitNotice::of_reset(revision, models.as_deref())),
+            StoreEvent::Reset { revision, models, .. } => {
+                reset_journal.log_unknown(revision);
+                notified.notify(CommitNotice::of_reset(revision, models.as_deref()));
+            }
             StoreEvent::Renewed => {}
         }));
         store.context = Context {
@@ -138,6 +147,7 @@ impl Store {
             opened,
             connectivity: crate::transport::Connectivity::new(true),
             replaced,
+            changed,
             commits,
             observers: OnceLock::new(),
         };

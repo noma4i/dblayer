@@ -1,0 +1,124 @@
+//! P-DLV-23 on a real Store: the owner `Deliveries` and the reads of `DbSnapshots`, stepped in one thread.
+//! dlv_prop_work_by_affected: a commit that changed 1 row of 1 stream costs the same streams examined and rows read at N and 2N open streams and at windows of M and 2M rows.
+
+use std::sync::{Arc, Mutex};
+
+use serde_json::json;
+
+use super::deliveries::{self as d, Deliveries, DeliveriesState, DeliveryEffect, DeliveryInput, DeliveryPeers, Kind, StreamEffect, StreamId, View};
+use super::windows::{WindowKey, Windows};
+use super::feed::Feed;
+use super::{DbSnapshots, Snapshots};
+use crate::ddl::table_name;
+use crate::owners::contract::{Committed, Models};
+use crate::query::Query;
+use crate::runtime::{Address, Effect, Outcomes, StateOwner};
+use crate::schema::{FieldSpec, ModelSpec};
+use crate::store::spec_fixtures::put;
+use crate::store::Store;
+use crate::value::ScalarKind;
+
+const EPOCH: u64 = 1;
+
+type Notice = (i64, Vec<String>, u64);
+
+fn model(index: usize) -> String { format!("t{index}") }
+
+fn spec(index: usize) -> ModelSpec { ModelSpec::new(&model(index), vec![FieldSpec::scalar("id", ScalarKind::Id), FieldSpec::scalar("text", ScalarKind::Str).optional()]) }
+
+fn view(index: usize) -> View { view_of(&Query::new(&model(index))) }
+
+fn view_of(query: &Query) -> View {
+    let name = query.model.as_str().to_string();
+    View { kind: Kind::List, tables: vec![table_name(&name)], local: true, remote: false, live: false, reload: false, window: WindowKey { model: name.clone(), name: "list".into() }, subject: serde_json::to_string(query).unwrap(), model: name }
+}
+
+struct Work {
+    db: Arc<Store>,
+    snapshots: DbSnapshots,
+    state: DeliveriesState,
+    notices: Arc<Mutex<Vec<Notice>>>,
+}
+
+impl Work {
+    fn new(models: usize) -> Self {
+        let db = Arc::new(Store::open_models(None, (0..models).map(spec).collect(), None).unwrap());
+        let notices = Arc::new(Mutex::new(Vec::new()));
+        let sink = notices.clone();
+        db.on_commit(move |notice| sink.lock().unwrap().push((notice.revision, notice.tables, notice.position)));
+        let peers = DeliveryPeers { windows: Address::<Windows>::new(0), feed: Address::<Feed>::new(1) };
+        Self { snapshots: DbSnapshots::new(db.clone()), db, state: DeliveriesState::new(EPOCH, peers), notices }
+    }
+
+    fn feed(&mut self, input: DeliveryInput) {
+        let mut queue = vec![input];
+        while let Some(input) = queue.pop() {
+            for effect in Deliveries::step(&mut self.state, input) {
+                if let Effect::Run(DeliveryEffect::Stream { stream, effect: StreamEffect::Read { read_id, revision, after, view, mode } }) = effect {
+                    let (seen, data) = self.snapshots.read(&view, revision, after, mode).unwrap();
+                    queue.push(DeliveryInput::ReadDone { stream, read_id, revision: seen, data });
+                }
+            }
+        }
+    }
+
+    fn put(&self, index: usize, id: &str, text: &str) { put(&self.db, &model(index), json!({"id": id, "text": text})); }
+
+    fn commit(&mut self) {
+        let (revision, tables, position) = self.notices.lock().unwrap().pop().expect("the write announced its commit");
+        self.feed(DeliveryInput::Committed(Committed { batch: 0, revision, tables, models: Models::default(), stale_parents: Vec::new(), position }));
+    }
+
+    fn pull(&mut self, stream: StreamId) { self.feed(DeliveryInput::Pull { stream, outcome: Outcomes::<d::PullAnswer>::new().register(EPOCH).id() }); }
+}
+
+fn work_of_one_commit(streams: usize, window: usize) -> (u64, usize) {
+    let mut work = Work::new(streams);
+    for row in 0..window {
+        work.put(0, &format!("r{row}"), "old");
+    }
+    for index in 1..streams {
+        work.put(index, "r0", "old");
+    }
+    for index in 0..streams {
+        work.feed(DeliveryInput::Open { stream: index as StreamId + 1, view: view(index), epoch: EPOCH, identity: true, valid: true, now: 0, revision: 0 });
+    }
+    work.pull(1);
+    let (examined, read) = (work.state.streams_examined(), work.db.counters().rows_read);
+
+    work.put(0, "r0", "new");
+    work.commit();
+    let delta = match work.state.journal(1).last() {
+        Some(d::Value::Delta(delta)) => delta.clone(),
+        other => panic!("the commit delivered no Delta to the stream of the row: {other:?}"),
+    };
+    assert_eq!((delta.rows.iter().map(|row| row.id.as_str()).collect::<Vec<_>>(), delta.size as usize), (vec!["r0"], window), "the Delta names the changed row and the size of the window");
+    (work.state.streams_examined() - examined, work.db.counters().rows_read - read)
+}
+
+#[test]
+fn dlv_prop_work_by_affected() {
+    let (examined, read) = work_of_one_commit(2, 20);
+    assert_eq!((examined, read), (1, 1), "one stream is examined and one row is read");
+    assert_eq!(work_of_one_commit(4, 20), (examined, read), "2N open streams");
+    assert_eq!(work_of_one_commit(2, 40), (examined, read), "a window of 2M rows");
+}
+
+#[test]
+fn inv_observe_16_a_row_that_cannot_enter_the_list_costs_no_read_and_no_delivery() {
+    let mut work = Work::new(1);
+    work.put(0, "a", "keep");
+    let query = Query::new(&model(0)).filtered(crate::query::Where::equal("text", json!("keep")));
+    work.feed(DeliveryInput::Open { stream: 1, view: view_of(&query), epoch: EPOCH, identity: true, valid: true, now: 0, revision: 0 });
+    work.pull(1);
+    let cost = |work: &Work| (work.db.counters().rows_read, work.state.journal_len(1));
+
+    let before = cost(&work);
+    work.put(0, "b", "skip");
+    work.commit();
+    assert_eq!(cost(&work), before, "a row outside the filter is not read and not delivered");
+
+    work.put(0, "c", "keep");
+    work.commit();
+    assert_eq!(cost(&work), (before.0 + 1, before.1 + 1), "a row inside the filter is read once and delivered once");
+}

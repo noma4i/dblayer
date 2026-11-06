@@ -78,6 +78,7 @@ pub(super) enum Input {
     OpenInvalid,
     Committed { revision: i64, touches: bool },
     ReadDone { revision: i64, rows: Vec<Row> },
+    ReadOverflow { revision: i64 },
     CountDone { revision: i64, count: u64 },
     ReadStale { revision: i64, rows: Vec<Row> },
     ReadFailed { revision: i64 },
@@ -459,6 +460,9 @@ impl Delivery {
             (Stage::Opening | Stage::Live, Input::Closing) => self.end_now(Cause::Closed, fx),
             (Stage::Live, Input::Committed { revision, touches }) => {
                 if touches && self.kind.reads_rows() { self.read_revision = revision; fx.push(Effect::Read(revision)); }
+            }
+            (Stage::Live, Input::ReadOverflow { revision }) if self.kind.reads_rows() => {
+                if revision >= self.read_seen { fx.push(Effect::Read(self.read_revision)); }
             }
             (Stage::Live, Input::ReadDone { revision, rows }) if self.kind.reads_rows() && self.kind != Kind::Count => {
                 if revision < self.read_seen { return; }

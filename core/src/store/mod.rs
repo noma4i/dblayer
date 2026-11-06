@@ -23,6 +23,7 @@ mod window_read;
 mod db_error;
 mod record;
 pub(crate) mod replaced_log;
+pub(crate) mod changed_log;
 #[cfg(test)]
 mod atomic_tests;
 #[cfg(test)]
@@ -93,7 +94,7 @@ pub(crate) use context::Context;
 pub use db_error::DbError;
 pub use record::{Record, Row};
 pub(crate) use record::row_bytes;
-pub(crate) use lookup::{ParsedQuery, ViewRead};
+pub(crate) use lookup::{HeldVersion, ParsedQuery, ViewRead};
 pub(crate) use plan::{Planned, LocalPlan, MutationCall};
 pub(crate) use apply::save_pending;
 pub use boot::BootReport;
@@ -253,6 +254,7 @@ pub struct Store {
     hook: OnceLock<StoreHook>,
     commit_log: OnceLock<CommitLog>,
     newest_operation: std::sync::atomic::AtomicI64,
+    rows_read: std::sync::atomic::AtomicUsize,
     generation_now: std::sync::atomic::AtomicU64,
     committed_revision: Arc<std::sync::atomic::AtomicI64>,
     line: AnnounceLine,
@@ -292,6 +294,7 @@ impl Store {
             hook: OnceLock::new(),
             commit_log: OnceLock::new(),
             newest_operation: std::sync::atomic::AtomicI64::new(0),
+            rows_read: std::sync::atomic::AtomicUsize::new(0),
             generation_now: std::sync::atomic::AtomicU64::new(Generation::INITIAL.value()),
             committed_revision: Arc::new(std::sync::atomic::AtomicI64::new(0)),
             line: AnnounceLine::default(),
@@ -370,7 +373,7 @@ impl Store {
     }
 
     pub fn counters(&self) -> Counters {
-        self.lock().counters.clone()
+        Counters { rows_read: self.rows_read.load(Ordering::Relaxed), ..self.lock().counters.clone() }
     }
 
     #[cfg(test)]

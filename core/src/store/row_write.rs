@@ -28,6 +28,7 @@ pub(super) struct RowWrite<'a> {
     pub now: i64,
     pub originals: &'a mut BTreeMap<RowRef, Option<Map<String, Value>>>,
     pub closing: Option<i64>,
+    pub candidates: usize,
 }
 
 impl RowWrite<'_> {

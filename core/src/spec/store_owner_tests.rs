@@ -47,7 +47,7 @@ fn action_of(effect: &StoreEffect) -> Option<Action> {
         StoreEffect::Saved { publication_id } => Action::Saved(*publication_id),
         StoreEffect::SaveFailed { publication_id, error } => Action::SaveFailed { publication_id: *publication_id, closed: error == "closed" },
         StoreEffect::BroadcastCommitted { revision, models, .. } => Action::BroadcastCommitted { revision: *revision, all: models.is_none() },
-        StoreEffect::ReadIntents { epoch } => Action::ReadIntents(*epoch),
+        StoreEffect::ReadIntents { epoch, .. } => Action::ReadIntents(*epoch),
         StoreEffect::CloseReads => Action::CloseReads,
         StoreEffect::CloseConnections => Action::CloseConnections,
         StoreEffect::StoreClosed => Action::StoreClosed,
