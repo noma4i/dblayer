@@ -1,0 +1,69 @@
+use std::sync::Arc;
+
+use serde_json::json;
+
+use super::rig_tests::{bound, Held, Rig, World};
+use super::v3_fixtures::{add_chat, chat_row, land_event};
+use crate::ffi::tape::Rows;
+use crate::ffi::ReadEnd;
+use crate::test_wait::yield_until;
+
+fn first_named(rows: &Rows, name: &str) -> Option<i64> {
+    rows.1.lock().unwrap().iter().find(|seen| seen.rows.iter().any(|row| super::super::lifecycle_tests::named(row, name))).map(|seen| seen.revision)
+}
+
+/// P-APP-18: one row of the user gives one name in every place that shows it, at one revision, whether it comes with an answer of the server or with an event.
+#[tokio::test(flavor = "multi_thread")]
+async fn v3_user_everywhere_shows_one_name_in_every_stream_at_one_revision() {
+    let rig = Rig::encrypted().await;
+    rig.login_ios("A").await;
+    let held = Held::open(&rig.database);
+    held.shows("A").await;
+    held.lists_show("A").await;
+    let epoch = rig.database.session_epoch();
+
+    rig.world.set_account("A2");
+    bound(rig.database.refresh(epoch, "User".into(), "all".into(), "{}".into())).await.unwrap();
+    held.shows("A2").await;
+    held.lists_show("A2").await;
+    let revisions: Vec<_> = [&held.single, &held.entity, &held.rows, &held.window_rows].iter().map(|rows| first_named(rows, "A2")).collect();
+    assert!(revisions.iter().all(|revision| *revision == revisions[0] && revision.is_some()), "the places showed the answer at different revisions: {revisions:?}");
+
+    land_event(&rig, "User", json!({"id": "user", "name": "A3"}));
+    held.shows("A3").await;
+    held.lists_show("A3").await;
+    let revisions: Vec<_> = [&held.single, &held.entity, &held.rows, &held.window_rows].iter().map(|rows| first_named(rows, "A3")).collect();
+    assert!(revisions.iter().all(|revision| *revision == revisions[0] && revision.is_some()), "the places showed the event at different revisions: {revisions:?}");
+    rig.database.close_now();
+}
+
+/// P-APP-28: after the exit every stream of the old account ends, and the next account sees no chat, no message and no user of the old one.
+#[tokio::test(flavor = "multi_thread")]
+async fn v3_account_switch_leaves_nothing_of_the_old_account() {
+    let rig = Rig::signed_as(World::new("server", "A", true), false, add_chat).await;
+    land_event(&rig, "Chat", chat_row("c1", 0));
+    land_event(&rig, "Message", json!({"id": "m1", "chatId": "c1", "text": "secret", "at": 3}));
+    let chats = Arc::new(Rows::default());
+    let stream = rig.database.watch_query(r#"{"model":"Chat","relation":"all","params":{}}"#, chats.clone());
+    bound(stream.wait_for_initial_load()).await.unwrap();
+    yield_until("the chat list shows c1", || chats.len() == 1).await;
+    let thread = Arc::new(Rows::default());
+    let thread_stream = rig.database.watch_query(r#"{"model":"Message","where":{"type":"equal","field":"chatId","value":"c1"}}"#, thread.clone());
+    bound(thread_stream.wait_for_initial_load()).await.unwrap();
+    yield_until("the thread shows m1", || thread.len() == 1).await;
+
+    bound(rig.database.session_call("logout".into(), "{}".into())).await.unwrap();
+    rig.database.session_reset().await.unwrap();
+    yield_until("both streams of the old account ended", || chats.ended() == vec![ReadEnd::SessionEnded] && thread.ended() == vec![ReadEnd::SessionEnded]).await;
+
+    bound(rig.database.session_call("login_link".into(), json!({"account": "B"}).to_string())).await.unwrap();
+    let fresh = Arc::new(Rows::default());
+    let fresh_stream = rig.database.watch_query(r#"{"model":"Chat","relation":"all","params":{}}"#, fresh.clone());
+    bound(fresh_stream.wait_for_initial_load()).await.unwrap();
+    let again = Arc::new(Rows::default());
+    let again_stream = rig.database.watch_query(r#"{"model":"Message","where":{"type":"equal","field":"chatId","value":"c1"}}"#, again.clone());
+    bound(again_stream.wait_for_initial_load()).await.unwrap();
+    rig.settle().await;
+    assert_eq!((fresh.len(), again.len()), (0, 0), "the new account sees rows of the old one");
+    rig.database.close_now();
+}
