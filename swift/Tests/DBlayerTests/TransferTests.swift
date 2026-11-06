@@ -128,9 +128,9 @@ extension BridgeProbeTests {
     let items = ["../../../outside", "other"].enumerated().map { index, key in UploadItem(values: ["clientKey": .string(key), "size": .integer(2), "position": .integer(Int64(index))], path: source.path) }
     let receipt = try await DB.account().uploadBatch(Asset.self, items: items, request: UploadBatchRequest(operation: "create_files"))
     #expect(try await confirmedIds(receipt) == ["a0", "a1"])
-    #expect(transport.identities.filter { $0.itemId == "../../../outside" }.count == 3)
-    let ranges = directory.appending(path: "db.sqlite.cache/ranges").resolvingSymlinksInPath().path + "/"
-    #expect(transport.paths.filter { $0.0 == "../../../outside" }.allSatisfy { $0.1.hasPrefix(ranges) })
+    #expect(Dictionary(grouping: transport.identities, by: \.itemId).values.map(\.count) == [3, 3])
+    let ranges = directory.appending(path: "db.sqlite.files/transfers").resolvingSymlinksInPath().path + "/"
+    #expect(transport.paths.count == 6 && transport.paths.allSatisfy { $0.1.hasPrefix(ranges) })
     await DB.closeForCleanup()
   }
 
@@ -193,11 +193,8 @@ extension BridgeProbeTests {
       let attempts = server.requests.filter { $0.body["operationName"] as? String == "CreateBlob" && ($0.body["variables"] as? [String: Any])?["filename"] as? String == "1.jpg" }
       #expect(attempts.count == (lose ? 2 : 1))
       #expect(server.routes.filter { $0.operation == "CreateBlob" }.allSatisfy { $0.purpose == .transfer })
-      let second = try #require(transport.identities.first { $0.itemId == "key-1" })
-      let third = try #require(transport.identities.first { $0.itemId == "key-2" })
-      #expect(second.operationId == third.operationId)
-      #expect(second.step == .put)
-      #expect(third.step == .put)
+      let puts = transport.identities.filter { $0.step == .put }
+      #expect(puts.count == 2 && puts[0].operationId == puts[1].operationId && Set(puts.map(\.itemId)).count == 2)
       let final = try #require(server.requests.first { $0.body["operationName"] as? String == "CreateAssets" })
       let variables = try #require(final.body["variables"] as? [String: Any])
       let sent = try #require(variables["items"] as? [[String: Any]])
@@ -488,12 +485,10 @@ extension BridgeProbeTests {
     await DB.closeForCleanup()
     let transport = MockTransport()
     let start = Date(timeIntervalSince1970: 1_000)
-    _ = try await DB.openTesting(transport: transport, modelsJSON: modelsJSON, path: path, startingAt: start)
-    try DB.database.registerOperations(defsJson: Self.expiryOperations)
+    try await reopenClocked(modelsJson: modelsJSON, transport: transport, operations: Self.expiryOperations, path: path, startingAt: start)
     let row = try await Self.refusedUpload(transport, source: source)
     await DB.closeForCleanup()
-    _ = try await DB.openTesting(transport: transport, modelsJSON: modelsJSON, path: path, startingAt: start.addingTimeInterval(7 * 24 * 60 * 60))
-    try DB.database.registerOperations(defsJson: Self.expiryOperations)
+    try await reopenClocked(modelsJson: modelsJSON, transport: transport, operations: Self.expiryOperations, path: path, startingAt: start.addingTimeInterval(7 * 24 * 60 * 60))
     await eventually("the expired upload is discarded at the open") { await Self.isGone(row) }
     await DB.closeForCleanup()
   }
@@ -505,8 +500,7 @@ extension BridgeProbeTests {
     defer { try? FileManager.default.removeItem(at: source) }
     await DB.closeForCleanup()
     let transport = MockTransport()
-    let clock = try await DB.openTesting(transport: transport, modelsJSON: modelsJSON)
-    try DB.database.registerOperations(defsJson: Self.expiryOperations)
+    let clock = try await reopenClocked(modelsJson: modelsJSON, transport: transport, operations: Self.expiryOperations)
     let row = try await Self.refusedUpload(transport, source: source)
     try DB.database.setOnline(online: false)
     clock.advance(by: 7 * 24 * 60 * 60)

@@ -107,11 +107,11 @@ func reopen(config: Config, modelsJson: String, transport: Transport?, operation
 
 /// The same session stand on a clock that only `advance(by:)` moves.
 @MainActor @discardableResult
-func reopenClocked(modelsJson: String, transport: MockTransport, operations: String = "[]", path: String? = nil) async throws -> TestClock {
+func reopenClocked(modelsJson: String, transport: MockTransport, operations: String = "[]", path: String? = nil, startingAt start: Date = Date()) async throws -> TestClock {
   let server = try SealedServer(bridge: bridgeToTransport(transport))
   transport.cable = EncryptedCablePeer(server: server)
   await DB.closeForCleanup()
-  let clock = try await DB.openTesting(transport: transport, modelsJSON: modelsJson, path: path, encrypted: standEncrypted(), credentials: HeldCredential(), http: server)
+  let clock = try await DB.openTesting(transport: transport, modelsJSON: modelsJson, path: path, startingAt: start, encrypted: standEncrypted(), credentials: HeldCredential(), http: server)
   try DB.database.registerOperations(defsJson: withSessionProfile(operations))
   try await signIn()
   return clock

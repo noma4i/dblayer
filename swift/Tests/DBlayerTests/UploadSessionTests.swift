@@ -40,7 +40,7 @@ extension BridgeProbeTests {
     let first = database.sessionEpoch()
     let sentFirst = try await DB.account().send(Moment.self, values: ["text": .string("A")], upload: UploadCommand(action: "upload_clip", request: UploadRequest(path: file.path)))
     try await DB.sessionReset()
-    try database.setOnline(online: true)
+    try await loginAgain()
     try await User.profile.load(in: DB.account())
     try database.setOnline(online: false)
     let second = database.sessionEpoch()
@@ -80,6 +80,7 @@ extension BridgeProbeTests {
       _ = try await database.upload(epoch: database.sessionEpoch(), model: "Moment", rowId: row.id, action: "upload_clip", request: UploadRequest(path: file.path).wire)
       Issue.record("upload accepted without a session")
     } catch DbError.NoSession {}
+    try await loginAgain()
     try await User.profile.load(in: DB.account())
     #expect(try await User.profile.read(in: DB.account()).first?.name == "B")
     transport.released.continuation.yield(())
