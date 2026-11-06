@@ -106,7 +106,7 @@ impl FeedIo {
             let line = tokio::select! {
                 biased;
                 () = cancel.cancelled() => return,
-                line = crate::runtime::send_in_epoch(&gate, epoch, lines.connect()) => line,
+                line = crate::runtime::send_in_epoch(&gate, epoch, || lines.connect()) => line,
             };
             let line = match line {
                 Ok(line) => line,

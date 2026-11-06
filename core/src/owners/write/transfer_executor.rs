@@ -32,12 +32,12 @@ impl Drop for Link {
 impl Link {
     pub async fn mutate(&self, mut request: GraphQLRequest) -> Result<Response, TransportError> {
         request.purpose = NetworkPurpose::Transfer;
-        crate::runtime::send_in_epoch(&self.gate, self.epoch, self.transport.mutate(request)).await
+        crate::runtime::send_in_epoch(&self.gate, self.epoch, || self.transport.mutate(request)).await
     }
 
     pub async fn put(&self, mut request: PutRequest) -> Result<PutResponse, TransportError> {
         request.cancel = self.cancel.clone();
-        crate::runtime::send_in_epoch(&self.gate, self.epoch, self.transport.put(request)).await
+        crate::runtime::send_in_epoch(&self.gate, self.epoch, || self.transport.put(request)).await
     }
 }
 

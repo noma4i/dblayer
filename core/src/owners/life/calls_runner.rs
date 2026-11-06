@@ -104,8 +104,8 @@ impl CallsRunner {
             let request = GraphQLRequest::new(document.clone(), operation, variables);
             crate::lock::assert_no_library_lock("Transport::request");
             let result = match kind {
-                CallKind::Mutate => crate::runtime::send_in_epoch(&gate, Some(epoch), transport.mutate(request)).await,
-                CallKind::Query => crate::runtime::send_in_epoch(&gate, Some(epoch), transport.query(request)).await,
+                CallKind::Mutate => crate::runtime::send_in_epoch(&gate, Some(epoch), || transport.mutate(request)).await,
+                CallKind::Query => crate::runtime::send_in_epoch(&gate, Some(epoch), || transport.query(request)).await,
             };
             back.reply(EpochStamp::Control, input_of(call_id, &root, result));
         }));

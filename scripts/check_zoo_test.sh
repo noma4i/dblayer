@@ -48,7 +48,8 @@ expect_red '#[cfg(test)]
 fn probe() {}
 fn parked(rx: &Receiver) { rx.recv(); }'
 
-expect_green 'fn go(transport: &T, gate: &G) { send_in_epoch(gate, Some(epoch), transport.query(request)); }'
+expect_green 'fn go(transport: &T, gate: &G) { send_in_epoch(gate, Some(epoch), || transport.query(request)); }'
+expect_red 'fn go(transport: &T, gate: &G) { send_in_epoch(gate, Some(epoch), transport.query(request)); }'
 expect_red 'fn go(transport: &T) { transport.query(request); }'
 expect_red 'fn go(transport: &T, gate: &G) { transport.query(request); send_in_epoch(gate, Some(epoch), other()); }'
 expect_red 'fn go(document: &str) { if document.starts_with("mutation") { send(); } }'

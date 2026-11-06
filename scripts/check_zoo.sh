@@ -313,7 +313,14 @@ for path in files:
     text = contents[path]
     code = code_only(text)
     inside = test_regions(code)
-    spans = [(match.end(), end_of(code, match.end() - 1, "(", ")")) for match in sending.finditer(code)]
+    spans = []
+    for match in sending.finditer(code):
+        finish = end_of(code, match.end() - 1, "(", ")")
+        argument = code[match.end():finish]
+        if not re.search(r"\|\s*\|\s*[^,]*$", argument.split(",", 2)[-1] if argument.count(",") >= 2 else argument) and not re.search(r",\s*\|\s*\|", argument):
+            number = text.count("\n", 0, match.start()) + 1
+            findings.append(f"Z23 the request of send_in_epoch is a closure that calls the transport after the gate check: {path.relative_to(root)}:{number}")
+        spans.append((match.end(), finish))
     for match in kind_from_text.finditer(text):
         if code[match.start():match.start() + 11] != "starts_with" or any(begin < match.start() < finish for begin, finish in inside) or f"z23:{relative}" in allowed:
             continue

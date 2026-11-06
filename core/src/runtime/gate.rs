@@ -24,12 +24,12 @@ impl EpochGate {
     pub fn admits(&self, epoch: Epoch) -> bool { self.0.load(Ordering::SeqCst) == epoch << 1 }
 }
 
-/// A request to the network of `epoch`: the gate check and the first poll of the request run in one synchronous stretch, a closed gate ends the request as `Interrupted` without calling the transport. `None` is a step that belongs to no epoch.
-pub async fn send_in_epoch<T>(gate: &EpochGate, epoch: Option<Epoch>, request: impl Future<Output = Result<T, TransportError>>) -> Result<T, TransportError> {
+/// A request to the network of `epoch`: the gate check, the call of the transport method and the first poll of its future run in one synchronous stretch, a closed gate ends the request as `Interrupted` without calling the transport. `None` is a step that belongs to no epoch.
+pub async fn send_in_epoch<T, F: Future<Output = Result<T, TransportError>>>(gate: &EpochGate, epoch: Option<Epoch>, request: impl FnOnce() -> F) -> Result<T, TransportError> {
     if epoch.is_some_and(|epoch| !gate.admits(epoch)) {
         return Err(TransportError::Interrupted("the epoch ended before the request was sent".into()));
     }
-    request.await
+    request().await
 }
 
 #[cfg(test)]

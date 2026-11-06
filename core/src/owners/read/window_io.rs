@@ -116,7 +116,7 @@ async fn ask(transport: Option<&dyn Transport>, (gate, epoch): (&crate::runtime:
     let Some(transport) = transport else {
         return TransportOutcome::Error(RequestError { message: "the database has no transport".into(), class: ErrorClass::Network, source: None });
     };
-    match crate::runtime::send_in_epoch(gate, Some(epoch), transport.query(request)).await {
+    match crate::runtime::send_in_epoch(gate, Some(epoch), || transport.query(request)).await {
         Ok(response) => match codec.refusal(&response) {
             Some(error) => TransportOutcome::Error(error),
             None => match codec.answer(key, page, response) {
