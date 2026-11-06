@@ -42,10 +42,13 @@ pub enum FailureKind {
     Rejected,
     MissingFile,
     Session(SessionCode),
+    /// The sealed request was above the limit of the transport: the size and the limit in bytes.
+    RequestTooLarge { size: u64, limit: u64 },
     Unrecognized,
 }
 
 const SESSION_PREFIX: &str = "session:";
+const TOO_LARGE_PREFIX: &str = "request_too_large:";
 
 impl FailureKind {
     fn text(self) -> String {
@@ -55,6 +58,7 @@ impl FailureKind {
             FailureKind::Rejected => "rejected".into(),
             FailureKind::MissingFile => "missing_file".into(),
             FailureKind::Session(code) => format!("{SESSION_PREFIX}{}", code.name()),
+            FailureKind::RequestTooLarge { size, limit } => format!("{TOO_LARGE_PREFIX}{size}:{limit}"),
             FailureKind::Unrecognized => "unrecognized".into(),
         }
     }
@@ -66,7 +70,7 @@ impl FailureKind {
             "rejected" => Some(FailureKind::Rejected),
             "missing_file" => Some(FailureKind::MissingFile),
             "unrecognized" => Some(FailureKind::Unrecognized),
-            _ => text.strip_prefix(SESSION_PREFIX).and_then(SessionCode::named).map(FailureKind::Session),
+            _ => text.strip_prefix(TOO_LARGE_PREFIX).and_then(|numbers| numbers.split_once(':')).and_then(|(size, limit)| Some(FailureKind::RequestTooLarge { size: size.parse().ok()?, limit: limit.parse().ok()? })).or_else(|| text.strip_prefix(SESSION_PREFIX).and_then(SessionCode::named).map(FailureKind::Session)),
         }
     }
 }

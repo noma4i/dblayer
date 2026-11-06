@@ -50,6 +50,9 @@ pub enum WireUploadStatus {
 pub struct WireFailure {
     pub kind: String,
     pub session_code: Option<crate::transport::SessionCode>,
+    /// Set for `request_too_large`: the size of the sealed request and the limit, in bytes.
+    pub request_size: Option<u64>,
+    pub request_limit: Option<u64>,
     pub message: String,
     pub extensions: Option<crate::transport::GraphqlExtensions>,
 }
@@ -223,7 +226,9 @@ fn cell<'a>(field: &'a FieldSpec, value: Option<&Value>, types: &mut Types<'a>) 
 
 pub(super) fn failure(failure: &OperationFailure) -> WireFailure {
     let session_code = match failure.kind { crate::syncstate::FailureKind::Session(code) => Some(code), _ => None };
-    WireFailure { kind: enum_text(&failure.kind).unwrap_or_default(), session_code, message: failure.message.clone(), extensions: failure.extensions.clone() }
+    let (request_size, request_limit) = match failure.kind { crate::syncstate::FailureKind::RequestTooLarge { size, limit } => (Some(size), Some(limit)), _ => (None, None) };
+    let kind = if request_size.is_some() { "request_too_large".to_string() } else { enum_text(&failure.kind).unwrap_or_default() };
+    WireFailure { kind, session_code, request_size, request_limit, message: failure.message.clone(), extensions: failure.extensions.clone() }
 }
 
 fn upload(info: &UploadInfo) -> WireUpload {

@@ -598,3 +598,20 @@ fn out_landing_committed_result_no_root() {
     let effects = twin.committed(id);
     assert!(answers(&effects, WAITER).iter().any(|answer| matches!(answer, OutboxAnswer::Outcome(OutboxOutcome::Confirmed { result: Some(text), .. }) if text == r#"{"copies":3}"#)), "{effects:?}");
 }
+
+/// A request above the limit of the transport ends the operation with a typed failure: the kind and both numbers reach the outcome, not a general transport text.
+#[test]
+fn out_sending_answered_too_large() {
+    use crate::owners::contract::ErrorClass;
+    use crate::owners::session::{AuthorOutcome, SessionError};
+    use crate::syncstate::FailureKind;
+    let mut twin = Twin::new();
+    let id = sending(&mut twin, Policy::Keep, false);
+    twin.waiter(id);
+    let request_id = twin.state().ops[&id].request_id;
+    twin.post(OutboxInput::Answered { req_id: request_id, outcome: AuthorOutcome::Error { class: ErrorClass::Permanent, error: SessionError::TooLarge { size: 300_000, limit: 262_144 } } });
+    let effects = twin.committed(id);
+    let failed = answers(&effects, WAITER).into_iter().find_map(|answer| match answer { OutboxAnswer::Outcome(OutboxOutcome::Failed { error }) => Some(error), _ => None }).expect("a failed outcome");
+    let failure = crate::owners::write::failure::parse(&failed);
+    assert_eq!(failure.kind, FailureKind::RequestTooLarge { size: 300_000, limit: 262_144 });
+}
