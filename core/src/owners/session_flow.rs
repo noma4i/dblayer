@@ -18,7 +18,7 @@ impl SessionState {
 
     pub fn subscribers(&self) -> usize { self.subscribers.len() }
 
-    pub fn awaiting_publication(&self) -> Option<&(ReplyId, String)> { self.after_publish.as_ref() }
+    pub fn awaiting_publication(&self) -> Option<(ReplyId, PublishWait)> { self.after_publish.as_ref().map(|held| (held.reply, held.wait)) }
 
     pub fn restored_direct(&self) -> Option<&PendingCall> { self.restored_direct.as_ref() }
 
@@ -213,7 +213,7 @@ impl SessionState {
         fx.push(SessionEffect::Drained(Drained { owner: "session" }));
     }
 
-    pub(super) fn answer_publication(&mut self, fx: &mut Vec<SessionEffect>, state: PublishedState, identity: Option<Digest>) {
+    pub(super) fn answer_publication(&mut self, fx: &mut Vec<SessionEffect>, epoch: Epoch, state: PublishedState, identity: Option<Digest>) {
         if let Some(body) = self.resume_published.take() {
             let digest = self.credential.as_ref().map(|credential| credential.digest);
             if state == PublishedState::Session && identity.is_some() && identity == digest { self.deliver_resume(Ok(body), fx); }
@@ -221,16 +221,15 @@ impl SessionState {
             else if state == PublishedState::Ending { self.deliver_resume(Err(SessionError::Interrupted), fx); }
             else { self.resume_published = Some(body); }
         }
-        let Some((id, body)) = self.after_publish.take() else { return };
+        let Some(held) = self.after_publish.take() else { return };
         let digest = self.credential.as_ref().map(|credential| credential.digest);
-        if state == PublishedState::Session && identity.is_some() && identity == digest {
-            reply(fx, id, Ok(body));
-        } else if matches!(state, PublishedState::StorageFailed | PublishedState::EndingFailed) {
-            reply(fx, id, Err(SessionError::Storage("the session could not be saved".into())));
-        } else if state == PublishedState::Ending {
-            reply(fx, id, Err(SessionError::Interrupted));
-        } else {
-            self.after_publish = Some((id, body));
+        let failed = matches!(state, PublishedState::StorageFailed | PublishedState::EndingFailed);
+        match held.wait {
+            _ if failed => reply(fx, held.reply, Err(SessionError::Storage("the session could not be saved".into()))),
+            PublishWait::Identity if state == PublishedState::Session && identity.is_some() && identity == digest => reply(fx, held.reply, held.result),
+            PublishWait::Identity if state == PublishedState::Ending => reply(fx, held.reply, Err(SessionError::Interrupted)),
+            PublishWait::EpochAfter(ended) if matches!(state, PublishedState::Session | PublishedState::NoSession) && epoch > ended => reply(fx, held.reply, held.result),
+            _ => self.after_publish = Some(held),
         }
     }
 

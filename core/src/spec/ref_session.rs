@@ -256,7 +256,8 @@ pub struct Session {
     pub online: Option<bool>,
     pub epoch: u64,
     pub pub_state: PubState,
-    pub after_publish: Option<(ReplyId, String)>,
+    /// The reply, its result, and the epoch it waits to pass (`None` waits for the identity of the new credential).
+    pub after_publish: Option<(ReplyId, Answer, Option<u64>)>,
     pub subscribers: BTreeSet<StreamId>,
     pub restored_direct: Option<Pending>,
     operations: Vec<Operation>,
@@ -475,17 +476,18 @@ impl Session {
         out.effects.push(Effect::Drained);
     }
 
-    fn answer_publication(&mut self, out: &mut Out, state: PubState, identity: Option<Digest>) {
-        let Some((reply, body)) = self.after_publish.take() else { return };
+    pub fn awaiting(&self) -> Option<(ReplyId, Option<u64>)> { self.after_publish.as_ref().map(|(reply, _, wait)| (*reply, *wait)) }
+
+    fn answer_publication(&mut self, out: &mut Out, epoch: u64, state: PubState, identity: Option<Digest>) {
+        let Some((reply, result, wait)) = self.after_publish.take() else { return };
         let digest = self.credential.as_ref().map(|credential| credential.digest);
-        if state == PubState::Session && identity.is_some() && identity == digest {
-            out.replies.push((reply, Ok(body)));
-        } else if matches!(state, PubState::StorageFailed | PubState::EndingFailed) {
-            out.replies.push((reply, Err(Fail::Storage)));
-        } else if state == PubState::Ending {
-            out.replies.push((reply, Err(Fail::Interrupted)));
-        } else {
-            self.after_publish = Some((reply, body));
+        let failed = matches!(state, PubState::StorageFailed | PubState::EndingFailed);
+        match wait {
+            _ if failed => out.replies.push((reply, Err(Fail::Storage))),
+            None if state == PubState::Session && identity.is_some() && identity == digest => out.replies.push((reply, result)),
+            None if state == PubState::Ending => out.replies.push((reply, Err(Fail::Interrupted))),
+            Some(ended) if matches!(state, PubState::Session | PubState::NoSession) && epoch > ended => out.replies.push((reply, result)),
+            _ => self.after_publish = Some((reply, result, wait)),
         }
     }
 

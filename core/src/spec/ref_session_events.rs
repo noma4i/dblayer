@@ -33,7 +33,7 @@ impl Session {
                 self.pub_state = published;
                 self.state = state;
                 if std::mem::take(&mut self.adopt) { self.adopt_epoch(epoch); }
-                self.answer_publication(out, published, identity);
+                self.answer_publication(out, epoch, published, identity);
                 if matches!(self.state, State::Idle) { self.drain(out); }
             }
             Input::Restored { epoch, pending } => {
@@ -69,7 +69,9 @@ impl Session {
                 self.restore_ready = false;
                 self.restore_floor = epoch + 1;
                 if is_ended(cause) {
-                    if let Some((reply, _)) = self.after_publish.take() { out.replies.push((reply, Err(Fail::Interrupted))); }
+                    if self.after_publish.as_ref().is_some_and(|held| held.2.is_none()) {
+                        if let Some((reply, ..)) = self.after_publish.take() { out.replies.push((reply, Err(Fail::Interrupted))); }
+                    }
                     self.held = None;
                 }
                 self.on_epoch_ended(state, epoch, cause, out);
@@ -127,7 +129,7 @@ impl Session {
     }
 
     pub(super) fn closing(&mut self, state: State, out: &mut Out) {
-        if let Some((reply, _)) = self.after_publish.take() { out.replies.push((reply, Err(Fail::Closed))); }
+        if let Some((reply, ..)) = self.after_publish.take() { out.replies.push((reply, Err(Fail::Closed))); }
         match state {
             State::Sealing { pending, .. } => Self::finish(out, &pending, Err(Fail::Closed)),
             State::Persisting { pending, .. } | State::Landing { pending, .. } => Self::finish(out, &pending, Err(Fail::Closed)),
@@ -382,7 +384,7 @@ impl Session {
                 match identity.filter(|_| answer.is_ok()) {
                     Some(digest) => {
                         self.credential = Some(Credential { digest, sequence: pending.sequence });
-                        if let (Some(reply), Ok(body)) = (pending.reply, &answer) { self.after_publish = Some((reply, body.clone())); }
+                        if let (Some(reply), Ok(_)) = (pending.reply, &answer) { self.after_publish = Some((reply, answer.clone(), None)); }
                         out.effects.push(Effect::CredentialCommitted(digest));
                     }
                     None if pending.class == Class::Login && pending.credential.is_some() && answer.is_err() && !server_ended => {
@@ -394,7 +396,14 @@ impl Session {
                     }
                     None => {
                         if let (Some(sequence), Some(credential)) = (sequence, &mut self.credential) { credential.sequence = sequence; }
-                        if server_ended { out.effects.push(Effect::ServerEnded { epoch: pending.epoch }); }
+                        let mut pending = pending;
+                        if server_ended {
+                            out.effects.push(Effect::ServerEnded { epoch: pending.epoch });
+                            if let (Some(reply), None) = (pending.reply, pending.author) {
+                                self.after_publish = Some((reply, answer.clone(), Some(pending.epoch)));
+                                pending.reply = None;
+                            }
+                        }
                         Self::finish(out, &pending, answer);
                     }
                 }

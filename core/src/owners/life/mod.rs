@@ -114,8 +114,6 @@ pub(crate) struct Wiring {
     mutate_sinks: Mutex<HashMap<AuthorId, MutateSink>>,
     /// Where the answer of Store to a batch goes, by author: the `install` of Window, Feed, Outbox and Transfer registers its owner here.
     store_sinks: Mutex<HashMap<BatchAuthor, StoreSink>>,
-    /// The answer of a call that ended the session waits for the next epoch: a caller that heard it finds the new epoch.
-    after_publish: Mutex<Vec<(Awaited, crate::runtime::OutcomeId, LifeReply)>>,
     network_sinks: Mutex<Vec<(Peer, NetworkSink)>>,
     /// Every subscriber of the Store broadcast `Committed`, in the order of subscription.
     committed_sinks: Mutex<Vec<CommittedSink>>,
@@ -127,12 +125,6 @@ pub(crate) struct Wiring {
 struct OpenWait {
     id: Option<u64>,
     answer: Option<Result<(), LifecycleError>>,
-}
-
-/// What a held answer waits for: the epoch to move past the one that ended.
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum Awaited {
-    EpochAbove(u64),
 }
 
 impl Wiring {
@@ -156,7 +148,6 @@ impl Wiring {
             open_failed: Mutex::new(None),
             mutate_sinks: Mutex::new(HashMap::new()),
             store_sinks: Mutex::new(HashMap::new()),
-            after_publish: Mutex::new(Vec::new()),
             network_sinks: Mutex::new(Vec::new()),
             committed_sinks: Mutex::new(Vec::new()),
             session_open: Mutex::new(None),
@@ -167,41 +158,7 @@ impl Wiring {
     /// `None` only before `install` finished: no effect runs by then.
     pub fn addresses(&self) -> Option<Addresses> { self.addresses.get().copied() }
 
-    pub fn publish(&self, published: Published) {
-        let published_epoch = published.epoch;
-        self.published.publish(published);
-        let due: Vec<_> = {
-            let mut held = self.after_publish.lock().unwrap_or_else(PoisonError::into_inner);
-            let (due, rest): (Vec<_>, Vec<_>) = held.drain(..).partition(|(waiting, ..)| match waiting {
-                Awaited::EpochAbove(epoch) => published_epoch > *epoch,
-            });
-            *held = rest;
-            due
-        };
-        for (_, id, reply) in due {
-            self.outcomes.settle(id, reply);
-        }
-    }
-
-    /// Settles the answer of a call that ended the session once the epoch moved past `epoch`. Nothing to wait for when the session already ended or the epoch is past.
-    pub fn settle_after_epoch(&self, epoch: u64, id: crate::runtime::OutcomeId, reply: LifeReply) {
-        let mut held = self.after_publish.lock().unwrap_or_else(PoisonError::into_inner);
-        let published = self.published.get();
-        if published.as_ref().is_none_or(|published| published.epoch > epoch || published.identity.is_none() || published.closed) {
-            drop(held);
-            self.outcomes.settle(id, reply);
-        } else {
-            held.push((Awaited::EpochAbove(epoch), id, reply));
-        }
-    }
-
-    /// The close answers every held answer: no publication follows.
-    pub fn release_held(&self) {
-        let held: Vec<_> = self.after_publish.lock().unwrap_or_else(PoisonError::into_inner).drain(..).collect();
-        for (_, id, reply) in held {
-            self.outcomes.settle(id, reply);
-        }
-    }
+    pub fn publish(&self, published: Published) { self.published.publish(published); }
 
     /// Whether the published epoch is already past `epoch`: an answer addressed to that epoch has no receiver left.
     pub fn epoch_passed(&self, epoch: Epoch) -> bool { self.published.read(|published| published.is_some_and(|published| published.epoch > epoch)) }

@@ -263,6 +263,19 @@ pub enum SessionInput {
     Closing,
 }
 
+/// What the answer of a call waits for: the publication that confirms the new credential, or the first epoch after the one the answer ended.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PublishWait {
+    Identity,
+    EpochAfter(Epoch),
+}
+
+struct AnswerAfterPublish {
+    reply: ReplyId,
+    result: SessionAnswer,
+    wait: PublishWait,
+}
+
 pub struct SessionState {
     phase: SessionPhase,
     credential: Option<Credential>,
@@ -270,7 +283,7 @@ pub struct SessionState {
     online: Option<bool>,
     epoch: Epoch,
     published: PublishedState,
-    after_publish: Option<(ReplyId, String)>,
+    after_publish: Option<AnswerAfterPublish>,
     subscribers: BTreeSet<StreamId>,
     restored_direct: Option<PendingCall>,
     restored_active: Option<RequestId>,

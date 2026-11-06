@@ -297,7 +297,7 @@ impl Twin {
         assert_eq!(state.credential().map(|c| RefCredential { digest: c.digest, sequence: c.sequence }), self.reference.credential, "the same credential");
         assert_eq!(state.queued(), self.reference.queue.len(), "the same queue");
         assert_eq!(state.subscribers(), self.reference.subscribers.len(), "the same subscribers");
-        assert_eq!(state.awaiting_publication().cloned(), self.reference.after_publish, "the same answer after publish");
+        assert_eq!(state.awaiting_publication().map(|(reply, wait)| (reply, match wait { crate::owners::session::PublishWait::EpochAfter(epoch) => Some(epoch), crate::owners::session::PublishWait::Identity => None })), self.reference.awaiting(), "the same answer after publish");
         assert_eq!(state.restored_direct().map(pending_of), self.reference.restored_direct, "the same restored direct pending");
         want.effects
     }

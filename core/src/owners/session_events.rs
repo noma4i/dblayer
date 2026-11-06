@@ -48,7 +48,7 @@ impl SessionState {
                 self.published = state;
                 self.phase = phase;
                 if std::mem::take(&mut self.adopt) { self.adopt_epoch(epoch); }
-                self.answer_publication(fx, state, identity);
+                self.answer_publication(fx, epoch, state, identity);
                 if matches!(self.phase, SessionPhase::Idle) { self.drain(fx); }
             }
             SessionInput::Restored { epoch, pending, .. } => {
@@ -85,7 +85,9 @@ impl SessionState {
                 self.restore_ready = false;
                 self.restore_floor = epoch + 1;
                 if is_ended(cause) {
-                    if let Some((id, _)) = self.after_publish.take() { reply(fx, id, Err(SessionError::Interrupted)); }
+                    if self.after_publish.as_ref().is_some_and(|held| held.wait == PublishWait::Identity) {
+                        if let Some(held) = self.after_publish.take() { reply(fx, held.reply, Err(SessionError::Interrupted)); }
+                    }
                     self.held = None;
                 }
                 self.on_epoch_ended(phase, epoch, cause, fx);
@@ -145,7 +147,7 @@ impl SessionState {
 
     pub(super) fn closing(&mut self, phase: SessionPhase, fx: &mut Vec<SessionEffect>) {
         self.end_resume(SessionError::Closed, fx);
-        if let Some((id, _)) = self.after_publish.take() { reply(fx, id, Err(SessionError::Closed)); }
+        if let Some(held) = self.after_publish.take() { reply(fx, held.reply, Err(SessionError::Closed)); }
         match phase {
             SessionPhase::Sealing { pending, .. } => finish(fx, &pending, Err(SessionError::Closed)),
             SessionPhase::Persisting { pending, .. } | SessionPhase::Landing { pending, .. } => finish(fx, &pending, Err(SessionError::Closed)),
@@ -406,7 +408,7 @@ impl SessionState {
                 match identity.filter(|_| answer.is_ok()) {
                     Some(digest) => {
                         self.credential = Some(Credential { digest, sequence: pending.sequence });
-                        if let (Some(id), Ok(body)) = (pending.reply, &answer) { self.after_publish = Some((id, body.clone())); }
+                        if let (Some(id), Ok(_)) = (pending.reply, &answer) { self.after_publish = Some(AnswerAfterPublish { reply: id, result: answer.clone(), wait: PublishWait::Identity }); }
                         if self.restored_active == Some(pending.request_id) { if let Ok(body) = &answer { self.resume_published = Some(body.clone()); } }
                         fx.push(SessionEffect::CredentialCommitted(CredentialCommitted { identity: digest }));
                     }
@@ -420,7 +422,14 @@ impl SessionState {
                     }
                     None => {
                         if let (Some(sequence), Some(credential)) = (sequence, &mut self.credential) { credential.sequence = sequence; }
-                        if server_ended { fx.push(SessionEffect::ServerEnded(ServerEnded { epoch: pending.epoch })); }
+                        let mut pending = pending;
+                        if server_ended {
+                            fx.push(SessionEffect::ServerEnded(ServerEnded { epoch: pending.epoch }));
+                            if let (Some(id), None) = (pending.reply, pending.author) {
+                                self.after_publish = Some(AnswerAfterPublish { reply: id, result: answer.clone(), wait: PublishWait::EpochAfter(pending.epoch) });
+                                pending.reply = None;
+                            }
+                        }
                         self.resume_finish(&pending, answer, fx);
                     }
                 }

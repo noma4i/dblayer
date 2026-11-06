@@ -187,7 +187,7 @@ fn sess_landing_committed_credential() {
     assert_eq!(twin.feed(committed()), vec![RefEffect::CredentialCommitted(42)], "the identity is the digest of the generated credential");
     assert!(twin.replies.is_empty(), "the answer waits for the publication");
     assert_eq!(twin.reference.credential, Some(RefCredential { digest: 42, sequence: 1 }));
-    assert_eq!(twin.reference.after_publish, Some((1, "{}".into())));
+    assert_eq!(twin.reference.awaiting(), Some((1, None)));
 }
 
 #[test]
@@ -361,6 +361,49 @@ fn sess_published_login_failed() {
         assert_eq!(twin.replies, vec![(1, Err(want))]);
         assert!(twin.reference.after_publish.is_none());
     }
+}
+
+fn revoked_and_landed() -> Twin {
+    let mut twin = calling();
+    let input = Input::Revoked { request_id: twin.rid(), attempt_id: twin.aid(), body: "{}".into() };
+    twin.feed_all([input, committed()]);
+    twin
+}
+
+#[test]
+fn sess_published_answers_session_end() {
+    for (epoch, state, want) in [(EPOCH, PubState::Session, None), (EPOCH + 1, PubState::Ending, None), (EPOCH + 1, PubState::Session, Some(Err(Fail::Revoked))), (EPOCH + 1, PubState::NoSession, Some(Err(Fail::Revoked)))] {
+        let mut twin = revoked_and_landed();
+        twin.feed(Input::Published { epoch, identity: None, state });
+        let answered = want.is_some();
+        assert_eq!(twin.replies, want.into_iter().map(|answer| (1, answer)).collect::<Vec<_>>(), "epoch {epoch} {state:?}");
+        assert_eq!(twin.reference.awaiting().is_none(), answered);
+    }
+}
+
+#[test]
+fn sess_published_session_end_failed() {
+    for state in [PubState::StorageFailed, PubState::EndingFailed] {
+        let mut twin = revoked_and_landed();
+        twin.feed(Input::Published { epoch: EPOCH, identity: None, state });
+        assert_eq!(twin.replies, vec![(1, Err(Fail::Storage))]);
+        assert!(twin.reference.after_publish.is_none());
+    }
+}
+
+#[test]
+fn sess_epoch_ended_keeps_session_end_answer() {
+    let mut twin = revoked_and_landed();
+    twin.feed(ended(EndCause::ServerEnded));
+    assert!(twin.replies.is_empty(), "the answer of the ended epoch stays until the next epoch");
+    assert_eq!(twin.reference.awaiting(), Some((1, Some(EPOCH))));
+}
+
+#[test]
+fn sess_closing_answers_session_end() {
+    let mut twin = revoked_and_landed();
+    twin.feed(Input::Closing);
+    assert_eq!(twin.replies, vec![(1, Err(Fail::Closed))]);
 }
 
 #[test]

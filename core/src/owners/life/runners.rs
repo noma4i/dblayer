@@ -82,7 +82,6 @@ impl EffectRunner<Lifecycle> for LifecycleRunner {
                 wiring.to_transfer(TransferInput::ModelsReset(reset));
             }
             LifecycleEffect::Closing => {
-                wiring.release_held();
                 wiring.handle.close();
                 for peer in &self.absent {
                     wiring.to_lifecycle(LifecycleInput::Drained(Drained { owner: peer.name() }));

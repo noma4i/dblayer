@@ -46,8 +46,6 @@ pub(super) struct SessionRunner {
     generated: Arc<Mutex<HashMap<u64, String>>>,
     wires: HashMap<RequestId, Wire>,
     operations: HashMap<RequestId, i64>,
-    /// The epoch that the last step ended on the server: the `Reply` of the same step waits for the next epoch.
-    ending: Option<u64>,
 }
 
 /// What the stored rows and the secret give to the owner and its executor at open.
@@ -66,7 +64,7 @@ impl SessionRunner {
         let wires = restored.wire.iter().map(|(request_id, wire)| (*request_id, Wire { id: wire.id.clone(), key: wire.key.clone() })).collect();
         let digests = Arc::new(Mutex::new(restored.digest.iter().cloned().collect()));
         let operations = restored.pending.iter().filter_map(|pending| match pending.owner { Some(crate::transport::RequestOwner::Operation { seq }) => Some((pending.request_id, seq)), _ => None }).collect();
-        Self { wiring, exchange, secret, store, seal, executor, running: HashMap::new(), digests, generated: Arc::default(), wires, operations, ending: None }
+        Self { wiring, exchange, secret, store, seal, executor, running: HashMap::new(), digests, generated: Arc::default(), wires, operations }
     }
 
     /// What `Open` of the owner takes: the rows and what `CredentialStore.get` found.
@@ -211,10 +209,6 @@ pub(super) fn input_of(request_id: RequestId, attempt_id: AttemptId, logout: boo
 }
 
 impl EffectRunner<SessionCalls> for SessionRunner {
-    fn step_done(&mut self) {
-        self.ending = None;
-    }
-
     fn run(&mut self, _stamp: EpochStamp, effect: SessionEffect, back: &Back<SessionCalls>) {
         let control = EpochStamp::Control;
         match effect {
@@ -322,18 +316,12 @@ impl EffectRunner<SessionCalls> for SessionRunner {
             }
             SessionEffect::ScheduleTick { .. } | SessionEffect::RetryState { .. } => {}
             SessionEffect::CredentialCommitted(committed) => self.wiring.to_lifecycle(LifecycleInput::CredentialCommitted(committed)),
-            SessionEffect::ServerEnded(ended) => {
-                self.ending = Some(ended.epoch);
-                self.wiring.to_lifecycle(LifecycleInput::ServerEnded(ended));
-            }
+            SessionEffect::ServerEnded(ended) => self.wiring.to_lifecycle(LifecycleInput::ServerEnded(ended)),
             SessionEffect::SessionReset => self.wiring.to_lifecycle(LifecycleInput::SessionReset { reply: None }),
             SessionEffect::RestoreClassified { epoch } => self.wiring.to_lifecycle(LifecycleInput::RestoreClassified { owner: Peer::Session, epoch }),
             SessionEffect::Reply { id, answer } => {
                 let (id, reply) = (OutcomeId::from_raw(id as ReplyId), LifeReply::Session(answer));
-                match self.ending.take() {
-                    Some(epoch) => self.wiring.settle_after_epoch(epoch, id, reply),
-                    None => { self.wiring.outcomes.settle(id, reply); }
-                }
+                self.wiring.outcomes.settle(id, reply);
             }
             SessionEffect::ResumeReply { id, answer } => {
                 self.wiring.outcomes.settle(OutcomeId::from_raw(id), LifeReply::SessionResume(answer));

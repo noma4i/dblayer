@@ -370,6 +370,9 @@ fn sess_calling_revoked() {
     assert!(matches!(&effects[..], [RefEffect::CommitLanding { digest: None, sequence: None, .. }]));
     let done = twin.feed(committed());
     assert!(done.contains(&RefEffect::ServerEnded { epoch: EPOCH }));
+    assert!(twin.replies.is_empty(), "the answer waits for the epoch after the one that ended");
+    assert_eq!(twin.reference.awaiting(), Some((1, Some(EPOCH))));
+    twin.feed(Input::Published { epoch: EPOCH + 1, identity: None, state: PubState::Session });
     assert_eq!(twin.replies, vec![(1, Err(Fail::Revoked))]);
 }
 
@@ -381,7 +384,31 @@ fn sess_calling_revoked_logout() {
     twin.feed(input);
     let done = twin.feed(committed());
     assert!(done.contains(&RefEffect::ServerEnded { epoch: EPOCH }));
+    assert!(twin.replies.is_empty(), "the logout answer waits for the new epoch");
+    twin.feed(Input::Published { epoch: EPOCH + 1, identity: None, state: PubState::Session });
     assert_eq!(twin.replies, vec![(1, Ok(r#"{"revoked":true}"#.into()))], "a revoked answer to logout confirms the logout");
+}
+
+#[test]
+fn sess_landing_server_ended_held() {
+    let mut twin = calling();
+    let input = Input::Revoked { request_id: twin.rid(), attempt_id: twin.aid(), body: "{}".into() };
+    twin.feed(input);
+    let done = twin.feed(committed());
+    assert!(done.contains(&RefEffect::ServerEnded { epoch: EPOCH }));
+    assert!(twin.replies.is_empty());
+    assert_eq!(twin.reference.awaiting(), Some((1, Some(EPOCH))), "the session call holds its answer until the epoch passes");
+}
+
+#[test]
+fn sess_landing_server_ended_mutate_answers() {
+    let mut twin = Twin::new();
+    twin.feed_all([mutate(7, 11), committed()]);
+    let input = Input::Revoked { request_id: twin.rid(), attempt_id: twin.aid(), body: "{}".into() };
+    twin.feed(input);
+    let done = twin.feed(committed());
+    assert!(done.contains(&RefEffect::ServerEnded { epoch: EPOCH }));
+    assert!(twin.reference.awaiting().is_none(), "a mutate answers at once");
 }
 
 #[test]
