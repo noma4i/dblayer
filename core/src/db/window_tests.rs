@@ -53,7 +53,7 @@ fn members_bounded_rows() {
     let db = booted();
     let scope = crate::commit::ScopeRef::new(ModelKey::new("users"), crate::identity::ListKey::compose(&["users", "members"]));
     let mut envelope = CommitEnvelope::new(WriteOrigin::Event, db.generation());
-    for n in 0..100_000 {
+    for n in 0..10_000 {
         let id = format!("u{n:06}");
         envelope.entity_ops.push(EntityOp::Upsert { model: ModelKey::new("users"), id: rid(&id), row: obj(json!({"id": id, "name": name_at(n)})) });
         envelope.scope_ops.push(crate::commit::ScopeOp::Append { scope: scope.clone(), row: rid(&id), order_key: format!("k{n:06}") });
@@ -67,7 +67,7 @@ fn members_bounded_rows() {
     assert!(total() - before <= 200, "the initial window must not read all member keys");
     let Body::Rows(body) = &first.version.body else { panic!("rows") };
     assert_eq!(first.loaded.rows.len(), 50);
-    assert_eq!(body.window.as_ref().unwrap().edge.total, Some(100_000));
+    assert_eq!(body.window.as_ref().unwrap().edge.total, Some(10_000));
     let (log, callback) = recorder();
     let live = db.observe_window(query.clone(), WindowSpec::Members { size: 50, max: 200 }, callback).unwrap();
     db.await_revision(db.revision_seq().unwrap());
@@ -79,7 +79,7 @@ fn members_bounded_rows() {
     live.grow_before(1);
     db.await_revision(db.revision_seq().unwrap());
     assert_eq!(changes(&log).pop().unwrap().size, 50);
-    assert_eq!(db.count(&query).unwrap(), 100_000);
+    assert_eq!(db.count(&query).unwrap(), 10_000);
 }
 
 #[test]

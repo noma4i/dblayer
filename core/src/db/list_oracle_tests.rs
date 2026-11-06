@@ -170,14 +170,14 @@ fn run_sequence(seed: u64) {
     assert_eq!(shown(&mirror.lock().unwrap()), shown(&db.query(&query).unwrap()), "sequence {seed}: list rebuilt from deliveries");
 }
 
-#[test]
-fn stepped_lists_equal_a_fresh_query_over_random_edit_sequences() {
-    let next = std::sync::atomic::AtomicU64::new(1);
+/// The seeds `from..to` run on a bounded number of threads; every seed is independent.
+fn run_seeds(from: u64, to: u64) {
+    let next = std::sync::atomic::AtomicU64::new(from);
     let workers = std::thread::available_parallelism().map_or(4, std::num::NonZero::get).min(8);
     std::thread::scope(|scope| {
         let runs: Vec<_> = (0..workers).map(|_| scope.spawn(|| loop {
             let seed = next.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-            if seed > SEQUENCES { break; }
+            if seed > to { break; }
             run_sequence(seed);
         })).collect();
         for run in runs {
@@ -185,3 +185,15 @@ fn stepped_lists_equal_a_fresh_query_over_random_edit_sequences() {
         }
     });
 }
+
+#[test]
+fn stepped_lists_equal_a_fresh_query_over_random_edit_sequences_part_0() { run_seeds(1, SEQUENCES / 4); }
+
+#[test]
+fn stepped_lists_equal_a_fresh_query_over_random_edit_sequences_part_1() { run_seeds(SEQUENCES / 4 + 1, SEQUENCES / 2); }
+
+#[test]
+fn stepped_lists_equal_a_fresh_query_over_random_edit_sequences_part_2() { run_seeds(SEQUENCES / 2 + 1, SEQUENCES / 4 * 3); }
+
+#[test]
+fn stepped_lists_equal_a_fresh_query_over_random_edit_sequences_part_3() { run_seeds(SEQUENCES / 4 * 3 + 1, SEQUENCES); }
