@@ -45,3 +45,46 @@ fn data_server_revision_drops_older() {
     write(&db, BatchAuthor::LocalWrites, Vec::new(), vec![StoreOp::LocalRows { model: "docs".into(), rows: vec![doc(1, "optimistic")] }]);
     assert_eq!(text(&db), json!("optimistic"), "an optimistic write does not check the rule");
 }
+
+fn open_moments() -> Arc<Store> {
+    let db = Arc::new(Store::open_models(None, crate::store::spec_fixtures::all_specs(), None).unwrap());
+    crate::store::spec_fixtures::put(&db, "moments", json!({"id": "m1", "userId": "u1", "text": "old"}));
+    crate::store::spec_fixtures::put(&db, "vibes", json!({"id": "m1", "momentId": "m1", "kind": "like"}));
+    db
+}
+
+fn moment_page(db: &Store, text: &str) -> StoreOp {
+    let key = WindowKey::nodes("moments", &["m1"]);
+    let root = RowValue { row_id: "m1".into(), values: json!({"id": "m1", "userId": "u1", "text": text}).to_string() };
+    StoreOp::Window { key: key.name, model: key.model, page: 1, replace_all: false, cursor: None, roots: vec![root], related: Vec::new(), total: None, base_revision: db.revision_seq().unwrap() }
+}
+
+fn moment_text(db: &Store) -> Value {
+    db.read(&["moments"], |reader| reader.point("moments", "m1")).unwrap().and_then(|row| row.get("text").cloned()).unwrap_or(Value::Null)
+}
+
+#[test]
+fn out_prop_other_model_same_id() {
+    let db = open_moments();
+    let effects = crate::owners::store::IntentEffects { rows: vec![crate::owners::store::EffectRow { model: "vibes".into(), row_id: "m1".into(), values: json!({"id": "m1", "momentId": "m1", "kind": "wow"}).to_string() }], ..Default::default() };
+    write(&db, BatchAuthor::Outbox, Vec::new(), vec![StoreOp::Intent { op_id: 3, model: "vibes".into(), row_id: "m1".into(), action: "react".into(), payload: "{}".into(), effects }]);
+    write(&db, BatchAuthor::Window, Vec::new(), vec![moment_page(&db, "new")]);
+    assert_eq!(moment_text(&db), json!("new"), "an open operation of vibes does not protect the moment with the same id");
+}
+
+#[test]
+fn out_prop_destroy_hides_row() {
+    let effects = || crate::owners::store::IntentEffects { tombstones: vec![crate::owners::store::EffectTombstone { model: "moments".into(), row_id: "m1".into() }], ..Default::default() };
+    for via_event in [false, true] {
+        let db = open_moments();
+        write(&db, BatchAuthor::Outbox, Vec::new(), vec![StoreOp::Intent { op_id: 4, model: "moments".into(), row_id: "m1".into(), action: "destroy".into(), payload: "{}".into(), effects: effects() }]);
+        assert_eq!(moment_text(&db), Value::Null, "the destroy hides the row at once");
+        if via_event {
+            let event = json!({"op": "upsert", "id": "m1", "row": {"id": "m1", "userId": "u1", "text": "again"}}).to_string();
+            write(&db, BatchAuthor::Feed, vec![("moments".into(), event)], Vec::new());
+        } else {
+            write(&db, BatchAuthor::Window, Vec::new(), vec![moment_page(&db, "again")]);
+        }
+        assert_eq!(moment_text(&db), Value::Null, "via_event={via_event}: a landing does not show the row before the outcome of the destroy");
+    }
+}
