@@ -145,6 +145,7 @@ impl OutboxState {
                 failed_errors: BTreeMap::new(),
                 reject_error: None,
                 cancels: None,
+                restore_element: None,
             },
         );
         self.next_op = self.next_op.max(op_id + 1);
@@ -183,6 +184,7 @@ impl OutboxState {
                 .chain((!operation.stale.is_empty()).then(|| StoreOp::StaleFamilies { families: operation.stale.clone() }))
                 .chain([StoreOp::RemoveIntent { op_id }, StoreOp::RemoveAnswer { request_id: operation.request_id }])
                 .collect(),
+            CommitKind::Rollback if operation.restore_element.is_some() => operation.restore_element.iter().map(|(table, key)| StoreOp::DiscardRestoreFailed { table: table.clone(), key: key.clone() }).chain([StoreOp::RemoveIntent { op_id }]).collect(),
             CommitKind::Rollback => vec![StoreOp::RollBack { op_id }, StoreOp::RemoveIntent { op_id }, StoreOp::RemoveAnswer { request_id: operation.request_id }],
             CommitKind::ErrorMark => vec![StoreOp::MarkError { op_id, error: Some(operation.error.clone().unwrap_or_else(|| "refused".into())) }, StoreOp::RemoveAnswer { request_id: operation.request_id }],
             CommitKind::ClearMark => vec![StoreOp::MarkError { op_id, error: None }, attempt],
@@ -360,7 +362,7 @@ impl OutboxState {
         if let (Some(error), OutboxInput::ReserveOp { transfer_id, .. }) = (&self.queue_error, &input) {
             return self.opened(fx, *transfer_id, Err(Fault::Rejected(RejectReason::Storage(error.clone()))));
         }
-        if let (Some(error), OutboxInput::Submit { reply, .. } | OutboxInput::Retry { reply, .. } | OutboxInput::Discard { reply, .. } | OutboxInput::Outcome { reply, .. }) = (&self.queue_error, &input) {
+        if let (Some(error), OutboxInput::Submit { reply, .. } | OutboxInput::Retry { reply, .. } | OutboxInput::Discard { reply, .. } | OutboxInput::DiscardRestoreFailed { reply, .. } | OutboxInput::Outcome { reply, .. }) = (&self.queue_error, &input) {
             return Self::reply(fx, *reply, OutboxAnswer::Err(Fault::Rejected(RejectReason::Storage(error.clone()))));
         }
         match input {
@@ -368,6 +370,7 @@ impl OutboxState {
             OutboxInput::ReserveOp { epoch, transfer_id } => self.reserve_op(epoch, transfer_id, fx),
             OutboxInput::SubmitReserved { epoch, op_id, op } => self.submit_reserved(epoch, op_id, op, fx),
             OutboxInput::Restored { .. } | OutboxInput::RestoreFailed { .. } | OutboxInput::ReservedFloor { .. } => {}
+            OutboxInput::OrphanAnswers { request_ids } => self.remove_orphan_answers(request_ids, fx),
             OutboxInput::RestoreReady { epoch } if epoch == self.epoch => self.restore_ready(fx),
             OutboxInput::RestoreReady { .. } => {}
             OutboxInput::RegisterOperations { declarations } => self.register(declarations, fx),
@@ -385,6 +388,7 @@ impl OutboxState {
             }
             OutboxInput::Retry { model, row_id, reply } => self.retry(&model, &row_id, reply, fx),
             OutboxInput::Discard { model, row_id, reply } => self.discard(&model, &row_id, reply, fx),
+            OutboxInput::DiscardRestoreFailed { table, key, reply } => self.discard_restore_failed(&table, &key, reply, fx),
             OutboxInput::Outcome { receipt, reply } => self.outcome(receipt, reply, fx),
             OutboxInput::Resolve { .. } | OutboxInput::Landed { .. } | OutboxInput::WhenQuiet { .. } => {}
             OutboxInput::Online(Online(on)) => self.online_changed(on, fx),

@@ -68,6 +68,8 @@ pub struct StoredOp {
     pub cycle_id: u64,
     /// The intent was dropped by the layout move or cannot be read: the operation is `Failed{RestoreFailed}`.
     pub restore_failed: Option<String>,
+    /// The `(table, key)` of the element of `restore_failed` this operation stands for.
+    pub restore_element: Option<(String, String)>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -140,6 +142,8 @@ pub enum OutboxInput {
     ReservedFloor { op_id: OpId },
     Restored { ops: Vec<StoredOp>, pending_lost: bool },
     RestoreFailed { error: String },
+    /// The saved answers of the open that no stored operation owns: the owner removes them (`out_open_orphan_answer`).
+    OrphanAnswers { request_ids: Vec<RequestId> },
     RestoreReady { epoch: Epoch },
     RegisterOperations { declarations: Vec<(String, String)> },
     Committed(Committed),
@@ -154,6 +158,8 @@ pub enum OutboxInput {
     Dropped { op_id: OpId },
     Retry { model: String, row_id: String, reply: ReplyId },
     Discard { model: String, row_id: String, reply: ReplyId },
+    /// The platform discards the element `(table, key)` of `restore_failed`: its operation `Failed{RestoreFailed}` ends like a `Discard`.
+    DiscardRestoreFailed { table: String, key: String, reply: ReplyId },
     Outcome { receipt: Receipt, reply: ReplyId },
     /// Answers `Ok` when no operation is on its way (the platform `settled`).
     WhenQuiet { reply: ReplyId },
@@ -262,4 +268,5 @@ pub struct QueuedOperation {
     pub reject_error: Option<String>,
     /// A `destroy` that waits for the rollback of the unsent `create` it cancels.
     pub cancels: Option<OpId>,
+    pub restore_element: Option<(String, String)>,
 }

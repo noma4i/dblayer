@@ -109,6 +109,8 @@ pub enum StoreOp {
     /// `encrypted_answer`: the terminal outcome of the `Mutate` of `request_id`, written with `RemovePending` and kept until `RemoveAnswer`.
     Answer { request_id: u64, operation: Option<i64>, result: crate::transport::encrypted::state::StoredAnswer },
     RemoveAnswer { request_id: u64 },
+    /// The element of `restore_failed` that an operation ended with `Failed{RestoreFailed}` leaves with its discard.
+    DiscardRestoreFailed { table: String, key: String },
     /// `encrypted_session`: `digest = None` keeps the stored digest, `sequence = None` keeps the stored sequence.
     Session { digest: Option<String>, sequence: Option<u64> },
     /// The intent of an operation with its optimistic `effects`.

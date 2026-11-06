@@ -130,6 +130,15 @@ impl OutboxState {
         }
     }
 
+    /// `(none) x DiscardRestoreFailed`: the operation of the element ends like a `Discard`, the element leaves in the same batch.
+    pub(super) fn discard_restore_failed(&mut self, table: &str, key: &str, reply: ReplyId, fx: &mut Effects<Outbox>) {
+        let found = self.ops.values().find(|operation| operation.stage == Stage::Failed && operation.restore_element.as_ref().is_some_and(|(found_table, found_key)| found_table == table && found_key == key));
+        let Some((model, row)) = found.map(|operation| (operation.op.model.clone(), operation.op.row_id.clone())) else {
+            return Self::reply(fx, reply, OutboxAnswer::Err(Fault::NotFound));
+        };
+        self.discard(&model, &row, reply, fx);
+    }
+
     pub(super) fn outcome(&mut self, receipt: Receipt, reply: ReplyId, fx: &mut Effects<Outbox>) {
         if receipt.epoch != self.epoch {
             return Self::reply(fx, reply, OutboxAnswer::Err(Fault::NoSession));

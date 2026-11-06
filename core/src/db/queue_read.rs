@@ -19,6 +19,8 @@ pub(crate) struct Restore {
     pub batches: std::collections::BTreeMap<u64, crate::owners::write::transfer::Joint>,
     /// The highest `op_id` a transfer reserved: Outbox gives no `op_id` at or below it.
     pub reserved: Option<u64>,
+    /// The saved answers that no operation of the queue owns.
+    pub orphan_answers: Vec<u64>,
 }
 
 impl Db {
@@ -33,14 +35,15 @@ impl Db {
     pub(crate) fn read_intents(&self) -> Result<Vec<StoredOp>, DbError> { self.read_restore()?.ops }
 
     pub(crate) fn read_restore(&self) -> Result<Restore, DbError> {
-        let (entries, pending, uploads, answers, orphans, batches) = self.shared.read(&[], |reader| {
+        let (entries, pending, uploads, answers, orphans, batches, orphan_answers) = self.shared.read(&[], |reader| {
             let connection = reader.connection();
             let pending = crate::transport::encrypted::state::pending(connection).map_err(crate::store::StoreError::from)?;
             let answers = crate::transport::encrypted::state::answers_of_operations(connection).map_err(crate::store::StoreError::from)?;
             let uploads = super::upload_rows::upload_rows(connection).map_err(crate::store::StoreError::from)?;
             let orphans = connection.prepare("SELECT upload_id, key FROM upload_orphan ORDER BY upload_id").and_then(|mut statement| statement.query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)))?.collect::<rusqlite::Result<Vec<_>>>()).map_err(crate::store::StoreError::from)?;
             let batches = connection.prepare("SELECT batch_id, joint FROM sync_upload_batch").and_then(|mut statement| statement.query_map([], |row| Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?)))?.collect::<rusqlite::Result<Vec<_>>>()).map_err(crate::store::StoreError::from)?;
-            Ok((read_outbox(reader)?, pending, uploads, answers, orphans, batches))
+            let orphan_answers = connection.prepare("SELECT request_id FROM encrypted_answer WHERE operation_id IS NULL OR operation_id NOT IN (SELECT seq FROM op) ORDER BY request_id").and_then(|mut statement| statement.query_map([], |row| row.get::<_, i64>(0))?.collect::<rusqlite::Result<Vec<_>>>()).map_err(crate::store::StoreError::from)?;
+            Ok((read_outbox(reader)?, pending, uploads, answers, orphans, batches, orphan_answers))
         })?;
         let owned: Vec<i64> = uploads.iter().filter_map(UploadRaw::owned_op).collect();
         let reserved = uploads.iter().filter_map(UploadRaw::reserved_op).max().and_then(|op| u64::try_from(op).ok());
@@ -48,7 +51,8 @@ impl Db {
         let ops = self.stored_intents(entries, pending.clone(), answers);
         let transfers = self.stored_transfers(uploads);
         let batches = batches.into_iter().filter_map(|(id, text)| Some((u64::try_from(id).ok()?, crate::owners::write::transfer::Joint::from_text(&text)?))).collect();
-        Ok(Restore { ops, transfers, orphans, batches, reserved })
+        let orphan_answers = orphan_answers.into_iter().filter_map(|id| u64::try_from(id).ok()).collect();
+        Ok(Restore { ops, transfers, orphans, batches, reserved, orphan_answers })
     }
 
     fn stored_intents(&self, entries: Vec<super::local_write::OutboxOperation>, pending: Option<crate::transport::encrypted::state::Pending>, mut answers: std::collections::BTreeMap<i64, (u64, crate::transport::encrypted::state::StoredAnswer)>) -> Result<Vec<StoredOp>, DbError> {
@@ -80,8 +84,23 @@ impl Db {
             let seq = operation.id.0;
             let resume = pending.as_ref().filter(|pending| pending.owner == Some(RequestOwner::Operation { seq })).and_then(|pending| Some((pending.req_id, u64::try_from(pending.sequence).ok()?)));
             let answered = answers.remove(&seq);
-            stored.push(StoredOp { answered, op_id: u64::try_from(seq).map_err(|_| DbError::UnknownOperation(seq))?, op, error_mark: operation.status == OperationStatus::Failed, pending: resume, attempts: operation.attempts, cycle_id: 0, restore_failed: None });
+            stored.push(StoredOp { answered, op_id: u64::try_from(seq).map_err(|_| DbError::UnknownOperation(seq))?, op, error_mark: operation.status == OperationStatus::Failed, pending: resume, attempts: operation.attempts, cycle_id: 0, restore_failed: None, restore_element: None });
         }
+        stored.extend(self.dropped_intents()?);
         Ok(stored)
+    }
+
+    /// The operations the layout move could not carry: each stays in the queue as `Failed{RestoreFailed}` until its element is discarded.
+    fn dropped_intents(&self) -> Result<Vec<StoredOp>, DbError> {
+        let mut dropped = Vec::new();
+        for row in self.shared.store.restore_failed()?.into_iter().filter(|row| row.table == "op") {
+            let Ok(columns) = serde_json::from_str::<serde_json::Value>(&row.columns) else { continue };
+            let Some(op_id) = columns.get("seq").and_then(serde_json::Value::as_u64) else { continue };
+            let Some((model, action)) = columns.get("action_key").and_then(serde_json::Value::as_str).and_then(|key| key.split_once(':')) else { continue };
+            let row_id = columns.get("temp_id").and_then(serde_json::Value::as_str).unwrap_or(&row.key).to_string();
+            let op = NewOp { model: model.to_string(), row_id, action: action.to_string(), on_failure: OnFailure::Keep, origin: OpSource::Api, path: String::new(), body: String::new(), effects: Default::default(), durable: true };
+            dropped.push(StoredOp { answered: None, op_id, op, error_mark: false, pending: None, attempts: 1, cycle_id: 0, restore_failed: Some(row.reason.clone()), restore_element: Some((row.table.clone(), row.key.clone())) });
+        }
+        Ok(dropped)
     }
 }

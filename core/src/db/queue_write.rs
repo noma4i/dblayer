@@ -137,7 +137,7 @@ impl Db {
                     }
                     return Ok(());
                 }
-                StoreOp::Pending { .. } | StoreOp::RemovePending | StoreOp::EraseSession | StoreOp::Answer { .. } | StoreOp::RemoveAnswer { .. } | StoreOp::Session { .. } | StoreOp::Attempt { .. } => {}
+                StoreOp::Pending { .. } | StoreOp::RemovePending | StoreOp::EraseSession | StoreOp::Answer { .. } | StoreOp::RemoveAnswer { .. } | StoreOp::Session { .. } | StoreOp::Attempt { .. } | StoreOp::DiscardRestoreFailed { .. } => {}
             }
         }
         for seq in rolled_back {

@@ -52,6 +52,7 @@ fn restored(kind: Restored, ctx: &Ctx) -> (Twin, OpId) {
         attempts: 1,
         cycle_id: 1,
         restore_failed: None,
+        restore_element: None,
     };
     twin.first_pair.insert(7, (41, 7));
     let before = twin.post(OutboxInput::Restored { ops: vec![stored], pending_lost: false });
@@ -67,7 +68,7 @@ fn out_open_saved_answer_ends_the_operation_without_a_send() {
     for (answer, kind) in [(crate::owners::session::StoredAnswer::Ok("{}".into()), CommitKind::Land), (crate::owners::session::StoredAnswer::Http { status: 422 }, CommitKind::Rollback)] {
         let mut twin = Twin::bare();
         twin.post(OutboxInput::RegisterOperations { declarations: vec![("Moment".into(), "update".into())] });
-        let stored = StoredOp { answered: Some((41, answer)), op_id: 7, op: model_op("r", Policy::Rollback, false), error_mark: false, pending: None, attempts: 1, cycle_id: 1, restore_failed: None };
+        let stored = StoredOp { answered: Some((41, answer)), op_id: 7, op: model_op("r", Policy::Rollback, false), error_mark: false, pending: None, attempts: 1, cycle_id: 1, restore_failed: None, restore_element: None };
         let effects = twin.post(OutboxInput::Restored { ops: vec![stored], pending_lost: false });
         assert!(!effects.iter().any(|effect| matches!(effect, OutboxEffect::Send { .. })), "{effects:?}");
         assert!(effects.iter().any(|effect| matches!(effect, OutboxEffect::Store { op_id: Some(7), kind: found, .. } if *found == kind)), "{kind:?}: {effects:?}");

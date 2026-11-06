@@ -19,6 +19,9 @@ impl OutboxState {
         if let Some(error) = item.restore_failed.clone() {
             self.add_operation(op_id, item.op, Stage::Failed);
             let _ = error;
+            if let Some(operation) = self.ops.get_mut(&op_id) {
+                operation.restore_element = item.restore_element;
+            }
             return self.restored_failed(op_id, "RestoreFailed".into());
         }
         if !self.declarations.contains(&(model, action)) {
@@ -65,6 +68,17 @@ impl OutboxState {
         if self.goes_out(op_id) {
             self.begin_attempt(op_id, fx);
         }
+    }
+
+    /// No operation owns these answers: one batch takes them out, nothing waits for its result.
+    pub(super) fn remove_orphan_answers(&mut self, request_ids: Vec<crate::owners::contract::RequestId>, fx: &mut Effects<Outbox>) {
+        if request_ids.is_empty() {
+            return;
+        }
+        let batch = self.next_batch;
+        self.next_batch += 1;
+        let ops = request_ids.into_iter().map(|request_id| crate::owners::store::StoreOp::RemoveAnswer { request_id }).collect();
+        self.commit(batch, std::collections::BTreeMap::new(), ops, 0, fx);
     }
 
     pub(super) fn restored_failed(&mut self, op_id: OpId, error: String) {
@@ -117,7 +131,7 @@ impl OutboxState {
     pub(super) fn answer_held(&mut self, fx: &mut Effects<Outbox>) {
         for input in std::mem::take(&mut self.held) {
             match input {
-                OutboxInput::Submit { reply, .. } | OutboxInput::Retry { reply, .. } | OutboxInput::Discard { reply, .. } => Self::reply(fx, reply, OutboxAnswer::Err(Fault::Interrupted)),
+                OutboxInput::Submit { reply, .. } | OutboxInput::Retry { reply, .. } | OutboxInput::Discard { reply, .. } | OutboxInput::DiscardRestoreFailed { reply, .. } => Self::reply(fx, reply, OutboxAnswer::Err(Fault::Interrupted)),
                 OutboxInput::Outcome { reply, .. } => Self::reply(fx, reply, OutboxAnswer::Outcome(OutboxOutcome::Interrupted)),
                 OutboxInput::ReserveOp { transfer_id, .. } => self.opened(fx, transfer_id, Err(Fault::Interrupted)),
                 _ => {}
@@ -137,7 +151,7 @@ impl OutboxState {
             }
             OutboxInput::ReservedFloor { op_id } => self.next_op = self.next_op.max(op_id + 1),
             held @ (OutboxInput::ReserveOp { .. } | OutboxInput::SubmitReserved { .. }) => self.held.push(held),
-            held @ (OutboxInput::Retry { .. } | OutboxInput::Discard { .. } | OutboxInput::Outcome { .. }) => self.held.push(held),
+            held @ (OutboxInput::Retry { .. } | OutboxInput::Discard { .. } | OutboxInput::DiscardRestoreFailed { .. } | OutboxInput::Outcome { .. }) => self.held.push(held),
             OutboxInput::Online(Online(on)) => self.online = on,
             OutboxInput::ModelsReset(reset) => {
                 for model in reset.models {
@@ -165,7 +179,7 @@ impl OutboxState {
                 self.phase = Phase::Classified;
                 self.replay_held(fx);
             }
-            OutboxInput::Resolve { .. } | OutboxInput::Landed { .. } | OutboxInput::WhenQuiet { .. } | OutboxInput::LocalWrite { .. } | OutboxInput::CopyDone { .. } | OutboxInput::CopyFailed { .. } | OutboxInput::Expire { .. } | OutboxInput::Committed(_) | OutboxInput::Rejected(_) => self.handle(input, fx),
+            OutboxInput::OrphanAnswers { .. } | OutboxInput::Resolve { .. } | OutboxInput::Landed { .. } | OutboxInput::WhenQuiet { .. } | OutboxInput::LocalWrite { .. } | OutboxInput::CopyDone { .. } | OutboxInput::CopyFailed { .. } | OutboxInput::Expire { .. } | OutboxInput::Committed(_) | OutboxInput::Rejected(_) => self.handle(input, fx),
             _ => {}
         }
     }

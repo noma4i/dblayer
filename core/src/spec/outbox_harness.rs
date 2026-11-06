@@ -33,7 +33,7 @@ pub(super) enum OutboxEffect {
 /// The kind of a batch from the ops it holds (`Debug` form of the typed ops).
 pub(super) fn kind_in(input: &str) -> CommitKind {
     if input.contains("ops: [Intent {") { CommitKind::Intent }
-    else if input.contains("ops: [RollBack {") { CommitKind::Rollback }
+    else if input.contains("ops: [RollBack {") || input.contains("ops: [DiscardRestoreFailed {") { CommitKind::Rollback }
     else if input.contains("MarkError { op_id") && input.contains("error: Some(") { CommitKind::ErrorMark }
     else if input.contains("MarkError { op_id") { CommitKind::ClearMark }
     else if input.contains("Attempt {") { CommitKind::Attempt }

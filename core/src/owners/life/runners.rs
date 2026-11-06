@@ -221,6 +221,7 @@ impl EffectRunner<StoreWriter> for StoreRunner {
                                 }
                                 wiring.to_outbox(OutboxInput::RegisterOperations { declarations: stored.iter().map(|item| (item.op.model.clone(), item.op.action.clone())).collect() });
                                 wiring.to_outbox(OutboxInput::Restored { ops: stored, pending_lost: false });
+                                wiring.to_outbox(OutboxInput::OrphanAnswers { request_ids: restore.orphan_answers.clone() });
                             }
                             Err(error) => {
                                 wiring.restore_failed_for(Peer::Outbox, error.to_string());
@@ -317,7 +318,7 @@ impl EffectRunner<Network> for NetworkRunner {
 
 /// One transaction per kind of ops: the tables `encrypted_*` through the store, the queue through the commit path of `Db`.
 pub(super) fn write_batch(db: &Db, batch: &crate::owners::store::StoreBatch, min_pin_revision: Option<u64>) -> Result<(), String> {
-    let (encrypted, queue): (Vec<&StoreOp>, Vec<&StoreOp>) = batch.ops.iter().partition(|op| matches!(op, StoreOp::Pending { .. } | StoreOp::RemovePending | StoreOp::EraseSession | StoreOp::Answer { .. } | StoreOp::RemoveAnswer { .. } | StoreOp::Attempt { .. } | StoreOp::Session { .. }));
+    let (encrypted, queue): (Vec<&StoreOp>, Vec<&StoreOp>) = batch.ops.iter().partition(|op| matches!(op, StoreOp::Pending { .. } | StoreOp::RemovePending | StoreOp::EraseSession | StoreOp::Answer { .. } | StoreOp::RemoveAnswer { .. } | StoreOp::Attempt { .. } | StoreOp::Session { .. } | StoreOp::DiscardRestoreFailed { .. }));
     let (removals, encrypted): (Vec<&StoreOp>, Vec<&StoreOp>) = encrypted.into_iter().partition(|op| matches!(op, StoreOp::RemoveAnswer { .. }));
     if batch.author == crate::owners::contract::BatchAuthor::Feed && !batch.rows.is_empty() {
         let payloads = db.land_events_with_pin(&batch.rows, min_pin_revision).map_err(|error| error.to_string())?;
@@ -369,6 +370,7 @@ fn row_op(op: &StoreOp) -> Option<crate::store::RowOp> {
         StoreOp::EraseSession => crate::store::RowOp::RemoveSession,
         StoreOp::Answer { request_id, operation, result } => crate::store::RowOp::PutAnswer { request_id: *request_id, operation: *operation, answer: result.clone() },
         StoreOp::RemoveAnswer { request_id } => crate::store::RowOp::RemoveAnswer { request_id: *request_id },
+        StoreOp::DiscardRestoreFailed { table, key } => crate::store::RowOp::DiscardRestoreFailed { table: table.clone(), key: key.clone() },
         StoreOp::Attempt { op_id, attempts, .. } => crate::store::RowOp::PutAttempts { op_id: i64::try_from(*op_id).unwrap_or(i64::MAX), attempts: i64::from(*attempts) },
         StoreOp::Session { digest, sequence } => crate::store::RowOp::PutSession { digest: digest.clone(), sequence: sequence.map(|sequence| i64::try_from(sequence).unwrap_or(i64::MAX)) },
         _ => return None,
