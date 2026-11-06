@@ -739,7 +739,7 @@ impl Held {
     }
 }
 
-fn add_reactions(models: &mut Value) {
+pub(super) fn add_reactions(models: &mut Value) {
     let message = models.as_array_mut().unwrap().iter_mut().find(|model| model["key"] == "Message").unwrap();
     let mut field = crate::schema::FieldSpec::array("reactions");
     field.app_type = Some("Reaction".into());

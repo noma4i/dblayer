@@ -1,0 +1,56 @@
+use std::sync::Arc;
+
+use serde_json::{json, Value};
+
+use super::rig_tests::{add_reactions, bound, Fault, Rig, World};
+use super::v3_fixtures::{add_chat, add_reactor_user, cell, chat_row, land_event, texts};
+use crate::ffi::tape::Rows;
+use crate::ffi::{ReadFetch, ReadRequest, WireOperationOutcome};
+use crate::test_wait::yield_until;
+
+const THREAD: &str = r#"{"model":"Message","where":{"type":"equal","field":"chatId","value":"c1"}}"#;
+
+fn reactions(rig: &Rig, rows: &Rows) -> Vec<String> {
+    rows.0.lock().unwrap().iter().find(|row| row.id == "m1").map(|row| texts(&cell(rig, "Message", row, "reactions"))).unwrap_or_default()
+}
+
+fn has(rig: &Rig, rows: &Rows, words: &[&str]) -> bool {
+    let shown = reactions(rig, rows);
+    words.iter().all(|word| shown.iter().any(|text| text == word))
+}
+
+fn answer(reactions: Value) -> Fault { Fault::Answer(json!({"data":{"messageReact":{"__typename":"Message","id":"m1","chatId":"c1","text":"hello","at":1,"reactions":reactions}}})) }
+
+/// P-APP-10: a reaction shows in the thread and in the entity of the message at the revision of the receipt, the answer and an event keep it.
+#[tokio::test(flavor = "multi_thread")]
+async fn v3_message_reactions_show_one_set_everywhere_and_follow_the_reactor() {
+    let rig = Rig::signed_as(World::new("server", "A", true), false, |models| { add_chat(models); add_reactions(models); add_reactor_user(models); }).await;
+    land_event(&rig, "Chat", chat_row("c1", 0));
+    for (id, name) in [("u1", "Ann"), ("u2", "Bob")] { land_event(&rig, "User", json!({"id": id, "name": name})); }
+    land_event(&rig, "Message", json!({"id": "m1", "chatId": "c1", "text": "hello", "at": 1, "reactions": [{"body": "B", "userId": "u2", "user": {"name": "Bob"}}]}));
+    let thread = Arc::new(Rows::default());
+    let stream = rig.database.watch_query(THREAD, thread.clone());
+    bound(stream.wait_for_initial_load()).await.unwrap();
+    let entity = Arc::new(Rows::default());
+    drop(rig.database.watch(ReadRequest::Entity { model: "Message".into(), id: "m1".into(), fetch: ReadFetch::Never }, entity.clone()));
+    yield_until("both places show the first reaction", || has(&rig, &thread, &["B", "Bob"]) && has(&rig, &entity, &["B", "Bob"])).await;
+    let epoch = rig.database.session_epoch();
+    let patch = json!({"reactions":{"$keyed":{"by":"userId","element":{"body":{"$arg":"body"},"userId":{"$arg":"userId"}}}}}).to_string();
+    let hold = rig.world.hold_then("MessageReact", answer(json!([{"body":"B","userId":"u2"},{"body":"A","userId":"u1"}])));
+
+    let receipt = bound(rig.database.act(epoch, "Message".into(), "m1".into(), "react".into(), patch, json!({"body":"A","userId":"u1"}).to_string())).await.unwrap();
+    hold.entered_for("the answer").await;
+    yield_until("both places show the new reaction with the name of the reactor", || has(&rig, &thread, &["A", "Ann"]) && has(&rig, &entity, &["A", "Ann"])).await;
+    for rows in [&thread, &entity] {
+        let first = rows.1.lock().unwrap().iter().find(|seen| seen.rows.iter().any(|row| texts(&cell(&rig, "Message", row, "reactions")).contains(&"A".to_string()))).map(|seen| seen.revision);
+        assert_eq!(first, Some(receipt.revision), "a place changed at another revision than the receipt");
+    }
+    hold.release();
+    assert!(matches!(bound(rig.database.outcome(receipt)).await.unwrap(), WireOperationOutcome::Confirmed { .. }));
+    rig.settle().await;
+    assert!(has(&rig, &thread, &["A", "B"]) && has(&rig, &entity, &["A", "B"]));
+
+    land_event(&rig, "Message", json!({"id": "m1", "chatId": "c1", "text": "hello", "at": 1, "reactions": [{"body": "B", "userId": "u2", "user": {"name": "Bob"}}, {"body": "A", "userId": "u1", "user": {"name": "Ann"}}, {"body": "C", "userId": "u3", "user": {"name": "Cy"}}]}));
+    yield_until("the event reaction shows in both places", || has(&rig, &thread, &["C"]) && has(&rig, &entity, &["C"])).await;
+    rig.database.close_now();
+}

@@ -102,3 +102,23 @@ pub(super) fn land_delete(rig: &Rig, model: &str, id: &str) {
     envelope.entity_ops.push(EntityOp::Destroy { model: ModelKey::new(model), id: RowId::new(id).unwrap(), reason: DestroyReason::Server });
     db.land(&db.admit().unwrap(), envelope).unwrap();
 }
+
+/// The reactor of a reaction is the row of a user: the nested `user` links to `User` by `userId`.
+pub(super) fn add_reactor_user(models: &mut Value) {
+    let message = models.as_array_mut().unwrap().iter_mut().find(|model| model["key"] == "Message").unwrap();
+    let reactions = message["fields"].as_array_mut().unwrap().iter_mut().find(|field| field["name"] == "reactions").unwrap();
+    let mut user = FieldSpec::object("user").nullable();
+    user.link = Some(crate::schema::FieldLink { model: "User".into(), id: "userId".into() });
+    user.fields = vec![FieldSpec::scalar("name", ScalarKind::Str).nullable().optional()];
+    reactions["fields"].as_array_mut().unwrap().push(serde_json::to_value(user).unwrap());
+}
+
+/// Every text a cell holds, nested cells included.
+pub(super) fn texts(cell: &Cell) -> Vec<String> {
+    match cell {
+        Cell::Text { value } => vec![value.clone()],
+        Cell::Seq { items } => items.iter().flat_map(texts).collect(),
+        Cell::Keyed { entries } => entries.iter().flat_map(|entry| texts(&entry.value)).collect(),
+        _ => Vec::new(),
+    }
+}
