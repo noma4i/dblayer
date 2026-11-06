@@ -53,6 +53,8 @@ pub(super) enum Input {
     /// The deadline of a `Connect`: a connection in `Handshake` fails like a protocol error.
     HandshakeDeadline { to: To },
     Committed,
+    /// `Committed` of a batch whose children left parents without a row: the windows of these models turn `Stale`.
+    CommittedStale(Vec<String>),
     Rejected(Reject),
     /// `Committed` or `Rejected` of a batch that is not in `landing`.
     StrayBatch,
@@ -580,6 +582,12 @@ impl Feed {
                 }
             }
             Input::Committed => return self.verdict(None),
+            Input::CommittedStale(parents) => {
+                let landed = !self.landing.is_empty();
+                let mut effects = self.verdict(None);
+                if landed { effects.extend(parents.into_iter().map(|model| Effect::Stale { model, all: true })); }
+                return effects;
+            }
             Input::Rejected(reason) => return self.verdict(Some(reason)),
             Input::StrayBatch => {}
             Input::Tick => {

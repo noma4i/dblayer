@@ -133,21 +133,21 @@ pub(super) fn add(builder: &mut RuntimeBuilder, wiring: &Arc<Wiring>, ports: &Po
     let reply_wiring = wiring.clone();
     wiring.on_store_reply(BatchAuthor::Window, move |batch, reply| {
         reply_wiring.to_windows(match reply {
-            StoreReply::Committed { revision } => WindowsInput::Committed(Committed { batch, revision: i64::try_from(revision).unwrap_or(i64::MAX), tables: Vec::new(), models: Models::default() }),
+            StoreReply::Committed { revision, .. } => WindowsInput::Committed(Committed { batch, revision: i64::try_from(revision).unwrap_or(i64::MAX), tables: Vec::new(), models: Models::default(), stale_parents: Vec::new() }),
             StoreReply::Rejected(reason) => WindowsInput::Rejected(Rejected { batch, reason }),
         });
     });
     let feed_reply = wiring.clone();
     wiring.on_store_reply(BatchAuthor::Feed, move |batch, reply| {
         feed_reply.to_feed(match reply {
-            StoreReply::Committed { revision } => FeedInput::Committed(Committed { batch, revision: i64::try_from(revision).unwrap_or(i64::MAX), tables: Vec::new(), models: Models::default() }),
+            StoreReply::Committed { revision, stale_parents } => FeedInput::Committed(Committed { batch, revision: i64::try_from(revision).unwrap_or(i64::MAX), tables: Vec::new(), models: Models::default(), stale_parents }),
             StoreReply::Rejected(reason) => FeedInput::Rejected(Rejected { batch, reason }),
         });
     });
     let commit_wiring = wiring.clone();
     db.on_commit(move |notice| {
         let models = if notice.all { Models::All } else { Models::Set(Default::default()) };
-        commit_wiring.to_deliveries(DeliveryInput::Committed(Committed { batch: 0, revision: notice.revision, tables: notice.tables.clone(), models }));
+        commit_wiring.to_deliveries(DeliveryInput::Committed(Committed { batch: 0, revision: notice.revision, tables: notice.tables.clone(), models, stale_parents: Vec::new() }));
         commit_wiring.to_windows(WindowsInput::StoreCommitted { models: notice.models.clone(), revision: notice.revision });
     });
     ReadAt { windows, deliveries, feed }

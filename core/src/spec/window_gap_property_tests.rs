@@ -180,7 +180,7 @@ fn win_base_revision() {
     twin.post_call(w::WindowsInput::Load { key: key(), id: 1, goal: w::Goal::First, force: false, store_revision: 7 });
     twin.post(w::WindowsInput::Response { request: 1, attempt: 1, page: AnswerPage::new(1, vec!["r1".into()], None) });
     assert!(sent_batch(&mut twin).contains("base_revision: 11"), "the batch carries the revision from Pinned");
-    twin.post(w::WindowsInput::Committed(Committed { batch: 1, revision: 9, tables: Vec::new(), models: Default::default() }));
+    twin.post(w::WindowsInput::Committed(Committed { batch: 1, revision: 9, tables: Vec::new(), models: Default::default(), stale_parents: Vec::new() }));
     twin.pin_revision.store(13, Ordering::SeqCst);
     twin.post_call(w::WindowsInput::Load { key: key(), id: 2, goal: w::Goal::First, force: true, store_revision: 5 });
     twin.post(w::WindowsInput::Response { request: 2, attempt: 2, page: AnswerPage::new(1, vec!["r1".into()], None) });
@@ -292,7 +292,7 @@ fn win_landed_revision_per_machine() {
     }
     for (request, row, revision) in [(1, "r1", 5), (2, "c1", 9)] {
         det.post(windows, EpochStamp::Epoch(EPOCH), w::WindowsInput::Response { request, attempt: u32::try_from(request).expect("a small id"), page: AnswerPage::new(1, vec![row.into()], None) });
-        det.post(windows, EpochStamp::Epoch(EPOCH), w::WindowsInput::Committed(Committed { batch: request, revision, tables: Vec::new(), models: Default::default() }));
+        det.post(windows, EpochStamp::Epoch(EPOCH), w::WindowsInput::Committed(Committed { batch: request, revision, tables: Vec::new(), models: Default::default(), stale_parents: Vec::new() }));
     }
     det.run_until_quiet(100).expect("quiet");
     take(&log);

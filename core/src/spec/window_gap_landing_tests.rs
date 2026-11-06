@@ -254,7 +254,7 @@ fn win_wait_nodes() {
     twin.post_call(w::WindowsInput::Load { key: nodes.clone(), id: 1, goal: w::Goal::First, force: false, store_revision: 0 });
     assert!(matches!(runs(take(&twin.log)).as_slice(), [WindowsEffect::Window { effect: WindowEffect::Request { page: 1, .. }, .. }]));
     twin.post(w::WindowsInput::Response { request: 1, attempt: 1, page: AnswerPage::new(1, vec!["m1".into()], None) });
-    twin.post(w::WindowsInput::Committed(Committed { batch: 1, revision: 11, tables: Vec::new(), models: Default::default() }));
+    twin.post(w::WindowsInput::Committed(Committed { batch: 1, revision: 11, tables: Vec::new(), models: Default::default(), stale_parents: Vec::new() }));
     assert!(runs(take(&twin.log)).iter().any(|effect| matches!(effect, WindowsEffect::Window { effect: WindowEffect::Outcome { id: 1, outcome: WindowOutcome::Loaded { revision: 11, .. } }, .. })));
     twin.post_call(w::WindowsInput::Load { key: nodes, id: 2, goal: w::Goal::First, force: false, store_revision: 0 });
     assert!(runs(take(&twin.log)).iter().any(|effect| matches!(effect, WindowsEffect::Window { effect: WindowEffect::Outcome { id: 2, outcome: WindowOutcome::Loaded { revision: 11, .. } }, .. })), "a fresh nodes key answers at once");

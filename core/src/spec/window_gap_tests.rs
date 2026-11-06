@@ -199,7 +199,7 @@ impl Twin {
             }
             Input::Dropped { request, attempt } => self.post(w::WindowsInput::Dropped { request: *request, attempt: *attempt }),
             Input::Retry { request } => self.post(w::WindowsInput::RetryDue { request: *request }),
-            Input::Committed { request, revision } => self.post(w::WindowsInput::Committed(Committed { batch: *request, revision: *revision, tables: Vec::new(), models: Default::default() })),
+            Input::Committed { request, revision } => self.post(w::WindowsInput::Committed(Committed { batch: *request, revision: *revision, tables: Vec::new(), models: Default::default(), stale_parents: Vec::new() })),
             Input::Rejected { request, reason } => {
                 let reason = match reason {
                     Reject::StaleGeneration => RejectReason::StaleGeneration { models: vec!["Moment".into()], generation: self.generation },

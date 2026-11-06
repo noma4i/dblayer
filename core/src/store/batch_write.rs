@@ -15,6 +15,7 @@ pub(crate) struct BatchWritten {
     pub faults: Vec<String>,
     pub expiring: Vec<crate::owners::store::MemoryExpiry>,
     pub removed_memory: Vec<(String, String)>,
+    pub stale_parents: Vec<String>,
 }
 
 impl Store {
@@ -29,7 +30,7 @@ impl Store {
                 }
                 Err(error)
             }
-            Ok((result, observed, live_files, discarded, expiring, removed_memory, position)) => {
+            Ok((result, observed, live_files, discarded, (expiring, removed_memory, stale_parents), position)) => {
                 let mut faults = Vec::new();
                 for file in prepared.iter().filter(|file| file.record.location == Location::Directory) {
                     let removed = if live_files.contains(&file.record.id) { files.finish(&file.record.id) } else { files.discard_partial(&file.record.id) };
@@ -40,12 +41,12 @@ impl Store {
                 }
                 let revision = result.result().revision.unwrap_or_default();
                 result.publish();
-                Ok(BatchWritten { revision: u64::try_from(revision).map_err(|_| StoreError::Constraint("negative revision".into()))?, position, observed, faults, expiring, removed_memory })
+                Ok(BatchWritten { revision: u64::try_from(revision).map_err(|_| StoreError::Constraint("negative revision".into()))?, position, observed, faults, expiring, removed_memory, stale_parents })
             }
         }
     }
 
-    fn write_batch_prepared<'a>(&'a self, batch: &StoreBatch, guards: &BTreeMap<String, Vec<AssociationSpec>>, min_pin_revision: Option<u64>, now: i64, files: &[super::file_write::PreparedFile]) -> Result<(super::Committed<'a>, Vec<String>, std::collections::HashSet<String>, Vec<String>, Vec<crate::owners::store::MemoryExpiry>, Vec<(String, String)>, u64), StoreError> {
+    fn write_batch_prepared<'a>(&'a self, batch: &StoreBatch, guards: &BTreeMap<String, Vec<AssociationSpec>>, min_pin_revision: Option<u64>, now: i64, files: &[super::file_write::PreparedFile]) -> Result<(super::Committed<'a>, Vec<String>, std::collections::HashSet<String>, Vec<String>, (Vec<crate::owners::store::MemoryExpiry>, Vec<(String, String)>, Vec<String>), u64), StoreError> {
         let inner = self.lock();
         if !inner.ready { return Err(StoreError::Refused); }
         let transaction = inner.connection.unchecked_transaction()?;
@@ -100,6 +101,7 @@ impl Store {
         let discarded = transaction.prepare("SELECT id FROM batch_file_deletions WHERE NOT EXISTS (SELECT 1 FROM file WHERE file.id = batch_file_deletions.id)")?.query_map([], |row| row.get(0))?.collect::<rusqlite::Result<Vec<String>>>()?;
         transaction.execute_batch("DROP TRIGGER batch_file_delete; DROP TABLE batch_file_deletions;")?;
         let (expiring, removed_memory) = super::batch_result::expiry(&transaction, &inner.models, &results, inner.now_ms())?;
+        let stale_parents = super::batch_result::stale_parents(&transaction, &inner.models, &results)?;
         let target_revision = if writes_database { revision } else { base_revision };
         let mut combined = super::batch_result::consolidate(&transaction, &inner.models, originals, results, target_revision)?;
         let current = self.overlays.get(base_revision).ok_or_else(|| StoreError::Constraint("overlay revision is unavailable".into()))?;
@@ -115,6 +117,6 @@ impl Store {
             transaction.rollback()?;
             if position != current.position { self.overlays.publish(snapshot); }
         }
-        Ok((self.commit_announcement(inner, combined), observed, live_files, discarded, expiring, removed_memory, position))
+        Ok((self.commit_announcement(inner, combined), observed, live_files, discarded, (expiring, removed_memory, stale_parents), position))
     }
 }

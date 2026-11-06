@@ -63,6 +63,8 @@ pub struct Committed {
     pub revision: i64,
     pub tables: Vec<String>,
     pub models: Models,
+    /// Parent models whose `sets:` fields the batch did not write because the parent row is not in the base.
+    pub stale_parents: Vec<String>,
 }
 
 /// The models a commit touched: `All` touches every stream, a `Set` touches the streams of its tables (the empty set touches none).

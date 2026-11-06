@@ -385,7 +385,11 @@ impl StateOwner for Feed {
             FeedInput::Resubscribe { connection_id } => state.resubscribe(connection_id, &mut fx),
             FeedInput::HandshakeDeadline { connection_id } => state.handshake_deadline(connection_id, &mut fx),
             FeedInput::Observed { batch, payloads } => state.observed(batch, payloads),
-            FeedInput::Committed(committed) => state.verdict(committed.batch, None, &mut fx),
+            FeedInput::Committed(committed) => {
+                let landed = state.owns_landing(committed.batch);
+                state.verdict(committed.batch, None, &mut fx);
+                if landed { fx.extend(committed.stale_parents.into_iter().map(|model| Fx::Stale { model, keys: StaleKeys::All })); }
+            }
             FeedInput::Rejected(rejected) => state.verdict(rejected.batch, Some(rejected.reason), &mut fx),
             FeedInput::Tick(_) => {
                 if state.mode == Mode::Live {

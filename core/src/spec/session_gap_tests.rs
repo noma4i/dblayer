@@ -35,7 +35,7 @@ fn sess_epoch_ended_kept() {
             } else {
                 let effects = send(&mut det, address, &log, SessionInput::Mutate { author: 7, owner: None, req_id: 11, epoch: 3, path: "/graphql".into(), body: "{}".into(), purpose: 0 });
                 let batch = effects.iter().find_map(|effect| match effect { SessionEffect::CommitPending { batch, .. } => Some(*batch), _ => None }).unwrap();
-                let effects = send(&mut det, address, &log, SessionInput::Committed(Committed { batch, revision: 1, tables: vec![], models: Default::default() }));
+                let effects = send(&mut det, address, &log, SessionInput::Committed(Committed { batch, revision: 1, tables: vec![], models: Default::default(), stale_parents: Vec::new() }));
                 let attempt = effects.iter().find_map(|effect| match effect { SessionEffect::HttpRequest { attempt_id, .. } => Some(*attempt_id), _ => None }).unwrap();
                 let input = if phase == 2 { SessionInput::Dropped { request_id: 11, attempt_id: attempt } } else { SessionInput::Response { request_id: 11, attempt_id: attempt, body: "{}".into(), sequence: Some(5), refusal: None } };
                 send(&mut det, address, &log, input);
@@ -69,7 +69,7 @@ fn sess_generating_other() {
             SessionInput::Revoked { request_id: 9, attempt_id: 9, body: "{}".into() },
             SessionInput::HttpError { request_id: 9, attempt_id: 9, temporary: false, auth: false, persisted_missing: false, status: 0, too_large: None, security: None },
             SessionInput::Dropped { request_id: 9, attempt_id: 9 },
-            SessionInput::Committed(Committed { batch: 9, revision: 1, tables: vec![], models: Default::default() }),
+            SessionInput::Committed(Committed { batch: 9, revision: 1, tables: vec![], models: Default::default(), stale_parents: Vec::new() }),
             SessionInput::Rejected(Rejected { batch: 9, reason: RejectReason::NoSession }),
         ];
         for input in inputs {
@@ -90,13 +90,13 @@ fn calling_error(too_large: Option<(u64, u64)>, security: Option<(crate::transpo
         let input = if author { SessionInput::Mutate { author: 7, owner: None, req_id: 11, epoch: 3, path: "/graphql".into(), body: "{}".into(), purpose: 0 } } else { SessionInput::SessionCall { operation: "read".into(), body: "{}".into(), reply: 1 } };
         let effects = send(&mut det, address, &log, input);
         let (batch, request) = effects.iter().find_map(|effect| match effect { SessionEffect::CommitPending { batch, pending, .. } => Some((*batch, pending.request_id)), _ => None }).unwrap();
-        let effects = send(&mut det, address, &log, SessionInput::Committed(Committed { batch, revision: 1, tables: vec![], models: Default::default() }));
+        let effects = send(&mut det, address, &log, SessionInput::Committed(Committed { batch, revision: 1, tables: vec![], models: Default::default(), stale_parents: Vec::new() }));
         let attempt = effects.iter().find_map(|effect| match effect { SessionEffect::HttpRequest { attempt_id, .. } => Some(*attempt_id), _ => None }).unwrap();
         let effects = send(&mut det, address, &log, SessionInput::HttpError { request_id: request, attempt_id: attempt, temporary: false, auth: false, persisted_missing: false, status: 0, too_large, security: security.clone() });
         let (batch, answer) = effects.iter().find_map(|effect| match effect { SessionEffect::CommitLanding { batch, answer, .. } => Some((*batch, answer.clone())), _ => None }).unwrap();
         assert_eq!(answer, author.then(|| (request, Err(expected.clone()))));
         assert!(!effects.iter().any(|effect| matches!(effect, SessionEffect::Reply { .. } | SessionEffect::Answer { .. })));
-        let effects = send(&mut det, address, &log, SessionInput::Committed(Committed { batch, revision: 2, tables: vec![], models: Default::default() }));
+        let effects = send(&mut det, address, &log, SessionInput::Committed(Committed { batch, revision: 2, tables: vec![], models: Default::default(), stale_parents: Vec::new() }));
         if author {
             assert!(effects.iter().any(|effect| matches!(effect, SessionEffect::Answer { author: 7, req_id: 11, outcome: AuthorOutcome::Error { error, .. } } if error == &expected)));
         } else {
@@ -143,11 +143,11 @@ fn http_failure_reports_after_its_answer_is_committed() {
     send(&mut det, address, &log, SessionInput::Open { credential: Some(Credential { digest: 4, sequence: 0 }), pending: None, dropped_pending: false, secret: SecretState::Present(4) });
     let effects = send(&mut det, address, &log, SessionInput::Mutate { author: 7, owner: None, req_id: 11, epoch: 3, path: "/graphql".into(), body: "{}".into(), purpose: 0 });
     let batch = effects.iter().find_map(|effect| match effect { SessionEffect::CommitPending { batch, .. } => Some(*batch), _ => None }).unwrap();
-    let effects = send(&mut det, address, &log, SessionInput::Committed(Committed { batch, revision: 1, tables: vec![], models: Default::default() }));
+    let effects = send(&mut det, address, &log, SessionInput::Committed(Committed { batch, revision: 1, tables: vec![], models: Default::default(), stale_parents: Vec::new() }));
     let attempt = effects.iter().find_map(|effect| match effect { SessionEffect::HttpRequest { attempt_id, .. } => Some(*attempt_id), _ => None }).unwrap();
     let effects = send(&mut det, address, &log, SessionInput::HttpFailed { attempt_id: attempt });
     assert!(!effects.iter().any(|effect| matches!(effect, SessionEffect::Answer { .. } | SessionEffect::ExecutorFailed)));
     let batch = effects.iter().find_map(|effect| match effect { SessionEffect::CommitLanding { batch, .. } => Some(*batch), _ => None }).unwrap();
-    let effects = send(&mut det, address, &log, SessionInput::Committed(Committed { batch, revision: 2, tables: vec![], models: Default::default() }));
+    let effects = send(&mut det, address, &log, SessionInput::Committed(Committed { batch, revision: 2, tables: vec![], models: Default::default(), stale_parents: Vec::new() }));
     assert!(matches!(&effects[..], [SessionEffect::Answer { author: 7, req_id: 11, outcome: AuthorOutcome::Error { error: SessionError::Http { status: 0 }, .. } }, SessionEffect::ExecutorFailed]));
 }

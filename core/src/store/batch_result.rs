@@ -78,3 +78,19 @@ pub(super) fn consolidate(connection: &Connection, models: &BTreeMap<String, Mod
     }
     Ok(combined)
 }
+
+/// The parent models whose `sets:` fields a batch could not write: a child landed and its parent row is not in the base (P-DATA-62).
+pub(super) fn stale_parents(connection: &Connection, models: &BTreeMap<String, ModelInfo>, results: &[CommitResult]) -> Result<Vec<String>, StoreError> {
+    let reader = Reader::new(connection, models);
+    let mut stale = BTreeSet::new();
+    let landed: BTreeSet<RowRef> = results.iter().flat_map(|result| result.rows.iter()).filter(|change| matches!(change.kind, RowChangeKind::Inserted | RowChangeKind::Updated)).map(|change| change.row.clone()).collect();
+    for row in landed {
+        let Some(info) = models.get(row.model.as_str()) else { continue };
+        let Some(stored) = reader.point(row.model.as_str(), row.id.as_str())? else { continue };
+        for association in info.spec.associations.iter().filter(|association| association.kind == crate::schema::AssociationKind::BelongsTo && !association.sets.is_empty()) {
+            let Some(parent) = stored.get(&association.foreign_key).and_then(crate::value::read_id) else { continue };
+            if reader.point(association.target.as_str(), parent.as_str())?.is_none() { stale.insert(association.target.to_string()); }
+        }
+    }
+    Ok(stale.into_iter().collect())
+}

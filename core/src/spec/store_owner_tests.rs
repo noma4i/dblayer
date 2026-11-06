@@ -24,7 +24,7 @@ fn cause(cause: RefCause) -> Cause {
 
 fn action_of(effect: &StoreEffect) -> Option<Action> {
     Some(match effect {
-        StoreEffect::Reply { batch, reply: StoreReply::Committed { revision }, .. } => Action::Committed { id: *batch, revision: *revision },
+        StoreEffect::Reply { batch, reply: StoreReply::Committed { revision, .. }, .. } => Action::Committed { id: *batch, revision: *revision },
         StoreEffect::Reply { batch, reply: StoreReply::Rejected(reason), .. } => Action::Rejected {
             id: *batch,
             reason: match reason {

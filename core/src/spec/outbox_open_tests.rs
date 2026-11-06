@@ -109,7 +109,7 @@ fn write_check(state: WSt, ctx: WCtx, input: WIn) {
     let _ = write_batch;
     let effects = match input {
         WIn::Write => twin.post(OutboxInput::LocalWrite { model: "Moment".into(), epoch: if ctx.epoch_current { EPOCH } else { EPOCH + 1 }, write: LocalWriteKind::SetEphemeral { expire_after: ctx.ephemeral_expiry.then_some(10) }, row: "w".into(), values: "{}".into(), reply, now: Time(100) }),
-        WIn::Committed => twin.post(OutboxInput::Committed(Committed { batch: 1, revision: 11, tables: vec!["moments".into()], models: Default::default() })),
+        WIn::Committed => twin.post(OutboxInput::Committed(Committed { batch: 1, revision: 11, tables: vec!["moments".into()], models: Default::default(), stale_parents: Vec::new() })),
         WIn::Rejected(reason) => {
             twin.post(OutboxInput::Rejected(Rejected { batch: 1, reason: reject(reason) }))
         }
@@ -118,7 +118,7 @@ fn write_check(state: WSt, ctx: WCtx, input: WIn) {
         WIn::Expire => {
             if ctx.renewed {
                 twin.post(OutboxInput::LocalWrite { model: "Moment".into(), epoch: EPOCH, write: LocalWriteKind::SetEphemeral { expire_after: Some(1_000) }, row: "w".into(), values: "{}".into(), reply: 51, now: Time(105) });
-                twin.post(OutboxInput::Committed(Committed { batch: 1, revision: 12, tables: vec!["moments".into()], models: Default::default() }));
+                twin.post(OutboxInput::Committed(Committed { batch: 1, revision: 12, tables: vec!["moments".into()], models: Default::default(), stale_parents: Vec::new() }));
             }
             twin.post(OutboxInput::Expire { model: "Moment".into(), row: "w".into(), due: Time(110) })
         }

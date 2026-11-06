@@ -28,6 +28,10 @@ pub(crate) mod replaced_log;
 mod atomic_tests;
 #[cfg(test)]
 mod cells_tests;
+#[cfg(test)]
+mod data_sets_tests;
+#[cfg(test)]
+mod data_cells_tests;
 mod apply;
 mod batch_common;
 mod batch_result;

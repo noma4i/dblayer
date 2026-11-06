@@ -419,7 +419,7 @@ async fn a_committed_batch_is_broadcast_to_every_subscriber() {
     let epoch = life.published().epoch;
     let batch = StoreBatch { author: BatchAuthor::Window, id: 1, epoch, basis: [("moments".to_string(), 0)].into(), rows: vec![("moments".into(), r#"{"id":"m1"}"#.into())], intents: 0, credential: None, ops: Vec::new() };
     life.wiring.to_store(StoreInput::Commit(batch));
-    let StoreReply::Committed { revision } = reply.recv_timeout(LIMIT).expect("the author got its reply") else { panic!("the batch was refused") };
+    let StoreReply::Committed { revision, .. } = reply.recv_timeout(LIMIT).expect("the author got its reply") else { panic!("the batch was refused") };
     for heard in [heard_first, heard_second] {
         let broadcast = heard.recv_timeout(LIMIT).expect("the subscriber heard the broadcast");
         assert_eq!((broadcast.revision, broadcast.models), (revision, Models::Set(["moments".to_string()].into())));

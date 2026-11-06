@@ -317,6 +317,19 @@ fn feed_live_committed() {
 }
 
 #[test]
+fn data_sets_missing_parent() {
+    let mut twin = live();
+    twin.reread = true;
+    twin.step(chat("c1"));
+    twin.step(Input::Tick);
+    assert_eq!(twin.step(Input::CommittedStale(vec!["Profile".into()])), [Effect::Stale { model: "Chat".into(), all: false }, Effect::Stale { model: "Profile".into(), all: true }], "every parent model whose fields were not written turns Stale");
+    twin.step(chat("c2"));
+    twin.step(Input::Tick);
+    assert_eq!(twin.step(Input::Committed), [Effect::Stale { model: "Chat".into(), all: false }], "a commit without stale parents adds nothing");
+    assert!(twin.step(Input::CommittedStale(vec!["Profile".into()])).is_empty(), "a batch that is not in landing adds nothing");
+}
+
+#[test]
 fn feed_live_rejected_generation() {
     let mut twin = live();
     twin.step(plus("Post"));

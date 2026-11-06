@@ -16,6 +16,8 @@ mod extract_tests;
 #[cfg(test)]
 mod normalize_tests;
 #[cfg(test)]
+mod data_cells_tests;
+#[cfg(test)]
 mod variables_tests;
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]

@@ -231,6 +231,8 @@ impl FeedState {
         }
     }
 
+    pub(super) fn owns_landing(&self, batch: BatchId) -> bool { self.landing.iter().any(|(id, _)| *id == batch) }
+
     /// `Committed` and `Rejected` of a batch of `landing`: delivered on `Committed`, lost on `Rejected`. `NoSession` and `Closed` end a `Live` feed.
     pub(super) fn verdict(&mut self, batch: BatchId, rejected: Option<RejectReason>, fx: &mut Vec<Fx>) {
         let Some(at) = self.landing.iter().position(|(id, _)| *id == batch) else { return };

@@ -176,7 +176,11 @@ impl Twin {
             Input::HandshakeDeadline { to } => vec![FeedInput::HandshakeDeadline { connection_id: self.connection(*to) }],
             Input::Committed => {
                 let batch = self.batch();
-                vec![FeedInput::Committed(Committed { batch, revision: 1, tables: Vec::new(), models: Default::default() })]
+                vec![FeedInput::Committed(Committed { batch, revision: 1, tables: Vec::new(), models: Default::default(), stale_parents: Vec::new() })]
+            }
+            Input::CommittedStale(parents) => {
+                let batch = self.batch();
+                vec![FeedInput::Committed(Committed { batch, revision: 1, tables: Vec::new(), models: Default::default(), stale_parents: parents.clone() })]
             }
             Input::Rejected(reason) => {
                 let batch = self.batch();
@@ -187,7 +191,7 @@ impl Twin {
                 };
                 vec![FeedInput::Rejected(Rejected { batch, reason })]
             }
-            Input::StrayBatch => vec![FeedInput::Committed(Committed { batch: 9_999, revision: 1, tables: Vec::new(), models: Default::default() })],
+            Input::StrayBatch => vec![FeedInput::Committed(Committed { batch: 9_999, revision: 1, tables: Vec::new(), models: Default::default(), stale_parents: Vec::new() })],
             Input::Tick => vec![FeedInput::Tick(Time(0))],
             Input::Online(on) => vec![FeedInput::Online(Online(*on))],
             Input::ModelsReset { models, generation } => vec![FeedInput::ModelsReset(ModelsReset { epoch: EPOCH, generation: *generation, models: models.clone() })],

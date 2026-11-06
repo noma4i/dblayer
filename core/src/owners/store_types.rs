@@ -197,7 +197,7 @@ pub struct OpenMessage {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum StoreReply {
-    Committed { revision: u64 },
+    Committed { revision: u64, stale_parents: Vec<String> },
     Rejected(RejectReason),
 }
 
@@ -222,6 +222,7 @@ pub struct WriteDone {
     pub observed: Vec<String>,
     pub expiring: Vec<MemoryExpiry>,
     pub removed_memory: Vec<(String, String)>,
+    pub stale_parents: Vec<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
