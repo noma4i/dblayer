@@ -69,7 +69,7 @@ impl Db {
         for op in changes {
             match op {
                 EntityOp::Upsert { model, row, .. } => self.advance_parents(reader, &model, &row, &mut ops, &mut parents)?,
-                EntityOp::Destroy { reason: DestroyReason::Replaced { .. }, .. } => {}
+                EntityOp::Destroy { model, id, reason: DestroyReason::Replaced { by }, .. } => self.rename_parent_pointers(reader, &model, &id, &by, &mut ops, &mut parents)?,
                 EntityOp::Destroy { model, id, .. } => self.retreat_parents(reader, &model, &id, &mut ops, &mut parents)?,
                 EntityOp::Touch { .. } => {}
             }
@@ -108,6 +108,30 @@ impl Db {
             if !same_fields(&merged, &current) {
                 ops.set(parents, parent, current, merged);
             }
+        }
+        Ok(())
+    }
+
+    fn rename_parent_pointers(&self, reader: &Reader<'_>, model: &ModelKey, id: &RowId, by: &RowId, ops: &mut Ops<'_>, parents: &mut Parents) -> Result<(), DbError> {
+        let associations = self.pointer_associations(model)?;
+        if associations.is_empty() {
+            return Ok(());
+        }
+        let Some(child) = reader.point(model.as_str(), id.as_str())? else { return Ok(()) };
+        for association in associations {
+            let Some(parent_id) = child.get(&association.foreign_key).and_then(read_id) else { continue };
+            let Some(pointer) = association.pointer_field() else { continue };
+            let parent = RowRef::new(association.target.clone(), parent_id);
+            if ops.doomed.contains(&parent) {
+                continue;
+            }
+            let Some(current) = ops.current(reader, parents, &parent)? else { continue };
+            if current.get(pointer).and_then(read_id).as_ref() != Some(id) {
+                continue;
+            }
+            let mut merged = current.clone();
+            merged.insert(pointer.to_string(), json!(by.as_str()));
+            ops.set(parents, parent, current, merged);
         }
         Ok(())
     }
