@@ -23,6 +23,7 @@ extension DB {
     let definitions = operations.map { OperationDefinition(name: $0.operationName, document: $0.document) }
     let database = try await opener.openWithClock(config: Config(path: path, dataVersion: nil), modelsJson: modelsJSON, ports: OpenPorts(transport: transport, encrypted: encrypted, credentials: credentials, http: http, endpoint: scriptedEndpoint), clock: clock, options: OpenOptions(operations: definitions), observers: observers ?? OnlineAtOnce())
     adopt(database)
+    await ChangePump.start(database)
     return clock
   }
 }

@@ -13,6 +13,8 @@ use crate::owners::read::windows::{WindowKey, Windows};
 use crate::spec::support::{as_owner, new_log, snapshot, take, Discard, Emitted, Ender, EnderState, Log, Silent, Sink, Source, SourceInput, SourceState, Spy, SpyState};
 use crate::runtime::{explore, Address, Cause as Ended, DetScheduler, EpochStamp, Limits, Outcomes};
 
+#[path = "delivery_changes_tests.rs"]
+mod delivery_changes_tests;
 #[path = "delivery_operations_tests.rs"]
 mod delivery_operations_tests;
 #[path = "delivery_more_tests.rs"]
@@ -47,6 +49,7 @@ fn view(kind: Kind) -> d::View {
         Kind::Count => (d::Kind::Count, "Moment"),
         Kind::Entity(fetch) => (d::Kind::Entity { fetch: match fetch { Fetch::Never => d::Fetch::Never, Fetch::Stale => d::Fetch::Stale, Fetch::Force => d::Fetch::Force, Fetch::IfMissing => d::Fetch::IfMissing } }, "Moment"),
         Kind::Events => (d::Kind::Events, "Chat"),
+        Kind::Changes => return d::View { kind: d::Kind::Changes, model: String::new(), tables: Vec::new(), local: true, remote: false, live: false, reload: false, window: WindowKey { model: String::new(), name: String::new() }, subject: String::new(), query: None },
         Kind::Blob => (d::Kind::Blob, "Moment"),
         Kind::Retry => (d::Kind::RetryStatus, "Moment"),
     };
@@ -95,6 +98,7 @@ fn val_of(value: &d::Value) -> Val {
         d::Value::Operations { .. } => unreachable!("the reference models no queue stream"),
         d::Value::State { revision, state } => Val::State { revision: *revision, state: ws_of(state) },
         d::Value::Ready => Val::Ready,
+        d::Value::Changes { revision, rows } => Val::Changes { revision: *revision, rows: rows.clone() },
         d::Value::Event { position, payload } => Val::Event { position: *position, payload: payload.clone() },
         d::Value::Lost { first, last } => Val::Lost { first: *first, last: *last },
         d::Value::Gap => Val::Gap,
@@ -205,6 +209,11 @@ impl Twin {
             Input::Committed { revision, touches } => {
                 let table = if *touches { "moments" } else { "other" };
                 self.post(d::DeliveryInput::Committed(Committed { batch: 0, revision: *revision, tables: vec![table.into()], rows: None, models: Default::default(), stale_parents: Vec::new(), position: 0 }));
+            }
+            Input::Changed { revision, rows, reset } => {
+                let tables = rows.iter().map(|(table, _)| table.clone()).collect();
+                let changed = rows.iter().cloned().collect::<std::collections::BTreeSet<_>>();
+                self.post(d::DeliveryInput::Committed(Committed { batch: 0, revision: *revision, tables, rows: (!*reset).then_some(changed), models: if *reset { Models::All } else { Default::default() }, stale_parents: Vec::new(), position: 0 }));
             }
             Input::ReadDone { revision, rows } => self.post(d::DeliveryInput::ReadDone { stream, read_id: self.read_id(), revision: *revision, data: d::ReadData::Rows { rows: rows_of(rows), replaced: Vec::new(), total: self.total } }),
             Input::ReadOverflow { revision } => self.post(d::DeliveryInput::ReadDone { stream, read_id: self.read_id(), revision: *revision, data: d::ReadData::Overflow }),

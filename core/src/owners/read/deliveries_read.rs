@@ -164,6 +164,17 @@ impl Delivery {
         })
     }
 
+    pub(super) fn changed(&mut self, committed: &Committed, fx: &mut Vec<Emit>) {
+        if self.stage != DeliveryStage::Live {
+            return;
+        }
+        let rows: Vec<(String, String)> = committed.rows.iter().flatten().cloned().collect();
+        if committed.rows.as_ref().is_some_and(std::collections::BTreeSet::is_empty) {
+            return;
+        }
+        self.push(Value::Changes { revision: committed.revision, rows }, fx);
+    }
+
     pub(super) fn committed(&mut self, committed: &Committed, fx: &mut Vec<Emit>) {
         if !self.view.kind.reads_rows() {
             return;

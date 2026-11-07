@@ -12,6 +12,7 @@
 
 - Snapshots carry the `edits` from the rows the reader holds to the new rows.
 - The status of an upload carries `localUrl` and `processing`.
+- `scope.changes()` streams the rows changed by each commit of the database on both platforms.
 - `DB.interruptedSessionAnswer` and `DBlayer.interruptedSessionAnswer` return the answer of a session call that a killed process left running.
 - `open` fails with `Config` on Android below API 34 when the manifest lacks `FOREGROUND_SERVICE_DATA_SYNC`.
 - `ReadEnd.internal` reports a stream value that could not be read; `pull` never throws.

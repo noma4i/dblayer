@@ -168,6 +168,7 @@ private class DatabaseRunner {
         is ReadValue.State -> observation("state", js(stateFields(stream, value.state)))
         ReadValue.Ready -> obs("ready", "stream" to stream)
         ReadValue.Gap -> obs("gap", "stream" to stream)
+        is ReadValue.Changes -> obs("changes", "stream" to stream, "revision" to value.revision, "rows" to value.rows.size)
         is ReadValue.Retry -> observation("unsupported", JsonPrimitive("retry"))
         is ReadValue.Event -> obs("event", "stream" to stream, "position" to value.position, "area" to value.area, "kind" to value.kind, "row" to nameOf(value.id))
         is ReadValue.Lost -> obs("lost", "stream" to stream, "first" to value.first, "last" to value.last)

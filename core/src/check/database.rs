@@ -245,6 +245,7 @@ impl DatabaseSut {
                 Observation::new("event", json!({ "stream": stream, "position": position, "area": area, "kind": kind, "row": self.name_of(id) }))
             }
             ReadValue::Ready => Observation::new("ready", json!({ "stream": stream })),
+            ReadValue::Changes { revision, rows } => Observation::new("changes", json!({ "stream": stream, "revision": revision, "rows": rows.len() })),
             ReadValue::Gap => Observation::new("gap", json!({ "stream": stream })),
             ReadValue::Retry { .. } => Observation::new("unsupported", json!("retry")),
             ReadValue::Lost { first, last } => Observation::new("lost", json!({ "stream": stream, "first": first, "last": last })),

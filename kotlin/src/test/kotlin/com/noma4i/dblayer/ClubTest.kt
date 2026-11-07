@@ -139,12 +139,12 @@ class ClubTest {
                 transport.enqueue("SendLetter", DbException.Http(422.toUShort(), "refused again"))
                 if (keep) {
                     var attempt: MutationReceipt<Letter>? = null
-                    eventuallyRead("the refusal of the first attempt is recorded") {
+                    eventually("the refusal of the first attempt is recorded") {
                         try { attempt = withTimeout(5000) { Letter.retry(id, null) }; true } catch (error: DbException.Invalid) { false }
                     }
                     assertTrue(withTimeout(5000) { requireNotNull(attempt).outcome() } is OperationOutcome.Rejected)
                 } else {
-                    eventuallyRead("the refused operation is gone") {
+                    eventually("the refused operation is gone") {
                         try { withTimeout(5000) { Letter.retry(id, null) }; false } catch (error: DbException.NotFound) { true } catch (error: DbException.Invalid) { false }
                     }
                 }
@@ -548,7 +548,7 @@ class ClubTest {
             hold.release()
             val receipt = withTimeout(5000) { leaving.await() }
             assertEquals("the outcome of leave", refusal, withTimeout(5000) { receipt.outcome() } is OperationOutcome.Rejected)
-            eventuallyRead("the club list after the outcome") { (Query("Club", Club).readRow(created.id) != null) == refusal }
+            eventually("the club list after the outcome") { (Query("Club", Club).readRow(created.id) != null) == refusal }
         }
     }
 
@@ -592,7 +592,7 @@ class ClubTest {
             hold.release()
             val receipt = withTimeout(5000) { forwarding.await() }
             assertEquals("$case: the outcome of forward", refusal, withTimeout(5000) { receipt.outcome() } is OperationOutcome.Rejected)
-            eventuallyRead("the target thread shows the outcome") { thread.read().map { it.id } == (if (refusal) emptyList() else listOf("fwd-1")) }
+            eventually("the target thread shows the outcome") { thread.read().map { it.id } == (if (refusal) emptyList() else listOf("fwd-1")) }
         }
     }
 }

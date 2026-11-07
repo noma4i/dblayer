@@ -56,6 +56,10 @@ impl Delivery {
                 fx.push(Emit::WantPlus);
                 machine.interested = true;
             }
+            Kind::Changes => {
+                machine.stage = DeliveryStage::Live;
+                machine.push(Value::Ready, fx);
+            }
             Kind::Blob | Kind::RetryStatus => {
                 fx.push(Emit::Run(StreamEffect::StatusInterest { plus: true }));
                 machine.interested = true;

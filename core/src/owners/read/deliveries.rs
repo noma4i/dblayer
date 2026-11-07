@@ -46,6 +46,7 @@ pub enum Kind {
     /// The queue of operations: the table `op`, read whole after every commit that touched it.
     Operations,
     Events,
+    Changes,
     Blob,
     RetryStatus,
 }
@@ -164,6 +165,7 @@ pub enum Value {
     Operations { revision: i64, items: Vec<crate::ffi::OperationInfo> },
     State { revision: i64, state: WindowState },
     Ready,
+    Changes { revision: i64, rows: Vec<(String, String)> },
     Event { position: u64, payload: String },
     Lost { first: u64, last: u64 },
     Gap,
@@ -336,6 +338,7 @@ pub struct DeliveriesState {
     streams: BTreeMap<StreamId, Delivery>,
     by_table: BTreeMap<String, BTreeSet<StreamId>>,
     by_row: BTreeMap<String, BTreeMap<String, BTreeSet<StreamId>>>,
+    watchers: BTreeSet<StreamId>,
     examined: u64,
     peers: DeliveryPeers,
     revision: i64,
@@ -344,7 +347,7 @@ pub struct DeliveriesState {
 }
 
 impl DeliveriesState {
-    pub fn new(epoch: Epoch, peers: DeliveryPeers) -> Self { Self { epoch, streams: BTreeMap::new(), by_table: BTreeMap::new(), by_row: BTreeMap::new(), examined: 0, peers, revision: 0, closing: false, drained: false } }
+    pub fn new(epoch: Epoch, peers: DeliveryPeers) -> Self { Self { epoch, streams: BTreeMap::new(), by_table: BTreeMap::new(), by_row: BTreeMap::new(), watchers: BTreeSet::new(), examined: 0, peers, revision: 0, closing: false, drained: false } }
 
     pub fn stage(&self, stream: StreamId) -> Option<DeliveryStage> { self.streams.get(&stream).map(|machine| machine.stage) }
 
@@ -359,6 +362,9 @@ impl DeliveriesState {
     pub fn streams_examined(&self) -> u64 { self.examined }
 
     fn index(&mut self, stream: StreamId) {
+        if self.streams.get(&stream).is_some_and(|machine| machine.view.kind == Kind::Changes && machine.stage == DeliveryStage::Live) {
+            self.watchers.insert(stream);
+        }
         let Some(machine) = self.streams.get(&stream).filter(|machine| machine.view.kind.reads_rows() && matches!(machine.stage, DeliveryStage::Opening | DeliveryStage::Live)) else { return };
         let own = entity_row(&machine.view);
         for table in &machine.view.tables {
@@ -372,6 +378,7 @@ impl DeliveriesState {
     fn settle(&mut self, stream: StreamId) {
         let Some(machine) = self.streams.get(&stream) else { return };
         if !matches!(machine.stage, DeliveryStage::Opening | DeliveryStage::Live) {
+            self.watchers.remove(&stream);
             let own = entity_row(&machine.view);
             for table in &machine.view.tables {
                 if let Some(streams) = self.by_table.get_mut(table) {
@@ -497,7 +504,7 @@ impl StateOwner for Deliveries {
             }
             DeliveryInput::Census { reply } => {
                 let observed = state.streams.values().filter(|machine| machine.view.remote && machine.stage != DeliveryStage::Ended).count();
-                let retained = state.streams.values().filter(|machine| machine.stage == DeliveryStage::Ended && !machine.released).count();
+                let retained = state.streams.values().filter(|machine| machine.stage == DeliveryStage::Ended && !machine.released && machine.view.kind != Kind::Changes).count();
                 out.push(Effect::Run(DeliveryEffect::Census { reply, observed, retained }));
             }
             DeliveryInput::Resync { stream } => on(state, stream, &mut out, |machine, fx| machine.resync(fx)),
@@ -506,6 +513,10 @@ impl StateOwner for Deliveries {
                 for stream in state.affected(&committed) {
                     state.examined += 1;
                     on(state, stream, &mut out, |machine, fx| machine.committed(&committed, fx));
+                }
+                let watchers: Vec<StreamId> = state.watchers.iter().copied().collect();
+                for stream in watchers {
+                    on(state, stream, &mut out, |machine, fx| machine.changed(&committed, fx));
                 }
             }
             DeliveryInput::ModelsReset(reset) => every(state, &mut out, |machine, fx| machine.models_reset(&reset, fx)),

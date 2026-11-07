@@ -68,6 +68,7 @@ pub enum ReadValue {
     Operations { revision: i64, items: Vec<OperationInfo> },
     State { revision: i64, state: ReadState },
     Ready,
+    Changes { revision: i64, rows: Vec<ChangedRow> },
     /// One event of a model: the rows before and after its landing, read only while a stream of events is open.
     Event { position: u64, area: String, kind: String, id: String, before: Option<Box<WireRow>>, after: Option<Box<WireRow>> },
     Lost { first: u64, last: u64 },
@@ -98,6 +99,13 @@ pub enum ReadRequest {
     Blob { model: String, id: String, action: String },
     /// The queue of operations of the database.
     Operations,
+    Changes,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
+pub struct ChangedRow {
+    pub model: String,
+    pub id: String,
 }
 
 fn state_of(state: WindowState) -> ReadState {
@@ -165,6 +173,7 @@ fn read_value(value: Value, wire: Option<&WireModel>) -> Result<ReadValue, DbErr
         Value::Operations { revision, items } => ReadValue::Operations { revision, items },
         Value::State { revision, state } => ReadValue::State { revision, state: state_of(state) },
         Value::Ready => ReadValue::Ready,
+        Value::Changes { revision, rows } => ReadValue::Changes { revision, rows: rows.into_iter().map(|(table, id)| ChangedRow { model: table.strip_prefix("row_").unwrap_or(&table).to_string(), id }).collect() },
         Value::Event { position, payload } => event_of(position, &payload, wire),
         Value::Lost { first, last } => ReadValue::Lost { first, last },
         Value::Gap => ReadValue::Gap,
@@ -313,6 +322,7 @@ impl Database {
                 self.db.spec(model)?;
                 Ok(View { kind: Kind::Events, model: model.clone(), tables: Vec::new(), local: false, remote: false, live: false, reload: false, window: WindowKey { model: model.clone(), name: String::new() }, subject: model.clone(), query: None })
             }
+            ReadRequest::Changes => Ok(View { kind: Kind::Changes, model: String::new(), tables: Vec::new(), local: true, remote: false, live: false, reload: false, window: WindowKey { model: String::new(), name: String::new() }, subject: String::new(), query: None }),
             ReadRequest::Operations => Ok(View { kind: Kind::Operations, model: String::new(), tables: vec![crate::store::operation::QUEUE_TABLE.to_string()], local: true, remote: false, live: false, reload: false, window: WindowKey { model: String::new(), name: String::new() }, subject: String::new(), query: None }),
             ReadRequest::Blob { model, id, action } => Ok(View { kind: Kind::Blob, model: String::new(), tables: Vec::new(), local: true, remote: false, live: false, reload: false, window: WindowKey { model: String::new(), name: String::new() }, subject: crate::store::transfer_key(model, id, action), query: None }),
             ReadRequest::Entity { model, id, fetch } => {

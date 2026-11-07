@@ -49,18 +49,17 @@ extension BridgeProbeTests {
     await eventually("the signal subscription opens") { transport.calls.count == 1 }
     for burst in [0..<200, 200..<400] {
       for index in burst { try transport.emit("ChatActionSignal", json: Self.screenshot("c\(index)")) }
-      await eventuallyRead("the notices of the burst are stored") { (try? await Query<ChatActivityNotice>().read().count) == burst.upperBound }
+      await eventuallyAsync("the notices of the burst are stored") { (try? await Query<ChatActivityNotice>().read().count) == burst.upperBound }
     }
     var events: UInt64 = 0
     var lost: [(UInt64, UInt64)] = []
-    await eventuallyRead("the burst is accounted") {
-      if events + lost.reduce(0, { $0 + $1.1 - $1.0 + 1 }) >= 400 { return true }
-      switch await collector.next("the next item of the burst") {
-      case .event?: events += 1
-      case let .lost(first, last)?: lost.append((first, last))
-      default: return true
+    var stopped = false
+    await consuming(collector, "the next item of the burst", until: { stopped || events + lost.reduce(0, { $0 + $1.1 - $1.0 + 1 }) >= 400 }) { item in
+      switch item {
+      case .event: events += 1
+      case let .lost(first, last): lost.append((first, last))
+      default: stopped = true
       }
-      return events + lost.reduce(0, { $0 + $1.1 - $1.0 + 1 }) >= 400
     }
     #expect(events + lost.reduce(0, { $0 + $1.1 - $1.0 + 1 }) == 400, "kept events and lost positions add up to the events sent")
     #expect(events <= 256, "the journal kept \(events) events of a burst of 400")

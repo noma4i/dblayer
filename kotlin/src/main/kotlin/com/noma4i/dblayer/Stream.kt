@@ -168,6 +168,25 @@ fun <Model : DBModel> ValueStream.events(decoder: ModelDecoder<Model>): Flow<Mod
     }
 }
 
+sealed interface ChangeItem {
+    data object Ready : ChangeItem
+
+    class Changed(val revision: Long, val rows: List<ChangedRow>) : ChangeItem
+
+    class Ended(val cause: ReadEnd) : ChangeItem
+}
+
+internal fun ValueStream.changeItems(): Flow<ChangeItem> = flow {
+    values.collect { value ->
+        when (value) {
+            is ReadValue.Ready -> emit(ChangeItem.Ready)
+            is ReadValue.Changes -> emit(ChangeItem.Changed(value.revision, value.rows))
+            is ReadValue.Ended -> emit(ChangeItem.Ended(value.cause))
+            else -> {}
+        }
+    }
+}
+
 /** The status of a transfer at one change. */
 data class TransferProgress(val revision: Long, val state: String, val progress: ULong, val error: String?, val localUrl: String?, val processing: WireProcessing?)
 
@@ -221,6 +240,8 @@ class AccountScope private constructor(val epoch: ULong, internal val database: 
     fun <Model : DBModel> entity(decoder: ModelDecoder<Model>, id: String, fetch: ReadFetch = ReadFetch.NEVER): ValueStream = database.openValueStream(epoch, ReadRequest.Entity(decoder.modelName, id, fetch))
 
     fun <Model : DBModel> events(decoder: ModelDecoder<Model>): ValueStream = database.openValueStream(epoch, ReadRequest.Events(decoder.modelName))
+
+    fun changes(): Flow<ChangeItem> = database.openValueStream(epoch, ReadRequest.Changes).changeItems()
 
     /** The status of the transfer of `uploads[action]` of a row. */
     fun uploadStatus(row: DBModel, action: String): ValueStream = database.openValueStream(epoch, ReadRequest.Blob(row.modelName, row.id, action))

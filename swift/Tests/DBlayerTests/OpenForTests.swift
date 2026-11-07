@@ -55,6 +55,7 @@ func withUploadSteps(_ operations: String, models: String) -> String {
 func adopt(_ database: Database) async throws -> Database {
   await DB.closeForCleanup()
   DB.adopt(database)
+  await ChangePump.start(database)
   return database
 }
 

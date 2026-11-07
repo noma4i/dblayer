@@ -13,6 +13,7 @@ One owner in the core serves each stream: the query, the count, the row by id, t
 | `scope.entity(Model, id, fetch)` | One row by id. `fetch` tells when the library loads it from the server. |
 | `scope.singleton(Model)` | The one row of a model that has a single record. |
 | `scope.events(Model)` | The events of a model after the stream opened. Past events are not repeated. |
+| `scope.changes()` | One item per commit of the database that changed rows, with the `(model, id)` pairs. It reads no rows and opens no query. |
 | `scope.uploadStatus(row, action)` | The status of a media upload while it runs, with `localUrl` of the copy of the library and `processing` while the server works on the file. The last item is `ended` with the cause of the core. |
 
 ```swift
@@ -21,6 +22,7 @@ let feed = Projected<Moment>(try scope.stream(Moment.feed))
 let total = ProjectedCount(try scope.count(Moment.where(Moment.userId == id)))
 let author = Projected<User>(try scope.entity(User.self, userId, fetch: .ifMissing))
 for await item in scope.events(Message.self) { show(item) }
+for await item in scope.changes() { refresh(item) }
 ```
 
 ```kotlin
@@ -29,6 +31,7 @@ val feed = Projected(scope.stream(Moment.feed), Moment, screenScope)
 val total = ProjectedCount(scope.count(Moment.where(Moment.userId eq id)), screenScope)
 val author = Projected(scope.entity(User, userId, ReadFetch.IF_MISSING), User, screenScope)
 scope.events(Message).events(Message).collect { item -> show(item) }
+scope.changes().collect { item -> refresh(item) }
 ```
 
 A stream lives while its reader lives. Release the model or close its scope and the core drops the stream.

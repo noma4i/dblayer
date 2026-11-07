@@ -44,6 +44,7 @@ suspend fun adopt(database: Database): Database {
     } catch (_: DbException.NotOpen) {
     }
     DBlayer.adopt(database)
+    ChangePump.start(database)
     return database
 }
 

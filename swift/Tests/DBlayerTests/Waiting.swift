@@ -103,8 +103,7 @@ func eventually(
   Issue.record("timed out after \(timeout) waiting for \(what)", sourceLocation: sourceLocation)
 }
 
-/// Waits for a condition that reads the core. The state it reads changes by commits that no stream announces to the tests, so each turn is one more read: the wait is the round trip of that read, not a pause or a call that is not the check.
-func eventuallyRead(
+func eventuallyAsync(
   _ what: String = "the condition",
   timeout: Duration = hangGuard,
   isolation: isolated (any Actor)? = #isolation,
@@ -113,15 +112,31 @@ func eventuallyRead(
 ) async {
   let deadline = ContinuousClock.now + timeout
   while ContinuousClock.now < deadline {
+    let seen = TestPulse.shared.current
     if await condition() {
       return
     }
-    await Task.yield()
+    await untilPulse(after: seen, deadline: deadline)
   }
   if await condition() {
     return
   }
   Issue.record("timed out after \(timeout) waiting for \(what)", sourceLocation: sourceLocation)
+}
+
+func consuming<Sequence: AsyncSequence & SendableMetatype>(
+  _ cursor: Cursor<Sequence>,
+  _ what: String,
+  timeout: Duration = hangGuard,
+  isolation: isolated (any Actor)? = #isolation,
+  sourceLocation: SourceLocation = #_sourceLocation,
+  until done: () -> Bool,
+  apply: (Sequence.Element) -> Void
+) async where Sequence.Element: Sendable, Sequence.AsyncIterator: SendableMetatype {
+  while !done() {
+    guard let item = await cursor.next(what, timeout: timeout, sourceLocation: sourceLocation) else { return }
+    apply(item)
+  }
 }
 final class Done: @unchecked Sendable {
   private let lock = NSLock()
@@ -149,7 +164,7 @@ func finishes(
   await eventually("\(what) to return", timeout: timeout, isolation: isolation, sourceLocation: sourceLocation) { done.value }
   return done.value
 }
-func fencedUntil(_ what: String, fence: () async -> Void, sourceLocation: SourceLocation = #_sourceLocation, _ ready: () -> Bool) async {
+func fencedUntil(_ what: String, isolation: isolated (any Actor)? = #isolation, fence: () async -> Void, sourceLocation: SourceLocation = #_sourceLocation, _ ready: () -> Bool) async {
   let deadline = ContinuousClock.now + .seconds(8)
   while !ready() {
     if ContinuousClock.now > deadline {

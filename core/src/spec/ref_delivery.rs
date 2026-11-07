@@ -57,6 +57,7 @@ pub(super) enum Kind {
     Entity(Fetch),
     Count,
     Events,
+    Changes,
     Blob,
     Retry,
 }
@@ -77,6 +78,7 @@ pub(super) enum Input {
     OpenNoSession,
     OpenInvalid,
     Committed { revision: i64, touches: bool },
+    Changed { revision: i64, rows: Vec<(String, String)>, reset: bool },
     ReadDone { revision: i64, rows: Vec<Row> },
     ReadOverflow { revision: i64 },
     CountDone { revision: i64, count: u64 },
@@ -122,6 +124,7 @@ pub(super) enum Val {
     Count { revision: i64, count: u64, state: Ws },
     State { revision: i64, state: Ws },
     Ready,
+    Changes { revision: i64, rows: Vec<(String, String)> },
     Event { position: u64, payload: String },
     Lost { first: u64, last: u64 },
     Gap,
@@ -388,6 +391,7 @@ impl Delivery {
                 self.kind = kind;
                 match kind {
                     Kind::Events => { self.stage = Stage::Live; self.interested = true; fx.push(Effect::WantPlus); }
+                    Kind::Changes => { self.stage = Stage::Live; self.append(Val::Ready, fx); }
                     Kind::Blob | Kind::Retry => { self.stage = Stage::Opening; self.interested = true; fx.push(Effect::StatusInterest(true)); }
                     _ => {
                         self.stage = Stage::Opening;
@@ -470,6 +474,9 @@ impl Delivery {
             (Stage::Opening | Stage::Live, Input::EpochClosed) => self.end_now(Cause::Closed, fx),
             (Stage::Cancelling, Input::EpochClosed) => self.cause = Cause::Closed,
             (Stage::Opening | Stage::Live, Input::Closing) => self.end_now(Cause::Closed, fx),
+            (Stage::Live, Input::Changed { revision, rows, reset }) if self.kind == Kind::Changes => {
+                if !rows.is_empty() || reset { self.append(Val::Changes { revision, rows }, fx); }
+            }
             (Stage::Live, Input::Committed { revision, touches }) => {
                 if touches && self.kind.reads_rows() { self.read_revision = revision; fx.push(Effect::Read(revision)); }
             }

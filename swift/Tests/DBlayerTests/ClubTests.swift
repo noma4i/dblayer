@@ -121,14 +121,14 @@ extension BridgeProbeTests {
     transport.enqueue("SendLetter", failure: .Http(status: 422, detail: "refused again"))
     if keep {
       var attempt: MutationReceipt<Letter>?
-      await eventuallyRead("the refusal of the first attempt is recorded") {
+      await eventuallyAsync("the refusal of the first attempt is recorded") {
         do { attempt = try await Letter.retry(id: id, action: nil); return true } catch DbError.Invalid { return false } catch { return false }
       }
       let retried = try #require(attempt)
       let waiting = Task { try await retried.outcome() }
       guard case .rejected = try await valueBeforeDeadline(waiting, release: {}) else { throw WaitFailure.unexpectedOutcome }
     } else {
-      await eventuallyRead("the refused operation is gone") {
+      await eventuallyAsync("the refused operation is gone") {
         do { _ = try await Letter.retry(id: id, action: nil); return false } catch DbError.NotFound { return true } catch { return false }
       }
     }
@@ -226,11 +226,7 @@ extension BridgeProbeTests {
     let stream = try DB.account().stream(joined)
     let cursor = Cursor(stream)
     var projection = ListProjection<Person>()
-    await eventuallyRead("the first settled list", timeout: .seconds(10)) {
-      if projection.state?.settled == true { return true }
-      if let delivery = await cursor.next("the first settled list", timeout: .seconds(10)) { _ = try? projection.apply(delivery) }
-      return projection.state?.settled == true
-    }
+    await consuming(cursor, "the first settled list", timeout: .seconds(10), until: { projection.state?.settled == true }) { _ = try? projection.apply($0) }
     try #require(projection.state?.settled == true, "the list did not settle")
     await eventually("member subscription", timeout: .seconds(10)) { transport.base.calls.contains { $0.operationName == "MemberChanged" } }
     let hold = transport.base.hold("AddClubMember", reply: clubAnswer("addClubMember"))
@@ -238,11 +234,7 @@ extension BridgeProbeTests {
     let adding = Task { try await club.addMember(userIds: ["u4"]) }
     try #require(await entered(hold), "join did not reach the transport")
     try transport.base.emit("MemberChanged", json: #"{"data":{"memberChanged":{"id":"u1","name":"updated"}}}"#)
-    await eventuallyRead("the member event", timeout: .seconds(10)) {
-      if projection.rows.contains(where: { $0.id == "u1" && $0.name == "updated" }) { return true }
-      if let delivery = await cursor.next("the member event", timeout: .seconds(10)) { _ = try? projection.apply(delivery) }
-      return projection.rows.contains(where: { $0.id == "u1" && $0.name == "updated" })
-    }
+    await consuming(cursor, "the member event", timeout: .seconds(10), until: { projection.rows.contains(where: { $0.id == "u1" && $0.name == "updated" }) }) { _ = try? projection.apply($0) }
     try #require(projection.rows.contains { $0.id == "u1" && $0.name == "updated" })
     #expect(projection.rows.map(\.id).contains("u4"))
     let receipt = try await valueBeforeDeadline(adding) { hold.release() }
@@ -549,7 +541,7 @@ extension BridgeProbeTests {
     let waiting = Task { try await receipt.outcome() }
     let outcome = try await valueBeforeDeadline(waiting) { hold.release() }
     if case .rejected = outcome { #expect(refusal) } else { #expect(!refusal) }
-    await eventuallyRead("the club list after the outcome") { ((try? await Club.ids([club.id]).read().map(\.id)) ?? ["?"]) == (refusal ? [club.id] : []) }
+    await eventuallyAsync("the club list after the outcome") { ((try? await Club.ids([club.id]).read().map(\.id)) ?? ["?"]) == (refusal ? [club.id] : []) }
   }
 
   /// K12: a forward into the same chat and into another chat leaves the source row unchanged, upserts the answer row in its own chat, and the call returns the answer row.
@@ -598,6 +590,6 @@ extension BridgeProbeTests {
     let waiting = Task { try await receipt.outcome() }
     let result = try await valueBeforeDeadline(waiting) { hold.release() }
     if case .rejected = result { #expect(refusal) } else { #expect(!refusal) }
-    await eventuallyRead("the target thread shows the outcome") { ((try? await thread.read().map(\.id)) ?? ["?"]) == (refusal ? [] : ["fwd-1"]) }
+    await eventuallyAsync("the target thread shows the outcome") { ((try? await thread.read().map(\.id)) ?? ["?"]) == (refusal ? [] : ["fwd-1"]) }
   }
 }

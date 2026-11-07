@@ -188,7 +188,8 @@ extension BridgeProbeTests {
     #expect(try await DB.subscriptionCensus().observedQueries == 1)
 
     projected = nil
-    await eventuallyRead("the stream left the core") { (try? await DB.subscriptionCensus().observedQueries) == 0 }
+    var observed: UInt64 = 1
+    await fencedUntil("the stream left the core", fence: { observed = (try? await DB.subscriptionCensus().observedQueries) ?? 1 }) { observed == 0 }
   }
 
   /// B07: a change of one row decodes one row, and the subscriptions are the readers.
@@ -330,11 +331,7 @@ extension BridgeProbeTests {
     let cursor = Cursor(stream)
     var projection = ListProjection<Moment>()
     var received = 0
-    await eventuallyRead("the first settled snapshot") {
-      if projection.state?.settled == true { return true }
-      if let value = await cursor.next("the first settled snapshot") { _ = try? projection.apply(value) }
-      return projection.state?.settled == true
-    }
+    await consuming(cursor, "the first settled snapshot", until: { projection.state?.settled == true }) { _ = try? projection.apply($0) }
     try DB.database.setOnline(online: false)
     for number in 1...300 { _ = try await scope.send(Moment.self, values: ["text": .string("m\(number)")]) }
     for _ in 0..<400 {

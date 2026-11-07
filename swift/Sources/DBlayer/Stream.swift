@@ -208,6 +208,35 @@ public struct EventStream<Model: DBModel>: AsyncSequence, Sendable {
   public func makeAsyncIterator() -> AsyncIterator { AsyncIterator(inner: stream.makeAsyncIterator()) }
 }
 
+public enum ChangeItem: Sendable, Equatable {
+  case ready
+  case changed(revision: Int64, rows: [ChangedRow])
+  case ended(ReadEnd)
+}
+
+public struct ChangeStream: AsyncSequence, Sendable {
+  public typealias Element = ChangeItem
+  public let stream: ValueStream
+
+  public struct AsyncIterator: AsyncIteratorProtocol {
+    var inner: ValueStream.AsyncIterator
+
+    public mutating func next() async -> ChangeItem? {
+      while let value = await inner.next() {
+        switch value {
+        case .ready: return .ready
+        case let .changes(revision, rows): return .changed(revision: revision, rows: rows)
+        case let .ended(cause): return .ended(cause)
+        default: continue
+        }
+      }
+      return nil
+    }
+  }
+
+  public func makeAsyncIterator() -> AsyncIterator { AsyncIterator(inner: stream.makeAsyncIterator()) }
+}
+
 /// The status of a transfer at one change.
 public struct TransferProgress: Sendable, Equatable {
   public let revision: Int64
@@ -315,6 +344,10 @@ public struct AccountScope: Sendable {
 
   public func events<Model: DBModel>(_: Model.Type) -> EventStream<Model> {
     EventStream<Model>(stream: database.openValueStream(epoch: epoch, request: .events(model: Model.modelName)))
+  }
+
+  public func changes() -> ChangeStream {
+    ChangeStream(stream: database.openValueStream(epoch: epoch, request: .changes))
   }
 
   /// The status of the transfer of `uploads[action]` of a row.
