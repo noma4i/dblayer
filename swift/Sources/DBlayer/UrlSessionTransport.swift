@@ -53,9 +53,9 @@ public final class UrlSessionTransport: Transport, EncryptedHttp, @unchecked Sen
 
   private func part(_ file: PutFile) throws -> Data {
     let handle = try FileHandle(forReadingFrom: URL(fileURLWithPath: file.path))
-    defer { try? handle.close() }
     try handle.seek(toOffset: file.offset)
     let bytes = try handle.read(upToCount: Int(file.length)) ?? Data()
+    try handle.close()
     guard UInt64(bytes.count) == file.length else { throw URLError(.cannotDecodeRawData) }
     return bytes
   }

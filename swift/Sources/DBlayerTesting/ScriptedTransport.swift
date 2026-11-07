@@ -16,8 +16,8 @@ public struct TransportRequest: Sendable, Equatable {
   }
 
   init(_ request: HttpRequest) {
-    let body = (try? JSONSerialization.jsonObject(with: Data(request.body.utf8))) as? [String: Any] ?? [:]
-    let variables = body["variables"].flatMap { try? JSONSerialization.data(withJSONObject: $0, options: [.sortedKeys, .fragmentsAllowed]) }
+    let body = try! JSONSerialization.jsonObject(with: Data(request.body.utf8)) as! [String: Any]
+    let variables = body["variables"].map { try! JSONSerialization.data(withJSONObject: $0, options: [.sortedKeys, .fragmentsAllowed]) }
     self.init(document: body["query"] as? String ?? "", operationName: body["operationName"] as? String ?? "", variablesJson: variables.map { String(decoding: $0, as: UTF8.self) } ?? "{}", purpose: request.purpose)
   }
 }
@@ -62,7 +62,7 @@ extension RawOutcome {
     case .Security(.tlsTrust, let detail): return .failed(failure: RawFailure.scripted(.tls, detail))
     case let .Graphql(messages, _):
       let errors = messages.map { ["message": $0, "extensions": ["code": $0]] as [String: Any] }
-      let body = (try? JSONSerialization.data(withJSONObject: ["errors": errors])).map { String(decoding: $0, as: UTF8.self) } ?? "{}"
+      let body = String(decoding: try! JSONSerialization.data(withJSONObject: ["errors": errors]), as: UTF8.self)
       return .response(status: 200, etag: nil, body: body)
     default: return .failed(failure: RawFailure.scripted(.io, "\(error)"))
     }
