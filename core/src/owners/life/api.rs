@@ -5,7 +5,7 @@ use std::sync::atomic::Ordering;
 
 use super::{Life, LifeReply, WAITER_AUTHORS};
 use crate::owners::calls::{CallKind, CallsInput};
-use crate::owners::contract::{BatchAuthor, BatchId, CredentialCommitted, RequestId};
+use crate::owners::contract::{BatchAuthor, BatchId, RequestId};
 use crate::owners::store::StoreReply;
 use crate::owners::lifecycle::LifecycleInput;
 use crate::owners::network::NetworkInput;
@@ -167,8 +167,8 @@ impl Life {
         waiter
     }
 
-    /// Until `Session` executes the sign-in, the old path reports the committed credential here.
-    pub fn credential_committed(&self, identity: u64) { self.wiring.to_lifecycle(LifecycleInput::CredentialCommitted(CredentialCommitted { identity })); }
+    #[cfg(test)]
+    pub fn credential_committed(&self, identity: u64) { self.wiring.to_lifecycle(LifecycleInput::CredentialCommitted(crate::owners::contract::CredentialCommitted { identity })); }
 
     pub fn close(&self) -> Waiter<LifeReply> {
         if self.shut.load(Ordering::SeqCst) { return self.settled(LifeReply::Closed); }

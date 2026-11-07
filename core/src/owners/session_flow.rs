@@ -18,6 +18,7 @@ impl SessionState {
 
     pub fn subscribers(&self) -> usize { self.subscribers.len() }
 
+    #[cfg(test)]
     pub fn awaiting_publication(&self) -> Option<(ReplyId, PublishWait)> { self.after_publish.as_ref().map(|held| (held.reply, held.wait)) }
 
     pub fn restored_direct(&self) -> Option<&PendingCall> { self.restored_direct.as_ref() }

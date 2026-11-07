@@ -174,6 +174,7 @@ fn remove(connection: &Connection, key: &SyncKey) -> rusqlite::Result<()> {
     Ok(())
 }
 
+#[cfg(test)]
 pub fn recompute_sync(connection: &Connection, keys: &BTreeSet<SyncKey>) -> rusqlite::Result<BTreeSet<SyncKey>> {
     recompute_sync_with(connection, keys, &|_| false)
 }
@@ -199,6 +200,7 @@ pub fn recompute_sync_with(connection: &Connection, keys: &BTreeSet<SyncKey>, ba
     Ok(changed)
 }
 
+#[cfg(test)]
 pub fn rebuild_sync(connection: &Connection) -> rusqlite::Result<usize> {
     rebuild_sync_with(connection, &|_| false)
 }

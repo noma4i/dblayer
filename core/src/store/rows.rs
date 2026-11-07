@@ -367,6 +367,7 @@ impl Store {
         self.read(&[model], |reader| reader.point(model, id))
     }
 
+    #[cfg(test)]
     pub fn rows_by_ids(&self, model: &str, ids: &[RowId]) -> Result<Vec<Map<String, Value>>, StoreError> {
         let names: Vec<String> = ids.iter().map(|id| id.as_str().to_string()).collect();
         let mut stored = self.read(&[model], |reader| reader.stored_rows(model, &names))?;

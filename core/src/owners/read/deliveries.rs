@@ -325,12 +325,14 @@ impl DeliveriesState {
 
     pub fn stage(&self, stream: StreamId) -> Option<DeliveryStage> { self.streams.get(&stream).map(|machine| machine.stage) }
 
+    #[cfg(test)]
     pub fn journal_len(&self, stream: StreamId) -> usize { self.streams.get(&stream).map_or(0, |machine| machine.journal.len()) }
 
     pub fn read_id(&self, stream: StreamId) -> u64 { self.streams.get(&stream).map_or(0, |machine| machine.read_id) }
 
     pub fn streams(&self) -> usize { self.streams.len() }
 
+    #[cfg(test)]
     pub fn streams_examined(&self) -> u64 { self.examined }
 
     fn index(&mut self, stream: StreamId) {

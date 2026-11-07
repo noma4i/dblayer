@@ -48,6 +48,7 @@ impl CompiledStatement {
         self.sql.matches('?').count()
     }
 
+    #[cfg(test)]
     pub fn is_balanced(&self) -> bool {
         self.placeholder_count() == self.bindings.len()
     }

@@ -59,6 +59,7 @@ impl Where {
         Where::Compare { field: field.to_string(), op, value }
     }
 
+    #[cfg(test)]
     pub fn in_list(field: &str, values: Vec<Value>) -> Self {
         Where::InList { field: field.to_string(), values }
     }

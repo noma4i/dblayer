@@ -142,6 +142,7 @@ impl FieldSpec {
         Self { indexed: true, ..self }
     }
 
+    #[cfg(test)]
     pub fn with_default(self, value: Value) -> Self {
         Self { default: Some(value), ..self }
     }

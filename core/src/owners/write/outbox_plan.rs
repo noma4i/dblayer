@@ -79,6 +79,7 @@ pub fn scope_changes(view: &dyn PlanView, target: &ModelSpec, effect: &ScopeEffe
     Ok(changes)
 }
 
+#[cfg(test)]
 /// The rows an action that removes its receiver tombstones: the receiver and what depends on it. The lists drop a tombstoned row, the rollback gives it back in place.
 pub fn receiver_tombstones(view: &dyn PlanView, model: &str, id: &str) -> Result<Vec<(String, String)>, PlanError> { view.removed_with(model, id) }
 
