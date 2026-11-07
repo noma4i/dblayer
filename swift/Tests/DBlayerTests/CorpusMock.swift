@@ -11,7 +11,6 @@ final class CorpusMock: Transport, EncryptedHttp, @unchecked Sendable {
   private var waiting: [String: CheckedContinuation<String, Error>] = [:]
   private var waitingPuts: [String: CheckedContinuation<PutReply, Error>] = [:]
   private var waitingHttp: [String: (request: [String: Any], continuation: CheckedContinuation<EncryptedReply, Error>)] = [:]
-  private var sinks: [String: SubscriptionSink] = [:]
   private var cables: [String: String] = [:]
   private let sealed: SealedServer = { do { return try SealedServer { _, _ in [:] } } catch { fatalError("\(error)") } }()
   private lazy var peer = EncryptedCablePeer(server: sealed)
@@ -78,7 +77,6 @@ final class CorpusMock: Transport, EncryptedHttp, @unchecked Sendable {
     if let continuation = lock.withLock({ waiting.removeValue(forKey: id) }) { continuation.resume(throwing: error); return true }
     if let continuation = lock.withLock({ waitingPuts.removeValue(forKey: id) }) { continuation.resume(throwing: error); return true }
     if let held = lock.withLock({ waitingHttp.removeValue(forKey: id) }) { held.continuation.resume(throwing: error); return true }
-    if let sink = lock.withLock({ sinks.removeValue(forKey: id) }) { sink.failed(error: error); return true }
     if let token = lock.withLock({ cables.removeValue(forKey: id) }) { return (try? peer.drop(token: token)) != nil }
     return false
   }
@@ -99,18 +97,12 @@ final class CorpusMock: Transport, EncryptedHttp, @unchecked Sendable {
   }
 
   func ready(_ id: String) -> Bool {
-    guard let sink = lock.withLock({ sinks[id] }) else { return lock.withLock { cables[id] != nil } }
-    sink.ready()
-    return true
+    lock.withLock { cables[id] != nil }
   }
 
   func frame(_ id: String, _ event: String) throws -> Bool {
-    guard let sink = lock.withLock({ sinks[id] }) else {
-      guard let token = lock.withLock({ cables[id] }), let result = try JSONSerialization.jsonObject(with: Data(event.utf8)) as? [String: Any] else { return false }
-      return try peer.event(token: token, result: result)
-    }
-    try sink.event(json: event)
-    return true
+    guard let token = lock.withLock({ cables[id] }), let result = try JSONSerialization.jsonObject(with: Data(event.utf8)) as? [String: Any] else { return false }
+    return try peer.event(token: token, result: result)
   }
 
   private func wait(_ kind: String, _ request: TransportRequest) async throws -> String {
@@ -134,14 +126,6 @@ final class CorpusMock: Transport, EncryptedHttp, @unchecked Sendable {
   func cableClose(token: String) async { await peer.cableClose(token: token) }
   func query(request: TransportRequest) async throws -> String { try await wait("query", request) }
   func mutate(request: TransportRequest) async throws -> String { try await wait("mutation", request) }
-
-  func subscribe(request: TransportRequest, sink: SubscriptionSink) async throws {
-    let id = record("subscription", request.purpose)
-    try sink.opened(token: id)
-    lock.withLock { sinks[id] = sink }
-  }
-
-  func unsubscribe(token: String) { lock.withLock { _ = sinks.removeValue(forKey: token) } }
 
   func put(url: String, headers: [String: String], file: PutFile, identity: TransferIdentity, progress: ByteProgress) async throws -> PutReply {
     let id = record("put", .transfer)

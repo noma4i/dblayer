@@ -43,7 +43,6 @@
 - A refused sessionless call reports a network error without the HTTP status.
 - `UrlSessionTransport` and `OkHttpTransport` have no `cablePath`. `Transport.openCable` receives the WebSocket address built by the core.
 - `EntityFetch.none` is `EntityFetch.never` in Swift and `EntityFetch.NEVER` in Kotlin.
-- `UrlSessionTransport` and `OkHttpTransport` refuse `subscribe`: server events arrive on the encrypted cable.
 - `Projected.loaded()` returns for any load error while rows exist; the state shows the error in the `Loaded` phase. It throws only in the `Failed` phase.
 - `Query.beginLoad` reads its arguments off the caller's thread; the interest of the caller exists when the call returns.
 - `Query.loadAll` gives up its pages when the caller's task or coroutine is cancelled. The core call is `Database.beginLoadAll`, which returns a `LoadRequest`; `Database.loadAll` is removed.
@@ -215,6 +214,7 @@
 - `streamLoaded`, `ValueStream.loaded()` and `ValueSink.delivered`: read the state and `readStream`.
 - `StreamValue.missed` and `ModelEventItem.missed`: use `lost` with its range.
 - `Database.load`: use `beginLoad` or `Query.load`.
+- `Transport.subscribe`, `Transport.unsubscribe` and `SubscriptionSink` are gone: server events arrive on the encrypted cable.
 
 ## 6.16.1 - 2026-11-03
 

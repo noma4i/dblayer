@@ -35,8 +35,6 @@ final class SwitchableTransport: Transport, WrapsMock, @unchecked Sendable {
   func cableClose(token: String) async { await target?.cableClose(token: token) }
   func query(request: TransportRequest) async throws -> String { try await resolve().query(request: request) }
   func mutate(request: TransportRequest) async throws -> String { try await resolve().mutate(request: request) }
-  func subscribe(request: TransportRequest, sink: SubscriptionSink) async throws { try await resolve().subscribe(request: request, sink: sink) }
-  func unsubscribe(token: String) { target?.unsubscribe(token: token) }
   func put(url: String, headers: [String: String], file: PutFile, identity: TransferIdentity, progress: ByteProgress) async throws -> PutReply {
     try await resolve().put(url: url, headers: headers, file: file, identity: identity, progress: progress)
   }

@@ -15,7 +15,6 @@ class CorpusMock : Transport, EncryptedHttp {
     private val waitingPuts = ConcurrentHashMap<String, CompletableDeferred<PutReply>>()
     private val waitingHttp = ConcurrentHashMap<String, Pair<JsonObject, CompletableDeferred<EncryptedReply>>>()
     private val sealed = SealedServer { _, _ -> JsonObject(emptyMap()) }
-    private val sinks = ConcurrentHashMap<String, SubscriptionSink>()
     private val cables = ConcurrentHashMap<String, String>()
     private val peer = EncryptedCablePeer(sealed)
 
@@ -68,7 +67,6 @@ class CorpusMock : Transport, EncryptedHttp {
         waiting.remove(id)?.let { return it.completeExceptionally(error) }
         waitingPuts.remove(id)?.let { return it.completeExceptionally(error) }
         waitingHttp.remove(id)?.let { return it.second.completeExceptionally(error) }
-        sinks.remove(id)?.let { it.failed(error); return true }
         cables.remove(id)?.let { token -> bounded { peer.drop(token) }; return true }
         return false
     }
@@ -80,10 +78,9 @@ class CorpusMock : Transport, EncryptedHttp {
         for (id in waitingHttp.keys.toList()) waitingHttp.remove(id)?.second?.completeExceptionally(DbException.Interrupted("closed"))
     }
 
-    fun ready(id: String): Boolean = sinks[id]?.let { it.ready(); true } ?: cables.containsKey(id)
+    fun ready(id: String): Boolean = cables.containsKey(id)
 
     fun frame(id: String, event: String): Boolean {
-        sinks[id]?.let { it.event(event); return true }
         val token = cables[id] ?: return false
         val result = kotlinx.serialization.json.Json.parseToJsonElement(event) as? JsonObject ?: return false
         return peer.event(token, result)
@@ -114,14 +111,6 @@ class CorpusMock : Transport, EncryptedHttp {
     override suspend fun cableClose(token: String) = peer.cableClose(token)
     override suspend fun query(request: TransportRequest): String = wait("query", request)
     override suspend fun mutate(request: TransportRequest): String = wait("mutation", request)
-
-    override suspend fun subscribe(request: TransportRequest, sink: SubscriptionSink) {
-        val id = record("subscription", request.purpose)
-        sink.opened(id)
-        sinks[id] = sink
-    }
-
-    override fun unsubscribe(token: String) { sinks.remove(token) }
 
     override suspend fun put(url: String, headers: Map<String, String>, file: PutFile, identity: TransferIdentity, progress: ByteProgress): PutReply {
         val id = record("put", NetworkPurpose.TRANSFER)

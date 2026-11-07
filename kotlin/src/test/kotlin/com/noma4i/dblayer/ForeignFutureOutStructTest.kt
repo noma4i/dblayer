@@ -22,8 +22,6 @@ class ForeignFutureOutStructTest {
         override suspend fun cableClose(token: String) {}
         override suspend fun query(request: TransportRequest): String = "{}"
         override suspend fun mutate(request: TransportRequest): String = "{}"
-        override suspend fun subscribe(request: TransportRequest, sink: SubscriptionSink) {}
-        override fun unsubscribe(token: String) {}
         override suspend fun put(url: String, headers: Map<String, String>, file: PutFile, identity: TransferIdentity, progress: ByteProgress): PutReply = PutReply(200u, null)
     }
 

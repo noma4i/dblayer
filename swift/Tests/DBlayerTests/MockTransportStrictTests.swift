@@ -35,13 +35,6 @@ struct MockTransportStrictTests {
     }
     #expect(transport.unscripted.isEmpty)
   }
-
-  @Test
-  func anUnknownTokenIsRecorded() {
-    let transport = MockTransport()
-    transport.unsubscribe(token: "never-issued")
-    #expect(transport.unknownTokens == ["never-issued"])
-  }
 }
 
 extension BridgeProbeTests {

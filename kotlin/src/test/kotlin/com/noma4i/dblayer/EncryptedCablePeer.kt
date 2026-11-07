@@ -164,7 +164,5 @@ class EncryptedCablePeer(private val server: SealedServer) : CablePeer {
     override suspend fun cableClose(token: String) { connections[token]?.events?.close(); closed.send(token) }
     override suspend fun query(request: TransportRequest): String = throw DbException.Invalid("unexpected plain query")
     override suspend fun mutate(request: TransportRequest): String = throw DbException.Invalid("unexpected plain mutation")
-    override suspend fun subscribe(request: TransportRequest, sink: SubscriptionSink) { throw DbException.Invalid("unexpected plain subscription") }
-    override fun unsubscribe(token: String) {}
     override suspend fun put(url: String, headers: Map<String, String>, file: PutFile, identity: TransferIdentity, progress: ByteProgress): PutReply = throw DbException.Invalid("unexpected upload")
 }

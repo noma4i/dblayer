@@ -32,8 +32,6 @@ private final class MultipartTransfer: Transport, @unchecked Sendable {
   func cableClose(token: String) async { await mock.cableClose(token: token) }
   func query(request: TransportRequest) async throws -> String { try await mock.query(request: request) }
   func mutate(request: TransportRequest) async throws -> String { try await mock.mutate(request: request) }
-  func subscribe(request: TransportRequest, sink: SubscriptionSink) async throws { try await mock.subscribe(request: request, sink: sink) }
-  func unsubscribe(token: String) { mock.unsubscribe(token: token) }
   func put(url: String, headers: [String: String], file: PutFile, identity: TransferIdentity, progress: ByteProgress) async throws -> PutReply {
     lock.withLock { urls.append(url); captured.append(identity); capturedPaths.append((identity.itemId, URL(fileURLWithPath: file.path).resolvingSymlinksInPath().path)) }
     return PutReply(status: 200, etag: "etag")
@@ -69,8 +67,6 @@ private final class HoldSecondFile: Transport, @unchecked Sendable {
   func cableClose(token: String) async { await mock.cableClose(token: token) }
   func query(request: TransportRequest) async throws -> String { try await mock.query(request: request) }
   func mutate(request: TransportRequest) async throws -> String { try await mock.mutate(request: request) }
-  func subscribe(request: TransportRequest, sink: SubscriptionSink) async throws { try await mock.subscribe(request: request, sink: sink) }
-  func unsubscribe(token: String) { mock.unsubscribe(token: token) }
   func put(url: String, headers: [String: String], file: PutFile, identity: TransferIdentity, progress: ByteProgress) async throws -> PutReply {
     let first = lock.withLock { captured.append(identity); count += 1; return count == 1 }
     if first { server.hold(operation: "CreateBlob") }
@@ -100,8 +96,6 @@ private final class RefuseFirstFile: Transport, @unchecked Sendable {
     let first = lock.withLock { () -> Bool in defer { refused = true }; return !refused }
     return first ? #"{"errors":[{"message":"no storage","extensions":{"code":"FORBIDDEN"}}]}"# : answer
   }
-  func subscribe(request: TransportRequest, sink: SubscriptionSink) async throws { try await mock.subscribe(request: request, sink: sink) }
-  func unsubscribe(token: String) { mock.unsubscribe(token: token) }
   func put(url: String, headers: [String: String], file: PutFile, identity: TransferIdentity, progress: ByteProgress) async throws -> PutReply {
     try await mock.put(url: url, headers: headers, file: file, identity: identity, progress: progress)
   }

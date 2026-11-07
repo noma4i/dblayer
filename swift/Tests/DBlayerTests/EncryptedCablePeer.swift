@@ -150,7 +150,5 @@ final class EncryptedCablePeer: CablePeer, @unchecked Sendable {
   }
   func query(request: TransportRequest) async throws -> String { throw DbError.Invalid(detail: "unexpected plain query") }
   func mutate(request: TransportRequest) async throws -> String { throw DbError.Invalid(detail: "unexpected plain mutation") }
-  func subscribe(request: TransportRequest, sink: SubscriptionSink) async throws { throw DbError.Invalid(detail: "unexpected plain subscription") }
-  func unsubscribe(token: String) {}
   func put(url: String, headers: [String: String], file: PutFile, identity: TransferIdentity, progress: ByteProgress) async throws -> PutReply { throw DbError.Invalid(detail: "unexpected upload") }
 }

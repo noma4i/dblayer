@@ -55,11 +55,4 @@ class MockTransportStrictTest {
         assertTrue(outcome(transport) is DbException.Network)
         assertEquals(emptyList<TransportRequest>(), transport.claimUnscripted())
     }
-
-    @Test
-    fun anUnknownTokenIsRecordedWithoutThrowing() {
-        val transport = MockTransport()
-        try { transport.unsubscribe("never-issued") } catch (error: Throwable) { fail("unsubscribe threw $error") }
-        assertEquals(listOf("never-issued"), transport.unknownTokens.toList())
-    }
 }

@@ -31,10 +31,6 @@ private final class MemberEventsTransport: Transport, WrapsMock, @unchecked Send
   func cableClose(token: String) async { await base.cableClose(token: token) }
   func query(request: TransportRequest) async throws -> String { try await base.query(request: request) }
   func mutate(request: TransportRequest) async throws -> String { try await base.mutate(request: request) }
-  func subscribe(request: TransportRequest, sink: SubscriptionSink) async throws {
-    try await base.subscribe(request: request, sink: sink)
-  }
-  func unsubscribe(token: String) { base.unsubscribe(token: token) }
   func put(url: String, headers: [String: String], file: PutFile, identity: TransferIdentity, progress: ByteProgress) async throws -> PutReply {
     try await base.put(url: url, headers: headers, file: file, identity: identity, progress: progress)
   }

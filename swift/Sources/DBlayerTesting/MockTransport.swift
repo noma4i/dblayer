@@ -13,7 +13,7 @@ public protocol CablePeer: Transport {
   func event(operation: String, result: String) throws -> Bool
 }
 
-/// Answers by operation name, can delay or fail answers, and lets a test push or break a subscription.
+/// Answers by operation name, can delay or fail answers, and lets a test push a cable event.
 public final class MockTransport: Transport, @unchecked Sendable {
   private struct Reply {
     let body: String?
@@ -24,10 +24,7 @@ public final class MockTransport: Transport, @unchecked Sendable {
 
   private let lock = NSLock()
   private var replies: [String: [Reply]] = [:]
-  private var sinks: [String: SubscriptionSink] = [:]
   private var recorded: [TransportRequest] = []
-  private var issuedTokens: Set<String> = []
-  private var unknown: [String] = []
 
   private let unanswered: Unanswered
   private var missed: [TransportRequest] = []
@@ -77,7 +74,6 @@ public final class MockTransport: Transport, @unchecked Sendable {
   public func cableClose(token: String) async { await cable?.cableClose(token: token) }
 
   public var calls: [TransportRequest] { lock.withLock { recorded } }
-  public var unknownTokens: [String] { lock.withLock { unknown } }
 
   public func enqueue(_ operation: String, reply: String, delay: TimeInterval = 0) {
     lock.withLock { replies[operation, default: []].append(Reply(body: reply, failure: nil, delay: delay)) }
@@ -95,29 +91,11 @@ public final class MockTransport: Transport, @unchecked Sendable {
   }
 
   public func emit(_ operation: String, json: String) throws {
-    if let sink = lock.withLock({ sinks[operation] }) { try sink.event(json: json); return }
     _ = try cable?.event(operation: operation, result: json)
-  }
-
-  public func breakSubscription(_ operation: String) {
-    lock.withLock { sinks.removeValue(forKey: operation) }?.failed(error: .Network(detail: "connection lost"))
   }
 
   public func query(request: TransportRequest) async throws -> String { try await answer(request) }
   public func mutate(request: TransportRequest) async throws -> String { try await answer(request) }
-
-  public func subscribe(request: TransportRequest, sink: SubscriptionSink) async throws {
-    lock.withLock { recorded.append(request); sinks[request.operationName] = sink; issuedTokens.insert(request.operationName) }
-    try sink.opened(token: request.operationName)
-    sink.ready()
-  }
-
-  public func unsubscribe(token: String) {
-    lock.withLock {
-      if !issuedTokens.contains(token) { unknown.append(token) }
-      _ = sinks.removeValue(forKey: token)
-    }
-  }
 
   public func put(url: String, headers: [String: String], file: PutFile, identity: TransferIdentity, progress: ByteProgress) async throws -> PutReply {
     progress.sent(bytes: file.length)

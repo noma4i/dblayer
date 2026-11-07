@@ -22,8 +22,6 @@ private final class PageTransport: Transport, @unchecked Sendable {
   }
 
   func mutate(request: TransportRequest) async throws -> String { try await mock.mutate(request: request) }
-  func subscribe(request: TransportRequest, sink: SubscriptionSink) async throws { try await mock.subscribe(request: request, sink: sink) }
-  func unsubscribe(token: String) { mock.unsubscribe(token: token) }
   func openCable(lease: CableLease, url: String) async throws { try await mock.openCable(lease: lease, url: url) }
   func cableSend(token: String, text: String) async throws { try await mock.cableSend(token: token, text: text) }
   func cableNext(token: String) async -> EncryptedSocketEvent? { await mock.cableNext(token: token) }

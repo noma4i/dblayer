@@ -90,9 +90,6 @@ class MockTransport(private val unanswered: Unanswered = Unanswered.Strict) : Tr
     private class Reply(val body: String?, val failure: DbException?, val delayMillis: Long, val hold: Hold? = null)
 
     private val replies = ConcurrentHashMap<String, java.util.ArrayDeque<Reply>>()
-    private val sinks = ConcurrentHashMap<String, SubscriptionSink>()
-    private val issuedTokens = ConcurrentHashMap.newKeySet<String>()
-    val unknownTokens = CopyOnWriteArrayList<String>()
     private val recorded = CopyOnWriteArrayList<TransportRequest>()
 
     val calls: List<TransportRequest> get() { failTestThread(); return recorded.toList() }
@@ -115,29 +112,12 @@ class MockTransport(private val unanswered: Unanswered = Unanswered.Strict) : Tr
 
     fun emit(operation: String, json: String) {
         failTestThread()
-        val sink = sinks[operation]
-        if (sink != null) sink.event(json) else cable?.event(operation, json)
+        cable?.event(operation, json)
     }
-
-    fun breakSubscription(operation: String) { failTestThread(); sinks.remove(operation)?.failed(DbException.Network("connection lost")) }
 
     override suspend fun query(request: TransportRequest): String = answer(request)
 
     override suspend fun mutate(request: TransportRequest): String = answer(request)
-
-    override suspend fun subscribe(request: TransportRequest, sink: SubscriptionSink) {
-        recorded.add(request)
-        sinks[request.operationName] = sink
-        issuedTokens.add(request.operationName)
-        sink.opened(request.operationName)
-        sink.ready()
-    }
-
-    override fun unsubscribe(token: String) {
-        failTestThread()
-        if (token !in issuedTokens) unknownTokens.add(token)
-        sinks.remove(token)
-    }
 
     override suspend fun put(url: String, headers: Map<String, String>, file: PutFile, identity: TransferIdentity, progress: ByteProgress): PutReply {
         progress.sent(file.length)

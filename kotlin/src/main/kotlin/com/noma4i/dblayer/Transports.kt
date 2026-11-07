@@ -43,12 +43,6 @@ class OkHttpTransport(
 
     override suspend fun mutate(request: TransportRequest): String = post(request, GraphQLOperationKind.Mutation)
 
-    override suspend fun subscribe(request: TransportRequest, sink: SubscriptionSink) {
-        throw DbException.Invalid("server events arrive on the encrypted cable")
-    }
-
-    override fun unsubscribe(token: String) {}
-
     override suspend fun put(url: String, headers: Map<String, String>, file: PutFile, identity: TransferIdentity, progress: ByteProgress): PutReply =
         putFile(client, url, headers, file, progress, routed = true)
 }

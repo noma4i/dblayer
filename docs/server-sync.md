@@ -68,7 +68,7 @@ object ArchiveGroupMutation : GraphQLOperation {
 }
 ```
 
-The transport is an interface with nine calls: `query`, `mutate`, `subscribe`, `unsubscribe`, `openCable`, `cableSend`, `cableNext`, `cableClose` and `put`. Your app gets HTTP and WebSocket implementations for each platform (`UrlSessionTransport`, `OkHttpTransport`). Tests use a mock transport. A REST transport implements the same interface, see [your own transport](cable-protocol.md#your-own-transport).
+The transport is an interface with seven calls: `query`, `mutate`, `openCable`, `cableSend`, `cableNext`, `cableClose` and `put`. Your app gets HTTP and WebSocket implementations for each platform (`UrlSessionTransport`, `OkHttpTransport`). Tests use a mock transport. A REST transport implements the same interface, see [your own transport](cable-protocol.md#your-own-transport).
 
 ## Encrypted session
 

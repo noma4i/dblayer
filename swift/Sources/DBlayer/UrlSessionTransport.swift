@@ -41,12 +41,6 @@ public final class UrlSessionTransport: Transport, @unchecked Sendable {
     return String(decoding: data, as: UTF8.self)
   }
 
-  public func subscribe(request: TransportRequest, sink: SubscriptionSink) async throws {
-    throw DbError.Invalid(detail: "server events arrive on the encrypted cable")
-  }
-
-  public func unsubscribe(token: String) {}
-
   public func put(url: String, headers: [String: String], file: PutFile, identity: TransferIdentity, progress: ByteProgress) async throws -> PutReply {
     guard let target = URL(string: url) else { throw DbError.Invalid(detail: "bad upload url") }
     guard file.offset == 0 else { throw DbError.Invalid(detail: "an upload sends a whole file") }
