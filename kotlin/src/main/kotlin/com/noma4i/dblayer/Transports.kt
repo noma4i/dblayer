@@ -31,7 +31,6 @@ internal suspend fun putFile(client: OkHttpClient, url: String, headers: Map<Str
                 val buffer = ByteArray(64 * 1024)
                 var sent = 0L
                 while (sent < file.length.toLong()) {
-                    if (progress.isCancelled()) throw java.io.IOException("Canceled")
                     val read = input.read(buffer, 0, minOf(buffer.size.toLong(), file.length.toLong() - sent).toInt())
                     if (read < 0) throw java.io.EOFException("the upload file is shorter than ${file.length} bytes")
                     sink.write(buffer, 0, read)

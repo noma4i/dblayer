@@ -113,3 +113,36 @@ async fn a_load_after_a_reset_without_a_sign_in_is_refused_with_no_session() {
     assert_eq!(stand.script.count("UserProfile"), 0);
     database.close_now();
 }
+
+/// xfer_prop_put_cancel_pushes (P-XFER-34, D-140): a PUT double that never reads the flag is cancelled by the core dropping its future, for the cancel of the upload and for the end of the epoch. The wait ends and `settled` returns before the double is released, and the release brings no second PUT or step.
+#[tokio::test(flavor = "multi_thread")]
+async fn xfer_prop_put_cancel_pushes() {
+    for cause in ["cancel_upload", "session_reset"] {
+        let stand = Stand::new();
+        let database = stand.open(None, &[CREATE_MOMENT, PROFILE]).await;
+        let directory = tempfile::tempdir().unwrap();
+        let file = directory.path().join("clip.mp4");
+        std::fs::write(&file, b"clip").unwrap();
+        stand.script.data("CreateBlob", BLOB);
+        let put = stand.puts.hold_next();
+        let epoch = database.session_epoch();
+        let sent = bound(database.send(clip("Moment", r#"{"text":"hello"}"#, "upload_clip", &file, epoch))).await.unwrap();
+        let id = sent.optimistic_value.clone().unwrap().id;
+        put.entered().await;
+        let waiting = tokio::spawn({ let database = database.clone(); async move { database.outcome(sent).await } });
+
+        if cause == "cancel_upload" {
+            assert!(bound(database.cancel_upload(epoch, "Moment".into(), id, "upload_clip".into())).await.unwrap(), "{cause}");
+        } else {
+            bound(database.session_reset()).await.unwrap();
+            assert!(matches!(bound(waiting).await.unwrap().unwrap(), WireOperationOutcome::Interrupted), "{cause}");
+        }
+
+        put.dropped().await;
+        bound(crate::ffi::settled(&database)).await.unwrap();
+        put.release();
+        bound(crate::ffi::settled(&database)).await.unwrap();
+        assert_eq!((stand.puts.seen.lock().unwrap().len(), stand.script.count("CreateBlob"), stand.script.count("CreateMoment")), (1, 1, 0), "{cause}: no second PUT or step after the release");
+        database.close_now();
+    }
+}

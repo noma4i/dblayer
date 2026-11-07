@@ -174,6 +174,7 @@ impl FakeTransport for Puts {
         self.seen.lock().unwrap().push(Put { url, operation: identity.operation_id, item: identity.item_id, step: identity.step, path: file.path });
         if let Some(hold) = held {
             hold.entered.store(true, Ordering::SeqCst);
+            let _dropped = Dropped(hold.clone());
             hold.gate.notified().await;
         }
         Ok(PutReply { status: 200, etag: Some("etag".into()) })

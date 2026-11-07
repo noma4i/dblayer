@@ -19,7 +19,8 @@ private final class HeldUploadTransport: ScriptedTransport, @unchecked Sendable 
     lock.withLock { putCount += 1 }
     defer { finished.continuation.yield(()) }
     arrived.continuation.yield(())
-    _ = await Cursor(released.stream).next("the held upload is released")
+    for await _ in released.stream { break }
+    try Task.checkCancellation()
     return PutReply(status: 200, etag: nil)
   }
 }
@@ -83,8 +84,8 @@ extension BridgeProbeTests {
     try await User.profile.load(in: DB.account())
     #expect(try await User.profile.read(in: DB.account()).first?.name == "B")
     #expect(transport.puts == 1, "the old upload was sent again after the reset")
-    transport.released.continuation.yield(())
-    _ = try #require(await Cursor(transport.finished.stream).next("the PUT ends"))
+    _ = try #require(await Cursor(transport.finished.stream).next("the cancelled PUT ends without a release"))
+    #expect(transport.puts == 1, "the old upload was sent again after the PUT ended")
     let found = try await database.readRow(epoch: database.sessionEpoch(), model: "Moment", rowId: row.id)
     #expect(found == nil)
     #expect(transport.base.calls.filter { $0.operationName == "CreateMoment" }.isEmpty)

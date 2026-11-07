@@ -80,7 +80,6 @@ class UploadSessionTest {
             loginAgain()
             User.profile.load(AccountScope.current())
             assertEquals("B", User.profile.read(AccountScope.current()).single().name)
-            transport.released.complete(Unit)
             transport.finished.await()
             assertNull(database.readRow(database.sessionEpoch(), "Moment", row.id))
             assertTrue(transport.base.calls.none { it.operationName == "CreateMoment" })

@@ -71,6 +71,5 @@ private final class PutProgress: RefuseRedirect, @unchecked Sendable {
 
   func urlSession(_ session: URLSession, task: URLSessionTask, didSendBodyData bytesSent: Int64, totalBytesSent: Int64, totalBytesExpectedToSend: Int64) {
     progress.sent(bytes: UInt64(totalBytesSent))
-    if progress.isCancelled() { task.cancel() }
   }
 }

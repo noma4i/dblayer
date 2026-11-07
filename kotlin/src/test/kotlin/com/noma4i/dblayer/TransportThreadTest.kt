@@ -73,22 +73,37 @@ class TransportThreadTest {
       }
     }
 
-    private class CancelledProgress(private val cancelled: Boolean) : ByteProgress(NoHandle) {
+    private class IdleProgress : ByteProgress(NoHandle) {
         override fun sent(bytes: ULong) {}
-        override fun isCancelled() = cancelled
+        override fun isCancelled() = false
+    }
+
+    private fun putOf(transport: OkHttpTransport) = suspend {
+        transport.put(PutTarget(server.url("/upload").toString(), emptyMap(), 10_000uL, 30_000uL), PutFile(java.io.File.createTempFile("thread", ".bin").apply { writeBytes(byteArrayOf(1, 2)); deleteOnExit() }.path, 0u, 2u), TransferIdentity(1L, "1.0.1", TransferStep.Put), IdleProgress())
     }
 
     @Test
-    fun aLostConnectionAndACancelledUploadReachTheCoreAsRawFailures() = bounded {
-        for ((operation, cancelled) in listOf("query" to false, "mutation" to false, "put" to false, "put" to true)) {
-            server.enqueue(MockResponse().setSocketPolicy(if (operation == "put" && cancelled) SocketPolicy.NO_RESPONSE else SocketPolicy.DISCONNECT_AT_START))
+    fun aLostConnectionReachesTheCoreAsARawFailure() = bounded {
+        for (operation in listOf("query", "mutation", "put")) {
+            server.enqueue(MockResponse().setSocketPolicy(SocketPolicy.DISCONNECT_AT_START))
             val transport = OkHttpTransport(client = OkHttpClient.Builder().retryOnConnectionFailure(false).build())
-            val outcome = if (operation == "put") {
-                transport.put(PutTarget(server.url("/upload").toString(), emptyMap(), 10_000uL, 30_000uL), PutFile(java.io.File.createTempFile("thread", ".bin").apply { writeBytes(byteArrayOf(1, 2)); deleteOnExit() }.path, 0u, 2u), TransferIdentity(1L, "1.0.1", TransferStep.Put), CancelledProgress(cancelled))
-            } else {
-                transport.send(probeRequest(server.url("/graphql").toString(), "{}"))
-            }
-            assertEquals("$operation cancelled=$cancelled", operation == "put" && cancelled, outcome.rawFailure()?.message.equals("Canceled", ignoreCase = true))
+            val outcome = if (operation == "put") putOf(transport)() else transport.send(probeRequest(server.url("/graphql").toString(), "{}"))
+            assertFalse(operation, outcome.rawFailure()?.message.equals("Canceled", ignoreCase = true))
         }
+    }
+
+    /** xfer_prop_put_cancel_pushes on the platform: the cancel of the coroutine cancels the OkHttp call, the flag of the progress is never read. */
+    @Test
+    fun cancellingThePutCoroutineCancelsTheCall() = bounded {
+        val canceled = kotlinx.coroutines.CompletableDeferred<Unit>()
+        val observed = OkHttpClient.Builder().retryOnConnectionFailure(false).eventListener(object : okhttp3.EventListener() {
+            override fun canceled(call: okhttp3.Call) { canceled.complete(Unit) }
+        }).build()
+        server.enqueue(MockResponse().setSocketPolicy(SocketPolicy.NO_RESPONSE))
+        val put = kotlinx.coroutines.async(kotlinx.coroutines.Dispatchers.IO) { putOf(OkHttpTransport(client = observed))() }
+        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { server.takeRequest(10, java.util.concurrent.TimeUnit.SECONDS) }
+        put.cancel()
+        canceled.await()
+        assertTrue(put.isCancelled)
     }
 }
