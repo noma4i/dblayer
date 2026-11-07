@@ -15,12 +15,14 @@ private enum PathProbe: GraphQLOperation {
   typealias Variables = String
   static let operationName = "PathProbe"
   static let document = "query PathProbe { __typename }"
+  static let returns: String? = rawReturns
 }
 
 private enum SessionProbe: GraphQLOperation {
   typealias Variables = String
   static let operationName = "SessionProfile"
   static let document = "query SessionProfile { sessionProfile { id } }"
+  static let returns: String? = rawReturns
 }
 
 private struct PathLogin: Encodable, Sendable { let account: String }
@@ -52,7 +54,7 @@ struct ReachabilityTests {
       return ["data": [String: Any]()]
     }
     let signedIn = EncryptedConfig(origin: encrypted.origin, serverKey: encrypted.serverKey, pin: encrypted.pin, endpoints: EncryptedEndpoints(graphql: "/graphql", cable: "/cable", logout: "/logout", bootstrap: "/bootstrap", sessionOperations: ["login_link": EncryptedSessionOperation(path: "/api/auth/login_link", class: .authenticated)]), protocolLabel: "test-v1", cablePurpose: "hello", cableChannel: "TestChannel")
-    try await DB.openTesting(transport: MockTransport(), modelsJSON: "[]", operations: [PathProbe.self, SessionProbe.self], operationReturns: ["PathProbe": rawReturns, "SessionProfile": rawReturns], encrypted: signedIn, credentials: PathCredential(), http: server, observers: SystemObservers(path: path))
+    try await DB.openTesting(transport: MockTransport(), modelsJSON: "[]", operations: [PathProbe.self, SessionProbe.self], encrypted: signedIn, credentials: PathCredential(), http: server, observers: SystemObservers(path: path))
     path.set(true)
     try await DB.sessionCall("login_link", body: PathLogin(account: "A"))
     try await DB.call("SessionProfile", variables: [:])

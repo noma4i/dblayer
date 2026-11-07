@@ -39,9 +39,8 @@ pub(super) fn emit_swift_operations(out: &mut String, operations: &[OperationCal
         let types = declared(root);
         for declaration in &types { emit_swift_type(out, declaration, &types, false); }
     }
-    let mut seen = std::collections::HashSet::new();
-    let entries = operations.iter().filter(|operation| seen.insert(operation.operation.as_str())).map(|operation| format!("    \"{}\": #\"{}\"#,", operation.operation, declaration(operation))).collect::<Vec<_>>().join("\n");
-    writeln!(out, "public let operationReturns: [String: String] = [\n{entries}\n]\n\npublic enum Operations {{").unwrap();
+    writeln!(out, "public enum Operations {{").unwrap();
+    for operation in operations { writeln!(out, "    public static let {}Returns = #\"{}\"#\n", name(&operation.name), declaration(operation)).unwrap(); }
     for operation in operations {
         let method = identifier(&name(&operation.name), true);
         let params = operation.args.iter().map(|(arg, kind)| format!("{}: {}{}", identifier(arg, true), arg_type(kind, true), if kind.ends_with('?') { "? = nil" } else { "" })).collect::<Vec<_>>().join(", ");
@@ -68,9 +67,8 @@ pub(super) fn emit_kotlin_operations(out: &mut String, operations: &[OperationCa
         let types = declared(root);
         for declaration in &types { emit_kotlin_type(out, declaration, &types, false); }
     }
-    let mut seen = std::collections::HashSet::new();
-    let entries = operations.iter().filter(|operation| seen.insert(operation.operation.as_str())).map(|operation| format!("    \"{}\" to \"\"\"{}\"\"\",", operation.operation, declaration(operation))).collect::<Vec<_>>().join("\n");
-    writeln!(out, "val operationReturns: Map<String, String> = mapOf(\n{entries}\n)\n\nobject Operations {{").unwrap();
+    writeln!(out, "object Operations {{").unwrap();
+    for operation in operations { writeln!(out, "    const val {}Returns = \"\"\"{}\"\"\"\n", name(&operation.name), declaration(operation)).unwrap(); }
     for operation in operations {
         let method = identifier(&name(&operation.name), false);
         let params = operation.args.iter().map(|(arg, kind)| format!("{}: {}{}", identifier(arg, false), arg_type(kind, false), if kind.ends_with('?') { "? = null" } else { "" })).collect::<Vec<_>>().join(", ");

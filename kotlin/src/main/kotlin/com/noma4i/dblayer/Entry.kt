@@ -60,18 +60,17 @@ object DBlayer {
         modelsJson: String,
         path: String? = null,
         operations: List<GraphQLOperation> = emptyList(),
-        operationReturns: Map<String, String> = emptyMap(),
         http: EncryptedHttp? = null,
         uploadNotification: UploadNotification,
     ) {
         val dataSync = dataSyncDeclared(android.os.Build.VERSION.SDK_INT) { context.packageManager.getPackageInfo(context.packageName, android.content.pm.PackageManager.GET_PERMISSIONS).requestedPermissions.orEmpty().toList() }
         UploadNotifications.store(context, uploadNotification)
         val ports = OpenPorts(transport, encrypted, credentials, http, endpoint, OkHttpTransport(headers), dataSync)
-        val made = opener.open(Config(path, null), modelsJson, OpenOptions(definitions(operations, operationReturns)), ports, SystemObservers(context))
+        val made = opener.open(Config(path, null), modelsJson, OpenOptions(definitions(operations)), ports, SystemObservers(context))
         made.setRoundJobs(UploadRounds(context.applicationContext, made))
         database = made
         UploadService.opened(made)
     }
 
-    private fun definitions(operations: List<GraphQLOperation>, returns: Map<String, String>): List<OperationDefinition> = operations.map { OperationDefinition(it.operationName, it.document, returns[it.operationName]) }
+    private fun definitions(operations: List<GraphQLOperation>): List<OperationDefinition> = operations.map { OperationDefinition(it.operationName, it.document, it.returns) }
 }

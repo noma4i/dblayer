@@ -7,9 +7,9 @@ private val opener = OpenDatabase()
 
 /** Opens the database on a clock that only `advance` moves, so freshness windows, retry delays and expiry run without sleeping. */
 @DBlayerTestingApi
-suspend fun DBlayer.openTesting(transport: Transport?, modelsJson: String, path: String? = null, operations: List<GraphQLOperation> = emptyList(), operationReturns: Map<String, String> = emptyMap(), startMillis: Long = System.currentTimeMillis(), encrypted: EncryptedConfig? = null, credentials: CredentialStore? = null, http: EncryptedHttp? = null, observers: PlatformObserver? = null): TestClock {
+suspend fun DBlayer.openTesting(transport: Transport?, modelsJson: String, path: String? = null, operations: List<GraphQLOperation> = emptyList(), startMillis: Long = System.currentTimeMillis(), encrypted: EncryptedConfig? = null, credentials: CredentialStore? = null, http: EncryptedHttp? = null, observers: PlatformObserver? = null): TestClock {
     val clock = TestClock(startMillis.toULong())
-    adopt(opener.openWithClock(Config(path, null), modelsJson, OpenPorts(transport, encrypted, credentials, http, SCRIPTED_ENDPOINT), clock, OpenOptions(operations.map { OperationDefinition(it.operationName, it.document, operationReturns[it.operationName]) }), observers))
+    adopt(opener.openWithClock(Config(path, null), modelsJson, OpenPorts(transport, encrypted, credentials, http, SCRIPTED_ENDPOINT), clock, OpenOptions(operations.map { OperationDefinition(it.operationName, it.document, it.returns) }), observers))
     return clock
 }
 

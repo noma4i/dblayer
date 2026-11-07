@@ -10,7 +10,7 @@ private func definitions(of operations: String) -> [OperationDefinition] {
   let listed = (try? JSONSerialization.jsonObject(with: Data(operations.utf8))) as? [[String: Any]] ?? []
   return listed.compactMap { entry in
     guard let name = entry["name"] as? String, let document = entry["document"] as? String else { return nil }
-    return OperationDefinition(name: name, document: document, returns: operationReturns[name] ?? rawReturns)
+    return OperationDefinition(name: name, document: document, returns: fixtureReturns[name] ?? rawReturns)
   }
 }
 

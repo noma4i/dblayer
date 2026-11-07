@@ -63,16 +63,16 @@ public enum DB {
     try await fetchServerConfig(encrypted: encrypted, platform: platform, version: version, build: build, http: http ?? UrlSessionTransport(), retries: retries, observers: SystemObservers())
   }
 
-  public static func open(endpoint: URL? = nil, headers: @escaping @Sendable () -> [String: String] = { [:] }, encrypted: EncryptedConfig? = nil, credentials: CredentialStore? = nil, transport: Transport? = nil, modelsJSON: String, path: String? = nil, operations: [any GraphQLOperation.Type] = [], operationReturns: [String: String] = [:], http: EncryptedHttp? = nil) async throws {
+  public static func open(endpoint: URL? = nil, headers: @escaping @Sendable () -> [String: String] = { [:] }, encrypted: EncryptedConfig? = nil, credentials: CredentialStore? = nil, transport: Transport? = nil, modelsJSON: String, path: String? = nil, operations: [any GraphQLOperation.Type] = [], http: EncryptedHttp? = nil) async throws {
     let ports = OpenPorts(transport: transport, encrypted: encrypted, credentials: credentials, http: http, endpoint: endpoint?.absoluteString, executor: UrlSessionTransport(headers: headers), dataSyncDeclared: nil)
-    let database = try await opener.open(config: Config(path: path, dataVersion: nil), modelsJson: modelsJSON, options: OpenOptions(operations: definitions(operations, operationReturns)), ports: ports, observers: SystemObservers())
+    let database = try await opener.open(config: Config(path: path, dataVersion: nil), modelsJson: modelsJSON, options: OpenOptions(operations: definitions(operations)), ports: ports, observers: SystemObservers())
     slot = database
   }
 
   /// The one test hook: makes `database` the open database of the calls, or none.
   @_spi(Testing) public static func adopt(_ database: Database?) { slot = database }
 
-  private static func definitions(_ operations: [any GraphQLOperation.Type], _ returns: [String: String]) -> [OperationDefinition] {
-    operations.map { OperationDefinition(name: $0.operationName, document: $0.document, returns: returns[$0.operationName]) }
+  private static func definitions(_ operations: [any GraphQLOperation.Type]) -> [OperationDefinition] {
+    operations.map { OperationDefinition(name: $0.operationName, document: $0.document, returns: $0.returns) }
   }
 }

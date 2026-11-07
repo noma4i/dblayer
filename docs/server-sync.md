@@ -20,14 +20,14 @@ The library opens files and recreates incompatible caches on its worker pool.
 Open the database once at app start and use that instance everywhere. A second call to `open` while the database is open fails with `database is already open; open it once at app start`, whatever its parameters. An opening error permits retry. `close` ends the database, meant for tests and the end of the process, and the next `open` opens it again.
 
 ```swift
-try await DB.open(endpoint: endpoint, headers: { ["Authorization": "Bearer \(session.token)"] }, modelsJSON: modelsJSON, operations: GraphQLOperations.all, operationReturns: operationReturns)
+try await DB.open(endpoint: endpoint, headers: { ["Authorization": "Bearer \(session.token)"] }, modelsJSON: modelsJSON, operations: GraphQLOperations.all)
 ```
 
 ```kotlin
-DBlayer.open(context, endpoint = endpoint, headers = { mapOf("Authorization" to "Bearer ${session.token}") }, modelsJson = modelsJson, operations = GraphQLOperations.all, operationReturns = operationReturns, uploadNotification = notification)
+DBlayer.open(context, endpoint = endpoint, headers = { mapOf("Authorization" to "Bearer ${session.token}") }, modelsJson = modelsJson, operations = GraphQLOperations.all, uploadNotification = notification)
 ```
 
-`endpoint`, `encrypted`, `credentials`, `transport`, `path` and `http` default to nil or null. `operationReturns` defaults to an empty map; pass the generated `operationReturns` so typed calls know their result.
+`endpoint`, `encrypted`, `credentials`, `transport`, `path` and `http` default to nil or null.
 `headers` is a closure that returns the request headers, `@Sendable () -> [String: String]` in Swift and `() -> Map<String, String>` in Kotlin. It defaults to an empty map and is called for each request and cable connection to the database origin. Presigned file uploads use their supplied headers and User-Agent. `operations` defaults to an empty list. `modelsJSON` or `modelsJson` is required.
 
 The built-in clients send `User-Agent: DBlayer/<version>` on HTTP requests, file PUTs and WebSocket handshakes.
@@ -58,6 +58,7 @@ enum ArchiveGroupMutation: GraphQLMutation {
   struct Variables: Encodable, Sendable { let id: String }
   static let operationName = "ArchiveGroup"
   static let document = "mutation ArchiveGroup($id: ID!) { archiveGroup(id: $id) { id archived } }"
+  static let returns: String? = Operations.archiveGroupReturns
 }
 ```
 
@@ -65,6 +66,7 @@ enum ArchiveGroupMutation: GraphQLMutation {
 object ArchiveGroupMutation : GraphQLOperation {
     override val operationName = "ArchiveGroup"
     override val document = "mutation ArchiveGroup(\$id: ID!) { archiveGroup(id: \$id) { id archived } }"
+    override val returns = Operations.archiveGroupReturns
 }
 ```
 

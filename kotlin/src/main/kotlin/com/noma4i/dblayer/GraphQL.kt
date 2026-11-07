@@ -14,6 +14,7 @@ import kotlinx.serialization.json.JsonObjectBuilder
 interface GraphQLOperation {
     val operationName: String
     val document: String
+    val returns: String? get() = null
 }
 
 interface GraphQLQuery<Data, Variables> : GraphQLOperation {

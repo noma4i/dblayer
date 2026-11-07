@@ -9,7 +9,7 @@ suspend fun openDatabase(config: Config, modelsJson: String, transport: Transpor
 private fun definitionsOf(operations: String): List<OperationDefinition> =
     (kotlinx.serialization.json.Json.parseToJsonElement(operations) as kotlinx.serialization.json.JsonArray).map { entry ->
         val operation = entry as kotlinx.serialization.json.JsonObject
-        (operation["name"] as kotlinx.serialization.json.JsonPrimitive).content.let { name -> OperationDefinition(name, (operation["document"] as kotlinx.serialization.json.JsonPrimitive).content, com.noma4i.dblayer.models.operationReturns[name] ?: RAW_RETURNS) }
+        (operation["name"] as kotlinx.serialization.json.JsonPrimitive).content.let { name -> OperationDefinition(name, (operation["document"] as kotlinx.serialization.json.JsonPrimitive).content, fixtureReturns[name] ?: RAW_RETURNS) }
     }
 
 /** A cleanup close: a database that is already closed stays closed. */
