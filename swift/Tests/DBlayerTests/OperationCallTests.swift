@@ -27,7 +27,7 @@ extension BridgeProbeTests {
 
   @MainActor
   @Test(.timeLimit(.minutes(1)), arguments: [
-    ("a status", DbError.Http(status: 401, detail: "unauthorized"), "Http 401"),
+    ("a status", DbError.Http(status: 401, detail: "unauthorized"), "Unauthorized"),
     ("graphql messages", DbError.Graphql(messages: ["nope", "bad"], extensions: nil), "Graphql nope,bad")
   ])
   func aRefusalOfTheServerArrivesTypedThroughAnOperationCall(_ name: String, _ failure: DbError, _ expected: String) async throws {

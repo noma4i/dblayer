@@ -46,7 +46,7 @@ class OperationCallTest {
 
     @Test
     fun aRefusalOfTheServerArrivesTypedThroughAnOperationCall() = bounded {
-        val refusals = listOf(DbException.Http(401u, "unauthorized") to "Http 401", DbException.Graphql(listOf("nope", "bad"), null) to "Graphql nope,bad")
+        val refusals = listOf(DbException.Http(401u, "unauthorized") to "Unauthorized", DbException.Graphql(listOf("nope", "bad"), null) to "Graphql nope,bad")
         for ((failure, expected) in refusals) {
             val transport = MockTransport()
             transport.enqueue("QrCodeCreate", failure)

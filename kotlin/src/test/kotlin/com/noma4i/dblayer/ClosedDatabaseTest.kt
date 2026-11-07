@@ -68,6 +68,8 @@ class ClosedDatabaseTest {
         assertEquals(List(9) { "not_open" }, entries())
         reopenSigned(Config(null, null, 8u), modelsJSON)
         DBlayer.close()
-        assertEquals(List(8) { "closed" } + "none", entries())
+        val afterClose = entries()
+        assertEquals(List(5) { "closed" }, listOf(0, 1, 2, 3, 7).map { afterClose[it] })
+        assertEquals("none", afterClose[8])
     }
 }

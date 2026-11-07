@@ -58,6 +58,7 @@ struct TransportFailureTests {
     switch error {
     case .Network: "Network"
     case .Interrupted: "Interrupted"
+    case .Unauthorized: "Unauthorized"
     case let .Http(status, _): "Http \(status)"
     case let .Graphql(messages, _): "Graphql \(messages.joined(separator: ","))"
     default: "other"

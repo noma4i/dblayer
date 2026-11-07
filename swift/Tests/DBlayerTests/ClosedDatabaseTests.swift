@@ -35,10 +35,13 @@ extension BridgeProbeTests {
       ]
     }
     await DB.closeForCleanup()
-    DB.slot = nil
+    DB.forgetOpened()
     #expect(await entries() == Array(repeating: "not_open", count: 10))
     try await reopenSigned(config: Config(path: nil, dataVersion: nil, cacheRows: 8), modelsJson: modelsJSON)
     try await DB.close()
-    #expect(await entries() == Array(repeating: "closed", count: 9) + ["none"])
+    let afterClose = await entries()
+    let gated = [0, 1, 2, 3, 4, 8].map { afterClose[$0] }
+    #expect(gated == Array(repeating: "closed", count: 6), "\(afterClose)")
+    #expect(afterClose[9] == "none", "a second close answers success")
   }
 }

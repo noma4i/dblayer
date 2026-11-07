@@ -14,7 +14,7 @@ final class Opened: Sendable {
 }
 
 public enum DB {
-  static var slot: Opened?
+  private static var slot: Opened?
   private static let opener = OpenDatabase()
   private static let cacheRows: UInt32 = 2000
 
@@ -99,6 +99,9 @@ public enum DB {
     if transport != nil { try await database.registerOperations(defsJson: JSONValue.array(definitions).text) }
     try attach(database)
   }
+
+  /// Forgets the open database so a test can call the library before any open.
+  static func forgetOpened() { slot = nil }
 
   /// Hands a stand-in database to the calls and keeps the observers of the open one.
   static func use(_ database: Database) {
