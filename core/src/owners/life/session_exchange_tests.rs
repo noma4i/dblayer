@@ -8,6 +8,7 @@ use serde_json::{json, Value};
 
 use super::LifeReply;
 use crate::store::Store;
+use crate::test_wait::yield_until;
 use crate::runtime::ManualClock;
 use crate::transport::encrypted::fake_server_tests::{FakeServer, MemoryCredentials};
 use crate::store::session_state;
@@ -191,12 +192,8 @@ async fn a_pending_request_stored_before_the_close_is_sent_again_when_the_owners
         sign_in(&client).await;
         world.server.drop_next_request();
         let waiter = life.mutate_for_call(None, OTP.into(), json!({}).to_string(), 0);
-        let started = std::time::Instant::now();
-        let pending = loop {
-            if let (_, Some(pending)) = rows(&db) { break pending; }
-            assert!(started.elapsed() < LIMIT, "the pending request was never stored");
-            tokio::time::sleep(Duration::from_millis(5)).await;
-        };
+        crate::test_wait::yield_until("the pending request was never stored", || rows(&db).1.is_some()).await;
+        let pending = rows(&db).1.unwrap();
         drop(waiter);
         let closed = life.close();
         let _ = tokio::time::timeout(LIMIT, closed.wait()).await;
@@ -205,11 +202,7 @@ async fn a_pending_request_stored_before_the_close_is_sent_again_when_the_owners
     assert!(!key.is_empty());
     let db = Store::open_models(Some(&path), Vec::new(), None).map(std::sync::Arc::new).unwrap();
     let (_client, _life) = world.open(&db).await;
-    let started = std::time::Instant::now();
-    while rows(&db).1.is_some() {
-        assert!(started.elapsed() < LIMIT, "the stored request was not sent again");
-        tokio::time::sleep(Duration::from_millis(5)).await;
-    }
+    crate::test_wait::yield_until("the stored request was not sent again", || rows(&db).1.is_none()).await;
     assert!(world.server.seen().iter().any(|request| request["requestId"] == json!(request_id)), "the request left again with its request id");
     assert_eq!(rows(&db).0.unwrap().sequence, 2);
 }
@@ -235,11 +228,7 @@ async fn a_stored_request_of_an_older_format_is_sent_again_with_the_request_id_a
     }
     let db = Store::open_models(Some(&path), Vec::new(), None).map(std::sync::Arc::new).unwrap();
     let (_client, _life) = world.open(&db).await;
-    let started = std::time::Instant::now();
-    while rows(&db).1.is_some() {
-        assert!(started.elapsed() < LIMIT, "the stored request of the older format was not sent again");
-        tokio::time::sleep(Duration::from_millis(5)).await;
-    }
+    crate::test_wait::yield_until("the stored request of the older format was not sent again", || rows(&db).1.is_none()).await;
     let again: Vec<Value> = world.server.seen().into_iter().filter(|request| request["requestId"] == json!(old_id)).collect();
     assert_eq!(again.len(), 1, "one request left with the stored request id");
     assert_eq!(again[0]["sequence"], json!(2), "and the stored sequence");
@@ -298,7 +287,7 @@ async fn the_pending_of_an_author_is_restored_with_its_request_id_and_owner() {
         sign_in(&client).await;
         world.server.drop_next_request();
         drop(life.mutate_answered(owner.clone(), req_id, OTP.into(), json!({}).to_string(), 0));
-        until("the pending request was never stored", || rows(&db).1.is_some()).await;
+        yield_until("the pending request was never stored", || rows(&db).1.is_some()).await;
         let _ = tokio::time::timeout(LIMIT, life.close().wait()).await;
     }
     let db = Store::open_models(Some(&path), Vec::new(), None).map(std::sync::Arc::new).unwrap();
@@ -356,14 +345,6 @@ fn open_with(world: &World, slot: Arc<ProbeSlot>, db: &Arc<Store>) -> (Arc<Clien
     (client, life)
 }
 
-async fn until(what: &str, mut done: impl FnMut() -> bool) {
-    let started = std::time::Instant::now();
-    while !done() {
-        assert!(started.elapsed() < LIMIT, "{what}");
-        tokio::time::sleep(Duration::from_millis(5)).await;
-    }
-}
-
 #[tokio::test(flavor = "multi_thread")]
 async fn the_credential_store_is_called_off_the_threads_of_the_owners() {
     let world = World::new();
@@ -372,7 +353,7 @@ async fn the_credential_store_is_called_off_the_threads_of_the_owners() {
     let (client, life) = open_with(&world, slot.clone(), &db);
     sign_in(&client).await;
     drop(life.session_reset());
-    until("the secret was never cleared", || slot.memory.get().unwrap().is_none()).await;
+    yield_until("the secret was never cleared", || slot.memory.get().unwrap().is_none()).await;
     let threads = slot.threads.lock().unwrap().clone();
     assert!(threads.len() >= 3, "the open read, the store and the clear: {threads:?}");
     let owners = ["lifecycle", "store", "network", "calls", "session", "outbox", "transfer"];
@@ -414,19 +395,19 @@ async fn a_first_sign_in_stored_before_a_crash_lands_its_digest_after_the_reopen
         let (client, life) = world.open(&db).await;
         world.server.interrupt_next_answer();
         let call = tokio::spawn({ let client = client.clone(); async move { sign_in(&client).await } });
-        until("the server never executed the sign-in", || world.server.executed().len() == 1).await;
-        until("the pending request was never stored", || rows(&db).1.is_some()).await;
+        yield_until("the server never executed the sign-in", || world.server.executed().len() == 1).await;
+        yield_until("the pending request was never stored", || rows(&db).1.is_some()).await;
         assert_eq!(rows(&db).0.map(|session| session.sequence), Some(0), "the digest is stored with the pending request, at sequence 0");
         let _ = tokio::time::timeout(LIMIT, life.close().wait()).await;
         call.abort();
     }
     let db = Store::open_models(Some(&path), Vec::new(), None).map(std::sync::Arc::new).unwrap();
     let (_client, life) = world.open(&db).await;
-    until("the stored sign-in did not land", || rows(&db).1.is_none() && rows(&db).0.is_some()).await;
+    yield_until("the stored sign-in did not land", || rows(&db).1.is_none() && rows(&db).0.is_some()).await;
     let secret = world.credentials.value().expect("the secret stays");
     let session = rows(&db).0.unwrap();
     assert_eq!((session.credential_digest.clone(), session.sequence), (digest_of(&secret), 1));
-    until("the identity was not published", || life.published().identity == crate::store::identity_of(&session.credential_digest)).await;
+    yield_until("the identity was not published", || life.published().identity == crate::store::identity_of(&session.credential_digest)).await;
     assert_eq!(world.server.executed().len(), 1, "the server executed the sign-in once");
 }
 
@@ -439,7 +420,7 @@ async fn a_secret_left_by_a_crash_is_erased_and_the_session_rows_go_before_the_s
     {
         let db = Store::open_models(Some(&path), Vec::new(), None).map(std::sync::Arc::new).unwrap();
         let (_client, life) = world.open(&db).await;
-        until("GenerateCredential crashed before the pending: the secret is not erased", || world.credentials.value().is_none()).await;
+        yield_until("GenerateCredential crashed before the pending: the secret is not erased", || world.credentials.value().is_none()).await;
         let _ = tokio::time::timeout(LIMIT, life.close().wait()).await;
     }
     {
@@ -497,7 +478,7 @@ async fn a_credential_store_that_panics_fails_the_sign_in_and_closes_the_databas
     let (client, life) = open_with(&world, slot.clone(), &db);
     let outcome = tokio::time::timeout(LIMIT, client.session_call("social", json!({ "provider": "google", "idToken": "t" }))).await.expect("the call has an outcome, it does not wait for ever");
     assert!(outcome.is_err(), "{outcome:?}");
-    until("Lifecycle never heard the executor failure", || life.published().closed).await;
+    yield_until("Lifecycle never heard the executor failure", || life.published().closed).await;
     assert_eq!(world.server.seen().len(), 0, "nothing left the device");
 }
 

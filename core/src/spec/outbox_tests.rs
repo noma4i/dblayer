@@ -276,7 +276,7 @@ async fn out_failed_retry_run() {
     rig.server.script("MakeMoment", Reply::Refuse);
     let receipt = rig.create("hello").await;
     let id = temp_id(&receipt);
-    within(async { while rig.row(&id).await.is_none_or(|row| row.sync.state != WireSyncState::Failed) { tokio::time::sleep(std::time::Duration::from_millis(5)).await; } }).await;
+    within(async { while rig.row(&id).await.is_none_or(|row| row.sync.state != WireSyncState::Failed) { tokio::task::yield_now().await; } }).await;
     let row = rig.row(&id).await.expect("the keep policy keeps the row");
     assert!(failed.obs.contains(&Obs::RowCarriesError));
     assert_eq!((row.sync.state, row.sync.error.is_some()), (WireSyncState::Failed, true));

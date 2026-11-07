@@ -142,11 +142,8 @@ async fn call_run_answers_by_epoch_and_network() {
     assert_eq!(answer(life.set_online(false)).await, Reply::Online { closed: false });
     assert_eq!(answer(life.run(1, "Op".into(), "{}".into())).await, Reply::Call(Err(CallError::Offline)), "a database without a session client hands the call to Calls in every state");
     life.credential_committed(IDENTITY);
-    let published = loop {
-        let published = life.published();
-        if published.identity.is_some() { break published; }
-        tokio::time::sleep(Duration::from_millis(5)).await;
-    };
+    crate::test_wait::yield_until("the identity was published", || life.published().identity.is_some()).await;
+    let published = life.published();
     assert_eq!(published.epoch, 2);
     assert_eq!(answer(life.run(2, "Op".into(), "{}".into())).await, Reply::Call(Err(CallError::Offline)));
     assert!(matches!(crate::test_wait::within(life.run(1, "Op".into(), "{}".into()).wait()).await, crate::runtime::Outcome::EpochEnded(_)), "call_run_stale: the wait of an ended epoch ends with the end of the epoch");
@@ -178,11 +175,8 @@ async fn life_session_reset_erases_the_credential_and_identity_change_keeps_it()
     session_row(&other);
     let life = start(&other, &transport).await;
     life.credential_committed(2);
-    let published = loop {
-        let published = life.published();
-        if published.epoch == 3 { break published; }
-        tokio::time::sleep(Duration::from_millis(5)).await;
-    };
+    crate::test_wait::yield_until("the third epoch was published", || life.published().epoch == 3).await;
+    let published = life.published();
     assert_eq!((published.identity, published.generation), (Some(2), 1));
     assert_eq!(stored_digest(&other).as_deref(), Some(DIGEST), "IdentityChanged keeps encrypted_session");
     closed(&life).await;
@@ -338,16 +332,9 @@ async fn network_events_reach_the_listeners_with_the_snapshot_of_the_epoch() {
     );
     heard.lock().unwrap().clear();
     life.credential_committed(IDENTITY);
-    let epoch = loop {
-        let published = life.published();
-        if published.epoch == 2 { break published.epoch; }
-        tokio::time::sleep(Duration::from_millis(5)).await;
-    };
-    let started = std::time::Instant::now();
-    while !heard.lock().unwrap().iter().any(|(owner, event)| *owner == Peer::Calls && matches!(event, NetworkEvent::Online { epoch: Some(_), .. })) {
-        assert!(started.elapsed() < LIMIT, "the snapshot of the new epoch reached Calls");
-        tokio::time::sleep(Duration::from_millis(5)).await;
-    }
+    crate::test_wait::yield_until("the second epoch was published", || life.published().epoch == 2).await;
+    let epoch = life.published().epoch;
+    crate::test_wait::yield_until("the snapshot of the new epoch reached Calls", || heard.lock().unwrap().iter().any(|(owner, event)| *owner == Peer::Calls && matches!(event, NetworkEvent::Online { epoch: Some(_), .. }))).await;
     let heard = heard.lock().unwrap().clone();
     assert!(heard.contains(&(Peer::Calls, NetworkEvent::Online { online: false, epoch: Some(epoch) })));
     closed(&life).await;
@@ -369,11 +356,7 @@ async fn a_snapshot_of_a_past_epoch_reaches_no_receiver() {
     let epoch = life.published().epoch;
     life.wiring.to_network(NetworkInput::SnapshotRequest { owner: Peer::Transfer, epoch: epoch - 1 });
     life.wiring.to_network(NetworkInput::SnapshotRequest { owner: Peer::Transfer, epoch });
-    let started = std::time::Instant::now();
-    while !heard.lock().unwrap().iter().any(|event| matches!(event, NetworkEvent::Online { epoch: Some(heard), .. } if *heard == epoch)) {
-        assert!(started.elapsed() < LIMIT, "the snapshot of the current epoch arrived");
-        tokio::time::sleep(Duration::from_millis(5)).await;
-    }
+    crate::test_wait::yield_until("the snapshot of the current epoch arrived", || heard.lock().unwrap().iter().any(|event| matches!(event, NetworkEvent::Online { epoch: Some(heard), .. } if *heard == epoch))).await;
     assert!(!heard.lock().unwrap().iter().any(|event| matches!(event, NetworkEvent::Online { epoch: Some(heard), .. } if *heard != epoch)), "the snapshot of the past epoch was dropped");
     closed(&life).await;
 }
@@ -438,11 +421,7 @@ async fn an_unreadable_queue_is_reported_for_outbox_and_open_still_ends() {
         inner.connection.execute_batch("INSERT INTO op (action_key, status, created_at, since) VALUES ('moments:send', 'pending', 1, 1)").unwrap();
     }
     let life = start(&db, &transport).await;
-    let started = std::time::Instant::now();
-    while life.restore_failures().is_empty() {
-        assert!(started.elapsed() < LIMIT, "the failure of the queue was reported");
-        tokio::time::sleep(Duration::from_millis(5)).await;
-    }
+    crate::test_wait::yield_until("the failure of the queue was reported", || !life.restore_failures().is_empty()).await;
     let failures = life.restore_failures();
     assert_eq!(failures.len(), 1);
     assert_eq!(failures[0].0, Peer::Outbox);
