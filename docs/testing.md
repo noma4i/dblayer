@@ -93,7 +93,7 @@ Typical scenarios to cover:
 
 ## In this repository
 
-`scripts/check_dblayer.sh` runs the cheap, cargo, swift and kotlin lanes at the same time (the steps of one lane run in order, each takes its own build slot), then the ship and final lanes when all of them passed, all within a 300 s limit.
+`scripts/check_dblayer.sh` runs the cheap, cargo, swift and kotlin lanes at the same time (the steps of one lane run in order, each takes its own build slot), then the ship and final lanes when all of them passed, all within a 300 s limit. The iOS cross-compile check `ios-slices` runs in the cargo lane, so the swift lane holds only the Swift tests and the simulator compile.
 
 | Check                                          | Command                                    |
 | ---------------------------------------------- | ------------------------------------------ |
