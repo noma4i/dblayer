@@ -187,7 +187,10 @@ internal class UploadService : Service() {
 
         fun opened(database: Database) { live?.report(database) }
 
-        fun stop() { live?.stopSelf() }
+        fun stop() {
+            live?.stopSelf()
+            OsProbe.changed?.invoke()
+        }
 
         fun start(context: Context, job: RoundJob): Refusal? = try {
             context.startForegroundService(Intent(context, UploadService::class.java).putExtra(REQUEST, job.requestId.toLong()).putExtra(ROUND, job.roundId.toLong()).putExtra(EPOCH, job.epoch.toLong()))

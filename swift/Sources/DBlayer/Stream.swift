@@ -21,7 +21,15 @@ public struct ValueStream: AsyncSequence, Sendable {
   public func loadMore() async throws -> LoadMoreResult { try await reader.loadMore() }
 
   /// Stops reading: the stream ends in the core and nothing is delivered after this returns.
-  public func cancel() async { await reader.cancel() }
+  public func cancel() async {
+    await reader.cancel()
+    NotificationCenter.default.post(name: .dblayerStreamLeft, object: nil)
+  }
+}
+
+extension Notification.Name {
+  /// Posted after a stream was released. The test fixtures listen to wake their waits.
+  @_spi(Testing) public static let dblayerStreamLeft = Notification.Name("DBlayerStreamLeft")
 }
 
 extension Database {

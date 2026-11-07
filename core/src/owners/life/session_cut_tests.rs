@@ -66,7 +66,7 @@ async fn sess_prop_cut_before_transport() {
         if closing { drop(life.close()); } else { drop(life.session_reset()); }
         yield_until("the epoch never ended", || life.published().state != crate::owners::contract::PublishedState::Session).await;
         slot.released.store(true, Ordering::SeqCst);
-        assert!(life.barrier(Duration::from_secs(10)), "the request task never ended");
+        life.barrier();
         assert_eq!(server.seen().len(), sent, "closing {closing}: the transport was called after the cut grew");
     }
 }

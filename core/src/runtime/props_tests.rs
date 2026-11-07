@@ -120,7 +120,7 @@ fn rt_prop_effect_order() {
     let runtime = builder.start().unwrap();
     runtime.start_epoch(1);
     runtime.post(toy, EpochStamp::Epoch(1), ToyInput::Burst(vec![1, 2, 3]));
-    assert!(runtime.barrier(WAIT));
+    runtime.barrier();
     let history = runtime.history(sink);
     assert_eq!(history.iter().map(|entry| entry.input.as_str()).filter(|input| input.starts_with("Note(")).collect::<Vec<_>>(), vec!["Note(1)", "Note(2)", "Note(3)"]);
 }
@@ -303,7 +303,7 @@ fn rt_prop_refinement() {
         let runtime = builder.start().unwrap();
         runtime.start_epoch(1);
         runtime.post(producer, EpochStamp::Epoch(1), ToyInput::Fan(9));
-        assert!(runtime.barrier(WAIT));
+        runtime.barrier();
         let order: Vec<u32> = runtime.history(sink).iter().filter(|entry| entry.input.starts_with("Note(")).map(|entry| entry.input.trim_start_matches("Note(").trim_end_matches(')').parse().unwrap()).collect();
         assert!(seen.borrow().contains(&order), "the threads produced {order:?}, which the model does not allow");
     }
@@ -334,7 +334,7 @@ fn rt_prop_det_equals_threaded() {
     let runtime = builder.start().unwrap();
     runtime.start_epoch(1);
     runtime.post(first, EpochStamp::Epoch(1), ToyInput::Go);
-    assert!(runtime.barrier(WAIT));
+    runtime.barrier();
     for (name, address_index) in [("sink", sink.index()), ("last", last.index()), ("middle", middle.index()), ("first", first.index())] {
         let modeled: Vec<&TraceEntry> = det.trace().iter().filter(|entry| entry.slot == address_index).collect();
         let threaded = match name {
@@ -367,7 +367,7 @@ fn rt_prop_det_equals_threaded() {
         runtime.start_epoch(1);
         runtime.post(depositor, EpochStamp::Epoch(1), ToyInput::Go);
         runtime.post(sealer, EpochStamp::Epoch(1), ToyInput::Go);
-        assert!(runtime.barrier(WAIT));
+        runtime.barrier();
         let history: Vec<String> = runtime.history(ledger).iter().map(|entry| entry.input.clone()).collect();
         assert!(allowed.borrow().contains(&history), "the threads produced {history:?}, which the model does not allow");
     }
@@ -389,7 +389,7 @@ fn rt_prop_no_lock_on_effect() {
     runtime.start_epoch(1);
     runtime.post(toy, EpochStamp::Epoch(1), ToyInput::Burst(vec![3, 4]));
     runtime.post(toy, EpochStamp::Epoch(1), ToyInput::WorkRequest(5));
-    assert!(runtime.barrier(WAIT));
+    runtime.barrier();
     assert_eq!(*held.lock().unwrap_or_else(PoisonError::into_inner), Vec::<&str>::new(), "no library lock is held while a runner runs");
 
     let guard = Mutex::new(0u8);
@@ -434,7 +434,7 @@ fn rt_prop_start_close() {
     runtime.start_epoch(1);
     runtime.post(bare, EpochStamp::Control, BareInput::Boom);
     runtime.post(dying, EpochStamp::Epoch(1), ToyInput::Ask(BOOM));
-    assert!(runtime.barrier(WAIT));
+    runtime.barrier();
     assert_eq!(runtime.history(watch).iter().filter(|entry| !entry.input.starts_with("EpochStarted(")).count(), 2, "the threads told Lifecycle about both executors");
     runtime.close();
     assert_eq!(reports.recv_timeout(WAIT), Ok(CLOSED));

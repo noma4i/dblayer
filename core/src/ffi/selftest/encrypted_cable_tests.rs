@@ -50,7 +50,7 @@ async fn feed_prop_census_from_owners() {
     drop(stream);
     assert_eq!(crate::test_wait::within(closes.recv()).await.as_deref(), Some(token.as_str()));
     let life = database.life_handle();
-    assert!(crate::test_wait::within(tokio::task::spawn_blocking(move || life.barrier(std::time::Duration::from_secs(5)))).await.unwrap());
+    crate::test_wait::within(tokio::task::spawn_blocking(move || life.barrier())).await.unwrap();
     let released = bound(database.subscription_census()).await.unwrap();
     assert_eq!((released.observed_queries, released.subscriptions, released.retained_observers), (0, 0, 0));
     bound(database.close_database()).await.unwrap();

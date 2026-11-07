@@ -42,7 +42,7 @@ pub struct WindowIo {
     reader: Option<WindowReader>,
     rest: Rest<WindowsEffect>,
     #[cfg(test)]
-    flights: Option<super::ports::Flights>,
+    flights: Option<super::ports::RequestsOnTheWay>,
 }
 
 impl WindowIo {
@@ -51,7 +51,7 @@ impl WindowIo {
     }
 
     #[cfg(test)]
-    pub fn flights_in(mut self, flights: super::ports::Flights) -> Self {
+    pub fn flights_in(mut self, flights: super::ports::RequestsOnTheWay) -> Self {
         self.flights = Some(flights);
         self
     }

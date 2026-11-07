@@ -8,9 +8,9 @@ pub(crate) async fn settled(database: &Database) -> Result<(), DbError> {
         loop {
             database.operations_quiet().await;
             let owners = database.life.clone();
-            database::blocking(move || { owners.barrier(std::time::Duration::from_secs(5)); Ok(()) }).await?;
+            database::blocking(move || { owners.barrier(); Ok(()) }).await?;
             if database.life.requests_in_flight() == 0 { return Ok::<(), DbError>(()); }
-            tokio::task::yield_now().await;
+            database.life.requests_none().await;
         }
     };
     match tokio::time::timeout(std::time::Duration::from_secs(10), quiet).await {

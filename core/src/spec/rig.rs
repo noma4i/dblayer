@@ -361,8 +361,7 @@ impl Rig {
     /// Returns once the owners handled every input and every started effect task, also while a server request is held.
     pub async fn quiet(&self) {
         let owners = self.db.life_handle();
-        let idle = within(async { tokio::task::spawn_blocking(move || owners.barrier(Duration::from_secs(10))).await.unwrap() }).await;
-        assert!(idle, "the owners still hold inputs or started effect tasks");
+        within(async { tokio::task::spawn_blocking(move || owners.barrier()).await.unwrap() }).await;
     }
 }
 

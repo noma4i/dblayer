@@ -26,9 +26,15 @@ class ValueStream internal constructor(val epoch: ULong, private val reader: Rea
     suspend fun loadMore(): LoadMoreResult = offCaller { reader.loadMore() }
 
     /** Stops reading: the stream ends in the core and nothing is delivered after this returns. */
-    suspend fun cancel() = reader.cancel()
+    suspend fun cancel() {
+        reader.cancel()
+        StreamProbe.left?.invoke()
+    }
 
-    fun close() = reader.close()
+    fun close() {
+        reader.close()
+        StreamProbe.left?.invoke()
+    }
 
     /** Asks the core for a snapshot: the one call a reader makes when a delivery cannot be decoded. */
     internal fun resync() = reader.resync()
@@ -88,9 +94,10 @@ class ListProjection<Model : DBModel> private constructor(
     fun apply(value: ReadValue, decoder: ModelDecoder<Model>): ListProjection<Model>? = value.listDelivery(decoder)?.let(::apply)
 }
 
-/** Called after a screen model took a delivery. The test fixtures set it to wake their waits. */
+/** Called after a screen model took a delivery and after a stream was released. The test fixtures set them to wake their waits. */
 object StreamProbe {
     @Volatile var delivered: (() -> Unit)? = null
+    @Volatile var left: (() -> Unit)? = null
 }
 
 /** The screen model of a stream of rows: a StateFlow over a projection. It reads the stream until its scope completes, and the completion of the reading job ends the stream in the core, also when the scope was cancelled before the first delivery. Rows are decoded on [Dispatchers.Default], the collecting scope only publishes them. */

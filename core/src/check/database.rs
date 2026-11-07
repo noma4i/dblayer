@@ -1,7 +1,6 @@
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
-use std::time::Duration;
 
 use async_trait::async_trait;
 use serde_json::{json, Map, Value};
@@ -264,8 +263,7 @@ impl DatabaseSut {
             self.calls.iter_mut().for_each(Call::poll_woken);
             if let Some(database) = self.database.clone() {
                 let owners = database.life_handle();
-                let (idle, held, holders) = tokio::task::spawn_blocking(move || (owners.barrier(Duration::from_secs(15)), owners.pending(), owners.holders())).await.unwrap_or((false, 0, String::new()));
-                assert!(idle, "the owners still hold {held} inputs or started effect tasks after 15 s: {holders}");
+                tokio::task::spawn_blocking(move || owners.barrier()).await.unwrap();
             }
             if !self.calls.iter().any(Call::is_woken) { break; }
         }

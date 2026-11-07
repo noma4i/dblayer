@@ -188,8 +188,7 @@ extension BridgeProbeTests {
     #expect(try await DB.subscriptionCensus().observedQueries == 1)
 
     projected = nil
-    var observed: UInt64 = 1
-    await fencedUntil("the stream left the core", fence: { observed = (try? await DB.subscriptionCensus().observedQueries) ?? 1 }) { observed == 0 }
+    await eventuallyAsync("the stream left the core") { (try? await DB.subscriptionCensus().observedQueries) == 0 }
   }
 
   /// B07: a change of one row decodes one row, and the subscriptions are the readers.

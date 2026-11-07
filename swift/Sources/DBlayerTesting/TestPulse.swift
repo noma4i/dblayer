@@ -1,8 +1,13 @@
+@_spi(Testing) import DBlayer
 import Foundation
 
 /// The common source of change events of the tests: the doubles and the collectors call `pulse()` at each change a test can observe, a waiter resumes at the next pulse.
 public final class TestPulse: @unchecked Sendable {
   public static let shared = TestPulse()
+
+  private init() {
+    NotificationCenter.default.addObserver(forName: .dblayerStreamLeft, object: nil, queue: nil) { _ in TestPulse.shared.pulse() }
+  }
 
   private let lock = NSLock()
   private var generation = 0

@@ -106,7 +106,7 @@ pub(crate) struct Wiring {
     /// The epoch the requests to the network may leave in: it closes before any owner steps on `EpochEnded`.
     pub(crate) gate: Arc<crate::runtime::EpochGate>,
     #[cfg(test)]
-    pub(crate) flights: super::read::Flights,
+    pub(crate) flights: super::read::RequestsOnTheWay,
     /// The id of the wait of `open`, set before the owners start, and its answer, set at `Saved` of the first publication.
     open_id: OnceLock<u64>,
     open_answer: OnceLock<Result<(), LifecycleError>>,
@@ -519,24 +519,15 @@ impl Life {
         self.runtime.stop();
     }
 
-    /// Returns once every input posted to an owner was handled, or false after `limit`.
     #[cfg(test)]
     pub fn commit_for_tests(&self, batch: crate::owners::store::StoreBatch) { self.wiring.to_store(StoreInput::Commit(batch)); }
 
+    /// Returns once every input posted to an owner was handled.
     #[cfg(test)]
-    pub fn barrier(&self, limit: std::time::Duration) -> bool { self.wiring.handle.barrier(limit) }
+    pub fn barrier(&self) { self.wiring.handle.barrier() }
 
     /// Counts a platform call as in flight until it registered with the owners.
-    #[track_caller]
     pub fn launch(&self) -> crate::runtime::Launch { self.wiring.handle.launch() }
-
-    /// The inputs and started effect tasks that still hold the barrier.
-    #[cfg(test)]
-    pub fn pending(&self) -> usize { self.wiring.handle.pending() }
-
-    /// The places that hold the barrier now.
-    #[cfg(test)]
-    pub fn holders(&self) -> String { self.wiring.handle.holders() }
 
     /// Whether `shutdown` ran: the database is closed for good.
     pub fn is_shut(&self) -> bool { self.shut.load(Ordering::SeqCst) }
@@ -551,6 +542,10 @@ impl Life {
     /// The requests of the network that are on their way.
     #[cfg(test)]
     pub fn requests_in_flight(&self) -> usize { self.wiring.flights.load(Ordering::SeqCst) }
+
+    /// Returns when no request of the network is on its way.
+    #[cfg(test)]
+    pub async fn requests_none(&self) { self.wiring.flights.none().await }
 
     pub(crate) fn fault(&self, what: String) { self.wiring.fault(what); }
 

@@ -119,7 +119,7 @@ fn mixed_effects_enqueue_before_the_next_run_on_threads() {
     assert_eq!(counts.recv_timeout(WAIT), Ok(3), "Send entered the blocked recipient mailbox");
     assert_eq!(counts.recv_timeout(WAIT), Ok(5), "Broadcast entered both mailboxes before the next Run");
     release.send(()).unwrap();
-    assert!(runtime.barrier(WAIT));
+    runtime.barrier();
 }
 
 #[test]
@@ -128,14 +128,14 @@ fn idle_runtime_has_zero_wakeups_and_schedule_fires_once() {
     let mut builder = RuntimeBuilder::for_tests();
     let toy = builder.add::<Toy>("toy", ToyState::default(), reporting(report));
     let runtime = builder.start().unwrap();
-    assert!(runtime.barrier(WAIT));
+    runtime.barrier();
     assert_eq!(runtime.wakeups(toy), 0);
     runtime.start_epoch(1);
     runtime.post(toy, EpochStamp::Epoch(1), ToyInput::ScheduleAt(1, Time(60), 9));
     assert_eq!(fired.recv_timeout(WAIT), Ok(9));
-    assert!(runtime.barrier(WAIT));
+    runtime.barrier();
     let settled = runtime.wakeups(toy);
-    assert!(runtime.barrier(WAIT));
+    runtime.barrier();
     assert_eq!(runtime.wakeups(toy), settled);
     assert!(fired.try_recv().is_err());
 }
@@ -162,7 +162,7 @@ fn threaded_executor_drops_input_of_another_epoch() {
     runtime.post(toy, EpochStamp::Epoch(1), ToyInput::Fire(1));
     runtime.post(toy, EpochStamp::Epoch(2), ToyInput::Fire(2));
     assert_eq!(fired.recv_timeout(WAIT), Ok(2));
-    assert!(runtime.barrier(WAIT));
+    runtime.barrier();
     assert!(fired.try_recv().is_err());
 }
 

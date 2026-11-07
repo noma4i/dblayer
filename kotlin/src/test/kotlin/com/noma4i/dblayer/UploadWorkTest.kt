@@ -100,7 +100,7 @@ class UploadWorkTest {
         assertTrue(!shadowOf(controller.get()).isStoppedBySelf)
         try {
             DBlayer.open(context, endpoint = SCRIPTED_ENDPOINT, transport = MockTransport(), modelsJson = modelsJSON, operations = UPLOAD_STEP_OPERATIONS.map { (name, text) -> object : GraphQLOperation { override val operationName = name; override val document = text } }, uploadNotification = notification)
-            eventuallyOs("the service stops by itself when no upload is unfinished") { shadowOf(controller.get()).isStoppedBySelf }
+            eventually("the service stops by itself when no upload is unfinished") { shadowOf(controller.get()).isStoppedBySelf }
         } finally {
             closeForCleanup()
         }

@@ -498,7 +498,7 @@ async fn a_locked_secret_waits_for_the_foreground_and_a_foreign_secret_ends_the_
     slot.fail_at.store(target, std::sync::atomic::Ordering::SeqCst);
     let waiting = tokio::spawn({ let life = life.clone(); async move { mutate_retrying(&life, json!({}).to_string()).await } });
     crate::test_wait::yield_until("the stored request reads the locked secret", || slot.fail_get.load(std::sync::atomic::Ordering::SeqCst)).await;
-    assert!(life.barrier(LIMIT));
+    life.barrier();
     assert!(!waiting.is_finished(), "a locked store gives the author no answer");
     assert_eq!(world.server.seen().len(), sent, "and no request leaves the device");
     slot.fail_get.store(false, std::sync::atomic::Ordering::SeqCst);

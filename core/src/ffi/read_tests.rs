@@ -79,7 +79,7 @@ async fn dlv_prop_one_change_every_view() {
     let mut pull = Box::pin(count.pull());
     assert!(std::future::poll_fn(|cx| std::task::Poll::Ready(std::future::Future::poll(pull.as_mut(), cx).is_pending())).await);
     let life = db.life_handle();
-    assert!(crate::test_wait::within(tokio::task::spawn_blocking(move || life.barrier(Duration::from_secs(5)))).await.unwrap());
+    crate::test_wait::within(tokio::task::spawn_blocking(move || life.barrier())).await.unwrap();
     assert!(std::future::poll_fn(|cx| std::task::Poll::Ready(std::future::Future::poll(pull.as_mut(), cx).is_pending())).await);
     db.destroy(epoch, "Note".into(), "n1".into()).await.unwrap();
     let count_revision = match crate::test_wait::within(pull).await.unwrap() { ReadValue::Count { revision, count: 0, .. } => revision, value => panic!("{value:?}") };
@@ -215,7 +215,7 @@ async fn data_query_limit_offset() {
 
 async fn settled(db: &Arc<Database>) {
     let life = db.life_handle();
-    assert!(crate::test_wait::within(tokio::task::spawn_blocking(move || life.barrier(Duration::from_secs(5)))).await.unwrap());
+    crate::test_wait::within(tokio::task::spawn_blocking(move || life.barrier())).await.unwrap();
 }
 
 fn delta_at(value: ReadValue) -> (i64, i64) {

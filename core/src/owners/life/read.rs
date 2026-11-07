@@ -222,10 +222,11 @@ impl super::Life {
             return Some((0, 0, 0, 0));
         }
         let streams = self.wiring.outcomes.register(Epoch::MAX);
-        let channels = self.wiring.outcomes.register(Epoch::MAX);
         self.wiring.to_deliveries(DeliveryInput::Census { reply: streams.id().raw() });
+        let streams = streams.wait().await;
+        let channels = self.wiring.outcomes.register(Epoch::MAX);
         self.wiring.to_feed(FeedInput::Census { reply: channels.id().raw() });
-        match (streams.wait().await, channels.wait().await) {
+        match (streams, channels.wait().await) {
             (Outcome::Value(LifeReply::Streams { observed, retained }), Outcome::Value(LifeReply::Channels { subscriptions, refused })) => Some((observed, subscriptions, retained, refused)),
             (Outcome::Closing, _) | (_, Outcome::Closing) => Some((0, 0, 0, 0)),
             _ => None,

@@ -21,7 +21,7 @@ pub use feed_io::{FeedCodec, FeedIo};
 pub(crate) use feed_io::CLOSE_DRAIN;
 pub use ports::{Admit, Refused, Rest};
 #[cfg(test)]
-pub(crate) use ports::{Flights, InFlight};
+pub(crate) use ports::{RequestsOnTheWay, InFlight};
 pub use schema_io::{has_media, lifetimes, max_pages, members_complete, DEFAULT_PAGE_SIZE, preload_keys, preload_sources, refreshes_on_foreground, ReadOperation, ReadOperations, SchemaWindowCodec};
 pub use snapshots::{DbSnapshots, Snapshots};
 pub use window_io::{WindowCodec, WindowIo, WindowReader};

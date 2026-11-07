@@ -29,7 +29,7 @@ async fn a_list_with_an_events_subscription_loads_once_when_the_network_returns(
         if matches!(bound(events.pull()).await, Some(ReadValue::Gap)) { break; }
     }
     let life = database.life_handle();
-    assert!(crate::test_wait::within(tokio::task::spawn_blocking(move || life.barrier(std::time::Duration::from_secs(5)))).await.unwrap(), "the owners did not go quiet");
+    crate::test_wait::within(tokio::task::spawn_blocking(move || life.barrier())).await.unwrap();
     assert_eq!(list_requests(&world), 2, "the return of the network and the gap of the subscription read the list twice");
     bound(database.close_database()).await.unwrap();
 }

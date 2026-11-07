@@ -162,13 +162,11 @@ pub(crate) fn limited(limit: Duration, test: impl std::future::Future<Output = (
 
 pub(crate) fn paused(test: impl std::future::Future<Output = ()>) {
     let runtime = tokio::runtime::Builder::new_current_thread().enable_all().start_paused(true).build().expect("test runtime");
-    let clock = crate::runtime::TestClock::stopped(Duration::from_millis(1_000_000));
-    WORLD.with(|world| *world.borrow_mut() = Some(World { clock: clock.clone() }));
     let _leave = Leave;
     runtime.block_on(async move {
-        let driver = tokio::spawn(async move { clock.drive(|| Some(0), || {}).await });
+        let clock = crate::runtime::TestClock::new(Duration::from_millis(1_000_000));
+        WORLD.with(|world| *world.borrow_mut() = Some(World { clock }));
         test.await;
-        driver.abort();
     });
 }
 

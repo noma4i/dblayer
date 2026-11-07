@@ -10,6 +10,8 @@ object TestPulse {
 
     init {
         StreamProbe.delivered = { pulse() }
+        StreamProbe.left = { pulse() }
+        OsProbe.changed = { pulse() }
     }
 
     val current: Int get() = generation.value

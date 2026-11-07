@@ -19,7 +19,7 @@ fn rt_prop_overload_bounded() {
     let runtime = builder.start().unwrap();
     runtime.start_epoch(1);
     runtime.post(store, EpochStamp::Epoch(1), ToyInput::WorkAsync(7));
-    assert!(runtime.barrier(WAIT));
+    runtime.barrier();
     let began = std::time::Instant::now();
     for frame in 0..FRAMES {
         runtime.post(feed, EpochStamp::Epoch(1), ToyInput::Deposit(1));
@@ -29,12 +29,12 @@ fn rt_prop_overload_bounded() {
     }
     assert!(began.elapsed() < WAIT, "a held Written of the store never blocks a sender");
     runtime.post(store, EpochStamp::Epoch(1), ToyInput::Release);
-    assert!(runtime.barrier(WAIT));
+    runtime.barrier();
     assert!(runtime.history(store).iter().any(|entry| entry.input == "Result(14)" && !entry.dropped), "the held answer of the store arrives when it is released");
     runtime.end_epoch(1, Cause::SessionReset);
     runtime.post(feed, EpochStamp::Epoch(1), ToyInput::Deposit(1));
     runtime.start_epoch(2);
-    assert!(runtime.barrier(WAIT));
+    runtime.barrier();
     assert_eq!(runtime.pending(), 0, "no input is left behind");
     let kept: Vec<String> = runtime.history(feed).into_iter().filter(|entry| !entry.dropped).map(|entry| entry.input).collect();
     assert_eq!(kept.iter().filter(|input| input.as_str() == "Deposit(1)").count(), FRAMES as usize, "every frame before the end of the epoch reached the owner, the late one of the old epoch did not");

@@ -1,7 +1,7 @@
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, OnceLock};
 use std::thread::JoinHandle;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use super::cell::{Cell, Emitted, EffectRunner};
 use super::det::TraceEntry;
@@ -26,22 +26,10 @@ type FailureRoute = Box<dyn Fn(&str) -> Vec<(usize, Box<dyn Message>)> + Send + 
 struct Inflight {
     count: Mutex<usize>,
     idle: Condvar,
-    /// Who holds the barrier outside the mailboxes: the place that took each count.
-    #[cfg(test)]
-    holders: Mutex<std::collections::HashMap<u64, &'static std::panic::Location<'static>>>,
 }
 
 impl Inflight {
     fn add(&self) { *lock(&self.count) += 1; }
-
-    #[cfg(test)]
-    fn hold(&self, id: u64, place: &'static std::panic::Location<'static>) { lock(&self.holders).insert(id, place); }
-
-    #[cfg(test)]
-    fn release(&self, id: u64) { lock(&self.holders).remove(&id); }
-
-    #[cfg(test)]
-    fn report(&self) -> String { lock(&self.holders).values().map(|place| format!("{}:{}", place.file(), place.line())).collect::<Vec<_>>().join(", ") }
 
     fn done(&self, handled: usize) {
         let mut count = lock(&self.count);
@@ -52,17 +40,11 @@ impl Inflight {
         }
     }
 
-    fn wait_idle(&self, limit: Duration) -> bool {
-        let deadline = Instant::now() + limit;
+    fn wait_idle(&self) {
         let mut count = lock(&self.count);
         while *count > 0 {
-            let left = deadline.saturating_duration_since(Instant::now());
-            if left.is_zero() {
-                return false;
-            }
-            count = blocking_unit(|| self.idle.wait_timeout(count, left).unwrap_or_else(std::sync::PoisonError::into_inner).0);
+            count = blocking_unit(|| self.idle.wait(count).unwrap_or_else(std::sync::PoisonError::into_inner));
         }
-        true
     }
 }
 
@@ -147,35 +129,20 @@ impl Handle {
 
     /// Returns once nothing is in flight, also after the owner threads ended, or false after `limit`.
     #[cfg(test)]
-    pub fn barrier(&self, limit: Duration) -> bool { self.router().is_none_or(|router| router.inflight.wait_idle(limit)) }
+    pub fn barrier(&self) { if let Some(router) = self.router() { router.inflight.wait_idle(); } }
 
     #[cfg(test)]
     pub fn pending(&self) -> usize { self.router().map_or(0, |router| *lock(&router.inflight.count)) }
 
     /// Counts an effect task as in flight from its spawn until its first poll, so the barrier covers the request it is about to make.
-    #[track_caller]
     pub fn launch(&self) -> Launch {
-        let place = std::panic::Location::caller();
-        let id = NEXT_HOLDER.fetch_add(1, Ordering::SeqCst) as u64;
-        Launch { router: self.router().cloned().inspect(|router| {
-            router.inflight.add();
-            #[cfg(test)]
-            router.inflight.hold(id, place);
-        }), id, place }
+        Launch { router: self.router().cloned().inspect(|router| router.inflight.add()) }
     }
-
-    /// Who holds the barrier now, as `file:line` of the places that took the counts.
-    #[cfg(test)]
-    pub fn holders(&self) -> String { self.router().map_or_else(String::new, |router| router.inflight.report()) }
 }
 
 pub struct Launch {
     router: Option<Arc<Router>>,
-    id: u64,
-    place: &'static std::panic::Location<'static>,
 }
-
-static NEXT_HOLDER: AtomicUsize = AtomicUsize::new(1);
 
 /// The counts a polled call holds while work started for it runs off its thread. The wake of the call lets them go.
 #[derive(Default)]
@@ -219,10 +186,6 @@ pub fn hold_until_woken(launch: Launch) -> Option<Launch> {
 /// The count of one effect task in the barrier: held while the task can run (spawned, woken or polled), released while it waits for the outside.
 struct Gate {
     router: Arc<Router>,
-    #[cfg_attr(not(test), allow(dead_code))]
-    id: u64,
-    #[cfg_attr(not(test), allow(dead_code))]
-    place: &'static std::panic::Location<'static>,
     held: std::sync::atomic::AtomicBool,
     woken: std::sync::atomic::AtomicBool,
 }
@@ -231,15 +194,11 @@ impl Gate {
     fn arm(&self) {
         if !self.held.swap(true, Ordering::SeqCst) {
             self.router.inflight.add();
-            #[cfg(test)]
-            self.router.inflight.hold(self.id, self.place);
         }
     }
 
     fn disarm(&self) {
         if self.held.swap(false, Ordering::SeqCst) {
-            #[cfg(test)]
-            self.router.inflight.release(self.id);
             self.router.inflight.done(1);
         }
     }
@@ -291,8 +250,8 @@ impl<F> Drop for Counted<F> {
 
 /// Wraps `work` so the barrier counts it whenever it can run. The launch taken before the spawn covers the time until the first poll.
 pub fn counted<F: std::future::Future>(launch: Option<Launch>, work: F) -> Counted<F> {
-    let gate = launch.and_then(|mut launch| launch.router.take().map(|router| (router, launch.id, launch.place))).map(|(router, id, place)| {
-        Arc::new(Gate { router, id, place, held: std::sync::atomic::AtomicBool::new(true), woken: std::sync::atomic::AtomicBool::new(false) })
+    let gate = launch.and_then(|mut launch| launch.router.take()).map(|router| {
+        Arc::new(Gate { router, held: std::sync::atomic::AtomicBool::new(true), woken: std::sync::atomic::AtomicBool::new(false) })
     });
     Counted { work: Box::pin(work), gate }
 }
@@ -300,8 +259,6 @@ pub fn counted<F: std::future::Future>(launch: Option<Launch>, work: F) -> Count
 impl Drop for Launch {
     fn drop(&mut self) {
         if let Some(router) = self.router.take() {
-            #[cfg(test)]
-            router.inflight.release(self.id);
             router.inflight.done(1);
         }
     }
@@ -413,7 +370,7 @@ impl Runtime {
 
     pub fn wakeups<O: StateOwner>(&self, address: Address<O>) -> u64 { self.router.boxes[address.index].wakeups() }
 
-    pub fn barrier(&self, limit: Duration) -> bool { self.router.inflight.wait_idle(limit) }
+    pub fn barrier(&self) { self.router.inflight.wait_idle(); }
 
     /// Inputs in mailboxes and started effect tasks that did not reply yet.
     #[cfg(test)]

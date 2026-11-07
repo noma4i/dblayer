@@ -179,17 +179,6 @@ func finishes(
   await eventually("\(what) to return", timeout: timeout, isolation: isolation, sourceLocation: sourceLocation) { done.value }
   return done.value
 }
-func fencedUntil(_ what: String, isolation: isolated (any Actor)? = #isolation, fence: () async -> Void, sourceLocation: SourceLocation = #_sourceLocation, _ ready: () -> Bool) async {
-  let deadline = ContinuousClock.now + .seconds(8)
-  while !ready() {
-    if ContinuousClock.now > deadline {
-      Issue.record("timed out waiting for \(what)", sourceLocation: sourceLocation)
-      return
-    }
-    await fence()
-    await Task.yield()
-  }
-}
 func parallel<Item: Sendable, Result: Sendable>(_ items: [Item], limit: Int, _ work: @escaping @Sendable (Item) async throws -> Result) async throws -> [Result] {
   try await withThrowingTaskGroup(of: (Int, Result).self) { group in
     var results: [(Int, Result)] = []

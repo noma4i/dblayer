@@ -205,7 +205,7 @@ async fn a_call_waiting_in_a_retry_or_a_queue_ends_with_the_session_reset_and_th
     let queued = tokio::spawn(async move { second.session_call("login_link".into(), json!({"account":"queued"}).to_string()).await.map(|_| ()) });
     crate::test_wait::yield_until("both calls wait for their outcomes", || database.life.waiting_calls() >= idle + 2).await;
     let life = database.life_handle();
-    assert!(tokio::task::spawn_blocking(move || life.barrier(std::time::Duration::from_secs(5))).await.unwrap(), "the owners took the queued call before the reset");
+    tokio::task::spawn_blocking(move || life.barrier()).await.unwrap();
     database.session_reset().await.unwrap();
     assert!(within(running).await.unwrap().is_err());
     assert!(within(queued).await.unwrap().is_err(), "a call queued behind another one ran after the session reset");

@@ -22,7 +22,7 @@ async fn cancelling_one_load_interest_keeps_the_other_call_alive() {
     let second = rig.database.begin_load(epoch, "User".into(), Some("all".into()), "{}".into()).unwrap();
     yield_until("both calls wait for the shared load", || rig.database.life.waiting_calls() >= idle + 2).await;
     let owners = rig.database.life.clone();
-    assert!(tokio::task::spawn_blocking(move || owners.barrier(std::time::Duration::from_secs(5))).await.unwrap(), "the owners handled both loads");
+    tokio::task::spawn_blocking(move || owners.barrier()).await.unwrap();
     first.cancel();
     held.release();
     bound(second.result()).await.unwrap();

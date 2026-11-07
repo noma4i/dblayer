@@ -75,7 +75,7 @@ async fn joined_the_flight(db: &Database, transport: &Counting, already: usize) 
         () = transport.started.notified() => panic!("the second load made its own request instead of joining"),
     }
     let life = db.life_handle();
-    assert!(tokio::task::spawn_blocking(move || life.barrier(std::time::Duration::from_secs(5))).await.unwrap(), "the owners did not settle");
+    tokio::task::spawn_blocking(move || life.barrier()).await.unwrap();
 }
 
 async fn rig_with_clock() -> (Arc<Database>, Arc<Counting>, Arc<TestClock>) {

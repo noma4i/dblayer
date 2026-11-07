@@ -5,7 +5,6 @@ import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.withTimeoutOrNull
-import kotlinx.coroutines.yield
 import kotlinx.serialization.decodeFromString
 const val HANG_GUARD_MILLIS = 18_000L
 const val TEST_DEADLINE_MILLIS = 20_000L
@@ -26,26 +25,10 @@ suspend fun eventually(what: String, timeoutMillis: Long = HANG_GUARD_MILLIS, de
         untilChange(seen, remainingMillis)
     }
 }
-/** The one poller left: state of an Android shadow (network callbacks, services) has no change event. Each turn is a coroutine yield, bounded by the hang guard. */
-suspend fun eventuallyOs(what: String, condition: () -> Boolean) {
-    val deadline = System.nanoTime() + HANG_GUARD_MILLIS * 1_000_000
-    while (!condition()) {
-        if (System.nanoTime() > deadline) throw AssertionError("timed out after $HANG_GUARD_MILLIS ms waiting for $what")
-        yield()
-    }
-}
 /** Returns at the next pulse of the doubles and of the screen models, or at the deadline. It never calls the core: a core that waits for the test must not hold the wait. */
 suspend fun untilChange(seen: Int, remainingMillis: Long) {
     if (TestPulse.current != seen) return
     withTimeoutOrNull(remainingMillis) { TestPulse.next(seen) }
-}
-suspend fun fencedUntil(what: String, fence: suspend () -> Unit, ready: () -> Boolean) {
-    val deadline = System.nanoTime() + 8_000_000_000L
-    while (!ready()) {
-        if (System.nanoTime() > deadline) throw AssertionError("timed out waiting for $what")
-        fence()
-        yield()
-    }
 }
 fun eventuallyBlocking(what: String, timeoutMillis: Long = HANG_GUARD_MILLIS, condition: () -> Boolean) = bounded(timeoutMillis + 2_000) { eventually(what, timeoutMillis) { condition() } }
 suspend fun <T> awaitWithin(what: String, detail: () -> String = { "" }, block: suspend () -> T): T = try {

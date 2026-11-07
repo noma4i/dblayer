@@ -67,7 +67,7 @@ struct Rig {
     det: DetScheduler,
     windows: Address<Windows>,
     mock: MockTransport,
-    flights: super::ports::Flights,
+    flights: super::ports::RequestsOnTheWay,
     batches: Batches,
     rest: Arc<Mutex<Vec<WindowsEffect>>>,
     _runtime: tokio::runtime::Runtime,
@@ -83,7 +83,7 @@ fn rig_with(mock: MockTransport, transport: Arc<dyn Upstream>, reader: Option<Wi
     let batches = Batches::default();
     let (rest, take_rest) = collector();
     let io = WindowIo::new(Some(transport), Arc::new(Pages), (admit(), open_gate(EPOCH)), (runtime.handle().clone(), Arc::new(|| NOW)), take_rest);
-    let flights = super::ports::Flights::default();
+    let flights = super::ports::RequestsOnTheWay::default();
     let io = io.flights_in(flights.clone());
     let io = match reader { Some(reader) => io.reading(reader), None => io };
     let mut det = DetScheduler::new(1);

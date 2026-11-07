@@ -303,7 +303,7 @@ async fn assert_quiet(db: &Database, streams: &[&Arc<ReadStream>]) {
         assert!(std::future::poll_fn(|cx| std::task::Poll::Ready(std::future::Future::poll(pull.as_mut(), cx).is_pending())).await);
     }
     let life = db.life_handle();
-    assert!(bound(tokio::task::spawn_blocking(move || life.barrier(std::time::Duration::from_secs(5)))).await.unwrap());
+    bound(tokio::task::spawn_blocking(move || life.barrier())).await.unwrap();
     for pull in &mut pulls {
         assert!(std::future::poll_fn(|cx| std::task::Poll::Ready(std::future::Future::poll(pull.as_mut(), cx).is_pending())).await);
     }
