@@ -47,7 +47,8 @@ class OperationQueueTest {
         val pending = withTimeout(5000) { queue.first { it.size == 1 && it[0].status == OperationQueueStatus.PENDING } }
         assertEquals(listOf("Moment", "update", moment.id), listOf(pending[0].model, pending[0].action, pending[0].rowId))
         DBlayer.database.setOnline(true)
-        withTimeout(5000) { queue.first { it.firstOrNull()?.status == OperationQueueStatus.SENDING } }
+        val sending = withTimeout(5000) { queue.first { it.firstOrNull()?.status == OperationQueueStatus.SENDING } }
+        assertEquals(1u, sending[0].attempts)
         hold.release()
         assertTrue(withTimeout(5000) { receipt.outcome() } is OperationOutcome.Confirmed)
         assertEquals(emptyList<OperationInfo>(), withTimeout(5000) { queue.first { it.isEmpty() } })

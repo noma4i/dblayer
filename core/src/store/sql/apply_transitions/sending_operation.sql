@@ -1,1 +1,1 @@
-UPDATE op SET status = 'sending' WHERE seq = ?1 AND {}
+UPDATE op SET status = 'sending', attempts = MAX(attempts, 1) WHERE seq = ?1 AND {}

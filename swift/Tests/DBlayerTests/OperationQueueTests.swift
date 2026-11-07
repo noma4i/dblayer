@@ -35,7 +35,8 @@ extension BridgeProbeTests {
     let pending = try #require(await queue.first("the update is pending") { $0.count == 1 && $0[0].status == .pending })
     #expect(pending[0].model == "Moment" && pending[0].action == "update" && pending[0].rowId == moment.id)
     try DB.database.setOnline(online: true)
-    #expect(await queue.first("the update is sending") { $0.first?.status == .sending } != nil)
+    let sending = try #require(await queue.first("the update is sending") { $0.first?.status == .sending })
+    #expect(sending[0].attempts == 1)
     hold.release()
     if case .confirmed = try await receipt.outcome() {} else { Issue.record("the update was not confirmed") }
     #expect(await queue.first("the queue is empty") { $0.isEmpty } != nil)
