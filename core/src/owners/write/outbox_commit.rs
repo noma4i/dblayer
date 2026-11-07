@@ -92,6 +92,7 @@ impl OutboxState {
                 let mut transfer_ids = Vec::new();
                 if let Some(operation) = self.ops.get_mut(&op_id) {
                     operation.error = None;
+                    if !operation.pending_owned { operation.request_id = crate::owners::contract::next_request_id(); }
                     transfer_ids = std::mem::take(&mut operation.retry_uploads).into_iter().map(|row| (row.transfer_id, row.cycle_id)).collect();
                 }
                 if !transfer_ids.is_empty() { self.retry_transfer_answer(transfer_ids, Ok(revision), fx); }

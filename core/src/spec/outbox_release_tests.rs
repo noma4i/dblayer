@@ -1,5 +1,5 @@
 use super::outbox_harness::*;
-use super::ref_outbox::Policy;
+use super::ref_outbox::{Policy, St};
 use crate::owners::contract::{ErrorClass, Online, RequestId};
 use crate::owners::session::{AuthorOutcome, SessionError};
 use crate::owners::write::outbox::{OpId, OutboxInput, StoredOp};
@@ -60,4 +60,26 @@ fn out_discard_pending_owner_crash() {
     twin.rejected(7, super::ref_outbox::Reason::Storage);
     assert!(twin.state().ops[&7].pending_owned, "a refused batch leaves the owner as it was");
     assert_eq!(releases(&twin.session_text), 0, "no Release without the commit");
+}
+
+fn retried_request_id(pending_retained: bool) -> (RequestId, RequestId) {
+    let mut twin = Twin::new();
+    let id = twin.submit("r", Policy::Keep, false);
+    twin.committed(id);
+    let first = twin.first_pair[&id].0;
+    twin.post(OutboxInput::Answered { req_id: first, outcome: AuthorOutcome::Error { class: ErrorClass::Permanent, error: SessionError::Http { status: 0 }, pending_retained } });
+    twin.committed(id);
+    assert_eq!(twin.stage(id), Some(St::Failed));
+    super::outbox_cells_tests::retry(&mut twin);
+    let effects = twin.committed(id);
+    let second = effects.iter().find_map(|effect| match effect { OutboxEffect::Send { request_id, .. } => Some(*request_id), _ => None }).expect("the retry sends");
+    (first, second)
+}
+
+#[test]
+fn out_retry_request_identity() {
+    let (kept_first, kept_second) = retried_request_id(true);
+    assert_eq!(kept_second, kept_first, "an unresolved pending keeps the request id");
+    let (released_first, released_second) = retried_request_id(false);
+    assert_ne!(released_second, released_first, "a released pending starts the cycle with a new request id");
 }
