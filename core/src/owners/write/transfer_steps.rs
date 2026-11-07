@@ -5,6 +5,7 @@ use super::outbox_types::Phase;
 use super::transfer::{reply, run, Fx, TransferState};
 use super::transfer_types::*;
 use crate::owners::contract::RejectReason;
+use crate::owners::store::StoreOp;
 use crate::runtime::Time;
 use crate::transport::NetworkPurpose;
 
@@ -24,7 +25,7 @@ impl TransferState {
 
     fn step_effect(transfer: &Transfer, operation: u64) -> TransferEffect {
         let NextStep::Part(part) = transfer.next_step else { return Self::complete_effect(transfer) };
-        TransferEffect::Step { transfer_id: transfer.transfer_id, attempt_id: transfer.attempt_id, operation, part: Some(part), purpose: NetworkPurpose::Transfer, upload_id: transfer.upload_id.clone(), source: transfer.source.clone(), steps: transfer.steps.clone(), place: transfer.place }
+        TransferEffect::Step { transfer_id: transfer.transfer_id, attempt_id: transfer.attempt_id, key: transfer.key.clone(), operation, part: Some(part), purpose: NetworkPurpose::Transfer, upload_id: transfer.upload_id.clone(), source: transfer.source.clone(), steps: transfer.steps.clone(), place: transfer.place }
     }
 
     fn complete_effect(transfer: &Transfer) -> TransferEffect {
@@ -125,12 +126,26 @@ impl TransferState {
         self.store(&[id], StoreKind::Failed, fx);
     }
 
-    pub(super) fn upload_minted(&mut self, id: TransferId, attempt_id: AttemptId, upload_id: String) {
-        if !self.live(id, TransferStage::Uploading, attempt_id) {
-            return;
-        }
-        if let Some(transfer) = self.transfers.get_mut(&id) {
-            transfer.upload_id.get_or_insert(upload_id);
+    /// The multipart upload exists on the server whatever became of the attempt that created it.
+    pub(super) fn upload_minted(&mut self, id: TransferId, upload_id: String, key: String, fx: &mut Fx) {
+        let owned = self.transfers.get(&id).map(|transfer| (transfer.upload_id.is_some(), transfer.stage));
+        let known = self.orphans.contains_key(&upload_id) || self.pending.values().any(|pending| pending.orphan.as_ref().is_some_and(|(pending_id, _)| *pending_id == upload_id));
+        match owned {
+            Some((true, _)) => {}
+            _ if known => {}
+            Some((false, stage)) if stage != TransferStage::Removing && stage != TransferStage::Done => {
+                if let Some(transfer) = self.transfers.get_mut(&id) {
+                    transfer.upload_id = Some(upload_id);
+                }
+                self.store(&[id], StoreKind::UploadId, fx);
+            }
+            _ => {
+                let batch = self.commit_ops(vec![StoreOp::UploadOrphan { upload_id: upload_id.clone(), key: key.clone() }], fx);
+                if let Some(pending) = batch.and_then(|batch| self.pending.get_mut(&batch)) {
+                    pending.kind = StoreKind::LateOrphan;
+                    pending.orphan = Some((upload_id, key));
+                }
+            }
         }
     }
 

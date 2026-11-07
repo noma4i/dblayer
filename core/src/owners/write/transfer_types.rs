@@ -193,7 +193,7 @@ pub enum TransferInput {
     /// The answer of Outbox to `ReserveOp`.
     OpReserved { target: super::outbox::ReserveTarget, result: Result<OpId, Fault> },
     StepOk { transfer_id: TransferId, attempt_id: AttemptId, part: Option<u32>, upload_id: Option<String>, etag: Option<String> },
-    UploadMinted { transfer_id: TransferId, attempt_id: AttemptId, upload_id: String },
+    UploadMinted { transfer_id: TransferId, attempt_id: AttemptId, upload_id: String, key: Key },
     StepError { transfer_id: TransferId, attempt_id: AttemptId, temporary: bool },
     Completed { transfer_id: TransferId, attempt_id: AttemptId, signed_id: Option<String> },
     CompleteError { transfer_id: TransferId, attempt_id: AttemptId, temporary: bool },
@@ -252,6 +252,10 @@ pub enum StoreKind {
     MixedOutcomes,
     /// Remove the row of `sync_upload`, the parts, the saved outcome and the inline bytes.
     Removed,
+    /// Write `upload_id` of a multipart upload the server created for an attempt.
+    UploadId,
+    /// The orphan record of a multipart upload minted after its transfer was removed.
+    LateOrphan,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -260,7 +264,7 @@ pub enum TransferEffect {
     Copy { transfer_id: TransferId, attempt_id: AttemptId, key: Key, source: Source },
     CopyCancel { transfer_id: TransferId },
     /// A step of the file (`part`, `blob`) with `NetworkPurpose::Transfer`.
-    Step { transfer_id: TransferId, attempt_id: AttemptId, operation: u64, part: Option<u32>, purpose: NetworkPurpose, upload_id: Option<String>, source: Source, steps: Steps, place: Option<Location> },
+    Step { transfer_id: TransferId, attempt_id: AttemptId, key: Key, operation: u64, part: Option<u32>, purpose: NetworkPurpose, upload_id: Option<String>, source: Source, steps: Steps, place: Option<Location> },
     Complete { transfer_id: TransferId, attempt_id: AttemptId, key: Key, upload_id: Option<String>, parts: Vec<(u32, Option<String>)>, place: Option<Location> },
     Abort { transfer_id: TransferId, attempt_id: AttemptId, key: Key, upload_id: String },
     /// `abort` of an upload whose transfer is gone: the answer comes back as `AbortDone`.
@@ -408,6 +412,7 @@ pub type TransferOutcomes = BTreeMap<TransferId, CycleOutcomes>;
 pub(super) struct Pending {
     pub ids: Vec<TransferId>,
     pub kind: StoreKind,
+    pub orphan: Option<(String, Key)>,
 }
 
 #[derive(Debug)]

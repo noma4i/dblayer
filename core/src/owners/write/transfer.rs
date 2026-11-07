@@ -119,7 +119,7 @@ impl TransferState {
             .collect();
         let id = self.next_batch;
         self.next_batch += 1;
-        self.pending.insert(id, Pending { ids: ids.to_vec(), kind });
+        self.pending.insert(id, Pending { ids: ids.to_vec(), kind, orphan: None });
         let intents = if kind == StoreKind::SyncUpload { ids.len() as u64 } else { 0 };
         let mut batch = StoreBatch { author: BatchAuthor::Transfer, id, epoch: self.epoch, basis, rows: Vec::new(), intents, credential: None, ops };
         let entries = batch.models().into_iter().map(|model| {
@@ -147,16 +147,17 @@ impl TransferState {
         }
     }
 
-    pub(super) fn commit_ops(&mut self, ops: Vec<StoreOp>, fx: &mut Fx) {
+    pub(super) fn commit_ops(&mut self, ops: Vec<StoreOp>, fx: &mut Fx) -> Option<crate::owners::contract::BatchId> {
         if ops.is_empty() {
-            return;
+            return None;
         }
         let id = self.next_batch;
         self.next_batch += 1;
-        self.pending.insert(id, Pending { ids: Vec::new(), kind: StoreKind::Removed });
+        self.pending.insert(id, Pending { ids: Vec::new(), kind: StoreKind::Removed, orphan: None });
         let mut batch = StoreBatch { author: BatchAuthor::Transfer, id, epoch: self.epoch, basis: BTreeMap::new(), rows: Vec::new(), intents: 0, credential: None, ops };
         batch.basis = crate::owners::store::basis_for(batch.models().into_iter().map(|model| (self.generations.get(&model).copied().unwrap_or(self.base_generation), model)).map(|(generation, model)| (model, generation)));
         fx.push(Effect::Send(Outbound::new(self.peers.store, StoreInput::Commit(batch))));
+        Some(id)
     }
 
     pub(super) fn abort_done(&mut self, upload_id: String, answered: bool, fx: &mut Fx) {
@@ -175,7 +176,7 @@ impl TransferState {
         }
         let id = self.next_batch;
         self.next_batch += 1;
-        self.pending.insert(id, Pending { ids: Vec::new(), kind: StoreKind::Removed });
+        self.pending.insert(id, Pending { ids: Vec::new(), kind: StoreKind::Removed, orphan: None });
         let batch = StoreBatch { author: BatchAuthor::Transfer, id, epoch: self.epoch, basis: BTreeMap::new(), rows: Vec::new(), intents: 0, credential: None, ops: vec![StoreOp::RemoveOrphan { upload_id }] };
         fx.push(Effect::Send(Outbound::new(self.peers.store, StoreInput::Commit(batch))));
     }
@@ -277,6 +278,13 @@ impl TransferState {
 
     fn committed(&mut self, batch: crate::owners::contract::BatchId, fx: &mut Fx) {
         let Some(pending) = self.pending.remove(&batch) else { return };
+        if matches!(pending.kind, StoreKind::UploadId | StoreKind::LateOrphan) {
+            if let Some((upload_id, key)) = pending.orphan {
+                self.orphans.insert(upload_id, key);
+                self.send_orphans(false, fx);
+            }
+            return self.maybe_drained(fx);
+        }
         if pending.kind == StoreKind::MixedOutcomes {
             for &id in &pending.ids {
                 match self.stage_of(id) {
@@ -312,6 +320,13 @@ impl TransferState {
 
     fn rejected(&mut self, rejected: crate::owners::contract::Rejected, fx: &mut Fx) {
         let Some(pending) = self.pending.remove(&rejected.batch) else { return };
+        if matches!(pending.kind, StoreKind::UploadId | StoreKind::LateOrphan) {
+            if let (Some((upload_id, key)), RejectReason::Storage(_)) = (pending.orphan, &rejected.reason) {
+                self.orphans.insert(upload_id, key);
+                self.send_orphans(false, fx);
+            }
+            return;
+        }
         if pending.kind == StoreKind::MixedOutcomes && matches!(&rejected.reason, RejectReason::Storage(_)) {
             self.schedule_retry(pending.ids[0], fx);
             return;
@@ -388,7 +403,7 @@ impl TransferState {
             TransferInput::CopyFailed { transfer_id, attempt_id, error } => self.copy_failed(transfer_id, attempt_id, error, fx),
             TransferInput::OpReserved { target, result } => self.op_reserved(target, result, fx),
             TransferInput::StepOk { transfer_id, attempt_id, part, upload_id, etag } => self.step_ok(transfer_id, attempt_id, part, upload_id, etag, fx),
-            TransferInput::UploadMinted { transfer_id, attempt_id, upload_id } => self.upload_minted(transfer_id, attempt_id, upload_id),
+            TransferInput::UploadMinted { transfer_id, upload_id, key, .. } => self.upload_minted(transfer_id, upload_id, key, fx),
             TransferInput::StepError { transfer_id, attempt_id, temporary } => self.step_error(transfer_id, attempt_id, temporary, fx),
             TransferInput::Completed { transfer_id, attempt_id, signed_id } => self.completed(transfer_id, attempt_id, signed_id, fx),
             TransferInput::CompleteError { transfer_id, attempt_id, temporary } => self.complete_error(transfer_id, attempt_id, temporary, fx),
@@ -528,7 +543,7 @@ impl StateOwner for Transfers {
 
 pub(super) fn upload_kind(kind: StoreKind) -> UploadKind {
     match kind {
-        StoreKind::SyncUpload | StoreKind::Removed | StoreKind::BatchIntent | StoreKind::MixedOutcomes => UploadKind::SyncUpload,
+        StoreKind::SyncUpload | StoreKind::UploadId | StoreKind::LateOrphan | StoreKind::Removed | StoreKind::BatchIntent | StoreKind::MixedOutcomes => UploadKind::SyncUpload,
         StoreKind::ConfirmedParts => UploadKind::ConfirmedParts,
         StoreKind::Completed => UploadKind::Completed,
         StoreKind::Failed => UploadKind::Failed,

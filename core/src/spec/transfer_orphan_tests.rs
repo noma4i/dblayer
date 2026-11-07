@@ -198,19 +198,74 @@ fn xfer_restart_stale_presign() {
     assert_eq!(out.steps().iter().map(|(part, _)| *part).collect::<Vec<_>>(), vec![Some(3)], "the first step after a restart asks only for the unfinished part");
 }
 
+fn minted(twin: &mut Twin, id: TransferId, upload_id: &str) -> Out {
+    let attempt_id = twin.state().transfers.get(&id).map_or(0, |transfer| transfer.attempt_id);
+    twin.post(TransferInput::UploadMinted { transfer_id: id, attempt_id, upload_id: upload_id.into(), key: KEY.into() })
+}
+
 #[test]
 fn xfer_discard_before_the_cancelled_attempt_answers() {
     let mut twin = Twin::new();
     let id = twin.uploading(KEY, 3);
-    let attempt_id = twin.attempt(id);
-    twin.post(TransferInput::UploadMinted { transfer_id: id, attempt_id, upload_id: "u1".into() });
+    minted(&mut twin, id, "u1");
+    twin.commit();
     twin.online(false);
     let (reply, out) = twin.discard(KEY);
     assert_eq!((out.orphans_written(), out.removed(), out.writes()), (vec![("u1".to_string(), KEY.to_string())], vec![KEY.to_string()], 1), "the removal carries the orphan of the minted upload");
     assert_eq!(twin.stage(id), TransferStage::Removing);
+    let attempt_id = twin.attempt(id);
     twin.ignores(id, vec![TransferInput::StepError { transfer_id: id, attempt_id, temporary: true }]);
     assert_eq!(twin.commit().replies(reply).len(), 1);
     assert_eq!(twin.online(true).orphan_aborts(), vec!["u1".to_string()]);
+}
+
+#[test]
+fn xfer_upload_minted() {
+    let mut twin = Twin::new();
+    let id = twin.uploading(KEY, 3);
+    twin.online(false);
+    assert_eq!(twin.stage(id), TransferStage::Ready);
+    let out = minted(&mut twin, id, "u1");
+    assert_eq!((out.writes(), twin.t(id).upload_id.as_deref()), (1, Some("u1")), "the id of the cancelled attempt is written");
+    twin.commit();
+    let (_, out) = twin.discard(KEY);
+    assert_eq!((out.orphans_written(), out.removed()), (vec![("u1".to_string(), KEY.to_string())], vec![KEY.to_string()]), "the removal carries the orphan");
+}
+
+#[test]
+fn xfer_upload_minted_late() {
+    let mut twin = Twin::new();
+    let id = twin.uploading(KEY, 3);
+    let (_, out) = twin.discard(KEY);
+    assert!(out.orphans_written().is_empty(), "no upload id is known at the discard");
+    let out = minted(&mut twin, id, "u1");
+    assert_eq!((out.orphans_written(), out.writes(), out.orphan_aborts().len()), (vec![("u1".to_string(), KEY.to_string())], 1, 0), "in Removing the orphan is written, no abort before Committed");
+    twin.commit();
+    let out = twin.commit();
+    assert_eq!(out.orphan_aborts(), vec!["u1".to_string()], "the abort goes once the orphan is written");
+    let gone = twin.post(TransferInput::AbortDone { upload_id: "u1".into(), answered: true });
+    assert_eq!(gone.orphans_removed(), vec!["u1".to_string()]);
+    twin.commit();
+    let mut after = Twin::new();
+    let id = after.uploading(KEY, 3);
+    after.discard(KEY);
+    after.commit();
+    let out = minted(&mut after, id, "u2");
+    assert_eq!(out.orphans_written(), vec![("u2".to_string(), KEY.to_string())], "after the removal the orphan is written too");
+    assert_eq!(after.commit().orphan_aborts(), vec!["u2".to_string()]);
+}
+
+#[test]
+fn xfer_upload_minted_dup() {
+    let mut twin = Twin::new();
+    let id = with_upload(&mut twin, KEY);
+    let out = minted(&mut twin, id, "u9");
+    assert!(Twin::quiet(&out) && twin.t(id).upload_id.as_deref() == Some("u1"), "a recorded upload id stays: {out:?}");
+    let mut late = Twin::new();
+    let id = late.uploading(KEY, 3);
+    late.discard(KEY);
+    minted(&mut late, id, "u1");
+    assert!(Twin::quiet(&minted(&mut late, id, "u1")), "the same id twice writes one orphan");
 }
 
 #[test]

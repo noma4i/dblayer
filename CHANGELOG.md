@@ -188,6 +188,7 @@
 - A refused multipart abort waits for `sessionResume` and reaches the server once.
 - `cancelUpload` cancels an upload that starts while the call runs.
 - A format change keeps queued operations and uploads when their table layout is unchanged and builds their list effects again. A queued create does not bring back its record.
+- A multipart upload discarded before its first part is aborted on the server after a reconnect.
 
 ### Removed
 

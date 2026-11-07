@@ -83,6 +83,7 @@ struct StepAsk {
     upload_id: Option<String>,
     source: Source,
     steps: Steps,
+    key: String,
 }
 
 /// What the owner asks of Lifecycle and Network.
@@ -198,9 +199,9 @@ impl TransferExecutor {
     }
 
     fn step(&self, stamp: EpochStamp, back: &Back<Transfers>, (transfer_id, attempt_id): (TransferId, u64), ask: StepAsk) {
-        let StepAsk { operation, part, upload_id, source, steps } = ask;
+        let StepAsk { operation, part, upload_id, source, steps, key } = ask;
         let source = self.local(transfer_id, source);
-        let report = { let back = back.clone(); move |upload_id| back.reply(stamp, TransferInput::UploadMinted { transfer_id, attempt_id, upload_id }) };
+        let report = { let back = back.clone(); move |upload_id| back.reply(stamp, TransferInput::UploadMinted { transfer_id, attempt_id, upload_id, key: key.clone() }) };
         self.task(
             stamp,
             back,
@@ -282,9 +283,9 @@ impl EffectRunner<Transfers> for TransferExecutor {
         match effect {
             TransferEffect::Copy { transfer_id, attempt_id, source, .. } => self.copy(stamp, back, transfer_id, attempt_id, source),
             TransferEffect::CopyCancel { transfer_id } => self.copies.cancel(&transfer_id),
-            TransferEffect::Step { transfer_id, attempt_id, operation, part, purpose, upload_id, source, steps, .. } => {
+            TransferEffect::Step { transfer_id, attempt_id, key, operation, part, purpose, upload_id, source, steps, .. } => {
                 debug_assert_eq!(purpose, NetworkPurpose::Transfer);
-                self.step(stamp, back, (transfer_id, attempt_id), StepAsk { operation, part, upload_id, source, steps });
+                self.step(stamp, back, (transfer_id, attempt_id), StepAsk { operation, part, upload_id, source, steps, key });
             }
             TransferEffect::Complete { transfer_id, attempt_id, key, upload_id, parts, .. } => self.complete(stamp, back, (transfer_id, attempt_id), key, upload_id, parts),
             TransferEffect::Abort { key, upload_id, .. } => self.drop_upload(key, upload_id),
