@@ -5,7 +5,6 @@ use crate::ffi::{Database, TestClock};
 use crate::test_wait::yield_until;
 
 const WEEK_MILLIS: u64 = 7 * 24 * 60 * 60 * 1000;
-const MARGIN_MILLIS: u64 = 60_000;
 const OPERATIONS: [(&str, &str); 2] = [("CreateBlob", "mutation CreateBlob { createBlob { signedId } }"), ("CreateMoment", "mutation CreateMoment { createMoment { id } }")];
 
 fn now_millis() -> u64 { std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis() as u64 }
@@ -34,7 +33,7 @@ async fn a_failed_blob_older_than_seven_days_is_gone_after_the_reopen() {
     let id = failed_upload(&stand, &database, &source).await;
     database.close_now();
 
-    let reopened = stand.open_with(Some(&path), &OPERATIONS, Some(TestClock::new(start + WEEK_MILLIS + MARGIN_MILLIS))).await;
+    let reopened = stand.open_with(Some(&path), &OPERATIONS, Some(TestClock::new(start + WEEK_MILLIS))).await;
 
     until_gone(&reopened, &id).await;
     reopened.close_now();

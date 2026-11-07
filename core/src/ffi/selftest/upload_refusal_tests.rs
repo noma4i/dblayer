@@ -9,7 +9,6 @@ use crate::test_wait::yield_until;
 
 const ROW: &str = r#"{"data":{"createMoment":{"__typename":"Moment","id":"m1","uuid":"u","likedByMe":false,"media":{},"createdAt":"2026-10-08T00:00:00.000Z"}}}"#;
 const WEEK_MILLIS: u64 = 7 * 24 * 60 * 60 * 1000;
-const MARGIN_MILLIS: u64 = 60_000;
 const EXPIRY_OPERATIONS: [(&str, &str); 2] = [("CreateBlob", "mutation CreateBlob { createBlob { signedId } }"), ("CreateMoment", "mutation CreateMoment { createMoment { id } }")];
 
 fn now_millis() -> u64 { std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis() as u64 }
@@ -58,7 +57,7 @@ async fn reopening_after_seven_days_expires_a_failed_blob() {
     until_state(&database, &id, WireSyncState::Failed).await;
     database.close_now();
 
-    let reopened = stand.open_with(Some(&path), &EXPIRY_OPERATIONS, Some(TestClock::new(start + WEEK_MILLIS + MARGIN_MILLIS))).await;
+    let reopened = stand.open_with(Some(&path), &EXPIRY_OPERATIONS, Some(TestClock::new(start + WEEK_MILLIS + 1))).await;
 
     until_gone(&reopened, &id).await;
     reopened.close_now();
