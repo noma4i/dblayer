@@ -12,4 +12,4 @@ pub mod store;
 pub mod write;
 
 #[cfg(test)]
-pub(crate) mod support;
+pub(crate) use crate::spec::support;
