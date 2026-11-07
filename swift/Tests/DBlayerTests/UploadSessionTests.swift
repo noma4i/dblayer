@@ -8,11 +8,15 @@ private final class HeldUploadTransport: ScriptedTransport, @unchecked Sendable 
   let arrived = AsyncStream<Void>.makeStream()
   let released = AsyncStream<Void>.makeStream()
   let finished = AsyncStream<Void>.makeStream()
+  private let lock = NSLock()
+  private var putCount = 0
+  var puts: Int { lock.withLock { putCount } }
 
   func scriptedCable(url: String, events: CableEvents) async -> CableOutcome { await base.scriptedCable(url: url, events: events) }
   func query(request: TransportRequest) async throws -> String { try await base.query(request: request) }
   func mutate(request: TransportRequest) async throws -> String { try await base.mutate(request: request) }
   func scriptedPut(url: String, headers: [String: String], file: PutFile, identity: TransferIdentity, progress: ByteProgress) async throws -> PutReply {
+    lock.withLock { putCount += 1 }
     defer { finished.continuation.yield(()) }
     arrived.continuation.yield(())
     _ = await Cursor(released.stream).next("the held upload is released")
@@ -78,6 +82,7 @@ extension BridgeProbeTests {
     try await loginAgain()
     try await User.profile.load(in: DB.account())
     #expect(try await User.profile.read(in: DB.account()).first?.name == "B")
+    #expect(transport.puts == 1, "the old upload was sent again after the reset")
     transport.released.continuation.yield(())
     _ = try #require(await Cursor(transport.finished.stream).next("the PUT ends"))
     let found = try await database.readRow(epoch: database.sessionEpoch(), model: "Moment", rowId: row.id)
