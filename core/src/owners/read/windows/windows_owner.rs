@@ -250,6 +250,9 @@ impl WindowsState {
         self
     }
 
+    #[cfg(test)]
+    pub fn held(&self) -> usize { self.held_nowait.len() }
+
     pub fn with_members_complete(mut self, members_complete: MembersComplete) -> Self {
         self.members_complete = members_complete;
         self

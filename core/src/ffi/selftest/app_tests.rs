@@ -183,6 +183,21 @@ async fn logout_then_login_of_the_same_account_reads_it_again() {
     rig.database.close_now();
 }
 
+/// The calls of the next account wait for the addressed snapshot of its epoch: reset, login again, a run and a load must end.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_run_and_a_load_after_reset_and_login_end() {
+    let rig = Rig::encrypted().await;
+    rig.login_ios("A").await;
+    rig.database.session_reset().await.unwrap();
+    let database = &rig.database;
+    database.set_online(true).unwrap();
+    bound(database.session_call("login_link".into(), json!({"account":"A"}).to_string())).await.unwrap();
+    bound(database.run(database.session_epoch(), "SessionProfile".into(), "{}".into())).await.unwrap();
+    let load = database.begin_load(database.session_epoch(), "User".into(), Some("profile".into()), "{}".into()).unwrap();
+    bound(load.result()).await.unwrap();
+    database.close_now();
+}
+
 /// C19, R-5: login is refused as already authenticated, the confirmed sign-out follows, the login repeats and starts the session. A refused sign-out does not repeat the login.
 #[tokio::test(flavor = "multi_thread")]
 async fn login_link_already_authenticated_signs_out_then_repeats_once() {

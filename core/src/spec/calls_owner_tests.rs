@@ -259,6 +259,49 @@ fn call_snapshot_sets_online() {
     assert_eq!(out.replies, vec![(2, Err(Fail::Offline))], "a broadcast after the snapshot follows the network");
 }
 
+fn orders(events: &mut Vec<usize>, rest: &mut Vec<usize>, all: &mut Vec<Vec<usize>>) {
+    if rest.is_empty() {
+        all.push(events.clone());
+        return;
+    }
+    for index in 0..rest.len() {
+        let event = rest.remove(index);
+        events.push(event);
+        orders(events, rest, all);
+        events.pop();
+        rest.insert(index, event);
+    }
+}
+
+/// call_prop_second_epoch_orders: every order of EpochStarted (0), its addressed snapshot (1), the broadcast (2) and a run of the new epoch (3). The snapshot follows its request.
+#[test]
+fn call_prop_second_epoch_orders() {
+    let mut all = Vec::new();
+    orders(&mut Vec::new(), &mut vec![0, 1, 2, 3], &mut all);
+    let before = |order: &[usize], first: usize, second: usize| order.iter().position(|seen| *seen == first) < order.iter().position(|seen| *seen == second);
+    let valid: Vec<&Vec<usize>> = all.iter().filter(|order| before(order, 0, 1)).collect();
+    assert_eq!(valid.len(), 12);
+    for network in [true, false] {
+        for order in &valid {
+            let mut twin = Twin::new();
+            for event in order.iter() {
+                twin.feed(match event {
+                    0 => Input::EpochStarted(EPOCH + 1),
+                    1 => Input::Snapshot(network),
+                    2 => Input::Online(network),
+                    _ => Input::Run { epoch: EPOCH + 1, operation: "Op".into(), reply: 1 },
+                });
+            }
+            twin.feed(Input::EpochEnded);
+            let answers = twin.history.iter().filter(|effect| matches!(effect, CallsEffect::Reply { id: 1, .. })).count();
+            let requests = twin.history.iter().filter(|effect| matches!(effect, CallsEffect::Request { .. })).count();
+            let cancels = twin.history.iter().filter(|effect| matches!(effect, CallsEffect::Cancel { .. })).count();
+            assert_eq!(answers, 1, "order {order:?} network {network}: the run has exactly one answer");
+            assert!(requests <= 1 && cancels == requests, "order {order:?} network {network}: a request that left is cancelled by the end of the epoch");
+        }
+    }
+}
+
 #[test]
 fn call_epoch_ended() { sending().feed(Input::EpochEnded); }
 

@@ -1,5 +1,6 @@
 use crate::owners::read::deliveries::Deliveries;
-use crate::owners::contract::Online;
+use crate::owners::contract::{EpochEnded, EpochStarted, Online};
+use crate::runtime::Cause;
 use crate::owners::read::windows::{WindowOutcome, AnswerPage, Goal, WindowEffect, WindowKey, Windows, WindowsEffect, WindowsInput, WindowsPeers, WindowsState};
 use crate::owners::store::{StoreInput, StoreOp, StoreWriter};
 use crate::runtime::{Address, Effect, StateOwner};
@@ -80,4 +81,49 @@ fn win_load_nowait_before_snapshot_waits() {
     let mut state = WindowsState::new(1, None, WindowsPeers { store: Address::<StoreWriter>::new(0), deliveries: Address::<Deliveries>::new(1) });
     no_wait(&mut state);
     assert_eq!(outcome_of(&Windows::step(&mut state, WindowsInput::Closing)), Some(WindowOutcome::Interrupted), "a waiting call ends with the owner");
+}
+
+fn orders(events: &mut Vec<usize>, rest: &mut Vec<usize>, all: &mut Vec<Vec<usize>>) {
+    if rest.is_empty() {
+        all.push(events.clone());
+        return;
+    }
+    for index in 0..rest.len() {
+        let event = rest.remove(index);
+        events.push(event);
+        orders(events, rest, all);
+        events.pop();
+        rest.insert(index, event);
+    }
+}
+
+/// win_load_nowait_before_snapshot_waits over every order of the second epoch: EpochStarted(0), the addressed snapshot (1), the broadcast (2), the call (3).
+/// The snapshot follows its request and a call stamped with the epoch follows its start.
+#[test]
+fn win_prop_nowait_second_epoch_orders() {
+    let mut all = Vec::new();
+    orders(&mut Vec::new(), &mut vec![0, 1, 2, 3], &mut all);
+    let position = |order: &[usize], event: usize| order.iter().position(|seen| *seen == event).unwrap();
+    let valid: Vec<&Vec<usize>> = all.iter().filter(|order| position(order, 0) < position(order, 1) && position(order, 0) < position(order, 3)).collect();
+    assert_eq!(valid.len(), 8);
+    for network in [true, false] {
+        for order in &valid {
+            let mut state = WindowsState::new(1, Some(true), WindowsPeers { store: Address::<StoreWriter>::new(0), deliveries: Address::<Deliveries>::new(1) });
+            let mut effects = Windows::step(&mut state, WindowsInput::EpochEnded(EpochEnded { epoch: 1, cause: Cause::SessionReset }));
+            let online = WindowsInput::Online { online: Online(network), online_seq: 1, now: NOW };
+            for event in order.iter() {
+                effects.extend(match event {
+                    0 => Windows::step(&mut state, WindowsInput::EpochStarted(EpochStarted { epoch: 2, identity: Some(1), generation: 0 })),
+                    1 | 2 => Windows::step(&mut state, online.clone()),
+                    _ => no_wait(&mut state),
+                });
+            }
+            assert_eq!(state.held(), 0, "order {order:?} network {network}: no held call is left once the snapshot came");
+            let outcomes = effects.iter().filter(|effect| outcome_of(std::slice::from_ref(effect)).is_some()).count();
+            assert_eq!(outcomes, usize::from(!network), "order {order:?} network {network}: only a call without network is answered before the close");
+            effects.extend(Windows::step(&mut state, WindowsInput::Closing));
+            let total = effects.iter().filter(|effect| outcome_of(std::slice::from_ref(effect)).is_some()).count();
+            assert_eq!(total, 1, "order {order:?} network {network}: exactly one outcome for the call");
+        }
+    }
 }

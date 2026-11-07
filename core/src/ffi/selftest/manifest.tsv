@@ -299,3 +299,4 @@ S316	replaced-pair	kotlin	com.noma4i.dblayer.BridgeProbeTest.aRewriteCarriesTheT
 S317	interrupted-answer	core	interrupted_session_answer_without_restored_call_returns_none	green	core-only: no swift or kotlin wrapper of the interrupted session answer yet	coordinator D-72
 S320	feed-event-insert-on	core	feed_event_insert_on	unrun	-	cell feed_event_insert_on
 D101	offline-run	core	a_run_offline_after_open_fails_at_once_and_the_transport_makes_no_attempt	green	-	coordinator D-101
+D133	snapshot-second-epoch	core	a_run_and_a_load_after_reset_and_login_end	green	S1: the exit is the session reset, the calls of the next login wait for the addressed snapshot	coordinator D-133
