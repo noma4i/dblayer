@@ -9,8 +9,8 @@ impl Delivery {
         if diff.at.len() + diff.removed.len() > DELTA_LIMIT {
             return None;
         }
-        let steps = edits(&self.acked_rows, rows, &diff);
         let (temporary, forgotten) = self.temporary_ids(&diff);
+        let steps = edits(&self.acked_rows, rows, &diff, &temporary.iter().cloned().collect());
         Some(Delta {
             base,
             revision,
@@ -362,7 +362,7 @@ impl Delivery {
 
 fn at(index: usize) -> u32 { u32::try_from(index).unwrap_or(u32::MAX) }
 
-fn edits(old: &[StreamRow], new: &[StreamRow], diff: &Diff) -> Vec<Edit> {
+fn edits(old: &[StreamRow], new: &[StreamRow], diff: &Diff, temporary: &BTreeMap<String, String>) -> Vec<Edit> {
     let alias: BTreeMap<&RowId, &RowId> = diff.replaced.iter().map(|(from, to)| (from, to)).collect();
     let mut work: Vec<String> = old.iter().map(|row| RowId::new(&row.id).ok().and_then(|id| alias.get(&id).map(ToString::to_string)).unwrap_or_else(|| row.id.clone())).collect();
     let mut steps = Vec::new();
@@ -390,7 +390,7 @@ fn edits(old: &[StreamRow], new: &[StreamRow], diff: &Diff) -> Vec<Edit> {
     }
     let rewritten: BTreeSet<String> = diff.updated.iter().chain(diff.replaced.iter().map(|(_, to)| to)).map(ToString::to_string).collect();
     for (position, row) in new.iter().enumerate().filter(|(_, row)| rewritten.contains(&row.id)) {
-        steps.push(Edit::Rewrite { index: at(position), row: row.clone() });
+        steps.push(Edit::Rewrite { index: at(position), row: row.clone(), temporary: temporary.get(&row.id).cloned() });
     }
     steps
 }

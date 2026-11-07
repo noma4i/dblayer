@@ -101,6 +101,17 @@ fn dlv_live_resync() {
 }
 
 #[test]
+fn dlv_live_resync_after_read_delta() {
+    let mut twin = live_rows();
+    twin.step(Input::ReadDone { revision: 2, rows: rows(&["r2"]) });
+    assert!(matches!(twin.read_all().as_slice(), [Val::Delta { base: 1, revision: 2, .. }]));
+    assert_eq!(resync(&mut twin), [Effect::Read(2)]);
+    let id = twin.read_id();
+    twin.post(d::DeliveryInput::ReadDone { stream: STREAM, read_id: id, revision: 2, data: d::ReadData::Rows { rows: rows_of(&rows(&["r2"])), replaced: vec![], total: None } });
+    assert!(matches!(twin.state().journal(STREAM).as_slice(), [d::Value::Snapshot { revision: 2, .. }]), "the read Delta is followed by a Snapshot of the current revision");
+}
+
+#[test]
 fn dlv_live_read_recovered() {
     for revision in [1, 2] {
         let mut twin = live_rows();

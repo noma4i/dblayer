@@ -377,7 +377,7 @@ fn replay(list: &mut Vec<String>, edits: &[d::Edit]) {
     for edit in edits {
         match edit {
             d::Edit::Insert { index, row } => list.insert(*index as usize, row.id.clone()),
-            d::Edit::Rewrite { index, row } => list[*index as usize].clone_from(&row.id),
+            d::Edit::Rewrite { index, row, .. } => list[*index as usize].clone_from(&row.id),
             d::Edit::Remove { index, id } => assert_eq!(&list.remove(*index as usize), id),
             d::Edit::Move { from, to } => {
                 let id = list.remove(*from as usize);
@@ -436,7 +436,7 @@ fn dlv_prop_delta_order() {
                         match edit {
                             d::Edit::Insert { index, .. } if (*index as usize) < delta.size as usize - 1 => middle += 1,
                             d::Edit::Move { .. } => moved += 1,
-                            d::Edit::Rewrite { index, row } if edited[*index as usize] != row.id => confirmed += 1,
+                            d::Edit::Rewrite { index, row, .. } if edited[*index as usize] != row.id => confirmed += 1,
                             d::Edit::Rewrite { .. } => rewritten += 1,
                             d::Edit::Remove { .. } => removed += 1,
                             d::Edit::Insert { .. } => {}

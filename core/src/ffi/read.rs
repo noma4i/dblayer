@@ -47,24 +47,18 @@ pub enum ReadEnd {
 #[derive(Clone, Debug, PartialEq, uniffi::Enum)]
 pub enum RowEdit {
     Insert { index: u32, row: WireRow },
-    Rewrite { index: u32, row: WireRow },
+    /// `temporary` = the id the row had when the reader first got it, set when this step settles the swap of a temporary id.
+    Rewrite { index: u32, row: WireRow, temporary: Option<String> },
     Remove { index: u32, id: String },
     Move { from: u32, to: u32 },
-}
-
-/// The temporary id a row had when the reader first got it.
-#[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
-pub struct RowTemporary {
-    pub id: String,
-    pub temporary: String,
 }
 
 #[derive(Clone, Debug, PartialEq, uniffi::Enum)]
 pub enum ReadValue {
     /// The whole result at a revision: the first value of a stream of rows.
     Snapshot { revision: i64, rows: Vec<WireRow>, state: ReadState },
-    /// The change after the last value the reader took: the steps from the rows it holds to the rows of `revision`, and the temporary ids the delta settles.
-    Delta { base: i64, revision: i64, edits: Vec<RowEdit>, temporary: Vec<RowTemporary>, forgotten: Vec<String>, state: ReadState },
+    /// The change after the last value the reader took: the steps from the rows it holds to the rows of `revision`.
+    Delta { base: i64, revision: i64, edits: Vec<RowEdit>, state: ReadState },
     Count { revision: i64, count: u64, state: ReadState },
     State { revision: i64, state: ReadState },
     Ready,
@@ -132,7 +126,7 @@ fn full_row(row: &StreamRow) -> Result<WireRow, DbError> {
 fn edit_of(edit: &Edit) -> Result<RowEdit, DbError> {
     Ok(match edit {
         Edit::Insert { index, row } => RowEdit::Insert { index: *index, row: full_row(row)? },
-        Edit::Rewrite { index, row } => RowEdit::Rewrite { index: *index, row: full_row(row)? },
+        Edit::Rewrite { index, row, temporary } => RowEdit::Rewrite { index: *index, row: full_row(row)?, temporary: temporary.clone() },
         Edit::Remove { index, id } => RowEdit::Remove { index: *index, id: id.clone() },
         Edit::Move { from, to } => RowEdit::Move { from: *from, to: *to },
     })
@@ -158,8 +152,6 @@ fn read_value(value: Value, wire: Option<&WireModel>) -> Result<ReadValue, DbErr
             base: delta.base,
             revision: delta.revision,
             edits: delta.edits.iter().map(edit_of).collect::<Result<_, _>>()?,
-            temporary: delta.temporary.into_iter().map(|(id, temporary)| RowTemporary { id, temporary }).collect(),
-            forgotten: delta.forgotten,
             state: state_of(delta.state),
         },
         Value::Count { revision, count, state } => ReadValue::Count { revision, count, state: state_of(state) },
@@ -357,7 +349,7 @@ impl RowEdit {
         for edit in edits {
             match edit {
                 RowEdit::Insert { index, row } => rows.insert(*index as usize, row.clone()),
-                RowEdit::Rewrite { index, row } => rows[*index as usize] = row.clone(),
+                RowEdit::Rewrite { index, row, .. } => rows[*index as usize] = row.clone(),
                 RowEdit::Remove { index, id } => assert_eq!(&rows.remove(*index as usize).id, id),
                 RowEdit::Move { from, to } => {
                     let row = rows.remove(*from as usize);

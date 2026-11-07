@@ -75,7 +75,7 @@ thread_local! {
 fn ed_of(edit: &d::Edit) -> Ed {
     match edit {
         d::Edit::Insert { index, row } => Ed::Insert { index: *index, id: row.id.clone() },
-        d::Edit::Rewrite { index, row } => Ed::Rewrite { index: *index, id: row.id.clone() },
+        d::Edit::Rewrite { index, row, .. } => Ed::Rewrite { index: *index, id: row.id.clone() },
         d::Edit::Remove { index, id } => Ed::Remove { index: *index, id: id.clone() },
         d::Edit::Move { from, to } => Ed::Move { from: *from, to: *to },
     }

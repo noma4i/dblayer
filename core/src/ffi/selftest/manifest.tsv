@@ -122,8 +122,8 @@ K04	B4	core	a_server_create_returns_the_confirmed_row_and_needs_the_network	gree
 K05	B5	core	the_cancel_of_a_reader_releases_its_object_outside_every_library_lock	green	-	arch-r3b review B5
 K06	B6	core	a_queued_message_shows_as_pending_in_the_thread_before_the_server_answers	green	-	arch-r3b review B6
 K07	B9	core	a_cancelled_list_stream_leaves_no_observer_and_a_later_write_does_no_reading	green	-	arch-r3b review B9
-K08	B7	swift	BridgeProbeTests.aProjectionKeepsTheDecodeErrorAndAStreamKeepsItsSourceError	green	-	arch-r3b review B7
-K08	B7	kotlin	com.noma4i.dblayer.ValueBridgeTest.aProjectionKeepsTheDecodeErrorAndAStreamKeepsItsSourceError	green	-	arch-r3b review B7
+K08	B7	swift	BridgeProbeTests.aRowThatDoesNotDecodeThrowsAndAStreamReportsItsSourceEnd	green	-	arch-r3b review B7
+K08	B7	kotlin	com.noma4i.dblayer.ValueBridgeTest.aRowThatDoesNotDecodeThrowsAndAStreamReportsItsSourceEnd	green	-	arch-r3b review B7
 K09	B	core	a_stream_that_refreshes_on_connect_loads_again_once_when_the_network_returns	green	-	arch-r3b consumer finding: refresh on reconnect
 K10	A	core	a_command_that_failed_on_the_network_is_delivered_by_the_backoff_and_the_clock	green	-	arch-r3c offline finding A
 K11	B	core	a_refresh_and_a_load_more_fail_at_once_offline_and_the_entity_stream_shows_the_error	green	-	arch-r3c offline finding B
@@ -151,10 +151,8 @@ K13	B6	kotlin	com.noma4i.dblayer.ClubTest.leaveRemovesTheClubFromItsListBeforeTh
 K22	B6	kotlin	com.noma4i.dblayer.ClubTest.aForwardShowsALocalCopyInTheTargetThreadAndARefusalRemovesIt	green	-	arch-r3c
 K12	forward	swift	BridgeProbeTests.aForwardLeavesTheSourceUnchangedUpsertsTheAnswerRowAndReturnsIt	green	-	arch-r3c
 K12	forward	kotlin	com.noma4i.dblayer.ClubTest.aForwardLeavesTheSourceUnchangedUpsertsTheAnswerRowAndReturnsIt	green	-	arch-r3c
-RC09	C09	swift	ProjectionRecoveryTests.aDeltaOffTheShownRevisionAsksOnceForASnapshotAndTheSnapshotClosesTheGap	green	-	arch-r3d review C09
-RC09	C09	swift	ProjectionRecoveryTests.aJumpOfThePositionWithTheShownBaseAppliesTheDelta	green	-	arch-r3d review C09
-RC09	C09	kotlin	com.noma4i.dblayer.ProjectionRecoveryTest.aDeltaOffTheShownRevisionAsksOnceForASnapshotAndTheSnapshotClosesTheGap	green	-	arch-r3d review C09
-RC09	C09	kotlin	com.noma4i.dblayer.ProjectionRecoveryTest.aJumpOfThePositionWithTheShownBaseAppliesTheDelta	green	-	arch-r3d review C09
+RC09	C09	swift	ProjectionRecoveryTests.aDeltaIsAppliedAsItComesAndKeepsOnlyItsOwnEdits	green	-	arch-r3d review C09
+RC09	C09	kotlin	com.noma4i.dblayer.ProjectionRecoveryTest.aDeltaIsAppliedAsItComesAndKeepsOnlyItsOwnEdits	green	-	arch-r3d review C09
 K17	C01	core	every_entry_of_a_left_account_is_refused_and_reaches_nothing	green	core-only: the proof counts the requests that reached the fake world; the behaviour lives only in the core delivery queue and sender (spec B: wrappers carry values, no hooks)	arch-r3d review C01
 K18	C04	core	a_plain_action_that_never_reached_the_server_ends_with_the_network_error_and_is_not_replayed	green	core-only: the proof counts the requests that reached the fake world; the behaviour lives only in the core delivery queue and sender (spec B: wrappers carry values, no hooks)	arch-r3d review C04
 K20	C08	core	a_command_that_failed_on_the_network_is_delivered_by_the_backoff_and_the_clock	green	core-only: the proof moves the test clock and reads the outbox; the behaviour lives only in the core delivery queue and sender (spec B: wrappers carry values, no hooks)	arch-r3d review C08
@@ -297,8 +295,8 @@ S219	A3-events	core	dlv_event_before_after	unrun	-	arch-audit astra A3
 S219	A3-events	swift	BridgeProbeTests.chatEventPayloadPlatforms	unrun	-	arch-audit astra A3
 S219	A3-events	kotlin	com.noma4i.dblayer.EventPayloadTest.chatEventPayloadPlatforms	unrun	-	arch-audit astra A3
 S316	replaced-pair	core	a_server_id_that_replaces_a_temporary_row_of_a_held_list_arrives_as_a_replaced_pair	unrun	-	coordinator replaced pair
-S316	replaced-pair	swift	BridgeProbeTests.aSnapshotCarriesTheTemporaryIdThatTheServerIdReplaced	unrun	-	coordinator replaced pair
-S316	replaced-pair	kotlin	com.noma4i.dblayer.BridgeProbeTest.aSnapshotCarriesTheTemporaryIdThatTheServerIdReplaced	unrun	-	coordinator replaced pair
+S316	replaced-pair	swift	BridgeProbeTests.aRewriteCarriesTheTemporaryIdThatTheServerIdReplaced	unrun	-	coordinator replaced pair
+S316	replaced-pair	kotlin	com.noma4i.dblayer.BridgeProbeTest.aRewriteCarriesTheTemporaryIdThatTheServerIdReplaced	unrun	-	coordinator replaced pair
 S317	interrupted-answer	core	interrupted_session_answer_without_restored_call_returns_none	green	core-only: no swift or kotlin wrapper of the interrupted session answer yet	coordinator D-72
 S320	feed-event-insert-on	core	feed_event_insert_on	unrun	-	cell feed_event_insert_on
 D101	offline-run	core	a_run_offline_after_open_fails_at_once_and_the_transport_makes_no_attempt	green	-	coordinator D-101

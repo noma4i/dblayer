@@ -130,7 +130,7 @@ pub struct Delta {
     pub size: u32,
     /// The steps from the rows the reader holds to the rows of `revision`, in order.
     pub edits: Vec<Edit>,
-    /// Server id to the temporary id its row had when the reader first got it, for the rows this delta confirms.
+    /// The owner keeps the temporary ids of the rows the reader took; the platform gets them on the `Rewrite` steps.
     pub temporary: Vec<(String, String)>,
     /// Ids that no longer map to a temporary id.
     pub forgotten: Vec<String>,
@@ -141,7 +141,8 @@ pub struct Delta {
 #[derive(Clone, Debug, PartialEq)]
 pub enum Edit {
     Insert { index: u32, row: StreamRow },
-    Rewrite { index: u32, row: StreamRow },
+    /// `temporary` is the id the row had when the reader first got it, set when this step settles the swap of a temporary id.
+    Rewrite { index: u32, row: StreamRow, temporary: Option<String> },
     Remove { index: u32, id: String },
     Move { from: u32, to: u32 },
 }

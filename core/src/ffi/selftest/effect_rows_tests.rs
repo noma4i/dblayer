@@ -423,14 +423,13 @@ async fn a_server_id_that_replaces_a_temporary_row_of_a_held_list_arrives_as_a_r
     hold.entered_for("the create").await;
     hold.release();
     assert!(matches!(bound(rig.database.outcome(receipt)).await.unwrap(), crate::ffi::WireOperationOutcome::Confirmed { .. }));
-    let (edits, pair) = loop {
-        let delivery = crate::test_wait::within_secs(20, deliveries.recv()).await.expect("a delta named the swap of the temporary id");
-        if let crate::ffi::ReadValue::Delta { edits, temporary, .. } = delivery.value {
-            if let Some(pair) = temporary.into_iter().next() { break (edits, pair); }
+    let edits = loop {
+        let delivery = crate::test_wait::within_secs(20, deliveries.recv()).await.expect("a delta that swaps the temporary id");
+        if let crate::ffi::ReadValue::Delta { edits, .. } = delivery.value {
+            if edits.iter().any(|edit| matches!(edit, crate::ffi::RowEdit::Rewrite { temporary: Some(_), .. })) { break edits; }
         }
     };
-    assert!(pair.temporary.starts_with("temp") && !pair.id.starts_with("temp"), "{pair:?}");
-    assert!(matches!(edits.as_slice(), [crate::ffi::RowEdit::Rewrite { index: 0, row }] if row.id == pair.id), "the temporary row is rewritten in place by the confirmed row: {edits:?}");
+    assert!(matches!(edits.as_slice(), [crate::ffi::RowEdit::Rewrite { index: 0, row, temporary: Some(temporary) }] if temporary.starts_with("temp") && !row.id.starts_with("temp")), "the temporary row is rewritten in place by the confirmed row, the edit names the temporary id: {edits:?}");
     rig.database.cancel_stream(stream);
     rig.database.close_now();
 }
