@@ -29,8 +29,7 @@ iOS 17, macOS 14, or Android 13 (API 33) or newer.
 - **Files built in.** A `file` field stores binary data. You never choose where bytes live: SQLite or disk.
 - **Owned upload sources.** Upload admission copies files before committing. Files above 256 KiB live beside the database and survive removal of the original.
 - **Background file reads.** Upload reads and checksums run off asynchronous executor threads. Cancellation does not wait for queued file work.
-- **Bounded observation reads.** At most 2 reads run or await application. Pending observations retain their requests without blocking callers.
-- **Background delivery.** Observers receive updates from library threads. Disk reads use a bounded WAL connection pool beside the writer. Releasing synchronization stops its background work. See [threading](docs/threading.md).
+- **Background delivery.** Streams receive values from library threads. Disk reads use a bounded WAL connection pool beside the writer. Closing the database ends every stream and request. See [threading](docs/threading.md).
 - **One core, two platforms.** All logic is Rust. Swift and Kotlin contain no business logic.
 - **Versioned cached rows.** Each row sent to Swift or Kotlin includes its stored revision, so readers can reject older values.
 - **Immediate cached entities.** The first reader gets a row already in memory without waiting for a subscription delivery or reading disk. Native callbacks never keep entity sources alive. Deliveries from a replaced database cannot overwrite current entities.

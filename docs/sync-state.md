@@ -150,18 +150,8 @@ Later changes to the same record wait behind a `failed` change and are sent afte
 
 ## Online and offline
 
-Opening starts network monitoring on both platforms. Kotlin requires an Android `Context` as the first argument.
-Mutations, uploads and loads read the same core flag. The online sink remains available for controlled tests.
-
-```swift
-try DB.database.onlineSink().setOnline(online: false)   // changes wait, loads fail with an offline error, uploads wait
-try DB.database.onlineSink().setOnline(online: true)    // waiting changes and uploads are sent by themselves
-```
-
-```kotlin
-DBlayer.database.onlineSink().setOnline(false)   // changes wait, loads fail with an offline error, uploads wait
-DBlayer.database.onlineSink().setOnline(true)    // waiting changes and uploads are sent by themselves
-```
+Opening starts network monitoring on both platforms. Kotlin requires an Android `Context` as the first argument. The wrappers pass the platform path, the app foreground and the power saving mode to the core. An app calls nothing for them.
+Mutations, uploads and loads read the same core flag. While the network is away, changes and uploads wait, an action that needs the server fails at once with `Offline`, and a load or refresh fails with `Offline`. When the network returns, waiting changes and uploads are sent by themselves and open lists that failed on the network read again once.
 
 ## Refreshing
 

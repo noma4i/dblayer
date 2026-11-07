@@ -2,21 +2,19 @@
 
 ## In your app
 
-Open a database in memory or in a temporary directory and give it a mock transport. `DB.close()` is synchronous and runs on the main actor, so a test off the main actor writes `await DB.close()`. The mock replies by operation name, can delay or fail replies, and can break a subscription.
+Open a database in memory or in a temporary directory and give it a mock transport. `DB.close()` is async and runs on the main actor. Calling it before the first `open` fails with `NotOpen`, and calling it on a closed database is a success. The mock replies by operation name, can delay or fail replies, and can break a subscription.
 
 ```swift
 import DBlayerTesting
 
 let transport = MockTransport()
 transport.enqueue("MomentsFeed", reply: feedJSON)
-await DB.close()
 try await DB.open(transport: transport, modelsJSON: modelsJSON)
 ```
 
 ```kotlin
 val transport = MockTransport()
 transport.enqueue("MomentsFeed", feedJson)
-DBlayer.close()
 DBlayer.open(context, transport = transport, modelsJson = modelsJSON, uploadNotification = notification)
 ```
 
@@ -38,9 +36,9 @@ A test opens its database and closes it. There is no reset between tests: close 
 
 A database opened without a transport has no session and keeps the rows of local models only. A send, a load and a create of a server model are refused there. Give a server model its rows with the replies of a `MockTransport`.
 
-After `sessionReset()` a test database reads again when its next explicit call succeeds while a credential is stored, the same rule as in production. `waitForInitialLoad` of a held entity is such a call. The call that restores the session returns its own result. The restoration moves the epoch for every other call, so a call of the epoch before it ends as `Interrupted`.
+After `sessionReset()` the credential and the data of the account are gone. A test signs in again with `sessionCall`. A call of the epoch before the reset ends as `Interrupted` or `NoSession`.
 
-A second `close` from another thread returns after the first one finished every close callback, and the open slot frees only then. A close callback that calls `close` again returns at once without waiting for itself, and the outer `close` frees the slot. A callback must not wait for a `close` made on another thread.
+A second `close` returns success. Any other call on a closed database fails with `Closed`, and any call before the first `open` fails with `NotOpen`.
 
 `openTesting` also takes the encrypted session parameters of `open`: `encrypted`, `credentials` and `http`, all optional. With them the test runs the real encrypted session path and replaces only the HTTP exchange. Without them the database has no session client, as before.
 
@@ -154,7 +152,7 @@ Test conventions:
 - Core member tests own window isolation, page accumulation, freshness and retained totals. Platform member tests check arguments and typed snapshots.
 - Core node tests own freshness, partial merges, response order and missing entries. Platform node tests check IDs, force, declared variables and typed results.
 - Core upload tests check source ownership, failed admission cleanup and progress delivery. Tests await an observed state, never a revision change after a call returns.
-- Core observation tests own read limits and pending entity ids. Platform tests check typed delivery and cancellation through the bridge.
+- Core delivery tests own journals, resync and the end of a stream. Platform tests check typed delivery and cancellation through the bridge.
 - Randomized tests use a fixed seed and compare every observer's last state with a fresh query.
 - Tests count work (reads, calls, commits) instead of measuring time.
 
@@ -169,40 +167,9 @@ Test conventions:
 | `calls_tests` | Each explicit call in flight at the server when session reset or close arrives, with a late success or a late sealed refusal. A call the server never answers ends at close |
 | `recovery_tests` | A refused pending request kept across a data reset, close and reopen with a new data version, an active and a queued upload ended by the exit |
 | `windows_tests` | Overlapping load-more and refresh in both answer orders, repeated online and power-saving signals, memory expiry on the last write |
-| `machine_tests` | 16 seeds of 32 steps over login, exit, session reset, refresh, held views, clock ticks, offline and overlapping calls. A model decides what every view must show and what may reach the server. A failure prints the seed, the shortest failing prefix and the action tape |
 
 `core/src/ffi/selftest/manifest.tsv` is the fixed list of the sequences C01 to C19 for the three lanes (core, Swift, Kotlin). A row names the test of one lane, the state it had when written (green, red with its cause, flaky), what changes when the lifecycle rules change, and the app source line the order comes from. A core test checks that every row names an existing test, that every sequence test is listed, and that a test using the data logout or the old exit is marked as changing.
 
 Swift and Kotlin run the login, exit, account switch, local-only exit, close with a held request, already-authenticated login and harness orders once through the wrappers: `LifecycleSessionTests.swift`, `SwitchableHarnessTests.swift`, `LifecycleSessionTest.kt`, `SwitchableHarnessTest.kt`.
-
-## Stress stand
-
-A separate program runs random operations from several threads against one database. A fake server delays, refuses and repeats answers, goes offline and sends late events. The `cargo-test-workspace` step in `scripts/check_dblayer.sh` tests the workspace with all features, including stress checks and injected read failures. Run these tests separately with `cargo test -p dblayer --features stress sync::stress`. Race runs and Clippy remain manual checks.
-
-```sh
-cargo run -p dblayer --features stress --bin stress -- --seed 7 --threads 4 --seconds 20
-```
-
-| Flag | Meaning |
-| ---- | ------- |
-| `--seed N[,N...]` | One run per seed, default 1 |
-| `--threads T` | Worker count, default 4. With 1 the run is deterministic: same seed, same final state |
-| `--seconds S` | Time limit per run, default 10 |
-| `--ops N` | Operations per worker instead of a time limit |
-| `--trace` | Print every operation, server decision, queue and row list |
-| `--no-minimize` | Skip the search for a shorter failing run |
-
-Operations: create, update, destroy, like, replace, refresh, load, load more, retry, retry all, discard, ephemeral write, upload, reset, offline and online, clock steps, subscription events.
-
-Checks while the run goes and at the end:
-
-- Observers on lists, scopes, counts and single rows see growing revisions and a diff that leads from their previous state to the next. Their last state equals a fresh read.
-- The row cache equals the database, ephemeral values included.
-- `row_sync` equals the state derived from the open operations. A temp row always has an open create. No list repeats a row or points at a missing row.
-- The server applies the writes of one record in the order they were made. A mutation is sent again only after a retry. Every write reaches the server, unless its record was discarded or its create was refused.
-- After all operations finish, rows equal the server rows, and equal them again after a complete reload.
-- A step that runs longer than 30 s fails with a dump of the queue. A blocked thread ends the run after 60 s with the dump of every worker.
-
-A failing run prints the findings, the command to repeat it and, for one thread, the smallest `--ops` that still fails. With several threads the same seed repeats the choices, not the interleaving, so a race may need several runs.
 
 Example models for tests are in `fixtures/` (`User`, `Moment`, `Vibe`, `Group`, `Note`).
