@@ -32,7 +32,7 @@ extension Database {
 
 /// One delivery of a stream of rows with its rows decoded: the platform value that `ListProjection` mirrors.
 public enum ListDelivery<Model: DBModel>: Sendable {
-  case snapshot(revision: Int64, rows: [Model], state: ReadState)
+  case snapshot(revision: Int64, rows: [Model], edits: [ListEdit<Model>], state: ReadState)
   case delta(revision: Int64, edits: [ListEdit<Model>], state: ReadState)
   case state(ReadState)
   case ended(ReadEnd)
@@ -40,7 +40,7 @@ public enum ListDelivery<Model: DBModel>: Sendable {
   /// Decodes the rows of a value of a stream of rows. `nil` for a value that carries no list. Throws when a row cannot be decoded: the reader then calls `ReadStream.resync()`.
   public init?(_ value: ReadValue) throws {
     switch value {
-    case let .snapshot(revision, wire, state): self = .snapshot(revision: revision, rows: try wire.map(Model.decode), state: state)
+    case let .snapshot(revision, wire, edits, state): self = .snapshot(revision: revision, rows: try wire.map(Model.decode), edits: try edits.map(Self.step), state: state)
     case let .delta(_, revision, edits, state): self = .delta(revision: revision, edits: try edits.map(Self.step), state: state)
     case let .state(_, state): self = .state(state)
     case let .ended(cause): self = .ended(cause)
@@ -64,7 +64,7 @@ public struct ListProjection<Model: DBModel>: Sendable {
   public private(set) var state: ReadState?
   public private(set) var revision: Int64?
   public private(set) var ended: ReadEnd?
-  /// The steps of the last delivery from the rows before to the rows after. A snapshot removes the rows before and inserts the rows after.
+  /// The steps of the last delivery from the rows before to the rows after, as the core gives them for a snapshot and a delta alike.
   public private(set) var lastEdits: [ListEdit<Model>] = []
   public init() {}
 
@@ -75,8 +75,8 @@ public struct ListProjection<Model: DBModel>: Sendable {
 
   public mutating func apply(_ delivery: ListDelivery<Model>) {
     switch delivery {
-    case let .snapshot(revision, rows, state):
-      lastEdits = self.rows.map { .remove(0, $0.id) } + rows.enumerated().map { .insert($0.offset, $0.element) }
+    case let .snapshot(revision, rows, edits, state):
+      lastEdits = edits
       self.rows = rows
       self.revision = revision
       self.state = state
@@ -214,6 +214,8 @@ public struct TransferProgress: Sendable, Equatable {
   public let state: String
   public let progress: UInt64
   public let error: String?
+  public let localUrl: String?
+  public let processing: WireProcessing?
 }
 
 /// One item of the status of a transfer: a change, or the end of the stream with the cause of the core.
@@ -233,7 +235,7 @@ public struct UploadStatusStream: AsyncSequence, Sendable {
     public mutating func next() async -> TransferItem? {
       while let value = await inner.next() {
         switch value {
-        case let .status(revision, state, progress, error): return .progress(TransferProgress(revision: revision, state: state, progress: progress, error: error))
+        case let .status(revision, state, progress, error, localUrl, processing): return .progress(TransferProgress(revision: revision, state: state, progress: progress, error: error, localUrl: localUrl, processing: processing))
         case let .ended(cause): return .ended(cause)
         default: continue
         }

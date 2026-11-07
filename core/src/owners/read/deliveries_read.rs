@@ -44,15 +44,16 @@ impl Delivery {
                         self.ended_given = true;
                         self.journal.clear();
                     }
-                    Value::Snapshot { revision, .. } | Value::Count { revision, .. } | Value::Operations { revision, .. } => self.acknowledge(*revision),
+                    Value::Count { revision, .. } | Value::Operations { revision, .. } => self.acknowledge(*revision),
+                    Value::Snapshot { revision, temporary, forgotten, .. } => {
+                        let revision = *revision;
+                        self.remember_temporary(temporary, forgotten);
+                        self.acknowledge(revision);
+                    }
                     Value::Delta(delta) => {
-                        for (id, temporary) in &delta.temporary {
-                            self.temporary.insert(id.clone(), temporary.clone());
-                        }
-                        for id in &delta.forgotten {
-                            self.temporary.remove(id);
-                        }
-                        self.acknowledge(delta.revision);
+                        let revision = delta.revision;
+                        self.remember_temporary(&delta.temporary, &delta.forgotten);
+                        self.acknowledge(revision);
                     }
                     _ => {}
                 }
@@ -60,6 +61,15 @@ impl Delivery {
             }
             None if self.ended_given => Some(PullAnswer::Done),
             None => None,
+        }
+    }
+
+    fn remember_temporary(&mut self, temporary: &[(String, String)], forgotten: &[String]) {
+        for (id, temporary) in temporary {
+            self.temporary.insert(id.clone(), temporary.clone());
+        }
+        for id in forgotten {
+            self.temporary.remove(id);
         }
     }
 
@@ -80,7 +90,7 @@ impl Delivery {
 
     pub(super) fn push(&mut self, value: Value, fx: &mut Vec<Emit>) {
         let value = match value {
-            Value::Snapshot { revision, rows, state } => Value::Snapshot { revision, rows, state: self.shown(state) },
+            Value::Snapshot { revision, rows, edits, temporary, forgotten, state } => Value::Snapshot { revision, rows, edits, temporary, forgotten, state: self.shown(state) },
             Value::Count { revision, count, state } => Value::Count { revision, count, state: self.shown(state) },
             Value::State { revision, state } => Value::State { revision, state: self.shown(state) },
             Value::Delta(mut delta) => {
@@ -207,7 +217,8 @@ impl Delivery {
                 self.rows = rows.clone();
                 self.revision = revision;
                 self.stage = DeliveryStage::Live;
-                self.push(Value::Snapshot { revision, rows, state }, fx);
+                let snapshot = self.snapshot(revision, rows, &[], state);
+                self.push(snapshot, fx);
                 if missing {
                     fx.push(Emit::Load { force: false });
                 }
@@ -233,13 +244,14 @@ impl Delivery {
                 self.stage = DeliveryStage::Live;
                 self.push(Value::Count { revision, count: now, state }, fx);
             }
-            (DeliveryStage::Live, Whole::Rows { rows, total, .. }) if self.resync_pending => {
+            (DeliveryStage::Live, Whole::Rows { rows, replaced, total }) if self.resync_pending => {
                 self.resync_pending = false;
                 self.total = total;
                 self.rows = rows.clone();
                 self.revision = revision;
                 let state = self.state_at(revision);
-                self.push(Value::Snapshot { revision, rows, state }, fx);
+                let snapshot = self.snapshot(revision, rows, &replaced, state);
+                self.push(snapshot, fx);
             }
             (DeliveryStage::Live, Whole::Rows { rows, replaced, total }) if self.view.kind != Kind::Count => self.live_rows(revision, rows, replaced, total, fx),
             (DeliveryStage::Live, Whole::Count(now)) if self.view.kind == Kind::Count => {
@@ -279,12 +291,16 @@ impl Delivery {
         self.revision = revision;
         let unread_snapshot = self.journal.iter().any(|kept| matches!(kept, Value::Snapshot { .. }));
         let Some(base) = self.acknowledged.filter(|_| !unread_snapshot) else {
-            self.push(Value::Snapshot { revision, rows, state }, fx);
+            let snapshot = self.snapshot(revision, rows, &replaced, state);
+            self.push(snapshot, fx);
             return;
         };
         match self.delta(base, revision, &rows, &replaced, state.clone()) {
             Some(delta) => self.push(Value::Delta(delta), fx),
-            None => self.push(Value::Snapshot { revision, rows, state }, fx),
+            None => {
+                let snapshot = self.snapshot(revision, rows, &replaced, state);
+                self.push(snapshot, fx);
+            }
         }
     }
 

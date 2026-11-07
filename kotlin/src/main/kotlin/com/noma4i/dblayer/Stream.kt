@@ -39,7 +39,7 @@ internal fun Database.openValueStream(epoch: ULong, request: ReadRequest): Value
 
 /** One delivery of a stream of rows with its rows decoded: the platform value that [ListProjection] mirrors. */
 sealed interface ListDelivery<out Model> {
-    class Snapshot<Model>(val revision: Long, val rows: List<Model>, val state: ReadState) : ListDelivery<Model>
+    class Snapshot<Model>(val revision: Long, val rows: List<Model>, val edits: List<ListEdit<Model>>, val state: ReadState) : ListDelivery<Model>
     class Delta<Model>(val revision: Long, val edits: List<ListEdit<Model>>, val state: ReadState) : ListDelivery<Model>
     class State(val state: ReadState) : ListDelivery<Nothing>
     class Ended(val cause: ReadEnd) : ListDelivery<Nothing>
@@ -47,18 +47,18 @@ sealed interface ListDelivery<out Model> {
 
 /** Decodes the rows of a value of a stream of rows. `null` for a value that carries no list. Throws when a row cannot be decoded: the reader then asks the core for a snapshot. */
 fun <Model : DBModel> ReadValue.listDelivery(decoder: ModelDecoder<Model>): ListDelivery<Model>? = when (this) {
-    is ReadValue.Snapshot -> ListDelivery.Snapshot(revision, rows.map(decoder::read), state)
-    is ReadValue.Delta -> ListDelivery.Delta(revision, edits.map { edit ->
-        when (edit) {
-            is RowEdit.Insert -> ListEdit.Insert(edit.index.toInt(), decoder.read(edit.row))
-            is RowEdit.Rewrite -> ListEdit.Rewrite(edit.index.toInt(), decoder.read(edit.row), edit.temporary)
-            is RowEdit.Remove -> ListEdit.Remove(edit.index.toInt(), edit.id)
-            is RowEdit.Move -> ListEdit.Move(edit.from.toInt(), edit.to.toInt())
-        }
-    }, state)
+    is ReadValue.Snapshot -> ListDelivery.Snapshot(revision, rows.map(decoder::read), edits.map { listEdit(it, decoder) }, state)
+    is ReadValue.Delta -> ListDelivery.Delta(revision, edits.map { listEdit(it, decoder) }, state)
     is ReadValue.State -> ListDelivery.State(state)
     is ReadValue.Ended -> ListDelivery.Ended(cause)
     else -> null
+}
+
+private fun <Model : DBModel> listEdit(edit: RowEdit, decoder: ModelDecoder<Model>): ListEdit<Model> = when (edit) {
+    is RowEdit.Insert -> ListEdit.Insert(edit.index.toInt(), decoder.read(edit.row))
+    is RowEdit.Rewrite -> ListEdit.Rewrite(edit.index.toInt(), decoder.read(edit.row), edit.temporary)
+    is RowEdit.Remove -> ListEdit.Remove(edit.index.toInt(), edit.id)
+    is RowEdit.Move -> ListEdit.Move(edit.from.toInt(), edit.to.toInt())
 }
 
 /** What a screen shows of a stream of rows: an immutable value mirrored from the deliveries of the core. It holds no lock and no reference to the core. */
@@ -67,7 +67,7 @@ class ListProjection<Model : DBModel> private constructor(
     val state: ReadState?,
     val revision: Long?,
     val ended: ReadEnd?,
-    /** The steps of the last delivery from the rows before to the rows after. A snapshot removes the rows before and inserts the rows after. */
+    /** The steps of the last delivery from the rows before to the rows after, as the core gives them for a snapshot and a delta alike. */
     val lastEdits: List<ListEdit<Model>>,
 ) {
     constructor() : this(emptyList(), null, null, null, emptyList())
@@ -78,7 +78,7 @@ class ListProjection<Model : DBModel> private constructor(
     val error: DbException? get() = state?.error
 
     fun apply(delivery: ListDelivery<Model>): ListProjection<Model> = when (delivery) {
-        is ListDelivery.Snapshot -> ListProjection(delivery.rows, delivery.state, delivery.revision, ended, rows.map { ListEdit.Remove(0, it.id) } + delivery.rows.mapIndexed { index, row -> ListEdit.Insert(index, row) })
+        is ListDelivery.Snapshot -> ListProjection(delivery.rows, delivery.state, delivery.revision, ended, delivery.edits)
         is ListDelivery.Delta -> ListProjection(rows.toMutableList().also { it.replay(delivery.edits) }, delivery.state, delivery.revision, ended, delivery.edits)
         is ListDelivery.State -> ListProjection(rows, delivery.state, revision, ended, emptyList())
         is ListDelivery.Ended -> ListProjection(rows, state, revision, delivery.cause, emptyList())
@@ -160,7 +160,7 @@ fun <Model : DBModel> ValueStream.events(decoder: ModelDecoder<Model>): Flow<Mod
 }
 
 /** The status of a transfer at one change. */
-data class TransferProgress(val revision: Long, val state: String, val progress: ULong, val error: String?)
+data class TransferProgress(val revision: Long, val state: String, val progress: ULong, val error: String?, val localUrl: String?, val processing: WireProcessing?)
 
 /** One item of the status of a transfer: a change, or the end of the stream with the cause of the core. */
 sealed interface TransferItem {
@@ -173,7 +173,7 @@ val ValueStream.uploadStatus: Flow<TransferItem>
     get() = flow {
         values.collect { value ->
             when (value) {
-                is ReadValue.Status -> emit(TransferItem.Progress(TransferProgress(value.revision, value.state, value.progress, value.error)))
+                is ReadValue.Status -> emit(TransferItem.Progress(TransferProgress(value.revision, value.state, value.progress, value.error, value.localUrl, value.processing)))
                 is ReadValue.Ended -> emit(TransferItem.Ended(value.cause))
                 else -> {}
             }

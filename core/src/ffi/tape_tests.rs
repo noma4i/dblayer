@@ -36,7 +36,7 @@ pub(crate) struct Seen {
 fn seen_of(seq: u64, value: ReadValue, size: &mut u32) -> Result<Seen, Option<ReadEnd>> {
     let blank = |revision: i64, state: ReadState, size: u32| Seen { rows: Vec::new(), size, revision, seq, removed: Vec::new(), phase: Some(state.phase), error: state.error, loaded: state.loaded };
     Ok(match value {
-        ReadValue::Snapshot { revision, rows, state } => {
+        ReadValue::Snapshot { revision, rows, state, .. } => {
             *size = u32::try_from(rows.len()).unwrap_or(u32::MAX);
             Seen { rows, ..blank(revision, state, *size) }
         }
@@ -286,7 +286,7 @@ fn rows_show_a_delivery_only_after_it_is_kept() {
     let rows = Arc::new(Rows::default());
     let state = ReadState { phase: ReadPhase::Loaded, error: None, loaded: None, has_more: false, settled: true, total: None };
     let row = WireRow { id: "c1".into(), revision: 7, estimated_bytes: 0, layout: String::new(), cells: Vec::new(), sync: WireSync { state: WireSyncState::Synced, actions: Vec::new(), dirty_fields: Vec::new(), error: None, attempts: 0, since: 0 }, uploads: Vec::new() };
-    let value = ReadValue::Snapshot { revision: 7, rows: vec![row], state };
+    let value = ReadValue::Snapshot { revision: 7, rows: vec![row], edits: Vec::new(), state };
     let kept = rows.1.lock().unwrap();
     let delivering = { let rows = rows.clone(); std::thread::spawn(move || rows.delivered(StreamDelivery { stream: 1, epoch: 1, seq: 1, value })) };
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);

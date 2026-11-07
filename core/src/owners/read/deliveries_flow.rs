@@ -1,25 +1,33 @@
 use super::*;
 
 impl Delivery {
-    pub(super) fn delta(&self, base: i64, revision: i64, rows: &[StreamRow], replaced: &[(String, String)], state: WindowState) -> Option<Delta> {
+    /// The steps from the rows of the last value the reader took to `rows`.
+    fn steps(&self, rows: &[StreamRow], replaced: &[(String, String)]) -> Option<Steps> {
         let old: Vec<Entry> = self.acked_rows.iter().map(entry).collect::<Result<_, _>>().ok()?;
         let new: Vec<Entry> = rows.iter().map(entry).collect::<Result<_, _>>().ok()?;
         let pairs: Vec<(RowId, RowId)> = replaced.iter().map(|(from, to)| Ok((RowId::new(from).map_err(|e| e.to_string())?, RowId::new(to).map_err(|e| e.to_string())?))).collect::<Result<_, String>>().ok()?;
         let diff = Diff::between(&old[..], &new[..], &pairs);
-        if diff.at.len() + diff.removed.len() > DELTA_LIMIT {
-            return None;
-        }
         let (temporary, forgotten) = self.temporary_ids(&diff);
-        let steps = edits(&self.acked_rows, rows, &diff, &temporary.iter().cloned().collect());
+        let edits = edits(&self.acked_rows, rows, &diff, &temporary.iter().cloned().collect());
+        Some(Steps { edits, temporary, forgotten, touched: diff.at.len() + diff.removed.len() })
+    }
+
+    pub(super) fn delta(&self, base: i64, revision: i64, rows: &[StreamRow], replaced: &[(String, String)], state: WindowState) -> Option<Delta> {
+        let steps = self.steps(rows, replaced).filter(|steps| steps.touched <= DELTA_LIMIT)?;
         Some(Delta {
             base,
             revision,
             size: u32::try_from(rows.len()).unwrap_or(u32::MAX),
-            edits: steps,
-            temporary,
-            forgotten,
+            edits: steps.edits,
+            temporary: steps.temporary,
+            forgotten: steps.forgotten,
             state,
         })
+    }
+
+    pub(super) fn snapshot(&self, revision: i64, rows: Vec<StreamRow>, replaced: &[(String, String)], state: WindowState) -> Value {
+        let steps = self.steps(&rows, replaced).unwrap_or_default();
+        Value::Snapshot { revision, rows, edits: steps.edits, temporary: steps.temporary, forgotten: steps.forgotten, state }
     }
 
     fn temporary_ids(&self, diff: &Diff) -> (Vec<(String, String)>, Vec<String>) {
@@ -69,7 +77,8 @@ impl Delivery {
                     self.count = Some(0);
                     self.push(Value::Count { revision, count: 0, state }, fx);
                 } else {
-                    self.push(Value::Snapshot { revision, rows: Vec::new(), state }, fx);
+                    let snapshot = self.snapshot(revision, Vec::new(), &[], state);
+                    self.push(snapshot, fx);
                 }
             }
             DeliveryStage::Live => {
@@ -362,6 +371,14 @@ impl Delivery {
     pub(super) fn gone(&self) -> bool { self.stage == DeliveryStage::Ended && self.released && self.sink_closed }
 
     pub(super) fn settled(&self) -> bool { self.stage == DeliveryStage::Ended && self.sink_closed }
+}
+
+#[derive(Default)]
+struct Steps {
+    edits: Vec<Edit>,
+    temporary: Vec<(String, String)>,
+    forgotten: Vec<String>,
+    touched: usize,
 }
 
 fn at(index: usize) -> u32 { u32::try_from(index).unwrap_or(u32::MAX) }

@@ -94,7 +94,7 @@ async fn a_list_stream_gives_a_snapshot_then_a_delta_with_the_final_order() {
     let epoch = db.session_epoch();
     db.create(epoch, "Note".into(), r#"{"id":"n1","text":"one"}"#.into(), "{}".into()).await.unwrap();
     let stream = db.subscribe_values(epoch, ReadRequest::List { query: crate::ffi::QuerySpec::json(r#"{"model":"Note"}"#) });
-    let ReadValue::Snapshot { revision, rows, state } = next(&stream).await else { panic!("the first value is a snapshot") };
+    let ReadValue::Snapshot { revision, rows, state, .. } = next(&stream).await else { panic!("the first value is a snapshot") };
     assert_eq!(ids(&rows), ["n1"]);
     assert_eq!(state.phase, ReadPhase::Loaded, "a local list has no window to load: it is loaded at once");
     db.create(epoch, "Note".into(), r#"{"id":"n2","text":"two"}"#.into(), "{}".into()).await.unwrap();

@@ -211,7 +211,7 @@ impl DatabaseSut {
     fn value(&self, stream: &str, value: &ReadValue) -> Observation {
         let mut out = Map::new();
         match value {
-            ReadValue::Snapshot { revision, rows, state } => {
+            ReadValue::Snapshot { revision, rows, state, .. } => {
                 self.state(stream, state, &mut out);
                 out.insert("revision".into(), (*revision).into());
                 out.insert("rows".into(), self.names(rows));

@@ -48,7 +48,7 @@ impl WireTransferStatus {
             WireTransferState::Failed => "failed",
             WireTransferState::Gone => "gone",
         };
-        crate::owners::read::deliveries::BlobStatus { state: state.into(), progress: (self.progress * 100.0).round() as u64, error: self.error.clone() }
+        crate::owners::read::deliveries::BlobStatus { state: state.into(), progress: (self.progress * 100.0).round() as u64, error: self.error.clone(), local_url: None, processing: None }
     }
 }
 
@@ -56,10 +56,11 @@ impl WireTransferStatus {
 pub(super) struct Shows {
     map: Mutex<HashMap<String, Shown>>,
     changed: watch::Sender<u64>,
+    commits: watch::Sender<u64>,
 }
 
 impl Default for Shows {
-    fn default() -> Self { Self { map: Mutex::default(), changed: watch::channel(0).0 } }
+    fn default() -> Self { Self { map: Mutex::default(), changed: watch::channel(0).0, commits: watch::channel(0).0 } }
 }
 
 impl Shows {
@@ -69,6 +70,10 @@ impl Shows {
     }
 
     pub(super) fn status(&self, key: &str) -> WireTransferStatus { WireTransferStatus::of(key, crate::lock::lock(&self.map).get(key)) }
+
+    pub(super) fn touch(&self) { crate::lock::effect(|| self.commits.send_modify(|count| *count += 1)); }
+
+    pub(super) fn watch_commits(&self) -> watch::Receiver<u64> { self.commits.subscribe() }
 
     pub(super) fn watch(&self) -> watch::Receiver<u64> { self.changed.subscribe() }
 }

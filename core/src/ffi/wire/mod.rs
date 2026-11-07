@@ -293,7 +293,7 @@ pub(super) fn failure(failure: &OperationFailure) -> WireFailure {
     WireFailure { kind, session_code, request_size, request_limit, message: failure.message.clone(), extensions: failure.extensions.clone() }
 }
 
-fn upload(info: &UploadInfo) -> WireUpload {
+pub(crate) fn upload(info: &UploadInfo) -> WireUpload {
     WireUpload {
         status: match info.status {
             UploadStatus::Waiting => WireUploadStatus::Waiting,

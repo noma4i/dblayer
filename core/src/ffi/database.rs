@@ -155,6 +155,8 @@ impl Database {
         let jobs: Arc<super::upload_rounds::RoundJobsSlot> = Arc::default();
         let shows: Arc<super::transfer_status::Shows> = Arc::default();
         let life = Self::build_life(&db, transport.clone(), encrypted.as_ref(), cable, seal, reads.clone(), (uploads.clone(), jobs.clone(), shows.clone(), clock.clone()))?;
+        let committed_shows = shows.clone();
+        life.on_committed(move |_| committed_shows.touch());
         let remote = transport.is_some();
         let wires = keys.into_iter().map(|key| db.spec(&key).map(|spec| (key, Arc::new(WireModel::of(spec)))).map_err(DbError::from)).collect::<Result<_, _>>()?;
         Ok(Arc::new(Self { lease: Arc::new(OnceLock::new()), life, db, remote, reads, uploads, jobs, shows, outcomes: Arc::default(), loads: Arc::default(), wires: Arc::new(wires) }))

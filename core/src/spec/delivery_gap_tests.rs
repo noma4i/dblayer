@@ -89,7 +89,7 @@ fn val_of(value: &d::Value) -> Val {
     }
     let ids = |rows: &[d::StreamRow]| rows.iter().map(|row| row.id.clone()).collect::<Vec<_>>();
     match value {
-        d::Value::Snapshot { revision, rows, state } => Val::Snapshot { revision: *revision, rows: ids(rows), state: ws_of(state) },
+        d::Value::Snapshot { revision, rows, state, .. } => Val::Snapshot { revision: *revision, rows: ids(rows), state: ws_of(state) },
         d::Value::Delta(delta) => Val::Delta { base: delta.base, revision: delta.revision, size: delta.size as usize, edits: delta.edits.iter().map(ed_of).collect(), state: ws_of(&delta.state) },
         d::Value::Count { revision, count, state } => Val::Count { revision: *revision, count: *count, state: ws_of(state) },
         d::Value::Operations { .. } => unreachable!("the reference models no queue stream"),
@@ -219,7 +219,7 @@ impl Twin {
             Input::ModelLost { first, last } => self.post(d::DeliveryInput::ModelLost { stream, first: *first, last: *last }),
             Input::ModelGap => self.post(d::DeliveryInput::ModelGap { stream }),
             Input::Resync => self.call(d::DeliveryInput::Resync { stream }),
-            Input::Transfer { state } => self.post(d::DeliveryInput::TransferStatus { stream, blob: d::BlobStatus { state: state.clone(), progress: 0, error: None } }),
+            Input::Transfer { state } => self.post(d::DeliveryInput::TransferStatus { stream, blob: d::BlobStatus { state: state.clone(), progress: 0, error: None, local_url: None, processing: None } }),
             Input::Retry { attempts } => self.post(d::DeliveryInput::RetryState { stream, retry: d::RetryStatus { attempts: *attempts, phase: "idle".into() } }),
             Input::Pull => {
                 let outcome = self.answers.register(EPOCH).id();

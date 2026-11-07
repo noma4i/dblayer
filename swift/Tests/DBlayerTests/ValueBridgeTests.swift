@@ -285,10 +285,10 @@ extension BridgeProbeTests {
     let state = try #require(profile.state)
     var bad = try #require(try await DB.database.readQuery(epoch: scope.epoch, query: try User.profile.spec()).first)
     bad.layout = "another layout"
-    #expect(throws: DbError.self) { try projection.apply(.snapshot(revision: 1, rows: [bad], state: state)) }
+    #expect(throws: DbError.self) { try projection.apply(.snapshot(revision: 1, rows: [bad], edits: [], state: state)) }
     #expect(projection.rows.isEmpty && projection.revision == nil, "a row that does not decode changed the projection")
     let whole = try #require(try await DB.database.readQuery(epoch: scope.epoch, query: try User.profile.spec()).first)
-    try projection.apply(.snapshot(revision: 2, rows: [whole], state: state))
+    try projection.apply(.snapshot(revision: 2, rows: [whole], edits: [], state: state))
     #expect(projection.rows.count == 1 && projection.error == nil)
 
     let database = try DB.database

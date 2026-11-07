@@ -180,7 +180,7 @@ private final class DatabaseRunner {
 
   func value(_ stream: String, _ seq: UInt64, _ value: ReadValue) -> String {
     switch value {
-    case .snapshot(let revision, let list, let state):
+    case .snapshot(let revision, let list, _, let state):
       var out = stateFields(stream, state); out["revision"] = revision; out["rows"] = names(list)
       return observation("snapshot", out)
     case .delta(let base, let revision, let edits, let state):

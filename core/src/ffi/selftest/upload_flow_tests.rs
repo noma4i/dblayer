@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use serde_json::{json, Value};
 
-use super::flow_fixtures::{add_chat, cell, chat_row, land_event};
+use super::flow_fixtures::{add_chat, cell, chat_row, land_event, land_owned};
 use crate::ffi::wire::Cell;
 use super::rig_tests::{bound, Fault, Rig, World};
 use super::upload_fixtures::add_uploads;
@@ -142,5 +142,66 @@ async fn xfer_prop_upload_state_reaches_row_streams() {
     hold.release();
     assert!(matches!(bound(rig.database.outcome(receipt)).await.unwrap(), WireOperationOutcome::Confirmed { .. }));
     yield_until("both places end the upload", || [&chat, &list].iter().all(|rows| status(rows, "c1", "update_photo").is_none())).await;
+    rig.database.close_now();
+}
+
+async fn status_until(stream: &crate::ffi::ReadStream, what: &str, wanted: impl Fn(&crate::ffi::ReadValue) -> bool) -> crate::ffi::ReadValue {
+    loop {
+        let value = crate::test_wait::within(stream.pull()).await.unwrap_or_else(|| panic!("the stream ended before {what}"));
+        if wanted(&value) { return value; }
+    }
+}
+
+fn blob_stream(rig: &Rig, action: &str) -> Arc<crate::ffi::ReadStream> {
+    rig.database.subscribe_values(rig.database.session_epoch(), ReadRequest::Blob { model: "Chat".into(), id: "c1".into(), action: action.into() })
+}
+
+/// P-XFER-23 through the stream `Blob`: the status carries the file URL of the copy from the end of the copy until the transfer is removed.
+#[tokio::test(flavor = "multi_thread")]
+async fn xfer_status_local_url() {
+    use crate::ffi::ReadValue;
+    let rig = rig().await;
+    let chat = entity(&rig, "Chat", "c1");
+    yield_until("the chat shows", || chat.len() == 1).await;
+    let stream = blob_stream(&rig, "update_photo");
+    let (_directory, path) = source("logo.jpg", b"jpeg");
+    let epoch = rig.database.session_epoch();
+    let hold = rig.world.hold_next("PUT");
+    let receipt = bound(rig.database.upload(epoch, "Chat".into(), "c1".into(), "update_photo".into(), request(&path, json!({"id": "c1"})))).await.unwrap();
+    hold.entered_for("the file in the network").await;
+    let ReadValue::Status { local_url: Some(url), .. } = status_until(&stream, "the copy has a URL", |value| matches!(value, ReadValue::Status { local_url: Some(_), .. })).await else { unreachable!() };
+    assert!(url.starts_with("file://") && std::path::Path::new(&url["file://".len()..]).exists(), "{url}");
+    hold.release();
+    assert!(matches!(bound(rig.database.outcome(receipt)).await.unwrap(), WireOperationOutcome::Confirmed { .. }));
+    status_until(&stream, "the URL goes with the transfer", |value| matches!(value, ReadValue::Status { local_url: None, .. })).await;
+    rig.database.close_now();
+}
+
+/// P-XFER-26 through the stream `Blob`: the status carries `processing` while the row of the server says the file is not ready, and drops it at the terminal value.
+#[tokio::test(flavor = "multi_thread")]
+async fn xfer_status_processing() {
+    use crate::ffi::{ReadValue, WireProcessing};
+    let rig = Rig::signed_as(World::new("server", "A", true), false, |models| {
+        add_chat(models);
+        add_uploads(models);
+        let chat = models.as_array_mut().unwrap().iter_mut().find(|model| model["key"] == "Chat").unwrap();
+        let fields = chat["fields"].as_array_mut().unwrap();
+        fields.push(serde_json::to_value(crate::schema::FieldSpec::scalar("photoState", crate::value::ScalarKind::Str).nullable().optional()).unwrap());
+        fields.push(serde_json::to_value(crate::schema::FieldSpec::scalar("photoProgress", crate::value::ScalarKind::Num).nullable().optional()).unwrap());
+        let action = chat["actions"].as_array_mut().unwrap().iter_mut().find(|action| action["name"] == "update_photo").unwrap();
+        action["processing"] = json!({"field": "photoState", "done": ["ready"], "progress": "photoProgress"});
+    }).await;
+    land_event(&rig, "Chat", chat_row("c1", 0));
+    let stream = blob_stream(&rig, "update_photo");
+    let mut working = chat_row("c1", 0);
+    working["photoState"] = json!("working");
+    working["photoProgress"] = json!(0.5);
+    land_owned(&rig, "Chat", working);
+    let shown = status_until(&stream, "the processing shows", |value| matches!(value, ReadValue::Status { processing: Some(_), .. })).await;
+    assert!(matches!(shown, ReadValue::Status { processing: Some(WireProcessing { progress: Some(progress) }), .. } if (progress - 0.5).abs() < f64::EPSILON));
+    let mut ready = chat_row("c1", 0);
+    ready["photoState"] = json!("ready");
+    land_owned(&rig, "Chat", ready);
+    status_until(&stream, "the terminal value drops the processing", |value| matches!(value, ReadValue::Status { processing: None, .. })).await;
     rig.database.close_now();
 }

@@ -342,8 +342,8 @@ class ValueBridgeTest {
             val whole = DBlayer.database.readQuery(scope.epoch, User.profile.spec()).first()
             val bad = whole.copy(layout = "another layout")
             val empty = ListProjection<User>()
-            assertTrue("a row that does not decode did not throw", runCatching { empty.apply(ReadValue.Snapshot(1L, listOf(bad), state), User) }.isFailure)
-            val applied = empty.apply(ReadValue.Snapshot(2L, listOf(whole), state), User)!!
+            assertTrue("a row that does not decode did not throw", runCatching { empty.apply(ReadValue.Snapshot(1L, listOf(bad), emptyList(), state), User) }.isFailure)
+            val applied = empty.apply(ReadValue.Snapshot(2L, listOf(whole), emptyList(), state), User)!!
             assertTrue(applied.rows.size == 1 && applied.error == null)
 
             val first = DBlayer.database.openValueStream(scope.epoch, ReadRequest.Events("Nope")).events(User).first()

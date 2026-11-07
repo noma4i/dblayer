@@ -78,7 +78,7 @@ async fn a_load_asks_the_first_page_once_and_the_snapshot_shows_the_revision_of_
     let (db, transport) = open(false).await;
     tokio::time::timeout(LIMIT, begin(&db).await.result()).await.expect("the load ends within 5 s").unwrap();
     assert_eq!(transport.requests(), 1);
-    let (_stream, ReadValue::Snapshot { revision, rows, state }) = first_value(&db).await else { panic!("the first value is a snapshot") };
+    let (_stream, ReadValue::Snapshot { revision, rows, state, .. }) = first_value(&db).await else { panic!("the first value is a snapshot") };
     assert_eq!(rows.iter().map(|row| row.id.as_str()).collect::<Vec<_>>(), ["m0"]);
     assert_eq!((state.phase, state.loaded), (ReadPhase::Loaded, Some(revision)));
     tokio::time::timeout(LIMIT, begin(&db).await.result()).await.expect("the load ends within 5 s").unwrap();

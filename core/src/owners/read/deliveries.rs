@@ -121,6 +121,8 @@ pub struct BlobStatus {
     pub state: String,
     pub progress: u64,
     pub error: Option<String>,
+    pub local_url: Option<String>,
+    pub processing: Option<crate::ffi::WireProcessing>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -155,7 +157,8 @@ pub enum Edit {
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum Value {
-    Snapshot { revision: i64, rows: Vec<StreamRow>, state: WindowState },
+    /// `edits` are the steps from the rows of the last value the reader took to `rows`; `temporary` and `forgotten` follow the rules of `Delta`.
+    Snapshot { revision: i64, rows: Vec<StreamRow>, edits: Vec<Edit>, temporary: Vec<(String, String)>, forgotten: Vec<String>, state: WindowState },
     Delta(Delta),
     Count { revision: i64, count: u64, state: WindowState },
     Operations { revision: i64, items: Vec<crate::ffi::OperationInfo> },

@@ -10,10 +10,16 @@ class ProjectionRecoveryTest {
 
     @Test
     fun aDeltaIsAppliedAsItComesAndKeepsOnlyItsOwnEdits() {
-        val first = ListProjection<Moment>().apply(ReadValue.Snapshot(1, emptyList(), state), Moment)!!
+        val first = ListProjection<Moment>().apply(ReadValue.Snapshot(1, emptyList(), emptyList(), state), Moment)!!
         assertEquals(emptyList<ListEdit<Moment>>(), first.lastEdits)
         val second = first.apply(ReadValue.Delta(1, 300, emptyList(), state), Moment)!!
         assertEquals(300L, second.revision)
         assertEquals(emptyList<ListEdit<Moment>>(), second.lastEdits)
+    }
+
+    @Test
+    fun theSnapshotEditsComeFromTheCore() {
+        val applied = ListProjection<Moment>().apply(ReadValue.Snapshot(1, emptyList(), listOf(RowEdit.Remove(0u, "m1"), RowEdit.Move(1u, 0u)), state), Moment)!!
+        assertEquals(listOf<ListEdit<Moment>>(ListEdit.Remove(0, "m1"), ListEdit.Move(1, 0)), applied.lastEdits)
     }
 }

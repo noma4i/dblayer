@@ -6,12 +6,12 @@ use std::sync::Arc;
 use super::database::Database;
 use super::LoadMoreResult;
 use super::queue::OperationInfo;
-use super::wire::{WireModel, WireRow};
+use super::wire::{WireModel, WireProcessing, WireRow};
 use super::QuerySpec;
 use super::DbError;
 use crate::owners::contract::{WindowPhase, WindowState};
 use crate::owners::life::Life;
-use crate::owners::read::deliveries::{EndCause, Edit, Fetch, Kind, PullAnswer, StreamRow, Value, View};
+use crate::owners::read::deliveries::{BlobStatus, EndCause, Edit, Fetch, Kind, PullAnswer, StreamRow, Value, View};
 use crate::owners::read::windows::WindowKey;
 use crate::runtime::Outcome;
 
@@ -60,7 +60,7 @@ pub enum RowEdit {
 #[derive(Clone, Debug, PartialEq, uniffi::Enum)]
 pub enum ReadValue {
     /// The whole result at a revision: the first value of a stream of rows.
-    Snapshot { revision: i64, rows: Vec<WireRow>, state: ReadState },
+    Snapshot { revision: i64, rows: Vec<WireRow>, edits: Vec<RowEdit>, state: ReadState },
     /// The change after the last value the reader took: the steps from the rows it holds to the rows of `revision`.
     Delta { base: i64, revision: i64, edits: Vec<RowEdit>, state: ReadState },
     Count { revision: i64, count: u64, state: ReadState },
@@ -72,7 +72,7 @@ pub enum ReadValue {
     Event { position: u64, area: String, kind: String, id: String, before: Option<Box<WireRow>>, after: Option<Box<WireRow>> },
     Lost { first: u64, last: u64 },
     Gap,
-    Status { revision: i64, state: String, progress: u64, error: Option<String> },
+    Status { revision: i64, state: String, progress: u64, error: Option<String>, local_url: Option<String>, processing: Option<WireProcessing> },
     Retry { attempts: u32, phase: String },
     /// The last value of a stream, exactly one.
     Ended { cause: ReadEnd },
@@ -154,7 +154,7 @@ fn event_of(position: u64, payload: &str, wire: Option<&WireModel>) -> ReadValue
 
 fn read_value(value: Value, wire: Option<&WireModel>) -> Result<ReadValue, DbError> {
     Ok(match value {
-        Value::Snapshot { revision, rows, state } => ReadValue::Snapshot { revision, rows: rows.iter().map(full_row).collect::<Result<_, _>>()?, state: state_of(state) },
+        Value::Snapshot { revision, rows, edits, state, .. } => ReadValue::Snapshot { revision, rows: rows.iter().map(full_row).collect::<Result<_, _>>()?, edits: edits.iter().map(edit_of).collect::<Result<_, _>>()?, state: state_of(state) },
         Value::Delta(delta) => ReadValue::Delta {
             base: delta.base,
             revision: delta.revision,
@@ -168,7 +168,7 @@ fn read_value(value: Value, wire: Option<&WireModel>) -> Result<ReadValue, DbErr
         Value::Event { position, payload } => event_of(position, &payload, wire),
         Value::Lost { first, last } => ReadValue::Lost { first, last },
         Value::Gap => ReadValue::Gap,
-        Value::Status { revision, blob } => ReadValue::Status { revision, state: blob.state, progress: blob.progress, error: blob.error },
+        Value::Status { revision, blob } => ReadValue::Status { revision, state: blob.state, progress: blob.progress, error: blob.error, local_url: blob.local_url, processing: blob.processing },
         Value::Retry(retry) => ReadValue::Retry { attempts: retry.attempts, phase: retry.phase },
         Value::Ended(cause) => ReadValue::Ended { cause: end_of(cause) },
     })
@@ -333,23 +333,35 @@ impl Database {
 }
 
 impl Database {
-    /// Hands the status of the transfer of `key` to the stream at each change.
-    fn watch_status(&self, stream: u64, key: &str) -> Option<tokio::task::AbortHandle> {
-        let (shows, life, key) = (self.shows.clone(), Arc::downgrade(&self.life), key.to_string());
-        let mut changes = shows.watch();
+    /// The copy URL and the processing `uploads[action]` of the row shows, read from the row like the row streams read it.
+    fn row_upload(&self, model: &str, id: &str, action: &str) -> (Option<String>, Option<WireProcessing>) {
+        let Ok(id) = crate::identity::RowId::new(id) else { return (None, None) };
+        let row = crate::blocking::blocking_unit(|| self.db.find(model, &id));
+        let upload = row.ok().flatten().and_then(|row| row.sync.uploads.get(action).map(super::wire::upload));
+        upload.map_or((None, None), |upload| (upload.local_url, upload.processing))
+    }
+
+    /// Hands the status of the transfer of a row and action to the stream at each change of the transfer and each commit.
+    fn watch_status(&self, stream: u64, model: &str, id: &str, action: &str) -> Option<tokio::task::AbortHandle> {
+        let (database, shows, life) = (self.clone(), self.shows.clone(), Arc::downgrade(&self.life));
+        let (key, model, id, action) = (crate::store::transfer_key(model, id, action), model.to_string(), id.to_string(), action.to_string());
+        let (mut changes, mut commits) = (shows.watch(), shows.watch_commits());
         let launch = self.life.launch();
         let task = crate::task::spawn_on(crate::task::Carry::Detached, super::database::executor().ok()?.handle(), crate::runtime::counted(Some(launch), async move {
             let mut last = None;
             loop {
                 changes.borrow_and_update();
+                commits.borrow_and_update();
                 let Some(life) = life.upgrade() else { return };
-                let next = shows.status(&key);
+                let (local_url, processing) = database.row_upload(&model, &id, &action);
+                let next = BlobStatus { local_url, processing, ..shows.status(&key).blob_status() };
                 if last.as_ref() != Some(&next) {
-                    life.push_status(stream, next.blob_status());
+                    life.push_status(stream, next.clone());
                     last = Some(next);
                 }
                 drop(life);
-                if changes.changed().await.is_err() { return; }
+                let ended = tokio::select! { moved = changes.changed() => moved.is_err(), moved = commits.changed() => moved.is_err() };
+                if ended { return; }
             }
         }));
         Some(task.abort_handle())
@@ -370,7 +382,7 @@ impl Database {
         let revision = self.db.published_revision().load(std::sync::atomic::Ordering::Acquire);
         self.life.open_stream(stream, view, epoch, valid, revision);
         let status = match (&request, valid) {
-            (ReadRequest::Blob { model, id, action }, true) => self.watch_status(stream, &crate::store::transfer_key(model, id, action)),
+            (ReadRequest::Blob { model, id, action }, true) => self.watch_status(stream, model, id, action),
             _ => None,
         };
         let wire = match (&request, valid) {

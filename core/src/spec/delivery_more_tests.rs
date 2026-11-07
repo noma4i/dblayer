@@ -158,3 +158,27 @@ fn dlv_resync_read_failed_end() {
     assert!(effects.contains(&Effect::InterestMinus));
     assert!(effects.contains(&Effect::CloseSink));
 }
+
+fn snapshot_edits(twin: &Twin) -> Vec<Ed> {
+    let journal = twin.state().journal(STREAM);
+    let [d::Value::Snapshot { edits, .. }] = journal.as_slice() else { panic!("one Snapshot waits: {journal:?}") };
+    edits.iter().map(ed_of).collect()
+}
+
+#[test]
+fn dlv_snapshot_edits_first() {
+    let mut twin = open_rows();
+    twin.step(Input::WindowState(Ws::loaded_at(1)));
+    twin.step(Input::ReadDone { revision: 1, rows: rows(&["r1", "r2"]) });
+    assert_eq!(snapshot_edits(&twin), [insert(0, "r1"), insert(1, "r2")]);
+}
+
+#[test]
+fn dlv_snapshot_edits_resync() {
+    let mut twin = live_rows();
+    twin.step(Input::ReadDone { revision: 2, rows: rows(&["r1", "r3"]) });
+    twin.read_all();
+    twin.step(Input::Resync);
+    twin.step(Input::ReadDone { revision: 3, rows: rows(&["r3", "r4"]) });
+    assert_eq!(snapshot_edits(&twin), [remove(0, "r1"), insert(1, "r4")]);
+}

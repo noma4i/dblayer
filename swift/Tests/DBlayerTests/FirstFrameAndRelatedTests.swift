@@ -15,7 +15,7 @@ extension BridgeProbeTests {
     let stream = try DB.account().stream(Presence.where(.equal("room", .string("r"))))
 
     let first = await Task.detached { () -> (onMain: Bool, ids: [String]?, revision: Int64?) in
-      guard case let .snapshot(revision, rows, _)? = await Cursor(stream).next("the first value of the stream") else { return ((pthread_main_np() == 1), nil, nil) }
+      guard case let .snapshot(revision, rows, _, _)? = await Cursor(stream).next("the first value of the stream") else { return ((pthread_main_np() == 1), nil, nil) }
       return ((pthread_main_np() == 1), rows.map(\.id), revision)
     }.value
     await stream.cancel()
