@@ -17,7 +17,7 @@ class OkHttpEncryptedHttp(
         .retryOnConnectionFailure(false)
         .build()
     override suspend fun post(path: String, body: String, purpose: NetworkPurpose): EncryptedReply =
-        send(Request.Builder().url(origin.trimEnd('/') + path).post(oneShot(body.toByteArray().toRequestBody("application/jose".toMediaType()))).apply { headers().forEach { (field, value) -> header(field, value) } }.build().withUserAgent(), purpose)
+        send(Request.Builder().url(origin.trimEnd('/') + path).post(body.toByteArray().toRequestBody("application/jose".toMediaType())).apply { headers().forEach { (field, value) -> header(field, value) } }.build().withUserAgent(), purpose)
 
 
     private suspend fun send(request: Request, purpose: NetworkPurpose): EncryptedReply = try {

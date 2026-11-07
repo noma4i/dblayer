@@ -239,6 +239,7 @@ extension BridgeProbeTests {
     let queued = try #require(try await DB.account().send(Moment.self, values: ["text": .string("group")], upload: UploadCommand(action: "upload_clip", request: UploadRequest(path: source.path))).optimisticValue)
     await held.entered()
     try db.setOnline(online: false)
+    await held.dropped()
     try await queued.discard(action: nil)
     #expect(try await Moment.find(queued.id).current() == nil)
     held.release()
@@ -248,9 +249,7 @@ extension BridgeProbeTests {
     try reopened.setOnline(online: true)
     await abort.entered()
     abort.release()
-    try reopened.setOnline(online: false)
-    try reopened.setOnline(online: true)
-    #expect(transport.calls.filter { $0.operationName == "PresignParts" }.count == 2, "the saved pair of the held step is sent once more")
+    await eventually("the saved pair of the held step is sent once more") { transport.calls.filter { $0.operationName == "PresignParts" }.count == 2 }
     let aborts = transport.calls.filter { $0.operationName == "AbortMultipart" }
     #expect(aborts.count == 1 && aborts.first?.purpose == .transfer)
     await DB.closeForCleanup()

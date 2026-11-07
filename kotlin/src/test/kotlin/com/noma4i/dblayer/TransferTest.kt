@@ -471,9 +471,6 @@ class TransferTest {
             reopened.setOnline(true)
             awaitWithin("the saved abort reached the transport after the network returned", { "calls=" + transport.calls.map { it.operationName } }) { abort.entered() }
             abort.release()
-            eventually("the abort was answered") { transport.calls.count { it.operationName == "AbortMultipart" } == 1 }
-            reopened.setOnline(false)
-            reopened.setOnline(true)
             eventually("the saved pair of the held step is sent once more") { transport.calls.count { it.operationName == "PresignParts" } == 2 }
             val aborts = transport.calls.filter { it.operationName == "AbortMultipart" }
             assertEquals(1, aborts.size)

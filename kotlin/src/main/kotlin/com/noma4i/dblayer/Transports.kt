@@ -25,7 +25,7 @@ class OkHttpTransport(
     }.toString()
 
     private suspend fun post(request: TransportRequest, kind: GraphQLOperationKind): String {
-        val http = Request.Builder().url(endpoint).post(oneShot(body(request).toRequestBody("application/json".toMediaType()))).apply {
+        val http = Request.Builder().url(endpoint).post(body(request).toRequestBody("application/json".toMediaType())).apply {
             headers().forEach { (field, value) -> header(field, value) }
         }.build().withUserAgent()
         return try {
@@ -45,13 +45,6 @@ class OkHttpTransport(
 
     override suspend fun put(url: String, headers: Map<String, String>, file: PutFile, identity: TransferIdentity, progress: ByteProgress): PutReply =
         putFile(client, url, headers, file, progress, routed = true)
-}
-
-internal fun oneShot(body: okhttp3.RequestBody): okhttp3.RequestBody = object : okhttp3.RequestBody() {
-    override fun contentType() = body.contentType()
-    override fun contentLength() = body.contentLength()
-    override fun writeTo(sink: okio.BufferedSink) = body.writeTo(sink)
-    override fun isOneShot() = true
 }
 
 internal suspend fun putFile(client: OkHttpClient, url: String, headers: Map<String, String>, file: PutFile, progress: ByteProgress, routed: Boolean = false): PutReply {

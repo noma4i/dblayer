@@ -64,4 +64,19 @@ struct UserAgentTests {
     #expect(requests[3].contains("x-presigned: yes"))
     #expect(!requests[3].contains("x-application:"))
   }
+
+  @Test
+  func life_put_connection_failure_is_network() async throws {
+    let session = URLSession(configuration: .ephemeral)
+    defer { session.invalidateAndCancel() }
+    let transport = UrlSessionTransport(endpoint: URL(string: "http://127.0.0.1:1")!, session: session)
+    let path = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    try Data("file".utf8).write(to: path)
+    defer { try? FileManager.default.removeItem(at: path) }
+    do {
+      _ = try await transport.put(url: "http://127.0.0.1:1/upload", headers: [:], file: PutFile(path: path.path, offset: 0, length: 4), identity: TransferIdentity(operationId: 1, itemId: "a", step: .put), progress: PutBytes(noHandle: .init()))
+      Issue.record("a refused connection must throw")
+    } catch DbError.Network {
+    }
+  }
 }
