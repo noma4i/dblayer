@@ -63,7 +63,7 @@ impl Transport for Headered {
 #[tokio::test(flavor = "multi_thread")]
 async fn life_prop_headers_per_request() {
     let port = Arc::new(Headered { value: Mutex::new("first".into()), server: FakeServer::new(Arc::new(crate::runtime::SystemClock)), sent: Mutex::default(), cables: Mutex::default(), puts: Mutex::default() });
-    let transport = ForeignTransport::plain(port.clone(), Some(format!("{GRAPHQL_HOST}/graphql")), Arc::new(crate::runtime::SystemClock)).unwrap();
+    let transport = ForeignTransport::plain(port.clone(), Some(format!("{GRAPHQL_HOST}/graphql"))).unwrap();
     let request = || crate::transport::GraphQLRequest::new("query Q { x }", "Q", serde_json::json!({})).by(crate::transport::WireIds::bootstrap());
     let ports = OpenPorts { executor: Some(port.clone()), encrypted: Some(crate::transport::encrypted::protocol_tests::config()), credentials: Some(Arc::new(crate::ffi::encrypted_tests::Held(Arc::new(MemoryCredentials::default())))), ..Default::default() };
     let database = within(crate::ffi::OpenDatabase::new().open(Config { path: None, data_version: None }, crate::ffi::EMPTY_SPECS.into(), OpenOptions::default(), ports, None)).await.unwrap();

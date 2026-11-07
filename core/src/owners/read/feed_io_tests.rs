@@ -278,7 +278,7 @@ fn rt_prop_close_against_query_no_old_transport_feed() {
     let (dropped, started) = (Arc::new(AtomicUsize::new(0)), Arc::new(AtomicUsize::new(0)));
     let (_, rest) = collector();
     let gate = super::rig::open_gate(1);
-    let io = FeedIo::new(Arc::new(Hanging(dropped, started.clone())), Arc::new(Models), runtime.handle().clone(), rest, (Arc::new(crate::runtime::SystemClock), gate.clone()));
+    let io = FeedIo::new(Arc::new(Hanging(dropped, started.clone())), Arc::new(Models), runtime.handle().clone(), rest, gate.clone());
     let mut det = DetScheduler::new(1);
     let store = det.add::<BatchPeer>("store", Batches::default(), Discard);
     let windows = det.add::<Sink<Windows>>("windows", Default::default(), Discard);
