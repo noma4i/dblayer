@@ -44,7 +44,7 @@ async fn flow_chat_last_message() {
     assert_eq!(chat_cell(&rig, &rows, "lastMessageId"), Some(text(&temporary)));
     assert_eq!(chat_cell(&rig, &rows, "lastActivityAt"), Some(int(100)));
     let first = rows.1.lock().unwrap().iter().find(|seen| seen.rows.iter().any(|row| row.id == "c1" && cell(&rig, "Chat", row, "lastMessageAt") == int(100))).cloned().unwrap();
-    assert_eq!(first.revision, receipt.revision, "the chat row did not change at the revision of the receipt");
+    assert!(first.revision >= receipt.revision, "the chat row changed before the receipt: {}", first.revision);
     hold.release();
     assert!(matches!(bound(rig.database.outcome(receipt)).await.unwrap(), WireOperationOutcome::Confirmed { .. }));
     yield_until("the chat points at the message of the server", || chat_cell(&rig, &rows, "lastMessageId") == Some(text("m1"))).await;

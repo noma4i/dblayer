@@ -136,12 +136,12 @@ async fn flow_moment_publish_delete() {
 
     rig.world.answer_with("MomentDelete", json!({"data":{"momentDelete":{"id":"m9"}}}));
     let destroy = bound(rig.database.destroy(epoch, "Moment".into(), "m9".into())).await.unwrap();
-    yield_until("the destroy empties every list", || places.iter().all(|rows| rows.len() == 0)).await;
+    yield_until("the destroy empties every list", || places.iter().all(|rows| rows.emptied())).await;
     assert!(matches!(bound(rig.database.outcome(destroy)).await.unwrap(), WireOperationOutcome::Confirmed { .. }));
 
     land_event(&rig, "Moment", moment("m5", "u1", 0, 0));
     yield_until("an event card stands", || places.iter().all(|rows| rows.len() == 1)).await;
     land_delete(&rig, "Moment", "m5");
-    yield_until("the delete event empties every list", || places.iter().all(|rows| rows.len() == 0)).await;
+    yield_until("the delete event empties every list", || places.iter().all(|rows| rows.emptied())).await;
     rig.database.close_now();
 }

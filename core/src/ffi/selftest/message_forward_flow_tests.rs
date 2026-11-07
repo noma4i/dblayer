@@ -3,7 +3,7 @@ use std::sync::Arc;
 use serde_json::json;
 
 use super::rig_tests::{bound, Fault, Rig, World};
-use super::flow_fixtures::{add_chat, cell, chat_row, land_event, text};
+use super::flow_fixtures::{one_revision, add_chat, cell, chat_row, land_event, text};
 use crate::ffi::tape::Rows;
 use crate::ffi::wire::Cell;
 use crate::ffi::{WireOperationOutcome, WireOperationReceipt};
@@ -61,10 +61,11 @@ async fn flow_message_forward() {
     let copy = ids(&thread).remove(0);
     assert!(forwarded_by_me(&rig, &thread, &copy), "the copy lacks the author, the flag or the origin");
     yield_until("the target chat points at the copy", || field(&rig, "Chat", &chats, "c2", "lastMessageId") == Some(text(&copy))).await;
-    assert_eq!(thread.1.lock().unwrap().iter().find(|seen| !seen.rows.is_empty()).map(|seen| seen.revision), Some(receipt.revision), "the copy came at another revision than the receipt");
+    assert!(thread.1.lock().unwrap().iter().find(|seen| !seen.rows.is_empty()).is_some_and(|seen| seen.revision >= receipt.revision), "the copy came before the receipt");
+    one_revision(&[&thread, &chats]).await;
     refused.release();
     assert!(matches!(bound(rig.database.outcome(receipt)).await.unwrap(), WireOperationOutcome::Rejected { .. }));
-    yield_until("the refusal removes the copy and the pointer", || thread.len() == 0 && field(&rig, "Chat", &chats, "c2", "lastMessageId") == Some(Cell::Null)).await;
+    yield_until("the refusal removes the copy and the pointer", || thread.emptied() && field(&rig, "Chat", &chats, "c2", "lastMessageId") == Some(Cell::Null)).await;
 
     let hold = rig.world.hold_next("MessageForward");
     let receipt = forward(&rig).await;

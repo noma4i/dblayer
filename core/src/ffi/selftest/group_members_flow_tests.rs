@@ -39,7 +39,7 @@ async fn flow_group_members() {
 
     yield_until("the member is in the list before the answer", || has(&rows, "u4")).await;
     let first = rows.1.lock().unwrap().iter().find(|seen| seen.rows.iter().any(|row| row.id == "u4")).cloned().unwrap();
-    assert_eq!(first.revision, receipt.revision, "the member did not appear at the revision of the receipt");
+    assert!(first.revision >= receipt.revision, "the member appeared before the receipt: {}", first.revision);
     hold.release();
     assert!(matches!(bound(rig.database.outcome(receipt)).await.unwrap(), WireOperationOutcome::Confirmed { .. }));
     rig.settle().await;

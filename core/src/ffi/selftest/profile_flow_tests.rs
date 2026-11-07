@@ -128,7 +128,7 @@ async fn flow_user_block() {
 
     let receipt = bound(rig.database.act(epoch, "User".into(), "u5".into(), "unblock".into(), "{}".into(), "{}".into())).await.unwrap();
     assert!(matches!(bound(rig.database.outcome(receipt)).await.unwrap(), WireOperationOutcome::Confirmed { .. }));
-    yield_until("the blocked list is empty again", || blocked.len() == 0).await;
+    yield_until("the blocked list is empty again", || blocked.emptied()).await;
     rig.database.close_now();
 }
 

@@ -37,7 +37,7 @@ async fn flow_chat_appears_from_event() {
     let reads = rig.world.count("ChatList");
 
     land_event(&rig, "Chat", json!({"id": "c1", "name": "event", "lists": ["PRIMARY"]}));
-    yield_until("the event chat stands in PRIMARY", || primary.len() == 1 && secondary.len() == 0).await;
+    yield_until("the event chat stands in PRIMARY", || primary.len() == 1 && secondary.emptied()).await;
 
     rig.world.answer_with("AnswerConnection", json!({"data":{"answerConnection":{"user":{"__typename":"User","id":"u5","connectionStatus":"PENDING"},"chat":{"__typename":"Chat","id":"c2","connectionStatus":"PENDING","name":"answer","lists":["SECONDARY"]}}}}));
     land_event(&rig, "User", json!({"id": "u5", "name": "Eve", "connectionStatus": "PENDING"}));
@@ -46,7 +46,7 @@ async fn flow_chat_appears_from_event() {
     yield_until("the chat of the answer stands in SECONDARY", || secondary.len() == 1).await;
 
     land_event(&rig, "Chat", json!({"id": "c2", "name": "answer", "lists": ["PRIMARY"]}));
-    yield_until("the accepted chat moves to PRIMARY", || primary.len() == 2 && secondary.len() == 0).await;
+    yield_until("the accepted chat moves to PRIMARY", || primary.len() == 2 && secondary.emptied()).await;
     assert_eq!(rig.world.count("ChatList"), reads, "the app reread a list");
     rig.database.close_now();
 }

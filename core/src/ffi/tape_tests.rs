@@ -89,6 +89,9 @@ impl Rows {
 
     pub(crate) fn len(&self) -> usize { self.0.lock().unwrap().len() }
 
+    /// A snapshot was seen and no row is left: an empty watcher before its first snapshot is not emptied.
+    pub(crate) fn emptied(&self) -> bool { self.last().is_some() && self.len() == 0 }
+
 }
 
 /// Like `Rows`, for tests that only read the values.

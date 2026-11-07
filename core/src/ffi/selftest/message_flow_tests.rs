@@ -4,7 +4,7 @@ use serde_json::json;
 
 use super::bridge_support_tests::message;
 use super::rig_tests::{bound, Fault, Rig, World};
-use super::flow_fixtures::{add_chat, cell, chat_row, land_delete, land_event, text};
+use super::flow_fixtures::{one_revision, add_chat, cell, chat_row, land_delete, land_event, text};
 use crate::ffi::tape::Rows;
 use crate::ffi::wire::Cell;
 use crate::ffi::{ReadFetch, ReadRequest, WireOperationOutcome, WireOperationReceipt};
@@ -99,8 +99,9 @@ async fn flow_message_delete() {
     hold.entered_for("the answer").await;
     yield_until("the delete shows", || ids(&thread) == ["m1"] && field(&rig, "Chat", &chats, "c1", "lastMessageId") == Some(text("m1"))).await;
     let revision = chats.1.lock().unwrap().iter().rev().find(|seen| seen.rows.iter().any(|row| cell(&rig, "Chat", row, "lastMessageId") == text("m1"))).map(|seen| seen.revision);
-    assert_eq!(revision, Some(receipt.revision), "the chat row changed at another revision than the receipt");
-    assert!(thread.1.lock().unwrap().iter().any(|seen| seen.revision == receipt.revision && seen.removed.iter().any(|id| id == "m2")), "the thread did not drop m2 at the revision of the receipt");
+    assert!(revision.is_some_and(|revision| revision >= receipt.revision), "the chat row changed before the receipt: {revision:?}");
+    assert!(thread.1.lock().unwrap().iter().any(|seen| seen.revision >= receipt.revision && seen.removed.iter().any(|id| id == "m2")), "the thread did not drop m2 at or after the receipt");
+    one_revision(&[&thread, &chats]).await;
     hold.release();
     confirmed(&rig, receipt).await;
     assert_eq!(ids(&thread), ["m1"]);

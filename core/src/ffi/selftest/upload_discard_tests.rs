@@ -25,7 +25,7 @@ async fn a_discard_offline_leaves_only_the_replay_of_the_unanswered_step_after_t
     bound(database.discard(epoch, "Moment".into(), id.clone(), None)).await.unwrap();
 
     let rows = watched(&database, "Moment", &id);
-    yield_until("the row is gone", || rows.len() == 0).await;
+    yield_until("the row is gone", || rows.emptied()).await;
     database.close_now();
     stand.script.data("PresignParts", PRESIGN);
     let abort = stand.script.hold("AbortMultipart", r#"{"data":{"abortMultipart":{"ok":true}}}"#);

@@ -32,7 +32,7 @@ async fn flow_chat_typing() {
     one_revision(&[&header, &row]).await;
 
     bound(rig.database.destroy(epoch, "ChatAction".into(), "c1:u1".into())).await.unwrap();
-    yield_until("a destroy empties both places", || places.iter().all(|rows| rows.len() == 0)).await;
+    yield_until("a destroy empties both places", || places.iter().all(|rows| rows.emptied())).await;
 
     land_owned(&rig, "ChatAction", json!({"id": "c1:u2", "chatId": "c1", "userId": "u2", "kind": "recording"}));
     yield_until("an event shows the user in both places", || places.iter().all(|rows| rows.len() == 1)).await;
@@ -42,10 +42,10 @@ async fn flow_chat_typing() {
     yield_until("the message of u2 ends only the typing of u2", || places.iter().all(|rows| rows.len() == 1 && rows.0.lock().unwrap()[0].id == "c1:u3")).await;
     let sent = bound(rig.database.send(crate::ffi::CommandRequest { epoch, model: "Message".into(), values_json: json!({"chatId": "c1", "text": "mine", "at": 6, "authorId": "u3"}).to_string(), args_json: "{}".into(), upload: None })).await.unwrap();
     assert!(sent.optimistic_value.is_some());
-    yield_until("a local message of u3 ends the typing of u3", || places.iter().all(|rows| rows.len() == 0)).await;
+    yield_until("a local message of u3 ends the typing of u3", || places.iter().all(|rows| rows.emptied())).await;
     land_owned(&rig, "ChatAction", json!({"id": "c1:u2", "chatId": "c1", "userId": "u2", "kind": "recording"}));
     yield_until("the user types again", || places.iter().all(|rows| rows.len() == 1)).await;
     rig.clock.advance(8_000);
-    yield_until("the expiry empties both places", || places.iter().all(|rows| rows.len() == 0)).await;
+    yield_until("the expiry empties both places", || places.iter().all(|rows| rows.emptied())).await;
     rig.database.close_now();
 }
