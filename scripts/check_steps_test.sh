@@ -19,15 +19,15 @@ cleanup_processes() {
 }
 trap 'cleanup_processes; /bin/rm -rf "$work"' EXIT
 failed=0
+mkfifo "$work/hang"
 
 wait_until_gone() {
-  local pid="$1" tries=0
-  while kill -0 "$pid" 2>/dev/null && [ "$tries" -lt 200 ]; do
-    sleep 0.05
-    tries=$((tries + 1))
-  done
+  local pid="$1" end=$((SECONDS + 10))
+  while kill -0 "$pid" 2>/dev/null && [ "$SECONDS" -lt "$end" ]; do :; done
   ! kill -0 "$pid" 2>/dev/null
 }
+
+busy_for_three_seconds() { echo "perl -e '1 while time < $(($(date +%s) + 3))'"; }
 
 expect_red_step_killed() {
   if [ "$1" -ne 124 ] || [ -z "$2" ] || ! wait_until_gone "$2"; then
@@ -43,12 +43,11 @@ step_runner_a_step_past_its_limit_leaves_no_process() {
 set -m
 exec 3<> "$1/go"
 read -r -u 3 _
-sleep 601.7 &
+cat "$1/hang" > /dev/null &
 echo $! > "$1/born"
 wait
 SUBJECT
   (
-    sleep() { if [ "$1" = 7777 ]; then return 0; fi; command sleep "$@"; }
     # The first list of descendants is taken before the subject forks. The fork happens right after it, as in a
     # process that was still running when the stop signal was sent, and its child leaves the group (set -m).
     pgrep() {
@@ -60,26 +59,29 @@ SUBJECT
         kill -CONT -- "-$2" 2> /dev/null || true
         echo go > "$work/go"
         read -r -t 30 -u 4 pid < /dev/null || true
-        echo "$pid" > "$work/pid-sleep"
+        echo "$pid" > "$work/pid-subject"
       fi
       [ -z "$found" ] || echo "$found"
     }
-    run_bounded 7777 selftest bash "$work/subject.sh" "$work" 2> /dev/null
+    run_bounded 0 selftest bash "$work/subject.sh" "$work" 2> /dev/null
   ) || code=$?
-  [ -s "$work/pid-sleep" ] && read -r pid < "$work/pid-sleep"
+  [ -s "$work/pid-subject" ] && read -r pid < "$work/pid-subject"
   expect_red_step_killed "$code" "$pid"
   [ -z "$pid" ] || kill -KILL "$pid" 2> /dev/null || true
-  /bin/rm -f "$work/pid-sleep" "$work/go" "$work/born" "$work/listed"
+  /bin/rm -f "$work/pid-subject" "$work/go" "$work/born" "$work/listed"
 }
 
 step_runner_the_wait_for_a_build_slot_is_not_test_time() {
   root="$work/engine"
   mkdir -p "$root/target"
   changed_files() { echo "$CHANGED"; }
-  steps=("final|queued|1|-|echo build-slot > /dev/null; sleep 2" "cheap|plain|1|*|sleep 2")
+  local busy
+  busy="$(busy_for_three_seconds)"
+  steps=("final|queued|1|-|echo build-slot > /dev/null; $busy" "cheap|plain|1|*|$busy")
   (run_checks --only final) > "$work/engine.out" 2>&1 \
     || { echo "FAIL expected green: a step with a build slot must get the limit plus the queue allowance"; failed=1; }
-  steps=("cheap|plain|1|*|sleep 2")
+  busy="$(busy_for_three_seconds)"
+  steps=("cheap|plain|1|*|$busy")
   (run_checks) > "$work/engine.out" 2>&1 && { echo "FAIL expected red: a step without a slot must stop at its limit"; failed=1; }
 }
 
@@ -144,7 +146,7 @@ step_runner_lanes_run_at_the_same_time_and_a_red_lane_does_not_hide_the_others()
   mkdir -p "$root/target"
   /bin/rm -f "$root"/met-* "$root"/ran-*
   changed_files() { echo "$CHANGED"; }
-  local meet='touch met-NAME; n=0; until [ -e met-OTHER ] || [ "$n" -ge 100 ]; do sleep 0.1; n=$((n + 1)); done; [ -e met-OTHER ]'
+  local meet='touch met-NAME; end=$((SECONDS + 10)); until [ -e met-OTHER ] || [ "$SECONDS" -ge "$end" ]; do :; done; [ -e met-OTHER ]'
   steps=(
     "cheap|c0|20|-|${meet//NAME/cheap}; touch ran-c0"
     "a|a1|20|-|${meet//NAME/a}"
@@ -172,7 +174,7 @@ step_runner_the_limit_kills_the_processes_of_every_lane() {
   mkdir -p "$root/target"
   /bin/rm -rf "$root/target/check.lock"
   changed_files() { echo "$CHANGED"; }
-  steps=("a|a1|280|-|sleep 603 & echo \$! > $work/pid-lane-a; wait" "b|b1|280|-|sleep 604 & echo \$! > $work/pid-lane-b; wait")
+  steps=("a|a1|280|-|cat $work/hang > /dev/null & echo \$! > $work/pid-lane-a; wait" "b|b1|280|-|cat $work/hang > /dev/null & echo \$! > $work/pid-lane-b; wait")
   local code=0 pid
   (run_bounded 3 selftest run_checks) > "$work/engine.out" 2>&1 || code=$?
   [ "$code" -eq 124 ] || { echo "FAIL expected the limit (124), got $code"; failed=1; }
@@ -191,12 +193,16 @@ step_runner_the_cpu_counter_sees_a_build_daemon() {
   /bin/rm -f "$work/marker-java"
   changed_files() { echo "$CHANGED"; }
   cp "$(command -v perl)" "$work/jdk/java"
-  local child='open(P, q(>), q(PIDFILE)); print P $$; close(P); while ((times)[0] + (times)[1] < 3) {} open(F, q(>), q(MARKER)); print F $$, q( ), int((times)[0] + (times)[1]); close(F); sleep 60' waiting='until [ -s MARKER ] && awk -v pid=$(cut -d" " -f1 MARKER) -v cpu=$(cut -d" " -f2 MARKER) "\$1 == pid && \$2 >= cpu - 1 { found = 1 } END { exit !found }" "$CHECK_SAMPLES_FILE"; do sleep 1; done'
+  local child='open(P, q(>), q(PIDFILE)); print P $$; close(P); while ((times)[0] + (times)[1] < 3) {} open(F, q(>), q(MARKFIFO)); print F $$, q( ), int((times)[0] + (times)[1]); close(F); open(H, q(+<), q(HANG)); <H>' waiting='read -r mpid mcpu < MARKFIFO; echo "$mpid $mcpu" > MARKFILE; tail -n +1 -f "$CHECK_SAMPLES_FILE" | awk -v pid=$mpid -v cpu=$mcpu "\$1 == pid && \$2 >= cpu - 1 { exit }"'
   child="${child//PIDFILE/$work/pid-java}"
-  child="${child//MARKER/$work/marker-java}"
-  waiting="${waiting//MARKER/$work/marker-java}"
+  child="${child//HANG/$work/hang}"
+  mkfifo "$work/marker-fifo-java"
+  child="${child//MARKFIFO/$work/marker-fifo-java}"
+  waiting="${waiting//MARKFIFO/$work/marker-fifo-java}"
+  waiting="${waiting//MARKFILE/$work/marker-java}"
   /bin/rm -f "$work/release"
-  steps=("a|a1|280|-|$work/jdk/java -e 'if (!fork) { exec(q(perl), q(-e), q($child)) } until (-e q($work/release)) { sleep 1 }' & $waiting; touch $work/release; wait")
+  mkfifo "$work/release"
+  steps=("a|a1|280|-|$work/jdk/java -e 'if (!fork) { exec(q(perl), q(-e), q($child)) } open(R, q(+<), q($work/release)); <R>' & $waiting; echo > $work/release; wait")
   (run_checks) > "$work/engine.out" 2>&1
   cleanup_processes
   local counted
@@ -214,13 +220,16 @@ step_runner_a_daemon_that_outlives_the_step_is_counted_and_another_runs_daemon_i
   /bin/rm -f "$work/marker-mine"
   changed_files() { echo "$CHANGED"; }
   cp "$(command -v perl)" "$work/jdk/java"
-  local mine other waiting='until [ -s MARKER ] && awk -v pid=$(cut -d" " -f1 MARKER) -v cpu=$(cut -d" " -f2 MARKER) "\$1 == pid && \$2 >= cpu - 1 { found = 1 } END { exit !found }" "$CHECK_SAMPLES_FILE"; do sleep 1; done'
-  mine='if (!fork) { open(P, q(>), q(PIDFILE)); print P $$; close(P); exec(q(perl), q(-e), q(while ((times)[0] + (times)[1] < 3) {} open(F, q(>), q(MARKER)); print F $$, q( ), int((times)[0] + (times)[1]); close(F); sleep 60), q(GradleDaemon), q(-XX:ErrorFile=/tmp/check-owner-) . $ENV{CHECK_OWNER_ID} . q(-x.log)) }'
+  local mine other waiting='read -r mpid mcpu < MARKFIFO; echo "$mpid $mcpu" > MARKFILE; tail -n +1 -f "$CHECK_SAMPLES_FILE" | awk -v pid=$mpid -v cpu=$mcpu "\$1 == pid && \$2 >= cpu - 1 { exit }"'
+  mine='if (!fork) { open(P, q(>), q(PIDFILE)); print P $$; close(P); exec(q(perl), q(-e), q(while ((times)[0] + (times)[1] < 3) {} open(F, q(>), q(MARKFIFO)); print F $$, q( ), int((times)[0] + (times)[1]); close(F); open(H, q(+<), q(HANG)); <H>), q(GradleDaemon), q(-XX:ErrorFile=/tmp/check-owner-) . $ENV{CHECK_OWNER_ID} . q(-x.log)) }'
   mine="${mine//PIDFILE/$work/pid-mine}"
+  mine="${mine//HANG/$work/hang}"
   other='if (!fork) { open(F, q(>), q(PIDFILE)); print F $$; close(F); exec(q(perl), q(-e), q(1 while 1), q(GradleDaemon), q(-XX:ErrorFile=/tmp/check-owner-other-run-x.log)) }'
   other="${other//PIDFILE/$work/pid-other}"
-  mine="${mine//MARKER/$work/marker-mine}"
-  waiting="${waiting//MARKER/$work/marker-mine}"
+  mkfifo "$work/marker-fifo-mine"
+  mine="${mine//MARKFIFO/$work/marker-fifo-mine}"
+  waiting="${waiting//MARKFIFO/$work/marker-fifo-mine}"
+  waiting="${waiting//MARKFILE/$work/marker-mine}"
   steps=("a|a1|280|-|$work/jdk/java -e '$mine'; $work/jdk/java -e '$other'; $waiting")
   (run_checks) > "$work/engine.out" 2>&1
   cleanup_processes

@@ -434,7 +434,9 @@ with tempfile.TemporaryDirectory(prefix="dblayer-release-modes-") as directory:
         return repo, env, repo / "target/release.lock"
 
     locked, locked_env, lock = lock_fixture("locked")
-    holder = subprocess.Popen(["sleep", "60"])
+    hang = base / "hang"
+    subprocess.run(["mkfifo", str(hang)], check=True)
+    holder = subprocess.Popen(["cat", str(hang)])
     try:
         (lock / "holder").write_text(f"{holder.pid} {version}\n")
         run(["bash", "scripts/release.sh", version], locked, locked_env, expected=1, contains=f"holder pid {holder.pid}, alive")
@@ -458,7 +460,7 @@ with tempfile.TemporaryDirectory(prefix="dblayer-release-modes-") as directory:
     import time
     def signal_case(sig):
         sig_repo, sig_env = fixture(base / f"signal-{sig.name}")
-        (sig_repo / "scripts/check_docs.sh").write_text("#!/bin/sh\nmkdir -p \"$TEST_ROOT/target\"; touch \"$TEST_ROOT/target/started\"\n[ -e \"$TEST_ROOT/target/arm\" ] || exit 0\nuntil [ -s \"$TEST_ROOT/target/signalled\" ]; do sleep 0.05; done\nkill -s \"$(cat \"$TEST_ROOT/target/signalled\")\" $$\n")
+        (sig_repo / "scripts/check_docs.sh").write_text("#!/bin/sh\nmkdir -p \"$TEST_ROOT/target\"; touch \"$TEST_ROOT/target/started\"\n[ -e \"$TEST_ROOT/target/arm\" ] || exit 0\nuntil [ -s \"$TEST_ROOT/target/signalled\" ]; do :; done\nkill -s \"$(cat \"$TEST_ROOT/target/signalled\")\" $$\n")
         subprocess.run([real_git, "-C", str(sig_repo), "commit", "-aq", "--amend", "--no-edit"], check=True, capture_output=True)
         (sig_repo / "target").mkdir(exist_ok=True)
         (sig_repo / "target/arm").touch()
@@ -466,7 +468,6 @@ with tempfile.TemporaryDirectory(prefix="dblayer-release-modes-") as directory:
         deadline = time.time() + 30
         while not (sig_repo / "target/started").exists():
             assert time.time() < deadline and proc.poll() is None, f"the release run did not reach its first check: {proc.poll()} {proc.stderr.read() if proc.poll() is not None else ''}"
-            time.sleep(0.05)
         assert (sig_repo / "target/release.lock").is_dir()
         proc.send_signal(sig)
         (sig_repo / "target/signalled").write_text(sig.name[3:])

@@ -31,10 +31,12 @@ with tempfile.TemporaryDirectory() as tmp:
     run(base, ["--selftest"], 0, "processes selftest ran")
 
     pidfile = base / "child.pid"
-    run(base, ["1", "slow", "bash", "-c", f"sleep 300 & echo $! > {pidfile}; wait"], 124, "check: step 'slow' passed 1 s, its process group was killed")
+    hang = base / "hang"
+    subprocess.run(["mkfifo", str(hang)], check=True)
+    run(base, ["1", "slow", "bash", "-c", f"cat {hang} > /dev/null & echo $! > {pidfile}; wait"], 124, "check: step 'slow' passed 1 s, its process group was killed")
     child = int(pidfile.read_text())
     deadline = time.monotonic() + 5
     while alive(child) and time.monotonic() < deadline:
-        time.sleep(0.05)
+        pass
     assert not alive(child), f"child {child} survived the kill"
 print("check_bounded_test: ok")

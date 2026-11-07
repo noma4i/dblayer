@@ -3,7 +3,8 @@ set -euo pipefail
 
 here="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
 work="$(mktemp -d)"
-sleep 601.7 &
+mkfifo "$work/outsider"
+cat "$work/outsider" > /dev/null &
 outsider=$!
 trap 'kill "$outsider" 2>/dev/null || true; wait "$outsider" 2>/dev/null || true; /bin/rm -rf "$work"' EXIT
 export CHECK_PROCESS_VIOLATION="$work/violation"
