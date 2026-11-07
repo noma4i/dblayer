@@ -419,5 +419,16 @@ fn win_preload_after_register() {
         }
         assert_eq!(asked, expected, "{name}: the declared preload key asks once");
         assert_eq!(twin.stage(), stage, "{name}");
+
+#[test]
+fn win_busy_interest_passive() {
+    for (name, mut twin) in [("Loading", loading()), ("Landing", landing()), ("Waiting", waiting())] {
+        take(&twin.log);
+        let stage = twin.stage();
+        twin.post_call(w::WindowsInput::InterestPassive { key: key(), id: u64::from(STREAM) });
+        let (effects, _) = twin.split(take(&twin.log));
+        assert_eq!(effects, [Effect::WindowState], "{name}: the state goes to the stream and nothing loads");
+        assert_eq!(twin.stage(), stage, "{name}: the state stays");
+        assert!(twin.state().interest(&key()).contains(&u64::from(STREAM)), "{name}: the interest is kept");
     }
 }
