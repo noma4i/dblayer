@@ -34,7 +34,7 @@ public final class UrlSessionTransport: Transport, @unchecked Sendable {
     urlRequest.setUserAgent()
     urlRequest.httpBody = try JSONSerialization.data(withJSONObject: body(request))
     let data: Data, response: URLResponse
-    do { (data, response) = try await session.data(for: urlRequest) } catch { throw TransportFailure.classify(error, kind: kind) }
+    do { (data, response) = try await session.data(for: urlRequest, delegate: RefuseRedirect()) } catch { throw TransportFailure.classify(error, kind: kind) }
     if let http = response as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
       throw DbError.Http(status: UInt16(http.statusCode), detail: String(decoding: data, as: UTF8.self))
     }
@@ -58,10 +58,13 @@ public final class UrlSessionTransport: Transport, @unchecked Sendable {
   }
 }
 
-private final class PutProgress: NSObject, URLSessionTaskDelegate, @unchecked Sendable {
+private final class PutProgress: RefuseRedirect, @unchecked Sendable {
   private let progress: ByteProgress
 
-  init(_ progress: ByteProgress) { self.progress = progress }
+  init(_ progress: ByteProgress) {
+    self.progress = progress
+    super.init()
+  }
 
   func urlSession(_ session: URLSession, task: URLSessionTask, didSendBodyData bytesSent: Int64, totalBytesSent: Int64, totalBytesExpectedToSend: Int64) {
     progress.sent(bytes: UInt64(totalBytesSent))

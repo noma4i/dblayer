@@ -70,6 +70,8 @@ object ArchiveGroupMutation : GraphQLOperation {
 
 The transport is an interface with seven calls: `query`, `mutate`, `openCable`, `cableSend`, `cableNext`, `cableClose` and `put`. Your app gets HTTP and WebSocket implementations for each platform (`UrlSessionTransport`, `OkHttpTransport`). Tests use a mock transport. A REST transport implements the same interface, see [your own transport](cable-protocol.md#your-own-transport).
 
+No HTTP call of the library follows a redirect: a `3xx` answer to a query, an encrypted request or a file upload is reported with its status (`Http` for a query) and the server sees one request.
+
 ## Encrypted session
 
 A server that takes only encrypted requests (JWE over HTTPS) needs no signing code in the app. The core builds and opens every request. The app gives it three things:
