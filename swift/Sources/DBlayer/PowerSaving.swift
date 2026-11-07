@@ -1,8 +1,6 @@
 import Foundation
 
 enum PowerSaving {
-  static var lowRam: Bool { ProcessInfo.processInfo.physicalMemory <= 2 << 30 }
-
   /// Reports the OS value at once and on every change until the returned stop runs.
   static func observe(
     name: Notification.Name = .NSProcessInfoPowerStateDidChange,

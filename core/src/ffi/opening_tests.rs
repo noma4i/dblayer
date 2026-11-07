@@ -1,7 +1,7 @@
 use super::*;
 
 fn config() -> Config { Config { path: None, data_version: None, cache_rows: 8 } }
-fn options() -> OpenOptions { OpenOptions { operations: "[]".into(), power_saving: false, low_ram: false } }
+fn options() -> OpenOptions { OpenOptions { operations: "[]".into(), power_saving: false } }
 async fn open(slot: &OpenDatabase) -> Result<Arc<Database>, DbError> {
     slot.open(config(), "[]".into(), options(), crate::ffi::OpenPorts::default()).await
 }
@@ -127,7 +127,7 @@ async fn open_carries_the_upload_declaration_and_frees_the_slot_when_it_is_refus
     use super::super::database_tests::Plain;
     let slot = OpenDatabase::new();
     for (name, accepted) in [("Missing", false), ("CreateBlob", true)] {
-        let options = OpenOptions { operations: r#"[{"name":"CreateBlob","document":"mutation CreateBlob { createBlob { url } }"}]"#.into(), power_saving: false, low_ram: false };
+        let options = OpenOptions { operations: r#"[{"name":"CreateBlob","document":"mutation CreateBlob { createBlob { url } }"}]"#.into(), power_saving: false };
         let opened = slot.open(config(), clip_with_blob(name), options, crate::ffi::OpenPorts { transport: Some(Arc::new(Plain)), ..Default::default() }).await;
         match opened {
             Ok(_) => assert!(accepted, "{name} was opened"),

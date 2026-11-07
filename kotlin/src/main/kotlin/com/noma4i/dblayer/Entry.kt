@@ -82,7 +82,7 @@ object DBlayer {
         checkUploadPermission(android.os.Build.VERSION.SDK_INT) { context.packageManager.getPackageInfo(context.packageName, android.content.pm.PackageManager.GET_PERMISSIONS).requestedPermissions.orEmpty().toList() }
         UploadNotifications.store(context, uploadNotification)
         val definitions = operations.map { JsonObject(mapOf("name" to JsonPrimitive(it.operationName), "document" to JsonPrimitive(it.document))) }
-        val options = OpenOptions(operations = JsonArray(definitions).jsonText(), powerSaving = PowerSaving.saving(context), lowRam = PowerSaving.lowRam(context))
+        val options = OpenOptions(operations = JsonArray(definitions).jsonText(), powerSaving = PowerSaving.saving(context))
         val selectedTransport = transport ?: (endpoint ?: encrypted?.origin)?.let { OkHttpTransport(it, headers) }
         val made = opener.open(Config(path, null, 2000u), modelsJson, options, OpenPorts(selectedTransport, encrypted, credentials, http ?: encrypted?.let { OkHttpEncryptedHttp(it.origin, headers = headers) }))
         val sink = made.onlineSink()

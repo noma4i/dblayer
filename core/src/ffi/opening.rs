@@ -6,7 +6,6 @@ use super::{Config, CredentialStore, Database, DbError, EncryptedConfig, Encrypt
 pub struct OpenOptions {
     pub operations: String,
     pub power_saving: bool,
-    pub low_ram: bool,
 }
 
 /// The ports of the platform an open hands to the core: the network, the encrypted session and what it stores and reports.

@@ -3,7 +3,7 @@ import Foundation
 @testable import DBlayer
 
 func openDatabase(config: Config, modelsJson: String, transport: Transport?, encrypted: EncryptedConfig? = nil, credentials: CredentialStore? = nil, http: EncryptedHttp? = nil, operations: String = "[]") async throws -> Database {
-  try await OpenDatabase().open(config: config, modelsJson: modelsJson, options: OpenOptions(operations: withUploadSteps(operations, models: modelsJson), powerSaving: false, lowRam: false), ports: OpenPorts(transport: transport, encrypted: encrypted, credentials: credentials, http: http))
+  try await OpenDatabase().open(config: config, modelsJson: modelsJson, options: OpenOptions(operations: withUploadSteps(operations, models: modelsJson), powerSaving: false), ports: OpenPorts(transport: transport, encrypted: encrypted, credentials: credentials, http: http))
 }
 
 private let uploadStepOperations: [(name: String, document: String)] = [

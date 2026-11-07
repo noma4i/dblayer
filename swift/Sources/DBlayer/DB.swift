@@ -86,7 +86,7 @@ public enum DB {
     let definitions = operations.map { JSONValue.object(["name": .string($0.operationName), "document": .string($0.document)]) }
     let origin = encrypted.flatMap { URL(string: $0.origin) }
     let selectedTransport = transport ?? (endpoint ?? origin).map { UrlSessionTransport(endpoint: $0, headers: headers) }
-    let opened = try await opener.open(config: Config(path: path, dataVersion: nil, cacheRows: cacheRows), modelsJson: modelsJSON, options: OpenOptions(operations: JSONValue.array(definitions).text, powerSaving: ProcessInfo.processInfo.isLowPowerModeEnabled, lowRam: PowerSaving.lowRam), ports: OpenPorts(transport: selectedTransport, encrypted: encrypted, credentials: credentials, http: http ?? origin.map { UrlSessionEncryptedHttp(origin: $0, headers: headers) }))
+    let opened = try await opener.open(config: Config(path: path, dataVersion: nil, cacheRows: cacheRows), modelsJson: modelsJSON, options: OpenOptions(operations: JSONValue.array(definitions).text, powerSaving: ProcessInfo.processInfo.isLowPowerModeEnabled), ports: OpenPorts(transport: selectedTransport, encrypted: encrypted, credentials: credentials, http: http ?? origin.map { UrlSessionEncryptedHttp(origin: $0, headers: headers) }))
     try attach(opened)
   }
 

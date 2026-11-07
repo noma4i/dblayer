@@ -1,6 +1,5 @@
 package com.noma4i.dblayer
 
-import android.app.ActivityManager
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
@@ -14,9 +13,6 @@ internal object PowerSaving {
 
     fun saving(context: Context): Boolean =
         (context.applicationContext.getSystemService(Context.POWER_SERVICE) as PowerManager).isPowerSaveMode
-
-    fun lowRam(context: Context): Boolean =
-        (context.applicationContext.getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager).isLowRamDevice
 
     fun start(context: Context, sink: OnlineSinkInterface): Registration {
         val app = context.applicationContext

@@ -93,7 +93,7 @@ async fn preloads_and_three_media_loads_finish_on_empty_pages() {
         {"name":"PresenceOnline","document":"query PresenceOnline { presenceOnline { id } }"},
         {"name":"ChatMedia","document":"query ChatMedia($chatId: ID!, $first: Int, $after: Cursor, $mediaKinds: [String!], $includeGifts: Boolean!) { node(id: $chatId) { ... on Chat { messages(first: $first, after: $after, mediaKinds: $mediaKinds, includeGifts: $includeGifts) { edges { cursor node { id chatId kind mediaKind sequenceNumber } } pageInfo { hasNextPage endCursor } } } } }"}
     ]).to_string();
-    let options = OpenOptions { operations, power_saving: false, low_ram: false };
+    let options = OpenOptions { operations, power_saving: false };
     let opener = OpenDatabase::new();
     let database = within_secs(20, opener.open(Config { path: None, data_version: None, cache_rows: 32 }, models(), options, crate::ffi::OpenPorts { transport: Some(transport.clone()), ..Default::default() })).await.unwrap();
     database.set_online(true).unwrap();

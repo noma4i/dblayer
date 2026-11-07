@@ -187,6 +187,7 @@
 
 ### Removed
 
+- `OpenOptions.lowRam` is gone: the core has no input that reads it.
 - `LoadMoreResult.alreadyLoading` is gone.
 - `scope.related` is gone: read a server relation with a query.
 - `Blob`, `BlobUpload`, `DB.blob` and `blob_upload` are gone: upload through a model action.
