@@ -3,7 +3,7 @@ import Foundation
 @_spi(Testing) @testable import DBlayer
 
 func openDatabase(config: Config, modelsJson: String, transport: Transport?, encrypted: EncryptedConfig? = nil, credentials: CredentialStore? = nil, http: EncryptedHttp? = nil, operations: String = "[]") async throws -> Database {
-  try await OpenDatabase().open(config: config, modelsJson: modelsJson, options: OpenOptions(operations: definitions(of: withUploadSteps(operations, models: modelsJson)), dataSyncDeclared: nil), ports: OpenPorts(transport: transport, encrypted: encrypted, credentials: credentials, http: http, endpoint: transport == nil ? nil : scriptedEndpoint), observers: nil)
+  try await OpenDatabase().open(config: config, modelsJson: modelsJson, options: OpenOptions(operations: definitions(of: withUploadSteps(operations, models: modelsJson))), ports: OpenPorts(transport: transport, encrypted: encrypted, credentials: credentials, http: http, endpoint: transport == nil ? nil : scriptedEndpoint), observers: nil)
 }
 
 private func definitions(of operations: String) -> [OperationDefinition] {

@@ -40,6 +40,7 @@
 
 ### Changed
 
+- One executor class per platform serves the transport and the encrypted HTTP, and the core picks it by `endpoint` and `encrypted`.
 - `Projected.edits` is a list for every delivery: a snapshot removes the rows before it and inserts its rows.
 - `RetryProgress.changes` is an `AsyncThrowingStream` and ends with the error of the subscription.
 - `DB.open` and `DB.close` are not bound to the main actor.

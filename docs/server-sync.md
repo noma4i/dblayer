@@ -79,7 +79,7 @@ A server that takes only encrypted requests (JWE over HTTPS) needs no signing co
 | Piece | What it is |
 | ----- | ---------- |
 | `EncryptedConfig` | `origin`, `serverKey`, `pin`, `endpoints`, `protocolLabel`, `cablePurpose`, `cableChannel`. The key is base64 DER with at least 3072 bits. Its SHA-256 must match the lowercase hex pin. Ship both with the app. See Application protocol configuration below |
-| `EncryptedHttp` | `send` runs the POST that the core built for `origin + path` with `application/jose` and returns the raw outcome. `UrlSessionEncryptedHttp` (Swift) and `OkHttpEncryptedHttp` (Kotlin) do it |
+| Executor | `send` runs the POST that the core built for `origin + path` with `application/jose` and returns the raw outcome. One class does it with the HTTP and WebSocket calls: `UrlSessionTransport` (Swift) and `OkHttpTransport` (Kotlin). `DB.open` and `DBlayer.open` pass it to the core, which picks it for the transport and for the encrypted HTTP |
 | `CredentialStore` | `get`, `set` and `clear` keep one string. The library ships no store: your app implements it over the Keychain (iOS) or the Keystore (Android). The core creates the credential, calls `set` before the first request and never writes it to SQLite. The examples call that app code `AppCredentials` |
 
 The database uses encrypted JWE for queries and mutations, and encrypted Cable for subscriptions.
@@ -94,10 +94,8 @@ let origin = URL(string: "https://api.example.com")!
 try await DB.open(
   encrypted: EncryptedConfig(origin: origin.absoluteString, serverKey: bundledServerKey, pin: bundledServerPin, endpoints: endpoints, protocolLabel: protocolLabel, cablePurpose: cablePurpose, cableChannel: cableChannel),
   credentials: AppCredentials(),
-  transport: UrlSessionTransport(),
   modelsJSON: modelsJSON,
-  path: path,
-  http: UrlSessionEncryptedHttp()
+  path: path
 )
 try await DB.sessionCall("otp", body: PhoneBody(phone: "+61400000000"))
 let answer = try await DB.sessionCall("confirm", body: CodeBody(code: "123456"), as: SignedIn.self)
@@ -109,11 +107,9 @@ DBlayer.open(
     context,
     encrypted = EncryptedConfig(origin, bundledServerKey, bundledServerPin, endpoints, protocolLabel, cablePurpose, cableChannel),
     credentials = AppCredentials(context),
-    transport = OkHttpTransport(),
     modelsJson = modelsJSON,
     path = path,
     uploadNotification = notification,
-    http = OkHttpEncryptedHttp(),
 )
 DBlayer.sessionCall("otp", PhoneBody("+61400000000"))
 val answer: SignedIn = DBlayer.sessionCall("confirm", CodeBody("123456"))
@@ -386,8 +382,7 @@ URLSession does not expose an independent connect timeout, so Swift has no separ
 Origin rule: `https://host[:port]` is accepted for any host. `http://host[:port]` is accepted only for development hosts: the name `localhost`, a name that ends with the label `.local`, and the IP literals of loopback (`127.0.0.0/8`, `::1`), private networks (`10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`, `fc00::/7`) and link-local (`169.254.0.0/16`, `fe80::/10`). The core parses the host strictly: decimal, hex and octal address forms, trailing dots, user info, paths, queries and fragments are refused. The request audience stays the origin you gave. The JWE protects the payload over http, but the transport is not protected, so use http for development only. Production origins use https.
 
 `DB.open` (Swift) and `DBlayer.open` (Kotlin) open the one database of the process. The calls of the library use it, and the raw bridge object is not public.
-`http` defaults to `UrlSessionEncryptedHttp` or `OkHttpEncryptedHttp` on the origin.
-`transport` defaults to `UrlSessionTransport` or `OkHttpTransport` on the same origin, including the WebSocket at `encrypted.endpoints.cable`.
+The core takes the transport and the encrypted HTTP from the executor of the platform, `UrlSessionTransport` or `OkHttpTransport`, on the same origin, including the WebSocket at `encrypted.endpoints.cable`. A database with neither `endpoint` nor `encrypted` is local and has no transport. The optional `transport` and `http` parameters replace the executor in tests.
 
 ```swift
 try await DB.open(encrypted: EncryptedConfig(origin: origin, serverKey: bundledServerKey, pin: bundledServerPin, endpoints: endpoints, protocolLabel: protocolLabel, cablePurpose: cablePurpose, cableChannel: cableChannel), credentials: AppCredentials(), modelsJSON: modelsJSON)

@@ -76,7 +76,7 @@ class EncryptedSessionTest {
             server.enqueue(MockResponse().setResponseCode(503).setBody("busy"))
             server.start()
 
-            val reply = OkHttpEncryptedHttp().send(probeRequest(server.url("/api/graphql").toString(), "a.b.c.d.e")) as RawOutcome.Response
+            val reply = OkHttpTransport().send(probeRequest(server.url("/api/graphql").toString(), "a.b.c.d.e")) as RawOutcome.Response
 
             assertEquals(503.toUShort() to "busy", reply.status to reply.body)
             val request = server.takeRequest()
@@ -95,7 +95,7 @@ class EncryptedSessionTest {
         val origin = server.url("/").toString().trimEnd('/')
         server.shutdown()
 
-        assertEquals("java.net.ConnectException", OkHttpEncryptedHttp().send(probeRequest("$origin/api/logout", "x")).rawFailure()?.domain)
+        assertEquals("java.net.ConnectException", OkHttpTransport().send(probeRequest("$origin/api/logout", "x")).rawFailure()?.domain)
     }
 
     @Test

@@ -29,7 +29,7 @@ async fn a_memory_model_with_subscribe_receives_the_frames_of_its_channel() {
     let (subscribed, mut subscriptions) = mpsc::unbounded_channel();
     let (closed, _closes) = mpsc::unbounded_channel();
     let peer = Arc::new(Peer::new(config.clone(), subscribed, closed));
-    let database = Database::open(Config { path: None, data_version: None }, typing_models(), crate::ffi::OpenPorts { transport: Some(peer.clone()), encrypted: Some(config), credentials: Some(rig.credentials.clone()), http: Some(Arc::new(ThroughServer(rig.server.clone()))), endpoint: Some(crate::ffi::FAKE_ENDPOINT.into()) }).await.unwrap();
+    let database = Database::open(Config { path: None, data_version: None }, typing_models(), crate::ffi::OpenPorts { transport: Some(peer.clone()), encrypted: Some(config), credentials: Some(rig.credentials.clone()), http: Some(Arc::new(ThroughServer(rig.server.clone()))), endpoint: Some(crate::ffi::FAKE_ENDPOINT.into()), ..Default::default() }).await.unwrap();
     database.register_operations(json!([{"name":"UserTyping","document":"subscription UserTyping { userTyping { id userId } }","rootPath":"userTyping"}]).to_string()).await.unwrap();
     database.set_online(true).unwrap();
     bound(database.session_call("social".into(), SOCIAL_BODY.into())).await.unwrap();
@@ -60,7 +60,7 @@ async fn one_signal_routes_typed_actions_and_notices() {
     let (closed, _closes) = mpsc::unbounded_channel();
     let peer = Arc::new(Peer::new(config.clone(), subscribed, closed));
     let models = include_str!("wrapper_models.inc").to_string();
-    let database = Database::open(Config { path: None, data_version: None }, models, crate::ffi::OpenPorts { transport: Some(peer.clone()), encrypted: Some(config), credentials: Some(rig.credentials.clone()), http: Some(Arc::new(ThroughServer(rig.server.clone()))), endpoint: Some(crate::ffi::FAKE_ENDPOINT.into()) }).await.unwrap();
+    let database = Database::open(Config { path: None, data_version: None }, models, crate::ffi::OpenPorts { transport: Some(peer.clone()), encrypted: Some(config), credentials: Some(rig.credentials.clone()), http: Some(Arc::new(ThroughServer(rig.server.clone()))), endpoint: Some(crate::ffi::FAKE_ENDPOINT.into()), ..Default::default() }).await.unwrap();
     database.register_operations(json!([{"name":"ChatActionSignal","document":"subscription ChatActionSignal { chatActionSignal { chatId userId kind active } }"}]).to_string()).await.unwrap();
     database.set_online(true).unwrap();
     bound(database.session_call("social".into(), SOCIAL_BODY.into())).await.unwrap();

@@ -118,7 +118,7 @@ async fn open(server: Arc<Server>) -> Arc<Database> {
     let mut encrypted = crate::transport::encrypted::protocol_tests::config();
     encrypted.endpoints.session_operations.insert("login_link".into(), EncryptedSessionOperation { path: "/api/auth/login_link".into(), class: crate::transport::EncryptedOperationClass::Authenticated });
     encrypted.endpoints.session_operations.insert("otp".into(), EncryptedSessionOperation { path: "/api/auth/otp".into(), class: crate::transport::EncryptedOperationClass::Sessionless });
-    let database = OpenDatabase::new().open_with_clock(Config { path: None, data_version: None }, models(), crate::ffi::OpenPorts { transport: Some(Arc::new(super::encrypted_tests::SubscriptionsOnly)), encrypted: Some(encrypted), credentials: Some(Arc::new(super::session_guards_tests::WatchedHeld::default())), http: Some(server), endpoint: Some(crate::ffi::FAKE_ENDPOINT.into()) }, TestClock::new(1_000_000), crate::ffi::OpenOptions::default(), None).await.unwrap();
+    let database = OpenDatabase::new().open_with_clock(Config { path: None, data_version: None }, models(), crate::ffi::OpenPorts { transport: Some(Arc::new(super::encrypted_tests::SubscriptionsOnly)), encrypted: Some(encrypted), credentials: Some(Arc::new(super::session_guards_tests::WatchedHeld::default())), http: Some(server), endpoint: Some(crate::ffi::FAKE_ENDPOINT.into()), ..Default::default() }, TestClock::new(1_000_000), crate::ffi::OpenOptions::default(), None).await.unwrap();
     database.register_operations(json!([
         {"name":"MyProfile","document":"query MyProfile { me { id name } }"},
         {"name":"UserNode","document":"query UserNode($id: ID!) { node(id: $id) { ... on User { id name } } }"},

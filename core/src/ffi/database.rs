@@ -169,7 +169,7 @@ impl Database {
     }
 
     async fn open_at(config: Config, models_json: String, ports: super::OpenPorts, clock: Arc<dyn Clock>) -> Result<Arc<Self>, DbError> {
-        let super::OpenPorts { transport, encrypted, credentials, http, endpoint } = ports;
+        let super::OpenPorts { transport, encrypted, credentials, http, endpoint, .. } = ports;
         blocking(move || {
             let database = match encrypted {
                 Some(encrypted) => {
@@ -298,10 +298,6 @@ impl Database {
     pub async fn url(&self, epoch: u64, model: String, row_id: String, field: String) -> Result<Option<String>, DbError> {
         let row_id = id(&row_id)?;
         self.read_in_epoch(epoch, "file url", move |database| Ok(database.db.url(&model, &row_id, &field)?.map(|path| path.to_string_lossy().into_owned()))).await
-    }
-    pub async fn declare_operations(&self, operations: Vec<super::OperationDefinition>) -> Result<(), DbError> {
-        let defs = serde_json::Value::Array(operations.into_iter().map(|operation| serde_json::json!({ "name": operation.name, "document": operation.document })).collect());
-        self.register_operations(defs.to_string()).await
     }
     pub async fn register_operations(&self, defs_json: String) -> Result<(), DbError> {
         if self.life.published().closed { return Err(super::command::closed()); }

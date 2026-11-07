@@ -18,7 +18,7 @@ impl FakeTransport for Plain {
     async fn put(&self, _: String, _: std::collections::HashMap<String, String>, _: crate::transport::PutFile, _: crate::transport::TransferIdentity, _: Arc<super::ByteProgress>) -> Result<super::PutReply, DbError> { unreachable!() }
 }
 
-struct Unused;
+pub(crate) struct Unused;
 
 impl CredentialStore for Unused {
     fn get(&self) -> Result<Option<String>, DbError> { unreachable!() }
@@ -54,7 +54,7 @@ async fn unified_open_rejects_incomplete_or_unencrypted_session_arguments() {
         (true, true, true, false),
     ] {
         let encrypted = encrypted.then(|| EncryptedConfig { origin: origin().into(), server_key: public_key_der_b64().into(), pin: pin().into(), ..crate::transport::encrypted::protocol_tests::config() });
-        let result = Database::open(config(), "[]".into(), crate::ffi::OpenPorts { transport: transport.then(|| Arc::new(Plain) as Arc<dyn Transport>), encrypted, credentials: credentials.then(|| Arc::new(Unused) as Arc<dyn CredentialStore>), http: http.then(|| Arc::new(Unused) as Arc<dyn EncryptedHttp>), endpoint: Some(crate::ffi::FAKE_ENDPOINT.into()) }).await;
+        let result = Database::open(config(), "[]".into(), crate::ffi::OpenPorts { transport: transport.then(|| Arc::new(Plain) as Arc<dyn Transport>), encrypted, credentials: credentials.then(|| Arc::new(Unused) as Arc<dyn CredentialStore>), http: http.then(|| Arc::new(Unused) as Arc<dyn EncryptedHttp>), endpoint: Some(crate::ffi::FAKE_ENDPOINT.into()), ..Default::default() }).await;
         rejected.push(matches!(result, Err(DbError::Invalid { .. })));
     }
     assert_eq!(rejected, [true; 6]);

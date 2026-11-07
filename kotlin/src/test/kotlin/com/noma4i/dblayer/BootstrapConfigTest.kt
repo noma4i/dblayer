@@ -46,7 +46,7 @@ class BootstrapConfigTest {
         val server = MockWebServer()
         server.enqueue(MockResponse().setBody("pending").throttleBody(1, 60, java.util.concurrent.TimeUnit.SECONDS))
         server.start()
-        val http = OkHttpEncryptedHttp(client)
+        val http = OkHttpTransport(client = client)
         val task = launch { runCatching { http.send(probeRequest(server.url("/probe").toString(), "x")) } }
         try {
             kotlinx.coroutines.withTimeout(5000) { reading.await() }
@@ -201,7 +201,7 @@ class BootstrapConfigTest {
             val polluted = OkHttpClient.Builder().addInterceptor { chain ->
                 chain.proceed(chain.request().newBuilder().header("X-App", "kept").build())
             }.build()
-            val reply = OkHttpEncryptedHttp(polluted).send(probeRequest(server.url("/api/bootstrap").toString()).let { it.copy(headers = it.headers + ("User-Agent" to userAgent(null))) })
+            val reply = OkHttpTransport(client = polluted).send(probeRequest(server.url("/api/bootstrap").toString()).let { it.copy(headers = it.headers + ("User-Agent" to userAgent(null))) })
             assertEquals(302.toUShort(), reply.status())
             assertEquals(1, server.requestCount)
             val request = server.takeRequest()

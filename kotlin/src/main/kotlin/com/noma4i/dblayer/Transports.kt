@@ -3,11 +3,11 @@ package com.noma4i.dblayer
 import okhttp3.OkHttpClient
 import okhttp3.Request
 
-/** A plain GraphQL endpoint over HTTP. */
+/** The HTTP and WebSocket executor of the platform. */
 class OkHttpTransport(
     private val headers: () -> Map<String, String> = { emptyMap() },
     client: OkHttpClient = OkHttpClient(),
-) : Transport {
+) : Transport, EncryptedHttp {
     private val client = client.newBuilder().followRedirects(false).followSslRedirects(false).retryOnConnectionFailure(false).build()
     private val cable = OkHttpCable(this.client)
 

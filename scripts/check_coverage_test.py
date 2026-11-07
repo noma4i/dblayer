@@ -12,11 +12,11 @@ class CoverageTests(unittest.TestCase):
         script = Path(__file__).with_name("check_coverage.sh")
         paths = {
             "swift": ["swift/Sources/DBlayer/Network/RawFailure+Error.swift",
-                      "swift/Sources/DBlayer/Network/UrlSessionEncryptedHttp.swift",
+                      "swift/Sources/DBlayer/Network/UrlSessionTransport.swift",
                       "swift/Sources/DBlayer/UrlSessionTransport.swift",
                       "swift/Sources/DBlayer/UrlSessionCable.swift"],
             "kotlin": ["kotlin/src/main/kotlin/com/noma4i/dblayer/OkHttpCable.kt",
-                       "kotlin/src/main/kotlin/com/noma4i/dblayer/OkHttpEncryptedHttp.kt",
+                       "kotlin/src/main/kotlin/com/noma4i/dblayer/OkHttpTransport.kt",
                        "kotlin/src/main/kotlin/com/noma4i/dblayer/Http.kt",
                        "kotlin/src/main/kotlin/com/noma4i/dblayer/Transports.kt"],
         }

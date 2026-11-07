@@ -128,7 +128,7 @@ async fn open_carries_the_upload_declaration_and_frees_the_slot_when_it_is_refus
     use super::super::database_tests::Plain;
     let slot = OpenDatabase::new();
     for (name, accepted) in [("Missing", false), ("CreateBlob", true)] {
-        let options = OpenOptions { operations: vec![OperationDefinition { name: "CreateBlob".into(), document: "mutation CreateBlob { createBlob { url } }".into() }], ..Default::default() };
+        let options = OpenOptions { operations: vec![OperationDefinition { name: "CreateBlob".into(), document: "mutation CreateBlob { createBlob { url } }".into() }] };
         let opened = slot.open(config(), clip_with_blob(name), options, crate::ffi::OpenPorts { transport: Some(Arc::new(Plain)), endpoint: Some(crate::ffi::FAKE_ENDPOINT.into()), ..Default::default() }, None).await;
         match opened {
             Ok(_) => assert!(accepted, "{name} was opened"),
@@ -219,12 +219,69 @@ fn the_round_job_carries_the_round_id_the_core_numbered() {
 async fn xfer_android_permission_checked_at_open() {
     let slot = OpenDatabase::new();
     for (declared, refused) in [(Some(false), true), (Some(true), false), (None, false)] {
-        let options = OpenOptions { data_sync_declared: declared, ..options() };
-        let opened = slot.open(config(), "[]".into(), options, crate::ffi::OpenPorts::default(), None).await;
+        let opened = slot.open(config(), "[]".into(), options(), crate::ffi::OpenPorts { data_sync_declared: declared, ..Default::default() }, None).await;
         match (opened, refused) {
             (Err(DbError::Config { code: ConfigCode::InvalidRequest, detail }), true) => assert!(detail.contains("FOREGROUND_SERVICE_DATA_SYNC"), "{detail}"),
             (Ok(database), false) => database.close_database().await.unwrap(),
             (other, _) => panic!("declared {declared:?} gave {:?}", other.map(|_| ())),
         }
     }
+}
+
+struct Recording(Arc<std::sync::Mutex<Vec<String>>>);
+
+#[async_trait::async_trait]
+impl Transport for Recording {
+    fn app_headers(&self) -> HashMap<String, String> { HashMap::new() }
+    async fn send(&self, request: crate::transport::HttpRequest) -> crate::transport::RawOutcome {
+        self.0.lock().unwrap().push(request.url);
+        crate::transport::RawOutcome::response(200, "{}")
+    }
+    async fn open_cable(&self, _: String, _: HashMap<String, String>, _: u64, _: Arc<dyn crate::ffi::CableEvents>) -> crate::ffi::CableOutcome { unreachable!() }
+    async fn put(&self, _: crate::ffi::PutTarget, _: crate::transport::PutFile, _: crate::transport::TransferIdentity, _: Arc<crate::ffi::ByteProgress>) -> crate::transport::RawOutcome { unreachable!() }
+}
+
+fn request(url: &str) -> crate::transport::HttpRequest {
+    crate::transport::HttpRequest { url: url.into(), method: "POST".into(), headers: HashMap::new(), body: String::new(), connect_ms: 1, request_ms: 1, purpose: crate::transport::NetworkPurpose::Standard }
+}
+
+fn encrypted() -> crate::ffi::EncryptedConfig {
+    use crate::transport::encrypted::vectors_tests::{origin, pin, public_key_der_b64};
+    crate::ffi::EncryptedConfig { origin: origin().into(), server_key: public_key_der_b64().into(), pin: pin().into(), ..crate::transport::encrypted::protocol_tests::config() }
+}
+
+#[tokio::test]
+async fn life_open_ports_executor() {
+    let log: Arc<std::sync::Mutex<Vec<String>>> = Arc::default();
+    let executor = || Some(Arc::new(Recording(log.clone())) as Arc<dyn Transport>);
+    let credentials = || Some(Arc::new(super::super::database_tests::Unused) as Arc<dyn CredentialStore>);
+
+    let plain = OpenPorts { endpoint: Some("https://graphql.test/graphql".into()), executor: executor(), ..Default::default() }.resolved();
+    plain.transport.unwrap().send(request("plain")).await;
+    assert!(plain.http.is_none());
+
+    let sealed = OpenPorts { encrypted: Some(encrypted()), credentials: credentials(), executor: executor(), ..Default::default() }.resolved();
+    sealed.transport.unwrap().send(request("sealed transport")).await;
+    sealed.http.unwrap().send(request("sealed http")).await;
+
+    let local = OpenPorts { executor: executor(), ..Default::default() }.resolved();
+    assert!(local.transport.is_none() && local.http.is_none());
+
+    let own = Arc::new(Recording(Arc::default()));
+    let tested = OpenPorts { endpoint: Some("https://graphql.test/graphql".into()), transport: Some(own.clone()), executor: executor(), ..Default::default() }.resolved();
+    tested.transport.unwrap().send(request("own")).await;
+
+    assert_eq!(*log.lock().unwrap(), ["plain", "sealed transport", "sealed http"]);
+    assert_eq!(*own.0.lock().unwrap(), ["own"]);
+}
+
+#[tokio::test]
+async fn life_open_executor_runs_the_operation() {
+    let slot = OpenDatabase::new();
+    let operations = vec![OperationDefinition { name: "Greeting".into(), document: "query Greeting($name: String!) { greeting(name: $name) }".into() }];
+    let ports = OpenPorts { endpoint: Some(crate::ffi::FAKE_ENDPOINT.into()), executor: Some(Arc::new(super::super::database_tests::Plain)), ..Default::default() };
+    let database = slot.open(config(), "[]".into(), OpenOptions { operations }, ports, None).await.unwrap();
+    database.set_online(true).unwrap();
+    assert_eq!(database.run(database.session_epoch(), "Greeting".into(), r#"{"name":"Ada"}"#.into()).await.unwrap(), r#""Hello Ada""#);
+    database.close_database().await.unwrap();
 }

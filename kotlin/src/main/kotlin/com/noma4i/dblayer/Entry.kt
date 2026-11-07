@@ -48,7 +48,7 @@ object DBlayer {
     internal fun adopt(database: Database) { this.database = database }
 
     suspend fun serverConfig(context: Context, encrypted: EncryptedConfig, platform: AppPlatform, version: String, build: String? = null, http: EncryptedHttp? = null, retries: RetryProgress? = null): ServerConfig =
-        fetchServerConfig(encrypted, platform, version, build, http ?: OkHttpEncryptedHttp(), retries, SystemObservers(context))
+        fetchServerConfig(encrypted, platform, version, build, http ?: OkHttpTransport(), retries, SystemObservers(context))
 
     suspend fun open(
         context: Context,
@@ -65,9 +65,8 @@ object DBlayer {
     ) {
         val dataSync = dataSyncDeclared(android.os.Build.VERSION.SDK_INT) { context.packageManager.getPackageInfo(context.packageName, android.content.pm.PackageManager.GET_PERMISSIONS).requestedPermissions.orEmpty().toList() }
         UploadNotifications.store(context, uploadNotification)
-        val address = endpoint ?: encrypted?.origin
-        val ports = OpenPorts(transport ?: address?.let { OkHttpTransport(headers) }, encrypted, credentials, http ?: encrypted?.let { OkHttpEncryptedHttp(headers = headers) }, address)
-        val made = opener.open(Config(path, null), modelsJson, OpenOptions(definitions(operations), dataSync), ports, SystemObservers(context))
+        val ports = OpenPorts(transport, encrypted, credentials, http, endpoint, OkHttpTransport(headers), dataSync)
+        val made = opener.open(Config(path, null), modelsJson, OpenOptions(definitions(operations)), ports, SystemObservers(context))
         made.setRoundJobs(UploadRounds(context.applicationContext, made))
         database = made
         UploadService.opened(made)

@@ -1,4 +1,7 @@
+use std::collections::HashMap;
 use std::sync::Arc;
+use async_trait::async_trait;
+use crate::transport::{HttpRequest, RawOutcome};
 use super::open_slot::OpenSlot;
 use super::transport::ObserverStop;
 use super::{Config, CredentialStore, Database, DbError, EncryptedConfig, EncryptedHttp, PlatformObserver, TestClock, Transport};
@@ -13,8 +16,6 @@ pub struct OperationDefinition {
 #[derive(Clone, Default, PartialEq, Eq, uniffi::Record)]
 pub struct OpenOptions {
     pub operations: Vec<OperationDefinition>,
-    /// Android below API 34 runs the upload round in a foreground service of type `dataSync`: `Some(declared)` says whether the manifest of the app declares its permission. `None` where the platform needs no declaration.
-    pub data_sync_declared: Option<bool>,
 }
 
 /// The ports of the platform an open hands to the core: the network, the encrypted session and what it stores and reports.
@@ -27,9 +28,40 @@ pub struct OpenPorts {
     /// The GraphQL address of a database without an encrypted session.
     #[uniffi(default = None)]
     pub endpoint: Option<String>,
+    /// The HTTP and socket executor of the platform: the core takes the transport and the encrypted http from it.
+    #[uniffi(default = None)]
+    pub executor: Option<Arc<dyn Transport>>,
+    /// Android below API 34 runs the upload round in a foreground service of type `dataSync`: `Some(declared)` says whether the manifest of the app declares its permission. `None` where the platform needs no declaration.
+    #[uniffi(default = None)]
+    pub data_sync_declared: Option<bool>,
 }
 
-impl OpenOptions {
+struct ExecutorHttp(Arc<dyn Transport>);
+
+impl Drop for ExecutorHttp {
+    fn drop(&mut self) { crate::lock::assert_no_library_lock("ExecutorHttp::drop"); }
+}
+
+#[async_trait]
+impl EncryptedHttp for ExecutorHttp {
+    fn app_headers(&self) -> HashMap<String, String> { crate::lock::effect(|| self.0.app_headers()) }
+    async fn send(&self, request: HttpRequest) -> RawOutcome { crate::lock::effect(|| self.0.send(request)).await }
+}
+
+impl OpenPorts {
+    fn resolved(mut self) -> Self {
+        if self.endpoint.is_none() {
+            self.endpoint = self.encrypted.as_ref().map(|encrypted| encrypted.origin.clone());
+        }
+        if self.endpoint.is_some() && self.transport.is_none() {
+            self.transport = self.executor.clone();
+        }
+        if self.encrypted.is_some() && self.http.is_none() {
+            self.http = self.executor.clone().map(|executor| Arc::new(ExecutorHttp(executor)) as Arc<dyn EncryptedHttp>);
+        }
+        self
+    }
+
     fn check_data_sync(&self) -> Result<(), DbError> {
         if self.data_sync_declared == Some(false) {
             return Err(DbError::Config { code: super::ConfigCode::InvalidRequest, detail: "the manifest of the app lacks android.permission.FOREGROUND_SERVICE_DATA_SYNC".into() });
@@ -49,7 +81,8 @@ impl OpenDatabase {
     pub fn new() -> Arc<Self> { Arc::new(Self { slot: OpenSlot::new() }) }
 
     pub async fn open(&self, config: Config, models_json: String, options: OpenOptions, ports: OpenPorts, observers: Option<Arc<dyn PlatformObserver>>) -> Result<Arc<Database>, DbError> {
-        options.check_data_sync()?;
+        ports.check_data_sync()?;
+        let ports = ports.resolved();
         let lease = self.slot.acquire()?;
         let remote = ports.transport.is_some();
         let database = Database::open(config, models_json, ports).await?;
@@ -57,7 +90,8 @@ impl OpenDatabase {
     }
 
     pub async fn open_with_clock(&self, config: Config, models_json: String, ports: OpenPorts, clock: Arc<TestClock>, options: OpenOptions, observers: Option<Arc<dyn PlatformObserver>>) -> Result<Arc<Database>, DbError> {
-        options.check_data_sync()?;
+        ports.check_data_sync()?;
+        let ports = ports.resolved();
         let lease = self.slot.acquire()?;
         let remote = ports.transport.is_some();
         let database = Database::open_with_clock(config, models_json, ports, clock).await?;
@@ -81,7 +115,12 @@ impl OpenDatabase {
 }
 
 impl Database {
-    pub(super) async fn start_observers(&self, observers: Option<Arc<dyn PlatformObserver>>) -> Result<(), DbError> {
+    async fn declare_operations(&self, operations: Vec<OperationDefinition>) -> Result<(), DbError> {
+        let defs = serde_json::Value::Array(operations.into_iter().map(|operation| serde_json::json!({ "name": operation.name, "document": operation.document })).collect());
+        self.register_operations(defs.to_string()).await
+    }
+
+    async fn start_observers(&self, observers: Option<Arc<dyn PlatformObserver>>) -> Result<(), DbError> {
         let Some(observers) = observers else { return Ok(()) };
         if self.db.observers().set(Arc::new(ObserverStop(observers.clone()))).is_err() {
             return Err(DbError::Invalid { detail: "the observers are already set".into() });

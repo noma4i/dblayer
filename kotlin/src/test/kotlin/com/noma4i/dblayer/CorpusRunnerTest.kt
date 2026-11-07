@@ -191,7 +191,7 @@ private class DatabaseRunner {
 
     suspend fun open(models: String, encrypted: Boolean): List<JsonObject> = try {
         val session = if (encrypted) EncryptedConfig("https://api.example.com", SealedServer.SERVER_KEY, SealedServer.SERVER_PIN, EncryptedEndpoints("/api/graphql", "/api/cable", "/api/logout", "/api/bootstrap", mapOf("otp" to EncryptedSessionOperation("/api/auth/otp", EncryptedOperationClass.AUTHENTICATED), "confirm" to EncryptedSessionOperation("/api/auth/confirm", EncryptedOperationClass.AUTHENTICATED), "social" to EncryptedSessionOperation("/api/auth/social", EncryptedOperationClass.AUTHENTICATED), "ticket" to EncryptedSessionOperation("/api/ticket", EncryptedOperationClass.SESSIONLESS))), "example-ws-v1", "ws.hello", "EncryptedGraphqlChannel") else null
-        val opened = OpenDatabase().openWithClock(Config(null, null), File(corpusDirectory, if (models == "events") "models_events.json" else "models.json").readText(), OpenPorts(mock, session, if (encrypted) Credentials() else null, if (encrypted) mock else null, SCRIPTED_ENDPOINT), clock, OpenOptions(emptyList(), null), null)
+        val opened = OpenDatabase().openWithClock(Config(null, null), File(corpusDirectory, if (models == "events") "models_events.json" else "models.json").readText(), OpenPorts(mock, session, if (encrypted) Credentials() else null, if (encrypted) mock else null, SCRIPTED_ENDPOINT), clock, OpenOptions(emptyList()), null)
         opened.registerOperations(File(corpusDirectory, "operations.json").readText())
         opened.setOnline(true)
         database = opened

@@ -1,17 +1,27 @@
 import Foundation
 
-public final class UrlSessionTransport: Transport, @unchecked Sendable {
+public final class UrlSessionTransport: Transport, EncryptedHttp, @unchecked Sendable {
   private let headers: @Sendable () -> [String: String]
   private let http: UrlSessionHttp
   private let session: URLSession
   private let cable: UrlSessionCable
 
-  public init(headers: @escaping @Sendable () -> [String: String] = { [:] }, session: URLSession = .shared) {
+  public init(headers: @escaping @Sendable () -> [String: String] = { [:] }, session: URLSession? = nil) {
+    let configuration = session?.configuration ?? .ephemeral
+    configuration.httpAdditionalHeaders = nil
+    configuration.httpCookieStorage = nil
+    configuration.httpShouldSetCookies = false
+    configuration.urlCredentialStorage = nil
+    configuration.urlCache = nil
+    configuration.requestCachePolicy = .reloadIgnoringLocalCacheData
+    let own = URLSession(configuration: configuration)
     self.headers = headers
-    self.session = session
-    self.http = UrlSessionHttp(session: session)
-    self.cable = UrlSessionCable { session.webSocketTask(with: $0) }
+    self.session = own
+    self.http = UrlSessionHttp(session: own)
+    self.cable = UrlSessionCable { own.webSocketTask(with: $0) }
   }
+
+  deinit { session.invalidateAndCancel() }
 
   public func appHeaders() -> [String: String] { headers() }
 

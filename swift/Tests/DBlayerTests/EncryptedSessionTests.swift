@@ -74,7 +74,7 @@ struct EncryptedSessionTests {
   func aResponseThatIsNotHttpHasStatusZero() async throws {
     let configuration = URLSessionConfiguration.ephemeral
     configuration.protocolClasses = [PlainResponseProtocol.self]
-    let http = UrlSessionEncryptedHttp(session: URLSession(configuration: configuration))
+    let http = UrlSessionTransport(session: URLSession(configuration: configuration))
 
     #expect(responseStatus(await http.send(request: probeRequest(Self.origin, path: "/api/bootstrap", body: "x"))) == 0)
   }
@@ -82,7 +82,7 @@ struct EncryptedSessionTests {
   @Test
   func aTransportFailureIsAFailedOutcome() async throws {
     ScriptedURLProtocol.reset(scriptId: Self.scriptId)
-    let http = UrlSessionEncryptedHttp(session: ScriptedURLProtocol.session(scriptId: Self.scriptId))
+    let http = UrlSessionTransport(session: ScriptedURLProtocol.session(scriptId: Self.scriptId))
 
     #expect(rawFailure(await http.send(request: probeRequest(Self.origin, path: "/api/logout", body: "x"))) != nil)
   }

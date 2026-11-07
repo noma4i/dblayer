@@ -17,7 +17,7 @@ class UploadPermissionTest {
     @Test
     fun xfer_android_permission_checked_at_open() = bounded {
         try {
-            OpenDatabase().open(Config(null, null), "[]", OpenOptions(emptyList(), false), OpenPorts(null, null, null, null), null)
+            OpenDatabase().open(Config(null, null), "[]", OpenOptions(emptyList()), OpenPorts(null, null, null, null, null, null, false), null)
             fail("open has to refuse")
         } catch (error: DbException.Config) {
             assertEquals(ConfigCode.INVALID_REQUEST, error.code)

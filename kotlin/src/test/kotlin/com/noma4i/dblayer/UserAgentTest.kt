@@ -22,7 +22,7 @@ class UserAgentTest {
                 val client = OkHttpClient()
                 val transport = OkHttpTransport(client = client)
                 when (path) {
-                    "encrypted" -> OkHttpEncryptedHttp(client).send(probeRequest(origin + "api/session").copy(headers = headers))
+                    "encrypted" -> OkHttpTransport(client = client).send(probeRequest(origin + "api/session").copy(headers = headers))
                     "graphql" -> transport.send(probeRequest(origin + "graphql").copy(headers = headers))
                     "encryptedSocket" -> transport.openCable(origin.replaceFirst("http", "ws") + "api/cable", headers, 10_000uL, RecordingEvents())
                     else -> {
@@ -47,7 +47,7 @@ class UserAgentTest {
     fun life_prop_headers_per_request() {
         val value = java.util.concurrent.atomic.AtomicReference("first")
         val headers = { mapOf("X-Application" to value.get(), "User-Agent" to "Reader") }
-        val http = OkHttpEncryptedHttp(headers = headers)
+        val http = OkHttpTransport(headers = headers)
         val transport = OkHttpTransport(headers)
         assertEquals(listOf("first", "first"), listOf(http.appHeaders()["X-Application"], transport.appHeaders()["X-Application"]))
         value.set("second")

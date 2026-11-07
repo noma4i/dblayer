@@ -27,7 +27,7 @@ struct UserAgentTests {
     let transport = UrlSessionTransport(session: session)
     switch path {
     case "encrypted":
-      _ = await UrlSessionEncryptedHttp(session: session).send(request: probeRequest(origin, headers: headers))
+      _ = await UrlSessionTransport(session: session).send(request: probeRequest(origin, headers: headers))
     case "graphql":
       _ = await transport.send(request: probeRequest(origin, path: "/graphql", headers: headers))
     case "encryptedSocket":
@@ -47,7 +47,7 @@ struct UserAgentTests {
   @Test
   func life_prop_headers_per_request() {
     let values = ChangingHeaders()
-    let http = UrlSessionEncryptedHttp(headers: { values.read() })
+    let http = UrlSessionTransport(headers: { values.read() })
     let transport = UrlSessionTransport(headers: { values.read() })
     #expect([http.appHeaders()["X-Application"], transport.appHeaders()["X-Application"]] == ["first", "first"])
     values.set("second")

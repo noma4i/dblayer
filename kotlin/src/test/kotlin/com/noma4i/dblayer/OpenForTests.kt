@@ -4,7 +4,7 @@ package com.noma4i.dblayer
 interface WrapsMock { val base: MockTransport }
 
 suspend fun openDatabase(config: Config, modelsJson: String, transport: Transport? = null, encrypted: EncryptedConfig? = null, credentials: CredentialStore? = null, http: EncryptedHttp? = null, operations: String = "[]"): Database =
-    OpenDatabase().open(config, modelsJson, OpenOptions(definitionsOf(withUploadSteps(operations, modelsJson)), null), OpenPorts(transport, encrypted, credentials, http, SCRIPTED_ENDPOINT), null)
+    OpenDatabase().open(config, modelsJson, OpenOptions(definitionsOf(withUploadSteps(operations, modelsJson))), OpenPorts(transport, encrypted, credentials, http, SCRIPTED_ENDPOINT), null)
 
 private fun definitionsOf(operations: String): List<OperationDefinition> =
     (kotlinx.serialization.json.Json.parseToJsonElement(operations) as kotlinx.serialization.json.JsonArray).map { entry ->

@@ -56,7 +56,7 @@ class UploadWorkTest {
                 val graphql = probeRequest(server.url("/graphql").toString(), "{}")
                 assertEquals(RawOutcome.Response(200u, null, """{"data":{}}"""), transport.send(graphql))
                 refused { transport.send(graphql.copy(purpose = NetworkPurpose.TRANSFER)) }
-                refused { OkHttpEncryptedHttp().send(probeRequest(server.url("/api/graphql").toString(), "a.b.c.d.e").copy(purpose = NetworkPurpose.TRANSFER)) }
+                refused { OkHttpTransport().send(probeRequest(server.url("/api/graphql").toString(), "a.b.c.d.e").copy(purpose = NetworkPurpose.TRANSFER)) }
                 UploadNetwork.ended()
                 assertEquals(RawOutcome.Response(200u, null, """{"data":{}}"""), transport.send(graphql.copy(purpose = NetworkPurpose.TRANSFER)))
             }
