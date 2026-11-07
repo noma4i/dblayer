@@ -153,6 +153,7 @@ pub(super) struct Put {
 pub(super) struct Puts {
     pub(super) seen: Mutex<Vec<Put>>,
     held: Mutex<VecDeque<Arc<Hold>>>,
+    pub(super) tokens: Mutex<Vec<Arc<ByteProgress>>>,
 }
 
 impl Puts {
@@ -167,7 +168,8 @@ impl Puts {
 impl FakeTransport for Puts {
     async fn query(&self, _: TransportRequest) -> Result<String, DbError> { unreachable!() }
     async fn mutate(&self, _: TransportRequest) -> Result<String, DbError> { unreachable!() }
-    async fn put(&self, url: String, _: HashMap<String, String>, file: PutFile, identity: TransferIdentity, _: Arc<ByteProgress>) -> Result<PutReply, DbError> {
+    async fn put(&self, url: String, _: HashMap<String, String>, file: PutFile, identity: TransferIdentity, progress: Arc<ByteProgress>) -> Result<PutReply, DbError> {
+        self.tokens.lock().unwrap().push(progress);
         let held = self.held.lock().unwrap().pop_front();
         self.seen.lock().unwrap().push(Put { url, operation: identity.operation_id, item: identity.item_id, step: identity.step, path: file.path });
         if let Some(hold) = held {

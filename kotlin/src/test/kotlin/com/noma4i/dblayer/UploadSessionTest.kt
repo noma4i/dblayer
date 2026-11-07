@@ -21,8 +21,10 @@ private class HeldUploadTransport(val base: MockTransport = MockTransport()) : S
     val arrived = CompletableDeferred<Unit>()
     val released = CompletableDeferred<Unit>()
     val finished = CompletableDeferred<Unit>()
+    val puts = java.util.concurrent.atomic.AtomicInteger()
 
     override suspend fun scriptedPut(url: String, headers: Map<String, String>, file: PutFile, identity: TransferIdentity, progress: ByteProgress): PutReply {
+        puts.incrementAndGet()
         try {
             arrived.complete(Unit)
             released.await()
@@ -82,6 +84,7 @@ class UploadSessionTest {
             transport.finished.await()
             assertNull(database.readRow(database.sessionEpoch(), "Moment", row.id))
             assertTrue(transport.base.calls.none { it.operationName == "CreateMoment" })
+            assertEquals("a second PUT started after the release", 1, transport.puts.get())
         } finally {
             transport.released.complete(Unit)
             closeForCleanup()

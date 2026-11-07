@@ -88,5 +88,7 @@ extension BridgeProbeTests {
     let found = try await database.readRow(epoch: database.sessionEpoch(), model: "Moment", rowId: row.id)
     #expect(found == nil)
     #expect(transport.base.calls.filter { $0.operationName == "CreateMoment" }.isEmpty)
+    #expect(transport.puts == 1, "a second PUT started after the release")
+    await DB.closeForCleanup()
   }
 }
