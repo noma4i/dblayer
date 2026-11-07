@@ -1,7 +1,7 @@
 use crate::store::Store;
 use crate::owners::contract::{Committed, EpochEnded, Online, Published, PublishedState, RejectReason, Rejected};
 use crate::owners::session::{AuthorOutcome, Credential, OperationClass, SecretState, SessionCalls, SessionEffect, SessionError, SessionInput, SessionOperation, SessionPhase, SessionState};
-use crate::owners::support::{new_log, take, Log, Recorder};
+use crate::spec::support::{new_log, take, Log, Recorder};
 use crate::runtime::{Address, Cause, DetScheduler, EpochStamp, Time};
 
 fn send(det: &mut DetScheduler, address: Address<SessionCalls>, log: &Log<SessionEffect>, input: SessionInput) -> Vec<SessionEffect> {

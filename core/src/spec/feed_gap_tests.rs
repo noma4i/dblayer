@@ -14,7 +14,7 @@ use crate::owners::read::deliveries::{Deliveries, DeliveryInput};
 use crate::owners::read::feed::{self as f, Feed, FeedEffect, FeedInput, FeedPeers, Frame, FramedEvent, Outgoing, Protocol, ProtocolReason};
 use crate::owners::read::windows::{StaleKeys, WindowKey, Windows};
 use crate::owners::store::StoreWriter;
-use crate::owners::support::{new_log, number_after, snapshot, take, text_after, Discard, Emitted, Landing, Log, NoEffect, Reset, ResetState, Silent, Sink, Source, SourceInput, SourceState, Spy, SpyState, StoreGeneration, StoreStub, StoreStubState};
+use crate::spec::support::{new_log, number_after, snapshot, take, text_after, Discard, Emitted, Landing, Log, NoEffect, Reset, ResetState, Silent, Sink, Source, SourceInput, SourceState, Spy, SpyState, StoreGeneration, StoreStub, StoreStubState};
 use crate::runtime::{explore, Address, Back, Cause as Ended, DetScheduler, Effects, EffectRunner, Epoch, EpochStamp, Limits, StateOwner, Time};
 
 const EPOCH: u64 = 1;

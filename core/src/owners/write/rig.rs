@@ -8,7 +8,7 @@ use std::task::{Context, Poll, Waker};
 use async_trait::async_trait;
 
 use super::wire::{Running, Task, Tasks};
-use crate::owners::support::{new_log, Log, Silent, Sink};
+use crate::spec::support::{new_log, Log, Silent, Sink};
 use crate::runtime::{Address, DetScheduler, StateOwner};
 use crate::transport::{GraphQLRequest, PutRequest, PutResponse, Response, ServerSubscription, Transport, TransportError};
 

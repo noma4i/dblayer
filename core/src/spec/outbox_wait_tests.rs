@@ -6,7 +6,7 @@ use super::ref_outbox::{In, Out, Policy, Reason as RReason, St};
 use crate::owners::contract::{Committed, ModelsReset, Online, RejectReason, ReplyId};
 
 
-use crate::owners::support::{Emitted, Log};
+use crate::spec::support::{Emitted, Log};
 use crate::owners::write::outbox::{self as o, CommitKind, Fault, LocalWriteKind, OpId, Outbox, OutboxAnswer, OutboxEffect as Run, OutboxInput, Stage};
 
 use crate::runtime::{Address, Cause, DetScheduler, EpochStamp, Time};
@@ -127,7 +127,7 @@ fn out_done_closing_without_operations() {
 
 // Properties: the explorer walks the orders of the inputs of three sources.
 
-use crate::owners::support::{Source, SourceInput, SourceState};
+use crate::spec::support::{Source, SourceInput, SourceState};
 use crate::runtime::{explore, Limits};
 use std::cell::RefCell;
 
@@ -139,7 +139,7 @@ fn scripted(sources: Vec<Vec<OutboxInput>>) -> DetScheduler {
     let addr = Address::<Outbox>::new(OUTBOX_AT);
     let mut feeders = Vec::new();
     for script in sources {
-        feeders.push(det.add::<Source<Outbox>>("source", SourceState { to: addr, script }, crate::owners::support::Silent));
+        feeders.push(det.add::<Source<Outbox>>("source", SourceState { to: addr, script }, crate::spec::support::Silent));
     }
     det.start_epoch(EPOCH);
     for feeder in feeders {
@@ -166,7 +166,7 @@ fn store_script() -> Vec<OutboxInput> {
     (1..=4).map(|batch| OutboxInput::Committed(Committed { batch, revision: 10 + batch as i64, tables: vec!["moments".into()], rows: None, models: Default::default(), stale_parents: Vec::new(), position: 0 })).collect()
 }
 
-fn effects_now() -> Vec<OutboxEffect> { LOG.with(|cell| cell.borrow().as_ref().map(|log| crate::owners::support::snapshot(log).into_iter().filter_map(|emitted| lower(emitted, None)).collect()).unwrap_or_default()) }
+fn effects_now() -> Vec<OutboxEffect> { LOG.with(|cell| cell.borrow().as_ref().map(|log| crate::spec::support::snapshot(log).into_iter().filter_map(|emitted| lower(emitted, None)).collect()).unwrap_or_default()) }
 
 fn walk(sources: impl Fn() -> Vec<Vec<OutboxInput>>, check: impl FnMut(&DetScheduler) -> Result<(), String>) {
     let report = explore(|| scripted(sources()), Limits { depth: 6, max_traces: 4_000 }, check);
@@ -189,7 +189,7 @@ fn out_prop_outcome_once() {
 fn out_prop_no_send_after_end() {
     let mut det = scripted(vec![api_script(&["r", "q"]), store_script()]);
     det.run_until_quiet(10_000).unwrap();
-    crate::owners::support::take(&LOG.with(|cell| cell.borrow().clone().unwrap()));
+    crate::spec::support::take(&LOG.with(|cell| cell.borrow().clone().unwrap()));
     det.end_epoch(EPOCH, Cause::SessionReset);
     det.run_until_quiet(10_000).unwrap();
     det.post(Address::<Outbox>::new(OUTBOX_AT), EpochStamp::Epoch(EPOCH), OutboxInput::Online(Online(true)));

@@ -14,7 +14,7 @@ use serde_json::json;
 
 use super::outbox::{Fault, NewOp, OpSource, OutboxOutcome, ReserveTarget};
 use super::rig::{open_gate, peer, settle, Act, ManualSpawn, Stub};
-use crate::owners::support::{StoreStub, StoreStubState};
+use crate::spec::support::{StoreStub, StoreStubState};
 use super::transfer::{file_id, BatchItem, Shown, Source, Steps, TransferAnswer, TransferInput, TransferPeers, TransferStage, TransferState, Transfers};
 use super::transfer_executor::{Link, StepCodec, StepDone, TransferExecutor, TransferSinks};
 use super::wire::Wire;
@@ -101,7 +101,7 @@ fn world() -> World {
     let mut det = DetScheduler::new(13);
     let generation = Arc::new(std::sync::atomic::AtomicU64::new(0));
     let store_stub = StoreStubState { to: Address::<Transfers>::new(2), generation, revision: 0, only: None, committed: TransferInput::Committed, rejected: TransferInput::Rejected, note: Box::new(|_| {}) };
-    let store = Address::new(det.add::<StoreStub<Transfers>>("store", store_stub, crate::owners::support::Silent).index());
+    let store = Address::new(det.add::<StoreStub<Transfers>>("store", store_stub, crate::spec::support::Silent).index());
     let (outbox, _) = peer(&mut det, "outbox");
     let transfers = det.add::<Transfers>("transfers", TransferState::new(EPOCH, 2, TransferPeers { store, outbox, rounds: None }), executor);
     det.start_epoch(EPOCH);

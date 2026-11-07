@@ -7,7 +7,7 @@ use super::ref_lifecycle::Cause as RefCause;
 use super::ref_store::{Action, Batch, Boot, Open, Reason, Request, Store as Ref};
 use crate::owners::contract::{BatchAuthor, EpochEnded, Published, PublishedState, RejectReason};
 use crate::owners::store::{BootFound, Done, StoreBatch, StoreEffect, StoreInput, StoreMode, StoreReply, StoreState, StoreWriter, WriteDone};
-use crate::owners::support::{new_log, take, Log, Recorder};
+use crate::spec::support::{new_log, take, Log, Recorder};
 use crate::runtime::{Address, Cause, DetScheduler, EpochStamp};
 
 const DISK: &str = "disk";

@@ -6,7 +6,7 @@ use std::sync::PoisonError;
 use crate::store::files::Location;
 use crate::owners::contract::{BatchId, Committed, Online, RejectReason, Rejected, ReplyId};
 use crate::owners::store::{StoreBatch, StoreInput, StoreOp, StoreWriter, UploadKind, UploadRow};
-use crate::owners::support::{new_log, take, Discard, Emitted, Log, NoEffect, Silent, Spy, SpyState};
+use crate::spec::support::{new_log, take, Discard, Emitted, Log, NoEffect, Silent, Spy, SpyState};
 use crate::owners::write::outbox::{Fault, NewOp, Outbox, OutboxInput, OutboxOutcome, OpSource, Receipt, ReserveTarget};
 use crate::owners::write::rounds::{Rounds, RoundsInput};
 use crate::owners::write::transfer::{BatchItem, Joint, NextStep, Shown, Source, Steps, StoredTransfer, Transfer, TransferAnswer, TransferEffect as Run, TransferId, TransferInput, TransferPeers, TransferStage, TransferState, TransferTick, Transfers};

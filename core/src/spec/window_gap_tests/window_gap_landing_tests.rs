@@ -350,7 +350,7 @@ impl StateOwner for WindowStore {
     const EPOCHED: bool = false;
     type State = StoreStubState<Windows>;
     type Input = StoreInput;
-    type Effect = crate::owners::support::NoEffect;
+    type Effect = crate::spec::support::NoEffect;
 
     fn step(state: &mut Self::State, input: Self::Input) -> Effects<Self> {
         if let StoreInput::Pin { request_id, .. } = input {

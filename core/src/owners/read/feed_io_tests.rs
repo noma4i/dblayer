@@ -22,7 +22,7 @@ use crate::owners::read::deliveries::Deliveries;
 use crate::owners::read::feed::{self as f, Feed, FeedInput, Mode};
 use crate::owners::read::windows::{StaleKeys, Windows};
 use crate::owners::store::StoreWriter;
-use crate::owners::support::{Discard, Sink};
+use crate::spec::support::{Discard, Sink};
 use crate::runtime::{Address, DetScheduler, EpochStamp};
 use crate::transport::{CableLine, CableLines, GraphQLRequest, Incoming, Response, TransportError};
 

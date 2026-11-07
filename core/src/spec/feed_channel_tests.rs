@@ -8,7 +8,7 @@ use crate::owners::read::deliveries::Deliveries;
 use crate::owners::read::feed::{self as f, Feed, FeedEffect, FeedInput, FeedPeers, FramedEvent, Outgoing};
 use crate::owners::read::windows::{StaleKeys, Windows};
 use crate::owners::store::StoreWriter;
-use crate::owners::support::{new_log, number_after, take, text_after, Discard, Emitted, Log, Sink, Spy, SpyState};
+use crate::spec::support::{new_log, number_after, take, text_after, Discard, Emitted, Log, Sink, Spy, SpyState};
 use crate::runtime::{Address, DetScheduler, EpochStamp};
 
 const EPOCH: u64 = 1;

@@ -2,7 +2,7 @@
 
 use super::outbox_harness::*;
 use super::ref_outbox::Policy;
-use crate::owners::support::{snapshot, Emitted};
+use crate::spec::support::{snapshot, Emitted};
 use crate::owners::write::outbox::{Fault, OutboxAnswer, OutboxInput, ReserveTarget};
 use crate::owners::write::outbox_types::{OpId, Stage};
 use crate::owners::contract::Online;

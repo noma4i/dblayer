@@ -3,7 +3,7 @@
 use super::ref_calls::{Calls as Ref, CallState, Effect as RefEffect, Fail, Input, Kind, Out};
 use crate::owners::calls::{CallAnswer, CallError, CallKind, CallPhase, Calls, CallsEffect, CallsInput, CallsState};
 use crate::owners::contract::Online;
-use crate::owners::support::{new_log, take, Log, Recorder};
+use crate::spec::support::{new_log, take, Log, Recorder};
 use crate::runtime::{Address, Cause, DetScheduler, EpochStamp};
 
 const EPOCH: u64 = 1;

@@ -3,7 +3,7 @@
 use super::ref_network::{Effect as RefEffect, Input, Network as Ref, Owner, Reply as RefReply, State as RefState};
 use crate::owners::lifecycle::Peer;
 use crate::owners::network::{Network, NetworkEffect, NetworkInput, NetworkMode, NetworkState};
-use crate::owners::support::{new_log, take, Log, Recorder};
+use crate::spec::support::{new_log, take, Log, Recorder};
 use crate::runtime::{Address, DetScheduler, EpochStamp};
 
 struct Twin {

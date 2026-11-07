@@ -6,7 +6,7 @@ use std::collections::BTreeSet;
 use super::ref_lifecycle::{Answer, Cause as RefCause, Effect as RefEffect, Erase as RefErase, EraseKind as RefEraseKind, Event, Lifecycle as Ref, Owner as RefOwner, PubState, Published as RefPublished, State as RefState, OWNERS};
 use crate::owners::contract::{CredentialCommitted, Drained, PublishedState, ServerEnded};
 use crate::owners::lifecycle::{Erase, EraseKind, Lifecycle, LifecycleEffect, LifecycleError, LifecycleInput, LifecyclePhase, LifecycleState, Peer};
-use crate::owners::support::{new_log, take, Log, Recorder};
+use crate::spec::support::{new_log, take, Log, Recorder};
 use crate::runtime::{Address, Cause, DetScheduler, EpochStamp};
 
 fn cause(cause: Cause) -> RefCause {

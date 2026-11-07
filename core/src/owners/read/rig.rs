@@ -6,7 +6,7 @@ use std::time::{Duration, Instant};
 
 use super::Admit;
 use crate::owners::store::{StoreBatch, StoreInput};
-use crate::owners::support::NoEffect;
+use crate::spec::support::NoEffect;
 use crate::runtime::{Address, Cause, DetScheduler, Effects, Epoch, EpochStamp, StateOwner, Time};
 
 pub const LIMIT: Duration = Duration::from_secs(10);

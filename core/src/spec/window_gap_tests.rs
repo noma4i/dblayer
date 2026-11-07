@@ -14,7 +14,7 @@ use super::ref_window::Phase;
 use super::ref_window::{Effect, Failure, Goal, Input, Marker3, Read, Reject, Result3, State, Window, PRELOAD};
 use crate::owners::contract::{Committed, EpochStarted, ErrorClass, ModelsReset, Online, RejectReason, Rejected, RequestError};
 use crate::owners::contract::WindowPhase as OwnerPhase;
-use crate::owners::support::{new_log, number_after, snapshot, take, Discard, Emitted, Landing, Log, Reset, ResetState, Silent, Sink, Source, SourceInput, SourceState, Spy, SpyState, StoreGeneration, StoreStub, StoreStubState};
+use crate::spec::support::{new_log, number_after, snapshot, take, Discard, Emitted, Landing, Log, Reset, ResetState, Silent, Sink, Source, SourceInput, SourceState, Spy, SpyState, StoreGeneration, StoreStub, StoreStubState};
 use crate::owners::read::deliveries::Deliveries;
 use crate::owners::store::{RowValue, StoreInput, StoreWriter};
 use crate::owners::read::windows::{self as w, AnswerPage, StaleKeys, WindowEffect, WindowKey, WindowKind, WindowOutcome, WindowStage, Windows, WindowsEffect, WindowsPeers};
@@ -39,7 +39,7 @@ impl StateOwner for PinStore {
     const EPOCHED: bool = false;
     type State = Arc<AtomicU64>;
     type Input = StoreInput;
-    type Effect = crate::owners::support::NoEffect;
+    type Effect = crate::spec::support::NoEffect;
 
     fn step(revision: &mut Self::State, input: Self::Input) -> Effects<Self> {
         match input {

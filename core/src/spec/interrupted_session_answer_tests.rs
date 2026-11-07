@@ -1,6 +1,6 @@
 use crate::owners::contract::{Committed, EpochEnded, Published, PublishedState};
 use crate::owners::session::{Credential, OperationClass, PendingCall, SecretState, SessionCalls, SessionEffect, SessionError, SessionInput, SessionState};
-use crate::owners::support::{new_log, take, Log, Recorder};
+use crate::spec::support::{new_log, take, Log, Recorder};
 use crate::runtime::{Address, Cause, DetScheduler, EpochStamp};
 
 struct Rig { det: DetScheduler, address: Address<SessionCalls>, log: Log<SessionEffect> }

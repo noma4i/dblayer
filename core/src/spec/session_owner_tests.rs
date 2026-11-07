@@ -4,7 +4,7 @@ use super::ref_session::{AfterClear, AfterStore, Block, CallPhase, Class, Creden
 use crate::owners::contract::{Committed, EpochEnded, ErrorClass, Online, Published, PublishedState, RejectReason, Rejected};
 use crate::owners::session::{self as owner, AuthorOutcome, Credential, OperationClass, PendingCall, Queued, SecretState, SessionCalls, SessionEffect, SessionError, SessionInput, SessionPhase, SessionState};
 use crate::owners::session::Landed;
-use crate::owners::support::{new_log, take, Log, Recorder};
+use crate::spec::support::{new_log, take, Log, Recorder};
 use crate::runtime::{Address, Cause, DetScheduler, EpochStamp, Time};
 use crate::transport::SessionCode;
 

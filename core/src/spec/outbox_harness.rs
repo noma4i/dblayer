@@ -6,7 +6,7 @@ use super::ref_outbox::{step_of, Ctx, Eff, Fault as RFault, In, Obs, Out, Policy
 use crate::owners::contract::{BatchId, Committed, ModelsReset, Online, RejectReason, Rejected, ReplyId, RequestId};
 use crate::owners::session::SessionCalls;
 use crate::owners::store::StoreWriter;
-use crate::owners::support::{new_log, number_after, Discard, Emitted, Log, Sink, Spy, SpyState};
+use crate::spec::support::{new_log, number_after, Discard, Emitted, Log, Sink, Spy, SpyState};
 use crate::owners::write::outbox::{self as o, CommitKind, Fault, NewOp, OpId, OpSource, Outbox, OutboxAnswer, OutboxEffect as Run, OutboxInput, OutboxPeers, OutboxState, Receipt, Stage, Why};
 use crate::owners::write::transfer::Transfers;
 use crate::runtime::{Address, Cause, DetScheduler, EpochStamp};
@@ -82,15 +82,15 @@ pub(super) fn lower(emitted: Emitted<Run>, state: Option<&OutboxState>) -> Optio
     })
 }
 
-pub(super) fn take_fx(log: &Log<Emitted<Run>>, state: Option<&OutboxState>) -> Vec<OutboxEffect> { crate::owners::support::take(log).into_iter().filter_map(|emitted| lower(emitted, state)).collect() }
+pub(super) fn take_fx(log: &Log<Emitted<Run>>, state: Option<&OutboxState>) -> Vec<OutboxEffect> { crate::spec::support::take(log).into_iter().filter_map(|emitted| lower(emitted, state)).collect() }
 
 pub(super) fn state_of(det: &DetScheduler) -> Option<&OutboxState> { det.state(Address::<Spy<Outbox>>::new(OUTBOX_AT)).map(|spy: &SpyState<Outbox>| &spy.inner) }
 
 /// The owner with its three peers: the Store, the Session and Transfer keep what they receive.
 pub(super) fn world(seed: u64) -> (DetScheduler, Log<Emitted<Run>>, Address<Spy<Outbox>>) {
     let mut det = DetScheduler::new(seed);
-    let peer = |det: &mut DetScheduler, name: &'static str| -> usize { det.add::<Sink<StoreWriter>>(name, new_log(), crate::owners::support::Silent).index() };
-    let (store, session, transfer) = (peer(&mut det, "store"), det.add::<Sink<SessionCalls>>("session", new_log(), crate::owners::support::Silent).index(), det.add::<Sink<Transfers>>("transfer", new_log(), crate::owners::support::Silent).index());
+    let peer = |det: &mut DetScheduler, name: &'static str| -> usize { det.add::<Sink<StoreWriter>>(name, new_log(), crate::spec::support::Silent).index() };
+    let (store, session, transfer) = (peer(&mut det, "store"), det.add::<Sink<SessionCalls>>("session", new_log(), crate::spec::support::Silent).index(), det.add::<Sink<Transfers>>("transfer", new_log(), crate::spec::support::Silent).index());
     assert_eq!((store, session, transfer), (STORE_AT, SESSION_AT, TRANSFER_AT));
     let peers = OutboxPeers { store: Address::new(store), session: Some(Address::new(session)), transfer: Some(Address::new(transfer)) };
     let log = new_log();
@@ -227,8 +227,8 @@ impl Twin {
         take_fx(&self.log, None);
         self.det.post(Address::<Outbox>::new(OUTBOX_AT), EpochStamp::Epoch(EPOCH), input);
         self.run();
-        self.store_text = crate::owners::support::snapshot(&self.log).into_iter().filter_map(|emitted| match emitted { Emitted::Send { to: STORE_AT, input } => Some(input), _ => None }).collect::<Vec<_>>().join("\n");
-        self.session_text = crate::owners::support::snapshot(&self.log).into_iter().filter_map(|emitted| match emitted { Emitted::Send { to: SESSION_AT, input } => Some(input), _ => None }).collect::<Vec<_>>().join("\n");
+        self.store_text = crate::spec::support::snapshot(&self.log).into_iter().filter_map(|emitted| match emitted { Emitted::Send { to: STORE_AT, input } => Some(input), _ => None }).collect::<Vec<_>>().join("\n");
+        self.session_text = crate::spec::support::snapshot(&self.log).into_iter().filter_map(|emitted| match emitted { Emitted::Send { to: SESSION_AT, input } => Some(input), _ => None }).collect::<Vec<_>>().join("\n");
         let effects = take_fx(&self.log, state_of(&self.det));
         self.note(&effects);
         effects

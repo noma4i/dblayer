@@ -15,7 +15,7 @@ use super::{WindowCodec, WindowIo, WindowReader};
 use crate::owners::read::deliveries::Deliveries;
 use crate::owners::read::windows::{self as w, AnswerPage, WindowEffect, WindowKey, WindowOutcome, Windows, WindowsEffect, WindowsInput};
 use crate::owners::store::{RowValue, StoreInput, StoreOp, StoreWriter};
-use crate::owners::support::Sink;
+use crate::spec::support::Sink;
 use crate::runtime::{Address, Cause, DetScheduler, Effect, Effects, EpochStamp, Outbound, StateOwner, Time};
 use crate::transport::{GraphQLRequest, MockTransport, PutRequest, PutResponse, Reply, Response, ServerSubscription, Transport, TransportError};
 
@@ -45,7 +45,7 @@ impl StateOwner for WindowStore {
     const EPOCHED: bool = false;
     type State = Batches;
     type Input = StoreInput;
-    type Effect = crate::owners::support::NoEffect;
+    type Effect = crate::spec::support::NoEffect;
 
     fn step(state: &mut Batches, input: StoreInput) -> Effects<Self> {
         if let StoreInput::Pin { request_id, .. } = input {
@@ -84,8 +84,8 @@ fn rig_with(mock: MockTransport, transport: Arc<dyn Transport>, reader: Option<W
     let io = WindowIo::new(Some(transport), Arc::new(Pages), (admit(), open_gate(EPOCH)), (runtime.handle().clone(), Arc::new(|| NOW)), take_rest);
     let io = match reader { Some(reader) => io.reading(reader), None => io };
     let mut det = DetScheduler::new(1);
-    let store = det.add::<WindowStore>("store", batches.clone(), crate::owners::support::Discard);
-    let deliveries = det.add::<Sink<Deliveries>>("deliveries", Default::default(), crate::owners::support::Discard);
+    let store = det.add::<WindowStore>("store", batches.clone(), crate::spec::support::Discard);
+    let deliveries = det.add::<Sink<Deliveries>>("deliveries", Default::default(), crate::spec::support::Discard);
     let peers = w::WindowsPeers { store: Address::<StoreWriter>::new(store.index()), deliveries: Address::<Deliveries>::new(deliveries.index()) };
     let windows = det.add::<Windows>("windows", w::WindowsState::new(EPOCH, Some(true), peers), io);
     det.start_epoch(EPOCH);

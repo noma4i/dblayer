@@ -10,7 +10,7 @@ use crate::owners::contract::{Committed, EpochEnded, Models, ModelsReset, Window
 use crate::owners::read::deliveries::{self as d, DeliveryEffect, DeliveryPeers, Deliveries, PullAnswer, StreamEffect};
 use crate::owners::read::feed::Feed;
 use crate::owners::read::windows::{WindowKey, Windows};
-use crate::owners::support::{as_owner, new_log, snapshot, take, Discard, Emitted, Ender, EnderState, Log, Silent, Sink, Source, SourceInput, SourceState, Spy, SpyState};
+use crate::spec::support::{as_owner, new_log, snapshot, take, Discard, Emitted, Ender, EnderState, Log, Silent, Sink, Source, SourceInput, SourceState, Spy, SpyState};
 use crate::runtime::{explore, Address, Cause as Ended, DetScheduler, EpochStamp, Limits, Outcomes};
 
 #[path = "delivery_more_tests.rs"]
