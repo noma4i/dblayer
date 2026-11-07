@@ -29,9 +29,9 @@ fn a_stored_upload_with_a_negative_size_or_transfer_is_a_read_error() {
     }
 }
 
-fn insert(connection: &Connection, action_key: &str, status: &str, started: i64, row_ids: &str, input: &str) -> i64 {
+fn insert(connection: &Connection, action_key: &str, status: &str, row_ids: &str, input: &str) -> i64 {
     connection
-        .execute("INSERT INTO op (action_key, status, transport_started, created_at, since) VALUES (?1, ?2, ?3, 5, 5)", rusqlite::params![action_key, status, started])
+        .execute("INSERT INTO op (action_key, status, created_at, since) VALUES (?1, ?2, 5, 5)", rusqlite::params![action_key, status])
         .unwrap();
     let seq = connection.last_insert_rowid();
     let ids: Vec<crate::identity::RowId> = serde_json::from_str(row_ids).unwrap();
@@ -55,7 +55,7 @@ fn info(connection: &Connection, model: &str, id: &str) -> Option<SyncInfo> {
 #[test]
 fn recompute_writes_a_row_for_an_open_operation_and_reports_the_change_once() {
     let connection = database();
-    insert(&connection, "moments:update", "pending", 0, r#"["m1"]"#, r#"{"id":"m1","text":"new","likes":2}"#);
+    insert(&connection, "moments:update", "pending", r#"["m1"]"#, r#"{"id":"m1","text":"new","likes":2}"#);
     let wanted = keys(&[key("moments", "m1")]);
     assert_eq!(recompute_sync(&connection, &wanted).unwrap(), wanted);
     let stored = info(&connection, "moments", "m1").unwrap();
@@ -66,7 +66,7 @@ fn recompute_writes_a_row_for_an_open_operation_and_reports_the_change_once() {
 #[test]
 fn recompute_removes_the_row_when_no_operation_is_open() {
     let connection = database();
-    let seq = insert(&connection, "moments:create", "pending", 0, r#"["temp-1"]"#, r#"{"id":"temp-1"}"#);
+    let seq = insert(&connection, "moments:create", "pending", r#"["temp-1"]"#, r#"{"id":"temp-1"}"#);
     let wanted = keys(&[key("moments", "temp-1")]);
     recompute_sync(&connection, &wanted).unwrap();
     connection.execute("DELETE FROM op WHERE seq = ?1", [seq]).unwrap();
@@ -77,8 +77,8 @@ fn recompute_removes_the_row_when_no_operation_is_open() {
 #[test]
 fn recompute_only_touches_the_asked_keys() {
     let connection = database();
-    insert(&connection, "moments:update", "pending", 0, r#"["m1"]"#, r#"{"id":"m1","text":"a"}"#);
-    insert(&connection, "moments:update", "pending", 0, r#"["m2"]"#, r#"{"id":"m2","text":"b"}"#);
+    insert(&connection, "moments:update", "pending", r#"["m1"]"#, r#"{"id":"m1","text":"a"}"#);
+    insert(&connection, "moments:update", "pending", r#"["m2"]"#, r#"{"id":"m2","text":"b"}"#);
     recompute_sync(&connection, &keys(&[key("moments", "m1")])).unwrap();
     assert!(info(&connection, "moments", "m1").is_some());
     assert_eq!(info(&connection, "moments", "m2"), None);
@@ -93,8 +93,8 @@ fn operation_with_a_temp_id_and_row_ids_gives_one_row_for_each_distinct_id() {
 #[test]
 fn rebuild_repairs_missing_extra_and_stale_rows() {
     let connection = database();
-    insert(&connection, "moments:update", "failed", 1, r#"["m1"]"#, r#"{"id":"m1","text":"a"}"#);
-    insert(&connection, "moments:update", "pending", 0, r#"["m2"]"#, r#"{"id":"m2","text":"b"}"#);
+    insert(&connection, "moments:update", "failed", r#"["m1"]"#, r#"{"id":"m1","text":"a"}"#);
+    insert(&connection, "moments:update", "pending", r#"["m2"]"#, r#"{"id":"m2","text":"b"}"#);
     recompute_sync(&connection, &keys(&[key("moments", "m1")])).unwrap();
     connection.execute("UPDATE row_sync SET state = 'pending' WHERE row_id = 'm1'", []).unwrap();
     connection
@@ -114,7 +114,7 @@ fn rebuild_repairs_missing_extra_and_stale_rows() {
 #[test]
 fn read_returns_only_rows_that_exist() {
     let connection = database();
-    insert(&connection, "moments:update", "failed", 1, r#"["m1"]"#, r#"{"id":"m1","text":"a"}"#);
+    insert(&connection, "moments:update", "failed", r#"["m1"]"#, r#"{"id":"m1","text":"a"}"#);
     recompute_sync(&connection, &keys(&[key("moments", "m1")])).unwrap();
     let found = read_sync(&connection, "moments", &["m1".to_string(), "m9".to_string()]).unwrap();
     assert_eq!(found.keys().collect::<Vec<_>>(), ["m1"]);

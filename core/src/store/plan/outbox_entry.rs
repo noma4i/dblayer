@@ -43,7 +43,6 @@ impl OutboxOperation {
             row_ids,
             temp_id: operation.temp_id.clone(),
             input,
-            transport_started: operation.transport_started,
             base_revision: Some(operation.base_revision),
             created_at: operation.created_at,
             dedupe_key: operation.dedupe_key.clone(),

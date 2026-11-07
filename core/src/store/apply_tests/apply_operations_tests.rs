@@ -8,7 +8,6 @@ pub(super) fn record(seq: Option<i64>, status: OperationStatus, dedupe: Option<&
         row_ids: vec![id("temp-1")],
         temp_id: Some(id("temp-1")),
         input: json!({"body": "hi"}),
-        transport_started: false,
         base_revision: None,
         created_at: 5,
         dedupe_key: dedupe.map(str::to_string),
@@ -63,21 +62,23 @@ fn operation_transitions_apply_only_from_the_statuses_the_machine_accepts() {
     let started = transitions(&store, vec![OperationTransition::Begin(Box::new(record(None, OperationStatus::Pending, Some("k"))))]);
     let seq = *started.operations.iter().next().unwrap();
     let rejected = || OperationFailure::new(FailureKind::Rejected, "no");
-    let row = || text(&store, "SELECT status || ':' || transport_started || ':' || attempts FROM op").unwrap_or_default();
+    let row = || text(&store, "SELECT status || ':' || attempts FROM op").unwrap_or_default();
     let refused = |transition| transitions(&store, vec![transition]).unknown_operation_acks;
-    assert_eq!(refused(OperationTransition::Postpone { seq, failure: rejected() }), 1);
     assert_eq!(refused(OperationTransition::Retry { seq }), 1);
-    assert_eq!(refused(OperationTransition::Start { seq }), 0);
-    assert_eq!(row(), "pending:1:1");
-    assert_eq!(refused(OperationTransition::Start { seq }), 1);
+    assert_eq!(refused(OperationTransition::Attempt { seq, attempts: 1, cycle_id: 1 }), 0);
+    assert_eq!(row(), "sending:1");
+    assert_eq!(refused(OperationTransition::Attempt { seq, attempts: 2, cycle_id: 1 }), 0);
+    assert_eq!(row(), "sending:2");
     assert_eq!(refused(OperationTransition::Fail { seq, status: OperationStatus::Failed, failure: rejected() }), 0);
-    assert_eq!(row(), "failed:1:1");
+    assert_eq!(row(), "failed:2");
+    assert_eq!(refused(OperationTransition::Attempt { seq, attempts: 3, cycle_id: 1 }), 0);
+    assert_eq!(row(), "failed:2");
     assert_eq!(refused(OperationTransition::Retry { seq }), 0);
-    assert_eq!(row(), "pending:0:0");
+    assert_eq!(row(), "pending:0");
     let mut misuse = envelope(&store, vec![], vec![]);
     misuse.operation_transitions = vec![OperationTransition::Close { seq, status: OperationStatus::Failed }];
     assert!(matches!(store.commit(misuse), Err(StoreError::Constraint(_))));
-    assert_eq!(row(), "pending:0:0");
+    assert_eq!(row(), "pending:0");
     assert_eq!(refused(OperationTransition::Close { seq, status: OperationStatus::RolledBack }), 0);
     assert_eq!(count(&store, "SELECT COUNT(*) FROM op"), 0);
     assert_eq!(refused(OperationTransition::Close { seq, status: OperationStatus::RolledBack }), 1);
@@ -216,34 +217,19 @@ fn begin_with_an_entity_change_reports_the_row_once_with_its_own_kind() {
 }
 
 #[test]
-fn inv_op_12_start_fail_and_retry_rewrite_row_sync_and_each_commit_reports_the_row() {
+fn inv_op_12_fail_and_retry_rewrite_row_sync_and_each_commit_reports_the_row() {
     use crate::value::sync::{FailureKind, OperationFailure};
     let (store, _) = booted_store();
     let begun = transitions(&store, vec![OperationTransition::Begin(Box::new(record(None, OperationStatus::Pending, None)))]);
     let seq = *begun.operations.iter().next().unwrap();
-    let started = transitions(&store, vec![OperationTransition::Start { seq }]);
-    assert_eq!((sync_row(&store, "temp-1"), synced_rows(&started)), (Some("sending:1".into()), vec![("temp-1".to_string(), RowChangeKind::Synced)]));
+    transitions(&store, vec![OperationTransition::Attempt { seq, attempts: 1, cycle_id: 1 }]);
     let failure = OperationFailure::new(FailureKind::Server, "http 503");
     let failed = transitions(&store, vec![OperationTransition::Fail { seq, status: OperationStatus::Failed, failure: failure.clone() }]);
     assert_eq!((sync_row(&store, "temp-1"), synced_rows(&failed).len()), (Some("failed:1".into()), 1));
     assert_eq!(text(&store, "SELECT error_kind || ':' || error_message FROM row_sync WHERE row_id = 'temp-1'"), Some("server:http 503".to_string()));
     transitions(&store, vec![OperationTransition::Retry { seq }]);
     assert_eq!(sync_row(&store, "temp-1"), Some("pending:0".into()));
-    assert_eq!(count(&store, "SELECT COUNT(*) FROM op WHERE error_kind IS NULL AND transport_started = 0 AND status = 'pending'"), 1);
-}
-
-#[test]
-fn start_only_applies_to_a_pending_operation_and_retry_only_to_a_stuck_one() {
-    let (store, _) = booted_store();
-    let begun = transitions(&store, vec![OperationTransition::Begin(Box::new(record(None, OperationStatus::Pending, None)))]);
-    let seq = *begun.operations.iter().next().unwrap();
-    let retried = transitions(&store, vec![OperationTransition::Retry { seq }]);
-    assert!(retried.is_noop());
-    transitions(&store, vec![OperationTransition::Start { seq }]);
-    let twice = transitions(&store, vec![OperationTransition::Start { seq }]);
-    assert!(twice.is_noop());
-    assert_eq!(sync_row(&store, "temp-1"), Some("sending:1".into()));
-    assert_eq!(store.counters().unknown_operation_acks, 2);
+    assert_eq!(count(&store, "SELECT COUNT(*) FROM op WHERE error_kind IS NULL AND status = 'pending'"), 1);
 }
 
 #[test]

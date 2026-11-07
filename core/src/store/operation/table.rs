@@ -9,8 +9,9 @@ use super::quarantine::{quarantine_add, QuarantineReason};
 use crate::owners::write::operation_status::{Operation, OperationId, OperationStatus};
 use crate::identity::{RowId, RowRef};
 
-pub(crate) const OPEN_STATUSES: &str = "('pending', 'failed')";
-const OPERATION_COLUMNS: &str = "seq, action_key, status, temp_id, transport_started, base_revision, created_at, dedupe_key, attempts, error_kind, error_message, since, client_mutation_id";
+pub(crate) const QUEUE_TABLE: &str = "op";
+pub(crate) const OPEN_STATUSES: &str = "('pending', 'sending', 'failed')";
+const OPERATION_COLUMNS: &str = "seq, action_key, status, temp_id, base_revision, created_at, dedupe_key, attempts, error_kind, error_message, since, client_mutation_id";
 
 #[cfg(test)]
 pub fn append_operation(connection: &Connection, operation: &mut Operation, input: &Value) -> rusqlite::Result<i64> {
@@ -20,7 +21,6 @@ pub fn append_operation(connection: &Connection, operation: &mut Operation, inpu
             operation.action_key,
             operation.status.as_sql(),
             operation.temp_id.as_ref().map(RowId::as_str),
-            operation.transport_started as i64,
             operation.base_revision,
             operation.dedupe_key,
             operation.created_at,
@@ -65,9 +65,8 @@ fn operation_at(row: &Row<'_>) -> rusqlite::Result<Option<Operation>> {
     Ok(Some(Operation {
         id: OperationId(row.get(0)?), action_key: row.get(1)?, status, row_ids: Vec::new(),
         temp_id: row.get::<_, Option<String>>(3)?.as_deref().map(stored_row_id).transpose()?,
-        transport_started: row.get::<_, i64>(4)? != 0,
-        base_revision: row.get::<_, Option<i64>>(5)?.unwrap_or(0), created_at: row.get(6)?, dedupe_key: row.get(7)?,
-        attempts: row.get(8)?, error: failure_at(row, 9)?, since: row.get(11)?, client_mutation_id: row.get(12)?,
+        base_revision: row.get::<_, Option<i64>>(4)?.unwrap_or(0), created_at: row.get(5)?, dedupe_key: row.get(6)?,
+        attempts: row.get(7)?, error: failure_at(row, 8)?, since: row.get(10)?, client_mutation_id: row.get(11)?,
     }))
 }
 

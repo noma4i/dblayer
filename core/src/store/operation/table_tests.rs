@@ -20,9 +20,9 @@ fn operation(row: &str, status: OperationStatus) -> Operation {
     operation
 }
 
-fn stored(connection: &Connection, seq: i64) -> Option<(String, String, i64)> {
+fn stored(connection: &Connection, seq: i64) -> Option<(String, String)> {
     connection
-        .query_row("SELECT action_key, status, transport_started FROM op WHERE seq = ?", [seq], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))
+        .query_row("SELECT action_key, status FROM op WHERE seq = ?", [seq], |r| Ok((r.get(0)?, r.get(1)?)))
         .ok()
 }
 
@@ -36,7 +36,7 @@ fn append_stores_action_and_status_then_status_applies() {
     assert!(!operations[0].client_mutation_id.is_empty());
     assert!(!operations[1].client_mutation_id.is_empty());
     assert_ne!(operations[0].client_mutation_id, operations[1].client_mutation_id);
-    assert_eq!(stored(&connection, first), Some(("messages.send".into(), "pending".into(), 0)));
+    assert_eq!(stored(&connection, first), Some(("messages.send".into(), "pending".into())));
     set_status(&connection, first, OperationStatus::Committed).unwrap();
     assert_eq!(stored(&connection, first).unwrap().1, "committed");
 }

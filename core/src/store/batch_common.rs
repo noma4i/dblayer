@@ -38,6 +38,17 @@ pub(super) fn apply_common(writer: &mut RowWrite<'_>, op: &StoreOp, index: usize
             };
             results.push(writer.transitions(vec![transition])?);
         }
+        StoreOp::Attempt { op_id, attempts, cycle_id } => {
+            let seq = i64::try_from(*op_id).map_err(|_| StoreError::Constraint("operation id is too large".into()))?;
+            let cycle_id = i64::try_from(*cycle_id).map_err(|_| StoreError::Constraint("cycle id is too large".into()))?;
+            results.push(writer.transitions(vec![crate::store::OperationTransition::Attempt { seq, attempts: i64::from(*attempts), cycle_id }])?);
+        }
+        StoreOp::Pending { pending, .. } => {
+            if let Some(row) = super::reset::row_op(op) { super::reset::apply_row_ops(writer.connection, vec![row])?; }
+            if let Some(crate::transport::RequestOwner::Operation { seq }) = pending.owner {
+                results.push(writer.transitions(vec![crate::store::OperationTransition::Sending { seq }])?);
+            }
+        }
         StoreOp::Planned { effects } => results.push(super::intent_write::planned(writer, effects)?),
         StoreOp::Intent { op_id, model, row_id, action, payload, effects, origin } => {
             results.push(super::intent_write::intent(writer, *op_id, model, row_id, action, payload, effects)?);

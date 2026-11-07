@@ -1,0 +1,1 @@
+UPDATE op SET attempts = ?2, cycle_id = ?3, status = 'sending' WHERE seq = ?1 AND {}

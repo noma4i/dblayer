@@ -8,24 +8,23 @@ fn id(value: &str) -> RowRef {
     RowRef::new(ModelKey::new("message"), RowId::new(value).unwrap())
 }
 
-fn operation(seq: i64, model: &str, status: OperationStatus, temp: Option<&str>, started: bool) -> Operation {
+fn operation(seq: i64, model: &str, status: OperationStatus, temp: Option<&str>) -> Operation {
     let mut operation = Operation::new(&Operation::action_key(model, "create"), vec![], 0, 0);
     operation.id = OperationId(seq);
     operation.status = status;
     operation.temp_id = temp.map(|value| RowId::new(value).unwrap());
-    operation.transport_started = started;
     operation
 }
 
 fn plain(seq: i64) -> Operation {
-    operation(seq, "message", Pending, None, false)
+    operation(seq, "message", Pending, None)
 }
 
 #[test]
 fn temp_rebuild_needs_missing_row_and_orphans_are_sorted_and_filtered() {
     let temp = id("temp-1");
-    let pending = operation(1, "message", Pending, Some("temp-1"), false);
-    let terminal = operation(3, "message", Committed, Some("temp-1"), false);
+    let pending = operation(1, "message", Pending, Some("temp-1"));
+    let terminal = operation(3, "message", Committed, Some("temp-1"));
     assert!(!needs_temp_rebuild(&pending, &[temp.clone()].into()));
     assert!(needs_temp_rebuild(&pending, &HashSet::new()));
     assert!(!needs_temp_rebuild(&plain(2), &HashSet::new()));
@@ -36,7 +35,7 @@ fn temp_rebuild_needs_missing_row_and_orphans_are_sorted_and_filtered() {
 
 #[test]
 fn plan_combines_actions_in_order() {
-    let started = operation(1, "message", Pending, Some("temp-rebuild"), true);
+    let started = operation(1, "message", Sending, Some("temp-rebuild"));
     let actions = fsck_plan(&[started, plain(2)], &HashSet::new(), &[id("temp-orphan")].into(), &HashSet::new());
     assert_eq!(
         actions,

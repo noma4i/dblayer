@@ -1,0 +1,1 @@
+UPDATE op SET status = 'pending', attempts = 0, error_kind = NULL, error_message = NULL, since = ?2 WHERE seq = ?1 AND {}

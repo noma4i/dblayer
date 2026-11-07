@@ -40,38 +40,27 @@ pub(super) fn apply_transitions(
                 result.operations.insert(*seq);
                 wrote = true;
             }
-            OperationTransition::Start { seq } => {
-                synced.extend(op_keys_of(connection, *seq)?);
-                let started = connection.execute(
-                    &format!(include_str!("../sql/apply_transitions/apply_transitions_update_op.sql"), operation_guard(OperationEvent::Start)?),
-                    params![seq, now_ms],
+            OperationTransition::Attempt { seq, attempts, cycle_id } => {
+                let written = connection.execute(
+                    &format!(include_str!("../sql/apply_transitions/attempt_operation.sql"), operation_guard(OperationEvent::Attempt)?),
+                    params![seq, attempts, cycle_id],
                 )?;
-                if started == 0 {
-                    result.unknown_operation_acks += 1;
-                    continue;
+                if written > 0 {
+                    result.operations.insert(*seq);
+                    wrote = true;
                 }
-                result.operations.insert(*seq);
-                wrote = true;
             }
-            OperationTransition::Postpone { seq, failure } => {
-                synced.extend(op_keys_of(connection, *seq)?);
-                let [kind, message] = failure_cells(Some(failure));
-                let postponed = connection.execute(
-                    &format!(include_str!("../sql/apply_transitions/apply_transitions_update_op_2.sql"), operation_guard(OperationEvent::Postpone)?),
-                    params![seq, kind, message, now_ms],
-                )?;
-                if postponed == 0 {
-                    result.unknown_operation_acks += 1;
-                    continue;
+            OperationTransition::Sending { seq } => {
+                let written = connection.execute(&format!(include_str!("../sql/apply_transitions/sending_operation.sql"), operation_guard(OperationEvent::Attempt)?), params![seq])?;
+                if written > 0 {
+                    result.operations.insert(*seq);
+                    wrote = true;
                 }
-                write_operation_error(connection, *seq, Some(failure))?;
-                result.operations.insert(*seq);
-                wrote = true;
             }
             OperationTransition::Retry { seq } => {
                 synced.extend(op_keys_of(connection, *seq)?);
                 let retried = connection.execute(
-                    &format!(include_str!("../sql/apply_transitions/apply_transitions_update_op_3.sql"), operation_guard(OperationEvent::Retry)?),
+                    &format!(include_str!("../sql/apply_transitions/retry_operation.sql"), operation_guard(OperationEvent::Retry)?),
                     params![seq, now_ms],
                 )?;
                 if retried == 0 {
@@ -101,7 +90,7 @@ pub(super) fn apply_transitions(
     Ok(wrote)
 }
 
-pub(super) fn operation_guard(event: OperationEvent) -> Result<String, StoreError> {
+pub(crate) fn operation_guard(event: OperationEvent) -> Result<String, StoreError> {
     event.guard_sql().ok_or_else(|| StoreError::Constraint(format!("the operation machine accepts {event:?} from no status")))
 }
 
@@ -127,7 +116,6 @@ pub(in super::super) fn begin_operation(connection: &Connection, record: &Operat
             record.action_key,
             record.status.as_sql(),
             record.temp_id.as_ref().map(|id| id.as_str().to_string()),
-            i64::from(record.transport_started),
             record.base_revision,
             record.created_at,
             dedupe_key,

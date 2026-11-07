@@ -10,6 +10,7 @@ pub struct OperationId(pub i64);
 #[serde(rename_all = "snake_case")]
 pub enum OperationStatus {
     Pending,
+    Sending,
     Failed,
     Committed,
     RolledBack,
@@ -19,6 +20,7 @@ impl OperationStatus {
     pub fn as_sql(self) -> &'static str {
         match self {
             OperationStatus::Pending => "pending",
+            OperationStatus::Sending => "sending",
             OperationStatus::Failed => "failed",
             OperationStatus::Committed => "committed",
             OperationStatus::RolledBack => "rolledback",
@@ -28,6 +30,7 @@ impl OperationStatus {
     pub fn from_sql(text: &str) -> Option<Self> {
         match text {
             "pending" => Some(OperationStatus::Pending),
+            "sending" => Some(OperationStatus::Sending),
             "failed" => Some(OperationStatus::Failed),
             "committed" => Some(OperationStatus::Committed),
             "rolledback" => Some(OperationStatus::RolledBack),
@@ -51,7 +54,6 @@ pub struct Operation {
     pub status: OperationStatus,
     pub row_ids: Vec<RowId>,
     pub temp_id: Option<RowId>,
-    pub transport_started: bool,
     pub base_revision: i64,
     pub created_at: i64,
     pub dedupe_key: Option<String>,
@@ -70,7 +72,6 @@ impl Operation {
             status: OperationStatus::Pending,
             row_ids,
             temp_id: None,
-            transport_started: false,
             base_revision,
             created_at,
             dedupe_key: None,

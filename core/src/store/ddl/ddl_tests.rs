@@ -267,7 +267,6 @@ fn core_table_columns_match_spec() {
         "action_key",
         "status",
         "temp_id",
-        "transport_started",
         "base_revision",
         "created_at",
         "dedupe_key",

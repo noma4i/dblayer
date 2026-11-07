@@ -99,7 +99,6 @@ pub(super) fn intent(writer: &mut RowWrite<'_>, op_id: u64, model: &str, row_id:
         row_ids: vec![row_id.clone()],
         temp_id: row_id.is_temp().then_some(row_id),
         input: serde_json::from_str(payload)?,
-        transport_started: false,
         base_revision: Some(writer.revision - 1),
         created_at: writer.now,
         dedupe_key: None,

@@ -13,7 +13,6 @@ fn record() -> OperationRecord {
         row_ids: vec![id("m1"), id("m2")],
         temp_id: None,
         input: json!({"id": "m1", "body": "hi", "extra": {"list": [1, "two", null]}}),
-        transport_started: false,
         base_revision: Some(3),
         created_at: 5,
         dedupe_key: None,
@@ -54,7 +53,6 @@ fn an_operation_keeps_its_rows_and_values_in_child_tables() {
 fn a_failure_is_columns() {
     let (store, seq) = begun();
     let failure = OperationFailure::new(FailureKind::Server, "http 503");
-    send(&store, vec![OperationTransition::Start { seq }]);
     send(&store, vec![OperationTransition::Fail { seq, status: OperationStatus::Failed, failure }]);
     assert_eq!(count(&store, "SELECT COUNT(*) FROM op WHERE error_kind = 'server' AND error_message = 'http 503'"), 1);
     assert_eq!(count(&store, "SELECT COUNT(*) FROM row_sync WHERE error_kind = 'server' AND error_message = 'http 503'"), 2);
@@ -83,7 +81,6 @@ fn graphql_extensions_survive_reopen_in_every_error_owner_and_leave_with_it() {
         store.mark_ready();
         let seq = send(&store, vec![OperationTransition::Begin(Box::new(record()))]);
         let failure = failure(extensions.clone(), "purchase refused");
-        send(&store, vec![OperationTransition::Start { seq }]);
         send(&store, vec![OperationTransition::Fail { seq, status: OperationStatus::Failed, failure: failure.clone() }]);
         drop(store);
         let store = Store::open(&path).unwrap();

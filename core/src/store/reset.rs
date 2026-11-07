@@ -395,8 +395,6 @@ pub(crate) enum RowOp {
     /// `digest = None` keeps the stored digest, `sequence = None` keeps the stored sequence.
     PutSession { digest: Option<String>, sequence: Option<i64> },
     DiscardRestoreFailed { table: String, key: String },
-    /// The durable attempt counter of an operation of the queue.
-    PutAttempts { op_id: i64, attempts: i64, cycle_id: i64 },
 }
 
 pub(crate) fn row_op(op: &crate::owners::store::StoreOp) -> Option<RowOp> {
@@ -419,7 +417,6 @@ pub(crate) fn row_op(op: &crate::owners::store::StoreOp) -> Option<RowOp> {
         StoreOp::RemoveAnswer { request_id } => RowOp::RemoveAnswer { request_id: *request_id },
         StoreOp::ReleasePendingOwner { request_id } => RowOp::ReleasePendingOwner { request_id: *request_id },
         StoreOp::DiscardRestoreFailed { table, key } => RowOp::DiscardRestoreFailed { table: table.clone(), key: key.clone() },
-        StoreOp::Attempt { op_id, attempts, cycle_id } => RowOp::PutAttempts { op_id: i64::try_from(*op_id).unwrap_or(i64::MAX), attempts: i64::from(*attempts), cycle_id: i64::try_from(*cycle_id).unwrap_or(i64::MAX) },
         StoreOp::Session { digest, sequence } => RowOp::PutSession { digest: digest.clone(), sequence: sequence.map(|sequence| i64::try_from(sequence).unwrap_or(i64::MAX)) },
         _ => return None,
     })
@@ -437,7 +434,6 @@ pub(super) fn apply_row_ops(transaction: &Connection, ops: Vec<RowOp>) -> Result
             RowOp::PutAnswer { request_id, operation, answer } => session_state::store_answer(transaction, request_id, operation, &answer)?,
             RowOp::RemoveAnswer { request_id } => session_state::remove_answer(transaction, request_id)?,
             RowOp::ReleasePendingOwner { request_id } => session_state::release_pending_owner(transaction, request_id)?,
-            RowOp::PutAttempts { op_id, attempts, cycle_id } => { transaction.execute(include_str!("sql/reset/apply_row_ops_update_op.sql"), params![op_id, attempts, cycle_id])?; }
             RowOp::DiscardRestoreFailed { table, key } => { transaction.execute(include_str!("sql/reset/apply_row_ops_delete_restore_failed.sql"), params![table, key])?; }
             RowOp::PutSession { digest, sequence } => {
                 let stored = session_state::session(transaction)?;

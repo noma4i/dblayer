@@ -1,0 +1,1 @@
+UPDATE op SET status = 'sending' WHERE seq = ?1 AND {}

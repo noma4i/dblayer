@@ -1,1 +1,0 @@
-UPDATE op SET transport_started = 0, error_kind = ?2, error_message = ?3, since = ?4 WHERE seq = ?1 AND {}

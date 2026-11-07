@@ -42,7 +42,6 @@ fn open_entries(connection: &Connection, keys: Option<&BTreeSet<SyncKey>>, batch
         let entry = SyncEntry {
             action,
             status: operation.status,
-            transport_started: operation.transport_started,
             attempts: operation.attempts,
             error: operation.error.clone(),
             since: operation.since,

@@ -97,7 +97,6 @@ pub struct OperationRecord {
     pub row_ids: Vec<RowId>,
     pub temp_id: Option<RowId>,
     pub input: Value,
-    pub transport_started: bool,
     pub base_revision: Option<i64>,
     pub created_at: i64,
     pub dedupe_key: Option<String>,
@@ -108,10 +107,10 @@ pub struct OperationRecord {
 pub enum OperationTransition {
     Begin(Box<OperationRecord>),
     Close { seq: i64, status: OperationStatus },
-    Start { seq: i64 },
     Fail { seq: i64, status: OperationStatus, failure: OperationFailure },
     Retry { seq: i64 },
-    Postpone { seq: i64, failure: OperationFailure },
+    Attempt { seq: i64, attempts: i64, cycle_id: i64 },
+    Sending { seq: i64 },
     Remove { seq: i64, expected: Option<OperationStatus> },
 }
 

@@ -1,9 +1,8 @@
 CREATE TABLE IF NOT EXISTS op (
   seq INTEGER PRIMARY KEY AUTOINCREMENT,
   action_key TEXT NOT NULL,
-  status TEXT NOT NULL CHECK (status IN ('pending', 'failed', 'committed', 'rolledback')),
+  status TEXT NOT NULL CHECK (status IN ('pending', 'sending', 'failed', 'committed', 'rolledback')),
   temp_id TEXT,
-  transport_started INTEGER NOT NULL DEFAULT 0,
   base_revision INTEGER,
   created_at INTEGER NOT NULL,
   dedupe_key TEXT,

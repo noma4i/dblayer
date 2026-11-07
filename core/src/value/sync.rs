@@ -128,7 +128,6 @@ impl SyncInfo {
 pub struct SyncEntry {
     pub action: String,
     pub status: OperationStatus,
-    pub transport_started: bool,
     pub attempts: u32,
     pub error: Option<OperationFailure>,
     pub since: i64,
@@ -138,10 +137,9 @@ pub struct SyncEntry {
 
 impl SyncEntry {
     fn state(&self) -> SyncState {
-        match (self.status, self.transport_started) {
-            (OperationStatus::Failed, _) => SyncState::Failed,
-            (OperationStatus::Pending, true) => SyncState::Sending,
-            (OperationStatus::Pending, false) if self.batch => SyncState::Sending,
+        match self.status {
+            OperationStatus::Failed => SyncState::Failed,
+            OperationStatus::Pending | OperationStatus::Sending if self.batch => SyncState::Sending,
             _ => SyncState::Pending,
         }
     }
