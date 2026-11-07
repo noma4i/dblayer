@@ -562,7 +562,6 @@ fn more_name(result: LoadMoreResult) -> &'static str {
         LoadMoreResult::Loaded { has_more: true } => "loaded_more",
         LoadMoreResult::Loaded { has_more: false } => "loaded_last",
         LoadMoreResult::NoMore => "no_more",
-        LoadMoreResult::AlreadyLoading => "already_loading",
     }
 }
 

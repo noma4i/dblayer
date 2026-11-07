@@ -133,7 +133,6 @@ private func moreName(_ result: LoadMoreResult) -> String {
   switch result {
   case .loaded(let hasMore): return hasMore ? "loaded_more" : "loaded_last"
   case .noMore: return "no_more"
-  case .alreadyLoading: return "already_loading"
   }
 }
 

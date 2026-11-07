@@ -99,7 +99,7 @@ async fn overlapping_load_more_and_refresh_in_both_answer_orders_leave_a_consist
         assert!(fresh_rows.1.lock().unwrap().iter().all(|change| change.error.is_none()), "{case}: the window after the reset delivered an error");
         assert!(pages.queries.load(Ordering::SeqCst) - before <= 1, "{case}: the window after the reset read more than once");
         let result = bound(database.load_more(database.session_epoch(), "Moment".into(), "feed".into(), "{}".into())).await.unwrap();
-        assert!(matches!(result, LoadMoreResult::Loaded { .. } | LoadMoreResult::NoMore | LoadMoreResult::AlreadyLoading), "{case}: {result:?}");
+        assert!(matches!(result, LoadMoreResult::Loaded { .. } | LoadMoreResult::NoMore), "{case}: {result:?}");
         live.cancel();
         fresh.cancel();
         database.close_now();

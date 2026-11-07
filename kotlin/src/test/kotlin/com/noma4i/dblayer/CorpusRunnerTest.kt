@@ -115,7 +115,6 @@ private fun outcomeName(outcome: WireOperationOutcome): String = when (outcome) 
 private fun moreName(result: LoadMoreResult): String = when (result) {
     is LoadMoreResult.Loaded -> if (result.hasMore) "loaded_more" else "loaded_last"
     LoadMoreResult.NoMore -> "no_more"
-    LoadMoreResult.AlreadyLoading -> "already_loading"
 }
 
 private val corpusDirectory = File("../core/tests/corpus")

@@ -17,7 +17,6 @@ use crate::schema::{NodeRead, NODE_PARAM};
 pub enum LoadMoreResult {
     Loaded { has_more: bool },
     NoMore,
-    AlreadyLoading,
 }
 
 /// The interest of one caller in a load that `Database::begin_load` started.

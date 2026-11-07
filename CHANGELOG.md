@@ -185,6 +185,7 @@
 
 ### Removed
 
+- `LoadMoreResult.alreadyLoading` is gone.
 - `scope.related` is gone: read a server relation with a query.
 - `Blob`, `BlobUpload`, `DB.blob` and `blob_upload` are gone: upload through a model action.
 - `needsAttention`, `canRetry`, `loadedAt` and `errorKind` are gone: read `sync.state` and `ReadState.error`.
