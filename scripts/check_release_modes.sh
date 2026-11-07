@@ -451,8 +451,10 @@ with tempfile.TemporaryDirectory(prefix="dblayer-release-modes-") as directory:
     import time
     def signal_case(sig):
         sig_repo, sig_env = fixture(base / f"signal-{sig.name}")
-        (sig_repo / "scripts/check_docs.sh").write_text("#!/bin/sh\nmkdir -p \"$TEST_ROOT/target\"; touch \"$TEST_ROOT/target/started\"\nuntil [ -e \"$TEST_ROOT/target/signalled\" ]; do sleep 0.05; done\n")
+        (sig_repo / "scripts/check_docs.sh").write_text("#!/bin/sh\nmkdir -p \"$TEST_ROOT/target\"; touch \"$TEST_ROOT/target/started\"\n[ -e \"$TEST_ROOT/target/arm\" ] || exit 0\nuntil [ -s \"$TEST_ROOT/target/signalled\" ]; do sleep 0.05; done\nkill -s \"$(cat \"$TEST_ROOT/target/signalled\")\" $$\n")
         subprocess.run([real_git, "-C", str(sig_repo), "commit", "-aq", "--amend", "--no-edit"], check=True, capture_output=True)
+        (sig_repo / "target").mkdir(exist_ok=True)
+        (sig_repo / "target/arm").touch()
         proc = subprocess.Popen(["bash", "scripts/release.sh", version], cwd=sig_repo, env=sig_env, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)
         deadline = time.time() + 30
         while not (sig_repo / "target/started").exists():
@@ -460,9 +462,11 @@ with tempfile.TemporaryDirectory(prefix="dblayer-release-modes-") as directory:
             time.sleep(0.05)
         assert (sig_repo / "target/release.lock").is_dir()
         proc.send_signal(sig)
-        (sig_repo / "target/signalled").touch()
+        (sig_repo / "target/signalled").write_text(sig.name[3:])
         assert proc.wait(timeout=60) == 128 + sig.value, proc.returncode
         assert not (sig_repo / "target/release.lock").exists(), f"the lock stayed after {sig.name}"
+        (sig_repo / "target/arm").unlink()
+        (sig_repo / "target/signalled").unlink()
         run(["bash", "scripts/release.sh", version], sig_repo, sig_env, contains="Package.swift to be written:")
         return f"ok {sig.name} releases the lock"
 
