@@ -222,6 +222,23 @@ async fn a_refresh_and_a_load_more_fail_at_once_offline_and_the_entity_stream_sh
     rig.database.close_now();
 }
 
+/// D-101: after `open` the transport makes no attempt and waits for no network: a `run` offline fails at once with `Network` and the server sees nothing, and the first `run` online goes out once.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_run_offline_after_open_fails_at_once_and_the_transport_makes_no_attempt() {
+    let rig = Rig::encrypted().await;
+    rig.login_ios("A").await;
+    let epoch = rig.database.session_epoch();
+    let hits = rig.world.log().len();
+    rig.database.set_online(false).unwrap();
+    let run = bound(rig.database.run(epoch, "SessionProfile".into(), "{}".into())).await;
+    assert!(matches!(run, Err(DbError::Network { .. })), "run offline: {run:?}");
+    assert_eq!(rig.world.log().len(), hits, "a run offline reached the server");
+    rig.database.set_online(true).unwrap();
+    bound(rig.database.run(epoch, "SessionProfile".into(), "{}".into())).await.unwrap();
+    assert_eq!(rig.world.log().len(), hits + 1, "the run online made another number of attempts than 1");
+    rig.database.close_now();
+}
+
 /// K12 (consumer finding forward; old line ffi/database.rs act returned the receiver row): a forward into the same chat and into another chat leaves the source row unchanged, upserts the answer row with its own id in the target chat, and the call returns the answer row. The answer has the shape of the mutation of the app: `messageForward.message` with the id `forwarded-1`.
 #[tokio::test(flavor = "multi_thread")]
 async fn a_forward_leaves_the_source_unchanged_upserts_the_answer_row_and_returns_it() {
