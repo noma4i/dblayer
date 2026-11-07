@@ -35,7 +35,7 @@ fn ports(db: std::sync::Arc<Store>, transport: Arc<MockTransport>) -> Ports {
 
 fn moments_spec() -> ModelSpec { ModelSpec::new("moments", vec![FieldSpec::scalar("id", ScalarKind::Id)]) }
 
-fn open(path: &std::path::Path) -> Arc<Store> { Store::open_models(Some(path), vec![moments_spec()], None).map(std::sync::Arc::new).unwrap() }
+pub(super) fn open(path: &std::path::Path) -> Arc<Store> { Store::open_models(Some(path), vec![moments_spec()], None).map(std::sync::Arc::new).unwrap() }
 
 fn session_row(db: &Store) {
     let inner = db.lock();
@@ -55,12 +55,12 @@ async fn answer(waiter: Waiter<Reply>) -> Reply {
     }
 }
 
-async fn start(db: &Arc<Store>, transport: &Arc<MockTransport>) -> Life {
+pub(super) async fn start(db: &Arc<Store>, transport: &Arc<MockTransport>) -> Life {
     let (db, transport) = (db.clone(), transport.clone());
     tokio::task::spawn_blocking(move || Life::start(ports(db, transport)).expect("the first publish comes")).await.unwrap()
 }
 
-async fn closed(life: &Life) {
+pub(super) async fn closed(life: &Life) {
     assert_eq!(answer(life.close()).await, Reply::Life(Ok(())), "close is answered after the store closed its connections");
 }
 

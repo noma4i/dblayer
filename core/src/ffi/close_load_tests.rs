@@ -22,3 +22,19 @@ async fn life_prop_close_under_load() {
     })).collect();
     for lane in lanes { within_secs(18, lane).await.unwrap(); }
 }
+
+/// P-LIFE-23: a second `close` that starts at any point of the first `close` returns, for every database on a loaded multi-thread runtime.
+#[tokio::test(flavor = "multi_thread", worker_threads = 8)]
+async fn life_prop_second_close_at_every_point_of_the_first() {
+    let lanes: Vec<_> = (0..8).map(|lane| tokio::spawn(async move {
+        for later in 0..40 {
+            let clock: Arc<dyn Clock> = Arc::new(SystemClock);
+            let (database, _transport) = with_transport(clock).await;
+            let first = { let database = database.clone(); tokio::spawn(async move { database.close_database().await }) };
+            for _ in 0..later { tokio::task::yield_now().await; }
+            within_secs(15, database.close_database()).await.unwrap_or_else(|error| panic!("lane {lane} later {later}: {error:?}"));
+            within_secs(15, first).await.unwrap().unwrap_or_else(|error| panic!("lane {lane} later {later}: first close {error:?}"));
+        }
+    })).collect();
+    for lane in lanes { within_secs(18, lane).await.unwrap(); }
+}

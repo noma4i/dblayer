@@ -7,6 +7,10 @@ mod call_rule;
 #[cfg(test)]
 mod attempt_tests;
 #[cfg(test)]
+mod close_orders_tests;
+#[cfg(test)]
+mod stop_tests;
+#[cfg(test)]
 mod call_rule_tests;
 mod api;
 mod transfer_api;
@@ -167,6 +171,14 @@ impl Wiring {
     pub fn addresses(&self) -> Option<Addresses> { self.addresses.get().copied() }
 
     pub fn publish(&self, published: Published) { self.published.publish(published); }
+
+    /// Ends every open wait with `Closing` and answers each later wait the same way: no owner runs after the stop to settle one.
+    pub fn close_waits(&self) {
+        self.outcomes.close();
+        self.pulls.close();
+        self.calls_answers.close();
+        self.mutations.close();
+    }
 
     /// Whether the published epoch is already past `epoch`: an answer addressed to that epoch has no receiver left.
     pub fn epoch_passed(&self, epoch: Epoch) -> bool { self.published.read(|published| published.is_some_and(|published| published.epoch > epoch)) }
@@ -520,6 +532,7 @@ impl Life {
     pub fn shutdown(&self) {
         self.shut.store(true, Ordering::SeqCst);
         self.runtime.stop();
+        self.wiring.close_waits();
     }
 
     #[cfg(test)]
