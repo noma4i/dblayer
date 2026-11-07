@@ -153,7 +153,8 @@ fn rt_prop_task_panic_fails() {
     let owner = rig.owner;
     pump(&mut rig.det, owner, |det| det.state(owner).is_some_and(|state| !state.journal(STREAM).is_empty()));
     let failed: Vec<String> = rig.det.trace().iter().filter(|entry| entry.input.starts_with("TaskFailed")).map(|entry| entry.input.clone()).collect();
-    assert!(failed.contains(&format!("TaskFailed {{ id: {} }}", d::read_task(STREAM, 1))), "the snapshot read reports its stream and read");
+    let inputs: Vec<&str> = rig.det.trace().iter().map(|entry| entry.input.as_str()).collect();
+    assert!(failed.contains(&format!("TaskFailed {{ id: {} }}", d::read_task(STREAM, 1))), "the snapshot read reports its stream and read: failed {failed:?}, inputs {inputs:?}");
     let journal = rig.det.state(owner).unwrap().journal(STREAM);
     let Some(Value::Snapshot { rows, state, .. }) = journal.first() else { panic!("a panicked first read gives a Snapshot without rows: {journal:?}") };
     assert!(rows.is_empty() && state.phase == WindowPhase::Failed, "the stream ends its wait with an error: {state:?}");
