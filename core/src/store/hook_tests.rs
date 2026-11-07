@@ -8,13 +8,13 @@ fn written(store: &Arc<Store>, row_id: &str) {
     store.commit(envelope(store, vec![upsert("messages", message(row_id, "c1"))], vec![])).unwrap();
 }
 
-fn within_five_seconds(work: impl FnOnce() + Send + 'static) {
+fn completes(work: impl FnOnce() + Send + 'static) {
     let (done, finished) = mpsc::channel();
     std::thread::spawn(move || {
         work();
         let _ = done.send(());
     });
-    assert_eq!(finished.recv_timeout(Duration::from_secs(5)), Ok(()), "the call never returned: the hook waits for a store lock");
+    recv_within(&finished);
 }
 
 #[test]
@@ -30,7 +30,7 @@ fn inv_conc_01_a_store_hook_may_call_the_store_it_was_announced_from() {
         counter.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
     })).unwrap();
     let worker = store.clone();
-    within_five_seconds(move || {
+    completes(move || {
         written(&worker, "m1");
         worker.erase_models(worker.generation().next(), &["messages"].map(String::from)).unwrap();
         worker.erase_account(worker.generation().next(), false).unwrap();
@@ -61,7 +61,7 @@ fn inv_conc_01_events_reach_the_hook_in_commit_order_while_an_earlier_hook_is_st
     })).unwrap();
     let earlier = store.clone();
     let first = std::thread::spawn(move || written(&earlier, "m1"));
-    first_entered.recv_timeout(Duration::from_secs(5)).unwrap();
+    recv_within(&first_entered);
     let later = store.clone();
     let second = std::thread::spawn(move || written(&later, "m2"));
     crate::test_wait::spin_until("the later commit never reached the store", Duration::from_secs(5), || store.revision_seq().unwrap() >= 2);
@@ -127,7 +127,7 @@ fn a_dropped_deferred_commit_still_announces_so_the_order_never_stalls() {
     })).unwrap();
     drop(deferred(&store, "m1"));
     let later = store.clone();
-    within_five_seconds(move || written(&later, "m2"));
+    completes(move || written(&later, "m2"));
     assert_eq!(announced.load(std::sync::atomic::Ordering::SeqCst), 2);
 }
 

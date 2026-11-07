@@ -72,7 +72,7 @@ async fn flow_message_media_upload() {
     let hold = rig.world.hold_next("PUT");
 
     let receipt = bound(rig.database.send(send_file(epoch, path.to_str().unwrap()))).await.unwrap();
-    hold.entered_for("the file in the network").await;
+    hold.entered().await;
     let temporary = receipt.optimistic_value.clone().unwrap().id;
     yield_until("the bubble stands with its upload", || rows.len() == 1 && status(&rows, &temporary).is_some()).await;
     bound(rig.database.set_local(epoch, "Message".into(), temporary, "localPreviewUrl".into(), json!("file:///clip.jpg").to_string())).await.unwrap();
@@ -147,7 +147,7 @@ async fn out_prop_swap_carries_local() {
     let hold = rig.world.hold_next("SendMessage");
 
     let receipt = bound(rig.database.send(message(epoch, "clip", 10))).await.unwrap();
-    hold.entered_for("the send").await;
+    hold.entered().await;
     let temporary = receipt.optimistic_value.clone().unwrap().id;
     bound(rig.database.set_local(epoch, "Message".into(), temporary, "localPreviewUrl".into(), json!("file:///clip.jpg").to_string())).await.unwrap();
     hold.release();

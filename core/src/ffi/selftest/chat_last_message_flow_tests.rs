@@ -37,7 +37,7 @@ async fn flow_chat_last_message() {
     let hold = rig.world.hold_next("SendMessage");
 
     let receipt = send(&rig, 100).await;
-    hold.entered_for("the send").await;
+    hold.entered().await;
 
     yield_until("the chat shows the new message", || chat_cell(&rig, &rows, "lastMessageAt") == Some(int(100))).await;
     let temporary = receipt.optimistic_value.clone().unwrap().id;

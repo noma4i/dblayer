@@ -40,7 +40,7 @@ async fn flow_message_reactions() {
     let hold = rig.world.hold_then("MessageReact", answer(json!([{"body":"B","userId":"u2"},{"body":"A","userId":"u1"}])));
 
     let receipt = bound(rig.database.act(epoch, "Message".into(), "m1".into(), "react".into(), patch, json!({"body":"A","userId":"u1"}).to_string())).await.unwrap();
-    hold.entered_for("the answer").await;
+    hold.entered().await;
     yield_until("both places show the new reaction with the name of the reactor", || has(&rig, &thread, &["A", "Ann"]) && has(&rig, &entity, &["A", "Ann"])).await;
     for rows in [&thread, &entity] {
         let first = rows.1.lock().unwrap().iter().find(|seen| seen.rows.iter().any(|row| texts(&cell(&rig, "Message", row, "reactions")).contains(&"A".to_string()))).map(|seen| seen.revision);

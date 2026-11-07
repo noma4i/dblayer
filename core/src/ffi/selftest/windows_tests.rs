@@ -72,11 +72,11 @@ async fn overlapping_load_more_and_refresh_in_both_answer_orders_leave_a_consist
         let reload = move || tokio::spawn(async move { refresh.refresh(refresh.session_epoch(), "Moment".into(), Some("feed".into()), "{}".into()).await });
         let (a, b) = if load_more_first {
             let a = load_more();
-            first.entered_for(&case).await;
+            first.entered().await;
             (a, reload())
         } else {
             let b = reload();
-            first.entered_for(&case).await;
+            first.entered().await;
             (load_more(), b)
         };
         for _ in 0..2 { first.release(); second.release(); }

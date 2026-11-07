@@ -34,7 +34,7 @@ async fn joining_multiple_members_keeps_each_once_in_order() {
     assert!(matches!(bound(rig.database.outcome(removed)).await.unwrap(), crate::ffi::WireOperationOutcome::Confirmed { .. }));
     let hold = world.hold_next("AddMember");
     let receipt = bound(rig.database.act(epoch, "Group".into(), group.id.clone(), "add_member".into(), "{}".into(), json!({"userIds":["u4","u5","u4"]}).to_string())).await.unwrap();
-    hold.entered_for("the join").await;
+    hold.entered().await;
     let query = json!({"model":"Member","relation":"group_members","params":params});
     let ids: Vec<_> = bound(rig.database.read_query(epoch, crate::ffi::QuerySpec::json(query.to_string()))).await.unwrap().into_iter().map(|row| row.id).collect();
     assert_eq!(ids, ["u1", "u2", "u3", "u4", "u5"]);
@@ -51,7 +51,7 @@ async fn an_operation_outcome_can_be_read_twice_from_its_receipt() {
     let group = confirmed_group(&rig).await;
     let hold = world.hold_next("AddMember");
     let receipt = bound(rig.database.act(epoch, "Group".into(), group.id.clone(), "add_member".into(), "{}".into(), json!({"userIds":["u9"]}).to_string())).await.unwrap();
-    hold.entered_for("the add").await;
+    hold.entered().await;
     hold.release();
     let first = bound(rig.database.outcome(receipt.clone())).await.unwrap();
     let leaving = bound(rig.database.act(epoch, "Group".into(), group.id, "leave".into(), "{}".into(), "{}".into())).await.unwrap();
@@ -71,7 +71,7 @@ async fn a_refused_destroy_restores_the_row_according_to_its_declaration() {
         let group = confirmed_group(&rig).await;
         let hold = world.hold_then("DeleteGroup", fault);
         let receipt = bound(rig.database.destroy(epoch, "Group".into(), group.id.clone())).await.unwrap();
-        hold.entered_for("destroy").await;
+        hold.entered().await;
         assert!(bound(rig.database.read_row(epoch, "Group".into(), group.id.clone())).await.unwrap().is_none());
         hold.release();
         assert!(matches!(bound(rig.database.outcome(receipt)).await.unwrap(), crate::ffi::WireOperationOutcome::Rejected { .. }));
@@ -101,18 +101,18 @@ async fn an_outcome_arrives_before_a_held_list_and_the_automatic_reread_shows_th
     bound(rig.database.loaded(stream)).await.unwrap();
     let old = rig.world.hold_next("GroupMembers");
     let refreshing = { let database = rig.database.clone(); let params = params.clone(); tokio::spawn(async move { database.refresh(epoch, "Member".into(), Some("group_members".into()), params.to_string()).await }) };
-    old.entered_for("the old list").await;
+    old.entered().await;
     rig.world.set_members("JOINED", &["u1", "u2", "u3", "u9"]);
     let mutation = rig.world.hold_next("AddMember");
     let acting = { let database = rig.database.clone(); let id = group.id.clone(); tokio::spawn(async move { database.act(epoch, "Group".into(), id, "add_member".into(), "{}".into(), json!({"userIds":["u9"]}).to_string()).await }) };
-    mutation.entered_for("the add").await;
+    mutation.entered().await;
     let receipt = bound(acting).await.unwrap().unwrap();
     mutation.release();
     assert!(matches!(bound(rig.database.outcome(receipt)).await.unwrap(), crate::ffi::WireOperationOutcome::Confirmed { .. }));
     old.release();
     bound(refreshing).await.unwrap().unwrap();
-    let shown = tokio::time::timeout(std::time::Duration::from_secs(20), async {
-        while let Some(delivery) = crate::test_wait::within_secs(20, deliveries.recv()).await {
+    let shown = async {
+        while let Some(delivery) = crate::test_wait::within(deliveries.recv()).await {
             let rows = match delivery.value {
                 crate::ffi::ReadValue::Snapshot { rows, .. } => rows,
                 crate::ffi::ReadValue::Delta { edits, .. } => crate::ffi::RowEdit::carried(&edits),
@@ -121,7 +121,7 @@ async fn an_outcome_arrives_before_a_held_list_and_the_automatic_reread_shows_th
             if rows.iter().any(|row| row.id == "u9") { return true; }
         }
         false
-    }).await.unwrap_or(false);
+    }.await;
     assert!(shown, "the automatic reread did not show u9");
     rig.database.cancel_stream(stream);
     rig.database.close_now();
@@ -143,13 +143,13 @@ async fn react_then_undo_keeps_the_other_users_reaction() {
     let second = rig.world.hold_then("MessageReact", Fault::Answer(answer(json!([{"body":"B","userId":"u2"}]))));
     let patch = json!({"reactions":{"$keyed":{"by":"userId","element":{"body":{"$arg":"body"},"userId":{"$arg":"userId"}}}}}).to_string();
     let first_receipt = bound(rig.database.act(epoch, "Message".into(), "m1".into(), "react".into(), patch.clone(), json!({"body":"A","userId":"u1"}).to_string())).await.unwrap();
-    first.entered_for("react").await;
+    first.entered().await;
     let second_receipt = bound(rig.database.act(epoch, "Message".into(), "m1".into(), "react".into(), patch, json!({"body":"","userId":"u1"}).to_string())).await.unwrap();
     let optimistic = bound(rig.database.read_row(epoch, "Message".into(), "m1".into())).await.unwrap().unwrap();
     assert_eq!(optimistic.cells[3], other);
     first.release();
     assert!(matches!(bound(rig.database.outcome(first_receipt)).await.unwrap(), crate::ffi::WireOperationOutcome::Confirmed { .. }));
-    second.entered_for("undo").await;
+    second.entered().await;
     second.release();
     assert!(matches!(bound(rig.database.outcome(second_receipt)).await.unwrap(), crate::ffi::WireOperationOutcome::Confirmed { .. }));
     let row = bound(rig.database.read_row(epoch, "Message".into(), "m1".into())).await.unwrap().unwrap();
@@ -167,7 +167,7 @@ async fn a_refused_durable_send_keeps_its_row_when_declared() {
     let hold = rig.world.hold_then("SendMessage", Fault::Http(422));
     let receipt = bound(rig.database.send(message(epoch, "held", 2))).await.unwrap();
     let id = receipt.optimistic_value.as_ref().unwrap().id.clone();
-    hold.entered_for("the durable send").await;
+    hold.entered().await;
     assert!(bound(rig.database.read_row(epoch, "Message".into(), id.clone())).await.unwrap().is_some());
     hold.release();
     assert!(matches!(bound(rig.database.outcome(receipt)).await.unwrap(), crate::ffi::WireOperationOutcome::Rejected { .. }));
@@ -197,18 +197,18 @@ async fn a_later_confirmed_membership_change_survives_an_earlier_refusal() {
     if first_join { rig.world.set_members("JOINED", &["u1", "u2", "u3"]); }
     let old = rig.world.hold_next("GroupMembers");
     let reading = { let database = rig.database.clone(); let params = params.clone(); tokio::spawn(async move { database.refresh(epoch, "Member".into(), Some("group_members".into()), params.to_string()).await }) };
-    old.entered_for("the old member list").await;
+    old.entered().await;
     let first = rig.world.hold_then(if first_join { "AddMember" } else { "RemoveMember" }, Fault::Refuse { code: "FORBIDDEN", confirmed: true });
     let second = rig.world.hold_next(if first_join { "RemoveMember" } else { "AddMember" });
     let start = |action: &'static str| { let database = rig.database.clone(); let id = group.id.clone(); tokio::spawn(async move { database.act(epoch, "Group".into(), id, action.into(), "{}".into(), json!({"userIds": ["u4"]}).to_string()).await }) };
     let (earlier, later) = if first_join { ("add_member", "remove_member") } else { ("remove_member", "add_member") };
     let joining = start(earlier);
-    first.entered_for("the first change").await;
+    first.entered().await;
     let joining = bound(joining).await.unwrap().unwrap();
     first.release();
     assert!(matches!(bound(rig.database.outcome(joining)).await.unwrap(), crate::ffi::WireOperationOutcome::Rejected { .. }));
     let leaving = start(later);
-    second.entered_for("the second change").await;
+    second.entered().await;
     second.release();
     let leaving = bound(leaving).await.unwrap().unwrap();
     assert!(matches!(bound(rig.database.outcome(leaving)).await.unwrap(), crate::ffi::WireOperationOutcome::Confirmed { .. }));
@@ -240,7 +240,7 @@ async fn out_leave_rows_orders() {
         let action = if removing { "remove_member" } else { "add_member" };
         let gate = rig.world.hold_then(if removing { "RemoveMember" } else { "AddMember" }, Fault::Refuse { code: "FORBIDDEN", confirmed: true });
         let acting = { let database = rig.database.clone(); let id = group.id.clone(); tokio::spawn(async move { database.act(epoch, "Group".into(), id, action.into(), "{}".into(), json!({"userIds": ["u4"]}).to_string()).await }) };
-        gate.entered_for(action).await;
+        gate.entered().await;
         for (order, _) in orders {
             let query = json!({"model": "Member", "relation": "group_members", "params": {"groupId": group.id, "order": order}}).to_string();
             let ids: Vec<_> = bound(rig.database.read_query(epoch, crate::ffi::QuerySpec::json(query))).await.unwrap().into_iter().map(|row| row.id).collect();
@@ -269,12 +269,8 @@ async fn forward_returns_its_optimistic_value_before_the_server_answers() {
     let source = bound(rig.database.read_row(epoch, "Message".into(), "m1".into())).await.unwrap().unwrap();
     let hold = rig.world.hold_next("MessageForward");
     let mut forward = { let database = rig.database.clone(); tokio::spawn(async move { database.act(epoch, "Message".into(), "m1".into(), "forward".into(), "{}".into(), json!({"targetChatId": "c2"}).to_string()).await }) };
-    hold.entered_for("forward").await;
-    let returned = tokio::time::timeout(std::time::Duration::from_secs(5), &mut forward).await;
-    let result = match returned {
-        Ok(result) => result.unwrap().unwrap(),
-        Err(_) => { hold.release(); let _ = bound(forward).await; panic!("forward did not return before the server answer") }
-    };
+    hold.entered().await;
+    let result = crate::test_wait::within(&mut forward).await.unwrap().unwrap();
     let optimistic = result.optimistic_value.as_ref().unwrap();
     assert_ne!(optimistic.id, "forwarded-1");
     let written = bound(rig.database.read_row(epoch, "Message".into(), optimistic.id.clone())).await.unwrap().unwrap();
@@ -342,11 +338,11 @@ async fn an_acknowledged_membership_change_survives_an_older_list_answer() {
         }
         let held = rig.world.hold_next("GroupMembers");
         let reading = { let database = rig.database.clone(); let params = params.clone(); tokio::spawn(async move { database.refresh(epoch, "Member".into(), Some("group_members".into()), params).await }) };
-        held.entered_for("the old member list").await;
+        held.entered().await;
         let action = if removing { "remove_member" } else { "add_member" };
         let mutation = rig.world.hold_next(if removing { "RemoveMember" } else { "AddMember" });
         let acting = { let database = rig.database.clone(); let id = created.id.clone(); tokio::spawn(async move { database.act(epoch, "Group".into(), id, action.into(), "{}".into(), json!({"userIds": ["u4"]}).to_string()).await }) };
-        mutation.entered_for("the membership mutation").await;
+        mutation.entered().await;
         let receipt = bound(acting).await.unwrap().unwrap();
         if answer_first { mutation.release(); }
         if answer_first { assert!(matches!(bound(rig.database.outcome(receipt.clone())).await.unwrap(), crate::ffi::WireOperationOutcome::Confirmed { .. })); }
@@ -388,11 +384,7 @@ async fn a_command_read_between_its_confirming_commit_and_the_announcement_is_de
     *shared.after_commit.lock().unwrap() = Some(Box::new(move |result| {
         if result.replaced.is_empty() { return; }
         probe_window.store(true, Ordering::SeqCst);
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
-        while !probe_done.load(Ordering::SeqCst) {
-            assert!(std::time::Instant::now() < deadline, "the read of the command never came");
-            std::thread::yield_now();
-        }
+        crate::test_wait::spin_until("the read of the command never came", std::time::Duration::from_secs(10), || probe_done.load(Ordering::SeqCst));
     }));
     rig.database.set_online(true).unwrap();
     yield_until("the confirming commit is visible and not announced", || in_window.load(Ordering::SeqCst)).await;
@@ -419,7 +411,7 @@ async fn a_server_id_that_replaces_a_temporary_row_of_a_held_list_arrives_as_a_r
     let hold = rig.world.hold_next("CreateGroup");
     let (values, args) = group("friends");
     let receipt = bound(rig.database.create(epoch, "Group".into(), values, args)).await.unwrap();
-    hold.entered_for("the create").await;
+    hold.entered().await;
     hold.release();
     assert!(matches!(bound(rig.database.outcome(receipt)).await.unwrap(), crate::ffi::WireOperationOutcome::Confirmed { .. }));
     let edits = loop {

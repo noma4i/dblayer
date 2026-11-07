@@ -324,7 +324,7 @@ async fn out_outcome_done_run() {
     let receipt = rig.create("a").await;
     let first = rig.outcome(&receipt).await;
 
-    let again = tokio::time::timeout(std::time::Duration::from_secs(1), rig.db.outcome(receipt.clone())).await.expect("a finished operation answers at once").unwrap();
+    let again = within(rig.db.outcome(receipt.clone())).await.unwrap();
 
     assert_eq!(kind_of(&first), "Confirmed");
     assert_eq!(first, again);

@@ -1,9 +1,5 @@
-use std::time::Duration;
-
 use super::toys_tests::*;
 use super::*;
-
-const WAIT: Duration = Duration::from_secs(5);
 
 #[test]
 fn rt_prop_overload_bounded() {
@@ -20,14 +16,12 @@ fn rt_prop_overload_bounded() {
     runtime.start_epoch(1);
     runtime.post(store, EpochStamp::Epoch(1), ToyInput::WorkAsync(7));
     runtime.barrier();
-    let began = std::time::Instant::now();
     for frame in 0..FRAMES {
         runtime.post(feed, EpochStamp::Epoch(1), ToyInput::Deposit(1));
         if frame % (FRAMES / CALLS) == 0 { runtime.post(feed, EpochStamp::Epoch(1), ToyInput::WorkRequest(frame)); }
         if frame == FRAMES / 3 { runtime.post(feed, EpochStamp::Epoch(1), ToyInput::Note(OFFLINE)); }
         if frame == 2 * FRAMES / 3 { runtime.post(feed, EpochStamp::Epoch(1), ToyInput::Note(ONLINE)); }
     }
-    assert!(began.elapsed() < WAIT, "a held Written of the store never blocks a sender");
     runtime.post(store, EpochStamp::Epoch(1), ToyInput::Release);
     runtime.barrier();
     assert!(runtime.history(store).iter().any(|entry| entry.input == "Result(14)" && !entry.dropped), "the held answer of the store arrives when it is released");

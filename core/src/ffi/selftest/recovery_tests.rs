@@ -5,7 +5,7 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use serde_json::json;
 
-use super::rig_tests::{bound, named_bound, Gate};
+use super::rig_tests::{bound, Gate};
 use crate::ffi::encrypted_tests::ThroughServer;
 use crate::ffi::sealed_errors_tests::moment_spec;
 use crate::ffi::session_guards_tests::{Rig as SessionRig, SOCIAL_BODY};
@@ -63,19 +63,19 @@ async fn a_round_running_at_the_session_exit_asks_for_the_job_of_the_next_epoch_
     database.set_online(true).unwrap();
     let jobs = Arc::new(Jobs::default());
     database.set_round_jobs(jobs.clone());
-    named_bound("first sign-in", database.session_call("social".into(), SOCIAL_BODY.into())).await.unwrap();
+    bound(database.session_call("social".into(), SOCIAL_BODY.into())).await.unwrap();
     let first = database.session_epoch();
     let file = || WireUploadRequest::of(&UploadFile::new(source.to_str().unwrap()));
-    named_bound("upload in A", database.upload(first, "Moment".into(), "42".into(), "upload".into(), file())).await.unwrap();
+    bound(database.upload(first, "Moment".into(), "42".into(), "upload".into(), file())).await.unwrap();
     let asked = jobs.0.lock().unwrap().clone();
     assert_eq!(asked.len(), 1);
     assert_eq!(asked[0].1, first);
     database.round_started(asked[0].0, 7, first);
-    named_bound("reset A", database.session_reset()).await.unwrap();
-    named_bound("second sign-in", database.session_call("social".into(), SOCIAL_BODY.into())).await.unwrap();
+    bound(database.session_reset()).await.unwrap();
+    bound(database.session_call("social".into(), SOCIAL_BODY.into())).await.unwrap();
     let second = database.session_epoch();
     assert_ne!(first, second);
-    named_bound("upload in B", database.upload(second, "Moment".into(), "43".into(), "upload".into(), file())).await.unwrap();
+    bound(database.upload(second, "Moment".into(), "43".into(), "upload".into(), file())).await.unwrap();
     assert_eq!(jobs.0.lock().unwrap().len(), 1, "the running round of A asked for a second job");
     database.round_ended(7, first);
     crate::test_wait::within_secs(10, async { while jobs.0.lock().unwrap().len() < 2 { tokio::task::yield_now().await; } }).await;
@@ -100,15 +100,15 @@ async fn an_active_and_a_queued_upload_end_at_the_exit_and_the_next_sign_in_runs
         }).collect();
         database.register_operations(json!(registered).to_string()).await.unwrap();
         database.set_online(true).unwrap();
-        named_bound("first sign-in", database.session_call("social".into(), SOCIAL_BODY.into())).await.unwrap();
+        bound(database.session_call("social".into(), SOCIAL_BODY.into())).await.unwrap();
         rig.server.reply_with(json!({"createBlob": {"url": "https://upload", "signedId": "sid", "blobId": "bid"}, "makeMoment": {"id": "42", "text": "clip"}}));
         let mut receipts = Vec::new();
         for id in ["42", "43"] {
             let source = directory.path().join(format!("{id}.mp4"));
             std::fs::write(&source, b"abc").unwrap();
-            receipts.push(named_bound(&format!("upload {id}"), database.upload(database.session_epoch(), "Moment".into(), id.into(), "upload".into(), WireUploadRequest::of(&UploadFile::new(source.to_str().unwrap())))).await.unwrap());
+            receipts.push(bound(database.upload(database.session_epoch(), "Moment".into(), id.into(), "upload".into(), WireUploadRequest::of(&UploadFile::new(source.to_str().unwrap())))).await.unwrap());
         }
-        gate.entered_for("the first PUT").await;
+        gate.entered().await;
         let waiters: Vec<_> = receipts.into_iter().map(|receipt| {
             let database = database.clone();
             let (started, ready) = tokio::sync::oneshot::channel();
@@ -127,16 +127,16 @@ async fn an_active_and_a_queued_upload_end_at_the_exit_and_the_next_sign_in_runs
         let mut tasks = Vec::new();
         for (task, ready) in waiters { bound(ready).await.unwrap(); tasks.push(task); }
 
-        named_bound("session reset", database.session_reset()).await.unwrap();
+        bound(database.session_reset()).await.unwrap();
 
-        let refused = named_bound("upload without a session", database.upload(database.session_epoch(), "Moment".into(), "42".into(), "upload".into(), WireUploadRequest::of(&UploadFile::new(directory.path().join("42.mp4").to_str().unwrap())))).await;
+        let refused = bound(database.upload(database.session_epoch(), "Moment".into(), "42".into(), "upload".into(), WireUploadRequest::of(&UploadFile::new(directory.path().join("42.mp4").to_str().unwrap())))).await;
         assert!(matches!(refused, Err(DbError::NoSession { .. })));
 
         for (index, waiter) in tasks.into_iter().enumerate() {
-            let ended = named_bound(&format!("outcome of upload {index}"), waiter).await.unwrap();
+            let ended = bound(waiter).await.unwrap();
             assert!(matches!(ended, Ok(crate::ffi::WireOperationOutcome::Interrupted)), "waiter {index} returned {ended:?}");
         }
-        named_bound("second sign-in", database.session_call("social".into(), SOCIAL_BODY.into())).await.unwrap();
+        bound(database.session_call("social".into(), SOCIAL_BODY.into())).await.unwrap();
         for _ in 0..8 { gate.release(); }
         bound(put_ended.notified()).await;
 

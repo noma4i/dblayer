@@ -292,11 +292,7 @@ fn rows_show_a_delivery_only_after_it_is_kept() {
     let value = ReadValue::Snapshot { revision: 7, rows: vec![row], edits: Vec::new(), state };
     let kept = rows.1.lock().unwrap();
     let delivering = { let rows = rows.clone(); std::thread::spawn(move || rows.delivered(StreamDelivery { stream: 1, epoch: 1, seq: 1, value })) };
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
-    while crate::test_wait::mutex_free(&rows.3) {
-        assert!(std::time::Instant::now() < deadline, "the delivery did not reach the kept values");
-        std::thread::yield_now();
-    }
+    crate::test_wait::spin_until("the delivery did not reach the kept values", std::time::Duration::from_secs(10), || !crate::test_wait::mutex_free(&rows.3));
     assert!(!crate::test_wait::mutex_free(&rows.0), "the rows are readable before the delivery is kept");
     drop(kept);
     crate::test_wait::join_within(delivering);

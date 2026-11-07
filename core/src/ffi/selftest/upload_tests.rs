@@ -7,10 +7,6 @@ use async_trait::async_trait;
 use serde_json::json;
 
 use super::rig_tests::bound;
-
-async fn named_bound<T>(step: &str, work: impl std::future::Future<Output = T>) -> T {
-    tokio::time::timeout(std::time::Duration::from_secs(8), work).await.unwrap_or_else(|_| panic!("{step}: did not return within 8 seconds"))
-}
 use crate::ffi::encrypted_tests::ThroughServer;
 use crate::ffi::sealed_errors_tests::moment_spec;
 use crate::ffi::session_guards_tests::{Rig as SessionRig, SOCIAL_BODY};
@@ -65,7 +61,7 @@ async fn opened_with_model(rig: &SessionRig, puts: Arc<Puts>, model: crate::sche
     }).collect();
     database.register_operations(json!(registered).to_string()).await.unwrap();
     database.set_online(true).unwrap();
-    named_bound("sign-in", database.session_call("social".into(), SOCIAL_BODY.into())).await.unwrap();
+    bound(database.session_call("social".into(), SOCIAL_BODY.into())).await.unwrap();
     rig.server.reply_with(json!({
         "createBlob": {"url": "https://upload", "signedId": "sid", "blobId": "bid"},
         "initMultipart": {"key": "blob-key", "uploadId": "multi"},
@@ -112,8 +108,8 @@ async fn a_small_file_uploads_in_one_step_and_its_mutation_carries_the_signed_id
     let directory = tempfile::tempdir().unwrap();
     let source = directory.path().join("clip.mp4");
     std::fs::write(&source, b"abc").unwrap();
-    let receipt = named_bound("upload", database.upload(database.session_epoch(), "Moment".into(), "42".into(), "upload".into(), request(&source))).await.unwrap();
-    let outcome = named_bound("outcome", database.outcome(receipt)).await.unwrap();
+    let receipt = bound(database.upload(database.session_epoch(), "Moment".into(), "42".into(), "upload".into(), request(&source))).await.unwrap();
+    let outcome = bound(database.outcome(receipt)).await.unwrap();
     assert!(matches!(outcome, WireOperationOutcome::Confirmed { .. }), "{outcome:?}");
     assert_eq!(*puts.0.lock().unwrap(), vec![(0, 3)]);
     let made = executed(&rig, "MakeMoment");
@@ -131,8 +127,8 @@ async fn a_large_file_uploads_in_parts_and_completes_before_its_mutation() {
     let directory = tempfile::tempdir().unwrap();
     let source = directory.path().join("long.mp4");
     std::fs::File::create(&source).unwrap().set_len(11 * MEBIBYTE).unwrap();
-    let receipt = named_bound("upload", database.upload(database.session_epoch(), "Moment".into(), "42".into(), "upload".into(), request(&source))).await.unwrap();
-    let outcome = named_bound("outcome", database.outcome(receipt)).await.unwrap();
+    let receipt = bound(database.upload(database.session_epoch(), "Moment".into(), "42".into(), "upload".into(), request(&source))).await.unwrap();
+    let outcome = bound(database.outcome(receipt)).await.unwrap();
     assert!(matches!(outcome, WireOperationOutcome::Confirmed { .. }), "{outcome:?}");
     assert_eq!(*puts.0.lock().unwrap(), vec![(0, 5 * MEBIBYTE), (5 * MEBIBYTE, 5 * MEBIBYTE), (10 * MEBIBYTE, MEBIBYTE)]);
     let completed = executed(&rig, "CompleteMultipart");
@@ -153,8 +149,8 @@ async fn a_cancelled_upload_sends_nothing() {
     let source = directory.path().join("clip.mp4");
     std::fs::write(&source, b"abc").unwrap();
     let epoch = database.session_epoch();
-    named_bound("upload", database.upload(epoch, "Moment".into(), "42".into(), "upload".into(), request(&source))).await.unwrap();
-    assert!(named_bound("cancel", database.cancel_upload(epoch, "Moment".into(), "42".into(), "upload".into())).await.unwrap());
+    bound(database.upload(epoch, "Moment".into(), "42".into(), "upload".into(), request(&source))).await.unwrap();
+    assert!(bound(database.cancel_upload(epoch, "Moment".into(), "42".into(), "upload".into())).await.unwrap());
     database.set_online(true).unwrap();
     bound(database.operations_quiet()).await;
     assert!(puts.0.lock().unwrap().is_empty());
@@ -171,10 +167,10 @@ async fn a_send_with_a_file_confirms_the_row_the_server_answers() {
     let source = directory.path().join("clip.mp4");
     std::fs::write(&source, b"abc").unwrap();
     let epoch = database.session_epoch();
-    let receipt = named_bound("send", database.send(crate::ffi::CommandRequest { epoch, model: "Moment".into(), values_json: r#"{"text":"clip"}"#.into(), args_json: "{}".into(), upload: Some(crate::ffi::command::CommandUpload { action: "upload".into(), request: request(&source) }) })).await.unwrap();
+    let receipt = bound(database.send(crate::ffi::CommandRequest { epoch, model: "Moment".into(), values_json: r#"{"text":"clip"}"#.into(), args_json: "{}".into(), upload: Some(crate::ffi::command::CommandUpload { action: "upload".into(), request: request(&source) }) })).await.unwrap();
     let shown = receipt.optimistic_value.clone().expect("the receipt carries the row");
     assert_eq!(shown.uploads.iter().map(|entry| entry.action.as_str()).collect::<Vec<_>>(), ["upload"], "the row shows the transfer of its action at once");
-    let outcome = named_bound("outcome", database.outcome(receipt)).await.unwrap();
+    let outcome = bound(database.outcome(receipt)).await.unwrap();
     let WireOperationOutcome::Confirmed { value, .. } = outcome else { panic!("{outcome:?}") };
     assert_eq!(value.map(|row| row.id), Some("42".to_string()));
     database.close_now();

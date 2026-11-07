@@ -27,11 +27,7 @@ impl CredentialSlot for HoldSlot {
     fn get(&self) -> Result<Option<String>, TransportError> {
         let read = self.reads.fetch_add(1, Ordering::SeqCst) + 1;
         if self.hold_at.load(Ordering::SeqCst) == read {
-            let limit = std::time::Instant::now() + Duration::from_secs(10);
-            while !self.released.load(Ordering::SeqCst) {
-                assert!(std::time::Instant::now() < limit, "the held read was never released");
-                std::thread::yield_now();
-            }
+            crate::test_wait::spin_until("the held read was never released", Duration::from_secs(10), || self.released.load(Ordering::SeqCst));
         }
         self.memory.get()
     }

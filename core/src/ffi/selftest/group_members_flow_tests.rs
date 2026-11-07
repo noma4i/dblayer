@@ -35,7 +35,7 @@ async fn flow_group_members() {
     let hold = rig.world.hold_next("AddMember");
 
     let receipt = bound(rig.database.act(epoch, "Group".into(), chat.id.clone(), "add_member".into(), "{}".into(), json!({"userIds":["u4"]}).to_string())).await.unwrap();
-    hold.entered_for("the add").await;
+    hold.entered().await;
 
     yield_until("the member is in the list before the answer", || has(&rows, "u4")).await;
     let first = rows.1.lock().unwrap().iter().find(|seen| seen.rows.iter().any(|row| row.id == "u4")).cloned().unwrap();
@@ -57,7 +57,7 @@ async fn flow_group_members_refused_add_removes_the_user_from_the_list() {
     let hold = rig.world.hold_then("AddMember", Fault::Business);
 
     let receipt = bound(rig.database.act(epoch, "Group".into(), chat.id.clone(), "add_member".into(), "{}".into(), json!({"userIds":["u4"]}).to_string())).await.unwrap();
-    hold.entered_for("the add").await;
+    hold.entered().await;
     yield_until("the member is in the list before the answer", || has(&rows, "u4")).await;
     hold.release();
 

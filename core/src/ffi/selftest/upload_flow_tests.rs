@@ -65,7 +65,7 @@ async fn flow_chat_photo_upload() {
     let hold = rig.world.hold_next("PUT");
 
     let receipt = bound(rig.database.upload(epoch, "Chat".into(), "c1".into(), "update_photo".into(), request(&path, json!({"id": "c1"})))).await.unwrap();
-    hold.entered_for("the file in the network").await;
+    hold.entered().await;
     yield_until("the chat shows the queued upload while the file is in the network", || status(&chat, "c1", "update_photo") == Some(WireUploadStatus::Queued)).await;
     hold.release();
     assert!(matches!(bound(rig.database.outcome(receipt)).await.unwrap(), WireOperationOutcome::Confirmed { .. }));
@@ -84,7 +84,7 @@ async fn xfer_prop_local_url() {
     let epoch = rig.database.session_epoch();
     let hold = rig.world.hold_next("PUT");
     let receipt = bound(rig.database.upload(epoch, "Chat".into(), "c1".into(), "update_photo".into(), request(&path, json!({"id": "c1"})))).await.unwrap();
-    hold.entered_for("the file in the network").await;
+    hold.entered().await;
     yield_until("the copy has a URL", || local_url(&chat, "c1", "update_photo").is_some()).await;
     let url = local_url(&chat, "c1", "update_photo").unwrap();
     assert!(url.starts_with("file://") && std::path::Path::new(&url["file://".len()..]).exists(), "{url}");
@@ -135,7 +135,7 @@ async fn xfer_prop_upload_state_reaches_row_streams() {
     let hold = rig.world.hold_next("PUT");
 
     let receipt = bound(rig.database.upload(epoch, "Chat".into(), "c1".into(), "update_photo".into(), request(&path, json!({"id": "c1"})))).await.unwrap();
-    hold.entered_for("the file in the network").await;
+    hold.entered().await;
     yield_until("both places show the queued upload", || [&chat, &list].iter().all(|rows| status(rows, "c1", "update_photo") == Some(WireUploadStatus::Queued))).await;
     let first = |rows: &Rows| rows.1.lock().unwrap().iter().find(|seen| seen.rows.iter().any(|row| row.uploads.iter().any(|entry| entry.action == "update_photo"))).map(|seen| seen.revision);
     assert!(first(&chat).is_some() && first(&list).is_some(), "a place never showed the upload {:?} {:?}", first(&chat), first(&list));
@@ -169,7 +169,7 @@ async fn xfer_status_local_url() {
     let epoch = rig.database.session_epoch();
     let hold = rig.world.hold_next("PUT");
     let receipt = bound(rig.database.upload(epoch, "Chat".into(), "c1".into(), "update_photo".into(), request(&path, json!({"id": "c1"})))).await.unwrap();
-    hold.entered_for("the file in the network").await;
+    hold.entered().await;
     let ReadValue::Status { local_url: Some(url), .. } = status_until(&stream, "the copy has a URL", |value| matches!(value, ReadValue::Status { local_url: Some(_), .. })).await else { unreachable!() };
     assert!(url.starts_with("file://") && std::path::Path::new(&url["file://".len()..]).exists(), "{url}");
     hold.release();

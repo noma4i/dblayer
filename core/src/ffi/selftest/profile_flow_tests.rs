@@ -35,7 +35,7 @@ async fn flow_current_user_profile() {
 
     let refused = rig.world.hold_then("ProfileUpdate", Fault::Business);
     let receipt = bound(rig.database.act(epoch, "User".into(), "user".into(), "update".into(), json!({"name": "Draft"}).to_string(), json!({"name": "Draft"}).to_string())).await.unwrap();
-    refused.entered_for("the refusal").await;
+    refused.entered().await;
     yield_until("every place shows the draft", || places.iter().all(|rows| field(&rig, rows, "user", "name") == Some(text("Draft")))).await;
     refused.release();
     assert!(matches!(bound(rig.database.outcome(receipt)).await.unwrap(), WireOperationOutcome::Rejected { .. }));
@@ -43,7 +43,7 @@ async fn flow_current_user_profile() {
 
     let hold = rig.world.hold_next("ProfileUpdate");
     let receipt = bound(rig.database.act(epoch, "User".into(), "user".into(), "update".into(), json!({"name": "New"}).to_string(), json!({"name": "New"}).to_string())).await.unwrap();
-    hold.entered_for("the answer").await;
+    hold.entered().await;
     yield_until("every place shows the new name", || places.iter().all(|rows| field(&rig, rows, "user", "name") == Some(text("New")))).await;
     let revisions: Vec<_> = places.iter().map(|rows| first_seen_at(&rig, rows, "user", "name", text("New"))).collect();
     assert!(revisions.iter().all(|revision| *revision >= receipt.revision), "a place showed the name before the receipt or never {revisions:?}, receipt {}", receipt.revision);
@@ -84,7 +84,7 @@ async fn flow_connection_accept() {
     let hold = rig.world.hold_next("AnswerConnection");
 
     let receipt = bound(rig.database.act(epoch, "User".into(), "u5".into(), "answer_connection".into(), json!({"connectionStatus": "CONNECTED"}).to_string(), json!({"chatId": "c1"}).to_string())).await.unwrap();
-    hold.entered_for("the answer").await;
+    hold.entered().await;
     yield_until("the user shows as connected", || field(&rig, &people, "u5", "connectionStatus") == Some(text("CONNECTED"))).await;
     assert!(first_seen_at(&rig, &people, "u5", "connectionStatus", text("CONNECTED")) >= receipt.revision, "the user showed the status before the receipt or never");
     rig.world.set_profile(json!({"secondaryChatsCount": 2, "unreadSecondaryChatsCount": 1}));
@@ -115,7 +115,7 @@ async fn flow_user_block() {
 
     let refused = rig.world.hold_then("BlockUser", Fault::Business);
     let receipt = bound(rig.database.act(epoch, "User".into(), "u5".into(), "block".into(), "{}".into(), "{}".into())).await.unwrap();
-    refused.entered_for("the refusal").await;
+    refused.entered().await;
     assert_eq!(blocked.len(), 0, "the blocked list changed before the answer");
     refused.release();
     assert!(matches!(bound(rig.database.outcome(receipt)).await.unwrap(), WireOperationOutcome::Rejected { .. }));

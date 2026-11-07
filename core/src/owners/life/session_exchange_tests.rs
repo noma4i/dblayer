@@ -16,7 +16,6 @@ use crate::transport::encrypted::vectors_tests::{origin, pin, public_key_der_b64
 use crate::transport::EncryptedConfig;
 use crate::transport::encrypted::exchange_tests::Client;
 
-const LIMIT: Duration = Duration::from_secs(10);
 const OTP: &str = "/api/auth/otp";
 
 fn config() -> EncryptedConfig {
@@ -55,7 +54,7 @@ fn rows(db: &Store) -> (Option<session_state::Session>, Option<session_state::Pe
 }
 
 async fn answer(waiter: crate::runtime::Waiter<LifeReply>) -> LifeReply {
-    match tokio::time::timeout(LIMIT, waiter.wait()).await.expect("the owner answered within 10 s") {
+    match crate::test_wait::within(waiter.wait()).await {
         crate::runtime::Outcome::Value(reply) => reply,
         other => panic!("the waiter ended without a value: {other:?}"),
     }
@@ -65,7 +64,7 @@ static NEXT_REQUEST: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64
 
 /// One `Mutate` of an author under its own id; the outcome comes through the sink of the author.
 async fn attempt(life: &crate::owners::life::Life, req_id: u64, body: String) -> LifeReply {
-    match tokio::time::timeout(LIMIT, life.mutate_answered(None, req_id, OTP.into(), body, 0).wait()).await.expect("the owner answered within 10 s") {
+    match crate::test_wait::within(life.mutate_answered(None, req_id, OTP.into(), body, 0).wait()).await {
         crate::runtime::Outcome::Value(reply) => reply,
         other => panic!("the author has an outcome: {other:?}"),
     }
@@ -189,7 +188,7 @@ async fn a_pending_request_stored_before_the_close_is_sent_again_when_the_owners
         let pending = rows(&db).1.unwrap();
         drop(waiter);
         let closed = life.close();
-        let _ = tokio::time::timeout(LIMIT, closed.wait()).await;
+        let _ = crate::test_wait::within(closed.wait()).await;
         (pending.request_id, pending.response_key)
     };
     assert!(!key.is_empty());
@@ -210,7 +209,7 @@ async fn a_stored_request_of_an_older_format_is_sent_again_with_the_request_id_a
         let db = Store::open_models(Some(&path), Vec::new(), None).map(std::sync::Arc::new).unwrap();
         let (client, life) = world.open(&db).await;
         sign_in(&client).await;
-        let _ = tokio::time::timeout(LIMIT, life.close().wait()).await;
+        let _ = crate::test_wait::within(life.close().wait()).await;
     }
     {
         let db = Store::open_models(Some(&path), Vec::new(), None).map(std::sync::Arc::new).unwrap();
@@ -232,7 +231,7 @@ async fn signed_in_file(world: &World, path: &std::path::Path) {
     let db = Store::open_models(Some(path), Vec::new(), None).map(std::sync::Arc::new).unwrap();
     let (client, life) = world.open(&db).await;
     sign_in(&client).await;
-    let _ = tokio::time::timeout(LIMIT, life.close().wait()).await;
+    let _ = crate::test_wait::within(life.close().wait()).await;
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -281,7 +280,7 @@ async fn the_pending_of_an_author_is_restored_with_its_request_id_and_owner() {
         world.server.drop_next_request();
         drop(life.mutate_answered(owner.clone(), req_id, OTP.into(), json!({}).to_string(), 0));
         yield_until("the pending request was never stored", || rows(&db).1.is_some()).await;
-        let _ = tokio::time::timeout(LIMIT, life.close().wait()).await;
+        let _ = crate::test_wait::within(life.close().wait()).await;
     }
     let db = Store::open_models(Some(&path), Vec::new(), None).map(std::sync::Arc::new).unwrap();
     let client = Client::new(&config(), world.server.clone(), world.credentials.clone(), db.clone(), world.clock.clone(), Arc::new(crate::transport::MockTransport::new())).unwrap();
@@ -364,7 +363,7 @@ async fn request_ids_are_random_uuid_v4_and_do_not_repeat_after_a_reopen() {
         if rows(&db).0.is_none() { sign_in(&client).await; }
         let reply = mutate_once(&life, json!({}).to_string()).await;
         assert!(matches!(reply, LifeReply::Mutated(AuthorOutcome::Response(_))), "{reply:?}");
-        let _ = tokio::time::timeout(LIMIT, life.close().wait()).await;
+        let _ = crate::test_wait::within(life.close().wait()).await;
     }
     let ids: Vec<String> = world.server.seen().iter().map(|request| request["requestId"].as_str().unwrap().to_string()).collect();
     assert_eq!(ids.len(), 3);
@@ -391,7 +390,7 @@ async fn a_first_sign_in_stored_before_a_crash_lands_its_digest_after_the_reopen
         yield_until("the server never executed the sign-in", || world.server.executed().len() == 1).await;
         yield_until("the pending request was never stored", || rows(&db).1.is_some()).await;
         assert_eq!(rows(&db).0.map(|session| session.sequence), Some(0), "the digest is stored with the pending request, at sequence 0");
-        let _ = tokio::time::timeout(LIMIT, life.close().wait()).await;
+        let _ = crate::test_wait::within(life.close().wait()).await;
         call.abort();
     }
     let db = Store::open_models(Some(&path), Vec::new(), None).map(std::sync::Arc::new).unwrap();
@@ -414,13 +413,13 @@ async fn a_secret_left_by_a_crash_is_erased_and_the_session_rows_go_before_the_s
         let db = Store::open_models(Some(&path), Vec::new(), None).map(std::sync::Arc::new).unwrap();
         let (_client, life) = world.open(&db).await;
         yield_until("GenerateCredential crashed before the pending: the secret is not erased", || world.credentials.value().is_none()).await;
-        let _ = tokio::time::timeout(LIMIT, life.close().wait()).await;
+        let _ = crate::test_wait::within(life.close().wait()).await;
     }
     {
         let db = Store::open_models(Some(&path), Vec::new(), None).map(std::sync::Arc::new).unwrap();
         let (client, life) = world.open(&db).await;
         sign_in(&client).await;
-        let _ = tokio::time::timeout(LIMIT, life.close().wait()).await;
+        let _ = crate::test_wait::within(life.close().wait()).await;
     }
     let db = Store::open_models(Some(&path), Vec::new(), None).map(std::sync::Arc::new).unwrap();
     crate::store::fixtures::exec(&db, "INSERT INTO reset_intent (id, mode, started_at) VALUES (1, 'session_end', 1)");
@@ -455,7 +454,7 @@ async fn a_credential_store_that_cannot_save_ends_the_sign_in_with_an_error() {
     let slot = Arc::new(ProbeSlot::default());
     slot.fail_set.store(true, std::sync::atomic::Ordering::SeqCst);
     let (client, _life) = open_with(&world, slot.clone(), &db);
-    let outcome = tokio::time::timeout(LIMIT, client.session_call("social", json!({ "provider": "google", "idToken": "t" }))).await.expect("the call has an outcome");
+    let outcome = crate::test_wait::within(client.session_call("social", json!({ "provider": "google", "idToken": "t" }))).await;
     assert!(outcome.is_err(), "{outcome:?}");
     assert_eq!(world.server.seen().len(), 0, "nothing left the device");
     assert_eq!(rows(&db), (None, None));
@@ -469,7 +468,7 @@ async fn a_credential_store_that_panics_fails_the_sign_in_and_closes_the_databas
     let slot = Arc::new(ProbeSlot::default());
     slot.panic_set.store(true, std::sync::atomic::Ordering::SeqCst);
     let (client, life) = open_with(&world, slot.clone(), &db);
-    let outcome = tokio::time::timeout(LIMIT, client.session_call("social", json!({ "provider": "google", "idToken": "t" }))).await.expect("the call has an outcome, it does not wait for ever");
+    let outcome = crate::test_wait::within(client.session_call("social", json!({ "provider": "google", "idToken": "t" }))).await;
     assert!(outcome.is_err(), "{outcome:?}");
     yield_until("Lifecycle never heard the executor failure", || life.published().closed).await;
     assert_eq!(world.server.seen().len(), 0, "nothing left the device");
@@ -496,7 +495,7 @@ async fn a_locked_secret_waits_for_the_foreground_and_a_foreign_secret_ends_the_
     assert_eq!(world.server.seen().len(), sent, "and no request leaves the device");
     slot.fail_get.store(false, std::sync::atomic::Ordering::SeqCst);
     drop(life.foreground());
-    let reply = tokio::time::timeout(LIMIT, waiting).await.expect("the request went on at the foreground").unwrap();
+    let reply = crate::test_wait::within(waiting).await.unwrap();
     assert!(matches!(reply, LifeReply::Mutated(AuthorOutcome::Response(_))), "{reply:?}");
     assert_eq!(world.server.seen().len(), sent + 1, "one request, with the pair it was stored with");
     slot.memory.set("a-foreign-secret").unwrap();

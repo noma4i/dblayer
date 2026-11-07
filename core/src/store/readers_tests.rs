@@ -1,9 +1,8 @@
 use std::sync::{mpsc, Arc};
-use std::time::Duration;
 
 use super::fixtures::*;
 use super::*;
-use crate::test_wait::join_within;
+use crate::test_wait::{join_within, recv_within};
 
 #[test]
 fn inv_conc_07_disk_read_finishes_while_writer_has_uncommitted_changes() {
@@ -28,12 +27,12 @@ fn inv_conc_07_disk_read_finishes_while_writer_has_uncommitted_changes() {
             reading.read(&["messages"], |reader| {
                 let row = reader.stored_row("messages", "m1")?.unwrap();
                 sent.send(row.row["chatId"].clone()).unwrap();
-                released.recv_timeout(Duration::from_secs(10)).unwrap();
+                recv_within(&released);
                 Ok(())
             }).unwrap();
         }));
     }
-    let results: Vec<_> = (0..2).map(|_| received.recv_timeout(Duration::from_secs(2))).collect();
+    let results: Vec<_> = (0..2).map(|_| recv_within(&received)).collect();
     for release in releases {
         release.send(()).unwrap();
     }
@@ -43,6 +42,6 @@ fn inv_conc_07_disk_read_finishes_while_writer_has_uncommitted_changes() {
         join_within(thread);
     }
     for result in results {
-        assert_eq!(result.unwrap(), serde_json::json!("before"));
+        assert_eq!(result, serde_json::json!("before"));
     }
 }

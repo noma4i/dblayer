@@ -16,7 +16,6 @@ use crate::transport::CredentialSlot;
 use super::harness_life::Held;
 use crate::value::ScalarKind;
 
-pub const LIMIT_SECS: u64 = 10;
 const STEP_SECS: u64 = 25;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -284,12 +283,11 @@ impl Drop for Rig {
         let (done, finished) = std::sync::mpsc::channel();
         std::thread::spawn(move || {
             let runtime = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
-            let closed = runtime.block_on(async { tokio::time::timeout(Duration::from_secs(LIMIT_SECS), db.close_database()).await });
-            let _ = done.send(closed.is_ok());
+            let _ = runtime.block_on(crate::test_wait::within(db.close_database()));
+            let _ = done.send(());
         });
-        let closed = finished.recv_timeout(Duration::from_secs(LIMIT_SECS + 5));
         if !std::thread::panicking() {
-            assert!(matches!(closed, Ok(true)), "the database did not close within the limit: a holder close still waits");
+            crate::test_wait::recv_within(&finished);
         }
     }
 }
@@ -346,15 +344,11 @@ fn credentials_of(path: Option<&str>) -> Arc<MemoryCredentials> {
 }
 
 pub async fn within<T>(work: impl std::future::Future<Output = T>) -> T {
-    tokio::time::timeout(Duration::from_secs(LIMIT_SECS), work).await.expect("did not finish within the limit")
+    crate::test_wait::within(work).await
 }
 
-pub async fn until(what: &str, mut condition: impl FnMut() -> bool) {
-    let deadline = std::time::Instant::now() + Duration::from_secs(LIMIT_SECS);
-    while !condition() {
-        assert!(std::time::Instant::now() < deadline, "{what}: the event did not come");
-        tokio::task::yield_now().await;
-    }
+pub async fn until(what: &str, condition: impl FnMut() -> bool) {
+    crate::test_wait::yield_until(&format!("{what}: the event did not come"), condition).await
 }
 
 impl Rig {

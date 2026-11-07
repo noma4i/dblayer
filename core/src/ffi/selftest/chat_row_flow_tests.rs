@@ -54,7 +54,7 @@ async fn flow_chat_pin_mute() {
 
         let hold = rig.world.hold_next(if action == "pin" { "ChatPin" } else { "ChatMute" });
         let receipt = act(&rig, action, json!({ name: true }), json!({ name: true })).await;
-        hold.entered_for("the answer").await;
+        hold.entered().await;
         yield_until("the marked list shows the chat", || marked.len() == 1).await;
         yield_until("the row of the list shows the flag", || field(&rig, &all, "c1", name) == Some(on.clone())).await;
         assert!(first_seen_at(&rig, &marked, "c1", name, on.clone()) >= receipt.revision, "{action}: the marked list showed the mark before the receipt or never");
@@ -68,7 +68,7 @@ async fn flow_chat_pin_mute() {
 
         let refused = rig.world.hold_then(if action == "pin" { "ChatPin" } else { "ChatMute" }, Fault::Business);
         let receipt = act(&rig, action, json!({ name: true }), json!({ name: true })).await;
-        refused.entered_for("the refusal").await;
+        refused.entered().await;
         yield_until("the refused change shows first", || marked.len() == 1).await;
         refused.release();
         assert!(matches!(bound(rig.database.outcome(receipt)).await.unwrap(), WireOperationOutcome::Rejected { .. }), "{action}");
@@ -88,7 +88,7 @@ async fn flow_chat_unread_counters() {
 
     let hold = rig.world.hold_next("ChatMarkRead");
     let receipt = act(&rig, "mark_read", json!({"unreadCount": 0}), json!({})).await;
-    hold.entered_for("the answer").await;
+    hold.entered().await;
     yield_until("the badge is zero", || field(&rig, &all, "c1", "unreadCount") == Some(int(0))).await;
     assert!(first_seen_at(&rig, &all, "c1", "unreadCount", int(0)) >= receipt.revision, "the badge showed 0 before the receipt or never");
     hold.release();
@@ -111,7 +111,7 @@ async fn flow_chat_list_order() {
     let epoch = rig.database.session_epoch();
 
     let receipt = bound(rig.database.send(message(epoch, "up", 30))).await.unwrap();
-    hold.entered_for("the send").await;
+    hold.entered().await;
     yield_until("c1 leads the list", || order(&rows) == ["c1", "c2"]).await;
     let lifted = rows.1.lock().unwrap().iter().find(|seen| seen.rows.first().map(|row| row.id.as_str()) == Some("c1")).map(|seen| seen.revision);
     assert!(lifted >= Some(receipt.revision), "the list led with c1 at {lifted:?}, below the receipt {}", receipt.revision);

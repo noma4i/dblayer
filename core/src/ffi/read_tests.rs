@@ -2,13 +2,11 @@
 //! dlv_open_rows, dlv_live_read_changed (P-DLV-01, P-DLV-14): the first value is a snapshot, the next is a delta with the order of the core.
 
 use std::sync::Arc;
-use std::time::Duration;
 
 use super::{Config, Database, ReadEnd, ReadPhase, ReadRequest, ReadStream, ReadValue, RowEdit, TestClock};
 use crate::schema::{FieldSpec, ModelSpec, Storage};
 use crate::value::ScalarKind;
 
-const LIMIT: Duration = Duration::from_secs(5);
 
 async fn open() -> Arc<Database> {
     let mut note = ModelSpec::new("Note", vec![FieldSpec::scalar("id", ScalarKind::Id), FieldSpec::scalar("text", ScalarKind::Str).optional()]);
@@ -16,7 +14,7 @@ async fn open() -> Arc<Database> {
     Database::open_with_clock(Config { path: None, data_version: None }, crate::ffi::specs(serde_json::to_string(&vec![note]).unwrap()), crate::ffi::OpenPorts::default(), TestClock::new(1_000_000)).await.unwrap()
 }
 
-async fn next(stream: &ReadStream) -> ReadValue { tokio::time::timeout(LIMIT, stream.pull()).await.expect("a value within 5 s").expect("a value") }
+async fn next(stream: &ReadStream) -> ReadValue { crate::test_wait::within(stream.pull()).await.expect("a value") }
 
 fn ids(rows: &[super::WireRow]) -> Vec<&str> { rows.iter().map(|row| row.id.as_str()).collect() }
 
@@ -175,7 +173,7 @@ async fn a_stream_held_across_close_gets_one_ended_then_nothing() {
     let ReadValue::Snapshot { .. } = next(&stream).await else { panic!("the first value is a snapshot") };
     db.close_database().await.unwrap();
     assert!(matches!(next(&stream).await, ReadValue::Ended { cause: ReadEnd::Closed }));
-    assert!(tokio::time::timeout(LIMIT, stream.pull()).await.expect("an answer within 5 s").is_none());
+    assert!(crate::test_wait::within(stream.pull()).await.is_none());
 }
 
 #[tokio::test(flavor = "multi_thread")]

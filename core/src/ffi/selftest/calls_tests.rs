@@ -95,7 +95,7 @@ async fn late_answer_case(call: Call, transition: Transition, refusal: bool) {
 
     if matches!(transition, Transition::Close) {
         gate.release();
-        let result = tokio::time::timeout(std::time::Duration::from_secs(BOUND), running).await.unwrap_or_else(|_| panic!("{case}: the call outlived the close")).unwrap();
+        let result = bound(running).await.unwrap();
         assert!(result.is_err(), "{case}: the call ended the close with {result:?}");
         return;
     }
@@ -139,11 +139,11 @@ async fn a_call_that_is_never_answered_ends_when_the_database_closes() {
         rig.settle().await;
         let gate = rig.world.hold_next(call.operation());
         let running = call.start(rig.database.clone());
-        gate.entered_for(&format!("{call:?}")).await;
+        gate.entered().await;
 
         rig.database.close_now();
 
-        let result = tokio::time::timeout(std::time::Duration::from_secs(BOUND), running).await.unwrap_or_else(|_| panic!("{call:?}: the call outlived the close")).unwrap();
+        let result = bound(running).await.unwrap();
         assert!(result.is_err(), "{call:?}: the call ended the close with {result:?}");
         rig.database.close_now();
     }

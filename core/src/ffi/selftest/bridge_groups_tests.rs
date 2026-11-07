@@ -59,7 +59,7 @@ async fn member_actions_change_both_member_lists_before_the_answer_and_a_refusal
             seed_members(&rig, &created.id);
             let gate = if refusal { rig.world.hold_then(operation, Fault::Refuse { code: "FORBIDDEN", confirmed: true }) } else { rig.world.hold_next(operation) };
             let acting = { let database = rig.database.clone(); let id = created.id.clone(); tokio::spawn(async move { database.act(epoch, "Group".into(), id, action.into(), "{}".into(), json!({"userIds": [user]}).to_string()).await }) };
-            gate.entered_for(&case).await;
+            gate.entered().await;
             let receipt = bound(acting).await.unwrap().unwrap();
             assert_eq!((member_list(&rig, &created.id, "JOINED"), member_list(&rig, &created.id, "OWNER_FIRST")), (joined(changed[0]), joined(changed[1])), "{case}: the lists before the answer");
             gate.release();
@@ -89,7 +89,7 @@ async fn leave_removes_the_group_from_its_list_before_the_answer_and_a_refusal_r
         yield_until("the list shows the group", || ids_of(reader.rows()) == strings(&[created.id.as_str()])).await;
         let gate = if refusal { rig.world.hold_then("LeaveGroup", Fault::Refuse { code: "FORBIDDEN", confirmed: true }) } else { rig.world.hold_next("LeaveGroup") };
         let acting = { let database = rig.database.clone(); let id = created.id.clone(); tokio::spawn(async move { database.act(epoch, "Group".into(), id, "leave".into(), "{}".into(), "{}".into()).await }) };
-        gate.entered_for(case).await;
+        gate.entered().await;
         yield_until("the group left the list before the answer", || ids_of(reader.rows()).is_empty()).await;
         gate.release();
         let receipt = bound(acting).await.unwrap().unwrap();
@@ -120,7 +120,7 @@ async fn forward_shows_a_local_copy_in_the_target_thread_and_a_refusal_removes_i
         yield_until("the thread shows the source", || ids_of(reader.rows()) == strings(&["m1"])).await;
         let gate = if refusal { rig.world.hold_then("MessageForward", Fault::Refuse { code: "FORBIDDEN", confirmed: true }) } else { rig.world.hold_next("MessageForward") };
         let acting = { let database = rig.database.clone(); tokio::spawn(async move { database.act(epoch, "Message".into(), "m1".into(), "forward".into(), "{}".into(), json!({"targetChatId": "c1"}).to_string()).await }) };
-        gate.entered_for(case).await;
+        gate.entered().await;
         yield_until("the thread shows the copy before the answer", || ids_of(reader.rows()).len() == 2).await;
         let during = ids_of(reader.rows());
         assert!(during.contains(&"m1".to_string()), "{case}: the source left the thread: {during:?}");
@@ -132,11 +132,7 @@ async fn forward_shows_a_local_copy_in_the_target_thread_and_a_refusal_removes_i
         settle(&rig).await;
         assert_eq!(matches!(result, WireOperationOutcome::Rejected { .. }), refusal, "{case}: the operation returned {result:?}");
         let expected = if refusal { strings(&["m1"]) } else { strings(&["m1", "forwarded-1"]) };
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
-        while ids_of(reader.rows()) != expected {
-            assert!(std::time::Instant::now() < deadline, "{case}: expected {expected:?}, the thread shows {:?}", ids_of(reader.rows()));
-            tokio::task::yield_now().await;
-        }
+        crate::test_wait::yield_until_showing(&format!("{case}: expected {expected:?}, the thread shows "), || format!("{:?}", ids_of(reader.rows())), || ids_of(reader.rows()) == expected).await;
         rig.database.close_now();
     }
 }
@@ -238,7 +234,7 @@ async fn an_accepted_request_whose_answer_lands_after_the_next_account_started_w
     let gate = rig.world.hold_next("MyProfile");
     gate.as_account("late");
     let running = { let database = rig.database.clone(); tokio::spawn(async move { database.refresh(epoch, "User".into(), Some("profile".into()), "{}".into()).await }) };
-    gate.entered_for("the accepted request").await;
+    gate.entered().await;
     bound(rig.database.session_reset()).await.unwrap();
     assert_ne!(rig.database.session_epoch(), epoch);
     gate.release();
@@ -257,7 +253,7 @@ async fn a_confirmed_create_keeps_its_row_when_another_model_resets_before_it_la
     let epoch = rig.database.session_epoch();
     let gate = rig.world.hold_next("SendMessage");
     let receipt = bound(rig.database.send(message(epoch, "kept", 9))).await.unwrap();
-    gate.entered_for("the send").await;
+    gate.entered().await;
     let generation = rig.database.db.generation();
     bound(rig.database.reset_models_of(&["User"])).await;
     assert_ne!(rig.database.db.generation(), generation, "the reset of another model did not move the generation");
@@ -291,11 +287,11 @@ async fn two_refused_changes_of_one_member_restore_the_original_lists_in_both_or
         let args = json!({"userIds": [user]}).to_string();
         let start = |action: &'static str| { let database = rig.database.clone(); let (id, args) = (created.id.clone(), args.clone()); tokio::spawn(async move { database.act(epoch, "Group".into(), id, action.into(), "{}".into(), args).await }) };
         let first_call = start(first.0);
-        first_gate.entered_for(case).await;
+        first_gate.entered().await;
         let second_call = start(second.0);
         yield_until("the second change is queued", || crate::ffi::queue_view_tests::queued(&rig.database).len() == 2).await;
         first_gate.release();
-        second_gate.entered_for(case).await;
+        second_gate.entered().await;
         let lists = |rig: &Rig| (member_list(rig, &created.id, "JOINED"), member_list(rig, &created.id, "OWNER_FIRST"));
         let expected = |lists: [&[&str]; 2]| (strings(lists[0]), strings(lists[1]));
         assert_eq!(lists(&rig), expected(while_second), "{case}: the lists while the second change waits for its answer");
@@ -333,11 +329,11 @@ async fn a_refused_change_of_a_member_does_not_undo_the_same_change_accepted_and
         let args = json!({"userIds": [user]}).to_string();
         let start = || { let database = rig.database.clone(); let (id, args) = (created.id.clone(), args.clone()); tokio::spawn(async move { database.act(epoch, "Group".into(), id, action.into(), "{}".into(), args).await }) };
         let first_call = start();
-        first_gate.entered_for(case).await;
+        first_gate.entered().await;
         let second_call = start();
         yield_until("the second change is queued", || crate::ffi::queue_view_tests::queued(&rig.database).len() == 2).await;
         first_gate.release();
-        second_gate.entered_for(case).await;
+        second_gate.entered().await;
         let lists = |rig: &Rig| (member_list(rig, &created.id, "JOINED"), member_list(rig, &created.id, "OWNER_FIRST"));
         let wanted = (strings(expected[0]), strings(expected[1]));
         assert_eq!(lists(&rig), wanted, "{case}: the lists while the second change waits for its answer");

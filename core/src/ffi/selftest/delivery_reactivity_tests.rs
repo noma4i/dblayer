@@ -324,7 +324,7 @@ async fn dlv_prop_one_change_every_view_response_and_rejection() {
     assert!(matches!(bound(count.pull()).await, Some(ReadValue::Count { count: 1, .. })));
     let hold = rig.world.hold_then("MomentReact", Fault::Answer(json!({"data":{"momentReact":{"__typename":"Moment","id":"m1","visitsCount":4,"reacted":true}}})));
     let receipt = bound(db.act(epoch, "Moment".into(), "m1".into(), "react".into(), json!({"visitsCount":3,"reacted":true}).to_string(), "{}".into())).await.unwrap();
-    hold.entered_for("the answer").await;
+    hold.entered().await;
     let (local_list, local_entity) = (next_rows(&rig, &list, 3).await, next_rows(&rig, &entity, 3).await);
     assert_eq!(local_list, local_entity);
     assert!(local_list >= receipt.revision, "the first value shows the optimistic row or the sending status that follows it");
@@ -335,7 +335,7 @@ async fn dlv_prop_one_change_every_view_response_and_rejection() {
     assert!(server_list > local_list);
     let refused = rig.world.hold_then("MomentReact", Fault::Business);
     let receipt = bound(db.act(epoch, "Moment".into(), "m1".into(), "react".into(), json!({"visitsCount":5}).to_string(), "{}".into())).await.unwrap();
-    refused.entered_for("the refusal").await;
+    refused.entered().await;
     let (draft_list, draft_entity) = (next_rows(&rig, &list, 5).await, next_rows(&rig, &entity, 5).await);
     assert_eq!(draft_list, draft_entity);
     assert!(draft_list >= receipt.revision, "the first value shows the optimistic row or the sending status that follows it");
@@ -392,7 +392,7 @@ async fn dlv_prop_one_change_every_view_related_row() {
     for stream in [&list, &entity, &count] { bound(stream.pull()).await.unwrap(); }
     let hold = rig.world.hold_then("ProfileUpdate", Fault::Business);
     let receipt = bound(db.act(epoch, "User".into(), "u2".into(), "update".into(), json!({"name":"Robert"}).to_string(), json!({"name":"Robert"}).to_string())).await.unwrap();
-    hold.entered_for("the refusal").await;
+    hold.entered().await;
     let mut revisions = Vec::new();
     for stream in [&list, &entity] {
         let value = bound(stream.pull()).await.unwrap();

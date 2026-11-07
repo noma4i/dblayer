@@ -1,7 +1,6 @@
 use std::future::Future;
 use std::sync::{mpsc, Arc};
 use std::task::{Context, Waker};
-use std::time::Duration;
 
 use super::{Config, Database};
 use crate::schema::{FieldSpec, ModelSpec, Storage};
@@ -25,9 +24,9 @@ async fn a_write_yields_while_sqlite_is_busy_and_finishes_after_release() {
             std::task::Poll::Pending => super::database::executor().unwrap().block_on(future),
         }
     });
-    let yielded = received.recv_timeout(Duration::from_secs(2));
+    let yielded = crate::test_wait::recv_within(&received);
     drop(writer);
     let row = join_within(thread).unwrap().optimistic_value.unwrap();
-    assert!(yielded.unwrap());
+    assert!(yielded);
     assert_eq!(database.db.find("Note", &crate::identity::RowId::new(&row.id).unwrap()).unwrap().unwrap().get("text"), Some(&serde_json::json!("saved")));
 }

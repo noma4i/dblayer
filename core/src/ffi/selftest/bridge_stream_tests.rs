@@ -162,11 +162,7 @@ async fn dlv_event_before_after() {
     assert_eq!(ids_of(bound(database.read_query(epoch, crate::ffi::QuerySpec::json(query("SECONDARY")))).await.unwrap()), ["c1"]);
     transport.subscription().await;
     transport.emit(json!({"data":{"recordEvents":{"entries":[{"topic":"MESSAGE","action":"UPDATED","recordId":"m1","chat":{"id":"c1","title":"after","revision":2,"lists":["PRIMARY"]}}]}}}));
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
-    while !reader.deliveries().iter().any(|delivery| matches!(&delivery.value, ReadValue::Event { .. })) {
-        assert!(std::time::Instant::now() < deadline, "no event arrived: {:?}", reader.deliveries().iter().map(|delivery| format!("{:?}", delivery.value)).collect::<Vec<_>>());
-        tokio::task::yield_now().await;
-    }
+    crate::test_wait::yield_until_showing("no event arrived: ", || format!("{:?}", reader.deliveries().iter().map(|delivery| format!("{:?}", delivery.value)).collect::<Vec<_>>()), || reader.deliveries().iter().any(|delivery| matches!(&delivery.value, ReadValue::Event { .. }))).await;
     let (id, before_row, after_row) = reader.deliveries().into_iter().find_map(|delivery| match delivery.value { ReadValue::Event { id, before, after, .. } => Some((id, before, after)), _ => None }).unwrap();
     assert_eq!(id, "c1");
     assert!(named(&before_row.expect("the event carries the row before"), "before"));

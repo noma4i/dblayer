@@ -18,7 +18,7 @@ async fn cancelling_one_load_interest_keeps_the_other_call_alive() {
     let held = rig.world.hold_next("Users");
     let idle = rig.database.life.waiting_calls();
     let first = rig.database.begin_load(epoch, "User".into(), Some("all".into()), "{}".into()).unwrap();
-    held.entered_for("the shared load").await;
+    held.entered().await;
     let second = rig.database.begin_load(epoch, "User".into(), Some("all".into()), "{}".into()).unwrap();
     yield_until("both calls wait for the shared load", || rig.database.life.waiting_calls() >= idle + 2).await;
     let owners = rig.database.life.clone();
@@ -223,7 +223,7 @@ async fn cancelling_a_delivery_wait_leaves_the_stream_running() {
     let gate = rig.world.hold_next("UserNode");
     let reader = Reader::open();
     let stream = rig.database.subscribe_reading(rig.database.session_epoch(), ReadRequest::Entity { model: "User".into(), id: "user".into(), fetch: ReadFetch::Force }, reader.clone());
-    gate.entered_for("the entity request").await;
+    gate.entered().await;
     let (started, waiting) = tokio::sync::oneshot::channel();
     let pending = { let reader = reader.clone(); tokio::spawn(async move {
         let _ = started.send(());
@@ -440,7 +440,7 @@ impl crate::ffi::tape::Reader for Blocking {
     fn delivered(&self, delivery: StreamDelivery) {
         if self.armed.swap(false, Ordering::SeqCst) {
             self.entered.lock().unwrap().send(()).unwrap();
-            let _ = self.release.lock().unwrap().recv_timeout(std::time::Duration::from_secs(20));
+            crate::test_wait::recv_within(&self.release.lock().unwrap());
             self.inner.delivered(delivery);
             self.finished.store(true, Ordering::SeqCst);
             return;
@@ -465,7 +465,7 @@ async fn the_cancel_of_a_reader_returns_while_a_delivery_runs_and_none_is_admitt
     rig.database.set_online(false).unwrap();
     blocking.armed.store(true, Ordering::SeqCst);
     bound(rig.database.send(message(epoch, "second", 2))).await.unwrap();
-    tokio::task::spawn_blocking(move || entered_rx.recv_timeout(std::time::Duration::from_secs(10)).unwrap()).await.unwrap();
+    tokio::task::spawn_blocking(move || crate::test_wait::recv_within(&entered_rx)).await.unwrap();
     rig.database.cancel_stream(stream);
     assert!(!blocking.finished.load(Ordering::SeqCst), "the cancel waited for the reader to finish a delivery");
     release_tx.send(()).unwrap();

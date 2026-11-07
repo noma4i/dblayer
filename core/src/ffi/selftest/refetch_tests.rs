@@ -42,8 +42,8 @@ async fn a_confirmed_action_reads_the_open_window_of_its_refetch_relation_again(
     bound(rig.database.loaded(stream)).await.unwrap();
     let before = rig.world.count("GroupMembers");
     join(&rig, &group, epoch).await;
-    let shown = tokio::time::timeout(std::time::Duration::from_secs(5), async {
-        while let Some(delivery) = crate::test_wait::within_secs(5, deliveries.recv()).await {
+    let shown = async {
+        while let Some(delivery) = crate::test_wait::within(deliveries.recv()).await {
             let rows = match delivery.value {
                 crate::ffi::ReadValue::Snapshot { rows, .. } => rows,
                 crate::ffi::ReadValue::Delta { edits, .. } => crate::ffi::RowEdit::carried(&edits),
@@ -52,7 +52,7 @@ async fn a_confirmed_action_reads_the_open_window_of_its_refetch_relation_again(
             if rows.iter().any(|row| row.id == "u9") { return true; }
         }
         false
-    }).await.unwrap_or(false);
+    }.await;
     let ids: Vec<_> = bound(rig.database.read_query(epoch, crate::ffi::QuerySpec::json(query.to_string()))).await.unwrap().into_iter().map(|row| row.id).collect();
     let all: Vec<_> = bound(rig.database.read_query(epoch, crate::ffi::QuerySpec::json(r#"{"model":"Member"}"#))).await.unwrap().into_iter().map(|row| row.id).collect();
     assert!(shown, "the joined member was not shown; reads {} -> {}: stored {ids:?} members {all:?}", before, rig.world.count("GroupMembers"));

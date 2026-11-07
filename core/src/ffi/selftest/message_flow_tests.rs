@@ -63,7 +63,7 @@ async fn flow_message_edit() {
     let hold = rig.world.hold_next("MessageEdit");
 
     let receipt = bound(rig.database.act(epoch, "Message".into(), "m1".into(), "update".into(), json!({"text": "edited"}).to_string(), json!({"text": "edited"}).to_string())).await.unwrap();
-    hold.entered_for("the answer").await;
+    hold.entered().await;
     yield_until("both places show the edit", || field(&rig, "Message", &thread, "m1", "text") == Some(text("edited")) && field(&rig, "Message", &last, "m1", "text") == Some(text("edited"))).await;
     for rows in [&thread, &last] {
         assert!(first_seen_at(&rig, "Message", rows, "m1", "text", text("edited")) >= receipt.revision, "a place showed the text before the receipt or never");
@@ -88,7 +88,7 @@ async fn flow_message_delete() {
 
     let refused = rig.world.hold_then("MessageDelete", Fault::Business);
     let receipt = bound(rig.database.destroy(epoch, "Message".into(), "m2".into())).await.unwrap();
-    refused.entered_for("the refusal").await;
+    refused.entered().await;
     yield_until("the thread and the chat row moved", || ids(&thread) == ["m1"] && field(&rig, "Chat", &chats, "c1", "lastMessageId") == Some(text("m1"))).await;
     refused.release();
     assert!(matches!(bound(rig.database.outcome(receipt)).await.unwrap(), WireOperationOutcome::Rejected { .. }));
@@ -96,7 +96,7 @@ async fn flow_message_delete() {
 
     let hold = rig.world.hold_next("MessageDelete");
     let receipt = bound(rig.database.destroy(epoch, "Message".into(), "m2".into())).await.unwrap();
-    hold.entered_for("the answer").await;
+    hold.entered().await;
     yield_until("the delete shows", || ids(&thread) == ["m1"] && field(&rig, "Chat", &chats, "c1", "lastMessageId") == Some(text("m1"))).await;
     let revision = chats.1.lock().unwrap().iter().rev().find(|seen| seen.rows.iter().any(|row| cell(&rig, "Chat", row, "lastMessageId") == text("m1"))).map(|seen| seen.revision);
     assert!(revision.is_some_and(|revision| revision >= receipt.revision), "the chat row changed before the receipt: {revision:?}");
@@ -120,7 +120,7 @@ async fn flow_message_status() {
     let hold = rig.world.hold_next("SendMessage");
 
     let receipt = bound(rig.database.send(message(epoch, "hi", 10))).await.unwrap();
-    hold.entered_for("the send").await;
+    hold.entered().await;
     yield_until("the bubble shows", || thread.len() == 1).await;
     let temporary = ids(&thread).remove(0);
     assert_eq!(temporary, receipt.optimistic_value.clone().unwrap().id);

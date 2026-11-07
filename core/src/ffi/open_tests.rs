@@ -53,8 +53,8 @@ fn opening_leaves_the_calling_thread_free_while_sqlite_is_busy() {
         if pending { super::database::executor().unwrap().block_on(opening).unwrap(); }
     });
     let caller = recv_within(&caller_id);
-    let worker = opened.recv_timeout(std::time::Duration::from_secs(10)).unwrap();
-    let free = if worker != caller { freed.recv_timeout(std::time::Duration::from_secs(10)).unwrap() } else { false };
+    let worker = recv_within(&opened);
+    let free = if worker != caller { recv_within(&freed) } else { false };
     release.send(()).unwrap();
     join_within(thread);
     rusqlite::auto_extension::cancel_auto_extension(pause_open);

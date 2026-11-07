@@ -3,7 +3,6 @@
 
 use std::collections::BTreeSet;
 use std::sync::Arc;
-use std::time::Duration;
 
 use serde_json::json;
 
@@ -16,7 +15,6 @@ use crate::owners::lifecycle::LifecycleError;
 use crate::runtime::Waiter;
 use crate::transport::{MockTransport, Reply as MockReply};
 
-const LIMIT: Duration = Duration::from_secs(5);
 const DIGEST: &str = "00000000000000010000000000000000000000000000000000000000000000ff";
 const IDENTITY: u64 = 1;
 
@@ -51,7 +49,7 @@ fn stored_digest(db: &Store) -> Option<String> {
 }
 
 async fn answer(waiter: Waiter<Reply>) -> Reply {
-    match tokio::time::timeout(LIMIT, waiter.wait()).await.expect("the owner answered within 5 s") {
+    match crate::test_wait::within(waiter.wait()).await {
         crate::runtime::Outcome::Value(reply) => reply,
         other => panic!("the waiter ended without a value: {other:?}"),
     }
@@ -376,12 +374,12 @@ async fn the_rows_of_a_batch_land_through_the_common_path() {
     let epoch = life.published().epoch;
     let batch = |id, row: &str| StoreBatch { author: BatchAuthor::Window, id, epoch, basis: [("moments".to_string(), 0)].into(), rows: vec![("moments".into(), row.into())], intents: 0, credential: None, ops: Vec::new() };
     life.wiring.to_store(StoreInput::Commit(batch(1, r#"{"id":"m1"}"#)));
-    let (id, reply) = receiver.recv_timeout(LIMIT).expect("the store answered");
+    let (id, reply) = crate::test_wait::recv_within(&receiver);
     assert_eq!(id, 1);
     assert!(matches!(reply, StoreReply::Committed { .. }), "{reply:?}");
     assert_eq!(db.row_count("moments").unwrap(), 1);
     life.wiring.to_store(StoreInput::Commit(batch(2, r#"{"name":"no id"}"#)));
-    let (id, reply) = receiver.recv_timeout(LIMIT).expect("the store answered");
+    let (id, reply) = crate::test_wait::recv_within(&receiver);
     assert_eq!(id, 2);
     assert!(matches!(reply, StoreReply::Rejected(_)), "a row without an id is refused: {reply:?}");
     assert_eq!(db.row_count("moments").unwrap(), 1);
@@ -405,9 +403,9 @@ async fn a_committed_batch_is_broadcast_to_every_subscriber() {
     let epoch = life.published().epoch;
     let batch = StoreBatch { author: BatchAuthor::Window, id: 1, epoch, basis: [("moments".to_string(), 0)].into(), rows: vec![("moments".into(), r#"{"id":"m1"}"#.into())], intents: 0, credential: None, ops: Vec::new() };
     life.wiring.to_store(StoreInput::Commit(batch));
-    let StoreReply::Committed { revision, .. } = reply.recv_timeout(LIMIT).expect("the author got its reply") else { panic!("the batch was refused") };
+    let StoreReply::Committed { revision, .. } = crate::test_wait::recv_within(&reply) else { panic!("the batch was refused") };
     for heard in [heard_first, heard_second] {
-        let broadcast = heard.recv_timeout(LIMIT).expect("the subscriber heard the broadcast");
+        let broadcast = crate::test_wait::recv_within(&heard);
         assert_eq!((broadcast.revision, broadcast.models), (revision, Models::Set(["moments".to_string()].into())));
     }
     closed(&life).await;

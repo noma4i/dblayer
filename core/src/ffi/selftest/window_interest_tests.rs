@@ -26,7 +26,7 @@ async fn cancelling_one_load_interest_keeps_the_other_call_alive() {
     let held = rig.world.hold_next("MomentsFeed");
     rig.world.mark("begin A");
     let first = rig.database.begin_load(epoch, "Moment".into(), Some("feed".into()), "{}".into()).unwrap();
-    held.entered_for("the shared load").await;
+    held.entered().await;
     rig.world.mark("request of A entered");
     let second = rig.database.begin_load(epoch, "Moment".into(), Some("feed".into()), "{}".into()).unwrap();
     rig.world.mark("begin B");

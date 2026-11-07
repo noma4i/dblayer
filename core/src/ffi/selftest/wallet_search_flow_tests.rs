@@ -41,7 +41,7 @@ async fn flow_wallet_gift() {
     let hold = rig.world.hold_then("SendGift", Fault::Answer(answer));
 
     let receipt = bound(rig.database.act(epoch, "User".into(), "user".into(), "send_gift".into(), json!({"balance": 90}).to_string(), json!({"chatId": "c1", "amount": 10}).to_string())).await.unwrap();
-    hold.entered_for("the answer").await;
+    hold.entered().await;
     yield_until("the balance shows 90", || field(&rig, "User", &profile, "user", "balance") == Some(int(90))).await;
     assert!(first_seen_at(&rig, "User", &profile, "user", "balance", int(90)) >= receipt.revision);
     hold.release();
@@ -73,7 +73,7 @@ async fn flow_search_follows_rows() {
 
     let hold = rig.world.hold_next("ChatPin");
     let receipt = bound(rig.database.act(epoch, "Chat".into(), "c1".into(), "pin".into(), json!({"pinned": false}).to_string(), json!({"pinned": false}).to_string())).await.unwrap();
-    hold.entered_for("the answer").await;
+    hold.entered().await;
     yield_until("both lists show the local change", || [&inbox, &found].iter().all(|rows| field(&rig, "Chat", rows, "c1", "pinned") == Some(Cell::Bool { value: false }))).await;
     hold.release();
     assert!(matches!(bound(rig.database.outcome(receipt)).await.unwrap(), WireOperationOutcome::Confirmed { .. }));

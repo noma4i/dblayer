@@ -60,7 +60,7 @@ async fn flow_moment_reaction() {
     let hold = rig.world.hold_then("MomentReact", Fault::Answer(json!({"data":{"momentReact":{"__typename":"Moment","id":"m1","reacted":true,"visitsCount":3}}})));
 
     let receipt = bound(rig.database.act(epoch, "Moment".into(), "m1".into(), "react".into(), json!({"reacted": true, "visitsCount": 3}).to_string(), "{}".into())).await.unwrap();
-    hold.entered_for("the answer").await;
+    hold.entered().await;
     yield_until("every list shows 3", || places.iter().all(|rows| field(&rig, rows, "m1", "visitsCount") == Some(int(3)))).await;
     same_revision(&rig, &places, "m1", "visitsCount", int(3), receipt.revision).await;
     let floor = receipt.revision;
@@ -94,7 +94,7 @@ async fn flow_compass_unread() {
     let hold = rig.world.hold_then("MomentReadCompass", Fault::Answer(json!({"data":{"momentReadCompass":{"__typename":"Moment","id":"m1","unreadSimilarMomentsCount":0}}})));
 
     let receipt = bound(rig.database.act(epoch, "Moment".into(), "m1".into(), "read_compass".into(), json!({"unreadSimilarMomentsCount": 0}).to_string(), "{}".into())).await.unwrap();
-    hold.entered_for("the answer").await;
+    hold.entered().await;
     yield_until("m1 sank below m2", || ids(&compass) == ["m2", "m1"]).await;
     same_revision(&rig, &[&compass], "m1", "unreadSimilarMomentsCount", int(0), receipt.revision).await;
     rig.world.set_profile(json!({"unreadCompassCount": 1}));
@@ -124,7 +124,7 @@ async fn flow_moment_publish_delete() {
     let hold = rig.world.hold_next("PUT");
 
     let receipt = bound(rig.database.send(publish)).await.unwrap();
-    hold.entered_for("the file in the network").await;
+    hold.entered().await;
     yield_until("the new moment stands in every list", || places.iter().all(|rows| rows.len() == 1)).await;
     let temporary = receipt.optimistic_value.clone().unwrap().id;
     assert!(places.iter().all(|rows| ids(rows) == [temporary.clone()]));

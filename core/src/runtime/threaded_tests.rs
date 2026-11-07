@@ -1,10 +1,8 @@
 use std::sync::{mpsc, Arc, Mutex};
-use std::time::Duration;
 
 use super::toys_tests::*;
 use super::*;
 
-const WAIT: Duration = Duration::from_secs(5);
 
 fn reporting(report: mpsc::Sender<u32>) -> ToyRunner { ToyRunner { report: Some(report), ..ToyRunner::default() } }
 
@@ -34,7 +32,7 @@ struct HoldRecipient { entered: mpsc::Sender<()>, release: mpsc::Receiver<()> }
 impl EffectRunner<OrderedRecipient> for HoldRecipient {
     fn run(&mut self, _: EpochStamp, _: OrderedRecipientEffect, _: &Back<OrderedRecipient>) {
         self.entered.send(()).unwrap();
-        self.release.recv_timeout(WAIT).unwrap();
+        crate::test_wait::recv_within(&self.release);
     }
 }
 
@@ -114,10 +112,10 @@ fn mixed_effects_enqueue_before_the_next_run_on_threads() {
     let source = builder.add::<OrderedSource>("source", recipient, ObservePending { handle, count });
     let runtime = builder.start().unwrap();
     runtime.post(recipient, EpochStamp::Control, OrderedRecipientInput::Hold);
-    held.recv_timeout(WAIT).unwrap();
+    crate::test_wait::recv_within(&held);
     runtime.post(source, EpochStamp::Control, OrderedSourceInput::Go);
-    assert_eq!(counts.recv_timeout(WAIT), Ok(3), "Send entered the blocked recipient mailbox");
-    assert_eq!(counts.recv_timeout(WAIT), Ok(5), "Broadcast entered both mailboxes before the next Run");
+    assert_eq!(crate::test_wait::recv_within(&counts), 3, "Send entered the blocked recipient mailbox");
+    assert_eq!(crate::test_wait::recv_within(&counts), 5, "Broadcast entered both mailboxes before the next Run");
     release.send(()).unwrap();
     runtime.barrier();
 }
@@ -132,7 +130,7 @@ fn idle_runtime_has_zero_wakeups_and_schedule_fires_once() {
     assert_eq!(runtime.wakeups(toy), 0);
     runtime.start_epoch(1);
     runtime.post(toy, EpochStamp::Epoch(1), ToyInput::ScheduleAt(1, Time(60), 9));
-    assert_eq!(fired.recv_timeout(WAIT), Ok(9));
+    assert_eq!(crate::test_wait::recv_within(&fired), 9);
     runtime.barrier();
     let settled = runtime.wakeups(toy);
     runtime.barrier();
@@ -149,7 +147,7 @@ fn owners_on_separate_threads_exchange_values() {
     let runtime = builder.start().unwrap();
     runtime.start_epoch(1);
     runtime.post(sender, EpochStamp::Epoch(1), ToyInput::Go);
-    assert_eq!(fired.recv_timeout(WAIT), Ok(3));
+    assert_eq!(crate::test_wait::recv_within(&fired), 3);
 }
 
 #[test]
@@ -161,7 +159,7 @@ fn threaded_executor_drops_input_of_another_epoch() {
     runtime.start_epoch(2);
     runtime.post(toy, EpochStamp::Epoch(1), ToyInput::Fire(1));
     runtime.post(toy, EpochStamp::Epoch(2), ToyInput::Fire(2));
-    assert_eq!(fired.recv_timeout(WAIT), Ok(2));
+    assert_eq!(crate::test_wait::recv_within(&fired), 2);
     runtime.barrier();
     assert!(fired.try_recv().is_err());
 }
@@ -176,7 +174,7 @@ fn asynchronous_effect_result_returns_through_the_mailbox_of_its_owner() {
     let runtime = builder.start().unwrap();
     runtime.start_epoch(1);
     runtime.post(ledger, EpochStamp::Epoch(1), ToyInput::WorkAsync(4));
-    assert_eq!(fired.recv_timeout(WAIT), Ok(8));
+    assert_eq!(crate::test_wait::recv_within(&fired), 8);
 }
 
 #[test]
@@ -190,7 +188,7 @@ fn lifecycle_broadcast_reaches_every_owner_on_threads() {
     runtime.post(hub, EpochStamp::Control, HubInput::Begin(1));
     runtime.post(hub, EpochStamp::Control, HubInput::Finish(1, Cause::SessionReset));
     runtime.post(hub, EpochStamp::Control, HubInput::Shutdown);
-    let mut got: Vec<u32> = (0..4).map(|_| reports.recv_timeout(WAIT).unwrap()).collect();
+    let mut got: Vec<u32> = (0..4).map(|_| crate::test_wait::recv_within(&reports)).collect();
     got.sort_unstable();
     assert_eq!(got, vec![1, 1, CLOSED, CLOSED]);
 }
@@ -236,5 +234,5 @@ fn rt_prop_addresses_reserved() {
     let runtime = builder.start().unwrap();
     runtime.start_epoch(1);
     runtime.post(sender, EpochStamp::Epoch(1), ToyInput::Go);
-    assert_eq!(fired.recv_timeout(WAIT), Ok(3));
+    assert_eq!(crate::test_wait::recv_within(&fired), 3);
 }

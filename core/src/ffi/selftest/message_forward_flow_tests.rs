@@ -56,7 +56,7 @@ async fn flow_message_forward() {
 
     let refused = rig.world.hold_then("MessageForward", Fault::Refuse { code: "FORBIDDEN", confirmed: true });
     let receipt = forward(&rig).await;
-    refused.entered_for("the refusal").await;
+    refused.entered().await;
     yield_until("the copy stands in the thread", || thread.len() == 1).await;
     let copy = ids(&thread).remove(0);
     assert!(forwarded_by_me(&rig, &thread, &copy), "the copy lacks the author, the flag or the origin");
@@ -69,7 +69,7 @@ async fn flow_message_forward() {
 
     let hold = rig.world.hold_next("MessageForward");
     let receipt = forward(&rig).await;
-    hold.entered_for("the answer").await;
+    hold.entered().await;
     yield_until("the copy stands again", || thread.len() == 1).await;
     hold.release();
     assert!(matches!(bound(rig.database.outcome(receipt)).await.unwrap(), WireOperationOutcome::Confirmed { .. }));

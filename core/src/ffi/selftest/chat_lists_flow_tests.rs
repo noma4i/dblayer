@@ -78,7 +78,7 @@ async fn flow_group_name_logo() {
     let hold = rig.world.hold_next("ChatUpdate");
 
     let receipt = bound(rig.database.act(epoch, "Chat".into(), "c1".into(), "update".into(), json!({"name": "new"}).to_string(), json!({"name": "new"}).to_string())).await.unwrap();
-    hold.entered_for("the answer").await;
+    hold.entered().await;
     yield_until("both places show the new name", || [&list, &entity].iter().all(|rows| names(&rig, rows) == [("c1".to_string(), text("new"))])).await;
     let revisions: Vec<_> = [&list, &entity].iter().map(|rows| rows.1.lock().unwrap().iter().find(|seen| seen.rows.iter().any(|row| cell(&rig, "Chat", row, "name") == text("new"))).map(|seen| seen.revision)).collect();
     assert!(revisions.iter().all(|revision| revision.is_some_and(|revision| revision >= receipt.revision)), "a place showed the name before the receipt or never {revisions:?}");

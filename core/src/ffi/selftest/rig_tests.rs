@@ -20,11 +20,6 @@ use crate::transport::encrypted::fake_server_tests::{decrypt_request, seal_respo
 /// Every call of a sequence returns within this many seconds or the test fails instead of hanging.
 pub(super) const BOUND: u64 = 8;
 
-/// Like `bound`, and the panic names the step that did not return.
-pub(super) async fn named_bound<T>(step: &str, work: impl std::future::Future<Output = T>) -> T {
-    tokio::time::timeout(std::time::Duration::from_secs(BOUND), work).await.unwrap_or_else(|_| panic!("{step}: did not return within {BOUND} seconds"))
-}
-
 pub(super) async fn bound<T>(work: impl std::future::Future<Output = T>) -> T { within_secs(BOUND, work).await }
 
 pub(super) struct Gate {
@@ -40,11 +35,6 @@ impl Gate {
         self.release.acquire().await.unwrap().forget();
     }
     pub(super) async fn entered(&self) { within_secs(BOUND, self.entered.notified()).await }
-    /// Waits for the request to reach the server and names the case when it never does.
-    pub(super) async fn entered_for(&self, case: &str) {
-        let notified = self.entered.notified();
-        tokio::time::timeout(std::time::Duration::from_secs(BOUND), notified).await.unwrap_or_else(|_| panic!("{case}: the request never reached the server"));
-    }
     pub(super) fn release(&self) { self.release.add_permits(1) }
     /// The held request carries rows of this account, whatever the server shows to the others.
     pub(super) fn as_account(self: &Arc<Self>, account: &str) -> Arc<Self> {

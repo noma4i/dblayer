@@ -35,7 +35,7 @@ where
 {
     let held = rig.world.hold_next(operation);
     let first = tokio::spawn(call(rig.database.clone()));
-    held.entered_for("the first call").await;
+    held.entered().await;
     after_first_entered();
     let mut second = Box::pin(call(rig.database.clone()));
     std::future::poll_fn(|cx| { drop(second.as_mut().poll(cx)); std::task::Poll::Ready(()) }).await;

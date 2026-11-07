@@ -1,6 +1,5 @@
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
 
 use super::load_tests::relation;
 use super::tape::{Seen, Tape};
@@ -41,16 +40,15 @@ async fn open(replies: &[&str]) -> (Arc<Database>, Arc<TestClock>) {
     (db, clock)
 }
 
-/// The first state of the stream that is loaded at a revision of `above` or later; the call fails after 5 seconds.
+/// The first state of the stream that is loaded at a revision of `above` or later.
 async fn loaded_state(stream: &ReadStream, above: i64) -> ReadState {
-    tokio::time::timeout(Duration::from_secs(5), async {
+    crate::test_wait::within(async {
         loop {
             let (ReadValue::Snapshot { state, .. } | ReadValue::Delta { state, .. } | ReadValue::State { state, .. }) = stream.pull().await.expect("a value") else { continue };
             if state.phase == ReadPhase::Loaded && state.loaded.is_some_and(|at| at >= above) { return state; }
         }
     })
     .await
-    .expect("the loaded state of the window reaches the stream")
 }
 
 fn consistent(changes: &[Seen]) {
@@ -82,7 +80,7 @@ async fn inv_loadm_16_a_cold_window_never_shows_loaded_or_empty_before_its_rows_
         let (db, _) = open(&[reply]).await;
         let listener = tape();
         let live = db.watch_query(FEED, listener.clone());
-        tokio::time::timeout(Duration::from_secs(5), live.wait_for_initial_load()).await.expect("the initial wait ends").unwrap();
+        crate::test_wait::within(live.wait_for_initial_load()).await.unwrap();
         let changes = heard(&listener);
         consistent(&changes);
         let last = changes.last().unwrap();

@@ -74,12 +74,12 @@ async fn react_then_undo_keeps_the_other_users_reaction_of_a_record() {
     let first = session.rig.world.hold_then("RecordReact", reacted(json!([{"body":"B","user":{"id":"u2"}},{"body":"A","user":{"id":"u1"}}])));
     let second = session.rig.world.hold_then("RecordReact", reacted(json!([{"body":"B","user":{"id":"u2"}}])));
     let one = session.react("A", "u1").await;
-    first.entered_for("the first reaction").await;
+    first.entered().await;
     let undo = session.react("", "u1").await;
     assert_eq!(session.reactions(&undo.optimistic_value.clone().unwrap()), vec![pair("u2", "B")]);
     first.release();
     assert!(matches!(bound(session.rig.database.outcome(one)).await.unwrap(), WireOperationOutcome::Confirmed { .. }));
-    second.entered_for("the undo after the first reaction ended").await;
+    second.entered().await;
     second.release();
     assert!(matches!(bound(session.rig.database.outcome(undo)).await.unwrap(), WireOperationOutcome::Confirmed { .. }));
     yield_until("the other reaction stays", || session.reactions(&session.shown()) == vec![pair("u2", "B")]).await;
@@ -122,7 +122,7 @@ async fn a_reaction_with_a_delayed_answer_shows_as_unsent_before_the_answer_and_
     let session = Session::settled(created(json!([]))).await;
     let hold: Arc<Gate> = session.rig.world.hold_then("RecordReact", reacted(json!([{"body":"C","userId":"u1"}])));
     let receipt = session.react("C", "u1").await;
-    hold.entered_for("the answer").await;
+    hold.entered().await;
     assert_eq!(session.reactions(&receipt.optimistic_value.clone().unwrap()), vec![pair("u1", "C")], "the reaction was not shown before the answer");
     yield_until("the row shows the reaction as unsent", || {
         let row = session.shown();

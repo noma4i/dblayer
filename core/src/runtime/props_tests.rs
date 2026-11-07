@@ -3,12 +3,10 @@ use std::collections::BTreeSet;
 use std::rc::Rc;
 use std::sync::atomic::Ordering;
 use std::sync::{mpsc, Arc, Mutex, PoisonError};
-use std::time::Duration;
 
 use super::toys_tests::*;
 use super::*;
 
-const WAIT: Duration = Duration::from_secs(5);
 
 fn prop(property: &'static str, domain: &'static str, cells: &'static str, depth: usize, threaded_public_test: &'static str) -> Property {
     Property { property, domain, cells, depth, max_traces: 400_000, seeds: 16, threaded_public_test }
@@ -56,7 +54,7 @@ fn rt_prop_timer_orders() {
     runtime.start_epoch(1);
     runtime.post(right, EpochStamp::Epoch(1), ToyInput::ScheduleAt(2, Time(70), 2));
     runtime.post(left, EpochStamp::Epoch(1), ToyInput::ScheduleAt(1, Time(30), 1));
-    let order: Vec<String> = (0..2).map(|_| format!("Fire({})", fired.recv_timeout(WAIT).unwrap())).collect();
+    let order: Vec<String> = (0..2).map(|_| format!("Fire({})", crate::test_wait::recv_within(&fired))).collect();
     let projected: Vec<String> = seen.borrow().iter().next().unwrap().iter().filter(|input| input.starts_with("Fire")).cloned().collect();
     assert!(seen.borrow().iter().any(|model| model.iter().filter(|input| input.starts_with("Fire")).cloned().collect::<Vec<_>>() == order), "the order of the clock {order:?} is an order of the model, e.g. {projected:?}");
 }
@@ -175,7 +173,7 @@ fn rt_prop_epoch_queue() {
         runtime.post(hub, EpochStamp::Control, HubInput::Finish(epoch, Cause::SessionReset));
         runtime.post(hub, EpochStamp::Control, HubInput::Begin(epoch + 1));
     }
-    let ended: Vec<u32> = (0..200).map(|_| reports.recv_timeout(WAIT).unwrap()).collect();
+    let ended: Vec<u32> = (0..200).map(|_| crate::test_wait::recv_within(&reports)).collect();
     assert_eq!(ended, (1..=200).collect::<Vec<u32>>(), "every EpochEnded(e) made its step before EpochStarted(e+1)");
 }
 
@@ -437,7 +435,7 @@ fn rt_prop_start_close() {
     runtime.barrier();
     assert_eq!(runtime.history(watch).iter().filter(|entry| !entry.input.starts_with("EpochStarted(")).count(), 2, "the threads told Lifecycle about both executors");
     runtime.close();
-    assert_eq!(reports.recv_timeout(WAIT), Ok(CLOSED));
+    assert_eq!(crate::test_wait::recv_within(&reports), CLOSED);
     assert_eq!(open.try_take(), Some(Outcome::Closing), "a wait that nobody answered ends with the close");
     assert_eq!(alive.load(Ordering::SeqCst), 4);
     drop(runtime);
