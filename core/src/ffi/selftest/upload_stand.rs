@@ -36,6 +36,7 @@ const STEPS: [(&str, &str); 6] = [
 pub(super) enum Answer {
     Data(String),
     Status(u16),
+    Lost,
     Held(Arc<Hold>, Box<Answer>),
 }
 
@@ -104,6 +105,7 @@ impl EncryptedHttp for ScriptedHttp {
                     hold.gate.notified().await;
                     answer = Some(*next);
                 }
+                Some(Answer::Lost) => return Err(DbError::Network { detail: "lost answer".into() }),
                 Some(Answer::Status(status)) => return Ok(EncryptedReply { status, body: String::new() }),
                 Some(Answer::Data(text)) => return Ok(EncryptedReply { status: 200, body: seal_response(&request, request["sequence"].as_i64(), serde_json::from_str(&text).unwrap()) }),
                 None => return Ok(EncryptedReply { status: 200, body: seal_response(&request, request["sequence"].as_i64(), json!({"errors":[{"message":format!("unscripted {operation}")}]})) }),

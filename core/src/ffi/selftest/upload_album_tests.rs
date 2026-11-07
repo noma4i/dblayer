@@ -3,10 +3,10 @@ use std::path::Path;
 use serde_json::Value;
 
 use super::rig_tests::bound;
-use super::upload_stand::{shows, watched, Stand};
+use super::upload_stand::{shows, watched, Answer, Stand};
 use crate::ffi::upload_wire::{WireUploadBatch, WireUploadItem};
 use crate::ffi::wire::WireSyncState;
-use crate::ffi::{Database, WireBatchReceipt, WireOperationOutcome, WireOperationReceipt};
+use crate::ffi::{Database, TestClock, WireBatchReceipt, WireOperationOutcome, WireOperationReceipt};
 use crate::owners::write::upload::MEBIBYTE;
 use crate::test_wait::yield_until;
 use crate::transport::{NetworkPurpose, TransferStep};
@@ -210,4 +210,38 @@ async fn shifting_a_batch_during_a_held_request_keeps_the_file_owner() {
     assert_eq!(sent.iter().map(|item| item["signedId"].as_str().unwrap()).collect::<Vec<_>>(), ["signed-1", "signed-2"]);
     assert!(stand.script.purposes("CreateBlob").iter().all(|purpose| *purpose == NetworkPurpose::Transfer));
     database.close_now();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_lost_answer_before_a_close_is_replayed_after_the_reopen_and_the_batch_completes() {
+    let (stand, now) = (Stand::new(), std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis() as u64);
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("db.sqlite");
+    let database = stand.open_with(Some(&path), &ALBUM_OPERATIONS, Some(TestClock::new(now))).await;
+    let files = album_files(directory.path(), &["0.jpg", "1.jpg", "2.jpg"], "image-x");
+    stand.script.data("CreateBlob", &blob(0));
+    let held = std::sync::Arc::new(super::upload_stand::Hold::default());
+    stand.script.enqueue("CreateBlob", Answer::Held(held.clone(), Box::new(Answer::Lost)));
+    let epoch = database.session_epoch();
+    let receipt = upload_batch(&database, items(&[&files[0], &files[1], &files[2]], &["key-0", "key-1", "key-2"], 3)).await;
+    held.entered().await;
+    bound(database.discard(epoch, "Asset".into(), receipt.items[0].optimistic_value.id.clone(), Some("create_files".into()))).await.unwrap();
+    database.set_online(false).unwrap();
+    held.release();
+    held.dropped().await;
+    database.close_now();
+    stand.script.data("CreateBlob", &blob(1));
+    stand.script.data("CreateBlob", &blob(2));
+    stand.script.data("CreateAssets", &assets(&[("a2", "key-2", 1), ("a1", "key-1", 0)]));
+
+    let reopened = stand.open_with(Some(&path), &ALBUM_OPERATIONS, Some(TestClock::new(now))).await;
+    reopened.set_online(false).unwrap();
+    reopened.set_online(true).unwrap();
+
+    let (first, second) = (watched(&reopened, "Asset", "a1"), watched(&reopened, "Asset", "a2"));
+    yield_until("both assets are stored", || !first.0.lock().unwrap().is_empty() && !second.0.lock().unwrap().is_empty()).await;
+    let attempts = stand.script.variables("CreateBlob").iter().filter(|variables| variables["filename"] == "1.jpg").count();
+    assert_eq!(attempts, 2, "the lost step is requested once more");
+    assert_eq!(keys_of(&sent_items(&stand)), ["key-1", "key-2"]);
+    reopened.close_now();
 }
