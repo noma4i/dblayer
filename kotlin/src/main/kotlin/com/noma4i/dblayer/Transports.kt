@@ -12,7 +12,7 @@ class OkHttpTransport(
     client: OkHttpClient = OkHttpClient(),
 ) : Transport {
     private val client = client.newBuilder().followRedirects(false).followSslRedirects(false).retryOnConnectionFailure(false).build()
-    private val encryptedSocket = OkHttpEncryptedSocket(client, headers)
+    private val encryptedSocket = OkHttpEncryptedSocket(this.client, headers)
     override suspend fun openCable(lease: CableLease, url: String) = lease.opened(encryptedSocket.open(url))
     override suspend fun cableSend(token: String, text: String) = encryptedSocket.send(token, text)
     override suspend fun cableNext(token: String): EncryptedSocketEvent? = encryptedSocket.next(token)

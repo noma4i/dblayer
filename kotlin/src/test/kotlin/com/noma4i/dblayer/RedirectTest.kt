@@ -11,7 +11,7 @@ import org.junit.Test
 class RedirectTest {
     @Test
     fun life_prop_no_redirect() = bounded {
-        for (path in listOf("query", "encrypted", "put")) {
+        for (path in listOf("query", "encrypted", "cable", "put")) {
             MockWebServer().use { server ->
                 server.enqueue(MockResponse().setResponseCode(302).setHeader("Location", "/redirect"))
                 server.enqueue(MockResponse().setResponseCode(200).setBody("followed"))
@@ -25,6 +25,10 @@ class RedirectTest {
                         assertEquals(path, 302.toUShort(), (error as DbException.Http).status)
                     }
                     "encrypted" -> assertEquals(path, 302.toUShort(), OkHttpEncryptedHttp(origin, client).post("/api/session", "jwe", NetworkPurpose.STANDARD).status)
+                    "cable" -> {
+                        val error = runCatching { transport.openedCable(cableUrl(server)) }.exceptionOrNull()
+                        assertEquals(path, 302.toUShort(), (error as DbException.Http).status)
+                    }
                     else -> {
                         val file = java.io.File.createTempFile("upload", ".bin").apply { writeText("file"); deleteOnExit() }
                         val progress = object : ByteProgress(NoHandle) {
