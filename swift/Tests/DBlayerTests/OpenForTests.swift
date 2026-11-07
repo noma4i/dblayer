@@ -71,7 +71,7 @@ private func mutationNames(_ operations: String) throws -> Set<String> {
   return Set(listed.compactMap { ($0["document"] as? String)?.hasPrefix("mutation") == true ? $0["name"] as? String : nil })
 }
 
-private func bridgeToTransport(_ transport: Transport, operations: String) throws -> @Sendable (String, [String: Any]) async throws -> [String: Any] {
+private func bridgeToTransport(_ transport: any ScriptedTransport, operations: String) throws -> @Sendable (String, [String: Any]) async throws -> [String: Any] {
   let mutations = try mutationNames(operations)
   return { path, body in
     if path == "/api/auth/login_link" { return ["sessionId": "stand"] }
@@ -110,7 +110,7 @@ func loginAgain() async throws {
 /// A transport signs in through the real session path, and its queries and mutations ride the session HTTP.
 @MainActor @discardableResult
 func reopen(config: Config, modelsJson: String, transport: Transport?, operations: String = "[]") async throws -> Database {
-  guard let mock = transport else {
+  guard let mock = transport as? any ScriptedTransport else {
     return try await adopt(try await openDatabase(config: config, modelsJson: modelsJson, transport: transport, operations: operations))
   }
   let server = try SealedServer(bridge: try bridgeToTransport(mock, operations: withUploadSteps(operations, models: modelsJson)))

@@ -1,8 +1,9 @@
 import DBlayer
+import DBlayerTesting
 import Foundation
 
 /// The transport mock of the shared vocabulary. It answers no request by itself: a request waits until an input of the trace answers, fails or drops it.
-final class CorpusMock: Transport, EncryptedHttp, @unchecked Sendable {
+final class CorpusMock: ScriptedTransport, ScriptedHttp, @unchecked Sendable {
   private struct Seen { let id: String; let kind: String; let purpose: String; var announced = false }
 
   private let lock = NSLock()
@@ -64,6 +65,7 @@ final class CorpusMock: Transport, EncryptedHttp, @unchecked Sendable {
 
   func fail(_ id: String, _ kind: String) -> Bool {
     guard let error = Self.failure(kind) else { return false }
+    if kind == "permanent", lock.withLock({ waitingHttp[id] != nil }) { return answer(id, #"{"errors":[{"message":"permanent","extensions":{"code":"permanent"}}]}"#) }
     if kind == "auth", let held = lock.withLock({ waitingHttp.removeValue(forKey: id) }) {
       held.continuation.resume(returning: EncryptedReply(status: 401, body: ""))
       return true
@@ -110,10 +112,15 @@ final class CorpusMock: Transport, EncryptedHttp, @unchecked Sendable {
     return try await withCheckedThrowingContinuation { continuation in lock.withLock { waiting[id] = continuation } }
   }
 
-  func openCable(lease: CableLease, url: String) async throws {
+  func scriptedCable(url: String, events: CableEvents) async -> CableOutcome {
     let id = record("subscription", .standard)
-    try await peer.openCable(lease: lease, url: url)
+    let outcome = await peer.openCable(url: url, events: events)
     lock.withLock { cables[id] = peer.lastOpened }
+    return outcome
+  }
+
+  func send(request: HttpRequest) async -> RawOutcome {
+    request.headers["Content-Type"] == "application/jose" ? await sendEncrypted(request: request) : await sendGraphql(request: request)
   }
 
   func post(path: String, body: String, purpose: NetworkPurpose) async throws -> EncryptedReply {
@@ -121,13 +128,10 @@ final class CorpusMock: Transport, EncryptedHttp, @unchecked Sendable {
     let id = record("http", purpose)
     return try await withCheckedThrowingContinuation { continuation in lock.withLock { waitingHttp[id] = (request, continuation) } }
   }
-  func cableSend(token: String, text: String) async throws { try await peer.cableSend(token: token, text: text) }
-  func cableNext(token: String) async -> EncryptedSocketEvent? { await peer.cableNext(token: token) }
-  func cableClose(token: String) async { await peer.cableClose(token: token) }
   func query(request: TransportRequest) async throws -> String { try await wait("query", request) }
   func mutate(request: TransportRequest) async throws -> String { try await wait("mutation", request) }
 
-  func put(url: String, headers: [String: String], file: PutFile, identity: TransferIdentity, progress: ByteProgress) async throws -> PutReply {
+  func scriptedPut(url: String, headers: [String: String], file: PutFile, identity: TransferIdentity, progress: ByteProgress) async throws -> PutReply {
     let id = record("put", .transfer)
     return try await withCheckedThrowingContinuation { continuation in lock.withLock { waitingPuts[id] = continuation } }
   }

@@ -1,9 +1,7 @@
 package com.noma4i.dblayer
 
-import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
-import okhttp3.RequestBody.Companion.toRequestBody
 
 /** A plain GraphQL endpoint over HTTP. */
 class OkHttpTransport(
@@ -12,42 +10,19 @@ class OkHttpTransport(
     client: OkHttpClient = OkHttpClient(),
 ) : Transport {
     private val client = client.newBuilder().followRedirects(false).followSslRedirects(false).retryOnConnectionFailure(false).build()
-    private val encryptedSocket = OkHttpEncryptedSocket(this.client, headers)
-    override suspend fun openCable(lease: CableLease, url: String) = lease.opened(encryptedSocket.open(url))
-    override suspend fun cableSend(token: String, text: String) = encryptedSocket.send(token, text)
-    override suspend fun cableNext(token: String): EncryptedSocketEvent? = encryptedSocket.next(token)
-    override suspend fun cableClose(token: String) = encryptedSocket.close(token)
+    private val cable = OkHttpCable(this.client, headers)
 
-    private fun body(request: TransportRequest): String = kotlinx.serialization.json.buildJsonObject {
-        put("query", kotlinx.serialization.json.JsonPrimitive(request.document))
-        put("operationName", kotlinx.serialization.json.JsonPrimitive(request.operationName))
-        put("variables", parseJson(request.variablesJson))
-    }.toString()
+    override fun endpoint(): String = endpoint
 
-    private suspend fun post(request: TransportRequest, kind: GraphQLOperationKind): String {
-        val http = Request.Builder().url(endpoint).post(body(request).toRequestBody("application/json".toMediaType())).apply {
-            headers().forEach { (field, value) -> header(field, value) }
-        }.build().withUserAgent()
-        return try {
-            (if (request.purpose == NetworkPurpose.TRANSFER) UploadNetwork.route(client) else client).newCall(http).exchange { response ->
-                val text = response.body.string()
-                if (response.code !in 200..299) throw DbException.Http(response.code.toUShort(), text)
-                text
-            }
-        } catch (error: java.io.IOException) {
-            throw classifyTransportFailure(error, kind)
-        }
-    }
+    override suspend fun send(request: HttpRequest): RawOutcome = client.run(request, headers())
 
-    override suspend fun query(request: TransportRequest): String = post(request, GraphQLOperationKind.Query)
+    override suspend fun openCable(url: String, connectMs: ULong, events: CableEvents): CableOutcome = cable.open(url, connectMs, events)
 
-    override suspend fun mutate(request: TransportRequest): String = post(request, GraphQLOperationKind.Mutation)
-
-    override suspend fun put(url: String, headers: Map<String, String>, file: PutFile, identity: TransferIdentity, progress: ByteProgress): PutReply =
+    override suspend fun put(url: String, headers: Map<String, String>, file: PutFile, identity: TransferIdentity, progress: ByteProgress): RawOutcome =
         putFile(client, url, headers, file, progress, routed = true)
 }
 
-internal suspend fun putFile(client: OkHttpClient, url: String, headers: Map<String, String>, file: PutFile, progress: ByteProgress, routed: Boolean = false): PutReply {
+internal suspend fun putFile(client: OkHttpClient, url: String, headers: Map<String, String>, file: PutFile, progress: ByteProgress, routed: Boolean = false): RawOutcome {
     val body = object : okhttp3.RequestBody() {
         override fun contentType() = null
         override fun contentLength() = file.length.toLong()
@@ -67,11 +42,14 @@ internal suspend fun putFile(client: OkHttpClient, url: String, headers: Map<Str
             }
         }
     }
-    val request = Request.Builder().url(url).put(body).apply { headers.forEach { (field, value) -> header(field, value) } }.build().withUserAgent()
+    val request = try {
+        Request.Builder().url(url).put(body).apply { headers.forEach { (field, value) -> header(field, value) } }.build().withUserAgent()
+    } catch (error: IllegalArgumentException) {
+        return failed(RawFailureKind.IO, error.message ?: "invalid upload address")
+    }
     return try {
-        (if (routed) UploadNetwork.route(client) else client).newCall(request).exchange { PutReply(it.code.toUShort(), it.header("ETag")) }
+        (if (routed) UploadNetwork.route(client) else client).newCall(request).exchange { RawOutcome.Response(it.code.toUShort(), it.header("ETag"), "") }
     } catch (error: java.io.IOException) {
-        if (progress.isCancelled()) throw DbException.Interrupted(error.message ?: "cancelled")
-        throw DbException.Network(error.message ?: error.toString())
+        RawOutcome.Failed(rawFailure(error))
     }
 }

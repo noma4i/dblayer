@@ -1,7 +1,6 @@
 package com.noma4i.dblayer
 
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.channels.Channel
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ConcurrentLinkedQueue
@@ -11,15 +10,17 @@ import java.util.concurrent.CopyOnWriteArrayList
 enum class Unanswered { Strict, NetworkError }
 
 /** The server end of the encrypted session cable. `MockTransport` hands the cable calls of the session to it and pushes model events through it. */
-interface CablePeer : Transport {
+interface CablePeer {
     /** Called with the request of every subscription the session opens on the cable. */
     var onSubscribe: ((TransportRequest) -> Unit)?
 
     /** A data event of the open subscription of that operation. False while it is not open. */
     fun event(operation: String, result: String): Boolean
+
+    suspend fun openCable(url: String, events: CableEvents): CableOutcome
 }
 
-class MockTransport(private val unanswered: Unanswered = Unanswered.Strict) : Transport {
+class MockTransport(private val unanswered: Unanswered = Unanswered.Strict) : ScriptedTransport {
     private class Missed(val owner: MockTransport, val message: String)
 
     private companion object {
@@ -54,7 +55,7 @@ class MockTransport(private val unanswered: Unanswered = Unanswered.Strict) : Tr
         missed.removeAll { it.owner === this }
         return unscripted.toList()
     }
-    private val cableEvents = ConcurrentHashMap<String, Channel<EncryptedSocketEvent>>()
+    private val cableSinks = ConcurrentHashMap<String, CableEvents>()
     private val sentFrames = CopyOnWriteArrayList<Pair<String, String>>()
     val cableFrames: List<Pair<String, String>> get() { failTestThread(); return sentFrames.toList() }
 
@@ -65,28 +66,27 @@ class MockTransport(private val unanswered: Unanswered = Unanswered.Strict) : Tr
             field = value
         }
 
-    override suspend fun openCable(lease: CableLease, url: String) {
-        cable?.let { return it.openCable(lease, url) }
+    private class MockCable(private val sent: MutableList<Pair<String, String>>, private val token: String) : PlatformSocket {
+        override fun send(text: String): Boolean = sent.add(token to text)
+
+        override fun close(code: UShort, reason: String) = Unit
+    }
+
+    override suspend fun scriptedCable(url: String, events: CableEvents): CableOutcome {
+        cable?.let { return it.openCable(url, events) }
         val token = UUID.randomUUID().toString()
-        cableEvents[token] = Channel(Channel.UNLIMITED)
-        lease.opened(token)
+        cableSinks[token] = events
+        return CableOutcome.Open(MockCable(sentFrames, token))
     }
 
-    override suspend fun cableSend(token: String, text: String) {
-        cable?.let { return it.cableSend(token, text) }
-        if (!cableEvents.containsKey(token)) throw DbException.Network("cable socket is closed")
-        sentFrames.add(token to text)
+    fun emitCable(token: String, frame: String) {
+        (cableSinks[token] ?: throw DbException.Network("cable socket is closed")).frame(frame)
     }
 
-    override suspend fun cableNext(token: String): EncryptedSocketEvent? = cable?.cableNext(token) ?: cableEvents[token]?.receiveCatching()?.getOrNull()
-
-    override suspend fun cableClose(token: String) { cable?.cableClose(token); cableEvents.remove(token)?.close() }
-
-    fun emitCable(token: String, event: EncryptedSocketEvent) {
-        val events = cableEvents[token] ?: throw DbException.Network("cable socket is closed")
-        if (!events.trySend(event).isSuccess) throw DbException.Network("cable socket is closed")
-        if (event is EncryptedSocketEvent.Closed) events.close()
+    fun closeCable(token: String, code: UShort, reason: String) {
+        (cableSinks.remove(token) ?: throw DbException.Network("cable socket is closed")).closed(code, reason)
     }
+
     private class Reply(val body: String?, val failure: DbException?, val delayMillis: Long, val hold: Hold? = null)
 
     private val replies = ConcurrentHashMap<String, java.util.ArrayDeque<Reply>>()
@@ -119,7 +119,7 @@ class MockTransport(private val unanswered: Unanswered = Unanswered.Strict) : Tr
 
     override suspend fun mutate(request: TransportRequest): String = answer(request)
 
-    override suspend fun put(url: String, headers: Map<String, String>, file: PutFile, identity: TransferIdentity, progress: ByteProgress): PutReply {
+    override suspend fun scriptedPut(url: String, headers: Map<String, String>, file: PutFile, identity: TransferIdentity, progress: ByteProgress): PutReply {
         progress.sent(file.length)
         return PutReply(200u, null)
     }

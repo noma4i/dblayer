@@ -46,7 +46,7 @@ impl Server {
 }
 
 #[async_trait]
-impl EncryptedHttp for Server {
+impl FakeHttp for Server {
     async fn post(&self, path: String, body: String, _: crate::transport::NetworkPurpose) -> Result<EncryptedReply, DbError> {
         let request = decrypt_request(&body).unwrap();
         let answer = {

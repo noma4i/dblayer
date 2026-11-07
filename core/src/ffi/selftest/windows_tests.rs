@@ -8,7 +8,7 @@ use async_trait::async_trait;
 use super::rig_tests::{bound, Gate, Rig};
 use super::rig_held::Held;
 use crate::ffi::lifecycle_tests::Rows;
-use crate::ffi::{ByteProgress, CableLease, Config, Database, DbError, EncryptedSocketEvent, LoadMoreResult, OpenDatabase, PutReply, TestClock, Transport, TransportRequest};
+use crate::ffi::{ByteProgress, Config, Database, DbError, LoadMoreResult, OpenDatabase, PutReply, TestClock, FakeTransport, TransportRequest};
 use crate::test_wait::yield_until;
 use crate::schema::{Coverage, FieldSpec, ModelSpec, PageDirection, RelationSpec, RemoteShape, RemoteSpec, Storage};
 
@@ -20,11 +20,7 @@ struct Pages {
 }
 
 #[async_trait]
-impl Transport for Pages {
-    async fn open_cable(&self, _: Arc<CableLease>, _url: String) -> Result<(), DbError> { Err(DbError::Network { detail: "fake socket unavailable".into() }) }
-    async fn cable_send(&self, _: String, _: String) -> Result<(), DbError> { unreachable!() }
-    async fn cable_next(&self, _: String) -> Option<EncryptedSocketEvent> { unreachable!() }
-    async fn cable_close(&self, _: String) {}
+impl FakeTransport for Pages {
     async fn query(&self, _: TransportRequest) -> Result<String, DbError> {
         let number = self.queries.fetch_add(1, Ordering::SeqCst);
         let gate = self.gates.lock().unwrap().remove(&number);

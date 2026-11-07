@@ -3,17 +3,14 @@ import Foundation
 import Testing
 @testable import DBlayer
 
-private final class HeldProfileTransport: Transport, WrapsMock, @unchecked Sendable {
+private final class HeldProfileTransport: ScriptedTransport, WrapsMock, @unchecked Sendable {
   let base = MockTransport()
   let arrived = AsyncStream<Void>.makeStream()
   let released = AsyncStream<Void>.makeStream()
   let ended = AsyncStream<Void>.makeStream()
   private let lock = NSLock()
   private var first = true
-  func openCable(lease: CableLease, url: String) async throws { try await base.openCable(lease: lease, url: url) }
-  func cableSend(token: String, text: String) async throws { try await base.cableSend(token: token, text: text) }
-  func cableNext(token: String) async -> EncryptedSocketEvent? { await base.cableNext(token: token) }
-  func cableClose(token: String) async { await base.cableClose(token: token) }
+  func scriptedCable(url: String, events: CableEvents) async -> CableOutcome { await base.scriptedCable(url: url, events: events) }
   func query(request: TransportRequest) async throws -> String {
     let held = lock.withLock { let value = first; first = false; return value }
     if !held { return try await base.query(request: request) }
@@ -23,7 +20,7 @@ private final class HeldProfileTransport: Transport, WrapsMock, @unchecked Senda
     return #"{"data":{"me":{"__typename":"User","id":"1","name":"A"}}}"#
   }
   func mutate(request: TransportRequest) async throws -> String { try await base.mutate(request: request) }
-  func put(url: String, headers: [String: String], file: PutFile, identity: TransferIdentity, progress: ByteProgress) async throws -> PutReply { try await base.put(url: url, headers: headers, file: file, identity: identity, progress: progress) }
+  func scriptedPut(url: String, headers: [String: String], file: PutFile, identity: TransferIdentity, progress: ByteProgress) async throws -> PutReply { try await base.scriptedPut(url: url, headers: headers, file: file, identity: identity, progress: progress) }
 }
 
 extension BridgeProbeTests {

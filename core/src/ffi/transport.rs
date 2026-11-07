@@ -1,88 +1,20 @@
 use std::collections::HashMap;
-use std::future::Future;
-use std::pin::Pin;
 use std::sync::Arc;
-use std::task::{Context, Poll};
 use async_trait::async_trait;
 use crate::transport as core;
-use super::lease::TokenLease;
+use super::cable::{CableOutcome, ForeignSocket, Mailbox, CableEvents};
 use super::DbError;
-
-#[derive(Clone, uniffi::Record)]
-pub struct TransportRequest {
-    pub document: String,
-    pub operation_name: String,
-    pub variables_json: String,
-    pub purpose: core::NetworkPurpose,
-}
-
-impl From<core::GraphQLRequest> for TransportRequest {
-    fn from(request: core::GraphQLRequest) -> Self {
-        Self { document: request.document, operation_name: request.operation_name, variables_json: request.variables.to_string(), purpose: request.purpose }
-    }
-}
 
 #[uniffi::export(rust, foreign)]
 #[async_trait]
 pub trait Transport: Send + Sync {
-    /// Opens the WebSocket at `url` (built by the core) and reports its token to `lease`. The platform sends and receives raw text frames only.
-    async fn open_cable(&self, lease: Arc<CableLease>, url: String) -> Result<(), DbError>;
-    async fn cable_send(&self, token: String, text: String) -> Result<(), DbError>;
-    async fn cable_next(&self, token: String) -> Option<EncryptedSocketEvent>;
-    async fn cable_close(&self, token: String);
-    async fn query(&self, request: TransportRequest) -> Result<String, DbError>;
-    async fn mutate(&self, request: TransportRequest) -> Result<String, DbError>;
-    async fn put(&self, url: String, headers: HashMap<String, String>, file: core::PutFile, identity: core::TransferIdentity, progress: Arc<ByteProgress>) -> Result<core::PutReply, DbError>;
-}
-
-#[derive(Clone, Debug, uniffi::Enum)]
-pub enum EncryptedSocketEvent {
-    Text { text: String },
-    Closed { code: u16, reason: String },
-}
-
-#[derive(uniffi::Object)]
-pub struct CableLease { lease: TokenLease }
-
-#[uniffi::export]
-impl CableLease {
-    pub fn opened(&self, token: String) -> Result<(), DbError> { self.lease.opened(token) }
-}
-
-struct Closing<'a> { lease: &'a TokenLease, done: bool }
-
-impl Drop for Closing<'_> {
-    fn drop(&mut self) {
-        if self.done { self.lease.finish_close(); } else { self.lease.restore_close(); }
-    }
-}
-
-struct ForeignSocket { transport: Arc<dyn Transport>, lease: Arc<CableLease>, token: String }
-
-impl Drop for ForeignSocket {
-    fn drop(&mut self) {
-        crate::lock::assert_no_library_lock("ForeignSocket::drop");
-        self.lease.lease.abandon();
-    }
-}
-
-#[async_trait]
-impl core::CableSocket for ForeignSocket {
-    async fn send(&self, text: String) -> Result<(), core::TransportError> { crate::lock::assert_no_library_lock("Transport::cable_send"); self.transport.cable_send(self.token.clone(), text).await.map_err(transport_error) }
-    async fn next(&self) -> Option<core::SocketEvent> {
-        crate::lock::assert_no_library_lock("Transport::cable_next");
-        self.transport.cable_next(self.token.clone()).await.map(|event| match event {
-            EncryptedSocketEvent::Text { text } => core::SocketEvent::Text(text),
-            EncryptedSocketEvent::Closed { code, reason } => core::SocketEvent::Closed { code, reason },
-        })
-    }
-    async fn close(&self) {
-        let Some(token) = self.lease.lease.begin_close() else { return };
-        let mut closing = Closing { lease: &self.lease.lease, done: false };
-        crate::lock::assert_no_library_lock("Transport::cable_close");
-        self.transport.cable_close(token).await;
-        closing.done = true;
-    }
+    /// The GraphQL address of a database without an encrypted session.
+    fn endpoint(&self) -> String;
+    /// Runs one HTTP exchange and returns the raw outcome: the executor never classifies, follows a redirect or retries.
+    async fn send(&self, request: core::HttpRequest) -> core::RawOutcome;
+    /// Opens the WebSocket at `url` (built by the core), reports its frames to `events` and returns the connection after the handshake.
+    async fn open_cable(&self, url: String, connect_ms: u64, events: Arc<dyn CableEvents>) -> CableOutcome;
+    async fn put(&self, url: String, headers: HashMap<String, String>, file: core::PutFile, identity: core::TransferIdentity, progress: Arc<ByteProgress>) -> core::RawOutcome;
 }
 
 #[derive(uniffi::Object)]
@@ -163,40 +95,25 @@ impl crate::owners::life::ObserverPort for ObserverStop {
     }
 }
 
-pub(super) struct ForeignTransport(pub Arc<dyn Transport>);
+pub(super) struct ForeignTransport { port: Arc<dyn Transport>, endpoint: Option<String> }
+
+impl ForeignTransport {
+    pub(super) fn plain(port: Arc<dyn Transport>) -> Result<Self, DbError> {
+        let endpoint = core::graphql_endpoint(&port.endpoint()).map_err(DbError::from)?;
+        Ok(Self { port, endpoint: Some(endpoint) })
+    }
+
+    pub(super) fn beside_session(port: Arc<dyn Transport>) -> Self { Self { port, endpoint: None } }
+
+    async fn graphql(&self, request: core::GraphQLRequest, kind: core::ExchangeKind) -> Result<core::Response, core::TransportError> {
+        let Some(endpoint) = &self.endpoint else { return Err(core::TransportError::Config { code: core::ConfigCode::InvalidRequest, detail: "the database has no GraphQL endpoint".into() }) };
+        let outcome = crate::lock::effect(|| self.port.send(core::graphql_call(endpoint, &request))).await;
+        serde_json::from_str(&core::graphql_text(outcome, kind)?).map_err(|error| core::TransportError::Decode(error.to_string()))
+    }
+}
 
 impl Drop for ForeignTransport {
     fn drop(&mut self) { crate::lock::assert_no_library_lock("ForeignTransport::drop"); }
-}
-
-struct Calling<'a> {
-    call: Pin<Box<dyn Future<Output = Result<(), DbError>> + Send + 'a>>,
-    abandon: Option<Box<dyn FnOnce() + Send + 'a>>,
-}
-
-impl<'a> Calling<'a> {
-    fn new(call: Pin<Box<dyn Future<Output = Result<(), DbError>> + Send + 'a>>, abandon: impl FnOnce() + Send + 'a) -> Self {
-        Self { call, abandon: Some(Box::new(abandon)) }
-    }
-}
-
-impl Future for Calling<'_> {
-    type Output = Result<(), DbError>;
-    fn poll(mut self: Pin<&mut Self>, context: &mut Context<'_>) -> Poll<Self::Output> {
-        let polled = self.call.as_mut().poll(context);
-        if let Poll::Ready(result) = &polled {
-            let abandon = self.abandon.take();
-            if let (Err(_), Some(abandon)) = (result, abandon) { abandon(); }
-        }
-        polled
-    }
-}
-
-impl Drop for Calling<'_> {
-    fn drop(&mut self) {
-        crate::lock::assert_no_library_lock("Calling::drop");
-        if let Some(abandon) = self.abandon.take() { abandon(); }
-    }
 }
 
 pub(super) fn transport_error(error: DbError) -> core::TransportError {
@@ -217,33 +134,29 @@ pub(super) fn transport_error(error: DbError) -> core::TransportError {
 impl core::Upstream for ForeignTransport {
     async fn open_cable(&self, url: &str) -> Result<Arc<dyn core::CableSocket>, core::TransportError> {
         crate::lock::assert_no_library_lock("Transport::open_cable");
-        let transport = self.0.clone();
-        let handle = super::database::executor().map_err(transport_error)?.handle().clone();
-        let lease = Arc::new(CableLease { lease: TokenLease::new(handle, move |token| {
-            let transport = transport.clone();
-            Box::pin(async move { crate::lock::assert_no_library_lock("Transport::cable_close"); transport.cable_close(token).await })
-        }) });
-        let abandoned = lease.clone();
-        Calling::new(self.0.open_cable(lease.clone(), url.to_string()), move || abandoned.lease.abandon()).await.map_err(transport_error)?;
-        let Some(token) = lease.lease.token() else {
-            return Err(transport_error(DbError::Invalid { detail: "open_cable finished without opened".into() }));
-        };
-        Ok(Arc::new(ForeignSocket { transport: self.0.clone(), lease, token }))
+        let mailbox = Arc::new(Mailbox::default());
+        match self.port.open_cable(url.to_string(), core::CONNECT_TIMEOUT_MS, mailbox.clone()).await {
+            CableOutcome::Open { connection } => Ok(Arc::new(ForeignSocket::new(connection, mailbox))),
+            CableOutcome::Failed { failure } => Err(core::classify(&failure, core::ExchangeKind::Post)),
+        }
     }
     async fn query(&self, request: core::GraphQLRequest) -> Result<core::Response, core::TransportError> {
         crate::lock::assert_no_library_lock("Transport::query");
-        let json = self.0.query(request.into()).await.map_err(transport_error)?;
-        serde_json::from_str(&json).map_err(|error| core::TransportError::Decode(error.to_string()))
+        self.graphql(request, core::ExchangeKind::Query).await
     }
     async fn mutate(&self, request: core::GraphQLRequest) -> Result<core::Response, core::TransportError> {
         crate::lock::assert_no_library_lock("Transport::mutate");
-        let json = self.0.mutate(request.into()).await.map_err(transport_error)?;
-        serde_json::from_str(&json).map_err(|error| core::TransportError::Decode(error.to_string()))
+        self.graphql(request, core::ExchangeKind::Mutation).await
     }
     async fn put(&self, request: core::PutRequest) -> Result<core::PutReply, core::TransportError> {
         crate::lock::assert_no_library_lock("Transport::put");
+        let cancel = request.cancel.clone();
         let progress = Arc::new(ByteProgress { cancel: request.cancel, sent: request.sent });
-        self.0.put(request.url, request.headers.into_iter().collect(), request.file, request.identity, progress).await.map_err(transport_error)
+        match self.port.put(request.url, request.headers.into_iter().collect(), request.file, request.identity, progress).await {
+            core::RawOutcome::Response { status, etag, .. } => Ok(core::PutReply { status, etag }),
+            core::RawOutcome::Failed { .. } if cancel.is_cancelled() => Err(core::TransportError::Interrupted("the upload was cancelled".into())),
+            core::RawOutcome::Failed { failure } => Err(core::classify(&failure, core::ExchangeKind::Post)),
+        }
     }
 }
 

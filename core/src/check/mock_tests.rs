@@ -1,5 +1,5 @@
+use crate::ffi::FakeTransport;
 use super::mock::Mock;
-use crate::ffi::Transport;
 use crate::ffi::TransportRequest;
 use crate::transport::NetworkPurpose;
 

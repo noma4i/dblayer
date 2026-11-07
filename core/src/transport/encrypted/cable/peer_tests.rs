@@ -8,15 +8,20 @@ use aes_gcm::{aead::{Aead, KeyInit, Payload}, Aes256Gcm, Nonce};
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
-use tokio::sync::mpsc;
 use x25519_dalek::{PublicKey, StaticSecret};
 
-use crate::ffi::{CableLease, DbError, EncryptedSocketEvent};
+use crate::ffi::{PlatformSocket, CableEvents, CableOutcome, DbError};
 use crate::transport::encrypted::fake_server_tests::decrypt_request;
 
+pub(crate) enum PeerEvent {
+    Subscribed(String),
+    Closed(String),
+}
+
+pub(crate) type Observer = Arc<dyn Fn(PeerEvent) + Send + Sync>;
+
 struct Connection {
-    input: mpsc::UnboundedSender<EncryptedSocketEvent>,
-    output: tokio::sync::Mutex<mpsc::UnboundedReceiver<EncryptedSocketEvent>>,
+    events: Arc<dyn CableEvents>,
     secret: StaticSecret,
     salt: [u8; 32],
     keys: Mutex<Option<([u8; 32], [u8; 32])>>,
@@ -24,29 +29,56 @@ struct Connection {
     subscription: Mutex<Option<String>>,
 }
 
+#[derive(Clone)]
 pub(crate) struct CablePeer {
     config: crate::transport::EncryptedConfig,
-    connections: Mutex<HashMap<String, Arc<Connection>>>,
-    next: AtomicUsize,
+    connections: Arc<Mutex<HashMap<String, Arc<Connection>>>>,
+    next: Arc<AtomicUsize>,
+    observer: Option<Observer>,
+}
+
+struct PeerLink {
+    peer: CablePeer,
+    token: String,
+}
+
+impl PlatformSocket for PeerLink {
+    fn send(&self, text: String) -> bool {
+        match self.peer.receive(&self.token, &text) {
+            Ok(subscribed) => {
+                if subscribed.is_some() { self.peer.observe(PeerEvent::Subscribed(self.token.clone())); }
+                true
+            }
+            Err(_) => false,
+        }
+    }
+
+    fn close(&self, _: u16, _: String) { self.peer.observe(PeerEvent::Closed(self.token.clone())); }
 }
 
 impl CablePeer {
     pub(crate) fn new(config: crate::transport::EncryptedConfig) -> Self {
-        Self { config, connections: Mutex::new(HashMap::new()), next: AtomicUsize::new(0) }
+        Self { config, connections: Arc::default(), next: Arc::default(), observer: None }
+    }
+
+    pub(crate) fn observed(config: crate::transport::EncryptedConfig, observer: impl Fn(PeerEvent) + Send + Sync + 'static) -> Self {
+        Self { observer: Some(Arc::new(observer)), ..Self::new(config) }
+    }
+
+    fn observe(&self, event: PeerEvent) {
+        if let Some(observer) = &self.observer { observer(event); }
     }
 
     fn connection(&self, token: &str) -> Option<Arc<Connection>> { self.connections.lock().unwrap().get(token).cloned() }
 
-    /// A socket opens: the token of the lease and the challenge of the server.
-    pub(crate) fn open(&self, lease: &Arc<CableLease>) -> Result<String, DbError> {
+    /// A socket opens: the token of the connection and the challenge of the server.
+    pub(crate) fn connect(&self, events: Arc<dyn CableEvents>) -> (String, CableOutcome) {
         let token = self.next.fetch_add(1, Ordering::SeqCst).to_string();
-        let (input, output) = mpsc::unbounded_channel();
-        let connection = Arc::new(Connection { input, output: tokio::sync::Mutex::new(output), secret: StaticSecret::from([9; 32]), salt: [5; 32], keys: Mutex::new(None), sequence: AtomicUsize::new(0), subscription: Mutex::new(None) });
+        let connection = Arc::new(Connection { events: events.clone(), secret: StaticSecret::from([9; 32]), salt: [5; 32], keys: Mutex::new(None), sequence: AtomicUsize::new(0), subscription: Mutex::new(None) });
         self.connections.lock().unwrap().insert(token.clone(), connection.clone());
-        lease.opened(token.clone())?;
         let challenge = json!({"type":"challenge", "v":1, "kid":self.config.pin, "challenge":URL_SAFE_NO_PAD.encode(connection.salt), "x25519":URL_SAFE_NO_PAD.encode(PublicKey::from(&connection.secret).as_bytes())});
-        let _ = connection.input.send(EncryptedSocketEvent::Text { text: challenge.to_string() });
-        Ok(token)
+        events.frame(challenge.to_string());
+        (token.clone(), CableOutcome::Open { connection: Arc::new(PeerLink { peer: self.clone(), token }) })
     }
 
     /// The client sends a text: the hello answers `ready`, a subscribe answers `subscribed`. The result is the id of the subscription a subscribe opened.
@@ -54,7 +86,7 @@ impl CablePeer {
         let Some(connection) = self.connection(token) else { return Err(DbError::Network { detail: "no such socket".into() }) };
         let command: Value = serde_json::from_str(text)?;
         if command["command"] == "subscribe" {
-            let _ = connection.input.send(EncryptedSocketEvent::Text { text: json!({"type":"confirm_subscription"}).to_string() });
+            connection.events.frame(json!({"type":"confirm_subscription"}).to_string());
             return Ok(None);
         }
         let data: Value = serde_json::from_str(command["data"].as_str().unwrap())?;
@@ -93,13 +125,6 @@ impl CablePeer {
         Ok(None)
     }
 
-    /// The next event the client reads from the socket.
-    pub(crate) async fn next(&self, token: &str) -> Option<EncryptedSocketEvent> {
-        let connection = self.connection(token)?;
-        let event = crate::test_wait::within(async { connection.output.lock().await.recv().await }).await;
-        event
-    }
-
     /// A sealed server frame.
     pub(crate) fn emit(&self, token: &str, mut body: Value) {
         let Some(connection) = self.connection(token) else { return };
@@ -111,7 +136,7 @@ impl CablePeer {
         let sealed = Aes256Gcm::new_from_slice(&key).unwrap().encrypt(Nonce::from_slice(&iv), Payload { msg: body.to_string().as_bytes(), aad: header.as_bytes() }).unwrap();
         let (text, tag) = sealed.split_at(sealed.len() - 16);
         let frame = format!("{header}..{}.{}.{}", URL_SAFE_NO_PAD.encode(iv), URL_SAFE_NO_PAD.encode(text), URL_SAFE_NO_PAD.encode(tag));
-        let _ = connection.input.send(EncryptedSocketEvent::Text { text: json!({"message":{"frame":frame}}).to_string() });
+        connection.events.frame(json!({"message":{"frame":frame}}).to_string());
     }
 
     /// A data event of the open subscription.
@@ -124,7 +149,7 @@ impl CablePeer {
     /// The socket breaks.
     pub(crate) fn close(&self, token: &str) -> bool {
         let Some(connection) = self.connection(token) else { return false };
-        let _ = connection.input.send(EncryptedSocketEvent::Closed { code: 1006, reason: "dropped".into() });
+        connection.events.closed(1006, "dropped".into());
         true
     }
 }

@@ -11,13 +11,13 @@ class CoverageTests(unittest.TestCase):
     def test_reports_account_for_current_transport_sources(self):
         script = Path(__file__).with_name("check_coverage.sh")
         paths = {
-            "swift": ["swift/Sources/DBlayer/Network/TransportFailure.swift",
+            "swift": ["swift/Sources/DBlayer/Network/RawFailure+Error.swift",
                       "swift/Sources/DBlayer/Network/UrlSessionEncryptedHttp.swift",
                       "swift/Sources/DBlayer/UrlSessionTransport.swift",
                       "swift/Sources/DBlayer/UrlSessionCable.swift"],
-            "kotlin": ["kotlin/src/main/kotlin/com/noma4i/dblayer/OkHttpEncryptedSocket.kt",
+            "kotlin": ["kotlin/src/main/kotlin/com/noma4i/dblayer/OkHttpCable.kt",
                        "kotlin/src/main/kotlin/com/noma4i/dblayer/OkHttpEncryptedHttp.kt",
-                       "kotlin/src/main/kotlin/com/noma4i/dblayer/TransportFailure.kt",
+                       "kotlin/src/main/kotlin/com/noma4i/dblayer/Http.kt",
                        "kotlin/src/main/kotlin/com/noma4i/dblayer/Transports.kt"],
         }
         cases = [
@@ -39,8 +39,6 @@ class CoverageTests(unittest.TestCase):
                     target = root / name
                     target.parent.mkdir(parents=True, exist_ok=True)
                     target.write_text("sendFrame()\n")
-            (root / "swift/Sources/DBlayer/Network/GraphQLOperationKind.swift").write_text(
-                "enum GraphQLOperationKind { case query, mutation }\n")
             allowlist = root / "allowlist"
             allowlist.write_text("")
             for label, platform, defect, target, expected in cases:

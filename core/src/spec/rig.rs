@@ -8,7 +8,7 @@ use async_trait::async_trait;
 use serde_json::{json, Value};
 use tokio::sync::oneshot;
 
-use crate::ffi::{ByteProgress, CableLease, Config, Database, DbError, EncryptedHttp, EncryptedReply, EncryptedSocketEvent, PutReply, TestClock, Transport, TransportRequest, WireOperationOutcome, WireOperationReceipt, WireRow};
+use crate::ffi::{ByteProgress, Config, Database, DbError, FakeHttp, EncryptedReply, PutReply, TestClock, FakeTransport, TransportRequest, WireOperationOutcome, WireOperationReceipt, WireRow};
 use crate::schema::{ActionDeclaration, FieldSpec, ModelSpec, OnFailure, RootShape};
 use crate::owners::write::upload::{MultipartOperations, UploadOperation, UploadOperations};
 use crate::transport::encrypted::fake_server_tests::{decrypt_request, seal_response, MemoryCredentials};
@@ -164,11 +164,7 @@ fn answer_of(operation: &str, variables: &Value, number: u64) -> Value {
 }
 
 #[async_trait]
-impl Transport for Wire {
-    async fn open_cable(&self, _: Arc<CableLease>, _url: String) -> Result<(), DbError> { Err(DbError::Network { detail: "no cable".into() }) }
-    async fn cable_send(&self, _: String, _: String) -> Result<(), DbError> { Err(DbError::Network { detail: "no cable".into() }) }
-    async fn cable_next(&self, _: String) -> Option<EncryptedSocketEvent> { None }
-    async fn cable_close(&self, _: String) {}
+impl FakeTransport for Wire {
     async fn query(&self, request: TransportRequest) -> Result<String, DbError> {
         self.0.state.lock().unwrap().seen.push(Seen { kind: Kind::Query, operation: request.operation_name, variables: serde_json::from_str(&request.variables_json)? });
         Ok(json!({"data":{"moments":[]}}).to_string())
@@ -195,7 +191,7 @@ impl Transport for Wire {
 }
 
 #[async_trait]
-impl EncryptedHttp for Wire {
+impl FakeHttp for Wire {
     async fn post(&self, path: String, body: String, _: crate::transport::NetworkPurpose) -> Result<EncryptedReply, DbError> {
         let request = decrypt_request(&body).unwrap();
         let sequence = request["sequence"].as_i64();

@@ -68,7 +68,7 @@ object ArchiveGroupMutation : GraphQLOperation {
 }
 ```
 
-The transport is an interface with seven calls: `query`, `mutate`, `openCable`, `cableSend`, `cableNext`, `cableClose` and `put`. Your app gets HTTP and WebSocket implementations for each platform (`UrlSessionTransport`, `OkHttpTransport`). Tests use a mock transport. A REST transport implements the same interface, see [your own transport](cable-protocol.md#your-own-transport).
+The transport is an interface with four calls: `endpoint`, `send`, `openCable` and `put`. The core builds the URL, the headers, the GraphQL body and the timeouts (connect 10 seconds, request 30 seconds) and classifies every raw outcome. Your app gets HTTP and WebSocket implementations for each platform (`UrlSessionTransport`, `OkHttpTransport`). Tests use a mock transport. A REST transport implements the same interface, see [your own transport](cable-protocol.md#your-own-transport).
 
 No HTTP call of the library follows a redirect: a `3xx` answer to a query, an encrypted request or a file upload is reported with its status (`Http` for a query) and the server sees one request.
 
@@ -79,13 +79,13 @@ A server that takes only encrypted requests (JWE over HTTPS) needs no signing co
 | Piece | What it is |
 | ----- | ---------- |
 | `EncryptedConfig` | `origin`, `serverKey`, `pin`, `endpoints`, `protocolLabel`, `cablePurpose`, `cableChannel`. The key is base64 DER with at least 3072 bits. Its SHA-256 must match the lowercase hex pin. Ship both with the app. See Application protocol configuration below |
-| `EncryptedHttp` | `post` sends the request text to `origin + path` as `application/jose` and returns status and body. `UrlSessionEncryptedHttp` (Swift) and `OkHttpEncryptedHttp` (Kotlin) do it |
+| `EncryptedHttp` | `send` runs the POST that the core built for `origin + path` with `application/jose` and returns the raw outcome. `UrlSessionEncryptedHttp` (Swift) and `OkHttpEncryptedHttp` (Kotlin) do it |
 | `CredentialStore` | `get`, `set` and `clear` keep one string. The library ships no store: your app implements it over the Keychain (iOS) or the Keystore (Android). The core creates the credential, calls `set` before the first request and never writes it to SQLite. The examples call that app code `AppCredentials` |
 
 The database uses encrypted JWE for queries and mutations, and encrypted Cable for subscriptions.
 The passed transport offers a text WebSocket and file upload. The shared subscription interface is described in [Cable protocol](cable-protocol.md).
 
-`TransportRequest.purpose` and the `purpose` argument of `EncryptedHttp.post` name the network of a request. `transfer` covers the upload steps, the content mutation and the abort. `standard` covers all other requests.
+`HttpRequest.purpose` names the network of a request. `transfer` covers the upload steps, the content mutation and the abort. `standard` covers all other requests.
 
 The Rust [cable protocol](cable-protocol.md) uses the same bundled key and pin for encrypted hello and encrypted frames.
 
@@ -277,7 +277,7 @@ The core refuses invalid input and a mismatched pin before HTTP. The optional `h
 
 The request uses `POST` at `encrypted.endpoints.bootstrap`, with `Content-Type: application/jose`, no query, cookies, credentials or old encryption headers.
 Redirects are refused. HTTP implementations do not reuse added application headers, cookie storage or authenticators.
-URLSession sends empty Accept and Accept-Language values to suppress system defaults.
+The core sets empty Accept and Accept-Language values to suppress system defaults, and both platforms send the headers as given.
 Bootstrap sends exactly one User-Agent with the library token and no application products.
 Each attempt creates a UUID, a response key and an issuedAt timestamp from the core clock. No sequence or pending request is stored.
 The server accepts issuedAt from 30 seconds ahead through 120 seconds old and returns `Cache-Control: no-store`.
@@ -366,7 +366,7 @@ Dropping the Rust future stops the request and its backoff.
 Swift Task and Kotlin coroutine cancellation also stop bootstrap and `sessionCall`.
 The Swift generator connects these calls to UniFFI cancellation and serializes cancel/free of each native future handle.
 Other Swift async calls keep their existing cancellation behavior.
-UniFFI generates non-throwing `current`, `cableNext` and `cableClose` with `try!`, so cancelling every async call would crash those methods.
+UniFFI generates non-throwing `current` with `try!`, so cancelling every async call would crash that method.
 
 Create one `RetryProgress()` before the database exists. Pass it as `retries` to `DB.serverConfig` in Swift and `DBlayer.serverConfig` in Kotlin.
 It is optional. Without it, retries behave identically. There is no process-wide instance.
@@ -380,8 +380,7 @@ There is no timer. The snapshot only follows the retry loops that `RetryPolicy` 
 `reason` is `network`, `HTTP <status>` or the temporary error code. It contains no request payload.
 Retries cover encrypted HTTP only. Durable outbox and upload owners expose their saved attempts through operation state.
 
-Kotlin `OkHttpEncryptedHttp` sets call and read timeouts to 30 seconds and connect timeout to 10 seconds.
-Swift `UrlSessionEncryptedHttp` sets request and resource timeouts to 30 seconds, including when given a custom session.
+The core puts the timeouts in every `HttpRequest`: connect 10 seconds, request 30 seconds. Kotlin applies them to the call. Swift applies the request timeout to the request, including when given a custom session.
 URLSession does not expose an independent connect timeout, so Swift has no separate 10-second connect setting.
 
 Origin rule: `https://host[:port]` is accepted for any host. `http://host[:port]` is accepted only for development hosts: the name `localhost`, a name that ends with the label `.local`, and the IP literals of loopback (`127.0.0.0/8`, `::1`), private networks (`10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`, `fc00::/7`) and link-local (`169.254.0.0/16`, `fe80::/10`). The core parses the host strictly: decimal, hex and octal address forms, trailing dots, user info, paths, queries and fragments are refused. The request audience stays the origin you gave. The JWE protects the payload over http, but the transport is not protected, so use http for development only. Production origins use https.
@@ -926,4 +925,4 @@ DBlayer.open(context, encrypted = encrypted, credentials = credentials, modelsJs
 
 `DBlayer.open` and `DBlayer.serverConfig` require Android Context first. Swift calls keep their argument lists.
 Their required encrypted configuration has changed. Applications must supply every protocol value before opening or fetching config.
-`UrlSessionTransport` and `OkHttpTransport` take no cable path. The core builds the WebSocket address from `EncryptedConfig` and passes it to `openCable`; the platform opens it and passes raw text frames.
+`UrlSessionTransport` and `OkHttpTransport` take no cable path. The core builds the WebSocket address from `EncryptedConfig` and passes it to `openCable`; the platform opens it and reports raw frames to `CableEvents`.

@@ -1,7 +1,7 @@
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
-use super::{Config, Database, DbError, TestClock, Transport};
+use super::{Config, Database, DbError, TestClock, FakeTransport};
 use crate::schema::{Coverage, FieldSpec, ModelSpec, PageDirection, RelationSpec, RemoteShape, RemoteSpec};
 use crate::test_wait::within_secs;
 use crate::value::ScalarKind;
@@ -19,11 +19,7 @@ impl Drop for OnCancel<'_> {
 }
 
 #[async_trait::async_trait]
-impl Transport for Endless {
-    async fn open_cable(&self, _: Arc<super::CableLease>, _url: String) -> Result<(), DbError> { Err(DbError::Network { detail: "fake socket unavailable".into() }) }
-    async fn cable_send(&self, _: String, _: String) -> Result<(), DbError> { unreachable!() }
-    async fn cable_next(&self, _: String) -> Option<crate::ffi::EncryptedSocketEvent> { unreachable!() }
-    async fn cable_close(&self, _: String) {}
+impl FakeTransport for Endless {
     async fn query(&self, _: super::TransportRequest) -> Result<String, DbError> {
         let number = self.queries.fetch_add(1, Ordering::SeqCst);
         if number == 5 {

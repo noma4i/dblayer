@@ -51,7 +51,7 @@ private fun mutationNames(operations: String): Set<String> =
     Regex(""""name":"(\w+)","document":"mutation""").findAll(operations).map { it.groupValues[1] }.toSet()
 
 /** The HTTP of the encrypted session answers from the mock transport, so the test database signs in the real way and every request still reaches the mock. */
-private fun bridgeToTransport(transport: Transport, operations: String): suspend (String, kotlinx.serialization.json.JsonObject) -> kotlinx.serialization.json.JsonObject {
+private fun bridgeToTransport(transport: ScriptedTransport, operations: String): suspend (String, kotlinx.serialization.json.JsonObject) -> kotlinx.serialization.json.JsonObject {
     val mutations = mutationNames(operations)
     val json = kotlinx.serialization.json.Json
     return { path, body ->
@@ -90,7 +90,7 @@ suspend fun loginAgain() {
 
 /** A transport signs in through the real session path, and its queries and mutations ride the session HTTP. */
 suspend fun reopen(config: Config, modelsJson: String, transport: Transport? = null, operations: String = "[]"): Database {
-    val mock = transport ?: return adopt(openDatabase(config, modelsJson, transport, operations = operations))
+    val mock = transport as? ScriptedTransport ?: return adopt(openDatabase(config, modelsJson, transport, operations = operations))
     val server = SealedServer(answer = bridgeToTransport(mock, withUploadSteps(operations, modelsJson)))
     val host = mock as? MockTransport ?: (mock as? WrapsMock)?.base
     host?.cable = EncryptedCablePeer(server)

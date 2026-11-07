@@ -25,7 +25,7 @@ private enum SessionProbe: GraphQLOperation {
 
 private struct PathLogin: Encodable, Sendable { let account: String }
 
-private final class RefusingHttp: EncryptedHttp, Sendable {
+private final class RefusingHttp: ScriptedHttp, Sendable {
   let posts: AsyncStream<Void>.Continuation
   init(_ posts: AsyncStream<Void>.Continuation) { self.posts = posts }
   func post(path: String, body: String, purpose: NetworkPurpose) async throws -> EncryptedReply {

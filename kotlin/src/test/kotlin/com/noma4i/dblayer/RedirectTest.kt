@@ -21,13 +21,13 @@ class RedirectTest {
                 val transport = OkHttpTransport(origin, client = client)
                 when (path) {
                     "query" -> {
-                        val error = runCatching { transport.query(TransportRequest("query Probe { id }", "Probe", "{}", NetworkPurpose.STANDARD)) }.exceptionOrNull()
-                        assertEquals(path, 302.toUShort(), (error as DbException.Http).status)
+                        assertEquals(path, 302.toUShort(), transport.send(probeRequest(origin + "graphql")).status())
                     }
-                    "encrypted" -> assertEquals(path, 302.toUShort(), OkHttpEncryptedHttp(origin, client).post("/api/session", "jwe", NetworkPurpose.STANDARD).status)
+                    "encrypted" -> assertEquals(path, 302.toUShort(), OkHttpEncryptedHttp(origin, client).send(probeRequest(origin + "api/session")).status())
                     "cable" -> {
-                        val error = runCatching { transport.openedCable(cableUrl(server)) }.exceptionOrNull()
-                        assertEquals(path, 302.toUShort(), (error as DbException.Http).status)
+                        val failure = (transport.openCable(cableUrl(server), 10_000uL, RecordingEvents()) as CableOutcome.Failed).failure
+                        assertEquals(path, 302L, failure.code)
+                        assertEquals(path, RawFailureKind.PROTOCOL, failure.kind)
                     }
                     else -> {
                         val file = java.io.File.createTempFile("upload", ".bin").apply { writeText("file"); deleteOnExit() }
@@ -35,7 +35,7 @@ class RedirectTest {
                             override fun sent(bytes: ULong) {}
                             override fun isCancelled() = false
                         }
-                        assertEquals(path, 302.toUShort(), transport.put(origin + "upload", emptyMap(), PutFile(file.path, 0u, 4u), TransferIdentity(1L, "a", TransferStep.Put), progress).status)
+                        assertEquals(path, 302.toUShort(), transport.put(origin + "upload", emptyMap(), PutFile(file.path, 0u, 4u), TransferIdentity(1L, "a", TransferStep.Put), progress).status())
                     }
                 }
                 assertEquals(path, 1, server.requestCount)

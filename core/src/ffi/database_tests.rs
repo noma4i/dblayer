@@ -1,3 +1,4 @@
+use crate::ffi::{FakeHttp, FakeTransport};
 use std::sync::Arc;
 
 use super::{Config, CredentialStore, Database, DbError, EncryptedConfig, EncryptedHttp, EncryptedReply, Transport, TransportRequest};
@@ -6,11 +7,7 @@ use crate::transport::encrypted::vectors_tests::{origin, pin, public_key_der_b64
 pub(crate) struct Plain;
 
 #[async_trait::async_trait]
-impl Transport for Plain {
-    async fn open_cable(&self, _: Arc<super::CableLease>, _url: String) -> Result<(), DbError> { unreachable!() }
-    async fn cable_send(&self, _: String, _: String) -> Result<(), DbError> { unreachable!() }
-    async fn cable_next(&self, _: String) -> Option<super::EncryptedSocketEvent> { unreachable!() }
-    async fn cable_close(&self, _: String) { unreachable!() }
+impl FakeTransport for Plain {
     async fn query(&self, request: TransportRequest) -> Result<String, DbError> {
         assert_eq!(request.document, "query Greeting($name: String!) { greeting(name: $name) }");
         assert_eq!(request.operation_name, "Greeting");
@@ -30,7 +27,7 @@ impl CredentialStore for Unused {
 }
 
 #[async_trait::async_trait]
-impl EncryptedHttp for Unused {
+impl FakeHttp for Unused {
     async fn post(&self, _: String, _: String, _: crate::transport::NetworkPurpose) -> Result<EncryptedReply, DbError> { unreachable!() }
 }
 

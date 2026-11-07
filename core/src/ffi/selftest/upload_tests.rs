@@ -15,7 +15,7 @@ use crate::ffi::encrypted_tests::ThroughServer;
 use crate::ffi::sealed_errors_tests::moment_spec;
 use crate::ffi::session_guards_tests::{Rig as SessionRig, SOCIAL_BODY};
 use crate::ffi::upload_wire::WireUploadRequest;
-use crate::ffi::{ByteProgress, CableLease, Config, Database, DbError, EncryptedConfig, EncryptedSocketEvent, PutReply, Transport, TransportRequest, WireOperationOutcome};
+use crate::ffi::{ByteProgress, Config, Database, DbError, EncryptedConfig, PutReply, FakeTransport, TransportRequest, WireOperationOutcome};
 use crate::transport::encrypted::vectors_tests::{origin, pin, public_key_der_b64};
 use crate::transport::encrypted::fake_server_tests::{decrypt_request, seal_response, FakeServer};
 use crate::transport::NetworkPurpose;
@@ -28,22 +28,18 @@ struct Puts(Mutex<Vec<(u64, u64)>>);
 struct UploadHttp(Arc<FakeServer>);
 
 #[async_trait]
-impl crate::ffi::EncryptedHttp for UploadHttp {
+impl crate::ffi::FakeHttp for UploadHttp {
     async fn post(&self, path: String, body: String, purpose: NetworkPurpose) -> Result<crate::ffi::EncryptedReply, DbError> {
         let request = decrypt_request(&body).unwrap();
         if request["body"]["operationName"] == "Feed" {
             return Ok(crate::ffi::EncryptedReply { status: 200, body: seal_response(&request, request["sequence"].as_i64(), json!({"data":{"moments":[]}})) });
         }
-        crate::ffi::EncryptedHttp::post(&ThroughServer(self.0.clone()), path, body, purpose).await
+        crate::ffi::FakeHttp::post(&ThroughServer(self.0.clone()), path, body, purpose).await
     }
 }
 
 #[async_trait]
-impl Transport for Puts {
-    async fn open_cable(&self, _: Arc<CableLease>, _url: String) -> Result<(), DbError> { Err(DbError::Network { detail: "fake socket unavailable".into() }) }
-    async fn cable_send(&self, _: String, _: String) -> Result<(), DbError> { unreachable!() }
-    async fn cable_next(&self, _: String) -> Option<EncryptedSocketEvent> { unreachable!() }
-    async fn cable_close(&self, _: String) {}
+impl FakeTransport for Puts {
     async fn query(&self, _: TransportRequest) -> Result<String, DbError> { unreachable!() }
     async fn mutate(&self, _: TransportRequest) -> Result<String, DbError> { unreachable!() }
     async fn put(&self, _: String, _: HashMap<String, String>, file: crate::transport::PutFile, _: crate::transport::TransferIdentity, _: Arc<ByteProgress>) -> Result<PutReply, DbError> {

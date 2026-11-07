@@ -23,16 +23,13 @@ private func forwardAnswer(_ id: String, chat: String) -> String {
   #"{"data":{"forwardLetter":{"letter":{"__typename":"Letter","id":"\#(id)","chatId":"\#(chat)","text":"hello","at":99}}}}"#
 }
 
-private final class MemberEventsTransport: Transport, WrapsMock, @unchecked Sendable {
+private final class MemberEventsTransport: ScriptedTransport, WrapsMock, @unchecked Sendable {
   let base = MockTransport()
-  func openCable(lease: CableLease, url: String) async throws { try await base.openCable(lease: lease, url: url) }
-  func cableSend(token: String, text: String) async throws { try await base.cableSend(token: token, text: text) }
-  func cableNext(token: String) async -> EncryptedSocketEvent? { await base.cableNext(token: token) }
-  func cableClose(token: String) async { await base.cableClose(token: token) }
+  func scriptedCable(url: String, events: CableEvents) async -> CableOutcome { await base.scriptedCable(url: url, events: events) }
   func query(request: TransportRequest) async throws -> String { try await base.query(request: request) }
   func mutate(request: TransportRequest) async throws -> String { try await base.mutate(request: request) }
-  func put(url: String, headers: [String: String], file: PutFile, identity: TransferIdentity, progress: ByteProgress) async throws -> PutReply {
-    try await base.put(url: url, headers: headers, file: file, identity: identity, progress: progress)
+  func scriptedPut(url: String, headers: [String: String], file: PutFile, identity: TransferIdentity, progress: ByteProgress) async throws -> PutReply {
+    try await base.scriptedPut(url: url, headers: headers, file: file, identity: identity, progress: progress)
   }
 }
 

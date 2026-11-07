@@ -11,7 +11,7 @@ import java.util.concurrent.CopyOnWriteArrayList
 private const val SERVER_KEY = "MIIBojANBgkqhkiG9w0BAQEFAAOCAY8AMIIBigKCAYEAtzb67l/cXul2uArFqeZXsMf4tImrLcaHb3uiVNp8mjjJrFK/zwUEEazm3pmriAbj1nBzSxQLuq3jNUeFHXoQxjwWmTdv+PoAypz4ZII6Dz6rknk290/ddmimc1Z4Mx0AkT4ffAA9WHiDtLPF6tKZWNsWF/SpJps9PWrIKNOKY78ZfCgfegrWfKwoNYExyZ0IuUUgG0lsRjEEE/U59GpbNBqdKtw7KaIGK47QRk6HWOkCQtyqqjsseOJLwdI0k6jDNmcH6DulPNmar9AbwsmpngD55P8y4JdH49Eq3Nr040gmg0Y1p1FZm5PbKeC4WgZZdmg1bxjKAa+MYP0fROi4dFz05/81fqFb6DWaXencb0p/Iz+IUfQiI/0EYNv1SfdTUHzGyHFAmQHeCUIKLSkNNg3uF/jqKthFecCnWEfTUWRWFsN/8/Nb65a1UI/L1hP/qd+T6xKfchqVBEf767yeHdgsy3GeuqTsgXUPkuA1DO9HPP1xWqa6orUNWkimSwxDAgMBAAE="
 private const val SERVER_PIN = "fab4f816eb33917161942684230405ae47ad4df5b456bd973085599b1364342a"
 
-private class RecordedHttp(private val status: UShort) : EncryptedHttp {
+private class RecordedHttp(private val status: UShort) : ScriptedHttp {
     val posts = CopyOnWriteArrayList<Pair<String, String>>()
 
     override suspend fun post(path: String, body: String, purpose: NetworkPurpose): EncryptedReply {
@@ -76,7 +76,7 @@ class EncryptedSessionTest {
             server.enqueue(MockResponse().setResponseCode(503).setBody("busy"))
             server.start()
 
-            val reply = OkHttpEncryptedHttp(server.url("/").toString().trimEnd('/')).post("/api/graphql", "a.b.c.d.e", NetworkPurpose.STANDARD)
+            val reply = OkHttpEncryptedHttp(server.url("/").toString().trimEnd('/')).send(probeRequest(server.url("/api/graphql").toString(), "a.b.c.d.e")) as RawOutcome.Response
 
             assertEquals(503.toUShort() to "busy", reply.status to reply.body)
             val request = server.takeRequest()
@@ -90,12 +90,12 @@ class EncryptedSessionTest {
 
 
     @Test
-    fun aTransportFailureIsANetworkError() = bounded {
+    fun aTransportFailureIsAnUnreachableOutcome() = bounded {
         val server = MockWebServer().apply { start() }
         val origin = server.url("/").toString().trimEnd('/')
         server.shutdown()
 
-        failsWith<DbException.Network> { OkHttpEncryptedHttp(origin).post("/api/logout", "x", NetworkPurpose.STANDARD) }
+        assertEquals(RawFailureKind.UNREACHABLE, OkHttpEncryptedHttp(origin).send(probeRequest("$origin/api/logout", "x")).failureKind())
     }
 
     @Test

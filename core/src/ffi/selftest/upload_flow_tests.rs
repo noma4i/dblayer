@@ -103,7 +103,7 @@ async fn flow_chat_photo_retry_and_discard() {
     let (_directory, path) = source("logo.jpg", b"jpeg");
     let epoch = rig.database.session_epoch();
 
-    rig.world.fail_next("PUT", Fault::Http(403));
+    rig.world.fail_next("PUT", Fault::Http(400));
     bound(rig.database.upload(epoch, "Chat".into(), "c1".into(), "update_photo".into(), request(&path, json!({"id": "c1"})))).await.unwrap();
     yield_until("the upload failed on the row", || status(&chat, "c1", "update_photo") == Some(WireUploadStatus::Failed)).await;
 
@@ -112,7 +112,7 @@ async fn flow_chat_photo_retry_and_discard() {
     yield_until("the retry delivered the logo", || cell(&rig, "Chat", &chat.0.lock().unwrap()[0], "logoUrl") != Cell::Null && status(&chat, "c1", "update_photo").is_none()).await;
 
     let (_other_directory, other) = source("logo2.jpg", b"another jpeg");
-    rig.world.fail_next("PUT", Fault::Http(403));
+    rig.world.fail_next("PUT", Fault::Http(400));
     bound(rig.database.upload(epoch, "Chat".into(), "c1".into(), "update_photo".into(), request(&other, json!({"id": "c1"})))).await.unwrap();
     yield_until("the second upload failed", || status(&chat, "c1", "update_photo") == Some(WireUploadStatus::Failed)).await;
     bound(rig.database.discard(epoch, "Chat".into(), "c1".into(), Some("update_photo".into()))).await.unwrap();

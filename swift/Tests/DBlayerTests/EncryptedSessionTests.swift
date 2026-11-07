@@ -6,7 +6,7 @@ import Testing
 private let serverKey = "MIIBojANBgkqhkiG9w0BAQEFAAOCAY8AMIIBigKCAYEAtzb67l/cXul2uArFqeZXsMf4tImrLcaHb3uiVNp8mjjJrFK/zwUEEazm3pmriAbj1nBzSxQLuq3jNUeFHXoQxjwWmTdv+PoAypz4ZII6Dz6rknk290/ddmimc1Z4Mx0AkT4ffAA9WHiDtLPF6tKZWNsWF/SpJps9PWrIKNOKY78ZfCgfegrWfKwoNYExyZ0IuUUgG0lsRjEEE/U59GpbNBqdKtw7KaIGK47QRk6HWOkCQtyqqjsseOJLwdI0k6jDNmcH6DulPNmar9AbwsmpngD55P8y4JdH49Eq3Nr040gmg0Y1p1FZm5PbKeC4WgZZdmg1bxjKAa+MYP0fROi4dFz05/81fqFb6DWaXencb0p/Iz+IUfQiI/0EYNv1SfdTUHzGyHFAmQHeCUIKLSkNNg3uF/jqKthFecCnWEfTUWRWFsN/8/Nb65a1UI/L1hP/qd+T6xKfchqVBEf767yeHdgsy3GeuqTsgXUPkuA1DO9HPP1xWqa6orUNWkimSwxDAgMBAAE="
 private let serverPin = "fab4f816eb33917161942684230405ae47ad4df5b456bd973085599b1364342a"
 
-private final class RecordedHttp: EncryptedHttp, @unchecked Sendable {
+private final class RecordedHttp: ScriptedHttp, @unchecked Sendable {
   private let lock = NSLock()
   private var recorded: [(path: String, body: String)] = []
   let status: UInt16
@@ -76,21 +76,15 @@ struct EncryptedSessionTests {
     configuration.protocolClasses = [PlainResponseProtocol.self]
     let http = UrlSessionEncryptedHttp(origin: Self.origin, session: URLSession(configuration: configuration))
 
-    #expect(try await http.post(path: "/api/bootstrap", body: "x", purpose: .standard).status == 0)
+    #expect(responseStatus(await http.send(request: probeRequest(Self.origin, path: "/api/bootstrap", body: "x"))) == 0)
   }
 
   @Test
-  func aTransportFailureIsANetworkError() async throws {
+  func aTransportFailureIsAFailedOutcome() async throws {
     ScriptedURLProtocol.reset(scriptId: Self.scriptId)
     let http = UrlSessionEncryptedHttp(origin: Self.origin, session: ScriptedURLProtocol.session(scriptId: Self.scriptId))
 
-    do {
-      _ = try await http.post(path: "/api/logout", body: "x", purpose: .standard)
-      Issue.record("the failed transport did not throw")
-    } catch DbError.Network {
-    } catch {
-      Issue.record("the failure surfaced as \(error), not as a network error")
-    }
+    #expect(failureKind(await http.send(request: probeRequest(Self.origin, path: "/api/logout", body: "x"))) != nil)
   }
 
   @Test

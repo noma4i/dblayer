@@ -17,7 +17,7 @@ private func confirmedIds<Model: DBModel>(_ receipt: OperationReceipt<Model>) as
 }
 
 
-private final class MultipartTransfer: Transport, @unchecked Sendable {
+private final class MultipartTransfer: ScriptedTransport, @unchecked Sendable {
   let mock = MockTransport()
   private let lock = NSLock()
   private var urls: [String] = []
@@ -26,13 +26,10 @@ private final class MultipartTransfer: Transport, @unchecked Sendable {
   var puts: [String] { lock.withLock { urls } }
   var identities: [TransferIdentity] { lock.withLock { captured } }
   var paths: [(String, String)] { lock.withLock { capturedPaths } }
-  func openCable(lease: CableLease, url: String) async throws { try await mock.openCable(lease: lease, url: url) }
-  func cableSend(token: String, text: String) async throws { try await mock.cableSend(token: token, text: text) }
-  func cableNext(token: String) async -> EncryptedSocketEvent? { await mock.cableNext(token: token) }
-  func cableClose(token: String) async { await mock.cableClose(token: token) }
+  func scriptedCable(url: String, events: CableEvents) async -> CableOutcome { await mock.scriptedCable(url: url, events: events) }
   func query(request: TransportRequest) async throws -> String { try await mock.query(request: request) }
   func mutate(request: TransportRequest) async throws -> String { try await mock.mutate(request: request) }
-  func put(url: String, headers: [String: String], file: PutFile, identity: TransferIdentity, progress: ByteProgress) async throws -> PutReply {
+  func scriptedPut(url: String, headers: [String: String], file: PutFile, identity: TransferIdentity, progress: ByteProgress) async throws -> PutReply {
     lock.withLock { urls.append(url); captured.append(identity); capturedPaths.append((identity.itemId, URL(fileURLWithPath: file.path).resolvingSymlinksInPath().path)) }
     return PutReply(status: 200, etag: "etag")
   }
@@ -53,7 +50,7 @@ private final class TransferCredential: CredentialStore, @unchecked Sendable {
   func clear() throws { lock.withLock { value = nil } }
 }
 
-private final class HoldSecondFile: Transport, @unchecked Sendable {
+private final class HoldSecondFile: ScriptedTransport, @unchecked Sendable {
   private let mock = MockTransport()
   private let lock = NSLock()
   private var count = 0
@@ -61,13 +58,10 @@ private final class HoldSecondFile: Transport, @unchecked Sendable {
   var identities: [TransferIdentity] { lock.withLock { captured } }
   let server: SealedServer
   init(_ server: SealedServer) { self.server = server }
-  func openCable(lease: CableLease, url: String) async throws { try await mock.openCable(lease: lease, url: url) }
-  func cableSend(token: String, text: String) async throws { try await mock.cableSend(token: token, text: text) }
-  func cableNext(token: String) async -> EncryptedSocketEvent? { await mock.cableNext(token: token) }
-  func cableClose(token: String) async { await mock.cableClose(token: token) }
+  func scriptedCable(url: String, events: CableEvents) async -> CableOutcome { await mock.scriptedCable(url: url, events: events) }
   func query(request: TransportRequest) async throws -> String { try await mock.query(request: request) }
   func mutate(request: TransportRequest) async throws -> String { try await mock.mutate(request: request) }
-  func put(url: String, headers: [String: String], file: PutFile, identity: TransferIdentity, progress: ByteProgress) async throws -> PutReply {
+  func scriptedPut(url: String, headers: [String: String], file: PutFile, identity: TransferIdentity, progress: ByteProgress) async throws -> PutReply {
     let first = lock.withLock { captured.append(identity); count += 1; return count == 1 }
     if first { server.hold(operation: "CreateBlob") }
     progress.sent(bytes: file.length)
@@ -79,15 +73,12 @@ private func createdBlob(_ index: Int) -> String {
   "{\"data\":{\"createBlob\":{\"url\":\"https://storage/file\",\"headers\":{},\"signedId\":\"signed-\(index)\",\"blobId\":\"b\(index)\"}}}"
 }
 
-private final class RefuseFirstFile: Transport, @unchecked Sendable {
+private final class RefuseFirstFile: ScriptedTransport, @unchecked Sendable {
   private let mock: MockTransport
   private let lock = NSLock()
   private var refused = false
   init(_ mock: MockTransport) { self.mock = mock }
-  func openCable(lease: CableLease, url: String) async throws { try await mock.openCable(lease: lease, url: url) }
-  func cableSend(token: String, text: String) async throws { try await mock.cableSend(token: token, text: text) }
-  func cableNext(token: String) async -> EncryptedSocketEvent? { await mock.cableNext(token: token) }
-  func cableClose(token: String) async { await mock.cableClose(token: token) }
+  func scriptedCable(url: String, events: CableEvents) async -> CableOutcome { await mock.scriptedCable(url: url, events: events) }
   func query(request: TransportRequest) async throws -> String { try await mock.query(request: request) }
   func mutate(request: TransportRequest) async throws -> String {
     let answer = try await mock.mutate(request: request)
@@ -96,8 +87,8 @@ private final class RefuseFirstFile: Transport, @unchecked Sendable {
     let first = lock.withLock { () -> Bool in defer { refused = true }; return !refused }
     return first ? #"{"errors":[{"message":"no storage","extensions":{"code":"FORBIDDEN"}}]}"# : answer
   }
-  func put(url: String, headers: [String: String], file: PutFile, identity: TransferIdentity, progress: ByteProgress) async throws -> PutReply {
-    try await mock.put(url: url, headers: headers, file: file, identity: identity, progress: progress)
+  func scriptedPut(url: String, headers: [String: String], file: PutFile, identity: TransferIdentity, progress: ByteProgress) async throws -> PutReply {
+    try await mock.scriptedPut(url: url, headers: headers, file: file, identity: identity, progress: progress)
   }
 }
 

@@ -47,7 +47,7 @@ class BootstrapConfigTest {
         server.enqueue(MockResponse().setBody("pending").throttleBody(1, 60, java.util.concurrent.TimeUnit.SECONDS))
         server.start()
         val http = OkHttpEncryptedHttp(server.url("/").toString().trimEnd('/'), client)
-        val task = launch { runCatching { http.post("/probe", "x", NetworkPurpose.STANDARD) } }
+        val task = launch { runCatching { http.send(probeRequest(server.url("/probe").toString(), "x")) } }
         try {
             kotlinx.coroutines.withTimeout(5000) { reading.await() }
             task.cancel()
@@ -64,7 +64,7 @@ class BootstrapConfigTest {
     fun coroutineCancellationReachesTheCoreAndCancelsForeignHttp() = bounded {
         val started = CompletableDeferred<Unit>()
         val stopped = CompletableDeferred<Throwable>()
-        val http = object : EncryptedHttp {
+        val http = object : ScriptedHttp {
             override suspend fun post(path: String, body: String, purpose: NetworkPurpose): EncryptedReply {
                 started.complete(Unit)
                 try {
@@ -85,11 +85,13 @@ class BootstrapConfigTest {
     fun bootstrapTimeoutWaitsForCancellationAndReportsTheAttempt() = bounded {
         val calls = AtomicInteger()
         val retries = RetryProgress()
-        val http = object : EncryptedHttp {
-            override suspend fun post(path: String, body: String, purpose: NetworkPurpose): EncryptedReply {
+        val http = object : ScriptedHttp {
+            override suspend fun send(request: HttpRequest): RawOutcome {
                 calls.incrementAndGet()
-                throw classifyEncryptedHttpFailure(SocketTimeoutException("timeout"))
+                return RawOutcome.Failed(RawFailure(RawFailureKind.TIMEOUT, null, "timeout"))
             }
+
+            override suspend fun post(path: String, body: String, purpose: NetworkPurpose): EncryptedReply = error("the timeout script answers in send")
         }
         val connected = async { retries.flow.take(2).toList() }
         val call = launch { DBlayer.serverConfig(context, encrypted(), AppPlatform.ANDROID, "1.2", http = http, retries = retries) }
@@ -162,7 +164,7 @@ class BootstrapConfigTest {
         for (platform in listOf(AppPlatform.IOS, AppPlatform.ANDROID)) {
             for (kind in listOf("ok", "http", "pin")) {
                 var calls = 0
-                val http = object : EncryptedHttp {
+                val http = object : ScriptedHttp {
                     override suspend fun post(path: String, body: String, purpose: NetworkPurpose): EncryptedReply {
                         calls++
                         assertEquals(kat.text("path"), path)
@@ -184,7 +186,6 @@ class BootstrapConfigTest {
                         "http" -> assertEquals(400.toUShort(), (error as DbException.Http).status)
                         else -> throw error
                     }
-                    assertSame(error, classifyEncryptedHttpFailure(error))
                 }
                 assertEquals(if (kind == "pin") 0 else 1, calls)
             }
@@ -200,14 +201,14 @@ class BootstrapConfigTest {
             val polluted = OkHttpClient.Builder().addInterceptor { chain ->
                 chain.proceed(chain.request().newBuilder().header("X-App", "kept").build())
             }.build()
-            val reply = OkHttpEncryptedHttp(server.url("/").toString().trimEnd('/'), polluted).post("/api/bootstrap", "jwe", NetworkPurpose.STANDARD)
-            assertEquals(302.toUShort(), reply.status)
+            val reply = OkHttpEncryptedHttp(server.url("/").toString().trimEnd('/'), polluted).send(probeRequest(server.url("/api/bootstrap").toString()))
+            assertEquals(302.toUShort(), reply.status())
             assertEquals(1, server.requestCount)
             val request = server.takeRequest()
             assertEquals(listOf(userAgent(null)), request.headers.values("User-Agent"))
             assertEquals("POST /api/bootstrap", "${request.method} ${request.path}")
             val applicationHeaders = request.headers.names().filter { it.lowercase() !in listOf("host", "content-length", "transfer-encoding", "connection", "user-agent", "accept-encoding") }
-            assertEquals(setOf("X-App", "Content-Type"), applicationHeaders.toSet())
+            assertEquals(setOf("X-App", "Content-Type", "Accept", "Accept-Language"), applicationHeaders.toSet())
             assertEquals("application/jose", request.getHeader("Content-Type"))
             assertEquals("jwe", request.body.readUtf8())
         }

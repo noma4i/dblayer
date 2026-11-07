@@ -1,3 +1,4 @@
+use crate::ffi::{FakeHttp};
 use std::sync::Arc;
 use async_trait::async_trait;
 use super::harness_life::Held;
@@ -13,7 +14,7 @@ struct WindowHttp(Arc<Server>);
 struct ThresholdHttp(Arc<Server>);
 
 #[async_trait]
-impl EncryptedHttp for ThresholdHttp {
+impl FakeHttp for ThresholdHttp {
     async fn post(&self, path: String, body: String, purpose: NetworkPurpose) -> Result<EncryptedReply, DbError> {
         let request = decrypt_request(&body).unwrap();
         let name = request["body"]["operationName"].as_str().unwrap_or_default();
@@ -29,7 +30,7 @@ impl EncryptedHttp for ThresholdHttp {
 }
 
 #[async_trait]
-impl EncryptedHttp for WindowHttp {
+impl FakeHttp for WindowHttp {
     async fn post(&self, path: String, body: String, purpose: NetworkPurpose) -> Result<EncryptedReply, DbError> {
         let request = decrypt_request(&body).unwrap();
         if request["body"]["operationName"] == "Profile" {

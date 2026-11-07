@@ -19,22 +19,33 @@ struct RedirectTests {
     let transport = UrlSessionTransport(endpoint: origin, session: session)
     switch path {
     case "query":
-      do {
-        _ = try await transport.query(request: TransportRequest(document: "query Probe { id }", operationName: "Probe", variablesJson: "{}", purpose: .standard))
-        Issue.record("a redirect answer returned")
-      } catch let DbError.Http(status, _) {
-        #expect(status == 302)
-      }
+      #expect(responseStatus(await transport.send(request: probeRequest(origin, path: "/graphql"))) == 302)
     case "encrypted":
-      let reply = try await UrlSessionEncryptedHttp(origin: origin, session: session).post(path: "/api/session", body: "jwe", purpose: .standard)
-      #expect(reply.status == 302)
+      #expect(responseStatus(await UrlSessionEncryptedHttp(origin: origin, session: session).send(request: probeRequest(origin))) == 302)
     default:
       let file = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
       try Data("file".utf8).write(to: file)
       defer { try? FileManager.default.removeItem(at: file) }
-      let reply = try await transport.put(url: origin.appendingPathComponent("upload").absoluteString, headers: [:], file: PutFile(path: file.path, offset: 0, length: 4), identity: TransferIdentity(operationId: 1, itemId: "a", step: .put), progress: PutNoBytes(noHandle: .init()))
-      #expect(reply.status == 302)
+      let reply = await transport.put(url: origin.appendingPathComponent("upload").absoluteString, headers: [:], file: PutFile(path: file.path, offset: 0, length: 4), identity: TransferIdentity(operationId: 1, itemId: "a", step: .put), progress: PutNoBytes(noHandle: .init()))
+      #expect(responseStatus(reply) == 302)
     }
     #expect(server.requests.count == 1)
+  }
+}
+
+struct PutPartTests {
+  @Test
+  func an_upload_sends_the_part_the_core_names() async throws {
+    let server = try BootstrapListener(responseStatus: "200 OK\r\nETag: \"part\"")
+    defer { server.listener.cancel() }
+    let origin = try await server.start()
+    let session = URLSession(configuration: .ephemeral)
+    defer { session.invalidateAndCancel() }
+    let file = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    try Data("0123456789".utf8).write(to: file)
+    defer { try? FileManager.default.removeItem(at: file) }
+    let outcome = await UrlSessionTransport(endpoint: origin, session: session).put(url: origin.appendingPathComponent("part").absoluteString, headers: [:], file: PutFile(path: file.path, offset: 2, length: 4), identity: TransferIdentity(operationId: 1, itemId: "a", step: .part(number: 1)), progress: PutNoBytes(noHandle: .init()))
+    #expect(outcome == .response(status: 200, etag: "\"part\"", body: ""))
+    #expect(try #require(server.requests.first).hasSuffix("\r\n\r\n2345"))
   }
 }

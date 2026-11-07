@@ -23,7 +23,7 @@ class FilePutTest {
             val request = server.takeRequest()
             assertEquals("3456", request.body.readUtf8())
             assertEquals("1", request.headers["x-a"])
-            assertEquals(PutReply(200u, "\"abc\""), reply)
+            assertEquals(RawOutcome.Response(200u, "\"abc\"", ""), reply)
             assertEquals(4uL, sent.last())
         }
     }

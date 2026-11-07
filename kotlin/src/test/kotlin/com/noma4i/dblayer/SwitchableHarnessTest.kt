@@ -7,16 +7,13 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /** The transport of the app harness: a target that the tests set and unset. An unset target throws the error the app harness throws. */
-class SwitchableTransport(@Volatile var target: MockTransport?, private val unset: () -> DbException) : Transport {
+class SwitchableTransport(@Volatile var target: MockTransport?, private val unset: () -> DbException) : ScriptedTransport {
     private fun resolve(): MockTransport = target ?: throw unset()
 
-    override suspend fun openCable(lease: CableLease, url: String) = resolve().openCable(lease, url)
-    override suspend fun cableSend(token: String, text: String) = resolve().cableSend(token, text)
-    override suspend fun cableNext(token: String): EncryptedSocketEvent? = target?.cableNext(token)
-    override suspend fun cableClose(token: String) { target?.cableClose(token) }
     override suspend fun query(request: TransportRequest): String = resolve().query(request)
     override suspend fun mutate(request: TransportRequest): String = resolve().mutate(request)
-    override suspend fun put(url: String, headers: Map<String, String>, file: PutFile, identity: TransferIdentity, progress: ByteProgress): PutReply = resolve().put(url, headers, file, identity, progress)
+    override suspend fun scriptedCable(url: String, events: CableEvents): CableOutcome = resolve().scriptedCable(url, events)
+    override suspend fun scriptedPut(url: String, headers: Map<String, String>, file: PutFile, identity: TransferIdentity, progress: ByteProgress): PutReply = resolve().scriptedPut(url, headers, file, identity, progress)
 }
 
 @OptIn(DBlayerTestingApi::class)

@@ -15,20 +15,14 @@ class ForeignFutureOutStructTest {
     private val threads = 8
     private val sentinel: Byte = 0x5A
 
-    private class Instant : Transport {
-        override suspend fun openCable(lease: CableLease, url: String) {}
-        override suspend fun cableSend(token: String, text: String) {}
-        override suspend fun cableNext(token: String): EncryptedSocketEvent? = null
-        override suspend fun cableClose(token: String) {}
-        override suspend fun query(request: TransportRequest): String = "{}"
-        override suspend fun mutate(request: TransportRequest): String = "{}"
-        override suspend fun put(url: String, headers: Map<String, String>, file: PutFile, identity: TransferIdentity, progress: ByteProgress): PutReply = PutReply(200u, null)
+    private class Instant : ScriptedTransport {
+        override suspend fun send(request: HttpRequest): RawOutcome = RawOutcome.Response(200u, null, "{}")
     }
 
     @Test
     fun theOutStructIsNotWrittenAfterTheFutureCompleted() {
         uniffiEnsureInitialized()
-        val function = Function.getFunction(CallbackReference.getFunctionPointer(uniffiCallbackInterfaceTransport.query))
+        val function = Function.getFunction(CallbackReference.getFunctionPointer(uniffiCallbackInterfaceTransport.send))
         val handle = FfiConverterTypeTransport.handleMap.insert(Instant())
         val clobbered = AtomicInteger()
         val unanswered = AtomicInteger()
@@ -40,12 +34,12 @@ class ForeignFutureOutStructTest {
                     val completed = CountDownLatch(1)
                     val complete = object : UniffiForeignFutureCompleteRustBuffer {
                         override fun callback(callbackData: Long, result: UniffiForeignFutureResultRustBuffer.UniffiByValue) {
-                            FfiConverterString.lift(result.returnValue)
+                            FfiConverterTypeRawOutcome.lift(result.returnValue)
                             owned.setMemory(0, 16, sentinel)
                             completed.countDown()
                         }
                     }
-                    function.invoke(Void.TYPE, arrayOf(handle, FfiConverterTypeTransportRequest.lower(TransportRequest("", "", "", NetworkPurpose.STANDARD)), complete, 0L, owned))
+                    function.invoke(Void.TYPE, arrayOf(handle, FfiConverterTypeHttpRequest.lower(HttpRequest("https://graphql.test/", "POST", emptyMap(), "", 1uL, 1uL, NetworkPurpose.STANDARD)), complete, 0L, owned))
                     if (!completed.await(10, TimeUnit.SECONDS)) {
                         unanswered.incrementAndGet()
                         break

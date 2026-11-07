@@ -4,9 +4,10 @@ import DBlayerTesting
 import Testing
 @testable import DBlayer
 
-final class EncryptedCablePeer: CablePeer, @unchecked Sendable {
+final class EncryptedCablePeer: CablePeer, ScriptedTransport, @unchecked Sendable {
   final class Connection: @unchecked Sendable {
-    let events = AsyncStream<EncryptedSocketEvent>.makeStream()
+    let events: CableEvents
+    init(events: CableEvents) { self.events = events }
     let secret = Curve25519.KeyAgreement.PrivateKey()
     let salt = Data(repeating: 5, count: 32)
     var sendKey: SymmetricKey?
@@ -46,21 +47,38 @@ final class EncryptedCablePeer: CablePeer, @unchecked Sendable {
     return value
   }
 
-  func openCable(lease: CableLease, url: String) async throws {
-    let token = UUID().uuidString
-    let connection = Connection()
-    lock.withLock { connections[token] = connection; latest = token }
-    try lease.opened(token: token)
-    let challenge: [String: Any] = ["type": "challenge", "v": 1, "kid": SealedServer.pin, "challenge": encode(connection.salt), "x25519": encode(connection.secret.publicKey.rawRepresentation)]
-    connection.events.continuation.yield(.text(text: try text(challenge)))
-    opened.continuation.yield(token)
+  private final class Link: PlatformSocket, @unchecked Sendable {
+    let peer: EncryptedCablePeer
+    let token: String
+    init(peer: EncryptedCablePeer, token: String) {
+      self.peer = peer
+      self.token = token
+    }
+    func send(text: String) -> Bool { (try? peer.receive(token: token, text: text)) != nil }
+    func close(code: UInt16, reason: String) { peer.closed.continuation.yield(token) }
   }
 
-  func cableSend(token: String, text: String) async throws {
+  func scriptedCable(url: String, events: CableEvents) async -> CableOutcome { await openCable(url: url, events: events) }
+
+  func openCable(url: String, events: CableEvents) async -> CableOutcome {
+    do { return try open(events: events) } catch { return .failed(failure: RawFailure(kind: .io, code: nil, message: "\(error)")) }
+  }
+
+  private func open(events: CableEvents) throws -> CableOutcome {
+    let token = UUID().uuidString
+    let connection = Connection(events: events)
+    lock.withLock { connections[token] = connection; latest = token }
+    let challenge: [String: Any] = ["type": "challenge", "v": 1, "kid": SealedServer.pin, "challenge": encode(connection.salt), "x25519": encode(connection.secret.publicKey.rawRepresentation)]
+    events.frame(text: try text(challenge))
+    opened.continuation.yield(token)
+    return .open(connection: Link(peer: self, token: token))
+  }
+
+  func receive(token: String, text: String) throws {
     let connection = try connection(token)
     let command = try JSONSerialization.jsonObject(with: Data(text.utf8)) as! [String: Any]
     if command["command"] as? String == "subscribe" {
-      connection.events.continuation.yield(.text(text: #"{"type":"confirm_subscription"}"#))
+      connection.events.frame(text: #"{"type":"confirm_subscription"}"#)
       return
     }
     let data = try JSONSerialization.jsonObject(with: Data((command["data"] as! String).utf8)) as! [String: Any]
@@ -109,7 +127,7 @@ final class EncryptedCablePeer: CablePeer, @unchecked Sendable {
     let nonce = AES.GCM.Nonce()
     let box = try AES.GCM.seal(JSONSerialization.data(withJSONObject: body), using: connection.sendKey!, nonce: nonce, authenticating: Data(header.utf8))
     let frame = "\(header)..\(encode(Data(box.nonce))).\(encode(box.ciphertext)).\(encode(box.tag))"
-    connection.events.continuation.yield(.text(text: try text(["message": ["frame": frame]])))
+    connection.events.frame(text: try text(["message": ["frame": frame]]))
   }
 
   /// A data event of the open subscription. False while no subscription is open.
@@ -132,23 +150,11 @@ final class EncryptedCablePeer: CablePeer, @unchecked Sendable {
 
   /// The socket breaks.
   func drop(token: String) throws {
-    try connection(token).events.continuation.yield(.closed(code: 1006, reason: "dropped"))
+    try connection(token).events.closed(code: 1006, reason: "dropped")
   }
 
   func emitOld(token: String) throws {
     let id = try connection(token).subscriptions.values.first!
     try emit(token: token, body: ["t": "next", "id": id, "result": ["data": ["bulletinAdded": ["body": "old", "occurredAt": "2026-10-18T00:00:00Z"]]]])
   }
-
-  func cableNext(token: String) async -> EncryptedSocketEvent? {
-    guard let connection = try? connection(token) else { return nil }
-    return await nextElement(of: connection.events.stream)
-  }
-  func cableClose(token: String) async {
-    lock.withLock { connections[token] }?.events.continuation.finish()
-    closed.continuation.yield(token)
-  }
-  func query(request: TransportRequest) async throws -> String { throw DbError.Invalid(detail: "unexpected plain query") }
-  func mutate(request: TransportRequest) async throws -> String { throw DbError.Invalid(detail: "unexpected plain mutation") }
-  func put(url: String, headers: [String: String], file: PutFile, identity: TransferIdentity, progress: ByteProgress) async throws -> PutReply { throw DbError.Invalid(detail: "unexpected upload") }
 }

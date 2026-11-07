@@ -1,4 +1,5 @@
 import CryptoKit
+import DBlayerTesting
 import Foundation
 import Network
 import Security
@@ -59,22 +60,28 @@ private final class BootstrapPeer: @unchecked Sendable {
   }
 }
 
-private final class BootstrapHttp: EncryptedHttp, @unchecked Sendable {
+private final class BootstrapHttp: ScriptedHttp, @unchecked Sendable {
   let peer: BootstrapPeer
   let kind: String
   private let lock = NSLock()
   private var count = 0
   var calls: Int { lock.withLock { count } }
   init(_ peer: BootstrapPeer, _ kind: String) { self.peer = peer; self.kind = kind }
+  func send(request: HttpRequest) async -> RawOutcome {
+    if kind == "timeout" {
+      lock.withLock { count += 1 }
+      return .failed(failure: RawFailure(kind: .timeout, code: -1001, message: "timed out"))
+    }
+    return await sendEncrypted(request: request)
+  }
   func post(path: String, body: String, purpose: NetworkPurpose) async throws -> EncryptedReply {
     lock.withLock { count += 1 }
     #expect(path == peer.encrypted.endpoints.bootstrap)
-    if kind == "timeout" { throw TransportFailure.classifyEncryptedHttp(URLError(.timedOut)) }
     return kind == "http" ? EncryptedReply(status: 400, body: "") : EncryptedReply(status: 200, body: try peer.answer(body))
   }
 }
 
-private final class HeldBootstrapHttp: EncryptedHttp, @unchecked Sendable {
+private final class HeldBootstrapHttp: ScriptedHttp, @unchecked Sendable {
   let signal: AsyncStream<String>.Continuation
   init(_ signal: AsyncStream<String>.Continuation) { self.signal = signal }
   func post(path: String, body: String, purpose: NetworkPurpose) async throws -> EncryptedReply {
@@ -206,10 +213,9 @@ struct BootstrapConfigTests {
       #expect(value.updateRequired && value.trackingPromptEnabled && value.flagsJson == "{}")
       #expect(value.storeUrl!.contains("apps.apple.com"))
     } catch let error as DbError {
-      let classified = TransportFailure.classifyEncryptedHttp(error)
-      switch (kind, classified) {
+      switch (kind, error) {
       case ("pin", .Security(.serverKeyMismatch, _)), ("http", .Http(400, _)): break
-      default: Issue.record("\(kind): \(error), classified \(classified)")
+      default: Issue.record("\(kind): \(error)")
       }
     }
     #expect(http.calls == (kind == "pin" ? 0 : 1))
@@ -223,8 +229,8 @@ struct BootstrapConfigTests {
     config.httpAdditionalHeaders = ["Authorization": "secret", "Cookie": "secret", "X-Payload-Encryption": "old", "X-Request-Signature": "old"]
     let session = URLSession(configuration: config)
     defer { session.invalidateAndCancel() }
-    let reply = try await UrlSessionEncryptedHttp(origin: origin, session: customSession ? session : nil).post(path: "/api/bootstrap", body: "jwe", purpose: .standard)
-    #expect(reply.status == 302 && reply.body == "busy")
+    let reply = await UrlSessionEncryptedHttp(origin: origin, session: customSession ? session : nil).send(request: probeRequest(origin, path: "/api/bootstrap"))
+    #expect(reply == .response(status: 302, etag: nil, body: "busy"))
     #expect(server.requests.count == 1)
     let request = try #require(server.requests.first)
     #expect(request.hasPrefix("POST /api/bootstrap HTTP/1.1\r\n"))

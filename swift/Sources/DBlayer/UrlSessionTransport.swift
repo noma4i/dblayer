@@ -1,60 +1,53 @@
 import Foundation
 
 public final class UrlSessionTransport: Transport, @unchecked Sendable {
-  private let endpoint: URL
-  private let headers: @Sendable () -> [String: String]
+  private let address: URL
+  private let http: UrlSessionHttp
   private let session: URLSession
-  private let encryptedCable: UrlSessionCable
+  private let cable: UrlSessionCable
 
   public init(endpoint: URL, headers: @escaping @Sendable () -> [String: String] = { [:] }, session: URLSession = .shared) {
-    self.endpoint = endpoint
-    self.headers = headers
+    self.address = endpoint
     self.session = session
-    self.encryptedCable = UrlSessionCable(headers: headers) { session.webSocketTask(with: $0) }
+    self.http = UrlSessionHttp(session: session, headers: headers)
+    self.cable = UrlSessionCable(headers: headers) { session.webSocketTask(with: $0) }
   }
 
-  public func query(request: TransportRequest) async throws -> String { try await post(request, kind: .query) }
-  public func mutate(request: TransportRequest) async throws -> String { try await post(request, kind: .mutation) }
+  public func endpoint() -> String { address.absoluteString }
 
-  public func openCable(lease: CableLease, url: String) async throws { try lease.opened(token: try await encryptedCable.open(url: url)) }
-  public func cableSend(token: String, text: String) async throws { try await encryptedCable.send(token: token, text: text) }
-  public func cableNext(token: String) async -> EncryptedSocketEvent? { await encryptedCable.next(token: token) }
-  public func cableClose(token: String) async { await encryptedCable.close(token: token) }
+  public func send(request: HttpRequest) async -> RawOutcome { await http.run(request) }
 
-  private func body(_ request: TransportRequest) throws -> [String: Any] {
-    let variables = try JSONSerialization.jsonObject(with: Data(request.variablesJson.utf8))
-    return ["query": request.document, "operationName": request.operationName, "variables": variables]
-  }
+  public func openCable(url: String, connectMs: UInt64, events: CableEvents) async -> CableOutcome { await cable.open(url: url, connectMs: connectMs, events: events) }
 
-  private func post(_ request: TransportRequest, kind: GraphQLOperationKind) async throws -> String {
-    var urlRequest = URLRequest(url: endpoint)
-    urlRequest.httpMethod = "POST"
-    urlRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
-    headers().forEach { urlRequest.setValue($1, forHTTPHeaderField: $0) }
-    urlRequest.setUserAgent()
-    urlRequest.httpBody = try JSONSerialization.data(withJSONObject: body(request))
-    let data: Data, response: URLResponse
-    do { (data, response) = try await session.data(for: urlRequest, delegate: RefuseRedirect()) } catch { throw TransportFailure.classify(error, kind: kind) }
-    if let http = response as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
-      throw DbError.Http(status: UInt16(http.statusCode), detail: String(decoding: data, as: UTF8.self))
-    }
-    return String(decoding: data, as: UTF8.self)
-  }
-
-  public func put(url: String, headers: [String: String], file: PutFile, identity: TransferIdentity, progress: ByteProgress) async throws -> PutReply {
-    guard let target = URL(string: url) else { throw DbError.Invalid(detail: "bad upload url") }
-    guard file.offset == 0 else { throw DbError.Invalid(detail: "an upload sends a whole file") }
+  public func put(url: String, headers: [String: String], file: PutFile, identity: TransferIdentity, progress: ByteProgress) async -> RawOutcome {
+    guard let target = URL(string: url) else { return .failed(.io, "invalid upload address") }
     var request = URLRequest(url: target)
     request.httpMethod = "PUT"
     headers.forEach { request.setValue($1, forHTTPHeaderField: $0) }
     request.setUserAgent()
     do {
-      let (_, response) = try await session.upload(for: request, fromFile: URL(fileURLWithPath: file.path), delegate: PutProgress(progress))
+      let delegate = PutProgress(progress)
+      let size = try FileManager.default.attributesOfItem(atPath: file.path)[.size] as? UInt64 ?? 0
+      let response: URLResponse
+      if file.offset == 0 && file.length == size {
+        (_, response) = try await session.upload(for: request, fromFile: URL(fileURLWithPath: file.path), delegate: delegate)
+      } else {
+        (_, response) = try await session.upload(for: request, from: try part(file), delegate: delegate)
+      }
       let http = response as? HTTPURLResponse
-      return PutReply(status: UInt16(clamping: http?.statusCode ?? 0), etag: http?.value(forHTTPHeaderField: "ETag"))
+      return .response(status: UInt16(clamping: http?.statusCode ?? 0), etag: http?.value(forHTTPHeaderField: "ETag"), body: "")
     } catch {
-      throw TransportFailure.classifySocket(error)
+      return .failed(error)
     }
+  }
+
+  private func part(_ file: PutFile) throws -> Data {
+    let handle = try FileHandle(forReadingFrom: URL(fileURLWithPath: file.path))
+    defer { try? handle.close() }
+    try handle.seek(toOffset: file.offset)
+    let bytes = try handle.read(upToCount: Int(file.length)) ?? Data()
+    guard UInt64(bytes.count) == file.length else { throw URLError(.cannotDecodeRawData) }
+    return bytes
   }
 }
 

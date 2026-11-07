@@ -14,12 +14,15 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
-private class HeldUploadTransport(val base: MockTransport = MockTransport()) : Transport by base {
+private class HeldUploadTransport(val base: MockTransport = MockTransport()) : ScriptedTransport {
+    override suspend fun query(request: TransportRequest): String = base.query(request)
+    override suspend fun mutate(request: TransportRequest): String = base.mutate(request)
+    override suspend fun scriptedCable(url: String, events: CableEvents): CableOutcome = base.scriptedCable(url, events)
     val arrived = CompletableDeferred<Unit>()
     val released = CompletableDeferred<Unit>()
     val finished = CompletableDeferred<Unit>()
 
-    override suspend fun put(url: String, headers: Map<String, String>, file: PutFile, identity: TransferIdentity, progress: ByteProgress): PutReply {
+    override suspend fun scriptedPut(url: String, headers: Map<String, String>, file: PutFile, identity: TransferIdentity, progress: ByteProgress): PutReply {
         try {
             arrived.complete(Unit)
             released.await()

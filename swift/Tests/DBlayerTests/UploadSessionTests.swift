@@ -3,19 +3,16 @@ import Foundation
 import Testing
 @testable import DBlayer
 
-private final class HeldUploadTransport: Transport, @unchecked Sendable {
+private final class HeldUploadTransport: ScriptedTransport, @unchecked Sendable {
   let base = MockTransport()
   let arrived = AsyncStream<Void>.makeStream()
   let released = AsyncStream<Void>.makeStream()
   let finished = AsyncStream<Void>.makeStream()
 
-  func openCable(lease: CableLease, url: String) async throws { try await base.openCable(lease: lease, url: url) }
-  func cableSend(token: String, text: String) async throws { try await base.cableSend(token: token, text: text) }
-  func cableNext(token: String) async -> EncryptedSocketEvent? { await base.cableNext(token: token) }
-  func cableClose(token: String) async { await base.cableClose(token: token) }
+  func scriptedCable(url: String, events: CableEvents) async -> CableOutcome { await base.scriptedCable(url: url, events: events) }
   func query(request: TransportRequest) async throws -> String { try await base.query(request: request) }
   func mutate(request: TransportRequest) async throws -> String { try await base.mutate(request: request) }
-  func put(url: String, headers: [String: String], file: PutFile, identity: TransferIdentity, progress: ByteProgress) async throws -> PutReply {
+  func scriptedPut(url: String, headers: [String: String], file: PutFile, identity: TransferIdentity, progress: ByteProgress) async throws -> PutReply {
     defer { finished.continuation.yield(()) }
     arrived.continuation.yield(())
     _ = await Cursor(released.stream).next("the held upload is released")

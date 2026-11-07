@@ -22,11 +22,10 @@ class UserAgentTest {
                     val headers = application?.let { mapOf("uSeR-aGeNt" to it) } ?: emptyMap()
                     val client = OkHttpClient()
                     val transport = OkHttpTransport(origin, { headers }, client)
-                    val operation = TransportRequest("query Probe { id }", "Probe", "{}", NetworkPurpose.STANDARD)
                     when (path) {
-                        "encrypted" -> OkHttpEncryptedHttp(origin, client) { headers }.post("/api/session", "jwe", NetworkPurpose.STANDARD)
-                        "graphql" -> runCatching { transport.query(operation) }
-                        "encryptedSocket" -> runCatching { transport.openCable(RecordingLease(), origin.replaceFirst("http", "ws") + "api/cable") }
+                        "encrypted" -> OkHttpEncryptedHttp(origin, client) { headers }.send(probeRequest(origin + "api/session"))
+                        "graphql" -> transport.send(probeRequest(origin + "graphql"))
+                        "encryptedSocket" -> transport.openCable(origin.replaceFirst("http", "ws") + "api/cable", 10_000uL, RecordingEvents())
                         else -> error("unexpected request kind")
                     }
                     val request = server.takeRequest()
@@ -51,10 +50,10 @@ class UserAgentTest {
             val client = OkHttpClient()
             val http = OkHttpEncryptedHttp(origin, client, headers)
             val transport = OkHttpTransport(origin, headers, client)
-            http.post("/api/session", "jwe", NetworkPurpose.STANDARD)
+            http.send(probeRequest(origin + "api/session"))
             value.set("second")
-            http.post("/api/session", "jwe", NetworkPurpose.STANDARD)
-            runCatching { transport.openCable(RecordingLease(), origin.replaceFirst("http", "ws") + "api/cable") }
+            http.send(probeRequest(origin + "api/session"))
+            transport.openCable(origin.replaceFirst("http", "ws") + "api/cable", 10_000uL, RecordingEvents())
             val file = java.io.File.createTempFile("upload", ".bin").apply { writeText("file"); deleteOnExit() }
             val progress = object : ByteProgress(NoHandle) {
                 override fun sent(bytes: ULong) {}

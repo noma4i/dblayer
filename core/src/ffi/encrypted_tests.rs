@@ -3,7 +3,7 @@ use std::sync::Arc;
 use async_trait::async_trait;
 
 use crate::store::Store;
-use super::{Config, CredentialStore, Database, DbError, EncryptedConfig, EncryptedHttp, EncryptedReply, SessionCode, Transport};
+use super::{Config, CredentialStore, Database, DbError, EncryptedConfig, FakeHttp, EncryptedReply, SessionCode, FakeTransport};
 use crate::runtime::SystemClock;
 use crate::transport::encrypted::fake_server_tests::{FakeServer, MemoryCredentials};
 use crate::transport::encrypted::vectors_tests::{origin, pin, public_key_der_b64};
@@ -27,7 +27,7 @@ struct SecurityHttp {
 }
 
 #[async_trait]
-impl EncryptedHttp for SecurityHttp {
+impl FakeHttp for SecurityHttp {
     async fn post(&self, path: String, body: String, purpose: crate::transport::NetworkPurpose) -> Result<EncryptedReply, DbError> {
         self.requests.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         if self.refused.load(std::sync::atomic::Ordering::SeqCst) {
@@ -69,7 +69,7 @@ pub(super) fn failure(error: TransportError) -> DbError {
 }
 
 #[async_trait]
-impl EncryptedHttp for ThroughServer {
+impl FakeHttp for ThroughServer {
     async fn post(&self, path: String, body: String, purpose: crate::transport::NetworkPurpose) -> Result<EncryptedReply, DbError> {
         let reply = self.0.post(&path, body, purpose).await.map_err(failure)?;
         Ok(EncryptedReply { status: reply.status, body: reply.body })
@@ -87,11 +87,7 @@ impl CredentialStore for Held {
 pub(super) struct SubscriptionsOnly;
 
 #[async_trait]
-impl Transport for SubscriptionsOnly {
-    async fn open_cable(&self, _: Arc<super::CableLease>, _url: String) -> Result<(), DbError> { Err(DbError::Network { detail: "fake socket unavailable".into() }) }
-    async fn cable_send(&self, _: String, _: String) -> Result<(), DbError> { unreachable!() }
-    async fn cable_next(&self, _: String) -> Option<crate::ffi::EncryptedSocketEvent> { unreachable!() }
-    async fn cable_close(&self, _: String) {}
+impl FakeTransport for SubscriptionsOnly {
     async fn query(&self, _: super::TransportRequest) -> Result<String, DbError> { unreachable!() }
     async fn mutate(&self, _: super::TransportRequest) -> Result<String, DbError> { unreachable!() }
     async fn put(&self, _: String, _: std::collections::HashMap<String, String>, _: crate::transport::PutFile, _: crate::transport::TransferIdentity, _: Arc<super::ByteProgress>) -> Result<super::PutReply, DbError> { unreachable!() }
@@ -264,7 +260,7 @@ async fn dropping_the_bootstrap_call_cancels_the_inflight_http_future() {
     struct Stopped(Arc<tokio::sync::Notify>);
     impl Drop for Stopped { fn drop(&mut self) { self.0.notify_one(); } }
     #[async_trait]
-    impl EncryptedHttp for Waiting {
+    impl FakeHttp for Waiting {
         async fn post(&self, _: String, _: String, _: crate::transport::NetworkPurpose) -> Result<EncryptedReply, DbError> {
             let _stopped = Stopped(self.stopped.clone());
             self.started.notify_one();
@@ -289,7 +285,7 @@ async fn a_sessionless_operation_posts_all_fields_without_a_session() {
     let body = r#"{"name":"Alex","contact":"alex@example.com","message":"Need assistance","step":"phone","device":"iPhone","os":"iOS","appVersion":"3.0","country":"AU"}"#;
 
     #[async_trait]
-    impl EncryptedHttp for TicketPost {
+    impl FakeHttp for TicketPost {
         async fn post(&self, path: String, body: String, _: crate::transport::NetworkPurpose) -> Result<EncryptedReply, DbError> {
             use crate::transport::encrypted::fake_server_tests::{decrypt_request, seal_response};
 
@@ -344,7 +340,7 @@ async fn sessionless_calls_leave_no_session_state_even_when_refused() {
     for status in [200, 400] {
         struct Reply(u16);
         #[async_trait]
-        impl EncryptedHttp for Reply {
+        impl FakeHttp for Reply {
             async fn post(&self, path: String, body: String, _: crate::transport::NetworkPurpose) -> Result<EncryptedReply, DbError> {
                 let request = crate::transport::encrypted::fake_server_tests::decrypt_request(&body).unwrap();
                 let status = if path == "/api/ticket" { self.0 } else { 200 };
@@ -383,7 +379,7 @@ async fn retry_progress_delivers_the_current_snapshot_to_each_reader_and_a_slow_
 
     struct Failing(watch::Sender<usize>);
     #[async_trait]
-    impl EncryptedHttp for Failing {
+    impl FakeHttp for Failing {
         async fn post(&self, _: String, _: String, _: crate::transport::NetworkPurpose) -> Result<EncryptedReply, DbError> {
             self.0.send_modify(|posts| *posts += 1);
             Ok(EncryptedReply { status: 503, body: String::new() })

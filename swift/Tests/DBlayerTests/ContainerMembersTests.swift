@@ -3,7 +3,7 @@ import Foundation
 import Testing
 @testable import DBlayer
 
-private final class PageTransport: Transport, @unchecked Sendable {
+private final class PageTransport: ScriptedTransport, @unchecked Sendable {
   let mock = MockTransport()
   private let lock = NSLock()
   private var requests = 0
@@ -22,12 +22,9 @@ private final class PageTransport: Transport, @unchecked Sendable {
   }
 
   func mutate(request: TransportRequest) async throws -> String { try await mock.mutate(request: request) }
-  func openCable(lease: CableLease, url: String) async throws { try await mock.openCable(lease: lease, url: url) }
-  func cableSend(token: String, text: String) async throws { try await mock.cableSend(token: token, text: text) }
-  func cableNext(token: String) async -> EncryptedSocketEvent? { await mock.cableNext(token: token) }
-  func cableClose(token: String) async { await mock.cableClose(token: token) }
-  func put(url: String, headers: [String: String], file: PutFile, identity: TransferIdentity, progress: ByteProgress) async throws -> PutReply {
-    try await mock.put(url: url, headers: headers, file: file, identity: identity, progress: progress)
+  func scriptedCable(url: String, events: CableEvents) async -> CableOutcome { await mock.scriptedCable(url: url, events: events) }
+  func scriptedPut(url: String, headers: [String: String], file: PutFile, identity: TransferIdentity, progress: ByteProgress) async throws -> PutReply {
+    try await mock.scriptedPut(url: url, headers: headers, file: file, identity: identity, progress: progress)
   }
 }
 

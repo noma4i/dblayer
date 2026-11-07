@@ -25,50 +25,42 @@ The public vectors in `fixtures/change-events/kat.json` contain test keys only. 
 Swift and Kotlin use the same `EncryptedConfig(origin, serverKey, pin, endpoints, protocolLabel, cablePurpose, cableChannel)` for config and `open` calls.
 Fetch config with `DB.serverConfig` or `DBlayer.serverConfig` before opening the database.
 Config posts to `EncryptedConfig.endpoints.bootstrap` without credentials, sequence or Cable connection. See [server sync](server-sync.md).
-The platform passes WebSocket text through `openCable`, `cableSend`, `cableNext` and `cableClose`. Rust handles encryption, subscriptions, reopening and timers.
+The platform opens the WebSocket with `openCable` and reports every frame to the `CableEvents` the core passes in. Rust handles encryption, subscriptions, reopening and timers.
 
 ## Platform sockets
 
 `DB.open` and `DBlayer.open` choose a platform transport when `transport` is omitted.
 Swift uses `URLSessionWebSocketTask`. Kotlin uses OkHttp WebSocket.
-Both combine `EncryptedConfig.endpoints.cable` with `EncryptedConfig.origin`: HTTPS becomes WSS, and development HTTP becomes WS.
-Every open creates a new token. `openCable` returns nothing: the call reports the token with `lease.opened(token)`.
-Calls for that token send and receive text without interpreting the encrypted payload.
-`cableClose` removes the token and cancels its socket. Further reads return no event.
+The core builds the address: it combines `EncryptedConfig.endpoints.cable` with `EncryptedConfig.origin`, HTTPS becomes WSS and development HTTP becomes WS. The platform opens that address as given.
+Every open creates one `PlatformSocket` object that the core holds. The core sends text with `send` and ends the socket with `close`. The platform reports in order what happens on that socket and keeps no registry of sockets.
 
 ## Your own transport
 
-`DB.open` and `DBlayer.open` take any `Transport` in `transport`. The interface has seven calls:
+`DB.open` and `DBlayer.open` take any `Transport` in `transport`. The interface has four calls:
 
 | Call | What the core expects |
 | ---- | --------------------- |
-| `query(request)`, `mutate(request)` | The JSON text of the GraphQL response. A failure throws `DbError` (`DbException` in Kotlin) |
-| `openCable(lease)` | Opens one text socket and reports its token with `lease.opened` |
-| `cableSend(token, text)` | Sends one text frame |
-| `cableNext(token)` | Returns the next `EncryptedSocketEvent` (`Text` or `Closed`), or nothing once the socket is closed |
-| `cableClose(token)` | Removes the token and cancels its socket. It does not throw |
-| `put(url, headers, bytes, progress)` | Sends the bytes with PUT and returns a `PutReply` with the status and the `ETag`. Calls `progress.sent(bytes)` while it sends and stops when `progress.isCancelled()` is true |
+| `endpoint()` | The GraphQL address of a database without an encrypted session |
+| `send(request)` | One HTTP exchange of `HttpRequest` (`url`, `method`, `headers`, `body`, `connectMs`, `requestMs`, `purpose`). Return `RawOutcome.response(status, etag, body)` for any HTTP answer, or `RawOutcome.failed(RawFailure)` when no answer came. Do not follow redirects, retry or classify |
+| `openCable(url, connectMs, events)` | Open the text socket at `url`, report to `events` and return `CableOutcome.open(connection)` after the handshake, or `CableOutcome.failed(RawFailure)` |
+| `put(url, headers, file, identity, progress)` | Send the `length` bytes of the file from `offset` with PUT and return `RawOutcome.response` with the status and the `ETag`. Call `progress.sent(bytes)` while it sends and stop when `progress.isCancelled()` is true |
 
-| Case | Result |
-| ---- | ------ |
-| `opened` once, then the call finishes | The core holds the token |
-| The call finishes without `opened` | `openCable` fails with `Invalid` (`open_cable finished without opened`) |
-| The call fails after `opened` | The core releases the token with `cableClose` and returns the error |
-| `opened` with the token the lease holds or already released | Throws `Invalid`. The core does not release the token again |
-| `opened` with another token while the lease holds a token or after it released one | Throws `Invalid`. The core releases the new token |
-| `opened` after the core dropped the call | Returns normally. The core releases the token at once |
+`RawFailure` has a `kind` the platform can observe, an optional platform `code` and a `message`. The core gives the failure its class.
 
-The core releases a token once per lease: after a release the lease refuses the token. A `cableClose` that the core cancels while it runs restores the lease, and the next release calls `cableClose` again with the same token. Make `cableClose` safe for a token that is already gone. The order of `cableClose` against a pending `cableNext` of the same token is not defined, so a transport handles both.
+| `kind` | Use it when |
+| ------ | ----------- |
+| `cancelled` | The call was cancelled |
+| `tls` | The server certificate is not trusted |
+| `unreachable` | The host is unknown, refused the connection or the device is offline |
+| `timeout` | A timeout of the call expired |
+| `io` | Any other failure of the connection |
+| `protocol` | The peer broke the protocol. For a refused WebSocket upgrade `code` is the HTTP status |
 
-A transport that does not open a cable socket throws `DbError.Invalid` (`DbException.Invalid` in Kotlin) from `openCable`, like `MockTransport`.
+`CableEvents` has `frame(text)`, `binary(bytes)`, `closed(code, reason)` and `failed(failure)`. Call them from one serial context per socket, in the order they happen. A binary frame ends the cable: the core closes the connection with code 1003. The core keeps at most 256 unread frames per connection and ends a connection that outruns its reader with code 1013.
 
-| Socket result | Result for Rust |
-| --- | --- |
-| Text | `EncryptedSocketEvent.Text` with unchanged text |
-| Peer close | `EncryptedSocketEvent.Closed` with the peer code and reason |
-| Binary frame | Close the socket and return `Closed` with code 1003 and a reason |
-| Network failure | `Closed` with code 1006 and a reason |
-| Open or send failure | Typed transport error from the platform classifier |
+`PlatformSocket.send(text)` returns false when the socket refuses the text. `PlatformSocket.close(code, reason)` ends the socket and is safe to call again.
+
+A transport that does not open a cable socket returns `CableOutcome.failed`, like `MockTransport`.
 
 ```swift
 try await DB.open(encrypted: encrypted, credentials: credentials, modelsJSON: modelsJSON)

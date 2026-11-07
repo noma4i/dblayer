@@ -45,11 +45,7 @@ impl Drop for CancelledLoad {
 }
 
 #[async_trait::async_trait]
-impl crate::ffi::Transport for CancelledLoadTransport {
-    async fn open_cable(&self, _: Arc<crate::ffi::CableLease>, _url: String) -> Result<(), DbError> { Err(DbError::Network { detail: "no cable".into() }) }
-    async fn cable_send(&self, _: String, _: String) -> Result<(), DbError> { unreachable!() }
-    async fn cable_next(&self, _: String) -> Option<crate::ffi::EncryptedSocketEvent> { None }
-    async fn cable_close(&self, _: String) {}
+impl crate::ffi::FakeTransport for CancelledLoadTransport {
     async fn query(&self, _: crate::ffi::TransportRequest) -> Result<String, DbError> {
         let _cancelled = CancelledLoad(self.cancelled.clone());
         self.started.notify_one();

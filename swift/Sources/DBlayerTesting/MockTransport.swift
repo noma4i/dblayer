@@ -6,15 +6,16 @@ import Testing
 public enum Unanswered: Sendable { case strict, networkError }
 
 /// The server end of the encrypted session cable. `MockTransport` hands the cable calls of the session to it and pushes model events through it.
-public protocol CablePeer: Transport {
+public protocol CablePeer: AnyObject, Sendable {
   /// Called with the request of every subscription the session opens on the cable.
   var onSubscribe: (@Sendable (TransportRequest) -> Void)? { get set }
   /// A data event of the open subscription of that operation. False while it is not open.
   func event(operation: String, result: String) throws -> Bool
+  func openCable(url: String, events: CableEvents) async -> CableOutcome
 }
 
 /// Answers by operation name, can delay or fail answers, and lets a test push a cable event.
-public final class MockTransport: Transport, @unchecked Sendable {
+public final class MockTransport: ScriptedTransport, @unchecked Sendable {
   private struct Reply {
     let body: String?
     let failure: DbError?
@@ -62,16 +63,10 @@ public final class MockTransport: Transport, @unchecked Sendable {
     }
   }
 
-  public func openCable(lease: CableLease, url: String) async throws {
-    guard let peer = cable else { throw DbError.Invalid(detail: "MockTransport has no cable peer") }
-    try await peer.openCable(lease: lease, url: url)
+  public func scriptedCable(url: String, events: CableEvents) async -> CableOutcome {
+    guard let peer = cable else { return .failed(failure: RawFailure(kind: .io, code: nil, message: "MockTransport has no cable peer")) }
+    return await peer.openCable(url: url, events: events)
   }
-  public func cableSend(token: String, text: String) async throws {
-    guard let peer = cable else { throw DbError.Interrupted(detail: "mock cable socket is closed") }
-    try await peer.cableSend(token: token, text: text)
-  }
-  public func cableNext(token: String) async -> EncryptedSocketEvent? { await cable?.cableNext(token: token) }
-  public func cableClose(token: String) async { await cable?.cableClose(token: token) }
 
   public var calls: [TransportRequest] { lock.withLock { recorded } }
 
@@ -97,7 +92,7 @@ public final class MockTransport: Transport, @unchecked Sendable {
   public func query(request: TransportRequest) async throws -> String { try await answer(request) }
   public func mutate(request: TransportRequest) async throws -> String { try await answer(request) }
 
-  public func put(url: String, headers: [String: String], file: PutFile, identity: TransferIdentity, progress: ByteProgress) async throws -> PutReply {
+  public func scriptedPut(url: String, headers: [String: String], file: PutFile, identity: TransferIdentity, progress: ByteProgress) async throws -> PutReply {
     progress.sent(bytes: file.length)
     return PutReply(status: 200, etag: nil)
   }

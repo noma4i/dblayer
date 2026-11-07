@@ -8,13 +8,11 @@ use super::transport::{transport_error, ForeignTransport};
 use super::{DbError, Transport};
 use crate::store::Store;
 
-#[derive(uniffi::Record)]
-pub struct EncryptedReply { pub status: u16, pub body: String }
-
 #[uniffi::export(rust, foreign)]
 #[async_trait]
 pub trait EncryptedHttp: Send + Sync {
-    async fn post(&self, path: String, body: String, purpose: core::NetworkPurpose) -> Result<EncryptedReply, DbError>;
+    /// Runs one POST built by the core and returns the raw outcome: the executor never classifies, follows a redirect or retries.
+    async fn send(&self, request: core::HttpRequest) -> core::RawOutcome;
 }
 
 #[uniffi::export(rust, foreign)]
@@ -24,7 +22,7 @@ pub trait CredentialStore: Send + Sync {
     fn clear(&self) -> Result<(), DbError>;
 }
 
-struct ForeignHttp(Arc<dyn EncryptedHttp>);
+struct ForeignHttp { port: Arc<dyn EncryptedHttp>, origin: String }
 
 impl Drop for ForeignHttp {
     fn drop(&mut self) { crate::lock::assert_no_library_lock("ForeignHttp::drop"); }
@@ -34,8 +32,11 @@ impl Drop for ForeignHttp {
 impl core::HttpExchange for ForeignHttp {
     async fn post(&self, path: &str, body: String, purpose: core::NetworkPurpose) -> Result<core::HttpReply, core::TransportError> {
         crate::lock::assert_no_library_lock("EncryptedHttp::post");
-        let reply = self.0.post(path.to_string(), body, purpose).await.map_err(transport_error)?;
-        Ok(core::HttpReply { status: reply.status, body: reply.body })
+        let request = core::encrypted_call(&self.origin, path, body, purpose)?;
+        match crate::lock::effect(|| self.port.send(request)).await {
+            core::RawOutcome::Response { status, body, .. } => Ok(core::HttpReply { status, body }),
+            core::RawOutcome::Failed { failure } => Err(core::classify(&failure, core::ExchangeKind::Post)),
+        }
     }
 
 }
@@ -75,10 +76,10 @@ pub(super) fn wire(
     transport: Arc<dyn Transport>,
 ) -> Result<Wiring, DbError> {
     let seal = crate::owners::session_seal::SealConfig::new(&encrypted, clock.clone()).map_err(|error| DbError::Invalid { detail: format!("{error:?}") })?;
-    let exchange = Arc::new(Exchange::new(&encrypted, Arc::new(ForeignHttp(http)), clock.clone()).map_err(|error| DbError::Invalid { detail: error.to_string() })?);
+    let exchange = Arc::new(Exchange::new(&encrypted, Arc::new(ForeignHttp { port: http, origin: encrypted.origin.clone() }), clock.clone()).map_err(|error| DbError::Invalid { detail: error.to_string() })?);
     let secret = Arc::new(crate::transport::encrypted::credential::Secret::new(Arc::new(ForeignCredentials(credentials))));
     crate::transport::encrypted::credential::finish_session_end(db, &secret).map_err(|error| DbError::Invalid { detail: error.to_string() })?;
-    let rest: Arc<dyn core::Upstream> = Arc::new(ForeignTransport(transport));
+    let rest: Arc<dyn core::Upstream> = Arc::new(ForeignTransport::beside_session(transport));
     let encrypted_transport = Arc::new(EncryptedTransport::new(exchange.clone(), secret.clone(), db.clone(), rest));
     let cable = encrypted_transport.cable_lines();
     Ok(Wiring { transport: Some(encrypted_transport.clone()), encrypted: Some(Encrypted { exchange, secret, transport: encrypted_transport }), cable: Some(cable), seal: Some(Arc::new(seal)) })
@@ -215,6 +216,6 @@ pub async fn fetch_server_config(encrypted: EncryptedConfig, platform: core::App
 pub(super) async fn fetch_server_config_with(encrypted: EncryptedConfig, platform: core::AppPlatform, version: String, build: Option<String>, http: Arc<dyn EncryptedHttp>, retries: Option<Arc<RetryProgress>>, connectivity: Arc<core::Connectivity>) -> Result<ServerConfig, DbError> {
     cancellable(async move {
         let progress = retries.map(|retries| retries.inner.clone()).unwrap_or_default();
-        core::encrypted::bootstrap::fetch(&encrypted, &core::encrypted::bootstrap::AppRelease { platform, version: &version, build: build.as_deref() }, Arc::new(ForeignHttp(http)), &crate::runtime::SystemClock, &progress, &connectivity).await.map_err(typed)
+        core::encrypted::bootstrap::fetch(&encrypted, &core::encrypted::bootstrap::AppRelease { platform, version: &version, build: build.as_deref() }, Arc::new(ForeignHttp { port: http, origin: encrypted.origin.clone() }), &crate::runtime::SystemClock, &progress, &connectivity).await.map_err(typed)
     }).await?
 }

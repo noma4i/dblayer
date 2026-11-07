@@ -3,13 +3,20 @@ import Foundation
 protocol CableWebSocket: AnyObject, Sendable {
   var closeCode: URLSessionWebSocketTask.CloseCode { get }
   var closeReason: Data? { get }
+  var handshakeStatus: Int? { get }
   func open() async throws
-  func send(_ message: URLSessionWebSocketTask.Message) async throws
+  func send(_ message: URLSessionWebSocketTask.Message, completion: @escaping @Sendable (Error?) -> Void)
   func receive() async throws -> URLSessionWebSocketTask.Message
   func cancel(with closeCode: URLSessionWebSocketTask.CloseCode, reason: Data?)
 }
 
 extension URLSessionWebSocketTask: CableWebSocket {
+  var handshakeStatus: Int? { (response as? HTTPURLResponse)?.statusCode }
+
+  func send(_ message: URLSessionWebSocketTask.Message, completion: @escaping @Sendable (Error?) -> Void) {
+    send(message, completionHandler: completion)
+  }
+
   func open() async throws {
     let (events, continuation) = AsyncThrowingStream<Void, Error>.makeStream()
     let opening = SocketOpening(continuation)
@@ -44,86 +51,68 @@ private final class SocketOpening: NSObject, URLSessionWebSocketDelegate, @unche
   }
 }
 
-private actor OpenSockets {
-  private var sockets: [String: any CableWebSocket] = [:]
+private final class UrlSessionCableConnection: PlatformSocket, @unchecked Sendable {
+  private let socket: any CableWebSocket
+  private var receiver: Task<Void, Never>?
 
-  func add(_ token: String, _ socket: any CableWebSocket) { sockets[token] = socket }
-  func socket(_ token: String) -> (any CableWebSocket)? { sockets[token] }
-  func remove(_ token: String) -> (any CableWebSocket)? { sockets.removeValue(forKey: token) }
+  init(socket: any CableWebSocket, events: CableEvents) {
+    self.socket = socket
+    receiver = Task { [socket] in
+      while !Task.isCancelled {
+        do {
+          switch try await socket.receive() {
+          case let .string(text): events.frame(text: text)
+          case let .data(bytes): events.binary(bytes: bytes)
+          @unknown default: events.failed(failure: RawFailure(kind: .protocol, code: nil, message: "unknown cable frame"))
+          }
+        } catch {
+          if Task.isCancelled { return }
+          if socket.closeCode == .invalid {
+            events.failed(failure: RawFailure(error))
+          } else {
+            events.closed(code: UInt16(clamping: socket.closeCode.rawValue), reason: socket.closeReason.map { String(decoding: $0, as: UTF8.self) } ?? "")
+          }
+          return
+        }
+      }
+    }
+  }
+
+  func send(text: String) -> Bool {
+    socket.send(.string(text)) { _ in }
+    return true
+  }
+
+  func close(code: UInt16, reason: String) {
+    receiver?.cancel()
+    socket.cancel(with: URLSessionWebSocketTask.CloseCode(rawValue: Int(code)) ?? .normalClosure, reason: Data(reason.utf8))
+  }
 }
 
 final class UrlSessionCable: Sendable {
   private let headers: @Sendable () -> [String: String]
   private let makeSocket: @Sendable (URLRequest) -> any CableWebSocket
-  private let sockets = OpenSockets()
 
   init(headers: @escaping @Sendable () -> [String: String] = { [:] }, makeSocket: @escaping @Sendable (URLRequest) -> any CableWebSocket) {
     self.headers = headers
     self.makeSocket = makeSocket
   }
 
-  func open(url: String) async throws -> String {
-    do { try Task.checkCancellation() } catch { throw TransportFailure.classifySocket(error) }
-    guard let target = URL(string: url), ["ws", "wss"].contains(target.scheme), target.host != nil else { throw DbError.Invalid(detail: "invalid cable url") }
-    var request = URLRequest(url: target)
+  func open(url: String, connectMs: UInt64, events: CableEvents) async -> CableOutcome {
+    guard let target = URL(string: url) else { return .failed(failure: RawFailure(kind: .io, code: nil, message: "invalid cable address")) }
+    var request = URLRequest(url: target, timeoutInterval: TimeInterval(connectMs) / 1000)
     headers().forEach { request.setValue($1, forHTTPHeaderField: $0) }
     request.setUserAgent()
     let socket = makeSocket(request)
-    let token = UUID().uuidString
-    await sockets.add(token, socket)
     do {
       try await socket.open()
       try Task.checkCancellation()
-      return token
+      return .open(connection: UrlSessionCableConnection(socket: socket, events: events))
     } catch {
-      await sockets.remove(token)?.cancel(with: .goingAway, reason: nil)
-      throw TransportFailure.classifySocket(error)
-    }
-  }
-
-  func send(token: String, text: String) async throws {
-    guard let socket = await sockets.socket(token) else {
-      throw DbError.Interrupted(detail: "cable socket is closed")
-    }
-    do {
-      try await withTaskCancellationHandler {
-        try Task.checkCancellation()
-        try await socket.send(.string(text))
-      } onCancel: { socket.cancel(with: .normalClosure, reason: nil) }
-    } catch {
-      if Task.isCancelled { await sockets.remove(token) }
-      throw TransportFailure.classifySocket(error)
-    }
-  }
-
-  func next(token: String) async -> EncryptedSocketEvent? {
-    guard let socket = await sockets.socket(token) else { return nil }
-    do {
-      let message = try await withTaskCancellationHandler {
-        try Task.checkCancellation()
-        return try await socket.receive()
-      } onCancel: { socket.cancel(with: .normalClosure, reason: nil) }
-      guard await sockets.socket(token) != nil else { return nil }
-      switch message {
-      case let .string(text): return .text(text: text)
-      case .data:
-        let reason = "binary cable frames are not supported"
-        await sockets.remove(token)?.cancel(with: .unsupportedData, reason: Data(reason.utf8))
-        return .closed(code: 1003, reason: reason)
-      @unknown default:
-        await sockets.remove(token)?.cancel(with: .protocolError, reason: nil)
-        return .closed(code: 1002, reason: "unknown cable frame")
-      }
-    } catch {
-      guard await sockets.remove(token) != nil else { return nil }
-      let code = socket.closeCode == .invalid ? 1006 : UInt16(clamping: socket.closeCode.rawValue)
-      let reason = socket.closeReason.map { String(decoding: $0, as: UTF8.self) } ?? error.localizedDescription
+      let status = socket.handshakeStatus
       socket.cancel(with: .goingAway, reason: nil)
-      return .closed(code: code, reason: reason)
+      if let status, status != 101 { return .failed(failure: RawFailure(kind: .protocol, code: Int64(status), message: "cable handshake refused")) }
+      return .failed(failure: RawFailure(error))
     }
-  }
-
-  func close(token: String) async {
-    await sockets.remove(token)?.cancel(with: .normalClosure, reason: nil)
   }
 }

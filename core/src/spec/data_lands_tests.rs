@@ -6,7 +6,7 @@ use sha2::{Digest, Sha256};
 
 use super::rig::{moment_models, within, Server, Wire, OPERATIONS};
 use super::harness_life::Held;
-use crate::ffi::{Config, Database, DbError, EncryptedHttp, EncryptedReply, OpenPorts, TestClock, WireOperationOutcome};
+use crate::ffi::{Config, Database, DbError, FakeHttp, EncryptedReply, OpenPorts, TestClock, WireOperationOutcome};
 use crate::schema::{ActionLanding, Coverage, FieldSpec, ModelSpec, OnFailure, RelationSpec, RemoteShape, RemoteSpec};
 use crate::transport::encrypted::fake_server_tests::{decrypt_request, seal_response, MemoryCredentials};
 use crate::transport::{EncryptedOperationClass, NetworkPurpose};
@@ -17,7 +17,7 @@ struct LandingHttp(Arc<Server>);
 const MAKE_MOMENT: &str = "mutation MakeMoment { makeMoment { id text extras { id text } } }";
 
 #[async_trait]
-impl EncryptedHttp for LandingHttp {
+impl FakeHttp for LandingHttp {
     async fn post(&self, path: String, body: String, purpose: NetworkPurpose) -> Result<EncryptedReply, DbError> {
         let request = decrypt_request(&body).unwrap();
         if request["body"]["operationName"] == "Annotations" {

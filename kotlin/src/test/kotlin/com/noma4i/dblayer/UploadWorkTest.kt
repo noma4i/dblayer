@@ -57,20 +57,21 @@ class UploadWorkTest {
                 repeat(2) { server.enqueue(MockResponse().setResponseCode(200).setBody("""{"data":{}}""")) }
                 server.start()
                 val transport = OkHttpTransport(server.url("/graphql").toString())
-                assertEquals("""{"data":{}}""", transport.query(TransportRequest("query Probe { id }", "Probe", "{}", NetworkPurpose.STANDARD)))
-                refused { transport.query(TransportRequest("mutation Probe { id }", "Probe", "{}", NetworkPurpose.TRANSFER)) }
-                refused { OkHttpEncryptedHttp(server.url("/").toString().trimEnd('/')).post("/api/graphql", "a.b.c.d.e", NetworkPurpose.TRANSFER) }
+                val graphql = probeRequest(server.url("/graphql").toString(), "{}")
+                assertEquals(RawOutcome.Response(200u, null, """{"data":{}}"""), transport.send(graphql))
+                refused { transport.send(graphql.copy(purpose = NetworkPurpose.TRANSFER)) }
+                refused { OkHttpEncryptedHttp(server.url("/").toString().trimEnd('/')).send(probeRequest(server.url("/api/graphql").toString(), "a.b.c.d.e").copy(purpose = NetworkPurpose.TRANSFER)) }
                 UploadNetwork.ended(current)
-                assertEquals("""{"data":{}}""", transport.mutate(TransportRequest("mutation Probe { id }", "Probe", "{}", NetworkPurpose.TRANSFER)))
+                assertEquals(RawOutcome.Response(200u, null, """{"data":{}}"""), transport.send(graphql.copy(purpose = NetworkPurpose.TRANSFER)))
             }
         } finally {
             UploadNetwork.ended(current)
         }
     }
 
-    private suspend fun refused(block: suspend () -> Unit) {
-        val failure = runCatching { block() }.exceptionOrNull()
-        assertTrue("expected a network failure, got $failure", failure is DbException.Network)
+    private suspend fun refused(block: suspend () -> RawOutcome) {
+        val outcome = block()
+        assertTrue("expected a failed outcome, got $outcome", outcome.failureKind() != null)
     }
 
     @Test

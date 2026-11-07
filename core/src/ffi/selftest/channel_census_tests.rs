@@ -8,7 +8,6 @@ use crate::ffi::session_guards_tests::{Rig, SOCIAL_BODY};
 use crate::ffi::tape::{Reader, StreamDelivery};
 use crate::ffi::encrypted_tests::ThroughServer;
 use crate::ffi::{Config, Database, ReadRequest};
-use crate::transport::encrypted::cable::peer_tests::CablePeer;
 
 struct Quiet;
 impl Reader for Quiet { fn delivered(&self, _: StreamDelivery) {} }
@@ -30,7 +29,7 @@ async fn signed(rig: &Rig, peer: Arc<Peer>) -> Arc<Database> {
 fn peer() -> (Arc<Peer>, mpsc::UnboundedReceiver<String>, mpsc::UnboundedReceiver<String>) {
     let (subscribed, subscriptions) = mpsc::unbounded_channel();
     let (closed, closes) = mpsc::unbounded_channel();
-    (Arc::new(Peer { cable: CablePeer::new(crate::transport::encrypted::protocol_tests::config()), subscribed, closed }), subscriptions, closes)
+    (Arc::new(Peer::new(crate::transport::encrypted::protocol_tests::config(), subscribed, closed)), subscriptions, closes)
 }
 
 #[tokio::test(flavor = "multi_thread")]

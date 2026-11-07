@@ -9,7 +9,7 @@ use std::time::Duration;
 
 use tokio::sync::Semaphore;
 
-use super::{Config, Database, DbError, LoadMoreResult, ReadPhase, ReadRequest, ReadStream, ReadValue, TestClock, Transport};
+use super::{Config, Database, DbError, LoadMoreResult, ReadPhase, ReadRequest, ReadStream, ReadValue, TestClock, FakeTransport};
 use crate::schema::{Coverage, FieldSpec, ModelSpec, PageDirection, RelationSpec, RemoteShape, RemoteSpec};
 use crate::value::ScalarKind;
 
@@ -28,11 +28,7 @@ struct Pages {
 }
 
 #[async_trait::async_trait]
-impl Transport for Pages {
-    async fn open_cable(&self, _: Arc<super::CableLease>, _url: String) -> Result<(), DbError> { Err(DbError::Network { detail: "fake socket unavailable".into() }) }
-    async fn cable_send(&self, _: String, _: String) -> Result<(), DbError> { unreachable!() }
-    async fn cable_next(&self, _: String) -> Option<crate::ffi::EncryptedSocketEvent> { unreachable!() }
-    async fn cable_close(&self, _: String) {}
+impl FakeTransport for Pages {
     async fn query(&self, request: super::TransportRequest) -> Result<String, DbError> {
         let number = self.count.fetch_add(1, Ordering::SeqCst);
         assert!(!self.panics.load(Ordering::SeqCst), "the transport failed");

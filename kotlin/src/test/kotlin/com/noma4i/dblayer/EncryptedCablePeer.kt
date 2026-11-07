@@ -21,10 +21,9 @@ import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
 
-class EncryptedCablePeer(private val server: SealedServer) : CablePeer {
+class EncryptedCablePeer(private val server: SealedServer) : CablePeer, ScriptedTransport {
     override var onSubscribe: ((TransportRequest) -> Unit)? = null
-    private class Connection {
-        val events = Channel<EncryptedSocketEvent>(Channel.UNLIMITED)
+    private class Connection(val events: CableEvents) {
         val keys = KeyPairGenerator.getInstance("X25519").generateKeyPair()
         val salt = ByteArray(32) { 5 }
         var sendKey: ByteArray? = null
@@ -45,12 +44,21 @@ class EncryptedCablePeer(private val server: SealedServer) : CablePeer {
     private fun rawPublic(bytes: ByteArray) = KeyFactory.getInstance("X25519").generatePublic(X509EncodedKeySpec(hex("302a300506032b656e032100") + bytes))
     private fun text(value: JsonObject) = value.toString()
 
-    override suspend fun openCable(lease: CableLease, url: String) {
+    private class Link(private val peer: EncryptedCablePeer, private val token: String) : PlatformSocket {
+        override fun send(text: String): Boolean = runCatching { peer.receive(token, text) }.isSuccess
+
+        override fun close(code: UShort, reason: String) {
+            peer.closed.trySend(token)
+        }
+    }
+
+    override suspend fun scriptedCable(url: String, events: CableEvents): CableOutcome = openCable(url, events)
+
+    override suspend fun openCable(url: String, events: CableEvents): CableOutcome {
         val token = UUID.randomUUID().toString()
-        val connection = Connection()
+        val connection = Connection(events)
         connections[token] = connection
         lastOpened = token
-        lease.opened(token)
         val challenge = buildJsonObject {
             put("type", "challenge")
             put("v", 1)
@@ -58,14 +66,15 @@ class EncryptedCablePeer(private val server: SealedServer) : CablePeer {
             put("challenge", encode(connection.salt))
             put("x25519", encode(connection.keys.public.encoded.takeLast(32).toByteArray()))
         }
-        connection.events.send(EncryptedSocketEvent.Text(text(challenge)))
+        events.frame(text(challenge))
+        return CableOutcome.Open(Link(this, token))
     }
 
-    override suspend fun cableSend(token: String, text: String) {
+    fun receive(token: String, text: String) {
         val connection = connections.getValue(token)
         val command = objectOf(text)
         if (command["command"]?.jsonPrimitive?.content == "subscribe") {
-            connection.events.send(EncryptedSocketEvent.Text("""{"type":"confirm_subscription"}"""))
+            connection.events.frame("""{"type":"confirm_subscription"}""")
             return
         }
         val data = objectOf(command.getValue("data").jsonPrimitive.content)
@@ -97,7 +106,7 @@ class EncryptedCablePeer(private val server: SealedServer) : CablePeer {
             val operation = body["operationName"]?.jsonPrimitive?.content ?: ""
             connection.subscriptions[operation] = id
             emit(token, buildJsonObject { put("t", "subscribed"); put("id", id) })
-            subscribed.send(token)
+            subscribed.trySend(token)
             onSubscribe?.invoke(TransportRequest(body["query"]?.jsonPrimitive?.content ?: "", operation, body["variables"]?.toString() ?: "{}", NetworkPurpose.STANDARD))
         }
     }
@@ -125,7 +134,7 @@ class EncryptedCablePeer(private val server: SealedServer) : CablePeer {
         cipher.updateAAD(header.toByteArray())
         val sealed = cipher.doFinal(body.toString().toByteArray())
         val frame = "$header..${encode(iv)}.${encode(sealed.dropLast(16).toByteArray())}.${encode(sealed.takeLast(16).toByteArray())}"
-        connection.events.trySend(EncryptedSocketEvent.Text(text(buildJsonObject { put("message", buildJsonObject { put("frame", frame) }) })))
+        connection.events.frame(text(buildJsonObject { put("message", buildJsonObject { put("frame", frame) }) }))
     }
 
     /** A data event of the open subscription. False while no subscription is open. */
@@ -147,11 +156,11 @@ class EncryptedCablePeer(private val server: SealedServer) : CablePeer {
     }
 
     /** The socket breaks. */
-    suspend fun drop(token: String) {
-        connections.getValue(token).events.send(EncryptedSocketEvent.Closed(1006u, "dropped"))
+    fun drop(token: String) {
+        connections.getValue(token).events.closed(1006u, "dropped")
     }
 
-    suspend fun emitOld(token: String) {
+    fun emitOld(token: String) {
         val id = connections.getValue(token).subscriptions.values.first()
         emit(token, buildJsonObject {
             put("t", "next")
@@ -159,10 +168,4 @@ class EncryptedCablePeer(private val server: SealedServer) : CablePeer {
             put("result", buildJsonObject { put("data", buildJsonObject { put("bulletinAdded", buildJsonObject { put("body", "old"); put("occurredAt", "2026-10-18T00:00:00Z") }) }) })
         })
     }
-
-    override suspend fun cableNext(token: String): EncryptedSocketEvent? = connections[token]?.events?.receiveCatching()?.getOrNull()
-    override suspend fun cableClose(token: String) { connections[token]?.events?.close(); closed.send(token) }
-    override suspend fun query(request: TransportRequest): String = throw DbException.Invalid("unexpected plain query")
-    override suspend fun mutate(request: TransportRequest): String = throw DbException.Invalid("unexpected plain mutation")
-    override suspend fun put(url: String, headers: Map<String, String>, file: PutFile, identity: TransferIdentity, progress: ByteProgress): PutReply = throw DbException.Invalid("unexpected upload")
 }

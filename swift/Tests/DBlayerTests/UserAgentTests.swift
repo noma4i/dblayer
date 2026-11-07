@@ -25,14 +25,13 @@ struct UserAgentTests {
     let session = URLSession(configuration: .ephemeral)
     defer { session.invalidateAndCancel() }
     let transport = UrlSessionTransport(endpoint: origin, headers: { headers }, session: session)
-    let operation = TransportRequest(document: "query Probe { id }", operationName: "Probe", variablesJson: "{}", purpose: .standard)
     switch path {
     case "encrypted":
-      _ = try await UrlSessionEncryptedHttp(origin: origin, headers: { headers }, session: session).post(path: "/api/session", body: "jwe", purpose: .standard)
+      _ = await UrlSessionEncryptedHttp(origin: origin, headers: { headers }, session: session).send(request: probeRequest(origin))
     case "graphql":
-      _ = try? await transport.query(request: operation)
+      _ = await transport.send(request: probeRequest(origin, path: "/graphql"))
     case "encryptedSocket":
-      _ = try? await transport.openCable(lease: RecordingLease(noHandle: .init()), url: cableURL(origin))
+      _ = await transport.openCable(url: cableURL(origin), connectMs: 10_000, events: RecordingEvents())
     default: break
     }
     let request = try #require(server.requests.first)
@@ -48,14 +47,14 @@ struct UserAgentTests {
     let values = ChangingHeaders()
     let http = UrlSessionEncryptedHttp(origin: origin, headers: { values.read() })
     let transport = UrlSessionTransport(endpoint: origin, headers: { values.read() })
-    _ = try await http.post(path: "/api/session", body: "jwe", purpose: .standard)
+    _ = await http.send(request: probeRequest(origin))
     values.set("second")
-    _ = try await http.post(path: "/api/session", body: "jwe", purpose: .standard)
-    _ = try? await transport.openCable(lease: RecordingLease(noHandle: .init()), url: cableURL(origin))
+    _ = await http.send(request: probeRequest(origin))
+    _ = await transport.openCable(url: cableURL(origin), connectMs: 10_000, events: RecordingEvents())
     let path = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     try Data("file".utf8).write(to: path)
     defer { try? FileManager.default.removeItem(at: path) }
-    _ = try await transport.put(url: origin.appendingPathComponent("upload").absoluteString, headers: ["X-Presigned": "yes"], file: PutFile(path: path.path, offset: 0, length: 4), identity: TransferIdentity(operationId: 1, itemId: "a", step: .put), progress: PutBytes(noHandle: .init()))
+    _ = await transport.put(url: origin.appendingPathComponent("upload").absoluteString, headers: ["X-Presigned": "yes"], file: PutFile(path: path.path, offset: 0, length: 4), identity: TransferIdentity(operationId: 1, itemId: "a", step: .put), progress: PutBytes(noHandle: .init()))
     let requests = server.requests.map { $0.lowercased() }
     #expect(requests.count == 4)
     #expect(requests[0].contains("x-application: first"))
@@ -66,17 +65,14 @@ struct UserAgentTests {
   }
 
   @Test
-  func life_put_connection_failure_is_network() async throws {
+  func life_put_connection_failure_is_unreachable() async throws {
     let session = URLSession(configuration: .ephemeral)
     defer { session.invalidateAndCancel() }
     let transport = UrlSessionTransport(endpoint: URL(string: "http://127.0.0.1:1")!, session: session)
     let path = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     try Data("file".utf8).write(to: path)
     defer { try? FileManager.default.removeItem(at: path) }
-    do {
-      _ = try await transport.put(url: "http://127.0.0.1:1/upload", headers: [:], file: PutFile(path: path.path, offset: 0, length: 4), identity: TransferIdentity(operationId: 1, itemId: "a", step: .put), progress: PutBytes(noHandle: .init()))
-      Issue.record("a refused connection must throw")
-    } catch DbError.Network {
-    }
+    let outcome = await transport.put(url: "http://127.0.0.1:1/upload", headers: [:], file: PutFile(path: path.path, offset: 0, length: 4), identity: TransferIdentity(operationId: 1, itemId: "a", step: .put), progress: PutBytes(noHandle: .init()))
+    #expect(failureKind(outcome) == .unreachable)
   }
 }

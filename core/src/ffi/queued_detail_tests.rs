@@ -1,14 +1,7 @@
 use std::sync::Arc;
 
-use super::sealed_errors_tests::{moment_spec, session, OPERATIONS};
-use super::{Config, Database, DbError, SessionCode, Transport};
-
-const THROWN: [(SessionCode, &str); 4] = [
-    (SessionCode::Unauthenticated, "token expired"),
-    (SessionCode::AccountUnavailable, "blocked until Monday"),
-    (SessionCode::Other, "I_AM_A_TEAPOT"),
-    (SessionCode::RateLimited, "slow down"),
-];
+use super::sealed_errors_tests::{moment_spec, OPERATIONS};
+use super::{Config, Database, DbError, FakeTransport};
 
 #[test]
 fn data_graphql_extensions() {
@@ -22,16 +15,10 @@ fn data_graphql_extensions() {
     }
 }
 
-struct Refusing(SessionCode, String);
-
 struct GraphqlRefusal(String);
 
 #[async_trait::async_trait]
-impl Transport for GraphqlRefusal {
-    async fn open_cable(&self, _: Arc<super::CableLease>, _url: String) -> Result<(), DbError> { Err(DbError::Network { detail: "fake socket unavailable".into() }) }
-    async fn cable_send(&self, _: String, _: String) -> Result<(), DbError> { unreachable!() }
-    async fn cable_next(&self, _: String) -> Option<crate::ffi::EncryptedSocketEvent> { unreachable!() }
-    async fn cable_close(&self, _: String) {}
+impl FakeTransport for GraphqlRefusal {
     async fn query(&self, _: super::TransportRequest) -> Result<String, DbError> {
         Ok(self.0.clone())
     }
@@ -67,26 +54,3 @@ async fn graphql_extensions_reach_run_and_refresh() {
     }
 }
 
-#[async_trait::async_trait]
-impl Transport for Refusing {
-    async fn open_cable(&self, _: Arc<super::CableLease>, _url: String) -> Result<(), DbError> { Err(DbError::Network { detail: "fake socket unavailable".into() }) }
-    async fn cable_send(&self, _: String, _: String) -> Result<(), DbError> { unreachable!() }
-    async fn cable_next(&self, _: String) -> Option<crate::ffi::EncryptedSocketEvent> { unreachable!() }
-    async fn cable_close(&self, _: String) {}
-    async fn query(&self, _: super::TransportRequest) -> Result<String, DbError> { Err(DbError::Session { code: self.0, detail: self.1.clone() }) }
-    async fn mutate(&self, _: super::TransportRequest) -> Result<String, DbError> { Err(DbError::Session { code: self.0, detail: self.1.clone() }) }
-    async fn put(&self, _: String, _: std::collections::HashMap<String, String>, _: crate::transport::PutFile, _: crate::transport::TransferIdentity, _: Arc<super::ByteProgress>) -> Result<super::PutReply, DbError> { unreachable!() }
-}
-
-#[tokio::test(flavor = "multi_thread")]
-async fn a_session_error_thrown_by_a_platform_transport_keeps_code_and_detail_through_run() {
-    for (code, detail) in THROWN {
-        let database = Database::open(Config { path: None, data_version: None }, serde_json::to_string(&vec![moment_spec()]).unwrap(), crate::ffi::OpenPorts { transport: Some(Arc::new(Refusing(code, detail.to_string()))), ..Default::default() }).await.unwrap();
-        database.register_operations(OPERATIONS.into()).await.unwrap();
-        database.set_online(true).unwrap();
-
-        let run = database.run(database.session_epoch(), "MakeMoment".into(), "{}".into()).await.unwrap_err();
-
-        assert_eq!(session(run), (code, detail.to_string()), "run {code:?}");
-    }
-}

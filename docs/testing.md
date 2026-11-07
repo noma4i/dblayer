@@ -121,9 +121,7 @@ Typical scenarios to cover:
 The check command stops after 300 seconds and kills its own child processes.
 Build the native artifacts before running checks. Unchanged native inputs reuse the built artifacts.
 
-Coverage includes Swift network sources, `UrlSessionTransport.swift` and `UrlSessionCable.swift`. Kotlin includes encrypted HTTP, sockets, `Transports.kt` and `TransportFailure.kt`. Missing executable coverage for any included file fails the check. Unexecuted lines require an entry in `scripts/coverage_allowlist.txt`. The Swift tests use atomic profile counters to preserve increments from concurrent execution.
-
-`GraphQLOperationKind.swift` declares enum cases without executable statements and is excluded from line coverage.
+Coverage includes Swift network sources, `UrlSessionTransport.swift` and `UrlSessionCable.swift`. Kotlin includes encrypted HTTP, `OkHttpCable.kt`, `Http.kt` and `Transports.kt`. Missing executable coverage for any included file fails the check. Unexecuted lines require an entry in `scripts/coverage_allowlist.txt`. The Swift tests use atomic profile counters to preserve increments from concurrent execution.
 
 The R8 check uses the generated Kotlin bindings. Run `bash scripts/build_kotlin.sh --host` first when running it separately.
 It builds a minimal Android release application with minification enabled and the package's consumer rules.

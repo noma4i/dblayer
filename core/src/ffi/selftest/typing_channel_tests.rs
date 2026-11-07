@@ -10,7 +10,6 @@ use crate::ffi::encrypted_tests::ThroughServer;
 use crate::ffi::session_guards_tests::{Rig, SOCIAL_BODY};
 use crate::ffi::{Config, Database, ReadRequest, ReadValue};
 use crate::schema::{FieldSpec, ModelSpec, Storage, UpdatesSpec};
-use crate::transport::encrypted::cable::peer_tests::CablePeer;
 use crate::value::ScalarKind;
 
 fn typing_models() -> String {
@@ -29,7 +28,7 @@ async fn a_memory_model_with_subscribe_receives_the_frames_of_its_channel() {
     let config = crate::transport::encrypted::protocol_tests::config();
     let (subscribed, mut subscriptions) = mpsc::unbounded_channel();
     let (closed, _closes) = mpsc::unbounded_channel();
-    let peer = Arc::new(Peer { cable: CablePeer::new(config.clone()), subscribed, closed });
+    let peer = Arc::new(Peer::new(config.clone(), subscribed, closed));
     let database = Database::open(Config { path: None, data_version: None }, typing_models(), crate::ffi::OpenPorts { transport: Some(peer.clone()), encrypted: Some(config), credentials: Some(rig.credentials.clone()), http: Some(Arc::new(ThroughServer(rig.server.clone()))) }).await.unwrap();
     database.register_operations(json!([{"name":"UserTyping","document":"subscription UserTyping { userTyping { id userId } }","rootPath":"userTyping"}]).to_string()).await.unwrap();
     database.set_online(true).unwrap();
@@ -59,7 +58,7 @@ async fn one_signal_routes_typed_actions_and_notices() {
     let config = crate::transport::encrypted::protocol_tests::config();
     let (subscribed, mut subscriptions) = mpsc::unbounded_channel();
     let (closed, _closes) = mpsc::unbounded_channel();
-    let peer = Arc::new(Peer { cable: CablePeer::new(config.clone()), subscribed, closed });
+    let peer = Arc::new(Peer::new(config.clone(), subscribed, closed));
     let models = include_str!("wrapper_models.inc").to_string();
     let database = Database::open(Config { path: None, data_version: None }, models, crate::ffi::OpenPorts { transport: Some(peer.clone()), encrypted: Some(config), credentials: Some(rig.credentials.clone()), http: Some(Arc::new(ThroughServer(rig.server.clone()))) }).await.unwrap();
     database.register_operations(json!([{"name":"ChatActionSignal","document":"subscription ChatActionSignal { chatActionSignal { chatId userId kind active } }"}]).to_string()).await.unwrap();

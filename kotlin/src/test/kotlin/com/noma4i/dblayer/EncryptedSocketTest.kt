@@ -19,10 +19,16 @@ import org.junit.Test
 @org.junit.runner.RunWith(org.robolectric.RobolectricTestRunner::class)
 @org.robolectric.annotation.Config(sdk = [35])
 class EncryptedSocketTest {
+    private suspend fun Transport.opened(url: String): Pair<PlatformSocket, RecordingEvents> {
+        val events = RecordingEvents()
+        val outcome = openCable(url, 10_000uL, events)
+        return (outcome as CableOutcome.Open).connection to events
+    }
+
     @Test
-    fun anAddressThatIsNoWebSocketUrlIsTyped() = bounded {
-        val error = runCatching { OkHttpTransport("https://example.test/").openedCable("ftp://example.test/api/cable") }.exceptionOrNull()
-        assertTrue("an invalid cable address must report its type", error is DbException.Invalid)
+    fun anAddressThatIsNoWebSocketUrlFailsWithoutAConnection() = bounded {
+        val outcome = OkHttpTransport("https://example.test/").openCable("ftp://example.test/api/cable", 10_000uL, RecordingEvents())
+        assertEquals(RawFailureKind.IO, (outcome as CableOutcome.Failed).failure.kind)
     }
 
     @Test
@@ -38,7 +44,7 @@ class EncryptedSocketTest {
             }.build()
             server.enqueue(MockResponse().setSocketPolicy(SocketPolicy.NO_RESPONSE))
             val transport = OkHttpTransport(server.url("/").toString(), client = client)
-            val pending = async(start = CoroutineStart.UNDISPATCHED) { transport.openedCable(cableUrl(server)) }
+            val pending = async(start = CoroutineStart.UNDISPATCHED) { transport.opened(cableUrl(server)) }
             try {
                 assertEquals("/api/cable", server.takeRequest().path)
                 pending.cancelAndJoin()
@@ -53,32 +59,31 @@ class EncryptedSocketTest {
     }
 
     @Test
-    fun exchangesTextOnTheConfiguredPathWithoutAuthorizationHeaders() = bounded {
-            MockWebServer().use { server ->
-                val received = CompletableDeferred<String>()
-                server.enqueue(MockResponse().withWebSocketUpgrade(object : WebSocketListener() {
-                    override fun onOpen(webSocket: WebSocket, response: Response) {
-                        webSocket.send("server challenge")
-                    }
-                    override fun onMessage(webSocket: WebSocket, text: String) {
-                        received.complete(text)
-                    }
-                }))
-                val endpoint = server.url("/api/graphql").toString()
-                val transport: Transport = OkHttpTransport(endpoint)
-                val token = transport.openedCable(cableUrl(server))
-                try {
-                    assertEquals(EncryptedSocketEvent.Text("server challenge"), transport.cableNext(token))
-                    transport.cableSend(token, "encrypted hello")
-                    assertEquals("encrypted hello", received.await())
-                    val request = server.takeRequest()
-                    assertEquals("/api/cable", request.path)
-                    assertNull(request.getHeader("Authorization"))
-                    assertNull(request.getHeader("Sec-WebSocket-Protocol"))
-                } finally {
-                    transport.cableClose(token)
+    fun exchangesTextOnTheGivenAddressWithoutAuthorizationHeaders() = bounded {
+        MockWebServer().use { server ->
+            val received = CompletableDeferred<String>()
+            server.enqueue(MockResponse().withWebSocketUpgrade(object : WebSocketListener() {
+                override fun onOpen(webSocket: WebSocket, response: Response) {
+                    webSocket.send("server challenge")
                 }
+                override fun onMessage(webSocket: WebSocket, text: String) {
+                    received.complete(text)
+                }
+            }))
+            val transport: Transport = OkHttpTransport(server.url("/api/graphql").toString())
+            val (connection, events) = transport.opened(cableUrl(server))
+            try {
+                assertEquals(RecordingEvents.Event.Frame("server challenge"), events.next())
+                assertTrue(connection.send("encrypted hello"))
+                assertEquals("encrypted hello", received.await())
+                val request = server.takeRequest()
+                assertEquals("/api/cable", request.path)
+                assertNull(request.getHeader("Authorization"))
+                assertNull(request.getHeader("Sec-WebSocket-Protocol"))
+            } finally {
+                connection.close(1000u, "")
             }
+        }
     }
 
     @Test
@@ -93,127 +98,64 @@ class EncryptedSocketTest {
                 }
             }))
             val transport = OkHttpTransport(server.url("/").toString(), client = client)
-            val token = transport.openedCable(cableUrl(server))
-            assertEquals(EncryptedSocketEvent.Closed(4401u, "UNAUTHENTICATED"), transport.cableNext(token))
-            assertNull(transport.cableNext(token))
+            val (connection, events) = transport.opened(cableUrl(server))
+            assertEquals(RecordingEvents.Event.Closed(4401u, "UNAUTHENTICATED"), events.next())
             withTimeout(2000) { idle.await() }
-            transport.cableClose(token)
+            connection.close(1000u, "")
         }
     }
 
     @Test
-    fun reportsRemoteCloseOnceWhenTheServerNeverAcknowledgesOurClose() = bounded {
-        MockWebServer().use { server ->
-            server.enqueue(MockResponse().withWebSocketUpgrade(object : WebSocketListener() {
-                override fun onOpen(webSocket: WebSocket, response: Response) {
-                    webSocket.close(4401, "UNAUTHENTICATED")
-                }
-                override fun onClosing(webSocket: WebSocket, code: Int, reason: String) = Unit
-            }))
-            val transport = OkHttpTransport(server.url("/").toString())
-            val token = transport.openedCable(cableUrl(server))
-            assertEquals(EncryptedSocketEvent.Closed(4401u, "UNAUTHENTICATED"), transport.cableNext(token))
-            assertNull(transport.cableNext(token))
-            transport.cableClose(token)
-        }
-    }
-
-    @Test
-    fun reportsBinaryAndDisconnectedSocketsAsCloseEvents() = bounded {
+    fun reportsBinaryAndDisconnectedSocketsAsTheyShowThemselves() = bounded {
         for (binary in listOf(true, false)) {
             MockWebServer().use { server ->
-                val closed = CompletableDeferred<Int>()
                 server.enqueue(MockResponse().withWebSocketUpgrade(object : WebSocketListener() {
                     override fun onOpen(webSocket: WebSocket, response: Response) {
                         if (binary) webSocket.send("not text".encodeUtf8()) else webSocket.cancel()
                     }
                     override fun onClosing(webSocket: WebSocket, code: Int, reason: String) {
-                        closed.complete(code)
                         webSocket.close(code, reason)
                     }
                 }))
                 val transport = OkHttpTransport(server.url("/").toString())
-                val token = transport.openedCable(cableUrl(server))
-                val event = transport.cableNext(token) as EncryptedSocketEvent.Closed
-                assertEquals(if (binary) 1003.toUShort() else 1006.toUShort(), event.code)
-                assertTrue(event.reason.isNotBlank())
-                assertNull(transport.cableNext(token))
-                if (binary) assertEquals(1003, closed.await())
-                transport.cableClose(token)
+                val (connection, events) = transport.opened(cableUrl(server))
+                val event = events.next()
+                if (binary) assertTrue(event is RecordingEvents.Event.Binary && event.bytes.decodeToString() == "not text") else assertEquals(RecordingEvents.Event.Failed(RawFailureKind.IO), event)
+                connection.close(1000u, "")
             }
         }
     }
 
     @Test
-    fun closesOnlyTheSelectedSocketAndReleasesItsPendingRead() = bounded {
+    fun aRefusedHandshakeReportsItsStatus() = bounded {
         MockWebServer().use { server ->
-            val disconnected = CompletableDeferred<Unit>()
-            server.enqueue(MockResponse().withWebSocketUpgrade(object : WebSocketListener() {
-                override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
-                    disconnected.complete(Unit)
-                }
-            }))
-            server.enqueue(MockResponse().withWebSocketUpgrade(object : WebSocketListener() {
-                override fun onOpen(webSocket: WebSocket, response: Response) {
-                    webSocket.send("second")
-                }
-            }))
-            val transport = OkHttpTransport(server.url("/").toString())
-            val first = transport.openedCable(cableUrl(server))
-            val second = transport.openedCable(cableUrl(server))
-            assertNotEquals(first, second)
-            val pending = async(start = CoroutineStart.UNDISPATCHED) { transport.cableNext(first) }
-            transport.cableClose(first)
-            assertNull(pending.await())
-            disconnected.await()
-            assertEquals(EncryptedSocketEvent.Text("second"), transport.cableNext(second))
-            transport.cableClose(second)
+            server.enqueue(MockResponse().setResponseCode(403))
+            val outcome = OkHttpTransport(server.url("/").toString()).openCable(cableUrl(server), 10_000uL, RecordingEvents())
+            val failure = (outcome as CableOutcome.Failed).failure
+            assertEquals(RawFailureKind.PROTOCOL, failure.kind)
+            assertEquals(403L, failure.code)
         }
     }
 
     @Test
     fun mockConnectionsHaveIndependentLifetimes() = bounded {
         val transport = MockTransport()
-        val first = transport.openedCable()
-        val second = transport.openedCable()
-        assertNotEquals(first, second)
-        transport.cableSend(second, "hello")
-        val pending = async(start = CoroutineStart.UNDISPATCHED) { transport.cableNext(first) }
-        transport.cableClose(first)
-        assertNull(pending.await())
+        val firstEvents = RecordingEvents()
+        val secondEvents = RecordingEvents()
+        val first = (transport.scriptedCable("ws://localhost/api/cable", firstEvents) as CableOutcome.Open).connection
+        val second = (transport.scriptedCable("ws://localhost/api/cable", secondEvents) as CableOutcome.Open).connection
+        assertTrue(second.send("hello"))
+        assertTrue(first.send("first"))
+        assertEquals(2, transport.cableFrames.size)
+        val token = transport.cableFrames.first().first
+        transport.emitCable(token, "reply")
+        transport.closeCable(token, 4401u, "UNAUTHENTICATED")
+        assertEquals(RecordingEvents.Event.Frame("reply"), secondEvents.next())
+        assertEquals(RecordingEvents.Event.Closed(4401u, "UNAUTHENTICATED"), secondEvents.next())
         try {
-            transport.cableSend(first, "after close")
-            fail("expected closed socket refusal")
+            transport.emitCable(token, "late")
+            fail("expected a closed socket refusal")
         } catch (_: DbException.Network) {
-        }
-        transport.cableSend(second, "still open")
-        assertEquals(listOf(second to "hello", second to "still open"), transport.cableFrames)
-        transport.emitCable(second, EncryptedSocketEvent.Text("reply"))
-        transport.emitCable(second, EncryptedSocketEvent.Closed(4401u, "UNAUTHENTICATED"))
-        assertEquals(EncryptedSocketEvent.Text("reply"), transport.cableNext(second))
-        assertEquals(EncryptedSocketEvent.Closed(4401u, "UNAUTHENTICATED"), transport.cableNext(second))
-        assertNull(transport.cableNext(second))
-        transport.cableClose(second)
-        assertNull(transport.cableNext(second))
-    }
-
-    @Test
-    fun classifiesHandshakeRefusalAndSendingAfterCancellation() = bounded {
-        MockWebServer().use { server ->
-            server.enqueue(MockResponse().setResponseCode(403))
-            val transport = OkHttpTransport(server.url("/").toString())
-            try {
-                transport.openedCable(cableUrl(server))
-                fail("expected HTTP refusal")
-            } catch (error: DbException.Http) {
-                assertEquals(403.toUShort(), error.status)
-            }
-            try {
-                transport.cableSend("closed", "hello")
-                fail("expected network failure")
-            } catch (_: DbException.Network) {
-                Unit
-            }
         }
     }
 }

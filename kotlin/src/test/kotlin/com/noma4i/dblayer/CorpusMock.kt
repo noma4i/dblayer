@@ -6,7 +6,7 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 
 /** The transport mock of the shared vocabulary. It answers no request by itself: a request waits until an input of the trace answers, fails or drops it. */
-class CorpusMock : Transport, EncryptedHttp {
+class CorpusMock : ScriptedTransport, ScriptedHttp {
     private class Seen(val id: String, val kind: String, val purpose: String, var announced: Boolean = false)
 
     private val seen = ArrayList<Seen>()
@@ -57,6 +57,7 @@ class CorpusMock : Transport, EncryptedHttp {
 
     fun fail(id: String, kind: String): Boolean {
         val error = failure(kind) ?: return false
+        if (kind == "permanent" && waitingHttp.containsKey(id)) return answer(id, """{"errors":[{"message":"permanent","extensions":{"code":"permanent"}}]}""")
         if (kind == "auth") waitingHttp.remove(id)?.let { return it.second.complete(EncryptedReply(401u, "")) }
         return finish(id, error)
     }
@@ -93,11 +94,15 @@ class CorpusMock : Transport, EncryptedHttp {
         return reply.await()
     }
 
-    override suspend fun openCable(lease: CableLease, url: String) {
+    override suspend fun scriptedCable(url: String, events: CableEvents): CableOutcome {
         val id = record("subscription", NetworkPurpose.STANDARD)
-        peer.openCable(lease, url)
+        val outcome = peer.openCable(url, events)
         cables[id] = peer.lastOpened!!
+        return outcome
     }
+
+    override suspend fun send(request: HttpRequest): RawOutcome =
+        if (request.headers["Content-Type"] == "application/jose") sendEncrypted(request) else sendGraphql(request)
 
     override suspend fun post(path: String, body: String, purpose: NetworkPurpose): EncryptedReply {
         val request = sealed.open(body)
@@ -106,13 +111,10 @@ class CorpusMock : Transport, EncryptedHttp {
         waitingHttp[id] = request to reply
         return reply.await()
     }
-    override suspend fun cableSend(token: String, text: String) = peer.cableSend(token, text)
-    override suspend fun cableNext(token: String): EncryptedSocketEvent? = peer.cableNext(token)
-    override suspend fun cableClose(token: String) = peer.cableClose(token)
     override suspend fun query(request: TransportRequest): String = wait("query", request)
     override suspend fun mutate(request: TransportRequest): String = wait("mutation", request)
 
-    override suspend fun put(url: String, headers: Map<String, String>, file: PutFile, identity: TransferIdentity, progress: ByteProgress): PutReply {
+    override suspend fun scriptedPut(url: String, headers: Map<String, String>, file: PutFile, identity: TransferIdentity, progress: ByteProgress): PutReply {
         val id = record("put", NetworkPurpose.TRANSFER)
         val reply = CompletableDeferred<PutReply>()
         waitingPuts[id] = reply

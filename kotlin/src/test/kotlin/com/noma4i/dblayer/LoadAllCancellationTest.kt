@@ -19,7 +19,10 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.util.concurrent.atomic.AtomicInteger
 
-private class PageTransport(val mock: MockTransport = MockTransport(), private val cancelAt: Int = 6) : Transport by mock {
+private class PageTransport(val mock: MockTransport = MockTransport(), private val cancelAt: Int = 6) : ScriptedTransport {
+    override suspend fun mutate(request: TransportRequest): String = mock.mutate(request)
+    override suspend fun scriptedPut(url: String, headers: Map<String, String>, file: PutFile, identity: TransferIdentity, progress: ByteProgress): PutReply = mock.scriptedPut(url, headers, file, identity, progress)
+    override suspend fun scriptedCable(url: String, events: CableEvents): CableOutcome = mock.scriptedCable(url, events)
     private val requests = AtomicInteger()
     val sixthEnded = CompletableDeferred<Boolean>()
 

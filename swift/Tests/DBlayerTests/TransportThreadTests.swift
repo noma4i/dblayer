@@ -12,15 +12,11 @@ struct TransportThreadTests {
     ThreadProbeProtocol.reset()
     let transport = UrlSessionTransport(endpoint: url, headers: { [:] }, session: session)
 
-    let request = TransportRequest(document: mutation ? "mutation Ping { ping }" : "query Ping { ping }", operationName: "Ping", variablesJson: "{}", purpose: .standard)
-    let reply: String
-    if mutation {
-      reply = try await transport.mutate(request: request)
-    } else {
-      reply = try await transport.query(request: request)
-    }
+    let body = #"{"query":"\#(mutation ? "mutation" : "query") Ping { ping }","operationName":"Ping","variables":{}}"#
+    let request = HttpRequest(url: url.absoluteString, method: "POST", headers: ["Content-Type": "application/json"], body: body, connectMs: 10_000, requestMs: 30_000, purpose: .standard)
+    let outcome = await transport.send(request: request)
 
-    #expect(reply == #"{"data":{"ping":"pong"}}"#)
+    #expect(outcome == .response(status: 200, etag: nil, body: #"{"data":{"ping":"pong"}}"#))
     #expect(ThreadProbeProtocol.loadedOnMain == [false])
   }
 }

@@ -4,7 +4,7 @@ use std::sync::{Arc, Mutex};
 
 use serde_json::{json, Value};
 
-use crate::ffi::{ByteProgress, CableLease, Config, DbError, EncryptedSocketEvent, ReadPhase, OpenDatabase, OpenOptions, PutReply, ReadRequest, ReadState, ReadValue, Transport, TransportRequest};
+use crate::ffi::{ByteProgress, Config, DbError, ReadPhase, OpenDatabase, OpenOptions, PutReply, ReadRequest, ReadState, ReadValue, FakeTransport, TransportRequest};
 use crate::schema::{Coverage, FieldSpec, ModelSpec, PageDirection, RelationSpec, RemoteShape, RowRule, RowTest, VariableSource};
 use crate::test_wait::within_secs;
 use crate::value::ScalarKind;
@@ -31,11 +31,7 @@ impl crate::ffi::tape::Reader for MediaSink {
 }
 
 #[async_trait::async_trait]
-impl Transport for MediaTransport {
-    async fn open_cable(&self, _: Arc<CableLease>, _url: String) -> Result<(), DbError> { Err(DbError::Network { detail: "no cable".into() }) }
-    async fn cable_send(&self, _: String, _: String) -> Result<(), DbError> { unreachable!() }
-    async fn cable_next(&self, _: String) -> Option<EncryptedSocketEvent> { None }
-    async fn cable_close(&self, _: String) {}
+impl FakeTransport for MediaTransport {
     async fn query(&self, request: TransportRequest) -> Result<String, DbError> {
         self.requests.lock().unwrap().push(request.clone());
         if request.operation_name == "PresenceOnline" {

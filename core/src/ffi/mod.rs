@@ -1,5 +1,5 @@
 mod database;
-mod lease;
+mod cable;
 mod receipt;
 #[cfg(test)]
 #[cfg(test)]
@@ -68,7 +68,7 @@ pub use database::{Config, Database, SubscriptionCensus, TestClock};
 pub use receipt::{ItemId, WireBatchReceipt, WireItemReceipt, WireOperationOutcome, WireOperationReceipt, WireReceiptTicket};
 pub use opening::{OpenDatabase, OpenOptions, OpenPorts, OperationDefinition};
 pub use write::FileBytes;
-pub use encrypted::{fetch_server_config, CredentialStore, EncryptedHttp, EncryptedReply, RetryProgress, RetryProgressListener, RetrySubscription};
+pub use encrypted::{fetch_server_config, CredentialStore, EncryptedHttp, RetryProgress, RetryProgressListener, RetrySubscription};
 pub use crate::transport::SessionCode;
 pub use crate::transport::{AppPlatform, ConfigCode, EncryptedConfig, EncryptedEndpoints, EncryptedOperationClass, EncryptedSessionOperation, SecurityCode, ServerConfig};
 pub use loading::{LoadMoreResult, LoadRequest};
@@ -77,7 +77,13 @@ pub use read::{ReadEnd, ReadFetch, ReadPhase, ReadRequest, ReadState, ReadStream
 pub use upload_rounds::{RoundJob, RoundJobsSink};
 pub use wire::{Cell, CellEntry, WireFailure, WireFile, WireModel, WireRow, WireSync, WireSyncState, WireProcessing, WireUpload, WireUploadStatus};
 pub use crate::transport::{PutFile, PutReply};
-pub use transport::{ByteProgress, CableLease, EncryptedSocketEvent, OnlineSink, PlatformObserver, Transport, TransportRequest};
+#[cfg(test)]
+mod fixtures;
+#[cfg(test)]
+pub(crate) use fixtures::{EncryptedReply, FakeHttp, FakeTransport, TransportRequest};
+pub use cable::{PlatformSocket, CableEvents, CableOutcome};
+pub use crate::transport::{RawFailureKind, HttpRequest, RawFailure, RawOutcome};
+pub use transport::{ByteProgress, OnlineSink, PlatformObserver, Transport};
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error, uniffi::Error)]
 pub enum DbError {

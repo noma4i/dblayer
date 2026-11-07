@@ -8,24 +8,22 @@ use super::rig_tests::{bound};
 use super::rig_models::plain_models;
 use crate::ffi::encrypted_tests::ThroughServer;
 use crate::ffi::session_guards_tests::{Rig, SOCIAL_BODY};
-use crate::ffi::{ByteProgress, CableLease, Config, Database, DbError, EncryptedSocketEvent, PutReply, ReadRequest, Transport, TransportRequest};
-use crate::transport::encrypted::cable::peer_tests::CablePeer;
+use crate::ffi::{ByteProgress, Config, Database, DbError, PutReply, ReadRequest, FakeTransport, TransportRequest};
+use crate::transport::encrypted::cable::peer_tests::{CablePeer, PeerEvent};
 
 pub(super) struct Peer {
     pub(super) cable: CablePeer,
-    pub(super) subscribed: mpsc::UnboundedSender<String>,
-    pub(super) closed: mpsc::UnboundedSender<String>,
+}
+
+impl Peer {
+    pub(super) fn new(config: crate::transport::EncryptedConfig, subscribed: mpsc::UnboundedSender<String>, closed: mpsc::UnboundedSender<String>) -> Self {
+        Self { cable: CablePeer::observed(config, move |event| { let _ = match event { PeerEvent::Subscribed(token) => subscribed.send(token), PeerEvent::Closed(token) => closed.send(token) }; }) }
+    }
 }
 
 #[async_trait]
-impl Transport for Peer {
-    async fn open_cable(&self, lease: Arc<CableLease>, _url: String) -> Result<(), DbError> { self.cable.open(&lease).map(drop) }
-    async fn cable_send(&self, token: String, text: String) -> Result<(), DbError> {
-        if self.cable.receive(&token, &text)?.is_some() { let _ = self.subscribed.send(token); }
-        Ok(())
-    }
-    async fn cable_next(&self, token: String) -> Option<EncryptedSocketEvent> { crate::test_wait::within(self.cable.next(&token)).await }
-    async fn cable_close(&self, token: String) { let _ = self.closed.send(token); }
+impl FakeTransport for Peer {
+    fn cable(&self) -> Option<&CablePeer> { Some(&self.cable) }
     async fn query(&self, _: TransportRequest) -> Result<String, DbError> { unreachable!() }
     async fn mutate(&self, _: TransportRequest) -> Result<String, DbError> { unreachable!() }
     async fn put(&self, _: String, _: std::collections::HashMap<String, String>, _: crate::transport::PutFile, _: crate::transport::TransferIdentity, _: Arc<ByteProgress>) -> Result<PutReply, DbError> { unreachable!() }
@@ -40,7 +38,7 @@ async fn feed_prop_census_from_owners() {
     let config = crate::transport::encrypted::protocol_tests::config();
     let (subscribed, mut subscriptions) = mpsc::unbounded_channel();
     let (closed, mut closes) = mpsc::unbounded_channel();
-    let peer = Arc::new(Peer { cable: CablePeer::new(config.clone()), subscribed, closed });
+    let peer = Arc::new(Peer::new(config.clone(), subscribed, closed));
     let database = Database::open(Config { path: None, data_version: None }, plain_models(), crate::ffi::OpenPorts { transport: Some(peer), encrypted: Some(config), credentials: Some(rig.credentials.clone()), http: Some(Arc::new(ThroughServer(rig.server.clone()))) }).await.unwrap();
     database.register_operations(r#"[{"name":"Notices","document":"subscription Notices { notices { id } }","rootPath":"notices"}]"#.into()).await.unwrap();
     database.set_online(true).unwrap();
@@ -64,7 +62,7 @@ async fn an_old_encrypted_cable_cannot_deliver_into_the_next_account() {
     let config = crate::transport::encrypted::protocol_tests::config();
     let (subscribed, mut subscriptions) = mpsc::unbounded_channel();
     let (closed, mut closes) = mpsc::unbounded_channel();
-    let peer = Arc::new(Peer { cable: CablePeer::new(config.clone()), subscribed, closed });
+    let peer = Arc::new(Peer::new(config.clone(), subscribed, closed));
     let database = Database::open(Config { path: None, data_version: None }, plain_models(), crate::ffi::OpenPorts { transport: Some(peer.clone()), encrypted: Some(config), credentials: Some(rig.credentials.clone()), http: Some(Arc::new(ThroughServer(rig.server.clone()))) }).await.unwrap();
     database.register_operations(r#"[{"name":"Notices","document":"subscription Notices { notices { id } }","rootPath":"notices"}]"#.into()).await.unwrap();
     database.set_online(true).unwrap();

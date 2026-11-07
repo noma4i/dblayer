@@ -41,7 +41,12 @@ private val FORBIDDEN = DbException.Http(403.toUShort(), "forbidden")
 
 private fun forwardAnswer(id: String, chat: String) = """{"data":{"forwardLetter":{"letter":{"__typename":"Letter","id":"$id","chatId":"$chat","text":"hello","at":99}}}}"""
 
-private class MemberEventsTransport(override val base: MockTransport = MockTransport()) : Transport by base, WrapsMock
+private class MemberEventsTransport(override val base: MockTransport = MockTransport()) : ScriptedTransport, WrapsMock {
+    override suspend fun query(request: TransportRequest): String = base.query(request)
+    override suspend fun mutate(request: TransportRequest): String = base.mutate(request)
+    override suspend fun scriptedPut(url: String, headers: Map<String, String>, file: PutFile, identity: TransferIdentity, progress: ByteProgress): PutReply = base.scriptedPut(url, headers, file, identity, progress)
+    override suspend fun scriptedCable(url: String, events: CableEvents): CableOutcome = base.scriptedCable(url, events)
+}
 
 private fun clubModels(keep: Boolean = false, complete: Boolean = false, keepLetter: Boolean = false, events: Boolean = false, destroy: Boolean = false): String {
     if (!keep && !complete && !keepLetter && !events && !destroy) return modelsJSON

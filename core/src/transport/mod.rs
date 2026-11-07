@@ -8,6 +8,7 @@ mod extensions;
 mod mock;
 mod online;
 mod put;
+mod raw;
 mod request;
 mod response;
 pub(crate) mod retry;
@@ -21,6 +22,7 @@ pub use extensions::{graphql_extensions, GraphqlExtensions, TransactionDispositi
 #[cfg(test)]
 pub use mock::{RecordedKind, MockTransport, PutScript, RecordedCall, RecordedPut, Reply};
 pub use online::Connectivity;
+pub use raw::{classify, encrypted_call, graphql_call, graphql_endpoint, graphql_text, ExchangeKind, RawFailureKind, HttpRequest, RawFailure, RawOutcome, CONNECT_TIMEOUT_MS, REQUEST_TIMEOUT_MS};
 pub use put::{ByteSink, PutFile, PutRequest, PutReply, TransferIdentity, TransferStep};
 pub use request::{GraphQLError, GraphQLRequest, NetworkPurpose, RequestOwner, Response};
 pub use response::{ResponseOutcome, ResponseShape};

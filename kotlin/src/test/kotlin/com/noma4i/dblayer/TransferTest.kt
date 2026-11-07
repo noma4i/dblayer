@@ -40,11 +40,14 @@ internal interface Sqlite3Library : Library {
     fun sqlite3_close(database: Pointer): Int
 }
 
-private class MultipartTransfer(val mock: MockTransport = MockTransport()) : Transport by mock {
+private class MultipartTransfer(val mock: MockTransport = MockTransport()) : ScriptedTransport {
+    override suspend fun query(request: TransportRequest): String = mock.query(request)
+    override suspend fun mutate(request: TransportRequest): String = mock.mutate(request)
+    override suspend fun scriptedCable(url: String, events: CableEvents): CableOutcome = mock.scriptedCable(url, events)
     val puts = java.util.concurrent.CopyOnWriteArrayList<String>()
     val identities = java.util.concurrent.CopyOnWriteArrayList<TransferIdentity>()
     val paths = java.util.concurrent.CopyOnWriteArrayList<Pair<String, java.nio.file.Path>>()
-    override suspend fun put(url: String, headers: Map<String, String>, file: PutFile, identity: TransferIdentity, progress: ByteProgress): PutReply {
+    override suspend fun scriptedPut(url: String, headers: Map<String, String>, file: PutFile, identity: TransferIdentity, progress: ByteProgress): PutReply {
         puts.add(url)
         identities.add(identity)
         paths.add(identity.itemId to java.io.File(file.path).canonicalFile.toPath())
@@ -59,10 +62,13 @@ private class TransferCredential : CredentialStore {
     override fun clear() { value = null }
 }
 
-private class HoldSecondFile(private val server: SealedServer, private val mock: MockTransport = MockTransport()) : Transport by mock {
+private class HoldSecondFile(private val server: SealedServer, private val mock: MockTransport = MockTransport()) : ScriptedTransport {
+    override suspend fun query(request: TransportRequest): String = mock.query(request)
+    override suspend fun mutate(request: TransportRequest): String = mock.mutate(request)
+    override suspend fun scriptedCable(url: String, events: CableEvents): CableOutcome = mock.scriptedCable(url, events)
     private val count = java.util.concurrent.atomic.AtomicInteger()
     val identities = java.util.Collections.synchronizedList(mutableListOf<TransferIdentity>())
-    override suspend fun put(url: String, headers: Map<String, String>, file: PutFile, identity: TransferIdentity, progress: ByteProgress): PutReply {
+    override suspend fun scriptedPut(url: String, headers: Map<String, String>, file: PutFile, identity: TransferIdentity, progress: ByteProgress): PutReply {
         identities.add(identity)
         if (count.incrementAndGet() == 1) server.hold("CreateBlob")
         progress.sent(file.length)
@@ -74,7 +80,10 @@ private const val REFUSED_BLOB = """{"errors":[{"message":"no storage","extensio
 
 private fun createdBlob(index: Int) = """{"data":{"createBlob":{"url":"https://storage/file","headers":{},"signedId":"signed-$index","blobId":"b$index"}}}"""
 
-private class RefuseFirstFile(private val mock: MockTransport) : Transport by mock {
+private class RefuseFirstFile(private val mock: MockTransport) : ScriptedTransport {
+    override suspend fun query(request: TransportRequest): String = mock.query(request)
+    override suspend fun scriptedPut(url: String, headers: Map<String, String>, file: PutFile, identity: TransferIdentity, progress: ByteProgress): PutReply = mock.scriptedPut(url, headers, file, identity, progress)
+    override suspend fun scriptedCable(url: String, events: CableEvents): CableOutcome = mock.scriptedCable(url, events)
     private val refused = java.util.concurrent.atomic.AtomicBoolean(false)
     override suspend fun mutate(request: TransportRequest): String {
         val answer = mock.mutate(request)

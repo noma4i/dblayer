@@ -1,3 +1,4 @@
+use crate::ffi::{FakeTransport};
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
 
@@ -7,7 +8,7 @@ use tokio::sync::{Notify, Semaphore};
 
 use crate::ffi::session_guards_tests::WatchedHeld;
 use crate::ffi::{
-    ByteProgress, CableLease, Config, Database, DbError, EncryptedHttp, EncryptedReply, EncryptedSessionOperation, EncryptedSocketEvent, OpenDatabase, PutReply, SessionCode,
+    ByteProgress, Config, Database, DbError, FakeHttp, EncryptedReply, EncryptedSessionOperation, OpenDatabase, PutReply,
     TestClock, Transport, TransportRequest,
 };
 use crate::test_wait::within_secs;
@@ -288,10 +289,7 @@ impl World {
             Some(Fault::Http(status)) => return Err(DbError::Http { status, detail: "refused".into() }),
             Some(Fault::Business) => return Ok(json!({"errors": [{"message": "refused", "extensions": {"code": "REFUSED"}}]}).to_string()),
             Some(Fault::Answer(answer)) => return Ok(answer.to_string()),
-            Some(Fault::Refuse { code, .. }) => return match SessionCode::from_wire(code) {
-                Some(session) => Err(DbError::Session { code: session, detail: code.into() }),
-                None => Ok(json!({"errors": [{"message": code, "extensions": {"code": code}}]}).to_string()),
-            },
+            Some(Fault::Refuse { code, .. }) => return Ok(json!({"errors": [{"message": code, "extensions": {"code": code}}]}).to_string()),
             Some(Fault::Down) => return Err(DbError::Network { detail: "the network is away".into() }),
             Some(Fault::Hold(_) | Fault::HoldThen(..)) | None => {}
         }
@@ -300,7 +298,7 @@ impl World {
 }
 
 #[async_trait]
-impl EncryptedHttp for World {
+impl FakeHttp for World {
     async fn post(&self, path: String, body: String, _: crate::transport::NetworkPurpose) -> Result<EncryptedReply, DbError> {
         let request = decrypt_request(&body).unwrap();
         let sequence = request["sequence"].as_i64();
@@ -349,11 +347,7 @@ impl Switchable {
 }
 
 #[async_trait]
-impl Transport for Switchable {
-    async fn open_cable(&self, _: Arc<CableLease>, _url: String) -> Result<(), DbError> { Err(DbError::Network { detail: "fake socket unavailable".into() }) }
-    async fn cable_send(&self, _: String, _: String) -> Result<(), DbError> { Err(DbError::Network { detail: "no cable".into() }) }
-    async fn cable_next(&self, _: String) -> Option<EncryptedSocketEvent> { None }
-    async fn cable_close(&self, _: String) {}
+impl FakeTransport for Switchable {
     async fn query(&self, request: TransportRequest) -> Result<String, DbError> { self.current()?.plain(&request.operation_name, &json!({"variables": serde_json::from_str::<Value>(&request.variables_json)?})).await }
     async fn mutate(&self, request: TransportRequest) -> Result<String, DbError> { self.current()?.plain(&request.operation_name, &json!({"variables": serde_json::from_str::<Value>(&request.variables_json)?})).await }
     async fn put(&self, _: String, _: std::collections::HashMap<String, String>, _: crate::transport::PutFile, _: crate::transport::TransferIdentity, _: Arc<ByteProgress>) -> Result<PutReply, DbError> {

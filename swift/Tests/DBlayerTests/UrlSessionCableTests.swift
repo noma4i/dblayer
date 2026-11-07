@@ -4,20 +4,16 @@ import Testing
 
 struct UrlSessionCableTests {
   @Test
-  func anAddressThatIsNoUrlIsTyped() async throws {
+  func anAddressThatIsNoUrlFailsWithoutASocket() async throws {
     let cable = UrlSessionCable { _ in
       Issue.record("an invalid cable address created a socket")
       return Socket()
     }
-    do {
-      _ = try await cable.open(url: "not a url")
+    guard case let .failed(failure) = await cable.open(url: "http://[::1", connectMs: 10_000, events: RecordingEvents()) else {
       Issue.record("an invalid cable address opened a socket")
-    } catch let error as DbError {
-      guard case .Invalid = error else {
-        Issue.record("expected Invalid for the cable address, got \(error)")
-        return
-      }
+      return
     }
+    #expect(failure.kind == .io)
   }
 
   @Test(.timeLimit(.minutes(1)))
@@ -28,24 +24,18 @@ struct UrlSessionCableTests {
     let session = URLSession(configuration: .ephemeral)
     defer { session.invalidateAndCancel() }
     let transport = UrlSessionTransport(endpoint: origin, session: session)
-    let lease = RecordingLease(noHandle: .init())
-    let outcome = AsyncStream<String>.makeStream()
+    let outcome = AsyncStream<RawFailureKind?>.makeStream()
     let task = Task {
-      do {
-        try await transport.openCable(lease: lease, url: cableURL(origin))
-        outcome.continuation.yield("opened")
-      } catch let error as DbError {
-        outcome.continuation.yield(TransportFailureTests.shape(error))
-      } catch {
-        outcome.continuation.yield("untyped")
+      switch await transport.openCable(url: cableURL(origin), connectMs: 10_000, events: RecordingEvents()) {
+      case .open: outcome.continuation.yield(nil)
+      case let .failed(failure): outcome.continuation.yield(failure.kind)
       }
     }
     await eventually("cable handshake request", timeout: .seconds(2)) { server.requests.count == 1 }
     task.cancel()
-    let finished = Cursor(outcome.stream)
-    #expect(await finished.next("cancelled handshake outcome", timeout: .seconds(2)) == "Interrupted")
+    var finished = outcome.stream.makeAsyncIterator()
+    #expect(await finished.next() == .some(.cancelled))
     await eventually("cancelled handshake disconnected", timeout: .seconds(2)) { server.disconnected }
-    #expect(lease.token == nil)
     session.invalidateAndCancel()
     await task.value
   }
@@ -54,122 +44,95 @@ struct UrlSessionCableTests {
     private let lock = NSLock()
     var closeCode: URLSessionWebSocketTask.CloseCode = .invalid
     var closeReason: Data?
-    var incoming: Result<URLSessionWebSocketTask.Message, Error> = .success(.string("server frame"))
-    var sendError: Error?
+    var handshakeStatus: Int?
+    var incoming: [Result<URLSessionWebSocketTask.Message, Error>] = [.success(.string("server frame"))]
     var openError: Error?
     private(set) var sent: [String] = []
     private(set) var resumed = false
     private(set) var cancelled: URLSessionWebSocketTask.CloseCode?
 
-    func resume() { lock.withLock { resumed = true } }
     func open() async throws {
-      resume()
+      lock.withLock { resumed = true }
       if let openError { throw openError }
     }
-    func send(_ message: URLSessionWebSocketTask.Message) async throws {
-      try lock.withLock {
-        if let sendError { throw sendError }
-        if case let .string(text) = message { sent.append(text) }
-      }
+    func send(_ message: URLSessionWebSocketTask.Message, completion: @escaping @Sendable (Error?) -> Void) {
+      lock.withLock { if case let .string(text) = message { sent.append(text) } }
+      completion(nil)
     }
-    func receive() async throws -> URLSessionWebSocketTask.Message { try lock.withLock { try incoming.get() } }
+    func receive() async throws -> URLSessionWebSocketTask.Message {
+      let next = lock.withLock { incoming.isEmpty ? nil : incoming.removeFirst() }
+      guard let next else {
+        try await Task.sleep(for: .seconds(60))
+        throw CancellationError()
+      }
+      return try next.get()
+    }
     func cancel(with closeCode: URLSessionWebSocketTask.CloseCode, reason: Data?) {
       lock.withLock { cancelled = closeCode }
     }
   }
 
-  @Test func textUsesTheGivenURLAndSeparateTokens() async throws {
+  @Test func frameGoesToTheCoreAndTextToTheSocket() async throws {
     let socket = Socket()
     let cable = UrlSessionCable { request in
       #expect(request.url?.absoluteString == "wss://example.com:8443/api/cable")
+      #expect(request.timeoutInterval == 10)
       #expect(request.value(forHTTPHeaderField: "Sec-WebSocket-Protocol") == nil)
       return socket
     }
-    let first = try await cable.open(url: "wss://example.com:8443/api/cable")
-    let second = try await cable.open(url: "wss://example.com:8443/api/cable")
-    #expect(first != second)
+    let events = RecordingEvents()
+    guard case let .open(connection) = await cable.open(url: "wss://example.com:8443/api/cable", connectMs: 10_000, events: events) else {
+      Issue.record("the cable did not open")
+      return
+    }
     #expect(socket.resumed)
-    try await cable.send(token: first, text: "client frame")
+    #expect(connection.send(text: "client frame"))
     #expect(socket.sent == ["client frame"])
-    #expect(await cable.next(token: first) == .text(text: "server frame"))
-    await cable.close(token: first)
-    await cable.close(token: second)
+    #expect(await events.next() == .frame("server frame"))
+    connection.close(code: 1000, reason: "done")
+    #expect(socket.cancelled == .normalClosure)
   }
 
   @Test(arguments: [4401, 1006, 1003])
-  func closesPreservePeerCodeAndRejectBinary(code: Int) async throws {
+  func theEndOfTheSocketIsReportedAsTheSocketShowsIt(code: Int) async throws {
     let socket = Socket()
     if code == 4401 {
       socket.closeCode = URLSessionWebSocketTask.CloseCode(rawValue: code)!
       socket.closeReason = Data("UNAUTHENTICATED".utf8)
     }
-    socket.incoming = code == 1003 ? .success(.data(Data([1]))) : .failure(URLError(.networkConnectionLost))
+    socket.incoming = [code == 1003 ? .success(.data(Data([1]))) : .failure(URLError(.networkConnectionLost))]
+    let events = RecordingEvents()
     let cable = UrlSessionCable { _ in socket }
-    let token = try await cable.open(url: "wss://example.com:8443/api/cable")
-    guard case let .closed(actual, reason) = await cable.next(token: token) else {
-      Issue.record("expected a close event")
+    guard case let .open(connection) = await cable.open(url: "wss://example.com:8443/api/cable", connectMs: 10_000, events: events) else {
+      Issue.record("the cable did not open")
       return
     }
-    #expect(actual == UInt16(code))
-    #expect(!reason.isEmpty)
-    if code == 4401 { #expect(reason == "UNAUTHENTICATED") }
-    if code == 1003 { #expect(socket.cancelled == .unsupportedData) }
-    #expect(await cable.next(token: token) == nil)
-  }
-
-  @Test func cancelClosesAndRemovesOnlyItsSocket() async throws {
-    let socket = Socket()
-    let cable = UrlSessionCable { _ in socket }
-    let token = try await cable.open(url: "wss://example.com:8443/api/cable")
-    await cable.close(token: token)
-    #expect(socket.cancelled == .normalClosure)
-    #expect(await cable.next(token: token) == nil)
-    await #expect(throws: DbError.self) { try await cable.send(token: token, text: "late") }
-  }
-
-  @Test(arguments: [URLError.Code.cancelled, .cannotConnectToHost])
-  func sendFailureIsTyped(code: URLError.Code) async throws {
-    let socket = Socket()
-    socket.sendError = URLError(code)
-    let cable = UrlSessionCable { _ in socket }
-    let token = try await cable.open(url: "wss://example.com:8443/api/cable")
-    do {
-      try await cable.send(token: token, text: "frame")
-      Issue.record("send must fail")
-    } catch let error as DbError {
-      #expect(TransportFailureTests.shape(error) == (code == .cancelled ? "Interrupted" : "Network"))
+    switch code {
+    case 4401: #expect(await events.next() == .closed(4401, "UNAUTHENTICATED"))
+    case 1003: #expect(await events.next() == .binary(Data([1])))
+    default: #expect(await events.next() == .failed(.io))
     }
+    connection.close(code: 1000, reason: "")
   }
 
-  @Test func cancelledOpenFailsWithTypedErrorBeforeCreatingSocket() async throws {
-    let cable = UrlSessionCable { _ in
-      Issue.record("cancelled open created a socket")
-      return Socket()
+  @Test func theHandshakeStatusAndTheNativeFailureReachTheCore() async throws {
+    let refused = Socket()
+    refused.openError = URLError(.badServerResponse)
+    refused.handshakeStatus = 403
+    let refusing = UrlSessionCable { _ in refused }
+    guard case let .failed(status) = await refusing.open(url: "wss://example.com/api/cable", connectMs: 10_000, events: RecordingEvents()) else {
+      Issue.record("a refused handshake opened")
+      return
     }
-    let task = Task {
-      withUnsafeCurrentTask { $0?.cancel() }
-      do {
-        _ = try await cable.open(url: "wss://example.com:8443/api/cable")
-        Issue.record("cancelled open succeeded")
-      } catch let error as DbError {
-        #expect(TransportFailureTests.shape(error) == "Interrupted")
-      } catch {
-        Issue.record("untyped open error: \(error)")
-      }
-    }
-    await task.value
-  }
-
-  @Test func connectionFailureRejectsOpenAndClosesSocket() async throws {
-    let socket = Socket()
-    socket.openError = URLError(.cannotConnectToHost)
-    let cable = UrlSessionCable { _ in socket }
-    do {
-      _ = try await cable.open(url: "wss://example.com:8443/api/cable")
+    #expect((status.kind, status.code) == (.protocol, 403))
+    let unreachable = Socket()
+    unreachable.openError = URLError(.cannotConnectToHost)
+    let unreachableCable = UrlSessionCable { _ in unreachable }
+    guard case let .failed(failure) = await unreachableCable.open(url: "wss://example.com/api/cable", connectMs: 10_000, events: RecordingEvents()) else {
       Issue.record("open returned before the WebSocket connected")
-    } catch let error as DbError {
-      #expect(TransportFailureTests.shape(error) == "Network")
+      return
     }
-    #expect(socket.cancelled != nil)
+    #expect(failure.kind == .unreachable)
+    #expect(unreachable.cancelled == .goingAway)
   }
 }

@@ -12,7 +12,10 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
-private class HeldProfileTransport(override val base: MockTransport = MockTransport()) : Transport by base, WrapsMock {
+private class HeldProfileTransport(override val base: MockTransport = MockTransport()) : ScriptedTransport, WrapsMock {
+    override suspend fun mutate(request: TransportRequest): String = base.mutate(request)
+    override suspend fun scriptedPut(url: String, headers: Map<String, String>, file: PutFile, identity: TransferIdentity, progress: ByteProgress): PutReply = base.scriptedPut(url, headers, file, identity, progress)
+    override suspend fun scriptedCable(url: String, events: CableEvents): CableOutcome = base.scriptedCable(url, events)
     val arrived = CompletableDeferred<Unit>()
     val released = CompletableDeferred<Unit>()
     val ended = CompletableDeferred<Unit>()

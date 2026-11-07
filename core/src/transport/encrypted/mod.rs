@@ -18,6 +18,7 @@ mod origin;
 pub(crate) mod vectors_tests;
 
 pub(crate) use exchange::SendOnce;
+pub(crate) use exchange::checked_path;
 pub use exchange::{Answer, EncryptedConfig, EncryptedEndpoints, EncryptedOperationClass, EncryptedSessionOperation, Exchange};
 pub use config::{AppPlatform, ConfigCode, Country, SecurityCode, ServerConfig};
 pub use graphql::{graphql_body, missing_from_registry, repeats, response_of, EncryptedTransport};

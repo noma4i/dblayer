@@ -4,7 +4,7 @@ use std::time::Duration;
 
 use super::load_tests::relation;
 use super::tape::{Seen, Tape};
-use super::{Config, Database, DbError, ReadPhase, ReadRequest, ReadState, ReadStream, ReadValue, TestClock, Transport};
+use super::{Config, Database, DbError, ReadPhase, ReadRequest, ReadState, ReadStream, ReadValue, TestClock, FakeTransport};
 use crate::schema::{FieldSpec, ModelSpec};
 use crate::value::ScalarKind;
 
@@ -16,11 +16,7 @@ const FEED: &str = r#"{"model":"Moment","relation":"feed","params":{}}"#;
 struct Replying(Mutex<VecDeque<String>>);
 
 #[async_trait::async_trait]
-impl Transport for Replying {
-    async fn open_cable(&self, _: Arc<super::CableLease>, _url: String) -> Result<(), DbError> { Err(DbError::Network { detail: "fake socket unavailable".into() }) }
-    async fn cable_send(&self, _: String, _: String) -> Result<(), DbError> { unreachable!() }
-    async fn cable_next(&self, _: String) -> Option<crate::ffi::EncryptedSocketEvent> { unreachable!() }
-    async fn cable_close(&self, _: String) {}
+impl FakeTransport for Replying {
     async fn query(&self, _: super::TransportRequest) -> Result<String, DbError> { Ok(self.0.lock().unwrap().pop_front().expect("a queued reply")) }
     async fn mutate(&self, _: super::TransportRequest) -> Result<String, DbError> { unreachable!() }
     async fn put(&self, _: String, _: std::collections::HashMap<String, String>, _: crate::transport::PutFile, _: crate::transport::TransferIdentity, _: Arc<super::ByteProgress>) -> Result<super::PutReply, DbError> { unreachable!() }

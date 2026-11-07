@@ -15,7 +15,7 @@ use crate::ffi::session_guards_tests::{Rig as SessionRig, SOCIAL_BODY};
 use crate::ffi::tape::Rows;
 use crate::ffi::upload_wire::WireUploadRequest;
 use crate::ffi::wire::WireSyncState;
-use crate::ffi::{ByteProgress, CableLease, Config, Database, DbError, EncryptedConfig, EncryptedHttp, EncryptedReply, EncryptedSocketEvent, OpenPorts, PutReply, ReadFetch, ReadRequest, TestClock, Transport, TransportRequest};
+use crate::ffi::{ByteProgress, Config, Database, DbError, EncryptedConfig, FakeHttp, EncryptedReply, OpenPorts, PutReply, ReadFetch, ReadRequest, TestClock, FakeTransport, TransportRequest};
 use crate::owners::write::upload::UploadFile;
 use crate::test_wait::yield_until;
 use crate::transport::encrypted::fake_server_tests::{decrypt_request, seal_response};
@@ -111,7 +111,7 @@ struct ScriptedHttp {
 }
 
 #[async_trait]
-impl EncryptedHttp for ScriptedHttp {
+impl FakeHttp for ScriptedHttp {
     async fn post(&self, path: String, body: String, purpose: NetworkPurpose) -> Result<EncryptedReply, DbError> {
         let request = decrypt_request(&body).unwrap();
         let Some(operation) = request["body"]["operationName"].as_str().map(str::to_string) else { return self.session.post(path, body, purpose).await };
@@ -158,11 +158,7 @@ impl Puts {
 }
 
 #[async_trait]
-impl Transport for Puts {
-    async fn open_cable(&self, _: Arc<CableLease>, _url: String) -> Result<(), DbError> { Err(DbError::Network { detail: "fake socket unavailable".into() }) }
-    async fn cable_send(&self, _: String, _: String) -> Result<(), DbError> { unreachable!() }
-    async fn cable_next(&self, _: String) -> Option<EncryptedSocketEvent> { unreachable!() }
-    async fn cable_close(&self, _: String) {}
+impl FakeTransport for Puts {
     async fn query(&self, _: TransportRequest) -> Result<String, DbError> { unreachable!() }
     async fn mutate(&self, _: TransportRequest) -> Result<String, DbError> { unreachable!() }
     async fn put(&self, url: String, _: HashMap<String, String>, file: PutFile, identity: TransferIdentity, _: Arc<ByteProgress>) -> Result<PutReply, DbError> {

@@ -4,7 +4,7 @@ use serde_json::json;
 use super::rig_tests::{bound, Fault, Rig, World};
 use crate::ffi::lifecycle_tests::named;
 use crate::ffi::{Database, DbError, ReadEnd, ReadRequest, ReadValue, WireOperationOutcome, WireSyncState};
-use crate::test_wait::{within, yield_until};
+use crate::test_wait::yield_until;
 use super::bridge_support_tests::*;
 
 fn chat_entry(index: usize) -> serde_json::Value {
@@ -14,12 +14,22 @@ fn chat_entry(index: usize) -> serde_json::Value {
 /// The transport of a database with a session: the cable of the server is a peer that seals the frames.
 struct CableTransport {
     cable: crate::transport::encrypted::cable::peer_tests::CablePeer,
-    token: Mutex<Option<String>>,
-    subscribed: tokio::sync::Notify,
+    token: Arc<Mutex<Option<String>>>,
+    subscribed: Arc<tokio::sync::Notify>,
 }
 
 impl CableTransport {
-    fn new(config: crate::transport::EncryptedConfig) -> Self { Self { cable: crate::transport::encrypted::cable::peer_tests::CablePeer::new(config), token: Mutex::new(None), subscribed: tokio::sync::Notify::new() } }
+    fn new(config: crate::transport::EncryptedConfig) -> Self {
+        let (token, subscribed) = (Arc::new(Mutex::new(None)), Arc::new(tokio::sync::Notify::new()));
+        let observed = (token.clone(), subscribed.clone());
+        let cable = crate::transport::encrypted::cable::peer_tests::CablePeer::observed(config, move |event| {
+            if let crate::transport::encrypted::cable::peer_tests::PeerEvent::Subscribed(opened) = event {
+                *observed.0.lock().unwrap() = Some(opened);
+                observed.1.notify_one();
+            }
+        });
+        Self { cable, token, subscribed }
+    }
 
     /// A data event of the open subscription, once the client subscribed.
     fn emit(&self, result: serde_json::Value) {
@@ -37,17 +47,8 @@ impl CableTransport {
 }
 
 #[async_trait::async_trait]
-impl crate::ffi::Transport for CableTransport {
-    async fn open_cable(&self, lease: Arc<crate::ffi::CableLease>, _url: String) -> Result<(), DbError> { self.cable.open(&lease).map(drop) }
-    async fn cable_send(&self, token: String, text: String) -> Result<(), DbError> {
-        if self.cable.receive(&token, &text)?.is_some() {
-            *self.token.lock().unwrap() = Some(token);
-            self.subscribed.notify_one();
-        }
-        Ok(())
-    }
-    async fn cable_next(&self, token: String) -> Option<crate::ffi::EncryptedSocketEvent> { within(self.cable.next(&token)).await }
-    async fn cable_close(&self, _: String) {}
+impl crate::ffi::FakeTransport for CableTransport {
+    fn cable(&self) -> Option<&crate::transport::encrypted::cable::peer_tests::CablePeer> { Some(&self.cable) }
     async fn query(&self, _: crate::ffi::TransportRequest) -> Result<String, DbError> { unreachable!() }
     async fn mutate(&self, _: crate::ffi::TransportRequest) -> Result<String, DbError> { unreachable!() }
     async fn put(&self, _: String, _: HashMap<String, String>, _: crate::transport::PutFile, _: crate::transport::TransferIdentity, _: Arc<crate::ffi::ByteProgress>) -> Result<crate::ffi::PutReply, DbError> { unreachable!() }

@@ -6,7 +6,7 @@ use serde_json::json;
 use tokio::sync::oneshot;
 
 use super::value::Observation;
-use crate::ffi::{ByteProgress, CableLease, CredentialStore, DbError, EncryptedHttp, EncryptedReply, EncryptedSocketEvent, PutReply, Transport, TransportRequest};
+use crate::ffi::{ByteProgress, CredentialStore, DbError, EncryptedReply, FakeHttp, FakeTransport, PutReply, TransportRequest};
 use crate::transport::encrypted::fake_server_tests::{decrypt_request, seal_response};
 use crate::transport::encrypted::cable::peer_tests::CablePeer;
 use crate::transport::{NetworkPurpose, PutFile, TransferIdentity};
@@ -112,6 +112,9 @@ impl Mock {
     /// Fails a waiting request or a subscription with `temporary`, `permanent` or `auth`. False for an unknown id or kind.
     pub fn fail(&self, id: &str, kind: &str) -> bool {
         let Some(error) = error_of(kind) else { return false };
+        if kind == "permanent" && locked(self).waiting_http.contains_key(id) {
+            return self.answer(id, r#"{"errors":[{"message":"permanent","extensions":{"code":"permanent"}}]}"#);
+        }
         if kind == "auth" {
             if let Some((_, sender)) = locked(self).waiting_http.remove(id) {
                 return deliver(sender, Ok(EncryptedReply { status: 401, body: String::new() }));
@@ -172,16 +175,12 @@ impl Mock {
 }
 
 #[async_trait]
-impl Transport for Mock {
-    async fn open_cable(&self, lease: Arc<CableLease>, _url: String) -> Result<(), DbError> {
+impl FakeTransport for Mock {
+    fn cable(&self) -> Option<&CablePeer> { Some(&self.peer) }
+    fn cable_opened(&self, token: &str) {
         let id = self.record("subscription", purpose_name(NetworkPurpose::Standard));
-        let token = self.peer.open(&lease)?;
-        locked(self).cables.insert(id, token);
-        Ok(())
+        locked(self).cables.insert(id, token.to_string());
     }
-    async fn cable_send(&self, token: String, text: String) -> Result<(), DbError> { self.peer.receive(&token, &text).map(drop) }
-    async fn cable_next(&self, token: String) -> Option<EncryptedSocketEvent> { self.peer.next(&token).await }
-    async fn cable_close(&self, _: String) {}
     async fn query(&self, request: TransportRequest) -> Result<String, DbError> { self.wait("query", &request).await }
     async fn mutate(&self, request: TransportRequest) -> Result<String, DbError> { self.wait("mutation", &request).await }
     async fn put(&self, _: String, _: HashMap<String, String>, _: PutFile, _: TransferIdentity, _: Arc<ByteProgress>) -> Result<PutReply, DbError> {
@@ -194,7 +193,7 @@ impl Transport for Mock {
 
 /// The encrypted HTTP exchange of the shared vocabulary: the request waits for an input of the trace, the answer body is sealed with the fixture server key.
 #[async_trait]
-impl EncryptedHttp for Mock {
+impl FakeHttp for Mock {
     async fn post(&self, _path: String, body: String, purpose: NetworkPurpose) -> Result<EncryptedReply, DbError> {
         let request = decrypt_request(&body).map_err(|detail| DbError::Invalid { detail })?;
         let id = self.record("http", purpose_name(purpose));

@@ -136,7 +136,7 @@ impl Database {
             #[cfg(test)]
             if transport.is_some() { super::signed_session_tests::signed_session(db); }
             let _ = db;
-            Ok(Wiring { transport: transport.map(|transport| Arc::new(ForeignTransport(transport)) as Arc<dyn core::Upstream>), encrypted: None, cable: None, seal: None })
+            Ok(Wiring { transport: transport.map(|transport| ForeignTransport::plain(transport).map(|plain| Arc::new(plain) as Arc<dyn core::Upstream>)).transpose()?, encrypted: None, cable: None, seal: None })
         })
     }
 

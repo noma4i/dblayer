@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
-use super::{Config, Database, DbError, TestClock, Transport};
+use super::{Config, Database, DbError, TestClock, FakeTransport};
 use crate::schema::{FieldSpec, ModelSpec};
 use crate::test_wait::within;
 use crate::value::ScalarKind;
@@ -30,11 +30,7 @@ impl Accounts {
 }
 
 #[async_trait::async_trait]
-impl Transport for Accounts {
-    async fn open_cable(&self, _: Arc<super::CableLease>, _url: String) -> Result<(), DbError> { Err(DbError::Network { detail: "fake socket unavailable".into() }) }
-    async fn cable_send(&self, _: String, _: String) -> Result<(), DbError> { unreachable!() }
-    async fn cable_next(&self, _: String) -> Option<crate::ffi::EncryptedSocketEvent> { unreachable!() }
-    async fn cable_close(&self, _: String) {}
+impl FakeTransport for Accounts {
     async fn query(&self, request: super::TransportRequest) -> Result<String, DbError> {
         let nth = {
             let mut asked = self.asked.lock().unwrap();

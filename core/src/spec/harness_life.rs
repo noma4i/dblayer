@@ -5,7 +5,7 @@ use std::time::Duration;
 use async_trait::async_trait;
 use serde_json::json;
 
-use crate::ffi::{ByteProgress, CableLease, CommandRequest, Config, CredentialStore, Database, DbError, EncryptedConfig, EncryptedHttp, EncryptedReply, EncryptedSocketEvent, PutReply, Transport, TransportRequest};
+use crate::ffi::{ByteProgress, CommandRequest, Config, CredentialStore, Database, DbError, EncryptedConfig, FakeHttp, EncryptedReply, PutReply, FakeTransport, TransportRequest};
 use crate::runtime::SystemClock;
 use crate::schema::{ActionDeclaration, FieldSpec, ModelSpec, OnFailure, RootShape};
 use crate::transport::encrypted::fake_server_tests::{FakeServer, MemoryCredentials};
@@ -26,7 +26,7 @@ fn failure(error: TransportError) -> DbError {
 }
 
 #[async_trait]
-impl EncryptedHttp for ThroughServer {
+impl FakeHttp for ThroughServer {
     async fn post(&self, path: String, body: String, purpose: crate::transport::NetworkPurpose) -> Result<EncryptedReply, DbError> {
         let reply = self.0.post(&path, body, purpose).await.map_err(failure)?;
         Ok(EncryptedReply { status: reply.status, body: reply.body })
@@ -45,11 +45,7 @@ impl CredentialStore for Held {
 struct NoCable;
 
 #[async_trait]
-impl Transport for NoCable {
-    async fn open_cable(&self, _: Arc<CableLease>, _url: String) -> Result<(), DbError> { Err(DbError::Network { detail: "no cable".into() }) }
-    async fn cable_send(&self, _: String, _: String) -> Result<(), DbError> { Err(DbError::Network { detail: "no cable".into() }) }
-    async fn cable_next(&self, _: String) -> Option<EncryptedSocketEvent> { None }
-    async fn cable_close(&self, _: String) {}
+impl FakeTransport for NoCable {
     async fn query(&self, _: TransportRequest) -> Result<String, DbError> { Err(DbError::Network { detail: "no cable".into() }) }
     async fn mutate(&self, _: TransportRequest) -> Result<String, DbError> { Err(DbError::Network { detail: "no cable".into() }) }
     async fn put(&self, _: String, _: std::collections::HashMap<String, String>, _: PutFile, _: TransferIdentity, _: Arc<ByteProgress>) -> Result<PutReply, DbError> { Err(DbError::Network { detail: "no cable".into() }) }

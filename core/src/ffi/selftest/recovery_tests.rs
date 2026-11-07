@@ -10,7 +10,7 @@ use crate::ffi::encrypted_tests::ThroughServer;
 use crate::ffi::sealed_errors_tests::moment_spec;
 use crate::ffi::session_guards_tests::{Rig as SessionRig, SOCIAL_BODY};
 use crate::ffi::upload_wire::WireUploadRequest;
-use crate::ffi::{ByteProgress, CableLease, Config, Database, DbError, EncryptedConfig, EncryptedSocketEvent, PutReply, Transport, TransportRequest};
+use crate::ffi::{ByteProgress, Config, Database, DbError, EncryptedConfig, PutReply, FakeTransport, TransportRequest};
 use crate::transport::encrypted::vectors_tests::{origin, pin, public_key_der_b64};
 use crate::owners::write::upload::UploadFile;
 
@@ -27,11 +27,7 @@ impl Drop for PutEnd {
 }
 
 #[async_trait]
-impl Transport for HeldPut {
-    async fn open_cable(&self, _: Arc<CableLease>, _url: String) -> Result<(), DbError> { Err(DbError::Network { detail: "fake socket unavailable".into() }) }
-    async fn cable_send(&self, _: String, _: String) -> Result<(), DbError> { unreachable!() }
-    async fn cable_next(&self, _: String) -> Option<EncryptedSocketEvent> { unreachable!() }
-    async fn cable_close(&self, _: String) {}
+impl FakeTransport for HeldPut {
     async fn query(&self, _: TransportRequest) -> Result<String, DbError> { unreachable!() }
     async fn mutate(&self, _: TransportRequest) -> Result<String, DbError> { unreachable!() }
     async fn put(&self, _: String, _: HashMap<String, String>, _: crate::transport::PutFile, _: crate::transport::TransferIdentity, _: Arc<ByteProgress>) -> Result<PutReply, DbError> {

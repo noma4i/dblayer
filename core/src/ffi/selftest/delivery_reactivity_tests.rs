@@ -11,19 +11,13 @@ use crate::ffi::wire::Cell;
 
 pub(super) struct FeedTransport {
     cable: crate::transport::encrypted::cable::peer_tests::CablePeer,
-    pub(super) token: Mutex<Option<String>>,
-    opened: tokio::sync::Notify,
+    pub(super) token: Arc<Mutex<Option<String>>>,
+    opened: Arc<tokio::sync::Notify>,
 }
 
 #[async_trait::async_trait]
-impl crate::ffi::Transport for FeedTransport {
-    async fn open_cable(&self, lease: Arc<crate::ffi::CableLease>, _: String) -> Result<(), DbError> { self.cable.open(&lease).map(drop) }
-    async fn cable_send(&self, token: String, text: String) -> Result<(), DbError> {
-        if self.cable.receive(&token, &text)?.is_some() { *self.token.lock().unwrap() = Some(token); self.opened.notify_one(); }
-        Ok(())
-    }
-    async fn cable_next(&self, token: String) -> Option<crate::ffi::EncryptedSocketEvent> { crate::test_wait::within(self.cable.next(&token)).await }
-    async fn cable_close(&self, _: String) {}
+impl crate::ffi::FakeTransport for FeedTransport {
+    fn cable(&self) -> Option<&crate::transport::encrypted::cable::peer_tests::CablePeer> { Some(&self.cable) }
     async fn query(&self, _: crate::ffi::TransportRequest) -> Result<String, DbError> { unreachable!() }
     async fn mutate(&self, _: crate::ffi::TransportRequest) -> Result<String, DbError> { unreachable!() }
     async fn put(&self, _: String, _: HashMap<String, String>, _: crate::transport::PutFile, _: crate::transport::TransferIdentity, _: Arc<crate::ffi::ByteProgress>) -> Result<crate::ffi::PutReply, DbError> { unreachable!() }
@@ -75,7 +69,12 @@ pub(super) async fn feed_database_in(world: Arc<World>, listen: Option<serde_jso
     } else { vec![chat] };
     let mut encrypted = crate::transport::encrypted::protocol_tests::config();
     encrypted.endpoints.session_operations.insert("login_link".into(), crate::ffi::EncryptedSessionOperation { path: "/api/auth/login_link".into(), class: crate::ffi::EncryptedOperationClass::Authenticated });
-    let transport = Arc::new(FeedTransport { cable: crate::transport::encrypted::cable::peer_tests::CablePeer::new(encrypted.clone()), token: Mutex::new(None), opened: tokio::sync::Notify::new() });
+    let (token, opened) = (Arc::new(Mutex::new(None)), Arc::new(tokio::sync::Notify::new()));
+    let observed = (token.clone(), opened.clone());
+    let cable = crate::transport::encrypted::cable::peer_tests::CablePeer::observed(encrypted.clone(), move |event| {
+        if let crate::transport::encrypted::cable::peer_tests::PeerEvent::Subscribed(subscribed) = event { *observed.0.lock().unwrap() = Some(subscribed); observed.1.notify_one(); }
+    });
+    let transport = Arc::new(FeedTransport { cable, token, opened });
     let database = bound(Database::open_with_clock(crate::ffi::Config { path: None, data_version: None }, serde_json::to_string(&models).unwrap(), crate::ffi::OpenPorts { transport: Some(transport.clone()), encrypted: Some(encrypted), credentials: Some(Arc::new(crate::ffi::session_guards_tests::WatchedHeld::default())), http: Some(world) }, crate::ffi::TestClock::new(1_000_000))).await.unwrap();
     database.register_operations(json!([
         {"name":"ChatList","document":"query ChatList($list: String) { chats(list: $list) { id title revision lists } }"},

@@ -56,13 +56,13 @@ impl EncryptedConfig {
     pub fn cable_url(&self) -> Result<String, TransportError> {
         let origin = self.origin.trim_end_matches('/');
         let rest = if let Some(rest) = origin.strip_prefix("https://") { format!("wss://{rest}") } else if let Some(rest) = origin.strip_prefix("http://") { format!("ws://{rest}") } else { return Err(TransportError::Decode("cable requires an HTTP origin".into())) };
-        check_path(&self.endpoints.cable)?;
+        checked_path(&self.endpoints.cable)?;
         Ok(format!("{rest}{}", self.endpoints.cable))
     }
 
     pub fn validate(&self) -> Result<(), TransportError> {
         for path in [&self.endpoints.graphql, &self.endpoints.cable, &self.endpoints.logout, &self.endpoints.bootstrap].into_iter().chain(self.endpoints.session_operations.values().map(|operation| &operation.path)) {
-            check_path(path)?;
+            checked_path(path)?;
         }
         if [&self.protocol_label, &self.cable_purpose, &self.cable_channel].into_iter().any(|value| value.trim().is_empty() || value.chars().any(char::is_control)) {
             return Err(TransportError::Decode("encrypted protocol labels must be nonempty and contain no control characters".into()));
@@ -94,7 +94,7 @@ pub(crate) fn digest_of(credential: &str) -> String {
     Sha256::digest(credential.as_bytes()).iter().map(|byte| format!("{byte:02x}")).collect()
 }
 
-fn check_path(path: &str) -> Result<(), TransportError> {
+pub(crate) fn checked_path(path: &str) -> Result<(), TransportError> {
     if !path.starts_with('/') || path.starts_with("//") || !path.is_ascii() || path.contains(['?', '#', '\\']) || path.bytes().any(|byte| byte <= 32 || byte == 127) {
         return Err(TransportError::Decode("encrypted endpoints require encoded absolute paths without query or fragment".into()));
     }
@@ -167,7 +167,7 @@ impl Exchange {
     /// One request of the executor of Session: seals `body` for `path` and posts it once. No retry and no state: the owner Session keeps both.
     pub(crate) async fn send_once(&self, request: SendOnce<'_>) -> Result<Answer, TransportError> {
         let SendOnce { credential, request_id, response_key, sequence, path, body, purpose } = request;
-        check_path(path)?;
+        checked_path(path)?;
         let session = credential.map(|credential| RequestSession { credential: credential.into(), sequence });
         let token = self.request_token(session, request_id, response_key, path, body)?;
         self.post(path, token, request_id, response_key, purpose).await

@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use super::encrypted_tests::{SubscriptionsOnly, ThroughServer};
 use super::session_guards_tests::{Rig, SOCIAL_BODY};
-use super::{Config, Database, DbError, EncryptedConfig, SessionCode, Transport};
+use super::{Config, Database, DbError, EncryptedConfig, SessionCode};
 use crate::schema::{ActionDeclaration, Coverage, FieldSpec, ModelSpec, RelationSpec, RemoteShape, RemoteSpec, RootShape};
 use crate::transport::encrypted::vectors_tests::{origin, pin, public_key_der_b64};
 use crate::value::ScalarKind;
@@ -108,35 +108,6 @@ async fn a_session_code_on_a_queued_mutation_reaches_settled_typed_and_keeps_the
             let case = format!("{wire} confirmed={confirmed}");
             assert_eq!((failure.session_code, failure.message), (Some(code), wire.to_string()), "{case}");
             assert_eq!((rig.credentials.inner.value(), rig.touched().1), (credential, 0), "{case}");
-        }
-    }
-}
-
-struct Refusing(SessionCode);
-
-#[async_trait::async_trait]
-impl Transport for Refusing {
-    async fn open_cable(&self, _: Arc<super::CableLease>, _url: String) -> Result<(), DbError> { Err(DbError::Network { detail: "fake socket unavailable".into() }) }
-    async fn cable_send(&self, _: String, _: String) -> Result<(), DbError> { unreachable!() }
-    async fn cable_next(&self, _: String) -> Option<crate::ffi::EncryptedSocketEvent> { unreachable!() }
-    async fn cable_close(&self, _: String) {}
-    async fn query(&self, _: super::TransportRequest) -> Result<String, DbError> { Err(DbError::Session { code: self.0, detail: "wire".into() }) }
-    async fn mutate(&self, _: super::TransportRequest) -> Result<String, DbError> { Err(DbError::Session { code: self.0, detail: "wire".into() }) }
-    async fn put(&self, _: String, _: std::collections::HashMap<String, String>, _: crate::transport::PutFile, _: crate::transport::TransferIdentity, _: Arc<super::ByteProgress>) -> Result<super::PutReply, DbError> { unreachable!() }
-}
-
-#[tokio::test(flavor = "multi_thread")]
-async fn a_session_error_thrown_by_a_platform_transport_keeps_its_code_through_load_and_run() {
-    for (_, code) in TABLE {
-        let database = Database::open(Config { path: None, data_version: None }, serde_json::to_string(&vec![moment_spec()]).unwrap(), crate::ffi::OpenPorts { transport: Some(Arc::new(Refusing(code))), ..Default::default() }).await.unwrap();
-        database.register_operations(OPERATIONS.into()).await.unwrap();
-        database.set_online(true).unwrap();
-
-        let load = database.load(database.session_epoch(), "Moment".into(), "feed".into(), "{}".into()).await.unwrap_err();
-        let run = database.run(database.session_epoch(), "MakeMoment".into(), "{}".into()).await.unwrap_err();
-
-        for error in [load, run] {
-            assert_eq!(session(error).0, code, "{code:?}");
         }
     }
 }

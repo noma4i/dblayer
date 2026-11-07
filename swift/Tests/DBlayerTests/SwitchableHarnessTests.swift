@@ -4,7 +4,7 @@ import Testing
 @testable import DBlayer
 
 /// The transport of the app harness: a target that the tests set and unset. An unset target throws the error the app harness throws.
-final class SwitchableTransport: Transport, WrapsMock, @unchecked Sendable {
+final class SwitchableTransport: ScriptedTransport, WrapsMock, @unchecked Sendable {
   private let lock = NSLock()
   private var current: MockTransport?
   private let unset: DbError
@@ -29,14 +29,14 @@ final class SwitchableTransport: Transport, WrapsMock, @unchecked Sendable {
     return target
   }
 
-  func openCable(lease: CableLease, url: String) async throws { try await resolve().openCable(lease: lease, url: url) }
-  func cableSend(token: String, text: String) async throws { try await resolve().cableSend(token: token, text: text) }
-  func cableNext(token: String) async -> EncryptedSocketEvent? { await target?.cableNext(token: token) }
-  func cableClose(token: String) async { await target?.cableClose(token: token) }
+  func scriptedCable(url: String, events: CableEvents) async -> CableOutcome {
+    guard let target = try? resolve() else { return .failed(failure: RawFailure(kind: .cancelled, code: nil, message: "\(unset)")) }
+    return await target.scriptedCable(url: url, events: events)
+  }
   func query(request: TransportRequest) async throws -> String { try await resolve().query(request: request) }
   func mutate(request: TransportRequest) async throws -> String { try await resolve().mutate(request: request) }
-  func put(url: String, headers: [String: String], file: PutFile, identity: TransferIdentity, progress: ByteProgress) async throws -> PutReply {
-    try await resolve().put(url: url, headers: headers, file: file, identity: identity, progress: progress)
+  func scriptedPut(url: String, headers: [String: String], file: PutFile, identity: TransferIdentity, progress: ByteProgress) async throws -> PutReply {
+    try await resolve().scriptedPut(url: url, headers: headers, file: file, identity: identity, progress: progress)
   }
 }
 
