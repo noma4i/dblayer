@@ -487,7 +487,7 @@ class TransferTest {
             db.setOnline(false)
             awaitWithin("the held step was dropped offline") { held.dropped() }
             row.discard("upload_clip")
-            eventually("the copy is gone") { copyCount() == 0 }
+            assertEquals(0, copyCount())
             assertTrue(source.exists())
             held.release()
             closeForCleanup()

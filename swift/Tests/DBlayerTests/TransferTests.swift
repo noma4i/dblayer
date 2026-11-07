@@ -464,7 +464,7 @@ extension BridgeProbeTests {
     try db.setOnline(online: false)
     await held.dropped()
     try await row.discard(action: "upload_clip")
-    await eventually("the copy is gone") { (try? copyCount()) == 0 }
+    #expect(try copyCount() == 0, "the copy is gone after the discard returned")
     #expect(FileManager.default.fileExists(atPath: source.path))
     held.release()
     await DB.closeForCleanup()
