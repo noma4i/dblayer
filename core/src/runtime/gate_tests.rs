@@ -141,7 +141,7 @@ async fn rt_prop_close_against_query_no_old_transport() {
         let transport = Arc::new(Parking::default());
         let _ = transport.gate.set(Arc::downgrade(&gate));
         gate.attach(transport.clone());
-        let flight = |gate: Arc<EpochGate>, verb: &'static str| crate::task::spawn_on(crate::task::Carry::Detached, &tokio::runtime::Handle::current(), async move {
+        let flight = |gate: Arc<EpochGate>, verb: &'static str| crate::task::spawn_on(&tokio::runtime::Handle::current(), async move {
             match verb {
                 "query" => gate.query(Some(1), graphql()).await.map(drop),
                 "mutate" => gate.mutate(Some(1), graphql()).await.map(drop),

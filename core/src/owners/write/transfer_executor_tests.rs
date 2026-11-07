@@ -340,7 +340,7 @@ async fn rt_prop_close_against_query_no_old_transport_transfer() {
     let gate = open_gate(EPOCH, Arc::new(stub.clone()));
     let link = Arc::new(Link::over(gate.clone(), EPOCH, super::wire::StepIds::held()));
     let put = || PutRequest { url: "https://storage/part".into(), headers: Vec::new(), file: PutFile { path: "unused".into(), offset: 0, length: 1 }, identity: TransferIdentity { operation_id: 0, item_id: "k".into(), step: TransferStep::Put }, cancel: CancelToken::new(), sent: Arc::new(|_| {}) };
-    let inside = crate::task::spawn_on(crate::task::Carry::Detached, &tokio::runtime::Handle::current(), { let (link, request) = (link.clone(), put()); async move { link.put(request).await } });
+    let inside = crate::task::spawn_on(&tokio::runtime::Handle::current(), { let (link, request) = (link.clone(), put()); async move { link.put(request).await } });
     crate::test_wait::yield_until("the PUT is inside the transport", || stub.put_tokens().len() == 1).await;
     gate.close(EPOCH);
     let late_mutation = link.mutate(GraphQLRequest::new("mutation Late", "Late", json!({})), &step_key()).await;
