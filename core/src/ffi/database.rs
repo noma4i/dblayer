@@ -342,13 +342,7 @@ impl Database {
     pub async fn close_database(&self) -> Result<(), DbError> {
         let waiter = self.life.close();
         let _closing = crate::runtime::hold_until_woken(self.life.launch());
-        let clock = self.db.lock().clock.clone();
-        let answered = on_executor(crate::runtime::counted(Some(self.life.launch()), async move {
-            tokio::select! {
-                outcome = waiter.wait() => Ok(outcome),
-                () = clock.sleep(Duration::from_secs(10)) => Err(DbError::Invalid { detail: "close timed out while the owners were closing".into() }),
-            }
-        })).await;
+        let answered = on_executor(crate::runtime::counted(Some(self.life.launch()), async move { Ok::<_, DbError>(waiter.wait().await) })).await;
         crate::runtime::release_holds();
         let answered = answered.map(|_| ());
         let (life, _closing) = (self.life.clone(), crate::runtime::hold_until_woken(self.life.launch()));
