@@ -36,7 +36,7 @@ fn command(model: &str, values: serde_json::Value, epoch: u64, upload: Option<Co
 
 fn is_invalid(error: &DbError) -> bool { matches!(error, DbError::Invalid { .. }) }
 
-/// `(нет) x Submit` with a value that does not fit the nested type: `Err(Invalid{path})`, no optimistic row, no intent.
+/// `(none) x Submit` with a value that does not fit the nested type: `Err(Invalid{path})`, no optimistic row, no intent.
 #[tokio::test(flavor = "multi_thread")]
 async fn out_submit_invalid_value() {
     let rig = rig().await;
