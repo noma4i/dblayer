@@ -201,6 +201,8 @@ pub struct WindowsState {
     pub(super) generations: BTreeMap<String, u64>,
     pub(super) base_generation: u64,
     pub(super) preload: Vec<WindowKey>,
+    pub(super) operations_awaited: bool,
+    pub(super) identity: bool,
     pub(super) sources: BTreeSet<WindowKey>,
     pub(super) next_request: RequestId,
     pub(super) next_attempt: u32,
@@ -225,12 +227,18 @@ pub struct WindowsPeers {
 impl WindowsState {
     /// `online` is the value of the first addressed `Online`, `None` before it.
     pub fn new(epoch: Epoch, online: Option<bool>, peers: WindowsPeers) -> Self {
-        Self { epoch, online, online_seq: 0, saving: false, generations: BTreeMap::new(), base_generation: 0, preload: Vec::new(), sources: BTreeSet::new(), next_request: 1, next_attempt: 1, windows: BTreeMap::new(), max_pages: Arc::new(|_| u32::MAX), members_complete: Arc::new(|_| false), lifetimes: Arc::new(|_| (300_000, 300_000)), media: Arc::new(|_| false), next_read: 1, on_foreground: Arc::new(|_| false), foreground_seen: 0, peers }
+        Self { epoch, online, online_seq: 0, saving: false, generations: BTreeMap::new(), base_generation: 0, preload: Vec::new(), operations_awaited: false, identity: false, sources: BTreeSet::new(), next_request: 1, next_attempt: 1, windows: BTreeMap::new(), max_pages: Arc::new(|_| u32::MAX), members_complete: Arc::new(|_| false), lifetimes: Arc::new(|_| (300_000, 300_000)), media: Arc::new(|_| false), next_read: 1, on_foreground: Arc::new(|_| false), foreground_seen: 0, peers }
     }
 
     /// Keys that `EpochStarted` loads with `Interest+(PRELOAD)`.
     pub fn with_preload(mut self, keys: Vec<WindowKey>) -> Self {
         self.preload = keys;
+        self
+    }
+
+    /// The preload keys wait for `RegisterOperations`: a request built before its operation is declared fails.
+    pub fn with_operations_awaited(mut self) -> Self {
+        self.operations_awaited = true;
         self
     }
 
@@ -366,6 +374,14 @@ impl Windows {
         Self::on(state, &key, Ev::InterestPlus { id: PRELOAD, now }, out);
     }
 
+    /// The declared keys get their machines once a session is live and the operations are declared. A key that has a machine is left as it is.
+    pub(super) fn start_preload(state: &mut WindowsState, now: i64, out: &mut Effects<Self>) {
+        if !state.identity || state.operations_awaited { return; }
+        for key in state.preload.clone() {
+            Self::interest_preload(state, key, now, out);
+        }
+    }
+
     pub(super) fn interest_passive(state: &mut WindowsState, key: WindowKey, id: InterestId, out: &mut Effects<Self>) {
         state.ensure(&key, out);
         Self::on(state, &key, Ev::InterestPassive { id }, out);
@@ -431,6 +447,10 @@ impl StateOwner for Windows {
                     Self::interest_preload(state, key, now, &mut out);
                 }
             }
+            WindowsInput::RegisterOperations { now } => {
+                state.operations_awaited = false;
+                Self::start_preload(state, now, &mut out);
+            }
             WindowsInput::StoreCommitted { models, revision } => {
                 let keys: Vec<WindowKey> = state.windows.keys().cloned().collect();
                 for key in keys {
@@ -485,14 +505,14 @@ impl StateOwner for Windows {
                 state.online_seq = 0;
                 state.saving = false;
                 state.foreground_seen = 0;
-                if started.identity.is_some() {
+                state.identity = started.identity.is_some();
+                if state.identity {
                     out.push(Effect::Run(WindowsEffect::SnapshotRequest { epoch: started.epoch }));
-                    for key in state.preload.clone() {
-                        Self::interest_preload(state, key, 0, &mut out);
-                    }
+                    Self::start_preload(state, 0, &mut out);
                 }
             }
             WindowsInput::EpochEnded(ended) => {
+                if ended.epoch == state.epoch { state.identity = false; }
                 let keys: Vec<WindowKey> = state.windows.iter().filter(|(_, window)| window.machine.epoch == ended.epoch).map(|(key, _)| key.clone()).collect();
                 for key in keys {
                     Self::on(state, &key, Ev::EpochEnded, &mut out);

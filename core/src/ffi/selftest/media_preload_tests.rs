@@ -143,3 +143,20 @@ async fn preloads_and_three_media_loads_finish_on_empty_pages() {
     database.cancel_stream(stream);
     within_secs(20, database.close_database()).await.unwrap();
 }
+
+struct OnlineAtStart;
+
+impl crate::ffi::PlatformObserver for OnlineAtStart {
+    fn start(&self, sink: Arc<crate::ffi::OnlineSink>) { sink.set_online(true); }
+    fn stop(&self) {}
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_preload_asks_once_when_the_network_is_there_before_the_operations_are_declared() {
+    let transport = Arc::new(MediaTransport::default());
+    let operations = vec![crate::ffi::OperationDefinition { name: "PresenceOnline".into(), document: "query PresenceOnline { presenceOnline { id } }".into() }];
+    let database = within_secs(20, OpenDatabase::new().open(Config { path: None, data_version: None }, crate::ffi::specs(models()), OpenOptions { operations }, crate::ffi::OpenPorts { transport: Some(transport.clone()), endpoint: Some(crate::ffi::FAKE_ENDPOINT.into()), ..Default::default() }, Some(Arc::new(OnlineAtStart)))).await.unwrap();
+    within_secs(20, transport.preload.notified()).await;
+    within_secs(20, database.close_database()).await.unwrap();
+    assert_eq!(transport.requests.lock().unwrap().iter().filter(|request| request.operation_name == "PresenceOnline").count(), 1);
+}

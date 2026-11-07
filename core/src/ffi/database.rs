@@ -327,11 +327,11 @@ impl Database {
             declared.push(operation);
         }
         let registered: Vec<(String, String)> = self.db.specs().values().flat_map(|spec| spec.actions.iter().filter_map(|action| action.mutation.as_ref().filter(|mutation| names.iter().any(|(name, _)| name == *mutation)).map(|_| (spec.key.to_string(), action.name.clone())))).collect();
-        let keys = crate::owners::read::preload_keys(&self.db, false).map_err(|error| DbError::Invalid { detail: format!("the preload of the schema is invalid: {error}") })?;
+        crate::owners::read::preload_keys(&self.db, false).map_err(|error| DbError::Invalid { detail: format!("the preload of the schema is invalid: {error}") })?;
         self.reads.declare(declared);
         self.life.declare(names);
         self.life.register_operations(registered);
-        self.life.preload(keys);
+        self.life.start_preload();
         Ok(())
     }
 

@@ -62,7 +62,7 @@ pub(super) fn add(builder: &mut RuntimeBuilder, wiring: &Arc<Wiring>, ports: &Po
         wiring.fault(format!("the preload of the schema is invalid: {error}"));
         Vec::new()
     });
-    let state = WindowsState::new(0, None, WindowsPeers { store, deliveries: deliveries_at }).with_preload(preload).with_sources(preload_sources(&db)).with_lifetimes(lifetimes(db.clone())).with_max_pages(max_pages(db.clone())).with_members_complete(members_complete(db.clone())).with_media(has_media(db.clone())).with_foreground(refreshes_on_foreground(db.clone()));
+    let state = WindowsState::new(0, None, WindowsPeers { store, deliveries: deliveries_at }).with_preload(preload).with_operations_awaited().with_sources(preload_sources(&db)).with_lifetimes(lifetimes(db.clone())).with_max_pages(max_pages(db.clone())).with_members_complete(members_complete(db.clone())).with_media(has_media(db.clone())).with_foreground(refreshes_on_foreground(db.clone()));
     let windows_wiring = wiring.clone();
     let (derive_db, derive_executor, derive_handle) = (db.clone(), ports.executor.clone(), handle.clone());
     let read_db = db.clone();
@@ -180,7 +180,7 @@ impl super::Life {
     }
 
     /// The keys of the schema declared `preload` start loading once their operations are registered.
-    pub fn preload(&self, keys: Vec<WindowKey>) { self.wiring.to_windows(WindowsInput::PreloadKeys { keys, now: (self.wiring.now)() }); }
+    pub fn start_preload(&self) { self.wiring.to_windows(WindowsInput::RegisterOperations { now: (self.wiring.now)() }); }
 
     /// The platform calls that wait for an outcome of `Windows` now.
     #[cfg(test)]

@@ -391,3 +391,33 @@ fn win_idle_stray() {
     }
 }
 
+
+#[test]
+fn win_preload_after_register() {
+    enum Step { Started(Option<u64>), Online, Register }
+    use Step::{Online as Net, Register, Started};
+    let cases: [(&str, Vec<Step>, usize, Option<WindowStage>); 5] = [
+        ("register after the session and the network", vec![Started(Some(1)), Net, Register], 1, Some(WindowStage::Loading)),
+        ("register before the session", vec![Register, Started(Some(1)), Net], 1, Some(WindowStage::Loading)),
+        ("register between the session and the network", vec![Started(Some(1)), Register, Net], 1, Some(WindowStage::Loading)),
+        ("register twice", vec![Started(Some(1)), Net, Register, Register], 1, Some(WindowStage::Loading)),
+        ("register without a session", vec![Started(None), Net, Register], 0, None),
+    ];
+    for (name, steps, expected, stage) in cases {
+        let mut twin = Twin::awaiting_operations();
+        let (mut asked, mut registered) = (0, false);
+        for step in steps {
+            registered |= matches!(step, Register);
+            match step {
+                Started(identity) => twin.post_call(w::WindowsInput::EpochStarted(EpochStarted { epoch: EPOCH, identity, generation: 0 })),
+                Net => twin.post_call(w::WindowsInput::Online { online: Online(true), online_seq: 1, now: NOW }),
+                Register => twin.post_call(w::WindowsInput::RegisterOperations { now: NOW }),
+            }
+            let step_requests = requests(&twin.split(take(&twin.log)).0);
+            assert!(registered || step_requests == 0, "{name}: no request before the operations are declared");
+            asked += step_requests;
+        }
+        assert_eq!(asked, expected, "{name}: the declared preload key asks once");
+        assert_eq!(twin.stage(), stage, "{name}");
+    }
+}
