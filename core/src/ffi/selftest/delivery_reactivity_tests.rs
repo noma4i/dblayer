@@ -315,36 +315,34 @@ async fn dlv_prop_one_change_every_view_response_and_rejection() {
     rig.login_ios("A").await;
     land_event(&rig, "Moment", json!({"id":"m1", "userId":"u1", "visitsCount":2, "reacted":false}));
     let db = &rig.database;
+    let floor = db.db.revision_seq().unwrap();
     let epoch = db.session_epoch();
     let list = db.subscribe_values(epoch, ReadRequest::List { query: crate::ffi::QuerySpec::json(r#"{"model":"Moment"}"#) });
     let entity = db.subscribe_values(epoch, ReadRequest::Entity { model: "Moment".into(), id: "m1".into(), fetch: ReadFetch::Never });
     let count = db.subscribe_values(epoch, ReadRequest::Count { query: crate::ffi::QuerySpec::json(r#"{"model":"Moment"}"#) });
     let (first_list, first_entity) = (next_rows(&rig, &list, 2).await, next_rows(&rig, &entity, 2).await);
-    assert_eq!(first_list, first_entity);
+    assert!(first_list >= floor && first_entity >= floor, "the landing value is not older than its commit: {first_list} {first_entity} floor {floor}");
     assert!(matches!(bound(count.pull()).await, Some(ReadValue::Count { count: 1, .. })));
     let hold = rig.world.hold_then("MomentReact", Fault::Answer(json!({"data":{"momentReact":{"__typename":"Moment","id":"m1","visitsCount":4,"reacted":true}}})));
     let receipt = bound(db.act(epoch, "Moment".into(), "m1".into(), "react".into(), json!({"visitsCount":3,"reacted":true}).to_string(), "{}".into())).await.unwrap();
     hold.entered().await;
     let (local_list, local_entity) = (next_rows(&rig, &list, 3).await, next_rows(&rig, &entity, 3).await);
-    assert_eq!(local_list, local_entity);
-    assert!(local_list >= receipt.revision, "the first value shows the optimistic row or the sending status that follows it");
+    assert!(local_list >= receipt.revision && local_entity >= receipt.revision, "the first value shows the optimistic row or the sending status that follows it: {local_list} {local_entity}");
     hold.release();
     assert!(matches!(bound(db.outcome(receipt)).await.unwrap(), WireOperationOutcome::Confirmed { .. }));
     let (server_list, server_entity) = (next_rows(&rig, &list, 4).await, next_rows(&rig, &entity, 4).await);
-    assert_eq!(server_list, server_entity);
-    assert!(server_list > local_list);
+    assert!(server_list > local_list && server_entity > local_entity, "the server value follows the optimistic one on each stream");
     let refused = rig.world.hold_then("MomentReact", Fault::Business);
     let receipt = bound(db.act(epoch, "Moment".into(), "m1".into(), "react".into(), json!({"visitsCount":5}).to_string(), "{}".into())).await.unwrap();
     refused.entered().await;
     let (draft_list, draft_entity) = (next_rows(&rig, &list, 5).await, next_rows(&rig, &entity, 5).await);
-    assert_eq!(draft_list, draft_entity);
-    assert!(draft_list >= receipt.revision, "the first value shows the optimistic row or the sending status that follows it");
+    assert!(draft_list >= receipt.revision && draft_entity >= receipt.revision, "the first value shows the optimistic row or the sending status that follows it: {draft_list} {draft_entity}");
     refused.release();
     assert!(matches!(bound(db.outcome(receipt)).await.unwrap(), WireOperationOutcome::Rejected { .. }));
     let (rollback_list, rollback_entity) = (next_rows(&rig, &list, 4).await, next_rows(&rig, &entity, 4).await);
-    assert_eq!(rollback_list, rollback_entity);
-    assert!(rollback_list > draft_list);
+    assert!(rollback_list > draft_list && rollback_entity > draft_entity, "the rollback follows the draft on each stream");
     assert_quiet(db, &[&list, &entity, &count]).await;
+    assert_eq!(rollback_list, rollback_entity, "both streams end on one revision once settled (P-DLV-17)");
     db.close_now();
 }
 
@@ -365,6 +363,7 @@ async fn dlv_prop_one_change_every_view_feed() {
         bound(notified).await;
     }
     let token = transport.token.lock().unwrap().clone().unwrap();
+    let floor = db.db.revision_seq().unwrap();
     assert!(transport.cable.event(&token, json!({"data":{"recordEvents":{"entries":[{"topic":"MESSAGE","action":"UPDATED","recordId":"m1","chat":{"id":"c1","title":"after","revision":2,"lists":["PRIMARY"]}}]}}})));
     let mut revisions = Vec::new();
     for stream in [&list, &entity] {
@@ -374,8 +373,9 @@ async fn dlv_prop_one_change_every_view_feed() {
         assert!(crate::ffi::lifecycle_tests::named(&rows[0], "after"));
         revisions.push(revision);
     }
-    assert_eq!(revisions[0], revisions[1]);
+    assert!(revisions.iter().all(|revision| *revision > floor), "a stream showed the event before its commit: {revisions:?}, floor {floor}");
     assert_quiet(&db, &[&list, &entity, &count]).await;
+    assert_eq!(revisions[0], revisions[1], "both streams end on one revision once settled (P-DLV-17)");
     db.close_now();
 }
 
@@ -401,7 +401,7 @@ async fn dlv_prop_one_change_every_view_related_row() {
         assert!(texts(&cell(&rig, "Message", &rows[0], "reactions")).contains(&"Robert".to_string()));
         revisions.push(revision);
     }
-    assert_eq!(revisions, [receipt.revision, receipt.revision]);
+    assert!(revisions.iter().all(|revision| *revision >= receipt.revision), "a stream showed the overlay before the receipt: {revisions:?}, receipt {}", receipt.revision);
     hold.release();
     assert!(matches!(bound(db.outcome(receipt)).await.unwrap(), WireOperationOutcome::Rejected { .. }));
     let mut restored = Vec::new();
@@ -411,9 +411,9 @@ async fn dlv_prop_one_change_every_view_related_row() {
         assert!(texts(&cell(&rig, "Message", &rows[0], "reactions")).contains(&"Bob".to_string()));
         restored.push(revision);
     }
-    assert_eq!(restored[0], restored[1]);
-    assert!(restored[0] > revisions[0]);
+    assert!(restored[0] > revisions[0] && restored[1] > revisions[1], "the restore follows the overlay on each stream");
     assert_quiet(db, &[&list, &entity, &count]).await;
+    assert_eq!(restored[0], restored[1], "both streams end on one revision once settled (P-DLV-17)");
     db.close_now();
 }
 
