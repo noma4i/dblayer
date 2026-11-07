@@ -175,23 +175,6 @@ func fencedUntil(_ what: String, isolation: isolated (any Actor)? = #isolation, 
     await Task.yield()
   }
 }
-func quiesce<State: Equatable>(_ what: String, rounds: Int = 50, fence: () async -> Void, _ state: () async -> State) async {
-  let deadline = ContinuousClock.now + hangGuard
-  var last = await state()
-  var stable = 0
-  while stable < rounds {
-    if ContinuousClock.now > deadline {
-      Issue.record("\(what): the state kept changing for \(hangGuard)")
-      return
-    }
-    await fence()
-    await Task.yield()
-    let now = await state()
-    stable = now == last ? stable + 1 : 0
-    last = now
-  }
-}
-
 func parallel<Item: Sendable, Result: Sendable>(_ items: [Item], limit: Int, _ work: @escaping @Sendable (Item) async throws -> Result) async throws -> [Result] {
   try await withThrowingTaskGroup(of: (Int, Result).self) { group in
     var results: [(Int, Result)] = []

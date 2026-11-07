@@ -25,7 +25,7 @@ import org.junit.Test
 
 private class Heard {
     val count = AtomicLong()
-    fun add() { count.incrementAndGet() }
+    fun add() { count.incrementAndGet(); TestPulse.pulse() }
 }
 
 /** A stream the runner reads: a task pulls it into a queue, `pull` of the corpus takes the next value. */
@@ -177,14 +177,14 @@ private class DatabaseRunner {
         is ReadValue.Ended -> obs("ended", "stream" to stream, "cause" to causeName(value.cause))
     }
 
-    fun spawn(work: suspend () -> Done) { calls.add(scope.async { try { work() } catch (error: Throwable) { failed(error) } }) }
+    fun spawn(work: suspend () -> Done) { calls.add(scope.async { try { work() } catch (error: Throwable) { failed(error) } }.also { call -> call.invokeOnCompletion { TestPulse.pulse() } }) }
 
     @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
     private fun available(): Int = mock.unannounced + calls.filter { it.isCompleted && !it.isCancelled }.sumOf { it.getCompleted().observed.size }
 
     suspend fun settle(already: Int = 0): List<JsonObject> {
-        fencedUntil("${wanted - already} observations of $at", fence) { available() >= wanted - already }
-        quiesce("the corpus run to go quiet", rounds = if (wanted - already > 0) 5 else 50, fence = fence) { listOf(mock.count.toLong(), calls.count { it.isCompleted }.toLong(), heard.count.get().toLong()) }
+        eventually("${wanted - already} observations of $at") { available() >= wanted - already }
+        fence()
         val observed = ArrayList<JsonObject>()
         val waiting = ArrayList<Deferred<Done>>()
         for (call in calls) {
@@ -386,7 +386,7 @@ private class DatabaseRunner {
             "tick" -> { clock.advance((args["ms"] as? JsonPrimitive)?.longOrNull?.toULong() ?: 0uL); return settle() }
             "answer", "error", "drop", "ready", "frame" -> {
                 val id = args.text("id") ?: return failure("arguments")
-                if (wantedFirst != "error") fencedUntil("the request $id of $at", fence) { mock.knows(id) }
+                if (wantedFirst != "error") eventually("the request $id of $at") { mock.knows(id) }
                 val reached = when (name) {
                     "answer" -> mock.answer(id, (args["json"] ?: return failure("arguments")).toString())
                     "error" -> mock.fail(id, args.text("kind") ?: return failure("arguments"))
@@ -395,7 +395,7 @@ private class DatabaseRunner {
                     else -> try {
                         val event = (args["event"] ?: return failure("arguments")).toString()
                         var delivered = mock.frame(id, event)
-                        if (!delivered && wantedFirst != "error") fencedUntil("the frame $id of $at", fence) { delivered = mock.frame(id, event); delivered }
+                        if (!delivered && wantedFirst != "error") eventually("the frame $id of $at") { delivered = mock.frame(id, event); delivered }
                         delivered
                     } catch (error: Exception) { return failure("frame") }
                 }
@@ -415,7 +415,7 @@ private class DatabaseRunner {
             "pull" -> {
                 val key = args.text("stream") ?: return failure("arguments")
                 val pulled = streams[key] ?: return failure("unknown_stream")
-                if (wantedFirst != "empty") fencedUntil("a value of the stream $key at $at", fence) { pulled.hasNext() }
+                if (wantedFirst != "empty") eventually("a value of the stream $key at $at") { pulled.hasNext() }
                 val next = pulled.next()
                 observed.add(if (next != null) value(key, next.second) else obs("empty", "stream" to key))
             }

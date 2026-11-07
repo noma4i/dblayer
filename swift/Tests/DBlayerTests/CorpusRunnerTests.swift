@@ -7,7 +7,7 @@ private final class Heard: @unchecked Sendable {
   private let lock = NSLock()
   private var heard: UInt64 = 0
   var count: UInt64 { lock.withLock { heard } }
-  func add() { lock.withLock { heard += 1 } }
+  func add() { lock.withLock { heard += 1 }; TestPulse.shared.pulse() }
 }
 
 /// A stream the runner reads: a task pulls it into a queue, `pull` of the corpus takes the next value.
@@ -55,7 +55,7 @@ private final class CallBox: @unchecked Sendable {
   private let lock = NSLock()
   private var value: CallResult?
   var done: CallResult? { lock.withLock { value } }
-  func finish(_ result: CallResult) { lock.withLock { value = result } }
+  func finish(_ result: CallResult) { lock.withLock { value = result }; TestPulse.shared.pulse() }
 }
 
 /// What a finished call hands back to the runner: what to observe and what to remember under a name.
@@ -237,8 +237,8 @@ private final class DatabaseRunner {
   func available() -> Int { mock.unannounced + calls.reduce(0) { $0 + ($1.done?.observed.count ?? 0) } }
 
   func settle(already: Int = 0) async -> [String] {
-    await fencedUntil("\(wanted - already) observations of \(at)", fence: fence) { available() >= wanted - already }
-    await quiesce("the corpus run to go quiet", rounds: wanted - already > 0 ? 5 : 50, fence: fence) { [mock.count, calls.filter { $0.done != nil }.count, Int(heard.count)] }
+    await eventually("\(wanted - already) observations of \(at)") { available() >= wanted - already }
+    await fence()
     var observed: [String] = []
     var waiting: [CallBox] = []
     for call in calls {
@@ -469,7 +469,7 @@ private final class DatabaseRunner {
       return await settle()
     case "answer", "error", "drop", "ready", "frame":
       guard let id = args["id"] as? String else { return failure("arguments") }
-      if wantedFirst != "error" { await fencedUntil("the request \(id) of \(at)", fence: fence) { mock.knows(id) } }
+      if wantedFirst != "error" { await eventually("the request \(id) of \(at)") { mock.knows(id) } }
       var reached = false
       switch name {
       case "answer":
@@ -485,7 +485,7 @@ private final class DatabaseRunner {
         do {
           let text = canonical(event)
           reached = try mock.frame(id, text)
-          if !reached, wantedFirst != "error" { await fencedUntil("the frame \(id) of \(at)", fence: fence) { reached = (try? mock.frame(id, text)) ?? false; return reached } }
+          if !reached, wantedFirst != "error" { await eventually("the frame \(id) of \(at)") { reached = (try? mock.frame(id, text)) ?? false; return reached } }
         } catch { return failure("frame") }
       }
       if !reached { return failure("no_request") }
@@ -508,7 +508,7 @@ private final class DatabaseRunner {
     case "pull":
       guard let label = args["stream"] as? String else { return failure("arguments") }
       guard let pulled = streams[label] else { return failure("unknown_stream") }
-      if wantedFirst != "empty" { await fencedUntil("a value of the stream \(label) at \(at)", fence: fence) { pulled.hasNext } }
+      if wantedFirst != "empty" { await eventually("a value of the stream \(label) at \(at)") { pulled.hasNext } }
       if let (position, next) = pulled.next() { observed = [value(label, position, next)] } else { observed = [observation("empty", ["stream": label])] }
     case "cancel":
       guard let target = args["target"] as? String else { return failure("arguments") }

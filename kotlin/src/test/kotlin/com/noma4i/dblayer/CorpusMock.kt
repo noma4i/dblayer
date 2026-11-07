@@ -39,7 +39,7 @@ class CorpusMock : ScriptedTransport, ScriptedHttp {
         val id = "r$next"
         seen.add(Seen(id, kind, if (purpose == NetworkPurpose.STANDARD) "standard" else "transfer"))
         id
-    }
+    }.also { TestPulse.pulse() }
 
     fun answer(id: String, body: String): Boolean {
         waiting.remove(id)?.let { return it.complete(body) }
@@ -97,6 +97,7 @@ class CorpusMock : ScriptedTransport, ScriptedHttp {
         val id = record(kind, request.purpose)
         val reply = CompletableDeferred<String>()
         waiting[id] = reply
+        TestPulse.pulse()
         return reply.await()
     }
 
@@ -104,6 +105,7 @@ class CorpusMock : ScriptedTransport, ScriptedHttp {
         val id = record("subscription", NetworkPurpose.STANDARD)
         val outcome = peer.openCable(url, events)
         cables[id] = peer.lastOpened!!
+        TestPulse.pulse()
         return outcome
     }
 
@@ -115,6 +117,7 @@ class CorpusMock : ScriptedTransport, ScriptedHttp {
         val id = record("http", purpose)
         val reply = CompletableDeferred<EncryptedReply>()
         waitingHttp[id] = request to reply
+        TestPulse.pulse()
         return reply.await()
     }
     override suspend fun query(request: TransportRequest): String = wait("query", request)
@@ -124,6 +127,7 @@ class CorpusMock : ScriptedTransport, ScriptedHttp {
         val id = record("put", NetworkPurpose.TRANSFER)
         val reply = CompletableDeferred<PutReply>()
         waitingPuts[id] = reply
+        TestPulse.pulse()
         return reply.await()
     }
 }

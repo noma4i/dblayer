@@ -47,19 +47,6 @@ suspend fun fencedUntil(what: String, fence: suspend () -> Unit, ready: () -> Bo
         yield()
     }
 }
-suspend fun <State> quiesce(what: String, rounds: Int = 50, fence: suspend () -> Unit, state: suspend () -> State) {
-    val deadline = System.nanoTime() + HANG_GUARD_MILLIS * 1_000_000
-    var last = state()
-    var stable = 0
-    while (stable < rounds) {
-        if (System.nanoTime() > deadline) throw AssertionError("$what: the state kept changing for $HANG_GUARD_MILLIS ms")
-        fence()
-        yield()
-        val now = state()
-        stable = if (now == last) stable + 1 else 0
-        last = now
-    }
-}
 fun eventuallyBlocking(what: String, timeoutMillis: Long = HANG_GUARD_MILLIS, condition: () -> Boolean) = bounded(timeoutMillis + 2_000) { eventually(what, timeoutMillis) { condition() } }
 suspend fun <T> awaitWithin(what: String, detail: () -> String = { "" }, block: suspend () -> T): T = try {
     withTimeout(HANG_GUARD_MILLIS) { block() }

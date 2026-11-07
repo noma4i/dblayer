@@ -115,13 +115,14 @@ final class CorpusMock: ScriptedTransport, ScriptedHttp, @unchecked Sendable {
 
   private func wait(_ kind: String, _ request: TransportRequest) async throws -> String {
     let id = record(kind, request.purpose)
-    return try await withCheckedThrowingContinuation { continuation in lock.withLock { waiting[id] = continuation } }
+    return try await withCheckedThrowingContinuation { continuation in lock.withLock { waiting[id] = continuation }; TestPulse.shared.pulse() }
   }
 
   func scriptedCable(url: String, events: CableEvents) async -> CableOutcome {
     let id = record("subscription", .standard)
     let outcome = await peer.openCable(url: url, events: events)
     lock.withLock { cables[id] = peer.lastOpened }
+    TestPulse.shared.pulse()
     return outcome
   }
 
@@ -132,14 +133,14 @@ final class CorpusMock: ScriptedTransport, ScriptedHttp, @unchecked Sendable {
   func post(path: String, body: String, purpose: NetworkPurpose) async throws -> EncryptedReply {
     let request = try sealed.open(body)
     let id = record("http", purpose)
-    return try await withCheckedThrowingContinuation { continuation in lock.withLock { waitingHttp[id] = (request, continuation) } }
+    return try await withCheckedThrowingContinuation { continuation in lock.withLock { waitingHttp[id] = (request, continuation) }; TestPulse.shared.pulse() }
   }
   func query(request: TransportRequest) async throws -> String { try await wait("query", request) }
   func mutate(request: TransportRequest) async throws -> String { try await wait("mutation", request) }
 
   func scriptedPut(url: String, headers: [String: String], file: PutFile, identity: TransferIdentity, progress: ByteProgress) async throws -> PutReply {
     let id = record("put", .transfer)
-    return try await withCheckedThrowingContinuation { continuation in lock.withLock { waitingPuts[id] = continuation } }
+    return try await withCheckedThrowingContinuation { continuation in lock.withLock { waitingPuts[id] = continuation }; TestPulse.shared.pulse() }
   }
 }
 
