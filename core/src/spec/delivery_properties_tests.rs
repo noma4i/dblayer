@@ -92,14 +92,20 @@ fn dlv_prop_first_and_base() {
                 }
             }
             let mut previous: Option<i64> = None;
+            let mut held: Vec<String> = Vec::new();
             for value in &values {
-                if let d::Value::Delta(delta) = value {
-                    if previous != Some(delta.base) {
-                        return Err(format!("a Delta with base {} follows revision {previous:?}", delta.base));
+                match value {
+                    d::Value::Snapshot { rows, .. } => held = rows.iter().map(|row| row.id.clone()).collect(),
+                    d::Value::Delta(delta) => {
+                        if previous != Some(delta.base) {
+                            return Err(format!("a Delta with base {} follows revision {previous:?}", delta.base));
+                        }
+                        replay(&mut held, &delta.edits);
                     }
+                    _ => {}
                 }
-                if let d::Value::Snapshot { rows, state, .. } | d::Value::Delta(d::Delta { rows, state, .. }) = value {
-                    if state.phase == WindowPhase::Failed && !rows.is_empty() {
+                if let d::Value::Snapshot { state, .. } | d::Value::Delta(d::Delta { state, .. }) = value {
+                    if state.phase == WindowPhase::Failed && !held.is_empty() {
                         return Err("Failed with rows".into());
                     }
                 }
@@ -132,14 +138,7 @@ fn dlv_prop_rows_visible() {
             for value in &values {
                 match value {
                     d::Value::Snapshot { rows, .. } => list = rows.iter().map(|row| row.id.clone()).collect(),
-                    d::Value::Delta(delta) => {
-                        list.retain(|id| !delta.removed.contains(id));
-                        for row in &delta.rows {
-                            if !list.contains(&row.id) {
-                                list.push(row.id.clone());
-                            }
-                        }
-                    }
+                    d::Value::Delta(delta) => replay(&mut list, &delta.edits),
                     _ => {}
                 }
             }
@@ -299,7 +298,7 @@ fn dlv_prop_ready_once() {
 fn dlv_prop_delta_size() {
     let mut twin = live_rows();
     let (_, values) = twin.step_read(Input::ReadDone { revision: 2, rows: rows(&["r1", "r2"]) });
-    assert!(matches!(values.as_slice(), [Val::Delta { upserted, .. }] if *upserted == ids(&["r2"])), "one changed row, one row in the value");
+    assert!(matches!(values.as_slice(), [Val::Delta { edits, .. }] if *edits == [insert(1, "r2")]), "one inserted row, one edit");
     let many: Vec<r::Row> = (0..300).map(|n| (format!("n{n}"), 0)).collect();
     let (_, values) = twin.step_read(Input::ReadDone { revision: 3, rows: many });
     assert!(matches!(values.as_slice(), [Val::Snapshot { rows, .. }] if rows.len() == 300), "over 256 changes the whole result goes");
@@ -374,24 +373,22 @@ fn dlv_prop_single_unread_delta() {
     }
 }
 
-#[test]
-fn dlv_prop_delta_order() {
-    fn apply(mut list: Vec<String>, delta: &d::Delta) -> Vec<String> {
-        for (from, to) in &delta.replaced {
-            for id in list.iter_mut().filter(|id| *id == from) {
-                *id = to.clone();
+fn replay(list: &mut Vec<String>, edits: &[d::Edit]) {
+    for edit in edits {
+        match edit {
+            d::Edit::Insert { index, row } => list.insert(*index as usize, row.id.clone()),
+            d::Edit::Rewrite { index, row } => list[*index as usize].clone_from(&row.id),
+            d::Edit::Remove { index, id } => assert_eq!(&list.remove(*index as usize), id),
+            d::Edit::Move { from, to } => {
+                let id = list.remove(*from as usize);
+                list.insert(*to as usize, id);
             }
         }
-        list.retain(|id| !delta.removed.contains(id));
-        list.retain(|id| !delta.placed.iter().any(|(placed, _)| placed == id));
-        let mut placed = delta.placed.clone();
-        placed.sort_by_key(|(_, index)| *index);
-        for (id, index) in placed {
-            let at = (index as usize).min(list.len());
-            list.insert(at, id);
-        }
-        list
     }
+}
+
+#[test]
+fn dlv_prop_delta_order() {
     let mut det = DetScheduler::new(3);
     let log: Spied = new_log();
     let addr = add_deliveries(&mut det, &log);
@@ -403,14 +400,19 @@ fn dlv_prop_delta_order() {
         seed = seed.wrapping_mul(6_364_136_223_846_793_005).wrapping_add(1_442_695_040_888_963_407);
         (seed >> 33) % bound
     };
-    let pool: Vec<String> = (0..12).map(|n| format!("p{n}")).collect();
-    let mut platform: Vec<String> = Vec::new();
+    let mut names: Vec<String> = (0..12).map(|n| format!("p{n}")).collect();
     let mut edited: Vec<String> = Vec::new();
     let mut lists: std::collections::BTreeMap<i64, Vec<String>> = std::collections::BTreeMap::new();
     let answers = Outcomes::<PullAnswer>::new();
-    let mut checked = 0;
+    let (mut checked, mut middle, mut moved, mut rewritten, mut removed, mut confirmed) = (0, 0, 0, 0, 0, 0);
     for revision in 1..120i64 {
-        let mut list: Vec<String> = pool.iter().filter(|_| next(3) != 0).cloned().collect();
+        let mut replaced: Vec<(String, String)> = Vec::new();
+        if next(3) == 0 {
+            let slot = next(12) as usize;
+            let confirmed_name = format!("s{slot}_{revision}");
+            replaced.push((std::mem::replace(&mut names[slot], confirmed_name.clone()), confirmed_name));
+        }
+        let mut list: Vec<String> = names.iter().filter(|_| next(3) != 0).cloned().collect();
         for index in (1..list.len()).rev() {
             if next(4) == 0 {
                 list.swap(index, next(index as u64 + 1) as usize);
@@ -419,7 +421,7 @@ fn dlv_prop_delta_order() {
         lists.insert(revision, list.clone());
         let read_id = inner(&det, addr).read_id(STREAM);
         let rows: Vec<d::StreamRow> = list.iter().map(|id| d::StreamRow::new(id, if next(5) == 0 { revision } else { 0 })).collect();
-        det.post(addr, EpochStamp::Epoch(EPOCH), d::DeliveryInput::ReadDone { stream: STREAM, read_id, revision, data: d::ReadData::Rows { rows, replaced: Vec::new(), total: None } });
+        det.post(addr, EpochStamp::Epoch(EPOCH), d::DeliveryInput::ReadDone { stream: STREAM, read_id, revision, data: d::ReadData::Rows { rows, replaced, total: None } });
         det.post(addr, EpochStamp::Epoch(EPOCH), d::DeliveryInput::Committed(Committed { batch: 0, revision, tables: vec!["moments".into()], rows: None, models: Default::default(), stale_parents: Vec::new(), position: 0 }));
         if next(2) == 0 {
             det.post(addr, EpochStamp::Control, d::DeliveryInput::Pull { stream: STREAM, outcome: answers.register(EPOCH).id() });
@@ -428,34 +430,29 @@ fn dlv_prop_delta_order() {
         for entry in take(&log) {
             let Emitted::Run(DeliveryEffect::Stream { effect: StreamEffect::Answer { answer: PullAnswer::Value(value), .. }, .. }) = entry else { continue };
             match *value {
-                d::Value::Snapshot { rows, .. } => {
-                    platform = rows.iter().map(|row| row.id.clone()).collect();
-                    edited.clone_from(&platform);
-                }
+                d::Value::Snapshot { rows, .. } => edited = rows.iter().map(|row| row.id.clone()).collect(),
                 d::Value::Delta(delta) => {
-                    platform = apply(platform.clone(), &delta);
                     for edit in &delta.edits {
                         match edit {
-                            d::Edit::Insert { index, row } => edited.insert(*index as usize, row.id.clone()),
-                            d::Edit::Rewrite { index, row } => assert_eq!(edited[*index as usize], row.id),
-                            d::Edit::Remove { index, id } => assert_eq!(&edited.remove(*index as usize), id),
-                            d::Edit::Move { from, to } => {
-                                let id = edited.remove(*from as usize);
-                                edited.insert(*to as usize, id);
-                            }
+                            d::Edit::Insert { index, .. } if (*index as usize) < delta.size as usize - 1 => middle += 1,
+                            d::Edit::Move { .. } => moved += 1,
+                            d::Edit::Rewrite { index, row } if edited[*index as usize] != row.id => confirmed += 1,
+                            d::Edit::Rewrite { .. } => rewritten += 1,
+                            d::Edit::Remove { .. } => removed += 1,
+                            d::Edit::Insert { .. } => {}
                         }
+                        replay(&mut edited, std::slice::from_ref(edit));
                     }
-                    assert_eq!(edited, platform, "the edits of revision {} give the list of the sets", delta.revision);
-                    assert_eq!(platform.len(), delta.size as usize, "the size of the result at {}", delta.revision);
-                    let core: Vec<String> = lists.get(&delta.revision).cloned().expect("a list of the revision");
-                    assert_eq!(platform, core, "revision {}", delta.revision);
+                    assert_eq!(edited.len(), delta.size as usize, "the size of the result at {}", delta.revision);
+                    assert_eq!(&edited, lists.get(&delta.revision).expect("a list of the revision"), "the edits of revision {} give its rows", delta.revision);
                     checked += 1;
                 }
                 _ => {}
             }
         }
     }
-    assert!(checked > 10, "{checked} deltas were applied");
+    assert!(checked > 10, "{checked} deltas were replayed");
+    assert!(middle > 0 && moved > 0 && rewritten > 0 && removed > 0 && confirmed > 0, "inserts in the middle {middle}, moves {moved}, rewrites {rewritten}, removals {removed}, confirmations {confirmed}");
 }
 
 #[test]

@@ -117,7 +117,7 @@ fn work_of_one_commit(streams: usize, window: usize, others: usize) -> (u64, usi
         Some(d::Value::Delta(delta)) => delta.clone(),
         other => panic!("the commit delivered no Delta to the stream of the row: {other:?}"),
     };
-    assert_eq!((delta.rows.iter().map(|row| row.id.as_str()).collect::<Vec<_>>(), delta.size as usize), (vec!["r0"], window), "the Delta names the changed row and the size of the window");
+    assert_eq!((delta.edits.iter().filter_map(|edit| match edit { d::Edit::Rewrite { row, .. } => Some(row.id.as_str()), _ => None }).collect::<Vec<_>>(), delta.size as usize), (vec!["r0"], window), "the Delta rewrites the changed row and gives the size of the window");
     (work.state.streams_examined() - examined, work.db.counters().rows_read - read)
 }
 

@@ -5,7 +5,7 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use super::ref_delivery::{self as r, rows, Cause, Delivery, Effect, Fetch, Input, Kind, Phase, Pulled, Val, Ws};
+use super::ref_delivery::{self as r, rows, Cause, Delivery, Effect, Fetch, Input, Kind, Phase, Pulled, Val, Ws, insert, remove, Ed};
 use crate::owners::contract::{Committed, EpochEnded, Models, ModelsReset, WindowPhase, WindowState};
 use crate::owners::read::deliveries::{self as d, DeliveryEffect, DeliveryPeers, Deliveries, PullAnswer, StreamEffect};
 use crate::owners::read::feed::Feed;
@@ -72,6 +72,15 @@ thread_local! {
     static TOTALS: std::cell::RefCell<Vec<Option<u64>>> = const { std::cell::RefCell::new(Vec::new()) };
 }
 
+fn ed_of(edit: &d::Edit) -> Ed {
+    match edit {
+        d::Edit::Insert { index, row } => Ed::Insert { index: *index, id: row.id.clone() },
+        d::Edit::Rewrite { index, row } => Ed::Rewrite { index: *index, id: row.id.clone() },
+        d::Edit::Remove { index, id } => Ed::Remove { index: *index, id: id.clone() },
+        d::Edit::Move { from, to } => Ed::Move { from: *from, to: *to },
+    }
+}
+
 fn val_of(value: &d::Value) -> Val {
     if let d::Value::Snapshot { state, .. } | d::Value::Count { state, .. } | d::Value::State { state, .. } | d::Value::Delta(d::Delta { state, .. }) = value {
         TOTALS.with(|totals| totals.borrow_mut().push(state.total));
@@ -79,7 +88,7 @@ fn val_of(value: &d::Value) -> Val {
     let ids = |rows: &[d::StreamRow]| rows.iter().map(|row| row.id.clone()).collect::<Vec<_>>();
     match value {
         d::Value::Snapshot { revision, rows, state } => Val::Snapshot { revision: *revision, rows: ids(rows), state: ws_of(state) },
-        d::Value::Delta(delta) => Val::Delta { base: delta.base, revision: delta.revision, size: delta.size as usize, upserted: ids(&delta.rows), removed: delta.removed.clone(), state: ws_of(&delta.state) },
+        d::Value::Delta(delta) => Val::Delta { base: delta.base, revision: delta.revision, size: delta.size as usize, edits: delta.edits.iter().map(ed_of).collect(), state: ws_of(&delta.state) },
         d::Value::Count { revision, count, state } => Val::Count { revision: *revision, count: *count, state: ws_of(state) },
         d::Value::State { revision, state } => Val::State { revision: *revision, state: ws_of(state) },
         d::Value::Ready => Val::Ready,
@@ -542,7 +551,7 @@ fn dlv_opening_window() {
     assert_eq!(values, [snap(1, &["r1"], Ws::idle())], "a state visible only after a newer revision is held back");
     twin.step(Input::Committed { revision: 5, touches: true });
     let (_, values) = twin.step_read(Input::ReadDone { revision: 5, rows: rows(&["r1", "r2"]) });
-    assert_eq!(values, [Val::Delta { base: 1, revision: 5, size: 2, upserted: ids(&["r2"]), removed: Vec::new(), state: Ws::loaded_at(5) }]);
+    assert_eq!(values, [Val::Delta { base: 1, revision: 5, size: 2, edits: vec![insert(1, "r2")], state: Ws::loaded_at(5) }]);
 }
 
 #[path = "delivery_cells_tests.rs"]

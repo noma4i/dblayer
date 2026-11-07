@@ -16,5 +16,5 @@ fn dlv_read_overflow() {
 
     twin.step(Input::ReadDone { revision: 2, rows: rows(&["r1", "r2"]) });
     let values = twin.read_all();
-    assert!(matches!(values.as_slice(), [Val::Delta { revision: 2, size: 2, upserted, .. }] if *upserted == ids(&["r2"])), "{values:?}");
+    assert!(matches!(values.as_slice(), [Val::Delta { revision: 2, size: 2, edits, .. }] if *edits == [insert(1, "r2")]), "{values:?}");
 }

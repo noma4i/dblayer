@@ -92,7 +92,7 @@ fn dlv_live_read_total_only() {
     twin.total = Some(3);
     TOTALS.with(|totals| totals.borrow_mut().clear());
     let (_, values) = twin.step_read(Input::ReadDone { revision: 2, rows: rows(&["r1"]) });
-    assert!(matches!(values.as_slice(), [Val::Delta { base: 1, revision: 2, size: 1, upserted, removed, .. }] if upserted.is_empty() && removed.is_empty()));
+    assert!(matches!(values.as_slice(), [Val::Delta { base: 1, revision: 2, size: 1, edits, .. }] if edits.is_empty()));
     assert_eq!(TOTALS.with(|totals| totals.borrow().clone()), [Some(3)]);
 }
 
@@ -282,7 +282,7 @@ fn dlv_prop_value_revision_relevant_commit() {
         twin.step(Input::Committed { revision: 3, touches: true });
         twin.step(Input::Committed { revision: 4, touches: false });
         let (_, values) = twin.step_read(Input::ReadDone { revision: seen, rows: rows(&["r1", "r2"]) });
-        assert_eq!(values, [Val::Delta { base: 1, revision: 3, size: 2, upserted: ids(&["r2"]), removed: Vec::new(), state: Ws::loaded_at(2) }], "seen {seen}");
+        assert_eq!(values, [Val::Delta { base: 1, revision: 3, size: 2, edits: vec![insert(1, "r2")], state: Ws::loaded_at(2) }], "seen {seen}");
     }
 }
 
@@ -292,9 +292,9 @@ fn dlv_live_read_changed() {
     twin.step(Input::WindowState(Ws::loaded_at(2)));
     let (effects, values) = twin.step_read(Input::ReadDone { revision: 2, rows: rows(&["r1", "r2"]) });
     assert_eq!(effects, [Effect::Available]);
-    assert_eq!(values, [Val::Delta { base: 1, revision: 2, size: 2, upserted: ids(&["r2"]), removed: Vec::new(), state: Ws::loaded_at(2) }]);
+    assert_eq!(values, [Val::Delta { base: 1, revision: 2, size: 2, edits: vec![insert(1, "r2")], state: Ws::loaded_at(2) }]);
     let (_, values) = twin.step_read(Input::ReadDone { revision: 3, rows: rows(&["r2"]) });
-    assert_eq!(values, [Val::Delta { base: 2, revision: 3, size: 1, upserted: Vec::new(), removed: ids(&["r1"]), state: Ws::loaded_at(2) }]);
+    assert_eq!(values, [Val::Delta { base: 2, revision: 3, size: 1, edits: vec![remove(0, "r1")], state: Ws::loaded_at(2) }]);
     let mut counted = open_as(Kind::Count);
     counted.step(Input::CountDone { revision: 1, count: 1 });
     counted.read_all();
@@ -307,7 +307,7 @@ fn dlv_live_read_unacknowledged() {
     let mut twin = live_rows();
     twin.step(Input::ReadDone { revision: 2, rows: rows(&["r1", "r2"]) });
     twin.step(Input::ReadDone { revision: 3, rows: rows(&["r1", "r2", "r3"]) });
-    assert_eq!(twin.read_all(), [Val::Delta { base: 1, revision: 3, size: 3, upserted: ids(&["r2", "r3"]), removed: Vec::new(), state: Ws::loaded_at(1) }], "one Delta from the last read revision");
+    assert_eq!(twin.read_all(), [Val::Delta { base: 1, revision: 3, size: 3, edits: vec![insert(1, "r2"), insert(2, "r3")], state: Ws::loaded_at(1) }], "one Delta from the last read revision");
     assert_eq!(twin.state().acknowledged(STREAM), Some(3));
 }
 
@@ -356,7 +356,7 @@ fn dlv_live_window_held() {
     assert!(values.is_empty(), "the state is visible only with revision 2");
     assert_eq!(effects, [Effect::Read(2)], "a state past the last read starts a read");
     let (_, values) = twin.step_read(Input::ReadDone { revision: 2, rows: rows(&["r1", "r2"]) });
-    assert_eq!(values, [Val::Delta { base: 1, revision: 2, size: 2, upserted: ids(&["r2"]), removed: Vec::new(), state: Ws::loaded_at(2) }]);
+    assert_eq!(values, [Val::Delta { base: 1, revision: 2, size: 2, edits: vec![insert(1, "r2")], state: Ws::loaded_at(2) }]);
 }
 
 #[test]
@@ -489,7 +489,7 @@ fn dlv_live_models_other() {
 fn dlv_live_pull() {
     let mut twin = live_rows();
     twin.step(Input::ReadDone { revision: 2, rows: rows(&["r1", "r2"]) });
-    assert_eq!(twin.step(Input::Pull), [Effect::Answer(Pulled::Value(Val::Delta { base: 1, revision: 2, size: 2, upserted: ids(&["r2"]), removed: Vec::new(), state: Ws::loaded_at(1) }))]);
+    assert_eq!(twin.step(Input::Pull), [Effect::Answer(Pulled::Value(Val::Delta { base: 1, revision: 2, size: 2, edits: vec![insert(1, "r2")], state: Ws::loaded_at(1) }))]);
     assert_eq!(twin.state().acknowledged(STREAM), Some(2), "the read of a rows value moves the acknowledged revision");
 }
 

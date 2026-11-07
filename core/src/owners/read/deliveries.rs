@@ -128,12 +128,6 @@ pub struct Delta {
     pub base: i64,
     pub revision: i64,
     pub size: u32,
-    pub rows: Vec<StreamRow>,
-    pub indexes: Vec<u32>,
-    pub removed: Vec<String>,
-    pub placed: Vec<(String, u32)>,
-    pub replaced: Vec<(String, String)>,
-    pub renamed: Vec<(String, String)>,
     /// The steps from the rows the reader holds to the rows of `revision`, in order.
     pub edits: Vec<Edit>,
     /// Server id to the temporary id its row had when the reader first got it, for the rows this delta confirms.

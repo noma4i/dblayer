@@ -23,7 +23,7 @@ impl Delivery {
         if rows == self.rows && self.incoming_total == self.total { self.same_rows(seen, fx); return; }
         let state = self.state_at(seen);
         let revision = self.shown_revision(seen);
-        let old = std::mem::replace(&mut self.rows, rows.clone());
+        self.rows = rows.clone();
         self.total = self.incoming_total;
         self.revision = revision;
         let unread_snapshot = self.journal.iter().any(|kept| matches!(kept, Val::Snapshot { .. }));
@@ -32,13 +32,11 @@ impl Delivery {
             self.append(Val::Snapshot { revision, rows: ids, state }, fx);
             return;
         };
-        let base_rows = if self.acked_rows.is_empty() && old.is_empty() { Vec::new() } else { self.acked_rows.clone() };
-        let upserted: Vec<String> = rows.iter().filter(|row| !base_rows.contains(row)).map(|(id, _)| id.clone()).collect();
-        let removed: Vec<String> = base_rows.iter().filter(|(id, _)| !rows.iter().any(|(now, _)| now == id)).map(|(id, _)| id.clone()).collect();
-        if upserted.len() + removed.len() > DELTA_LIMIT {
+        let (edits, touched) = edits_between(&self.acked_rows, &rows);
+        if touched > DELTA_LIMIT {
             self.append(Val::Snapshot { revision, rows: ids, state }, fx);
         } else {
-            self.append(Val::Delta { base, revision, size: rows.len(), upserted, removed, state }, fx);
+            self.append(Val::Delta { base, revision, size: rows.len(), edits, state }, fx);
         }
     }
 
@@ -88,4 +86,46 @@ impl Delivery {
         self.last_retry = Some(attempts);
         self.append(Val::Retry { attempts }, fx);
     }
+}
+
+/// The steps from `old` to `new` and the number of rows they touch: removals from the back, then each inserted or out-of-order row at its place, then the rows whose stamp changed.
+fn edits_between(old: &[Row], new: &[Row]) -> (Vec<Ed>, usize) {
+    let in_new = |id: &str| new.iter().any(|(now, _)| now == id);
+    let common: Vec<usize> = old.iter().filter_map(|(id, _)| new.iter().position(|(now, _)| now == id)).collect();
+    let mut best: Vec<Vec<usize>> = Vec::new();
+    for (at, value) in common.iter().enumerate() {
+        let tail = (0..at).filter(|before| common[*before] < *value).map(|before| best[before].clone()).max_by_key(Vec::len).unwrap_or_default();
+        best.push([tail, vec![*value]].concat());
+    }
+    let kept: Vec<usize> = best.into_iter().max_by_key(|chain| chain.len()).unwrap_or_default();
+    let mut steps = Vec::new();
+    let mut work: Vec<String> = old.iter().map(|(id, _)| id.clone()).collect();
+    let leaving: Vec<usize> = (0..work.len()).rev().filter(|index| !in_new(&work[*index])).collect();
+    for index in leaving {
+        steps.push(Ed::Remove { index: index as u32, id: work.remove(index) });
+    }
+    let mut touched = steps.len();
+    for (position, (id, _)) in new.iter().enumerate().filter(|(position, (id, _))| !old.iter().any(|(held, _)| held == id) || !kept.contains(position)) {
+        let from = work.iter().position(|held| held == id);
+        if let Some(from) = from {
+            work.remove(from);
+        }
+        let to = if position == 0 { 0 } else { work.iter().position(|held| *held == new[position - 1].0).map_or(0, |before| before + 1) };
+        work.insert(to, id.clone());
+        touched += 1;
+        match from {
+            Some(from) if from != to => steps.push(Ed::Move { from: from as u32, to: to as u32 }),
+            Some(_) => {}
+            None => steps.push(Ed::Insert { index: to as u32, id: id.clone() }),
+        }
+    }
+    for (position, (id, stamp)) in new.iter().enumerate() {
+        if old.iter().any(|(held, before)| held == id && before != stamp) {
+            steps.push(Ed::Rewrite { index: position as u32, id: id.clone() });
+            if kept.contains(&position) {
+                touched += 1;
+            }
+        }
+    }
+    (steps, touched)
 }

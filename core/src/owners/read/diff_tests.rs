@@ -24,13 +24,6 @@ fn identical_lists_give_an_empty_diff() {
 }
 
 #[test]
-fn first_state_is_all_inserted() {
-    let diff = Diff::inserting(&entries(&[("a", 1), ("b", 2)]), &[]);
-    assert_eq!(diff.inserted, ids(&["a", "b"]));
-    assert!(diff.removed.is_empty() && diff.updated.is_empty() && diff.moved.is_empty());
-}
-
-#[test]
 fn inserted_removed_and_updated_are_separated() {
     let diff = Diff::between(&entries(&[("a", 1), ("b", 1), ("c", 1)]), &entries(&[("a", 1), ("c", 2), ("d", 3)]), &[]);
     assert_eq!(diff.inserted, ids(&["d"]));
@@ -164,6 +157,4 @@ fn inv_observe_18_a_pair_whose_old_id_the_reader_never_held_is_still_named() {
     let pair = (id("tmp-1"), id("m77"));
     let diff = Diff::between(&entries(&[]), &entries(&[("m77", 1)]), std::slice::from_ref(&pair));
     assert_eq!((diff.inserted, diff.replaced, diff.renamed), (ids(&["m77"]), vec![], vec![pair.clone()]));
-    let first = Diff::inserting(&entries(&[("m77", 1)]), std::slice::from_ref(&pair));
-    assert_eq!(first.renamed, vec![pair]);
 }

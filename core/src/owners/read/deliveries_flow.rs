@@ -9,23 +9,12 @@ impl Delivery {
         if diff.at.len() + diff.removed.len() > DELTA_LIMIT {
             return None;
         }
-        let mut at: Vec<(String, usize)> = diff.at.iter().map(|(id, index)| (id.to_string(), *index)).collect();
-        at.sort_by_key(|(_, index)| *index);
-        let by_id: BTreeMap<&str, &StreamRow> = rows.iter().map(|row| (row.id.as_str(), row)).collect();
-        let changed: Vec<StreamRow> = at.iter().filter_map(|(id, _)| by_id.get(id.as_str()).map(|row| (*row).clone())).collect();
-        let steps = edits(&self.acked_rows, rows, &diff)?;
+        let steps = edits(&self.acked_rows, rows, &diff);
         let (temporary, forgotten) = self.temporary_ids(&diff);
-        let pair = |list: &[(RowId, RowId)]| list.iter().map(|(from, to)| (from.to_string(), to.to_string())).collect::<Vec<_>>();
         Some(Delta {
             base,
             revision,
             size: u32::try_from(rows.len()).unwrap_or(u32::MAX),
-            indexes: at.iter().map(|(_, index)| u32::try_from(*index).unwrap_or(u32::MAX)).collect(),
-            rows: changed,
-            removed: diff.removed.iter().map(ToString::to_string).collect(),
-            placed: diff.placed().into_iter().map(|(id, index)| (id.to_string(), u32::try_from(index).unwrap_or(u32::MAX))).collect(),
-            replaced: pair(&diff.replaced),
-            renamed: pair(&diff.renamed),
             edits: steps,
             temporary,
             forgotten,
@@ -371,14 +360,16 @@ impl Delivery {
     pub(super) fn settled(&self) -> bool { self.stage == DeliveryStage::Ended && self.sink_closed }
 }
 
-fn edits(old: &[StreamRow], new: &[StreamRow], diff: &Diff) -> Option<Vec<Edit>> {
+fn at(index: usize) -> u32 { u32::try_from(index).unwrap_or(u32::MAX) }
+
+fn edits(old: &[StreamRow], new: &[StreamRow], diff: &Diff) -> Vec<Edit> {
     let alias: BTreeMap<&RowId, &RowId> = diff.replaced.iter().map(|(from, to)| (from, to)).collect();
     let mut work: Vec<String> = old.iter().map(|row| RowId::new(&row.id).ok().and_then(|id| alias.get(&id).map(ToString::to_string)).unwrap_or_else(|| row.id.clone())).collect();
     let mut steps = Vec::new();
     let gone: BTreeSet<String> = diff.removed.iter().map(ToString::to_string).collect();
     let leaving: Vec<usize> = (0..work.len()).rev().filter(|index| gone.contains(&work[*index])).collect();
     for index in leaving {
-        steps.push(Edit::Remove { index: u32::try_from(index).ok()?, id: work.remove(index) });
+        steps.push(Edit::Remove { index: at(index), id: work.remove(index) });
     }
     let placing: BTreeSet<String> = diff.inserted.iter().chain(&diff.moved).map(ToString::to_string).collect();
     for (position, row) in new.iter().enumerate().filter(|(_, row)| placing.contains(&row.id)) {
@@ -387,19 +378,19 @@ fn edits(old: &[StreamRow], new: &[StreamRow], diff: &Diff) -> Option<Vec<Edit>>
             work.remove(from);
         }
         let to = match position.checked_sub(1) {
-            Some(before) => work.iter().position(|id| *id == new[before].id)? + 1,
+            Some(before) => work.iter().position(|id| *id == new[before].id).map_or(0, |before| before + 1),
             None => 0,
         };
         work.insert(to, row.id.clone());
         match from {
-            Some(from) if from != to => steps.push(Edit::Move { from: u32::try_from(from).ok()?, to: u32::try_from(to).ok()? }),
+            Some(from) if from != to => steps.push(Edit::Move { from: at(from), to: at(to) }),
             Some(_) => {}
-            None => steps.push(Edit::Insert { index: u32::try_from(to).ok()?, row: row.clone() }),
+            None => steps.push(Edit::Insert { index: at(to), row: row.clone() }),
         }
     }
     let rewritten: BTreeSet<String> = diff.updated.iter().chain(diff.replaced.iter().map(|(_, to)| to)).map(ToString::to_string).collect();
     for (position, row) in new.iter().enumerate().filter(|(_, row)| rewritten.contains(&row.id)) {
-        steps.push(Edit::Rewrite { index: u32::try_from(position).ok()?, row: row.clone() });
+        steps.push(Edit::Rewrite { index: at(position), row: row.clone() });
     }
-    (work.iter().eq(new.iter().map(|row| &row.id))).then_some(steps)
+    steps
 }

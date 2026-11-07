@@ -104,9 +104,21 @@ pub(super) enum Input {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) enum Ed {
+    Insert { index: u32, id: String },
+    Rewrite { index: u32, id: String },
+    Remove { index: u32, id: String },
+    Move { from: u32, to: u32 },
+}
+
+pub(super) fn insert(index: u32, id: &str) -> Ed { Ed::Insert { index, id: id.to_string() } }
+
+pub(super) fn remove(index: u32, id: &str) -> Ed { Ed::Remove { index, id: id.to_string() } }
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) enum Val {
     Snapshot { revision: i64, rows: Vec<String>, state: Ws },
-    Delta { base: i64, revision: i64, size: usize, upserted: Vec<String>, removed: Vec<String>, state: Ws },
+    Delta { base: i64, revision: i64, size: usize, edits: Vec<Ed>, state: Ws },
     Count { revision: i64, count: u64, state: Ws },
     State { revision: i64, state: Ws },
     Ready,
@@ -254,7 +266,7 @@ impl Delivery {
             Val::Snapshot { revision, rows, state } => Val::Snapshot { revision, rows, state: self.shown(state) },
             Val::Count { revision, count, state } => Val::Count { revision, count, state: self.shown(state) },
             Val::State { revision, state } => Val::State { revision, state: self.shown(state) },
-            Val::Delta { base, revision, size, upserted, removed, state } => Val::Delta { base, revision, size, upserted, removed, state: self.shown(state) },
+            Val::Delta { base, revision, size, edits, state } => Val::Delta { base, revision, size, edits, state: self.shown(state) },
             other => other,
         };
         let was_empty = self.journal.is_empty();

@@ -35,25 +35,11 @@ pub struct Diff {
     pub replaced: Vec<(RowId, RowId)>,
     pub renamed: Vec<(RowId, RowId)>,
     pub at: BTreeMap<RowId, usize>,
-    pub was: BTreeMap<RowId, usize>,
 }
 
 impl Diff {
     pub fn is_empty(&self) -> bool {
         self.inserted.is_empty() && self.removed.is_empty() && self.updated.is_empty() && self.moved.is_empty() && self.replaced.is_empty()
-    }
-
-    pub fn inserting<E: Borrow<Entry>>(entries: &[E], replaced: &[(RowId, RowId)]) -> Self {
-        let inserted: Vec<RowId> = entries.iter().map(|entry| entry_of(entry).id.clone()).collect();
-        let at: BTreeMap<RowId, usize> = inserted.iter().cloned().enumerate().map(|(index, id)| (id, index)).collect();
-        let renamed = replaced.iter().filter(|(from, to)| at.contains_key(to) && !at.contains_key(from)).cloned().collect();
-        Self { inserted, at, renamed, ..Self::default() }
-    }
-
-    pub fn placed(&self) -> Vec<(RowId, usize)> {
-        let mut placed: Vec<(RowId, usize)> = self.inserted.iter().chain(&self.moved).map(|id| (id.clone(), self.at[id])).collect();
-        placed.sort_by_key(|(_, index)| *index);
-        placed
     }
 
     pub fn between<E: Borrow<Entry>>(old: &[E], new: &[E], replaced: &[(RowId, RowId)]) -> Self {
@@ -98,8 +84,6 @@ impl Diff {
         let mut moved: Vec<usize> = common.iter().enumerate().filter(|(index, _)| !stable.contains(index)).map(|(_, position)| *position).collect();
         moved.sort_unstable();
         diff.moved = moved.into_iter().map(|position| entry_of(&new[position]).id.clone()).collect();
-        let leaving: HashSet<&RowId> = diff.removed.iter().chain(&diff.moved).chain(diff.replaced.iter().map(|(_, to)| to)).collect();
-        diff.was = old.iter().enumerate().map(|(index, entry)| (canonical(&entry_of(entry).id), index)).filter(|(id, _)| leaving.contains(id)).collect();
         let replaced_to = diff.replaced.iter().map(|(_, to)| to);
         diff.at = diff.inserted.iter().chain(&diff.updated).chain(&diff.moved).chain(replaced_to).map(|id| (id.clone(), new_position[id])).collect();
         diff
