@@ -9,7 +9,7 @@ use crate::identity::Generation;
 use crate::owners::calls::CallsInput;
 use crate::owners::contract::{Drained, NetworkEvent, Online, PublishedState};
 use crate::owners::lifecycle::{Lifecycle, LifecycleEffect, LifecycleInput, Peer};
-use crate::owners::network::{Network, NetworkEffect, NetworkInput};
+use crate::owners::network::{Network, NetworkEffect};
 use crate::owners::read::deliveries::DeliveryInput;
 use crate::owners::read::feed::FeedInput;
 use crate::owners::read::windows::WindowsInput;
