@@ -336,31 +336,37 @@ impl Database {
     /// The copy URL and the processing `uploads[action]` of the row shows, read from the row like the row streams read it.
     fn row_upload(&self, model: &str, id: &str, action: &str) -> (Option<String>, Option<WireProcessing>) {
         let Ok(id) = crate::identity::RowId::new(id) else { return (None, None) };
+        #[cfg(test)]
+        self.shows.note_read();
         let row = crate::blocking::blocking_unit(|| self.db.find(model, &id));
         let upload = row.ok().flatten().and_then(|row| row.sync.uploads.get(action).map(super::wire::upload));
         upload.map_or((None, None), |upload| (upload.local_url, upload.processing))
     }
 
-    /// Hands the status of the transfer of a row and action to the stream at each change of the transfer and each commit.
+    /// Hands the status of the transfer of a row and action to the stream at each change of the transfer and each commit of its row.
     fn watch_status(&self, stream: u64, model: &str, id: &str, action: &str) -> Option<tokio::task::AbortHandle> {
         let (database, shows, life) = (self.clone(), self.shows.clone(), Arc::downgrade(&self.life));
         let (key, model, id, action) = (crate::store::transfer_key(model, id, action), model.to_string(), id.to_string(), action.to_string());
-        let (mut changes, mut commits) = (shows.watch(), shows.watch_commits());
+        let (mut changes, mut row_commits) = (shows.watch(), shows.watch_row(crate::store::ddl::table_name(&model), id.clone()));
         let launch = self.life.launch();
         let task = crate::task::spawn_on(crate::task::Carry::Detached, super::database::executor().ok()?.handle(), crate::runtime::counted(Some(launch), async move {
             let mut last = None;
+            let mut row_seen = true;
+            let mut upload = (None, None);
             loop {
                 changes.borrow_and_update();
-                commits.borrow_and_update();
+                row_commits.borrow_and_update();
                 let Some(life) = life.upgrade() else { return };
-                let (local_url, processing) = database.row_upload(&model, &id, &action);
-                let next = BlobStatus { local_url, processing, ..shows.status(&key).blob_status() };
+                if std::mem::take(&mut row_seen) {
+                    upload = database.row_upload(&model, &id, &action);
+                }
+                let next = BlobStatus { local_url: upload.0.clone(), processing: upload.1.clone(), ..shows.status(&key).blob_status() };
                 if last.as_ref() != Some(&next) {
                     life.push_status(stream, next.clone());
                     last = Some(next);
                 }
                 drop(life);
-                let ended = tokio::select! { moved = changes.changed() => moved.is_err(), moved = commits.changed() => moved.is_err() };
+                let ended = tokio::select! { moved = changes.changed() => moved.is_err(), moved = row_commits.changed() => { row_seen = true; moved.is_err() } };
                 if ended { return; }
             }
         }));

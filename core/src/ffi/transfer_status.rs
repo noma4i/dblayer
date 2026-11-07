@@ -56,11 +56,14 @@ impl WireTransferStatus {
 pub(super) struct Shows {
     map: Mutex<HashMap<String, Shown>>,
     changed: watch::Sender<u64>,
-    commits: watch::Sender<u64>,
+    /// One counter per open `Blob` stream row: `(table, row id)` to the counter its commits move.
+    rows: Mutex<HashMap<(String, String), watch::Sender<u64>>>,
+    #[cfg(test)]
+    reads: std::sync::atomic::AtomicUsize,
 }
 
 impl Default for Shows {
-    fn default() -> Self { Self { map: Mutex::default(), changed: watch::channel(0).0, commits: watch::channel(0).0 } }
+    fn default() -> Self { Self { map: Mutex::default(), changed: watch::channel(0).0, rows: Mutex::default(), #[cfg(test)] reads: std::sync::atomic::AtomicUsize::new(0) } }
 }
 
 impl Shows {
@@ -71,9 +74,30 @@ impl Shows {
 
     pub(super) fn status(&self, key: &str) -> WireTransferStatus { WireTransferStatus::of(key, crate::lock::lock(&self.map).get(key)) }
 
-    pub(super) fn touch(&self) { crate::lock::effect(|| self.commits.send_modify(|count| *count += 1)); }
+    /// Moves the counter of each watched row the commit changed: `None` = every row of the tables.
+    pub(super) fn touch(&self, changed: &crate::owners::contract::ChangedRows) {
+        let hit: Vec<watch::Sender<u64>> = {
+            let mut rows = crate::lock::lock(&self.rows);
+            rows.retain(|_, sender| sender.receiver_count() > 0);
+            match changed {
+                None => rows.values().cloned().collect(),
+                Some(changed) => changed.iter().filter_map(|key| rows.get(key).cloned()).collect(),
+            }
+        };
+        for sender in hit {
+            crate::lock::effect(|| sender.send_modify(|count| *count += 1));
+        }
+    }
 
-    pub(super) fn watch_commits(&self) -> watch::Receiver<u64> { self.commits.subscribe() }
+    pub(super) fn watch_row(&self, table: String, row: String) -> watch::Receiver<u64> {
+        crate::lock::lock(&self.rows).entry((table, row)).or_insert_with(|| watch::channel(0).0).subscribe()
+    }
+
+    #[cfg(test)]
+    pub(super) fn note_read(&self) { self.reads.fetch_add(1, std::sync::atomic::Ordering::SeqCst); }
+
+    #[cfg(test)]
+    pub(crate) fn row_reads(&self) -> usize { self.reads.load(std::sync::atomic::Ordering::SeqCst) }
 
     pub(super) fn watch(&self) -> watch::Receiver<u64> { self.changed.subscribe() }
 }
