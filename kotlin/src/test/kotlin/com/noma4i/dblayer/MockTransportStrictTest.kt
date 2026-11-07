@@ -5,9 +5,7 @@ import com.noma4i.dblayer.models.modelsJSON
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Assert.fail
-import org.junit.Assume
 import org.junit.Test
-import org.junit.runner.JUnitCore
 
 class MockTransportStrictTest {
     private val request = TransportRequest("query Ping { ping }", "Ping", """{"page":2}""", NetworkPurpose.STANDARD)
@@ -27,9 +25,7 @@ class MockTransportStrictTest {
     }
 
     class UnansweredLoad {
-        @Test
         fun loadsWithoutAReply() = bounded {
-            Assume.assumeTrue(System.getProperty("dblayer.unansweredLoad") == "run")
             val transport = MockTransport()
             reopen(Config(null, null, 8u), modelsJSON, transport, """[{"name":"MomentsFeed","document":"query MomentsFeed(${'$'}first: Int, ${'$'}after: String) { feed(first: ${'$'}first, after: ${'$'}after) { nodes { id uuid likedByMe media createdAt } pageInfo { hasNextPage endCursor } } }"}]""")
             runCatching { Moment.feed.refresh() }
@@ -39,11 +35,7 @@ class MockTransportStrictTest {
 
     @Test
     fun anUnansweredLoadOfTheCoreFailsTheNextTouchOfAMockOnTheTestThread() {
-        System.setProperty("dblayer.unansweredLoad", "run")
-        try {
-            val result = JUnitCore().run(UnansweredLoad::class.java)
-            assertEquals(result.failures.toString(), 0, result.failureCount)
-        } finally { System.clearProperty("dblayer.unansweredLoad") }
+        UnansweredLoad().loadsWithoutAReply()
         val error = try { MockTransport(); null } catch (error: AssertionError) { error }
         assertTrue(error.toString(), error?.message?.contains("MomentsFeed") == true && error.message?.contains("UnansweredLoad") == true)
         MockTransport()
