@@ -33,8 +33,8 @@ struct UrlSessionCableTests {
     }
     await eventually("cable handshake request", timeout: .seconds(2)) { server.requests.count == 1 }
     task.cancel()
-    var finished = outcome.stream.makeAsyncIterator()
-    #expect(await finished.next() == .some(.cancelled))
+    let finished = Cursor(outcome.stream)
+    #expect(await finished.next("the handshake outcome") == .some(.cancelled))
     await eventually("cancelled handshake disconnected", timeout: .seconds(2)) { server.disconnected }
     session.invalidateAndCancel()
     await task.value
@@ -62,7 +62,7 @@ struct UrlSessionCableTests {
     func receive() async throws -> URLSessionWebSocketTask.Message {
       let next = lock.withLock { incoming.isEmpty ? nil : incoming.removeFirst() }
       guard let next else {
-        try await Task.sleep(for: .seconds(60))
+        _ = await AsyncStream<Void> { _ in }.first { _ in true }
         throw CancellationError()
       }
       return try next.get()

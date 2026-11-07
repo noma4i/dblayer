@@ -194,11 +194,12 @@ struct BridgeProbeTests {
 
     let local = try await Moment.create(text: "hello", media: nil, in: DB.account()).optimisticValue!
     var settled: String?
-    for _ in 0..<20 where settled == nil {
-      guard let value = await cursor.next("a delivery of the list") else { break }
+    await eventually("the server id replaces the temporary id") {
+      guard let value = await cursor.next("a delivery of the list") else { return true }
       if case let .delta(_, _, edits, _) = value {
         for case let .rewrite(_, row, temporary) in edits where row.id == "m77" { settled = temporary }
       }
+      return settled != nil
     }
 
     #expect(settled == local.id)

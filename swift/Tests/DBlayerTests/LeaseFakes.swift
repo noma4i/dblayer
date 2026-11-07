@@ -1,4 +1,5 @@
 import Foundation
+import Testing
 @testable import DBlayer
 
 final class RecordingEvents: CableEvents, @unchecked Sendable {
@@ -10,16 +11,16 @@ final class RecordingEvents: CableEvents, @unchecked Sendable {
   }
 
   private let stream = AsyncStream<Event>.makeStream()
-  private var iterator: AsyncStream<Event>.Iterator
+  private let cursor: Cursor<AsyncStream<Event>>
 
-  init() { iterator = stream.stream.makeAsyncIterator() }
+  init() { cursor = Cursor(stream.stream) }
 
   func frame(text: String) { stream.continuation.yield(.frame(text)) }
   func binary(bytes: Data) { stream.continuation.yield(.binary(bytes)) }
   func closed(code: UInt16, reason: String) { stream.continuation.yield(.closed(code, reason)) }
   func failed(failure: RawFailure) { stream.continuation.yield(.failed(failure.kind)) }
 
-  func next() async -> Event? { await iterator.next() }
+  func next() async -> Event? { await cursor.next("a cable event") }
 }
 
 func cableURL(_ origin: URL) -> String {
