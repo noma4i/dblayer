@@ -3,7 +3,7 @@ use std::sync::Arc;
 use serde_json::json;
 
 use super::rig_tests::{bound, Fault, Rig};
-use super::flow_fixtures::{add_chat, add_profile, add_search, add_wallet, cell, chat_row, int, land_event, text};
+use super::flow_fixtures::{one_revision, add_chat, add_profile, add_search, add_wallet, cell, chat_row, int, land_event, text};
 use crate::ffi::tape::Rows;
 use crate::ffi::wire::Cell;
 use crate::ffi::WireOperationOutcome;
@@ -68,7 +68,8 @@ async fn flow_search_follows_rows() {
     land_event(&rig, "Chat", json!({"id": "c1", "name": "renamed", "lastMessageAt": 0, "lastActivityAt": 0, "unreadCount": 0, "pinned": true, "muted": false}));
     yield_until("both lists show the event", || [&inbox, &found].iter().all(|rows| field(&rig, "Chat", rows, "c1", "name") == Some(text("renamed")))).await;
     let revisions: Vec<_> = [&inbox, &found].iter().map(|rows| first_seen_at(&rig, "Chat", rows, "c1", "name", text("renamed"))).collect();
-    assert_eq!(revisions[0], revisions[1], "the lists changed at different revisions");
+    assert!(revisions.iter().all(|revision| *revision >= 0), "a list never showed the event\ninbox: {}\nfound: {}", inbox.trace(), found.trace());
+    one_revision(&[&inbox, &found]).await;
 
     let hold = rig.world.hold_next("ChatPin");
     let receipt = bound(rig.database.act(epoch, "Chat".into(), "c1".into(), "pin".into(), json!({"pinned": false}).to_string(), json!({"pinned": false}).to_string())).await.unwrap();

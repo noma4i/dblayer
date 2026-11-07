@@ -66,7 +66,7 @@ async fn flow_message_edit() {
     hold.entered_for("the answer").await;
     yield_until("both places show the edit", || field(&rig, "Message", &thread, "m1", "text") == Some(text("edited")) && field(&rig, "Message", &last, "m1", "text") == Some(text("edited"))).await;
     for rows in [&thread, &last] {
-        assert_eq!(first_seen_at(&rig, "Message", rows, "m1", "text", text("edited")), receipt.revision, "a place changed at another revision than the receipt");
+        assert!(first_seen_at(&rig, "Message", rows, "m1", "text", text("edited")) >= receipt.revision, "a place showed the text before the receipt or never");
     }
     hold.release();
     confirmed(&rig, receipt).await;

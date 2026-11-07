@@ -300,3 +300,15 @@ fn rows_show_a_delivery_only_after_it_is_kept() {
     assert_eq!(rows.1.lock().unwrap().iter().map(|seen| seen.revision).collect::<Vec<_>>(), vec![7]);
     assert_eq!(rows.len(), 1);
 }
+
+impl Rows {
+    pub(crate) fn trace(&self) -> String {
+        let kept = self.3.lock().unwrap();
+        kept.1.iter().map(|value| match value {
+            ReadValue::Snapshot { revision, rows, .. } => format!("Snapshot@{revision}[{}]", rows.iter().map(|row| row.id.clone()).collect::<Vec<_>>().join(",")),
+            ReadValue::Delta { base, revision, edits, .. } => format!("Delta@{revision}<-{base}[{}]", edits.iter().map(|edit| match edit { RowEdit::Insert { index, row } => format!("+{index}:{}", row.id), RowEdit::Rewrite { index, row, .. } => format!("~{index}:{}", row.id), RowEdit::Remove { index, id } => format!("-{index}:{id}"), RowEdit::Move { from, to } => format!("mv{from}>{to}") }).collect::<Vec<_>>().join(",")),
+            ReadValue::State { revision, .. } => format!("State@{revision}"),
+            other => format!("{other:?}").chars().take(40).collect(),
+        }).collect::<Vec<_>>().join(" | ")
+    }
+}

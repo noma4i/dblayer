@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use serde_json::{json, Value};
 
-use super::flow_fixtures::{add_chat, cell, chat_row, land_event, land_owned};
+use super::flow_fixtures::{add_chat, cell, chat_row, land_event, land_owned, one_revision};
 use crate::ffi::wire::Cell;
 use super::rig_tests::{bound, Fault, Rig, World};
 use super::upload_fixtures::add_uploads;
@@ -138,7 +138,8 @@ async fn xfer_prop_upload_state_reaches_row_streams() {
     hold.entered_for("the file in the network").await;
     yield_until("both places show the queued upload", || [&chat, &list].iter().all(|rows| status(rows, "c1", "update_photo") == Some(WireUploadStatus::Queued))).await;
     let first = |rows: &Rows| rows.1.lock().unwrap().iter().find(|seen| seen.rows.iter().any(|row| row.uploads.iter().any(|entry| entry.action == "update_photo"))).map(|seen| seen.revision);
-    assert!(first(&chat).is_some() && first(&chat) == first(&list), "the places showed the upload at different revisions {:?} {:?}", first(&chat), first(&list));
+    assert!(first(&chat).is_some() && first(&list).is_some(), "a place never showed the upload {:?} {:?}", first(&chat), first(&list));
+    one_revision(&[&chat, &list]).await;
     hold.release();
     assert!(matches!(bound(rig.database.outcome(receipt)).await.unwrap(), WireOperationOutcome::Confirmed { .. }));
     yield_until("both places end the upload", || [&chat, &list].iter().all(|rows| status(rows, "c1", "update_photo").is_none())).await;

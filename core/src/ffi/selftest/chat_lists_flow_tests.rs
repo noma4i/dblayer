@@ -3,7 +3,7 @@ use std::sync::Arc;
 use serde_json::json;
 
 use super::rig_tests::{bound, Rig};
-use super::flow_fixtures::{add_chat, add_lists, add_profile, cell, land_event, text};
+use super::flow_fixtures::{one_revision, add_chat, add_lists, add_profile, cell, land_event, text};
 use crate::ffi::tape::Rows;
 use crate::ffi::wire::Cell;
 use crate::ffi::WireOperationOutcome;
@@ -81,7 +81,8 @@ async fn flow_group_name_logo() {
     hold.entered_for("the answer").await;
     yield_until("both places show the new name", || [&list, &entity].iter().all(|rows| names(&rig, rows) == [("c1".to_string(), text("new"))])).await;
     let revisions: Vec<_> = [&list, &entity].iter().map(|rows| rows.1.lock().unwrap().iter().find(|seen| seen.rows.iter().any(|row| cell(&rig, "Chat", row, "name") == text("new"))).map(|seen| seen.revision)).collect();
-    assert!(revisions[0] == revisions[1] && revisions[0].is_some_and(|revision| revision >= receipt.revision), "the places changed at different revisions {revisions:?}");
+    assert!(revisions.iter().all(|revision| revision.is_some_and(|revision| revision >= receipt.revision)), "a place showed the name before the receipt or never {revisions:?}");
+    one_revision(&[&list, &entity]).await;
     hold.release();
     assert!(matches!(bound(rig.database.outcome(receipt)).await.unwrap(), WireOperationOutcome::Confirmed { .. }));
     rig.settle().await;

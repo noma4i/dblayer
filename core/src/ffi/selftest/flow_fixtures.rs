@@ -298,3 +298,11 @@ pub(super) fn add_lists(models: &mut Value) {
     update.args.insert("name".into(), "string".into());
     chat["actions"].as_array_mut().unwrap().push(serde_json::to_value(update).unwrap());
 }
+
+/// Places that hold the same change end on one revision: a reader that pulls after a second commit takes both commits in one value at the revision of the last (P-DLV-17, dlv_live_read_unacknowledged), so the first revision of a change is only bounded below by its commit.
+pub(super) async fn one_revision(places: &[&crate::ffi::tape::Rows]) {
+    crate::test_wait::yield_until("every place ends on one revision", || {
+        let last: Vec<Option<i64>> = places.iter().map(|rows| rows.last().map(|seen| seen.revision)).collect();
+        last[0].is_some() && last.iter().all(|revision| *revision == last[0])
+    }).await
+}

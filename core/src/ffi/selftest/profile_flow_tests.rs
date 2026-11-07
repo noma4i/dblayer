@@ -4,7 +4,7 @@ use serde_json::json;
 
 use super::rig_tests::{bound, Fault, Rig};
 use super::rig_held::Held;
-use super::flow_fixtures::{add_chat, add_profile, cell, int, land_event, text};
+use super::flow_fixtures::{one_revision, add_chat, add_profile, cell, int, land_event, text};
 use crate::ffi::tape::Rows;
 use crate::ffi::wire::Cell;
 use crate::ffi::WireOperationOutcome;
@@ -46,7 +46,8 @@ async fn flow_current_user_profile() {
     hold.entered_for("the answer").await;
     yield_until("every place shows the new name", || places.iter().all(|rows| field(&rig, rows, "user", "name") == Some(text("New")))).await;
     let revisions: Vec<_> = places.iter().map(|rows| first_seen_at(&rig, rows, "user", "name", text("New"))).collect();
-    assert!(revisions.iter().all(|revision| *revision == revisions[0] && *revision >= receipt.revision), "the places changed at different revisions {revisions:?}, receipt {}", receipt.revision);
+    assert!(revisions.iter().all(|revision| *revision >= receipt.revision), "a place showed the name before the receipt or never {revisions:?}, receipt {}", receipt.revision);
+    one_revision(&places.map(|rows| &**rows)).await;
     hold.release();
     assert!(matches!(bound(rig.database.outcome(receipt)).await.unwrap(), WireOperationOutcome::Confirmed { .. }));
     rig.settle().await;
@@ -85,7 +86,7 @@ async fn flow_connection_accept() {
     let receipt = bound(rig.database.act(epoch, "User".into(), "u5".into(), "answer_connection".into(), json!({"connectionStatus": "CONNECTED"}).to_string(), json!({"chatId": "c1"}).to_string())).await.unwrap();
     hold.entered_for("the answer").await;
     yield_until("the user shows as connected", || field(&rig, &people, "u5", "connectionStatus") == Some(text("CONNECTED"))).await;
-    assert_eq!(first_seen_at(&rig, &people, "u5", "connectionStatus", text("CONNECTED")), receipt.revision, "the user changed at another revision than the receipt");
+    assert!(first_seen_at(&rig, &people, "u5", "connectionStatus", text("CONNECTED")) >= receipt.revision, "the user showed the status before the receipt or never");
     rig.world.set_profile(json!({"secondaryChatsCount": 2, "unreadSecondaryChatsCount": 1}));
     hold.release();
     assert!(matches!(bound(rig.database.outcome(receipt)).await.unwrap(), WireOperationOutcome::Confirmed { .. }));

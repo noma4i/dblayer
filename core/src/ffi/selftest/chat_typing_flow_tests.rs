@@ -3,7 +3,7 @@ use std::sync::Arc;
 use serde_json::json;
 
 use super::rig_tests::{bound, Rig, World};
-use super::flow_fixtures::{add_chat, add_typing, land_event, land_owned};
+use super::flow_fixtures::{one_revision, add_chat, add_typing, land_event, land_owned};
 use crate::ffi::tape::Rows;
 use crate::test_wait::yield_until;
 
@@ -28,7 +28,8 @@ async fn flow_chat_typing() {
     let receipt = bound(rig.database.create(epoch, "ChatAction".into(), json!({"id": "c1:u1", "chatId": "c1", "userId": "u1", "kind": "typing"}).to_string(), "{}".into())).await.unwrap();
     yield_until("both places show the typing user", || places.iter().all(|rows| rows.len() == 1)).await;
     let revisions: Vec<_> = places.iter().map(|rows| rows.1.lock().unwrap().iter().find(|seen| !seen.rows.is_empty()).map(|seen| seen.revision)).collect();
-    assert!(revisions.iter().all(|revision| *revision == revisions[0] && revision.is_some_and(|revision| revision >= receipt.revision)), "the places showed the row at different revisions {revisions:?}");
+    assert!(revisions.iter().all(|revision| revision.is_some_and(|revision| revision >= receipt.revision)), "a place showed the row before the receipt or never {revisions:?}");
+    one_revision(&[&header, &row]).await;
 
     bound(rig.database.destroy(epoch, "ChatAction".into(), "c1:u1".into())).await.unwrap();
     yield_until("a destroy empties both places", || places.iter().all(|rows| rows.len() == 0)).await;

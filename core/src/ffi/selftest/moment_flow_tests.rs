@@ -3,7 +3,7 @@ use std::sync::Arc;
 use serde_json::{json, Value};
 
 use super::rig_tests::{bound, Fault, Rig};
-use super::flow_fixtures::{add_chat, add_moment, add_profile, cell, int, land_delete, land_event};
+use super::flow_fixtures::{one_revision, add_chat, add_moment, add_profile, cell, int, land_delete, land_event};
 use super::upload_fixtures::add_moment_file;
 use crate::ffi::command::{CommandRequest, CommandUpload};
 use crate::ffi::upload_wire::WireUploadRequest;
@@ -40,9 +40,11 @@ fn first_seen_at(rig: &Rig, rows: &Rows, id: &str, name: &str, value: Cell) -> i
 
 fn moment(id: &str, user: &str, visits: i64, unread: i64) -> Value { json!({"id": id, "userId": user, "text": id, "reacted": false, "visitsCount": visits, "unreadSimilarMomentsCount": unread}) }
 
-fn same_revision(rig: &Rig, places: &[&Arc<Rows>], id: &str, name: &str, value: Cell, floor: i64) {
+async fn same_revision(rig: &Rig, places: &[&Arc<Rows>], id: &str, name: &str, value: Cell, floor: i64) {
     let revisions: Vec<_> = places.iter().map(|rows| first_seen_at(rig, rows, id, name, value.clone())).collect();
-    assert!(revisions.iter().all(|revision| *revision == revisions[0] && *revision >= floor), "the lists changed at different revisions {revisions:?}, floor {floor}");
+    assert!(revisions.iter().all(|revision| *revision >= floor), "a list showed the change before its commit {revisions:?}, floor {floor}\n{}", places.iter().map(|rows| rows.trace()).collect::<Vec<_>>().join("\n"));
+    let rows: Vec<&Rows> = places.iter().map(|rows| &***rows).collect();
+    one_revision(&rows).await;
 }
 
 /// P-APP-22: a reaction changes the counter in every list of moments at one revision on the local write, the answer and an event.
@@ -60,7 +62,7 @@ async fn flow_moment_reaction() {
     let receipt = bound(rig.database.act(epoch, "Moment".into(), "m1".into(), "react".into(), json!({"reacted": true, "visitsCount": 3}).to_string(), "{}".into())).await.unwrap();
     hold.entered_for("the answer").await;
     yield_until("every list shows 3", || places.iter().all(|rows| field(&rig, rows, "m1", "visitsCount") == Some(int(3)))).await;
-    same_revision(&rig, &places, "m1", "visitsCount", int(3), receipt.revision);
+    same_revision(&rig, &places, "m1", "visitsCount", int(3), receipt.revision).await;
     let floor = receipt.revision;
     hold.release();
     assert!(matches!(bound(rig.database.outcome(receipt)).await.unwrap(), WireOperationOutcome::Confirmed { .. }));
@@ -69,7 +71,7 @@ async fn flow_moment_reaction() {
 
     land_event(&rig, "Moment", moment("m1", "u1", 4, 0));
     yield_until("an event sets 4 in every list", || places.iter().all(|rows| field(&rig, rows, "m1", "visitsCount") == Some(int(4)))).await;
-    same_revision(&rig, &places, "m1", "visitsCount", int(4), floor);
+    same_revision(&rig, &places, "m1", "visitsCount", int(4), floor).await;
     rig.database.close_now();
 }
 
@@ -94,7 +96,7 @@ async fn flow_compass_unread() {
     let receipt = bound(rig.database.act(epoch, "Moment".into(), "m1".into(), "read_compass".into(), json!({"unreadSimilarMomentsCount": 0}).to_string(), "{}".into())).await.unwrap();
     hold.entered_for("the answer").await;
     yield_until("m1 sank below m2", || ids(&compass) == ["m2", "m1"]).await;
-    same_revision(&rig, &[&compass], "m1", "unreadSimilarMomentsCount", int(0), receipt.revision);
+    same_revision(&rig, &[&compass], "m1", "unreadSimilarMomentsCount", int(0), receipt.revision).await;
     rig.world.set_profile(json!({"unreadCompassCount": 1}));
     hold.release();
     assert!(matches!(bound(rig.database.outcome(receipt)).await.unwrap(), WireOperationOutcome::Confirmed { .. }));

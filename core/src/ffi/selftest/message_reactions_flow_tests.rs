@@ -4,7 +4,7 @@ use serde_json::{json, Value};
 
 use super::rig_tests::{bound, Fault, Rig, World};
 use super::rig_models::add_reactions;
-use super::flow_fixtures::{add_chat, add_reactor_user, cell, chat_row, land_delete, land_event, texts};
+use super::flow_fixtures::{one_revision, add_chat, add_reactor_user, cell, chat_row, land_delete, land_event, texts};
 use crate::ffi::tape::Rows;
 use crate::ffi::{ReadFetch, ReadRequest, WireOperationOutcome};
 use crate::test_wait::yield_until;
@@ -44,8 +44,9 @@ async fn flow_message_reactions() {
     yield_until("both places show the new reaction with the name of the reactor", || has(&rig, &thread, &["A", "Ann"]) && has(&rig, &entity, &["A", "Ann"])).await;
     for rows in [&thread, &entity] {
         let first = rows.1.lock().unwrap().iter().find(|seen| seen.rows.iter().any(|row| texts(&cell(&rig, "Message", row, "reactions")).contains(&"A".to_string()))).map(|seen| seen.revision);
-        assert_eq!(first, Some(receipt.revision), "a place changed at another revision than the receipt");
+        assert!(first.is_some_and(|revision| revision >= receipt.revision), "a place showed the reaction before the receipt or never: {first:?}");
     }
+    one_revision(&[&thread, &entity]).await;
     hold.release();
     assert!(matches!(bound(rig.database.outcome(receipt)).await.unwrap(), WireOperationOutcome::Confirmed { .. }));
     rig.settle().await;

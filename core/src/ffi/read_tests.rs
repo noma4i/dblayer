@@ -212,3 +212,37 @@ async fn data_query_limit_offset() {
     assert!(matches!(next(&stream).await, ReadValue::Ended { cause: ReadEnd::Invalid }), "a zero limit");
     crate::test_wait::within(db.close_database()).await.unwrap();
 }
+
+async fn settled(db: &Arc<Database>) {
+    let life = db.life_handle();
+    assert!(crate::test_wait::within(tokio::task::spawn_blocking(move || life.barrier(Duration::from_secs(5)))).await.unwrap());
+}
+
+fn delta_at(value: ReadValue) -> (i64, i64) {
+    match value {
+        ReadValue::Delta { base, revision, edits, .. } => { assert_eq!(ids(&RowEdit::carried(&edits)), ["n1"]); (base, revision) }
+        other => panic!("a delta of n1 expected: {other:?}"),
+    }
+}
+
+/// dlv_live_read_unacknowledged (P-DLV-17): a reader that pulls after a second commit takes one delta at the revision of the last commit, a reader that pulled between the commits saw both revisions: lists of one row differ in the first revision of a change and end on one.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_pull_after_a_second_commit_takes_one_delta_at_the_last_revision() {
+    let db = open().await;
+    let epoch = db.session_epoch();
+    db.create(epoch, "Note".into(), r#"{"id":"n1","text":"one"}"#.into(), "{}".into()).await.unwrap();
+    let query = || ReadRequest::List { query: crate::ffi::QuerySpec::json(r#"{"model":"Note"}"#) };
+    let (early, late) = (db.subscribe_values(epoch, query()), db.subscribe_values(epoch, query()));
+    for stream in [&early, &late] { assert!(matches!(crate::test_wait::within(stream.pull()).await, Some(ReadValue::Snapshot { .. }))); }
+
+    db.update(epoch, "Note".into(), "n1".into(), r#"{"text":"two"}"#.into(), "{}".into()).await.unwrap();
+    settled(&db).await;
+    let (base, first) = delta_at(crate::test_wait::within(early.pull()).await.unwrap());
+    db.update(epoch, "Note".into(), "n1".into(), r#"{"text":"three"}"#.into(), "{}".into()).await.unwrap();
+    settled(&db).await;
+
+    let (late_base, last) = delta_at(crate::test_wait::within(late.pull()).await.unwrap());
+    let (early_base, early_last) = delta_at(crate::test_wait::within(early.pull()).await.unwrap());
+    assert!(first > base && last > first, "two commits, two revisions: {base} {first} {last}");
+    assert_eq!((late_base, early_base, early_last), (base, first, last), "the late reader skipped the revision between: one delta from the snapshot to the last commit");
+}

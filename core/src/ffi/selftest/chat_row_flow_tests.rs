@@ -57,7 +57,7 @@ async fn flow_chat_pin_mute() {
         hold.entered_for("the answer").await;
         yield_until("the marked list shows the chat", || marked.len() == 1).await;
         yield_until("the row of the list shows the flag", || field(&rig, &all, "c1", name) == Some(on.clone())).await;
-        assert_eq!(first_seen_at(&rig, &marked, "c1", name, on.clone()), receipt.revision, "{action}: the marked list changed at another revision than the receipt");
+        assert!(first_seen_at(&rig, &marked, "c1", name, on.clone()) >= receipt.revision, "{action}: the marked list showed the mark before the receipt or never");
         hold.release();
         assert!(matches!(bound(rig.database.outcome(receipt)).await.unwrap(), WireOperationOutcome::Confirmed { .. }), "{action}");
         rig.settle().await;
@@ -90,7 +90,7 @@ async fn flow_chat_unread_counters() {
     let receipt = act(&rig, "mark_read", json!({"unreadCount": 0}), json!({})).await;
     hold.entered_for("the answer").await;
     yield_until("the badge is zero", || field(&rig, &all, "c1", "unreadCount") == Some(int(0))).await;
-    assert_eq!(first_seen_at(&rig, &all, "c1", "unreadCount", int(0)), receipt.revision, "the badge changed at another revision than the receipt");
+    assert!(first_seen_at(&rig, &all, "c1", "unreadCount", int(0)) >= receipt.revision, "the badge showed 0 before the receipt or never");
     hold.release();
     assert!(matches!(bound(rig.database.outcome(receipt)).await.unwrap(), WireOperationOutcome::Confirmed { .. }));
     rig.settle().await;
