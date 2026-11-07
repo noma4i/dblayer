@@ -5,7 +5,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use super::ref_lifecycle::Cause as RefCause;
 use super::ref_store::{Action, Batch, Boot, Open, Reason, Request, Store as Ref};
-use crate::owners::contract::{BatchAuthor, EpochEnded, Published, PublishedState, RejectReason};
+use crate::owners::contract::{BatchAuthor, EpochEnded, Models, Published, PublishedState, RejectReason};
 use crate::owners::store::{BootFound, Done, StoreBatch, StoreEffect, StoreInput, StoreMode, StoreReply, StoreState, StoreWriter, WriteDone};
 use crate::spec::support::{new_log, take, Log, Recorder};
 use crate::runtime::{Address, Cause, DetScheduler, EpochStamp};
@@ -46,7 +46,7 @@ fn action_of(effect: &StoreEffect) -> Option<Action> {
         StoreEffect::ClearFailed { erase_id, error } => Action::ClearFailed { erase_id: *erase_id, closed: error == "closed" },
         StoreEffect::Saved { publication_id } => Action::Saved(*publication_id),
         StoreEffect::SaveFailed { publication_id, error } => Action::SaveFailed { publication_id: *publication_id, closed: error == "closed" },
-        StoreEffect::BroadcastCommitted { revision, models, rows, .. } => Action::BroadcastCommitted { revision: *revision, all: models.is_none(), rows: rows.clone() },
+        StoreEffect::BroadcastCommitted(notice) => Action::BroadcastCommitted { revision: notice.revision, all: notice.models == Models::All, tables: notice.tables.iter().cloned().collect(), models: match &notice.models { Models::All => BTreeSet::new(), Models::Set(models) => models.clone() }, rows: notice.rows.clone() },
         StoreEffect::ReadIntents { epoch, direct } => Action::ReadIntents { epoch: *epoch, direct: *direct },
         StoreEffect::CloseReads => Action::CloseReads,
         StoreEffect::CloseConnections => Action::CloseConnections,
@@ -121,6 +121,13 @@ impl Twin {
         raw
     }
 
+    /// What SQLite reports for the batch `id`: the tables and rows the batch wrote.
+    fn notice_of(&self, id: u64, revision: u64) -> crate::owners::contract::CommittedBroadcast {
+        let rows = self.committing.get(&id).cloned().unwrap_or_default();
+        let models: BTreeSet<String> = rows.iter().map(|(model, _)| model.clone()).collect();
+        crate::owners::contract::CommittedBroadcast { revision, tables: models.iter().map(|model| format!("row_{model}")).collect(), rows: Some(rows.into_iter().map(|(model, row)| (format!("row_{model}"), row)).collect()), models: Models::Set(models), position: 0 }
+    }
+
     fn state(&self) -> &StoreState { self.det.state(self.addr).expect("the owner state") }
 
     fn input_of(&self, request: &Request) -> StoreInput {
@@ -132,7 +139,7 @@ impl Twin {
             Request::EpochEnded { epoch } => StoreInput::EpochEnded(EpochEnded { epoch, cause: Cause::SessionReset }),
             Request::ReadIntents { epoch } => StoreInput::ReadIntents { epoch },
             Request::Close => StoreInput::Close,
-            Request::Written { id, result } => StoreInput::Written { author: BatchAuthor::Outbox, batch: id, result: result.map(|revision| WriteDone { revision, rows: self.committing.get(&id).cloned(), ..WriteDone::default() }).map_err(|()| crate::owners::contract::RejectReason::Storage(DISK.into())) },
+            Request::Written { id, result } => StoreInput::Written { author: BatchAuthor::Outbox, batch: id, result: result.map(|revision| WriteDone { revision, notice: self.notice_of(id, revision), ..WriteDone::default() }).map_err(|()| crate::owners::contract::RejectReason::Storage(DISK.into())) },
             Request::Erased { io_id, result } => StoreInput::Erased { io_id, result: result.map(|revision| Done { revision }).map_err(|()| DISK.into()) },
             Request::ReadsClosed(ids) => StoreInput::ReadsClosed { ids },
             Request::ReadFinished(read_id) => StoreInput::ReadFinished { read_id },

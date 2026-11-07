@@ -10,7 +10,8 @@ use super::windows::{WindowKey, Windows};
 use super::feed::Feed;
 use super::{DbSnapshots, Snapshots};
 use crate::store::ddl::table_name;
-use crate::owners::contract::{ChangedRows, Committed, Models};
+use crate::owners::contract::{ChangedRows, Committed, CommittedBroadcast, Models};
+use crate::spec::ref_delivery_fanout::{self as r, Fanout, Stream, Watched};
 use crate::store::query::Query;
 use crate::runtime::{Address, Effect, Outcomes, StateOwner};
 use crate::schema::{FieldSpec, ModelSpec};
@@ -20,7 +21,7 @@ use crate::value::ScalarKind;
 
 const EPOCH: u64 = 1;
 
-type Notice = (i64, Vec<String>, u64, ChangedRows);
+type Notice = CommittedBroadcast;
 
 fn model(index: usize) -> String { format!("t{index}") }
 
@@ -54,7 +55,7 @@ impl Work {
         let db = Arc::new(Store::open_models(None, (0..models).map(spec).collect(), None).unwrap());
         let notices = Arc::new(Mutex::new(Vec::new()));
         let sink = notices.clone();
-        db.on_commit(move |notice| sink.lock().unwrap().push((notice.revision, notice.tables, notice.position, notice.rows))).unwrap();
+        db.on_commit(move |notice| sink.lock().unwrap().push(notice)).unwrap();
         let peers = DeliveryPeers { windows: Address::<Windows>::new(0), feed: Address::<Feed>::new(1) };
         Self { snapshots: DbSnapshots::new(db.clone()), db, state: DeliveriesState::new(EPOCH, peers), notices }
     }
@@ -81,8 +82,8 @@ impl Work {
     fn put(&self, index: usize, id: &str, text: &str) { put(&self.db, &model(index), json!({"id": id, "text": text})); }
 
     fn commit(&mut self) {
-        let (revision, tables, position, rows) = self.notices.lock().unwrap().pop().expect("the write announced its commit");
-        self.feed(DeliveryInput::Committed(Committed { batch: 0, revision, tables, rows, models: Models::default(), stale_parents: Vec::new(), position }));
+        let notice = self.notices.lock().unwrap().pop().expect("the write announced its commit");
+        self.feed(DeliveryInput::Committed(notice.for_deliveries()));
     }
 
     fn pull(&mut self, stream: StreamId) { self.feed(DeliveryInput::Pull { stream, outcome: Outcomes::<d::PullAnswer>::new().register(EPOCH).id() }); }
@@ -160,8 +161,8 @@ fn dlv_streams_of_one_commit_deliver_independently() {
     let (all_before, marked_before) = (work.state.journal_len(1), work.state.journal_len(2));
 
     work.put(0, "r0", "new");
-    let (revision, tables, position, rows) = work.notices.lock().unwrap().pop().expect("the write announced its commit");
-    let reads = work.step(DeliveryInput::Committed(Committed { batch: 0, revision, tables, rows, models: Models::default(), stale_parents: Vec::new(), position }));
+    let notice = work.notices.lock().unwrap().pop().expect("the write announced its commit");
+    let reads = work.step(DeliveryInput::Committed(notice.for_deliveries()));
     assert_eq!(reads.iter().map(|read| read.stream).collect::<Vec<_>>(), [1, 2], "one commit asks both streams to read");
     let mut reads = reads.into_iter();
     let (all_read, marked_read) = (reads.next().unwrap(), reads.next().unwrap());
@@ -193,4 +194,83 @@ fn dlv_committed_rows_select_the_entity_streams_of_those_rows() {
 
     let reads = work.step(committed(101, None));
     assert_eq!(reads.iter().map(|read| read.stream).collect::<Vec<_>>(), [1, 2], "a commit without a row list reads every Entity stream of its tables");
+}
+
+fn linked_entity_view(index: usize, row: &str, target: usize) -> View {
+    let mut view = entity_view(index, row);
+    view.tables.push(table_name(&model(target)));
+    view
+}
+
+fn prod_result(write: &crate::spec::ref_delivery_fanout::Write) -> crate::store::CommitResult {
+    use crate::identity::{ModelKey, RowRef};
+    use crate::store::fixtures::{id, scope};
+    use crate::store::{CommitResult, RowChange, RowChangeKind};
+    let reference = |(name, row): &(String, String)| RowRef::new(ModelKey::new(name), id(row));
+    let mut result = CommitResult::noop(uuid::Uuid::nil());
+    result.revision = Some(100);
+    result.rows = write.rows.iter().map(|row| RowChange { row: reference(row), kind: RowChangeKind::Updated, fields: Default::default() }).collect();
+    result.scopes = write.scopes.iter().map(|name| scope(name, "list")).collect();
+    result.members = write.members.iter().map(reference).collect();
+    result.renewed = write.renewed.iter().map(reference).collect();
+    result.replaced = write.replaced.iter().map(|(from, to)| (reference(from), id(to))).collect();
+    if write.queue { result.operations.insert(1); }
+    result
+}
+
+type Change = Result<r::Write, Option<Vec<&'static str>>>;
+
+fn write(build: fn(&mut r::Write)) -> Change {
+    let mut write = r::Write::default();
+    build(&mut write);
+    Ok(write)
+}
+
+fn pair(model: &str, row: &str) -> (String, String) { (model.to_string(), row.to_string()) }
+
+#[test]
+fn dlv_prop_fanout_matches_reference() {
+    let kinds: Vec<(&str, Change)> = vec![
+        ("server row", write(|w| w.rows.push(pair("t0", "b")))),
+        ("local field of the row of an Entity and a list", write(|w| w.rows.push(pair("t0", "a")))),
+        ("tombstone in the other table", write(|w| w.rows.push(pair("t1", "a")))),
+        ("cascade", write(|w| w.rows.extend([pair("t0", "a"), pair("t1", "a")]))),
+        ("scope only", write(|w| w.scopes.push("t0".into()))),
+        ("member", write(|w| w.members.push(pair("t0", "b")))),
+        ("renewed row of another table", write(|w| { w.rows.push(pair("t0", "b")); w.renewed.push(pair("t1", "a")); })),
+        ("replaced", write(|w| w.replaced.push((pair("t0", "a"), "b".into())))),
+        ("queue", write(|w| w.queue = true)),
+        ("reset of a model", Err(Some(vec!["t1"]))),
+        ("reset of every model", Err(None)),
+    ];
+    let own = |model: &str, row: &str| Watched::Row { table: r::table_of(model), id: row.into() };
+    let streams: std::collections::BTreeMap<u64, Stream> = [
+        (1, Stream { tables: vec![r::table_of("t0")], watched: Watched::Tables }),
+        (2, Stream { tables: vec![r::table_of("t1")], watched: Watched::Tables }),
+        (3, Stream { tables: vec![r::table_of("t0")], watched: own("t0", "a") }),
+        (4, Stream { tables: vec![r::table_of("t0")], watched: own("t0", "b") }),
+        (5, Stream { tables: vec![r::table_of("t1"), r::table_of("t0")], watched: own("t1", "a") }),
+    ].into();
+    let index = Fanout::of(&streams);
+    for (kind, change) in kinds {
+        let mut work = Work::new(2);
+        for (model, row) in [(0, "a"), (0, "b"), (1, "a")] { work.put(model, row, "old"); }
+        let views = [(1, view(0)), (2, view(1)), (3, entity_view(0, "a")), (4, entity_view(0, "b")), (5, linked_entity_view(1, "a", 0))];
+        for (stream, view) in views {
+            work.feed(DeliveryInput::Open { stream, view, epoch: EPOCH, identity: true, valid: true, now: 0, revision: 0 });
+            work.pull(stream);
+        }
+        let (notice, want) = match &change {
+            Ok(written) => (CommittedBroadcast::of_commit(&prod_result(written)), index.affected(&r::notice_of_write(written))),
+            Err(models) => {
+                let owned: Option<Vec<String>> = models.as_ref().map(|models| models.iter().map(|model| model.to_string()).collect());
+                (CommittedBroadcast::of_reset(100, owned.as_deref()), index.affected(&r::notice_of_reset(models.as_deref())))
+            }
+        };
+        let reads = work.step(DeliveryInput::Committed(notice.for_deliveries()));
+        let got: std::collections::BTreeSet<u64> = reads.iter().map(|read| read.stream).collect();
+        assert_eq!(reads.len(), got.len(), "{kind}: one read per stream");
+        assert_eq!(got, want, "{kind}: the streams the commit reaches");
+        assert!(reads.iter().all(|read| read.revision == 100), "{kind}: every stream reads the revision of the commit");
+    }
 }

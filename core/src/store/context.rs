@@ -4,6 +4,7 @@ use std::collections::{BTreeMap, HashSet};
 use std::path::Path;
 use std::sync::{Arc, OnceLock};
 
+use crate::owners::contract::{CommittedBroadcast, Models};
 use crate::store::{BatchPlan, CommitResult, EntityOp};
 use crate::store::ddl::{table_name, ManifestVerdict, RecreateReason};
 use crate::store::files::FileDirectories;
@@ -33,35 +34,29 @@ pub struct DroppedRecord {
     pub reason: String,
 }
 
-/// A commit as the owners of reading hear it: the revision and the tables it touched, or every table.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct CommitNotice {
-    pub revision: i64,
-    pub tables: Vec<String>,
-    pub models: Vec<String>,
-    pub all: bool,
-    pub position: u64,
-    pub rows: crate::owners::contract::ChangedRows,
-}
-
-impl CommitNotice {
-    fn of_commit(result: &CommitResult) -> Self {
-        let models: std::collections::BTreeSet<&str> = result.rows.iter().map(|change| change.row.model.as_str()).chain(result.scopes.iter().map(|scope| scope.model.as_str())).chain(result.members.iter().map(|row| row.model.as_str())).collect();
+impl CommittedBroadcast {
+    /// The one notice of a commit: `rows` are exactly the changed rows of the tables named in `tables`.
+    pub(crate) fn of_commit(result: &CommitResult) -> Self {
+        let models: std::collections::BTreeSet<&str> = result.rows.iter().map(|change| change.row.model.as_str()).chain(result.scopes.iter().map(|scope| scope.model.as_str())).chain(result.members.iter().map(|row| row.model.as_str())).chain(result.replaced.iter().map(|(from, _)| from.model.as_str())).collect();
         let queue = (!result.operations.is_empty()).then(|| crate::store::operation::QUEUE_TABLE.to_string());
-        Self { revision: result.revision.unwrap_or_default(), tables: models.iter().map(|model| table_name(model)).chain(queue).collect(), models: models.into_iter().map(str::to_string).collect(), all: false, position: result.position, rows: Some(super::changed_log::table_rows(result)) }
+        let tables: Vec<String> = models.iter().map(|model| table_name(model)).chain(queue).collect();
+        let mut rows = super::changed_log::table_rows(result);
+        rows.retain(|(table, _)| tables.contains(table));
+        Self { revision: u64::try_from(result.revision.unwrap_or_default()).unwrap_or_default(), tables, models: Models::Set(models.into_iter().map(str::to_string).collect()), position: result.position, rows: Some(rows) }
     }
 
-    fn of_reset(revision: i64, models: Option<&[String]>) -> Self {
-        Self { revision, tables: models.into_iter().flatten().map(|model| table_name(model)).collect(), models: models.map(<[String]>::to_vec).unwrap_or_default(), all: models.is_none(), position: 0, rows: None }
+    /// The notice of a reset of `models`, or of every model.
+    pub(crate) fn of_reset(revision: u64, models: Option<&[String]>) -> Self {
+        Self { revision, tables: models.into_iter().flatten().map(|model| table_name(model)).collect(), models: models.map_or(Models::All, |models| Models::Set(models.iter().cloned().collect())), position: 0, rows: None }
     }
 }
 
 /// Where the commits go: the owner `Deliveries` listens once `Life` started.
 #[derive(Default)]
-pub(crate) struct CommitSink(OnceLock<Arc<dyn Fn(CommitNotice) + Send + Sync>>);
+pub(crate) struct CommitSink(OnceLock<Arc<dyn Fn(CommittedBroadcast) + Send + Sync>>);
 
 impl CommitSink {
-    fn notify(&self, notice: CommitNotice) {
+    fn notify(&self, notice: CommittedBroadcast) {
         if let Some(sink) = self.0.get() { sink(notice); }
     }
 }
@@ -136,10 +131,10 @@ impl Store {
             }
         }))?;
         store.set_hook(Box::new(move |event| match event {
-            StoreEvent::Committed(result) => notified.notify(CommitNotice::of_commit(result)),
+            StoreEvent::Committed(result) => notified.notify(CommittedBroadcast::of_commit(result)),
             StoreEvent::Reset { revision, models, .. } => {
                 reset_journal.log_unknown(revision);
-                notified.notify(CommitNotice::of_reset(revision, models.as_deref()));
+                notified.notify(CommittedBroadcast::of_reset(u64::try_from(revision).unwrap_or_default(), models.as_deref()));
             }
             StoreEvent::Renewed => {}
         }))?;
@@ -175,7 +170,7 @@ impl Store {
 
     pub fn connectivity(&self) -> Arc<crate::transport::Connectivity> { self.context.connectivity.clone() }
 
-    pub(crate) fn on_commit(&self, sink: impl Fn(CommitNotice) + Send + Sync + 'static) -> Result<(), StoreError> {
+    pub(crate) fn on_commit(&self, sink: impl Fn(CommittedBroadcast) + Send + Sync + 'static) -> Result<(), StoreError> {
         self.context.commits.0.set(Arc::new(sink)).map_err(|_| StoreError::AlreadyAttached("the commit sink"))
     }
 

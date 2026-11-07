@@ -470,6 +470,8 @@ mod reads_tests;
 #[cfg(test)]
 mod hook_tests;
 #[cfg(test)]
+mod commit_notice_tests;
+#[cfg(test)]
 mod reset_tests;
 #[cfg(test)]
 mod restore_tests;

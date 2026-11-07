@@ -11,6 +11,7 @@ mod ref_network;
 mod ref_calls;
 mod store;
 mod ref_delivery;
+pub(crate) mod ref_delivery_fanout;
 mod ref_feed;
 mod ref_window;
 

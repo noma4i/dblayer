@@ -17,7 +17,6 @@ struct WrittenBatch<'a> {
     live_files: std::collections::HashSet<String>,
     discarded: Vec<String>,
     expiry: ExpiryParts,
-    position: u64,
     resets: ResetParts,
     candidates: usize,
 }
@@ -27,7 +26,6 @@ type ResetParts = (Vec<u64>, Vec<crate::owners::store::EphemeralReset>);
 
 pub(crate) struct BatchWritten {
     pub revision: u64,
-    pub position: u64,
     pub observed: Vec<String>,
     pub faults: Vec<String>,
     pub expiring: Vec<crate::owners::store::MemoryExpiry>,
@@ -35,7 +33,7 @@ pub(crate) struct BatchWritten {
     pub stale_parents: Vec<String>,
     pub removed_operations: Vec<u64>,
     pub resets: Vec<crate::owners::store::EphemeralReset>,
-    pub rows: crate::owners::contract::ChangedRows,
+    pub notice: crate::owners::contract::CommittedBroadcast,
 }
 
 impl Store {
@@ -50,7 +48,7 @@ impl Store {
                 }
                 Err(error)
             }
-            Ok(WrittenBatch { committed: result, observed, live_files, discarded, expiry: (expiring, removed_memory, stale_parents), position, resets: (removed_operations, resets), candidates }) => {
+            Ok(WrittenBatch { committed: result, observed, live_files, discarded, expiry: (expiring, removed_memory, stale_parents), resets: (removed_operations, resets), candidates }) => {
                 self.lock().counters.outbox_candidates += candidates;
                 let mut faults = Vec::new();
                 for file in prepared.iter().filter(|file| file.record.location == Location::Directory) {
@@ -61,9 +59,9 @@ impl Store {
                     if let Err(error) = files.discard(std::slice::from_ref(&id)) { faults.push(format!("remove file {id}: {error}")); }
                 }
                 let revision = result.result().revision.ok_or_else(|| StoreError::Invalid("a committed batch has no revision".into()))?;
-                let rows = Some(super::changed_log::table_rows(result.result()));
+                let notice = crate::owners::contract::CommittedBroadcast::of_commit(result.result());
                 result.publish();
-                Ok(BatchWritten { revision: u64::try_from(revision).map_err(|_| StoreError::Constraint("negative revision".into()))?, position, observed, faults, expiring, removed_memory, stale_parents, removed_operations, resets, rows })
+                Ok(BatchWritten { revision: u64::try_from(revision).map_err(|_| StoreError::Constraint("negative revision".into()))?, observed, faults, expiring, removed_memory, stale_parents, removed_operations, resets, notice })
             }
         }
     }
@@ -151,6 +149,6 @@ impl Store {
             transaction.rollback()?;
             if position != current.position { self.overlays.publish(snapshot); }
         }
-        Ok(WrittenBatch { committed: self.commit_announcement(inner, combined), observed, live_files, discarded, expiry: (expiring, removed_memory, stale_parents), position, resets: (removed_operations, arms), candidates })
+        Ok(WrittenBatch { committed: self.commit_announcement(inner, combined), observed, live_files, discarded, expiry: (expiring, removed_memory, stale_parents), resets: (removed_operations, arms), candidates })
     }
 }

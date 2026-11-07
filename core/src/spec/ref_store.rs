@@ -67,7 +67,7 @@ pub enum Action {
     ClearFailed { erase_id: u64, closed: bool },
     Saved(u64),
     SaveFailed { publication_id: u64, closed: bool },
-    BroadcastCommitted { revision: u64, all: bool, rows: Option<BTreeSet<(String, String)>> },
+    BroadcastCommitted { revision: u64, all: bool, tables: BTreeSet<String>, models: BTreeSet<String>, rows: Option<BTreeSet<(String, String)>> },
     ReadIntents { epoch: u64, direct: bool },
     CloseReads,
     CloseConnections,
@@ -273,13 +273,15 @@ impl Store {
                 }
                 match result {
                     Ok(revision) => {
-                        let rows: BTreeSet<(String, String)> = batch.rows.iter().cloned().collect();
+                        let models: BTreeSet<String> = batch.rows.iter().map(|(model, _)| model.clone()).collect();
+                        let tables: BTreeSet<String> = models.iter().map(|model| format!("row_{model}")).collect();
+                        let rows: BTreeSet<(String, String)> = batch.rows.iter().map(|(model, row)| (format!("row_{model}"), row.clone())).collect();
                         self.rows.extend(batch.rows.clone());
                         self.intents += batch.intents;
                         if let Some(identity) = batch.credential { self.credential = Some(identity); }
                         self.revision = revision;
                         out.push(Action::Committed { id, revision, rows: Some(rows.clone()) });
-                        out.push(Action::BroadcastCommitted { revision, all: false, rows: Some(rows) });
+                        out.push(Action::BroadcastCommitted { revision, all: false, tables, models, rows: Some(rows) });
                     }
                     Err(()) => out.push(Action::Rejected { id, reason: Reason::Storage }),
                 }
@@ -324,19 +326,19 @@ impl Store {
                         }
                         self.revision = revision;
                         out.push(Action::Cleared { epoch_old, erase_id });
-                        out.push(Action::BroadcastCommitted { revision, all: true, rows: None });
+                        out.push(Action::BroadcastCommitted { revision, all: true, tables: BTreeSet::new(), models: BTreeSet::new(), rows: None });
                     }
                     (IoKind::Secret { epoch_old, erase_id, revision }, Ok(_) | Err(())) => {
                         self.revision = revision;
                         out.push(Action::Cleared { epoch_old, erase_id });
-                        out.push(Action::BroadcastCommitted { revision, all: true, rows: None });
+                        out.push(Action::BroadcastCommitted { revision, all: true, tables: BTreeSet::new(), models: BTreeSet::new(), rows: None });
                     }
                     (IoKind::Models { generation_new, models, erase_id }, Ok(revision)) => {
                         self.rows.retain(|(model, _)| !models.contains(model));
-                        for model in models { self.generations.insert(model, generation_new); }
+                        for model in models.iter().cloned() { self.generations.insert(model, generation_new); }
                         self.revision = revision;
                         out.push(Action::ModelsCleared { generation_new, erase_id });
-                        out.push(Action::BroadcastCommitted { revision, all: false, rows: None });
+                        out.push(Action::BroadcastCommitted { revision, all: false, tables: models.iter().map(|model| format!("row_{model}")).collect(), models: models.clone(), rows: None });
                     }
                     (IoKind::Save { publication_id, epoch, generation, active }, Ok(_)) => {
                         if active { self.epoch = self.epoch.max(epoch); }

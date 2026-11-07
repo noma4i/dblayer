@@ -150,9 +150,11 @@ pub(super) fn add(builder: &mut RuntimeBuilder, wiring: &Arc<Wiring>, ports: &Po
     });
     let commit_wiring = wiring.clone();
     db.on_commit(move |notice| {
-        let models = if notice.all { Models::All } else { Models::Set(Default::default()) };
-        commit_wiring.to_deliveries(DeliveryInput::Committed(Committed { batch: 0, revision: notice.revision, tables: notice.tables.clone(), rows: notice.rows.clone(), models, stale_parents: Vec::new(), position: notice.position }));
-        commit_wiring.to_windows(WindowsInput::StoreCommitted { models: notice.models.clone(), revision: notice.revision });
+        let windows = match &notice.models { Models::All => Vec::new(), Models::Set(models) => models.iter().cloned().collect() };
+        let committed = notice.for_deliveries();
+        let revision = committed.revision;
+        commit_wiring.to_deliveries(DeliveryInput::Committed(committed));
+        commit_wiring.to_windows(WindowsInput::StoreCommitted { models: windows, revision });
     }).unwrap_or_else(|error| wiring.fault(error.to_string()));
     ReadAt { windows: windows_at, deliveries: deliveries_at, feed: feed_at }
 }

@@ -187,7 +187,9 @@ impl Twin {
                 let reason = match reason {
                     Reject::StaleGeneration(models) => RejectReason::StaleGeneration { models: models.clone(), generation: 0 },
                     Reject::Storage => RejectReason::Storage("disk".into()),
+                    Reject::Invalid => RejectReason::Invalid,
                     Reject::NoSession => RejectReason::NoSession,
+                    Reject::Closed => RejectReason::Closed,
                 };
                 vec![FeedInput::Rejected(Rejected { batch, reason })]
             }

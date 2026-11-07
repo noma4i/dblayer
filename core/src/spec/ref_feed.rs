@@ -6,7 +6,9 @@ use std::collections::{BTreeMap, BTreeSet, VecDeque};
 pub(super) enum Reject {
     StaleGeneration(Vec<String>),
     Storage,
+    Invalid,
     NoSession,
+    Closed,
 }
 
 /// The connection an input names: the active one, the opening one, or one that is neither.
@@ -321,11 +323,11 @@ impl Feed {
                 let rest = rest.into_iter().map(|event| Ev { basis: self.basis(&event.model), ..event }).collect();
                 self.commit(rest, &mut effects);
             }
-            Some(Reject::Storage) => {
+            Some(Reject::Storage | Reject::Invalid) => {
                 let lost_models = self.mark(&batch, |_| Slot::Lost);
                 Self::stale(&lost_models, &mut effects);
             }
-            Some(Reject::NoSession) => {
+            Some(Reject::NoSession | Reject::Closed) => {
                 self.mode = Mode::Ended;
                 self.close_all(&mut effects);
                 self.held.clear();

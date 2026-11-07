@@ -140,9 +140,9 @@ fn store_commit_ok() {
     let mut twin = Twin::live();
     let actions = twin.commit(1, &["a"]);
     assert_eq!(Twin::committed(&actions), Some(1));
-    let rows = Some([("Moment".to_string(), "a".to_string())].into());
+    let rows = Some([("row_Moment".to_string(), "a".to_string())].into());
     assert!(actions.contains(&Action::Committed { id: 1, revision: 1, rows: rows.clone() }));
-    assert!(actions.contains(&Action::BroadcastCommitted { revision: 1, all: false, rows }));
+    assert!(actions.contains(&Action::BroadcastCommitted { revision: 1, all: false, tables: ["row_Moment".to_string()].into(), models: ["Moment".to_string()].into(), rows }));
     assert_eq!(twin.commit(1, &["b"]).len(), 3);
     assert_eq!(twin.state().revision(), 2);
 }
@@ -196,7 +196,7 @@ fn store_clear_account() {
     let mut twin = Twin::live();
     let actions = twin.clear_account(RefCause::IdentityChanged, 4, true);
     assert!(actions.contains(&Action::Cleared { epoch_old: 1, erase_id: 1 }));
-    assert!(actions.contains(&Action::BroadcastCommitted { revision: 1, all: true, rows: None }));
+    assert!(actions.contains(&Action::BroadcastCommitted { revision: 1, all: true, tables: Default::default(), models: Default::default(), rows: None }));
     assert_eq!(twin.state().generation("Moment"), 4);
 }
 

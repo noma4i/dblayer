@@ -165,7 +165,7 @@ fn inv_ephemeral_04_a_write_reaches_observers_as_an_updated_row_without_a_databa
     let before = db.revision_seq().unwrap();
     let written = set_typing(&db, "m1", true);
     assert_eq!((db.revision_seq().unwrap(), written.revision), (before, u64::try_from(before).unwrap()), "no database revision");
-    assert!(written.position > 0, "the overlay version moves, observers read the row again at it");
+    assert!(written.notice.position > 0, "the overlay version moves, observers read the row again at it");
 }
 
 #[test]
@@ -177,7 +177,7 @@ fn inv_ephemeral_04_the_position_grows_with_every_write_and_reset_while_the_revi
     let reset = first.resets[0].clone();
     let batch = StoreBatch { author: BatchAuthor::Outbox, id: 2, epoch: 1, basis: Default::default(), rows: Vec::new(), intents: 0, credential: None, ops: vec![StoreOp::ResetEphemeral { model: reset.model, row_id: reset.row_id, field: reset.field, position: reset.position }] };
     let third = db.write_batch(&batch, db.files(), db.pointer_guards(), None).unwrap();
-    assert!(first.position < second.position && second.position < third.position, "{} {} {}", first.position, second.position, third.position);
+    assert!(first.notice.position < second.notice.position && second.notice.position < third.notice.position, "{} {} {}", first.notice.position, second.notice.position, third.notice.position);
     assert_eq!((first.revision, second.revision, third.revision), (second.revision, second.revision, second.revision));
 }
 

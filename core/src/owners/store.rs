@@ -5,7 +5,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use std::collections::VecDeque;
 
-use super::contract::{BatchAuthor, BatchId, EpochEnded, Published, PublishedState, RejectReason};
+use super::contract::{BatchAuthor, BatchId, CommittedBroadcast, EpochEnded, Published, PublishedState, RejectReason};
 use super::session::PendingCall;
 use crate::runtime::{Cause, Effect, Effects, Epoch, StateOwner, Time};
 
@@ -240,16 +240,15 @@ impl StoreState {
                 let Some(written) = self.writing.take() else { return };
                 match result {
                     Err(reason) => fx.push(StoreEffect::Reply { author, batch, epoch: written.epoch, reply: StoreReply::Rejected(reason) }),
-                    Ok(WriteDone { revision, position, observed, expiring, removed_memory, stale_parents, removed_operations, resets, rows }) => {
+                    Ok(WriteDone { revision, observed, expiring, removed_memory, stale_parents, removed_operations, resets, notice }) => {
                         self.revision = revision;
-                        let models: Vec<String> = written.models().into_iter().collect();
                         if !observed.is_empty() { fx.push(StoreEffect::Observed { epoch: written.epoch, batch, payloads: observed }); }
-                        fx.push(StoreEffect::Reply { author, batch, epoch: written.epoch, reply: StoreReply::Committed { revision, stale_parents, rows: rows.clone() } });
+                        fx.push(StoreEffect::Reply { author, batch, epoch: written.epoch, reply: StoreReply::Committed { revision, stale_parents, rows: notice.rows.clone() } });
                         for reset in resets { fx.push(StoreEffect::ArmReset { epoch: written.epoch, reset }); }
                         if !removed_operations.is_empty() { fx.push(StoreEffect::OperationsGone { epoch: written.epoch, ops: removed_operations }); }
                         for (model, row_id) in removed_memory { fx.push(StoreEffect::DisarmExpiry { epoch: written.epoch, model, row_id }); }
                         for item in expiring { fx.push(StoreEffect::ArmExpiry { epoch: written.epoch, model: item.model, row_id: item.row_id, revision, deadline: item.written_at.saturating_add(item.expires_after) }); }
-                        fx.push(StoreEffect::BroadcastCommitted { revision, position, models: Some(models), rows });
+                        fx.push(StoreEffect::BroadcastCommitted(notice));
                     }
                 }
                 self.drain(fx);
@@ -295,12 +294,12 @@ impl StoreState {
                         }
                         self.revision = revision;
                         fx.push(StoreEffect::Cleared { epoch_old, erase_id });
-                        fx.push(StoreEffect::BroadcastCommitted { revision, position: 0, models: None, rows: None });
+                        fx.push(StoreEffect::BroadcastCommitted(CommittedBroadcast::of_reset(revision, None)));
                     }
                     (IoKind::Secret { epoch_old, erase_id, revision }, Ok(_) | Err(_)) => {
                         self.revision = revision;
                         fx.push(StoreEffect::Cleared { epoch_old, erase_id });
-                        fx.push(StoreEffect::BroadcastCommitted { revision, position: 0, models: None, rows: None });
+                        fx.push(StoreEffect::BroadcastCommitted(CommittedBroadcast::of_reset(revision, None)));
                     }
                     (IoKind::Models { generation_new, models, erase_id }, Ok(Done { revision })) => {
                         for model in &models {
@@ -308,7 +307,7 @@ impl StoreState {
                         }
                         self.revision = revision;
                         fx.push(StoreEffect::ModelsCleared { generation_new, erase_id });
-                        fx.push(StoreEffect::BroadcastCommitted { revision, position: 0, models: Some(models.into_iter().collect()), rows: None });
+                        fx.push(StoreEffect::BroadcastCommitted(CommittedBroadcast::of_reset(revision, Some(models.iter().cloned().collect::<Vec<_>>().as_slice()))));
                     }
                     (IoKind::Save { publication_id, published }, Ok(_)) => {
                         if matches!(published.state, PublishedState::NoSession | PublishedState::Session | PublishedState::Resetting) {

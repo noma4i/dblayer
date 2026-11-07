@@ -70,6 +70,14 @@ pub struct Committed {
     pub position: u64,
 }
 
+impl CommittedBroadcast {
+    /// The input of `Deliveries`: `All` touches every stream, a `Set` touches the streams of `tables` and `rows`.
+    pub fn for_deliveries(self) -> Committed {
+        let models = if self.models == Models::All { Models::All } else { Models::default() };
+        Committed { batch: 0, revision: i64::try_from(self.revision).unwrap_or(i64::MAX), tables: self.tables, rows: self.rows, models, stale_parents: Vec::new(), position: self.position }
+    }
+}
+
 /// The `(table, row_id)` pairs a commit changed, from the Store journal of changed rows. `None` = every row of the tables.
 pub type ChangedRows = Option<std::collections::BTreeSet<(String, String)>>;
 
@@ -84,8 +92,8 @@ impl Default for Models {
     fn default() -> Self { Models::Set(std::collections::BTreeSet::new()) }
 }
 
-/// The Store broadcast `Committed{revision, tables, models}` to every subscriber (Deliveries).
-#[derive(Clone, Debug, PartialEq, Eq)]
+/// The one notice of a commit, `Committed{revision, tables, rows, models, position}`: built by `CommittedBroadcast::of_commit` and `of_reset`.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct CommittedBroadcast {
     pub revision: u64,
     pub position: u64,

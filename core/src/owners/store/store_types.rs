@@ -248,14 +248,13 @@ pub struct EphemeralReset {
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct WriteDone {
     pub revision: u64,
-    pub position: u64,
     pub observed: Vec<String>,
     pub expiring: Vec<MemoryExpiry>,
     pub removed_memory: Vec<(String, String)>,
     pub stale_parents: Vec<String>,
     pub removed_operations: Vec<u64>,
     pub resets: Vec<EphemeralReset>,
-    pub rows: crate::owners::contract::ChangedRows,
+    pub notice: crate::owners::contract::CommittedBroadcast,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -281,8 +280,8 @@ pub enum StoreEffect {
     ClearFailed { erase_id: u64, error: String },
     Saved { publication_id: u64 },
     SaveFailed { publication_id: u64, error: String },
-    /// Broadcast `Committed{revision, tables, models}`; `None` = all tables and models.
-    BroadcastCommitted { revision: u64, position: u64, models: Option<Vec<String>>, rows: crate::owners::contract::ChangedRows },
+    /// Broadcast the one notice `Committed{revision, tables, rows, models, position}`.
+    BroadcastCommitted(crate::owners::contract::CommittedBroadcast),
     Observed { epoch: Epoch, batch: BatchId, payloads: Vec<String> },
     ArmExpiry { epoch: Epoch, model: String, row_id: String, revision: u64, deadline: u64 },
     DisarmExpiry { epoch: Epoch, model: String, row_id: String },

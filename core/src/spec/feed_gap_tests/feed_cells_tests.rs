@@ -361,6 +361,23 @@ fn feed_live_rejected_session() {
 }
 
 #[test]
+fn feed_live_rejected_invalid() {
+    let mut twin = live_immediate();
+    twin.step(chat("c1"));
+    assert_eq!(twin.step(Input::Rejected(Reject::Invalid)), [Effect::Stale { model: "Chat".into(), all: true }]);
+    assert_eq!(twin.state().position("Chat"), 1, "the lost event holds its position");
+    assert_eq!(twin.state().mode(), f::Mode::Live);
+}
+
+#[test]
+fn feed_live_rejected_closed() {
+    let mut twin = live_immediate();
+    twin.step(chat("c1"));
+    assert_eq!(twin.step(Input::Rejected(Reject::Closed)), [Effect::SealUnsubscribe, Effect::Close]);
+    assert_eq!(twin.state().mode(), f::Mode::Ended);
+}
+
+#[test]
 fn feed_live_stray_batch() {
     let mut twin = live();
     assert!(twin.step(Input::StrayBatch).is_empty());
