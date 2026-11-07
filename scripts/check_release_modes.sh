@@ -7,6 +7,8 @@ from concurrent.futures import ThreadPoolExecutor
 import io
 import json
 import os
+import signal
+signal.signal(signal.SIGINT, signal.SIG_DFL)
 from pathlib import Path
 import shutil
 import subprocess
@@ -463,7 +465,8 @@ with tempfile.TemporaryDirectory(prefix="dblayer-release-modes-") as directory:
         assert (sig_repo / "target/release.lock").is_dir()
         proc.send_signal(sig)
         (sig_repo / "target/signalled").write_text(sig.name[3:])
-        assert proc.wait(timeout=60) == 128 + sig.value, proc.returncode
+        code = proc.wait(timeout=60)
+        assert code == 128 + sig.value, f"{sig.name}: release.sh exited {code}: {proc.stderr.read()}"
         assert not (sig_repo / "target/release.lock").exists(), f"the lock stayed after {sig.name}"
         (sig_repo / "target/arm").unlink()
         (sig_repo / "target/signalled").unlink()

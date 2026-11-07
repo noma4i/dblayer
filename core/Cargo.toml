@@ -9,7 +9,6 @@ name = "dblayer"
 
 [features]
 cli = ["uniffi/cli"]
-spec_api = []
 
 [[bin]]
 name = "uniffi-bindgen"

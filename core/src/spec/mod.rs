@@ -1,5 +1,5 @@
 //! Executable references of the machine specs and the tests that compare the core with them: `Lifecycle` and `Store` (direction A), `Delivery`, `Window` and `Feed` (direction B), `Outbox` and `Transfer` (direction C).
-//! Every test is named like the `Test` column of the machine tables. Tests of `Delivery`, `Window` and `Feed` in `*_gap_tests.rs` run at the level of the owner (`core/src/owners`) on `DetScheduler`; tests under the feature `spec_api` wait for the owners of their direction.
+//! Every test is named like the `Test` column of the machine tables. Tests of `Delivery`, `Window` and `Feed` in `*_gap_tests.rs` run at the level of the owner (`core/src/owners`) on `DetScheduler`.
 
 mod harness_life;
 mod lifecycle;

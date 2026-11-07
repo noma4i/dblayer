@@ -26,7 +26,7 @@ steps=(
   "cheap|silent|120|*|bash scripts/check_silent.sh"
   "cheap|silent-selftest|120|*|bash scripts/check_silent_test.sh"
   "cheap|coverage-selftest|120|*|python3 -I scripts/check_coverage_test.py"
-  "cargo|cargo-test-core|600|core/ Cargo.|$slot cargo-step cargo test -p dblayer --features cli,spec_api"
+  "cargo|cargo-test-core|600|core/ Cargo.|$slot cargo-step cargo test -p dblayer"
   "cargo|cargo-test-gen|600|gen/ Cargo.|$slot cargo-step cargo test -p dblayer-gen"
   "cargo|fixtures|120|core/ gen/ Cargo. fixtures/|bash scripts/gen_fixtures.sh --check"
   "cargo|fixtures-args|120|core/ gen/ Cargo. fixtures/|bash scripts/gen_fixtures_test.sh"
