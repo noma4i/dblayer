@@ -4,6 +4,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.yield
 import kotlinx.serialization.decodeFromString
 const val HANG_GUARD_MILLIS = 18_000L
@@ -17,11 +18,27 @@ fun <T> bounded(timeoutMillis: Long = TEST_DEADLINE_MILLIS, body: suspend Corout
 }
 suspend fun eventually(what: String, timeoutMillis: Long = HANG_GUARD_MILLIS, detail: () -> String = { "" }, condition: suspend () -> Boolean) {
     val deadline = System.nanoTime() + timeoutMillis * 1_000_000
-    while (!condition()) {
-        if (System.nanoTime() > deadline) throw AssertionError("timed out after $timeoutMillis ms waiting for $what\n${detail()}")
-        yield()
-        Thread.onSpinWait()
+    while (true) {
+        val seen = TestPulse.current
+        if (condition()) return
+        val remainingMillis = (deadline - System.nanoTime()) / 1_000_000
+        if (remainingMillis <= 0) throw AssertionError("timed out after $timeoutMillis ms waiting for $what\n${detail()}")
+        untilChange(seen, remainingMillis)
     }
+}
+/** The one poller left: state of an Android shadow (network callbacks, services) has no change event. Each turn is a coroutine yield, bounded by the hang guard. */
+suspend fun eventuallyOs(what: String, condition: () -> Boolean) {
+    val deadline = System.nanoTime() + HANG_GUARD_MILLIS * 1_000_000
+    while (!condition()) {
+        if (System.nanoTime() > deadline) throw AssertionError("timed out after $HANG_GUARD_MILLIS ms waiting for $what")
+        yield()
+    }
+}
+/** Returns at the next pulse of the doubles. With a database open the wait is one round trip through the core: it ends when the owners have handled what was posted before it, and frees the thread meanwhile. */
+suspend fun untilChange(seen: Int, remainingMillis: Long) {
+    if (TestPulse.current != seen) return
+    if (runCatching { DBlayer.subscriptionCensus() }.isSuccess) return
+    withTimeoutOrNull(remainingMillis) { TestPulse.next(seen) }
 }
 suspend fun fencedUntil(what: String, fence: suspend () -> Unit, ready: () -> Boolean) {
     val deadline = System.nanoTime() + 8_000_000_000L
@@ -31,7 +48,7 @@ suspend fun fencedUntil(what: String, fence: suspend () -> Unit, ready: () -> Bo
         yield()
     }
 }
-suspend fun <State> quiesce(what: String, rounds: Int = 3, fence: suspend () -> Unit, state: suspend () -> State) {
+suspend fun <State> quiesce(what: String, rounds: Int = 50, fence: suspend () -> Unit, state: suspend () -> State) {
     val deadline = System.nanoTime() + HANG_GUARD_MILLIS * 1_000_000
     var last = state()
     var stable = 0

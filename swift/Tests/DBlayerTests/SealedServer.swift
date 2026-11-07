@@ -115,6 +115,7 @@ final class SealedServer: ScriptedHttp, @unchecked Sendable {
       reply = answer(path, sent)
     }
     lock.withLock { executed.append(sent) }
+    TestPulse.shared.pulse()
     if let operation = sent["operationName"] as? String, lock.withLock({ holding == operation }) {
       await withCheckedContinuation { continuation in
         let wait = lock.withLock { () -> Bool in
@@ -122,7 +123,10 @@ final class SealedServer: ScriptedHttp, @unchecked Sendable {
           parked.append(continuation)
           return true
         }
-        if wait { arrivals.continuation.yield(()) }
+        if wait {
+          arrivals.continuation.yield(())
+          TestPulse.shared.pulse()
+        }
         if !wait { continuation.resume() }
       }
     }

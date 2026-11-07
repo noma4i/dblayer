@@ -28,8 +28,7 @@ private final class GraphQLPeer: @unchecked Sendable {
       connection.start(queue: .global())
       receive(connection)
     }
-    listener.start(queue: .global())
-    await eventually("GraphQL WebSocket listener ready") { self.listener.state == .ready }
+    try await startListening(listener)
     let port = try #require(listener.port)
     return try #require(URL(string: "http://127.0.0.1:\(port.rawValue)/graphql"))
   }

@@ -61,7 +61,7 @@ class MockTransport(private val unanswered: Unanswered = Unanswered.Strict) : Sc
     /** The cable of the session: events a test pushes with `emit` for an operation without a plain subscription go through it, and the cable calls of the session go to it. */
     @Volatile var cable: CablePeer? = null
         set(value) {
-            value?.onSubscribe = { request -> recorded.add(request) }
+            value?.onSubscribe = { request -> recorded.add(request); TestPulse.pulse() }
             field = value
         }
 
@@ -114,6 +114,7 @@ class MockTransport(private val unanswered: Unanswered = Unanswered.Strict) : Sc
     fun emit(operation: String, json: String) {
         failTestThread()
         cable?.event(operation, json)
+        TestPulse.pulse()
     }
 
     override suspend fun query(request: TransportRequest): String = answer(request)
@@ -130,6 +131,7 @@ class MockTransport(private val unanswered: Unanswered = Unanswered.Strict) : Sc
 
     private suspend fun answer(request: TransportRequest): String {
         recorded.add(request)
+        TestPulse.pulse()
         val identity = request.operationName to request.variablesJson
         settled[identity]?.let { return it }
         val reply = synchronized(replies) { replies[request.operationName]?.pollFirst() } ?: refuse(request)
@@ -139,6 +141,7 @@ class MockTransport(private val unanswered: Unanswered = Unanswered.Strict) : Sc
             reply.body?.let { settled[identity] = it }
             throw cancelled
         }
+        TestPulse.pulse()
         reply.failure?.let { throw it }
         return reply.body ?: "{}"
     }
@@ -166,14 +169,19 @@ class Hold {
     /** Returns when the library dropped the held request before its release. */
     suspend fun dropped() = gone.await()
 
-    fun release() { freed.complete(Unit) }
+    fun release() {
+        freed.complete(Unit)
+        TestPulse.pulse()
+    }
 
     internal suspend fun pass() {
         arrived.complete(Unit)
+        TestPulse.pulse()
         try {
             freed.await()
         } catch (cancelled: kotlinx.coroutines.CancellationException) {
             gone.complete(Unit)
+            TestPulse.pulse()
             throw cancelled
         }
     }

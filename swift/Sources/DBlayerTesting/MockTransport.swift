@@ -57,7 +57,7 @@ public final class MockTransport: ScriptedTransport, @unchecked Sendable {
   public var cable: (any CablePeer)? {
     get { lock.withLock { peer } }
     set {
-      newValue?.onSubscribe = { [unowned self] request in lock.withLock { recorded.append(request) } }
+      newValue?.onSubscribe = { [unowned self] request in lock.withLock { recorded.append(request) }; TestPulse.shared.pulse() }
       lock.withLock { peer = newValue }
     }
   }
@@ -86,6 +86,7 @@ public final class MockTransport: ScriptedTransport, @unchecked Sendable {
 
   public func emit(_ operation: String, json: String) throws {
     _ = try cable?.event(operation: operation, result: json)
+    TestPulse.shared.pulse()
   }
 
   public func query(request: TransportRequest) async throws -> String { try await answer(request) }
@@ -109,6 +110,7 @@ public final class MockTransport: ScriptedTransport, @unchecked Sendable {
       replies[request.operationName] = queue
       return next
     }
+    TestPulse.shared.pulse()
     guard let reply else { throw await refuse(request) }
     do {
       if let hold = reply.hold { await hold.pass() }
@@ -117,6 +119,7 @@ public final class MockTransport: ScriptedTransport, @unchecked Sendable {
       if let body = reply.body { lock.withLock { settled[identity] = body } }
       throw error
     }
+    defer { TestPulse.shared.pulse() }
     if let failure = reply.failure { throw failure }
     return reply.body ?? "{}"
   }
@@ -154,11 +157,16 @@ public final class Hold: @unchecked Sendable {
     _ = await drops.next()
   }
 
-  public func release() { freed.continuation.yield(()) }
+  public func release() {
+    freed.continuation.yield(())
+    TestPulse.shared.pulse()
+  }
 
   fileprivate func pass() async {
     arrived.continuation.yield(())
+    TestPulse.shared.pulse()
     var releases = freed.stream.makeAsyncIterator()
     if await releases.next() == nil { gone.continuation.yield(()) }
+    TestPulse.shared.pulse()
   }
 }

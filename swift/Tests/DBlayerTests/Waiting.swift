@@ -1,4 +1,5 @@
 import Foundation
+import Network
 import Observation
 import Testing
 import DBlayerTesting
@@ -47,6 +48,43 @@ func valueBeforeDeadline<Value: Sendable>(_ task: Task<Value, any Error>, releas
   }
 }
 let hangGuard: Duration = .seconds(20)
+
+/// Returns at the next pulse of the doubles and collectors. With a database open the wait is one round trip through the core: it ends when the owners have handled what was posted before it, and frees the thread meanwhile.
+func untilChange(after seen: Int, deadline: ContinuousClock.Instant) async {
+  if TestPulse.shared.current != seen { return }
+  if let database = try? DB.database {
+    _ = try? await database.subscriptionCensus()
+    return
+  }
+  await withTaskGroup(of: Void.self) { group in
+    group.addTask { await TestPulse.shared.next(after: seen) }
+    group.addTask { try? await expiry(ContinuousClock.now.duration(to: deadline)) }
+    await group.next()
+    group.cancelAll()
+  }
+}
+
+final class OnceFlag: @unchecked Sendable {
+  private let lock = NSLock()
+  private var taken = false
+  func first() -> Bool { lock.withLock { defer { taken = true }; return !taken } }
+}
+
+/// Starts the listener and returns when its state is `.ready`; a failed or cancelled listener throws.
+func startListening(_ listener: NWListener) async throws {
+  let once = OnceFlag()
+  try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, any Error>) in
+    listener.stateUpdateHandler = { state in
+      switch state {
+      case .ready: if once.first() { continuation.resume() }
+      case .failed(let error): if once.first() { continuation.resume(throwing: error) }
+      case .cancelled: if once.first() { continuation.resume(throwing: CancellationError()) }
+      default: break
+      }
+    }
+    listener.start(queue: .global())
+  }
+}
 func eventually(
   _ what: String = "the condition",
   timeout: Duration = hangGuard,
@@ -56,10 +94,11 @@ func eventually(
 ) async {
   let deadline = ContinuousClock.now + timeout
   while ContinuousClock.now < deadline {
+    let seen = TestPulse.shared.current
     if await condition() {
       return
     }
-    await Task.yield()
+    await untilChange(after: seen, deadline: deadline)
   }
   if await condition() {
     return
@@ -70,7 +109,10 @@ final class Done: @unchecked Sendable {
   private let lock = NSLock()
   private var flag = false
   var value: Bool { lock.withLock { flag } }
-  func set() { lock.withLock { flag = true } }
+  func set() {
+    lock.withLock { flag = true }
+    TestPulse.shared.pulse()
+  }
 }
 /// Runs `body` on its own task and records an issue when it does not return within the guard, so a call that hangs fails the test instead of stopping it.
 @discardableResult
@@ -100,7 +142,7 @@ func fencedUntil(_ what: String, fence: () async -> Void, sourceLocation: Source
     await Task.yield()
   }
 }
-func quiesce<State: Equatable>(_ what: String, rounds: Int = 3, fence: () async -> Void, _ state: () async -> State) async {
+func quiesce<State: Equatable>(_ what: String, rounds: Int = 50, fence: () async -> Void, _ state: () async -> State) async {
   let deadline = ContinuousClock.now + hangGuard
   var last = await state()
   var stable = 0
@@ -155,7 +197,10 @@ final class Collected: @unchecked Sendable {
   private let lock = NSLock()
   private var values: [ReadValue] = []
   var all: [ReadValue] { lock.withLock { values } }
-  func append(_ value: ReadValue) { lock.withLock { values.append(value) } }
+  func append(_ value: ReadValue) {
+    lock.withLock { values.append(value) }
+    TestPulse.shared.pulse()
+  }
 }
 
 func nextElement<Element: Sendable>(of stream: AsyncStream<Element>) async -> Element? {

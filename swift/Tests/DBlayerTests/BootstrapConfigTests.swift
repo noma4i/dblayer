@@ -117,8 +117,7 @@ final class BootstrapListener: @unchecked Sendable {
       connection.start(queue: .global())
       receive(connection, Data())
     }
-    listener.start(queue: .global())
-    await eventually("bootstrap HTTP listener ready") { self.listener.state == .ready }
+    try await startListening(listener)
     let port = try #require(listener.port)
     return URL(string: "http://127.0.0.1:\(port.rawValue)")!
   }
@@ -131,6 +130,7 @@ final class BootstrapListener: @unchecked Sendable {
         let length = header.components(separatedBy: "\r\n").first { $0.lowercased().hasPrefix("content-length:") }.flatMap { Int($0.split(separator: ":")[1].trimmingCharacters(in: .whitespaces)) } ?? 0
         if text[end.upperBound...].utf8.count < length { receive(connection, data); return }
         lock.withLock { received.append(text) }
+        TestPulse.shared.pulse()
         if holdHeaders {
           watchDisconnect(connection)
           return
@@ -149,6 +149,7 @@ final class BootstrapListener: @unchecked Sendable {
   private func watchDisconnect(_ connection: NWConnection) {
     connection.receive(minimumIncompleteLength: 1, maximumLength: 1) { _, _, done, error in
       self.lock.withLock { self.stopped = done || error != nil }
+      TestPulse.shared.pulse()
       connection.cancel()
     }
   }
