@@ -161,6 +161,8 @@ async fn rt_prop_close_against_query_no_old_transport() {
         let trace = transport.trace();
         assert_eq!(trace, vec![(first, true)], "{first}: late calls reached the old transport, trace (verb, gate admitted at entry): {trace:?}");
         assert_eq!(Arc::strong_count(&transport), 2, "{first}: a task still holds the transport after its call returned");
+    }
+}
 
 type EndGate = fn(&EpochGate);
 
