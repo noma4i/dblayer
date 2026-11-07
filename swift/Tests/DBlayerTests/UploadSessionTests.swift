@@ -6,7 +6,6 @@ import Testing
 private final class HeldUploadTransport: ScriptedTransport, @unchecked Sendable {
   let base = MockTransport()
   let arrived = AsyncStream<Void>.makeStream()
-  let released = AsyncStream<Void>.makeStream()
   let finished = AsyncStream<Void>.makeStream()
   private let lock = NSLock()
   private var putCount = 0
@@ -19,8 +18,7 @@ private final class HeldUploadTransport: ScriptedTransport, @unchecked Sendable 
     lock.withLock { putCount += 1 }
     defer { finished.continuation.yield(()) }
     arrived.continuation.yield(())
-    for await _ in released.stream { break }
-    try Task.checkCancellation()
+    try await parkUntilCancelled()
     return PutReply(status: 200, etag: nil)
   }
 }
@@ -57,7 +55,6 @@ extension BridgeProbeTests {
     try Data("clip".utf8).write(to: file)
     defer { try? FileManager.default.removeItem(at: file) }
     let transport = HeldUploadTransport()
-    defer { transport.released.continuation.yield(()) }
     transport.base.enqueue("CreateBlob", reply: #"{"data":{"createBlob":{"url":"https://storage.test/file","headers":{},"signedId":"signed","blobId":"blob"}}}"#)
     transport.base.enqueue("UserProfile", reply: #"{"data":{"me":{"__typename":"User","id":"1","name":"B"}}}"#)
     let database = try await reopen(config: Config(path: nil, dataVersion: nil), modelsJson: modelsJSON, transport: transport, operations: #"[{"name":"CreateBlob","document":"mutation CreateBlob { createBlob { url headers signedId blobId } }"},{"name":"CreateMoment","document":"mutation CreateMoment { createMoment { id } }"},{"name":"UserProfile","document":"query UserProfile { me { id name } }"}]"#)

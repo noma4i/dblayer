@@ -163,7 +163,6 @@ async fn a_failed_put_is_interrupted_only_when_the_core_cancelled_it() {
 
 struct Held {
     entered: tokio::sync::Notify,
-    release: tokio::sync::Notify,
     dropped: std::sync::atomic::AtomicBool,
 }
 
@@ -180,8 +179,8 @@ impl Transport for Held {
     async fn open_cable(&self, _: String, _: HashMap<String, String>, _: u64, _: Arc<dyn CableEvents>) -> CableOutcome {
         let _dropped = OpenDropped(&self.dropped);
         self.entered.notify_one();
-        self.release.notified().await;
-        unreachable!("the held open is never released: the core cancels it")
+        within(std::future::pending::<()>()).await;
+        unreachable!("the held open ends only when the core cancels it")
     }
     async fn put(&self, _: crate::ffi::PutTarget, _: PutFile, _: TransferIdentity, _: Arc<ByteProgress>) -> RawOutcome { unreachable!() }
 }
@@ -189,7 +188,7 @@ impl Transport for Held {
 /// P-XFER-34 and D-140 for the cable open: the core abandons the open by dropping the platform future, with no release of the platform.
 #[tokio::test]
 async fn an_abandoned_cable_open_cancels_the_platform_call() {
-    let held = Arc::new(Held { entered: tokio::sync::Notify::new(), release: tokio::sync::Notify::new(), dropped: std::sync::atomic::AtomicBool::new(false) });
+    let held = Arc::new(Held { entered: tokio::sync::Notify::new(), dropped: std::sync::atomic::AtomicBool::new(false) });
     let transport = Arc::new(ForeignTransport::beside_session(held.clone()));
     let opening = { let transport = transport.clone(); tokio::spawn(async move { transport.open_cable(URL).await.map(drop) }) };
     within(held.entered.notified()).await;

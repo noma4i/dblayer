@@ -1,5 +1,6 @@
 package com.noma4i.dblayer
 
+import kotlinx.coroutines.async
 import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.withContext
 import okhttp3.Interceptor
@@ -100,7 +101,7 @@ class TransportThreadTest {
             override fun canceled(call: okhttp3.Call) { canceled.complete(Unit) }
         }).build()
         server.enqueue(MockResponse().setSocketPolicy(SocketPolicy.NO_RESPONSE))
-        val put = kotlinx.coroutines.async(kotlinx.coroutines.Dispatchers.IO) { putOf(OkHttpTransport(client = observed))() }
+        val put = async(kotlinx.coroutines.Dispatchers.IO) { putOf(OkHttpTransport(client = observed))() }
         kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { server.takeRequest(10, java.util.concurrent.TimeUnit.SECONDS) }
         put.cancel()
         canceled.await()
