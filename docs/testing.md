@@ -93,7 +93,7 @@ Typical scenarios to cover:
 
 ## In this repository
 
-`scripts/check_dblayer.sh` runs the cheap, cargo, swift and kotlin lanes at the same time (the steps of one lane run in order, each takes its own build slot), then the ship and final lanes when all of them passed, all within a 300 s limit. The iOS cross-compile check `ios-slices` runs in the cargo lane, so the swift lane holds only the Swift tests and the simulator compile.
+`scripts/check_dblayer.sh` runs the cheap, cargo, swift and kotlin lanes at the same time (the steps of one lane run in order, each takes its own build slot), then the ship and final lanes when all of them passed, all within a 300 s limit. Every test step (`cargo-test-core`, `cargo-test-gen`, `swift-test`, `gradle-test`) has its own 300 s limit, compile steps keep theirs; a single lane run (`--only <lane>`) is bounded by its steps, not by the 300 s of the whole check.
 
 | Check                                          | Command                                    |
 | ---------------------------------------------- | ------------------------------------------ |
