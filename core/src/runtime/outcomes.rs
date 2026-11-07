@@ -56,10 +56,22 @@ impl<T> Outcomes<T> {
 
     fn lock(&self) -> MutexGuard<'_, Inner<T>> { lock(&self.inner) }
 
-    pub fn register(&self, epoch: Epoch) -> Waiter<T> {
+    pub fn register(&self, epoch: Epoch) -> Waiter<T> { self.register_with(None, epoch) }
+
+    /// A waiter under the id of the caller: the id names the request the answer belongs to.
+    pub fn register_as(&self, id: u64, epoch: Epoch) -> Waiter<T> { self.register_with(Some(id), epoch) }
+
+    pub fn forget(&self, id: OutcomeId) {
+        let removed = self.lock().open.remove(&id.0);
+        crate::lock::effect(|| drop(removed));
+    }
+
+    fn register_with(&self, id: Option<u64>, epoch: Epoch) -> Waiter<T> {
         let mut inner = self.lock();
-        let id = inner.next;
-        inner.next += 1;
+        let id = id.unwrap_or_else(|| {
+            inner.next += 1;
+            inner.next - 1
+        });
         let (sender, receiver) = oneshot::channel();
         let terminal = if inner.closed {
             Some(Outcome::Closing)

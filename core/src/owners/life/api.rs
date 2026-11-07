@@ -3,13 +3,13 @@
 use std::collections::BTreeSet;
 use std::sync::atomic::Ordering;
 
-use super::{Life, LifeReply, WAITER_AUTHORS};
+use super::{Life, LifeReply, WAITER_AUTHOR};
 use crate::owners::calls::{CallKind, CallsInput};
 use crate::owners::contract::{BatchAuthor, BatchId, RequestId};
 use crate::owners::store::StoreReply;
 use crate::owners::lifecycle::LifecycleInput;
 use crate::owners::network::NetworkInput;
-use crate::owners::session::{AuthorId, AuthorOutcome, SessionInput};
+use crate::owners::session::{AuthorId, SessionInput};
 use crate::owners::write::outbox::{Fault, OutboxAnswer, OutboxInput};
 use crate::runtime::{Epoch, EpochStamp, Waiter};
 
@@ -93,23 +93,24 @@ impl Life {
         waiter
     }
 
-    /// `Mutate` of Outbox and Transfer: the answer comes to the sink the author registered with `on_mutate_answer`.
+    /// `Mutate` of an author: the runner of Session answers its `reply_to`.
     pub fn mutate(&self, author: AuthorId, owner: Option<crate::owners::session::MutateOwner>, req_id: RequestId, path: String, body: String, purpose: u8) {
         self.wiring.to_session(SessionInput::Mutate { author, owner, req_id, epoch: self.published().epoch, path, body, purpose });
     }
 
     /// One `Mutate` of a direct call: the outcome comes to the waiter, a repeat is the business of its caller.
     pub fn mutate_for_call(&self, owner: Option<crate::owners::session::MutateOwner>, path: String, body: String, purpose: u8) -> Waiter<LifeReply> {
-        if self.shut.load(Ordering::SeqCst) { return self.settled(LifeReply::Closed); }
-        let waiter = self.wiring.outcomes.register(Epoch::MAX);
-        let author = WAITER_AUTHORS + waiter.id().raw();
-        let (wiring, id) = (self.wiring.clone(), waiter.id());
-        self.wiring.on_mutate_answer_once(author, move |outcome| { wiring.outcomes.settle(id, LifeReply::Mutated(outcome)); });
-        self.mutate(author, owner, crate::owners::contract::next_request_id(), path, body, purpose);
-        waiter
+        self.mutate_answered(owner, crate::owners::contract::next_request_id(), path, body, purpose)
     }
 
-    pub fn on_mutate_answer(&self, author: AuthorId, sink: impl FnMut(RequestId, AuthorOutcome) + Send + 'static) { self.wiring.on_mutate_answer(author, sink); }
+    /// One `Mutate` under the request id of the caller: the outcome settles the waiter.
+    pub fn mutate_answered(&self, owner: Option<crate::owners::session::MutateOwner>, req_id: RequestId, path: String, body: String, purpose: u8) -> Waiter<LifeReply> {
+        if self.shut.load(Ordering::SeqCst) { return self.settled(LifeReply::Closed); }
+        let author = WAITER_AUTHOR.saturating_add(req_id);
+        let waiter = self.wiring.mutations.register_as(author, Epoch::MAX);
+        self.mutate(author, owner, req_id, path, body, purpose);
+        waiter
+    }
 
     pub fn on_store_reply(&self, author: BatchAuthor, sink: impl Fn(BatchId, StoreReply) + Send + Sync + 'static) { self.wiring.on_store_reply(author, sink); }
 

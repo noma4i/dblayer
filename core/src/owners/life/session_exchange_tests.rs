@@ -64,13 +64,10 @@ static NEXT_REQUEST: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64
 
 /// One `Mutate` of an author under its own id; the outcome comes through the sink of the author.
 async fn attempt(life: &crate::owners::life::Life, req_id: u64, body: String) -> LifeReply {
-    let (sender, receiver) = tokio::sync::oneshot::channel();
-    let sender = std::sync::Mutex::new(Some(sender));
-    life.on_mutate_answer(1 << 32, move |_, outcome| {
-        if let Some(sender) = sender.lock().unwrap().take() { let _ = sender.send(outcome); }
-    });
-    life.mutate(1 << 32, None, req_id, OTP.into(), body, 0);
-    LifeReply::Mutated(tokio::time::timeout(LIMIT, receiver).await.expect("the owner answered within 10 s").unwrap())
+    match tokio::time::timeout(LIMIT, life.mutate_answered(None, req_id, OTP.into(), body, 0).wait()).await.expect("the owner answered within 10 s") {
+        crate::runtime::Outcome::Value(reply) => reply,
+        other => panic!("the author has an outcome: {other:?}"),
+    }
 }
 
 /// The author repeats a request with the same `req_id` after `Dropped` or a temporary error, as Outbox does.
@@ -300,8 +297,7 @@ async fn the_pending_of_an_author_is_restored_with_its_request_id_and_owner() {
         let (client, life) = world.open(&db).await;
         sign_in(&client).await;
         world.server.drop_next_request();
-        life.on_mutate_answer(1 << 32, |_, _| {});
-        life.mutate(1 << 32, owner.clone(), req_id, OTP.into(), json!({}).to_string(), 0);
+        drop(life.mutate_answered(owner.clone(), req_id, OTP.into(), json!({}).to_string(), 0));
         until("the pending request was never stored", || rows(&db).1.is_some()).await;
         let _ = tokio::time::timeout(LIMIT, life.close().wait()).await;
     }

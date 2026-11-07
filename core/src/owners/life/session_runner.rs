@@ -8,7 +8,7 @@ use std::sync::Arc;
 use serde_json::Value;
 use tokio::task::AbortHandle;
 
-use super::{LifeReply, MutateSinks, Wiring};
+use super::{LifeReply, Wiring};
 use crate::owners::contract::{BatchAuthor, RejectReason, Rejected, ReplyId, RequestId};
 use crate::owners::lifecycle::{LifecycleInput, Peer};
 use crate::owners::network::NetworkInput;
@@ -50,7 +50,6 @@ pub(super) struct SessionRunner {
     /// The credentials generated off the owner threads reach the maps above through this channel before the owner hears of them.
     minted: Receiver<(u64, String, String)>,
     mint: Sender<(u64, String, String)>,
-    sinks: MutateSinks,
     wires: HashMap<RequestId, Wire>,
     operations: HashMap<RequestId, i64>,
 }
@@ -69,12 +68,12 @@ pub(crate) struct Restored {
 }
 
 impl SessionRunner {
-    pub fn new(wiring: Arc<Wiring>, (exchange, secret, store): (Arc<Exchange>, Arc<Secret>, Arc<Store>), seal: Arc<crate::owners::session_seal::SealConfig>, executor: tokio::runtime::Handle, (restored, sinks): (&Restored, MutateSinks)) -> Self {
+    pub fn new(wiring: Arc<Wiring>, (exchange, secret, store): (Arc<Exchange>, Arc<Secret>, Arc<Store>), seal: Arc<crate::owners::session_seal::SealConfig>, executor: tokio::runtime::Handle, restored: &Restored) -> Self {
         let wires = restored.wire.iter().map(|(request_id, wire)| (*request_id, Wire { id: wire.id.clone(), key: wire.key.clone(), cut: wiring.gate.cut() })).collect();
         let digests = restored.digest.iter().cloned().collect();
         let (mint, minted) = std::sync::mpsc::channel();
         let operations = restored.pending.iter().filter_map(|pending| match pending.owner { Some(crate::transport::RequestOwner::Operation { seq }) => Some((pending.request_id, seq)), _ => None }).collect();
-        Self { wiring, exchange, secret, store, seal, executor, running: HashMap::new(), digests, generated: HashMap::new(), minted, mint, sinks, wires, operations }
+        Self { wiring, exchange, secret, store, seal, executor, running: HashMap::new(), digests, generated: HashMap::new(), minted, mint, wires, operations }
     }
 
     /// What `Open` of the owner takes: the rows and what `CredentialStore.get` found.
@@ -361,7 +360,7 @@ impl EffectRunner<SessionCalls> for SessionRunner {
             }
             SessionEffect::ExecutorFailed => self.wiring.to_lifecycle(LifecycleInput::ExecutorFailed { executor: "session".into() }),
             SessionEffect::Answer { author, req_id, outcome } => {
-                if !self.sinks.answer(author, req_id, outcome) { self.wiring.fault(format!("no author {author} for the answer to request {req_id}")); }
+                self.wiring.answer_author(author, req_id, outcome);
             }
             SessionEffect::Drained(drained) => self.wiring.to_lifecycle(LifecycleInput::Drained(drained)),
         }

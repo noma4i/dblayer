@@ -53,11 +53,8 @@ async fn sess_prop_security_code_kept() {
     http.refused.store(true, std::sync::atomic::Ordering::SeqCst);
     let before = http.requests.load(std::sync::atomic::Ordering::SeqCst);
     assert!(matches!(within(database.session_call("confirm".into(), "{}".into())).await, Err(DbError::Security { code: SecurityCode::TlsTrust, detail }) if detail == "platform trust refused"));
-    let (tx, rx) = tokio::sync::oneshot::channel();
-    let tx = std::sync::Mutex::new(Some(tx));
-    database.life.on_mutate_answer(1 << 32, move |_, result| { if let Some(tx) = tx.lock().unwrap().take() { let _ = tx.send(result); } });
-    database.life.mutate(1 << 32, None, 42, "/api/auth/confirm".into(), "{}".into(), 0);
-    assert!(matches!(within(rx).await.unwrap(), AuthorOutcome::Error { class: ErrorClass::Permanent, error: SessionError::Security { code: SecurityCode::TlsTrust, detail }, pending_retained: false } if detail == "platform trust refused"));
+    let crate::runtime::Outcome::Value(crate::owners::life::LifeReply::Mutated(outcome)) = within(database.life.mutate_answered(None, 42, "/api/auth/confirm".into(), "{}".into(), 0).wait()).await else { panic!("the author has an outcome") };
+    assert!(matches!(outcome, AuthorOutcome::Error { class: ErrorClass::Permanent, error: SessionError::Security { code: SecurityCode::TlsTrust, detail }, pending_retained: false } if detail == "platform trust refused"));
     assert_eq!(http.requests.load(std::sync::atomic::Ordering::SeqCst), before + 2);
     let answers = crate::store::session_state::answers(&database.db.lock().connection).unwrap();
     assert_eq!(answers.get(&42), Some(&crate::store::session_state::StoredAnswer::Security { code: SecurityCode::TlsTrust, detail: "platform trust refused".into() }));

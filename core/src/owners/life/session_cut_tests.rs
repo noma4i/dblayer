@@ -1,11 +1,12 @@
 
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::time::Duration;
 
 use serde_json::json;
 
-use crate::runtime::ManualClock;
+use crate::owners::life::LifeReply;
+use crate::runtime::{ManualClock, Outcome};
 use crate::store::Store;
 use crate::test_wait::{within, yield_until};
 use crate::transport::encrypted::exchange_tests::Client;
@@ -41,13 +42,7 @@ impl CredentialSlot for HoldSlot {
 }
 
 async fn mutate(life: &crate::owners::life::Life, req_id: u64) {
-    let (sender, receiver) = tokio::sync::oneshot::channel();
-    let sender = Mutex::new(Some(sender));
-    life.on_mutate_answer(1 << 32, move |_, outcome| {
-        if let Some(sender) = sender.lock().unwrap_or_else(std::sync::PoisonError::into_inner).take() { let _ = sender.send(outcome); }
-    });
-    life.mutate(1 << 32, None, req_id, OTP.into(), "{}".into(), 0);
-    within(receiver).await.expect("the author has an outcome");
+    let Outcome::Value(LifeReply::Mutated(_)) = within(life.mutate_answered(None, req_id, OTP.into(), "{}".into(), 0).wait()).await else { panic!("the author has an outcome") };
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -66,8 +61,7 @@ async fn sess_prop_cut_before_transport() {
         let per_request = slot.reads.load(Ordering::SeqCst) - before;
         let sent = server.seen().len();
         slot.hold_at.store(slot.reads.load(Ordering::SeqCst) + per_request, Ordering::SeqCst);
-        life.on_mutate_answer(1 << 32, |_, _| {});
-        life.mutate(1 << 32, None, (1 << 41) + 1, OTP.into(), "{}".into(), 0);
+        drop(life.mutate_answered(None, (1 << 41) + 1, OTP.into(), "{}".into(), 0));
         yield_until("the request task never read the secret", || slot.reads.load(Ordering::SeqCst) == slot.hold_at.load(Ordering::SeqCst)).await;
         if closing { drop(life.close()); } else { drop(life.session_reset()); }
         yield_until("the epoch never ended", || life.published().state != crate::owners::contract::PublishedState::Session).await;

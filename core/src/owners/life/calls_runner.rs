@@ -1,7 +1,6 @@
 //! Executor of the effects of Calls: a query goes to the transport, a mutation goes through the owner Session.
 
 use std::collections::HashMap;
-use std::sync::mpsc::Sender;
 use std::sync::Arc;
 
 use serde_json::Value;
@@ -15,11 +14,6 @@ use crate::owners::session::{AuthorOutcome, SessionError, SessionInput, CALLS_AU
 use crate::runtime::{Back, EffectRunner, EpochStamp, OutcomeId};
 use crate::transport::{GraphQLRequest, ResponseOutcome, SessionCode, TransportError};
 
-enum RootNote {
-    Root(RequestId, String),
-    Forget(RequestId),
-}
-
 pub(super) struct CallsRunner {
     wiring: Arc<Wiring>,
     transport: Option<Arc<dyn crate::transport::Upstream>>,
@@ -27,7 +21,6 @@ pub(super) struct CallsRunner {
     executor: tokio::runtime::Handle,
     operations: super::OperationLookup,
     running: HashMap<u64, AbortHandle>,
-    roots: Sender<RootNote>,
 }
 
 fn input_of(call_id: u64, root: &str, result: Result<crate::transport::Response, TransportError>) -> CallsInput {
@@ -85,19 +78,7 @@ struct CallRequest {
 
 impl CallsRunner {
     pub fn new(wiring: Arc<Wiring>, ports: &Ports) -> Self {
-        let (roots, notes) = std::sync::mpsc::channel();
-        let (sink_wiring, mut sink_roots) = (wiring.clone(), HashMap::new());
-        wiring.on_mutate_answer(CALLS_AUTHOR, move |request_id, outcome| {
-            for note in notes.try_iter() {
-                match note {
-                    RootNote::Root(request_id, root) => { sink_roots.insert(request_id, root); }
-                    RootNote::Forget(request_id) => { sink_roots.remove(&request_id); }
-                }
-            }
-            let Some(root) = sink_roots.remove(&request_id) else { return };
-            sink_wiring.to_calls(answer_input(request_id, &root, outcome));
-        });
-        Self { wiring, transport: ports.transport.clone(), session: ports.exchange.clone(), executor: ports.executor.clone(), operations: ports.operations.clone(), running: HashMap::new(), roots }
+        Self { wiring, transport: ports.transport.clone(), session: ports.exchange.clone(), executor: ports.executor.clone(), operations: ports.operations.clone(), running: HashMap::new() }
     }
 
     fn query(&mut self, call: CallRequest, back: &Back<Calls>) {
@@ -122,12 +103,24 @@ impl CallsRunner {
         self.running.insert(request_id, task.abort_handle());
     }
 
+    fn forget(&mut self, request_id: RequestId) {
+        self.wiring.calls_answers.forget(OutcomeId::from_raw(request_id));
+        if let Some(task) = self.running.remove(&request_id) {
+            crate::lock::effect(|| task.abort());
+        }
+    }
+
     fn mutate(&mut self, call: CallRequest, back: &Back<Calls>) {
         let Some(client) = self.session.clone() else { return self.query(call, back) };
         let CallRequest { request_id, epoch, operation, variables, document, root, .. } = call;
         let variables: Value = serde_json::from_str(&variables).unwrap_or(Value::Null);
         let body = crate::transport::encrypted::graphql_body(&GraphQLRequest::new(document, operation, variables), true);
-        let _ = crate::lock::effect(|| self.roots.send(RootNote::Root(request_id, root)));
+        let waiter = self.wiring.calls_answers.register_as(request_id, crate::runtime::Epoch::MAX);
+        let back = back.clone();
+        let task = crate::task::spawn_on(crate::task::Carry::Detached, &self.executor, crate::runtime::counted(None, async move {
+            if let crate::runtime::Outcome::Value(outcome) = waiter.wait().await { back.reply(EpochStamp::Control, answer_input(request_id, &root, outcome)); }
+        }));
+        self.running.insert(request_id, task.abort_handle());
         self.wiring.to_session(mutate_input(request_id, epoch, client.graphql_path().to_string(), body.to_string()));
     }
 }
@@ -157,12 +150,12 @@ impl EffectRunner<Calls> for CallsRunner {
                     }
                 }
                 CallKind::Mutate => {
-                    let _ = crate::lock::effect(|| self.roots.send(RootNote::Forget(request_id)));
+                    self.forget(request_id);
                     self.wiring.to_session(SessionInput::Cancel { req_id: request_id });
                 }
             },
             CallsEffect::Release { request_id } => {
-                let _ = crate::lock::effect(|| self.roots.send(RootNote::Forget(request_id)));
+                self.forget(request_id);
                 self.wiring.to_session(SessionInput::Release { req_id: request_id });
             }
             CallsEffect::Reply { id, answer } => {

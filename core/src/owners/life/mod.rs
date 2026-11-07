@@ -42,7 +42,7 @@ use super::write::rounds_executor::RoundsExecutor;
 use super::write::transfer_executor::{LifeSignal, TransferExecutor, TransferPort, TransferSinks};
 use super::store::{BootFound, StoreInput, StoreReply, StoreState, StoreWriter};
 use crate::store::Store;
-use crate::runtime::{Address, AppendLog, Epoch, EpochStamp, Handle, Outcomes, PublishedCell, Runtime, RuntimeBuilder, Waiter};
+use crate::runtime::{Address, AppendLog, Epoch, EpochStamp, Handle, OutcomeId, Outcomes, PublishedCell, Runtime, RuntimeBuilder, Waiter};
 
 mod reply;
 mod boot;
@@ -51,8 +51,8 @@ pub(crate) use call_rule::CallVerdict;
 use boot::boot_found;
 
 
-/// The first author id of the calls that the old stack makes: below it the ids of Outbox, Transfer and Session.
-const WAITER_AUTHORS: AuthorId = 1 << 32;
+/// The first author id of the direct calls: below it the ids of Outbox, Transfer and Calls.
+const WAITER_AUTHOR: AuthorId = 1 << 32;
 
 /// The document and the answer root of a declared operation.
 pub type OperationLookup = Arc<dyn Fn(&str) -> Option<(String, String)> + Send + Sync>;
@@ -112,8 +112,10 @@ pub(crate) struct Wiring {
     open_answer: OnceLock<Result<(), LifecycleError>>,
     faults: AppendLog<String>,
     open_failed: OnceLock<(String, bool)>,
-    /// Where the answer to a `Mutate` goes, by author: the table lives in the runner of Session, a registration reaches it through this channel.
-    mutate_registry: std::sync::mpsc::Sender<(AuthorId, MutateSink)>,
+    /// The answers to `Mutate{reply_to = Calls, req_id}`: the executor of Calls waits for its request under `req_id`.
+    pub(crate) calls_answers: Outcomes<AuthorOutcome>,
+    /// The waits of direct calls by author id: a pending that a later `Mutate` of the same owner takes over answers the author of that `Mutate`.
+    pub(crate) mutations: Outcomes<LifeReply>,
     /// Where the answer of Store to a batch goes, by author: the `install` of Window, Feed, Outbox and Transfer registers its owner here, the last registration of an author answers.
     store_sinks: AppendLog<(BatchAuthor, StoreSink)>,
     network_sinks: AppendLog<(Peer, NetworkSink)>,
@@ -122,36 +124,12 @@ pub(crate) struct Wiring {
     restore_failures: AppendLog<(Peer, String)>,
 }
 
-/// The sink of the answers of one author: it returns whether it stays registered.
-pub(crate) type MutateSink = Box<dyn FnMut(RequestId, AuthorOutcome) -> bool + Send>;
-
-/// The sinks of the authors of `Mutate`: the runner of Session owns them and takes the registrations before each answer.
-pub(crate) struct MutateSinks {
-    inbox: std::sync::mpsc::Receiver<(AuthorId, MutateSink)>,
-    table: std::collections::HashMap<AuthorId, MutateSink>,
-}
-
-impl MutateSinks {
-    /// Returns whether an author was registered for the answer.
-    pub(crate) fn answer(&mut self, author: AuthorId, req_id: RequestId, outcome: AuthorOutcome) -> bool {
-        while let Ok((registered, sink)) = self.inbox.try_recv() {
-            self.table.insert(registered, sink);
-        }
-        let Some(sink) = self.table.get_mut(&author) else { return false };
-        if !sink(req_id, outcome) {
-            self.table.remove(&author);
-        }
-        true
-    }
-}
-
 impl Wiring {
     /// The epoch is the published one, open, and has an identity: a request to the server needs a session.
     pub(crate) fn admits_session(&self, epoch: Epoch) -> bool { self.published.read(|published| published.is_some_and(|published| published.epoch == epoch && !published.closed && published.identity.is_some())) }
 
-    fn new(handle: Handle, now: Arc<dyn Fn() -> i64 + Send + Sync>) -> (Self, MutateSinks) {
-        let (mutate_registry, inbox) = std::sync::mpsc::channel();
-        (Self {
+    fn new(handle: Handle, now: Arc<dyn Fn() -> i64 + Send + Sync>) -> Self {
+        Self {
             now,
             addresses: OnceLock::new(),
             outcomes: Outcomes::new(),
@@ -166,12 +144,13 @@ impl Wiring {
             open_answer: OnceLock::new(),
             faults: AppendLog::default(),
             open_failed: OnceLock::new(),
-            mutate_registry,
+            calls_answers: Outcomes::new(),
+            mutations: Outcomes::new(),
             store_sinks: AppendLog::default(),
             network_sinks: AppendLog::default(),
             committed_sinks: AppendLog::default(),
             restore_failures: AppendLog::default(),
-        }, MutateSinks { inbox, table: Default::default() })
+        }
     }
 
     /// `None` only before `install` finished: no effect runs by then.
@@ -290,15 +269,14 @@ impl Wiring {
         self.store_sinks.push((author, Arc::new(sink)));
     }
 
-    /// `Transport{req_id, Response/Error{Permanent, X}}` to the author of a `Mutate`: the sink stays until it returns false.
-    pub fn on_mutate_answer(&self, author: AuthorId, mut sink: impl FnMut(RequestId, AuthorOutcome) + Send + 'static) {
-        let _ = crate::lock::effect(|| self.mutate_registry.send((author, Box::new(move |req_id, outcome| { sink(req_id, outcome); true }))));
-    }
-
-    /// The sink hears the first answer of the author and goes.
-    pub fn on_mutate_answer_once(&self, author: AuthorId, sink: impl FnOnce(AuthorOutcome) + Send + 'static) {
-        let mut sink = Some(sink);
-        let _ = crate::lock::effect(|| self.mutate_registry.send((author, Box::new(move |_, outcome| { if let Some(sink) = sink.take() { sink(outcome); } false }))));
+    /// `Transport{req_id, Response/Error{Permanent, X}}` to the `reply_to` of a `Mutate`: Outbox, Calls or the waiter of a direct call.
+    pub(crate) fn answer_author(&self, author: AuthorId, req_id: RequestId, outcome: AuthorOutcome) {
+        match author {
+            super::session::OUTBOX_AUTHOR => self.to_outbox(OutboxInput::Answered { req_id, outcome }),
+            super::session::CALLS_AUTHOR => { self.calls_answers.settle(OutcomeId::from_raw(req_id), outcome); }
+            WAITER_AUTHOR.. => { self.mutations.settle(OutcomeId::from_raw(author), LifeReply::Mutated(outcome)); }
+            _ => self.fault(format!("no author {author} for the answer to request {req_id}")),
+        }
     }
 
     pub fn to_rounds(&self, input: RoundsInput) {
@@ -398,7 +376,7 @@ impl Life {
         let found = boot_found(&ports.db, saved_unowned_pending)?;
         let clock = ports.db.lock().clock.clone();
         let mut builder = RuntimeBuilder::new(clock.clone());
-        let (wiring, mutate_sinks) = Wiring::new(builder.handle(), Arc::new(move || i64::try_from(clock.now().as_millis()).unwrap_or(i64::MAX)));
+        let wiring = Wiring::new(builder.handle(), Arc::new(move || i64::try_from(clock.now().as_millis()).unwrap_or(i64::MAX)));
         let wiring = Arc::new(wiring);
         let open_wait = wiring.outcomes.register(Epoch::MAX);
         let _ = wiring.open_id.set(open_wait.id().raw());
@@ -409,7 +387,7 @@ impl Life {
         let calls = builder.add::<Calls>("calls", CallsState::new(0, None, &[]), calls_runner::CallsRunner::new(wiring.clone(), &ports));
         let session_address = session.as_ref().zip(restored).map(|((exchange, secret, seal), restored)| {
             let state = SessionState::with_operations(exchange.session_operations(), None);
-            let address = builder.add::<SessionCalls>("session", state, session_runner::SessionRunner::new(wiring.clone(), (exchange.clone(), secret.clone(), ports.db.clone()), seal.clone(), ports.executor.clone(), (&restored, mutate_sinks)));
+            let address = builder.add::<SessionCalls>("session", state, session_runner::SessionRunner::new(wiring.clone(), (exchange.clone(), secret.clone(), ports.db.clone()), seal.clone(), ports.executor.clone(), &restored));
             (address, restored)
         });
         let has_transfer = session_address.is_some() && ports.transfer.is_some() && ports.transport.is_some();
@@ -438,8 +416,6 @@ impl Life {
                     (ports.executor.clone(), decode)
                 }),
             };
-            let answers = wiring.clone();
-            wiring.on_mutate_answer(super::session::OUTBOX_AUTHOR, move |req_id, outcome| answers.to_outbox(OutboxInput::Answered { req_id, outcome }));
             builder.add::<Outbox>("outbox", OutboxState::new(0, peers), executor)
         });
         let transfer = match (outbox, ports.transfer.as_ref(), ports.transport.as_ref(), transfer_at, rounds_at) {

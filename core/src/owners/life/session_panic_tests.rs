@@ -1,5 +1,5 @@
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::time::Duration;
 
 use async_trait::async_trait;
@@ -8,7 +8,8 @@ use serde_json::json;
 use crate::store::Store;
 use crate::owners::contract::ErrorClass;
 use crate::owners::session::{AuthorOutcome, SessionError};
-use crate::runtime::ManualClock;
+use crate::owners::life::LifeReply;
+use crate::runtime::{ManualClock, Outcome};
 use crate::test_wait::{within, yield_until};
 use crate::transport::encrypted::fake_server_tests::{FakeServer, MemoryCredentials};
 use crate::transport::encrypted::exchange_tests::Client;
@@ -32,12 +33,8 @@ async fn sess_calling_http_panic() {
     let client = Client::new(&crate::transport::encrypted::protocol_tests::config(), http.clone(), Arc::new(MemoryCredentials::default()), db.clone(), clock, Arc::new(crate::transport::MockTransport::new())).unwrap();
     let life = client.start_owners();
     within(client.session_call("social", json!({}))).await.unwrap();
-    let (sender, receiver) = tokio::sync::oneshot::channel();
-    let sender = Mutex::new(Some(sender));
-    life.on_mutate_answer(7, move |_, outcome| { if let Some(sender) = sender.lock().unwrap().take() { let _ = sender.send(outcome); } });
     http.panic.store(true, Ordering::SeqCst);
-    life.mutate(7, None, 11, "/api/auth/otp".into(), "{}".into(), 0);
-    let outcome = within(receiver).await.unwrap();
+    let Outcome::Value(LifeReply::Mutated(outcome)) = within(life.mutate_answered(None, 11, "/api/auth/otp".into(), "{}".into(), 0).wait()).await else { panic!("the author has an outcome") };
     assert!(matches!(outcome, AuthorOutcome::Error { class: ErrorClass::Permanent, error: SessionError::Http { status: 0 }, pending_retained: false }), "{outcome:?}");
     yield_until("Lifecycle did not close after HTTP panic", || life.published().closed).await;
 }
