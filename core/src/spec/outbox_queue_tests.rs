@@ -2,13 +2,13 @@
 
 use std::time::Duration;
 
-use super::outbox_cells_tests::{answers, kinds, sends, submit_op};
+use super::outbox_cells_tests::{answers, kinds, sends, submit_op, tick};
 use super::outbox_harness::*;
 use super::outbox_tests::want;
 use super::ref_outbox::{Ctx, Eff, In, Policy, St, Why as RWhy};
 use crate::owners::contract::Online;
 use crate::owners::write::failure;
-use crate::owners::write::outbox::{NewOp, OpId, OutboxAnswer, OutboxInput, OutboxOutcome, Stage, DRAIN_LIMIT};
+use crate::owners::write::outbox::{NewOp, OpId, OutboxAnswer, OutboxInput, OutboxOutcome, Stage, StoredOp, DRAIN_LIMIT};
 use crate::runtime::Time;
 use crate::value::sync::FailureKind;
 
@@ -63,6 +63,18 @@ fn out_queued_expired() {
     let (mut twin, id) = queued_for(9);
     assert_eq!(sends(&twin.post(OutboxInput::Online(Online(true)))), 1);
     assert_eq!(twin.stage(id), Some(St::Sending));
+
+    for (attempts, expect_rollback) in [(1, true), (2, false)] {
+        let mut twin = Twin::bare();
+        twin.post(OutboxInput::RegisterOperations { declarations: vec![("Moment".into(), "update".into())] });
+        let op = NewOp { expires_after: Some(Duration::from_secs(10)), ..model_op("r", Policy::Rollback, false) };
+        twin.post(OutboxInput::Tick(Time(11_000)));
+        twin.post(OutboxInput::Restored { ops: vec![StoredOp { answered: None, op_id: 1, op, error_mark: false, pending: None, attempts, cycle_id: 1, restore_failed: None, restore_element: None }], pending_lost: false });
+        let ready = twin.post(OutboxInput::RestoreReady { epoch: EPOCH });
+        let stage = twin.stage(1);
+        assert_eq!(stage == Some(St::RollingBack(RWhy::Rejected)), expect_rollback, "attempts {attempts}: {stage:?} {ready:?}");
+        assert_eq!(stage == Some(St::PersistingAttempt), !expect_rollback, "attempts {attempts}: a sent operation goes out again, never expired");
+    }
 }
 
 fn o_rollback() -> crate::owners::write::outbox::CommitKind { crate::owners::write::outbox::CommitKind::Rollback }
@@ -76,24 +88,24 @@ impl Dice {
     }
 }
 
-/// One random trace: a step submits, commits, answers, refuses or moves the network. `rows` = how many rows the submits spread over.
-fn trace(seed: u64, limit: usize, rows: usize) -> Vec<OpId> {
-    let mut twin = Twin::new_with(limit);
+/// One random trace: a step submits, commits, answers, refuses, fails on the network, fires a retry or moves the network. `rows` = how many rows the submits spread over, 0 = one row per operation.
+fn trace(seed: u64, rows: usize) -> Vec<OpId> {
+    let mut twin = Twin::new();
     let mut dice = Dice(seed);
     let mut order: Vec<OpId> = Vec::new();
-    for _ in 0..60 {
+    for _ in 0..80 {
         let open: Vec<(OpId, Stage)> = twin.state().ops.values().map(|operation| (operation.op_id, operation.stage)).collect();
         let pick = |stages: &[fn(Stage) -> bool], dice: &mut Dice| -> Option<OpId> {
             let found: Vec<OpId> = open.iter().filter(|(_, stage)| stages.iter().any(|test| test(*stage))).map(|(id, _)| *id).collect();
             (!found.is_empty()).then(|| found[dice.below(found.len())])
         };
-        let effects = match dice.below(10) {
+        let effects = match dice.below(12) {
             0..=3 => {
                 let row = if rows == 0 { open.len() } else { dice.below(rows) };
                 twin.submit(&format!("r{row}"), Policy::Rollback, false);
                 Vec::new()
             }
-            4 | 5 => match pick(&[|stage| matches!(stage, Stage::Submitting | Stage::Landing | Stage::RollingBack(_))], &mut dice) {
+            4 | 5 => match pick(&[|stage| matches!(stage, Stage::Submitting | Stage::Landing | Stage::RollingBack(_) | Stage::PersistingAttempt)], &mut dice) {
                 Some(id) => {
                     let oldest = open.iter().filter(|(_, stage)| *stage == Stage::Submitting).map(|(id, _)| *id).min();
                     twin.committed(if open.iter().any(|(found, stage)| *found == id && *stage == Stage::Submitting) { oldest.unwrap_or(id) } else { id })
@@ -105,17 +117,21 @@ fn trace(seed: u64, limit: usize, rows: usize) -> Vec<OpId> {
                 None => Vec::new(),
             },
             8 => match pick(&[|stage| stage == Stage::Sending], &mut dice) {
-                Some(id) => twin.post(OutboxInput::TransportError { op_id: id, temporary: false }),
+                Some(id) => twin.post(OutboxInput::TransportError { op_id: id, temporary: dice.below(2) == 0 }),
                 None => Vec::new(),
             },
-            _ => twin.post(OutboxInput::Online(Online(dice.below(2) == 0))),
+            9 => match pick(&[|stage| stage == Stage::Sending], &mut dice) {
+                Some(id) => tick(&mut twin, id),
+                None => Vec::new(),
+            },
+            _ => twin.post(OutboxInput::Online(Online(dice.below(3) != 0))),
         };
         let sent = sent_ids(&effects);
         assert!(sent.windows(2).all(|pair| pair[0] < pair[1]), "seed {seed}: one step sends in seq order: {sent:?}");
         order.extend(sent);
         let state = twin.state();
-        assert!(state.slots_taken() <= limit, "seed {seed}: {} slots", state.slots_taken());
-        let startable = state.online && state.slots_taken() < limit && state.ops.values().any(|queued| queued.stage == Stage::Queued && !state.ops.values().any(|other| other.op_id < queued.op_id && other.op.row_id == queued.op.row_id && other.stage != Stage::Done));
+        assert!(state.slots_taken() <= DRAIN_LIMIT, "seed {seed}: {} slots", state.slots_taken());
+        let startable = state.online && state.slots_taken() < DRAIN_LIMIT && state.ops.values().any(|queued| queued.stage == Stage::Queued && !state.ops.values().any(|other| other.op_id < queued.op_id && other.op.row_id == queued.op.row_id && other.stage != Stage::Done));
         assert!(!startable, "seed {seed}: a free slot and a queued operation on a free row");
     }
     order
@@ -123,13 +139,32 @@ fn trace(seed: u64, limit: usize, rows: usize) -> Vec<OpId> {
 
 #[test]
 fn out_prop_drain_order() {
-    for seed in 1..=40 {
-        trace(seed, DRAIN_LIMIT, 6);
+    for seed in 1..=60 {
+        trace(seed, 6);
     }
-    for seed in 1..=40 {
-        let order = trace(seed, 1, 0);
-        let mut sorted = order.clone();
+    for seed in 1..=60 {
+        let order = trace(seed, 0);
+        let mut first_sends: Vec<OpId> = Vec::new();
+        for id in order { if !first_sends.contains(&id) { first_sends.push(id); } }
+        let mut sorted = first_sends.clone();
         sorted.sort_unstable();
-        assert_eq!(order, sorted, "seed {seed}: with one slot the Mutate order is the op_id order");
+        assert_eq!(first_sends, sorted, "seed {seed}: the first Mutate of each operation follows the op_id order");
     }
+}
+
+#[test]
+fn out_sending_tick_no_slot() {
+    let no_slot = Ctx { slot_free: false, ..Ctx::ready() };
+    assert_eq!(want(St::Sending, &no_slot, In::Tick).next, St::Queued);
+
+    let mut twin = Twin::new();
+    let first = twin.submit("r1", Policy::Rollback, false);
+    twin.committed(first);
+    twin.post(OutboxInput::TransportError { op_id: first, temporary: true });
+    let second = twin.submit("r2", Policy::Rollback, false);
+    assert_eq!(sends(&twin.committed(second)), 1, "the waiting retry holds no slot");
+    let due = tick(&mut twin, first);
+    assert_eq!((twin.stage(first), sends(&due), kinds(&due).len()), (Some(St::Queued), 0, 0), "{due:?}");
+    twin.post(OutboxInput::Response { op_id: second, rows: server_rows(), swaps: Vec::new(), stale: Vec::new(), result: None, missing: Vec::new(), errors: None });
+    assert_eq!(twin.stage(first), Some(St::PersistingAttempt), "the freed slot gives the retry its next attempt");
 }

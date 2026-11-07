@@ -18,8 +18,8 @@ pub(super) const PURPOSE_TRANSFER: u8 = 1;
 pub(super) const EXPIRE_TIMER: u64 = 1 << 32;
 /// Attempts of an operation before the permanent error.
 pub(super) const ATTEMPT_LIMIT: u32 = 40;
-/// Operations with a `Mutate` in flight at the same time.
-pub const DRAIN_LIMIT: usize = 4;
+/// Operations with a `Mutate` in flight at the same time: Session sends by `sequence`, so the Outbox is the only queue.
+pub const DRAIN_LIMIT: usize = 1;
 
 /// The owners Outbox sends to.
 #[derive(Clone, Copy, Debug)]

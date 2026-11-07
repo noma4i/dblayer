@@ -87,18 +87,14 @@ pub(super) fn take_fx(log: &Log<Emitted<Run>>, state: Option<&OutboxState>) -> V
 pub(super) fn state_of(det: &DetScheduler) -> Option<&OutboxState> { det.state(Address::<Spy<Outbox>>::new(OUTBOX_AT)).map(|spy: &SpyState<Outbox>| &spy.inner) }
 
 /// The owner with its three peers: the Store, the Session and Transfer keep what they receive.
-pub(super) fn world(seed: u64) -> (DetScheduler, Log<Emitted<Run>>, Address<Spy<Outbox>>) { world_with(seed, o::DRAIN_LIMIT) }
-
-pub(super) fn world_with(seed: u64, drain_limit: usize) -> (DetScheduler, Log<Emitted<Run>>, Address<Spy<Outbox>>) {
+pub(super) fn world(seed: u64) -> (DetScheduler, Log<Emitted<Run>>, Address<Spy<Outbox>>) {
     let mut det = DetScheduler::new(seed);
     let peer = |det: &mut DetScheduler, name: &'static str| -> usize { det.add::<Sink<StoreWriter>>(name, new_log(), crate::spec::support::Silent).index() };
     let (store, session, transfer) = (peer(&mut det, "store"), det.add::<Sink<SessionCalls>>("session", new_log(), crate::spec::support::Silent).index(), det.add::<Sink<Transfers>>("transfer", new_log(), crate::spec::support::Silent).index());
     assert_eq!((store, session, transfer), (STORE_AT, SESSION_AT, TRANSFER_AT));
     let peers = OutboxPeers { store: Address::new(store), session: Some(Address::new(session)), transfer: Some(Address::new(transfer)) };
     let log = new_log();
-    let mut state = OutboxState::new(EPOCH, peers);
-    state.drain_limit = drain_limit;
-    let addr = det.add::<Spy<Outbox>>("outbox", SpyState::new(state, &log), Discard);
+    let addr = det.add::<Spy<Outbox>>("outbox", SpyState::new(OutboxState::new(EPOCH, peers), &log), Discard);
     assert_eq!(addr.index(), OUTBOX_AT);
     (det, log, addr)
 }
@@ -199,19 +195,15 @@ pub(super) struct Twin {
 
 impl Twin {
     /// The owner in the phase `Restoring`: nothing restored yet.
-    pub(super) fn bare() -> Self { Self::bare_with(o::DRAIN_LIMIT) }
-
-    pub(super) fn bare_with(drain_limit: usize) -> Self {
-        let (mut det, log, _) = world_with(7, drain_limit);
+    pub(super) fn bare() -> Self {
+        let (mut det, log, _) = world(7);
         det.start_epoch(EPOCH);
         Self { det, log, kept: Vec::new(), batches: BTreeMap::new(), first_pair: BTreeMap::new(), revision: 10, reply: 10, follower: None, store_text: String::new(), session_text: String::new() }
     }
 
     /// The owner in the phase `Ready` with an empty queue.
-    pub(super) fn new() -> Self { Self::new_with(o::DRAIN_LIMIT) }
-
-    pub(super) fn new_with(drain_limit: usize) -> Self {
-        let mut twin = Self::bare_with(drain_limit);
+    pub(super) fn new() -> Self {
+        let mut twin = Self::bare();
         twin.post(OutboxInput::RegisterOperations { declarations: vec![("Moment".into(), "update".into()), ("Moment".into(), "create".into()), ("Moment".into(), "destroy".into())] });
         twin.post(OutboxInput::Restored { ops: Vec::new(), pending_lost: false });
         twin.post(OutboxInput::RestoreReady { epoch: EPOCH });

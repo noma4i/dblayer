@@ -152,6 +152,7 @@ pub fn step_of(state: St, ctx: &Ctx, input: In) -> Option<Step> {
         (Sending, In::TransportError { temporary: true } | In::Dropped) => step(Queued, &[], &[]),
         (Sending, In::TransportError { temporary: false }) if ctx.policy == Policy::Rollback => step(RollingBack(Why::Rejected), &[], &[Store(Rollback)]),
         (Sending, In::TransportError { temporary: false }) => step(MarkingFailed, &[], &[Store(ErrorMark)]),
+        (Sending, In::Tick) if ctx.ours && ctx.online && !ctx.slot_free => step(Queued, &[], &[]),
         (Sending, In::Tick) if ctx.ours && ctx.online && ctx.attempts_left => step(PersistingAttempt, &[], &[Store(Attempt)]),
         (Sending, In::Tick) if ctx.ours && ctx.online => step(MarkingFailed, &[], &[Store(ErrorMark)]),
         (Sending, In::Tick) if ctx.ours => step(Queued, &[], &[]),

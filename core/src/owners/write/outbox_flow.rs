@@ -80,6 +80,12 @@ impl OutboxState {
             return;
         }
         match self.stage_of(op_id) {
+            Some(Stage::Sending) if self.online && self.slots_taken() >= DRAIN_LIMIT => {
+                if let Some(operation) = self.ops.get_mut(&op_id) {
+                    operation.stage = Stage::Queued;
+                    operation.waiting_retry = false;
+                }
+            }
             Some(Stage::Sending) if self.online => {
                 if self.ops[&op_id].attempts < ATTEMPT_LIMIT {
                     self.begin_attempt(op_id, fx);

@@ -36,7 +36,6 @@ pub struct OutboxState {
     pub online: bool,
     /// The clock in milliseconds as the last `Tick` or `Submit` told it.
     pub(super) now: u64,
-    pub drain_limit: usize,
     pub generation: BTreeMap<String, u64>,
     /// The generation of the models without an entry in `generation`.
     pub(super) base_generation: u64,
@@ -85,7 +84,6 @@ impl OutboxState {
             epoch,
             online: true,
             now: 0,
-            drain_limit: DRAIN_LIMIT,
             generation: BTreeMap::new(),
             base_generation: 0,
             ops: BTreeMap::new(),
@@ -121,10 +119,8 @@ impl OutboxState {
     /// A new epoch: a fresh instance. The platform call gate keeps calls out of an epoch without an identity.
     pub(super) fn begin_epoch(&mut self, epoch: Epoch) {
         let declarations = std::mem::take(&mut self.declarations);
-        let drain_limit = self.drain_limit;
         *self = if self.author == BatchAuthor::LocalWrites { Self::local_writes(epoch, self.peers.store) } else { Self::new(epoch, self.peers) };
         self.declarations = declarations;
-        self.drain_limit = drain_limit;
     }
 
     pub fn stage_of(&self, op_id: OpId) -> Option<Stage> { self.ops.get(&op_id).map(|operation| operation.stage) }
@@ -142,11 +138,11 @@ impl OutboxState {
         self.ops.values().filter(|operation| operation.stage == Stage::PersistingAttempt || (operation.stage == Stage::Sending && !operation.waiting_retry)).count()
     }
 
-    pub(super) fn goes_out(&self, op_id: OpId) -> bool { self.online && !self.row_busy(op_id) && self.slots_taken() < self.drain_limit }
+    pub(super) fn goes_out(&self, op_id: OpId) -> bool { self.online && !self.row_busy(op_id) && self.slots_taken() < DRAIN_LIMIT }
 
     fn expired(&self, op_id: OpId) -> bool {
         let Some(operation) = self.ops.get(&op_id) else { return false };
-        operation.op.expires_after.is_some_and(|after| u128::from(self.now.saturating_sub(operation.op.created_at)) > after.as_millis())
+        operation.attempts <= 1 && operation.sends == 0 && !operation.pending_owned && operation.op.expires_after.is_some_and(|after| u128::from(self.now.saturating_sub(operation.op.created_at)) > after.as_millis())
     }
 
     /// The Queued operations in `seq` order: each one goes out while a slot is free or ends `Rejected{Expired}`.
@@ -352,7 +348,7 @@ impl OutboxState {
             }
             return self.store(op_id, CommitKind::Rollback, fx);
         }
-        if self.slots_taken() >= self.drain_limit {
+        if self.slots_taken() >= DRAIN_LIMIT {
             return;
         }
         if !operation.sent && operation.attempts <= 1 {
