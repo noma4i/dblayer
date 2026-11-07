@@ -295,6 +295,17 @@ fn xfer_not_expired() {
 }
 
 #[test]
+fn xfer_expiry_exact_week_keeps() {
+    let mut twin = Twin::new();
+    let id = twin.failed(KEY);
+    let out = twin.post(TransferInput::Tick { now: Time(7 * DAY), kind: TransferTick::Expire });
+    assert!(Twin::quiet(&out), "{out:?}");
+    assert_eq!(twin.stage(id), TransferStage::Failed);
+    let out = twin.post(TransferInput::Tick { now: Time(7 * DAY + 1), kind: TransferTick::Expire });
+    assert_eq!((twin.stage(id), out.removed()), (TransferStage::Removing, vec![KEY.to_string()]), "one millisecond over the week expires");
+}
+
+#[test]
 fn xfer_failed_other() {
     let mut twin = Twin::new();
     let id = twin.failed(KEY);

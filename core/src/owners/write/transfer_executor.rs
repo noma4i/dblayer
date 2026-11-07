@@ -116,6 +116,8 @@ pub(crate) struct TransferExecutor {
     steps: Flights<TransferId>,
     /// The cache of blobs: what is known of a server blob for the content of a copy.
     cache: Arc<dyn Fn(&str) -> CachedBlob + Send + Sync>,
+    doomed: Vec<String>,
+    answers: Vec<(ReplyId, TransferAnswer)>,
 }
 
 /// Where the executor reports to.
@@ -129,7 +131,7 @@ pub struct TransferSinks {
 impl TransferExecutor {
     pub fn new(wire: Wire, codec: Arc<dyn StepCodec>, files: Arc<FileDirectories>, sinks: TransferSinks, cache: Arc<dyn Fn(&str) -> CachedBlob + Send + Sync>) -> Self {
         let TransferSinks { settle, shows, drained, signal } = sinks;
-        Self { wire, codec, files, settle, shows, drained, signal, copies: Flights::default(), steps: Flights::default(), cache }
+        Self { wire, codec, files, settle, shows, drained, signal, copies: Flights::default(), steps: Flights::default(), cache, doomed: Vec::new(), answers: Vec::new() }
     }
 
     fn copy(&self, stamp: EpochStamp, back: &Back<Transfers>, transfer_id: TransferId, attempt_id: u64, source: Source) {
@@ -265,10 +267,22 @@ impl TransferExecutor {
         }));
     }
 
-    fn delete_file(&self, path: String) {
-        let files = self.files.clone();
+    fn finish_files(&mut self) {
+        let (doomed, answers) = (std::mem::take(&mut self.doomed), std::mem::take(&mut self.answers));
+        if doomed.is_empty() {
+            for (reply, answer) in answers {
+                (self.settle)(reply, answer);
+            }
+            return;
+        }
+        let (files, settle) = (self.files.clone(), self.settle.clone());
         let _ = self.wire.tasks.start_blocking(Box::new(move || {
-            let _ = files.discard(&[path]);
+            for path in doomed {
+                let _ = files.discard(&[path]);
+            }
+            for (reply, answer) in answers {
+                settle(reply, answer);
+            }
         }));
     }
 }
@@ -288,6 +302,8 @@ fn keep_small_copy(files: &FileDirectories, id: &str, location: crate::store::fi
 pub(crate) fn temporary(error: &TransportError) -> bool { RetryClass::of_error(error) != RetryClass::Fatal }
 
 impl EffectRunner<Transfers> for TransferExecutor {
+    fn step_done(&mut self) { self.finish_files(); }
+
     fn run(&mut self, stamp: EpochStamp, effect: TransferEffect, back: &Back<Transfers>) {
         match effect {
             TransferEffect::Copy { transfer_id, attempt_id, source, .. } => self.copy(stamp, back, transfer_id, attempt_id, source),
@@ -301,8 +317,8 @@ impl EffectRunner<Transfers> for TransferExecutor {
             TransferEffect::AbortOrphan { key, upload_id } => self.abort_orphan(stamp, back, key, upload_id),
             TransferEffect::CancelStep { transfer_id } => self.steps.cancel(&transfer_id),
             TransferEffect::ReleaseStep { request_id } => (self.signal)(LifeSignal::ReleaseStep(request_id)),
-            TransferEffect::DeleteFile { path } => self.delete_file(path),
-            TransferEffect::Reply { reply, answer } => (self.settle)(reply, answer),
+            TransferEffect::DeleteFile { path } => self.doomed.push(path),
+            TransferEffect::Reply { reply, answer } => self.answers.push((reply, answer)),
             TransferEffect::Shows { key, shown } => (self.shows)(&key, shown),
             TransferEffect::Refused { key, reason } => {
                 if reason.is_some() {

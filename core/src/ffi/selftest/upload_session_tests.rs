@@ -1,5 +1,6 @@
 use super::rig_tests::bound;
-use super::upload_stand::{clip, request, Stand, BLOB, CREATE_MOMENT};
+use super::upload_stand::{clip, request, watched, Answer, Stand, BLOB, CREATE_MOMENT};
+use crate::ffi::tape::Rows;
 use crate::ffi::session_guards_tests::SOCIAL_BODY;
 use crate::ffi::{DbError, WireOperationOutcome};
 use crate::test_wait::yield_until;
@@ -143,6 +144,70 @@ async fn xfer_prop_put_cancel_pushes() {
         put.release();
         bound(crate::ffi::settled(&database)).await.unwrap();
         assert_eq!((stand.puts.seen.lock().unwrap().len(), stand.script.count("CreateBlob"), stand.script.count("CreateMoment")), (1, 1, 0), "{cause}: no second PUT or step after the release");
+        database.close_now();
+    }
+}
+
+const MOMENT_ROW: &str = r#"{"data":{"createMoment":{"__typename":"Moment","id":"m1","uuid":"u","likedByMe":false,"media":{},"createdAt":"2026-10-08T00:00:00.000Z"}}}"#;
+
+fn local_url(rows: &Rows) -> Option<String> {
+    rows.0.lock().unwrap().first().and_then(|row| row.uploads.iter().find(|entry| entry.action == "upload_clip").and_then(|entry| entry.upload.local_url.clone()))
+}
+
+fn names(directory: &std::path::Path) -> Vec<String> {
+    let mut found: Vec<String> = std::fs::read_dir(directory).unwrap().map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned()).collect();
+    found.sort();
+    found
+}
+
+/// P-XFER-38 xfer_prop_reply_after_delete (D-142): for a database on disk and one in memory, the answer of `discard` and of `cancel_upload` comes after the removal of the copy of the same step, and a confirmed transfer has no copy once the work settled.
+#[tokio::test(flavor = "multi_thread")]
+async fn xfer_prop_reply_after_delete() {
+    for on_disk in [true, false] {
+        let stand = Stand::new();
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("db.sqlite");
+        let database = stand.open(on_disk.then_some(path.as_path()), &[CREATE_MOMENT, PROFILE]).await;
+        let file_of = |name: &str| {
+            let file = directory.path().join(format!("{name}.jpg"));
+            std::fs::write(&file, name.as_bytes()).unwrap();
+            file
+        };
+        let epoch = database.session_epoch();
+
+        stand.script.data("CreateBlob", BLOB);
+        stand.script.enqueue("CreateMoment", Answer::Status(422));
+        let failed = bound(database.send(clip("Moment", r#"{"text":"failed"}"#, "upload_clip", &file_of("failed"), epoch))).await.unwrap();
+        let failed_id = failed.optimistic_value.clone().unwrap().id;
+        let failed_rows = watched(&database, "Moment", &failed_id);
+        assert!(matches!(bound(database.outcome(failed)).await.unwrap(), WireOperationOutcome::Rejected { .. }));
+        yield_until("the failed row shows its copy", || local_url(&failed_rows).is_some()).await;
+        let url = local_url(&failed_rows).unwrap();
+        let copies = std::path::Path::new(&url["file://".len()..]).parent().unwrap().to_path_buf();
+        assert_eq!(names(&copies).len(), 1, "{on_disk}");
+        bound(database.discard(epoch, "Moment".into(), failed_id, None)).await.unwrap();
+        assert_eq!(names(&copies), Vec::<String>::new(), "{on_disk}: no copy after the answer of discard");
+        yield_until("localUrl is cleared", || local_url(&failed_rows).is_none()).await;
+
+        stand.script.data("CreateBlob", BLOB);
+        let put = stand.puts.hold_next();
+        let held = bound(database.send(clip("Moment", r#"{"text":"held"}"#, "upload_clip", &file_of("held"), epoch))).await.unwrap();
+        let held_id = held.optimistic_value.clone().unwrap().id;
+        let held_rows = watched(&database, "Moment", &held_id);
+        put.entered().await;
+        yield_until("the held row shows its copy", || local_url(&held_rows).is_some()).await;
+        assert_eq!(names(&copies).len(), 1, "{on_disk}");
+        assert!(bound(database.cancel_upload(epoch, "Moment".into(), held_id, "upload_clip".into())).await.unwrap());
+        assert_eq!(names(&copies), Vec::<String>::new(), "{on_disk}: no copy after the answer of cancel_upload");
+        yield_until("localUrl is cleared", || local_url(&held_rows).is_none()).await;
+        put.release();
+
+        stand.script.data("CreateBlob", BLOB);
+        stand.script.data("CreateMoment", MOMENT_ROW);
+        let confirmed = bound(database.send(clip("Moment", r#"{"text":"confirmed"}"#, "upload_clip", &file_of("confirmed"), epoch))).await.unwrap();
+        assert!(matches!(bound(database.outcome(confirmed)).await.unwrap(), WireOperationOutcome::Confirmed { .. }));
+        bound(crate::ffi::settled(&database)).await.unwrap();
+        assert_eq!(names(&copies), Vec::<String>::new(), "{on_disk}: no copy of a confirmed transfer once the work settled");
         database.close_now();
     }
 }

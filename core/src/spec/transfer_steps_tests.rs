@@ -270,6 +270,40 @@ fn xfer_put_timeout_other() {
 }
 
 #[test]
+fn xfer_put_timeout_cancelled() {
+    let in_flight = || {
+        let mut twin = Twin::new();
+        let id = twin.uploading(KEY, 3);
+        (twin, id)
+    };
+    let deadline = Time(u64::try_from(UploadConfig::default().put_timeout.as_millis()).unwrap() + 1);
+    let fired = |twin: &mut Twin| {
+        let before = twin.det.trace().len();
+        twin.det.tick(deadline);
+        twin.det.run_until_quiet(10_000).unwrap();
+        twin.det.trace()[before..].iter().filter(|entry| entry.input.contains("PutTimeout")).count()
+    };
+    let (mut control, _) = in_flight();
+    assert_eq!(fired(&mut control), 1, "an armed timeout fires once at its deadline");
+    let (mut twin, id) = in_flight();
+    assert_eq!(twin.step_ok(id, 1, Some("u1")).cancels, 1, "StepOk");
+    assert_eq!(fired(&mut twin), 0);
+    let (mut twin, id) = in_flight();
+    assert_eq!(twin.step_error(id, true).cancels, 1, "StepError temporary");
+    let (mut twin, id) = in_flight();
+    assert_eq!(twin.step_error(id, false).cancels, 1, "StepError permanent");
+    let (mut twin, _) = in_flight();
+    assert_eq!(twin.online(false).cancels, 1, "Online(false)");
+    assert_eq!(fired(&mut twin), 0);
+    let (mut twin, _) = in_flight();
+    assert_eq!(twin.post(TransferInput::PowerSaving(true)).cancels, 1, "PowerSaving");
+    assert_eq!(fired(&mut twin), 0);
+    let (mut twin, _) = in_flight();
+    twin.end_epoch();
+    assert_eq!(fired(&mut twin), 0, "EpochEnded");
+}
+
+#[test]
 fn xfer_step_fail() {
     let mut twin = Twin::new();
     let id = twin.uploading(KEY, 3);
