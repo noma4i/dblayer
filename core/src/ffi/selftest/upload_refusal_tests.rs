@@ -176,6 +176,37 @@ async fn an_offline_discard_is_aborted_after_the_reopen_toggles_the_network_at_o
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn an_offline_discard_without_waiting_for_the_dropped_step_is_aborted_after_the_reopen() {
+    let stand = Stand::new();
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("db.sqlite");
+    let source = directory.path().join("video");
+    std::fs::File::create(&source).unwrap().set_len(11 * MEBIBYTE).unwrap();
+    let operations = [CREATE_MOMENT];
+    let database = stand.open(Some(&path), &operations).await;
+    stand.script.data("InitMultipart", r#"{"data":{"initMultipart":{"key":"key","uploadId":"upload"}}}"#);
+    let presign = stand.script.hold("PresignParts", r#"{"data":{"presignParts":{"parts":[{"partNumber":1,"url":"https://storage/1"}]}}}"#);
+    let epoch = database.session_epoch();
+    let sent = bound(database.send(clip("Moment", r#"{"text":"video"}"#, "upload_clip", &source, epoch))).await.unwrap();
+    let id = sent.optimistic_value.unwrap().id;
+    presign.entered().await;
+    database.set_online(false).unwrap();
+    bound(database.discard(epoch, "Moment".into(), id, Some("upload_clip".into()))).await.unwrap();
+    presign.release();
+    database.close_now();
+    let abort = stand.script.hold("AbortMultipart", r#"{"data":{"abortMultipart":{"ok":true}}}"#);
+    let reopened: Arc<Database> = stand.open(Some(&path), &operations).await;
+    reopened.set_online(false).unwrap();
+    reopened.set_online(true).unwrap();
+    yield_until("the abort reached the transport", || stand.script.count("AbortMultipart") == 1).await;
+    abort.entered().await;
+    abort.release();
+    bound(crate::ffi::settled(&reopened)).await.unwrap();
+    assert_eq!(stand.script.count("AbortMultipart"), 1, "calls: {:?}", stand.script.names());
+    reopened.close_now();
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn an_offline_discard_routes_its_reopened_abort_as_a_transfer() {
     let stand = Stand::new();
     let directory = tempfile::tempdir().unwrap();

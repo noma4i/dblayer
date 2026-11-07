@@ -199,6 +199,21 @@ fn xfer_restart_stale_presign() {
 }
 
 #[test]
+fn xfer_discard_before_the_cancelled_attempt_answers() {
+    let mut twin = Twin::new();
+    let id = twin.uploading(KEY, 3);
+    let attempt_id = twin.attempt(id);
+    twin.post(TransferInput::UploadMinted { transfer_id: id, attempt_id, upload_id: "u1".into() });
+    twin.online(false);
+    let (reply, out) = twin.discard(KEY);
+    assert_eq!((out.orphans_written(), out.removed(), out.writes()), (vec![("u1".to_string(), KEY.to_string())], vec![KEY.to_string()], 1), "the removal carries the orphan of the minted upload");
+    assert_eq!(twin.stage(id), TransferStage::Removing);
+    twin.ignores(id, vec![TransferInput::StepError { transfer_id: id, attempt_id, temporary: true }]);
+    assert_eq!(twin.commit().replies(reply).len(), 1);
+    assert_eq!(twin.online(true).orphan_aborts(), vec!["u1".to_string()]);
+}
+
+#[test]
 fn xfer_singleton_row_upload() {
     use crate::owners::write::outbox::OutboxOutcome;
     use crate::owners::write::transfer::TransferAnswer;
