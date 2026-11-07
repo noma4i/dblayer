@@ -128,7 +128,7 @@ impl RetryProgress {
 }
 
 #[derive(uniffi::Object)]
-pub struct RetrySubscription { task: tokio::task::AbortHandle, pub(crate) calls: Arc<crate::ffi::CallState> }
+pub struct RetrySubscription { pub(super) task: tokio::task::AbortHandle, pub(crate) calls: Arc<crate::ffi::CallState> }
 
 #[uniffi::export]
 impl RetrySubscription {
@@ -204,22 +204,41 @@ pub(super) fn session_failure(error: crate::owners::session::SessionError) -> Db
 /// The server config before the database exists: `observers` report the network state to the fetch and stop when it ends.
 #[uniffi::export]
 pub async fn fetch_server_config(encrypted: EncryptedConfig, platform: core::AppPlatform, version: String, build: Option<String>, http: Arc<dyn EncryptedHttp>, retries: Option<Arc<RetryProgress>>, observers: Option<Arc<dyn super::PlatformObserver>>) -> Result<ServerConfig, DbError> {
+    fetch_observed(encrypted, platform, version, build, FetchPorts { http, retries, observers }, Arc::new(crate::runtime::SystemClock)).await
+}
+
+#[derive(uniffi::Record)]
+pub struct FetchPorts {
+    pub http: Arc<dyn EncryptedHttp>,
+    pub retries: Option<Arc<RetryProgress>>,
+    pub observers: Option<Arc<dyn super::PlatformObserver>>,
+}
+
+#[uniffi::export]
+pub async fn fetch_server_config_with_clock(encrypted: EncryptedConfig, platform: core::AppPlatform, version: String, build: Option<String>, ports: FetchPorts, clock: Arc<super::TestClock>) -> Result<ServerConfig, DbError> {
+    fetch_observed(encrypted, platform, version, build, ports, clock.manual()).await
+}
+
+async fn fetch_observed(encrypted: EncryptedConfig, platform: core::AppPlatform, version: String, build: Option<String>, ports: FetchPorts, clock: Arc<dyn crate::runtime::Clock>) -> Result<ServerConfig, DbError> {
     struct StopOnDrop(Option<Arc<dyn super::PlatformObserver>>);
     impl Drop for StopOnDrop {
         fn drop(&mut self) { if let Some(observers) = self.0.take() { crate::lock::effect(|| observers.stop()); } }
     }
+    let FetchPorts { http, retries, observers } = ports;
     let connectivity = core::Connectivity::new(false);
     let _stop = StopOnDrop(observers.clone());
     if let Some(observers) = observers {
         let sink = super::OnlineSink::of_connectivity(connectivity.clone());
         blocking(move || { observers.start(sink); Ok(()) }).await?;
     }
-    fetch_server_config_with(encrypted, platform, version, build, http, retries, connectivity).await
+    fetch_server_config_with(encrypted, platform, version, build, http, retries, Waits { connectivity, clock }).await
 }
 
-pub(super) async fn fetch_server_config_with(encrypted: EncryptedConfig, platform: core::AppPlatform, version: String, build: Option<String>, http: Arc<dyn EncryptedHttp>, retries: Option<Arc<RetryProgress>>, connectivity: Arc<core::Connectivity>) -> Result<ServerConfig, DbError> {
+pub(super) struct Waits { pub connectivity: Arc<core::Connectivity>, pub clock: Arc<dyn crate::runtime::Clock> }
+
+pub(super) async fn fetch_server_config_with(encrypted: EncryptedConfig, platform: core::AppPlatform, version: String, build: Option<String>, http: Arc<dyn EncryptedHttp>, retries: Option<Arc<RetryProgress>>, waits: Waits) -> Result<ServerConfig, DbError> {
     cancellable(async move {
         let progress = retries.map(|retries| retries.inner.clone()).unwrap_or_default();
-        core::encrypted::bootstrap::fetch(&encrypted, &core::encrypted::bootstrap::AppRelease { platform, version: &version, build: build.as_deref() }, Arc::new(ForeignHttp { port: http, origin: encrypted.origin.clone() }), &crate::runtime::SystemClock, &progress, &connectivity).await.map_err(typed)
+        core::encrypted::bootstrap::fetch(&encrypted, &core::encrypted::bootstrap::AppRelease { platform, version: &version, build: build.as_deref() }, Arc::new(ForeignHttp { port: http, origin: encrypted.origin.clone() }), &*waits.clock, &progress, &waits.connectivity).await.map_err(typed)
     }).await?
 }

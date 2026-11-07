@@ -112,6 +112,10 @@ impl TestClock {
     pub async fn await_armed(&self, after: u64) { self.clock.wait_armed(after).await }
 }
 
+impl TestClock {
+    pub(super) fn manual(&self) -> Arc<ManualClock> { self.clock.clone() }
+}
+
 type OutcomesByKey = Arc<Mutex<HashMap<(u64, u64, u64), WireOperationOutcome>>>;
 
 #[derive(Clone, uniffi::Object)]

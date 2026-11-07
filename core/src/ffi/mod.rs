@@ -68,7 +68,7 @@ pub use database::{Config, Database, EdgeRow, SubscriptionCensus, TestClock};
 pub use receipt::{ItemId, WireBatchReceipt, WireItemReceipt, WireOperationOutcome, WireOperationReceipt, WireReceiptTicket};
 pub use opening::{OpenDatabase, OpenOptions, OpenPorts, OperationDefinition};
 pub use write::FileBytes;
-pub use encrypted::{fetch_server_config, CredentialStore, EncryptedHttp, RetryProgress, RetryProgressListener, RetrySubscription};
+pub use encrypted::{fetch_server_config, fetch_server_config_with_clock, FetchPorts, CredentialStore, EncryptedHttp, RetryProgress, RetryProgressListener, RetrySubscription};
 pub use crate::transport::SessionCode;
 pub use crate::transport::{AppPlatform, ConfigCode, EncryptedConfig, EncryptedEndpoints, EncryptedOperationClass, EncryptedSessionOperation, SecurityCode, ServerConfig};
 pub use loading::{LoadMoreResult, LoadRequest};
@@ -203,6 +203,8 @@ impl From<serde_json::Error> for DbError {
 
 #[cfg(test)]
 pub(super) mod encrypted_tests;
+#[cfg(test)]
+mod bootstrap_public_tests;
 #[cfg(test)]
 mod lost_session_recovery_tests;
 #[cfg(test)]
