@@ -28,6 +28,8 @@ pub(super) enum OutboxEffect {
     TransferOutcomes { input: String },
     Schedule,
     Drained,
+    Started { epoch: u64 },
+    RestoreClassified { epoch: u64 },
     Copy { id: u64, source: String },
 }
 
@@ -56,6 +58,8 @@ pub(super) fn lower(emitted: Emitted<Run>, state: Option<&OutboxState>) -> Optio
     Some(match emitted {
         Emitted::Run(Run::Reply { reply, answer }) => OutboxEffect::Reply { reply, answer },
         Emitted::Run(Run::Drained(_)) => OutboxEffect::Drained,
+        Emitted::Run(Run::Started { epoch }) => OutboxEffect::Started { epoch },
+        Emitted::Run(Run::RestoreClassified { epoch }) => OutboxEffect::RestoreClassified { epoch },
         Emitted::Run(Run::Copy { id, source }) => OutboxEffect::Copy { id, source },
         Emitted::Run(Run::Decode(_) | Run::Stale { .. }) => return None,
         Emitted::Send { to: STORE_AT, input } => {
@@ -381,7 +385,7 @@ pub(super) fn translate(twin: &Twin, id: OpId, effects: Vec<OutboxEffect>, sched
             OutboxEffect::TransferOutcome { outcome, .. } => eff.push(Eff::TransferOutcome(out_of(&outcome))),
             OutboxEffect::TransferOutcomes { .. } => {}
             OutboxEffect::Drained => eff.push(Eff::Drained),
-            OutboxEffect::Copy { .. } => {}
+            OutboxEffect::Copy { .. } | OutboxEffect::Started { .. } | OutboxEffect::RestoreClassified { .. } => {}
         }
     }
     if scheduled {

@@ -35,7 +35,7 @@ use super::session::{AuthorId, AuthorOutcome, SessionAnswer, SessionCalls, Sessi
 use super::lifecycle::{Lifecycle, LifecycleError, LifecycleInput, LifecycleState, Peer};
 use super::network::{Network, NetworkInput, NetworkState};
 use super::write::outbox::{Outbox, OutboxAnswer, OutboxInput, OutboxPeers, OutboxState};
-use super::write::outbox_executor::OutboxExecutor;
+use super::write::outbox_executor::{OutboxExecutor, OutboxSignal};
 use super::write::transfer::{TransferAnswer, TransferInput, TransferPeers, TransferState, Transfers};
 use super::write::rounds::{Rounds, RoundsInput, RoundsState};
 use super::write::rounds_executor::RoundsExecutor;
@@ -360,11 +360,6 @@ pub struct Life {
     alive: Arc<std::sync::atomic::AtomicUsize>,
 }
 
-/// Installed owners that send `Started` and `RestoreClassified` to Lifecycle.
-fn restore_participants(session: bool) -> Vec<Peer> {
-    if session { vec![Peer::Session] } else { Vec::new() }
-}
-
 /// Peers of `all owners` without an installed owner answer `Drained` at `Closing`.
 fn absent(session: bool, transfer: bool) -> Vec<Peer> {
     let mut peers: Vec<Peer> = Vec::new();
@@ -393,7 +388,7 @@ impl Life {
         let wiring = Arc::new(wiring);
         let open_wait = wiring.outcomes.register(Epoch::MAX);
         wiring.open_id.set(open_wait.id().raw()).map_err(|_| LifeError::Storage("the wait of open is set twice".into()))?;
-        let lifecycle = builder.add::<Lifecycle>("lifecycle", LifecycleState::new().with_restore_participants(restore_participants(session.is_some())), runners::LifecycleRunner { wiring: wiring.clone(), absent: absent(session.is_some(), session.is_some() && ports.transfer.is_some()), db: ports.db.clone(), held_published: None, held_replies: Vec::new(), held_read: None });
+        let lifecycle = builder.add::<Lifecycle>("lifecycle", LifecycleState::new(), runners::LifecycleRunner { wiring: wiring.clone(), absent: absent(session.is_some(), session.is_some() && ports.transfer.is_some()), db: ports.db.clone(), held_published: None, held_replies: Vec::new(), held_read: None });
         builder.on_executor_failed(lifecycle);
         let store = builder.reserve::<StoreWriter>();
         let network = builder.add::<Network>("network", NetworkState::new(), runners::NetworkRunner { wiring: wiring.clone(), db: ports.db.clone(), held_replies: Vec::new() });
@@ -408,10 +403,14 @@ impl Life {
         let rounds_at = has_transfer.then(|| builder.reserve::<Rounds>());
         let outbox = session_address.as_ref().map(|(session, _)| {
             let peers = OutboxPeers { store, session: Some(*session), transfer: transfer_at };
-            let (settle_wiring, drained_wiring) = (wiring.clone(), wiring.clone());
+            let (settle_wiring, drained_wiring, signal_wiring) = (wiring.clone(), wiring.clone(), wiring.clone());
             let executor = OutboxExecutor {
                 settle: Arc::new(move |reply, answer| { settle_wiring.outcomes.settle(crate::runtime::OutcomeId::from_raw(reply), LifeReply::Outbox(answer)); }),
                 drained: Arc::new(move |drained| drained_wiring.to_lifecycle(LifecycleInput::Drained(drained))),
+                signal: Arc::new(move |signal| signal_wiring.to_lifecycle(match signal {
+                    OutboxSignal::Started(epoch) => LifecycleInput::Started { owner: Peer::Outbox, epoch },
+                    OutboxSignal::RestoreClassified(epoch) => LifecycleInput::RestoreClassified { owner: Peer::Outbox, epoch },
+                })),
                 copy: None,
                 counted: Some(builder.handle()),
                 stale: Some({
@@ -472,6 +471,7 @@ impl Life {
             let executor = OutboxExecutor {
                 settle: Arc::new(move |reply, answer| { settle_wiring.outcomes.settle(crate::runtime::OutcomeId::from_raw(reply), LifeReply::Outbox(answer)); }),
                 drained: Arc::new(move |drained| drained_wiring.to_lifecycle(LifecycleInput::Drained(drained))),
+                signal: Arc::new(|_| {}),
                 copy: None,
                 stale: None,
                 decode: None,

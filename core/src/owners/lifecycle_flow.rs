@@ -12,7 +12,7 @@ impl LifecycleState {
                 if saved_identity.is_some() {
                     self.restoring = Some(self.new_restoring(epoch, reply));
                     self.publish(Some(Started { epoch, identity: saved_identity, generation: saved_generation }), Vec::new(), fx);
-                } else if saved_unowned_pending && self.restore_participants.contains(&Peer::Session) {
+                } else if saved_unowned_pending {
                     self.restoring = Some(Restoring { epoch, start_waiting: Default::default(), restore_waiting: [Peer::Session].into(), open_reply: reply });
                     self.publish(Some(Started { epoch, identity: saved_identity, generation: saved_generation }), Vec::new(), fx);
                 } else {

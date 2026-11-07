@@ -2,7 +2,7 @@
 
 use super::outbox_harness::*;
 use super::ref_outbox::{Policy, St};
-use crate::owners::contract::{Committed, ModelsReset, Online, RejectReason, Rejected};
+use crate::owners::contract::{Committed, EpochStarted, ModelsReset, Online, RejectReason, Rejected};
 use crate::owners::session::StoredAnswer;
 use crate::owners::write::outbox::{CommitKind, Fault, OutboxAnswer, OutboxInput, OutboxOutcome, Phase, Receipt, StoredOp};
 use crate::runtime::Cause;
@@ -13,9 +13,15 @@ fn stored(op_id: u64, row: &str) -> StoredOp {
 
 fn declare(twin: &mut Twin) { twin.post(OutboxInput::RegisterOperations { declarations: vec![("Moment".into(), "update".into())] }); }
 
-fn restore(twin: &mut Twin, ops: Vec<StoredOp>) -> Vec<OutboxEffect> { twin.post(OutboxInput::Restored { ops, pending_lost: false }) }
+fn restore(twin: &mut Twin, ops: Vec<StoredOp>) -> Vec<OutboxEffect> {
+    twin.post(OutboxInput::Restored { ops, pending_lost: false }).into_iter().filter(|effect| !matches!(effect, OutboxEffect::RestoreClassified { .. })).collect()
+}
 
 fn ready(twin: &mut Twin) -> Vec<OutboxEffect> { twin.post(OutboxInput::RestoreReady { epoch: EPOCH }) }
+
+fn classified(effects: &[OutboxEffect]) -> Vec<u64> {
+    effects.iter().filter_map(|effect| match effect { OutboxEffect::RestoreClassified { epoch } => Some(*epoch), _ => None }).collect()
+}
 
 fn kinds(effects: &[OutboxEffect]) -> Vec<CommitKind> {
     effects.iter().filter_map(|effect| match effect { OutboxEffect::Store { kind, .. } => Some(*kind), _ => None }).collect()
@@ -114,8 +120,9 @@ fn out_restoring_foreign() {
 fn out_restored() {
     let mut twin = Twin::bare();
     declare(&mut twin);
-    let effects = restore(&mut twin, vec![stored(7, "r")]);
+    let effects = twin.post(OutboxInput::Restored { ops: vec![stored(7, "r")], pending_lost: false });
     assert_eq!((twin.state().phase, twin.stage(7), sends(&effects), kinds(&effects).len()), (Phase::Classified, Some(St::PersistingAttempt), 0, 0), "{effects:?}");
+    assert_eq!(classified(&effects), vec![EPOCH], "{effects:?}");
 }
 
 #[test]
@@ -223,7 +230,8 @@ fn out_waiting_declaration_other() {
 fn out_open_queue_unreadable() {
     let mut twin = Twin::bare();
     let effects = twin.post(OutboxInput::RestoreFailed { error: "disk".into() });
-    assert!(effects.is_empty() && twin.state().ops.is_empty());
+    assert_eq!(classified(&effects), vec![EPOCH], "{effects:?}");
+    assert!(effects.len() == 1 && twin.state().ops.is_empty());
     assert_eq!(twin.state().phase, Phase::Classified);
 }
 
@@ -351,4 +359,45 @@ fn out_prop_restore_answer() {
     effects.extend(twin.post(OutboxInput::Tick(crate::runtime::Time(5))));
     effects.extend(twin.post(OutboxInput::Response { op_id: 7, rows: server_rows(), swaps: Vec::new(), stale: Vec::new(), result: None, missing: Vec::new(), errors: None }));
     assert_eq!((sends(&effects), kinds(&effects)), (0, vec![CommitKind::Land]));
+}
+
+#[test]
+fn out_epoch_started_tells_lifecycle() {
+    let mut twin = Twin::bare();
+    let effects = twin.post(OutboxInput::EpochStarted(EpochStarted { epoch: EPOCH, identity: Some(9), generation: 2 }));
+    let started: Vec<u64> = effects.iter().filter_map(|effect| match effect { OutboxEffect::Started { epoch } => Some(*epoch), _ => None }).collect();
+    assert_eq!((started, effects.len()), (vec![EPOCH], 1), "{effects:?}");
+}
+
+fn freed_row_twin() -> Twin {
+    let mut twin = Twin::bare();
+    declare(&mut twin);
+    let dropped = StoredOp { restore_failed: Some("layout".into()), restore_element: Some(("op".into(), "k1".into())), ..stored(7, "r") };
+    restore(&mut twin, vec![dropped, stored(8, "r")]);
+    twin
+}
+
+fn free_row(twin: &mut Twin) -> Vec<OutboxEffect> {
+    twin.post(OutboxInput::Discard { model: "Moment".into(), row_id: "r".into(), reply: 42 });
+    twin.committed(7)
+}
+
+fn attempts_of(effects: &[OutboxEffect], op: u64) -> usize {
+    effects.iter().filter(|effect| matches!(effect, OutboxEffect::Store { op_id: Some(found), kind: CommitKind::Attempt, .. } if *found == op)).count()
+}
+
+#[test]
+fn out_prop_restore_ready_row_freed_once() {
+    for freed_first in [true, false] {
+        let mut twin = freed_row_twin();
+        let mut all = Vec::new();
+        let (first, second) = if freed_first { (free_row(&mut twin), ready(&mut twin)) } else { let started = ready(&mut twin); (started, free_row(&mut twin)) };
+        let before_ready = if freed_first { &first } else { &second };
+        assert!(before_ready.iter().all(|effect| !matches!(effect, OutboxEffect::Send { .. })) && (!freed_first || attempts_of(&first, 8) == 0), "freed_first={freed_first}: no write of the attempt before RestoreReady: {first:?}");
+        all.extend(first);
+        all.extend(second);
+        assert_eq!((attempts_of(&all, 8), sends(&all), twin.stage(8)), (1, 0, Some(St::PersistingAttempt)), "freed_first={freed_first}: {all:?}");
+        let started = twin.committed(8);
+        assert_eq!((sends(&started), twin.stage(8)), (1, Some(St::Sending)), "freed_first={freed_first}: {started:?}");
+    }
 }

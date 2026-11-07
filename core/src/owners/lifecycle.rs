@@ -158,7 +158,6 @@ pub struct LifecycleState {
     restoring: Option<Restoring>,
     next_publication: PublicationId,
     next_erase: EraseId,
-    restore_participants: BTreeSet<Peer>,
     /// `issued_generation`: the highest generation reserved for an erase.
     allocated: u64,
 }
@@ -190,12 +189,7 @@ impl Default for LifecycleState {
 impl LifecycleState {
     /// Before `Open`: no session, epoch 0.
     pub fn new() -> Self {
-        Self { phase: LifecyclePhase::NoSession { epoch: 0 }, published: Published::initial(), publishing: Vec::new(), cell: Published::initial(), cell_publication: 0, ended_up_to: None, restoring: None, next_publication: 1, next_erase: 1, restore_participants: [Peer::Outbox, Peer::Transfer, Peer::Session].into(), allocated: 0 }
-    }
-
-    pub fn with_restore_participants(mut self, participants: impl IntoIterator<Item = Peer>) -> Self {
-        self.restore_participants = participants.into_iter().collect();
-        self
+        Self { phase: LifecyclePhase::NoSession { epoch: 0 }, published: Published::initial(), publishing: Vec::new(), cell: Published::initial(), cell_publication: 0, ended_up_to: None, restoring: None, next_publication: 1, next_erase: 1, allocated: 0 }
     }
 
     pub fn phase(&self) -> &LifecyclePhase { &self.phase }
@@ -232,8 +226,7 @@ impl LifecycleState {
     }
 
     fn new_restoring(&self, epoch: Epoch, open_reply: Option<ReplyId>) -> Restoring {
-        let taking_part = |owners: &[Peer]| owners.iter().copied().filter(|owner| self.restore_participants.contains(owner)).collect();
-        Restoring { epoch, start_waiting: taking_part(&[Peer::Outbox, Peer::Transfer]), restore_waiting: taking_part(&[Peer::Outbox, Peer::Transfer, Peer::Session]), open_reply }
+        Restoring { epoch, start_waiting: [Peer::Outbox, Peer::Transfer].into(), restore_waiting: [Peer::Outbox, Peer::Transfer, Peer::Session].into(), open_reply }
     }
 
     fn restore_progress(&mut self, epoch: Epoch, fx: &mut Vec<LifecycleEffect>) {

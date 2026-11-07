@@ -225,6 +225,8 @@ pub enum CommitKind {
 pub enum OutboxEffect {
     Reply { reply: ReplyId, answer: OutboxAnswer },
     Drained(Drained),
+    Started { epoch: Epoch },
+    RestoreClassified { epoch: Epoch },
     /// Copy `source` into the directory of the files in chunks, outside the writer of SQLite; the result is `CopyDone{id}` or `CopyFailed{id}`.
     Copy { id: u64, source: String },
     /// Read the answer of an operation outside the actor: the result is `Response` or `Refused`.

@@ -427,3 +427,28 @@ fn life_ending_credential_after_failure() {
 
 mod lifecycle_ending_tests;
 mod lifecycle_closing_tests;
+
+fn orders(items: &[RefOwner]) -> Vec<Vec<RefOwner>> {
+    if items.len() <= 1 { return vec![items.to_vec()]; }
+    (0..items.len()).flat_map(|at| {
+        let mut rest = items.to_vec();
+        let first = rest.remove(at);
+        orders(&rest).into_iter().map(move |tail| std::iter::once(first).chain(tail).collect())
+    }).collect()
+}
+
+#[test]
+fn life_restore_classified_every_order() {
+    let count = |effects: &[RefEffect], wanted: &RefEffect| effects.iter().filter(|effect| *effect == wanted).count();
+    for started in orders(&[RefOwner::Outbox, RefOwner::Transfer]) {
+        for classified in orders(&[RefOwner::Outbox, RefOwner::Transfer, RefOwner::Session]) {
+            let mut twin = Twin::open(4, 2, Some(9), Some(7));
+            twin.feed(Event::Saved(1));
+            let read: Vec<Vec<RefEffect>> = started.iter().map(|owner| twin.feed(Event::Started(*owner, 5))).collect();
+            assert_eq!(read.iter().map(|effects| count(effects, &RefEffect::ReadIntents(5))).collect::<Vec<_>>(), vec![0, 1], "{started:?}");
+            let ready: Vec<Vec<RefEffect>> = classified.iter().map(|owner| twin.feed(Event::RestoreClassified(*owner, 5))).collect();
+            assert_eq!(ready.iter().map(|effects| count(effects, &RefEffect::RestoreReady(5))).collect::<Vec<_>>(), vec![0, 0, 1], "{classified:?}");
+            assert_eq!(twin.replies(), vec![(7, Ok(()))], "{classified:?}");
+        }
+    }
+}

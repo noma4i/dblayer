@@ -57,6 +57,10 @@ impl EffectRunner<Lifecycle> for LifecycleRunner {
                 wiring.to_windows(WindowsInput::EpochStarted(started.clone()));
                 wiring.to_deliveries(DeliveryInput::EpochStarted(started.clone()));
                 wiring.to_feed(FeedInput::EpochStarted(started.clone()));
+                for owner in self.absent.iter().copied().filter(|owner| matches!(owner, Peer::Outbox | Peer::Transfer | Peer::Session)) {
+                    wiring.to_lifecycle(LifecycleInput::Started { owner, epoch });
+                    wiring.to_lifecycle(LifecycleInput::RestoreClassified { owner, epoch });
+                }
                 wiring.to_outbox(OutboxInput::EpochStarted(started.clone()));
                 wiring.to_local_writes(OutboxInput::EpochStarted(started.clone()));
                 wiring.to_rounds(RoundsInput::EpochStarted(started.clone()));
@@ -255,12 +259,10 @@ impl EffectRunner<StoreWriter> for StoreRunner {
                     wiring.to_session(SessionInput::RestoreFailed { epoch, error });
                     return;
                 }
-                match &self.exchange {
-                    Some(exchange) => match super::session_runner::SessionRunner::rows(exchange, &self.db) {
-                        Ok(stored) => wiring.to_session(SessionInput::Restored { epoch, pending: stored.pending.map(|pending| if orphan_pending { PendingCall { author: None, owner: Some(crate::owners::session::MutateOwner::Detached), ..pending } } else { pending }), answers: stored.answers, pending_lost: stored.dropped_pending }),
-                        Err(error) => wiring.to_session(SessionInput::RestoreFailed { epoch, error: error.to_string() }),
-                    },
-                    None => wiring.to_lifecycle(LifecycleInput::RestoreClassified { owner: Peer::Session, epoch }),
+                let Some(exchange) = &self.exchange else { return };
+                match super::session_runner::SessionRunner::rows(exchange, &self.db) {
+                    Ok(stored) => wiring.to_session(SessionInput::Restored { epoch, pending: stored.pending.map(|pending| if orphan_pending { PendingCall { author: None, owner: Some(crate::owners::session::MutateOwner::Detached), ..pending } } else { pending }), answers: stored.answers, pending_lost: stored.dropped_pending }),
+                    Err(error) => wiring.to_session(SessionInput::RestoreFailed { epoch, error: error.to_string() }),
                 }
             }
             StoreEffect::CloseReads => self.db.reads().close(),

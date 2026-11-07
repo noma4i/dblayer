@@ -6,7 +6,13 @@ use std::sync::Arc;
 use super::answer::{DecodeJob, Decoded};
 use super::outbox::{Outbox, OutboxAnswer, OutboxEffect, OutboxInput};
 use crate::owners::contract::{Drained, ReplyId};
-use crate::runtime::{Back, EffectRunner, EpochStamp};
+use crate::runtime::{Back, EffectRunner, Epoch, EpochStamp};
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum OutboxSignal {
+    Started(Epoch),
+    RestoreClassified(Epoch),
+}
 
 pub type CopyFile = Arc<dyn Fn(&str) -> bool + Send + Sync>;
 pub type MarkStale = Arc<dyn Fn(Vec<(String, String)>, i64) + Send + Sync>;
@@ -16,6 +22,7 @@ pub struct OutboxExecutor {
     pub settle: Arc<dyn Fn(ReplyId, OutboxAnswer) + Send + Sync>,
     /// `Drained` goes to Lifecycle.
     pub drained: Arc<dyn Fn(Drained) + Send + Sync>,
+    pub signal: Arc<dyn Fn(OutboxSignal) + Send + Sync>,
     /// Copies a file into the directory of the files; `None` fails every copy.
     pub copy: Option<CopyFile>,
     /// Marks the windows of the (model, relation) pairs stale in memory.
@@ -31,6 +38,8 @@ impl EffectRunner<Outbox> for OutboxExecutor {
         match effect {
             OutboxEffect::Reply { reply, answer } => (self.settle)(reply, answer),
             OutboxEffect::Drained(drained) => (self.drained)(drained),
+            OutboxEffect::Started { epoch } => (self.signal)(OutboxSignal::Started(epoch)),
+            OutboxEffect::RestoreClassified { epoch } => (self.signal)(OutboxSignal::RestoreClassified(epoch)),
             OutboxEffect::Stale { families, revision } => {
                 if let Some(stale) = &self.stale { stale(families, revision); }
             }

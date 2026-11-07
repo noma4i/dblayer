@@ -7,7 +7,7 @@ use super::outbox_types::*;
 use crate::owners::contract::{Online};
 
 
-use crate::runtime::{Effects};
+use crate::runtime::{Effect, Effects};
 
 
 
@@ -161,7 +161,10 @@ impl OutboxState {
                     self.generation.insert(model, reset.generation);
                 }
             }
-            OutboxInput::EpochStarted(started) => self.base_generation = started.generation,
+            OutboxInput::EpochStarted(started) => {
+                self.base_generation = started.generation;
+                fx.push(Effect::Run(OutboxEffect::Started { epoch: started.epoch }));
+            }
             OutboxInput::RegisterOperations { declarations } => self.declarations.extend(declarations),
             OutboxInput::EpochEnded(_) => {
                 self.ended = true;
@@ -175,11 +178,13 @@ impl OutboxState {
             OutboxInput::Restored { ops, pending_lost } if !self.ended => {
                 self.phase = Phase::Classified;
                 self.restored(ops, pending_lost, fx);
+                fx.push(Effect::Run(OutboxEffect::RestoreClassified { epoch: self.epoch }));
                 self.replay_held(fx);
             }
             OutboxInput::RestoreFailed { error } if !self.ended => {
                 self.queue_error = Some(error);
                 self.phase = Phase::Classified;
+                fx.push(Effect::Run(OutboxEffect::RestoreClassified { epoch: self.epoch }));
                 self.replay_held(fx);
             }
             OutboxInput::OrphanAnswers { .. } | OutboxInput::Resolve { .. } | OutboxInput::Landed { .. } | OutboxInput::WhenQuiet { .. } | OutboxInput::LocalWrite { .. } | OutboxInput::CopyDone { .. } | OutboxInput::CopyFailed { .. } | OutboxInput::Expire { .. } | OutboxInput::ArmExpiry { .. } | OutboxInput::DisarmExpiry { .. } | OutboxInput::RowsGone { .. } | OutboxInput::ArmReset { .. } | OutboxInput::ResetField { .. } | OutboxInput::ExpireRow { .. } | OutboxInput::Committed(_) | OutboxInput::Rejected(_) => self.handle(input, fx),
