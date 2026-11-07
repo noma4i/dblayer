@@ -183,7 +183,7 @@ private class DatabaseRunner {
 
     suspend fun settle(already: Int = 0): List<JsonObject> {
         fencedUntil("${wanted - already} observations of $at", fence) { available() >= wanted - already }
-        quiesce("the corpus run to go quiet", fence = fence) { listOf(mock.count.toLong(), calls.count { it.isCompleted }.toLong(), heard.count.get().toLong()) }
+        quiesce("the corpus run to go quiet", rounds = if (wanted - already > 0) 5 else 50, fence = fence) { listOf(mock.count.toLong(), calls.count { it.isCompleted }.toLong(), heard.count.get().toLong()) }
         val observed = ArrayList<JsonObject>()
         val waiting = ArrayList<Deferred<Done>>()
         for (call in calls) {

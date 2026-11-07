@@ -236,7 +236,7 @@ private final class DatabaseRunner {
 
   func settle(already: Int = 0) async -> [String] {
     await fencedUntil("\(wanted - already) observations of \(at)", fence: fence) { available() >= wanted - already }
-    await quiesce("the corpus run to go quiet", fence: fence) { [mock.count, calls.filter { $0.done != nil }.count, Int(heard.count)] }
+    await quiesce("the corpus run to go quiet", rounds: wanted - already > 0 ? 5 : 50, fence: fence) { [mock.count, calls.filter { $0.done != nil }.count, Int(heard.count)] }
     var observed: [String] = []
     var waiting: [CallBox] = []
     for call in calls {

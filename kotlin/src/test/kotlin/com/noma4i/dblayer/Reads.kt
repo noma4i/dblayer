@@ -3,6 +3,7 @@ package com.noma4i.dblayer
 import com.noma4i.dblayer.models.User
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -76,6 +77,11 @@ class ListReader<M : DBModel>(private val query: Query<M>, scope: CoroutineScope
         val state = projection.state
         Snapshot(projection.rows, projection.phase, state?.error, state?.total?.toLong(), state?.hasMore ?: false, state?.complete ?: false, state?.loaded)
     }.stateIn(scope, SharingStarted.Eagerly, Snapshot(emptyList(), null, null, null, false, false, null))
+
+    init {
+        scope.launch { rows.collect { TestPulse.pulse() } }
+        scope.launch { snapshot.collect { TestPulse.pulse() } }
+    }
 
     suspend fun waitForInitialLoad() = projected.loaded()
     suspend fun refresh() = projected.refresh()

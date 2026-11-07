@@ -68,6 +68,7 @@ class SealedServer(private val deduplicate: Boolean = false, private val answer:
         if (operation == null) {
             parked.forEach { it.complete(Unit) }
             parked.clear()
+            TestPulse.pulse()
         }
     }
 
@@ -83,6 +84,7 @@ class SealedServer(private val deduplicate: Boolean = false, private val answer:
         val request = open(body)
         val sent = request.getValue("body").jsonObject
         requests.add(path to sent)
+        TestPulse.pulse()
         routes.add(sent["operationName"]?.jsonPrimitive?.content to purpose)
         if (refusing.get()) return EncryptedReply(500u, "")
         val requestId = request.getValue("requestId").jsonPrimitive.content
@@ -109,11 +111,13 @@ class SealedServer(private val deduplicate: Boolean = false, private val answer:
             }
         }
         effects.add(sent)
+        TestPulse.pulse()
         val operation = sent["operationName"]?.jsonPrimitive?.content
         if (operation != null && holding.get() == operation) {
             val gate = kotlinx.coroutines.CompletableDeferred<Unit>()
             parked.add(gate)
             arrivals.trySend(Unit)
+            TestPulse.pulse()
             if (holding.get() != operation) gate.complete(Unit)
             kotlinx.coroutines.withContext(kotlinx.coroutines.NonCancellable) { gate.await() }
         }
