@@ -79,7 +79,7 @@ lane_swift() {
   local log="$logs/swift.log" filters=() name
   while IFS= read -r name; do filters+=(--filter "${name/./\/}"); done < "$tmp/swift.tests"
   /bin/rm -f "$logs"/swift*.xml
-  bounded "${SEQ_SWIFT_LIMIT:-900}" sequences-swift swift test --package-path "$root/swift" --xunit-output "$logs/swift.xml" "${filters[@]}" > "$log" 2>&1
+  bounded "${SEQ_SWIFT_LIMIT:-900}" sequences-swift swift test --package-path "$root/swift" --no-parallel --xunit-output "$logs/swift.xml" "${filters[@]}" > "$log" 2>&1
 }
 
 lane_kotlin() {

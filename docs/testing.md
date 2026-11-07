@@ -95,13 +95,13 @@ Typical scenarios to cover:
 
 `scripts/check_dblayer.sh` runs the cheap, cargo, swift and kotlin lanes at the same time (the steps of one lane run in order, each takes its own build slot), then the ship and final lanes when all of them passed, all within a 300 s limit.
 
-| Check | Command |
-| ----- | ------- |
-| Rust core and generator | `cargo test` |
-| Everything, including Swift and Kotlin | `bash scripts/check_dblayer.sh` |
-| Android R8 release and optimized JVM FFI calls | `gradle -p kotlin/r8-check probe` |
-| Touched directories only | `bash scripts/check_dblayer.sh --fast` |
-| Check scripts leave unrelated processes alone | `bash scripts/check_bounded.sh --selftest` |
+| Check                                          | Command                                    |
+| ---------------------------------------------- | ------------------------------------------ |
+| Rust core and generator                        | `cargo test`                               |
+| Everything, including Swift and Kotlin         | `bash scripts/check_dblayer.sh`            |
+| Android R8 release and optimized JVM FFI calls | `gradle -p kotlin/r8-check probe`          |
+| Touched directories only                       | `bash scripts/check_dblayer.sh --fast`     |
+| Check scripts leave unrelated processes alone  | `bash scripts/check_bounded.sh --selftest` |
 
 | A second check run in the same tree is refused (exit 3), a lock of a dead run is taken over | `bash scripts/check_lock_test.sh` |
 | Every check run keeps its logs in its own `target/check-logs/<UTC time>-<sha>-<lane>-<random>/` (step logs, `summary.txt`, `run.txt`, and the Gradle test result XML and report of `gradle-test` under their source paths in `gradle-test.artifacts/`), `target/check-logs/latest` points at the newest run, nothing is deleted | `bash scripts/check_logs_test.sh` |
@@ -119,6 +119,7 @@ Typical scenarios to cover:
 | The step limit kills the whole process tree and reports it | `python3 -I scripts/check_bounded_test.py` |
 
 The check command stops after 300 seconds and kills its own child processes.
+The Swift tests run one at a time (`swift test --no-parallel`): the process holds one open database, so tests must not overlap.
 Build the native artifacts before running checks. Unchanged native inputs reuse the built artifacts.
 
 Coverage includes Swift network sources, `UrlSessionTransport.swift` and `UrlSessionCable.swift`. Kotlin includes encrypted HTTP, `OkHttpCable.kt`, `Http.kt` and `Transports.kt`. Missing executable coverage for any included file fails the check. Unexecuted lines require an entry in `scripts/coverage_allowlist.txt`. The Swift tests use atomic profile counters to preserve increments from concurrent execution.
@@ -158,13 +159,13 @@ Test conventions:
 
 `core/src/ffi/selftest/` runs the orders of the apps through the public `Database`. The session path is the real encrypted client and only the HTTP exchange is fake. Every call of a sequence runs inside a bound and fails instead of hanging.
 
-| Group | What it covers |
-| ----- | -------------- |
-| `app_tests` | Login in the iOS and Android order, the exit with a held singleton and a pending wait, local-only exit, refused unregister, account switch A, B, A, the same account again, `ALREADY_AUTHENTICATED` then sign-out and a second login |
-| `harness_tests` | Target unset (Interrupted or Invalid), close, next target, a new database. A late answer of the old target. Reopen through the same opener. Tests that leave offline, a session reset and subscriptions behind |
-| `calls_tests` | Each explicit call in flight at the server when session reset or close arrives, with a late success or a late sealed refusal. A call the server never answers ends at close |
-| `recovery_tests` | A refused pending request kept across a data reset, close and reopen with a new data version, an active and a queued upload ended by the exit |
-| `windows_tests` | Overlapping load-more and refresh in both answer orders, repeated online and power-saving signals, memory expiry on the last write |
+| Group            | What it covers                                                                                                                                                                                                                       |
+| ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `app_tests`      | Login in the iOS and Android order, the exit with a held singleton and a pending wait, local-only exit, refused unregister, account switch A, B, A, the same account again, `ALREADY_AUTHENTICATED` then sign-out and a second login |
+| `harness_tests`  | Target unset (Interrupted or Invalid), close, next target, a new database. A late answer of the old target. Reopen through the same opener. Tests that leave offline, a session reset and subscriptions behind                       |
+| `calls_tests`    | Each explicit call in flight at the server when session reset or close arrives, with a late success or a late sealed refusal. A call the server never answers ends at close                                                          |
+| `recovery_tests` | A refused pending request kept across a data reset, close and reopen with a new data version, an active and a queued upload ended by the exit                                                                                        |
+| `windows_tests`  | Overlapping load-more and refresh in both answer orders, repeated online and power-saving signals, memory expiry on the last write                                                                                                   |
 
 `core/src/ffi/selftest/manifest.tsv` is the fixed list of the sequences C01 to C19 for the three lanes (core, Swift, Kotlin). A row names the test of one lane, the state it had when written (green, red with its cause, flaky), what changes when the lifecycle rules change, and the app source line the order comes from. A core test checks that every row names an existing test, that every sequence test is listed, and that a test using the data logout or the old exit is marked as changing.
 

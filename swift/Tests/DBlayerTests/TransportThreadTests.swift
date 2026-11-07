@@ -2,7 +2,7 @@ import Foundation
 import Testing
 @testable import DBlayer
 
-@Suite(.serialized)
+@Suite
 struct TransportThreadTests {
   @Test(arguments: [false, true]) @MainActor
   func urlSessionTransportLoadsOffTheCallerThread(mutation: Bool) async throws {

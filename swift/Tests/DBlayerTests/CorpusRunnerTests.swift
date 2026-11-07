@@ -530,7 +530,7 @@ private func runCorpus(_ file: URL) async throws -> String? {
   return mismatch
 }
 
-@Suite(.serialized)
+@Suite
 struct CorpusRunnerTests {
   @Test(.timeLimit(.minutes(1)))
   func theSharedCorpusIsGreenThroughTheSwiftWrapper() async throws {

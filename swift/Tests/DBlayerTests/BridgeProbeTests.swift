@@ -3,7 +3,7 @@ import Foundation
 import Testing
 @testable import DBlayer
 
-@Suite(.serialized)
+@Suite
 struct BridgeProbeTests {
   @Test
   func aSearchPassesWholeWordsToTheCore() async throws {

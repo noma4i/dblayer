@@ -40,7 +40,7 @@ struct NestedTypesTests {
   }
 }
 
-@Suite(.serialized)
+@Suite
 struct CellDecoderTests {
   private func open() async throws -> Database {
     try await openDatabase(config: Config(path: nil, dataVersion: nil), modelsJson: modelsJSON, transport: nil)
