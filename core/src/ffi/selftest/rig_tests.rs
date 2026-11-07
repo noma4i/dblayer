@@ -415,7 +415,7 @@ impl Rig {
         if reactions { add_reactions(&mut models); }
         edit(&mut models);
         let database = opener
-            .open_with_clock(config(), models.to_string(), crate::ffi::OpenPorts { transport: Some(switch.clone()), encrypted: Some(encrypted), credentials: Some(Arc::new(WatchedHeld::default())), http: Some(world.clone()), ..Default::default() }, clock.clone())
+            .open_with_clock(config(), models.to_string(), crate::ffi::OpenPorts { transport: Some(switch.clone()), encrypted: Some(encrypted), credentials: Some(Arc::new(WatchedHeld::default())), http: Some(world.clone()) }, clock.clone())
             .await
             .unwrap();
         database.register_operations(plain_operations()).await.unwrap();
@@ -483,7 +483,7 @@ impl Rig {
         let opener = OpenDatabase::new();
         let mut models: Value = serde_json::from_str(&plain_models()).unwrap();
         edit(&mut models);
-        let database = opener.open_with_clock(config(), models.to_string(), crate::ffi::OpenPorts { transport: Some(switch.clone()), encrypted: Some(encrypted), credentials: Some(Arc::new(WatchedHeld::default())), http: Some(first.clone()), ..Default::default() }, clock.clone()).await.unwrap();
+        let database = opener.open_with_clock(config(), models.to_string(), crate::ffi::OpenPorts { transport: Some(switch.clone()), encrypted: Some(encrypted), credentials: Some(Arc::new(WatchedHeld::default())), http: Some(first.clone()) }, clock.clone()).await.unwrap();
         database.register_operations(plain_operations()).await.unwrap();
         database.set_online(true).unwrap();
         bound(database.session_call("login_link".into(), json!({"account": first.account()}).to_string())).await.unwrap();

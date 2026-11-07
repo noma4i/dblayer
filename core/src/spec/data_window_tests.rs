@@ -104,7 +104,7 @@ async fn open_models_with_http(models: String, path: String, server: Arc<Server>
     let clock = TestClock::new(1_000_000);
     let mut encrypted = crate::transport::encrypted::protocol_tests::config();
     encrypted.endpoints.session_operations.insert("login_link".into(), crate::ffi::EncryptedSessionOperation { path: "/api/auth/login_link".into(), class: EncryptedOperationClass::Authenticated });
-    let ports = OpenPorts { transport: Some(Arc::new(Wire(server.clone()))), encrypted: Some(encrypted), credentials: Some(Arc::new(Held(credentials))), http: Some(http), ..Default::default() };
+    let ports = OpenPorts { transport: Some(Arc::new(Wire(server.clone()))), encrypted: Some(encrypted), credentials: Some(Arc::new(Held(credentials))), http: Some(http) };
     let db = within(Database::open_with_clock(Config { path: Some(path), data_version: None, cache_rows: 64 }, models, ports, clock.clone())).await.unwrap();
     db.register_operations(OPERATIONS.into()).await.unwrap();
     db.set_online(true).unwrap();

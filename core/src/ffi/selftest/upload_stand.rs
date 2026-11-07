@@ -170,7 +170,7 @@ impl Stand {
     pub(super) async fn open_with(&self, path: Option<&Path>, operations: &[(&str, &str)], clock: Option<Arc<TestClock>>) -> Arc<Database> {
         let restored = self.rig.credentials.inner.value().is_some();
         let models = include_str!("upload_wrapper_models.json").to_string();
-        let ports = OpenPorts { transport: Some(self.puts.clone()), encrypted: Some(EncryptedConfig { origin: origin().into(), server_key: public_key_der_b64().into(), pin: pin().into(), ..crate::transport::encrypted::protocol_tests::config() }), credentials: Some(self.rig.credentials.clone()), http: Some(Arc::new(ScriptedHttp { script: self.script.clone(), session: ThroughServer(self.rig.server.clone()) })), ..Default::default() };
+        let ports = OpenPorts { transport: Some(self.puts.clone()), encrypted: Some(EncryptedConfig { origin: origin().into(), server_key: public_key_der_b64().into(), pin: pin().into(), ..crate::transport::encrypted::protocol_tests::config() }), credentials: Some(self.rig.credentials.clone()), http: Some(Arc::new(ScriptedHttp { script: self.script.clone(), session: ThroughServer(self.rig.server.clone()) })) };
         let config = Config { path: path.map(|path| path.to_string_lossy().into_owned()), data_version: None, cache_rows: 32 };
         let database = match clock {
             Some(clock) => Database::open_with_clock(config, models, ports, clock).await,

@@ -277,7 +277,7 @@ impl DatabaseSut {
         } else {
             (None, None, None)
         };
-        let opened = OpenDatabase::new().open_with_clock(config, if models == "events" { EVENT_MODELS } else { MODELS }.into(), crate::ffi::OpenPorts { transport: Some(transport), encrypted, credentials, http, ..Default::default() }, self.clock.clone()).await;
+        let opened = OpenDatabase::new().open_with_clock(config, if models == "events" { EVENT_MODELS } else { MODELS }.into(), crate::ffi::OpenPorts { transport: Some(transport), encrypted, credentials, http }, self.clock.clone()).await;
         match opened {
             Ok(database) => {
                 if database.register_operations(OPERATIONS.into()).await.is_err() { return error("operations"); }

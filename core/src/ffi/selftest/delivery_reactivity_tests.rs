@@ -76,7 +76,7 @@ pub(super) async fn feed_database_in(world: Arc<World>, listen: Option<serde_jso
     let mut encrypted = crate::transport::encrypted::protocol_tests::config();
     encrypted.endpoints.session_operations.insert("login_link".into(), crate::ffi::EncryptedSessionOperation { path: "/api/auth/login_link".into(), class: crate::ffi::EncryptedOperationClass::Authenticated });
     let transport = Arc::new(FeedTransport { cable: crate::transport::encrypted::cable::peer_tests::CablePeer::new(encrypted.clone()), token: Mutex::new(None), opened: tokio::sync::Notify::new() });
-    let database = bound(Database::open_with_clock(crate::ffi::Config { path: None, data_version: None, cache_rows: 32 }, serde_json::to_string(&models).unwrap(), crate::ffi::OpenPorts { transport: Some(transport.clone()), encrypted: Some(encrypted), credentials: Some(Arc::new(crate::ffi::session_guards_tests::WatchedHeld::default())), http: Some(world), ..Default::default() }, crate::ffi::TestClock::new(1_000_000))).await.unwrap();
+    let database = bound(Database::open_with_clock(crate::ffi::Config { path: None, data_version: None, cache_rows: 32 }, serde_json::to_string(&models).unwrap(), crate::ffi::OpenPorts { transport: Some(transport.clone()), encrypted: Some(encrypted), credentials: Some(Arc::new(crate::ffi::session_guards_tests::WatchedHeld::default())), http: Some(world) }, crate::ffi::TestClock::new(1_000_000))).await.unwrap();
     database.register_operations(json!([
         {"name":"ChatList","document":"query ChatList($list: String) { chats(list: $list) { id title revision lists } }"},
         {"name":"ChatNode","document":"query ChatNode($id: ID!) { node(id: $id) { ... on Chat { id title revision lists } } }"},
