@@ -55,6 +55,8 @@ impl Twin {
         let addr = det.add::<Calls>("calls", CallsState::new(EPOCH, None, &declared.map(|(name, kind)| (name, kind_of(kind)))), Recorder::<Calls>::new(&log));
         det.start_epoch(EPOCH);
         if let Some(online) = online { det.post(addr, EpochStamp::Epoch(EPOCH), CallsInput::Snapshot(Online(online))); }
+        det.run_until_quiet(100).expect("the owner is quiet");
+        take(&log);
         Self { det, addr, log, reference: Ref::new(EPOCH, online, &declared), history: Vec::new(), epoch: EPOCH }
     }
 
@@ -80,6 +82,7 @@ impl Twin {
             CallsEffect::Request { call_id, request_id, operation, kind, .. } => Some(RefEffect::Request { call_id: *call_id, request_id: *request_id, operation: operation.clone(), kind: ref_kind(*kind) }),
             CallsEffect::Cancel { request_id, kind } => Some(RefEffect::Cancel { request_id: *request_id, kind: ref_kind(*kind) }),
             CallsEffect::Release { request_id } => Some(RefEffect::Release { request_id: *request_id }),
+            CallsEffect::SnapshotRequest { epoch } => Some(RefEffect::SnapshotRequest { epoch: *epoch }),
             CallsEffect::Drained(_) => Some(RefEffect::Drained),
             CallsEffect::Reply { .. } => None,
         }).collect();
@@ -133,8 +136,7 @@ fn call_run_stale() { Twin::new().feed(Input::Run { epoch: EPOCH + 1, operation:
 fn call_run_unknown() { Twin::new().feed(Input::Run { epoch: EPOCH, operation: "Nope".into(), reply: 1 }); }
 
 #[test]
-fn call_run_offline() { Twin::with(Some(false)).feed(run(1));
-    Twin::with(None).feed(run(2)); }
+fn call_run_offline() { Twin::with(Some(false)).feed(run(1)); }
 
 #[test]
 fn call_run() {
@@ -216,10 +218,26 @@ fn call_online() {
 #[test]
 fn call_epoch_started_resets_online() {
     let mut twin = Twin::new();
-    twin.feed(Input::EpochStarted(EPOCH + 1));
+    let out = twin.feed(Input::EpochStarted(EPOCH + 1));
+    assert_eq!(out.effects, vec![RefEffect::SnapshotRequest { epoch: EPOCH + 1 }], "the owner asks Network for its snapshot");
     let out = twin.feed(Input::Run { epoch: EPOCH + 1, operation: "Op".into(), reply: 1 });
-    assert_eq!(out.replies, vec![(1, Err(Fail::Offline))], "the new epoch has no online value until its snapshot");
-    assert!(out.effects.is_empty(), "no request goes out before the snapshot");
+    assert!(out.replies.is_empty() && out.effects.is_empty(), "the new epoch has no online value until its snapshot: the call waits");
+}
+
+#[test]
+fn call_run_before_snapshot_waits() {
+    let mut twin = Twin::with(None);
+    assert!(twin.feed(run(1)).replies.is_empty(), "no answer and no request before the snapshot");
+    let out = twin.feed(Input::Snapshot(true));
+    assert_eq!(out.effects.len(), 1, "the snapshot releases the call as a run with online");
+    let mut offline = Twin::with(None);
+    offline.feed(run(2));
+    let out = offline.feed(Input::Snapshot(false));
+    assert_eq!(out.replies, vec![(2, Err(Fail::Offline))], "the snapshot without network answers the waiting call Offline");
+    let mut ended = Twin::with(None);
+    ended.feed(run(3));
+    let out = ended.feed(Input::EpochEnded);
+    assert_eq!(out.replies, vec![(3, Err(Fail::Interrupted))], "the end of the epoch answers a waiting call");
 }
 
 #[test]
@@ -227,7 +245,7 @@ fn call_online_before_snapshot_ignored() {
     let mut twin = Twin::with(None);
     twin.feed(Input::Online(true));
     let out = twin.feed(run(1));
-    assert_eq!(out.replies, vec![(1, Err(Fail::Offline))], "the broadcast does not set online before the addressed snapshot");
+    assert!(out.replies.is_empty() && out.effects.is_empty(), "the broadcast does not set online before the addressed snapshot");
 }
 
 #[test]

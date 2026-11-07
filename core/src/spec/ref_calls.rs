@@ -46,6 +46,7 @@ pub enum Effect {
     Request { call_id: CallId, request_id: RequestId, operation: String, kind: Kind },
     Cancel { request_id: RequestId, kind: Kind },
     Release { request_id: RequestId },
+    SnapshotRequest { epoch: u64 },
     Drained,
 }
 
@@ -67,13 +68,14 @@ pub struct Calls {
     pub declared: BTreeMap<String, Kind>,
     pub generation: u64,
     pub calls: BTreeMap<CallId, (CallState, ReplyId)>,
+    awaiting: Vec<(String, ReplyId)>,
     next: u64,
     drained: bool,
 }
 
 impl Calls {
     pub fn new(epoch: u64, online: Option<bool>, declared: &[(&str, Kind)]) -> Self {
-        Self { epoch, online, declared: declared.iter().map(|(name, kind)| (name.to_string(), *kind)).collect(), generation: 0, calls: BTreeMap::new(), next: 1, drained: false }
+        Self { epoch, online, declared: declared.iter().map(|(name, kind)| (name.to_string(), *kind)).collect(), generation: 0, calls: BTreeMap::new(), awaiting: Vec::new(), next: 1, drained: false }
     }
 
     pub fn state(&self, call: CallId) -> Option<CallState> { self.calls.get(&call).map(|(state, _)| *state) }
@@ -97,14 +99,8 @@ impl Calls {
             }
             Input::Run { epoch, reply, .. } if epoch != self.epoch => out.replies.push((reply, Err(Fail::NoSession))),
             Input::Run { reply, ref operation, .. } if !self.declared.contains_key(operation) => out.replies.push((reply, Err(Fail::Invalid))),
-            Input::Run { reply, .. } if self.online != Some(true) => out.replies.push((reply, Err(Fail::Offline))),
-            Input::Run { reply, operation, .. } => {
-                let (call_id, request_id) = (self.next, self.next);
-                self.next += 1;
-                let kind = self.declared[&operation];
-                self.calls.insert(call_id, (CallState::Sending { request_id, kind, generation: self.generation }, reply));
-                out.effects.push(Effect::Request { call_id, request_id, operation, kind });
-            }
+            Input::Run { reply, operation, .. } if self.online.is_none() => self.awaiting.push((operation, reply)),
+            Input::Run { reply, operation, .. } => self.start(operation, reply, &mut out),
             Input::Response { call_id, body, errors } if self.sending(call_id) => {
                 let answer = match (errors.is_empty(), body) {
                     (false, _) => Err(Fail::Graphql(errors)),
@@ -121,11 +117,18 @@ impl Calls {
             Input::Response { .. } | Input::TransportError { .. } | Input::Dropped { .. } => {}
             Input::Online(online) if self.online.is_some() => self.online = Some(online),
             Input::Online(_) => {}
-            Input::Snapshot(online) => self.online = Some(online),
+            Input::Snapshot(online) => {
+                self.online = Some(online);
+                for (operation, reply) in std::mem::take(&mut self.awaiting) {
+                    self.start(operation, reply, &mut out);
+                }
+            }
             Input::EpochStarted(epoch) => {
                 self.epoch = epoch;
                 self.online = None;
                 self.calls.clear();
+                self.awaiting.clear();
+                out.effects.push(Effect::SnapshotRequest { epoch });
             }
             Input::EpochEnded => self.interrupt(&mut out),
             Input::Closing => {
@@ -139,7 +142,25 @@ impl Calls {
         out
     }
 
+    fn start(&mut self, operation: String, reply: ReplyId, out: &mut Out) {
+        if self.online != Some(true) {
+            out.replies.push((reply, Err(Fail::Offline)));
+            return;
+        }
+        let Some(kind) = self.declared.get(&operation).copied() else {
+            out.replies.push((reply, Err(Fail::Invalid)));
+            return;
+        };
+        let (call_id, request_id) = (self.next, self.next);
+        self.next += 1;
+        self.calls.insert(call_id, (CallState::Sending { request_id, kind, generation: self.generation }, reply));
+        out.effects.push(Effect::Request { call_id, request_id, operation, kind });
+    }
+
     fn interrupt(&mut self, out: &mut Out) {
+        for (_, reply) in std::mem::take(&mut self.awaiting) {
+            out.replies.push((reply, Err(Fail::Interrupted)));
+        }
         let sending: Vec<(CallId, RequestId, Kind)> = self.calls.iter().filter_map(|(id, (state, _))| match state {
             CallState::Sending { request_id, kind, .. } => Some((*id, *request_id, *kind)),
             CallState::Done => None,

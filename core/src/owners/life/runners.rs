@@ -65,9 +65,7 @@ impl EffectRunner<Lifecycle> for LifecycleRunner {
                 wiring.to_local_writes(OutboxInput::EpochStarted(started.clone()));
                 wiring.to_rounds(RoundsInput::EpochStarted(started.clone()));
                 wiring.to_transfer(TransferInput::EpochStarted(started));
-                for owner in [Peer::Outbox, Peer::Calls] {
-                    wiring.to_network(NetworkInput::SnapshotRequest { owner, epoch });
-                }
+                wiring.to_network(NetworkInput::SnapshotRequest { owner: Peer::Outbox, epoch });
             }
             LifecycleEffect::ReadIntents { epoch } => self.held_read = Some(epoch),
             LifecycleEffect::EpochEnded { epoch, cause } => {

@@ -67,6 +67,7 @@ pub enum CallsEffect {
     /// Session `Release{req_id}`: the pair of a dropped mutation stays with Session, Calls gives up its outcome.
     Release { request_id: RequestId },
     Reply { id: ReplyId, answer: CallAnswer },
+    SnapshotRequest { epoch: Epoch },
     Drained(Drained),
 }
 
@@ -96,13 +97,15 @@ pub struct CallsState {
     declared: BTreeMap<String, CallKind>,
     generation: u64,
     calls: BTreeMap<CallId, (CallPhase, ReplyId)>,
+    /// `Run` calls that came before the addressed snapshot of the epoch.
+    awaiting: Vec<(String, String, ReplyId)>,
     next: u64,
     drained: bool,
 }
 
 impl CallsState {
     pub fn new(epoch: Epoch, online: Option<bool>, declared: &[(&str, CallKind)]) -> Self {
-        Self { epoch, online, declared: declared.iter().map(|(name, kind)| (name.to_string(), *kind)).collect(), generation: 0, calls: BTreeMap::new(), next: 1, drained: false }
+        Self { epoch, online, declared: declared.iter().map(|(name, kind)| (name.to_string(), *kind)).collect(), generation: 0, calls: BTreeMap::new(), awaiting: Vec::new(), next: 1, drained: false }
     }
 
     pub fn phase(&self, call: CallId) -> Option<CallPhase> { self.calls.get(&call).map(|(phase, _)| *phase) }
@@ -116,7 +119,25 @@ impl CallsState {
         }
     }
 
+    fn run(&mut self, (operation, variables, reply): (String, String, ReplyId), fx: &mut Vec<CallsEffect>) {
+        if self.online != Some(true) {
+            fx.push(CallsEffect::Reply { id: reply, answer: Err(CallError::Offline) });
+            return;
+        }
+        let Some(kind) = self.declared.get(&operation).copied() else {
+            fx.push(CallsEffect::Reply { id: reply, answer: Err(CallError::Invalid) });
+            return;
+        };
+        let id = self.next;
+        self.next += 1;
+        self.calls.insert(id, (CallPhase::Sending { request_id: id, kind, generation: self.generation }, reply));
+        fx.push(CallsEffect::Request { call_id: id, request_id: id, operation, variables, kind, epoch: self.epoch });
+    }
+
     fn interrupt(&mut self, fx: &mut Vec<CallsEffect>) {
+        for (_, _, reply) in std::mem::take(&mut self.awaiting) {
+            fx.push(CallsEffect::Reply { id: reply, answer: Err(CallError::Interrupted) });
+        }
         let sending: Vec<(CallId, RequestId, CallKind)> = self.calls.iter().filter_map(|(id, (phase, _))| match phase {
             CallPhase::Sending { request_id, kind, .. } => Some((*id, *request_id, *kind)),
             CallPhase::Done => None,
@@ -142,14 +163,8 @@ impl StateOwner for Calls {
         match input {
             CallsInput::Run { epoch, reply, .. } if epoch != state.epoch => fx.push(CallsEffect::Reply { id: reply, answer: Err(CallError::NoSession) }),
             CallsInput::Run { reply, ref operation, .. } if !state.declared.contains_key(operation) => fx.push(CallsEffect::Reply { id: reply, answer: Err(CallError::Invalid) }),
-            CallsInput::Run { reply, .. } if state.online != Some(true) => fx.push(CallsEffect::Reply { id: reply, answer: Err(CallError::Offline) }),
-            CallsInput::Run { reply, operation, variables, .. } => {
-                let id = state.next;
-                state.next += 1;
-                let kind = state.declared[&operation];
-                state.calls.insert(id, (CallPhase::Sending { request_id: id, kind, generation: state.generation }, reply));
-                fx.push(CallsEffect::Request { call_id: id, request_id: id, operation, variables, kind, epoch: state.epoch });
-            }
+            CallsInput::Run { operation, variables, reply, .. } if state.online.is_none() => state.awaiting.push((operation, variables, reply)),
+            CallsInput::Run { operation, variables, reply, .. } => state.run((operation, variables, reply), &mut fx),
             CallsInput::Response { call_id, body, errors, extensions } if state.sending(call_id) => {
                 let answer = match (errors.is_empty(), body) {
                     (false, _) => Err(CallError::Graphql { messages: errors, extensions }),
@@ -169,8 +184,18 @@ impl StateOwner for Calls {
             }
             CallsInput::Online(Online(online)) if state.online.is_some() => state.online = Some(online),
             CallsInput::Online(_) => {}
-            CallsInput::Snapshot(Online(online)) => state.online = Some(online),
-            CallsInput::ActivateEpoch(epoch) => { state.epoch = epoch; state.online = None; state.calls.clear(); }
+            CallsInput::Snapshot(Online(online)) => {
+                state.online = Some(online);
+                for held in std::mem::take(&mut state.awaiting) {
+                    state.run(held, &mut fx);
+                }
+            }
+            CallsInput::ActivateEpoch(epoch) => { state.epoch = epoch;
+                state.online = None;
+                state.calls.clear();
+                state.awaiting.clear();
+                fx.push(CallsEffect::SnapshotRequest { epoch });
+            }
             CallsInput::EpochEnded => state.interrupt(&mut fx),
             CallsInput::Closing => {
                 state.interrupt(&mut fx);

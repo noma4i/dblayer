@@ -1,5 +1,6 @@
 use crate::owners::read::deliveries::Deliveries;
-use crate::owners::read::windows::{AnswerPage, Goal, WindowEffect, WindowKey, Windows, WindowsEffect, WindowsInput, WindowsPeers, WindowsState};
+use crate::owners::contract::Online;
+use crate::owners::read::windows::{WindowOutcome, AnswerPage, Goal, WindowEffect, WindowKey, Windows, WindowsEffect, WindowsInput, WindowsPeers, WindowsState};
 use crate::owners::store::{StoreInput, StoreOp, StoreWriter};
 use crate::runtime::{Address, Effect, StateOwner};
 
@@ -44,4 +45,39 @@ fn win_pinned_stray() {
     let _ = Windows::step(&mut state, WindowsInput::Pinned { request_id: 1, base_revision: 2 });
     let duplicate = Windows::step(&mut state, WindowsInput::Pinned { request_id: 1, base_revision: 3 });
     assert!(duplicate.is_empty());
+}
+
+fn no_wait(state: &mut WindowsState) -> Vec<Effect<Windows>> {
+    let key = WindowKey { model: "Item".into(), name: "items".into() };
+    Windows::step(state, WindowsInput::LoadNoWait { key, id: 7, goal: Goal::First, force: true, store_revision: 0, now: NOW, verb: "refresh" })
+}
+
+fn outcome_of(effects: &[Effect<Windows>]) -> Option<WindowOutcome> {
+    effects.iter().find_map(|effect| match effect {
+        Effect::Run(WindowsEffect::Window { effect: WindowEffect::Outcome { id: 7, outcome }, .. }) => Some(outcome.clone()),
+        _ => None,
+    })
+}
+
+#[test]
+fn win_load_nowait_offline() {
+    let mut state = WindowsState::new(1, Some(false), WindowsPeers { store: Address::<StoreWriter>::new(0), deliveries: Address::<Deliveries>::new(1) });
+    let effects = no_wait(&mut state);
+    assert_eq!(outcome_of(&effects), Some(WindowOutcome::Offline { message: "Item.items refresh needs the network".into() }), "the owner answers Offline by its own online");
+}
+
+#[test]
+fn win_load_nowait_before_snapshot_waits() {
+    let online = |value: bool| WindowsInput::Online { online: Online(value), online_seq: 1, now: NOW };
+    let mut state = WindowsState::new(1, None, WindowsPeers { store: Address::<StoreWriter>::new(0), deliveries: Address::<Deliveries>::new(1) });
+    assert!(no_wait(&mut state).is_empty(), "no answer and no request before the snapshot");
+    assert_eq!(outcome_of(&Windows::step(&mut state, online(false))), Some(WindowOutcome::Offline { message: "Item.items refresh needs the network".into() }), "Online(false) answers the waiting call");
+    let mut state = WindowsState::new(1, None, WindowsPeers { store: Address::<StoreWriter>::new(0), deliveries: Address::<Deliveries>::new(1) });
+    no_wait(&mut state);
+    let effects = Windows::step(&mut state, online(true));
+    assert_eq!(outcome_of(&effects), None, "Online(true) releases the call as a load");
+    assert!(!effects.is_empty(), "the load of the window starts");
+    let mut state = WindowsState::new(1, None, WindowsPeers { store: Address::<StoreWriter>::new(0), deliveries: Address::<Deliveries>::new(1) });
+    no_wait(&mut state);
+    assert_eq!(outcome_of(&Windows::step(&mut state, WindowsInput::Closing)), Some(WindowOutcome::Interrupted), "a waiting call ends with the owner");
 }

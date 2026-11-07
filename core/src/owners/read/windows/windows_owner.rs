@@ -215,6 +215,8 @@ pub struct WindowsState {
     pub(super) on_foreground: OnForeground,
     pub(super) foreground_seen: u64,
     pub(super) peers: WindowsPeers,
+    /// `LoadNoWait` calls that came before the addressed snapshot of the epoch.
+    pub(super) held_nowait: Vec<WindowsInput>,
 }
 
 /// The owners `Windows` sends inputs to.
@@ -227,7 +229,7 @@ pub struct WindowsPeers {
 impl WindowsState {
     /// `online` is the value of the first addressed `Online`, `None` before it.
     pub fn new(epoch: Epoch, online: Option<bool>, peers: WindowsPeers) -> Self {
-        Self { epoch, online, online_seq: 0, saving: false, generations: BTreeMap::new(), base_generation: 0, preload: Vec::new(), operations_awaited: false, identity: false, sources: BTreeSet::new(), next_request: 1, next_attempt: 1, windows: BTreeMap::new(), max_pages: Arc::new(|_| u32::MAX), members_complete: Arc::new(|_| false), lifetimes: Arc::new(|_| (300_000, 300_000)), media: Arc::new(|_| false), next_read: 1, on_foreground: Arc::new(|_| false), foreground_seen: 0, peers }
+        Self { epoch, online, online_seq: 0, saving: false, generations: BTreeMap::new(), base_generation: 0, preload: Vec::new(), operations_awaited: false, identity: false, sources: BTreeSet::new(), next_request: 1, next_attempt: 1, windows: BTreeMap::new(), max_pages: Arc::new(|_| u32::MAX), members_complete: Arc::new(|_| false), lifetimes: Arc::new(|_| (300_000, 300_000)), media: Arc::new(|_| false), next_read: 1, on_foreground: Arc::new(|_| false), foreground_seen: 0, peers, held_nowait: Vec::new() }
     }
 
     /// Keys that `EpochStarted` loads with `Interest+(PRELOAD)`.
@@ -348,6 +350,14 @@ impl Windows {
         }
     }
 
+    fn interrupt_held(state: &mut WindowsState, out: &mut Effects<Self>) {
+        for held in std::mem::take(&mut state.held_nowait) {
+            if let WindowsInput::LoadNoWait { key, id, .. } = held {
+                out.push(Effect::Run(WindowsEffect::Window { key, effect: WindowEffect::Outcome { id, outcome: WindowOutcome::Interrupted } }));
+            }
+        }
+    }
+
     pub(super) fn by_request(state: &mut WindowsState, request: RequestId, event: Ev, out: &mut Effects<Self>) {
         let Some(key) = state.windows.iter().find(|(_, window)| window.owns(request)).map(|(key, _)| key.clone()) else { return };
         Self::on(state, &key, event, out);
@@ -412,6 +422,10 @@ impl StateOwner for Windows {
 
     fn step(state: &mut WindowsState, input: WindowsInput) -> Effects<Self> {
         let mut out: Effects<Self> = Vec::new();
+        if matches!(input, WindowsInput::LoadNoWait { .. }) && state.online.is_none() {
+            state.held_nowait.push(input);
+            return out;
+        }
         match input {
             WindowsInput::InterestPlus { key, id, now } => Self::interest_plus(state, key, (id, now), &mut out),
             WindowsInput::InterestPassive { key, id } => Self::interest_passive(state, key, id, &mut out),
@@ -482,6 +496,9 @@ impl StateOwner for Windows {
                     state.online_seq = online_seq;
                 }
                 Self::every(state, &Ev::Online { online, online_seq, now }, &mut out);
+                for held in std::mem::take(&mut state.held_nowait) {
+                    out.extend(Self::step(state, held));
+                }
             }
             WindowsInput::PowerSaving { saving } => {
                 state.saving = saving;
@@ -520,6 +537,7 @@ impl StateOwner for Windows {
             }
             WindowsInput::EpochEnded(ended) => {
                 if ended.epoch == state.epoch { state.identity = false; }
+                Self::interrupt_held(state, &mut out);
                 let keys: Vec<WindowKey> = state.windows.iter().filter(|(_, window)| window.machine.epoch == ended.epoch).map(|(key, _)| key.clone()).collect();
                 for key in keys {
                     Self::on(state, &key, Ev::EpochEnded, &mut out);
@@ -532,6 +550,7 @@ impl StateOwner for Windows {
                 Self::every(state, &Ev::ModelsReset { generation: reset.generation, models: reset.models }, &mut out);
             }
             WindowsInput::Closing => {
+                Self::interrupt_held(state, &mut out);
                 Self::every(state, &Ev::Closing, &mut out);
                 out.push(Effect::Run(WindowsEffect::Drained(Drained { owner: "windows" })));
             }

@@ -9,7 +9,8 @@ use tokio::task::AbortHandle;
 use super::{LifeReply, Ports, Wiring};
 use crate::owners::calls::{CallError, CallKind, Calls, CallsEffect, CallsInput};
 use crate::owners::contract::RequestId;
-use crate::owners::lifecycle::LifecycleInput;
+use crate::owners::lifecycle::{LifecycleInput, Peer};
+use crate::owners::network::NetworkInput;
 use crate::owners::session::{AuthorOutcome, SessionError, SessionInput, CALLS_AUTHOR};
 use crate::runtime::{Back, EffectRunner, EpochStamp, OutcomeId};
 use crate::transport::{GraphQLRequest, ResponseOutcome, SessionCode, TransportError};
@@ -160,6 +161,7 @@ impl EffectRunner<Calls> for CallsRunner {
             CallsEffect::Reply { id, answer } => {
                 self.wiring.outcomes.settle(OutcomeId::from_raw(id), LifeReply::Call(answer));
             }
+            CallsEffect::SnapshotRequest { epoch } => self.wiring.to_network(NetworkInput::SnapshotRequest { owner: Peer::Calls, epoch }),
             CallsEffect::Drained(drained) => self.wiring.to_lifecycle(LifecycleInput::Drained(drained)),
         }
     }
