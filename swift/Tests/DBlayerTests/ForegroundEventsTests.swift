@@ -44,8 +44,7 @@ extension BridgeProbeTests {
   func anActiveAppDeliversForegroundAtRegistration() async {
     let (events, continuation) = AsyncStream<Void>.makeStream()
     let stop = ForegroundEvents.observe(name: Notification.Name("DBlayerTestRegistration"), active: { true }) { continuation.yield() }
-    var iterator = events.makeAsyncIterator()
-    #expect(await iterator.next() != nil)
+    #expect(await Cursor(events).next("foreground at registration") != nil)
     stop()
   }
 }

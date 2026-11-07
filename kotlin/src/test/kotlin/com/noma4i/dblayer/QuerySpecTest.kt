@@ -5,7 +5,7 @@ import com.noma4i.dblayer.models.modelsJSON
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonPrimitive
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertThrows
+import org.junit.Assert.fail
 import org.junit.Test
 
 class QuerySpecTest {
@@ -44,8 +44,8 @@ class QuerySpecTest {
     fun aStreamWithoutARelationRefusesToLoad() = bounded {
         reopenSigned(Config(null, null), modelsJSON)
         val stream = AccountScope.current().stream(Query("Moment", Moment))
-        assertThrows(DbException.Invalid::class.java) { kotlinx.coroutines.runBlocking { stream.refresh() } }
-        assertThrows(DbException.Invalid::class.java) { kotlinx.coroutines.runBlocking { stream.loadMore() } }
+        try { stream.refresh(); fail("refresh has to refuse") } catch (_: DbException.Invalid) {}
+        try { stream.loadMore(); fail("loadMore has to refuse") } catch (_: DbException.Invalid) {}
         stream.cancel()
     }
 }

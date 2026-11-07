@@ -1,6 +1,5 @@
 package com.noma4i.dblayer
 
-import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -16,7 +15,7 @@ class UploadPermissionTest {
     }
 
     @Test
-    fun xfer_android_permission_checked_at_open() = runBlocking {
+    fun xfer_android_permission_checked_at_open() = bounded {
         try {
             OpenDatabase().open(Config(null, null), "[]", OpenOptions(emptyList(), false), OpenPorts(null, null, null, null), null)
             fail("open has to refuse")
