@@ -351,13 +351,14 @@ impl Database {
         let launch = self.life.launch();
         let task = crate::task::spawn_on(crate::task::Carry::Detached, super::database::executor().ok()?.handle(), crate::runtime::counted(Some(launch), async move {
             let mut last = None;
-            let mut row_seen = true;
+            let mut row_count = None;
             let mut upload = (None, None);
             loop {
                 changes.borrow_and_update();
-                row_commits.borrow_and_update();
+                let count = *row_commits.borrow_and_update();
+                let row_moved = row_count.replace(count) != Some(count);
                 let Some(life) = life.upgrade() else { return };
-                if std::mem::take(&mut row_seen) {
+                if row_moved {
                     upload = database.row_upload(&model, &id, &action);
                 }
                 let next = BlobStatus { local_url: upload.0.clone(), processing: upload.1.clone(), ..shows.status(&key).blob_status() };
@@ -366,7 +367,7 @@ impl Database {
                     last = Some(next);
                 }
                 drop(life);
-                let ended = tokio::select! { moved = changes.changed() => moved.is_err(), moved = row_commits.changed() => { row_seen = true; moved.is_err() } };
+                let ended = tokio::select! { moved = changes.changed() => moved.is_err(), moved = row_commits.changed() => moved.is_err() };
                 if ended { return; }
             }
         }));
