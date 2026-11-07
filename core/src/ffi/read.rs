@@ -1,7 +1,7 @@
 //! The values of reading as the platform gets them: the bridge carries the values of the owner `Deliveries`,
 //! the wrappers compute nothing. A stream is an object: `pull` waits for the next value, `cancel` returns when no value follows, the last handle gone releases it.
 
-use std::sync::Arc;
+use std::sync::{Arc, Weak};
 
 use super::database::Database;
 use super::LoadMoreResult;
@@ -186,15 +186,14 @@ fn read_value(value: Value, wire: Option<&WireModel>) -> Result<ReadValue, DbErr
 /// An open stream. Dropping the last handle releases it in the core.
 #[derive(uniffi::Object)]
 pub struct ReadStream {
-    life: Arc<Life>,
+    database: Weak<Database>,
     stream: u64,
     ended: std::sync::atomic::AtomicBool,
     /// The task that hands the status of a transfer to the stream.
     status: Option<tokio::task::AbortHandle>,
     /// The model of an events stream, to turn the rows of its events into wire rows.
     wire: Option<Arc<WireModel>>,
-    /// The database and epoch of the open, and the relation the request reads from the server.
-    database: Database,
+    /// The epoch of the open, and the relation the request reads from the server.
     epoch: u64,
     load: Option<RelationLoad>,
 }
@@ -209,6 +208,8 @@ impl ReadStream {
     #[cfg(test)]
     pub(crate) fn id(&self) -> u64 { self.stream }
 
+    fn life(&self) -> Option<Arc<Life>> { self.database.upgrade().map(|database| database.life.clone()) }
+
     fn relation(&self) -> Result<&RelationLoad, DbError> {
         self.load.as_ref().ok_or_else(|| DbError::Invalid { detail: "the stream has no relation to load".into() })
     }
@@ -218,14 +219,14 @@ impl ReadStream {
     }
 }
 
-struct PullWait<'a> {
-    life: &'a Life,
+struct PullWait {
+    life: Arc<Life>,
     stream: u64,
     outcome: crate::runtime::OutcomeId,
     armed: bool,
 }
 
-impl Drop for PullWait<'_> {
+impl Drop for PullWait {
     fn drop(&mut self) {
         if self.armed { self.life.cancel_pull(self.stream, self.outcome); }
     }
@@ -233,12 +234,15 @@ impl Drop for PullWait<'_> {
 
 #[uniffi::export]
 impl ReadStream {
-    pub fn resync(&self) { self.life.request_snapshot(self.stream); }
+    pub fn resync(&self) {
+        if let Some(life) = self.life() { life.request_snapshot(self.stream); }
+    }
 
     /// The next value of the stream, `None` once the stream ended and its last value was taken. A failure of the stream arrives as its last value `Ended`.
     pub async fn pull(&self) -> Option<ReadValue> {
-        let waiter = self.life.pull(self.stream);
-        let mut waiting = PullWait { life: &self.life, stream: self.stream, outcome: waiter.id(), armed: true };
+        let Some(life) = self.life() else { return self.finished(ReadEnd::Closed) };
+        let waiter = life.pull(self.stream);
+        let mut waiting = PullWait { life, stream: self.stream, outcome: waiter.id(), armed: true };
         let answer = waiter.wait().await;
         waiting.armed = false;
         match answer {
@@ -262,19 +266,21 @@ impl ReadStream {
 
     /// Loads the first page of the relation of this stream again. `Invalid` when the stream reads no relation, `Interrupted` when its session ended.
     pub async fn refresh(&self) -> Result<(), DbError> {
+        let database = self.database.upgrade().ok_or_else(super::command::closed)?;
         let load = self.relation()?;
-        self.database.refresh(self.epoch, load.model.clone(), Some(load.relation.clone()), load.params_json.clone()).await
+        database.refresh(self.epoch, load.model.clone(), Some(load.relation.clone()), load.params_json.clone()).await
     }
 
     /// Loads the next page of the relation of this stream.
     pub async fn load_more(&self) -> Result<LoadMoreResult, DbError> {
+        let database = self.database.upgrade().ok_or_else(super::command::closed)?;
         let load = self.relation()?;
-        self.database.load_more(self.epoch, load.model.clone(), Some(load.relation.clone()), load.params_json.clone()).await
+        database.load_more(self.epoch, load.model.clone(), Some(load.relation.clone()), load.params_json.clone()).await
     }
 
     /// Returns when no value of this stream is delivered any more.
     pub async fn cancel(&self) {
-        let _ = self.life.cancel_stream(self.stream).wait().await;
+        if let Some(life) = self.life() { let _ = life.cancel_stream(self.stream).wait().await; }
         self.ended.store(true, std::sync::atomic::Ordering::SeqCst);
     }
 }
@@ -282,7 +288,7 @@ impl ReadStream {
 impl Drop for ReadStream {
     fn drop(&mut self) {
         if let Some(task) = &self.status { crate::lock::effect(|| task.abort()); }
-        self.life.release_stream(self.stream);
+        if let Some(life) = self.life() { life.release_stream(self.stream); }
     }
 }
 
@@ -410,7 +416,7 @@ impl Database {
             (ReadRequest::List { query } | ReadRequest::Count { query }, true) => query.relation.as_ref().map(|relation| RelationLoad { model: query.model.clone(), relation: relation.clone(), params_json: query.params_json.clone() }),
             _ => None,
         };
-        Arc::new(ReadStream { life: self.life.clone(), stream, ended: std::sync::atomic::AtomicBool::new(false), status, wire, database: self.clone(), epoch, load })
+        Arc::new(ReadStream { database: self.me.clone(), stream, ended: std::sync::atomic::AtomicBool::new(false), status, wire, epoch, load })
     }
 }
 

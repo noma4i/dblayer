@@ -2,8 +2,14 @@ import DBlayerTesting
 import Foundation
 @_spi(Testing) @testable import DBlayer
 
+/// The one database of the process: a test that opens the next one closes the previous.
+func closePrevious() async {
+  do { try await DB.opener.opened().closeDatabase() } catch DbError.NotOpen(_) {} catch { fatalError("closing the previous database failed: \(error)") }
+}
+
 func openDatabase(config: Config, modelsJson: String, transport: Transport?, encrypted: EncryptedConfig? = nil, credentials: CredentialStore? = nil, http: EncryptedHttp? = nil, operations: String = "[]") async throws -> Database {
-  try await OpenDatabase().open(config: config, modelsJson: withRawCalls(modelsJson), options: OpenOptions(operations: definitions(of: withUploadSteps(operations, models: modelsJson))), ports: OpenPorts(transport: transport, encrypted: encrypted, credentials: credentials, http: http, endpoint: transport == nil ? nil : scriptedEndpoint), observers: nil)
+  await closePrevious()
+  return try await DB.opener.open(config: config, modelsJson: withRawCalls(modelsJson), options: OpenOptions(operations: definitions(of: withUploadSteps(operations, models: modelsJson))), ports: OpenPorts(transport: transport, encrypted: encrypted, credentials: credentials, http: http, endpoint: transport == nil ? nil : scriptedEndpoint), observers: nil)
 }
 
 let modelsArrayJSON: String = {
@@ -53,8 +59,6 @@ func withUploadSteps(_ operations: String, models: String) -> String {
 
 @MainActor @discardableResult
 func adopt(_ database: Database) async throws -> Database {
-  await DB.closeForCleanup()
-  DB.adopt(database)
   await ChangePump.start(database)
   return database
 }
@@ -160,7 +164,8 @@ func reopen(config: Config, modelsJson: String, transport: Transport?, operation
     let ports = OpenPorts(transport: mock, encrypted: standEncrypted(), credentials: held, http: server, endpoint: scriptedEndpoint)
     let declared = definitions(of: withUploadSteps(operations, models: modelsJson))
     let steps = Set(uploadStepOperations.map(\.name))
-    database = try await adopt(try await OpenDatabase().open(config: config, modelsJson: withRawCalls(modelsJson), options: OpenOptions(operations: declared.filter { steps.contains($0.name) }), ports: ports, observers: OnlineAtOpen()))
+    await closePrevious()
+    database = try await adopt(try await DB.opener.open(config: config, modelsJson: withRawCalls(modelsJson), options: OpenOptions(operations: declared.filter { steps.contains($0.name) }), ports: ports, observers: OnlineAtOpen()))
     let later = declared.filter { !steps.contains($0.name) }.map { ["name": $0.name, "document": $0.document] }
     try await database.registerOperations(defsJson: withSessionProfile(String(decoding: try JSONSerialization.data(withJSONObject: later), as: UTF8.self)))
   } else {

@@ -63,8 +63,7 @@ class ClosedDatabaseTest {
             }
         }
         closeForCleanup()
-        DBlayer.opened = null
-        assertEquals(List(8) { "not_open" }, entries())
+        assertTrue(refusal { OpenDatabase().opened() } is DbException.NotOpen)
         reopenSigned(Config(null, null), modelsJSON)
         DBlayer.close()
         val afterClose = entries()

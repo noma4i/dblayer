@@ -285,3 +285,16 @@ async fn life_open_executor_runs_the_operation() {
     assert_eq!(database.run(database.session_epoch(), "Greeting".into(), r#"{"name":"Ada"}"#.into()).await.unwrap(), r#""Hello Ada""#);
     database.close_database().await.unwrap();
 }
+
+#[tokio::test]
+async fn life_opened_database() {
+    let slot = OpenDatabase::new();
+    assert!(matches!(slot.opened(), Err(DbError::NotOpen { .. })));
+    let first = open(&slot).await.unwrap();
+    assert!(Arc::ptr_eq(&slot.opened().unwrap(), &first));
+    first.close_database().await.unwrap();
+    assert!(Arc::ptr_eq(&slot.opened().unwrap(), &first), "a closed database answers its calls with Closed");
+    let second = open(&slot).await.unwrap();
+    assert!(Arc::ptr_eq(&slot.opened().unwrap(), &second));
+    second.close_database().await.unwrap();
+}

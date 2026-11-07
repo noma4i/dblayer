@@ -7,58 +7,24 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
-@Serializable private data class PhoneBody(val phone: String)
-@Serializable private data class TicketAnswer(val ticket: String)
+@Serializable private data class AccountBody(val account: String)
+@Serializable private data class SessionAnswer(val sessionId: String)
 
 class SessionBridgeTest {
-    private class RecordingSession : Database(NoHandle) {
-        val calls = java.util.concurrent.CopyOnWriteArrayList<String>()
-
-        override suspend fun sessionCall(operation: String, bodyJson: String): String {
-            calls.add("call $operation $bodyJson")
-            return """{"ticket":"t-1"}"""
-        }
-        override suspend fun sessionReset() { calls.add("reset") }
-        override suspend fun retry(epoch: ULong, model: String, rowId: String, action: String?, source: WireUploadRequest?): WireOperationReceipt {
-            calls.add("retry $model $rowId ${action ?: "null"}")
-            throw DbException.Invalid("recorded")
-        }
-        override fun admit(accountEpoch: ULong?): ULong = accountEpoch ?: 1uL
+    @Test fun aSessionCallSendsTheEncodedBodyAndDecodesTheAnswerAfterAResetOfTheSession() = bounded {
+        reopenSigned(Config(null, null), modelsJSON)
+        DBlayer.sessionReset()
+        DBlayer.database.setOnline(true)
+        val answer: SessionAnswer = DBlayer.sessionCall("login_link", AccountBody("stand"))
+        assertEquals(SessionAnswer("stand"), answer)
+        val repeated = DBlayer.sessionCall<AccountBody, kotlinx.serialization.json.JsonElement>("login_link", AccountBody("stand"))
+        assertEquals(SessionAnswer("stand").sessionId, (repeated as kotlinx.serialization.json.JsonObject).getValue("sessionId").toString().trim('"'))
     }
 
-    private suspend fun withRecordingSession(block: suspend (RecordingSession) -> Unit) {
-        reopen(Config(null, null), modelsJSON, null)
-        val real = DBlayer.database
-        val recording = RecordingSession()
-        DBlayer.adopt(recording)
-        try {
-            block(recording)
-        } finally {
-            DBlayer.adopt(real)
-        }
-    }
-
-    @Test fun aSessionCallSendsTheEncodedBodyAndDecodesTheAnswer() = bounded {
-        withRecordingSession { recording ->
-            val answer: TicketAnswer = DBlayer.sessionCall("otp", PhoneBody("+61400000000"))
-            assertEquals(TicketAnswer("t-1"), answer)
-            DBlayer.sessionCall<PhoneBody, kotlinx.serialization.json.JsonElement>("otp", PhoneBody("+61411111111"))
-            assertEquals(listOf("""call otp {"phone":"+61400000000"}""", """call otp {"phone":"+61411111111"}"""), recording.calls)
-        }
-    }
-
-    @Test fun sessionResetReachesTheCore() = bounded {
-        withRecordingSession { recording ->
-            DBlayer.sessionReset()
-            assertEquals(listOf("reset"), recording.calls)
-        }
-    }
-
-    @Test fun retryByIdReachesTheCore() = bounded {
-        withRecordingSession { recording ->
-            assertTrue(runCatching { Moment.retry("42", "like") }.exceptionOrNull() is DbException.Invalid)
-            assertTrue(runCatching { Moment.retry("43", null) }.exceptionOrNull() is DbException.Invalid)
-            assertEquals(listOf("retry Moment 42 like", "retry Moment 43 null"), recording.calls)
-        }
+    @Test fun retryByIdReachesTheCoreAndItsErrorComesBack() = bounded {
+        reopenSigned(Config(null, null), modelsJSON)
+        DBlayer.close()
+        assertTrue(runCatching { Moment.retry("42", "like") }.exceptionOrNull() is DbException.Closed)
+        assertTrue(runCatching { Moment.retry("43", null) }.exceptionOrNull() is DbException.Closed)
     }
 }

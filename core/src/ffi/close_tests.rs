@@ -4,7 +4,7 @@ use serde_json::json;
 
 use super::open_slot::OpenSlot;
 use super::tape::Rows;
-use super::{Config, Database, ReadEnd};
+use super::{Config, Database, DbError, ReadEnd, ReadRequest, ReadValue};
 use crate::runtime::{Clock, ManualClock};
 use crate::schema::{FieldSpec, ModelSpec, Storage};
 use crate::test_wait::yield_until;
@@ -80,4 +80,19 @@ async fn a_second_close_succeeds_and_the_slot_frees_once() {
     database.close_database().await.unwrap();
     database.close_database().await.unwrap();
     assert!(slot.acquire().is_ok(), "the slot stayed taken after the close finished");
+}
+
+#[tokio::test]
+async fn life_closed_stream_releases_store() {
+    let database = local_notes().await;
+    let stream = database.subscribe_values(database.session_epoch(), ReadRequest::List { query: crate::ffi::QuerySpec::json(r#"{"model":"Note"}"#) });
+    let (store, life) = (Arc::downgrade(&database.db), Arc::downgrade(&database.life));
+    database.close_database().await.unwrap();
+    drop(database);
+    yield_until("a live stream keeps neither the store nor the life of a closed database", || store.upgrade().is_none() && life.upgrade().is_none()).await;
+    assert!(matches!(stream.refresh().await, Err(DbError::Closed { .. })));
+    assert!(matches!(stream.load_more().await, Err(DbError::Closed { .. })));
+    let mut last = None;
+    while let Some(value) = stream.pull().await { last = Some(value); }
+    assert!(matches!(last, Some(ReadValue::Ended { cause: ReadEnd::Closed })));
 }

@@ -73,12 +73,13 @@ impl OpenPorts {
 #[derive(uniffi::Object)]
 pub struct OpenDatabase {
     slot: Arc<OpenSlot>,
+    held: std::sync::Mutex<Option<Arc<Database>>>,
 }
 
 #[uniffi::export]
 impl OpenDatabase {
     #[uniffi::constructor]
-    pub fn new() -> Arc<Self> { Arc::new(Self { slot: OpenSlot::new() }) }
+    pub fn new() -> Arc<Self> { Arc::new(Self { slot: OpenSlot::new(), held: std::sync::Mutex::new(None) }) }
 
     pub async fn open(&self, config: Config, models_json: String, options: OpenOptions, ports: OpenPorts, observers: Option<Arc<dyn PlatformObserver>>) -> Result<Arc<Database>, DbError> {
         ports.check_data_sync()?;
@@ -86,7 +87,12 @@ impl OpenDatabase {
         let lease = self.slot.acquire()?;
         let remote = ports.transport.is_some();
         let database = Database::open(config, models_json, ports).await?;
-        Self::start(database, lease, remote, options, observers, true).await
+        self.keep(Self::start(database, lease, remote, options, observers, true).await?)
+    }
+
+    /// The database this opener opened last, closed or not: a call on a closed database gets its `Closed` error. `NotOpen` before the first open.
+    pub fn opened(&self) -> Result<Arc<Database>, DbError> {
+        crate::lock::lock(&self.held).clone().ok_or_else(|| DbError::NotOpen { detail: "database is not open; call DBlayer.open once at app start".into() })
     }
 
     pub async fn open_with_clock(&self, config: Config, models_json: String, ports: OpenPorts, clock: Arc<TestClock>, options: OpenOptions, observers: Option<Arc<dyn PlatformObserver>>) -> Result<Arc<Database>, DbError> {
@@ -95,11 +101,17 @@ impl OpenDatabase {
         let lease = self.slot.acquire()?;
         let remote = ports.transport.is_some();
         let database = Database::open_with_clock(config, models_json, ports, clock).await?;
-        Self::start(database, lease, remote, options, observers, false).await
+        self.keep(Self::start(database, lease, remote, options, observers, false).await?)
     }
 }
 
 impl OpenDatabase {
+    fn keep(&self, database: Arc<Database>) -> Result<Arc<Database>, DbError> {
+        let previous = crate::lock::lock(&self.held).replace(database.clone());
+        drop(previous);
+        Ok(database)
+    }
+
     async fn start(database: Arc<Database>, lease: Arc<super::open_slot::OpenLease>, remote: bool, options: OpenOptions, observers: Option<Arc<dyn PlatformObserver>>, verify_uploads: bool) -> Result<Arc<Database>, DbError> {
         database.hold(lease);
         let opened = match database.start_observers(observers).await {

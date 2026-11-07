@@ -3,8 +3,10 @@ package com.noma4i.dblayer
 /** A test transport that forwards to a `MockTransport`: the session cable of the stand goes to that mock. */
 interface WrapsMock { val base: MockTransport }
 
-suspend fun openDatabase(config: Config, modelsJson: String, transport: Transport? = null, encrypted: EncryptedConfig? = null, credentials: CredentialStore? = null, http: EncryptedHttp? = null, operations: String = "[]"): Database =
-    OpenDatabase().open(config, withRawCalls(modelsJson), OpenOptions(definitionsOf(withUploadSteps(operations, modelsJson))), OpenPorts(transport, encrypted, credentials, http, SCRIPTED_ENDPOINT), null)
+suspend fun openDatabase(config: Config, modelsJson: String, transport: Transport? = null, encrypted: EncryptedConfig? = null, credentials: CredentialStore? = null, http: EncryptedHttp? = null, operations: String = "[]"): Database {
+    DBlayer.openedDatabase()?.closeDatabase()
+    return DBlayer.opener.open(config, withRawCalls(modelsJson), OpenOptions(definitionsOf(withUploadSteps(operations, modelsJson))), OpenPorts(transport, encrypted, credentials, http, SCRIPTED_ENDPOINT), null)
+}
 
 const val EMPTY_SPECS = """{"models":[]}"""
 
@@ -38,12 +40,6 @@ suspend fun closeForCleanup() {
 }
 
 suspend fun adopt(database: Database): Database {
-    try {
-        DBlayer.close()
-    } catch (_: DbException.Closed) {
-    } catch (_: DbException.NotOpen) {
-    }
-    DBlayer.adopt(database)
     ChangePump.start(database)
     return database
 }
@@ -129,7 +125,8 @@ suspend fun reopen(config: Config, modelsJson: String, transport: Transport? = n
         val declared = kotlinx.serialization.json.Json.parseToJsonElement(withUploadSteps(operations, modelsJson)) as kotlinx.serialization.json.JsonArray
         val steps = UPLOAD_STEP_OPERATIONS.map { it.first }.toSet()
         val (atOpen, later) = declared.partition { ((it as kotlinx.serialization.json.JsonObject)["name"] as kotlinx.serialization.json.JsonPrimitive).content in steps }
-        val opened = adopt(OpenDatabase().open(config, withRawCalls(modelsJson), OpenOptions(definitionsOf(kotlinx.serialization.json.JsonArray(atOpen).toString())), OpenPorts(mock, standEncrypted(), credential, server, SCRIPTED_ENDPOINT), OnlineAtOpen()))
+        DBlayer.openedDatabase()?.closeDatabase()
+        val opened = adopt(DBlayer.opener.open(config, withRawCalls(modelsJson), OpenOptions(definitionsOf(kotlinx.serialization.json.JsonArray(atOpen).toString())), OpenPorts(mock, standEncrypted(), credential, server, SCRIPTED_ENDPOINT), OnlineAtOpen()))
         opened.registerOperations(withSessionProfile(kotlinx.serialization.json.JsonArray(later).toString()))
         opened
     } else {

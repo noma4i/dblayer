@@ -7,10 +7,9 @@ import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.JsonObject
 
 object DBlayer {
-    private val opener = OpenDatabase()
-    @Volatile internal var opened: Database? = null
+    internal val opener = OpenDatabase()
 
-    internal fun openedDatabase(): Database? = opened
+    internal fun openedDatabase(): Database? = try { opener.opened() } catch (_: DbException.NotOpen) { null }
 
     suspend inline fun <reified Body, reified Answer> sessionCall(operation: String, body: Body): Answer =
         offCaller { dbJson.decodeFromString<Answer>(database.sessionCall(operation, dbJson.encodeToString(body))) }
@@ -41,11 +40,8 @@ object DBlayer {
         onAccount(account) { database, epoch -> database.call(epoch, operation, variables.jsonText()) }
     }
 
-    @PublishedApi internal var database: Database
-        get() = opened ?: throw DbException.NotOpen("database is not open; call DBlayer.open once at app start")
-        private set(value) { opened = value }
-
-    internal fun adopt(database: Database) { this.database = database }
+    @PublishedApi internal val database: Database
+        get() = opener.opened()
 
     suspend fun serverConfig(context: Context, encrypted: EncryptedConfig, platform: AppPlatform, version: String, build: String? = null, http: EncryptedHttp? = null, retries: RetryProgress? = null): ServerConfig =
         fetchServerConfig(encrypted, platform, version, build, http ?: OkHttpTransport(), retries, SystemObservers(context))
@@ -68,7 +64,6 @@ object DBlayer {
         val ports = OpenPorts(transport, encrypted, credentials, http, endpoint, OkHttpTransport(headers), dataSync)
         val made = opener.open(Config(path, null), modelsJson, OpenOptions(definitions(operations)), ports, SystemObservers(context))
         made.setRoundJobs(UploadRounds(context.applicationContext, made))
-        database = made
         UploadService.opened(made)
     }
 

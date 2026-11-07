@@ -1,14 +1,10 @@
 import Foundation
 
 public enum DB {
-  private static var slot: Database?
-  private static let opener = OpenDatabase()
+  @_spi(Testing) public static let opener = OpenDatabase()
 
   static var database: Database {
-    get throws {
-      guard let database = slot else { throw DbError.NotOpen(detail: "database is not open; call DBlayer.open once at app start") }
-      return database
-    }
+    get throws { try opener.opened() }
   }
 
   /// The database and the epoch a command belongs to: the epoch the account scope holds, else the epoch the core admits for the open database.
@@ -65,12 +61,8 @@ public enum DB {
 
   public static func open(endpoint: URL? = nil, headers: @escaping @Sendable () -> [String: String] = { [:] }, encrypted: EncryptedConfig? = nil, credentials: CredentialStore? = nil, transport: Transport? = nil, modelsJSON: String, path: String? = nil, operations: [any GraphQLOperation.Type] = [], http: EncryptedHttp? = nil) async throws {
     let ports = OpenPorts(transport: transport, encrypted: encrypted, credentials: credentials, http: http, endpoint: endpoint?.absoluteString, executor: UrlSessionTransport(headers: headers), dataSyncDeclared: nil)
-    let database = try await opener.open(config: Config(path: path, dataVersion: nil), modelsJson: modelsJSON, options: OpenOptions(operations: definitions(operations)), ports: ports, observers: SystemObservers())
-    slot = database
+    _ = try await opener.open(config: Config(path: path, dataVersion: nil), modelsJson: modelsJSON, options: OpenOptions(operations: definitions(operations)), ports: ports, observers: SystemObservers())
   }
-
-  /// The one test hook: makes `database` the open database of the calls, or none.
-  @_spi(Testing) public static func adopt(_ database: Database?) { slot = database }
 
   private static func definitions(_ operations: [any GraphQLOperation.Type]) -> [OperationDefinition] {
     operations.map { OperationDefinition(name: $0.operationName, document: $0.document) }

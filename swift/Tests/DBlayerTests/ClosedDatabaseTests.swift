@@ -36,8 +36,7 @@ extension BridgeProbeTests {
       ]
     }
     await DB.closeForCleanup()
-    DB.adopt(nil)
-    #expect(await entries() == Array(repeating: "not_open", count: 10))
+    #expect(await code { _ = try OpenDatabase().opened() } == "not_open")
     try await reopenSigned(config: Config(path: nil, dataVersion: nil), modelsJson: modelsJSON)
     try await DB.close()
     let afterClose = await entries()

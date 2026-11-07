@@ -9,21 +9,11 @@ import org.junit.Assert.assertNull
 import org.junit.Test
 
 class SealedErrorsTest {
-    private class RefusedRetry : Database(NoHandle) {
-        override suspend fun retry(epoch: ULong, model: String, rowId: String, action: String?, source: WireUploadRequest?): WireOperationReceipt = throw DbException.Invalid("retry refused")
-        override fun admit(accountEpoch: ULong?): ULong = accountEpoch ?: 1uL
-    }
-
     @Test fun modelRetriesPropagateErrorsToTheirCaller() = bounded {
         reopenSigned(Config(null, null), modelsJSON)
         val row = Moment.create(text = "saved", account = AccountScope.current()).optimisticValue!!
-        val real = DBlayer.database
-        DBlayer.adopt(RefusedRetry())
-        try {
-            org.junit.Assert.assertTrue(runCatching { row.retry(null) }.exceptionOrNull() is DbException.Invalid)
-        } finally {
-            DBlayer.adopt(real)
-        }
+        DBlayer.close()
+        org.junit.Assert.assertTrue(runCatching { row.retry(null) }.exceptionOrNull() is DbException.Closed)
     }
     private val codes = listOf(
         SessionCode.SEQUENCE_CONFLICT, SessionCode.REPLAYED_REQUEST, SessionCode.RATE_LIMITED, SessionCode.ACCOUNT_UNAVAILABLE,

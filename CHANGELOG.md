@@ -50,6 +50,7 @@
 ### Changed
 
 - `HttpRequest` carries `author`, `requestId` and `attempt`; a repeat of a request keeps its `requestId`.
+- The core keeps the open database: `OpenDatabase.opened()` returns it, and `DB` and `DBlayer` keep no copy.
 - `call` replaces `run`: the core reads the result by the `returns` block of the `.dbl`, and the generated types decode it strictly.
 - One executor class per platform serves the transport and the encrypted HTTP, and the core picks it by `endpoint` and `encrypted`.
 - `Projected.edits` is a list for every delivery: a snapshot removes the rows before it and inserts its rows.
@@ -148,6 +149,8 @@
 
 ### Fixed
 
+- A stream that outlives `close` no longer holds the database.
+- A cable socket that opens after the core gave up on it is closed.
 - An upload abort that the network interrupts is sent again when the network returns.
 - A refused background start shows its reason as `refused` on every upload of the round until the next start is asked.
 - A reopen replays the unanswered request of an upload step instead of sending the step again.

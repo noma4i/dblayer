@@ -2,58 +2,24 @@ import Foundation
 import Testing
 @_spi(Testing) @testable import DBlayer
 
-private struct PhoneBody: Codable, Sendable, Equatable { let phone: String }
-private struct TicketAnswer: Codable, Sendable, Equatable { let ticket: String }
-
-private final class RecordingSession: Database, @unchecked Sendable {
-  private let lock = NSLock()
-  private var recorded: [String] = []
-  var calls: [String] { lock.withLock { recorded } }
-  private func record(_ line: String) { lock.withLock { recorded.append(line) } }
-
-  override func sessionCall(operation: String, bodyJson: String) async throws -> String {
-    record("call \(operation) \(bodyJson)")
-    return #"{"ticket":"t-1"}"#
-  }
-  override func sessionReset() async throws { record("reset") }
-  override func admit(accountEpoch: UInt64?) throws -> UInt64 { accountEpoch ?? 1 }
-  override func retry(epoch: UInt64, model: String, rowId: String, action: String?, source: WireUploadRequest?) async throws -> WireOperationReceipt {
-    record("retry \(model) \(rowId) \(action ?? "nil")")
-    throw DbError.Invalid(detail: "recorded")
-  }
-}
+private struct AccountBody: Codable, Sendable, Equatable { let account: String }
+private struct SessionAnswer: Codable, Sendable, Equatable { let sessionId: String }
 
 extension BridgeProbeTests {
-  @MainActor private func withRecordingSession(_ body: (RecordingSession) async throws -> Void) async throws {
-    try await reopen(config: Config(path: nil, dataVersion: nil), modelsJson: modelsJSON, transport: nil)
-    let real = try DB.database
-    defer { DB.adopt(real) }
-    let recording = RecordingSession(noHandle: .init())
-    DB.adopt(recording)
-    try await body(recording)
+  @Test(.timeLimit(.minutes(1))) @MainActor func aSessionCallSendsTheEncodedBodyAndDecodesTheAnswerAfterAResetOfTheSession() async throws {
+    try await reopenSigned(config: Config(path: nil, dataVersion: nil), modelsJson: modelsJSON)
+    try await DB.sessionReset()
+    try DB.database.setOnline(online: true)
+    let answer = try await DB.sessionCall("login_link", body: AccountBody(account: "stand"), as: SessionAnswer.self)
+    #expect(answer == SessionAnswer(sessionId: "stand"))
+    try await DB.sessionCall("login_link", body: AccountBody(account: "stand"))
   }
 
-  @Test @MainActor func aSessionCallSendsTheEncodedBodyAndDecodesTheAnswer() async throws {
-    try await withRecordingSession { recording in
-      let answer = try await DB.sessionCall("otp", body: PhoneBody(phone: "+61400000000"), as: TicketAnswer.self)
-      #expect(answer == TicketAnswer(ticket: "t-1"))
-      try await DB.sessionCall("otp", body: PhoneBody(phone: "+61411111111"))
-      #expect(recording.calls == [#"call otp {"phone":"+61400000000"}"#, #"call otp {"phone":"+61411111111"}"#])
-    }
-  }
-
-  @Test @MainActor func sessionResetReachesTheCore() async throws {
-    try await withRecordingSession { recording in
-      try await DB.sessionReset()
-      #expect(recording.calls == ["reset"])
-    }
-  }
-
-  @Test @MainActor func retryByIdReachesTheCore() async throws {
-    try await withRecordingSession { recording in
-      await #expect(throws: DbError.self) { try await Moment.retry(id: "42", action: "like") }
-      await #expect(throws: DbError.self) { try await Moment.retry(id: "43", action: nil) }
-      #expect(recording.calls == ["retry Moment 42 like", "retry Moment 43 nil"])
+  @Test @MainActor func retryByIdReachesTheCoreAndItsErrorComesBack() async throws {
+    try await reopenSigned(config: Config(path: nil, dataVersion: nil), modelsJson: modelsJSON)
+    try await DB.close()
+    for action in ["like", nil] {
+      do { try await Moment.retry(id: "42", action: action); Issue.record("retry on a closed database succeeded") } catch DbError.Closed(_) {} catch { Issue.record("retry surfaced as \(error), not as the closed error of the core") }
     }
   }
 }

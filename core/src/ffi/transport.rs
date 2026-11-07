@@ -148,10 +148,16 @@ impl core::Upstream for ForeignTransport {
         crate::lock::assert_no_library_lock("Transport::open_cable");
         let mailbox = Arc::new(Mailbox::new(self.clock.clone()));
         let headers = core::merge_headers(crate::lock::effect(|| self.port.app_headers()), HashMap::new());
-        match self.port.open_cable(url.to_string(), headers, core::CONNECT_TIMEOUT_MS, mailbox.clone()).await {
-            CableOutcome::Open { connection } => Ok(Arc::new(ForeignSocket::new(connection, mailbox))),
-            CableOutcome::Failed { failure, handshake_status } => Err(core::classify_upgrade(&failure, handshake_status)),
-        }
+        let (port, url, events) = (self.port.clone(), url.to_string(), mailbox.clone());
+        let (answer, outcome) = tokio::sync::oneshot::channel();
+        crate::task::spawn_on(crate::task::Carry::Detached, &tokio::runtime::Handle::current(), async move {
+            let opened = match port.open_cable(url, headers, core::CONNECT_TIMEOUT_MS, events.clone()).await {
+                CableOutcome::Open { connection } => Ok(Arc::new(ForeignSocket::new(connection, events)) as Arc<dyn core::CableSocket>),
+                CableOutcome::Failed { failure, handshake_status } => Err(core::classify_upgrade(&failure, handshake_status)),
+            };
+            let _ = crate::lock::effect(|| answer.send(opened));
+        });
+        outcome.await.unwrap_or_else(|_| Err(core::TransportError::Interrupted("the cable open was lost".into())))
     }
     async fn query(&self, request: core::GraphQLRequest) -> Result<core::Response, core::TransportError> {
         crate::lock::assert_no_library_lock("Transport::query");
