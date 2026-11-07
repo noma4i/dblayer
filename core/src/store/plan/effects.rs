@@ -7,7 +7,7 @@ use crate::schema::EffectSource;
 use crate::store::Reader;
 use crate::value::read_id;
 
-use crate::store::DbError;
+use crate::store::CoreError;
 use crate::store::Store;
 
 type Row = Map<String, Value>;
@@ -28,7 +28,7 @@ impl Edits {
 }
 
 impl Store {
-    fn effect_row(&self, reader: &Reader<'_>, args: &Map<String, Value>, model: &str, row: Option<&str>) -> Result<Option<RowId>, DbError> {
+    fn effect_row(&self, reader: &Reader<'_>, args: &Map<String, Value>, model: &str, row: Option<&str>) -> Result<Option<RowId>, CoreError> {
         if let Some(name) = row {
             return Ok(args.get(name).and_then(read_id));
         }
@@ -37,7 +37,7 @@ impl Store {
         reader.scope_members(model, key.as_str())?.into_iter().next().map(|(id, _)| Ok(RowId::new(&id)?)).transpose()
     }
 
-    pub(crate) fn fill_local_sources(&self, model: &str, values: &mut Map<String, Value>) -> Result<(), DbError> {
+    pub(crate) fn fill_local_sources(&self, model: &str, values: &mut Map<String, Value>) -> Result<(), CoreError> {
         let spec = self.spec(model)?;
         let Some(create) = spec.actions.iter().find(|declared| declared.name == "create") else { return Ok(()) };
         if create.local_from.is_empty() { return Ok(()); }
@@ -73,13 +73,13 @@ impl Store {
     }
 
     /// The fields `set:` of a copy of the receiver: a literal, a field of the receiver, or a field of the row of another model.
-    pub(crate) fn apply_copy_set(&self, reader: &Reader<'_>, copy: &crate::schema::ReceiverCopy, receiver: &Row, args: &Map<String, Value>, values: &mut Row) -> Result<(), DbError> {
+    pub(crate) fn apply_copy_set(&self, reader: &Reader<'_>, copy: &crate::schema::ReceiverCopy, receiver: &Row, args: &Map<String, Value>, values: &mut Row) -> Result<(), CoreError> {
         for (field, source) in &copy.set {
             let value = match source {
                 crate::schema::CopyValue::Literal(value) => value.clone(),
                 crate::schema::CopyValue::Source(EffectSource::Owner(from)) => receiver.get(from).cloned().unwrap_or(Value::Null),
                 crate::schema::CopyValue::Source(EffectSource::Row { model, row, field: from }) => {
-                    let id = self.effect_row(reader, args, model, row.as_deref())?.ok_or_else(|| DbError::NotFound { model: model.clone(), id: format!("the row of {model} that {field} copies") })?;
+                    let id = self.effect_row(reader, args, model, row.as_deref())?.ok_or_else(|| CoreError::NotFound { model: model.clone(), id: format!("the row of {model} that {field} copies") })?;
                     if from == "id" {
                         Value::String(id.to_string())
                     } else {

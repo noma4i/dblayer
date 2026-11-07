@@ -1,7 +1,7 @@
 //! `WindowIo` on `DetScheduler` with the mock transport. Requirement -> observed value -> assert:
-//! win_io_request_lands: a `Request` is asked through `Transport`, the answer is an input, the landed page reaches the Store as `Commit`.
+//! win_io_request_lands: a `Request` is asked through `Upstream`, the answer is an input, the landed page reaches the Store as `Commit`.
 //! win_io_error_classes: a transport error is an input of its class (network -> a `Schedule` of `RetryDue`, permanent -> `Failed`).
-//! win_io_cancel_no_answer: a cancelled request gives the owner no `Transport` input.
+//! win_io_cancel_no_answer: a cancelled request gives the owner no `Upstream` input.
 
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -17,7 +17,7 @@ use crate::owners::read::windows::{self as w, AnswerPage, WindowEffect, WindowKe
 use crate::owners::store::{RowValue, StoreInput, StoreOp, StoreWriter};
 use crate::spec::support::Sink;
 use crate::runtime::{Address, Cause, DetScheduler, Effect, Effects, EpochStamp, Outbound, StateOwner, Time};
-use crate::transport::{GraphQLRequest, MockTransport, PutRequest, PutResponse, Reply, Response, Transport, TransportError};
+use crate::transport::{GraphQLRequest, MockTransport, PutRequest, PutReply, Reply, Response, Upstream, TransportError};
 
 const EPOCH: u64 = 1;
 
@@ -77,7 +77,7 @@ fn rig() -> Rig {
     rig_with(mock.clone(), Arc::new(mock), None)
 }
 
-fn rig_with(mock: MockTransport, transport: Arc<dyn Transport>, reader: Option<WindowReader>) -> Rig {
+fn rig_with(mock: MockTransport, transport: Arc<dyn Upstream>, reader: Option<WindowReader>) -> Rig {
     let runtime = runtime();
     let batches = Batches::default();
     let (rest, take_rest) = collector();
@@ -173,10 +173,10 @@ type Sent<'a, T> = std::pin::Pin<Box<dyn std::future::Future<Output = Result<T, 
 
 struct Panicking;
 
-impl Transport for Panicking {
+impl Upstream for Panicking {
     fn query<'a, 'b>(&'a self, _: GraphQLRequest) -> Sent<'b, Response> where 'a: 'b, Self: 'b { panic!("the transport failed") }
     fn mutate<'a, 'b>(&'a self, _: GraphQLRequest) -> Sent<'b, Response> where 'a: 'b, Self: 'b { panic!("the transport failed") }
-    fn put<'a, 'b>(&'a self, _: PutRequest) -> Sent<'b, PutResponse> where 'a: 'b, Self: 'b { panic!("the transport failed") }
+    fn put<'a, 'b>(&'a self, _: PutRequest) -> Sent<'b, PutReply> where 'a: 'b, Self: 'b { panic!("the transport failed") }
 }
 
 fn task_failed(det: &DetScheduler) -> Vec<String> { det.trace().iter().filter(|entry| entry.input.starts_with("TaskFailed")).map(|entry| entry.input.clone()).collect() }

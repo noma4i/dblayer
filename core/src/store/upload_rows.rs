@@ -9,7 +9,7 @@ use crate::owners::write::transfer::{Source, Steps, StoredTransfer};
 use crate::runtime::Time;
 use crate::schema::OnFailure;
 
-use super::db_error::DbError;
+use super::db_error::CoreError;
 use super::Store;
 
 type BatchRow = (crate::identity::RowId, serde_json::Map<String, serde_json::Value>);
@@ -95,24 +95,24 @@ pub(crate) fn upload_rows(connection: &rusqlite::Connection) -> rusqlite::Result
     rows.collect()
 }
 
-fn unsigned<T: TryFrom<i64>>(value: i64, column: &str) -> Result<T, DbError> { T::try_from(value).map_err(|_| DbError::Internal(format!("sync_upload.{column} holds {value}"))) }
+fn unsigned<T: TryFrom<i64>>(value: i64, column: &str) -> Result<T, CoreError> { T::try_from(value).map_err(|_| CoreError::Internal(format!("sync_upload.{column} holds {value}"))) }
 
 
 impl Store {
-    fn file_present(&self, transfer_id: u64, place: Location) -> Result<bool, DbError> {
+    fn file_present(&self, transfer_id: u64, place: Location) -> Result<bool, CoreError> {
         let file_id = crate::owners::write::transfer::file_id(transfer_id);
         match place {
             Location::Table => self.read_locked(|connection| connection.query_row(include_str!("sql/upload_rows/file_present.sql"), [&file_id], |row| row.get::<_, i64>(0))).map(|count| count > 0),
             Location::Directory => Ok(self.files().path(&file_id).is_some_and(|path| path.exists())),
         }
-        .map_err(|error| DbError::Internal(error.to_string()))
+        .map_err(|error| CoreError::Internal(error.to_string()))
     }
 
-    pub(crate) fn stored_transfers(&self, rows: Vec<UploadRaw>) -> Result<Vec<StoredTransfer>, DbError> {
+    pub(crate) fn stored_transfers(&self, rows: Vec<UploadRaw>) -> Result<Vec<StoredTransfer>, CoreError> {
         rows.into_iter().map(|raw| self.stored_transfer(raw)).collect()
     }
 
-    fn stored_transfer(&self, raw: UploadRaw) -> Result<StoredTransfer, DbError> {
+    fn stored_transfer(&self, raw: UploadRaw) -> Result<StoredTransfer, CoreError> {
         let [model, id, action] = raw.key;
         let key = format!("{model}:{id}:{action}");
         let place = if raw.inline { Location::Table } else { Location::Directory };
@@ -176,14 +176,14 @@ impl Store {
     }
 
     /// The elements of the batch `group` that still wait for the answer: the row id and the fields the element sends.
-    pub(crate) fn batch_rows(&self, model: &str, action: &str, group: u64) -> Result<Vec<BatchRow>, DbError> {
+    pub(crate) fn batch_rows(&self, model: &str, action: &str, group: u64) -> Result<Vec<BatchRow>, CoreError> {
         let found = self
             .read_locked(|connection| {
                 let mut statement = connection.prepare_cached(include_str!("sql/upload_rows/batch_rows.sql"))?;
                 let rows = statement.query_map(rusqlite::params![model, action, i64::try_from(group).unwrap_or(i64::MAX)], |row| Ok((row.get::<_, String>(0)?, row.get::<_, Option<String>>(1)?)))?.collect::<Result<Vec<_>, _>>();
                 rows
             })
-            .map_err(|error| DbError::Internal(error.to_string()))?;
+            .map_err(|error| CoreError::Internal(error.to_string()))?;
         Ok(found
             .into_iter()
             .filter_map(|(id, fields)| {

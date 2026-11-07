@@ -11,7 +11,7 @@ use crate::store::query::{compile_count, compile_keys, fetch_count, fetch_keys, 
 use crate::schema::Sort;
 use crate::store::sync_state::read_sync;
 
-use super::db_error::DbError;
+use super::db_error::CoreError;
 use super::record::{Record, Row};
 use super::{Reader, Store, StoreError};
 
@@ -34,10 +34,10 @@ pub(crate) struct HeldVersion {
     pub limit: usize,
 }
 
-fn fault(error: serde_json::Error) -> DbError { DbError::Internal(error.to_string()) }
+fn fault(error: serde_json::Error) -> CoreError { CoreError::Internal(error.to_string()) }
 
 impl Store {
-    pub(crate) fn load(&self, reader: &Reader<'_>, model: &str, ids: &[String]) -> Result<HashMap<String, Row>, DbError> {
+    pub(crate) fn load(&self, reader: &Reader<'_>, model: &str, ids: &[String]) -> Result<HashMap<String, Row>, CoreError> {
         let stored = reader.stored_rows(model, ids)?;
         let mut syncs = read_sync(reader.connection(), model, ids).map_err(StoreError::from)?;
         let spec = self.spec(model)?;
@@ -76,27 +76,27 @@ impl Store {
         }
     }
 
-    fn rows_for_keys(&self, reader: &Reader<'_>, model: &str, keys: &[RowKey]) -> Result<Vec<Row>, DbError> {
+    fn rows_for_keys(&self, reader: &Reader<'_>, model: &str, keys: &[RowKey]) -> Result<Vec<Row>, CoreError> {
         let ids: Vec<String> = keys.iter().map(|(id, _)| id.clone()).collect();
         let loaded = self.load(reader, model, &ids)?;
         Ok(keys.iter().filter_map(|(id, _)| loaded.get(id).cloned()).collect())
     }
 
-    pub(crate) fn query_keys(&self, reader: &Reader<'_>, query: &Query) -> Result<Vec<RowKey>, DbError> {
+    pub(crate) fn query_keys(&self, reader: &Reader<'_>, query: &Query) -> Result<Vec<RowKey>, CoreError> {
         let statement = compile_keys(query, self.spec(query.model.as_str())?)?;
         let keys = fetch_keys(reader.connection(), &statement)?;
         touch(keys.len());
         Ok(keys)
     }
 
-    pub fn find(&self, model: &str, id: &RowId) -> Result<Option<Row>, DbError> {
+    pub fn find(&self, model: &str, id: &RowId) -> Result<Option<Row>, CoreError> {
         self.spec(model)?;
         let ids = [id.to_string()];
         let mut loaded = self.read_models(&[model], |reader| self.load(reader, model, &ids))?;
         Ok(loaded.remove(id.as_str()))
     }
 
-    pub fn query(&self, query: &Query) -> Result<Vec<Row>, DbError> {
+    pub fn query(&self, query: &Query) -> Result<Vec<Row>, CoreError> {
         let model = query.model.as_str();
         self.read_models(&[model], |reader| {
             let keys = self.query_keys(reader, query)?;
@@ -104,14 +104,14 @@ impl Store {
         })
     }
 
-    pub fn count(&self, query: &Query) -> Result<i64, DbError> {
+    pub fn count(&self, query: &Query) -> Result<i64, CoreError> {
         let statement = compile_count(query, self.spec(query.model.as_str())?)?;
         self.read_models(&[query.model.as_str()], |reader| Ok(fetch_count(reader.connection(), &statement)?))
     }
 
-    pub fn remote_relation_query(&self, model: &str, name: &str, params: &Map<String, Value>) -> Result<Option<Query>, DbError> {
+    pub fn remote_relation_query(&self, model: &str, name: &str, params: &Map<String, Value>) -> Result<Option<Query>, CoreError> {
         let spec = self.spec(model)?;
-        let relation = spec.relations.iter().find(|relation| relation.name == name).ok_or_else(|| DbError::UnknownAssociation { model: model.to_string(), name: name.to_string() })?;
+        let relation = spec.relations.iter().find(|relation| relation.name == name).ok_or_else(|| CoreError::UnknownAssociation { model: model.to_string(), name: name.to_string() })?;
         if relation.remote.is_none() {
             return Ok(None);
         }
@@ -124,10 +124,10 @@ impl Store {
         Ok(Some(Query { stable: relation.order_stable || relation.members_complete, ..Query::new(model).in_scope(scope).ordered(order) }))
     }
 
-    pub(crate) fn parse_query(&self, json: &str) -> Result<ParsedQuery, DbError> {
+    pub(crate) fn parse_query(&self, json: &str) -> Result<ParsedQuery, CoreError> {
         let description: Value = serde_json::from_str(json).map_err(fault)?;
         let mut query: Query = serde_json::from_value(description.clone()).map_err(fault)?;
-        let remote = description["relation"].as_str().map(|name| -> Result<_, DbError> {
+        let remote = description["relation"].as_str().map(|name| -> Result<_, CoreError> {
             let params: Map<String, Value> = description.get("params").map(|value| serde_json::from_value(value.clone())).transpose().map_err(fault)?.unwrap_or_default();
             let params = self.spec(query.model.as_str())?.selection_values(name, &params)?;
             let relation_query = self.remote_relation_query(query.model.as_str(), name, &params)?;
@@ -143,14 +143,14 @@ impl Store {
     }
 
     /// Reads `query` in one snapshot that is not older than `floor`; gives the revision of the snapshot.
-    pub(crate) fn read_view(&self, query: &Query, count: bool, floor: i64, window: Option<&crate::owners::read::windows::WindowKey>, held: Option<HeldVersion>) -> Result<(i64, ViewRead), DbError> {
+    pub(crate) fn read_view(&self, query: &Query, count: bool, floor: i64, window: Option<&crate::owners::read::windows::WindowKey>, held: Option<HeldVersion>) -> Result<(i64, ViewRead), CoreError> {
         #[cfg(test)]
         assert!(self.panic_reads.load(std::sync::atomic::Ordering::SeqCst) & super::PANIC_VIEW_READ == 0, "the snapshot read failed");
         let model = query.model.as_str();
         self.read_models(&[model], |reader| {
             let seen = reader.revision_seq()?;
             if seen < floor {
-                return Err(DbError::Internal(format!("the snapshot is at revision {seen}, older than {floor}")));
+                return Err(CoreError::Internal(format!("the snapshot is at revision {seen}, older than {floor}")));
             }
             if count {
                 let statement = compile_count(query, self.spec(model)?)?;
@@ -170,7 +170,7 @@ impl Store {
             };
             let rows = self.rows_for_keys(reader, model, &wanted)?;
             if rows.len() != wanted.len() {
-                return Err(DbError::Internal(format!("the snapshot at revision {seen} lost {} of {} rows of {model}", wanted.len() - rows.len(), wanted.len())));
+                return Err(CoreError::Internal(format!("the snapshot at revision {seen} lost {} of {} rows of {model}", wanted.len() - rows.len(), wanted.len())));
             }
             self.rows_read.fetch_add(rows.len(), std::sync::atomic::Ordering::Relaxed);
             let total = match window.map(crate::owners::read::windows::WindowKey::kind) {

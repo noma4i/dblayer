@@ -21,7 +21,7 @@ fn request(url: &str, body: &[u8], cancel: &CancelToken, ticks: &Arc<Mutex<Vec<u
 fn put_records_the_range_headers_and_reports_progress_in_steps() { crate::test_wait::paused(async {
     let mock = MockTransport::new();
     let ticks = Arc::new(Mutex::new(Vec::new()));
-    mock.enqueue_put("https://s3/p1", PutReply::etag("abc").after(Duration::from_secs(4)));
+    mock.enqueue_put("https://s3/p1", PutScript::etag("abc").after(Duration::from_secs(4)));
     let response = mock.put(request("https://s3/p1", &[7; 8], &CancelToken::new(), &ticks)).await.unwrap();
     assert_eq!(response.etag.as_deref(), Some("abc"));
     assert_eq!(*ticks.lock().unwrap(), [2, 4, 6, 8]);
@@ -34,8 +34,8 @@ fn put_records_the_range_headers_and_reports_progress_in_steps() { crate::test_w
 fn queued_replies_play_in_order_then_repeat_the_last_and_default_answers_with_an_etag() { crate::test_wait::paused(async {
     let mock = MockTransport::new();
     let ticks = Arc::default();
-    mock.enqueue_put("u", PutReply::status(503));
-    mock.enqueue_put("u", PutReply::etag("ok"));
+    mock.enqueue_put("u", PutScript::status(503));
+    mock.enqueue_put("u", PutScript::etag("ok"));
     let cancel = CancelToken::new();
     assert!(matches!(mock.put(request("u", b"a", &cancel, &ticks)).await, Err(TransportError::Http { status: 503, .. })));
     assert_eq!(mock.put(request("u", b"a", &cancel, &ticks)).await.unwrap().etag.as_deref(), Some("ok"));
@@ -48,7 +48,7 @@ fn queued_replies_play_in_order_then_repeat_the_last_and_default_answers_with_an
 fn cancel_interrupts_a_slow_put_and_parallel_puts_are_counted() { crate::test_wait::paused(async {
     let mock = MockTransport::new();
     let ticks = Arc::default();
-    mock.enqueue_put("slow", PutReply::etag("x").after(Duration::from_secs(60)));
+    mock.enqueue_put("slow", PutScript::etag("x").after(Duration::from_secs(60)));
     let cancel = CancelToken::new();
     let first = tokio::spawn({
         let (mock, request) = (mock.clone(), request("slow", b"abcd", &cancel, &ticks));

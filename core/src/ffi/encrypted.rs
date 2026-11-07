@@ -80,7 +80,7 @@ pub(super) fn wire(
     let secret = Arc::new(crate::transport::encrypted::credential::Secret::new(Arc::new(ForeignCredentials(credentials))));
     crate::transport::encrypted::credential::finish_session_end(db, &secret).map_err(|error| DbError::Invalid { detail: error.to_string() })?;
     let progress = retries.map(|retries| retries.inner.clone()).unwrap_or_default();
-    let rest: Arc<dyn core::Transport> = Arc::new(ForeignTransport(transport));
+    let rest: Arc<dyn core::Upstream> = Arc::new(ForeignTransport(transport));
     let encrypted_transport = Arc::new(EncryptedTransport::new(exchange.clone(), secret.clone(), db.clone(), clock.clone(), progress, rest));
     let cable = encrypted_transport.cable_lines();
     Ok(Wiring { transport: Some(encrypted_transport.clone()), encrypted: Some(Encrypted { exchange, secret, transport: encrypted_transport }), cable: Some(cable), seal: Some(Arc::new(seal)) })

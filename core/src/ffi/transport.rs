@@ -32,7 +32,7 @@ pub trait Transport: Send + Sync {
     async fn cable_close(&self, token: String);
     async fn query(&self, request: TransportRequest) -> Result<String, DbError>;
     async fn mutate(&self, request: TransportRequest) -> Result<String, DbError>;
-    async fn put(&self, url: String, headers: HashMap<String, String>, file: core::PutFile, identity: core::TransferIdentity, progress: Arc<ByteProgress>) -> Result<PutReply, DbError>;
+    async fn put(&self, url: String, headers: HashMap<String, String>, file: core::PutFile, identity: core::TransferIdentity, progress: Arc<ByteProgress>) -> Result<core::PutReply, DbError>;
 }
 
 #[derive(Clone, Debug, uniffi::Enum)]
@@ -93,9 +93,6 @@ impl ByteProgress {
     pub fn sent(&self, bytes: u64) { crate::lock::assert_no_library_lock("ByteProgress::sent"); (self.sent)(bytes); }
     pub fn is_cancelled(&self) -> bool { self.cancel.is_cancelled() }
 }
-
-#[derive(uniffi::Record)]
-pub struct PutReply { pub status: u16, pub etag: Option<String> }
 
 #[derive(uniffi::Object)]
 pub struct OnlineSink { pub(crate) life: std::sync::Weak<crate::owners::life::Life> }
@@ -172,7 +169,7 @@ pub(super) fn transport_error(error: DbError) -> core::TransportError {
 }
 
 #[async_trait]
-impl core::Transport for ForeignTransport {
+impl core::Upstream for ForeignTransport {
     async fn open_cable(&self, url: &str) -> Result<Arc<dyn core::CableSocket>, core::TransportError> {
         crate::lock::assert_no_library_lock("Transport::open_cable");
         let transport = self.0.clone();
@@ -198,11 +195,10 @@ impl core::Transport for ForeignTransport {
         let json = self.0.mutate(request.into()).await.map_err(transport_error)?;
         serde_json::from_str(&json).map_err(|error| core::TransportError::Decode(error.to_string()))
     }
-    async fn put(&self, request: core::PutRequest) -> Result<core::PutResponse, core::TransportError> {
+    async fn put(&self, request: core::PutRequest) -> Result<core::PutReply, core::TransportError> {
         crate::lock::assert_no_library_lock("Transport::put");
         let progress = Arc::new(ByteProgress { cancel: request.cancel, sent: request.sent });
-        let reply = self.0.put(request.url, request.headers.into_iter().collect(), request.file, request.identity, progress).await.map_err(transport_error)?;
-        Ok(core::PutResponse { status: reply.status, etag: reply.etag })
+        self.0.put(request.url, request.headers.into_iter().collect(), request.file, request.identity, progress).await.map_err(transport_error)
     }
 }
 

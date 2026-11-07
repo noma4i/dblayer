@@ -77,8 +77,8 @@ pub use command::CommandRequest;
 pub use read::{ReadEnd, ReadFetch, ReadPhase, ReadRequest, ReadState, ReadStream, ReadValue, RowPlace, RowRename};
 pub use upload_rounds::RoundJobsSink;
 pub use wire::{Cell, CellEntry, WireFailure, WireModel, WireRow, WireSync, WireSyncState, WireProcessing, WireUpload, WireUploadStatus};
-pub use crate::transport::PutFile;
-pub use transport::{ByteProgress, CableLease, EncryptedSocketEvent, OnlineSink, PutReply, Transport, TransportRequest};
+pub use crate::transport::{PutFile, PutReply};
+pub use transport::{ByteProgress, CableLease, EncryptedSocketEvent, OnlineSink, Transport, TransportRequest};
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error, uniffi::Error)]
 pub enum DbError {
@@ -117,36 +117,36 @@ pub enum DbError {
     CorruptManifest { detail: String },
 }
 
-impl From<crate::store::DbError> for DbError {
-    fn from(error: crate::store::DbError) -> Self {
+impl From<crate::store::CoreError> for DbError {
+    fn from(error: crate::store::CoreError) -> Self {
         match error {
-            crate::store::DbError::NoSession { detail } => Self::NoSession { detail },
-            crate::store::DbError::AlreadyExists { model, id } => Self::AlreadyExists { model, id },
-            crate::store::DbError::Store(crate::store::StoreError::CorruptManifest(detail)) => Self::CorruptManifest { detail },
-            error @ (crate::store::DbError::InvalidUpload(_)
-                | crate::store::DbError::Schema(_)
-                | crate::store::DbError::Identity(_)
-                | crate::store::DbError::Invalid(_)
-                | crate::store::DbError::UnknownModel(_)
-                | crate::store::DbError::UnknownAction { .. }
-                | crate::store::DbError::UnknownAssociation { .. }
-                | crate::store::DbError::UnknownField { .. }
-                | crate::store::DbError::NotFileField { .. }
-                | crate::store::DbError::NotEphemeralField { .. }
-                | crate::store::DbError::InvalidEphemeralValue { .. }
-                | crate::store::DbError::NotLocalField { .. }
-                | crate::store::DbError::LocalValue { .. }
-                | crate::store::DbError::Selection(_)
-                | crate::store::DbError::Store(crate::store::StoreError::UnknownModel(_))) => Self::Invalid { detail: error.to_string() },
-            crate::store::DbError::Query(crate::store::query::QueryError::Sqlite(detail)) => Self::Database { detail },
-            error @ crate::store::DbError::Query(_) => Self::Invalid { detail: error.to_string() },
+            crate::store::CoreError::NoSession { detail } => Self::NoSession { detail },
+            crate::store::CoreError::AlreadyExists { model, id } => Self::AlreadyExists { model, id },
+            crate::store::CoreError::Store(crate::store::StoreError::CorruptManifest(detail)) => Self::CorruptManifest { detail },
+            error @ (crate::store::CoreError::InvalidUpload(_)
+                | crate::store::CoreError::Schema(_)
+                | crate::store::CoreError::Identity(_)
+                | crate::store::CoreError::Invalid(_)
+                | crate::store::CoreError::UnknownModel(_)
+                | crate::store::CoreError::UnknownAction { .. }
+                | crate::store::CoreError::UnknownAssociation { .. }
+                | crate::store::CoreError::UnknownField { .. }
+                | crate::store::CoreError::NotFileField { .. }
+                | crate::store::CoreError::NotEphemeralField { .. }
+                | crate::store::CoreError::InvalidEphemeralValue { .. }
+                | crate::store::CoreError::NotLocalField { .. }
+                | crate::store::CoreError::LocalValue { .. }
+                | crate::store::CoreError::Selection(_)
+                | crate::store::CoreError::Store(crate::store::StoreError::UnknownModel(_))) => Self::Invalid { detail: error.to_string() },
+            crate::store::CoreError::Query(crate::store::query::QueryError::Sqlite(detail)) => Self::Database { detail },
+            error @ crate::store::CoreError::Query(_) => Self::Invalid { detail: error.to_string() },
             other => Self::Database { detail: other.to_string() },
         }
     }
 }
 
 impl From<crate::store::StoreError> for DbError {
-    fn from(error: crate::store::StoreError) -> Self { crate::store::DbError::from(error).into() }
+    fn from(error: crate::store::StoreError) -> Self { crate::store::CoreError::from(error).into() }
 }
 
 impl From<crate::transport::TransportError> for DbError {

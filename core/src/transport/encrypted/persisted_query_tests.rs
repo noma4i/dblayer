@@ -9,7 +9,7 @@ use super::vectors_tests::*;
 use super::*;
 use crate::store::Store;
 use crate::runtime::ManualClock;
-use crate::transport::{GraphQLRequest, MockTransport, Transport};
+use crate::transport::{GraphQLRequest, MockTransport, Upstream};
 
 const READ: &str = "query Me { me { id } }";
 pub(super) const WRITE: &str = "mutation Rename { rename { id } }";

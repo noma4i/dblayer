@@ -11,7 +11,7 @@ use super::*;
 use crate::runtime::{Clock, ManualClock};
 use crate::store::Store;
 use crate::transport::retry::RetryCalls;
-use crate::transport::{NetworkPurpose, Transport};
+use crate::transport::{NetworkPurpose, Upstream};
 
 const START: u64 = 1_800_000_000;
 
@@ -25,12 +25,12 @@ pub(crate) struct Client {
     pub(crate) secret: Arc<Secret>,
     pub(crate) db: Arc<Store>,
     pub(crate) clock: Arc<dyn Clock>,
-    rest: Arc<dyn Transport>,
+    rest: Arc<dyn Upstream>,
     life: OnceLock<Arc<crate::owners::life::Life>>,
 }
 
 impl Client {
-    pub(crate) fn new(config: &EncryptedConfig, http: Arc<dyn HttpExchange>, credentials: Arc<dyn CredentialSlot>, db: Arc<Store>, clock: Arc<dyn Clock>, rest: Arc<dyn Transport>) -> Result<Arc<Self>, TransportError> {
+    pub(crate) fn new(config: &EncryptedConfig, http: Arc<dyn HttpExchange>, credentials: Arc<dyn CredentialSlot>, db: Arc<Store>, clock: Arc<dyn Clock>, rest: Arc<dyn Upstream>) -> Result<Arc<Self>, TransportError> {
         let exchange = Arc::new(Exchange::new(config, http, clock.clone())?);
         let secret = Arc::new(Secret::new(credentials.clone()));
         super::credential::finish_session_end(&db, &secret)?;

@@ -96,7 +96,7 @@ mod write;
 pub use admission::{admit_upsert, UpsertAdmission};
 pub use context::{DroppedRecord, OpenReport};
 pub(crate) use context::Context;
-pub use db_error::DbError;
+pub use db_error::CoreError;
 pub use record::{Record, Row};
 pub(crate) use record::row_bytes;
 pub(crate) use lookup::{HeldVersion, ParsedQuery, ViewRead};

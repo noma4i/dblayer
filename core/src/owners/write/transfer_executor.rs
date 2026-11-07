@@ -15,11 +15,11 @@ use super::wire::{Flights, Running, Wire};
 use crate::store::files::{CopiedSource, FileDirectories};
 use crate::owners::contract::{Drained, ReplyId};
 use crate::runtime::{Back, EffectRunner, Epoch, EpochStamp};
-use crate::transport::{CancelToken, GraphQLRequest, NetworkPurpose, PutRequest, PutResponse, Response, RetryClass, Transport, TransportError};
+use crate::transport::{CancelToken, GraphQLRequest, NetworkPurpose, PutRequest, PutReply, Response, RetryClass, Upstream, TransportError};
 
 /// The requests of one step. Every request goes out with `NetworkPurpose::Transfer` and stops with the step.
 pub struct Link {
-    transport: Arc<dyn Transport>,
+    transport: Arc<dyn Upstream>,
     cancel: CancelToken,
     gate: Arc<crate::runtime::EpochGate>,
     epoch: Option<Epoch>,
@@ -42,7 +42,7 @@ impl Link {
         }
     }
 
-    pub async fn put(&self, mut request: PutRequest) -> Result<PutResponse, TransportError> {
+    pub async fn put(&self, mut request: PutRequest) -> Result<PutReply, TransportError> {
         request.cancel = self.cancel.clone();
         crate::runtime::send_in_epoch(&self.gate, self.epoch, || self.transport.put(request)).await
     }

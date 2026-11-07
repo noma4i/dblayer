@@ -10,7 +10,7 @@ use async_trait::async_trait;
 use super::wire::{Running, Task, Tasks};
 use crate::spec::support::{new_log, Log, Silent, Sink};
 use crate::runtime::{Address, DetScheduler, StateOwner};
-use crate::transport::{GraphQLRequest, PutRequest, PutResponse, Response, Transport, TransportError};
+use crate::transport::{GraphQLRequest, PutRequest, PutReply, Response, Upstream, TransportError};
 
 pub(super) const STEPS: usize = 20_000;
 
@@ -138,19 +138,19 @@ impl Stub {
 }
 
 #[async_trait]
-impl Transport for Stub {
+impl Upstream for Stub {
     async fn query(&self, request: GraphQLRequest) -> Result<Response, TransportError> { self.answer(request).await }
 
     async fn mutate(&self, request: GraphQLRequest) -> Result<Response, TransportError> { self.answer(request).await }
 
 
-    async fn put(&self, request: PutRequest) -> Result<PutResponse, TransportError> {
+    async fn put(&self, request: PutRequest) -> Result<PutReply, TransportError> {
         lock(&self.puts).push(request.cancel.clone());
         if self.hang_puts.load(Ordering::SeqCst) {
             let _waiting = Waiting(self.dropped.clone());
             std::future::pending::<()>().await;
         }
-        Ok(PutResponse::with_etag("etag"))
+        Ok(PutReply::with_etag("etag"))
     }
 }
 

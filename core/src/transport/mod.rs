@@ -19,16 +19,16 @@ pub use encrypted::{missing_from_registry, repeats, response_of, Answer, AppPlat
 pub use error::TransportError;
 pub use extensions::{graphql_extensions, GraphqlExtensions, TransactionDisposition};
 #[cfg(test)]
-pub use mock::{RecordedKind, MockTransport, PutReply, RecordedCall, RecordedPut, Reply};
+pub use mock::{RecordedKind, MockTransport, PutScript, RecordedCall, RecordedPut, Reply};
 pub use online::Connectivity;
-pub use put::{ByteSink, PutFile, PutRequest, PutResponse, TransferIdentity, TransferStep};
+pub use put::{ByteSink, PutFile, PutRequest, PutReply, TransferIdentity, TransferStep};
 pub use request::{GraphQLError, GraphQLRequest, NetworkPurpose, RequestOwner, Response};
 pub use response::{ResponseOutcome, ResponseShape};
 pub use retry::{RetryAttempt, RetryClass, RetryCalls, RetrySnapshot};
 pub use session_code::SessionCode;
 
 #[async_trait]
-pub trait Transport: Send + Sync {
+pub trait Upstream: Send + Sync {
     fn retries_queries(&self) -> bool { false }
     fn set_online(&self, _online: bool) {}
     fn session(&self) -> Result<Option<String>, TransportError> { Ok(Some(String::new())) }
@@ -37,7 +37,7 @@ pub trait Transport: Send + Sync {
     }
     async fn query(&self, request: GraphQLRequest) -> Result<Response, TransportError>;
     async fn mutate(&self, request: GraphQLRequest) -> Result<Response, TransportError>;
-    async fn put(&self, request: PutRequest) -> Result<PutResponse, TransportError>;
+    async fn put(&self, request: PutRequest) -> Result<PutReply, TransportError>;
 }
 
 #[cfg(test)]

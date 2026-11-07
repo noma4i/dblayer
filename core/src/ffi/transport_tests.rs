@@ -22,12 +22,12 @@ impl super::Transport for FakeSocket {
     async fn cable_close(&self, token: String) { assert_eq!(token, "socket-1"); }
     async fn query(&self, _: super::TransportRequest) -> Result<String, super::DbError> { unreachable!() }
     async fn mutate(&self, _: super::TransportRequest) -> Result<String, super::DbError> { unreachable!() }
-    async fn put(&self, _: String, _: std::collections::HashMap<String, String>, _: crate::transport::PutFile, _: crate::transport::TransferIdentity, _: std::sync::Arc<super::ByteProgress>) -> Result<super::PutReply, super::DbError> { unreachable!() }
+    async fn put(&self, _: String, _: std::collections::HashMap<String, String>, _: crate::transport::PutFile, _: crate::transport::TransferIdentity, _: std::sync::Arc<super::ByteProgress>) -> Result<crate::transport::PutReply, super::DbError> { unreachable!() }
 }
 
 #[tokio::test]
 async fn raw_socket_bridge_preserves_ciphertext_and_close_codes() {
-    use crate::transport::Transport;
+    use crate::transport::Upstream;
     let transport = super::ForeignTransport(std::sync::Arc::new(FakeSocket));
     let socket = transport.open_cable("wss://test.invalid/cable").await.unwrap();
     socket.send("ciphertext".into()).await.unwrap();
@@ -64,7 +64,7 @@ impl super::Transport for Ordered {
     }
     async fn query(&self, _: super::TransportRequest) -> Result<String, super::DbError> { unreachable!() }
     async fn mutate(&self, _: super::TransportRequest) -> Result<String, super::DbError> { unreachable!() }
-    async fn put(&self, _: String, _: std::collections::HashMap<String, String>, _: crate::transport::PutFile, _: crate::transport::TransferIdentity, _: Arc<super::ByteProgress>) -> Result<super::PutReply, super::DbError> { unreachable!() }
+    async fn put(&self, _: String, _: std::collections::HashMap<String, String>, _: crate::transport::PutFile, _: crate::transport::TransferIdentity, _: Arc<super::ByteProgress>) -> Result<crate::transport::PutReply, super::DbError> { unreachable!() }
 }
 
 fn boxed(work: impl Future<Output = Result<(), super::DbError>> + Send + 'static) -> Pin<Box<dyn Future<Output = Result<(), super::DbError>> + Send>> { Box::pin(work) }
@@ -83,7 +83,7 @@ fn pending<F: Future>(call: &mut Pin<Box<F>>) -> bool {
 
 #[test]
 fn a_cable_token_opened_before_the_call_is_dropped_is_closed() {
-    use crate::transport::Transport;
+    use crate::transport::Upstream;
     let script: Script<super::CableLease> = Box::new(|lease| boxed(async move { lease.opened("c1".into())?; std::future::pending::<()>().await; Ok(()) }));
     let (transport, events) = ordered(Some(script));
     let mut call = Box::pin(transport.open_cable("wss://test.invalid/cable"));
@@ -94,7 +94,7 @@ fn a_cable_token_opened_before_the_call_is_dropped_is_closed() {
 
 #[test]
 fn a_cable_token_opened_after_the_call_was_dropped_is_closed() {
-    use crate::transport::Transport;
+    use crate::transport::Upstream;
     let (go, gate) = std::sync::mpsc::channel::<()>();
     let script: Script<super::CableLease> = Box::new(move |lease| {
         std::thread::spawn(move || { recv_within(&gate); lease.opened("c1".into()).unwrap(); });
@@ -110,7 +110,7 @@ fn a_cable_token_opened_after_the_call_was_dropped_is_closed() {
 
 #[tokio::test]
 async fn a_cable_socket_dropped_without_close_closes_its_token() {
-    use crate::transport::Transport;
+    use crate::transport::Upstream;
     let (transport, events) = ordered(Some(Box::new(|lease| boxed(async move { lease.opened("c1".into()) }))));
     let socket = transport.open_cable("wss://test.invalid/cable").await.unwrap();
     drop(socket);
@@ -119,7 +119,7 @@ async fn a_cable_socket_dropped_without_close_closes_its_token() {
 
 #[tokio::test]
 async fn a_cancelled_close_leaves_the_token_to_the_dropped_socket() {
-    use crate::transport::Transport;
+    use crate::transport::Upstream;
     let (transport, events) = ordered(Some(Box::new(|lease| boxed(async move { lease.opened("stuck".into()) }))));
     let socket = transport.open_cable("wss://test.invalid/cable").await.unwrap();
     let mut closing = Box::pin(socket.close());

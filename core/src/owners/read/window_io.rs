@@ -1,5 +1,5 @@
-//! Runner of the effects of `Windows`: the request of a page goes through the `Transport` of the core, the answer comes back as
-//! `WindowsInput::Transport`. A cancelled request gives no answer.
+//! Runner of the effects of `Windows`: the request of a page goes through the `Upstream` of the core, the answer comes back as
+//! `WindowsInput::Upstream`. A cancelled request gives no answer.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -11,7 +11,7 @@ use crate::owners::contract::{ErrorClass, RequestError, RequestId, TransportOutc
 use crate::owners::read::windows::{request_task, read_task, AnswerPage, RequestKind, SavedWindow, WindowEffect, WindowKey, Windows, WindowsEffect, WindowsInput};
 use crate::runtime::{Back, EffectRunner, Epoch, EpochStamp};
 use crate::task::{spawn_on, Carry};
-use crate::transport::{CancelToken, GraphQLRequest, Response, RetryClass, Transport, TransportError};
+use crate::transport::{CancelToken, GraphQLRequest, Response, RetryClass, Upstream, TransportError};
 
 /// The wire form of a window: how a page is asked and how its answer reads.
 pub trait WindowCodec: Send + Sync + 'static {
@@ -31,7 +31,7 @@ type Open = HashMap<(RequestId, u32), CancelToken>;
 pub type WindowReader = Arc<dyn Fn(&WindowKey) -> Result<Option<SavedWindow>, String> + Send + Sync>;
 
 pub struct WindowIo {
-    transport: Option<Arc<dyn Transport>>,
+    transport: Option<Arc<dyn Upstream>>,
     codec: Arc<dyn WindowCodec>,
     admit: Admit,
     gate: Arc<crate::runtime::EpochGate>,
@@ -46,7 +46,7 @@ pub struct WindowIo {
 }
 
 impl WindowIo {
-    pub fn new(transport: Option<Arc<dyn Transport>>, codec: Arc<dyn WindowCodec>, (admit, gate): (Admit, Arc<crate::runtime::EpochGate>), (handle, now): (Handle, Arc<dyn Fn() -> i64 + Send + Sync>), rest: Rest<WindowsEffect>) -> Self {
+    pub fn new(transport: Option<Arc<dyn Upstream>>, codec: Arc<dyn WindowCodec>, (admit, gate): (Admit, Arc<crate::runtime::EpochGate>), (handle, now): (Handle, Arc<dyn Fn() -> i64 + Send + Sync>), rest: Rest<WindowsEffect>) -> Self {
         Self { transport, codec, admit, gate, handle, now, counted: None, open: Open::default(), reader: None, rest, #[cfg(test)] flights: None }
     }
 
@@ -135,7 +135,7 @@ impl EffectRunner<Windows> for WindowIo {
     }
 }
 
-async fn ask(transport: Option<&dyn Transport>, (gate, epoch): (&crate::runtime::EpochGate, Epoch), codec: &dyn WindowCodec, (key, page, kind): (&WindowKey, u32, RequestKind), cursor: Option<&str>) -> TransportOutcome<AnswerPage> {
+async fn ask(transport: Option<&dyn Upstream>, (gate, epoch): (&crate::runtime::EpochGate, Epoch), codec: &dyn WindowCodec, (key, page, kind): (&WindowKey, u32, RequestKind), cursor: Option<&str>) -> TransportOutcome<AnswerPage> {
     let request = match codec.request(key, page, cursor, kind) {
         Ok(request) => request,
         Err(message) => return TransportOutcome::Error(RequestError { message, class: ErrorClass::Permanent, source: None }),

@@ -10,7 +10,7 @@ use super::vectors_tests::*;
 use super::*;
 use crate::store::Store;
 use crate::runtime::ManualClock;
-use crate::transport::{GraphQLRequest, MockTransport, Transport};
+use crate::transport::{GraphQLRequest, MockTransport, Upstream};
 
 async fn transport(rest: MockTransport) -> (Arc<EncryptedTransport>, Arc<FakeServer>, Arc<Client>) {
     let clock = Arc::new(ManualClock::new(Duration::from_secs(1_800_000_000)));

@@ -6,7 +6,7 @@ use std::pin::Pin;
 
 use super::{send_in_epoch, EpochGate};
 use crate::transport::{
-    CancelToken, GraphQLRequest, PutFile, PutRequest, PutResponse, Response, Transport, TransportError, TransferIdentity, TransferStep,
+    CancelToken, GraphQLRequest, PutFile, PutRequest, PutReply, Response, Upstream, TransportError, TransferIdentity, TransferStep,
 };
 
 /// A transport that starts its request in the call itself, as a platform transport behind the bridge does: the counter moves before the future exists.
@@ -22,10 +22,10 @@ impl Counting {
     }
 }
 
-impl Transport for Counting {
+impl Upstream for Counting {
     fn query<'a, 'b>(&'a self, _: GraphQLRequest) -> Sent<'b, Response> where 'a: 'b, Self: 'b { self.started() }
     fn mutate<'a, 'b>(&'a self, _: GraphQLRequest) -> Sent<'b, Response> where 'a: 'b, Self: 'b { self.started() }
-    fn put<'a, 'b>(&'a self, _: PutRequest) -> Sent<'b, PutResponse> where 'a: 'b, Self: 'b { self.started() }
+    fn put<'a, 'b>(&'a self, _: PutRequest) -> Sent<'b, PutReply> where 'a: 'b, Self: 'b { self.started() }
 }
 
 fn graphql() -> GraphQLRequest { GraphQLRequest::new("query Q { q }", "Q", serde_json::Value::Null) }

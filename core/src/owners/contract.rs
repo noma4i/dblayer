@@ -137,13 +137,6 @@ pub enum TransportOutcome<R> {
     Dropped,
 }
 
-/// `Transport{req_id, Response/Error/Dropped}`: the outcome of a request, to its author.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Transport<R> {
-    pub req_id: RequestId,
-    pub outcome: TransportOutcome<R>,
-}
-
 /// `Tick(now)`: the only clock.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Tick(pub Time);

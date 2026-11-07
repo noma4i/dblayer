@@ -59,7 +59,7 @@ pub type OperationLookup = Arc<dyn Fn(&str) -> Option<(String, String)> + Send +
 
 pub struct Ports {
     pub db: std::sync::Arc<Store>,
-    pub transport: Option<Arc<dyn crate::transport::Transport>>,
+    pub transport: Option<Arc<dyn crate::transport::Upstream>>,
     pub executor: tokio::runtime::Handle,
     pub operations: OperationLookup,
     pub(crate) secret: Option<Arc<crate::transport::encrypted::credential::Secret>>,

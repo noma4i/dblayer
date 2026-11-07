@@ -3,7 +3,7 @@ use std::collections::BTreeMap;
 use serde_json::{Map, Value};
 
 use crate::store::{EdgeValue, EdgeWrite, ScopeRef};
-use crate::store::DbError;
+use crate::store::CoreError;
 use crate::owners::read::windows::WindowKey;
 use crate::owners::store::RowValue;
 use crate::schema::{FieldKind, FieldSpec};
@@ -20,10 +20,10 @@ pub(crate) struct WindowPage<'a> {
     pub base_revision: i64,
 }
 
-pub(crate) fn row_values(row: &RowValue) -> Result<Map<String, Value>, DbError> {
-    match serde_json::from_str(&row.values).map_err(|error| DbError::Internal(error.to_string()))? {
+pub(crate) fn row_values(row: &RowValue) -> Result<Map<String, Value>, CoreError> {
+    match serde_json::from_str(&row.values).map_err(|error| CoreError::Internal(error.to_string()))? {
         Value::Object(map) => Ok(map),
-        _ => Err(DbError::Internal("the values of a row are not an object".into())),
+        _ => Err(CoreError::Internal("the values of a row are not an object".into())),
     }
 }
 

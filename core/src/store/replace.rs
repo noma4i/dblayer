@@ -4,7 +4,7 @@ use serde_json::{Map, Value};
 
 use crate::store::{EntityOp, ScopeOp, ScopeRef};
 use crate::owners::read::diff::longest_increasing;
-use crate::store::DbError;
+use crate::store::CoreError;
 use crate::identity::RowId;
 use crate::owners::read::codec::LandingPlan;
 use crate::schema::Coverage;
@@ -28,13 +28,13 @@ struct Member {
     order_key: String,
 }
 
-pub(crate) fn scope_membership(reader: &Reader<'_>, model: &str, scope_key: &str, base_revision: i64) -> Result<HashMap<String, bool>, DbError> {
+pub(crate) fn scope_membership(reader: &Reader<'_>, model: &str, scope_key: &str, base_revision: i64) -> Result<HashMap<String, bool>, CoreError> {
     let mut membership: HashMap<String, bool> = reader.scope_changes_since(model, scope_key, base_revision)?.into_iter().map(|(id, order)| (id, order.is_some())).collect();
     for (id, joined) in crate::store::plan::op_effect::open_scope_effects(reader.connection(), model, scope_key)? { membership.insert(id, joined); }
     Ok(membership)
 }
 
-pub(crate) fn replace_plan(reader: &Reader<'_>, request: &ReplaceRequest, rows: &[Map<String, Value>], base_revision: i64) -> Result<LandingPlan, DbError> {
+pub(crate) fn replace_plan(reader: &Reader<'_>, request: &ReplaceRequest, rows: &[Map<String, Value>], base_revision: i64) -> Result<LandingPlan, CoreError> {
     let model = &request.scope.model;
     let scope_key = request.scope.key.as_str();
     let current: Vec<Member> = reader.scope_members(model.as_str(), scope_key)?.into_iter().map(|(id, order_key)| Member { id, order_key }).collect();
@@ -73,7 +73,7 @@ pub(crate) fn replace_plan(reader: &Reader<'_>, request: &ReplaceRequest, rows: 
     Ok(LandingPlan { entity_ops, scope_ops })
 }
 
-fn order_ops(scope: &ScopeRef, current: &[Member], result: &[String]) -> Result<Vec<ScopeOp>, DbError> {
+fn order_ops(scope: &ScopeRef, current: &[Member], result: &[String]) -> Result<Vec<ScopeOp>, CoreError> {
     let rank: HashMap<&str, usize> = current.iter().enumerate().map(|(index, member)| (member.id.as_str(), index)).collect();
     let existing: Vec<(usize, usize)> = result.iter().enumerate().filter_map(|(position, id)| rank.get(id.as_str()).map(|rank| (position, *rank))).collect();
     let ranks: Vec<usize> = existing.iter().map(|(_, rank)| *rank).collect();

@@ -22,7 +22,7 @@ enum RootNote {
 
 pub(super) struct CallsRunner {
     wiring: Arc<Wiring>,
-    transport: Option<Arc<dyn crate::transport::Transport>>,
+    transport: Option<Arc<dyn crate::transport::Upstream>>,
     session: Option<Arc<crate::transport::Exchange>>,
     executor: tokio::runtime::Handle,
     operations: super::OperationLookup,

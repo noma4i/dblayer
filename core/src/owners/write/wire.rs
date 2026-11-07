@@ -5,7 +5,7 @@ use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
 
-use crate::transport::Transport;
+use crate::transport::Upstream;
 
 pub type Task = Pin<Box<dyn Future<Output = ()> + Send>>;
 
@@ -41,7 +41,7 @@ impl Tasks for TokioTasks {
 /// The network of an executor: the transport and the gate of the epoch it works in.
 #[derive(Clone)]
 pub struct Wire {
-    pub transport: Arc<dyn Transport>,
+    pub transport: Arc<dyn Upstream>,
     pub gate: Arc<crate::runtime::EpochGate>,
     pub tasks: Arc<dyn Tasks>,
 }

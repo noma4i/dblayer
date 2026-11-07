@@ -9,7 +9,7 @@ use crate::identity::{ModelKey, RowId, RowRef};
 use crate::owners::write::operation_status::Operation;
 use crate::store::query::{Query, Where};
 use crate::schema::{AssociationKind, Dependent, ModelSpec, SchemaError, ValueFault};
-use crate::store::{Reader, Store, StoreError, DbError};
+use crate::store::{Reader, Store, StoreError, CoreError};
 use crate::value::{fractional_between, read_id};
 use crate::owners::write::plan_cascade::cascade_destroys;
 
@@ -61,7 +61,7 @@ pub(crate) fn read_outbox(reader: &Reader<'_>) -> Result<Vec<OutboxOperation>, S
     Ok(entries)
 }
 
-pub(super) fn local_scope_ops(reader: &Reader<'_>, spec: &ModelSpec, id: &RowId, row: &Map<String, Value>) -> Result<Vec<ScopeOp>, DbError> {
+pub(super) fn local_scope_ops(reader: &Reader<'_>, spec: &ModelSpec, id: &RowId, row: &Map<String, Value>) -> Result<Vec<ScopeOp>, CoreError> {
     let mut operations = Vec::new();
     for key in spec.list_scopes(row) {
         let first = reader.scope_first_key(spec.key.as_str(), key.as_str())?;
@@ -71,17 +71,17 @@ pub(super) fn local_scope_ops(reader: &Reader<'_>, spec: &ModelSpec, id: &RowId,
     Ok(operations)
 }
 
-pub(super) fn is_resident(reader: &Reader<'_>, model: &ModelKey, id: &RowId) -> Result<bool, DbError> {
+pub(super) fn is_resident(reader: &Reader<'_>, model: &ModelKey, id: &RowId) -> Result<bool, CoreError> {
     let sql = format!(include_str!("../sql/plan/is_resident.sql"), table_name(model.as_str()));
     let found: Option<i64> = reader.connection().query_row(&sql, [id.as_str()], |row| row.get(0)).optional()?;
     Ok(found.is_some())
 }
 
-pub(super) fn plan_scope_effect<'a>(reader: &'a Reader<'_>, specs: &'a dyn Fn(&str) -> Option<&'a ModelSpec>, target: &ModelSpec, effect: &crate::schema::ScopeEffect, call: (&RowRef, &Map<String, Value>), rows: &mut Vec<PriorRow>, scope_ops: &mut Vec<ScopeOp>) -> Result<(), DbError> {
+pub(super) fn plan_scope_effect<'a>(reader: &'a Reader<'_>, specs: &'a dyn Fn(&str) -> Option<&'a ModelSpec>, target: &ModelSpec, effect: &crate::schema::ScopeEffect, call: (&RowRef, &Map<String, Value>), rows: &mut Vec<PriorRow>, scope_ops: &mut Vec<ScopeOp>) -> Result<(), CoreError> {
     use crate::owners::write::outbox_plan::{scope_changes, ListChange};
     let view = super::view::ReaderView { reader, specs, db: None };
     let owned = reader.revision_seq()? + 1;
-    for change in scope_changes(&view, target, effect, call.0.id.as_str(), call.1).map_err(|error| DbError::Internal(error.0))? {
+    for change in scope_changes(&view, target, effect, call.0.id.as_str(), call.1).map_err(|error| CoreError::Internal(error.0))? {
         match change {
             ListChange::Join { model, list, id, before, order_key } => {
                 if let Some(order_key) = order_key {
@@ -100,7 +100,7 @@ pub(super) fn plan_scope_effect<'a>(reader: &'a Reader<'_>, specs: &'a dyn Fn(&s
 
 impl Store {
 
-    pub(crate) fn touch_ops(&self, reader: &Reader<'_>, spec: &ModelSpec, rows: &[&Map<String, Value>], own: &RowRef) -> Result<Vec<EntityOp>, DbError> {
+    pub(crate) fn touch_ops(&self, reader: &Reader<'_>, spec: &ModelSpec, rows: &[&Map<String, Value>], own: &RowRef) -> Result<Vec<EntityOp>, CoreError> {
         let mut seen = HashSet::from([own.clone()]);
         let mut ops = Vec::new();
         for association in spec.associations.iter().filter(|association| association.kind == AssociationKind::BelongsTo && association.touches_parent) {
@@ -117,13 +117,13 @@ impl Store {
         Ok(ops)
     }
 
-    pub(crate) fn destroy_targets(&self, reader: &Reader<'_>, own: &RowRef) -> Result<Vec<RowRef>, DbError> {
+    pub(crate) fn destroy_targets(&self, reader: &Reader<'_>, own: &RowRef) -> Result<Vec<RowRef>, CoreError> {
         let mut descendants = Vec::new();
         self.descendants(reader, own, &mut HashSet::from([own.clone()]), &mut descendants)?;
         Ok(cascade_destroys(own, &descendants, true))
     }
 
-    fn descendants(&self, reader: &Reader<'_>, parent: &RowRef, seen: &mut HashSet<RowRef>, found: &mut Vec<RowRef>) -> Result<(), DbError> {
+    fn descendants(&self, reader: &Reader<'_>, parent: &RowRef, seen: &mut HashSet<RowRef>, found: &mut Vec<RowRef>) -> Result<(), CoreError> {
         let spec = self.spec(parent.model.as_str())?;
         for association in spec.associations.iter().filter(|association| association.owns_children() && association.dependent == Some(Dependent::Destroy)) {
             let query = Query::new(association.target.as_str()).filtered(Where::equal(&association.foreign_key, json!(parent.id.as_str())));
@@ -141,23 +141,23 @@ impl Store {
 
 
 
-pub(super) fn reject_unknown_fields(spec: &ModelSpec, model: &str, values: &Map<String, Value>) -> Result<(), DbError> {
+pub(super) fn reject_unknown_fields(spec: &ModelSpec, model: &str, values: &Map<String, Value>) -> Result<(), CoreError> {
     match spec.fault(values, false) {
         Some(fault) => Err(fault_error(model, fault)),
         None => Ok(()),
     }
 }
 
-pub(super) fn reject_invalid_values(spec: &ModelSpec, model: &str, values: &Map<String, Value>) -> Result<(), DbError> {
+pub(super) fn reject_invalid_values(spec: &ModelSpec, model: &str, values: &Map<String, Value>) -> Result<(), CoreError> {
     match spec.fault(values, true) {
         Some(fault) => Err(fault_error(model, fault)),
         None => Ok(()),
     }
 }
 
-pub(crate) fn fault_error(model: &str, fault: ValueFault) -> DbError {
+pub(crate) fn fault_error(model: &str, fault: ValueFault) -> CoreError {
     match fault {
-        ValueFault::Unknown(field) => DbError::UnknownField { model: model.to_string(), field },
+        ValueFault::Unknown(field) => CoreError::UnknownField { model: model.to_string(), field },
         ValueFault::Invalid(field) => SchemaError::InvalidValue(field).into(),
     }
 }

@@ -4,7 +4,7 @@ use serde_json::{json, Value};
 
 use crate::schema::{ActionDeclaration, FieldSpec, MergeRule, ModelSpec, RootShape, SchemaError};
 use crate::store::spec_fixtures::{obj, rid};
-use crate::store::{DbError, Store};
+use crate::store::{CoreError, Store};
 use crate::value::ScalarKind;
 
 fn typed(mut field: FieldSpec, name: &str, members: Vec<FieldSpec>) -> FieldSpec {
@@ -35,11 +35,11 @@ fn notes() -> Store {
     db
 }
 
-fn verdict<T>(result: Result<T, DbError>) -> String {
+fn verdict<T>(result: Result<T, CoreError>) -> String {
     match result {
         Ok(_) => "ok".into(),
-        Err(DbError::UnknownField { field, .. }) => format!("unknown {field}"),
-        Err(DbError::Schema(SchemaError::InvalidValue(path))) => format!("invalid {path}"),
+        Err(CoreError::UnknownField { field, .. }) => format!("unknown {field}"),
+        Err(CoreError::Schema(SchemaError::InvalidValue(path))) => format!("invalid {path}"),
         Err(other) => format!("other {other}"),
     }
 }

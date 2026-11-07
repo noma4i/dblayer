@@ -4,7 +4,7 @@ use crate::schema::{ModelFault, SchemaError};
 use crate::store::StoreError;
 
 #[derive(Debug, thiserror::Error)]
-pub enum DbError {
+pub enum CoreError {
     #[error("no session: {detail}")]
     NoSession { detail: String },
     #[error("invalid upload: {0}")]
@@ -55,8 +55,8 @@ pub enum DbError {
     Selection(#[from] crate::schema::SelectionKeyError),
 }
 
-impl From<rusqlite::Error> for DbError {
+impl From<rusqlite::Error> for CoreError {
     fn from(error: rusqlite::Error) -> Self {
-        DbError::Store(error.into())
+        CoreError::Store(error.into())
     }
 }

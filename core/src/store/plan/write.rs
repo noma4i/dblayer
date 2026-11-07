@@ -12,7 +12,7 @@ use crate::store::sync_state::read_sync;
 use crate::value::{read_id, same_fields};
 
 use super::effects::Edits;
-use crate::store::DbError;
+use crate::store::CoreError;
 use super::outbox_entry::{local_scope_ops, plan_scope_effect, reject_invalid_values, reject_unknown_fields};
 use crate::store::Store;
 use super::prior::PriorRow;
@@ -60,7 +60,7 @@ fn touch_effects(effects: &mut IntentEffects, touches: Vec<EntityOp>) {
 
 impl Store {
     /// A new row. The id is temporary for a server model, a final one for a local model.
-    pub(crate) fn plan_create(&self, model: &str, mut values: Row, args: Row) -> Result<Planned, DbError> {
+    pub(crate) fn plan_create(&self, model: &str, mut values: Row, args: Row) -> Result<Planned, CoreError> {
         self.fill_local_sources(model, &mut values)?;
         let spec = self.spec(model)?;
         reject_unknown_fields(spec, model, &values)?;
@@ -75,7 +75,7 @@ impl Store {
         if let Some(create) = spec.actions.iter().find(|action| action.name == "create") {
             for name in create.local_from.keys() {
                 let Some(value) = values.get(name).filter(|value| !value.is_null()) else { continue };
-                let field = spec.field(name).ok_or_else(|| DbError::UnknownField { model: model.to_string(), field: name.clone() })?;
+                let field = spec.field(name).ok_or_else(|| CoreError::UnknownField { model: model.to_string(), field: name.clone() })?;
                 if let Some(fault) = field.fault(value, name, true, &mut Vec::new()) { return Err(super::outbox_entry::fault_error(model, fault)); }
                 let decoded = field.decode(value).ok_or_else(|| crate::schema::SchemaError::InvalidValue(name.clone()))?;
                 local.insert(name.clone(), decoded);
@@ -90,7 +90,7 @@ impl Store {
         let input = Value::Object(data.iter().chain(&args).map(|(name, value)| (name.clone(), value.clone())).collect());
         let effects = self.read_models(&[model], |reader| {
             if reader.point(model, id.as_str())?.is_some() || !read_sync(reader.connection(), model, &[id.to_string()])?.is_empty() {
-                return Err(DbError::AlreadyExists { model: model.to_string(), id: id.to_string() });
+                return Err(CoreError::AlreadyExists { model: model.to_string(), id: id.to_string() });
             }
             let mut effects = IntentEffects { rows: vec![row_effect(model, id.as_str(), None, &data)], ..Default::default() };
             member_effects(&mut effects, local_scope_ops(reader, spec, &id, &data)?);
@@ -101,7 +101,7 @@ impl Store {
     }
 
     /// New values of a row. A call with the values the row has and no arguments changes nothing.
-    pub(crate) fn plan_update(&self, model: &str, id: &RowId, patch: Row, args: Row) -> Result<Planned, DbError> {
+    pub(crate) fn plan_update(&self, model: &str, id: &RowId, patch: Row, args: Row) -> Result<Planned, CoreError> {
         let spec = self.spec(model)?;
         reject_unknown_fields(spec, model, &patch)?;
         reject_invalid_values(spec, model, &patch)?;
@@ -114,7 +114,7 @@ impl Store {
         let sends_args = !args.is_empty();
         input.extend(args);
         let effects = self.read_models(&[model], |reader| {
-            let current = reader.point(model, id.as_str())?.ok_or_else(|| DbError::NotFound { model: model.to_string(), id: id.to_string() })?;
+            let current = reader.point(model, id.as_str())?.ok_or_else(|| CoreError::NotFound { model: model.to_string(), id: id.to_string() })?;
             let mut merged = current.clone();
             merged.extend(patch.clone());
             if same_fields(&merged, &current) && !sends_args {
@@ -131,7 +131,7 @@ impl Store {
     }
 
     /// A named action: the edits of the receiver and of the rows its arguments name, the closed effects of the declaration.
-    pub(crate) fn plan_act(&self, model: &str, action: &str, id: &RowId, mut patch: Row, args: Row) -> Result<Planned, DbError> {
+    pub(crate) fn plan_act(&self, model: &str, action: &str, id: &RowId, mut patch: Row, args: Row) -> Result<Planned, CoreError> {
         let spec = self.spec(model)?;
         crate::schema::keyed::resolve_maps(&mut patch, &args);
         let keyed = crate::schema::keyed::take(&mut patch);
@@ -149,9 +149,9 @@ impl Store {
         let mut read_models = vec![model];
         if let Some(copy) = declared.as_ref().and_then(|declared| declared.copies_receiver_to.as_ref()) { read_models.extend(Self::copy_source_models(copy)); }
         let effects = self.read_models(&read_models, |reader| {
-            let current = reader.point(model, id.as_str())?.ok_or_else(|| DbError::NotFound { model: model.to_string(), id: id.to_string() })?;
+            let current = reader.point(model, id.as_str())?.ok_or_else(|| CoreError::NotFound { model: model.to_string(), id: id.to_string() })?;
             let view = super::view::ReaderView { reader, specs: &|name| self.spec(name).ok(), db: Some(self) };
-            let merged = crate::owners::write::outbox_plan::optimistic_row(spec, &view, (&current, &patch), crate::owners::write::outbox_plan::Fields { keyed: &keyed, flagged: &flagged }, &args, (model, id.as_str())).map_err(|error| DbError::Internal(error.0))?;
+            let merged = crate::owners::write::outbox_plan::optimistic_row(spec, &view, (&current, &patch), crate::owners::write::outbox_plan::Fields { keyed: &keyed, flagged: &flagged }, &args, (model, id.as_str())).map_err(|error| CoreError::Internal(error.0))?;
             let edits = Edits::of_owner(model, id, current, merged);
             let mut effects = IntentEffects::default();
             let removes = declared.as_ref().is_some_and(|declared| declared.removes_receiver);
@@ -174,11 +174,11 @@ impl Store {
     }
 
     /// The row and every row that depends on it.
-    pub(crate) fn plan_destroy(&self, model: &str, id: &RowId) -> Result<Planned, DbError> {
+    pub(crate) fn plan_destroy(&self, model: &str, id: &RowId) -> Result<Planned, CoreError> {
         let own = RowRef::new(ModelKey::new(model), id.clone());
         let effects = self.read_models(&[model], |reader| {
             if reader.point(model, id.as_str())?.is_none() {
-                return Err(DbError::NotFound { model: model.to_string(), id: id.to_string() });
+                return Err(CoreError::NotFound { model: model.to_string(), id: id.to_string() });
             }
             let tombstones = self.destroy_targets(reader, &own)?.into_iter().map(|target| EffectTombstone { model: target.model.to_string(), row_id: target.id.to_string() }).collect();
             Ok(IntentEffects { tombstones, ..Default::default() })
@@ -186,7 +186,7 @@ impl Store {
         Ok(Planned { model: model.to_string(), row_id: id.clone(), shown: id.clone(), input: json!({ "id": id.as_str() }), effects, noop: false })
     }
 
-    fn plan_closed_effect(&self, reader: &Reader<'_>, spec: &ModelSpec, declared: &crate::schema::ActionDeclaration, (own, args): (&RowRef, &Map<String, Value>), now_ms: i64, effects: &mut IntentEffects) -> Result<Option<RowId>, DbError> {
+    fn plan_closed_effect(&self, reader: &Reader<'_>, spec: &ModelSpec, declared: &crate::schema::ActionDeclaration, (own, args): (&RowRef, &Map<String, Value>), now_ms: i64, effects: &mut IntentEffects) -> Result<Option<RowId>, CoreError> {
         if declared.removes_receiver {
             for target in self.destroy_targets(reader, own)? {
                 effects.tombstones.push(EffectTombstone { model: target.model.to_string(), row_id: target.id.to_string() });
@@ -194,8 +194,8 @@ impl Store {
         }
         let mut copied = None;
         if let Some(copy) = &declared.copies_receiver_to {
-            let target = args.get(&copy.arg).cloned().ok_or_else(|| DbError::Internal(format!("the argument {} of the copy is missing", copy.arg)))?;
-            let mut values = reader.point(own.model.as_str(), own.id.as_str())?.ok_or_else(|| DbError::NotFound { model: own.model.to_string(), id: own.id.to_string() })?;
+            let target = args.get(&copy.arg).cloned().ok_or_else(|| CoreError::Internal(format!("the argument {} of the copy is missing", copy.arg)))?;
+            let mut values = reader.point(own.model.as_str(), own.id.as_str())?.ok_or_else(|| CoreError::NotFound { model: own.model.to_string(), id: own.id.to_string() })?;
             let receiver = values.clone();
             let copy_id = RowId::generate_temp(None);
             values.insert("id".to_string(), Value::String(copy_id.to_string()));
@@ -244,7 +244,7 @@ pub(crate) enum LocalPlan {
 
 impl Store {
     /// The action of `model` that has a mutation, or `None` for a local model and an action without one.
-    pub(crate) fn mutation_call(&self, model: &str, action: &str, planned: &Planned, client_mutation_id: &str) -> Result<Option<MutationCall>, DbError> {
+    pub(crate) fn mutation_call(&self, model: &str, action: &str, planned: &Planned, client_mutation_id: &str) -> Result<Option<MutationCall>, CoreError> {
         let spec = self.spec(model)?;
         if spec.is_local() { return Ok(None); }
         let Some(declaration) = spec.actions.iter().find(|declared| declared.name == action) else { return Ok(None) };
@@ -257,14 +257,14 @@ impl Store {
     }
 
     /// The write of a local field: the value goes on the row, or waits for the row when it is not in the base.
-    pub(crate) fn plan_set_local(&self, model: &str, id: &RowId, path: &str, value: Value) -> Result<LocalPlan, DbError> {
+    pub(crate) fn plan_set_local(&self, model: &str, id: &RowId, path: &str, value: Value) -> Result<LocalPlan, CoreError> {
         let spec = self.spec(model)?;
-        let slot = spec.local_slot(path).ok_or_else(|| DbError::NotLocalField { model: model.to_string(), path: path.to_string() })?;
+        let slot = spec.local_slot(path).ok_or_else(|| CoreError::NotLocalField { model: model.to_string(), path: path.to_string() })?;
         let value = match slot.key {
             None if !value.is_null() => match slot.field.fault(&value, path, true, &mut Vec::new()) {
-                Some(crate::schema::ValueFault::Unknown(field)) => return Err(DbError::UnknownField { model: model.to_string(), field }),
-                Some(crate::schema::ValueFault::Invalid(_)) => return Err(DbError::LocalValue { model: model.to_string(), path: path.to_string() }),
-                None => slot.field.decode(&value).ok_or_else(|| DbError::LocalValue { model: model.to_string(), path: path.to_string() })?,
+                Some(crate::schema::ValueFault::Unknown(field)) => return Err(CoreError::UnknownField { model: model.to_string(), field }),
+                Some(crate::schema::ValueFault::Invalid(_)) => return Err(CoreError::LocalValue { model: model.to_string(), path: path.to_string() }),
+                None => slot.field.decode(&value).ok_or_else(|| CoreError::LocalValue { model: model.to_string(), path: path.to_string() })?,
             },
             _ => value,
         };

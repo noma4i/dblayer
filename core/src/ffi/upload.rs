@@ -164,7 +164,7 @@ impl Database {
         let (db, name, verb, target, args) = (self.db.clone(), model.clone(), action.clone(), row.clone(), file.variables.clone());
         let effects = self.offload(move || match db.plan_act(&name, &verb, &target, Map::new(), args) {
             Ok(planned) => Ok(planned.effects),
-            Err(crate::store::DbError::NotFound { .. }) => Ok(IntentEffects::default()),
+            Err(crate::store::CoreError::NotFound { .. }) => Ok(IntentEffects::default()),
             Err(error) => Err(error.into()),
         }).await?;
         let item = self.single_upload(&model, row.as_str(), &action, &file, effects)?;

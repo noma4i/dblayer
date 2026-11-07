@@ -120,7 +120,7 @@ type OutcomesByKey = Arc<Mutex<HashMap<(u64, u64, u64), WireOperationOutcome>>>;
 pub struct Database { pub(super) lease: Arc<OnceLock<Arc<OpenLease>>>, pub(super) life: Arc<crate::owners::life::Life>, pub(super) db: Arc<Store>, pub(super) remote: bool, pub(super) reads: crate::owners::read::ReadOperations, pub(super) uploads: Option<UploadOperations>, pub(super) jobs: Arc<super::upload_rounds::RoundJobsSlot>, pub(super) shows: Arc<super::transfer_status::Shows>, pub(super) outcomes: OutcomesByKey, pub(super) loads: Arc<super::load_order::LoadOrder>, wires: Arc<HashMap<String, Arc<WireModel>>> }
 
 pub(super) struct Wiring {
-    pub transport: Option<Arc<dyn core::Transport>>,
+    pub transport: Option<Arc<dyn core::Upstream>>,
     pub encrypted: Option<Encrypted>,
     pub cable: Option<Arc<dyn core::CableLines>>,
     pub seal: Option<Arc<crate::owners::session_seal::SealConfig>>,
@@ -139,7 +139,7 @@ impl Database {
             #[cfg(test)]
             if transport.is_some() { super::signed_session_tests::signed_session(db); }
             let _ = db;
-            Ok(Wiring { transport: transport.map(|transport| Arc::new(ForeignTransport(transport)) as Arc<dyn core::Transport>), encrypted: None, cable: None, seal: None })
+            Ok(Wiring { transport: transport.map(|transport| Arc::new(ForeignTransport(transport)) as Arc<dyn core::Upstream>), encrypted: None, cable: None, seal: None })
         })
     }
 
@@ -197,7 +197,7 @@ impl Database {
     }
 
     /// F1: the owners of direction A on the threads of the core, started from the booted `Store`. It returns after the first `Publish`.
-    fn build_life(db: &Arc<Store>, transport: Option<Arc<dyn core::Transport>>, encrypted: Option<&Encrypted>, cable: Option<Arc<dyn core::CableLines>>, seal: Option<Arc<crate::owners::session_seal::SealConfig>>, read_operations: crate::owners::read::ReadOperations, (uploads, jobs, shows, clock): (Option<UploadOperations>, Arc<super::upload_rounds::RoundJobsSlot>, Arc<super::transfer_status::Shows>, Arc<dyn Clock>)) -> Result<Arc<crate::owners::life::Life>, DbError> {
+    fn build_life(db: &Arc<Store>, transport: Option<Arc<dyn core::Upstream>>, encrypted: Option<&Encrypted>, cable: Option<Arc<dyn core::CableLines>>, seal: Option<Arc<crate::owners::session_seal::SealConfig>>, read_operations: crate::owners::read::ReadOperations, (uploads, jobs, shows, clock): (Option<UploadOperations>, Arc<super::upload_rounds::RoundJobsSlot>, Arc<super::transfer_status::Shows>, Arc<dyn Clock>)) -> Result<Arc<crate::owners::life::Life>, DbError> {
         let executor = executor()?.handle().clone();
         let operations = operations_lookup(&read_operations);
         let transfer = uploads.filter(|_| encrypted.is_some()).map(|operations| crate::owners::write::transfer_executor::TransferPort {
@@ -264,7 +264,7 @@ impl Database {
     }
     pub fn open_report(&self) -> OpenReport { self.db.open_report().clone() }
     pub fn restore_failed(&self) -> Result<Vec<crate::store::DroppedRecord>, DbError> { Ok(self.db.failed_restores()?) }
-    pub fn discard_restore_failed(&self, table: String, key: String) -> Result<bool, DbError> { Ok(self.db.discard_restore_failed(&table, &key).map_err(crate::store::DbError::from)?) }
+    pub fn discard_restore_failed(&self, table: String, key: String) -> Result<bool, DbError> { Ok(self.db.discard_restore_failed(&table, &key).map_err(crate::store::CoreError::from)?) }
     pub async fn subscription_census(&self) -> Result<SubscriptionCensus, DbError> {
         let (observed, subscriptions, retained, refused_events) = self.life.subscription_census().await.ok_or_else(|| DbError::Interrupted { detail: "the census was interrupted".into() })?;
         Ok(SubscriptionCensus { observed_queries: observed as u64, subscriptions: subscriptions as u64, retained_observers: retained as u64, refused_events })

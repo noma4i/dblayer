@@ -1,7 +1,7 @@
 use std::sync::Arc;
 use async_trait::async_trait;
 use serde_json::{json, Value};
-use crate::transport::{Transport, TransportError};
+use crate::transport::{Upstream, TransportError};
 use super::{CableError, CableKeys, CableSocket, EncryptedConfig, SocketEvent};
 
 /// What a connection gives to its reader: a decrypted frame with its number, the end of the socket, or bytes that are no frame.
@@ -29,13 +29,13 @@ pub trait CableLines: Send + Sync {
 pub type CableCredential = Arc<dyn Fn() -> Result<String, TransportError> + Send + Sync>;
 
 pub struct EncryptedLines {
-    transport: Arc<dyn Transport>,
+    transport: Arc<dyn Upstream>,
     config: EncryptedConfig,
     credential: CableCredential,
 }
 
 impl EncryptedLines {
-    pub fn new(transport: Arc<dyn Transport>, config: EncryptedConfig, credential: CableCredential) -> Self { Self { transport, config, credential } }
+    pub fn new(transport: Arc<dyn Upstream>, config: EncryptedConfig, credential: CableCredential) -> Self { Self { transport, config, credential } }
 }
 
 impl Drop for EncryptedLines {

@@ -7,7 +7,7 @@ use serde_json::{Map, Value};
 use crate::schema::{FieldKind, FieldSpec, ModelSpec};
 use crate::store::Reader;
 
-use crate::store::DbError;
+use crate::store::CoreError;
 use crate::store::Store;
 
 type FetchedRow = Option<(Map<String, Value>, i64)>;
@@ -44,9 +44,9 @@ fn snapshot(nested: &FieldSpec, id: &str, row: &Map<String, Value>) -> Map<Strin
 }
 
 type Fetched = BTreeMap<(String, String), Option<(Map<String, Value>, i64)>>;
-type Fetch<'a> = dyn FnMut(&str, &str) -> Result<Option<(Map<String, Value>, i64)>, DbError> + 'a;
+type Fetch<'a> = dyn FnMut(&str, &str) -> Result<Option<(Map<String, Value>, i64)>, CoreError> + 'a;
 
-fn walk(fields: &[FieldSpec], shared: &[FieldSpec], value: &mut Value, fetch: &mut Fetch<'_>) -> Result<(), DbError> {
+fn walk(fields: &[FieldSpec], shared: &[FieldSpec], value: &mut Value, fetch: &mut Fetch<'_>) -> Result<(), CoreError> {
     match value {
         Value::Array(items) => items.iter_mut().try_for_each(|item| walk(fields, shared, item, fetch)),
         Value::Object(map) => {
@@ -71,11 +71,11 @@ fn walk(fields: &[FieldSpec], shared: &[FieldSpec], value: &mut Value, fetch: &m
 impl Store {
     /// Replaces the nested records that reference a row by the current row at the revision of `reader`. A row that is not there keeps the record as written.
     /// Gives the newest revision among the rows read: the stamp of the row changes with them.
-    pub(crate) fn resolve_nested_refs(&self, reader: &Reader<'_>, spec: &ModelSpec, data: &mut Map<String, Value>) -> Result<i64, DbError> {
+    pub(crate) fn resolve_nested_refs(&self, reader: &Reader<'_>, spec: &ModelSpec, data: &mut Map<String, Value>) -> Result<i64, CoreError> {
         let mut fetched = Fetched::new();
         let snapshot_revision = reader.revision_seq()?;
         let mut newest = 0;
-        let mut fetch = |model: &str, id: &str| -> Result<FetchedRow, DbError> {
+        let mut fetch = |model: &str, id: &str| -> Result<FetchedRow, CoreError> {
             let key = (model.to_string(), id.to_string());
             if let Some(found) = fetched.get(&key) {
                 return Ok(found.clone());

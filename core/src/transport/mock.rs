@@ -7,9 +7,9 @@ use serde_json::{json, Value};
 use tokio::sync::Notify;
 
 use super::error::TransportError;
-use super::put::{PutRequest, PutResponse};
+use super::put::{PutRequest, PutReply};
 use super::request::{GraphQLError, GraphQLRequest, Response};
-use super::Transport;
+use super::Upstream;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RecordedKind {
@@ -70,14 +70,14 @@ pub struct RecordedPut {
 }
 
 #[derive(Debug, Clone)]
-pub struct PutReply {
+pub struct PutScript {
     delay: Duration,
-    result: Result<PutResponse, TransportError>,
+    result: Result<PutReply, TransportError>,
 }
 
-impl PutReply {
+impl PutScript {
     pub fn etag(etag: &str) -> Self {
-        Self { delay: Duration::ZERO, result: Ok(PutResponse::with_etag(etag)) }
+        Self { delay: Duration::ZERO, result: Ok(PutReply::with_etag(etag)) }
     }
 
     pub fn status(status: u16) -> Self {
@@ -100,7 +100,7 @@ type Responder = Arc<dyn Fn(&GraphQLRequest) -> Option<Reply> + Send + Sync>;
 
 #[derive(Default)]
 struct MockState {
-    puts: HashMap<String, VecDeque<PutReply>>,
+    puts: HashMap<String, VecDeque<PutScript>>,
     put_calls: Vec<RecordedPut>,
     puts_running: usize,
     puts_peak: usize,
@@ -180,7 +180,7 @@ impl MockTransport {
         }
     }
 
-    pub fn enqueue_put(&self, url: &str, reply: PutReply) {
+    pub fn enqueue_put(&self, url: &str, reply: PutScript) {
         self.lock().puts.entry(url.to_string()).or_default().push_back(reply);
     }
 
@@ -240,7 +240,7 @@ impl MockTransport {
 }
 
 impl MockTransport {
-    async fn transfer(&self, request: PutRequest) -> Result<PutResponse, TransportError> {
+    async fn transfer(&self, request: PutRequest) -> Result<PutReply, TransportError> {
         let length = request.file.length;
         let body = std::fs::File::open(&request.file.path).and_then(|mut file| {
             use std::io::{Read, Seek, SeekFrom};
@@ -261,7 +261,7 @@ impl MockTransport {
                 None => None,
             }
         };
-        let reply = reply.unwrap_or_else(|| PutReply::etag(&format!("etag:{}", request.url)));
+        let reply = reply.unwrap_or_else(|| PutScript::etag(&format!("etag:{}", request.url)));
         let progress = self.lock().put_progress.clone();
         let run = async {
             for step in 1..=PUT_STEPS {
@@ -283,12 +283,12 @@ impl MockTransport {
 }
 
 #[async_trait]
-impl Transport for MockTransport {
+impl Upstream for MockTransport {
     fn session(&self) -> Result<Option<String>, TransportError> {
         self.lock().session.clone().unwrap_or_else(|| Ok(Some(String::new())))
     }
 
-    async fn put(&self, request: PutRequest) -> Result<PutResponse, TransportError> {
+    async fn put(&self, request: PutRequest) -> Result<PutReply, TransportError> {
         self.transfer(request).await
     }
 

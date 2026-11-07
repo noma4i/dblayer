@@ -31,13 +31,13 @@ pub struct PutRequest {
     pub sent: ByteSink,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct PutResponse {
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct PutReply {
     pub status: u16,
     pub etag: Option<String>,
 }
 
-impl PutResponse {
+impl PutReply {
     pub fn with_etag(etag: &str) -> Self {
         Self { status: 200, etag: Some(etag.to_string()) }
     }

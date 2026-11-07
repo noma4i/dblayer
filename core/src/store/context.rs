@@ -13,7 +13,7 @@ use crate::owners::write::operation_outbox::OutboxQueue;
 use crate::schema::{reserved_member_names, resolve_types, validate_models, AssociationKind, AssociationSpec, ModelSpec};
 use crate::store::sync_state::rebuild_sync_with;
 
-use super::db_error::DbError;
+use super::db_error::CoreError;
 use super::changed_log::ChangedLog;
 use super::replaced_log::ReplacedLog;
 use super::{Reader, Store, StoreError, StoreEvent};
@@ -95,12 +95,12 @@ impl Context {
 
 impl Store {
     /// Opens the file (or memory), boots the models, restores the queue and installs the notice of the commits.
-    pub fn open_models(path: Option<&Path>, models: Vec<ModelSpec>, data_version: Option<&str>) -> Result<Store, DbError> {
+    pub fn open_models(path: Option<&Path>, models: Vec<ModelSpec>, data_version: Option<&str>) -> Result<Store, CoreError> {
         let mut models = models;
         resolve_types(&mut models);
         let faults = validate_models(&models, &reserved_member_names());
         if !faults.is_empty() {
-            return Err(DbError::Invalid(faults));
+            return Err(CoreError::Invalid(faults));
         }
         let (mut store, unreadable) = match path {
             Some(path) => match Store::open(path) {
@@ -156,8 +156,8 @@ impl Store {
         Ok(store)
     }
 
-    pub fn spec(&self, model: &str) -> Result<&ModelSpec, DbError> {
-        self.context.specs.get(model).ok_or_else(|| DbError::UnknownModel(model.to_string()))
+    pub fn spec(&self, model: &str) -> Result<&ModelSpec, CoreError> {
+        self.context.specs.get(model).ok_or_else(|| CoreError::UnknownModel(model.to_string()))
     }
 
     pub(crate) fn specs(&self) -> &BTreeMap<String, ModelSpec> { &self.context.specs }
@@ -179,7 +179,7 @@ impl Store {
     pub fn set_clock(&self, clock: Arc<dyn crate::runtime::Clock>) { self.lock().clock = clock; }
 
     /// Reads with the models named, the failure as the error of the database.
-    pub(crate) fn read_models<T>(&self, models: &[&str], run: impl FnOnce(&Reader<'_>) -> Result<T, DbError>) -> Result<T, DbError> {
+    pub(crate) fn read_models<T>(&self, models: &[&str], run: impl FnOnce(&Reader<'_>) -> Result<T, CoreError>) -> Result<T, CoreError> {
         self.read(models, |reader| Ok(run(reader)))?
     }
 }

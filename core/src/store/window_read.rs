@@ -8,28 +8,28 @@ use crate::store::EdgeValue;
 use crate::schema::FieldKind;
 use crate::value::ScalarKind;
 
-use super::db_error::DbError;
+use super::db_error::CoreError;
 use super::{window_identity, Store};
 
-fn json_fault(error: impl std::fmt::Display) -> DbError { DbError::Internal(error.to_string()) }
+fn json_fault(error: impl std::fmt::Display) -> CoreError { CoreError::Internal(error.to_string()) }
 
 impl Store {
     /// The stored record of the window of a relation, `None` before its first page.
-    pub(crate) fn window_record(&self, model: &str, relation: &str, params: &Map<String, Value>) -> Result<Option<crate::store::WindowRecord>, DbError> {
+    pub(crate) fn window_record(&self, model: &str, relation: &str, params: &Map<String, Value>) -> Result<Option<crate::store::WindowRecord>, CoreError> {
         let spec = self.spec(model)?;
-        let declared = spec.relations.iter().find(|candidate| candidate.name == relation).ok_or_else(|| DbError::Internal(format!("{model} has no relation {relation}")))?;
-        let remote = declared.remote.as_ref().ok_or_else(|| DbError::Internal(format!("{model}.{relation} is no remote relation")))?;
+        let declared = spec.relations.iter().find(|candidate| candidate.name == relation).ok_or_else(|| CoreError::Internal(format!("{model} has no relation {relation}")))?;
+        let remote = declared.remote.as_ref().ok_or_else(|| CoreError::Internal(format!("{model}.{relation} is no remote relation")))?;
         let (_, key) = window_identity(spec, model, relation, remote, params)?;
         Ok(self.window(&key)?)
     }
 
     /// The saved window of a relation with params, `None` before its first page.
-    pub(crate) fn window_saved(&self, model: &str, relation: &str, params: &Map<String, Value>) -> Result<Option<crate::store::SavedWindow>, DbError> {
+    pub(crate) fn window_saved(&self, model: &str, relation: &str, params: &Map<String, Value>) -> Result<Option<crate::store::SavedWindow>, CoreError> {
         #[cfg(test)]
         assert!(self.panic_reads.load(std::sync::atomic::Ordering::SeqCst) & super::PANIC_WINDOW_READ == 0, "the window read failed");
         let spec = self.spec(model)?;
-        let declared = spec.relations.iter().find(|candidate| candidate.name == relation).ok_or_else(|| DbError::Internal(format!("{model} has no relation {relation}")))?;
-        let remote = declared.remote.as_ref().ok_or_else(|| DbError::Internal(format!("{model}.{relation} is no remote relation")))?;
+        let declared = spec.relations.iter().find(|candidate| candidate.name == relation).ok_or_else(|| CoreError::Internal(format!("{model} has no relation {relation}")))?;
+        let remote = declared.remote.as_ref().ok_or_else(|| CoreError::Internal(format!("{model}.{relation} is no remote relation")))?;
         let (scope, key) = window_identity(spec, model, relation, remote, params)?;
         let (Some(record), Some(freshness)) = (self.window(&key)?, self.window_freshness(&key)?) else { return Ok(None) };
         let has_rows = self.read(&[model], |reader| reader.scope_last_id(model, scope.key.as_str()))?.is_some();
@@ -39,26 +39,26 @@ impl Store {
     }
 
     /// Whether the window landed within the stale time of its relation and nothing marked it stale since (`now_ms` is the clock of the database).
-    pub(crate) fn window_is_fresh(&self, model: &str, relation: &str, params: &Map<String, Value>, now_ms: i64) -> Result<bool, DbError> {
+    pub(crate) fn window_is_fresh(&self, model: &str, relation: &str, params: &Map<String, Value>, now_ms: i64) -> Result<bool, CoreError> {
         Ok(self.window_age(model, relation, params, now_ms)?.unwrap_or(false))
     }
 
-    fn window_age(&self, model: &str, relation: &str, params: &Map<String, Value>, now_ms: i64) -> Result<Option<bool>, DbError> {
+    fn window_age(&self, model: &str, relation: &str, params: &Map<String, Value>, now_ms: i64) -> Result<Option<bool>, CoreError> {
         let spec = self.spec(model)?;
-        let declared = spec.relations.iter().find(|candidate| candidate.name == relation).ok_or_else(|| DbError::Internal(format!("{model} has no relation {relation}")))?;
-        let remote = declared.remote.as_ref().ok_or_else(|| DbError::Internal(format!("{model}.{relation} is no remote relation")))?;
+        let declared = spec.relations.iter().find(|candidate| candidate.name == relation).ok_or_else(|| CoreError::Internal(format!("{model} has no relation {relation}")))?;
+        let remote = declared.remote.as_ref().ok_or_else(|| CoreError::Internal(format!("{model}.{relation} is no remote relation")))?;
         let (scope, key) = window_identity(spec, model, relation, remote, params)?;
         let Some(freshness) = self.window_freshness(&key)? else { return Ok(None) };
         let is_empty = self.read(&[model], |reader| reader.scope_last_id(model, scope.key.as_str()))?.is_none();
         let policy = crate::runtime::selected_policy(is_empty, &remote.stale_time, remote.empty_stale_time.as_deref());
-        let window = crate::runtime::parse_duration(policy).ok_or_else(|| DbError::Internal(format!("unknown freshness {policy}")))?;
+        let window = crate::runtime::parse_duration(policy).ok_or_else(|| CoreError::Internal(format!("unknown freshness {policy}")))?;
         Ok(Some(freshness.is_fresh(now_ms, i64::try_from(window.as_millis()).unwrap_or(i64::MAX))))
     }
 
     /// The edge values of the rows of a relation window, by row id.
-    pub(crate) fn edge_values(&self, model: &str, relation: &str, params: &Map<String, Value>, ids: &[String]) -> Result<BTreeMap<String, Map<String, Value>>, DbError> {
+    pub(crate) fn edge_values(&self, model: &str, relation: &str, params: &Map<String, Value>, ids: &[String]) -> Result<BTreeMap<String, Map<String, Value>>, CoreError> {
         let spec = self.spec(model)?;
-        let declared = spec.relations.iter().find(|candidate| candidate.name == relation).ok_or_else(|| DbError::UnknownAssociation { model: model.to_string(), name: relation.to_string() })?;
+        let declared = spec.relations.iter().find(|candidate| candidate.name == relation).ok_or_else(|| CoreError::UnknownAssociation { model: model.to_string(), name: relation.to_string() })?;
         let scope = spec.selection_key(relation, params)?;
         let wanted: Vec<&str> = ids.iter().map(String::as_str).collect();
         let read = self.read(&[model], |reader| reader.scope_edges(model, scope.as_str(), &wanted))?;
@@ -76,7 +76,7 @@ impl Store {
 
     /// Whether the row is in the membership of the scope of a relation with params.
     /// The ids of a `nodes` window that came back as rows in the answer of its request, in the order of `ids`.
-    pub(crate) fn nodes_answered(&self, model: &str, key: &str, ids: &[crate::identity::RowId]) -> Result<Vec<crate::identity::RowId>, DbError> {
+    pub(crate) fn nodes_answered(&self, model: &str, key: &str, ids: &[crate::identity::RowId]) -> Result<Vec<crate::identity::RowId>, CoreError> {
         Ok(self.read(&[model], |reader| {
             let mut answered = Vec::new();
             for id in ids {
@@ -86,7 +86,7 @@ impl Store {
         })?)
     }
 
-    pub(crate) fn window_member(&self, model: &str, relation: &str, params: &Map<String, Value>, id: &str) -> Result<bool, DbError> {
+    pub(crate) fn window_member(&self, model: &str, relation: &str, params: &Map<String, Value>, id: &str) -> Result<bool, CoreError> {
         let scope = self.spec(model)?.selection_key(relation, params).map_err(json_fault)?;
         Ok(self.read(&[model], |reader| reader.scope_has_member(model, scope.as_str(), id))?)
     }

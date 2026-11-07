@@ -15,7 +15,7 @@ use crate::owners::read::windows::{Goal, Windows, WindowEffect, WindowKey, Windo
 use crate::owners::read::{channels_of, has_media, lifetimes, max_pages, members_complete, preload_keys, preload_sources, refreshes_on_foreground, DbSnapshots, DeliveryIo, FeedIo, Rest, SchemaFeedCodec, SchemaWindowCodec, WindowIo};
 use crate::owners::store::{StoreReply, StoreWriter};
 use crate::runtime::{Address, Back, EffectRunner, Epoch, EpochStamp, Outcome, OutcomeId, RuntimeBuilder, Waiter};
-use crate::transport::Transport;
+use crate::transport::Upstream;
 
 /// The ids of waiters that platform calls register in `Windows` carry this bit, the ids of streams stay below it.
 pub(crate) const CALL: u64 = 1 << 62;
@@ -52,7 +52,7 @@ pub(super) fn add(builder: &mut RuntimeBuilder, wiring: &Arc<Wiring>, ports: &Po
     let feed_at = builder.reserve::<Feed>();
     let db: std::sync::Arc<Store> = ports.db.clone();
     let handle = builder.handle();
-    let transport: Option<Arc<dyn Transport>> = ports.transport.clone();
+    let transport: Option<Arc<dyn Upstream>> = ports.transport.clone();
     let admit_wiring = wiring.clone();
     let admit: crate::owners::read::Admit = Arc::new(move |epoch| if admit_wiring.admits_session(epoch) { Ok(()) } else { Err(crate::owners::read::Refused("the epoch of the request ended".into())) });
     let feed_admit = admit.clone();
