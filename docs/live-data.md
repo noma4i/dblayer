@@ -27,7 +27,7 @@ for await item in scope.events(Message.self) { show(item) }
 val scope = AccountScope.current()
 val feed = Projected(scope.stream(Moment.feed), Moment, screenScope)
 val total = ProjectedCount(scope.count(Moment.where(Moment.userId eq id)), screenScope)
-val author = Projected(scope.entity(User, userId, EntityFetch.IF_MISSING), User, screenScope)
+val author = Projected(scope.entity(User, userId, ReadFetch.IF_MISSING), User, screenScope)
 scope.events(Message).events(Message).collect { item -> show(item) }
 ```
 

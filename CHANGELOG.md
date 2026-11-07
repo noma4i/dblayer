@@ -20,8 +20,7 @@
 - Core encrypted calls and cable subscriptions take the admission of their caller.
 - Value bridge: `AccountScope`, `ValueStream`, `Projected`, snapshots and keyed deltas with the session epoch.
 - `AccountScope.send`: a durable message command with an operation receipt, refused for an old epoch.
-- `refresh`, `loadMore` and `loaded` on a stream, interrupted when its session ends.
-- Lifecycle sequence tests for the core, Swift and Kotlin, listed in a manifest.
+- `refresh` and `loadMore` on a stream, interrupted when its session ends.
 - Streams for counts, related rows, rows by id, model events and upload status.
 - `AccountScope.send` carries a media upload; `uploadBatch` sends many files.
 - `durable: true` on `operation :create` generates `Model.send`.
@@ -29,9 +28,7 @@
 - `AccountScope.stream` takes `refreshOnConnect`; a list stream opened with it loads again when the network returns.
 - A projection keeps the edits of its deltas and the temporary id of a row.
 - `Query.beginLoad` returns the interest of one caller with `result()` and `cancel()`.
-- `Projected.shown(revision)` returns when the projection shows that revision of the database.
 - `ModelEventItem.ready` tells that the source of an events stream is open.
-- `Database.readStream` takes the next value of a stream from its journal in the core.
 
 ### Changed
 
@@ -42,8 +39,7 @@
 - `OperationReceipt.items` carry one `MutationReceipt` each.
 - A refused sessionless call reports a network error without the HTTP status.
 - `UrlSessionTransport` and `OkHttpTransport` have no `cablePath`. `Transport.openCable` receives the WebSocket address built by the core.
-- `EntityFetch.none` is `EntityFetch.never` in Swift and `EntityFetch.NEVER` in Kotlin.
-- `Projected.loaded()` returns for any load error while rows exist; the state shows the error in the `Loaded` phase. It throws only in the `Failed` phase.
+- `ReadFetch.none` is `ReadFetch.never` in Swift and `ReadFetch.NEVER` in Kotlin.
 - `Query.beginLoad` reads its arguments off the caller's thread; the interest of the caller exists when the call returns.
 - `Query.loadAll` gives up its pages when the caller's task or coroutine is cancelled. The core call is `Database.beginLoadAll`, which returns a `LoadRequest`; `Database.loadAll` is removed.
 - Core writes and transport calls carry one `Admitted` value from the calling database.
@@ -72,14 +68,12 @@
 - A task started by a call of one session epoch commits and sends in that epoch only.
 - A stream keeps at most 256 values in one journal in the core; platforms keep no buffer.
 - A full list journal gets one new snapshot; a full events journal reports one lost range.
-- `ValueSink.available` only tells that values wait; `readStream` moves the cursor of the reader.
 - The end of a stream comes once after its values; a session end drops unread values.
 - A shared load stops only when its last caller cancelled its interest.
 - A window that owes a read after a mutation is read again once while observed.
 - A media window that owes a read after a mutation reads all its pages again.
-- `DB.resume` and `DBlayer.resume` pass the epoch of the session; each epoch resumes apart.
 - A blob reads its status stream while the scope of its reader lives (Kotlin).
-- A list stream no longer keeps a warm observer after its reader left; `retainedObservers` counts the observers of `warm`.
+- A list stream no longer keeps a warm observer after its reader left.
 - Projections, count streams and event streams report platform decode errors and source errors.
 - `create`, `update`, `act`, `destroy`, `send` and `upload` return a receipt with the optimistic value, revision and outcome.
 - `uploadBatch` returns one receipt whose items keep their client keys and confirmed rows.
