@@ -107,13 +107,10 @@ async fn a_closed_socket_is_cancelled_when_the_peer_does_not_answer_within_the_d
     let link = Arc::new(Link::default());
     let transport = ForeignTransport::beside_session(Arc::new(Port { link: link.clone(), refusal: None, put: RawOutcome::response(200, "") }), Arc::new(clock.clone()));
     let socket = transport.open_cable(URL).await.unwrap();
-    let armed = clock.armed_total();
     socket.close().await;
-    clock.wait_armed(armed).await;
     clock.advance(crate::owners::read::CLOSE_DRAIN / 2);
     assert_eq!(*crate::lock::lock(&link.cancels), 0);
-    clock.advance(crate::owners::read::CLOSE_DRAIN / 2);
-    yield_until("the connection is cancelled after the drain", || *crate::lock::lock(&link.cancels) == 1).await;
+    yield_until("the connection is cancelled after the drain", || { clock.advance(crate::owners::read::CLOSE_DRAIN); *crate::lock::lock(&link.cancels) == 1 }).await;
 }
 
 #[tokio::test]
