@@ -10,7 +10,7 @@ fun main() = runBlocking {
         check(created.id.isNotEmpty())
         check(created.sync.state == WireSyncState.SYNCED)
         check(created.cells.contains(Cell.Text("kept")))
-        val stream = db.subscribeValues(epoch, ReadRequest.List("""{"model":"Item"}"""))
+        val stream = db.subscribeValues(epoch, ReadRequest.List(QuerySpec("Item", null, "{}", emptyList(), emptyList(), null, null, false)))
         var snapshot: ReadValue.Snapshot? = null
         while (snapshot == null) {
             val value = checkNotNull(stream.pull()) { "the stream ended before its first snapshot" }
