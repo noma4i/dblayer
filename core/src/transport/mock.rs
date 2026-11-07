@@ -105,7 +105,6 @@ struct MockState {
     responder: Option<Responder>,
     put_progress: Option<Arc<dyn Fn() + Send + Sync>>,
     session: Option<Result<Option<String>, TransportError>>,
-    clock: Option<Arc<dyn crate::runtime::Clock>>,
 }
 
 #[derive(Clone, Default)]
@@ -120,11 +119,7 @@ impl MockTransport {
     }
 
     async fn wait(&self, delay: Duration) {
-        let clock = self.lock().clock.clone();
-        match clock {
-            Some(clock) => clock.sleep(delay).await,
-            None => tokio::time::sleep(delay).await,
-        }
+        tokio::time::sleep(delay).await;
     }
 
     pub fn enqueue(&self, operation_name: &str, reply: Reply) {

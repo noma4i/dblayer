@@ -4,7 +4,7 @@ use async_trait::async_trait;
 use serde_json::json;
 use tokio::task::JoinHandle;
 
-use super::harness_life::{bounded, kind, timeout, Rig};
+use super::harness_life::{kind, timeout, Rig, STEP_LIMIT};
 use super::ref_lifecycle::LifecycleRef;
 use crate::check::explore::{all_traces, seeded};
 use crate::check::model::{run, Divergence, Owner, Property, RefModel, Sut};
@@ -57,9 +57,8 @@ impl LifecycleSut {
 
     async fn settle(&mut self) -> Vec<Observation> {
         let mut done = Vec::new();
-        let wait = std::time::Duration::from_secs(5);
         for (id, mut handle) in std::mem::take(&mut self.pending) {
-            match tokio::time::timeout(wait, &mut handle).await {
+            match crate::test_wait::timeout(STEP_LIMIT, &mut handle).await {
                 Ok(Ok(result)) => done.push((id, Some(result))),
                 Ok(Err(_)) => done.push((id, Some(Err(timeout())))),
                 Err(_) => {
@@ -92,7 +91,7 @@ impl Drop for LifecycleSut {
         }
         if let Some(rig) = self.rig.take() {
             if let Ok(runtime) = tokio::runtime::Handle::try_current() {
-                runtime.spawn(async move { let _ = bounded(rig.database.close_database()).await; });
+                runtime.spawn(async move { let _ = crate::test_wait::timeout(STEP_LIMIT, rig.database.close_database()).await; });
             }
         }
     }
@@ -139,7 +138,7 @@ impl Sut for LifecycleSut {
                 let value = match step.name.as_str() {
                     "create" => {
                         let name = step.text("as").unwrap_or("a").to_string();
-                        match bounded(rig.create(epoch, &name)).await {
+                        match crate::test_wait::timeout(STEP_LIMIT, rig.create(epoch, &name)).await {
                             Ok(Ok(row)) => {
                                 self.rows.insert(name.clone(), row);
                                 json!({ "row": name, "epoch": epoch })
@@ -148,7 +147,7 @@ impl Sut for LifecycleSut {
                             Err(_) => json!({ "error": "timeout" }),
                         }
                     }
-                    "rows" => match bounded(rig.rows(epoch)).await {
+                    "rows" => match crate::test_wait::timeout(STEP_LIMIT, rig.rows(epoch)).await {
                         Ok(Ok(ids)) => {
                             let mut present: Vec<&String> = self.rows.iter().filter(|(_, row)| ids.contains(row)).map(|(name, _)| name).collect();
                             present.sort();
@@ -157,7 +156,7 @@ impl Sut for LifecycleSut {
                         Ok(Err(error)) => json!({ "error": kind(&error) }),
                         Err(_) => json!({ "error": "timeout" }),
                     },
-                    _ => match bounded(rig.rows(epoch)).await {
+                    _ => match crate::test_wait::timeout(STEP_LIMIT, rig.rows(epoch)).await {
                         Ok(Ok(_)) => json!({ "ok": true }),
                         Ok(Err(error)) => json!({ "error": kind(&error) }),
                         Err(_) => json!({ "error": "timeout" }),

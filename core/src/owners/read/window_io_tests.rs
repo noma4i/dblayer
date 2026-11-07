@@ -143,7 +143,7 @@ fn win_io_error_classes() {
 #[test]
 fn win_io_cancel_no_answer() {
     let mut rig = rig();
-    rig.mock.enqueue("Page", Reply::data(json!({ "rows": ["r1"], "cursor": null })).after(Duration::from_secs(3600)));
+    rig.mock.enqueue("Page", Reply::data(json!({ "rows": ["r1"], "cursor": null })).after(Duration::MAX));
     rig.watch(1);
     pump(&mut rig.det, rig.windows, |det| det.trace().iter().any(|entry| entry.effects.contains("Request")));
     rig.det.post(rig.windows, EpochStamp::Epoch(EPOCH), WindowsInput::InterestMinus { key: key(), id: 1 });
@@ -212,7 +212,7 @@ pub(super) fn read_id(read: u64) -> String { format!("TaskFailed {{ id: {} }}", 
 #[test]
 fn rt_prop_close_against_query_no_old_transport_window() {
     let mut rig = rig();
-    rig.mock.enqueue("Page", Reply::data(json!({ "rows": ["r1"], "cursor": null })).after(Duration::from_secs(3600)));
+    rig.mock.enqueue("Page", Reply::data(json!({ "rows": ["r1"], "cursor": null })).after(Duration::MAX));
     rig.watch(1);
     let mock = rig.mock.clone();
     pump(&mut rig.det, rig.windows, |_| mock.calls().len() == 1);

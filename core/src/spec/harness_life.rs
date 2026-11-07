@@ -1,4 +1,3 @@
-use std::future::Future;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -82,14 +81,14 @@ impl Rig {
 
     pub async fn login(&self) -> Result<String, DbError> {
         self.database.set_online(true).ok();
-        let answer = bounded(self.database.session_call("social".into(), SOCIAL.into())).await;
+        let answer = crate::test_wait::timeout(STEP_LIMIT, self.database.session_call("social".into(), SOCIAL.into())).await;
         self.database.set_online(false).ok();
         answer.unwrap_or_else(|_| Err(timeout()))
     }
 
     pub async fn logout(&self) -> Result<String, DbError> {
         self.database.set_online(true).ok();
-        let answer = bounded(self.database.session_call("logout".into(), "{}".into())).await;
+        let answer = crate::test_wait::timeout(STEP_LIMIT, self.database.session_call("logout".into(), "{}".into())).await;
         self.database.set_online(false).ok();
         answer.unwrap_or_else(|_| Err(timeout()))
     }
@@ -106,9 +105,7 @@ impl Rig {
 }
 
 /// Every wait of a spec test has a limit: a core that never answers is a red test, not a hung run.
-pub async fn bounded<T>(future: impl Future<Output = T>) -> Result<T, tokio::time::error::Elapsed> {
-    tokio::time::timeout(Duration::from_secs(5), future).await
-}
+pub const STEP_LIMIT: Duration = Duration::from_secs(5);
 
 pub fn timeout() -> DbError {
     DbError::Invalid { detail: "timeout".into() }
