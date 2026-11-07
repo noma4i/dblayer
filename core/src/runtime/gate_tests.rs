@@ -6,7 +6,7 @@ use std::pin::Pin;
 
 use super::{send_in_epoch, EpochGate};
 use crate::transport::{
-    CancelToken, GraphQLRequest, PutFile, PutRequest, PutResponse, Response, ServerSubscription, Transport, TransportError, TransferIdentity, TransferStep,
+    CancelToken, GraphQLRequest, PutFile, PutRequest, PutResponse, Response, Transport, TransportError, TransferIdentity, TransferStep,
 };
 
 /// A transport that starts its request in the call itself, as a platform transport behind the bridge does: the counter moves before the future exists.
@@ -25,7 +25,6 @@ impl Counting {
 impl Transport for Counting {
     fn query<'a, 'b>(&'a self, _: GraphQLRequest) -> Sent<'b, Response> where 'a: 'b, Self: 'b { self.started() }
     fn mutate<'a, 'b>(&'a self, _: GraphQLRequest) -> Sent<'b, Response> where 'a: 'b, Self: 'b { self.started() }
-    fn subscribe<'a, 'b>(&'a self, _: GraphQLRequest) -> Sent<'b, ServerSubscription> where 'a: 'b, Self: 'b { self.started() }
     fn put<'a, 'b>(&'a self, _: PutRequest) -> Sent<'b, PutResponse> where 'a: 'b, Self: 'b { self.started() }
 }
 
@@ -44,7 +43,7 @@ fn put() -> PutRequest {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn life_gate_closed_before_poll() {
-    for kind in ["query", "mutate", "subscribe", "put"] {
+    for kind in ["query", "mutate", "put"] {
         let gate = Arc::new(EpochGate::default());
         gate.open(1);
         let transport = Arc::new(Counting::default());
@@ -58,7 +57,6 @@ async fn life_gate_closed_before_poll() {
                 match kind {
                     "query" => send_in_epoch(&gate, Some(1), || transport.query(graphql())).await.map(drop),
                     "mutate" => send_in_epoch(&gate, Some(1), || transport.mutate(graphql())).await.map(drop),
-                    "subscribe" => send_in_epoch(&gate, Some(1), || transport.subscribe(graphql())).await.map(drop),
                     "put" => send_in_epoch(&gate, Some(1), || transport.put(put())).await.map(drop),
                     other => unreachable!("{other}"),
                 }

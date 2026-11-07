@@ -17,7 +17,6 @@ pub(super) struct Counting {
     started: Notify,
     hold: Option<Arc<tokio::sync::Semaphore>>,
     gate: Option<Arc<tokio::sync::Semaphore>>,
-    subscriptions: Option<tokio::sync::mpsc::UnboundedSender<Arc<super::SubscriptionSink>>>,
 }
 
 #[async_trait::async_trait]
@@ -34,13 +33,6 @@ impl Transport for Counting {
         Ok(if request.operation_name == "Node" { r#"{"data":{"node":{"__typename":"Moment","id":"m1","text":"a"}}}"# } else { r#"{"data":{"moments":[{"id":"m1","text":"a"}]}}"# }.into())
     }
     async fn mutate(&self, _: super::TransportRequest) -> Result<String, DbError> { unreachable!() }
-    async fn subscribe(&self, _: super::TransportRequest, sink: Arc<super::SubscriptionSink>) -> Result<(), DbError> {
-        sink.opened("notice".into())?;
-        sink.ready();
-        if let Some(sender) = &self.subscriptions { sender.send(sink).unwrap(); }
-        Ok(())
-    }
-    fn unsubscribe(&self, _: String) {}
     async fn put(&self, _: String, _: std::collections::HashMap<String, String>, _: crate::transport::PutFile, _: crate::transport::TransferIdentity, _: Arc<super::ByteProgress>) -> Result<super::PutReply, DbError> { unreachable!() }
 }
 
@@ -98,7 +90,7 @@ async fn rig_with_clock() -> (Arc<Database>, Arc<Counting>, Arc<TestClock>) {
 pub(super) async fn open_rig(clock: Option<Arc<TestClock>>, hold: Option<Arc<tokio::sync::Semaphore>>, gate: Option<Arc<tokio::sync::Semaphore>>) -> (Arc<Database>, Arc<Counting>, Option<Arc<TestClock>>) {
     let mut model = ModelSpec::new("Moment", vec![FieldSpec::scalar("id", ScalarKind::Id), FieldSpec::scalar("text", ScalarKind::Str).optional()]);
     model.relations.extend([relation("feed", "5.minutes"), relation("quick", "200.milliseconds")]);
-    let transport = Arc::new(Counting { queries: AtomicUsize::new(0), started: Notify::new(), hold: hold.clone(), gate, subscriptions: None });
+    let transport = Arc::new(Counting { queries: AtomicUsize::new(0), started: Notify::new(), hold: hold.clone(), gate });
     let config = Config { path: None, data_version: None, cache_rows: 8 };
     let models = serde_json::to_string(&vec![model]).unwrap();
     let transport_handle = Some(transport.clone() as Arc<dyn Transport>);
@@ -139,7 +131,7 @@ async fn settled_waits_for_a_load_that_outlives_a_data_reset() {
     crate::test_wait::yield_until("the loaded row reached the listener", || listener.heard().iter().any(|seen| seen.size == 1)).await;
 
     let hold = Arc::new(tokio::sync::Semaphore::new(0));
-    let transport = Arc::new(Counting { queries: AtomicUsize::new(0), started: Notify::new(), hold: Some(hold.clone()), gate: None, subscriptions: None });
+    let transport = Arc::new(Counting { queries: AtomicUsize::new(0), started: Notify::new(), hold: Some(hold.clone()), gate: None });
     let mut model = ModelSpec::new("Moment", vec![FieldSpec::scalar("id", ScalarKind::Id), FieldSpec::scalar("text", ScalarKind::Str).optional()]);
     let mut node = RelationSpec::new("node", &[]);
     node.text_params = vec![crate::schema::NODE_PARAM.to_string()];
@@ -272,7 +264,7 @@ async fn an_entity_stream_is_not_loaded_when_its_first_empty_snapshot_arrives_be
     node.remote = Some(remote);
     model.relations.push(node);
     let hold = Arc::new(tokio::sync::Semaphore::new(0));
-    let transport = Arc::new(Counting { queries: AtomicUsize::new(0), started: Notify::new(), hold: Some(hold.clone()), gate: None, subscriptions: None });
+    let transport = Arc::new(Counting { queries: AtomicUsize::new(0), started: Notify::new(), hold: Some(hold.clone()), gate: None });
     let db = Database::open(Config { path: None, data_version: None, cache_rows: 8 }, serde_json::to_string(&vec![model]).unwrap(), crate::ffi::OpenPorts { transport: Some(transport.clone()), ..Default::default() }).await.unwrap();
     db.register_operations(r#"[{"name":"Node","document":"query Node($id: ID!) { node(id: $id) { ... on Moment { id text } } }","rootPath":"node"}]"#.into()).await.unwrap();
     db.set_online(true).unwrap();

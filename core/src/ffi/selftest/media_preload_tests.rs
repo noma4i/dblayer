@@ -4,7 +4,7 @@ use std::sync::{Arc, Mutex};
 
 use serde_json::{json, Value};
 
-use crate::ffi::{ByteProgress, CableLease, Config, DbError, EncryptedSocketEvent, ReadPhase, OpenDatabase, OpenOptions, PutReply, ReadRequest, ReadState, ReadValue, SubscriptionSink, Transport, TransportRequest};
+use crate::ffi::{ByteProgress, CableLease, Config, DbError, EncryptedSocketEvent, ReadPhase, OpenDatabase, OpenOptions, PutReply, ReadRequest, ReadState, ReadValue, Transport, TransportRequest};
 use crate::schema::{Coverage, FieldSpec, ModelSpec, PageDirection, RelationSpec, RemoteShape, RowRule, RowTest, VariableSource};
 use crate::test_wait::within_secs;
 use crate::value::ScalarKind;
@@ -54,8 +54,6 @@ impl Transport for MediaTransport {
         Ok(json!({"data":{"node":{"messages":{"edges":edges,"pageInfo":{"hasNextPage":after.is_none(),"endCursor":if after.is_none() { Some(id) } else { None }}}}}}).to_string())
     }
     async fn mutate(&self, _: TransportRequest) -> Result<String, DbError> { unreachable!() }
-    async fn subscribe(&self, _: TransportRequest, _: Arc<SubscriptionSink>) -> Result<(), DbError> { unreachable!() }
-    fn unsubscribe(&self, _: String) {}
     async fn put(&self, _: String, _: HashMap<String, String>, _: crate::transport::PutFile, _: crate::transport::TransferIdentity, _: Arc<ByteProgress>) -> Result<PutReply, DbError> { unreachable!() }
 }
 

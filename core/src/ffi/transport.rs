@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::future::Future;
 use std::pin::Pin;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::task::{Context, Poll};
 use async_trait::async_trait;
 use crate::transport as core;
@@ -32,8 +32,6 @@ pub trait Transport: Send + Sync {
     async fn cable_close(&self, token: String);
     async fn query(&self, request: TransportRequest) -> Result<String, DbError>;
     async fn mutate(&self, request: TransportRequest) -> Result<String, DbError>;
-    async fn subscribe(&self, request: TransportRequest, sink: Arc<SubscriptionSink>) -> Result<(), DbError>;
-    fn unsubscribe(&self, token: String);
     async fn put(&self, url: String, headers: HashMap<String, String>, file: core::PutFile, identity: core::TransferIdentity, progress: Arc<ByteProgress>) -> Result<PutReply, DbError>;
 }
 
@@ -84,47 +82,6 @@ impl core::CableSocket for ForeignSocket {
         crate::lock::assert_no_library_lock("Transport::cable_close");
         self.transport.cable_close(token).await;
         closing.done = true;
-    }
-}
-
-#[derive(uniffi::Object)]
-pub struct SubscriptionSink { sender: Mutex<Option<core::SubscriptionSender>>, lease: TokenLease }
-
-#[uniffi::export]
-impl SubscriptionSink {
-    pub fn ready(&self) { self.send(core::SubscriptionEvent::Ready); }
-    pub fn event(&self, json: String) -> Result<(), DbError> {
-        let response: core::Response = serde_json::from_str(&json)?;
-        if response.data.is_none() && response.errors.is_empty() {
-            let detail = format!("subscription frame without data: {}", json.chars().take(120).collect::<String>());
-            self.send(core::SubscriptionEvent::Failed(core::SubscriptionFailure::new(core::SubscriptionFailureKind::Internal, detail.clone())));
-            return Err(DbError::Invalid { detail });
-        }
-        self.send(core::SubscriptionEvent::response(response));
-        Ok(())
-    }
-    pub fn failed(&self, error: DbError) {
-        self.send(core::SubscriptionEvent::Failed(core::SubscriptionFailure::from_error(transport_error(error))));
-    }
-    pub fn closed(&self) { self.close(); }
-    pub fn opened(&self, token: String) -> Result<(), DbError> { self.lease.opened(token) }
-}
-
-impl SubscriptionSink {
-    fn new(handle: tokio::runtime::Handle, sender: core::SubscriptionSender, release: impl Fn(String) -> Pin<Box<dyn Future<Output = ()> + Send>> + Send + Sync + 'static) -> Self {
-        Self { sender: Mutex::new(Some(sender)), lease: TokenLease::new(handle, release) }
-    }
-    fn abandon(&self) {
-        self.lease.abandon();
-        self.close();
-    }
-    fn close(&self) {
-        let sender = crate::lock::lock(&self.sender).take();
-        drop(sender);
-    }
-    fn send(&self, event: core::SubscriptionEvent) {
-        let sender = crate::lock::lock(&self.sender).clone();
-        if let Some(sender) = sender { crate::lock::effect(|| { let _ = sender.send(event); }); }
     }
 }
 
@@ -240,23 +197,6 @@ impl core::Transport for ForeignTransport {
         crate::lock::assert_no_library_lock("Transport::mutate");
         let json = self.0.mutate(request.into()).await.map_err(transport_error)?;
         serde_json::from_str(&json).map_err(|error| core::TransportError::Decode(error.to_string()))
-    }
-    async fn subscribe(&self, request: core::GraphQLRequest) -> Result<core::ServerSubscription, core::TransportError> {
-        crate::lock::assert_no_library_lock("Transport::subscribe");
-        let (sender, receiver) = core::subscription_channel();
-        let transport = self.0.clone();
-        let handle = super::database::executor().map_err(transport_error)?.handle().clone();
-        let sink = Arc::new(SubscriptionSink::new(handle, sender, move |token| {
-            let transport = transport.clone();
-            Box::pin(async move { crate::lock::assert_no_library_lock("Transport::unsubscribe"); transport.unsubscribe(token) })
-        }));
-        let abandoned = sink.clone();
-        Calling::new(self.0.subscribe(request.into(), sink.clone()), move || abandoned.abandon()).await.map_err(transport_error)?;
-        if sink.lease.token().is_none() {
-            sink.abandon();
-            return Err(transport_error(DbError::Invalid { detail: "subscribe finished without opened".into() }));
-        }
-        Ok(core::ServerSubscription::new(receiver, core::ServerSubscriptionHandle::new(move || sink.abandon())))
     }
     async fn put(&self, request: core::PutRequest) -> Result<core::PutResponse, core::TransportError> {
         crate::lock::assert_no_library_lock("Transport::put");

@@ -5,7 +5,7 @@ use std::time::Duration;
 use async_trait::async_trait;
 use serde_json::json;
 
-use crate::ffi::{ByteProgress, CableLease, CommandRequest, Config, CredentialStore, Database, DbError, EncryptedConfig, EncryptedHttp, EncryptedReply, EncryptedSocketEvent, PutReply, SubscriptionSink, Transport, TransportRequest};
+use crate::ffi::{ByteProgress, CableLease, CommandRequest, Config, CredentialStore, Database, DbError, EncryptedConfig, EncryptedHttp, EncryptedReply, EncryptedSocketEvent, PutReply, Transport, TransportRequest};
 use crate::runtime::SystemClock;
 use crate::schema::{ActionDeclaration, FieldSpec, ModelSpec, OnFailure, RootShape};
 use crate::transport::encrypted::fake_server_tests::{FakeServer, MemoryCredentials};
@@ -52,8 +52,6 @@ impl Transport for NoCable {
     async fn cable_close(&self, _: String) {}
     async fn query(&self, _: TransportRequest) -> Result<String, DbError> { Err(DbError::Network { detail: "no cable".into() }) }
     async fn mutate(&self, _: TransportRequest) -> Result<String, DbError> { Err(DbError::Network { detail: "no cable".into() }) }
-    async fn subscribe(&self, _: TransportRequest, _: Arc<SubscriptionSink>) -> Result<(), DbError> { Err(DbError::Network { detail: "no cable".into() }) }
-    fn unsubscribe(&self, _: String) {}
     async fn put(&self, _: String, _: std::collections::HashMap<String, String>, _: PutFile, _: TransferIdentity, _: Arc<ByteProgress>) -> Result<PutReply, DbError> { Err(DbError::Network { detail: "no cable".into() }) }
 }
 

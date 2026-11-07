@@ -24,14 +24,6 @@ async fn transport(rest: MockTransport) -> (Arc<EncryptedTransport>, Arc<FakeSer
     (transport, server, client)
 }
 
-#[tokio::test]
-async fn encrypted_subscriptions_do_not_send_credentials_or_queries_to_v2() {
-    let rest = MockTransport::new();
-    let (transport, _, _client) = transport(rest.clone()).await;
-    let _subscription = transport.subscribe(GraphQLRequest::new("subscription Changes { recordEvents { changes { entityId } } }", "Changes", json!({}))).await.unwrap();
-    assert_eq!(rest.call_count("Changes"), 0);
-}
-
 #[test]
 fn the_body_carries_the_sha256_hash_and_the_document_only_when_asked_and_omits_empty_fields() {
     let request = GraphQLRequest::new("query Me { me { id } }", "Me", json!({ "a": 1 }));

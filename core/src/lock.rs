@@ -57,8 +57,6 @@ mod debug {
     }
 
     #[cfg(test)]
-    pub(crate) fn is_empty() -> bool { HELD.with(|held| held.borrow().is_empty()) }
-    #[cfg(test)]
     pub(crate) fn held_classes() -> Vec<&'static str> { HELD.with(|held| held.borrow().iter().map(|(_, class)| *class).collect()) }
 
     struct Held { instance: usize, class: Class }
@@ -99,7 +97,7 @@ mod debug {
 #[cfg(any(debug_assertions, test))]
 pub(crate) use debug::{assert_no_library_lock, lock, wait};
 #[cfg(test)]
-pub(crate) use debug::{held_classes, is_empty};
+pub(crate) use debug::held_classes;
 
 #[inline(always)]
 pub(crate) fn effect<R>(run: impl FnOnce() -> R) -> R {

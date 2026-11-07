@@ -13,7 +13,7 @@ use crate::runtime::{Clock, RetryPolicy};
 use crate::store::Store;
 use crate::transport::retry::{RetryCalls, Retrying};
 use crate::transport::{CableConnect, CableSocket, CableSubscriptions, Connectivity};
-use crate::transport::{GraphQLError, GraphQLRequest, PutRequest, PutResponse, Response, ServerSubscription, Transport, TransportError};
+use crate::transport::{GraphQLError, GraphQLRequest, PutRequest, PutResponse, Response, Transport, TransportError};
 
 const PERSISTED_QUERY_VERSION: u32 = 1;
 const PERSISTED_QUERY_NOT_FOUND: &str = "PERSISTED_QUERY_NOT_FOUND";
@@ -143,10 +143,6 @@ impl Transport for EncryptedTransport {
 
     async fn mutate(&self, request: GraphQLRequest) -> Result<Response, TransportError> {
         response_of(self.mutate_owned(&self.exchange.config().endpoints.graphql, graphql_body(&request, true), request.owner, request.purpose).await?)
-    }
-
-    async fn subscribe(&self, request: GraphQLRequest) -> Result<ServerSubscription, TransportError> {
-        self.cable.subscribe(request).await
     }
 
     async fn put(&self, request: PutRequest) -> Result<PutResponse, TransportError> {

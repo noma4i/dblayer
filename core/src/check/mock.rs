@@ -6,7 +6,7 @@ use serde_json::json;
 use tokio::sync::oneshot;
 
 use super::value::Observation;
-use crate::ffi::{ByteProgress, CableLease, CredentialStore, DbError, EncryptedHttp, EncryptedReply, EncryptedSocketEvent, PutReply, SubscriptionSink, Transport, TransportRequest};
+use crate::ffi::{ByteProgress, CableLease, CredentialStore, DbError, EncryptedHttp, EncryptedReply, EncryptedSocketEvent, PutReply, Transport, TransportRequest};
 use crate::transport::encrypted::fake_server_tests::{decrypt_request, seal_response};
 use crate::transport::encrypted::cable::peer_tests::CablePeer;
 use crate::transport::{NetworkPurpose, PutFile, TransferIdentity};
@@ -27,7 +27,6 @@ struct Inner {
     waiting: HashMap<String, oneshot::Sender<Reply>>,
     waiting_puts: HashMap<String, oneshot::Sender<Result<PutReply, DbError>>>,
     waiting_http: HashMap<String, (serde_json::Value, oneshot::Sender<Result<EncryptedReply, DbError>>)>,
-    sinks: HashMap<String, Arc<SubscriptionSink>>,
     /// The socket of each cable request: the token of the lease.
     cables: HashMap<String, String>,
 }
@@ -137,11 +136,6 @@ impl Mock {
         if let Some((_, sender)) = inner.waiting_http.remove(id) {
             return deliver(sender, Err(error));
         }
-        if let Some(sink) = inner.sinks.remove(id) {
-            drop(inner);
-            sink.failed(error);
-            return true;
-        }
         if let Some(token) = inner.cables.remove(id) {
             drop(inner);
             return self.peer.close(&token);
@@ -158,14 +152,10 @@ impl Mock {
     }
 
     pub fn ready(&self, id: &str) -> bool {
-        let sink = locked(self).sinks.get(id).cloned();
-        if let Some(sink) = sink { sink.ready(); return true; }
         locked(self).cables.contains_key(id)
     }
 
     pub fn frame(&self, id: &str, event: &str) -> Result<bool, DbError> {
-        let sink = locked(self).sinks.get(id).cloned();
-        if let Some(sink) = sink { return sink.event(event.to_string()).map(|()| true); }
         let token = locked(self).cables.get(id).cloned();
         match token {
             Some(token) => Ok(self.peer.event(&token, serde_json::from_str(event).map_err(|error| DbError::Invalid { detail: error.to_string() })?)),
@@ -194,13 +184,6 @@ impl Transport for Mock {
     async fn cable_close(&self, _: String) {}
     async fn query(&self, request: TransportRequest) -> Result<String, DbError> { self.wait("query", &request).await }
     async fn mutate(&self, request: TransportRequest) -> Result<String, DbError> { self.wait("mutation", &request).await }
-    async fn subscribe(&self, request: TransportRequest, sink: Arc<SubscriptionSink>) -> Result<(), DbError> {
-        let id = self.record("subscription", purpose_name(request.purpose));
-        sink.opened(id.clone())?;
-        locked(self).sinks.insert(id, sink);
-        Ok(())
-    }
-    fn unsubscribe(&self, token: String) { locked(self).sinks.remove(&token); }
     async fn put(&self, _: String, _: HashMap<String, String>, _: PutFile, _: TransferIdentity, _: Arc<ByteProgress>) -> Result<PutReply, DbError> {
         let id = self.record("put", purpose_name(NetworkPurpose::Transfer));
         let (sender, receiver) = oneshot::channel();

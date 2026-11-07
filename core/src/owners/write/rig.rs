@@ -10,7 +10,7 @@ use async_trait::async_trait;
 use super::wire::{Running, Task, Tasks};
 use crate::spec::support::{new_log, Log, Silent, Sink};
 use crate::runtime::{Address, DetScheduler, StateOwner};
-use crate::transport::{GraphQLRequest, PutRequest, PutResponse, Response, ServerSubscription, Transport, TransportError};
+use crate::transport::{GraphQLRequest, PutRequest, PutResponse, Response, Transport, TransportError};
 
 pub(super) const STEPS: usize = 20_000;
 
@@ -143,7 +143,6 @@ impl Transport for Stub {
 
     async fn mutate(&self, request: GraphQLRequest) -> Result<Response, TransportError> { self.answer(request).await }
 
-    async fn subscribe(&self, request: GraphQLRequest) -> Result<ServerSubscription, TransportError> { Err(TransportError::Unscripted(request.operation_name)) }
 
     async fn put(&self, request: PutRequest) -> Result<PutResponse, TransportError> {
         lock(&self.puts).push(request.cancel.clone());

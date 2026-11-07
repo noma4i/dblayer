@@ -23,8 +23,6 @@ impl Transport for Replying {
     async fn cable_close(&self, _: String) {}
     async fn query(&self, _: super::TransportRequest) -> Result<String, DbError> { Ok(self.0.lock().unwrap().pop_front().expect("a queued reply")) }
     async fn mutate(&self, _: super::TransportRequest) -> Result<String, DbError> { unreachable!() }
-    async fn subscribe(&self, _: super::TransportRequest, _: Arc<super::SubscriptionSink>) -> Result<(), DbError> { unreachable!() }
-    fn unsubscribe(&self, _: String) {}
     async fn put(&self, _: String, _: std::collections::HashMap<String, String>, _: crate::transport::PutFile, _: crate::transport::TransferIdentity, _: Arc<super::ByteProgress>) -> Result<super::PutReply, DbError> { unreachable!() }
 }
 

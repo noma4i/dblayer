@@ -9,14 +9,12 @@ use tokio::sync::Notify;
 use super::error::TransportError;
 use super::put::{PutRequest, PutResponse};
 use super::request::{GraphQLError, GraphQLRequest, Response};
-use super::subscription::{ConsumerSignal, ServerSubscription, SubscriptionEvent, ServerSubscriptionHandle};
 use super::Transport;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RecordedKind {
     Query,
     Mutation,
-    Subscription,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -107,24 +105,11 @@ struct MockState {
     puts_running: usize,
     puts_peak: usize,
     replies: HashMap<String, VecDeque<Reply>>,
-    scripts: HashMap<String, Vec<SubscriptionEvent>>,
-    senders: HashMap<String, Vec<(usize, super::SubscriptionSender)>>,
-    streams: Vec<Stream>,
-    cancellations: HashMap<String, usize>,
     calls: Vec<RecordedCall>,
     responder: Option<Responder>,
     put_progress: Option<Arc<dyn Fn() + Send + Sync>>,
     session: Option<Result<Option<String>, TransportError>>,
     clock: Option<Arc<dyn crate::runtime::Clock>>,
-}
-
-struct Stream {
-    operation_name: String,
-    sent: usize,
-    received: usize,
-    entered: usize,
-    waiting: bool,
-    open: bool,
 }
 
 #[derive(Clone, Default)]
@@ -166,40 +151,6 @@ impl MockTransport {
         self.lock().put_progress = Some(Arc::new(progress));
     }
 
-    pub fn script_subscription(&self, operation_name: &str, events: Vec<SubscriptionEvent>) {
-        self.lock().scripts.insert(operation_name.to_string(), events);
-    }
-
-    pub fn emit(&self, operation_name: &str, event: SubscriptionEvent) {
-        let mut state = self.lock();
-        let senders = state.senders.get(operation_name).cloned().unwrap_or_default();
-        for (index, sender) in senders {
-            if sender.send(event.clone()).is_ok() {
-                state.streams[index].sent += 1;
-            }
-        }
-        drop(state);
-        self.wake.notify_waiters();
-    }
-
-    pub fn emit_on(&self, operation_name: &str, connection: usize, event: SubscriptionEvent) {
-        let mut state = self.lock();
-        if let Some((index, sender)) = state.senders.get(operation_name).and_then(|senders| senders.get(connection)).cloned() {
-            if sender.send(event).is_ok() { state.streams[index].sent += 1; }
-        }
-        drop(state);
-        self.wake.notify_waiters();
-    }
-
-    pub fn disconnect(&self, operation_name: &str) {
-        let mut state = self.lock();
-        for (index, _) in state.senders.remove(operation_name).unwrap_or_default() {
-            state.streams[index].open = false;
-        }
-        drop(state);
-        self.wake.notify_waiters();
-    }
-
     pub async fn await_calls(&self, operation_name: &str, count: usize) {
         self.until(&format!("{count} calls of {operation_name}"), |state| state.calls.iter().filter(|call| call.operation_name == operation_name).count() >= count).await;
     }
@@ -210,25 +161,6 @@ impl MockTransport {
 
     pub async fn await_put_calls(&self, count: usize) {
         self.until(&format!("{count} puts"), |state| state.put_calls.len() >= count).await;
-    }
-
-    pub async fn await_cancellations(&self, operation_name: &str, count: usize) {
-        self.until(&format!("{count} cancellations of {operation_name}"), |state| state.cancellations.get(operation_name).copied().unwrap_or(0) >= count).await;
-    }
-
-    pub async fn await_consumed(&self, operation_name: &str) {
-        self.until(&format!("every event of {operation_name} consumed"), |state| {
-            state.streams.iter().filter(|stream| stream.operation_name == operation_name && stream.open).all(|stream| stream.received == stream.sent && stream.waiting)
-        })
-        .await;
-    }
-
-    pub fn waits(&self, operation_name: &str) -> usize {
-        self.lock().streams.iter().filter(|stream| stream.operation_name == operation_name).map(|stream| stream.entered).sum()
-    }
-
-    pub async fn await_waits(&self, operation_name: &str, count: usize) {
-        self.until(&format!("{count} reads of {operation_name}"), |state| state.streams.iter().filter(|stream| stream.operation_name == operation_name).map(|stream| stream.entered).sum::<usize>() >= count).await;
     }
 
     async fn until(&self, what: &str, ready: impl Fn(&MockState) -> bool) {
@@ -270,10 +202,6 @@ impl MockTransport {
 
     pub fn call_count(&self, operation_name: &str) -> usize {
         self.lock().calls.iter().filter(|call| call.operation_name == operation_name).count()
-    }
-
-    pub fn cancellations(&self, operation_name: &str) -> usize {
-        self.lock().cancellations.get(operation_name).copied().unwrap_or(0)
     }
 
     fn lock(&self) -> std::sync::MutexGuard<'_, MockState> {
@@ -370,44 +298,5 @@ impl Transport for MockTransport {
 
     async fn mutate(&self, request: GraphQLRequest) -> Result<Response, TransportError> {
         self.reply(RecordedKind::Mutation, request).await
-    }
-
-    async fn subscribe(&self, request: GraphQLRequest) -> Result<ServerSubscription, TransportError> {
-        self.record(RecordedKind::Subscription, &request);
-        let (sender, receiver) = super::subscription_channel();
-        let name = request.operation_name;
-        let mut state = self.lock();
-        let index = state.streams.len();
-        state.streams.push(Stream { operation_name: name.clone(), sent: 0, received: 0, entered: 0, waiting: false, open: true });
-        for event in state.scripts.get(&name).cloned().unwrap_or_else(|| vec![SubscriptionEvent::Ready]) {
-            let _ = sender.send(event);
-            state.streams[index].sent += 1;
-        }
-        state.senders.entry(name.clone()).or_default().push((index, sender));
-        drop(state);
-        self.wake.notify_waiters();
-        let (shared, wake) = (self.state.clone(), self.wake.clone());
-        let handle = ServerSubscriptionHandle::new(move || {
-            let mut state = shared.lock().expect("mock transport state");
-            *state.cancellations.entry(name.clone()).or_default() += 1;
-            state.streams[index].open = false;
-            drop(state);
-            wake.notify_waiters();
-        });
-        let (shared, wake) = (self.state.clone(), self.wake.clone());
-        Ok(ServerSubscription::new(receiver, handle).on_next(move |signal| {
-            let mut state = shared.lock().expect("mock transport state");
-            let stream = &mut state.streams[index];
-            match signal {
-                ConsumerSignal::Waiting => {
-                    stream.entered += 1;
-                    stream.waiting = true;
-                }
-                ConsumerSignal::Received => stream.received += 1,
-                ConsumerSignal::Left => stream.waiting = false,
-            }
-            drop(state);
-            wake.notify_waiters();
-        }))
     }
 }

@@ -1,5 +1,5 @@
 use std::collections::BTreeMap;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
@@ -10,7 +10,7 @@ use crate::ffi::lifecycle_tests::{models, named, Rows};
 use crate::ffi::session_guards_tests::WatchedHeld;
 use crate::ffi::{
     ByteProgress, CableLease, Config, Database, DbError, EncryptedHttp, EncryptedReply, EncryptedSessionOperation, EncryptedSocketEvent, ReadFetch, OpenDatabase, PutReply, SessionCode, ReadRequest,
-    SubscriptionSink, TestClock, Transport, TransportRequest,
+    TestClock, Transport, TransportRequest,
 };
 use crate::ffi::tape::Watched;
 use crate::test_wait::{within_secs, yield_until};
@@ -272,7 +272,6 @@ impl World {
                 json!({"data":{"chatUpdatePhoto":{"__typename":"Chat","id":variables["id"],"logoUrl":format!("https://cdn/logo-{}", variables["signedId"].as_str().unwrap_or_default())}}})
             }
             "PUT" => json!({}),
-            other if other.starts_with("subscribe:") => json!({}),
             other => panic!("unexpected operation {other}"),
         };
         if commits && answer.get("data").is_some() {
@@ -334,19 +333,11 @@ impl EncryptedHttp for World {
 pub(super) struct Switchable {
     target: Mutex<Option<Arc<World>>>,
     invalid: bool,
-    tokens: AtomicUsize,
-    attempts: AtomicUsize,
-    failures: Mutex<Vec<String>>,
-    sinks: Mutex<Vec<(String, Arc<SubscriptionSink>)>>,
-    subscription_opened: Notify,
-    unsubscribed: Mutex<Vec<String>>,
-    sink_opened: Notify,
-    sink_closed: Notify,
 }
 
 impl Switchable {
     pub(super) fn new(target: Option<Arc<World>>, invalid: bool) -> Arc<Self> {
-        Arc::new(Self { target: Mutex::new(target), invalid, tokens: AtomicUsize::new(0), attempts: AtomicUsize::new(0), failures: Mutex::new(Vec::new()), sinks: Mutex::new(Vec::new()), subscription_opened: Notify::new(), unsubscribed: Mutex::new(Vec::new()), sink_opened: Notify::new(), sink_closed: Notify::new() })
+        Arc::new(Self { target: Mutex::new(target), invalid })
     }
     pub(super) fn set(&self, target: Option<Arc<World>>) { *self.target.lock().unwrap() = target; }
     fn current(&self) -> Result<Arc<World>, DbError> {
@@ -365,24 +356,6 @@ impl Transport for Switchable {
     async fn cable_close(&self, _: String) {}
     async fn query(&self, request: TransportRequest) -> Result<String, DbError> { self.current()?.plain(&request.operation_name, &json!({"variables": serde_json::from_str::<Value>(&request.variables_json)?})).await }
     async fn mutate(&self, request: TransportRequest) -> Result<String, DbError> { self.current()?.plain(&request.operation_name, &json!({"variables": serde_json::from_str::<Value>(&request.variables_json)?})).await }
-    async fn subscribe(&self, request: TransportRequest, sink: Arc<SubscriptionSink>) -> Result<(), DbError> {
-        self.attempts.fetch_add(1, Ordering::SeqCst);
-        let opened = async {
-            let world = self.current()?;
-            world.plain(&format!("subscribe:{}", request.operation_name), &Value::Null).await?;
-            let token = format!("{}-{}", world.label, self.tokens.fetch_add(1, Ordering::SeqCst));
-            sink.opened(token.clone())?;
-            sink.ready();
-            self.sinks.lock().unwrap().push((token, sink));
-            self.sink_opened.notify_one();
-            self.subscription_opened.notify_one();
-            Ok(())
-        };
-        let result: Result<(), DbError> = opened.await;
-        if let Err(error) = &result { self.failures.lock().unwrap().push(format!("{error:?}")); }
-        result
-    }
-    fn unsubscribe(&self, token: String) { self.unsubscribed.lock().unwrap().push(token); self.sink_closed.notify_one(); }
     async fn put(&self, _: String, _: std::collections::HashMap<String, String>, _: crate::transport::PutFile, _: crate::transport::TransferIdentity, _: Arc<ByteProgress>) -> Result<PutReply, DbError> {
         self.current()?.plain("PUT", &Value::Null).await?;
         Ok(PutReply { status: 200, etag: Some("etag".into()) })

@@ -18,8 +18,6 @@ impl Transport for Plain {
         Ok(r#"{"data":{"greeting":"Hello Ada"}}"#.into())
     }
     async fn mutate(&self, _: TransportRequest) -> Result<String, DbError> { unreachable!() }
-    async fn subscribe(&self, _: TransportRequest, _: Arc<super::SubscriptionSink>) -> Result<(), DbError> { unreachable!() }
-    fn unsubscribe(&self, _: String) { unreachable!() }
     async fn put(&self, _: String, _: std::collections::HashMap<String, String>, _: crate::transport::PutFile, _: crate::transport::TransferIdentity, _: Arc<super::ByteProgress>) -> Result<super::PutReply, DbError> { unreachable!() }
 }
 

@@ -78,7 +78,7 @@ pub use read::{ReadEnd, ReadFetch, ReadPhase, ReadRequest, ReadState, ReadStream
 pub use upload_rounds::RoundJobsSink;
 pub use wire::{Cell, CellEntry, WireFailure, WireModel, WireRow, WireSync, WireSyncState, WireProcessing, WireUpload, WireUploadStatus};
 pub use crate::transport::PutFile;
-pub use transport::{ByteProgress, CableLease, EncryptedSocketEvent, OnlineSink, PutReply, SubscriptionSink, Transport, TransportRequest};
+pub use transport::{ByteProgress, CableLease, EncryptedSocketEvent, OnlineSink, PutReply, Transport, TransportRequest};
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error, uniffi::Error)]
 pub enum DbError {

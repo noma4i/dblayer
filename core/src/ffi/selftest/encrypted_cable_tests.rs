@@ -7,7 +7,7 @@ use tokio::sync::mpsc;
 use super::rig_tests::{bound, plain_models};
 use crate::ffi::encrypted_tests::ThroughServer;
 use crate::ffi::session_guards_tests::{Rig, SOCIAL_BODY};
-use crate::ffi::{ByteProgress, CableLease, Config, Database, DbError, EncryptedSocketEvent, PutReply, ReadRequest, SubscriptionSink, Transport, TransportRequest};
+use crate::ffi::{ByteProgress, CableLease, Config, Database, DbError, EncryptedSocketEvent, PutReply, ReadRequest, Transport, TransportRequest};
 use crate::transport::encrypted::cable::peer_tests::CablePeer;
 
 pub(super) struct Peer {
@@ -27,8 +27,6 @@ impl Transport for Peer {
     async fn cable_close(&self, token: String) { let _ = self.closed.send(token); }
     async fn query(&self, _: TransportRequest) -> Result<String, DbError> { unreachable!() }
     async fn mutate(&self, _: TransportRequest) -> Result<String, DbError> { unreachable!() }
-    async fn subscribe(&self, _: TransportRequest, _: Arc<SubscriptionSink>) -> Result<(), DbError> { unreachable!() }
-    fn unsubscribe(&self, _: String) {}
     async fn put(&self, _: String, _: std::collections::HashMap<String, String>, _: crate::transport::PutFile, _: crate::transport::TransferIdentity, _: Arc<ByteProgress>) -> Result<PutReply, DbError> { unreachable!() }
 }
 

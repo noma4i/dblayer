@@ -15,7 +15,7 @@ use crate::ffi::encrypted_tests::ThroughServer;
 use crate::ffi::sealed_errors_tests::moment_spec;
 use crate::ffi::session_guards_tests::{Rig as SessionRig, SOCIAL_BODY};
 use crate::ffi::upload_wire::WireUploadRequest;
-use crate::ffi::{ByteProgress, CableLease, Config, Database, DbError, EncryptedConfig, EncryptedSocketEvent, PutReply, SubscriptionSink, Transport, TransportRequest, WireOperationOutcome};
+use crate::ffi::{ByteProgress, CableLease, Config, Database, DbError, EncryptedConfig, EncryptedSocketEvent, PutReply, Transport, TransportRequest, WireOperationOutcome};
 use crate::transport::encrypted::vectors_tests::{origin, pin, public_key_der_b64};
 use crate::transport::encrypted::fake_server_tests::{decrypt_request, seal_response, FakeServer};
 use crate::transport::NetworkPurpose;
@@ -46,8 +46,6 @@ impl Transport for Puts {
     async fn cable_close(&self, _: String) {}
     async fn query(&self, _: TransportRequest) -> Result<String, DbError> { unreachable!() }
     async fn mutate(&self, _: TransportRequest) -> Result<String, DbError> { unreachable!() }
-    async fn subscribe(&self, _: TransportRequest, _: Arc<SubscriptionSink>) -> Result<(), DbError> { unreachable!() }
-    fn unsubscribe(&self, _: String) {}
     async fn put(&self, _: String, _: HashMap<String, String>, file: crate::transport::PutFile, _: crate::transport::TransferIdentity, _: Arc<ByteProgress>) -> Result<PutReply, DbError> {
         self.0.lock().unwrap().push((file.offset, file.length));
         Ok(PutReply { status: 200, etag: Some("etag".into()) })

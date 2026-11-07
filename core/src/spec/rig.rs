@@ -8,7 +8,7 @@ use async_trait::async_trait;
 use serde_json::{json, Value};
 use tokio::sync::oneshot;
 
-use crate::ffi::{ByteProgress, CableLease, Config, Database, DbError, EncryptedHttp, EncryptedReply, EncryptedSocketEvent, PutReply, SubscriptionSink, TestClock, Transport, TransportRequest, WireOperationOutcome, WireOperationReceipt, WireRow};
+use crate::ffi::{ByteProgress, CableLease, Config, Database, DbError, EncryptedHttp, EncryptedReply, EncryptedSocketEvent, PutReply, TestClock, Transport, TransportRequest, WireOperationOutcome, WireOperationReceipt, WireRow};
 use crate::schema::{ActionDeclaration, FieldSpec, ModelSpec, OnFailure, RootShape};
 use crate::owners::write::upload::{MultipartOperations, UploadOperation, UploadOperations};
 use crate::transport::encrypted::fake_server_tests::{decrypt_request, seal_response, MemoryCredentials};
@@ -183,8 +183,6 @@ impl Transport for Wire {
             Reply::NotFound => Err(DbError::Graphql { messages: vec!["gone".into()], extensions: None }),
         }
     }
-    async fn subscribe(&self, _: TransportRequest, _: Arc<SubscriptionSink>) -> Result<(), DbError> { Err(DbError::Network { detail: "no subscriptions".into() }) }
-    fn unsubscribe(&self, _: String) {}
     async fn put(&self, url: String, _: HashMap<String, String>, _: crate::transport::PutFile, _: crate::transport::TransferIdentity, _: Arc<ByteProgress>) -> Result<PutReply, DbError> {
         let reply = self.0.decide(Kind::Put, "put", json!({"url": url})).await;
         match reply {

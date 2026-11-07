@@ -25,8 +25,6 @@ impl crate::ffi::Transport for FeedTransport {
     async fn cable_close(&self, _: String) {}
     async fn query(&self, _: crate::ffi::TransportRequest) -> Result<String, DbError> { unreachable!() }
     async fn mutate(&self, _: crate::ffi::TransportRequest) -> Result<String, DbError> { unreachable!() }
-    async fn subscribe(&self, _: crate::ffi::TransportRequest, _: Arc<crate::ffi::SubscriptionSink>) -> Result<(), DbError> { unreachable!() }
-    fn unsubscribe(&self, _: String) {}
     async fn put(&self, _: String, _: HashMap<String, String>, _: crate::transport::PutFile, _: crate::transport::TransferIdentity, _: Arc<crate::ffi::ByteProgress>) -> Result<crate::ffi::PutReply, DbError> { unreachable!() }
 }
 

@@ -43,7 +43,6 @@ pub trait Transport: Send + Sync {
     }
     async fn query(&self, request: GraphQLRequest) -> Result<Response, TransportError>;
     async fn mutate(&self, request: GraphQLRequest) -> Result<Response, TransportError>;
-    async fn subscribe(&self, request: GraphQLRequest) -> Result<ServerSubscription, TransportError>;
     async fn put(&self, request: PutRequest) -> Result<PutResponse, TransportError>;
 }
 

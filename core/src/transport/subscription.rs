@@ -233,26 +233,6 @@ pub struct ServerSubscription {
     events: SubscriptionReceiver,
     handle: ServerSubscriptionHandle,
     frame: Option<FrameLease>,
-    #[cfg(test)]
-    on_next: Option<Box<dyn Fn(ConsumerSignal) + Send + Sync>>,
-}
-
-#[cfg(test)]
-#[derive(Clone, Copy)]
-pub(crate) enum ConsumerSignal {
-    Waiting,
-    Received,
-    Left,
-}
-
-#[cfg(test)]
-struct Waiting<'a>(&'a (dyn Fn(ConsumerSignal) + Send + Sync));
-
-#[cfg(test)]
-impl Drop for Waiting<'_> {
-    fn drop(&mut self) {
-        (self.0)(ConsumerSignal::Left);
-    }
 }
 
 impl ServerSubscription {
@@ -261,33 +241,15 @@ impl ServerSubscription {
             events,
             handle,
             frame: None,
-            #[cfg(test)]
-            on_next: None,
         }
-    }
-
-    #[cfg(test)]
-    pub(crate) fn on_next(mut self, hook: impl Fn(ConsumerSignal) + Send + Sync + 'static) -> Self {
-        self.on_next = Some(Box::new(hook));
-        self
     }
 
     pub async fn next(&mut self) -> Option<SubscriptionEvent> {
         drop(self.frame.take());
-        #[cfg(test)]
-        let _waiting = self.on_next.as_deref().map(|hook| {
-            hook(ConsumerSignal::Waiting);
-            Waiting(hook)
-        });
-        let event = self.events.recv().await.map(|(event, lease)| {
+        self.events.recv().await.map(|(event, lease)| {
             self.frame = lease;
             event
-        });
-        #[cfg(test)]
-        if let (Some(hook), Some(_)) = (&self.on_next, &event) {
-            hook(ConsumerSignal::Received);
-        }
-        event
+        })
     }
 
     #[cfg(test)]

@@ -2,7 +2,6 @@ use super::*;
 use serde_json::json;
 use std::time::Duration;
 use tokio::time::Instant;
-use crate::test_wait::within;
 
 fn ping() -> GraphQLRequest {
     GraphQLRequest::new("query Ping { ping }", "Ping", json!({"n": 1}))
@@ -59,31 +58,4 @@ async fn journal_records_calls_in_order_with_kind_and_variables() {
     assert_eq!((calls[1].kind, calls[1].operation_name.as_str()), (RecordedKind::Mutation, "Rename"));
     assert_eq!(calls[1].variables, json!({"id": "a"}));
     assert_eq!(mock.call_count("Ping"), 1);
-}
-
-#[tokio::test]
-async fn subscription_delivers_scripted_and_emitted_events_then_breaks_on_disconnect() {
-    let mock = MockTransport::new();
-    mock.script_subscription("Tick", vec![SubscriptionEvent::Ready]);
-    let mut subscription = mock.subscribe(GraphQLRequest::new("subscription Tick { t }", "Tick", json!({}))).await.unwrap();
-    assert_eq!(within(subscription.next()).await, Some(SubscriptionEvent::Ready));
-    mock.emit("Tick", SubscriptionEvent::Next(Response::data(json!({"t": 1}))));
-    assert_eq!(within(subscription.next()).await, Some(SubscriptionEvent::Next(Response::data(json!({"t": 1})))));
-    mock.emit(
-        "Tick",
-        SubscriptionEvent::Failed(SubscriptionFailure::new(SubscriptionFailureKind::Transport, "lost")),
-    );
-    assert!(matches!(within(subscription.next()).await, Some(SubscriptionEvent::Failed(_))));
-    mock.disconnect("Tick");
-    assert_eq!(within(subscription.next()).await, None);
-    assert_eq!(mock.call_count("Tick"), 1);
-}
-
-#[tokio::test]
-async fn cancelling_subscription_is_counted_once() {
-    let mock = MockTransport::new();
-    let subscription = mock.subscribe(GraphQLRequest::new("subscription Tick { t }", "Tick", json!({}))).await.unwrap();
-    subscription.cancel();
-    drop(subscription);
-    assert_eq!(mock.cancellations("Tick"), 1);
 }

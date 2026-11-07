@@ -123,8 +123,6 @@ impl Transport for Refusing {
     async fn cable_close(&self, _: String) {}
     async fn query(&self, _: super::TransportRequest) -> Result<String, DbError> { Err(DbError::Session { code: self.0, detail: "wire".into() }) }
     async fn mutate(&self, _: super::TransportRequest) -> Result<String, DbError> { Err(DbError::Session { code: self.0, detail: "wire".into() }) }
-    async fn subscribe(&self, _: super::TransportRequest, _: Arc<super::SubscriptionSink>) -> Result<(), DbError> { unreachable!() }
-    fn unsubscribe(&self, _: String) {}
     async fn put(&self, _: String, _: std::collections::HashMap<String, String>, _: crate::transport::PutFile, _: crate::transport::TransferIdentity, _: Arc<super::ByteProgress>) -> Result<super::PutReply, DbError> { unreachable!() }
 }
 

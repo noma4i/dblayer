@@ -7,7 +7,7 @@ use async_trait::async_trait;
 
 use super::rig_tests::{bound, Gate, Held, Rig};
 use crate::ffi::lifecycle_tests::Rows;
-use crate::ffi::{ByteProgress, CableLease, Config, Database, DbError, EncryptedSocketEvent, LoadMoreResult, OpenDatabase, PutReply, SubscriptionSink, TestClock, Transport, TransportRequest};
+use crate::ffi::{ByteProgress, CableLease, Config, Database, DbError, EncryptedSocketEvent, LoadMoreResult, OpenDatabase, PutReply, TestClock, Transport, TransportRequest};
 use crate::schema::{Coverage, FieldSpec, ModelSpec, PageDirection, RelationSpec, RemoteShape, RemoteSpec, Storage};
 
 use crate::value::ScalarKind;
@@ -30,8 +30,6 @@ impl Transport for Pages {
         Ok(format!(r#"{{"data":{{"feed":{{"nodes":[{{"id":"m{number}","text":"t"}}],"pageInfo":{{"hasNextPage":true,"endCursor":"c{number}"}}}}}}}}"#))
     }
     async fn mutate(&self, _: TransportRequest) -> Result<String, DbError> { unreachable!() }
-    async fn subscribe(&self, _: TransportRequest, _: Arc<SubscriptionSink>) -> Result<(), DbError> { unreachable!() }
-    fn unsubscribe(&self, _: String) {}
     async fn put(&self, _: String, _: HashMap<String, String>, _: crate::transport::PutFile, _: crate::transport::TransferIdentity, _: Arc<ByteProgress>) -> Result<PutReply, DbError> { unreachable!() }
 }
 

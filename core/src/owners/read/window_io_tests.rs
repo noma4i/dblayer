@@ -17,7 +17,7 @@ use crate::owners::read::windows::{self as w, AnswerPage, WindowEffect, WindowKe
 use crate::owners::store::{RowValue, StoreInput, StoreOp, StoreWriter};
 use crate::spec::support::Sink;
 use crate::runtime::{Address, Cause, DetScheduler, Effect, Effects, EpochStamp, Outbound, StateOwner, Time};
-use crate::transport::{GraphQLRequest, MockTransport, PutRequest, PutResponse, Reply, Response, ServerSubscription, Transport, TransportError};
+use crate::transport::{GraphQLRequest, MockTransport, PutRequest, PutResponse, Reply, Response, Transport, TransportError};
 
 const EPOCH: u64 = 1;
 
@@ -176,7 +176,6 @@ struct Panicking;
 impl Transport for Panicking {
     fn query<'a, 'b>(&'a self, _: GraphQLRequest) -> Sent<'b, Response> where 'a: 'b, Self: 'b { panic!("the transport failed") }
     fn mutate<'a, 'b>(&'a self, _: GraphQLRequest) -> Sent<'b, Response> where 'a: 'b, Self: 'b { panic!("the transport failed") }
-    fn subscribe<'a, 'b>(&'a self, _: GraphQLRequest) -> Sent<'b, ServerSubscription> where 'a: 'b, Self: 'b { panic!("the transport failed") }
     fn put<'a, 'b>(&'a self, _: PutRequest) -> Sent<'b, PutResponse> where 'a: 'b, Self: 'b { panic!("the transport failed") }
 }
 
