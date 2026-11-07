@@ -58,7 +58,6 @@ enum ArchiveGroupMutation: GraphQLMutation {
   struct Variables: Encodable, Sendable { let id: String }
   static let operationName = "ArchiveGroup"
   static let document = "mutation ArchiveGroup($id: ID!) { archiveGroup(id: $id) { id archived } }"
-  static let returns: String? = Operations.archiveGroupReturns
 }
 ```
 
@@ -66,7 +65,6 @@ enum ArchiveGroupMutation: GraphQLMutation {
 object ArchiveGroupMutation : GraphQLOperation {
     override val operationName = "ArchiveGroup"
     override val document = "mutation ArchiveGroup(\$id: ID!) { archiveGroup(id: \$id) { id archived } }"
-    override val returns = Operations.archiveGroupReturns
 }
 ```
 

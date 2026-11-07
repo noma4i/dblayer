@@ -9,7 +9,7 @@ extension BridgeProbeTests {
     let transport = MockTransport()
     transport.enqueue(name, reply: reply)
     try await reopen(config: Config(path: nil, dataVersion: nil), modelsJson: modelsJSON, transport: transport)
-    try await DB.database.registerOperations(defsJson: try declaringReturns(#"[{"name":"\#(name)","document":"\#(document)"}]"#))
+    try await DB.database.registerOperations(defsJson: #"[{"name":"\#(name)","document":"\#(document)"}]"#)
     return transport
   }
 
@@ -43,7 +43,7 @@ extension BridgeProbeTests {
     let transport = MockTransport()
     transport.enqueue("QrCodeCreate", failure: failure)
     try await reopen(config: Config(path: nil, dataVersion: nil), modelsJson: modelsJSON, transport: transport)
-    try await DB.database.registerOperations(defsJson: try declaringReturns(#"[{"name":"QrCodeCreate","document":"mutation QrCodeCreate($input: CreateQrCodeInput!) { qrCodeCreate(input: $input) { url } }"}]"#))
+    try await DB.database.registerOperations(defsJson: #"[{"name":"QrCodeCreate","document":"mutation QrCodeCreate($input: CreateQrCodeInput!) { qrCodeCreate(input: $input) { url } }"}]"#)
 
     do {
       _ = try await Operations.qrCodeCreate(kind: "container", size: 3)

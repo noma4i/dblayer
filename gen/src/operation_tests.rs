@@ -7,7 +7,6 @@ const QR: &str = "operation :qr_code_create do\n  mutation \"QrCodeCreate\"\n  w
 fn an_operation_without_a_model_becomes_a_typed_call_on_both_platforms() {
     let declared = parse_all(&[QR]).unwrap();
     assert!(declared.models.is_empty());
-    assert!(!emit_swift(&declared.models, &declared.operations, &SchemaTypes::default()).contains("modelsJSON") && !emit_kotlin(&declared.models, &declared.operations, &SchemaTypes::default()).contains("modelsJSON"), "a file without models has no models constant");
     let swift = emit_swift(&declared.models, &declared.operations, &SchemaTypes::default());
     for line in [
         "public struct QrCodeCreateResult: Codable, Sendable, Equatable {\n    public let url: String?",

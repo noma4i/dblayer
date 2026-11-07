@@ -25,18 +25,15 @@ pub struct ReadOperation {
     pub document: String,
     pub root_path: String,
     pub page_size: u32,
-    pub returns: Option<String>,
 }
 
 impl ReadOperation {
-    pub fn new(name: &str, document: &str, root_path: &str) -> Self { Self { name: name.into(), document: document.into(), root_path: root_path.into(), page_size: DEFAULT_PAGE_SIZE, returns: None } }
+    pub fn new(name: &str, document: &str, root_path: &str) -> Self { Self { name: name.into(), document: document.into(), root_path: root_path.into(), page_size: DEFAULT_PAGE_SIZE } }
 
     /// The root path is the response key of the first field of the document.
     pub fn from_document(name: &str, document: &str) -> Option<Self> { Some(Self::new(name, document, &first_field(document)?)) }
 
     pub fn paged(self, page_size: u32) -> Self { Self { page_size, ..self } }
-
-    pub fn returning(self, returns: Option<String>) -> Self { Self { returns, ..self } }
 }
 
 fn first_field(document: &str) -> Option<String> {

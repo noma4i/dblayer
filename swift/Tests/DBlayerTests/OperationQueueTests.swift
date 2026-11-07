@@ -8,7 +8,7 @@ private let queueUpdated = #"{"data":{"updateMoment":{"__typename":"Moment","id"
 private let queueDefs = #"[{"name":"MomentsFeed","document":"query MomentsFeed($first: Int, $after: String) { feed(first: $first, after: $after) { nodes { id uuid text likedByMe media createdAt } pageInfo { hasNextPage endCursor } } }"},{"name":"UpdateMoment","document":"mutation UpdateMoment($id: ID!, $text: String) { updateMoment(id: $id, text: $text) { id uuid text likedByMe media createdAt } }"},{"name":"DeleteMoment","document":"mutation DeleteMoment($id: ID!) { deleteMoment(id: $id) { id } }"}]"#
 
 private func momentsKeepingUpdates() throws -> String {
-  var models = try JSONSerialization.jsonObject(with: Data(modelsJSON.utf8)) as! [[String: Any]]
+  var models = try JSONSerialization.jsonObject(with: Data(modelsArrayJSON.utf8)) as! [[String: Any]]
   let index = models.firstIndex { $0["key"] as? String == "Moment" }!
   var actions = models[index]["actions"] as! [[String: Any]]
   let update = actions.firstIndex { $0["name"] as? String == "update" }!

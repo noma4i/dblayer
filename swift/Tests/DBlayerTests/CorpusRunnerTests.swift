@@ -242,9 +242,9 @@ private final class DatabaseRunner {
   func open(_ models: String, encrypted: Bool) async -> [String] {
     do {
       let session = encrypted ? EncryptedConfig(origin: SealedServer.origin, serverKey: SealedServer.serverKey, pin: SealedServer.pin, endpoints: EncryptedEndpoints(graphql: "/api/graphql", cable: "/api/cable", logout: "/api/logout", bootstrap: "/api/bootstrap", sessionOperations: ["otp": EncryptedSessionOperation(path: "/api/auth/otp", class: .authenticated), "confirm": EncryptedSessionOperation(path: "/api/auth/confirm", class: .authenticated), "social": EncryptedSessionOperation(path: "/api/auth/social", class: .authenticated), "ticket": EncryptedSessionOperation(path: "/api/ticket", class: .sessionless)]), protocolLabel: "example-ws-v1", cablePurpose: "ws.hello", cableChannel: "EncryptedGraphqlChannel") : nil
-      let opened = try await OpenDatabase().openWithClock(config: Config(path: nil, dataVersion: nil), modelsJson: try modelsText(models == "events" ? "models_events.json" : "models.json"), ports: OpenPorts(transport: mock, encrypted: session, credentials: encrypted ? Credentials() : nil, http: encrypted ? mock : nil, endpoint: scriptedEndpoint), clock: clock, options: OpenOptions(operations: []), observers: nil)
+      let opened = try await OpenDatabase().openWithClock(config: Config(path: nil, dataVersion: nil), modelsJson: withRawCalls(try modelsText(models == "events" ? "models_events.json" : "models.json"), try (JSONSerialization.jsonObject(with: Data(contentsOf: corpusDirectory().appendingPathComponent("operations.json"))) as! [[String: Any]]).map { $0["name"] as! String }), ports: OpenPorts(transport: mock, encrypted: session, credentials: encrypted ? Credentials() : nil, http: encrypted ? mock : nil, endpoint: scriptedEndpoint), clock: clock, options: OpenOptions(operations: []), observers: nil)
       let operations = try String(contentsOf: corpusDirectory().appendingPathComponent("operations.json"), encoding: .utf8)
-      try await opened.registerOperations(defsJson: try declaringReturns(operations))
+      try await opened.registerOperations(defsJson: operations)
       try opened.setOnline(online: true)
       database = opened
       _ = await settle()

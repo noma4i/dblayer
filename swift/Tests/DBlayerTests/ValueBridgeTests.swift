@@ -58,8 +58,8 @@ extension BridgeProbeTests {
     let encrypted = EncryptedConfig(origin: SealedServer.origin, serverKey: SealedServer.serverKey, pin: SealedServer.pin, endpoints: EncryptedEndpoints(graphql: "/api/graphql", cable: "/api/cable", logout: "/api/logout", bootstrap: "/api/bootstrap", sessionOperations: ["login_link": EncryptedSessionOperation(path: "/api/auth/login_link", class: .authenticated)]), protocolLabel: "example-ws-v1", cablePurpose: "ws.hello", cableChannel: "EncryptedGraphqlChannel")
     let transport = MockTransport()
     transport.cable = EncryptedCablePeer(server: server)
-    try await DB.openTesting(transport: transport, modelsJSON: modelsJSON, encrypted: encrypted, credentials: BridgeCredential(), http: server)
-    try await DB.database.registerOperations(defsJson: try declaringReturns(#"[{"name":"UserProfile","document":"query UserProfile { me { id name } }"},{"name":"SessionProfile","document":"query SessionProfile { sessionProfile { id } }"},{"name":"CreateMoment","document":"mutation CreateMoment($text: String) { createMoment(text: $text) { id uuid text likedByMe media createdAt } }"}]"#))
+    try await DB.openTesting(transport: transport, modelsJSON: withRawCalls(modelsJSON), encrypted: encrypted, credentials: BridgeCredential(), http: server)
+    try await DB.database.registerOperations(defsJson: #"[{"name":"UserProfile","document":"query UserProfile { me { id name } }"},{"name":"SessionProfile","document":"query SessionProfile { sessionProfile { id } }"},{"name":"CreateMoment","document":"mutation CreateMoment($text: String) { createMoment(text: $text) { id uuid text likedByMe media createdAt } }"}]"#)
     return server
   }
 

@@ -20,7 +20,7 @@ extension BridgeProbeTests {
   @Test(.timeLimit(.minutes(1)))
   func aMediaRefetchAfterMutationReadsTheWholeStaleWindow() async throws {
     await DB.closeForCleanup()
-    var models = try #require(JSONSerialization.jsonObject(with: Data(modelsJSON.utf8)) as? [[String: Any]])
+    var models = try #require(JSONSerialization.jsonObject(with: Data(modelsArrayJSON.utf8)) as? [[String: Any]])
     let momentIndex = try #require(models.firstIndex { $0["key"] as? String == "Moment" })
     let mediaIndex = try #require(models.firstIndex { $0["key"] as? String == "MediaMessage" })
     let actions = try #require(models[momentIndex]["actions"] as? [[String: Any]])

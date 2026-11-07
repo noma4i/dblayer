@@ -11,8 +11,6 @@ use super::{Config, CredentialStore, Database, DbError, EncryptedConfig, Encrypt
 pub struct OperationDefinition {
     pub name: String,
     pub document: String,
-    #[uniffi(default = None)]
-    pub returns: Option<String>,
 }
 
 #[derive(Clone, Default, PartialEq, Eq, uniffi::Record)]
@@ -118,7 +116,7 @@ impl OpenDatabase {
 
 impl Database {
     async fn declare_operations(&self, operations: Vec<OperationDefinition>) -> Result<(), DbError> {
-        let defs = serde_json::Value::Array(operations.into_iter().map(|operation| serde_json::json!({ "name": operation.name, "document": operation.document, "returns": operation.returns })).collect());
+        let defs = serde_json::Value::Array(operations.into_iter().map(|operation| serde_json::json!({ "name": operation.name, "document": operation.document })).collect());
         self.register_operations(defs.to_string()).await
     }
 

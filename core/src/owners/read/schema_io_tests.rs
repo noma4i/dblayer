@@ -26,7 +26,7 @@ fn codec(page_size: Option<u32>) -> SchemaWindowCodec {
     moments.relations.push(mine);
     let specs = all_specs().into_iter().map(|spec| if spec.key.as_str() == "moments" { moments.clone() } else { spec }).collect();
     let operations = ReadOperations::default();
-    operations.declare([ReadOperation { name: "Mine".into(), document: "query Mine($first: Int) { moments { id } }".into(), root_path: "moments".into(), page_size: 20, returns: None }]);
+    operations.declare([ReadOperation { name: "Mine".into(), document: "query Mine($first: Int) { moments { id } }".into(), root_path: "moments".into(), page_size: 20 }]);
     SchemaWindowCodec::new(Store::open_models(None, specs, None).map(std::sync::Arc::new).unwrap(), operations)
 }
 

@@ -43,7 +43,7 @@ class SealedErrorsTest {
         for (code in codes) {
             val transport = MockTransport()
             reopen(Config(null, null), modelsJSON, transport)
-            DBlayer.database.registerOperations(declaringReturns(operations))
+            DBlayer.database.registerOperations(operations)
             val failure = DbException.Session(code, code.name)
 
             transport.enqueue("MomentsFeed", failure)

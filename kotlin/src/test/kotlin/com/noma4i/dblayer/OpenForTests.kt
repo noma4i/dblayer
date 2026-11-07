@@ -4,12 +4,25 @@ package com.noma4i.dblayer
 interface WrapsMock { val base: MockTransport }
 
 suspend fun openDatabase(config: Config, modelsJson: String, transport: Transport? = null, encrypted: EncryptedConfig? = null, credentials: CredentialStore? = null, http: EncryptedHttp? = null, operations: String = "[]"): Database =
-    OpenDatabase().open(config, modelsJson, OpenOptions(definitionsOf(withUploadSteps(operations, modelsJson))), OpenPorts(transport, encrypted, credentials, http, SCRIPTED_ENDPOINT), null)
+    OpenDatabase().open(config, withRawCalls(modelsJson), OpenOptions(definitionsOf(withUploadSteps(operations, modelsJson))), OpenPorts(transport, encrypted, credentials, http, SCRIPTED_ENDPOINT), null)
+
+val modelsArrayJSON: String = (kotlinx.serialization.json.Json.parseToJsonElement(com.noma4i.dblayer.models.modelsJSON) as kotlinx.serialization.json.JsonObject).getValue("models").toString()
+
+fun withRawCalls(specs: String, names: List<String> = listOf("SessionProfile", "PurchaseCreate", "RecordAlbumSend")): String {
+    val parsed = kotlinx.serialization.json.Json.parseToJsonElement(specs)
+    val fields = (parsed as? kotlinx.serialization.json.JsonObject) ?: kotlinx.serialization.json.JsonObject(mapOf("models" to parsed))
+    val declared = (fields["operations"] as? kotlinx.serialization.json.JsonArray).orEmpty()
+    val known = declared.map { (it as kotlinx.serialization.json.JsonObject)["name"] }.toSet()
+    val raw = names.filter { kotlinx.serialization.json.JsonPrimitive(it) !in known }.map {
+        kotlinx.serialization.json.JsonObject(mapOf("name" to kotlinx.serialization.json.JsonPrimitive(it), "returns" to kotlinx.serialization.json.JsonObject(mapOf("name" to kotlinx.serialization.json.JsonPrimitive(it), "kind" to kotlinx.serialization.json.JsonObject(mapOf("type" to kotlinx.serialization.json.JsonPrimitive("raw")))))))
+    }
+    return kotlinx.serialization.json.JsonObject(fields + ("operations" to kotlinx.serialization.json.JsonArray(declared + raw))).toString()
+}
 
 private fun definitionsOf(operations: String): List<OperationDefinition> =
     (kotlinx.serialization.json.Json.parseToJsonElement(operations) as kotlinx.serialization.json.JsonArray).map { entry ->
         val operation = entry as kotlinx.serialization.json.JsonObject
-        (operation["name"] as kotlinx.serialization.json.JsonPrimitive).content.let { name -> OperationDefinition(name, (operation["document"] as kotlinx.serialization.json.JsonPrimitive).content, fixtureReturns[name] ?: RAW_RETURNS) }
+        OperationDefinition((operation["name"] as kotlinx.serialization.json.JsonPrimitive).content, (operation["document"] as kotlinx.serialization.json.JsonPrimitive).content)
     }
 
 /** A cleanup close: a database that is already closed stays closed. */
@@ -113,8 +126,8 @@ suspend fun reopenClocked(modelsJson: String, transport: MockTransport, operatio
     }
     val credential = credentialOf(Config(path, null))
     val restored = credential.get() != null
-    val clock = DBlayer.openTesting(transport, modelsJson, path = path, startMillis = startMillis, encrypted = standEncrypted(), credentials = credential, http = server)
-    DBlayer.database.registerOperations(declaringReturns(withSessionProfile(operations)))
+    val clock = DBlayer.openTesting(transport, withRawCalls(modelsJson), path = path, startMillis = startMillis, encrypted = standEncrypted(), credentials = credential, http = server)
+    DBlayer.database.registerOperations(withSessionProfile(operations))
     signIn(DBlayer.database, restored)
     return clock
 }
@@ -129,7 +142,7 @@ suspend fun reopenSigned(config: Config, modelsJson: String, operations: String 
 /** The schema with one server subscription: a schema holds one subscription, so a test of a model-level subscription runs on a schema that declares only that one. */
 fun schema(onlySubscription: String, source: String = com.noma4i.dblayer.models.modelsJSON): String {
     fun keep(entries: kotlinx.serialization.json.JsonElement?) = entries?.let { all -> kotlinx.serialization.json.JsonArray((all as kotlinx.serialization.json.JsonArray).filter { ((it as kotlinx.serialization.json.JsonObject)["subscription"] as? kotlinx.serialization.json.JsonPrimitive)?.content == onlySubscription }) }
-    return kotlinx.serialization.json.JsonArray((kotlinx.serialization.json.Json.parseToJsonElement(source) as kotlinx.serialization.json.JsonArray).map { model ->
+    return kotlinx.serialization.json.JsonArray((kotlinx.serialization.json.Json.parseToJsonElement(source).let { (it as? kotlinx.serialization.json.JsonObject)?.get("models") ?: it } as kotlinx.serialization.json.JsonArray).map { model ->
         val fields = (model as kotlinx.serialization.json.JsonObject).filterKeys { it != "change_feed" }.toMutableMap()
         keep(fields["listens"])?.let { fields["listens"] = it }
         (fields["relations"] as? kotlinx.serialization.json.JsonArray)?.let { relations ->

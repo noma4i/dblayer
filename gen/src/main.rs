@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 use std::process::ExitCode;
 
-use dblayer_gen::{compile_files, emit_swift_with, emit_kotlin, Access, Declarations};
+use dblayer_gen::{compile_files, emit_swift_with, emit_kotlin, specs_text, Access, Declarations};
 
 mod explain;
 
@@ -56,7 +56,7 @@ fn main() -> ExitCode {
                     Ok(report) => report,
                     Err(error) => { eprintln!("explain: {error}"); return ExitCode::from(1); }
                 },
-                _ => serde_json::to_string_pretty(&models).expect("specs serialize"),
+                _ => serde_json::to_string_pretty(&serde_json::from_str::<serde_json::Value>(&specs_text(&models, &operations)).expect("specs parse")).expect("specs serialize"),
             };
             println!("{output}");
             ExitCode::SUCCESS

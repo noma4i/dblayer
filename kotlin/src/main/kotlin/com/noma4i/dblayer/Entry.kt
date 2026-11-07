@@ -72,5 +72,5 @@ object DBlayer {
         UploadService.opened(made)
     }
 
-    private fun definitions(operations: List<GraphQLOperation>): List<OperationDefinition> = operations.map { OperationDefinition(it.operationName, it.document, it.returns) }
+    private fun definitions(operations: List<GraphQLOperation>): List<OperationDefinition> = operations.map { OperationDefinition(it.operationName, it.document) }
 }

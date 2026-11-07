@@ -74,9 +74,9 @@ class ValueBridgeTest {
         val encrypted = EncryptedConfig("https://api.example.com", SealedServer.SERVER_KEY, SealedServer.SERVER_PIN, EncryptedEndpoints("/api/graphql", "/api/cable", "/api/logout", "/api/bootstrap", mapOf("login_link" to EncryptedSessionOperation("/api/auth/login_link", EncryptedOperationClass.AUTHENTICATED))), "example-ws-v1", "ws.hello", "EncryptedGraphqlChannel")
         val transport = MockTransport()
         transport.cable = EncryptedCablePeer(server)
-        DBlayer.openTesting(transport, modelsJSON, encrypted = encrypted, credentials = BridgeCredential(), http = server)
+        DBlayer.openTesting(transport, withRawCalls(modelsJSON), encrypted = encrypted, credentials = BridgeCredential(), http = server)
         DBlayer.database.setOnline(true)
-        DBlayer.database.registerOperations(declaringReturns("""[{"name":"UserProfile","document":"query UserProfile { me { id name } }"},{"name":"SessionProfile","document":"query SessionProfile { sessionProfile { id } }"},{"name":"CreateMoment","document":"mutation CreateMoment(${'$'}text: String) { createMoment(text: ${'$'}text) { id uuid text likedByMe media createdAt } }"}]"""))
+        DBlayer.database.registerOperations("""[{"name":"UserProfile","document":"query UserProfile { me { id name } }"},{"name":"SessionProfile","document":"query SessionProfile { sessionProfile { id } }"},{"name":"CreateMoment","document":"mutation CreateMoment(${'$'}text: String) { createMoment(text: ${'$'}text) { id uuid text likedByMe media createdAt } }"}]""")
     }
 
     private fun text(value: String): JsonObject = buildJsonObject { put("text", value) }

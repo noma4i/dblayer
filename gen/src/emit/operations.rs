@@ -20,10 +20,6 @@ fn result_name(operation: &OperationCall) -> &str {
     operation.result.as_ref().and_then(|root| root.app_type.as_deref()).unwrap_or_default()
 }
 
-fn declaration(operation: &OperationCall) -> String {
-    serde_json::to_string(&operation.result.clone().unwrap_or_else(|| FieldSpec::raw(&operation.name))).unwrap()
-}
-
 fn returned(operation: &OperationCall, swift: bool) -> String {
     match (operation.list, swift) {
         (true, true) => format!("[{}]", result_name(operation)),
@@ -40,7 +36,6 @@ pub(super) fn emit_swift_operations(out: &mut String, operations: &[OperationCal
         for declaration in &types { emit_swift_type(out, declaration, &types, false); }
     }
     writeln!(out, "public enum Operations {{").unwrap();
-    for operation in operations { writeln!(out, "    public static let {}Returns = #\"{}\"#\n", name(&operation.name), declaration(operation)).unwrap(); }
     for operation in operations {
         let method = identifier(&name(&operation.name), true);
         let params = operation.args.iter().map(|(arg, kind)| format!("{}: {}{}", identifier(arg, true), arg_type(kind, true), if kind.ends_with('?') { "? = nil" } else { "" })).collect::<Vec<_>>().join(", ");
@@ -68,7 +63,6 @@ pub(super) fn emit_kotlin_operations(out: &mut String, operations: &[OperationCa
         for declaration in &types { emit_kotlin_type(out, declaration, &types, false); }
     }
     writeln!(out, "object Operations {{").unwrap();
-    for operation in operations { writeln!(out, "    const val {}Returns = \"\"\"{}\"\"\"\n", name(&operation.name), declaration(operation)).unwrap(); }
     for operation in operations {
         let method = identifier(&name(&operation.name), false);
         let params = operation.args.iter().map(|(arg, kind)| format!("{}: {}{}", identifier(arg, false), arg_type(kind, false), if kind.ends_with('?') { "? = null" } else { "" })).collect::<Vec<_>>().join(", ");

@@ -16,8 +16,12 @@ kotlin_operations_out="$root/kotlin/src/test/kotlin/com/noma4i/dblayer/models/Fi
 gen() { cargo run -q --manifest-path "$root/Cargo.toml" -p dblayer-gen -- "$1" "$root"/fixtures/*.dbl; }
 gen_operations() { cargo run -q --manifest-path "$root/Cargo.toml" -p dblayer-gen -- --schema "$root/fixtures/operations/schema.graphql" "$1" "$root"/fixtures/operations/*.dbl | grep -v -e '^public let modelsJSON = ' -e '^val modelsJSON = '; }
 
-swift="$(gen swift)"
-kotlin="$(gen kotlin)"
+gen_operation_specs() { cargo run -q --manifest-path "$root/Cargo.toml" -p dblayer-gen -- --schema "$root/fixtures/operations/schema.graphql" spec "$root"/fixtures/operations/*.dbl | python3 -I -c 'import json, sys; print(json.dumps(json.load(sys.stdin)["operations"], separators=(",", ":")))'; }
+with_operations() { python3 -I -c 'import sys; text = sys.stdin.read(); empty = ",\"operations\":[]}"; assert text.count(empty) == 1; operations = sys.argv[1]; operations = operations.replace("$", "${\x27$\x27}") if sys.argv[2] == "kotlin" else operations; sys.stdout.write(text.replace(empty, ",\"operations\":" + operations + "}"))' "$1" "$2"; }
+
+operation_specs="$(gen_operation_specs 2> /dev/null)"
+swift="$(gen swift | with_operations "$operation_specs" swift)"
+kotlin="$(gen kotlin | with_operations "$operation_specs" kotlin)"
 swift_operations="$(gen_operations swift)"
 kotlin_operations="$(gen_operations kotlin)"
 

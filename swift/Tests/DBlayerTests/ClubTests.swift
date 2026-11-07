@@ -35,7 +35,7 @@ private final class MemberEventsTransport: ScriptedTransport, WrapsMock, @unchec
 
 private func clubModels(keep: Bool = false, complete: Bool = false, keepLetter: Bool = false, events: Bool = false, destroy: Bool = false) throws -> String {
   guard keep || complete || keepLetter || events || destroy else { return modelsJSON }
-  var models = try JSONSerialization.jsonObject(with: Data(modelsJSON.utf8)) as! [[String: Any]]
+  var models = try JSONSerialization.jsonObject(with: Data(modelsArrayJSON.utf8)) as! [[String: Any]]
   if keep {
     let index = models.firstIndex { $0["key"] as? String == "Club" }!
     var actions = models[index]["actions"] as! [[String: Any]]

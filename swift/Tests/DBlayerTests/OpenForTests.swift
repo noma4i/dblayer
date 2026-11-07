@@ -3,14 +3,30 @@ import Foundation
 @_spi(Testing) @testable import DBlayer
 
 func openDatabase(config: Config, modelsJson: String, transport: Transport?, encrypted: EncryptedConfig? = nil, credentials: CredentialStore? = nil, http: EncryptedHttp? = nil, operations: String = "[]") async throws -> Database {
-  try await OpenDatabase().open(config: config, modelsJson: modelsJson, options: OpenOptions(operations: definitions(of: withUploadSteps(operations, models: modelsJson))), ports: OpenPorts(transport: transport, encrypted: encrypted, credentials: credentials, http: http, endpoint: transport == nil ? nil : scriptedEndpoint), observers: nil)
+  try await OpenDatabase().open(config: config, modelsJson: withRawCalls(modelsJson), options: OpenOptions(operations: definitions(of: withUploadSteps(operations, models: modelsJson))), ports: OpenPorts(transport: transport, encrypted: encrypted, credentials: credentials, http: http, endpoint: transport == nil ? nil : scriptedEndpoint), observers: nil)
+}
+
+let modelsArrayJSON: String = {
+  let parsed = try! JSONSerialization.jsonObject(with: Data(modelsJSON.utf8)) as! [String: Any]
+  return String(decoding: try! JSONSerialization.data(withJSONObject: parsed["models"]!), as: UTF8.self)
+}()
+
+func withRawCalls(_ specs: String, _ names: [String] = ["SessionProfile", "PurchaseCreate", "RecordAlbumSend"]) -> String {
+  let parsed = try! JSONSerialization.jsonObject(with: Data(specs.utf8))
+  var object = (parsed as? [String: Any]) ?? ["models": parsed]
+  var operations = object["operations"] as? [[String: Any]] ?? []
+  for name in names where !operations.contains(where: { $0["name"] as? String == name }) {
+    operations.append(["name": name, "returns": ["name": name, "kind": ["type": "raw"]]])
+  }
+  object["operations"] = operations
+  return String(decoding: try! JSONSerialization.data(withJSONObject: object), as: UTF8.self)
 }
 
 private func definitions(of operations: String) -> [OperationDefinition] {
   let listed = (try? JSONSerialization.jsonObject(with: Data(operations.utf8))) as? [[String: Any]] ?? []
   return listed.compactMap { entry in
     guard let name = entry["name"] as? String, let document = entry["document"] as? String else { return nil }
-    return OperationDefinition(name: name, document: document, returns: fixtureReturns[name] ?? rawReturns)
+    return OperationDefinition(name: name, document: document)
   }
 }
 
@@ -130,8 +146,8 @@ func reopenClocked(modelsJson: String, transport: MockTransport, operations: Str
   await DB.closeForCleanup()
   let held = path.map { credential(of: Config(path: $0, dataVersion: nil)) } ?? HeldCredential()
   let restored = (try? held.get()) != nil
-  let clock = try await DB.openTesting(transport: transport, modelsJSON: modelsJson, path: path, startingAt: start, encrypted: standEncrypted(), credentials: held, http: server, observers: observers)
-  try await DB.database.registerOperations(defsJson: try declaringReturns(withSessionProfile(operations)))
+  let clock = try await DB.openTesting(transport: transport, modelsJSON: withRawCalls(modelsJson), path: path, startingAt: start, encrypted: standEncrypted(), credentials: held, http: server, observers: observers)
+  try await DB.database.registerOperations(defsJson: withSessionProfile(operations))
   try await signIn(restored: restored)
   return clock
 }
@@ -146,7 +162,8 @@ func reopenSigned(config: Config, modelsJson: String, operations: String = sendM
 
 /// The schema with one server subscription: a schema holds one subscription, so a test of a model-level subscription runs on a schema that declares only that one.
 func schema(onlySubscription name: String, in source: String = modelsJSON) -> String {
-  var models = (try? JSONSerialization.jsonObject(with: Data(source.utf8))) as? [[String: Any]] ?? []
+  let parsed = try? JSONSerialization.jsonObject(with: Data(source.utf8))
+  var models = ((parsed as? [String: Any])?["models"] ?? parsed) as? [[String: Any]] ?? []
   for index in models.indices {
     models[index].removeValue(forKey: "change_feed")
     if let listens = models[index]["listens"] as? [[String: Any]] { models[index]["listens"] = listens.filter { $0["subscription"] as? String == name } }

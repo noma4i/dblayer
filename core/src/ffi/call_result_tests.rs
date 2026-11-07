@@ -37,14 +37,16 @@ fn declaration() -> String {
 async fn call_result_normalized() {
     let answer = Arc::new(Mutex::new(String::new()));
     let sent = Arc::new(std::sync::atomic::AtomicUsize::new(0));
-    let database = Database::open(Config { path: None, data_version: None }, "[]".into(), crate::ffi::OpenPorts { transport: Some(Arc::new(Answers(answer.clone(), sent.clone()))), endpoint: Some(crate::ffi::FAKE_ENDPOINT.into()), ..Default::default() }).await.unwrap();
-    let raw = serde_json::to_string(&FieldSpec::raw("Raw")).unwrap();
-    let operations = json!([
-        {"name": "Profile", "document": "query Profile { profile { id } }", "returns": declaration()},
-        {"name": "Raw", "document": "query Raw { profile { id } }", "returns": raw},
+    let specs = json!({"models": [], "operations": [
+        {"name": "Profile", "returns": serde_json::from_str::<Value>(&declaration()).unwrap()},
+        {"name": "Raw", "returns": FieldSpec::raw("Raw")},
+    ]});
+    let database = Database::open(Config { path: None, data_version: None }, specs.to_string(), crate::ffi::OpenPorts { transport: Some(Arc::new(Answers(answer.clone(), sent.clone()))), endpoint: Some(crate::ffi::FAKE_ENDPOINT.into()), ..Default::default() }).await.unwrap();
+    database.register_operations(json!([
+        {"name": "Profile", "document": "query Profile { profile { id } }"},
+        {"name": "Raw", "document": "query Raw { profile { id } }"},
         {"name": "Bare", "document": "query Bare { profile { id } }"},
-    ]);
-    database.register_operations(operations.to_string()).await.unwrap();
+    ]).to_string()).await.unwrap();
     database.set_online(true).unwrap();
     let call = |root: Value| {
         *answer.lock().unwrap() = json!({"data": {"profile": root}}).to_string();

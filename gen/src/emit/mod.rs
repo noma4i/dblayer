@@ -153,6 +153,14 @@ pub(crate) fn declared_types(models: &[ModelSpec]) -> Vec<&FieldSpec> {
     out
 }
 
+pub fn specs_text(models: &[ModelSpec], operations: &[crate::operation::OperationCall]) -> String {
+    let declared: Vec<String> = operations.iter().map(|operation| {
+        let returns = operation.result.clone().unwrap_or_else(|| FieldSpec::raw(&operation.name));
+        format!("{{\"name\":{},\"returns\":{}}}", serde_json::to_string(&operation.operation).unwrap(), serde_json::to_string(&returns).unwrap())
+    }).collect();
+    format!("{{\"models\":{},\"operations\":[{}]}}", serde_json::to_string(models).unwrap(), declared.join(","))
+}
+
 fn is_nullable(field: &FieldSpec) -> bool {
     field.nullable || field.optional
 }
@@ -375,7 +383,7 @@ pub fn emit_swift(models: &[ModelSpec], operations: &[OperationCall], schema_typ
     emit_swift_enums(&mut out, &decls);
     emit_swift_inputs(&mut out, &schema_types.inputs);
     emit_swift_operations(&mut out, operations);
-    if !models.is_empty() { writeln!(out, "public let modelsJSON = #\"{}\"#", serde_json::to_string(models).unwrap()).unwrap(); }
+    if !models.is_empty() || !operations.is_empty() { writeln!(out, "public let modelsJSON = #\"{}\"#", specs_text(models, operations)).unwrap(); }
     out
 }
 
@@ -511,7 +519,7 @@ pub fn emit_kotlin(models: &[ModelSpec], operations: &[OperationCall], schema_ty
     emit_kotlin_enums(&mut out, &decls);
     emit_kotlin_inputs(&mut out, &schema_types.inputs);
     emit_kotlin_operations(&mut out, operations);
-    let models_json = serde_json::to_string(models).unwrap().replace('$', "${'$'}");
-    if !models.is_empty() { writeln!(out, "val modelsJSON = \"\"\"{models_json}\"\"\"").unwrap(); }
+    let models_json = specs_text(models, operations).replace('$', "${'$'}");
+    if !models.is_empty() || !operations.is_empty() { writeln!(out, "val modelsJSON = \"\"\"{models_json}\"\"\"").unwrap(); }
     out
 }

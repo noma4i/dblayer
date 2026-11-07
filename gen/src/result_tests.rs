@@ -58,15 +58,17 @@ fn a_wrong_returns_declaration_is_named_with_its_line() {
 }
 
 #[test]
-fn every_operation_declares_its_returns_and_a_void_one_is_raw() {
+fn the_specs_hold_the_returns_of_every_operation_and_a_void_one_is_raw() {
     let void = "operation :sign_out do\n  mutation \"SignOut\"\nend\n";
     let declared = parse_all(&[PRICING, void]).unwrap();
-    let swift = emit_swift(&declared.models, &declared.operations, &SchemaTypes::default());
-    let kotlin = emit_kotlin(&declared.models, &declared.operations, &SchemaTypes::default());
-    for (source, pricing, signed) in [
-        (&swift, "    public static let pricingLoadReturns = #\"{\"name\":\"pricing_load\",\"kind\":{\"type\":\"object\"}", "    public static let signOutReturns = #\"{\"name\":\"sign_out\",\"kind\":{\"type\":\"raw\"}"),
-        (&kotlin, "    const val pricingLoadReturns = \"\"\"{\"name\":\"pricing_load\",\"kind\":{\"type\":\"object\"}", "    const val signOutReturns = \"\"\"{\"name\":\"sign_out\",\"kind\":{\"type\":\"raw\"}"),
-    ] {
-        assert!(source.contains(pricing) && source.contains(signed), "declarations missing\n{source}");
+    let specs = serde_json::from_str::<serde_json::Value>(&crate::specs_text(&declared.models, &declared.operations)).unwrap();
+    let operations = specs["operations"].as_array().unwrap();
+    assert_eq!(operations.iter().map(|operation| operation["name"].as_str().unwrap()).collect::<Vec<_>>(), ["Pricing", "SignOut"]);
+    assert_eq!(operations[0]["returns"]["kind"]["type"], "object");
+    assert_eq!(operations[0]["returns"]["fields"][0]["name"], "gifts");
+    assert_eq!(operations[1]["returns"]["kind"]["type"], "raw");
+    for source in [emit_swift(&declared.models, &declared.operations, &SchemaTypes::default()), emit_kotlin(&declared.models, &declared.operations, &SchemaTypes::default())] {
+        assert!(source.contains("modelsJSON") && source.contains(r#""operations":[{"name":"Pricing""#), "an operations-only project still has its specs\n{source}");
+        assert!(!source.contains("Returns"), "no constant carries a declaration");
     }
 }

@@ -24,7 +24,7 @@ private const val QUEUE_FEED = """{"data":{"feed":{"nodes":[{"__typename":"Momen
 private const val QUEUE_UPDATED = """{"data":{"updateMoment":{"__typename":"Moment","id":"1","uuid":"a","text":"edited","likedByMe":false,"media":{},"createdAt":"2026-10-08T00:00:00.000Z"}}}"""
 private val QUEUE_DEFS = """[{"name":"MomentsFeed","document":"query MomentsFeed(${'$'}first: Int, ${'$'}after: String) { feed(first: ${'$'}first, after: ${'$'}after) { nodes { id uuid text likedByMe media createdAt } pageInfo { hasNextPage endCursor } } }"},{"name":"UpdateMoment","document":"mutation UpdateMoment(${'$'}id: ID!, ${'$'}text: String) { updateMoment(id: ${'$'}id, text: ${'$'}text) { id uuid text likedByMe media createdAt } }"},{"name":"DeleteMoment","document":"mutation DeleteMoment(${'$'}id: ID!) { deleteMoment(id: ${'$'}id) { id } }"}]"""
 
-private fun momentsKeepingUpdates(): String = JsonArray(Json.parseToJsonElement(modelsJSON).jsonArray.map { model ->
+private fun momentsKeepingUpdates(): String = JsonArray(Json.parseToJsonElement(modelsArrayJSON).jsonArray.map { model ->
     val fields = model.jsonObject
     if (fields["key"] != JsonPrimitive("Moment")) model else {
         val actions = fields.getValue("actions").jsonArray.map { action ->

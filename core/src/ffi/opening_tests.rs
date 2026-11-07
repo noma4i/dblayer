@@ -128,7 +128,7 @@ async fn open_carries_the_upload_declaration_and_frees_the_slot_when_it_is_refus
     use super::super::database_tests::Plain;
     let slot = OpenDatabase::new();
     for (name, accepted) in [("Missing", false), ("CreateBlob", true)] {
-        let options = OpenOptions { operations: vec![OperationDefinition { name: "CreateBlob".into(), document: "mutation CreateBlob { createBlob { url } }".into(), returns: None }] };
+        let options = OpenOptions { operations: vec![OperationDefinition { name: "CreateBlob".into(), document: "mutation CreateBlob { createBlob { url } }".into() }] };
         let opened = slot.open(config(), clip_with_blob(name), options, crate::ffi::OpenPorts { transport: Some(Arc::new(Plain)), endpoint: Some(crate::ffi::FAKE_ENDPOINT.into()), ..Default::default() }, None).await;
         match opened {
             Ok(_) => assert!(accepted, "{name} was opened"),
@@ -278,7 +278,7 @@ async fn life_open_ports_executor() {
 #[tokio::test]
 async fn life_open_executor_runs_the_operation() {
     let slot = OpenDatabase::new();
-    let operations = vec![OperationDefinition { name: "Greeting".into(), document: "query Greeting($name: String!) { greeting(name: $name) }".into(), returns: None }];
+    let operations = vec![OperationDefinition { name: "Greeting".into(), document: "query Greeting($name: String!) { greeting(name: $name) }".into() }];
     let ports = OpenPorts { endpoint: Some(crate::ffi::FAKE_ENDPOINT.into()), executor: Some(Arc::new(super::super::database_tests::Plain)), ..Default::default() };
     let database = slot.open(config(), "[]".into(), OpenOptions { operations }, ports, None).await.unwrap();
     database.set_online(true).unwrap();

@@ -25,7 +25,7 @@ class MediaPreloadTest {
     fun aMediaRefetchAfterMutationReadsTheWholeStaleWindow() = bounded {
         try {
             closeForCleanup()
-            val original = Json.parseToJsonElement(modelsJSON).jsonArray
+            val original = Json.parseToJsonElement(modelsArrayJSON).jsonArray
             val moment = original.first { it.jsonObject["key"]?.jsonPrimitive?.content == "Moment" }.jsonObject
             val like = moment.getValue("actions").jsonArray.first { it.jsonObject["name"]?.jsonPrimitive?.content == "like" }.jsonObject
             val action = JsonObject(like + mapOf("refetch" to JsonArray(listOf(JsonPrimitive("visual_media"))), "optimistic" to JsonObject(emptyMap())))

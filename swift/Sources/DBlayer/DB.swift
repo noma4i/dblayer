@@ -73,6 +73,6 @@ public enum DB {
   @_spi(Testing) public static func adopt(_ database: Database?) { slot = database }
 
   private static func definitions(_ operations: [any GraphQLOperation.Type]) -> [OperationDefinition] {
-    operations.map { OperationDefinition(name: $0.operationName, document: $0.document, returns: $0.returns) }
+    operations.map { OperationDefinition(name: $0.operationName, document: $0.document) }
   }
 }

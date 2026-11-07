@@ -50,7 +50,7 @@ private class MemberEventsTransport(override val base: MockTransport = MockTrans
 
 private fun clubModels(keep: Boolean = false, complete: Boolean = false, keepLetter: Boolean = false, events: Boolean = false, destroy: Boolean = false): String {
     if (!keep && !complete && !keepLetter && !events && !destroy) return modelsJSON
-    return JsonArray(Json.parseToJsonElement(modelsJSON).jsonArray.map { model ->
+    return JsonArray(Json.parseToJsonElement(modelsArrayJSON).jsonArray.map { model ->
         val fields = model.jsonObject
         if (((keep || destroy) && fields["key"] == JsonPrimitive("Club")) || (keepLetter && fields["key"] == JsonPrimitive("Letter"))) {
             var actions = fields.getValue("actions").jsonArray.map { action ->

@@ -21,7 +21,7 @@ extension BridgeProbeTests {
     #expect(try encoded == JSONValue.read(#"{"default":"nested","when":"now","class":"kind","container":"box","r":"reader","child":{"default":"d","when":"w","class":"c"}}"#))
     let transport = MockTransport()
     try await reopen(config: Config(path: nil, dataVersion: nil), modelsJson: modelsJSON, transport: transport)
-    try await DB.database.registerOperations(defsJson: try declaringReturns(#"[{"name":"KeywordCall","document":"query KeywordCall($class: String!) { keywordCall(class: $class) { default when container r } }"}]"#))
+    try await DB.database.registerOperations(defsJson: #"[{"name":"KeywordCall","document":"query KeywordCall($class: String!) { keywordCall(class: $class) { default when container r } }"}]"#)
     transport.enqueue("KeywordCall", reply: #"{"data":{"keywordCall":{"default":"answer","when":"now","container":"box","r":"reader"}}}"#)
     let answer = try await Operations.when(class: "request")
     #expect(answer.default == "answer" && answer.when == "now" && answer.container == "box" && answer.r == "reader")

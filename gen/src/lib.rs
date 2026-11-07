@@ -16,7 +16,7 @@ mod members;
 mod enums;
 mod scalars;
 mod unions;
-pub use emit::{emit_swift, emit_swift_with, emit_kotlin, Access};
+pub use emit::{emit_swift, emit_swift_with, emit_kotlin, specs_text, Access};
 pub use enums::EnumDecl;
 pub use scalars::Scalars;
 pub use operation::OperationCall;

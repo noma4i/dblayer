@@ -23,6 +23,7 @@ mod nested_decode;
 mod newer;
 mod reserved;
 mod search;
+mod specs;
 mod types;
 
 pub use action::*;
@@ -34,6 +35,7 @@ pub use ephemeral::{EphemeralSpec, Storage};
 pub use merge::MergeRule;
 pub use reserved::{generated_member_names, reserved_member_names, ReservedMember, LAYOUT, MODEL_NAME, RESERVED_MEMBERS, SINGLETON, SYNC, UPLOADS, WIRE_LAYOUT};
 pub use search::{search_text, SearchPath};
+pub use specs::{OperationSpec, Specs};
 pub use types::{resolve_types, ValueFault};
 
 pub const TYPENAME: &str = "__typename";

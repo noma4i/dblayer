@@ -8,7 +8,7 @@ use tokio::runtime::Runtime;
 use crate::store::{OpenReport, Store};
 use crate::identity::RowId;
 use crate::runtime::{Clock, ManualClock, SystemClock};
-use crate::schema::ModelSpec;
+use crate::schema::{FieldSpec, ModelSpec, Specs};
 use crate::transport::{self as core, EncryptedTransport, Exchange};
 use crate::owners::write::upload::UploadOperations;
 use super::open_slot::OpenLease;
@@ -113,7 +113,7 @@ impl TestClock {
 type OutcomesByKey = Arc<Mutex<HashMap<(u64, u64, u64), WireOperationOutcome>>>;
 
 #[derive(Clone, uniffi::Object)]
-pub struct Database { pub(super) lease: Arc<OnceLock<Arc<OpenLease>>>, pub(super) life: Arc<crate::owners::life::Life>, pub(super) db: Arc<Store>, pub(super) remote: bool, pub(super) reads: crate::owners::read::ReadOperations, pub(super) uploads: Option<UploadOperations>, pub(super) jobs: Arc<super::upload_rounds::RoundJobsSlot>, pub(super) shows: Arc<super::transfer_status::Shows>, pub(super) outcomes: OutcomesByKey, pub(super) loads: Arc<super::load_order::LoadOrder>, wires: Arc<HashMap<String, Arc<WireModel>>> }
+pub struct Database { pub(super) lease: Arc<OnceLock<Arc<OpenLease>>>, pub(super) life: Arc<crate::owners::life::Life>, pub(super) db: Arc<Store>, pub(super) remote: bool, pub(super) reads: crate::owners::read::ReadOperations, pub(super) returns: Arc<HashMap<String, crate::schema::FieldSpec>>, pub(super) uploads: Option<UploadOperations>, pub(super) jobs: Arc<super::upload_rounds::RoundJobsSlot>, pub(super) shows: Arc<super::transfer_status::Shows>, pub(super) outcomes: OutcomesByKey, pub(super) loads: Arc<super::load_order::LoadOrder>, wires: Arc<HashMap<String, Arc<WireModel>>> }
 
 pub(super) struct Wiring {
     pub transport: Option<Arc<dyn core::Upstream>>,
@@ -145,7 +145,8 @@ impl Database {
         clock: Arc<dyn Clock>,
         wire: impl FnOnce(&Arc<Store>, &Arc<dyn Clock>) -> Result<Wiring, DbError>,
     ) -> Result<Arc<Self>, DbError> {
-        let models: Vec<ModelSpec> = serde_json::from_str(&models_json)?;
+        let Specs { models, operations } = Specs::parse(&models_json)?;
+        let returns: Arc<HashMap<String, FieldSpec>> = Arc::new(operations.into_iter().map(|operation| (operation.name, operation.returns)).collect());
         let uploads = upload_steps_of(&models)?;
         let keys: Vec<String> = models.iter().map(|model| model.key.to_string()).collect();
         let db = Arc::new(Store::open_models(config.path.as_deref().map(Path::new), models, config.data_version.as_deref())?);
@@ -159,7 +160,7 @@ impl Database {
         life.on_committed(move |broadcast| committed_shows.touch(&broadcast.rows));
         let remote = transport.is_some();
         let wires = keys.into_iter().map(|key| db.spec(&key).map(|spec| (key, Arc::new(WireModel::of(spec)))).map_err(DbError::from)).collect::<Result<_, _>>()?;
-        Ok(Arc::new(Self { lease: Arc::new(OnceLock::new()), life, db, remote, reads, uploads, jobs, shows, outcomes: Arc::default(), loads: Arc::default(), wires: Arc::new(wires) }))
+        Ok(Arc::new(Self { lease: Arc::new(OnceLock::new()), life, db, remote, reads, returns, uploads, jobs, shows, outcomes: Arc::default(), loads: Arc::default(), wires: Arc::new(wires) }))
     }
 
     pub async fn open(config: Config, models_json: String, ports: super::OpenPorts) -> Result<Arc<Self>, DbError> {
@@ -318,7 +319,6 @@ impl Database {
                 let size = size.as_u64().and_then(|size| u32::try_from(size).ok()).ok_or_else(|| DbError::Invalid { detail: format!("operation {name} has invalid pageSize") })?;
                 operation = operation.paged(size);
             }
-            operation = operation.returning(def.get("returns").and_then(Value::as_str).map(str::to_string));
             if let Some(kind) = crate::owners::calls::CallKind::declared_by(&document) {
                 names.push((name.clone(), kind));
             }
@@ -342,8 +342,8 @@ impl Database {
         uploads.check(|name| self.reads.get(name).is_some()).map_err(|detail| DbError::Invalid { detail })
     }
     pub async fn call(&self, epoch: u64, operation: String, variables_json: String) -> Result<String, DbError> {
-        let Some(returns) = self.reads.get(&operation).and_then(|declared| declared.returns.clone()) else {
-            return Err(if self.life.published().closed { super::command::ended() } else { DbError::Invalid { detail: format!("operation {operation} has no returns declaration") } });
+        let Some(returns) = self.returns.get(&operation).cloned() else {
+            return Err(if self.life.published().closed { super::command::ended() } else { DbError::Invalid { detail: format!("operation {operation} is not declared in the specs") } });
         };
         let root = self.run(epoch, operation, variables_json).await?;
         self.offload(move || super::call_result::normalize(&root, &returns).map_err(|detail| DbError::Invalid { detail })).await
