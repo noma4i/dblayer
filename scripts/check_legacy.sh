@@ -32,9 +32,9 @@ count_names() {
 counts() {
   local tree="$1" ref="$2" lines names_legacy dev_lines names_dev
   # shellcheck disable=SC2086
-  lines="$(count "$tree" "$ref" "$LEGACY_RE" $LEGACY_PATHS ':(exclude)scripts/check_legacy.sh' ':(exclude)scripts/release.sh' ':(exclude)scripts/check_release_modes.sh')" || return $?
+  lines="$(count "$tree" "$ref" "$LEGACY_RE" $LEGACY_PATHS ':(exclude)scripts/check_legacy.sh' ':(exclude)scripts/release.sh' ':(exclude)scripts/check_release_modes.sh' ':(exclude)scripts/check_markers_test.py')" || return $?
   names_legacy="$(count_names "$tree" "$ref" "$LEGACY_NAME_RE")" || return $?
-  dev_lines="$(count "$tree" "$ref" "$DEV_RE" . ':(exclude)scripts/check_legacy.sh' ':(exclude)scripts/check_release_modes.sh')" || return $?
+  dev_lines="$(count "$tree" "$ref" "$DEV_RE" . ':(exclude)scripts/check_legacy.sh' ':(exclude)scripts/check_release_modes.sh' ':(exclude)scripts/check_markers_test.py')" || return $?
   names_dev="$(count_names "$tree" "$ref" "$DEV_NAME_RE")" || return $?
   printf '%s %s\n' "$((lines + names_legacy))" "$((dev_lines + names_dev))"
 }
