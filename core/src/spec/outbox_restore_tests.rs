@@ -1,7 +1,7 @@
 //! Owner-level tests of the `outbox` machine: the phase `Restoring` with its held calls, the classes of the opening and the declarations. Names are the `Test` column.
 
 use super::outbox_harness::*;
-use super::ref_outbox::{Policy, St};
+use super::ref_outbox::{epoch_started_effects, restored_effects, Policy, St};
 use crate::owners::contract::{Committed, EpochStarted, ModelsReset, Online, RejectReason, Rejected};
 use crate::owners::session::StoredAnswer;
 use crate::owners::write::outbox::{CommitKind, Fault, OutboxAnswer, OutboxInput, OutboxOutcome, Phase, Receipt, StoredOp};
@@ -96,7 +96,8 @@ fn out_restoring_epoch_ended() {
         assert_eq!(answers(&ended, reply), vec![OutboxAnswer::Err(Fault::Interrupted)], "reply {reply}");
     }
     assert_eq!(answers(&ended, 43), vec![OutboxAnswer::Outcome(OutboxOutcome::Interrupted)]);
-    assert!(restore(&mut twin, vec![stored(7, "r")]).is_empty(), "a late Restored of the ended epoch is a foreign input");
+    let late = twin.post(OutboxInput::Restored { ops: vec![stored(7, "r")], pending_lost: false });
+    assert_eq!((told(&late), late.is_empty()), (Vec::new(), true), "a late Restored of the ended epoch is a foreign input and tells nobody: {late:?}");
 }
 
 #[test]
@@ -117,10 +118,17 @@ fn out_restoring_foreign() {
 }
 
 #[test]
+fn out_epoch_started_tells_lifecycle() {
+    let twin = Twin::bare();
+    assert_eq!(told(&twin.started), epoch_started_effects(), "{:?}", twin.started);
+}
+
+#[test]
 fn out_restored() {
     let mut twin = Twin::bare();
     declare(&mut twin);
     let effects = twin.post(OutboxInput::Restored { ops: vec![stored(7, "r")], pending_lost: false });
+    assert_eq!(told(&effects), restored_effects(), "{effects:?}");
     assert_eq!((twin.state().phase, twin.stage(7), sends(&effects), kinds(&effects).len()), (Phase::Classified, Some(St::PersistingAttempt), 0, 0), "{effects:?}");
     assert_eq!(classified(&effects), vec![EPOCH], "{effects:?}");
 }
@@ -230,6 +238,7 @@ fn out_waiting_declaration_other() {
 fn out_open_queue_unreadable() {
     let mut twin = Twin::bare();
     let effects = twin.post(OutboxInput::RestoreFailed { error: "disk".into() });
+    assert_eq!(told(&effects), restored_effects(), "{effects:?}");
     assert_eq!(classified(&effects), vec![EPOCH], "{effects:?}");
     assert!(effects.len() == 1 && twin.state().ops.is_empty());
     assert_eq!(twin.state().phase, Phase::Classified);

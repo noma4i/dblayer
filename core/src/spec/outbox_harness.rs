@@ -33,6 +33,14 @@ pub(super) enum OutboxEffect {
     Copy { id: u64, source: String },
 }
 
+pub(super) fn told(effects: &[OutboxEffect]) -> Vec<Eff> {
+    effects.iter().filter_map(|effect| match effect {
+        OutboxEffect::Started { .. } => Some(Eff::Started),
+        OutboxEffect::RestoreClassified { .. } => Some(Eff::RestoreClassified),
+        _ => None,
+    }).collect()
+}
+
 /// The kind of a batch from the ops it holds (`Debug` form of the typed ops).
 pub(super) fn kind_in(input: &str) -> CommitKind {
     if input.contains("ops: [Intent {") { CommitKind::Intent }
@@ -196,6 +204,7 @@ pub(super) struct Twin {
     /// The typed text of the last inputs the Store received (`StoreOp` names).
     pub(super) store_text: String,
     pub(super) session_text: String,
+    pub(super) started: Vec<OutboxEffect>,
 }
 
 impl Twin {
@@ -203,7 +212,9 @@ impl Twin {
     pub(super) fn bare() -> Self {
         let (mut det, log, _) = world(7);
         det.start_epoch(EPOCH);
-        Self { det, log, kept: Vec::new(), batches: BTreeMap::new(), first_pair: BTreeMap::new(), revision: 10, reply: 10, follower: None, store_text: String::new(), session_text: String::new() }
+        det.run_until_quiet(10_000).expect("the owner is quiet");
+        let started = take_fx(&log, None);
+        Self { det, log, kept: Vec::new(), batches: BTreeMap::new(), first_pair: BTreeMap::new(), revision: 10, reply: 10, follower: None, store_text: String::new(), session_text: String::new(), started }
     }
 
     /// The owner in the phase `Ready` with an empty queue.
@@ -385,7 +396,9 @@ pub(super) fn translate(twin: &Twin, id: OpId, effects: Vec<OutboxEffect>, sched
             OutboxEffect::TransferOutcome { outcome, .. } => eff.push(Eff::TransferOutcome(out_of(&outcome))),
             OutboxEffect::TransferOutcomes { .. } => {}
             OutboxEffect::Drained => eff.push(Eff::Drained),
-            OutboxEffect::Copy { .. } | OutboxEffect::Started { .. } | OutboxEffect::RestoreClassified { .. } => {}
+            OutboxEffect::Copy { .. } => {}
+            OutboxEffect::Started { .. } => eff.push(Eff::Started),
+            OutboxEffect::RestoreClassified { .. } => eff.push(Eff::RestoreClassified),
         }
     }
     if scheduled {

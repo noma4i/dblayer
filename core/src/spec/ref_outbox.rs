@@ -94,6 +94,9 @@ pub(super) enum Eff {
     Drained,
     SendNextOfRow,
     TransferOutcome(Out),
+    Started,
+    SnapshotRequest,
+    RestoreClassified,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -270,3 +273,7 @@ pub fn open_step_of(kind: Restored, ctx: &OCtx) -> OStep {
     };
     OStep { next, obs, eff }
 }
+
+pub fn epoch_started_effects() -> Vec<Eff> { vec![Eff::Started, Eff::SnapshotRequest] }
+
+pub fn restored_effects() -> Vec<Eff> { vec![Eff::RestoreClassified] }
