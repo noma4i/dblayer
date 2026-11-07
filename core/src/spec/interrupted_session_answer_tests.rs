@@ -160,3 +160,40 @@ fn sess_prop_resume_once() {
     assert_eq!(rig.det.state(rig.address).unwrap().credential().unwrap().sequence, 1);
 }
 mod session_restored_login_tests;
+
+/// Waits of Session, `interrupted_session_answer`: every column of the row, the first consumer gets the outcome and the next one gets `Ok(None)`.
+#[test]
+fn sess_wait_resume() {
+    assert_eq!(Rig::new().send(ask_answer(1)), [answer(1, Ok(None))], "no restored call: Ok(None)");
+
+    let mut rig = Rig::new();
+    rig.restore();
+    let attempt = rig.start();
+    rig.send(ask_answer(1));
+    rig.send(ask_answer(2));
+    let response = rig.send(SessionInput::Response { request_id: 11, attempt_id: attempt, body: "{\"ok\":true}".into(), sequence: Some(1), refusal: None });
+    let batch = response.iter().find_map(|effect| match effect { SessionEffect::CommitLanding { batch, .. } => Some(*batch), _ => None }).unwrap();
+    let committed = rig.send(SessionInput::Committed(Committed { batch, revision: 1, tables: vec![], rows: None, models: Default::default(), stale_parents: Vec::new(), position: 0 }));
+    let published = rig.send(SessionInput::Published(Published { epoch: 3, identity: Some(4), generation: 0, state: PublishedState::Session, closed: false }));
+    assert_eq!(committed.into_iter().chain(published).filter(|effect| matches!(effect, SessionEffect::ResumeReply { .. })).collect::<Vec<_>>(), [answer(1, Ok(Some("{\"ok\":true}".into()))), answer(2, Ok(None))], "the first consumer gets the body");
+
+    let mut refused = Rig::new();
+    refused.restore();
+    let attempt = refused.start();
+    refused.send(ask_answer(1));
+    refused.send(ask_answer(2));
+    assert_eq!(refused.refuse(attempt), [answer(1, Err(too_large())), answer(2, Ok(None))], "the error of the restored call goes to the first consumer");
+
+    let mut ended = Rig::new();
+    ended.restore();
+    ended.start();
+    ended.send(ask_answer(1));
+    let effects = ended.send(SessionInput::EpochEnded(EpochEnded { epoch: 3, cause: Cause::SessionReset }));
+    assert_eq!(effects.iter().filter(|effect| matches!(effect, SessionEffect::ResumeReply { .. })).collect::<Vec<_>>(), [&answer(1, Err(SessionError::Interrupted))]);
+
+    let mut closed = Rig::new();
+    closed.restore();
+    closed.send(ask_answer(3));
+    let effects = closed.send(SessionInput::Closing);
+    assert_eq!(effects.iter().filter(|effect| matches!(effect, SessionEffect::ResumeReply { .. })).collect::<Vec<_>>(), [&answer(3, Err(SessionError::Closed))]);
+}

@@ -16,7 +16,7 @@ mod ref_feed;
 mod ref_window;
 
 mod lifecycle_tests;
-mod lifecycle_owner_tests;
+pub(crate) mod lifecycle_owner_tests;
 mod lifecycle_restore_tests;
 mod network_owner_tests;
 mod store_owner_tests;

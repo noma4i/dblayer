@@ -25,3 +25,20 @@ fn life_prop_single_published() {
     assert_eq!(call_verdict(&open, 0, false), CallVerdict::Pass, "a database without a session client hands every call to the owners");
     assert_eq!(call_verdict(&Published { closed: true, ..open }, 0, false), CallVerdict::Closed);
 }
+
+/// lifecycle.md call table: in `Resetting` a call with the current epoch goes to the owner.
+#[test]
+fn life_call_resetting() {
+    let published = crate::spec::lifecycle_owner_tests::resetting_published();
+    assert_eq!(published.state, PublishedState::Resetting);
+    assert!(published.identity.is_some());
+    assert_eq!(call_verdict(&published, published.epoch, true), CallVerdict::Pass);
+}
+
+/// lifecycle.md call table: in `Resetting` a call with another epoch gets `NoSession`.
+#[test]
+fn life_call_resetting_stale() {
+    let published = crate::spec::lifecycle_owner_tests::resetting_published();
+    assert_eq!(published.state, PublishedState::Resetting);
+    assert_eq!(call_verdict(&published, published.epoch + 1, true), CallVerdict::Refuse(CallError::NoSession));
+}

@@ -451,4 +451,8 @@ fn life_restore_classified_every_order() {
             assert_eq!(twin.replies(), vec![(7, Ok(()))], "{classified:?}");
         }
     }
+/// The `Published` of the owner while a models reset waits for the Store (state `Resetting`, identity kept).
+pub(crate) fn resetting_published() -> crate::owners::contract::Published {
+    let twin = resetting();
+    twin.det.state(twin.addr).expect("the owner state").published().clone()
 }

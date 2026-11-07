@@ -245,3 +245,55 @@ fn out_prop_landing_no_stale() {
         assert_eq!(announced, marks, "the windows turn stale only for a declared refetch");
     }
 }
+
+fn store_outcome(twin: &mut Twin, batch: u64, outcome: Option<RejectReason>) -> Vec<OutboxEffect> {
+    take_fx(&twin.log, None);
+    let input = match outcome {
+        None => OutboxInput::Committed(Committed { batch, revision: 11, tables: vec!["moments".into()], rows: None, models: Default::default(), stale_parents: Vec::new(), position: 0 }),
+        Some(reason) => OutboxInput::Rejected(Rejected { batch, reason }),
+    };
+    twin.det.post(crate::runtime::Address::<crate::owners::write::outbox::Outbox>::new(OUTBOX_AT), crate::runtime::EpochStamp::Control, input);
+    twin.run();
+    take_fx(&twin.log, state_of(&twin.det))
+}
+
+fn end_epoch(twin: &mut Twin) -> Vec<OutboxEffect> {
+    take_fx(&twin.log, None);
+    twin.det.end_epoch(EPOCH, Cause::SessionReset);
+    twin.run();
+    take_fx(&twin.log, state_of(&twin.det))
+}
+
+/// P-OUT-35: a local write against the Store outcome of its batch, `Closing`, `EpochEnded` and `ModelsReset` in every order gets one answer and one batch.
+#[test]
+fn out_prop_local_write_orders() {
+    #[derive(Clone, Copy, Debug, PartialEq)]
+    enum Event { Write, Outcome, Closing, EpochEnded, ModelsReset }
+    use Event::*;
+    let stale = RejectReason::StaleGeneration { models: vec!["Moment".into()], generation: NEW_GENERATION };
+    let outcomes: [Vec<(u64, Option<RejectReason>)>; 3] = [vec![(1, None)], vec![(1, Some(RejectReason::NoSession))], vec![(1, Some(stale)), (2, None)]];
+    let orders: Vec<_> = super::transfer_harness::permutations(&[Write, Outcome, Closing, EpochEnded, ModelsReset]).into_iter().filter(|order| order.iter().position(|e| *e == Write) < order.iter().position(|e| *e == Outcome)).collect();
+    assert_eq!(orders.len(), 60);
+    for outcome in outcomes {
+        for order in &orders {
+            let mut twin = Twin::new();
+            let mut effects = Vec::new();
+            for event in order {
+                effects.extend(match event {
+                    Write => twin.post(write(LocalWriteKind::SetLocal)),
+                    Outcome => outcome.iter().flat_map(|(batch, result)| store_outcome(&mut twin, *batch, result.clone())).collect(),
+                    Closing => close(&mut twin),
+                    EpochEnded => end_epoch(&mut twin),
+                    ModelsReset => twin.post(OutboxInput::ModelsReset(crate::owners::contract::ModelsReset { epoch: EPOCH, generation: 3, models: vec!["Moment".into()] })),
+                });
+            }
+            let label = format!("{order:?} x {outcome:?}");
+            let closed_first = order.iter().position(|e| *e == Closing) < order.iter().position(|e| *e == Write);
+            let ended_first = order.iter().position(|e| *e == EpochEnded) < order.iter().position(|e| *e == Write);
+            let want: Vec<OutboxAnswer> = if ended_first { Vec::new() } else if closed_first { vec![OutboxAnswer::Err(Fault::Closed)] } else { vec![outcome.last().and_then(|(_, result)| result.clone()).map_or(OutboxAnswer::Ok, |reason| OutboxAnswer::Err(Fault::Rejected(reason)))] };
+            assert_eq!(answers(&effects, WRITE), want, "{label}: exactly one answer, none from the owner for a write of an ended epoch (the runtime answers the caller Interrupted)");
+            assert_eq!(kinds(&effects).len(), if closed_first || ended_first { 0 } else { 1 + outcome.iter().filter(|(_, result)| matches!(result, Some(RejectReason::StaleGeneration { .. }))).count() }, "{label}: one batch per attempt of the Store, none after Closing");
+            assert_eq!(drained(&effects), 1, "{label}: Drained once");
+        }
+    }
+}

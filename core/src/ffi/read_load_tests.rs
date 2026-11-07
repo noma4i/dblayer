@@ -244,3 +244,48 @@ async fn a_blob_stream_follows_the_transfer_of_its_model_row_and_action() {
         }
     }
 }
+
+/// P-NET-08: the owner of the window decides a call that needs the network, the `Connectivity` value of the Store decides nothing.
+#[tokio::test(flavor = "multi_thread")]
+async fn net_prop_offline_decided_by_owner() {
+    const ANSWER: Duration = Duration::from_secs(2);
+    let mut found = Vec::new();
+    {
+        let (db, transport) = open(false).await;
+        crate::test_wait::within(begin(&db).await.result()).await.unwrap();
+        db.db.connectivity().change(false);
+        let before = transport.requests();
+        let refreshed = tokio::time::timeout(ANSWER, refresh(&db)).await;
+        if !matches!(refreshed, Ok(Ok(()))) || transport.requests() != before + 1 { found.push(format!("owner online, Connectivity offline: refresh gave {refreshed:?}, requests {}", transport.requests() - before)); }
+        let next = tokio::time::timeout(ANSWER, more(&db)).await;
+        if !matches!(next, Ok(Ok(LoadMoreResult::Loaded { .. }))) { found.push(format!("owner online, Connectivity offline: load_more gave {next:?}")); }
+    }
+    {
+        let (db, transport) = open(false).await;
+        crate::test_wait::within(begin(&db).await.result()).await.unwrap();
+        db.set_online(false).unwrap();
+        db.db.connectivity().change(true);
+        let before = transport.requests();
+        let refreshed = tokio::time::timeout(ANSWER, refresh(&db)).await;
+        if !matches!(refreshed, Ok(Err(DbError::Offline { .. }))) || transport.requests() != before { found.push(format!("owner offline, Connectivity online: refresh gave {refreshed:?}, requests {}", transport.requests() - before)); }
+        let next = tokio::time::timeout(ANSWER, more(&db)).await;
+        if !matches!(next, Ok(Err(DbError::Offline { .. }))) || transport.requests() != before { found.push(format!("owner offline, Connectivity online: load_more gave {next:?}, requests {}", transport.requests() - before)); }
+    }
+    assert!(found.is_empty(), "{found:#?}");
+}
+
+/// P-LIFE-21 and D-127: a stream that outlives `close` answers `Closed` and holds neither `Database` nor `Store`.
+#[tokio::test(flavor = "multi_thread")]
+async fn life_closed_stream_releases_store() {
+    let (db, _transport) = open(false).await;
+    let (stream, _first) = first_value(&db).await;
+    db.close_database().await.unwrap();
+    assert!(matches!(crate::test_wait::within(stream.refresh()).await, Err(DbError::Closed { .. })));
+    assert!(matches!(crate::test_wait::within(stream.load_more()).await, Err(DbError::Closed { .. })));
+    assert!(matches!(crate::test_wait::within(stream.pull()).await, Some(ReadValue::Ended { cause: super::ReadEnd::Closed })));
+    let (database, store) = (Arc::downgrade(&db), Arc::downgrade(&db.db));
+    drop(db);
+    crate::test_wait::yield_until("the stream keeps the Database", || database.upgrade().is_none()).await;
+    crate::test_wait::yield_until("the stream keeps the Store", || store.upgrade().is_none()).await;
+    drop(stream);
+}

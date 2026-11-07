@@ -465,3 +465,34 @@ async fn a_database_without_a_session_writes_a_local_row_through_local_writes() 
     assert!(db.find("moments", &crate::identity::RowId::new("m1").unwrap()).unwrap().is_some());
     closed(&life).await;
 }
+
+/// lifecycle.md `StartObserving`: `open` starts the platform observer once, and the current value it reports first reaches Network.
+#[tokio::test(flavor = "multi_thread")]
+async fn life_open_starts_observers() {
+    use crate::owners::contract::NetworkEvent;
+    use crate::owners::lifecycle::Peer;
+    use crate::owners::network::NetworkInput;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Mutex;
+    struct Counting(Arc<AtomicUsize>);
+    impl crate::ffi::PlatformObserver for Counting {
+        fn start(&self, sink: Arc<crate::ffi::OnlineSink>) { self.0.fetch_add(1, Ordering::SeqCst); sink.set_online(true); }
+        fn stop(&self) {}
+    }
+    let started = Arc::new(AtomicUsize::new(0));
+    let slot = crate::ffi::OpenDatabase::new();
+    let config = crate::ffi::Config { path: None, data_version: None };
+    let transport = Arc::new(crate::ffi::database_tests::Plain);
+    let ports = crate::ffi::OpenPorts { transport: Some(transport), endpoint: Some(crate::ffi::FAKE_ENDPOINT.into()), ..Default::default() };
+    let database = slot.open(config, crate::ffi::EMPTY_SPECS.into(), crate::ffi::OpenOptions::default(), ports, Some(Arc::new(Counting(started.clone())))).await.unwrap();
+    assert_eq!(started.load(Ordering::SeqCst), 1, "the observer started once before open returned");
+    let life = database.life_handle();
+    let heard = Arc::new(Mutex::new(Vec::new()));
+    let sink = heard.clone();
+    life.on_network(Peer::Windows, move |event| sink.lock().unwrap().push(event));
+    let epoch = life.published().epoch;
+    life.wiring.to_network(NetworkInput::SnapshotRequest { owner: Peer::Windows, epoch });
+    crate::test_wait::yield_until("the snapshot holds the value the observer reported", || heard.lock().unwrap().contains(&NetworkEvent::Online { online: true, epoch: Some(epoch) })).await;
+    assert_eq!(started.load(Ordering::SeqCst), 1);
+    database.close_database().await.unwrap();
+}
