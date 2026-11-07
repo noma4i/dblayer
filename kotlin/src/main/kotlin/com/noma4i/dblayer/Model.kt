@@ -19,13 +19,15 @@ data class OperationFailure(val kind: String, val message: String, val extension
 
 @Serializable
 data class SyncInfo(
-    val state: SyncState = SyncState.Synced,
-    val actions: List<String> = emptyList(),
-    val dirtyFields: List<String> = emptyList(),
-    val error: OperationFailure? = null,
-    val attempts: Int = 0,
-    val since: Long = 0,
+    val state: SyncState,
+    val actions: List<String>,
+    val dirtyFields: List<String>,
+    val error: OperationFailure?,
+    val attempts: Int,
+    val since: Long,
 ) {
+    constructor() : this(SyncState.Synced, emptyList(), emptyList(), null, 0, 0)
+
     companion object
 }
 
@@ -49,9 +51,9 @@ data class UploadInfo(
     @SerialName("total_bytes") val totalBytes: ULong,
     /** The sent share of the bytes in percent, 0 to 100. */
     val progress: Double,
-    @SerialName("wait_reason") val waitReason: String? = null,
-    val attempts: Int = 0,
-    val error: OperationFailure? = null,
+    @SerialName("wait_reason") val waitReason: String?,
+    val attempts: Int,
+    val error: OperationFailure?,
 ) {
     companion object
 }

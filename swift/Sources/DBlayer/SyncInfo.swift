@@ -9,13 +9,23 @@ public struct OperationFailure: Codable, Sendable, Equatable {
 }
 
 public struct SyncInfo: Codable, Sendable, Equatable {
-  public var state: SyncState = .synced
-  public var actions: [String] = []
-  public var dirtyFields: [String] = []
-  public var error: OperationFailure?
-  public var attempts: Int = 0
-  public var since: Int64 = 0
-  public init() {}
+  public let state: SyncState
+  public let actions: [String]
+  public let dirtyFields: [String]
+  public let error: OperationFailure?
+  public let attempts: Int
+  public let since: Int64
+
+  public init() { self.init(state: .synced, actions: [], dirtyFields: [], error: nil, attempts: 0, since: 0) }
+
+  init(state: SyncState, actions: [String], dirtyFields: [String], error: OperationFailure?, attempts: Int, since: Int64) {
+    self.state = state
+    self.actions = actions
+    self.dirtyFields = dirtyFields
+    self.error = error
+    self.attempts = attempts
+    self.since = since
+  }
 }
 
 public enum UploadStatus: String, Codable, Sendable { case waiting, preparing, queued, uploading, sending, done, failed, cancelled }
@@ -71,13 +81,7 @@ extension OperationFailure {
 
 extension SyncInfo {
   public init(wire: WireSync) {
-    self.init()
-    state = SyncState(wire: wire.state)
-    actions = wire.actions
-    dirtyFields = wire.dirtyFields
-    error = wire.error.map(OperationFailure.init(wire:))
-    attempts = Int(wire.attempts)
-    since = wire.since
+    self.init(state: SyncState(wire: wire.state), actions: wire.actions, dirtyFields: wire.dirtyFields, error: wire.error.map(OperationFailure.init(wire:)), attempts: Int(wire.attempts), since: wire.since)
   }
 }
 
