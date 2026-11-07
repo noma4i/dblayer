@@ -2,7 +2,7 @@
 //! `WindowsInput::Transport`. A cancelled request gives no answer.
 
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex, PoisonError};
+use std::sync::Arc;
 
 use tokio::runtime::Handle;
 
@@ -26,7 +26,7 @@ pub trait WindowCodec: Send + Sync + 'static {
     }
 }
 
-type Open = Arc<Mutex<HashMap<(RequestId, u32), CancelToken>>>;
+type Open = HashMap<(RequestId, u32), CancelToken>;
 
 pub type WindowReader = Arc<dyn Fn(&WindowKey) -> Result<Option<SavedWindow>, String> + Send + Sync>;
 
@@ -67,13 +67,14 @@ impl WindowIo {
         self
     }
 
-    fn request(&self, stamp: EpochStamp, key: WindowKey, (request, attempt): (RequestId, u32), (page, epoch, kind): (u32, Epoch, RequestKind), cursor: Option<String>, back: &Back<Windows>) {
+    fn request(&mut self, stamp: EpochStamp, key: WindowKey, (request, attempt): (RequestId, u32), (page, epoch, kind): (u32, Epoch, RequestKind), cursor: Option<String>, back: &Back<Windows>) {
         if let Err(refused) = (self.admit)(epoch) {
             return back.reply(stamp, WindowsInput::Failure { request, attempt, error: RequestError { message: refused.0, class: ErrorClass::Permanent, source: None } });
         }
         let token = CancelToken::new();
-        self.open.lock().unwrap_or_else(PoisonError::into_inner).insert((request, attempt), token.clone());
-        let (transport, codec, open, back, admit, gate, now) = (self.transport.clone(), self.codec.clone(), self.open.clone(), back.clone(), self.admit.clone(), self.gate.clone(), self.now.clone());
+        self.open.retain(|_, flight| !flight.is_cancelled());
+        self.open.insert((request, attempt), token.clone());
+        let (transport, codec, back, admit, gate, now) = (self.transport.clone(), self.codec.clone(), back.clone(), self.admit.clone(), self.gate.clone(), self.now.clone());
         let launch = self.counted.as_ref().map(crate::runtime::Handle::launch);
         #[cfg(test)]
         let flight = self.flights.as_ref().map(super::ports::InFlight::start);
@@ -89,8 +90,9 @@ impl WindowIo {
                     ask(transport.as_deref(), (&gate, epoch), codec.as_ref(), (&key, page, kind), cursor.as_deref()).await
                 } => Some(outcome),
             };
-            open.lock().unwrap_or_else(PoisonError::into_inner).remove(&(request, attempt));
-            if let Some(outcome) = outcome.filter(|_| !token.is_cancelled()) {
+            let delivered = outcome.filter(|_| !token.is_cancelled());
+            token.cancel();
+            if let Some(outcome) = delivered {
                 back.reply(stamp, match outcome {
                     TransportOutcome::Response(page) => WindowsInput::Response { request, attempt, page, now: now() },
                     TransportOutcome::Error(error) => WindowsInput::Failure { request, attempt, error },
@@ -113,9 +115,8 @@ impl WindowIo {
         None
     }
 
-    fn cancel(&self, request: RequestId, attempt: u32) {
-        let token = self.open.lock().unwrap_or_else(PoisonError::into_inner).remove(&(request, attempt));
-        if let Some(token) = token {
+    fn cancel(&mut self, request: RequestId, attempt: u32) {
+        if let Some(token) = self.open.remove(&(request, attempt)) {
             token.cancel();
         }
     }
