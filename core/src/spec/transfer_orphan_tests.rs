@@ -17,6 +17,7 @@ fn with_upload(twin: &mut Twin, key: &str) -> TransferId {
 
 fn orphan_restart(orphans: Vec<(String, String)>) -> Twin {
     let mut twin = Twin::bare(1);
+    twin.post(TransferInput::RegisterOperations { declarations: vec![("Moment".into(), "upload".into())] });
     twin.post(TransferInput::Restored { uploads: Vec::new(), outcomes: Default::default(), orphans, batches: Default::default() });
     twin
 }
@@ -53,6 +54,16 @@ fn xfer_orphan_abort_sent() {
     assert_eq!(out.orphan_aborts(), vec!["u9".to_string()]);
     let again = twin.post(TransferInput::RestoreReady { epoch: EPOCH });
     assert!(again.orphan_aborts().is_empty(), "an abort in flight is not sent twice");
+}
+
+#[test]
+fn xfer_orphan_abort_waits_declaration() {
+    let mut twin = Twin::bare(1);
+    twin.post(TransferInput::Restored { uploads: Vec::new(), outcomes: Default::default(), orphans: vec![("u9".into(), KEY.into())], batches: Default::default() });
+    twin.post(TransferInput::RestoreReady { epoch: EPOCH });
+    assert!(twin.online(true).orphan_aborts().is_empty(), "an undeclared abort operation would be refused for good and drop the orphan");
+    let out = twin.post(TransferInput::RegisterOperations { declarations: vec![("Moment".into(), "upload".into())] });
+    assert_eq!(out.orphan_aborts(), vec!["u9".to_string()]);
 }
 
 #[test]

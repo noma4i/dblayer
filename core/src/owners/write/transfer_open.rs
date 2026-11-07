@@ -199,6 +199,7 @@ impl TransferState {
             return;
         }
         let ready: Vec<TransferId> = self.waiting.iter().filter(|(_, (row, _))| self.declarations.contains(&(row.mutation.model.clone(), row.mutation.action.clone()))).map(|(id, _)| *id).collect();
+        let classified = !ready.is_empty();
         for id in ready {
             if let Some((row, outcomes)) = self.waiting.remove(&id) {
                 self.transfers.remove(&id);
@@ -207,6 +208,10 @@ impl TransferState {
                 }
                 self.classify_declared(row, &outcomes, fx);
             }
+        }
+        if self.phase == Phase::Ready {
+            self.send_orphans(false, fx);
+            if classified { self.start_in_order(fx); }
         }
     }
 

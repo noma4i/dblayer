@@ -95,6 +95,26 @@ fn xfer_restoring_register() {
 }
 
 #[test]
+fn xfer_prop_online_before_declaration() {
+    #[derive(Clone, Copy, Debug)]
+    enum Event { Online, Restored, RestoreReady, Register }
+    use Event::*;
+    for order in [[Online, Restored, RestoreReady, Register], [Restored, Online, RestoreReady, Register], [Restored, RestoreReady, Register, Online]] {
+        let mut twin = Twin::bare(1);
+        for event in order {
+            match event {
+                Online => { twin.online(true); }
+                Restored => { twin.post(TransferInput::Restored { uploads: vec![partly(1, KEY)], outcomes: Default::default(), orphans: Vec::new(), batches: Default::default() }); }
+                RestoreReady => { twin.post(TransferInput::RestoreReady { epoch: EPOCH }); }
+                Register => { twin.post(TransferInput::RegisterOperations { declarations: vec![("Moment".into(), "upload".into())] }); }
+            }
+        }
+        assert_eq!(twin.stage(1), TransferStage::PersistingAttempt, "{order:?}: the step of the restored transfer starts once it is declared and the network is up");
+        assert_eq!(twin.commit().steps().len(), 1, "{order:?}: one physical step");
+    }
+}
+
+#[test]
 fn xfer_restore_ready() {
     let (mut twin, _) = Twin::opened(vec![partly(1, KEY), partly(2, OTHER)], Default::default());
     twin.online(true);

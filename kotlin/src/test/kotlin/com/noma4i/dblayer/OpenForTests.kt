@@ -130,6 +130,7 @@ suspend fun reopenClocked(modelsJson: String, transport: MockTransport, operatio
     val credential = credentialOf(Config(path, null))
     val restored = credential.get() != null
     val clock = DBlayer.openTesting(transport, withRawCalls(modelsJson), path = path, startMillis = startMillis, encrypted = standEncrypted(), credentials = credential, http = server)
+    DBlayer.database.setOnline(true)
     DBlayer.database.registerOperations(withSessionProfile(operations))
     signIn(DBlayer.database, restored)
     return clock

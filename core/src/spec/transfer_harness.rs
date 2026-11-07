@@ -238,6 +238,7 @@ impl Twin {
 
     pub fn with_slots(slots: u32) -> Self {
         let mut twin = Self::bare(slots);
+        twin.post(TransferInput::RegisterOperations { declarations: vec![("Moment".into(), "upload".into())] });
         twin.post(TransferInput::Restored { uploads: Vec::new(), outcomes: Default::default(), orphans: Vec::new(), batches: Default::default() });
         twin.post(TransferInput::RestoreReady { epoch: EPOCH });
         twin.post(TransferInput::Online(Online(true)));

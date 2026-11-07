@@ -106,6 +106,7 @@ fn world() -> World {
     let transfers = det.add::<Transfers>("transfers", TransferState::new(EPOCH, 2, TransferPeers { store, outbox, rounds: None }), executor);
     det.start_epoch(EPOCH);
     let mut world = World { det, spawn, stub, transfers, files, codec, answers, shown, dir };
+    world.post(TransferInput::RegisterOperations { declarations: vec![("Moment".into(), "upload".into())] });
     world.post(TransferInput::Restored { uploads: Vec::new(), outcomes: Default::default(), orphans: Vec::new(), batches: Default::default() });
     world.post(TransferInput::RestoreReady { epoch: EPOCH });
     world.post(TransferInput::Online(Online(true)));

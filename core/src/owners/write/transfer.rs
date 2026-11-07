@@ -135,7 +135,7 @@ impl TransferState {
 
     /// `abort` of every orphan whose abort is not in flight, when the network is up. `network`: the call comes from `Online(true)` or `RestoreReady`, so an abort already in flight is owed again.
     pub(super) fn send_orphans(&mut self, network: bool, fx: &mut Fx) {
-        if self.online != Some(true) || self.ended {
+        if self.online != Some(true) || self.ended || self.declarations.is_empty() {
             return;
         }
         for (upload_id, key) in &self.orphans {

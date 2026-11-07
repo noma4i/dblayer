@@ -163,8 +163,6 @@ extension BridgeProbeTests {
         await DB.closeForCleanup()
         _ = try await DB.openTesting(transport: transport, modelsJSON: modelsJSON, path: path, encrypted: encrypted, credentials: credential, http: server)
         try await DB.database.registerOperations(defsJson: operations)
-        try DB.database.setOnline(online: false)
-        try DB.database.setOnline(online: true)
         await eventually("both assets are stored") {
           let a1 = (try? await Asset.find("a1").current()) ?? nil
           let a2 = (try? await Asset.find("a2").current()) ?? nil
