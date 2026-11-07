@@ -83,6 +83,26 @@ async fn a_batch_owns_its_sources_and_confirms_every_member_with_one_request() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn a_batch_member_that_landed_before_the_accepted_row_is_read_gives_the_landed_row() {
+    let stand = Stand::new();
+    let database = stand.open(None, &ALBUM_OPERATIONS).await;
+    database.set_online(false).unwrap();
+    let directory = tempfile::tempdir().unwrap();
+    let source = directory.path().join("image.png");
+    std::fs::write(&source, b"image").unwrap();
+    let receipt = upload_batch(&database, items(&[&source, &source], &["key-0", "key-1"], 2)).await;
+    for _ in 0..2 { stand.script.data("CreateBlob", &blob(0).replace("signed-0", "signed")); }
+    stand.script.data("CreateAssets", &assets(&[("a0", "key-0", 0), ("a1", "key-1", 1)]));
+    database.set_online(true).unwrap();
+    assert_eq!(outcomes(&database, &receipt).await, ["confirmed a0", "confirmed a1"]);
+
+    let temporary = crate::ffi::database::id(&receipt.items[0].optimistic_value.id).unwrap();
+    let landed = bound(database.accepted_row(database.session_epoch(), "Asset", &temporary)).await.unwrap();
+    assert_eq!((landed.id, landed.sync.state), ("a0".to_string(), WireSyncState::Synced));
+    database.close_now();
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn a_multipart_batch_accepts_a_correlation_key_with_path_characters() {
     let stand = Stand::new();
     let directory = tempfile::tempdir().unwrap();

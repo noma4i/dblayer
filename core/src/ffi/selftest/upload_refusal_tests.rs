@@ -106,6 +106,25 @@ async fn an_http_refusal_of_a_photo_keeps_the_failed_record_until_discard() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn a_send_that_landed_before_the_accepted_row_is_read_gives_the_landed_row() {
+    let stand = Stand::new();
+    let database = stand.open(None, &[CREATE_MOMENT]).await;
+    let directory = tempfile::tempdir().unwrap();
+    let source = directory.path().join("photo.jpg");
+    std::fs::write(&source, b"image").unwrap();
+    stand.script.data("CreateBlob", BLOB);
+    stand.script.data("CreateMoment", ROW);
+    let epoch = database.session_epoch();
+    let sent = bound(database.send(clip("Moment", r#"{"text":"group"}"#, "upload_clip", &source, epoch))).await.unwrap();
+    let temporary = crate::ffi::database::id(&sent.optimistic_value.clone().unwrap().id).unwrap();
+    assert!(matches!(bound(database.outcome(sent)).await.unwrap(), WireOperationOutcome::Confirmed { .. }));
+
+    let landed = bound(database.accepted_row(epoch, "Moment", &temporary)).await.unwrap();
+    assert_eq!((landed.id, landed.sync.state), ("m1".to_string(), WireSyncState::Synced));
+    database.close_now();
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn a_complete_failure_then_retry_keeps_the_confirmed_parts() {
     let stand = Stand::new();
     let database = stand.open(None, &[CREATE_MOMENT]).await;
