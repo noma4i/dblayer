@@ -44,26 +44,33 @@ impl TransferState {
                 self.begin_cancel(id, Some((rep, cancel)), Some(TransferStage::Ready), fx);
                 self.start_in_order(fx);
             }
-            TransferStage::Failed if transfer.intent_live && transfer.signed_id.is_some() && !matches!(transfer.error.as_deref(), Some("missing_file" | "RestoreFailed")) => self.discard_through_outbox(id, rep, cancel, fx),
-            TransferStage::Failed => {
-                self.begin_cancel(id, Some((rep, cancel)), Some(TransferStage::Failed), fx);
-            }
+            TransferStage::Failed => self.discard_failed(id, Some((rep, cancel)), fx),
             TransferStage::BatchReady => self.begin_cancel(id, Some((rep, cancel)), Some(TransferStage::BatchReady), fx),
             TransferStage::Mutating if cancel => reply(fx, rep, if batched { TransferAnswer::Err(Fault::InFlight) } else { TransferAnswer::Cancelled(false) }),
-            TransferStage::Mutating => self.discard_through_outbox(id, rep, false, fx),
+            TransferStage::Mutating => self.discard_through_outbox(id, Some((rep, false)), fx),
             _ => Self::refuse(fx, rep, Fault::InFlight),
         }
     }
 
-    /// The Outbox owns the live intent of the final mutation: it rolls the row back and answers with `MutationOutcome(Discarded)`.
-    fn discard_through_outbox(&mut self, id: TransferId, rep: ReplyId, cancel: bool, fx: &mut Fx) {
-        let Some(transfer) = self.transfers.get_mut(&id) else { return };
-        if !cancel {
-            transfer.discard_waiters.push(rep);
-        } else if transfer.cancel_reply.is_some() {
-            return Self::refuse(fx, rep, Fault::InFlight);
+    /// `discard` and the expiry of a `Failed` transfer: the Outbox owns the operation of a saved or live intent, otherwise the transfer leaves alone.
+    fn discard_failed(&mut self, id: TransferId, waiter: Option<(ReplyId, bool)>, fx: &mut Fx) {
+        let Some(transfer) = self.transfers.get(&id) else { return };
+        let through_outbox = transfer.intent_live && transfer.signed_id.is_some() && !matches!(transfer.error.as_deref(), Some("missing_file" | "RestoreFailed"));
+        if through_outbox {
+            self.discard_through_outbox(id, waiter, fx);
         } else {
-            transfer.cancel_reply = Some((rep, true));
+            self.begin_cancel(id, waiter, Some(TransferStage::Failed), fx);
+        }
+    }
+
+    /// The Outbox owns the live intent of the final mutation: it rolls the row back and answers with `MutationOutcome(Discarded)`.
+    fn discard_through_outbox(&mut self, id: TransferId, waiter: Option<(ReplyId, bool)>, fx: &mut Fx) {
+        let Some(transfer) = self.transfers.get_mut(&id) else { return };
+        match waiter {
+            Some((rep, false)) => transfer.discard_waiters.push(rep),
+            Some((rep, true)) if transfer.cancel_reply.is_some() => return Self::refuse(fx, rep, Fault::InFlight),
+            Some((rep, true)) => transfer.cancel_reply = Some((rep, true)),
+            None => {}
         }
         if !std::mem::replace(&mut transfer.discard_sent, true) {
             let (model, row_id) = (transfer.mutation.model.clone(), transfer.mutation.row_id.clone());
@@ -306,7 +313,7 @@ impl TransferState {
     pub(super) fn expire(&mut self, fx: &mut Fx) {
         let old: Vec<TransferId> = self.scan().filter(|transfer| transfer.stage == TransferStage::Failed && self.now.0.saturating_sub(transfer.created_at.0) > EXPIRY_MS).map(|transfer| transfer.transfer_id).collect();
         for id in old {
-            self.begin_cancel(id, None, Some(TransferStage::Failed), fx);
+            self.discard_failed(id, None, fx);
         }
     }
 

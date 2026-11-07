@@ -17,18 +17,13 @@ async fn failed_upload(stand: &Stand, database: &Database, source: &std::path::P
     id
 }
 
-async fn until_expired(database: &Database, id: &str) {
-    let rows = watched(database, "Moment", id);
-    yield_until("the failed upload expired", || rows.last().is_some() && !shows(&rows, WireSyncState::Failed)).await;
-}
-
 async fn until_gone(database: &Database, id: &str) {
     let rows = watched(database, "Moment", id);
     yield_until("the expired row is gone", || rows.last().is_some() && rows.len() == 0).await;
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn a_failed_blob_older_than_seven_days_is_expired_after_the_reopen() {
+async fn a_failed_blob_older_than_seven_days_is_gone_after_the_reopen() {
     let (stand, start) = (Stand::new(), now_millis());
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("db.sqlite");
@@ -40,7 +35,7 @@ async fn a_failed_blob_older_than_seven_days_is_expired_after_the_reopen() {
 
     let reopened = stand.open_with(Some(&path), &OPERATIONS, Some(TestClock::new(start + WEEK_MILLIS + 1))).await;
 
-    until_expired(&reopened, &id).await;
+    until_gone(&reopened, &id).await;
     reopened.close_now();
 }
 
