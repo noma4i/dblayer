@@ -161,5 +161,35 @@ async fn rt_prop_close_against_query_no_old_transport() {
         let trace = transport.trace();
         assert_eq!(trace, vec![(first, true)], "{first}: late calls reached the old transport, trace (verb, gate admitted at entry): {trace:?}");
         assert_eq!(Arc::strong_count(&transport), 2, "{first}: a task still holds the transport after its call returned");
+
+type EndGate = fn(&EpochGate);
+
+async fn send_kind(gate: &EpochGate, transport: &Counting, kind: &str) -> Result<(), TransportError> {
+    match kind {
+        "query" => send_in_epoch(gate, Some(1), || transport.query(graphql())).await.map(drop),
+        "mutate" => send_in_epoch(gate, Some(1), || transport.mutate(graphql())).await.map(drop),
+        "put" => send_in_epoch(gate, Some(1), || transport.put(put())).await.map(drop),
+        other => unreachable!("{other}"),
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn rt_prop_close_against_query_no_old_transport_threaded() {
+    for round in 0..200 {
+        for kind in ["query", "mutate", "put"] {
+            let gate = Arc::new(EpochGate::default());
+            gate.open(1);
+            let transport = Arc::new(Counting::default());
+            let sender = crate::task::spawn_on(&tokio::runtime::Handle::current(), {
+                let (gate, transport) = (gate.clone(), transport.clone());
+                async move { send_kind(&gate, &transport, kind).await }
+            });
+            gate.close(1);
+            let result = crate::test_wait::within(sender).await.unwrap();
+            let reached = transport.0.load(Ordering::SeqCst);
+            assert!(matches!((&result, reached), (Err(TransportError::Network(_)), 1) | (Err(TransportError::Interrupted(_)), 0)), "round {round} {kind}: {result:?} with {reached} calls");
+            assert!(matches!(send_kind(&gate, &transport, kind).await, Err(TransportError::Interrupted(_))));
+            assert_eq!(transport.0.load(Ordering::SeqCst), reached, "round {round} {kind}: a request left after the close");
+        }
     }
 }

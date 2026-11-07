@@ -11,6 +11,7 @@ mod harness_tests;
 mod manifest_tests;
 mod media_preload_tests;
 mod files_tests;
+mod store_wait_tests;
 mod recovery_tests;
 mod delivery_reactivity_tests;
 mod refetch_tests;

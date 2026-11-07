@@ -14,7 +14,7 @@ fn kat() -> Value { serde_json::from_str(include_str!("../../../../fixtures/boot
 struct ConfiguredPath;
 
 #[tokio::test]
-async fn offline_bootstrap_waits_without_http_and_starts_online() {
+async fn life_bootstrap_waits_online() {
     use std::{future::Future, task::{Context, Poll, Waker}};
     struct Calls(AtomicUsize);
     #[async_trait::async_trait]
@@ -207,3 +207,179 @@ async fn fetch_needs_no_database_validates_before_http_and_distinguishes_service
 async fn fetch_with(config: &EncryptedConfig, platform: AppPlatform, version: &str, build: Option<&str>, http: Arc<dyn HttpExchange>, clock: &dyn crate::runtime::Clock) -> Result<ServerConfig, TransportError> {
     fetch(config, &super::bootstrap::AppRelease { platform, version, build }, http, clock, &crate::transport::retry::RetryCalls::default(), &crate::transport::Connectivity::new(true)).await
 }
+
+type Step = Box<dyn Fn(&Value) -> Result<HttpReply, TransportError> + Send + Sync>;
+
+struct Scripted {
+    steps: std::sync::Mutex<std::collections::VecDeque<Step>>,
+    calls: AtomicUsize,
+    request_ids: std::sync::Mutex<Vec<String>>,
+    progress: Arc<crate::transport::retry::RetryCalls>,
+    seen: std::sync::Mutex<Vec<crate::transport::retry::RetrySnapshot>>,
+}
+
+#[async_trait::async_trait]
+impl HttpExchange for Scripted {
+    async fn post(&self, _: &str, token: String, _: crate::transport::NetworkPurpose, _: crate::transport::WireIds) -> Result<HttpReply, TransportError> {
+        let plain: Value = serde_json::from_str(&decrypt_request(&token)).unwrap();
+        self.calls.fetch_add(1, Ordering::SeqCst);
+        self.request_ids.lock().unwrap().push(text(&plain, "requestId").to_string());
+        self.seen.lock().unwrap().push(self.progress.current());
+        let step = self.steps.lock().unwrap().pop_front().expect("unscripted bootstrap request");
+        step(&plain)
+    }
+}
+
+fn scripted(steps: Vec<Step>) -> Arc<Scripted> {
+    Arc::new(Scripted { steps: std::sync::Mutex::new(steps.into()), calls: AtomicUsize::new(0), request_ids: Default::default(), progress: Arc::new(Default::default()), seen: Default::default() })
+}
+
+fn answered(edit: impl Fn(&mut Value) + Send + Sync + 'static) -> Step {
+    Box::new(move |plain| {
+        let mut response: Value = serde_json::from_str(text(&kat()["response"], "plaintext")).unwrap();
+        response["requestId"] = plain["requestId"].clone();
+        response["requestDigest"] = request_digest(plain).into();
+        edit(&mut response);
+        Ok(HttpReply { status: 200, body: seal(&response, text(plain, "responseKey")) })
+    })
+}
+fn good() -> Step { answered(|_| {}) }
+fn status(status: u16) -> Step { Box::new(move |_| Ok(HttpReply { status, body: String::new() })) }
+fn failing(kind: crate::transport::RawFailureKind) -> Step {
+    Box::new(move |_| Err(crate::transport::classify(&crate::transport::RawFailure::of_kind(kind, "x"), crate::transport::ExchangeKind::Post)))
+}
+
+async fn run(http: Arc<dyn HttpExchange>, progress: &crate::transport::retry::RetryCalls, config: &EncryptedConfig) -> Result<ServerConfig, TransportError> {
+    fetch(config, &super::bootstrap::AppRelease { platform: AppPlatform::Ios, version: "1.2", build: None }, http, &crate::test_wait::world_clock().unwrap(), progress, &crate::transport::Connectivity::new(true)).await
+}
+
+#[test]
+fn life_bootstrap_ok() { crate::test_wait::paused(async {
+    let http = scripted(vec![good()]);
+    let config = run(http.clone(), &http.progress, &configuration()).await.unwrap();
+    assert_eq!((config.config_version, http.calls.load(Ordering::SeqCst)), (1, 1));
+}) }
+
+#[test]
+fn life_bootstrap_invalid_config() { crate::test_wait::paused(async {
+    for origin in ["http://example.com", "https://example.com/path", "ftp://example.com"] {
+        let http = scripted(vec![]);
+        let mut config = configuration();
+        config.origin = origin.into();
+        assert!(matches!(run(http.clone(), &http.progress, &config).await, Err(TransportError::Config { code: ConfigCode::InvalidRequest, .. })), "{origin}");
+        assert_eq!(http.calls.load(Ordering::SeqCst), 0, "{origin}");
+    }
+}) }
+
+#[test]
+fn life_bootstrap_pin() { crate::test_wait::paused(async {
+    let http = scripted(vec![]);
+    let mut config = configuration();
+    config.pin = "wrong".into();
+    assert!(matches!(run(http.clone(), &http.progress, &config).await, Err(TransportError::Security { code: SecurityCode::ServerKeyMismatch, .. })));
+    assert_eq!(http.calls.load(Ordering::SeqCst), 0);
+}) }
+
+#[test]
+fn life_bootstrap_tampered() { crate::test_wait::paused(async {
+    let wrong_key = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
+    let steps: Vec<(Step, &str)> = vec![
+        (Box::new(move |plain| Ok(HttpReply { status: 200, body: seal(&json!({"requestId": plain["requestId"]}), wrong_key) })), "sealed under another key"),
+        (Box::new(|_| Ok(HttpReply { status: 200, body: "broken".into() })), "not a JWE"),
+        (answered(|response| response["requestDigest"] = json!("other")), "digest of another request"),
+        (answered(|response| response["requestId"] = json!("other")), "id of another request"),
+        (answered(|response| response["sequence"] = json!(1)), "sequence present"),
+    ];
+    for (step, case) in steps {
+        let http = scripted(vec![step]);
+        assert!(matches!(run(http.clone(), &http.progress, &configuration()).await, Err(TransportError::Security { code: SecurityCode::ResponseAuthentication, .. })), "{case}");
+        assert_eq!(http.calls.load(Ordering::SeqCst), 1, "{case}");
+    }
+}) }
+
+#[test]
+fn life_bootstrap_refused() { crate::test_wait::paused(async {
+    let http = scripted(vec![answered(|response| response["body"] = json!({"error": "INVALID_REQUEST"}))]);
+    assert!(matches!(run(http.clone(), &http.progress, &configuration()).await, Err(TransportError::Config { code: ConfigCode::InvalidRequest, .. })));
+    assert_eq!(http.calls.load(Ordering::SeqCst), 1);
+    let http = scripted(vec![answered(|response| response["body"] = json!({"error": "SERVICE_UNAVAILABLE"})), good()]);
+    assert!(run(http.clone(), &http.progress, &configuration()).await.is_ok());
+    assert_eq!(http.calls.load(Ordering::SeqCst), 2);
+}) }
+
+#[test]
+fn life_bootstrap_config_code() { crate::test_wait::paused(async {
+    for (field, value, code) in [("configVersion", json!(2), ConfigCode::UnsupportedVersion), ("updateRequired", json!("false"), ConfigCode::InvalidFormat)] {
+        let http = scripted(vec![answered(move |response| response["body"][field] = value.clone())]);
+        assert!(matches!(run(http.clone(), &http.progress, &configuration()).await, Err(TransportError::Config { code: actual, .. }) if actual == code), "{field}");
+        assert_eq!(http.calls.load(Ordering::SeqCst), 1, "{field}");
+    }
+}) }
+
+#[test]
+fn life_bootstrap_http() { crate::test_wait::paused(async {
+    for code in [301, 400, 404, 413] {
+        let http = scripted(vec![status(code)]);
+        assert!(matches!(run(http.clone(), &http.progress, &configuration()).await, Err(TransportError::Http { status, .. }) if status == code), "{code}");
+        assert_eq!(http.calls.load(Ordering::SeqCst), 1, "{code}");
+    }
+}) }
+
+#[test]
+fn life_bootstrap_retry() { crate::test_wait::paused(async {
+    let http = scripted(vec![status(500), status(408), status(429), failing(crate::transport::RawFailureKind::Unreachable), good()]);
+    assert!(run(http.clone(), &http.progress, &configuration()).await.is_ok());
+    assert_eq!(http.calls.load(Ordering::SeqCst), 5);
+    let ids = http.request_ids.lock().unwrap().clone();
+    assert_eq!(ids.iter().collect::<std::collections::HashSet<_>>().len(), 5);
+    let seen = http.seen.lock().unwrap().clone();
+    let reasons = ["HTTP 500", "HTTP 408", "HTTP 429", "network"];
+    assert_eq!(seen[0], crate::transport::retry::RetrySnapshot::default());
+    for (index, snapshot) in seen[1..].iter().enumerate() {
+        let last = snapshot.last_attempt.clone().unwrap();
+        let ceiling = 1000u64 * 2u64.pow(index as u32);
+        assert_eq!((snapshot.active_calls, last.attempt, last.reason.as_str()), (1, index as u64 + 1, reasons[index]));
+        assert!((ceiling * 8 / 10..=ceiling).contains(&last.delay_ms), "{} outside {ceiling}", last.delay_ms);
+    }
+    assert_eq!(http.progress.current(), crate::transport::retry::RetrySnapshot::default());
+}) }
+
+#[test]
+fn life_bootstrap_timeout() { crate::test_wait::paused(async {
+    let http = scripted(vec![failing(crate::transport::RawFailureKind::Timeout), failing(crate::transport::RawFailureKind::Timeout), failing(crate::transport::RawFailureKind::Io), good()]);
+    assert!(run(http.clone(), &http.progress, &configuration()).await.is_ok());
+    assert_eq!(http.calls.load(Ordering::SeqCst), 4);
+    let attempts: Vec<_> = http.seen.lock().unwrap().iter().map(|snapshot| snapshot.last_attempt.as_ref().map(|attempt| attempt.attempt)).collect();
+    assert_eq!(attempts, [None, Some(1), Some(2), Some(3)]);
+}) }
+
+struct DropFlag(Arc<AtomicUsize>);
+impl Drop for DropFlag { fn drop(&mut self) { self.0.fetch_add(1, Ordering::SeqCst); } }
+
+struct HangsOnSecond { calls: AtomicUsize, dropped: Arc<AtomicUsize>, started: Arc<tokio::sync::Notify> }
+#[async_trait::async_trait]
+impl HttpExchange for HangsOnSecond {
+    async fn post(&self, _: &str, _: String, _: crate::transport::NetworkPurpose, _: crate::transport::WireIds) -> Result<HttpReply, TransportError> {
+        if self.calls.fetch_add(1, Ordering::SeqCst) == 0 { return Err(TransportError::Network("x".into())); }
+        let _held = DropFlag(self.dropped.clone());
+        self.started.notify_one();
+        std::future::pending().await
+    }
+}
+
+#[test]
+fn life_bootstrap_cancel() { crate::test_wait::paused(async {
+    let http = scripted(vec![failing(crate::transport::RawFailureKind::Cancelled)]);
+    assert!(matches!(run(http.clone(), &http.progress, &configuration()).await, Err(TransportError::Interrupted(_))));
+    assert_eq!(http.calls.load(Ordering::SeqCst), 1);
+    let hanging = Arc::new(HangsOnSecond { calls: AtomicUsize::new(0), dropped: Arc::new(AtomicUsize::new(0)), started: Arc::new(tokio::sync::Notify::new()) });
+    let progress = crate::transport::retry::RetryCalls::default();
+    let config = configuration();
+    tokio::select! {
+        biased;
+        () = hanging.started.notified() => {}
+        _ = run(hanging.clone(), &progress, &config) => unreachable!(),
+    }
+    assert_eq!((hanging.calls.load(Ordering::SeqCst), hanging.dropped.load(Ordering::SeqCst)), (2, 1));
+    assert_eq!(progress.current(), crate::transport::retry::RetrySnapshot::default());
+}) }

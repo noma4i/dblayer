@@ -470,3 +470,20 @@ fn rt_race_a_cancel_against_a_due_entry() {
     manifest.assert_complete();
     assert_eq!(*seen.borrow(), BTreeSet::from([vec![], vec![7]]), "a cancel before the Fire removes the entry, a cancel behind the Fire in the queue is too late");
 }
+
+#[test]
+fn rt_prop_task_panic_each_read() {
+    for rounds in 1..=4u64 {
+        let mut det = DetScheduler::new(0);
+        let toy = det.add::<Toy>("toy", ToyState::default(), ToyRunner::default());
+        det.start_epoch(1);
+        let mut expected = Vec::new();
+        for round in 0..rounds {
+            det.post(toy, EpochStamp::Epoch(1), ToyInput::Ask(100 + round));
+            det.post(toy, EpochStamp::Epoch(1), ToyInput::Ask(BOOM));
+            det.run_until_quiet(30).unwrap();
+            if round == 0 { expected.extend([BOOM, 100]); } else { expected.extend([100 + round, BOOM]); }
+            assert_eq!(det.state(toy).unwrap().failed, expected, "round {round} of {rounds}: each failing task gives its own failure, the first death lists its pending ids ascending, a later start fails at its own start");
+        }
+    }
+}
