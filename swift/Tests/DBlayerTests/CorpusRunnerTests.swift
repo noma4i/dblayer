@@ -230,6 +230,8 @@ private final class DatabaseRunner {
   }
 
   var wanted = 0
+  var previousStart: UInt64 = 0
+  var currentStart: UInt64 = 0
   var wantedFirst: String?
   var at = ""
   var fence: () async -> Void { { _ = try? await self.database?.subscriptionCensus() } }
@@ -462,10 +464,23 @@ private final class DatabaseRunner {
   func apply(_ input: [String: Any]) async -> [String] {
     let name = input["in"] as? String ?? ""
     let args = input["args"] as? [String: Any] ?? [:]
+    previousStart = currentStart
+    currentStart = clock.armed()
     switch name {
     case "open": return await open(args["models"] as? String ?? "", encrypted: args["encrypted"] as? Bool ?? false)
     case "tick":
-      clock.advance(millis: (args["ms"] as? NSNumber)?.uint64Value ?? 0)
+      let ms = (args["ms"] as? NSNumber)?.uint64Value ?? 0
+      if ms > 0, wanted > 0, clock.armed() <= previousStart {
+        let timer = clock
+        let after = previousStart
+        await withTaskGroup(of: Void.self) { group in
+          group.addTask { await timer.awaitArmed(after: after) }
+          group.addTask { try? await expiry(hangGuard) }
+          await group.next()
+          group.cancelAll()
+        }
+      }
+      clock.advance(millis: ms)
       return await settle()
     case "answer", "error", "drop", "ready", "frame":
       guard let id = args["id"] as? String else { return failure("arguments") }

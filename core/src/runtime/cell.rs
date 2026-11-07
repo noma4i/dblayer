@@ -256,6 +256,8 @@ impl<O: StateOwner> Cell<O> {
         }
     }
 
+    pub fn scheduled(&self) -> u64 { self.sequence }
+
     fn schedule_input(&mut self, id: ScheduleId, at: Time, stamp: EpochStamp, input: O::Input) {
         self.cancel(id);
         let key = (at, self.sequence);

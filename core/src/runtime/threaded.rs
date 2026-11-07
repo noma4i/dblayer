@@ -443,6 +443,7 @@ fn run_owner<O: StateOwner>(mut owner: OwnerThread<O>, router: Arc<Router>, time
         let failing = router.clone();
         Back::<O>::new(move |stamp, input| router.push(own, Command::Deliver(stamp, Box::new(input))), move |pending| failing.push(own, Command::Failed(pending)))
     };
+    let mut armed = 0;
     loop {
         let cell = &owner.cell;
         let commands = owner.mailbox.take(|| cell.next_due().map(|at| Duration::from_millis(at.0.saturating_sub(timeline.now().0))));
@@ -479,6 +480,11 @@ fn run_owner<O: StateOwner>(mut owner: OwnerThread<O>, router: Arc<Router>, time
                 let finished_failed = owner.cell.finish_emission(owner.name, owner.runner.as_mut());
                 if failed || finished_failed { router.report_failure(owner.name); }
             }
+        }
+        let scheduled = owner.cell.scheduled();
+        if scheduled != armed {
+            timeline.clock.armed(scheduled - armed);
+            armed = scheduled;
         }
         router.inflight.done(handled);
     }

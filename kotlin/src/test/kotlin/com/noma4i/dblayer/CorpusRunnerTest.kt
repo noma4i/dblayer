@@ -143,6 +143,8 @@ private class DatabaseRunner {
     val streams = HashMap<String, Pulled>()
     var calls = ArrayList<Deferred<Done>>()
     var wanted = 0
+    private var previousStart = 0uL
+    private var currentStart = 0uL
     var wantedFirst: String? = null
     var at = ""
     private val fence: suspend () -> Unit = { runCatching { database?.subscriptionCensus() } }
@@ -381,9 +383,16 @@ private class DatabaseRunner {
     suspend fun apply(input: JsonObject): List<JsonObject> {
         val name = input.text("in") ?: ""
         val args = (input["args"] as? JsonObject) ?: JsonObject(emptyMap())
+        previousStart = currentStart
+        currentStart = clock.armed()
         when (name) {
             "open" -> return open(args.text("models") ?: "", (args["encrypted"] as? JsonPrimitive)?.booleanOrNull ?: false)
-            "tick" -> { clock.advance((args["ms"] as? JsonPrimitive)?.longOrNull?.toULong() ?: 0uL); return settle() }
+            "tick" -> {
+                val ms = (args["ms"] as? JsonPrimitive)?.longOrNull?.toULong() ?: 0uL
+                if (ms > 0uL && wanted > 0 && clock.armed() <= previousStart) awaitWithin("the timer of $at is armed") { clock.awaitArmed(previousStart) }
+                clock.advance(ms)
+                return settle()
+            }
             "answer", "error", "drop", "ready", "frame" -> {
                 val id = args.text("id") ?: return failure("arguments")
                 if (wantedFirst != "error") eventually("the request $id of $at") { mock.knows(id) }

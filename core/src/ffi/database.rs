@@ -108,6 +108,8 @@ impl TestClock {
     #[uniffi::constructor]
     pub fn new(start_millis: u64) -> Arc<Self> { Arc::new(Self { clock: Arc::new(ManualClock::new(Duration::from_millis(start_millis))) }) }
     pub fn advance(&self, millis: u64) { self.clock.advance(Duration::from_millis(millis)) }
+    pub fn armed(&self) -> u64 { self.clock.armed_total() }
+    pub async fn await_armed(&self, after: u64) { self.clock.wait_armed(after).await }
 }
 
 type OutcomesByKey = Arc<Mutex<HashMap<(u64, u64, u64), WireOperationOutcome>>>;
