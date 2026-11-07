@@ -124,11 +124,21 @@ class MockTransport(private val unanswered: Unanswered = Unanswered.Strict) : Sc
         return PutReply(200u, null)
     }
 
+    /** The reply the server gave a request whose answer the library cancelled before it arrived. The request carries no request id on this side of the bridge, so the identity of a repeat is `(operationName, variablesJson)`: the repeat gets the same reply, any other request takes the next queued one. */
+    private val settled = ConcurrentHashMap<Pair<String, String>, String>()
+
     private suspend fun answer(request: TransportRequest): String {
         recorded.add(request)
+        val identity = request.operationName to request.variablesJson
+        settled[identity]?.let { return it }
         val reply = synchronized(replies) { replies[request.operationName]?.pollFirst() } ?: refuse(request)
-        if (reply.delayMillis > 0) delay(reply.delayMillis)
-        reply.hold?.pass()
+        try {
+            if (reply.delayMillis > 0) delay(reply.delayMillis)
+            reply.hold?.pass()
+        } catch (cancelled: kotlinx.coroutines.CancellationException) {
+            reply.body?.let { settled[identity] = it }
+            throw cancelled
+        }
         reply.failure?.let { throw it }
         return reply.body ?: "{}"
     }

@@ -6,6 +6,8 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Assert.fail
 import org.junit.Test
+import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.launch
 
 class MockTransportStrictTest {
     private val request = TransportRequest("query Ping { ping }", "Ping", """{"page":2}""", NetworkPurpose.STANDARD)
@@ -46,5 +48,21 @@ class MockTransportStrictTest {
         val transport = MockTransport(Unanswered.NetworkError)
         assertTrue(outcome(transport) is DbException.Network)
         assertEquals(emptyList<TransportRequest>(), transport.claimUnscripted())
+    }
+
+    @Test
+    fun aRepeatOfACancelledRequestGetsTheSameReplyAndAnotherRequestTheNextOne() = bounded {
+        val transport = MockTransport(Unanswered.NetworkError)
+        val held = transport.hold("Ping", reply = "first")
+        transport.enqueue("Ping", "second")
+        val same = TransportRequest("query Ping { ping }", "Ping", """{"page":2}""", NetworkPurpose.STANDARD)
+        val other = TransportRequest("query Ping { ping }", "Ping", """{"page":3}""", NetworkPurpose.STANDARD)
+        val cancelled = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.Default).launch { transport.mutate(same) }
+        held.entered()
+        cancelled.cancelAndJoin()
+        assertEquals("first", transport.mutate(same))
+        assertEquals("first", transport.mutate(same))
+        assertEquals("second", transport.mutate(other))
+        assertTrue(runCatching { transport.mutate(other) }.exceptionOrNull() is DbException.Network)
     }
 }

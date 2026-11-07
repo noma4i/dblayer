@@ -134,3 +134,15 @@ async fn inv_row_09_run() {
     assert!(matches!(rig.outcome(&destroyed).await, WireOperationOutcome::Confirmed { .. }));
     assert!(rig.row("srv1").await.is_none() && observed_texts(&rig).await.is_empty(), "destroy");
 }
+
+#[test]
+fn the_rig_server_answers_a_repeated_request_pair_with_its_first_answer() {
+    let server = super::rig::Server::new();
+    let pair = |id: &str| ("PresignParts".to_string(), id.to_string(), Some(4));
+    assert!(server.known(&pair("a")).is_none());
+    assert_eq!(server.settle(pair("a"), json!({"n": 1})), json!({"n": 1}));
+    assert_eq!(server.settle(pair("a"), json!({"n": 2})), json!({"n": 1}));
+    assert_eq!(server.known(&pair("a")), Some(json!({"n": 1})));
+    assert!(server.known(&pair("b")).is_none());
+    assert_eq!(server.settle(pair("b"), json!({"n": 3})), json!({"n": 3}));
+}

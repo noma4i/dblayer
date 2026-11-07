@@ -35,6 +35,22 @@ struct MockTransportStrictTests {
     }
     #expect(transport.unscripted.isEmpty)
   }
+
+  @Test(.timeLimit(.minutes(1)))
+  func aRepeatOfACancelledRequestGetsTheSameReplyAndAnotherRequestTheNextOne() async throws {
+    let transport = MockTransport(unanswered: .networkError)
+    let held = transport.hold("Ping", reply: "first")
+    transport.enqueue("Ping", reply: "second")
+    let other = TransportRequest(document: "query Ping { ping }", operationName: "Ping", variablesJson: #"{"page":3}"#, purpose: .standard)
+    let cancelled = Task { try await transport.mutate(request: request) }
+    await held.entered()
+    cancelled.cancel()
+    _ = try? await cancelled.value
+    #expect(try await transport.mutate(request: request) == "first")
+    #expect(try await transport.mutate(request: request) == "first")
+    #expect(try await transport.mutate(request: other) == "second")
+    await #expect(throws: DbError.self) { try await transport.mutate(request: other) }
+  }
 }
 
 extension BridgeProbeTests {

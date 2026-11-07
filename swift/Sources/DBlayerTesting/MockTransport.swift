@@ -97,17 +97,28 @@ public final class MockTransport: ScriptedTransport, @unchecked Sendable {
     return PutReply(status: 200, etag: nil)
   }
 
+  /// The reply the server gave a request whose answer the library cancelled before it arrived. The request carries no request id on this side of the bridge, so the identity of a repeat is `(operationName, variablesJson)`: the repeat gets the same reply, any other request takes the next queued one.
+  private var settled: [String: String] = [:]
+
   private func answer(_ request: TransportRequest) async throws -> String {
+    let identity = request.operationName + "\u{0}" + request.variablesJson
     let reply = lock.withLock { () -> Reply? in
       recorded.append(request)
+      if let known = settled[identity] { return Reply(body: known, failure: nil, delay: 0) }
       guard var queue = replies[request.operationName], !queue.isEmpty else { return nil }
       let next = queue.removeFirst()
       replies[request.operationName] = queue
       return next
     }
     guard let reply else { throw await refuse(request) }
-    if reply.delay > 0 { try await Task.sleep(for: .seconds(reply.delay)) }
-    if let hold = reply.hold { await hold.pass() }
+    do {
+      if reply.delay > 0 { try await Task.sleep(for: .seconds(reply.delay)) }
+      if let hold = reply.hold { await hold.pass() }
+      try Task.checkCancellation()
+    } catch {
+      if let body = reply.body { lock.withLock { settled[identity] = body } }
+      throw error
+    }
     if let failure = reply.failure { throw failure }
     return reply.body ?? "{}"
   }
