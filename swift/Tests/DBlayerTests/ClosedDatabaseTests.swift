@@ -1,9 +1,10 @@
+import DBlayerTesting
 import Testing
 @testable import DBlayer
 
 extension BridgeProbeTests {
   @Test @MainActor func aClosedDatabaseRefusesEveryCallWithTheClosedErrorOfTheCore() async throws {
-    try await reopenSigned(config: Config(path: nil, dataVersion: nil, cacheRows: 8), modelsJson: modelsJSON)
+    try await reopenSigned(config: Config(path: nil, dataVersion: nil), modelsJson: modelsJSON)
     try await DB.close()
     func refused(_ call: () async throws -> Void) async -> Bool {
       do { try await call() } catch DbError.Closed(_) { return true } catch { return false }
@@ -37,11 +38,24 @@ extension BridgeProbeTests {
     await DB.closeForCleanup()
     DB.forgetOpened()
     #expect(await entries() == Array(repeating: "not_open", count: 10))
-    try await reopenSigned(config: Config(path: nil, dataVersion: nil, cacheRows: 8), modelsJson: modelsJSON)
+    try await reopenSigned(config: Config(path: nil, dataVersion: nil), modelsJson: modelsJSON)
     try await DB.close()
     let afterClose = await entries()
-    let gated = [0, 1, 2, 3, 4, 8].map { afterClose[$0] }
-    #expect(gated == Array(repeating: "closed", count: 6), "\(afterClose)")
+    let gated = (0...8).map { afterClose[$0] }
+    #expect(gated == Array(repeating: "closed", count: 9), "\(afterClose)")
     #expect(afterClose[9] == "none", "a second close answers success")
+  }
+}
+
+extension BridgeProbeTests {
+  @Test @MainActor func aQueryWithoutARelationIsInvalidFromTheCore() async throws {
+    try await reopen(config: Config(path: nil, dataVersion: nil), modelsJson: modelsJSON, transport: MockTransport())
+    func invalid(_ call: () async throws -> Void) async -> Bool {
+      do { try await call() } catch DbError.Invalid(_) { return true } catch { return false }
+      return false
+    }
+    #expect(await invalid { try await Query<Moment>().refresh() })
+    #expect(await invalid { try await Query<Moment>().load() })
+    await DB.closeForCleanup()
   }
 }

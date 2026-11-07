@@ -13,7 +13,7 @@ extension BridgeProbeTests {
     let transport = MockTransport()
     let created = #"{"data":{"createMoment":{"__typename":"Moment","id":"m1","uuid":"u","userId":"u1","text":"hello","likedByMe":false,"media":{},"createdAt":"2026-10-08T00:00:00.000Z"}}}"#
     transport.enqueue("CreateMoment", reply: created)
-    try await reopen(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: transport, operations: sendMoment)
+    try await reopen(config: Config(path: nil, dataVersion: nil), modelsJson: modelsJSON, transport: transport, operations: sendMoment)
     let scope = try DB.account()
 
     let moments: Projected<Moment> = Projected(try scope.stream(Moment.where(Moment.userId == "u1").order(Moment.createdAt.desc).limit(20)))

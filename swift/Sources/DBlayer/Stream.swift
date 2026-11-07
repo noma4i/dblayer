@@ -282,7 +282,7 @@ public struct AccountScope: Sendable {
   public init() throws {
     let database = try DB.database
     self.database = database
-    epoch = database.sessionEpoch()
+    epoch = try database.admit(accountEpoch: nil)
   }
 
   /// `refreshOnConnect` loads the relation again when the stream opens, also when it is fresh. The first rows stay visible.

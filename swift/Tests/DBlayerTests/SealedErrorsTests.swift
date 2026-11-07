@@ -11,13 +11,13 @@ private let sessionCodes: [SessionCode] = [
 private let operations = #"[{"name":"MomentsFeed","document":"query MomentsFeed($first: Int, $after: String) { feed(first: $first, after: $after) { nodes { id uuid likedByMe media createdAt } pageInfo { hasNextPage endCursor } } }"},{"name":"CreateMoment","document":"mutation CreateMoment($text: String) { createMoment(text: $text) { id uuid likedByMe media createdAt } }"},{"name":"QrCodeCreate","document":"mutation QrCodeCreate($input: CreateQrCodeInput!) { qrCodeCreate(input: $input) { url } }"}]"#
 
 private final class RefusedRetry: Database, @unchecked Sendable {
-  override func sessionEpoch() -> UInt64 { 1 }
+  override func admit(accountEpoch: UInt64?) throws -> UInt64 { accountEpoch ?? 1 }
   override func retry(epoch: UInt64, model: String, rowId: String, action: String?, source: WireUploadRequest?) async throws -> WireOperationReceipt { throw DbError.Invalid(detail: "retry refused") }
 }
 
 extension BridgeProbeTests {
   @Test @MainActor func modelRetriesPropagateErrorsToTheirCaller() async throws {
-    try await reopenSigned(config: Config(path: nil, dataVersion: nil, cacheRows: 8), modelsJson: modelsJSON)
+    try await reopenSigned(config: Config(path: nil, dataVersion: nil), modelsJson: modelsJSON)
     let real = try DB.database
     defer { DB.use(real) }
     let row = try await Moment.create(text: "saved", in: DB.account()).optimisticValue!
@@ -26,7 +26,7 @@ extension BridgeProbeTests {
   }
   @MainActor
   private func openSealedRig(_ transport: MockTransport) async throws {
-    try await reopen(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: transport)
+    try await reopen(config: Config(path: nil, dataVersion: nil), modelsJson: modelsJSON, transport: transport)
     try await DB.database.registerOperations(defsJson: operations)
   }
 

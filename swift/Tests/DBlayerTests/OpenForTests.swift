@@ -3,7 +3,15 @@ import Foundation
 @testable import DBlayer
 
 func openDatabase(config: Config, modelsJson: String, transport: Transport?, encrypted: EncryptedConfig? = nil, credentials: CredentialStore? = nil, http: EncryptedHttp? = nil, operations: String = "[]") async throws -> Database {
-  try await OpenDatabase().open(config: config, modelsJson: modelsJson, options: OpenOptions(operations: withUploadSteps(operations, models: modelsJson), powerSaving: false), ports: OpenPorts(transport: transport, encrypted: encrypted, credentials: credentials, http: http))
+  try await OpenDatabase().open(config: config, modelsJson: modelsJson, options: OpenOptions(operations: definitions(of: withUploadSteps(operations, models: modelsJson))), ports: OpenPorts(transport: transport, encrypted: encrypted, credentials: credentials, http: http), observers: nil)
+}
+
+private func definitions(of operations: String) -> [OperationDefinition] {
+  let listed = (try? JSONSerialization.jsonObject(with: Data(operations.utf8))) as? [[String: Any]] ?? []
+  return listed.compactMap { entry in
+    guard let name = entry["name"] as? String, let document = entry["document"] as? String else { return nil }
+    return OperationDefinition(name: name, document: document)
+  }
 }
 
 private let uploadStepOperations: [(name: String, document: String)] = [
@@ -120,7 +128,7 @@ func reopenClocked(modelsJson: String, transport: MockTransport, operations: Str
   let server = try SealedServer(bridge: try bridgeToTransport(transport, operations: withUploadSteps(operations, models: modelsJson)))
   transport.cable = EncryptedCablePeer(server: server)
   await DB.closeForCleanup()
-  let held = path.map { credential(of: Config(path: $0, dataVersion: nil, cacheRows: 0)) } ?? HeldCredential()
+  let held = path.map { credential(of: Config(path: $0, dataVersion: nil)) } ?? HeldCredential()
   let restored = (try? held.get()) != nil
   let clock = try await DB.openTesting(transport: transport, modelsJSON: modelsJson, path: path, startingAt: start, encrypted: standEncrypted(), credentials: held, http: server)
   try await DB.database.registerOperations(defsJson: withSessionProfile(operations))

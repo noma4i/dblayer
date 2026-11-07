@@ -11,7 +11,7 @@ extension BridgeProbeTests {
 
   private static func openNoticeRig() async throws -> MockTransport {
     let transport = MockTransport()
-    try await reopen(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: schema(onlySubscription: "ChatActionSignal"), transport: transport, operations: #"[{"name":"ChatActionSignal","document":"subscription ChatActionSignal { chatActionSignal { chatId userId kind active } }"}]"#)
+    try await reopen(config: Config(path: nil, dataVersion: nil), modelsJson: schema(onlySubscription: "ChatActionSignal"), transport: transport, operations: #"[{"name":"ChatActionSignal","document":"subscription ChatActionSignal { chatActionSignal { chatId userId kind active } }"}]"#)
     return transport
   }
 

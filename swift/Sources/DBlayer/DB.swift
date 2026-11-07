@@ -1,46 +1,25 @@
 import Foundation
 
-final class Opened: Sendable {
-  let database: Database
-  private let stops: [@Sendable () -> Void]
-
-  init(database: Database, stops: [@Sendable () -> Void]) {
-    self.database = database
-    self.stops = stops
-  }
-
-  func stopObservers() { stops.forEach { $0() } }
-  func standingIn(_ database: Database) -> Opened { Opened(database: database, stops: stops) }
-}
-
 public enum DB {
-  private static var slot: Opened?
+  private static var slot: Database?
   private static let opener = OpenDatabase()
-  private static let cacheRows: UInt32 = 2000
 
   static var database: Database {
     get throws {
-      try slotOrThrow().database
+      guard let database = slot else { throw DbError.NotOpen(detail: "database is not open; call DBlayer.open once at app start") }
+      return database
     }
   }
 
-  private static func slotOrThrow() throws -> Opened {
-    guard let opened = slot else { throw DbError.NotOpen(detail: "database is not open; call DBlayer.open once at app start") }
-    return opened
-  }
-
-  /// The database and the epoch a command belongs to: the pair the scope holds when the caller has one, else the open database and the epoch of its session now.
+  /// The database and the epoch a command belongs to: the epoch the account scope holds, else the epoch the core admits for the open database.
   static func admitted(_ scope: AccountScope?) throws -> (Database, UInt64) {
-    if let scope { return (scope.database, scope.epoch) }
-    let database = try database
-    return (database, database.sessionEpoch())
+    let target = try scope?.database ?? database
+    return (target, try target.admit(accountEpoch: scope?.epoch))
   }
 
   /// Closes the database. Every request, load and subscription ends, and the call returns after the library released its resources. A call on the closed database, a second close included, gets the closed error of the core.
   @MainActor public static func close() async throws {
-    let opened = try slotOrThrow()
-    opened.stopObservers()
-    try await opened.database.closeDatabase()
+    try await database.closeDatabase()
   }
 
   public static func subscriptionCensus() async throws -> SubscriptionCensus { try await database.subscriptionCensus() }
@@ -76,47 +55,33 @@ public enum DB {
   }
 
   public static func serverConfig(encrypted: EncryptedConfig, platform: AppPlatform, version: String, build: String? = nil, http: EncryptedHttp? = nil, retries: RetryProgress? = nil) async throws -> ServerConfig {
-    let connectivity = Connectivity(online: false)
-    let stop = Reachability.observe { connectivity.setOnline(online: $0) }
-    defer { stop() }
-    return try await fetchServerConfig(encrypted: encrypted, platform: platform, version: version, build: build, http: http ?? UrlSessionEncryptedHttp(origin: encrypted.origin), retries: retries, connectivity: connectivity)
+    try await fetchServerConfig(encrypted: encrypted, platform: platform, version: version, build: build, http: http ?? UrlSessionEncryptedHttp(origin: encrypted.origin), retries: retries, observers: SystemObservers())
   }
 
   @MainActor public static func open(endpoint: URL? = nil, headers: @escaping @Sendable () -> [String: String] = { [:] }, encrypted: EncryptedConfig? = nil, credentials: CredentialStore? = nil, transport: Transport? = nil, modelsJSON: String, path: String? = nil, operations: [any GraphQLOperation.Type] = [], http: EncryptedHttp? = nil) async throws {
-    let definitions = operations.map { JSONValue.object(["name": .string($0.operationName), "document": .string($0.document)]) }
     let origin = encrypted.flatMap { URL(string: $0.origin) }
-    let selectedTransport = transport ?? (endpoint ?? origin).map { UrlSessionTransport(endpoint: $0, headers: headers) }
-    let opened = try await opener.open(config: Config(path: path, dataVersion: nil, cacheRows: cacheRows), modelsJson: modelsJSON, options: OpenOptions(operations: JSONValue.array(definitions).text, powerSaving: ProcessInfo.processInfo.isLowPowerModeEnabled), ports: OpenPorts(transport: selectedTransport, encrypted: encrypted, credentials: credentials, http: http ?? origin.map { UrlSessionEncryptedHttp(origin: $0, headers: headers) }))
-    try attach(opened)
+    let ports = OpenPorts(transport: transport ?? (endpoint ?? origin).map { UrlSessionTransport(endpoint: $0, headers: headers) }, encrypted: encrypted, credentials: credentials, http: http ?? origin.map { UrlSessionEncryptedHttp(origin: $0, headers: headers) })
+    let database = try await opener.open(config: Config(path: path, dataVersion: nil), modelsJson: modelsJSON, options: OpenOptions(operations: definitions(operations)), ports: ports, observers: SystemObservers())
+    slot = database
   }
 
   @_spi(Testing) public static func openOnClock(path: String?, modelsJson: String, transport: Transport?, clock: TestClock, encrypted: EncryptedConfig? = nil, credentials: CredentialStore? = nil, http: EncryptedHttp? = nil) async throws -> Database {
-    try await opener.openWithClock(config: Config(path: path, dataVersion: nil, cacheRows: cacheRows), modelsJson: modelsJson, ports: OpenPorts(transport: transport, encrypted: encrypted, credentials: credentials, http: http), clock: clock)
+    try await opener.openWithClock(config: Config(path: path, dataVersion: nil), modelsJson: modelsJson, ports: OpenPorts(transport: transport, encrypted: encrypted, credentials: credentials, http: http), clock: clock)
   }
 
   @_spi(Testing) public static func install(_ database: Database, transport: Transport?, operations: [any GraphQLOperation.Type]) async throws {
-    let definitions = operations.map { JSONValue.object(["name": .string($0.operationName), "document": .string($0.document)]) }
-    if transport != nil { try await database.registerOperations(defsJson: JSONValue.array(definitions).text) }
-    try attach(database)
+    if transport != nil { try await database.declareOperations(operations: definitions(operations)) }
+    try await database.startObservers(observers: SystemObservers())
+    slot = database
   }
 
   /// Forgets the open database so a test can call the library before any open.
   static func forgetOpened() { slot = nil }
 
-  /// Hands a stand-in database to the calls and keeps the observers of the open one.
-  static func use(_ database: Database) {
-    slot = slot?.standingIn(database) ?? Opened(database: database, stops: [])
-  }
+  /// Hands a stand-in database to the calls.
+  static func use(_ database: Database) { slot = database }
 
-  private static func attach(_ database: Database) throws {
-    let sink = try database.onlineSink()
-    let opened = Opened(database: database, stops: [
-      Reachability.observe { sink.setOnline(online: $0) },
-      ForegroundEvents.observe { sink.enterForeground() },
-      PowerSaving.observe { sink.setPowerSaving(saving: $0) }
-    ])
-    let previous = slot
-    slot = opened
-    previous?.stopObservers()
+  private static func definitions(_ operations: [any GraphQLOperation.Type]) -> [OperationDefinition] {
+    operations.map { OperationDefinition(name: $0.operationName, document: $0.document) }
   }
 }

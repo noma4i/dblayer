@@ -104,7 +104,7 @@ extension BridgeProbeTests {
     try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
     defer { try? FileManager.default.removeItem(at: directory) }
     let path = directory.appendingPathComponent("old.sqlite").path
-    let config = Config(path: path, dataVersion: nil, cacheRows: 32)
+    let config = Config(path: path, dataVersion: nil)
     let models = try clubModels(keepLetter: keep)
     try await reopenSigned(config: config, modelsJson: models, operations: clubDefs)
     let receipt = try await Letter.create(chatId: "c1", text: "held", at: 1, in: DB.account())
@@ -419,7 +419,7 @@ extension BridgeProbeTests {
   @MainActor
   static func openClubSession(_ transport: any Transport, models: String = modelsJSON, subscription: String? = nil) async throws {
     let defs = subscription.map { String(clubDefs.dropLast()) + ",\($0)]" } ?? clubDefs
-    try await reopen(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: models, transport: transport, operations: defs)
+    try await reopen(config: Config(path: nil, dataVersion: nil), modelsJson: models, transport: transport, operations: defs)
   }
 
   /// K04 (B4): a create the server answers returns the confirmed row.

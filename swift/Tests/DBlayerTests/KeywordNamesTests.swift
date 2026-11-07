@@ -6,7 +6,7 @@ import Testing
 extension BridgeProbeTests {
   @Test(.timeLimit(.minutes(1)))
   func keywordNamesPreserveStoredKeysAndNestedValues() async throws {
-    try await reopen(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: nil)
+    try await reopen(config: Config(path: nil, dataVersion: nil), modelsJson: modelsJSON, transport: nil)
     let input = #"{"default":"nested","when":"now","class":"kind","container":"box","r":"reader"}"#
     let nested = try JSONDecoder().decode(KeywordValue.self, from: Data(input.utf8))
     let created = try await KeywordRecord.create(default: "row", class: "selected", value: nested).optimisticValue!
@@ -20,7 +20,7 @@ extension BridgeProbeTests {
     let encoded = try JSONDecoder().decode(JSONValue.self, from: JSONEncoder().encode(nested))
     #expect(try encoded == JSONValue.read(#"{"default":"nested","when":"now","class":"kind","container":"box","r":"reader","child":{"default":"d","when":"w","class":"c"}}"#))
     let transport = MockTransport()
-    try await reopen(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: transport)
+    try await reopen(config: Config(path: nil, dataVersion: nil), modelsJson: modelsJSON, transport: transport)
     try await DB.database.registerOperations(defsJson: #"[{"name":"KeywordCall","document":"query KeywordCall($class: String!) { keywordCall(class: $class) { default when container r } }"}]"#)
     transport.enqueue("KeywordCall", reply: #"{"data":{"keywordCall":{"default":"answer","when":"now","container":"box","r":"reader"}}}"#)
     let answer = try await Operations.when(class: "request")

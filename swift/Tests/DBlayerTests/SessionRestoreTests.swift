@@ -34,7 +34,7 @@ extension BridgeProbeTests {
     let transport = HeldProfileTransport()
     defer { transport.released.continuation.yield(()) }
     transport.base.enqueue("UserProfile", reply: #"{"data":{"me":{"__typename":"User","id":"1","name":"B"}}}"#)
-    try await reopen(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: transport, operations: #"[{"name":"UserProfile","document":"query UserProfile { me { id name } }"}]"#)
+    try await reopen(config: Config(path: nil, dataVersion: nil), modelsJson: modelsJSON, transport: transport, operations: #"[{"name":"UserProfile","document":"query UserProfile { me { id name } }"}]"#)
     let oldScope = try DB.account()
     let result = AsyncStream<Bool>.makeStream()
     Task {
@@ -61,7 +61,7 @@ extension BridgeProbeTests {
     for name in ["A", "B"] {
       transport.enqueue("UserProfile", reply: #"{"data":{"me":{"__typename":"User","id":"1","name":"\#(name)"}}}"#)
     }
-    try await reopen(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: transport, operations: #"[{"name":"UserProfile","document":"query UserProfile { me { id name } }"}]"#)
+    try await reopen(config: Config(path: nil, dataVersion: nil), modelsJson: modelsJSON, transport: transport, operations: #"[{"name":"UserProfile","document":"query UserProfile { me { id name } }"}]"#)
     try await User.profile.load(in: DB.account())
     let old = try #require(try await User.profile.read(in: DB.account()).first)
     try await old.set(typing: true, in: DB.account())
@@ -84,7 +84,7 @@ extension BridgeProbeTests {
       transport.enqueue("CurrentUserQuery", reply: #"{"data":{"user":{"id":"\#(user)","name":"\#(user)"}}}"#)
       transport.enqueue("CurrentRegionQuery", reply: #"{"data":{"region":{"id":"\#(region)","name":"\#(region)"}}}"#)
     }
-    try await reopen(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: transport, operations: #"[{"name":"CurrentUserQuery","document":"query CurrentUserQuery { user { id name } }"},{"name":"CurrentRegionQuery","document":"query CurrentRegionQuery { region { id name } }"}]"#)
+    try await reopen(config: Config(path: nil, dataVersion: nil), modelsJson: modelsJSON, transport: transport, operations: #"[{"name":"CurrentUserQuery","document":"query CurrentUserQuery { user { id name } }"},{"name":"CurrentRegionQuery","document":"query CurrentRegionQuery { region { id name } }"}]"#)
     try await CurrentUser.current.load(in: DB.account())
     try await CurrentRegion.current.load(in: DB.account())
     #expect(try await CurrentUser.current.read(in: DB.account()).map(\.id) == ["u1"])

@@ -16,7 +16,7 @@ private final class RecordingSession: Database, @unchecked Sendable {
     return #"{"ticket":"t-1"}"#
   }
   override func sessionReset() async throws { record("reset") }
-  override func sessionEpoch() -> UInt64 { 1 }
+  override func admit(accountEpoch: UInt64?) throws -> UInt64 { accountEpoch ?? 1 }
   override func retry(epoch: UInt64, model: String, rowId: String, action: String?, source: WireUploadRequest?) async throws -> WireOperationReceipt {
     record("retry \(model) \(rowId) \(action ?? "nil")")
     throw DbError.Invalid(detail: "recorded")
@@ -25,7 +25,7 @@ private final class RecordingSession: Database, @unchecked Sendable {
 
 extension BridgeProbeTests {
   @MainActor private func withRecordingSession(_ body: (RecordingSession) async throws -> Void) async throws {
-    try await reopen(config: Config(path: nil, dataVersion: nil, cacheRows: 8), modelsJson: modelsJSON, transport: nil)
+    try await reopen(config: Config(path: nil, dataVersion: nil), modelsJson: modelsJSON, transport: nil)
     let real = try DB.database
     defer { DB.use(real) }
     let recording = RecordingSession(noHandle: .init())

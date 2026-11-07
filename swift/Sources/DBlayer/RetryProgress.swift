@@ -7,9 +7,9 @@ final class RetrySnapshotListener: RetryProgressListener, @unchecked Sendable {
 }
 
 extension RetryProgress {
-  /// The encrypted HTTP calls that wait for a retry. A reader gets the current snapshot first, then the newest one. Cancelling the reading task ends only that reader.
+  /// The encrypted HTTP calls that wait for a retry. The core delivers the current snapshot first, then each newer one. Cancelling the reading task ends only that reader.
   public var changes: AsyncStream<RetrySnapshot> {
-    AsyncStream(bufferingPolicy: .bufferingNewest(1)) { continuation in
+    AsyncStream { continuation in
       do {
         let subscription = try subscribe(listener: RetrySnapshotListener { continuation.yield($0) })
         continuation.onTermination = { _ in subscription.cancel() }

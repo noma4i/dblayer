@@ -43,7 +43,7 @@ struct NestedTypesTests {
 @Suite(.serialized)
 struct CellDecoderTests {
   private func open() async throws -> Database {
-    try await openDatabase(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: nil)
+    try await openDatabase(config: Config(path: nil, dataVersion: nil), modelsJson: modelsJSON, transport: nil)
   }
 
   private func withoutUnknownKeys(_ value: JSONValue) -> JSONValue {

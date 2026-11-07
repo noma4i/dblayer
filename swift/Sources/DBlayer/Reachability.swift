@@ -17,6 +17,25 @@ struct SystemPath: PathSource {
 
 enum Reachability {
   @TaskLocal static var source: any PathSource = SystemPath()
+}
 
-  static func observe(_ changed: @escaping @Sendable (Bool) -> Void) -> @Sendable () -> Void { source.observe(changed) }
+/// The OS observers the core starts after `open` and stops in `Closing`: each OS value goes to the sink as it comes.
+final class SystemObservers: PlatformObserver, @unchecked Sendable {
+  private let path: any PathSource
+  private var stops: [@Sendable () -> Void] = []
+
+  init(path: any PathSource = Reachability.source) { self.path = path }
+
+  func start(sink: OnlineSink) {
+    stops = [
+      path.observe { sink.setOnline(online: $0) },
+      ForegroundEvents.observe { sink.enterForeground() },
+      PowerSaving.observe { sink.setPowerSaving(saving: $0) }
+    ]
+  }
+
+  func stop() {
+    stops.forEach { $0() }
+    stops = []
+  }
 }

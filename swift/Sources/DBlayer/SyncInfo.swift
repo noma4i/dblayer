@@ -25,15 +25,16 @@ public struct UploadInfo: Codable, Sendable, Equatable {
   public let stage: String
   public let sentBytes: UInt64
   public let totalBytes: UInt64
+  /// The sent share of the bytes in percent, 0 to 100.
+  public let progress: Double
   public let waitReason: String?
   /// Sum of retries for unfinished steps, preserved across restarts.
   public let attempts: Int
   public let error: OperationFailure?
 
-  public var percent: Double { totalBytes == 0 ? 0 : min(100, Double(sentBytes) * 100 / Double(totalBytes)) }
-
   enum CodingKeys: String, CodingKey {
     case status, stage, attempts, error
+    case progress
     case sentBytes = "sent_bytes", totalBytes = "total_bytes", waitReason = "wait_reason"
   }
 }
@@ -83,7 +84,7 @@ extension SyncInfo {
 extension UploadInfo {
   public init(wire: WireUpload) {
     self.init(
-      status: UploadStatus(wire: wire.status), stage: wire.stage, sentBytes: wire.sentBytes, totalBytes: wire.totalBytes,
+      status: UploadStatus(wire: wire.status), stage: wire.stage, sentBytes: wire.sentBytes, totalBytes: wire.totalBytes, progress: wire.progress,
       waitReason: wire.waitReason, attempts: Int(wire.attempts), error: wire.error.map(OperationFailure.init(wire:))
     )
   }

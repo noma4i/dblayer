@@ -42,7 +42,7 @@ extension BridgeProbeTests {
   func aLoadOfTheCoreWithoutAReplyFailsTheTestThatCausedIt() async throws {
     try await withKnownIssue {
       let transport = MockTransport()
-      try await reopen(config: Config(path: nil, dataVersion: nil, cacheRows: 8), modelsJson: modelsJSON, transport: transport, operations: #"[{"name":"MomentsFeed","document":"query MomentsFeed($first: Int, $after: String) { feed(first: $first, after: $after) { nodes { id uuid likedByMe media createdAt } pageInfo { hasNextPage endCursor } } }"}]"#)
+      try await reopen(config: Config(path: nil, dataVersion: nil), modelsJson: modelsJSON, transport: transport, operations: #"[{"name":"MomentsFeed","document":"query MomentsFeed($first: Int, $after: String) { feed(first: $first, after: $after) { nodes { id uuid likedByMe media createdAt } pageInfo { hasNextPage endCursor } } }"}]"#)
       _ = try? await Moment.feed.load()
       #expect(!transport.unscripted.isEmpty)
     } matching: { issue in

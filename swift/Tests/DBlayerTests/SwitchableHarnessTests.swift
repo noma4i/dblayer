@@ -54,7 +54,7 @@ extension BridgeProbeTests {
       let first = MockTransport(unanswered: .networkError)
       first.enqueue("UserProfile", reply: Self.profile("A"))
       let switchable = SwitchableTransport(first, unset: unset)
-      try await reopen(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: switchable, operations: Self.operations)
+      try await reopen(config: Config(path: nil, dataVersion: nil), modelsJson: modelsJSON, transport: switchable, operations: Self.operations)
       let entity = Projected<User>(try DB.account().stream(User.profile))
       await eventually(#"entity.value?.name == "A""#) { entity.value?.name == "A" }
       let before = first.calls.count
@@ -66,7 +66,7 @@ extension BridgeProbeTests {
       #expect(first.calls.count == before, "work of the close reached the old transport")
       #expect(second.calls.isEmpty, "work of the close reached the next transport")
       switchable.target = second
-      try await reopen(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: switchable, operations: Self.operations)
+      try await reopen(config: Config(path: nil, dataVersion: nil), modelsJson: modelsJSON, transport: switchable, operations: Self.operations)
 
       let next = Projected<User>(try DB.account().stream(User.profile))
       try await next.loaded()
@@ -83,7 +83,7 @@ extension BridgeProbeTests {
     await DB.closeForCleanup()
     let first = MockTransport(unanswered: .networkError)
     first.enqueue("UserProfile", reply: Self.profile("A"))
-    try await reopen(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: first, operations: Self.operations)
+    try await reopen(config: Config(path: nil, dataVersion: nil), modelsJson: modelsJSON, transport: first, operations: Self.operations)
     let entity = Projected<User>(try DB.account().stream(User.profile))
     await eventually(#"entity.value?.name == "A""#) { entity.value?.name == "A" }
     await DB.closeForCleanup()
@@ -91,7 +91,7 @@ extension BridgeProbeTests {
     await DB.closeForCleanup()
     let second = MockTransport(unanswered: .networkError)
     second.enqueue("UserProfile", reply: Self.profile("B"))
-    try await reopen(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: second, operations: Self.operations)
+    try await reopen(config: Config(path: nil, dataVersion: nil), modelsJson: modelsJSON, transport: second, operations: Self.operations)
     let reopened = Projected<User>(try DB.account().stream(User.profile))
     await eventually(#"reopened.value?.name == "B""#) { reopened.value?.name == "B" }
     #expect(first.calls.filter { $0.operationName == "UserProfile" }.count == 1)
