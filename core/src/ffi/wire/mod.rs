@@ -217,11 +217,27 @@ fn file_cell(value: &Value) -> Cell {
     })
 }
 
-fn free_cell(value: &Value) -> Cell {
+pub(crate) fn free_cell(value: &Value) -> Cell {
     match value {
         Value::Array(items) => Cell::Seq { items: items.iter().map(free_cell).collect() },
         Value::Object(fields) => Cell::Keyed { entries: fields.iter().map(|(key, value)| CellEntry { key: key.clone(), value: free_cell(value) }).collect() },
         other => scalar_cell(other),
+    }
+}
+
+impl Cell {
+    /// The JSON value of a cell. A real that is not finite is `null`.
+    #[cfg(test)]
+    pub(crate) fn json(&self) -> Value {
+        match self {
+            Cell::Null => Value::Null,
+            Cell::Bool { value } => Value::Bool(*value),
+            Cell::Int { value } => Value::from(*value),
+            Cell::Real { value } => serde_json::Number::from_f64(*value).map_or(Value::Null, Value::Number),
+            Cell::Text { value } => Value::String(value.clone()),
+            Cell::Seq { items } => Value::Array(items.iter().map(Cell::json).collect()),
+            Cell::Keyed { entries } => Value::Object(entries.iter().map(|entry| (entry.key.clone(), entry.value.json())).collect()),
+        }
     }
 }
 

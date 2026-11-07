@@ -33,6 +33,10 @@ mod selftest;
 pub(crate) mod database_tests;
 mod encrypted;
 mod query;
+mod query_spec;
+#[cfg(test)]
+mod query_spec_tests;
+pub use query_spec::{QueryCondition, QueryOrder, QuerySpec};
 #[cfg(test)]
 #[path = "tape_tests.rs"]
 pub(crate) mod tape;
@@ -65,7 +69,7 @@ pub fn user_agent(application: Option<String>) -> String {
     }
 }
 
-pub use database::{Config, Database, SubscriptionCensus, TestClock};
+pub use database::{Config, Database, EdgeRow, SubscriptionCensus, TestClock};
 pub use receipt::{ItemId, WireBatchReceipt, WireItemReceipt, WireOperationOutcome, WireOperationReceipt, WireReceiptTicket};
 pub use opening::{OpenDatabase, OpenOptions, OpenPorts, OperationDefinition};
 pub use write::FileBytes;

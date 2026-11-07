@@ -34,10 +34,10 @@ fn json_calls() -> Vec<(&'static str, Call)> {
         })),
         ("run", Box::new(move |db, bad| Box::pin(async move { db.run(db.session_epoch(), "Feed".into(), bad).await.map(drop) }))),
         ("load", Box::new(move |db, bad| Box::pin(async move { db.load(db.session_epoch(), moment(), "feed".into(), bad).await }))),
-        ("refresh", Box::new(move |db, bad| Box::pin(async move { db.refresh(db.session_epoch(), moment(), "feed".into(), bad).await }))),
-        ("load_more", Box::new(move |db, bad| Box::pin(async move { db.load_more(db.session_epoch(), moment(), "feed".into(), bad).await.map(drop) }))),
-        ("load_all", Box::new(move |db, bad| Box::pin(async move { db.load_all(db.session_epoch(), moment(), "feed".into(), bad, false).await }))),
-        ("edge_values", Box::new(move |db, bad| Box::pin(async move { db.edge_values(db.session_epoch(), moment(), "feed".into(), bad, vec!["r1".into()]).await.map(drop) }))),
+        ("refresh", Box::new(move |db, bad| Box::pin(async move { db.refresh(db.session_epoch(), moment(), Some("feed".into()), bad).await }))),
+        ("load_more", Box::new(move |db, bad| Box::pin(async move { db.load_more(db.session_epoch(), moment(), Some("feed".into()), bad).await.map(drop) }))),
+        ("load_all", Box::new(move |db, bad| Box::pin(async move { db.load_all(db.session_epoch(), moment(), Some("feed".into()), bad, false).await }))),
+        ("edge_values", Box::new(move |db, bad| Box::pin(async move { db.edge_values(db.session_epoch(), moment(), Some("feed".into()), bad, vec!["r1".into()]).await.map(drop) }))),
     ]
 }
 

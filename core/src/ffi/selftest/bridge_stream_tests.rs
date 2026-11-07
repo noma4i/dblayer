@@ -159,7 +159,7 @@ async fn dlv_event_before_after() {
     let before = bound(database.node(epoch, "Chat".into(), "node".into(), "c1".into(), true)).await.unwrap().unwrap();
     assert!(named(&before, "before"));
     let query = |list: &str| json!({"model":"Chat","relation":"list","params":{"list":list}}).to_string();
-    assert_eq!(ids_of(bound(database.read_query(epoch, query("SECONDARY"))).await.unwrap()), ["c1"]);
+    assert_eq!(ids_of(bound(database.read_query(epoch, crate::ffi::QuerySpec::json(query("SECONDARY")))).await.unwrap()), ["c1"]);
     transport.subscription().await;
     transport.emit(json!({"data":{"recordEvents":{"entries":[{"topic":"MESSAGE","action":"UPDATED","recordId":"m1","chat":{"id":"c1","title":"after","revision":2,"lists":["PRIMARY"]}}]}}}));
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
@@ -171,10 +171,10 @@ async fn dlv_event_before_after() {
     assert_eq!(id, "c1");
     assert!(named(&before_row.expect("the event carries the row before"), "before"));
     assert!(named(&after_row.expect("the event carries the committed row"), "after"));
-    let primary = bound(database.read_query(epoch, query("PRIMARY"))).await.unwrap();
+    let primary = bound(database.read_query(epoch, crate::ffi::QuerySpec::json(query("PRIMARY")))).await.unwrap();
     assert_eq!(ids_of(primary.clone()), ["c1"]);
     assert!(named(&primary[0], "after"));
-    assert!(bound(database.read_query(epoch, query("SECONDARY"))).await.unwrap().is_empty());
+    assert!(bound(database.read_query(epoch, crate::ffi::QuerySpec::json(query("SECONDARY")))).await.unwrap().is_empty());
     let calls = world.log().into_iter().map(|entry| entry.operation).collect::<Vec<_>>();
     assert_eq!(calls, ["login_link", "ChatList", "ChatList", "ChatNode"]);
     database.close_now();
@@ -189,14 +189,14 @@ async fn feed_event_insert_on() {
     assert!(matches!(bound(events.pull()).await.unwrap(), Some(ReadValue::Ready)));
     for list in ["PRIMARY", "SECONDARY"] { bound(database.load(epoch, "Chat".into(), "list".into(), json!({"list": list}).to_string())).await.unwrap(); }
     let query = |list: &str| json!({"model":"Chat","relation":"list","params":{"list":list}}).to_string();
-    let before = (ids_of(bound(database.read_query(epoch, query("PRIMARY"))).await.unwrap()), ids_of(bound(database.read_query(epoch, query("SECONDARY"))).await.unwrap()));
+    let before = (ids_of(bound(database.read_query(epoch, crate::ffi::QuerySpec::json(query("PRIMARY")))).await.unwrap()), ids_of(bound(database.read_query(epoch, crate::ffi::QuerySpec::json(query("SECONDARY")))).await.unwrap()));
     let reads = world.count("ChatList");
     transport.subscription().await;
     transport.emit(json!({"data":{"recordEvents":{"entries":[{"topic":"MESSAGE","action":"UPDATED","recordId":"m9","chat":{"id":"c9","title":"new","revision":1,"lists":["PRIMARY"]}}]}}}));
     loop {
         if matches!(bound(events.pull()).await.unwrap(), Some(ReadValue::Event { id, .. }) if id == "c9") { break; }
     }
-    let (primary, secondary) = (ids_of(bound(database.read_query(epoch, query("PRIMARY"))).await.unwrap()), ids_of(bound(database.read_query(epoch, query("SECONDARY"))).await.unwrap()));
+    let (primary, secondary) = (ids_of(bound(database.read_query(epoch, crate::ffi::QuerySpec::json(query("PRIMARY")))).await.unwrap()), ids_of(bound(database.read_query(epoch, crate::ffi::QuerySpec::json(query("SECONDARY")))).await.unwrap()));
     assert!(primary.contains(&"c9".to_string()) && primary.len() == before.0.len() + 1, "the window of its list takes the row: {primary:?}");
     assert_eq!(secondary, before.1, "another list does not");
     assert_eq!(world.count("ChatList"), reads, "no window is read again");
@@ -371,7 +371,7 @@ async fn the_reader_that_cancels_ends_the_stream_and_the_core_keeps_nothing() {
     assert!(reader.ended().is_empty(), "a cancelled stream delivers no outcome");
     let mark = reader.len();
     rig.world.set_account("A2");
-    bound(rig.database.refresh(rig.database.session_epoch(), "User".into(), "all".into(), "{}".into())).await.unwrap();
+    bound(rig.database.refresh(rig.database.session_epoch(), "User".into(), Some("all".into()), "{}".into())).await.unwrap();
     settle(&rig).await;
     assert_eq!(reader.len(), mark, "a value reached a cancelled reader");
     assert!(matches!(bound(rig.database.refresh_stream(stream)).await, Err(DbError::Interrupted { .. })));

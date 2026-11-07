@@ -254,13 +254,11 @@ impl Database {
             let relation = spec.relations.iter().find(|relation| relation.node == Some(crate::schema::NodeRead::One)).map(|relation| relation.name.clone()).ok_or_else(|| DbError::Invalid { detail: format!("{model} declares no node read") })?;
             return self.node(watched.epoch, model.clone(), relation, id.clone(), true).await.map(drop);
         }
-        let ReadRequest::List { query_json } = &watched.request else { return Err(DbError::Invalid { detail: "the stream has nothing to refresh".into() }) };
-        let query: serde_json::Value = serde_json::from_str(query_json)?;
-        let (model, relation) = (query["model"].as_str().unwrap_or_default().to_string(), query["relation"].as_str().unwrap_or_default().to_string());
-        self.refresh(watched.epoch, model, relation, query.get("params").cloned().unwrap_or_else(|| serde_json::json!({})).to_string()).await
+        let ReadRequest::List { query } = &watched.request else { return Err(DbError::Invalid { detail: "the stream has nothing to refresh".into() }) };
+        self.refresh(watched.epoch, query.model.clone(), query.relation.clone(), query.params_json.clone()).await
     }
 
-    pub(crate) fn watch_query(&self, query_json: &str, reader: Arc<dyn Reader>) -> Arc<Watched> { self.watch(ReadRequest::List { query_json: query_json.into() }, reader) }
+    pub(crate) fn watch_query(&self, query_json: &str, reader: Arc<dyn Reader>) -> Arc<Watched> { self.watch(ReadRequest::List { query: crate::ffi::QuerySpec::json(query_json) }, reader) }
 
     /// The data of the account goes and its epoch ends, as at a sign-out.
     pub(crate) async fn reset_data(&self) { let _ = self.await_life(self.life.session_reset()).await; }
@@ -270,7 +268,7 @@ impl Database {
 
     /// What `load()` of a platform does: begin the load, wait for its result, give up the interest when the wait is dropped.
     pub(crate) async fn load(&self, epoch: u64, model: String, relation: String, params_json: String) -> Result<(), DbError> {
-        self.begin_load(epoch, model, relation, params_json)?.result().await
+        self.begin_load(epoch, model, Some(relation), params_json)?.result().await
     }
 
     pub(crate) async fn send_create(&self, model: &str, values_json: &str) -> super::WireOperationReceipt {

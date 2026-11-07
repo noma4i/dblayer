@@ -87,7 +87,7 @@ async fn a_send_with_a_file_joins_a_loaded_create_window() {
     rig.server.register(document);
     database.register_operations(json!([{"name":"Feed", "document":document, "rootPath":"moments"}]).to_string()).await.unwrap();
     let epoch = database.session_epoch();
-    let load = database.begin_load(epoch, "Moment".into(), "feed".into(), "{}".into()).unwrap();
+    let load = database.begin_load(epoch, "Moment".into(), Some("feed".into()), "{}".into()).unwrap();
     bound(load.result()).await.unwrap();
     database.set_online(false).unwrap();
     let directory = tempfile::tempdir().unwrap();
@@ -96,7 +96,7 @@ async fn a_send_with_a_file_joins_a_loaded_create_window() {
     let receipt = bound(database.send(crate::ffi::CommandRequest { epoch, model: "Moment".into(), values_json: r#"{"text":"clip"}"#.into(), args_json: "{}".into(), upload: Some(crate::ffi::command::CommandUpload { action: "upload".into(), request: request(&source) }) })).await.unwrap();
     let id = receipt.optimistic_value.unwrap().id;
     let query = json!({"model":"Moment", "relation":"feed", "params":{}}).to_string();
-    let rows = bound(database.read_query(epoch, query)).await.unwrap();
+    let rows = bound(database.read_query(epoch, crate::ffi::QuerySpec::json(query))).await.unwrap();
     assert_eq!(rows.into_iter().map(|row| row.id).collect::<Vec<_>>(), [id]);
     database.close_now();
 }

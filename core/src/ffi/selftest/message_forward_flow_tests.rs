@@ -15,7 +15,7 @@ const CHATS: &str = r#"{"model":"Chat","relation":"all","params":{}}"#;
 async fn rig_with_source() -> Rig {
     let rig = Rig::signed_as(World::new("server", "A", true), false, add_chat).await;
     let epoch = rig.database.session_epoch();
-    bound(rig.database.refresh(epoch, "User".into(), "profile".into(), "{}".into())).await.unwrap();
+    bound(rig.database.refresh(epoch, "User".into(), Some("profile".into()), "{}".into())).await.unwrap();
     for chat in ["c1", "c2"] { land_event(&rig, "Chat", chat_row(chat, 0)); }
     rig.world.seed_authored_message("A", "m1", "hello", 5, "u7");
     land_event(&rig, "Message", json!({"id": "m1", "chatId": "c1", "text": "hello", "at": 5, "authorId": "u7"}));

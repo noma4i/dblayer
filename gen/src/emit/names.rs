@@ -9,7 +9,7 @@ use crate::schema_check::SchemaTypes;
 const BARE_CALLS: &[&str] = &["self", "this", "jsonValue", "mapOf", "mutableMapOf", "buildJsonObject", "parseJsonObject", "requireNotNull", "onAccount", "listOf", "emptyMap"];
 
 const IMPORTED_TYPES: &[&str] = &[
-    "Query", "Condition", "Order", "Column", "Association", "FileField", "FileInfo", "JSONValue", "JsonElement", "JsonObject", "JsonArray", "JsonPrimitive", "JsonNull", "JsonEncoder", "DB", "DBlayer", "DBModel", "DBSingleton",
+    "Query", "Condition", "Order", "SortDirection", "Column", "Association", "FileField", "FileInfo", "JSONValue", "JsonElement", "JsonObject", "JsonArray", "JsonPrimitive", "JsonNull", "JsonEncoder", "DB", "DBlayer", "DBModel", "DBSingleton",
     "ModelDecoder", "AccountScope", "MutationReceipt", "OperationOutcome", "UploadRequest", "UploadInfo", "SyncInfo", "WireRow", "Cell", "CellReader", "Blob", "IDText", "IDTexts", "GraphQLNullable", "ListSerializer", "UnionSerializer",
     "UnionTypenameKey", "RawEnumSerializer", "RawEnum", "KSerializer", "SerialDescriptor", "SerializationException", "SerialName", "Serializable", "Immutable", "EncodeDefault", "ExperimentalSerializationApi", "OptIn",
     "Operations", "Self", "Pair", "Date", "String", "Int", "Long", "Bool", "Boolean", "Double", "List", "Map", "Dictionary", "Array", "Codable", "Encodable", "Equatable", "Hashable", "Sendable", "Encoder", "Decoder",

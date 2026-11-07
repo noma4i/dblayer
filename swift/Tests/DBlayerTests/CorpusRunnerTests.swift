@@ -379,8 +379,9 @@ private final class DatabaseRunner {
       spawn {
         do {
           let values = try await database.edgeValues(epoch: epoch, model: model, relation: relation, paramsJson: "{}", rowIds: ids)
-          let parsed = ((try? JSONSerialization.jsonObject(with: Data(values.utf8))) as? [String: Any]) ?? [:]
-          return done("edges", ["relation": relation, "values": Dictionary(uniqueKeysWithValues: parsed.map { (byId[$0.key] ?? $0.key, $0.value) })])
+          let named = try values.map { (byId[$0.id] ?? $0.id, try Cell.keyed(entries: $0.values).asJSON.jsonData()) }
+          let parsed = Dictionary(uniqueKeysWithValues: named.map { ($0.0, (try? JSONSerialization.jsonObject(with: $0.1)) ?? [String: Any]()) })
+          return done("edges", ["relation": relation, "values": parsed])
         } catch { return failed(error) }
       }
     case "upload_batch":
@@ -417,7 +418,7 @@ private final class DatabaseRunner {
       guard let row = text("row") else { return failure("arguments") }
       let id = idOf(row)
       spawn {
-        do { let found = try await database.readQuery(epoch: epoch, queryJson: #"{"model":"Moment"}"#); return done("row", ["row": row, "present": found.contains { $0.id == id }]) } catch { return failed(error) }
+        do { let found = try await database.readQuery(epoch: epoch, query: QuerySpec(model: "Moment", relation: nil, paramsJson: "{}", conditions: [], order: [], limit: nil, offset: nil, refreshOnConnect: false)); return done("row", ["row": row, "present": found.contains { $0.id == id }]) } catch { return failed(error) }
       }
     default:
       return nil
@@ -427,14 +428,13 @@ private final class DatabaseRunner {
 
   func openStream(_ database: Database, _ name: String, _ args: [String: Any]) -> [String] {
     guard let label = args["as"] as? String else { return failure("arguments") }
-    func query(_ relation: String?) -> String {
-      if let relation { return canonical(["model": "Moment", "relation": relation, "params": [String: Any]()] as [String: Any]) }
-      return canonical(["model": "Moment"])
+    func query(_ relation: String?) -> QuerySpec {
+      QuerySpec(model: "Moment", relation: relation, paramsJson: "{}", conditions: [], order: [], limit: nil, offset: nil, refreshOnConnect: false)
     }
     let request: ReadRequest
     switch name {
-    case "open_list": request = .list(queryJson: query(args["relation"] as? String))
-    case "open_count": request = .count(queryJson: query(args["relation"] as? String))
+    case "open_list": request = .list(query: query(args["relation"] as? String))
+    case "open_count": request = .count(query: query(args["relation"] as? String))
     case "open_entity":
       guard let row = args["row"] as? String, let fetch = (args["fetch"] as? String).flatMap(fetchOf) else { return failure("arguments") }
       request = .entity(model: "Moment", id: idOf(row), fetch: fetch)
@@ -442,7 +442,7 @@ private final class DatabaseRunner {
       guard let model = args["model"] as? String else { return failure("arguments") }
       request = .events(model: model)
     }
-    streams[label] = Pulled(ValueStream(epoch: database.sessionEpoch(), reader: database.subscribeValues(epoch: database.sessionEpoch(), request: request), database: database, load: nil), heard: heard)
+    streams[label] = Pulled(ValueStream(epoch: database.sessionEpoch(), reader: database.subscribeValues(epoch: database.sessionEpoch(), request: request)), heard: heard)
     return []
   }
 

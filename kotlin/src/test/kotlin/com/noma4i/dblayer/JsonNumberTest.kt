@@ -15,7 +15,7 @@ class JsonNumberTest {
     fun invalidJSONCannotBeSentOrBecomeAnEmptyObject() {
         val variables = JsonObject(mapOf("value" to JsonPrimitive(Double.POSITIVE_INFINITY)))
         val invalid = listOf<() -> Unit>(
-            { Query("Moment", Moment, relation = "feed", params = variables).json },
+            { Query("Moment", Moment, relation = "feed", params = variables).spec() },
             { UploadRequest("unused", variables = variables).wire() },
             { parseJsonObject("null") },
             { parseJsonObject("[]") },

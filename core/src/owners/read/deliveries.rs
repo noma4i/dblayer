@@ -92,6 +92,8 @@ pub struct View {
     pub reload: bool,
     pub window: WindowKey,
     pub subject: String,
+    /// What a list or count reads, already resolved against its relation.
+    pub query: Option<std::sync::Arc<crate::store::query::Query>>,
 }
 
 #[derive(Clone, Debug, PartialEq)]

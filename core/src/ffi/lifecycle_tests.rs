@@ -132,7 +132,7 @@ async fn open(server: Arc<Server>) -> Arc<Database> {
 async fn sign_in(database: &Database, account: &str) {
     within(database.session_call("login_link".into(), json!({"account":account}).to_string())).await.unwrap();
     within(database.run(database.session_epoch(), "SessionProfile".into(), "{}".into())).await.unwrap();
-    within(database.refresh(database.session_epoch(), "User".into(), "profile".into(), "{}".into())).await.unwrap();
+    within(database.refresh(database.session_epoch(), "User".into(), Some("profile".into()), "{}".into())).await.unwrap();
 }
 
 pub(super) fn named(row: &WireRow, name: &str) -> bool { row.cells.contains(&super::wire::Cell::Text { value: name.into() }) }
@@ -151,7 +151,7 @@ async fn session_reset_and_close_reject_answers_started_before_the_transition() 
             if session_call {
                 caller.session_call("login_link".into(), json!({"account":"late"}).to_string()).await.map(|_| ())
             } else {
-                caller.refresh(caller.session_epoch(), "User".into(), "profile".into(), "{}".into()).await.map(|_| ())
+                caller.refresh(caller.session_epoch(), "User".into(), Some("profile".into()), "{}".into()).await.map(|_| ())
             }
         });
         within(pause.entered.notified()).await;
@@ -236,12 +236,12 @@ async fn a_refresh_after_a_reset_does_not_join_the_flight_of_the_old_generation(
     let pause = server.pause_next();
     let first = database.clone();
     let epoch = first.session_epoch();
-    let old = tokio::spawn(async move { first.refresh(epoch, "User".into(), "all".into(), "{}".into()).await });
+    let old = tokio::spawn(async move { first.refresh(epoch, "User".into(), Some("all".into()), "{}".into()).await });
     within(pause.entered.notified()).await;
     let before = server.calls()["Users"];
     within(database.session_reset()).await.unwrap();
     sign_in(&database, "B").await;
-    within(database.refresh(database.session_epoch(), "User".into(), "all".into(), "{}".into())).await.unwrap();
+    within(database.refresh(database.session_epoch(), "User".into(), Some("all".into()), "{}".into())).await.unwrap();
     assert_eq!(server.calls()["Users"], before + 1, "the refresh after the reset waited for the old request");
     assert!(within(old).await.unwrap().is_err(), "the refresh of the old data waited for its request after the reset");
     pause.release.add_permits(1);
@@ -256,7 +256,7 @@ async fn a_reset_ends_every_explicit_call_waiting_on_the_old_flight_without_its_
     let pause = server.pause_next();
     let first = database.clone();
     let epoch = first.session_epoch();
-    let owner = tokio::spawn(async move { first.refresh(epoch, "User".into(), "all".into(), "{}".into()).await });
+    let owner = tokio::spawn(async move { first.refresh(epoch, "User".into(), Some("all".into()), "{}".into()).await });
     within(pause.entered.notified()).await;
     let second = database.clone();
     let epoch = second.session_epoch();

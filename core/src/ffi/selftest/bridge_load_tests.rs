@@ -17,9 +17,9 @@ async fn cancelling_one_load_interest_keeps_the_other_call_alive() {
     let before = rig.world.count("Users");
     let held = rig.world.hold_next("Users");
     let idle = rig.database.life.waiting_calls();
-    let first = rig.database.begin_load(epoch, "User".into(), "all".into(), "{}".into()).unwrap();
+    let first = rig.database.begin_load(epoch, "User".into(), Some("all".into()), "{}".into()).unwrap();
     held.entered_for("the shared load").await;
-    let second = rig.database.begin_load(epoch, "User".into(), "all".into(), "{}".into()).unwrap();
+    let second = rig.database.begin_load(epoch, "User".into(), Some("all".into()), "{}".into()).unwrap();
     yield_until("both calls wait for the shared load", || rig.database.life.waiting_calls() >= idle + 2).await;
     let owners = rig.database.life.clone();
     assert!(tokio::task::spawn_blocking(move || owners.barrier(std::time::Duration::from_secs(5))).await.unwrap(), "the owners handled both loads");
@@ -27,7 +27,7 @@ async fn cancelling_one_load_interest_keeps_the_other_call_alive() {
     held.release();
     bound(second.result()).await.unwrap();
     assert_eq!(rig.world.count("Users") - before, 1, "{:?}", rig.world.log());
-    let rows = bound(rig.database.read_query(epoch, r#"{"model":"User","relation":"all","params":{}}"#.into())).await.unwrap();
+    let rows = bound(rig.database.read_query(epoch, crate::ffi::QuerySpec::json(r#"{"model":"User","relation":"all","params":{}}"#))).await.unwrap();
     assert_eq!(ids_of(rows), ["user"]);
     rig.database.close_now();
 }
@@ -61,7 +61,7 @@ async fn cancelling_the_last_load_interest_cancels_the_request() {
     let database = bound(Database::open(crate::ffi::Config { path: None, data_version: None }, crate::ffi::lifecycle_tests::models(), crate::ffi::OpenPorts { transport: Some(transport.clone()), ..Default::default() })).await.unwrap();
     database.register_operations(json!([{"name":"Users","document":"query Users { users { id name } }"}]).to_string()).await.unwrap();
     database.set_online(true).unwrap();
-    let request = database.begin_load(database.session_epoch(), "User".into(), "all".into(), "{}".into()).unwrap();
+    let request = database.begin_load(database.session_epoch(), "User".into(), Some("all".into()), "{}".into()).unwrap();
     bound(transport.started.notified()).await;
     request.cancel();
     bound(transport.cancelled.notified()).await;
@@ -79,9 +79,9 @@ async fn a_refresh_after_reopen_and_clock_rollback_keeps_the_new_response() {
     let first = bound(opener.open_with_clock(config.clone(), plain_models(), crate::ffi::OpenPorts { transport: Some(switch.clone()), ..Default::default() }, crate::ffi::TestClock::new(1_000_000))).await.unwrap();
     first.register_operations(plain_operations()).await.unwrap();
     first.set_online(true).unwrap();
-    bound(first.refresh(first.session_epoch(), "User".into(), "profile".into(), "{}".into())).await.unwrap();
+    bound(first.refresh(first.session_epoch(), "User".into(), Some("profile".into()), "{}".into())).await.unwrap();
     let query = r#"{"model":"User","relation":"profile","params":{}}"#.to_string();
-    let rows = bound(first.read_query(first.session_epoch(), query.clone())).await.unwrap();
+    let rows = bound(first.read_query(first.session_epoch(), crate::ffi::QuerySpec::json(query.clone()))).await.unwrap();
     assert!(rows.iter().any(|row| named(row, "A")));
     bound(first.close_database()).await.unwrap();
     let world_b = World::new("server", "B", true);
@@ -89,8 +89,8 @@ async fn a_refresh_after_reopen_and_clock_rollback_keeps_the_new_response() {
     let second = bound(opener.open_with_clock(config, plain_models(), crate::ffi::OpenPorts { transport: Some(switch), ..Default::default() }, crate::ffi::TestClock::new(100))).await.unwrap();
     second.register_operations(plain_operations()).await.unwrap();
     second.set_online(true).unwrap();
-    bound(second.refresh(second.session_epoch(), "User".into(), "profile".into(), "{}".into())).await.unwrap();
-    let rows = bound(second.read_query(second.session_epoch(), query)).await.unwrap();
+    bound(second.refresh(second.session_epoch(), "User".into(), Some("profile".into()), "{}".into())).await.unwrap();
+    let rows = bound(second.read_query(second.session_epoch(), crate::ffi::QuerySpec::json(query))).await.unwrap();
     assert!(rows.iter().any(|row| named(row, "B")));
     assert_eq!((world_a.count("MyProfile"), world_b.count("MyProfile")), (1, 1));
     second.close_now();
@@ -114,7 +114,7 @@ async fn a_profile_delivery_is_ready_with_its_rows_before_an_explicit_refresh() 
     }).await;
     assert!(reader.shows("A"));
     assert_eq!(rig.world.count("MyProfile"), 1);
-    bound(rig.database.refresh(epoch, "User".into(), "profile".into(), "{}".into())).await.unwrap();
+    bound(rig.database.refresh(epoch, "User".into(), Some("profile".into()), "{}".into())).await.unwrap();
     assert_eq!(rig.world.count("MyProfile"), 2);
     rig.database.close_now();
 }
@@ -260,7 +260,7 @@ async fn a_mutation_answer_requires_one_reread_after_an_older_load() {
     rig.world.set_members("JOINED", &["u1", "u2"]);
     let query = json!({"model":"Member", "relation":"group_members", "params":{"groupId":created.id,"order":"JOINED"}}).to_string();
     let reader = Reader::open();
-    let stream = rig.database.subscribe_reading(epoch, ReadRequest::List { query_json: query }, reader.clone());
+    let stream = rig.database.subscribe_reading(epoch, ReadRequest::List { query: crate::ffi::QuerySpec::json(query) }, reader.clone());
     bound(rig.database.loaded(stream)).await.unwrap();
     let before = rig.world.count("GroupMembers");
     let older = rig.world.hold_next("GroupMembers");
@@ -340,7 +340,7 @@ async fn work_counters_an_entity_stream_ignores_other_rows_and_a_count_stream_ge
     let (entity, count, list) = (Reader::open(), Reader::open(), Reader::open());
     let streams = [
         rig.database.subscribe_reading(epoch, ReadRequest::Entity { model: "Message".into(), id: "s1".into(), fetch: crate::ffi::ReadFetch::Never }, entity.clone()),
-        rig.database.subscribe_reading(epoch, ReadRequest::Count { query_json: r#"{"model":"Message","relation":"thread","params":{"chatId":"c1"}}"#.into() }, count.clone()),
+        rig.database.subscribe_reading(epoch, ReadRequest::Count { query: crate::ffi::QuerySpec::json(r#"{"model":"Message","relation":"thread","params":{"chatId":"c1"}}"#) }, count.clone()),
         rig.database.subscribe_reading(epoch, thread(), list.clone()),
     ];
     for stream in streams { bound(rig.database.loaded(stream)).await.unwrap(); }
@@ -414,7 +414,7 @@ async fn a_stream_that_cannot_connect_ends_once_and_leaves_the_table() {
     let requests = [
         ReadRequest::Entity { model: "Nope".into(), id: "x".into(), fetch: crate::ffi::ReadFetch::Never },
         ReadRequest::Events { model: "Nope".into() },
-        ReadRequest::Count { query_json: r#"{"model":"Nope"}"#.into() },
+        ReadRequest::Count { query: crate::ffi::QuerySpec::json(r#"{"model":"Nope"}"#) },
     ];
     for request in requests {
         let reader = Reader::open();

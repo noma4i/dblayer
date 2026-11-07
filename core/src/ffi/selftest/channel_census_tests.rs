@@ -37,7 +37,7 @@ async fn the_reader_that_stops_ends_the_channel_of_its_relation_in_the_core() {
     let rig = Rig::new();
     let (peer, mut subscriptions, mut closes) = peer();
     let database = signed(&rig, peer).await;
-    let stream = database.subscribe_reading(database.session_epoch(), ReadRequest::List { query_json: PROFILE.into() }, Arc::new(Quiet));
+    let stream = database.subscribe_reading(database.session_epoch(), ReadRequest::List { query: crate::ffi::QuerySpec::json(PROFILE) }, Arc::new(Quiet));
     let token = crate::test_wait::within(subscriptions.recv()).await.unwrap();
     assert_eq!(bound(database.subscription_census()).await.unwrap().subscriptions, 1);
     database.cancel_stream(stream);
@@ -51,8 +51,8 @@ async fn a_stream_of_a_relation_without_updates_adds_no_channel() {
     let rig = Rig::new();
     let (peer, mut subscriptions, _closes) = peer();
     let database = signed(&rig, peer).await;
-    let first = database.subscribe_reading(database.session_epoch(), ReadRequest::List { query_json: PROFILE.into() }, Arc::new(Quiet));
-    let second = database.subscribe_reading(database.session_epoch(), ReadRequest::List { query_json: RECENT.into() }, Arc::new(Quiet));
+    let first = database.subscribe_reading(database.session_epoch(), ReadRequest::List { query: crate::ffi::QuerySpec::json(PROFILE) }, Arc::new(Quiet));
+    let second = database.subscribe_reading(database.session_epoch(), ReadRequest::List { query: crate::ffi::QuerySpec::json(RECENT) }, Arc::new(Quiet));
     crate::test_wait::within(subscriptions.recv()).await.unwrap();
     let census = bound(database.subscription_census()).await.unwrap();
     assert_eq!(census.subscriptions, 1, "a relation without `updates` and a model without `changed_by` has no channel");

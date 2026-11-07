@@ -191,10 +191,10 @@ async fn a_load_call_without_a_relation_is_invalid() {
     let slot = OpenDatabase::new();
     let database = slot.open(config(), "[]".into(), options(), crate::ffi::OpenPorts { transport: Some(Arc::new(Plain)), ..Default::default() }, None).await.unwrap();
     let epoch = database.session_epoch();
-    assert!(matches!(database.begin_load(epoch, "Item".into(), String::new(), "{}".into()), Err(DbError::Invalid { detail }) if detail.contains("no relation")));
-    assert!(matches!(database.refresh(epoch, "Item".into(), String::new(), "{}".into()).await, Err(DbError::Invalid { .. })));
-    assert!(matches!(database.load_more(epoch, "Item".into(), String::new(), "{}".into()).await, Err(DbError::Invalid { .. })));
-    assert!(matches!(database.edge_values(epoch, "Item".into(), String::new(), "{}".into(), vec![]).await, Err(DbError::Invalid { .. })));
+    assert!(matches!(database.begin_load(epoch, "Item".into(), None, "{}".into()), Err(DbError::Invalid { detail }) if detail.contains("no relation")));
+    assert!(matches!(database.refresh(epoch, "Item".into(), None, "{}".into()).await, Err(DbError::Invalid { .. })));
+    assert!(matches!(database.load_more(epoch, "Item".into(), None, "{}".into()).await, Err(DbError::Invalid { .. })));
+    assert!(matches!(database.edge_values(epoch, "Item".into(), None, "{}".into(), vec![]).await, Err(DbError::Invalid { .. })));
     database.close_database().await.unwrap();
 }
 

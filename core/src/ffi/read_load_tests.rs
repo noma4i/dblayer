@@ -62,16 +62,16 @@ async fn open(gated: bool) -> (Arc<Database>, Arc<Pages>) {
 }
 
 async fn first_value(db: &Database) -> (Arc<ReadStream>, ReadValue) {
-    let stream = db.subscribe_values(db.session_epoch(), ReadRequest::List { query_json: LIST.into() });
+    let stream = db.subscribe_values(db.session_epoch(), ReadRequest::List { query: crate::ffi::QuerySpec::json(LIST) });
     let value = tokio::time::timeout(LIMIT, stream.pull()).await.expect("a value within 5 s").unwrap().expect("a value");
     (stream, value)
 }
 
-async fn begin(db: &Database) -> Arc<super::loading::LoadRequest> { db.begin_load(db.session_epoch(), "Moment".into(), "feed".into(), "{}".into()).unwrap() }
+async fn begin(db: &Database) -> Arc<super::loading::LoadRequest> { db.begin_load(db.session_epoch(), "Moment".into(), Some("feed".into()), "{}".into()).unwrap() }
 
-async fn refresh(db: &Database) -> Result<(), DbError> { db.refresh(db.session_epoch(), "Moment".into(), "feed".into(), "{}".into()).await }
+async fn refresh(db: &Database) -> Result<(), DbError> { db.refresh(db.session_epoch(), "Moment".into(), Some("feed".into()), "{}".into()).await }
 
-async fn more(db: &Database) -> Result<LoadMoreResult, DbError> { db.load_more(db.session_epoch(), "Moment".into(), "feed".into(), "{}".into()).await }
+async fn more(db: &Database) -> Result<LoadMoreResult, DbError> { db.load_more(db.session_epoch(), "Moment".into(), Some("feed".into()), "{}".into()).await }
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_load_asks_the_first_page_once_and_the_snapshot_shows_the_revision_of_its_landing() {
@@ -196,8 +196,40 @@ async fn a_panic_in_the_window_read_ends_the_refresh_with_an_error_and_closes_th
 async fn a_panic_in_the_snapshot_read_ends_the_wait_of_the_stream_with_an_error_and_closes_the_database() {
     let (db, _transport) = open(false).await;
     db.db.panic_reads.store(crate::store::PANIC_VIEW_READ, Ordering::SeqCst);
-    let stream = db.subscribe_values(db.session_epoch(), ReadRequest::List { query_json: LIST.into() });
+    let stream = db.subscribe_values(db.session_epoch(), ReadRequest::List { query: crate::ffi::QuerySpec::json(LIST) });
     let value = crate::test_wait::within(stream.pull()).await;
     assert!(matches!(&value, Ok(Some(ReadValue::Snapshot { state, .. })) if state.phase == ReadPhase::Failed) || matches!(&value, Ok(Some(ReadValue::Ended { .. })) | Err(_)), "the stream ends its wait with an error or its end: {value:?}");
     crate::test_wait::yield_until("Lifecycle did not close after the snapshot read panic", || db.life.published().closed).await;
+}
+
+/// P-DATA-39 (R18): a stream loads the next page of its own relation and its first page again, and a stream without a relation refuses both.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_stream_loads_more_and_refreshes_its_own_relation() {
+    let (db, transport) = open(false).await;
+    crate::test_wait::within(begin(&db).await.result()).await.unwrap();
+    let (stream, _) = first_value(&db).await;
+    assert_eq!(crate::test_wait::within(stream.load_more()).await.unwrap(), LoadMoreResult::Loaded { has_more: false });
+    assert_eq!(transport.requests(), 2);
+    assert!(transport.asked.lock().unwrap()[1].contains("c0"), "the next page follows the cursor of the first");
+    assert_eq!(crate::test_wait::within(stream.load_more()).await.unwrap(), LoadMoreResult::NoMore);
+    crate::test_wait::within(stream.refresh()).await.unwrap();
+    assert_eq!(transport.requests(), 3, "the refresh asks the first page again");
+
+    let entity = db.subscribe_values(db.session_epoch(), ReadRequest::Entity { model: "Moment".into(), id: "1".into(), fetch: super::ReadFetch::Never });
+    assert!(matches!(crate::test_wait::within(entity.refresh()).await, Err(DbError::Invalid { detail }) if detail.contains("no relation")));
+    assert!(matches!(crate::test_wait::within(entity.load_more()).await, Err(DbError::Invalid { .. })));
+}
+
+/// P-DATA-91 (R17): the core builds the key of a transfer from the model, row and action: a status put under it reaches the stream.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_blob_stream_follows_the_transfer_of_its_model_row_and_action() {
+    let (db, _) = open(false).await;
+    let stream = db.subscribe_values(db.session_epoch(), ReadRequest::Blob { model: "Moment".into(), id: "m1".into(), action: "upload".into() });
+    db.shows.put(&crate::store::transfer_key("Moment", "m1", "upload"), crate::owners::write::transfer::Shown::Uploading { progress: 40 });
+    loop {
+        match crate::test_wait::within(stream.pull()).await.unwrap().expect("a value") {
+            ReadValue::Status { state, progress, .. } if state == "uploading" => { assert_eq!(progress, 40); break; }
+            _ => {}
+        }
+    }
 }

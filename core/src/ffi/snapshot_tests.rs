@@ -130,10 +130,10 @@ async fn dlv_state_error_typed() {
 async fn inv_loadm_16_a_refresh_that_changes_no_row_still_shows_its_state_once_the_group_has_read_through_it() {
     let (db, clock) = open(&[ONE_ROW, ONE_ROW]).await;
     db.load(db.session_epoch(), "Moment".into(), "feed".into(), "{}".into()).await.unwrap();
-    let stream = db.subscribe_values(db.session_epoch(), ReadRequest::List { query_json: FEED.into() });
+    let stream = db.subscribe_values(db.session_epoch(), ReadRequest::List { query: crate::ffi::QuerySpec::json(FEED) });
     let first_loaded = loaded_state(&stream, 0).await.loaded.expect("the first value is loaded");
     clock.advance(60_000);
-    db.refresh(db.session_epoch(), "Moment".into(), "feed".into(), "{}".into()).await.unwrap();
+    db.refresh(db.session_epoch(), "Moment".into(), Some("feed".into()), "{}".into()).await.unwrap();
     let shown = loaded_state(&stream, first_loaded).await;
     assert_eq!(shown.phase, ReadPhase::Loaded);
 }
@@ -158,10 +158,10 @@ async fn inv_loadm_16_a_refresh_that_only_changes_a_related_row_still_shows_its_
     const BOB: &str = r#"{"data":{"moments":[{"id":"m1","text":"a","author":{"id":"u1","name":"Bob"}}]}}"#;
     let (db, clock) = open_with_authors(&[ANN, BOB]).await;
     db.load(db.session_epoch(), "Moment".into(), "feed".into(), "{}".into()).await.unwrap();
-    let stream = db.subscribe_values(db.session_epoch(), ReadRequest::List { query_json: FEED.into() });
+    let stream = db.subscribe_values(db.session_epoch(), ReadRequest::List { query: crate::ffi::QuerySpec::json(FEED) });
     let first_loaded = loaded_state(&stream, 0).await.loaded.expect("the first value is loaded");
     clock.advance(60_000);
-    db.refresh(db.session_epoch(), "Moment".into(), "feed".into(), "{}".into()).await.unwrap();
+    db.refresh(db.session_epoch(), "Moment".into(), Some("feed".into()), "{}".into()).await.unwrap();
     let shown = loaded_state(&stream, first_loaded).await;
     assert_eq!(shown.phase, ReadPhase::Loaded);
 }

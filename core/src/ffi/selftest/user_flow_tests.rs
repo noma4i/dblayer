@@ -24,7 +24,7 @@ async fn flow_user_everywhere() {
     let epoch = rig.database.session_epoch();
 
     rig.world.set_account("A2");
-    bound(rig.database.refresh(epoch, "User".into(), "all".into(), "{}".into())).await.unwrap();
+    bound(rig.database.refresh(epoch, "User".into(), Some("all".into()), "{}".into())).await.unwrap();
     held.shows("A2").await;
     held.lists_show("A2").await;
     yield_until("all four places show the answer", || [&held.single, &held.entity, &held.rows, &held.window_rows].iter().all(|rows| first_named(rows, "A2").is_some())).await;

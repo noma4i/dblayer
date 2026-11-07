@@ -34,7 +34,6 @@ pub(crate) struct HeldVersion {
     pub limit: usize,
 }
 
-fn fault(error: serde_json::Error) -> CoreError { CoreError::Internal(error.to_string()) }
 
 impl Store {
     pub(crate) fn load(&self, reader: &Reader<'_>, model: &str, ids: &[String]) -> Result<HashMap<String, Row>, CoreError> {
@@ -124,11 +123,9 @@ impl Store {
         Ok(Some(Query { stable: relation.order_stable || relation.members_complete, ..Query::new(model).in_scope(scope).ordered(order) }))
     }
 
-    pub(crate) fn parse_query(&self, json: &str) -> Result<ParsedQuery, CoreError> {
-        let description: Value = serde_json::from_str(json).map_err(fault)?;
-        let mut query: Query = serde_json::from_value(description.clone()).map_err(fault)?;
-        let remote = description["relation"].as_str().map(|name| -> Result<_, CoreError> {
-            let params: Map<String, Value> = description.get("params").map(|value| serde_json::from_value(value.clone())).transpose().map_err(fault)?.unwrap_or_default();
+    /// The query of a request with the scope, order and stability of its relation, and the relation with its resolved params when the window is watched.
+    pub(crate) fn select_query(&self, mut query: Query, relation: Option<(&str, Map<String, Value>)>) -> Result<ParsedQuery, CoreError> {
+        let remote = relation.map(|(name, params)| -> Result<_, CoreError> {
             let params = self.spec(query.model.as_str())?.selection_values(name, &params)?;
             let relation_query = self.remote_relation_query(query.model.as_str(), name, &params)?;
             let watch = relation_query.is_some() || self.spec(query.model.as_str())?.relations.iter().any(|relation| relation.name == name && !relation.updates.is_empty());

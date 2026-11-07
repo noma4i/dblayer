@@ -22,7 +22,7 @@ async fn an_upload_keeps_the_epoch_it_was_sent_in() {
     database.set_online(true).unwrap();
     bound(database.session_call("social".into(), SOCIAL_BODY.into())).await.unwrap();
     stand.script.data("UserProfile", PROFILE_ANSWER);
-    let load = database.begin_load(database.session_epoch(), "User".into(), "profile".into(), "{}".into()).unwrap();
+    let load = database.begin_load(database.session_epoch(), "User".into(), Some("profile".into()), "{}".into()).unwrap();
     bound(load.result()).await.unwrap();
     database.set_online(false).unwrap();
     let second = database.session_epoch();
@@ -70,7 +70,7 @@ async fn a_load_after_a_reset_without_a_sign_in_is_refused_with_no_session() {
     database.set_online(true).unwrap();
     stand.script.data("UserProfile", PROFILE_ANSWER);
 
-    let refused = match database.begin_load(database.session_epoch(), "User".into(), "profile".into(), "{}".into()) {
+    let refused = match database.begin_load(database.session_epoch(), "User".into(), Some("profile".into()), "{}".into()) {
         Err(error) => error,
         Ok(load) => bound(load.result()).await.unwrap_err(),
     };

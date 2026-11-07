@@ -28,6 +28,12 @@ pub(crate) const ACCOUNT: &str = "account";
 pub(crate) const ROW_ID: &str = "id";
 
 /// The relation that holds the one row of a model: the only global relation answered as a single record.
+fn swift_direction(direction: dblayer::value::SortDirection) -> String {
+    let mut words = direction.name().split('_');
+    let first = words.next().unwrap_or_default().to_string();
+    words.fold(first, |mut name, word| { name.push_str(&word[..1].to_uppercase()); name.push_str(&word[1..]); name })
+}
+
 fn singleton_relation(model: &ModelSpec) -> Option<&RelationSpec> {
     let mut found = model.relations.iter().filter(|relation| relation.is_global && relation.remote.as_ref().is_some_and(|remote| remote.shape == RemoteShape::Single));
     let relation = found.next()?;
@@ -285,7 +291,7 @@ pub fn emit_swift(models: &[ModelSpec], operations: &[OperationCall], schema_typ
             if relation.remote.is_none() {
                 for key in &relation.by_columns { writeln!(out, "        {built} = {built}.where(Condition.equal(\"{key}\", try JSONValue.encode({})))", identifier(key, true)).unwrap(); }
                 if let Sort::Fields(fields) = &relation.sort {
-                    for field in fields { writeln!(out, "        {built} = {built}.order(Order(field: \"{}\", direction: \"{}\"))", field.column, field.direction.name()).unwrap(); }
+                    for field in fields { writeln!(out, "        {built} = {built}.order(Order(field: \"{}\", direction: .{}))", field.column, swift_direction(field.direction)).unwrap(); }
                 }
             }
             writeln!(out, "        return {built}\n    }}").unwrap();
@@ -414,7 +420,7 @@ pub fn emit_kotlin(models: &[ModelSpec], operations: &[OperationCall], schema_ty
             writeln!(out, "            var {built} = Query(\"{class}\", this, relation = \"{}\", params = buildJsonObject {{ {} }})", relation.name, relation.by_columns.iter().chain(relation.text_params.iter()).map(|key| format!("this.put(\"{key}\", jsonValue({}))", identifier(key, false))).collect::<Vec<_>>().join("; ")).unwrap();
             if relation.remote.is_none() {
                 for key in &relation.by_columns { writeln!(out, "            {built} = {built}.where(Condition.equal(\"{key}\", jsonValue({})))", identifier(key, false)).unwrap(); }
-                if let Sort::Fields(fields) = &relation.sort { for field in fields { writeln!(out, "            {built} = {built}.order(Order(\"{}\", \"{}\"))", field.column, field.direction.name()).unwrap(); } }
+                if let Sort::Fields(fields) = &relation.sort { for field in fields { writeln!(out, "            {built} = {built}.order(Order(\"{}\", SortDirection.{}))", field.column, field.direction.name().to_uppercase()).unwrap(); } }
             }
             writeln!(out, "            return {built}\n        }}").unwrap();
             kotlin_accessors(&mut out, &mut edge_types, model, relation, &decls);

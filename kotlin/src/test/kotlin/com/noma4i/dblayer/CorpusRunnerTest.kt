@@ -318,8 +318,8 @@ private class DatabaseRunner {
                 val ids = names.map(::idOf)
                 val byId = ids.zip(names).toMap()
                 spawn {
-                    val parsed = Json.parseToJsonElement(database.edgeValues(epoch, model, relation, "{}", ids)).jsonObject
-                    done("edges", mapOf("relation" to relation, "values" to parsed.entries.associate { (byId[it.key] ?: it.key) to it.value }))
+                    val edges = database.edgeValues(epoch, model, relation, "{}", ids)
+                    done("edges", mapOf("relation" to relation, "values" to edges.associate { (byId[it.id] ?: it.id) to Cell.Keyed(it.values).asJson() }))
                 }
             }
             "upload_batch" -> {
@@ -343,7 +343,7 @@ private class DatabaseRunner {
             "has" -> {
                 val row = text("row") ?: return failure("arguments")
                 val id = idOf(row)
-                spawn { done("row", mapOf("row" to row, "present" to database.readQuery(epoch, """{"model":"Moment"}""").any { it.id == id })) }
+                spawn { done("row", mapOf("row" to row, "present" to database.readQuery(epoch, QuerySpec("Moment", null, "{}", emptyList(), emptyList(), null, null, false)).any { it.id == id })) }
             }
             else -> return null
         }
@@ -352,7 +352,7 @@ private class DatabaseRunner {
 
     fun openStream(database: Database, name: String, args: JsonObject): List<JsonObject> {
         val key = args.text("as") ?: return failure("arguments")
-        fun query(relation: String?): String = if (relation != null) JsonObject(mapOf("model" to JsonPrimitive("Moment"), "relation" to JsonPrimitive(relation), "params" to JsonObject(emptyMap()))).toString() else """{"model":"Moment"}"""
+        fun query(relation: String?) = QuerySpec("Moment", relation, "{}", emptyList(), emptyList(), null, null, false)
         val request = when (name) {
             "open_list" -> ReadRequest.List(query(args.text("relation")))
             "open_count" -> ReadRequest.Count(query(args.text("relation")))
@@ -363,7 +363,7 @@ private class DatabaseRunner {
             }
             else -> ReadRequest.Events(args.text("model") ?: return failure("arguments"))
         }
-        streams[key] = Pulled(ValueStream(database.sessionEpoch(), database.subscribeValues(database.sessionEpoch(), request), database, null), heard, scope)
+        streams[key] = Pulled(ValueStream(database.sessionEpoch(), database.subscribeValues(database.sessionEpoch(), request)), heard, scope)
         return emptyList()
     }
 

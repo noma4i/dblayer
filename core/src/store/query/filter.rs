@@ -9,7 +9,7 @@ use super::statement::QueryError;
 
 pub(super) const SYNC_FIELD: &str = "sync";
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, uniffi::Enum)]
 #[serde(rename_all = "snake_case")]
 pub enum CompareOp {
     Less,
@@ -29,7 +29,7 @@ impl CompareOp {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum Where {
     Equal { field: String, #[serde(default)] value: Value },

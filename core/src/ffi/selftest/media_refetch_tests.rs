@@ -28,7 +28,7 @@ fn page(id: &str) -> Fault {
 }
 
 async fn driven(rig: &Rig, epoch: u64, params: &str) {
-    let load = { let database = rig.database.clone(); let params = params.to_string(); tokio::spawn(async move { database.load_all(epoch, "MediaMessage".into(), "visual_media".into(), params, false).await }) };
+    let load = { let database = rig.database.clone(); let params = params.to_string(); tokio::spawn(async move { database.load_all(epoch, "MediaMessage".into(), Some("visual_media".into()), params, false).await }) };
     yield_until("the media load ends", || { rig.clock.advance(1_000); load.is_finished() }).await;
     load.await.unwrap().unwrap();
 }
@@ -49,13 +49,13 @@ async fn a_media_refetch_after_mutation_reads_the_whole_stale_window() {
     let query = json!({"model":"MediaMessage","relation":"visual_media","params":{"chatId":"c1"}}).to_string();
     driven(&rig, epoch, &params).await;
     let ids = |rows: Vec<crate::ffi::wire::WireRow>| rows.into_iter().map(|row| row.id).collect::<Vec<_>>();
-    assert_eq!(ids(bound(rig.database.read_query(epoch, query.clone())).await.unwrap()), ["v1"]);
+    assert_eq!(ids(bound(rig.database.read_query(epoch, crate::ffi::QuerySpec::json(query.clone()))).await.unwrap()), ["v1"]);
     let receipt = bound(rig.database.act(epoch, "MediaMessage".into(), "v1".into(), "like".into(), "{}".into(), "{}".into())).await.unwrap();
     assert!(matches!(bound(rig.database.outcome(receipt)).await.unwrap(), WireOperationOutcome::Confirmed { .. }));
-    bound(rig.database.load_all(epoch, "MediaMessage".into(), "visual_media".into(), params.clone(), false)).await.unwrap();
-    assert_eq!(ids(bound(rig.database.read_query(epoch, query)).await.unwrap()), ["v2"], "the stale window was not read again after the mutation");
+    bound(rig.database.load_all(epoch, "MediaMessage".into(), Some("visual_media".into()), params.clone(), false)).await.unwrap();
+    assert_eq!(ids(bound(rig.database.read_query(epoch, crate::ffi::QuerySpec::json(query))).await.unwrap()), ["v2"], "the stale window was not read again after the mutation");
     assert_eq!(requests(&rig, "ChatMedia"), 2);
-    bound(rig.database.load_all(epoch, "MediaMessage".into(), "visual_media".into(), params.clone(), false)).await.unwrap();
+    bound(rig.database.load_all(epoch, "MediaMessage".into(), Some("visual_media".into()), params.clone(), false)).await.unwrap();
     assert_eq!(requests(&rig, "MediaMarker"), 5);
     rig.database.close_now();
 }

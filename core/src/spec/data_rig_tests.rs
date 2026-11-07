@@ -23,10 +23,10 @@ async fn data_scope_enum_default() {
     let rig = Rig::open_models(serde_json::to_string(&models).unwrap(), Some(path), super::rig::Server::new()).await;
     rig.db.register_operations(r#"[{"name":"Feed","document":"query Feed($kind: FeedKind!) { moments(kind: $kind) { id text } }","rootPath":"moments"}]"#.into()).await.unwrap();
     for params in ["{}", r#"{"kind":"PRIMARY"}"#, "{}"] {
-        let request = rig.db.begin_load(rig.epoch(), "Moment".into(), "feed".into(), params.into()).unwrap();
+        let request = rig.db.begin_load(rig.epoch(), "Moment".into(), Some("feed".into()), params.into()).unwrap();
         crate::test_wait::within(request.result()).await.unwrap();
         let query = json!({"model":"Moment","relation":"feed","params":serde_json::from_str::<serde_json::Value>(params).unwrap()});
-        assert!(crate::test_wait::within(rig.db.read_query(rig.epoch(), query.to_string())).await.unwrap().is_empty());
+        assert!(crate::test_wait::within(rig.db.read_query(rig.epoch(), crate::ffi::QuerySpec::json(query.to_string()))).await.unwrap().is_empty());
     }
     let requests = rig.server.seen();
     let requests: Vec<_> = requests.iter().filter(|request| request.operation == "Feed").collect();
@@ -92,7 +92,7 @@ async fn inv_row_05_run() {
 }
 
 async fn observed_texts(rig: &Rig) -> Vec<String> {
-    let stream = rig.db.subscribe_values(rig.epoch(), ReadRequest::List { query_json: r#"{"model":"Moment"}"#.into() });
+    let stream = rig.db.subscribe_values(rig.epoch(), ReadRequest::List { query: crate::ffi::QuerySpec::json(r#"{"model":"Moment"}"#) });
     let Some(ReadValue::Snapshot { rows, .. }) = within(stream.pull()).await.unwrap() else { panic!("the first value of a list is a snapshot") };
     within(stream.cancel()).await;
     rows.iter().map(|row| match &row.cells[..] { [Cell::Text { value }] => value.clone(), other => panic!("{other:?}") }).collect()

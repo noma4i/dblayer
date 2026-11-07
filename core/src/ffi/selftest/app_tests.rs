@@ -40,7 +40,7 @@ async fn app_logout_ios_order_ends_a_pending_initial_wait_and_hides_the_account_
     held.lists_show("A").await;
     bound(held.query().wait_for_initial_load()).await.unwrap();
     let gate = rig.world.hold_next("Users");
-    let _late = { let database = rig.database.clone(); let epoch = database.session_epoch(); tokio::spawn(async move { database.refresh(epoch, "User".into(), "all".into(), "{}".into()).await }) };
+    let _late = { let database = rig.database.clone(); let epoch = database.session_epoch(); tokio::spawn(async move { database.refresh(epoch, "User".into(), Some("all".into()), "{}".into()).await }) };
     gate.entered().await;
     let waiting = held.query();
     let pending = tokio::spawn(async move { waiting.wait_for_initial_load().await });
@@ -143,7 +143,7 @@ async fn account_switch_a_b_a_never_delivers_the_previous_account_and_drops_its_
     let mut previous = "A";
     for account in ["B", "A"] {
         let gate = rig.world.hold_next("Users");
-        let _late = { let database = rig.database.clone(); let epoch = database.session_epoch(); tokio::spawn(async move { database.refresh(epoch, "User".into(), "all".into(), "{}".into()).await }) };
+        let _late = { let database = rig.database.clone(); let epoch = database.session_epoch(); tokio::spawn(async move { database.refresh(epoch, "User".into(), Some("all".into()), "{}".into()).await }) };
         gate.entered().await;
 
         rig.exit(&held, true, false).await;
@@ -197,7 +197,7 @@ async fn login_link_already_authenticated_signs_out_then_repeats_once() {
     let logout = bound(rig.database.session_call("logout".into(), "{}".into())).await.unwrap_err();
     assert_eq!(session_code(logout), SessionCode::NoCredential);
     bound(rig.database.session_call("login_link".into(), body.clone())).await.unwrap();
-    bound(rig.database.refresh(rig.database.session_epoch(), "User".into(), "profile".into(), "{}".into())).await.unwrap();
+    bound(rig.database.refresh(rig.database.session_epoch(), "User".into(), Some("profile".into()), "{}".into())).await.unwrap();
 
     assert_eq!(rig.world.log().iter().filter(|entry| entry.operation == "login_link").count(), logins + 1);
     assert!(rig.world.signed());

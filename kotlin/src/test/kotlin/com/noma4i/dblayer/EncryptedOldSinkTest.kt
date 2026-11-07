@@ -35,7 +35,7 @@ class EncryptedOldSinkTest {
             DBlayer.database.registerOperations("""[{"name":"BulletinAdded","document":"subscription BulletinAdded { bulletinAdded { body occurredAt } }","rootPath":"bulletinAdded"}]""")
             DBlayer.database.setOnline(true)
             DBlayer.database.sessionCall("login_link", """{"account":"A"}""")
-            val query = Notice.recent.json
+            val query = Notice.recent.spec()
             val first = AccountScope.current().stream(Notice.recent)
             val firstReading = launch(Dispatchers.Default) { runCatching { first.values.collect { } } }
             val old = peer.subscribed.receive()

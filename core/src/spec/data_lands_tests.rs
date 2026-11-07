@@ -61,7 +61,7 @@ async fn data_upsert_lands() {
     db.set_online(true).unwrap();
     within(db.session_call("login_link".into(), json!({"account": "A"}).to_string())).await.unwrap();
     let epoch = db.session_epoch();
-    let load = db.begin_load(epoch, "Annotation".into(), "all".into(), "{}".into()).unwrap();
+    let load = db.begin_load(epoch, "Annotation".into(), Some("all".into()), "{}".into()).unwrap();
     within(load.result()).await.unwrap();
     let receipt = within(db.send_create("Moment", &json!({"text": "root"}).to_string())).await;
     assert!(matches!(within(db.outcome(receipt)).await.unwrap(), WireOperationOutcome::Confirmed { .. }));
@@ -73,7 +73,7 @@ async fn data_upsert_lands() {
         assert!(within(db.read_row(epoch, "Absent".into(), id.into())).await.unwrap().is_none());
     }
     let query = json!({"model":"Annotation", "relation":"all", "params":{}}).to_string();
-    let ids: Vec<_> = within(db.read_query(epoch, query)).await.unwrap().into_iter().map(|row| row.id).collect();
+    let ids: Vec<_> = within(db.read_query(epoch, crate::ffi::QuerySpec::json(query))).await.unwrap().into_iter().map(|row| row.id).collect();
     assert_eq!(ids, ["a2", "a1"]);
     within(db.close_database()).await.unwrap();
 }

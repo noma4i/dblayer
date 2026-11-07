@@ -4,8 +4,10 @@
 use std::sync::Arc;
 
 use super::database::Database;
+use super::LoadMoreResult;
 use super::queue::OperationInfo;
 use super::wire::{WireModel, WireRow};
+use super::QuerySpec;
 use super::DbError;
 use crate::owners::contract::{WindowPhase, WindowState};
 use crate::owners::life::Life;
@@ -86,14 +88,13 @@ pub enum ReadFetch {
 /// What a stream reads.
 #[derive(Clone, Debug, uniffi::Enum)]
 pub enum ReadRequest {
-    /// The JSON of a query: model, filters, order, and for a server relation its name and parameters.
-    List { query_json: String },
-    Count { query_json: String },
+    List { query: QuerySpec },
+    Count { query: QuerySpec },
     Entity { model: String, id: String, fetch: ReadFetch },
     /// The events of a model after the stream opened.
     Events { model: String },
-    /// The status of the transfer of `uploads[action]`, by its key `model:row:action`.
-    Blob { key: String },
+    /// The status of the transfer of `uploads[action]` of a row.
+    Blob { model: String, id: String, action: String },
     /// The queue of operations of the database.
     Operations,
 }
@@ -182,11 +183,25 @@ pub struct ReadStream {
     status: Option<tokio::task::AbortHandle>,
     /// The model of an events stream, to turn the rows of its events into wire rows.
     wire: Option<Arc<WireModel>>,
+    /// The database and epoch of the open, and the relation the request reads from the server.
+    database: Database,
+    epoch: u64,
+    load: Option<RelationLoad>,
+}
+
+struct RelationLoad {
+    model: String,
+    relation: String,
+    params_json: String,
 }
 
 impl ReadStream {
     #[cfg(test)]
     pub(crate) fn id(&self) -> u64 { self.stream }
+
+    fn relation(&self) -> Result<&RelationLoad, DbError> {
+        self.load.as_ref().ok_or_else(|| DbError::Invalid { detail: "the stream has no relation to load".into() })
+    }
 
     fn finished(&self, cause: ReadEnd) -> Option<ReadValue> {
         (!self.ended.swap(true, std::sync::atomic::Ordering::SeqCst)).then_some(ReadValue::Ended { cause })
@@ -232,6 +247,18 @@ impl ReadStream {
         }
     }
 
+    /// Loads the first page of the relation of this stream again. `Invalid` when the stream reads no relation, `Interrupted` when its session ended.
+    pub async fn refresh(&self) -> Result<(), DbError> {
+        let load = self.relation()?;
+        self.database.refresh(self.epoch, load.model.clone(), Some(load.relation.clone()), load.params_json.clone()).await
+    }
+
+    /// Loads the next page of the relation of this stream.
+    pub async fn load_more(&self) -> Result<LoadMoreResult, DbError> {
+        let load = self.relation()?;
+        self.database.load_more(self.epoch, load.model.clone(), Some(load.relation.clone()), load.params_json.clone()).await
+    }
+
     /// Returns when no value of this stream is delivered any more.
     pub async fn cancel(&self) {
         let _ = self.life.cancel_stream(self.stream).wait().await;
@@ -265,8 +292,8 @@ impl Database {
     /// The view of a request: what the owner reads, and the window it watches.
     fn view_of(&self, request: &ReadRequest) -> Result<View, DbError> {
         match request {
-            ReadRequest::List { query_json } | ReadRequest::Count { query_json } => {
-                let (query, remote) = self.parsed_query(query_json)?;
+            ReadRequest::List { query: asked } | ReadRequest::Count { query: asked } => {
+                let (query, remote) = self.parsed_query(asked)?;
                 let model = query.model.as_str().to_string();
                 let spec = self.db.spec(&model)?;
                 let kind = if matches!(request, ReadRequest::Count { .. }) { Kind::Count } else { Kind::List };
@@ -276,14 +303,14 @@ impl Database {
                     Some((relation, params)) => WindowKey::relation(&model, relation, params),
                     None => WindowKey { model: model.clone(), name: String::new() },
                 };
-                Ok(View { kind, model: model.clone(), tables: read_tables(&self.db, &model), local: spec.is_local(), remote: remote.is_some(), live, reload: serde_json::from_str::<serde_json::Value>(query_json).ok().and_then(|query| query.get("refreshOnConnect").and_then(serde_json::Value::as_bool)).unwrap_or(false), window, subject: query_json.clone() })
+                Ok(View { kind, model: model.clone(), tables: read_tables(&self.db, &model), local: spec.is_local(), remote: remote.is_some(), live, reload: asked.refresh_on_connect, window, subject: String::new(), query: Some(Arc::new(query)) })
             }
             ReadRequest::Events { model } => {
                 self.db.spec(model)?;
-                Ok(View { kind: Kind::Events, model: model.clone(), tables: Vec::new(), local: false, remote: false, live: false, reload: false, window: WindowKey { model: model.clone(), name: String::new() }, subject: model.clone() })
+                Ok(View { kind: Kind::Events, model: model.clone(), tables: Vec::new(), local: false, remote: false, live: false, reload: false, window: WindowKey { model: model.clone(), name: String::new() }, subject: model.clone(), query: None })
             }
-            ReadRequest::Operations => Ok(View { kind: Kind::Operations, model: String::new(), tables: vec![crate::store::operation::QUEUE_TABLE.to_string()], local: true, remote: false, live: false, reload: false, window: WindowKey { model: String::new(), name: String::new() }, subject: String::new() }),
-            ReadRequest::Blob { key } => Ok(View { kind: Kind::Blob, model: String::new(), tables: Vec::new(), local: true, remote: false, live: false, reload: false, window: WindowKey { model: String::new(), name: String::new() }, subject: key.clone() }),
+            ReadRequest::Operations => Ok(View { kind: Kind::Operations, model: String::new(), tables: vec![crate::store::operation::QUEUE_TABLE.to_string()], local: true, remote: false, live: false, reload: false, window: WindowKey { model: String::new(), name: String::new() }, subject: String::new(), query: None }),
+            ReadRequest::Blob { model, id, action } => Ok(View { kind: Kind::Blob, model: String::new(), tables: Vec::new(), local: true, remote: false, live: false, reload: false, window: WindowKey { model: String::new(), name: String::new() }, subject: crate::store::transfer_key(model, id, action), query: None }),
             ReadRequest::Entity { model, id, fetch } => {
                 let spec = self.db.spec(model)?;
                 let node = spec.relations.iter().find(|relation| relation.node == Some(crate::schema::NodeRead::One));
@@ -295,7 +322,7 @@ impl Database {
                     Some(relation) => WindowKey::relation(model, &relation.name, &serde_json::Map::from_iter([(crate::schema::NODE_PARAM.to_string(), serde_json::Value::String(id.clone()))])),
                     None => WindowKey { model: model.clone(), name: String::new() },
                 };
-                Ok(View { kind: Kind::Entity { fetch }, model: model.clone(), tables: read_tables(&self.db, model), local: spec.is_local(), remote: fetch != Fetch::Never, live: fetch != Fetch::Never && spec.is_live(), reload: false, window, subject: id.clone() })
+                Ok(View { kind: Kind::Entity { fetch }, model: model.clone(), tables: read_tables(&self.db, model), local: spec.is_local(), remote: fetch != Fetch::Never, live: fetch != Fetch::Never && spec.is_live(), reload: false, window, subject: id.clone(), query: None })
             }
         }
     }
@@ -334,19 +361,23 @@ impl Database {
         let stream = self.life.next_stream_id();
         let (view, valid) = match self.view_of(&request) {
             Ok(view) => (view, true),
-            Err(_) => (View { kind: Kind::List, model: String::new(), tables: Vec::new(), local: true, remote: false, live: false, reload: false, window: WindowKey { model: String::new(), name: String::new() }, subject: String::new() }, false),
+            Err(_) => (View { kind: Kind::List, model: String::new(), tables: Vec::new(), local: true, remote: false, live: false, reload: false, window: WindowKey { model: String::new(), name: String::new() }, subject: String::new(), query: None }, false),
         };
         let revision = self.db.published_revision().load(std::sync::atomic::Ordering::Acquire);
         self.life.open_stream(stream, view, epoch, valid, revision);
         let status = match (&request, valid) {
-            (ReadRequest::Blob { key }, true) => self.watch_status(stream, key),
+            (ReadRequest::Blob { model, id, action }, true) => self.watch_status(stream, &crate::store::transfer_key(model, id, action)),
             _ => None,
         };
         let wire = match (&request, valid) {
             (ReadRequest::Events { model }, true) => self.wire(model).ok().cloned(),
             _ => None,
         };
-        Arc::new(ReadStream { life: self.life.clone(), stream, ended: std::sync::atomic::AtomicBool::new(false), status, wire })
+        let load = match (&request, valid) {
+            (ReadRequest::List { query } | ReadRequest::Count { query }, true) => query.relation.as_ref().map(|relation| RelationLoad { model: query.model.clone(), relation: relation.clone(), params_json: query.params_json.clone() }),
+            _ => None,
+        };
+        Arc::new(ReadStream { life: self.life.clone(), stream, ended: std::sync::atomic::AtomicBool::new(false), status, wire, database: self.clone(), epoch, load })
     }
 }
 

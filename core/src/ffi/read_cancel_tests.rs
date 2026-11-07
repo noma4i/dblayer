@@ -16,7 +16,7 @@ async fn open() -> Arc<Database> {
 #[tokio::test(flavor = "multi_thread")]
 async fn a_cancel_from_another_task_ends_the_pull_that_waits() {
     let db = open().await;
-    let stream = Arc::new(db.subscribe_values(db.session_epoch(), ReadRequest::List { query_json: r#"{"model":"Note"}"#.into() }));
+    let stream = Arc::new(db.subscribe_values(db.session_epoch(), ReadRequest::List { query: crate::ffi::QuerySpec::json(r#"{"model":"Note"}"#) }));
     assert!(matches!(within(stream.pull()).await.unwrap(), Some(ReadValue::Snapshot { .. })));
     let mut pending = Box::pin(stream.pull());
     assert!(std::future::poll_fn(|cx| std::task::Poll::Ready(std::future::Future::poll(pending.as_mut(), cx).is_pending())).await);

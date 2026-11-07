@@ -27,7 +27,7 @@ extension BridgeProbeTests {
     try await DB.openTesting(transport: peer, modelsJSON: modelsJSON, encrypted: encrypted, credentials: CableCredentials(), http: server)
     try await DB.database.registerOperations(defsJson: #"[{"name":"BulletinAdded","document":"subscription BulletinAdded { bulletinAdded { body occurredAt } }","rootPath":"bulletinAdded"}]"#)
     try await DB.sessionCall("login_link", body: CableLogin(account: "A"))
-    let query = try Notice.recent.json
+    let query = try Notice.recent.spec()
     let first = try DB.account().stream(Notice.recent)
     let firstReading = Task { do { for try await _ in first {} } catch {} }
     let subscriptions = Cursor(peer.subscribed.stream)
@@ -40,7 +40,7 @@ extension BridgeProbeTests {
     let current = try #require(await subscriptions.next("the second subscription"))
     #expect(current != old)
     try peer.emitOld(token: old)
-    let rows = try await DB.database.readQuery(epoch: DB.database.sessionEpoch(), queryJson: query)
+    let rows = try await DB.database.readQuery(epoch: DB.database.sessionEpoch(), query: query)
     #expect(rows.isEmpty)
     firstReading.cancel()
     secondReading.cancel()

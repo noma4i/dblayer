@@ -50,7 +50,7 @@ fn view(kind: Kind) -> d::View {
         Kind::Blob => (d::Kind::Blob, "Moment"),
         Kind::Retry => (d::Kind::RetryStatus, "Moment"),
     };
-    d::View { kind, model: model.into(), tables: vec!["moments".into()], local: false, remote: true, live: false, reload: false, window: window(), subject: "t1".into() }
+    d::View { kind, model: model.into(), tables: vec!["moments".into()], local: false, remote: true, live: false, reload: false, window: window(), subject: "t1".into(), query: None }
 }
 
 fn rows_of(rows: &[r::Row]) -> Vec<d::StreamRow> { rows.iter().map(|(id, stamp)| d::StreamRow::new(id, *stamp)).collect() }

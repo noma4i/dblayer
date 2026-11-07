@@ -30,7 +30,7 @@ impl Held {
         if open.first().is_some_and(|stream| stream.epoch == database.session_epoch()) { return; }
         self.stopped.store(false, Ordering::SeqCst);
         for stream in open.drain(..) { stream.cancel(); }
-        open.push(database.watch(ReadRequest::List { query_json: r#"{"model":"User","relation":"profile","params":{}}"#.into() }, self.single.clone()));
+        open.push(database.watch(ReadRequest::List { query: crate::ffi::QuerySpec::json(r#"{"model":"User","relation":"profile","params":{}}"#) }, self.single.clone()));
         open.push(database.watch(ReadRequest::Entity { model: "User".into(), id: "user".into(), fetch: ReadFetch::Force }, self.entity.clone()));
         open.push(database.watch_query(r#"{"model":"User","relation":"all","params":{}}"#, self.rows.clone()));
         open.push(database.watch_query(r#"{"model":"User","relation":"all","params":{},"order":[{"field":"name","direction":"asc"}]}"#, self.window_rows.clone()));

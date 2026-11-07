@@ -97,13 +97,13 @@ async fn preloads_and_three_media_loads_finish_on_empty_pages() {
     within_secs(20, transport.preload.notified()).await;
     let epoch = database.session_epoch();
     for (relation, id) in [("visual_media", "v1"), ("audio_media", "a1"), ("gift_media", "g1")] {
-        within_secs(20, database.load_all(epoch, "MediaMessage".into(), relation.into(), json!({"chatId":"c1"}).to_string(), false)).await.unwrap();
+        within_secs(20, database.load_all(epoch, "MediaMessage".into(), Some(relation.into()), json!({"chatId":"c1"}).to_string(), false)).await.unwrap();
         let query = json!({"model":"MediaMessage","relation":relation,"params":{"chatId":"c1"}}).to_string();
-        let rows = within_secs(20, database.read_query(epoch, query)).await.unwrap();
+        let rows = within_secs(20, database.read_query(epoch, crate::ffi::QuerySpec::json(query))).await.unwrap();
         assert_eq!(rows.iter().map(|row| row.id.as_str()).collect::<Vec<_>>(), [id]);
         let sink = Arc::new(MediaSink::default());
         let request = json!({"model":"MediaMessage","relation":relation,"params":{"chatId":"c1"}}).to_string();
-        let stream = database.subscribe_reading(epoch, ReadRequest::List { query_json: request }, sink.clone());
+        let stream = database.subscribe_reading(epoch, ReadRequest::List { query: crate::ffi::QuerySpec::json(request) }, sink.clone());
         within_secs(20, database.loaded(stream)).await.unwrap();
         within_secs(20, async {
             loop {
@@ -126,9 +126,9 @@ async fn preloads_and_three_media_loads_finish_on_empty_pages() {
     assert_eq!(requests.iter().filter(|request| request.operation_name == "PresenceOnline").count(), 1);
     let failure_query = json!({"model":"MediaMessage","relation":"gift_media","params":{"chatId":"c2"}}).to_string();
     let sink = Arc::new(MediaSink::default());
-    let stream = database.subscribe_reading(epoch, ReadRequest::List { query_json: failure_query.clone() }, sink.clone());
+    let stream = database.subscribe_reading(epoch, ReadRequest::List { query: crate::ffi::QuerySpec::json(failure_query.clone()) }, sink.clone());
     within_secs(20, database.loaded(stream)).await.unwrap();
-    let outcome = within_secs(20, database.load_all(epoch, "MediaMessage".into(), "gift_media".into(), json!({"chatId":"c2"}).to_string(), false)).await;
+    let outcome = within_secs(20, database.load_all(epoch, "MediaMessage".into(), Some("gift_media".into()), json!({"chatId":"c2"}).to_string(), false)).await;
     assert!(matches!(outcome, Err(DbError::Network { .. })));
     within_secs(20, async {
         loop {
@@ -139,7 +139,7 @@ async fn preloads_and_three_media_loads_finish_on_empty_pages() {
     }).await;
     let states = sink.states.lock().unwrap().clone();
     assert!(states.iter().any(|state| state.phase == ReadPhase::Loaded && state.error.is_some()));
-    assert_eq!(within_secs(20, database.read_query(epoch, failure_query)).await.unwrap().iter().map(|row| row.id.as_str()).collect::<Vec<_>>(), ["x1"]);
+    assert_eq!(within_secs(20, database.read_query(epoch, crate::ffi::QuerySpec::json(failure_query))).await.unwrap().iter().map(|row| row.id.as_str()).collect::<Vec<_>>(), ["x1"]);
     database.cancel_stream(stream);
     within_secs(20, database.close_database()).await.unwrap();
 }

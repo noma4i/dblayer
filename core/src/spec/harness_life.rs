@@ -101,7 +101,7 @@ impl Rig {
     }
 
     pub async fn rows(&self, epoch: u64) -> Result<Vec<String>, DbError> {
-        Ok(self.database.read_query(epoch, r#"{"model":"Moment"}"#.into()).await?.into_iter().map(|row| row.id).collect())
+        Ok(self.database.read_query(epoch, crate::ffi::QuerySpec::json(r#"{"model":"Moment"}"#)).await?.into_iter().map(|row| row.id).collect())
     }
 }
 

@@ -21,7 +21,7 @@ async fn a_command_and_a_read_of_a_left_account_are_refused_and_change_nothing()
     assert_ne!(old, current);
     let users = r#"{"model":"User","relation":"all","params":{}}"#;
     let refused = |result: Result<(), DbError>| matches!(result, Err(DbError::Interrupted { .. } | DbError::NoSession { .. }));
-    assert!(refused(bound(rig.database.read_query(old, users.into())).await.map(|_| ())), "a read of A returned rows in the epoch of B");
+    assert!(refused(bound(rig.database.read_query(old, crate::ffi::QuerySpec::json(users))).await.map(|_| ())), "a read of A returned rows in the epoch of B");
     assert!(refused(bound(rig.database.read_row(old, "User".into(), "user".into())).await.map(|_| ())));
     assert!(refused(bound(rig.database.update(old, "User".into(), "user".into(), json!({"name":"hijacked"}).to_string(), "{}".into())).await.map(|_| ())));
     assert!(refused(bound(rig.database.destroy(old, "User".into(), "user".into())).await.map(|_| ())));
@@ -205,9 +205,9 @@ async fn a_refresh_and_a_load_more_fail_at_once_offline_and_the_entity_stream_sh
     rig.database.set_online(false).unwrap();
     let refreshed = bound(rig.database.refresh_stream(stream)).await;
     assert!(matches!(refreshed, Err(DbError::Offline { .. })), "refresh of a stream offline: {refreshed:?}");
-    let refreshed = bound(rig.database.refresh(rig.database.session_epoch(), "User".into(), "all".into(), "{}".into())).await;
+    let refreshed = bound(rig.database.refresh(rig.database.session_epoch(), "User".into(), Some("all".into()), "{}".into())).await;
     assert!(matches!(refreshed, Err(DbError::Offline { .. })), "refresh offline: {refreshed:?}");
-    let more = bound(rig.database.load_more(rig.database.session_epoch(), "User".into(), "all".into(), "{}".into())).await;
+    let more = bound(rig.database.load_more(rig.database.session_epoch(), "User".into(), Some("all".into()), "{}".into())).await;
     assert!(matches!(more, Err(DbError::Offline { .. })), "load more offline: {more:?}");
     yield_until("the entity stream shows the error", || entity.deliveries().iter().any(|delivery| match &delivery.value {
         ReadValue::State { state, .. } | ReadValue::Snapshot { state, .. } => state.error.is_some(),

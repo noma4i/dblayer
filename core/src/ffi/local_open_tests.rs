@@ -27,7 +27,7 @@ async fn a_retry_needs_a_session_without_a_transport() {
 #[tokio::test]
 async fn a_call_that_needs_the_server_still_fails_without_a_transport() {
     let database = local().await;
-    let refused = database.refresh(database.session_epoch(), "Note".into(), "recent".into(), "{}".into()).await;
+    let refused = database.refresh(database.session_epoch(), "Note".into(), Some("recent".into()), "{}".into()).await;
     assert!(matches!(refused, Err(super::DbError::NoSession { .. })));
 }
 

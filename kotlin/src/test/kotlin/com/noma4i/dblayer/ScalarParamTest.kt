@@ -15,13 +15,13 @@ class ScalarParamTest {
     @Test
     fun aScopeParamIsSentAsItsJsonValue() {
         val cases = listOf(
-            "an int and a bool" to (Tail.since("c1", afterSequence = 120L, pinned = true).json to """{"model":"Tail","relation":"since","params":{"containerId":"c1","afterSequence":120,"pinned":true}}"""),
-            "another int" to (Tail.since("c1", afterSequence = 121L, pinned = true).json to """{"model":"Tail","relation":"since","params":{"containerId":"c1","afterSequence":121,"pinned":true}}"""),
-            "a schema enum" to (Inbox.shelf(ContainerShelfKind.Primary).json to """{"model":"Inbox","relation":"shelf","params":{"list":"PRIMARY"}}"""),
-            "another schema enum value" to (Inbox.shelf(ContainerShelfKind.Secondary).json to """{"model":"Inbox","relation":"shelf","params":{"list":"SECONDARY"}}"""),
-            "a schema enum value the build lacks" to (Inbox.shelf(ContainerShelfKind.Unknown("LATER")).json to """{"model":"Inbox","relation":"shelf","params":{"list":"LATER"}}"""),
-            "the default order" to (Roster.containerMembers("c1").json to """{"model":"Roster","relation":"container_members","params":{"containerId":"c1","order":"JOINED"}}"""),
-            "an order of the schema" to (Roster.containerMembers("c1", order = ContainerMemberOrder.OwnerFirst).json to """{"model":"Roster","relation":"container_members","params":{"containerId":"c1","order":"OWNER_FIRST"}}"""),
+            "an int and a bool" to (Tail.since("c1", afterSequence = 120L, pinned = true).spec() to QuerySpec("Tail", "since", """{"containerId":"c1","afterSequence":120,"pinned":true}""", emptyList(), emptyList(), null, null, false)),
+            "another int" to (Tail.since("c1", afterSequence = 121L, pinned = true).spec() to QuerySpec("Tail", "since", """{"containerId":"c1","afterSequence":121,"pinned":true}""", emptyList(), emptyList(), null, null, false)),
+            "a schema enum" to (Inbox.shelf(ContainerShelfKind.Primary).spec() to QuerySpec("Inbox", "shelf", """{"list":"PRIMARY"}""", emptyList(), emptyList(), null, null, false)),
+            "another schema enum value" to (Inbox.shelf(ContainerShelfKind.Secondary).spec() to QuerySpec("Inbox", "shelf", """{"list":"SECONDARY"}""", emptyList(), emptyList(), null, null, false)),
+            "a schema enum value the build lacks" to (Inbox.shelf(ContainerShelfKind.Unknown("LATER")).spec() to QuerySpec("Inbox", "shelf", """{"list":"LATER"}""", emptyList(), emptyList(), null, null, false)),
+            "the default order" to (Roster.containerMembers("c1").spec() to QuerySpec("Roster", "container_members", """{"containerId":"c1","order":"JOINED"}""", emptyList(), emptyList(), null, null, false)),
+            "an order of the schema" to (Roster.containerMembers("c1", order = ContainerMemberOrder.OwnerFirst).spec() to QuerySpec("Roster", "container_members", """{"containerId":"c1","order":"OWNER_FIRST"}""", emptyList(), emptyList(), null, null, false)),
         )
         for ((name, pair) in cases) assertEquals(name, pair.second, pair.first)
     }

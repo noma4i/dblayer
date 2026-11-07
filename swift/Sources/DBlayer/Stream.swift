@@ -6,14 +6,6 @@ public struct ValueStream: AsyncSequence, Sendable {
   public typealias Element = ReadValue
   public let epoch: UInt64
   let reader: ReadStream
-  let database: Database
-  let load: LoadTarget?
-
-  struct LoadTarget: Sendable {
-    let model: String
-    let relation: String
-    let paramsJson: String
-  }
 
   public func makeAsyncIterator() -> AsyncIterator { AsyncIterator(reader: reader) }
 
@@ -23,31 +15,18 @@ public struct ValueStream: AsyncSequence, Sendable {
     public mutating func next() async throws -> ReadValue? { try await reader.pull() }
   }
 
-  /// Loads the relation of the stream again. Throws `Interrupted` when the session of the stream ended.
-  public func refresh() async throws {
-    let load = try target
-    try await database.refresh(epoch: epoch, model: load.model, relation: load.relation, paramsJson: load.paramsJson)
-  }
+  /// Loads the relation of the stream again. Throws `Interrupted` when the session of the stream ended and `Invalid` when the stream has no relation.
+  public func refresh() async throws { try await reader.refresh() }
 
-  public func loadMore() async throws -> LoadMoreResult {
-    let load = try target
-    return try await database.loadMore(epoch: epoch, model: load.model, relation: load.relation, paramsJson: load.paramsJson)
-  }
+  public func loadMore() async throws -> LoadMoreResult { try await reader.loadMore() }
 
   /// Stops reading: the stream ends in the core and nothing is delivered after this returns.
   public func cancel() async { await reader.cancel() }
-
-  private var target: LoadTarget {
-    get throws {
-      guard let load else { throw DbError.Invalid(detail: "the stream has no relation to load") }
-      return load
-    }
-  }
 }
 
 extension Database {
-  fileprivate func openValueStream(epoch: UInt64, request: ReadRequest, load: ValueStream.LoadTarget? = nil) -> ValueStream {
-    ValueStream(epoch: epoch, reader: subscribeValues(epoch: epoch, request: request), database: self, load: load)
+  fileprivate func openValueStream(epoch: UInt64, request: ReadRequest) -> ValueStream {
+    ValueStream(epoch: epoch, reader: subscribeValues(epoch: epoch, request: request))
   }
 }
 
@@ -310,11 +289,11 @@ public struct AccountScope: Sendable {
 
   /// `refreshOnConnect` loads the relation again when the stream opens, also when it is fresh. The first rows stay visible.
   public func stream<Model: DBModel>(_ query: Query<Model>, refreshOnConnect: Bool = false) throws -> ValueStream {
-    database.openValueStream(epoch: epoch, request: .list(queryJson: try query.json(refreshOnConnect: refreshOnConnect)), load: try query.loadTarget)
+    database.openValueStream(epoch: epoch, request: .list(query: try query.spec(refreshOnConnect: refreshOnConnect)))
   }
 
   public func count<Model: DBModel>(_ query: Query<Model>) throws -> ValueStream {
-    database.openValueStream(epoch: epoch, request: .count(queryJson: try query.json))
+    database.openValueStream(epoch: epoch, request: .count(query: try query.spec()))
   }
 
   /// One row by id. `fetch` tells when the library loads it from the server.
@@ -330,7 +309,7 @@ public struct AccountScope: Sendable {
 
   /// The status of the transfer of `uploads[action]` of a row.
   public func uploadStatus<Model: DBModel>(_ row: Model, action: String) -> UploadStatusStream {
-    UploadStatusStream(stream: database.openValueStream(epoch: epoch, request: .blob(key: "\(Model.modelName):\(row.id):\(action)")))
+    UploadStatusStream(stream: database.openValueStream(epoch: epoch, request: .blob(model: Model.modelName, id: row.id, action: action)))
   }
 
   /// The operations that wait for the server, are on their way or were refused.

@@ -112,6 +112,8 @@ Moment.recent                       // a named scope
 ```
 
 `limit` is at least 1 and `offset` is 0 or more, else the read fails with `Invalid`. A count ignores both.
+
+The builders only fill a typed record that the core compiles to SQL. A relation is optional in it: a load, refresh or load more of a query without a relation fails with `Invalid`.
 The count of a relation is a query: `scope.count(...)`. There are no counter caches.
 A query is plain data (`model`, `where`, `order`, `limit`, `offset`). The core compiles it to SQL. Every scalar and enum field compares as its own SQLite column, and an index makes the comparison fast.
 A row with a null field matches `!(field == value)`.

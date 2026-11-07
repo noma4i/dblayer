@@ -62,7 +62,7 @@ async fn flow_search_follows_rows() {
     let params = json!({"query": "c"});
     let inbox = watch(&rig, r#"{"model":"Chat","relation":"all","params":{}}"#).await;
     let found = watch(&rig, &json!({"model":"Chat","relation":"search","params":params}).to_string()).await;
-    bound(rig.database.refresh(epoch, "Chat".into(), "search".into(), params.to_string())).await.unwrap();
+    bound(rig.database.refresh(epoch, "Chat".into(), Some("search".into()), params.to_string())).await.unwrap();
     yield_until("the search finds c1", || found.len() == 1 && inbox.len() == 1).await;
 
     land_event(&rig, "Chat", json!({"id": "c1", "name": "renamed", "lastMessageAt": 0, "lastActivityAt": 0, "unreadCount": 0, "pinned": true, "muted": false}));

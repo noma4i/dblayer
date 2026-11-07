@@ -66,7 +66,7 @@ impl Order {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Query {
     pub model: ModelKey,
     #[serde(default)]

@@ -33,8 +33,7 @@ impl Snapshots for DbSnapshots {
             return Ok((seen, ReadData::Operations(crate::ffi::queue_of(&operations))));
         }
         let (query, count) = match view.kind {
-            Kind::List => (self.db.parse_query(&view.subject).map_err(|error| error.to_string())?.0, false),
-            Kind::Count => (self.db.parse_query(&view.subject).map_err(|error| error.to_string())?.0, true),
+            Kind::List | Kind::Count => (view.query.as_deref().cloned().ok_or_else(|| "a list or count view has no query".to_string())?, view.kind == Kind::Count),
             Kind::Entity { .. } => (crate::store::query::Query::new(&view.model).filtered(crate::store::query::Where::equal("id", serde_json::json!(view.subject))), false),
             Kind::Events | Kind::Blob | Kind::RetryStatus | Kind::Operations => return Err("a stream of this kind reads no rows".to_string()),
         };

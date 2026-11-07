@@ -15,23 +15,15 @@ import kotlinx.coroutines.launch
 import kotlinx.serialization.json.JsonObject
 
 /** The values of one stream in order, taken from the core one by one. Collecting it reads the stream, and a collector that stops or is cancelled ends the stream in the core. A stream that ends by itself delivers one `ReadValue.Ended` last. */
-class ValueStream internal constructor(val epoch: ULong, private val reader: ReadStream, private val database: Database, private val load: LoadTarget?) {
-    internal class LoadTarget(val model: String, val relation: String, val paramsJson: String)
-
+class ValueStream internal constructor(val epoch: ULong, private val reader: ReadStream) {
     val values: Flow<ReadValue> = flow {
         while (true) emit(reader.pull() ?: break)
     }
 
-    /** Loads the relation of the stream again. Throws `Interrupted` when the session of the stream ended. */
-    suspend fun refresh() {
-        val target = requireTarget()
-        offCaller { database.refresh(epoch, target.model, target.relation, target.paramsJson) }
-    }
+    /** Loads the relation of the stream again. Throws `Interrupted` when the session of the stream ended and `Invalid` when the stream has no relation. */
+    suspend fun refresh() = offCaller { reader.refresh() }
 
-    suspend fun loadMore(): LoadMoreResult {
-        val target = requireTarget()
-        return offCaller { database.loadMore(epoch, target.model, target.relation, target.paramsJson) }
-    }
+    suspend fun loadMore(): LoadMoreResult = offCaller { reader.loadMore() }
 
     /** Stops reading: the stream ends in the core and nothing is delivered after this returns. */
     suspend fun cancel() = reader.cancel()
@@ -40,12 +32,10 @@ class ValueStream internal constructor(val epoch: ULong, private val reader: Rea
 
     /** Asks the core for a snapshot: the one call a reader makes when a delivery cannot be decoded. */
     internal fun resync() = reader.resync()
-
-    private fun requireTarget(): LoadTarget = load ?: throw DbException.Invalid("the stream has no relation to load")
 }
 
-internal fun Database.openValueStream(epoch: ULong, request: ReadRequest, load: ValueStream.LoadTarget? = null): ValueStream =
-    ValueStream(epoch, subscribeValues(epoch, request), this, load)
+internal fun Database.openValueStream(epoch: ULong, request: ReadRequest): ValueStream =
+    ValueStream(epoch, subscribeValues(epoch, request))
 
 /** One delivery of a stream of rows with its rows decoded: the platform value that [ListProjection] mirrors. */
 sealed interface ListDelivery<out Model> {
@@ -186,9 +176,9 @@ class UploadCommand(val action: String, val request: UploadRequest)
 /** The streams and commands of one signed-in account. The root of the app makes one after the sign-in and recreates its screens when the account changes: a scope whose session ended opens streams that end at once. */
 class AccountScope private constructor(val epoch: ULong, internal val database: Database) {
     /** [refreshOnConnect] loads the relation again when the stream opens, also when it is fresh. The first rows stay visible. */
-    fun <Model : DBModel> stream(query: Query<Model>, refreshOnConnect: Boolean = false): ValueStream = database.openValueStream(epoch, ReadRequest.List(query.json(refreshOnConnect)), query.loadTarget)
+    fun <Model : DBModel> stream(query: Query<Model>, refreshOnConnect: Boolean = false): ValueStream = database.openValueStream(epoch, ReadRequest.List(query.spec(refreshOnConnect)))
 
-    fun <Model : DBModel> count(query: Query<Model>): ValueStream = database.openValueStream(epoch, ReadRequest.Count(query.json))
+    fun <Model : DBModel> count(query: Query<Model>): ValueStream = database.openValueStream(epoch, ReadRequest.Count(query.spec()))
 
     /** One row by id. [fetch] tells when the library loads it from the server. */
     fun <Model : DBModel> entity(decoder: ModelDecoder<Model>, id: String, fetch: ReadFetch = ReadFetch.NEVER): ValueStream = database.openValueStream(epoch, ReadRequest.Entity(decoder.modelName, id, fetch))
@@ -196,7 +186,7 @@ class AccountScope private constructor(val epoch: ULong, internal val database: 
     fun <Model : DBModel> events(decoder: ModelDecoder<Model>): ValueStream = database.openValueStream(epoch, ReadRequest.Events(decoder.modelName))
 
     /** The status of the transfer of `uploads[action]` of a row. */
-    fun uploadStatus(row: DBModel, action: String): ValueStream = database.openValueStream(epoch, ReadRequest.Blob("${row.modelName}:${row.id}:$action"))
+    fun uploadStatus(row: DBModel, action: String): ValueStream = database.openValueStream(epoch, ReadRequest.Blob(row.modelName, row.id, action))
 
     /** The operations that wait for the server, are on their way or were refused. */
     fun operations(): Flow<List<OperationInfo>> = database.openValueStream(epoch, ReadRequest.Operations).operationLists()

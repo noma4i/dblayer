@@ -66,7 +66,7 @@ async fn one_signal_routes_typed_actions_and_notices() {
     bound(database.session_call("social".into(), SOCIAL_BODY.into())).await.unwrap();
     let epoch = database.session_epoch();
     let notices = database.subscribe_values(epoch, ReadRequest::Events { model: "ChatActivityNotice".into() });
-    let actions = database.subscribe_values(epoch, ReadRequest::List { query_json: json!({"model":"ChatAction","relation":"by_chat","params":{"chatId":"c"}}).to_string() });
+    let actions = database.subscribe_values(epoch, ReadRequest::List { query: crate::ffi::QuerySpec::json(json!({"model":"ChatAction","relation":"by_chat","params":{"chatId":"c"}}).to_string()) });
     let token = crate::test_wait::within(subscriptions.recv()).await.unwrap();
     until(&notices, "the notices open", |value| matches!(value, ReadValue::Ready)).await;
     until(&actions, "the list opens", |value| matches!(value, ReadValue::Snapshot { rows, .. } if rows.is_empty())).await;

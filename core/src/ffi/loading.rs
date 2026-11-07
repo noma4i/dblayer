@@ -104,33 +104,34 @@ impl Drop for LeaveLoad {
     }
 }
 
-/// A call without a relation has nothing to load: the wrappers pass an absent relation as the empty name.
-pub(super) fn relation_named(model: &str, relation: &str) -> Result<(), DbError> {
-    if relation.is_empty() { return Err(DbError::Invalid { detail: format!("{model} query has no relation to load") }); }
-    Ok(())
+/// A call without a relation has nothing to load.
+pub(super) fn relation_named(model: &str, relation: Option<String>) -> Result<String, DbError> {
+    relation.ok_or_else(|| DbError::Invalid { detail: format!("{model} query has no relation to load") })
 }
 
 #[uniffi::export]
 impl Database {
     /// Starts loading a relation and returns this caller's interest in the load at once. Callers of the same scope share one request: the request stops when every interest in it was cancelled.
-    pub fn begin_load(&self, epoch: u64, model: String, relation: String, params_json: String) -> Result<Arc<LoadRequest>, DbError> {
+    pub fn begin_load(&self, epoch: u64, model: String, relation: Option<String>, params_json: String) -> Result<Arc<LoadRequest>, DbError> {
+        let relation = relation_named(&model, relation)?;
         self.begin(LoadArgs { epoch, model, relation, params_json, goal: Goal::First, force: false })
     }
 
-    pub async fn refresh(&self, epoch: u64, model: String, relation: String, params_json: String) -> Result<(), DbError> {
-        relation_named(&model, &relation)?;
+    pub async fn refresh(&self, epoch: u64, model: String, relation: Option<String>, params_json: String) -> Result<(), DbError> {
+        let relation = relation_named(&model, relation)?;
         self.refuse_offline(&model, &relation, &params_json, "refresh")?;
         let call = self.start_load(epoch, &model, &relation, &params_json, Goal::First, true).await?;
         self.finish_load(call).await.map(drop)
     }
 
     /// Starts reading every page of the relation and returns this caller's request at once. Cancelling it stops the pages that no other caller waits for.
-    pub fn begin_load_all(&self, epoch: u64, model: String, relation: String, params_json: String, force: bool) -> Result<Arc<LoadRequest>, DbError> {
+    pub fn begin_load_all(&self, epoch: u64, model: String, relation: Option<String>, params_json: String, force: bool) -> Result<Arc<LoadRequest>, DbError> {
+        let relation = relation_named(&model, relation)?;
         self.begin(LoadArgs { epoch, model, relation, params_json, goal: Goal::All, force })
     }
 
-    pub async fn load_more(&self, epoch: u64, model: String, relation: String, params_json: String) -> Result<LoadMoreResult, DbError> {
-        relation_named(&model, &relation)?;
+    pub async fn load_more(&self, epoch: u64, model: String, relation: Option<String>, params_json: String) -> Result<LoadMoreResult, DbError> {
+        let relation = relation_named(&model, relation)?;
         self.refuse_offline(&model, &relation, &params_json, "load more")?;
         let call = self.start_load(epoch, &model, &relation, &params_json, Goal::Next, false).await?;
         self.finish_load(call).await
@@ -182,7 +183,6 @@ impl Database {
     }
 
     fn begin(&self, args: LoadArgs) -> Result<Arc<LoadRequest>, DbError> {
-        relation_named(&args.model, &args.relation)?;
         self.remote()?;
         let (sender, outcome) = tokio::sync::watch::channel(None);
         let this = self.clone();
@@ -213,7 +213,7 @@ impl Database {
     }
 
     #[cfg(test)]
-    pub(crate) async fn load_all(&self, epoch: u64, model: String, relation: String, params_json: String, force: bool) -> Result<(), DbError> {
+    pub(crate) async fn load_all(&self, epoch: u64, model: String, relation: Option<String>, params_json: String, force: bool) -> Result<(), DbError> {
         self.begin_load_all(epoch, model, relation, params_json, force)?.result().await
     }
 

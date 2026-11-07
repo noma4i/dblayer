@@ -10,7 +10,7 @@ use super::mock::{Credentials, Mock};
 use super::model::Sut;
 use super::value::{Input, Observation};
 use crate::ffi::{
-    CommandRequest, Config, Database, DbError, LoadMoreResult, OpenDatabase, ReadEnd, ReadFetch, ReadPhase, ReadRequest, ReadState, ReadStream, ReadValue, TestClock,
+    CommandRequest, Config, Database, DbError, LoadMoreResult, OpenDatabase, ReadEnd, ReadFetch, ReadPhase, ReadRequest, ReadState, ReadStream, ReadValue, QuerySpec, TestClock,
     WireOperationOutcome, WireOperationReceipt, WireRow,
 };
 use crate::ffi::upload_wire::{WireUploadBatch, WireUploadItem, WireUploadRequest};
@@ -383,7 +383,7 @@ impl DatabaseSut {
             }
             "begin_load" => {
                 let (Some(name), Some(relation)) = (text("as"), text("relation")) else { return Some(error("arguments")) };
-                match database.begin_load(epoch, "Moment".into(), relation, "{}".into()) {
+                match database.begin_load(epoch, "Moment".into(), Some(relation), "{}".into()) {
                     Ok(load) => {
                         let handle = load.clone();
                         self.loads.insert(name.clone(), Arc::new(move || handle.cancel()));
@@ -394,12 +394,12 @@ impl DatabaseSut {
             }
             "refresh" => {
                 let Some(relation) = text("relation") else { return Some(error("arguments")) };
-                self.launch(async move { database.refresh(epoch, "Moment".into(), relation.clone(), "{}".into()).await.map_or_else(|e| failed(&e), |()| done("refreshed", json!({ "relation": relation }))) });
+                self.launch(async move { database.refresh(epoch, "Moment".into(), Some(relation.clone()), "{}".into()).await.map_or_else(|e| failed(&e), |()| done("refreshed", json!({ "relation": relation }))) });
             }
             "load_more" => {
                 let Some(relation) = text("relation") else { return Some(error("arguments")) };
                 self.launch(async move {
-                    match database.load_more(epoch, "Moment".into(), relation.clone(), "{}".into()).await {
+                    match database.load_more(epoch, "Moment".into(), Some(relation.clone()), "{}".into()).await {
                         Ok(result) => done("more", json!({ "relation": relation, "result": more_name(result) })),
                         Err(error) => failed(&error),
                     }
@@ -439,7 +439,7 @@ impl DatabaseSut {
             }
             "begin_load_all" => {
                 let (Some(name), Some(relation)) = (text("as"), text("relation")) else { return Some(error("arguments")) };
-                match database.begin_load_all(epoch, "Moment".into(), relation, "{}".into(), input.flag("force").unwrap_or(false)) {
+                match database.begin_load_all(epoch, "Moment".into(), Some(relation), "{}".into(), input.flag("force").unwrap_or(false)) {
                     Ok(load) => {
                         let handle = load.clone();
                         self.loads.insert(name.clone(), Arc::new(move || handle.cancel()));
@@ -462,10 +462,9 @@ impl DatabaseSut {
                 let by_id: HashMap<String, String> = rows.iter().map(|row| (self.id_of(row), row.clone())).collect();
                 let model = text_or(input, "model", "Moment");
                 self.launch(async move {
-                    match database.edge_values(epoch, model, relation.clone(), "{}".into(), ids).await {
+                    match database.edge_values(epoch, model, Some(relation.clone()), "{}".into(), ids).await {
                         Ok(values) => {
-                            let parsed: Map<String, Value> = serde_json::from_str(&values).unwrap_or_default();
-                            let named: Map<String, Value> = parsed.into_iter().map(|(id, value)| (by_id.get(&id).cloned().unwrap_or(id), value)).collect();
+                            let named: Map<String, Value> = values.into_iter().map(|edge| (by_id.get(&edge.id).cloned().unwrap_or(edge.id), Value::Object(edge.values.into_iter().map(|entry| (entry.key, entry.value.json())).collect()))).collect();
                             done("edges", json!({ "relation": relation, "values": named }))
                         }
                         Err(error) => failed(&error),
@@ -501,7 +500,7 @@ impl DatabaseSut {
                 let Some(name) = text("row") else { return Some(error("arguments")) };
                 let id = self.id_of(&name);
                 self.launch(async move {
-                    match database.read_query(epoch, r#"{"model":"Moment"}"#.into()).await {
+                    match database.read_query(epoch, crate::ffi::QuerySpec::json(r#"{"model":"Moment"}"#)).await {
                         Ok(found) => done("row", json!({ "row": name, "present": found.iter().any(|row| row.id == id) })),
                         Err(error) => failed(&error),
                     }
@@ -514,13 +513,10 @@ impl DatabaseSut {
 
     fn open_stream(&mut self, database: &Arc<Database>, input: &Input) -> Vec<Observation> {
         let Some(name) = input.text("as") else { return error("arguments") };
-        let query = |relation: Option<&str>| match relation {
-            Some(relation) => json!({ "model": "Moment", "relation": relation, "params": {} }).to_string(),
-            None => json!({ "model": "Moment" }).to_string(),
-        };
+        let query = |relation: Option<&str>| QuerySpec { model: "Moment".into(), relation: relation.map(str::to_string), params_json: "{}".into(), conditions: Vec::new(), order: Vec::new(), limit: None, offset: None, refresh_on_connect: false };
         let request = match input.name.as_str() {
-            "open_list" => ReadRequest::List { query_json: query(input.text("relation")) },
-            "open_count" => ReadRequest::Count { query_json: query(input.text("relation")) },
+            "open_list" => ReadRequest::List { query: query(input.text("relation")) },
+            "open_count" => ReadRequest::Count { query: query(input.text("relation")) },
             "open_entity" => {
                 let (Some(row), Some(fetch)) = (input.text("row"), input.text("fetch").and_then(fetch_of)) else { return error("arguments") };
                 ReadRequest::Entity { model: "Moment".into(), id: self.id_of(row), fetch }

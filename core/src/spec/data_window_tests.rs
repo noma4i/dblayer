@@ -66,10 +66,10 @@ async fn inv_dsl_09_a_create_fills_a_local_attribute_from_the_singleton_row_and_
     server.hold(Kind::Mutate, true);
     let without = rig.create("before").await;
     assert_eq!(without.optimistic_value.unwrap().cells[1], crate::ffi::Cell::Null);
-    let request = rig.db.begin_load(rig.epoch(), "User".into(), "profile".into(), "{}".into()).unwrap();
+    let request = rig.db.begin_load(rig.epoch(), "User".into(), Some("profile".into()), "{}".into()).unwrap();
     within(request.result()).await.unwrap();
     let query = json!({"model":"User", "relation":"profile", "params":{}}).to_string();
-    let rows = within(rig.db.read_query(rig.epoch(), query)).await.unwrap();
+    let rows = within(rig.db.read_query(rig.epoch(), crate::ffi::QuerySpec::json(query))).await.unwrap();
     assert_eq!(rows.into_iter().map(|row| row.id).collect::<Vec<_>>(), ["u1"]);
     let with = rig.create("after").await;
     assert_eq!(with.optimistic_value.unwrap().cells[1], crate::ffi::Cell::Text { value: "u1".into() });
@@ -118,7 +118,7 @@ async fn load(rig: &Rig, name: &str) {
 }
 
 async fn load_params(rig: &Rig, name: &str, params: serde_json::Value) {
-    let request = rig.db.begin_load(rig.epoch(), "Moment".into(), name.into(), params.to_string()).unwrap();
+    let request = rig.db.begin_load(rig.epoch(), "Moment".into(), Some(name.into()), params.to_string()).unwrap();
     within(request.result()).await.unwrap();
 }
 
@@ -128,7 +128,7 @@ async fn ids(rig: &Rig, name: &str) -> Vec<String> {
 
 async fn ids_params(rig: &Rig, name: &str, params: serde_json::Value) -> Vec<String> {
     let query = json!({"model":"Moment", "relation":name, "params":params}).to_string();
-    within(rig.db.read_query(rig.epoch(), query)).await.unwrap().into_iter().map(|row| row.id).collect()
+    within(rig.db.read_query(rig.epoch(), crate::ffi::QuerySpec::json(query))).await.unwrap().into_iter().map(|row| row.id).collect()
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

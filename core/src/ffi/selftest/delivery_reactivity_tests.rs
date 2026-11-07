@@ -316,9 +316,9 @@ async fn dlv_prop_one_change_every_view_response_and_rejection() {
     land_event(&rig, "Moment", json!({"id":"m1", "userId":"u1", "visitsCount":2, "reacted":false}));
     let db = &rig.database;
     let epoch = db.session_epoch();
-    let list = db.subscribe_values(epoch, ReadRequest::List { query_json: r#"{"model":"Moment"}"#.into() });
+    let list = db.subscribe_values(epoch, ReadRequest::List { query: crate::ffi::QuerySpec::json(r#"{"model":"Moment"}"#) });
     let entity = db.subscribe_values(epoch, ReadRequest::Entity { model: "Moment".into(), id: "m1".into(), fetch: ReadFetch::Never });
-    let count = db.subscribe_values(epoch, ReadRequest::Count { query_json: r#"{"model":"Moment"}"#.into() });
+    let count = db.subscribe_values(epoch, ReadRequest::Count { query: crate::ffi::QuerySpec::json(r#"{"model":"Moment"}"#) });
     let (first_list, first_entity) = (next_rows(&rig, &list, 2).await, next_rows(&rig, &entity, 2).await);
     assert_eq!(first_list, first_entity);
     assert!(matches!(bound(count.pull()).await.unwrap(), Some(ReadValue::Count { count: 1, .. })));
@@ -355,9 +355,9 @@ async fn dlv_prop_one_change_every_view_feed() {
     bound(db.node(epoch, "Chat".into(), "node".into(), "c1".into(), true)).await.unwrap().unwrap();
     let events = db.subscribe_values(epoch, ReadRequest::Events { model: "Chat".into() });
     assert!(matches!(bound(events.pull()).await.unwrap(), Some(ReadValue::Ready)));
-    let list = db.subscribe_values(epoch, ReadRequest::List { query_json: r#"{"model":"Chat"}"#.into() });
+    let list = db.subscribe_values(epoch, ReadRequest::List { query: crate::ffi::QuerySpec::json(r#"{"model":"Chat"}"#) });
     let entity = db.subscribe_values(epoch, ReadRequest::Entity { model: "Chat".into(), id: "c1".into(), fetch: ReadFetch::Never });
-    let count = db.subscribe_values(epoch, ReadRequest::Count { query_json: r#"{"model":"Chat"}"#.into() });
+    let count = db.subscribe_values(epoch, ReadRequest::Count { query: crate::ffi::QuerySpec::json(r#"{"model":"Chat"}"#) });
     for stream in [&list, &entity, &count] { bound(stream.pull()).await.unwrap().unwrap(); }
     loop {
         let notified = transport.opened.notified();
@@ -386,9 +386,9 @@ async fn dlv_prop_one_change_every_view_related_row() {
     land_event(&rig, "Message", json!({"id":"m1","chatId":"c1","text":"hello","at":1,"reactions":[{"body":"B","userId":"u2","user":{"name":"Old"}}]}));
     let db = &rig.database;
     let epoch = db.session_epoch();
-    let list = db.subscribe_values(epoch, ReadRequest::List { query_json: r#"{"model":"Message"}"#.into() });
+    let list = db.subscribe_values(epoch, ReadRequest::List { query: crate::ffi::QuerySpec::json(r#"{"model":"Message"}"#) });
     let entity = db.subscribe_values(epoch, ReadRequest::Entity { model: "Message".into(), id: "m1".into(), fetch: ReadFetch::Never });
-    let count = db.subscribe_values(epoch, ReadRequest::Count { query_json: r#"{"model":"Message"}"#.into() });
+    let count = db.subscribe_values(epoch, ReadRequest::Count { query: crate::ffi::QuerySpec::json(r#"{"model":"Message"}"#) });
     for stream in [&list, &entity, &count] { bound(stream.pull()).await.unwrap().unwrap(); }
     let hold = rig.world.hold_then("ProfileUpdate", Fault::Business);
     let receipt = bound(db.act(epoch, "User".into(), "u2".into(), "update".into(), json!({"name":"Robert"}).to_string(), json!({"name":"Robert"}).to_string())).await.unwrap();

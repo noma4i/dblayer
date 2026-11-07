@@ -68,8 +68,8 @@ async fn overlapping_load_more_and_refresh_in_both_answer_orders_leave_a_consist
         pages.gates.lock().unwrap().insert(1, first.clone());
         pages.gates.lock().unwrap().insert(2, second.clone());
         let (more, refresh) = (database.clone(), database.clone());
-        let load_more = move || tokio::spawn(async move { more.load_more(more.session_epoch(), "Moment".into(), "feed".into(), "{}".into()).await });
-        let reload = move || tokio::spawn(async move { refresh.refresh(refresh.session_epoch(), "Moment".into(), "feed".into(), "{}".into()).await });
+        let load_more = move || tokio::spawn(async move { more.load_more(more.session_epoch(), "Moment".into(), Some("feed".into()), "{}".into()).await });
+        let reload = move || tokio::spawn(async move { refresh.refresh(refresh.session_epoch(), "Moment".into(), Some("feed".into()), "{}".into()).await });
         let (a, b) = if load_more_first {
             let a = load_more();
             first.entered_for(&case).await;
@@ -95,7 +95,7 @@ async fn overlapping_load_more_and_refresh_in_both_answer_orders_leave_a_consist
         bound(fresh.wait_for_initial_load()).await.unwrap_or_else(|error| panic!("{case}: the window after the reset inherited {error:?}"));
         assert!(fresh_rows.1.lock().unwrap().iter().all(|change| change.error.is_none()), "{case}: the window after the reset delivered an error");
         assert!(pages.queries.load(Ordering::SeqCst) - before <= 1, "{case}: the window after the reset read more than once");
-        let result = bound(database.load_more(database.session_epoch(), "Moment".into(), "feed".into(), "{}".into())).await.unwrap();
+        let result = bound(database.load_more(database.session_epoch(), "Moment".into(), Some("feed".into()), "{}".into())).await.unwrap();
         assert!(matches!(result, LoadMoreResult::Loaded { .. } | LoadMoreResult::NoMore), "{case}: {result:?}");
         live.cancel();
         fresh.cancel();
@@ -167,14 +167,14 @@ async fn a_refused_refresh_keeps_the_views_and_the_credential() {
     rig.settle().await;
     rig.world.fail_next("MyProfile", super::rig_tests::Fault::Refuse { code: "UNAUTHENTICATED", confirmed: false });
 
-    let refused = bound(rig.database.refresh(rig.database.session_epoch(), "User".into(), "profile".into(), "{}".into())).await.unwrap_err();
+    let refused = bound(rig.database.refresh(rig.database.session_epoch(), "User".into(), Some("profile".into()), "{}".into())).await.unwrap_err();
 
     assert!(matches!(refused, DbError::Session { code: crate::ffi::SessionCode::Unauthenticated, .. }), "{refused:?}");
     rig.settle().await;
     assert!(rig.database.signed_in_digest().is_some(), "the refusal cleared the credential");
     assert!(held.single.0.lock().unwrap().iter().all(|row| crate::ffi::lifecycle_tests::named(row, "A")) && held.entity.0.lock().unwrap().iter().all(|row| crate::ffi::lifecycle_tests::named(row, "A")) && !held.entities_empty(), "the refusal removed the value of a held entity");
     held.lists_show("A").await;
-    bound(rig.database.refresh(rig.database.session_epoch(), "User".into(), "profile".into(), "{}".into())).await.unwrap();
+    bound(rig.database.refresh(rig.database.session_epoch(), "User".into(), Some("profile".into()), "{}".into())).await.unwrap();
     held.shows("A").await;
     rig.database.close_now();
 }

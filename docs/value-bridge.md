@@ -107,6 +107,8 @@ One owner in the core serves each stream. The wrappers keep no registry, no lock
 | `refresh()` | Loads the relation again. |
 | `loadMore()` | Loads the next page. |
 
+A stream knows its own relation. A stream without a relation fails both calls with `Invalid`.
+
 A call that outlives its epoch ends as `Interrupted`.
 Server work without a session or transport fails with `NoSession`.
 Its late answer changes nothing, and a request of the stream does not start in the next epoch.

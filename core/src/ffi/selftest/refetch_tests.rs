@@ -18,10 +18,10 @@ async fn members_after_a_group_joined(rig: &Rig) -> (String, serde_json::Value, 
     let (values, args) = group("friends");
     let receipt = bound(rig.database.create(epoch, "Group".into(), values, args)).await.unwrap();
     assert!(matches!(bound(rig.database.outcome(receipt)).await.unwrap(), crate::ffi::WireOperationOutcome::Confirmed { .. }));
-    let id = bound(rig.database.read_query(epoch, r#"{"model":"Group"}"#.into())).await.unwrap().into_iter().next().unwrap().id;
+    let id = bound(rig.database.read_query(epoch, crate::ffi::QuerySpec::json(r#"{"model":"Group"}"#))).await.unwrap().into_iter().next().unwrap().id;
     rig.world.set_members("JOINED", &["u1", "u2"]);
     let params = json!({"groupId": id, "order": "JOINED"});
-    bound(rig.database.refresh(epoch, "Member".into(), "group_members".into(), params.to_string())).await.unwrap();
+    bound(rig.database.refresh(epoch, "Member".into(), Some("group_members".into()), params.to_string())).await.unwrap();
     (id, params, epoch)
 }
 
@@ -38,7 +38,7 @@ async fn a_confirmed_action_reads_the_open_window_of_its_refetch_relation_again(
     let (group, params, epoch) = members_after_a_group_joined(&rig).await;
     let (sender, mut deliveries) = tokio::sync::mpsc::unbounded_channel();
     let query = json!({"model": "Member", "relation": "group_members", "params": params});
-    let stream = rig.database.subscribe_reading(epoch, crate::ffi::ReadRequest::List { query_json: query.to_string() }, Arc::new(Deliveries(sender)));
+    let stream = rig.database.subscribe_reading(epoch, crate::ffi::ReadRequest::List { query: crate::ffi::QuerySpec::json(query.to_string()) }, Arc::new(Deliveries(sender)));
     bound(rig.database.loaded(stream)).await.unwrap();
     let before = rig.world.count("GroupMembers");
     join(&rig, &group, epoch).await;
@@ -53,8 +53,8 @@ async fn a_confirmed_action_reads_the_open_window_of_its_refetch_relation_again(
         }
         false
     }).await.unwrap_or(false);
-    let ids: Vec<_> = bound(rig.database.read_query(epoch, query.to_string())).await.unwrap().into_iter().map(|row| row.id).collect();
-    let all: Vec<_> = bound(rig.database.read_query(epoch, r#"{"model":"Member"}"#.into())).await.unwrap().into_iter().map(|row| row.id).collect();
+    let ids: Vec<_> = bound(rig.database.read_query(epoch, crate::ffi::QuerySpec::json(query.to_string()))).await.unwrap().into_iter().map(|row| row.id).collect();
+    let all: Vec<_> = bound(rig.database.read_query(epoch, crate::ffi::QuerySpec::json(r#"{"model":"Member"}"#))).await.unwrap().into_iter().map(|row| row.id).collect();
     assert!(shown, "the joined member was not shown; reads {} -> {}: stored {ids:?} members {all:?}", before, rig.world.count("GroupMembers"));
     yield_until("the open window is read again", || rig.world.count("GroupMembers") > before).await;
     rig.database.cancel_stream(stream);
@@ -71,7 +71,7 @@ async fn a_window_without_a_reader_is_read_again_when_the_next_reader_opens_it()
     assert_eq!(rig.world.count("GroupMembers"), before, "nobody reads the window: nothing is read");
     let (sender, _deliveries) = tokio::sync::mpsc::unbounded_channel();
     let query = json!({"model": "Member", "relation": "group_members", "params": params});
-    let stream = rig.database.subscribe_reading(epoch, crate::ffi::ReadRequest::List { query_json: query.to_string() }, Arc::new(Deliveries(sender)));
+    let stream = rig.database.subscribe_reading(epoch, crate::ffi::ReadRequest::List { query: crate::ffi::QuerySpec::json(query.to_string()) }, Arc::new(Deliveries(sender)));
     bound(rig.database.loaded(stream)).await.unwrap();
     yield_until("the owed read", || rig.world.count("GroupMembers") > before).await;
     rig.database.cancel_stream(stream);

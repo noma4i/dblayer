@@ -8,7 +8,6 @@ use tokio::runtime::Runtime;
 use crate::store::{OpenReport, Store};
 use crate::identity::RowId;
 use crate::runtime::{Clock, ManualClock, SystemClock};
-use crate::store::query::Query;
 use crate::schema::ModelSpec;
 use crate::transport::{self as core, EncryptedTransport, Exchange};
 use crate::owners::write::upload::UploadOperations;
@@ -240,6 +239,13 @@ fn operations_lookup(reads: &crate::owners::read::ReadOperations) -> crate::owne
     Arc::new(move |name| reads.get(name).map(|operation| (operation.document.clone(), operation.root_path.clone())))
 }
 
+/// The edge fields of one row in a relation.
+#[derive(Clone, Debug, PartialEq, uniffi::Record)]
+pub struct EdgeRow {
+    pub id: String,
+    pub values: Vec<super::wire::CellEntry>,
+}
+
 pub(super) fn parse_json<T: serde::de::DeserializeOwned>(text: &str) -> Result<T, DbError> {
     Ok(serde_json::from_str(text)?)
 }
@@ -257,11 +263,14 @@ impl Database {
         self.admit_now(epoch)?;
         Ok(found)
     }
-    pub async fn edge_values(&self, epoch: u64, model: String, relation: String, params_json: String, row_ids: Vec<String>) -> Result<String, DbError> {
-        super::loading::relation_named(&model, &relation)?;
+    pub async fn edge_values(&self, epoch: u64, model: String, relation: Option<String>, params_json: String, row_ids: Vec<String>) -> Result<Vec<EdgeRow>, DbError> {
+        let relation = super::loading::relation_named(&model, relation)?;
         self.read_in_epoch(epoch, "edge values", move |database| {
             let params = parse_json(&params_json)?;
-            Ok(serde_json::to_string(&database.db.edge_values(&model, &relation, &params, &row_ids)?)?)
+            Ok(database.db.edge_values(&model, &relation, &params, &row_ids)?.into_iter().map(|(id, values)| EdgeRow {
+                id,
+                values: values.iter().map(|(key, value)| super::wire::CellEntry { key: key.clone(), value: super::wire::free_cell(value) }).collect(),
+            }).collect())
         }).await
     }
     pub fn open_report(&self) -> Result<OpenReport, DbError> {
@@ -398,9 +407,9 @@ impl Database {
         Err(DbError::Offline { detail: format!("{what} needs the network") })
     }
 
-    pub(super) fn parsed_query(&self, json: &str) -> Result<crate::store::ParsedQuery, DbError> {
-        if serde_json::from_str::<Query>(json)?.limit == Some(0) { return Err(DbError::Invalid { detail: "a query limit must be positive".into() }); }
-        Ok(self.db.parse_query(json)?)
+    pub(super) fn parsed_query(&self, spec: &super::QuerySpec) -> Result<crate::store::ParsedQuery, DbError> {
+        let relation = spec.relation.as_deref().map(|name| parse_json::<serde_json::Map<String, serde_json::Value>>(&spec.params_json).map(|params| (name, params))).transpose()?;
+        Ok(self.db.select_query(spec.query()?, relation)?)
     }
 }
 

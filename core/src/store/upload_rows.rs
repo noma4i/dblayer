@@ -114,7 +114,7 @@ impl Store {
 
     fn stored_transfer(&self, raw: UploadRaw) -> Result<StoredTransfer, CoreError> {
         let [model, id, action] = raw.key;
-        let key = format!("{model}:{id}:{action}");
+        let key = transfer_key(&model, &id, &action);
         let place = if raw.inline { Location::Table } else { Location::Directory };
         let copying = raw.size == 0;
         let seq: u64 = unsigned(raw.seq, "seq")?;
@@ -193,4 +193,9 @@ impl Store {
             .collect())
     }
 
+}
+
+/// The key of the transfer of `uploads[action]` of a row.
+pub(crate) fn transfer_key(model: &str, id: &str, action: &str) -> String {
+    format!("{model}:{id}:{action}")
 }

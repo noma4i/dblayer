@@ -10,7 +10,7 @@ async fn a_load_whose_request_is_at_the_server_waits_for_the_network_and_ends_wi
     let before = profile_requests(&rig);
     let epoch = rig.database.session_epoch();
     let held = rig.world.hold_next("MyProfile");
-    let loading = { let database = rig.database.clone(); tokio::spawn(async move { database.refresh(epoch, "User".into(), "profile".into(), "{}".into()).await }) };
+    let loading = { let database = rig.database.clone(); tokio::spawn(async move { database.refresh(epoch, "User".into(), Some("profile".into()), "{}".into()).await }) };
     held.entered_for("the profile load").await;
     rig.database.set_online(false).unwrap();
     held.release();

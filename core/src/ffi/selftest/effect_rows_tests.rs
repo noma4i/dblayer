@@ -12,7 +12,7 @@ async fn confirmed_group(rig: &Rig) -> crate::ffi::WireRow {
     let (values, args) = group("friends");
     let receipt = bound(rig.database.create(epoch, "Group".into(), values, args)).await.unwrap();
     assert!(matches!(bound(rig.database.outcome(receipt)).await.unwrap(), crate::ffi::WireOperationOutcome::Confirmed { .. }));
-    bound(rig.database.read_query(epoch, r#"{"model":"Group"}"#.into())).await.unwrap().into_iter().next().unwrap()
+    bound(rig.database.read_query(epoch, crate::ffi::QuerySpec::json(r#"{"model":"Group"}"#))).await.unwrap().into_iter().next().unwrap()
 }
 
 async fn remove_member(rig: &Rig, id: &str) {
@@ -29,14 +29,14 @@ async fn joining_multiple_members_keeps_each_once_in_order() {
     let group = confirmed_group(&rig).await;
     let params = json!({"groupId": group.id, "order": "JOINED"});
     world.set_members("JOINED", &["u1", "u2", "u3", "u4", "u5"]);
-    bound(rig.database.refresh(epoch, "Member".into(), "group_members".into(), params.to_string())).await.unwrap();
+    bound(rig.database.refresh(epoch, "Member".into(), Some("group_members".into()), params.to_string())).await.unwrap();
     let removed = bound(rig.database.act(epoch, "Group".into(), group.id.clone(), "remove_member".into(), "{}".into(), json!({"userIds":["u4","u5"]}).to_string())).await.unwrap();
     assert!(matches!(bound(rig.database.outcome(removed)).await.unwrap(), crate::ffi::WireOperationOutcome::Confirmed { .. }));
     let hold = world.hold_next("AddMember");
     let receipt = bound(rig.database.act(epoch, "Group".into(), group.id.clone(), "add_member".into(), "{}".into(), json!({"userIds":["u4","u5","u4"]}).to_string())).await.unwrap();
     hold.entered_for("the join").await;
     let query = json!({"model":"Member","relation":"group_members","params":params});
-    let ids: Vec<_> = bound(rig.database.read_query(epoch, query.to_string())).await.unwrap().into_iter().map(|row| row.id).collect();
+    let ids: Vec<_> = bound(rig.database.read_query(epoch, crate::ffi::QuerySpec::json(query.to_string()))).await.unwrap().into_iter().map(|row| row.id).collect();
     assert_eq!(ids, ["u1", "u2", "u3", "u4", "u5"]);
     hold.release();
     assert!(matches!(bound(rig.database.outcome(receipt)).await.unwrap(), crate::ffi::WireOperationOutcome::Confirmed { .. }));
@@ -94,13 +94,13 @@ async fn an_outcome_arrives_before_a_held_list_and_the_automatic_reread_shows_th
     let group = confirmed_group(&rig).await;
     rig.world.set_members("JOINED", &["u1", "u2", "u3"]);
     let params = json!({"groupId": group.id, "order": "JOINED"});
-    bound(rig.database.refresh(epoch, "Member".into(), "group_members".into(), params.to_string())).await.unwrap();
+    bound(rig.database.refresh(epoch, "Member".into(), Some("group_members".into()), params.to_string())).await.unwrap();
     let query = json!({"model": "Member", "relation": "group_members", "params": params});
     let (sender, mut deliveries) = tokio::sync::mpsc::unbounded_channel();
-    let stream = rig.database.subscribe_reading(epoch, crate::ffi::ReadRequest::List { query_json: query.to_string() }, Arc::new(Deliveries(sender)));
+    let stream = rig.database.subscribe_reading(epoch, crate::ffi::ReadRequest::List { query: crate::ffi::QuerySpec::json(query.to_string()) }, Arc::new(Deliveries(sender)));
     bound(rig.database.loaded(stream)).await.unwrap();
     let old = rig.world.hold_next("GroupMembers");
-    let refreshing = { let database = rig.database.clone(); let params = params.clone(); tokio::spawn(async move { database.refresh(epoch, "Member".into(), "group_members".into(), params.to_string()).await }) };
+    let refreshing = { let database = rig.database.clone(); let params = params.clone(); tokio::spawn(async move { database.refresh(epoch, "Member".into(), Some("group_members".into()), params.to_string()).await }) };
     old.entered_for("the old list").await;
     rig.world.set_members("JOINED", &["u1", "u2", "u3", "u9"]);
     let mutation = rig.world.hold_next("AddMember");
@@ -134,7 +134,7 @@ async fn react_then_undo_keeps_the_other_users_reaction() {
     rig.world.seed_reacted_message();
     if !plain { rig.login_ios("A").await; }
     let epoch = rig.database.session_epoch();
-    bound(rig.database.refresh(epoch, "Message".into(), "thread".into(), json!({"chatId":"c1"}).to_string())).await.unwrap();
+    bound(rig.database.refresh(epoch, "Message".into(), Some("thread".into()), json!({"chatId":"c1"}).to_string())).await.unwrap();
     let initial = bound(rig.database.read_row(epoch, "Message".into(), "m1".into())).await.unwrap().unwrap();
     let other = crate::ffi::Cell::Seq { items: vec![crate::ffi::Cell::Seq { items: vec![crate::ffi::Cell::Text { value: "B".into() }, crate::ffi::Cell::Text { value: "u2".into() }] }] };
     assert_eq!(initial.cells[3], other);
@@ -178,7 +178,7 @@ async fn a_refused_durable_send_keeps_its_row_when_declared() {
     } else {
         bound(rig.database.discard(epoch, "Message".into(), id, None)).await.unwrap();
     }
-    let rows = bound(rig.database.read_query(epoch, r#"{"model":"Message"}"#.into())).await.unwrap();
+    let rows = bound(rig.database.read_query(epoch, crate::ffi::QuerySpec::json(r#"{"model":"Message"}"#))).await.unwrap();
     assert_eq!(rows.len(), usize::from(retry));
     rig.database.close_now();
   }
@@ -192,11 +192,11 @@ async fn a_later_confirmed_membership_change_survives_an_earlier_refusal() {
     let group = confirmed_group(&rig).await;
     rig.world.set_members("JOINED", &["u1", "u2", "u3", "u4"]);
     let params = json!({"groupId": group.id, "order": "JOINED"});
-    bound(rig.database.refresh(epoch, "Member".into(), "group_members".into(), params.to_string())).await.unwrap();
+    bound(rig.database.refresh(epoch, "Member".into(), Some("group_members".into()), params.to_string())).await.unwrap();
     if first_join { remove_member(&rig, &group.id).await; }
     if first_join { rig.world.set_members("JOINED", &["u1", "u2", "u3"]); }
     let old = rig.world.hold_next("GroupMembers");
-    let reading = { let database = rig.database.clone(); let params = params.clone(); tokio::spawn(async move { database.refresh(epoch, "Member".into(), "group_members".into(), params.to_string()).await }) };
+    let reading = { let database = rig.database.clone(); let params = params.clone(); tokio::spawn(async move { database.refresh(epoch, "Member".into(), Some("group_members".into()), params.to_string()).await }) };
     old.entered_for("the old member list").await;
     let first = rig.world.hold_then(if first_join { "AddMember" } else { "RemoveMember" }, Fault::Refuse { code: "FORBIDDEN", confirmed: true });
     let second = rig.world.hold_next(if first_join { "RemoveMember" } else { "AddMember" });
@@ -215,7 +215,7 @@ async fn a_later_confirmed_membership_change_survives_an_earlier_refusal() {
     old.release();
     bound(reading).await.unwrap().unwrap();
     let query = json!({"model": "Member", "relation": "group_members", "params": params}).to_string();
-    let ids: Vec<_> = bound(rig.database.read_query(epoch, query)).await.unwrap().into_iter().map(|row| row.id).collect();
+    let ids: Vec<_> = bound(rig.database.read_query(epoch, crate::ffi::QuerySpec::json(query))).await.unwrap().into_iter().map(|row| row.id).collect();
     assert_eq!(ids.contains(&"u4".to_string()), !first_join);
     rig.database.close_now();
   }
@@ -232,7 +232,7 @@ async fn out_leave_rows_orders() {
         for (order, members) in orders {
             rig.world.set_members(order, &members);
             let params = json!({"groupId": group.id, "order": order}).to_string();
-            bound(rig.database.refresh(epoch, "Member".into(), "group_members".into(), params)).await.unwrap();
+            bound(rig.database.refresh(epoch, "Member".into(), Some("group_members".into()), params)).await.unwrap();
         }
         if !removing {
             remove_member(&rig, &group.id).await;
@@ -243,7 +243,7 @@ async fn out_leave_rows_orders() {
         gate.entered_for(action).await;
         for (order, _) in orders {
             let query = json!({"model": "Member", "relation": "group_members", "params": {"groupId": group.id, "order": order}}).to_string();
-            let ids: Vec<_> = bound(rig.database.read_query(epoch, query)).await.unwrap().into_iter().map(|row| row.id).collect();
+            let ids: Vec<_> = bound(rig.database.read_query(epoch, crate::ffi::QuerySpec::json(query))).await.unwrap().into_iter().map(|row| row.id).collect();
             assert_eq!(ids.contains(&"u4".to_string()), !removing, "{action}: before refusal in {order}");
         }
         gate.release();
@@ -251,7 +251,7 @@ async fn out_leave_rows_orders() {
         assert!(matches!(bound(rig.database.outcome(receipt)).await.unwrap(), crate::ffi::WireOperationOutcome::Rejected { .. }));
         for (order, original) in orders {
             let query = json!({"model": "Member", "relation": "group_members", "params": {"groupId": group.id, "order": order}}).to_string();
-            let ids: Vec<_> = bound(rig.database.read_query(epoch, query)).await.unwrap().into_iter().map(|row| row.id).collect();
+            let ids: Vec<_> = bound(rig.database.read_query(epoch, crate::ffi::QuerySpec::json(query))).await.unwrap().into_iter().map(|row| row.id).collect();
             let expected: Vec<_> = original.iter().filter(|id| removing || **id != "u4").map(|id| id.to_string()).collect();
             assert_eq!(ids, expected, "{action}: after refusal in {order}");
         }
@@ -265,7 +265,7 @@ async fn forward_returns_its_optimistic_value_before_the_server_answers() {
     rig.world.seed_message("A", "m1", "hello", 1);
     rig.login_ios("A").await;
     let epoch = rig.database.session_epoch();
-    bound(rig.database.refresh(epoch, "Message".into(), "thread".into(), json!({"chatId": "c1"}).to_string())).await.unwrap();
+    bound(rig.database.refresh(epoch, "Message".into(), Some("thread".into()), json!({"chatId": "c1"}).to_string())).await.unwrap();
     let source = bound(rig.database.read_row(epoch, "Message".into(), "m1".into())).await.unwrap().unwrap();
     let hold = rig.world.hold_next("MessageForward");
     let mut forward = { let database = rig.database.clone(); tokio::spawn(async move { database.act(epoch, "Message".into(), "m1".into(), "forward".into(), "{}".into(), json!({"targetChatId": "c2"}).to_string()).await }) };
@@ -319,7 +319,7 @@ async fn a_create_refusal_follows_the_declared_policy() {
         let receipt = bound(rig.database.create(epoch, "Group".into(), values, args)).await.unwrap();
         assert!(matches!(bound(rig.database.outcome(receipt)).await.unwrap(), crate::ffi::WireOperationOutcome::Rejected { .. }));
         assert_eq!(world.log().iter().filter(|entry| entry.operation == "CreateGroup").count(), 1);
-        let rows = bound(rig.database.read_query(epoch, r#"{"model":"Group"}"#.into())).await.unwrap();
+        let rows = bound(rig.database.read_query(epoch, crate::ffi::QuerySpec::json(r#"{"model":"Group"}"#))).await.unwrap();
         assert_eq!(rows.len(), usize::from(keep), "the retained rows disagree with the declared policy");
         rig.database.close_now();
     }
@@ -335,13 +335,13 @@ async fn an_acknowledged_membership_change_survives_an_older_list_answer() {
         rig.world.set_members("JOINED", &["u1", "u2", "u3", "u4"]);
         let params = json!({"groupId": created.id, "order": "JOINED"}).to_string();
         let query = json!({"model": "Member", "relation": "group_members", "params": {"groupId": created.id, "order": "JOINED"}}).to_string();
-        bound(rig.database.refresh(epoch, "Member".into(), "group_members".into(), params.clone())).await.unwrap();
+        bound(rig.database.refresh(epoch, "Member".into(), Some("group_members".into()), params.clone())).await.unwrap();
         if !removing {
             remove_member(&rig, &created.id).await;
             rig.world.set_members("JOINED", &["u1", "u2", "u3"]);
         }
         let held = rig.world.hold_next("GroupMembers");
-        let reading = { let database = rig.database.clone(); let params = params.clone(); tokio::spawn(async move { database.refresh(epoch, "Member".into(), "group_members".into(), params).await }) };
+        let reading = { let database = rig.database.clone(); let params = params.clone(); tokio::spawn(async move { database.refresh(epoch, "Member".into(), Some("group_members".into()), params).await }) };
         held.entered_for("the old member list").await;
         let action = if removing { "remove_member" } else { "add_member" };
         let mutation = rig.world.hold_next(if removing { "RemoveMember" } else { "AddMember" });
@@ -352,7 +352,7 @@ async fn an_acknowledged_membership_change_survives_an_older_list_answer() {
         if answer_first { assert!(matches!(bound(rig.database.outcome(receipt.clone())).await.unwrap(), crate::ffi::WireOperationOutcome::Confirmed { .. })); }
         held.release();
         bound(reading).await.unwrap().unwrap();
-        let ids: Vec<_> = bound(rig.database.read_query(epoch, query)).await.unwrap().into_iter().map(|row| row.id).collect();
+        let ids: Vec<_> = bound(rig.database.read_query(epoch, crate::ffi::QuerySpec::json(query))).await.unwrap().into_iter().map(|row| row.id).collect();
         assert_eq!(ids.contains(&"u4".to_string()), !removing, "{action}: an older read changed confirmed membership");
         if !answer_first { mutation.release(); assert!(matches!(bound(rig.database.outcome(receipt)).await.unwrap(), crate::ffi::WireOperationOutcome::Confirmed { .. })); }
         rig.database.close_now();
@@ -414,7 +414,7 @@ async fn a_server_id_that_replaces_a_temporary_row_of_a_held_list_arrives_as_a_r
     rig.login_ios("A").await;
     let epoch = rig.database.session_epoch();
     let (sender, mut deliveries) = tokio::sync::mpsc::unbounded_channel();
-    let stream = rig.database.subscribe_reading(epoch, crate::ffi::ReadRequest::List { query_json: r#"{"model":"Group"}"#.into() }, Arc::new(Deliveries(sender)));
+    let stream = rig.database.subscribe_reading(epoch, crate::ffi::ReadRequest::List { query: crate::ffi::QuerySpec::json(r#"{"model":"Group"}"#) }, Arc::new(Deliveries(sender)));
     bound(rig.database.loaded(stream)).await.unwrap();
     let hold = rig.world.hold_next("CreateGroup");
     let (values, args) = group("friends");

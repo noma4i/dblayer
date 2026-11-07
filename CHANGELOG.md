@@ -38,6 +38,7 @@
 
 - `sync.state` of a record shows `sending` while its write is sent, and a write that waits in the queue again shows `pending`.
 - Rows reach Swift and Kotlin with every cell in its declared type, and a cell of another type throws instead of converting.
+- A query is a typed record that the core compiles, and `relation` is optional on load calls.
 - `Transport` and `EncryptedHttp` take one `HttpRequest` built by the core and return a raw `RawOutcome`; the core classifies the failure.
 - `Transport.openCable` returns a `PlatformSocket` and reports frames to `CableEvents`; `CableLease` and `EncryptedSocketEvent` are removed.
 - The status of an operation is `pending`, `sending`, `failed`, `committed` or `rolledback`, written with each transition.

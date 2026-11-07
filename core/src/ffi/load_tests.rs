@@ -195,7 +195,7 @@ fn inv_api_04_connecting_starts_the_load_and_only_refresh_asks_again() { crate::
     let second = db.watch_query(query, Arc::new(Rows::default()));
     second.wait_for_initial_load().await.unwrap();
     assert_eq!(queries(&transport), 1);
-    db.refresh(db.session_epoch(), "Moment".into(), "feed".into(), "{}".into()).await.unwrap();
+    db.refresh(db.session_epoch(), "Moment".into(), Some("feed".into()), "{}".into()).await.unwrap();
     assert_eq!(queries(&transport), 2);
     first.cancel();
     second.cancel();

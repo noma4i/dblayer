@@ -1,6 +1,18 @@
 import Foundation
 
 extension Cell {
+  public init(json: JSONValue) {
+    switch json {
+    case .null: self = .null
+    case let .bool(value): self = .bool(value: value)
+    case let .integer(value): self = .int(value: value)
+    case let .number(value): self = .real(value: value)
+    case let .string(value): self = .text(value: value)
+    case let .array(items): self = .seq(items: items.map(Cell.init(json:)))
+    case let .object(object): self = .keyed(entries: object.map { CellEntry(key: $0.key, value: Cell(json: $0.value)) })
+    }
+  }
+
   public var asText: String? { if case let .text(value) = self { value } else { nil } }
   public var asId: String? { if case let .text(value) = self { value } else { nil } }
   public var asBool: Bool? { if case let .bool(value) = self { value } else { nil } }

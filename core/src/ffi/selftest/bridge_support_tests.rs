@@ -65,12 +65,12 @@ impl Reader {
     }
 }
 
-pub(super) fn profile() -> ReadRequest { ReadRequest::List { query_json: r#"{"model":"User","relation":"profile","params":{}}"#.into() } }
+pub(super) fn profile() -> ReadRequest { ReadRequest::List { query: crate::ffi::QuerySpec::json(r#"{"model":"User","relation":"profile","params":{}}"#) } }
 
-pub(super) fn users() -> ReadRequest { ReadRequest::List { query_json: r#"{"model":"User","relation":"all","params":{}}"#.into() } }
+pub(super) fn users() -> ReadRequest { ReadRequest::List { query: crate::ffi::QuerySpec::json(r#"{"model":"User","relation":"all","params":{}}"#) } }
 
 pub(super) fn thread() -> ReadRequest {
-    ReadRequest::List { query_json: r#"{"model":"Message","relation":"thread","params":{"chatId":"c1"},"order":[{"field":"at","direction":"asc"}]}"#.into() }
+    ReadRequest::List { query: crate::ffi::QuerySpec::json(r#"{"model":"Message","relation":"thread","params":{"chatId":"c1"},"order":[{"field":"at","direction":"asc"}]}"#) }
 }
 
 pub(super) fn message(epoch: u64, text: &str, at: i64) -> CommandRequest {

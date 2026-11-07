@@ -1,14 +1,14 @@
 //! One-shot reads of the local database: the rows of a query or one row, without a stream and without the server.
 
 use super::wire::WireRow;
-use super::{Database, DbError};
+use super::{Database, DbError, QuerySpec};
 
 #[uniffi::export]
 impl Database {
     /// The rows of a query read from SQLite once, off the calling thread. Nothing is loaded from the server and no stream stays open.
-    pub async fn read_query(&self, epoch: u64, query_json: String) -> Result<Vec<WireRow>, DbError> {
+    pub async fn read_query(&self, epoch: u64, query: QuerySpec) -> Result<Vec<WireRow>, DbError> {
         self.read_in_epoch(epoch, "read query", move |this| {
-            let (query, _) = this.parsed_query(&query_json)?;
+            let (query, _) = this.parsed_query(&query)?;
             let wire = this.wire(query.model.as_str())?;
             Ok(this.db.query(&query)?.iter().map(|row| wire.row(row)).collect())
         }).await

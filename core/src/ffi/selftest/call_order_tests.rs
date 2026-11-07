@@ -53,7 +53,7 @@ where
 async fn refresh_survives_the_cancel_of_an_earlier_refresh() {
     let rig = rig().await;
     let epoch = rig.database.session_epoch();
-    second_call_survives_cancel_of_first(&rig, "MomentsFeed", move |db| async move { db.refresh(epoch, "Moment".into(), "feed".into(), "{}".into()).await }, || ()).await;
+    second_call_survives_cancel_of_first(&rig, "MomentsFeed", move |db| async move { db.refresh(epoch, "Moment".into(), Some("feed".into()), "{}".into()).await }, || ()).await;
     assert_eq!(requests(&rig, "MomentsFeed"), 1, "the second refresh sent a request of its own");
     rig.database.close_now();
 }
@@ -62,10 +62,10 @@ async fn refresh_survives_the_cancel_of_an_earlier_refresh() {
 async fn load_more_waits_for_the_page_that_an_earlier_cancelled_load_more_started() {
     let rig = rig().await;
     let epoch = rig.database.session_epoch();
-    bound(rig.database.begin_load(epoch, "Moment".into(), "feed".into(), "{}".into()).unwrap().result()).await.unwrap();
+    bound(rig.database.begin_load(epoch, "Moment".into(), Some("feed".into()), "{}".into()).unwrap().result()).await.unwrap();
     rig.world.answer_with("MomentsFeed", feed_page("2"));
     let world = rig.world.clone();
-    second_call_survives_cancel_of_first(&rig, "MomentsFeed", move |db| async move { db.load_more(epoch, "Moment".into(), "feed".into(), "{}".into()).await.map(drop) }, move || world.answer_with("MomentsFeed", feed_page("3"))).await;
+    second_call_survives_cancel_of_first(&rig, "MomentsFeed", move |db| async move { db.load_more(epoch, "Moment".into(), Some("feed".into()), "{}".into()).await.map(drop) }, move || world.answer_with("MomentsFeed", feed_page("3"))).await;
     assert!(rig.database.peek_row(epoch, "Moment".into(), "2".into()).unwrap().is_some(), "the page of the held request did not land: the cancel of the first call stopped it");
     assert!(rig.database.peek_row(epoch, "Moment".into(), "3".into()).unwrap().is_some(), "the second load more did not read its own page");
     rig.database.close_now();

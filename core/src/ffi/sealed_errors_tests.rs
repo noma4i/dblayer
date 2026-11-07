@@ -76,7 +76,7 @@ async fn a_session_code_in_a_sealed_answer_reaches_the_bridge_typed_for_every_en
                     rig.server.refuse_next(wire, confirmed);
                     let error = match entry {
                         "load" => database.load(database.session_epoch(), "Moment".into(), "feed".into(), "{}".into()).await.unwrap_err(),
-                        "refresh" => database.refresh(database.session_epoch(), "Moment".into(), "feed".into(), "{}".into()).await.unwrap_err(),
+                        "refresh" => database.refresh(database.session_epoch(), "Moment".into(), Some("feed".into()), "{}".into()).await.unwrap_err(),
                         "run query" => database.run(database.session_epoch(), "Feed".into(), "{}".into()).await.unwrap_err(),
                         _ => database.run(database.session_epoch(), "MakeMoment".into(), "{}".into()).await.unwrap_err(),
                     };

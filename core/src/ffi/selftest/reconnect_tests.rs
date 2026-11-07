@@ -19,7 +19,7 @@ async fn a_list_with_an_events_subscription_loads_once_when_the_network_returns(
     assert!(matches!(bound(events.pull()).await.unwrap(), Some(ReadValue::Ready)));
     let rows = Arc::new(Rows::default());
     let query = json!({"model":"Chat","relation":"list","params":{"list":"PRIMARY"},"refreshOnConnect":true}).to_string();
-    drop(database.watch(ReadRequest::List { query_json: query }, rows.clone()));
+    drop(database.watch(ReadRequest::List { query: crate::ffi::QuerySpec::json(query) }, rows.clone()));
     yield_until("the list shows its first load", || rows.len() == 1).await;
     assert_eq!(list_requests(&world), 1);
     database.set_online(false).unwrap();

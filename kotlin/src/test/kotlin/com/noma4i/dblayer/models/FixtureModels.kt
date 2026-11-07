@@ -420,7 +420,7 @@ data class Letter(
         fun thread(chatId: String): Query<Letter> {
             var built_ = Query("Letter", this, relation = "thread", params = buildJsonObject { this.put("chatId", jsonValue(chatId)) })
             built_ = built_.where(Condition.equal("chatId", jsonValue(chatId)))
-            built_ = built_.order(Order("at", "asc"))
+            built_ = built_.order(Order("at", SortDirection.ASC))
             return built_
         }
         suspend fun create(chatId: String, text: String, at: Long, account: AccountScope? = null): MutationReceipt<Letter> = onAccount(account) { database_, epoch_ ->
@@ -488,7 +488,7 @@ data class Container(
         suspend fun nodes(ids: List<String>, account: AccountScope? = null): List<Container> = onAccount(account) { database, epoch -> database.nodes(epoch, "Container", "nodes", ids).map { Container.read(it) } }
         val recent: Query<Container> get() {
             var built_ = Query("Container", this, relation = "recent", params = buildJsonObject {  })
-            built_ = built_.order(Order("lastRecordAt", "desc"))
+            built_ = built_.order(Order("lastRecordAt", SortDirection.DESC))
             return built_
         }
         fun shelf(shelf: ContainerShelf): Query<Container> {
@@ -912,13 +912,13 @@ data class Moment(
         suspend fun transcodeStatus(id: String, force: Boolean = false, account: AccountScope? = null): Moment? = onAccount(account) { database, epoch -> database.node(epoch, "Moment", "transcode_status", id, force)?.let { Moment.read(it) } }
         val recent: Query<Moment> get() {
             var built_ = Query("Moment", this, relation = "recent", params = buildJsonObject {  })
-            built_ = built_.order(Order("createdAt", "desc"))
+            built_ = built_.order(Order("createdAt", SortDirection.DESC))
             return built_
         }
         fun byUser(userId: String?): Query<Moment> {
             var built_ = Query("Moment", this, relation = "by_user", params = buildJsonObject { this.put("userId", jsonValue(userId)) })
             built_ = built_.where(Condition.equal("userId", jsonValue(userId)))
-            built_ = built_.order(Order("createdAt", "desc"))
+            built_ = built_.order(Order("createdAt", SortDirection.DESC))
             return built_
         }
         val feed: Query<Moment> get() {
@@ -1100,7 +1100,7 @@ data class Notice(
         fun ids(ids: List<String>) = idsQuery("Notice", this, ids)
         val recent: Query<Notice> get() {
             var built_ = Query("Notice", this, relation = "recent", params = buildJsonObject {  })
-            built_ = built_.order(Order("occurredAt", "desc"))
+            built_ = built_.order(Order("occurredAt", SortDirection.DESC))
             return built_
         }
         suspend fun create(body: String, occurredAt: String, account: AccountScope? = null): MutationReceipt<Notice> = onAccount(account) { database_, epoch_ ->
@@ -1154,7 +1154,7 @@ data class InteractionNotice(
         fun ids(ids: List<String>) = idsQuery("InteractionNotice", this, ids)
         val recent: Query<InteractionNotice> get() {
             var built_ = Query("InteractionNotice", this, relation = "recent", params = buildJsonObject {  })
-            built_ = built_.order(Order("occurredAt", "desc"))
+            built_ = built_.order(Order("occurredAt", SortDirection.DESC))
             return built_
         }
         suspend fun create(recordId: String, actorUserId: String, occurredAt: String, account: AccountScope? = null): MutationReceipt<InteractionNotice> = onAccount(account) { database_, epoch_ ->
@@ -1274,7 +1274,7 @@ data class ChatActivityNotice(
         fun ids(ids: List<String>) = idsQuery("ChatActivityNotice", this, ids)
         val recent: Query<ChatActivityNotice> get() {
             var built_ = Query("ChatActivityNotice", this, relation = "recent", params = buildJsonObject {  })
-            built_ = built_.order(Order("kind", "asc"))
+            built_ = built_.order(Order("kind", SortDirection.ASC))
             return built_
         }
         suspend fun create(chatId: String, userId: String, kind: String, active: Boolean, account: AccountScope? = null): MutationReceipt<ChatActivityNotice> = onAccount(account) { database_, epoch_ ->
@@ -1417,7 +1417,7 @@ data class Record(
         fun byContainer(containerId: String): Query<Record> {
             var built_ = Query("Record", this, relation = "by_container", params = buildJsonObject { this.put("containerId", jsonValue(containerId)) })
             built_ = built_.where(Condition.equal("containerId", jsonValue(containerId)))
-            built_ = built_.order(Order("createdAt", "asc"))
+            built_ = built_.order(Order("createdAt", SortDirection.ASC))
             return built_
         }
         fun thread(containerId: String): Query<Record> {

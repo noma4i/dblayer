@@ -339,7 +339,7 @@ class ValueBridgeTest {
             profile.loaded()
             eventually("the stream shows A") { profile.value?.name == "A" }
             val state = profile.projection.value.state!!
-            val whole = DBlayer.database.readQuery(scope.epoch, User.profile.json).first()
+            val whole = DBlayer.database.readQuery(scope.epoch, User.profile.spec()).first()
             val bad = whole.copy(layout = "another layout")
             val empty = ListProjection<User>()
             assertTrue("a row that does not decode did not throw", runCatching { empty.apply(ReadValue.Snapshot(1L, listOf(bad), state), User) }.isFailure)

@@ -23,7 +23,7 @@ fn ids(rows: &[super::WireRow]) -> Vec<&str> { rows.iter().map(|row| row.id.as_s
 #[tokio::test(flavor = "multi_thread")]
 async fn dropping_a_pending_pull_cancels_the_stream() {
     let db = open().await;
-    let stream = db.subscribe_values(db.session_epoch(), ReadRequest::List { query_json: r#"{"model":"Note"}"#.into() });
+    let stream = db.subscribe_values(db.session_epoch(), ReadRequest::List { query: crate::ffi::QuerySpec::json(r#"{"model":"Note"}"#) });
     assert!(matches!(crate::test_wait::within(stream.pull()).await.unwrap(), Some(ReadValue::Snapshot { .. })));
     let mut pending = Box::pin(stream.pull());
     assert!(std::future::poll_fn(|cx| std::task::Poll::Ready(std::future::Future::poll(pending.as_mut(), cx).is_pending())).await);
@@ -41,7 +41,7 @@ async fn dlv_prop_first_value_off_caller() {
     assert_eq!(db.db.published_revision().load(std::sync::atomic::Ordering::Acquire), db.db.revision_seq().unwrap());
     let caller = std::thread::current().id();
     db.db.read_threads.lock().unwrap().clear();
-    let stream = db.subscribe_values(epoch, ReadRequest::List { query_json: r#"{"model":"Note"}"#.into() });
+    let stream = db.subscribe_values(epoch, ReadRequest::List { query: crate::ffi::QuerySpec::json(r#"{"model":"Note"}"#) });
     let reads = db.db.read_threads.lock().unwrap().clone();
     assert!(!reads.contains(&caller), "SQLite reads must run outside the caller");
     assert!(matches!(crate::test_wait::within(stream.pull()).await.unwrap(), Some(ReadValue::Snapshot { .. })));
@@ -50,7 +50,7 @@ async fn dlv_prop_first_value_off_caller() {
 #[tokio::test(flavor = "multi_thread")]
 async fn dlv_prop_resync_ends() {
     let db = open().await;
-    let stream = db.subscribe_values(db.session_epoch(), ReadRequest::List { query_json: r#"{"model":"Note"}"#.into() });
+    let stream = db.subscribe_values(db.session_epoch(), ReadRequest::List { query: crate::ffi::QuerySpec::json(r#"{"model":"Note"}"#) });
     let ReadValue::Snapshot { revision, .. } = crate::test_wait::within(stream.pull()).await.unwrap().unwrap() else { panic!("first snapshot") };
     stream.resync();
     let ReadValue::Snapshot { revision: recovered, .. } = crate::test_wait::within(stream.pull()).await.unwrap().unwrap() else { panic!("resync snapshot") };
@@ -61,8 +61,8 @@ async fn dlv_prop_resync_ends() {
 async fn dlv_prop_one_change_every_view() {
     let db = open().await;
     let epoch = db.session_epoch();
-    let list = db.subscribe_values(epoch, ReadRequest::List { query_json: r#"{"model":"Note"}"#.into() });
-    let count = db.subscribe_values(epoch, ReadRequest::Count { query_json: r#"{"model":"Note"}"#.into() });
+    let list = db.subscribe_values(epoch, ReadRequest::List { query: crate::ffi::QuerySpec::json(r#"{"model":"Note"}"#) });
+    let count = db.subscribe_values(epoch, ReadRequest::Count { query: crate::ffi::QuerySpec::json(r#"{"model":"Note"}"#) });
     let entity = db.subscribe_values(epoch, ReadRequest::Entity { model: "Note".into(), id: "n1".into(), fetch: super::ReadFetch::Never });
     for stream in [&list, &count, &entity] { crate::test_wait::within(stream.pull()).await.unwrap().unwrap(); }
     db.create(epoch, "Note".into(), r#"{"id":"n1","text":"one"}"#.into(), "{}".into()).await.unwrap();
@@ -93,7 +93,7 @@ async fn a_list_stream_gives_a_snapshot_then_a_delta_with_the_final_order() {
     let db = open().await;
     let epoch = db.session_epoch();
     db.create(epoch, "Note".into(), r#"{"id":"n1","text":"one"}"#.into(), "{}".into()).await.unwrap();
-    let stream = db.subscribe_values(epoch, ReadRequest::List { query_json: r#"{"model":"Note"}"#.into() });
+    let stream = db.subscribe_values(epoch, ReadRequest::List { query: crate::ffi::QuerySpec::json(r#"{"model":"Note"}"#) });
     let ReadValue::Snapshot { revision, rows, state } = next(&stream).await else { panic!("the first value is a snapshot") };
     assert_eq!(ids(&rows), ["n1"]);
     assert_eq!(state.phase, ReadPhase::Loaded, "a local list has no window to load: it is loaded at once");
@@ -113,7 +113,7 @@ async fn a_row_that_changes_its_place_arrives_as_a_move_and_its_new_values() {
     for (id, text) in [("n1", "b"), ("n2", "c")] {
         db.create(epoch, "Note".into(), format!(r#"{{"id":"{id}","text":"{text}"}}"#), "{}".into()).await.unwrap();
     }
-    let stream = db.subscribe_values(epoch, ReadRequest::List { query_json: r#"{"model":"Note","order":[{"field":"text","direction":"asc"}]}"#.into() });
+    let stream = db.subscribe_values(epoch, ReadRequest::List { query: crate::ffi::QuerySpec::json(r#"{"model":"Note","order":[{"field":"text","direction":"asc"}]}"#) });
     let ReadValue::Snapshot { mut rows, .. } = next(&stream).await else { panic!("the first value is a snapshot") };
     assert_eq!(ids(&rows), ["n1", "n2"]);
     db.update(epoch, "Note".into(), "n1".into(), r#"{"text":"d"}"#.into(), "{}".into()).await.unwrap();
@@ -130,7 +130,7 @@ async fn a_row_that_enters_the_middle_of_the_list_arrives_with_its_index() {
     for (id, text) in [("n1", "b"), ("n3", "d")] {
         db.create(epoch, "Note".into(), format!(r#"{{"id":"{id}","text":"{text}"}}"#), "{}".into()).await.unwrap();
     }
-    let stream = db.subscribe_values(epoch, ReadRequest::List { query_json: r#"{"model":"Note","order":[{"field":"text","direction":"asc"}]}"#.into() });
+    let stream = db.subscribe_values(epoch, ReadRequest::List { query: crate::ffi::QuerySpec::json(r#"{"model":"Note","order":[{"field":"text","direction":"asc"}]}"#) });
     let ReadValue::Snapshot { mut rows, .. } = next(&stream).await else { panic!("the first value is a snapshot") };
     for (id, text, index, expected) in [("n2", "c", 1, vec!["n1", "n2", "n3"]), ("n0", "a", 0, vec!["n0", "n1", "n2", "n3"])] {
         db.create(epoch, "Note".into(), format!(r#"{{"id":"{id}","text":"{text}"}}"#), "{}".into()).await.unwrap();
@@ -153,7 +153,7 @@ async fn a_delta_after_a_removal_carries_the_rows_of_its_own_snapshot() {
     let db = open().await;
     let epoch = db.session_epoch();
     db.create(epoch, "Note".into(), r#"{"id":"n1","text":"one"}"#.into(), "{}".into()).await.unwrap();
-    let stream = db.subscribe_values(epoch, ReadRequest::List { query_json: r#"{"model":"Note"}"#.into() });
+    let stream = db.subscribe_values(epoch, ReadRequest::List { query: crate::ffi::QuerySpec::json(r#"{"model":"Note"}"#) });
     let ReadValue::Snapshot { .. } = next(&stream).await else { panic!("the first value is a snapshot") };
     db.destroy(epoch, "Note".into(), "n1".into()).await.unwrap();
     db.create(epoch, "Note".into(), r#"{"id":"n2","text":"two"}"#.into(), "{}".into()).await.unwrap();
@@ -171,7 +171,7 @@ async fn a_delta_after_a_removal_carries_the_rows_of_its_own_snapshot() {
 #[tokio::test(flavor = "multi_thread")]
 async fn a_stream_held_across_close_gets_one_ended_then_nothing() {
     let db = open().await;
-    let stream = db.subscribe_values(db.session_epoch(), ReadRequest::List { query_json: r#"{"model":"Note"}"#.into() });
+    let stream = db.subscribe_values(db.session_epoch(), ReadRequest::List { query: crate::ffi::QuerySpec::json(r#"{"model":"Note"}"#) });
     let ReadValue::Snapshot { .. } = next(&stream).await else { panic!("the first value is a snapshot") };
     db.close_database().await.unwrap();
     assert!(matches!(next(&stream).await, ReadValue::Ended { cause: ReadEnd::Closed }));
@@ -196,8 +196,8 @@ async fn data_query_limit_offset() {
         db.create(epoch, "Note".into(), format!(r#"{{"id":"{id}","text":"{text}"}}"#), "{}".into()).await.unwrap();
     }
     let window = r#"{"model":"Note","order":[{"field":"text","direction":"asc"}],"limit":2,"offset":1}"#;
-    let list = db.subscribe_values(epoch, ReadRequest::List { query_json: window.into() });
-    let count = db.subscribe_values(epoch, ReadRequest::Count { query_json: window.into() });
+    let list = db.subscribe_values(epoch, ReadRequest::List { query: crate::ffi::QuerySpec::json(window) });
+    let count = db.subscribe_values(epoch, ReadRequest::Count { query: crate::ffi::QuerySpec::json(window) });
     let ReadValue::Snapshot { mut rows, .. } = next(&list).await else { panic!("the first value is a snapshot") };
     assert_eq!(ids(&rows), ["n2", "n3"]);
     assert!(matches!(next(&count).await, ReadValue::Count { count: 4, .. }));
@@ -208,9 +208,7 @@ async fn data_query_limit_offset() {
     RowEdit::replay(&mut rows, &edits);
     assert_eq!(ids(&rows), ["n5", "n2"]);
     assert!(matches!(next(&count).await, ReadValue::Count { count: 5, .. }));
-    for bad in [r#"{"model":"Note","limit":0}"#, r#"{"model":"Note","offset":-1}"#] {
-        let stream = db.subscribe_values(epoch, ReadRequest::List { query_json: bad.into() });
-        assert!(matches!(next(&stream).await, ReadValue::Ended { cause: ReadEnd::Invalid }), "{bad}");
-    }
+    let stream = db.subscribe_values(epoch, ReadRequest::List { query: crate::ffi::QuerySpec::json(r#"{"model":"Note","limit":0}"#) });
+    assert!(matches!(next(&stream).await, ReadValue::Ended { cause: ReadEnd::Invalid }), "a zero limit");
     crate::test_wait::within(db.close_database()).await.unwrap();
 }

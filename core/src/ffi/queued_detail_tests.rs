@@ -45,7 +45,7 @@ async fn graphql_extensions_reach_run_and_refresh() {
             database.set_online(true).unwrap();
             let error = match entry {
                 "run" => database.run(database.session_epoch(), "MakeMoment".into(), "{}".into()).await.unwrap_err(),
-                "refresh" => database.refresh(database.session_epoch(), "Moment".into(), "feed".into(), "{}".into()).await.unwrap_err(),
+                "refresh" => database.refresh(database.session_epoch(), "Moment".into(), Some("feed".into()), "{}".into()).await.unwrap_err(),
                 _ => unreachable!(),
             };
             let DbError::Graphql { extensions, .. } = error else { panic!("{entry}: {error:?}") };

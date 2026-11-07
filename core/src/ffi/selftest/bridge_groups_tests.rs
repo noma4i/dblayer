@@ -7,7 +7,7 @@ use crate::ffi::{Database, DbError, ReadRequest, WireOperationOutcome};
 use crate::test_wait::yield_until;
 use super::bridge_support_tests::*;
 
-fn groups() -> ReadRequest { ReadRequest::List { query_json: r#"{"model":"Group","relation":"all","params":{}}"#.into() } }
+fn groups() -> ReadRequest { ReadRequest::List { query: crate::ffi::QuerySpec::json(r#"{"model":"Group","relation":"all","params":{}}"#) } }
 
 /// K32: a member added or removed ends with the member lists of the server in both orders: the added user appears in the lists the screen reads and the removed one leaves them, without a read by the app.
 #[tokio::test(flavor = "multi_thread")]
@@ -22,7 +22,7 @@ async fn adding_and_removing_a_member_ends_with_the_member_lists_of_the_server_i
     let mut readers = Vec::new();
     for (order, _) in orders {
         let (reader, query) = (Reader::open(), json!({"model": "Member", "relation": "group_members", "params": {"groupId": created.id, "order": order}}).to_string());
-        let stream = rig.database.subscribe_reading(epoch, ReadRequest::List { query_json: query }, reader.clone());
+        let stream = rig.database.subscribe_reading(epoch, ReadRequest::List { query: crate::ffi::QuerySpec::json(query) }, reader.clone());
         bound(rig.database.loaded(stream)).await.unwrap();
         readers.push(reader);
     }
@@ -157,12 +157,12 @@ async fn every_entry_of_a_left_account_is_refused_and_reaches_nothing() {
     let calls = vec![
         case("run", |db, old| Box::pin(async move { bound(db.run(old, "MyProfile".into(), "{}".into())).await.map(drop) })),
         case("load", |db, old| Box::pin(async move { bound(db.load(old, "User".into(), "all".into(), "{}".into())).await })),
-        case("refresh", |db, old| Box::pin(async move { bound(db.refresh(old, "User".into(), "all".into(), "{}".into())).await })),
-        case("load_all", |db, old| Box::pin(async move { bound(db.load_all(old, "User".into(), "all".into(), "{}".into(), true)).await })),
-        case("load_more", |db, old| Box::pin(async move { bound(db.load_more(old, "User".into(), "all".into(), "{}".into())).await.map(drop) })),
+        case("refresh", |db, old| Box::pin(async move { bound(db.refresh(old, "User".into(), Some("all".into()), "{}".into())).await })),
+        case("load_all", |db, old| Box::pin(async move { bound(db.load_all(old, "User".into(), Some("all".into()), "{}".into(), true)).await })),
+        case("load_more", |db, old| Box::pin(async move { bound(db.load_more(old, "User".into(), Some("all".into()), "{}".into())).await.map(drop) })),
         case("node", |db, old| Box::pin(async move { bound(db.node(old, "User".into(), "node".into(), "user".into(), true)).await.map(drop) })),
         case("nodes", |db, old| Box::pin(async move { bound(db.nodes(old, "User".into(), "nodes".into(), vec!["user".into()])).await.map(drop) })),
-        case("edge_values", |db, old| Box::pin(async move { bound(db.edge_values(old, "User".into(), "all".into(), "{}".into(), vec!["user".into()])).await.map(drop) })),
+        case("edge_values", |db, old| Box::pin(async move { bound(db.edge_values(old, "User".into(), Some("all".into()), "{}".into(), vec!["user".into()])).await.map(drop) })),
         case("peek_row", |db, old| Box::pin(async move { db.peek_row(old, "User".into(), "user".into()).map(drop) })),
         case("cancel_upload", |db, old| Box::pin(async move { bound(db.cancel_upload(old, "User".into(), "user".into(), "upload".into())).await.map(drop) })),
     ];
@@ -182,7 +182,7 @@ async fn a_stream_that_refreshes_on_connect_loads_again_once_when_the_network_re
     rig.login_ios("A").await;
     let epoch = rig.database.session_epoch();
     let list = Reader::open();
-    let stream = rig.database.subscribe_reading(epoch, ReadRequest::List { query_json: r#"{"model":"Message","relation":"thread","params":{"chatId":"c1"},"refreshOnConnect":true}"#.into() }, list.clone());
+    let stream = rig.database.subscribe_reading(epoch, ReadRequest::List { query: crate::ffi::QuerySpec::json(r#"{"model":"Message","relation":"thread","params":{"chatId":"c1"},"refreshOnConnect":true}"#) }, list.clone());
     bound(rig.database.loaded(stream)).await.unwrap();
     settle(&rig).await;
     let before = rig.world.count("Thread");
@@ -226,12 +226,12 @@ async fn an_accepted_request_whose_answer_lands_after_the_next_account_started_w
     let rig = Rig::encrypted().await;
     rig.login_ios("A").await;
     let epoch = rig.database.session_epoch();
-    bound(rig.database.refresh(epoch, "User".into(), "profile".into(), "{}".into())).await.unwrap();
+    bound(rig.database.refresh(epoch, "User".into(), Some("profile".into()), "{}".into())).await.unwrap();
     let before = bound(rig.database.read_row(epoch, "User".into(), "user".into())).await.unwrap().expect("the row of A");
     assert!(named(&before, "A"));
     let gate = rig.world.hold_next("MyProfile");
     gate.as_account("late");
-    let running = { let database = rig.database.clone(); tokio::spawn(async move { database.refresh(epoch, "User".into(), "profile".into(), "{}".into()).await }) };
+    let running = { let database = rig.database.clone(); tokio::spawn(async move { database.refresh(epoch, "User".into(), Some("profile".into()), "{}".into()).await }) };
     gate.entered_for("the accepted request").await;
     bound(rig.database.session_reset()).await.unwrap();
     assert_ne!(rig.database.session_epoch(), epoch);

@@ -76,7 +76,7 @@ async fn load(database: &Database, model: &str, relation: &str) -> Result<(), Db
 
 async fn ids(database: &Database, model: &str, relation: &str) -> Vec<String> {
     let query = format!(r#"{{"model":"{model}","relation":"{relation}","params":{{}}}}"#);
-    database.read_query(database.session_epoch(), query).await.unwrap().into_iter().map(|row| row.id).collect()
+    database.read_query(database.session_epoch(), crate::ffi::QuerySpec::json(query)).await.unwrap().into_iter().map(|row| row.id).collect()
 }
 
 #[tokio::test]

@@ -415,7 +415,7 @@ public struct Letter: DBModel {
     public static func thread(_ chatId: String) throws -> Query<Self> {
         var built_ = Query<Self>(relation: "thread", params: ["chatId": try JSONValue.encode(chatId)])
         built_ = built_.where(Condition.equal("chatId", try JSONValue.encode(chatId)))
-        built_ = built_.order(Order(field: "at", direction: "asc"))
+        built_ = built_.order(Order(field: "at", direction: .asc))
         return built_
     }
     @concurrent public static func create(chatId: String, text: String, at: Int, in scope_: AccountScope? = nil) async throws -> MutationReceipt<Self> {
@@ -492,7 +492,7 @@ public struct Container: DBModel {
     }
     public static var recent: Query<Self> {
         var built_ = Query<Self>(relation: "recent", params: [:])
-        built_ = built_.order(Order(field: "lastRecordAt", direction: "desc"))
+        built_ = built_.order(Order(field: "lastRecordAt", direction: .desc))
         return built_
     }
     public static func shelf(shelf: ContainerShelf) throws -> Query<Self> {
@@ -920,13 +920,13 @@ public struct Moment: DBModel {
     }
     public static var recent: Query<Self> {
         var built_ = Query<Self>(relation: "recent", params: [:])
-        built_ = built_.order(Order(field: "createdAt", direction: "desc"))
+        built_ = built_.order(Order(field: "createdAt", direction: .desc))
         return built_
     }
     public static func byUser(_ userId: String?) throws -> Query<Self> {
         var built_ = Query<Self>(relation: "by_user", params: ["userId": try JSONValue.encode(userId)])
         built_ = built_.where(Condition.equal("userId", try JSONValue.encode(userId)))
-        built_ = built_.order(Order(field: "createdAt", direction: "desc"))
+        built_ = built_.order(Order(field: "createdAt", direction: .desc))
         return built_
     }
     public static var feed: Query<Self> {
@@ -1113,7 +1113,7 @@ public struct Notice: DBModel {
     public static func `where`(_ condition: Condition) -> Query<Self> { Query<Self>().where(condition) }
     public static var recent: Query<Self> {
         var built_ = Query<Self>(relation: "recent", params: [:])
-        built_ = built_.order(Order(field: "occurredAt", direction: "desc"))
+        built_ = built_.order(Order(field: "occurredAt", direction: .desc))
         return built_
     }
     @concurrent public static func create(body: String, occurredAt: String, in scope_: AccountScope? = nil) async throws -> MutationReceipt<Self> {
@@ -1166,7 +1166,7 @@ public struct InteractionNotice: DBModel {
     public static func `where`(_ condition: Condition) -> Query<Self> { Query<Self>().where(condition) }
     public static var recent: Query<Self> {
         var built_ = Query<Self>(relation: "recent", params: [:])
-        built_ = built_.order(Order(field: "occurredAt", direction: "desc"))
+        built_ = built_.order(Order(field: "occurredAt", direction: .desc))
         return built_
     }
     @concurrent public static func create(recordId: String, actorUserId: String, occurredAt: String, in scope_: AccountScope? = nil) async throws -> MutationReceipt<Self> {
@@ -1286,7 +1286,7 @@ public struct ChatActivityNotice: DBModel {
     public static func `where`(_ condition: Condition) -> Query<Self> { Query<Self>().where(condition) }
     public static var recent: Query<Self> {
         var built_ = Query<Self>(relation: "recent", params: [:])
-        built_ = built_.order(Order(field: "kind", direction: "asc"))
+        built_ = built_.order(Order(field: "kind", direction: .asc))
         return built_
     }
     @concurrent public static func create(chatId: String, userId: String, kind: String, active: Bool, in scope_: AccountScope? = nil) async throws -> MutationReceipt<Self> {
@@ -1432,7 +1432,7 @@ public struct Record: DBModel {
     public static func byContainer(_ containerId: String) throws -> Query<Self> {
         var built_ = Query<Self>(relation: "by_container", params: ["containerId": try JSONValue.encode(containerId)])
         built_ = built_.where(Condition.equal("containerId", try JSONValue.encode(containerId)))
-        built_ = built_.order(Order(field: "createdAt", direction: "asc"))
+        built_ = built_.order(Order(field: "createdAt", direction: .asc))
         return built_
     }
     public static func thread(_ containerId: String) throws -> Query<Self> {

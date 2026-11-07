@@ -24,9 +24,9 @@ async fn cancelling_one_load_interest_keeps_the_other_call_alive() {
     let rig = feed_rig().await;
     let epoch = rig.database.session_epoch();
     let held = rig.world.hold_next("MomentsFeed");
-    let first = rig.database.begin_load(epoch, "Moment".into(), "feed".into(), "{}".into()).unwrap();
+    let first = rig.database.begin_load(epoch, "Moment".into(), Some("feed".into()), "{}".into()).unwrap();
     held.entered_for("the shared load").await;
-    let second = rig.database.begin_load(epoch, "Moment".into(), "feed".into(), "{}".into()).unwrap();
+    let second = rig.database.begin_load(epoch, "Moment".into(), Some("feed".into()), "{}".into()).unwrap();
     let issued = rig.database.loads.issued();
     yield_until("the second interest is registered in the window", || rig.database.loads.registered_through(issued)).await;
     first.cancel();
@@ -41,7 +41,7 @@ async fn a_list_that_refreshes_on_connect_loads_again_once_when_the_network_retu
     let rig = feed_rig().await;
     let rows = Arc::new(Rows::default());
     let query = json!({"model":"Moment","relation":"feed","params":{},"refreshOnConnect":true}).to_string();
-    drop(rig.database.watch(ReadRequest::List { query_json: query }, rows.clone()));
+    drop(rig.database.watch(ReadRequest::List { query: crate::ffi::QuerySpec::json(query) }, rows.clone()));
     yield_until("the list shows its first load", || rows.len() == 1).await;
     assert_eq!(feed_requests(&rig), 1);
     rig.database.set_online(false).unwrap();

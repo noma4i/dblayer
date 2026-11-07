@@ -51,7 +51,7 @@ async fn open() -> (Arc<Database>, Arc<Endless>) {
 #[tokio::test(flavor = "multi_thread")]
 async fn a_load_all_whose_caller_went_away_asks_the_server_for_no_more_pages() {
     let (db, transport) = open().await;
-    let caller = tokio::spawn({ let db = db.clone(); async move { db.load_all(db.session_epoch(), "Moment".into(), "feed".into(), "{}".into(), false).await } });
+    let caller = tokio::spawn({ let db = db.clone(); async move { db.load_all(db.session_epoch(), "Moment".into(), Some("feed".into()), "{}".into(), false).await } });
     within_secs(20, transport.sixth_started.notified()).await;
 
     caller.abort();

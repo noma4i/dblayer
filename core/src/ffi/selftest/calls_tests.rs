@@ -34,9 +34,9 @@ impl Call {
         tokio::spawn(async move {
             match self {
                 Call::Run => database.run(database.session_epoch(), "MyProfile".into(), "{}".into()).await.map(|_| ()),
-                Call::RefreshList => database.refresh(database.session_epoch(), "User".into(), "all".into(), "{}".into()).await,
-                Call::RefreshProfile => database.refresh(database.session_epoch(), "User".into(), "profile".into(), "{}".into()).await,
-                Call::LoadAll => database.load_all(database.session_epoch(), "User".into(), "all".into(), "{}".into(), true).await,
+                Call::RefreshList => database.refresh(database.session_epoch(), "User".into(), Some("all".into()), "{}".into()).await,
+                Call::RefreshProfile => database.refresh(database.session_epoch(), "User".into(), Some("profile".into()), "{}".into()).await,
+                Call::LoadAll => database.load_all(database.session_epoch(), "User".into(), Some("all".into()), "{}".into(), true).await,
                 Call::Node => database.node(database.session_epoch(), "User".into(), "node".into(), "user".into(), true).await.map(|_| ()),
                 Call::SignIn => database.session_call("login_link".into(), json!({"account":"B"}).to_string()).await.map(|_| ()),
             }
@@ -100,7 +100,7 @@ async fn late_answer_case(call: Call, transition: Transition, refusal: bool) {
         return;
     }
     rig.login_ios("B").await;
-    let result = bound(rig.database.refresh(rig.database.session_epoch(), "User".into(), "all".into(), "{}".into())).await;
+    let result = bound(rig.database.refresh(rig.database.session_epoch(), "User".into(), Some("all".into()), "{}".into())).await;
     assert!(result.is_ok(), "{case}: the next read of the same key failed with {result:?}");
     gate.release();
     let late = bound(running).await.unwrap();
@@ -108,7 +108,7 @@ async fn late_answer_case(call: Call, transition: Transition, refusal: bool) {
     held.follow(&rig.database);
     held.shows("B").await;
     assert!(held.never_showed("late"), "{case}: the late answer ({late:?}) reached a held handle");
-    bound(rig.database.refresh(rig.database.session_epoch(), "User".into(), "all".into(), "{}".into())).await.unwrap_or_else(|error| panic!("{case}: the read after the late answer failed with {error:?}"));
+    bound(rig.database.refresh(rig.database.session_epoch(), "User".into(), Some("all".into()), "{}".into())).await.unwrap_or_else(|error| panic!("{case}: the read after the late answer failed with {error:?}"));
     held.lists_show("B").await;
     rig.database.close_now();
 }
@@ -158,7 +158,7 @@ async fn close_ends_every_pending_stream_wait_of_a_held_handle() {
     held.shows("A").await;
     held.lists_show("A").await;
     let gate = rig.world.hold_next("Users");
-    let _late = { let database = rig.database.clone(); let epoch = database.session_epoch(); tokio::spawn(async move { database.refresh(epoch, "User".into(), "all".into(), "{}".into()).await }) };
+    let _late = { let database = rig.database.clone(); let epoch = database.session_epoch(); tokio::spawn(async move { database.refresh(epoch, "User".into(), Some("all".into()), "{}".into()).await }) };
     gate.entered().await;
     let pending = rig.database.watch_query(r#"{"model":"User","relation":"all","params":{}}"#, Arc::new(Rows::default()));
     let waits = [tokio::spawn(async move { pending.wait_for_initial_load().await })];
