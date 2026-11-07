@@ -139,8 +139,8 @@ impl Database {
         }
     }
 
-    fn transfer_receipt(&self, epoch: u64, model: String, held: Receipt, value: Option<super::wire::WireRow>) -> WireOperationReceipt {
-        receipt_of_transfer(epoch, model, held, value, self.life.clone())
+    fn transfer_receipt(&self, epoch: u64, model: String, held: Receipt, value: Option<super::wire::WireRow>, row: &str) -> WireOperationReceipt {
+        receipt_of_transfer(epoch, model, held, value, row.to_string(), self.life.clone())
     }
 
     /// The upload actions a model declares: a call without an action names the transfer by them.
@@ -171,7 +171,7 @@ impl Database {
         let waiter = self.life.accept_upload(epoch, item, self.now());
         let TransferAnswer::Receipt(held) = self.transfer_answer(waiter, "upload").await? else { return Err(DbError::Database { detail: "the owner answered an upload with no receipt".into() }) };
         let value = self.optimistic(&model, &row)?;
-        Ok(self.transfer_receipt(epoch, model, held, value))
+        Ok(self.transfer_receipt(epoch, model, held, value, row.as_str()))
     }
 
     pub async fn upload_create_batch(&self, epoch: u64, model: String, items: Vec<WireUploadItem>, request: WireUploadBatch) -> Result<WireBatchReceipt, DbError> {
@@ -200,7 +200,7 @@ impl Database {
         let items = planned.into_iter().zip(held).map(|((item, planned, _), held)| {
             let key = item.values.get(&field).and_then(Value::as_str).unwrap_or_default().to_string();
             let value = self.accepted_row(&model, &planned.row_id)?;
-            Ok(WireItemReceipt { item: ItemId { value: key }, optimistic_value: value.clone(), receipt: self.transfer_receipt(epoch, model.clone(), held, Some(value)) })
+            Ok(WireItemReceipt { item: ItemId { value: key }, optimistic_value: value.clone(), receipt: self.transfer_receipt(epoch, model.clone(), held, Some(value), planned.row_id.as_str()) })
         }).collect::<Result<Vec<_>, DbError>>()?;
         Ok(WireBatchReceipt { epoch, items })
     }
@@ -229,7 +229,7 @@ impl Database {
         let waiter = self.life.accept_upload(epoch, item, self.now());
         let TransferAnswer::Receipt(held) = self.transfer_answer(waiter, "send").await? else { return Err(DbError::Database { detail: "the owner answered a send with no receipt".into() }) };
         let value = self.accepted_row(&request.model, &planned.row_id)?;
-        Ok(self.transfer_receipt(epoch, request.model, held, Some(value)))
+        Ok(self.transfer_receipt(epoch, request.model, held, Some(value), planned.row_id.as_str()))
     }
 
     /// `retry` of a transfer with a new source of a file that is gone.
@@ -256,7 +256,7 @@ impl Database {
         let waiter = self.life.retry_upload(epoch, key_of(&model, row.as_str(), &action), source);
         let TransferAnswer::Receipt(held) = self.transfer_answer(waiter, "retry").await? else { return Err(DbError::Database { detail: "the owner answered a retry with no receipt".into() }) };
         let value = self.optimistic(&model, &row)?;
-        Ok(self.transfer_receipt(epoch, model, held, value))
+        Ok(self.transfer_receipt(epoch, model, held, value, row.as_str()))
     }
 
     /// `retry` with no source: the transfers of the row first, then the mutations. `None` when no transfer has the row.
@@ -269,7 +269,7 @@ impl Database {
                 LifeReply::Transfer(TransferAnswer::Err(fault)) => return Err(refused(fault, "retry")),
                 LifeReply::Transfer(TransferAnswer::Receipt(held)) => {
                     let value = self.optimistic(model, &id(row)?)?;
-                    return Ok(Some(self.transfer_receipt(epoch, model.to_string(), held, value)));
+                    return Ok(Some(self.transfer_receipt(epoch, model.to_string(), held, value, row)));
                 }
                 _ => return Err(super::command::ended()),
             }
@@ -308,9 +308,8 @@ impl Database {
         };
         Ok(match answer {
             OutboxOutcome::Confirmed { result, .. } => {
-                let row = receipt.optimistic_value.as_ref().map(|row| row.id.clone());
-                let value = match row {
-                    Some(row) => self.transfer_value(receipt.epoch, &receipt.model, &row).await?,
+                let value = match receipt.ticket.row.as_deref() {
+                    Some(row) => self.transfer_value(receipt.epoch, &receipt.model, row).await?,
                     None => None,
                 };
                 WireOperationOutcome::Confirmed { value: value.or(receipt.optimistic_value), answer_json: result }

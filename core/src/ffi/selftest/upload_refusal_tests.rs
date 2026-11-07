@@ -3,7 +3,7 @@ use std::sync::Arc;
 use super::rig_tests::bound;
 use super::upload_stand::{clip, shows, watched, Answer, Stand, BLOB, CREATE_MOMENT};
 use crate::ffi::wire::{WireRow, WireSyncState, WireUploadStatus};
-use crate::ffi::{Database, TestClock, WireOperationOutcome};
+use crate::ffi::{Database, TestClock, WireOperationOutcome, WireOperationReceipt, WireReceiptTicket};
 use crate::owners::write::upload::MEBIBYTE;
 use crate::test_wait::yield_until;
 
@@ -125,7 +125,10 @@ async fn a_complete_failure_then_retry_keeps_the_confirmed_parts() {
     let id = sent.optimistic_value.unwrap().id;
     until_state(&database, &id, WireSyncState::Failed).await;
     let again = bound(database.retry(epoch, "Moment".into(), id.clone(), Some("upload_clip".into()), None)).await.unwrap();
-    let WireOperationOutcome::Confirmed { value, .. } = bound(database.outcome(again)).await.unwrap() else { panic!("the retry was not confirmed") };
+    let held = &again.ticket;
+    let ticket = WireReceiptTicket { ticket: held.ticket.clone(), owner: held.owner.clone(), epoch: held.epoch, model: held.model.clone(), operation: held.operation, revision: held.revision, optimistic_value: None, row: held.row.clone() };
+    let late = WireOperationReceipt { optimistic_value: None, ticket: Arc::new(ticket), ..again };
+    let WireOperationOutcome::Confirmed { value, .. } = bound(database.outcome(late)).await.unwrap() else { panic!("the retry was not confirmed") };
     assert_eq!(value.map(|row| (row.id, row.sync.state)), Some(("m1".to_string(), WireSyncState::Synced)));
 
     let names = stand.script.names();
