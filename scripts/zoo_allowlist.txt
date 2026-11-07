@@ -1,3 +1,6 @@
 
 
 
+z18:swift/Sources/DBlayer/DB.swift  # open database slot: the core owns it (D-127, slice 2)
+z18:kotlin/src/main/kotlin/com/noma4i/dblayer/Entry.kt  # open database slot: the core owns it (D-127, slice 2)
+z18:kotlin/src/main/kotlin/com/noma4i/dblayer/UploadWork.kt  # OS tokens of the foreground service: the Service instance (live), the once-only notification flag (announced) and the round token (round: request, round, epoch) the core handed to start and the service echoes back at stop, D-120 lets the wrapper hold OS tokens only

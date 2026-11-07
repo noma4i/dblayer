@@ -18,7 +18,6 @@ import org.junit.Test
 
 /** Spec B, first frame: the cached rows come with the first value, read off the calling thread. Related queries: a stream over a server relation follows a change of its rows and of the link. */
 class FirstFrameAndRelatedTest {
-    private fun titles(projected: Projected<Chat>) = projected.projection.value.rows.map { it.title }
 
     /** Requirement: a stream opened over cached rows delivers them in its very first value, which the reader takes off the calling thread. Observable: the kind, the rows and the revision of the first value, and the thread that took it. */
     @Test
@@ -54,13 +53,13 @@ class FirstFrameAndRelatedTest {
             transport.enqueue("ChatList", """{"data":{"chats":[{"__typename":"Chat","id":"c1","title":"before","revision":1,"lists":["SECONDARY"]}]}}""")
             val related = Projected(scope.stream(Chat.list("SECONDARY")), Chat, screen)
             Chat.list("SECONDARY").load()
-            eventually("the linked row shows") { titles(related) == listOf("before") }
+            related.until("the linked row shows") { it.rows.map { chat -> chat.title } == listOf("before") }
 
             transport.emit("RecordEvents", """{"data":{"recordEvents":{"entries":[{"topic":"MESSAGE","action":"UPDATED","recordId":"m1","chat":{"id":"c1","title":"after","revision":2,"lists":["SECONDARY"]},"message":{"id":"m1","text":"x","chatId":"c1"}}]}}}""")
-            eventually("a change of the row shows") { titles(related) == listOf("after") }
+            related.until("a change of the row shows") { it.rows.map { chat -> chat.title } == listOf("after") }
 
             transport.emit("RecordEvents", """{"data":{"recordEvents":{"entries":[{"topic":"MESSAGE","action":"UPDATED","recordId":"m1","chat":{"id":"c1","title":"after","revision":3,"lists":["PRIMARY"]},"message":{"id":"m1","text":"x","chatId":"c1"}}]}}}""")
-            eventually("a change of the link moves the row out of the relation") { titles(related).isEmpty() }
+            related.until("a change of the link moves the row out of the relation") { it.rows.isEmpty() }
         } finally {
             screen.cancel()
             closeForCleanup()

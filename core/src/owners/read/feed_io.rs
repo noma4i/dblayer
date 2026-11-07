@@ -15,7 +15,7 @@ use super::ports::{Admit, Rest};
 use crate::owners::contract::ConnectionId;
 use crate::owners::read::feed::{Feed, FeedEffect, FeedInput};
 use crate::runtime::{Back, EffectRunner, EpochStamp};
-use crate::task::{spawn_on, Carry};
+use crate::task::spawn_on;
 use crate::transport::{CableLine, CableLines, CancelToken, GraphQLRequest, Incoming, Response, ResponseShape, TransportError};
 
 /// The one reading of the frames: what the subscription asks and which events a response carries.
@@ -85,7 +85,7 @@ impl FeedIo {
             }
         };
         let launch = self.counted.as_ref().map(crate::runtime::Handle::launch);
-        spawn_on(Carry::Detached, &self.handle, crate::runtime::counted(launch, async move {
+        spawn_on(&self.handle, crate::runtime::counted(launch, async move {
             let ended = cancel.clone();
             Self::run(lines, codec, (clock, gate, epoch), connection, (cancel, closing), queued, reply).await;
             ended.cancel();

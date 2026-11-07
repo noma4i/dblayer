@@ -9,9 +9,6 @@ object TestPulse {
     private val generation = MutableStateFlow(0)
 
     init {
-        StreamProbe.delivered = { pulse() }
-        StreamProbe.left = { pulse() }
-        OsProbe.changed = { pulse() }
     }
 
     val current: Int get() = generation.value

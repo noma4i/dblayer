@@ -76,7 +76,6 @@ private fun kindOf(error: DbException): String = when (error) {
     is DbException.Runtime -> "runtime"
     is DbException.Internal -> "internal"
     is DbException.Copy -> "copy"
-    is DbException.Sync -> "sync"
     is DbException.Network -> "network"
     is DbException.Interrupted -> "interrupted"
     is DbException.Http -> "http"

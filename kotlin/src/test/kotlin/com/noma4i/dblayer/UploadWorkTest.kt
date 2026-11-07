@@ -22,7 +22,7 @@ import org.robolectric.Robolectric
 import org.robolectric.Shadows.shadowOf
 
 @org.junit.runner.RunWith(org.robolectric.RobolectricTestRunner::class)
-@org.robolectric.annotation.Config(sdk = [35])
+@org.robolectric.annotation.Config(sdk = [35], shadows = [PulsingService::class])
 class UploadWorkTest {
     private val notification = UploadNotification("Uploading", "Files are on their way", 1)
 

@@ -365,7 +365,7 @@ impl Database {
         let (key, model, id, action) = (crate::store::transfer_key(model, id, action), model.to_string(), id.to_string(), action.to_string());
         let (mut changes, mut row_commits) = (shows.watch(), shows.watch_row(crate::store::ddl::table_name(&model), id.clone()));
         let launch = self.life.launch();
-        let task = crate::task::spawn_on(crate::task::Carry::Detached, super::database::executor().ok()?.handle(), crate::runtime::counted(Some(launch), async move {
+        let task = crate::task::spawn_on(super::database::executor().ok()?.handle(), crate::runtime::counted(Some(launch), async move {
             let mut last = None;
             let mut row_count = None;
             let mut upload = (None, None);

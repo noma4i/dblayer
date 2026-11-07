@@ -121,8 +121,6 @@ pub enum DbError {
     Internal { detail: String },
     #[error("copy: {detail}")]
     Copy { detail: String },
-    #[error("sync: {detail}")]
-    Sync { detail: String },
     #[error("network: {detail}")]
     Network { detail: String },
     #[error("interrupted: {detail}")]
@@ -194,7 +192,7 @@ impl From<crate::transport::TransportError> for DbError {
             TransportError::Decode(detail) => Self::Invalid { detail },
             TransportError::Session { code, detail } => Self::Session { code, detail },
             TransportError::Graphql { messages, extensions } => Self::Graphql { messages, extensions },
-            other => Self::Sync { detail: other.to_string() },
+            TransportError::Unscripted(detail) => Self::Internal { detail },
         }
     }
 }

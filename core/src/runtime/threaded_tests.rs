@@ -210,7 +210,7 @@ fn a_failed_start_of_an_owner_stops_the_owners_already_started() {
             return Err(std::io::Error::other("no thread for the third owner"));
         }
         let ended = ended.clone();
-        crate::task::spawn_thread(crate::task::Carry::Internal, name, move || {
+        crate::task::spawn_thread(name, move || {
             body();
             ended.lock().unwrap().push(which);
         })

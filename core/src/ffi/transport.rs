@@ -70,7 +70,7 @@ impl OnlineSink {
         let waiter = life.set_online(online);
         let Ok(executor) = super::database::executor() else { return };
         let (sender, receiver) = std::sync::mpsc::channel();
-        crate::task::spawn_on(crate::task::Carry::Detached, executor.handle(), async move { let outcome = waiter.wait().await; crate::lock::effect(|| { let _ = sender.send(outcome); }); });
+        crate::task::spawn_on(executor.handle(), async move { let outcome = waiter.wait().await; crate::lock::effect(|| { let _ = sender.send(outcome); }); });
         let _ = crate::blocking::blocking_unit(|| receiver.recv_timeout(std::time::Duration::from_secs(10)));
     }
 

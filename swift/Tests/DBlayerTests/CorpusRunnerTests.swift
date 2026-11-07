@@ -84,7 +84,6 @@ private func kind(of error: DbError) -> String {
   case .Runtime: return "runtime"
   case .Internal: return "internal"
   case .Copy: return "copy"
-  case .Sync: return "sync"
   case .Network: return "network"
   case .Interrupted: return "interrupted"
   case .Http: return "http"

@@ -28,7 +28,7 @@ class ReadmeExamplesTest {
             val moments = Projected(scope.stream(query), query.decoder, screen)
             val moment = Moment.create(text = "hello", account = scope).optimisticValue
             assertEquals("hello", moment?.text)
-            eventually("the row of the sent moment reaches the feed") { moments.projection.value.rows.map { it.text } == listOf("hello") }
+            moments.until("the row of the sent moment reaches the feed") { it.rows.map { it.text } == listOf("hello") }
 
             val user = User.create(name = "ann").optimisticValue!!
             val info = user.attach(User.avatar, byteArrayOf(1, 2, 3), name = "a.png", mime = "image/png")

@@ -10,7 +10,7 @@ use super::ports::{Admit, Rest};
 use crate::owners::contract::{ErrorClass, RequestError, RequestId, TransportOutcome};
 use crate::owners::read::windows::{request_task, read_task, AnswerPage, RequestKind, SavedWindow, WindowEffect, WindowKey, Windows, WindowsEffect, WindowsInput};
 use crate::runtime::{Back, EffectRunner, Epoch, EpochStamp};
-use crate::task::{spawn_on, Carry};
+use crate::task::spawn_on;
 use crate::transport::{CancelToken, GraphQLRequest, Response, RetryClass, Upstream, TransportError};
 
 /// The wire form of a window: how a page is asked and how its answer reads.
@@ -78,7 +78,7 @@ impl WindowIo {
         let launch = self.counted.as_ref().map(crate::runtime::Handle::launch);
         #[cfg(test)]
         let flight = self.flights.as_ref().map(super::ports::InFlight::start);
-        spawn_on(Carry::Detached, &self.handle, crate::runtime::counted(launch, async move {
+        spawn_on(&self.handle, crate::runtime::counted(launch, async move {
             let _watch = back.watch(request_task(request, attempt));
             #[cfg(test)]
             let _flight = flight;
@@ -106,7 +106,7 @@ impl WindowIo {
         let Some(reader) = self.reader.clone() else { return Some((key, read_id)) };
         let back = back.clone();
         let launch = self.counted.as_ref().map(crate::runtime::Handle::launch);
-        crate::task::spawn_blocking_on(Carry::Detached, &self.handle, move || {
+        crate::task::spawn_blocking_on(&self.handle, move || {
             let _launch = launch;
             let _watch = back.watch(read_task(read_id));
             let result = reader(&key);

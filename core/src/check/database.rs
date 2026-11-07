@@ -61,7 +61,6 @@ pub(super) fn error_kind(error: &DbError) -> &'static str {
         DbError::Runtime { .. } => "runtime",
         DbError::Internal { .. } => "internal",
         DbError::Copy { .. } => "copy",
-        DbError::Sync { .. } => "sync",
         DbError::Network { .. } => "network",
         DbError::Interrupted { .. } => "interrupted",
         DbError::Http { .. } => "http",
@@ -530,7 +529,7 @@ impl DatabaseSut {
         let queue: Arc<std::sync::Mutex<std::collections::VecDeque<(u64, ReadValue)>>> = Arc::default();
         let (pulling, kept, heard) = (stream.clone(), queue.clone(), self.heard.clone());
         let launch = database.life_handle().launch();
-        let task = crate::task::spawn(crate::task::Carry::here(), crate::runtime::counted(Some(launch), async move {
+        let task = crate::task::spawn(crate::runtime::counted(Some(launch), async move {
             let mut seq = 0;
             while let Some(value) = pulling.pull().await {
                 seq += 1;

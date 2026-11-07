@@ -148,8 +148,8 @@ for path in files:
 task_support = ("sync/stress/", "test_wait.rs", "transport/mock.rs", "/fixtures.rs", "/rig.rs", "/spec_fixtures.rs", "/invariants/")
 spawn_forms = [
     re.compile(r"(?<![\w:.])(?:tokio::(?:task::)?)?spawn(?:_blocking|_local)?\s*\("),
-    re.compile(r"\.\s*(?:spawn|spawn_blocking|spawn_local|spawn_on|spawn_blocking_on)\s*\((?!\s*(?:crate::task::)?Carry\b|\s*carry\b|\s*stream\.carry\(\))"),
-    re.compile(r"(?<![\w])spawn_named\s*\((?!\s*(?:crate::task::)?Carry\b|\s*carry\b)"),
+    re.compile(r"\.\s*(?:spawn|spawn_blocking|spawn_local|spawn_on|spawn_blocking_on)\s*\("),
+    re.compile(r"(?<![\w])spawn_named\s*\("),
     re.compile(r"\bJoinSet\b|\bstd::thread::(?:Builder|spawn)\b|(?<![\w:])thread::(?:Builder|spawn)\b"),
 ]
 for path in files:
@@ -298,9 +298,23 @@ for directory, suffix, generated in [("swift/Sources/DBlayer", "*.swift", "dblay
             ("Z16 change streams use the bounded core queue", r"buffer\(Channel\.UNLIMITED\)|buffered:\s*true"),
         ]
         rules.append(("Z18 a wrapper holds no lock and no static registry: the core owns the state", r"\b(?:NSLock|NSRecursiveLock|OSAllocatedUnfairLock|Mutex|DispatchSemaphore|ReentrantLock|ReentrantReadWriteLock|synchronized|ConcurrentHashMap)\b|\.withLock\b|\bstatic\s+(?:let|var)\s+shared\b|nonisolated\(unsafe\)"))
+        global_state = "Z18 a wrapper holds no global state: the core owns it"
+        if suffix == "*.swift":
+            rules.append((global_state, r"\bstatic\s+(?:nonisolated\(unsafe\)\s+)?var\s+\w+\s*(?::[^={\n]*)?(?:=|$)"))
+            rules.append((global_state, r"\bstatic\s+let\s+\w+[^=\n]*=\s*(?:\[|Dictionary\b|Array\b|Set\b|NSMutable\w*|Atomic\b|ManagedAtomic\b)"))
+        else:
+            rules.append((global_state, r"@Volatile\b"))
+            for body in re.finditer(r"^( *)(?:\w+ +)*object\s+\w+[^{\n]*\{", text, re.M):
+                inside = text[body.end():end_of(text, body.end() - 1, "{", "}")]
+                for member in re.finditer(r"^" + body[1] + r" {4}(?:(?:private|internal|public|lateinit)\s+)*var\b[^\n]*", inside, re.M):
+                    number = text.count("\n", 0, body.end()) + inside.count("\n", 0, member.start()) + 1
+                    if f"z18:{relative}" not in allowed:
+                        findings.append(f"{global_state}: {relative}:{number}: {member.group().strip()}")
         for label, expression in rules:
-            for match in re.finditer(expression, text):
+            for match in re.finditer(expression, text, re.M):
                 number = text.count("\n", 0, match.start()) + 1
+                if label == global_state and f"z18:{relative}" in allowed:
+                    continue
                 findings.append(f"{label}: {relative}:{number}: {match.group()}")
 
 network_call = re.compile(r"\b(?:transport|http|client|lines)\s*\.\s*(?:query|mutate|subscribe|put|connect)\s*\(")

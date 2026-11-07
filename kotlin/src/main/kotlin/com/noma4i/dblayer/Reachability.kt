@@ -5,11 +5,6 @@ import android.net.ConnectivityManager
 import android.net.Network
 import android.net.NetworkCapabilities
 
-/** Called after the core registered an OS callback and after the upload service stopped itself. The test fixtures set it to wake their waits. */
-object OsProbe {
-    @Volatile var changed: (() -> Unit)? = null
-}
-
 internal object Reachability {
     /** Reports the OS value at once and on every change until the returned stop runs. */
     fun observe(context: Context, changed: (Boolean) -> Unit): () -> Unit {
@@ -21,7 +16,6 @@ internal object Reachability {
         }
         changed(current())
         service.registerDefaultNetworkCallback(callback)
-        OsProbe.changed?.invoke()
         return { service.unregisterNetworkCallback(callback) }
     }
 

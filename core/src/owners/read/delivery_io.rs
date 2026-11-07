@@ -9,7 +9,7 @@ use super::deliveries::{read_task, Deliveries, DeliveryEffect, DeliveryInput, Pu
 use super::ports::Rest;
 use super::snapshots::Snapshots;
 use crate::runtime::{Back, EffectRunner, EpochStamp, Outcomes};
-use crate::task::{spawn_blocking_on, Carry};
+use crate::task::spawn_blocking_on;
 
 pub struct DeliveryIo {
     snapshots: Arc<dyn Snapshots>,
@@ -40,7 +40,7 @@ impl DeliveryIo {
         let ReadRequest { read_id, revision, after, view, mode } = request;
         let (snapshots, back) = (self.snapshots.clone(), back.clone());
         let launch = self.counted.as_ref().map(crate::runtime::Handle::launch);
-        spawn_blocking_on(Carry::Detached, &self.handle, move || {
+        spawn_blocking_on(&self.handle, move || {
             let _launch = launch;
             let _watch = back.watch(read_task(stream, read_id));
             let answer = match snapshots.read(&view, revision, after, mode) {

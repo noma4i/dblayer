@@ -93,7 +93,7 @@ class ValueBridgeTest {
             val scope = AccountScope.current()
             val profile = Projected(scope.stream(User.profile), User, screen)
             profile.loaded()
-            eventually("the stream shows A") { profile.value?.name == "A" }
+            profile.until("the stream shows A") { it.rows.firstOrNull()?.name == "A" }
             assertTrue(profile.projection.value.revision != null && profile.projection.value.ended == null)
         } finally {
             screen.cancel()
@@ -110,10 +110,10 @@ class ValueBridgeTest {
             signIn("A")
             val profile = Projected(AccountScope.current().stream(User.profile), User, screen)
             profile.loaded()
-            eventually("the stream shows A") { profile.value?.name == "A" }
+            profile.until("the stream shows A") { it.rows.firstOrNull()?.name == "A" }
 
             DBlayer.sessionReset()
-            eventually("the stream ended") { profile.projection.value.ended == ReadEnd.SessionEnded }
+            profile.until("the stream ended") { it.ended == ReadEnd.SessionEnded }
 
             assertEquals(0uL, DBlayer.subscriptionCensus().subscriptions)
             assertEquals("A", profile.value?.name)
@@ -133,7 +133,7 @@ class ValueBridgeTest {
             val first = AccountScope.current()
             val projectionA = Projected(first.stream(User.profile), User, screen)
             projectionA.loaded()
-            eventually("A shows") { projectionA.value?.name == "A" }
+            projectionA.until("A shows") { it.rows.firstOrNull()?.name == "A" }
 
             DBlayer.sessionReset()
             signIn("B")
@@ -141,7 +141,7 @@ class ValueBridgeTest {
             assertNotEquals(first.epoch, second.epoch)
             val projectionB = Projected(second.stream(User.profile), User, screen)
             projectionB.loaded()
-            eventually("B shows") { projectionB.value?.name == "B" }
+            projectionB.until("B shows") { it.rows.firstOrNull()?.name == "B" }
 
             assertEquals("A", projectionA.value?.name)
             assertEquals(ReadEnd.SessionEnded, projectionA.projection.value.ended)
@@ -164,14 +164,14 @@ class ValueBridgeTest {
             DBlayer.database.setOnline(false)
 
             val sent = scope.send(Moment, text("hello"))
-            eventually("the thread shows the queued message") { thread.projection.value.rows.size == 1 }
+            thread.until("the thread shows the queued message") { it.rows.size == 1 }
             assertEquals(sent.optimisticValue?.id, thread.projection.value.rows[0].id)
             assertEquals(SyncState.Pending, thread.projection.value.rows[0].sync.state)
             assertEquals(0, server.operationRequests("CreateMoment"))
 
             DBlayer.database.setOnline(true)
             assertEquals("m1", sent.confirmed().id)
-            eventually("the thread shows the confirmed message") { thread.projection.value.rows.firstOrNull()?.id == "m1" }
+            thread.until("the thread shows the confirmed message") { it.rows.firstOrNull()?.id == "m1" }
 
             assertEquals("one message, not a temporary row and a confirmed row", 1, thread.projection.value.rows.size)
             assertEquals(SyncState.Synced, thread.projection.value.rows[0].sync.state)
@@ -193,7 +193,7 @@ class ValueBridgeTest {
             val stream = old.stream(User.profile)
             val projectionA = Projected(stream, User, screen)
             projectionA.loaded()
-            eventually("A shows") { projectionA.value?.name == "A" }
+            projectionA.until("A shows") { it.rows.firstOrNull()?.name == "A" }
 
             server.hold("UserProfile")
             val late = async { runCatching { stream.refresh() } }
@@ -203,7 +203,7 @@ class ValueBridgeTest {
             signIn("B")
             val projectionB = Projected(AccountScope.current().stream(User.profile), User, screen)
             projectionB.loaded()
-            eventually("B shows") { projectionB.value?.name == "B" }
+            projectionB.until("B shows") { it.rows.firstOrNull()?.name == "B" }
 
             val ended = late.await().exceptionOrNull()
             assertTrue("the late call of the old epoch ended as $ended", ended is DbException.Interrupted)
@@ -229,7 +229,8 @@ class ValueBridgeTest {
             assertEquals(1uL, DBlayer.subscriptionCensus().observedQueries)
 
             projected.close()
-            eventually("the stream left the core") { DBlayer.subscriptionCensus().observedQueries == 0uL }
+            projected.reading.join()
+            assertEquals(0uL, DBlayer.subscriptionCensus().observedQueries)
         } finally {
             screen.cancel()
             closeForCleanup()
@@ -249,13 +250,13 @@ class ValueBridgeTest {
             thread.loaded()
             val first = (1..5).map { number -> scope.send(Moment, text("m$number")) }
             first.forEach { it.outcome() }
-            eventually("the thread holds five confirmed rows") { thread.projection.value.rows.let { rows -> rows.size == 5 && rows.all { it.sync.state == SyncState.Synced } } }
+            thread.until("the thread holds five confirmed rows") { it.rows.let { rows -> rows.size == 5 && rows.all { it.sync.state == SyncState.Synced } } }
             assertEquals(1uL, DBlayer.subscriptionCensus().subscriptions)
 
             val extra = scope.send(Moment, text("m6"))
-            eventually("the sixth row shows") { thread.projection.value.rows.size == 6 }
+            thread.until("the sixth row shows") { it.rows.size == 6 }
             extra.outcome()
-            eventually("the sixth row is confirmed") { thread.projection.value.rows.lastOrNull()?.sync?.state == SyncState.Synced }
+            thread.until("the sixth row is confirmed") { it.rows.lastOrNull()?.sync?.state == SyncState.Synced }
 
             assertEquals(6, thread.projection.value.rows.size)
         } finally {
@@ -337,7 +338,7 @@ class ValueBridgeTest {
             val scope = AccountScope.current()
             val profile = Projected(scope.stream(User.profile), User, screen)
             profile.loaded()
-            eventually("the stream shows A") { profile.value?.name == "A" }
+            profile.until("the stream shows A") { it.rows.firstOrNull()?.name == "A" }
             val state = profile.projection.value.state!!
             val whole = DBlayer.database.readQuery(scope.epoch, User.profile.spec()).first()
             val bad = whole.copy(layout = "another layout")
@@ -363,8 +364,9 @@ class ValueBridgeTest {
             val scope = AccountScope.current()
             val cancelled = CoroutineScope(SupervisorJob())
             cancelled.cancel()
-            Projected(scope.stream(User.profile), User, cancelled)
-            eventually("the stream left the core") { DBlayer.subscriptionCensus().subscriptions == 0uL }
+            val projected = Projected(scope.stream(User.profile), User, cancelled)
+            awaitWithin("the reading job ended") { projected.reading.join() }
+            assertEquals(0uL, DBlayer.subscriptionCensus().subscriptions)
         } finally {
             closeForCleanup()
         }

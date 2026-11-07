@@ -91,6 +91,11 @@ class ListReader<M : DBModel>(private val query: Query<M>, scope: CoroutineScope
 
 fun heldUser(): Projected<User> = Projected(AccountScope.current().stream(User.profile), User, CoroutineScope(SupervisorJob()))
 
+/** Returns when the projection satisfies the condition: the wait ends on the delivery that makes it true. Bounded by the hang guard. */
+suspend fun <M : DBModel> Projected<M>.until(what: String, condition: (ListProjection<M>) -> Boolean) {
+    awaitWithin(what) { projection.first(condition) }
+}
+
 /** Returns when the projection shows a settled state, throws the failed state's error or `Interrupted` when the stream ended. Bounded by the hang guard. */
 suspend fun <M : DBModel> Projected<M>.loaded() {
     val shown = awaitWithin("the projection shows a settled state") { projection.first { it.state?.settled == true || it.ended != null } }

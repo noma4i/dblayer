@@ -46,7 +46,7 @@ impl Database {
         let total = std::fs::metadata(path).map_err(|error| invalid(format!("the source file is unreadable: {error}")))?.len();
         if total == 0 { return Err(invalid("the source file is empty")); }
         let config = self.upload_config();
-        let operations = self.uploads.as_ref().ok_or_else(|| DbError::Sync { detail: "upload operations are not declared: pass UploadOperations to open".into() })?;
+        let operations = self.uploads.as_ref().ok_or_else(|| invalid("upload operations are not declared: pass UploadOperations to open"))?;
         let multipart = operations.multipart.is_some() && (operations.create_blob.is_none() || scenario_for(total, config.multipart_threshold) == UploadScenario::Multipart);
         Ok((Source { path: path.to_string(), parts: if multipart { part_count(total, config.part_size) } else { 1 } }, multipart))
     }
@@ -81,7 +81,7 @@ impl Database {
     fn batch_upload(&self, model: &str, action: &str, planned: &Planned, item: &crate::owners::write::upload::UploadItem, request: &crate::owners::write::upload::UploadBatchInput) -> Result<BatchItem, DbError> {
         let spec = self.db.spec(model)?;
         let declaration = spec.actions.iter().find(|declared| declared.name == action).ok_or_else(|| invalid("unknown upload operation"))?;
-        let batch = declaration.batch.as_ref().ok_or_else(|| DbError::Sync { detail: "operation has no upload batch declaration".into() })?;
+        let batch = declaration.batch.as_ref().ok_or_else(|| invalid("operation has no upload batch declaration"))?;
         let mut fields = item.variables.clone();
         let data = planned.input.as_object().cloned().unwrap_or_default();
         for (target, source) in &batch.input { fields.insert(target.clone(), data.get(source).cloned().unwrap_or(Value::Null)); }
@@ -112,7 +112,7 @@ impl Database {
     fn joint_of(&self, model: &str, request: &crate::owners::write::upload::UploadBatchInput) -> Result<Joint, DbError> {
         let spec = self.db.spec(model)?;
         let declaration = spec.actions.iter().find(|declared| declared.name == request.operation).ok_or_else(|| invalid("unknown upload operation"))?;
-        let batch = declaration.batch.as_ref().ok_or_else(|| DbError::Sync { detail: "operation has no upload batch declaration".into() })?;
+        let batch = declaration.batch.as_ref().ok_or_else(|| invalid("operation has no upload batch declaration"))?;
         let mutation = declaration.mutation.clone().ok_or_else(|| invalid("upload mutation is missing"))?;
         let plan = Plan { model, row: "", action: &request.operation, declaration, variables: request.variables.clone(), file: &UploadFile::new(""), effects: IntentEffects::default() };
         let template = self.upload_mutation(&plan, &mutation)?;
@@ -181,7 +181,7 @@ impl Database {
         let (items, request) = self.offload(move || Ok((items.into_iter().map(WireUploadItem::into_item).collect::<Result<Vec<_>, _>>()?, request.into_input()?))).await?;
         let spec = self.db.spec(&model)?;
         let action = spec.actions.iter().find(|declared| declared.name == request.operation).ok_or_else(|| invalid("unknown upload operation"))?;
-        let batch = action.batch.as_ref().ok_or_else(|| DbError::Sync { detail: "operation has no upload batch declaration".into() })?;
+        let batch = action.batch.as_ref().ok_or_else(|| invalid("operation has no upload batch declaration"))?;
         if items.len() < batch.min || items.len() > batch.max { return Err(invalid(format!("upload batch requires {}..{} items", batch.min, batch.max))); }
         let field = action.correlate.first().cloned().ok_or_else(|| invalid("upload batch has no correlation field"))?;
         let mut keys = std::collections::HashSet::new();

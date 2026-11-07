@@ -5,5 +5,5 @@
 {"args":{"id":"r1","json":{"nextStep":"authenticated"}},"in":"answer","out":[{"o":"session","v":{"answer":{"nextStep":"authenticated"},"operation":"social"}}]}
 {"in":"published","out":[{"o":"published","v":{"epoch":2}}]}
 {"args":{"online":true},"in":"set_online","out":[{"o":"online","v":true}]}
-{"args":{"as":"b","count":2,"operation":"upload_clip"},"in":"upload_batch","out":[{"o":"error","v":{"kind":"sync"}}]}
+{"args":{"as":"b","count":2,"operation":"upload_clip"},"in":"upload_batch","out":[{"o":"error","v":{"kind":"invalid"}}]}
 {"in":"close","out":[{"o":"closed"}]}

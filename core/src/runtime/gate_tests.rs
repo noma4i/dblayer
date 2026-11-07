@@ -49,7 +49,7 @@ async fn life_gate_closed_before_poll() {
         let transport = Arc::new(Counting::default());
         let (started, running) = tokio::sync::oneshot::channel();
         let (ended, waiting) = tokio::sync::oneshot::channel::<()>();
-        let task = crate::task::spawn_on(crate::task::Carry::Detached, &tokio::runtime::Handle::current(), {
+        let task = crate::task::spawn_on(&tokio::runtime::Handle::current(), {
             let (gate, transport) = (gate.clone(), transport.clone());
             async move {
                 let _ = started.send(());

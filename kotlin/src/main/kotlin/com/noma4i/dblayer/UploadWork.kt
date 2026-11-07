@@ -189,7 +189,6 @@ internal class UploadService : Service() {
 
         fun stop() {
             live?.stopSelf()
-            OsProbe.changed?.invoke()
         }
 
         fun start(context: Context, job: RoundJob): Refusal? = try {

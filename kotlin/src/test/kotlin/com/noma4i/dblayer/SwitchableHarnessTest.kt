@@ -33,7 +33,7 @@ class SwitchableHarnessTest {
                 val switchable = SwitchableTransport(first, unset)
                 reopen(Config(null, null), modelsJSON, switchable, operations)
                 val entity = heldUser()
-                eventually("the held entity shows A") { entity.value?.name == "A" }
+                entity.until("the held entity shows A") { it.rows.firstOrNull()?.name == "A" }
                 val before = first.calls.size
 
                 switchable.target = null
@@ -64,8 +64,9 @@ class SwitchableHarnessTest {
             first.enqueue("UserProfile", profile("A"))
             reopen(Config(null, null), modelsJSON, first, operations)
             val entity = heldUser()
-            eventually("the held entity shows A") { entity.value?.name == "A" }
+            entity.until("the held entity shows A") { it.rows.firstOrNull()?.name == "A" }
             closeForCleanup()
+            val closed = first.calls.size
 
             DBlayer.openTesting(null, modelsJSON)
             closeForCleanup()
@@ -74,8 +75,9 @@ class SwitchableHarnessTest {
             second.enqueue("UserProfile", profile("B"))
             reopen(Config(null, null), modelsJSON, second, operations)
             val reopened = heldUser()
-            eventually("the reopened entity shows B") { reopened.value?.name == "B" }
-            assertEquals("the first transport saw: ${first.calls.map { it.operationName }}", 1, first.calls.size)
+            reopened.until("the reopened entity shows B") { it.rows.firstOrNull()?.name == "B" }
+            assertEquals("the first transport saw: ${first.calls.map { it.operationName }}", 1, first.calls.count { it.operationName == "UserProfile" })
+            assertEquals("work after the close reached the first transport: ${first.calls.map { it.operationName }}", closed, first.calls.size)
         } finally {
             closeForCleanup()
         }

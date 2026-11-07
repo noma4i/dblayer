@@ -187,8 +187,10 @@ extension BridgeProbeTests {
     try await projected?.loaded()
     #expect(try await DB.subscriptionCensus().observedQueries == 1)
 
+    let stream = projected?.stream
     projected = nil
-    await eventuallyAsync("the stream left the core") { (try? await DB.subscriptionCensus().observedQueries) == 0 }
+    await stream?.cancel()
+    #expect(try await DB.subscriptionCensus().observedQueries == 0)
   }
 
   /// B07: a change of one row decodes one row, and the subscriptions are the readers.

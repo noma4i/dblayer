@@ -9,7 +9,7 @@ use super::mailbox::Mailbox;
 use super::owner::{Address, Back, Cause, Control, EffectId, Epoch, EpochStamp, Message, StateOwner, Time};
 use super::sync::{lock, Condvar, Mutex};
 use crate::blocking::blocking_unit;
-use crate::task::{spawn_thread, Carry};
+use crate::task::spawn_thread;
 
 enum Command {
     Deliver(EpochStamp, Box<dyn Message>),
@@ -312,7 +312,7 @@ impl RuntimeBuilder {
 
     pub fn handle(&self) -> Handle { self.handle.clone() }
 
-    pub fn start(self) -> std::io::Result<Runtime> { self.start_with(|name, body| spawn_thread(Carry::Internal, name, body)) }
+    pub fn start(self) -> std::io::Result<Runtime> { self.start_with(spawn_thread) }
 
     pub(super) fn start_with(self, mut launch: impl FnMut(String, Box<dyn FnOnce() + Send>) -> std::io::Result<JoinHandle<()>>) -> std::io::Result<Runtime> {
         if self.bodies.iter().any(Option::is_none) {

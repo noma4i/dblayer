@@ -28,12 +28,10 @@ class ValueStream internal constructor(val epoch: ULong, private val reader: Rea
     /** Stops reading: the stream ends in the core and nothing is delivered after this returns. */
     suspend fun cancel() {
         reader.cancel()
-        StreamProbe.left?.invoke()
     }
 
     fun close() {
         reader.close()
-        StreamProbe.left?.invoke()
     }
 
     /** Asks the core for a snapshot: the one call a reader makes when a delivery cannot be decoded. */
@@ -94,29 +92,26 @@ class ListProjection<Model : DBModel> private constructor(
     fun apply(value: ReadValue, decoder: ModelDecoder<Model>): ListProjection<Model>? = value.listDelivery(decoder)?.let(::apply)
 }
 
-/** Called after a screen model took a delivery and after a stream was released. The test fixtures set them to wake their waits. */
-object StreamProbe {
-    @Volatile var delivered: (() -> Unit)? = null
-    @Volatile var left: (() -> Unit)? = null
-}
-
 /** The screen model of a stream of rows: a StateFlow over a projection. It reads the stream until its scope completes, and the completion of the reading job ends the stream in the core, also when the scope was cancelled before the first delivery. Rows are decoded on [Dispatchers.Default], the collecting scope only publishes them. */
 class Projected<Model : DBModel>(val stream: ValueStream, decoder: ModelDecoder<Model>, scope: CoroutineScope) {
     private val held = MutableStateFlow(ListProjection<Model>())
     val projection: StateFlow<ListProjection<Model>> = held.asStateFlow()
-    private val reading: Job = scope.launch(start = CoroutineStart.ATOMIC) {
-        stream.values.mapNotNull { value ->
-            try {
-                value.listDelivery(decoder)
-            } catch (error: kotlinx.coroutines.CancellationException) { throw error } catch (error: Exception) {
-                stream.resync()
-                null
+    internal val reading: Job = scope.launch(start = CoroutineStart.ATOMIC) {
+        try {
+            stream.values.mapNotNull { value ->
+                try {
+                    value.listDelivery(decoder)
+                } catch (error: kotlinx.coroutines.CancellationException) { throw error } catch (error: Exception) {
+                    stream.resync()
+                    null
+                }
+            }.flowOn(Dispatchers.Default).collect {
+                held.value = held.value.apply(it)
             }
-        }.flowOn(Dispatchers.Default).collect {
-            held.value = held.value.apply(it)
-            StreamProbe.delivered?.invoke()
+        } finally {
+            stream.close()
         }
-    }.also { job -> job.invokeOnCompletion { stream.close() } }
+    }
 
     val value: Model? get() = held.value.rows.firstOrNull()
 
@@ -143,17 +138,20 @@ class ProjectedCount(val stream: ValueStream, scope: CoroutineScope) {
     private val over = MutableStateFlow<ReadEnd?>(null)
     /** Why the stream ended by itself. */
     val ended: StateFlow<ReadEnd?> = over.asStateFlow()
-    private val reading: Job = scope.launch(start = CoroutineStart.ATOMIC) {
-        stream.values.collect { value ->
-            when (value) {
-                is ReadValue.Count -> { held.value = value.count.toLong(); shown.value = value.state }
-                is ReadValue.State -> shown.value = value.state
-                is ReadValue.Ended -> over.value = value.cause
-                else -> {}
+    internal val reading: Job = scope.launch(start = CoroutineStart.ATOMIC) {
+        try {
+            stream.values.collect { value ->
+                when (value) {
+                    is ReadValue.Count -> { held.value = value.count.toLong(); shown.value = value.state }
+                    is ReadValue.State -> shown.value = value.state
+                    is ReadValue.Ended -> over.value = value.cause
+                    else -> {}
+                }
             }
-            StreamProbe.delivered?.invoke()
+        } finally {
+            stream.close()
         }
-    }.also { it.invokeOnCompletion { stream.close() } }
+    }
 
     fun close() {
         reading.cancel()

@@ -87,7 +87,7 @@ struct OpenSocket(Option<Arc<dyn CableSocket>>);
 impl Drop for OpenSocket {
     fn drop(&mut self) {
         let (Some(socket), Ok(handle)) = (self.0.take(), tokio::runtime::Handle::try_current()) else { return };
-        crate::task::spawn_on(crate::task::Carry::Detached, &handle, async move { socket.close().await });
+        crate::task::spawn_on(&handle, async move { socket.close().await });
     }
 }
 

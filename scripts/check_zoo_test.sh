@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Self test of check_zoo.sh rules Z20 and Z21: each bypass makes it exit 1, the allowed forms exit 0.
+# Self test of check_zoo.sh rules Z18, Z20 and Z21: each bypass makes it exit 1, the allowed forms exit 0.
 set -euo pipefail
 
 root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)"
@@ -78,6 +78,35 @@ run || { echo "check_zoo_test: a clean public call failed" >&2; exit 1; }
 
 expect_red '#[allow(clippy::too_many_arguments)] fn many(a: u8) {}'
 expect_red '#![allow(unexpected_cfgs)]'
+
+swift_probe="$work/swift/Sources/DBlayer/Probe.swift"
+kotlin_probe="$work/kotlin/src/main/kotlin/com/noma4i/dblayer/Probe.kt"
+mkdir -p "$(dirname "$swift_probe")" "$(dirname "$kotlin_probe")"
+: > "$probe"
+expect_wrapper() {
+  local file="$1" verdict="$2" text="$3"
+  printf '%s\n' "$text" > "$file"
+  if [ "$verdict" = red ]; then
+    if run; then echo "check_zoo_test: wrapper state not caught: $text" >&2; exit 1; fi
+  else
+    run || { echo "check_zoo_test: a clean wrapper failed: $text" >&2; exit 1; }
+  fi
+  /bin/rm -f "$file"
+}
+expect_wrapper "$swift_probe" green 'protocol Named { static var name: String { get } }
+enum Slot { static var computed: Int { 1 } }'
+expect_wrapper "$swift_probe" red 'enum Slot { private static var slot: Database? }'
+expect_wrapper "$swift_probe" red 'enum Slot { nonisolated(unsafe) static var held: [String: Int] = [:] }'
+expect_wrapper "$swift_probe" red 'enum Slot { static let registry = [String: Int]() }
+enum Other { static let table = [1: 2] }'
+expect_wrapper "$kotlin_probe" green 'object Names {
+    val fixed = 1
+    fun run() { var local = 0; local += 1 }
+}'
+expect_wrapper "$kotlin_probe" red 'object Hook {
+    var delivered: (() -> Unit)? = null
+}'
+expect_wrapper "$kotlin_probe" red 'class Holder { @Volatile private var live: Int? = null }'
 
 mkdir -p "$work/core/src/zoo_probe"
 printf '#[cfg(test)]\nmod zoo_probe;\n' > "$work/core/src/lib.rs"

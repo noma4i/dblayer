@@ -170,7 +170,7 @@ impl SessionRunner {
         let back = back.clone();
         let watch = back.watch(id);
         let launch = self.wiring.handle.launch();
-        drop(crate::task::spawn_blocking_on(crate::task::Carry::Detached, &self.executor, move || {
+        drop(crate::task::spawn_blocking_on(&self.executor, move || {
             let _watch = watch;
             back.reply(EpochStamp::Control, work());
             drop(launch);
@@ -326,7 +326,7 @@ impl EffectRunner<SessionCalls> for SessionRunner {
                 let watch = back.watch(crate::owners::session::http_id(attempt_id));
                 let launch = self.wiring.handle.launch();
                 let gate = self.wiring.gate.clone();
-                let task = crate::task::spawn_on(crate::task::Carry::Detached, &self.executor, crate::runtime::counted(Some(launch), async move {
+                let task = crate::task::spawn_on(&self.executor, crate::runtime::counted(Some(launch), async move {
                     let _watch = watch;
                     crate::lock::assert_no_library_lock("HttpExchange::post");
                     let credential = match secret_for(credentials.as_ref(), expected.as_deref()) {

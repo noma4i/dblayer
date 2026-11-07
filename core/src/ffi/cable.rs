@@ -147,7 +147,7 @@ fn close_bounded(connection: &Arc<dyn PlatformSocket>, clock: &Arc<dyn Clock>, c
     connection.close(code, reason.into());
     let Ok(executor) = super::database::executor() else { return };
     let (connection, clock) = (connection.clone(), clock.clone());
-    crate::task::spawn_on(crate::task::Carry::Detached, executor.handle(), async move {
+    crate::task::spawn_on(executor.handle(), async move {
         clock.sleep(crate::owners::read::CLOSE_DRAIN).await;
         crate::lock::effect(|| connection.cancel());
     });

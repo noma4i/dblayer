@@ -71,13 +71,13 @@ pub(super) fn started(slot: &Starter, build: impl FnOnce() -> std::io::Result<Ru
 }
 
 pub(super) async fn on_executor<T: Send + 'static, E: Into<DbError> + Send + 'static>(work: impl std::future::Future<Output = Result<T, E>> + Send + 'static) -> Result<T, DbError> {
-    crate::task::spawn_on(crate::task::Carry::here(), executor()?.handle(), work).await.map_err(|error| DbError::Invalid { detail: error.to_string() })?.map_err(Into::into)
+    crate::task::spawn_on(executor()?.handle(), work).await.map_err(|error| DbError::Invalid { detail: error.to_string() })?.map_err(Into::into)
 }
 
 pub(super) async fn cancellable<T: Send + 'static>(work: impl std::future::Future<Output = T> + Send + 'static) -> Result<T, DbError> {
     struct Cancel(tokio::task::AbortHandle);
     impl Drop for Cancel { fn drop(&mut self) { crate::lock::effect(|| self.0.abort()); } }
-    let task = crate::task::spawn_on(crate::task::Carry::here(), executor()?.handle(), work);
+    let task = crate::task::spawn_on(executor()?.handle(), work);
     let _cancel = Cancel(task.abort_handle());
     task.await.map_err(|error| DbError::Invalid { detail: error.to_string() })
 }
@@ -91,7 +91,7 @@ pub(super) async fn blocking<T: Send + 'static>(work: impl FnOnce() -> Result<T,
             work()
         }
     };
-    crate::task::spawn_blocking_on(crate::task::Carry::here(), executor()?.handle(), work).await.map_err(|error| DbError::Invalid { detail: error.to_string() })?
+    crate::task::spawn_blocking_on(executor()?.handle(), work).await.map_err(|error| DbError::Invalid { detail: error.to_string() })?
 }
 
 #[derive(Clone, PartialEq, Eq, uniffi::Record)]

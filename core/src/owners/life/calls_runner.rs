@@ -88,7 +88,7 @@ impl CallsRunner {
         let (launch, gate) = (self.wiring.handle.launch(), self.wiring.gate.clone());
         #[cfg(test)]
         let flight = crate::owners::read::InFlight::start(&self.wiring.flights);
-        let task = crate::task::spawn_on(crate::task::Carry::Detached, &self.executor, crate::runtime::counted(Some(launch), async move {
+        let task = crate::task::spawn_on(&self.executor, crate::runtime::counted(Some(launch), async move {
             #[cfg(test)]
             let _flight = flight;
             let variables: Value = serde_json::from_str(&variables).unwrap_or(Value::Null);
@@ -117,7 +117,7 @@ impl CallsRunner {
         let body = crate::transport::encrypted::graphql_body(&GraphQLRequest::new(document, operation, variables), true);
         let waiter = self.wiring.calls_answers.register_as(request_id, crate::runtime::Epoch::MAX);
         let back = back.clone();
-        let task = crate::task::spawn_on(crate::task::Carry::Detached, &self.executor, crate::runtime::counted(None, async move {
+        let task = crate::task::spawn_on(&self.executor, crate::runtime::counted(None, async move {
             if let crate::runtime::Outcome::Value(outcome) = waiter.wait().await { back.reply(EpochStamp::Control, answer_input(request_id, &root, outcome)); }
         }));
         self.running.insert(request_id, task.abort_handle());
