@@ -30,7 +30,7 @@ head -1 "$manifest" | grep -Fxq $'version\t1' || fail 'manifest version line mus
 sed -n 2p "$manifest" | grep -Fxq $'id\taliases\tlane\ttest\tstate\ts1\tprovenance' || fail 'manifest header line is not the expected column list'
 
 export BUILD_RUN_ID="${BUILD_RUN_ID:-check-sequences-$$-$(date +%s)}"
-slot_tool="${BUILD_SLOT:-$HOME/.claude/bin/build-slot}"
+slot_tool="${BUILD_SLOT:-}"
 logs="$stage/sequence-logs"
 mkdir -p "$logs"
 tmp="$(mktemp -d)"

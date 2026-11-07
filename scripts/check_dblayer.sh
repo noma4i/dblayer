@@ -6,8 +6,8 @@ root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)"
 export ANDROID_HOME="${ANDROID_HOME:-$HOME/Library/Android/sdk}"
 export BUILD_RUN_ID="${BUILD_RUN_ID:-check-dblayer-$$-$(date +%s)}"
 gradle="${GRADLE:-$(ls -d "$HOME"/.gradle/wrapper/dists/gradle-9.*-bin/*/gradle-9.*/bin/gradle 2> /dev/null | sort -V | tail -1)}"
-slot="$HOME/.claude/bin/build-slot -- bash $root/scripts/check_bounded.sh {limit}"
-[ -x "$HOME/.claude/bin/build-slot" ] || slot="bash $root/scripts/check_bounded.sh {limit}"
+slot="bash $root/scripts/check_bounded.sh {limit}"
+[ -n "${BUILD_SLOT:-}" ] && [ -x "$BUILD_SLOT" ] && slot="$BUILD_SLOT -- $slot"
 
 source "$root/scripts/check_steps.sh"
 

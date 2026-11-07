@@ -57,7 +57,7 @@ See [Android R8 evidence](android-r8.md) for the red/green results and reproduct
 The complete command passed all 21 selected steps:
 
 ```sh
-LC_ALL=C PATH=/bin:/usr/bin:$PATH ~/.claude/bin/build-slot -- bash scripts/check_dblayer.sh
+LC_ALL=C PATH=/bin:/usr/bin:$PATH bash scripts/check_dblayer.sh
 ```
 
 | Check | Result |

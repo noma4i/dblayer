@@ -12,7 +12,7 @@
 #   CONSUMER_IOS_COMMAND      command of the iOS lane, run in its worktree        (iOS lane)
 #   CONSUMER_ANDROID_COMMAND  command of the Android lane, run in its worktree    (Android lane)
 #   CONSUMER_WORK_ROOT    scratch parent for trees, default $TMPDIR
-#   BUILD_SLOT            tool path, default ~/.claude/bin/build-slot
+#   BUILD_SLOT            tool path of a wrapper that serialises builds, default none
 # A lane command receives DBLAYER_PACKAGE (local Swift package), DBLAYER_MAVEN (staged Maven directory),
 # DBLAYER_GEN (staged generator), DBLAYER_VERSION and DBLAYER_STAGE. Only exit code 0 is a pass.
 # Writes <stage>/consumers.tsv (lane, rc, log, source sha, run id) and exits 0 only when every requested lane is green.
@@ -62,7 +62,7 @@ done
 [ "${#missing[@]}" = 0 ] || fail "unset inputs: ${missing[*]}"
 [ -d "$CONSUMER_REPO/.git" ] || [ -f "$CONSUMER_REPO/.git" ] || fail "CONSUMER_REPO is not a git checkout: $CONSUMER_REPO"
 
-slot_tool="${BUILD_SLOT:-$HOME/.claude/bin/build-slot}"
+slot_tool="${BUILD_SLOT:-}"
 ios_ref="${CONSUMER_IOS_REF:-master}"
 android_ref="${CONSUMER_ANDROID_REF:-master}"
 export BUILD_RUN_ID="${BUILD_RUN_ID:-check-consumers-$$-$(date +%s)}"
