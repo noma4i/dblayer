@@ -34,7 +34,6 @@ class BootstrapConfigTest {
         val capabilities = org.robolectric.shadows.ShadowNetworkCapabilities.newInstance()
         org.robolectric.Shadows.shadowOf(capabilities).addCapability(android.net.NetworkCapabilities.NET_CAPABILITY_VALIDATED)
         org.robolectric.Shadows.shadowOf(manager).setNetworkCapabilities(manager.activeNetwork, capabilities)
-        Reachability.start(context)
     }
     @Test
     fun nativeHttpCancellationClosesTheCallDuringResponseBody() = bounded {

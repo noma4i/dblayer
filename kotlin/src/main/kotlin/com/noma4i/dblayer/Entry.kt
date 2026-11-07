@@ -13,6 +13,7 @@ object DBlayer {
     @Volatile private var opened: Database? = null
     @Volatile private var running = false
     @Volatile private var powerSaving: PowerSaving.Registration? = null
+    @Volatile private var stopReachability: (() -> Unit)? = null
 
     internal fun openedDatabase(): Database? = opened.takeIf { running }
 
@@ -34,7 +35,8 @@ object DBlayer {
         ForegroundEvents.stop()
         powerSaving?.stop()
         powerSaving = null
-        Reachability.disconnect()
+        stopReachability?.invoke()
+        stopReachability = null
         opened?.let { offCaller { it.closeDatabase() } }
     }
 
@@ -53,8 +55,15 @@ object DBlayer {
         get() = opened ?: throw IllegalStateException("database is not open; call DBlayer.open once at app start")
         internal set(value) { opened = value; running = true }
 
-    suspend fun serverConfig(context: Context, encrypted: EncryptedConfig, platform: AppPlatform, version: String, build: String? = null, http: EncryptedHttp? = null, retries: RetryProgress? = null): ServerConfig =
-        fetchServerConfig(encrypted, platform, version, build, http ?: OkHttpEncryptedHttp(encrypted.origin), retries, Reachability.start(context))
+    suspend fun serverConfig(context: Context, encrypted: EncryptedConfig, platform: AppPlatform, version: String, build: String? = null, http: EncryptedHttp? = null, retries: RetryProgress? = null): ServerConfig {
+        val connectivity = Connectivity(false)
+        val stop = Reachability.observe(context) { connectivity.setOnline(it) }
+        try {
+            return fetchServerConfig(encrypted, platform, version, build, http ?: OkHttpEncryptedHttp(encrypted.origin), retries, connectivity)
+        } finally {
+            stop()
+        }
+    }
 
     suspend fun open(
         context: Context,
@@ -75,10 +84,9 @@ object DBlayer {
         val definitions = operations.map { JsonObject(mapOf("name" to JsonPrimitive(it.operationName), "document" to JsonPrimitive(it.document))) }
         val options = OpenOptions(operations = JsonArray(definitions).jsonText(), powerSaving = PowerSaving.saving(context), lowRam = PowerSaving.lowRam(context))
         val selectedTransport = transport ?: (endpoint ?: encrypted?.origin)?.let { OkHttpTransport(it, headers) }
-        Reachability.start(context)
         val made = opener.open(Config(path, null, 2000u), modelsJson, options, OpenPorts(selectedTransport, encrypted, credentials, http ?: encrypted?.let { OkHttpEncryptedHttp(it.origin, headers = headers) }, retries))
         val sink = made.onlineSink()
-        Reachability.connect(sink)
+        stopReachability = Reachability.observe(context) { sink.setOnline(it) }
         ForegroundEvents.start(sink)
         powerSaving = PowerSaving.start(context, sink)
         made.setRoundJobs(UploadRounds(context.applicationContext, made))
