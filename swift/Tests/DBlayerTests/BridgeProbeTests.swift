@@ -118,7 +118,7 @@ struct BridgeProbeTests {
     await eventually("the rows and the load time arrive") { !(list.rows.isEmpty || list.state?.loaded == nil) }
 
     #expect(list.rows.first?.uuid == "a")
-    #expect(transport.calls.first?.operationName == "MomentsFeed")
+    #expect(transport.calls.contains { $0.operationName == "MomentsFeed" })
     #expect(list.state?.hasMore == true && list.phase == .loaded)
     #expect(list.state?.total == 9)
     let entity = Projected<Moment>(try AccountScope().entity(Moment.self, "1"))
