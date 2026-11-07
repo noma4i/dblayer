@@ -425,20 +425,6 @@ pub(crate) fn row_op(op: &crate::owners::store::StoreOp) -> Option<RowOp> {
     })
 }
 
-impl Store {
-    /// The effect `Write`: the writes of one batch in one transaction. Returns the new revision.
-    pub(crate) fn write_ops(&self, ops: Vec<RowOp>) -> Result<i64, StoreError> {
-        let inner = self.lock();
-        let transaction = inner.connection.unchecked_transaction()?;
-        apply_row_ops(&transaction, ops)?;
-        let revision = bump_revision(&transaction)?;
-        let snapshot = self.overlays.next(revision - 1, true).ok_or_else(|| StoreError::Constraint("overlay revision is unavailable".into()))?;
-        self.overlays.commit(snapshot, transaction)?;
-        self.publish_revision(revision);
-        Ok(revision)
-    }
-}
-
 pub(super) fn apply_row_ops(transaction: &Connection, ops: Vec<RowOp>) -> Result<(), StoreError> {
     for op in ops {
         match op {

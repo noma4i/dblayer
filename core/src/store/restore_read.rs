@@ -88,11 +88,6 @@ fn transfer_asking_again<'a>(rows: &'a [crate::owners::write::transfer::StoredTr
 }
 
 impl Store {
-    pub fn failed_restores(&self) -> Result<Vec<super::DroppedRecord>, CoreError> {
-        Ok(self.restore_failed()?.into_iter().map(|row| super::DroppedRecord { table: row.table, key: row.key, reason: row.reason }).collect())
-    }
-
-
     pub(crate) fn read_restore(&self) -> Result<Restore, CoreError> {
         let (entries, origins, cycles, effects_only, pending, uploads, outcomes, answers, orphans, batches, orphan_answers) = self.read_models(&[], |reader| {
             let connection = reader.connection();

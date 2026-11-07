@@ -208,6 +208,7 @@
 - `StreamValue.missed` and `ModelEventItem.missed`: use `lost` with its range.
 - `Database.load`: use `beginLoad` or `Query.load`.
 - `Transport.subscribe`, `Transport.unsubscribe` and `SubscriptionSink` are gone: server events arrive on the encrypted cable.
+- `restoreFailed` and `discardRestoreFailed` are gone.
 
 ## 6.16.1 - 2026-11-03
 

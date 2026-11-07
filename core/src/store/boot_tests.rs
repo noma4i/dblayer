@@ -401,8 +401,6 @@ fn store_prop_boot_reopen() {
     let (second, report) = reopen(&path, &[messages_spec()], None);
     assert!(report.dropped.is_empty() && report.recreated.is_none());
     assert_eq!(second.restore_failed().unwrap(), before, "the kept data does not move");
-    assert!(second.discard_restore_failed(&before[0].table, &before[0].key).unwrap());
-    assert!(second.restore_failed().unwrap().is_empty());
 }
 
 #[test]

@@ -18,12 +18,4 @@ impl Store {
             Ok(rows)
         })
     }
-
-    pub(crate) fn discard_restore_failed(&self, table: &str, key: &str) -> Result<bool, StoreError> {
-        if !self.restore_failed()?.iter().any(|row| row.table == table && row.key == key) {
-            return Ok(false);
-        }
-        self.write_ops(vec![super::RowOp::DiscardRestoreFailed { table: table.to_string(), key: key.to_string() }])?;
-        Ok(true)
-    }
 }

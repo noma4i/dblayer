@@ -69,15 +69,13 @@ mod overlay_write;
 mod open;
 mod restore;
 mod rollback;
-#[cfg(test)]
-mod restore_tests;
 pub(crate) use open::{is_unreadable, remove_database};
 pub use open::DroppedRow;
 mod readers;
 mod references;
 pub(crate) mod reads;
 mod reset;
-pub(crate) use reset::{identity_of, RowOp};
+pub(crate) use reset::identity_of;
 mod rows;
 mod row_write;
 mod response;
