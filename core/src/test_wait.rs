@@ -114,10 +114,6 @@ pub(crate) async fn within_secs<T>(seconds: u64, work: impl std::future::Future<
     }
 }
 
-pub(crate) async fn serving<T>(work: impl std::future::Future<Output = T>) -> T {
-    work.await
-}
-
 pub(crate) async fn yield_until(what: &str, mut ready: impl FnMut() -> bool) {
     let deadline = Instant::now() + SPIN_LIMIT;
     while !ready() {

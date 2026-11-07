@@ -5,19 +5,12 @@ mod link;
 mod keys;
 mod frame;
 mod schema;
-mod lifecycle;
 mod line;
 pub use line::{CableCredential, CableLine, CableLines, EncryptedLines, Incoming};
-mod session;
-pub use session::CableSession;
 mod wire;
-pub use wire::{CableConnect, CableSocket, CableSubscriptions, SocketEvent};
-#[cfg(test)]
-mod session_tests;
+pub use wire::{CableSocket, SocketEvent};
 #[cfg(test)]
 pub(crate) mod peer_tests;
-#[cfg(test)]
-mod wire_tests;
 pub use link::{CableKeys, CableLink};
 
 const CLIENT_BYTES: usize = 32 * 1024;

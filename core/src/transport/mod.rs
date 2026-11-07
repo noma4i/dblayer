@@ -12,10 +12,9 @@ mod request;
 mod response;
 pub(crate) mod retry;
 mod session_code;
-mod subscription;
 
 pub use cancel::CancelToken;
-pub use encrypted::cable::{CableConnect, CableCredential, CableError, CableKeys, CableLine, CableLines, CableLink, CableSocket, CableSubscriptions, EncryptedLines, Incoming, SocketEvent};
+pub use encrypted::cable::{CableCredential, CableError, CableKeys, CableLine, CableLines, CableLink, CableSocket, EncryptedLines, Incoming, SocketEvent};
 pub use encrypted::{missing_from_registry, repeats, response_of, Answer, AppPlatform, ConfigCode, Country, CredentialSlot, EncryptedConfig, EncryptedEndpoints, EncryptedOperationClass, EncryptedSessionOperation, EncryptedTransport, Exchange, HttpExchange, HttpReply, SecurityCode, ServerConfig};
 pub use error::TransportError;
 pub use extensions::{graphql_extensions, GraphqlExtensions, TransactionDisposition};
@@ -27,16 +26,11 @@ pub use request::{GraphQLError, GraphQLRequest, NetworkPurpose, RequestOwner, Re
 pub use response::{ResponseOutcome, ResponseShape};
 pub use retry::{RetryAttempt, RetryClass, RetryCalls, RetrySnapshot};
 pub use session_code::SessionCode;
-pub use subscription::{
-    ServerSubscription, SubscriptionClose, SubscriptionEvent, SubscriptionFailure, SubscriptionFailureKind,
-    ServerSubscriptionHandle, SubscriptionSender, SubscriptionReceiver, subscription_channel,
-};
 
 #[async_trait]
 pub trait Transport: Send + Sync {
     fn retries_queries(&self) -> bool { false }
     fn set_online(&self, _online: bool) {}
-    fn resume_subscriptions(&self) {}
     fn session(&self) -> Result<Option<String>, TransportError> { Ok(Some(String::new())) }
     async fn open_cable(&self, _url: &str) -> Result<std::sync::Arc<dyn CableSocket>, TransportError> {
         Err(TransportError::Network("encrypted cable socket is not connected".into()))
@@ -60,5 +54,3 @@ mod respond_tests;
 mod response_tests;
 #[cfg(test)]
 mod retry_tests;
-#[cfg(test)]
-mod subscription_tests;

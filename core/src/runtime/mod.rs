@@ -25,7 +25,6 @@ pub use append_log::AppendLog;
 pub use backoff::Backoff;
 pub use cell::EffectRunner;
 pub use clock::{Clock, ManualClock, SystemClock};
-pub(crate) use clock::timeout;
 pub use counters::Counters;
 pub use duration::parse_duration;
 pub use freshness::selected_policy;

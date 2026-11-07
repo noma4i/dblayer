@@ -82,10 +82,3 @@ impl Clock for ManualClock {
     }
 }
 
-pub(crate) async fn timeout<T>(clock: &dyn Clock, duration: Duration, call: impl std::future::Future<Output = T>) -> Result<T, ()> {
-    tokio::select! {
-        biased;
-        result = call => Ok(result),
-        () = clock.sleep(duration) => Err(()),
-    }
-}

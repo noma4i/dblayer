@@ -7,12 +7,12 @@ use sha2::{Digest, Sha256};
 use std::sync::{OnceLock, Weak};
 
 use super::credential::Secret;
-use super::exchange::{session_failure, temporary_error, Answer, EncryptedConfig, Exchange};
+use super::exchange::{session_failure, temporary_error, Answer, Exchange};
 use super::jwe::random_token;
 use crate::runtime::{Clock, RetryPolicy};
 use crate::store::Store;
 use crate::transport::retry::{RetryCalls, Retrying};
-use crate::transport::{CableConnect, CableSocket, CableSubscriptions, Connectivity};
+use crate::transport::Connectivity;
 use crate::transport::{GraphQLError, GraphQLRequest, PutRequest, PutResponse, Response, Transport, TransportError};
 
 const PERSISTED_QUERY_VERSION: u32 = 1;
@@ -27,22 +27,12 @@ pub struct EncryptedTransport {
     progress: Arc<RetryCalls>,
     life: OnceLock<Weak<crate::owners::life::Life>>,
     rest: Arc<dyn Transport>,
-    cable: CableSubscriptions,
-}
-
-struct TransportCable(Arc<dyn Transport>, EncryptedConfig);
-
-#[async_trait]
-impl CableConnect for TransportCable {
-    async fn open(&self) -> Result<Arc<dyn CableSocket>, TransportError> { crate::lock::assert_no_library_lock("Transport::open_cable"); self.0.open_cable(&self.1.cable_url()?).await }
 }
 
 impl EncryptedTransport {
     pub(crate) fn new(exchange: Arc<Exchange>, credential: Arc<Secret>, store: Arc<Store>, clock: Arc<dyn Clock>, progress: Arc<RetryCalls>, rest: Arc<dyn Transport>) -> Self {
         let online = store.connectivity();
-        let (signing, signing_store) = (credential.clone(), store.clone());
-        let cable = CableSubscriptions::new(exchange.config().clone(), Arc::new(move || signing.read(&signing_store)), Arc::new(TransportCable(rest.clone(), exchange.config().clone())), online.clone(), clock.clone());
-        Self { exchange, credential, store, online, clock, progress, life: OnceLock::new(), rest, cable }
+        Self { exchange, credential, store, online, clock, progress, life: OnceLock::new(), rest }
     }
 
     /// Joins the owners: from now on a request with a `sequence` goes through the owner Session.
@@ -127,7 +117,6 @@ pub fn missing_from_registry(response: &Response) -> bool {
 #[async_trait]
 impl Transport for EncryptedTransport {
     fn retries_queries(&self) -> bool { true }
-    fn resume_subscriptions(&self) { self.cable.reconnect(); }
     fn session(&self) -> Result<Option<String>, TransportError> {
         Ok(super::credential::stored_session(&self.store)?.filter(|session| session.sequence > 0).map(|session| session.credential_digest))
     }

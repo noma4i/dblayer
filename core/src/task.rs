@@ -16,6 +16,7 @@ impl Carry {
 }
 
 
+#[cfg(test)]
 #[allow(clippy::disallowed_methods)]
 pub(crate) fn spawn<F>(_: Carry, work: F) -> JoinHandle<F::Output> where F: Future + Send + 'static, F::Output: Send + 'static {
     tokio::spawn(work)
