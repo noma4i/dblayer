@@ -82,11 +82,16 @@ stage="$root/target/release-$version"
 tmp="$(mktemp -d)"
 attachments=(DBlayerFFI.xcframework.zip dblayer.swift dblayer-android.zip dblayer-gen-macos-universal)
 archives=(DBlayerFFI.xcframework.zip dblayer-android.zip)
+# An existing stage is reused only for the source commit that built it: another commit moves it aside and builds again.
+if [ -d "$stage" ] && [ "$(cat "$stage/SOURCE" 2> /dev/null)" != "$source_sha" ]; then
+  mv "$stage" "$stage.stale-$(cat "$stage/SOURCE" 2> /dev/null || echo unknown)" || fail "cannot move the stale stage aside: $stage"
+fi
 if [ -d "$stage" ]; then
   for file in "${attachments[@]}" SHA256SUMS; do [ -s "$stage/$file" ] || fail "incomplete existing output: $stage/$file"; done
   (cd "$stage" && shasum -a 256 -c SHA256SUMS)
 else
   mkdir -p "$stage"
+  printf '%s\n' "$source_sha" > "$stage/SOURCE"
   (cd swift && zip -qry "$stage/DBlayerFFI.xcframework.zip" DBlayerFFI.xcframework)
   cp swift/Sources/DBlayer/dblayer.swift "$stage/dblayer.swift"
   (cd kotlin && zip -q "$stage/dblayer-android.zip" src/main/jniLibs/{arm64-v8a,armeabi-v7a,x86_64,x86}/libdblayer.so src/main/kotlin/com/noma4i/dblayer/dblayer.kt)

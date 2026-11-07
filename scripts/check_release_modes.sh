@@ -197,7 +197,7 @@ with tempfile.TemporaryDirectory(prefix="dblayer-release-modes-") as directory:
     repo, env = fixture(base)
     run(["bash", "scripts/release.sh", version], repo, env, contains="Package.swift to be written:")
     stage = repo / "target/release-1.2.3"
-    assert sorted(path.name for path in stage.iterdir()) == sorted(attachments + ["SHA256SUMS", "NOTES.md", "RECEIPT.json", "sequences.tsv"])
+    assert sorted(path.name for path in stage.iterdir()) == sorted(attachments + ["SHA256SUMS", "SOURCE", "NOTES.md", "RECEIPT.json", "sequences.tsv"])
     receipt = json.loads((stage / "RECEIPT.json").read_text())
     assert receipt["sequences"] == {"core": {"listed": 3, "passed": 3, "rc": "0"}, "swift": {"listed": 2, "passed": 2, "rc": "0"}, "kotlin": {"listed": 2, "passed": 2, "rc": "0"}}, receipt
     assert receipt["consumers"] == "not-required" and receipt["consumer_lanes"] == {}, receipt
@@ -298,8 +298,13 @@ with tempfile.TemporaryDirectory(prefix="dblayer-release-modes-") as directory:
     stage.mkdir(parents=True)
     (stage / "DBlayerFFI.xcframework.zip").write_text("partial")
     (stage / "SHA256SUMS").write_text("partial")
+    (stage / "SOURCE").write_text(subprocess.check_output([real_git, "-C", str(incomplete), "rev-parse", "HEAD"], text=True))
     run(["bash", "scripts/release.sh", version], incomplete, incomplete_env, expected=1, contains="incomplete existing output")
-    print("ok incomplete stage is rejected")
+    print("ok incomplete stage of the same source is rejected")
+    (stage / "SOURCE").write_text("other\n")
+    run(["bash", "scripts/release.sh", version], incomplete, incomplete_env, contains="Package.swift to be written:")
+    assert (incomplete / "target/release-1.2.3.stale-other").is_dir() and (stage / "SOURCE").read_text().strip() == subprocess.check_output([real_git, "-C", str(incomplete), "rev-parse", "HEAD"], text=True).strip()
+    print("ok a stage of another source is moved aside and built again")
 
     def assert_no_release(repo, env, events_file, foreign=0):
         events = events_file.read_text().splitlines() if events_file.exists() else []
