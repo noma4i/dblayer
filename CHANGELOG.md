@@ -1,8 +1,9 @@
 # Changelog
 
-## Unreleased
+## 6.17.0 - 2026-11-07
 
 ### Added
+
 - `DbError.AlreadyExists` reports a `create` with an id that exists.
 - A batch element without a row in the answer fails with the kind `protocol`.
 - Ephemeral fields with `reset_after` return to their default after the window.
@@ -15,80 +16,6 @@
 - `removed_by Model, match: { field: :model_field }` removes the rows of a model when a matching row of another model lands.
 - The state of an upload reaches the streams of its row.
 - The local values of a temporary row move to the row that replaces it.
-
-### Changed
-- `subscriptionCensus` is async and reads the streams and channels of the owners.
-- `ReadState.error` is the typed `DbError`.
-- `open` takes the upload steps from the models: `UploadOperations` and the `uploads` parameter are gone.
-- `OperationReceipt.items` carry one `MutationReceipt` each.
-- A refused sessionless call reports a network error without the HTTP status.
-- `UrlSessionTransport` and `OkHttpTransport` have no `cablePath`. `Transport.openCable` receives the WebSocket address built by the core.
-- `EntityFetch.none` is `EntityFetch.never` in Swift and `EntityFetch.NEVER` in Kotlin.
-- `UrlSessionTransport` and `OkHttpTransport` refuse `subscribe`: server events arrive on the encrypted cable.
-
-### Fixed
-- An upload abort that the network interrupts is sent again when the network returns.
-- A refused background start shows its reason as `refused` on every upload of the round until the next start is asked.
-- A reopen replays the unanswered request of an upload step instead of sending the step again.
-- An upload that stops after a reopen frees the mutation queue held by its saved step.
-- A list that refreshes on connect reads once when the network returns, not again for the resumed subscription.
-- `discard` and `cancelUpload` of an upload whose final mutation failed remove its operation and its optimistic row.
-- A media window marked stale reads the whole window again after a failed load.
-- The Android upload service reports its start after `open` and stops when no transfer is unfinished.
-- Android reachability follows the validated state that the system passes to its callback.
-- A released `Projected` ends its stream in the core.
-- Preserve validated local fields copied from singleton rows during creation.
-- Preserve queued operations and uploads when model caches are reset.
-- Keep readable snapshots after a failed database commit.
-- Insert created and response rows into matching loaded windows.
-- Share the same window for omitted and explicit enum defaults.
-- Preserve upload attempt limits across restarts and network changes.
-- Restore interrupted first logins and report damaged saved session requests until reset.
-- Send current application headers to encrypted requests and cable connections.
-- Keyed reactions match elements stored under a nested path.
-- The receipt of an action carries the revision of its commit.
-- A parent pointer follows a sent child to the id the server gave it.
-- Events of the server subscription land in the cache and reach event streams.
-- A destroy the server answers only with NOT_FOUND is confirmed and the open lists of the model are read once more.
-- An offline refresh shows its error in the state of the stream of the window.
-- The first value of a stream of a loaded window holds the loaded phase.
-- A stream opened on a closed database ends as closed.
-- A request that cannot be read ends its stream as invalid.
-- Sign-in returns after its session identity is visible to subsequent calls.
-- Receipt waits return Interrupted when session reset races with their admission.
-- Loads keep their caller's epoch when the account changes before dispatch.
-- Pagination reports the page it completed when called during an earlier load.
-- Refresh and pagination preserve GraphQL messages and extensions, including repeated cursor errors.
-- Opening a database of an older layout no longer fails: tables kept across a format change move by the columns both layouts share.
-- Operations of the previous account are not sent after an identity change without `sessionReset`.
-- A confirmed create keeps its row when another model is reset before its answer lands.
-- Encrypted request ids are random UUID v4 values that do not repeat after a reopen.
-- A first sign-in interrupted before its answer lands its credential after the next open.
-- A credential that is missing or does not match the stored digest ends the call with `stateLost` before any request is sent.
-- A `CredentialStore` failure ends the call with an error instead of waiting or repeating the request.
-- A cancelled request that already started in the network is not cancelled and reaches its answer.
-- A rejected landing keeps the stored request and repeats it with the same request id.
-- Only a `logout` answer with `revoked` ends the session.
-- The session end erases the digest rows before the credential; a credential left by a crash is erased at open.
-- A failed upload older than 7 days is removed when the network returns, without a reopen.
-- A background round that starts before any session ends its job at once.
-- A second `close` of a database returns success after the first finished.
-
-### Removed
-- `scope.related` is gone: read a server relation with a query.
-- `Blob`, `BlobUpload`, `DB.blob` and `blob_upload` are gone: upload through a model action.
-- `needsAttention`, `canRetry`, `loadedAt` and `errorKind` are gone: read `sync.state` and `ReadState.error`.
-- `ValueSink`, `readStream` and `cancelStream` are gone: read a value stream.
-- `Query.cached()` and `Database.peekQuery` are gone: read rows with `read()` or a stream.
-- `deliveryUnknown` is gone from `SyncState`, `UploadStatus` and `OperationOutcome`: a send without an answer repeats with the same request id.
-- `Database.flush`, `resume`, `resumeUploads`, `retryAll`, `refreshPreloads`, `warm`, `maintain` and `setListening` are gone from the bridge on both platforms. The library sends, resumes and maintains by itself.
-- `sessionResume` is gone from Swift, Kotlin and the core. Opening the database with a session sends a request stored before the close.
-- `enterForegroundForTesting` is gone. The foreground notice comes from the system.
-- `OpenOptions` has no `preload` and no `listening`. `openTesting` and `openOnClock` have no `preload` and no `listening` parameter. A scope declared with `preload` loads on a test clock like it does in production.
-
-## 6.17.0 - 2026-11-04
-
-### Added
 - `NoSession` reports server work without a session or transport on both platforms.
 - Core encrypted calls and cable subscriptions take the admission of their caller.
 - Value bridge: `AccountScope`, `ValueStream`, `Projected`, snapshots and keyed deltas with the session epoch.
@@ -107,6 +34,15 @@
 - `Database.readStream` takes the next value of a stream from its journal in the core.
 
 ### Changed
+
+- `subscriptionCensus` is async and reads the streams and channels of the owners.
+- `ReadState.error` is the typed `DbError`.
+- `open` takes the upload steps from the models: `UploadOperations` and the `uploads` parameter are gone.
+- `OperationReceipt.items` carry one `MutationReceipt` each.
+- A refused sessionless call reports a network error without the HTTP status.
+- `UrlSessionTransport` and `OkHttpTransport` have no `cablePath`. `Transport.openCable` receives the WebSocket address built by the core.
+- `EntityFetch.none` is `EntityFetch.never` in Swift and `EntityFetch.NEVER` in Kotlin.
+- `UrlSessionTransport` and `OkHttpTransport` refuse `subscribe`: server events arrive on the encrypted cable.
 - `Projected.loaded()` returns for any load error while rows exist; the state shows the error in the `Loaded` phase. It throws only in the `Failed` phase.
 - `Query.beginLoad` reads its arguments off the caller's thread; the interest of the caller exists when the call returns.
 - `Query.loadAll` gives up its pages when the caller's task or coroutine is cancelled. The core call is `Database.beginLoadAll`, which returns a `LoadRequest`; `Database.loadAll` is removed.
@@ -170,6 +106,53 @@
 - The DSL refuses a name that ends with `_`.
 
 ### Fixed
+
+- An upload abort that the network interrupts is sent again when the network returns.
+- A refused background start shows its reason as `refused` on every upload of the round until the next start is asked.
+- A reopen replays the unanswered request of an upload step instead of sending the step again.
+- An upload that stops after a reopen frees the mutation queue held by its saved step.
+- A list that refreshes on connect reads once when the network returns, not again for the resumed subscription.
+- `discard` and `cancelUpload` of an upload whose final mutation failed remove its operation and its optimistic row.
+- A media window marked stale reads the whole window again after a failed load.
+- The Android upload service reports its start after `open` and stops when no transfer is unfinished.
+- Android reachability follows the validated state that the system passes to its callback.
+- A released `Projected` ends its stream in the core.
+- Preserve validated local fields copied from singleton rows during creation.
+- Preserve queued operations and uploads when model caches are reset.
+- Keep readable snapshots after a failed database commit.
+- Insert created and response rows into matching loaded windows.
+- Share the same window for omitted and explicit enum defaults.
+- Preserve upload attempt limits across restarts and network changes.
+- Restore interrupted first logins and report damaged saved session requests until reset.
+- Send current application headers to encrypted requests and cable connections.
+- Keyed reactions match elements stored under a nested path.
+- The receipt of an action carries the revision of its commit.
+- A parent pointer follows a sent child to the id the server gave it.
+- Events of the server subscription land in the cache and reach event streams.
+- A destroy the server answers only with NOT_FOUND is confirmed and the open lists of the model are read once more.
+- An offline refresh shows its error in the state of the stream of the window.
+- The first value of a stream of a loaded window holds the loaded phase.
+- A stream opened on a closed database ends as closed.
+- A request that cannot be read ends its stream as invalid.
+- Sign-in returns after its session identity is visible to subsequent calls.
+- Receipt waits return Interrupted when session reset races with their admission.
+- Loads keep their caller's epoch when the account changes before dispatch.
+- Pagination reports the page it completed when called during an earlier load.
+- Refresh and pagination preserve GraphQL messages and extensions, including repeated cursor errors.
+- Opening a database of an older layout no longer fails: tables kept across a format change move by the columns both layouts share.
+- Operations of the previous account are not sent after an identity change without `sessionReset`.
+- A confirmed create keeps its row when another model is reset before its answer lands.
+- Encrypted request ids are random UUID v4 values that do not repeat after a reopen.
+- A first sign-in interrupted before its answer lands its credential after the next open.
+- A credential that is missing or does not match the stored digest ends the call with `stateLost` before any request is sent.
+- A `CredentialStore` failure ends the call with an error instead of waiting or repeating the request.
+- A cancelled request that already started in the network is not cancelled and reaches its answer.
+- A rejected landing keeps the stored request and repeats it with the same request id.
+- Only a `logout` answer with `revoked` ends the session.
+- The session end erases the digest rows before the credential; a credential left by a crash is erased at open.
+- A failed upload older than 7 days is removed when the network returns, without a reopen.
+- A background round that starts before any session ends its job at once.
+- A second `close` of a database returns success after the first finished.
 - `flush` returns after each pending operation ends its send, also one sent by a background pass.
 - Subscription frames dropped from a full input reach the events reader as lost positions.
 - Closing the database returns after its threads release the file, so the same file opens again at once.
@@ -207,6 +190,17 @@
 - A format change keeps queued operations and uploads when their table layout is unchanged and builds their list effects again. A queued create does not bring back its record.
 
 ### Removed
+
+- `scope.related` is gone: read a server relation with a query.
+- `Blob`, `BlobUpload`, `DB.blob` and `blob_upload` are gone: upload through a model action.
+- `needsAttention`, `canRetry`, `loadedAt` and `errorKind` are gone: read `sync.state` and `ReadState.error`.
+- `ValueSink`, `readStream` and `cancelStream` are gone: read a value stream.
+- `Query.cached()` and `Database.peekQuery` are gone: read rows with `read()` or a stream.
+- `deliveryUnknown` is gone from `SyncState`, `UploadStatus` and `OperationOutcome`: a send without an answer repeats with the same request id.
+- `Database.flush`, `resume`, `resumeUploads`, `retryAll`, `refreshPreloads`, `warm`, `maintain` and `setListening` are gone from the bridge on both platforms. The library sends, resumes and maintains by itself.
+- `sessionResume` is gone from Swift, Kotlin and the core. Opening the database with a session sends a request stored before the close.
+- `enterForegroundForTesting` is gone. The foreground notice comes from the system.
+- `OpenOptions` has no `preload` and no `listening`. `openTesting` and `openOnClock` have no `preload` and no `listening` parameter. A scope declared with `preload` loads on a test clock like it does in production.
 - `DB.logout` and `DBlayer.logout`: use `sessionReset`.
 - `settled`, `confirmedId`, `ActionAnswer`, `Sent`, `CommandStatus`, `commandStatus` and `commandOutcome`: use the receipt outcome.
 - `resetForTesting`, `settleForTesting` and `testing_busy`.
