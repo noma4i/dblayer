@@ -50,8 +50,8 @@ async fn flow_current_user_profile() {
     one_revision(&places.map(|rows| &**rows)).await;
     hold.release();
     assert!(matches!(bound(rig.database.outcome(receipt)).await.unwrap(), WireOperationOutcome::Confirmed { .. }));
-    rig.settle().await;
     yield_until("the refetch of the profile keeps the name", || rig.world.count("MyProfile") >= 2).await;
+    rig.settle().await;
     assert!(places.iter().all(|rows| field(&rig, rows, "user", "name") == Some(text("New"))));
 
     land_event(&rig, "User", json!({"id": "user", "name": "Event"}));

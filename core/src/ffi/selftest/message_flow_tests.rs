@@ -124,7 +124,7 @@ async fn flow_message_status() {
     let temporary = ids(&thread).remove(0);
     assert_eq!(temporary, receipt.optimistic_value.clone().unwrap().id);
     hold.release();
-    confirmed(&rig, receipt).await;
+    assert!(matches!(bound(rig.database.outcome(receipt)).await.unwrap(), WireOperationOutcome::Confirmed { .. }));
     yield_until("the bubble has the id of the server", || ids(&thread) == ["m1"]).await;
     let doubled = thread.1.lock().unwrap().iter().any(|seen| seen.size > 1);
     assert!(!doubled, "the thread showed two bubbles for one message");
