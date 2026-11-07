@@ -405,6 +405,7 @@ fn dlv_prop_delta_order() {
     };
     let pool: Vec<String> = (0..12).map(|n| format!("p{n}")).collect();
     let mut platform: Vec<String> = Vec::new();
+    let mut edited: Vec<String> = Vec::new();
     let mut lists: std::collections::BTreeMap<i64, Vec<String>> = std::collections::BTreeMap::new();
     let answers = Outcomes::<PullAnswer>::new();
     let mut checked = 0;
@@ -427,9 +428,24 @@ fn dlv_prop_delta_order() {
         for entry in take(&log) {
             let Emitted::Run(DeliveryEffect::Stream { effect: StreamEffect::Answer { answer: PullAnswer::Value(value), .. }, .. }) = entry else { continue };
             match *value {
-                d::Value::Snapshot { rows, .. } => platform = rows.iter().map(|row| row.id.clone()).collect(),
+                d::Value::Snapshot { rows, .. } => {
+                    platform = rows.iter().map(|row| row.id.clone()).collect();
+                    edited.clone_from(&platform);
+                }
                 d::Value::Delta(delta) => {
                     platform = apply(platform.clone(), &delta);
+                    for edit in &delta.edits {
+                        match edit {
+                            d::Edit::Insert { index, row } => edited.insert(*index as usize, row.id.clone()),
+                            d::Edit::Rewrite { index, row } => assert_eq!(edited[*index as usize], row.id),
+                            d::Edit::Remove { index, id } => assert_eq!(&edited.remove(*index as usize), id),
+                            d::Edit::Move { from, to } => {
+                                let id = edited.remove(*from as usize);
+                                edited.insert(*to as usize, id);
+                            }
+                        }
+                    }
+                    assert_eq!(edited, platform, "the edits of revision {} give the list of the sets", delta.revision);
                     assert_eq!(platform.len(), delta.size as usize, "the size of the result at {}", delta.revision);
                     let core: Vec<String> = lists.get(&delta.revision).cloned().expect("a list of the revision");
                     assert_eq!(platform, core, "revision {}", delta.revision);

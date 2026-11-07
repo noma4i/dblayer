@@ -1,4 +1,3 @@
-use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread::ThreadId;
@@ -6,7 +5,7 @@ use serde_json::json;
 use super::rig_tests::{bound, Rig};
 use crate::ffi::lifecycle_tests::named;
 use crate::ffi::tape::StreamDelivery;
-use crate::ffi::{CommandRequest, ReadEnd, ReadRequest, ReadValue, RowPlace, RowRename, WireOperationOutcome, WireRow};
+use crate::ffi::{CommandRequest, ReadEnd, ReadRequest, ReadValue, RowEdit, WireOperationOutcome, WireRow};
 
 /// What a platform reader holds: the deliveries in order, replayed into the rows its screen shows.
 #[derive(Default)]
@@ -26,31 +25,6 @@ impl crate::ffi::tape::Reader for Reader {
     }
 }
 
-pub(super) fn apply_delta(rows: &mut Vec<WireRow>, carried: Vec<WireRow>, indexes: &[u32], removed: &[String], placed: &[RowPlace], replaced: &[RowRename], size: u32) {
-    let by_id: HashMap<String, WireRow> = carried.iter().map(|row| (row.id.clone(), row.clone())).collect();
-    for pair in replaced {
-        let at = rows.iter().position(|row| row.id == pair.from).expect("a replaced row is held");
-        rows[at] = by_id[&pair.to].clone();
-    }
-    rows.retain(|row| !removed.contains(&row.id));
-    let mut taken = HashMap::new();
-    for place in placed {
-        if let Some(at) = rows.iter().position(|row| row.id == place.id) { taken.insert(place.id.clone(), rows.remove(at)); }
-    }
-    let mut ordered: Vec<&RowPlace> = placed.iter().collect();
-    ordered.sort_by_key(|place| place.index);
-    for place in ordered {
-        let row = taken.remove(&place.id).or_else(|| by_id.get(&place.id).cloned()).expect("a placed row is known");
-        rows.insert(place.index as usize, row);
-    }
-    for (row, index) in carried.into_iter().zip(indexes) {
-        let index = *index as usize;
-        if rows[index].id == row.id && rows[index].cells == row.cells && rows[index].sync == row.sync { continue; }
-        rows[index] = row;
-    }
-    assert_eq!(rows.len(), size as usize, "the delta leaves the size it names");
-}
-
 impl Reader {
     pub(super) fn open() -> Arc<Reader> { Arc::new(Reader::default()) }
     pub(super) fn deliveries(&self) -> Vec<StreamDelivery> { self.log.lock().unwrap().clone() }
@@ -62,9 +36,9 @@ impl Reader {
         for delivery in self.deliveries() {
             match delivery.value {
                 ReadValue::Snapshot { revision: held, rows: whole, .. } => { rows = whole; revision = Some(held); }
-                ReadValue::Delta { base, revision: next, size, rows: carried, indexes: row_indexes, removed, placed, replaced, .. } => {
+                ReadValue::Delta { base, revision: next, edits, .. } => {
                     if revision != Some(base) { gaps += 1; continue; }
-                    apply_delta(&mut rows, carried, &row_indexes, &removed, &placed, &replaced, size);
+                    RowEdit::replay(&mut rows, &edits);
                     revision = Some(next);
                 }
                 _ => {}
@@ -78,7 +52,8 @@ impl Reader {
     pub(super) fn shows(&self, account: &str) -> bool { let rows = self.rows(); !rows.is_empty() && rows.iter().all(|row| named(row, account)) }
     pub(super) fn ever_showed(&self, account: &str) -> bool {
         self.deliveries().iter().any(|delivery| match &delivery.value {
-            ReadValue::Snapshot { rows, .. } | ReadValue::Delta { rows, .. } => rows.iter().any(|row| named(row, account)),
+            ReadValue::Snapshot { rows, .. } => rows.iter().any(|row| named(row, account)),
+            ReadValue::Delta { edits, .. } => crate::ffi::RowEdit::carried(edits).iter().any(|row| named(row, account)),
             _ => false,
         })
     }

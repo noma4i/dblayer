@@ -94,14 +94,18 @@ public struct ListProjection<Model: DBModel>: Sendable {
       ended = cause
       lastEdits = []
       return .changed
-    case let .delta(base, revision, size, wire, indexes, removed, placed, replaced, renamed, state):
+    case let .delta(base, revision, edits, temporary, forgotten, state):
       guard let held = self.revision else { return .ignored }
       guard base == held else { return gap() }
-      let carried = decode(wire)
-      guard carried.allSatisfy({ $0 != nil }) else { return gap() }
-      guard let edits = rebuild(carried: zip(carried.compactMap { $0 }, indexes).map { ($0, Int($1)) }, removed: removed, placed: placed, replaced: replaced, size: Int(size)) else { return gap() }
-      for pair in replaced + renamed { temporaryIds[pair.to] = temporaryIds[pair.from] ?? pair.from; temporaryIds[pair.from] = nil }
-      lastEdits = edits.count <= rows.count ? edits : nil
+      var applied: [ListEdit<Model>] = []
+      for edit in edits {
+        guard let one = step(edit) else { return gap() }
+        applied.append(one)
+      }
+      rows.replay(applied)
+      for pair in temporary { temporaryIds[pair.id] = pair.temporary }
+      for id in forgotten { temporaryIds[id] = nil }
+      lastEdits = applied
       deltas += 1
       self.revision = revision
       self.state = state
@@ -130,55 +134,13 @@ public struct ListProjection<Model: DBModel>: Sendable {
     }
   }
 
-  /// Changes of values at their own place touch the carried rows only. A change of order works on a copy and leaves the rows as they were when it cannot apply.
-  private mutating func rebuild(carried: [(Model, Int)], removed: [String], placed: [RowPlace], replaced: [RowRename], size: Int) -> [ListEdit<Model>]? {
-    if removed.isEmpty && placed.isEmpty && replaced.isEmpty {
-      guard size == rows.count, carried.allSatisfy({ $0.1 < rows.count && rows[$0.1].id == $0.0.id }) else { return nil }
-      for (model, index) in carried { rows[index] = model }
-      return carried.map { .rewrite($0.1, $0.0) }
+  private mutating func step(_ edit: RowEdit) -> ListEdit<Model>? {
+    switch edit {
+    case let .insert(index, row): decode([row])[0].map { .insert(Int(index), $0) }
+    case let .rewrite(index, row): decode([row])[0].map { .rewrite(Int(index), $0) }
+    case let .remove(index, id): .remove(Int(index), id)
+    case let .move(from, to): .move(Int(from), Int(to))
     }
-    var work = rows
-    var edits: [ListEdit<Model>] = []
-    let byId = Dictionary(carried.map { ($0.0.id, $0.0) }, uniquingKeysWith: { _, newer in newer })
-    var landed = Set<String>()
-    for pair in replaced {
-      guard let at = work.firstIndex(where: { $0.id == pair.from }), let model = byId[pair.to] else { return nil }
-      work[at] = model
-      edits.append(.rewrite(at, model))
-      landed.insert(pair.to)
-    }
-    if !removed.isEmpty {
-      let gone = Set(removed)
-      let found = work.indices.filter { gone.contains(work[$0].id) }
-      guard found.count == gone.count else { return nil }
-      for index in found.reversed() {
-        edits.append(.remove(index, work[index].id))
-        work.remove(at: index)
-      }
-    }
-    var taken: [String: Model] = [:]
-    for place in placed {
-      if let at = work.firstIndex(where: { $0.id == place.id }) {
-        taken[place.id] = work[at]
-        edits.append(.remove(at, place.id))
-        work.remove(at: at)
-      }
-    }
-    for place in placed.sorted(by: { $0.index < $1.index }) {
-      guard let model = taken[place.id] ?? byId[place.id], Int(place.index) <= work.count else { return nil }
-      work.insert(model, at: Int(place.index))
-      edits.append(.insert(Int(place.index), model))
-      if taken[place.id] == nil { landed.insert(place.id) }
-    }
-    for (model, index) in carried {
-      guard index < work.count else { return nil }
-      if landed.contains(model.id), work[index].id == model.id { continue }
-      work[index] = model
-      edits.append(.rewrite(index, model))
-    }
-    guard work.count == size else { return nil }
-    rows = work
-    return edits
   }
 }
 

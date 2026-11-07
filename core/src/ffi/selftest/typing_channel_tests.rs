@@ -73,10 +73,10 @@ async fn one_signal_routes_typed_actions_and_notices() {
     until(&actions, "the list opens", |value| matches!(value, ReadValue::Snapshot { rows, .. } if rows.is_empty())).await;
     let frame = |kind: &str, active: bool| json!({"data":{"chatActionSignal":{"chatId":"c","userId":"u","kind":kind,"active":active}}});
     assert!(peer.cable.event(&token, frame("TYPING", true)));
-    until(&actions, "the typing row", |value| matches!(value, ReadValue::Delta { rows, .. } if rows.len() == 1) || matches!(value, ReadValue::Snapshot { rows, .. } if rows.len() == 1)).await;
+    until(&actions, "the typing row", |value| matches!(value, ReadValue::Delta { edits, .. } if edits.len() == 1) || matches!(value, ReadValue::Snapshot { rows, .. } if rows.len() == 1)).await;
     assert!(peer.cable.event(&token, frame("SCREENSHOT", true)));
     until(&notices, "the screenshot notice", |value| matches!(value, ReadValue::Event { .. })).await;
     assert!(peer.cable.event(&token, frame("TYPING", false)));
-    until(&actions, "the typing stops", |value| matches!(value, ReadValue::Delta { removed, .. } if removed.len() == 1) || matches!(value, ReadValue::Snapshot { rows, .. } if rows.is_empty())).await;
+    until(&actions, "the typing stops", |value| matches!(value, ReadValue::Delta { edits, .. } if matches!(edits.as_slice(), [crate::ffi::RowEdit::Remove { .. }])) || matches!(value, ReadValue::Snapshot { rows, .. } if rows.is_empty())).await;
     database.close_now();
 }

@@ -102,68 +102,24 @@ class ListProjection<Model : DBModel> private constructor(
                 val held = revision ?: return Step(this, Applied.Ignored)
                 fun gap() = Step(ListProjection(rows, state, null, ended, failure, decoded, deltas, lastEdits, temporaryIds), Applied.Resync)
                 if (value.base != held) return gap()
-                val carried = decode(value.rows)
-                if (carried.any { it == null }) return gap()
-                val result = rebuild(carried.filterNotNull().zip(value.indexes.map { it.toInt() }), value.removed, value.placed, value.replaced, value.size.toInt()) ?: return gap()
+                val steps: List<ListEdit<Model>?> = value.edits.map { edit ->
+                    when (edit) {
+                        is RowEdit.Insert -> decode(listOf(edit.row))[0]?.let { ListEdit.Insert(edit.index.toInt(), it) }
+                        is RowEdit.Rewrite -> decode(listOf(edit.row))[0]?.let { ListEdit.Rewrite(edit.index.toInt(), it) }
+                        is RowEdit.Remove -> ListEdit.Remove(edit.index.toInt(), edit.id)
+                        is RowEdit.Move -> ListEdit.Move(edit.from.toInt(), edit.to.toInt())
+                    }
+                }
+                if (steps.any { it == null }) return gap()
+                val applied = steps.filterNotNull()
+                val next = rows.toMutableList().also { it.replay(applied) }
                 val ids = HashMap(temporaryIds)
-                for (pair in value.replaced + value.renamed) { ids[pair.to] = ids[pair.from] ?: pair.from; ids.remove(pair.from) }
-                Step(copy(rows = result.first, state = value.state, revision = value.revision, failure = failure, decoded = decoded, deltas = deltas + 1, lastEdits = result.second.takeIf { it.size <= result.first.size }, temporaryIds = ids), Applied.Changed)
+                value.temporary.forEach { ids[it.id] = it.temporary }
+                value.forgotten.forEach { ids.remove(it) }
+                Step(copy(rows = next, state = value.state, revision = value.revision, failure = failure, decoded = decoded, deltas = deltas + 1, lastEdits = applied, temporaryIds = ids), Applied.Changed)
             }
             else -> Step(this, Applied.Ignored)
         }
-    }
-
-    private fun rebuild(carried: List<Pair<Model, Int>>, removed: List<String>, placed: List<RowPlace>, replaced: List<RowRename>, size: Int): Pair<List<Model>, List<ListEdit<Model>>>? {
-        if (removed.isEmpty() && placed.isEmpty() && replaced.isEmpty()) {
-            if (size != rows.size || carried.any { (model, index) -> index >= rows.size || rows[index].id != model.id }) return null
-            val next = rows.toMutableList()
-            for ((model, index) in carried) next[index] = model
-            return next to carried.map { (model, index) -> ListEdit.Rewrite(index, model) }
-        }
-        val work = rows.toMutableList()
-        val edits = ArrayList<ListEdit<Model>>()
-        val byId = carried.associate { (model, _) -> model.id to model }
-        val landed = HashSet<String>()
-        for (pair in replaced) {
-            val at = work.indexOfFirst { it.id == pair.from }
-            val model = byId[pair.to]
-            if (at < 0 || model == null) return null
-            work[at] = model
-            edits.add(ListEdit.Rewrite(at, model))
-            landed.add(pair.to)
-        }
-        if (removed.isNotEmpty()) {
-            val gone = removed.toSet()
-            val found = work.indices.filter { work[it].id in gone }
-            if (found.size != gone.size) return null
-            for (index in found.reversed()) {
-                edits.add(ListEdit.Remove(index, work[index].id))
-                work.removeAt(index)
-            }
-        }
-        val taken = HashMap<String, Model>()
-        for (place in placed) {
-            val at = work.indexOfFirst { it.id == place.id }
-            if (at >= 0) {
-                taken[place.id] = work[at]
-                edits.add(ListEdit.Remove(at, place.id))
-                work.removeAt(at)
-            }
-        }
-        for (place in placed.sortedBy { it.index }) {
-            val model = taken[place.id] ?: byId[place.id]
-            if (model == null || place.index.toInt() > work.size) return null
-            work.add(place.index.toInt(), model)
-            edits.add(ListEdit.Insert(place.index.toInt(), model))
-            if (taken[place.id] == null) landed.add(place.id)
-        }
-        for ((model, index) in carried) {
-            if (index >= work.size) return null
-            if (model.id in landed && work[index].id == model.id) continue
-            work[index] = model
-            edits.add(ListEdit.Rewrite(index, model))
-        }
-        return if (work.size == size) work to edits else null
     }
 }
 

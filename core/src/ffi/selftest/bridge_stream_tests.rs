@@ -403,7 +403,7 @@ async fn work_counters_idle_zero_one_row_one_decode_and_subscriptions_equal_read
         let receipt = bound(rig.database.send(message(epoch, text, 6 + index as i64))).await.unwrap();
         bound(rig.database.outcome(receipt)).await.unwrap();
         settle(&rig).await;
-        let delta_rows: Vec<usize> = reader.deliveries().iter().skip(mark).filter_map(|delivery| if let ReadValue::Delta { rows, .. } = &delivery.value { Some(rows.len()) } else { None }).collect();
+        let delta_rows: Vec<usize> = reader.deliveries().iter().skip(mark).filter_map(|delivery| if let ReadValue::Delta { edits, .. } = &delivery.value { Some(crate::ffi::RowEdit::carried(edits).len()) } else { None }).collect();
         assert!(!delta_rows.is_empty() && delta_rows.iter().all(|rows| *rows == 1), "a change of one row carried {delta_rows:?} rows");
         costs.push((delta_rows.len(), rig.database.db.counters().rows_delivered - before));
     }

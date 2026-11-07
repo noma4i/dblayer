@@ -44,7 +44,15 @@ impl Delivery {
                         self.journal.clear();
                     }
                     Value::Snapshot { revision, .. } | Value::Count { revision, .. } => self.acknowledge(*revision),
-                    Value::Delta(delta) => self.acknowledge(delta.revision),
+                    Value::Delta(delta) => {
+                        for (id, temporary) in &delta.temporary {
+                            self.temporary.insert(id.clone(), temporary.clone());
+                        }
+                        for id in &delta.forgotten {
+                            self.temporary.remove(id);
+                        }
+                        self.acknowledge(delta.revision);
+                    }
                     _ => {}
                 }
                 Some(PullAnswer::Value(Box::new(value)))

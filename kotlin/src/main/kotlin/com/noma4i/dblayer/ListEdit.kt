@@ -4,6 +4,7 @@ sealed class ListEdit<out Model> {
     data class Rewrite<out Model>(val index: Int, val row: Model) : ListEdit<Model>()
     data class Insert<out Model>(val index: Int, val row: Model) : ListEdit<Model>()
     data class Remove(val index: Int, val id: String) : ListEdit<Nothing>()
+    data class Move(val from: Int, val to: Int) : ListEdit<Nothing>()
 
     internal companion object {
         fun <Model> composing(older: List<ListEdit<Model>>?, newer: List<ListEdit<Model>>?, within: Int): List<ListEdit<Model>>? {
@@ -19,5 +20,6 @@ fun <Model> MutableList<Model>.replay(edits: List<ListEdit<Model>>) {
         is ListEdit.Rewrite -> this[edit.index] = edit.row
         is ListEdit.Insert -> add(edit.index, edit.row)
         is ListEdit.Remove -> removeAt(edit.index)
+        is ListEdit.Move -> add(edit.to, removeAt(edit.from))
     }
 }

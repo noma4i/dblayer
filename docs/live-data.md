@@ -35,18 +35,15 @@ A stream lives while its reader lives. Release the model or close its scope and 
 
 ## What a delta contains
 
-A delta carries the rows that changed since its base revision, keyed by id.
+A delta carries the steps from the rows the reader holds to the rows of its revision.
 
 | Part | Meaning |
 | --- | --- |
-| `rows`, `row_indexes` | The inserted and updated rows with their final index. |
-| `removed` | The ids that left the result. |
-| `placed` | The ids that moved, with their new index. |
-| `replaced` | A temporary id that became the server id, at the same position. |
-| `size` | The number of rows after the delta. |
+| `edits` | The steps in order: `insert` and `rewrite` carry the row, `remove` carries the id, `move` carries two indexes. An index is a place in the list as it stands after the steps before. |
+| `temporary`, `forgotten` | The temporary ids that this delta settles: server id to temporary id, and the ids that no longer map. |
 | `state` | The load state, `hasMore`, `total`, the error. |
 
-A projection applies a delta in this order: rename the replaced ids, drop the removed rows, move the placed rows, write every row at its index.
+A projection applies the steps in order and decides nothing: the core fixed the order.
 A delta whose base is not the held revision asks for one new snapshot. The deltas that were queued behind the gap wait for it.
 
 `Projected` keeps the edits of the last deltas (`takeEdits()`). Apply them to a list you keep. A snapshot means: read all rows.

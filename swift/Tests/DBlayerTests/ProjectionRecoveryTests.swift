@@ -10,7 +10,7 @@ struct ProjectionRecoveryTests {
   }
 
   private func delta(base: Int64, revision: Int64) -> ReadValue {
-    .delta(base: base, revision: revision, size: 0, rows: [], indexes: [], removed: [], placed: [], replaced: [], renamed: [], state: state)
+    .delta(base: base, revision: revision, edits: [], temporary: [], forgotten: [], state: state)
   }
 
   @Test

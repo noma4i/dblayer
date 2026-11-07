@@ -220,7 +220,7 @@ async fn feed_apply_values() {
     assert!(matches!(bound(entity.pull()).await.unwrap(), Some(ReadValue::Snapshot { rows, .. }) if rows.is_empty()));
     assert!(transport.cable.event(&token, json!({"data":{"recordEvents":{"item":{"id":"c1","title":"after","revision":1,"lists":[]}}}})));
     assert!(matches!(bound(stream.pull()).await.unwrap(), Some(ReadValue::Event { id, .. }) if id == "c1"));
-    assert!(matches!(bound(entity.pull()).await.unwrap(), Some(ReadValue::Delta { rows, .. }) if rows.len() == 1 && rows[0].cells.contains(&Cell::Bool { value: true })));
+    assert!(matches!(bound(entity.pull()).await.unwrap(), Some(ReadValue::Delta { edits, .. }) if matches!(crate::ffi::RowEdit::carried(&edits).as_slice(), [row] if row.cells.contains(&Cell::Bool { value: true }))));
     bound(database.close_database()).await.unwrap();
 }
 
@@ -268,7 +268,8 @@ async fn feed_apply_ephemeral() {
     assert!(matches!(bound(entity.pull()).await.unwrap(), Some(ReadValue::Snapshot { rows, .. }) if rows.len() == 1 && rows[0].cells.contains(&Cell::Bool { value: false })));
     assert!(transport.cable.event(&token, json!({"data":{"recordEvents":{"item":{"id":"c1","active":true}}}})));
     assert!(matches!(bound(stream.pull()).await.unwrap(), Some(ReadValue::Event { position: 2, id, .. }) if id == "c1"));
-    let Some(ReadValue::Delta { rows, .. }) = bound(entity.pull()).await.unwrap() else { panic!("the overlay did not reach the row") };
+    let Some(ReadValue::Delta { edits, .. }) = bound(entity.pull()).await.unwrap() else { panic!("the overlay did not reach the row") };
+    let rows = crate::ffi::RowEdit::carried(&edits);
     assert!(rows.len() == 1 && rows[0].cells.contains(&Cell::Bool { value: true }) && crate::ffi::lifecycle_tests::named(&rows[0], "before"), "the ephemeral value shows and the columns stay: {rows:?}");
     assert_eq!(bound(database.subscription_census()).await.unwrap().refused_events, 0);
     bound(database.close_database()).await.unwrap();
@@ -288,7 +289,8 @@ async fn feed_apply_ephemeral_missing() {
 async fn next_rows(rig: &Rig, stream: &ReadStream, expected: i64) -> i64 {
     let value = bound(stream.pull()).await.unwrap().unwrap();
     let (revision, rows) = match value {
-        ReadValue::Snapshot { revision, rows, .. } | ReadValue::Delta { revision, rows, .. } => (revision, rows),
+        ReadValue::Snapshot { revision, rows, .. } => (revision, rows),
+        ReadValue::Delta { revision, edits, .. } => (revision, crate::ffi::RowEdit::carried(&edits)),
         other => panic!("unexpected value: {other:?}"),
     };
     assert_eq!(rows.len(), 1);
@@ -366,7 +368,7 @@ async fn dlv_prop_one_change_every_view_feed() {
     let mut revisions = Vec::new();
     for stream in [&list, &entity] {
         let value = bound(stream.pull()).await.unwrap().unwrap();
-        let (revision, rows) = match value { ReadValue::Delta { revision, rows, .. } | ReadValue::Snapshot { revision, rows, .. } => (revision, rows), other => panic!("{other:?}") };
+        let (revision, rows) = match value { ReadValue::Delta { revision, edits, .. } => (revision, crate::ffi::RowEdit::carried(&edits)), ReadValue::Snapshot { revision, rows, .. } => (revision, rows), other => panic!("{other:?}") };
         assert_eq!(rows.len(), 1);
         assert!(crate::ffi::lifecycle_tests::named(&rows[0], "after"));
         revisions.push(revision);
@@ -393,7 +395,7 @@ async fn dlv_prop_one_change_every_view_related_row() {
     let mut revisions = Vec::new();
     for stream in [&list, &entity] {
         let value = bound(stream.pull()).await.unwrap().unwrap();
-        let (revision, rows) = match value { ReadValue::Delta { revision, rows, .. } | ReadValue::Snapshot { revision, rows, .. } => (revision, rows), other => panic!("{other:?}") };
+        let (revision, rows) = match value { ReadValue::Delta { revision, edits, .. } => (revision, crate::ffi::RowEdit::carried(&edits)), ReadValue::Snapshot { revision, rows, .. } => (revision, rows), other => panic!("{other:?}") };
         assert_eq!(rows.len(), 1);
         assert!(texts(&cell(&rig, "Message", &rows[0], "reactions")).contains(&"Robert".to_string()));
         revisions.push(revision);
@@ -404,7 +406,7 @@ async fn dlv_prop_one_change_every_view_related_row() {
     let mut restored = Vec::new();
     for stream in [&list, &entity] {
         let value = bound(stream.pull()).await.unwrap().unwrap();
-        let (revision, rows) = match value { ReadValue::Delta { revision, rows, .. } | ReadValue::Snapshot { revision, rows, .. } => (revision, rows), other => panic!("{other:?}") };
+        let (revision, rows) = match value { ReadValue::Delta { revision, edits, .. } => (revision, crate::ffi::RowEdit::carried(&edits)), ReadValue::Snapshot { revision, rows, .. } => (revision, rows), other => panic!("{other:?}") };
         assert!(texts(&cell(&rig, "Message", &rows[0], "reactions")).contains(&"Bob".to_string()));
         restored.push(revision);
     }
@@ -427,7 +429,7 @@ async fn dlv_live_overlay_position() {
         assert!(transport.cable.event(&token, json!({"data":{"recordEvents":{"item":{"id":"c1","active":active}}}})));
         let value = loop {
             match bound(entity.pull()).await.unwrap().unwrap() {
-                ReadValue::Delta { revision: seen, rows, .. } => { assert_eq!(seen, revision, "an overlay-only batch keeps the revision"); break rows; }
+                ReadValue::Delta { revision: seen, edits, .. } => { assert_eq!(seen, revision, "an overlay-only batch keeps the revision"); break crate::ffi::RowEdit::carried(&edits); }
                 ReadValue::State { .. } => {}
                 other => panic!("an overlay-only batch is a Delta: {other:?}"),
             }

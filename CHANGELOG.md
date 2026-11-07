@@ -98,6 +98,7 @@
 - The generator refuses clashing GraphQL input field names and repeated one-of cases.
 - The generator refuses scope and association names that repeat a generated member.
 - The DSL refuses a name that ends with `_`.
+- A delta carries the ordered steps from the reader's rows to the new rows, and `ListEdit` has a move.
 
 ### Fixed
 

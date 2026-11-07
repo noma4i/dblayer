@@ -4,7 +4,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use super::{Config, Database, ReadEnd, ReadPhase, ReadRequest, ReadStream, ReadValue, TestClock};
+use super::{Config, Database, ReadEnd, ReadPhase, ReadRequest, ReadStream, ReadValue, RowEdit, TestClock};
 use crate::schema::{FieldSpec, ModelSpec, Storage};
 use crate::value::ScalarKind;
 
@@ -72,8 +72,8 @@ async fn dlv_prop_one_change_every_view() {
     assert_eq!((count_revision, entity_revision), (list_revision, list_revision));
     let first_revision = list_revision;
     db.update(epoch, "Note".into(), "n1".into(), r#"{"text":"two"}"#.into(), "{}".into()).await.unwrap();
-    let list_revision = match crate::test_wait::within(list.pull()).await.unwrap().unwrap() { ReadValue::Delta { revision, rows, .. } | ReadValue::Snapshot { revision, rows, .. } => { assert_eq!(ids(&rows), ["n1"]); revision }, value => panic!("{value:?}") };
-    let entity_revision = match crate::test_wait::within(entity.pull()).await.unwrap().unwrap() { ReadValue::Delta { revision, rows, .. } | ReadValue::Snapshot { revision, rows, .. } => { assert_eq!(ids(&rows), ["n1"]); revision }, value => panic!("{value:?}") };
+    let list_revision = match crate::test_wait::within(list.pull()).await.unwrap().unwrap() { ReadValue::Delta { revision, edits, .. } => { assert_eq!(ids(&RowEdit::carried(&edits)), ["n1"]); revision }, ReadValue::Snapshot { revision, rows, .. } => { assert_eq!(ids(&rows), ["n1"]); revision }, value => panic!("{value:?}") };
+    let entity_revision = match crate::test_wait::within(entity.pull()).await.unwrap().unwrap() { ReadValue::Delta { revision, edits, .. } => { assert_eq!(ids(&RowEdit::carried(&edits)), ["n1"]); revision }, ReadValue::Snapshot { revision, rows, .. } => { assert_eq!(ids(&rows), ["n1"]); revision }, value => panic!("{value:?}") };
     assert!(list_revision > first_revision);
     assert_eq!(entity_revision, list_revision);
     let mut pull = Box::pin(count.pull());
@@ -83,8 +83,8 @@ async fn dlv_prop_one_change_every_view() {
     assert!(std::future::poll_fn(|cx| std::task::Poll::Ready(std::future::Future::poll(pull.as_mut(), cx).is_pending())).await);
     db.destroy(epoch, "Note".into(), "n1".into()).await.unwrap();
     let count_revision = match crate::test_wait::within(pull).await.unwrap().unwrap() { ReadValue::Count { revision, count: 0, .. } => revision, value => panic!("{value:?}") };
-    let list_revision = match crate::test_wait::within(list.pull()).await.unwrap().unwrap() { ReadValue::Delta { revision, size: 0, .. } => revision, ReadValue::Snapshot { revision, rows, .. } if rows.is_empty() => revision, value => panic!("{value:?}") };
-    let entity_revision = match crate::test_wait::within(entity.pull()).await.unwrap().unwrap() { ReadValue::Delta { revision, size: 0, .. } => revision, ReadValue::Snapshot { revision, rows, .. } if rows.is_empty() => revision, value => panic!("{value:?}") };
+    let list_revision = match crate::test_wait::within(list.pull()).await.unwrap().unwrap() { ReadValue::Delta { revision, edits, .. } if matches!(edits.as_slice(), [RowEdit::Remove { .. }]) => revision, ReadValue::Snapshot { revision, rows, .. } if rows.is_empty() => revision, value => panic!("{value:?}") };
+    let entity_revision = match crate::test_wait::within(entity.pull()).await.unwrap().unwrap() { ReadValue::Delta { revision, edits, .. } if matches!(edits.as_slice(), [RowEdit::Remove { .. }]) => revision, ReadValue::Snapshot { revision, rows, .. } if rows.is_empty() => revision, value => panic!("{value:?}") };
     assert_eq!((list_revision, entity_revision), (count_revision, count_revision));
 }
 
@@ -98,11 +98,29 @@ async fn a_list_stream_gives_a_snapshot_then_a_delta_with_the_final_order() {
     assert_eq!(ids(&rows), ["n1"]);
     assert_eq!(state.phase, ReadPhase::Loaded, "a local list has no window to load: it is loaded at once");
     db.create(epoch, "Note".into(), r#"{"id":"n2","text":"two"}"#.into(), "{}".into()).await.unwrap();
-    let ReadValue::Delta { base, size, rows, indexes, .. } = next(&stream).await else { panic!("the next value is a delta") };
-    assert_eq!((base, size), (revision, 2));
-    assert_eq!((ids(&rows), indexes), (vec!["n2"], vec![1]), "only the new row travels, with its place in the final list");
+    let ReadValue::Delta { base, edits, .. } = next(&stream).await else { panic!("the next value is a delta") };
+    assert_eq!(base, revision);
+    assert_eq!((edits.len(), ids(&RowEdit::carried(&edits))), (1, vec!["n2"]), "only the new row travels");
+    assert!(matches!(edits[0], RowEdit::Insert { index: 1, .. }), "with its place in the list: {edits:?}");
     stream.cancel().await;
     assert!(matches!(next(&stream).await, ReadValue::Ended { cause: ReadEnd::Cancelled }));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_row_that_changes_its_place_arrives_as_a_move_and_its_new_values() {
+    let db = open().await;
+    let epoch = db.session_epoch();
+    for (id, text) in [("n1", "b"), ("n2", "c")] {
+        db.create(epoch, "Note".into(), format!(r#"{{"id":"{id}","text":"{text}"}}"#), "{}".into()).await.unwrap();
+    }
+    let stream = db.subscribe_values(epoch, ReadRequest::List { query_json: r#"{"model":"Note","order":[{"field":"text","direction":"asc"}]}"#.into() });
+    let ReadValue::Snapshot { mut rows, .. } = next(&stream).await else { panic!("the first value is a snapshot") };
+    assert_eq!(ids(&rows), ["n1", "n2"]);
+    db.update(epoch, "Note".into(), "n1".into(), r#"{"text":"d"}"#.into(), "{}".into()).await.unwrap();
+    let ReadValue::Delta { edits, .. } = next(&stream).await else { panic!("the next value is a delta") };
+    assert!(matches!(edits.as_slice(), [RowEdit::Move { .. }, RowEdit::Rewrite { index: 1, .. }]), "{edits:?}");
+    RowEdit::replay(&mut rows, &edits);
+    assert_eq!(ids(&rows), ["n2", "n1"]);
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -123,9 +141,8 @@ async fn a_delta_after_a_removal_carries_the_rows_of_its_own_snapshot() {
     db.create(epoch, "Note".into(), r#"{"id":"n2","text":"two"}"#.into(), "{}".into()).await.unwrap();
     loop {
         match next(&stream).await {
-            ReadValue::Delta { size, rows, indexes, .. } => {
-                assert_eq!(rows.len(), indexes.len(), "every index has the values of its row");
-                if size == 1 { break; }
+            ReadValue::Delta { edits, .. } => {
+                if edits.iter().any(|edit| matches!(edit, RowEdit::Insert { .. })) { break; }
             }
             ReadValue::Snapshot { rows, .. } if rows.len() == 1 => break,
             _ => {}

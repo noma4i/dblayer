@@ -20,6 +20,7 @@ impl Delivery {
             read_error: false,
             rows: Vec::new(),
             acked_rows: Vec::new(),
+            temporary: BTreeMap::new(),
             count: None,
             total: None,
             window,

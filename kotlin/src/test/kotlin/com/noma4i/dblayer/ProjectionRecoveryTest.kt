@@ -11,7 +11,7 @@ class ProjectionRecoveryTest {
     private fun snapshot(revision: Long): ReadValue = ReadValue.Snapshot(revision, emptyList(), state)
 
     private fun delta(base: Long, revision: Long): ReadValue =
-        ReadValue.Delta(base, revision, 0u, emptyList(), emptyList(), emptyList(), emptyList(), emptyList(), emptyList(), state)
+        ReadValue.Delta(base, revision, emptyList(), emptyList(), emptyList(), state)
 
     private fun ListProjection<Moment>.read(value: ReadValue): Pair<ListProjection<Moment>, Applied> = apply(value, Moment).let { it.projection to it.applied }
 

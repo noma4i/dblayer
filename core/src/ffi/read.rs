@@ -8,7 +8,7 @@ use super::wire::{WireModel, WireRow};
 use super::DbError;
 use crate::owners::contract::{WindowPhase, WindowState};
 use crate::owners::life::Life;
-use crate::owners::read::deliveries::{EndCause, Fetch, Kind, PullAnswer, StreamRow, Value, View};
+use crate::owners::read::deliveries::{EndCause, Edit, Fetch, Kind, PullAnswer, StreamRow, Value, View};
 use crate::owners::read::windows::WindowKey;
 use crate::runtime::Outcome;
 
@@ -43,24 +43,28 @@ pub enum ReadEnd {
     Storage { error: String },
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
-pub struct RowPlace {
-    pub id: String,
-    pub index: u32,
+/// One step on the list of the reader: an index is a place in the list as it stands after the steps before.
+#[derive(Clone, Debug, PartialEq, uniffi::Enum)]
+pub enum RowEdit {
+    Insert { index: u32, row: WireRow },
+    Rewrite { index: u32, row: WireRow },
+    Remove { index: u32, id: String },
+    Move { from: u32, to: u32 },
 }
 
+/// The temporary id a row had when the reader first got it.
 #[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
-pub struct RowRename {
-    pub from: String,
-    pub to: String,
+pub struct RowTemporary {
+    pub id: String,
+    pub temporary: String,
 }
 
 #[derive(Clone, Debug, PartialEq, uniffi::Enum)]
 pub enum ReadValue {
     /// The whole result at a revision: the first value of a stream of rows.
     Snapshot { revision: i64, rows: Vec<WireRow>, state: ReadState },
-    /// The change after the last value the reader took. `rows[i]` stands at `indexes[i]` of the final list of `size` rows, the core fixed the order.
-    Delta { base: i64, revision: i64, size: u32, rows: Vec<WireRow>, indexes: Vec<u32>, removed: Vec<String>, placed: Vec<RowPlace>, replaced: Vec<RowRename>, renamed: Vec<RowRename>, state: ReadState },
+    /// The change after the last value the reader took: the steps from the rows it holds to the rows of `revision`, and the temporary ids the delta settles.
+    Delta { base: i64, revision: i64, edits: Vec<RowEdit>, temporary: Vec<RowTemporary>, forgotten: Vec<String>, state: ReadState },
     Count { revision: i64, count: u64, state: ReadState },
     State { revision: i64, state: ReadState },
     Ready,
@@ -125,6 +129,15 @@ fn full_row(row: &StreamRow) -> Result<WireRow, DbError> {
     row.row.clone().ok_or_else(|| DbError::Database { detail: format!("the read gave row {} without its values", row.id) })
 }
 
+fn edit_of(edit: &Edit) -> Result<RowEdit, DbError> {
+    Ok(match edit {
+        Edit::Insert { index, row } => RowEdit::Insert { index: *index, row: full_row(row)? },
+        Edit::Rewrite { index, row } => RowEdit::Rewrite { index: *index, row: full_row(row)? },
+        Edit::Remove { index, id } => RowEdit::Remove { index: *index, id: id.clone() },
+        Edit::Move { from, to } => RowEdit::Move { from: *from, to: *to },
+    })
+}
+
 fn event_row(wire: Option<&WireModel>, id: &str, value: Option<&serde_json::Value>) -> Option<Box<WireRow>> {
     let (wire, data) = (wire?, value?.as_object()?);
     let id = crate::identity::RowId::new(id).ok()?;
@@ -141,23 +154,14 @@ fn event_of(position: u64, payload: &str, wire: Option<&WireModel>) -> ReadValue
 fn read_value(value: Value, wire: Option<&WireModel>) -> Result<ReadValue, DbError> {
     Ok(match value {
         Value::Snapshot { revision, rows, state } => ReadValue::Snapshot { revision, rows: rows.iter().map(full_row).collect::<Result<_, _>>()?, state: state_of(state) },
-        Value::Delta(delta) => {
-            let rows = delta.rows.iter().map(full_row).collect::<Result<Vec<_>, _>>()?;
-            let indexes = delta.indexes.clone();
-            let pairs = |pairs: Vec<(String, String)>| pairs.into_iter().map(|(from, to)| RowRename { from, to }).collect();
-            ReadValue::Delta {
-                base: delta.base,
-                revision: delta.revision,
-                size: delta.size,
-                rows,
-                indexes,
-                removed: delta.removed,
-                placed: delta.placed.into_iter().map(|(id, index)| RowPlace { id, index }).collect(),
-                replaced: pairs(delta.replaced),
-                renamed: pairs(delta.renamed),
-                state: state_of(delta.state),
-            }
-        }
+        Value::Delta(delta) => ReadValue::Delta {
+            base: delta.base,
+            revision: delta.revision,
+            edits: delta.edits.iter().map(edit_of).collect::<Result<_, _>>()?,
+            temporary: delta.temporary.into_iter().map(|(id, temporary)| RowTemporary { id, temporary }).collect(),
+            forgotten: delta.forgotten,
+            state: state_of(delta.state),
+        },
         Value::Count { revision, count, state } => ReadValue::Count { revision, count, state: state_of(state) },
         Value::State { revision, state } => ReadValue::State { revision, state: state_of(state) },
         Value::Ready => ReadValue::Ready,
@@ -344,5 +348,30 @@ impl Database {
             _ => None,
         };
         Arc::new(ReadStream { life: self.life.clone(), stream, ended: std::sync::atomic::AtomicBool::new(false), status, wire })
+    }
+}
+
+#[cfg(test)]
+impl RowEdit {
+    pub(crate) fn replay(rows: &mut Vec<WireRow>, edits: &[RowEdit]) {
+        for edit in edits {
+            match edit {
+                RowEdit::Insert { index, row } => rows.insert(*index as usize, row.clone()),
+                RowEdit::Rewrite { index, row } => rows[*index as usize] = row.clone(),
+                RowEdit::Remove { index, id } => assert_eq!(&rows.remove(*index as usize).id, id),
+                RowEdit::Move { from, to } => {
+                    let row = rows.remove(*from as usize);
+                    rows.insert(*to as usize, row);
+                }
+            }
+        }
+    }
+
+    pub(crate) fn carried(edits: &[RowEdit]) -> Vec<WireRow> {
+        edits.iter().filter_map(|edit| match edit { RowEdit::Insert { row, .. } | RowEdit::Rewrite { row, .. } => Some(row.clone()), _ => None }).collect()
+    }
+
+    pub(crate) fn removed(edits: &[RowEdit]) -> Vec<String> {
+        edits.iter().filter_map(|edit| match edit { RowEdit::Remove { id, .. } => Some(id.clone()), _ => None }).collect()
     }
 }

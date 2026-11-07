@@ -210,11 +210,12 @@ impl DatabaseSut {
                 out.insert("rows".into(), self.names(rows));
                 Observation::new("snapshot", Value::Object(out))
             }
-            ReadValue::Delta { base, revision, rows, removed, state, .. } => {
+            ReadValue::Delta { base, revision, edits, state, .. } => {
+                let (rows, removed) = (crate::ffi::RowEdit::carried(edits), crate::ffi::RowEdit::removed(edits));
                 self.state(stream, state, &mut out);
                 out.insert("base".into(), (*base).into());
                 out.insert("revision".into(), (*revision).into());
-                out.insert("rows".into(), self.names(rows));
+                out.insert("rows".into(), self.names(&rows));
                 out.insert("removed".into(), Value::Array(removed.iter().map(|id| Value::String(self.name_of(id))).collect()));
                 Observation::new("delta", Value::Object(out))
             }

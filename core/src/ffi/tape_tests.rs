@@ -2,7 +2,7 @@
 
 use std::sync::{Arc, Mutex};
 
-use super::read::{ReadEnd, ReadPhase, ReadRequest, ReadState, ReadStream, ReadValue};
+use super::read::{ReadEnd, ReadPhase, ReadRequest, ReadState, ReadStream, ReadValue, RowEdit};
 use super::wire::{WireRow, WireSync, WireSyncState};
 use super::{Database, DbError};
 
@@ -40,9 +40,11 @@ fn seen_of(seq: u64, value: ReadValue, size: &mut u32) -> Result<Seen, Option<Re
             *size = u32::try_from(rows.len()).unwrap_or(u32::MAX);
             Seen { rows, ..blank(revision, state, *size) }
         }
-        ReadValue::Delta { revision, size: now, rows, removed, state, .. } => {
-            *size = now;
-            Seen { rows, removed, ..blank(revision, state, now) }
+        ReadValue::Delta { revision, edits, state, .. } => {
+            let inserted = edits.iter().filter(|edit| matches!(edit, RowEdit::Insert { .. })).count();
+            let removed = RowEdit::removed(&edits);
+            *size = *size + u32::try_from(inserted).unwrap_or(0) - u32::try_from(removed.len()).unwrap_or(0);
+            Seen { rows: RowEdit::carried(&edits), removed, ..blank(revision, state, *size) }
         }
         ReadValue::Count { revision, state, .. } => blank(revision, state, *size),
         ReadValue::State { revision, state } => blank(revision, state, *size),
@@ -51,30 +53,11 @@ fn seen_of(seq: u64, value: ReadValue, size: &mut u32) -> Result<Seen, Option<Re
     })
 }
 
-/// Applies one value to a list the way a projection does: rename, drop, take the placed ones out, insert them in ascending index, write the carried rows.
+/// Applies one value to a list the way a projection does: the steps of a delta in order.
 fn apply(rows: &mut Vec<WireRow>, value: &ReadValue) {
     match value {
         ReadValue::Snapshot { rows: whole, .. } => rows.clone_from(whole),
-        ReadValue::Delta { rows: carried, indexes, removed, placed, replaced, size, .. } => {
-            for pair in replaced {
-                if let Some(row) = rows.iter_mut().find(|row| row.id == pair.from) { row.id.clone_from(&pair.to); }
-            }
-            rows.retain(|row| !removed.contains(&row.id));
-            let mut taken: Vec<WireRow> = Vec::new();
-            for place in placed {
-                if let Some(at) = rows.iter().position(|row| row.id == place.id) { taken.push(rows.remove(at)); }
-            }
-            let mut order: Vec<_> = placed.iter().collect();
-            order.sort_by_key(|place| place.index);
-            for place in order {
-                let row = taken.iter().find(|row| row.id == place.id).cloned().or_else(|| carried.iter().find(|row| row.id == place.id).cloned());
-                if let Some(row) = row { rows.insert((place.index as usize).min(rows.len()), row); }
-            }
-            for (row, at) in carried.iter().zip(indexes) {
-                if let Some(slot) = rows.get_mut(*at as usize) { *slot = row.clone(); }
-            }
-            assert_eq!(rows.len(), *size as usize, "a delta leaves the list at its size");
-        }
+        ReadValue::Delta { edits, .. } => RowEdit::replay(rows, edits),
         _ => {}
     }
 }

@@ -150,7 +150,7 @@ private class DatabaseRunner {
 
     fun value(stream: String, value: ReadValue): JsonObject = when (value) {
         is ReadValue.Snapshot -> observation("snapshot", js(stateFields(stream, value.state).also { it["revision"] = value.revision; it["rows"] = names(value.rows) }))
-        is ReadValue.Delta -> observation("delta", js(stateFields(stream, value.state).also { it["base"] = value.base; it["revision"] = value.revision; it["rows"] = names(value.rows); it["removed"] = value.removed.map(::nameOf) }))
+        is ReadValue.Delta -> observation("delta", js(stateFields(stream, value.state).also { it["base"] = value.base; it["revision"] = value.revision; it["rows"] = names(value.edits.mapNotNull { (it as? RowEdit.Insert)?.row ?: (it as? RowEdit.Rewrite)?.row }); it["removed"] = value.edits.mapNotNull { (it as? RowEdit.Remove)?.id }.map(::nameOf) }))
         is ReadValue.Count -> observation("count", js(stateFields(stream, value.state).also { it["revision"] = value.revision; it["count"] = value.count }))
         is ReadValue.State -> observation("state", js(stateFields(stream, value.state)))
         ReadValue.Ready -> obs("ready", "stream" to stream)

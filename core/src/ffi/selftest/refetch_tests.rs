@@ -45,7 +45,8 @@ async fn a_confirmed_action_reads_the_open_window_of_its_refetch_relation_again(
     let shown = tokio::time::timeout(std::time::Duration::from_secs(5), async {
         while let Some(delivery) = crate::test_wait::within_secs(5, deliveries.recv()).await {
             let rows = match delivery.value {
-                crate::ffi::ReadValue::Snapshot { rows, .. } | crate::ffi::ReadValue::Delta { rows, .. } => rows,
+                crate::ffi::ReadValue::Snapshot { rows, .. } => rows,
+                crate::ffi::ReadValue::Delta { edits, .. } => crate::ffi::RowEdit::carried(&edits),
                 _ => continue,
             };
             if rows.iter().any(|row| row.id == "u9") { return true; }

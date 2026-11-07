@@ -114,7 +114,8 @@ async fn an_outcome_arrives_before_a_held_list_and_the_automatic_reread_shows_th
     let shown = tokio::time::timeout(std::time::Duration::from_secs(20), async {
         while let Some(delivery) = crate::test_wait::within_secs(20, deliveries.recv()).await {
             let rows = match delivery.value {
-                crate::ffi::ReadValue::Snapshot { rows, .. } | crate::ffi::ReadValue::Delta { rows, .. } => rows,
+                crate::ffi::ReadValue::Snapshot { rows, .. } => rows,
+                crate::ffi::ReadValue::Delta { edits, .. } => crate::ffi::RowEdit::carried(&edits),
                 _ => continue,
             };
             if rows.iter().any(|row| row.id == "u9") { return true; }
@@ -422,13 +423,14 @@ async fn a_server_id_that_replaces_a_temporary_row_of_a_held_list_arrives_as_a_r
     hold.entered_for("the create").await;
     hold.release();
     assert!(matches!(bound(rig.database.outcome(receipt)).await.unwrap(), crate::ffi::WireOperationOutcome::Confirmed { .. }));
-    let pair = loop {
+    let (edits, pair) = loop {
         let delivery = crate::test_wait::within_secs(20, deliveries.recv()).await.expect("a delta named the swap of the temporary id");
-        if let crate::ffi::ReadValue::Delta { replaced, renamed, .. } = delivery.value {
-            if let Some(pair) = replaced.into_iter().chain(renamed).next() { break pair; }
+        if let crate::ffi::ReadValue::Delta { edits, temporary, .. } = delivery.value {
+            if let Some(pair) = temporary.into_iter().next() { break (edits, pair); }
         }
     };
-    assert!(pair.from.starts_with("temp") && !pair.to.starts_with("temp"), "{pair:?}");
+    assert!(pair.temporary.starts_with("temp") && !pair.id.starts_with("temp"), "{pair:?}");
+    assert!(matches!(edits.as_slice(), [crate::ffi::RowEdit::Rewrite { index: 0, row }] if row.id == pair.id), "the temporary row is rewritten in place by the confirmed row: {edits:?}");
     rig.database.cancel_stream(stream);
     rig.database.close_now();
 }

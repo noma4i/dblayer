@@ -134,7 +134,22 @@ pub struct Delta {
     pub placed: Vec<(String, u32)>,
     pub replaced: Vec<(String, String)>,
     pub renamed: Vec<(String, String)>,
+    /// The steps from the rows the reader holds to the rows of `revision`, in order.
+    pub edits: Vec<Edit>,
+    /// Server id to the temporary id its row had when the reader first got it, for the rows this delta confirms.
+    pub temporary: Vec<(String, String)>,
+    /// Ids that no longer map to a temporary id.
+    pub forgotten: Vec<String>,
     pub state: WindowState,
+}
+
+/// One mechanical step on the list of the reader: an index is a place in the list as it stands after the steps before.
+#[derive(Clone, Debug, PartialEq)]
+pub enum Edit {
+    Insert { index: u32, row: StreamRow },
+    Rewrite { index: u32, row: StreamRow },
+    Remove { index: u32, id: String },
+    Move { from: u32, to: u32 },
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -264,6 +279,8 @@ struct Delivery {
     read_error: bool,
     rows: Vec<StreamRow>,
     acked_rows: Vec<StreamRow>,
+    /// Server id to the temporary id of the rows the reader took.
+    temporary: BTreeMap<String, String>,
     count: Option<u64>,
     total: Option<u64>,
     window: WindowState,

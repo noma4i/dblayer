@@ -31,7 +31,7 @@ val thread = Projected(scope.stream(Message.thread(id)), Message, screenScope)
 | Value | Meaning |
 | --- | --- |
 | `snapshot` | The whole result at a revision. It is the first value. |
-| `delta` | Rows changed since `base`: upserts, removals, positions, replaced ids. |
+| `delta` | The steps from the rows the reader holds to the rows after `base`: insert, rewrite, remove, move. |
 | `state` | The load state changed and the rows did not. |
 | `event` | One event of a model. |
 | `lost` | The events at the positions `first` to `last` are gone: the reader was slow or the event could not be read. |
