@@ -62,8 +62,8 @@ mv "$generated.wake" "$generated"
 
 complete_pattern='`uniffiFutureCallback`: UniffiForeignFutureComplete'
 alloc='    external fun ffi_dblayer_rustbuffer_alloc(`size`: Long,uniffi_out_err: UniffiRustCallStatus, '
-[ "$(grep -cF -- "$complete_pattern" "$generated")" = 18 ] || { echo "$name: expected exactly 18 UniffiForeignFutureComplete parameters in dblayer.kt, the UniFFI template changed" >&2; exit 1; }
-[ "$(grep -cE -- '`uniffiFutureCallback`: UniffiForeignFutureComplete(RustBuffer|Void),' "$generated")" = 18 ] || { echo "$name: dblayer.kt uses a UniffiForeignFutureComplete type without a scalar completion in core/src/ffi/foreign_future.rs" >&2; exit 1; }
+[ "$(grep -cF -- "$complete_pattern" "$generated")" = 16 ] || { echo "$name: expected exactly 16 UniffiForeignFutureComplete parameters in dblayer.kt, the UniFFI template changed" >&2; exit 1; }
+[ "$(grep -cE -- '`uniffiFutureCallback`: UniffiForeignFutureComplete(RustBuffer|Void),' "$generated")" = 16 ] || { echo "$name: dblayer.kt uses a UniffiForeignFutureComplete type without a scalar completion in core/src/ffi/foreign_future.rs" >&2; exit 1; }
 [ "$(grep -cxF -- "$alloc" "$generated")" = 1 ] || { echo "$name: expected exactly 1 ffi_dblayer_rustbuffer_alloc declaration in dblayer.kt, the UniFFI template changed" >&2; exit 1; }
 awk -v alloc="$alloc" '
   $0 == alloc {
@@ -90,6 +90,6 @@ internal class UniffiForeignFutureAnswerVoid(private val pointer: Pointer?) {
     }
 }
 KOTLIN
-[ "$(grep -c '`uniffiFuturePointer`: Pointer?,' "$generated")" = 18 ] || { echo "$name: 18 uniffiFuturePointer parameters were not written to dblayer.kt" >&2; exit 1; }
-[ "$(grep -c '^            val uniffiFutureCallback = UniffiForeignFutureAnswer' "$generated")" = 9 ] || { echo "$name: 9 UniffiForeignFutureAnswer values were not inserted into dblayer.kt" >&2; exit 1; }
+[ "$(grep -c '`uniffiFuturePointer`: Pointer?,' "$generated")" = 16 ] || { echo "$name: 16 uniffiFuturePointer parameters were not written to dblayer.kt" >&2; exit 1; }
+[ "$(grep -c '^            val uniffiFutureCallback = UniffiForeignFutureAnswer' "$generated")" = 8 ] || { echo "$name: 8 UniffiForeignFutureAnswer values were not inserted into dblayer.kt" >&2; exit 1; }
 [ "$(grep -c 'external fun dblayer_complete_foreign_future_' "$generated")" = 2 ] || { echo "$name: the scalar completion declarations were not inserted into dblayer.kt" >&2; exit 1; }
