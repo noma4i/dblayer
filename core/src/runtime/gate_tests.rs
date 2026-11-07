@@ -164,7 +164,6 @@ async fn rt_prop_close_against_query_no_old_transport() {
     }
 }
 
-type EndGate = fn(&EpochGate);
 
 async fn send_kind(gate: &EpochGate, transport: &Counting, kind: &str) -> Result<(), TransportError> {
     match kind {
