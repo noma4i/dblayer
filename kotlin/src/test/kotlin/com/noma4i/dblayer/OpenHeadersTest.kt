@@ -25,7 +25,7 @@ class OpenHeadersTest {
                 override fun set(credential: String) { value = credential }
                 override fun clear() { value = null }
             }
-            DBlayer.open(org.robolectric.RuntimeEnvironment.getApplication(), headers = { mapOf("X-Token" to token.get()) }, encrypted = encrypted, credentials = credential, modelsJson = "[]", uploadNotification = UploadNotification("Uploading", "Files are on their way", 1))
+            DBlayer.open(org.robolectric.RuntimeEnvironment.getApplication(), headers = { mapOf("X-Token" to token.get()) }, encrypted = encrypted, credentials = credential, modelsJson = EMPTY_SPECS, uploadNotification = UploadNotification("Uploading", "Files are on their way", 1))
 
             val context = org.robolectric.RuntimeEnvironment.getApplication()
             val manager = context.getSystemService(android.content.Context.CONNECTIVITY_SERVICE) as android.net.ConnectivityManager

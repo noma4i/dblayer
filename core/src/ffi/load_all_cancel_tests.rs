@@ -42,7 +42,7 @@ async fn open() -> (Arc<Database>, Arc<Endless>) {
     });
     model.relations.push(feed);
     let transport = Arc::new(Endless { queries: AtomicUsize::new(0), sixth_started: tokio::sync::Notify::new(), sixth_cancelled: tokio::sync::Notify::new() });
-    let db = Database::open_with_clock(Config { path: None, data_version: None }, serde_json::to_string(&vec![model]).unwrap(), crate::ffi::OpenPorts { transport: Some(transport.clone()), endpoint: Some(crate::ffi::FAKE_ENDPOINT.into()), ..Default::default() }, TestClock::new(1_000_000)).await.unwrap();
+    let db = Database::open_with_clock(Config { path: None, data_version: None }, crate::ffi::specs(serde_json::to_string(&vec![model]).unwrap()), crate::ffi::OpenPorts { transport: Some(transport.clone()), endpoint: Some(crate::ffi::FAKE_ENDPOINT.into()), ..Default::default() }, TestClock::new(1_000_000)).await.unwrap();
     db.register_operations(r#"[{"name":"Feed","document":"query Feed { feed { nodes { id text } pageInfo { hasNextPage endCursor } } }","rootPath":"feed"}]"#.into()).await.unwrap();
     db.set_online(true).unwrap();
     (db, transport)

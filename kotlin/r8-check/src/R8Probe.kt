@@ -3,7 +3,7 @@ package com.noma4i.dblayer
 import kotlinx.coroutines.runBlocking
 
 fun main() = runBlocking {
-    val schema = """[{"key":"Item","storage":"local","fields":[{"name":"id","kind":{"type":"scalar","kind":"id"}},{"name":"title","kind":{"type":"scalar","kind":"str"}}]}]"""
+    val schema = """{"models":[{"key":"Item","storage":"local","fields":[{"name":"id","kind":{"type":"scalar","kind":"id"}},{"name":"title","kind":{"type":"scalar","kind":"str"}}]}]}"""
     OpenDatabase().open(Config(null, null), schema, OpenOptions(emptyList()), OpenPorts(null, null, null, null), null).use { db ->
         val epoch = db.sessionEpoch()
         val created = checkNotNull(db.create(epoch, "Item", """{"title":"kept"}""", "{}").optimisticValue)

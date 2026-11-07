@@ -65,7 +65,7 @@ class OperationQueueTest {
         transport.enqueue("MomentsFeed", QUEUE_FEED)
         transport.enqueue("UpdateMoment", DbException.Http(422.toUShort(), "refused"))
         transport.enqueue("UpdateMoment", QUEUE_UPDATED)
-        reopen(Config(null, null), momentsKeepingUpdates(), transport)
+        reopen(Config(null, null), specs(momentsKeepingUpdates()), transport)
         DBlayer.database.registerOperations(QUEUE_DEFS)
         Moment.feed.load()
         val moment = withTimeout(5000) { Moment.recent.live.flow.first { it.isNotEmpty() } }.first()

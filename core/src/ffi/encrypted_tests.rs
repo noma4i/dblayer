@@ -47,7 +47,7 @@ async fn sess_prop_security_code_kept() {
     let server = FakeServer::new(Arc::new(SystemClock));
     let credentials = Arc::new(MemoryCredentials::default());
     let http = Arc::new(SecurityHttp { server, refused: false.into(), requests: 0.into() });
-    let database = within(Database::open(Config { path: None, data_version: None }, "[]".into(), crate::ffi::OpenPorts { transport: Some(Arc::new(SubscriptionsOnly)), encrypted: Some(crate::transport::encrypted::protocol_tests::config()), credentials: Some(Arc::new(Held(credentials))), http: Some(http.clone()), endpoint: Some(crate::ffi::FAKE_ENDPOINT.into()), ..Default::default() })).await.unwrap();
+    let database = within(Database::open(Config { path: None, data_version: None }, crate::ffi::EMPTY_SPECS.into(), crate::ffi::OpenPorts { transport: Some(Arc::new(SubscriptionsOnly)), encrypted: Some(crate::transport::encrypted::protocol_tests::config()), credentials: Some(Arc::new(Held(credentials))), http: Some(http.clone()), endpoint: Some(crate::ffi::FAKE_ENDPOINT.into()), ..Default::default() })).await.unwrap();
     database.set_online(true).unwrap();
     within(database.session_call("social".into(), "{}".into())).await.unwrap();
     http.refused.store(true, std::sync::atomic::Ordering::SeqCst);
@@ -97,7 +97,7 @@ pub(super) async fn rig(server_key: &str, pin: &str) -> (Arc<Database>, Arc<Fake
     let server = FakeServer::new(Arc::new(SystemClock));
     let credentials = Arc::new(MemoryCredentials::default());
     let encrypted = EncryptedConfig { origin: origin().to_string(), server_key: server_key.to_string(), pin: pin.to_string(), ..crate::transport::encrypted::protocol_tests::config() };
-    let database = Database::open(Config { path: None, data_version: None }, "[]".to_string(), crate::ffi::OpenPorts { transport: Some(Arc::new(SubscriptionsOnly)), encrypted: Some(encrypted), credentials: Some(Arc::new(Held(credentials.clone()))), http: Some(Arc::new(ThroughServer(server.clone()))), endpoint: Some(crate::ffi::FAKE_ENDPOINT.into()), ..Default::default() }).await
+    let database = Database::open(Config { path: None, data_version: None }, crate::ffi::EMPTY_SPECS.to_string(), crate::ffi::OpenPorts { transport: Some(Arc::new(SubscriptionsOnly)), encrypted: Some(encrypted), credentials: Some(Arc::new(Held(credentials.clone()))), http: Some(Arc::new(ThroughServer(server.clone()))), endpoint: Some(crate::ffi::FAKE_ENDPOINT.into()), ..Default::default() }).await
     .unwrap();
     database.set_online(true).unwrap();
     (database, server, credentials)
@@ -106,7 +106,7 @@ pub(super) async fn rig(server_key: &str, pin: &str) -> (Arc<Database>, Arc<Fake
 #[tokio::test(flavor = "multi_thread")]
 async fn sess_wait_call() {
     use crate::test_wait::within;
-    let database = within(Database::open(Config { path: None, data_version: None }, "[]".into(), crate::ffi::OpenPorts::default())).await.unwrap();
+    let database = within(Database::open(Config { path: None, data_version: None }, crate::ffi::EMPTY_SPECS.into(), crate::ffi::OpenPorts::default())).await.unwrap();
     assert!(matches!(within(database.session_call("unknown".into(), "{}".into())).await, Err(DbError::Invalid { .. })));
     within(database.close_database()).await.unwrap();
     let (database, _, _) = rig(public_key_der_b64(), pin()).await;
@@ -124,7 +124,7 @@ async fn interrupted_session_answer_returns_the_restored_call_once() {
     let server = FakeServer::new(Arc::new(SystemClock));
     let credentials = Arc::new(MemoryCredentials::default());
     let config = || Config { path: Some(path.to_string_lossy().into_owned()), data_version: None };
-    let open = || Database::open(config(), "[]".into(), crate::ffi::OpenPorts { transport: Some(Arc::new(SubscriptionsOnly)), encrypted: Some(crate::transport::encrypted::protocol_tests::config()), credentials: Some(Arc::new(Held(credentials.clone()))), http: Some(Arc::new(ThroughServer(server.clone()))), endpoint: Some(crate::ffi::FAKE_ENDPOINT.into()), ..Default::default() });
+    let open = || Database::open(config(), crate::ffi::EMPTY_SPECS.into(), crate::ffi::OpenPorts { transport: Some(Arc::new(SubscriptionsOnly)), encrypted: Some(crate::transport::encrypted::protocol_tests::config()), credentials: Some(Arc::new(Held(credentials.clone()))), http: Some(Arc::new(ThroughServer(server.clone()))), endpoint: Some(crate::ffi::FAKE_ENDPOINT.into()), ..Default::default() });
     let database = within(open()).await.unwrap();
     database.set_online(true).unwrap();
     within(database.session_call("social".into(), "{}".into())).await.unwrap();
@@ -156,7 +156,7 @@ async fn restored_first_login_finishes_after_open() {
     let server = FakeServer::new(Arc::new(SystemClock));
     let credentials = Arc::new(MemoryCredentials::default());
     let config = || Config { path: Some(path.to_string_lossy().into_owned()), data_version: None };
-    let open = || Database::open(config(), "[]".into(), crate::ffi::OpenPorts { transport: Some(Arc::new(SubscriptionsOnly)), encrypted: Some(crate::transport::encrypted::protocol_tests::config()), credentials: Some(Arc::new(Held(credentials.clone()))), http: Some(Arc::new(ThroughServer(server.clone()))), endpoint: Some(crate::ffi::FAKE_ENDPOINT.into()), ..Default::default() });
+    let open = || Database::open(config(), crate::ffi::EMPTY_SPECS.into(), crate::ffi::OpenPorts { transport: Some(Arc::new(SubscriptionsOnly)), encrypted: Some(crate::transport::encrypted::protocol_tests::config()), credentials: Some(Arc::new(Held(credentials.clone()))), http: Some(Arc::new(ThroughServer(server.clone()))), endpoint: Some(crate::ffi::FAKE_ENDPOINT.into()), ..Default::default() });
     let database = within(open()).await.unwrap();
     within(database.close_database()).await.unwrap();
     drop(database);
@@ -192,7 +192,7 @@ async fn failed_session_restore_opens_and_refuses_calls_until_reset() {
         let server = FakeServer::new(Arc::new(SystemClock));
         let credentials = Arc::new(MemoryCredentials::default());
         let config = || Config { path: Some(path.to_string_lossy().into_owned()), data_version: None };
-        let open = || Database::open(config(), "[]".into(), crate::ffi::OpenPorts { transport: Some(Arc::new(SubscriptionsOnly)), encrypted: Some(crate::transport::encrypted::protocol_tests::config()), credentials: Some(Arc::new(Held(credentials.clone()))), http: Some(Arc::new(ThroughServer(server.clone()))), endpoint: Some(crate::ffi::FAKE_ENDPOINT.into()), ..Default::default() });
+        let open = || Database::open(config(), crate::ffi::EMPTY_SPECS.into(), crate::ffi::OpenPorts { transport: Some(Arc::new(SubscriptionsOnly)), encrypted: Some(crate::transport::encrypted::protocol_tests::config()), credentials: Some(Arc::new(Held(credentials.clone()))), http: Some(Arc::new(ThroughServer(server.clone()))), endpoint: Some(crate::ffi::FAKE_ENDPOINT.into()), ..Default::default() });
         let database = within(open()).await.unwrap();
         within(database.close_database()).await.unwrap();
         drop(database);
@@ -299,7 +299,7 @@ async fn a_sessionless_operation_posts_all_fields_without_a_session() {
     let mut encrypted = EncryptedConfig { origin: origin().into(), server_key: public_key_der_b64().into(), pin: pin().into(), ..crate::transport::encrypted::protocol_tests::config() };
     encrypted.endpoints.session_operations = [("ticket".into(), super::EncryptedSessionOperation { path: "/api/ticket".into(), class: crate::transport::EncryptedOperationClass::Sessionless })].into();
     let credentials = Arc::new(MemoryCredentials::default());
-    let database = Database::open(Config { path: None, data_version: None }, "[]".into(), crate::ffi::OpenPorts { transport: Some(Arc::new(SubscriptionsOnly)), encrypted: Some(encrypted), credentials: Some(Arc::new(Held(credentials.clone()))), http: Some(Arc::new(TicketPost)), endpoint: Some(crate::ffi::FAKE_ENDPOINT.into()), ..Default::default() }).await.unwrap();
+    let database = Database::open(Config { path: None, data_version: None }, crate::ffi::EMPTY_SPECS.into(), crate::ffi::OpenPorts { transport: Some(Arc::new(SubscriptionsOnly)), encrypted: Some(encrypted), credentials: Some(Arc::new(Held(credentials.clone()))), http: Some(Arc::new(TicketPost)), endpoint: Some(crate::ffi::FAKE_ENDPOINT.into()), ..Default::default() }).await.unwrap();
     database.set_online(true).unwrap();
     assert!(credentials.value().is_none());
 
@@ -352,7 +352,7 @@ async fn sessionless_calls_leave_no_session_state_even_when_refused() {
         let mut encrypted = crate::transport::encrypted::protocol_tests::config();
         encrypted.endpoints.session_operations.insert("ticket".into(), super::EncryptedSessionOperation { path: "/api/ticket".into(), class: crate::transport::EncryptedOperationClass::Sessionless });
         let credentials = Arc::new(MemoryCredentials::default());
-        let database = Database::open(Config { path: None, data_version: None }, "[]".into(), crate::ffi::OpenPorts { transport: Some(Arc::new(SubscriptionsOnly)), encrypted: Some(encrypted), credentials: Some(Arc::new(Held(credentials.clone()))), http: Some(Arc::new(Reply(status))), endpoint: Some(crate::ffi::FAKE_ENDPOINT.into()), ..Default::default() }).await.unwrap();
+        let database = Database::open(Config { path: None, data_version: None }, crate::ffi::EMPTY_SPECS.into(), crate::ffi::OpenPorts { transport: Some(Arc::new(SubscriptionsOnly)), encrypted: Some(encrypted), credentials: Some(Arc::new(Held(credentials.clone()))), http: Some(Arc::new(Reply(status))), endpoint: Some(crate::ffi::FAKE_ENDPOINT.into()), ..Default::default() }).await.unwrap();
         database.set_online(true).unwrap();
         let result = database.session_call("ticket".into(), "{}".into()).await;
         if status == 200 { assert_eq!(result.unwrap(), "{}"); }

@@ -72,3 +72,8 @@ async fn call_result_normalized() {
     assert_eq!(database.call(database.session_epoch(), "Raw".into(), "{}".into()).await.unwrap(), r#"{"extra":1,"id":7}"#);
     database.session_reset().await.unwrap();
 }
+
+#[tokio::test]
+async fn a_bare_list_of_models_is_refused_as_specs() {
+    assert!(Database::open(Config { path: None, data_version: None }, "[]".into(), crate::ffi::OpenPorts::default()).await.is_err());
+}

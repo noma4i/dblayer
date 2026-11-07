@@ -17,10 +17,8 @@ pub struct Specs {
 
 impl Specs {
     pub fn parse(text: &str) -> Result<Self, serde_json::Error> {
-        match serde_json::from_str::<Value>(text)? {
-            Value::Array(models) => Ok(Self { models: serde_json::from_value(Value::Array(models))?, operations: Vec::new() }),
-            Value::Object(fields) => serde_json::from_value(Value::Object(fields)),
-            _ => Err(serde_json::Error::custom("the specs are a list of models or an object with models and operations")),
-        }
+        let value: Value = serde_json::from_str(text)?;
+        if !value.is_object() { return Err(serde_json::Error::custom("the specs are an object with models and operations")); }
+        serde_json::from_value(value)
     }
 }

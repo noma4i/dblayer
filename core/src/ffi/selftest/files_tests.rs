@@ -11,7 +11,7 @@ async fn store_wait_url() {
     spec.storage = crate::schema::Storage::Local;
     let models = serde_json::to_string(&vec![spec]).unwrap();
     let config = Config { path: Some(path.to_string_lossy().into()), data_version: None };
-    let db = Database::open(config, models, crate::ffi::OpenPorts::default()).await.unwrap();
+    let db = Database::open(config, crate::ffi::specs(models), crate::ffi::OpenPorts::default()).await.unwrap();
     let epoch = db.session_epoch();
     let id = db.create(epoch, "Files".into(), "{}".into(), "{}".into()).await.unwrap().optimistic_value.unwrap().id;
     assert_eq!(db.url(epoch, "Files".into(), id.clone(), "photo".into()).await.unwrap(), None);
@@ -36,7 +36,7 @@ async fn attached_files_survive_reopen_and_detaching_one_keeps_the_other() {
     spec.storage = crate::schema::Storage::Local;
     let models = serde_json::to_string(&vec![spec]).unwrap();
     let config = || Config { path: Some(path.to_string_lossy().into()), data_version: None };
-    let db = Database::open(config(), models.clone(), crate::ffi::OpenPorts::default()).await.unwrap();
+    let db = Database::open(config(), crate::ffi::specs(models.clone()), crate::ffi::OpenPorts::default()).await.unwrap();
     let epoch = db.session_epoch();
     let first = db.create(epoch, "Files".into(), "{}".into(), "{}".into()).await.unwrap().optimistic_value.unwrap().id;
     let second = db.create(epoch, "Files".into(), "{}".into(), "{}".into()).await.unwrap().optimistic_value.unwrap().id;
@@ -51,7 +51,7 @@ async fn attached_files_survive_reopen_and_detaching_one_keeps_the_other() {
     assert!(db.detach(epoch, "Files".into(), first.clone(), "photo".into()).await.unwrap());
     db.close_database().await.unwrap();
     drop(db);
-    let db = Database::open(config(), models, crate::ffi::OpenPorts::default()).await.unwrap();
+    let db = Database::open(config(), crate::ffi::specs(models), crate::ffi::OpenPorts::default()).await.unwrap();
     let epoch = db.session_epoch();
     assert_eq!(db.read(epoch, "Files".into(), first, "photo".into()).await.unwrap(), None);
     assert_eq!(db.read(epoch, "Files".into(), second.clone(), "photo".into()).await.unwrap(), Some(large));

@@ -11,9 +11,12 @@ let modelsArrayJSON: String = {
   return String(decoding: try! JSONSerialization.data(withJSONObject: parsed["models"]!), as: UTF8.self)
 }()
 
-func withRawCalls(_ specs: String, _ names: [String] = ["SessionProfile", "PurchaseCreate", "RecordAlbumSend"]) -> String {
-  let parsed = try! JSONSerialization.jsonObject(with: Data(specs.utf8))
-  var object = (parsed as? [String: Any]) ?? ["models": parsed]
+let emptySpecs = #"{"models":[]}"#
+
+func specs(_ models: String) -> String { #"{"models":\#(models)}"# }
+
+func withRawCalls(_ source: String, _ names: [String] = ["SessionProfile", "PurchaseCreate", "RecordAlbumSend"]) -> String {
+  var object = try! JSONSerialization.jsonObject(with: Data(source.utf8)) as! [String: Any]
   var operations = object["operations"] as? [[String: Any]] ?? []
   for name in names where !operations.contains(where: { $0["name"] as? String == name }) {
     operations.append(["name": name, "returns": ["name": name, "kind": ["type": "raw"]]])
@@ -162,8 +165,7 @@ func reopenSigned(config: Config, modelsJson: String, operations: String = sendM
 
 /// The schema with one server subscription: a schema holds one subscription, so a test of a model-level subscription runs on a schema that declares only that one.
 func schema(onlySubscription name: String, in source: String = modelsJSON) -> String {
-  let parsed = try? JSONSerialization.jsonObject(with: Data(source.utf8))
-  var models = ((parsed as? [String: Any])?["models"] ?? parsed) as? [[String: Any]] ?? []
+  var models = ((try? JSONSerialization.jsonObject(with: Data(source.utf8))) as? [String: Any])?["models"] as? [[String: Any]] ?? []
   for index in models.indices {
     models[index].removeValue(forKey: "change_feed")
     if let listens = models[index]["listens"] as? [[String: Any]] { models[index]["listens"] = listens.filter { $0["subscription"] as? String == name } }
@@ -172,5 +174,5 @@ func schema(onlySubscription name: String, in source: String = modelsJSON) -> St
       models[index]["relations"] = relations
     }
   }
-  return String(decoding: (try? JSONSerialization.data(withJSONObject: models)) ?? Data(), as: UTF8.self)
+  return specs(String(decoding: (try? JSONSerialization.data(withJSONObject: models)) ?? Data(), as: UTF8.self))
 }

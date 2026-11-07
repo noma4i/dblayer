@@ -261,7 +261,7 @@ async fn net_open_power_saving() {
         fn start(&self, sink: Arc<crate::ffi::OnlineSink>) { sink.set_power_saving(true); }
         fn stop(&self) {}
     }
-    let database = slot.open(config, "[]".into(), options, crate::ffi::OpenPorts { transport: Some(transport), endpoint: Some(crate::ffi::FAKE_ENDPOINT.into()), ..Default::default() }, Some(Arc::new(Saving))).await.unwrap();
+    let database = slot.open(config, crate::ffi::EMPTY_SPECS.into(), options, crate::ffi::OpenPorts { transport: Some(transport), endpoint: Some(crate::ffi::FAKE_ENDPOINT.into()), ..Default::default() }, Some(Arc::new(Saving))).await.unwrap();
     let life = database.life_handle();
     let heard = Arc::new(Mutex::new(Vec::new()));
     let sink = heard.clone();

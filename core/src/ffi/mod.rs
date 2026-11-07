@@ -21,6 +21,10 @@ pub(crate) async fn settled(database: &Database) -> Result<(), DbError> {
 #[cfg(test)]
 mod close_tests;
 mod call_result;
+#[cfg(test)]
+pub(crate) const EMPTY_SPECS: &str = r#"{"models":[]}"#;
+#[cfg(test)]
+pub(crate) fn specs(models: impl AsRef<str>) -> String { format!(r#"{{"models":{}}}"#, models.as_ref()) }
 mod call_state;
 pub(crate) use call_state::CallState;
 mod foreign_future;

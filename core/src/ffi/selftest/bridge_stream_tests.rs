@@ -110,7 +110,7 @@ async fn chat_events() -> (Arc<Database>, Arc<CableTransport>, Arc<World>) {
     let mut encrypted = crate::transport::encrypted::protocol_tests::config();
     encrypted.endpoints.session_operations.insert("login_link".into(), crate::ffi::EncryptedSessionOperation { path: "/api/auth/login_link".into(), class: crate::transport::EncryptedOperationClass::Authenticated });
     let transport = Arc::new(CableTransport::new(encrypted.clone()));
-    let database = bound(Database::open_with_clock(crate::ffi::Config { path: None, data_version: None }, serde_json::to_string(&vec![chat]).unwrap(), crate::ffi::OpenPorts { transport: Some(transport.clone()), encrypted: Some(encrypted), credentials: Some(Arc::new(crate::ffi::session_guards_tests::WatchedHeld::default())), http: Some(world.clone()), endpoint: Some(crate::ffi::FAKE_ENDPOINT.into()), ..Default::default() }, crate::ffi::TestClock::new(1_000_000))).await.unwrap();
+    let database = bound(Database::open_with_clock(crate::ffi::Config { path: None, data_version: None }, crate::ffi::specs(serde_json::to_string(&vec![chat]).unwrap()), crate::ffi::OpenPorts { transport: Some(transport.clone()), encrypted: Some(encrypted), credentials: Some(Arc::new(crate::ffi::session_guards_tests::WatchedHeld::default())), http: Some(world.clone()), endpoint: Some(crate::ffi::FAKE_ENDPOINT.into()), ..Default::default() }, crate::ffi::TestClock::new(1_000_000))).await.unwrap();
     database.register_operations(json!([
         {"name":"ChatList","document":"query ChatList($list: String) { chats(list: $list) { id title revision lists } }"},
         {"name":"ChatNode","document":"query ChatNode($id: ID!) { node(id: $id) { ... on Chat { id title revision lists } } }"},

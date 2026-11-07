@@ -75,7 +75,7 @@ pub(super) async fn feed_database_in(world: Arc<World>, listen: Option<serde_jso
         if let crate::transport::encrypted::cable::peer_tests::PeerEvent::Subscribed(subscribed) = event { *observed.0.lock().unwrap() = Some(subscribed); observed.1.notify_one(); }
     });
     let transport = Arc::new(FeedTransport { cable, token, opened });
-    let database = bound(Database::open_with_clock(crate::ffi::Config { path: None, data_version: None }, serde_json::to_string(&models).unwrap(), crate::ffi::OpenPorts { transport: Some(transport.clone()), encrypted: Some(encrypted), credentials: Some(Arc::new(crate::ffi::session_guards_tests::WatchedHeld::default())), http: Some(world), endpoint: Some(crate::ffi::FAKE_ENDPOINT.into()), ..Default::default() }, crate::ffi::TestClock::new(1_000_000))).await.unwrap();
+    let database = bound(Database::open_with_clock(crate::ffi::Config { path: None, data_version: None }, crate::ffi::specs(serde_json::to_string(&models).unwrap()), crate::ffi::OpenPorts { transport: Some(transport.clone()), encrypted: Some(encrypted), credentials: Some(Arc::new(crate::ffi::session_guards_tests::WatchedHeld::default())), http: Some(world), endpoint: Some(crate::ffi::FAKE_ENDPOINT.into()), ..Default::default() }, crate::ffi::TestClock::new(1_000_000))).await.unwrap();
     database.register_operations(json!([
         {"name":"ChatList","document":"query ChatList($list: String) { chats(list: $list) { id title revision lists } }"},
         {"name":"ChatNode","document":"query ChatNode($id: ID!) { node(id: $id) { ... on Chat { id title revision lists } } }"},

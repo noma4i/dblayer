@@ -14,7 +14,7 @@ private func momentsKeepingUpdates() throws -> String {
   let update = actions.firstIndex { $0["name"] as? String == "update" }!
   actions[update]["on_failure"] = "keep"
   models[index]["actions"] = actions
-  return String(decoding: try JSONSerialization.data(withJSONObject: models), as: UTF8.self)
+  return specs(String(decoding: try JSONSerialization.data(withJSONObject: models), as: UTF8.self))
 }
 
 private extension OperationQueueStream {

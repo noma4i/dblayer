@@ -4,7 +4,7 @@ use crate::ffi::ConfigCode;
 fn config() -> Config { Config { path: None, data_version: None } }
 fn options() -> OpenOptions { OpenOptions::default() }
 async fn open(slot: &OpenDatabase) -> Result<Arc<Database>, DbError> {
-    slot.open(config(), "[]".into(), options(), crate::ffi::OpenPorts::default(), None).await
+    slot.open(config(), crate::ffi::EMPTY_SPECS.into(), options(), crate::ffi::OpenPorts::default(), None).await
 }
 
 #[tokio::test]
@@ -64,7 +64,7 @@ async fn life_register_no_transport() {
 async fn life_register_closed() {
     use super::super::database_tests::Plain;
     let slot = OpenDatabase::new();
-    let database = slot.open(config(), "[]".into(), options(), crate::ffi::OpenPorts { transport: Some(Arc::new(Plain)), endpoint: Some(crate::ffi::FAKE_ENDPOINT.into()), ..Default::default() }, None).await.unwrap();
+    let database = slot.open(config(), crate::ffi::EMPTY_SPECS.into(), options(), crate::ffi::OpenPorts { transport: Some(Arc::new(Plain)), endpoint: Some(crate::ffi::FAKE_ENDPOINT.into()), ..Default::default() }, None).await.unwrap();
     database.close_database().await.unwrap();
     let result = database.register_operations(r#"[{"name":"Query","document":"query Query { items }"}]"#.into()).await;
     assert!(matches!(result, Err(DbError::Closed { .. })));
@@ -74,7 +74,7 @@ async fn life_register_closed() {
 async fn life_register_invalid() {
     use super::super::database_tests::Plain;
     let slot = OpenDatabase::new();
-    let database = slot.open(config(), "[]".into(), options(), crate::ffi::OpenPorts { transport: Some(Arc::new(Plain)), endpoint: Some(crate::ffi::FAKE_ENDPOINT.into()), ..Default::default() }, None).await.unwrap();
+    let database = slot.open(config(), crate::ffi::EMPTY_SPECS.into(), options(), crate::ffi::OpenPorts { transport: Some(Arc::new(Plain)), endpoint: Some(crate::ffi::FAKE_ENDPOINT.into()), ..Default::default() }, None).await.unwrap();
     for definitions in [
         r#"[{"document":"query Query { items }"}]"#,
         r#"[{"name":"Query"}]"#,
@@ -100,7 +100,7 @@ async fn life_register_bad_preload() {
         selection.preload = Some([(if bad_source { "category" } else { "unknown" }.to_string(), choice)].into());
         selection.preload_limit = Some(1);
         model.relations.push(selection);
-        let database = Database::open(config(), serde_json::to_string(&vec![model]).unwrap(), crate::ffi::OpenPorts { transport: Some(Arc::new(Plain)), endpoint: Some(crate::ffi::FAKE_ENDPOINT.into()), ..Default::default() }).await.unwrap();
+        let database = Database::open(config(), crate::ffi::specs(serde_json::to_string(&vec![model]).unwrap()), crate::ffi::OpenPorts { transport: Some(Arc::new(Plain)), endpoint: Some(crate::ffi::FAKE_ENDPOINT.into()), ..Default::default() }).await.unwrap();
         let definitions = r#"[{"name":"Greeting","document":"query Greeting($name: String!) { greeting(name: $name) }"}]"#;
         assert!(matches!(database.register_operations(definitions.into()).await, Err(DbError::Invalid { .. })));
         database.set_online(true).unwrap();
@@ -129,7 +129,7 @@ async fn open_carries_the_upload_declaration_and_frees_the_slot_when_it_is_refus
     let slot = OpenDatabase::new();
     for (name, accepted) in [("Missing", false), ("CreateBlob", true)] {
         let options = OpenOptions { operations: vec![OperationDefinition { name: "CreateBlob".into(), document: "mutation CreateBlob { createBlob { url } }".into() }] };
-        let opened = slot.open(config(), clip_with_blob(name), options, crate::ffi::OpenPorts { transport: Some(Arc::new(Plain)), endpoint: Some(crate::ffi::FAKE_ENDPOINT.into()), ..Default::default() }, None).await;
+        let opened = slot.open(config(), crate::ffi::specs(clip_with_blob(name)), options, crate::ffi::OpenPorts { transport: Some(Arc::new(Plain)), endpoint: Some(crate::ffi::FAKE_ENDPOINT.into()), ..Default::default() }, None).await;
         match opened {
             Ok(_) => assert!(accepted, "{name} was opened"),
             Err(error) => assert!(!accepted && error.to_string().ends_with("invalid: upload operation Missing is not registered"), "{name}: {error}"),
@@ -142,7 +142,7 @@ async fn open_carries_the_upload_declaration_and_frees_the_slot_when_it_is_refus
 async fn inv_upload_22_uploads_with_empty_operations_explain_the_cause_and_the_fix() {
     use super::super::database_tests::Plain;
     let slot = OpenDatabase::new();
-    let opened = slot.open(config(), clip_with_blob("CreateBlob"), options(), crate::ffi::OpenPorts { transport: Some(Arc::new(Plain)), endpoint: Some(crate::ffi::FAKE_ENDPOINT.into()), ..Default::default() }, None).await;
+    let opened = slot.open(config(), crate::ffi::specs(clip_with_blob("CreateBlob")), options(), crate::ffi::OpenPorts { transport: Some(Arc::new(Plain)), endpoint: Some(crate::ffi::FAKE_ENDPOINT.into()), ..Default::default() }, None).await;
     let error = match opened {
         Err(error) => error.to_string(),
         Ok(_) => panic!("uploads with empty operations were accepted"),
@@ -164,7 +164,7 @@ impl PlatformObserver for Observed {
 async fn life_closing_observers_stopped_last_reaches_the_platform_observer() {
     let slot = OpenDatabase::new();
     let observed = Arc::new(Observed::default());
-    let database = slot.open(config(), "[]".into(), options(), crate::ffi::OpenPorts::default(), Some(observed.clone())).await.unwrap();
+    let database = slot.open(config(), crate::ffi::EMPTY_SPECS.into(), options(), crate::ffi::OpenPorts::default(), Some(observed.clone())).await.unwrap();
     assert_eq!(*observed.0.lock().unwrap(), ["start"]);
     database.close_database().await.unwrap();
     assert_eq!(*observed.0.lock().unwrap(), ["start", "stop"]);
@@ -190,7 +190,7 @@ async fn life_prop_not_open_typed_for_census_report_and_admission() {
 async fn a_load_call_without_a_relation_is_invalid() {
     use super::super::database_tests::Plain;
     let slot = OpenDatabase::new();
-    let database = slot.open(config(), "[]".into(), options(), crate::ffi::OpenPorts { transport: Some(Arc::new(Plain)), endpoint: Some(crate::ffi::FAKE_ENDPOINT.into()), ..Default::default() }, None).await.unwrap();
+    let database = slot.open(config(), crate::ffi::EMPTY_SPECS.into(), options(), crate::ffi::OpenPorts { transport: Some(Arc::new(Plain)), endpoint: Some(crate::ffi::FAKE_ENDPOINT.into()), ..Default::default() }, None).await.unwrap();
     let epoch = database.session_epoch();
     assert!(matches!(database.begin_load(epoch, "Item".into(), None, "{}".into()), Err(DbError::Invalid { detail }) if detail.contains("no relation")));
     assert!(matches!(database.refresh(epoch, "Item".into(), None, "{}".into()).await, Err(DbError::Invalid { .. })));
@@ -219,7 +219,7 @@ fn the_round_job_carries_the_round_id_the_core_numbered() {
 async fn xfer_android_permission_checked_at_open() {
     let slot = OpenDatabase::new();
     for (declared, refused) in [(Some(false), true), (Some(true), false), (None, false)] {
-        let opened = slot.open(config(), "[]".into(), options(), crate::ffi::OpenPorts { data_sync_declared: declared, ..Default::default() }, None).await;
+        let opened = slot.open(config(), crate::ffi::EMPTY_SPECS.into(), options(), crate::ffi::OpenPorts { data_sync_declared: declared, ..Default::default() }, None).await;
         match (opened, refused) {
             (Err(DbError::Config { code: ConfigCode::InvalidRequest, detail }), true) => assert!(detail.contains("FOREGROUND_SERVICE_DATA_SYNC"), "{detail}"),
             (Ok(database), false) => database.close_database().await.unwrap(),
@@ -280,7 +280,7 @@ async fn life_open_executor_runs_the_operation() {
     let slot = OpenDatabase::new();
     let operations = vec![OperationDefinition { name: "Greeting".into(), document: "query Greeting($name: String!) { greeting(name: $name) }".into() }];
     let ports = OpenPorts { endpoint: Some(crate::ffi::FAKE_ENDPOINT.into()), executor: Some(Arc::new(super::super::database_tests::Plain)), ..Default::default() };
-    let database = slot.open(config(), "[]".into(), OpenOptions { operations }, ports, None).await.unwrap();
+    let database = slot.open(config(), crate::ffi::EMPTY_SPECS.into(), OpenOptions { operations }, ports, None).await.unwrap();
     database.set_online(true).unwrap();
     assert_eq!(database.run(database.session_epoch(), "Greeting".into(), r#"{"name":"Ada"}"#.into()).await.unwrap(), r#""Hello Ada""#);
     database.close_database().await.unwrap();

@@ -1,4 +1,4 @@
-[
+{"models":[
   {
     "key": "MediaEntry",
     "fields": [
@@ -110,4 +110,4 @@
     "expire_after": null,
     "listens": []
   }
-]
+]}

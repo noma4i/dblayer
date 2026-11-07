@@ -189,8 +189,8 @@ impl Stand {
         let ports = OpenPorts { transport: Some(self.puts.clone()), encrypted: Some(EncryptedConfig { origin: origin().into(), server_key: public_key_der_b64().into(), pin: pin().into(), ..crate::transport::encrypted::protocol_tests::config() }), credentials: Some(self.rig.credentials.clone()), http: Some(Arc::new(ScriptedHttp { script: self.script.clone(), session: ThroughServer(self.rig.server.clone()) })), endpoint: Some(crate::ffi::FAKE_ENDPOINT.into()), ..Default::default() };
         let config = Config { path: path.map(|path| path.to_string_lossy().into_owned()), data_version: None };
         let database = match clock {
-            Some(clock) => Database::open_with_clock(config, models, ports, clock).await,
-            None => Database::open(config, models, ports).await,
+            Some(clock) => Database::open_with_clock(config, crate::ffi::specs(models), ports, clock).await,
+            None => Database::open(config, crate::ffi::specs(models), ports).await,
         }
         .unwrap();
         let named: Vec<(&str, &str)> = STEPS.iter().copied().filter(|(name, _)| !operations.iter().any(|(declared, _)| declared == name)).chain(operations.iter().copied()).collect();

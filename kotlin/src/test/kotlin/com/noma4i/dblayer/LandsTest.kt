@@ -10,7 +10,7 @@ class LandsTest {
         val schema = """[{"key":"Record","fields":[{"name":"id","kind":{"type":"scalar","kind":"id"}}],"actions":[{"name":"create","root_shape":"upsert","mutation":"CreateRecord","root":"createRecord.record","has_optimistic":true,"has_temp_row_retention":true,"lands":[{"model":"Record","root":"createRecord.extra"}]}]}]"""
         val transport = MockTransport()
         transport.enqueue("CreateRecord", """{"data":{"createRecord":{"record":{"id":"r1"},"extra":{"id":"r2"}}}}""")
-        val database = reopen(Config(null, null), schema, transport)
+        val database = reopen(Config(null, null), specs(schema), transport)
         database.registerOperations("""[{"name":"CreateRecord","document":"mutation CreateRecord { createRecord { record { id } extra { id } } }"}]""")
         val receipt = database.send(CommandRequest(database.sessionEpoch(), "Record", "{}", "{}", null))
         assertTrue(database.outcome(receipt) is WireOperationOutcome.Confirmed)
