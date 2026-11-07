@@ -44,6 +44,7 @@ mod data_lands_tests;
 mod data_window_tests;
 mod outbox_plan_tests;
 mod outbox_cells_tests;
+mod outbox_marks_tests;
 mod outbox_reserve_tests;
 mod outbox_restore_tests;
 #[cfg(test)]
