@@ -17,7 +17,7 @@ use serde_json::{json, Map, Value};
 use super::feed::FramedEvent;
 use super::windows::{StaleKeys, WindowKey};
 use super::{FeedCodec, SchemaFeedCodec};
-use crate::store::spec_fixtures::{chats_spec, messages_spec};
+use crate::store::fixtures::{chat_messages_spec, chats_spec};
 use crate::store::Store;
 use crate::schema::{ChangeFeed, Coverage, ModelSpec, RelationSpec, RemoteShape, UpdatesSpec};
 use super::ReadOperation;
@@ -45,7 +45,7 @@ fn specs(with_feed: bool) -> Vec<ModelSpec> {
     chats.relations.push(list);
     chats.changes.push(read(json!({"area":"CHAT", "relation":"list", "removes_on":["DELETED"]})));
     chats.changes.push(read(json!({"area":"CHATSEEN", "relation":"list", "observed":true})));
-    let mut messages = messages_spec();
+    let mut messages = chat_messages_spec();
     messages.changes.push(read(json!({"area":"MESSAGE", "relation":"x", "payload":"message", "removes_on":["DELETED"]})));
     let mut by_chat = RelationSpec::new("by_chat", &["chatId"]);
     by_chat.joins_events = true;
@@ -62,7 +62,7 @@ fn specs(with_feed: bool) -> Vec<ModelSpec> {
 fn codec(with_feed: bool) -> SchemaFeedCodec { SchemaFeedCodec::new(Store::open_models(None, specs(with_feed), None).map(std::sync::Arc::new).unwrap(), operations()) }
 
 fn codec_for_apply(apply: Value) -> SchemaFeedCodec {
-    let mut messages = messages_spec();
+    let mut messages = chat_messages_spec();
     messages.listens.push(updates(json!({"subscription":"MessageChanged", "apply":apply})));
     SchemaFeedCodec::new(Store::open_models(None, vec![chats_spec(), messages], None).map(std::sync::Arc::new).unwrap(), operations())
 }
@@ -160,7 +160,7 @@ fn feed_codec_request() {
 
 #[test]
 fn feed_codec_relation_updates_channel() {
-    let mut messages = messages_spec();
+    let mut messages = chat_messages_spec();
     let mut by_chat = RelationSpec::new("by_chat", &["chatId"]);
     by_chat.updates.push(updates(json!({"subscription":"RelationChanged", "deleted_by":"deleted"})));
     messages.relations.push(by_chat);

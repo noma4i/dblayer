@@ -8,7 +8,7 @@ use crate::identity::RowId;
 use crate::owners::contract::BatchAuthor;
 use crate::owners::read::windows::WindowKey;
 use crate::owners::store::{RowValue, StoreBatch, StoreOp};
-use crate::store::spec_fixtures::{all_specs, put};
+use crate::store::fixtures::{all_specs, put};
 use crate::store::Store;
 
 fn open() -> Arc<Store> {

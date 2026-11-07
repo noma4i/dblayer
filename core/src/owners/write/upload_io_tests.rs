@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
 use std::thread::ThreadId;
 
-use super::*;
+use super::upload_io::*;
 
 type Reads = HashMap<PathBuf, Vec<(&'static str, ThreadId)>>;
 static READS: OnceLock<Mutex<Reads>> = OnceLock::new();

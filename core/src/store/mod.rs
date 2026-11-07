@@ -442,9 +442,7 @@ impl Store {
 }
 
 #[cfg(test)]
-mod fixtures;
-#[cfg(test)]
-pub(crate) mod spec_fixtures;
+pub(crate) mod fixtures;
 #[cfg(test)]
 mod admission_tests;
 #[cfg(test)]

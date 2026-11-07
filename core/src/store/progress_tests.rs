@@ -6,7 +6,7 @@ use serde_json::json;
 use crate::owners::contract::BatchAuthor;
 use crate::owners::store::{EffectRow, IntentEffects, IntentOrigin, StoreBatch, StoreOp, UploadKind, UploadRow};
 use crate::schema::OnFailure;
-use crate::store::spec_fixtures::{all_specs, put};
+use crate::store::fixtures::{all_specs, put};
 use crate::store::Store;
 
 fn write(db: &Store, author: BatchAuthor, ops: Vec<StoreOp>) {

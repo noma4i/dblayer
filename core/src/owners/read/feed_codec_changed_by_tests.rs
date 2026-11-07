@@ -8,7 +8,7 @@ use super::feed::FramedEvent;
 use super::windows::{StaleKeys, WindowKey};
 use super::{FeedCodec, ReadOperation, SchemaFeedCodec};
 use crate::schema::{ChangeFeed, ModelSpec, NodeRead, RelationSpec};
-use crate::store::spec_fixtures::{chats_spec, messages_spec, put};
+use crate::store::fixtures::{chat_messages_spec, chats_spec, put};
 use crate::store::Store;
 use crate::transport::Response;
 
@@ -27,7 +27,7 @@ fn specs(reads: Vec<Value>) -> Vec<ModelSpec> {
     chats.relations.extend([node, relation("list", &["list"]), relation("named", &["key", "other"]), RelationSpec::global("current")]);
     chats.changes = reads.into_iter().map(read).collect();
     chats.change_feed = Some(ChangeFeed { subscription: "Changes".into(), root: "changes".into(), area: "topic".into(), kind: "action".into(), id: "recordId".into() });
-    let mut messages = messages_spec();
+    let mut messages = chat_messages_spec();
     messages.changes.push(read(json!({"area":"MESSAGE", "relation":"x", "removes_on":["DELETED"]})));
     vec![chats, messages]
 }

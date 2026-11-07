@@ -8,7 +8,7 @@ use crate::owners::contract::BatchAuthor;
 use crate::owners::store::{EffectRow, IntentEffects, StoreBatch, StoreOp};
 use crate::store::query::{Order, Query, Where};
 use crate::owners::read::windows::WindowKey;
-use crate::store::spec_fixtures::{all_specs, moments_spec, obj, put};
+use crate::store::fixtures::{all_specs, moments_spec, put, row};
 use crate::store::Store;
 use crate::value::SortDirection;
 
@@ -333,7 +333,7 @@ fn paged_moments() -> Arc<Store> {
     Arc::new(Store::open_models(None, specs, None).unwrap())
 }
 
-fn mine(user: &str) -> WindowKey { WindowKey::relation("moments", "mine", &obj(json!({"userId": user}))) }
+fn mine(user: &str) -> WindowKey { WindowKey::relation("moments", "mine", &row(json!({"userId": user}))) }
 
 fn mine_page(db: &Store, user: &str, ids: &[&str], cursor: Option<&str>, replace_all: bool) -> StoreOp {
     let key = mine(user);
@@ -342,7 +342,7 @@ fn mine_page(db: &Store, user: &str, ids: &[&str], cursor: Option<&str>, replace
 }
 
 fn members(db: &Store, user: &str) -> Vec<String> {
-    let scope = db.spec("moments").unwrap().selection_key("mine", &obj(json!({"userId": user}))).unwrap();
+    let scope = db.spec("moments").unwrap().selection_key("mine", &row(json!({"userId": user}))).unwrap();
     db.read(&["moments"], |reader| reader.scope_members("moments", scope.as_str())).unwrap().into_iter().map(|(id, _)| id).collect()
 }
 
@@ -430,7 +430,7 @@ fn inv_order_04_restored_member_takes_a_free_key_when_its_old_key_was_reused() {
     let second = crate::value::fractional_between(Some(&first), None).unwrap();
     let append = |db: &Store, id: &str, key: &str| {
         let mut envelope = BatchPlan::from_server(db.generation());
-        envelope.scope_ops.push(ScopeOp::Append { scope: scope.clone(), row: crate::store::spec_fixtures::rid(id), order_key: key.into() });
+        envelope.scope_ops.push(ScopeOp::Append { scope: scope.clone(), row: crate::store::fixtures::id(id), order_key: key.into() });
         db.commit(envelope).unwrap();
     };
     append(&db, "a", &first);

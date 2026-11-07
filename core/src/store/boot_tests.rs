@@ -206,7 +206,7 @@ fn an_interrupted_session_end_wipes_the_data_at_the_next_open_and_asks_for_the_c
     {
         let (store, _) = reopen(&path, &models, None);
         seed(&store);
-        store.execute_for_test("INSERT INTO reset_intent (id, mode, started_at) VALUES (1, 'session_end', 1)");
+        exec(&store, "INSERT INTO reset_intent (id, mode, started_at) VALUES (1, 'session_end', 1)");
     }
     let (store, report) = reopen(&path, &models, None);
     assert!(report.finished_interrupted_reset);

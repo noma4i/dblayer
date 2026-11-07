@@ -430,7 +430,7 @@ async fn a_secret_left_by_a_crash_is_erased_and_the_session_rows_go_before_the_s
         let _ = tokio::time::timeout(LIMIT, life.close().wait()).await;
     }
     let db = Store::open_models(Some(&path), Vec::new(), None).map(std::sync::Arc::new).unwrap();
-    db.execute_for_test("INSERT INTO reset_intent (id, mode, started_at) VALUES (1, 'session_end', 1)");
+    crate::store::fixtures::exec(&db, "INSERT INTO reset_intent (id, mode, started_at) VALUES (1, 'session_end', 1)");
     drop(db);
     let slot = Arc::new(ProbeSlot::default());
     slot.memory.set(&world.credentials.value().unwrap()).unwrap();

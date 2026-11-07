@@ -106,7 +106,7 @@ fn data_nested_layout_mismatch() {
     let second = ModelSpec::new("readings", vec![FieldSpec::scalar("id", ScalarKind::Id), FieldSpec::scalar("size", ScalarKind::Str).nullable()]);
     {
         let db = Store::open_models(Some(&path), vec![first], None).unwrap();
-        crate::store::spec_fixtures::put(&db, "readings", json!({"id": "r1", "size": 7}));
+        crate::store::fixtures::put(&db, "readings", json!({"id": "r1", "size": 7}));
         assert!(stored(&db).is_some());
     }
     let db = Store::open_models(Some(&path), vec![second], None).unwrap();

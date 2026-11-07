@@ -5,7 +5,7 @@ use serde_json::json;
 use super::window_io::WindowCodec;
 use super::windows::WindowKey;
 use super::{ReadOperation, ReadOperations, SchemaWindowCodec};
-use crate::store::spec_fixtures::{all_specs, moments_spec, obj};
+use crate::store::fixtures::{all_specs, moments_spec, row};
 use crate::store::Store;
 use crate::schema::{Coverage, PageDirection, RelationSpec, RemoteShape, RemoteSpec};
 
@@ -32,7 +32,7 @@ fn codec(page_size: Option<u32>) -> SchemaWindowCodec {
 
 #[test]
 fn inv_dsl_03_the_declared_page_size_reaches_the_request_and_the_operation_size_is_the_default() {
-    let key = WindowKey::relation("moments", "mine", &obj(json!({"userId": "u1"})));
+    let key = WindowKey::relation("moments", "mine", &row(json!({"userId": "u1"})));
     assert_eq!(codec(Some(7)).request(&key, 1, None, crate::owners::read::windows::RequestKind::Page).unwrap().variables["first"], json!(7));
     assert_eq!(codec(None).request(&key, 1, None, crate::owners::read::windows::RequestKind::Page).unwrap().variables["first"], json!(20));
 }

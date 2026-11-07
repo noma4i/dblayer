@@ -1,5 +1,5 @@
 use crate::store::Store;
-use crate::store::spec_fixtures::{all_specs, put, rid};
+use crate::store::fixtures::{all_specs, id, put};
 use crate::owners::contract::BatchAuthor;
 use crate::owners::store::{RowValue, StoreBatch, StoreOp};
 
@@ -93,7 +93,7 @@ fn store_overlay_survives_failed_sql_commits() {
     }
     assert_eq!(attempts.load(std::sync::atomic::Ordering::Relaxed), 65);
     database.lock().connection.commit_hook(None::<fn() -> bool>).unwrap();
-    let row = database.find("moments", &rid("m1")).unwrap().unwrap();
+    let row = database.find("moments", &id("m1")).unwrap().unwrap();
     assert_eq!(database.revision_seq().unwrap(), before);
     assert_eq!(row.get("text"), Some(&serde_json::json!("before")));
     assert_eq!(row.get("typing"), Some(&serde_json::json!(true)));
@@ -111,7 +111,7 @@ fn store_prop_atomic() {
         StoreOp::Rows { model: "missing".into(), rows: vec![RowValue { row_id: "a".into(), values: r#"{"id":"a"}"#.into() }] },
     ];
     assert!(write(&database, ops).is_err());
-    assert!(database.file("moments", &rid("m1"), "media").unwrap().is_none());
+    assert!(database.file("moments", &id("m1"), "media").unwrap().is_none());
     let files = directory.path().join("data.sqlite.files");
     assert!(!files.exists() || std::fs::read_dir(files).unwrap().all(|entry| entry.unwrap().file_name() == "cache"));
 }
@@ -124,16 +124,16 @@ fn store_commit_file_orphan() {
     put(&database, "moments", serde_json::json!({"id": "m1", "userId": "u1"}));
     let attach = |byte| StoreOp::AttachFile { model: "moments".into(), row_id: "m1".into(), field: "media".into(), bytes: vec![byte; 300_000], name: "photo".into(), mime: "image/jpeg".into() };
     write(&database, vec![attach(1)]).unwrap();
-    let old = database.file("moments", &rid("m1"), "media").unwrap().unwrap();
+    let old = database.file("moments", &id("m1"), "media").unwrap().unwrap();
     let files = directory.path().join("data.sqlite.files");
     std::fs::create_dir_all(files.join("cache")).unwrap();
     std::fs::write(files.join("cache").join(&old.id), b"cached").unwrap();
     write(&database, vec![attach(2)]).unwrap();
-    let new = database.file("moments", &rid("m1"), "media").unwrap().unwrap();
+    let new = database.file("moments", &id("m1"), "media").unwrap().unwrap();
     assert_ne!(old.id, new.id);
     assert!(!files.join(&old.id).exists());
     assert!(!files.join("cache").join(&old.id).exists());
-    assert_eq!(database.read_file("moments", &rid("m1"), "media").unwrap(), Some(vec![2; 300_000]));
+    assert_eq!(database.read_file("moments", &id("m1"), "media").unwrap(), Some(vec![2; 300_000]));
 }
 
 #[test]
@@ -143,14 +143,14 @@ fn store_prop_file_orphans() {
     put(&database, "moments", serde_json::json!({"id": "m1", "userId": "u1"}));
     let attach = |field: &str| StoreOp::AttachFile { model: "moments".into(), row_id: "m1".into(), field: field.into(), bytes: vec![3; 300_000], name: "photo".into(), mime: "image/jpeg".into() };
     write(&database, vec![attach("media"), attach("cover")]).unwrap();
-    let detached = database.file("moments", &rid("m1"), "media").unwrap().unwrap();
-    let retained = database.file("moments", &rid("m1"), "cover").unwrap().unwrap();
+    let detached = database.file("moments", &id("m1"), "media").unwrap().unwrap();
+    let retained = database.file("moments", &id("m1"), "cover").unwrap().unwrap();
     write(&database, vec![StoreOp::DetachFile { model: "moments".into(), row_id: "m1".into(), field: "media".into() }]).unwrap();
     let files = directory.path().join("data.sqlite.files");
     assert!(!files.join(detached.id).exists());
     assert!(files.join(retained.id).exists());
-    assert!(database.file("moments", &rid("m1"), "media").unwrap().is_none());
-    assert_eq!(database.read_file("moments", &rid("m1"), "cover").unwrap(), Some(vec![3; 300_000]));
+    assert!(database.file("moments", &id("m1"), "media").unwrap().is_none());
+    assert_eq!(database.read_file("moments", &id("m1"), "cover").unwrap(), Some(vec![3; 300_000]));
 }
 
 #[test]
@@ -161,7 +161,7 @@ fn store_boot_finishes_file_rename() {
     put(&database, "moments", serde_json::json!({"id": "m1", "userId": "u1"}));
     let bytes = vec![7; 300_000];
     write(&database, vec![StoreOp::AttachFile { model: "moments".into(), row_id: "m1".into(), field: "media".into(), bytes: bytes.clone(), name: "photo".into(), mime: "image/jpeg".into() }]).unwrap();
-    let descriptor = database.file("moments", &rid("m1"), "media").unwrap().unwrap();
+    let descriptor = database.file("moments", &id("m1"), "media").unwrap().unwrap();
     drop(database);
     let files = directory.path().join("data.sqlite.files");
     let target = files.join(&descriptor.id);
@@ -172,7 +172,7 @@ fn store_boot_finishes_file_rename() {
     std::fs::create_dir_all(files.join("cache")).unwrap();
     std::fs::write(files.join("cache/orphan"), b"orphan").unwrap();
     let reopened = Store::open_models(Some(&path), all_specs(), None).map(std::sync::Arc::new).unwrap();
-    assert_eq!(reopened.read_file("moments", &rid("m1"), "media").unwrap(), Some(bytes));
+    assert_eq!(reopened.read_file("moments", &id("m1"), "media").unwrap(), Some(bytes));
     assert!(!partial.exists());
     assert!(!files.join("orphan.partial").exists());
     assert!(!files.join("orphan").exists());
@@ -219,7 +219,7 @@ fn store_batch_same_row_ordered() {
         StoreOp::Rows { model: "moments".into(), rows: vec![row("m1", "server", "server")] },
     ];
     write(&database, ops).unwrap();
-    let found = database.find("moments", &rid("m1")).unwrap().unwrap();
+    let found = database.find("moments", &id("m1")).unwrap().unwrap();
     assert_eq!(found.text("text"), Some("server"));
     assert_eq!(found.text("pinned"), Some("local"));
     assert_eq!(database.revision_seq().unwrap(), before + 1);
@@ -231,7 +231,7 @@ fn store_batch_same_row_ordered() {
         StoreOp::RemoveRows { model: "moments".into(), ids: vec!["m2".into()] },
     ];
     write(&database, transient).unwrap();
-    assert!(database.find("moments", &rid("m2")).unwrap().is_none());
+    assert!(database.find("moments", &id("m2")).unwrap().is_none());
     assert!(changes.lock().unwrap().iter().all(|change| change.row.id.as_str() != "m2"));
 }
 

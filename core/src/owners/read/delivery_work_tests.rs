@@ -14,7 +14,7 @@ use crate::owners::contract::{ChangedRows, Committed, Models};
 use crate::store::query::Query;
 use crate::runtime::{Address, Effect, Outcomes, StateOwner};
 use crate::schema::{FieldSpec, ModelSpec};
-use crate::store::spec_fixtures::put;
+use crate::store::fixtures::put;
 use crate::store::Store;
 use crate::value::ScalarKind;
 

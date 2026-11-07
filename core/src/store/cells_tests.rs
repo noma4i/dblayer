@@ -5,7 +5,7 @@ use serde_json::{json, Value};
 use crate::owners::contract::BatchAuthor;
 use crate::owners::read::windows::WindowKey;
 use crate::owners::store::{RowValue, StoreBatch, StoreOp};
-use crate::store::spec_fixtures::{all_specs, obj, put, rid};
+use crate::store::fixtures::{all_specs, id, put, row};
 use crate::store::Store;
 
 fn write(db: &Arc<Store>, author: BatchAuthor, rows: Vec<(String, String)>, ops: Vec<StoreOp>) -> Result<super::batch_write::BatchWritten, super::StoreError> {
@@ -67,8 +67,8 @@ fn store_url_small_file_cached() {
     let database = directory.path().join("data.sqlite");
     let db = Arc::new(Store::open_models(Some(&database), all_specs(), None).unwrap());
     row_with_file(&db, vec![7; 64]);
-    let descriptor = db.file("moments", &rid("m1"), "media").unwrap().unwrap();
-    let path = db.url("moments", &rid("m1"), "media").unwrap().unwrap();
+    let descriptor = db.file("moments", &id("m1"), "media").unwrap().unwrap();
+    let path = db.url("moments", &id("m1"), "media").unwrap().unwrap();
     assert!(path.ends_with(format!("cache/{}", descriptor.id)), "{path:?}");
     assert!(path.starts_with(directory.path()));
     assert_eq!(std::fs::read(&path).unwrap(), vec![7; 64]);
@@ -77,14 +77,14 @@ fn store_url_small_file_cached() {
 }
 
 fn page(db: &Store, relation: &str, rows: &[(&str, Value)], replace_all: bool) -> StoreOp {
-    let key = WindowKey::relation("moments", relation, &obj(json!({})));
+    let key = WindowKey::relation("moments", relation, &row(json!({})));
     let roots = rows.iter().map(|(id, edge)| RowValue { row_id: (*id).into(), values: json!({"id": id, "text": "same", "@edge": edge}).to_string() }).collect();
     StoreOp::Window { key: key.name, model: key.model, page: 1, replace_all, cursor: None, roots, related: Vec::new(), total: None, base_revision: db.revision_seq().unwrap() }
 }
 
 fn edges(db: &Store, ids: &[&str]) -> Value {
     let ids: Vec<String> = ids.iter().map(|id| (*id).to_string()).collect();
-    serde_json::to_value(db.edge_values("moments", "feed", &obj(json!({})), &ids).unwrap()).unwrap()
+    serde_json::to_value(db.edge_values("moments", "feed", &row(json!({})), &ids).unwrap()).unwrap()
 }
 
 fn open_feed() -> Arc<Store> {

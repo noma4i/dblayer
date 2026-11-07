@@ -29,9 +29,12 @@ pub(crate) mod rounds_executor;
 pub(crate) mod transfer_executor;
 pub mod wire;
 pub(crate) mod upload_codec;
+pub mod upload_io;
 
 #[cfg(test)]
 mod rig;
+#[cfg(test)]
+mod upload_io_tests;
 #[cfg(test)]
 mod answer_tests;
 #[cfg(test)]

@@ -14,7 +14,8 @@ use crate::owners::life::OperationLookup;
 use crate::runtime::Clock;
 use crate::owners::read::codec::root_value;
 use crate::transport::{CancelToken, GraphQLRequest, PutFile, PutRequest, RequestOwner, Response, TransferIdentity, TransferStep, TransportError};
-use crate::owners::write::upload::{md5_base64, parse_headers, part_range, UploadConfig, UploadOperations, UploadStage};
+use crate::owners::write::upload::{parse_headers, part_range, UploadConfig, UploadOperations, UploadStage};
+use crate::owners::write::upload_io::md5_base64;
 
 /// What `Steps.body` holds: the file the steps are for.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

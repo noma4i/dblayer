@@ -47,9 +47,9 @@ fn data_server_revision_drops_older() {
 }
 
 fn open_moments() -> Arc<Store> {
-    let db = Arc::new(Store::open_models(None, crate::store::spec_fixtures::all_specs(), None).unwrap());
-    crate::store::spec_fixtures::put(&db, "moments", json!({"id": "m1", "userId": "u1", "text": "old"}));
-    crate::store::spec_fixtures::put(&db, "vibes", json!({"id": "m1", "momentId": "m1", "kind": "like"}));
+    let db = Arc::new(Store::open_models(None, crate::store::fixtures::all_specs(), None).unwrap());
+    crate::store::fixtures::put(&db, "moments", json!({"id": "m1", "userId": "u1", "text": "old"}));
+    crate::store::fixtures::put(&db, "vibes", json!({"id": "m1", "momentId": "m1", "kind": "like"}));
     db
 }
 
@@ -113,7 +113,7 @@ fn feed(db: &Store, events: Vec<Value>) -> crate::store::batch_write::BatchWritt
 #[test]
 fn feed_event_delete_cascade() {
     let db = open_moments();
-    crate::store::spec_fixtures::put(&db, "vibes", json!({"id": "v2", "momentId": "m1", "kind": "wow"}));
+    crate::store::fixtures::put(&db, "vibes", json!({"id": "v2", "momentId": "m1", "kind": "wow"}));
     let count = |model: &str| db.read(&[model], |reader| Ok(reader.point(model, "m1")?.is_some() as usize + reader.point(model, "v2")?.is_some() as usize)).unwrap();
     assert_eq!((count("moments"), count("vibes")), (1, 2));
     feed(&db, vec![json!({"op": "delete", "model": "moments", "id": "m1"})]);
@@ -122,13 +122,13 @@ fn feed_event_delete_cascade() {
 
 #[test]
 fn feed_event_touch_parent_once() {
-    let mut specs = crate::store::spec_fixtures::all_specs();
+    let mut specs = crate::store::fixtures::all_specs();
     for association in specs.iter_mut().filter(|spec| spec.key.as_str() == "messages").flat_map(|spec| spec.associations.iter_mut()) {
         association.sets.clear();
         association.newer.clear();
     }
     let db = Arc::new(Store::open_models(None, specs, None).unwrap());
-    crate::store::spec_fixtures::put(&db, "chats", json!({"id": "c1"}));
+    crate::store::fixtures::put(&db, "chats", json!({"id": "c1"}));
     let revision_of = |id: &str| db.read(&["chats"], |reader| Ok(reader.stored_row("chats", id)?.map(|row| row.revision))).unwrap();
     let before = revision_of("c1");
     let message = |id: &str, chat: &str| json!({"op": "upsert", "model": "messages", "id": id, "row": {"id": id, "chatId": chat}});

@@ -5,7 +5,7 @@ use serde_json::{json, Value};
 use crate::owners::contract::BatchAuthor;
 use crate::owners::read::windows::WindowKey;
 use crate::owners::store::{RowValue, StoreBatch, StoreOp};
-use crate::store::spec_fixtures::{all_specs, put};
+use crate::store::fixtures::{all_specs, put};
 use crate::store::Store;
 
 fn write(db: &Arc<Store>, author: BatchAuthor, rows: Vec<(String, String)>, ops: Vec<StoreOp>) {

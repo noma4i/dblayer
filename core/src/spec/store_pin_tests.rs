@@ -92,7 +92,7 @@ fn store_prop_tombstone_flight() {
     use crate::owners::read::windows::WindowKey;
     use crate::owners::store::{RowValue, StoreOp};
 
-    let db = Store::open_models(None, crate::store::spec_fixtures::all_specs(), None).map(std::sync::Arc::new).unwrap();
+    let db = Store::open_models(None, crate::store::fixtures::all_specs(), None).map(std::sync::Arc::new).unwrap();
     let clock = Arc::new(crate::runtime::ManualClock::new(Duration::from_secs(1)));
     db.set_clock(clock.clone());
     let row = |id: &str| RowValue { row_id: id.into(), values: format!(r#"{{"id":"{id}","text":"value"}}"#) };

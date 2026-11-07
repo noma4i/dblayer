@@ -1,7 +1,7 @@
 use serde_json::{json, Map, Value};
 
 use super::normalize::normalize_nodes;
-use crate::store::spec_fixtures::all_specs;
+use crate::store::fixtures::all_specs;
 use crate::store::Store;
 
 fn nodes(value: Value) -> Vec<Map<String, Value>> {

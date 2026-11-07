@@ -3,7 +3,7 @@
 use serde_json::{json, Value};
 
 use crate::schema::{ActionDeclaration, FieldSpec, MergeRule, ModelSpec, RootShape, SchemaError};
-use crate::store::spec_fixtures::{obj, rid};
+use crate::store::fixtures::{id, row};
 use crate::store::{CoreError, Store};
 use crate::value::ScalarKind;
 
@@ -31,7 +31,7 @@ fn notes() -> Store {
     );
     spec.actions.push(ActionDeclaration::new("touch", RootShape::Upsert));
     let db = Store::open_models(None, vec![spec], None).unwrap();
-    crate::store::spec_fixtures::put(&db, "notes", json!({"id": "n1", "title": "kept"}));
+    crate::store::fixtures::put(&db, "notes", json!({"id": "n1", "title": "kept"}));
     db
 }
 
@@ -58,9 +58,9 @@ fn data_nested_write_rejects_path() {
         (json!({"media": {"kind": "IMAGE", "width": 3}, "replies": [{"body": "a", "user": {"id": "u1"}}]}), "ok"),
     ];
     for (values, expected) in cases {
-        let created = verdict(db.plan_create("notes", obj(values.clone()), Default::default()));
-        let updated = verdict(db.plan_update("notes", &rid("n1"), obj(values.clone()), Default::default()));
-        let acted = verdict(db.plan_act("notes", "touch", &rid("n1"), obj(values.clone()), Default::default()));
+        let created = verdict(db.plan_create("notes", row(values.clone()), Default::default()));
+        let updated = verdict(db.plan_update("notes", &id("n1"), row(values.clone()), Default::default()));
+        let acted = verdict(db.plan_act("notes", "touch", &id("n1"), row(values.clone()), Default::default()));
         assert_eq!((created.as_str(), updated.as_str(), acted.as_str()), (expected, expected, expected), "{values}");
     }
 }
@@ -69,7 +69,7 @@ fn data_nested_write_rejects_path() {
 fn data_nested_write_rejects_path_on_set_local() {
     let db = notes();
     for (value, expected) in [(json!({"text": "hi", "nope": 1}), "unknown draft.nope"), (json!({"text": 5}), "other value for local field draft of notes is invalid"), (json!({"text": "hi"}), "ok")] {
-        assert_eq!(verdict(db.plan_set_local("notes", &rid("n1"), "draft", value.clone())), expected, "{value}");
+        assert_eq!(verdict(db.plan_set_local("notes", &id("n1"), "draft", value.clone())), expected, "{value}");
     }
 }
 

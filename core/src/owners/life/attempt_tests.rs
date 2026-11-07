@@ -4,7 +4,7 @@ use serde_json::json;
 
 use crate::store::Store;
 
-use crate::store::spec_fixtures::{booted, put};
+use crate::store::fixtures::{booted, put};
 use crate::owners::contract::BatchAuthor;
 use crate::owners::store::{EffectRow, IntentEffects, StoreBatch, StoreOp};
 
