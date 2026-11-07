@@ -47,7 +47,7 @@ pub(crate) mod exchange_tests;
 #[cfg(test)]
 mod credential_reenter_tests;
 #[cfg(test)]
-mod bootstrap_tests;
+pub(crate) mod bootstrap_tests;
 #[cfg(test)]
 mod graphql_tests;
 #[cfg(test)]

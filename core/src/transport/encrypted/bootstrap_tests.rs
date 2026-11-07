@@ -55,7 +55,7 @@ async fn sends_bootstrap_to_the_application_path() {
     assert!(matches!(result, Err(TransportError::Http { status: 400, .. })));
 }
 fn text<'a>(value: &'a Value, key: &str) -> &'a str { value[key].as_str().unwrap() }
-fn configuration() -> EncryptedConfig {
+pub(crate) fn configuration() -> EncryptedConfig {
     let k = kat();
     let private = RsaPrivateKey::from_pkcs1_pem(text(&k, "rsa_private_pem")).unwrap();
     let mut config = EncryptedConfig { origin: text(&k, "audience").into(), server_key: STANDARD.encode(private.to_public_key().to_public_key_der().unwrap().as_bytes()), pin: text(&k, "kid").into(), ..crate::transport::encrypted::protocol_tests::config() };
@@ -244,6 +244,7 @@ fn answered(edit: impl Fn(&mut Value) + Send + Sync + 'static) -> Step {
     })
 }
 fn good() -> Step { answered(|_| {}) }
+pub(crate) fn good_reply(token: &str) -> HttpReply { let plain: Value = serde_json::from_str(&decrypt_request(token)).unwrap(); good()(&plain).unwrap() }
 fn status(status: u16) -> Step { Box::new(move |_| Ok(HttpReply { status, body: String::new() })) }
 fn failing(kind: crate::transport::RawFailureKind) -> Step {
     Box::new(move |_| Err(crate::transport::classify(&crate::transport::RawFailure::of_kind(kind, "x"), crate::transport::ExchangeKind::Post)))

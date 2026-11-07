@@ -272,7 +272,7 @@ async fn dropping_the_bootstrap_call_cancels_the_inflight_http_future() {
     let stopped = Arc::new(tokio::sync::Notify::new());
     let http = Arc::new(Waiting { started: tokio::sync::Notify::new(), stopped: stopped.clone() });
     let config = crate::transport::EncryptedConfig { origin: origin().into(), pin: pin().into(), server_key: public_key_der_b64().into(), ..crate::transport::encrypted::protocol_tests::config() };
-    let mut call = Box::pin(super::encrypted::fetch_server_config_with(config, crate::transport::AppPlatform::Ios, "1.2".into(), None, http.clone(), None, super::encrypted::Waits { connectivity: crate::transport::Connectivity::new(true), clock: Arc::new(SystemClock) }));
+    let mut call = Box::pin(super::encrypted::fetch_server_config_with(config, crate::transport::AppPlatform::Ios, "1.2".into(), None, http.clone(), None, super::encrypted::Waits { connectivity: crate::transport::Connectivity::new(true), clock: Arc::new(crate::runtime::ManualClock::default()) }));
     crate::test_wait::timeout(std::time::Duration::from_secs(2), async {
         tokio::select! { _ = http.started.notified() => {}, result = &mut call => panic!("unexpected completion {:?}", result.map(|_| ())) }
     }).await.unwrap();
@@ -415,12 +415,15 @@ async fn retry_progress_delivers_the_current_snapshot_to_each_reader_and_a_slow_
     let (release, gate) = std::sync::mpsc::channel();
     let (slow, mut slow_seen) = tap(Some(gate));
     let slow_subscription = retries.subscribe(slow.clone()).unwrap();
+    let clock = super::TestClock::new(1_800_000_000_000);
     let call = tokio::spawn({
-        let retries = retries.clone();
-        async move { super::encrypted::fetch_server_config_with(config, crate::transport::AppPlatform::Ios, "1.2".into(), None, http, Some(retries), super::encrypted::Waits { connectivity: crate::transport::Connectivity::new(true), clock: Arc::new(SystemClock) }).await }
+        let (retries, clock) = (retries.clone(), clock.manual());
+        async move { super::encrypted::fetch_server_config_with(config, crate::transport::AppPlatform::Ios, "1.2".into(), None, http, Some(retries), super::encrypted::Waits { connectivity: crate::transport::Connectivity::new(true), clock }).await }
     });
 
-    crate::test_wait::timeout(std::time::Duration::from_secs(5), posts.wait_for(|posts| *posts >= 2)).await.expect("the request retried while the first delivery blocked").unwrap();
+    crate::test_wait::within(clock.await_armed(0)).await;
+    clock.advance(1_000);
+    crate::test_wait::timeout(std::time::Duration::from_secs(5), posts.wait_for(|posts| *posts == 2)).await.expect("the request retried while the first delivery blocked").unwrap();
     assert!(slow_seen.borrow().is_none(), "the blocked reader has not seen anything yet");
     assert_eq!(retries.current().active_calls, 1);
 

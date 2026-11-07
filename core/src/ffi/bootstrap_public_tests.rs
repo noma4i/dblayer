@@ -13,20 +13,23 @@ struct Platform {
     sink: Mutex<Option<Arc<OnlineSink>>>,
     started: Mutex<std::sync::mpsc::Sender<()>>,
     stops: AtomicUsize,
+    at_start: Vec<bool>,
 }
 
 impl PlatformObserver for Platform {
     fn start(&self, sink: Arc<OnlineSink>) {
-        *self.sink.lock().unwrap() = Some(sink);
+        *self.sink.lock().unwrap() = Some(sink.clone());
+        for online in &self.at_start { sink.set_online(*online); }
         self.started.lock().unwrap().send(()).unwrap();
     }
     fn stop(&self) { self.stops.fetch_add(1, Ordering::SeqCst); }
 }
 
 impl Platform {
-    fn offline() -> (Arc<Self>, std::sync::mpsc::Receiver<()>) {
+    fn offline() -> (Arc<Self>, std::sync::mpsc::Receiver<()>) { Self::reporting(&[]) }
+    fn reporting(at_start: &[bool]) -> (Arc<Self>, std::sync::mpsc::Receiver<()>) {
         let (started, heard) = std::sync::mpsc::channel();
-        (Arc::new(Self { sink: Mutex::default(), started: Mutex::new(started), stops: AtomicUsize::new(0) }), heard)
+        (Arc::new(Self { sink: Mutex::default(), started: Mutex::new(started), stops: AtomicUsize::new(0), at_start: at_start.to_vec() }), heard)
     }
     fn go_online(&self) {
         let sink = self.sink.lock().unwrap().clone().unwrap();
@@ -129,4 +132,36 @@ async fn life_bootstrap_cancel() {
     subscription.cancel();
     yield_until("the subscription task ended", || subscription.task.is_finished()).await;
     assert_eq!(http.requests.load(Ordering::SeqCst), 1);
+}
+
+struct Answering { requests: AtomicUsize, clock: Arc<TestClock> }
+
+#[async_trait]
+impl FakeHttp for Answering {
+    async fn post(&self, _: String, body: String, _: crate::transport::NetworkPurpose) -> Result<EncryptedReply, DbError> {
+        assert_eq!(self.requests.fetch_add(1, Ordering::SeqCst), 0, "the fetch sent a second request");
+        assert_eq!(self.clock.armed(), 0, "a timer was armed before the first answer");
+        let reply = crate::transport::encrypted::bootstrap_tests::good_reply(&body);
+        Ok(EncryptedReply { status: reply.status, body: reply.body })
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn life_prop_bootstrap_start_orders() {
+    let mut configs = Vec::new();
+    for (order, at_start, after_call) in [("online before the call", &[true][..], false), ("online after the call", &[][..], true), ("flap before the first request", &[true, false][..], true)] {
+        let (platform, started) = Platform::reporting(at_start);
+        let clock = TestClock::new(1_800_000_000_000);
+        let http = Arc::new(Answering { requests: AtomicUsize::new(0), clock: clock.clone() });
+        let call = tokio::spawn({
+            let (http, clock, platform) = (http.clone(), clock.clone(), platform.clone());
+            async move { super::fetch_server_config_with_clock(crate::transport::encrypted::bootstrap_tests::configuration(), AppPlatform::Ios, "1.2".into(), None, super::FetchPorts { http, retries: None, observers: Some(platform) }, clock).await }
+        });
+        recv_within(&started);
+        if after_call { platform.go_online(); }
+        let config = within(call).await.unwrap().unwrap_or_else(|error| panic!("{order}: {error:?}"));
+        assert_eq!((http.requests.load(Ordering::SeqCst), clock.armed()), (1, 0), "{order}");
+        configs.push(config);
+    }
+    assert!(configs.iter().all(|config| *config == configs[0]), "the result differs across orders");
 }
