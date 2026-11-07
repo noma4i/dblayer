@@ -344,7 +344,7 @@ impl Database {
     }
     pub async fn run(&self, epoch: u64, operation: String, variables_json: String) -> Result<String, DbError> {
         self.remote()?;
-        let variables_json = self.offload(move || { parse_json::<Value>(&variables_json)?; Ok(variables_json) }).await?;
+        let variables_json = self.offload(move || Ok(parse_json::<Value>(&variables_json)?.to_string())).await?;
         match self.await_life(self.life.run(epoch, operation, variables_json)).await? {
             LifeReply::Call(Ok(answer)) => Ok(answer),
             LifeReply::Call(Err(error)) => Err(call_failure(error)),

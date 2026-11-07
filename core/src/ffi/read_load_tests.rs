@@ -63,7 +63,7 @@ async fn open(gated: bool) -> (Arc<Database>, Arc<Pages>) {
 
 async fn first_value(db: &Database) -> (Arc<ReadStream>, ReadValue) {
     let stream = db.subscribe_values(db.session_epoch(), ReadRequest::List { query: crate::ffi::QuerySpec::json(LIST) });
-    let value = tokio::time::timeout(LIMIT, stream.pull()).await.expect("a value within 5 s").unwrap().expect("a value");
+    let value = tokio::time::timeout(LIMIT, stream.pull()).await.expect("a value within 5 s").expect("a value");
     (stream, value)
 }
 
@@ -198,7 +198,7 @@ async fn a_panic_in_the_snapshot_read_ends_the_wait_of_the_stream_with_an_error_
     db.db.panic_reads.store(crate::store::PANIC_VIEW_READ, Ordering::SeqCst);
     let stream = db.subscribe_values(db.session_epoch(), ReadRequest::List { query: crate::ffi::QuerySpec::json(LIST) });
     let value = crate::test_wait::within(stream.pull()).await;
-    assert!(matches!(&value, Ok(Some(ReadValue::Snapshot { state, .. })) if state.phase == ReadPhase::Failed) || matches!(&value, Ok(Some(ReadValue::Ended { .. })) | Err(_)), "the stream ends its wait with an error or its end: {value:?}");
+    assert!(matches!(&value, Some(ReadValue::Snapshot { state, .. }) if state.phase == ReadPhase::Failed) || matches!(&value, Some(ReadValue::Ended { .. })), "the stream ends its wait with an error or its end: {value:?}");
     crate::test_wait::yield_until("Lifecycle did not close after the snapshot read panic", || db.life.published().closed).await;
 }
 
@@ -227,7 +227,7 @@ async fn a_blob_stream_follows_the_transfer_of_its_model_row_and_action() {
     let stream = db.subscribe_values(db.session_epoch(), ReadRequest::Blob { model: "Moment".into(), id: "m1".into(), action: "upload".into() });
     db.shows.put(&crate::store::transfer_key("Moment", "m1", "upload"), crate::owners::write::transfer::Shown::Uploading { progress: 40 });
     loop {
-        match crate::test_wait::within(stream.pull()).await.unwrap().expect("a value") {
+        match crate::test_wait::within(stream.pull()).await.expect("a value") {
             ReadValue::Status { state, progress, .. } if state == "uploading" => { assert_eq!(progress, 40); break; }
             _ => {}
         }

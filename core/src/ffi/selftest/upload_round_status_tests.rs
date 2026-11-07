@@ -36,9 +36,9 @@ async fn a_refused_round_shows_its_reason_on_the_upload_until_the_next_round_is_
     yield_until("the first round is asked", || !jobs.asked.lock().unwrap().is_empty()).await;
     let (request, round_epoch) = jobs.asked.lock().unwrap()[0];
 
-    database.round_refused(request, round_epoch, "the app was not visible".into());
+    database.round_refused(request, round_epoch, crate::ffi::RoundRefusal::JobRefused, String::new());
 
-    yield_until("the row shows the refusal", || refusal(&rows).is_some_and(|message| message.contains("the app was not visible"))).await;
+    yield_until("the row shows the refusal", || refusal(&rows).is_some_and(|message| message.contains("while the app was not visible"))).await;
     crate::ffi::OnlineSink::of_life(&database.life).enter_foreground();
     yield_until("the next round clears the refusal", || refusal(&rows).is_none()).await;
     database.close_now();

@@ -73,7 +73,7 @@ pub use crate::transport::{AppPlatform, ConfigCode, EncryptedConfig, EncryptedEn
 pub use loading::{LoadMoreResult, LoadRequest};
 pub use command::CommandRequest;
 pub use read::{ReadEnd, ReadFetch, ReadPhase, ReadRequest, ReadState, ReadStream, ReadValue, RowEdit};
-pub use upload_rounds::{RoundJob, RoundJobsSink};
+pub use upload_rounds::{RoundJob, RoundJobsSink, RoundRefusal};
 pub use wire::{Cell, CellEntry, WireFailure, WireFile, WireModel, WireRow, WireSync, WireSyncState, WireProcessing, WireUpload, WireUploadStatus};
 pub(crate) use queue::queue_of;
 pub use queue::{OperationInfo, OperationQueueStatus};

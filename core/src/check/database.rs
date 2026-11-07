@@ -99,6 +99,7 @@ fn cause_name(end: &ReadEnd) -> &'static str {
         ReadEnd::Cancelled => "cancelled",
         ReadEnd::Invalid => "invalid",
         ReadEnd::Storage { .. } => "storage",
+        ReadEnd::Internal { .. } => "internal",
     }
 }
 
@@ -288,7 +289,7 @@ impl DatabaseSut {
         } else {
             (None, None, None)
         };
-        let opened = OpenDatabase::new().open_with_clock(config, if models == "events" { EVENT_MODELS } else { MODELS }.into(), crate::ffi::OpenPorts { transport: Some(transport), encrypted, credentials, http, endpoint: Some(crate::ffi::FAKE_ENDPOINT.into()) }, self.clock.clone()).await;
+        let opened = OpenDatabase::new().open_with_clock(config, if models == "events" { EVENT_MODELS } else { MODELS }.into(), crate::ffi::OpenPorts { transport: Some(transport), encrypted, credentials, http, endpoint: Some(crate::ffi::FAKE_ENDPOINT.into()) }, self.clock.clone(), crate::ffi::OpenOptions::default(), None).await;
         match opened {
             Ok(database) => {
                 if database.register_operations(OPERATIONS.into()).await.is_err() { return error("operations"); }
@@ -532,7 +533,7 @@ impl DatabaseSut {
         let launch = database.life_handle().launch();
         let task = crate::task::spawn(crate::task::Carry::here(), crate::runtime::counted(Some(launch), async move {
             let mut seq = 0;
-            while let Ok(Some(value)) = pulling.pull().await {
+            while let Some(value) = pulling.pull().await {
                 seq += 1;
                 kept.lock().unwrap().push_back((seq, value));
                 heard.0.fetch_add(1, Ordering::SeqCst);

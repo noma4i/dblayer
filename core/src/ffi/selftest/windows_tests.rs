@@ -42,7 +42,7 @@ async fn open_pages() -> (Arc<Database>, Arc<Pages>) {
     });
     model.relations.push(feed);
     let pages = Arc::new(Pages { queries: AtomicUsize::new(0), gates: Mutex::new(HashMap::new()) });
-    let database = OpenDatabase::new().open_with_clock(Config { path: None, data_version: None }, serde_json::to_string(&vec![model]).unwrap(), crate::ffi::OpenPorts { transport: Some(pages.clone()), endpoint: Some(crate::ffi::FAKE_ENDPOINT.into()), ..Default::default() }, TestClock::new(1_000_000)).await.unwrap();
+    let database = OpenDatabase::new().open_with_clock(Config { path: None, data_version: None }, serde_json::to_string(&vec![model]).unwrap(), crate::ffi::OpenPorts { transport: Some(pages.clone()), endpoint: Some(crate::ffi::FAKE_ENDPOINT.into()), ..Default::default() }, TestClock::new(1_000_000), crate::ffi::OpenOptions::default(), None).await.unwrap();
     database.register_operations(r#"[{"name":"Feed","document":"query Feed { feed { nodes { id text } pageInfo { hasNextPage endCursor } } }","rootPath":"feed"}]"#.into()).await.unwrap();
     database.set_online(true).unwrap();
     (database, pages)
@@ -145,7 +145,7 @@ fn presence() -> ModelSpec {
 async fn memory_expiry_follows_the_last_write() {
     let models = vec![presence()];
     let clock = TestClock::new(1_000_000);
-    let database = OpenDatabase::new().open_with_clock(Config { path: None, data_version: None }, serde_json::to_string(&models).unwrap(), crate::ffi::OpenPorts::default(), clock.clone()).await.unwrap();
+    let database = OpenDatabase::new().open_with_clock(Config { path: None, data_version: None }, serde_json::to_string(&models).unwrap(), crate::ffi::OpenPorts::default(), clock.clone(), crate::ffi::OpenOptions::default(), None).await.unwrap();
 
     bound(database.create(database.session_epoch(), "presence".into(), r#"{"id":"p1","room":"a"}"#.into(), "{}".into())).await.unwrap();
     clock.advance(29_000);

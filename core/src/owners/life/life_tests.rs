@@ -254,7 +254,7 @@ async fn net_open_power_saving() {
     use std::sync::Mutex;
     let slot = crate::ffi::OpenDatabase::new();
     let config = crate::ffi::Config { path: None, data_version: None };
-    let options = crate::ffi::OpenOptions { operations: Vec::new() };
+    let options = crate::ffi::OpenOptions::default();
     let transport = Arc::new(crate::ffi::database_tests::Plain);
     struct Saving;
     impl crate::ffi::PlatformObserver for Saving {

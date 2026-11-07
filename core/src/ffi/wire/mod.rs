@@ -116,6 +116,14 @@ pub struct WireSync {
     pub since: i64,
 }
 
+impl Default for WireSync {
+    fn default() -> Self { Self { state: WireSyncState::Synced, actions: Vec::new(), dirty_fields: Vec::new(), error: None, attempts: 0, since: 0 } }
+}
+
+/// The sync state of a row the server has not touched.
+#[uniffi::export]
+pub fn default_sync() -> WireSync { WireSync::default() }
+
 #[derive(Clone, Debug, PartialEq, uniffi::Record)]
 pub struct WireRow {
     pub id: String,

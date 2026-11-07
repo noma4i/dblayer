@@ -123,7 +123,7 @@ async fn run_trace(trace: &[Act], check: Check) {
         if let (Some(queue), false) = (&queue, matches!(act, Act::Close)) {
             let stored = rig.db.op_statuses();
             while seen != stored {
-                let Some(crate::ffi::ReadValue::Operations { items, .. }) = within(queue.pull()).await.unwrap() else { panic!("{label} step {index}: the stream gave no queue value") };
+                let Some(crate::ffi::ReadValue::Operations { items, .. }) = within(queue.pull()).await else { panic!("{label} step {index}: the stream gave no queue value") };
                 seen = items.iter().map(|item| (item.seq, format!("{:?}", item.status).to_lowercase())).collect();
             }
         }
@@ -373,7 +373,7 @@ async fn out_queued_drain_limit_api_run() {
 
 async fn queue_until(queue: &crate::ffi::ReadStream, wanted: impl Fn(&[crate::ffi::OperationInfo]) -> bool) -> Vec<crate::ffi::OperationInfo> {
     loop {
-        let Some(crate::ffi::ReadValue::Operations { items, .. }) = within(queue.pull()).await.unwrap() else { panic!("the queue stream ended") };
+        let Some(crate::ffi::ReadValue::Operations { items, .. }) = within(queue.pull()).await else { panic!("the queue stream ended") };
         if wanted(&items) { return items; }
     }
 }

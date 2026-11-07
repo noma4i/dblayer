@@ -93,7 +93,7 @@ async fn inv_row_05_run() {
 
 async fn observed_texts(rig: &Rig) -> Vec<String> {
     let stream = rig.db.subscribe_values(rig.epoch(), ReadRequest::List { query: crate::ffi::QuerySpec::json(r#"{"model":"Moment"}"#) });
-    let Some(ReadValue::Snapshot { rows, .. }) = within(stream.pull()).await.unwrap() else { panic!("the first value of a list is a snapshot") };
+    let Some(ReadValue::Snapshot { rows, .. }) = within(stream.pull()).await else { panic!("the first value of a list is a snapshot") };
     within(stream.cancel()).await;
     rows.iter().map(|row| match &row.cells[..] { [Cell::Text { value }] => value.clone(), other => panic!("{other:?}") }).collect()
 }

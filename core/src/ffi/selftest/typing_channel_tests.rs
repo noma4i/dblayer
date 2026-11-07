@@ -35,17 +35,17 @@ async fn a_memory_model_with_subscribe_receives_the_frames_of_its_channel() {
     bound(database.session_call("social".into(), SOCIAL_BODY.into())).await.unwrap();
     let stream = database.subscribe_values(database.session_epoch(), ReadRequest::Events { model: "Typing".into() });
     let token = crate::test_wait::within(subscriptions.recv()).await.unwrap();
-    let opened = bound(stream.pull()).await.unwrap();
+    let opened = bound(stream.pull()).await;
     assert!(matches!(opened, Some(ReadValue::Ready)), "the first value is the open source: {opened:?}");
     assert!(peer.cable.event(&token, json!({"data":{"userTyping":{"id":"t1","userId":"u1"}}})), "the subscription is open");
-    let event = bound(stream.pull()).await.unwrap();
+    let event = bound(stream.pull()).await;
     assert!(matches!(event, Some(ReadValue::Event { .. })), "the frame of the channel did not reach the events stream: {event:?}");
     database.close_now();
 }
 
 async fn until<F: Fn(&ReadValue) -> bool>(stream: &crate::ffi::ReadStream, what: &str, wanted: F) -> ReadValue {
     for _ in 0..20 {
-        let value = bound(stream.pull()).await.unwrap().unwrap_or_else(|| panic!("{what}: the stream ended"));
+        let value = bound(stream.pull()).await.unwrap_or_else(|| panic!("{what}: the stream ended"));
         if wanted(&value) { return value; }
     }
     panic!("{what}: no such value")

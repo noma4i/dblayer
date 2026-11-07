@@ -30,6 +30,6 @@ async fn bridge_subscription_without_a_session_ends_for_a_server_relation() {
     let db = Database::open(Config { path: None, data_version: None },
         serde_json::to_string(&vec![model]).unwrap(), dblayer::ffi::OpenPorts::default()).await.unwrap();
     let stream = db.subscribe_values(db.session_epoch(), ReadRequest::List { query: dblayer::ffi::QuerySpec { model: "Moment".into(), relation: Some("feed".into()), params_json: "{}".into(), conditions: Vec::new(), order: Vec::new(), limit: None, offset: None, refresh_on_connect: false } });
-    let first = tokio::time::timeout(std::time::Duration::from_secs(10), stream.pull()).await.expect("the stream got a value").unwrap();
+    let first = tokio::time::timeout(std::time::Duration::from_secs(10), stream.pull()).await.expect("the stream got a value");
     assert!(matches!(first, Some(ReadValue::Ended { cause: ReadEnd::SessionEnded })), "first value {first:?}");
 }

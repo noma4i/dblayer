@@ -1,7 +1,8 @@
 use super::*;
+use crate::ffi::ConfigCode;
 
 fn config() -> Config { Config { path: None, data_version: None } }
-fn options() -> OpenOptions { OpenOptions { operations: Vec::new() } }
+fn options() -> OpenOptions { OpenOptions::default() }
 async fn open(slot: &OpenDatabase) -> Result<Arc<Database>, DbError> {
     slot.open(config(), "[]".into(), options(), crate::ffi::OpenPorts::default(), None).await
 }
@@ -127,7 +128,7 @@ async fn open_carries_the_upload_declaration_and_frees_the_slot_when_it_is_refus
     use super::super::database_tests::Plain;
     let slot = OpenDatabase::new();
     for (name, accepted) in [("Missing", false), ("CreateBlob", true)] {
-        let options = OpenOptions { operations: vec![OperationDefinition { name: "CreateBlob".into(), document: "mutation CreateBlob { createBlob { url } }".into() }] };
+        let options = OpenOptions { operations: vec![OperationDefinition { name: "CreateBlob".into(), document: "mutation CreateBlob { createBlob { url } }".into() }], ..Default::default() };
         let opened = slot.open(config(), clip_with_blob(name), options, crate::ffi::OpenPorts { transport: Some(Arc::new(Plain)), endpoint: Some(crate::ffi::FAKE_ENDPOINT.into()), ..Default::default() }, None).await;
         match opened {
             Ok(_) => assert!(accepted, "{name} was opened"),
@@ -212,4 +213,18 @@ fn the_round_job_carries_the_round_id_the_core_numbered() {
     assert!(slot.set(asked.clone()));
     slot.schedule_job((1u64 << 32) + 5, 9);
     assert_eq!(*asked.0.lock().unwrap(), [RoundJob { request_id: (1 << 32) + 5, round_id: 5, epoch: 9 }]);
+}
+
+#[tokio::test]
+async fn xfer_android_permission_checked_at_open() {
+    let slot = OpenDatabase::new();
+    for (declared, refused) in [(Some(false), true), (Some(true), false), (None, false)] {
+        let options = OpenOptions { data_sync_declared: declared, ..options() };
+        let opened = slot.open(config(), "[]".into(), options, crate::ffi::OpenPorts::default(), None).await;
+        match (opened, refused) {
+            (Err(DbError::Config { code: ConfigCode::InvalidRequest, detail }), true) => assert!(detail.contains("FOREGROUND_SERVICE_DATA_SYNC"), "{detail}"),
+            (Ok(database), false) => database.close_database().await.unwrap(),
+            (other, _) => panic!("declared {declared:?} gave {:?}", other.map(|_| ())),
+        }
+    }
 }

@@ -17,7 +17,7 @@ async fn open() -> Arc<Database> {
 async fn a_cancel_from_another_task_ends_the_pull_that_waits() {
     let db = open().await;
     let stream = Arc::new(db.subscribe_values(db.session_epoch(), ReadRequest::List { query: crate::ffi::QuerySpec::json(r#"{"model":"Note"}"#) }));
-    assert!(matches!(within(stream.pull()).await.unwrap(), Some(ReadValue::Snapshot { .. })));
+    assert!(matches!(within(stream.pull()).await, Some(ReadValue::Snapshot { .. })));
     let mut pending = Box::pin(stream.pull());
     assert!(std::future::poll_fn(|cx| std::task::Poll::Ready(std::future::Future::poll(pending.as_mut(), cx).is_pending())).await);
 
@@ -26,8 +26,8 @@ async fn a_cancel_from_another_task_ends_the_pull_that_waits() {
         async move { stream.cancel().await }
     });
 
-    assert!(matches!(within(pending).await.unwrap(), Some(ReadValue::Ended { cause: ReadEnd::Cancelled })));
+    assert!(matches!(within(pending).await, Some(ReadValue::Ended { cause: ReadEnd::Cancelled })));
     within(canceller).await.unwrap();
-    assert!(within(stream.pull()).await.unwrap().is_none());
+    assert!(within(stream.pull()).await.is_none());
     within(db.close_database()).await.unwrap();
 }

@@ -196,7 +196,7 @@ impl Database {
             let mut seq = 0;
             loop {
                 match pulled.pull().await {
-                    Ok(Some(value)) => {
+                    Some(value) => {
                         if halt.load(std::sync::atomic::Ordering::SeqCst) { return; }
                         seq += 1;
                         if matches!(value, ReadValue::Ended { .. }) { flag.store(true, std::sync::atomic::Ordering::SeqCst); }
@@ -206,11 +206,7 @@ impl Database {
                             outcome.send_if_modified(|current| current.is_none().then(|| *current = Some(done)).is_some());
                         }
                     }
-                    Ok(None) => return,
-                    Err(error) => {
-                        outcome.send_if_modified(|current| current.is_none().then(|| *current = Some(Err(error))).is_some());
-                        return;
-                    }
+                    None => return,
                 }
             }
         });

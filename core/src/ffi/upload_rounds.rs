@@ -17,6 +17,24 @@ pub struct RoundJob {
     pub epoch: u64,
 }
 
+/// Why the system did not take a round: the platform names the kind of its refusal and passes the text of the system as `detail`, the core words the reason the row shows.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, uniffi::Enum)]
+pub enum RoundRefusal {
+    JobRefused,
+    StartNotAllowed,
+    SchedulerFailed,
+}
+
+impl RoundRefusal {
+    fn reason(self, detail: &str) -> String {
+        match self {
+            Self::JobRefused => "the system refused the user-initiated job while the app was not visible".into(),
+            Self::StartNotAllowed => format!("the system refused to start the upload service: {detail}"),
+            Self::SchedulerFailed => format!("the system scheduler failed: {detail}"),
+        }
+    }
+}
+
 /// The platform schedules and ends the system job. It answers with `round_started`, `round_refused` and `round_ended`.
 #[uniffi::export(with_foreign)]
 pub trait RoundJobsSink: Send + Sync {
@@ -63,7 +81,7 @@ impl Database {
         if self.life.has_rounds() { self.life.round_started(request_id, round_id, epoch); } else { RoundJobs::end_job(&*self.jobs, round_id); }
     }
 
-    pub fn round_refused(&self, request_id: u64, epoch: u64, reason: String) { self.life.round_refused(request_id, epoch, reason); }
+    pub fn round_refused(&self, request_id: u64, epoch: u64, kind: RoundRefusal, detail: String) { self.life.round_refused(request_id, epoch, kind.reason(&detail)); }
 
     pub fn round_ended(&self, round_id: u32, epoch: u64) { self.life.round_ended(round_id, epoch); }
 }

@@ -44,6 +44,7 @@ pub enum ReadEnd {
     Cancelled,
     Invalid,
     Storage { error: String },
+    Internal { detail: String },
 }
 
 /// One step on the list of the reader: an index is a place in the list as it stands after the steps before.
@@ -225,8 +226,8 @@ impl Drop for PullWait<'_> {
 impl ReadStream {
     pub fn resync(&self) { self.life.request_snapshot(self.stream); }
 
-    /// The next value of the stream, `None` once the stream ended and its last value was taken.
-    pub async fn pull(&self) -> Result<Option<ReadValue>, DbError> {
+    /// The next value of the stream, `None` once the stream ended and its last value was taken. A failure of the stream arrives as its last value `Ended`.
+    pub async fn pull(&self) -> Option<ReadValue> {
         let waiter = self.life.pull(self.stream);
         let mut waiting = PullWait { life: &self.life, stream: self.stream, outcome: waiter.id(), armed: true };
         let answer = waiter.wait().await;
@@ -237,13 +238,16 @@ impl ReadStream {
                 if matches!(value, Value::Ended(_)) {
                     self.ended.store(true, std::sync::atomic::Ordering::SeqCst);
                 }
-                read_value(value, self.wire.as_deref()).map(Some)
+                match read_value(value, self.wire.as_deref()) {
+                    Ok(value) => Some(value),
+                    Err(error) => self.finished(ReadEnd::Internal { detail: error.to_string() }),
+                }
             }
-            Outcome::Value(PullAnswer::Done) | Outcome::Closing => Ok(self.finished(ReadEnd::Closed)),
-            Outcome::EpochEnded(_) => Ok(self.finished(ReadEnd::SessionEnded)),
-            Outcome::Internal => Err(DbError::Internal { detail: "the answer of the owner was lost".into() }),
-            Outcome::Value(PullAnswer::Invalid) => Err(DbError::Invalid { detail: "a pull of this stream is waiting already".into() }),
-            Outcome::Value(PullAnswer::Interrupted) => Err(DbError::Interrupted { detail: "the pull was cancelled".into() }),
+            Outcome::Value(PullAnswer::Done) | Outcome::Closing => self.finished(ReadEnd::Closed),
+            Outcome::EpochEnded(_) => self.finished(ReadEnd::SessionEnded),
+            Outcome::Internal => self.finished(ReadEnd::Internal { detail: "the answer of the owner was lost".into() }),
+            Outcome::Value(PullAnswer::Invalid) => self.finished(ReadEnd::Invalid),
+            Outcome::Value(PullAnswer::Interrupted) => self.finished(ReadEnd::Cancelled),
         }
     }
 

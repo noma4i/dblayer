@@ -45,7 +45,7 @@ async fn open(replies: &[&str]) -> (Arc<Database>, Arc<TestClock>) {
 async fn loaded_state(stream: &ReadStream, above: i64) -> ReadState {
     tokio::time::timeout(Duration::from_secs(5), async {
         loop {
-            let (ReadValue::Snapshot { state, .. } | ReadValue::Delta { state, .. } | ReadValue::State { state, .. }) = stream.pull().await.unwrap().expect("a value") else { continue };
+            let (ReadValue::Snapshot { state, .. } | ReadValue::Delta { state, .. } | ReadValue::State { state, .. }) = stream.pull().await.expect("a value") else { continue };
             if state.phase == ReadPhase::Loaded && state.loaded.is_some_and(|at| at >= above) { return state; }
         }
     })
