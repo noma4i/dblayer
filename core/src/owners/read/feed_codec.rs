@@ -50,9 +50,8 @@ impl SchemaFeedCodec {
         let Some(feed) = self.feed() else { return Vec::new() };
         let Some(changes) = root_value(data, &feed.root) else { return Vec::new() };
         let Some(changes) = changes.as_array() else {
-            let mut events = vec![invalid("", format!("{} is no list", feed.root))];
-            events.extend(self.specs().filter(|spec| !spec.changes.is_empty()).map(|spec| FramedEvent { refused: false, ..invalid(spec.key.as_str(), "change feed is no list") }));
-            return events;
+            let events: Vec<FramedEvent> = self.specs().filter(|spec| !spec.changes.is_empty()).map(|spec| invalid(spec.key.as_str(), "change feed is no list")).collect();
+            return if events.is_empty() { vec![invalid("", format!("{} is no list", feed.root))] } else { events };
         };
         let mut events = Vec::new();
         for change in changes {

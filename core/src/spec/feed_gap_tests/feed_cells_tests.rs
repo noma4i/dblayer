@@ -690,6 +690,26 @@ fn feed_changes_not_list() {
 }
 
 #[test]
+fn feed_changes_entry_incomplete() {
+    let mut twin = live_immediate();
+    let connection = twin.connection(To::Active);
+    let counter = twin.counter(connection, Counter::Expected);
+    let events = vec![framed("", "refused", &Reread::None, true), framed("Chat", "c1", &Reread::None, false)];
+    take(&twin.log);
+    twin.post(FeedInput::FrameOpened { connection_id: connection, counter, frame: Frame::Events { id: CHANNEL.into(), events } });
+    let emitted = take(&twin.log);
+    let (got, seen) = twin.split(emitted);
+    assert_eq!((got, seen), (vec![Effect::Commit], vec![]), "the entry takes no position, the next entry of the frame goes to the Store");
+    twin.owner_batches.clear();
+    assert_eq!(twin.reference.step(chat("c1")), [Effect::Commit], "the reference sees the entries that go");
+    twin.reference.take_marks();
+    assert_eq!(census_refused(&mut twin), 1, "the entry without area, kind or id counts once");
+    assert_eq!(twin.reference.refused, 0, "the reference has no input for a refused entry without a model");
+    twin.step(Input::Committed);
+    assert_eq!(twin.shown, [Obs::Event { stream: CHAT, position: 1, payload: "c1".into() }]);
+}
+
+#[test]
 fn feed_live_verdict_by_batch() {
     let mut twin = live_immediate();
     for payload in ["c1", "c2", "c3"] {
