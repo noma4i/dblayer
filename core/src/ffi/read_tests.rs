@@ -185,3 +185,32 @@ async fn inv_api_06_an_events_stream_that_cannot_open_its_subscription_reports_t
     let value = next(&stream).await;
     assert!(matches!(value, ReadValue::Ended { .. }), "no subscription can open here: the stream ends with its cause instead of waiting: {value:?}");
 }
+
+/// Requirement: P-DATA-91, a query window of `limit` rows after `offset` rows in `order`.
+/// Observable: the rows of the snapshot, the edits of the delta after a row enters the window, the count, the end of a stream with a bad window. Assert: the window rows, at most `limit`, the entering row as `Insert` and the pushed out row as `Remove`, a count of all rows, `Ended(Invalid)` for `limit` 0 and a negative `offset`.
+#[tokio::test(flavor = "multi_thread")]
+async fn data_query_limit_offset() {
+    let db = open().await;
+    let epoch = db.session_epoch();
+    for (id, text) in [("n1", "a"), ("n2", "b"), ("n3", "c"), ("n4", "d")] {
+        db.create(epoch, "Note".into(), format!(r#"{{"id":"{id}","text":"{text}"}}"#), "{}".into()).await.unwrap();
+    }
+    let window = r#"{"model":"Note","order":[{"field":"text","direction":"asc"}],"limit":2,"offset":1}"#;
+    let list = db.subscribe_values(epoch, ReadRequest::List { query_json: window.into() });
+    let count = db.subscribe_values(epoch, ReadRequest::Count { query_json: window.into() });
+    let ReadValue::Snapshot { mut rows, .. } = next(&list).await else { panic!("the first value is a snapshot") };
+    assert_eq!(ids(&rows), ["n2", "n3"]);
+    assert!(matches!(next(&count).await, ReadValue::Count { count: 4, .. }));
+    db.create(epoch, "Note".into(), r#"{"id":"n5","text":"ab"}"#.into(), "{}".into()).await.unwrap();
+    let ReadValue::Delta { edits, .. } = next(&list).await else { panic!("the next value is a delta") };
+    assert!(edits.iter().any(|edit| matches!(edit, RowEdit::Insert { row, .. } if row.id == "n5")), "{edits:?}");
+    assert!(edits.iter().any(|edit| matches!(edit, RowEdit::Remove { id, .. } if id == "n3")), "{edits:?}");
+    RowEdit::replay(&mut rows, &edits);
+    assert_eq!(ids(&rows), ["n5", "n2"]);
+    assert!(matches!(next(&count).await, ReadValue::Count { count: 5, .. }));
+    for bad in [r#"{"model":"Note","limit":0}"#, r#"{"model":"Note","offset":-1}"#] {
+        let stream = db.subscribe_values(epoch, ReadRequest::List { query_json: bad.into() });
+        assert!(matches!(next(&stream).await, ReadValue::Ended { cause: ReadEnd::Invalid }), "{bad}");
+    }
+    crate::test_wait::within(db.close_database()).await.unwrap();
+}

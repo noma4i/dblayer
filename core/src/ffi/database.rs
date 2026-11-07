@@ -381,7 +381,7 @@ impl Database {
     }
 
     pub(super) fn parsed_query(&self, json: &str) -> Result<crate::store::ParsedQuery, DbError> {
-        serde_json::from_str::<Query>(json)?;
+        if serde_json::from_str::<Query>(json)?.limit == Some(0) { return Err(DbError::Invalid { detail: "a query limit must be positive".into() }); }
         Ok(self.db.parse_query(json)?)
     }
 }
