@@ -8,7 +8,7 @@ use std::rc::Rc;
 use std::sync::atomic::AtomicU64;
 use std::sync::{Arc, PoisonError};
 
-use super::ref_feed::{Counter, Effect, Feed as Ref, Input, Kind, Mode, Obs, Reject, To};
+use super::ref_feed::{Counter, Effect, Feed as Ref, Input, Kind, Mode, Obs, Reject, Reread, To};
 use crate::owners::contract::{BatchId, Committed, ConnectionId, EpochEnded, EpochStarted, ModelsReset, Online, RejectReason, Rejected};
 use crate::owners::read::deliveries::{Deliveries, DeliveryInput};
 use crate::owners::read::feed::{self as f, Feed, FeedEffect, FeedInput, FeedPeers, Frame, FramedEvent, Outgoing, Protocol, ProtocolReason};
@@ -53,9 +53,14 @@ fn model_of(stream: u64) -> &'static str { if stream == POST { "Post" } else { "
 
 fn names(models: &[&str]) -> Vec<String> { models.iter().map(|model| model.to_string()).collect() }
 
-fn key() -> BTreeSet<WindowKey> { BTreeSet::from([WindowKey { model: "Chat".into(), name: "all".into() }]) }
-
-fn framed(model: &str, payload: &str, reread: bool) -> FramedEvent { FramedEvent { model: model.into(), payload: payload.into(), reread: if reread { StaleKeys::Set(key()) } else { StaleKeys::none() }, refused: false } }
+fn framed(model: &str, payload: &str, reread: &Reread, refused: bool) -> FramedEvent {
+    let reread = match reread {
+        Reread::None => StaleKeys::none(),
+        Reread::All => StaleKeys::All,
+        Reread::Set(names) => StaleKeys::Set(names.iter().map(|name| WindowKey { model: model.into(), name: name.clone() }).collect()),
+    };
+    FramedEvent { model: model.into(), payload: payload.into(), reread, refused }
+}
 
 fn add_feed(det: &mut DetScheduler, log: &Spied, state: f::FeedState, runner: impl EffectRunner<Spy<Feed>>) -> Address<Spy<Feed>> {
     det.add::<Sink<StoreWriter>>("store", new_log(), Discard);
@@ -82,12 +87,14 @@ struct Twin {
     reference: Ref,
     debounce_ms: u64,
     batches: VecDeque<BatchId>,
+    used: Vec<BatchId>,
+    owner_batches: Vec<String>,
     generation: u64,
     /// `(connection, counter)` of every `Seal` the owner gave out.
     sealed: Vec<(ConnectionId, u64)>,
     /// The `SnapshotRequest` effects the owner gave out.
     snapshots: usize,
-    reread: bool,
+    reread: Reread,
     /// Everything the owner gave out, in order, across the steps.
     history: Vec<Emitted<FeedEffect>>,
     /// Everything the streams saw, in order, across the steps.
@@ -108,7 +115,7 @@ impl Twin {
         det.start_epoch(EPOCH);
         let mut reference = Ref::new();
         reference.debounce = debounce;
-        let mut twin = Self { det, addr, log, reference, debounce_ms: ms, batches: VecDeque::new(), generation: 0, sealed: Vec::new(), snapshots: 0, reread: false, history: Vec::new(), shown: Vec::new() };
+        let mut twin = Self { det, addr, log, reference, debounce_ms: ms, batches: VecDeque::new(), used: Vec::new(), owner_batches: Vec::new(), generation: 0, sealed: Vec::new(), snapshots: 0, reread: Reread::None, history: Vec::new(), shown: Vec::new() };
         if let Some(on) = online {
             twin.post(FeedInput::Online { online: Online(on), online_seq: u64::from(on) });
             twin.reference.online = Some(on);
@@ -146,10 +153,26 @@ impl Twin {
         }
     }
 
-    fn batch(&mut self) -> BatchId { self.batches.pop_front().unwrap_or(9_999) }
+    fn batch(&mut self) -> BatchId { self.batch_at(0) }
+
+    fn batch_at(&mut self, nth: usize) -> BatchId {
+        let batch = self.batches.remove(nth).unwrap_or(9_999);
+        self.used.push(batch);
+        batch
+    }
+
+    fn reject_reason(reason: &Reject) -> RejectReason {
+        match reason {
+            Reject::StaleGeneration(models) => RejectReason::StaleGeneration { models: models.clone(), generation: 0 },
+            Reject::Storage => RejectReason::Storage("disk".into()),
+            Reject::Invalid => RejectReason::Invalid,
+            Reject::NoSession => RejectReason::NoSession,
+            Reject::Closed => RejectReason::Closed,
+        }
+    }
 
     fn owner_input(&mut self, input: &Input) -> Vec<FeedInput> {
-        let reread = self.reread;
+        let reread = self.reread.clone();
         match input {
             Input::WantPlus { model, id, stream } => vec![FeedInput::WantPlus { model: model.clone(), id: *id, stream: *stream }],
             Input::WantMinus { model, id } => vec![FeedInput::WantMinus { model: model.clone(), id: *id }],
@@ -160,7 +183,7 @@ impl Twin {
             }
             Input::FrameOpened { to, counter, events } => {
                 let connection = self.connection(*to);
-                vec![FeedInput::FrameOpened { connection_id: connection, counter: self.counter(connection, *counter), frame: Frame::Events { id: CHANNEL.into(), events: events.iter().map(|(model, payload)| framed(model, payload, reread)).collect() } }]
+                vec![FeedInput::FrameOpened { connection_id: connection, counter: self.counter(connection, *counter), frame: Frame::Events { id: CHANNEL.into(), events: events.iter().map(|(model, payload)| framed(model, payload, &reread, false)).collect() } }]
             }
             Input::Frame { to, counter, kind } => {
                 let connection = self.connection(*to);
@@ -173,7 +196,7 @@ impl Twin {
                 vec![FeedInput::FrameOpened { connection_id: connection, counter: self.counter(connection, *counter), frame }]
             }
             Input::ProtocolError { to } => vec![FeedInput::ProtocolError { connection_id: self.connection(*to), reason: ProtocolReason::Decrypt }],
-            Input::Event { to, model, payload } => vec![FeedInput::Event { connection_id: self.connection(*to), channel: CHANNEL.into(), event: framed(model, payload, reread) }],
+            Input::Event { to, model, payload } => vec![FeedInput::Event { connection_id: self.connection(*to), channel: CHANNEL.into(), event: framed(model, payload, &reread, false) }],
             Input::ChannelLost { to, dropped } => vec![FeedInput::ChannelLost { connection_id: self.connection(*to), dropped: dropped.as_ref().map(|counts| counts.iter().cloned().collect::<BTreeMap<_, _>>()) }],
             Input::Dropped { to } => vec![FeedInput::Dropped { connection_id: self.connection(*to) }],
             Input::Ended { to } => vec![FeedInput::SubscriptionEnded { connection_id: self.connection(*to) }],
@@ -183,20 +206,29 @@ impl Twin {
                 let batch = self.batch();
                 vec![FeedInput::Committed(Committed { batch, revision: 1, tables: Vec::new(), rows: None, models: Default::default(), stale_parents: Vec::new(), position: 0 })]
             }
+            Input::CommittedAt(nth) => {
+                let batch = self.batch_at(*nth);
+                vec![FeedInput::Committed(Committed { batch, revision: 1, tables: Vec::new(), rows: None, models: Default::default(), stale_parents: Vec::new(), position: 0 })]
+            }
+            Input::RejectedAt(nth, reason) => {
+                let batch = self.batch_at(*nth);
+                vec![FeedInput::Rejected(Rejected { batch, reason: Self::reject_reason(reason) })]
+            }
+            Input::Refused { model } => {
+                let connection = self.connection(To::Active);
+                vec![FeedInput::FrameOpened { connection_id: connection, counter: self.counter(connection, Counter::Expected), frame: Frame::Events { id: CHANNEL.into(), events: vec![framed(model, "refused", &Reread::None, true)] } }]
+            }
+            Input::StrayRepeat => {
+                let batch = self.used.last().copied().unwrap_or(9_999);
+                vec![FeedInput::Committed(Committed { batch, revision: 1, tables: Vec::new(), rows: None, models: Default::default(), stale_parents: Vec::new(), position: 0 })]
+            }
             Input::CommittedStale(parents) => {
                 let batch = self.batch();
                 vec![FeedInput::Committed(Committed { batch, revision: 1, tables: Vec::new(), rows: None, models: Default::default(), stale_parents: parents.clone(), position: 0 })]
             }
             Input::Rejected(reason) => {
                 let batch = self.batch();
-                let reason = match reason {
-                    Reject::StaleGeneration(models) => RejectReason::StaleGeneration { models: models.clone(), generation: 0 },
-                    Reject::Storage => RejectReason::Storage("disk".into()),
-                    Reject::Invalid => RejectReason::Invalid,
-                    Reject::NoSession => RejectReason::NoSession,
-                    Reject::Closed => RejectReason::Closed,
-                };
-                vec![FeedInput::Rejected(Rejected { batch, reason })]
+                vec![FeedInput::Rejected(Rejected { batch, reason: Self::reject_reason(reason) })]
             }
             Input::StrayBatch => vec![FeedInput::Committed(Committed { batch: 9_999, revision: 1, tables: Vec::new(), rows: None, models: Default::default(), stale_parents: Vec::new(), position: 0 })],
             Input::Tick => vec![FeedInput::Tick(Time(0))],
@@ -210,7 +242,7 @@ impl Twin {
     /// Feeds one input of the table to both sides, checks the effects, the observable and the state, and returns the effects of the reference.
     fn step(&mut self, input: Input) -> Vec<Effect> {
         take(&self.log);
-        self.reference.reread = self.reread;
+        self.reference.reread = self.reread.clone();
         match input {
             Input::EpochEnded => {
                 self.det.end_epoch(EPOCH, Ended::SessionReset);
@@ -229,7 +261,10 @@ impl Twin {
         let emitted = take(&self.log);
         self.history.extend(emitted.clone());
         let (got, seen) = self.split(emitted);
+        let owner_batches = std::mem::take(&mut self.owner_batches);
         let want = self.reference.step(input);
+        let owner_marks: Vec<bool> = owner_batches.iter().map(|batch| batch.replace(['"', '\\', ' '], "").contains("observe:true")).collect();
+        assert_eq!(owner_marks, self.reference.take_marks(), "the owner and the reference mark the same batches with the observe marker of the stream: {owner_batches:?}");
         let observed = self.reference.take_obs();
         self.shown.extend(observed.clone());
         assert_eq!(got, want, "the owner and the reference give the same effects");
@@ -276,10 +311,14 @@ impl Twin {
                 Emitted::Schedule { input, .. } if input.starts_with("Resubscribe") => modelled.push(Effect::ScheduleResubscribe),
                 Emitted::Send { to: STORE, input } => {
                     assert!(input.contains("author: Feed"), "a batch of Feed names its author: {input}");
+                    self.owner_batches.push(input.clone());
                     self.batches.push_back(number_after(&input, "id: ").expect("the batch id"));
                     modelled.push(Effect::Commit);
                 }
-                Emitted::Send { to: WINDOWS, input } if input.starts_with("Stale {") => modelled.push(Effect::Stale { model: text_after(&input, "model: ").expect("the model"), all: input.contains("keys: All") }),
+                Emitted::Send { to: WINDOWS, input } if input.starts_with("Stale {") => {
+                    let model = text_after(&input, "model: ").expect("the model");
+                    modelled.push(if input.contains("keys: All") { Effect::Stale { model, all: true } } else { Effect::StaleSet { model, keys: input.split("name: \"").skip(1).filter_map(|rest| rest.split('"').next()).map(String::from).collect() } });
+                }
                 Emitted::Send { to: DELIVERIES, input } => {
                     let stream = number_after(&input, "stream: ").expect("the stream");
                     if input.starts_with("Joined") {

@@ -173,7 +173,7 @@ pub(super) fn seen() -> Log<Saw> { (*SEEN.with(|slot| slot.borrow().clone()).exp
 /// The active connection of the rig after its setup: the wants of Chat and Post opened the connections 1 and 2, the second one switched in.
 pub(super) const ACTIVE: ConnectionId = 2;
 
-pub(super) fn event_input(model: &str, payload: &str) -> FeedInput { FeedInput::Event { connection_id: ACTIVE, channel: CHANNEL.into(), event: framed(model, payload, false) } }
+pub(super) fn event_input(model: &str, payload: &str) -> FeedInput { FeedInput::Event { connection_id: ACTIVE, channel: CHANNEL.into(), event: framed(model, payload, &Reread::None, false) } }
 
 pub(super) fn rig(debounce_ms: u64, frames: Vec<FeedInput>, with_reset: bool) -> DetScheduler {
     let mut det = DetScheduler::new(1);
@@ -300,7 +300,7 @@ fn feed_prop_stale_connection() {
     let report = explore(
         || {
             let frames = vec![
-                FeedInput::Event { connection_id: 77, channel: CHANNEL.into(), event: framed("Chat", "x", false) },
+                FeedInput::Event { connection_id: 77, channel: CHANNEL.into(), event: framed("Chat", "x", &Reread::None, false) },
                 FeedInput::Dropped { connection_id: 77 },
                 FeedInput::ChannelLost { connection_id: 77, dropped: Some(BTreeMap::from([("Chat".to_string(), 3)])) },
             ];

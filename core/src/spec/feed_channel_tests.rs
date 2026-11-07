@@ -10,6 +10,7 @@ use crate::owners::read::windows::{StaleKeys, Windows};
 use crate::owners::store::StoreWriter;
 use crate::spec::support::{new_log, number_after, take, text_after, Discard, Emitted, Log, Sink, Spy, SpyState};
 use crate::runtime::{Address, DetScheduler, EpochStamp};
+use super::ref_feed::ref_feed_channels::{Chan, In, Out};
 
 const EPOCH: u64 = 1;
 const STORE: usize = 0;
@@ -25,11 +26,27 @@ fn channels() -> BTreeMap<String, Vec<String>> {
     [("Chat", vec!["A", "B"]), ("Post", vec!["B"]), ("Third", vec!["C"])].into_iter().map(|(model, own)| (model.to_string(), own.into_iter().map(String::from).collect())).collect()
 }
 
+fn word(effect: Out) -> String {
+    match effect {
+        Out::Connect => "connect".into(),
+        Out::Joined(stream) => format!("joined:{stream}"),
+        Out::Subscribe(channel) => format!("subscribe:{channel}"),
+        Out::Unsubscribe(channel) => format!("unsubscribe:{channel}"),
+        Out::ModelReady(stream) => format!("modelready:{stream}"),
+        Out::ModelGap(stream) => format!("modelgap:{stream}"),
+        Out::StaleGap { model, online_seq } => format!("stale:{model}:gap{online_seq}"),
+        Out::Commit => "commit".into(),
+        Out::ModelInvalid(stream) => format!("modelinvalid:{stream}"),
+        Out::ScheduleResubscribe => "schedule:channel".into(),
+    }
+}
+
 struct Rig {
     det: DetScheduler,
     addr: Address<Spy<Feed>>,
     log: Log<Emitted<FeedEffect>>,
     batches: Vec<u64>,
+    reference: Chan,
 }
 
 impl Rig {
@@ -42,7 +59,7 @@ impl Rig {
         let peers = FeedPeers { store: Address::<StoreWriter>::new(STORE), windows: Address::<Windows>::new(WINDOWS), deliveries: Address::<Deliveries>::new(DELIVERIES) };
         let addr = det.add::<Spy<Feed>>("feed", SpyState::new(f::FeedState::new(EPOCH, peers, BTreeMap::new(), channels()), &log), Discard);
         det.start_epoch(EPOCH);
-        let mut rig = Self { det, addr, log, batches: Vec::new() };
+        let mut rig = Self { det, addr, log, batches: Vec::new(), reference: Chan::new(channels()) };
         rig.post(FeedInput::Online { online: Online(true), online_seq: 1 });
         rig
     }
@@ -51,6 +68,33 @@ impl Rig {
 
     /// Posts one input and shows what the owner gave out, one word per effect.
     fn post(&mut self, input: FeedInput) -> Vec<String> {
+        let row = match &input {
+            FeedInput::WantPlus { model, id, .. } => Some(In::WantPlus { model: model.clone(), id: *id }),
+            FeedInput::WantMinus { model, id } => Some(In::WantMinus { model: model.clone(), id: *id }),
+            FeedInput::HandshakeDone { .. } => Some(In::Ready),
+            FeedInput::ChannelConfirmed { channel, .. } => Some(In::ChannelConfirmed(channel.clone())),
+            FeedInput::Event { channel, event, .. } => Some(In::Event { channel: channel.clone(), model: event.model.clone() }),
+            FeedInput::ChannelEnded { channel, failed, .. } => Some(In::Ended { channel: channel.clone(), failed: *failed }),
+            FeedInput::ChannelResubscribe { channel, .. } => Some(In::Resubscribe(channel.clone())),
+            FeedInput::Online { online_seq, .. } => Some(In::Online(*online_seq)),
+            _ => None,
+        };
+        let want = row.and_then(|row| self.reference.step(row)).map(|effects| effects.into_iter().map(word).collect::<Vec<_>>());
+        let got = self.owner_post(input);
+        if let Some(mut want) = want {
+            let mut seen = got.clone();
+            seen.sort();
+            want.sort();
+            assert_eq!(seen, want, "the owner and the reference give the same effects of the row");
+            assert_eq!(self.state().confirmed(), self.reference.confirmed.iter().cloned().collect::<Vec<_>>(), "the same confirmed channels");
+            for model in ["Chat", "Post", "Third"] {
+                assert_eq!(self.state().position(model), self.reference.position.get(model).copied().unwrap_or(0), "the same position of {model}");
+            }
+        }
+        got
+    }
+
+    fn owner_post(&mut self, input: FeedInput) -> Vec<String> {
         take(&self.log);
         self.det.post(self.addr, EpochStamp::Epoch(EPOCH), input);
         self.det.run_until_quiet(10_000).expect("the owner is quiet");

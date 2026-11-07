@@ -308,12 +308,12 @@ fn feed_live_tick_empty() {
 #[test]
 fn feed_live_committed() {
     let mut twin = live();
-    twin.reread = true;
+    twin.reread = Reread::Set(names(&["all"]));
     for payload in ["c1", "c2", "c3"] {
         twin.step(chat(payload));
     }
     twin.step(Input::Tick);
-    assert_eq!(twin.step(Input::Committed), [Effect::Stale { model: "Chat".into(), all: false }]);
+    assert_eq!(twin.step(Input::Committed), [Effect::StaleSet { model: "Chat".into(), keys: names(&["all"]) }]);
     assert_eq!(twin.state().position("Chat"), 3, "positions of a batch follow one another from 1");
     assert_eq!(twin.reference.take_obs(), Vec::new());
 }
@@ -321,13 +321,13 @@ fn feed_live_committed() {
 #[test]
 fn data_sets_missing_parent() {
     let mut twin = live();
-    twin.reread = true;
+    twin.reread = Reread::Set(names(&["all"]));
     twin.step(chat("c1"));
     twin.step(Input::Tick);
-    assert_eq!(twin.step(Input::CommittedStale(vec!["Profile".into()])), [Effect::Stale { model: "Chat".into(), all: false }, Effect::Stale { model: "Profile".into(), all: true }], "every parent model whose fields were not written turns Stale");
+    assert_eq!(twin.step(Input::CommittedStale(vec!["Profile".into()])), [Effect::StaleSet { model: "Chat".into(), keys: names(&["all"]) }, Effect::Stale { model: "Profile".into(), all: true }], "every parent model whose fields were not written turns Stale");
     twin.step(chat("c2"));
     twin.step(Input::Tick);
-    assert_eq!(twin.step(Input::Committed), [Effect::Stale { model: "Chat".into(), all: false }], "a commit without stale parents adds nothing");
+    assert_eq!(twin.step(Input::Committed), [Effect::StaleSet { model: "Chat".into(), keys: names(&["all"]) }], "a commit without stale parents adds nothing");
     assert!(twin.step(Input::CommittedStale(vec!["Profile".into()])).is_empty(), "a batch that is not in landing adds nothing");
 }
 
@@ -648,3 +648,78 @@ fn feed_wait_subscription_census() {
     assert_eq!(census_of(&mut twin), 0, "after the last Want- no channel stays wanted");
 }
 
+
+#[test]
+fn feed_changed_by_forms() {
+    let forms: [(&str, Reread, Effect); 5] = [
+        ("feed_changed_by_node", Reread::Set(names(&["node"])), Effect::StaleSet { model: "Chat".into(), keys: names(&["node"]) }),
+        ("feed_changed_by_named", Reread::Set(names(&["byChat"])), Effect::StaleSet { model: "Chat".into(), keys: names(&["byChat"]) }),
+        ("feed_changed_by_named_default_param", Reread::Set(names(&["byChat", "byAuthor"])), Effect::StaleSet { model: "Chat".into(), keys: names(&["byAuthor", "byChat"]) }),
+        ("feed_changed_by_observed", Reread::All, Effect::Stale { model: "Chat".into(), all: true }),
+        ("feed_changed_by_current", Reread::Set(names(&["current"])), Effect::StaleSet { model: "Chat".into(), keys: names(&["current"]) }),
+    ];
+    for (name, reread, stale) in forms {
+        let mut twin = live_immediate();
+        twin.reread = reread;
+        assert_eq!(twin.step(chat("c1")), [Effect::Commit], "{name}");
+        assert_eq!(twin.step(Input::Committed), [stale], "{name}");
+    }
+}
+
+#[test]
+fn feed_changed_by_two_forms() {
+    let mut twin = live_immediate();
+    twin.reread = Reread::All;
+    twin.step(chat("c1"));
+    assert_eq!(twin.step(Input::Committed), [Effect::Stale { model: "Chat".into(), all: true }]);
+}
+
+#[test]
+fn feed_changes_not_list() {
+    let mut twin = live_immediate();
+    twin.step(chat("c1"));
+    twin.step(Input::Refused { model: "Chat".into() });
+    assert_eq!(census_refused(&mut twin), twin.reference.refused);
+    assert_eq!(twin.reference.refused, 1);
+    assert_eq!(twin.shown, [], "the refused position waits behind the pending position of c1");
+    twin.step(Input::Committed);
+    assert_eq!(twin.shown, [Obs::Event { stream: CHAT, position: 1, payload: "c1".into() }, Obs::Lost { stream: CHAT, first: 2, last: 2 }]);
+    twin.step(Input::Refused { model: "Chat".into() });
+    twin.step(Input::Refused { model: "Chat".into() });
+    assert_eq!((census_refused(&mut twin), twin.reference.refused), (3, 3), "one count per refused event, never reset in the epoch");
+}
+
+#[test]
+fn feed_live_verdict_by_batch() {
+    let mut twin = live_immediate();
+    for payload in ["c1", "c2", "c3"] {
+        twin.step(chat(payload));
+    }
+    assert!(twin.step(Input::StrayBatch).is_empty(), "an id that never was a batch of the Feed");
+    twin.step(Input::CommittedAt(2));
+    assert_eq!(twin.shown, [], "the third position waits for the first two");
+    twin.step(Input::RejectedAt(1, Reject::Storage));
+    assert!(twin.step(Input::StrayRepeat).is_empty(), "the verdict of a batch that landed changes nothing");
+    assert_eq!(twin.state().landing(), 1);
+    twin.step(Input::Committed);
+    assert_eq!(twin.shown, [Obs::Event { stream: CHAT, position: 1, payload: "c1".into() }, Obs::Lost { stream: CHAT, first: 2, last: 2 }, Obs::Event { stream: CHAT, position: 3, payload: "c3".into() }]);
+}
+
+#[test]
+fn feed_commit_observe_stream() {
+    let mut twin = Twin::immediate();
+    twin.step(plus("Chat"));
+    twin.step(window("Post"));
+    twin.step(Input::HandshakeDone);
+    twin.step(chat("{\"id\":\"c1\"}"));
+    twin.step(event(To::Active, "Post", "{\"id\":\"p1\"}"));
+    assert_eq!(twin.state().landing(), 2);
+}
+
+fn census_refused(twin: &mut Twin) -> u64 {
+    twin.post(FeedInput::Census { reply: 7 });
+    take(&twin.log).into_iter().find_map(|entry| match entry {
+        Emitted::Run(FeedEffect::Census { reply: 7, refused, .. }) => Some(refused),
+        _ => None,
+    }).expect("the owner answers the census")
+}

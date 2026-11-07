@@ -41,6 +41,28 @@ pub(super) enum Kind {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) enum Reread {
+    None,
+    All,
+    Set(Vec<String>),
+}
+
+impl Reread {
+    fn union(self, other: &Reread) -> Reread {
+        match (self, other) {
+            (Reread::All, _) | (_, Reread::All) => Reread::All,
+            (Reread::None, other) => other.clone(),
+            (keys, Reread::None) => keys,
+            (Reread::Set(mut keys), Reread::Set(more)) => {
+                let fresh: Vec<String> = more.iter().filter(|key| !keys.contains(key)).cloned().collect();
+                keys.extend(fresh);
+                Reread::Set(keys)
+            }
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) enum Input {
     WantPlus { model: String, id: u64, stream: bool },
     WantMinus { model: String, id: u64 },
@@ -57,11 +79,15 @@ pub(super) enum Input {
     /// The deadline of a `Connect`: a connection in `Handshake` fails like a protocol error.
     HandshakeDeadline { to: To },
     Committed,
+    CommittedAt(usize),
+    RejectedAt(usize, Reject),
+    Refused { model: String },
     /// `Committed` of a batch whose children left parents without a row: the windows of these models turn `Stale`.
     CommittedStale(Vec<String>),
     Rejected(Reject),
     /// `Committed` or `Rejected` of a batch that is not in `landing`.
     StrayBatch,
+    StrayRepeat,
     Tick,
     Online(bool),
     ModelsReset { models: Vec<String>, generation: u64 },
@@ -85,6 +111,7 @@ pub(super) enum Effect {
     ScheduleResubscribe,
     Commit,
     Stale { model: String, all: bool },
+    StaleSet { model: String, keys: Vec<String> },
     Joined(u64),
     ModelReady(u64),
     Drained,
@@ -126,6 +153,7 @@ pub(super) struct Ev {
     payload: String,
     position: u64,
     basis: u64,
+    reread: Reread,
 }
 
 pub(super) struct Feed {
@@ -145,8 +173,9 @@ pub(super) struct Feed {
     /// `updates.debounce` is declared for every model: an event waits for a `Tick`.
     pub(super) debounce: bool,
     generation: BTreeMap<String, u64>,
-    /// Every event declares `reread` keys: a landed batch turns the keys of its models stale.
-    pub(super) reread: bool,
+    pub(super) reread: Reread,
+    pub(super) refused: u64,
+    pub(super) marks: Vec<bool>,
     pub(super) obs: Vec<Obs>,
     drained: bool,
 }
@@ -168,13 +197,17 @@ impl Feed {
             opening: None,
             debounce: true,
             generation: BTreeMap::new(),
-            reread: false,
+            reread: Reread::None,
+            refused: 0,
+            marks: Vec::new(),
             obs: Vec::new(),
             drained: false,
         }
     }
 
     pub(super) fn take_obs(&mut self) -> Vec<Obs> { std::mem::take(&mut self.obs) }
+
+    pub(super) fn take_marks(&mut self) -> Vec<bool> { std::mem::take(&mut self.marks) }
 
     fn at(&self, model: &str) -> u64 { self.position.get(model).copied().unwrap_or(0) }
 
@@ -199,7 +232,7 @@ impl Feed {
         let position = self.at(model) + 1;
         self.position.insert(model.to_string(), position);
         self.ledger.entry(model.to_string()).or_default().push(Slot::Pending);
-        Ev { model: model.to_string(), payload: payload.to_string(), position, basis: self.basis(model) }
+        Ev { model: model.to_string(), payload: payload.to_string(), position, basis: self.basis(model), reread: self.reread.clone() }
     }
 
     fn settle(&mut self, model: &str) {
@@ -279,7 +312,10 @@ impl Feed {
             }
         }
         for basis in bases {
-            self.landing.push_back(events.iter().filter(|event| event.basis == basis).cloned().collect());
+            let batch: Vec<Ev> = events.iter().filter(|event| event.basis == basis).cloned().collect();
+            let observed = batch.iter().any(|event| event.payload.starts_with('{') && !self.streams_of(&event.model).is_empty());
+            self.marks.push(observed);
+            self.landing.push_back(batch);
             effects.push(Effect::Commit);
         }
     }
@@ -305,8 +341,8 @@ impl Feed {
         self.commit(now, effects);
     }
 
-    fn verdict(&mut self, rejected: Option<Reject>) -> Vec<Effect> {
-        let Some(batch) = self.landing.pop_front() else { return Vec::new() };
+    fn verdict(&mut self, nth: usize, rejected: Option<Reject>) -> Vec<Effect> {
+        let Some(batch) = self.landing.remove(nth) else { return Vec::new() };
         let mut effects = Vec::new();
         match rejected {
             None => {
@@ -320,8 +356,17 @@ impl Feed {
                 for model in &models {
                     self.settle(model);
                 }
-                if self.reread {
-                    effects.extend(models.into_iter().map(|model| Effect::Stale { model, all: false }));
+                for model in models {
+                    let keys = batch.iter().filter(|event| event.model == model).fold(Reread::None, |keys, event| keys.union(&event.reread));
+                    match keys {
+                        Reread::None => {}
+                        Reread::All => effects.push(Effect::Stale { model, all: true }),
+                        Reread::Set(mut keys) => {
+                            keys.sort();
+                            keys.dedup();
+                            effects.push(Effect::StaleSet { model, keys });
+                        }
+                    }
                 }
             }
             Some(Reject::StaleGeneration(models)) => {
@@ -486,15 +531,23 @@ impl Feed {
                     effects.extend(self.dropped(to));
                 }
             }
-            Input::Committed => return self.verdict(None),
+            Input::Committed => return self.verdict(0, None),
+            Input::CommittedAt(nth) => return self.verdict(nth, None),
+            Input::RejectedAt(nth, reason) => return self.verdict(nth, Some(reason)),
+            Input::Refused { model } => {
+                if self.mode == Mode::Live && self.want.contains_key(&model) {
+                    self.refused += 1;
+                    self.lose(&model, 1);
+                }
+            }
             Input::CommittedStale(parents) => {
                 let landed = !self.landing.is_empty();
-                let mut effects = self.verdict(None);
+                let mut effects = self.verdict(0, None);
                 if landed { effects.extend(parents.into_iter().map(|model| Effect::Stale { model, all: true })); }
                 return effects;
             }
-            Input::Rejected(reason) => return self.verdict(Some(reason)),
-            Input::StrayBatch => {}
+            Input::Rejected(reason) => return self.verdict(0, Some(reason)),
+            Input::StrayBatch | Input::StrayRepeat => {}
             Input::Tick => {
                 if self.mode == Mode::Live && !self.pending.is_empty() {
                     self.commit_pending(&mut effects);
@@ -515,4 +568,5 @@ impl Feed {
     }
 }
 
+pub(in crate::spec) mod ref_feed_channels;
 mod ref_feed_wants;
