@@ -94,8 +94,20 @@ private fun standEncrypted() = EncryptedConfig("https://api.example.com", Sealed
 
 private fun withSessionProfile(operations: String) = if (operations.trim() == "[]") "[$SESSION_PROFILE]" else operations.dropLast(1) + ",$SESSION_PROFILE]"
 
-private suspend fun signIn(database: Database, restored: Boolean = false) {
-    database.setOnline(true)
+/** The platform reports online the moment the database opens, before the operations are declared. */
+class OnlineAtOpen : PlatformObserver {
+    override fun `start`(sink: OnlineSink) { sink.setOnline(true) }
+    override fun `stop`() {}
+}
+
+/** The platform reports nothing at open: the test sets online itself after the operations are declared. */
+class SilentPlatform : PlatformObserver {
+    override fun `start`(sink: OnlineSink) {}
+    override fun `stop`() {}
+}
+
+private suspend fun signIn(database: Database, restored: Boolean = false, setsOnline: Boolean = true) {
+    if (setsOnline) database.setOnline(true)
     if (!restored) database.sessionCall("login_link", """{"account":"stand"}""")
     DBlayer.call("SessionProfile", kotlinx.serialization.json.JsonObject(emptyMap()))
 }
@@ -105,22 +117,31 @@ suspend fun loginAgain() {
     signIn(DBlayer.database)
 }
 
-/** A transport signs in through the real session path, and its queries and mutations ride the session HTTP. */
-suspend fun reopen(config: Config, modelsJson: String, transport: Transport? = null, operations: String = "[]"): Database {
+/** A transport signs in through the real session path, and its queries and mutations ride the session HTTP. By default the operations are declared at open and online follows in the sign-in. With `onlineAtOpen` the platform reports online at open and the operations are declared after it, except the upload steps the core requires at open. */
+suspend fun reopen(config: Config, modelsJson: String, transport: Transport? = null, operations: String = "[]", onlineAtOpen: Boolean = false): Database {
     val mock = transport as? ScriptedTransport ?: return adopt(openDatabase(config, modelsJson, transport, operations = operations))
     val server = SealedServer(answer = bridgeToTransport(mock, withUploadSteps(operations, modelsJson)))
     val host = mock as? MockTransport ?: (mock as? WrapsMock)?.base
     host?.cable = EncryptedCablePeer(server)
     val credential = credentialOf(config)
     val restored = credential.get() != null
-    val database = adopt(openDatabase(config, modelsJson, mock, standEncrypted(), credential, server, withSessionProfile(operations)))
-    signIn(database, restored)
+    val database = if (onlineAtOpen) {
+        val declared = kotlinx.serialization.json.Json.parseToJsonElement(withUploadSteps(operations, modelsJson)) as kotlinx.serialization.json.JsonArray
+        val steps = UPLOAD_STEP_OPERATIONS.map { it.first }.toSet()
+        val (atOpen, later) = declared.partition { ((it as kotlinx.serialization.json.JsonObject)["name"] as kotlinx.serialization.json.JsonPrimitive).content in steps }
+        val opened = adopt(OpenDatabase().open(config, withRawCalls(modelsJson), OpenOptions(definitionsOf(kotlinx.serialization.json.JsonArray(atOpen).toString())), OpenPorts(mock, standEncrypted(), credential, server, SCRIPTED_ENDPOINT), OnlineAtOpen()))
+        opened.registerOperations(withSessionProfile(kotlinx.serialization.json.JsonArray(later).toString()))
+        opened
+    } else {
+        adopt(openDatabase(config, modelsJson, mock, standEncrypted(), credential, server, withSessionProfile(operations)))
+    }
+    signIn(database, restored, setsOnline = !onlineAtOpen)
     return database
 }
 
-/** The same session stand on a clock that only `advance` moves. */
+/** The same session stand on a clock that only `advance` moves. The platform reports online at open unless `onlineAtOpen` is false: then the sign-in sets online after the operations. */
 @OptIn(DBlayerTestingApi::class)
-suspend fun reopenClocked(modelsJson: String, transport: MockTransport, operations: String = "[]", path: String? = null, startMillis: Long = System.currentTimeMillis()): TestClock {
+suspend fun reopenClocked(modelsJson: String, transport: MockTransport, operations: String = "[]", path: String? = null, startMillis: Long = System.currentTimeMillis(), onlineAtOpen: Boolean = true): TestClock {
     val server = SealedServer(answer = bridgeToTransport(transport, withUploadSteps(operations, modelsJson)))
     transport.cable = EncryptedCablePeer(server)
     try {
@@ -130,8 +151,8 @@ suspend fun reopenClocked(modelsJson: String, transport: MockTransport, operatio
     }
     val credential = credentialOf(Config(path, null))
     val restored = credential.get() != null
-    val clock = DBlayer.openTesting(transport, withRawCalls(modelsJson), path = path, startMillis = startMillis, encrypted = standEncrypted(), credentials = credential, http = server)
-    DBlayer.database.setOnline(true)
+    val clock = DBlayer.openTesting(transport, withRawCalls(modelsJson), path = path, startMillis = startMillis, encrypted = standEncrypted(), credentials = credential, http = server, observers = if (onlineAtOpen) null else SilentPlatform())
+    if (onlineAtOpen) DBlayer.database.setOnline(true)
     DBlayer.database.registerOperations(withSessionProfile(operations))
     signIn(DBlayer.database, restored)
     return clock

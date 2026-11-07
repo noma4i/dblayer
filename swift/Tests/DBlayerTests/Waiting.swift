@@ -124,6 +124,21 @@ func eventuallyAsync(
   Issue.record("timed out after \(timeout) waiting for \(what)", sourceLocation: sourceLocation)
 }
 
+/// The wait of a condition that reads: a read that throws fails the test with its error instead of reading as "not yet".
+func eventuallyThrowing(
+  _ what: String = "the condition",
+  timeout: Duration = hangGuard,
+  isolation: isolated (any Actor)? = #isolation,
+  sourceLocation: SourceLocation = #_sourceLocation,
+  _ condition: () async throws -> Bool
+) async throws {
+  var failure: (any Error)?
+  await eventuallyAsync(what, timeout: timeout, sourceLocation: sourceLocation) {
+    do { return try await condition() } catch { failure = error; return true }
+  }
+  if let failure { throw failure }
+}
+
 func consuming<Sequence: AsyncSequence & SendableMetatype>(
   _ cursor: Cursor<Sequence>,
   _ what: String,

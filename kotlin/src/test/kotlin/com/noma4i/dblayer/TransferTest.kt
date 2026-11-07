@@ -20,6 +20,7 @@ import kotlinx.serialization.json.put
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Assert.assertArrayEquals
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.fail
 import org.junit.Test
@@ -126,12 +127,31 @@ class TransferTest {
         }
     }
 
-    @OptIn(DBlayerTestingApi::class)
     @Test
-    fun shiftingABatchDuringAHeldEncryptedRequestKeepsTheFileOwner() = bounded {
+    fun shiftingABatchDuringAHeldEncryptedRequestKeepsTheFileOwner() = bounded { shiftingABatch(listOf("live", "reopen"), onlineAtOpen = true) }
+
+    @Test
+    fun aSavedStepAndAnOrphanAbortGoOutOnceInEveryOpenOrder() = bounded {
+        for (order in listOf("onlineAtOpen", "onlineAfterRegister")) {
+            try {
+                shiftingABatch(listOf("reopen"), onlineAtOpen = order == "onlineAtOpen")
+                abortOfADiscardedPhotoAfterReopen(onlineAtOpen = order == "onlineAtOpen")
+            } catch (error: Throwable) { throw AssertionError("open order $order: ${error.message}", error) }
+        }
+    }
+
+    @OptIn(DBlayerTestingApi::class)
+    private suspend fun openStand(transport: HoldSecondFile, path: String, encrypted: EncryptedConfig, credential: TransferCredential, server: SealedServer, operations: String, onlineAtOpen: Boolean) {
+        closeForCleanup()
+        DBlayer.openTesting(transport, modelsJSON, path = path, encrypted = encrypted, credentials = credential, http = server, observers = if (onlineAtOpen) null else SilentPlatform())
+        DBlayer.database.registerOperations(operations)
+        if (!onlineAtOpen) DBlayer.database.setOnline(true)
+    }
+
+    private suspend fun shiftingABatch(cases: List<String>, onlineAtOpen: Boolean) {
         val directory = Files.createTempDirectory("encrypted-album").toFile()
         try {
-            for (case in listOf("live", "reopen")) {
+            for (case in cases) {
                 val lose = case != "live"
                 val server = SealedServer(deduplicate = true) { path, body ->
                     when {
@@ -150,9 +170,7 @@ class TransferTest {
                     val credential = TransferCredential()
                     val path = directory.resolve("db-$case.sqlite").path
                     val operations = """[{"name":"CreateBlob","document":"mutation CreateBlob { createBlob { url headers signedId blobId } }"},{"name":"CreateAssets","document":"mutation CreateAssets { createAssets { assets { id clientKey size position } } }"},{"name":"CreateAsset","document":"mutation CreateAsset { createAsset { asset { id clientKey size position } } }"}]"""
-                    closeForCleanup()
-                    DBlayer.openTesting(transport, modelsJSON, path = path, encrypted = encrypted, credentials = credential, http = server)
-                    DBlayer.database.registerOperations(operations)
+                    openStand(transport, path, encrypted, credential, server, operations, onlineAtOpen)
                     DBlayer.database.setOnline(true)
                     DBlayer.database.sessionCall("login_link", """{"account":"A"}""")
                     val files = (0..2).map { index -> directory.resolve("$index.jpg").apply { writeText("image-$index") } }
@@ -165,11 +183,11 @@ class TransferTest {
                     server.hold(null)
                     if (lose) {
                         awaitWithin("the answer is lost") { server.lostAnswer() }
-                        closeForCleanup()
-                        DBlayer.openTesting(transport, modelsJSON, path = path, encrypted = encrypted, credentials = credential, http = server)
-                        DBlayer.database.registerOperations(operations)
+                        openStand(transport, path, encrypted, credential, server, operations, onlineAtOpen)
+                        eventually("the lost step is requested again") { server.requests.map { it.second }.count { it["operationName"]?.jsonPrimitive?.content == "CreateBlob" && it.getValue("variables").jsonObject.getValue("filename").jsonPrimitive.content == "1.jpg" } == 2 }
                         eventually("both assets are stored") { Asset.find("a1").current() != null && Asset.find("a2").current() != null }
-                        assertEquals(listOf("a1", "a2"), listOf("a1", "a2").filter { Asset.find(it).current() != null })
+                        assertEquals("key-1", Asset.find("a1").current()?.clientKey)
+                        assertEquals("key-2", Asset.find("a2").current()?.clientKey)
                     } else {
                         assertEquals(listOf(null, "a1", "a2"), confirmedIds(receipt))
                     }
@@ -199,6 +217,7 @@ class TransferTest {
         val sent = AccountScope.current().send(Moment, buildJsonObject { put("text", "video") }, upload = UploadCommand("upload_clip", UploadRequest(source.path)))
         val row = requireNotNull(sent.optimisticValue)
         eventually("the refused upload failed") { Moment.find(row.id).current()?.sync?.state == SyncState.Failed }
+        assertNotNull(requireNotNull(Moment.find(row.id).current()).sync.error)
         return row
     }
 
@@ -244,7 +263,9 @@ class TransferTest {
     }
 
     @Test
-    fun discardingAQueuedPhotoOfflineRoutesTheAbortAfterReopen() = bounded {
+    fun discardingAQueuedPhotoOfflineRoutesTheAbortAfterReopen() = bounded { abortOfADiscardedPhotoAfterReopen(onlineAtOpen = false) }
+
+    private suspend fun abortOfADiscardedPhotoAfterReopen(onlineAtOpen: Boolean) {
         val directory = Files.createTempDirectory("photo").toFile()
         val transport = MockTransport()
         transport.enqueue("InitMultipart", """{"data":{"initMultipart":{"key":"key","uploadId":"upload"}}}""")
@@ -255,7 +276,7 @@ class TransferTest {
             val source = directory.resolve("photo").apply { writeBytes(ByteArray(11 * 1024 * 1024)) }
             val config = Config(directory.resolve("db.sqlite").path, null)
             val operations = """[{"name":"CreateMoment","document":"mutation CreateMoment { createMoment { id uuid likedByMe media createdAt } }"},{"name":"InitMultipart","document":"mutation InitMultipart { initMultipart { key uploadId } }"},{"name":"PresignParts","document":"mutation PresignParts { presignParts { parts { partNumber url } } }"},{"name":"CompleteMultipart","document":"mutation CompleteMultipart { completeMultipart { signedId blobId } }"},{"name":"AbortMultipart","document":"mutation AbortMultipart { abortMultipart { ok } }"}]"""
-            val db = reopen(config, modelsJSON, transport, operations)
+            val db = reopen(config, modelsJSON, transport, operations, onlineAtOpen)
             val queued = requireNotNull(AccountScope.current().send(Moment, buildJsonObject { put("text", "group") }, upload = UploadCommand("upload_clip", UploadRequest(source.path))).optimisticValue)
             held.entered()
             db.setOnline(false)
@@ -263,10 +284,10 @@ class TransferTest {
             assertNull(Moment.find(queued.id).current())
             held.release()
             closeForCleanup()
-            reopen(config, modelsJSON, transport, operations)
+            reopen(config, modelsJSON, transport, operations, onlineAtOpen)
             awaitWithin("the saved abort reached the transport after the network returned", { "calls=" + transport.calls.map { it.operationName } }) { abort.entered() }
             abort.release()
-            assertEquals("the saved pair of the held step is sent once more", 2, transport.calls.count { it.operationName == "PresignParts" })
+            eventually("the saved pair of the held step is sent once more") { transport.calls.count { it.operationName == "PresignParts" } == 2 }
             val aborts = transport.calls.filter { it.operationName == "AbortMultipart" }
             assertEquals(1, aborts.size)
             assertEquals(NetworkPurpose.TRANSFER, aborts.single().purpose)
@@ -289,6 +310,7 @@ class TransferTest {
             val rows = receipt.items.map { it.optimisticValue }
             eventually("the refused file failed") { Asset.find(rows[0].id).current()?.sync?.state == SyncState.Failed }
             assertEquals(SyncState.Failed, requireNotNull(Asset.find(rows[0].id).current()).sync.state)
+            assertNotNull(requireNotNull(Asset.find(rows[0].id).current()).sync.error)
             rows[0].discard("create_files")
             assertEquals(listOf(null, "a1"), confirmedIds(receipt))
             assertEquals(2, transport.calls.count { it.operationName == "CreateBlob" })
@@ -314,6 +336,7 @@ class TransferTest {
             val rows = receipt.items.map { it.optimisticValue }
             eventually("the refused file failed") { Asset.find(rows[0].id).current()?.sync?.state == SyncState.Failed }
             assertEquals(SyncState.Failed, requireNotNull(Asset.find(rows[0].id).current()).sync.state)
+            assertNotNull(requireNotNull(Asset.find(rows[0].id).current()).sync.error)
             val retried = rows[0].retry("create_files")
             assertTrue(receipt.items[0].receipt.outcome() is OperationOutcome.Rejected)
             assertEquals("a0", retried.confirmed().id)
@@ -395,6 +418,7 @@ class TransferTest {
             val sent = AccountScope.current().send(Moment, buildJsonObject { put("text", "video") }, upload = UploadCommand("upload_clip", UploadRequest(source.path)))
             val row = requireNotNull(sent.optimisticValue)
             eventually("the refused complete fails the upload") { Moment.find(row.id).current()?.sync?.state == SyncState.Failed }
+            assertNotNull(requireNotNull(Moment.find(row.id).current()).sync.error)
             val retried = row.retry("upload_clip")
             assertEquals("m1", retried.confirmed().id)
             assertEquals(SyncState.Synced, Moment.find("m1").current()?.sync?.state)
