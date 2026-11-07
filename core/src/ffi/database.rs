@@ -173,7 +173,7 @@ impl Database {
     }
 
     async fn open_at(config: Config, models_json: String, ports: super::OpenPorts, clock: Arc<dyn Clock>) -> Result<Arc<Self>, DbError> {
-        let super::OpenPorts { transport, encrypted, credentials, http, retries } = ports;
+        let super::OpenPorts { transport, encrypted, credentials, http } = ports;
         blocking(move || {
             let database = match encrypted {
                 Some(encrypted) => {
@@ -186,8 +186,8 @@ impl Database {
                     })?
                 }
                 None => {
-                    if credentials.is_some() || http.is_some() || retries.is_some() {
-                        return Err(DbError::Invalid { detail: "credentials, http and retries require encrypted".into() });
+                    if credentials.is_some() || http.is_some() {
+                        return Err(DbError::Invalid { detail: "credentials and http require encrypted".into() });
                     }
                     Self::start(config, models_json, transport, clock)?
                 }

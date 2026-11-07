@@ -1,6 +1,6 @@
 use std::sync::Arc;
 use super::open_slot::OpenSlot;
-use super::{Config, CredentialStore, Database, DbError, EncryptedConfig, EncryptedHttp, RetryProgress, TestClock, Transport};
+use super::{Config, CredentialStore, Database, DbError, EncryptedConfig, EncryptedHttp, TestClock, Transport};
 
 #[derive(Clone, PartialEq, Eq, uniffi::Record)]
 pub struct OpenOptions {
@@ -16,7 +16,6 @@ pub struct OpenPorts {
     pub encrypted: Option<EncryptedConfig>,
     pub credentials: Option<Arc<dyn CredentialStore>>,
     pub http: Option<Arc<dyn EncryptedHttp>>,
-    pub retries: Option<Arc<RetryProgress>>,
 }
 
 #[derive(uniffi::Object)]

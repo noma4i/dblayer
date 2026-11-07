@@ -209,6 +209,7 @@
 - `Database.load`: use `beginLoad` or `Query.load`.
 - `Transport.subscribe`, `Transport.unsubscribe` and `SubscriptionSink` are gone: server events arrive on the encrypted cable.
 - `restoreFailed` and `discardRestoreFailed` are gone.
+- The `retries` parameter of `open` and `openTesting` is gone: `serverConfig` still takes it.
 
 ## 6.16.1 - 2026-11-03
 

@@ -76,7 +76,6 @@ object DBlayer {
         path: String? = null,
         operations: List<GraphQLOperation> = emptyList(),
         http: EncryptedHttp? = null,
-        retries: RetryProgress? = null,
         uploadNotification: UploadNotification,
     ) {
         checkUploadPermission(android.os.Build.VERSION.SDK_INT) { context.packageManager.getPackageInfo(context.packageName, android.content.pm.PackageManager.GET_PERMISSIONS).requestedPermissions.orEmpty().toList() }
@@ -84,7 +83,7 @@ object DBlayer {
         val definitions = operations.map { JsonObject(mapOf("name" to JsonPrimitive(it.operationName), "document" to JsonPrimitive(it.document))) }
         val options = OpenOptions(operations = JsonArray(definitions).jsonText(), powerSaving = PowerSaving.saving(context), lowRam = PowerSaving.lowRam(context))
         val selectedTransport = transport ?: (endpoint ?: encrypted?.origin)?.let { OkHttpTransport(it, headers) }
-        val made = opener.open(Config(path, null, 2000u), modelsJson, options, OpenPorts(selectedTransport, encrypted, credentials, http ?: encrypted?.let { OkHttpEncryptedHttp(it.origin, headers = headers) }, retries))
+        val made = opener.open(Config(path, null, 2000u), modelsJson, options, OpenPorts(selectedTransport, encrypted, credentials, http ?: encrypted?.let { OkHttpEncryptedHttp(it.origin, headers = headers) }))
         val sink = made.onlineSink()
         stopReachability = Reachability.observe(context) { sink.setOnline(it) }
         ForegroundEvents.start(sink)
@@ -94,7 +93,7 @@ object DBlayer {
         UploadService.opened(made)
     }
 
-    internal suspend fun openOnClock(config: Config, modelsJson: String, transport: Transport?, clock: TestClock, encrypted: EncryptedConfig? = null, credentials: CredentialStore? = null, http: EncryptedHttp? = null, retries: RetryProgress? = null): Database = opener.openWithClock(config, modelsJson, OpenPorts(transport, encrypted, credentials, http, retries), clock)
+    internal suspend fun openOnClock(config: Config, modelsJson: String, transport: Transport?, clock: TestClock, encrypted: EncryptedConfig? = null, credentials: CredentialStore? = null, http: EncryptedHttp? = null): Database = opener.openWithClock(config, modelsJson, OpenPorts(transport, encrypted, credentials, http), clock)
 
     internal suspend fun install(opened: Database, transport: Transport?, operations: List<GraphQLOperation>) {
         val definitions = operations.map { JsonObject(mapOf("name" to JsonPrimitive(it.operationName), "document" to JsonPrimitive(it.document))) }

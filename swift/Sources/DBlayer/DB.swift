@@ -78,16 +78,16 @@ public enum DB {
     return try await fetchServerConfig(encrypted: encrypted, platform: platform, version: version, build: build, http: http ?? UrlSessionEncryptedHttp(origin: encrypted.origin), retries: retries, connectivity: connectivity)
   }
 
-  @MainActor public static func open(endpoint: URL? = nil, headers: @escaping @Sendable () -> [String: String] = { [:] }, encrypted: EncryptedConfig? = nil, credentials: CredentialStore? = nil, transport: Transport? = nil, modelsJSON: String, path: String? = nil, operations: [any GraphQLOperation.Type] = [], http: EncryptedHttp? = nil, retries: RetryProgress? = nil) async throws {
+  @MainActor public static func open(endpoint: URL? = nil, headers: @escaping @Sendable () -> [String: String] = { [:] }, encrypted: EncryptedConfig? = nil, credentials: CredentialStore? = nil, transport: Transport? = nil, modelsJSON: String, path: String? = nil, operations: [any GraphQLOperation.Type] = [], http: EncryptedHttp? = nil) async throws {
     let definitions = operations.map { JSONValue.object(["name": .string($0.operationName), "document": .string($0.document)]) }
     let origin = encrypted.flatMap { URL(string: $0.origin) }
     let selectedTransport = transport ?? (endpoint ?? origin).map { UrlSessionTransport(endpoint: $0, headers: headers) }
-    let opened = try await opener.open(config: Config(path: path, dataVersion: nil, cacheRows: cacheRows), modelsJson: modelsJSON, options: OpenOptions(operations: JSONValue.array(definitions).text, powerSaving: ProcessInfo.processInfo.isLowPowerModeEnabled, lowRam: PowerSaving.lowRam), ports: OpenPorts(transport: selectedTransport, encrypted: encrypted, credentials: credentials, http: http ?? origin.map { UrlSessionEncryptedHttp(origin: $0, headers: headers) }, retries: retries))
+    let opened = try await opener.open(config: Config(path: path, dataVersion: nil, cacheRows: cacheRows), modelsJson: modelsJSON, options: OpenOptions(operations: JSONValue.array(definitions).text, powerSaving: ProcessInfo.processInfo.isLowPowerModeEnabled, lowRam: PowerSaving.lowRam), ports: OpenPorts(transport: selectedTransport, encrypted: encrypted, credentials: credentials, http: http ?? origin.map { UrlSessionEncryptedHttp(origin: $0, headers: headers) }))
     try attach(opened)
   }
 
-  @_spi(Testing) public static func openOnClock(path: String?, modelsJson: String, transport: Transport?, clock: TestClock, encrypted: EncryptedConfig? = nil, credentials: CredentialStore? = nil, http: EncryptedHttp? = nil, retries: RetryProgress? = nil) async throws -> Database {
-    try await opener.openWithClock(config: Config(path: path, dataVersion: nil, cacheRows: cacheRows), modelsJson: modelsJson, ports: OpenPorts(transport: transport, encrypted: encrypted, credentials: credentials, http: http, retries: retries), clock: clock)
+  @_spi(Testing) public static func openOnClock(path: String?, modelsJson: String, transport: Transport?, clock: TestClock, encrypted: EncryptedConfig? = nil, credentials: CredentialStore? = nil, http: EncryptedHttp? = nil) async throws -> Database {
+    try await opener.openWithClock(config: Config(path: path, dataVersion: nil, cacheRows: cacheRows), modelsJson: modelsJson, ports: OpenPorts(transport: transport, encrypted: encrypted, credentials: credentials, http: http), clock: clock)
   }
 
   @_spi(Testing) public static func install(_ database: Database, transport: Transport?, operations: [any GraphQLOperation.Type]) async throws {

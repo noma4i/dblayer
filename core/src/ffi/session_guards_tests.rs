@@ -39,16 +39,15 @@ impl CredentialStore for WatchedHeld {
 pub(super) struct Rig {
     pub(super) server: Arc<FakeServer>,
     pub(super) credentials: Arc<WatchedHeld>,
-    pub(super) retries: Arc<super::RetryProgress>,
 }
 
 impl Rig {
     pub(super) fn new() -> Self {
-        Self { server: FakeServer::new(Arc::new(SystemClock)), credentials: Arc::default(), retries: super::RetryProgress::new() }
+        Self { server: FakeServer::new(Arc::new(SystemClock)), credentials: Arc::default() }
     }
 
     pub(super) async fn open(&self, path: Option<&Path>, pin: &str) -> Result<Arc<Database>, DbError> {
-        let database = Database::open(Config { path: path.map(|path| path.to_string_lossy().into_owned()), data_version: None, cache_rows: 8 }, "[]".to_string(), crate::ffi::OpenPorts { transport: Some(Arc::new(SubscriptionsOnly)), encrypted: Some(EncryptedConfig { origin: origin().to_string(), server_key: public_key_der_b64().to_string(), pin: pin.to_string(), ..crate::transport::encrypted::protocol_tests::config() }), credentials: Some(self.credentials.clone()), http: Some(Arc::new(ThroughServer(self.server.clone()))), retries: Some(self.retries.clone()) }).await?;
+        let database = Database::open(Config { path: path.map(|path| path.to_string_lossy().into_owned()), data_version: None, cache_rows: 8 }, "[]".to_string(), crate::ffi::OpenPorts { transport: Some(Arc::new(SubscriptionsOnly)), encrypted: Some(EncryptedConfig { origin: origin().to_string(), server_key: public_key_der_b64().to_string(), pin: pin.to_string(), ..crate::transport::encrypted::protocol_tests::config() }), credentials: Some(self.credentials.clone()), http: Some(Arc::new(ThroughServer(self.server.clone()))) }).await?;
         database.set_online(true)?;
         Ok(database)
     }
