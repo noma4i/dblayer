@@ -256,8 +256,6 @@ async fn an_offline_discard_routes_its_reopened_abort_as_a_transfer() {
     database.close_now();
     let abort = stand.script.hold("AbortMultipart", r#"{"data":{"abortMultipart":{"ok":true}}}"#);
     let reopened: Arc<Database> = stand.open(Some(&path), &operations).await;
-    reopened.set_online(false).unwrap();
-    reopened.set_online(true).unwrap();
     abort.entered().await;
     abort.release();
     yield_until("the abort was answered", || stand.script.count("AbortMultipart") == 1).await;
@@ -265,7 +263,7 @@ async fn an_offline_discard_routes_its_reopened_abort_as_a_transfer() {
     bound(crate::ffi::settled(&reopened)).await.unwrap();
     reopened.set_online(true).unwrap();
     bound(crate::ffi::settled(&reopened)).await.unwrap();
-    assert_eq!(stand.script.count("AbortMultipart"), 1);
+    assert_eq!(stand.script.names(), ["InitMultipart", "PresignParts", "PresignParts", "AbortMultipart"]);
     assert_eq!(stand.script.purposes("AbortMultipart"), [crate::transport::NetworkPurpose::Transfer]);
     reopened.close_now();
 }

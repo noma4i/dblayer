@@ -275,6 +275,9 @@ async fn a_lost_answer_before_a_close_is_replayed_after_the_reopen_and_the_batch
     yield_until_showing("both assets are stored", || state_report(&stand, &reopened, &optimistic), || !first.0.lock().unwrap().is_empty() && !second.0.lock().unwrap().is_empty()).await;
     let attempts = stand.script.variables("CreateBlob").iter().filter(|variables| variables["filename"] == "1.jpg").count();
     assert_eq!(attempts, 2, "the lost step is requested once more");
+    let filenames: Vec<String> = stand.script.variables("CreateBlob").iter().map(|variables| variables["filename"].as_str().unwrap().to_string()).collect();
+    assert_eq!(filenames, ["0.jpg", "1.jpg", "1.jpg", "2.jpg"], "calls: {:?}", stand.script.names());
+    assert_eq!(stand.script.count("CreateAssets"), 1);
     assert_eq!(keys_of(&sent_items(&stand)), ["key-1", "key-2"]);
     reopened.close_now();
 }
