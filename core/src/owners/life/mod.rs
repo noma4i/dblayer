@@ -385,6 +385,7 @@ impl Life {
         let clock = ports.db.lock().clock.clone();
         let mut builder = RuntimeBuilder::new(clock.clone());
         let wiring = Wiring::new(builder.handle(), Arc::new(move || i64::try_from(clock.now().as_millis()).unwrap_or(i64::MAX)));
+        if let Some(transport) = &ports.transport { wiring.gate.attach(transport.clone()); }
         let wiring = Arc::new(wiring);
         let open_wait = wiring.outcomes.register(Epoch::MAX);
         wiring.open_id.set(open_wait.id().raw()).map_err(|_| LifeError::Storage("the wait of open is set twice".into()))?;
@@ -431,10 +432,9 @@ impl Life {
             builder.add::<Outbox>("outbox", OutboxState::new(0, peers), executor)
         });
         let transfer = match (outbox, ports.transfer.as_ref(), ports.transport.as_ref(), transfer_at, rounds_at) {
-            (Some(outbox), Some(port), Some(transport), Some(address), Some(rounds)) => {
+            (Some(outbox), Some(port), Some(_), Some(address), Some(rounds)) => {
                 let (settle_wiring, drained_wiring, signal_wiring) = (wiring.clone(), wiring.clone(), wiring.clone());
                 let wire = super::write::wire::Wire {
-                    transport: transport.clone(),
                     gate: wiring.gate.clone(),
                     tasks: Arc::new(super::write::wire::TokioTasks(ports.executor.clone(), Some(builder.handle()))),
                     ids: super::write::wire::StepIds { mint: { let ids = wiring.clone(); Arc::new(move |step| ids.request_of(step)) }, settle: { let ids = wiring.clone(); Arc::new(move |id| ids.settle_request(id)) } },

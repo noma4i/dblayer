@@ -85,11 +85,13 @@ fn confirmed(counter: u64) -> Incoming { Incoming::Frame { counter, body: json!(
 
 fn next(counter: u64, payload: &str) -> Incoming { Incoming::Frame { counter, body: json!({"t":"next", "id":"1", "result":{"data":{"model":"Chat", "payload":payload}}}) } }
 
-fn rig(lines: Vec<Arc<Line>>) -> (DetScheduler, Address<Feed>, Batches, tokio::runtime::Runtime) {
+fn rig(lines: Vec<Arc<Line>>) -> (DetScheduler, Address<Feed>, Batches, tokio::runtime::Runtime) { rig_over(lines, super::rig::open_gate(1)) }
+
+fn rig_over(lines: Vec<Arc<Line>>, gate: Arc<crate::runtime::EpochGate>) -> (DetScheduler, Address<Feed>, Batches, tokio::runtime::Runtime) {
     let runtime = runtime();
     let batches = Batches::default();
     let (_, rest) = collector();
-    let io = FeedIo::new(Arc::new(Lines(Mutex::new(lines.into()))), Arc::new(Models), runtime.handle().clone(), rest, (Arc::new(crate::runtime::SystemClock), super::rig::open_gate(1)));
+    let io = FeedIo::new(Arc::new(Lines(Mutex::new(lines.into()))), Arc::new(Models), runtime.handle().clone(), rest, (Arc::new(crate::runtime::SystemClock), gate));
     let mut det = DetScheduler::new(1);
     let store = det.add::<BatchPeer>("store", batches.clone(), Discard);
     let windows = det.add::<Sink<Windows>>("windows", Default::default(), Discard);
@@ -243,4 +245,41 @@ fn feed_io_foreign_subscription_is_ignored() {
     pump(&mut det, feed, |_| !seen.all().is_empty());
     assert_eq!(batches.all()[0].rows, [("Chat".to_string(), "mine".to_string())]);
     assert_eq!((saw_input(&det, "ProtocolError"), det.state(feed).map(|state| state.active_connection())), (0, Some(Some(1))), "frames of a channel this connection never subscribed neither end nor break it");
+}
+
+/// P-RT-14 for Feed: a connection requested after the close of the epoch never reaches the lines of the old transport.
+#[test]
+fn rt_prop_close_against_query_no_old_transport_feed() {
+    let runtime = runtime();
+    let (dropped, started) = (Arc::new(AtomicUsize::new(0)), Arc::new(AtomicUsize::new(0)));
+    let (_, rest) = collector();
+    let gate = super::rig::open_gate(1);
+    let io = FeedIo::new(Arc::new(Hanging(dropped, started.clone())), Arc::new(Models), runtime.handle().clone(), rest, (Arc::new(crate::runtime::SystemClock), gate.clone()));
+    let mut det = DetScheduler::new(1);
+    let store = det.add::<BatchPeer>("store", Batches::default(), Discard);
+    let windows = det.add::<Sink<Windows>>("windows", Default::default(), Discard);
+    let deliveries = det.add::<Sink<Deliveries>>("deliveries", Default::default(), Discard);
+    let peers = f::FeedPeers { store: Address::<StoreWriter>::new(store.index()), windows: Address::<Windows>::new(windows.index()), deliveries: Address::<Deliveries>::new(deliveries.index()) };
+    let feed = det.add::<Feed>("feed", f::FeedState::new(EPOCH, peers, [("Chat".to_string(), 0)].into(), [("Chat".to_string(), vec!["1".to_string()])].into()), io);
+    det.start_epoch(EPOCH);
+    gate.close(EPOCH);
+    det.post(feed, EpochStamp::Epoch(EPOCH), FeedInput::Online { online: Online(true), online_seq: 1 });
+    det.post(feed, EpochStamp::Epoch(EPOCH), FeedInput::WantPlus { model: "Chat".into(), id: 1, stream: false });
+    pump(&mut det, feed, |det| saw_input(det, "Dropped") >= 1);
+    assert_eq!(started.load(Ordering::SeqCst), 0, "a connect reached the old lines after the close");
+}
+
+/// P-RT-14 for Feed with an open cable: a frame sent after the close of the epoch never reaches the old connection.
+#[test]
+fn rt_prop_close_against_send_no_old_connection_feed() {
+    let (line, peer) = line();
+    let gate = super::rig::open_gate(1);
+    let (mut det, feed, _batches, _runtime) = rig_over(vec![line], gate.clone());
+    let sent = peer.sent.clone();
+    pump(&mut det, feed, |det| det.state(feed).is_some_and(|state| state.mode() == Mode::Live) && sent.lock().unwrap_or_else(PoisonError::into_inner).len() == 1);
+    gate.close(EPOCH);
+    det.post(feed, EpochStamp::Epoch(EPOCH), FeedInput::WantMinus { model: "Chat".into(), id: 1 });
+    pump(&mut det, feed, |det| saw_input(det, "Dropped") >= 1);
+    let late: Vec<_> = peer.sent.lock().unwrap_or_else(PoisonError::into_inner).iter().skip(1).map(|(counter, body)| (*counter, body["t"].as_str().unwrap_or("").to_string())).collect();
+    assert!(late.is_empty(), "late frames reached the old connection after the close: {late:?}");
 }

@@ -21,6 +21,12 @@ pub fn open_gate(epoch: u64) -> Arc<crate::runtime::EpochGate> {
     gate
 }
 
+pub fn open_gate_over(epoch: u64, transport: Arc<dyn crate::transport::Upstream>) -> Arc<crate::runtime::EpochGate> {
+    let gate = open_gate(epoch);
+    gate.attach(transport);
+    gate
+}
+
 /// A Store peer: it keeps the batches of `Commit`.
 #[derive(Clone, Default)]
 pub struct Batches(pub Arc<Mutex<Vec<StoreBatch>>>);

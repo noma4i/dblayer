@@ -87,7 +87,7 @@ fn world() -> World {
     let (answers, shown) = (Arc::new(Mutex::new(Vec::new())), Arc::new(Mutex::new(Vec::new())));
     let (to_answers, to_shown) = (answers.clone(), shown.clone());
     let executor = TransferExecutor::new(
-        Wire { transport: Arc::new(stub.clone()), gate: open_gate(EPOCH), tasks: Arc::new(spawn.clone()), ids: super::wire::StepIds::held() },
+        Wire { gate: open_gate(EPOCH, Arc::new(stub.clone())), tasks: Arc::new(spawn.clone()), ids: super::wire::StepIds::held() },
         codec.clone(),
         files.clone(),
         TransferSinks {
@@ -331,3 +331,24 @@ fn xfer_prop_table_file_off_async() {
 }
 
 fn step_key() -> crate::transport::RequestOwner { crate::transport::RequestOwner::Detached }
+
+/// P-RT-14 for Transfer: a close while a PUT is inside the transport leaves that PUT alone and no later mutation or PUT of the step reaches the old transport.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn rt_prop_close_against_query_no_old_transport_transfer() {
+    let stub = Stub::default();
+    stub.hang_puts();
+    let gate = open_gate(EPOCH, Arc::new(stub.clone()));
+    let link = Arc::new(Link::over(gate.clone(), EPOCH, super::wire::StepIds::held()));
+    let put = || PutRequest { url: "https://storage/part".into(), headers: Vec::new(), file: PutFile { path: "unused".into(), offset: 0, length: 1 }, identity: TransferIdentity { operation_id: 0, item_id: "k".into(), step: TransferStep::Put }, cancel: CancelToken::new(), sent: Arc::new(|_| {}) };
+    let inside = crate::task::spawn_on(crate::task::Carry::Detached, &tokio::runtime::Handle::current(), { let (link, request) = (link.clone(), put()); async move { link.put(request).await } });
+    crate::test_wait::yield_until("the PUT is inside the transport", || stub.put_tokens().len() == 1).await;
+    gate.close(EPOCH);
+    let late_mutation = link.mutate(GraphQLRequest::new("mutation Late", "Late", json!({})), &step_key()).await;
+    let late_put = link.put(put()).await;
+    assert!(matches!(late_mutation, Err(TransportError::Interrupted(_))), "{late_mutation:?}");
+    assert!(matches!(late_put, Err(TransportError::Interrupted(_))), "{late_put:?}");
+    let late: Vec<_> = stub.calls().iter().map(|call| call.operation_name.clone()).collect();
+    assert!(late.is_empty() && stub.put_tokens().len() == 1, "late calls reached the old transport after the close: mutations {late:?}, PUTs {}", stub.put_tokens().len());
+    inside.abort_handle().abort();
+    crate::test_wait::yield_until("the aborted PUT is dropped", || stub.dropped() == 1).await;
+}

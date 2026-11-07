@@ -15,11 +15,10 @@ use super::wire::{Flights, Running, StepIds, Wire};
 use crate::store::files::{CopiedSource, FileDirectories};
 use crate::owners::contract::{Drained, ReplyId};
 use crate::runtime::{Back, EffectRunner, Epoch, EpochStamp};
-use crate::transport::{CancelToken, GraphQLRequest, NetworkPurpose, PutRequest, PutReply, Response, RetryClass, Upstream, TransportError};
+use crate::transport::{CancelToken, GraphQLRequest, NetworkPurpose, PutRequest, PutReply, Response, RetryClass, TransportError};
 
 /// The requests of one step. Every request goes out with `NetworkPurpose::Transfer` and stops with the step.
 pub struct Link {
-    transport: Arc<dyn Upstream>,
     cancel: CancelToken,
     gate: Arc<crate::runtime::EpochGate>,
     epoch: Option<Epoch>,
@@ -32,12 +31,15 @@ impl Drop for Link {
 }
 
 impl Link {
+    #[cfg(test)]
+    pub(super) fn over(gate: Arc<crate::runtime::EpochGate>, epoch: Epoch, ids: StepIds) -> Self { Self { cancel: CancelToken::new(), gate, epoch: Some(epoch), minted: None, ids } }
+
     /// `step` names the request: its id is minted by the owner and a repeat of the step carries it again.
     pub async fn mutate(&self, mut request: GraphQLRequest, step: &crate::transport::RequestOwner) -> Result<Response, TransportError> {
         request.purpose = NetworkPurpose::Transfer;
         let id = (self.ids.mint)(step);
         let request = request.by(crate::transport::WireIds::new(crate::transport::Author::Transfer, id, crate::transport::WireIds::next_attempt()));
-        let response = crate::runtime::send_in_epoch(&self.gate, self.epoch, || self.transport.mutate(request)).await?;
+        let response = self.gate.mutate(self.epoch, request).await?;
         (self.ids.settle)(id);
         Ok(response)
     }
@@ -50,7 +52,7 @@ impl Link {
 
     pub async fn put(&self, mut request: PutRequest) -> Result<PutReply, TransportError> {
         request.cancel = self.cancel.clone();
-        crate::runtime::send_in_epoch(&self.gate, self.epoch, || self.transport.put(request)).await
+        self.gate.put(self.epoch, request).await
     }
 }
 
@@ -174,7 +176,7 @@ impl TransferExecutor {
             EpochStamp::Control => None,
         };
         if epoch.is_some_and(|epoch| !self.wire.gate.admits(epoch)) { return None; }
-        Some(Link { transport: self.wire.transport.clone(), cancel: CancelToken::new(), gate: self.wire.gate.clone(), epoch, minted: None, ids: self.wire.ids.clone() })
+        Some(Link { cancel: CancelToken::new(), gate: self.wire.gate.clone(), epoch, minted: None, ids: self.wire.ids.clone() })
     }
 
     /// Runs `call` as the task of `transfer_id`: its result becomes `input_of(result)` for the owner, unless the task is cancelled first.

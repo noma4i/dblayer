@@ -11,7 +11,7 @@ use crate::owners::contract::{ErrorClass, RequestError, RequestId, TransportOutc
 use crate::owners::read::windows::{request_task, read_task, AnswerPage, RequestKind, SavedWindow, WindowEffect, WindowKey, Windows, WindowsEffect, WindowsInput};
 use crate::runtime::{Back, EffectRunner, Epoch, EpochStamp};
 use crate::task::spawn_on;
-use crate::transport::{CancelToken, GraphQLRequest, Response, RetryClass, Upstream, TransportError};
+use crate::transport::{CancelToken, GraphQLRequest, Response, RetryClass, TransportError};
 
 /// The wire form of a window: how a page is asked and how its answer reads.
 pub trait WindowCodec: Send + Sync + 'static {
@@ -31,7 +31,6 @@ type Open = HashMap<(RequestId, u32), CancelToken>;
 pub type WindowReader = Arc<dyn Fn(&WindowKey) -> Result<Option<SavedWindow>, String> + Send + Sync>;
 
 pub struct WindowIo {
-    transport: Option<Arc<dyn Upstream>>,
     codec: Arc<dyn WindowCodec>,
     admit: Admit,
     gate: Arc<crate::runtime::EpochGate>,
@@ -46,8 +45,8 @@ pub struct WindowIo {
 }
 
 impl WindowIo {
-    pub fn new(transport: Option<Arc<dyn Upstream>>, codec: Arc<dyn WindowCodec>, (admit, gate): (Admit, Arc<crate::runtime::EpochGate>), (handle, now): (Handle, Arc<dyn Fn() -> i64 + Send + Sync>), rest: Rest<WindowsEffect>) -> Self {
-        Self { transport, codec, admit, gate, handle, now, counted: None, open: Open::default(), reader: None, rest, #[cfg(test)] flights: None }
+    pub fn new(codec: Arc<dyn WindowCodec>, (admit, gate): (Admit, Arc<crate::runtime::EpochGate>), (handle, now): (Handle, Arc<dyn Fn() -> i64 + Send + Sync>), rest: Rest<WindowsEffect>) -> Self {
+        Self { codec, admit, gate, handle, now, counted: None, open: Open::default(), reader: None, rest, #[cfg(test)] flights: None }
     }
 
     #[cfg(test)]
@@ -74,7 +73,7 @@ impl WindowIo {
         let token = CancelToken::new();
         self.open.retain(|_, flight| !flight.is_cancelled());
         self.open.insert((request, attempt), token.clone());
-        let (transport, codec, back, admit, gate, now) = (self.transport.clone(), self.codec.clone(), back.clone(), self.admit.clone(), self.gate.clone(), self.now.clone());
+        let (codec, back, admit, gate, now) = (self.codec.clone(), back.clone(), self.admit.clone(), self.gate.clone(), self.now.clone());
         let launch = self.counted.as_ref().map(crate::runtime::Handle::launch);
         #[cfg(test)]
         let flight = self.flights.as_ref().map(super::ports::InFlight::start);
@@ -87,7 +86,7 @@ impl WindowIo {
                 () = token.cancelled() => None,
                 outcome = async {
                     if let Err(refused) = admit(epoch) { return TransportOutcome::Error(RequestError { message: refused.0, class: ErrorClass::Permanent, source: None }); }
-                    ask(transport.as_deref(), (&gate, epoch), codec.as_ref(), (&key, page, kind), (cursor.as_deref(), crate::transport::WireIds::new(crate::transport::Author::Window, request, u64::from(attempt)))).await
+                    ask((&gate, epoch), codec.as_ref(), (&key, page, kind), (cursor.as_deref(), crate::transport::WireIds::new(crate::transport::Author::Window, request, u64::from(attempt)))).await
                 } => Some(outcome),
             };
             let delivered = outcome.filter(|_| !token.is_cancelled());
@@ -135,15 +134,12 @@ impl EffectRunner<Windows> for WindowIo {
     }
 }
 
-async fn ask(transport: Option<&dyn Upstream>, (gate, epoch): (&crate::runtime::EpochGate, Epoch), codec: &dyn WindowCodec, (key, page, kind): (&WindowKey, u32, RequestKind), (cursor, wire): (Option<&str>, crate::transport::WireIds)) -> TransportOutcome<AnswerPage> {
+async fn ask((gate, epoch): (&crate::runtime::EpochGate, Epoch), codec: &dyn WindowCodec, (key, page, kind): (&WindowKey, u32, RequestKind), (cursor, wire): (Option<&str>, crate::transport::WireIds)) -> TransportOutcome<AnswerPage> {
     let request = match codec.request(key, page, cursor, kind) {
         Ok(request) => request.by(wire),
         Err(message) => return TransportOutcome::Error(RequestError { message, class: ErrorClass::Permanent, source: None }),
     };
-    let Some(transport) = transport else {
-        return TransportOutcome::Error(RequestError { message: "the database has no transport".into(), class: ErrorClass::Network, source: None });
-    };
-    match crate::runtime::send_in_epoch(gate, Some(epoch), || transport.query(request)).await {
+    match gate.query(Some(epoch), request).await {
         Ok(response) => match codec.refusal(&response) {
             Some(error) => TransportOutcome::Error(error),
             None => match codec.answer(key, page, kind, response) {

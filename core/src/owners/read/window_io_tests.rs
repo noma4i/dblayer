@@ -10,7 +10,7 @@ const NOW: i64 = 1_000_000;
 
 use serde_json::json;
 
-use super::rig::{admit, open_gate, collector, pump, runtime, saw_input, BatchPeer, Batches};
+use super::rig::{admit, open_gate_over, collector, pump, runtime, saw_input, BatchPeer, Batches};
 use super::{WindowCodec, WindowIo, WindowReader};
 use crate::owners::read::deliveries::Deliveries;
 use crate::owners::read::windows::{self as w, AnswerPage, WindowEffect, WindowKey, WindowOutcome, Windows, WindowsEffect, WindowsInput};
@@ -67,6 +67,7 @@ struct Rig {
     det: DetScheduler,
     windows: Address<Windows>,
     mock: MockTransport,
+    gate: Arc<crate::runtime::EpochGate>,
     flights: super::ports::RequestsOnTheWay,
     batches: Batches,
     rest: Arc<Mutex<Vec<WindowsEffect>>>,
@@ -82,7 +83,8 @@ fn rig_with(mock: MockTransport, transport: Arc<dyn Upstream>, reader: Option<Wi
     let runtime = runtime();
     let batches = Batches::default();
     let (rest, take_rest) = collector();
-    let io = WindowIo::new(Some(transport), Arc::new(Pages), (admit(), open_gate(EPOCH)), (runtime.handle().clone(), Arc::new(|| NOW)), take_rest);
+    let gate = open_gate_over(EPOCH, transport);
+    let io = WindowIo::new(Arc::new(Pages), (admit(), gate.clone()), (runtime.handle().clone(), Arc::new(|| NOW)), take_rest);
     let flights = super::ports::RequestsOnTheWay::default();
     let io = io.flights_in(flights.clone());
     let io = match reader { Some(reader) => io.reading(reader), None => io };
@@ -92,7 +94,7 @@ fn rig_with(mock: MockTransport, transport: Arc<dyn Upstream>, reader: Option<Wi
     let peers = w::WindowsPeers { store: Address::<StoreWriter>::new(store.index()), deliveries: Address::<Deliveries>::new(deliveries.index()) };
     let windows = det.add::<Windows>("windows", w::WindowsState::new(EPOCH, Some(true), peers), io);
     det.start_epoch(EPOCH);
-    Rig { det, windows, mock, flights, batches, rest, _runtime: runtime }
+    Rig { det, windows, mock, gate, flights, batches, rest, _runtime: runtime }
 }
 
 impl Rig {
@@ -205,3 +207,20 @@ pub(super) fn panicked_read() -> Vec<String> {
 pub(super) fn request_id(request: u64, attempt: u32) -> String { format!("TaskFailed {{ id: {} }}", w::request_task(request, attempt)) }
 
 pub(super) fn read_id(read: u64) -> String { format!("TaskFailed {{ id: {} }}", w::read_task(read)) }
+
+/// P-RT-14 for Window: a close while a page request is inside the transport leaves that request alone and no later request of the Window reaches the old transport.
+#[test]
+fn rt_prop_close_against_query_no_old_transport_window() {
+    let mut rig = rig();
+    rig.mock.enqueue("Page", Reply::data(json!({ "rows": ["r1"], "cursor": null })).after(Duration::from_secs(3600)));
+    rig.watch(1);
+    let mock = rig.mock.clone();
+    pump(&mut rig.det, rig.windows, |_| mock.calls().len() == 1);
+    rig.gate.close(EPOCH);
+    let other = WindowKey { model: "Moment".into(), name: "other".into() };
+    rig.det.post(rig.windows, EpochStamp::Epoch(EPOCH), WindowsInput::Load { key: other.clone(), id: 2, goal: w::Goal::First, force: false, store_revision: 0, now: NOW });
+    rig.det.post(rig.windows, EpochStamp::Epoch(EPOCH), WindowsInput::WindowRead { key: other, read_id: 2, result: Ok(None) });
+    pump(&mut rig.det, rig.windows, |det| saw_input(det, "Dropped") == 1);
+    let late: Vec<_> = rig.mock.calls().iter().skip(1).map(|call| (call.operation_name.clone(), call.wire)).collect();
+    assert!(late.is_empty(), "late calls reached the old transport after the close: {late:?}");
+}

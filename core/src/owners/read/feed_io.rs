@@ -107,10 +107,10 @@ impl FeedIo {
             };
             reply(FeedInput::HandshakeDone { connection_id: connection, key_id: connection });
             let writer = {
-                let (line, reply) = (line.clone(), reply.clone());
+                let (line, reply, gate) = (line.clone(), reply.clone(), gate.clone());
                 async move {
                     while let Some((counter, body)) = queued.recv().await {
-                        if crate::lock::effect(|| line.send(counter, body)).await.is_err() {
+                        if crate::runtime::send_in_epoch(&gate, epoch, || crate::lock::effect(|| line.send(counter, body))).await.is_err() {
                             return reply(FeedInput::Dropped { connection_id: connection });
                         }
                     }

@@ -16,7 +16,6 @@ use crate::transport::{GraphQLRequest, ResponseOutcome, SessionCode, TransportEr
 
 pub(super) struct CallsRunner {
     wiring: Arc<Wiring>,
-    transport: Option<Arc<dyn crate::transport::Upstream>>,
     session: Option<Arc<crate::transport::Exchange>>,
     executor: tokio::runtime::Handle,
     operations: super::OperationLookup,
@@ -78,12 +77,12 @@ struct CallRequest {
 
 impl CallsRunner {
     pub fn new(wiring: Arc<Wiring>, ports: &Ports) -> Self {
-        Self { wiring, transport: ports.transport.clone(), session: ports.exchange.clone(), executor: ports.executor.clone(), operations: ports.operations.clone(), running: HashMap::new() }
+        Self { wiring, session: ports.exchange.clone(), executor: ports.executor.clone(), operations: ports.operations.clone(), running: HashMap::new() }
     }
 
     fn query(&mut self, call: CallRequest, back: &Back<Calls>) {
         let CallRequest { call_id, request_id, epoch, operation, variables, document, root, kind } = call;
-        let Some(transport) = self.transport.clone() else { return back.reply(EpochStamp::Control, CallsInput::TransportError { call_id, error: CallError::Invalid }) };
+        if !self.wiring.gate.has_transport() { return back.reply(EpochStamp::Control, CallsInput::TransportError { call_id, error: CallError::Invalid }); }
         let back = back.clone();
         let (launch, gate) = (self.wiring.handle.launch(), self.wiring.gate.clone());
         #[cfg(test)]
@@ -95,8 +94,8 @@ impl CallsRunner {
             let request = GraphQLRequest::new(document.clone(), operation, variables).by(crate::transport::WireIds::new(crate::transport::Author::Calls, request_id, crate::transport::WireIds::next_attempt()));
             crate::lock::assert_no_library_lock("Transport::request");
             let result = match kind {
-                CallKind::Mutate => crate::runtime::send_in_epoch(&gate, Some(epoch), || transport.mutate(request)).await,
-                CallKind::Query => crate::runtime::send_in_epoch(&gate, Some(epoch), || transport.query(request)).await,
+                CallKind::Mutate => gate.mutate(Some(epoch), request).await,
+                CallKind::Query => gate.query(Some(epoch), request).await,
             };
             back.reply(EpochStamp::Control, input_of(call_id, &root, result));
         }));

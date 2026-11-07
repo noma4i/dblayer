@@ -154,9 +154,10 @@ impl Upstream for Stub {
     }
 }
 
-pub(super) fn open_gate(epoch: u64) -> Arc<crate::runtime::EpochGate> {
+pub(super) fn open_gate(epoch: u64, transport: Arc<dyn Upstream>) -> Arc<crate::runtime::EpochGate> {
     let gate = Arc::new(crate::runtime::EpochGate::default());
     gate.open(epoch);
+    gate.attach(transport);
     gate
 }
 
