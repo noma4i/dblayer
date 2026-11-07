@@ -37,9 +37,9 @@ pub struct ActionDeclaration {
     pub mutation: Option<String>,
     #[serde(default)]
     pub upload: bool,
-    /// The command survives a missing network and a restart of the app: sending a message.
-    #[serde(default)]
-    pub durable: bool,
+    /// Seconds a queued operation may wait before it is rolled back with `Rejected{Expired}`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expires_after: Option<u64>,
     #[serde(default)]
     pub variables: BTreeMap<String, String>,
     #[serde(default)]
@@ -168,7 +168,7 @@ impl ActionDeclaration {
             members: Vec::new(),
             mutation: None,
             upload: false,
-            durable: false,
+            expires_after: None,
             variables: BTreeMap::new(),
             optimistic: Map::new(),
             refetch: Vec::new(),

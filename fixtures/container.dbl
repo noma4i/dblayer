@@ -27,7 +27,7 @@ model Container do
     query "ContainerShelfQuery"
     response from: "containers", shape: :list
   end
-  operation :create, durable: true do
+  operation :create do
     mutation "CreateContainer"
   end
   operation :create_photo, upload: true do

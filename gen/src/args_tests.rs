@@ -11,7 +11,7 @@ fn failure(body: &str) -> (usize, String) {
     (errors[0].line, errors[0].message.clone())
 }
 
-const PAIR: &str = "operation :create, durable: true do\n  mutation \"CreateSample\"\n  parameter :signedId, :string\n  parameter :momentId, :id, null: true\n  variables name: :name, signedId: :signedId, momentId: :momentId\nend\n\noperation :update do\n  mutation \"UpdateSample\"\n  parameter :signedId, :string, null: true\n  variables sampleId: :id, signedId: :signedId\nend";
+const PAIR: &str = "operation :create do\n  mutation \"CreateSample\"\n  parameter :signedId, :string\n  parameter :momentId, :id, null: true\n  variables name: :name, signedId: :signedId, momentId: :momentId\nend\n\noperation :update do\n  mutation \"UpdateSample\"\n  parameter :signedId, :string, null: true\n  variables sampleId: :id, signedId: :signedId\nend";
 
 #[test]
 fn standard_operation_parameters_are_typed_values_that_variables_may_name() {
@@ -45,7 +45,7 @@ fn the_generated_calls_take_the_args_after_the_fields() {
     let models = parse_models(&model(PAIR)).unwrap();
     let swift = emit_swift(&models, &[], &SchemaTypes::default());
     for expected in [
-        "send(in scope_: AccountScope, name: String, momentId: String? = nil, signedId: String) async throws -> MutationReceipt<Self>",
+        "create(name: String, momentId: String? = nil, signedId: String, in scope_: AccountScope? = nil) async throws -> MutationReceipt<Self>",
         "args_[\"signedId\"] = try JSONValue.encode(signedId)",
         "update(name: String? = nil, ownerId: String? = nil, signedId: String? = nil, in scope_: AccountScope? = nil) async throws -> MutationReceipt<Self>",
     ] {
@@ -53,7 +53,7 @@ fn the_generated_calls_take_the_args_after_the_fields() {
     }
     let kotlin = emit_kotlin(&models, &[], &SchemaTypes::default());
     for expected in [
-        "suspend fun send(account: AccountScope, name: String, momentId: String? = null, signedId: String): MutationReceipt<Sample>",
+        "suspend fun create(name: String, momentId: String? = null, signedId: String, account: AccountScope? = null): MutationReceipt<Sample>",
         "suspend fun update(name: String? = null, ownerId: String? = null, signedId: String? = null, account: AccountScope? = null): MutationReceipt<Sample>",
     ] {
         assert!(kotlin.contains(expected), "kotlin lacks {expected}");
@@ -62,9 +62,23 @@ fn the_generated_calls_take_the_args_after_the_fields() {
 
 #[test]
 fn a_model_without_args_emits_no_args_variable() {
-    let models = parse_models(&model("operation :create, durable: true do\n  mutation \"CreateSample\"\nend\n\noperation :update do\n  mutation \"UpdateSample\"\nend")).unwrap();
+    let models = parse_models(&model("operation :create do\n  mutation \"CreateSample\"\nend\n\noperation :update do\n  mutation \"UpdateSample\"\nend")).unwrap();
     let swift = emit_swift(&models, &[], &SchemaTypes::default());
     assert!(!swift.contains("var args") && !swift.contains("args: args"), "swift keeps an unused args variable");
     let kotlin = emit_kotlin(&models, &[], &SchemaTypes::default());
-    assert!(kotlin.contains("account.send(this, values_)") && kotlin.contains("update(epoch_, this.modelName, this.id, values_.jsonText(), \"{}\")"), "kotlin builds an empty args object");
+    assert!(kotlin.contains("database_.create(epoch_, \"Sample\", values_.jsonText(), \"{}\")") && kotlin.contains("update(epoch_, this.modelName, this.id, values_.jsonText(), \"{}\")"), "kotlin builds an empty args object");
+}
+
+#[test]
+fn gen_unknown_operation_key() {
+    let found = failure("operation :create, durable: true do\n  mutation \"CreateSample\"\nend").1;
+    assert!(found.contains("durable"), "{found}");
+}
+
+#[test]
+fn expires_after_is_lowered_into_the_operation_spec() {
+    let models = parse_models(&model("operation :create, expires_after: 90 do\n  mutation \"CreateSample\"\nend\n\noperation :update do\n  mutation \"UpdateSample\"\nend")).unwrap();
+    let expires: Vec<_> = models[0].actions.iter().map(|action| action.expires_after).collect();
+    assert_eq!(expires, [Some(90), None]);
+    assert!(failure("operation :create, expires_after: 0 do\n  mutation \"CreateSample\"\nend").1.contains("expires_after"));
 }

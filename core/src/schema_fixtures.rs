@@ -117,7 +117,6 @@ fn edge_fields() -> Vec<FieldSpec> {
 fn bound(name: &str, shape: RootShape, mutation: &str) -> ActionDeclaration {
     let mut action = ActionDeclaration::new(name, shape);
     action.mutation = Some(mutation.to_string());
-    action.durable = true;
     action.has_optimistic = name == "create";
     action.has_temp_row_retention = name == "create";
     if name == "create" {

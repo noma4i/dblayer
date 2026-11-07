@@ -383,7 +383,7 @@ fn build_operation(operation: &OperationDecl, owner: &str) -> ActionDeclaration 
     if let Some((OptimisticDecl::Fields(fields), _)) = &operation.optimistic {
         action.optimistic = fields.iter().map(|(name, value, _)| (name.clone(), optimistic_json(value))).collect();
     }
-    action.durable = operation.durable.is_some();
+    action.expires_after = operation.expires_after;
     action.processing = operation.processing.as_ref().map(|processing| dblayer::schema::ProcessingDeclaration { field: processing.field.clone(), done: processing.done.clone(), progress: processing.progress.clone() });
     action.removes_receiver = operation.removes_receiver.is_some();
     action.copies_receiver_to = operation.copies_receiver_to.as_ref().map(|copy| ReceiverCopy {

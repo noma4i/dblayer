@@ -313,33 +313,18 @@ pub fn emit_swift(models: &[ModelSpec], operations: &[OperationCall], schema_typ
             if optional && !kind.ends_with('?') { kind.push('?'); }
             format!("{}: {}{}", identifier(&field.name, true), kind, if optional { " = nil" } else { "" })
         }).chain(create_args.iter().map(|(name, kind)| format!("{}: {}{}{}", identifier(name, true), arg_type(kind, true), if kind.ends_with('?') { "?" } else { "" }, if kind.ends_with('?') { " = nil" } else { "" }))).collect::<Vec<_>>().join(", ");
-        if model.actions.iter().any(|action| action.name == "create" && action.durable) {
-            let params = if params.is_empty() { format!("in {scope}: AccountScope") } else { format!("in {scope}: AccountScope, {params}") };
-            writeln!(out, "    @concurrent public static func send({params}) async throws -> MutationReceipt<Self> {{\n        var {values}: [String: JSONValue] = [:]").unwrap();
-            if !create_args.is_empty() { writeln!(out, "        var {args}: [String: JSONValue] = [:]").unwrap(); }
-            for field in &create_fields {
-                if create_optional(model, field) { writeln!(out, "        if let value = {} {{ {values}[\"{}\"] = try JSONValue.encode(value) }}", identifier(&field.name, true), field.name).unwrap(); }
-                else { writeln!(out, "        {values}[\"{}\"] = try JSONValue.encode({})", field.name, identifier(&field.name, true)).unwrap(); }
-            }
-            for (name, kind) in &create_args {
-                if kind.ends_with('?') { writeln!(out, "        if let value = {printed} {{ {args}[\"{name}\"] = try JSONValue.encode(value) }}", printed = identifier(name, true)).unwrap(); }
-                else { writeln!(out, "        {args}[\"{name}\"] = try JSONValue.encode({printed})", printed = identifier(name, true)).unwrap(); }
-            }
-            writeln!(out, "        return try await {scope}.send(Self.self, values: {values}{})\n    }}", if create_args.is_empty() { String::new() } else { format!(", args: {args}") }).unwrap();
-        } else {
-            let params = swift_scope(&params, &scope);
-            writeln!(out, "    @concurrent public static func create({params}) async throws -> MutationReceipt<Self> {{\n        var {values}: [String: JSONValue] = [:]").unwrap();
-            if !create_args.is_empty() { writeln!(out, "        var {args}: [String: JSONValue] = [:]").unwrap(); }
-            for field in &create_fields {
-                if create_optional(model, field) { writeln!(out, "        if let value = {} {{ {values}[\"{}\"] = try JSONValue.encode(value) }}", identifier(&field.name, true), field.name).unwrap(); }
-                else { writeln!(out, "        {values}[\"{}\"] = try JSONValue.encode({})", field.name, identifier(&field.name, true)).unwrap(); }
-            }
-            for (name, kind) in &create_args {
-                if kind.ends_with('?') { writeln!(out, "        if let value = {printed} {{ {args}[\"{name}\"] = try JSONValue.encode(value) }}", printed = identifier(name, true)).unwrap(); }
-                else { writeln!(out, "        {args}[\"{name}\"] = try JSONValue.encode({printed})", printed = identifier(name, true)).unwrap(); }
-            }
-            writeln!(out, "        return try await Self.create(values: {values}{}, in: {scope})\n    }}", if create_args.is_empty() { String::new() } else { format!(", args: {args}") }).unwrap();
+        let params = swift_scope(&params, &scope);
+        writeln!(out, "    @concurrent public static func create({params}) async throws -> MutationReceipt<Self> {{\n        var {values}: [String: JSONValue] = [:]").unwrap();
+        if !create_args.is_empty() { writeln!(out, "        var {args}: [String: JSONValue] = [:]").unwrap(); }
+        for field in &create_fields {
+            if create_optional(model, field) { writeln!(out, "        if let value = {} {{ {values}[\"{}\"] = try JSONValue.encode(value) }}", identifier(&field.name, true), field.name).unwrap(); }
+            else { writeln!(out, "        {values}[\"{}\"] = try JSONValue.encode({})", field.name, identifier(&field.name, true)).unwrap(); }
         }
+        for (name, kind) in &create_args {
+            if kind.ends_with('?') { writeln!(out, "        if let value = {printed} {{ {args}[\"{name}\"] = try JSONValue.encode(value) }}", printed = identifier(name, true)).unwrap(); }
+            else { writeln!(out, "        {args}[\"{name}\"] = try JSONValue.encode({printed})", printed = identifier(name, true)).unwrap(); }
+        }
+        writeln!(out, "        return try await Self.create(values: {values}{}, in: {scope})\n    }}", if create_args.is_empty() { String::new() } else { format!(", args: {args}") }).unwrap();
         let update_args = standard_args(model, "update");
         let params = fields.iter().map(|field| format!("{}: {}? = nil", identifier(&field.name, true), field_type(field, true))).chain(update_args.iter().map(|(name, kind)| format!("{}: {}? = nil", identifier(name, true), arg_type(kind, true)))).collect::<Vec<_>>().join(", ");
         let params = swift_scope(&params, &scope);
@@ -455,9 +440,8 @@ pub fn emit_kotlin(models: &[ModelSpec], operations: &[OperationCall], schema_ty
             if optional && !kind.ends_with('?') { kind.push('?'); }
             format!("{}: {}{}", identifier(&field.name, false), kind, if optional { " = null" } else { "" })
         }).chain(create_args.iter().map(|(name, kind)| format!("{}: {}{}", identifier(name, false), arg_type(kind, false), if kind.ends_with('?') { "? = null" } else { "" }))).collect::<Vec<_>>().join(", ");
-        if model.actions.iter().any(|action| action.name == "create" && action.durable) {
-        let params = if params.is_empty() { format!("{account}: AccountScope") } else { format!("{account}: AccountScope, {params}") };
-        writeln!(out, "        suspend fun send({params}): MutationReceipt<{class}> {{\n            val {values} = buildJsonObject {{").unwrap();
+        let params = kotlin_scope(&params, &account);
+        writeln!(out, "        suspend fun create({params}): MutationReceipt<{class}> = onAccount({account}) {{ database_, epoch_ ->\n            val {values} = buildJsonObject {{").unwrap();
         for field in &create_fields {
             if create_optional(model, field) { writeln!(out, "                {}?.let {{ this.put(\"{}\", jsonValue(it)) }}", identifier(&field.name, false), field.name).unwrap(); }
             else { writeln!(out, "                this.put(\"{}\", jsonValue({}))", field.name, identifier(&field.name, false)).unwrap(); }
@@ -471,31 +455,7 @@ pub fn emit_kotlin(models: &[ModelSpec], operations: &[OperationCall], schema_ty
             }
             out.push_str("            }\n");
         }
-        writeln!(out, "            return {account}.send(this, {values}{})\n        }}", if create_args.is_empty() { String::new() } else { format!(", {args}") }).unwrap();
-        } else {
-            let params = create_fields.iter().map(|field| {
-                let optional = create_optional(model, field);
-                let mut kind = field_type(field, false);
-                if optional && !kind.ends_with('?') { kind.push('?'); }
-                format!("{}: {}{}", identifier(&field.name, false), kind, if optional { " = null" } else { "" })
-            }).chain(create_args.iter().map(|(name, kind)| format!("{}: {}{}", identifier(name, false), arg_type(kind, false), if kind.ends_with('?') { "? = null" } else { "" }))).collect::<Vec<_>>().join(", ");
-            let params = kotlin_scope(&params, &account);
-            writeln!(out, "        suspend fun create({params}): MutationReceipt<{class}> = onAccount({account}) {{ database_, epoch_ ->\n            val {values} = buildJsonObject {{").unwrap();
-            for field in &create_fields {
-                if create_optional(model, field) { writeln!(out, "                {}?.let {{ this.put(\"{}\", jsonValue(it)) }}", identifier(&field.name, false), field.name).unwrap(); }
-                else { writeln!(out, "                this.put(\"{}\", jsonValue({}))", field.name, identifier(&field.name, false)).unwrap(); }
-            }
-            out.push_str("            }\n");
-            if !create_args.is_empty() {
-                writeln!(out, "            val {args} = buildJsonObject {{").unwrap();
-                for (name, kind) in &create_args {
-                    if kind.ends_with('?') { writeln!(out, "                {printed}?.let {{ this.put(\"{name}\", jsonValue(it)) }}", printed = identifier(name, false)).unwrap(); }
-                    else { writeln!(out, "                this.put(\"{name}\", jsonValue({printed}))", printed = identifier(name, false)).unwrap(); }
-                }
-                out.push_str("            }\n");
-            }
-            writeln!(out, "            MutationReceipt(database_, {class}, database_.create(epoch_, \"{class}\", {values}.jsonText(), {}))\n        }}", if create_args.is_empty() { "\"{}\"".to_string() } else { format!("{args}.jsonText()") }).unwrap();
-        }
+        writeln!(out, "            MutationReceipt(database_, {class}, database_.create(epoch_, \"{class}\", {values}.jsonText(), {}))\n        }}", if create_args.is_empty() { "\"{}\"".to_string() } else { format!("{args}.jsonText()") }).unwrap();
         out.push_str("    }\n");
         let update_args = standard_args(model, "update");
         let params = fields.iter().map(|field| kotlin_patch_param(field)).chain(update_args.iter().map(|(name, kind)| format!("{}: {}? = null", identifier(name, false), arg_type(kind, false)))).collect::<Vec<_>>().join(", ");

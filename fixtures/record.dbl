@@ -53,7 +53,7 @@ model Record do
     response from: "container.records"
     paginate size: 30, direction: :forward
   end
-  operation :create, durable: true do
+  operation :create do
     mutation "CreateRecord"
     variables containerId: :containerId, text: :text, signedId: :signedId, attachedUserId: :attachedUserId
     parameter :signedId, :string, null: true

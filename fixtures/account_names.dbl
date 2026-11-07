@@ -1,7 +1,7 @@
 model Ledger do
   attribute :scope, :string
   index :scope
-  operation :create, durable: true do
+  operation :create do
     mutation "CreateMoment"
   end
   operation :update do
@@ -29,7 +29,7 @@ end
 
 model Shadow do
   attribute :title, :string
-  operation :create, durable: true do
+  operation :create do
     mutation "CreateMoment"
   end
   scope :scope do

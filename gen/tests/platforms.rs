@@ -134,7 +134,7 @@ fn create_takes_only_the_fields_the_mutation_input_maps() {
   attribute :name, :string, null: true
   attribute :unreadCount, :int
   attribute :createdAt, :date
-  operation :create, durable: true do
+  operation :create do
     mutation "ContainerGroupCreate"
     variables name: :name
     local :unreadCount
@@ -143,8 +143,8 @@ end
 "#).unwrap();
     let swift = emit_swift(&models, &[], &dblayer_gen::SchemaTypes::default());
     let kotlin = emit_kotlin(&models, &[], &dblayer_gen::SchemaTypes::default());
-    assert!(swift.contains("@concurrent public static func send(in scope_: AccountScope, name: String? = nil, unreadCount: Int) async throws -> MutationReceipt<Self>"));
-    assert!(kotlin.contains("suspend fun send(account: AccountScope, name: String? = null, unreadCount: Long): MutationReceipt<Container>"));
+    assert!(swift.contains("@concurrent public static func create(name: String? = nil, unreadCount: Int, in scope_: AccountScope? = nil) async throws -> MutationReceipt<Self>"));
+    assert!(kotlin.contains("suspend fun create(name: String? = null, unreadCount: Long, account: AccountScope? = null): MutationReceipt<Container>"));
 }
 
 #[test]
@@ -239,7 +239,7 @@ fn a_local_attribute_with_a_source_is_optional_in_create_and_a_map_reaches_the_c
   attribute :name, :string
   attribute :unreadCount, :int
   attribute :stance, :string, null: true
-  operation :create, durable: true do
+  operation :create do
     mutation "ContainerGroupCreate"
     variables name: :name
     local :unreadCount, from: { of: Counter, field: :total }
@@ -260,8 +260,8 @@ end
 "#).unwrap();
     let swift = emit_swift(&models, &[], &dblayer_gen::SchemaTypes::default());
     let kotlin = emit_kotlin(&models, &[], &dblayer_gen::SchemaTypes::default());
-    assert!(swift.contains("static func send(in scope_: AccountScope, name: String, unreadCount: Int? = nil) async throws -> MutationReceipt<Self>"));
-    assert!(kotlin.contains("suspend fun send(account: AccountScope, name: String, unreadCount: Long? = null): MutationReceipt<Container>"));
+    assert!(swift.contains("static func create(name: String, unreadCount: Int? = nil, in scope_: AccountScope? = nil) async throws -> MutationReceipt<Self>"));
+    assert!(kotlin.contains("suspend fun create(name: String, unreadCount: Long? = null, account: AccountScope? = null): MutationReceipt<Container>"));
     let map = r#"{"stance":{"$map":{"from":"shelf","map":{"PRIMARY":"main","SECONDARY":"other"}}}}"#;
     assert!(swift.contains(map), "Swift literal");
     assert!(kotlin.contains(&map.replace('$', "${'$'}")), "Kotlin literal");
@@ -280,7 +280,7 @@ fn model_with_two_node_relations_gets_one_entity_per_platform() {
 #[test]
 fn every_create_form_closes_the_kotlin_companion() {
     let source = |create: &str| format!("model Moment do\n  attribute :text, :string\n{create}\nend\n");
-    for create in ["", "  operation :create, durable: true do\n    mutation \"SendMoment\"\n  end", "  operation :create do\n    mutation \"CreateMoment\"\n  end"] {
+    for create in ["", "  operation :create do\n    mutation \"SendMoment\"\n  end", "  operation :create do\n    mutation \"CreateMoment\"\n  end"] {
         let models = parse_models(&source(create)).unwrap();
         let kotlin = emit_kotlin(&models, &[], &Default::default());
         let opened = kotlin.matches('{').count();

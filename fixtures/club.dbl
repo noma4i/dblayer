@@ -51,7 +51,7 @@ model Letter do
     where chatId: :chatId
     order at: :asc
   end
-  operation :create, durable: true do
+  operation :create do
     mutation "SendLetter"
     variables chatId: :chatId, text: :text, at: :at
   end

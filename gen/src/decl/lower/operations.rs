@@ -278,21 +278,17 @@ pub(super) fn operation(cx: &mut Cx, call: &Call) -> Option<OperationDecl> {
     if upload.is_some() && kind != OperationKind::Custom {
         cx.fail(line.pos, format!("`{name}` is a standard operation: `upload: true` belongs to a named operation"));
     }
-    let durable = line.opt(cx, "durable").and_then(|pair| match boolean(cx, &pair.value, "`durable`") {
-        Some(true) => Some(pair_pos(pair)),
-        Some(false) => {
-            cx.fail(pair_pos(pair), "`durable: false` is the default: remove it");
+    let expires_after = line.opt(cx, "expires_after").and_then(|pair| match &pair.value.item {
+        Value::Int(seconds) if *seconds > 0 => Some(*seconds as u64),
+        _ => {
+            cx.fail(pair_pos(pair), "`expires_after` is a whole number of seconds above 0");
             None
         }
-        None => None,
     });
-    if durable.is_some() && name != "create" {
-        cx.fail(line.pos, format!("`{name}` cannot be durable: only `create` sends a message offline"));
-    }
     line.finish(cx);
     let lines = block(cx, call)?;
     let mut decl = OperationDecl {
-        pos: line.pos, name: name.clone(), kind, upload, durable, processing: None, mutation: None, parameters: Vec::new(), variables: None, local: None, local_from: Vec::new(), local_sites: Vec::new(), wrap: None, response: None, match_by: None,
+        pos: line.pos, name: name.clone(), kind, upload, expires_after, processing: None, mutation: None, parameters: Vec::new(), variables: None, local: None, local_from: Vec::new(), local_sites: Vec::new(), wrap: None, response: None, match_by: None,
         on_failure: None, optimistic: None, upserts: Vec::new(), refetch: Vec::new(), returns: None, batch: None, length: None,
         removes_receiver: None, copies_receiver_to: None, scope_effects: Vec::new(),
     };

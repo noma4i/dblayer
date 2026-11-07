@@ -448,7 +448,7 @@ pub struct OperationDecl {
     pub name: String,
     pub kind: OperationKind,
     pub upload: Option<Pos>,
-    pub durable: Option<Pos>,
+    pub expires_after: Option<u64>,
     pub processing: Option<ProcessingDecl>,
     pub mutation: Option<Spanned<String>>,
     pub parameters: Vec<ParameterDecl>,
