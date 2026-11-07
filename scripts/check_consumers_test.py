@@ -76,6 +76,8 @@ tsv = run(args=lambda c: c + ["--lane", "ios"], env={"CONSUMER_ANDROID_COMMAND":
 assert tsv.count("\n") == 1 and tsv.startswith("ios\t0\t"), tsv
 tsv = run(env={"CONSUMER_ANDROID_COMMAND": "exit 3"}, expect=1, contains="consumers: lane android red: rc=3")
 assert [line.split("\t")[:2] for line in tsv.splitlines()] == [["ios", "0"], ["android", "3"]], tsv
+tsv = run(env={"CONSUMER_ANDROID_COMMAND": "tail -f /dev/null", "CONSUMER_LANE_LIMIT": "1"}, expect=1, contains="consumers: lane android red: rc=124")
+assert "android\t124\t" in tsv, tsv
 tsv = run(env={"CONSUMER_IOS_REF": "no-such-ref"}, expect=1, contains="consumers: lane ios red")
 assert "ios\t1\t" in tsv, tsv
 run(args=lambda c: [], expect=1, contains="usage: check_consumers.sh")

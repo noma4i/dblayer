@@ -114,7 +114,7 @@ Typical scenarios to cover:
 | The docs check accepts a correct tree and refuses unpaired examples, non-English text, banned words, status wording, missing paths and broken links | `python3 -I scripts/check_docs_test.py` |
 | The marker count check refuses old-name markers, files named for them and development files | `python3 -I scripts/check_markers_test.py` |
 | The Android artifact check refuses ABI mismatch, missing libraries and stale source hash | `python3 -I scripts/check_android_artifacts_test.py` |
-| The consumer check refuses missing inputs and reports a red lane | `python3 -I scripts/check_consumers_test.py` |
+| The consumer check refuses missing inputs, reports a red lane and kills a lane past its 300 s limit | `python3 -I scripts/check_consumers_test.py` |
 | The sequence check refuses differing staged bytes and a lane whose listed tests did not pass | `python3 -I scripts/check_sequences_test.py` |
 | The step limit kills the whole process tree and reports it | `python3 -I scripts/check_bounded_test.py` |
 

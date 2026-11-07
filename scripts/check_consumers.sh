@@ -27,6 +27,7 @@ run_id="${RELEASE_RUN_ID:-standalone}"
 stage="$1"
 shift
 version="" maven="" package_swift="" lanes=()
+lane_limit="${CONSUMER_LANE_LIMIT:-300}"
 while [ "$#" -gt 0 ]; do
   [ "$#" -ge 2 ] || fail "$1 needs a value"
   case "$1" in
@@ -107,10 +108,12 @@ in_slot() {
 }
 
 run_lane() {
-  local lane="$1" ref="$2" command="$3" log="$logs/$1.log" tree
+  local lane="$1" ref="$2" command="$3" log="$logs/$1.log" tree code=0
   tree="$(new_tree "$lane-tree" "$ref" 2> "$log")" || { echo "cannot make the $lane worktree from $ref" >> "$log"; return 1; }
   DBLAYER_PACKAGE="$package" DBLAYER_MAVEN="$maven" DBLAYER_GEN="$stage/dblayer-gen-macos-universal" DBLAYER_VERSION="$version" DBLAYER_STAGE="$stage" \
-    in_slot bash -c "git -C \"$tree\" rev-parse HEAD > /dev/null && cd \"$tree\" && $command" >> "$log" 2>&1
+    in_slot timeout --kill-after=10 "$lane_limit" bash -c "git -C \"$tree\" rev-parse HEAD > /dev/null && cd \"$tree\" && $command" >> "$log" 2>&1 || code=$?
+  [ "$code" -ne 124 ] || echo "TIMEOUT $lane_limit lane $lane" >> "$log"
+  return "$code"
 }
 
 lane_ios() { run_lane ios "$ios_ref" "$CONSUMER_IOS_COMMAND"; }

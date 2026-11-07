@@ -64,12 +64,11 @@ run_bounded() {
   "$@" &
   pid=$!
   set +m
-  ( sleep "$limit"; echo expired > "$marker"; kill_tree "$pid" ) &
+  ( trap 'kill "$nap" 2>/dev/null; wait "$nap" 2>/dev/null; exit 0' TERM; sleep "$limit" & nap=$!; wait "$nap"; echo expired > "$marker"; kill_tree "$pid" ) &
   watcher=$!
   code=0
   wait "$pid" || code=$?
   kill "$watcher" 2>/dev/null || true
-  pkill -P "$watcher" 2>/dev/null || true
   wait "$watcher" 2>/dev/null || true
   if [ -s "$marker" ]; then
     /bin/rm -f "$marker"
