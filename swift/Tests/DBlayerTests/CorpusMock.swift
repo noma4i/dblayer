@@ -36,12 +36,12 @@ final class CorpusMock: ScriptedTransport, ScriptedHttp, @unchecked Sendable {
     }
   }
 
-  private func record(_ kind: String, _ purpose: NetworkPurpose) -> String {
+  private func record(_ kind: String, _ purpose: NetworkPurpose, hold: (String) -> Void) {
     lock.withLock {
       next += 1
       let id = "r\(next)"
       seen.append(Seen(id: id, kind: kind, purpose: purpose == .standard ? "standard" : "transfer"))
-      return id
+      hold(id)
     }
   }
 
@@ -114,14 +114,12 @@ final class CorpusMock: ScriptedTransport, ScriptedHttp, @unchecked Sendable {
   }
 
   private func wait(_ kind: String, _ request: TransportRequest) async throws -> String {
-    let id = record(kind, request.purpose)
-    return try await withCheckedThrowingContinuation { continuation in lock.withLock { waiting[id] = continuation }; TestPulse.shared.pulse() }
+    return try await withCheckedThrowingContinuation { continuation in record(kind, request.purpose) { waiting[$0] = continuation }; TestPulse.shared.pulse() }
   }
 
   func scriptedCable(url: String, events: CableEvents) async -> CableOutcome {
-    let id = record("subscription", .standard)
     let outcome = await peer.openCable(url: url, events: events)
-    lock.withLock { cables[id] = peer.lastOpened }
+    record("subscription", .standard) { cables[$0] = peer.lastOpened }
     TestPulse.shared.pulse()
     return outcome
   }
@@ -132,15 +130,13 @@ final class CorpusMock: ScriptedTransport, ScriptedHttp, @unchecked Sendable {
 
   func post(path: String, body: String, purpose: NetworkPurpose) async throws -> EncryptedReply {
     let request = try sealed.open(body)
-    let id = record("http", purpose)
-    return try await withCheckedThrowingContinuation { continuation in lock.withLock { waitingHttp[id] = (request, continuation) }; TestPulse.shared.pulse() }
+    return try await withCheckedThrowingContinuation { continuation in record("http", purpose) { waitingHttp[$0] = (request, continuation) }; TestPulse.shared.pulse() }
   }
   func query(request: TransportRequest) async throws -> String { try await wait("query", request) }
   func mutate(request: TransportRequest) async throws -> String { try await wait("mutation", request) }
 
   func scriptedPut(url: String, headers: [String: String], file: PutFile, identity: TransferIdentity, progress: ByteProgress) async throws -> PutReply {
-    let id = record("put", .transfer)
-    return try await withCheckedThrowingContinuation { continuation in lock.withLock { waitingPuts[id] = continuation }; TestPulse.shared.pulse() }
+    return try await withCheckedThrowingContinuation { continuation in record("put", .transfer) { waitingPuts[$0] = continuation }; TestPulse.shared.pulse() }
   }
 }
 

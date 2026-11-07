@@ -66,12 +66,12 @@ impl Mock {
         Arc::new(Self { inner: Mutex::new(Inner::default()), peer: CablePeer::new(crate::transport::encrypted::protocol_tests::config()) })
     }
 
-    fn record(&self, kind: &'static str, purpose: &'static str) -> String {
+    fn record(&self, kind: &'static str, purpose: &'static str, hold: impl FnOnce(&mut Inner, String)) {
         let mut inner = locked(self);
         inner.next += 1;
         let id = format!("r{}", inner.next);
         inner.seen.push(Seen { id: id.clone(), kind, purpose, announced: false });
-        id
+        hold(&mut inner, id);
     }
 
     /// How many requests arrived. The runner waits until this number and the other counters stop moving.
@@ -167,9 +167,8 @@ impl Mock {
     }
 
     async fn wait(&self, kind: &'static str, request: &TransportRequest) -> Reply {
-        let id = self.record(kind, purpose_name(request.purpose));
         let (sender, receiver) = oneshot::channel();
-        locked(self).waiting.insert(id, sender);
+        self.record(kind, purpose_name(request.purpose), |inner, id| { inner.waiting.insert(id, sender); });
         receiver.await.unwrap_or_else(|_| Err(DbError::Interrupted { detail: "the mock was dropped".into() }))
     }
 }
@@ -178,15 +177,13 @@ impl Mock {
 impl FakeTransport for Mock {
     fn cable(&self) -> Option<&CablePeer> { Some(&self.peer) }
     fn cable_opened(&self, token: &str) {
-        let id = self.record("subscription", purpose_name(NetworkPurpose::Standard));
-        locked(self).cables.insert(id, token.to_string());
+        self.record("subscription", purpose_name(NetworkPurpose::Standard), |inner, id| { inner.cables.insert(id, token.to_string()); });
     }
     async fn query(&self, request: TransportRequest) -> Result<String, DbError> { self.wait("query", &request).await }
     async fn mutate(&self, request: TransportRequest) -> Result<String, DbError> { self.wait("mutation", &request).await }
     async fn put(&self, _: String, _: HashMap<String, String>, _: PutFile, _: TransferIdentity, _: Arc<ByteProgress>) -> Result<PutReply, DbError> {
-        let id = self.record("put", purpose_name(NetworkPurpose::Transfer));
         let (sender, receiver) = oneshot::channel();
-        locked(self).waiting_puts.insert(id, sender);
+        self.record("put", purpose_name(NetworkPurpose::Transfer), |inner, id| { inner.waiting_puts.insert(id, sender); });
         receiver.await.unwrap_or_else(|_| Err(DbError::Interrupted { detail: "the mock was dropped".into() }))
     }
 }
@@ -196,9 +193,8 @@ impl FakeTransport for Mock {
 impl FakeHttp for Mock {
     async fn post(&self, _path: String, body: String, purpose: NetworkPurpose) -> Result<EncryptedReply, DbError> {
         let request = decrypt_request(&body).map_err(|detail| DbError::Invalid { detail })?;
-        let id = self.record("http", purpose_name(purpose));
         let (sender, receiver) = oneshot::channel();
-        locked(self).waiting_http.insert(id, (request, sender));
+        self.record("http", purpose_name(purpose), |inner, id| { inner.waiting_http.insert(id, (request, sender)); });
         receiver.await.unwrap_or_else(|_| Err(DbError::Interrupted { detail: "the mock was dropped".into() }))
     }
 }

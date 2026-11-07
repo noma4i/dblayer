@@ -34,12 +34,15 @@ class CorpusMock : ScriptedTransport, ScriptedHttp {
         }
     }
 
-    private fun record(kind: String, purpose: NetworkPurpose): String = synchronized(seen) {
-        next += 1
-        val id = "r$next"
-        seen.add(Seen(id, kind, if (purpose == NetworkPurpose.STANDARD) "standard" else "transfer"))
-        id
-    }.also { TestPulse.pulse() }
+    private fun record(kind: String, purpose: NetworkPurpose, hold: (String) -> Unit) {
+        synchronized(seen) {
+            next += 1
+            val id = "r$next"
+            seen.add(Seen(id, kind, if (purpose == NetworkPurpose.STANDARD) "standard" else "transfer"))
+            hold(id)
+        }
+        TestPulse.pulse()
+    }
 
     fun answer(id: String, body: String): Boolean {
         waiting.remove(id)?.let { return it.complete(body) }
@@ -94,17 +97,15 @@ class CorpusMock : ScriptedTransport, ScriptedHttp {
     }
 
     private suspend fun wait(kind: String, request: TransportRequest): String {
-        val id = record(kind, request.purpose)
         val reply = CompletableDeferred<String>()
-        waiting[id] = reply
+        record(kind, request.purpose) { waiting[it] = reply }
         TestPulse.pulse()
         return reply.await()
     }
 
     override suspend fun scriptedCable(url: String, events: CableEvents): CableOutcome {
-        val id = record("subscription", NetworkPurpose.STANDARD)
         val outcome = peer.openCable(url, events)
-        cables[id] = peer.lastOpened!!
+        record("subscription", NetworkPurpose.STANDARD) { cables[it] = peer.lastOpened!! }
         TestPulse.pulse()
         return outcome
     }
@@ -114,9 +115,8 @@ class CorpusMock : ScriptedTransport, ScriptedHttp {
 
     override suspend fun post(path: String, body: String, purpose: NetworkPurpose): EncryptedReply {
         val request = sealed.open(body)
-        val id = record("http", purpose)
         val reply = CompletableDeferred<EncryptedReply>()
-        waitingHttp[id] = request to reply
+        record("http", purpose) { waitingHttp[it] = request to reply }
         TestPulse.pulse()
         return reply.await()
     }
@@ -124,9 +124,8 @@ class CorpusMock : ScriptedTransport, ScriptedHttp {
     override suspend fun mutate(request: TransportRequest): String = wait("mutation", request)
 
     override suspend fun scriptedPut(url: String, headers: Map<String, String>, file: PutFile, identity: TransferIdentity, progress: ByteProgress): PutReply {
-        val id = record("put", NetworkPurpose.TRANSFER)
         val reply = CompletableDeferred<PutReply>()
-        waitingPuts[id] = reply
+        record("put", NetworkPurpose.TRANSFER) { waitingPuts[it] = reply }
         TestPulse.pulse()
         return reply.await()
     }
