@@ -88,3 +88,18 @@ fn dlv_live_resync_operations() {
     assert!(take(&twin.log).is_empty());
     assert_eq!(twin.state().journal(STREAM), before);
 }
+
+fn live_after_commit() -> Twin {
+    let mut twin = live();
+    commit(&mut twin, 2, "op");
+    twin
+}
+
+#[test]
+fn dlv_operations_read_failed() {
+    for mut twin in [opened(), live_after_commit()] {
+        let read_id = twin.read_id();
+        twin.post(d::DeliveryInput::ReadFailed { stream: STREAM, read_id, revision: 2, error: "queue unreadable".into() });
+        assert!(matches!(twin.state().journal(STREAM).last(), Some(d::Value::Ended(d::EndCause::Storage { error })) if error == "queue unreadable"), "{:?}", twin.state().journal(STREAM));
+    }
+}
