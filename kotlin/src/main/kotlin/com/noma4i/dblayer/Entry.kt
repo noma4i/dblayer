@@ -34,11 +34,11 @@ object DBlayer {
 
     fun openReport(): OpenReport = database.openReport()
 
-    suspend fun <Answer> run(operation: String, variables: JsonObject, returns: String, serializer: KSerializer<Answer>, account: AccountScope? = null): Answer =
-        onAccount(account) { database, epoch -> dbJson.decodeFromString(serializer, database.call(epoch, operation, variables.jsonText(), returns)) }
+    suspend fun <Answer> call(operation: String, variables: JsonObject, serializer: KSerializer<Answer>, account: AccountScope? = null): Answer =
+        onAccount(account) { database, epoch -> dbJson.decodeFromString(serializer, database.call(epoch, operation, variables.jsonText())) }
 
-    suspend fun run(operation: String, variables: JsonObject, account: AccountScope? = null) {
-        onAccount(account) { database, epoch -> database.run(epoch, operation, variables.jsonText()) }
+    suspend fun call(operation: String, variables: JsonObject, account: AccountScope? = null) {
+        onAccount(account) { database, epoch -> database.call(epoch, operation, variables.jsonText()) }
     }
 
     @PublishedApi internal var database: Database
@@ -60,17 +60,18 @@ object DBlayer {
         modelsJson: String,
         path: String? = null,
         operations: List<GraphQLOperation> = emptyList(),
+        operationReturns: Map<String, String> = emptyMap(),
         http: EncryptedHttp? = null,
         uploadNotification: UploadNotification,
     ) {
         val dataSync = dataSyncDeclared(android.os.Build.VERSION.SDK_INT) { context.packageManager.getPackageInfo(context.packageName, android.content.pm.PackageManager.GET_PERMISSIONS).requestedPermissions.orEmpty().toList() }
         UploadNotifications.store(context, uploadNotification)
         val ports = OpenPorts(transport, encrypted, credentials, http, endpoint, OkHttpTransport(headers), dataSync)
-        val made = opener.open(Config(path, null), modelsJson, OpenOptions(definitions(operations)), ports, SystemObservers(context))
+        val made = opener.open(Config(path, null), modelsJson, OpenOptions(definitions(operations, operationReturns)), ports, SystemObservers(context))
         made.setRoundJobs(UploadRounds(context.applicationContext, made))
         database = made
         UploadService.opened(made)
     }
 
-    private fun definitions(operations: List<GraphQLOperation>): List<OperationDefinition> = operations.map { OperationDefinition(it.operationName, it.document) }
+    private fun definitions(operations: List<GraphQLOperation>, returns: Map<String, String>): List<OperationDefinition> = operations.map { OperationDefinition(it.operationName, it.document, returns[it.operationName]) }
 }

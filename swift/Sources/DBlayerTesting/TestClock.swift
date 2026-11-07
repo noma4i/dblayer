@@ -15,9 +15,9 @@ private final class OnlineAtOnce: PlatformObserver {
 extension DB {
   /// Opens the database on a clock that only `advance(by:)` moves, so freshness windows, retry delays and expiry run without sleeping. The platform reports online at once unless the test passes its own `observers`.
   @discardableResult
-  public static func openTesting(transport: Transport?, modelsJSON: String, path: String? = nil, operations: [any GraphQLOperation.Type] = [], startingAt start: Date = Date(), encrypted: EncryptedConfig? = nil, credentials: CredentialStore? = nil, http: EncryptedHttp? = nil, observers: (any PlatformObserver)? = nil) async throws -> TestClock {
+  public static func openTesting(transport: Transport?, modelsJSON: String, path: String? = nil, operations: [any GraphQLOperation.Type] = [], operationReturns: [String: String] = [:], startingAt start: Date = Date(), encrypted: EncryptedConfig? = nil, credentials: CredentialStore? = nil, http: EncryptedHttp? = nil, observers: (any PlatformObserver)? = nil) async throws -> TestClock {
     let clock = TestClock(startMillis: UInt64(start.timeIntervalSince1970 * 1000))
-    let definitions = operations.map { OperationDefinition(name: $0.operationName, document: $0.document) }
+    let definitions = operations.map { OperationDefinition(name: $0.operationName, document: $0.document, returns: operationReturns[$0.operationName]) }
     let database = try await opener.openWithClock(config: Config(path: path, dataVersion: nil), modelsJson: modelsJSON, ports: OpenPorts(transport: transport, encrypted: encrypted, credentials: credentials, http: http, endpoint: scriptedEndpoint), clock: clock, options: OpenOptions(operations: definitions), observers: observers ?? OnlineAtOnce())
     adopt(database)
     return clock

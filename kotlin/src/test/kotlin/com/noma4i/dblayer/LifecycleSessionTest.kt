@@ -96,7 +96,7 @@ class LifecycleSessionTest {
     /** The order of the app: sign-in call, session profile, profile refresh. */
     private suspend fun startSession(name: String) {
         DBlayer.database.sessionCall("login_link", """{"account":"$name"}""")
-        DBlayer.run("SessionProfile", JsonObject(emptyMap()))
+        DBlayer.call("SessionProfile", JsonObject(emptyMap()))
         User.profile.refresh()
     }
 
@@ -108,7 +108,7 @@ class LifecycleSessionTest {
         val encrypted = EncryptedConfig("https://api.example.com", SealedServer.SERVER_KEY, SealedServer.SERVER_PIN, EncryptedEndpoints("/api/graphql", "/api/cable", "/api/logout", "/api/bootstrap", mapOf("login_link" to EncryptedSessionOperation("/api/auth/login_link", EncryptedOperationClass.AUTHENTICATED))), "example-ws-v1", "ws.hello", "EncryptedGraphqlChannel")
         DBlayer.openTesting(MockTransport(), modelsJSON, encrypted = encrypted, credentials = LifecycleCredential(), http = server)
         DBlayer.database.setOnline(true)
-        DBlayer.database.registerOperations("""[{"name":"UserProfile","document":"query UserProfile { me { id name } }"},{"name":"SessionProfile","document":"query SessionProfile { sessionProfile { id } }"}]""")
+        DBlayer.database.registerOperations(declaringReturns("""[{"name":"UserProfile","document":"query UserProfile { me { id name } }"},{"name":"SessionProfile","document":"query SessionProfile { sessionProfile { id } }"}]"""))
     }
 
     /** REL-24 and the login hang: a login after a logout refreshes the held entity, no read reaches the server after the logout, and the next account never shows the last one. */

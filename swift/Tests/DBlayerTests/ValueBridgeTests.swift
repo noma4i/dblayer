@@ -59,14 +59,14 @@ extension BridgeProbeTests {
     let transport = MockTransport()
     transport.cable = EncryptedCablePeer(server: server)
     try await DB.openTesting(transport: transport, modelsJSON: modelsJSON, encrypted: encrypted, credentials: BridgeCredential(), http: server)
-    try await DB.database.registerOperations(defsJson: #"[{"name":"UserProfile","document":"query UserProfile { me { id name } }"},{"name":"SessionProfile","document":"query SessionProfile { sessionProfile { id } }"},{"name":"CreateMoment","document":"mutation CreateMoment($text: String) { createMoment(text: $text) { id uuid text likedByMe media createdAt } }"}]"#)
+    try await DB.database.registerOperations(defsJson: try declaringReturns(#"[{"name":"UserProfile","document":"query UserProfile { me { id name } }"},{"name":"SessionProfile","document":"query SessionProfile { sessionProfile { id } }"},{"name":"CreateMoment","document":"mutation CreateMoment($text: String) { createMoment(text: $text) { id uuid text likedByMe media createdAt } }"}]"#))
     return server
   }
 
   @MainActor
   static func signIn(_ account: String) async throws {
     try await DB.sessionCall("login_link", body: BridgeLogin(account: account))
-    try await DB.run("SessionProfile", variables: [:])
+    try await DB.call("SessionProfile", variables: [:])
     try await User.profile.refresh()
   }
 

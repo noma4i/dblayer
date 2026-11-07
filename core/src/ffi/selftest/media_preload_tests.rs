@@ -89,7 +89,7 @@ async fn preloads_and_three_media_loads_finish_on_empty_pages() {
         {"name":"PresenceOnline","document":"query PresenceOnline { presenceOnline { id } }"},
         {"name":"ChatMedia","document":"query ChatMedia($chatId: ID!, $first: Int, $after: Cursor, $mediaKinds: [String!], $includeGifts: Boolean!) { node(id: $chatId) { ... on Chat { messages(first: $first, after: $after, mediaKinds: $mediaKinds, includeGifts: $includeGifts) { edges { cursor node { id chatId kind mediaKind sequenceNumber } } pageInfo { hasNextPage endCursor } } } } }"}
     ]);
-    let operations = operations.as_array().unwrap().iter().map(|operation| crate::ffi::OperationDefinition { name: operation["name"].as_str().unwrap().into(), document: operation["document"].as_str().unwrap().into() }).collect();
+    let operations = operations.as_array().unwrap().iter().map(|operation| crate::ffi::OperationDefinition { name: operation["name"].as_str().unwrap().into(), document: operation["document"].as_str().unwrap().into(), returns: None }).collect();
     let options = OpenOptions { operations };
     let opener = OpenDatabase::new();
     let database = within_secs(20, opener.open(Config { path: None, data_version: None }, models(), options, crate::ffi::OpenPorts { transport: Some(transport.clone()), endpoint: Some(crate::ffi::FAKE_ENDPOINT.into()), ..Default::default() }, None)).await.unwrap();

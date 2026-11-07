@@ -44,7 +44,7 @@ class ClosedDatabaseTest {
     fun life_prop_not_open_typed() = bounded {
         suspend fun entries(): List<String> {
             val calls: List<suspend () -> Unit> = listOf(
-                { DBlayer.run("Probe", JsonObject(emptyMap())) },
+                { DBlayer.call("Probe", JsonObject(emptyMap())) },
                 { DBlayer.sessionCall<JsonNull, JsonElement>("Probe", JsonNull) },
                 { DBlayer.sessionReset() },
                 { DBlayer.subscriptionCensus() },

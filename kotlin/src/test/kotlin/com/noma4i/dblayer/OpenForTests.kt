@@ -9,7 +9,7 @@ suspend fun openDatabase(config: Config, modelsJson: String, transport: Transpor
 private fun definitionsOf(operations: String): List<OperationDefinition> =
     (kotlinx.serialization.json.Json.parseToJsonElement(operations) as kotlinx.serialization.json.JsonArray).map { entry ->
         val operation = entry as kotlinx.serialization.json.JsonObject
-        OperationDefinition((operation["name"] as kotlinx.serialization.json.JsonPrimitive).content, (operation["document"] as kotlinx.serialization.json.JsonPrimitive).content)
+        (operation["name"] as kotlinx.serialization.json.JsonPrimitive).content.let { name -> OperationDefinition(name, (operation["document"] as kotlinx.serialization.json.JsonPrimitive).content, com.noma4i.dblayer.models.operationReturns[name] ?: RAW_RETURNS) }
     }
 
 /** A cleanup close: a database that is already closed stays closed. */
@@ -80,7 +80,7 @@ private fun withSessionProfile(operations: String) = if (operations.trim() == "[
 private suspend fun signIn(database: Database, restored: Boolean = false) {
     database.setOnline(true)
     if (!restored) database.sessionCall("login_link", """{"account":"stand"}""")
-    DBlayer.run("SessionProfile", kotlinx.serialization.json.JsonObject(emptyMap()))
+    DBlayer.call("SessionProfile", kotlinx.serialization.json.JsonObject(emptyMap()))
 }
 
 /** After a session reset the account signs in again through the same stand. */
@@ -114,7 +114,7 @@ suspend fun reopenClocked(modelsJson: String, transport: MockTransport, operatio
     val credential = credentialOf(Config(path, null))
     val restored = credential.get() != null
     val clock = DBlayer.openTesting(transport, modelsJson, path = path, startMillis = startMillis, encrypted = standEncrypted(), credentials = credential, http = server)
-    DBlayer.database.registerOperations(withSessionProfile(operations))
+    DBlayer.database.registerOperations(declaringReturns(withSessionProfile(operations)))
     signIn(DBlayer.database, restored)
     return clock
 }

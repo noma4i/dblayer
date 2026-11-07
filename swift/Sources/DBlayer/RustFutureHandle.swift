@@ -2,7 +2,7 @@ import Foundation
 
 enum RuntimeLane {
   private static let queue = DispatchQueue(label: "com.noma4i.dblayer.runtime-lane", qos: .userInitiated)
-  static func run(_ work: @escaping @Sendable () -> Void) { queue.async(execute: work) }
+  static func enqueue(_ work: @escaping @Sendable () -> Void) { queue.async(execute: work) }
 }
 
 final class RustFutureHandle: @unchecked Sendable {
@@ -13,7 +13,7 @@ final class RustFutureHandle: @unchecked Sendable {
   private let freeCall: (UInt64) -> Void
   private let lane: (@escaping @Sendable () -> Void) -> Void
 
-  init(_ value: UInt64, cancel: ((UInt64) -> Void)?, free: @escaping (UInt64) -> Void, lane: @escaping (@escaping @Sendable () -> Void) -> Void = RuntimeLane.run) {
+  init(_ value: UInt64, cancel: ((UInt64) -> Void)?, free: @escaping (UInt64) -> Void, lane: @escaping (@escaping @Sendable () -> Void) -> Void = RuntimeLane.enqueue) {
     self.value = value
     cancelCall = cancel
     freeCall = free

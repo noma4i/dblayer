@@ -29,7 +29,7 @@ fn updates(value: Value) -> UpdatesSpec { serde_json::from_value(value).unwrap()
 
 fn operations() -> super::feed_codec::Operations {
     let known = super::ReadOperations::default();
-    let declare = |name: &str, document: &str, root: &str| ReadOperation { name: name.into(), document: document.into(), root_path: root.into(), page_size: 0 };
+    let declare = |name: &str, document: &str, root: &str| ReadOperation { name: name.into(), document: document.into(), root_path: root.into(), page_size: 0, returns: None };
     known.declare([
         declare("Changes", "subscription Changes { recordEvents { changes { topic action recordId message { id chatId body } } } }", "recordEvents"),
         declare("MessageChanged", "subscription MessageChanged { messageChanged { id chatId body deleted } }", "messageChanged"),

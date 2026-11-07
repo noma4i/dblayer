@@ -20,8 +20,8 @@ fn result_name(operation: &OperationCall) -> &str {
     operation.result.as_ref().and_then(|root| root.app_type.as_deref()).unwrap_or_default()
 }
 
-fn returns_name(operation: &OperationCall) -> String {
-    format!("{}Returns", name(&operation.name))
+fn declaration(operation: &OperationCall) -> String {
+    serde_json::to_string(&operation.result.clone().unwrap_or_else(|| FieldSpec::raw(&operation.name))).unwrap()
 }
 
 fn returned(operation: &OperationCall, swift: bool) -> String {
@@ -39,10 +39,9 @@ pub(super) fn emit_swift_operations(out: &mut String, operations: &[OperationCal
         let types = declared(root);
         for declaration in &types { emit_swift_type(out, declaration, &types, false); }
     }
-    writeln!(out, "public enum Operations {{").unwrap();
-    for operation in operations {
-        if let Some(root) = &operation.result { writeln!(out, "    private static let {} = #\"{}\"#\n", returns_name(operation), serde_json::to_string(root).unwrap()).unwrap(); }
-    }
+    let mut seen = std::collections::HashSet::new();
+    let entries = operations.iter().filter(|operation| seen.insert(operation.operation.as_str())).map(|operation| format!("    \"{}\": #\"{}\"#,", operation.operation, declaration(operation))).collect::<Vec<_>>().join("\n");
+    writeln!(out, "public let operationReturns: [String: String] = [\n{entries}\n]\n\npublic enum Operations {{").unwrap();
     for operation in operations {
         let method = identifier(&name(&operation.name), true);
         let params = operation.args.iter().map(|(arg, kind)| format!("{}: {}{}", identifier(arg, true), arg_type(kind, true), if kind.ends_with('?') { "? = nil" } else { "" })).collect::<Vec<_>>().join(", ");
@@ -56,8 +55,8 @@ pub(super) fn emit_swift_operations(out: &mut String, operations: &[OperationCal
             else { writeln!(out, "        variables_[\"{arg}\"] = try JSONValue.encode({printed})", printed = identifier(arg, true)).unwrap(); }
         }
         let sent = operation.wrap.as_ref().map_or("variables_".to_string(), |wrap| format!("[\"{wrap}\": JSONValue.object(variables_)]"));
-        if operation.result.is_none() { writeln!(out, "        try await DB.run(\"{}\", variables: {sent}, in: {scope})\n    }}", operation.operation).unwrap(); }
-        else { writeln!(out, "        return try await DB.run(\"{}\", variables: {sent}, returns: {}, as: {}.self, in: {scope})\n    }}", operation.operation, returns_name(operation), returned(operation, true)).unwrap(); }
+        if operation.result.is_none() { writeln!(out, "        try await DB.call(\"{}\", variables: {sent}, in: {scope})\n    }}", operation.operation).unwrap(); }
+        else { writeln!(out, "        return try await DB.call(\"{}\", variables: {sent}, as: {}.self, in: {scope})\n    }}", operation.operation, returned(operation, true)).unwrap(); }
     }
     writeln!(out, "}}\n").unwrap();
 }
@@ -69,10 +68,9 @@ pub(super) fn emit_kotlin_operations(out: &mut String, operations: &[OperationCa
         let types = declared(root);
         for declaration in &types { emit_kotlin_type(out, declaration, &types, false); }
     }
-    writeln!(out, "object Operations {{").unwrap();
-    for operation in operations {
-        if let Some(root) = &operation.result { writeln!(out, "    private const val {} = \"\"\"{}\"\"\"\n", returns_name(operation), serde_json::to_string(root).unwrap()).unwrap(); }
-    }
+    let mut seen = std::collections::HashSet::new();
+    let entries = operations.iter().filter(|operation| seen.insert(operation.operation.as_str())).map(|operation| format!("    \"{}\" to \"\"\"{}\"\"\",", operation.operation, declaration(operation))).collect::<Vec<_>>().join("\n");
+    writeln!(out, "val operationReturns: Map<String, String> = mapOf(\n{entries}\n)\n\nobject Operations {{").unwrap();
     for operation in operations {
         let method = identifier(&name(&operation.name), false);
         let params = operation.args.iter().map(|(arg, kind)| format!("{}: {}{}", identifier(arg, false), arg_type(kind, false), if kind.ends_with('?') { "? = null" } else { "" })).collect::<Vec<_>>().join(", ");
@@ -85,9 +83,9 @@ pub(super) fn emit_kotlin_operations(out: &mut String, operations: &[OperationCa
             else { writeln!(out, "        variables_[\"{arg}\"] = jsonValue({printed})", printed = identifier(arg, false)).unwrap(); }
         }
         let sent = operation.wrap.as_ref().map_or("JsonObject(variables_)".to_string(), |wrap| format!("JsonObject(mapOf(\"{wrap}\" to JsonObject(variables_)))"));
-        if operation.result.is_none() { writeln!(out, "        DBlayer.run(\"{}\", {sent}, {account})\n    }}", operation.operation).unwrap(); }
-        else if operation.list { writeln!(out, "        return DBlayer.run(\"{}\", {sent}, {}, ListSerializer({}.serializer()), {account})\n    }}", operation.operation, returns_name(operation), result_name(operation)).unwrap(); }
-        else { writeln!(out, "        return DBlayer.run(\"{}\", {sent}, {}, {}.serializer(), {account})\n    }}", operation.operation, returns_name(operation), result_name(operation)).unwrap(); }
+        if operation.result.is_none() { writeln!(out, "        DBlayer.call(\"{}\", {sent}, {account})\n    }}", operation.operation).unwrap(); }
+        else if operation.list { writeln!(out, "        return DBlayer.call(\"{}\", {sent}, ListSerializer({}.serializer()), {account})\n    }}", operation.operation, result_name(operation)).unwrap(); }
+        else { writeln!(out, "        return DBlayer.call(\"{}\", {sent}, {}.serializer(), {account})\n    }}", operation.operation, result_name(operation)).unwrap(); }
     }
     writeln!(out, "}}\n").unwrap();
 }

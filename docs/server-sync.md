@@ -20,14 +20,14 @@ The library opens files and recreates incompatible caches on its worker pool.
 Open the database once at app start and use that instance everywhere. A second call to `open` while the database is open fails with `database is already open; open it once at app start`, whatever its parameters. An opening error permits retry. `close` ends the database, meant for tests and the end of the process, and the next `open` opens it again.
 
 ```swift
-try await DB.open(endpoint: endpoint, headers: { ["Authorization": "Bearer \(session.token)"] }, modelsJSON: modelsJSON, operations: GraphQLOperations.all)
+try await DB.open(endpoint: endpoint, headers: { ["Authorization": "Bearer \(session.token)"] }, modelsJSON: modelsJSON, operations: GraphQLOperations.all, operationReturns: operationReturns)
 ```
 
 ```kotlin
-DBlayer.open(context, endpoint = endpoint, headers = { mapOf("Authorization" to "Bearer ${session.token}") }, modelsJson = modelsJson, operations = GraphQLOperations.all, uploadNotification = notification)
+DBlayer.open(context, endpoint = endpoint, headers = { mapOf("Authorization" to "Bearer ${session.token}") }, modelsJson = modelsJson, operations = GraphQLOperations.all, operationReturns = operationReturns, uploadNotification = notification)
 ```
 
-`endpoint`, `encrypted`, `credentials`, `transport`, `path` and `http` default to nil or null.
+`endpoint`, `encrypted`, `credentials`, `transport`, `path` and `http` default to nil or null. `operationReturns` defaults to an empty map; pass the generated `operationReturns` so typed calls know their result.
 `headers` is a closure that returns the request headers, `@Sendable () -> [String: String]` in Swift and `() -> Map<String, String>` in Kotlin. It defaults to an empty map and is called for each request and cable connection to the database origin. Presigned file uploads use their supplied headers and User-Agent. `operations` defaults to an empty list. `modelsJSON` or `modelsJson` is required.
 
 The built-in clients send `User-Agent: DBlayer/<version>` on HTTP requests, file PUTs and WebSocket handshakes.
@@ -148,7 +148,7 @@ A sealed answer of the encrypted session that carries an `error` field with a se
 | Where | Result |
 | ----- | -------------- |
 | `Query.load()`, `loadMore()`, `refresh()`, a forced reload (`readNode(force: true)`, `nodes`) | the request of the load got the sealed refusal |
-| `DB.run(_:variables:)` and generated `Operations.*` calls (`DBlayer.run` in Kotlin) | the call got the sealed refusal |
+| `DB.call(_:variables:)` and generated `Operations.*` calls (`DBlayer.call` in Kotlin) | the call got the sealed refusal |
 | Mutation receipt `outcome()` | the queued mutation got the sealed refusal. The rejected outcome carries the session code and detail. The action's `onFailure` declaration decides whether the optimistic value stays |
 | streams (`scope.stream`, `updates`) | never. They read the local database. A load under them that gets the refusal fails quietly, the explicit `load()` shows it |
 

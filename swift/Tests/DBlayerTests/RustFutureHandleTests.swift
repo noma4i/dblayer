@@ -64,7 +64,7 @@ struct RustFutureHandleTests {
         group.addTask { if index.isMultiple(of: 3) { handle.free() } else { handle.cancel() } }
       }
     }
-    await withCheckedContinuation { continuation in RuntimeLane.run { continuation.resume() } }
+    await withCheckedContinuation { continuation in RuntimeLane.enqueue { continuation.resume() } }
     #expect(calls.calls.filter { $0 == "free:42" }.count == 1)
     #expect(calls.calls.filter { $0 == "cancel:42" }.count <= 1)
     #expect(calls.calls.first != "free:42" || !calls.calls.contains("cancel:42"))

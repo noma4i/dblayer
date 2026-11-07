@@ -14,7 +14,7 @@ extension RawOutcome {
 struct UrlSessionHttp: Sendable {
   let session: URLSession
 
-  func run(_ request: HttpRequest) async -> RawOutcome {
+  func exchange(_ request: HttpRequest) async -> RawOutcome {
     guard let url = URL(string: request.url) else { return .failed(failure: RawFailure(domain: "url", code: nil, message: "")) }
     var urlRequest = URLRequest(url: url, timeoutInterval: TimeInterval(request.requestMs) / 1000)
     urlRequest.httpMethod = request.method

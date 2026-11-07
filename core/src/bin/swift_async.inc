@@ -17,7 +17,7 @@ fileprivate func uniffiRustCallAsync<F, T>(
                 pollFunc(
                     handle.value,
                     { handle, pollResult in
-                        RuntimeLane.run { uniffiFutureContinuationCallback(handle: handle, pollResult: pollResult) }
+                        RuntimeLane.enqueue { uniffiFutureContinuationCallback(handle: handle, pollResult: pollResult) }
                     },
                     uniffiContinuationHandleMap.insert(obj: $0)
                 )

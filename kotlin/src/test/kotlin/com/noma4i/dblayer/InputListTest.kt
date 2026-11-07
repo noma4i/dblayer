@@ -25,7 +25,7 @@ class InputListTest {
         val transport = MockTransport()
         transport.enqueue("WidgetsSend", reply)
         reopen(Config(null, null), modelsJSON, transport)
-        DBlayer.database.registerOperations("""[{"name":"WidgetsSend","document":"mutation WidgetsSend(${'$'}widgets: [StickerWidgetInput!]) { widgetsSend(widgets: ${'$'}widgets) { id } }"}]""")
+        DBlayer.database.registerOperations(declaringReturns("""[{"name":"WidgetsSend","document":"mutation WidgetsSend(${'$'}widgets: [StickerWidgetInput!]) { widgetsSend(widgets: ${'$'}widgets) { id } }"}]"""))
         return transport
     }
 

@@ -23,8 +23,8 @@ extension BridgeProbeTests {
     }
     func entries() async -> [String] {
       [
-        await code { _ = try await DB.run("Probe", variables: [:], returns: #"{"name":"Probe","kind":{"type":"object"}}"#, as: JSONValue.self) },
-        await code { try await DB.run("Probe", variables: [:]) },
+        await code { _ = try await DB.call("Probe", variables: [:], as: JSONValue.self) },
+        await code { try await DB.call("Probe", variables: [:]) },
         await code { try await DB.sessionCall("Probe", body: JSONValue.null) },
         await code { _ = try await DB.sessionCall("Probe", body: JSONValue.null, as: JSONValue.self) },
         await code { try await DB.sessionReset() },

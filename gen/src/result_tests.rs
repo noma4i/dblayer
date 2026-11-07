@@ -16,7 +16,7 @@ fn a_result_with_objects_lists_and_raw_json_becomes_nested_types_on_both_platfor
         "public struct PricingLoadResultGifts: Codable, Sendable, Equatable {",
         "    public let price: Int?",
         "public struct PricingLoadResultWallet: Codable, Sendable, Equatable {",
-        "return try await DB.run(\"Pricing\", variables: variables_, returns: pricingLoadReturns, as: PricingLoadResult.self, in: scope_)",
+        "return try await DB.call(\"Pricing\", variables: variables_, as: PricingLoadResult.self, in: scope_)",
     ] {
         assert!(swift.contains(line), "swift lacks {line}\n{swift}");
     }
@@ -30,7 +30,7 @@ fn a_result_with_objects_lists_and_raw_json_becomes_nested_types_on_both_platfor
         "    val spec: JsonElement? = null,",
         "data class PricingLoadResultGifts(",
         "    val id: String? = null,",
-        "DBlayer.run(\"Pricing\", JsonObject(variables_), pricingLoadReturns, PricingLoadResult.serializer(), account)",
+        "DBlayer.call(\"Pricing\", JsonObject(variables_), PricingLoadResult.serializer(), account)",
     ] {
         assert!(kotlin.contains(line), "kotlin lacks {line}\n{kotlin}");
     }
@@ -54,5 +54,20 @@ fn a_wrong_returns_declaration_is_named_with_its_line() {
         let source = format!("operation :a do\n  mutation \"A\"\n  returns do\n    {line}\n  end\nend\n");
         let errors = parse_all(&[&source]).err().unwrap_or_else(|| panic!("accepted: {line}"));
         assert!(errors.iter().any(|(_, error)| error.message.contains(message)), "{line}: {errors:?}");
+    }
+}
+
+#[test]
+fn every_operation_declares_its_returns_once_by_graphql_name_and_a_void_one_is_raw() {
+    let void = "operation :sign_out do\n  mutation \"SignOut\"\nend\n";
+    let declared = parse_all(&[PRICING, void]).unwrap();
+    let swift = emit_swift(&declared.models, &declared.operations, &SchemaTypes::default());
+    let kotlin = emit_kotlin(&declared.models, &declared.operations, &SchemaTypes::default());
+    for (source, pricing, signed) in [
+        (&swift, "    \"Pricing\": #\"{\"name\":\"pricing_load\",\"kind\":{\"type\":\"object\"}", "    \"SignOut\": #\"{\"name\":\"sign_out\",\"kind\":{\"type\":\"raw\"}"),
+        (&kotlin, "    \"Pricing\" to \"\"\"{\"name\":\"pricing_load\",\"kind\":{\"type\":\"object\"}", "    \"SignOut\" to \"\"\"{\"name\":\"sign_out\",\"kind\":{\"type\":\"raw\"}"),
+    ] {
+        assert!(source.contains(pricing) && source.contains(signed), "declarations missing\n{source}");
+        assert_eq!(source.matches("operationReturns").count(), 1);
     }
 }

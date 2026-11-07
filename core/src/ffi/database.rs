@@ -318,6 +318,7 @@ impl Database {
                 let size = size.as_u64().and_then(|size| u32::try_from(size).ok()).ok_or_else(|| DbError::Invalid { detail: format!("operation {name} has invalid pageSize") })?;
                 operation = operation.paged(size);
             }
+            operation = operation.returning(def.get("returns").and_then(Value::as_str).map(str::to_string));
             if let Some(kind) = crate::owners::calls::CallKind::declared_by(&document) {
                 names.push((name.clone(), kind));
             }
@@ -340,18 +341,12 @@ impl Database {
         }
         uploads.check(|name| self.reads.get(name).is_some()).map_err(|detail| DbError::Invalid { detail })
     }
-    pub async fn run(&self, epoch: u64, operation: String, variables_json: String) -> Result<String, DbError> {
-        self.remote()?;
-        let variables_json = self.offload(move || Ok(parse_json::<Value>(&variables_json)?.to_string())).await?;
-        match self.await_life(self.life.run(epoch, operation, variables_json)).await? {
-            LifeReply::Call(Ok(answer)) => Ok(answer),
-            LifeReply::Call(Err(error)) => Err(call_failure(error)),
-            _ => Err(super::command::ended()),
-        }
-    }
-    pub async fn call(&self, epoch: u64, operation: String, variables_json: String, returns_json: String) -> Result<String, DbError> {
+    pub async fn call(&self, epoch: u64, operation: String, variables_json: String) -> Result<String, DbError> {
+        let Some(returns) = self.reads.get(&operation).and_then(|declared| declared.returns.clone()) else {
+            return Err(if self.life.published().closed { super::command::ended() } else { DbError::Invalid { detail: format!("operation {operation} has no returns declaration") } });
+        };
         let root = self.run(epoch, operation, variables_json).await?;
-        self.offload(move || super::call_result::normalize(&root, &returns_json).map_err(|detail| DbError::Invalid { detail })).await
+        self.offload(move || super::call_result::normalize(&root, &returns).map_err(|detail| DbError::Invalid { detail })).await
     }
     pub async fn retry(&self, epoch: u64, model: String, row_id: String, action: Option<String>, source: Option<WireUploadRequest>) -> Result<WireOperationReceipt, DbError> {
         if source.is_some() || action.as_deref().is_some_and(|action| self.db.spec(&model).is_ok_and(|spec| spec.upload_action(action).is_some())) {
@@ -380,6 +375,15 @@ impl Database {
 }
 
 impl Database {
+    pub(crate) async fn run(&self, epoch: u64, operation: String, variables_json: String) -> Result<String, DbError> {
+        self.remote()?;
+        let variables_json = self.offload(move || Ok(parse_json::<Value>(&variables_json)?.to_string())).await?;
+        match self.await_life(self.life.run(epoch, operation, variables_json)).await? {
+            LifeReply::Call(Ok(answer)) => Ok(answer),
+            LifeReply::Call(Err(error)) => Err(call_failure(error)),
+            _ => Err(super::command::ended()),
+        }
+    }
     /// Runs the blocking part of a call. The owners barrier counts the job until the call wakes.
     pub(super) async fn offload<T: Send + 'static>(&self, work: impl FnOnce() -> Result<T, DbError> + Send + 'static) -> Result<T, DbError> {
         let kept = crate::runtime::hold_until_woken(self.life.launch());

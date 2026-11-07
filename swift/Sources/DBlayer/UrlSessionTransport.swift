@@ -25,7 +25,7 @@ public final class UrlSessionTransport: Transport, EncryptedHttp, @unchecked Sen
 
   public func appHeaders() -> [String: String] { headers() }
 
-  public func send(request: HttpRequest) async -> RawOutcome { await http.run(request) }
+  public func send(request: HttpRequest) async -> RawOutcome { await http.exchange(request) }
 
   public func openCable(url: String, headers: [String: String], connectMs: UInt64, events: CableEvents) async -> CableOutcome { await cable.open(url: url, headers: headers, connectMs: connectMs, events: events) }
 

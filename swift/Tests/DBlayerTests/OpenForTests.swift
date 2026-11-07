@@ -10,7 +10,7 @@ private func definitions(of operations: String) -> [OperationDefinition] {
   let listed = (try? JSONSerialization.jsonObject(with: Data(operations.utf8))) as? [[String: Any]] ?? []
   return listed.compactMap { entry in
     guard let name = entry["name"] as? String, let document = entry["document"] as? String else { return nil }
-    return OperationDefinition(name: name, document: document)
+    return OperationDefinition(name: name, document: document, returns: operationReturns[name] ?? rawReturns)
   }
 }
 
@@ -98,7 +98,7 @@ private func withSessionProfile(_ operations: String) -> String {
 private func signIn(restored: Bool = false) async throws {
   try DB.database.setOnline(online: true)
   if !restored { try await DB.sessionCall("login_link", body: StandLogin(account: "stand")) }
-  try await DB.run("SessionProfile", variables: [:])
+  try await DB.call("SessionProfile", variables: [:])
 }
 
 /// After a session reset the account signs in again through the same stand.
@@ -131,7 +131,7 @@ func reopenClocked(modelsJson: String, transport: MockTransport, operations: Str
   let held = path.map { credential(of: Config(path: $0, dataVersion: nil)) } ?? HeldCredential()
   let restored = (try? held.get()) != nil
   let clock = try await DB.openTesting(transport: transport, modelsJSON: modelsJson, path: path, startingAt: start, encrypted: standEncrypted(), credentials: held, http: server, observers: observers)
-  try await DB.database.registerOperations(defsJson: withSessionProfile(operations))
+  try await DB.database.registerOperations(defsJson: try declaringReturns(withSessionProfile(operations)))
   try await signIn(restored: restored)
   return clock
 }

@@ -6,11 +6,14 @@ use super::{Config, Database, DbError, FakeTransport, TransportRequest};
 use crate::schema::FieldSpec;
 use crate::value::ScalarKind;
 
-struct Answers(Arc<Mutex<String>>);
+struct Answers(Arc<Mutex<String>>, Arc<std::sync::atomic::AtomicUsize>);
 
 #[async_trait::async_trait]
 impl FakeTransport for Answers {
-    async fn query(&self, _: TransportRequest) -> Result<String, DbError> { Ok(self.0.lock().unwrap().clone()) }
+    async fn query(&self, _: TransportRequest) -> Result<String, DbError> {
+        self.1.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        Ok(self.0.lock().unwrap().clone())
+    }
     async fn mutate(&self, _: TransportRequest) -> Result<String, DbError> { unreachable!() }
     async fn put(&self, _: String, _: std::collections::HashMap<String, String>, _: crate::transport::PutFile, _: crate::transport::TransferIdentity, _: Arc<super::ByteProgress>) -> Result<super::PutReply, DbError> { unreachable!() }
 }
@@ -33,14 +36,20 @@ fn declaration() -> String {
 #[tokio::test]
 async fn call_result_normalized() {
     let answer = Arc::new(Mutex::new(String::new()));
-    let database = Database::open(Config { path: None, data_version: None }, "[]".into(), crate::ffi::OpenPorts { transport: Some(Arc::new(Answers(answer.clone()))), endpoint: Some(crate::ffi::FAKE_ENDPOINT.into()), ..Default::default() }).await.unwrap();
-    database.register_operations(r#"[{"name":"Profile","document":"query Profile { profile { id } }"}]"#.into()).await.unwrap();
+    let sent = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let database = Database::open(Config { path: None, data_version: None }, "[]".into(), crate::ffi::OpenPorts { transport: Some(Arc::new(Answers(answer.clone(), sent.clone()))), endpoint: Some(crate::ffi::FAKE_ENDPOINT.into()), ..Default::default() }).await.unwrap();
+    let raw = serde_json::to_string(&FieldSpec::raw("Raw")).unwrap();
+    let operations = json!([
+        {"name": "Profile", "document": "query Profile { profile { id } }", "returns": declaration()},
+        {"name": "Raw", "document": "query Raw { profile { id } }", "returns": raw},
+        {"name": "Bare", "document": "query Bare { profile { id } }"},
+    ]);
+    database.register_operations(operations.to_string()).await.unwrap();
     database.set_online(true).unwrap();
-    let declared = declaration();
     let call = |root: Value| {
         *answer.lock().unwrap() = json!({"data": {"profile": root}}).to_string();
-        let (database, declared) = (database.clone(), declared.clone());
-        async move { database.call(database.session_epoch(), "Profile".into(), "{}".into(), declared).await.map(|text| serde_json::from_str::<Value>(&text).unwrap()) }
+        let database = database.clone();
+        async move { database.call(database.session_epoch(), "Profile".into(), "{}".into()).await.map(|text| serde_json::from_str::<Value>(&text).unwrap()) }
     };
     let cases = [
         (json!({"id": 7, "balance": "12", "ratio": "1.5", "title": "Ada", "owners": [1, "2"], "extra": true}), json!({"id": "7", "balance": 12, "ratio": 1.5, "title": "Ada", "owners": ["1", "2"], "attachment": null})),
@@ -54,5 +63,10 @@ async fn call_result_normalized() {
     for refused in [json!({"title": 5}), json!({"balance": "many"}), json!({"attachment": {"tier": "gold"}})] {
         assert!(matches!(call(refused.clone()).await, Err(DbError::Invalid { .. })), "{refused}");
     }
+    let before = sent.load(std::sync::atomic::Ordering::SeqCst);
+    assert!(matches!(database.call(database.session_epoch(), "Bare".into(), "{}".into()).await, Err(DbError::Invalid { .. })), "a call without a returns declaration is refused");
+    assert_eq!(sent.load(std::sync::atomic::Ordering::SeqCst), before, "the refused call sent no request");
+    *answer.lock().unwrap() = json!({"data": {"profile": {"id": 7, "extra": 1}}}).to_string();
+    assert_eq!(database.call(database.session_epoch(), "Raw".into(), "{}".into()).await.unwrap(), r#"{"extra":1,"id":7}"#);
     database.session_reset().await.unwrap();
 }

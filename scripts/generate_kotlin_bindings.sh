@@ -56,9 +56,9 @@ mv "$generated.published" "$generated"
 
 wake='        uniffiContinuationHandleMap.remove(data).resume(pollResult)'
 [ "$(grep -cxF -- "$wake" "$generated")" = 1 ] || { echo "$name: expected exactly 1 continuation resume line in dblayer.kt, the UniFFI template changed" >&2; exit 1; }
-awk -v wake="$wake" '$0 == wake { print "        RuntimeLane.run { uniffiContinuationHandleMap.remove(data).resume(pollResult) }"; next } { print }' "$generated" > "$generated.wake"
+awk -v wake="$wake" '$0 == wake { print "        RuntimeLane.enqueue { uniffiContinuationHandleMap.remove(data).resume(pollResult) }"; next } { print }' "$generated" > "$generated.wake"
 mv "$generated.wake" "$generated"
-[ "$(grep -cxF -- '        RuntimeLane.run { uniffiContinuationHandleMap.remove(data).resume(pollResult) }' "$generated")" = 1 ] || { echo "$name: the deferred continuation resume was not written to dblayer.kt" >&2; exit 1; }
+[ "$(grep -cxF -- '        RuntimeLane.enqueue { uniffiContinuationHandleMap.remove(data).resume(pollResult) }' "$generated")" = 1 ] || { echo "$name: the deferred continuation resume was not written to dblayer.kt" >&2; exit 1; }
 
 complete_pattern='`uniffiFutureCallback`: UniffiForeignFutureComplete'
 alloc='    external fun ffi_dblayer_rustbuffer_alloc(`size`: Long,uniffi_out_err: UniffiRustCallStatus, '

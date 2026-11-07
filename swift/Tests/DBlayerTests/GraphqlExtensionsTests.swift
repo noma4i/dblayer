@@ -16,7 +16,7 @@ extension BridgeProbeTests {
     let operation = code == "DUPLICATE_CLIENT_KEY" ? "RecordAlbumSend" : "PurchaseCreate"
     let root = code == "DUPLICATE_CLIENT_KEY" ? "recordAlbumSend" : "purchaseCreate"
     let database = try await reopen(config: Config(path: nil, dataVersion: nil), modelsJson: modelsJSON.replacingOccurrences(of: "CreateMoment", with: operation), transport: transport)
-    try await database.registerOperations(defsJson: #"[{"name":"\#(operation)","document":"mutation \#(operation) { \#(root) { id } }"}]"#)
+    try await database.registerOperations(defsJson: try declaringReturns(#"[{"name":"\#(operation)","document":"mutation \#(operation) { \#(root) { id } }"}]"#))
     let extra = text.map { #", "transactionDisposition":"\#($0)""# } ?? ""
     let response = #"{"errors":[{"message":"refused","extensions":{"code":"\#(code)"\#(extra),"detail":"refused","limit":3,"context":{"values":[true,null,2]}}},{"message":"secondary","extensions":{"code":"SECONDARY","transactionDisposition":"KEEP"}}]}"#
     for queued in [false, true] {
@@ -28,7 +28,7 @@ extension BridgeProbeTests {
         extensions = failure.extensions
       } else {
         do {
-          _ = try await database.run(epoch: database.sessionEpoch(), operation: operation, variablesJson: "{}")
+          _ = try await database.call(epoch: database.sessionEpoch(), operation: operation, variablesJson: "{}")
           Issue.record("the refused purchase did not throw")
           continue
         } catch let DbError.Graphql(_, thrown) {

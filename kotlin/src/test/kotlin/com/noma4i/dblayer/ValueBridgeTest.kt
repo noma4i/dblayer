@@ -64,7 +64,7 @@ class ValueBridgeTest {
 
     private suspend fun signIn(name: String) {
         DBlayer.database.sessionCall("login_link", """{"account":"$name"}""")
-        DBlayer.run("SessionProfile", JsonObject(emptyMap()))
+        DBlayer.call("SessionProfile", JsonObject(emptyMap()))
         User.profile.refresh()
     }
 
@@ -76,7 +76,7 @@ class ValueBridgeTest {
         transport.cable = EncryptedCablePeer(server)
         DBlayer.openTesting(transport, modelsJSON, encrypted = encrypted, credentials = BridgeCredential(), http = server)
         DBlayer.database.setOnline(true)
-        DBlayer.database.registerOperations("""[{"name":"UserProfile","document":"query UserProfile { me { id name } }"},{"name":"SessionProfile","document":"query SessionProfile { sessionProfile { id } }"},{"name":"CreateMoment","document":"mutation CreateMoment(${'$'}text: String) { createMoment(text: ${'$'}text) { id uuid text likedByMe media createdAt } }"}]""")
+        DBlayer.database.registerOperations(declaringReturns("""[{"name":"UserProfile","document":"query UserProfile { me { id name } }"},{"name":"SessionProfile","document":"query SessionProfile { sessionProfile { id } }"},{"name":"CreateMoment","document":"mutation CreateMoment(${'$'}text: String) { createMoment(text: ${'$'}text) { id uuid text likedByMe media createdAt } }"}]"""))
     }
 
     private fun text(value: String): JsonObject = buildJsonObject { put("text", value) }

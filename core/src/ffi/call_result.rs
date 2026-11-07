@@ -7,6 +7,7 @@ const TYPENAME: &str = "__typename";
 
 pub(super) fn normalize(root: &str, declaration: &str) -> Result<String, String> {
     let declared: FieldSpec = serde_json::from_str(declaration).map_err(|error| format!("the returns declaration is invalid: {error}"))?;
+    if matches!(declared.kind, FieldKind::Raw) { return Ok(root.to_string()); }
     let body: Value = serde_json::from_str(root).map_err(|error| format!("the answer is not JSON: {error}"))?;
     let name = declared.name.as_str();
     let value = match &body {

@@ -36,7 +36,7 @@ fn codec(reads: Vec<Value>) -> SchemaFeedCodec { codec_with_store(reads).0 }
 
 fn codec_with_store(reads: Vec<Value>) -> (SchemaFeedCodec, std::sync::Arc<Store>) {
     let known = super::ReadOperations::default();
-    known.declare([ReadOperation { name: "Changes".into(), document: "subscription Changes { changes { topic action recordId } }".into(), root_path: "changes".into(), page_size: 0 }]);
+    known.declare([ReadOperation { name: "Changes".into(), document: "subscription Changes { changes { topic action recordId } }".into(), root_path: "changes".into(), page_size: 0, returns: None }]);
     let store = Store::open_models(None, specs(reads), None).map(std::sync::Arc::new).unwrap();
     (SchemaFeedCodec::new(store.clone(), known), store)
 }
@@ -130,7 +130,7 @@ fn feed_id_of_removed_source() {
 #[test]
 fn feed_apply_reread() {
     let known = super::ReadOperations::default();
-    known.declare([ReadOperation { name: "ChatChanged".into(), document: "subscription ChatChanged { chatChanged { id } }".into(), root_path: "chatChanged".into(), page_size: 0 }]);
+    known.declare([ReadOperation { name: "ChatChanged".into(), document: "subscription ChatChanged { chatChanged { id } }".into(), root_path: "chatChanged".into(), page_size: 0, returns: None }]);
     let mut with = specs(Vec::new());
     with[0].change_feed = None;
     with[0].listens.push(serde_json::from_value(json!({"subscription":"ChatChanged", "apply":{"effect":"reread", "via":"list"}})).unwrap());
