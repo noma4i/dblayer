@@ -16,7 +16,10 @@ echo "$*" >> "$FAKE_CARGO_LOG"
 kind=models
 case "$*" in *--schema*) kind=operations ;; esac
 for arg in "$@"; do
-  case "$arg" in swift|kotlin) echo "$kind-$arg-${FAKE_CARGO_TAG:-v1}" ;; esac
+  case "$arg" in
+    swift|kotlin) if [ "$kind" = models ]; then echo "$kind-$arg-${FAKE_CARGO_TAG:-v1},\"operations\":[]}"; else echo "$kind-$arg-${FAKE_CARGO_TAG:-v1}"; fi ;;
+    spec) echo '{"models":[],"operations":[]}' ;;
+  esac
 done
 CARGO
 chmod +x "$root/bin/cargo"
@@ -55,8 +58,8 @@ done
 seed
 run
 [ "$code" -eq 0 ] || check "generation failed"
-[ "$(wc -l < "$FAKE_CARGO_LOG" | tr -d ' ')" -eq 4 ] || check "generation did not run cargo 4 times"
-grep -qx "models-swift-v1" "${outputs[0]}" || check "generation did not write outputs"
+[ "$(wc -l < "$FAKE_CARGO_LOG" | tr -d ' ')" -eq 5 ] || check "generation did not run cargo 5 times"
+grep -qxF 'models-swift-v1,"operations":[]}' "${outputs[0]}" || check "generation did not write outputs"
 
 run --check
 [ "$code" -eq 0 ] || check "--check failed on matching outputs"
