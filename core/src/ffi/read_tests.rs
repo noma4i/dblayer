@@ -124,6 +124,24 @@ async fn a_row_that_changes_its_place_arrives_as_a_move_and_its_new_values() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn a_row_that_enters_the_middle_of_the_list_arrives_with_its_index() {
+    let db = open().await;
+    let epoch = db.session_epoch();
+    for (id, text) in [("n1", "b"), ("n3", "d")] {
+        db.create(epoch, "Note".into(), format!(r#"{{"id":"{id}","text":"{text}"}}"#), "{}".into()).await.unwrap();
+    }
+    let stream = db.subscribe_values(epoch, ReadRequest::List { query_json: r#"{"model":"Note","order":[{"field":"text","direction":"asc"}]}"#.into() });
+    let ReadValue::Snapshot { mut rows, .. } = next(&stream).await else { panic!("the first value is a snapshot") };
+    for (id, text, index, expected) in [("n2", "c", 1, vec!["n1", "n2", "n3"]), ("n0", "a", 0, vec!["n0", "n1", "n2", "n3"])] {
+        db.create(epoch, "Note".into(), format!(r#"{{"id":"{id}","text":"{text}"}}"#), "{}".into()).await.unwrap();
+        let ReadValue::Delta { edits, .. } = next(&stream).await else { panic!("the next value is a delta") };
+        assert!(matches!(edits.as_slice(), [RowEdit::Insert { index: at, row }] if *at == index && row.id == id), "{edits:?}");
+        RowEdit::replay(&mut rows, &edits);
+        assert_eq!(ids(&rows), expected);
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn a_request_that_cannot_be_read_ends_as_invalid() {
     let db = open().await;
     let stream = db.subscribe_values(db.session_epoch(), ReadRequest::Entity { model: "Ghost".into(), id: "g1".into(), fetch: super::ReadFetch::Never });
