@@ -56,19 +56,21 @@ fn first_field(document: &str) -> Option<String> {
 }
 
 #[derive(Clone, Default)]
-pub struct ReadOperations(Arc<std::sync::RwLock<std::collections::HashMap<String, Arc<ReadOperation>>>>);
+pub struct ReadOperations(Arc<arc_swap::ArcSwap<std::collections::HashMap<String, Arc<ReadOperation>>>>);
 
 impl ReadOperations {
     pub fn declare(&self, operations: impl IntoIterator<Item = ReadOperation>) {
-        let mut known = self.0.write().unwrap_or_else(std::sync::PoisonError::into_inner);
-        for operation in operations {
-            known.insert(operation.name.clone(), Arc::new(operation));
-        }
+        let operations: Vec<Arc<ReadOperation>> = operations.into_iter().map(Arc::new).collect();
+        self.0.rcu(|known| {
+            let mut next = std::collections::HashMap::clone(known);
+            next.extend(operations.iter().map(|operation| (operation.name.clone(), operation.clone())));
+            next
+        });
     }
 
-    pub fn is_empty(&self) -> bool { self.0.read().unwrap_or_else(std::sync::PoisonError::into_inner).is_empty() }
+    pub fn is_empty(&self) -> bool { self.0.load().is_empty() }
 
-    pub fn get(&self, name: &str) -> Option<Arc<ReadOperation>> { self.0.read().unwrap_or_else(std::sync::PoisonError::into_inner).get(name).cloned() }
+    pub fn get(&self, name: &str) -> Option<Arc<ReadOperation>> { self.0.load().get(name).cloned() }
 }
 
 pub struct SchemaWindowCodec {
