@@ -204,7 +204,7 @@ impl Twin {
             Input::HandshakeDeadline { to } => vec![FeedInput::HandshakeDeadline { connection_id: self.connection(*to) }],
             Input::Committed => {
                 let batch = self.batch();
-                vec![FeedInput::Committed(Committed { batch, revision: 1, tables: Vec::new(), rows: None, models: Default::default(), stale_parents: Vec::new(), position: 0 })]
+                vec![FeedInput::Committed(Committed { batch, revision: 1, tables: Vec::new(), rows: None, models: Default::default(), stale_parents: Vec::new(), position: 0, shown: None })]
             }
             Input::CommittedAt(nth) => {
                 let batch = self.batch_at(*nth);
@@ -224,13 +224,13 @@ impl Twin {
             }
             Input::CommittedStale(parents) => {
                 let batch = self.batch();
-                vec![FeedInput::Committed(Committed { batch, revision: 1, tables: Vec::new(), rows: None, models: Default::default(), stale_parents: parents.clone(), position: 0 })]
+                vec![FeedInput::Committed(Committed { batch, revision: 1, tables: Vec::new(), rows: None, models: Default::default(), stale_parents: parents.clone(), position: 0, shown: None })]
             }
             Input::Rejected(reason) => {
                 let batch = self.batch();
                 vec![FeedInput::Rejected(Rejected { batch, reason: Self::reject_reason(reason) })]
             }
-            Input::StrayBatch => vec![FeedInput::Committed(Committed { batch: 9_999, revision: 1, tables: Vec::new(), rows: None, models: Default::default(), stale_parents: Vec::new(), position: 0 })],
+            Input::StrayBatch => vec![FeedInput::Committed(Committed { batch: 9_999, revision: 1, tables: Vec::new(), rows: None, models: Default::default(), stale_parents: Vec::new(), position: 0, shown: None })],
             Input::Tick => vec![FeedInput::Tick(Time(0))],
             Input::Online(on) => vec![FeedInput::Online { online: Online(*on), online_seq: u64::from(*on) }],
             Input::ModelsReset { models, generation } => vec![FeedInput::ModelsReset(ModelsReset { epoch: EPOCH, generation: *generation, models: models.clone() })],

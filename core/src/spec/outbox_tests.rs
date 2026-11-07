@@ -46,6 +46,33 @@ async fn out_submit_run() {
 }
 
 #[test]
+fn out_receipt_optimistic_from_commit() { bounded("out_receipt_optimistic_from_commit", out_receipt_optimistic_from_commit_run) }
+
+async fn out_receipt_optimistic_from_commit_run() {
+    let cell = want(want(St::None, &Ctx::ready(), In::Submit).next, &Ctx::ready(), In::Committed);
+    let rig = Rig::open(OnFailure::Rollback).await;
+    rig.server.hold(Kind::Mutate, true);
+
+    let created = rig.create("fresh").await;
+    rig.server.wait_held(Kind::Mutate, 1).await;
+    rig.server.hold(Kind::Mutate, false);
+    rig.server.answer(Kind::Mutate, Reply::Ok);
+    let real = landed_row_after(&rig, &created).await;
+    let updated = rig.update(&real, "edited").await.unwrap();
+
+    assert!(cell.obs.contains(&Obs::ReceiptRowFromCommit));
+    assert!(format!("{:?}", created.optimistic_value.expect("create receipt row").cells).contains("fresh"));
+    assert!(format!("{:?}", updated.optimistic_value.expect("update receipt row").cells).contains("edited"));
+}
+
+async fn landed_row_after(rig: &Rig, receipt: &WireOperationReceipt) -> String {
+    match rig.outcome(receipt).await {
+        WireOperationOutcome::Confirmed { value: Some(row), .. } => row.id,
+        other => panic!("{other:?}"),
+    }
+}
+
+#[test]
 fn out_submit_stale() { bounded("out_submit_stale", out_submit_stale_run) }
 
 async fn out_submit_stale_run() {

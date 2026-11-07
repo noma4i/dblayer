@@ -39,6 +39,8 @@ pub struct IntentEffects {
     pub members: Vec<EffectMember>,
     pub tombstones: Vec<EffectTombstone>,
     pub touches: Vec<EffectTouch>,
+    /// The `(model, row_id)` the receipt of the call shows: the Store reads it in the transaction of the intent and replies with it.
+    pub shown: Option<(String, String)>,
 }
 
 impl IntentEffects {
@@ -218,7 +220,7 @@ pub struct OpenMessage {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum StoreReply {
-    Committed { revision: u64, stale_parents: Vec<String>, rows: crate::owners::contract::ChangedRows },
+    Committed { revision: u64, stale_parents: Vec<String>, rows: crate::owners::contract::ChangedRows, shown: Option<crate::store::Row> },
     Rejected(RejectReason),
 }
 
@@ -255,6 +257,7 @@ pub struct WriteDone {
     pub removed_operations: Vec<u64>,
     pub resets: Vec<EphemeralReset>,
     pub notice: crate::owners::contract::CommittedBroadcast,
+    pub shown: Option<crate::store::Row>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

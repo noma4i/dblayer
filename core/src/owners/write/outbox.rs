@@ -26,7 +26,7 @@ pub(super) struct LocalCall {
 #[derive(Clone, Debug)]
 pub(super) enum Batch {
     Operation { op_id: OpId, kind: CommitKind },
-    Write { reply: ReplyId, call: LocalCall, expire: Option<Time> },
+    Write { reply: ReplyId, call: Box<LocalCall>, expire: Option<Time> },
 }
 
 #[derive(Debug)]
@@ -287,7 +287,7 @@ impl OutboxState {
         }
     }
 
-    pub(super) fn receipt(&self, op_id: OpId, revision: i64) -> Receipt { Receipt { epoch: self.epoch, op_id, cycle_id: self.ops.get(&op_id).map_or(0, |operation| operation.cycle_id), revision } }
+    pub(super) fn receipt(&self, op_id: OpId, revision: i64) -> Receipt { Receipt { epoch: self.epoch, op_id, cycle_id: self.ops.get(&op_id).map_or(0, |operation| operation.cycle_id), revision, optimistic: None } }
 
     pub(super) fn retry_transfer_answer(&self, cycles: Vec<(u64, u64)>, result: Result<i64, Fault>, fx: &mut Effects<Outbox>) {
         if let Some(transfer) = self.peers.transfer {

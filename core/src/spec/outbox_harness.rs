@@ -265,7 +265,7 @@ impl Twin {
     pub(super) fn committed(&mut self, id: OpId) -> Vec<OutboxEffect> {
         self.revision += 1;
         let batch = self.batches[&id];
-        self.post(OutboxInput::Committed(Committed { batch, revision: self.revision, tables: vec!["moments".into()], rows: None, models: Default::default(), stale_parents: Vec::new(), position: 0 }))
+        self.post(OutboxInput::Committed(Committed { batch, revision: self.revision, tables: vec!["moments".into()], rows: None, models: Default::default(), stale_parents: Vec::new(), position: 0, shown: None }))
     }
 
     pub(super) fn rejected(&mut self, id: OpId, reason: RReason) -> Vec<OutboxEffect> {
@@ -273,7 +273,7 @@ impl Twin {
         self.post(OutboxInput::Rejected(Rejected { batch, reason: reject(reason) }))
     }
 
-    pub(super) fn receipt(&self, id: OpId, epoch: u64) -> Receipt { Receipt { epoch, op_id: id, cycle_id: 1, revision: 0 } }
+    pub(super) fn receipt(&self, id: OpId, epoch: u64) -> Receipt { Receipt { epoch, op_id: id, cycle_id: 1, revision: 0, optimistic: None } }
 
     pub(super) fn waiter(&mut self, id: OpId) { self.post(OutboxInput::Outcome { receipt: self.receipt(id, EPOCH), reply: WAITER }); }
 }

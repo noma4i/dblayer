@@ -77,6 +77,8 @@ impl Database {
         self.db.find(model, row)?.map(|found| self.wire(model).map(|wire| wire.row(&found))).transpose()
     }
 
+    fn wire_of_row(&self, model: &str, row: &crate::store::Row) -> Result<super::wire::WireRow, DbError> { self.wire(model).map(|wire| wire.row(row)) }
+
     /// The path and the body of the request of a mutation: the registered document, the variables of the call.
     fn mutation_request(&self, call: &crate::store::MutationCall) -> Result<(String, String), DbError> {
         let path = self.life.graphql_path().ok_or_else(|| DbError::NoSession { detail: "transport is required for server operations".into() })?;
@@ -109,10 +111,12 @@ impl Database {
             return Ok(receipt_of(epoch, model, None, self.db.revision_seq()?, value, None, self.life.clone()));
         };
         let (path, body) = self.mutation_request(&call)?;
-        let op = NewOp { model: model.clone(), row_id: row.to_string(), action: action.to_string(), on_failure: call.on_failure, origin: OpSource::Api, path, body, effects: planned.effects, created_at: self.now().0, expires_after: call.expires_after.map(std::time::Duration::from_secs) };
+        let mut effects = planned.effects;
+        if !destroyed { effects.shown = Some((model.clone(), shown.to_string())); }
+        let op = NewOp { model: model.clone(), row_id: row.to_string(), action: action.to_string(), on_failure: call.on_failure, origin: OpSource::Api, path, body, effects, created_at: self.now().0, expires_after: call.expires_after.map(std::time::Duration::from_secs) };
         let waiter = self.life.submit(epoch, op);
         let OutboxAnswer::Receipt(held) = self.outbox_answer(waiter, action).await? else { return Err(DbError::Internal { detail: "the owner answered a call with no receipt".into() }) };
-        let value = if destroyed { None } else { self.optimistic(&model, &shown)? };
+        let value = held.optimistic.as_ref().map(|row| self.wire_of_row(&model, row)).transpose()?;
         Ok(receipt_of(epoch, model, Some(i64::try_from(held.op_id).unwrap_or(i64::MAX)), held.revision, value, Some(held), self.life.clone()))
     }
 

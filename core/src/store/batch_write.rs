@@ -19,6 +19,7 @@ struct WrittenBatch<'a> {
     expiry: ExpiryParts,
     resets: ResetParts,
     candidates: usize,
+    shown: Option<super::Row>,
 }
 
 type ExpiryParts = (Vec<crate::owners::store::MemoryExpiry>, Vec<(String, String)>, Vec<String>);
@@ -34,6 +35,7 @@ pub(crate) struct BatchWritten {
     pub removed_operations: Vec<u64>,
     pub resets: Vec<crate::owners::store::EphemeralReset>,
     pub notice: crate::owners::contract::CommittedBroadcast,
+    pub shown: Option<super::Row>,
 }
 
 impl Store {
@@ -48,7 +50,7 @@ impl Store {
                 }
                 Err(error)
             }
-            Ok(WrittenBatch { committed: result, observed, live_files, discarded, expiry: (expiring, removed_memory, stale_parents), resets: (removed_operations, resets), candidates }) => {
+            Ok(WrittenBatch { committed: result, observed, live_files, discarded, expiry: (expiring, removed_memory, stale_parents), resets: (removed_operations, resets), candidates, shown }) => {
                 self.lock().counters.outbox_candidates += candidates;
                 let mut faults = Vec::new();
                 for file in prepared.iter().filter(|file| file.record.location == Location::Directory) {
@@ -61,7 +63,7 @@ impl Store {
                 let revision = result.result().revision.ok_or_else(|| StoreError::Invalid("a committed batch has no revision".into()))?;
                 let notice = crate::owners::contract::CommittedBroadcast::of_commit(result.result());
                 result.publish();
-                Ok(BatchWritten { revision: u64::try_from(revision).map_err(|_| StoreError::Constraint("negative revision".into()))?, observed, faults, expiring, removed_memory, stale_parents, removed_operations, resets, notice })
+                Ok(BatchWritten { revision: u64::try_from(revision).map_err(|_| StoreError::Constraint("negative revision".into()))?, observed, faults, expiring, removed_memory, stale_parents, removed_operations, resets, notice, shown })
             }
         }
     }
@@ -118,6 +120,11 @@ impl Store {
             if let crate::owners::store::StoreOp::RollBack { op_id } = op { rolled_back.insert(*op_id); }
         }
         let candidates = writer.candidates;
+        let mut shown = None;
+        for op in &batch.ops {
+            let crate::owners::store::StoreOp::Intent { effects: crate::owners::store::IntentEffects { shown: Some((model, row_id)), .. }, .. } = op else { continue };
+            shown = self.load(&Reader::new(&transaction, &inner.models), model, std::slice::from_ref(row_id)).map_err(|error| StoreError::Constraint(error.to_string()))?.remove(row_id.as_str());
+        }
         let mut live_files = std::collections::HashSet::new();
         for file in files {
             let present: bool = transaction.query_row(include_str!("sql/batch_write/write_batch_prepared_select_file.sql"), [&file.record.id], |row| row.get(0))?;
@@ -149,6 +156,6 @@ impl Store {
             transaction.rollback()?;
             if position != current.position { self.overlays.publish(snapshot); }
         }
-        Ok(WrittenBatch { committed: self.commit_announcement(inner, combined), observed, live_files, discarded, expiry: (expiring, removed_memory, stale_parents), resets: (removed_operations, arms), candidates })
+        Ok(WrittenBatch { committed: self.commit_announcement(inner, combined), observed, live_files, discarded, expiry: (expiring, removed_memory, stale_parents), resets: (removed_operations, arms), candidates, shown })
     }
 }

@@ -47,7 +47,7 @@ impl OutboxState {
         let batch = self.next_batch;
         self.next_batch += 1;
         self.commit_write(batch, &call, generation, fx);
-        self.batches.insert(batch, Batch::Write { reply, call, expire });
+        self.batches.insert(batch, Batch::Write { reply, call: Box::new(call), expire });
     }
 
     pub(super) fn commit_write(&self, batch: BatchId, call: &LocalCall, generation: u64, fx: &mut Effects<Outbox>) {

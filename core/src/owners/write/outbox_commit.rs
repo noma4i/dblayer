@@ -19,7 +19,7 @@ impl OutboxState {
             Batch::Write { reply, call, expire } => {
                 Self::reply(fx, reply, OutboxAnswer::Ok);
                 if let Some(due) = expire {
-                    let LocalCall { model, row, .. } = call;
+                    let LocalCall { model, row, .. } = *call;
                     self.ephemeral.insert(row.clone(), due);
                     let id = ScheduleId(EXPIRE_TIMER + self.next_schedule);
                     self.next_schedule += 1;
@@ -27,15 +27,15 @@ impl OutboxState {
                 }
                 self.maybe_drained(fx);
             }
-            Batch::Operation { op_id, kind } => self.operation_committed(op_id, kind, committed.revision, fx),
+            Batch::Operation { op_id, kind } => self.operation_committed(op_id, kind, (committed.revision, committed.shown), fx),
         }
     }
 
-    pub(super) fn operation_committed(&mut self, op_id: OpId, kind: CommitKind, revision: i64, fx: &mut Effects<Outbox>) {
+    pub(super) fn operation_committed(&mut self, op_id: OpId, kind: CommitKind, (revision, shown): (i64, Option<crate::store::Row>), fx: &mut Effects<Outbox>) {
         let Some(stage) = self.stage_of(op_id) else { return };
         match (kind, stage) {
             (CommitKind::Intent, Stage::Submitting) => {
-                let receipt = OutboxAnswer::Receipt(self.receipt(op_id, revision));
+                let receipt = OutboxAnswer::Receipt(Receipt { optimistic: shown, ..self.receipt(op_id, revision) });
                 if let Some(reply) = self.submit_replies.remove(&op_id) {
                     Self::reply(fx, reply, receipt.clone());
                 }

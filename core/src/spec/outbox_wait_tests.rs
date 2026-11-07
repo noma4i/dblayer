@@ -102,7 +102,7 @@ fn out_wait_local_write() {
     let mut twin = Twin::new();
     let effects = twin.post(OutboxInput::LocalWrite { model: "Moment".into(), epoch: EPOCH, write: LocalWriteKind::SetLocal, row: "w".into(), values: "{}".into(), reply: 81, now: Time(0) });
     assert!(replies_of(&effects, 81).is_empty());
-    let committed = twin.post(OutboxInput::Committed(Committed { batch: 1, revision: 11, tables: vec!["moments".into()], rows: None, models: Default::default(), stale_parents: Vec::new(), position: 0 }));
+    let committed = twin.post(OutboxInput::Committed(Committed { batch: 1, revision: 11, tables: vec!["moments".into()], rows: None, models: Default::default(), stale_parents: Vec::new(), position: 0, shown: None }));
     assert_eq!(replies_of(&committed, 81), [OutboxAnswer::Ok]);
     let mut twin = Twin::new();
     twin.post(OutboxInput::LocalWrite { model: "Moment".into(), epoch: EPOCH, write: LocalWriteKind::Attach { source: None }, row: "w".into(), values: "{}".into(), reply: 82, now: Time(0) });
@@ -111,7 +111,7 @@ fn out_wait_local_write() {
     twin.run();
     let closing = take_fx(&twin.log, state_of(&twin.det));
     assert!(replies_of(&closing, 82).is_empty() && !closing.iter().any(|effect| matches!(effect, OutboxEffect::Drained)), "the write waits for the Store: {closing:?}");
-    let committed = twin.post(OutboxInput::Committed(Committed { batch: 1, revision: 11, tables: vec!["moments".into()], rows: None, models: Default::default(), stale_parents: Vec::new(), position: 0 }));
+    let committed = twin.post(OutboxInput::Committed(Committed { batch: 1, revision: 11, tables: vec!["moments".into()], rows: None, models: Default::default(), stale_parents: Vec::new(), position: 0, shown: None }));
     assert_eq!(replies_of(&committed, 82), [OutboxAnswer::Ok]);
     assert_eq!(committed.iter().filter(|effect| matches!(effect, OutboxEffect::Drained)).count(), 1, "Drained after the last answer");
 }
@@ -163,7 +163,7 @@ fn net_script() -> Vec<OutboxInput> {
 }
 
 fn store_script() -> Vec<OutboxInput> {
-    (1..=4).map(|batch| OutboxInput::Committed(Committed { batch, revision: 10 + batch as i64, tables: vec!["moments".into()], rows: None, models: Default::default(), stale_parents: Vec::new(), position: 0 })).collect()
+    (1..=4).map(|batch| OutboxInput::Committed(Committed { batch, revision: 10 + batch as i64, tables: vec!["moments".into()], rows: None, models: Default::default(), stale_parents: Vec::new(), position: 0, shown: None })).collect()
 }
 
 fn effects_now() -> Vec<OutboxEffect> { LOG.with(|cell| cell.borrow().as_ref().map(|log| crate::spec::support::snapshot(log).into_iter().filter_map(|emitted| lower(emitted, None)).collect()).unwrap_or_default()) }
@@ -228,7 +228,7 @@ fn out_prop_idle() {
     det.run_until_quiet(10_000).unwrap();
     det.post(Address::<Outbox>::new(OUTBOX_AT), EpochStamp::Epoch(EPOCH), OutboxInput::Response { op_id: 1, rows: server_rows(), swaps: Vec::new(), stale: Vec::new(), result: None, missing: Vec::new(), errors: None });
     det.run_until_quiet(10_000).unwrap();
-    det.post(Address::<Outbox>::new(OUTBOX_AT), EpochStamp::Epoch(EPOCH), OutboxInput::Committed(Committed { batch: 2, revision: 20, tables: vec![], rows: None, models: Default::default(), stale_parents: Vec::new(), position: 0 }));
+    det.post(Address::<Outbox>::new(OUTBOX_AT), EpochStamp::Epoch(EPOCH), OutboxInput::Committed(Committed { batch: 2, revision: 20, tables: vec![], rows: None, models: Default::default(), stale_parents: Vec::new(), position: 0, shown: None }));
     det.run_until_quiet(10_000).unwrap();
     let before = det.trace().len();
     det.tick(Time(u64::MAX / 2));

@@ -21,7 +21,7 @@ fn kinds(effects: &[OutboxEffect]) -> Vec<CommitKind> {
 }
 
 fn commit_first(twin: &mut Twin) -> Vec<OutboxEffect> {
-    twin.post(OutboxInput::Committed(Committed { batch: 1, revision: 11, tables: vec!["moments".into()], rows: None, models: Default::default(), stale_parents: Vec::new(), position: 0 }))
+    twin.post(OutboxInput::Committed(Committed { batch: 1, revision: 11, tables: vec!["moments".into()], rows: None, models: Default::default(), stale_parents: Vec::new(), position: 0, shown: None }))
 }
 
 fn close(twin: &mut Twin) -> Vec<OutboxEffect> {
@@ -222,7 +222,7 @@ fn out_local_write_memory_same() {
     commit_first(&mut twin);
     let again = twin.post(OutboxInput::LocalWrite { model: "Moment".into(), epoch: EPOCH, write: LocalWriteKind::SetEphemeral { expire_after: Some(10) }, row: "w".into(), values: "{}".into(), reply: WRITE + 1, now: Time(200) });
     assert_eq!(kinds(&again), vec![CommitKind::LocalWrite], "the same values commit again: the write renews the expiry");
-    let committed = twin.post(OutboxInput::Committed(Committed { batch: 2, revision: 12, tables: vec!["moments".into()], rows: None, models: Default::default(), stale_parents: Vec::new(), position: 0 }));
+    let committed = twin.post(OutboxInput::Committed(Committed { batch: 2, revision: 12, tables: vec!["moments".into()], rows: None, models: Default::default(), stale_parents: Vec::new(), position: 0, shown: None }));
     assert_eq!(answers(&committed, WRITE + 1), vec![OutboxAnswer::Ok]);
     assert!(committed.iter().any(|effect| matches!(effect, OutboxEffect::Schedule)), "the new timer: {committed:?}");
     let stale = twin.post(OutboxInput::Expire { model: "Moment".into(), row: "w".into(), due: Time(110) });

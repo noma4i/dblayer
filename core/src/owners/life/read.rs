@@ -134,14 +134,14 @@ pub(super) fn add(builder: &mut RuntimeBuilder, wiring: &Arc<Wiring>, ports: &Po
     let reply_wiring = wiring.clone();
     wiring.on_store_reply(BatchAuthor::Window, move |batch, reply| {
         reply_wiring.to_windows(match reply {
-            StoreReply::Committed { revision, .. } => WindowsInput::Committed(Committed { batch, revision: i64::try_from(revision).unwrap_or(i64::MAX), tables: Vec::new(), rows: None, models: Models::default(), stale_parents: Vec::new(), position: 0 }),
+            StoreReply::Committed { revision, .. } => WindowsInput::Committed(Committed { batch, revision: i64::try_from(revision).unwrap_or(i64::MAX), tables: Vec::new(), rows: None, models: Models::default(), stale_parents: Vec::new(), position: 0, shown: None }),
             StoreReply::Rejected(reason) => WindowsInput::Rejected(Rejected { batch, reason }),
         });
     });
     let feed_reply = wiring.clone();
     wiring.on_store_reply(BatchAuthor::Feed, move |batch, reply| {
         feed_reply.to_feed(match reply {
-            StoreReply::Committed { revision, stale_parents, .. } => FeedInput::Committed(Committed { batch, revision: i64::try_from(revision).unwrap_or(i64::MAX), tables: Vec::new(), rows: None, models: Models::default(), stale_parents, position: 0 }),
+            StoreReply::Committed { revision, stale_parents, .. } => FeedInput::Committed(Committed { batch, revision: i64::try_from(revision).unwrap_or(i64::MAX), tables: Vec::new(), rows: None, models: Models::default(), stale_parents, position: 0, shown: None }),
             StoreReply::Rejected(reason) => FeedInput::Rejected(Rejected { batch, reason }),
         });
     });

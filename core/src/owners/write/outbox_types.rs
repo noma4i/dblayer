@@ -96,6 +96,8 @@ pub struct Receipt {
     pub op_id: OpId,
     pub cycle_id: u64,
     pub revision: i64,
+    /// The row of the call as its intent batch wrote it.
+    pub optimistic: Option<crate::store::Row>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

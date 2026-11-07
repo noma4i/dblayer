@@ -300,6 +300,33 @@ async fn out_prop_intent_kept_run() {
 }
 
 #[test]
+fn out_prop_receipt_fast_confirm() { bounded("out_prop_receipt_fast_confirm", out_prop_receipt_fast_confirm_run) }
+
+async fn out_prop_receipt_fast_confirm_run() {
+    let held = Rig::open(OnFailure::Rollback).await;
+    held.server.hold(Kind::Mutate, true);
+    let slow = held.create("same").await;
+    held.server.wait_held(Kind::Mutate, 1).await;
+    held.server.hold(Kind::Mutate, false);
+    held.server.answer(Kind::Mutate, Reply::Ok);
+    assert_eq!(kind_of(&held.outcome(&slow).await), "Confirmed");
+    let reference = format!("{:?}", slow.optimistic_value.expect("the receipt of a held create carries the row").cells);
+
+    let fast = Rig::open(OnFailure::Rollback).await;
+    for round in 0..40 {
+        let receipt = fast.create("same").await;
+        let row = receipt.optimistic_value.clone().unwrap_or_else(|| panic!("round {round}: the create receipt has no optimistic row"));
+        assert_eq!(format!("{:?}", row.cells), reference, "round {round}");
+        assert_eq!(kind_of(&fast.outcome(&receipt).await), "Confirmed");
+        let real = match fast.outcome(&receipt).await { WireOperationOutcome::Confirmed { value: Some(row), .. } => row.id, other => panic!("{other:?}") };
+        let edit = fast.update(&real, "edited").await.unwrap();
+        let edited = edit.optimistic_value.clone().unwrap_or_else(|| panic!("round {round}: the update receipt has no optimistic row"));
+        assert!(format!("{:?}", edited.cells).contains("edited"), "round {round}");
+        assert_eq!(kind_of(&fast.outcome(&edit).await), "Confirmed");
+    }
+}
+
+#[test]
 fn out_prop_offline_queue() { bounded("out_prop_offline_queue", out_prop_offline_queue_run) }
 
 async fn out_prop_offline_queue_run() {

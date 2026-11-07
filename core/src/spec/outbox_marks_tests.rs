@@ -176,7 +176,7 @@ fn out_marking_retry_other() {
 fn out_outcome_old_cycle() {
     let mut twin = Twin::new();
     let id = failed(&mut twin);
-    let old = Receipt { epoch: EPOCH, op_id: id, cycle_id: 1, revision: 0 };
+    let old = Receipt { epoch: EPOCH, op_id: id, cycle_id: 1, revision: 0, optimistic: None };
     retry(&mut twin);
     twin.committed(id);
     let effects = twin.post(OutboxInput::Outcome { receipt: old, reply: 804 });
@@ -187,7 +187,7 @@ fn out_outcome_old_cycle() {
 fn out_outcome_failed() {
     let mut twin = Twin::new();
     let id = failed(&mut twin);
-    let current = Receipt { epoch: EPOCH, op_id: id, cycle_id: 1, revision: 0 };
+    let current = Receipt { epoch: EPOCH, op_id: id, cycle_id: 1, revision: 0, optimistic: None };
     let effects = twin.post(OutboxInput::Outcome { receipt: current, reply: 805 });
     assert!(matches!(answers(&effects, 805).as_slice(), [OutboxAnswer::Outcome(OutboxOutcome::Failed { .. })]), "{effects:?}");
     assert_eq!(twin.stage(id), Some(St::Failed));

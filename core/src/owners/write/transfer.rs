@@ -193,7 +193,7 @@ impl TransferState {
         }
     }
 
-    pub(super) fn receipt(&self, id: TransferId) -> Receipt { Receipt { epoch: self.epoch, op_id: id, cycle_id: self.transfers.get(&id).map_or(0, |transfer| transfer.cycle_id), revision: 0 } }
+    pub(super) fn receipt(&self, id: TransferId) -> Receipt { Receipt { epoch: self.epoch, op_id: id, cycle_id: self.transfers.get(&id).map_or(0, |transfer| transfer.cycle_id), revision: 0, optimistic: None } }
 
     /// The immutable outcome of the current cycle: every waiter of the cycle gets it once.
     pub(super) fn settle(&mut self, id: TransferId, outcome: OutboxOutcome, fx: &mut Fx) {

@@ -304,7 +304,7 @@ impl<O: StateOwner> StateOwner for StoreStub<O> {
         }
         state.revision += 1;
         (state.note)(Landing::Landed { batch: batch.id, basis: batch.basis.values().copied().min().unwrap_or(0), revision: state.revision, rows: batch.rows.len() });
-        let committed = Committed { batch: batch.id, revision: state.revision, tables: Vec::new(), rows: None, models: Default::default(), stale_parents: Vec::new(), position: 0 };
+        let committed = Committed { batch: batch.id, revision: state.revision, tables: Vec::new(), rows: None, models: Default::default(), stale_parents: Vec::new(), position: 0, shown: None };
         vec![Effect::Send(Outbound::new(state.to, (state.committed)(committed)))]
     }
 

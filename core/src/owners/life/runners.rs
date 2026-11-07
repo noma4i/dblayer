@@ -163,7 +163,7 @@ impl EffectRunner<StoreWriter> for StoreRunner {
             StoreEffect::Write { batch, min_pin_revision } => {
                 let result = store.write_batch(&batch, self.db.files(), self.db.pointer_guards(), min_pin_revision).map(|written| {
                     for fault in written.faults { wiring.fault(fault); }
-                    WriteDone { revision: written.revision, observed: written.observed, expiring: written.expiring, removed_memory: written.removed_memory, stale_parents: written.stale_parents, removed_operations: written.removed_operations, resets: written.resets, notice: written.notice }
+                    WriteDone { revision: written.revision, observed: written.observed, expiring: written.expiring, removed_memory: written.removed_memory, stale_parents: written.stale_parents, removed_operations: written.removed_operations, resets: written.resets, notice: written.notice, shown: written.shown }
                 }).map_err(|error| match error { crate::store::StoreError::Invalid(_) => crate::owners::contract::RejectReason::Invalid, other => crate::owners::contract::RejectReason::Storage(other.to_string()) });
                 back.reply(EpochStamp::Control, StoreInput::Written { author: batch.author, batch: batch.id, result });
             }

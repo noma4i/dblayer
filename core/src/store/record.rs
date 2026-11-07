@@ -6,7 +6,7 @@ use serde_json::{Map, Value};
 use crate::identity::RowId;
 use crate::value::sync::SyncInfo;
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Record {
     pub id: RowId,
     pub revision: i64,

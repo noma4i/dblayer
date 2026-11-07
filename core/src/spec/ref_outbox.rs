@@ -68,6 +68,8 @@ pub(super) enum Obs {
     RowCarriesError,
     RowErrorCleared,
     OptimismVisibleAtRevision,
+    /// The receipt carries the optimistic row the batch of the call wrote, whatever the server answers after.
+    ReceiptRowFromCommit,
     OptimismGoneAtRevision,
     ResponseRowsVisibleAtRevision,
     OptimismErasedByReset,
@@ -130,8 +132,8 @@ pub fn step_of(state: St, ctx: &Ctx, input: In) -> Option<Step> {
         (None, In::Submit) => step(Done, &[Fails(Fault::NoSession)], &[]),
         (None, In::Retry | In::Discard | In::Outcome) => step(None, &[Fails(Fault::NotFound)], &[]),
 
-        (Submitting, In::Committed) if goes_out(ctx) => step(Sending, &[Receipt, OptimismVisibleAtRevision], &[Send]),
-        (Submitting, In::Committed) => step(Queued, &[Receipt, OptimismVisibleAtRevision], &[]),
+        (Submitting, In::Committed) if goes_out(ctx) => step(Sending, &[Receipt, ReceiptRowFromCommit, OptimismVisibleAtRevision], &[Send]),
+        (Submitting, In::Committed) => step(Queued, &[Receipt, ReceiptRowFromCommit, OptimismVisibleAtRevision], &[]),
         (Submitting, In::Rejected(Reason::StaleGeneration)) => step(Submitting, &[], &[Store(IntentNewBasis)]),
         (Submitting, In::Rejected(reason)) => step(Done, &[Fails(Fault::Reason(reason))], &[]),
         (Submitting, In::Discard) => step(Submitting, &[Fails(Fault::InFlight)], &[]),
