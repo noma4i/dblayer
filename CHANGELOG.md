@@ -71,6 +71,7 @@
 - The session end erases the digest rows before the credential; a credential left by a crash is erased at open.
 - A failed upload older than 7 days is removed when the network returns, without a reopen.
 - A background round that starts before any session ends its job at once.
+- A second `close` of a database returns success after the first finished.
 
 ### Removed
 - `scope.related` is gone: read a server relation with a query.

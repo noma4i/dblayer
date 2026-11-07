@@ -17,9 +17,10 @@ fn life_closed_refuses() {
     twin.feed(reset_models(&["Moment"], 6));
     twin.feed(close(7));
     twin.feed_all([Event::Saved(999), Event::ExecutorFailed]);
-    for id in [5, 6, 7] {
+    for id in [5, 6] {
         assert!(twin.replies().contains(&(id, Err(LifecycleError::Closed))));
     }
+    assert!(twin.replies().contains(&(7, Ok(()))), "a repeated close after Closed succeeds");
 }
 
 #[test]

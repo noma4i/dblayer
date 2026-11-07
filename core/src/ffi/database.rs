@@ -342,7 +342,6 @@ impl Database {
     pub fn online_sink(&self) -> Result<Arc<OnlineSink>, DbError> { Ok(Arc::new(OnlineSink { life: Arc::downgrade(&self.life) })) }
     /// Closes the database: every lease ends, every holder closes, every database thread lets go of the file, then the process slot opens for the next database. Closing again returns the same result. The name differs from `close` because Kotlin objects already carry `close()` for their native handle.
     pub async fn close_database(&self) -> Result<(), DbError> {
-        if self.life.is_shut() { return Err(super::command::closed()); }
         let waiter = self.life.close();
         let _closing = crate::runtime::hold_until_woken(self.life.launch());
         let clock = self.db.lock().clock.clone();
@@ -353,10 +352,7 @@ impl Database {
             }
         })).await;
         crate::runtime::release_holds();
-        let answered = answered.and_then(|outcome| match outcome {
-            crate::runtime::Outcome::Value(LifeReply::Life(Err(crate::owners::lifecycle::LifecycleError::Closed))) => Err(super::command::closed()),
-            _ => Ok(()),
-        });
+        let answered = answered.map(|_| ());
         let (life, _closing) = (self.life.clone(), crate::runtime::hold_until_woken(self.life.launch()));
         let ended = blocking(move || { life.shutdown(); Ok(()) }).await;
         crate::runtime::release_holds();

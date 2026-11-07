@@ -38,6 +38,18 @@ async fn life_open_concurrent() {
     database.close_database().await.unwrap();
 }
 
+#[tokio::test(flavor = "multi_thread")]
+async fn life_close_concurrent() {
+    let slot = OpenDatabase::new();
+    let database = open(&slot).await.unwrap();
+    let first = tokio::spawn({ let database = database.clone(); async move { database.close_database().await } });
+    crate::test_wait::yield_until("the first close started", || database.life.is_shut()).await;
+    let second = tokio::spawn({ let database = database.clone(); async move { database.close_database().await } });
+    assert!(crate::test_wait::within(first).await.unwrap().is_ok());
+    assert!(crate::test_wait::within(second).await.unwrap().is_ok());
+    assert_eq!(database.life.owners_alive(), 0);
+}
+
 #[tokio::test]
 async fn life_register_no_transport() {
     let slot = OpenDatabase::new();

@@ -388,7 +388,7 @@ impl Lifecycle {
                 State::Closed
             }
             (State::Closed, Event::Close(reply)) => {
-                answer_all(&mut out, vec![reply], Answer::Closed);
+                answer_all(&mut out, vec![reply], Answer::Ok);
                 State::Closed
             }
             (State::Closed, _) => State::Closed,

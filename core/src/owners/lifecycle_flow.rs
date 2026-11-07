@@ -280,7 +280,7 @@ impl LifecycleState {
                 LifecyclePhase::Closed
             }
             (LifecyclePhase::Closed, LifecycleInput::Close { reply }) => {
-                reply_all(vec![reply], Err(LifecycleError::Closed), fx);
+                reply_all(vec![reply], Ok(()), fx);
                 LifecyclePhase::Closed
             }
             (LifecyclePhase::Closed, _) => LifecyclePhase::Closed,

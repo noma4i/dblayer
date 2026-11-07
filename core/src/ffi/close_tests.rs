@@ -4,7 +4,7 @@ use serde_json::json;
 
 use super::open_slot::OpenSlot;
 use super::tape::Rows;
-use super::{Config, Database, DbError, ReadEnd};
+use super::{Config, Database, ReadEnd};
 use crate::runtime::{Clock, ManualClock};
 use crate::schema::{FieldSpec, ModelSpec, Storage};
 use crate::test_wait::yield_until;
@@ -73,11 +73,11 @@ async fn close_releases_old_engine() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn a_second_close_is_refused_and_the_slot_frees_once() {
+async fn a_second_close_succeeds_and_the_slot_frees_once() {
     let database = local_notes().await;
     let slot = OpenSlot::new();
     database.hold(slot.acquire().unwrap());
     database.close_database().await.unwrap();
-    assert!(matches!(database.close_database().await, Err(DbError::Closed { .. })));
+    database.close_database().await.unwrap();
     assert!(slot.acquire().is_ok(), "the slot stayed taken after the close finished");
 }
