@@ -168,8 +168,6 @@ class TransferTest {
                         closeForCleanup()
                         DBlayer.openTesting(transport, modelsJSON, path = path, encrypted = encrypted, credentials = credential, http = server)
                         DBlayer.database.registerOperations(operations)
-                        DBlayer.database.setOnline(false)
-                        DBlayer.database.setOnline(true)
                         eventually("both assets are stored") { Asset.find("a1").current() != null && Asset.find("a2").current() != null }
                         assertEquals(listOf("a1", "a2"), listOf("a1", "a2").filter { Asset.find(it).current() != null })
                     } else {

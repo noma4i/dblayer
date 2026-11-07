@@ -267,8 +267,6 @@ async fn a_lost_answer_before_a_close_is_replayed_after_the_reopen_and_the_batch
     stand.script.data("CreateAssets", &assets(&[("a2", "key-2", 1), ("a1", "key-1", 0)]));
 
     let reopened = stand.open_with(Some(&path), &ALBUM_OPERATIONS, Some(TestClock::new(now))).await;
-    reopened.set_online(false).unwrap();
-    reopened.set_online(true).unwrap();
 
     let (first, second) = (watched(&reopened, "Asset", "a1"), watched(&reopened, "Asset", "a2"));
     let optimistic: Vec<&str> = receipt.items.iter().map(|item| item.optimistic_value.id.as_str()).chain(["a1", "a2"]).collect();

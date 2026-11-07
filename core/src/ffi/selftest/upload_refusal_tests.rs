@@ -191,13 +191,11 @@ async fn an_offline_discard_is_aborted_after_the_reopen_toggles_the_network_at_o
     database.close_now();
 
     let reopened: Arc<Database> = stand.open(Some(&path), &operations).await;
-    reopened.set_online(false).unwrap();
-    reopened.set_online(true).unwrap();
     let names = || stand.script.names();
     yield_until("the abort reached the transport", || stand.script.count("AbortMultipart") == 1).await;
     abort.entered().await;
     abort.release();
-    yield_until("the abort was answered", || stand.script.count("AbortMultipart") == 1).await;
+    bound(crate::ffi::settled(&reopened)).await.unwrap();
     reopened.set_online(false).unwrap();
     reopened.set_online(true).unwrap();
     bound(crate::ffi::settled(&reopened)).await.unwrap();
@@ -226,8 +224,6 @@ async fn an_offline_discard_without_waiting_for_the_dropped_step_is_aborted_afte
     database.close_now();
     let abort = stand.script.hold("AbortMultipart", r#"{"data":{"abortMultipart":{"ok":true}}}"#);
     let reopened: Arc<Database> = stand.open(Some(&path), &operations).await;
-    reopened.set_online(false).unwrap();
-    reopened.set_online(true).unwrap();
     yield_until("the abort reached the transport", || stand.script.count("AbortMultipart") == 1).await;
     abort.entered().await;
     abort.release();
