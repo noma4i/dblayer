@@ -33,7 +33,7 @@ async fn a_failed_blob_older_than_seven_days_is_gone_after_the_reopen() {
     let id = failed_upload(&stand, &database, &source).await;
     database.close_now();
 
-    let reopened = stand.open_with(Some(&path), &OPERATIONS, Some(TestClock::new(start + WEEK_MILLIS))).await;
+    let reopened = stand.open_with(Some(&path), &OPERATIONS, Some(TestClock::new(start + WEEK_MILLIS + 1))).await;
 
     until_gone(&reopened, &id).await;
     reopened.close_now();

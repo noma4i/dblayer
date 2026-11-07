@@ -57,7 +57,7 @@ async fn reopening_after_seven_days_expires_a_failed_blob() {
     until_state(&database, &id, WireSyncState::Failed).await;
     database.close_now();
 
-    let reopened = stand.open_with(Some(&path), &EXPIRY_OPERATIONS, Some(TestClock::new(start + WEEK_MILLIS + 1))).await;
+    let reopened = stand.open_with(Some(&path), &EXPIRY_OPERATIONS, Some(TestClock::new(start + WEEK_MILLIS))).await;
 
     until_gone(&reopened, &id).await;
     reopened.close_now();
