@@ -159,6 +159,7 @@ class TransferTest {
                         closeForCleanup()
                         DBlayer.openTesting(transport, modelsJSON, path = path, encrypted = encrypted, credentials = credential, http = server)
                         DBlayer.database.registerOperations(operations)
+                        DBlayer.database.setOnline(false)
                         DBlayer.database.setOnline(true)
                         eventually("both assets are stored") { Asset.find("a1").current() != null && Asset.find("a2").current() != null }
                         assertEquals(listOf("a1", "a2"), listOf("a1", "a2").filter { Asset.find(it).current() != null })
@@ -454,7 +455,7 @@ class TransferTest {
             val db = reopen(config, modelsJSON, transport, operations)
             val sent = AccountScope.current().send(Moment, buildJsonObject { put("text", "video") }, upload = UploadCommand("upload_clip", UploadRequest(source.path)))
             val row = requireNotNull(sent.optimisticValue)
-            held.entered()
+            awaitWithin("the first step request reached the transport") { held.entered() }
             val copies = directory.resolve("db.sqlite.files/transfers")
             fun copyCount() = copies.list()?.size ?: 0
             assertEquals(1, copyCount())
@@ -467,11 +468,12 @@ class TransferTest {
             val reopened = reopen(config, modelsJSON, transport, operations)
             reopened.setOnline(false)
             reopened.setOnline(true)
-            abort.entered()
+            awaitWithin("the saved abort reached the transport after the network returned") { abort.entered() }
             abort.release()
+            eventually("the abort was answered") { transport.calls.count { it.operationName == "AbortMultipart" } == 1 }
             reopened.setOnline(false)
             reopened.setOnline(true)
-            assertEquals("the saved pair of the held step is sent once more", 2, transport.calls.count { it.operationName == "PresignParts" })
+            eventually("the saved pair of the held step is sent once more") { transport.calls.count { it.operationName == "PresignParts" } == 2 }
             val aborts = transport.calls.filter { it.operationName == "AbortMultipart" }
             assertEquals(1, aborts.size)
             assertEquals(NetworkPurpose.TRANSFER, aborts.single().purpose)

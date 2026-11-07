@@ -57,7 +57,7 @@ class ReconnectTest {
             try { list.refresh(); fail("a refresh offline did not fail") } catch (error: DbException.Network) {}
             try { list.loadMore(); fail("a load more offline did not fail") } catch (error: DbException.Network) {}
             eventually("the stream shows the network error") { list.projection.value.error is DbException.Network }
-            assertEquals("a call offline reached the transport", calls, transport.calls.size)
+            assertEquals("a call offline reached the transport: ${transport.calls.map { "${it.operationName} ${it.variablesJson}" }}", calls, transport.calls.size)
         } finally {
             screen.cancel()
         }
