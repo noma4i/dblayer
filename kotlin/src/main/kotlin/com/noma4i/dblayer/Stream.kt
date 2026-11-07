@@ -176,6 +176,10 @@ data class TransferProgress(val revision: Long, val state: String, val progress:
 val ValueStream.uploadStatus: Flow<TransferProgress>
     get() = flow { values.collect { value -> (value as? ReadValue.Status)?.let { emit(TransferProgress(it.revision, it.state, it.progress, it.error)) } } }
 
+/** The queue of operations of the account: the whole queue at open and after every change. Each [OperationInfo] names the arguments of [AccountScope.retry] and [AccountScope.discard]. */
+internal fun ValueStream.operationLists(): Flow<List<OperationInfo>> =
+    flow { values.collect { value -> (value as? ReadValue.Operations)?.let { emit(it.items) } } }
+
 /** The file of a media command and the declared upload action that sends it. */
 class UploadCommand(val action: String, val request: UploadRequest)
 
@@ -193,6 +197,17 @@ class AccountScope private constructor(val epoch: ULong, internal val database: 
 
     /** The status of the transfer of `uploads[action]` of a row. */
     fun uploadStatus(row: DBModel, action: String): ValueStream = database.openValueStream(epoch, ReadRequest.Blob("${row.modelName}:${row.id}:$action"))
+
+    /** The operations that wait for the server, are on their way or were refused. */
+    fun operations(): Flow<List<OperationInfo>> = database.openValueStream(epoch, ReadRequest.Operations).operationLists()
+
+    /** Sends a refused operation again, by the fields of its [OperationInfo]. Throws `NotFound` when the operation is gone. */
+    suspend fun retry(model: String, id: String, action: String?) {
+        offCaller { database.retry(epoch, model, id, action, null) }
+    }
+
+    /** Drops an operation that is not on its way, by the fields of its [OperationInfo]. */
+    suspend fun discard(model: String, id: String, action: String?) = offCaller { database.discard(epoch, model, id, action) }
 
     /** Writes the model locally and queues it for the server. It works without a network and after the app closed. A model with a `create` operation and a declared upload action work this way; another model is refused. Throws `Interrupted` when the session of this scope ended. */
     suspend fun <Model : DBModel> send(decoder: ModelDecoder<Model>, values: JsonObject, args: JsonObject = JsonObject(emptyMap()), upload: UploadCommand? = null): MutationReceipt<Model> {

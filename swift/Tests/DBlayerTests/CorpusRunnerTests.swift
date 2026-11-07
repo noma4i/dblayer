@@ -211,6 +211,8 @@ private final class DatabaseRunner {
       return observation("lost", ["stream": stream, "first": first, "last": last])
     case .status:
       return observation("unsupported", "status")
+    case .operations:
+      return observation("unsupported", "operations")
     case .ended(let reason):
       return observation("ended", ["stream": stream, "cause": causeName(reason)])
     }

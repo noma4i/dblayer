@@ -264,6 +264,29 @@ public struct UploadStatusStream: AsyncSequence, Sendable {
   public func makeAsyncIterator() -> AsyncIterator { AsyncIterator(inner: stream.makeAsyncIterator()) }
 }
 
+/// The queue of operations of the account: the whole queue at open and after every change. Each `OperationInfo` names the arguments of `retry(model:id:action:)` and `discard(model:id:action:)`.
+public struct OperationQueueStream: AsyncSequence, Sendable {
+  public typealias Element = [OperationInfo]
+  public let stream: ValueStream
+
+  public struct AsyncIterator: AsyncIteratorProtocol {
+    var inner: ValueStream.AsyncIterator
+
+    public mutating func next() async throws -> [OperationInfo]? {
+      while let value = try await inner.next() {
+        switch value {
+        case let .operations(_, items): return items
+        case .ended: return nil
+        default: continue
+        }
+      }
+      return nil
+    }
+  }
+
+  public func makeAsyncIterator() -> AsyncIterator { AsyncIterator(inner: stream.makeAsyncIterator()) }
+}
+
 /// The file of a media command and the declared upload action that sends it.
 public struct UploadCommand: Sendable {
   public var action: String
@@ -308,6 +331,21 @@ public struct AccountScope: Sendable {
   /// The status of the transfer of `uploads[action]` of a row.
   public func uploadStatus<Model: DBModel>(_ row: Model, action: String) -> UploadStatusStream {
     UploadStatusStream(stream: database.openValueStream(epoch: epoch, request: .blob(key: "\(Model.modelName):\(row.id):\(action)")))
+  }
+
+  /// The operations that wait for the server, are on their way or were refused.
+  public func operations() -> OperationQueueStream {
+    OperationQueueStream(stream: database.openValueStream(epoch: epoch, request: .operations))
+  }
+
+  /// Sends a refused operation again, by the fields of its `OperationInfo`. Throws `NotFound` when the operation is gone.
+  @concurrent public func retry(model: String, id: String, action: String?) async throws {
+    _ = try await database.retry(epoch: epoch, model: model, rowId: id, action: action, source: nil)
+  }
+
+  /// Drops an operation that is not on its way, by the fields of its `OperationInfo`.
+  @concurrent public func discard(model: String, id: String, action: String?) async throws {
+    try await database.discard(epoch: epoch, model: model, rowId: id, action: action)
   }
 
   /// Writes the model locally and queues it for the server. It works without a network and after the app closed. A model with a `create` operation and a declared upload action work this way; another model is refused. Throws `Interrupted` when the session of this scope ended.

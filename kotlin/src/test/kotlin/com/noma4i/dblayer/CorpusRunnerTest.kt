@@ -166,6 +166,7 @@ private class DatabaseRunner {
         is ReadValue.Event -> obs("event", "stream" to stream, "position" to value.position, "area" to value.area, "kind" to value.kind, "row" to nameOf(value.id))
         is ReadValue.Lost -> obs("lost", "stream" to stream, "first" to value.first, "last" to value.last)
         is ReadValue.Status -> observation("unsupported", JsonPrimitive("status"))
+        is ReadValue.Operations -> observation("unsupported", JsonPrimitive("operations"))
         is ReadValue.Ended -> obs("ended", "stream" to stream, "cause" to causeName(value.cause))
     }
 
