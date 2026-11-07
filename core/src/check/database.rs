@@ -279,7 +279,7 @@ impl DatabaseSut {
         let opened = OpenDatabase::new().open_with_clock(config, if models == "events" { EVENT_MODELS } else { MODELS }.into(), crate::ffi::OpenPorts { transport: Some(transport), encrypted, credentials, http, ..Default::default() }, self.clock.clone()).await;
         match opened {
             Ok(database) => {
-                if database.register_operations(OPERATIONS.into()).is_err() { return error("operations"); }
+                if database.register_operations(OPERATIONS.into()).await.is_err() { return error("operations"); }
                 if database.set_online(true).is_err() { return error("online"); }
                 self.database = Some(database);
                 let _ = self.settle().await;

@@ -83,7 +83,7 @@ impl Rig {
         let encrypted = EncryptedConfig { origin: origin().to_string(), server_key: public_key_der_b64().to_string(), pin: pin().to_string(), ..crate::transport::encrypted::protocol_tests::config() };
         let config = Config { path: None, data_version: None, cache_rows: 32 };
         let database = Database::open(config, models_json(), crate::ffi::OpenPorts { transport: Some(Arc::new(NoCable)), encrypted: Some(encrypted), credentials: Some(Arc::new(Held(credentials.clone()))), http: Some(Arc::new(ThroughServer(server.clone()))), ..Default::default() }).await.expect("the database opens");
-        database.register_operations(OPERATIONS.into()).expect("operations register");
+        database.register_operations(OPERATIONS.into()).await.expect("operations register");
         Self { server, credentials, database }
     }
 

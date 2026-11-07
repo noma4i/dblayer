@@ -281,9 +281,9 @@ impl Database {
         let row_id = id(&row_id)?;
         self.read_in_epoch(epoch, "file url", move |database| Ok(database.db.url(&model, &row_id, &field)?.map(|path| path.to_string_lossy().into_owned()))).await
     }
-    pub fn register_operations(&self, defs_json: String) -> Result<(), DbError> {
+    pub async fn register_operations(&self, defs_json: String) -> Result<(), DbError> {
         if self.life.published().closed { return Err(super::command::closed()); }
-        let defs: Vec<Value> = serde_json::from_str(&defs_json)?;
+        let defs: Vec<Value> = self.offload(move || parse_json(&defs_json)).await?;
         self.remote()?;
         let mut names = Vec::new();
         let mut declared = Vec::new();

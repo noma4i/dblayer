@@ -90,9 +90,9 @@ public enum DB {
     try await opener.openWithClock(config: Config(path: path, dataVersion: nil, cacheRows: cacheRows), modelsJson: modelsJson, ports: OpenPorts(transport: transport, encrypted: encrypted, credentials: credentials, http: http, retries: retries), clock: clock)
   }
 
-  @_spi(Testing) public static func install(_ database: Database, transport: Transport?, operations: [any GraphQLOperation.Type]) throws {
+  @_spi(Testing) public static func install(_ database: Database, transport: Transport?, operations: [any GraphQLOperation.Type]) async throws {
     let definitions = operations.map { JSONValue.object(["name": .string($0.operationName), "document": .string($0.document)]) }
-    if transport != nil { try database.registerOperations(defsJson: JSONValue.array(definitions).text) }
+    if transport != nil { try await database.registerOperations(defsJson: JSONValue.array(definitions).text) }
     try attach(database)
   }
 

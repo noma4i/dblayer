@@ -153,7 +153,7 @@ impl crate::ffi::Transport for CancelledLoadTransport {
 async fn cancelling_the_last_load_interest_cancels_the_request() {
     let transport = Arc::new(CancelledLoadTransport::default());
     let database = bound(Database::open(crate::ffi::Config { path: None, data_version: None, cache_rows: 32 }, crate::ffi::lifecycle_tests::models(), crate::ffi::OpenPorts { transport: Some(transport.clone()), ..Default::default() })).await.unwrap();
-    database.register_operations(json!([{"name":"Users","document":"query Users { users { id name } }"}]).to_string()).unwrap();
+    database.register_operations(json!([{"name":"Users","document":"query Users { users { id name } }"}]).to_string()).await.unwrap();
     database.set_online(true).unwrap();
     let request = database.begin_load(database.session_epoch(), "User".into(), "all".into(), "{}".into()).unwrap();
     bound(transport.started.notified()).await;
@@ -175,7 +175,7 @@ async fn a_refresh_after_reopen_and_clock_rollback_keeps_the_new_response() {
     let world_a = World::new("server", "A", true);
     let switch = Switchable::new(Some(world_a.clone()), false);
     let first = bound(opener.open_with_clock(config.clone(), plain_models(), crate::ffi::OpenPorts { transport: Some(switch.clone()), ..Default::default() }, crate::ffi::TestClock::new(1_000_000))).await.unwrap();
-    first.register_operations(plain_operations()).unwrap();
+    first.register_operations(plain_operations()).await.unwrap();
     first.set_online(true).unwrap();
     bound(first.refresh(first.session_epoch(), "User".into(), "profile".into(), "{}".into())).await.unwrap();
     let query = r#"{"model":"User","relation":"profile","params":{}}"#.to_string();
@@ -185,7 +185,7 @@ async fn a_refresh_after_reopen_and_clock_rollback_keeps_the_new_response() {
     let world_b = World::new("server", "B", true);
     switch.set(Some(world_b.clone()));
     let second = bound(opener.open_with_clock(config, plain_models(), crate::ffi::OpenPorts { transport: Some(switch), ..Default::default() }, crate::ffi::TestClock::new(100))).await.unwrap();
-    second.register_operations(plain_operations()).unwrap();
+    second.register_operations(plain_operations()).await.unwrap();
     second.set_online(true).unwrap();
     bound(second.refresh(second.session_epoch(), "User".into(), "profile".into(), "{}".into())).await.unwrap();
     let rows = bound(second.read_query(second.session_epoch(), query)).await.unwrap();
@@ -547,7 +547,7 @@ async fn chat_events() -> (Arc<Database>, Arc<CableTransport>, Arc<World>) {
         {"name":"ChatList","document":"query ChatList($list: String) { chats(list: $list) { id title revision lists } }"},
         {"name":"ChatNode","document":"query ChatNode($id: ID!) { node(id: $id) { ... on Chat { id title revision lists } } }"},
         {"name":"RecordEvents","document":"subscription RecordEvents { recordEvents { entries { topic action recordId chat { id title revision lists } } } }"}
-    ]).to_string()).unwrap();
+    ]).to_string()).await.unwrap();
     database.set_online(true).unwrap();
     bound(database.session_call("login_link".into(), json!({"account": world.account()}).to_string())).await.unwrap();
     (database, transport, world)

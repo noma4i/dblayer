@@ -225,7 +225,7 @@ private final class DatabaseRunner {
       let session = encrypted ? EncryptedConfig(origin: SealedServer.origin, serverKey: SealedServer.serverKey, pin: SealedServer.pin, endpoints: EncryptedEndpoints(graphql: "/api/graphql", cable: "/api/cable", logout: "/api/logout", bootstrap: "/api/bootstrap", sessionOperations: ["otp": EncryptedSessionOperation(path: "/api/auth/otp", class: .authenticated), "confirm": EncryptedSessionOperation(path: "/api/auth/confirm", class: .authenticated), "social": EncryptedSessionOperation(path: "/api/auth/social", class: .authenticated), "ticket": EncryptedSessionOperation(path: "/api/ticket", class: .sessionless)]), protocolLabel: "example-ws-v1", cablePurpose: "ws.hello", cableChannel: "EncryptedGraphqlChannel") : nil
       let opened = try await OpenDatabase().openWithClock(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: try modelsText(models == "events" ? "models_events.json" : "models.json"), ports: OpenPorts(transport: mock, encrypted: session, credentials: encrypted ? Credentials() : nil, http: encrypted ? mock : nil, retries: nil), clock: clock)
       let operations = try String(contentsOf: corpusDirectory().appendingPathComponent("operations.json"), encoding: .utf8)
-      try opened.registerOperations(defsJson: operations)
+      try await opened.registerOperations(defsJson: operations)
       try opened.setOnline(online: true)
       database = opened
       _ = await settle()

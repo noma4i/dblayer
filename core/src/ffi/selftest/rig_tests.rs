@@ -596,7 +596,7 @@ impl Rig {
             .open_with_clock(config(), models.to_string(), crate::ffi::OpenPorts { transport: Some(switch.clone()), encrypted: Some(encrypted), credentials: Some(Arc::new(WatchedHeld::default())), http: Some(world.clone()), ..Default::default() }, clock.clone())
             .await
             .unwrap();
-        database.register_operations(plain_operations()).unwrap();
+        database.register_operations(plain_operations()).await.unwrap();
         database.set_online(true).unwrap();
         Rig { opener, database, world, switch, clock }
     }
@@ -612,7 +612,7 @@ impl Rig {
         let clock = TestClock::new(1_000_000);
         let opener = OpenDatabase::new();
         let database = opener.open_with_clock(config(), plain_models(), crate::ffi::OpenPorts { transport: Some(switch.clone()), ..Default::default() }, clock.clone()).await.unwrap();
-        database.register_operations(plain_operations()).unwrap();
+        database.register_operations(plain_operations()).await.unwrap();
         database.set_online(true).unwrap();
         Rig { opener, database, world: first, switch, clock }
     }
@@ -662,7 +662,7 @@ impl Rig {
         let mut models: Value = serde_json::from_str(&plain_models()).unwrap();
         edit(&mut models);
         let database = opener.open_with_clock(config(), models.to_string(), crate::ffi::OpenPorts { transport: Some(switch.clone()), encrypted: Some(encrypted), credentials: Some(Arc::new(WatchedHeld::default())), http: Some(first.clone()), ..Default::default() }, clock.clone()).await.unwrap();
-        database.register_operations(plain_operations()).unwrap();
+        database.register_operations(plain_operations()).await.unwrap();
         database.set_online(true).unwrap();
         bound(database.session_call("login_link".into(), json!({"account": first.account()}).to_string())).await.unwrap();
         Rig { opener, database, world: first, switch, clock }
@@ -674,7 +674,7 @@ impl Rig {
         bound(self.database.close_database()).await.unwrap();
         self.switch.set(next);
         let database = self.opener.open_with_clock(config(), plain_models(), crate::ffi::OpenPorts { transport: Some(self.switch.clone()), ..Default::default() }, self.clock.clone()).await.unwrap();
-        database.register_operations(plain_operations()).unwrap();
+        database.register_operations(plain_operations()).await.unwrap();
         database.set_online(true).unwrap();
         self.database = database;
     }

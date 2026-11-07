@@ -160,7 +160,7 @@ extension BridgeProbeTests {
       let operations = #"[{"name":"CreateBlob","document":"mutation CreateBlob { createBlob { url headers signedId blobId } }"},{"name":"CreateAssets","document":"mutation CreateAssets { createAssets { assets { id clientKey size position } } }"},{"name":"CreateAsset","document":"mutation CreateAsset { createAsset { asset { id clientKey size position } } }"}]"#
       await DB.closeForCleanup()
       _ = try await DB.openTesting(transport: transport, modelsJSON: modelsJSON, path: path, encrypted: encrypted, credentials: credential, http: server)
-      try DB.database.registerOperations(defsJson: operations)
+      try await DB.database.registerOperations(defsJson: operations)
       _ = try await DB.database.sessionCall(operation: "login_link", bodyJson: #"{"account":"A"}"#)
       let items = try (0..<3).map { index in
         let file = directory.appending(path: "\(index).jpg")
@@ -177,7 +177,7 @@ extension BridgeProbeTests {
         await server.lostAnswer()
         await DB.closeForCleanup()
         _ = try await DB.openTesting(transport: transport, modelsJSON: modelsJSON, path: path, encrypted: encrypted, credentials: credential, http: server)
-        try DB.database.registerOperations(defsJson: operations)
+        try await DB.database.registerOperations(defsJson: operations)
         try DB.database.setOnline(online: false)
         try DB.database.setOnline(online: true)
         await eventually("both assets are stored") {

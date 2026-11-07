@@ -21,7 +21,7 @@ async fn signed(rig: &Rig, peer: Arc<Peer>) -> Arc<Database> {
     let config = crate::transport::encrypted::protocol_tests::config();
     let models = include_str!("wrapper_models.inc").to_string();
     let database = Database::open(Config { path: None, data_version: None, cache_rows: 8 }, models, crate::ffi::OpenPorts { transport: Some(peer), encrypted: Some(config), credentials: Some(rig.credentials.clone()), http: Some(Arc::new(ThroughServer(rig.server.clone()))), ..Default::default() }).await.unwrap();
-    database.register_operations(OPERATIONS.into()).unwrap();
+    database.register_operations(OPERATIONS.into()).await.unwrap();
     database.set_online(true).unwrap();
     bound(database.session_call("social".into(), SOCIAL_BODY.into())).await.unwrap();
     database

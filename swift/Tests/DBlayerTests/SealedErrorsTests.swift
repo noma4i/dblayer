@@ -27,7 +27,7 @@ extension BridgeProbeTests {
   @MainActor
   private func openSealedRig(_ transport: MockTransport) async throws {
     try await reopen(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: transport)
-    try DB.database.registerOperations(defsJson: operations)
+    try await DB.database.registerOperations(defsJson: operations)
   }
 
   private func sealedCode(_ error: Error, _ comment: String) -> SessionCode? {

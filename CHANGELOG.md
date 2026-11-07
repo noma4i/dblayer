@@ -35,6 +35,7 @@
 
 ### Changed
 
+- `registerOperations` is async and parses its definitions off the caller thread.
 - `subscriptionCensus` is async and reads the streams and channels of the owners.
 - `ReadState.error` is the typed `DbError`.
 - `open` takes the upload steps from the models: `UploadOperations` and the `uploads` parameter are gone.

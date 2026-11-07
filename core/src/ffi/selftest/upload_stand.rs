@@ -181,7 +181,7 @@ impl Stand {
         .unwrap();
         let named: Vec<(&str, &str)> = STEPS.iter().copied().filter(|(name, _)| !operations.iter().any(|(declared, _)| declared == name)).chain(operations.iter().copied()).collect();
         let declared: Vec<Value> = named.iter().map(|(name, document)| json!({"name": name, "document": document})).collect();
-        database.register_operations(Value::Array(declared).to_string()).unwrap();
+        database.register_operations(Value::Array(declared).to_string()).await.unwrap();
         database.set_online(true).unwrap();
         if !restored {
             super::rig_tests::bound(database.session_call("social".into(), SOCIAL_BODY.into())).await.unwrap();

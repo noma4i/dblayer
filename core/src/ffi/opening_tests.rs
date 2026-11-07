@@ -54,7 +54,7 @@ async fn life_close_concurrent() {
 async fn life_register_no_transport() {
     let slot = OpenDatabase::new();
     let database = open(&slot).await.unwrap();
-    let result = database.register_operations(r#"[{"name":"Query","document":"query Query { items }"}]"#.into());
+    let result = database.register_operations(r#"[{"name":"Query","document":"query Query { items }"}]"#.into()).await;
     assert!(matches!(result, Err(DbError::NoSession { .. })));
     database.close_database().await.unwrap();
 }
@@ -65,7 +65,7 @@ async fn life_register_closed() {
     let slot = OpenDatabase::new();
     let database = slot.open(config(), "[]".into(), options(), crate::ffi::OpenPorts { transport: Some(Arc::new(Plain)), ..Default::default() }).await.unwrap();
     database.close_database().await.unwrap();
-    let result = database.register_operations(r#"[{"name":"Query","document":"query Query { items }"}]"#.into());
+    let result = database.register_operations(r#"[{"name":"Query","document":"query Query { items }"}]"#.into()).await;
     assert!(matches!(result, Err(DbError::Closed { .. })));
 }
 
@@ -81,7 +81,7 @@ async fn life_register_invalid() {
         r#"[{"name":"Query","document":"query Query { items }","pageSize":4294967296}]"#,
         r#"[{"name":"Query","document":"query Query { items }","pageSize":-1}]"#,
     ] {
-        assert!(matches!(database.register_operations(definitions.into()), Err(DbError::Invalid { .. })), "{definitions}");
+        assert!(matches!(database.register_operations(definitions.into()).await, Err(DbError::Invalid { .. })), "{definitions}");
     }
     database.close_database().await.unwrap();
 }
@@ -101,7 +101,7 @@ async fn life_register_bad_preload() {
         model.relations.push(selection);
         let database = Database::open(config(), serde_json::to_string(&vec![model]).unwrap(), crate::ffi::OpenPorts { transport: Some(Arc::new(Plain)), ..Default::default() }).await.unwrap();
         let definitions = r#"[{"name":"Greeting","document":"query Greeting($name: String!) { greeting(name: $name) }"}]"#;
-        assert!(matches!(database.register_operations(definitions.into()), Err(DbError::Invalid { .. })));
+        assert!(matches!(database.register_operations(definitions.into()).await, Err(DbError::Invalid { .. })));
         database.set_online(true).unwrap();
         let answer = crate::test_wait::within(database.run(database.session_epoch(), "Greeting".into(), r#"{"name":"Ada"}"#.into())).await;
         assert!(matches!(answer, Err(DbError::Invalid { .. })));

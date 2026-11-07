@@ -69,7 +69,7 @@ async fn opened_with_model(rig: &SessionRig, puts: Arc<Puts>, model: crate::sche
         rig.server.register(&document);
         json!({"name": name, "document": document, "rootPath": root})
     }).collect();
-    database.register_operations(json!(registered).to_string()).unwrap();
+    database.register_operations(json!(registered).to_string()).await.unwrap();
     database.set_online(true).unwrap();
     named_bound("sign-in", database.session_call("social".into(), SOCIAL_BODY.into())).await.unwrap();
     rig.server.reply_with(json!({
@@ -91,7 +91,7 @@ async fn a_send_with_a_file_joins_a_loaded_create_window() {
     let database = opened_with_model(&rig, Arc::new(Puts::default()), model).await;
     let document = "query Feed { moments { id text } }";
     rig.server.register(document);
-    database.register_operations(json!([{"name":"Feed", "document":document, "rootPath":"moments"}]).to_string()).unwrap();
+    database.register_operations(json!([{"name":"Feed", "document":document, "rootPath":"moments"}]).to_string()).await.unwrap();
     let epoch = database.session_epoch();
     let load = database.begin_load(epoch, "Moment".into(), "feed".into(), "{}".into()).unwrap();
     bound(load.result()).await.unwrap();

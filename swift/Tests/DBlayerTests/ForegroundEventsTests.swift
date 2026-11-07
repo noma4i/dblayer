@@ -20,7 +20,7 @@ extension BridgeProbeTests {
     let transport = MockTransport()
     for _ in 0..<8 { transport.enqueue("MomentsFeed", failure: .Http(status: 400, detail: "bad request")) }
     try await reopen(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: Self.reloadingOnForeground, transport: transport)
-    try DB.database.registerOperations(defsJson: #"[{"name":"MomentsFeed","document":"query MomentsFeed($first: Int, $after: String) { feed(first: $first, after: $after) { nodes { id uuid likedByMe media createdAt } pageInfo { hasNextPage endCursor } } }"}]"#)
+    try await DB.database.registerOperations(defsJson: #"[{"name":"MomentsFeed","document":"query MomentsFeed($first: Int, $after: String) { feed(first: $first, after: $after) { nodes { id uuid likedByMe media createdAt } pageInfo { hasNextPage endCursor } } }"}]"#)
     let list = ListReader(Moment.feed)
     await eventually("the relation fails") { list.snapshot.phase == .failed }
     let sink = try DB.database.onlineSink()

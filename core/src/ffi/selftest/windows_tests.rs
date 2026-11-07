@@ -47,7 +47,7 @@ async fn open_pages() -> (Arc<Database>, Arc<Pages>) {
     model.relations.push(feed);
     let pages = Arc::new(Pages { queries: AtomicUsize::new(0), gates: Mutex::new(HashMap::new()) });
     let database = OpenDatabase::new().open_with_clock(Config { path: None, data_version: None, cache_rows: 8 }, serde_json::to_string(&vec![model]).unwrap(), crate::ffi::OpenPorts { transport: Some(pages.clone()), ..Default::default() }, TestClock::new(1_000_000)).await.unwrap();
-    database.register_operations(r#"[{"name":"Feed","document":"query Feed { feed { nodes { id text } pageInfo { hasNextPage endCursor } } }","rootPath":"feed"}]"#.into()).unwrap();
+    database.register_operations(r#"[{"name":"Feed","document":"query Feed { feed { nodes { id text } pageInfo { hasNextPage endCursor } } }","rootPath":"feed"}]"#.into()).await.unwrap();
     database.set_online(true).unwrap();
     (database, pages)
 }

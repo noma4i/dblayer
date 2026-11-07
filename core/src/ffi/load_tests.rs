@@ -107,7 +107,7 @@ pub(super) async fn open_rig(clock: Option<Arc<TestClock>>, hold: Option<Arc<tok
         None => Database::open(config, models, crate::ffi::OpenPorts { transport: transport_handle, ..Default::default() }).await,
     }
     .unwrap();
-    db.register_operations(r#"[{"name":"Feed","document":"query Feed { moments { id text } }","rootPath":"moments"}]"#.into()).unwrap();
+    db.register_operations(r#"[{"name":"Feed","document":"query Feed { moments { id text } }","rootPath":"moments"}]"#.into()).await.unwrap();
     db.set_online(true).unwrap();
     (db, transport, clock)
 }
@@ -151,7 +151,7 @@ async fn settled_waits_for_a_load_that_outlives_a_data_reset() {
     node.remote = Some(remote);
     model.relations.push(node);
     let db = Database::open_with_clock(Config { path: None, data_version: None, cache_rows: 8 }, serde_json::to_string(&vec![model]).unwrap(), crate::ffi::OpenPorts { transport: Some(transport.clone()), ..Default::default() }, TestClock::new(1_000_000)).await.unwrap();
-    db.register_operations(r#"[{"name":"Node","document":"query Node($id: ID!) { node(id: $id) { ... on Moment { id text } } }","rootPath":"node"}]"#.into()).unwrap();
+    db.register_operations(r#"[{"name":"Node","document":"query Node($id: ID!) { node(id: $id) { ... on Moment { id text } } }","rootPath":"node"}]"#.into()).await.unwrap();
     db.set_online(true).unwrap();
     let listener = Arc::new(Rows::default());
     let _entity = db.watch(ReadRequest::Entity { model: "Moment".into(), id: "m1".into(), fetch: super::ReadFetch::Force }, listener.clone());
@@ -274,7 +274,7 @@ async fn an_entity_stream_is_not_loaded_when_its_first_empty_snapshot_arrives_be
     let hold = Arc::new(tokio::sync::Semaphore::new(0));
     let transport = Arc::new(Counting { queries: AtomicUsize::new(0), started: Notify::new(), hold: Some(hold.clone()), gate: None, subscriptions: None });
     let db = Database::open(Config { path: None, data_version: None, cache_rows: 8 }, serde_json::to_string(&vec![model]).unwrap(), crate::ffi::OpenPorts { transport: Some(transport.clone()), ..Default::default() }).await.unwrap();
-    db.register_operations(r#"[{"name":"Node","document":"query Node($id: ID!) { node(id: $id) { ... on Moment { id text } } }","rootPath":"node"}]"#.into()).unwrap();
+    db.register_operations(r#"[{"name":"Node","document":"query Node($id: ID!) { node(id: $id) { ... on Moment { id text } } }","rootPath":"node"}]"#.into()).await.unwrap();
     db.set_online(true).unwrap();
     let listener = Arc::new(Tape::default());
     let entity = db.watch(ReadRequest::Entity { model: "Moment".into(), id: "m1".into(), fetch: super::ReadFetch::Force }, listener.clone());

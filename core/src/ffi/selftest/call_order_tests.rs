@@ -18,7 +18,7 @@ fn feed_page(id: &str) -> Value {
 
 async fn rig() -> Rig {
     let rig = Rig::signed_as(World::new("server", "A", true), false, wrapper_models).await;
-    rig.database.register_operations(json!([{"name":"MomentsFeed","document":FEED},{"name":"ContainerNode","document":NODE},{"name":"ContainersByIds","document":NODES}]).to_string()).unwrap();
+    rig.database.register_operations(json!([{"name":"MomentsFeed","document":FEED},{"name":"ContainerNode","document":NODE},{"name":"ContainersByIds","document":NODES}]).to_string()).await.unwrap();
     rig.world.answer_with("MomentsFeed", feed_page("1"));
     rig.world.answer_with("ContainerNode", json!({"data":{"node":{"__typename":"Container","id":"k1","title":"x"}}}));
     rig.world.answer_with("ContainersByIds", json!({"data":{"nodes":[{"__typename":"Container","id":"k1","title":"x"}]}}));

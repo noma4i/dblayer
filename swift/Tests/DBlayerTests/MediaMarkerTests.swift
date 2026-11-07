@@ -11,7 +11,7 @@ extension BridgeProbeTests {
     let document = try String(contentsOf: root.appendingPathComponent("fixtures/operations/queries/media.graphql"), encoding: .utf8)
     let transport = MockTransport()
     try await reopen(config: Config(path: nil, dataVersion: nil, cacheRows: 64), modelsJson: spec, transport: transport)
-    try DB.database.registerOperations(defsJson: JSONValue.array(["chatMedia", "chatMediaState"].map { .object(["name": .string($0), "document": .string(document)]) }).text)
+    try await DB.database.registerOperations(defsJson: JSONValue.array(["chatMedia", "chatMediaState"].map { .object(["name": .string($0), "document": .string(document)]) }).text)
     func marker(_ count: Int, _ sequence: Int) {
       transport.enqueue("chatMediaState", reply: #"{"data":{"node":{"mediaLibrary":{"revision":"1","visualCount":\#(count),"audioCount":0,"giftCount":0,"latestSequence":\#(sequence)}}}}"#)
     }

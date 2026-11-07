@@ -123,7 +123,7 @@ func reopenClocked(modelsJson: String, transport: MockTransport, operations: Str
   let held = path.map { credential(of: Config(path: $0, dataVersion: nil, cacheRows: 0)) } ?? HeldCredential()
   let restored = (try? held.get()) != nil
   let clock = try await DB.openTesting(transport: transport, modelsJSON: modelsJson, path: path, startingAt: start, encrypted: standEncrypted(), credentials: held, http: server)
-  try DB.database.registerOperations(defsJson: withSessionProfile(operations))
+  try await DB.database.registerOperations(defsJson: withSessionProfile(operations))
   try await signIn(restored: restored)
   return clock
 }

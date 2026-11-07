@@ -71,7 +71,7 @@ async fn open(transport: Arc<Accounts>) -> Arc<Database> {
     vibe.relations.push(list);
     let models = serde_json::to_string(&vec![profile, vibe]).unwrap();
     let database = Database::open_with_clock(Config { path: None, data_version: None, cache_rows: 8 }, models, crate::ffi::OpenPorts { transport: Some(transport), ..Default::default() }, TestClock::new(1_000_000)).await.unwrap();
-    database.register_operations(r#"[{"name":"Profile","document":"query Profile { profiles { id name } }","rootPath":"profiles"},{"name":"Vibe","document":"query Vibe { vibes { id name } }","rootPath":"vibes"}]"#.into()).unwrap();
+    database.register_operations(r#"[{"name":"Profile","document":"query Profile { profiles { id name } }","rootPath":"profiles"},{"name":"Vibe","document":"query Vibe { vibes { id name } }","rootPath":"vibes"}]"#.into()).await.unwrap();
     database.set_online(true).unwrap();
     database
 }

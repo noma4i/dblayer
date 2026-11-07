@@ -37,7 +37,7 @@ impl OpenDatabase {
         database.hold(lease);
         if remote {
             drop(database.life.set_power_saving(options.power_saving));
-            if let Err(error) = database.register_operations(options.operations).and_then(|()| database.check_uploads()) {
+            if let Err(error) = database.register_operations(options.operations).await.and_then(|()| database.check_uploads()) {
                 let _ = database.close_database().await;
                 return Err(error);
             }

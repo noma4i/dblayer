@@ -97,7 +97,7 @@ extension BridgeProbeTests {
     let transport = MockTransport()
     transport.enqueue("ContainerThread", reply: Self.threadReply(Self.nodes))
     _ = try await open(transport)
-    try DB.database.registerOperations(defsJson: JSONValue.array([.object(["name": .string("ContainerThread"), "document": .string(Self.threadDocument)])]).text)
+    try await DB.database.registerOperations(defsJson: JSONValue.array([.object(["name": .string("ContainerThread"), "document": .string(Self.threadDocument)])]).text)
     let thread = try Record.thread("c1")
     try await thread.load()
 
@@ -128,7 +128,7 @@ extension BridgeProbeTests {
     let transport = MockTransport()
     transport.enqueue("CreateRecord", reply: #"{"data":{"createRecord":{"__typename":"Record","id":"x1","containerId":"c","authorId":"u1","text":"hi","createdAt":"2026-10-08T00:00:00.000Z","attachment":{"__typename":"MomentAttachment","momentId":"m9","caption":"look"}}}}"#)
     _ = try await open(transport)
-    try DB.database.registerOperations(defsJson: #"[{"name":"CreateRecord","document":"mutation CreateRecord($containerId: ID!, $text: String!, $signedId: String, $attachedUserId: ID) { createRecord(containerId: $containerId, text: $text, signedId: $signedId, attachedUserId: $attachedUserId) { id containerId authorId text createdAt attachment { __typename ... on MomentAttachment { momentId caption } } } }"}]"#)
+    try await DB.database.registerOperations(defsJson: #"[{"name":"CreateRecord","document":"mutation CreateRecord($containerId: ID!, $text: String!, $signedId: String, $attachedUserId: ID) { createRecord(containerId: $containerId, text: $text, signedId: $signedId, attachedUserId: $attachedUserId) { id containerId authorId text createdAt attachment { __typename ... on MomentAttachment { momentId caption } } } }"}]"#)
 
     let sent = try await Record.send(in: DB.account(), containerId: "c", authorId: "u1", text: "hi")
     #expect(sent.optimisticValue?.attachment == nil)

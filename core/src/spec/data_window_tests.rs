@@ -61,7 +61,7 @@ async fn inv_dsl_09_a_create_fills_a_local_attribute_from_the_singleton_row_and_
     models.push(user);
     let server = Server::new();
     let rig = open_models(serde_json::to_string(&models).unwrap(), path, server.clone(), Arc::default()).await;
-    rig.db.register_operations(r#"[{"name":"Profile","document":"query Profile { profile { id } }","rootPath":"profile"}]"#.into()).unwrap();
+    rig.db.register_operations(r#"[{"name":"Profile","document":"query Profile { profile { id } }","rootPath":"profile"}]"#.into()).await.unwrap();
     server.hold(Kind::Mutate, true);
     let without = rig.create("before").await;
     assert_eq!(without.optimistic_value.unwrap().cells[1], crate::ffi::Cell::Null);
@@ -90,7 +90,7 @@ async fn open(relations: Vec<RelationSpec>, server: std::sync::Arc<Server>, path
     let mut models: Vec<crate::schema::ModelSpec> = serde_json::from_str(&moment_models(OnFailure::Rollback)).unwrap();
     models[0].relations.extend(relations);
     let rig = open_models(serde_json::to_string(&models).unwrap(), path, server, Arc::default()).await;
-    rig.db.register_operations(r#"[{"name":"Feed","document":"query Feed { moments { id text } }","rootPath":"moments"}]"#.into()).unwrap();
+    rig.db.register_operations(r#"[{"name":"Feed","document":"query Feed { moments { id text } }","rootPath":"moments"}]"#.into()).await.unwrap();
     rig
 }
 
@@ -106,7 +106,7 @@ async fn open_models_with_http(models: String, path: String, server: Arc<Server>
     encrypted.endpoints.session_operations.insert("login_link".into(), crate::ffi::EncryptedSessionOperation { path: "/api/auth/login_link".into(), class: EncryptedOperationClass::Authenticated });
     let ports = OpenPorts { transport: Some(Arc::new(Wire(server.clone()))), encrypted: Some(encrypted), credentials: Some(Arc::new(Held(credentials))), http: Some(http), ..Default::default() };
     let db = within(Database::open_with_clock(Config { path: Some(path), data_version: None, cache_rows: 64 }, models, ports, clock.clone())).await.unwrap();
-    db.register_operations(OPERATIONS.into()).unwrap();
+    db.register_operations(OPERATIONS.into()).await.unwrap();
     db.set_online(true).unwrap();
     if !signed { within(db.session_call("login_link".into(), json!({"account":"A"}).to_string())).await.unwrap(); }
     Rig { db, server, clock }
@@ -209,7 +209,7 @@ async fn create_without_durable_send_joins_loaded_window() {
     models[0].relations.push(relation("created", true, false));
     let server = Server::new();
     let rig = open_models(serde_json::to_string(&models).unwrap(), path, server.clone(), Arc::default()).await;
-    rig.db.register_operations(r#"[{"name":"Feed","document":"query Feed { moments { id text } }","rootPath":"moments"}]"#.into()).unwrap();
+    rig.db.register_operations(r#"[{"name":"Feed","document":"query Feed { moments { id text } }","rootPath":"moments"}]"#.into()).await.unwrap();
     load(&rig, "created").await;
     server.hold(Kind::Mutate, true);
     let receipt = within(rig.db.create(rig.epoch(), "Moment".into(), json!({"text":"created"}).to_string(), "{}".into())).await.unwrap();
@@ -237,7 +237,7 @@ async fn matching_threshold_updates_loaded_windows_through_database() {
         {"name":"Feed","document":"query Feed { moments { id text score } }","rootPath":"moments"},
         {"name":"MakeMoment","document":"mutation MakeMoment { makeMoment { id text score } }","rootPath":"makeMoment"},
         {"name":"UpdateMoment","document":"mutation UpdateMoment { updateMoment { id text score } }","rootPath":"updateMoment"}
-    ]"#.into()).unwrap();
+    ]"#.into()).await.unwrap();
     for minimum in [5, 10] { load_params(&rig, "selected", json!({"minimum":minimum})).await; }
     let first = rig.create("8").await;
     assert!(matches!(rig.outcome(&first).await, WireOperationOutcome::Confirmed { .. }));

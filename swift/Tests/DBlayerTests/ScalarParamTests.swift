@@ -43,7 +43,7 @@ extension BridgeProbeTests {
   func aTypedScopeParamReachesTheServerAsANumberAndAKeyOfItsOwnWindow() async throws {
     let transport = MockTransport()
     try await reopen(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: transport)
-    try DB.database.registerOperations(defsJson: JSONValue.array([.object(["name": .string("tailSince"), "document": .string(Self.tailDocument)])]).text)
+    try await DB.database.registerOperations(defsJson: JSONValue.array([.object(["name": .string("tailSince"), "document": .string(Self.tailDocument)])]).text)
     transport.enqueue("tailSince", reply: #"{"data":{"tailSince":{"edges":[{"cursor":"c1","node":{"id":"t1","text":"a"}}],"pageInfo":{"hasNextPage":false,"endCursor":"c1"}}}}"#)
 
     try await Tail.since("c1", afterSequence: 120, pinned: false).refresh()

@@ -25,7 +25,7 @@ extension BridgeProbeTests {
     let peer = EncryptedCablePeer(server: server)
     let encrypted = EncryptedConfig(origin: SealedServer.origin, serverKey: SealedServer.serverKey, pin: SealedServer.pin, endpoints: EncryptedEndpoints(graphql: "/api/graphql", cable: "/api/cable", logout: "/api/logout", bootstrap: "/api/bootstrap", sessionOperations: ["login_link": EncryptedSessionOperation(path: "/api/auth/login_link", class: .authenticated)]), protocolLabel: "example-ws-v1", cablePurpose: "ws.hello", cableChannel: "EncryptedGraphqlChannel")
     try await DB.openTesting(transport: peer, modelsJSON: modelsJSON, encrypted: encrypted, credentials: CableCredentials(), http: server)
-    try DB.database.registerOperations(defsJson: #"[{"name":"BulletinAdded","document":"subscription BulletinAdded { bulletinAdded { body occurredAt } }","rootPath":"bulletinAdded"}]"#)
+    try await DB.database.registerOperations(defsJson: #"[{"name":"BulletinAdded","document":"subscription BulletinAdded { bulletinAdded { body occurredAt } }","rootPath":"bulletinAdded"}]"#)
     try await DB.sessionCall("login_link", body: CableLogin(account: "A"))
     let query = try Notice.recent.json
     let first = try DB.account().stream(Notice.recent)

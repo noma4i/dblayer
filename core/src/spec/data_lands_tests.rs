@@ -56,8 +56,8 @@ async fn data_upsert_lands() {
     let db = within(Database::open_with_clock(Config { path: Some(path), data_version: None, cache_rows: 64 }, serde_json::to_string(&models).unwrap(), ports, TestClock::new(1_000_000))).await.unwrap();
     let mut operations: serde_json::Value = serde_json::from_str(OPERATIONS).unwrap();
     operations.as_array_mut().unwrap().iter_mut().find(|operation| operation["name"] == "MakeMoment").unwrap()["document"] = json!(MAKE_MOMENT);
-    db.register_operations(operations.to_string()).unwrap();
-    db.register_operations(r#"[{"name":"Annotations","document":"query Annotations { annotations { id text } }","rootPath":"annotations"}]"#.into()).unwrap();
+    db.register_operations(operations.to_string()).await.unwrap();
+    db.register_operations(r#"[{"name":"Annotations","document":"query Annotations { annotations { id text } }","rootPath":"annotations"}]"#.into()).await.unwrap();
     db.set_online(true).unwrap();
     within(db.session_call("login_link".into(), json!({"account": "A"}).to_string())).await.unwrap();
     let epoch = db.session_epoch();

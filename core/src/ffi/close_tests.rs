@@ -19,7 +19,7 @@ async fn local_notes() -> Arc<Database> {
     Database::open(config(), serde_json::to_string(&vec![model]).unwrap(), crate::ffi::OpenPorts::default()).await.unwrap()
 }
 
-fn with_transport(clock: Arc<dyn Clock>) -> (Arc<Database>, Arc<MockTransport>) {
+async fn with_transport(clock: Arc<dyn Clock>) -> (Arc<Database>, Arc<MockTransport>) {
     let transport = Arc::new(MockTransport::new());
     let mut notice = ModelSpec::new("Notice", vec![FieldSpec::scalar("id", ScalarKind::Id)]);
     notice.listens.push(serde_json::from_value(json!({"subscription":"Signal"})).unwrap());
@@ -28,7 +28,7 @@ fn with_transport(clock: Arc<dyn Clock>) -> (Arc<Database>, Arc<MockTransport>) 
         super::signed_session_tests::signed_session(db);
         Ok(super::database::Wiring { transport: Some(wired), encrypted: None, cable: None, seal: None })
     }).unwrap();
-    database.register_operations(r#"[{"name":"Signal","document":"subscription Signal { signal { id } }","rootPath":"signal"}]"#.into()).unwrap();
+    database.register_operations(r#"[{"name":"Signal","document":"subscription Signal { signal { id } }","rootPath":"signal"}]"#.into()).await.unwrap();
     (database, transport)
 }
 
@@ -51,7 +51,7 @@ async fn closing_the_database_ends_every_open_stream_with_closed_and_a_late_stre
 #[tokio::test]
 async fn close_releases_old_engine() {
     let clock = Arc::new(ManualClock::new(std::time::Duration::from_secs(1)));
-    let (database, transport) = with_transport(clock.clone());
+    let (database, transport) = with_transport(clock.clone()).await;
     let slot = OpenSlot::new();
     database.hold(slot.acquire().unwrap());
     let sink = database.online_sink().unwrap();

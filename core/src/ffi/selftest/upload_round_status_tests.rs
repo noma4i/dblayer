@@ -60,7 +60,7 @@ async fn a_round_that_starts_with_nothing_unfinished_is_ended_at_once_before_any
     let ports = crate::ffi::OpenPorts { transport: Some(stand.puts.clone()), ..Default::default() };
     let database = crate::ffi::Database::open(crate::ffi::Config { path: None, data_version: None, cache_rows: 32 }, models, ports).await.unwrap();
     let declared: Vec<_> = STEPS.iter().map(|(name, document)| serde_json::json!({"name": name, "document": document})).collect();
-    database.register_operations(serde_json::Value::Array(declared).to_string()).unwrap();
+    database.register_operations(serde_json::Value::Array(declared).to_string()).await.unwrap();
     let jobs = Arc::new(Jobs::default());
     database.set_round_jobs(jobs.clone());
 

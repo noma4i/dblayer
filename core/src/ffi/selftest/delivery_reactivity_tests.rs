@@ -82,7 +82,7 @@ pub(super) async fn feed_database_in(world: Arc<World>, listen: Option<serde_jso
         {"name":"ChatList","document":"query ChatList($list: String) { chats(list: $list) { id title revision lists } }"},
         {"name":"ChatNode","document":"query ChatNode($id: ID!) { node(id: $id) { ... on Chat { id title revision lists } } }"},
         {"name":"RecordEvents","document":"subscription RecordEvents { recordEvents { entries { topic action recordId chat { id title revision lists } } } }"}
-    ]).to_string()).unwrap();
+    ]).to_string()).await.unwrap();
     database.set_online(true).unwrap();
     bound(database.session_call("login_link".into(), json!({"account":"A"}).to_string())).await.unwrap();
     (database, transport)

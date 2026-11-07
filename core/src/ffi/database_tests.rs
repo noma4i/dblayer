@@ -41,7 +41,7 @@ fn config() -> Config { Config { path: None, data_version: None, cache_rows: 8 }
 #[tokio::test]
 async fn life_register_ok() {
     let database = Database::open(config(), "[]".into(), crate::ffi::OpenPorts { transport: Some(Arc::new(Plain)), ..Default::default() }).await.unwrap();
-    database.register_operations(r#"[{"name":"Greeting","document":"query Greeting($name: String!) { greeting(name: $name) }"}]"#.into()).unwrap();
+    database.register_operations(r#"[{"name":"Greeting","document":"query Greeting($name: String!) { greeting(name: $name) }"}]"#.into()).await.unwrap();
     database.set_online(true).unwrap();
     assert_eq!(database.run(database.session_epoch(), "Greeting".into(), r#"{"name":"Ada"}"#.into()).await.unwrap(), r#""Hello Ada""#);
     database.session_reset().await.unwrap();

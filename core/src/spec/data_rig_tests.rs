@@ -21,7 +21,7 @@ async fn data_scope_enum_default() {
     });
     models[0].relations.push(relation);
     let rig = Rig::open_models(serde_json::to_string(&models).unwrap(), Some(path), super::rig::Server::new()).await;
-    rig.db.register_operations(r#"[{"name":"Feed","document":"query Feed($kind: FeedKind!) { moments(kind: $kind) { id text } }","rootPath":"moments"}]"#.into()).unwrap();
+    rig.db.register_operations(r#"[{"name":"Feed","document":"query Feed($kind: FeedKind!) { moments(kind: $kind) { id text } }","rootPath":"moments"}]"#.into()).await.unwrap();
     for params in ["{}", r#"{"kind":"PRIMARY"}"#, "{}"] {
         let request = rig.db.begin_load(rig.epoch(), "Moment".into(), "feed".into(), params.into()).unwrap();
         crate::test_wait::within(request.result()).await.unwrap();

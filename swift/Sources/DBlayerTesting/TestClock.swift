@@ -11,7 +11,7 @@ extension DB {
   public static func openTesting(transport: Transport?, modelsJSON: String, path: String? = nil, operations: [any GraphQLOperation.Type] = [], startingAt start: Date = Date(), encrypted: EncryptedConfig? = nil, credentials: CredentialStore? = nil, http: EncryptedHttp? = nil, retries: RetryProgress? = nil) async throws -> TestClock {
     let clock = TestClock(startMillis: UInt64(start.timeIntervalSince1970 * 1000))
     let database = try await openOnClock(path: path, modelsJson: modelsJSON, transport: transport, clock: clock, encrypted: encrypted, credentials: credentials, http: http, retries: retries)
-    try install(database, transport: transport, operations: operations)
+    try await install(database, transport: transport, operations: operations)
     return clock
   }
 }

@@ -65,7 +65,7 @@ async fn a_round_running_at_the_session_exit_asks_for_the_job_of_the_next_epoch_
         rig.server.register(&document);
         json!({"name": name, "document": document, "rootPath": root})
     }).collect();
-    database.register_operations(json!(registered).to_string()).unwrap();
+    database.register_operations(json!(registered).to_string()).await.unwrap();
     database.set_online(true).unwrap();
     let jobs = Arc::new(Jobs::default());
     database.set_round_jobs(jobs.clone());
@@ -104,7 +104,7 @@ async fn an_active_and_a_queued_upload_end_at_the_exit_and_the_next_sign_in_runs
             rig.server.register(&document);
             json!({"name": name, "document": document, "rootPath": root})
         }).collect();
-        database.register_operations(json!(registered).to_string()).unwrap();
+        database.register_operations(json!(registered).to_string()).await.unwrap();
         database.set_online(true).unwrap();
         named_bound("first sign-in", database.session_call("social".into(), SOCIAL_BODY.into())).await.unwrap();
         rig.server.reply_with(json!({"createBlob": {"url": "https://upload", "signedId": "sid", "blobId": "bid"}, "makeMoment": {"id": "42", "text": "clip"}}));

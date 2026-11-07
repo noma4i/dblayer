@@ -56,7 +56,7 @@ async fn graphql_extensions_reach_run_and_refresh() {
         for entry in ["run", "refresh"] {
             let response = serde_json::json!({"errors":[{"message":"purchase refused","extensions":fields},{"message":"secondary","extensions":{"code":"SECONDARY","transactionDisposition":"KEEP"}}]}).to_string();
             let database = Database::open(Config { path: None, data_version: None, cache_rows: 8 }, serde_json::to_string(&vec![moment_spec()]).unwrap(), crate::ffi::OpenPorts { transport: Some(Arc::new(GraphqlRefusal(response))), ..Default::default() }).await.unwrap();
-            database.register_operations(OPERATIONS.into()).unwrap();
+            database.register_operations(OPERATIONS.into()).await.unwrap();
             database.set_online(true).unwrap();
             let error = match entry {
                 "run" => database.run(database.session_epoch(), "MakeMoment".into(), "{}".into()).await.unwrap_err(),
@@ -86,7 +86,7 @@ impl Transport for Refusing {
 async fn a_session_error_thrown_by_a_platform_transport_keeps_code_and_detail_through_run() {
     for (code, detail) in THROWN {
         let database = Database::open(Config { path: None, data_version: None, cache_rows: 8 }, serde_json::to_string(&vec![moment_spec()]).unwrap(), crate::ffi::OpenPorts { transport: Some(Arc::new(Refusing(code, detail.to_string()))), ..Default::default() }).await.unwrap();
-        database.register_operations(OPERATIONS.into()).unwrap();
+        database.register_operations(OPERATIONS.into()).await.unwrap();
         database.set_online(true).unwrap();
 
         let run = database.run(database.session_epoch(), "MakeMoment".into(), "{}".into()).await.unwrap_err();

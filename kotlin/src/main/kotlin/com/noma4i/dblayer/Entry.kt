@@ -88,7 +88,7 @@ object DBlayer {
 
     internal suspend fun openOnClock(config: Config, modelsJson: String, transport: Transport?, clock: TestClock, encrypted: EncryptedConfig? = null, credentials: CredentialStore? = null, http: EncryptedHttp? = null, retries: RetryProgress? = null): Database = opener.openWithClock(config, modelsJson, OpenPorts(transport, encrypted, credentials, http, retries), clock)
 
-    internal fun install(opened: Database, transport: Transport?, operations: List<GraphQLOperation>) {
+    internal suspend fun install(opened: Database, transport: Transport?, operations: List<GraphQLOperation>) {
         val definitions = operations.map { JsonObject(mapOf("name" to JsonPrimitive(it.operationName), "document" to JsonPrimitive(it.document))) }
         if (transport != null) opened.registerOperations(JsonArray(definitions).jsonText())
         database = opened
