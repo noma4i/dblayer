@@ -88,12 +88,12 @@ impl OutboxState {
         self.commit(batch, BTreeMap::new(), vec![StoreOp::RemoveRows { model, ids: vec![row] }], 0, fx);
     }
 
-    pub(super) fn arm_expiry(&mut self, model: String, row: String, revision: u64, after: u64, fx: &mut Effects<Outbox>) {
+    pub(super) fn arm_expiry(&mut self, model: String, row: String, revision: u64, deadline: u64, fx: &mut Effects<Outbox>) {
         self.disarm_expiry(&model, &row, fx);
         let id = ScheduleId(EXPIRE_TIMER + self.next_schedule);
         self.next_schedule += 1;
         self.expiry.insert((model.clone(), row.clone()), (id, revision));
-        fx.push(Effect::Schedule { id, after: std::time::Duration::from_millis(after), input: OutboxInput::ExpireRow { model, row, revision } });
+        fx.push(Effect::ScheduleAt { id, at: Time(deadline), input: OutboxInput::ExpireRow { model, row, revision } });
     }
 
     pub(super) fn arm_reset(&mut self, reset: crate::owners::store::EphemeralReset, fx: &mut Effects<Outbox>) {

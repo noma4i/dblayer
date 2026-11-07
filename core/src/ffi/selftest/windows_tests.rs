@@ -9,6 +9,7 @@ use super::rig_tests::{bound, Gate, Rig};
 use super::rig_held::Held;
 use crate::ffi::lifecycle_tests::Rows;
 use crate::ffi::{ByteProgress, CableLease, Config, Database, DbError, EncryptedSocketEvent, LoadMoreResult, OpenDatabase, PutReply, TestClock, Transport, TransportRequest};
+use crate::test_wait::yield_until;
 use crate::schema::{Coverage, FieldSpec, ModelSpec, PageDirection, RelationSpec, RemoteShape, RemoteSpec, Storage};
 
 use crate::value::ScalarKind;
@@ -156,14 +157,7 @@ async fn memory_expiry_follows_the_last_write() {
     clock.advance(29_000);
     assert!(database.peek_row(database.session_epoch(), "presence".into(), "p1".into()).unwrap().is_some(), "an equal write did not renew the expiry");
     clock.advance(2_000);
-    let expired = tokio::time::timeout(std::time::Duration::from_secs(10), async {
-        while database.peek_row(database.session_epoch(), "presence".into(), "p1".into()).unwrap().is_some() {
-            tokio::task::yield_now().await;
-        }
-    })
-    .await;
-    assert!(expired.is_ok(), "the row outlived its new boundary");
-
+    yield_until("the row outlived its new boundary", || database.peek_row(database.session_epoch(), "presence".into(), "p1".into()).unwrap().is_none()).await;
 }
 
 /// R-11: the app returns to the foreground and refreshes the profile while its views are held. The refusal is typed, the credential and the views stay, and the next refresh succeeds. The server subscription of an encrypted session runs on the cable socket, which this rig does not speak, so it is not part of this sequence.

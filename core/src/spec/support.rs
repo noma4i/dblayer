@@ -195,6 +195,10 @@ where
                     seen.push(Emitted::Schedule { id, after, input: format!("{input:?}") });
                     Effect::Schedule { id, after, input }
                 }
+                Effect::ScheduleAt { id, at, input } => {
+                    seen.push(Emitted::Schedule { id, after: std::time::Duration::from_millis(at.0), input: format!("{input:?}") });
+                    Effect::ScheduleAt { id, at, input }
+                }
                 Effect::Backoff { id, policy, attempt, input } => {
                     seen.push(Emitted::Schedule { id, after: policy.with_jitter(0.0, 0).delay(attempt), input: format!("{input:?}") });
                     Effect::Backoff { id, policy, attempt, input }

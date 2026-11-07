@@ -484,7 +484,7 @@ impl OutboxState {
             OutboxInput::CopyDone { id } => self.copy_done(id, fx),
             OutboxInput::CopyFailed { id } => self.copy_failed(id, fx),
             OutboxInput::Expire { model, row, due } => self.expire(model, row, due, fx),
-            OutboxInput::ArmExpiry { model, row, revision, after } => self.arm_expiry(model, row, revision, after, fx),
+            OutboxInput::ArmExpiry { model, row, revision, deadline } => self.arm_expiry(model, row, revision, deadline, fx),
             OutboxInput::ArmReset { reset } => self.arm_reset(reset, fx),
             OutboxInput::ResetField { reset } => self.reset_field(reset, fx),
             OutboxInput::RowsGone { ops } => self.rows_gone(ops, fx),

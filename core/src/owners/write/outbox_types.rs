@@ -194,7 +194,7 @@ pub enum OutboxInput {
     CopyFailed { id: u64 },
     /// `Tick(expire)` of an ephemeral row, scheduled by the owner when the write commits: `due` is the expiry it was scheduled for.
     Expire { model: String, row: String, due: Time },
-    ArmExpiry { model: String, row: String, revision: u64, after: u64 },
+    ArmExpiry { model: String, row: String, revision: u64, deadline: u64 },
     DisarmExpiry { model: String, row: String },
     /// The server removed the rows of these operations: they end `Discarded` with no `Mutate` and no rollback.
     ArmReset { reset: crate::owners::store::EphemeralReset },

@@ -173,6 +173,10 @@ impl<O: StateOwner> Cell<O> {
                     self.schedule_input(id, at, out, input);
                     None
                 }
+                Effect::ScheduleAt { id, at, input } => {
+                    self.schedule_input(id, at, out, input);
+                    None
+                }
                 Effect::Backoff { id, policy, attempt, input } => {
                     let delay = policy.with_jitter(policy.jitter, (self.jitter)()).delay(attempt);
                     let at = Time(self.now.0.saturating_add(u64::try_from(delay.as_millis()).unwrap_or(u64::MAX)));

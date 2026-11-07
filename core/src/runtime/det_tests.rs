@@ -123,6 +123,30 @@ fn schedule_fires_only_after_tick_reaches_its_time() {
 }
 
 #[test]
+fn a_deadline_does_not_move_with_the_moment_the_effect_runs() {
+    let (mut det, toy) = single(1);
+    det.start_epoch(1);
+    det.tick(Time(60));
+    det.post(toy, EpochStamp::Epoch(1), ToyInput::Deadline(1, Time(100), 9));
+    det.run_until_quiet(10).unwrap();
+    det.tick(Time(99));
+    assert!(det.state(toy).unwrap().fired.is_empty());
+    det.tick(Time(100));
+    det.run_until_quiet(10).unwrap();
+    assert_eq!(det.state(toy).unwrap().fired, vec![9]);
+}
+
+#[test]
+fn a_deadline_in_the_past_fires_at_once() {
+    let (mut det, toy) = single(1);
+    det.start_epoch(1);
+    det.tick(Time(200));
+    det.post(toy, EpochStamp::Epoch(1), ToyInput::Deadline(1, Time(100), 4));
+    det.run_until_quiet(10).unwrap();
+    assert_eq!(det.state(toy).unwrap().fired, vec![4]);
+}
+
+#[test]
 fn cancelled_schedule_never_fires() {
     let (mut det, toy) = single(1);
     det.start_epoch(1);

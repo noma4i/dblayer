@@ -196,8 +196,7 @@ impl EffectRunner<StoreWriter> for StoreRunner {
             StoreEffect::Reply { author, batch, epoch, reply } => wiring.route_store_reply(author, batch, epoch, reply),
             StoreEffect::Observed { epoch, batch, payloads } => wiring.to_feed_at(EpochStamp::Epoch(epoch), FeedInput::Observed { batch, payloads }),
             StoreEffect::ArmExpiry { epoch, model, row_id, revision, deadline } => {
-                let now = u64::try_from(store.lock().now_ms()).unwrap_or(0);
-                wiring.to_local_writes_at(EpochStamp::Epoch(epoch), OutboxInput::ArmExpiry { model, row: row_id, revision, after: deadline.saturating_sub(now) });
+                wiring.to_local_writes_at(EpochStamp::Epoch(epoch), OutboxInput::ArmExpiry { model, row: row_id, revision, deadline });
             }
             StoreEffect::DisarmExpiry { epoch, model, row_id } => wiring.to_local_writes_at(EpochStamp::Epoch(epoch), OutboxInput::DisarmExpiry { model, row: row_id }),
             StoreEffect::ArmReset { epoch, reset } => wiring.to_local_writes_at(EpochStamp::Epoch(epoch), OutboxInput::ArmReset { reset }),

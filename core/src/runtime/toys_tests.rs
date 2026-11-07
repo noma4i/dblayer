@@ -23,6 +23,7 @@ pub enum ToyInput {
     Release,
     Resolve(OutcomeId, u32),
     ScheduleAt(u64, Time, u32),
+    Deadline(u64, Time, u32),
     CancelSchedule(u64),
     Fire(u32),
     Tick(Time),
@@ -107,6 +108,7 @@ impl StateOwner for Toy {
             ToyInput::Release => vec![Effect::Run(ToyEffect::ReleaseParked)],
             ToyInput::Resolve(id, value) => vec![Effect::Run(ToyEffect::Settle(id, value))],
             ToyInput::ScheduleAt(id, at, n) => vec![Effect::Schedule { id: ScheduleId(id), after: std::time::Duration::from_millis(at.0), input: ToyInput::Fire(n) }],
+            ToyInput::Deadline(id, at, n) => vec![Effect::ScheduleAt { id: ScheduleId(id), at, input: ToyInput::Fire(n) }],
             ToyInput::CancelSchedule(id) => vec![Effect::Cancel(ScheduleId(id))],
             ToyInput::Fire(n) => {
                 state.fired.push(n);
