@@ -41,6 +41,19 @@ class TransportFailureTest {
     }
 
     @Test
+    fun anAddressThatIsNoHttpUrlFailsBeforeTheNetwork() = bounded {
+        val request = HttpRequest(Author.SESSION, 0uL, 1u, "ftp://example.test/graphql", "POST", emptyMap(), "{}", 10_000uL, 10_000uL, NetworkPurpose.STANDARD)
+        assertEquals("url", OkHttpTransport().send(request).rawFailure()?.domain)
+        val file = java.io.File.createTempFile("upload", ".bin").apply { writeText("file"); deleteOnExit() }
+        val progress = object : ByteProgress(NoHandle) {
+            override fun sent(bytes: ULong) {}
+            override fun isCancelled() = false
+        }
+        val put = putFile(okhttp3.OkHttpClient(), "ftp://example.test/upload", emptyMap(), 10_000uL, 10_000uL, PutFile(file.path, 0u, 4u), progress)
+        assertEquals("url", put.rawFailure()?.domain)
+    }
+
+    @Test
     fun theWrapperNeverBuildsAClassOfItsOwn() {
         val sources = java.io.File("src/main/kotlin/com/noma4i/dblayer").walkTopDown().filter { it.extension == "kt" && it.name != "dblayer.kt" }.toList()
         assertTrue(sources.isNotEmpty())
