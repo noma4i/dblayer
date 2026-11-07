@@ -4,6 +4,10 @@
 
 ### Added
 
+- `DB.interruptedSessionAnswer` and `DBlayer.interruptedSessionAnswer` return the answer of a session call that a killed process left running.
+- `open` fails with `Config` on Android below API 34 when the manifest lacks `FOREGROUND_SERVICE_DATA_SYNC`.
+- `ReadEnd.internal` reports a stream value that could not be read; `pull` never throws.
+- `uploadStatus` and `operations` streams end with an `ended` item that carries the cause.
 - `DbError.AlreadyExists` reports a `create` with an id that exists.
 - A batch element without a row in the answer fails with the kind `protocol`.
 - Ephemeral fields with `reset_after` return to their default after the window.
@@ -36,6 +40,14 @@
 
 ### Changed
 
+- `Projected.edits` is a list for every delivery: a snapshot removes the rows before it and inserts its rows.
+- `RetryProgress.changes` is an `AsyncThrowingStream` and ends with the error of the subscription.
+- `DB.open` and `DB.close` are not bound to the main actor.
+- `DBlayer.database` is internal; use the typed calls of the library.
+- `run` hands the transport the variables as canonical JSON text with sorted keys on both platforms.
+- Swift reports the foreground at registration when the app is active, as Kotlin does; Kotlin reports a lost network as offline.
+- Android `onStopJob` returns `false`; a refused round start names a kind (`RoundRefusal`) and the core words the reason.
+- `DB.openTesting` and `DBlayer.openTesting` take `observers`; the test hooks left the production module.
 - `sync.state` of a record shows `sending` while its write is sent, and a write that waits in the queue again shows `pending`.
 - `Transport` and `EncryptedHttp` report raw failure facts and the core merges the headers and the `User-Agent`.
 - Rows reach Swift and Kotlin with every cell in its declared type, and a cell of another type throws instead of converting.

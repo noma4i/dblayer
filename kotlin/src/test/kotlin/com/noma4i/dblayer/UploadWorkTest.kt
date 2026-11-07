@@ -47,12 +47,8 @@ class UploadWorkTest {
 
     @Test
     fun onlyUploadRequestsGoThroughTheNetworkOfTheRunningJob() = bounded {
-        val old = 1u
-        val current = 2u
-        UploadNetwork.started(old, null)
-        UploadNetwork.started(current, null)
+        UploadNetwork.started(null)
         try {
-            UploadNetwork.ended(old)
             MockWebServer().use { server ->
                 repeat(2) { server.enqueue(MockResponse().setResponseCode(200).setBody("""{"data":{}}""")) }
                 server.start()
@@ -61,11 +57,11 @@ class UploadWorkTest {
                 assertEquals(RawOutcome.Response(200u, null, """{"data":{}}"""), transport.send(graphql))
                 refused { transport.send(graphql.copy(purpose = NetworkPurpose.TRANSFER)) }
                 refused { OkHttpEncryptedHttp().send(probeRequest(server.url("/api/graphql").toString(), "a.b.c.d.e").copy(purpose = NetworkPurpose.TRANSFER)) }
-                UploadNetwork.ended(current)
+                UploadNetwork.ended()
                 assertEquals(RawOutcome.Response(200u, null, """{"data":{}}"""), transport.send(graphql.copy(purpose = NetworkPurpose.TRANSFER)))
             }
         } finally {
-            UploadNetwork.ended(current)
+            UploadNetwork.ended()
         }
     }
 
@@ -81,11 +77,11 @@ class UploadWorkTest {
             val source = java.io.File(directory, "image.png").apply { writeText("image") }
             val database = reopen(Config(null, null), modelsJSON, MockTransport(), operations = """[{"name":"CreateBlob","document":"mutation CreateBlob { createBlob { url headers signedId blobId } }"},{"name":"CreateAssets","document":"mutation CreateAssets { createAssets { assets { id clientKey size } } }"}]""")
             database.setOnline(false)
-            database.setRoundJobs(UploadRounds(org.robolectric.RuntimeEnvironment.getApplication(), database, UploadScheduler { _, _ -> "the app was not visible" }))
+            database.setRoundJobs(UploadRounds(org.robolectric.RuntimeEnvironment.getApplication(), database, UploadScheduler { _, _ -> Refusal(RoundRefusal.JOB_REFUSED, "") }))
             fun batch(keys: IntRange) = keys.map { UploadItem(values = buildJsonObject { put("clientKey", "key-$it"); put("size", 2) }, path = source.path) }
             val rows = AccountScope.current().uploadBatch(Asset, batch(0..1), UploadBatchRequest(operation = "create_files"))
             eventually("every member of the refused batch shows the reason") {
-                rows.items.all { Asset.find(it.optimisticValue.id).current()?.uploads?.values?.singleOrNull()?.error?.message?.contains("the app was not visible") == true }
+                rows.items.all { Asset.find(it.optimisticValue.id).current()?.uploads?.values?.singleOrNull()?.error?.message?.contains("while the app was not visible") == true }
             }
         } finally {
             closeForCleanup()

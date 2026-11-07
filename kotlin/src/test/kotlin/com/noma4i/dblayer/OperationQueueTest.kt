@@ -2,7 +2,12 @@ package com.noma4i.dblayer
 
 import com.noma4i.dblayer.models.Moment
 import com.noma4i.dblayer.models.modelsJSON
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.mapNotNull
+import kotlinx.coroutines.flow.onEach
+import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.withTimeout
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
@@ -41,7 +46,7 @@ class OperationQueueTest {
         DBlayer.database.registerOperations(QUEUE_DEFS)
         Moment.feed.load()
         val moment = withTimeout(5000) { Moment.recent.live.flow.first { it.isNotEmpty() } }.first()
-        val queue = AccountScope.current().operations()
+        val queue = AccountScope.current().operations().mapNotNull { (it as? OperationQueueItem.Queue)?.items }
         DBlayer.database.setOnline(false)
         val receipt = moment.update(text = GraphQLNullable.Value("edited"))
         val pending = withTimeout(5000) { queue.first { it.size == 1 && it[0].status == OperationQueueStatus.PENDING } }
@@ -64,12 +69,34 @@ class OperationQueueTest {
         DBlayer.database.registerOperations(QUEUE_DEFS)
         Moment.feed.load()
         val moment = withTimeout(5000) { Moment.recent.live.flow.first { it.isNotEmpty() } }.first()
-        val queue = AccountScope.current().operations()
+        val queue = AccountScope.current().operations().mapNotNull { (it as? OperationQueueItem.Queue)?.items }
         moment.update(text = GraphQLNullable.Value("edited"))
         val failed = withTimeout(5000) { queue.first { it.firstOrNull()?.status == OperationQueueStatus.FAILED } }.first()
         assertNotNull(failed.error)
         AccountScope.current().retry(failed.model, failed.rowId, failed.action)
         withTimeout(5000) { queue.first { it.isEmpty() } }
         assertEquals(2, transport.calls.count { it.operationName == "UpdateMoment" })
+    }
+
+    @Test
+    fun theStatusAndQueueStreamsEndWithTheCauseOfTheCore() = bounded {
+        val transport = MockTransport()
+        transport.enqueue("MomentsFeed", QUEUE_FEED)
+        reopen(Config(null, null), modelsJSON, transport)
+        DBlayer.database.registerOperations(QUEUE_DEFS)
+        Moment.feed.load()
+        val moment = withTimeout(5000) { Moment.recent.live.flow.first { it.isNotEmpty() } }.first()
+        val scope = AccountScope.current()
+        val queueReady = CompletableDeferred<Unit>()
+        val statusReady = CompletableDeferred<Unit>()
+        val queue = async { scope.operations().onEach { queueReady.complete(Unit) }.toList() }
+        val status = async { scope.uploadStatus(moment, "upload_clip").uploadStatus.onEach { statusReady.complete(Unit) }.toList() }
+        withTimeout(5000) { queueReady.await() }
+        withTimeout(5000) { statusReady.await() }
+
+        closeForCleanup()
+
+        assertEquals(ReadEnd.Closed, (withTimeout(5000) { queue.await() }.last() as OperationQueueItem.Ended).cause)
+        assertEquals(ReadEnd.Closed, (withTimeout(5000) { status.await() }.last() as TransferItem.Ended).cause)
     }
 }

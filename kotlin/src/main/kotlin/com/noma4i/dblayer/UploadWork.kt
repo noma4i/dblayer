@@ -54,18 +54,18 @@ internal fun uploadMode(sdk: Int): UploadMode = if (sdk >= Build.VERSION_CODES.U
 
 internal const val DATA_SYNC_PERMISSION = "android.permission.FOREGROUND_SERVICE_DATA_SYNC"
 
-/** Below API 34 the round runs in a foreground service of type `dataSync`: the manifest of the app has to request its permission. */
-internal fun checkUploadPermission(sdk: Int, requested: () -> Collection<String>) {
-    if (uploadMode(sdk) != UploadMode.ForegroundService || DATA_SYNC_PERMISSION in requested()) return
-    throw DbException.Config(ConfigCode.INVALID_REQUEST, "the manifest of the app lacks $DATA_SYNC_PERMISSION")
-}
+/** Below API 34 the round runs in a foreground service of type `dataSync`: the manifest of the app has to request its permission, and the core refuses `open` when it does not. `null` where the platform needs no declaration. */
+internal fun dataSyncDeclared(sdk: Int, requested: () -> Collection<String>): Boolean? =
+    if (uploadMode(sdk) == UploadMode.ForegroundService) DATA_SYNC_PERMISSION in requested() else null
+
+internal class Refusal(val kind: RoundRefusal, val detail: String)
 
 internal fun interface UploadScheduler {
-    fun start(context: Context, job: RoundJob): String?
+    fun start(context: Context, job: RoundJob): Refusal?
 }
 
 internal object SystemUploadScheduler : UploadScheduler {
-    override fun start(context: Context, job: RoundJob): String? = when (uploadMode(Build.VERSION.SDK_INT)) {
+    override fun start(context: Context, job: RoundJob): Refusal? = when (uploadMode(Build.VERSION.SDK_INT)) {
         UploadMode.UserInitiatedJob -> UploadJobService.schedule(context, job)
         UploadMode.ForegroundService -> UploadService.start(context, job)
     }
@@ -74,15 +74,16 @@ internal object SystemUploadScheduler : UploadScheduler {
 /** The jobs of the rounds of the core: the core asks for a job, the system runs it, the core ends it. */
 internal class UploadRounds(private val context: Context, private val database: Database, private val scheduler: UploadScheduler = SystemUploadScheduler) : RoundJobsSink {
     override fun scheduleJob(job: RoundJob) {
-        val refused = try {
+        val refusal = try {
             scheduler.start(context, job)
         } catch (error: RuntimeException) {
-            error.message ?: error.javaClass.simpleName
+            Refusal(RoundRefusal.SCHEDULER_FAILED, error.message ?: error.javaClass.simpleName)
         }
-        if (refused != null) database.roundRefused(job.requestId, job.epoch, refused)
+        if (refusal != null) database.roundRefused(job.requestId, job.epoch, refusal.kind, refusal.detail)
     }
 
     override fun endJob(roundId: UInt) {
+        UploadNetwork.ended()
         context.getSystemService(JobScheduler::class.java).cancel(UploadJobService.JOB_ID)
         UploadService.stop()
     }
@@ -95,16 +96,16 @@ private const val EPOCH = "epoch"
 internal fun roundJobOf(extras: android.os.PersistableBundle) = RoundJob(extras.getLong(REQUEST).toULong(), extras.getLong(ROUND).toUInt(), extras.getLong(EPOCH).toULong())
 
 internal object UploadNetwork {
-    private class Route(val roundId: UInt, val network: Network?)
-    private val current = java.util.concurrent.atomic.AtomicReference<Route?>(null)
+    private class Held(val network: Network?)
+    private val current = java.util.concurrent.atomic.AtomicReference<Held?>(null)
 
-    fun started(roundId: UInt, network: Network?) { current.set(Route(roundId, network)) }
-    fun changed(roundId: UInt, network: Network?) { current.updateAndGet { if (it?.roundId == roundId) Route(roundId, network) else it } }
-    fun ended(roundId: UInt) { current.updateAndGet { if (it?.roundId == roundId) null else it } }
+    fun started(network: Network?) { current.set(Held(network)) }
+    fun changed(network: Network?) { current.updateAndGet { if (it != null) Held(network) else it } }
+    fun ended() { current.set(null) }
 
     fun route(client: OkHttpClient): OkHttpClient {
-        val route = current.get() ?: return client
-        val bound = route.network ?: throw java.io.IOException("the upload job has no network")
+        val held = current.get() ?: return client
+        val bound = held.network ?: throw java.io.IOException("the upload job has no network")
         return client.newBuilder().socketFactory(bound.socketFactory).dns(Dns { host -> bound.getAllByName(host).toList() }).build()
     }
 }
@@ -116,26 +117,26 @@ internal class UploadJobService : JobService() {
         val database = DBlayer.openedDatabase()
         if (database == null) { jobFinished(params, false); return false }
         val job = roundJobOf(params.extras)
-        UploadNetwork.started(job.roundId, params.network)
+        UploadNetwork.started(params.network)
         database.roundStarted(job.requestId, job.roundId, job.epoch)
         return true
     }
 
     override fun onNetworkChanged(params: JobParameters) {
-        UploadNetwork.changed(roundJobOf(params.extras).roundId, params.network)
+        UploadNetwork.changed(params.network)
     }
 
     override fun onStopJob(params: JobParameters): Boolean {
         val job = roundJobOf(params.extras)
-        UploadNetwork.ended(job.roundId)
+        UploadNetwork.ended()
         DBlayer.openedDatabase()?.roundEnded(job.roundId, job.epoch)
-        return true
+        return false
     }
 
     companion object {
         const val JOB_ID = 0x0DB1
 
-        fun schedule(context: Context, job: RoundJob): String? {
+        fun schedule(context: Context, job: RoundJob): Refusal? {
             val scheduler = context.getSystemService(JobScheduler::class.java)
             val extras = android.os.PersistableBundle().apply { putLong(REQUEST, job.requestId.toLong()); putLong(ROUND, job.roundId.toLong()); putLong(EPOCH, job.epoch.toLong()) }
             val info = JobInfo.Builder(JOB_ID, ComponentName(context, UploadJobService::class.java))
@@ -143,7 +144,7 @@ internal class UploadJobService : JobService() {
                 .setRequiredNetworkType(JobInfo.NETWORK_TYPE_ANY)
                 .setExtras(extras)
                 .build()
-            return if (scheduler.schedule(info) == JobScheduler.RESULT_SUCCESS) null else "the system refused the user-initiated job while the app was not visible"
+            return if (scheduler.schedule(info) == JobScheduler.RESULT_SUCCESS) null else Refusal(RoundRefusal.JOB_REFUSED, "")
         }
     }
 }
@@ -188,11 +189,11 @@ internal class UploadService : Service() {
 
         fun stop() { live?.stopSelf() }
 
-        fun start(context: Context, job: RoundJob): String? = try {
+        fun start(context: Context, job: RoundJob): Refusal? = try {
             context.startForegroundService(Intent(context, UploadService::class.java).putExtra(REQUEST, job.requestId.toLong()).putExtra(ROUND, job.roundId.toLong()).putExtra(EPOCH, job.epoch.toLong()))
             null
         } catch (error: IllegalStateException) {
-            error.message ?: "the system refused to start the upload service"
+            Refusal(RoundRefusal.START_NOT_ALLOWED, error.message ?: "")
         }
     }
 }

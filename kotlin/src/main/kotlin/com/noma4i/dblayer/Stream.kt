@@ -67,8 +67,8 @@ class ListProjection<Model : DBModel> private constructor(
     val state: ReadState?,
     val revision: Long?,
     val ended: ReadEnd?,
-    /** The steps of the last delivery from the rows before to the rows after. `null` after a snapshot: the screen reads the whole list. */
-    val lastEdits: List<ListEdit<Model>>?,
+    /** The steps of the last delivery from the rows before to the rows after. A snapshot removes the rows before and inserts the rows after. */
+    val lastEdits: List<ListEdit<Model>>,
 ) {
     constructor() : this(emptyList(), null, null, null, emptyList())
 
@@ -78,7 +78,7 @@ class ListProjection<Model : DBModel> private constructor(
     val error: DbException? get() = state?.error
 
     fun apply(delivery: ListDelivery<Model>): ListProjection<Model> = when (delivery) {
-        is ListDelivery.Snapshot -> ListProjection(delivery.rows, delivery.state, delivery.revision, ended, null)
+        is ListDelivery.Snapshot -> ListProjection(delivery.rows, delivery.state, delivery.revision, ended, rows.map { ListEdit.Remove(0, it.id) } + delivery.rows.mapIndexed { index, row -> ListEdit.Insert(index, row) })
         is ListDelivery.Delta -> ListProjection(rows.toMutableList().also { it.replay(delivery.edits) }, delivery.state, delivery.revision, ended, delivery.edits)
         is ListDelivery.State -> ListProjection(rows, delivery.state, revision, ended, emptyList())
         is ListDelivery.Ended -> ListProjection(rows, state, revision, delivery.cause, emptyList())
@@ -105,8 +105,8 @@ class Projected<Model : DBModel>(val stream: ValueStream, decoder: ModelDecoder<
 
     val value: Model? get() = held.value.rows.firstOrNull()
 
-    /** The steps of the last delivery, to apply to a list the screen keeps. `null`: the screen reads the rows again. */
-    val edits: List<ListEdit<Model>>? get() = held.value.lastEdits
+    /** The steps of the last delivery, to apply to a list the screen keeps. */
+    val edits: List<ListEdit<Model>> get() = held.value.lastEdits
 
     suspend fun refresh() = stream.refresh()
 
@@ -162,13 +162,41 @@ fun <Model : DBModel> ValueStream.events(decoder: ModelDecoder<Model>): Flow<Mod
 /** The status of a transfer at one change. */
 data class TransferProgress(val revision: Long, val state: String, val progress: ULong, val error: String?)
 
-/** The status of a transfer while it runs, by the key `model:row:action`. */
-val ValueStream.uploadStatus: Flow<TransferProgress>
-    get() = flow { values.collect { value -> (value as? ReadValue.Status)?.let { emit(TransferProgress(it.revision, it.state, it.progress, it.error)) } } }
+/** One item of the status of a transfer: a change, or the end of the stream with the cause of the core. */
+sealed interface TransferItem {
+    class Progress(val progress: TransferProgress) : TransferItem
+    class Ended(val cause: ReadEnd) : TransferItem
+}
 
-/** The queue of operations of the account: the whole queue at open and after every change. Each [OperationInfo] names the arguments of [AccountScope.retry] and [AccountScope.discard]. */
-internal fun ValueStream.operationLists(): Flow<List<OperationInfo>> =
-    flow { values.collect { value -> (value as? ReadValue.Operations)?.let { emit(it.items) } } }
+/** The status of a transfer while it runs, by the key `model:row:action`. The last item is [TransferItem.Ended]. */
+val ValueStream.uploadStatus: Flow<TransferItem>
+    get() = flow {
+        values.collect { value ->
+            when (value) {
+                is ReadValue.Status -> emit(TransferItem.Progress(TransferProgress(value.revision, value.state, value.progress, value.error)))
+                is ReadValue.Ended -> emit(TransferItem.Ended(value.cause))
+                else -> {}
+            }
+        }
+    }
+
+/** One item of the queue of operations: the whole queue, or the end of the stream with the cause of the core. */
+sealed interface OperationQueueItem {
+    class Queue(val items: List<OperationInfo>) : OperationQueueItem
+    class Ended(val cause: ReadEnd) : OperationQueueItem
+}
+
+/** The queue of operations of the account: the whole queue at open and after every change, then [OperationQueueItem.Ended]. Each [OperationInfo] names the arguments of [AccountScope.retry] and [AccountScope.discard]. */
+internal fun ValueStream.operationLists(): Flow<OperationQueueItem> =
+    flow {
+        values.collect { value ->
+            when (value) {
+                is ReadValue.Operations -> emit(OperationQueueItem.Queue(value.items))
+                is ReadValue.Ended -> emit(OperationQueueItem.Ended(value.cause))
+                else -> {}
+            }
+        }
+    }
 
 /** The file of a media command and the declared upload action that sends it. */
 class UploadCommand(val action: String, val request: UploadRequest)
@@ -189,7 +217,7 @@ class AccountScope private constructor(val epoch: ULong, internal val database: 
     fun uploadStatus(row: DBModel, action: String): ValueStream = database.openValueStream(epoch, ReadRequest.Blob(row.modelName, row.id, action))
 
     /** The operations that wait for the server, are on their way or were refused. */
-    fun operations(): Flow<List<OperationInfo>> = database.openValueStream(epoch, ReadRequest.Operations).operationLists()
+    fun operations(): Flow<OperationQueueItem> = database.openValueStream(epoch, ReadRequest.Operations).operationLists()
 
     /** Sends a refused operation again, by the fields of its [OperationInfo]. Throws `NotFound` when the operation is gone. */
     suspend fun retry(model: String, id: String, action: String?) {

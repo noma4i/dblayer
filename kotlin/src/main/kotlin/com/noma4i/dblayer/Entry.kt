@@ -15,6 +15,10 @@ object DBlayer {
     suspend inline fun <reified Body, reified Answer> sessionCall(operation: String, body: Body): Answer =
         offCaller { dbJson.decodeFromString<Answer>(database.sessionCall(operation, dbJson.encodeToString(body))) }
 
+    /** The answer of the session call that the killed process left running, taken once: `null` when there is none. */
+    suspend fun interruptedSessionAnswer(): JsonObject? =
+        offCaller { database.interruptedSessionAnswer()?.let { dbJson.parseToJsonElement(it) as JsonObject } }
+
     /** Ends the session: work of the old session ends, the credential and the data of the account go. Call it for every sign-out; the library clears the data itself. */
     suspend fun sessionReset() {
         offCaller { database.sessionReset() }
@@ -37,9 +41,11 @@ object DBlayer {
         onAccount(account) { database, epoch -> database.run(epoch, operation, variables.jsonText()) }
     }
 
-    var database: Database
+    @PublishedApi internal var database: Database
         get() = opened ?: throw DbException.NotOpen("database is not open; call DBlayer.open once at app start")
-        internal set(value) { opened = value }
+        private set(value) { opened = value }
+
+    internal fun adopt(database: Database) { this.database = database }
 
     suspend fun serverConfig(context: Context, encrypted: EncryptedConfig, platform: AppPlatform, version: String, build: String? = null, http: EncryptedHttp? = null, retries: RetryProgress? = null): ServerConfig =
         fetchServerConfig(encrypted, platform, version, build, http ?: OkHttpEncryptedHttp(), retries, SystemObservers(context))
@@ -57,21 +63,14 @@ object DBlayer {
         http: EncryptedHttp? = null,
         uploadNotification: UploadNotification,
     ) {
-        checkUploadPermission(android.os.Build.VERSION.SDK_INT) { context.packageManager.getPackageInfo(context.packageName, android.content.pm.PackageManager.GET_PERMISSIONS).requestedPermissions.orEmpty().toList() }
+        val dataSync = dataSyncDeclared(android.os.Build.VERSION.SDK_INT) { context.packageManager.getPackageInfo(context.packageName, android.content.pm.PackageManager.GET_PERMISSIONS).requestedPermissions.orEmpty().toList() }
         UploadNotifications.store(context, uploadNotification)
         val address = endpoint ?: encrypted?.origin
         val ports = OpenPorts(transport ?: address?.let { OkHttpTransport(headers) }, encrypted, credentials, http ?: encrypted?.let { OkHttpEncryptedHttp(headers = headers) }, address)
-        val made = opener.open(Config(path, null), modelsJson, OpenOptions(definitions(operations)), ports, SystemObservers(context))
+        val made = opener.open(Config(path, null), modelsJson, OpenOptions(definitions(operations), dataSync), ports, SystemObservers(context))
         made.setRoundJobs(UploadRounds(context.applicationContext, made))
         database = made
         UploadService.opened(made)
-    }
-
-    internal suspend fun openOnClock(config: Config, modelsJson: String, transport: Transport?, endpoint: String? = null, clock: TestClock, encrypted: EncryptedConfig? = null, credentials: CredentialStore? = null, http: EncryptedHttp? = null): Database = opener.openWithClock(config, modelsJson, OpenPorts(transport, encrypted, credentials, http, endpoint), clock)
-
-    internal suspend fun install(opened: Database, transport: Transport?, operations: List<GraphQLOperation>) {
-        if (transport != null) opened.declareOperations(definitions(operations))
-        database = opened
     }
 
     private fun definitions(operations: List<GraphQLOperation>): List<OperationDefinition> = operations.map { OperationDefinition(it.operationName, it.document) }

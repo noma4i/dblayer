@@ -90,7 +90,7 @@ Notes remain available separately. Transaction disposition describes the server 
 
 ```swift
 do {
-  _ = try await DB.database.run(operation: "PurchaseCreate", variablesJson: inputJSON)
+  _ = try await DB.run("PurchaseCreate", variables: input)
 } catch let DbError.Graphql(messages, extensions) {
   let code = extensions?.code
   let detail = try extensions?.fields["detail"].map { try JSONValue.decode(Data($0.utf8)) }
@@ -105,7 +105,7 @@ do {
 
 ```kotlin
 try {
-    DBlayer.database.run("PurchaseCreate", inputJSON)
+    DBlayer.run("PurchaseCreate", input)
 } catch (error: DbException.Graphql) {
     val code = error.extensions?.code
     val detail = error.extensions?.fields?.get("detail")?.let { Json.parseToJsonElement(it) }

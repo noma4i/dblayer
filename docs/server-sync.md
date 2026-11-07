@@ -152,7 +152,7 @@ A sealed answer of the encrypted session that carries an `error` field with a se
 | Where | Result |
 | ----- | -------------- |
 | `Query.load()`, `loadMore()`, `refresh()`, a forced reload (`readNode(force: true)`, `nodes`) | the request of the load got the sealed refusal |
-| `DB.run(_:variables:)` and generated `Operations.*` calls (`DBlayer.database.run` in Kotlin) | the call got the sealed refusal |
+| `DB.run(_:variables:)` and generated `Operations.*` calls (`DBlayer.run` in Kotlin) | the call got the sealed refusal |
 | Mutation receipt `outcome()` | the queued mutation got the sealed refusal. The rejected outcome carries the session code and detail. The action's `onFailure` declaration decides whether the optimistic value stays |
 | streams (`scope.stream`, `updates`) | never. They read the local database. A load under them that gets the refusal fails quietly, the explicit `load()` shows it |
 
@@ -370,7 +370,7 @@ UniFFI generates non-throwing `current` with `try!`, so cancelling every async c
 
 Create one `RetryProgress()` before the database exists. Pass it as `retries` to `DB.serverConfig` in Swift and `DBlayer.serverConfig` in Kotlin.
 It is optional. Without it, retries behave identically. There is no process-wide instance.
-`RetryProgress.changes` in Swift and `RetryProgress.flow` in Kotlin deliver a `RetrySnapshot`: `activeCalls` and `lastAttempt` (`attempt`, `delayMs`, `reason`).
+`RetryProgress.changes` in Swift (an `AsyncThrowingStream`) and `RetryProgress.flow` in Kotlin deliver a `RetrySnapshot`: `activeCalls` and `lastAttempt` (`attempt`, `delayMs`, `reason`).
 A reader gets the current snapshot first, then the newest one. A slow reader sees the newest snapshot and delays no request.
 Cancelling a read ends only that reader. The calls and the other readers go on.
 A call becomes active after its first temporary failure. It leaves when it succeeds, fails for good or is cancelled.
@@ -385,7 +385,7 @@ URLSession does not expose an independent connect timeout, so Swift has no separ
 
 Origin rule: `https://host[:port]` is accepted for any host. `http://host[:port]` is accepted only for development hosts: the name `localhost`, a name that ends with the label `.local`, and the IP literals of loopback (`127.0.0.0/8`, `::1`), private networks (`10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`, `fc00::/7`) and link-local (`169.254.0.0/16`, `fe80::/10`). The core parses the host strictly: decimal, hex and octal address forms, trailing dots, user info, paths, queries and fragments are refused. The request audience stays the origin you gave. The JWE protects the payload over http, but the transport is not protected, so use http for development only. Production origins use https.
 
-`DB.open` (Swift) and `DBlayer.open` (Kotlin) set `DB.database` and `DBlayer.database`.
+`DB.open` (Swift) and `DBlayer.open` (Kotlin) open the one database of the process. The calls of the library use it, and the raw bridge object is not public.
 `http` defaults to `UrlSessionEncryptedHttp` or `OkHttpEncryptedHttp` on the origin.
 `transport` defaults to `UrlSessionTransport` or `OkHttpTransport` on the same origin, including the WebSocket at `encrypted.endpoints.cable`.
 

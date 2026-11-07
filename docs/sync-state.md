@@ -86,7 +86,7 @@ Use them for an "unsent" banner, a retry-all button or a badge with the number o
 
 ## The queue of operations
 
-`operations()` streams every write that has not ended, oldest first: the whole list when you open it and again after each change. A write enters the list before its receipt returns and leaves it when the server confirmed it or it rolled back.
+`operations()` streams every write that has not ended, oldest first: the whole list when you open it and again after each change, then one `ended` item with the cause of the core (`OperationQueueItem.Ended` in Kotlin). A write enters the list before its receipt returns and leaves it when the server confirmed it or it rolled back.
 
 | Field | Meaning |
 | ----- | ------- |
@@ -100,7 +100,8 @@ Use them for an "unsent" banner, a retry-all button or a badge with the number o
 
 ```swift
 let scope = try DB.account()
-for try await queue in scope.operations() {
+for await item in scope.operations() {
+  guard case let .queue(queue) = item else { break }
   badge = queue.filter { $0.status == .failed }.count
   if let refused = queue.first(where: { $0.status == .failed }) {
     try await scope.retry(model: refused.model, id: refused.rowId, action: refused.action)
@@ -110,7 +111,8 @@ for try await queue in scope.operations() {
 
 ```kotlin
 val scope = AccountScope.current()
-scope.operations().collect { queue ->
+scope.operations().collect { item ->
+  val queue = (item as? OperationQueueItem.Queue)?.items ?: return@collect
   badge = queue.count { it.status == OperationQueueStatus.FAILED }
   queue.firstOrNull { it.status == OperationQueueStatus.FAILED }?.let { scope.retry(it.model, it.rowId, it.action) }
 }

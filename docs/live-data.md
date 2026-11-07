@@ -13,7 +13,7 @@ One owner in the core serves each stream: the query, the count, the row by id, t
 | `scope.entity(Model, id, fetch)` | One row by id. `fetch` tells when the library loads it from the server. |
 | `scope.singleton(Model)` | The one row of a model that has a single record. |
 | `scope.events(Model)` | The events of a model after the stream opened. Past events are not repeated. |
-| `scope.uploadStatus(id)` | The status of a media upload while it runs. |
+| `scope.uploadStatus(row, action)` | The status of a media upload while it runs. The last item is `ended` with the cause of the core. |
 
 ```swift
 let scope = try DB.account()
@@ -45,7 +45,7 @@ A delta carries the steps from the rows the reader holds to the rows of its revi
 A projection applies the steps in order and decides nothing: the core fixed the order.
 A row that cannot be decoded asks the core for one new snapshot with `resync()`.
 
-`Projected.edits` holds the edits of the last delivery. Apply them to a list you keep. A snapshot means: read all rows.
+`Projected.edits` holds the edits of the last delivery. Apply them to a list you keep. A snapshot removes the rows before it and inserts its rows. A failure of a stream arrives as its last value `ended` with a cause (`Internal` for a delivery that could not be read); reading a stream never throws.
 A `rewrite` that the server confirmed carries the `temporary` id the row had when the screen first showed it. A screen keeps the identity of the row with it.
 
 ## Reading before the first delivery

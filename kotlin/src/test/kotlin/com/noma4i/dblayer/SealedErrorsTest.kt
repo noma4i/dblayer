@@ -18,11 +18,11 @@ class SealedErrorsTest {
         reopenSigned(Config(null, null), modelsJSON)
         val row = Moment.create(text = "saved", account = AccountScope.current()).optimisticValue!!
         val real = DBlayer.database
-        DBlayer.database = RefusedRetry()
+        DBlayer.adopt(RefusedRetry())
         try {
             org.junit.Assert.assertTrue(runCatching { row.retry(null) }.exceptionOrNull() is DbException.Invalid)
         } finally {
-            DBlayer.database = real
+            DBlayer.adopt(real)
         }
     }
     private val codes = listOf(

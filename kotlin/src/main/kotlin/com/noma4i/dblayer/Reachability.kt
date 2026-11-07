@@ -11,8 +11,7 @@ internal object Reachability {
         val service = context.applicationContext.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
         fun current() = validated(service.getNetworkCapabilities(service.activeNetwork))
         val callback = object : ConnectivityManager.NetworkCallback() {
-            override fun onAvailable(network: Network) = changed(current())
-            override fun onLost(network: Network) = changed(current())
+            override fun onLost(network: Network) = changed(false)
             override fun onCapabilitiesChanged(network: Network, capabilities: NetworkCapabilities) = changed(validated(capabilities))
         }
         service.registerDefaultNetworkCallback(callback)

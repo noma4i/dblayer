@@ -30,11 +30,11 @@ class SessionBridgeTest {
         reopen(Config(null, null), modelsJSON, null)
         val real = DBlayer.database
         val recording = RecordingSession()
-        DBlayer.database = recording
+        DBlayer.adopt(recording)
         try {
             block(recording)
         } finally {
-            DBlayer.database = real
+            DBlayer.adopt(real)
         }
     }
 

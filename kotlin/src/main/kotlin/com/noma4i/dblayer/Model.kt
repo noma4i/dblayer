@@ -26,7 +26,9 @@ data class SyncInfo(
     val attempts: Int,
     val since: Long,
 ) {
-    constructor() : this(SyncState.Synced, emptyList(), emptyList(), null, 0, 0)
+    constructor() : this(SyncInfo.of(defaultSync()))
+
+    private constructor(copy: SyncInfo) : this(copy.state, copy.actions, copy.dirtyFields, copy.error, copy.attempts, copy.since)
 
     companion object
 }
