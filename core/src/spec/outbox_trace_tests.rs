@@ -183,7 +183,7 @@ async fn run_traces(traces: Vec<Vec<Act>>, check: Check) {
     for chunk in traces.chunks(16) {
         step(&format!("{} traces start", chunk.len()));
         let running: Vec<_> = chunk.iter().cloned().map(|trace| tokio::spawn(async move { run_trace(&trace, check).await })).collect();
-        for trace in running { within(trace).await.unwrap(); }
+        for trace in running { trace.await.unwrap(); }
     }
 }
 
@@ -308,10 +308,16 @@ async fn out_prop_offline_queue_run() {
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("db.sqlite").to_string_lossy().to_string();
         let first = Rig::open_at(OnFailure::Rollback, Some(path.clone()), Server::new()).await;
+        first.server.hold(Kind::Mutate, true);
         let seed = first.create("seed").await;
+        first.server.wait_held(Kind::Mutate, 1).await;
+        first.server.answer(Kind::Mutate, Reply::Ok);
         assert_eq!(kind_of(&first.outcome(&seed).await), "Confirmed");
         let landed = first.update(&temp_id(&seed), "landed").await.unwrap();
+        first.server.wait_held(Kind::Mutate, 1).await;
+        first.server.answer(Kind::Mutate, Reply::Ok);
         assert_eq!(kind_of(&first.outcome(&landed).await), "Confirmed");
+        first.server.hold(Kind::Mutate, false);
         let real = temp_id(&landed);
         let before = first.server.mutations();
         first.db.set_online(false).unwrap();

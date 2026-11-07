@@ -280,8 +280,7 @@ impl Drop for Rig {
     fn drop(&mut self) {
         self.server.release_all();
         let db = self.db.clone();
-        let (done, finished) = std::sync::mpsc::channel();
-        std::thread::spawn(move || {
+        let closer = std::thread::spawn(move || {
             let runtime = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
             let _ = runtime.block_on(crate::test_wait::within(db.close_database()));
             let _ = done.send(());
