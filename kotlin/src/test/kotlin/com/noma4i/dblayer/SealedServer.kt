@@ -115,7 +115,7 @@ class SealedServer(private val deduplicate: Boolean = false, private val answer:
             parked.add(gate)
             arrivals.trySend(Unit)
             if (holding.get() != operation) gate.complete(Unit)
-            gate.await()
+            kotlinx.coroutines.withContext(kotlinx.coroutines.NonCancellable) { gate.await() }
         }
         val sealed = seal(request, reply)
         if (deduplicate) cached[requestId] = stable to sealed
