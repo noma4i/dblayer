@@ -33,9 +33,9 @@ async fn a_command_and_a_read_of_a_left_account_are_refused_and_change_nothing()
     rig.database.close_now();
 }
 
-/// K03 a send needs a session, and an action that is not a durable command does not wait for the network: it is refused and rolled back, and it never goes out later.
+/// K03 a send needs a session, and a plain action written while the network is away is queued with its optimistic row and goes out once when the network returns.
 #[tokio::test(flavor = "multi_thread")]
-async fn a_send_needs_a_session_and_a_plain_action_never_waits_for_the_network() {
+async fn a_send_needs_a_session_and_a_plain_action_waits_for_the_network() {
     let rig = Rig::encrypted().await;
     let epoch = rig.database.session_epoch();
     let sent = bound(rig.database.send(message(epoch, "anonymous", 1))).await;
@@ -46,14 +46,14 @@ async fn a_send_needs_a_session_and_a_plain_action_never_waits_for_the_network()
     let (values, args) = group("g");
     rig.database.set_online(false).unwrap();
     settle(&rig).await;
-    let plain = bound(rig.database.create(epoch, "Group".into(), values, args)).await;
-    assert!(matches!(plain, Err(DbError::Offline { .. })), "a plain action was not refused while the network was away: {plain:?}");
+    let plain = bound(rig.database.create(epoch, "Group".into(), values, args)).await.unwrap();
+    assert_eq!(plain.optimistic_value.as_ref().unwrap().sync.state, WireSyncState::Pending);
     settle(&rig).await;
-    assert!(crate::ffi::queue_view_tests::queued(&rig.database).is_empty(), "a plain action stayed queued while the network was away");
-    assert_eq!(rig.database.db.row_count("Group").unwrap(), 0, "the row of the refused action stayed");
+    assert_eq!(crate::ffi::queue_view_tests::queued(&rig.database).len(), 1, "a plain action was not queued while the network was away");
+    assert_eq!(rig.world.count("CreateGroup"), 0, "a plain action went out without the network");
     rig.database.set_online(true).unwrap();
-    settle(&rig).await;
-    assert_eq!(rig.world.count("CreateGroup"), 0, "a plain action went out after the network returned");
+    assert!(matches!(bound(rig.database.outcome(plain)).await.unwrap(), WireOperationOutcome::Confirmed { .. }));
+    assert_eq!(rig.world.count("CreateGroup"), 1, "a plain action went out more or less than once after the network returned");
     let receipt = bound(rig.database.send(message(epoch, "offline", 2))).await.unwrap();
     assert_eq!(receipt.optimistic_value.as_ref().unwrap().sync.state, WireSyncState::Pending);
     rig.database.close_now();
@@ -102,9 +102,9 @@ async fn reset_clears_ephemeral_values_before_the_next_account_reads_the_same_id
     rig.database.close_now();
 }
 
-/// K04 (B4, old line ffi/database.rs create): a create the server answers goes through `create` with the epoch of the caller, needs the network, and returns the row the server confirmed.
+/// K04 (B4, old line ffi/database.rs create): a create the server answers goes through `create` with the epoch of the caller and returns the row the server confirmed.
 #[tokio::test(flavor = "multi_thread")]
-async fn a_server_create_returns_the_confirmed_row_and_needs_the_network() {
+async fn a_server_create_returns_the_confirmed_row() {
     let rig = Rig::encrypted().await;
     rig.login_ios("A").await;
     let epoch = rig.database.session_epoch();
@@ -113,11 +113,6 @@ async fn a_server_create_returns_the_confirmed_row_and_needs_the_network() {
     assert!(!row.id.starts_with("tmp") && !row.id.contains("temp"), "the created row still has a temporary id: {}", row.id);
     assert!(named(&row, "friends"));
     assert_eq!(rig.world.count("CreateGroup"), 1);
-    rig.database.set_online(false).unwrap();
-    let offline = bound(rig.database.create(epoch, "Group".into(), values, args)).await;
-    assert!(matches!(offline, Err(DbError::Offline { .. })), "an offline server create did not fail at once: {offline:?}");
-    assert_eq!(rig.world.count("CreateGroup"), 1);
-    assert!(crate::ffi::queue_view_tests::queued(&rig.database).is_empty());
     rig.database.close_now();
 }
 
@@ -153,7 +148,7 @@ async fn the_cancel_of_a_reader_releases_its_object_outside_every_library_lock()
     rig.database.close_now();
 }
 
-/// K06 (B6): the row of a durable command shows in the stream of its reader as pending before the server answers, and the server has not been asked.
+/// K06 (B6): the row of a command shows in the stream of its reader as pending before the server answers, and the server has not been asked.
 #[tokio::test(flavor = "multi_thread")]
 async fn a_queued_message_shows_as_pending_in_the_thread_before_the_server_answers() {
     let rig = Rig::encrypted().await;

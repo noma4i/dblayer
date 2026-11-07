@@ -34,7 +34,6 @@ pub(super) fn moment_spec() -> ModelSpec {
     model.relations.push(feed);
     let mut create = ActionDeclaration::new("create", RootShape::Upsert);
     create.mutation = Some("MakeMoment".to_string());
-    create.durable = true;
     create.has_optimistic = true;
     create.has_temp_row_retention = true;
     create.on_failure = crate::schema::OnFailure::Keep;
@@ -101,7 +100,7 @@ async fn a_session_code_on_a_queued_mutation_reaches_settled_typed_and_keeps_the
             let database = signed_in(&rig).await;
             let credential = rig.credentials.inner.value();
             rig.server.refuse_next(wire, confirmed);
-            let receipt = database.create_durable("Moment", r#"{"text":"hello"}"#).await;
+            let receipt = database.send_create("Moment", r#"{"text":"hello"}"#).await;
 
             let outcome = database.outcome(receipt).await.unwrap();
             let super::WireOperationOutcome::Rejected { failure } = outcome else { panic!("expected rejection: {outcome:?}") };
@@ -152,7 +151,7 @@ async fn an_unauthenticated_or_unavailable_refusal_keeps_the_queued_mutation_fai
         let rig = Rig::new();
         let database = signed_in(&rig).await;
         rig.server.refuse_next(wire, false);
-        let receipt = database.create_durable("Moment", r#"{"text":"hello"}"#).await;
+        let receipt = database.send_create("Moment", r#"{"text":"hello"}"#).await;
         let row = receipt.optimistic_value.clone().unwrap();
 
         let outcome = database.outcome(receipt).await.unwrap();
@@ -177,7 +176,7 @@ async fn any_other_session_refusal_follows_the_same_keep_declaration() {
     let rig = Rig::new();
     let database = signed_in(&rig).await;
     rig.server.refuse_next("RATE_LIMITED", true);
-    let receipt = database.create_durable("Moment", r#"{"text":"hello"}"#).await;
+    let receipt = database.send_create("Moment", r#"{"text":"hello"}"#).await;
     let row = receipt.optimistic_value.clone().unwrap();
 
     assert!(matches!(database.outcome(receipt).await.unwrap(), super::WireOperationOutcome::Rejected { .. }));

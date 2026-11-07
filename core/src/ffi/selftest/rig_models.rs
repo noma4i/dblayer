@@ -76,7 +76,6 @@ fn message_spec() -> crate::schema::ModelSpec {
     message.relations.push(thread);
     let mut create = ActionDeclaration::new("create", RootShape::Upsert);
     create.mutation = Some("SendMessage".into());
-    create.durable = true;
     create.has_optimistic = true;
     create.has_temp_row_retention = true;
     for field in ["chatId", "text", "at"] { create.variables.insert(field.into(), field.into()); }

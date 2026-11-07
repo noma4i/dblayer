@@ -166,7 +166,7 @@ async fn a_cancelled_upload_sends_nothing() {
     database.close_now();
 }
 
-/// A durable send with a file writes the row at once and the confirmed row replaces it when the file and its mutation went out.
+/// A send with a file writes the row at once and the confirmed row replaces it when the file and its mutation went out.
 #[tokio::test(flavor = "multi_thread")]
 async fn a_send_with_a_file_confirms_the_row_the_server_answers() {
     let rig = SessionRig::new();

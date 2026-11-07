@@ -273,7 +273,7 @@ impl Database {
         self.begin_load(epoch, model, relation, params_json)?.result().await
     }
 
-    pub(crate) async fn create_durable(&self, model: &str, values_json: &str) -> super::WireOperationReceipt {
+    pub(crate) async fn send_create(&self, model: &str, values_json: &str) -> super::WireOperationReceipt {
         let request = crate::ffi::CommandRequest { epoch: self.session_epoch(), model: model.into(), values_json: values_json.into(), args_json: "{}".into(), upload: None };
         self.send(request).await.unwrap()
     }

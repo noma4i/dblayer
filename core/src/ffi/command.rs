@@ -11,8 +11,8 @@ pub struct CommandUpload {
     pub request: WireUploadRequest,
 }
 
-/// A durable command: the row is written locally at once and the library sends it, also after the network returned or the app restarted.
-/// Only a message send and a media upload are durable: a model sends a message through its `durable` create action, and a media upload goes through a declared upload action.
+/// A command: the row is written locally at once and the library queues and sends it, also after the network returned or the app restarted.
+/// A model sends through its `create` operation, and a media upload goes through a declared upload action.
 #[derive(Clone, Debug, uniffi::Record)]
 pub struct CommandRequest {
     /// The session epoch the caller was admitted in. A command for an epoch that has gone is refused.
@@ -29,7 +29,7 @@ pub(super) fn ended() -> DbError { DbError::Interrupted { detail: "the session o
 /// The error of a call that finds the database closed.
 pub(super) fn closed() -> DbError { DbError::Closed { detail: "the database is closed".into() } }
 
-fn refused(model: &str) -> DbError { DbError::Invalid { detail: format!("{model} declares no durable command: only sending a message and a media upload work without a network") } }
+fn refused(model: &str) -> DbError { DbError::Invalid { detail: format!("{model} declares no create operation and no declared upload action for this command") } }
 
 impl Database {
     /// Runs the work in the epoch of the caller: it starts only while that epoch is current, and a result read after the epoch moved is not returned.
@@ -58,7 +58,7 @@ impl Database {
         let spec = self.db.spec(&request.model)?;
         let allowed = match &request.upload {
             Some(upload) => spec.upload_action(&upload.action).is_some(),
-            None => spec.actions.iter().any(|action| action.name == "create" && action.durable),
+            None => spec.actions.iter().any(|action| action.name == "create"),
         };
         if allowed { Ok(()) } else { Err(refused(&request.model)) }
     }

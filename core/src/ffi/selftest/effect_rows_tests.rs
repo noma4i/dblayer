@@ -291,21 +291,20 @@ async fn forward_returns_its_optimistic_value_before_the_server_answers() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn an_offline_action_is_not_sent_after_reconnect_but_a_message_is_sent_once() {
+async fn an_offline_action_and_a_message_are_each_sent_once_after_reconnect() {
     let rig = Rig::encrypted().await;
     rig.login_ios("A").await;
     let epoch = rig.database.session_epoch();
     let group = confirmed_group(&rig).await;
     rig.database.set_online(false).unwrap();
-    let refused = bound(rig.database.act(epoch, "Group".into(), group.id, "add_member".into(), "{}".into(), json!({"userIds": ["u9"]}).to_string())).await;
-    assert!(refused.is_err());
+    let action = bound(rig.database.act(epoch, "Group".into(), group.id, "add_member".into(), "{}".into(), json!({"userIds": ["u9"]}).to_string())).await.unwrap();
     let receipt = bound(rig.database.send(message(epoch, "offline", 2))).await.unwrap();
     assert!(receipt.optimistic_value.is_some());
-    assert_eq!(rig.world.count("SendMessage"), 0);
+    assert_eq!((rig.world.count("SendMessage"), rig.world.count("AddMember")), (0, 0));
     rig.database.set_online(true).unwrap();
     assert!(matches!(bound(rig.database.outcome(receipt)).await.unwrap(), crate::ffi::WireOperationOutcome::Confirmed { .. }));
-    assert_eq!(rig.world.count("SendMessage"), 1);
-    assert_eq!(rig.world.log().iter().filter(|entry| entry.operation == "AddMember").count(), 0);
+    assert!(matches!(bound(rig.database.outcome(action)).await.unwrap(), crate::ffi::WireOperationOutcome::Confirmed { .. }));
+    assert_eq!((rig.world.count("SendMessage"), rig.world.count("AddMember")), (1, 1));
     rig.database.close_now();
 }
 

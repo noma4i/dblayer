@@ -16,9 +16,9 @@ S301	A4	kotlin	com.noma4i.dblayer.ClubTest.anAcknowledgedMembershipChangeSurvive
 S302	K7	core	a_create_refusal_follows_the_declared_policy	red-by-reading	HTTP 422 and business refusal after create	arch-audit/fable.md K7
 S302	K7	swift	BridgeProbeTests.aCreateRefusalFollowsTheDeclaredPolicy	red-by-reading	HTTP 422 and business refusal after create	arch-audit/fable.md K7
 S302	K7	kotlin	com.noma4i.dblayer.ClubTest.aCreateRefusalFollowsTheDeclaredPolicy	red-by-reading	HTTP 422 and business refusal after create	arch-audit/fable.md K7
-S303	A5	core	an_offline_action_is_not_sent_after_reconnect_but_a_message_is_sent_once	regression-by-reading	offline action and durable send, reconnect	arch-audit/astra.md A5
-S303	A5	swift	BridgeProbeTests.anOfflineActionIsNotSentAfterReconnectButALetterIsSentOnce	regression-by-reading	offline action and durable send, reconnect	arch-audit/astra.md A5
-S303	A5	kotlin	com.noma4i.dblayer.ClubTest.anOfflineActionIsNotSentAfterReconnectButALetterIsSentOnce	regression-by-reading	offline action and durable send, reconnect	arch-audit/astra.md A5
+S303	A5	core	an_offline_action_and_a_message_are_each_sent_once_after_reconnect	regression-by-reading	offline action and send, reconnect	arch-audit/astra.md A5
+S303	A5	swift	BridgeProbeTests.anOfflineActionAndALetterAreEachSentOnceAfterReconnect	regression-by-reading	offline action and send, reconnect	arch-audit/astra.md A5
+S303	A5	kotlin	com.noma4i.dblayer.ClubTest.anOfflineActionAndALetterAreEachSentOnceAfterReconnect	regression-by-reading	offline action and send, reconnect	arch-audit/astra.md A5
 S304	A5	core	forward_returns_its_optimistic_value_before_the_server_answers	red-by-reading	forward returns optimistic value while answer is held	arch-audit/astra.md A5
 S304	A5	swift	BridgeProbeTests.forwardReturnsItsOptimisticValueBeforeTheServerAnswers	red-by-reading	forward returns optimistic value while answer is held	arch-audit/astra.md A5
 S304	A5	kotlin	com.noma4i.dblayer.ClubTest.forwardReturnsItsOptimisticValueBeforeTheServerAnswers	red-by-reading	forward returns optimistic value while answer is held	arch-audit/astra.md A5
@@ -117,8 +117,8 @@ B15		core	work_counters_an_entity_stream_ignores_other_rows_and_a_count_stream_g
 K02	B2	core	a_command_and_a_read_of_a_left_account_are_refused_and_change_nothing	green	-	arch-r3b review B2
 K02	B2	swift	BridgeProbeTests.aCommandAndAReadOfAnAccountThatLeftAreRefusedAndChangeNothing	green	-	arch-r3b review B2
 K02	B2	kotlin	com.noma4i.dblayer.ValueBridgeTest.aCommandAndAReadOfAnAccountThatLeftAreRefusedAndChangeNothing	green	-	arch-r3b review B2
-K03	B3	core	a_send_needs_a_session_and_a_plain_action_never_waits_for_the_network	green	-	arch-r3b review B3
-K04	B4	core	a_server_create_returns_the_confirmed_row_and_needs_the_network	green	-	arch-r3b review B4
+K03	B3	core	a_send_needs_a_session_and_a_plain_action_waits_for_the_network	green	-	arch-r3b review B3
+K04	B4	core	a_server_create_returns_the_confirmed_row	green	-	arch-r3b review B4
 K05	B5	core	the_cancel_of_a_reader_releases_its_object_outside_every_library_lock	green	-	arch-r3b review B5
 K06	B6	core	a_queued_message_shows_as_pending_in_the_thread_before_the_server_answers	green	-	arch-r3b review B6
 K07	B9	core	a_cancelled_list_stream_leaves_no_observer_and_a_later_write_does_no_reading	green	-	arch-r3b review B9
@@ -141,8 +141,8 @@ K10	A	kotlin	com.noma4i.dblayer.ReconnectTest.aDurableSendThatFailedOnTheNetwork
 K11	B	kotlin	com.noma4i.dblayer.ReconnectTest.aRefreshAndALoadMoreFailAtOnceOfflineAndTheStreamShowsTheError	green	-	arch-r3c
 K14	B6	kotlin	com.noma4i.dblayer.RecordSessionTest.aReactionWithADelayedAnswerShowsAsUnsentBeforeTheAnswerAndSyncedAfter	green	-	arch-r3c
 K16	B8	kotlin	com.noma4i.dblayer.ValueBridgeTest.aReaderThatFallsBehindKeepsAtMost256DeliveriesAndEndsWithTheWholeList	green	-	arch-r3c
-K04	B4	swift	BridgeProbeTests.aServerCreateReturnsTheConfirmedRowAndNeedsTheNetwork	green	-	arch-r3c
-K04	B4	kotlin	com.noma4i.dblayer.ClubTest.aServerCreateReturnsTheConfirmedRowAndNeedsTheNetwork	green	-	arch-r3c
+K04	B4	swift	BridgeProbeTests.aServerCreateReturnsTheConfirmedRow	green	-	arch-r3c
+K04	B4	kotlin	com.noma4i.dblayer.ClubTest.aServerCreateReturnsTheConfirmedRow	green	-	arch-r3c
 K13	B6	swift	BridgeProbeTests.aMemberActionChangesBothListsBeforeTheAnswerAndARefusalRestoresThem	green	-	arch-r3c
 K13	B6	swift	BridgeProbeTests.leaveRemovesTheClubFromItsListBeforeTheAnswerAndARefusalRestoresIt	green	-	arch-r3c
 K22	B6	swift	BridgeProbeTests.aForwardShowsALocalCopyInTheTargetThreadAndARefusalRemovesIt	green	-	arch-r3c
@@ -154,7 +154,6 @@ K12	forward	kotlin	com.noma4i.dblayer.ClubTest.aForwardLeavesTheSourceUnchangedU
 RC09	C09	swift	ProjectionRecoveryTests.aDeltaIsAppliedAsItComesAndKeepsOnlyItsOwnEdits	green	-	arch-r3d review C09
 RC09	C09	kotlin	com.noma4i.dblayer.ProjectionRecoveryTest.aDeltaIsAppliedAsItComesAndKeepsOnlyItsOwnEdits	green	-	arch-r3d review C09
 K17	C01	core	every_entry_of_a_left_account_is_refused_and_reaches_nothing	green	core-only: the proof counts the requests that reached the fake world; the behaviour lives only in the core delivery queue and sender (spec B: wrappers carry values, no hooks)	arch-r3d review C01
-K18	C04	core	a_plain_action_that_never_reached_the_server_ends_with_the_network_error_and_is_not_replayed	green	core-only: the proof counts the requests that reached the fake world; the behaviour lives only in the core delivery queue and sender (spec B: wrappers carry values, no hooks)	arch-r3d review C04
 K20	C08	core	a_command_that_failed_on_the_network_is_delivered_by_the_backoff_and_the_clock	green	core-only: the proof moves the test clock and reads the outbox; the behaviour lives only in the core delivery queue and sender (spec B: wrappers carry values, no hooks)	arch-r3d review C08
 K21	C02	swift	BridgeProbeTests.aScopeKeepsItsOwnDatabaseAfterTheDatabaseIsReplaced	green	-	arch-r3d review C02
 K21	C02	kotlin	com.noma4i.dblayer.ValueBridgeTest.aScopeKeepsItsOwnDatabaseAfterTheDatabaseIsReplaced	green	-	arch-r3d review C02

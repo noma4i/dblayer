@@ -174,28 +174,6 @@ async fn every_entry_of_a_left_account_is_refused_and_reaches_nothing() {
     rig.database.close_now();
 }
 
-/// K18 (C04, old lines sync/send/flush.rs settle_delivery and online.rs set_online): an action that is not a durable command and whose request never reached the server ends with the network error and rolls back. Nothing replays it when the network returns.
-#[tokio::test(flavor = "multi_thread")]
-async fn a_plain_action_that_never_reached_the_server_ends_with_the_network_error_and_is_not_replayed() {
-    let rig = Rig::encrypted().await;
-    rig.login_ios("A").await;
-    let epoch = rig.database.session_epoch();
-    let (values, args) = group("friends");
-    let created = confirmed_group(&rig, epoch, values, args).await;
-    rig.world.fail_next("LeaveGroup", Fault::Down);
-    let receipt = bound(rig.database.act(epoch, "Group".into(), created.id.clone(), "leave".into(), "{}".into(), "{}".into())).await.unwrap();
-    let outcome = bound(rig.database.outcome(receipt)).await.unwrap();
-    assert!(matches!(outcome, WireOperationOutcome::Rejected { failure } if failure.kind == "network"));
-    let after = bound(rig.database.read_row(epoch, "Group".into(), created.id.clone())).await.unwrap();
-    assert!(after.is_some(), "the group stayed removed after the failed request");
-    assert!(crate::ffi::queue_view_tests::queued(&rig.database).is_empty(), "the failed action stayed queued");
-    rig.database.set_online(false).unwrap();
-    rig.database.set_online(true).unwrap();
-    settle(&rig).await;
-    assert_eq!(rig.world.log().iter().filter(|entry| entry.operation == "LeaveGroup").count(), 1, "the action went out again after the network returned");
-    rig.database.close_now();
-}
-
 /// K09 a list stream opened with refresh on connect loads again once when the network returns, without a call of the app. A stream without the flag asks nothing.
 #[tokio::test(flavor = "multi_thread")]
 async fn a_stream_that_refreshes_on_connect_loads_again_once_when_the_network_returns() {
@@ -222,7 +200,7 @@ async fn a_stream_that_refreshes_on_connect_loads_again_once_when_the_network_re
     rig.database.close_now();
 }
 
-/// K10 (out_sending_temp, out_sending_tick): a durable command whose request failed on the network is sent again by the backoff, the clock delivers it, and one pair reaches the server.
+/// K10 (out_sending_temp, out_sending_tick): a command whose request failed on the network is sent again by the backoff, the clock delivers it, and one pair reaches the server.
 #[tokio::test(flavor = "multi_thread")]
 async fn a_command_that_failed_on_the_network_is_delivered_by_the_backoff_and_the_clock() {
     for failures in [1, 2] {

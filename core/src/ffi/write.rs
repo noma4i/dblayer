@@ -31,7 +31,6 @@ pub(super) fn refused(fault: Fault, what: &str) -> DbError {
         Fault::NotFound => DbError::NotFound { detail: format!("{what}: there is no such operation") },
         Fault::InFlight => DbError::InFlight { detail: format!("{what}: the operation is in flight") },
         Fault::Interrupted => super::command::ended(),
-        Fault::Offline => DbError::Offline { detail: format!("{what} needs the network") },
         Fault::Closed => super::command::closed(),
         Fault::RestoreFailed => DbError::Invalid { detail: format!("{what}: the stored operation cannot be read, discard it") },
         Fault::StateLost => DbError::Session { code: crate::transport::SessionCode::StateLost, detail: "the pending request of the session was lost".into() },
@@ -110,7 +109,7 @@ impl Database {
             return Ok(receipt_of(epoch, model, None, self.db.revision_seq()?, value, None, self.life.clone()));
         };
         let (path, body) = self.mutation_request(&call)?;
-        let op = NewOp { model: model.clone(), row_id: row.to_string(), action: action.to_string(), on_failure: call.on_failure, origin: OpSource::Api, path, body, effects: planned.effects, durable: call.durable };
+        let op = NewOp { model: model.clone(), row_id: row.to_string(), action: action.to_string(), on_failure: call.on_failure, origin: OpSource::Api, path, body, effects: planned.effects, created_at: self.now().0, expires_after: call.expires_after.map(std::time::Duration::from_secs) };
         let waiter = self.life.submit(epoch, op);
         let OutboxAnswer::Receipt(held) = self.outbox_answer(waiter, action).await? else { return Err(DbError::Internal { detail: "the owner answered a call with no receipt".into() }) };
         let value = if destroyed { None } else { self.optimistic(&model, &shown)? };
@@ -129,10 +128,6 @@ impl Database {
 #[uniffi::export]
 impl Database {
     pub async fn create(&self, epoch: u64, model: String, values_json: String, args_json: String) -> Result<WireOperationReceipt, DbError> {
-        let declared = self.db.spec(&model)?.actions.iter().find(|action| action.name == "create").cloned();
-        if declared.is_some_and(|action| action.durable) {
-            return Err(DbError::Invalid { detail: format!("{model} sends its create as a durable command: use send") });
-        }
         self.create_row(epoch, model, values_json, args_json).await
     }
 
