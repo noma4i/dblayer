@@ -11,6 +11,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.mapNotNull
 import kotlinx.coroutines.flow.take
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.withTimeout
@@ -153,20 +154,20 @@ class BridgeProbeTest {
     }
 
     @Test
-    fun aSnapshotCarriesTheTemporaryIdThatTheServerIdReplaced() = bounded {
+    fun aRewriteCarriesTheTemporaryIdThatTheServerIdReplaced() = bounded {
         val transport = MockTransport()
         transport.enqueue("CreateMoment", """{"data":{"createMoment":{"__typename":"Moment","id":"m77","uuid":"u","likedByMe":false,"media":{},"createdAt":"2026-10-08T00:00:00.000Z"}}}""")
         reopen(Config(null, null, 32u), modelsJSON, transport)
         DBlayer.database.registerOperations("""[{"name":"CreateMoment","document":"mutation CreateMoment(${'$'}text: String) { createMoment(text: ${'$'}text) { id uuid likedByMe media createdAt } }"}]""")
-        val listScope = CoroutineScope(SupervisorJob())
-        val list = Projected(AccountScope.current().stream(Moment.recent), Moment, listScope)
-        list.loaded()
+        val stream = AccountScope.current().stream(Moment.recent)
 
         val local = Moment.send(AccountScope.current(), text = "hello", media = null).optimisticValue!!
-        val projection = withTimeout(5000) { list.projection.first { it.temporaryIds.containsKey("m77") } }
+        val settled = withTimeout(5000) {
+            stream.values.mapNotNull { value -> (value as? ReadValue.Delta)?.edits?.filterIsInstance<RowEdit.Rewrite>()?.firstOrNull { it.row.id == "m77" }?.temporary }.first()
+        }
 
-        assertEquals(local.id, projection.temporaryIds["m77"])
-        listScope.cancel()
+        assertEquals(local.id, settled)
+        stream.close()
     }
 
     @Test

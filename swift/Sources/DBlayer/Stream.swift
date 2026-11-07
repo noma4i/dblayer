@@ -51,100 +51,79 @@ extension Database {
   }
 }
 
-/// What a screen shows of a stream of rows: a value the screen owns, built only from deliveries. It holds no lock and no reference to the core.
-public struct ListProjection<Model: DBModel>: Sendable {
-  public enum Applied: Sendable, Equatable { case changed, resync, ignored }
+/// One delivery of a stream of rows with its rows decoded: the platform value that `ListProjection` mirrors.
+public enum ListDelivery<Model: DBModel>: Sendable {
+  case snapshot(revision: Int64, rows: [Model], state: ReadState)
+  case delta(revision: Int64, edits: [ListEdit<Model>], state: ReadState)
+  case state(ReadState)
+  case ended(ReadEnd)
 
-  public private(set) var rows: [Model] = []
-  public private(set) var state: ReadState?
-  public private(set) var revision: Int64?
-  public private(set) var ended: ReadEnd?
-  public private(set) var failure: String?
-  /// How many rows were decoded so far. A change of one row decodes one row.
-  public private(set) var decoded = 0
-  /// How many deltas were applied. A delta decodes the rows it carries and no other.
-  public private(set) var deltas = 0
-  /// The steps of the last delivery from the rows before to the rows after. `nil` after a snapshot: the screen reads the whole list.
-  public private(set) var lastEdits: [ListEdit<Model>]? = nil
-  /// Server id to the temporary id the row had when the screen first showed it, so a screen keeps the identity of a row that the server confirmed.
-  public private(set) var temporaryIds: [String: String] = [:]
-  public init() {}
-
-  public var phase: ReadPhase? { state?.phase }
-
-  /// The error the screen shows: the one the core reports for the stream, else a row the platform could not decode.
-  public var error: DbError? { state?.error ?? failure.map { DbError.Invalid(detail: $0) } }
-
-  public mutating func fail(_ error: Error) { failure = String(describing: error) }
-
-  public mutating func apply(_ value: ReadValue) -> Applied {
+  /// Decodes the rows of a value of a stream of rows. `nil` for a value that carries no list. Throws when a row cannot be decoded: the reader then calls `ReadStream.resync()`.
+  public init?(_ value: ReadValue) throws {
     switch value {
-    case let .snapshot(revision, wire, state):
-      failure = nil
-      rows = decode(wire).compactMap { $0 }
-      self.revision = revision
-      self.state = state
-      lastEdits = nil
-      return .changed
-    case let .state(_, state):
-      self.state = state
-      lastEdits = []
-      return .changed
-    case let .ended(cause):
-      ended = cause
-      lastEdits = []
-      return .changed
-    case let .delta(base, revision, edits, temporary, forgotten, state):
-      guard let held = self.revision else { return .ignored }
-      guard base == held else { return gap() }
-      var applied: [ListEdit<Model>] = []
-      for edit in edits {
-        guard let one = step(edit) else { return gap() }
-        applied.append(one)
-      }
-      rows.replay(applied)
-      for pair in temporary { temporaryIds[pair.id] = pair.temporary }
-      for id in forgotten { temporaryIds[id] = nil }
-      lastEdits = applied
-      deltas += 1
-      self.revision = revision
-      self.state = state
-      return .changed
-    default:
-      return .ignored
+    case let .snapshot(revision, wire, state): self = .snapshot(revision: revision, rows: try wire.map(Model.decode), state: state)
+    case let .delta(_, revision, edits, state): self = .delta(revision: revision, edits: try edits.map(Self.step), state: state)
+    case let .state(_, state): self = .state(state)
+    case let .ended(cause): self = .ended(cause)
+    default: return nil
     }
   }
 
-  /// The projection holds no revision until the next snapshot: deltas wait for it.
-  private mutating func gap() -> Applied {
-    revision = nil
-    return .resync
-  }
-
-  private mutating func decode(_ wire: [WireRow]) -> [Model?] {
-    wire.map { row in
-      do {
-        let model = try Model.decode(row)
-        decoded += 1
-        return model
-      } catch {
-        failure = String(describing: error)
-        return nil
-      }
-    }
-  }
-
-  private mutating func step(_ edit: RowEdit) -> ListEdit<Model>? {
+  private static func step(_ edit: RowEdit) throws -> ListEdit<Model> {
     switch edit {
-    case let .insert(index, row): decode([row])[0].map { .insert(Int(index), $0) }
-    case let .rewrite(index, row): decode([row])[0].map { .rewrite(Int(index), $0) }
+    case let .insert(index, row): .insert(Int(index), try Model.decode(row))
+    case let .rewrite(index, row, temporary): .rewrite(Int(index), try Model.decode(row), temporary: temporary)
     case let .remove(index, id): .remove(Int(index), id)
     case let .move(from, to): .move(Int(from), Int(to))
     }
   }
 }
 
-/// The screen model of a stream of rows: Swift Observation over a projection. It reads the stream until it is released, and releasing it ends the stream in the core.
+/// What a screen shows of a stream of rows: a value the screen owns, mirrored from the deliveries of the core. It holds no lock and no reference to the core.
+public struct ListProjection<Model: DBModel>: Sendable {
+  public private(set) var rows: [Model] = []
+  public private(set) var state: ReadState?
+  public private(set) var revision: Int64?
+  public private(set) var ended: ReadEnd?
+  /// The steps of the last delivery from the rows before to the rows after. `nil` after a snapshot: the screen reads the whole list.
+  public private(set) var lastEdits: [ListEdit<Model>]? = nil
+  public init() {}
+
+  public var phase: ReadPhase? { state?.phase }
+
+  /// The error the core reports for the stream.
+  public var error: DbError? { state?.error }
+
+  public mutating func apply(_ delivery: ListDelivery<Model>) {
+    switch delivery {
+    case let .snapshot(revision, rows, state):
+      self.rows = rows
+      self.revision = revision
+      self.state = state
+      lastEdits = nil
+    case let .delta(revision, edits, state):
+      rows.replay(edits)
+      self.revision = revision
+      self.state = state
+      lastEdits = edits
+    case let .state(state):
+      self.state = state
+      lastEdits = []
+    case let .ended(cause):
+      ended = cause
+      lastEdits = []
+    }
+  }
+
+  /// Decodes and applies a value. Returns `false` for a value that carries no list. Throws when a row cannot be decoded, the projection is then unchanged.
+  @discardableResult public mutating func apply(_ value: ReadValue) throws -> Bool {
+    guard let delivery = try ListDelivery<Model>(value) else { return false }
+    apply(delivery)
+    return true
+  }
+}
+
+/// The screen model of a stream of rows: Swift Observation over a projection. It reads the stream until it is released, and releasing it ends the stream in the core. Rows are decoded off the main actor, the main actor only publishes them.
 @MainActor @Observable
 public final class Projected<Model: DBModel> {
   public private(set) var projection = ListProjection<Model>()
@@ -154,34 +133,29 @@ public final class Projected<Model: DBModel> {
   public var phase: ReadPhase? { projection.phase }
   public var error: DbError? { projection.error }
   public var isEnded: Bool { projection.ended != nil }
+  /// The steps of the last delivery, to apply to a list the screen keeps. `nil`: the screen reads `rows` again.
+  public var edits: [ListEdit<Model>]? { projection.lastEdits }
   @ObservationIgnored public let stream: ValueStream
   @ObservationIgnored var reading: Task<Void, Never>?
-  @ObservationIgnored private var pending: [ListEdit<Model>]?
 
   public init(_ stream: ValueStream) {
     self.stream = stream
-    reading = Task { [weak self] in
+    reading = Task.detached { [weak self] in
       do {
         for try await value in stream {
-          guard let self else { return }
-          self.receive(value)
+          let delivery: ListDelivery<Model>?
+          do { delivery = try ListDelivery(value) } catch {
+            stream.reader.resync()
+            continue
+          }
+          guard let delivery, let self else { continue }
+          await self.receive(delivery)
         }
-      } catch {
-        self?.projection.fail(error)
-      }
+      } catch {}
     }
   }
 
-  private func receive(_ value: ReadValue) {
-    let applied = projection.apply(value)
-    if applied == .changed { pending = ListEdit.composing(pending, projection.lastEdits, within: projection.rows.count) }
-  }
-
-  /// The steps since the last call, to apply to a list the screen keeps. `nil`: the screen reads `rows` again.
-  public func takeEdits() -> [ListEdit<Model>]? {
-    defer { pending = [] }
-    return pending
-  }
+  private func receive(_ delivery: ListDelivery<Model>) { projection.apply(delivery) }
 
   public func refresh() async throws { try await stream.refresh() }
   public func loadMore() async throws -> LoadMoreResult { try await stream.loadMore() }
@@ -243,16 +217,12 @@ public struct EventStream<Model: DBModel>: AsyncSequence, Sendable {
     public mutating func next() async throws -> ModelEventItem<Model>? {
       while let value = try await inner.next() {
         switch value {
-        case let .state(_, state):
-          if let error = state.error { return .failed(error) }
         case .ready: return .ready
-        case let .ended(cause):
-          if cause == .invalid { return .failed(DbError.Invalid(detail: "the events stream could not open")) }
-          return nil
+        case let .ended(cause): return .ended(cause)
         case let .lost(first, last): return .lost(first: first, last: last)
         case .gap: return .gap
         case let .event(position, area, kind, id, before, after):
-          do { return .event(ModelEvent(position: position, area: area, kind: kind, id: id, before: try before.map(Model.decode), after: try after.map(Model.decode))) } catch { return .failed(error) }
+          return .event(ModelEvent(position: position, area: area, kind: kind, id: id, before: try before.map(Model.decode), after: try after.map(Model.decode)))
         default: continue
         }
       }

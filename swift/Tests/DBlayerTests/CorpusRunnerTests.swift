@@ -182,10 +182,10 @@ private final class DatabaseRunner {
     case .snapshot(let revision, let list, let state):
       var out = stateFields(stream, state); out["revision"] = revision; out["rows"] = names(list)
       return observation("snapshot", out)
-    case .delta(let base, let revision, let edits, _, _, let state):
+    case .delta(let base, let revision, let edits, let state):
       let list = edits.compactMap { edit -> WireRow? in
         switch edit {
-        case .insert(_, let row), .rewrite(_, let row): row
+        case .insert(_, let row), .rewrite(_, let row, _): row
         default: nil
         }
       }

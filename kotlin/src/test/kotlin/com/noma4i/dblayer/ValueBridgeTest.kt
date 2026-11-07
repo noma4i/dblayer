@@ -95,7 +95,6 @@ class ValueBridgeTest {
             profile.loaded()
             eventually("the stream shows A") { profile.value?.name == "A" }
             assertTrue(profile.projection.value.revision != null && profile.projection.value.ended == null)
-            assertTrue(profile.projection.value.decoded >= 1)
         } finally {
             screen.cancel()
             closeForCleanup()
@@ -253,18 +252,12 @@ class ValueBridgeTest {
             eventually("the thread holds five confirmed rows") { thread.projection.value.rows.let { rows -> rows.size == 5 && rows.all { it.sync.state == SyncState.Synced } } }
             assertEquals(1uL, DBlayer.subscriptionCensus().subscriptions)
 
-            val decoded = thread.projection.value.decoded
-            val deltas = thread.projection.value.deltas
             val extra = scope.send(Moment, text("m6"))
             eventually("the sixth row shows") { thread.projection.value.rows.size == 6 }
             extra.outcome()
             eventually("the sixth row is confirmed") { thread.projection.value.rows.lastOrNull()?.sync?.state == SyncState.Synced }
 
-            val decodedNow = thread.projection.value.decoded - decoded
-            val deltasNow = thread.projection.value.deltas - deltas
-            assertTrue("each delta of one row decodes one row, not the six of the list: $decodedNow rows in $deltasNow deltas", deltasNow >= 1 && decodedNow == deltasNow)
             assertEquals(6, thread.projection.value.rows.size)
-            assertTrue(profile.projection.value.decoded >= 1)
         } finally {
             screen.cancel()
             closeForCleanup()
@@ -336,7 +329,7 @@ class ValueBridgeTest {
 
     /** K08: a row the platform cannot decode is an error of the projection and the next good snapshot clears it. A count stream and an events stream report their source error. */
     @Test
-    fun aProjectionKeepsTheDecodeErrorAndAStreamKeepsItsSourceError() = bounded {
+    fun aRowThatDoesNotDecodeThrowsAndAStreamReportsItsSourceEnd() = bounded {
         val screen = screens()
         try {
             openSession()
@@ -348,13 +341,13 @@ class ValueBridgeTest {
             val state = profile.projection.value.state!!
             val whole = DBlayer.database.readQuery(scope.epoch, User.profile.json).first()
             val bad = whole.copy(layout = "another layout")
-            val broken = ListProjection<User>().apply(ReadValue.Snapshot(1L, listOf(bad), state), User).projection
-            assertTrue("a row that does not decode was dropped without an error", broken.rows.isEmpty() && broken.error != null)
-            val healed = broken.apply(ReadValue.Snapshot(2L, listOf(whole), state), User).projection
-            assertTrue("a good snapshot did not clear the error", healed.rows.size == 1 && healed.error == null)
+            val empty = ListProjection<User>()
+            assertTrue("a row that does not decode did not throw", runCatching { empty.apply(ReadValue.Snapshot(1L, listOf(bad), state), User) }.isFailure)
+            val applied = empty.apply(ReadValue.Snapshot(2L, listOf(whole), state), User)!!
+            assertTrue(applied.rows.size == 1 && applied.error == null)
 
             val first = DBlayer.database.openValueStream(scope.epoch, ReadRequest.Events("Nope")).events(User).first()
-            assertTrue("the events stream did not report its source error: $first", first is ModelEventItem.Failed)
+            assertTrue("the events stream did not end with the invalid cause: $first", first is ModelEventItem.Ended && first.cause == ReadEnd.Invalid)
         } finally {
             screen.cancel()
             closeForCleanup()
@@ -414,8 +407,7 @@ class ValueBridgeTest {
                 stream.values.collect { value ->
                     if (settled.isCompleted) sending.await() else received.set(0)
                     received.incrementAndGet()
-                    val step = projection.apply(value, Moment)
-                    projection = step.projection
+                    projection = projection.apply(value, Moment) ?: projection
                     rowCount.set(projection.rows.size)
                     if (projection.state?.settled == true) settled.complete(Unit)
                 }

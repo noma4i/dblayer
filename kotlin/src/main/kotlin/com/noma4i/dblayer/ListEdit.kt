@@ -1,17 +1,11 @@
 package com.noma4i.dblayer
 
 sealed class ListEdit<out Model> {
-    data class Rewrite<out Model>(val index: Int, val row: Model) : ListEdit<Model>()
+    /** [temporary] is the id the row had when the reader first got it, set when this step settles the swap of a temporary id. */
+    data class Rewrite<out Model>(val index: Int, val row: Model, val temporary: String?) : ListEdit<Model>()
     data class Insert<out Model>(val index: Int, val row: Model) : ListEdit<Model>()
     data class Remove(val index: Int, val id: String) : ListEdit<Nothing>()
     data class Move(val from: Int, val to: Int) : ListEdit<Nothing>()
-
-    internal companion object {
-        fun <Model> composing(older: List<ListEdit<Model>>?, newer: List<ListEdit<Model>>?, within: Int): List<ListEdit<Model>>? {
-            if (older == null || newer == null || older.size + newer.size > within) return null
-            return older + newer
-        }
-    }
 }
 
 /** Applies the steps in order. The steps come from the same library that delivered the rows, so an index outside the list is a defect there. */

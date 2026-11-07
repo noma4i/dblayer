@@ -2,14 +2,15 @@ package com.noma4i.dblayer
 
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
-import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.emitAll
 import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.flowOn
+import kotlinx.coroutines.flow.mapNotNull
 import kotlinx.coroutines.launch
 import kotlinx.serialization.json.JsonObject
 
@@ -18,11 +19,7 @@ class ValueStream internal constructor(val epoch: ULong, private val reader: Rea
     internal class LoadTarget(val model: String, val relation: String, val paramsJson: String)
 
     val values: Flow<ReadValue> = flow {
-        while (true) {
-            val value = reader.pull() ?: break
-            emit(value)
-            if (value is ReadValue.Ended) break
-        }
+        while (true) emit(reader.pull() ?: break)
     }
 
     /** Loads the relation of the stream again. Throws `Interrupted` when the session of the stream ended. */
@@ -41,105 +38,85 @@ class ValueStream internal constructor(val epoch: ULong, private val reader: Rea
 
     fun close() = reader.close()
 
+    /** Asks the core for a snapshot: the one call a reader makes when a delivery cannot be decoded. */
+    internal fun resync() = reader.resync()
+
     private fun requireTarget(): LoadTarget = load ?: throw DbException.Invalid("the stream has no relation to load")
 }
 
 internal fun Database.openValueStream(epoch: ULong, request: ReadRequest, load: ValueStream.LoadTarget? = null): ValueStream =
     ValueStream(epoch, subscribeValues(epoch, request), this, load)
 
-enum class Applied { Changed, Resync, Ignored }
+/** One delivery of a stream of rows with its rows decoded: the platform value that [ListProjection] mirrors. */
+sealed interface ListDelivery<out Model> {
+    class Snapshot<Model>(val revision: Long, val rows: List<Model>, val state: ReadState) : ListDelivery<Model>
+    class Delta<Model>(val revision: Long, val edits: List<ListEdit<Model>>, val state: ReadState) : ListDelivery<Model>
+    class State(val state: ReadState) : ListDelivery<Nothing>
+    class Ended(val cause: ReadEnd) : ListDelivery<Nothing>
+}
 
-/** What a screen shows of a stream of rows: an immutable value built only from deliveries. It holds no lock and no reference to the core. */
+/** Decodes the rows of a value of a stream of rows. `null` for a value that carries no list. Throws when a row cannot be decoded: the reader then asks the core for a snapshot. */
+fun <Model : DBModel> ReadValue.listDelivery(decoder: ModelDecoder<Model>): ListDelivery<Model>? = when (this) {
+    is ReadValue.Snapshot -> ListDelivery.Snapshot(revision, rows.map(decoder::read), state)
+    is ReadValue.Delta -> ListDelivery.Delta(revision, edits.map { edit ->
+        when (edit) {
+            is RowEdit.Insert -> ListEdit.Insert(edit.index.toInt(), decoder.read(edit.row))
+            is RowEdit.Rewrite -> ListEdit.Rewrite(edit.index.toInt(), decoder.read(edit.row), edit.temporary)
+            is RowEdit.Remove -> ListEdit.Remove(edit.index.toInt(), edit.id)
+            is RowEdit.Move -> ListEdit.Move(edit.from.toInt(), edit.to.toInt())
+        }
+    }, state)
+    is ReadValue.State -> ListDelivery.State(state)
+    is ReadValue.Ended -> ListDelivery.Ended(cause)
+    else -> null
+}
+
+/** What a screen shows of a stream of rows: an immutable value mirrored from the deliveries of the core. It holds no lock and no reference to the core. */
 class ListProjection<Model : DBModel> private constructor(
     val rows: List<Model>,
     val state: ReadState?,
     val revision: Long?,
     val ended: ReadEnd?,
-    val failure: String?,
-    /** How many rows were decoded so far. A change of one row decodes one row. */
-    val decoded: Int,
-    /** How many deltas were applied. A delta decodes the rows it carries and no other. */
-    val deltas: Int,
     /** The steps of the last delivery from the rows before to the rows after. `null` after a snapshot: the screen reads the whole list. */
     val lastEdits: List<ListEdit<Model>>?,
-    /** Server id to the temporary id the row had when the screen first showed it. */
-    val temporaryIds: Map<String, String>,
 ) {
-    constructor() : this(emptyList(), null, null, null, null, 0, 0, emptyList(), emptyMap())
+    constructor() : this(emptyList(), null, null, null, emptyList())
 
     val phase: ReadPhase? get() = state?.phase
 
-    /** The error the screen shows: the one the core reports for the stream, else a row the platform could not decode. */
-    val error: DbException? get() = state?.error ?: failure?.let { DbException.Invalid(it) }
+    /** The error the core reports for the stream. */
+    val error: DbException? get() = state?.error
 
-    class Step<Model : DBModel>(val projection: ListProjection<Model>, val applied: Applied)
-
-    private fun copy(
-        rows: List<Model> = this.rows, state: ReadState? = this.state, revision: Long? = this.revision, ended: ReadEnd? = this.ended, failure: String? = this.failure,
-        decoded: Int = this.decoded, deltas: Int = this.deltas, lastEdits: List<ListEdit<Model>>? = this.lastEdits, temporaryIds: Map<String, String> = this.temporaryIds,
-    ) = ListProjection(rows, state, revision, ended, failure, decoded, deltas, lastEdits, temporaryIds)
-
-    fun apply(value: ReadValue, decoder: ModelDecoder<Model>): Step<Model> {
-        var decoded = this.decoded
-        var failure = this.failure
-        fun decode(wire: List<WireRow>): List<Model?> = wire.map { row ->
-            try {
-                decoder.read(row).also { decoded += 1 }
-            } catch (error: Exception) {
-                failure = error.toString()
-                null
-            }
-        }
-        return when (value) {
-            is ReadValue.Snapshot -> {
-                failure = null
-                val whole = decode(value.rows).filterNotNull()
-                Step(copy(rows = whole, state = value.state, revision = value.revision, failure = failure, decoded = decoded, lastEdits = null), Applied.Changed)
-            }
-            is ReadValue.State -> Step(copy(state = value.state, lastEdits = emptyList()), Applied.Changed)
-            is ReadValue.Ended -> Step(copy(ended = value.cause, lastEdits = emptyList()), Applied.Changed)
-            is ReadValue.Delta -> {
-                val held = revision ?: return Step(this, Applied.Ignored)
-                fun gap() = Step(ListProjection(rows, state, null, ended, failure, decoded, deltas, lastEdits, temporaryIds), Applied.Resync)
-                if (value.base != held) return gap()
-                val steps: List<ListEdit<Model>?> = value.edits.map { edit ->
-                    when (edit) {
-                        is RowEdit.Insert -> decode(listOf(edit.row))[0]?.let { ListEdit.Insert(edit.index.toInt(), it) }
-                        is RowEdit.Rewrite -> decode(listOf(edit.row))[0]?.let { ListEdit.Rewrite(edit.index.toInt(), it) }
-                        is RowEdit.Remove -> ListEdit.Remove(edit.index.toInt(), edit.id)
-                        is RowEdit.Move -> ListEdit.Move(edit.from.toInt(), edit.to.toInt())
-                    }
-                }
-                if (steps.any { it == null }) return gap()
-                val applied = steps.filterNotNull()
-                val next = rows.toMutableList().also { it.replay(applied) }
-                val ids = HashMap(temporaryIds)
-                value.temporary.forEach { ids[it.id] = it.temporary }
-                value.forgotten.forEach { ids.remove(it) }
-                Step(copy(rows = next, state = value.state, revision = value.revision, failure = failure, decoded = decoded, deltas = deltas + 1, lastEdits = applied, temporaryIds = ids), Applied.Changed)
-            }
-            else -> Step(this, Applied.Ignored)
-        }
+    fun apply(delivery: ListDelivery<Model>): ListProjection<Model> = when (delivery) {
+        is ListDelivery.Snapshot -> ListProjection(delivery.rows, delivery.state, delivery.revision, ended, null)
+        is ListDelivery.Delta -> ListProjection(rows.toMutableList().also { it.replay(delivery.edits) }, delivery.state, delivery.revision, ended, delivery.edits)
+        is ListDelivery.State -> ListProjection(rows, delivery.state, revision, ended, emptyList())
+        is ListDelivery.Ended -> ListProjection(rows, state, revision, delivery.cause, emptyList())
     }
+
+    /** Decodes and applies a value. `null` for a value that carries no list. Throws when a row cannot be decoded. */
+    fun apply(value: ReadValue, decoder: ModelDecoder<Model>): ListProjection<Model>? = value.listDelivery(decoder)?.let(::apply)
 }
 
-/** The screen model of a stream of rows: a StateFlow over a projection. It reads the stream until its scope completes, and the completion of the reading job ends the stream in the core, also when the scope was cancelled before the first delivery. */
+/** The screen model of a stream of rows: a StateFlow over a projection. It reads the stream until its scope completes, and the completion of the reading job ends the stream in the core, also when the scope was cancelled before the first delivery. Rows are decoded on [Dispatchers.Default], the collecting scope only publishes them. */
 class Projected<Model : DBModel>(val stream: ValueStream, decoder: ModelDecoder<Model>, scope: CoroutineScope) {
     private val held = MutableStateFlow(ListProjection<Model>())
     val projection: StateFlow<ListProjection<Model>> = held.asStateFlow()
-    private val pending = java.util.concurrent.atomic.AtomicReference<List<ListEdit<Model>>?>(null)
     private val reading: Job = scope.launch(start = CoroutineStart.ATOMIC) {
-        stream.values.collect { value ->
-            val step = held.value.apply(value, decoder)
-            held.value = step.projection
-            if (step.applied == Applied.Changed) pending.updateAndGet { ListEdit.composing(it, step.projection.lastEdits, step.projection.rows.size) }
-        }
+        stream.values.mapNotNull { value ->
+            try {
+                value.listDelivery(decoder)
+            } catch (error: kotlinx.coroutines.CancellationException) { throw error } catch (error: Exception) {
+                stream.resync()
+                null
+            }
+        }.flowOn(Dispatchers.Default).collect { held.value = held.value.apply(it) }
     }.also { job -> job.invokeOnCompletion { stream.close() } }
 
     val value: Model? get() = held.value.rows.firstOrNull()
 
-    /** The steps since the last call, to apply to a list the screen keeps. `null`: the screen reads the rows again. */
-    fun takeEdits(): List<ListEdit<Model>>? = pending.getAndSet(emptyList())
+    /** The steps of the last delivery, to apply to a list the screen keeps. `null`: the screen reads the rows again. */
+    val edits: List<ListEdit<Model>>? get() = held.value.lastEdits
 
     suspend fun refresh() = stream.refresh()
 
@@ -178,21 +155,15 @@ class ProjectedCount(val stream: ValueStream, scope: CoroutineScope) {
     }
 }
 
-/** The events of a model after the stream opened. The flow ends when the collector stops or the session of the account ends. */
+/** The events of a model after the stream opened. The flow ends when the collector stops or the stream ends: the last item is [ModelEventItem.Ended] with the cause of the core. */
 fun <Model : DBModel> ValueStream.events(decoder: ModelDecoder<Model>): Flow<ModelEventItem<Model>> = flow {
     values.collect { value ->
         when (value) {
             is ReadValue.Ready -> emit(ModelEventItem.Ready)
             is ReadValue.Lost -> emit(ModelEventItem.Lost(value.first, value.last))
             is ReadValue.Gap -> emit(ModelEventItem.Gap)
-            is ReadValue.Event -> try {
-                emit(ModelEventItem.Event(ModelEvent(value.position, value.area, value.kind, value.id, value.before?.let(decoder::read), value.after?.let(decoder::read))))
-            } catch (error: kotlinx.coroutines.CancellationException) { throw error } catch (error: Throwable) {
-                emit(ModelEventItem.Failed(error))
-                close()
-            }
-            is ReadValue.State -> value.state.error?.let { emit(ModelEventItem.Failed(it)) }
-            is ReadValue.Ended -> if (value.cause == ReadEnd.Invalid) emit(ModelEventItem.Failed(DbException.Invalid("the events stream could not open")))
+            is ReadValue.Event -> emit(ModelEventItem.Event(ModelEvent(value.position, value.area, value.kind, value.id, value.before?.let(decoder::read), value.after?.let(decoder::read))))
+            is ReadValue.Ended -> emit(ModelEventItem.Ended(value.cause))
             else -> {}
         }
     }

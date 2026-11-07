@@ -236,8 +236,8 @@ struct TestLive<Model: DBModel>: Sendable {
         var projection = ListProjection<Model>()
         do {
           for try await next in value {
-            let applied = projection.apply(next)
-            if applied == .changed, carriesRows(next) { continuation.yield(projection.rows) }
+            let applied = try projection.apply(next)
+            if applied, carriesRows(next) { continuation.yield(projection.rows) }
           }
         } catch {}
         continuation.finish()
@@ -269,7 +269,7 @@ struct TestSnapshots<Model: DBModel>: Sendable {
         var projection = ListProjection<Model>()
         do {
           for try await next in value {
-            if projection.apply(next) == .changed { continuation.yield(TestSnapshot(rows: projection.rows, phase: projection.phase, error: projection.state?.error, total: projection.state?.total.map { Int($0) }, hasMore: projection.state?.hasMore ?? false)) }
+            if try projection.apply(next) { continuation.yield(TestSnapshot(rows: projection.rows, phase: projection.phase, error: projection.state?.error, total: projection.state?.total.map { Int($0) }, hasMore: projection.state?.hasMore ?? false)) }
           }
         } catch {}
         continuation.finish()

@@ -161,5 +161,6 @@ public enum ModelEventItem<Model: DBModel>: Sendable {
   case lost(first: UInt64, last: UInt64)
   /// The core lost the order of the events: the reader reads the rows again.
   case gap
-  case failed(any Error)
+  /// The stream ended: the core reports why. Nothing follows.
+  case ended(ReadEnd)
 }

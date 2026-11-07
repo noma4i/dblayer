@@ -79,6 +79,10 @@ extension BridgeProbeTests {
 
     try await DB.sessionReset()
     let ended = await first.next("the end of the old stream", timeout: .seconds(10))
-    #expect(ended == nil, "the old stream delivered after the session reset: \(String(describing: ended))")
+    guard case .ended(let cause)? = ended else {
+      Issue.record("the old stream did not end with its cause after the session reset: \(String(describing: ended))")
+      return
+    }
+    #expect(cause == .sessionEnded)
   }
 }

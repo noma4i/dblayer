@@ -131,5 +131,6 @@ sealed interface ModelEventItem<out Model : DBModel> {
     /** The core lost the order of the events: the reader reads the rows again. */
     data object Gap : ModelEventItem<Nothing>
 
-    class Failed(val error: Throwable) : ModelEventItem<Nothing>
+    /** The stream ended: the core reports why. Nothing follows. */
+    class Ended(val cause: ReadEnd) : ModelEventItem<Nothing>
 }

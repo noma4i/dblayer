@@ -231,7 +231,7 @@ extension BridgeProbeTests {
     var projection = ListProjection<Person>()
     await eventually("the first settled list", timeout: .seconds(10)) {
       if projection.state?.settled == true { return true }
-      if let delivery = await cursor.next("the first settled list", timeout: .seconds(10)) { _ = projection.apply(delivery) }
+      if let delivery = await cursor.next("the first settled list", timeout: .seconds(10)) { _ = try? projection.apply(delivery) }
       return projection.state?.settled == true
     }
     try #require(projection.state?.settled == true, "the list did not settle")
@@ -243,7 +243,7 @@ extension BridgeProbeTests {
     try transport.base.emit("MemberChanged", json: #"{"data":{"memberChanged":{"id":"u1","name":"updated"}}}"#)
     await eventually("the member event", timeout: .seconds(10)) {
       if projection.rows.contains(where: { $0.id == "u1" && $0.name == "updated" }) { return true }
-      if let delivery = await cursor.next("the member event", timeout: .seconds(10)) { _ = projection.apply(delivery) }
+      if let delivery = await cursor.next("the member event", timeout: .seconds(10)) { _ = try? projection.apply(delivery) }
       return projection.rows.contains(where: { $0.id == "u1" && $0.name == "updated" })
     }
     try #require(projection.rows.contains { $0.id == "u1" && $0.name == "updated" })

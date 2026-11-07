@@ -50,9 +50,9 @@ class TestSnapshots<M : DBModel>(private val query: Query<M>) {
         val stream = AccountScope.current().stream(query)
         var projection = ListProjection<M>()
         stream.values.collect { value ->
-            val step = projection.apply(value, query.decoder)
-            projection = step.projection
-            if (step.applied == Applied.Changed) {
+            val next = projection.apply(value, query.decoder)
+            if (next != null) {
+                projection = next
                 val state = projection.state
                 emit(Snapshot(projection.rows, projection.phase, state?.error, state?.total?.toLong(), state?.hasMore ?: false, state?.complete ?: false, state?.loaded))
             }

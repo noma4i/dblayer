@@ -162,18 +162,26 @@ struct BridgeProbeTests {
 
   @MainActor
   @Test(.timeLimit(.minutes(1)))
-  func aSnapshotCarriesTheTemporaryIdThatTheServerIdReplaced() async throws {
+  func aRewriteCarriesTheTemporaryIdThatTheServerIdReplaced() async throws {
     let transport = MockTransport()
     transport.enqueue("CreateMoment", reply: #"{"data":{"createMoment":{"__typename":"Moment","id":"m77","uuid":"u","likedByMe":false,"media":{},"createdAt":"2026-10-08T00:00:00.000Z"}}}"#)
     try await reopen(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: transport)
     try await DB.database.registerOperations(defsJson: #"[{"name":"CreateMoment","document":"mutation CreateMoment($text: String) { createMoment(text: $text) { id uuid likedByMe media createdAt } }"}]"#)
-    let list = Projected<Moment>(try AccountScope().stream(Moment.recent))
-    try await list.loaded()
+    let stream = try AccountScope().stream(Moment.recent)
+    let cursor = Cursor(stream)
+    _ = await cursor.next("the first snapshot")
 
     let local = try await Moment.send(in: DB.account(), text: "hello", media: nil).optimisticValue!
-    await eventually("the list carries the replaced id") { list.projection.temporaryIds["m77"] != nil }
+    var settled: String?
+    for _ in 0..<20 where settled == nil {
+      guard let value = await cursor.next("a delivery of the list") else { break }
+      if case let .delta(_, _, edits, _) = value {
+        for case let .rewrite(_, row, temporary) in edits where row.id == "m77" { settled = temporary }
+      }
+    }
 
-    #expect(list.projection.temporaryIds["m77"] == local.id)
+    #expect(settled == local.id)
+    await stream.cancel()
   }
 
 

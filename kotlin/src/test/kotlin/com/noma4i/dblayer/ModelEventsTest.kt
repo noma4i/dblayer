@@ -10,6 +10,7 @@ import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /** Model events through the generated API: what a collector of `AccountScope.events(Model)` hears, and in which order. */
@@ -112,7 +113,9 @@ class ModelEventsTest {
             assertEquals("a1", chat(awaitWithin("the event of the first session") { first.receive() }))
 
             DBlayer.sessionReset()
-            assertEquals("the old stream delivered an item instead of ending after the session reset", Ended, awaitWithin("the end of the old stream") { first.receive() })
+            val last = awaitWithin("the end of the old stream") { first.receive() }
+            assertTrue("the old stream did not report the end of its session: $last", last is ModelEventItem.Ended && last.cause == ReadEnd.SessionEnded)
+            assertEquals("the old stream delivered an item after its end", Ended, awaitWithin("the close of the old stream") { first.receive() })
         } finally {
             screen.cancel()
             closeForCleanup()

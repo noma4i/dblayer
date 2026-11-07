@@ -32,7 +32,7 @@ private final class RowHistory: @unchecked Sendable {
 
   func take(_ value: ReadValue) {
     lock.withLock {
-      if projection.apply(value) == .changed { history.append(projection.rows.map(\.name)) }
+      if (try? projection.apply(value)) == true { history.append(projection.rows.map(\.name)) }
     }
   }
 }

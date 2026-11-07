@@ -43,9 +43,10 @@ private class RowHistory {
 
     fun take(value: ReadValue) {
         synchronized(this) {
-            val step = projection.apply(value, User)
-            projection = step.projection
-            if (step.applied == Applied.Changed) states.add(projection.rows.map { it.name })
+            projection.apply(value, User)?.let {
+                projection = it
+                states.add(it.rows.map { row -> row.name })
+            }
         }
     }
 }

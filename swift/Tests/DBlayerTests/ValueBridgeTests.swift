@@ -82,7 +82,6 @@ extension BridgeProbeTests {
     await eventually("the stream shows A") { profile.value?.name == "A" }
 
     #expect(profile.projection.revision != nil && profile.projection.ended == nil)
-    #expect(profile.projection.decoded >= 1)
   }
 
   /// B02: the sign-out ends the stream with one outcome, the projection keeps no new value, and nothing stays open in the core.
@@ -208,14 +207,11 @@ extension BridgeProbeTests {
     await eventually("the thread holds five confirmed rows") { thread.rows.count == 5 && thread.rows.allSatisfy { $0.sync.state == .synced } }
     #expect(try await DB.subscriptionCensus().subscriptions == 1)
 
-    let (decoded, deltas) = (thread.projection.decoded, thread.projection.deltas)
     let extra = try await scope.send(Moment.self, values: ["text": .string("m6")])
     await eventually("the sixth row shows") { thread.rows.count == 6 }
     _ = try await extra.outcome()
     await eventually("the sixth row is confirmed") { thread.rows.last?.sync.state == .synced }
 
-    let (decodedNow, deltasNow) = (thread.projection.decoded - decoded, thread.projection.deltas - deltas)
-    #expect(deltasNow >= 1 && decodedNow == deltasNow, "each delta of one row decodes one row, not the six of the list: \(decodedNow) rows in \(deltasNow) deltas")
     #expect(thread.rows.count == 6, "a row of the list was lost")
     withExtendedLifetime(profile) {}
   }
@@ -276,7 +272,7 @@ extension BridgeProbeTests {
   /// K08: a row the platform cannot decode is an error of the projection, and the next good snapshot clears it. A count stream and an events stream report their source error.
   @MainActor
   @Test
-  func aProjectionKeepsTheDecodeErrorAndAStreamKeepsItsSourceError() async throws {
+  func aRowThatDoesNotDecodeThrowsAndAStreamReportsItsSourceEnd() async throws {
     _ = try await Self.openBridgeSession()
     try await Self.signIn("A")
     let scope = try DB.account()
@@ -289,16 +285,16 @@ extension BridgeProbeTests {
     let state = try #require(profile.state)
     var bad = try #require(try await DB.database.readQuery(epoch: scope.epoch, queryJson: User.profile.json).first)
     bad.layout = "another layout"
-    _ = projection.apply(.snapshot(revision: 1, rows: [bad], state: state))
-    #expect(projection.rows.isEmpty && projection.error != nil, "a row that does not decode was dropped without an error")
+    #expect(throws: DbError.self) { try projection.apply(.snapshot(revision: 1, rows: [bad], state: state)) }
+    #expect(projection.rows.isEmpty && projection.revision == nil, "a row that does not decode changed the projection")
     let whole = try #require(try await DB.database.readQuery(epoch: scope.epoch, queryJson: User.profile.json).first)
-    _ = projection.apply(.snapshot(revision: 2, rows: [whole], state: state))
-    #expect(projection.rows.count == 1 && projection.error == nil, "a good snapshot did not clear the error")
+    try projection.apply(.snapshot(revision: 2, rows: [whole], state: state))
+    #expect(projection.rows.count == 1 && projection.error == nil)
 
     let database = try DB.database
     let unknown = ValueStream(epoch: scope.epoch, reader: database.subscribeValues(epoch: scope.epoch, request: .events(model: "Nope")), database: database, load: nil)
-    guard case .failed? = await Cursor(EventStream<User>(stream: unknown)).next("the source error of the events stream") else {
-      Issue.record("the events stream did not report its source error")
+    guard case .ended(.invalid)? = await Cursor(EventStream<User>(stream: unknown)).next("the source error of the events stream") else {
+      Issue.record("the events stream did not end with the invalid cause")
       return
     }
   }
@@ -336,7 +332,7 @@ extension BridgeProbeTests {
     var received = 0
     await eventually("the first settled snapshot") {
       if projection.state?.settled == true { return true }
-      if let value = await cursor.next("the first settled snapshot") { _ = projection.apply(value) }
+      if let value = await cursor.next("the first settled snapshot") { _ = try? projection.apply(value) }
       return projection.state?.settled == true
     }
     try DB.database.setOnline(online: false)
@@ -345,7 +341,7 @@ extension BridgeProbeTests {
       if projection.rows.count == 300 { break }
       guard let value = await cursor.next("a value of the burst") else { break }
       received += 1
-      _ = projection.apply(value)
+      _ = try projection.apply(value)
     }
     #expect(projection.rows.count == 300, "the reader did not end with the whole list")
     #expect(received <= 260, "the reader received \(received) values of a burst of 300: the journal bounded nothing")
