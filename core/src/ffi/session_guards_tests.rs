@@ -47,7 +47,7 @@ impl Rig {
     }
 
     pub(super) async fn open(&self, path: Option<&Path>, pin: &str) -> Result<Arc<Database>, DbError> {
-        let database = Database::open(Config { path: path.map(|path| path.to_string_lossy().into_owned()), data_version: None }, "[]".to_string(), crate::ffi::OpenPorts { transport: Some(Arc::new(SubscriptionsOnly)), encrypted: Some(EncryptedConfig { origin: origin().to_string(), server_key: public_key_der_b64().to_string(), pin: pin.to_string(), ..crate::transport::encrypted::protocol_tests::config() }), credentials: Some(self.credentials.clone()), http: Some(Arc::new(ThroughServer(self.server.clone()))) }).await?;
+        let database = Database::open(Config { path: path.map(|path| path.to_string_lossy().into_owned()), data_version: None }, "[]".to_string(), crate::ffi::OpenPorts { transport: Some(Arc::new(SubscriptionsOnly)), encrypted: Some(EncryptedConfig { origin: origin().to_string(), server_key: public_key_der_b64().to_string(), pin: pin.to_string(), ..crate::transport::encrypted::protocol_tests::config() }), credentials: Some(self.credentials.clone()), http: Some(Arc::new(ThroughServer(self.server.clone()))), endpoint: Some(crate::ffi::FAKE_ENDPOINT.into()) }).await?;
         database.set_online(true)?;
         Ok(database)
     }

@@ -6,8 +6,7 @@ final class RecordingEvents: CableEvents, @unchecked Sendable {
   enum Event: Equatable {
     case frame(String)
     case binary(Data)
-    case closed(UInt16, String)
-    case failed(RawFailureKind)
+    case ended(UInt16?, String?, RawFailure?)
   }
 
   private let stream = AsyncStream<Event>.makeStream()
@@ -17,8 +16,7 @@ final class RecordingEvents: CableEvents, @unchecked Sendable {
 
   func frame(text: String) { stream.continuation.yield(.frame(text)) }
   func binary(bytes: Data) { stream.continuation.yield(.binary(bytes)) }
-  func closed(code: UInt16, reason: String) { stream.continuation.yield(.closed(code, reason)) }
-  func failed(failure: RawFailure) { stream.continuation.yield(.failed(failure.kind)) }
+  func ended(closeCode: UInt16?, reason: String?, failure: RawFailure?) { stream.continuation.yield(.ended(closeCode, reason, failure)) }
 
   func next() async -> Event? { await cursor.next("a cable event") }
 }
@@ -30,8 +28,8 @@ func cableURL(_ origin: URL) -> String {
   return components.string!
 }
 
-func probeRequest(_ origin: URL, path: String = "/api/session", body: String = "jwe") -> HttpRequest {
-  HttpRequest(url: origin.absoluteString.trimmingCharacters(in: CharacterSet(charactersIn: "/")) + path, method: "POST", headers: ["Content-Type": "application/jose", "Accept": "", "Accept-Language": ""], body: body, connectMs: 10_000, requestMs: 30_000, purpose: .standard)
+func probeRequest(_ origin: URL, path: String = "/api/session", body: String = "jwe", headers: [String: String] = [:]) -> HttpRequest {
+  HttpRequest(url: origin.absoluteString.trimmingCharacters(in: CharacterSet(charactersIn: "/")) + path, method: "POST", headers: headers.merging(["Content-Type": "application/jose", "Accept": "", "Accept-Language": ""]) { $1 }, body: body, connectMs: 10_000, requestMs: 30_000, purpose: .standard)
 }
 
 func responseStatus(_ outcome: RawOutcome) -> UInt16? {
@@ -39,7 +37,7 @@ func responseStatus(_ outcome: RawOutcome) -> UInt16? {
   return nil
 }
 
-func failureKind(_ outcome: RawOutcome) -> RawFailureKind? {
-  if case let .failed(failure) = outcome { return failure.kind }
+func rawFailure(_ outcome: RawOutcome) -> RawFailure? {
+  if case let .failed(failure) = outcome { return failure }
   return nil
 }

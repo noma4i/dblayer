@@ -5,24 +5,23 @@ import okhttp3.Request
 
 /** A plain GraphQL endpoint over HTTP. */
 class OkHttpTransport(
-    private val endpoint: String,
     private val headers: () -> Map<String, String> = { emptyMap() },
     client: OkHttpClient = OkHttpClient(),
 ) : Transport {
     private val client = client.newBuilder().followRedirects(false).followSslRedirects(false).retryOnConnectionFailure(false).build()
-    private val cable = OkHttpCable(this.client, headers)
+    private val cable = OkHttpCable(this.client)
 
-    override fun endpoint(): String = endpoint
+    override fun appHeaders(): Map<String, String> = headers()
 
-    override suspend fun send(request: HttpRequest): RawOutcome = client.run(request, headers())
+    override suspend fun send(request: HttpRequest): RawOutcome = client.run(request)
 
-    override suspend fun openCable(url: String, connectMs: ULong, events: CableEvents): CableOutcome = cable.open(url, connectMs, events)
+    override suspend fun openCable(url: String, headers: Map<String, String>, connectMs: ULong, events: CableEvents): CableOutcome = cable.open(url, headers, connectMs, events)
 
-    override suspend fun put(url: String, headers: Map<String, String>, file: PutFile, identity: TransferIdentity, progress: ByteProgress): RawOutcome =
-        putFile(client, url, headers, file, progress, routed = true)
+    override suspend fun put(target: PutTarget, file: PutFile, identity: TransferIdentity, progress: ByteProgress): RawOutcome =
+        putFile(client, target.url, target.headers, target.connectMs, target.requestMs, file, progress, routed = true)
 }
 
-internal suspend fun putFile(client: OkHttpClient, url: String, headers: Map<String, String>, file: PutFile, progress: ByteProgress, routed: Boolean = false): RawOutcome {
+internal suspend fun putFile(client: OkHttpClient, url: String, headers: Map<String, String>, connectMs: ULong, requestMs: ULong, file: PutFile, progress: ByteProgress, routed: Boolean = false): RawOutcome {
     val body = object : okhttp3.RequestBody() {
         override fun contentType() = null
         override fun contentLength() = file.length.toLong()
@@ -32,7 +31,7 @@ internal suspend fun putFile(client: OkHttpClient, url: String, headers: Map<Str
                 val buffer = ByteArray(64 * 1024)
                 var sent = 0L
                 while (sent < file.length.toLong()) {
-                    if (progress.isCancelled()) throw java.io.IOException("cancelled")
+                    if (progress.isCancelled()) throw java.io.IOException("Canceled")
                     val read = input.read(buffer, 0, minOf(buffer.size.toLong(), file.length.toLong() - sent).toInt())
                     if (read < 0) throw java.io.EOFException("the upload file is shorter than ${file.length} bytes")
                     sink.write(buffer, 0, read)
@@ -43,12 +42,12 @@ internal suspend fun putFile(client: OkHttpClient, url: String, headers: Map<Str
         }
     }
     val request = try {
-        Request.Builder().url(url).put(body).apply { headers.forEach { (field, value) -> header(field, value) } }.build().withUserAgent()
+        Request.Builder().url(url).put(body).apply { headers.forEach { (field, value) -> header(field, value) } }.build()
     } catch (error: IllegalArgumentException) {
-        return failed(RawFailureKind.IO, error.message ?: "invalid upload address")
+        return RawOutcome.Failed(urlFailure())
     }
     return try {
-        (if (routed) UploadNetwork.route(client) else client).newCall(request).exchange { RawOutcome.Response(it.code.toUShort(), it.header("ETag"), "") }
+        (if (routed) UploadNetwork.route(client) else client).timed(connectMs, requestMs, total = false).newCall(request).exchange { RawOutcome.Response(it.code.toUShort(), it.header("ETag"), "") }
     } catch (error: java.io.IOException) {
         RawOutcome.Failed(rawFailure(error))
     }

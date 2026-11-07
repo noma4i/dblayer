@@ -3,6 +3,7 @@ import Foundation
 public final class UrlSessionEncryptedHttp: EncryptedHttp, @unchecked Sendable {
   private let session: URLSession
   private let http: UrlSessionHttp
+  private let headers: @Sendable () -> [String: String]
 
   public init(headers: @escaping @Sendable () -> [String: String] = { [:] }, session: URLSession? = nil) {
     let configuration = session?.configuration ?? .ephemeral
@@ -13,10 +14,13 @@ public final class UrlSessionEncryptedHttp: EncryptedHttp, @unchecked Sendable {
     configuration.urlCache = nil
     configuration.requestCachePolicy = .reloadIgnoringLocalCacheData
     self.session = URLSession(configuration: configuration)
-    self.http = UrlSessionHttp(session: self.session, headers: headers)
+    self.http = UrlSessionHttp(session: self.session)
+    self.headers = headers
   }
 
   deinit { session.invalidateAndCancel() }
+
+  public func appHeaders() -> [String: String] { headers() }
 
   public func send(request: HttpRequest) async -> RawOutcome { await http.run(request) }
 }

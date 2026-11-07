@@ -30,7 +30,7 @@ final class SwitchableTransport: ScriptedTransport, WrapsMock, @unchecked Sendab
   }
 
   func scriptedCable(url: String, events: CableEvents) async -> CableOutcome {
-    guard let target = try? resolve() else { return .failed(failure: RawFailure(kind: .cancelled, code: nil, message: "\(unset)")) }
+    guard let target = try? resolve() else { return .failed(failure: .scripted(.cancelled, "\(unset)"), handshakeStatus: nil) }
     return await target.scriptedCable(url: url, events: events)
   }
   func query(request: TransportRequest) async throws -> String { try await resolve().query(request: request) }

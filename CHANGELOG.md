@@ -37,6 +37,7 @@
 ### Changed
 
 - `sync.state` of a record shows `sending` while its write is sent, and a write that waits in the queue again shows `pending`.
+- `Transport` and `EncryptedHttp` report raw failure facts and the core merges the headers and the `User-Agent`.
 - Rows reach Swift and Kotlin with every cell in its declared type, and a cell of another type throws instead of converting.
 - A query is a typed record that the core compiles, and `relation` is optional on load calls.
 - `Transport` and `EncryptedHttp` take one `HttpRequest` built by the core and return a raw `RawOutcome`; the core classifies the failure.
@@ -318,6 +319,8 @@
 ## 6.13.1 - 2026-10-31
 
 ### Changed
+
+- `Transport` and `EncryptedHttp` report raw failure facts and the core merges the headers and the `User-Agent`.
 - Release tags are lightweight tags.
 
 ### Fixed
@@ -365,6 +368,8 @@
 - `enterForegroundForTesting()` sends a foreground event to a database opened with `openTesting`.
 
 ### Changed
+
+- `Transport` and `EncryptedHttp` report raw failure facts and the core merges the headers and the `User-Agent`.
 - Wait for the first local core snapshot in `waitForInitialLoad()` when an entity has no fetch.
 - `members_complete` windows read SQLite slices without retaining all keys and reject sizes above 200 rows.
 - Derived `preload` requires a positive `limit` for the entire parameter product.
@@ -392,6 +397,8 @@
 - Upload actions return the declared fields of the final mutation.
 
 ### Changed
+
+- `Transport` and `EncryptedHttp` report raw failure facts and the core merges the headers and the `User-Agent`.
 - Uploads with empty operations report the cause and the required operation definitions.
 
 ## 6.10.2 - 2026-10-27
@@ -401,6 +408,8 @@
 - `open(listening: false)` and `DB.setListening(_:)` / `DBlayer.setListening(allowed)` hold the model subscriptions that a committed credential starts until the app allows them.
 
 ### Changed
+
+- `Transport` and `EncryptedHttp` report raw failure facts and the core merges the headers and the `User-Agent`.
 - `Entity.refreshError` becomes `Entity.read`: `notLoaded`, `loaded` or `failed(error)`.
 
 ## 6.10.1 - 2026-10-27
@@ -409,6 +418,8 @@
 - `LiveList`, `Live`, `LiveView` and `rememberLiveList` take a `RelatedQuery` and load its source scope like a `Query`.
 
 ### Changed
+
+- `Transport` and `EncryptedHttp` report raw failure facts and the core merges the headers and the `User-Agent`.
 - An upload that waits for the network reports `waiting` with `waitReason` `offline`, and its record stays `pending`.
 
 ### Fixed
@@ -440,6 +451,8 @@
 - A refused operation takes back only its own membership, created row and changed attributes.
 
 ### Changed
+
+- `Transport` and `EncryptedHttp` report raw failure facts and the core merges the headers and the `User-Agent`.
 - `LiveWindow` connects its scope like `LiveList` instead of reading the local database only.
 - `preload` waits for the first snapshot of the app and runs behind loads the app asked for.
 - A committed credential starts the model subscriptions, and `logout()` and `sessionReset()` stop them.
@@ -456,6 +469,8 @@
 - An optimistic keyed element carries the nested object of the local row its declared `ref:` and `id:` name.
 
 ### Changed
+
+- `Transport` and `EncryptedHttp` report raw failure facts and the core merges the headers and the `User-Agent`.
 - `expires_in` of a memory model counts from the last write, and a write of equal values renews it.
 
 ### Fixed
@@ -473,6 +488,8 @@
 - `preload` parameter on `DB.openTesting` and `DBlayer.openTesting`, default false, keeps scope preloads quiet in tests.
 
 ### Changed
+
+- `Transport` and `EncryptedHttp` report raw failure facts and the core merges the headers and the `User-Agent`.
 - `preload` scopes wait while the device saves power and never load on a low-RAM Android device.
 
 ### Fixed
@@ -506,6 +523,8 @@
 - `FileInfo` describes a stored file on Swift and Kotlin.
 
 ### Changed
+
+- `Transport` and `EncryptedHttp` report raw failure facts and the core merges the headers and the `User-Agent`.
 - `create` and `update` refuse an undeclared field or a wrongly typed value.
 - A row with a temporary id sorts before permanent rows of equal order.
 - The store hook runs after the writer lock is released.
@@ -592,6 +611,8 @@
 - `loadMore` reports loaded pages, exhausted pagination and concurrent loading.
 
 ### Changed
+
+- `Transport` and `EncryptedHttp` report raw failure facts and the core merges the headers and the `User-Agent`.
 - Custom transports report tokens through leases instead of returning strings.
 - `DB.open` and `DBlayer.open` take a headers closure read on every request.
 - Kotlin `update` and `set` write null through `GraphQLNullable`.
@@ -629,6 +650,8 @@
 - `MockTransport` mode `networkError` answers an unqueued call with a network error.
 
 ### Changed
+
+- `Transport` and `EncryptedHttp` report raw failure facts and the core merges the headers and the `User-Agent`.
 - A subscription delivers rows, phase, error and revision in one value.
 - The first value of a subscription waits for the first read of its rows.
 - A background load error with rows keeps the phase loaded and carries the error.
@@ -650,6 +673,8 @@
 ## 6.5.0 - 2026-10-23
 
 ### Changed
+
+- `Transport` and `EncryptedHttp` report raw failure facts and the core merges the headers and the `User-Agent`.
 - A subscription returns at once, its first value arrives after a reader thread reads it.
 - `retain` returns without a database error, a failed read keeps the last rows.
 - An invalid relation query fails the window of that relation with `invalid`.
@@ -668,6 +693,8 @@
 - `entityCensus()` and `entityLeaseFailures()` count entity reads, skips and failed leases.
 
 ### Changed
+
+- `Transport` and `EncryptedHttp` report raw failure facts and the core merges the headers and the `User-Agent`.
 - A second `open` while the database is open throws. Open it once at app start.
 - `DBlayer.database` and `DB.database` cannot be assigned from outside.
 - Signing out keeps held entities: they show empty, then the next account's rows.
@@ -691,6 +718,8 @@
 - The open report names the changed models and the reset models.
 
 ### Changed
+
+- `Transport` and `EncryptedHttp` report raw failure facts and the core merges the headers and the `User-Agent`.
 - Android requires API 33 or newer.
 - A changed spec of any server model clears the whole server cache.
 - Local models and `local: true` values survive a server cache reset.
@@ -719,6 +748,8 @@
 - Generation fails on an unknown, incomplete, repeated or misplaced declaration.
 
 ### Changed
+
+- `Transport` and `EncryptedHttp` report raw failure facts and the core merges the headers and the `User-Agent`.
 - One change to a scoped list reads only the changed rows.
 - A second window over the same query shares its order index.
 - `max_pages` counts fetched pages and resets on refresh.
@@ -740,6 +771,8 @@
 - Kotlin `DBlayer.open` and `DBlayer.serverConfig` take a `Context` and watch the network.
 
 ### Changed
+
+- `Transport` and `EncryptedHttp` report raw failure facts and the core merges the headers and the `User-Agent`.
 - A repeated `open` reuses the database only for the same callback instances.
 - Encrypted requests retry without a limit online and make no attempt offline.
 - `load()` fails at once with `Offline` when the device has no network.
@@ -800,6 +833,8 @@
 - `build_ios.sh --device` builds the iPhone slice only. `build_kotlin.sh --release` builds the two ARM libraries only.
 
 ### Changed
+
+- `Transport` and `EncryptedHttp` report raw failure facts and the core merges the headers and the `User-Agent`.
 - `DB.open` is `async throws` in Swift and `DBlayer.open` is `suspend` in Kotlin.
 - Opening runs on the library worker pool. Repeated identical opens do nothing, changed parameters throw.
 - Encrypted requests wait through network errors, timeouts, HTTP 408, 429 and 5xx instead of failing.
@@ -830,6 +865,8 @@
 - `EncryptedSessionOperation` marks a session operation as sessionless in `sessionOperations`.
 
 ### Changed
+
+- `Transport` and `EncryptedHttp` report raw failure facts and the core merges the headers and the `User-Agent`.
 - `sessionOperations` maps each name to an `EncryptedSessionOperation` with a path and `sessionless`.
 - A sessionless call is sealed without a credential and a sequence.
 - A sessionless call stores no pending request and takes no mutation lock.
@@ -860,6 +897,8 @@
 - Mutation idempotency keys survive restarts.
 
 ### Changed
+
+- `Transport` and `EncryptedHttp` report raw failure facts and the core merges the headers and the `User-Agent`.
 - Cable retries back off with jitter and reset only after a server frame.
 - Any server error code of 1 to 64 uppercase characters is accepted.
 - A refused subscription stops until an explicit resume.
@@ -887,6 +926,8 @@
 - A union is stored in columns, so `where` by variant kind works.
 
 ### Changed
+
+- `Transport` and `EncryptedHttp` report raw failure facts and the core merges the headers and the `User-Agent`.
 - Enum fields, inputs, arguments and results are typed enums instead of strings.
 - A model enum column keeps a value outside its declared list.
 - A custom scalar without a mapping fails generation.
@@ -906,6 +947,8 @@
 - Typed session errors in Swift and Kotlin, with `CredentialStore` and `EncryptedHttp` hooks.
 
 ### Changed
+
+- `Transport` and `EncryptedHttp` report raw failure facts and the core merges the headers and the `User-Agent`.
 - One change to an ordered list reads the touched rows, not the whole list.
 - A landing page looks up its members by id instead of loading the list.
 
@@ -916,6 +959,8 @@
 - `replay` applies the steps to a mirror of the rows.
 
 ### Changed
+
+- `Transport` and `EncryptedHttp` report raw failure facts and the core merges the headers and the `User-Agent`.
 - The list feed keeps decoded rows between deliveries and undoes a refused delivery without copying.
 
 ## 1.0.1 - 2026-10-16
@@ -940,6 +985,8 @@
 - Rows carried as cells over the bridge.
 
 ### Changed
+
+- `Transport` and `EncryptedHttp` report raw failure facts and the core merges the headers and the `User-Agent`.
 - Outbox, sync state, window ids, quarantine and reset intent are stored in tables.
 - A database file that does not fit the build is recreated on open.
 - File calls run off the caller thread.
@@ -973,6 +1020,8 @@
 - R8 keep rules for JNA and UniFFI bindings.
 
 ### Changed
+
+- `Transport` and `EncryptedHttp` report raw failure facts and the core merges the headers and the `User-Agent`.
 - Dates are stored as UTC text with milliseconds.
 - An event row joins the loaded lists that declare it without a reload.
 - Cable reconnect backs off by failed opens.
@@ -1006,6 +1055,8 @@
 - Auth token is read per request.
 
 ### Changed
+
+- `Transport` and `EncryptedHttp` report raw failure facts and the core merges the headers and the `User-Agent`.
 - A reload after a commit waits for in-flight loads.
 - Transport response bodies are read off the caller thread.
 - A wipe of an incompatible database keeps `row_sync`; missing core tables are created at open.

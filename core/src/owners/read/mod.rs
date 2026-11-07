@@ -18,6 +18,7 @@ mod window_io;
 pub use delivery_io::DeliveryIo;
 pub use feed_codec::{channels_of, SchemaFeedCodec};
 pub use feed_io::{FeedCodec, FeedIo};
+pub(crate) use feed_io::CLOSE_DRAIN;
 pub use ports::{Admit, Refused, Rest};
 #[cfg(test)]
 pub(crate) use ports::{Flights, InFlight};

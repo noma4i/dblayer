@@ -92,7 +92,7 @@ async fn preloads_and_three_media_loads_finish_on_empty_pages() {
     let operations = operations.as_array().unwrap().iter().map(|operation| crate::ffi::OperationDefinition { name: operation["name"].as_str().unwrap().into(), document: operation["document"].as_str().unwrap().into() }).collect();
     let options = OpenOptions { operations };
     let opener = OpenDatabase::new();
-    let database = within_secs(20, opener.open(Config { path: None, data_version: None }, models(), options, crate::ffi::OpenPorts { transport: Some(transport.clone()), ..Default::default() }, None)).await.unwrap();
+    let database = within_secs(20, opener.open(Config { path: None, data_version: None }, models(), options, crate::ffi::OpenPorts { transport: Some(transport.clone()), endpoint: Some(crate::ffi::FAKE_ENDPOINT.into()), ..Default::default() }, None)).await.unwrap();
     database.set_online(true).unwrap();
     within_secs(20, transport.preload.notified()).await;
     let epoch = database.session_epoch();

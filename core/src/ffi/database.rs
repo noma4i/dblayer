@@ -130,12 +130,12 @@ pub(super) struct Encrypted {
 }
 
 impl Database {
-    fn start(config: Config, models_json: String, transport: Option<Arc<dyn Transport>>, clock: Arc<dyn Clock>) -> Result<Arc<Self>, DbError> {
-        Self::start_with(config, models_json, clock, |db, _| {
+    fn start(config: Config, models_json: String, transport: Option<Arc<dyn Transport>>, endpoint: Option<String>, clock: Arc<dyn Clock>) -> Result<Arc<Self>, DbError> {
+        Self::start_with(config, models_json, clock, |db, clock| {
             #[cfg(test)]
             if transport.is_some() { super::signed_session_tests::signed_session(db); }
             let _ = db;
-            Ok(Wiring { transport: transport.map(|transport| ForeignTransport::plain(transport).map(|plain| Arc::new(plain) as Arc<dyn core::Upstream>)).transpose()?, encrypted: None, cable: None, seal: None })
+            Ok(Wiring { transport: transport.map(|transport| ForeignTransport::plain(transport, endpoint, clock.clone()).map(|plain| Arc::new(plain) as Arc<dyn core::Upstream>)).transpose()?, encrypted: None, cable: None, seal: None })
         })
     }
 
@@ -169,7 +169,7 @@ impl Database {
     }
 
     async fn open_at(config: Config, models_json: String, ports: super::OpenPorts, clock: Arc<dyn Clock>) -> Result<Arc<Self>, DbError> {
-        let super::OpenPorts { transport, encrypted, credentials, http } = ports;
+        let super::OpenPorts { transport, encrypted, credentials, http, endpoint } = ports;
         blocking(move || {
             let database = match encrypted {
                 Some(encrypted) => {
@@ -185,7 +185,7 @@ impl Database {
                     if credentials.is_some() || http.is_some() {
                         return Err(DbError::Invalid { detail: "credentials and http require encrypted".into() });
                     }
-                    Self::start(config, models_json, transport, clock)?
+                    Self::start(config, models_json, transport, endpoint, clock)?
                 }
             };
             Ok(database)

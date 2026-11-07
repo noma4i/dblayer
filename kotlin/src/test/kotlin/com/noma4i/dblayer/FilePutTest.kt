@@ -19,7 +19,7 @@ class FilePutTest {
                 override fun sent(bytes: ULong) { sent.add(bytes) }
                 override fun isCancelled() = false
             }
-            val reply = putFile(OkHttpClient(), server.url("/part").toString(), mapOf("x-a" to "1"), PutFile(file.path, 3u, 4u), progress)
+            val reply = putFile(OkHttpClient(), server.url("/part").toString(), mapOf("x-a" to "1"), 10_000uL, 30_000uL, PutFile(file.path, 3u, 4u), progress)
             val request = server.takeRequest()
             assertEquals("3456", request.body.readUtf8())
             assertEquals("1", request.headers["x-a"])

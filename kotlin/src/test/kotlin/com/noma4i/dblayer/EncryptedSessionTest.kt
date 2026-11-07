@@ -95,7 +95,7 @@ class EncryptedSessionTest {
         val origin = server.url("/").toString().trimEnd('/')
         server.shutdown()
 
-        assertEquals(RawFailureKind.UNREACHABLE, OkHttpEncryptedHttp().send(probeRequest("$origin/api/logout", "x")).failureKind())
+        assertEquals("java.net.ConnectException", OkHttpEncryptedHttp().send(probeRequest("$origin/api/logout", "x")).rawFailure()?.domain)
     }
 
     @Test

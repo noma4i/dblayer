@@ -8,13 +8,23 @@ use super::DbError;
 #[uniffi::export(rust, foreign)]
 #[async_trait]
 pub trait Transport: Send + Sync {
-    /// The GraphQL address of a database without an encrypted session.
-    fn endpoint(&self) -> String;
+    /// The headers of the app, read again for every request and every cable.
+    fn app_headers(&self) -> HashMap<String, String>;
     /// Runs one HTTP exchange and returns the raw outcome: the executor never classifies, follows a redirect or retries.
     async fn send(&self, request: core::HttpRequest) -> core::RawOutcome;
     /// Opens the WebSocket at `url` (built by the core), reports its frames to `events` and returns the connection after the handshake.
-    async fn open_cable(&self, url: String, connect_ms: u64, events: Arc<dyn CableEvents>) -> CableOutcome;
-    async fn put(&self, url: String, headers: HashMap<String, String>, file: core::PutFile, identity: core::TransferIdentity, progress: Arc<ByteProgress>) -> core::RawOutcome;
+    async fn open_cable(&self, url: String, headers: HashMap<String, String>, connect_ms: u64, events: Arc<dyn CableEvents>) -> CableOutcome;
+    /// Uploads the file range to the presigned `url` with the core timeouts, reports the sent bytes to `progress`.
+    async fn put(&self, target: PutTarget, file: core::PutFile, identity: core::TransferIdentity, progress: Arc<ByteProgress>) -> core::RawOutcome;
+}
+
+/// Where one PUT goes: the presigned `url`, its headers as the executor sets them and the core timeouts.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct PutTarget {
+    pub url: String,
+    pub headers: HashMap<String, String>,
+    pub connect_ms: u64,
+    pub request_ms: u64,
 }
 
 #[derive(uniffi::Object)]
@@ -95,19 +105,22 @@ impl crate::owners::life::ObserverPort for ObserverStop {
     }
 }
 
-pub(super) struct ForeignTransport { port: Arc<dyn Transport>, endpoint: Option<String> }
+pub(super) struct ForeignTransport { port: Arc<dyn Transport>, endpoint: Option<String>, clock: Arc<dyn crate::runtime::Clock> }
 
 impl ForeignTransport {
-    pub(super) fn plain(port: Arc<dyn Transport>) -> Result<Self, DbError> {
-        let endpoint = core::graphql_endpoint(&port.endpoint()).map_err(DbError::from)?;
-        Ok(Self { port, endpoint: Some(endpoint) })
+    pub(super) fn plain(port: Arc<dyn Transport>, endpoint: Option<String>, clock: Arc<dyn crate::runtime::Clock>) -> Result<Self, DbError> {
+        let endpoint = core::graphql_endpoint(&endpoint.unwrap_or_default()).map_err(DbError::from)?;
+        Ok(Self { port, endpoint: Some(endpoint), clock })
     }
 
-    pub(super) fn beside_session(port: Arc<dyn Transport>) -> Self { Self { port, endpoint: None } }
+    pub(super) fn beside_session(port: Arc<dyn Transport>, clock: Arc<dyn crate::runtime::Clock>) -> Self { Self { port, endpoint: None, clock } }
 
     async fn graphql(&self, request: core::GraphQLRequest, kind: core::ExchangeKind) -> Result<core::Response, core::TransportError> {
         let Some(endpoint) = &self.endpoint else { return Err(core::TransportError::Config { code: core::ConfigCode::InvalidRequest, detail: "the database has no GraphQL endpoint".into() }) };
-        let outcome = crate::lock::effect(|| self.port.send(core::graphql_call(endpoint, &request))).await;
+        let app_headers = crate::lock::effect(|| self.port.app_headers());
+        let call = core::graphql_call(endpoint, &request, app_headers);
+        let request_ms = call.request_ms;
+        let outcome = core::within_request(self.clock.as_ref(), request_ms, crate::lock::effect(|| self.port.send(call))).await;
         serde_json::from_str(&core::graphql_text(outcome, kind)?).map_err(|error| core::TransportError::Decode(error.to_string()))
     }
 }
@@ -134,10 +147,11 @@ pub(super) fn transport_error(error: DbError) -> core::TransportError {
 impl core::Upstream for ForeignTransport {
     async fn open_cable(&self, url: &str) -> Result<Arc<dyn core::CableSocket>, core::TransportError> {
         crate::lock::assert_no_library_lock("Transport::open_cable");
-        let mailbox = Arc::new(Mailbox::default());
-        match self.port.open_cable(url.to_string(), core::CONNECT_TIMEOUT_MS, mailbox.clone()).await {
+        let mailbox = Arc::new(Mailbox::new(self.clock.clone()));
+        let headers = core::merge_headers(crate::lock::effect(|| self.port.app_headers()), HashMap::new());
+        match self.port.open_cable(url.to_string(), headers, core::CONNECT_TIMEOUT_MS, mailbox.clone()).await {
             CableOutcome::Open { connection } => Ok(Arc::new(ForeignSocket::new(connection, mailbox))),
-            CableOutcome::Failed { failure } => Err(core::classify(&failure, core::ExchangeKind::Post)),
+            CableOutcome::Failed { failure, handshake_status } => Err(core::classify_upgrade(&failure, handshake_status)),
         }
     }
     async fn query(&self, request: core::GraphQLRequest) -> Result<core::Response, core::TransportError> {
@@ -152,7 +166,9 @@ impl core::Upstream for ForeignTransport {
         crate::lock::assert_no_library_lock("Transport::put");
         let cancel = request.cancel.clone();
         let progress = Arc::new(ByteProgress { cancel: request.cancel, sent: request.sent });
-        match self.port.put(request.url, request.headers.into_iter().collect(), request.file, request.identity, progress).await {
+        let headers = core::merge_headers(HashMap::new(), request.headers.into_iter().collect());
+        let target = PutTarget { url: request.url, headers, connect_ms: core::CONNECT_TIMEOUT_MS, request_ms: core::REQUEST_TIMEOUT_MS };
+        match self.port.put(target, request.file, request.identity, progress).await {
             core::RawOutcome::Response { status, etag, .. } => Ok(core::PutReply { status, etag }),
             core::RawOutcome::Failed { .. } if cancel.is_cancelled() => Err(core::TransportError::Interrupted("the upload was cancelled".into())),
             core::RawOutcome::Failed { failure } => Err(core::classify(&failure, core::ExchangeKind::Post)),

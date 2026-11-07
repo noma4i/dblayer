@@ -59,14 +59,15 @@ object DBlayer {
     ) {
         checkUploadPermission(android.os.Build.VERSION.SDK_INT) { context.packageManager.getPackageInfo(context.packageName, android.content.pm.PackageManager.GET_PERMISSIONS).requestedPermissions.orEmpty().toList() }
         UploadNotifications.store(context, uploadNotification)
-        val ports = OpenPorts(transport ?: (endpoint ?: encrypted?.origin)?.let { OkHttpTransport(it, headers) }, encrypted, credentials, http ?: encrypted?.let { OkHttpEncryptedHttp(headers = headers) })
+        val address = endpoint ?: encrypted?.origin
+        val ports = OpenPorts(transport ?: address?.let { OkHttpTransport(headers) }, encrypted, credentials, http ?: encrypted?.let { OkHttpEncryptedHttp(headers = headers) }, address)
         val made = opener.open(Config(path, null), modelsJson, OpenOptions(definitions(operations)), ports, SystemObservers(context))
         made.setRoundJobs(UploadRounds(context.applicationContext, made))
         database = made
         UploadService.opened(made)
     }
 
-    internal suspend fun openOnClock(config: Config, modelsJson: String, transport: Transport?, clock: TestClock, encrypted: EncryptedConfig? = null, credentials: CredentialStore? = null, http: EncryptedHttp? = null): Database = opener.openWithClock(config, modelsJson, OpenPorts(transport, encrypted, credentials, http), clock)
+    internal suspend fun openOnClock(config: Config, modelsJson: String, transport: Transport?, endpoint: String? = null, clock: TestClock, encrypted: EncryptedConfig? = null, credentials: CredentialStore? = null, http: EncryptedHttp? = null): Database = opener.openWithClock(config, modelsJson, OpenPorts(transport, encrypted, credentials, http, endpoint), clock)
 
     internal suspend fun install(opened: Database, transport: Transport?, operations: List<GraphQLOperation>) {
         if (transport != null) opened.declareOperations(definitions(operations))

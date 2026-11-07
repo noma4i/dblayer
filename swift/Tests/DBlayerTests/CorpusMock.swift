@@ -6,6 +6,8 @@ import Foundation
 final class CorpusMock: ScriptedTransport, ScriptedHttp, @unchecked Sendable {
   private struct Seen { let id: String; let kind: String; let purpose: String; var announced = false }
 
+  func appHeaders() -> [String: String] { [:] }
+
   private let lock = NSLock()
   private var next = 0
   private var seen: [Seen] = []

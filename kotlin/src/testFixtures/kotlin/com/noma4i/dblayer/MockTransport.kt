@@ -70,6 +70,8 @@ class MockTransport(private val unanswered: Unanswered = Unanswered.Strict) : Sc
         override fun send(text: String): Boolean = sent.add(token to text)
 
         override fun close(code: UShort, reason: String) = Unit
+
+        override fun cancel() = Unit
     }
 
     override suspend fun scriptedCable(url: String, events: CableEvents): CableOutcome {
@@ -84,7 +86,7 @@ class MockTransport(private val unanswered: Unanswered = Unanswered.Strict) : Sc
     }
 
     fun closeCable(token: String, code: UShort, reason: String) {
-        (cableSinks.remove(token) ?: throw DbException.Network("cable socket is closed")).closed(code, reason)
+        (cableSinks.remove(token) ?: throw DbException.Network("cable socket is closed")).ended(code, reason, null)
     }
 
     private class Reply(val body: String?, val failure: DbException?, val delayMillis: Long, val hold: Hold? = null)

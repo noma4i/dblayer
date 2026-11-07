@@ -56,12 +56,13 @@ final class EncryptedCablePeer: CablePeer, ScriptedTransport, @unchecked Sendabl
     }
     func send(text: String) -> Bool { (try? peer.receive(token: token, text: text)) != nil }
     func close(code: UInt16, reason: String) { peer.closed.continuation.yield(token) }
+    func cancel() {}
   }
 
   func scriptedCable(url: String, events: CableEvents) async -> CableOutcome { await openCable(url: url, events: events) }
 
   func openCable(url: String, events: CableEvents) async -> CableOutcome {
-    do { return try open(events: events) } catch { return .failed(failure: RawFailure(kind: .io, code: nil, message: "\(error)")) }
+    do { return try open(events: events) } catch { return .failed(failure: .scripted(.io, "\(error)"), handshakeStatus: nil) }
   }
 
   private func open(events: CableEvents) throws -> CableOutcome {
@@ -150,7 +151,7 @@ final class EncryptedCablePeer: CablePeer, ScriptedTransport, @unchecked Sendabl
 
   /// The socket breaks.
   func drop(token: String) throws {
-    try connection(token).events.closed(code: 1006, reason: "dropped")
+    try connection(token).events.ended(closeCode: 1006, reason: "dropped", failure: nil)
   }
 
   func emitOld(token: String) throws {

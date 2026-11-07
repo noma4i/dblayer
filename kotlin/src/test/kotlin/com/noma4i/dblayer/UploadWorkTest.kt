@@ -56,7 +56,7 @@ class UploadWorkTest {
             MockWebServer().use { server ->
                 repeat(2) { server.enqueue(MockResponse().setResponseCode(200).setBody("""{"data":{}}""")) }
                 server.start()
-                val transport = OkHttpTransport(server.url("/graphql").toString())
+                val transport = OkHttpTransport()
                 val graphql = probeRequest(server.url("/graphql").toString(), "{}")
                 assertEquals(RawOutcome.Response(200u, null, """{"data":{}}"""), transport.send(graphql))
                 refused { transport.send(graphql.copy(purpose = NetworkPurpose.TRANSFER)) }
@@ -71,7 +71,7 @@ class UploadWorkTest {
 
     private suspend fun refused(block: suspend () -> RawOutcome) {
         val outcome = block()
-        assertTrue("expected a failed outcome, got $outcome", outcome.failureKind() != null)
+        assertTrue("expected a failed outcome, got $outcome", outcome.rawFailure() != null)
     }
 
     @Test
@@ -103,7 +103,7 @@ class UploadWorkTest {
         assertNotNull("the foreground notification is shown before open ran", shadowOf(controller.get()).lastForegroundNotification)
         assertTrue(!shadowOf(controller.get()).isStoppedBySelf)
         try {
-            DBlayer.open(context, transport = MockTransport(), modelsJson = modelsJSON, operations = UPLOAD_STEP_OPERATIONS.map { (name, text) -> object : GraphQLOperation { override val operationName = name; override val document = text } }, uploadNotification = notification)
+            DBlayer.open(context, endpoint = SCRIPTED_ENDPOINT, transport = MockTransport(), modelsJson = modelsJSON, operations = UPLOAD_STEP_OPERATIONS.map { (name, text) -> object : GraphQLOperation { override val operationName = name; override val document = text } }, uploadNotification = notification)
             eventually("the service stops by itself when no upload is unfinished") { shadowOf(controller.get()).isStoppedBySelf }
         } finally {
             closeForCleanup()

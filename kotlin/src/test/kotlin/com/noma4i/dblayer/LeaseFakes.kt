@@ -7,16 +7,14 @@ class RecordingEvents : CableEvents {
     sealed interface Event {
         data class Frame(val text: String) : Event
         class Binary(val bytes: ByteArray) : Event
-        data class Closed(val code: UShort, val reason: String) : Event
-        data class Failed(val kind: RawFailureKind) : Event
+        data class Ended(val code: UShort?, val reason: String?, val failure: RawFailure?) : Event
     }
 
     val events = Channel<Event>(Channel.UNLIMITED)
 
     override fun frame(text: String) { events.trySend(Event.Frame(text)) }
     override fun binary(bytes: ByteArray) { events.trySend(Event.Binary(bytes)) }
-    override fun closed(code: UShort, reason: String) { events.trySend(Event.Closed(code, reason)) }
-    override fun failed(failure: RawFailure) { events.trySend(Event.Failed(failure.kind)) }
+    override fun ended(closeCode: UShort?, reason: String?, failure: RawFailure?) { events.trySend(Event.Ended(closeCode, reason, failure)) }
 
     suspend fun next(): Event = events.receive()
 }
@@ -28,4 +26,4 @@ fun probeRequest(url: String, body: String = "jwe"): HttpRequest =
 
 fun RawOutcome.status(): UShort? = (this as? RawOutcome.Response)?.status
 
-fun RawOutcome.failureKind(): RawFailureKind? = (this as? RawOutcome.Failed)?.failure?.kind
+fun RawOutcome.rawFailure(): RawFailure? = (this as? RawOutcome.Failed)?.failure

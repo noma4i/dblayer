@@ -57,7 +57,7 @@ class TransportThreadTest {
     fun theHttpTransportReadsTheResponseBodyOffTheCallerThread() = bounded {
       for (mutation in listOf(false, true)) {
         server.enqueue(MockResponse().setResponseCode(200).setBody("""{"data":{"id":"7"}}"""))
-        val transport = OkHttpTransport(server.url("/graphql").toString(), client = client)
+        val transport = OkHttpTransport(client = client)
 
         val document = if (mutation) "mutation Probe { probe { id } }" else "query Probe { probe { id } }"
         val request = HttpRequest(server.url("/graphql").toString(), "POST", mapOf("Content-Type" to "application/json"), """{"query":"$document","operationName":"Probe","variables":{"id":"7"}}""", 10_000uL, 30_000uL, NetworkPurpose.STANDARD)
@@ -82,13 +82,13 @@ class TransportThreadTest {
     fun aLostConnectionAndACancelledUploadReachTheCoreAsRawFailures() = bounded {
         for ((operation, cancelled) in listOf("query" to false, "mutation" to false, "put" to false, "put" to true)) {
             server.enqueue(MockResponse().setSocketPolicy(if (operation == "put" && cancelled) SocketPolicy.NO_RESPONSE else SocketPolicy.DISCONNECT_AT_START))
-            val transport = OkHttpTransport(server.url("/graphql").toString(), client = OkHttpClient.Builder().retryOnConnectionFailure(false).build())
+            val transport = OkHttpTransport(client = OkHttpClient.Builder().retryOnConnectionFailure(false).build())
             val outcome = if (operation == "put") {
-                transport.put(server.url("/upload").toString(), emptyMap(), PutFile(java.io.File.createTempFile("thread", ".bin").apply { writeBytes(byteArrayOf(1, 2)); deleteOnExit() }.path, 0u, 2u), TransferIdentity(1L, "1.0.1", TransferStep.Put), CancelledProgress(cancelled))
+                transport.put(PutTarget(server.url("/upload").toString(), emptyMap(), 10_000uL, 30_000uL), PutFile(java.io.File.createTempFile("thread", ".bin").apply { writeBytes(byteArrayOf(1, 2)); deleteOnExit() }.path, 0u, 2u), TransferIdentity(1L, "1.0.1", TransferStep.Put), CancelledProgress(cancelled))
             } else {
                 transport.send(probeRequest(server.url("/graphql").toString(), "{}"))
             }
-            assertEquals("$operation cancelled=$cancelled", RawFailureKind.IO, outcome.failureKind())
+            assertEquals("$operation cancelled=$cancelled", operation == "put" && cancelled, outcome.rawFailure()?.message.equals("Canceled", ignoreCase = true))
         }
     }
 }

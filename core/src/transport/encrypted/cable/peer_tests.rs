@@ -54,6 +54,8 @@ impl PlatformSocket for PeerLink {
     }
 
     fn close(&self, _: u16, _: String) { self.peer.observe(PeerEvent::Closed(self.token.clone())); }
+
+    fn cancel(&self) {}
 }
 
 impl CablePeer {
@@ -149,7 +151,7 @@ impl CablePeer {
     /// The socket breaks.
     pub(crate) fn close(&self, token: &str) -> bool {
         let Some(connection) = self.connection(token) else { return false };
-        connection.events.closed(1006, "dropped".into());
+        connection.events.ended(Some(1006), Some("dropped".into()), None);
         true
     }
 }

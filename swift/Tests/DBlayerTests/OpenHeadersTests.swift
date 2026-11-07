@@ -42,6 +42,10 @@ struct OpenHeadersTests {
       request.components(separatedBy: "\r\n").first { $0.lowercased().hasPrefix("x-token:") }.map { $0.split(separator: ":", maxSplits: 1)[1].trimmingCharacters(in: .whitespaces) }
     }
     #expect(tokens.first == "first" && tokens.last == "second" && tokens.count >= 2, "tokens sent: \(tokens)")
+    let agents = server.requests.compactMap { request in
+      request.components(separatedBy: "\r\n").first { $0.lowercased().hasPrefix("user-agent:") }.map { $0.split(separator: ":", maxSplits: 1)[1].trimmingCharacters(in: .whitespaces) }
+    }
+    #expect(agents.count == server.requests.count && agents.allSatisfy { $0 == userAgent(application: nil) }, "agents sent: \(agents)")
   }
 }
 }

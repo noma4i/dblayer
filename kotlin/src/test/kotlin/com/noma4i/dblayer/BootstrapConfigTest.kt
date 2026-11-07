@@ -88,7 +88,7 @@ class BootstrapConfigTest {
         val http = object : ScriptedHttp {
             override suspend fun send(request: HttpRequest): RawOutcome {
                 calls.incrementAndGet()
-                return RawOutcome.Failed(RawFailure(RawFailureKind.TIMEOUT, null, "timeout"))
+                return RawOutcome.Failed(ScriptedFailure.TIMEOUT.raw("timeout"))
             }
 
             override suspend fun post(path: String, body: String, purpose: NetworkPurpose): EncryptedReply = error("the timeout script answers in send")
@@ -201,7 +201,7 @@ class BootstrapConfigTest {
             val polluted = OkHttpClient.Builder().addInterceptor { chain ->
                 chain.proceed(chain.request().newBuilder().header("X-App", "kept").build())
             }.build()
-            val reply = OkHttpEncryptedHttp(polluted).send(probeRequest(server.url("/api/bootstrap").toString()))
+            val reply = OkHttpEncryptedHttp(polluted).send(probeRequest(server.url("/api/bootstrap").toString()).let { it.copy(headers = it.headers + ("User-Agent" to userAgent(null))) })
             assertEquals(302.toUShort(), reply.status())
             assertEquals(1, server.requestCount)
             val request = server.takeRequest()

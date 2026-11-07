@@ -16,20 +16,34 @@ data class TransportRequest(val document: String, val operationName: String, val
 /** The answer of an encrypted POST as a test scripts it. */
 class EncryptedReply(val status: UShort, val body: String)
 
+/** The GraphQL address a database on a scripted transport opens with. */
+const val SCRIPTED_ENDPOINT = "https://graphql.test/graphql"
+
+/** The kinds of failure a test scripts; each is the raw platform error the core classifies to that kind. */
+enum class ScriptedFailure(private val exception: String) {
+    CANCELLED("java.util.concurrent.CancellationException"),
+    TLS("javax.net.ssl.SSLHandshakeException"),
+    UNREACHABLE("java.net.UnknownHostException"),
+    TIMEOUT("java.net.SocketTimeoutException"),
+    IO("java.io.IOException");
+
+    fun raw(message: String): RawFailure = RawFailure(exception, null, message)
+}
+
 /** A scripted error as the raw outcome the platform executor would report. */
-private fun failed(kind: RawFailureKind, message: String): RawOutcome = RawOutcome.Failed(RawFailure(kind, null, message))
+private fun failed(kind: ScriptedFailure, message: String): RawOutcome = RawOutcome.Failed(kind.raw(message))
 
 fun scriptedOutcome(error: Throwable): RawOutcome = when (error) {
     is DbException.Http -> RawOutcome.Response(error.status, null, error.detail)
-    is DbException.Network, is DbException.Offline -> failed(RawFailureKind.UNREACHABLE, error.message ?: "network")
-    is DbException.Interrupted, is kotlinx.coroutines.CancellationException -> failed(RawFailureKind.CANCELLED, error.message ?: "cancelled")
-    is DbException.Security -> failed(if (error.code == SecurityCode.TLS_TRUST) RawFailureKind.TLS else RawFailureKind.IO, error.message ?: "security")
+    is DbException.Network, is DbException.Offline -> failed(ScriptedFailure.UNREACHABLE, error.message ?: "network")
+    is DbException.Interrupted, is kotlinx.coroutines.CancellationException -> failed(ScriptedFailure.CANCELLED, error.message ?: "cancelled")
+    is DbException.Security -> failed(if (error.code == SecurityCode.TLS_TRUST) ScriptedFailure.TLS else ScriptedFailure.IO, error.message ?: "security")
     is DbException.Graphql -> RawOutcome.Response(200u, null, buildJsonObject {
         put("errors", buildJsonArray {
             error.messages.forEach { text -> add(buildJsonObject { put("message", text); put("extensions", buildJsonObject { put("code", text) }) }) }
         })
     }.toString())
-    else -> failed(RawFailureKind.IO, error.message ?: error.toString())
+    else -> failed(ScriptedFailure.IO, error.message ?: error.toString())
 }
 
 private fun graphqlCall(request: HttpRequest): TransportRequest {
@@ -47,9 +61,9 @@ interface ScriptedTransport : Transport {
 
     suspend fun scriptedPut(url: String, headers: Map<String, String>, file: PutFile, identity: TransferIdentity, progress: ByteProgress): PutReply = throw DbException.Invalid("unexpected upload")
 
-    suspend fun scriptedCable(url: String, events: CableEvents): CableOutcome = CableOutcome.Failed(RawFailure(RawFailureKind.UNREACHABLE, null, "no cable"))
+    suspend fun scriptedCable(url: String, events: CableEvents): CableOutcome = CableOutcome.Failed(ScriptedFailure.UNREACHABLE.raw("no cable"), null)
 
-    override fun endpoint(): String = "https://graphql.test/graphql"
+    override fun appHeaders(): Map<String, String> = emptyMap()
 
     override suspend fun send(request: HttpRequest): RawOutcome = sendGraphql(request)
 
@@ -63,10 +77,10 @@ interface ScriptedTransport : Transport {
         }
     }
 
-    override suspend fun openCable(url: String, connectMs: ULong, events: CableEvents): CableOutcome = scriptedCable(url, events)
+    override suspend fun openCable(url: String, headers: Map<String, String>, connectMs: ULong, events: CableEvents): CableOutcome = scriptedCable(url, events)
 
-    override suspend fun put(url: String, headers: Map<String, String>, file: PutFile, identity: TransferIdentity, progress: ByteProgress): RawOutcome = try {
-        val reply = scriptedPut(url, headers, file, identity, progress)
+    override suspend fun put(target: PutTarget, file: PutFile, identity: TransferIdentity, progress: ByteProgress): RawOutcome = try {
+        val reply = scriptedPut(target.url, target.headers, file, identity, progress)
         RawOutcome.Response(reply.status, reply.etag, "")
     } catch (error: DbException) {
         scriptedOutcome(error)
@@ -75,6 +89,8 @@ interface ScriptedTransport : Transport {
 
 /** An encrypted HTTP exchange a test scripts by path. */
 interface ScriptedHttp : EncryptedHttp {
+    override fun appHeaders(): Map<String, String> = emptyMap()
+
     suspend fun post(path: String, body: String, purpose: NetworkPurpose): EncryptedReply
 
     override suspend fun send(request: HttpRequest): RawOutcome = sendEncrypted(request)

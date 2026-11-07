@@ -9,11 +9,11 @@ struct UrlSessionCableTests {
       Issue.record("an invalid cable address created a socket")
       return Socket()
     }
-    guard case let .failed(failure) = await cable.open(url: "http://[::1", connectMs: 10_000, events: RecordingEvents()) else {
+    guard case let .failed(failure, status) = await cable.open(url: "http://[::1", headers: [:], connectMs: 10_000, events: RecordingEvents()) else {
       Issue.record("an invalid cable address opened a socket")
       return
     }
-    #expect(failure.kind == .io)
+    #expect((failure.domain, failure.code, status) == ("url", nil, nil))
   }
 
   @Test(.timeLimit(.minutes(1)))
@@ -23,18 +23,19 @@ struct UrlSessionCableTests {
     let origin = try await server.start()
     let session = URLSession(configuration: .ephemeral)
     defer { session.invalidateAndCancel() }
-    let transport = UrlSessionTransport(endpoint: origin, session: session)
-    let outcome = AsyncStream<RawFailureKind?>.makeStream()
+    let transport = UrlSessionTransport(session: session)
+    let outcome = AsyncStream<RawFailure?>.makeStream()
     let task = Task {
-      switch await transport.openCable(url: cableURL(origin), connectMs: 10_000, events: RecordingEvents()) {
+      switch await transport.openCable(url: cableURL(origin), headers: [:], connectMs: 10_000, events: RecordingEvents()) {
       case .open: outcome.continuation.yield(nil)
-      case let .failed(failure): outcome.continuation.yield(failure.kind)
+      case let .failed(failure, _): outcome.continuation.yield(failure)
       }
     }
     await eventually("cable handshake request", timeout: .seconds(2)) { server.requests.count == 1 }
     task.cancel()
     let finished = Cursor(outcome.stream)
-    #expect(await finished.next("the handshake outcome") == .some(.cancelled))
+    let failure = await finished.next("the handshake outcome") ?? nil
+    #expect(failure?.domain == "Swift.CancellationError" || (failure?.domain, failure?.code) == (NSURLErrorDomain, Int64(URLError.cancelled.rawValue)), "\(String(describing: failure))")
     await eventually("cancelled handshake disconnected", timeout: .seconds(2)) { server.disconnected }
     session.invalidateAndCancel()
     await task.value
@@ -50,6 +51,7 @@ struct UrlSessionCableTests {
     private(set) var sent: [String] = []
     private(set) var resumed = false
     private(set) var cancelled: URLSessionWebSocketTask.CloseCode?
+    private(set) var hardCancelled = false
 
     func open() async throws {
       lock.withLock { resumed = true }
@@ -70,6 +72,7 @@ struct UrlSessionCableTests {
     func cancel(with closeCode: URLSessionWebSocketTask.CloseCode, reason: Data?) {
       lock.withLock { cancelled = closeCode }
     }
+    func cancel() { lock.withLock { hardCancelled = true } }
   }
 
   @Test func frameGoesToTheCoreAndTextToTheSocket() async throws {
@@ -78,10 +81,11 @@ struct UrlSessionCableTests {
       #expect(request.url?.absoluteString == "wss://example.com:8443/api/cable")
       #expect(request.timeoutInterval == 10)
       #expect(request.value(forHTTPHeaderField: "Sec-WebSocket-Protocol") == nil)
+      #expect(request.value(forHTTPHeaderField: "X-Core") == "yes")
       return socket
     }
     let events = RecordingEvents()
-    guard case let .open(connection) = await cable.open(url: "wss://example.com:8443/api/cable", connectMs: 10_000, events: events) else {
+    guard case let .open(connection) = await cable.open(url: "wss://example.com:8443/api/cable", headers: ["X-Core": "yes"], connectMs: 10_000, events: events) else {
       Issue.record("the cable did not open")
       return
     }
@@ -91,6 +95,12 @@ struct UrlSessionCableTests {
     #expect(await events.next() == .frame("server frame"))
     connection.close(code: 1000, reason: "done")
     #expect(socket.cancelled == .normalClosure)
+    #expect(!socket.hardCancelled)
+    connection.cancel()
+    #expect(socket.hardCancelled)
+    socket.closeCode = .goingAway
+    #expect(!connection.send(text: "late"))
+    #expect(socket.sent == ["client frame"])
   }
 
   @Test(arguments: [4401, 1006, 1003])
@@ -103,14 +113,19 @@ struct UrlSessionCableTests {
     socket.incoming = [code == 1003 ? .success(.data(Data([1]))) : .failure(URLError(.networkConnectionLost))]
     let events = RecordingEvents()
     let cable = UrlSessionCable { _ in socket }
-    guard case let .open(connection) = await cable.open(url: "wss://example.com:8443/api/cable", connectMs: 10_000, events: events) else {
+    guard case let .open(connection) = await cable.open(url: "wss://example.com:8443/api/cable", headers: [:], connectMs: 10_000, events: events) else {
       Issue.record("the cable did not open")
       return
     }
     switch code {
-    case 4401: #expect(await events.next() == .closed(4401, "UNAUTHENTICATED"))
+    case 4401:
+      guard case let .ended(closeCode, reason, _)? = await events.next() else { Issue.record("no end"); return }
+      #expect((closeCode, reason) == (4401, "UNAUTHENTICATED"))
     case 1003: #expect(await events.next() == .binary(Data([1])))
-    default: #expect(await events.next() == .failed(.io))
+    default:
+      guard case let .ended(closeCode, _, failure)? = await events.next() else { Issue.record("no end"); return }
+      #expect(closeCode == nil)
+      #expect((failure?.domain, failure?.code) == (NSURLErrorDomain, Int64(URLError.networkConnectionLost.rawValue)))
     }
     connection.close(code: 1000, reason: "")
   }
@@ -120,19 +135,19 @@ struct UrlSessionCableTests {
     refused.openError = URLError(.badServerResponse)
     refused.handshakeStatus = 403
     let refusing = UrlSessionCable { _ in refused }
-    guard case let .failed(status) = await refusing.open(url: "wss://example.com/api/cable", connectMs: 10_000, events: RecordingEvents()) else {
+    guard case let .failed(refusal, status) = await refusing.open(url: "wss://example.com/api/cable", headers: [:], connectMs: 10_000, events: RecordingEvents()) else {
       Issue.record("a refused handshake opened")
       return
     }
-    #expect((status.kind, status.code) == (.protocol, 403))
+    #expect((refusal.domain, refusal.code, status) == (NSURLErrorDomain, Int64(URLError.badServerResponse.rawValue), 403))
     let unreachable = Socket()
     unreachable.openError = URLError(.cannotConnectToHost)
     let unreachableCable = UrlSessionCable { _ in unreachable }
-    guard case let .failed(failure) = await unreachableCable.open(url: "wss://example.com/api/cable", connectMs: 10_000, events: RecordingEvents()) else {
+    guard case let .failed(failure, noStatus) = await unreachableCable.open(url: "wss://example.com/api/cable", headers: [:], connectMs: 10_000, events: RecordingEvents()) else {
       Issue.record("open returned before the WebSocket connected")
       return
     }
-    #expect(failure.kind == .unreachable)
+    #expect((failure.domain, failure.code, noStatus) == (NSURLErrorDomain, Int64(URLError.cannotConnectToHost.rawValue), nil))
     #expect(unreachable.cancelled == .goingAway)
   }
 }

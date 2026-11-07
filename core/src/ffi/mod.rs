@@ -61,13 +61,7 @@ pub mod upload_wire;
 pub mod wire;
 
 #[uniffi::export]
-pub fn user_agent(application: Option<String>) -> String {
-    let token = concat!("DBlayer/", env!("CARGO_PKG_VERSION"));
-    match application.filter(|value| !value.is_empty()) {
-        Some(value) => format!("{value} {token}"),
-        None => token.into(),
-    }
-}
+pub fn user_agent(application: Option<String>) -> String { crate::transport::user_agent(application) }
 
 pub use database::{Config, Database, EdgeRow, SubscriptionCensus, TestClock};
 pub use receipt::{ItemId, WireBatchReceipt, WireItemReceipt, WireOperationOutcome, WireOperationReceipt, WireReceiptTicket};
@@ -87,10 +81,10 @@ pub use crate::transport::{PutFile, PutReply};
 #[cfg(test)]
 mod fixtures;
 #[cfg(test)]
-pub(crate) use fixtures::{EncryptedReply, FakeHttp, FakeTransport, TransportRequest};
+pub(crate) use fixtures::{EncryptedReply, FakeHttp, FakeTransport, TransportRequest, FAKE_ENDPOINT};
 pub use cable::{PlatformSocket, CableEvents, CableOutcome};
-pub use crate::transport::{RawFailureKind, HttpRequest, RawFailure, RawOutcome};
-pub use transport::{ByteProgress, OnlineSink, PlatformObserver, Transport};
+pub use crate::transport::{HttpRequest, RawFailure, RawOutcome};
+pub use transport::{ByteProgress, OnlineSink, PlatformObserver, PutTarget, Transport};
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error, uniffi::Error)]
 pub enum DbError {

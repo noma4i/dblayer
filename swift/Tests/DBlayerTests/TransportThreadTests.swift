@@ -10,7 +10,7 @@ struct TransportThreadTests {
     let session = ThreadProbeProtocol.session()
     defer { session.invalidateAndCancel() }
     ThreadProbeProtocol.reset()
-    let transport = UrlSessionTransport(endpoint: url, headers: { [:] }, session: session)
+    let transport = UrlSessionTransport(headers: { [:] }, session: session)
 
     let body = #"{"query":"\#(mutation ? "mutation" : "query") Ping { ping }","operationName":"Ping","variables":{}}"#
     let request = HttpRequest(url: url.absoluteString, method: "POST", headers: ["Content-Type": "application/json"], body: body, connectMs: 10_000, requestMs: 30_000, purpose: .standard)

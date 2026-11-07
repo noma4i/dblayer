@@ -18,16 +18,15 @@ class RedirectTest {
                 server.start()
                 val origin = server.url("/").toString()
                 val client = OkHttpClient()
-                val transport = OkHttpTransport(origin, client = client)
+                val transport = OkHttpTransport(client = client)
                 when (path) {
                     "query" -> {
                         assertEquals(path, 302.toUShort(), transport.send(probeRequest(origin + "graphql")).status())
                     }
                     "encrypted" -> assertEquals(path, 302.toUShort(), OkHttpEncryptedHttp(client).send(probeRequest(origin + "api/session")).status())
                     "cable" -> {
-                        val failure = (transport.openCable(cableUrl(server), 10_000uL, RecordingEvents()) as CableOutcome.Failed).failure
-                        assertEquals(path, 302L, failure.code)
-                        assertEquals(path, RawFailureKind.PROTOCOL, failure.kind)
+                        val refused = transport.openCable(cableUrl(server), emptyMap(), 10_000uL, RecordingEvents()) as CableOutcome.Failed
+                        assertEquals(path, 302.toUShort(), refused.handshakeStatus)
                     }
                     else -> {
                         val file = java.io.File.createTempFile("upload", ".bin").apply { writeText("file"); deleteOnExit() }
@@ -35,7 +34,7 @@ class RedirectTest {
                             override fun sent(bytes: ULong) {}
                             override fun isCancelled() = false
                         }
-                        assertEquals(path, 302.toUShort(), transport.put(origin + "upload", emptyMap(), PutFile(file.path, 0u, 4u), TransferIdentity(1L, "a", TransferStep.Put), progress).status())
+                        assertEquals(path, 302.toUShort(), transport.put(PutTarget(origin + "upload", emptyMap(), 10_000uL, 30_000uL), PutFile(file.path, 0u, 4u), TransferIdentity(1L, "a", TransferStep.Put), progress).status())
                     }
                 }
                 assertEquals(path, 1, server.requestCount)

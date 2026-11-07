@@ -56,7 +56,7 @@ fn path_of(url: &str) -> String {
 
 #[async_trait]
 impl<T: FakeTransport> Transport for T {
-    fn endpoint(&self) -> String { FAKE_ENDPOINT.into() }
+    fn app_headers(&self) -> HashMap<String, String> { HashMap::new() }
 
     async fn send(&self, request: core::HttpRequest) -> RawOutcome {
         let body: Value = serde_json::from_str(&request.body).expect("GraphQL body");
@@ -70,19 +70,19 @@ impl<T: FakeTransport> Transport for T {
         answer.map_or_else(failed, |text| RawOutcome::response(200, text))
     }
 
-    async fn open_cable(&self, _: String, _: u64, events: Arc<dyn CableEvents>) -> CableOutcome {
+    async fn open_cable(&self, _: String, _: HashMap<String, String>, _: u64, events: Arc<dyn CableEvents>) -> CableOutcome {
         match self.cable() {
             Some(peer) => {
                 let (token, outcome) = peer.connect(events);
                 self.cable_opened(&token);
                 outcome
             }
-            None => CableOutcome::Failed { failure: core::RawFailure { kind: RawFailureKind::Unreachable, code: None, message: "no cable".into() } },
+            None => CableOutcome::Failed { failure: core::RawFailure::of_kind(RawFailureKind::Unreachable, "no cable"), handshake_status: None },
         }
     }
 
-    async fn put(&self, url: String, headers: HashMap<String, String>, file: core::PutFile, identity: core::TransferIdentity, progress: Arc<ByteProgress>) -> RawOutcome {
-        match FakeTransport::put(self, url, headers, file, identity, progress).await {
+    async fn put(&self, target: super::PutTarget, file: core::PutFile, identity: core::TransferIdentity, progress: Arc<ByteProgress>) -> RawOutcome {
+        match FakeTransport::put(self, target.url, target.headers, file, identity, progress).await {
             Ok(reply) => RawOutcome::Response { status: reply.status, etag: reply.etag, body: String::new() },
             Err(error) => failed(error),
         }
@@ -91,6 +91,8 @@ impl<T: FakeTransport> Transport for T {
 
 #[async_trait]
 impl<T: FakeHttp> EncryptedHttp for T {
+    fn app_headers(&self) -> HashMap<String, String> { HashMap::new() }
+
     async fn send(&self, request: core::HttpRequest) -> RawOutcome {
         match self.post(path_of(&request.url), request.body, request.purpose).await {
             Ok(reply) => RawOutcome::response(reply.status, reply.body),

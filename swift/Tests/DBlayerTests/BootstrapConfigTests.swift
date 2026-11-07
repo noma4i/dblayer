@@ -70,7 +70,7 @@ private final class BootstrapHttp: ScriptedHttp, @unchecked Sendable {
   func send(request: HttpRequest) async -> RawOutcome {
     if kind == "timeout" {
       lock.withLock { count += 1 }
-      return .failed(failure: RawFailure(kind: .timeout, code: -1001, message: "timed out"))
+      return .failed(failure: .scripted(.timeout, "timed out"))
     }
     return await sendEncrypted(request: request)
   }
@@ -229,7 +229,7 @@ struct BootstrapConfigTests {
     config.httpAdditionalHeaders = ["Authorization": "secret", "Cookie": "secret", "X-Payload-Encryption": "old", "X-Request-Signature": "old"]
     let session = URLSession(configuration: config)
     defer { session.invalidateAndCancel() }
-    let reply = await UrlSessionEncryptedHttp(session: customSession ? session : nil).send(request: probeRequest(origin, path: "/api/bootstrap"))
+    let reply = await UrlSessionEncryptedHttp(session: customSession ? session : nil).send(request: probeRequest(origin, path: "/api/bootstrap", headers: ["User-Agent": DBlayer.userAgent(application: nil)]))
     #expect(reply == .response(status: 302, etag: nil, body: "busy"))
     #expect(server.requests.count == 1)
     let request = try #require(server.requests.first)

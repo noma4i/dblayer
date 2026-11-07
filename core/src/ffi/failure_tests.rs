@@ -33,7 +33,7 @@ pub(super) async fn rig(answer: Result<&'static str, fn() -> DbError>) -> (Arc<D
     model.relations.push(relation);
     let transport = Arc::new(Refusing { calls: AtomicUsize::new(0), variables: Default::default(), answer });
     let models = serde_json::to_string(&vec![model]).unwrap();
-    let db = Database::open(Config { path: None, data_version: None }, models, crate::ffi::OpenPorts { transport: Some(transport.clone() as Arc<dyn Transport>), ..Default::default() }).await.unwrap();
+    let db = Database::open(Config { path: None, data_version: None }, models, crate::ffi::OpenPorts { transport: Some(transport.clone() as Arc<dyn Transport>), endpoint: Some(crate::ffi::FAKE_ENDPOINT.into()), ..Default::default() }).await.unwrap();
     db.register_operations(r#"[{"name":"Feed","document":"query Feed { moments { id } }","rootPath":"moments"}]"#.into()).await.unwrap();
     db.set_online(true).unwrap();
     (db, transport)

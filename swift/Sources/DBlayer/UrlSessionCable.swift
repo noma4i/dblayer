@@ -8,6 +8,7 @@ protocol CableWebSocket: AnyObject, Sendable {
   func send(_ message: URLSessionWebSocketTask.Message, completion: @escaping @Sendable (Error?) -> Void)
   func receive() async throws -> URLSessionWebSocketTask.Message
   func cancel(with closeCode: URLSessionWebSocketTask.CloseCode, reason: Data?)
+  func cancel()
 }
 
 extension URLSessionWebSocketTask: CableWebSocket {
@@ -63,15 +64,12 @@ private final class UrlSessionCableConnection: PlatformSocket, @unchecked Sendab
           switch try await socket.receive() {
           case let .string(text): events.frame(text: text)
           case let .data(bytes): events.binary(bytes: bytes)
-          @unknown default: events.failed(failure: RawFailure(kind: .protocol, code: nil, message: "unknown cable frame"))
+          @unknown default: events.ended(closeCode: nil, reason: nil, failure: RawFailure(domain: "cable", code: nil, message: "unknown cable frame"))
           }
         } catch {
           if Task.isCancelled { return }
-          if socket.closeCode == .invalid {
-            events.failed(failure: RawFailure(error))
-          } else {
-            events.closed(code: UInt16(clamping: socket.closeCode.rawValue), reason: socket.closeReason.map { String(decoding: $0, as: UTF8.self) } ?? "")
-          }
+          let code = socket.closeCode
+          events.ended(closeCode: code == .invalid ? nil : UInt16(clamping: code.rawValue), reason: socket.closeReason.map { String(decoding: $0, as: UTF8.self) }, failure: RawFailure(error))
           return
         }
       }
@@ -79,6 +77,7 @@ private final class UrlSessionCableConnection: PlatformSocket, @unchecked Sendab
   }
 
   func send(text: String) -> Bool {
+    guard socket.closeCode == .invalid else { return false }
     socket.send(.string(text)) { _ in }
     return true
   }
@@ -87,22 +86,24 @@ private final class UrlSessionCableConnection: PlatformSocket, @unchecked Sendab
     receiver?.cancel()
     socket.cancel(with: URLSessionWebSocketTask.CloseCode(rawValue: Int(code)) ?? .normalClosure, reason: Data(reason.utf8))
   }
+
+  func cancel() {
+    receiver?.cancel()
+    socket.cancel()
+  }
 }
 
 final class UrlSessionCable: Sendable {
-  private let headers: @Sendable () -> [String: String]
   private let makeSocket: @Sendable (URLRequest) -> any CableWebSocket
 
-  init(headers: @escaping @Sendable () -> [String: String] = { [:] }, makeSocket: @escaping @Sendable (URLRequest) -> any CableWebSocket) {
-    self.headers = headers
+  init(makeSocket: @escaping @Sendable (URLRequest) -> any CableWebSocket) {
     self.makeSocket = makeSocket
   }
 
-  func open(url: String, connectMs: UInt64, events: CableEvents) async -> CableOutcome {
-    guard let target = URL(string: url) else { return .failed(failure: RawFailure(kind: .io, code: nil, message: "invalid cable address")) }
+  func open(url: String, headers: [String: String], connectMs: UInt64, events: CableEvents) async -> CableOutcome {
+    guard let target = URL(string: url) else { return .failed(failure: RawFailure(domain: "url", code: nil, message: ""), handshakeStatus: nil) }
     var request = URLRequest(url: target, timeoutInterval: TimeInterval(connectMs) / 1000)
-    headers().forEach { request.setValue($1, forHTTPHeaderField: $0) }
-    request.setUserAgent()
+    headers.forEach { request.setValue($1, forHTTPHeaderField: $0) }
     let socket = makeSocket(request)
     do {
       try await socket.open()
@@ -111,8 +112,7 @@ final class UrlSessionCable: Sendable {
     } catch {
       let status = socket.handshakeStatus
       socket.cancel(with: .goingAway, reason: nil)
-      if let status, status != 101 { return .failed(failure: RawFailure(kind: .protocol, code: Int64(status), message: "cable handshake refused")) }
-      return .failed(failure: RawFailure(error))
+      return .failed(failure: RawFailure(error), handshakeStatus: status.map { UInt16(clamping: $0) })
     }
   }
 }

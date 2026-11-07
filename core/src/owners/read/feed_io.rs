@@ -26,7 +26,7 @@ pub trait FeedCodec: Send + Sync + 'static {
 }
 
 /// How long the queued frames of a closing established connection may still go out.
-const CLOSE_DRAIN: Duration = Duration::from_secs(2);
+pub(crate) const CLOSE_DRAIN: Duration = Duration::from_secs(2);
 
 struct Open {
     frames: mpsc::UnboundedSender<(u64, Value)>,

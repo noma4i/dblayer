@@ -64,7 +64,7 @@ public final class MockTransport: ScriptedTransport, @unchecked Sendable {
   }
 
   public func scriptedCable(url: String, events: CableEvents) async -> CableOutcome {
-    guard let peer = cable else { return .failed(failure: RawFailure(kind: .io, code: nil, message: "MockTransport has no cable peer")) }
+    guard let peer = cable else { return .failed(failure: .scripted(.io, "MockTransport has no cable peer"), handshakeStatus: nil) }
     return await peer.openCable(url: url, events: events)
   }
 

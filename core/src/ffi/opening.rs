@@ -22,6 +22,9 @@ pub struct OpenPorts {
     pub encrypted: Option<EncryptedConfig>,
     pub credentials: Option<Arc<dyn CredentialStore>>,
     pub http: Option<Arc<dyn EncryptedHttp>>,
+    /// The GraphQL address of a database without an encrypted session.
+    #[uniffi(default = None)]
+    pub endpoint: Option<String>,
 }
 
 #[derive(uniffi::Object)]

@@ -6,37 +6,28 @@ struct TransportFailureTests {
   struct Case: Sendable, CustomTestStringConvertible {
     let name: String
     let error: any Error & Sendable
-    let kind: RawFailureKind
+    let domain: String
+    let code: Int64?
 
     var testDescription: String { name }
   }
 
   static let cases: [Case] = [
-    Case(name: "task cancelled", error: CancellationError(), kind: .cancelled),
-    Case(name: "url cancelled", error: URLError(.cancelled), kind: .cancelled),
-    Case(name: "native failure", error: CocoaError(.fileNoSuchFile), kind: .io),
-    Case(name: "not connected", error: URLError(.notConnectedToInternet), kind: .unreachable),
-    Case(name: "cannot find host", error: URLError(.cannotFindHost), kind: .unreachable),
-    Case(name: "cannot connect", error: URLError(.cannotConnectToHost), kind: .unreachable),
-    Case(name: "dns lookup", error: URLError(.dnsLookupFailed), kind: .unreachable),
-    Case(name: "data not allowed", error: URLError(.dataNotAllowed), kind: .unreachable),
-    Case(name: "roaming off", error: URLError(.internationalRoamingOff), kind: .unreachable),
-    Case(name: "timeout", error: URLError(.timedOut), kind: .timeout),
-    Case(name: "connection lost", error: URLError(.networkConnectionLost), kind: .io),
-    Case(name: "secure connection", error: URLError(.secureConnectionFailed), kind: .tls),
-    Case(name: "bad date", error: URLError(.serverCertificateHasBadDate), kind: .tls),
-    Case(name: "untrusted", error: URLError(.serverCertificateUntrusted), kind: .tls),
-    Case(name: "unknown root", error: URLError(.serverCertificateHasUnknownRoot), kind: .tls),
-    Case(name: "not yet valid", error: URLError(.serverCertificateNotYetValid), kind: .tls),
-    Case(name: "client rejected", error: URLError(.clientCertificateRejected), kind: .tls),
-    Case(name: "client required", error: URLError(.clientCertificateRequired), kind: .tls)
+    Case(name: "task cancelled", error: CancellationError(), domain: "Swift.CancellationError", code: nil),
+    Case(name: "url cancelled", error: URLError(.cancelled), domain: NSURLErrorDomain, code: -999),
+    Case(name: "native failure", error: CocoaError(.fileNoSuchFile), domain: NSCocoaErrorDomain, code: 4),
+    Case(name: "not connected", error: URLError(.notConnectedToInternet), domain: NSURLErrorDomain, code: -1009),
+    Case(name: "timeout", error: URLError(.timedOut), domain: NSURLErrorDomain, code: -1001),
+    Case(name: "connection lost", error: URLError(.networkConnectionLost), domain: NSURLErrorDomain, code: -1005),
+    Case(name: "untrusted", error: URLError(.serverCertificateUntrusted), domain: NSURLErrorDomain, code: -1202)
   ]
 
   @Test(arguments: cases)
-  func aPlatformErrorMapsToTheKindItShows(_ failure: Case) {
+  func theWrapperReportsTheDomainTheCodeAndTheTextOfThePlatformError(_ failure: Case) {
     let raw = RawFailure(failure.error)
-    #expect(raw.kind == failure.kind)
-    #expect(raw.code == (failure.error as? URLError).map { Int64($0.code.rawValue) })
+    #expect(raw.domain == failure.domain)
+    #expect(failure.code == nil || raw.code == failure.code)
+    #expect(raw.message == failure.error.localizedDescription)
   }
 
   static func shape(_ error: DbError) -> String {

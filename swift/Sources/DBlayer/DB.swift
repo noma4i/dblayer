@@ -60,13 +60,13 @@ public enum DB {
 
   @MainActor public static func open(endpoint: URL? = nil, headers: @escaping @Sendable () -> [String: String] = { [:] }, encrypted: EncryptedConfig? = nil, credentials: CredentialStore? = nil, transport: Transport? = nil, modelsJSON: String, path: String? = nil, operations: [any GraphQLOperation.Type] = [], http: EncryptedHttp? = nil) async throws {
     let origin = encrypted.flatMap { URL(string: $0.origin) }
-    let ports = OpenPorts(transport: transport ?? (endpoint ?? origin).map { UrlSessionTransport(endpoint: $0, headers: headers) }, encrypted: encrypted, credentials: credentials, http: http ?? (encrypted == nil ? nil : UrlSessionEncryptedHttp(headers: headers)))
+    let ports = OpenPorts(transport: transport ?? (endpoint ?? origin).map { _ in UrlSessionTransport(headers: headers) }, encrypted: encrypted, credentials: credentials, http: http ?? (encrypted == nil ? nil : UrlSessionEncryptedHttp(headers: headers)), endpoint: (endpoint ?? origin)?.absoluteString)
     let database = try await opener.open(config: Config(path: path, dataVersion: nil), modelsJson: modelsJSON, options: OpenOptions(operations: definitions(operations)), ports: ports, observers: SystemObservers())
     slot = database
   }
 
-  @_spi(Testing) public static func openOnClock(path: String?, modelsJson: String, transport: Transport?, clock: TestClock, encrypted: EncryptedConfig? = nil, credentials: CredentialStore? = nil, http: EncryptedHttp? = nil) async throws -> Database {
-    try await opener.openWithClock(config: Config(path: path, dataVersion: nil), modelsJson: modelsJson, ports: OpenPorts(transport: transport, encrypted: encrypted, credentials: credentials, http: http), clock: clock)
+  @_spi(Testing) public static func openOnClock(path: String?, modelsJson: String, transport: Transport?, endpoint: String? = nil, clock: TestClock, encrypted: EncryptedConfig? = nil, credentials: CredentialStore? = nil, http: EncryptedHttp? = nil) async throws -> Database {
+    try await opener.openWithClock(config: Config(path: path, dataVersion: nil), modelsJson: modelsJson, ports: OpenPorts(transport: transport, encrypted: encrypted, credentials: credentials, http: http, endpoint: endpoint), clock: clock)
   }
 
   @_spi(Testing) public static func install(_ database: Database, transport: Transport?, operations: [any GraphQLOperation.Type]) async throws {

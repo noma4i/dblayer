@@ -12,5 +12,7 @@ class OkHttpEncryptedHttp(
         .retryOnConnectionFailure(false)
         .build()
 
-    override suspend fun send(request: HttpRequest): RawOutcome = client.run(request, headers())
+    override fun appHeaders(): Map<String, String> = headers()
+
+    override suspend fun send(request: HttpRequest): RawOutcome = client.run(request)
 }

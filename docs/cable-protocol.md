@@ -40,25 +40,30 @@ Every open creates one `PlatformSocket` object that the core holds. The core sen
 
 | Call | What the core expects |
 | ---- | --------------------- |
-| `endpoint()` | The GraphQL address of a database without an encrypted session |
-| `send(request)` | One HTTP exchange of `HttpRequest` (`url`, `method`, `headers`, `body`, `connectMs`, `requestMs`, `purpose`). Return `RawOutcome.response(status, etag, body)` for any HTTP answer, or `RawOutcome.failed(RawFailure)` when no answer came. Do not follow redirects, retry or classify |
-| `openCable(url, connectMs, events)` | Open the text socket at `url`, report to `events` and return `CableOutcome.open(connection)` after the handshake, or `CableOutcome.failed(RawFailure)` |
-| `put(url, headers, file, identity, progress)` | Send the `length` bytes of the file from `offset` with PUT and return `RawOutcome.response` with the status and the `ETag`. Call `progress.sent(bytes)` while it sends and stop when `progress.isCancelled()` is true |
+| `appHeaders()` | The headers of the app. The core reads them again for every request and cable, merges them with its own headers and the `User-Agent`, and passes the result in `HttpRequest.headers` |
+| `send(request)` | One HTTP exchange of `HttpRequest` (`url`, `method`, `headers`, `body`, `connectMs`, `requestMs`, `purpose`). Set the headers as given. Return `RawOutcome.response(status, etag, body)` for any HTTP answer, or `RawOutcome.failed(RawFailure)` when no answer came. Do not follow redirects, retry or classify |
+| `openCable(url, headers, connectMs, events)` | Open the text socket at `url` with `headers` as given, report to `events` and return `CableOutcome.open(connection)` after the handshake, or `CableOutcome.failed(failure, handshakeStatus)` |
+| `put(target, file, identity, progress)` | `target` is `PutTarget(url, headers, connectMs, requestMs)`. Send the `length` bytes of the file from `offset` with PUT, set the headers as given and return `RawOutcome.response` with the status and the `ETag`. Call `progress.sent(bytes)` while it sends and stop when `progress.isCancelled()` is true. `requestMs` is the idle bound of the upload, a file has no total bound |
 
-`RawFailure` has a `kind` the platform can observe, an optional platform `code` and a `message`. The core gives the failure its class.
+The GraphQL address of a database without an encrypted session is `endpoint` of the open call. The core validates the addresses it builds before it hands them to a transport.
 
-| `kind` | Use it when |
-| ------ | ----------- |
-| `cancelled` | The call was cancelled |
-| `tls` | The server certificate is not trusted |
-| `unreachable` | The host is unknown, refused the connection or the device is offline |
-| `timeout` | A timeout of the call expired |
-| `io` | Any other failure of the connection |
-| `protocol` | The peer broke the protocol. For a refused WebSocket upgrade `code` is the HTTP status |
+`RawFailure` has the raw facts of the failure: `domain` (the `NSError` domain, or the class name of the exception), an optional `code` and the `message`. The core derives the class from a table of known domains, codes and exception classes. An error the table does not know is a failed connection.
 
-`CableEvents` has `frame(text)`, `binary(bytes)`, `closed(code, reason)` and `failed(failure)`. Call them from one serial context per socket, in the order they happen. A binary frame ends the cable: the core closes the connection with code 1003. The core keeps at most 256 unread frames per connection and ends a connection that outruns its reader with code 1013.
+| `domain` and `code` | Class |
+| ------------------- | ----- |
+| `NSURLErrorDomain` -999, `Swift.CancellationError`, `java.util.concurrent.CancellationException`, `kotlinx.coroutines.JobCancellationException`, `java.io.IOException` with the text `Canceled` | The call was cancelled |
+| `NSURLErrorDomain` -1200 to -1206, `javax.net.ssl.SSLHandshakeException`, `javax.net.ssl.SSLPeerUnverifiedException` | The server certificate is not trusted |
+| `NSURLErrorDomain` -1003, -1004, -1006, -1009, -1018, -1020, `java.net.UnknownHostException`, `java.net.ConnectException`, `java.net.NoRouteToHostException` | The host is unreachable or the device is offline |
+| `NSURLErrorDomain` -1001, `java.net.SocketTimeoutException` | A timeout of the call expired |
+| anything else, `url` | Any other failure of the connection |
 
-`PlatformSocket.send(text)` returns false when the socket refuses the text. `PlatformSocket.close(code, reason)` ends the socket and is safe to call again.
+The core ends every HTTP exchange after `requestMs` on its clock and drops the platform call, a timeout that reports `dblayer.timeout`. The platform still applies its own bounds. URLSession has no connect timeout: Swift sets `requestMs` as the idle bound and ignores `connectMs`. Kotlin sets `connectMs` as the connect timeout and `requestMs` as the idle and total bound.
+
+`CableOutcome.failed` carries `handshakeStatus`, the HTTP status of a refused upgrade when the server answered. The core turns a status other than 101 into an `Http` error.
+
+`CableEvents` has `frame(text)`, `binary(bytes)` and `ended(closeCode, reason, failure)`. Call them from one serial context per socket, in the order they happen. Call `ended` once when the socket ends: `closeCode` and `reason` are the close frame of the peer when it sent one, `failure` is the raw error when the connection broke. A binary frame ends the cable: the core closes the connection with code 1003. The core keeps at most 256 unread frames per connection and ends a connection that outruns its reader with code 1013.
+
+`PlatformSocket.send(text)` returns false when the socket refuses the text. `PlatformSocket.close(code, reason)` sends a close frame with that code. The core calls `PlatformSocket.cancel()` 2 seconds later when the peer has not answered. Both are safe to call again.
 
 A transport that does not open a cable socket returns `CableOutcome.failed`, like `MockTransport`.
 

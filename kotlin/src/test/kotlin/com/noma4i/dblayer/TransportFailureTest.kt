@@ -1,34 +1,31 @@
 package com.noma4i.dblayer
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.IOException
 import java.net.ConnectException
-import java.net.NoRouteToHostException
 import java.net.SocketTimeoutException
-import java.net.UnknownHostException
 import javax.net.ssl.SSLHandshakeException
-import javax.net.ssl.SSLPeerUnverifiedException
 
 class TransportFailureTest {
-    private val table: List<Pair<Throwable, RawFailureKind>> = listOf(
-        kotlinx.coroutines.CancellationException("cancelled") to RawFailureKind.CANCELLED,
-        SSLHandshakeException("handshake") to RawFailureKind.TLS,
-        SSLPeerUnverifiedException("peer") to RawFailureKind.TLS,
-        UnknownHostException("host") to RawFailureKind.UNREACHABLE,
-        ConnectException("refused") to RawFailureKind.UNREACHABLE,
-        NoRouteToHostException("route") to RawFailureKind.UNREACHABLE,
-        SocketTimeoutException("timeout") to RawFailureKind.TIMEOUT,
-        IOException("unexpected end of stream") to RawFailureKind.IO,
-        IllegalStateException("closed") to RawFailureKind.IO,
+    private val table: List<Throwable> = listOf(
+        kotlinx.coroutines.CancellationException("cancelled"),
+        SSLHandshakeException("handshake"),
+        ConnectException("refused"),
+        SocketTimeoutException("timeout"),
+        IOException("unexpected end of stream"),
+        IllegalStateException("closed"),
     )
 
     @Test
-    fun aPlatformErrorMapsToTheKindItShows() {
-        for ((error, kind) in table) {
-            assertEquals(error.toString(), kind, rawFailure(error).kind)
-            assertEquals(error.message, rawFailure(error).message)
+    fun theWrapperReportsTheClassNameAndTheTextOfThePlatformError() {
+        for (error in table) {
+            val raw = rawFailure(error)
+            assertEquals(error.toString(), error.javaClass.name, raw.domain)
+            assertNull(raw.code)
+            assertEquals(error.message, raw.message)
         }
     }
 

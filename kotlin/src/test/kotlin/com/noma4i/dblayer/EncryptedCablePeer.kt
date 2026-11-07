@@ -50,6 +50,8 @@ class EncryptedCablePeer(private val server: SealedServer) : CablePeer, Scripted
         override fun close(code: UShort, reason: String) {
             peer.closed.trySend(token)
         }
+
+        override fun cancel() = Unit
     }
 
     override suspend fun scriptedCable(url: String, events: CableEvents): CableOutcome = openCable(url, events)
@@ -157,7 +159,7 @@ class EncryptedCablePeer(private val server: SealedServer) : CablePeer, Scripted
 
     /** The socket breaks. */
     fun drop(token: String) {
-        connections.getValue(token).events.closed(1006u, "dropped")
+        connections.getValue(token).events.ended(1006u, "dropped", null)
     }
 
     fun emitOld(token: String) {

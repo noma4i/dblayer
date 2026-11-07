@@ -74,9 +74,9 @@ struct GraphQLSocketTests {
     let origin = try await server.start()
     let session = URLSession(configuration: .ephemeral)
     defer { session.invalidateAndCancel() }
-    let transport = UrlSessionTransport(endpoint: origin, session: session)
+    let transport = UrlSessionTransport(session: session)
     let events = RecordingEvents()
-    guard case let .open(connection) = await transport.openCable(url: cableURL(origin), connectMs: 10_000, events: events) else {
+    guard case let .open(connection) = await transport.openCable(url: cableURL(origin), headers: [:], connectMs: 10_000, events: events) else {
       Issue.record("the cable did not open")
       return
     }
@@ -85,7 +85,8 @@ struct GraphQLSocketTests {
     #expect(await received.next("client frame", timeout: .seconds(2)) == "client frame")
     #expect(await events.next() == .frame("server frame"))
     if remoteClose {
-      #expect(await events.next() == .closed(4401, "UNAUTHENTICATED"))
+      guard case let .ended(code, reason, _)? = await events.next() else { Issue.record("the cable did not end"); return }
+      #expect((code, reason) == (4401, "UNAUTHENTICATED"))
     }
     connection.close(code: 1000, reason: "")
   }

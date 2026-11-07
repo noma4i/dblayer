@@ -84,7 +84,7 @@ struct EncryptedSessionTests {
     ScriptedURLProtocol.reset(scriptId: Self.scriptId)
     let http = UrlSessionEncryptedHttp(session: ScriptedURLProtocol.session(scriptId: Self.scriptId))
 
-    #expect(failureKind(await http.send(request: probeRequest(Self.origin, path: "/api/logout", body: "x"))) != nil)
+    #expect(rawFailure(await http.send(request: probeRequest(Self.origin, path: "/api/logout", body: "x"))) != nil)
   }
 
   @Test

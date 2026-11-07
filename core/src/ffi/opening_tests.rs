@@ -63,7 +63,7 @@ async fn life_register_no_transport() {
 async fn life_register_closed() {
     use super::super::database_tests::Plain;
     let slot = OpenDatabase::new();
-    let database = slot.open(config(), "[]".into(), options(), crate::ffi::OpenPorts { transport: Some(Arc::new(Plain)), ..Default::default() }, None).await.unwrap();
+    let database = slot.open(config(), "[]".into(), options(), crate::ffi::OpenPorts { transport: Some(Arc::new(Plain)), endpoint: Some(crate::ffi::FAKE_ENDPOINT.into()), ..Default::default() }, None).await.unwrap();
     database.close_database().await.unwrap();
     let result = database.register_operations(r#"[{"name":"Query","document":"query Query { items }"}]"#.into()).await;
     assert!(matches!(result, Err(DbError::Closed { .. })));
@@ -73,7 +73,7 @@ async fn life_register_closed() {
 async fn life_register_invalid() {
     use super::super::database_tests::Plain;
     let slot = OpenDatabase::new();
-    let database = slot.open(config(), "[]".into(), options(), crate::ffi::OpenPorts { transport: Some(Arc::new(Plain)), ..Default::default() }, None).await.unwrap();
+    let database = slot.open(config(), "[]".into(), options(), crate::ffi::OpenPorts { transport: Some(Arc::new(Plain)), endpoint: Some(crate::ffi::FAKE_ENDPOINT.into()), ..Default::default() }, None).await.unwrap();
     for definitions in [
         r#"[{"document":"query Query { items }"}]"#,
         r#"[{"name":"Query"}]"#,
@@ -99,7 +99,7 @@ async fn life_register_bad_preload() {
         selection.preload = Some([(if bad_source { "category" } else { "unknown" }.to_string(), choice)].into());
         selection.preload_limit = Some(1);
         model.relations.push(selection);
-        let database = Database::open(config(), serde_json::to_string(&vec![model]).unwrap(), crate::ffi::OpenPorts { transport: Some(Arc::new(Plain)), ..Default::default() }).await.unwrap();
+        let database = Database::open(config(), serde_json::to_string(&vec![model]).unwrap(), crate::ffi::OpenPorts { transport: Some(Arc::new(Plain)), endpoint: Some(crate::ffi::FAKE_ENDPOINT.into()), ..Default::default() }).await.unwrap();
         let definitions = r#"[{"name":"Greeting","document":"query Greeting($name: String!) { greeting(name: $name) }"}]"#;
         assert!(matches!(database.register_operations(definitions.into()).await, Err(DbError::Invalid { .. })));
         database.set_online(true).unwrap();
@@ -128,7 +128,7 @@ async fn open_carries_the_upload_declaration_and_frees_the_slot_when_it_is_refus
     let slot = OpenDatabase::new();
     for (name, accepted) in [("Missing", false), ("CreateBlob", true)] {
         let options = OpenOptions { operations: vec![OperationDefinition { name: "CreateBlob".into(), document: "mutation CreateBlob { createBlob { url } }".into() }] };
-        let opened = slot.open(config(), clip_with_blob(name), options, crate::ffi::OpenPorts { transport: Some(Arc::new(Plain)), ..Default::default() }, None).await;
+        let opened = slot.open(config(), clip_with_blob(name), options, crate::ffi::OpenPorts { transport: Some(Arc::new(Plain)), endpoint: Some(crate::ffi::FAKE_ENDPOINT.into()), ..Default::default() }, None).await;
         match opened {
             Ok(_) => assert!(accepted, "{name} was opened"),
             Err(error) => assert!(!accepted && error.to_string().ends_with("invalid: upload operation Missing is not registered"), "{name}: {error}"),
@@ -141,7 +141,7 @@ async fn open_carries_the_upload_declaration_and_frees_the_slot_when_it_is_refus
 async fn inv_upload_22_uploads_with_empty_operations_explain_the_cause_and_the_fix() {
     use super::super::database_tests::Plain;
     let slot = OpenDatabase::new();
-    let opened = slot.open(config(), clip_with_blob("CreateBlob"), options(), crate::ffi::OpenPorts { transport: Some(Arc::new(Plain)), ..Default::default() }, None).await;
+    let opened = slot.open(config(), clip_with_blob("CreateBlob"), options(), crate::ffi::OpenPorts { transport: Some(Arc::new(Plain)), endpoint: Some(crate::ffi::FAKE_ENDPOINT.into()), ..Default::default() }, None).await;
     let error = match opened {
         Err(error) => error.to_string(),
         Ok(_) => panic!("uploads with empty operations were accepted"),
@@ -189,7 +189,7 @@ async fn life_prop_not_open_typed_for_census_report_and_admission() {
 async fn a_load_call_without_a_relation_is_invalid() {
     use super::super::database_tests::Plain;
     let slot = OpenDatabase::new();
-    let database = slot.open(config(), "[]".into(), options(), crate::ffi::OpenPorts { transport: Some(Arc::new(Plain)), ..Default::default() }, None).await.unwrap();
+    let database = slot.open(config(), "[]".into(), options(), crate::ffi::OpenPorts { transport: Some(Arc::new(Plain)), endpoint: Some(crate::ffi::FAKE_ENDPOINT.into()), ..Default::default() }, None).await.unwrap();
     let epoch = database.session_epoch();
     assert!(matches!(database.begin_load(epoch, "Item".into(), None, "{}".into()), Err(DbError::Invalid { detail }) if detail.contains("no relation")));
     assert!(matches!(database.refresh(epoch, "Item".into(), None, "{}".into()).await, Err(DbError::Invalid { .. })));

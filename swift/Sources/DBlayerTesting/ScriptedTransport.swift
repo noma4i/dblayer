@@ -33,20 +33,38 @@ public struct EncryptedReply: Sendable {
   }
 }
 
+/// The GraphQL address a database on a scripted transport opens with.
+public let scriptedEndpoint = "https://graphql.test/graphql"
+
+/// The kinds of failure a test scripts; each is the raw platform error the core classifies to that kind.
+public enum ScriptedFailure: Sendable { case cancelled, tls, unreachable, timeout, io }
+
+extension RawFailure {
+  public static func scripted(_ kind: ScriptedFailure, _ message: String) -> RawFailure {
+    switch kind {
+    case .cancelled: RawFailure(domain: NSURLErrorDomain, code: Int64(URLError.cancelled.rawValue), message: message)
+    case .tls: RawFailure(domain: NSURLErrorDomain, code: Int64(URLError.serverCertificateUntrusted.rawValue), message: message)
+    case .unreachable: RawFailure(domain: NSURLErrorDomain, code: Int64(URLError.notConnectedToInternet.rawValue), message: message)
+    case .timeout: RawFailure(domain: NSURLErrorDomain, code: Int64(URLError.timedOut.rawValue), message: message)
+    case .io: RawFailure(domain: NSURLErrorDomain, code: Int64(URLError.networkConnectionLost.rawValue), message: message)
+    }
+  }
+}
+
 extension RawOutcome {
   /// A scripted error as the raw outcome the platform executor would report.
   public static func scripted(_ error: Error) -> RawOutcome {
-    guard let error = error as? DbError else { return .failed(failure: RawFailure(kind: .io, code: nil, message: "\(error)")) }
+    guard let error = error as? DbError else { return .failed(failure: RawFailure.scripted(.io, "\(error)")) }
     switch error {
     case let .Http(status, detail): return .response(status: status, etag: nil, body: detail)
-    case let .Network(detail), let .Offline(detail): return .failed(failure: RawFailure(kind: .unreachable, code: nil, message: detail))
-    case let .Interrupted(detail): return .failed(failure: RawFailure(kind: .cancelled, code: nil, message: detail))
-    case .Security(.tlsTrust, let detail): return .failed(failure: RawFailure(kind: .tls, code: nil, message: detail))
+    case let .Network(detail), let .Offline(detail): return .failed(failure: RawFailure.scripted(.unreachable, detail))
+    case let .Interrupted(detail): return .failed(failure: RawFailure.scripted(.cancelled, detail))
+    case .Security(.tlsTrust, let detail): return .failed(failure: RawFailure.scripted(.tls, detail))
     case let .Graphql(messages, _):
       let errors = messages.map { ["message": $0, "extensions": ["code": $0]] as [String: Any] }
       let body = (try? JSONSerialization.data(withJSONObject: ["errors": errors])).map { String(decoding: $0, as: UTF8.self) } ?? "{}"
       return .response(status: 200, etag: nil, body: body)
-    default: return .failed(failure: RawFailure(kind: .io, code: nil, message: "\(error)"))
+    default: return .failed(failure: RawFailure.scripted(.io, "\(error)"))
     }
   }
 }
@@ -63,9 +81,9 @@ extension ScriptedTransport {
   public func query(request: TransportRequest) async throws -> String { throw DbError.Invalid(detail: "unexpected plain query") }
   public func mutate(request: TransportRequest) async throws -> String { throw DbError.Invalid(detail: "unexpected plain mutation") }
   public func scriptedPut(url: String, headers: [String: String], file: PutFile, identity: TransferIdentity, progress: ByteProgress) async throws -> PutReply { throw DbError.Invalid(detail: "unexpected upload") }
-  public func scriptedCable(url: String, events: CableEvents) async -> CableOutcome { .failed(failure: RawFailure(kind: .unreachable, code: nil, message: "no cable")) }
+  public func scriptedCable(url: String, events: CableEvents) async -> CableOutcome { .failed(failure: .scripted(.unreachable, "no cable"), handshakeStatus: nil) }
 
-  public func endpoint() -> String { "https://graphql.test/graphql" }
+  public func appHeaders() -> [String: String] { [:] }
 
   public func send(request: HttpRequest) async -> RawOutcome { await sendGraphql(request: request) }
 
@@ -79,11 +97,11 @@ extension ScriptedTransport {
     }
   }
 
-  public func openCable(url: String, connectMs: UInt64, events: CableEvents) async -> CableOutcome { await scriptedCable(url: url, events: events) }
+  public func openCable(url: String, headers: [String: String], connectMs: UInt64, events: CableEvents) async -> CableOutcome { await scriptedCable(url: url, events: events) }
 
-  public func put(url: String, headers: [String: String], file: PutFile, identity: TransferIdentity, progress: ByteProgress) async -> RawOutcome {
+  public func put(target: PutTarget, file: PutFile, identity: TransferIdentity, progress: ByteProgress) async -> RawOutcome {
     do {
-      let reply = try await scriptedPut(url: url, headers: headers, file: file, identity: identity, progress: progress)
+      let reply = try await scriptedPut(url: target.url, headers: target.headers, file: file, identity: identity, progress: progress)
       return .response(status: reply.status, etag: reply.etag, body: "")
     } catch {
       return .scripted(error)
@@ -97,6 +115,8 @@ public protocol ScriptedHttp: EncryptedHttp {
 }
 
 extension ScriptedHttp {
+  public func appHeaders() -> [String: String] { [:] }
+
   public func send(request: HttpRequest) async -> RawOutcome { await sendEncrypted(request: request) }
 
   public func sendEncrypted(request: HttpRequest) async -> RawOutcome {

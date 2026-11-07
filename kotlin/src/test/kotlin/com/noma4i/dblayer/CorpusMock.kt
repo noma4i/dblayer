@@ -9,6 +9,8 @@ import kotlinx.serialization.json.JsonPrimitive
 class CorpusMock : ScriptedTransport, ScriptedHttp {
     private class Seen(val id: String, val kind: String, val purpose: String, var announced: Boolean = false)
 
+    override fun appHeaders(): Map<String, String> = emptyMap()
+
     private val seen = ArrayList<Seen>()
     private var next = 0
     private val waiting = ConcurrentHashMap<String, CompletableDeferred<String>>()
