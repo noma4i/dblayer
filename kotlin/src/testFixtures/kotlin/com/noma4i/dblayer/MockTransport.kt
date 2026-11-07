@@ -126,13 +126,13 @@ class MockTransport(private val unanswered: Unanswered = Unanswered.Strict) : Sc
         return PutReply(200u, null)
     }
 
-    /** The reply the server gave a request whose answer the library cancelled before it arrived. The request carries no request id on this side of the bridge, so the identity of a repeat is `(operationName, variablesJson)`: the repeat gets the same reply, any other request takes the next queued one. */
-    private val settled = ConcurrentHashMap<Pair<String, String>, String>()
+    /** The reply the server gave a request whose answer the library cancelled before it arrived. A repeat carries the same author and `requestId` and gets the same reply, any other request takes the next queued one. */
+    private val settled = ConcurrentHashMap<Pair<Author, ULong>, String>()
 
     private suspend fun answer(request: TransportRequest): String {
         recorded.add(request)
         TestPulse.pulse()
-        val identity = request.operationName to request.variablesJson
+        val identity = request.author to request.requestId
         settled[identity]?.let { return it }
         val reply = synchronized(replies) { replies[request.operationName]?.pollFirst() } ?: refuse(request)
         try {

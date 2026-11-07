@@ -87,7 +87,7 @@ impl WindowIo {
                 () = token.cancelled() => None,
                 outcome = async {
                     if let Err(refused) = admit(epoch) { return TransportOutcome::Error(RequestError { message: refused.0, class: ErrorClass::Permanent, source: None }); }
-                    ask(transport.as_deref(), (&gate, epoch), codec.as_ref(), (&key, page, kind), cursor.as_deref()).await
+                    ask(transport.as_deref(), (&gate, epoch), codec.as_ref(), (&key, page, kind), (cursor.as_deref(), crate::transport::WireIds::new(crate::transport::Author::Window, request, u64::from(attempt)))).await
                 } => Some(outcome),
             };
             let delivered = outcome.filter(|_| !token.is_cancelled());
@@ -135,9 +135,9 @@ impl EffectRunner<Windows> for WindowIo {
     }
 }
 
-async fn ask(transport: Option<&dyn Upstream>, (gate, epoch): (&crate::runtime::EpochGate, Epoch), codec: &dyn WindowCodec, (key, page, kind): (&WindowKey, u32, RequestKind), cursor: Option<&str>) -> TransportOutcome<AnswerPage> {
+async fn ask(transport: Option<&dyn Upstream>, (gate, epoch): (&crate::runtime::EpochGate, Epoch), codec: &dyn WindowCodec, (key, page, kind): (&WindowKey, u32, RequestKind), (cursor, wire): (Option<&str>, crate::transport::WireIds)) -> TransportOutcome<AnswerPage> {
     let request = match codec.request(key, page, cursor, kind) {
-        Ok(request) => request,
+        Ok(request) => request.by(wire),
         Err(message) => return TransportOutcome::Error(RequestError { message, class: ErrorClass::Permanent, source: None }),
     };
     let Some(transport) = transport else {

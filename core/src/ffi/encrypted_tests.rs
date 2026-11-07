@@ -33,7 +33,7 @@ impl FakeHttp for SecurityHttp {
         if self.refused.load(std::sync::atomic::Ordering::SeqCst) {
             return Err(DbError::Security { code: crate::transport::SecurityCode::TlsTrust, detail: "platform trust refused".into() });
         }
-        let reply = self.server.post(&path, body, purpose).await.map_err(failure)?;
+        let reply = self.server.post(&path, body, purpose, crate::transport::WireIds::bootstrap()).await.map_err(failure)?;
         Ok(EncryptedReply { status: reply.status, body: reply.body })
     }
 }
@@ -71,7 +71,7 @@ pub(super) fn failure(error: TransportError) -> DbError {
 #[async_trait]
 impl FakeHttp for ThroughServer {
     async fn post(&self, path: String, body: String, purpose: crate::transport::NetworkPurpose) -> Result<EncryptedReply, DbError> {
-        let reply = self.0.post(&path, body, purpose).await.map_err(failure)?;
+        let reply = self.0.post(&path, body, purpose, crate::transport::WireIds::bootstrap()).await.map_err(failure)?;
         Ok(EncryptedReply { status: reply.status, body: reply.body })
     }
 }

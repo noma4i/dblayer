@@ -23,6 +23,7 @@ pub struct RecordedCall {
     pub operation_name: String,
     pub variables: Value,
     pub purpose: super::NetworkPurpose,
+    pub wire: Option<super::WireIds>,
 }
 
 #[derive(Debug, Clone)]
@@ -197,6 +198,7 @@ impl MockTransport {
             operation_name: request.operation_name.clone(),
             variables: request.variables.clone(),
             purpose: request.purpose,
+            wire: request.wire,
         });
         self.wake.notify_waiters();
     }

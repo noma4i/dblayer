@@ -79,7 +79,7 @@ fn a_graphql_answer_is_its_body_on_2xx_and_http_otherwise() {
 #[test]
 fn the_graphql_call_carries_the_body_the_json_header_and_the_core_timeouts() {
     let request = GraphQLRequest::new("query Q { a }", "Q", json!({"id": 1}));
-    let call = graphql_call("https://api.test/graphql", &request, HashMap::new());
+    let call = graphql_call("https://api.test/graphql", &request, crate::transport::WireIds::new(crate::transport::Author::Window, 7, 2), HashMap::new());
     assert_eq!((call.url.as_str(), call.method.as_str()), ("https://api.test/graphql", "POST"));
     assert_eq!(serde_json::from_str::<serde_json::Value>(&call.body).unwrap(), json!({"query": "query Q { a }", "operationName": "Q", "variables": {"id": 1}}));
     assert_eq!(call.headers.get("Content-Type").map(String::as_str), Some("application/json"));
@@ -88,12 +88,12 @@ fn the_graphql_call_carries_the_body_the_json_header_and_the_core_timeouts() {
 
 #[test]
 fn the_encrypted_call_joins_origin_and_path_and_refuses_a_path_that_leaves_the_origin() {
-    let call = encrypted_call("https://api.test/", "/api/session", "jwe".into(), NetworkPurpose::Transfer, HashMap::new()).unwrap();
+    let call = encrypted_call("https://api.test/", "/api/session", "jwe".into(), (NetworkPurpose::Transfer, crate::transport::WireIds::new(crate::transport::Author::Window, 7, 2)), HashMap::new()).unwrap();
     assert_eq!((call.url.as_str(), call.body.as_str(), call.purpose), ("https://api.test/api/session", "jwe", NetworkPurpose::Transfer));
     assert_eq!(call.headers.get("Content-Type").map(String::as_str), Some("application/jose"));
     assert_eq!(call.headers.get("Accept").map(String::as_str), Some(""));
     for path in ["//evil.test/x", "/a?x=1", "/a#f", "api/session", "/a/../b", "/a b"] {
-        assert!(encrypted_call("https://api.test", path, String::new(), NetworkPurpose::Standard, HashMap::new()).is_err(), "{path}");
+        assert!(encrypted_call("https://api.test", path, String::new(), (NetworkPurpose::Standard, crate::transport::WireIds::bootstrap()), HashMap::new()).is_err(), "{path}");
     }
 }
 

@@ -118,7 +118,7 @@ async fn a_request_over_256_kib_is_refused_without_being_sent() {
     let server = FakeServer::new(clock.clone());
     let exchange = Exchange::new(&config(), server.clone(), clock).unwrap();
 
-    let outcome = exchange.send_once(SendOnce { credential: Some("credential"), request_id: "request", response_key: "key", sequence: None, path: "/api/graphql", body: &json!({ "query": "q".repeat(300 * 1024) }), purpose: NetworkPurpose::Standard }).await;
+    let outcome = exchange.send_once(SendOnce { credential: Some("credential"), request_id: "request", response_key: "key", sequence: None, path: "/api/graphql", body: &json!({ "query": "q".repeat(300 * 1024) }), purpose: NetworkPurpose::Standard, wire: crate::transport::WireIds::bootstrap() }).await;
 
     assert!(matches!(outcome, Err(TransportError::RequestTooLarge { size, limit }) if size > limit && limit == 256 * 1024));
     assert!(server.seen().is_empty());

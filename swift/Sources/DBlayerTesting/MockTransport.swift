@@ -97,11 +97,11 @@ public final class MockTransport: ScriptedTransport, @unchecked Sendable {
     return PutReply(status: 200, etag: nil)
   }
 
-  /// The reply the server gave a request whose answer the library cancelled before it arrived. The request carries no request id on this side of the bridge, so the identity of a repeat is `(operationName, variablesJson)`: the repeat gets the same reply, any other request takes the next queued one.
+  /// The reply the server gave a request whose answer the library cancelled before it arrived. A repeat carries the same author and `requestId` and gets the same reply, any other request takes the next queued one.
   private var settled: [String: String] = [:]
 
   private func answer(_ request: TransportRequest) async throws -> String {
-    let identity = request.operationName + "\u{0}" + request.variablesJson
+    let identity = "\(request.author)#\(request.requestId)"
     let reply = lock.withLock { () -> Reply? in
       recorded.append(request)
       if let known = settled[identity] { return Reply(body: known, failure: nil) }

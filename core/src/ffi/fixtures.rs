@@ -32,6 +32,7 @@ pub(crate) trait FakeTransport: Send + Sync {
 #[async_trait]
 pub(crate) trait FakeHttp: Send + Sync {
     async fn post(&self, path: String, body: String, purpose: core::NetworkPurpose) -> Result<EncryptedReply, DbError>;
+    fn seen(&self, _: &core::HttpRequest) {}
 }
 
 fn failed(error: DbError) -> RawOutcome {
@@ -94,6 +95,7 @@ impl<T: FakeHttp> EncryptedHttp for T {
     fn app_headers(&self) -> HashMap<String, String> { HashMap::new() }
 
     async fn send(&self, request: core::HttpRequest) -> RawOutcome {
+        self.seen(&request);
         match self.post(path_of(&request.url), request.body, request.purpose).await {
             Ok(reply) => RawOutcome::response(reply.status, reply.body),
             Err(error) => failed(error),

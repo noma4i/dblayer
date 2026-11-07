@@ -77,7 +77,7 @@ pub(crate) async fn fetch(config: &EncryptedConfig, release: &AppRelease<'_>, ht
         let digest = request_digest(&plain);
         let token = seal_plain(&key, request_text(&plain).as_bytes()).map_err(authentication)?;
         crate::lock::assert_no_library_lock("HttpExchange::post");
-        let result = match http.post(&config.endpoints.bootstrap, token, crate::transport::NetworkPurpose::Standard).await {
+        let result = match http.post(&config.endpoints.bootstrap, token, crate::transport::NetworkPurpose::Standard, crate::transport::WireIds::bootstrap()).await {
             Ok(reply) if reply.status == 200 => accept(&reply.body, &response_key, &request_id, &digest),
             Ok(reply) => Err(TransportError::Http { status: reply.status, body: String::new() }),
             Err(error) => Err(error),

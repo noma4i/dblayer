@@ -7,18 +7,24 @@ public struct TransportRequest: Sendable, Equatable {
   public let operationName: String
   public let variablesJson: String
   public let purpose: NetworkPurpose
+  public let author: Author
+  public let requestId: UInt64
+  public let attempt: UInt32
 
-  public init(document: String, operationName: String, variablesJson: String, purpose: NetworkPurpose) {
+  public init(document: String, operationName: String, variablesJson: String, purpose: NetworkPurpose, author: Author = .session, requestId: UInt64 = 0, attempt: UInt32 = 0) {
     self.document = document
     self.operationName = operationName
     self.variablesJson = variablesJson
     self.purpose = purpose
+    self.author = author
+    self.requestId = requestId
+    self.attempt = attempt
   }
 
   init(_ request: HttpRequest) {
     let body = try! JSONSerialization.jsonObject(with: Data(request.body.utf8)) as! [String: Any]
     let variables = body["variables"].map { try! JSONSerialization.data(withJSONObject: $0, options: [.sortedKeys, .fragmentsAllowed]) }
-    self.init(document: body["query"] as? String ?? "", operationName: body["operationName"] as? String ?? "", variablesJson: variables.map { String(decoding: $0, as: UTF8.self) } ?? "{}", purpose: request.purpose)
+    self.init(document: body["query"] as? String ?? "", operationName: body["operationName"] as? String ?? "", variablesJson: variables.map { String(decoding: $0, as: UTF8.self) } ?? "{}", purpose: request.purpose, author: request.author, requestId: request.requestId, attempt: request.attempt)
   }
 }
 
@@ -109,6 +115,11 @@ extension ScriptedTransport {
   }
 }
 
+/// The request id and attempt of the `HttpRequest` a `ScriptedHttp.post` answers, for the code that builds a `TransportRequest` behind it.
+public enum ScriptedWire {
+  @TaskLocal public static var ids: (author: Author, requestId: UInt64, attempt: UInt32) = (.session, 0, 0)
+}
+
 /// An encrypted HTTP exchange a test scripts by path.
 public protocol ScriptedHttp: EncryptedHttp {
   func post(path: String, body: String, purpose: NetworkPurpose) async throws -> EncryptedReply
@@ -122,7 +133,7 @@ extension ScriptedHttp {
   public func sendEncrypted(request: HttpRequest) async -> RawOutcome {
     let path = URL(string: request.url).map { $0.path } ?? ""
     do {
-      let reply = try await post(path: path, body: request.body, purpose: request.purpose)
+      let reply = try await ScriptedWire.$ids.withValue((request.author, request.requestId, request.attempt)) { try await post(path: path, body: request.body, purpose: request.purpose) }
       return .response(status: reply.status, etag: nil, body: reply.body)
     } catch {
       return .scripted(error)

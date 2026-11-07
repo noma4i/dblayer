@@ -28,7 +28,7 @@ fn failure(error: TransportError) -> DbError {
 #[async_trait]
 impl FakeHttp for ThroughServer {
     async fn post(&self, path: String, body: String, purpose: crate::transport::NetworkPurpose) -> Result<EncryptedReply, DbError> {
-        let reply = self.0.post(&path, body, purpose).await.map_err(failure)?;
+        let reply = self.0.post(&path, body, purpose, crate::transport::WireIds::bootstrap()).await.map_err(failure)?;
         Ok(EncryptedReply { status: reply.status, body: reply.body })
     }
 }

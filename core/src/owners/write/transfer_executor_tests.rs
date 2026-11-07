@@ -47,19 +47,19 @@ impl StepCodec for Codec {
             let request = PutRequest { url: "https://storage/part".into(), headers: Vec::new(), file: PutFile { path: source.path.clone(), offset: 0, length: 1 }, identity: TransferIdentity { operation_id: 0, item_id: "k".into(), step: TransferStep::Put }, cancel: CancelToken::new(), sent: Arc::new(|_| {}) };
             link.put(request).await?;
         } else {
-            link.mutate(GraphQLRequest::new("mutation Step", "Step", json!({ "part": part }))).await?;
+            link.mutate(GraphQLRequest::new("mutation Step", "Step", json!({ "part": part })), &step_key()).await?;
         }
         Ok(StepDone { upload_id: (part == Some(1)).then(|| "u1".to_string()), etag: None })
     }
 
     async fn complete(&self, link: &Link, _key: &str, upload_id: Option<&str>, _parts: &[(u32, Option<String>)]) -> Result<Option<String>, TransportError> {
         lock(&self.asked).push(("Complete".into(), None, upload_id.map(str::to_string), String::new()));
-        link.mutate(GraphQLRequest::new("mutation Complete", "Complete", json!({}))).await.map(|_| Some("signed".to_string()))
+        link.mutate(GraphQLRequest::new("mutation Complete", "Complete", json!({})), &step_key()).await.map(|_| Some("signed".to_string()))
     }
 
     async fn discard_upload(&self, link: &Link, _key: &str, upload_id: Option<&str>) -> Result<(), TransportError> {
         lock(&self.asked).push(("Abort".into(), None, upload_id.map(str::to_string), String::new()));
-        link.mutate(GraphQLRequest::new("mutation Abort", "Abort", json!({}))).await.map(|_| ())
+        link.mutate(GraphQLRequest::new("mutation Abort", "Abort", json!({})), &step_key()).await.map(|_| ())
     }
 }
 
@@ -87,7 +87,7 @@ fn world() -> World {
     let (answers, shown) = (Arc::new(Mutex::new(Vec::new())), Arc::new(Mutex::new(Vec::new())));
     let (to_answers, to_shown) = (answers.clone(), shown.clone());
     let executor = TransferExecutor::new(
-        Wire { transport: Arc::new(stub.clone()), gate: open_gate(EPOCH), tasks: Arc::new(spawn.clone()) },
+        Wire { transport: Arc::new(stub.clone()), gate: open_gate(EPOCH), tasks: Arc::new(spawn.clone()), ids: super::wire::StepIds::held() },
         codec.clone(),
         files.clone(),
         TransferSinks {
@@ -329,3 +329,5 @@ fn xfer_prop_table_file_off_async() {
     w.settle();
     assert!(w.files.read(&copy).is_err(), "the pending job removed the copy");
 }
+
+fn step_key() -> crate::transport::RequestOwner { crate::transport::RequestOwner::Detached }

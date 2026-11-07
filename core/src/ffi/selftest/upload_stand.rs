@@ -71,6 +71,7 @@ pub(super) struct Script {
     queues: Mutex<HashMap<String, VecDeque<Answer>>>,
     calls: Mutex<Vec<Call>>,
     settled: Mutex<HashMap<Pair, Answer>>,
+    wires: Mutex<Vec<(crate::transport::Author, u64, u32)>>,
 }
 
 type Pair = (String, String, Option<i64>);
@@ -100,6 +101,7 @@ impl Script {
         if let Some(known) = settled_of(&answer) { self.settled.lock().unwrap().insert(pair, known); }
         Some(answer)
     }
+    pub(super) fn wires(&self) -> Vec<(crate::transport::Author, u64, u32)> { self.wires.lock().unwrap().clone() }
     pub(super) fn names(&self) -> Vec<String> { self.calls.lock().unwrap().iter().map(|call| call.operation.clone()).collect() }
     pub(super) fn count(&self, operation: &str) -> usize { self.calls.lock().unwrap().iter().filter(|call| call.operation == operation).count() }
     pub(super) fn pairs(&self, operation: &str, filename: &str) -> Vec<(String, Option<i64>)> { self.calls.lock().unwrap().iter().filter(|call| call.operation == operation && call.variables["filename"] == filename).map(|call| call.pair.clone()).collect() }
@@ -114,6 +116,8 @@ struct ScriptedHttp {
 
 #[async_trait]
 impl FakeHttp for ScriptedHttp {
+    fn seen(&self, request: &crate::transport::HttpRequest) { self.script.wires.lock().unwrap().push((request.author, request.request_id, request.attempt)) }
+
     async fn post(&self, path: String, body: String, purpose: NetworkPurpose) -> Result<EncryptedReply, DbError> {
         let request = decrypt_request(&body).unwrap();
         let Some(operation) = request["body"]["operationName"].as_str().map(str::to_string) else { return self.session.post(path, body, purpose).await };

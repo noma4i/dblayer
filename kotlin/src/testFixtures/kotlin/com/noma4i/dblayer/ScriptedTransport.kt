@@ -11,7 +11,7 @@ import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.add
 
 /** A GraphQL call of the library as a test reads it: the operation text, its name and its variables. */
-data class TransportRequest(val document: String, val operationName: String, val variablesJson: String, val purpose: NetworkPurpose)
+data class TransportRequest(val document: String, val operationName: String, val variablesJson: String, val purpose: NetworkPurpose, val author: Author = Author.SESSION, val requestId: ULong = 0uL, val attempt: UInt = 0u)
 
 /** The answer of an encrypted POST as a test scripts it. */
 class EncryptedReply(val status: UShort, val body: String)
@@ -50,7 +50,7 @@ private fun graphqlCall(request: HttpRequest): TransportRequest {
     val body: JsonObject = kotlinx.serialization.json.Json.parseToJsonElement(request.body).jsonObject
     fun text(key: String) = (body[key] as? JsonPrimitive)?.contentOrNull ?: ""
     val variables: JsonElement = body["variables"] ?: JsonObject(emptyMap())
-    return TransportRequest(text("query"), text("operationName"), variables.toString(), request.purpose)
+    return TransportRequest(text("query"), text("operationName"), variables.toString(), request.purpose, request.author, request.requestId, request.attempt)
 }
 
 /** A transport a test scripts with values and errors; the defaults turn them into the raw outcomes of the platform port. */
@@ -87,6 +87,11 @@ interface ScriptedTransport : Transport {
     }
 }
 
+/** The request id and attempt of the `HttpRequest` a `ScriptedHttp.post` answers, for the code that builds a `TransportRequest` behind it. */
+class ScriptedWire(val author: Author, val requestId: ULong, val attempt: UInt) : kotlin.coroutines.AbstractCoroutineContextElement(Key) {
+    companion object Key : kotlin.coroutines.CoroutineContext.Key<ScriptedWire>
+}
+
 /** An encrypted HTTP exchange a test scripts by path. */
 interface ScriptedHttp : EncryptedHttp {
     override fun appHeaders(): Map<String, String> = emptyMap()
@@ -96,7 +101,7 @@ interface ScriptedHttp : EncryptedHttp {
     override suspend fun send(request: HttpRequest): RawOutcome = sendEncrypted(request)
 
     suspend fun sendEncrypted(request: HttpRequest): RawOutcome = try {
-        val reply = post(java.net.URI(request.url).path, request.body, request.purpose)
+        val reply = kotlinx.coroutines.withContext(ScriptedWire(request.author, request.requestId, request.attempt)) { post(java.net.URI(request.url).path, request.body, request.purpose) }
         RawOutcome.Response(reply.status, null, reply.body)
     } catch (error: DbException) {
         scriptedOutcome(error)

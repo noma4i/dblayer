@@ -92,7 +92,7 @@ impl CallsRunner {
             #[cfg(test)]
             let _flight = flight;
             let variables: Value = serde_json::from_str(&variables).unwrap_or(Value::Null);
-            let request = GraphQLRequest::new(document.clone(), operation, variables);
+            let request = GraphQLRequest::new(document.clone(), operation, variables).by(crate::transport::WireIds::new(crate::transport::Author::Calls, request_id, crate::transport::WireIds::next_attempt()));
             crate::lock::assert_no_library_lock("Transport::request");
             let result = match kind {
                 CallKind::Mutate => crate::runtime::send_in_epoch(&gate, Some(epoch), || transport.mutate(request)).await,

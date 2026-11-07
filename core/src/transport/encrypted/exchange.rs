@@ -137,6 +137,7 @@ pub(crate) struct SendOnce<'a> {
     pub path: &'a str,
     pub body: &'a Value,
     pub purpose: crate::transport::NetworkPurpose,
+    pub wire: crate::transport::WireIds,
 }
 
 pub(crate) fn temporary_error(body: &Value) -> Option<TransportError> {
@@ -166,11 +167,11 @@ impl Exchange {
 
     /// One request of the executor of Session: seals `body` for `path` and posts it once. No retry and no state: the owner Session keeps both.
     pub(crate) async fn send_once(&self, request: SendOnce<'_>) -> Result<Answer, TransportError> {
-        let SendOnce { credential, request_id, response_key, sequence, path, body, purpose } = request;
+        let SendOnce { credential, request_id, response_key, sequence, path, body, purpose, wire } = request;
         checked_path(path)?;
         let session = credential.map(|credential| RequestSession { credential: credential.into(), sequence });
         let token = self.request_token(session, request_id, response_key, path, body)?;
-        self.post(path, token, request_id, response_key, purpose).await
+        self.post(path, token, request_id, response_key, (purpose, wire)).await
     }
 
     /// The declared session operations and `logout`, as the owner Session takes them.
@@ -200,9 +201,9 @@ impl Exchange {
     }
 
 
-    async fn post(&self, path: &str, token: String, request_id: &str, response_key: &str, purpose: crate::transport::NetworkPurpose) -> Result<Answer, TransportError> {
+    async fn post(&self, path: &str, token: String, request_id: &str, response_key: &str, (purpose, wire): (crate::transport::NetworkPurpose, crate::transport::WireIds)) -> Result<Answer, TransportError> {
         crate::lock::assert_no_library_lock("HttpExchange::post");
-        let reply = self.http.post(path, token, purpose).await?;
+        let reply = self.http.post(path, token, purpose, wire).await?;
         if reply.status != 200 {
             return Err(TransportError::Http { status: reply.status, body: reply.body });
         }

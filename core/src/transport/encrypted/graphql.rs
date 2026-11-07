@@ -39,18 +39,18 @@ impl EncryptedTransport {
         Arc::new(crate::transport::EncryptedLines::new(self.rest.clone(), self.exchange.config().clone(), Arc::new(move || credential.read(&store))))
     }
 
-    async fn read(&self, path: &str, body: Value) -> Result<Answer, TransportError> {
+    async fn read(&self, path: &str, body: Value, wire: crate::transport::WireIds) -> Result<Answer, TransportError> {
         let credential = self.credential.read(&self.store)?;
-        let mut answer = self.exchange_once(&credential, path, &body).await?;
+        let mut answer = self.exchange_once(&credential, path, &body, wire).await?;
         if answer.body.get("error").and_then(Value::as_str) == Some("REPLAYED_REQUEST") {
-            answer = self.exchange_once(&credential, path, &body).await?;
+            answer = self.exchange_once(&credential, path, &body, crate::transport::WireIds::new(wire.author, wire.request_id, crate::transport::WireIds::next_attempt())).await?;
         }
         Ok(answer)
     }
 
-    async fn exchange_once(&self, credential: &str, path: &str, body: &Value) -> Result<Answer, TransportError> {
+    async fn exchange_once(&self, credential: &str, path: &str, body: &Value, wire: crate::transport::WireIds) -> Result<Answer, TransportError> {
         let (request_id, response_key) = (uuid::Uuid::new_v4().to_string(), random_token());
-        let answer = self.exchange.send_once(super::SendOnce { credential: Some(credential), request_id: &request_id, response_key: &response_key, sequence: None, path, body, purpose: crate::transport::NetworkPurpose::Standard }).await?;
+        let answer = self.exchange.send_once(super::SendOnce { credential: Some(credential), request_id: &request_id, response_key: &response_key, sequence: None, path, body, purpose: crate::transport::NetworkPurpose::Standard, wire }).await?;
         match temporary_error(&answer.body) { Some(error) => Err(error), None => Ok(answer) }
     }
 
@@ -113,11 +113,12 @@ impl Upstream for EncryptedTransport {
 
     async fn query(&self, request: GraphQLRequest) -> Result<Response, TransportError> {
         let path = &self.exchange.config().endpoints.graphql;
-        let response = response_of(self.read(path, graphql_body(&request, false)).await?)?;
+        let wire = request.authored()?;
+        let response = response_of(self.read(path, graphql_body(&request, false), wire).await?)?;
         if !missing_from_registry(&response) {
             return Ok(response);
         }
-        response_of(self.read(path, graphql_body(&request, true)).await?)
+        response_of(self.read(path, graphql_body(&request, true), crate::transport::WireIds::new(wire.author, wire.request_id, crate::transport::WireIds::next_attempt())).await?)
     }
 
     async fn mutate(&self, request: GraphQLRequest) -> Result<Response, TransportError> {

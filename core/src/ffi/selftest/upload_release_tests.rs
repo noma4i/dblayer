@@ -29,3 +29,25 @@ async fn a_reopen_with_the_saved_step_of_an_exhausted_upload_does_not_hold_the_q
     assert_eq!((stand.script.count("CreateBlob"), stand.puts.seen.lock().unwrap().len()), (2, 0), "Session replays the saved pair once and the exhausted upload sends nothing else");
     reopened.close_now();
 }
+
+/// sess_request_identity_on_wire: a request in flight when the network drops goes out again with the same request id and a new attempt.
+#[tokio::test(flavor = "multi_thread")]
+async fn sess_request_identity_on_wire() {
+    let stand = Stand::new();
+    let database = stand.open(None, &[CREATE_MOMENT]).await;
+    let held = stand.script.hold("CreateMoment", ANSWER);
+    let epoch = database.session_epoch();
+    let sent = bound(database.send(plain("Moment", r#"{"text":"A"}"#, epoch))).await.unwrap();
+    held.entered().await;
+    database.set_online(false).unwrap();
+    held.dropped().await;
+    database.set_online(true).unwrap();
+
+    assert!(matches!(bound(database.outcome(sent)).await.unwrap(), WireOperationOutcome::Confirmed { .. }));
+    let wires = stand.script.wires();
+    let [.., (first_author, first_request, first_attempt), (second_author, second_request, second_attempt)] = wires[..] else { panic!("{wires:?}") };
+    assert_eq!((first_author, second_author), (crate::transport::Author::Outbox, crate::transport::Author::Outbox), "{wires:?}");
+    assert_eq!(first_request, second_request, "the same request goes again: {wires:?}");
+    assert!(second_attempt > first_attempt, "the repeat is a new attempt: {wires:?}");
+    database.close_now();
+}

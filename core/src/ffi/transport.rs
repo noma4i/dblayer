@@ -117,8 +117,9 @@ impl ForeignTransport {
 
     async fn graphql(&self, request: core::GraphQLRequest, kind: core::ExchangeKind) -> Result<core::Response, core::TransportError> {
         let Some(endpoint) = &self.endpoint else { return Err(core::TransportError::Config { code: core::ConfigCode::InvalidRequest, detail: "the database has no GraphQL endpoint".into() }) };
+        let wire = request.authored()?;
         let app_headers = crate::lock::effect(|| self.port.app_headers());
-        let outcome = crate::lock::effect(|| self.port.send(core::graphql_call(endpoint, &request, app_headers))).await;
+        let outcome = crate::lock::effect(|| self.port.send(core::graphql_call(endpoint, &request, wire, app_headers))).await;
         serde_json::from_str(&core::graphql_text(outcome, kind)?).map_err(|error| core::TransportError::Decode(error.to_string()))
     }
 }

@@ -333,7 +333,7 @@ impl EffectRunner<SessionCalls> for SessionRunner {
                         Ok(secret) => secret,
                         Err(failure) => return back.reply(EpochStamp::Control, SessionInput::SecretMissing { request_id, attempt_id, lost: matches!(failure, SecretFailure::Lost) }),
                     };
-                    let sent = crate::runtime::send_in_cut(&gate, cut, || exchange.send_once(crate::transport::encrypted::SendOnce { credential: credential.as_deref(), request_id: &wire, response_key: &key, sequence, path: &pending.path, body: &body, purpose })).await;
+                    let sent = crate::runtime::send_in_cut(&gate, cut, || exchange.send_once(crate::transport::encrypted::SendOnce { credential: credential.as_deref(), request_id: &wire, response_key: &key, sequence, path: &pending.path, body: &body, purpose, wire: crate::transport::WireIds::new(author_kind(&pending), request_id, attempt_id) })).await;
                     back.reply(EpochStamp::Control, match sent {
                         Ok(result) => input_of(request_id, attempt_id, logout, result),
                         Err(_) => SessionInput::GateClosed { request_id, attempt_id },
@@ -367,5 +367,16 @@ impl EffectRunner<SessionCalls> for SessionRunner {
             }
             SessionEffect::Drained(drained) => self.wiring.to_lifecycle(LifecycleInput::Drained(drained)),
         }
+    }
+}
+
+fn author_kind(pending: &crate::owners::session::PendingCall) -> crate::transport::Author {
+    use crate::owners::session::{CALLS_AUTHOR, OUTBOX_AUTHOR, TRANSFER_AUTHOR};
+    use crate::transport::{Author, RequestOwner};
+    match (&pending.owner, pending.author) {
+        (Some(RequestOwner::Transfer { .. }), _) | (_, Some(TRANSFER_AUTHOR)) => Author::Transfer,
+        (Some(RequestOwner::Operation { .. } | RequestOwner::Unmatched { .. }), _) | (_, Some(OUTBOX_AUTHOR)) => Author::Outbox,
+        (_, Some(CALLS_AUTHOR)) => Author::Calls,
+        _ => Author::Session,
     }
 }

@@ -60,7 +60,7 @@ class TransportThreadTest {
         val transport = OkHttpTransport(client = client)
 
         val document = if (mutation) "mutation Probe { probe { id } }" else "query Probe { probe { id } }"
-        val request = HttpRequest(server.url("/graphql").toString(), "POST", mapOf("Content-Type" to "application/json"), """{"query":"$document","operationName":"Probe","variables":{"id":"7"}}""", 10_000uL, 30_000uL, NetworkPurpose.STANDARD)
+        val request = HttpRequest(Author.SESSION, 0uL, 1u, server.url("/graphql").toString(), "POST", mapOf("Content-Type" to "application/json"), """{"query":"$document","operationName":"Probe","variables":{"id":"7"}}""", 10_000uL, 30_000uL, NetworkPurpose.STANDARD)
         val text = (withContext(caller) { transport.send(request) } as RawOutcome.Response).body
 
         assertEquals("""{"data":{"id":"7"}}""", text)

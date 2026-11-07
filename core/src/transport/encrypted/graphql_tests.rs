@@ -57,7 +57,7 @@ async fn queries_and_mutations_use_the_encrypted_client() {
     server.register("query Q { q }");
     server.register("mutation M { m }");
 
-    let read = transport.query(GraphQLRequest::new("query Q { q }", "Q", json!({}))).await.unwrap();
+    let read = transport.query(GraphQLRequest::new("query Q { q }", "Q", json!({})).by(crate::transport::WireIds::new(crate::transport::Author::Window, 1, 1))).await.unwrap();
     let written = transport.mutate(GraphQLRequest::new("mutation M { m }", "M", json!({}))).await.unwrap();
 
     assert_eq!(read.data, Some(json!({ "read": "query Q { q }" })));

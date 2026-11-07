@@ -35,7 +35,7 @@ struct TransportFailureTests {
     let server = try BootstrapListener(holdHeaders: true)
     defer { server.listener.cancel() }
     let origin = try await server.start()
-    let request = HttpRequest(url: origin.appendingPathComponent("graphql").absoluteString, method: "POST", headers: [:], body: "{}", connectMs: 10_000, requestMs: 300, purpose: .standard)
+    let request = HttpRequest(author: .session, requestId: 0, attempt: 1, url: origin.appendingPathComponent("graphql").absoluteString, method: "POST", headers: [:], body: "{}", connectMs: 10_000, requestMs: 300, purpose: .standard)
     let failure = try #require(rawFailure(await UrlSessionTransport().send(request: request)))
     #expect((failure.domain, failure.code) == (NSURLErrorDomain, Int64(URLError.timedOut.rawValue)))
   }

@@ -32,10 +32,10 @@ impl Drop for ForeignHttp {
 
 #[async_trait]
 impl core::HttpExchange for ForeignHttp {
-    async fn post(&self, path: &str, body: String, purpose: core::NetworkPurpose) -> Result<core::HttpReply, core::TransportError> {
+    async fn post(&self, path: &str, body: String, purpose: core::NetworkPurpose, wire: core::WireIds) -> Result<core::HttpReply, core::TransportError> {
         crate::lock::assert_no_library_lock("EncryptedHttp::post");
         let app_headers = crate::lock::effect(|| self.port.app_headers());
-        let request = core::encrypted_call(&self.origin, path, body, purpose, app_headers)?;
+        let request = core::encrypted_call(&self.origin, path, body, (purpose, wire), app_headers)?;
         match crate::lock::effect(|| self.port.send(request)).await {
             core::RawOutcome::Response { status, body, .. } => Ok(core::HttpReply { status, body }),
             core::RawOutcome::Failed { failure } => Err(core::classify(&failure, core::ExchangeKind::Post)),

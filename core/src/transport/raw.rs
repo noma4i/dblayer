@@ -82,6 +82,9 @@ impl RawOutcome {
 
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct HttpRequest {
+    pub author: Author,
+    pub request_id: u64,
+    pub attempt: u32,
     pub url: String,
     pub method: String,
     pub headers: HashMap<String, String>,
@@ -89,6 +92,41 @@ pub struct HttpRequest {
     pub connect_ms: u64,
     pub request_ms: u64,
     pub purpose: NetworkPurpose,
+}
+
+/// The owner that minted the request id of an `HttpRequest`. Ids of different authors may repeat, so a double keys by the pair.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, uniffi::Enum)]
+pub enum Author {
+    Session,
+    Window,
+    Outbox,
+    Transfer,
+    Calls,
+    Bootstrap,
+}
+
+/// The identity of one physical attempt on the wire: the author, the id the author gave the request and the number of the attempt.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct WireIds {
+    pub author: Author,
+    pub request_id: u64,
+    pub attempt: u32,
+}
+
+impl WireIds {
+    pub fn new(author: Author, request_id: u64, attempt: u64) -> Self { Self { author, request_id, attempt: u32::try_from(attempt).unwrap_or(u32::MAX) } }
+
+    /// A physical attempt gets a number that no earlier attempt of the process had.
+    pub fn next_attempt() -> u64 {
+        static ATTEMPT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+        ATTEMPT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// The fetch of the bootstrap config: each fetch is one request.
+    pub fn bootstrap() -> Self {
+        static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+        Self::new(Author::Bootstrap, NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed), Self::next_attempt())
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -156,9 +194,12 @@ pub fn merge_headers(app: HashMap<String, String>, own: HashMap<String, String>)
     merged
 }
 
-pub fn graphql_call(endpoint: &str, request: &GraphQLRequest, app_headers: HashMap<String, String>) -> HttpRequest {
+pub fn graphql_call(endpoint: &str, request: &GraphQLRequest, wire: WireIds, app_headers: HashMap<String, String>) -> HttpRequest {
     let body = serde_json::json!({"query": request.document, "operationName": request.operation_name, "variables": request.variables});
     HttpRequest {
+        author: wire.author,
+        request_id: wire.request_id,
+        attempt: wire.attempt,
         url: endpoint.to_string(),
         method: "POST".into(),
         headers: merge_headers(app_headers, HashMap::from([("Content-Type".into(), "application/json".into())])),
@@ -169,9 +210,12 @@ pub fn graphql_call(endpoint: &str, request: &GraphQLRequest, app_headers: HashM
     }
 }
 
-pub fn encrypted_call(origin: &str, path: &str, body: String, purpose: NetworkPurpose, app_headers: HashMap<String, String>) -> Result<HttpRequest, TransportError> {
+pub fn encrypted_call(origin: &str, path: &str, body: String, (purpose, wire): (NetworkPurpose, WireIds), app_headers: HashMap<String, String>) -> Result<HttpRequest, TransportError> {
     super::encrypted::checked_path(path)?;
     Ok(HttpRequest {
+        author: wire.author,
+        request_id: wire.request_id,
+        attempt: wire.attempt,
         url: format!("{}{path}", origin.trim_end_matches('/')),
         method: "POST".into(),
         headers: merge_headers(app_headers, HashMap::from([("Content-Type".into(), "application/jose".into()), ("Accept".into(), String::new()), ("Accept-Language".into(), String::new())])),

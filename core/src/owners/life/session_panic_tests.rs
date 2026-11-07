@@ -19,9 +19,9 @@ struct PanicHttp { server: Arc<FakeServer>, panic: AtomicBool }
 
 #[async_trait]
 impl HttpExchange for PanicHttp {
-    async fn post(&self, path: &str, body: String, purpose: NetworkPurpose) -> Result<HttpReply, TransportError> {
+    async fn post(&self, path: &str, body: String, purpose: NetworkPurpose, wire: crate::transport::WireIds) -> Result<HttpReply, TransportError> {
         assert!(!self.panic.load(Ordering::SeqCst), "HTTP exchange failed");
-        self.server.post(path, body, purpose).await
+        self.server.post(path, body, purpose, wire).await
     }
 }
 

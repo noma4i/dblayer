@@ -55,13 +55,14 @@ class MockTransportStrictTest {
         val transport = MockTransport(Unanswered.NetworkError)
         val held = transport.hold("Ping", reply = "first")
         transport.enqueue("Ping", "second")
-        val same = TransportRequest("query Ping { ping }", "Ping", """{"page":2}""", NetworkPurpose.STANDARD)
-        val other = TransportRequest("query Ping { ping }", "Ping", """{"page":3}""", NetworkPurpose.STANDARD)
+        val same = TransportRequest("query Ping { ping }", "Ping", """{"page":2}""", NetworkPurpose.STANDARD, Author.WINDOW, 1uL, 1u)
+        val repeated = TransportRequest("query Ping { ping }", "Ping", """{"page":2}""", NetworkPurpose.STANDARD, Author.WINDOW, 1uL, 2u)
+        val other = TransportRequest("query Ping { ping }", "Ping", """{"page":2}""", NetworkPurpose.STANDARD, Author.WINDOW, 2uL, 1u)
         val cancelled = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.Default).launch { transport.mutate(same) }
         held.entered()
         cancelled.cancelAndJoin()
-        assertEquals("first", transport.mutate(same))
-        assertEquals("first", transport.mutate(same))
+        assertEquals("first", transport.mutate(repeated))
+        assertEquals("first", transport.mutate(repeated))
         assertEquals("second", transport.mutate(other))
         assertTrue(runCatching { transport.mutate(other) }.exceptionOrNull() is DbException.Network)
     }

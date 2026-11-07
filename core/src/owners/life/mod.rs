@@ -438,6 +438,7 @@ impl Life {
                     transport: transport.clone(),
                     gate: wiring.gate.clone(),
                     tasks: Arc::new(super::write::wire::TokioTasks(ports.executor.clone(), Some(builder.handle()))),
+                    ids: super::write::wire::StepIds { mint: { let ids = wiring.clone(); Arc::new(move |step| ids.request_of(step)) }, settle: { let ids = wiring.clone(); Arc::new(move |id| ids.settle_request(id)) } },
                 };
                 let executor = TransferExecutor::new(
                     wire,

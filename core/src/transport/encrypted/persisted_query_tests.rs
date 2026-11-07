@@ -54,7 +54,7 @@ impl Rig {
 }
 
 pub(super) fn request(document: &str) -> GraphQLRequest {
-    GraphQLRequest::new(document, "", json!({}))
+    GraphQLRequest::new(document, "", json!({})).by(crate::transport::WireIds::new(crate::transport::Author::Window, 1, 1))
 }
 
 pub(super) fn documents(requests: &[Value]) -> Vec<bool> {

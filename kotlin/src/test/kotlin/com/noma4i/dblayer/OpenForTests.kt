@@ -82,7 +82,7 @@ private fun bridgeToTransport(transport: ScriptedTransport, operations: String):
                 } else {
                     val variables = body["variables"]?.toString() ?: "{}"
                     val document = (body["query"] as? kotlinx.serialization.json.JsonPrimitive)?.content ?: ""
-                    val request = TransportRequest(document, operation, variables, kotlin.coroutines.coroutineContext[RequestPurpose]?.value ?: NetworkPurpose.STANDARD)
+                    val request = TransportRequest(document, operation, variables, kotlin.coroutines.coroutineContext[RequestPurpose]?.value ?: NetworkPurpose.STANDARD, kotlin.coroutines.coroutineContext[ScriptedWire]?.author ?: Author.SESSION, kotlin.coroutines.coroutineContext[ScriptedWire]?.requestId ?: 0uL, kotlin.coroutines.coroutineContext[ScriptedWire]?.attempt ?: 0u)
                     json.parseToJsonElement(if (operation in mutations) transport.mutate(request) else transport.query(request)) as kotlinx.serialization.json.JsonObject
                 }
             }

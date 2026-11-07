@@ -29,7 +29,7 @@ func cableURL(_ origin: URL) -> String {
 }
 
 func probeRequest(_ origin: URL, path: String = "/api/session", body: String = "jwe", headers: [String: String] = [:]) -> HttpRequest {
-  HttpRequest(url: origin.absoluteString.trimmingCharacters(in: CharacterSet(charactersIn: "/")) + path, method: "POST", headers: headers.merging(["Content-Type": "application/jose", "Accept": "", "Accept-Language": ""]) { $1 }, body: body, connectMs: 10_000, requestMs: 30_000, purpose: .standard)
+  HttpRequest(author: .session, requestId: 0, attempt: 1, url: origin.absoluteString.trimmingCharacters(in: CharacterSet(charactersIn: "/")) + path, method: "POST", headers: headers.merging(["Content-Type": "application/jose", "Accept": "", "Accept-Language": ""]) { $1 }, body: body, connectMs: 10_000, requestMs: 30_000, purpose: .standard)
 }
 
 func responseStatus(_ outcome: RawOutcome) -> UInt16? {

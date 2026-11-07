@@ -49,6 +49,7 @@
 
 ### Changed
 
+- `HttpRequest` carries `author`, `requestId` and `attempt`; a repeat of a request keeps its `requestId`.
 - `call` replaces `run`: the core reads the result by the `returns` block of the `.dbl`, and the generated types decode it strictly.
 - One executor class per platform serves the transport and the encrypted HTTP, and the core picks it by `endpoint` and `encrypted`.
 - `Projected.edits` is a list for every delivery: a snapshot removes the rows before it and inserts its rows.

@@ -24,11 +24,19 @@ pub struct GraphQLRequest {
     pub variables: Value,
     pub owner: Option<RequestOwner>,
     pub purpose: NetworkPurpose,
+    pub wire: Option<super::WireIds>,
 }
 
 impl GraphQLRequest {
     pub fn new(document: impl Into<String>, operation_name: impl Into<String>, variables: Value) -> Self {
-        Self { document: document.into(), operation_name: operation_name.into(), variables, owner: None, purpose: NetworkPurpose::Standard }
+        Self { document: document.into(), operation_name: operation_name.into(), variables, owner: None, purpose: NetworkPurpose::Standard, wire: None }
+    }
+
+    /// The author and the id the author gave the request: a request that reaches the platform carries them in `HttpRequest`.
+    pub fn by(self, wire: super::WireIds) -> Self { Self { wire: Some(wire), ..self } }
+
+    pub fn authored(&self) -> Result<super::WireIds, super::TransportError> {
+        self.wire.ok_or_else(|| super::TransportError::Config { code: super::ConfigCode::InvalidRequest, detail: "the request has no author".into() })
     }
 
 }

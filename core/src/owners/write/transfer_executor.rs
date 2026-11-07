@@ -11,7 +11,7 @@ use std::sync::Arc;
 use async_trait::async_trait;
 
 use super::transfer::{file_id, CachedBlob, ShowSink, Shown, Source, Steps, TransferAnswer, TransferEffect, TransferId, TransferInput, Transfers};
-use super::wire::{Flights, Running, Wire};
+use super::wire::{Flights, Running, StepIds, Wire};
 use crate::store::files::{CopiedSource, FileDirectories};
 use crate::owners::contract::{Drained, ReplyId};
 use crate::runtime::{Back, EffectRunner, Epoch, EpochStamp};
@@ -24,6 +24,7 @@ pub struct Link {
     gate: Arc<crate::runtime::EpochGate>,
     epoch: Option<Epoch>,
     minted: Option<Arc<dyn Fn(String) + Send + Sync>>,
+    ids: StepIds,
 }
 
 impl Drop for Link {
@@ -31,9 +32,14 @@ impl Drop for Link {
 }
 
 impl Link {
-    pub async fn mutate(&self, mut request: GraphQLRequest) -> Result<Response, TransportError> {
+    /// `step` names the request: its id is minted by the owner and a repeat of the step carries it again.
+    pub async fn mutate(&self, mut request: GraphQLRequest, step: &crate::transport::RequestOwner) -> Result<Response, TransportError> {
         request.purpose = NetworkPurpose::Transfer;
-        crate::runtime::send_in_epoch(&self.gate, self.epoch, || self.transport.mutate(request)).await
+        let id = (self.ids.mint)(step);
+        let request = request.by(crate::transport::WireIds::new(crate::transport::Author::Transfer, id, crate::transport::WireIds::next_attempt()));
+        let response = crate::runtime::send_in_epoch(&self.gate, self.epoch, || self.transport.mutate(request)).await?;
+        (self.ids.settle)(id);
+        Ok(response)
     }
 
     pub fn minted(&self, upload_id: String) {
@@ -168,7 +174,7 @@ impl TransferExecutor {
             EpochStamp::Control => None,
         };
         if epoch.is_some_and(|epoch| !self.wire.gate.admits(epoch)) { return None; }
-        Some(Link { transport: self.wire.transport.clone(), cancel: CancelToken::new(), gate: self.wire.gate.clone(), epoch, minted: None })
+        Some(Link { transport: self.wire.transport.clone(), cancel: CancelToken::new(), gate: self.wire.gate.clone(), epoch, minted: None, ids: self.wire.ids.clone() })
     }
 
     /// Runs `call` as the task of `transfer_id`: its result becomes `input_of(result)` for the owner, unless the task is cancelled first.

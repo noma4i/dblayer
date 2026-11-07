@@ -100,7 +100,7 @@ private func bridgeToTransport(_ transport: any ScriptedTransport, operations: S
     if operation == "SessionProfile" { return ["data": ["sessionProfile": ["id": "stand"]]] }
     let variables = (body["variables"] as? [String: Any]).flatMap { try? JSONSerialization.data(withJSONObject: $0, options: [.sortedKeys]) }.flatMap { String(data: $0, encoding: .utf8) } ?? "{}"
     let document = body["query"] as? String ?? ""
-    let request = TransportRequest(document: document, operationName: operation, variablesJson: variables, purpose: SealedServer.purpose)
+    let request = TransportRequest(document: document, operationName: operation, variablesJson: variables, purpose: SealedServer.purpose, author: ScriptedWire.ids.author, requestId: ScriptedWire.ids.requestId, attempt: ScriptedWire.ids.attempt)
     let text: String
     if mutations.contains(operation) { text = try await transport.mutate(request: request) } else { text = try await transport.query(request: request) }
     return try JSONSerialization.jsonObject(with: Data(text.utf8)) as? [String: Any] ?? [:]

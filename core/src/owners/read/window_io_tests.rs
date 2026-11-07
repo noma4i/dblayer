@@ -118,6 +118,7 @@ fn win_io_request_lands() {
     assert_eq!(landed_rows, ["r1", "r2"]);
     assert_eq!(batch.basis.get("Moment"), Some(&0));
     assert_eq!(saw_input(&rig.det, "Response"), 1, "the answer came back as one input");
+    assert_eq!(rig.mock.calls().iter().map(|call| call.wire).collect::<Vec<_>>(), [Some(crate::transport::WireIds::new(crate::transport::Author::Window, 1, 1))], "the request goes out with the request and attempt of the Window");
 }
 
 #[test]

@@ -34,7 +34,7 @@ class TransportFailureTest {
         okhttp3.mockwebserver.MockWebServer().use { server ->
             server.enqueue(okhttp3.mockwebserver.MockResponse().setSocketPolicy(okhttp3.mockwebserver.SocketPolicy.NO_RESPONSE))
             server.start()
-            val request = HttpRequest(server.url("/graphql").toString(), "POST", emptyMap(), "{}", 10_000uL, 300uL, NetworkPurpose.STANDARD)
+            val request = HttpRequest(Author.SESSION, 0uL, 1u, server.url("/graphql").toString(), "POST", emptyMap(), "{}", 10_000uL, 300uL, NetworkPurpose.STANDARD)
             val failure = OkHttpTransport().send(request).rawFailure()
             assertTrue("$failure", failure?.domain in listOf("java.net.SocketTimeoutException", "java.io.InterruptedIOException"))
         }
