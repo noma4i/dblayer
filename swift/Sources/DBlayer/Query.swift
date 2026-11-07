@@ -87,6 +87,7 @@ public struct Query<Model: DBModel>: Sendable {
   /// Loads the relation. Cancelling the task gives up its interest in the shared request.
   @concurrent public func load(in scope: AccountScope? = nil) async throws {
     let request = try beginLoad(in: scope)
+    defer { request.cancel() }
     try await withTaskCancellationHandler { try await request.result() } onCancel: { request.cancel() }
   }
   @concurrent public func refresh(in scope: AccountScope? = nil) async throws {
@@ -97,6 +98,7 @@ public struct Query<Model: DBModel>: Sendable {
   @concurrent public func loadAll(force: Bool = false, in scope: AccountScope? = nil) async throws {
     let (database, epoch) = try DB.admitted(scope)
     let request = try database.beginLoadAll(epoch: epoch, model: Model.modelName, relation: relation, paramsJson: JSONValue.object(params).text, force: force)
+    defer { request.cancel() }
     try await withTaskCancellationHandler { try await request.result() } onCancel: { request.cancel() }
   }
   @discardableResult @concurrent public func loadMore(in scope: AccountScope? = nil) async throws -> LoadMoreResult {

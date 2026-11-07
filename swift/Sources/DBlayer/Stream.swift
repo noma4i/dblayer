@@ -12,7 +12,7 @@ public struct ValueStream: AsyncSequence, Sendable {
   public struct AsyncIterator: AsyncIteratorProtocol {
     let reader: ReadStream
 
-    public mutating func next() async throws -> ReadValue? { try await reader.pull() }
+    public mutating func next() async -> ReadValue? { await reader.pull() }
   }
 
   /// Loads the relation of the stream again. Throws `Interrupted` when the session of the stream ended and `Invalid` when the stream has no relation.
@@ -64,8 +64,8 @@ public struct ListProjection<Model: DBModel>: Sendable {
   public private(set) var state: ReadState?
   public private(set) var revision: Int64?
   public private(set) var ended: ReadEnd?
-  /// The steps of the last delivery from the rows before to the rows after. `nil` after a snapshot: the screen reads the whole list.
-  public private(set) var lastEdits: [ListEdit<Model>]? = nil
+  /// The steps of the last delivery from the rows before to the rows after. A snapshot removes the rows before and inserts the rows after.
+  public private(set) var lastEdits: [ListEdit<Model>] = []
   public init() {}
 
   public var phase: ReadPhase? { state?.phase }
@@ -76,10 +76,10 @@ public struct ListProjection<Model: DBModel>: Sendable {
   public mutating func apply(_ delivery: ListDelivery<Model>) {
     switch delivery {
     case let .snapshot(revision, rows, state):
+      lastEdits = self.rows.map { .remove(0, $0.id) } + rows.enumerated().map { .insert($0.offset, $0.element) }
       self.rows = rows
       self.revision = revision
       self.state = state
-      lastEdits = nil
     case let .delta(revision, edits, state):
       rows.replay(edits)
       self.revision = revision
@@ -112,25 +112,23 @@ public final class Projected<Model: DBModel> {
   public var phase: ReadPhase? { projection.phase }
   public var error: DbError? { projection.error }
   public var isEnded: Bool { projection.ended != nil }
-  /// The steps of the last delivery, to apply to a list the screen keeps. `nil`: the screen reads `rows` again.
-  public var edits: [ListEdit<Model>]? { projection.lastEdits }
+  /// The steps of the last delivery, to apply to a list the screen keeps.
+  public var edits: [ListEdit<Model>] { projection.lastEdits }
   @ObservationIgnored public let stream: ValueStream
   @ObservationIgnored var reading: Task<Void, Never>?
 
   public init(_ stream: ValueStream) {
     self.stream = stream
     reading = Task.detached { [weak self] in
-      do {
-        for try await value in stream {
-          let delivery: ListDelivery<Model>?
-          do { delivery = try ListDelivery(value) } catch {
-            stream.reader.resync()
-            continue
-          }
-          guard let delivery, let self else { continue }
-          await self.receive(delivery)
+      for await value in stream {
+        let delivery: ListDelivery<Model>?
+        do { delivery = try ListDelivery(value) } catch {
+          stream.reader.resync()
+          continue
         }
-      } catch {}
+        guard let delivery, let self else { continue }
+        await self.receive(delivery)
+      }
     }
   }
 
@@ -160,12 +158,10 @@ public final class ProjectedCount {
   public init(_ stream: ValueStream) {
     self.stream = stream
     reading = Task { [weak self] in
-      do {
-        for try await value in stream {
-          guard let self else { return }
-          self.receive(value)
-        }
-      } catch {}
+      for await value in stream {
+        guard let self else { return }
+        self.receive(value)
+      }
     }
   }
 
@@ -194,7 +190,7 @@ public struct EventStream<Model: DBModel>: AsyncSequence, Sendable {
     var inner: ValueStream.AsyncIterator
 
     public mutating func next() async throws -> ModelEventItem<Model>? {
-      while let value = try await inner.next() {
+      while let value = await inner.next() {
         switch value {
         case .ready: return .ready
         case let .ended(cause): return .ended(cause)
@@ -220,19 +216,25 @@ public struct TransferProgress: Sendable, Equatable {
   public let error: String?
 }
 
-/// The status of a transfer while it runs, by the key `model:row:action`.
+/// One item of the status of a transfer: a change, or the end of the stream with the cause of the core.
+public enum TransferItem: Sendable, Equatable {
+  case progress(TransferProgress)
+  case ended(ReadEnd)
+}
+
+/// The status of a transfer while it runs, by the key `model:row:action`. The last item is `.ended`.
 public struct UploadStatusStream: AsyncSequence, Sendable {
-  public typealias Element = TransferProgress
+  public typealias Element = TransferItem
   public let stream: ValueStream
 
   public struct AsyncIterator: AsyncIteratorProtocol {
     var inner: ValueStream.AsyncIterator
 
-    public mutating func next() async throws -> TransferProgress? {
-      while let value = try await inner.next() {
+    public mutating func next() async -> TransferItem? {
+      while let value = await inner.next() {
         switch value {
-        case let .status(revision, state, progress, error): return TransferProgress(revision: revision, state: state, progress: progress, error: error)
-        case .ended: return nil
+        case let .status(revision, state, progress, error): return .progress(TransferProgress(revision: revision, state: state, progress: progress, error: error))
+        case let .ended(cause): return .ended(cause)
         default: continue
         }
       }
@@ -243,19 +245,25 @@ public struct UploadStatusStream: AsyncSequence, Sendable {
   public func makeAsyncIterator() -> AsyncIterator { AsyncIterator(inner: stream.makeAsyncIterator()) }
 }
 
-/// The queue of operations of the account: the whole queue at open and after every change. Each `OperationInfo` names the arguments of `retry(model:id:action:)` and `discard(model:id:action:)`.
+/// One item of the queue of operations: the whole queue, or the end of the stream with the cause of the core.
+public enum OperationQueueItem: Sendable {
+  case queue([OperationInfo])
+  case ended(ReadEnd)
+}
+
+/// The queue of operations of the account: the whole queue at open and after every change, then `.ended`. Each `OperationInfo` names the arguments of `retry(model:id:action:)` and `discard(model:id:action:)`.
 public struct OperationQueueStream: AsyncSequence, Sendable {
-  public typealias Element = [OperationInfo]
+  public typealias Element = OperationQueueItem
   public let stream: ValueStream
 
   public struct AsyncIterator: AsyncIteratorProtocol {
     var inner: ValueStream.AsyncIterator
 
-    public mutating func next() async throws -> [OperationInfo]? {
-      while let value = try await inner.next() {
+    public mutating func next() async -> OperationQueueItem? {
+      while let value = await inner.next() {
         switch value {
-        case let .operations(_, items): return items
-        case .ended: return nil
+        case let .operations(_, items): return .queue(items)
+        case let .ended(cause): return .ended(cause)
         default: continue
         }
       }

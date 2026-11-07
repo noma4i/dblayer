@@ -1,9 +1,9 @@
 import DBlayerTesting
 import Foundation
-@testable import DBlayer
+@_spi(Testing) @testable import DBlayer
 
 func openDatabase(config: Config, modelsJson: String, transport: Transport?, encrypted: EncryptedConfig? = nil, credentials: CredentialStore? = nil, http: EncryptedHttp? = nil, operations: String = "[]") async throws -> Database {
-  try await OpenDatabase().open(config: config, modelsJson: modelsJson, options: OpenOptions(operations: definitions(of: withUploadSteps(operations, models: modelsJson))), ports: OpenPorts(transport: transport, encrypted: encrypted, credentials: credentials, http: http, endpoint: transport == nil ? nil : scriptedEndpoint), observers: nil)
+  try await OpenDatabase().open(config: config, modelsJson: modelsJson, options: OpenOptions(operations: definitions(of: withUploadSteps(operations, models: modelsJson)), dataSyncDeclared: nil), ports: OpenPorts(transport: transport, encrypted: encrypted, credentials: credentials, http: http, endpoint: transport == nil ? nil : scriptedEndpoint), observers: nil)
 }
 
 private func definitions(of operations: String) -> [OperationDefinition] {
@@ -35,7 +35,7 @@ func withUploadSteps(_ operations: String, models: String) -> String {
 @MainActor @discardableResult
 func adopt(_ database: Database) async throws -> Database {
   await DB.closeForCleanup()
-  DB.use(database)
+  DB.adopt(database)
   return database
 }
 
@@ -124,13 +124,13 @@ func reopen(config: Config, modelsJson: String, transport: Transport?, operation
 
 /// The same session stand on a clock that only `advance(by:)` moves.
 @MainActor @discardableResult
-func reopenClocked(modelsJson: String, transport: MockTransport, operations: String = "[]", path: String? = nil, startingAt start: Date = Date()) async throws -> TestClock {
+func reopenClocked(modelsJson: String, transport: MockTransport, operations: String = "[]", path: String? = nil, startingAt start: Date = Date(), observers: (any PlatformObserver)? = nil) async throws -> TestClock {
   let server = try SealedServer(bridge: try bridgeToTransport(transport, operations: withUploadSteps(operations, models: modelsJson)))
   transport.cable = EncryptedCablePeer(server: server)
   await DB.closeForCleanup()
   let held = path.map { credential(of: Config(path: $0, dataVersion: nil)) } ?? HeldCredential()
   let restored = (try? held.get()) != nil
-  let clock = try await DB.openTesting(transport: transport, modelsJSON: modelsJson, path: path, startingAt: start, encrypted: standEncrypted(), credentials: held, http: server)
+  let clock = try await DB.openTesting(transport: transport, modelsJSON: modelsJson, path: path, startingAt: start, encrypted: standEncrypted(), credentials: held, http: server, observers: observers)
   try await DB.database.registerOperations(defsJson: withSessionProfile(operations))
   try await signIn(restored: restored)
   return clock

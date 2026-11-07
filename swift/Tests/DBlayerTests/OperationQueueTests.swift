@@ -17,6 +17,12 @@ private func momentsKeepingUpdates() throws -> String {
   return String(decoding: try JSONSerialization.data(withJSONObject: models), as: UTF8.self)
 }
 
+private extension OperationQueueStream {
+  var queues: AsyncCompactMapSequence<OperationQueueStream, [OperationInfo]> {
+    compactMap { if case let .queue(items) = $0 { items } else { nil } }
+  }
+}
+
 /// The queue of operations through its public API: `operations()` shows each write with its status, and `retry` takes the fields of an `OperationInfo`.
 extension BridgeProbeTests {
   @Test @MainActor
@@ -29,7 +35,7 @@ extension BridgeProbeTests {
     let changes = Cursor(try await Moment.recent.live.stream())
     try await Moment.feed.load()
     let moment = try #require(await changes.first("the loaded row") { $0.map(\.text) == ["m"] }?.first)
-    let queue = Cursor(try DB.account().operations())
+    let queue = Cursor(try DB.account().operations().queues)
     try DB.database.setOnline(online: false)
     let receipt = try await moment.update(text: "edited")
     let pending = try #require(await queue.first("the update is pending") { $0.count == 1 && $0[0].status == .pending })
@@ -53,12 +59,32 @@ extension BridgeProbeTests {
     let changes = Cursor(try await Moment.recent.live.stream())
     try await Moment.feed.load()
     let moment = try #require(await changes.first("the loaded row") { $0.map(\.text) == ["m"] }?.first)
-    let queue = Cursor(try DB.account().operations())
+    let queue = Cursor(try DB.account().operations().queues)
     _ = try await moment.update(text: "edited")
     let failed = try #require(await queue.first("the update failed") { $0.first?.status == .failed }?.first)
     #expect(failed.error != nil)
     try await DB.account().retry(model: failed.model, id: failed.rowId, action: failed.action)
     #expect(await queue.first("the queue is empty") { $0.isEmpty } != nil)
     #expect(transport.calls.filter { $0.operationName == "UpdateMoment" }.count == 2)
+  }
+
+  @Test @MainActor
+  func theStatusAndQueueStreamsEndWithTheCauseOfTheCore() async throws {
+    let transport = MockTransport()
+    transport.enqueue("MomentsFeed", reply: queueFeed)
+    try await reopen(config: Config(path: nil, dataVersion: nil), modelsJson: modelsJSON, transport: transport)
+    try await DB.database.registerOperations(defsJson: queueDefs)
+    let changes = Cursor(try await Moment.recent.live.stream())
+    try await Moment.feed.load()
+    let moment = try #require(await changes.first("the loaded row") { $0.map(\.text) == ["m"] }?.first)
+    let queue = Cursor(try DB.account().operations())
+    let status = Cursor(try DB.account().uploadStatus(moment, action: "upload_clip"))
+    #expect(await queue.next("the first queue") != nil)
+    #expect(await status.next("the first status") != nil)
+
+    await DB.closeForCleanup()
+
+    guard case .ended(.closed)? = await queue.first("the end of the queue stream", where: { if case .ended = $0 { true } else { false } }) else { Issue.record("the queue stream did not end with Closed"); return }
+    guard case .ended(.closed)? = await status.first("the end of the status stream", where: { if case .ended = $0 { true } else { false } }) else { Issue.record("the status stream did not end with Closed"); return }
   }
 }

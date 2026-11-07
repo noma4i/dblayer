@@ -16,7 +16,7 @@ public struct SyncInfo: Codable, Sendable, Equatable {
   public let attempts: Int
   public let since: Int64
 
-  public init() { self.init(state: .synced, actions: [], dirtyFields: [], error: nil, attempts: 0, since: 0) }
+  public init() { self.init(wire: defaultSync()) }
 
   init(state: SyncState, actions: [String], dirtyFields: [String], error: OperationFailure?, attempts: Int, since: Int64) {
     self.state = state

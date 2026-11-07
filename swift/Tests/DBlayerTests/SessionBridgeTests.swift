@@ -1,6 +1,6 @@
 import Foundation
 import Testing
-@testable import DBlayer
+@_spi(Testing) @testable import DBlayer
 
 private struct PhoneBody: Codable, Sendable, Equatable { let phone: String }
 private struct TicketAnswer: Codable, Sendable, Equatable { let ticket: String }
@@ -27,9 +27,9 @@ extension BridgeProbeTests {
   @MainActor private func withRecordingSession(_ body: (RecordingSession) async throws -> Void) async throws {
     try await reopen(config: Config(path: nil, dataVersion: nil), modelsJson: modelsJSON, transport: nil)
     let real = try DB.database
-    defer { DB.use(real) }
+    defer { DB.adopt(real) }
     let recording = RecordingSession(noHandle: .init())
-    DB.use(recording)
+    DB.adopt(recording)
     try await body(recording)
   }
 

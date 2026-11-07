@@ -1,6 +1,6 @@
 import DBlayerTesting
 import Testing
-@testable import DBlayer
+@_spi(Testing) @testable import DBlayer
 
 extension BridgeProbeTests {
   @Test @MainActor func aClosedDatabaseRefusesEveryCallWithTheClosedErrorOfTheCore() async throws {
@@ -36,7 +36,7 @@ extension BridgeProbeTests {
       ]
     }
     await DB.closeForCleanup()
-    DB.forgetOpened()
+    DB.adopt(nil)
     #expect(await entries() == Array(repeating: "not_open", count: 10))
     try await reopenSigned(config: Config(path: nil, dataVersion: nil), modelsJson: modelsJSON)
     try await DB.close()

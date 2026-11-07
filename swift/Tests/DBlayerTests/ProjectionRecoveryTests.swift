@@ -9,8 +9,8 @@ struct ProjectionRecoveryTests {
   func aDeltaIsAppliedAsItComesAndKeepsOnlyItsOwnEdits() throws {
     var projection = ListProjection<Moment>()
     #expect(try projection.apply(.snapshot(revision: 1, rows: [], state: state)))
-    #expect(projection.lastEdits == nil)
+    #expect(projection.lastEdits.isEmpty)
     #expect(try projection.apply(.delta(base: 1, revision: 300, edits: [], state: state)))
-    #expect(projection.revision == 300 && projection.lastEdits?.isEmpty == true)
+    #expect(projection.revision == 300 && projection.lastEdits.isEmpty)
   }
 }

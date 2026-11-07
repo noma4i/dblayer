@@ -52,9 +52,7 @@ struct ReachabilityTests {
       return ["data": [String: Any]()]
     }
     let signedIn = EncryptedConfig(origin: encrypted.origin, serverKey: encrypted.serverKey, pin: encrypted.pin, endpoints: EncryptedEndpoints(graphql: "/graphql", cable: "/cable", logout: "/logout", bootstrap: "/bootstrap", sessionOperations: ["login_link": EncryptedSessionOperation(path: "/api/auth/login_link", class: .authenticated)]), protocolLabel: "test-v1", cablePurpose: "hello", cableChannel: "TestChannel")
-    try await Reachability.$source.withValue(path) {
-      try await DB.open(encrypted: signedIn, credentials: PathCredential(), transport: MockTransport(), modelsJSON: "[]", operations: [PathProbe.self, SessionProbe.self], http: server)
-    }
+    try await DB.openTesting(transport: MockTransport(), modelsJSON: "[]", operations: [PathProbe.self, SessionProbe.self], encrypted: signedIn, credentials: PathCredential(), http: server, observers: SystemObservers(path: path))
     path.set(true)
     try await DB.sessionCall("login_link", body: PathLogin(account: "A"))
     try await DB.run("SessionProfile", variables: [:])
@@ -62,7 +60,7 @@ struct ReachabilityTests {
 
     path.set(false)
     #expect(await refusal().contains("needs the network"))
-    let bootstrap = Task { try? await Reachability.$source.withValue(path) { try await DB.serverConfig(encrypted: encrypted, platform: .ios, version: "1.2", http: bootstrapHttp) } }
+    let bootstrap = Task { try? await fetchServerConfig(encrypted: encrypted, platform: .ios, version: "1.2", build: nil, http: bootstrapHttp, retries: nil, observers: SystemObservers(path: path)) }
     path.set(true)
     #expect(await Cursor(posts).next("the bootstrap request after the path became satisfied") != nil)
     bootstrap.cancel()

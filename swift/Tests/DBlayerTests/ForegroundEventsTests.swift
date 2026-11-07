@@ -25,7 +25,7 @@ extension BridgeProbeTests {
     await eventually("the relation fails") { list.snapshot.phase == .failed }
     let sink = try DB.database.onlineSink()
     let delivered = Delivered()
-    let stop = ForegroundEvents.observe(name: name) {
+    let stop = ForegroundEvents.observe(name: name, active: { false }) {
       delivered.add()
       sink.enterForeground()
     }
@@ -38,5 +38,14 @@ extension BridgeProbeTests {
     stop()
     NotificationCenter.default.post(name: name, object: nil)
     #expect(delivered.count == 1)
+  }
+
+  @Test(.timeLimit(.minutes(1)))
+  func anActiveAppDeliversForegroundAtRegistration() async {
+    let (events, continuation) = AsyncStream<Void>.makeStream()
+    let stop = ForegroundEvents.observe(name: Notification.Name("DBlayerTestRegistration"), active: { true }) { continuation.yield() }
+    var iterator = events.makeAsyncIterator()
+    #expect(await iterator.next() != nil)
+    stop()
   }
 }

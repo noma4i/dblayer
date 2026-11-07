@@ -1,7 +1,7 @@
 import DBlayerTesting
 import Foundation
 import Testing
-@testable import DBlayer
+@_spi(Testing) @testable import DBlayer
 
 private let sessionCodes: [SessionCode] = [
   .sequenceConflict, .replayedRequest, .rateLimited, .accountUnavailable, .unauthenticated, .sessionEnded,
@@ -19,9 +19,9 @@ extension BridgeProbeTests {
   @Test @MainActor func modelRetriesPropagateErrorsToTheirCaller() async throws {
     try await reopenSigned(config: Config(path: nil, dataVersion: nil), modelsJson: modelsJSON)
     let real = try DB.database
-    defer { DB.use(real) }
+    defer { DB.adopt(real) }
     let row = try await Moment.create(text: "saved", in: DB.account()).optimisticValue!
-    DB.use(RefusedRetry(noHandle: .init()))
+    DB.adopt(RefusedRetry(noHandle: .init()))
     await #expect(throws: DbError.self) { try await row.retry(action: nil) }
   }
   @MainActor
