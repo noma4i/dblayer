@@ -30,8 +30,10 @@ for document in documents:
     for number, line in enumerate(text.splitlines(), 1):
         if re.search(r"[\u0400-\u04FF]", line):
             problems.append(f"{name}:{number}: non-English text")
+    prose = re.sub(r"```.*?```", "", lowered, flags=re.S)
+    prose = re.sub(r"`[^`\n]*`", "", prose)
     for word in banned_words:
-        if re.search(rf"\b{word}\b", lowered):
+        if re.search(rf"\b{word}\b", prose):
             problems.append(f"{name}: banned word '{word}'")
     for phrase in status_words:
         if phrase in lowered:
