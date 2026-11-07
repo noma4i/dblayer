@@ -73,6 +73,8 @@ pub(super) struct Entry {
     pub(super) account: String,
     pub(super) label: String,
     pub(super) sequence: Option<i64>,
+    pub(super) body: String,
+    pub(super) marks_before: usize,
 }
 
 #[derive(Default)]
@@ -84,6 +86,7 @@ struct State {
     calls: BTreeMap<String, usize>,
     violations: Vec<String>,
     log: Vec<Entry>,
+    marks: Vec<String>,
     script: Vec<(String, Fault)>,
     messages: Vec<(String, Value)>,
     group_members: BTreeMap<String, Vec<String>>,
@@ -119,6 +122,18 @@ impl World {
     pub(super) fn violations(&self) -> Vec<String> { self.state.lock().unwrap().violations.clone() }
     pub(super) fn count(&self, operation: &str) -> usize { self.state.lock().unwrap().calls.get(operation).copied().unwrap_or(0) }
     pub(super) fn log(&self) -> Vec<Entry> { self.state.lock().unwrap().log.clone() }
+    /// Notes a step of the test: `journal` prints the steps and the requests of the server in the order they happened.
+    pub(super) fn mark(&self, step: &str) { self.state.lock().unwrap().marks.push(step.into()); }
+    pub(super) fn journal(&self) -> String {
+        let state = self.state.lock().unwrap();
+        let mut lines = Vec::new();
+        for (index, step) in state.marks.iter().enumerate() {
+            lines.extend(state.log.iter().filter(|entry| entry.marks_before == index).map(|entry| format!("request {} {}", entry.operation, entry.body)));
+            lines.push(format!("step {step}"));
+        }
+        lines.extend(state.log.iter().filter(|entry| entry.marks_before >= state.marks.len()).map(|entry| format!("request {} {}", entry.operation, entry.body)));
+        lines.join("\n")
+    }
     pub(super) fn hits(&self) -> usize { self.state.lock().unwrap().log.len() }
     /// A message of the thread `c1` that the server already holds for this account.
     pub(super) fn seed_message(&self, account: &str, id: &str, text: &str, at: i64) {
@@ -157,7 +172,8 @@ impl World {
             return None;
         }
         let account = state.account.clone();
-        state.log.push(Entry { operation: operation.into(), account: account.clone(), label: self.label.clone(), sequence });
+        let marks_before = state.marks.len();
+        state.log.push(Entry { operation: operation.into(), account: account.clone(), label: self.label.clone(), sequence, body: body.to_string(), marks_before });
         let position = state.script.iter().position(|(wanted, _)| wanted == operation || wanted == "*");
         let fault = position.map(|index| state.script.remove(index).1);
         let commits = matches!(fault, None | Some(Fault::Hold(_)));

@@ -24,15 +24,22 @@ async fn cancelling_one_load_interest_keeps_the_other_call_alive() {
     let rig = feed_rig().await;
     let epoch = rig.database.session_epoch();
     let held = rig.world.hold_next("MomentsFeed");
+    rig.world.mark("begin A");
     let first = rig.database.begin_load(epoch, "Moment".into(), Some("feed".into()), "{}".into()).unwrap();
     held.entered_for("the shared load").await;
+    rig.world.mark("request of A entered");
     let second = rig.database.begin_load(epoch, "Moment".into(), Some("feed".into()), "{}".into()).unwrap();
+    rig.world.mark("begin B");
     let issued = rig.database.loads.issued();
     yield_until("the second interest is registered in the window", || rig.database.loads.registered_through(issued)).await;
+    rig.world.mark("B registered");
     first.cancel();
+    rig.world.mark("A cancelled");
     held.release();
+    rig.world.mark("answer released");
     bound(second.result()).await.unwrap();
-    assert_eq!(feed_requests(&rig), 1, "the second call sent a request of its own: {:?}", rig.world.log());
+    rig.world.mark("B result");
+    assert_eq!(feed_requests(&rig), 1, "the second call sent a request of its own, steps and requests in order:\n{}", rig.world.journal());
     rig.database.close_now();
 }
 

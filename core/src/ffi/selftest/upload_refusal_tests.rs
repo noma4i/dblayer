@@ -145,10 +145,18 @@ async fn a_complete_failure_then_retry_keeps_the_confirmed_parts() {
     until_state(&database, &id, WireSyncState::Failed).await;
     let again = bound(database.retry(epoch, "Moment".into(), id.clone(), Some("upload_clip".into()), None)).await.unwrap();
     let held = &again.ticket;
+    let receipt_revision = held.revision;
     let ticket = WireReceiptTicket { ticket: held.ticket.clone(), owner: held.owner.clone(), epoch: held.epoch, model: held.model.clone(), operation: held.operation, revision: held.revision, optimistic_value: None, row: held.row.clone() };
     let late = WireOperationReceipt { optimistic_value: None, ticket: Arc::new(ticket), ..again };
     let WireOperationOutcome::Confirmed { value, .. } = bound(database.outcome(late)).await.unwrap() else { panic!("the retry was not confirmed") };
-    assert_eq!(value.map(|row| (row.id, row.sync.state)), Some(("m1".to_string(), WireSyncState::Synced)));
+    let shown = value.map(|row| (row.id, row.sync.state));
+    if shown.is_none() {
+        let found = |row: &str| crate::ffi::database::id(row).ok().map(|row| database.optimistic("Moment", &row).map(|row| row.map(|row| (row.id, row.sync.state))));
+        let resolved = database.resolved(epoch, "Moment", crate::ffi::database::id(&id).unwrap()).await;
+        let published = database.db.published_revision().load(std::sync::atomic::Ordering::Acquire);
+        panic!("the confirmed outcome carried no row: temporary {id} resolved {resolved:?}, find(temporary) {:?}, find(resolved) {:?}, find(m1) {:?}, published revision {published}, receipt revision {}", found(&id), resolved.as_ref().ok().and_then(|row| found(row.as_str())), found("m1"), receipt_revision);
+    }
+    assert_eq!(shown, Some(("m1".to_string(), WireSyncState::Synced)));
 
     let names = stand.script.names();
     let count = |name: &str| names.iter().filter(|seen| *seen == name).count();
