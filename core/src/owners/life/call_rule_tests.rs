@@ -4,7 +4,7 @@ use crate::owners::contract::{Published, PublishedState};
 
 const STATES: [PublishedState; 7] = [PublishedState::NoSession, PublishedState::Session, PublishedState::Ending, PublishedState::EndingFailed, PublishedState::Resetting, PublishedState::StorageFailed, PublishedState::Closing];
 
-/// life_prop_single_published: the verdict of a call is a function of one snapshot, the table "Вызовы платформы" row by row.
+/// life_prop_single_published: the verdict of a call is a function of one snapshot, the table "Platform calls" row by row.
 #[test]
 fn life_prop_single_published() {
     for state in STATES {
