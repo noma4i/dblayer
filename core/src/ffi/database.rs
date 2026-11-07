@@ -358,7 +358,7 @@ impl Database {
         if let Some(receipt) = self.retry_declared_transfer(epoch, &model, &row_id).await? { return Ok(receipt); }
         self.retry_operation(epoch, model, row_id).await
     }
-    pub fn set_online(&self, online: bool) -> Result<(), DbError> { self.online_sink()?.set_online(online); Ok(()) }
+    pub fn set_online(&self, online: bool) -> Result<(), DbError> { self.online_sink()?.apply_online(online) }
 
     pub fn online_sink(&self) -> Result<Arc<OnlineSink>, DbError> { Ok(OnlineSink::of_life(&self.life)) }
     /// Closes the database: every lease ends, every holder closes, every database thread lets go of the file, then the process slot opens for the next database. Closing again returns the same result. The name differs from `close` because Kotlin objects already carry `close()` for their native handle.

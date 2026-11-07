@@ -42,6 +42,20 @@ async fn life_register_ok() {
     database.session_reset().await.unwrap();
 }
 
+/// net_prop_set_online_no_wall_clock: `set_online` returns the outcome of the owner under a clock that never advances, and `Err(Closed)` once the database closed.
+#[tokio::test]
+async fn net_prop_set_online_no_wall_clock() {
+    let database = Database::open_with_clock(config(), crate::ffi::EMPTY_SPECS.into(), crate::ffi::OpenPorts { transport: Some(Arc::new(Plain)), endpoint: Some(crate::ffi::FAKE_ENDPOINT.into()), ..Default::default() }, crate::ffi::TestClock::new(1_000)).await.unwrap();
+    let sink = database.online_sink().unwrap();
+    let live = Arc::clone(&database);
+    crate::test_wait::within(async move { crate::task::spawn_blocking(move || live.set_online(true)).await.unwrap() }).await.unwrap();
+    database.close_database().await.unwrap();
+    let after = Arc::clone(&database);
+    let closed = crate::test_wait::within(async move { crate::task::spawn_blocking(move || after.set_online(false)).await.unwrap() }).await;
+    assert!(matches!(closed, Err(DbError::Closed { .. })), "{closed:?}");
+    crate::test_wait::within(async move { crate::task::spawn_blocking(move || sink.set_online(true)).await.unwrap() }).await;
+}
+
 #[tokio::test]
 async fn unified_open_rejects_incomplete_or_unencrypted_session_arguments() {
     let mut rejected = Vec::new();
@@ -71,7 +85,7 @@ impl Database {
         let handle = super::database::executor().expect("the executor").handle().clone();
         handle.spawn(async move { let _ = sender.send(crate::test_wait::within(waiter.wait()).await); });
         if std::thread::current().name() != Some("lifecycle") {
-            receiver.recv_timeout(std::time::Duration::from_secs(10)).expect("the owners closed within 10 s");
+            crate::test_wait::recv_within(&receiver);
         }
         if let Some(lease) = self.lease.get() { lease.release(); }
     }

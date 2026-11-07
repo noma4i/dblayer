@@ -231,8 +231,7 @@ pub(super) async fn cancel_on_retry(retries: &super::RetryProgress, call: impl s
     let mut waiting = retries.inner.watch();
     {
         let mut call = Box::pin(call);
-        let deadline = super::database::executor().unwrap().spawn(async { crate::test_wait::pass(std::time::Duration::from_secs(10)).await });
-        tokio::select! { _ = waiting.wait_for(|snapshot| snapshot.active_calls > 0) => {}, _ = &mut call => {}, _ = deadline => panic!("the retry was not observed") }
+        crate::test_wait::within(async { tokio::select! { _ = waiting.wait_for(|snapshot| snapshot.active_calls > 0) => {}, _ = &mut call => {} } }).await;
         assert!(waiting.borrow().active_calls > 0, "call completed before retry");
     }
 }
@@ -440,14 +439,12 @@ async fn retry_progress_delivers_the_current_snapshot_to_each_reader_and_a_slow_
     drop(late_subscription);
 }
 
-const HOLD_WAIT: std::time::Duration = std::time::Duration::from_secs(10);
-
 fn hold_before_the_call(call_state: &crate::ffi::CallState) -> (std::sync::mpsc::Receiver<()>, std::sync::mpsc::Sender<()>) {
     let (reached, at_the_call) = std::sync::mpsc::channel();
     let (release, released) = std::sync::mpsc::channel::<()>();
     *call_state.before_enter.lock().unwrap() = Some(Box::new(move || {
         reached.send(()).unwrap();
-        released.recv_timeout(HOLD_WAIT).unwrap();
+        crate::test_wait::recv_within(&released);
     }));
     (at_the_call, release)
 }
@@ -465,7 +462,7 @@ async fn inv_observe_08_a_retry_progress_call_that_passed_the_cancel_check_does_
     let tap = Arc::new(Tap(std::sync::Mutex::new(heard)));
     let retries = super::RetryProgress::new();
     let subscription = retries.subscribe(tap.clone()).unwrap();
-    deliveries.recv_timeout(HOLD_WAIT).unwrap();
+    crate::test_wait::recv_within(&deliveries);
     let (at_the_call, release) = hold_before_the_call(&subscription.calls);
     let progress = retries.inner.clone();
     let retrying = tokio::spawn(async move {
@@ -473,14 +470,10 @@ async fn inv_observe_08_a_retry_progress_call_that_passed_the_cancel_check_does_
         let online = crate::transport::Connectivity::new(true);
         let _ = Retrying::new(&clock, &progress, &online, crate::runtime::RetryPolicy::Http).failed(TransportError::Network("down".into())).await;
     });
-    at_the_call.recv_timeout(HOLD_WAIT).unwrap();
+    crate::test_wait::recv_within(&at_the_call);
     subscription.cancel();
     release.send(()).unwrap();
-    let deadline = std::time::Instant::now() + HOLD_WAIT;
-    while Arc::strong_count(&tap) > 1 {
-        assert!(std::time::Instant::now() < deadline, "the blocked delivery did not end");
-        tokio::task::yield_now().await;
-    }
+    crate::test_wait::yield_until("the blocked delivery ended", || Arc::strong_count(&tap) == 1).await;
     assert!(deliveries.try_recv().is_err());
     retrying.abort();
 }

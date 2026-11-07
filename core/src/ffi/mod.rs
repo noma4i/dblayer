@@ -4,18 +4,12 @@ mod receipt;
 #[cfg(test)]
 #[cfg(test)]
 pub(crate) async fn settled(database: &Database) -> Result<(), DbError> {
-    let quiet = async {
-        loop {
-            database.operations_quiet().await;
-            let owners = database.life.clone();
-            database::blocking(move || { owners.barrier(); Ok(()) }).await?;
-            if database.life.requests_in_flight() == 0 { return Ok::<(), DbError>(()); }
-            database.life.requests_none().await;
-        }
-    };
-    match tokio::time::timeout(std::time::Duration::from_secs(10), quiet).await {
-        Ok(result) => result,
-        Err(_) => Err(DbError::Invalid { detail: "settled timed out".into() }),
+    loop {
+        database.operations_quiet().await;
+        let owners = database.life.clone();
+        database::blocking(move || { owners.barrier(); Ok(()) }).await?;
+        if database.life.requests_in_flight() == 0 { return Ok(()); }
+        database.life.requests_none().await;
     }
 }
 #[cfg(test)]

@@ -36,6 +36,22 @@ impl ByteProgress {
     pub fn is_cancelled(&self) -> bool { self.cancel.is_cancelled() }
 }
 
+struct Unpark(std::thread::Thread);
+
+impl std::task::Wake for Unpark {
+    fn wake(self: Arc<Self>) { self.0.unpark(); }
+}
+
+fn block_on<T>(future: impl std::future::Future<Output = T>) -> T {
+    let mut future = std::pin::pin!(future);
+    let waker = std::task::Waker::from(Arc::new(Unpark(std::thread::current())));
+    let mut context = std::task::Context::from_waker(&waker);
+    loop {
+        if let std::task::Poll::Ready(value) = future.as_mut().poll(&mut context) { return value; }
+        std::thread::park();
+    }
+}
+
 enum SignalTarget {
     Life(std::sync::Weak<crate::owners::life::Life>),
     Connectivity(Arc<core::Connectivity>),
@@ -50,6 +66,22 @@ impl OnlineSink {
 
     pub(crate) fn of_connectivity(connectivity: Arc<core::Connectivity>) -> Arc<Self> { Arc::new(Self { target: SignalTarget::Connectivity(connectivity) }) }
 
+    /// Waits for the outcome of the owner: the answer of `Network`, `Closed` once the database ended.
+    pub(crate) fn apply_online(&self, online: bool) -> Result<(), DbError> {
+        if let SignalTarget::Connectivity(connectivity) = &self.target {
+            connectivity.change(online);
+            return Ok(());
+        }
+        let Some(life) = self.life() else { return Err(super::command::closed()) };
+        let waiter = life.set_online(online);
+        match crate::blocking::blocking_unit(|| block_on(waiter.wait())) {
+            crate::runtime::Outcome::Value(crate::owners::life::LifeReply::Online { closed: false }) => Ok(()),
+            crate::runtime::Outcome::Value(_) | crate::runtime::Outcome::Closing => Err(super::command::closed()),
+            crate::runtime::Outcome::EpochEnded(_) => Err(super::command::ended()),
+            crate::runtime::Outcome::Internal => Err(DbError::Internal { detail: "the answer of the owner was lost".into() }),
+        }
+    }
+
     fn life(&self) -> Option<Arc<crate::owners::life::Life>> {
         match &self.target {
             SignalTarget::Life(life) => life.upgrade(),
@@ -61,18 +93,7 @@ impl OnlineSink {
 #[uniffi::export]
 impl OnlineSink {
     /// Returns once the owners heard the change.
-    pub fn set_online(&self, online: bool) {
-        if let SignalTarget::Connectivity(connectivity) = &self.target {
-            connectivity.change(online);
-            return;
-        }
-        let Some(life) = self.life() else { return };
-        let waiter = life.set_online(online);
-        let Ok(executor) = super::database::executor() else { return };
-        let (sender, receiver) = std::sync::mpsc::channel();
-        crate::task::spawn_on(executor.handle(), async move { let outcome = waiter.wait().await; crate::lock::effect(|| { let _ = sender.send(outcome); }); });
-        let _ = crate::blocking::blocking_unit(|| receiver.recv_timeout(std::time::Duration::from_secs(10)));
-    }
+    pub fn set_online(&self, online: bool) { let _ = self.apply_online(online); }
 
     pub fn set_power_saving(&self, saving: bool) {
         if let Some(life) = self.life() { drop(life.set_power_saving(saving)); }

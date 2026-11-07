@@ -147,7 +147,7 @@ impl MockTransport {
         self.until(&format!("{count} puts"), |state| state.put_calls.len() >= count).await;
     }
 
-    async fn until(&self, what: &str, ready: impl Fn(&MockState) -> bool) {
+    async fn until(&self, _what: &str, ready: impl Fn(&MockState) -> bool) {
         let wait = async {
             loop {
                 let notified = self.wake.notified();
@@ -159,9 +159,7 @@ impl MockTransport {
                 notified.await;
             }
         };
-        if tokio::time::timeout(Duration::from_secs(60), wait).await.is_err() {
-            panic!("mock transport: waited for {what}");
-        }
+        crate::test_wait::within(wait).await;
     }
 
     pub fn enqueue_put(&self, url: &str, reply: PutScript) {
