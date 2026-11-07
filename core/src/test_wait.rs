@@ -114,10 +114,14 @@ pub(crate) async fn within_secs<T>(seconds: u64, work: impl std::future::Future<
     }
 }
 
-pub(crate) async fn yield_until(what: &str, mut ready: impl FnMut() -> bool) {
+pub(crate) async fn yield_until(what: &str, ready: impl FnMut() -> bool) {
+    yield_until_showing(what, String::new, ready).await
+}
+
+pub(crate) async fn yield_until_showing(what: &str, state: impl Fn() -> String, mut ready: impl FnMut() -> bool) {
     let deadline = Instant::now() + SPIN_LIMIT;
     while !ready() {
-        assert!(Instant::now() < deadline, "{what}");
+        assert!(Instant::now() < deadline, "{what}{}", state());
         tokio::task::yield_now().await;
     }
 }
