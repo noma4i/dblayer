@@ -3,8 +3,8 @@
 //! counter the effect names. The counters and the protocol transitions belong to `Feed`. A closed connection gives no more inputs.
 
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::{Arc, Mutex, PoisonError};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use std::time::Duration;
 
 use serde_json::{json, Value};
@@ -35,11 +35,9 @@ struct Open {
     /// Set at `Close`: the writer gets `CLOSE_DRAIN` to send the queue, then the line closes.
     closing: CancelToken,
     established: Arc<AtomicBool>,
-    /// Which attempt of the connection id owns the entry: a finished task removes only its own.
-    attempt: u64,
 }
 
-type Connections = Arc<Mutex<HashMap<ConnectionId, Open>>>;
+type Connections = HashMap<ConnectionId, Open>;
 
 pub struct FeedIo {
     lines: Arc<dyn CableLines>,
@@ -48,7 +46,6 @@ pub struct FeedIo {
     counted: Option<crate::runtime::Handle>,
     admit: Option<Admit>,
     open: Connections,
-    attempts: AtomicU64,
     rest: Rest<FeedEffect>,
     clock: Arc<dyn crate::runtime::Clock>,
     gate: Arc<crate::runtime::EpochGate>,
@@ -58,7 +55,7 @@ pub struct FeedIo {
 fn session_closed(code: u16, reason: &str) -> bool { matches!(code, 4401 | 4403) || matches!(reason, "LOGGED_OUT" | "ACCOUNT_LOCKED") }
 
 impl FeedIo {
-    pub fn new(lines: Arc<dyn CableLines>, codec: Arc<dyn FeedCodec>, handle: Handle, rest: Rest<FeedEffect>, (clock, gate): (Arc<dyn crate::runtime::Clock>, Arc<crate::runtime::EpochGate>)) -> Self { Self { lines, codec, handle, clock, gate, counted: None, admit: None, open: Connections::default(), attempts: AtomicU64::new(0), rest } }
+    pub fn new(lines: Arc<dyn CableLines>, codec: Arc<dyn FeedCodec>, handle: Handle, rest: Rest<FeedEffect>, (clock, gate): (Arc<dyn crate::runtime::Clock>, Arc<crate::runtime::EpochGate>)) -> Self { Self { lines, codec, handle, clock, gate, counted: None, admit: None, open: Connections::default(), rest } }
 
     /// A connection starts with the admission of the epoch it was decided in, and its end cancels it.
     pub fn admitted_by(mut self, admit: Admit) -> Self {
@@ -72,16 +69,15 @@ impl FeedIo {
         self
     }
 
-    fn connect(&self, stamp: EpochStamp, connection: ConnectionId, back: &Back<Feed>) {
+    fn connect(&mut self, stamp: EpochStamp, connection: ConnectionId, back: &Back<Feed>) {
         if let (Some(admit), EpochStamp::Epoch(epoch)) = (&self.admit, stamp) {
             if admit(epoch).is_err() { return back.reply(stamp, FeedInput::SubscriptionEnded { connection_id: connection }); }
         }
         let cancel = CancelToken::new();
-        let attempt = self.attempts.fetch_add(1, Ordering::SeqCst);
-        let open = self.open.clone();
         let (closing, established) = (CancelToken::new(), Arc::new(AtomicBool::new(false)));
         let (frames, queued) = mpsc::unbounded_channel::<(u64, Value)>();
-        self.open.lock().unwrap_or_else(PoisonError::into_inner).insert(connection, Open { frames, cancel: cancel.clone(), closing: closing.clone(), established: established.clone(), attempt });
+        self.open.retain(|_, open| !open.cancel.is_cancelled());
+        self.open.insert(connection, Open { frames, cancel: cancel.clone(), closing: closing.clone(), established: established.clone() });
         let (lines, codec, back, clock, gate) = (self.lines.clone(), self.codec.clone(), back.clone(), self.clock.clone(), self.gate.clone());
         let epoch = match stamp { EpochStamp::Epoch(epoch) => Some(epoch), EpochStamp::Control => None };
         let token = cancel.clone();
@@ -92,12 +88,9 @@ impl FeedIo {
         };
         let launch = self.counted.as_ref().map(crate::runtime::Handle::launch);
         spawn_on(Carry::Detached, &self.handle, crate::runtime::counted(launch, async move {
-            let running = Self::run(lines, codec, (clock, gate, epoch), connection, (cancel, closing, established), queued, reply);
-            running.await;
-            let mut open = open.lock().unwrap_or_else(PoisonError::into_inner);
-            if open.get(&connection).is_some_and(|entry| entry.attempt == attempt) {
-                open.remove(&connection);
-            }
+            let ended = cancel.clone();
+            Self::run(lines, codec, (clock, gate, epoch), connection, (cancel, closing, established), queued, reply).await;
+            ended.cancel();
         }));
     }
 
@@ -194,17 +187,17 @@ impl FeedIo {
         }
     }
 
-    fn seal(&self, connection: ConnectionId, counter: u64, frame: Outgoing) {
+    fn seal(&mut self, connection: ConnectionId, counter: u64, frame: Outgoing) {
         let body = self.body_of(frame);
-        let frames = self.open.lock().unwrap_or_else(PoisonError::into_inner).get(&connection).map(|open| open.frames.clone());
+        let frames = self.open.get(&connection).map(|open| open.frames.clone());
         if let Some(frames) = frames {
             let _ = crate::lock::effect(|| frames.send((counter, body)));
         }
     }
 
     /// The frames sealed before the close still go out: the writer ends when its queue is empty and the sender is gone, then the line closes.
-    fn close(&self, connection: ConnectionId) {
-        let Some(open) = self.open.lock().unwrap_or_else(PoisonError::into_inner).remove(&connection) else { return };
+    fn close(&mut self, connection: ConnectionId) {
+        let Some(open) = self.open.remove(&connection) else { return };
         if open.established.load(Ordering::SeqCst) {
             open.closing.cancel();
         } else {
@@ -227,7 +220,6 @@ impl EffectRunner<Feed> for FeedIo {
 impl Drop for FeedIo {
     fn drop(&mut self) {
         crate::lock::assert_no_library_lock("FeedIo drop");
-        let open: Vec<Open> = self.open.lock().unwrap_or_else(PoisonError::into_inner).drain().map(|(_, open)| open).collect();
-        open.iter().for_each(|open| open.cancel.cancel());
+        self.open.values().for_each(|open| open.cancel.cancel());
     }
 }
