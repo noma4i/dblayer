@@ -13,7 +13,7 @@ use crate::runtime::{Clock, RetryPolicy};
 use crate::store::Store;
 use crate::transport::retry::{RetryCalls, Retrying};
 use crate::transport::Connectivity;
-use crate::transport::{GraphQLError, GraphQLRequest, PutRequest, PutResponse, Response, Transport, TransportError};
+use crate::transport::{GraphQLError, GraphQLRequest, PutRequest, PutReply, Response, Upstream, TransportError};
 
 const PERSISTED_QUERY_VERSION: u32 = 1;
 const PERSISTED_QUERY_NOT_FOUND: &str = "PERSISTED_QUERY_NOT_FOUND";
@@ -26,11 +26,11 @@ pub struct EncryptedTransport {
     clock: Arc<dyn Clock>,
     progress: Arc<RetryCalls>,
     life: OnceLock<Weak<crate::owners::life::Life>>,
-    rest: Arc<dyn Transport>,
+    rest: Arc<dyn Upstream>,
 }
 
 impl EncryptedTransport {
-    pub(crate) fn new(exchange: Arc<Exchange>, credential: Arc<Secret>, store: Arc<Store>, clock: Arc<dyn Clock>, progress: Arc<RetryCalls>, rest: Arc<dyn Transport>) -> Self {
+    pub(crate) fn new(exchange: Arc<Exchange>, credential: Arc<Secret>, store: Arc<Store>, clock: Arc<dyn Clock>, progress: Arc<RetryCalls>, rest: Arc<dyn Upstream>) -> Self {
         let online = store.connectivity();
         Self { exchange, credential, store, online, clock, progress, life: OnceLock::new(), rest }
     }
@@ -115,7 +115,7 @@ pub fn missing_from_registry(response: &Response) -> bool {
 }
 
 #[async_trait]
-impl Transport for EncryptedTransport {
+impl Upstream for EncryptedTransport {
     fn retries_queries(&self) -> bool { true }
     fn session(&self) -> Result<Option<String>, TransportError> {
         Ok(super::credential::stored_session(&self.store)?.filter(|session| session.sequence > 0).map(|session| session.credential_digest))
@@ -134,8 +134,8 @@ impl Transport for EncryptedTransport {
         response_of(self.mutate_owned(&self.exchange.config().endpoints.graphql, graphql_body(&request, true), request.owner, request.purpose).await?)
     }
 
-    async fn put(&self, request: PutRequest) -> Result<PutResponse, TransportError> {
-        crate::lock::assert_no_library_lock("Transport::put");
+    async fn put(&self, request: PutRequest) -> Result<PutReply, TransportError> {
+        crate::lock::assert_no_library_lock("Upstream::put");
         self.rest.put(request).await
     }
 }
