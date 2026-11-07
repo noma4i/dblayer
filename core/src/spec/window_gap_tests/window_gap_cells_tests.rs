@@ -419,6 +419,8 @@ fn win_preload_after_register() {
         }
         assert_eq!(asked, expected, "{name}: the declared preload key asks once");
         assert_eq!(twin.stage(), stage, "{name}");
+    }
+}
 
 #[test]
 fn win_busy_interest_passive() {
