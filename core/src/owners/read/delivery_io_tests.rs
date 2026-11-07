@@ -151,7 +151,7 @@ fn rt_prop_task_panic_fails() {
     let mut rig = rig_with(|_| Arc::new(Panicking));
     open(&mut rig, 1);
     let owner = rig.owner;
-    pump(&mut rig.det, owner, |det| det.state(owner).is_some_and(|state| !state.journal(STREAM).is_empty()));
+    pump(&mut rig.det, owner, |det| det.trace().iter().filter(|entry| entry.input.starts_with("TaskFailed")).count() == 2 && det.state(owner).is_some_and(|state| !state.journal(STREAM).is_empty()));
     let failed: Vec<String> = rig.det.trace().iter().filter(|entry| entry.input.starts_with("TaskFailed")).map(|entry| entry.input.clone()).collect();
     let inputs: Vec<&str> = rig.det.trace().iter().map(|entry| entry.input.as_str()).collect();
     let mut failed = failed;
