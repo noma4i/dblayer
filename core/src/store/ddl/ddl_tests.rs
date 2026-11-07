@@ -5,6 +5,10 @@ use rusqlite::Connection;
 use serde_json::json;
 use std::collections::{BTreeMap, BTreeSet};
 
+fn fingerprint(model: &ModelSpec) -> String { super::fingerprint(model).unwrap() }
+
+fn fingerprint_text(model: &ModelSpec) -> String { super::fingerprint_text(model).unwrap() }
+
 fn messages() -> ModelSpec {
     ModelSpec::new(
         "messages",

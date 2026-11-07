@@ -94,6 +94,6 @@ fn data_parse_json() {
     }
     let plain = FieldSpec::raw("data").nullable();
     let sample = |field| ModelSpec::new("samples", vec![FieldSpec::scalar("id", ScalarKind::Id), field]);
-    assert_ne!(crate::store::ddl::fingerprint(&sample(field.clone())), crate::store::ddl::fingerprint(&sample(plain.clone())));
+    assert_ne!(crate::store::ddl::fingerprint(&sample(field.clone())).unwrap(), crate::store::ddl::fingerprint(&sample(plain.clone())).unwrap());
     assert_ne!(crate::ffi::wire::wire_layout(&sample(field)), crate::ffi::wire::wire_layout(&sample(plain)));
 }

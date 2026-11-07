@@ -243,8 +243,8 @@ pub(crate) fn restore_local_values(connection: &Connection, stash: &[PendingValu
     stash.iter().try_for_each(|item| save_pending(connection, &item.model, &item.row_id, &item.path, &item.value))
 }
 
-pub(crate) fn current_fingerprints(inner: &Inner) -> BTreeMap<String, String> {
-    inner.models.iter().filter(|(_, info)| !info.spec.is_memory()).map(|(key, info)| (key.clone(), fingerprint(&info.spec))).collect()
+pub(crate) fn current_fingerprints(inner: &Inner) -> Result<BTreeMap<String, String>, StoreError> {
+    inner.models.iter().filter(|(_, info)| !info.spec.is_memory()).map(|(key, info)| Ok((key.clone(), fingerprint(&info.spec)?))).collect()
 }
 
 pub(crate) fn finish_interrupted_reset(inner: &mut Inner) -> Result<bool, StoreError> {
@@ -270,7 +270,7 @@ pub(crate) fn finish_interrupted_reset(inner: &mut Inner) -> Result<bool, StoreE
             wipe_all_cache(&transaction, true, keep_intents)?;
             if !keep_intents { retire_operations(&transaction, None, None)?; }
             let data_version = inner.data_version.clone();
-            manifest_stamp(&transaction, data_version.as_deref(), &current_fingerprints(inner))?;
+            manifest_stamp(&transaction, data_version.as_deref(), &current_fingerprints(inner)?)?;
         }
     }
     clear_intent(&transaction)?;
@@ -337,7 +337,7 @@ impl Store {
         if erase_encrypted {
             transaction.execute_batch(include_str!("sql/reset/erase_account.sql"))?;
         }
-        manifest_stamp(&transaction, inner.data_version.as_deref(), &current_fingerprints(&inner))?;
+        manifest_stamp(&transaction, inner.data_version.as_deref(), &current_fingerprints(&inner)?)?;
         let revision = bump_revision(&transaction)?;
         clear_intent(&transaction)?;
         let mut snapshot = self.overlays.next(revision - 1, true).ok_or_else(|| StoreError::Constraint("overlay revision is unavailable".into()))?;

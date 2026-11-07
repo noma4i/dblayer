@@ -285,11 +285,11 @@ struct ModelFingerprint<'a> {
     ddl: Vec<String>,
 }
 
-pub fn fingerprint(model: &ModelSpec) -> String {
-    Sha256::digest(fingerprint_text(model).as_bytes()).iter().map(|byte| format!("{byte:02x}")).collect()
+pub fn fingerprint(model: &ModelSpec) -> Result<String, serde_json::Error> {
+    Ok(Sha256::digest(fingerprint_text(model)?.as_bytes()).iter().map(|byte| format!("{byte:02x}")).collect())
 }
 
-fn fingerprint_text(model: &ModelSpec) -> String {
+fn fingerprint_text(model: &ModelSpec) -> Result<String, serde_json::Error> {
     let mut fields: Vec<&FieldSpec> = model.fields.iter().collect();
     fields.sort_by(|left, right| left.name.cmp(&right.name));
     let mut relations: Vec<RelationFingerprint> = model
@@ -314,7 +314,7 @@ fn fingerprint_text(model: &ModelSpec) -> String {
     ddl.extend(layout(&canonical).table_statements(canonical.is_memory()));
     ddl.extend(create_index_statements(&canonical));
     ddl.sort();
-    serde_json::to_string(&ModelFingerprint { fields, relations, associations, storage: model.storage, indexes, ddl }).expect("fingerprint serializes")
+    serde_json::to_string(&ModelFingerprint { fields, relations, associations, storage: model.storage, indexes, ddl })
 }
 
 pub fn fingerprint_key(model: &str) -> String {

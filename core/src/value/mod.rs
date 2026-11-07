@@ -233,10 +233,9 @@ fn is_missing(value: Option<&Value>) -> bool {
 
 #[cfg(test)]
 pub fn null_equals(value: Option<&Value>, expected: Option<&Value>) -> bool {
-    match (is_missing(value), is_missing(expected)) {
-        (true, true) => true,
-        (false, false) => values_equal(value.unwrap(), expected.unwrap()),
-        _ => false,
+    match (value, expected) {
+        (Some(value), Some(expected)) if !value.is_null() && !expected.is_null() => values_equal(value, expected),
+        _ => is_missing(value) && is_missing(expected),
     }
 }
 
@@ -342,7 +341,7 @@ pub fn relation_scope_key(
     if model.is_empty() || name.is_empty() {
         return Err(ListKeyError::MissingSegment);
     }
-    let encoded = serde_json::to_string(params).expect("string map serializes");
+    let encoded = Value::Object(params.iter().map(|(key, value)| (key.clone(), Value::String(value.clone()))).collect()).to_string();
     Ok(ListKey::compose(&[model, name, encoded.as_str()]))
 }
 

@@ -39,7 +39,7 @@ impl Store {
 
         verify_saved(&inner.connection)?;
         if let Some(reason) = crate::store::ddl::recreate_reason(&inner.connection)? {
-            let fingerprints = current_fingerprints(&inner);
+            let fingerprints = current_fingerprints(&inner)?;
             let transaction = inner.connection.unchecked_transaction()?;
             let database: String = transaction.query_row(include_str!("sql/boot/boot_select_pragma_database_list.sql"), [], |row| row.get(0))?;
             let has_files: bool = transaction.query_row(include_str!("sql/boot/boot_select_sqlite_master.sql"), [], |row| row.get(0))?;
@@ -64,7 +64,7 @@ impl Store {
 
         self.session_end_replay.store(super::reset::pending_intent(&inner.connection)?.as_deref() == Some("session_end"), std::sync::atomic::Ordering::SeqCst);
         let finished_interrupted_reset = finish_interrupted_reset(&mut inner)?;
-        let fingerprints: BTreeMap<String, String> = current_fingerprints(&inner);
+        let fingerprints: BTreeMap<String, String> = current_fingerprints(&inner)?;
         let verdict = if rebuilt { ManifestVerdict::Fresh } else { manifest_verify(&inner.connection, data_version, &fingerprints)? };
         let now = inner.now_ms();
 

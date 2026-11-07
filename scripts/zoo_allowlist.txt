@@ -2,8 +2,5 @@ type:DbError        # the ffi error mirrors core errors for the foreign bindings
 type:PutReply       # the ffi reply is the foreign-binding form of the core reply
 type:Transport      # the ffi trait is implemented by Swift and Kotlin, the core trait by the mock
 
-panic:core/src/value/mod.rs:value.unwrap(), expected.unwrap()   # the match arm proves both options are Some
-panic:core/src/value/mod.rs:expect("string map serializes")   # a map of strings always serializes
-panic:core/src/store/ddl/mod.rs:expect("fingerprint serializes")   # own Serialize type, string keys
 
 
