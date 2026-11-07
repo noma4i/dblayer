@@ -4,6 +4,7 @@ use super::transfer_harness::*;
 use crate::owners::contract::{Online, RejectReason};
 use crate::owners::store::UploadKind;
 use crate::owners::write::outbox::{Fault, OutboxOutcome};
+use crate::owners::write::upload::UploadConfig;
 use crate::owners::write::transfer::{NextStep, Shown, TransferAnswer, TransferEffect, TransferId, TransferInput, TransferStage, TransferTick};
 use crate::runtime::Time;
 use crate::transport::NetworkPurpose;
@@ -221,6 +222,51 @@ fn xfer_step_temp() {
     assert_ne!(twin.attempt(id), before, "the retry is a new physical attempt");
     assert_eq!((out.writes(), out.steps().len(), out.all_replies()), (0, 0, 0));
     assert_eq!(twin.state().active(), 0, "the slot is free while the retry waits");
+}
+
+#[test]
+fn xfer_put_timeout() {
+    let (mut twin, id) = ready(3);
+    twin.online(true);
+    let attempt = twin.attempt(id);
+    let armed = twin.commit();
+    let now = twin.state().now;
+    let expected = TransferInput::Tick { now, kind: TransferTick::PutTimeout { transfer_id: id, attempt_id: attempt } };
+    assert_eq!(armed.schedules, vec![(UploadConfig::default().put_timeout, format!("{expected:?}"))], "the step arms one timeout of its attempt");
+    let out = twin.put_timeout(id, attempt);
+    assert_eq!((twin.stage(id), twin.t(id).attempts, twin.t(id).waiting_retry, out.timers, out.cancel_steps()), (TransferStage::Uploading, 1, true, 1, 1));
+    assert_ne!(twin.attempt(id), attempt, "the retry is a new physical attempt");
+    assert_eq!((out.writes(), out.steps().len(), out.all_replies()), (0, 0, 0));
+    assert_eq!(twin.state().active(), 0, "the slot is free while the retry waits");
+    let (mut done, id) = ready(3);
+    done.online(true);
+    done.commit();
+    assert_eq!(done.step_ok(id, 1, Some("u1")).cancels, 1, "the answer of the step disarms its timeout");
+    let (mut worn, id) = ready(3);
+    worn.online(true);
+    worn.commit();
+    for _ in 0..49 {
+        let attempt = worn.attempt(id);
+        assert_eq!(worn.put_timeout(id, attempt).writes(), 0);
+        worn.tick_retry(id);
+        worn.commit();
+    }
+    let attempt = worn.attempt(id);
+    let out = worn.put_timeout(id, attempt);
+    assert_eq!((worn.stage(id), out.kinds()), (TransferStage::PersistingFailure, vec![UploadKind::Failed]), "the 50th attempt is the last");
+}
+
+#[test]
+fn xfer_put_timeout_other() {
+    let mut twin = Twin::new();
+    let id = twin.uploading(KEY, 3);
+    let attempt = twin.attempt(id);
+    let wrong = |transfer_id, attempt_id| TransferInput::Tick { now: Time(1), kind: TransferTick::PutTimeout { transfer_id, attempt_id } };
+    twin.ignores(id, vec![wrong(id, attempt + 1), wrong(id + 77, attempt)]);
+    let mut completing = Twin::new();
+    let id = completing_multipart(&mut completing, OTHER);
+    let attempt = completing.attempt(id);
+    completing.ignores(id, vec![wrong(id, attempt)]);
 }
 
 #[test]

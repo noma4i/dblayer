@@ -136,6 +136,26 @@ fn xfer_prop_epoch() {
 }
 
 #[test]
+fn xfer_put_timeout_epoch_end() {
+    let in_flight = || {
+        let mut twin = Twin::new();
+        let id = twin.uploading(KEY, 3);
+        let attempt = twin.attempt(id);
+        (twin, id, attempt)
+    };
+    let (mut twin, id, attempt) = in_flight();
+    twin.end_epoch();
+    let late = twin.put_timeout(id, attempt);
+    assert_eq!((late.steps().len(), late.cancel_steps(), late.timers, late.writes(), late.all_replies()), (0, 0, 0, 0, 0), "the timeout after EpochEnded is dropped: {late:?}");
+    let (mut twin, id, attempt) = in_flight();
+    let first = twin.put_timeout(id, attempt);
+    assert_eq!((first.cancel_steps(), first.timers, first.writes(), first.steps().len()), (1, 1, 0, 0), "the timeout before EpochEnded is exactly one StepError");
+    twin.end_epoch();
+    let retry = twin.tick_retry(id);
+    assert_eq!((retry.steps().len(), retry.writes(), retry.timers), (0, 0, 0), "EpochEnded drops the retry");
+}
+
+#[test]
 fn xfer_prop_round_covers() {
     let mut twin = Twin::new();
     let (id, _, _) = twin.accepting(KEY, 1);

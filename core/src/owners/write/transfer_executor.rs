@@ -80,6 +80,7 @@ pub(crate) struct TransferPort {
     pub shows: ShowSink,
     /// `FileSlots`: transfers in Uploading and Completing at the same time.
     pub slots: u32,
+    pub put_timeout: std::time::Duration,
 }
 
 type Call<T> = Pin<Box<dyn Future<Output = Result<T, TransportError>> + Send>>;

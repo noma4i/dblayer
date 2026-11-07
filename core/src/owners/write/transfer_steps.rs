@@ -6,8 +6,11 @@ use super::transfer::{reply, run, Fx, TransferState};
 use super::transfer_types::*;
 use crate::owners::contract::RejectReason;
 use crate::owners::store::StoreOp;
-use crate::runtime::Time;
+use crate::runtime::{Effect, ScheduleId, Time};
 use crate::transport::NetworkPurpose;
+
+/// Attempt ids come from one counter, so the id of a timer of an attempt is never the id of another timer.
+fn put_timer(attempt_id: AttemptId) -> ScheduleId { ScheduleId(RETRY_TIMER + attempt_id) }
 
 impl TransferState {
     /// Transfers in the network: only a physical attempt in flight holds a slot.
@@ -64,8 +67,13 @@ impl TransferState {
         }
         transfer.stage = if transfer.next_step == NextStep::Complete { TransferStage::Completing } else { TransferStage::Uploading };
         let (effect, shown) = (Self::step_effect(transfer, operation), if transfer.stage == TransferStage::Completing { Shown::Uploading { progress: 100 } } else { Shown::Uploading { progress: Self::progress(transfer) } });
+        let (uploading, attempt_id) = (transfer.stage == TransferStage::Uploading, transfer.attempt_id);
         self.show(id, shown, fx);
         run(fx, effect);
+        if uploading {
+            let input = TransferInput::Tick { now: self.now, kind: TransferTick::PutTimeout { transfer_id: id, attempt_id } };
+            fx.push(Effect::Schedule { id: put_timer(attempt_id), after: self.put_timeout, input });
+        }
     }
 
     /// `Online(false)` and `PowerSaving(true)` of a transfer that is not urgent: the steps in the network go back to `Ready`.
@@ -77,8 +85,10 @@ impl TransferState {
             transfer.next_step = if transfer.stage == TransferStage::Completing { NextStep::Complete } else { NextStep::Part(transfer.confirmed_parts + 1) };
             transfer.stage = TransferStage::Ready;
             transfer.waiting_retry = false;
+            let attempt_id = transfer.attempt_id;
             if std::mem::replace(&mut transfer.in_flight, false) {
                 run(fx, TransferEffect::CancelStep { transfer_id: id });
+                fx.push(Effect::Cancel(put_timer(attempt_id)));
             }
             self.show(id, Shown::Queued, fx);
         }
@@ -91,6 +101,7 @@ impl TransferState {
             return;
         }
         self.step_answered(id);
+        fx.push(Effect::Cancel(put_timer(attempt_id)));
         let Some(transfer) = self.transfers.get_mut(&id) else { return };
         if part.is_some_and(|part| part != transfer.confirmed_parts + 1) {
             return;
@@ -154,6 +165,7 @@ impl TransferState {
             return;
         }
         self.step_answered(id);
+        fx.push(Effect::Cancel(put_timer(attempt_id)));
         let Some(transfer) = self.transfers.get_mut(&id) else { return };
         if temporary && transfer.attempts < ATTEMPT_LIMIT {
             self.schedule_retry(id, fx);
@@ -195,7 +207,16 @@ impl TransferState {
         match kind {
             TransferTick::Expire => self.expire(fx),
             TransferTick::Retry { transfer_id, attempt_id } => self.tick_retry(transfer_id, attempt_id, fx),
+            TransferTick::PutTimeout { transfer_id, attempt_id } => self.tick_put_timeout(transfer_id, attempt_id, fx),
         }
+    }
+
+    fn tick_put_timeout(&mut self, id: TransferId, attempt_id: AttemptId, fx: &mut Fx) {
+        if !self.live(id, TransferStage::Uploading, attempt_id) {
+            return;
+        }
+        run(fx, TransferEffect::CancelStep { transfer_id: id });
+        self.step_error(id, attempt_id, true, fx);
     }
 
     fn tick_retry(&mut self, id: TransferId, attempt_id: AttemptId, fx: &mut Fx) {

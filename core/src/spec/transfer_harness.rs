@@ -53,6 +53,8 @@ pub(super) struct Out {
     pub outbox: Vec<OutboxInput>,
     pub rounds: Vec<RoundsInput>,
     pub timers: usize,
+    pub schedules: Vec<(std::time::Duration, String)>,
+    pub cancels: usize,
 }
 
 impl Out {
@@ -258,8 +260,12 @@ impl Twin {
         for emitted in take(&self.log) {
             match emitted {
                 Emitted::Run(run) => out.runs.push(run),
-                Emitted::Schedule { .. } => out.timers += 1,
-                Emitted::Send { .. } | Emitted::Cancel(_) | Emitted::Broadcast(_) => {}
+                Emitted::Schedule { after, input, .. } => {
+                    out.timers += 1;
+                    out.schedules.push((after, input));
+                }
+                Emitted::Cancel(_) => out.cancels += 1,
+                Emitted::Send { .. } | Emitted::Broadcast(_) => {}
             }
         }
         for input in take(&self.store) {
@@ -373,6 +379,10 @@ impl Twin {
     pub fn tick_retry(&mut self, id: TransferId) -> Out {
         let attempt_id = self.attempt(id);
         self.post(TransferInput::Tick { now: Time(1), kind: TransferTick::Retry { transfer_id: id, attempt_id } })
+    }
+
+    pub fn put_timeout(&mut self, id: TransferId, attempt_id: u64) -> Out {
+        self.post(TransferInput::Tick { now: Time(1), kind: TransferTick::PutTimeout { transfer_id: id, attempt_id } })
     }
 
     pub fn online(&mut self, on: bool) -> Out { self.post(TransferInput::Online(Online(on))) }

@@ -460,7 +460,9 @@ impl Life {
                     },
                     { let db = ports.db.clone(); Arc::new(move |sha256: &str| db.blob_cache_lookup(sha256)) },
                 );
-                builder.install(address, "transfer", TransferState::new(0, port.slots, TransferPeers { store, outbox, rounds: rounds_at }), executor);
+                let mut transfers = TransferState::new(0, port.slots, TransferPeers { store, outbox, rounds: rounds_at });
+                transfers.put_timeout = port.put_timeout;
+                builder.install(address, "transfer", transfers, executor);
                 let rounds_drained = wiring.clone();
                 builder.install(rounds, "rounds", RoundsState::new(address), RoundsExecutor::new(port.jobs.clone(), Arc::new(move |drained| rounds_drained.to_lifecycle(LifecycleInput::Drained(drained)))));
                 Some((address, rounds))

@@ -11,7 +11,6 @@ use serde_json::{json, Value};
 use super::transfer::{Source, Steps};
 use super::transfer_executor::{Link, StepCodec, StepDone};
 use crate::owners::life::OperationLookup;
-use crate::runtime::Clock;
 use crate::owners::read::codec::root_value;
 use crate::transport::{CancelToken, GraphQLRequest, PutFile, PutRequest, RequestOwner, Response, TransferIdentity, TransferStep, TransportError};
 use crate::owners::write::upload::{parse_headers, part_range, UploadConfig, UploadOperations, UploadStage};
@@ -52,11 +51,10 @@ pub(crate) struct UploadCodec {
     operations: UploadOperations,
     lookup: OperationLookup,
     config: UploadConfig,
-    clock: Arc<dyn Clock>,
 }
 
 impl UploadCodec {
-    pub fn new(operations: UploadOperations, lookup: OperationLookup, config: UploadConfig, clock: Arc<dyn Clock>) -> Self { Self { operations, lookup, config, clock } }
+    pub fn new(operations: UploadOperations, lookup: OperationLookup, config: UploadConfig) -> Self { Self { operations, lookup, config } }
 
     async fn graphql(&self, link: &Link, (name, step): (&str, UploadStage), (operation, item): (u64, &str), variables: Value) -> Result<Value, TransportError> {
         let (document, root) = (self.lookup)(name).ok_or_else(|| rejected(&format!("operation {name} is not registered")))?;
@@ -75,10 +73,7 @@ impl UploadCodec {
             cancel: CancelToken::new(),
             sent: Arc::new(|_| {}),
         };
-        let response = tokio::select! {
-            response = link.put(request) => response,
-            () = self.clock.sleep(self.config.put_timeout) => Err(TransportError::Network("put timed out".into())),
-        }?;
+        let response = link.put(request).await?;
         match response.status {
             200..=299 => Ok(response.etag),
             403 => Err(TransportError::Network("the upload url expired".into())),

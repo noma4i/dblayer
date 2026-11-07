@@ -103,6 +103,7 @@ pub struct StoredTransfer {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum TransferTick {
     Retry { transfer_id: TransferId, attempt_id: AttemptId },
+    PutTimeout { transfer_id: TransferId, attempt_id: AttemptId },
     Expire,
 }
 
@@ -446,6 +447,7 @@ pub struct TransferState {
     pub next_batch: BatchId,
     pub(super) next_attempt: AttemptId,
     pub(super) next_timer: u64,
+    pub put_timeout: std::time::Duration,
     pub now: Time,
     pub drained: bool,
     pub closing: bool,
@@ -484,6 +486,7 @@ impl TransferState {
             examined: std::sync::atomic::AtomicU64::new(0),
             next_attempt: 1,
             next_timer: 1,
+            put_timeout: super::upload::UploadConfig::default().put_timeout,
             now: Time(0),
             drained: false,
             closing: false,
