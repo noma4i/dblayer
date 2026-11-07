@@ -54,10 +54,10 @@ The GraphQL address of a database without an encrypted session is `endpoint` of 
 | `NSURLErrorDomain` -999, `Swift.CancellationError`, `java.util.concurrent.CancellationException`, `kotlinx.coroutines.JobCancellationException`, `java.io.IOException` with the text `Canceled` | The call was cancelled |
 | `NSURLErrorDomain` -1200 to -1206, `javax.net.ssl.SSLHandshakeException`, `javax.net.ssl.SSLPeerUnverifiedException` | The server certificate is not trusted |
 | `NSURLErrorDomain` -1003, -1004, -1006, -1009, -1018, -1020, `java.net.UnknownHostException`, `java.net.ConnectException`, `java.net.NoRouteToHostException` | The host is unreachable or the device is offline |
-| `NSURLErrorDomain` -1001, `java.net.SocketTimeoutException` | A timeout of the call expired |
+| `NSURLErrorDomain` -1001, `java.net.SocketTimeoutException`, `java.io.InterruptedIOException` | A timeout of the call expired |
 | anything else, `url` | Any other failure of the connection |
 
-The core ends every HTTP exchange after `requestMs` on its clock and drops the platform call, a timeout that reports `dblayer.timeout`. The platform still applies its own bounds. URLSession has no connect timeout: Swift sets `requestMs` as the idle bound and ignores `connectMs`. Kotlin sets `connectMs` as the connect timeout and `requestMs` as the idle and total bound.
+The core sets the timeouts and the platform applies them. URLSession has no connect timeout: Swift sets `requestMs` as the idle bound and as the total bound of an HTTP request and ignores `connectMs`. Kotlin sets `connectMs` as the connect timeout and `requestMs` as the idle and total bound.
 
 `CableOutcome.failed` carries `handshakeStatus`, the HTTP status of a refused upgrade when the server answered. The core turns a status other than 101 into an `Http` error.
 

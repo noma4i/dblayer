@@ -21,8 +21,14 @@ struct UrlSessionHttp: Sendable {
     urlRequest.httpShouldHandleCookies = false
     request.headers.forEach { urlRequest.setValue($1, forHTTPHeaderField: $0) }
     urlRequest.httpBody = Data(request.body.utf8)
+    let seconds = TimeInterval(request.requestMs) / 1000
+    let configuration = session.configuration
+    configuration.timeoutIntervalForRequest = seconds
+    configuration.timeoutIntervalForResource = seconds
+    let bounded = URLSession(configuration: configuration)
+    defer { bounded.finishTasksAndInvalidate() }
     do {
-      let (data, response) = try await session.data(for: urlRequest, delegate: RefuseRedirect())
+      let (data, response) = try await bounded.data(for: urlRequest, delegate: RefuseRedirect())
       let status = (response as? HTTPURLResponse)?.statusCode ?? 0
       return .response(status: UInt16(clamping: status), etag: nil, body: String(decoding: data, as: UTF8.self))
     } catch {

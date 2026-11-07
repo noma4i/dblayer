@@ -30,6 +30,16 @@ struct TransportFailureTests {
     #expect(raw.message == failure.error.localizedDescription)
   }
 
+  @Test(.timeLimit(.minutes(1)))
+  func theExecutorAppliesTheRequestTimeoutOfTheCore() async throws {
+    let server = try BootstrapListener(holdHeaders: true)
+    defer { server.listener.cancel() }
+    let origin = try await server.start()
+    let request = HttpRequest(url: origin.absoluteString + "graphql", method: "POST", headers: [:], body: "{}", connectMs: 10_000, requestMs: 300, purpose: .standard)
+    let failure = try #require(rawFailure(await UrlSessionTransport().send(request: request)))
+    #expect((failure.domain, failure.code) == (NSURLErrorDomain, Int64(URLError.timedOut.rawValue)))
+  }
+
   static func shape(_ error: DbError) -> String {
     switch error {
     case .Network: "Network"

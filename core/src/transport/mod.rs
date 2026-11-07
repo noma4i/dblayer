@@ -22,7 +22,7 @@ pub use extensions::{graphql_extensions, GraphqlExtensions, TransactionDispositi
 #[cfg(test)]
 pub use mock::{RecordedKind, MockTransport, PutScript, RecordedCall, RecordedPut, Reply};
 pub use online::Connectivity;
-pub use raw::{classify, classify_upgrade, encrypted_call, graphql_call, graphql_endpoint, graphql_text, merge_headers, user_agent, within_request, ExchangeKind, RawFailureKind, HttpRequest, RawFailure, RawOutcome, CONNECT_TIMEOUT_MS, REQUEST_TIMEOUT_MS};
+pub use raw::{classify, classify_upgrade, encrypted_call, graphql_call, graphql_endpoint, graphql_text, merge_headers, user_agent, ExchangeKind, RawFailureKind, HttpRequest, RawFailure, RawOutcome, CONNECT_TIMEOUT_MS, REQUEST_TIMEOUT_MS};
 pub use put::{ByteSink, PutFile, PutRequest, PutReply, TransferIdentity, TransferStep};
 pub use request::{GraphQLError, GraphQLRequest, NetworkPurpose, RequestOwner, Response};
 pub use response::{ResponseOutcome, ResponseShape};

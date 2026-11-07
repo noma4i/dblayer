@@ -22,13 +22,13 @@ fn sess_transport_classify_table() {
         (failure("java.net.ConnectException", None), [network(), network(), network()]),
         (failure("java.net.NoRouteToHostException", None), [network(), network(), network()]),
         (failure("java.net.SocketTimeoutException", None), [network(), interrupted(), network()]),
+        (failure("java.io.InterruptedIOException", None), [network(), interrupted(), network()]),
         (failure(url, Some(-1001)), [network(), interrupted(), network()]),
         (failure(url, Some(-1005)), [network(), interrupted(), network()]),
         (failure("java.io.IOException", None), [network(), interrupted(), network()]),
         (failure("NSCocoaErrorDomain", Some(260)), [network(), interrupted(), network()]),
         (failure("url", None), [network(), interrupted(), network()]),
         (failure(url, None), [network(), interrupted(), network()]),
-        (failure(TIMEOUT_DOMAIN, None), [network(), interrupted(), network()]),
     ];
     table.extend([-1200, -1201, -1202, -1203, -1204, -1205, -1206].map(|code| (failure(url, Some(code)), [tls(), tls(), tls()])));
     table.extend([-1003, -1004, -1006, -1009, -1018, -1020].map(|code| (failure(url, Some(code)), [network(), network(), network()])));
@@ -103,17 +103,4 @@ fn the_graphql_endpoint_needs_an_http_scheme_and_a_host() {
     for endpoint in ["ftp://api.test", "https://", "https:///graphql", "api.test/graphql", "https://api test"] {
         assert!(graphql_endpoint(endpoint).is_err(), "{endpoint}");
     }
-}
-
-#[tokio::test]
-async fn a_request_the_platform_never_answers_ends_as_a_timeout_after_the_request_timeout() {
-    let clock = std::sync::Arc::new(crate::runtime::ManualClock::default());
-    let waiting = crate::task::spawn(crate::task::Carry::Detached, {
-        let clock = clock.clone();
-        async move { within_request(clock.as_ref(), REQUEST_TIMEOUT_MS, std::future::pending()).await }
-    });
-    crate::test_wait::yield_until("the request ends on the clock", || { clock.advance(std::time::Duration::from_millis(REQUEST_TIMEOUT_MS)); waiting.is_finished() }).await;
-    let RawOutcome::Failed { failure } = waiting.await.unwrap() else { panic!("a timeout is a failure") };
-    assert_eq!(failure.kind(), RawFailureKind::Timeout);
-    assert_eq!(classify(&failure, ExchangeKind::Mutation), TransportError::Interrupted("the request timed out".into()));
 }

@@ -30,8 +30,7 @@ const URL_UNREACHABLE: [i64; 6] = [-1003, -1004, -1006, -1009, -1018, -1020];
 const CANCELLED_CLASSES: [&str; 4] = ["Swift.CancellationError", "java.util.concurrent.CancellationException", "kotlinx.coroutines.JobCancellationException", "kotlinx.coroutines.TimeoutCancellationException"];
 const TLS_CLASSES: [&str; 2] = ["javax.net.ssl.SSLHandshakeException", "javax.net.ssl.SSLPeerUnverifiedException"];
 const UNREACHABLE_CLASSES: [&str; 3] = ["java.net.UnknownHostException", "java.net.ConnectException", "java.net.NoRouteToHostException"];
-const TIMEOUT_CLASSES: [&str; 1] = ["java.net.SocketTimeoutException"];
-pub const TIMEOUT_DOMAIN: &str = "dblayer.timeout";
+const TIMEOUT_CLASSES: [&str; 2] = ["java.net.SocketTimeoutException", "java.io.InterruptedIOException"];
 const CALL_CANCELLED_CLASS: &str = "java.io.IOException";
 const CALL_CANCELLED_TEXT: &str = "Canceled";
 
@@ -49,8 +48,7 @@ impl RawFailure {
                 _ => RawFailureKind::Io,
             };
         }
-        if class == TIMEOUT_DOMAIN { RawFailureKind::Timeout }
-        else if CANCELLED_CLASSES.contains(&class) || (class == CALL_CANCELLED_CLASS && self.message.eq_ignore_ascii_case(CALL_CANCELLED_TEXT)) { RawFailureKind::Cancelled }
+        if CANCELLED_CLASSES.contains(&class) || (class == CALL_CANCELLED_CLASS && self.message.eq_ignore_ascii_case(CALL_CANCELLED_TEXT)) { RawFailureKind::Cancelled }
         else if TLS_CLASSES.contains(&class) { RawFailureKind::Tls }
         else if UNREACHABLE_CLASSES.contains(&class) { RawFailureKind::Unreachable }
         else if TIMEOUT_CLASSES.contains(&class) { RawFailureKind::Timeout }
@@ -108,14 +106,6 @@ pub fn classify(failure: &RawFailure, kind: ExchangeKind) -> TransportError {
         RawFailureKind::Tls => TransportError::Security { code: SecurityCode::TlsTrust, detail },
         RawFailureKind::Unreachable => TransportError::Network(detail),
         RawFailureKind::Timeout | RawFailureKind::Io => if kind == ExchangeKind::Mutation { TransportError::Interrupted(detail) } else { TransportError::Network(detail) },
-    }
-}
-
-/// The whole exchange ends after `request_ms` on the clock of the database, whatever the platform timers do: the platform call is dropped.
-pub async fn within_request(clock: &dyn crate::runtime::Clock, request_ms: u64, work: impl std::future::Future<Output = RawOutcome>) -> RawOutcome {
-    tokio::select! {
-        outcome = work => outcome,
-        () = clock.sleep(std::time::Duration::from_millis(request_ms)) => RawOutcome::Failed { failure: RawFailure { domain: TIMEOUT_DOMAIN.into(), code: None, message: "the request timed out".into() } },
     }
 }
 
