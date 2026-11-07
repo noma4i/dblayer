@@ -138,7 +138,7 @@ impl Twin {
             To::Active => self.state().active_connection().unwrap_or(8_888),
             To::Opening => self.state().opening_connection().unwrap_or(8_888),
             To::Draining => match self.state().mode() {
-                f::Mode::Draining { connection } => connection,
+                f::Mode::Draining { connection, .. } => connection,
                 _ => 8_888,
             },
             To::Stray => 9_999,

@@ -1,7 +1,7 @@
 use std::sync::Arc;
 use async_trait::async_trait;
 use serde_json::{json, Value};
-use crate::transport::{Upstream, TransportError};
+use crate::transport::{CancelToken, Upstream, TransportError};
 use super::{CableError, CableKeys, CableSocket, EncryptedConfig, SocketEvent};
 
 /// What a connection gives to its reader: a decrypted frame with its number, the end of the socket, or bytes that are no frame.
@@ -22,10 +22,10 @@ pub trait CableLine: Send + Sync {
     async fn cancel(&self);
 }
 
-/// Opens a socket and runs the handshake of the cable.
+/// Opens a socket and runs the handshake of the cable. `cancel` ends the connection: the open outcome is awaited, then its socket is closed and the call fails with `Interrupted`.
 #[async_trait]
 pub trait CableLines: Send + Sync {
-    async fn connect(&self) -> Result<Arc<dyn CableLine>, TransportError>;
+    async fn connect(&self, cancel: &CancelToken) -> Result<Arc<dyn CableLine>, TransportError>;
 }
 
 pub type CableCredential = Arc<dyn Fn() -> Result<String, TransportError> + Send + Sync>;
@@ -83,16 +83,6 @@ async fn handshake(socket: &dyn CableSocket, config: &EncryptedConfig, credentia
     }
 }
 
-/// A socket whose handshake is cancelled mid-way (the connect future is dropped) closes in the background.
-struct OpenSocket(Option<Arc<dyn CableSocket>>);
-
-impl Drop for OpenSocket {
-    fn drop(&mut self) {
-        let (Some(socket), Ok(handle)) = (self.0.take(), tokio::runtime::Handle::try_current()) else { return };
-        crate::task::spawn_on(&handle, async move { socket.close().await });
-    }
-}
-
 struct SocketLine {
     socket: Arc<dyn CableSocket>,
     keys: CableKeys,
@@ -130,12 +120,14 @@ impl CableLine for SocketLine {
 
 #[async_trait]
 impl CableLines for EncryptedLines {
-    async fn connect(&self) -> Result<Arc<dyn CableLine>, TransportError> {
+    async fn connect(&self, cancel: &CancelToken) -> Result<Arc<dyn CableLine>, TransportError> {
         let credential = (self.credential)()?;
         let socket = self.transport.open_cable(&self.config.cable_url()?).await?;
-        let mut open = OpenSocket(Some(socket.clone()));
-        let keys = handshake(socket.as_ref(), &self.config, &credential).await;
-        open.0 = None;
+        let keys = tokio::select! {
+            biased;
+            () = cancel.cancelled() => Err(TransportError::Interrupted("the cable open was cancelled".into())),
+            keys = handshake(socket.as_ref(), &self.config, &credential) => keys,
+        };
         match keys {
             Ok(keys) => Ok(Arc::new(SocketLine { socket, keys, channel: self.config.cable_channel.clone() })),
             Err(error) => {
@@ -145,3 +137,7 @@ impl CableLines for EncryptedLines {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "line_tests.rs"]
+mod line_tests;

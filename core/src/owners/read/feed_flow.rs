@@ -71,9 +71,8 @@ impl FeedState {
         }
         self.narrow(fx);
         if self.want.is_empty() {
-            self.mode = Mode::Off { gap: false };
             self.flush_pending(fx);
-            self.close_all(false, fx);
+            self.drain_live(false, fx);
         }
     }
 
@@ -133,6 +132,16 @@ impl FeedState {
 
     pub(super) fn protocol_failed(&mut self, connection: ConnectionId, fx: &mut Vec<Fx>) {
         let goodbye = self.connection_mut(connection).is_some_and(|found| found.goodbye());
+        if goodbye && self.mode == Mode::Live && self.active_connection() == Some(connection) {
+            fx.push(Fx::Run(FeedEffect::Close { connection, goodbye, drain: true }));
+            fx.push(Fx::Drain { connection });
+            self.flush_pending(fx);
+            let lost = self.lose_held(None, fx);
+            self.active = None;
+            self.mode = Mode::Draining { connection, then: Resume::Reopen };
+            Self::stale_all(&lost, fx);
+            return;
+        }
         fx.push(Fx::Run(FeedEffect::Close { connection, goodbye, drain: false }));
         self.dropped(connection, fx);
     }
@@ -247,9 +256,8 @@ impl FeedState {
                 self.leave(fx);
             }
             Mode::Live => {
-                self.mode = Mode::Off { gap: false };
                 self.flush_pending(fx);
-                self.close_all(false, fx);
+                self.drain_live(false, fx);
             }
             _ => {}
         }
@@ -278,9 +286,8 @@ impl FeedState {
                 self.leave(fx);
             }
             Mode::Live if !online => {
-                self.mode = Mode::Off { gap: true };
                 self.flush_pending(fx);
-                self.close_all(false, fx);
+                self.drain_live(true, fx);
             }
             _ => {}
         }
@@ -303,7 +310,8 @@ impl FeedState {
         };
         self.refused = 0;
         self.close_all(draining.is_some(), fx);
-        self.mode = draining.map_or(Mode::Ended, |connection| Mode::Draining { connection });
+        self.mode = draining.map_or(Mode::Ended, |connection| Mode::Draining { connection, then: Resume::End });
+        self.closing_asked |= draining.is_some();
         self.held.clear();
         if !self.pending.is_empty() {
             self.pending.clear();
@@ -314,19 +322,65 @@ impl FeedState {
         }
     }
 
-    /// `Draining`: the timer, or the end of the connection, cancels it once. Every other input changes nothing.
-    pub(super) fn draining(&mut self, connection: ConnectionId, input: &FeedInput, fx: &mut Vec<Fx>) {
-        let timer = match input {
-            FeedInput::Drain { connection_id } if *connection_id == connection => false,
-            FeedInput::Dropped { connection_id } | FeedInput::SubscriptionEnded { connection_id } | FeedInput::ChannelLost { connection_id, .. } if *connection_id == connection => true,
-            _ => return,
-        };
-        self.mode = Mode::Ended;
+    /// A live feed leaves `Live` for `Off{gap}`: the established connection drains first.
+    pub(super) fn drain_live(&mut self, gap: bool, fx: &mut Vec<Fx>) {
+        let draining = self.active.as_ref().filter(|active| active.goodbye()).map(|active| active.id);
+        self.close_all(draining.is_some(), fx);
+        self.mode = draining.map_or(Mode::Off { gap }, |connection| Mode::Draining { connection, then: Resume::Off { gap } });
+    }
+
+    /// `Draining`: the timer, or the end of the connection, cancels it once. The wants and the network state go on while the feed resumes; the epoch end cancels at once.
+    pub(super) fn draining(&mut self, connection: ConnectionId, then: Resume, input: FeedInput, fx: &mut Vec<Fx>) {
+        match input {
+            FeedInput::Drain { connection_id } if connection_id == connection => self.drain_over(connection, then, false, fx),
+            FeedInput::Dropped { connection_id } | FeedInput::SubscriptionEnded { connection_id } | FeedInput::ChannelLost { connection_id, .. } if connection_id == connection => self.drain_over(connection, then, true, fx),
+            FeedInput::EpochEnded(ended) if ended.epoch == self.epoch => self.drain_over(connection, Resume::End, true, fx),
+            FeedInput::Closing => {
+                self.closing_asked = true;
+                self.mode = Mode::Draining { connection, then: Resume::End };
+            }
+            FeedInput::WantPlus { model, id, stream } if then != Resume::End => self.want_plus(model, id, stream, fx),
+            FeedInput::WantMinus { model, id } if then != Resume::End => self.want_minus(&model, id, fx),
+            FeedInput::Online { online: Online(online), online_seq } if then != Resume::End => self.online_changed(online, online_seq, fx),
+            _ => {}
+        }
+    }
+
+    /// A terminal verdict of the Store ended the feed while a connection drained: the connection is cancelled at once.
+    pub(super) fn drain_cut(&mut self, connection: ConnectionId, fx: &mut Vec<Fx>) {
+        fx.push(Fx::Run(FeedEffect::Cancel { connection }));
+        fx.push(Fx::CancelDrain { connection });
+        if std::mem::take(&mut self.closing_asked) {
+            self.drained = true;
+            fx.push(Fx::Run(FeedEffect::Drained(Drained { owner: "feed" })));
+        }
+    }
+
+    fn drain_over(&mut self, connection: ConnectionId, then: Resume, timer: bool, fx: &mut Vec<Fx>) {
         fx.push(Fx::Run(FeedEffect::Cancel { connection }));
         if timer {
             fx.push(Fx::CancelDrain { connection });
         }
-        self.drained = true;
-        fx.push(Fx::Run(FeedEffect::Drained(Drained { owner: "feed" })));
+        match then {
+            Resume::End => {
+                self.mode = Mode::Ended;
+                if std::mem::take(&mut self.closing_asked) {
+                    self.drained = true;
+                    fx.push(Fx::Run(FeedEffect::Drained(Drained { owner: "feed" })));
+                }
+            }
+            Resume::Off { gap } => self.go_on(gap, fx),
+            Resume::Reopen => self.go_on(true, fx),
+        }
+    }
+
+    fn go_on(&mut self, gap: bool, fx: &mut Vec<Fx>) {
+        if self.want.is_empty() || !self.is_online() {
+            self.mode = Mode::Off { gap };
+            return;
+        }
+        self.mode = Mode::Opening { gap };
+        self.attempts = 0;
+        self.open_connection(fx);
     }
 }

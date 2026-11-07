@@ -63,9 +63,18 @@ pub enum Mode {
     Off { gap: bool },
     Opening { gap: bool },
     Live,
-    /// `Closing` of a live feed with an established connection: the writer sends the queue until `Drain` or the end of the connection.
-    Draining { connection: ConnectionId },
+    /// A live feed closed its established connection: the writer sends the queue until `Drain` or the end of the connection, then the feed goes on as `then` says.
+    Draining { connection: ConnectionId, then: Resume },
     Ended,
+}
+
+/// What a draining feed becomes when its drain is over.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Resume {
+    End,
+    Off { gap: bool },
+    /// The protocol of the connection failed: the feed opens another one if it still wants and is online.
+    Reopen,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -281,6 +290,8 @@ pub struct FeedState {
     attempts: u32,
     refused: u64,
     drained: bool,
+    /// `Closing` came: the end of the drain answers it with `Drained`.
+    closing_asked: bool,
     peers: FeedPeers,
 }
 
@@ -374,10 +385,14 @@ impl StateOwner for Feed {
             fx.push(Fx::Run(FeedEffect::Census { reply, subscriptions: state.census(), refused: state.refused }));
             return Self::lower(state, fx);
         }
-        if let Mode::Draining { connection } = state.mode {
-            state.draining(connection, &input, &mut fx);
-            return Self::lower(state, fx);
-        }
+        let draining = match state.mode {
+            Mode::Draining { connection, then } if !matches!(input, FeedInput::Observed { .. } | FeedInput::Committed(_) | FeedInput::Rejected(_)) => {
+                state.draining(connection, then, input, &mut fx);
+                return Self::lower(state, fx);
+            }
+            Mode::Draining { connection, .. } => Some(connection),
+            _ => None,
+        };
         if state.mode == Mode::Ended {
             if matches!(input, FeedInput::Closing) && !std::mem::replace(&mut state.drained, true) {
                 fx.push(Fx::Run(FeedEffect::Drained(Drained { owner: "feed" })));
@@ -430,6 +445,9 @@ impl StateOwner for Feed {
             }
             FeedInput::Online { online: Online(online), online_seq } => state.online_changed(online, online_seq, &mut fx),
             FeedInput::ModelsReset(reset) => state.models_reset(reset, &mut fx),
+        }
+        if let Some(connection) = draining.filter(|_| state.mode == Mode::Ended) {
+            state.drain_cut(connection, &mut fx);
         }
         Self::lower(state, fx)
     }

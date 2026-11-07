@@ -42,15 +42,24 @@ impl Feed {
                 Self::stale(&lost, &mut effects);
             }
             Mode::Live => {
-                self.mode = Mode::Off { gap: false };
                 if !self.pending.is_empty() {
                     self.commit_pending(&mut effects);
                 }
-                self.close_all(&mut effects);
+                self.drain_all(Then::Off { gap: false }, &mut effects);
             }
             _ => {}
         }
         effects
+    }
+
+    /// The protocol of the active connection failed: it drains, the feed opens another one after the drain.
+    pub(super) fn fail_live(&mut self, effects: &mut Vec<Effect>) {
+        if !self.pending.is_empty() {
+            self.commit_pending(effects);
+        }
+        self.active = None;
+        self.mode = Mode::Draining;
+        self.then = Then::Reopen;
     }
 
     /// `Dropped` of the connection `to` in `Opening` or `Live`.
@@ -130,11 +139,10 @@ impl Feed {
                 Self::stale(&lost, &mut effects);
             }
             Mode::Live if !on => {
-                self.mode = Mode::Off { gap: true };
                 if !self.pending.is_empty() {
                     self.commit_pending(&mut effects);
                 }
-                self.close_all(&mut effects);
+                self.drain_all(Then::Off { gap: true }, &mut effects);
             }
             _ => {}
         }

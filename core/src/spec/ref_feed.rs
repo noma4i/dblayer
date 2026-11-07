@@ -134,6 +134,14 @@ pub(super) enum Mode {
     Ended,
 }
 
+/// What a draining feed becomes when the drain is over.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Then {
+    End,
+    Off { gap: bool },
+    Reopen,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Proto {
     Handshake,
@@ -178,6 +186,8 @@ pub(super) struct Feed {
     pub(super) marks: Vec<bool>,
     pub(super) obs: Vec<Obs>,
     drained: bool,
+    then: Then,
+    closing_asked: bool,
 }
 
 impl Feed {
@@ -202,6 +212,8 @@ impl Feed {
             marks: Vec::new(),
             obs: Vec::new(),
             drained: false,
+            then: Then::End,
+            closing_asked: false,
         }
     }
 
@@ -405,38 +417,84 @@ impl Feed {
         Self::goodbye(self.opening.take(), effects);
     }
 
-    /// `Closing` of a live feed with an established connection: the connection drains before it is cancelled.
-    fn drain_all(&mut self, effects: &mut Vec<Effect>) {
+    /// A live feed with an established connection closes it: the connection drains before it is cancelled, then the feed goes on as `then`.
+    fn drain_all(&mut self, then: Then, effects: &mut Vec<Effect>) {
+        self.mode = Mode::Draining;
+        self.then = then;
         Self::goodbye(self.active.take(), effects);
         effects.push(Effect::ScheduleDrain);
         Self::goodbye(self.opening.take(), effects);
     }
 
-    fn draining(&mut self, input: Input) -> Vec<Effect> {
-        let mut effects = Vec::new();
-        let ends = match input {
-            Input::Drain { own: true } => Some(Vec::new()),
-            Input::Dropped { to: To::Draining } | Input::Ended { to: To::Draining } | Input::ChannelLost { to: To::Draining, .. } => Some(vec![Effect::CancelDrain]),
-            _ => None,
-        };
-        if let Some(timer) = ends {
-            self.mode = Mode::Ended;
-            effects.push(Effect::Cancel);
-            effects.extend(timer);
-            self.drained = true;
-            effects.push(Effect::Drained);
+    fn drain_over(&mut self, timer: bool, then: Then) -> Vec<Effect> {
+        let mut effects = vec![Effect::Cancel];
+        if timer {
+            effects.push(Effect::CancelDrain);
+        }
+        match then {
+            Then::End => {
+                self.mode = Mode::Ended;
+                if std::mem::take(&mut self.closing_asked) {
+                    self.drained = true;
+                    effects.push(Effect::Drained);
+                }
+            }
+            Then::Off { gap } => self.go_on(gap, &mut effects),
+            Then::Reopen => self.go_on(true, &mut effects),
         }
         effects
     }
 
+    fn go_on(&mut self, gap: bool, effects: &mut Vec<Effect>) {
+        if self.want.is_empty() || !self.online() {
+            self.mode = Mode::Off { gap };
+            return;
+        }
+        self.mode = Mode::Opening { gap };
+        self.opening = Some(Proto::Handshake);
+        effects.push(Effect::Connect);
+    }
+
+    fn draining(&mut self, input: Input) -> Vec<Effect> {
+        let then = self.then;
+        match input {
+            Input::Drain { own: true } => self.drain_over(false, then),
+            Input::Dropped { to: To::Draining } | Input::Ended { to: To::Draining } | Input::ChannelLost { to: To::Draining, .. } => self.drain_over(true, then),
+            Input::EpochEnded => self.drain_over(true, Then::End),
+            Input::Closing => {
+                self.closing_asked = true;
+                self.then = Then::End;
+                Vec::new()
+            }
+            Input::WantPlus { model, id, stream } if then != Then::End => self.want_plus(&model, id, stream),
+            Input::WantMinus { model, id } if then != Then::End => self.want_minus(&model, id),
+            Input::Online(on) if then != Then::End => self.online_changed(on),
+            _ => Vec::new(),
+        }
+    }
+
     pub(super) fn step(&mut self, input: Input) -> Vec<Effect> {
-        let mut effects = Vec::new();
-        if self.mode == Mode::Draining {
+        let verdict = matches!(input, Input::Committed | Input::CommittedStale(_) | Input::Rejected(_));
+        if self.mode == Mode::Draining && !verdict {
             return self.draining(input);
         }
+        let draining = self.mode == Mode::Draining;
+        let mut effects = self.step_main(input);
+        if draining && self.mode == Mode::Ended {
+            effects.extend([Effect::Cancel, Effect::CancelDrain]);
+            if std::mem::take(&mut self.closing_asked) {
+                self.drained = true;
+                effects.push(Effect::Drained);
+            }
+        }
+        effects
+    }
+
+    fn step_main(&mut self, input: Input) -> Vec<Effect> {
+        let mut effects = Vec::new();
         if input == Input::Closing && self.mode == Mode::Live && self.active == Some(Proto::Established) {
-            self.mode = Mode::Draining;
-            self.drain_all(&mut effects);
+            self.closing_asked = true;
+            self.drain_all(Then::End, &mut effects);
             self.held.clear();
             self.pending.clear();
             return effects;
@@ -473,9 +531,14 @@ impl Feed {
                         self.event(to, &model, &payload, &mut effects);
                     }
                 }
-                (Some(_), _) => {
+                (Some(proto), _) => {
                     effects.push(Effect::Close);
-                    effects.extend(self.dropped(to));
+                    if self.mode == Mode::Live && to == To::Active && proto == Proto::Established {
+                        effects.push(Effect::ScheduleDrain);
+                        self.fail_live(&mut effects);
+                    } else {
+                        effects.extend(self.dropped(to));
+                    }
                 }
                 (None, _) => {}
             },
@@ -485,9 +548,14 @@ impl Feed {
                     Kind::Complete => return self.dropped(to),
                     Kind::OtherId | Kind::Quiet => {}
                 },
-                (Some(_), _) => {
+                (Some(proto), _) => {
                     effects.push(Effect::Close);
-                    effects.extend(self.dropped(to));
+                    if self.mode == Mode::Live && to == To::Active && proto == Proto::Established {
+                        effects.push(Effect::ScheduleDrain);
+                        self.fail_live(&mut effects);
+                    } else {
+                        effects.extend(self.dropped(to));
+                    }
                 }
                 (None, _) => {}
             },

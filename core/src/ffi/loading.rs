@@ -93,13 +93,11 @@ struct LeaveLoad {
 impl Drop for LeaveLoad {
     fn drop(&mut self) {
         if self.settled { return; }
-        let issued = self.order.issued();
-        let Ok(runtime) = executor() else { return self.life.leave_load(self.key.clone(), self.id) };
-        if self.order.registered_through(issued) { return self.life.leave_load(self.key.clone(), self.id); }
-        let (life, order, key, id) = (self.life.clone(), self.order.clone(), self.key.clone(), self.id);
-        crate::task::spawn_on(runtime.handle(), async move {
-            order.wait_through(issued).await;
+        let (life, key, id) = (self.life.clone(), self.key.clone(), self.id);
+        let counted = life.launch();
+        self.order.leave_after(self.order.issued(), move || {
             life.leave_load(key, id);
+            drop(counted);
         });
     }
 }

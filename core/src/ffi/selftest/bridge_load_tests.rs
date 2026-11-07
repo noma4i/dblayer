@@ -36,18 +36,22 @@ async fn cancelling_one_load_interest_keeps_the_other_call_alive() {
 struct CancelledLoadTransport {
     started: tokio::sync::Notify,
     cancelled: Arc<tokio::sync::Notify>,
+    ended: Arc<AtomicBool>,
 }
 
-struct CancelledLoad(Arc<tokio::sync::Notify>);
+struct CancelledLoad(Arc<tokio::sync::Notify>, Arc<AtomicBool>);
 
 impl Drop for CancelledLoad {
-    fn drop(&mut self) { self.0.notify_one(); }
+    fn drop(&mut self) {
+        self.1.store(true, Ordering::SeqCst);
+        self.0.notify_one();
+    }
 }
 
 #[async_trait::async_trait]
 impl crate::ffi::FakeTransport for CancelledLoadTransport {
     async fn query(&self, _: crate::ffi::TransportRequest) -> Result<String, DbError> {
-        let _cancelled = CancelledLoad(self.cancelled.clone());
+        let _cancelled = CancelledLoad(self.cancelled.clone(), self.ended.clone());
         self.started.notify_one();
         std::future::pending().await
     }
@@ -65,6 +69,27 @@ async fn cancelling_the_last_load_interest_cancels_the_request() {
     bound(transport.started.notified()).await;
     request.cancel();
     bound(transport.cancelled.notified()).await;
+    database.close_now();
+}
+
+/// D-138: a caller that leaves while an earlier call has still to register is an input the owner counts, not a task apart.
+#[tokio::test(flavor = "multi_thread")]
+async fn the_last_load_interest_leaves_through_the_owner_after_the_earlier_registrations() {
+    let transport = Arc::new(CancelledLoadTransport::default());
+    let database = bound(Database::open(crate::ffi::Config { path: None, data_version: None }, crate::ffi::specs(crate::ffi::lifecycle_tests::models()), crate::ffi::OpenPorts { transport: Some(transport.clone()), endpoint: Some(crate::ffi::FAKE_ENDPOINT.into()), ..Default::default() })).await.unwrap();
+    database.register_operations(json!([{"name":"Users","document":"query Users { users { id name } }"}]).to_string()).await.unwrap();
+    database.set_online(true).unwrap();
+    let request = database.begin_load(database.session_epoch(), "User".into(), Some("all".into()), "{}".into()).unwrap();
+    bound(transport.started.notified()).await;
+    let earlier_call = database.loads.begin();
+    request.cancel();
+    yield_until("the leave waits for the earlier call as one counted input", || database.life.pending() == 1).await;
+    assert!(!transport.ended.load(Ordering::SeqCst), "the window still has the interest until the leave is delivered");
+    drop(earlier_call);
+    bound(transport.cancelled.notified()).await;
+    let owners = database.life.clone();
+    tokio::task::spawn_blocking(move || owners.barrier()).await.unwrap();
+    assert_eq!(database.life.pending(), 0);
     database.close_now();
 }
 

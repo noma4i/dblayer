@@ -79,6 +79,7 @@ fn feed_prop_subscriber_ids() {
     assert_eq!(twin.state().ids("Chat"), [3]);
     assert_eq!(twin.state().mode(), f::Mode::Live, "the model stays while an id is left");
     twin.step(Input::WantMinus { model: "Chat".into(), id: 3 });
+    twin.step(Input::Drain { own: true });
     assert_eq!(twin.state().mode(), f::Mode::Off { gap: false });
 }
 
@@ -87,6 +88,7 @@ fn feed_prop_subscriber_ids() {
 fn feed_prop_counters() {
     let mut twin = live();
     twin.step(Input::FrameOpened { to: To::Active, counter: Counter::Replayed, events: vec![("Chat".into(), "c1".into())] });
+    twin.step(Input::Drain { own: true });
     twin.step(Input::HandshakeDone);
     twin.step(Input::EpochEnded);
     let mut seen = BTreeSet::new();
@@ -317,13 +319,14 @@ fn feed_prop_stale_connection() {
     assert!(report.violations.is_empty(), "{:?}", report.violations.first());
 }
 
-/// P-FEED-26: after `Close` of an established connection the four ends of a drain come in any order: one timer, one `cancel`, one `Drained`.
+/// P-FEED-26: after any close of an established connection the four ends of a drain come in any order: one timer, one `cancel`, one `Drained` only for `Closing`.
 #[test]
 fn feed_drain_vs_cancel_orders() {
     let ends = [Input::Dropped { to: To::Draining }, Input::Ended { to: To::Draining }, Input::ChannelLost { to: To::Draining, dropped: None }, Input::Drain { own: true }];
-    for order in crate::spec::transfer_harness::permutations(&ends) {
+    let closes = [Input::Closing, Input::Online(false), minus("Chat"), Input::FrameOpened { to: To::Active, counter: Counter::Replayed, events: Vec::new() }];
+    for (close, order) in closes.iter().flat_map(|close| crate::spec::transfer_harness::permutations(&ends).into_iter().map(move |order| (close, order))) {
         let mut twin = live();
-        twin.step(Input::Closing);
+        twin.step(close.clone());
         for end in &order {
             twin.step(end.clone());
         }
@@ -332,6 +335,6 @@ fn feed_drain_vs_cancel_orders() {
         let timer_cancels = twin.history.iter().filter(|entry| matches!(entry, Emitted::Cancel(id) if f::is_drain_schedule(*id))).count();
         let schedules = twin.history.iter().filter(|entry| matches!(entry, Emitted::Schedule { input, .. } if input.starts_with("Drain"))).count();
         let first_is_tick = order[0] == Input::Drain { own: true };
-        assert_eq!((cancels, drained, schedules, timer_cancels), (1, 1, 1, usize::from(!first_is_tick)), "order {order:?}");
+        assert_eq!((cancels, drained, schedules, timer_cancels), (1, usize::from(*close == Input::Closing), 1, usize::from(!first_is_tick)), "close {close:?} order {order:?}");
     }
 }

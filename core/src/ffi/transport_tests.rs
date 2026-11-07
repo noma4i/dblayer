@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
-use crate::test_wait::{within, yield_until};
+use crate::test_wait::within;
 use crate::transport::{SocketEvent, Upstream};
 use crate::ffi::cable::{PlatformSocket, CableEvents, CableOutcome, MAILBOX_FRAMES};
 use super::ForeignTransport;
@@ -159,38 +159,4 @@ async fn a_failed_put_is_interrupted_only_when_the_core_cancelled_it() {
     let cancelled = crate::transport::CancelToken::new();
     cancelled.cancel();
     assert!(matches!(transport.put(request(cancelled)).await.unwrap_err(), crate::transport::TransportError::Interrupted(_)));
-}
-
-struct Held {
-    link: Arc<Link>,
-    entered: tokio::sync::Notify,
-    release: tokio::sync::Notify,
-}
-
-#[async_trait::async_trait]
-impl Transport for Held {
-    fn app_headers(&self) -> HashMap<String, String> { HashMap::new() }
-    async fn send(&self, _: HttpRequest) -> RawOutcome { unreachable!() }
-    async fn open_cable(&self, _: String, _: HashMap<String, String>, _: u64, events: Arc<dyn CableEvents>) -> CableOutcome {
-        self.entered.notify_one();
-        crate::test_wait::within(self.release.notified()).await;
-        *crate::lock::lock(&self.link.events) = Some(events);
-        CableOutcome::Open { connection: self.link.clone() }
-    }
-    async fn put(&self, _: crate::ffi::PutTarget, _: PutFile, _: TransferIdentity, _: Arc<ByteProgress>) -> RawOutcome { unreachable!() }
-}
-
-#[tokio::test]
-async fn feed_open_after_abandon_closes() {
-    let link = Arc::new(Link::default());
-    let held = Arc::new(Held { link: link.clone(), entered: tokio::sync::Notify::new(), release: tokio::sync::Notify::new() });
-    let transport = Arc::new(ForeignTransport::beside_session(held.clone()));
-    let opening = { let transport = transport.clone(); tokio::spawn(async move { transport.open_cable(URL).await.map(drop) }) };
-    within(held.entered.notified()).await;
-    opening.abort();
-    let _ = opening.await;
-    assert!(crate::lock::lock(&link.closes).is_empty());
-    held.release.notify_one();
-    yield_until("the socket that opened after the core gave up is closed", || !crate::lock::lock(&link.closes).is_empty()).await;
-    assert_eq!(crate::lock::lock(&link.closes).iter().map(|(code, _)| *code).collect::<Vec<_>>(), [1001]);
 }

@@ -94,12 +94,7 @@ impl FeedIo {
 
     async fn run(lines: Arc<dyn CableLines>, codec: Arc<dyn FeedCodec>, (gate, epoch): (Arc<crate::runtime::EpochGate>, Option<crate::runtime::Epoch>), connection: ConnectionId, (cancel, closing): (CancelToken, CancelToken), mut queued: mpsc::UnboundedReceiver<(u64, Value)>, reply: impl Fn(FeedInput) + Clone + Send + 'static) {
         {
-            let line = tokio::select! {
-                biased;
-                () = cancel.cancelled() => return,
-                line = crate::runtime::send_in_epoch(&gate, epoch, || lines.connect()) => line,
-            };
-            let line = match line {
+            let line = match crate::runtime::send_in_epoch(&gate, epoch, || lines.connect(&cancel)).await {
                 Ok(line) => line,
                 Err(TransportError::Session { .. }) => return reply(FeedInput::SubscriptionEnded { connection_id: connection }),
                 Err(TransportError::Decode(_)) => return reply(FeedInput::ProtocolError { connection_id: connection, reason: ProtocolReason::Handshake }),

@@ -2,7 +2,7 @@
 //! feed_io_frames_commit: the handshake, the subscribe frame with the first send counter, an opened frame as `FrameOpened`, an event reaches the Store as a `Commit`.
 //! feed_io_unsubscribe_closes: the last `Want-` seals the unsubscribe frame with the next counter and closes the line, no frame reaches the owner after it.
 //! feed_io_broken_next_drops: a `next` that is no response is a protocol error, the owner opens another connection and nothing lands.
-//! feed_io_close_cancels_handshake: `Close` of a connection that waits in its handshake ends the open (the future is dropped).
+//! feed_io_close_cancels_handshake: `Close` of a connection that waits in its handshake gives the call its cancel token, the call ends by itself.
 //! feed_io_counter_mismatch_closes: a frame with a skipped counter closes the line and the owner opens another connection.
 
 use std::collections::VecDeque;
@@ -66,7 +66,7 @@ struct Lines(Mutex<VecDeque<Arc<Line>>>);
 
 #[async_trait]
 impl CableLines for Lines {
-    async fn connect(&self) -> Result<Arc<dyn CableLine>, TransportError> {
+    async fn connect(&self, _: &crate::transport::CancelToken) -> Result<Arc<dyn CableLine>, TransportError> {
         let line = self.0.lock().unwrap_or_else(PoisonError::into_inner).pop_front().ok_or_else(|| TransportError::Network("no line".into()))?;
         Ok(line)
     }
@@ -173,7 +173,12 @@ fn feed_io_counter_mismatch_closes() {
     peer.frames.send(next(5, "skipped")).unwrap();
     let closed = peer.closed.clone();
     pump(&mut det, feed, |_| closed.load(Ordering::SeqCst) >= 1);
+    assert!(det.state(feed).is_some_and(|state| matches!(state.mode(), Mode::Draining { then: f::Resume::Reopen, .. })), "the broken connection drains before another opens");
+    det.tick(crate::runtime::Time(crate::owners::read::CLOSE_DRAIN.as_millis() as u64));
     pump(&mut det, feed, |det| det.state(feed).is_some_and(|state| matches!(state.mode(), Mode::Live | Mode::Opening { .. }) && state.active_connection() != Some(1)));
+    let cancels = peer.cancels.clone();
+    pump(&mut det, feed, |_| cancels.load(Ordering::SeqCst) == 1);
+    assert_eq!((peer.closed.load(Ordering::SeqCst), peer.cancels.load(Ordering::SeqCst)), (1, 1), "the drain ended with one close and one cancel");
     assert!(batches.all().is_empty(), "the frame with a skipped counter does not reach the Store");
 }
 
@@ -217,18 +222,13 @@ fn feed_io_graphql_errors_drop() {
 
 struct Hanging(Arc<AtomicUsize>, Arc<AtomicUsize>);
 
-struct DropCount(Arc<AtomicUsize>);
-
-impl Drop for DropCount {
-    fn drop(&mut self) { self.0.fetch_add(1, Ordering::SeqCst); }
-}
-
 #[async_trait]
 impl CableLines for Hanging {
-    async fn connect(&self) -> Result<Arc<dyn CableLine>, TransportError> {
-        let _guard = DropCount(self.0.clone());
+    async fn connect(&self, cancel: &crate::transport::CancelToken) -> Result<Arc<dyn CableLine>, TransportError> {
         self.1.fetch_add(1, Ordering::SeqCst);
-        std::future::pending().await
+        cancel.cancelled().await;
+        self.0.fetch_add(1, Ordering::SeqCst);
+        Err(TransportError::Interrupted("cancelled".into()))
     }
 }
 

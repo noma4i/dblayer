@@ -30,6 +30,7 @@ impl FeedState {
             attempts: 0,
             refused: 0,
             drained: false,
+            closing_asked: false,
             peers,
         }
     }

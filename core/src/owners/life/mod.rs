@@ -527,6 +527,10 @@ impl Life {
     #[cfg(test)]
     pub fn barrier(&self) { self.wiring.handle.barrier() }
 
+    /// The inputs and calls that are in flight now.
+    #[cfg(test)]
+    pub fn pending(&self) -> usize { self.wiring.handle.pending() }
+
     /// Counts a platform call as in flight until it registered with the owners.
     pub fn launch(&self) -> crate::runtime::Launch { self.wiring.handle.launch() }
 

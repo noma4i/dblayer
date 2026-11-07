@@ -232,6 +232,7 @@ S211	shared-load	kotlin	com.noma4i.dblayer.TestClockTest.cancellingOneLoadIntere
 S211b	last-interest	core	cancelling_the_last_load_interest_cancels_the_request	red-by-reading	-	arch-audit fable K6 cancellation
 S211b	last-interest	swift	BridgeProbeTests.cancellingTheLastLoadInterestCancelsTheRequest	red-by-reading	-	arch-audit fable K6 cancellation
 S211b	last-interest	kotlin	com.noma4i.dblayer.LoadAllCancellationTest.cancellingTheLastLoadInterestCancelsTheRequest	red-by-reading	-	arch-audit fable K6 cancellation
+S211c	last-interest-order	core	the_last_load_interest_leaves_through_the_owner_after_the_earlier_registrations	unrun	-	D-138 glue drop to effect
 S212	K9	core	a_receipt_revision_arrives_with_the_updated_row	unrun	-	arch-audit fable K9
 S213	H3	core	cancelling_a_delivery_wait_leaves_the_stream_running	unrun	-	arch-audit astra H3, server response held
 S214	A2-cold	core	a_cold_profile_delivers_a_complete_first_frame_when_empty_or_failed	red-by-reading	-	arch-audit astra A2

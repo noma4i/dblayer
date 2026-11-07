@@ -126,29 +126,6 @@ impl crate::owners::life::ObserverPort for ObserverStop {
     }
 }
 
-type OpenedCable = Result<Arc<dyn core::CableSocket>, core::TransportError>;
-
-/// The platform open of a cable. A dropped `Opening` hands the open to a task that waits for its outcome and drops the socket, which closes it.
-struct Opening(Option<std::pin::Pin<Box<dyn std::future::Future<Output = OpenedCable> + Send>>>);
-
-impl std::future::Future for Opening {
-    type Output = OpenedCable;
-
-    fn poll(mut self: std::pin::Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> std::task::Poll<OpenedCable> {
-        let Some(open) = self.0.as_mut() else { return std::task::Poll::Ready(Err(core::TransportError::Interrupted("the cable open ended".into()))) };
-        let polled = open.as_mut().poll(cx);
-        if polled.is_ready() { self.0 = None; }
-        polled
-    }
-}
-
-impl Drop for Opening {
-    fn drop(&mut self) {
-        let (Some(open), Ok(handle)) = (self.0.take(), tokio::runtime::Handle::try_current()) else { return };
-        crate::task::spawn_on(&handle, async move { drop(open.await) });
-    }
-}
-
 pub(super) struct ForeignTransport { port: Arc<dyn Transport>, endpoint: Option<String> }
 
 impl ForeignTransport {
@@ -193,12 +170,10 @@ impl core::Upstream for ForeignTransport {
         let mailbox = Arc::new(Mailbox::new());
         let headers = core::merge_headers(crate::lock::effect(|| self.port.app_headers()), HashMap::new());
         let (port, url, events) = (self.port.clone(), url.to_string(), mailbox.clone());
-        Opening(Some(Box::pin(async move {
-            match port.open_cable(url, headers, core::CONNECT_TIMEOUT_MS, events.clone()).await {
-                CableOutcome::Open { connection } => Ok(Arc::new(ForeignSocket::new(connection, events)) as Arc<dyn core::CableSocket>),
-                CableOutcome::Failed { failure, handshake_status } => Err(core::classify_upgrade(&failure, handshake_status)),
-            }
-        }))).await
+        match port.open_cable(url, headers, core::CONNECT_TIMEOUT_MS, events.clone()).await {
+            CableOutcome::Open { connection } => Ok(Arc::new(ForeignSocket::new(connection, events)) as Arc<dyn core::CableSocket>),
+            CableOutcome::Failed { failure, handshake_status } => Err(core::classify_upgrade(&failure, handshake_status)),
+        }
     }
     async fn query(&self, request: core::GraphQLRequest) -> Result<core::Response, core::TransportError> {
         crate::lock::assert_no_library_lock("Transport::query");

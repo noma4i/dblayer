@@ -116,8 +116,8 @@ fn feed_landing_rejected_after_drop() {
     let mut off = live_immediate();
     off.step(chat("c1"));
     off.step(Input::Online(false));
-    off.step(Input::Rejected(Reject::NoSession));
-    assert_eq!(off.state().mode(), f::Mode::Ended, "and in Off");
+    assert_eq!(off.step(Input::Rejected(Reject::NoSession)), [Effect::Cancel, Effect::CancelDrain], "and in the drain of Off the connection is cancelled at once");
+    assert_eq!(off.state().mode(), f::Mode::Ended);
 }
 
 #[test]
@@ -411,7 +411,9 @@ fn feed_live_dropped() {
 fn feed_live_offline() {
     let mut twin = live();
     twin.step(chat("c1"));
-    assert_eq!(twin.step(Input::Online(false)), [Effect::Commit, Effect::SealUnsubscribe, Effect::Close]);
+    assert_eq!(twin.step(Input::Online(false)), [Effect::Commit, Effect::SealUnsubscribe, Effect::Close, Effect::ScheduleDrain]);
+    assert!(matches!(twin.state().mode(), f::Mode::Draining { then: f::Resume::Off { gap: true }, .. }));
+    assert_eq!(twin.step(Input::Drain { own: true }), [Effect::Cancel]);
     assert!(matches!(twin.state().mode(), f::Mode::Off { gap: true }));
 }
 
@@ -437,7 +439,9 @@ fn feed_live_models_reset() {
 fn feed_live_last_unwant() {
     let mut twin = live();
     twin.step(chat("c1"));
-    assert_eq!(twin.step(minus("Chat")), [Effect::Commit, Effect::SealUnsubscribe, Effect::Close]);
+    assert_eq!(twin.step(minus("Chat")), [Effect::Commit, Effect::SealUnsubscribe, Effect::Close, Effect::ScheduleDrain]);
+    assert!(matches!(twin.state().mode(), f::Mode::Draining { then: f::Resume::Off { gap: false }, .. }));
+    assert_eq!(twin.step(Input::Drain { own: true }), [Effect::Cancel]);
     assert_eq!(twin.state().mode(), f::Mode::Off { gap: false });
 }
 
@@ -489,7 +493,7 @@ fn feed_closing() {
 fn feed_close_drains() {
     let mut twin = live();
     assert_eq!(twin.step(Input::Closing), [Effect::SealUnsubscribe, Effect::Close, Effect::ScheduleDrain], "no Drained until the drain ends");
-    assert_eq!(twin.state().mode(), f::Mode::Draining { connection: twin.connection(To::Draining) });
+    assert_eq!(twin.state().mode(), f::Mode::Draining { connection: twin.connection(To::Draining), then: f::Resume::End });
 }
 
 #[test]
@@ -514,10 +518,33 @@ fn feed_drain_pre_empted() {
 fn feed_draining_other() {
     let mut twin = live();
     twin.step(Input::Closing);
-    for other in [Input::Online(false), Input::Tick, chat("c1"), minus("Chat"), plus("Post"), Input::Drain { own: false }, Input::Dropped { to: To::Stray }, Input::Dropped { to: To::Active }, Input::Closing, Input::EpochEnded] {
+    for other in [Input::Online(false), Input::Tick, chat("c1"), minus("Chat"), plus("Post"), Input::Drain { own: false }, Input::Dropped { to: To::Stray }, Input::Dropped { to: To::Active }, Input::Closing] {
         assert!(twin.step(other.clone()).is_empty(), "{other:?} changes nothing while draining");
-        assert_eq!(twin.state().mode(), f::Mode::Draining { connection: twin.connection(To::Draining) });
+        assert_eq!(twin.state().mode(), f::Mode::Draining { connection: twin.connection(To::Draining), then: f::Resume::End });
     }
+}
+
+#[test]
+fn feed_draining_resumes() {
+    let mut twin = live();
+    twin.step(Input::Online(false));
+    assert!(twin.step(plus("Post")).len() == 1, "a want during the drain joins at once and opens nothing");
+    assert!(twin.step(Input::Online(true)).is_empty(), "the network returns during the drain: no connection yet");
+    assert_eq!(twin.step(Input::Drain { own: true }), [Effect::Cancel, Effect::Connect], "the drain over: the feed opens for the wants it has now");
+    assert!(matches!(twin.state().mode(), f::Mode::Opening { gap: true }));
+    let mut closing = live();
+    closing.step(Input::Online(false));
+    assert!(closing.step(Input::Closing).is_empty());
+    assert_eq!(closing.step(Input::Drain { own: true }), [Effect::Cancel, Effect::Drained], "Closing during a drain that resumes makes the drain end the feed");
+    assert_eq!(closing.state().mode(), f::Mode::Ended);
+}
+
+#[test]
+fn feed_draining_epoch_ended() {
+    let mut twin = live();
+    twin.step(Input::Closing);
+    assert_eq!(twin.step(Input::EpochEnded), [Effect::Cancel, Effect::CancelDrain, Effect::Drained], "the epoch end purges the drain timer: the connection is cancelled at once");
+    assert_eq!(twin.state().mode(), f::Mode::Ended);
 }
 
 #[test]
@@ -571,7 +598,7 @@ fn feed_proto_frame_kinds() {
     let mut quiet = live();
     assert!(quiet.step(Input::Frame { to: To::Active, counter: Counter::Expected, kind: Kind::Quiet }).is_empty());
     let mut replayed = live();
-    assert_eq!(replayed.step(Input::Frame { to: To::Active, counter: Counter::Replayed, kind: Kind::Complete }), [Effect::Close, Effect::Connect], "the counter is checked before the meaning of the frame");
+    assert_eq!(replayed.step(Input::Frame { to: To::Active, counter: Counter::Replayed, kind: Kind::Complete }), [Effect::Close, Effect::ScheduleDrain], "the counter is checked before the meaning of the frame");
 }
 
 #[test]
@@ -586,8 +613,10 @@ fn feed_proto_frame_ok() {
 #[test]
 fn feed_proto_frame_counter_mismatch() {
     let mut twin = live();
-    assert_eq!(twin.step(Input::FrameOpened { to: To::Active, counter: Counter::Replayed, events: vec![("Chat".into(), "c1".into())] }), [Effect::Close, Effect::Connect]);
+    assert_eq!(twin.step(Input::FrameOpened { to: To::Active, counter: Counter::Replayed, events: vec![("Chat".into(), "c1".into())] }), [Effect::Close, Effect::ScheduleDrain]);
     assert_eq!(twin.state().pending(), 0, "a replayed frame does not sit");
+    assert!(matches!(twin.state().mode(), f::Mode::Draining { then: f::Resume::Reopen, .. }));
+    assert_eq!(twin.step(Input::Drain { own: true }), [Effect::Cancel, Effect::Connect], "the new connection opens after the drain");
     assert!(matches!(twin.state().mode(), f::Mode::Opening { gap: true }));
 }
 
