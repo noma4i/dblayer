@@ -20,6 +20,10 @@ final class CorpusMock: ScriptedTransport, ScriptedHttp, @unchecked Sendable {
 
   var count: Int { lock.withLock { seen.count } }
 
+  func knows(_ id: String) -> Bool { lock.withLock { waiting[id] != nil || waitingPuts[id] != nil || waitingHttp[id] != nil || cables[id] != nil } }
+
+  var unannounced: Int { lock.withLock { seen.filter { !$0.announced }.count } }
+
   /// The requests that arrived since the last call, in arrival order, as `request` observations.
   func announce() -> [String] {
     lock.withLock {

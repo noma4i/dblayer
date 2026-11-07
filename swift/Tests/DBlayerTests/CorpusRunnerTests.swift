@@ -32,6 +32,8 @@ private final class Pulled: @unchecked Sendable {
 
   deinit { task?.cancel() }
 
+  var hasNext: Bool { lock.withLock { !queue.isEmpty } }
+
   func next() -> (UInt64, ReadValue)? {
     lock.withLock {
       guard !queue.isEmpty else { return nil }
@@ -225,8 +227,16 @@ private final class DatabaseRunner {
     Task { box.finish(await work()) }
   }
 
-  func settle() async -> [String] {
-    await quiesce("the corpus run to go quiet") { [mock.count, calls.filter { $0.done != nil }.count, Int(heard.count)] }
+  var wanted = 0
+  var wantedFirst: String?
+  var at = ""
+  var fence: () async -> Void { { _ = try? await self.database?.subscriptionCensus() } }
+
+  func available() -> Int { mock.unannounced + calls.reduce(0) { $0 + ($1.done?.observed.count ?? 0) } }
+
+  func settle(already: Int = 0) async -> [String] {
+    await fencedUntil("\(wanted - already) observations of \(at)", fence: fence) { available() >= wanted - already }
+    await quiesce("the corpus run to go quiet", fence: fence) { [mock.count, calls.filter { $0.done != nil }.count, Int(heard.count)] }
     var observed: [String] = []
     var waiting: [CallBox] = []
     for call in calls {
@@ -247,7 +257,7 @@ private final class DatabaseRunner {
       try await opened.registerOperations(defsJson: operations)
       try opened.setOnline(online: true)
       database = opened
-      _ = await settle()
+      _ = await settle(already: wanted)
       return [observation("opened")]
     } catch { return failure("open") }
   }
@@ -457,6 +467,7 @@ private final class DatabaseRunner {
       return await settle()
     case "answer", "error", "drop", "ready", "frame":
       guard let id = args["id"] as? String else { return failure("arguments") }
+      if wantedFirst != "error" { await fencedUntil("the request \(id) of \(at)", fence: fence) { mock.knows(id) } }
       var reached = false
       switch name {
       case "answer":
@@ -469,7 +480,11 @@ private final class DatabaseRunner {
       case "ready": reached = mock.ready(id)
       default:
         guard let event = args["event"] else { return failure("arguments") }
-        do { reached = try mock.frame(id, canonical(event)) } catch { return failure("frame") }
+        do {
+          let text = canonical(event)
+          reached = try mock.frame(id, text)
+          if !reached, wantedFirst != "error" { await fencedUntil("the frame \(id) of \(at)", fence: fence) { reached = (try? mock.frame(id, text)) ?? false; return reached } }
+        } catch { return failure("frame") }
       }
       if !reached { return failure("no_request") }
       return await settle()
@@ -491,6 +506,7 @@ private final class DatabaseRunner {
     case "pull":
       guard let label = args["stream"] as? String else { return failure("arguments") }
       guard let pulled = streams[label] else { return failure("unknown_stream") }
+      if wantedFirst != "empty" { await fencedUntil("a value of the stream \(label) at \(at)", fence: fence) { pulled.hasNext } }
       if let (position, next) = pulled.next() { observed = [value(label, position, next)] } else { observed = [observation("empty", ["stream": label])] }
     case "cancel":
       guard let target = args["target"] as? String else { return failure("arguments") }
@@ -500,7 +516,7 @@ private final class DatabaseRunner {
       guard let immediate = start(database, name, args) else { return [observation("unsupported", name)] }
       observed = immediate
     }
-    observed += await settle()
+    observed += await settle(already: observed.count)
     if name == "close" && calls.isEmpty { self.database = nil }
     return observed
   }
@@ -518,6 +534,9 @@ private func runCorpus(_ file: URL) async throws -> String? {
   var mismatch: String?
   for (index, line) in lines.dropFirst().enumerated() {
     guard let step = try JSONSerialization.jsonObject(with: Data(line.utf8)) as? [String: Any] else { throw CorpusStepInvalid() }
+    runner.at = "\(file.lastPathComponent) step \(index + 1) input \(canonical(step["in"] ?? ""))"
+    runner.wanted = (step["out"] as? [Any])?.count ?? 0
+    runner.wantedFirst = ((step["out"] as? [[String: Any]])?.first)?["o"] as? String
     let got = "[" + (await runner.apply(step)).joined(separator: ",") + "]"
     let expected = canonical(step["out"] ?? [])
     if got != expected {

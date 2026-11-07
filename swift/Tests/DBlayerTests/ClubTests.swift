@@ -424,9 +424,16 @@ extension BridgeProbeTests {
   @Test(.timeLimit(.minutes(1)))
   func aServerCreateReturnsTheConfirmedRow() async throws {
     let transport = MockTransport()
-    transport.enqueue("CreateClub", reply: clubCreated, delay: 0.3)
+    let hold = transport.hold("CreateClub", reply: clubCreated)
+    defer { hold.release() }
     try await Self.openClubSession(transport)
-    let club = try await Self.confirmedClub()
+    let creating = Task { try await Club.create(name: "friends") }
+    let receipt = try await valueBeforeDeadline(creating) { hold.release() }
+    try #require(await entered(hold))
+    hold.release()
+    let waiting = Task { try await receipt.outcome() }
+    guard case .confirmed = try await valueBeforeDeadline(waiting, release: { hold.release() }) else { throw WaitFailure.unexpectedOutcome }
+    let club = try #require(try await Query<Club>().read().first)
     #expect(club.id == "g1" && club.name == "friends" && club.sync.state == .synced, "the call returned before the server answered")
     let creates = { transport.calls.filter { $0.operationName == "CreateClub" }.count }
     #expect(creates() == 1)

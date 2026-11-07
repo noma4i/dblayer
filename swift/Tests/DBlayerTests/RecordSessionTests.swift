@@ -43,10 +43,10 @@ extension BridgeProbeTests {
   }
 
   @MainActor
-  static func openRecordSession(reactDelay: TimeInterval = 0, reacts: Int = 3, recordReply: String = recordCreated) async throws -> MockTransport {
+  static func openRecordSession(reacts: Int = 3, recordReply: String = recordCreated) async throws -> MockTransport {
     let transport = MockTransport()
     transport.enqueue("CreateRecord", reply: recordReply)
-    for _ in 0..<reacts { transport.enqueue("RecordReact", reply: recordReacted, delay: reactDelay) }
+    for _ in 0..<reacts { transport.enqueue("RecordReact", reply: recordReacted) }
     try await reopen(config: Config(path: nil, dataVersion: nil), modelsJson: modelsJSON, transport: transport)
     try await DB.database.registerOperations(defsJson: #"[{"name":"CreateRecord","document":"mutation CreateRecord($containerId: ID!, $text: String!, $signedId: String, $attachedUserId: ID) { createRecord(containerId: $containerId, text: $text, signedId: $signedId, attachedUserId: $attachedUserId) { id containerId authorId text createdAt reactions { body userId } } }"},{"name":"RecordReact","document":"mutation RecordReact($id: ID!, $reactionBody: String!, $userId: ID!) { recordReact(id: $id, reactionBody: $reactionBody, userId: $userId) { id containerId authorId text createdAt reactions { body userId } } }"}]"#)
     return transport

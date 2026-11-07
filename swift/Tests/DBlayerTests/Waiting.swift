@@ -6,10 +6,27 @@ import DBlayerTesting
 
 enum WaitFailure: Error { case timeout, unexpectedOutcome }
 
+/// Returns when `timeout` has passed on the wall clock, or at once when the task is cancelled. A limit raced against an event, never a pause.
+func expiry(_ timeout: Duration) async throws {
+  let (expired, fire) = AsyncStream<Void>.makeStream()
+  let timer = DispatchSource.makeTimerSource(queue: .global())
+  let parts = timeout.components
+  timer.schedule(deadline: .now() + .nanoseconds(Int(parts.seconds) * 1_000_000_000 + Int(parts.attoseconds / 1_000_000_000)))
+  timer.setEventHandler { fire.finish() }
+  timer.resume()
+  await withTaskCancellationHandler {
+    for await _ in expired {}
+  } onCancel: {
+    timer.cancel()
+    fire.finish()
+  }
+  try Task.checkCancellation()
+}
+
 func entered(_ hold: Hold) async -> Bool {
   await withTaskGroup(of: Bool.self) { group in
     group.addTask { await hold.entered(); return !Task.isCancelled }
-    group.addTask { try? await Task.sleep(for: .seconds(10)); return false }
+    group.addTask { try? await expiry(.seconds(10)); return false }
     let arrived = await group.next() ?? false
     group.cancelAll()
     return arrived
@@ -20,7 +37,7 @@ func valueBeforeDeadline<Value: Sendable>(_ task: Task<Value, any Error>, releas
   try await withThrowingTaskGroup(of: Value.self) { group in
     group.addTask { try await task.value }
     group.addTask {
-      try await Task.sleep(for: .seconds(10))
+      try await expiry(.seconds(10))
       task.cancel()
       release()
       throw WaitFailure.timeout
@@ -42,7 +59,7 @@ func eventually(
     if await condition() {
       return
     }
-    try? await Task.sleep(for: .milliseconds(5))
+    await Task.yield()
   }
   if await condition() {
     return
@@ -72,14 +89,30 @@ func finishes(
   await eventually("\(what) to return", timeout: timeout, isolation: isolation, sourceLocation: sourceLocation) { done.value }
   return done.value
 }
-func quiesce<State: Equatable>(_ what: String, timeout: Duration = .seconds(6), samples: Int = 25, _ state: () async -> State) async {
-  let deadline = ContinuousClock.now + timeout
-  var last: State?
-  var quiet = 0
-  while ContinuousClock.now < deadline, quiet < samples {
-    try? await Task.sleep(for: .milliseconds(10))
+func fencedUntil(_ what: String, fence: () async -> Void, sourceLocation: SourceLocation = #_sourceLocation, _ ready: () -> Bool) async {
+  let deadline = ContinuousClock.now + .seconds(8)
+  while !ready() {
+    if ContinuousClock.now > deadline {
+      Issue.record("timed out waiting for \(what)", sourceLocation: sourceLocation)
+      return
+    }
+    await fence()
+    await Task.yield()
+  }
+}
+func quiesce<State: Equatable>(_ what: String, rounds: Int = 3, fence: () async -> Void, _ state: () async -> State) async {
+  let deadline = ContinuousClock.now + hangGuard
+  var last = await state()
+  var stable = 0
+  while stable < rounds {
+    if ContinuousClock.now > deadline {
+      Issue.record("\(what): the state kept changing for \(hangGuard)")
+      return
+    }
+    await fence()
+    await Task.yield()
     let now = await state()
-    quiet = now == last ? quiet + 1 : 0
+    stable = now == last ? stable + 1 : 0
     last = now
   }
 }
@@ -131,7 +164,13 @@ func nextElement<Element: Sendable>(of stream: AsyncStream<Element>) async -> El
 }
 
 func parkUntilCancelled() async throws {
-  try await Task.sleep(for: .seconds(3600))
+  let (parked, release) = AsyncStream<Void>.makeStream()
+  await withTaskCancellationHandler {
+    for await _ in parked {}
+  } onCancel: {
+    release.finish()
+  }
+  try Task.checkCancellation()
 }
 final class Cursor<Sequence: AsyncSequence & SendableMetatype>: @unchecked Sendable where Sequence.Element: Sendable, Sequence.AsyncIterator: SendableMetatype {
   private var iterator: Sequence.AsyncIterator
@@ -148,7 +187,7 @@ final class Cursor<Sequence: AsyncSequence & SendableMetatype>: @unchecked Senda
     let element: Sequence.Element?? = await withTaskGroup(of: Sequence.Element??.self) { group in
       group.addTask { [self] in .some(try? await iterator.next()) }
       group.addTask {
-        try? await Task.sleep(for: timeout)
+        try? await expiry(timeout)
         return nil
       }
       let first = await group.next() ?? nil

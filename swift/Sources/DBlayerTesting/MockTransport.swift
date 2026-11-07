@@ -14,12 +14,11 @@ public protocol CablePeer: AnyObject, Sendable {
   func openCable(url: String, events: CableEvents) async -> CableOutcome
 }
 
-/// Answers by operation name, can delay or fail answers, and lets a test push a cable event.
+/// Answers by operation name, can hold or fail answers, and lets a test push a cable event.
 public final class MockTransport: ScriptedTransport, @unchecked Sendable {
   private struct Reply {
     let body: String?
     let failure: DbError?
-    let delay: TimeInterval
     var hold: Hold? = nil
   }
 
@@ -70,18 +69,18 @@ public final class MockTransport: ScriptedTransport, @unchecked Sendable {
 
   public var calls: [TransportRequest] { lock.withLock { recorded } }
 
-  public func enqueue(_ operation: String, reply: String, delay: TimeInterval = 0) {
-    lock.withLock { replies[operation, default: []].append(Reply(body: reply, failure: nil, delay: delay)) }
+  public func enqueue(_ operation: String, reply: String) {
+    lock.withLock { replies[operation, default: []].append(Reply(body: reply, failure: nil)) }
   }
 
-  public func enqueue(_ operation: String, failure: DbError, delay: TimeInterval = 0) {
-    lock.withLock { replies[operation, default: []].append(Reply(body: nil, failure: failure, delay: delay)) }
+  public func enqueue(_ operation: String, failure: DbError) {
+    lock.withLock { replies[operation, default: []].append(Reply(body: nil, failure: failure)) }
   }
 
   /// Queues an answer that waits at the server: `entered()` returns when the request arrived, and the answer goes out when the test calls `release()`.
   public func hold(_ operation: String, reply: String = "{}", failure: DbError? = nil) -> Hold {
     let hold = Hold()
-    lock.withLock { replies[operation, default: []].append(Reply(body: failure == nil ? reply : nil, failure: failure, delay: 0, hold: hold)) }
+    lock.withLock { replies[operation, default: []].append(Reply(body: failure == nil ? reply : nil, failure: failure, hold: hold)) }
     return hold
   }
 
@@ -104,7 +103,7 @@ public final class MockTransport: ScriptedTransport, @unchecked Sendable {
     let identity = request.operationName + "\u{0}" + request.variablesJson
     let reply = lock.withLock { () -> Reply? in
       recorded.append(request)
-      if let known = settled[identity] { return Reply(body: known, failure: nil, delay: 0) }
+      if let known = settled[identity] { return Reply(body: known, failure: nil) }
       guard var queue = replies[request.operationName], !queue.isEmpty else { return nil }
       let next = queue.removeFirst()
       replies[request.operationName] = queue
@@ -112,7 +111,6 @@ public final class MockTransport: ScriptedTransport, @unchecked Sendable {
     }
     guard let reply else { throw await refuse(request) }
     do {
-      if reply.delay > 0 { try await Task.sleep(for: .seconds(reply.delay)) }
       if let hold = reply.hold { await hold.pass() }
       try Task.checkCancellation()
     } catch {
