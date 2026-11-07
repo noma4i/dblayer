@@ -15,10 +15,10 @@ fun <T> bounded(timeoutMillis: Long = TEST_DEADLINE_MILLIS, body: suspend Corout
         throw AssertionError("the test body did not finish within $timeoutMillis ms\n${threadStacks()}", error)
     }
 }
-suspend fun eventually(what: String, timeoutMillis: Long = HANG_GUARD_MILLIS, condition: suspend () -> Boolean) {
+suspend fun eventually(what: String, timeoutMillis: Long = HANG_GUARD_MILLIS, detail: () -> String = { "" }, condition: suspend () -> Boolean) {
     val deadline = System.nanoTime() + timeoutMillis * 1_000_000
     while (!condition()) {
-        if (System.nanoTime() > deadline) throw AssertionError("timed out after $timeoutMillis ms waiting for $what")
+        if (System.nanoTime() > deadline) throw AssertionError("timed out after $timeoutMillis ms waiting for $what\n${detail()}")
         delay(5)
     }
 }
@@ -34,10 +34,10 @@ suspend fun <State> quiesce(what: String, timeoutMillis: Long = 6_000L, samples:
     }
 }
 fun eventuallyBlocking(what: String, timeoutMillis: Long = HANG_GUARD_MILLIS, condition: () -> Boolean) = bounded(timeoutMillis + 2_000) { eventually(what, timeoutMillis) { condition() } }
-suspend fun <T> awaitWithin(what: String, block: suspend () -> T): T = try {
+suspend fun <T> awaitWithin(what: String, detail: () -> String = { "" }, block: suspend () -> T): T = try {
     withTimeout(HANG_GUARD_MILLIS) { block() }
 } catch (error: TimeoutCancellationException) {
-    throw AssertionError("$what did not happen within $HANG_GUARD_MILLIS ms\n${threadStacks()}", error)
+    throw AssertionError("$what did not happen within $HANG_GUARD_MILLIS ms\n${detail()}\n${threadStacks()}", error)
 }
 private fun threadStacks(): String = Thread.getAllStackTraces().entries
     .sortedBy { it.key.name }

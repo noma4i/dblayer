@@ -259,7 +259,7 @@ class TransferTest {
             val reopened = reopen(config, modelsJSON, transport, operations)
             reopened.setOnline(false)
             reopened.setOnline(true)
-            abort.entered()
+            awaitWithin("the saved abort reached the transport after the network returned", { "calls=" + transport.calls.map { it.operationName } }) { abort.entered() }
             abort.release()
             reopened.setOnline(false)
             reopened.setOnline(true)
@@ -469,7 +469,7 @@ class TransferTest {
             val reopened = reopen(config, modelsJSON, transport, operations)
             reopened.setOnline(false)
             reopened.setOnline(true)
-            awaitWithin("the saved abort reached the transport after the network returned") { abort.entered() }
+            awaitWithin("the saved abort reached the transport after the network returned", { "calls=" + transport.calls.map { it.operationName } }) { abort.entered() }
             abort.release()
             eventually("the abort was answered") { transport.calls.count { it.operationName == "AbortMultipart" } == 1 }
             reopened.setOnline(false)
