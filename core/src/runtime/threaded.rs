@@ -107,7 +107,6 @@ impl Timeline {
 
 type Body = Box<dyn FnOnce(Arc<Router>, Arc<Timeline>) + Send>;
 
-#[derive(Default)]
 pub struct RuntimeBuilder {
     boxes: Vec<Arc<Mailbox<Command>>>,
     bodies: Vec<Option<(&'static str, Body)>>,
@@ -116,7 +115,7 @@ pub struct RuntimeBuilder {
     failure: Option<FailureRoute>,
     record: bool,
     handle: Handle,
-    clock: Option<Arc<dyn crate::runtime::Clock>>,
+    clock: Arc<dyn crate::runtime::Clock>,
 }
 
 /// A clonable address book of the running owners. An effect runner takes it before `start` and uses it after.
@@ -317,7 +316,13 @@ pub struct Runtime {
 }
 
 impl RuntimeBuilder {
-    pub fn new() -> Self { Self::default() }
+    /// The timers of the owners follow this clock.
+    pub fn new(clock: Arc<dyn crate::runtime::Clock>) -> Self {
+        Self { boxes: Vec::new(), bodies: Vec::new(), types: Vec::new(), history: Vec::new(), failure: None, record: false, handle: Handle::default(), clock }
+    }
+
+    #[cfg(test)]
+    pub fn for_tests() -> Self { Self::new(Arc::new(crate::runtime::TestClock::new(Duration::from_secs(1_000_000)))) }
 
     pub fn reserve<O: StateOwner>(&mut self) -> Address<O> {
         let slot = self.boxes.len();
@@ -350,9 +355,6 @@ impl RuntimeBuilder {
 
     pub fn record(&mut self) { self.record = true; }
 
-    /// The timers of the owners follow this clock.
-    pub fn with_clock(&mut self, clock: Arc<dyn crate::runtime::Clock>) { self.clock = Some(clock); }
-
     pub fn handle(&self) -> Handle { self.handle.clone() }
 
     pub fn start(self) -> std::io::Result<Runtime> { self.start_with(|name, body| spawn_thread(Carry::Internal, name, body)) }
@@ -363,7 +365,7 @@ impl RuntimeBuilder {
         }
         let router = Arc::new(Router { boxes: self.boxes, inflight: Inflight::default(), failure: self.failure, history: self.history, record: self.record });
         let _ = self.handle.router.set(router.clone());
-        let clock = self.clock.unwrap_or_else(|| Arc::new(crate::runtime::SystemClock));
+        let clock = self.clock;
         let timeline = Arc::new(Timeline { clock: clock.clone() });
         let weak = Arc::downgrade(&router);
         clock.on_advance(Arc::new(move || {

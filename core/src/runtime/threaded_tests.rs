@@ -109,7 +109,7 @@ fn mixed_effects_enqueue_before_the_next_run_on_threads() {
     let (entered, held) = mpsc::channel();
     let (release, release_rx) = mpsc::channel();
     let (count, counts) = mpsc::channel();
-    let mut builder = RuntimeBuilder::new();
+    let mut builder = RuntimeBuilder::for_tests();
     let handle = builder.handle();
     let recipient = builder.add::<OrderedRecipient>("recipient", (), HoldRecipient { entered, release: release_rx });
     let source = builder.add::<OrderedSource>("source", recipient, ObservePending { handle, count });
@@ -126,7 +126,7 @@ fn mixed_effects_enqueue_before_the_next_run_on_threads() {
 #[test]
 fn idle_runtime_has_zero_wakeups_and_schedule_fires_once() {
     let (report, fired) = mpsc::channel();
-    let mut builder = RuntimeBuilder::new();
+    let mut builder = RuntimeBuilder::for_tests();
     let toy = builder.add::<Toy>("toy", ToyState::default(), reporting(report));
     let runtime = builder.start().unwrap();
     sleep(Duration::from_millis(150));
@@ -144,7 +144,7 @@ fn idle_runtime_has_zero_wakeups_and_schedule_fires_once() {
 #[test]
 fn owners_on_separate_threads_exchange_values() {
     let (report, fired) = mpsc::channel();
-    let mut builder = RuntimeBuilder::new();
+    let mut builder = RuntimeBuilder::for_tests();
     let receiver = builder.add::<Toy>("receiver", ToyState::default(), reporting(report));
     let sender = builder.add::<Toy>("sender", ToyState { on_go: Some((receiver, ToyInput::Fire(3))), ..ToyState::default() }, ToyRunner::default());
     let runtime = builder.start().unwrap();
@@ -156,7 +156,7 @@ fn owners_on_separate_threads_exchange_values() {
 #[test]
 fn threaded_executor_drops_input_of_another_epoch() {
     let (report, fired) = mpsc::channel();
-    let mut builder = RuntimeBuilder::new();
+    let mut builder = RuntimeBuilder::for_tests();
     let toy = builder.add::<Toy>("toy", ToyState::default(), reporting(report));
     let runtime = builder.start().unwrap();
     runtime.start_epoch(2);
@@ -171,7 +171,7 @@ fn threaded_executor_drops_input_of_another_epoch() {
 fn asynchronous_effect_result_returns_through_the_mailbox_of_its_owner() {
     let (report, fired) = mpsc::channel();
     let pending = ParkedBacks::default();
-    let mut builder = RuntimeBuilder::new();
+    let mut builder = RuntimeBuilder::for_tests();
     let pump = builder.add::<Toy>("pump", ToyState::default(), ToyRunner { pending: Some(pending.clone()), ..ToyRunner::default() });
     let ledger = builder.add::<Toy>("ledger", ToyState { pump: Some(pump), ..ToyState::default() }, ToyRunner { pending: Some(pending), report: Some(report), ..ToyRunner::default() });
     let runtime = builder.start().unwrap();
@@ -183,7 +183,7 @@ fn asynchronous_effect_result_returns_through_the_mailbox_of_its_owner() {
 #[test]
 fn lifecycle_broadcast_reaches_every_owner_on_threads() {
     let (report, reports) = mpsc::channel();
-    let mut builder = RuntimeBuilder::new();
+    let mut builder = RuntimeBuilder::for_tests();
     let hub = builder.add::<Hub>("hub", (), HubRunner);
     builder.add::<Toy>("first", ToyState::default(), reporting(report.clone()));
     builder.add::<Toy>("second", ToyState::default(), reporting(report));
@@ -199,7 +199,7 @@ fn lifecycle_broadcast_reaches_every_owner_on_threads() {
 #[test]
 fn a_failed_start_of_an_owner_stops_the_owners_already_started() {
     let ended = Arc::new(Mutex::new(Vec::new()));
-    let mut builder = RuntimeBuilder::new();
+    let mut builder = RuntimeBuilder::for_tests();
     for name in ["first", "second", "third"] {
         builder.add::<Toy>(name, ToyState::default(), ToyRunner::default());
     }
@@ -224,12 +224,12 @@ fn a_failed_start_of_an_owner_stops_the_owners_already_started() {
 
 #[test]
 fn rt_prop_addresses_reserved() {
-    let mut missing = RuntimeBuilder::new();
+    let mut missing = RuntimeBuilder::for_tests();
     missing.reserve::<Toy>();
     assert!(missing.start().is_err());
 
     let (report, fired) = mpsc::channel();
-    let mut builder = RuntimeBuilder::new();
+    let mut builder = RuntimeBuilder::for_tests();
     let sender = builder.reserve::<Toy>();
     let receiver = builder.reserve::<Toy>();
     builder.install(sender, "sender", ToyState { on_go: Some((receiver, ToyInput::Fire(3))), ..ToyState::default() }, ToyRunner::default());

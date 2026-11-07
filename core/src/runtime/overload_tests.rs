@@ -12,7 +12,7 @@ fn rt_prop_overload_bounded() {
     const OFFLINE: u32 = 1_000_000;
     const ONLINE: u32 = 1_000_001;
     let parked = ParkedBacks::default();
-    let mut builder = RuntimeBuilder::new();
+    let mut builder = RuntimeBuilder::for_tests();
     let store = builder.add::<Toy>("store", ToyState::default(), ToyRunner { pending: Some(parked), ..ToyRunner::default() });
     let feed = builder.add::<Toy>("feed", ToyState::default(), ToyRunner::default());
     builder.record();

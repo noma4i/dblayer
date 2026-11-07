@@ -392,9 +392,8 @@ impl Life {
         let saved_unowned_pending = restored.as_ref().is_some_and(|state| state.unowned_pending);
         let restore_error = restored.as_ref().and_then(|state| state.restore_error.clone());
         let found = boot_found(&ports.db, saved_unowned_pending)?;
-        let mut builder = RuntimeBuilder::new();
-        builder.with_clock(ports.db.lock().clock.clone());
         let clock = ports.db.lock().clock.clone();
+        let mut builder = RuntimeBuilder::new(clock.clone());
         let wiring = Arc::new(Wiring::new(builder.handle(), Arc::new(move || i64::try_from(clock.now().as_millis()).unwrap_or(i64::MAX))));
         let open_wait = wiring.outcomes.register(Epoch::MAX);
         let lifecycle = builder.add::<Lifecycle>("lifecycle", LifecycleState::new().with_restore_participants(restore_participants(session.is_some())), runners::LifecycleRunner { wiring: wiring.clone(), absent: absent(session.is_some(), session.is_some() && ports.transfer.is_some()), db: ports.db.clone(), held_published: None, held_replies: Vec::new(), held_read: None });
@@ -517,11 +516,11 @@ impl Life {
         Ok(Self { wiring, runtime: Mutex::new(Some(runtime)), shut: AtomicBool::new(false), with_session: session.is_some(), graphql_path: session.as_ref().map(|session| session.0.graphql_path().to_string()), alive })
     }
 
-    /// Stops the owner threads and joins them. The caller is not an owner thread. A second call does nothing.
+    /// Stops the owner threads and joins them. The caller is not an owner thread. A second call waits for the first to finish.
     pub fn shutdown(&self) {
         self.shut.store(true, Ordering::SeqCst);
-        let runtime = self.runtime.lock().unwrap_or_else(PoisonError::into_inner).take();
-        drop(runtime);
+        let mut runtime = self.runtime.lock().unwrap_or_else(PoisonError::into_inner);
+        drop(runtime.take());
     }
 
     /// Returns once every input posted to an owner was handled, or false after `limit`.

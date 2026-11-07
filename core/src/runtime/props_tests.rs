@@ -49,7 +49,7 @@ fn rt_prop_timer_orders() {
     assert_eq!(seen.borrow().len(), 6, "{}: every order of two due entries and a Send was visited", manifest.line());
 
     let (report, fired) = mpsc::channel();
-    let mut builder = RuntimeBuilder::new();
+    let mut builder = RuntimeBuilder::for_tests();
     let left = builder.add::<Toy>("left", ToyState::default(), ToyRunner { report: Some(report.clone()), ..ToyRunner::default() });
     let right = builder.add::<Toy>("right", ToyState::default(), ToyRunner { report: Some(report), ..ToyRunner::default() });
     let runtime = builder.start().unwrap();
@@ -113,7 +113,7 @@ fn rt_prop_effect_order() {
     manifest.assert_complete();
 
     let (report, _fired) = mpsc::channel();
-    let mut builder = RuntimeBuilder::new();
+    let mut builder = RuntimeBuilder::for_tests();
     let sink = builder.add::<Sink>("sink", Vec::new(), SinkRunner);
     let toy = builder.add::<Toy>("toy", ToyState { tell: Some((sink, 0)), ..ToyState::default() }, ToyRunner { report: Some(report), ..ToyRunner::default() });
     builder.record();
@@ -166,7 +166,7 @@ fn rt_prop_epoch_queue() {
     manifest.assert_complete();
 
     let (report, reports) = mpsc::channel();
-    let mut builder = RuntimeBuilder::new();
+    let mut builder = RuntimeBuilder::for_tests();
     let hub = builder.add::<Hub>("hub", (), HubRunner);
     builder.add::<Toy>("toy", ToyState::default(), ToyRunner { report: Some(report), ..ToyRunner::default() });
     let runtime = builder.start().unwrap();
@@ -295,7 +295,7 @@ fn rt_prop_refinement() {
 
     for _ in 0..100 {
         let (report, _unused) = mpsc::channel();
-        let mut builder = RuntimeBuilder::new();
+        let mut builder = RuntimeBuilder::for_tests();
         let sink = builder.add::<Sink>("sink", Vec::new(), SinkRunner);
         let relay = builder.add::<Toy>("relay", ToyState { tell: Some((sink, 5)), ..ToyState::default() }, ToyRunner { report: Some(report), ..ToyRunner::default() });
         let producer = builder.add::<Toy>("producer", ToyState { on_go: Some((relay, ToyInput::Tell)), tell: Some((sink, 9)), ..ToyState::default() }, ToyRunner::default());
@@ -325,7 +325,7 @@ fn chain() -> DetScheduler {
 fn rt_prop_det_equals_threaded() {
     let mut det = chain();
     det.run_until_quiet(20).unwrap();
-    let mut builder = RuntimeBuilder::new();
+    let mut builder = RuntimeBuilder::for_tests();
     let sink = builder.add::<Sink>("sink", Vec::new(), SinkRunner);
     let last = builder.add::<Toy>("last", ToyState { tell: Some((sink, 3)), ..ToyState::default() }, ToyRunner::default());
     let middle = builder.add::<Toy>("middle", ToyState { on_go: Some((last, ToyInput::Tell)), ..ToyState::default() }, ToyRunner::default());
@@ -358,7 +358,7 @@ fn rt_prop_det_equals_threaded() {
     manifest.assert_complete();
     assert_eq!(allowed.borrow().len(), 2);
     for _ in 0..200 {
-        let mut builder = RuntimeBuilder::new();
+        let mut builder = RuntimeBuilder::for_tests();
         let ledger = builder.add::<Toy>("ledger", ToyState::default(), ToyRunner::default());
         let depositor = builder.add::<Toy>("depositor", ToyState { on_go: Some((ledger, ToyInput::Deposit(5))), ..ToyState::default() }, ToyRunner::default());
         let sealer = builder.add::<Toy>("sealer", ToyState { on_go: Some((ledger, ToyInput::Seal)), ..ToyState::default() }, ToyRunner::default());
@@ -383,7 +383,7 @@ fn rt_prop_no_lock_on_effect() {
     det.post(toy, EpochStamp::Epoch(1), ToyInput::Burst(vec![1, 2]));
     det.run_until_quiet(10).unwrap();
 
-    let mut builder = RuntimeBuilder::new();
+    let mut builder = RuntimeBuilder::for_tests();
     let toy = builder.add::<Toy>("toy", ToyState::default(), ToyRunner { held: Some(held.clone()), ..ToyRunner::default() });
     let runtime = builder.start().unwrap();
     runtime.start_epoch(1);
@@ -419,7 +419,7 @@ fn rt_prop_start_close() {
     failed.sort_unstable();
     assert_eq!(failed, vec![1, 2, 5, BOOM], "every id without a result got its failure cell, also the one asked after the death");
 
-    let mut builder = RuntimeBuilder::new();
+    let mut builder = RuntimeBuilder::for_tests();
     let watch = builder.add::<DeathLog>("deaths", Vec::new(), DeathLogRunner);
     let bare = builder.add::<Bare>("bare", (), BareRunner);
     let (report, reports) = mpsc::channel();
