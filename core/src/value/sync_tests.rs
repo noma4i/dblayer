@@ -2,7 +2,7 @@ use super::sync::*;
 use crate::owners::write::operation_status::OperationStatus;
 
 fn entry(action: &str, status: OperationStatus, since: i64) -> SyncEntry {
-    SyncEntry { action: action.to_string(), status, attempts: 0, error: None, since, fields: Vec::new(), batch: false }
+    SyncEntry { action: action.to_string(), status, attempts: 0, error: None, since, fields: Vec::new() }
 }
 
 fn failure(text: &str) -> Option<OperationFailure> {
@@ -19,13 +19,13 @@ fn a_single_open_operation_gives_its_state_action_attempts_and_creation_time() {
         "pending"
     );
     let sending = fold_entries(&[SyncEntry { attempts: 1, ..entry("update", OperationStatus::Sending, 9) }]).unwrap();
-    assert_eq!((sending.state, sending.attempts, sending.since), (SyncState::Pending, 1, 9), "sending status of a plain operation");
+    assert_eq!((sending.state, sending.attempts, sending.since), (SyncState::Sending, 1, 9), "sending status of a plain operation");
 }
 
 #[test]
 fn inv_sync_01_failed_beats_sending_beats_pending() {
     let pending = entry("a", OperationStatus::Pending, 1);
-    let sending = SyncEntry { batch: true, ..entry("b", OperationStatus::Pending, 2) };
+    let sending = entry("b", OperationStatus::Sending, 2);
     let failed = SyncEntry { attempts: 2, error: failure("no"), ..entry("d", OperationStatus::Failed, 4) };
     let state = |entries: &[SyncEntry]| fold_entries(entries).unwrap().state;
     assert_eq!(state(&[pending.clone(), sending.clone()]), SyncState::Sending);
@@ -45,8 +45,8 @@ fn inv_sync_01_dirty_fields_are_the_unique_union_in_queue_order() {
 fn inv_sync_01_inv_sync_04_random_sets_of_open_operations_fold_to_the_state_attempts_since_and_error_of_the_oracle() {
     let rank = |entry: &SyncEntry| match entry.status {
         OperationStatus::Failed => 0,
-        OperationStatus::Pending | OperationStatus::Sending if entry.batch => 1,
-        OperationStatus::Pending | OperationStatus::Sending => 2,
+        OperationStatus::Sending => 1,
+        OperationStatus::Pending => 2,
         OperationStatus::Committed | OperationStatus::RolledBack => 3,
     };
     let mut seed = 0x9e37_79b9_7f4a_7c15_u64;
@@ -60,7 +60,7 @@ fn inv_sync_01_inv_sync_04_random_sets_of_open_operations_fold_to_the_state_atte
         let entries: Vec<SyncEntry> = (0..next(6))
             .map(|turn| {
                 let status = [OperationStatus::Pending, OperationStatus::Sending, OperationStatus::Failed][next(3) as usize];
-                SyncEntry { attempts: next(5) as u32, batch: next(2) == 1, error: failure(&format!("e{turn}")), ..entry(&format!("a{turn}"), status, 10 + turn as i64) }
+                SyncEntry { attempts: next(5) as u32, error: failure(&format!("e{turn}")), ..entry(&format!("a{turn}"), status, 10 + turn as i64) }
             })
             .collect();
         let Some(info) = fold_entries(&entries) else {

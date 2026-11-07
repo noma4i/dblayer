@@ -317,7 +317,7 @@ fn visible_after(state: &WindowState) -> i64 { state.loaded.unwrap_or(0) }
 fn shown_hash(row: &WireRow) -> u64 {
     use std::hash::{Hash, Hasher};
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    format!("{:?}", row.cells).hash(&mut hasher);
+    format!("{:?}{:?}", row.cells, row.sync).hash(&mut hasher);
     hasher.finish()
 }
 

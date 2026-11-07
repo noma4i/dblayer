@@ -326,7 +326,8 @@ async fn dlv_prop_one_change_every_view_response_and_rejection() {
     let receipt = bound(db.act(epoch, "Moment".into(), "m1".into(), "react".into(), json!({"visitsCount":3,"reacted":true}).to_string(), "{}".into())).await.unwrap();
     hold.entered_for("the answer").await;
     let (local_list, local_entity) = (next_rows(&rig, &list, 3).await, next_rows(&rig, &entity, 3).await);
-    assert_eq!((local_list, local_entity), (receipt.revision, receipt.revision));
+    assert_eq!(local_list, local_entity);
+    assert!(local_list >= receipt.revision, "the first value shows the optimistic row or the sending status that follows it");
     hold.release();
     assert!(matches!(bound(db.outcome(receipt)).await.unwrap(), WireOperationOutcome::Confirmed { .. }));
     let (server_list, server_entity) = (next_rows(&rig, &list, 4).await, next_rows(&rig, &entity, 4).await);
@@ -336,7 +337,8 @@ async fn dlv_prop_one_change_every_view_response_and_rejection() {
     let receipt = bound(db.act(epoch, "Moment".into(), "m1".into(), "react".into(), json!({"visitsCount":5}).to_string(), "{}".into())).await.unwrap();
     refused.entered_for("the refusal").await;
     let (draft_list, draft_entity) = (next_rows(&rig, &list, 5).await, next_rows(&rig, &entity, 5).await);
-    assert_eq!((draft_list, draft_entity), (receipt.revision, receipt.revision));
+    assert_eq!(draft_list, draft_entity);
+    assert!(draft_list >= receipt.revision, "the first value shows the optimistic row or the sending status that follows it");
     refused.release();
     assert!(matches!(bound(db.outcome(receipt)).await.unwrap(), WireOperationOutcome::Rejected { .. }));
     let (rollback_list, rollback_entity) = (next_rows(&rig, &list, 4).await, next_rows(&rig, &entity, 4).await);

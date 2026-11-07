@@ -18,8 +18,8 @@ Every record knows whether the server has seen it. The state is live like everyt
 | State | When |
 | ----- | ---- |
 | `synced` | nothing is waiting for the server |
-| `pending` | a change is queued and sending has not started, or an upload of the record waits for the network (`uploads[action].waitReason == offline`) |
-| `sending` | the request is on its way and no answer has arrived |
+| `pending` | a change is queued and sending has not started or it waits in the queue again (offline, busy slot), or an upload of the record waits for the network (`uploads[action].waitReason == offline`) |
+| `sending` | an attempt was written and no answer has arrived: the same word as the `status` of the write in the queue of operations |
 | `failed` | the server refused the change and the record is kept for you to decide |
 
 The error `kind` is `network`, `server`, `rejected`, `unrecognized` or `session:<CODE>`. A sealed session refusal of the encrypted session gives the wire name of its code, for example `session:UNAUTHENTICATED`, and `message` holds the detail text.
@@ -92,8 +92,8 @@ Use them for an "unsent" banner, a retry-all button or a badge with the number o
 | ----- | ------- |
 | `seq` | the order of the write |
 | `model`, `rowId`, `action` | the write; the same three arguments address `retry` and `discard` |
-| `status` | `pending` (queued, not sent), `sending` (an attempt was written and not answered) or `failed` (refused and kept, `on_failure: keep`) |
-| `attempts` | how many attempts were written |
+| `status` | `pending` (queued, not sent, or back in the queue after the network was lost), `sending` (an attempt was written and not answered) or `failed` (refused and kept, `on_failure: keep`); `sync.state` of the record shows the same word |
+| `attempts` | how many attempts were written: 1 once the first request has left |
 | `error` | the failure of a `failed` write |
 | `createdAt` | when the write was queued |
 | `blockedBy` | the `seq` of the failed write of the same row that this write waits behind |

@@ -10,7 +10,7 @@ pub struct Stamp {
     pub revision: i64,
     pub sync: SyncInfo,
     pub related: Vec<(RowRef, Stamp)>,
-    /// Hash of the shown cells: a change of an ephemeral value moves it while the revision of the row stays.
+    /// Hash of the shown cells and the sync of the row: a change of an ephemeral value or of the sync moves it while the revision of the row stays.
     pub shown: u64,
 }
 

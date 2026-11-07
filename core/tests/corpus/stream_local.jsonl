@@ -9,6 +9,7 @@
 {"in":"pull","args":{"stream":"s1"},"out":[{"o":"empty","v":{"stream":"s1"}}]}
 {"in":"create","args":{"as":"r1","text":"a"},"out":[{"o":"receipt","v":{"op":"create","row":"r1"}},{"o":"request","v":{"id":"r2","kind":"http","purpose":"standard"}}]}
 {"in":"pull","args":{"stream":"s1"},"out":[{"o":"delta","v":{"base":2,"phase":"loaded","removed":[],"revision":3,"rows":["r1"],"stream":"s1"}}]}
+{"in":"pull","args":{"stream":"s1"},"out":[{"o":"delta","v":{"base":3,"phase":"loaded","removed":[],"revision":4,"rows":["r1"],"stream":"s1"}}]}
 {"in":"open_count","args":{"as":"c1"},"out":[]}
 {"in":"pull","args":{"stream":"c1"},"out":[{"o":"count","v":{"count":1,"phase":"loaded","revision":4,"stream":"c1"}}]}
 {"in":"open_entity","args":{"as":"e1","fetch":"never","row":"r1"},"out":[]}

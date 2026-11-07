@@ -92,8 +92,7 @@ pub(in super::super) fn apply_envelope_at(
             }
         }
     }
-    let is_batch = |key: &str| crate::owners::write::operation_status::Operation::upload_action(key).is_some_and(|(model, action)| models.get(model.as_str()).is_some_and(|info| info.spec.upload_action(&action).is_some_and(|declared| declared.batch.is_some())));
-    for (model, id) in recompute_sync_with(connection, &synced_keys, &is_batch)? {
+    for (model, id) in recompute_sync(connection, &synced_keys)? {
         let touched = changes.changes.iter().any(|change| change.row.model.as_str() == model && change.row.id.as_str() == id);
         if !touched {
             changes.push(&ModelKey::new(&model), &id, RowChangeKind::Synced, BTreeSet::new());

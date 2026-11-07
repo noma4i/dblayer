@@ -11,7 +11,7 @@ use crate::identity::{ModelKey, RowRef};
 use crate::store::operation::{apply_fsck, fsck_plan, open_operations, rebuilt_rows, FsckAction, Orphan, Orphans};
 use crate::owners::write::operation_outbox::OutboxQueue;
 use crate::schema::{reserved_member_names, resolve_types, validate_models, AssociationKind, AssociationSpec, ModelSpec};
-use crate::store::sync_state::rebuild_sync_with;
+use crate::store::sync_state::rebuild_sync;
 
 use super::db_error::CoreError;
 use super::changed_log::ChangedLog;
@@ -222,7 +222,7 @@ fn recover_operations(store: &Store, models: &[ModelSpec], restore_rows: bool) -
             }
         }
         apply_fsck(&inner.connection, &plan, &orphans)?;
-        rebuild_sync_with(&inner.connection, &|key| crate::owners::write::operation_status::Operation::upload_action(key).is_some_and(|(model, action)| inner.models.get(model.as_str()).is_some_and(|info| info.spec.upload_action(&action).is_some_and(|declared| declared.batch.is_some()))))?;
+        rebuild_sync(&inner.connection)?;
         if restore_rows { rebuilt_rows(&inner.connection, &plan, &operations, &known)? } else { Vec::new() }
     };
     if rebuilt.is_empty() {

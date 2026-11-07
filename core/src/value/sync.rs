@@ -132,14 +132,13 @@ pub struct SyncEntry {
     pub error: Option<OperationFailure>,
     pub since: i64,
     pub fields: Vec<String>,
-    pub batch: bool,
 }
 
 impl SyncEntry {
     fn state(&self) -> SyncState {
         match self.status {
             OperationStatus::Failed => SyncState::Failed,
-            OperationStatus::Pending | OperationStatus::Sending if self.batch => SyncState::Sending,
+            OperationStatus::Sending => SyncState::Sending,
             _ => SyncState::Pending,
         }
     }
