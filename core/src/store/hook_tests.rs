@@ -28,7 +28,7 @@ fn inv_conc_01_a_store_hook_may_call_the_store_it_was_announced_from() {
         inside.counters();
         inside.generation();
         counter.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-    }));
+    })).unwrap();
     let worker = store.clone();
     within_five_seconds(move || {
         written(&worker, "m1");
@@ -58,7 +58,7 @@ fn inv_conc_01_events_reach_the_hook_in_commit_order_while_an_earlier_hook_is_st
             entered.send(()).unwrap();
             recv_within(&released.lock().unwrap());
         }
-    }));
+    })).unwrap();
     let earlier = store.clone();
     let first = std::thread::spawn(move || written(&earlier, "m1"));
     first_entered.recv_timeout(Duration::from_secs(5)).unwrap();
@@ -81,7 +81,7 @@ fn inv_conc_02_no_store_lock_is_held_while_the_hook_calls_into_other_components(
     let (inside, log) = (store.clone(), probes.clone());
     store.set_hook(Box::new(move |_| {
         log.lock().unwrap().push((inside.writer_is_free(), inside.models.try_write().is_ok()));
-    }));
+    })).unwrap();
     written(&store, "m1");
     store.erase_models(store.generation().next(), &["messages"].map(String::from)).unwrap();
     store.erase_account(store.generation().next(), false).unwrap();
@@ -102,7 +102,7 @@ fn a_deferred_commit_announces_only_when_the_caller_publishes_in_commit_order() 
         if let StoreEvent::Committed(result) = event {
             log.lock().unwrap().push(result.revision);
         }
-    }));
+    })).unwrap();
     let caller_state = Mutex::new(());
     let guard = caller_state.lock().unwrap();
     let first = deferred(&store, "m1");
@@ -124,7 +124,7 @@ fn a_dropped_deferred_commit_still_announces_so_the_order_never_stalls() {
         if matches!(event, StoreEvent::Committed(_)) {
             count.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         }
-    }));
+    })).unwrap();
     drop(deferred(&store, "m1"));
     let later = store.clone();
     within_five_seconds(move || written(&later, "m2"));

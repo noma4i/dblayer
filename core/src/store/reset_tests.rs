@@ -142,7 +142,7 @@ fn resets_advance_the_revision_and_tell_the_hook() {
         if let StoreEvent::Reset { revision, models, .. } = event {
             sink.lock().unwrap().push((revision, models));
         }
-    }));
+    })).unwrap();
     store.erase_models(store.generation().next(), &["messages"].map(String::from)).unwrap();
     assert_eq!(store.revision_seq().unwrap(), 2);
     store.erase_account(store.generation().next(), false).unwrap();

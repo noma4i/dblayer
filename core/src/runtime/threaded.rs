@@ -362,7 +362,7 @@ impl RuntimeBuilder {
             return Err(std::io::Error::other("owner reservation is not installed"));
         }
         let router = Arc::new(Router { boxes: self.boxes, inflight: Inflight::default(), failure: self.failure, history: self.history, record: self.record });
-        let _ = self.handle.router.set(router.clone());
+        self.handle.router.set(router.clone()).map_err(|_| std::io::Error::other("the runtime is already started"))?;
         let clock = self.clock;
         let timeline = Arc::new(Timeline { clock: clock.clone() });
         let weak = Arc::downgrade(&router);

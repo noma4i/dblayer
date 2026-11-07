@@ -1,6 +1,8 @@
 use std::collections::{BTreeSet, VecDeque};
 use std::sync::{Arc, Mutex, OnceLock, PoisonError};
 
+use super::StoreError;
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum ReadEvent {
     Closed(Vec<u64>),
@@ -33,7 +35,9 @@ pub(crate) struct ReadGuard {
 impl Reads {
     pub fn new() -> Arc<Self> { Arc::new(Self::default()) }
 
-    pub fn attach(&self, sink: impl Fn(ReadEvent) + Send + Sync + 'static) { let _ = self.sink.set(Box::new(sink)); }
+    pub fn attach(&self, sink: impl Fn(ReadEvent) + Send + Sync + 'static) -> Result<(), StoreError> {
+        self.sink.set(Box::new(sink)).map_err(|_| StoreError::AlreadyAttached("the read sink"))
+    }
 
     pub fn admit(self: &Arc<Self>) -> Option<ReadGuard> {
         let mut state = self.state.lock().unwrap_or_else(PoisonError::into_inner);

@@ -23,6 +23,8 @@ pub enum StoreError {
     Constraint(String),
     #[error("the database is closed or its state moved")]
     Refused,
+    #[error("{0} is already attached")]
+    AlreadyAttached(&'static str),
     #[error("corrupt manifest: {0}")]
     CorruptManifest(String),
 }

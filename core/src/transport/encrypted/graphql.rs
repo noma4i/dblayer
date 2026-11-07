@@ -36,7 +36,9 @@ impl EncryptedTransport {
     }
 
     /// Joins the owners: from now on a request with a `sequence` goes through the owner Session.
-    pub(crate) fn attach(&self, life: &Arc<crate::owners::life::Life>) { let _ = self.life.set(Arc::downgrade(life)); }
+    pub(crate) fn attach(&self, life: &Arc<crate::owners::life::Life>) {
+        if self.life.set(Arc::downgrade(life)).is_err() { life.fault("the encrypted transport is attached twice".into()); }
+    }
 
     /// The cable of the owner Feed: it opens sockets through `rest` and signs in with the stored credential.
     pub(crate) fn cable_lines(&self) -> Arc<dyn crate::transport::CableLines> {

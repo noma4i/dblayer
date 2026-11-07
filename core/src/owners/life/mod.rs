@@ -178,7 +178,7 @@ impl Wiring {
     pub fn fault(&self, what: String) { self.faults.push(what); }
 
     pub fn open_failed(&self, error: String, corrupt: bool) {
-        let _ = self.open_failed.set((error, corrupt));
+        if self.open_failed.set((error, corrupt)).is_err() { self.fault("the open failed twice".into()); }
         self.published.notify();
     }
 
@@ -379,7 +379,7 @@ impl Life {
         let wiring = Wiring::new(builder.handle(), Arc::new(move || i64::try_from(clock.now().as_millis()).unwrap_or(i64::MAX)));
         let wiring = Arc::new(wiring);
         let open_wait = wiring.outcomes.register(Epoch::MAX);
-        let _ = wiring.open_id.set(open_wait.id().raw());
+        wiring.open_id.set(open_wait.id().raw()).map_err(|_| LifeError::Storage("the wait of open is set twice".into()))?;
         let lifecycle = builder.add::<Lifecycle>("lifecycle", LifecycleState::new().with_restore_participants(restore_participants(session.is_some())), runners::LifecycleRunner { wiring: wiring.clone(), absent: absent(session.is_some(), session.is_some() && ports.transfer.is_some()), db: ports.db.clone(), held_published: None, held_replies: Vec::new(), held_read: None });
         builder.on_executor_failed(lifecycle);
         let store = builder.reserve::<StoreWriter>();
@@ -467,7 +467,7 @@ impl Life {
             ports.db.reads().attach(move |event| reads_wiring.to_store(match event {
                 crate::store::reads::ReadEvent::Closed(ids) => StoreInput::ReadsClosed { ids },
                 crate::store::reads::ReadEvent::Finished(read_id) => StoreInput::ReadFinished { read_id },
-            }));
+            })).map_err(|error| LifeError::Storage(error.to_string()))?;
         }
         if session_address.is_some() {
             let weak = Arc::downgrade(&wiring);
@@ -476,7 +476,7 @@ impl Life {
             });
         }
         let read = read::add(&mut builder, &wiring, &ports, store);
-        let _ = wiring.addresses.set(Addresses { lifecycle, store, network, calls, session: session_address.as_ref().map(|(address, _)| *address), outbox, local_writes, transfer: transfer.map(|(address, _)| address), rounds: transfer.map(|(_, rounds)| rounds), windows: None, deliveries: None, feed: None }.with_read(&read));
+        wiring.addresses.set(Addresses { lifecycle, store, network, calls, session: session_address.as_ref().map(|(address, _)| *address), outbox, local_writes, transfer: transfer.map(|(address, _)| address), rounds: transfer.map(|(_, rounds)| rounds), windows: None, deliveries: None, feed: None }.with_read(&read)).map_err(|_| LifeError::Storage("the addresses are set twice".into()))?;
         let session_open = session_address.map(|(_, restored)| SessionInput::Open { credential: restored.credential, pending: restored.pending, dropped_pending: restored.dropped_pending, secret: restored.secret });
         builder.install(store, "store", StoreState::new(), runners::StoreRunner { wiring: wiring.clone(), db: ports.db.clone(), secret: ports.secret.clone(), exchange: ports.exchange.clone(), executor: ports.executor.clone(), restore_error, session_open });
         let runtime = builder.start().map_err(|error| LifeError::Storage(error.to_string()))?;
@@ -534,6 +534,8 @@ impl Life {
     /// The requests of the network that are on their way.
     #[cfg(test)]
     pub fn requests_in_flight(&self) -> usize { self.wiring.flights.load(Ordering::SeqCst) }
+
+    pub(crate) fn fault(&self, what: String) { self.wiring.fault(what); }
 
     pub fn faults(&self) -> Vec<String> { self.wiring.faults.iter().cloned().collect() }
 

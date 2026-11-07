@@ -133,7 +133,7 @@ impl Store {
                 logged.log_replaced(result.revision.unwrap_or_default(), result.replaced.iter().map(|(from, to)| (from.id.clone(), to.clone())));
                 journal.log_commit(result);
             }
-        }));
+        }))?;
         store.set_hook(Box::new(move |event| match event {
             StoreEvent::Committed(result) => notified.notify(CommitNotice::of_commit(result)),
             StoreEvent::Reset { revision, models, .. } => {
@@ -141,7 +141,7 @@ impl Store {
                 notified.notify(CommitNotice::of_reset(revision, models.as_deref()));
             }
             StoreEvent::Renewed => {}
-        }));
+        }))?;
         store.context = Context {
             pointer_guards: pointer_guards(&models),
             specs: models.into_iter().map(|spec| (spec.key.as_str().to_string(), spec)).collect(),
@@ -174,7 +174,9 @@ impl Store {
 
     pub fn connectivity(&self) -> Arc<crate::transport::Connectivity> { self.context.connectivity.clone() }
 
-    pub(crate) fn on_commit(&self, sink: impl Fn(CommitNotice) + Send + Sync + 'static) { let _ = self.context.commits.0.set(Arc::new(sink)); }
+    pub(crate) fn on_commit(&self, sink: impl Fn(CommitNotice) + Send + Sync + 'static) -> Result<(), StoreError> {
+        self.context.commits.0.set(Arc::new(sink)).map_err(|_| StoreError::AlreadyAttached("the commit sink"))
+    }
 
     pub fn set_clock(&self, clock: Arc<dyn crate::runtime::Clock>) { self.lock().clock = clock; }
 

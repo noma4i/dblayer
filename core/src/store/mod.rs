@@ -329,12 +329,12 @@ impl Store {
         crate::lock::acquire(&self.inner)
     }
 
-    pub(crate) fn set_hook(&self, hook: StoreHook) {
-        let _ = self.hook.set(hook);
+    pub(crate) fn set_hook(&self, hook: StoreHook) -> Result<(), StoreError> {
+        self.hook.set(hook).map_err(|_| StoreError::AlreadyAttached("the store hook"))
     }
 
-    pub(crate) fn set_commit_log(&self, log: CommitLog) {
-        let _ = self.commit_log.set(log);
+    pub(crate) fn set_commit_log(&self, log: CommitLog) -> Result<(), StoreError> {
+        self.commit_log.set(log).map_err(|_| StoreError::AlreadyAttached("the commit log"))
     }
 
     pub(crate) fn announce(&self, event: StoreEvent<'_>) {

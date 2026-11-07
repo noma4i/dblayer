@@ -163,7 +163,7 @@ fn the_commit_hook_runs_inside_the_commit_for_every_non_empty_result() {
         if let StoreEvent::Committed(result) = event {
             sink.lock().unwrap().push(result.revision.unwrap());
         }
-    }));
+    })).unwrap();
     commit(&store, vec![upsert("messages", message("m1", "c1"))], vec![]);
     commit(&store, vec![], vec![]);
     commit(&store, vec![upsert("messages", message("m1", "c1"))], vec![]);
@@ -183,7 +183,7 @@ fn the_commit_log_runs_while_every_read_is_excluded() {
         if matches!(event, StoreEvent::Committed(_)) && probe.inner.try_lock().is_err() {
             count.fetch_add(1, Ordering::SeqCst);
         }
-    }));
+    })).unwrap();
     commit(&store, vec![upsert("messages", message("m1", "c1"))], vec![]);
     assert_eq!(excluded.load(Ordering::SeqCst), 1);
 }

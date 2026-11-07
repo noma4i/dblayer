@@ -7,7 +7,7 @@ fn recording() -> (Arc<Reads>, Arc<Mutex<Vec<ReadEvent>>>) {
     let reads = Reads::new();
     let seen = Arc::new(Mutex::new(Vec::new()));
     let log = seen.clone();
-    reads.attach(move |event| log.lock().unwrap().push(event));
+    reads.attach(move |event| log.lock().unwrap().push(event)).unwrap();
     (reads, seen)
 }
 

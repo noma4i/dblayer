@@ -54,7 +54,7 @@ impl Work {
         let db = Arc::new(Store::open_models(None, (0..models).map(spec).collect(), None).unwrap());
         let notices = Arc::new(Mutex::new(Vec::new()));
         let sink = notices.clone();
-        db.on_commit(move |notice| sink.lock().unwrap().push((notice.revision, notice.tables, notice.position, notice.rows)));
+        db.on_commit(move |notice| sink.lock().unwrap().push((notice.revision, notice.tables, notice.position, notice.rows))).unwrap();
         let peers = DeliveryPeers { windows: Address::<Windows>::new(0), feed: Address::<Feed>::new(1) };
         Self { snapshots: DbSnapshots::new(db.clone()), db, state: DeliveriesState::new(EPOCH, peers), notices }
     }
