@@ -10,7 +10,6 @@ extension BridgeProbeTests {
       return false
     }
     #expect(await refused { _ = try await Moment.recent.current() })
-    do { try await DB.close() } catch DbError.Closed(_) { return } catch { Issue.record("second close: \(error)") }
-    Issue.record("second close succeeded")
+    do { try await DB.close() } catch { Issue.record("a second close answers success: \(error)") }
   }
 }

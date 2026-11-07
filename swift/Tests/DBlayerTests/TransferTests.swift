@@ -178,6 +178,7 @@ extension BridgeProbeTests {
         await DB.closeForCleanup()
         _ = try await DB.openTesting(transport: transport, modelsJSON: modelsJSON, path: path, encrypted: encrypted, credentials: credential, http: server)
         try DB.database.registerOperations(defsJson: operations)
+        try DB.database.setOnline(online: false)
         try DB.database.setOnline(online: true)
         await eventually("both assets are stored") {
           let a1 = (try? await Asset.find("a1").current()) ?? nil
@@ -488,8 +489,8 @@ extension BridgeProbeTests {
   }
 
   private static func isGone(_ row: Moment) async -> Bool {
-    guard let database = try? DB.database, let found = try? await database.readRow(epoch: database.sessionEpoch(), model: "Moment", rowId: row.id) else { return false }
-    return found == nil
+    guard let database = try? DB.database else { return false }
+    do { return try await database.readRow(epoch: database.sessionEpoch(), model: "Moment", rowId: row.id) == nil } catch { return false }
   }
 
   @MainActor @Test(.timeLimit(.minutes(1)))
