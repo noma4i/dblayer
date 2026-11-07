@@ -1,16 +1,6 @@
 # Changelog
 
-## Unreleased
-
-### Fixed
-
-- Android reports the network state before it registers the network callback.
-
-### Removed
-
-- `DbError.Sync` is removed: an upload without declared operations fails with `Invalid`.
-
-## 6.17.0 - 2026-11-07
+## 6.17.0 - 2026-11-08
 
 ### Added
 
@@ -50,6 +40,7 @@
 - `DbError.NotOpen` reports a call before the first successful `open`; a database that was opened and closed keeps answering `Closed`.
 - `AccountScope.operations` streams the queue of operations as `OperationInfo` values with status, attempts, error and `blockedBy`.
 - `AccountScope.retry` and `AccountScope.discard` take the model, id and action of an `OperationInfo`.
+- `fetch_server_config_with_clock` and `FetchPorts` run the config fetch on a test clock.
 
 ### Changed
 
@@ -150,6 +141,9 @@
 - `close` returns after the core stopped the platform observers.
 - The core rejects a load call without a relation with `Invalid` on both platforms.
 - Kotlin reports the network value of the system on every callback.
+- The core cancels a platform PUT or cable open through Swift task or Kotlin coroutine cancellation.
+- `setOnline` waits for the owner answer without a time limit and returns `Closed` after `close`.
+- A cable connection that closes drains its queued frames before the core cancels it.
 
 ### Fixed
 
@@ -236,6 +230,11 @@
 - `cancelUpload` cancels an upload that starts while the call runs.
 - A format change keeps queued operations and uploads when their table layout is unchanged and builds their list effects again. A queued create does not bring back its record.
 - A multipart upload discarded before its first part is aborted on the server after a reconnect.
+- `discard` and `cancelUpload` answer after the copy of the file is removed.
+- A receipt carries the optimistic row as its intent commit wrote it.
+- A feed event without a commit is refused and counted by `subscriptionCensus`.
+- A call that waits for an owner returns `Closed` when `close` stops the owners.
+- Android reports the network state before it registers the network callback.
 
 ### Removed
 
@@ -271,6 +270,7 @@
 - `DBlayer.sessionSend`: use `sessionCall`.
 - `Config.cacheRows`.
 - `Connectivity` of `serverConfig`: the core takes the platform observer.
+- `DbError.Sync` is removed: an upload without declared operations fails with `Invalid`.
 
 
 ## 6.16.1 - 2026-11-03
