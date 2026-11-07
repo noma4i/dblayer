@@ -73,7 +73,7 @@ Regenerate both platforms and replace the `events` property with `scope.events(M
 Start actions after this call returns: the first reader and server subscription are ready.
 Remove offline retry loops around this call. The library waits for connectivity and owns cancellation and reader release.
 A stream is one reader. Open a new one for each screen.
-Handle opening errors with their original `DbError` kind. Later collection failures use `ModelEventItem.failed` or `ModelEventItem.Failed`.
+Handle opening errors with their original `DbError` kind. The end of an events stream is `ModelEventItem.ended` or `ModelEventItem.Ended` with the cause of the core.
 
 ## Node membership
 

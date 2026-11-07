@@ -725,14 +725,14 @@ for await item in events {
   case .ready: startWork()
   case .event(let event): show(event.before, event.after)
   case .lost(let first, let last): resync(last - first + 1)
-  case .failed(let error): report(error)
+  case .ended(let cause): report(cause)
   }
 }
 ```
 
 ```kotlin
 val events = scope.events(Message).events(Message)
-events.collect { item -> when (item) { ModelEventItem.Ready -> startWork(); is ModelEventItem.Event -> show(item.event.before, item.event.after); is ModelEventItem.Lost -> resync(item.last - item.first + 1uL); is ModelEventItem.Failed -> report(item.error) } }
+events.collect { item -> when (item) { ModelEventItem.Ready -> startWork(); is ModelEventItem.Event -> show(item.event.before, item.event.after); is ModelEventItem.Lost -> resync(item.last - item.first + 1uL); is ModelEventItem.Ended -> report(item.cause) } }
 ```
 
 The journal of a reader in the core holds 256 values. A slower reader reads one `lost` range with the positions of the dropped events before the events that were kept, and never delays the next event of other readers. The kept events and the lost positions add up to the events sent. A failed row read publishes a `lost` position in place of the event and raises the rejected count of the subscription. Frames that the full input of a subscription dropped reach the reader as `lost` positions, one per frame. A failure of the stream itself arrives as the last item `failed`. Cancellation or completion releases that reader. Dropping an uncollected stream releases its prepared reader, through automatic reference release on Swift and garbage collection on Kotlin. Cancellation during opening also releases the pending reader. The last reader releases the shared subscription after `live_linger`, without app cleanup. The stream needs no notice model.

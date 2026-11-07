@@ -43,13 +43,13 @@ A full journal of a list drops the values that a new snapshot replaces and sends
 The end of a stream is kept apart from the journal and comes once, after every other value. When the session ends or the database closes, the values of the old account that were not read are dropped and only the end follows.
 Each state says whether the first load `settled` and up to which `revision` of the database its rows are read.
 A projection ignores a value of another epoch.
-A delta whose `base` is not the held revision is not applied: `apply` returns `resync` and the projection waits for the next snapshot.
+A projection applies each delivery as it arrives and decides nothing. A row that cannot be decoded is reported to the core with `resync()`, and the core sends one snapshot.
 
 ## Reading a projection on screen
 
-The first delivery of a stream is a snapshot. It carries no list of edits: `takeEdits()` returns `nil` and the screen reads `rows` again.
+The first delivery of a stream is a snapshot. It carries no list of edits: `edits` is `nil` and the screen reads `rows` again.
 Edits come only with deltas, as the steps from the rows before to the rows after.
-A delta that a projection cannot apply gives one new snapshot per stream, also when a screen follows several streams.
+`edits` holds the steps of the last delivery only: the core merges the deliveries a reader did not take.
 
 On iOS 17 a SwiftUI view reads `Projected` through `@Observable`: it tracks the properties it reads, and `withObservationTracking` reports the next change.
 `Observations { }` needs iOS 26. Code that targets iOS 17 does not use it.

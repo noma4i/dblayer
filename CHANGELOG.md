@@ -35,6 +35,8 @@
 ### Changed
 
 - `DbError` names the failures of the cells: `Offline`, `Dropped`, `Unauthorized`, `InFlight`, `Storage`, `Runtime`, `Internal` and `Copy`. `Storage` replaces `Database`.
+- `ListEdit.rewrite` carries the `temporary` id it settles, `Projected.edits` replaces `takeEdits`, and `ModelEventItem.ended` replaces `failed`.
+- Projections mirror each delivery and drop `temporaryIds`, the decode counters and the resync decision.
 - Redirect answers are reported as `Http` errors on every platform and are never followed.
 - `registerOperations` is async and parses its definitions off the caller thread.
 - `subscriptionCensus` is async and reads the streams and channels of the owners.
