@@ -47,6 +47,7 @@ public struct Query<Model: DBModel>: Sendable {
   var condition: Condition?
   var orders: [Order] = []
   var limitCount: Int?
+  var offsetCount: Int?
   var relation: String?
   var params: [String: JSONValue] = [:]
 
@@ -61,6 +62,7 @@ public struct Query<Model: DBModel>: Sendable {
   public func search(_ text: String, wholeWords: Bool = false) -> Query { `where`(.search(text, wholeWords: wholeWords)) }
   public func order(_ order: Order...) -> Query { var copy = self; copy.orders += order; return copy }
   public func limit(_ count: Int) -> Query { var copy = self; copy.limitCount = count; return copy }
+  public func offset(_ count: Int) -> Query { var copy = self; copy.offsetCount = count; return copy }
   var json: String {
     get throws { try json(refreshOnConnect: false) }
   }
@@ -71,6 +73,7 @@ public struct Query<Model: DBModel>: Sendable {
     if let condition { object["where"] = condition.json }
     if !orders.isEmpty { object["order"] = .array(orders.map { .object(["field": .string($0.field), "direction": .string($0.direction)]) }) }
     if let limitCount { object["limit"] = .integer(Int64(limitCount)) }
+    if let offsetCount { object["offset"] = .integer(Int64(offsetCount)) }
     if let relation { object["relation"] = .string(relation); object["params"] = .object(params) }
     return try JSONValue.object(object).text
   }

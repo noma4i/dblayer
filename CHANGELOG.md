@@ -28,6 +28,7 @@
 - `AccountScope.stream` takes `refreshOnConnect`; a list stream opened with it loads again when the network returns.
 - A projection keeps the edits of its deltas and the temporary id of a row.
 - `Query.beginLoad` returns the interest of one caller with `result()` and `cancel()`.
+- `Query.offset` skips rows before the `limit` window on both platforms; a `limit` of 0 fails with `Invalid`.
 - `ModelEventItem.ready` tells that the source of an events stream is open.
 - `DbError.NotOpen` reports a call before the first successful `open`; a database that was opened and closed keeps answering `Closed`.
 

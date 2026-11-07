@@ -72,14 +72,16 @@ class Query<Model : DBModel>(
     private val limitCount: Int? = null,
     private val relation: String? = null,
     private val params: JsonObject = JsonObject(emptyMap()),
+    private val offsetCount: Int? = null,
 ) {
-    private fun copy(condition: Condition? = this.condition, orders: List<Order> = this.orders, limitCount: Int? = this.limitCount) =
-        Query(modelName, decoder, condition, orders, limitCount, relation, params)
+    private fun copy(condition: Condition? = this.condition, orders: List<Order> = this.orders, limitCount: Int? = this.limitCount, offsetCount: Int? = this.offsetCount) =
+        Query(modelName, decoder, condition, orders, limitCount, relation, params, offsetCount)
 
     fun where(next: Condition) = copy(condition = condition?.and(next) ?: next)
     fun search(text: String, wholeWords: Boolean = false) = where(Condition.search(text, wholeWords))
     fun order(vararg next: Order) = copy(orders = orders + next)
     fun limit(count: Int) = copy(limitCount = count)
+    fun offset(count: Int) = copy(offsetCount = count)
 
     internal val loadTarget: ValueStream.LoadTarget? get() = relation?.let { ValueStream.LoadTarget(modelName, it, params.jsonText()) }
 
@@ -92,6 +94,7 @@ class Query<Model : DBModel>(
         condition?.let { put("where", it.json) }
         if (orders.isNotEmpty()) put("order", JsonArray(orders.map { buildJsonObject { put("field", it.field); put("direction", it.direction) } }))
         limitCount?.let { put("limit", it) }
+        offsetCount?.let { put("offset", it) }
         relation?.let { put("relation", it); put("params", params) }
     }.jsonText()
 

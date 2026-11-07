@@ -103,15 +103,16 @@ An explicit null in a top-level `from` path clears the projected nullable field.
 ## Queries
 
 ```swift
-try Moment.where(Moment.userId == id).order(Moment.createdAt.desc).limit(20)
+try Moment.where(Moment.userId == id).order(Moment.createdAt.desc).limit(20).offset(40)
 Moment.recent                       // a named scope
 ```
 
 ```kotlin
-Moment.where(Moment.userId eq id).order(Moment.createdAt.desc()).limit(20)
+Moment.where(Moment.userId eq id).order(Moment.createdAt.desc()).limit(20).offset(40)
 Moment.recent                       // a named scope
 ```
 
+`limit` is at least 1 and `offset` is 0 or more, else the read fails with `Invalid`. A count ignores both.
 The count of a relation is a query: `scope.count(...)`. There are no counter caches.
 A query is plain data (`model`, `where`, `order`, `limit`, `offset`). The core compiles it to SQL. Every scalar and enum field compares as its own SQLite column, and an index makes the comparison fast.
 A row with a null field matches `!(field == value)`.
