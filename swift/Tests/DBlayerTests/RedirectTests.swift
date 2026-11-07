@@ -21,7 +21,7 @@ struct RedirectTests {
     case "query":
       #expect(responseStatus(await transport.send(request: probeRequest(origin, path: "/graphql"))) == 302)
     case "encrypted":
-      #expect(responseStatus(await UrlSessionEncryptedHttp(origin: origin, session: session).send(request: probeRequest(origin))) == 302)
+      #expect(responseStatus(await UrlSessionEncryptedHttp(session: session).send(request: probeRequest(origin))) == 302)
     default:
       let file = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
       try Data("file".utf8).write(to: file)

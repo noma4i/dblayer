@@ -23,7 +23,7 @@ class RedirectTest {
                     "query" -> {
                         assertEquals(path, 302.toUShort(), transport.send(probeRequest(origin + "graphql")).status())
                     }
-                    "encrypted" -> assertEquals(path, 302.toUShort(), OkHttpEncryptedHttp(origin, client).send(probeRequest(origin + "api/session")).status())
+                    "encrypted" -> assertEquals(path, 302.toUShort(), OkHttpEncryptedHttp(client).send(probeRequest(origin + "api/session")).status())
                     "cable" -> {
                         val failure = (transport.openCable(cableUrl(server), 10_000uL, RecordingEvents()) as CableOutcome.Failed).failure
                         assertEquals(path, 302L, failure.code)

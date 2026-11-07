@@ -27,7 +27,7 @@ struct UserAgentTests {
     let transport = UrlSessionTransport(endpoint: origin, headers: { headers }, session: session)
     switch path {
     case "encrypted":
-      _ = await UrlSessionEncryptedHttp(origin: origin, headers: { headers }, session: session).send(request: probeRequest(origin))
+      _ = await UrlSessionEncryptedHttp(headers: { headers }, session: session).send(request: probeRequest(origin))
     case "graphql":
       _ = await transport.send(request: probeRequest(origin, path: "/graphql"))
     case "encryptedSocket":
@@ -45,7 +45,7 @@ struct UserAgentTests {
     defer { server.listener.cancel() }
     let origin = try await server.start()
     let values = ChangingHeaders()
-    let http = UrlSessionEncryptedHttp(origin: origin, headers: { values.read() })
+    let http = UrlSessionEncryptedHttp(headers: { values.read() })
     let transport = UrlSessionTransport(endpoint: origin, headers: { values.read() })
     _ = await http.send(request: probeRequest(origin))
     values.set("second")

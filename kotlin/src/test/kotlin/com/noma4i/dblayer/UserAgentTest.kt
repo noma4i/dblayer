@@ -23,7 +23,7 @@ class UserAgentTest {
                     val client = OkHttpClient()
                     val transport = OkHttpTransport(origin, { headers }, client)
                     when (path) {
-                        "encrypted" -> OkHttpEncryptedHttp(origin, client) { headers }.send(probeRequest(origin + "api/session"))
+                        "encrypted" -> OkHttpEncryptedHttp(client) { headers }.send(probeRequest(origin + "api/session"))
                         "graphql" -> transport.send(probeRequest(origin + "graphql"))
                         "encryptedSocket" -> transport.openCable(origin.replaceFirst("http", "ws") + "api/cable", 10_000uL, RecordingEvents())
                         else -> error("unexpected request kind")
@@ -48,7 +48,7 @@ class UserAgentTest {
             val value = java.util.concurrent.atomic.AtomicReference("first")
             val headers = { mapOf("X-Application" to value.get(), "User-Agent" to "Reader") }
             val client = OkHttpClient()
-            val http = OkHttpEncryptedHttp(origin, client, headers)
+            val http = OkHttpEncryptedHttp(client, headers)
             val transport = OkHttpTransport(origin, headers, client)
             http.send(probeRequest(origin + "api/session"))
             value.set("second")

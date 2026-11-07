@@ -97,7 +97,7 @@ try await DB.open(
   transport: UrlSessionTransport(endpoint: origin),
   modelsJSON: modelsJSON,
   path: path,
-  http: UrlSessionEncryptedHttp(origin: origin)
+  http: UrlSessionEncryptedHttp()
 )
 try await DB.sessionCall("otp", body: PhoneBody(phone: "+61400000000"))
 let answer = try await DB.sessionCall("confirm", body: CodeBody(code: "123456"), as: SignedIn.self)
@@ -113,7 +113,7 @@ DBlayer.open(
     modelsJson = modelsJSON,
     path = path,
     uploadNotification = notification,
-    http = OkHttpEncryptedHttp(origin),
+    http = OkHttpEncryptedHttp(),
 )
 DBlayer.sessionCall("otp", PhoneBody("+61400000000"))
 val answer: SignedIn = DBlayer.sessionCall("confirm", CodeBody("123456"))

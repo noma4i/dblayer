@@ -3,7 +3,6 @@ package com.noma4i.dblayer
 import okhttp3.OkHttpClient
 
 class OkHttpEncryptedHttp(
-    origin: String,
     client: OkHttpClient = OkHttpClient(),
     private val headers: () -> Map<String, String> = { emptyMap() },
 ) : EncryptedHttp {

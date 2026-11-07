@@ -163,7 +163,7 @@ struct BootstrapConfigTests {
     let origin = try await server.start()
     var config = peer.encrypted
     config.origin = origin.absoluteString
-    let task = Task { try await DB.serverConfig(encrypted: config, platform: .ios, version: "1.2", http: UrlSessionEncryptedHttp(origin: origin)) }
+    let task = Task { try await DB.serverConfig(encrypted: config, platform: .ios, version: "1.2", http: UrlSessionEncryptedHttp()) }
     await eventually("native HTTP received") { server.requests.count == 1 }
     task.cancel()
     await eventually("native HTTP disconnected", timeout: .seconds(2)) { server.disconnected }
@@ -229,7 +229,7 @@ struct BootstrapConfigTests {
     config.httpAdditionalHeaders = ["Authorization": "secret", "Cookie": "secret", "X-Payload-Encryption": "old", "X-Request-Signature": "old"]
     let session = URLSession(configuration: config)
     defer { session.invalidateAndCancel() }
-    let reply = await UrlSessionEncryptedHttp(origin: origin, session: customSession ? session : nil).send(request: probeRequest(origin, path: "/api/bootstrap"))
+    let reply = await UrlSessionEncryptedHttp(session: customSession ? session : nil).send(request: probeRequest(origin, path: "/api/bootstrap"))
     #expect(reply == .response(status: 302, etag: nil, body: "busy"))
     #expect(server.requests.count == 1)
     let request = try #require(server.requests.first)

@@ -55,12 +55,12 @@ public enum DB {
   }
 
   public static func serverConfig(encrypted: EncryptedConfig, platform: AppPlatform, version: String, build: String? = nil, http: EncryptedHttp? = nil, retries: RetryProgress? = nil) async throws -> ServerConfig {
-    try await fetchServerConfig(encrypted: encrypted, platform: platform, version: version, build: build, http: http ?? UrlSessionEncryptedHttp(origin: encrypted.origin), retries: retries, observers: SystemObservers())
+    try await fetchServerConfig(encrypted: encrypted, platform: platform, version: version, build: build, http: http ?? UrlSessionEncryptedHttp(), retries: retries, observers: SystemObservers())
   }
 
   @MainActor public static func open(endpoint: URL? = nil, headers: @escaping @Sendable () -> [String: String] = { [:] }, encrypted: EncryptedConfig? = nil, credentials: CredentialStore? = nil, transport: Transport? = nil, modelsJSON: String, path: String? = nil, operations: [any GraphQLOperation.Type] = [], http: EncryptedHttp? = nil) async throws {
     let origin = encrypted.flatMap { URL(string: $0.origin) }
-    let ports = OpenPorts(transport: transport ?? (endpoint ?? origin).map { UrlSessionTransport(endpoint: $0, headers: headers) }, encrypted: encrypted, credentials: credentials, http: http ?? origin.map { UrlSessionEncryptedHttp(origin: $0, headers: headers) })
+    let ports = OpenPorts(transport: transport ?? (endpoint ?? origin).map { UrlSessionTransport(endpoint: $0, headers: headers) }, encrypted: encrypted, credentials: credentials, http: http ?? (encrypted == nil ? nil : UrlSessionEncryptedHttp(headers: headers)))
     let database = try await opener.open(config: Config(path: path, dataVersion: nil), modelsJson: modelsJSON, options: OpenOptions(operations: definitions(operations)), ports: ports, observers: SystemObservers())
     slot = database
   }
