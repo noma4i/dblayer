@@ -113,8 +113,8 @@ async fn flow_chat_list_order() {
     let receipt = bound(rig.database.send(message(epoch, "up", 30))).await.unwrap();
     hold.entered_for("the send").await;
     yield_until("c1 leads the list", || order(&rows) == ["c1", "c2"]).await;
-    let lifted = rows.1.lock().unwrap().iter().find(|seen| seen.rows.iter().any(|row| row.id == "c1") && seen.revision >= receipt.revision).map(|seen| seen.revision);
-    assert!(lifted.is_some(), "the list never showed the row at or after the receipt");
+    let lifted = rows.1.lock().unwrap().iter().find(|seen| seen.rows.first().map(|row| row.id.as_str()) == Some("c1")).map(|seen| seen.revision);
+    assert!(lifted >= Some(receipt.revision), "the list led with c1 at {lifted:?}, below the receipt {}", receipt.revision);
     hold.release();
     assert!(matches!(bound(rig.database.outcome(receipt)).await.unwrap(), WireOperationOutcome::Confirmed { .. }));
     rig.settle().await;
