@@ -128,10 +128,14 @@ async fn run_trace(trace: &[Act], check: Check) {
             }
         }
         if check == Check::StatusColumn && !matches!(act, Act::Close) {
-            let reached: Vec<String> = rig.server.seen().iter().filter_map(|seen| seen.variables["text"].as_str().map(str::to_string)).collect();
-            let expected: Vec<&str> = model.ops.iter().filter(|op| op.resolved.is_none()).map(|op| if reached.contains(&op.text) { "sending" } else { "pending" }).collect();
+            let expected: Vec<&str> = model.ops.iter().filter(|op| op.resolved.is_none()).map(|op| if rig.server.holds_text(&op.text) { "sending" } else { "pending" }).collect();
             let stored: Vec<String> = rig.db.op_statuses().into_iter().map(|(_, status)| status).collect();
             assert_eq!(stored, expected, "{label} step {index}: the status column");
+            let mut shown = rig.db.row_sync_states();
+            let mut wanted = expected.clone();
+            shown.sort();
+            wanted.sort();
+            assert_eq!(shown, wanted, "{label} step {index}: sync.state of the rows is the status of their operation");
         }
         for (number, op) in model.ops.iter().enumerate() {
             assert_eq!(op.handle.is_finished(), op.resolved.is_some(), "{label} step {index}: op {number} {:?}", op.state);
@@ -172,6 +176,10 @@ fn traces() -> Vec<Vec<Act>> {
 
 async fn run_all(check: Check) {
     let traces: Vec<Vec<Act>> = traces().into_iter().map(|trace| trace.into_iter().flat_map(|act| if matches!(act, Act::Create) { vec![act] } else { vec![Act::Create, act] }).take(8).collect()).collect();
+    run_traces(traces, check).await
+}
+
+async fn run_traces(traces: Vec<Vec<Act>>, check: Check) {
     for chunk in traces.chunks(16) {
         step(&format!("{} traces start", chunk.len()));
         let running: Vec<_> = chunk.iter().cloned().map(|trace| tokio::spawn(async move { run_trace(&trace, check).await })).collect();
@@ -184,11 +192,28 @@ fn out_prop_outcome_once() { bounded("out_prop_outcome_once", out_prop_outcome_o
 
 async fn out_prop_outcome_once_run() { run_all(Check::Outcomes).await }
 
-/// P-OUT-33: the column `op.status` of an operation is `pending` until its first request is written and `sending` after it: the server saw the request of every `sending` operation and of no `pending` one.
+/// P-OUT-33: the column `op.status` of an operation is `sending` while the server holds its request and `pending` otherwise (queued, offline, back in the queue), and `sync.state` of its row says the same.
 #[test]
 fn out_prop_status_column() { bounded("out_prop_status_column", out_prop_status_column_run) }
 
 async fn out_prop_status_column_run() { run_all(Check::StatusColumn).await }
+
+/// P-OUT-33 after a requeue: an operation that left the network (offline, temporary failure) is `pending` again and `sending` once it goes out again.
+#[test]
+fn out_prop_status_requeue() { bounded("out_prop_status_requeue", out_prop_status_requeue_run) }
+
+async fn out_prop_status_requeue_run() {
+    let tail = [Act::On, Act::Create, Act::Ok, Act::Off];
+    let mut traces = Vec::new();
+    for first in tail {
+        for second in tail {
+            for third in tail {
+                traces.push(vec![Act::Create, Act::Off, first, second, third]);
+            }
+        }
+    }
+    run_traces(traces, Check::StatusColumn).await
+}
 
 /// P-DLV-24: every value of the queue stream is the rows of `op` at its revision, and the stream reaches the stored rows after every step.
 #[test]

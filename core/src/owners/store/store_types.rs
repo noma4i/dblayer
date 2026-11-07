@@ -130,6 +130,8 @@ pub enum StoreOp {
     TransferOutcome { transfer_id: u64, cycle_id: u64, outcome: crate::owners::write::outbox::OutboxOutcome },
     /// The durable attempt counter and the cycle of an operation: written before the `Mutate` of that attempt.
     Attempt { op_id: u64, attempts: u32, cycle_id: u64 },
+    /// An operation that left the network returns to the queue: its status is `pending`.
+    Requeue { op_id: u64 },
     /// A `create` with a temporary id landed: the row `temp` becomes `real` with its references and membership.
     Swap { model: String, temp: String, real: String },
     /// The rows, membership, tombstones and touches of a call that has no operation (a local model, an action without a mutation): final at once.

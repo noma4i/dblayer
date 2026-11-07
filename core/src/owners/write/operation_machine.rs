@@ -11,6 +11,7 @@ pub(crate) struct OperationFacts {
 pub(crate) enum OperationEvent {
     Restore,
     Attempt,
+    Requeue,
     Fail(OperationStatus),
     Retry,
     Close(OperationStatus),
@@ -56,6 +57,7 @@ impl OperationFlow {
     fn idle(event: &OperationEvent) -> Outcome<State> {
         match event {
             OperationEvent::Attempt => Transition(State::sending()),
+            OperationEvent::Requeue => Transition(State::idle()),
             _ => Super,
         }
     }
@@ -64,6 +66,7 @@ impl OperationFlow {
     fn sending(event: &OperationEvent) -> Outcome<State> {
         match event {
             OperationEvent::Attempt => Transition(State::sending()),
+            OperationEvent::Requeue => Transition(State::idle()),
             _ => Super,
         }
     }

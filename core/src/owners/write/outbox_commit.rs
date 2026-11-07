@@ -54,8 +54,8 @@ impl OutboxState {
                 }
                 if self.online && !self.row_busy(op_id) {
                     self.start_sending(op_id, fx);
-                } else if let Some(operation) = self.ops.get_mut(&op_id) {
-                    operation.stage = Stage::Queued;
+                } else {
+                    self.requeue(op_id, fx);
                 }
             }
             (CommitKind::Land, Stage::Landing) => {
@@ -102,8 +102,8 @@ impl OutboxState {
                 }
                 if self.goes_out(op_id) {
                     self.start_sending(op_id, fx);
-                } else if let Some(operation) = self.ops.get_mut(&op_id) {
-                    operation.stage = Stage::Queued;
+                } else {
+                    self.requeue(op_id, fx);
                 }
             }
             _ => {}

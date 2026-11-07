@@ -41,6 +41,7 @@ pub(super) fn apply_transitions(
                 wrote = true;
             }
             OperationTransition::Attempt { seq, attempts, cycle_id } => {
+                synced.extend(op_keys_of(connection, *seq)?);
                 let written = connection.execute(
                     &format!(include_str!("../sql/apply_transitions/attempt_operation.sql"), operation_guard(OperationEvent::Attempt)?),
                     params![seq, attempts, cycle_id],
@@ -51,7 +52,16 @@ pub(super) fn apply_transitions(
                 }
             }
             OperationTransition::Sending { seq } => {
+                synced.extend(op_keys_of(connection, *seq)?);
                 let written = connection.execute(&format!(include_str!("../sql/apply_transitions/sending_operation.sql"), operation_guard(OperationEvent::Attempt)?), params![seq])?;
+                if written > 0 {
+                    result.operations.insert(*seq);
+                    wrote = true;
+                }
+            }
+            OperationTransition::Requeue { seq } => {
+                synced.extend(op_keys_of(connection, *seq)?);
+                let written = connection.execute(&format!(include_str!("../sql/apply_transitions/requeue_operation.sql"), operation_guard(OperationEvent::Requeue)?), params![seq])?;
                 if written > 0 {
                     result.operations.insert(*seq);
                     wrote = true;

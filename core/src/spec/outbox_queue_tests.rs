@@ -164,7 +164,7 @@ fn out_sending_tick_no_slot() {
     let second = twin.submit("r2", Policy::Rollback, false);
     assert_eq!(sends(&twin.committed(second)), 1, "the waiting retry holds no slot");
     let due = tick(&mut twin, first);
-    assert_eq!((twin.stage(first), sends(&due), kinds(&due).len()), (Some(St::Queued), 0, 0), "{due:?}");
+    assert_eq!((twin.stage(first), sends(&due), kinds(&due)), (Some(St::Queued), 0, vec![crate::owners::write::outbox::CommitKind::Requeue]), "the operation waits in the queue and its column says pending: {due:?}");
     twin.post(OutboxInput::Response { op_id: second, rows: server_rows(), swaps: Vec::new(), stale: Vec::new(), result: None, missing: Vec::new(), errors: None });
     assert_eq!(twin.stage(first), Some(St::PersistingAttempt), "the freed slot gives the retry its next attempt");
 }

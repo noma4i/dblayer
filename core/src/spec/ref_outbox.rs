@@ -79,7 +79,7 @@ pub(super) enum Obs {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum Commit { Attempt, Intent, IntentNewBasis, Land, LandNewBasis, Rollback, RollbackNewBasis, ErrorMark, ClearMark }
+pub(super) enum Commit { Attempt, Intent, IntentNewBasis, Land, LandNewBasis, Rollback, RollbackNewBasis, ErrorMark, ClearMark, Requeue }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum Eff {
@@ -149,13 +149,13 @@ pub fn step_of(state: St, ctx: &Ctx, input: In) -> Option<Step> {
         (Sending, In::Response | In::TransportError { .. } | In::Dropped) if !ctx.ours => step(Sending, &[], &[]),
         (Sending, In::TransportError { temporary: true } | In::Dropped) if !ctx.attempts_left => step(MarkingFailed, &[], &[Store(ErrorMark)]),
         (Sending, In::TransportError { temporary: true } | In::Dropped) if ctx.online => step(Sending, &[], &[ScheduleTick, ScheduleBackoffSend]),
-        (Sending, In::TransportError { temporary: true } | In::Dropped) => step(Queued, &[], &[]),
+        (Sending, In::TransportError { temporary: true } | In::Dropped) => step(Queued, &[], &[Store(Requeue)]),
         (Sending, In::TransportError { temporary: false }) if ctx.policy == Policy::Rollback => step(RollingBack(Why::Rejected), &[], &[Store(Rollback)]),
         (Sending, In::TransportError { temporary: false }) => step(MarkingFailed, &[], &[Store(ErrorMark)]),
-        (Sending, In::Tick) if ctx.ours && ctx.online && !ctx.slot_free => step(Queued, &[], &[]),
+        (Sending, In::Tick) if ctx.ours && ctx.online && !ctx.slot_free => step(Queued, &[], &[Store(Requeue)]),
         (Sending, In::Tick) if ctx.ours && ctx.online && ctx.attempts_left => step(PersistingAttempt, &[], &[Store(Attempt)]),
         (Sending, In::Tick) if ctx.ours && ctx.online => step(MarkingFailed, &[], &[Store(ErrorMark)]),
-        (Sending, In::Tick) if ctx.ours => step(Queued, &[], &[]),
+        (Sending, In::Tick) if ctx.ours => step(Queued, &[], &[Store(Requeue)]),
         (Sending, In::Tick) => step(Sending, &[], &[]),
         (Sending, In::Online(_)) => step(Sending, &[], &[]),
         (Sending, In::Discard) => step(Sending, &[Fails(Fault::InFlight)], &[]),
@@ -186,9 +186,9 @@ pub fn step_of(state: St, ctx: &Ctx, input: In) -> Option<Step> {
         (Failed, In::Retry) if ctx.ours => step(MarkingRetry, &[], &[Store(ClearMark)]),
         (MarkingFailed, In::Committed) => done_marked(ctx),
         (MarkingRetry, In::Committed) if goes_out(ctx) => step(Sending, &[RowErrorCleared, Receipt], &[Send]),
-        (MarkingRetry, In::Committed) => step(Queued, &[RowErrorCleared, Receipt], &[]),
+        (MarkingRetry, In::Committed) => step(Queued, &[RowErrorCleared, Receipt], &[Store(Requeue)]),
         (PersistingAttempt, In::Committed) if goes_out(ctx) => step(Sending, &[], &[SendSamePair]),
-        (PersistingAttempt, In::Committed) => step(Queued, &[], &[]),
+        (PersistingAttempt, In::Committed) => step(Queued, &[], &[Store(Requeue)]),
         (Failed, In::Discard) if ctx.ours => step(RollingBack(Why::Discarded), &[], &[Store(Rollback)]),
         (Failed, In::Committed | In::Rejected(_)) => step(Failed, &[], &[]),
         (Failed, In::Online(_) | In::ModelsReset | In::Response | In::TransportError { .. } | In::Dropped | In::Tick) => step(Failed, &[], &[]),

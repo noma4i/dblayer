@@ -38,6 +38,7 @@ pub(super) fn kind_in(input: &str) -> CommitKind {
     else if input.contains("MarkError { op_id") && input.contains("error: Some(") { CommitKind::ErrorMark }
     else if input.contains("MarkError { op_id") { CommitKind::ClearMark }
     else if input.contains("Attempt {") { CommitKind::Attempt }
+    else if input.contains("ops: [Requeue {") { CommitKind::Requeue }
     else if input.contains("ops: [LocalRows {") || input.contains("ops: [EphemeralRows {") || input.contains("ops: [LocalPending {") { CommitKind::LocalWrite }
     else if input.contains("ops: [RemoveRows {") { CommitKind::RemoveRow }
     else { CommitKind::Land }
@@ -59,7 +60,7 @@ pub(super) fn lower(emitted: Emitted<Run>, state: Option<&OutboxState>) -> Optio
         Emitted::Run(Run::Decode(_) | Run::Stale { .. }) => return None,
         Emitted::Send { to: STORE_AT, input } => {
             let kind = kind_in(&input);
-            let op_id = matches!(kind, CommitKind::Intent | CommitKind::Attempt | CommitKind::Land | CommitKind::Rollback | CommitKind::ErrorMark | CommitKind::ClearMark).then(|| number_after(&input, "op_id: ")).flatten();
+            let op_id = matches!(kind, CommitKind::Intent | CommitKind::Attempt | CommitKind::Land | CommitKind::Rollback | CommitKind::ErrorMark | CommitKind::ClearMark | CommitKind::Requeue).then(|| number_after(&input, "op_id: ")).flatten();
             let generation = number_after(&input, "\"Moment\": ").unwrap_or(0);
             OutboxEffect::Store { op_id, batch: number_after(&input, "id: ")?, kind, generation }
         }
@@ -353,6 +354,7 @@ pub(super) fn translate(twin: &Twin, id: OpId, effects: Vec<OutboxEffect>, sched
                 (CommitKind::Rollback, true) => super::ref_outbox::Commit::RollbackNewBasis,
                 (CommitKind::ErrorMark, _) => super::ref_outbox::Commit::ErrorMark,
                 (CommitKind::ClearMark, _) => super::ref_outbox::Commit::ClearMark,
+                (CommitKind::Requeue, _) => super::ref_outbox::Commit::Requeue,
                 (CommitKind::LocalWrite | CommitKind::RemoveRow, _) => panic!("a local write in an operation row"),
             })),
             OutboxEffect::Store { .. } => {}

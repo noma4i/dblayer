@@ -1,0 +1,1 @@
+UPDATE op SET status = 'pending' WHERE seq = ?1 AND {}

@@ -237,6 +237,7 @@ impl OutboxState {
                 .collect(),
             CommitKind::ErrorMark => vec![StoreOp::MarkError { op_id, error: Some(operation.error.clone().unwrap_or_else(|| "refused".into())) }, StoreOp::RemoveAnswer { request_id: operation.request_id }],
             CommitKind::ClearMark => std::iter::once(StoreOp::MarkError { op_id, error: None }).chain(std::iter::once(attempt)).chain(operation.retry_uploads.iter().cloned().map(|row| StoreOp::Upload { row, kind: crate::owners::store::UploadKind::Retrying })).collect(),
+            CommitKind::Requeue => vec![StoreOp::Requeue { op_id }],
             CommitKind::LocalWrite | CommitKind::RemoveRow => Vec::new(),
         };
         let terminal = match kind {
@@ -358,6 +359,15 @@ impl OutboxState {
         } else {
             self.fail_with(op_id, "Exhausted".into(), fx);
         }
+    }
+
+    /// A `Sending` operation waits in the queue again: its column says `pending` once the batch commits.
+    pub(super) fn requeue(&mut self, op_id: OpId, fx: &mut Effects<Outbox>) {
+        if let Some(operation) = self.ops.get_mut(&op_id) {
+            operation.stage = Stage::Queued;
+            operation.waiting_retry = false;
+        }
+        self.store(op_id, CommitKind::Requeue, fx);
     }
 
     pub(super) fn start_sending(&mut self, op_id: OpId, fx: &mut Effects<Outbox>) {

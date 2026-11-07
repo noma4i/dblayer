@@ -111,6 +111,7 @@ pub enum OperationTransition {
     Retry { seq: i64 },
     Attempt { seq: i64, attempts: i64, cycle_id: i64 },
     Sending { seq: i64 },
+    Requeue { seq: i64 },
     Remove { seq: i64, expected: Option<OperationStatus> },
 }
 

@@ -69,8 +69,8 @@ impl OutboxState {
                 operation.waiting_retry = true;
             }
             self.retry_timer(op_id, fx);
-        } else if let Some(operation) = self.ops.get_mut(&op_id) {
-            operation.stage = Stage::Queued;
+        } else {
+            self.requeue(op_id, fx);
         }
         self.drain(fx);
     }
@@ -81,10 +81,7 @@ impl OutboxState {
         }
         match self.stage_of(op_id) {
             Some(Stage::Sending) if self.online && self.slots_taken() - usize::from(!self.ops[&op_id].waiting_retry) >= DRAIN_LIMIT => {
-                if let Some(operation) = self.ops.get_mut(&op_id) {
-                    operation.stage = Stage::Queued;
-                    operation.waiting_retry = false;
-                }
+                self.requeue(op_id, fx);
             }
             Some(Stage::Sending) if self.online => {
                 if self.ops[&op_id].attempts < ATTEMPT_LIMIT {
@@ -93,9 +90,7 @@ impl OutboxState {
                     self.fail_with(op_id, "Exhausted".into(), fx);
                 }
             }
-            Some(Stage::Sending) => {
-                if let Some(operation) = self.ops.get_mut(&op_id) { operation.stage = Stage::Queued; }
-            }
+            Some(Stage::Sending) => self.requeue(op_id, fx),
             Some(Stage::PersistingAttempt) => self.store(op_id, CommitKind::Attempt, fx),
             Some(Stage::Landing) => self.store(op_id, CommitKind::Land, fx),
             Some(Stage::RollingBack(_)) => self.store(op_id, CommitKind::Rollback, fx),

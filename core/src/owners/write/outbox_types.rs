@@ -215,6 +215,7 @@ pub enum CommitKind {
     Rollback,
     ErrorMark,
     ClearMark,
+    Requeue,
     LocalWrite,
     RemoveRow,
 }

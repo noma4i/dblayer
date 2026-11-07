@@ -8,6 +8,12 @@ pub(super) fn queued(database: &Database) -> Vec<Operation> {
 }
 
 impl Database {
+    pub(crate) fn row_sync_states(&self) -> Vec<String> {
+        let inner = self.db.lock();
+        let mut statement = inner.connection.prepare("SELECT state FROM row_sync").unwrap();
+        statement.query_map([], |row| row.get(0)).unwrap().collect::<Result<Vec<_>, _>>().unwrap()
+    }
+
     pub(crate) fn op_statuses(&self) -> Vec<(i64, String)> {
         let inner = self.db.lock();
         let mut statement = inner.connection.prepare("SELECT seq, status FROM op ORDER BY seq").unwrap();
