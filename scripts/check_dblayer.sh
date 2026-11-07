@@ -26,7 +26,7 @@ steps=(
   "cheap|silent|120|*|bash scripts/check_silent.sh"
   "cheap|silent-selftest|120|*|bash scripts/check_silent_test.sh"
   "cheap|coverage-selftest|120|*|python3 -I scripts/check_coverage_test.py"
-  "cargo|cargo-test-workspace|600|core/ gen/ Cargo.|$slot cargo-step cargo test --manifest-path Cargo.toml --workspace --all-features"
+  "cargo|cargo-test-workspace|600|core/ gen/ Cargo.|$slot cargo-step cargo test --workspace --all-features"
   "cargo|fixtures|120|core/ gen/ Cargo. fixtures/|bash scripts/gen_fixtures.sh --check"
   "cargo|fixtures-args|120|core/ gen/ Cargo. fixtures/|bash scripts/gen_fixtures_test.sh"
   "swift|ios-slices|600|swift/|$slot bash-step bash scripts/build_ios.sh --check"
