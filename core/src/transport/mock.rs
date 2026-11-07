@@ -99,7 +99,6 @@ struct MockState {
     put_calls: Vec<RecordedPut>,
     puts_running: usize,
     puts_peak: usize,
-    abandoned: usize,
     replies: HashMap<String, VecDeque<Reply>>,
     calls: Vec<RecordedCall>,
     responder: Option<Responder>,
@@ -176,10 +175,6 @@ impl MockTransport {
         self.lock().put_calls.iter().filter(|call| call.url == url).count()
     }
 
-    pub fn abandoned_calls(&self) -> usize {
-        self.lock().abandoned
-    }
-
     pub fn parallel_puts_peak(&self) -> usize {
         self.lock().puts_peak
     }
@@ -220,25 +215,10 @@ impl MockTransport {
             }
         });
         let reply = reply.ok_or_else(|| TransportError::Unscripted(request.operation_name.clone()))?;
-        let mut flight = Flight { mock: self, answered: false };
         if !reply.delay.is_zero() {
             self.wait(reply.delay).await;
         }
-        flight.answered = true;
         reply.result
-    }
-}
-
-struct Flight<'a> {
-    mock: &'a MockTransport,
-    answered: bool,
-}
-
-impl Drop for Flight<'_> {
-    fn drop(&mut self) {
-        if self.answered { return; }
-        self.mock.lock().abandoned += 1;
-        self.mock.wake.notify_waiters();
     }
 }
 

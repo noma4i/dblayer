@@ -67,6 +67,7 @@ struct Rig {
     det: DetScheduler,
     windows: Address<Windows>,
     mock: MockTransport,
+    flights: super::ports::Flights,
     batches: Batches,
     rest: Arc<Mutex<Vec<WindowsEffect>>>,
     _runtime: tokio::runtime::Runtime,
@@ -82,6 +83,8 @@ fn rig_with(mock: MockTransport, transport: Arc<dyn Upstream>, reader: Option<Wi
     let batches = Batches::default();
     let (rest, take_rest) = collector();
     let io = WindowIo::new(Some(transport), Arc::new(Pages), (admit(), open_gate(EPOCH)), (runtime.handle().clone(), Arc::new(|| NOW)), take_rest);
+    let flights = super::ports::Flights::default();
+    let io = io.flights_in(flights.clone());
     let io = match reader { Some(reader) => io.reading(reader), None => io };
     let mut det = DetScheduler::new(1);
     let store = det.add::<WindowStore>("store", batches.clone(), crate::spec::support::Discard);
@@ -89,7 +92,7 @@ fn rig_with(mock: MockTransport, transport: Arc<dyn Upstream>, reader: Option<Wi
     let peers = w::WindowsPeers { store: Address::<StoreWriter>::new(store.index()), deliveries: Address::<Deliveries>::new(deliveries.index()) };
     let windows = det.add::<Windows>("windows", w::WindowsState::new(EPOCH, Some(true), peers), io);
     det.start_epoch(EPOCH);
-    Rig { det, windows, mock, batches, rest, _runtime: runtime }
+    Rig { det, windows, mock, flights, batches, rest, _runtime: runtime }
 }
 
 impl Rig {
@@ -142,8 +145,8 @@ fn win_io_cancel_no_answer() {
     pump(&mut rig.det, rig.windows, |det| det.trace().iter().any(|entry| entry.effects.contains("Request")));
     rig.det.post(rig.windows, EpochStamp::Epoch(EPOCH), WindowsInput::InterestMinus { key: key(), id: 1 });
     pump(&mut rig.det, rig.windows, |det| det.trace().iter().any(|entry| entry.effects.contains("Cancel")));
-    let mock = rig.mock.clone();
-    pump(&mut rig.det, rig.windows, |_| mock.abandoned_calls() == 1);
+    let flights = rig.flights.clone();
+    pump(&mut rig.det, rig.windows, |_| flights.load(std::sync::atomic::Ordering::SeqCst) == 0);
     assert_eq!(saw_input(&rig.det, "Response"), 0, "a cancelled request gives no answer");
     assert!(rig.batches.all().is_empty());
 }
