@@ -265,13 +265,9 @@ class TransferTest {
             assertNull(Moment.find(queued.id).current())
             held.release()
             closeForCleanup()
-            val reopened = reopen(config, modelsJSON, transport, operations)
-            reopened.setOnline(false)
-            reopened.setOnline(true)
+            reopen(config, modelsJSON, transport, operations)
             awaitWithin("the saved abort reached the transport after the network returned", { "calls=" + transport.calls.map { it.operationName } }) { abort.entered() }
             abort.release()
-            reopened.setOnline(false)
-            reopened.setOnline(true)
             assertEquals("the saved pair of the held step is sent once more", 2, transport.calls.count { it.operationName == "PresignParts" })
             val aborts = transport.calls.filter { it.operationName == "AbortMultipart" }
             assertEquals(1, aborts.size)
@@ -475,9 +471,7 @@ class TransferTest {
             assertTrue(source.exists())
             held.release()
             closeForCleanup()
-            val reopened = reopen(config, modelsJSON, transport, operations)
-            reopened.setOnline(false)
-            reopened.setOnline(true)
+            reopen(config, modelsJSON, transport, operations)
             awaitWithin("the saved abort reached the transport after the network returned", { "calls=" + transport.calls.map { it.operationName } }) { abort.entered() }
             abort.release()
             eventually("the saved pair of the held step is sent once more") { transport.calls.count { it.operationName == "PresignParts" } == 2 }
