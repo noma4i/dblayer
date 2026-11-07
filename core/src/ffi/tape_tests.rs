@@ -3,7 +3,7 @@
 use std::sync::{Arc, Mutex};
 
 use super::read::{ReadEnd, ReadPhase, ReadRequest, ReadState, ReadStream, ReadValue};
-use super::wire::WireRow;
+use super::wire::{WireRow, WireSync, WireSyncState};
 use super::{Database, DbError};
 
 /// Hears every value of a stream in the order it was pulled.
@@ -86,7 +86,8 @@ pub(crate) struct Rows(pub(crate) Mutex<Vec<WireRow>>, pub(crate) Mutex<Vec<Seen
 impl Reader for Rows {
     fn delivered(&self, delivery: StreamDelivery) {
         let StreamDelivery { seq, value, .. } = delivery;
-        apply(&mut self.0.lock().unwrap(), &value);
+        let mut shown = self.0.lock().unwrap();
+        apply(&mut shown, &value);
         let mut kept = self.3.lock().unwrap();
         kept.1.push(value.clone());
         match seen_of(seq, value, &mut kept.0) {
@@ -300,4 +301,25 @@ impl Database {
             other => panic!("expected a refusal, got {other:?}"),
         }
     }
+}
+
+/// A reader that sees the rows of a delivery finds the value of that delivery in `.1`: `.0` stays locked until `.1` has it.
+#[test]
+fn rows_show_a_delivery_only_after_it_is_kept() {
+    let rows = Arc::new(Rows::default());
+    let state = ReadState { phase: ReadPhase::Loaded, error: None, loaded: None, has_more: false, settled: true, total: None };
+    let row = WireRow { id: "c1".into(), revision: 7, estimated_bytes: 0, layout: String::new(), cells: Vec::new(), sync: WireSync { state: WireSyncState::Synced, actions: Vec::new(), dirty_fields: Vec::new(), error: None, attempts: 0, since: 0 }, uploads: Vec::new() };
+    let value = ReadValue::Snapshot { revision: 7, rows: vec![row], state };
+    let kept = rows.1.lock().unwrap();
+    let delivering = { let rows = rows.clone(); std::thread::spawn(move || rows.delivered(StreamDelivery { stream: 1, epoch: 1, seq: 1, value })) };
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+    while crate::test_wait::mutex_free(&rows.3) {
+        assert!(std::time::Instant::now() < deadline, "the delivery did not reach the kept values");
+        std::thread::yield_now();
+    }
+    assert!(!crate::test_wait::mutex_free(&rows.0), "the rows are readable before the delivery is kept");
+    drop(kept);
+    crate::test_wait::join_within(delivering);
+    assert_eq!(rows.1.lock().unwrap().iter().map(|seen| seen.revision).collect::<Vec<_>>(), vec![7]);
+    assert_eq!(rows.len(), 1);
 }
