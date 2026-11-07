@@ -503,6 +503,7 @@ extension BridgeProbeTests {
     let transport = MockTransport()
     let clock = try await reopenClocked(modelsJson: modelsJSON, transport: transport, operations: Self.expiryOperations)
     let row = try await Self.refusedUpload(transport, source: source)
+    try DB.database.setOnline(online: false)
     clock.advance(by: 7 * 24 * 60 * 60 + 1)
     try DB.database.setOnline(online: true)
     await eventuallyAsync("the expired upload is discarded when the network returns") { await Self.isGone(row) }

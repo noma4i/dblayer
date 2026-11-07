@@ -153,6 +153,7 @@ class TransferTest {
                     closeForCleanup()
                     DBlayer.openTesting(transport, modelsJSON, path = path, encrypted = encrypted, credentials = credential, http = server)
                     DBlayer.database.registerOperations(operations)
+                    DBlayer.database.setOnline(true)
                     DBlayer.database.sessionCall("login_link", """{"account":"A"}""")
                     val files = (0..2).map { index -> directory.resolve("$index.jpg").apply { writeText("image-$index") } }
                     val items = files.mapIndexed { index, file -> UploadItem(values = buildJsonObject { put("clientKey", "key-$index"); put("size", 3); put("position", index) }, path = file.path) }
@@ -368,6 +369,7 @@ class TransferTest {
             val transport = MockTransport()
             val clock = reopenClocked(modelsJSON, transport, expiryOperations)
             val row = refusedUpload(transport, source)
+            DBlayer.database.setOnline(false)
             clock.advance(7L * 24 * 60 * 60 * 1000 + 1)
             DBlayer.database.setOnline(true)
             eventually("the expired upload is discarded when the network returns") { isGone(row) }
