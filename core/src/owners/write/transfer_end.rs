@@ -193,7 +193,7 @@ impl TransferState {
         self.show(id, Shown::Failed { error }, fx);
         self.rounds_idle(id, fx);
         self.batch_after_removal(id, fx);
-        self.send_orphans(fx);
+        self.send_orphans(false, fx);
     }
 
     pub(super) fn failure_rejected(&mut self, id: TransferId, fx: &mut Fx) { self.schedule_retry(id, fx); }
@@ -263,7 +263,7 @@ impl TransferState {
                 self.subscribers.remove(&id);
             }
         }
-        self.send_orphans(fx);
+        self.send_orphans(false, fx);
         self.start_in_order(fx);
     }
 

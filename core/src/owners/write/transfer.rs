@@ -133,14 +133,16 @@ impl TransferState {
     /// The multipart upload a removed transfer leaves on the server: it gets `abort` until the server answers.
     pub(super) fn orphan_of(transfer: &Transfer) -> Option<String> { transfer.upload_id.clone().filter(|_| !transfer.aborted && transfer.signed_id.is_none()) }
 
-    /// `abort` of every orphan the server has not answered, when the network is up.
-    pub(super) fn send_orphans(&mut self, fx: &mut Fx) {
+    /// `abort` of every orphan whose abort is not in flight, when the network is up. `network`: the call comes from `Online(true)` or `RestoreReady`, so an abort already in flight is owed again.
+    pub(super) fn send_orphans(&mut self, network: bool, fx: &mut Fx) {
         if self.online != Some(true) || self.ended {
             return;
         }
         for (upload_id, key) in &self.orphans {
             if self.orphan_flight.insert(upload_id.clone()) {
                 run(fx, TransferEffect::AbortOrphan { key: key.clone(), upload_id: upload_id.clone() });
+            } else if network {
+                self.orphan_owed.insert(upload_id.clone());
             }
         }
     }
@@ -158,8 +160,17 @@ impl TransferState {
     }
 
     pub(super) fn abort_done(&mut self, upload_id: String, answered: bool, fx: &mut Fx) {
+        let owed = self.orphan_owed.remove(&upload_id);
+        if !answered {
+            let key = self.orphans.get(&upload_id).filter(|_| owed && self.online == Some(true) && !self.ended).cloned();
+            match key {
+                Some(key) => run(fx, TransferEffect::AbortOrphan { key, upload_id }),
+                None => { self.orphan_flight.remove(&upload_id); }
+            }
+            return;
+        }
         self.orphan_flight.remove(&upload_id);
-        if !answered || self.orphans.remove(&upload_id).is_none() {
+        if self.orphans.remove(&upload_id).is_none() {
             return;
         }
         let id = self.next_batch;
@@ -356,7 +367,7 @@ impl TransferState {
         self.leave_network(fx);
         if online == Some(true) && was_online != Some(true) {
             self.expire_failed(fx);
-            self.send_orphans(fx);
+            self.send_orphans(true, fx);
         }
         self.start_in_order(fx);
     }

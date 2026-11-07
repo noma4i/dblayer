@@ -77,6 +77,48 @@ fn xfer_orphan_abort_retry_later() {
 }
 
 #[test]
+fn xfer_orphan_abort_owed() {
+    let mut twin = orphan_restart(vec![("u9".into(), KEY.into())]);
+    assert_eq!(twin.online(true).orphan_aborts(), vec!["u9".to_string()]);
+    twin.online(false);
+    assert!(twin.online(true).orphan_aborts().is_empty(), "the abort in flight is not sent twice");
+    assert!(twin.post(TransferInput::RestoreReady { epoch: EPOCH }).orphan_aborts().is_empty());
+    let out = twin.post(TransferInput::AbortDone { upload_id: "u9".into(), answered: true });
+    assert_eq!((out.orphans_removed(), out.orphan_aborts()), (vec!["u9".to_string()], Vec::<String>::new()), "the answer ends the debt");
+    twin.commit();
+    twin.online(false);
+    assert!(twin.online(true).orphan_aborts().is_empty());
+}
+
+#[test]
+fn xfer_orphan_abort_owed_resent() {
+    let mut twin = orphan_restart(vec![("u9".into(), KEY.into())]);
+    twin.online(true);
+    twin.online(false);
+    twin.online(true);
+    let out = twin.post(TransferInput::AbortDone { upload_id: "u9".into(), answered: false });
+    assert_eq!(out.orphan_aborts(), vec!["u9".to_string()], "the Online(true) before the failed answer owes an abort");
+    twin.online(false);
+    assert!(twin.online(true).orphan_aborts().is_empty(), "the resent abort is still in flight");
+    let out = twin.post(TransferInput::AbortDone { upload_id: "u9".into(), answered: false });
+    assert_eq!(out.orphan_aborts(), vec!["u9".to_string()], "the new Online(true) is owed in its turn");
+    let out = twin.post(TransferInput::AbortDone { upload_id: "u9".into(), answered: false });
+    assert!(out.orphan_aborts().is_empty(), "the debt is paid once");
+}
+
+#[test]
+fn xfer_orphan_abort_owed_offline() {
+    let mut twin = orphan_restart(vec![("u9".into(), KEY.into())]);
+    twin.online(true);
+    twin.online(false);
+    twin.online(true);
+    twin.online(false);
+    let out = twin.post(TransferInput::AbortDone { upload_id: "u9".into(), answered: false });
+    assert!(out.orphan_aborts().is_empty(), "no abort while offline");
+    assert_eq!(twin.online(true).orphan_aborts(), vec!["u9".to_string()], "the next network sends it once");
+}
+
+#[test]
 fn xfer_prop_orphan_abort() {
     for (state, discard) in [("uploading", false), ("uploading", true), ("completing", false), ("completing", true)] {
         let mut twin = Twin::new();

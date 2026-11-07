@@ -429,6 +429,8 @@ pub struct TransferState {
     /// `upload_id` -> key of the removed transfers whose `abort` the server has not answered.
     pub(super) orphans: BTreeMap<String, Key>,
     pub(super) orphan_flight: BTreeSet<String>,
+    /// The orphans whose `Online(true)` or `RestoreReady` came while their abort was in flight.
+    pub(super) orphan_owed: BTreeSet<String>,
     /// The restored groups that still have an element without its file on the server.
     pub(super) open_groups: BTreeSet<u64>,
     pub(super) held: Vec<TransferInput>,
@@ -466,6 +468,7 @@ impl TransferState {
             declarations: BTreeSet::new(),
             orphans: BTreeMap::new(),
             orphan_flight: BTreeSet::new(),
+            orphan_owed: BTreeSet::new(),
             open_groups: BTreeSet::new(),
             held: Vec::new(),
             waiting: BTreeMap::new(),

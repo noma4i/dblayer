@@ -27,6 +27,7 @@
 - `UrlSessionTransport` and `OkHttpTransport` refuse `subscribe`: server events arrive on the encrypted cable.
 
 ### Fixed
+- An upload abort that the network interrupts is sent again when the network returns.
 - A refused background start shows its reason as `refused` on every upload of the round until the next start is asked.
 - A reopen replays the unanswered request of an upload step instead of sending the step again.
 - An upload that stops after a reopen frees the mutation queue held by its saved step.

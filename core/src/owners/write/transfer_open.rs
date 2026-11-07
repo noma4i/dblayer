@@ -217,7 +217,7 @@ impl TransferState {
             return;
         }
         self.phase = Phase::Ready;
-        self.send_orphans(fx);
+        self.send_orphans(true, fx);
         let groups: Vec<_> = self.groups.keys().copied().collect();
         for group in groups {
             if self.phase_of(group) == Some(BatchPhase::Singles) { self.single_next(group, fx); }
