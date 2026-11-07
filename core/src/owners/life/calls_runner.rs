@@ -1,7 +1,8 @@
 //! Executor of the effects of Calls: a query goes to the transport, a mutation goes through the owner Session.
 
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex, PoisonError};
+use std::sync::mpsc::Sender;
+use std::sync::Arc;
 
 use serde_json::Value;
 use tokio::task::AbortHandle;
@@ -14,7 +15,10 @@ use crate::owners::session::{AuthorOutcome, SessionError, SessionInput, CALLS_AU
 use crate::runtime::{Back, EffectRunner, EpochStamp, OutcomeId};
 use crate::transport::{GraphQLRequest, ResponseOutcome, SessionCode, TransportError};
 
-type Roots = Arc<Mutex<HashMap<RequestId, String>>>;
+enum RootNote {
+    Root(RequestId, String),
+    Forget(RequestId),
+}
 
 pub(super) struct CallsRunner {
     wiring: Arc<Wiring>,
@@ -23,7 +27,7 @@ pub(super) struct CallsRunner {
     executor: tokio::runtime::Handle,
     operations: super::OperationLookup,
     running: HashMap<u64, AbortHandle>,
-    roots: Roots,
+    roots: Sender<RootNote>,
 }
 
 fn input_of(call_id: u64, root: &str, result: Result<crate::transport::Response, TransportError>) -> CallsInput {
@@ -81,10 +85,16 @@ struct CallRequest {
 
 impl CallsRunner {
     pub fn new(wiring: Arc<Wiring>, ports: &Ports) -> Self {
-        let roots = Roots::default();
-        let (sink_wiring, sink_roots) = (wiring.clone(), roots.clone());
+        let (roots, notes) = std::sync::mpsc::channel();
+        let (sink_wiring, mut sink_roots) = (wiring.clone(), HashMap::new());
         wiring.on_mutate_answer(CALLS_AUTHOR, move |request_id, outcome| {
-            let Some(root) = sink_roots.lock().unwrap_or_else(PoisonError::into_inner).remove(&request_id) else { return };
+            for note in notes.try_iter() {
+                match note {
+                    RootNote::Root(request_id, root) => { sink_roots.insert(request_id, root); }
+                    RootNote::Forget(request_id) => { sink_roots.remove(&request_id); }
+                }
+            }
+            let Some(root) = sink_roots.remove(&request_id) else { return };
             sink_wiring.to_calls(answer_input(request_id, &root, outcome));
         });
         Self { wiring, transport: ports.transport.clone(), session: ports.exchange.clone(), executor: ports.executor.clone(), operations: ports.operations.clone(), running: HashMap::new(), roots }
@@ -117,7 +127,7 @@ impl CallsRunner {
         let CallRequest { request_id, epoch, operation, variables, document, root, .. } = call;
         let variables: Value = serde_json::from_str(&variables).unwrap_or(Value::Null);
         let body = crate::transport::encrypted::graphql_body(&GraphQLRequest::new(document, operation, variables), true);
-        self.roots.lock().unwrap_or_else(PoisonError::into_inner).insert(request_id, root);
+        let _ = crate::lock::effect(|| self.roots.send(RootNote::Root(request_id, root)));
         self.wiring.to_session(mutate_input(request_id, epoch, client.graphql_path().to_string(), body.to_string()));
     }
 }
@@ -147,12 +157,12 @@ impl EffectRunner<Calls> for CallsRunner {
                     }
                 }
                 CallKind::Mutate => {
-                    self.roots.lock().unwrap_or_else(PoisonError::into_inner).remove(&request_id);
+                    let _ = crate::lock::effect(|| self.roots.send(RootNote::Forget(request_id)));
                     self.wiring.to_session(SessionInput::Cancel { req_id: request_id });
                 }
             },
             CallsEffect::Release { request_id } => {
-                self.roots.lock().unwrap_or_else(PoisonError::into_inner).remove(&request_id);
+                let _ = crate::lock::effect(|| self.roots.send(RootNote::Forget(request_id)));
                 self.wiring.to_session(SessionInput::Release { req_id: request_id });
             }
             CallsEffect::Reply { id, answer } => {

@@ -2,12 +2,13 @@
 //! the `CredentialStore` calls and the writes of `encrypted_*` that go to Store as batches by value. It does IO and returns the result as an input; it takes no transition.
 
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex, PoisonError};
+use std::sync::mpsc::{Receiver, Sender};
+use std::sync::Arc;
 
 use serde_json::Value;
 use tokio::task::AbortHandle;
 
-use super::{LifeReply, Wiring};
+use super::{LifeReply, MutateSinks, Wiring};
 use crate::owners::contract::{BatchAuthor, RejectReason, Rejected, ReplyId, RequestId};
 use crate::owners::lifecycle::{LifecycleInput, Peer};
 use crate::owners::network::NetworkInput;
@@ -43,9 +44,13 @@ pub(super) struct SessionRunner {
     executor: tokio::runtime::Handle,
     running: HashMap<AttemptId, AbortHandle>,
     /// The identity of a credential to its full digest.
-    digests: Arc<Mutex<HashMap<u64, String>>>,
+    digests: HashMap<u64, String>,
     /// The generated secrets that `StoreSecret` has not written yet, by identity.
-    generated: Arc<Mutex<HashMap<u64, String>>>,
+    generated: HashMap<u64, String>,
+    /// The credentials generated off the owner threads reach the maps above through this channel before the owner hears of them.
+    minted: Receiver<(u64, String, String)>,
+    mint: Sender<(u64, String, String)>,
+    sinks: MutateSinks,
     wires: HashMap<RequestId, Wire>,
     operations: HashMap<RequestId, i64>,
 }
@@ -64,11 +69,12 @@ pub(crate) struct Restored {
 }
 
 impl SessionRunner {
-    pub fn new(wiring: Arc<Wiring>, (exchange, secret, store): (Arc<Exchange>, Arc<Secret>, Arc<Store>), seal: Arc<crate::owners::session_seal::SealConfig>, executor: tokio::runtime::Handle, restored: &Restored) -> Self {
+    pub fn new(wiring: Arc<Wiring>, (exchange, secret, store): (Arc<Exchange>, Arc<Secret>, Arc<Store>), seal: Arc<crate::owners::session_seal::SealConfig>, executor: tokio::runtime::Handle, (restored, sinks): (&Restored, MutateSinks)) -> Self {
         let wires = restored.wire.iter().map(|(request_id, wire)| (*request_id, Wire { id: wire.id.clone(), key: wire.key.clone(), cut: wiring.gate.cut() })).collect();
-        let digests = Arc::new(Mutex::new(restored.digest.iter().cloned().collect()));
+        let digests = restored.digest.iter().cloned().collect();
+        let (mint, minted) = std::sync::mpsc::channel();
         let operations = restored.pending.iter().filter_map(|pending| match pending.owner { Some(crate::transport::RequestOwner::Operation { seq }) => Some((pending.request_id, seq)), _ => None }).collect();
-        Self { wiring, exchange, secret, store, seal, executor, running: HashMap::new(), digests, generated: Arc::default(), wires, operations }
+        Self { wiring, exchange, secret, store, seal, executor, running: HashMap::new(), digests, generated: HashMap::new(), minted, mint, sinks, wires, operations }
     }
 
     /// What `Open` of the owner takes: the rows and what `CredentialStore.get` found.
@@ -136,6 +142,13 @@ impl SessionRunner {
         Ok(Restored { credential, pending: Some(pending), dropped_pending: false, answers, secret, restore_error: None, unowned_pending, wire: Some((request_id, Wire { id: row.request_id, key: row.response_key, cut: 0 })), digest })
     }
 
+    fn take_minted(&mut self) {
+        while let Ok((identity, digest, secret)) = self.minted.try_recv() {
+            self.digests.insert(identity, digest);
+            self.generated.insert(identity, secret);
+        }
+    }
+
     fn commit(&self, batch: u64, epoch: u64, ops: Vec<StoreOp>) {
         self.wiring.to_store(StoreInput::Commit(StoreBatch { author: BatchAuthor::Session, id: batch, epoch, basis: Default::default(), rows: Vec::new(), intents: 1, credential: None, ops }));
     }
@@ -145,7 +158,7 @@ impl SessionRunner {
             return Ok(String::new());
         }
         match pending.credential {
-            Some(identity) => self.digests.lock().unwrap_or_else(PoisonError::into_inner).get(&identity).cloned().ok_or_else(|| TransportError::Decode(format!("no digest for the identity {identity}"))),
+            Some(identity) => self.digests.get(&identity).cloned().ok_or_else(|| TransportError::Decode(format!("no digest for the identity {identity}"))),
             None => Ok(stored_session(&self.store)?.map_or_else(String::new, |session| session.credential_digest)),
         }
     }
@@ -227,6 +240,7 @@ pub(super) fn input_of(request_id: RequestId, attempt_id: AttemptId, logout: boo
 impl EffectRunner<SessionCalls> for SessionRunner {
     fn run(&mut self, _stamp: EpochStamp, effect: SessionEffect, back: &Back<SessionCalls>) {
         let control = EpochStamp::Control;
+        self.take_minted();
         match effect {
             SessionEffect::SealProbe { seal_id, pending, credential } => {
                 let (seal, credentials) = (self.seal.clone(), self.secret.slot());
@@ -236,20 +250,18 @@ impl EffectRunner<SessionCalls> for SessionRunner {
                 });
             }
             SessionEffect::GenerateCredential { secret_op_id } => {
-                let (digests, generated) = (self.digests.clone(), self.generated.clone());
+                let mint = self.mint.clone();
                 self.off_thread(back, secret_id(0, secret_op_id), move || {
                     let secret = random_token();
                     let digest = digest_of(&secret);
                     let Some(identity) = crate::store::identity_of(&digest) else { return SessionInput::SecretStored { secret_op_id, ok: false } };
-                    digests.lock().unwrap_or_else(PoisonError::into_inner).insert(identity, digest);
-                    generated.lock().unwrap_or_else(PoisonError::into_inner).insert(identity, secret);
+                    let _ = crate::lock::effect(|| mint.send((identity, digest, secret)));
                     SessionInput::CredentialGenerated { secret_op_id, credential: identity }
                 });
             }
             SessionEffect::StoreSecret { credential, secret_op_id } => {
-                let (generated, credentials) = (self.generated.clone(), self.secret.slot());
+                let (secret, credentials) = (self.generated.remove(&credential), self.secret.slot());
                 self.off_thread(back, secret_id(1, secret_op_id), move || {
-                    let secret = generated.lock().unwrap_or_else(PoisonError::into_inner).remove(&credential);
                     let ok = secret.is_some_and(|secret| credentials.set(&secret).is_ok());
                     SessionInput::SecretStored { secret_op_id, ok }
                 });
@@ -284,7 +296,7 @@ impl EffectRunner<SessionCalls> for SessionRunner {
                 self.commit(batch, epoch, ops);
             }
             SessionEffect::CommitLanding { batch, epoch, digest, sequence, answer, erase_session } => {
-                let digest = match digest.map(|identity| self.digests.lock().unwrap_or_else(PoisonError::into_inner).get(&identity).cloned().ok_or(identity)).transpose() {
+                let digest = match digest.map(|identity| self.digests.get(&identity).cloned().ok_or(identity)).transpose() {
                     Ok(digest) => digest,
                     Err(identity) => return back.reply(control, SessionInput::Rejected(Rejected { batch, reason: RejectReason::Storage(format!("no digest for the identity {identity}")) })),
                 };
@@ -348,7 +360,9 @@ impl EffectRunner<SessionCalls> for SessionRunner {
                 self.wiring.outcomes.settle(OutcomeId::from_raw(id), LifeReply::SessionResume(answer));
             }
             SessionEffect::ExecutorFailed => self.wiring.to_lifecycle(LifecycleInput::ExecutorFailed { executor: "session".into() }),
-            SessionEffect::Answer { author, req_id, outcome } => self.wiring.answer_author(author, req_id, outcome),
+            SessionEffect::Answer { author, req_id, outcome } => {
+                if !self.sinks.answer(author, req_id, outcome) { self.wiring.fault(format!("no author {author} for the answer to request {req_id}")); }
+            }
             SessionEffect::Drained(drained) => self.wiring.to_lifecycle(LifecycleInput::Drained(drained)),
         }
     }

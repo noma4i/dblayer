@@ -128,6 +128,7 @@ pub(super) struct StoreRunner {
     pub exchange: Option<Arc<crate::transport::Exchange>>,
     pub executor: tokio::runtime::Handle,
     pub restore_error: Option<String>,
+    pub session_open: Option<SessionInput>,
 }
 
 impl StoreRunner {
@@ -147,7 +148,7 @@ impl EffectRunner<StoreWriter> for StoreRunner {
             StoreEffect::Prepare { .. } => {}
             StoreEffect::OpenLifecycle(message) => {
                 store.adopt_generation(Generation::from_value(message.saved_generation));
-                wiring.open_session();
+                if let Some(open) = self.session_open.take() { wiring.to_session(open); }
                 wiring.to_lifecycle(LifecycleInput::Open {
                     saved_epoch: message.saved_epoch,
                     saved_generation: message.saved_generation,

@@ -1,4 +1,5 @@
 
+mod append_log;
 mod backoff;
 mod cell;
 mod clock;
@@ -20,6 +21,7 @@ mod threaded;
 #[cfg(test)]
 mod test_clock;
 
+pub use append_log::AppendLog;
 pub use backoff::Backoff;
 pub use cell::EffectRunner;
 pub use clock::{Clock, ManualClock, SystemClock};
@@ -42,6 +44,8 @@ pub use outcomes::{Outcome, OutcomeId, Outcomes, Waiter};
 pub use owner::{Address, Back, Cause, Control, Effect, Effects, Epoch, Message, Outbound, StateOwner, ScheduleId, EpochStamp, Time, EffectId};
 pub use threaded::{counted, hold_until_woken, polling, release_holds, Handle, Holds, Launch, Runtime, RuntimeBuilder};
 
+#[cfg(test)]
+mod append_log_tests;
 #[cfg(test)]
 mod toys_tests;
 #[cfg(test)]

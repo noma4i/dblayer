@@ -311,7 +311,7 @@ impl Drop for Launch {
 
 pub struct Runtime {
     router: Arc<Router>,
-    joins: Vec<JoinHandle<()>>,
+    joins: Mutex<Vec<JoinHandle<()>>>,
     alive: Arc<AtomicUsize>,
 }
 
@@ -386,7 +386,7 @@ impl RuntimeBuilder {
                 }
             }
         }
-        Ok(Runtime { router, joins, alive })
+        Ok(Runtime { router, joins: Mutex::new(joins), alive })
     }
 }
 
@@ -407,6 +407,9 @@ impl Runtime {
 
     pub fn close(&self) { self.router.broadcast(Control::Closing); }
 
+    /// Stops the owner threads and joins them. A concurrent call waits for the first to finish.
+    pub fn stop(&self) { stop(&self.router, &mut lock(&self.joins)); }
+
     /// The number of owner threads of this runtime that have not ended.
     pub fn alive(&self) -> Arc<AtomicUsize> { self.alive.clone() }
 
@@ -422,7 +425,7 @@ impl Runtime {
 }
 
 impl Drop for Runtime {
-    fn drop(&mut self) { stop(&self.router, &mut self.joins); }
+    fn drop(&mut self) { stop(&self.router, self.joins.get_mut().unwrap_or_else(std::sync::PoisonError::into_inner)); }
 }
 
 struct OwnerThread<O: StateOwner> {

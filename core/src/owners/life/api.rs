@@ -2,7 +2,6 @@
 
 use std::collections::BTreeSet;
 use std::sync::atomic::Ordering;
-use std::sync::PoisonError;
 
 use super::{Life, LifeReply, WAITER_AUTHORS};
 use crate::owners::calls::{CallKind, CallsInput};
@@ -105,15 +104,12 @@ impl Life {
         let waiter = self.wiring.outcomes.register(Epoch::MAX);
         let author = WAITER_AUTHORS + waiter.id().raw();
         let (wiring, id) = (self.wiring.clone(), waiter.id());
-        self.wiring.on_mutate_answer(author, move |_, outcome| {
-            wiring.mutate_sinks.lock().unwrap_or_else(PoisonError::into_inner).remove(&author);
-            wiring.outcomes.settle(id, LifeReply::Mutated(outcome));
-        });
+        self.wiring.on_mutate_answer_once(author, move |outcome| { wiring.outcomes.settle(id, LifeReply::Mutated(outcome)); });
         self.mutate(author, owner, crate::owners::contract::next_request_id(), path, body, purpose);
         waiter
     }
 
-    pub fn on_mutate_answer(&self, author: AuthorId, sink: impl Fn(RequestId, AuthorOutcome) + Send + Sync + 'static) { self.wiring.on_mutate_answer(author, sink); }
+    pub fn on_mutate_answer(&self, author: AuthorId, sink: impl FnMut(RequestId, AuthorOutcome) + Send + 'static) { self.wiring.on_mutate_answer(author, sink); }
 
     pub fn on_store_reply(&self, author: BatchAuthor, sink: impl Fn(BatchId, StoreReply) + Send + Sync + 'static) { self.wiring.on_store_reply(author, sink); }
 

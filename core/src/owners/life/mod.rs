@@ -26,9 +26,8 @@ mod session_cut_tests;
 
 pub use observers::{ObserverPort, StopDone};
 
-use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex, OnceLock, PoisonError};
+use std::sync::{Arc, OnceLock};
 
 use super::calls::{CallAnswer, Calls, CallsInput, CallsState};
 use super::contract::{BatchAuthor, BatchId, Committed, CommittedBroadcast, NetworkEvent, Published, Rejected, RequestId};
@@ -43,7 +42,7 @@ use super::write::rounds_executor::RoundsExecutor;
 use super::write::transfer_executor::{LifeSignal, TransferExecutor, TransferPort, TransferSinks};
 use super::store::{BootFound, StoreInput, StoreReply, StoreState, StoreWriter};
 use crate::store::Store;
-use crate::runtime::{Address, Epoch, EpochStamp, Handle, Outcomes, PublishedCell, Runtime, RuntimeBuilder, Waiter};
+use crate::runtime::{Address, AppendLog, Epoch, EpochStamp, Handle, Outcomes, PublishedCell, Runtime, RuntimeBuilder, Waiter};
 
 mod reply;
 mod boot;
@@ -108,33 +107,51 @@ pub(crate) struct Wiring {
     pub(crate) gate: Arc<crate::runtime::EpochGate>,
     #[cfg(test)]
     pub(crate) flights: super::read::Flights,
-    /// The id of the wait of `open` and its answer, set at `Saved` of the first publication.
-    open: Mutex<OpenWait>,
-    faults: Mutex<Vec<String>>,
-    open_failed: Mutex<Option<(String, bool)>>,
-    /// Where the answer to a `Mutate` goes, by author: `Transport{req_id, Response/Error}`.
-    mutate_sinks: Mutex<HashMap<AuthorId, MutateSink>>,
-    /// Where the answer of Store to a batch goes, by author: the `install` of Window, Feed, Outbox and Transfer registers its owner here.
-    store_sinks: Mutex<HashMap<BatchAuthor, StoreSink>>,
-    network_sinks: Mutex<Vec<(Peer, NetworkSink)>>,
+    /// The id of the wait of `open`, set before the owners start, and its answer, set at `Saved` of the first publication.
+    open_id: OnceLock<u64>,
+    open_answer: OnceLock<Result<(), LifecycleError>>,
+    faults: AppendLog<String>,
+    open_failed: OnceLock<(String, bool)>,
+    /// Where the answer to a `Mutate` goes, by author: the table lives in the runner of Session, a registration reaches it through this channel.
+    mutate_registry: std::sync::mpsc::Sender<(AuthorId, MutateSink)>,
+    /// Where the answer of Store to a batch goes, by author: the `install` of Window, Feed, Outbox and Transfer registers its owner here, the last registration of an author answers.
+    store_sinks: AppendLog<(BatchAuthor, StoreSink)>,
+    network_sinks: AppendLog<(Peer, NetworkSink)>,
     /// Every subscriber of the Store broadcast `Committed`, in the order of subscription.
-    committed_sinks: Mutex<Vec<CommittedSink>>,
-    session_open: Mutex<Option<SessionInput>>,
-    restore_failures: Mutex<Vec<(Peer, String)>>,
+    committed_sinks: AppendLog<CommittedSink>,
+    restore_failures: AppendLog<(Peer, String)>,
 }
 
-#[derive(Default)]
-struct OpenWait {
-    id: Option<u64>,
-    answer: Option<Result<(), LifecycleError>>,
+/// The sink of the answers of one author: it returns whether it stays registered.
+pub(crate) type MutateSink = Box<dyn FnMut(RequestId, AuthorOutcome) -> bool + Send>;
+
+/// The sinks of the authors of `Mutate`: the runner of Session owns them and takes the registrations before each answer.
+pub(crate) struct MutateSinks {
+    inbox: std::sync::mpsc::Receiver<(AuthorId, MutateSink)>,
+    table: std::collections::HashMap<AuthorId, MutateSink>,
+}
+
+impl MutateSinks {
+    /// Returns whether an author was registered for the answer.
+    pub(crate) fn answer(&mut self, author: AuthorId, req_id: RequestId, outcome: AuthorOutcome) -> bool {
+        while let Ok((registered, sink)) = self.inbox.try_recv() {
+            self.table.insert(registered, sink);
+        }
+        let Some(sink) = self.table.get_mut(&author) else { return false };
+        if !sink(req_id, outcome) {
+            self.table.remove(&author);
+        }
+        true
+    }
 }
 
 impl Wiring {
     /// The epoch is the published one, open, and has an identity: a request to the server needs a session.
     pub(crate) fn admits_session(&self, epoch: Epoch) -> bool { self.published.read(|published| published.is_some_and(|published| published.epoch == epoch && !published.closed && published.identity.is_some())) }
 
-    fn new(handle: Handle, now: Arc<dyn Fn() -> i64 + Send + Sync>) -> Self {
-        Self {
+    fn new(handle: Handle, now: Arc<dyn Fn() -> i64 + Send + Sync>) -> (Self, MutateSinks) {
+        let (mutate_registry, inbox) = std::sync::mpsc::channel();
+        (Self {
             now,
             addresses: OnceLock::new(),
             outcomes: Outcomes::new(),
@@ -145,16 +162,16 @@ impl Wiring {
             gate: Arc::default(),
             #[cfg(test)]
             flights: Default::default(),
-            open: Mutex::new(OpenWait::default()),
-            faults: Mutex::new(Vec::new()),
-            open_failed: Mutex::new(None),
-            mutate_sinks: Mutex::new(HashMap::new()),
-            store_sinks: Mutex::new(HashMap::new()),
-            network_sinks: Mutex::new(Vec::new()),
-            committed_sinks: Mutex::new(Vec::new()),
-            session_open: Mutex::new(None),
-            restore_failures: Mutex::new(Vec::new()),
-        }
+            open_id: OnceLock::new(),
+            open_answer: OnceLock::new(),
+            faults: AppendLog::default(),
+            open_failed: OnceLock::new(),
+            mutate_registry,
+            store_sinks: AppendLog::default(),
+            network_sinks: AppendLog::default(),
+            committed_sinks: AppendLog::default(),
+            restore_failures: AppendLog::default(),
+        }, MutateSinks { inbox, table: Default::default() })
     }
 
     /// `None` only before `install` finished: no effect runs by then.
@@ -166,26 +183,23 @@ impl Wiring {
     pub fn epoch_passed(&self, epoch: Epoch) -> bool { self.published.read(|published| published.is_some_and(|published| published.epoch > epoch)) }
 
     /// The wait of `open`: the id Lifecycle answers when the first publication is saved.
-    pub fn open_reply(&self) -> Option<u64> { self.open.lock().unwrap_or_else(PoisonError::into_inner).id }
+    pub fn open_reply(&self) -> Option<u64> { self.open_id.get().copied() }
 
     /// Takes the answer of `open` when `id` is its wait. Returns whether it was.
     pub fn open_answered(&self, id: u64, result: Result<(), LifecycleError>) -> bool {
-        let mut open = self.open.lock().unwrap_or_else(PoisonError::into_inner);
-        if open.id != Some(id) || open.answer.is_some() {
+        if self.open_id.get() != Some(&id) || self.open_answer.set(result).is_err() {
             return false;
         }
-        open.answer = Some(result);
-        drop(open);
         self.published.notify();
         true
     }
 
     pub fn has_transfer(&self) -> bool { self.addresses().is_some_and(|addresses| addresses.transfer.is_some()) }
 
-    pub fn fault(&self, what: String) { self.faults.lock().unwrap_or_else(PoisonError::into_inner).push(what); }
+    pub fn fault(&self, what: String) { self.faults.push(what); }
 
     pub fn open_failed(&self, error: String, corrupt: bool) {
-        *self.open_failed.lock().unwrap_or_else(PoisonError::into_inner) = Some((error, corrupt));
+        let _ = self.open_failed.set((error, corrupt));
         self.published.notify();
     }
 
@@ -209,36 +223,29 @@ impl Wiring {
         if let Some(Addresses { session: Some(session), .. }) = self.addresses() { self.handle.post(session, stamp, input); }
     }
 
-    pub fn open_session(&self) {
-        let open = self.session_open.lock().unwrap_or_else(PoisonError::into_inner).take();
-        if let Some(open) = open { self.to_session(open); }
-    }
-
     pub fn on_network(&self, owner: Peer, sink: impl Fn(NetworkEvent) + Send + Sync + 'static) {
-        self.network_sinks.lock().unwrap_or_else(PoisonError::into_inner).push((owner, Arc::new(sink)));
+        self.network_sinks.push((owner, Arc::new(sink)));
     }
 
     pub fn tell_network(&self, owners: &[Peer], event: NetworkEvent) {
-        let sinks: Vec<_> = self.network_sinks.lock().unwrap_or_else(PoisonError::into_inner).iter().filter(|(owner, _)| owners.contains(owner)).map(|(_, sink)| sink.clone()).collect();
-        for sink in sinks {
+        for (_, sink) in self.network_sinks.iter().filter(|(owner, _)| owners.contains(owner)) {
             crate::lock::effect(|| sink(event));
         }
     }
 
     pub fn on_committed(&self, sink: impl Fn(CommittedBroadcast) + Send + Sync + 'static) {
-        self.committed_sinks.lock().unwrap_or_else(PoisonError::into_inner).push(Arc::new(sink));
+        self.committed_sinks.push(Arc::new(sink));
     }
 
     pub fn tell_committed(&self, broadcast: CommittedBroadcast) {
-        let sinks = self.committed_sinks.lock().unwrap_or_else(PoisonError::into_inner).clone();
-        for sink in sinks {
+        for sink in self.committed_sinks.iter() {
             crate::lock::effect(|| sink(broadcast.clone()));
         }
     }
 
     pub fn restore_failed_for(&self, owner: Peer, error: String) {
         self.fault(format!("{} could not restore its intents: {error}", owner.name()));
-        self.restore_failures.lock().unwrap_or_else(PoisonError::into_inner).push((owner, error));
+        self.restore_failures.push((owner, error));
     }
 
     /// The answer of Store to the batch `(author, batch)`.
@@ -272,7 +279,7 @@ impl Wiring {
             });
             return;
         }
-        let sink = self.store_sinks.lock().unwrap_or_else(PoisonError::into_inner).get(&author).cloned();
+        let sink = self.store_sinks.iter().filter(|(registered, _)| *registered == author).map(|(_, sink)| sink.clone()).last();
         match sink {
             Some(sink) => sink(batch, reply),
             None => self.fault(format!("no owner installed for the batches of {author:?}")),
@@ -280,20 +287,18 @@ impl Wiring {
     }
 
     pub fn on_store_reply(&self, author: BatchAuthor, sink: impl Fn(BatchId, StoreReply) + Send + Sync + 'static) {
-        self.store_sinks.lock().unwrap_or_else(PoisonError::into_inner).insert(author, Arc::new(sink));
+        self.store_sinks.push((author, Arc::new(sink)));
     }
 
-    pub fn on_mutate_answer(&self, author: AuthorId, sink: impl Fn(RequestId, AuthorOutcome) + Send + Sync + 'static) {
-        self.mutate_sinks.lock().unwrap_or_else(PoisonError::into_inner).insert(author, Arc::new(sink));
+    /// `Transport{req_id, Response/Error{Permanent, X}}` to the author of a `Mutate`: the sink stays until it returns false.
+    pub fn on_mutate_answer(&self, author: AuthorId, mut sink: impl FnMut(RequestId, AuthorOutcome) + Send + 'static) {
+        let _ = crate::lock::effect(|| self.mutate_registry.send((author, Box::new(move |req_id, outcome| { sink(req_id, outcome); true }))));
     }
 
-    /// `Transport{req_id, Response/Error{Permanent, X}}` to the author of a `Mutate`.
-    pub fn answer_author(&self, author: AuthorId, req_id: RequestId, outcome: AuthorOutcome) {
-        let sink = self.mutate_sinks.lock().unwrap_or_else(PoisonError::into_inner).get(&author).cloned();
-        match sink {
-            Some(sink) => sink(req_id, outcome),
-            None => self.fault(format!("no author {author} for the answer to request {req_id}")),
-        }
+    /// The sink hears the first answer of the author and goes.
+    pub fn on_mutate_answer_once(&self, author: AuthorId, sink: impl FnOnce(AuthorOutcome) + Send + 'static) {
+        let mut sink = Some(sink);
+        let _ = crate::lock::effect(|| self.mutate_registry.send((author, Box::new(move |_, outcome| { if let Some(sink) = sink.take() { sink(outcome); } false }))));
     }
 
     pub fn to_rounds(&self, input: RoundsInput) {
@@ -349,14 +354,13 @@ pub enum LifeError {
     CorruptManifest(String),
 }
 
-type MutateSink = Arc<dyn Fn(RequestId, AuthorOutcome) + Send + Sync>;
 type StoreSink = Arc<dyn Fn(BatchId, StoreReply) + Send + Sync>;
 type NetworkSink = Arc<dyn Fn(NetworkEvent) + Send + Sync>;
 type CommittedSink = Arc<dyn Fn(CommittedBroadcast) + Send + Sync>;
 
 pub struct Life {
     wiring: Arc<Wiring>,
-    runtime: Mutex<Option<Runtime>>,
+    runtime: Runtime,
     shut: AtomicBool,
     /// The database has a session client: the rule of the calls reads `Published`. A database without one hands the calls to the owners.
     with_session: bool,
@@ -394,16 +398,18 @@ impl Life {
         let found = boot_found(&ports.db, saved_unowned_pending)?;
         let clock = ports.db.lock().clock.clone();
         let mut builder = RuntimeBuilder::new(clock.clone());
-        let wiring = Arc::new(Wiring::new(builder.handle(), Arc::new(move || i64::try_from(clock.now().as_millis()).unwrap_or(i64::MAX))));
+        let (wiring, mutate_sinks) = Wiring::new(builder.handle(), Arc::new(move || i64::try_from(clock.now().as_millis()).unwrap_or(i64::MAX)));
+        let wiring = Arc::new(wiring);
         let open_wait = wiring.outcomes.register(Epoch::MAX);
+        let _ = wiring.open_id.set(open_wait.id().raw());
         let lifecycle = builder.add::<Lifecycle>("lifecycle", LifecycleState::new().with_restore_participants(restore_participants(session.is_some())), runners::LifecycleRunner { wiring: wiring.clone(), absent: absent(session.is_some(), session.is_some() && ports.transfer.is_some()), db: ports.db.clone(), held_published: None, held_replies: Vec::new(), held_read: None });
         builder.on_executor_failed(lifecycle);
-        let store = builder.add::<StoreWriter>("store", StoreState::new(), runners::StoreRunner { wiring: wiring.clone(), db: ports.db.clone(), secret: ports.secret.clone(), exchange: ports.exchange.clone(), executor: ports.executor.clone(), restore_error });
+        let store = builder.reserve::<StoreWriter>();
         let network = builder.add::<Network>("network", NetworkState::new(), runners::NetworkRunner { wiring: wiring.clone(), db: ports.db.clone(), held_replies: Vec::new() });
         let calls = builder.add::<Calls>("calls", CallsState::new(0, None, &[]), calls_runner::CallsRunner::new(wiring.clone(), &ports));
         let session_address = session.as_ref().zip(restored).map(|((exchange, secret, seal), restored)| {
             let state = SessionState::with_operations(exchange.session_operations(), None);
-            let address = builder.add::<SessionCalls>("session", state, session_runner::SessionRunner::new(wiring.clone(), (exchange.clone(), secret.clone(), ports.db.clone()), seal.clone(), ports.executor.clone(), &restored));
+            let address = builder.add::<SessionCalls>("session", state, session_runner::SessionRunner::new(wiring.clone(), (exchange.clone(), secret.clone(), ports.db.clone()), seal.clone(), ports.executor.clone(), (&restored, mutate_sinks)));
             (address, restored)
         });
         let has_transfer = session_address.is_some() && ports.transfer.is_some() && ports.transport.is_some();
@@ -495,17 +501,15 @@ impl Life {
         }
         let read = read::add(&mut builder, &wiring, &ports, store);
         let _ = wiring.addresses.set(Addresses { lifecycle, store, network, calls, session: session_address.as_ref().map(|(address, _)| *address), outbox, local_writes, transfer: transfer.map(|(address, _)| address), rounds: transfer.map(|(_, rounds)| rounds), windows: None, deliveries: None, feed: None }.with_read(&read));
+        let session_open = session_address.map(|(_, restored)| SessionInput::Open { credential: restored.credential, pending: restored.pending, dropped_pending: restored.dropped_pending, secret: restored.secret });
+        builder.install(store, "store", StoreState::new(), runners::StoreRunner { wiring: wiring.clone(), db: ports.db.clone(), secret: ports.secret.clone(), exchange: ports.exchange.clone(), executor: ports.executor.clone(), restore_error, session_open });
         let runtime = builder.start().map_err(|error| LifeError::Storage(error.to_string()))?;
-        if let Some((_, restored)) = session_address {
-            *wiring.session_open.lock().unwrap_or_else(PoisonError::into_inner) = Some(SessionInput::Open { credential: restored.credential, pending: restored.pending, dropped_pending: restored.dropped_pending, secret: restored.secret });
-        }
-        wiring.open.lock().unwrap_or_else(PoisonError::into_inner).id = Some(open_wait.id().raw());
         wiring.to_store(StoreInput::Boot(found));
         let settled = wiring.published.wait_until(|| {
-            if let Some(answer) = wiring.open.lock().unwrap_or_else(PoisonError::into_inner).answer {
-                return Some(Ok(answer));
+            if let Some(answer) = wiring.open_answer.get() {
+                return Some(Ok(*answer));
             }
-            wiring.open_failed.lock().unwrap_or_else(PoisonError::into_inner).clone().map(Err)
+            wiring.open_failed.get().cloned().map(Err)
         });
         let answer = match settled {
             Ok(answer) => answer,
@@ -513,14 +517,13 @@ impl Life {
         };
         answer.map_err(|error| LifeError::Storage(format!("the first publication was not saved: {error:?}")))?;
         let alive = runtime.alive();
-        Ok(Self { wiring, runtime: Mutex::new(Some(runtime)), shut: AtomicBool::new(false), with_session: session.is_some(), graphql_path: session.as_ref().map(|session| session.0.graphql_path().to_string()), alive })
+        Ok(Self { wiring, runtime, shut: AtomicBool::new(false), with_session: session.is_some(), graphql_path: session.as_ref().map(|session| session.0.graphql_path().to_string()), alive })
     }
 
     /// Stops the owner threads and joins them. The caller is not an owner thread. A second call waits for the first to finish.
     pub fn shutdown(&self) {
         self.shut.store(true, Ordering::SeqCst);
-        let mut runtime = self.runtime.lock().unwrap_or_else(PoisonError::into_inner);
-        drop(runtime.take());
+        self.runtime.stop();
     }
 
     /// Returns once every input posted to an owner was handled, or false after `limit`.
@@ -556,9 +559,9 @@ impl Life {
     #[cfg(test)]
     pub fn requests_in_flight(&self) -> usize { self.wiring.flights.load(Ordering::SeqCst) }
 
-    pub fn faults(&self) -> Vec<String> { self.wiring.faults.lock().unwrap_or_else(PoisonError::into_inner).clone() }
+    pub fn faults(&self) -> Vec<String> { self.wiring.faults.iter().cloned().collect() }
 
-    pub fn restore_failures(&self) -> Vec<(Peer, String)> { self.wiring.restore_failures.lock().unwrap_or_else(PoisonError::into_inner).clone() }
+    pub fn restore_failures(&self) -> Vec<(Peer, String)> { self.wiring.restore_failures.iter().cloned().collect() }
 
     pub fn on_network(&self, owner: Peer, sink: impl Fn(NetworkEvent) + Send + Sync + 'static) { self.wiring.on_network(owner, sink); }
 
