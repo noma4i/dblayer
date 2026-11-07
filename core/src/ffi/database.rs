@@ -182,7 +182,7 @@ impl Database {
                     let transport = transport.ok_or_else(|| DbError::Invalid { detail: "encrypted requires transport".into() })?;
                     let _entered = executor()?.enter();
                     Self::start_with(config, models_json, clock, |db, clock| {
-                        super::encrypted::wire(db, clock, encrypted, http, credentials, transport, retries)
+                        super::encrypted::wire(db, clock, encrypted, http, credentials, transport)
                     })?
                 }
                 None => {

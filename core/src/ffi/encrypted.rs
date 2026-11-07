@@ -73,15 +73,13 @@ pub(super) fn wire(
     http: Arc<dyn EncryptedHttp>,
     credentials: Arc<dyn CredentialStore>,
     transport: Arc<dyn Transport>,
-    retries: Option<Arc<RetryProgress>>,
 ) -> Result<Wiring, DbError> {
     let seal = crate::owners::session_seal::SealConfig::new(&encrypted, clock.clone()).map_err(|error| DbError::Invalid { detail: format!("{error:?}") })?;
     let exchange = Arc::new(Exchange::new(&encrypted, Arc::new(ForeignHttp(http)), clock.clone()).map_err(|error| DbError::Invalid { detail: error.to_string() })?);
     let secret = Arc::new(crate::transport::encrypted::credential::Secret::new(Arc::new(ForeignCredentials(credentials))));
     crate::transport::encrypted::credential::finish_session_end(db, &secret).map_err(|error| DbError::Invalid { detail: error.to_string() })?;
-    let progress = retries.map(|retries| retries.inner.clone()).unwrap_or_default();
     let rest: Arc<dyn core::Upstream> = Arc::new(ForeignTransport(transport));
-    let encrypted_transport = Arc::new(EncryptedTransport::new(exchange.clone(), secret.clone(), db.clone(), clock.clone(), progress, rest));
+    let encrypted_transport = Arc::new(EncryptedTransport::new(exchange.clone(), secret.clone(), db.clone(), rest));
     let cable = encrypted_transport.cable_lines();
     Ok(Wiring { transport: Some(encrypted_transport.clone()), encrypted: Some(Encrypted { exchange, secret, transport: encrypted_transport }), cable: Some(cable), seal: Some(Arc::new(seal)) })
 }

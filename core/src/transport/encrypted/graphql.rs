@@ -9,10 +9,7 @@ use std::sync::{OnceLock, Weak};
 use super::credential::Secret;
 use super::exchange::{session_failure, temporary_error, Answer, Exchange};
 use super::jwe::random_token;
-use crate::runtime::{Clock, RetryPolicy};
 use crate::store::Store;
-use crate::transport::retry::{RetryCalls, Retrying};
-use crate::transport::Connectivity;
 use crate::transport::{GraphQLError, GraphQLRequest, PutRequest, PutReply, Response, Upstream, TransportError};
 
 const PERSISTED_QUERY_VERSION: u32 = 1;
@@ -22,17 +19,13 @@ pub struct EncryptedTransport {
     exchange: Arc<Exchange>,
     credential: Arc<Secret>,
     store: Arc<Store>,
-    online: Arc<Connectivity>,
-    clock: Arc<dyn Clock>,
-    progress: Arc<RetryCalls>,
     life: OnceLock<Weak<crate::owners::life::Life>>,
     rest: Arc<dyn Upstream>,
 }
 
 impl EncryptedTransport {
-    pub(crate) fn new(exchange: Arc<Exchange>, credential: Arc<Secret>, store: Arc<Store>, clock: Arc<dyn Clock>, progress: Arc<RetryCalls>, rest: Arc<dyn Upstream>) -> Self {
-        let online = store.connectivity();
-        Self { exchange, credential, store, online, clock, progress, life: OnceLock::new(), rest }
+    pub(crate) fn new(exchange: Arc<Exchange>, credential: Arc<Secret>, store: Arc<Store>, rest: Arc<dyn Upstream>) -> Self {
+        Self { exchange, credential, store, life: OnceLock::new(), rest }
     }
 
     /// Joins the owners: from now on a request with a `sequence` goes through the owner Session.
@@ -57,12 +50,8 @@ impl EncryptedTransport {
 
     async fn exchange_once(&self, credential: &str, path: &str, body: &Value) -> Result<Answer, TransportError> {
         let (request_id, response_key) = (uuid::Uuid::new_v4().to_string(), random_token());
-        let mut retry = Retrying::new(self.clock.as_ref(), &self.progress, &self.online, RetryPolicy::Http);
-        loop {
-            self.online.online().await;
-            let result = self.exchange.send_once(super::SendOnce { credential: Some(credential), request_id: &request_id, response_key: &response_key, sequence: None, path, body, purpose: crate::transport::NetworkPurpose::Standard }).await.and_then(|answer| match temporary_error(&answer.body) { Some(error) => Err(error), None => Ok(answer) });
-            match result { Ok(answer) => return Ok(answer), Err(error) => retry.failed(error).await? }
-        }
+        let answer = self.exchange.send_once(super::SendOnce { credential: Some(credential), request_id: &request_id, response_key: &response_key, sequence: None, path, body, purpose: crate::transport::NetworkPurpose::Standard }).await?;
+        match temporary_error(&answer.body) { Some(error) => Err(error), None => Ok(answer) }
     }
 
     /// A request with a `sequence`: the owner Session sends it, in order with every other request of the session.
@@ -118,7 +107,6 @@ pub fn missing_from_registry(response: &Response) -> bool {
 
 #[async_trait]
 impl Upstream for EncryptedTransport {
-    fn retries_queries(&self) -> bool { true }
     fn session(&self) -> Result<Option<String>, TransportError> {
         Ok(super::credential::stored_session(&self.store)?.filter(|session| session.sequence > 0).map(|session| session.credential_digest))
     }

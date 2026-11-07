@@ -29,7 +29,6 @@ pub use session_code::SessionCode;
 
 #[async_trait]
 pub trait Upstream: Send + Sync {
-    fn retries_queries(&self) -> bool { false }
     fn set_online(&self, _online: bool) {}
     fn session(&self) -> Result<Option<String>, TransportError> { Ok(Some(String::new())) }
     async fn open_cable(&self, _url: &str) -> Result<std::sync::Arc<dyn CableSocket>, TransportError> {

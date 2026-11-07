@@ -10,7 +10,6 @@ use super::vectors_tests::*;
 use super::*;
 use crate::runtime::{Clock, ManualClock};
 use crate::store::Store;
-use crate::transport::retry::RetryCalls;
 use crate::transport::{NetworkPurpose, Upstream};
 
 const START: u64 = 1_800_000_000;
@@ -49,7 +48,7 @@ impl Client {
 
     /// The transport of the application on top of this exchange; it joins the owners that `start_owners` started.
     pub(crate) fn transport(&self) -> Arc<EncryptedTransport> {
-        let transport = Arc::new(EncryptedTransport::new(self.exchange.clone(), self.secret.clone(), self.db.clone(), self.clock.clone(), Arc::<RetryCalls>::default(), self.rest.clone()));
+        let transport = Arc::new(EncryptedTransport::new(self.exchange.clone(), self.secret.clone(), self.db.clone(), self.rest.clone()));
         if let Some(life) = self.life.get() { transport.attach(life); }
         transport
     }
