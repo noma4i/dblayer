@@ -16,6 +16,8 @@ pub(super) enum Reject {
 pub(super) enum To {
     Active,
     Opening,
+    /// The connection that `Closing` left to drain.
+    Draining,
     Stray,
 }
 
@@ -65,6 +67,8 @@ pub(super) enum Input {
     ModelsReset { models: Vec<String>, generation: u64 },
     EpochEnded,
     Closing,
+    /// `Tick(drain{connection_id})`: `own` names the draining connection, otherwise a stray one.
+    Drain { own: bool },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -74,6 +78,9 @@ pub(super) enum Effect {
     SealUnsubscribe,
     SealPong,
     Close,
+    Cancel,
+    ScheduleDrain,
+    CancelDrain,
     ScheduleTick,
     ScheduleResubscribe,
     Commit,
@@ -96,6 +103,7 @@ pub(super) enum Mode {
     Off { gap: bool },
     Opening { gap: bool },
     Live,
+    Draining,
     Ended,
 }
 
@@ -183,7 +191,7 @@ impl Feed {
         match to {
             To::Active => self.active,
             To::Opening => self.opening,
-            To::Stray => None,
+            To::Draining | To::Stray => None,
         }
     }
 
@@ -352,8 +360,42 @@ impl Feed {
         Self::goodbye(self.opening.take(), effects);
     }
 
+    /// `Closing` of a live feed with an established connection: the connection drains before it is cancelled.
+    fn drain_all(&mut self, effects: &mut Vec<Effect>) {
+        Self::goodbye(self.active.take(), effects);
+        effects.push(Effect::ScheduleDrain);
+        Self::goodbye(self.opening.take(), effects);
+    }
+
+    fn draining(&mut self, input: Input) -> Vec<Effect> {
+        let mut effects = Vec::new();
+        let ends = match input {
+            Input::Drain { own: true } => Some(Vec::new()),
+            Input::Dropped { to: To::Draining } | Input::Ended { to: To::Draining } | Input::ChannelLost { to: To::Draining, .. } => Some(vec![Effect::CancelDrain]),
+            _ => None,
+        };
+        if let Some(timer) = ends {
+            self.mode = Mode::Ended;
+            effects.push(Effect::Cancel);
+            effects.extend(timer);
+            self.drained = true;
+            effects.push(Effect::Drained);
+        }
+        effects
+    }
+
     pub(super) fn step(&mut self, input: Input) -> Vec<Effect> {
         let mut effects = Vec::new();
+        if self.mode == Mode::Draining {
+            return self.draining(input);
+        }
+        if input == Input::Closing && self.mode == Mode::Live && self.active == Some(Proto::Established) {
+            self.mode = Mode::Draining;
+            self.drain_all(&mut effects);
+            self.held.clear();
+            self.pending.clear();
+            return effects;
+        }
         if self.mode == Mode::Ended {
             if input == Input::Closing && !std::mem::replace(&mut self.drained, true) {
                 effects.push(Effect::Drained);
@@ -361,6 +403,7 @@ impl Feed {
             return effects;
         }
         match input {
+            Input::Drain { .. } => {}
             Input::EpochEnded | Input::Closing => {
                 self.mode = Mode::Ended;
                 self.close_all(&mut effects);

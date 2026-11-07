@@ -316,3 +316,22 @@ fn feed_prop_stale_connection() {
     );
     assert!(report.violations.is_empty(), "{:?}", report.violations.first());
 }
+
+/// P-FEED-26: after `Close` of an established connection the four ends of a drain come in any order: one timer, one `cancel`, one `Drained`.
+#[test]
+fn feed_drain_vs_cancel_orders() {
+    let ends = [Input::Dropped { to: To::Draining }, Input::Ended { to: To::Draining }, Input::ChannelLost { to: To::Draining, dropped: None }, Input::Drain { own: true }];
+    for order in crate::spec::transfer_harness::permutations(&ends) {
+        let mut twin = live();
+        twin.step(Input::Closing);
+        for end in &order {
+            twin.step(end.clone());
+        }
+        let cancels = twin.history.iter().filter(|entry| matches!(entry, Emitted::Run(FeedEffect::Cancel { .. }))).count();
+        let drained = twin.history.iter().filter(|entry| matches!(entry, Emitted::Run(FeedEffect::Drained(_)))).count();
+        let timer_cancels = twin.history.iter().filter(|entry| matches!(entry, Emitted::Cancel(id) if f::is_drain_schedule(*id))).count();
+        let schedules = twin.history.iter().filter(|entry| matches!(entry, Emitted::Schedule { input, .. } if input.starts_with("Drain"))).count();
+        let first_is_tick = order[0] == Input::Drain { own: true };
+        assert_eq!((cancels, drained, schedules, timer_cancels), (1, 1, 1, usize::from(!first_is_tick)), "order {order:?}");
+    }
+}

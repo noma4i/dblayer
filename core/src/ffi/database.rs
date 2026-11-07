@@ -133,11 +133,11 @@ pub(super) struct Encrypted {
 
 impl Database {
     fn start(config: Config, models_json: String, transport: Option<Arc<dyn Transport>>, endpoint: Option<String>, clock: Arc<dyn Clock>) -> Result<Arc<Self>, DbError> {
-        Self::start_with(config, models_json, clock, |db, clock| {
+        Self::start_with(config, models_json, clock, |db, _| {
             #[cfg(test)]
             if transport.is_some() { super::signed_session_tests::signed_session(db); }
             let _ = db;
-            Ok(Wiring { transport: transport.map(|transport| ForeignTransport::plain(transport, endpoint, clock.clone()).map(|plain| Arc::new(plain) as Arc<dyn core::Upstream>)).transpose()?, encrypted: None, cable: None, seal: None })
+            Ok(Wiring { transport: transport.map(|transport| ForeignTransport::plain(transport, endpoint).map(|plain| Arc::new(plain) as Arc<dyn core::Upstream>)).transpose()?, encrypted: None, cable: None, seal: None })
         })
     }
 

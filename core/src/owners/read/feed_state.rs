@@ -127,20 +127,24 @@ impl FeedState {
     }
 
     /// Transport `Unsubscribe(connection)`: an established connection says goodbye, then closes.
-    pub(super) fn close(connection: Option<Connection>, subscribed: &BTreeSet<Channel>, fx: &mut Vec<Fx>) {
+    pub(super) fn close(connection: Option<Connection>, subscribed: &BTreeSet<Channel>, drain: bool, fx: &mut Vec<Fx>) {
         let Some(mut connection) = connection else { return };
         for channel in subscribed {
             Self::seal(&mut connection, Outgoing::Unsubscribe { channel: channel.clone() }, fx);
         }
         fx.push(Fx::CancelResubscribe { connection: connection.id });
         fx.push(Fx::CancelHandshake { connection: connection.id });
-        fx.push(Fx::Run(FeedEffect::Close { connection: connection.id, goodbye: connection.goodbye() }));
+        let drain = drain && connection.goodbye();
+        fx.push(Fx::Run(FeedEffect::Close { connection: connection.id, goodbye: connection.goodbye(), drain }));
+        if drain {
+            fx.push(Fx::Drain { connection: connection.id });
+        }
     }
 
     /// Transport `Unsubscribe` of both connections, the active one first.
-    pub(super) fn close_all(&mut self, fx: &mut Vec<Fx>) {
-        Self::close(self.active.take(), &self.subscribed, fx);
-        Self::close(self.opening.take(), &BTreeSet::new(), fx);
+    pub(super) fn close_all(&mut self, drain: bool, fx: &mut Vec<Fx>) {
+        Self::close(self.active.take(), &self.subscribed, drain, fx);
+        Self::close(self.opening.take(), &BTreeSet::new(), false, fx);
     }
 
     pub(super) fn accept(&mut self, event: FramedEvent) -> FeedEvent {

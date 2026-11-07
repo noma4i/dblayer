@@ -126,7 +126,7 @@ pub(super) fn add(builder: &mut RuntimeBuilder, wiring: &Arc<Wiring>, ports: &Po
     match &ports.cable {
         Some(lines) => {
             let codec = Arc::new(SchemaFeedCodec::new(db.clone(), ports.read_operations.clone().unwrap_or_default()));
-            builder.install(feed_at, "feed", feed_state, FeedIo::new(lines.clone(), codec, ports.executor.clone(), feed_rest, (ports.db.lock().clock.clone(), wiring.gate.clone())).counted_by(handle.clone()).admitted_by(feed_admit.clone()))
+            builder.install(feed_at, "feed", feed_state, FeedIo::new(lines.clone(), codec, ports.executor.clone(), feed_rest, wiring.gate.clone()).counted_by(handle.clone()).admitted_by(feed_admit.clone()))
         }
         None => builder.install(feed_at, "feed", feed_state, FeedWithoutIo { rest: feed_rest }),
     };

@@ -3,6 +3,7 @@
 //! counter the effect names. The counters and the protocol transitions belong to `Feed`. A closed connection gives no more inputs.
 
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -29,9 +30,9 @@ pub trait FeedCodec: Send + Sync + 'static {
 pub(crate) const CLOSE_DRAIN: Duration = Duration::from_secs(2);
 
 struct Open {
-    frames: mpsc::UnboundedSender<(u64, Value)>,
+    frames: Option<mpsc::UnboundedSender<(u64, Value)>>,
     cancel: CancelToken,
-    /// Set at `Close`: the writer gets `CLOSE_DRAIN` to send the queue, then the line closes.
+    /// Set at a draining `Close`: the line closes when the queue is sent and the connection waits for `Cancel`.
     closing: CancelToken,
 }
 
@@ -45,7 +46,6 @@ pub struct FeedIo {
     admit: Option<Admit>,
     open: Connections,
     rest: Rest<FeedEffect>,
-    clock: Arc<dyn crate::runtime::Clock>,
     gate: Arc<crate::runtime::EpochGate>,
 }
 
@@ -53,7 +53,7 @@ pub struct FeedIo {
 fn session_closed(code: u16, reason: &str) -> bool { matches!(code, 4401 | 4403) || matches!(reason, "LOGGED_OUT" | "ACCOUNT_LOCKED") }
 
 impl FeedIo {
-    pub fn new(lines: Arc<dyn CableLines>, codec: Arc<dyn FeedCodec>, handle: Handle, rest: Rest<FeedEffect>, (clock, gate): (Arc<dyn crate::runtime::Clock>, Arc<crate::runtime::EpochGate>)) -> Self { Self { lines, codec, handle, clock, gate, counted: None, admit: None, open: Connections::default(), rest } }
+    pub fn new(lines: Arc<dyn CableLines>, codec: Arc<dyn FeedCodec>, handle: Handle, rest: Rest<FeedEffect>, gate: Arc<crate::runtime::EpochGate>) -> Self { Self { lines, codec, handle, gate, counted: None, admit: None, open: Connections::default(), rest } }
 
     /// A connection starts with the admission of the epoch it was decided in, and its end cancels it.
     pub fn admitted_by(mut self, admit: Admit) -> Self {
@@ -75,8 +75,8 @@ impl FeedIo {
         let closing = CancelToken::new();
         let (frames, queued) = mpsc::unbounded_channel::<(u64, Value)>();
         self.open.retain(|_, open| !open.cancel.is_cancelled());
-        self.open.insert(connection, Open { frames, cancel: cancel.clone(), closing: closing.clone() });
-        let (lines, codec, back, clock, gate) = (self.lines.clone(), self.codec.clone(), back.clone(), self.clock.clone(), self.gate.clone());
+        self.open.insert(connection, Open { frames: Some(frames), cancel: cancel.clone(), closing: closing.clone() });
+        let (lines, codec, back, gate) = (self.lines.clone(), self.codec.clone(), back.clone(), self.gate.clone());
         let epoch = match stamp { EpochStamp::Epoch(epoch) => Some(epoch), EpochStamp::Control => None };
         let token = cancel.clone();
         let reply = move |input: FeedInput| {
@@ -87,12 +87,12 @@ impl FeedIo {
         let launch = self.counted.as_ref().map(crate::runtime::Handle::launch);
         spawn_on(&self.handle, crate::runtime::counted(launch, async move {
             let ended = cancel.clone();
-            Self::run(lines, codec, (clock, gate, epoch), connection, (cancel, closing), queued, reply).await;
+            Self::run(lines, codec, (gate, epoch), connection, (cancel, closing), queued, reply).await;
             ended.cancel();
         }));
     }
 
-    async fn run(lines: Arc<dyn CableLines>, codec: Arc<dyn FeedCodec>, (clock, gate, epoch): (Arc<dyn crate::runtime::Clock>, Arc<crate::runtime::EpochGate>, Option<crate::runtime::Epoch>), connection: ConnectionId, (cancel, closing): (CancelToken, CancelToken), mut queued: mpsc::UnboundedReceiver<(u64, Value)>, reply: impl Fn(FeedInput) + Clone + Send + 'static) {
+    async fn run(lines: Arc<dyn CableLines>, codec: Arc<dyn FeedCodec>, (gate, epoch): (Arc<crate::runtime::EpochGate>, Option<crate::runtime::Epoch>), connection: ConnectionId, (cancel, closing): (CancelToken, CancelToken), mut queued: mpsc::UnboundedReceiver<(u64, Value)>, reply: impl Fn(FeedInput) + Clone + Send + 'static) {
         {
             let line = tokio::select! {
                 biased;
@@ -106,24 +106,33 @@ impl FeedIo {
                 Err(_) => return reply(FeedInput::Dropped { connection_id: connection }),
             };
             reply(FeedInput::HandshakeDone { connection_id: connection, key_id: connection });
+            let closed = Arc::new(AtomicBool::new(false));
             let writer = {
-                let (line, reply, gate) = (line.clone(), reply.clone(), gate.clone());
+                let (line, reply, gate, cancel, closing, closed) = (line.clone(), reply.clone(), gate.clone(), cancel.clone(), closing.clone(), closed.clone());
                 async move {
                     while let Some((counter, body)) = queued.recv().await {
                         if crate::runtime::send_in_epoch(&gate, epoch, || crate::lock::effect(|| line.send(counter, body))).await.is_err() {
                             return reply(FeedInput::Dropped { connection_id: connection });
                         }
                     }
+                    if closing.is_cancelled() {
+                        if !closed.swap(true, Ordering::SeqCst) { line.close().await; }
+                        return std::future::pending().await;
+                    }
+                    cancel.cancel();
                 }
             };
             let reader = Self::read(line.clone(), codec, connection, reply);
             tokio::select! {
                 () = cancel.cancelled() => {}
-                () = async { closing.cancelled().await; clock.sleep(CLOSE_DRAIN).await } => {}
-                () = writer => cancel.cancel(),
+                () = writer => {}
                 () = reader => {}
             }
-            line.close().await;
+            if !closed.swap(true, Ordering::SeqCst) { line.close().await; }
+            if closing.is_cancelled() {
+                cancel.cancelled().await;
+                line.cancel().await;
+            }
         }
     }
 
@@ -186,18 +195,29 @@ impl FeedIo {
 
     fn seal(&mut self, connection: ConnectionId, counter: u64, frame: Outgoing) {
         let body = self.body_of(frame);
-        let frames = self.open.get(&connection).map(|open| open.frames.clone());
+        let frames = self.open.get(&connection).and_then(|open| open.frames.clone());
         if let Some(frames) = frames {
             let _ = crate::lock::effect(|| frames.send((counter, body)));
         }
     }
 
     /// The frames sealed before the close still go out: the writer ends when its queue is empty and the sender is gone, then the line closes.
-    fn close(&mut self, connection: ConnectionId, goodbye: bool) {
+    fn close(&mut self, connection: ConnectionId, goodbye: bool, drain: bool) {
+        if drain {
+            if let Some(open) = self.open.get_mut(&connection) {
+                open.closing.cancel();
+                open.frames = None;
+            }
+            return;
+        }
         let Some(open) = self.open.remove(&connection) else { return };
-        if goodbye {
-            open.closing.cancel();
-        } else {
+        if !goodbye {
+            open.cancel.cancel();
+        }
+    }
+
+    fn cancel(&mut self, connection: ConnectionId) {
+        if let Some(open) = self.open.remove(&connection) {
             open.cancel.cancel();
         }
     }
@@ -208,7 +228,8 @@ impl EffectRunner<Feed> for FeedIo {
         match effect {
             FeedEffect::Connect { connection } => self.connect(stamp, connection, back),
             FeedEffect::Seal { connection, counter, frame, .. } => self.seal(connection, counter, frame),
-            FeedEffect::Close { connection, goodbye } => self.close(connection, goodbye),
+            FeedEffect::Close { connection, goodbye, drain } => self.close(connection, goodbye, drain),
+            FeedEffect::Cancel { connection } => self.cancel(connection),
             other => (self.rest)(stamp, other),
         }
     }

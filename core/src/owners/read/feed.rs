@@ -27,6 +27,11 @@ const HANDSHAKE_SCHEDULE: u64 = 1 << 40;
 /// The schedule ids of the channel resubscribe timers: the connection and the slot of the channel under this bit.
 const CHANNEL_SCHEDULE: u64 = 1 << 41;
 
+/// The drain timer of a closing connection: both id bits, the connection under them.
+pub fn drain_schedule(connection: ConnectionId) -> ScheduleId { ScheduleId(HANDSHAKE_SCHEDULE | CHANNEL_SCHEDULE | connection) }
+
+pub fn is_drain_schedule(id: ScheduleId) -> bool { id.0 & (HANDSHAKE_SCHEDULE | CHANNEL_SCHEDULE) == HANDSHAKE_SCHEDULE | CHANNEL_SCHEDULE }
+
 /// The first frame the client seals is number 0 (the hello is no sealed frame).
 pub const FIRST_SEND_COUNTER: u64 = 0;
 /// The `ready` frame of the server is number 0 and the handshake consumes it: the first frame after it is number 1.
@@ -57,6 +62,8 @@ pub enum Mode {
     Off { gap: bool },
     Opening { gap: bool },
     Live,
+    /// `Closing` of a live feed with an established connection: the writer sends the queue until `Drain` or the end of the connection.
+    Draining { connection: ConnectionId },
     Ended,
 }
 
@@ -121,8 +128,10 @@ pub enum FeedEffect {
     Connect { connection: ConnectionId },
     /// The executor encrypts `frame` with the key `key_id` and the counter, both given by value.
     Seal { connection: ConnectionId, key_id: u64, counter: u64, frame: Outgoing },
-    /// Transport `Unsubscribe(connection)`: `goodbye` is set for an established connection, its queued frames still go out before the line closes.
-    Close { connection: ConnectionId, goodbye: bool },
+    /// Transport `Unsubscribe(connection)`: `goodbye` is set for an established connection, its queued frames still go out before the line closes. `drain` keeps the connection until `Cancel`.
+    Close { connection: ConnectionId, goodbye: bool, drain: bool },
+    /// Transport `cancel(connection)`: the drain is over.
+    Cancel { connection: ConnectionId },
     Drained(Drained),
     /// `SnapshotRequest{Feed, epoch}` to Network: the first `Online` of the epoch comes back addressed to Feed.
     SnapshotRequest { epoch: Epoch },
@@ -137,6 +146,8 @@ enum Fx {
     CancelDebounce,
     Resubscribe { connection: ConnectionId, attempt: u32 },
     CancelResubscribe { connection: ConnectionId },
+    Drain { connection: ConnectionId },
+    CancelDrain { connection: ConnectionId },
     ResubscribeChannel { connection: ConnectionId, channel: Channel, attempt: u32 },
     HandshakeDeadline { connection: ConnectionId },
     CancelHandshake { connection: ConnectionId },
@@ -173,6 +184,8 @@ pub enum FeedInput {
     Resubscribe { connection_id: ConnectionId },
     /// The timer of a `Connect`: a connection still in `Handshake` fails.
     HandshakeDeadline { connection_id: ConnectionId },
+    /// The timer of a closing connection: its drain is over.
+    Drain { connection_id: ConnectionId },
     Committed(Committed),
     /// The payloads of the events of a batch with the rows read at its landing: they arrive before the `Committed` of the batch.
     Observed { batch: BatchId, payloads: Vec<String> },
@@ -325,6 +338,8 @@ impl Feed {
                     out.push(Effect::Schedule { id: ScheduleId(CHANNEL_SCHEDULE | (connection << 16) | state.channel_slot(&channel)), after, input: FeedInput::ChannelResubscribe { connection_id: connection, channel } });
                 }
                 Fx::HandshakeDeadline { connection } => out.push(Effect::Schedule { id: ScheduleId(HANDSHAKE_SCHEDULE | connection), after: HANDSHAKE_DEADLINE, input: FeedInput::HandshakeDeadline { connection_id: connection } }),
+                Fx::Drain { connection } => out.push(Effect::Schedule { id: drain_schedule(connection), after: crate::owners::read::CLOSE_DRAIN, input: FeedInput::Drain { connection_id: connection } }),
+                Fx::CancelDrain { connection } => out.push(Effect::Cancel(drain_schedule(connection))),
                 Fx::CancelHandshake { connection } => out.push(Effect::Cancel(ScheduleId(HANDSHAKE_SCHEDULE | connection))),
                 Fx::Commit { batch, events } => out.push(Effect::Send(Outbound::new(peers.store, StoreInput::Commit(Self::commit_batch(state, batch, events))))),
                 Fx::Stale { model, keys, cause } => out.push(Effect::Send(Outbound::new(peers.windows, WindowsInput::Stale { model, keys, cause }))),
@@ -356,6 +371,10 @@ impl StateOwner for Feed {
         }
         if let FeedInput::Census { reply } = input {
             fx.push(Fx::Run(FeedEffect::Census { reply, subscriptions: state.census(), refused: state.refused }));
+            return Self::lower(state, fx);
+        }
+        if let Mode::Draining { connection } = state.mode {
+            state.draining(connection, &input, &mut fx);
             return Self::lower(state, fx);
         }
         if state.mode == Mode::Ended {
@@ -395,6 +414,7 @@ impl StateOwner for Feed {
             FeedInput::Dropped { connection_id } | FeedInput::SubscriptionEnded { connection_id } => state.dropped(connection_id, &mut fx),
             FeedInput::Resubscribe { connection_id } => state.resubscribe(connection_id, &mut fx),
             FeedInput::HandshakeDeadline { connection_id } => state.handshake_deadline(connection_id, &mut fx),
+            FeedInput::Drain { .. } => {}
             FeedInput::Observed { batch, payloads } => state.observed(batch, payloads),
             FeedInput::Committed(committed) => {
                 let landed = state.owns_landing(committed.batch);

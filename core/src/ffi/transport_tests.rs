@@ -48,7 +48,7 @@ impl Transport for Port {
 
 fn opened(refusal: Option<(RawFailure, Option<u16>)>) -> (ForeignTransport, Arc<Link>) {
     let link = Arc::new(Link::default());
-    (ForeignTransport::beside_session(Arc::new(Port { link: link.clone(), refusal, put: RawOutcome::response(200, "") }), Arc::new(crate::runtime::SystemClock)), link)
+    (ForeignTransport::beside_session(Arc::new(Port { link: link.clone(), refusal, put: RawOutcome::response(200, "") })), link)
 }
 
 const URL: &str = "wss://test.invalid/cable";
@@ -102,15 +102,13 @@ async fn a_dropped_socket_closes_its_connection_once() {
 }
 
 #[tokio::test]
-async fn a_closed_socket_is_cancelled_when_the_peer_does_not_answer_within_the_drain() {
-    let clock = crate::runtime::ManualClock::default();
-    let link = Arc::new(Link::default());
-    let transport = ForeignTransport::beside_session(Arc::new(Port { link: link.clone(), refusal: None, put: RawOutcome::response(200, "") }), Arc::new(clock.clone()));
+async fn a_closed_socket_is_cancelled_only_when_the_core_cancels_it() {
+    let (transport, link) = opened(None);
     let socket = transport.open_cable(URL).await.unwrap();
     socket.close().await;
-    clock.advance(crate::owners::read::CLOSE_DRAIN / 2);
-    assert_eq!(*crate::lock::lock(&link.cancels), 0);
-    yield_until("the connection is cancelled after the drain", || { clock.advance(crate::owners::read::CLOSE_DRAIN); *crate::lock::lock(&link.cancels) == 1 }).await;
+    assert_eq!(*crate::lock::lock(&link.cancels), 0, "close alone starts no timer and cancels nothing");
+    socket.cancel().await;
+    assert_eq!(*crate::lock::lock(&link.cancels), 1);
 }
 
 #[tokio::test]
@@ -148,7 +146,7 @@ async fn the_cable_carries_the_app_headers_and_the_library_user_agent() {
 async fn a_failed_put_is_interrupted_only_when_the_core_cancelled_it() {
     let failed = RawOutcome::failed(crate::transport::RawFailureKind::Io, "connection reset");
     let link = Arc::new(Link::default());
-    let transport = ForeignTransport::beside_session(Arc::new(Port { link, refusal: None, put: failed }), Arc::new(crate::runtime::SystemClock));
+    let transport = ForeignTransport::beside_session(Arc::new(Port { link, refusal: None, put: failed }));
     let request = |cancel: crate::transport::CancelToken| crate::transport::PutRequest {
         url: "https://files.test/blob".into(),
         headers: Vec::new(),
@@ -186,7 +184,7 @@ impl Transport for Held {
 async fn feed_open_after_abandon_closes() {
     let link = Arc::new(Link::default());
     let held = Arc::new(Held { link: link.clone(), entered: tokio::sync::Notify::new(), release: tokio::sync::Notify::new() });
-    let transport = Arc::new(ForeignTransport::beside_session(held.clone(), Arc::new(crate::runtime::SystemClock)));
+    let transport = Arc::new(ForeignTransport::beside_session(held.clone()));
     let opening = { let transport = transport.clone(); tokio::spawn(async move { transport.open_cable(URL).await.map(drop) }) };
     within(held.entered.notified()).await;
     opening.abort();

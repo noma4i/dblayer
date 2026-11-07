@@ -128,15 +128,15 @@ impl Drop for Opening {
     }
 }
 
-pub(super) struct ForeignTransport { port: Arc<dyn Transport>, endpoint: Option<String>, clock: Arc<dyn crate::runtime::Clock> }
+pub(super) struct ForeignTransport { port: Arc<dyn Transport>, endpoint: Option<String> }
 
 impl ForeignTransport {
-    pub(super) fn plain(port: Arc<dyn Transport>, endpoint: Option<String>, clock: Arc<dyn crate::runtime::Clock>) -> Result<Self, DbError> {
+    pub(super) fn plain(port: Arc<dyn Transport>, endpoint: Option<String>) -> Result<Self, DbError> {
         let endpoint = core::graphql_endpoint(&endpoint.unwrap_or_default()).map_err(DbError::from)?;
-        Ok(Self { port, endpoint: Some(endpoint), clock })
+        Ok(Self { port, endpoint: Some(endpoint) })
     }
 
-    pub(super) fn beside_session(port: Arc<dyn Transport>, clock: Arc<dyn crate::runtime::Clock>) -> Self { Self { port, endpoint: None, clock } }
+    pub(super) fn beside_session(port: Arc<dyn Transport>) -> Self { Self { port, endpoint: None } }
 
     async fn graphql(&self, request: core::GraphQLRequest, kind: core::ExchangeKind) -> Result<core::Response, core::TransportError> {
         let Some(endpoint) = &self.endpoint else { return Err(core::TransportError::Config { code: core::ConfigCode::InvalidRequest, detail: "the database has no GraphQL endpoint".into() }) };
@@ -169,7 +169,7 @@ pub(super) fn transport_error(error: DbError) -> core::TransportError {
 impl core::Upstream for ForeignTransport {
     async fn open_cable(&self, url: &str) -> Result<Arc<dyn core::CableSocket>, core::TransportError> {
         crate::lock::assert_no_library_lock("Transport::open_cable");
-        let mailbox = Arc::new(Mailbox::new(self.clock.clone()));
+        let mailbox = Arc::new(Mailbox::new());
         let headers = core::merge_headers(crate::lock::effect(|| self.port.app_headers()), HashMap::new());
         let (port, url, events) = (self.port.clone(), url.to_string(), mailbox.clone());
         Opening(Some(Box::pin(async move {

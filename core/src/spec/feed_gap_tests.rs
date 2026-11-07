@@ -69,6 +69,7 @@ fn mode_of(mode: f::Mode) -> Mode {
         f::Mode::Off { gap } => Mode::Off { gap },
         f::Mode::Opening { gap } => Mode::Opening { gap },
         f::Mode::Live => Mode::Live,
+        f::Mode::Draining { .. } => Mode::Draining,
         f::Mode::Ended => Mode::Ended,
     }
 }
@@ -129,6 +130,10 @@ impl Twin {
         match to {
             To::Active => self.state().active_connection().unwrap_or(8_888),
             To::Opening => self.state().opening_connection().unwrap_or(8_888),
+            To::Draining => match self.state().mode() {
+                f::Mode::Draining { connection } => connection,
+                _ => 8_888,
+            },
             To::Stray => 9_999,
         }
     }
@@ -197,6 +202,7 @@ impl Twin {
             Input::Tick => vec![FeedInput::Tick(Time(0))],
             Input::Online(on) => vec![FeedInput::Online { online: Online(*on), online_seq: u64::from(*on) }],
             Input::ModelsReset { models, generation } => vec![FeedInput::ModelsReset(ModelsReset { epoch: EPOCH, generation: *generation, models: models.clone() })],
+            Input::Drain { own } => vec![FeedInput::Drain { connection_id: self.connection(if *own { To::Draining } else { To::Stray }) }],
             Input::EpochEnded | Input::Closing => Vec::new(),
         }
     }
@@ -251,6 +257,7 @@ impl Twin {
                     });
                 }
                 Emitted::Run(FeedEffect::Close { .. }) => modelled.push(Effect::Close),
+                Emitted::Run(FeedEffect::Cancel { .. }) => modelled.push(Effect::Cancel),
                 Emitted::Run(FeedEffect::SnapshotRequest { .. }) => self.snapshots += 1,
                 Emitted::Run(FeedEffect::Drained(_)) => modelled.push(Effect::Drained),
                 Emitted::Run(FeedEffect::Census { .. }) => {}
@@ -261,6 +268,10 @@ impl Twin {
                 Emitted::Schedule { after, input, .. } if input.starts_with("HandshakeDeadline") => {
                     assert_eq!(after, f::HANDSHAKE_DEADLINE, "the deadline of a handshake");
                     assert_eq!(modelled.last(), Some(&Effect::Connect), "a deadline is set by a Connect: {input}");
+                }
+                Emitted::Schedule { after, input, .. } if input.starts_with("Drain") => {
+                    assert_eq!(after, crate::owners::read::CLOSE_DRAIN, "the drain is CLOSE_DRAIN");
+                    modelled.push(Effect::ScheduleDrain);
                 }
                 Emitted::Schedule { input, .. } if input.starts_with("Resubscribe") => modelled.push(Effect::ScheduleResubscribe),
                 Emitted::Send { to: STORE, input } => {
@@ -283,6 +294,7 @@ impl Twin {
                         seen.push(Obs::Gap { stream });
                     }
                 }
+                Emitted::Cancel(id) if f::is_drain_schedule(id) => modelled.push(Effect::CancelDrain),
                 Emitted::Send { .. } | Emitted::Schedule { .. } | Emitted::Cancel(_) | Emitted::Broadcast(_) => {}
             }
         }

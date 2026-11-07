@@ -18,6 +18,8 @@ pub trait CableLine: Send + Sync {
     async fn send(&self, counter: u64, body: Value) -> Result<(), TransportError>;
     async fn next(&self) -> Incoming;
     async fn close(&self);
+    /// The peer did not answer the close: the socket is dropped at once.
+    async fn cancel(&self);
 }
 
 /// Opens a socket and runs the handshake of the cable.
@@ -122,6 +124,8 @@ impl CableLine for SocketLine {
     }
 
     async fn close(&self) { self.socket.close().await; }
+
+    async fn cancel(&self) { self.socket.cancel().await; }
 }
 
 #[async_trait]

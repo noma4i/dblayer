@@ -45,6 +45,7 @@ struct Line {
     incoming: tokio::sync::Mutex<mpsc::UnboundedReceiver<Incoming>>,
     sent: Arc<Mutex<Vec<(u64, Value)>>>,
     closed: Arc<AtomicUsize>,
+    cancels: Arc<AtomicUsize>,
 }
 
 #[async_trait]
@@ -57,6 +58,8 @@ impl CableLine for Line {
     async fn next(&self) -> Incoming { crate::test_wait::within(async { self.incoming.lock().await.recv().await }).await.unwrap_or(Incoming::Closed { code: 1006, reason: String::new() }) }
 
     async fn close(&self) { self.closed.fetch_add(1, Ordering::SeqCst); }
+
+    async fn cancel(&self) { self.cancels.fetch_add(1, Ordering::SeqCst); }
 }
 
 struct Lines(Mutex<VecDeque<Arc<Line>>>);
@@ -73,12 +76,13 @@ struct Peer {
     frames: mpsc::UnboundedSender<Incoming>,
     sent: Arc<Mutex<Vec<(u64, Value)>>>,
     closed: Arc<AtomicUsize>,
+    cancels: Arc<AtomicUsize>,
 }
 
 fn line() -> (Arc<Line>, Peer) {
     let (frames, incoming) = mpsc::unbounded_channel();
-    let (sent, closed) = (Arc::new(Mutex::new(Vec::new())), Arc::new(AtomicUsize::new(0)));
-    (Arc::new(Line { incoming: tokio::sync::Mutex::new(incoming), sent: sent.clone(), closed: closed.clone() }), Peer { frames, sent, closed })
+    let (sent, closed, cancels) = (Arc::new(Mutex::new(Vec::new())), Arc::new(AtomicUsize::new(0)), Arc::new(AtomicUsize::new(0)));
+    (Arc::new(Line { incoming: tokio::sync::Mutex::new(incoming), sent: sent.clone(), closed: closed.clone(), cancels: cancels.clone() }), Peer { frames, sent, closed, cancels })
 }
 
 fn confirmed(counter: u64) -> Incoming { Incoming::Frame { counter, body: json!({"t":"subscribed", "id":"1"}) } }
@@ -91,7 +95,7 @@ fn rig_over(lines: Vec<Arc<Line>>, gate: Arc<crate::runtime::EpochGate>) -> (Det
     let runtime = runtime();
     let batches = Batches::default();
     let (_, rest) = collector();
-    let io = FeedIo::new(Arc::new(Lines(Mutex::new(lines.into()))), Arc::new(Models), runtime.handle().clone(), rest, (Arc::new(crate::runtime::SystemClock), gate));
+    let io = FeedIo::new(Arc::new(Lines(Mutex::new(lines.into()))), Arc::new(Models), runtime.handle().clone(), rest, gate);
     let mut det = DetScheduler::new(1);
     let store = det.add::<BatchPeer>("store", batches.clone(), Discard);
     let windows = det.add::<Sink<Windows>>("windows", Default::default(), Discard);
@@ -121,6 +125,26 @@ fn feed_io_frames_commit() {
     assert_eq!(sent.len(), 1);
     assert_eq!((sent[0].0, sent[0].1["t"].as_str(), sent[0].1["id"].as_str(), sent[0].1["variables"]["channel"].as_str()), (f::FIRST_SEND_COUNTER, Some("subscribe"), Some("1"), Some("1")), "the subscribe frame is sealed with the first send counter");
     assert_eq!((saw_input(&det, "HandshakeDone"), saw_input(&det, "FrameOpened")), (1, 2), "one handshake, the frames confirmed and next");
+}
+
+#[test]
+fn feed_io_close_drains_then_cancels_once() {
+    let (line, peer) = line();
+    let (mut det, feed, _batches, _runtime) = rig(vec![line]);
+    pump(&mut det, feed, |det| det.state(feed).is_some_and(|state| state.mode() == Mode::Live));
+    peer.frames.send(confirmed(1)).unwrap();
+    det.close();
+    let closed = peer.closed.clone();
+    pump(&mut det, feed, |_| closed.load(Ordering::SeqCst) == 1);
+    assert_eq!((peer.cancels.load(Ordering::SeqCst), saw_input(&det, "Drain")), (0, 0), "the queue is sent and the line is closed, the drain runs");
+    let half = crate::owners::read::CLOSE_DRAIN.as_millis() as u64 / 2;
+    det.tick(crate::runtime::Time(half));
+    det.run_until_quiet(10_000).expect("quiet");
+    assert_eq!((peer.cancels.load(Ordering::SeqCst), saw_input(&det, "Drain")), (0, 0), "half of the drain: no cancel");
+    det.tick(crate::runtime::Time(2 * half));
+    let cancels = peer.cancels.clone();
+    pump(&mut det, feed, |_| cancels.load(Ordering::SeqCst) == 1);
+    assert_eq!((peer.closed.load(Ordering::SeqCst), saw_input(&det, "Drain"), det.state(feed).map(|state| state.mode())), (1, 1, Some(Mode::Ended)), "one close, one drain tick, one cancel");
 }
 
 #[test]
@@ -213,7 +237,7 @@ fn feed_io_close_cancels_handshake() {
     let runtime = runtime();
     let (dropped, started) = (Arc::new(AtomicUsize::new(0)), Arc::new(AtomicUsize::new(0)));
     let (_, rest) = collector();
-    let io = FeedIo::new(Arc::new(Hanging(dropped.clone(), started.clone())), Arc::new(Models), runtime.handle().clone(), rest, (Arc::new(crate::runtime::SystemClock), super::rig::open_gate(1)));
+    let io = FeedIo::new(Arc::new(Hanging(dropped.clone(), started.clone())), Arc::new(Models), runtime.handle().clone(), rest, super::rig::open_gate(1));
     let mut det = DetScheduler::new(1);
     let store = det.add::<BatchPeer>("store", Batches::default(), Discard);
     let windows = det.add::<Sink<Windows>>("windows", Default::default(), Discard);

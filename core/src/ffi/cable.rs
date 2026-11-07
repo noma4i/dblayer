@@ -3,7 +3,6 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use async_trait::async_trait;
 use tokio::sync::Notify;
-use crate::runtime::Clock;
 use crate::transport::{RawFailure, SocketEvent, TransportError};
 
 pub(crate) const MAILBOX_FRAMES: usize = 256;
@@ -17,7 +16,7 @@ const ABNORMAL: u16 = 1006;
 #[uniffi::export(rust, foreign)]
 pub trait PlatformSocket: Send + Sync {
     fn send(&self, text: String) -> bool;
-    /// Sends a close frame with `code`. The core calls `cancel` after `CLOSE_DRAIN` when the peer has not answered.
+    /// Sends a close frame with `code`. The core calls `cancel` when the drain of the closed connection ends.
     fn close(&self, code: u16, reason: String);
     /// Ends the connection without a close handshake.
     fn cancel(&self);
@@ -50,7 +49,6 @@ pub(super) struct Mailbox {
     queue: Mutex<Queue>,
     ready: Notify,
     connection: Mutex<Option<Arc<dyn PlatformSocket>>>,
-    clock: Arc<dyn Clock>,
 }
 
 impl Drop for Mailbox {
@@ -64,8 +62,8 @@ enum Push {
 }
 
 impl Mailbox {
-    pub(super) fn new(clock: Arc<dyn Clock>) -> Self {
-        Self { queue: Mutex::default(), ready: Notify::new(), connection: Mutex::default(), clock }
+    pub(super) fn new() -> Self {
+        Self { queue: Mutex::default(), ready: Notify::new(), connection: Mutex::default() }
     }
 
     fn push(&self, event: SocketEvent) -> Push {
@@ -98,7 +96,7 @@ impl Mailbox {
 
     fn close_connection(&self, code: u16, reason: &str) {
         let connection = crate::lock::acquire(&self.connection).clone();
-        if let Some(connection) = connection { crate::lock::effect(|| close_bounded(&connection, &self.clock, code, reason)); }
+        if let Some(connection) = connection { crate::lock::effect(|| connection.close(code, reason.into())); }
     }
 
     pub(super) fn is_ended(&self) -> bool { crate::lock::acquire(&self.queue).ended }
@@ -143,16 +141,6 @@ impl CableEvents for Mailbox {
     }
 }
 
-fn close_bounded(connection: &Arc<dyn PlatformSocket>, clock: &Arc<dyn Clock>, code: u16, reason: &str) {
-    connection.close(code, reason.into());
-    let Ok(executor) = super::database::executor() else { return };
-    let (connection, clock) = (connection.clone(), clock.clone());
-    crate::task::spawn_on(executor.handle(), async move {
-        clock.sleep(crate::owners::read::CLOSE_DRAIN).await;
-        crate::lock::effect(|| connection.cancel());
-    });
-}
-
 pub(super) struct ForeignSocket {
     connection: Arc<dyn PlatformSocket>,
     mailbox: Arc<Mailbox>,
@@ -170,7 +158,7 @@ impl ForeignSocket {
     fn shut(&self, code: u16) {
         if self.closed.swap(true, Ordering::SeqCst) { return; }
         crate::lock::assert_no_library_lock("PlatformSocket::close");
-        close_bounded(&self.connection, &self.mailbox.clock, code, "");
+        self.connection.close(code, String::new());
     }
 }
 
@@ -198,4 +186,6 @@ impl crate::transport::CableSocket for ForeignSocket {
         self.shut(NORMAL);
         self.mailbox.shut();
     }
+
+    async fn cancel(&self) { crate::lock::effect(|| self.connection.cancel()); }
 }

@@ -73,7 +73,7 @@ impl FeedState {
         if self.want.is_empty() {
             self.mode = Mode::Off { gap: false };
             self.flush_pending(fx);
-            self.close_all(fx);
+            self.close_all(false, fx);
         }
     }
 
@@ -133,7 +133,7 @@ impl FeedState {
 
     pub(super) fn protocol_failed(&mut self, connection: ConnectionId, fx: &mut Vec<Fx>) {
         let goodbye = self.connection_mut(connection).is_some_and(|found| found.goodbye());
-        fx.push(Fx::Run(FeedEffect::Close { connection, goodbye }));
+        fx.push(Fx::Run(FeedEffect::Close { connection, goodbye, drain: false }));
         self.dropped(connection, fx);
     }
 
@@ -249,7 +249,7 @@ impl FeedState {
             Mode::Live => {
                 self.mode = Mode::Off { gap: false };
                 self.flush_pending(fx);
-                self.close_all(fx);
+                self.close_all(false, fx);
             }
             _ => {}
         }
@@ -257,7 +257,7 @@ impl FeedState {
 
     /// `Opening` -> `Off`: `held` is lost, the connection closes.
     pub(super) fn leave(&mut self, fx: &mut Vec<Fx>) {
-        self.close_all(fx);
+        self.close_all(false, fx);
         let lost = self.lose_held(None, fx);
         Self::stale_all(&lost, fx);
     }
@@ -280,7 +280,7 @@ impl FeedState {
             Mode::Live if !online => {
                 self.mode = Mode::Off { gap: true };
                 self.flush_pending(fx);
-                self.close_all(fx);
+                self.close_all(false, fx);
             }
             _ => {}
         }
@@ -297,16 +297,36 @@ impl FeedState {
     }
 
     pub(super) fn end(&mut self, drained: bool, fx: &mut Vec<Fx>) {
-        self.mode = Mode::Ended;
+        let draining = match self.active.as_ref() {
+            Some(active) if drained && self.mode == Mode::Live && active.goodbye() => Some(active.id),
+            _ => None,
+        };
         self.refused = 0;
-        self.close_all(fx);
+        self.close_all(draining.is_some(), fx);
+        self.mode = draining.map_or(Mode::Ended, |connection| Mode::Draining { connection });
         self.held.clear();
         if !self.pending.is_empty() {
             self.pending.clear();
             fx.push(Fx::CancelDebounce);
         }
-        if drained && !std::mem::replace(&mut self.drained, true) {
+        if drained && draining.is_none() && !std::mem::replace(&mut self.drained, true) {
             fx.push(Fx::Run(FeedEffect::Drained(Drained { owner: "feed" })));
         }
+    }
+
+    /// `Draining`: the timer, or the end of the connection, cancels it once. Every other input changes nothing.
+    pub(super) fn draining(&mut self, connection: ConnectionId, input: &FeedInput, fx: &mut Vec<Fx>) {
+        let timer = match input {
+            FeedInput::Drain { connection_id } if *connection_id == connection => false,
+            FeedInput::Dropped { connection_id } | FeedInput::SubscriptionEnded { connection_id } | FeedInput::ChannelLost { connection_id, .. } if *connection_id == connection => true,
+            _ => return,
+        };
+        self.mode = Mode::Ended;
+        fx.push(Fx::Run(FeedEffect::Cancel { connection }));
+        if timer {
+            fx.push(Fx::CancelDrain { connection });
+        }
+        self.drained = true;
+        fx.push(Fx::Run(FeedEffect::Drained(Drained { owner: "feed" })));
     }
 }
