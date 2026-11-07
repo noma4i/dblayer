@@ -181,6 +181,9 @@ extension BridgeProbeTests {
         }
         #expect(try await Asset.find("a1").current() != nil)
         #expect(try await Asset.find("a2").current() != nil)
+        await eventually("the lost step is requested again") {
+          server.requests.filter { $0.body["operationName"] as? String == "CreateBlob" && ($0.body["variables"] as? [String: Any])?["filename"] as? String == "1.jpg" }.count == 2
+        }
       } else {
         #expect(try await confirmedIds(receipt) == [nil, "a1", "a2"])
       }
