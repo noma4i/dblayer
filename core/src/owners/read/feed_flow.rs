@@ -132,7 +132,8 @@ impl FeedState {
     }
 
     pub(super) fn protocol_failed(&mut self, connection: ConnectionId, fx: &mut Vec<Fx>) {
-        fx.push(Fx::Run(FeedEffect::Close { connection }));
+        let goodbye = self.connection_mut(connection).is_some_and(|found| found.goodbye());
+        fx.push(Fx::Run(FeedEffect::Close { connection, goodbye }));
         self.dropped(connection, fx);
     }
 

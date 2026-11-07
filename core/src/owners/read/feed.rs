@@ -101,6 +101,10 @@ struct Connection {
     protocol: Protocol,
 }
 
+impl Connection {
+    fn goodbye(&self) -> bool { matches!(self.protocol, Protocol::Established { .. }) }
+}
+
 /// The frames Feed sends over an `Established` connection.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Outgoing {
@@ -117,8 +121,8 @@ pub enum FeedEffect {
     Connect { connection: ConnectionId },
     /// The executor encrypts `frame` with the key `key_id` and the counter, both given by value.
     Seal { connection: ConnectionId, key_id: u64, counter: u64, frame: Outgoing },
-    /// Transport `Unsubscribe(connection)`.
-    Close { connection: ConnectionId },
+    /// Transport `Unsubscribe(connection)`: `goodbye` is set for an established connection, its queued frames still go out before the line closes.
+    Close { connection: ConnectionId, goodbye: bool },
     Drained(Drained),
     /// `SnapshotRequest{Feed, epoch}` to Network: the first `Online` of the epoch comes back addressed to Feed.
     SnapshotRequest { epoch: Epoch },

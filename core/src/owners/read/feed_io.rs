@@ -3,7 +3,6 @@
 //! counter the effect names. The counters and the protocol transitions belong to `Feed`. A closed connection gives no more inputs.
 
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -34,7 +33,6 @@ struct Open {
     cancel: CancelToken,
     /// Set at `Close`: the writer gets `CLOSE_DRAIN` to send the queue, then the line closes.
     closing: CancelToken,
-    established: Arc<AtomicBool>,
 }
 
 type Connections = HashMap<ConnectionId, Open>;
@@ -74,10 +72,10 @@ impl FeedIo {
             if admit(epoch).is_err() { return back.reply(stamp, FeedInput::SubscriptionEnded { connection_id: connection }); }
         }
         let cancel = CancelToken::new();
-        let (closing, established) = (CancelToken::new(), Arc::new(AtomicBool::new(false)));
+        let closing = CancelToken::new();
         let (frames, queued) = mpsc::unbounded_channel::<(u64, Value)>();
         self.open.retain(|_, open| !open.cancel.is_cancelled());
-        self.open.insert(connection, Open { frames, cancel: cancel.clone(), closing: closing.clone(), established: established.clone() });
+        self.open.insert(connection, Open { frames, cancel: cancel.clone(), closing: closing.clone() });
         let (lines, codec, back, clock, gate) = (self.lines.clone(), self.codec.clone(), back.clone(), self.clock.clone(), self.gate.clone());
         let epoch = match stamp { EpochStamp::Epoch(epoch) => Some(epoch), EpochStamp::Control => None };
         let token = cancel.clone();
@@ -89,12 +87,12 @@ impl FeedIo {
         let launch = self.counted.as_ref().map(crate::runtime::Handle::launch);
         spawn_on(Carry::Detached, &self.handle, crate::runtime::counted(launch, async move {
             let ended = cancel.clone();
-            Self::run(lines, codec, (clock, gate, epoch), connection, (cancel, closing, established), queued, reply).await;
+            Self::run(lines, codec, (clock, gate, epoch), connection, (cancel, closing), queued, reply).await;
             ended.cancel();
         }));
     }
 
-    async fn run(lines: Arc<dyn CableLines>, codec: Arc<dyn FeedCodec>, (clock, gate, epoch): (Arc<dyn crate::runtime::Clock>, Arc<crate::runtime::EpochGate>, Option<crate::runtime::Epoch>), connection: ConnectionId, (cancel, closing, established): (CancelToken, CancelToken, Arc<AtomicBool>), mut queued: mpsc::UnboundedReceiver<(u64, Value)>, reply: impl Fn(FeedInput) + Clone + Send + 'static) {
+    async fn run(lines: Arc<dyn CableLines>, codec: Arc<dyn FeedCodec>, (clock, gate, epoch): (Arc<dyn crate::runtime::Clock>, Arc<crate::runtime::EpochGate>, Option<crate::runtime::Epoch>), connection: ConnectionId, (cancel, closing): (CancelToken, CancelToken), mut queued: mpsc::UnboundedReceiver<(u64, Value)>, reply: impl Fn(FeedInput) + Clone + Send + 'static) {
         {
             let line = tokio::select! {
                 biased;
@@ -107,7 +105,6 @@ impl FeedIo {
                 Err(TransportError::Decode(_)) => return reply(FeedInput::ProtocolError { connection_id: connection, reason: ProtocolReason::Handshake }),
                 Err(_) => return reply(FeedInput::Dropped { connection_id: connection }),
             };
-            established.store(true, Ordering::SeqCst);
             reply(FeedInput::HandshakeDone { connection_id: connection, key_id: connection });
             let writer = {
                 let (line, reply) = (line.clone(), reply.clone());
@@ -196,9 +193,9 @@ impl FeedIo {
     }
 
     /// The frames sealed before the close still go out: the writer ends when its queue is empty and the sender is gone, then the line closes.
-    fn close(&mut self, connection: ConnectionId) {
+    fn close(&mut self, connection: ConnectionId, goodbye: bool) {
         let Some(open) = self.open.remove(&connection) else { return };
-        if open.established.load(Ordering::SeqCst) {
+        if goodbye {
             open.closing.cancel();
         } else {
             open.cancel.cancel();
@@ -211,7 +208,7 @@ impl EffectRunner<Feed> for FeedIo {
         match effect {
             FeedEffect::Connect { connection } => self.connect(stamp, connection, back),
             FeedEffect::Seal { connection, counter, frame, .. } => self.seal(connection, counter, frame),
-            FeedEffect::Close { connection } => self.close(connection),
+            FeedEffect::Close { connection, goodbye } => self.close(connection, goodbye),
             other => (self.rest)(stamp, other),
         }
     }

@@ -134,7 +134,7 @@ impl FeedState {
         }
         fx.push(Fx::CancelResubscribe { connection: connection.id });
         fx.push(Fx::CancelHandshake { connection: connection.id });
-        fx.push(Fx::Run(FeedEffect::Close { connection: connection.id }));
+        fx.push(Fx::Run(FeedEffect::Close { connection: connection.id, goodbye: connection.goodbye() }));
     }
 
     /// Transport `Unsubscribe` of both connections, the active one first.
