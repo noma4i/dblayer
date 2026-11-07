@@ -96,21 +96,26 @@ fn xfer_restoring_register() {
 
 #[test]
 fn xfer_prop_online_before_declaration() {
-    #[derive(Clone, Copy, Debug)]
-    enum Event { Online, Restored, RestoreReady, Register }
+    #[derive(Clone, Copy, Debug, PartialEq)]
+    enum Event { Online, Offline, Restored, RestoreReady, Register }
     use Event::*;
-    for order in [[Online, Restored, RestoreReady, Register], [Restored, Online, RestoreReady, Register], [Restored, RestoreReady, Register, Online]] {
+    let orders: Vec<_> = permutations(&[Online, Offline, Restored, RestoreReady, Register]).into_iter().filter(|order| order.iter().position(|e| *e == Restored) < order.iter().position(|e| *e == RestoreReady)).collect();
+    assert_eq!(orders.len(), 60);
+    for order in orders {
         let mut twin = Twin::bare(1);
-        for event in order {
-            match event {
-                Online => { twin.online(true); }
-                Restored => { twin.post(TransferInput::Restored { uploads: vec![partly(1, KEY)], outcomes: Default::default(), orphans: Vec::new(), batches: Default::default() }); }
-                RestoreReady => { twin.post(TransferInput::RestoreReady { epoch: EPOCH }); }
-                Register => { twin.post(TransferInput::RegisterOperations { declarations: vec![("Moment".into(), "upload".into())] }); }
-            }
+        let mut steps = 0;
+        for event in order.iter().copied().chain([Online]) {
+            let out = match event {
+                Online => twin.online(true),
+                Offline => twin.online(false),
+                Restored => twin.post(TransferInput::Restored { uploads: vec![partly(1, KEY)], outcomes: Default::default(), orphans: Vec::new(), batches: Default::default() }),
+                RestoreReady => twin.post(TransferInput::RestoreReady { epoch: EPOCH }),
+                Register => twin.post(TransferInput::RegisterOperations { declarations: vec![("Moment".into(), "upload".into())] }),
+            };
+            steps += out.steps().len();
         }
-        assert_eq!(twin.stage(1), TransferStage::PersistingAttempt, "{order:?}: the step of the restored transfer starts once it is declared and the network is up");
-        assert_eq!(twin.commit().steps().len(), 1, "{order:?}: one physical step");
+        steps += twin.commit().steps().len();
+        assert_eq!(steps, 1, "{order:?}: the saved step of the restored transfer goes out once");
     }
 }
 

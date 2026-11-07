@@ -61,6 +61,7 @@ impl Hold {
 
 pub(super) struct Call {
     pub(super) operation: String,
+    pub(super) pair: (String, Option<i64>),
     pub(super) variables: Value,
     pub(super) purpose: NetworkPurpose,
 }
@@ -101,6 +102,7 @@ impl Script {
     }
     pub(super) fn names(&self) -> Vec<String> { self.calls.lock().unwrap().iter().map(|call| call.operation.clone()).collect() }
     pub(super) fn count(&self, operation: &str) -> usize { self.calls.lock().unwrap().iter().filter(|call| call.operation == operation).count() }
+    pub(super) fn pairs(&self, operation: &str, filename: &str) -> Vec<(String, Option<i64>)> { self.calls.lock().unwrap().iter().filter(|call| call.operation == operation && call.variables["filename"] == filename).map(|call| call.pair.clone()).collect() }
     pub(super) fn variables(&self, operation: &str) -> Vec<Value> { self.calls.lock().unwrap().iter().filter(|call| call.operation == operation).map(|call| call.variables.clone()).collect() }
     pub(super) fn purposes(&self, operation: &str) -> Vec<NetworkPurpose> { self.calls.lock().unwrap().iter().filter(|call| call.operation == operation).map(|call| call.purpose).collect() }
 }
@@ -115,7 +117,7 @@ impl FakeHttp for ScriptedHttp {
     async fn post(&self, path: String, body: String, purpose: NetworkPurpose) -> Result<EncryptedReply, DbError> {
         let request = decrypt_request(&body).unwrap();
         let Some(operation) = request["body"]["operationName"].as_str().map(str::to_string) else { return self.session.post(path, body, purpose).await };
-        self.script.calls.lock().unwrap().push(Call { operation: operation.clone(), variables: request["body"]["variables"].clone(), purpose });
+        self.script.calls.lock().unwrap().push(Call { operation: operation.clone(), pair: (request["requestId"].as_str().unwrap_or_default().to_string(), request["sequence"].as_i64()), variables: request["body"]["variables"].clone(), purpose });
         let mut answer = self.script.answer(&operation, request["requestId"].as_str().unwrap_or_default(), request["sequence"].as_i64());
         loop {
             match answer {
@@ -128,7 +130,7 @@ impl FakeHttp for ScriptedHttp {
                 Some(Answer::Lost) => return Err(DbError::Network { detail: "lost answer".into() }),
                 Some(Answer::Status(status)) => return Ok(EncryptedReply { status, body: String::new() }),
                 Some(Answer::Data(text)) => return Ok(EncryptedReply { status: 200, body: seal_response(&request, request["sequence"].as_i64(), serde_json::from_str(&text).unwrap()) }),
-                None => return Ok(EncryptedReply { status: 200, body: seal_response(&request, request["sequence"].as_i64(), json!({"errors":[{"message":format!("unscripted {operation}")}]})) }),
+                None => panic!("the request {operation} has no scripted answer"),
             }
         }
     }
@@ -172,6 +174,18 @@ impl FakeTransport for Puts {
     }
 }
 
+/// The order of the inputs the platform gives an opening database. A restored session needs no session call: that step is then a no-op.
+#[derive(Clone, Copy, Debug)]
+pub(super) enum OpenOrder {
+    OnlineFirst,
+    RegisterFirst,
+    OnlineBetweenRegisterAndSession,
+}
+
+impl OpenOrder {
+    pub(super) const ALL: [OpenOrder; 3] = [Self::OnlineFirst, Self::RegisterFirst, Self::OnlineBetweenRegisterAndSession];
+}
+
 pub(super) struct Stand {
     pub(super) rig: SessionRig,
     pub(super) script: Arc<Script>,
@@ -183,7 +197,9 @@ impl Stand {
 
     pub(super) async fn open(&self, path: Option<&Path>, operations: &[(&str, &str)]) -> Arc<Database> { self.open_with(path, operations, None).await }
 
-    pub(super) async fn open_with(&self, path: Option<&Path>, operations: &[(&str, &str)], clock: Option<Arc<TestClock>>) -> Arc<Database> {
+    pub(super) async fn open_with(&self, path: Option<&Path>, operations: &[(&str, &str)], clock: Option<Arc<TestClock>>) -> Arc<Database> { self.open_ordered(path, operations, clock, OpenOrder::OnlineFirst).await }
+
+    pub(super) async fn open_ordered(&self, path: Option<&Path>, operations: &[(&str, &str)], clock: Option<Arc<TestClock>>, order: OpenOrder) -> Arc<Database> {
         let restored = self.rig.credentials.inner.value().is_some();
         let models = include_str!("upload_wrapper_models.json").to_string();
         let ports = OpenPorts { transport: Some(self.puts.clone()), encrypted: Some(EncryptedConfig { origin: origin().into(), server_key: public_key_der_b64().into(), pin: pin().into(), ..crate::transport::encrypted::protocol_tests::config() }), credentials: Some(self.rig.credentials.clone()), http: Some(Arc::new(ScriptedHttp { script: self.script.clone(), session: ThroughServer(self.rig.server.clone()) })), endpoint: Some(crate::ffi::FAKE_ENDPOINT.into()), ..Default::default() };
@@ -195,10 +211,12 @@ impl Stand {
         .unwrap();
         let named: Vec<(&str, &str)> = STEPS.iter().copied().filter(|(name, _)| !operations.iter().any(|(declared, _)| declared == name)).chain(operations.iter().copied()).collect();
         let declared: Vec<Value> = named.iter().map(|(name, document)| json!({"name": name, "document": document})).collect();
-        database.set_online(true).unwrap();
-        database.register_operations(Value::Array(declared).to_string()).await.unwrap();
-        if !restored {
-            super::rig_tests::bound(database.session_call("social".into(), SOCIAL_BODY.into())).await.unwrap();
+        let register = || database.register_operations(Value::Array(declared.clone()).to_string());
+        let session = || async { if !restored { super::rig_tests::bound(database.session_call("social".into(), SOCIAL_BODY.into())).await.unwrap(); } };
+        match order {
+            OpenOrder::OnlineFirst => { database.set_online(true).unwrap(); register().await.unwrap(); session().await; }
+            OpenOrder::RegisterFirst => { register().await.unwrap(); session().await; database.set_online(true).unwrap(); }
+            OpenOrder::OnlineBetweenRegisterAndSession => { register().await.unwrap(); database.set_online(true).unwrap(); session().await; }
         }
         database
     }

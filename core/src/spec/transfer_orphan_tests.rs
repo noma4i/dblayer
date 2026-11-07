@@ -58,12 +58,28 @@ fn xfer_orphan_abort_sent() {
 
 #[test]
 fn xfer_orphan_abort_waits_declaration() {
-    let mut twin = Twin::bare(1);
-    twin.post(TransferInput::Restored { uploads: Vec::new(), outcomes: Default::default(), orphans: vec![("u9".into(), KEY.into())], batches: Default::default() });
-    twin.post(TransferInput::RestoreReady { epoch: EPOCH });
-    assert!(twin.online(true).orphan_aborts().is_empty(), "an undeclared abort operation would be refused for good and drop the orphan");
-    let out = twin.post(TransferInput::RegisterOperations { declarations: vec![("Moment".into(), "upload".into())] });
-    assert_eq!(out.orphan_aborts(), vec!["u9".to_string()]);
+    #[derive(Clone, Copy, Debug, PartialEq)]
+    enum Event { Online, Offline, Restored, RestoreReady, Register }
+    use Event::*;
+    let orders: Vec<_> = permutations(&[Online, Offline, Restored, RestoreReady, Register]).into_iter().filter(|order| order.iter().position(|e| *e == Restored) < order.iter().position(|e| *e == RestoreReady)).collect();
+    for order in orders {
+        let mut twin = Twin::bare(1);
+        let mut aborts = Vec::new();
+        let mut declared = false;
+        for event in order.iter().copied().chain([Online]) {
+            let out = match event {
+                Online => twin.online(true),
+                Offline => twin.online(false),
+                Restored => twin.post(TransferInput::Restored { uploads: Vec::new(), outcomes: Default::default(), orphans: vec![("u9".into(), KEY.into())], batches: Default::default() }),
+                RestoreReady => twin.post(TransferInput::RestoreReady { epoch: EPOCH }),
+                Register => twin.post(TransferInput::RegisterOperations { declarations: vec![("Moment".into(), "upload".into())] }),
+            };
+            declared |= event == Register;
+            assert!(declared || out.orphan_aborts().is_empty(), "{order:?} at {event:?}: an abort before the declaration would be refused for good, got {:?}", out.orphan_aborts());
+            aborts.extend(out.orphan_aborts());
+        }
+        assert_eq!(aborts, ["u9".to_string()], "{order:?}: the orphan abort goes out once");
+    }
 }
 
 #[test]

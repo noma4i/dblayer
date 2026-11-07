@@ -60,16 +60,20 @@ impl Twin {
     fn replies(&self) -> Vec<bool> { self.history.iter().filter_map(|effect| match effect { NetworkEffect::Reply { closed, .. } => Some(*closed), _ => None }).collect() }
 }
 
-#[test]
-fn net_set_online_changed() { assert_eq!(Twin::new().feed(Input::SetOnline(true)), vec![RefEffect::Broadcast(true, 1)]); }
+/// Every step feeds the owner and expects these effects.
+fn echoes(steps: Vec<(Input, Vec<RefEffect>)>) {
+    let mut twin = Twin::new();
+    for (input, want) in steps {
+        let label = format!("{input:?}");
+        assert_eq!(twin.feed(input), want, "{label}");
+    }
+}
 
 #[test]
-fn net_set_online_same() {
-    let mut twin = Twin::new();
-    assert!(twin.feed(Input::SetOnline(false)).is_empty(), "online is false at open");
-    twin.feed(Input::SetOnline(true));
-    assert!(twin.feed(Input::SetOnline(true)).is_empty());
-}
+fn net_set_online_changed() { echoes(vec![(Input::SetOnline(true), vec![RefEffect::Broadcast(true, 1)])]); }
+
+#[test]
+fn net_set_online_same() { echoes(vec![(Input::SetOnline(false), vec![]), (Input::SetOnline(true), vec![RefEffect::Broadcast(true, 1)]), (Input::SetOnline(true), vec![])]); }
 
 #[test]
 fn net_foreground() {
@@ -79,15 +83,10 @@ fn net_foreground() {
 }
 
 #[test]
-fn net_power_saving_changed() { assert_eq!(Twin::new().feed(Input::PowerSaving(true)), vec![RefEffect::PowerSaving(true)]); }
+fn net_power_saving_changed() { echoes(vec![(Input::PowerSaving(true), vec![RefEffect::PowerSaving(true)])]); }
 
 #[test]
-fn net_power_saving_same() {
-    let mut twin = Twin::new();
-    assert!(twin.feed(Input::PowerSaving(false)).is_empty(), "saving is false at open");
-    twin.feed(Input::PowerSaving(true));
-    assert!(twin.feed(Input::PowerSaving(true)).is_empty());
-}
+fn net_power_saving_same() { echoes(vec![(Input::PowerSaving(false), vec![]), (Input::PowerSaving(true), vec![RefEffect::PowerSaving(true)]), (Input::PowerSaving(true), vec![])]); }
 
 #[test]
 fn net_snapshot_request() {
@@ -112,7 +111,7 @@ fn net_snapshot_windows() {
 }
 
 #[test]
-fn net_closing() { assert_eq!(Twin::new().feed(Input::Closing), vec![RefEffect::Drained]); }
+fn net_closing() { echoes(vec![(Input::Closing, vec![RefEffect::Drained])]); }
 
 #[test]
 fn net_closed() {
