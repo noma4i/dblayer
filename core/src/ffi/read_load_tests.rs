@@ -180,7 +180,7 @@ async fn net_prop_offline_decided_by_owner() {
     assert!(matches!(more(&db).await, Err(DbError::Offline { detail }) if detail == "Moment.feed load more needs the network"));
     assert_eq!(transport.requests(), 0, "no request leaves while the owner is offline");
     db.set_online(true).unwrap();
-    tokio::time::timeout(LIMIT, refresh(&db)).await.expect("the refresh ends within 5 s").unwrap();
+    crate::test_wait::within(refresh(&db)).await.unwrap();
     assert_eq!(transport.requests(), 1, "the owner took the call once it was online");
 }
 
