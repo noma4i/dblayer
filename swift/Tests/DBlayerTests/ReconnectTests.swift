@@ -44,12 +44,12 @@ extension BridgeProbeTests {
     do {
       try await list.refresh()
       Issue.record("a refresh offline did not fail")
-    } catch DbError.Network {
+    } catch DbError.Offline {
     }
     do {
       _ = try await list.loadMore()
       Issue.record("a load more offline did not fail")
-    } catch DbError.Network {
+    } catch DbError.Offline {
     }
     await eventually("the stream shows the network error") {
       list.error != nil

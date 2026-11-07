@@ -403,7 +403,7 @@ class ClubTest {
         assertEquals(1, transport.calls.count { it.operationName == "CreateClub" })
 
         DBlayer.database.setOnline(false)
-        try { Club.create(name = "offline"); fail("a server create offline did not fail") } catch (error: DbException.Network) {}
+        try { Club.create(name = "offline"); fail("a server create offline did not fail") } catch (error: DbException.Offline) {}
         assertEquals(1, transport.calls.count { it.operationName == "CreateClub" })
     }
 

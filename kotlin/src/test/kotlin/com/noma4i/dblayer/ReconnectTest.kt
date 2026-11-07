@@ -55,9 +55,9 @@ class ReconnectTest {
             eventually("the events subscription of the stream opened") { count(transport, "MomentEvents") == 1 }
             val calls = transport.calls.size
             DBlayer.database.setOnline(false)
-            try { list.refresh(); fail("a refresh offline did not fail") } catch (error: DbException.Network) {}
-            try { list.loadMore(); fail("a load more offline did not fail") } catch (error: DbException.Network) {}
-            eventually("the stream shows the network error") { list.projection.value.error is DbException.Network }
+            try { list.refresh(); fail("a refresh offline did not fail") } catch (error: DbException.Offline) {}
+            try { list.loadMore(); fail("a load more offline did not fail") } catch (error: DbException.Offline) {}
+            eventually("the stream shows the network error") { list.projection.value.error is DbException.Offline }
             assertEquals("a call offline reached the transport: ${transport.calls.map { "${it.operationName} ${it.variablesJson}" }}", calls, transport.calls.size)
         } finally {
             screen.cancel()

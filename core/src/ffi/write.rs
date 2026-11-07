@@ -29,18 +29,18 @@ pub(super) fn refused(fault: Fault, what: &str) -> DbError {
     match fault {
         Fault::NoSession => DbError::NoSession { detail: "the database has no session in this epoch".into() },
         Fault::NotFound => DbError::NotFound { detail: format!("{what}: there is no such operation") },
-        Fault::InFlight => DbError::Invalid { detail: format!("{what}: the operation is in flight") },
+        Fault::InFlight => DbError::InFlight { detail: format!("{what}: the operation is in flight") },
         Fault::Interrupted => super::command::ended(),
-        Fault::Offline => DbError::Network { detail: format!("{what} needs the network") },
+        Fault::Offline => DbError::Offline { detail: format!("{what} needs the network") },
         Fault::Closed => super::command::closed(),
         Fault::RestoreFailed => DbError::Invalid { detail: format!("{what}: the stored operation cannot be read, discard it") },
         Fault::StateLost => DbError::Session { code: crate::transport::SessionCode::StateLost, detail: "the pending request of the session was lost".into() },
-        Fault::Internal => DbError::Database { detail: format!("{what}: internal error") },
+        Fault::Internal => DbError::Internal { detail: format!("{what}: internal error") },
         Fault::Invalid => DbError::Invalid { detail: format!("{what}: the owner refused the call") },
-        Fault::Copy(detail) => DbError::Database { detail },
+        Fault::Copy(detail) => DbError::Copy { detail },
         Fault::Rejected(RejectReason::NoSession) => DbError::NoSession { detail: "the session of this write ended".into() },
         Fault::Rejected(RejectReason::Closed) => super::command::closed(),
-        Fault::Rejected(RejectReason::Storage(detail)) => DbError::Database { detail },
+        Fault::Rejected(RejectReason::Storage(detail)) => DbError::Storage { detail },
         Fault::Rejected(RejectReason::StaleGeneration { .. } | RejectReason::Invalid) => DbError::Invalid { detail: format!("{what}: the write was refused") },
     }
 }
@@ -112,7 +112,7 @@ impl Database {
         let (path, body) = self.mutation_request(&call)?;
         let op = NewOp { model: model.clone(), row_id: row.to_string(), action: action.to_string(), on_failure: call.on_failure, origin: OpSource::Api, path, body, effects: planned.effects, durable: call.durable };
         let waiter = self.life.submit(epoch, op);
-        let OutboxAnswer::Receipt(held) = self.outbox_answer(waiter, action).await? else { return Err(DbError::Database { detail: "the owner answered a call with no receipt".into() }) };
+        let OutboxAnswer::Receipt(held) = self.outbox_answer(waiter, action).await? else { return Err(DbError::Internal { detail: "the owner answered a call with no receipt".into() }) };
         let value = if destroyed { None } else { self.optimistic(&model, &shown)? };
         Ok(receipt_of(epoch, model, Some(i64::try_from(held.op_id).unwrap_or(i64::MAX)), held.revision, value, Some(held), self.life.clone()))
     }
@@ -190,7 +190,7 @@ impl Database {
         let waiter = self.life.local_write(epoch, model.clone(), LocalWriteKind::AttachBytes { bytes, name, mime }, row.to_string(), field.clone(), self.now());
         self.outbox_answer(waiter, "attach").await?;
         self.read_in_epoch(epoch, "attach", move |database| {
-            let attached = database.db.file(&model, &row, &field)?.ok_or_else(|| DbError::Database { detail: "the attached file is not on the row".into() })?;
+            let attached = database.db.file(&model, &row, &field)?.ok_or_else(|| DbError::Internal { detail: "the attached file is not on the row".into() })?;
             Ok(attached.to_value().to_string())
         })
         .await
@@ -287,7 +287,7 @@ impl Database {
     pub(super) async fn retry_operation(&self, epoch: u64, model: String, row_id: String) -> Result<WireOperationReceipt, DbError> {
         self.account_call(epoch)?;
         let waiter = self.life.retry_operation(epoch, model.clone(), row_id.clone());
-        let OutboxAnswer::Receipt(held): OutboxAnswer = self.outbox_answer(waiter, "retry").await? else { return Err(DbError::Database { detail: "the owner answered a retry with no receipt".into() }) };
+        let OutboxAnswer::Receipt(held): OutboxAnswer = self.outbox_answer(waiter, "retry").await? else { return Err(DbError::Internal { detail: "the owner answered a retry with no receipt".into() }) };
         let value = self.optimistic(&model, &id(&row_id)?)?;
         Ok(receipt_of(epoch, model, Some(i64::try_from(held.op_id).unwrap_or(i64::MAX)), held.revision, value, Some(held), self.life.clone()))
     }

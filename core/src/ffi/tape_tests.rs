@@ -171,7 +171,7 @@ fn settled_by(value: &ReadValue, seq: u64) -> Option<Result<u64, DbError>> {
     match value {
         ReadValue::Snapshot { state, .. } | ReadValue::Delta { state, .. } | ReadValue::Count { state, .. } | ReadValue::State { state, .. } => match state.phase {
             ReadPhase::Loaded => Some(Ok(seq)),
-            ReadPhase::Failed => Some(Err(state.error.clone().unwrap_or(DbError::Database { detail: String::new() }))),
+            ReadPhase::Failed => Some(Err(state.error.clone().unwrap_or(DbError::Storage { detail: String::new() }))),
             ReadPhase::Idle | ReadPhase::Loading => None,
         },
         ReadValue::Ended { cause: ReadEnd::Invalid } => Some(Err(DbError::Invalid { detail: "the stream could not open".into() })),

@@ -2,7 +2,6 @@ mod database;
 mod lease;
 mod receipt;
 #[cfg(test)]
-pub(crate) use database::NEEDS_NETWORK;
 #[cfg(test)]
 pub(crate) async fn settled(database: &Database) -> Result<(), DbError> {
     let quiet = async {
@@ -94,8 +93,22 @@ pub enum DbError {
     NotFound { detail: String },
     #[error("row {id} of {model} already exists")]
     AlreadyExists { model: String, id: String },
-    #[error("database: {detail}")]
-    Database { detail: String },
+    #[error("storage: {detail}")]
+    Storage { detail: String },
+    #[error("offline: {detail}")]
+    Offline { detail: String },
+    #[error("dropped: {detail}")]
+    Dropped { detail: String },
+    #[error("unauthorized: {detail}")]
+    Unauthorized { detail: String },
+    #[error("in flight: {detail}")]
+    InFlight { detail: String },
+    #[error("runtime: {detail}")]
+    Runtime { detail: String },
+    #[error("internal: {detail}")]
+    Internal { detail: String },
+    #[error("copy: {detail}")]
+    Copy { detail: String },
     #[error("sync: {detail}")]
     Sync { detail: String },
     #[error("network: {detail}")]
@@ -141,9 +154,13 @@ impl From<crate::store::CoreError> for DbError {
                 | crate::store::CoreError::LocalValue { .. }
                 | crate::store::CoreError::Selection(_)
                 | crate::store::CoreError::Store(crate::store::StoreError::UnknownModel(_))) => Self::Invalid { detail: error.to_string() },
-            crate::store::CoreError::Query(crate::store::query::QueryError::Sqlite(detail)) => Self::Database { detail },
+            crate::store::CoreError::InFlight { model, id } => Self::InFlight { detail: format!("row {id} of {model} has an operation in flight") },
+            crate::store::CoreError::ThreadSpawn { name, detail } => Self::Runtime { detail: format!("thread {name} did not start: {detail}") },
+            crate::store::CoreError::Internal(detail) => Self::Internal { detail },
+            error @ (crate::store::CoreError::NotFound { .. } | crate::store::CoreError::UnknownOperation(_)) => Self::NotFound { detail: error.to_string() },
+            crate::store::CoreError::Query(crate::store::query::QueryError::Sqlite(detail)) => Self::Storage { detail },
             error @ crate::store::CoreError::Query(_) => Self::Invalid { detail: error.to_string() },
-            other => Self::Database { detail: other.to_string() },
+            other => Self::Storage { detail: other.to_string() },
         }
     }
 }

@@ -55,7 +55,7 @@ fn rows_of(rows: &[r::Row]) -> Vec<d::StreamRow> { rows.iter().map(|(id, stamp)|
 
 fn window_state(state: &Ws) -> WindowState {
     let phase = match state.phase { Phase::Idle => WindowPhase::Idle, Phase::Loading => WindowPhase::Loading, Phase::Loaded => WindowPhase::Loaded, Phase::Failed => WindowPhase::Failed };
-    WindowState { phase, error: state.error.then(|| crate::ffi::DbError::Database { detail: "e".into() }), loaded: state.loaded, has_more: false, settled: false, total: None }
+    WindowState { phase, error: state.error.then(|| crate::ffi::DbError::Storage { detail: "e".into() }), loaded: state.loaded, has_more: false, settled: false, total: None }
 }
 
 fn ws_of(state: &WindowState) -> Ws {

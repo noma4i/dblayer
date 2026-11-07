@@ -259,7 +259,7 @@ impl Database {
         match *outcome {
             WindowOutcome::Loaded { has_more, fetched, .. } => Ok(if fetched { LoadMoreResult::Loaded { has_more } } else { LoadMoreResult::NoMore }),
             WindowOutcome::Failed { source: Some(source), .. } => Err(DbError::from(source)),
-            WindowOutcome::Failed { error, .. } => Err(DbError::Database { detail: error }),
+            WindowOutcome::Failed { error, .. } => Err(DbError::Storage { detail: error }),
             WindowOutcome::PageLimit => Err(DbError::Invalid { detail: "the window reached its page limit".into() }),
             _ => Err(super::command::ended()),
         }

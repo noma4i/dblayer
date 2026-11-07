@@ -166,9 +166,9 @@ impl Database {
     pub async fn session_reset(&self) -> Result<(), DbError> {
         match self.await_life(self.life.session_reset()).await? {
             LifeReply::Life(Ok(())) => Ok(()),
-            LifeReply::Life(Err(crate::owners::lifecycle::LifecycleError::Storage)) => Err(DbError::Database { detail: "the account could not be cleared".into() }),
+            LifeReply::Life(Err(crate::owners::lifecycle::LifecycleError::Storage)) => Err(DbError::Storage { detail: "the account could not be cleared".into() }),
             LifeReply::Life(Err(crate::owners::lifecycle::LifecycleError::Closed)) => Err(super::command::closed()),
-            LifeReply::Life(Err(crate::owners::lifecycle::LifecycleError::Runtime)) => Err(DbError::Database { detail: "the owners failed".into() }),
+            LifeReply::Life(Err(crate::owners::lifecycle::LifecycleError::Runtime)) => Err(DbError::Runtime { detail: "the owners failed".into() }),
             _ => Err(super::command::ended()),
         }
     }
@@ -182,14 +182,14 @@ pub(super) fn session_failure(error: crate::owners::session::SessionError) -> Db
         Failed::StateLost => DbError::Session { code: SessionCode::StateLost, detail: "the stored credential does not match the stored session state".into() },
         Failed::Revoked => DbError::Session { code: SessionCode::SessionEnded, detail: "the session was ended by the server".into() },
         Failed::SequenceConflict => DbError::Session { code: SessionCode::SequenceConflict, detail: "the sequence of the request conflicts with the server".into() },
-        Failed::Unauthorized => DbError::Http { status: 401, detail: String::new() },
+        Failed::Unauthorized => DbError::Unauthorized { detail: "the server refused the credential".into() },
         Failed::Security { code, detail } => DbError::Security { code, detail },
         Failed::Http { status } => DbError::Http { status, detail: "the request was refused".into() },
         Failed::TooLarge { size, limit } => DbError::RequestTooLarge { size, limit },
-        Failed::Rejected(reason) => DbError::Database { detail: format!("the request was not stored: {reason:?}") },
+        Failed::Rejected(reason) => DbError::Storage { detail: format!("the request was not stored: {reason:?}") },
         Failed::Session(code) => DbError::Session { code, detail: code.name().to_string() },
         Failed::SessionExists => DbError::Session { code: SessionCode::AlreadyAuthenticated, detail: "the database has a session".into() },
-        Failed::Storage(detail) => DbError::Database { detail },
+        Failed::Storage(detail) => DbError::Storage { detail },
         Failed::NoSession => DbError::NoSession { detail: "the database has no session".into() },
         Failed::Interrupted => super::command::ended(),
         Failed::Closed => super::command::closed(),

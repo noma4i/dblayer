@@ -126,7 +126,7 @@ fn end_of(cause: EndCause) -> ReadEnd {
 }
 
 fn full_row(row: &StreamRow) -> Result<WireRow, DbError> {
-    row.row.clone().ok_or_else(|| DbError::Database { detail: format!("the read gave row {} without its values", row.id) })
+    row.row.clone().ok_or_else(|| DbError::Internal { detail: format!("the read gave row {} without its values", row.id) })
 }
 
 fn edit_of(edit: &Edit) -> Result<RowEdit, DbError> {
@@ -228,7 +228,7 @@ impl ReadStream {
             }
             Outcome::Value(PullAnswer::Done) | Outcome::Closing => Ok(self.finished(ReadEnd::Closed)),
             Outcome::EpochEnded(_) => Ok(self.finished(ReadEnd::SessionEnded)),
-            Outcome::Internal => Err(DbError::Database { detail: "the answer of the owner was lost".into() }),
+            Outcome::Internal => Err(DbError::Internal { detail: "the answer of the owner was lost".into() }),
             Outcome::Value(PullAnswer::Invalid) => Err(DbError::Invalid { detail: "a pull of this stream is waiting already".into() }),
             Outcome::Value(PullAnswer::Interrupted) => Err(DbError::Interrupted { detail: "the pull was cancelled".into() }),
         }

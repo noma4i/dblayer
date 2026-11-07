@@ -302,7 +302,7 @@ impl Facts {
         self.fresh = false;
         self.reread_due = false;
         self.set_phase(self.failed_phase());
-        self.error = Some(source.clone().map_or_else(|| crate::ffi::DbError::Database { detail: message.to_string() }, crate::ffi::DbError::from));
+        self.error = Some(source.clone().map_or_else(|| crate::ffi::DbError::Storage { detail: message.to_string() }, crate::ffi::DbError::from));
         self.answer_all(&WindowOutcome::Failed { error: message.to_string(), source });
         self.announce();
         Transition(WinState::idle())

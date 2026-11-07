@@ -181,7 +181,7 @@ fn names(input: &Input, key: &str) -> BTreeSet<String> {
 fn answer_kind(answer: Answer) -> Option<&'static str> {
     match answer {
         Answer::Ok => None,
-        Answer::Storage => Some("database"),
+        Answer::Storage => Some("storage"),
         Answer::Closed => Some("closed"),
         Answer::Runtime => Some("runtime"),
         Answer::Interrupted => Some("interrupted"),
@@ -243,7 +243,7 @@ impl LifecycleRef {
     fn gate(&self, epoch_current: bool) -> Result<(), &'static str> {
         match (&self.machine.state, self.machine.cell.state) {
             (State::Closing { .. } | State::Closed, _) => Err("closed"),
-            (_, PubState::StorageFailed) => Err("database"),
+            (_, PubState::StorageFailed) => Err("storage"),
             (State::Ending { .. } | State::NoSession { .. }, _) => Err("no_session"),
             (State::Resetting { identity: None, .. }, _) => Err("no_session"),
             (State::Session { .. } | State::Resetting { .. }, _) if !epoch_current => Err("no_session"),

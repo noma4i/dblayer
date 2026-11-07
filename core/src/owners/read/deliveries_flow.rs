@@ -47,7 +47,7 @@ impl Delivery {
             self.resync_failed = true;
             self.read_error = true;
             let phase = if self.rows.is_empty() { WindowPhase::Failed } else { WindowPhase::Loaded };
-            let state = WindowState { phase, error: Some(crate::ffi::DbError::Database { detail: error }), loaded: self.window.loaded, has_more: self.window.has_more, settled: true, total: None };
+            let state = WindowState { phase, error: Some(crate::ffi::DbError::Storage { detail: error }), loaded: self.window.loaded, has_more: self.window.has_more, settled: true, total: None };
             self.window = state.clone();
             self.push(Value::State { revision: self.revision, state }, fx);
             fx.push(self.new_read(self.revision));
@@ -55,7 +55,7 @@ impl Delivery {
         }
         match self.stage {
             DeliveryStage::Opening => {
-                let state = WindowState { phase: WindowPhase::Failed, error: Some(crate::ffi::DbError::Database { detail: error }), loaded: None, has_more: false, settled: true, total: None };
+                let state = WindowState { phase: WindowPhase::Failed, error: Some(crate::ffi::DbError::Storage { detail: error }), loaded: None, has_more: false, settled: true, total: None };
                 self.window = state.clone();
                 self.revision = revision;
                 self.rows = Vec::new();
@@ -72,7 +72,7 @@ impl Delivery {
                 self.read_error = true;
                 let empty = if self.view.kind == Kind::Count { self.count.unwrap_or(0) == 0 } else { self.rows.is_empty() };
                 let phase = if empty { WindowPhase::Failed } else { WindowPhase::Loaded };
-                let state = WindowState { phase, error: Some(crate::ffi::DbError::Database { detail: error }), loaded: self.window.loaded, has_more: self.window.has_more, settled: true, total: None };
+                let state = WindowState { phase, error: Some(crate::ffi::DbError::Storage { detail: error }), loaded: self.window.loaded, has_more: self.window.has_more, settled: true, total: None };
                 self.window = state.clone();
                 self.push(Value::State { revision: self.revision, state }, fx);
             }

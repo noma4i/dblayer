@@ -1,8 +1,5 @@
 use std::collections::HashMap;
 
-/// The detail of the `Network` error a call gets while the network is down.
-pub(crate) const NEEDS_NETWORK: &str = "the operation needs the network";
-
 use std::path::Path;
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
@@ -70,7 +67,7 @@ pub(super) fn started(slot: &Starter, build: impl FnOnce() -> std::io::Result<Ru
     if let Some(runtime) = slot.runtime.get() {
         return Ok(runtime);
     }
-    let runtime = build().map_err(|error| DbError::Database { detail: format!("the database executor did not start: {error}") })?;
+    let runtime = build().map_err(|error| DbError::Runtime { detail: format!("the database executor did not start: {error}") })?;
     Ok(slot.runtime.get_or_init(|| runtime))
 }
 
@@ -221,7 +218,7 @@ impl Database {
         let _entered = executor_enter()?;
         let life = Arc::new(crate::owners::life::Life::start(ports).map_err(|error| match error {
             crate::owners::life::LifeError::CorruptManifest(detail) => DbError::CorruptManifest { detail },
-            other => DbError::Database { detail: format!("the owners did not start: {other:?}") },
+            other => DbError::Runtime { detail: format!("the owners did not start: {other:?}") },
         })?);
         if let Some(encrypted) = encrypted { encrypted.transport.attach(&life); }
         Ok(life)
@@ -368,7 +365,7 @@ impl Database {
         match waiter.wait().await {
             crate::runtime::Outcome::Value(LifeReply::Closed) | crate::runtime::Outcome::Closing => Err(super::command::closed()),
             crate::runtime::Outcome::EpochEnded(_) => Err(super::command::ended()),
-            crate::runtime::Outcome::Internal => Err(DbError::Database { detail: "the answer of the owner was lost".into() }),
+            crate::runtime::Outcome::Internal => Err(DbError::Internal { detail: "the answer of the owner was lost".into() }),
             crate::runtime::Outcome::Value(reply) => Ok(reply),
         }
     }
@@ -380,7 +377,7 @@ impl Database {
     /// A call that always goes to the server fails at once while the network is away. It does not wait for the network and does not retry.
     pub(super) fn require_online(&self, what: &str) -> Result<(), DbError> {
         if self.db.connectivity().is_online() { return Ok(()); }
-        Err(DbError::Network { detail: format!("{what} needs the network") })
+        Err(DbError::Offline { detail: format!("{what} needs the network") })
     }
 
     pub(super) fn parsed_query(&self, json: &str) -> Result<crate::store::ParsedQuery, DbError> {
@@ -396,15 +393,16 @@ fn call_failure(error: crate::owners::calls::CallError) -> DbError {
     match error {
         CallError::NoSession => DbError::NoSession { detail: "the database has no session".into() },
         CallError::Invalid => DbError::Invalid { detail: "the operation is not registered".into() },
-        CallError::Offline => DbError::Network { detail: NEEDS_NETWORK.into() },
+        CallError::Offline => DbError::Offline { detail: "the operation needs the network".into() },
         CallError::Network => DbError::Network { detail: "the request did not reach the server".into() },
         CallError::Graphql { messages, extensions } => DbError::Graphql { messages, extensions },
         CallError::Session { code, detail } => DbError::Session { code, detail },
         CallError::Http { status, detail } => DbError::Http { status, detail },
-        CallError::Dropped => DbError::Network { detail: "the request left and the answer did not come".into() },
+        CallError::Unauthorized => DbError::Unauthorized { detail: "the server refused the credential".into() },
+        CallError::Dropped => DbError::Dropped { detail: "the request left and the answer did not come".into() },
         CallError::InvalidResponse => DbError::Invalid { detail: "the response has no root of the operation".into() },
         CallError::Interrupted => super::command::ended(),
-        CallError::Storage => DbError::Database { detail: "the database could not save its state".into() },
+        CallError::Storage => DbError::Storage { detail: "the database could not save its state".into() },
     }
 }
 

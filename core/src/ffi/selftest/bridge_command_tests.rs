@@ -47,7 +47,7 @@ async fn a_send_needs_a_session_and_a_plain_action_never_waits_for_the_network()
     rig.database.set_online(false).unwrap();
     settle(&rig).await;
     let plain = bound(rig.database.create(epoch, "Group".into(), values, args)).await;
-    assert!(matches!(plain, Err(DbError::Network { .. })), "a plain action was not refused while the network was away: {plain:?}");
+    assert!(matches!(plain, Err(DbError::Offline { .. })), "a plain action was not refused while the network was away: {plain:?}");
     settle(&rig).await;
     assert!(crate::ffi::queue_view_tests::queued(&rig.database).is_empty(), "a plain action stayed queued while the network was away");
     assert_eq!(rig.database.db.row_count("Group").unwrap(), 0, "the row of the refused action stayed");
@@ -115,7 +115,7 @@ async fn a_server_create_returns_the_confirmed_row_and_needs_the_network() {
     assert_eq!(rig.world.count("CreateGroup"), 1);
     rig.database.set_online(false).unwrap();
     let offline = bound(rig.database.create(epoch, "Group".into(), values, args)).await;
-    assert!(matches!(offline, Err(DbError::Network { .. })), "an offline server create did not fail at once: {offline:?}");
+    assert!(matches!(offline, Err(DbError::Offline { .. })), "an offline server create did not fail at once: {offline:?}");
     assert_eq!(rig.world.count("CreateGroup"), 1);
     assert!(crate::ffi::queue_view_tests::queued(&rig.database).is_empty());
     rig.database.close_now();
@@ -209,11 +209,11 @@ async fn a_refresh_and_a_load_more_fail_at_once_offline_and_the_entity_stream_sh
     let hits = rig.world.log().len();
     rig.database.set_online(false).unwrap();
     let refreshed = bound(rig.database.refresh_stream(stream)).await;
-    assert!(matches!(refreshed, Err(DbError::Network { .. })), "refresh of a stream offline: {refreshed:?}");
+    assert!(matches!(refreshed, Err(DbError::Offline { .. })), "refresh of a stream offline: {refreshed:?}");
     let refreshed = bound(rig.database.refresh(rig.database.session_epoch(), "User".into(), "all".into(), "{}".into())).await;
-    assert!(matches!(refreshed, Err(DbError::Network { .. })), "refresh offline: {refreshed:?}");
+    assert!(matches!(refreshed, Err(DbError::Offline { .. })), "refresh offline: {refreshed:?}");
     let more = bound(rig.database.load_more(rig.database.session_epoch(), "User".into(), "all".into(), "{}".into())).await;
-    assert!(matches!(more, Err(DbError::Network { .. })), "load more offline: {more:?}");
+    assert!(matches!(more, Err(DbError::Offline { .. })), "load more offline: {more:?}");
     yield_until("the entity stream shows the error", || entity.deliveries().iter().any(|delivery| match &delivery.value {
         ReadValue::State { state, .. } | ReadValue::Snapshot { state, .. } => state.error.is_some(),
         _ => false,
@@ -231,7 +231,7 @@ async fn a_run_offline_after_open_fails_at_once_and_the_transport_makes_no_attem
     let hits = rig.world.log().len();
     rig.database.set_online(false).unwrap();
     let run = bound(rig.database.run(epoch, "SessionProfile".into(), "{}".into())).await;
-    assert!(matches!(run, Err(DbError::Network { .. })), "run offline: {run:?}");
+    assert!(matches!(run, Err(DbError::Offline { .. })), "run offline: {run:?}");
     assert_eq!(rig.world.log().len(), hits, "a run offline reached the server");
     rig.database.set_online(true).unwrap();
     bound(rig.database.run(epoch, "SessionProfile".into(), "{}".into())).await.unwrap();

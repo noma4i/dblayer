@@ -52,3 +52,24 @@ fn life_call_not_open() {
     assert_eq!(error_kind(&DbError::NotOpen { detail: String::new() }), "not_open");
     assert_eq!(error_kind(&DbError::Closed { detail: String::new() }), "closed");
 }
+
+/// Requirement: the corpus error kind is the snake_case name of the `DbError` variant.
+/// Observable: the kind of each variant the cells name.
+#[test]
+fn error_kind_is_the_snake_case_name_of_the_variant() {
+    let detail = String::new;
+    let table = [
+        (DbError::Offline { detail: detail() }, "offline"),
+        (DbError::Dropped { detail: detail() }, "dropped"),
+        (DbError::Unauthorized { detail: detail() }, "unauthorized"),
+        (DbError::InFlight { detail: detail() }, "in_flight"),
+        (DbError::Storage { detail: detail() }, "storage"),
+        (DbError::Runtime { detail: detail() }, "runtime"),
+        (DbError::Internal { detail: detail() }, "internal"),
+        (DbError::Copy { detail: detail() }, "copy"),
+        (DbError::Http { status: 401, detail: detail() }, "http"),
+    ];
+    for (error, kind) in table {
+        assert_eq!(error_kind(&error), kind, "{error:?}");
+    }
+}

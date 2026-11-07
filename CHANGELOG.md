@@ -33,6 +33,7 @@
 
 ### Changed
 
+- `DbError` names the failures of the cells: `Offline`, `Dropped`, `Unauthorized`, `InFlight`, `Storage`, `Runtime`, `Internal` and `Copy`. `Storage` replaces `Database`.
 - Redirect answers are reported as `Http` errors on every platform and are never followed.
 - `registerOperations` is async and parses its definitions off the caller thread.
 - `subscriptionCensus` is async and reads the streams and channels of the owners.

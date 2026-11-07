@@ -490,7 +490,7 @@ impl StoreRef {
     fn commit(&mut self, batch: Batch, sqlite_ok: bool) -> Result<(), &'static str> {
         self.batch += 1;
         let id = self.batch;
-        let mut result = Err("database");
+        let mut result = Err("storage");
         let mut todo = vec![Request::Commit { id, batch }];
         while !todo.is_empty() {
             let request = todo.remove(0);

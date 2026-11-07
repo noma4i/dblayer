@@ -14,6 +14,7 @@ pub enum CallError {
     Invalid,
     Offline,
     Network,
+    Unauthorized,
     Graphql { messages: Vec<String>, extensions: Option<crate::transport::GraphqlExtensions> },
     Http { status: u16, detail: String },
     /// A query the server refused with a session code: the call ends, the session stays.

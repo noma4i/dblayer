@@ -126,7 +126,7 @@ pub fn kind(error: &DbError) -> &'static str {
         DbError::Interrupted { .. } => "interrupted",
         DbError::Invalid { detail } if detail == "timeout" => "timeout",
         DbError::Invalid { .. } => "invalid",
-        DbError::Database { .. } => "database",
+        DbError::Storage { .. } => "storage",
         DbError::Network { .. } => "network",
         DbError::Session { .. } => "session",
         DbError::Closed { .. } => "closed",

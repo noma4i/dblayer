@@ -171,7 +171,7 @@ async fn a_load_without_the_network_waits_and_asks_when_the_network_returns_whil
     let call = begin(&db).await;
     tokio::time::sleep(Duration::from_millis(200)).await;
     assert_eq!(transport.requests(), 0, "no request leaves while the network is away");
-    assert!(matches!(refresh(&db).await, Err(DbError::Network { .. })), "a refresh needs the network now");
+    assert!(matches!(refresh(&db).await, Err(DbError::Offline { .. })), "a refresh needs the network now");
     db.set_online(true).unwrap();
     tokio::time::timeout(LIMIT, call.result()).await.expect("the load ends within 5 s").unwrap();
     assert_eq!(transport.requests(), 1);

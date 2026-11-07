@@ -237,7 +237,7 @@ do {
   showBlocked()
 } catch DbError.Session(let code, _) where code == .unauthenticated {
   signOut()
-} catch DbError.Network {
+} catch DbError.Offline {
   showOffline()
 }
 ```
@@ -251,7 +251,7 @@ try {
         SessionCode.UNAUTHENTICATED -> signOut()
         else -> show(error.detail)
     }
-} catch (error: DbException.Network) {
+} catch (error: DbException.Offline) {
     showOffline()
 }
 ```
@@ -621,7 +621,7 @@ println(code.url)
 - Encrypted calls follow the [retry policy](#retries). A numbered mutation stores Pending before HTTP, including for a standalone operation.
 - Cancelling a standalone encrypted mutation preserves Pending and leaves its result unconfirmed.
 - Plain standalone calls return transport failures and GraphQL errors directly.
-- A failed call or load throws a typed error. `Http` carries the status and the body (401, 503), `Graphql` carries every message of an answer with errors in order, `Session` carries the session code of a refusal of the encrypted session (see [session errors in loads and mutations](#session-errors-in-loads-and-mutations)), `Network` and `Interrupted` tell whether the request left the device. Any other failure is a `Sync` error with its text.
+- A failed call or load throws a typed error. `Http` carries the status and the body (401, 503), `Graphql` carries every message of an answer with errors in order, `Session` carries the session code of a refusal of the encrypted session (see [session errors in loads and mutations](#session-errors-in-loads-and-mutations)), `Network` and `Interrupted` tell whether the request left the device. `Offline` is a call that needs the network while it is away, `Dropped` a request that left and got no answer, `Unauthorized` a refusal of the credential by the encrypted session, `InFlight` a change refused because the operation is in flight. `Storage`, `Runtime` and `Internal` are failures of the local database, of a thread and of an invariant of the library, `Copy` is a failure to copy the source of a transfer. Any other failure is a `Sync` error with its text.
 
 ```swift
 do {

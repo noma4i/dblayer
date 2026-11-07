@@ -104,7 +104,7 @@ fn error_of(error: &CallError) -> Fail {
         CallError::Offline => Fail::Offline,
         CallError::Network => Fail::Network,
         CallError::Graphql { messages, .. } => Fail::Graphql(messages.clone()),
-        CallError::Http { .. } | CallError::Session { .. } => Fail::Http,
+        CallError::Http { .. } | CallError::Session { .. } | CallError::Unauthorized => Fail::Http,
         CallError::Dropped => Fail::Dropped,
         CallError::InvalidResponse => Fail::InvalidResponse,
         CallError::Interrupted => Fail::Interrupted,

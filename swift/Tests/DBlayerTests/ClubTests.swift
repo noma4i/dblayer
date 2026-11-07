@@ -439,7 +439,7 @@ extension BridgeProbeTests {
     do {
       _ = try await Club.create(name: "offline")
       Issue.record("a server create offline did not fail")
-    } catch DbError.Network {
+    } catch DbError.Offline {
     }
     #expect(creates() == 1)
   }

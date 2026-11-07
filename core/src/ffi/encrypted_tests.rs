@@ -217,7 +217,7 @@ async fn failed_session_restore_opens_and_refuses_calls_until_reset() {
         }
         let database = within(open()).await.unwrap();
         database.set_online(true).unwrap();
-        assert!(matches!(within(database.session_call("social".into(), "{}".into())).await, Err(DbError::Database { .. })), "{broken}");
+        assert!(matches!(within(database.session_call("social".into(), "{}".into())).await, Err(DbError::Storage { .. })), "{broken}");
         assert!(server.seen().is_empty());
         within(database.session_reset()).await.unwrap();
         assert!(within(database.session_call("social".into(), "{}".into())).await.is_ok());
@@ -486,13 +486,27 @@ async fn inv_observe_08_a_retry_progress_call_that_passed_the_cancel_check_does_
     retrying.abort();
 }
 
-/// Requirement: a call that the close ended answers `Closed`, a refused sign-in over a session answers `AlreadyAuthenticated`, a 401 stays `Http 401`.
+/// Requirement: a call that the close ended answers `Closed`, a refused sign-in over a session answers `AlreadyAuthenticated`, a 401 answers `Unauthorized`.
 /// Observable: the `DbError` of the session failure. Assert: the variant of each failure.
 #[test]
 fn a_session_failure_keeps_its_own_error() {
     use crate::owners::session::SessionError as Failed;
     assert!(matches!(super::encrypted::session_failure(Failed::Closed), DbError::Closed { .. }));
     assert!(matches!(super::encrypted::session_failure(Failed::SessionExists), DbError::Session { code: SessionCode::AlreadyAuthenticated, .. }));
-    assert!(matches!(super::encrypted::session_failure(Failed::Unauthorized), DbError::Http { status: 401, .. }));
+    assert!(matches!(super::encrypted::session_failure(Failed::Unauthorized), DbError::Unauthorized { .. }));
     assert!(matches!(super::encrypted::session_failure(Failed::Http { status: 422 }), DbError::Http { status: 422, .. }));
+}
+
+/// Requirement: an owner refusal reaches the app as the error of its cell name.
+/// Observable: the `DbError` variant of each fault. Assert: the variant.
+#[test]
+fn an_owner_refusal_keeps_the_name_of_its_cell() {
+    use crate::owners::contract::RejectReason;
+    use crate::owners::write::outbox_types::Fault;
+    let refusal = |fault| super::write::refused(fault, "update");
+    assert!(matches!(refusal(Fault::Offline), DbError::Offline { .. }));
+    assert!(matches!(refusal(Fault::InFlight), DbError::InFlight { .. }));
+    assert!(matches!(refusal(Fault::Internal), DbError::Internal { .. }));
+    assert!(matches!(refusal(Fault::Copy("source".into())), DbError::Copy { .. }));
+    assert!(matches!(refusal(Fault::Rejected(RejectReason::Storage("disk".into()))), DbError::Storage { .. }));
 }

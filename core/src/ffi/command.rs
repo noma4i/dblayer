@@ -77,7 +77,7 @@ impl Database {
         match self.life.verdict(epoch) {
             CallVerdict::Pass => Ok(()),
             CallVerdict::Closed => Err(closed()),
-            CallVerdict::Refuse(crate::owners::calls::CallError::Storage) => Err(DbError::Database { detail: "the database could not save its state".into() }),
+            CallVerdict::Refuse(crate::owners::calls::CallError::Storage) => Err(DbError::Storage { detail: "the database could not save its state".into() }),
             CallVerdict::Refuse(_) => Err(DbError::NoSession { detail: "the database has no session in this epoch".into() }),
         }
     }

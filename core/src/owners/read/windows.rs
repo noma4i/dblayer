@@ -46,7 +46,7 @@ impl Facts {
             }
             Ev::Load { id, goal, force, now, .. } => self.idle_load(context, (*id, *now), *goal, *force),
             Ev::OfflineRefused { message } => {
-                self.error = Some(crate::ffi::DbError::Network { detail: message.clone() });
+                self.error = Some(crate::ffi::DbError::Offline { detail: message.clone() });
                 self.set_phase(self.failed_phase());
                 self.announce();
                 Handled
@@ -251,7 +251,7 @@ impl Facts {
             Ev::Online { online: true, .. } => self.leave_waiting(context, *force, *page),
             Ev::PowerSaving { .. } if self.is_online() && !self.deferred() => self.leave_waiting(context, *force, *page),
             Ev::OfflineRefused { message } => {
-                self.error = Some(crate::ffi::DbError::Network { detail: message.clone() });
+                self.error = Some(crate::ffi::DbError::Offline { detail: message.clone() });
                 self.set_phase(self.failed_phase());
                 self.announce();
                 Handled
