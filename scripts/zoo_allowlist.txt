@@ -7,7 +7,6 @@ panic:core/src/value/mod.rs:expect("string map serializes")   # a map of strings
 panic:core/src/store/ddl/mod.rs:expect("fingerprint serializes")   # own Serialize type, string keys
 
 z24:owners/support.rs   # owner state behind a lock, open finding (line D)
-z24:owners/read/snapshots.rs   # owner state behind a lock, open finding (line C)
 z24:owners/read/schema_io.rs   # owner state behind a lock, open finding (line C)
 z24:owners/read/window_io.rs   # owner state behind a lock, open finding (line C)
 z24:owners/read/feed_io.rs   # owner state behind a lock, open finding (line C)

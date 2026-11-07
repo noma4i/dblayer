@@ -1,5 +1,6 @@
 use crate::store::Store;
-use std::sync::{Arc, Mutex, PoisonError};
+use std::collections::BTreeMap;
+use std::sync::Arc;
 
 use crate::owners::read::deliveries::{Kind, ReadData, ReadMode, StreamRow, View};
 
@@ -11,19 +12,17 @@ pub trait Snapshots: Send + Sync + 'static {
 /// Reads of the snapshot through `Db`: the query of the view runs in the read pool, the rows of the answer are ids with their stamps.
 pub struct DbSnapshots {
     db: std::sync::Arc<Store>,
-    wires: Mutex<std::collections::HashMap<String, Arc<crate::ffi::wire::WireModel>>>,
+    wires: BTreeMap<String, Arc<crate::ffi::wire::WireModel>>,
 }
 
 impl DbSnapshots {
-    pub fn new(db: std::sync::Arc<Store>) -> Self { Self { db, wires: Mutex::new(std::collections::HashMap::new()) } }
+    pub fn new(db: std::sync::Arc<Store>) -> Self { Self { wires: db.specs().iter().map(|(key, spec)| (key.clone(), Arc::new(crate::ffi::wire::WireModel::of(spec)))).collect(), db } }
 
     fn wire(&self, model: &str) -> Result<Arc<crate::ffi::wire::WireModel>, String> {
-        if let Some(wire) = self.wires.lock().unwrap_or_else(PoisonError::into_inner).get(model) {
-            return Ok(wire.clone());
+        match self.wires.get(model) {
+            Some(wire) => Ok(wire.clone()),
+            None => Err(self.db.spec(model).err().map_or_else(|| format!("model {model} has no wire form"), |error| error.to_string())),
         }
-        let wire = Arc::new(crate::ffi::wire::WireModel::of(self.db.spec(model).map_err(|error| error.to_string())?));
-        self.wires.lock().unwrap_or_else(PoisonError::into_inner).insert(model.to_string(), wire.clone());
-        Ok(wire)
     }
 }
 
