@@ -128,7 +128,10 @@ async fn retry_progress_releases_a_call_on_success_terminal_failure_and_cancel_a
     assert_eq!(progress.current().active_calls, 1, "a cancelled call leaves the other one active");
     assert!(progress.current().last_attempt.is_some());
 
-    clock.advance(std::time::Duration::from_secs(60));
+    let delay = progress.current().last_attempt.unwrap().delay_ms;
+    clock.advance(std::time::Duration::from_millis(delay - 1));
+    assert!(poll(&mut second_wait).is_pending());
+    clock.advance(std::time::Duration::from_millis(2));
     assert!(matches!(poll(&mut second_wait), Poll::Ready(Ok(()))));
     drop(second_wait);
     assert!(matches!(within(second.failed(TransportError::Decode("fatal".into()))).await, Err(TransportError::Decode(_))));

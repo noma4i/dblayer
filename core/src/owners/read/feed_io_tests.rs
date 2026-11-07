@@ -118,7 +118,7 @@ fn feed_io_frames_commit() {
     let sent = peer.sent.lock().unwrap_or_else(PoisonError::into_inner).clone();
     assert_eq!(sent.len(), 1);
     assert_eq!((sent[0].0, sent[0].1["t"].as_str(), sent[0].1["id"].as_str(), sent[0].1["variables"]["channel"].as_str()), (f::FIRST_SEND_COUNTER, Some("subscribe"), Some("1"), Some("1")), "the subscribe frame is sealed with the first send counter");
-    assert!(saw_input(&det, "HandshakeDone") >= 1 && saw_input(&det, "FrameOpened") >= 1);
+    assert_eq!((saw_input(&det, "HandshakeDone"), saw_input(&det, "FrameOpened")), (1, 2), "one handshake, the frames confirmed and next");
 }
 
 #[test]
@@ -160,7 +160,7 @@ fn feed_io_broken_next_drops() {
     peer.frames.send(Incoming::Frame { counter: 1, body: json!({"t":"next", "id":"1", "result":{}}) }).unwrap();
     pump(&mut det, feed, |det| det.state(feed).is_some_and(|state| matches!(state.mode(), Mode::Live | Mode::Opening { .. }) && state.active_connection() != Some(1)));
     assert!(batches.all().is_empty());
-    assert!(saw_input(&det, "ProtocolError") >= 1, "the broken frame is an explicit protocol error");
+    assert!(saw_input(&det, "ProtocolError") == 1, "the broken frame is an explicit protocol error");
 }
 
 #[test]
@@ -179,7 +179,7 @@ fn feed_io_graphql_errors_drop() {
         peer.frames.send(Incoming::Frame { counter: 2, body: json!({"t":"next", "id":"1", "result":result}) }).unwrap();
         if drops {
             pump(&mut det, feed, |det| det.state(feed).is_some_and(|state| matches!(state.mode(), Mode::Live | Mode::Opening { .. }) && state.active_connection() != Some(1)));
-            assert!(saw_input(&det, "ProtocolError") >= 1, "{name}: the error frame is an explicit protocol error");
+            assert!(saw_input(&det, "ProtocolError") == 1, "{name}: the error frame is an explicit protocol error");
             assert!(batches.all().is_empty(), "{name}: no event reaches the Store");
         } else {
             let seen = batches.clone();

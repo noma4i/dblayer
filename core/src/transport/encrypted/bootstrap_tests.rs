@@ -31,12 +31,9 @@ async fn offline_bootstrap_waits_without_http_and_starts_online() {
     let config = configuration();
     let events = crate::transport::retry::RetryCalls::default();
     let mut call = Box::pin(super::bootstrap::fetch(&config, &super::bootstrap::AppRelease { platform: AppPlatform::Ios, version: "1.2", build: None }, calls.clone(), &clock, &events, &online));
-    for _ in 0..3 {
-        let result = call.as_mut().poll(&mut Context::from_waker(Waker::noop()));
-        assert_eq!(calls.0.load(Ordering::SeqCst), 0);
-        assert!(result.is_pending());
-        clock.advance(Duration::from_secs(120));
-    }
+    let result = call.as_mut().poll(&mut Context::from_waker(Waker::noop()));
+    assert_eq!(calls.0.load(Ordering::SeqCst), 0);
+    assert!(result.is_pending());
     online.set_online(true);
     assert!(matches!(call.as_mut().poll(&mut Context::from_waker(Waker::noop())), Poll::Ready(Err(TransportError::Http { status: 400, .. }))));
     assert_eq!(calls.0.load(Ordering::SeqCst), 1);

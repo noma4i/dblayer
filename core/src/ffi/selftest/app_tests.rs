@@ -24,7 +24,7 @@ async fn app_login_in_the_ios_and_android_order_fills_the_handles_held_since_lau
         held.follow(&rig.database);
         held.shows("A").await;
         held.lists_show("A").await;
-        assert!(rig.world.count("MyProfile") >= 1, "android={android}: the profile was never loaded");
+        assert_eq!(rig.world.count("MyProfile"), 1, "android={android}: the profile loads once");
         assert_eq!(rig.world.count("SessionProfile"), usize::from(!android), "android={android}");
         rig.database.close_now();
     }

@@ -208,10 +208,16 @@ async fn a_command_that_failed_on_the_network_is_delivered_by_the_backoff_and_th
         rig.login_ios("A").await;
         let epoch = rig.database.session_epoch();
         for _ in 0..failures { rig.world.fail_next("SendMessage", super::rig_tests::Fault::Down); }
+        let mut armed = rig.clock.armed();
         let receipt = bound(rig.database.send(message(epoch, "queued", 2))).await.unwrap();
         let done = Arc::new(AtomicBool::new(false));
         let waiting = { let database = rig.database.clone(); let done = done.clone(); tokio::spawn(async move { let outcome = database.outcome(receipt).await; done.store(true, Ordering::SeqCst); outcome }) };
-        yield_until("the clock delivers the command", || { rig.clock.advance(3_600_000); done.load(Ordering::SeqCst) }).await;
+        for retry in 0..failures {
+            rig.clock.await_armed(armed).await;
+            armed = rig.clock.armed();
+            rig.clock.advance(crate::runtime::RetryPolicy::Outbox.backoff().delay(retry).as_nanos().div_ceil(1_000_000) as u64);
+        }
+        yield_until("the command is delivered", || done.load(Ordering::SeqCst)).await;
         let outcome = bound(waiting).await.unwrap().unwrap();
         assert!(matches!(outcome, WireOperationOutcome::Confirmed { .. }), "{failures} failures: the command was not delivered: {outcome:?}");
         let sequences: std::collections::BTreeSet<_> = rig.world.log().iter().filter(|entry| entry.operation == "SendMessage").map(|entry| entry.sequence).collect();

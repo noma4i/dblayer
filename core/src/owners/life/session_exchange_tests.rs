@@ -71,18 +71,8 @@ async fn attempt(life: &crate::owners::life::Life, req_id: u64, body: String) ->
     }
 }
 
-/// The author repeats a request with the same `req_id` after `Dropped` or a temporary error, as Outbox does.
-async fn mutate_retrying(life: &crate::owners::life::Life, body: String) -> LifeReply {
-    use crate::owners::contract::ErrorClass;
-    use crate::owners::session::AuthorOutcome;
-    let req_id = NEXT_REQUEST.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-    for _ in 0..20 {
-        match attempt(life, req_id, body.clone()).await {
-            LifeReply::Mutated(AuthorOutcome::Dropped | AuthorOutcome::Error { class: ErrorClass::Network | ErrorClass::Server, .. }) => continue,
-            other => return other,
-        }
-    }
-    panic!("the request was still dropped after 20 attempts");
+async fn mutate_once(life: &crate::owners::life::Life, body: String) -> LifeReply {
+    attempt(life, NEXT_REQUEST.fetch_add(1, std::sync::atomic::Ordering::SeqCst), body).await
 }
 
 async fn sign_in(client: &Client) {
@@ -128,7 +118,7 @@ async fn a_mutate_goes_out_once_with_the_next_sequence_and_its_answer_reaches_th
     let db = Store::open_models(None, Vec::new(), None).map(std::sync::Arc::new).unwrap();
     let (client, life) = world.open(&db).await;
     sign_in(&client).await;
-    let reply = mutate_retrying(&life, json!({}).to_string()).await;
+    let reply = mutate_once(&life, json!({}).to_string()).await;
     assert!(matches!(reply, LifeReply::Mutated(crate::owners::session::AuthorOutcome::Response(_))), "{reply:?}");
     let (session, pending) = rows(&db);
     assert_eq!((session.unwrap().sequence, pending.is_none()), (2, true));
@@ -141,7 +131,7 @@ async fn the_answer_of_a_mutate_is_stored_with_the_removal_of_its_pending() {
     let db = Store::open_models(None, Vec::new(), None).map(std::sync::Arc::new).unwrap();
     let (client, life) = world.open(&db).await;
     sign_in(&client).await;
-    let reply = mutate_retrying(&life, json!({}).to_string()).await;
+    let reply = mutate_once(&life, json!({}).to_string()).await;
     let crate::owners::life::LifeReply::Mutated(crate::owners::session::AuthorOutcome::Response(body)) = reply else { panic!("{reply:?}") };
     let (_, pending) = rows(&db);
     let answers = {
@@ -159,11 +149,14 @@ async fn a_lost_answer_is_repeated_with_the_same_request_id_and_executes_once() 
     let (client, life) = world.open(&db).await;
     sign_in(&client).await;
     world.server.lose_next_answer();
-    let reply = mutate_retrying(&life, json!({}).to_string()).await;
+    let req_id = NEXT_REQUEST.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    let lost = attempt(&life, req_id, json!({}).to_string()).await;
+    assert!(matches!(lost, LifeReply::Mutated(crate::owners::session::AuthorOutcome::Dropped | crate::owners::session::AuthorOutcome::Error { class: crate::owners::contract::ErrorClass::Network | crate::owners::contract::ErrorClass::Server, .. })), "{lost:?}");
+    let reply = attempt(&life, req_id, json!({}).to_string()).await;
     assert!(matches!(reply, LifeReply::Mutated(crate::owners::session::AuthorOutcome::Response(_))), "{reply:?}");
     let seen = world.server.seen();
-    assert!(seen.len() >= 3, "the sign-in, the request and its repeat");
-    assert!(seen[1..].iter().all(|request| request["requestId"] == seen[1]["requestId"]), "every repeat carries the request id of the first send");
+    assert_eq!(seen.len(), 3, "the sign-in, the request and its repeat");
+    assert_eq!(seen[1]["requestId"], seen[2]["requestId"], "the repeat carries the request id of the first send");
     assert_eq!(world.server.executed().len(), 2, "the sign-in and the mutation each executed once");
 }
 
@@ -173,11 +166,11 @@ async fn a_request_over_the_size_limit_is_refused_and_spends_no_sequence() {
     let db = Store::open_models(None, Vec::new(), None).map(std::sync::Arc::new).unwrap();
     let (client, life) = world.open(&db).await;
     sign_in(&client).await;
-    let reply = mutate_retrying(&life, json!({ "text": "x".repeat(300_000) }).to_string()).await;
+    let reply = mutate_once(&life, json!({ "text": "x".repeat(300_000) }).to_string()).await;
     assert!(matches!(reply, LifeReply::Mutated(crate::owners::session::AuthorOutcome::Error { .. })), "{reply:?}");
     let (session, pending) = rows(&db);
     assert_eq!((session.unwrap().sequence, pending.is_none()), (1, true), "the refused request left no pending and spent no sequence");
-    let next = mutate_retrying(&life, json!({}).to_string()).await;
+    let next = mutate_once(&life, json!({}).to_string()).await;
     assert!(matches!(next, LifeReply::Mutated(crate::owners::session::AuthorOutcome::Response(_))), "{next:?}");
 }
 
@@ -369,7 +362,7 @@ async fn request_ids_are_random_uuid_v4_and_do_not_repeat_after_a_reopen() {
         let db = Store::open_models(Some(&path), Vec::new(), None).map(std::sync::Arc::new).unwrap();
         let (client, life) = world.open(&db).await;
         if rows(&db).0.is_none() { sign_in(&client).await; }
-        let reply = mutate_retrying(&life, json!({}).to_string()).await;
+        let reply = mutate_once(&life, json!({}).to_string()).await;
         assert!(matches!(reply, LifeReply::Mutated(AuthorOutcome::Response(_))), "{reply:?}");
         let _ = tokio::time::timeout(LIMIT, life.close().wait()).await;
     }
@@ -491,12 +484,12 @@ async fn a_locked_secret_waits_for_the_foreground_and_a_foreign_secret_ends_the_
     sign_in(&client).await;
     let sent = world.server.seen().len();
     slot.fail_get.store(true, std::sync::atomic::Ordering::SeqCst);
-    let refused = mutate_retrying(&life, json!({}).to_string()).await;
+    let refused = mutate_once(&life, json!({}).to_string()).await;
     assert!(matches!(refused, LifeReply::Mutated(AuthorOutcome::Error { error: SessionError::Storage(_), .. })));
     slot.fail_get.store(false, std::sync::atomic::Ordering::SeqCst);
     let target = slot.get_count.load(std::sync::atomic::Ordering::SeqCst) + 2;
     slot.fail_at.store(target, std::sync::atomic::Ordering::SeqCst);
-    let waiting = tokio::spawn({ let life = life.clone(); async move { mutate_retrying(&life, json!({}).to_string()).await } });
+    let waiting = tokio::spawn({ let life = life.clone(); async move { mutate_once(&life, json!({}).to_string()).await } });
     crate::test_wait::yield_until("the stored request reads the locked secret", || slot.fail_get.load(std::sync::atomic::Ordering::SeqCst)).await;
     life.barrier();
     assert!(!waiting.is_finished(), "a locked store gives the author no answer");
@@ -507,7 +500,7 @@ async fn a_locked_secret_waits_for_the_foreground_and_a_foreign_secret_ends_the_
     assert!(matches!(reply, LifeReply::Mutated(AuthorOutcome::Response(_))), "{reply:?}");
     assert_eq!(world.server.seen().len(), sent + 1, "one request, with the pair it was stored with");
     slot.memory.set("a-foreign-secret").unwrap();
-    let lost = mutate_retrying(&life, json!({}).to_string()).await;
+    let lost = mutate_once(&life, json!({}).to_string()).await;
     assert!(matches!(lost, LifeReply::Mutated(AuthorOutcome::Error { error: SessionError::StateLost, .. })), "{lost:?}");
     assert_eq!(world.server.seen().len(), sent + 1, "no request left the device");
 }

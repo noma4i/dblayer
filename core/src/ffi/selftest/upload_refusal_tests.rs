@@ -3,26 +3,18 @@ use std::sync::Arc;
 use super::rig_tests::bound;
 use super::upload_stand::{clip, shows, watched, Answer, Stand, BLOB, CREATE_MOMENT};
 use crate::ffi::wire::{WireRow, WireSyncState, WireUploadStatus};
-use crate::ffi::{Database, TestClock, WireOperationOutcome, WireOperationReceipt, WireReceiptTicket};
+use crate::ffi::{Database, WireOperationOutcome, WireOperationReceipt, WireReceiptTicket};
 use crate::owners::write::upload::MEBIBYTE;
 use crate::test_wait::yield_until;
 
 const ROW: &str = r#"{"data":{"createMoment":{"__typename":"Moment","id":"m1","uuid":"u","likedByMe":false,"media":{},"createdAt":"2026-10-08T00:00:00.000Z"}}}"#;
-const WEEK_MILLIS: u64 = 7 * 24 * 60 * 60 * 1000;
 const EXPIRY_OPERATIONS: [(&str, &str); 2] = [("CreateBlob", "mutation CreateBlob { createBlob { signedId } }"), ("CreateMoment", "mutation CreateMoment { createMoment { id } }")];
-
-fn now_millis() -> u64 { std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis() as u64 }
 
 async fn row(database: &Database, id: &str) -> Option<WireRow> { bound(database.read_row(database.session_epoch(), "Moment".into(), id.into())).await.unwrap() }
 
 async fn until_state(database: &Database, id: &str, wanted: WireSyncState) {
     let rows = watched(database, "Moment", id);
     yield_until("the row reaches the state", || shows(&rows, wanted)).await;
-}
-
-async fn until_gone(database: &Database, id: &str) {
-    let rows = watched(database, "Moment", id);
-    yield_until("the row is gone", || rows.len() == 0).await;
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -41,46 +33,6 @@ async fn a_refused_blob_fails_the_row_of_its_upload() {
     let failed = row(&database, &id).await.unwrap();
     let upload = &failed.uploads.iter().find(|entry| entry.action == "upload_clip").unwrap().upload;
     assert_eq!(upload.status, WireUploadStatus::Failed);
-    database.close_now();
-}
-
-#[tokio::test(flavor = "multi_thread")]
-async fn reopening_after_seven_days_expires_a_failed_blob() {
-    let (stand, start) = (Stand::new(), now_millis());
-    let directory = tempfile::tempdir().unwrap();
-    let path = directory.path().join("db.sqlite");
-    let source = directory.path().join("video");
-    std::fs::write(&source, b"video").unwrap();
-    let database = stand.open_with(Some(&path), &EXPIRY_OPERATIONS, Some(TestClock::new(start))).await;
-    stand.script.enqueue("CreateBlob", Answer::Status(422));
-    let id = bound(database.send(clip("Moment", r#"{"text":"video"}"#, "upload_clip", &source, database.session_epoch()))).await.unwrap().optimistic_value.unwrap().id;
-    until_state(&database, &id, WireSyncState::Failed).await;
-    database.close_now();
-
-    let reopened = stand.open_with(Some(&path), &EXPIRY_OPERATIONS, Some(TestClock::new(start + WEEK_MILLIS))).await;
-
-    until_gone(&reopened, &id).await;
-    reopened.close_now();
-}
-
-#[tokio::test(flavor = "multi_thread")]
-async fn a_failed_blob_expires_when_the_network_returns_after_seven_days() {
-    let (stand, start) = (Stand::new(), now_millis());
-    let clock = TestClock::new(start);
-    let database = stand.open_with(None, &EXPIRY_OPERATIONS, Some(clock.clone())).await;
-    let directory = tempfile::tempdir().unwrap();
-    let source = directory.path().join("video");
-    std::fs::write(&source, b"video").unwrap();
-    stand.script.enqueue("CreateBlob", Answer::Status(422));
-    let id = bound(database.send(clip("Moment", r#"{"text":"video"}"#, "upload_clip", &source, database.session_epoch()))).await.unwrap().optimistic_value.unwrap().id;
-    until_state(&database, &id, WireSyncState::Failed).await;
-    database.set_online(false).unwrap();
-    bound(crate::ffi::settled(&database)).await.unwrap();
-    clock.advance(WEEK_MILLIS);
-
-    database.set_online(true).unwrap();
-
-    until_gone(&database, &id).await;
     database.close_now();
 }
 

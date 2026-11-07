@@ -29,7 +29,7 @@ extern "C" fn arm_test_deadline() {
 }
 
 const SPIN_LIMIT: Duration = Duration::from_secs(10);
-const BLOCK_LIMIT: Duration = Duration::from_secs(30);
+const BLOCK_LIMIT: Duration = Duration::from_secs(20);
 
 #[track_caller]
 pub(crate) fn recv_within<T>(receiver: &Receiver<T>) -> T {
