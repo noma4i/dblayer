@@ -163,7 +163,7 @@ async fn inv_fresh_12_load_requests_only_a_window_that_is_not_fresh() {
 
     load(&db, "quick").await.unwrap();
     assert_eq!(queries(&transport), 2);
-    clock.advance(300);
+    clock.advance(200);
     load(&db, "quick").await.unwrap();
     assert_eq!(queries(&transport), 3, "fresh_for elapsed");
 
@@ -238,7 +238,7 @@ async fn inv_fresh_13_a_cancelled_caller_does_not_cancel_the_load_another_waits_
 
 #[tokio::test]
 async fn inv_fresh_15_a_test_clock_moves_fresh_for_without_sleeping() {
-    for (advance_ms, expected) in [(5 * 60_000 + 1_000, 2), (5 * 60_000 - 1_000, 1)] {
+    for (advance_ms, expected) in [(5 * 60_000, 2), (5 * 60_000 - 1, 1)] {
         let (db, transport, clock) = rig_with_clock().await;
         load(&db, "feed").await.unwrap();
         clock.advance(advance_ms);

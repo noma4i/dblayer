@@ -253,7 +253,7 @@ fn corrupt_reset_intent_goes_to_quarantine_and_is_cleared() {
 fn boot_prunes_expired_tombstones() {
     let (store, clock) = booted_store();
     store.mark_tombstone("messages", "old", 1, 0).unwrap();
-    clock.advance(std::time::Duration::from_millis(200_000_000));
+    clock.advance(std::time::Duration::from_millis(85_400_001));
     let report = store.boot(&[messages_spec(), items_spec()], None).unwrap();
     assert_eq!(report.tombstone_drops, 1);
 }

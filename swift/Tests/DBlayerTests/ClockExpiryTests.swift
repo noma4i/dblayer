@@ -16,7 +16,7 @@ extension BridgeProbeTests {
     try transport.emit("BulletinAdded", json: #"{"data":{"bulletinAdded":{"body":"hello","occurredAt":"2026-10-18T00:00:00Z"}}}"#)
     #expect(await notices.first("the notice row") { !$0.isEmpty } != nil)
 
-    clock.advance(by: 61)
+    clock.advance(by: 60)
 
     #expect(await notices.first("the notice expires") { $0.isEmpty } != nil)
   }
@@ -33,10 +33,10 @@ extension BridgeProbeTests {
 
     clock.advance(by: 40)
     _ = try await presence.update(room: "lobby")
-    clock.advance(by: 40)
+    clock.advance(millis: 59_999)
 
     #expect(try await Presence.find(presence.id).current() != nil)
-    clock.advance(by: 21)
+    clock.advance(millis: 1)
     #expect(await lobby.next("the expiry, not a repeat of the row")?.isEmpty == true)
   }
 }

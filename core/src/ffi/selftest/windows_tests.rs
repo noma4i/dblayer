@@ -150,9 +150,9 @@ async fn memory_expiry_follows_the_last_write() {
     bound(database.create(database.session_epoch(), "presence".into(), r#"{"id":"p1","room":"a"}"#.into(), "{}".into())).await.unwrap();
     clock.advance(29_000);
     bound(database.update(database.session_epoch(), "presence".into(), "p1".into(), r#"{"room":"a"}"#.into(), "{}".into())).await.unwrap();
-    clock.advance(29_000);
+    clock.advance(29_999);
     assert!(database.peek_row(database.session_epoch(), "presence".into(), "p1".into()).unwrap().is_some(), "an equal write did not renew the expiry");
-    clock.advance(2_000);
+    clock.advance(1);
     yield_until("the row outlived its new boundary", || database.peek_row(database.session_epoch(), "presence".into(), "p1".into()).unwrap().is_none()).await;
 }
 

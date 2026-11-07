@@ -135,7 +135,7 @@ fn rows_and_operation_transition_commit_together() {
 fn direct_commit_keeps_tombstones() {
     let (store, clock) = booted_store();
     store.mark_tombstone("messages", "old", 1, 0).unwrap();
-    clock.advance(std::time::Duration::from_millis(100_000_000));
+    clock.advance(std::time::Duration::from_millis(85_400_001));
     commit(&store, vec![destroy("messages", "fresh", DestroyReason::Server)], vec![]);
     assert!(store.is_tombstoned("messages", "old").unwrap());
     assert!(store.is_tombstoned("messages", "fresh").unwrap());

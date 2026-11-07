@@ -23,7 +23,7 @@ class ClockExpiryTest {
         transport.emit("BulletinAdded", """{"data":{"bulletinAdded":{"body":"hello","occurredAt":"2026-10-18T00:00:00Z"}}}""")
         shown.await()
 
-        clock.advance(61_000L)
+        clock.advance(60_000L)
 
         Notice.recent.live.flow.first { it.isEmpty() }
         closeForCleanup()
@@ -40,10 +40,10 @@ class ClockExpiryTest {
 
         clock.advance(40_000L)
         presence.update(room = "lobby")
-        clock.advance(40_000L)
+        clock.advance(59_999L)
 
         assertEquals(presence.id, Presence.find(presence.id).current()?.id)
-        clock.advance(21_000L)
+        clock.advance(1L)
         assertTrue(inbox.receive().isEmpty())
         collection.cancelAndJoin()
         closeForCleanup()

@@ -170,12 +170,12 @@ extension BridgeProbeTests {
     clock.advance(by: 5 * 60 - 1)
     try await Moment.feed.load()
     #expect(transport.calls.filter { $0.operationName == "MomentsFeed" }.count == 1)
-    clock.advance(by: 2)
+    clock.advance(by: 1)
     try await Moment.feed.load()
     #expect(transport.calls.filter { $0.operationName == "MomentsFeed" }.count == 2)
     transport.enqueue("MomentsFeed", reply: #"{"data":{"feed":{"nodes":[{"__typename":"Moment","id":"1","uuid":"a","likedByMe":false,"media":{},"createdAt":"2026-10-08T00:00:00.000Z"}],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}"#)
     transport.enqueue("MomentsFeed", reply: #"{"data":{"feed":{"nodes":[{"__typename":"Moment","id":"1","uuid":"a","likedByMe":false,"media":{},"createdAt":"2026-10-08T00:00:00.000Z"}],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}"#)
-    clock.advance(by: 5 * 60 + 1)
+    clock.advance(by: 5 * 60)
     let failing = Task { try await Moment.feed.load() }
     let finished = Done()
     let watcher = Task { _ = await failing.result; finished.set() }

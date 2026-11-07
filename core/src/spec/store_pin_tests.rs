@@ -103,7 +103,7 @@ fn store_prop_tombstone_flight() {
     let min = limit(&step(&mut owner, batch(1))).unwrap();
     db.land_events_with_pin(&[("moments".into(), r#"{"op":"delete","id":"m1"}"#.into())], min).unwrap();
     assert!(db.is_tombstoned("moments", "m1").unwrap());
-    clock.advance(Duration::from_secs(86_401));
+    clock.advance(Duration::from_millis(86_400_001));
     db.write_queue_ops_with_pin(&[StoreOp::Rows { model: "moments".into(), rows: vec![row("m2")] }], min).unwrap();
     assert!(db.is_tombstoned("moments", "m1").unwrap());
     db.write_queue_ops_with_pin(&[StoreOp::AttachFile { model: "moments".into(), row_id: "m2".into(), field: "media".into(), bytes: b"file".to_vec(), name: "file.txt".into(), mime: "text/plain".into() }], min).unwrap();

@@ -1,6 +1,6 @@
 use crate::test_wait::limited;
 
-const LIMIT: std::time::Duration = std::time::Duration::from_secs(180);
+const LIMIT: std::time::Duration = std::time::Duration::from_secs(20);
 use super::lifecycle::explore_inputs;
 use super::store::StoreOwner;
 use crate::check::model::run;

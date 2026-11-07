@@ -98,7 +98,7 @@ async fn inv_loadm_16_a_cold_window_never_shows_loaded_or_empty_before_its_rows_
 async fn inv_loadm_16_a_background_failure_is_loaded_with_the_error_when_rows_exist_and_failed_without() {
     let (db, clock) = open(&[ONE_ROW, REFUSED]).await;
     db.load(db.session_epoch(), "Moment".into(), "feed".into(), "{}".into()).await.unwrap();
-    clock.advance(6 * 60_000);
+    clock.advance(5 * 60_000);
     let listener = tape();
     let live = db.watch_query(FEED, listener.clone());
     live.wait_for_initial_load().await.unwrap();
@@ -184,7 +184,7 @@ async fn win_prop_reopen_lands() {
     let first = open_file(&path, &[ONE_ROW], clock.clone()).await;
     first.load(first.session_epoch(), "Moment".into(), "feed".into(), "{}".into()).await.unwrap();
     first.close_database().await.unwrap();
-    clock.advance(6 * 60_000);
+    clock.advance(5 * 60_000);
     let second = open_file(&path, &[NO_ROWS], clock.clone()).await;
     second.load(second.session_epoch(), "Moment".into(), "feed".into(), "{}".into()).await.unwrap();
     let listener = tape();

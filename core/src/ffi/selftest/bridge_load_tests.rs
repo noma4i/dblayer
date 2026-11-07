@@ -321,10 +321,10 @@ async fn a_fresh_profile_is_read_again_after_expiry() {
     let load = || rig.database.load(epoch, "User".into(), "profile".into(), "{}".into());
     let requests = || rig.world.log().iter().filter(|call| call.operation == "MyProfile").count();
     bound(load()).await.unwrap();
-    rig.clock.advance(299_000);
+    rig.clock.advance(299_999);
     bound(load()).await.unwrap();
     assert_eq!(requests(), 1, "a fresh window answers without a request");
-    rig.clock.advance(2_000);
+    rig.clock.advance(1);
     bound(load()).await.unwrap();
     assert_eq!(requests(), 2, "an expired window asks again");
     rig.database.close_now();

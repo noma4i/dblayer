@@ -45,7 +45,7 @@ async fn flow_chat_typing() {
     yield_until("a local message of u3 ends the typing of u3", || places.iter().all(|rows| rows.len() == 0)).await;
     land_owned(&rig, "ChatAction", json!({"id": "c1:u2", "chatId": "c1", "userId": "u2", "kind": "recording"}));
     yield_until("the user types again", || places.iter().all(|rows| rows.len() == 1)).await;
-    rig.clock.advance(9_000);
+    rig.clock.advance(8_000);
     yield_until("the expiry empties both places", || places.iter().all(|rows| rows.len() == 0)).await;
     rig.database.close_now();
 }
