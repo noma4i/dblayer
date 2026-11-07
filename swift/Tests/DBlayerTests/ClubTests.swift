@@ -126,9 +126,8 @@ extension BridgeProbeTests {
       let waiting = Task { try await retried.outcome() }
       guard case .rejected = try await valueBeforeDeadline(waiting, release: {}) else { throw WaitFailure.unexpectedOutcome }
     } else {
-      await eventuallyAsync("the refused operation is gone") {
-        do { _ = try await Letter.retry(id: id, action: nil); return false } catch DbError.NotFound { return true } catch { return false }
-      }
+      let queue = Cursor(try DB.account().operations().compactMap { item -> [OperationInfo]? in if case let .queue(items) = item { items } else { nil } })
+      _ = try #require(await queue.first("the refused operation is gone") { $0.allSatisfy { $0.rowId != id } })
     }
     #expect(try await Letter.ids([id]).read().isEmpty)
     await DB.closeForCleanup()

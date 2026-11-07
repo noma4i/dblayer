@@ -145,8 +145,8 @@ class ClubTest {
                     val attempt = withTimeout(5000) { Letter.retry(id, null) }
                     assertTrue(withTimeout(5000) { attempt.outcome() } is OperationOutcome.Rejected)
                 } else {
-                    eventually("the refused operation is gone") {
-                        try { withTimeout(5000) { Letter.retry(id, null) }; false } catch (error: DbException.NotFound) { true } catch (error: DbException.Invalid) { false }
+                    awaitWithin("the refused operation is gone") {
+                        AccountScope.current().operations().mapNotNull { (it as? OperationQueueItem.Queue)?.items }.first { items -> items.none { it.rowId == id } }
                     }
                 }
                 assertTrue(Query("Letter", Letter).readRow(id) == null)
