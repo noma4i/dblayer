@@ -8,8 +8,8 @@ impl FeedState {
             _ => false,
         };
         if !current { return; }
-        if event.refused { self.refused += 1; }
         if !self.want.contains_key(&event.model) {
+            self.refused += u64::from(event.refused);
             return;
         }
         match self.mode {
@@ -19,10 +19,6 @@ impl FeedState {
             }
             Mode::Live if self.active_connection() == Some(connection) && self.subscribed.contains(channel) => {
                 let ready = self.announced.contains(&event.model);
-                if ready && event.refused {
-                    self.lose(&event.model, 1, fx);
-                    return;
-                }
                 let accepted = self.accept(event);
                 if ready {
                     self.seat(vec![accepted], fx);

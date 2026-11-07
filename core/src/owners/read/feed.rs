@@ -55,6 +55,7 @@ struct FeedEvent {
     /// `model_generation` of the model when the frame arrived.
     basis: u64,
     position: u64,
+    refused: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

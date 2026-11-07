@@ -50,6 +50,8 @@ impl FeedState {
 
     pub fn held(&self) -> usize { self.held.len() }
 
+    pub fn refused(&self) -> u64 { self.refused }
+
     pub fn pending(&self) -> usize { self.pending.len() }
 
     pub fn landing(&self) -> usize { self.landing.len() }
@@ -152,7 +154,7 @@ impl FeedState {
         self.position.insert(event.model.clone(), position);
         self.ledger.entry(event.model.clone()).or_insert_with(Ledger::new).slots.insert(position, Slot::Pending);
         let basis = self.generation_of(&event.model);
-        FeedEvent { model: event.model, payload: event.payload, reread: event.reread, basis, position }
+        FeedEvent { model: event.model, payload: event.payload, reread: event.reread, basis, position, refused: event.refused }
     }
 
     /// The positions of `count` lost events of `model`.
@@ -358,6 +360,9 @@ impl FeedState {
 
     /// `Event` of the current connection in `Live`: the event waits for the debounce of its model or lands at once.
     pub(super) fn seat(&mut self, events: Vec<FeedEvent>, fx: &mut Vec<Fx>) {
+        let (refused, events): (Vec<FeedEvent>, Vec<FeedEvent>) = events.into_iter().partition(|event| event.refused);
+        self.refused += refused.len() as u64;
+        self.mark_lost(&refused, fx);
         let mut now: Vec<FeedEvent> = Vec::new();
         let mut scheduled: Option<u64> = None;
         for event in events {

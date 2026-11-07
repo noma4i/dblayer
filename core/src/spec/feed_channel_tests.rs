@@ -135,6 +135,10 @@ impl Rig {
         self.post(FeedInput::Event { connection_id: FIRST, channel: channel.into(), event: FramedEvent { model: model.into(), payload: payload.into(), reread: StaleKeys::none(), refused: false } })
     }
 
+    fn refused_event(&mut self, channel: &str, model: &str) -> Vec<String> {
+        self.owner_post(FeedInput::Event { connection_id: FIRST, channel: channel.into(), event: FramedEvent { model: model.into(), payload: "refused".into(), reread: StaleKeys::none(), refused: true } })
+    }
+
     /// Chat and Post are wanted, the connection is open and every channel of them is confirmed.
     fn live() -> Self {
         let mut rig = Self::new();
@@ -230,6 +234,26 @@ fn feed_chan_event_before_confirm() {
     rig.confirm("A");
     assert_eq!(rig.confirm("B"), ["modelready:1", "commit"], "the held event lands after the model is ready");
     assert_eq!(rig.state().held(), 0);
+}
+
+#[test]
+fn feed_changes_refused_held() {
+    for handshaken in [false, true] {
+        let mut rig = Rig::new();
+        rig.owner_post(FeedInput::WantPlus { model: "Chat".into(), id: CHAT, stream: true });
+        if handshaken {
+            rig.owner_post(FeedInput::HandshakeDone { connection_id: FIRST, key_id: 7 });
+        }
+        assert!(rig.refused_event("A", "Chat").is_empty(), "handshaken {handshaken}: nothing before the model is ready");
+        assert_eq!((rig.state().held(), rig.state().position("Chat"), rig.state().refused()), (1, 1, 0), "handshaken {handshaken}: held with its position, not counted yet");
+        if !handshaken {
+            rig.owner_post(FeedInput::HandshakeDone { connection_id: FIRST, key_id: 7 });
+        }
+        rig.owner_post(FeedInput::ChannelConfirmed { connection_id: FIRST, channel: "A".into() });
+        let seat = rig.owner_post(FeedInput::ChannelConfirmed { connection_id: FIRST, channel: "B".into() });
+        assert_eq!(seat, ["modelready:1", "modellost:1"], "handshaken {handshaken}: the seat gives Lost and no commit");
+        assert_eq!((rig.state().held(), rig.state().landing(), rig.state().refused()), (0, 0, 1), "handshaken {handshaken}");
+    }
 }
 
 #[test]
