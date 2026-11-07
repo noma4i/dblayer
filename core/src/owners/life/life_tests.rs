@@ -253,10 +253,15 @@ async fn net_open_power_saving() {
     use crate::owners::network::NetworkInput;
     use std::sync::Mutex;
     let slot = crate::ffi::OpenDatabase::new();
-    let config = crate::ffi::Config { path: None, data_version: None, cache_rows: 8 };
-    let options = crate::ffi::OpenOptions { operations: "[]".into(), power_saving: true };
+    let config = crate::ffi::Config { path: None, data_version: None };
+    let options = crate::ffi::OpenOptions { operations: Vec::new() };
     let transport = Arc::new(crate::ffi::database_tests::Plain);
-    let database = slot.open(config, "[]".into(), options, crate::ffi::OpenPorts { transport: Some(transport), ..Default::default() }).await.unwrap();
+    struct Saving;
+    impl crate::ffi::PlatformObserver for Saving {
+        fn start(&self, sink: Arc<crate::ffi::OnlineSink>) { sink.set_power_saving(true); }
+        fn stop(&self) {}
+    }
+    let database = slot.open(config, "[]".into(), options, crate::ffi::OpenPorts { transport: Some(transport), ..Default::default() }, Some(Arc::new(Saving))).await.unwrap();
     let life = database.life_handle();
     let heard = Arc::new(Mutex::new(Vec::new()));
     let sink = heard.clone();

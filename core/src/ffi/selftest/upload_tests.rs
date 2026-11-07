@@ -61,7 +61,7 @@ async fn opened(rig: &SessionRig, puts: Arc<Puts>) -> Arc<Database> {
 }
 
 async fn opened_with_model(rig: &SessionRig, puts: Arc<Puts>, model: crate::schema::ModelSpec) -> Arc<Database> {
-    let database = Database::open(Config { path: None, data_version: None, cache_rows: 8 }, serde_json::to_string(&vec![model]).unwrap(), crate::ffi::OpenPorts { transport: Some(puts), encrypted: Some(EncryptedConfig { origin: origin().into(), server_key: public_key_der_b64().into(), pin: pin().into(), ..crate::transport::encrypted::protocol_tests::config() }), credentials: Some(rig.credentials.clone()), http: Some(Arc::new(UploadHttp(rig.server.clone()))) }).await.unwrap();
+    let database = Database::open(Config { path: None, data_version: None }, serde_json::to_string(&vec![model]).unwrap(), crate::ffi::OpenPorts { transport: Some(puts), encrypted: Some(EncryptedConfig { origin: origin().into(), server_key: public_key_der_b64().into(), pin: pin().into(), ..crate::transport::encrypted::protocol_tests::config() }), credentials: Some(rig.credentials.clone()), http: Some(Arc::new(UploadHttp(rig.server.clone()))) }).await.unwrap();
     let registered: Vec<_> = [("CreateBlob", "createBlob"), ("MakeMoment", "makeMoment"), ("InitMultipart", "initMultipart"), ("PresignParts", "presignParts"), ("CompleteMultipart", "completeMultipart"), ("AbortMultipart", "abortMultipart")].into_iter().map(|(name, root)| {
         let document = format!("mutation {name} {{ {root} {{ id }} }}");
         rig.server.register(&document);

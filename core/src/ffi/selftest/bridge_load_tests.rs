@@ -62,7 +62,7 @@ impl crate::ffi::Transport for CancelledLoadTransport {
 #[tokio::test(flavor = "multi_thread")]
 async fn cancelling_the_last_load_interest_cancels_the_request() {
     let transport = Arc::new(CancelledLoadTransport::default());
-    let database = bound(Database::open(crate::ffi::Config { path: None, data_version: None, cache_rows: 32 }, crate::ffi::lifecycle_tests::models(), crate::ffi::OpenPorts { transport: Some(transport.clone()), ..Default::default() })).await.unwrap();
+    let database = bound(Database::open(crate::ffi::Config { path: None, data_version: None }, crate::ffi::lifecycle_tests::models(), crate::ffi::OpenPorts { transport: Some(transport.clone()), ..Default::default() })).await.unwrap();
     database.register_operations(json!([{"name":"Users","document":"query Users { users { id name } }"}]).to_string()).await.unwrap();
     database.set_online(true).unwrap();
     let request = database.begin_load(database.session_epoch(), "User".into(), "all".into(), "{}".into()).unwrap();
@@ -76,7 +76,7 @@ async fn cancelling_the_last_load_interest_cancels_the_request() {
 async fn a_refresh_after_reopen_and_clock_rollback_keeps_the_new_response() {
     use super::rig_models::{plain_models, plain_operations};
     let directory = tempfile::tempdir().unwrap();
-    let config = crate::ffi::Config { path: Some(directory.path().join("cache.sqlite").to_string_lossy().into_owned()), data_version: None, cache_rows: 32 };
+    let config = crate::ffi::Config { path: Some(directory.path().join("cache.sqlite").to_string_lossy().into_owned()), data_version: None };
     let opener = crate::ffi::OpenDatabase::new();
     let world_a = World::new("server", "A", true);
     let switch = Switchable::new(Some(world_a.clone()), false);

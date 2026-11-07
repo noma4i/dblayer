@@ -53,7 +53,7 @@ async fn data_upsert_lands() {
     let mut encrypted = crate::transport::encrypted::protocol_tests::config();
     encrypted.endpoints.session_operations.insert("login_link".into(), crate::ffi::EncryptedSessionOperation { path: "/api/auth/login_link".into(), class: EncryptedOperationClass::Authenticated });
     let ports = OpenPorts { transport: Some(Arc::new(Wire(server.clone()))), encrypted: Some(encrypted), credentials: Some(Arc::new(Held(Arc::new(MemoryCredentials::default())))), http: Some(Arc::new(LandingHttp(server))) };
-    let db = within(Database::open_with_clock(Config { path: Some(path), data_version: None, cache_rows: 64 }, serde_json::to_string(&models).unwrap(), ports, TestClock::new(1_000_000))).await.unwrap();
+    let db = within(Database::open_with_clock(Config { path: Some(path), data_version: None }, serde_json::to_string(&models).unwrap(), ports, TestClock::new(1_000_000))).await.unwrap();
     let mut operations: serde_json::Value = serde_json::from_str(OPERATIONS).unwrap();
     operations.as_array_mut().unwrap().iter_mut().find(|operation| operation["name"] == "MakeMoment").unwrap()["document"] = json!(MAKE_MOMENT);
     db.register_operations(operations.to_string()).await.unwrap();

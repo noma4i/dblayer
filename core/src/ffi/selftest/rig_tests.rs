@@ -371,7 +371,7 @@ pub(super) struct Rig {
 }
 
 
-fn config() -> Config { Config { path: None, data_version: None, cache_rows: 8 } }
+fn config() -> Config { Config { path: None, data_version: None } }
 
 impl Rig {
     /// The app path: the real EncryptedClient, only the HTTP exchange is the fake world.

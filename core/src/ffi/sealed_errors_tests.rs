@@ -45,7 +45,7 @@ pub(super) fn moment_spec() -> ModelSpec {
 }
 
 pub(super) async fn signed_in(rig: &Rig) -> Arc<Database> {
-    let database = Database::open(Config { path: None, data_version: None, cache_rows: 8 }, serde_json::to_string(&vec![moment_spec()]).unwrap(), crate::ffi::OpenPorts { transport: Some(Arc::new(SubscriptionsOnly)), encrypted: Some(EncryptedConfig { origin: origin().to_string(), server_key: public_key_der_b64().to_string(), pin: pin().to_string(), ..crate::transport::encrypted::protocol_tests::config() }), credentials: Some(rig.credentials.clone()), http: Some(Arc::new(ThroughServer(rig.server.clone()))) }).await
+    let database = Database::open(Config { path: None, data_version: None }, serde_json::to_string(&vec![moment_spec()]).unwrap(), crate::ffi::OpenPorts { transport: Some(Arc::new(SubscriptionsOnly)), encrypted: Some(EncryptedConfig { origin: origin().to_string(), server_key: public_key_der_b64().to_string(), pin: pin().to_string(), ..crate::transport::encrypted::protocol_tests::config() }), credentials: Some(rig.credentials.clone()), http: Some(Arc::new(ThroughServer(rig.server.clone()))) }).await
     .unwrap();
     database.register_operations(OPERATIONS.into()).await.unwrap();
     database.set_online(true).unwrap();
@@ -128,7 +128,7 @@ impl Transport for Refusing {
 #[tokio::test(flavor = "multi_thread")]
 async fn a_session_error_thrown_by_a_platform_transport_keeps_its_code_through_load_and_run() {
     for (_, code) in TABLE {
-        let database = Database::open(Config { path: None, data_version: None, cache_rows: 8 }, serde_json::to_string(&vec![moment_spec()]).unwrap(), crate::ffi::OpenPorts { transport: Some(Arc::new(Refusing(code))), ..Default::default() }).await.unwrap();
+        let database = Database::open(Config { path: None, data_version: None }, serde_json::to_string(&vec![moment_spec()]).unwrap(), crate::ffi::OpenPorts { transport: Some(Arc::new(Refusing(code))), ..Default::default() }).await.unwrap();
         database.register_operations(OPERATIONS.into()).await.unwrap();
         database.set_online(true).unwrap();
 

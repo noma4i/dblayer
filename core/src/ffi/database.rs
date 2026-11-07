@@ -96,7 +96,7 @@ pub(super) async fn blocking<T: Send + 'static>(work: impl FnOnce() -> Result<T,
 }
 
 #[derive(Clone, PartialEq, Eq, uniffi::Record)]
-pub struct Config { pub path: Option<String>, pub data_version: Option<String>, pub cache_rows: u32 }
+pub struct Config { pub path: Option<String>, pub data_version: Option<String> }
 
 #[derive(uniffi::Record)]
 pub struct SubscriptionCensus { pub observed_queries: u64, pub subscriptions: u64, pub retained_observers: u64, pub refused_events: u64 }
@@ -224,6 +224,10 @@ impl Database {
         Ok(life)
     }
 
+    pub(super) fn not_closed(&self) -> Result<(), DbError> {
+        if self.life.published().closed { Err(super::command::closed()) } else { Ok(()) }
+    }
+
     pub(super) fn hold(&self, lease: Arc<OpenLease>) { let _ = self.lease.set(lease); }
 
     pub(super) fn wire(&self, model: &str) -> Result<&Arc<WireModel>, DbError> {
@@ -254,13 +258,23 @@ impl Database {
         Ok(found)
     }
     pub async fn edge_values(&self, epoch: u64, model: String, relation: String, params_json: String, row_ids: Vec<String>) -> Result<String, DbError> {
+        super::loading::relation_named(&model, &relation)?;
         self.read_in_epoch(epoch, "edge values", move |database| {
             let params = parse_json(&params_json)?;
             Ok(serde_json::to_string(&database.db.edge_values(&model, &relation, &params, &row_ids)?)?)
         }).await
     }
-    pub fn open_report(&self) -> OpenReport { self.db.open_report().clone() }
+    pub fn open_report(&self) -> Result<OpenReport, DbError> {
+        self.not_closed()?;
+        Ok(self.db.open_report().clone())
+    }
+    /// The epoch a call is admitted in: the epoch of the account scope the caller holds, else the epoch of the session now. `Closed` after the close.
+    pub fn admit(&self, account_epoch: Option<u64>) -> Result<u64, DbError> {
+        self.not_closed()?;
+        Ok(account_epoch.unwrap_or_else(|| self.life.published().epoch))
+    }
     pub async fn subscription_census(&self) -> Result<SubscriptionCensus, DbError> {
+        self.not_closed()?;
         let (observed, subscriptions, retained, refused_events) = self.life.subscription_census().await.ok_or_else(|| DbError::Interrupted { detail: "the census was interrupted".into() })?;
         Ok(SubscriptionCensus { observed_queries: observed as u64, subscriptions: subscriptions as u64, retained_observers: retained as u64, refused_events })
     }
@@ -275,6 +289,10 @@ impl Database {
     pub async fn url(&self, epoch: u64, model: String, row_id: String, field: String) -> Result<Option<String>, DbError> {
         let row_id = id(&row_id)?;
         self.read_in_epoch(epoch, "file url", move |database| Ok(database.db.url(&model, &row_id, &field)?.map(|path| path.to_string_lossy().into_owned()))).await
+    }
+    pub async fn declare_operations(&self, operations: Vec<super::OperationDefinition>) -> Result<(), DbError> {
+        let defs = serde_json::Value::Array(operations.into_iter().map(|operation| serde_json::json!({ "name": operation.name, "document": operation.document })).collect());
+        self.register_operations(defs.to_string()).await
     }
     pub async fn register_operations(&self, defs_json: String) -> Result<(), DbError> {
         if self.life.published().closed { return Err(super::command::closed()); }
@@ -334,7 +352,7 @@ impl Database {
     }
     pub fn set_online(&self, online: bool) -> Result<(), DbError> { self.online_sink()?.set_online(online); Ok(()) }
 
-    pub fn online_sink(&self) -> Result<Arc<OnlineSink>, DbError> { Ok(Arc::new(OnlineSink { life: Arc::downgrade(&self.life) })) }
+    pub fn online_sink(&self) -> Result<Arc<OnlineSink>, DbError> { Ok(OnlineSink::of_life(&self.life)) }
     /// Closes the database: every lease ends, every holder closes, every database thread lets go of the file, then the process slot opens for the next database. Closing again returns the same result. The name differs from `close` because Kotlin objects already carry `close()` for their native handle.
     pub async fn close_database(&self) -> Result<(), DbError> {
         let waiter = self.life.close();

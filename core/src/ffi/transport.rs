@@ -94,14 +94,37 @@ impl ByteProgress {
     pub fn is_cancelled(&self) -> bool { self.cancel.is_cancelled() }
 }
 
+enum SignalTarget {
+    Life(std::sync::Weak<crate::owners::life::Life>),
+    Connectivity(Arc<core::Connectivity>),
+}
+
+/// The inputs of the platform signals: each OS value reaches the core as one input, without dedup.
 #[derive(uniffi::Object)]
-pub struct OnlineSink { pub(crate) life: std::sync::Weak<crate::owners::life::Life> }
+pub struct OnlineSink { target: SignalTarget }
+
+impl OnlineSink {
+    pub(crate) fn of_life(life: &Arc<crate::owners::life::Life>) -> Arc<Self> { Arc::new(Self { target: SignalTarget::Life(Arc::downgrade(life)) }) }
+
+    pub(crate) fn of_connectivity(connectivity: Arc<core::Connectivity>) -> Arc<Self> { Arc::new(Self { target: SignalTarget::Connectivity(connectivity) }) }
+
+    fn life(&self) -> Option<Arc<crate::owners::life::Life>> {
+        match &self.target {
+            SignalTarget::Life(life) => life.upgrade(),
+            SignalTarget::Connectivity(_) => None,
+        }
+    }
+}
 
 #[uniffi::export]
 impl OnlineSink {
     /// Returns once the owners heard the change.
     pub fn set_online(&self, online: bool) {
-        let Some(life) = self.life.upgrade() else { return };
+        if let SignalTarget::Connectivity(connectivity) = &self.target {
+            connectivity.change(online);
+            return;
+        }
+        let Some(life) = self.life() else { return };
         let waiter = life.set_online(online);
         let Ok(executor) = super::database::executor() else { return };
         let (sender, receiver) = std::sync::mpsc::channel();
@@ -110,11 +133,33 @@ impl OnlineSink {
     }
 
     pub fn set_power_saving(&self, saving: bool) {
-        if let Some(life) = self.life.upgrade() { drop(life.set_power_saving(saving)); }
+        if let Some(life) = self.life() { drop(life.set_power_saving(saving)); }
     }
 
     pub fn enter_foreground(&self) {
-        if let Some(life) = self.life.upgrade() { drop(life.foreground()); }
+        if let Some(life) = self.life() { drop(life.foreground()); }
+    }
+}
+
+/// The OS observers of the platform: the core starts them after `open` and stops them in `Closing`, and `close` returns after `stop`.
+#[uniffi::export(with_foreign)]
+pub trait PlatformObserver: Send + Sync {
+    /// Starts the OS observers. Each OS value (online, foreground, power saving) goes to `sink` as one input, the current value first.
+    fn start(&self, sink: Arc<OnlineSink>);
+    /// Ends the OS observers: no callback reaches the sink after it returns.
+    fn stop(&self);
+}
+
+pub(super) struct ObserverStop(pub Arc<dyn PlatformObserver>);
+
+impl Drop for ObserverStop {
+    fn drop(&mut self) { crate::lock::assert_no_library_lock("ObserverStop::drop"); }
+}
+
+impl crate::owners::life::ObserverPort for ObserverStop {
+    fn stop(&self, done: crate::owners::life::StopDone) {
+        self.0.stop();
+        done.finish();
     }
 }
 

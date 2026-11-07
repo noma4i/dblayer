@@ -91,7 +91,7 @@ pub(super) async fn open_rig(clock: Option<Arc<TestClock>>, hold: Option<Arc<tok
     let mut model = ModelSpec::new("Moment", vec![FieldSpec::scalar("id", ScalarKind::Id), FieldSpec::scalar("text", ScalarKind::Str).optional()]);
     model.relations.extend([relation("feed", "5.minutes"), relation("quick", "200.milliseconds")]);
     let transport = Arc::new(Counting { queries: AtomicUsize::new(0), started: Notify::new(), hold: hold.clone(), gate });
-    let config = Config { path: None, data_version: None, cache_rows: 8 };
+    let config = Config { path: None, data_version: None };
     let models = serde_json::to_string(&vec![model]).unwrap();
     let transport_handle = Some(transport.clone() as Arc<dyn Transport>);
     let db = match &clock {
@@ -142,7 +142,7 @@ async fn settled_waits_for_a_load_that_outlives_a_data_reset() {
     remote.variables.insert("id".into(), crate::schema::VariableSource::Param { name: crate::schema::NODE_PARAM.into() });
     node.remote = Some(remote);
     model.relations.push(node);
-    let db = Database::open_with_clock(Config { path: None, data_version: None, cache_rows: 8 }, serde_json::to_string(&vec![model]).unwrap(), crate::ffi::OpenPorts { transport: Some(transport.clone()), ..Default::default() }, TestClock::new(1_000_000)).await.unwrap();
+    let db = Database::open_with_clock(Config { path: None, data_version: None }, serde_json::to_string(&vec![model]).unwrap(), crate::ffi::OpenPorts { transport: Some(transport.clone()), ..Default::default() }, TestClock::new(1_000_000)).await.unwrap();
     db.register_operations(r#"[{"name":"Node","document":"query Node($id: ID!) { node(id: $id) { ... on Moment { id text } } }","rootPath":"node"}]"#.into()).await.unwrap();
     db.set_online(true).unwrap();
     let listener = Arc::new(Rows::default());
@@ -265,7 +265,7 @@ async fn an_entity_stream_is_not_loaded_when_its_first_empty_snapshot_arrives_be
     model.relations.push(node);
     let hold = Arc::new(tokio::sync::Semaphore::new(0));
     let transport = Arc::new(Counting { queries: AtomicUsize::new(0), started: Notify::new(), hold: Some(hold.clone()), gate: None });
-    let db = Database::open(Config { path: None, data_version: None, cache_rows: 8 }, serde_json::to_string(&vec![model]).unwrap(), crate::ffi::OpenPorts { transport: Some(transport.clone()), ..Default::default() }).await.unwrap();
+    let db = Database::open(Config { path: None, data_version: None }, serde_json::to_string(&vec![model]).unwrap(), crate::ffi::OpenPorts { transport: Some(transport.clone()), ..Default::default() }).await.unwrap();
     db.register_operations(r#"[{"name":"Node","document":"query Node($id: ID!) { node(id: $id) { ... on Moment { id text } } }","rootPath":"node"}]"#.into()).await.unwrap();
     db.set_online(true).unwrap();
     let listener = Arc::new(Tape::default());

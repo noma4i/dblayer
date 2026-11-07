@@ -47,7 +47,7 @@ fn opening_leaves_the_calling_thread_free_while_sqlite_is_busy() {
     unsafe { rusqlite::auto_extension::register_auto_extension(pause_open).unwrap(); }
     let thread = std::thread::spawn(move || {
         caller.send(std::thread::current().id()).unwrap();
-        let mut opening = Box::pin(Database::open(Config { path: Some(path), data_version: None, cache_rows: 8 }, "[]".into(), crate::ffi::OpenPorts::default()));
+        let mut opening = Box::pin(Database::open(Config { path: Some(path), data_version: None }, "[]".into(), crate::ffi::OpenPorts::default()));
         let pending = matches!(opening.as_mut().poll(&mut Context::from_waker(Waker::noop())), Poll::Pending);
         free.send(pending).unwrap();
         if pending { super::database::executor().unwrap().block_on(opening).unwrap(); }
@@ -68,10 +68,10 @@ async fn an_opening_error_leaves_the_same_path_available_for_retry() {
     let parent = directory.path().join("blocked");
     std::fs::write(&parent, b"file").unwrap();
     let path = parent.join("database.sqlite");
-    let config = || Config { path: Some(path.to_string_lossy().into_owned()), data_version: None, cache_rows: 8 };
+    let config = || Config { path: Some(path.to_string_lossy().into_owned()), data_version: None };
     assert!(Database::open(config(), "[]".into(), crate::ffi::OpenPorts::default()).await.is_err());
     std::fs::remove_file(parent).unwrap();
     let database = Database::open(config(), "[]".into(), crate::ffi::OpenPorts::default()).await.unwrap();
     assert!(path.is_file());
-    assert!(database.open_report().recreated.is_none());
+    assert!(database.open_report().unwrap().recreated.is_none());
 }

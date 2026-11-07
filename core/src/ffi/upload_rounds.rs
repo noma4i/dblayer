@@ -9,10 +9,18 @@ use crate::runtime::Epoch;
 
 use super::Database;
 
+/// The round the platform schedules: the core numbers requests and rounds, the platform returns these values unchanged in `round_started`, `round_refused` and `round_ended`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, uniffi::Record)]
+pub struct RoundJob {
+    pub request_id: u64,
+    pub round_id: u32,
+    pub epoch: u64,
+}
+
 /// The platform schedules and ends the system job. It answers with `round_started`, `round_refused` and `round_ended`.
 #[uniffi::export(with_foreign)]
 pub trait RoundJobsSink: Send + Sync {
-    fn schedule_job(&self, request_id: u64, epoch: u64);
+    fn schedule_job(&self, job: RoundJob);
     fn end_job(&self, round_id: u32);
 }
 
@@ -28,7 +36,7 @@ impl RoundJobs for RoundJobsSlot {
     fn schedule_job(&self, request_id: RequestId, epoch: Epoch) {
         if let Some(sink) = self.0.get() {
             crate::lock::assert_no_library_lock("RoundJobsSink::schedule_job");
-            sink.schedule_job(request_id, epoch);
+            sink.schedule_job(RoundJob { request_id, round_id: request_id as RoundId, epoch });
         }
     }
 

@@ -92,10 +92,11 @@ async fn preloads_and_three_media_loads_finish_on_empty_pages() {
     let operations = json!([
         {"name":"PresenceOnline","document":"query PresenceOnline { presenceOnline { id } }"},
         {"name":"ChatMedia","document":"query ChatMedia($chatId: ID!, $first: Int, $after: Cursor, $mediaKinds: [String!], $includeGifts: Boolean!) { node(id: $chatId) { ... on Chat { messages(first: $first, after: $after, mediaKinds: $mediaKinds, includeGifts: $includeGifts) { edges { cursor node { id chatId kind mediaKind sequenceNumber } } pageInfo { hasNextPage endCursor } } } } }"}
-    ]).to_string();
-    let options = OpenOptions { operations, power_saving: false };
+    ]);
+    let operations = operations.as_array().unwrap().iter().map(|operation| crate::ffi::OperationDefinition { name: operation["name"].as_str().unwrap().into(), document: operation["document"].as_str().unwrap().into() }).collect();
+    let options = OpenOptions { operations };
     let opener = OpenDatabase::new();
-    let database = within_secs(20, opener.open(Config { path: None, data_version: None, cache_rows: 32 }, models(), options, crate::ffi::OpenPorts { transport: Some(transport.clone()), ..Default::default() })).await.unwrap();
+    let database = within_secs(20, opener.open(Config { path: None, data_version: None }, models(), options, crate::ffi::OpenPorts { transport: Some(transport.clone()), ..Default::default() }, None)).await.unwrap();
     database.set_online(true).unwrap();
     within_secs(20, transport.preload.notified()).await;
     let epoch = database.session_epoch();

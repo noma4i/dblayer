@@ -39,7 +39,7 @@ async fn a_database_of_an_older_layout_opens_with_its_session_and_without_pendin
     let server = FakeServer::new(Arc::new(crate::runtime::SystemClock));
     let encrypted = EncryptedConfig { origin: origin().to_string(), server_key: public_key_der_b64().to_string(), pin: pin().to_string(), ..crate::transport::encrypted::protocol_tests::config() };
 
-    let database = Database::open(Config { path: Some(path.to_string_lossy().into_owned()), data_version: None, cache_rows: 8 }, "[]".to_string(), crate::ffi::OpenPorts { transport: Some(Arc::new(SubscriptionsOnly)), encrypted: Some(encrypted), credentials: Some(Arc::new(Held(credentials))), http: Some(Arc::new(ThroughServer(server))) }).await.expect("the database opens");
+    let database = Database::open(Config { path: Some(path.to_string_lossy().into_owned()), data_version: None }, "[]".to_string(), crate::ffi::OpenPorts { transport: Some(Arc::new(SubscriptionsOnly)), encrypted: Some(encrypted), credentials: Some(Arc::new(Held(credentials))), http: Some(Arc::new(ThroughServer(server))) }).await.expect("the database opens");
 
     assert_eq!(database.life.published().identity, crate::store::identity_of(&digest), "the session identity is published");
     assert_eq!(crate::transport::encrypted::credential::stored_pending(&database.db).unwrap(), None, "no pending request");

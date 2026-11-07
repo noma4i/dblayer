@@ -55,12 +55,14 @@ pub struct WireFailure {
     pub extensions: Option<crate::transport::GraphqlExtensions>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
+#[derive(Clone, Debug, PartialEq, uniffi::Record)]
 pub struct WireUpload {
     pub status: WireUploadStatus,
     pub stage: String,
     pub sent_bytes: u64,
     pub total_bytes: u64,
+    /// The sent share of the bytes in percent, 0 to 100, 0 while the total is unknown.
+    pub progress: f64,
     pub wait_reason: Option<String>,
     pub attempts: u32,
     pub error: Option<WireFailure>,
@@ -77,6 +79,9 @@ pub struct WireProcessing {
 
 /// The progress is a finite number read from JSON, so equality is total.
 impl Eq for WireProcessing {}
+
+/// The progress is a finite share of two counters, so equality is total.
+impl Eq for WireUpload {}
 
 #[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
 pub struct WireUploadEntry {
@@ -244,6 +249,7 @@ fn upload(info: &UploadInfo) -> WireUpload {
         stage: enum_text(&info.stage).unwrap_or_default(),
         sent_bytes: info.sent_bytes,
         total_bytes: info.total_bytes,
+        progress: if info.total_bytes == 0 { 0.0 } else { (info.sent_bytes as f64 * 100.0 / info.total_bytes as f64).min(100.0) },
         wait_reason: info.wait_reason.and_then(|reason| enum_text(&reason)),
         attempts: info.attempts,
         error: info.error.as_ref().map(failure),

@@ -34,7 +34,7 @@ impl EncryptedHttp for Unused {
     async fn post(&self, _: String, _: String, _: crate::transport::NetworkPurpose) -> Result<EncryptedReply, DbError> { unreachable!() }
 }
 
-fn config() -> Config { Config { path: None, data_version: None, cache_rows: 8 } }
+fn config() -> Config { Config { path: None, data_version: None } }
 
 #[tokio::test]
 async fn life_register_ok() {

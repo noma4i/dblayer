@@ -66,7 +66,7 @@ pub fn user_agent(application: Option<String>) -> String {
 
 pub use database::{Config, Database, SubscriptionCensus, TestClock};
 pub use receipt::{ItemId, WireBatchReceipt, WireItemReceipt, WireOperationOutcome, WireOperationReceipt, WireReceiptTicket};
-pub use opening::{OpenDatabase, OpenOptions, OpenPorts};
+pub use opening::{OpenDatabase, OpenOptions, OpenPorts, OperationDefinition};
 pub use write::FileBytes;
 pub use encrypted::{fetch_server_config, CredentialStore, EncryptedHttp, EncryptedReply, RetryProgress, RetryProgressListener, RetrySubscription};
 pub use crate::transport::SessionCode;
@@ -74,10 +74,10 @@ pub use crate::transport::{AppPlatform, ConfigCode, EncryptedConfig, EncryptedEn
 pub use loading::{LoadMoreResult, LoadRequest};
 pub use command::CommandRequest;
 pub use read::{ReadEnd, ReadFetch, ReadPhase, ReadRequest, ReadState, ReadStream, ReadValue, RowEdit};
-pub use upload_rounds::RoundJobsSink;
+pub use upload_rounds::{RoundJob, RoundJobsSink};
 pub use wire::{Cell, CellEntry, WireFailure, WireModel, WireRow, WireSync, WireSyncState, WireProcessing, WireUpload, WireUploadStatus};
 pub use crate::transport::{PutFile, PutReply};
-pub use transport::{ByteProgress, CableLease, EncryptedSocketEvent, OnlineSink, Transport, TransportRequest};
+pub use transport::{ByteProgress, CableLease, EncryptedSocketEvent, OnlineSink, PlatformObserver, Transport, TransportRequest};
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error, uniffi::Error)]
 pub enum DbError {

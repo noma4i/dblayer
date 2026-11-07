@@ -1,9 +1,9 @@
 use super::*;
 
-fn config() -> Config { Config { path: None, data_version: None, cache_rows: 8 } }
-fn options() -> OpenOptions { OpenOptions { operations: "[]".into(), power_saving: false } }
+fn config() -> Config { Config { path: None, data_version: None } }
+fn options() -> OpenOptions { OpenOptions { operations: Vec::new() } }
 async fn open(slot: &OpenDatabase) -> Result<Arc<Database>, DbError> {
-    slot.open(config(), "[]".into(), options(), crate::ffi::OpenPorts::default()).await
+    slot.open(config(), "[]".into(), options(), crate::ffi::OpenPorts::default(), None).await
 }
 
 #[tokio::test]
@@ -63,7 +63,7 @@ async fn life_register_no_transport() {
 async fn life_register_closed() {
     use super::super::database_tests::Plain;
     let slot = OpenDatabase::new();
-    let database = slot.open(config(), "[]".into(), options(), crate::ffi::OpenPorts { transport: Some(Arc::new(Plain)), ..Default::default() }).await.unwrap();
+    let database = slot.open(config(), "[]".into(), options(), crate::ffi::OpenPorts { transport: Some(Arc::new(Plain)), ..Default::default() }, None).await.unwrap();
     database.close_database().await.unwrap();
     let result = database.register_operations(r#"[{"name":"Query","document":"query Query { items }"}]"#.into()).await;
     assert!(matches!(result, Err(DbError::Closed { .. })));
@@ -73,7 +73,7 @@ async fn life_register_closed() {
 async fn life_register_invalid() {
     use super::super::database_tests::Plain;
     let slot = OpenDatabase::new();
-    let database = slot.open(config(), "[]".into(), options(), crate::ffi::OpenPorts { transport: Some(Arc::new(Plain)), ..Default::default() }).await.unwrap();
+    let database = slot.open(config(), "[]".into(), options(), crate::ffi::OpenPorts { transport: Some(Arc::new(Plain)), ..Default::default() }, None).await.unwrap();
     for definitions in [
         r#"[{"document":"query Query { items }"}]"#,
         r#"[{"name":"Query"}]"#,
@@ -112,7 +112,7 @@ async fn life_register_bad_preload() {
 #[tokio::test]
 async fn an_open_that_fails_leaves_the_slot_free() {
     let slot = OpenDatabase::new();
-    assert!(slot.open(config(), "invalid".into(), options(), crate::ffi::OpenPorts::default()).await.is_err());
+    assert!(slot.open(config(), "invalid".into(), options(), crate::ffi::OpenPorts::default(), None).await.is_err());
     assert!(open(&slot).await.is_ok());
 }
 
@@ -127,8 +127,8 @@ async fn open_carries_the_upload_declaration_and_frees_the_slot_when_it_is_refus
     use super::super::database_tests::Plain;
     let slot = OpenDatabase::new();
     for (name, accepted) in [("Missing", false), ("CreateBlob", true)] {
-        let options = OpenOptions { operations: r#"[{"name":"CreateBlob","document":"mutation CreateBlob { createBlob { url } }"}]"#.into(), power_saving: false };
-        let opened = slot.open(config(), clip_with_blob(name), options, crate::ffi::OpenPorts { transport: Some(Arc::new(Plain)), ..Default::default() }).await;
+        let options = OpenOptions { operations: vec![OperationDefinition { name: "CreateBlob".into(), document: "mutation CreateBlob { createBlob { url } }".into() }] };
+        let opened = slot.open(config(), clip_with_blob(name), options, crate::ffi::OpenPorts { transport: Some(Arc::new(Plain)), ..Default::default() }, None).await;
         match opened {
             Ok(_) => assert!(accepted, "{name} was opened"),
             Err(error) => assert!(!accepted && error.to_string().ends_with("invalid: upload operation Missing is not registered"), "{name}: {error}"),
@@ -141,7 +141,7 @@ async fn open_carries_the_upload_declaration_and_frees_the_slot_when_it_is_refus
 async fn inv_upload_22_uploads_with_empty_operations_explain_the_cause_and_the_fix() {
     use super::super::database_tests::Plain;
     let slot = OpenDatabase::new();
-    let opened = slot.open(config(), clip_with_blob("CreateBlob"), options(), crate::ffi::OpenPorts { transport: Some(Arc::new(Plain)), ..Default::default() }).await;
+    let opened = slot.open(config(), clip_with_blob("CreateBlob"), options(), crate::ffi::OpenPorts { transport: Some(Arc::new(Plain)), ..Default::default() }, None).await;
     let error = match opened {
         Err(error) => error.to_string(),
         Ok(_) => panic!("uploads with empty operations were accepted"),
@@ -150,3 +150,66 @@ async fn inv_upload_22_uploads_with_empty_operations_explain_the_cause_and_the_f
     assert!(open(&slot).await.is_ok(), "the refused open must release its slot");
 }
 
+
+#[derive(Default)]
+struct Observed(std::sync::Mutex<Vec<&'static str>>);
+
+impl PlatformObserver for Observed {
+    fn start(&self, _sink: Arc<crate::ffi::OnlineSink>) { self.0.lock().unwrap().push("start"); }
+    fn stop(&self) { self.0.lock().unwrap().push("stop"); }
+}
+
+#[tokio::test]
+async fn life_closing_observers_stopped_last_reaches_the_platform_observer() {
+    let slot = OpenDatabase::new();
+    let observed = Arc::new(Observed::default());
+    let database = slot.open(config(), "[]".into(), options(), crate::ffi::OpenPorts::default(), Some(observed.clone())).await.unwrap();
+    assert_eq!(*observed.0.lock().unwrap(), ["start"]);
+    database.close_database().await.unwrap();
+    assert_eq!(*observed.0.lock().unwrap(), ["start", "stop"]);
+    database.close_database().await.unwrap();
+    assert_eq!(*observed.0.lock().unwrap(), ["start", "stop"]);
+}
+
+#[tokio::test]
+async fn life_prop_not_open_typed_for_census_report_and_admission() {
+    let slot = OpenDatabase::new();
+    let database = open(&slot).await.unwrap();
+    assert_eq!(database.admit(None).unwrap(), database.session_epoch());
+    assert_eq!(database.admit(Some(7)).unwrap(), 7);
+    assert!(database.open_report().is_ok() && database.subscription_census().await.is_ok());
+    database.close_database().await.unwrap();
+    assert!(matches!(database.admit(None), Err(DbError::Closed { .. })));
+    assert!(matches!(database.admit(Some(7)), Err(DbError::Closed { .. })));
+    assert!(matches!(database.open_report(), Err(DbError::Closed { .. })));
+    assert!(matches!(database.subscription_census().await, Err(DbError::Closed { .. })));
+}
+
+#[tokio::test]
+async fn a_load_call_without_a_relation_is_invalid() {
+    use super::super::database_tests::Plain;
+    let slot = OpenDatabase::new();
+    let database = slot.open(config(), "[]".into(), options(), crate::ffi::OpenPorts { transport: Some(Arc::new(Plain)), ..Default::default() }, None).await.unwrap();
+    let epoch = database.session_epoch();
+    assert!(matches!(database.begin_load(epoch, "Item".into(), String::new(), "{}".into()), Err(DbError::Invalid { detail }) if detail.contains("no relation")));
+    assert!(matches!(database.refresh(epoch, "Item".into(), String::new(), "{}".into()).await, Err(DbError::Invalid { .. })));
+    assert!(matches!(database.load_more(epoch, "Item".into(), String::new(), "{}".into()).await, Err(DbError::Invalid { .. })));
+    assert!(matches!(database.edge_values(epoch, "Item".into(), String::new(), "{}".into(), vec![]).await, Err(DbError::Invalid { .. })));
+    database.close_database().await.unwrap();
+}
+
+#[test]
+fn the_round_job_carries_the_round_id_the_core_numbered() {
+    use super::super::upload_rounds::{RoundJob, RoundJobsSink, RoundJobsSlot};
+    use crate::owners::write::rounds_executor::RoundJobs;
+    struct Asked(std::sync::Mutex<Vec<RoundJob>>);
+    impl RoundJobsSink for Asked {
+        fn schedule_job(&self, job: RoundJob) { self.0.lock().unwrap().push(job); }
+        fn end_job(&self, _round_id: u32) {}
+    }
+    let asked = Arc::new(Asked(Default::default()));
+    let slot = RoundJobsSlot::default();
+    assert!(slot.set(asked.clone()));
+    slot.schedule_job((1u64 << 32) + 5, 9);
+    assert_eq!(*asked.0.lock().unwrap(), [RoundJob { request_id: (1 << 32) + 5, round_id: 5, epoch: 9 }]);
+}

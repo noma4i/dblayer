@@ -41,7 +41,7 @@ async fn feed_prop_census_from_owners() {
     let (subscribed, mut subscriptions) = mpsc::unbounded_channel();
     let (closed, mut closes) = mpsc::unbounded_channel();
     let peer = Arc::new(Peer { cable: CablePeer::new(config.clone()), subscribed, closed });
-    let database = Database::open(Config { path: None, data_version: None, cache_rows: 8 }, plain_models(), crate::ffi::OpenPorts { transport: Some(peer), encrypted: Some(config), credentials: Some(rig.credentials.clone()), http: Some(Arc::new(ThroughServer(rig.server.clone()))) }).await.unwrap();
+    let database = Database::open(Config { path: None, data_version: None }, plain_models(), crate::ffi::OpenPorts { transport: Some(peer), encrypted: Some(config), credentials: Some(rig.credentials.clone()), http: Some(Arc::new(ThroughServer(rig.server.clone()))) }).await.unwrap();
     database.register_operations(r#"[{"name":"Notices","document":"subscription Notices { notices { id } }","rootPath":"notices"}]"#.into()).await.unwrap();
     database.set_online(true).unwrap();
     bound(database.session_call("social".into(), SOCIAL_BODY.into())).await.unwrap();
@@ -65,7 +65,7 @@ async fn an_old_encrypted_cable_cannot_deliver_into_the_next_account() {
     let (subscribed, mut subscriptions) = mpsc::unbounded_channel();
     let (closed, mut closes) = mpsc::unbounded_channel();
     let peer = Arc::new(Peer { cable: CablePeer::new(config.clone()), subscribed, closed });
-    let database = Database::open(Config { path: None, data_version: None, cache_rows: 8 }, plain_models(), crate::ffi::OpenPorts { transport: Some(peer.clone()), encrypted: Some(config), credentials: Some(rig.credentials.clone()), http: Some(Arc::new(ThroughServer(rig.server.clone()))) }).await.unwrap();
+    let database = Database::open(Config { path: None, data_version: None }, plain_models(), crate::ffi::OpenPorts { transport: Some(peer.clone()), encrypted: Some(config), credentials: Some(rig.credentials.clone()), http: Some(Arc::new(ThroughServer(rig.server.clone()))) }).await.unwrap();
     database.register_operations(r#"[{"name":"Notices","document":"subscription Notices { notices { id } }","rootPath":"notices"}]"#.into()).await.unwrap();
     database.set_online(true).unwrap();
     bound(database.session_call("social".into(), SOCIAL_BODY.into())).await.unwrap();

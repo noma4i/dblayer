@@ -2,7 +2,7 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use serde_json::Value;
 use crate::transport::{self as core, EncryptedConfig, EncryptedTransport, Exchange, ServerConfig, SessionCode};
-use super::database::{cancellable, parse_json, Database, Encrypted, Wiring};
+use super::database::{blocking, cancellable, parse_json, Database, Encrypted, Wiring};
 use crate::owners::life::LifeReply;
 use super::transport::{transport_error, ForeignTransport};
 use super::{DbError, Transport};
@@ -196,8 +196,23 @@ pub(super) fn session_failure(error: crate::owners::session::SessionError) -> Db
     }
 }
 
+/// The server config before the database exists: `observers` report the network state to the fetch and stop when it ends.
 #[uniffi::export]
-pub async fn fetch_server_config(encrypted: EncryptedConfig, platform: core::AppPlatform, version: String, build: Option<String>, http: Arc<dyn EncryptedHttp>, retries: Option<Arc<RetryProgress>>, connectivity: Arc<core::Connectivity>) -> Result<ServerConfig, DbError> {
+pub async fn fetch_server_config(encrypted: EncryptedConfig, platform: core::AppPlatform, version: String, build: Option<String>, http: Arc<dyn EncryptedHttp>, retries: Option<Arc<RetryProgress>>, observers: Option<Arc<dyn super::PlatformObserver>>) -> Result<ServerConfig, DbError> {
+    struct StopOnDrop(Option<Arc<dyn super::PlatformObserver>>);
+    impl Drop for StopOnDrop {
+        fn drop(&mut self) { if let Some(observers) = self.0.take() { crate::lock::effect(|| observers.stop()); } }
+    }
+    let connectivity = core::Connectivity::new(false);
+    let _stop = StopOnDrop(observers.clone());
+    if let Some(observers) = observers {
+        let sink = super::OnlineSink::of_connectivity(connectivity.clone());
+        blocking(move || { observers.start(sink); Ok(()) }).await?;
+    }
+    fetch_server_config_with(encrypted, platform, version, build, http, retries, connectivity).await
+}
+
+pub(super) async fn fetch_server_config_with(encrypted: EncryptedConfig, platform: core::AppPlatform, version: String, build: Option<String>, http: Arc<dyn EncryptedHttp>, retries: Option<Arc<RetryProgress>>, connectivity: Arc<core::Connectivity>) -> Result<ServerConfig, DbError> {
     cancellable(async move {
         let progress = retries.map(|retries| retries.inner.clone()).unwrap_or_default();
         core::encrypted::bootstrap::fetch(&encrypted, &core::encrypted::bootstrap::AppRelease { platform, version: &version, build: build.as_deref() }, Arc::new(ForeignHttp(http)), &crate::runtime::SystemClock, &progress, &connectivity).await.map_err(typed)

@@ -104,6 +104,12 @@ impl Drop for LeaveLoad {
     }
 }
 
+/// A call without a relation has nothing to load: the wrappers pass an absent relation as the empty name.
+pub(super) fn relation_named(model: &str, relation: &str) -> Result<(), DbError> {
+    if relation.is_empty() { return Err(DbError::Invalid { detail: format!("{model} query has no relation to load") }); }
+    Ok(())
+}
+
 #[uniffi::export]
 impl Database {
     /// Starts loading a relation and returns this caller's interest in the load at once. Callers of the same scope share one request: the request stops when every interest in it was cancelled.
@@ -112,6 +118,7 @@ impl Database {
     }
 
     pub async fn refresh(&self, epoch: u64, model: String, relation: String, params_json: String) -> Result<(), DbError> {
+        relation_named(&model, &relation)?;
         self.refuse_offline(&model, &relation, &params_json, "refresh")?;
         let call = self.start_load(epoch, &model, &relation, &params_json, Goal::First, true).await?;
         self.finish_load(call).await.map(drop)
@@ -123,6 +130,7 @@ impl Database {
     }
 
     pub async fn load_more(&self, epoch: u64, model: String, relation: String, params_json: String) -> Result<LoadMoreResult, DbError> {
+        relation_named(&model, &relation)?;
         self.refuse_offline(&model, &relation, &params_json, "load more")?;
         let call = self.start_load(epoch, &model, &relation, &params_json, Goal::Next, false).await?;
         self.finish_load(call).await
@@ -174,6 +182,7 @@ impl Database {
     }
 
     fn begin(&self, args: LoadArgs) -> Result<Arc<LoadRequest>, DbError> {
+        relation_named(&args.model, &args.relation)?;
         self.remote()?;
         let (sender, outcome) = tokio::sync::watch::channel(None);
         let this = self.clone();

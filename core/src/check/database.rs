@@ -276,7 +276,7 @@ impl DatabaseSut {
     }
 
     async fn open(&mut self, models: &str, encrypted: bool) -> Vec<Observation> {
-        let config = Config { path: None, data_version: None, cache_rows: 32 };
+        let config = Config { path: None, data_version: None };
         let transport: Arc<dyn crate::ffi::Transport> = self.mock.clone();
         let (encrypted, credentials, http): EncryptedParts = if encrypted {
             (Some(crate::transport::encrypted::protocol_tests::config()), Some(Arc::new(Credentials::default())), Some(self.mock.clone()))

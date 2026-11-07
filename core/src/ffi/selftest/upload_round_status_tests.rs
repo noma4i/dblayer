@@ -12,7 +12,7 @@ struct Jobs {
 }
 
 impl RoundJobsSink for Jobs {
-    fn schedule_job(&self, request_id: u64, epoch: u64) { self.asked.lock().unwrap().push((request_id, epoch)); }
+    fn schedule_job(&self, job: crate::ffi::RoundJob) { self.asked.lock().unwrap().push((job.request_id, job.epoch)); }
     fn end_job(&self, round_id: u32) { self.ended.lock().unwrap().push(round_id); }
 }
 
@@ -39,7 +39,7 @@ async fn a_refused_round_shows_its_reason_on_the_upload_until_the_next_round_is_
     database.round_refused(request, round_epoch, "the app was not visible".into());
 
     yield_until("the row shows the refusal", || refusal(&rows).is_some_and(|message| message.contains("the app was not visible"))).await;
-    crate::ffi::OnlineSink { life: Arc::downgrade(&database.life) }.enter_foreground();
+    crate::ffi::OnlineSink::of_life(&database.life).enter_foreground();
     yield_until("the next round clears the refusal", || refusal(&rows).is_none()).await;
     database.close_now();
 }
@@ -58,7 +58,7 @@ async fn a_round_that_starts_with_nothing_unfinished_is_ended_at_once_before_any
     let stand = Stand::new();
     let models = include_str!("upload_wrapper_models.json").to_string();
     let ports = crate::ffi::OpenPorts { transport: Some(stand.puts.clone()), ..Default::default() };
-    let database = crate::ffi::Database::open(crate::ffi::Config { path: None, data_version: None, cache_rows: 32 }, models, ports).await.unwrap();
+    let database = crate::ffi::Database::open(crate::ffi::Config { path: None, data_version: None }, models, ports).await.unwrap();
     let declared: Vec<_> = STEPS.iter().map(|(name, document)| serde_json::json!({"name": name, "document": document})).collect();
     database.register_operations(serde_json::Value::Array(declared).to_string()).await.unwrap();
     let jobs = Arc::new(Jobs::default());

@@ -39,7 +39,7 @@ async fn open(replies: &[&str]) -> (Arc<Database>, Arc<TestClock>) {
     model.relations.push(relation("feed", "5.minutes"));
     let transport = Arc::new(Replying(Mutex::new(replies.iter().map(|reply| reply.to_string()).collect())));
     let clock = TestClock::new(1_000_000);
-    let db = Database::open_with_clock(Config { path: None, data_version: None, cache_rows: 8 }, serde_json::to_string(&vec![model]).unwrap(), crate::ffi::OpenPorts { transport: Some(transport), ..Default::default() }, clock.clone()).await.unwrap();
+    let db = Database::open_with_clock(Config { path: None, data_version: None }, serde_json::to_string(&vec![model]).unwrap(), crate::ffi::OpenPorts { transport: Some(transport), ..Default::default() }, clock.clone()).await.unwrap();
     db.register_operations(r#"[{"name":"Feed","document":"query Feed { moments { id text } }","rootPath":"moments"}]"#.into()).await.unwrap();
     db.set_online(true).unwrap();
     (db, clock)
@@ -150,7 +150,7 @@ async fn open_with_authors(replies: &[&str]) -> (Arc<Database>, Arc<TestClock>) 
     model.relations.push(relation("feed", "5.minutes"));
     let transport = Arc::new(Replying(Mutex::new(replies.iter().map(|reply| reply.to_string()).collect())));
     let clock = TestClock::new(1_000_000);
-    let db = Database::open_with_clock(Config { path: None, data_version: None, cache_rows: 8 }, serde_json::to_string(&vec![user, model]).unwrap(), crate::ffi::OpenPorts { transport: Some(transport), ..Default::default() }, clock.clone()).await.unwrap();
+    let db = Database::open_with_clock(Config { path: None, data_version: None }, serde_json::to_string(&vec![user, model]).unwrap(), crate::ffi::OpenPorts { transport: Some(transport), ..Default::default() }, clock.clone()).await.unwrap();
     db.register_operations(r#"[{"name":"Feed","document":"query Feed { moments { id text author { id name } } }","rootPath":"moments"}]"#.into()).await.unwrap();
     db.set_online(true).unwrap();
     (db, clock)
@@ -174,7 +174,7 @@ async fn open_file(path: &str, replies: &[&str], clock: Arc<TestClock>) -> Arc<D
     let mut model = ModelSpec::new("Moment", vec![FieldSpec::scalar("id", ScalarKind::Id), FieldSpec::scalar("text", ScalarKind::Str).optional()]);
     model.relations.push(relation("feed", "5.minutes"));
     let transport = Arc::new(Replying(Mutex::new(replies.iter().map(|reply| reply.to_string()).collect())));
-    let db = Database::open_with_clock(Config { path: Some(path.to_string()), data_version: None, cache_rows: 8 }, serde_json::to_string(&vec![model]).unwrap(), crate::ffi::OpenPorts { transport: Some(transport), ..Default::default() }, clock).await.unwrap();
+    let db = Database::open_with_clock(Config { path: Some(path.to_string()), data_version: None }, serde_json::to_string(&vec![model]).unwrap(), crate::ffi::OpenPorts { transport: Some(transport), ..Default::default() }, clock).await.unwrap();
     db.register_operations(r#"[{"name":"Feed","document":"query Feed { moments { id text } }","rootPath":"moments"}]"#.into()).await.unwrap();
     db.set_online(true).unwrap();
     db
