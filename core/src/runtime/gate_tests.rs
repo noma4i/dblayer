@@ -168,9 +168,9 @@ type EndGate = fn(&EpochGate);
 
 async fn send_kind(gate: &EpochGate, transport: &Counting, kind: &str) -> Result<(), TransportError> {
     match kind {
-        "query" => send_in_epoch(gate, Some(1), || transport.query(graphql())).await.map(drop),
-        "mutate" => send_in_epoch(gate, Some(1), || transport.mutate(graphql())).await.map(drop),
-        "put" => send_in_epoch(gate, Some(1), || transport.put(put())).await.map(drop),
+        "query" => crate::runtime::send_in_epoch(gate, Some(1), || transport.query(graphql())).await.map(drop),
+        "mutate" => crate::runtime::send_in_epoch(gate, Some(1), || transport.mutate(graphql())).await.map(drop),
+        "put" => crate::runtime::send_in_epoch(gate, Some(1), || transport.put(put())).await.map(drop),
         other => unreachable!("{other}"),
     }
 }
