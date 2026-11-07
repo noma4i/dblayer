@@ -38,8 +38,8 @@ extension BridgeProbeTests {
     try await DB.database.registerOperations(defsJson: feedDefs)
     let list = Projected<Moment>(try AccountScope().stream(Moment.feed))
     try await list.loaded()
-    let calls = transport.calls.count
     try DB.database.setOnline(online: false)
+    let calls = transport.calls.count
 
     do {
       try await list.refresh()

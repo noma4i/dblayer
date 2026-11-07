@@ -53,8 +53,8 @@ class ReconnectTest {
             val list = Projected(AccountScope.current().stream(Moment.feed), Moment, screen)
             list.loaded()
             eventually("the events subscription of the stream opened") { count(transport, "MomentEvents") == 1 }
-            val calls = transport.calls.size
             DBlayer.database.setOnline(false)
+            val calls = transport.calls.size
             try { list.refresh(); fail("a refresh offline did not fail") } catch (error: DbException.Offline) {}
             try { list.loadMore(); fail("a load more offline did not fail") } catch (error: DbException.Offline) {}
             list.until("the stream shows the network error") { it.error is DbException.Offline }
