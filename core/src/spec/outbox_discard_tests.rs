@@ -39,19 +39,8 @@ fn out_discard_restore_failed_committed() {
     assert_eq!(answers(&effects, DISCARD), vec![OutboxAnswer::Ok]);
     let outcome = twin.post(OutboxInput::Outcome { receipt: twin.receipt(7, EPOCH), reply: WAITER });
     assert_eq!(answers(&outcome, WAITER), vec![OutboxAnswer::Outcome(OutboxOutcome::Discarded)]);
-    let again = twin.post(OutboxInput::DiscardRestoreFailed { table: "op".into(), key: "k1".into(), reply: API });
-    assert_eq!(answers(&again, API), vec![OutboxAnswer::Err(Fault::NotFound)], "the element is gone");
-}
-
-#[test]
-fn out_discard_restore_failed_api() {
-    let mut twin = dropped();
-    let unknown = twin.post(OutboxInput::DiscardRestoreFailed { table: "op".into(), key: "other".into(), reply: API });
-    assert_eq!(answers(&unknown, API), vec![OutboxAnswer::Err(Fault::NotFound)]);
-    twin.post(OutboxInput::DiscardRestoreFailed { table: "op".into(), key: "k1".into(), reply: API });
-    assert!(twin.store_text.contains("DiscardRestoreFailed { table: \"op\", key: \"k1\" }"), "{}", twin.store_text);
-    let effects = twin.committed(7);
-    assert_eq!((twin.stage(7), answers(&effects, API)), (Some(St::Done), vec![OutboxAnswer::Ok]));
+    let again = twin.post(OutboxInput::Discard { model: "Moment".into(), row_id: "r".into(), reply: API });
+    assert_eq!(answers(&again, API), vec![OutboxAnswer::Err(Fault::NotFound)], "the operation and its element are gone");
 }
 
 #[test]

@@ -471,6 +471,8 @@ mod hook_tests;
 #[cfg(test)]
 mod reset_tests;
 #[cfg(test)]
+mod restore_tests;
+#[cfg(test)]
 mod rows_tests;
 #[cfg(test)]
 mod shape_tests;

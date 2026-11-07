@@ -174,8 +174,6 @@ pub enum OutboxInput {
     Retry { model: String, row_id: String, reply: ReplyId },
     RetryTransfer { model: String, row_id: String, reply: ReplyId, uploads: Vec<crate::owners::store::UploadRow> },
     Discard { model: String, row_id: String, reply: ReplyId },
-    /// The platform discards the element `(table, key)` of `restore_failed`: its operation `Failed{RestoreFailed}` ends like a `Discard`.
-    DiscardRestoreFailed { table: String, key: String, reply: ReplyId },
     Outcome { receipt: Receipt, reply: ReplyId },
     /// Answers `Ok` when no operation is on its way (the platform `settled`).
     WhenQuiet { reply: ReplyId },

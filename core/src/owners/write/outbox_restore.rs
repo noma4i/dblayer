@@ -135,7 +135,7 @@ impl OutboxState {
     pub(super) fn answer_held(&mut self, fx: &mut Effects<Outbox>) {
         for input in std::mem::take(&mut self.held) {
             match input {
-                OutboxInput::Submit { reply, .. } | OutboxInput::Retry { reply, .. } | OutboxInput::Discard { reply, .. } | OutboxInput::DiscardRestoreFailed { reply, .. } => Self::reply(fx, reply, OutboxAnswer::Err(Fault::Interrupted)),
+                OutboxInput::Submit { reply, .. } | OutboxInput::Retry { reply, .. } | OutboxInput::Discard { reply, .. } => Self::reply(fx, reply, OutboxAnswer::Err(Fault::Interrupted)),
                 OutboxInput::RetryTransfer { uploads, .. } => self.retry_transfer_answer(uploads.into_iter().map(|row| (row.transfer_id, row.cycle_id)).collect(), Err(Fault::Interrupted), fx),
                 OutboxInput::Outcome { reply, .. } => Self::reply(fx, reply, OutboxAnswer::Outcome(OutboxOutcome::Interrupted)),
                 OutboxInput::ReserveOp { target, .. } => self.opened(fx, target, Err(Fault::Interrupted)),
@@ -156,7 +156,7 @@ impl OutboxState {
             }
             OutboxInput::ReservedFloor { op_id } => self.next_op = self.next_op.max(op_id + 1),
             held @ (OutboxInput::ReserveOp { .. } | OutboxInput::SubmitReserved { .. }) => self.held.push(held),
-            held @ (OutboxInput::Retry { .. } | OutboxInput::RetryTransfer { .. } | OutboxInput::Discard { .. } | OutboxInput::DiscardRestoreFailed { .. } | OutboxInput::Outcome { .. }) => self.held.push(held),
+            held @ (OutboxInput::Retry { .. } | OutboxInput::RetryTransfer { .. } | OutboxInput::Discard { .. } | OutboxInput::Outcome { .. }) => self.held.push(held),
             OutboxInput::Online(Online(on)) => self.online = on,
             OutboxInput::ModelsReset(reset) => {
                 for model in reset.models {

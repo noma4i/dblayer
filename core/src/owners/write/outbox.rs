@@ -435,7 +435,7 @@ impl OutboxState {
             self.retry_transfer_answer(uploads.iter().map(|row| (row.transfer_id, row.cycle_id)).collect(), Err(Fault::Rejected(RejectReason::Storage(error.clone()))), fx);
             return;
         }
-        if let (Some(error), OutboxInput::Submit { reply, .. } | OutboxInput::Retry { reply, .. } | OutboxInput::Discard { reply, .. } | OutboxInput::DiscardRestoreFailed { reply, .. } | OutboxInput::Outcome { reply, .. }) = (&self.queue_error, &input) {
+        if let (Some(error), OutboxInput::Submit { reply, .. } | OutboxInput::Retry { reply, .. } | OutboxInput::Discard { reply, .. } | OutboxInput::Outcome { reply, .. }) = (&self.queue_error, &input) {
             return Self::reply(fx, *reply, OutboxAnswer::Err(Fault::Rejected(RejectReason::Storage(error.clone()))));
         }
         match input {
@@ -463,7 +463,6 @@ impl OutboxState {
             OutboxInput::Retry { model, row_id, reply } => self.retry(&model, &row_id, reply, fx),
             OutboxInput::RetryTransfer { model, row_id, reply, uploads } => self.retry_transfer(&model, &row_id, reply, uploads, fx),
             OutboxInput::Discard { model, row_id, reply } => self.discard(&model, &row_id, reply, fx),
-            OutboxInput::DiscardRestoreFailed { table, key, reply } => self.discard_restore_failed(&table, &key, reply, fx),
             OutboxInput::Outcome { receipt, reply } => self.outcome(receipt, reply, fx),
             OutboxInput::Resolve { .. } | OutboxInput::Landed { .. } | OutboxInput::WhenQuiet { .. } => {}
             OutboxInput::Online(Online(on)) => self.online_changed(on, fx),
