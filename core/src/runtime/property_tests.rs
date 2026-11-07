@@ -1,4 +1,5 @@
-use super::{explore, DetScheduler, Limits, Violation};
+use super::explore::walk;
+use super::{explore, DetScheduler, Limits, Report, Violation};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Exhaustive {
@@ -47,13 +48,37 @@ impl Manifest {
 impl Property {
     pub fn explore(self, build: impl Fn() -> DetScheduler, mut check: impl FnMut(&DetScheduler) -> Result<(), String>) -> Manifest {
         let report = explore(&build, Limits { depth: self.depth, max_traces: self.max_traces }, &mut check);
-        let mut violation = report.violations.into_iter().next();
+        let mut violation = report.violations.first().cloned();
         for seed in 0..self.seeds {
             if violation.is_some() {
                 break;
             }
             violation = seeded(&build, seed, &mut check);
         }
+        self.manifest(report, violation)
+    }
+
+    /// Same walk as `explore` for a pure check: subtrees and seeds run on their own threads, results join in choice and seed order.
+    pub fn explore_parallel(self, build: impl Fn() -> DetScheduler + Sync, check: impl Fn(&DetScheduler) -> Result<(), String> + Sync) -> Manifest {
+        let report = explore_parallel(&build, Limits { depth: self.depth, max_traces: self.max_traces }, &check);
+        let mut violation = report.violations.first().cloned();
+        if violation.is_none() {
+            let found: std::sync::Mutex<Vec<Option<Violation>>> = std::sync::Mutex::new((0..self.seeds).map(|_| None).collect());
+            std::thread::scope(|scope| {
+                for seed in 0..self.seeds {
+                    let (build, check, found) = (&build, &check, &found);
+                    scope.spawn(move || {
+                        let own = seeded(build, seed, &mut |det| check(det));
+                        found.lock().unwrap_or_else(std::sync::PoisonError::into_inner)[seed as usize] = own;
+                    });
+                }
+            });
+            violation = found.into_inner().unwrap_or_else(std::sync::PoisonError::into_inner).into_iter().flatten().next();
+        }
+        self.manifest(report, violation)
+    }
+
+    fn manifest(self, report: Report, violation: Option<Violation>) -> Manifest {
         let exhaustive_result = match (&violation, report.incomplete) {
             (Some(_), _) => Exhaustive::Violated,
             (None, true) => Exhaustive::Incomplete,
@@ -75,4 +100,68 @@ fn seeded(build: &impl Fn() -> DetScheduler, seed: u64, check: &mut impl FnMut(&
         }
     }
     None
+}
+
+const FRONTIER_JOBS: usize = 64;
+
+fn replay(build: &dyn Fn() -> DetScheduler, prefix: &[usize]) -> DetScheduler {
+    let mut at = build();
+    prefix.iter().for_each(|choice| { at.step_choice(*choice); });
+    at
+}
+
+/// Walks the same tree as `explore` for a pure check: the first levels are expanded in place until
+/// there are enough subtrees, the subtrees run on worker threads and their reports join in frontier order.
+fn explore_parallel(build: &(dyn Fn() -> DetScheduler + Sync), limits: Limits, check: &(dyn Fn(&DetScheduler) -> Result<(), String> + Sync)) -> Report {
+    let mut report = Report::default();
+    let mut frontier: Vec<Vec<usize>> = vec![Vec::new()];
+    while !frontier.is_empty() && frontier.len() < FRONTIER_JOBS {
+        let mut deeper = Vec::new();
+        for prefix in &frontier {
+            let at = replay(build, prefix);
+            let moves = at.choices().len();
+            if prefix.len() == limits.depth || moves == 0 {
+                report.traces += 1;
+                continue;
+            }
+            for choice in 0..moves {
+                let mut next = replay(build, prefix);
+                next.step_choice(choice);
+                let mut path = prefix.clone();
+                path.push(choice);
+                match check(&next) {
+                    Ok(()) => deeper.push(path),
+                    Err(message) => {
+                        report.traces += 1;
+                        report.violations.push(Violation { choices: path, trace: next.trace().to_vec(), message });
+                    }
+                }
+            }
+        }
+        frontier = deeper;
+        if !report.violations.is_empty() {
+            return report;
+        }
+    }
+    let next_job = std::sync::atomic::AtomicUsize::new(0);
+    let done: std::sync::Mutex<Vec<Option<Report>>> = std::sync::Mutex::new(frontier.iter().map(|_| None).collect());
+    let workers = std::thread::available_parallelism().map_or(4, |count| count.get()).min(frontier.len());
+    std::thread::scope(|scope| {
+        for _ in 0..workers {
+            scope.spawn(|| loop {
+                let job = next_job.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                let Some(prefix) = frontier.get(job) else { return };
+                let mut part = Report::default();
+                let mut path = prefix.clone();
+                walk(build, limits, &mut |det| check(det), replay(build, prefix), &mut path, &mut part);
+                done.lock().unwrap_or_else(std::sync::PoisonError::into_inner)[job] = Some(part);
+            });
+        }
+    });
+    for part in done.into_inner().unwrap_or_else(std::sync::PoisonError::into_inner).into_iter().flatten() {
+        report.traces += part.traces;
+        report.incomplete |= part.incomplete;
+        report.violations.extend(part.violations);
+    }
+    report
 }

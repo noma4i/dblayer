@@ -26,7 +26,7 @@ pub fn explore(build: impl Fn() -> DetScheduler, limits: Limits, mut check: impl
     report
 }
 
-fn walk(build: &dyn Fn() -> DetScheduler, limits: Limits, check: &mut dyn FnMut(&DetScheduler) -> Result<(), String>, at: DetScheduler, prefix: &mut Vec<usize>, report: &mut Report) {
+pub(super) fn walk(build: &dyn Fn() -> DetScheduler, limits: Limits, check: &mut dyn FnMut(&DetScheduler) -> Result<(), String>, at: DetScheduler, prefix: &mut Vec<usize>, report: &mut Report) {
     let moves = at.choices().len();
     if prefix.len() == limits.depth || moves == 0 {
         report.traces += 1;
@@ -37,17 +37,21 @@ fn walk(build: &dyn Fn() -> DetScheduler, limits: Limits, check: &mut dyn FnMut(
             report.incomplete = true;
             return;
         }
-        let mut next = build();
-        prefix.iter().for_each(|earlier| { next.step_choice(*earlier); });
-        next.step_choice(choice);
-        prefix.push(choice);
-        match check(&next) {
-            Ok(()) => walk(build, limits, check, next, prefix, report),
-            Err(message) => {
-                report.traces += 1;
-                report.violations.push(Violation { choices: prefix.clone(), trace: next.trace().to_vec(), message });
-            }
-        }
-        prefix.pop();
+        branch(build, limits, check, prefix, choice, report);
     }
+}
+
+fn branch(build: &dyn Fn() -> DetScheduler, limits: Limits, check: &mut dyn FnMut(&DetScheduler) -> Result<(), String>, prefix: &mut Vec<usize>, choice: usize, report: &mut Report) {
+    let mut next = build();
+    prefix.iter().for_each(|earlier| { next.step_choice(*earlier); });
+    next.step_choice(choice);
+    prefix.push(choice);
+    match check(&next) {
+        Ok(()) => walk(build, limits, check, next, prefix, report),
+        Err(message) => {
+            report.traces += 1;
+            report.violations.push(Violation { choices: prefix.clone(), trace: next.trace().to_vec(), message });
+        }
+    }
+    prefix.pop();
 }

@@ -142,7 +142,7 @@ fn epochs() -> (DetScheduler, [Address<Toy>; 2]) {
 #[test]
 fn rt_prop_epoch_queue() {
     let toys = epochs().1;
-    let manifest = prop("P-RT-04", "End(e) x Start(e+1) x input of e", "R4 queue of control inputs", 20, "rt_prop_epoch_queue").explore(
+    let manifest = prop("P-RT-04", "End(e) x Start(e+1) x input of e", "R4 queue of control inputs", 20, "rt_prop_epoch_queue").explore_parallel(
         || epochs().0,
         |det| {
             for toy in toys {
