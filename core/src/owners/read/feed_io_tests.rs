@@ -110,8 +110,8 @@ fn feed_io_frames_commit() {
     pump(&mut det, feed, |det| det.state(feed).is_some_and(|state| state.mode() == Mode::Live));
     peer.frames.send(confirmed(1)).unwrap();
     peer.frames.send(next(2, "hello")).unwrap();
-    let seen = batches.clone();
-    pump(&mut det, feed, |_| !seen.all().is_empty());
+    let (seen, sent_frames) = (batches.clone(), peer.sent.clone());
+    pump(&mut det, feed, |_| !seen.all().is_empty() && !sent_frames.lock().unwrap_or_else(PoisonError::into_inner).is_empty());
     let landed = batches.all();
     assert_eq!(landed.len(), 1);
     assert_eq!(landed[0].rows, [("Chat".to_string(), "hello".to_string())]);

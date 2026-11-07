@@ -168,14 +168,23 @@ class MockTransport(private val unanswered: Unanswered = Unanswered.Strict) : Tr
 class Hold {
     private val arrived = kotlinx.coroutines.CompletableDeferred<Unit>()
     private val freed = kotlinx.coroutines.CompletableDeferred<Unit>()
+    private val gone = kotlinx.coroutines.CompletableDeferred<Unit>()
 
     /** Returns when the request reached the transport. */
     suspend fun entered() = arrived.await()
+
+    /** Returns when the library dropped the held request before its release. */
+    suspend fun dropped() = gone.await()
 
     fun release() { freed.complete(Unit) }
 
     internal suspend fun pass() {
         arrived.complete(Unit)
-        freed.await()
+        try {
+            freed.await()
+        } catch (cancelled: kotlinx.coroutines.CancellationException) {
+            gone.complete(Unit)
+            throw cancelled
+        }
     }
 }

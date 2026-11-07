@@ -158,6 +158,7 @@ public final class MockTransport: Transport, @unchecked Sendable {
 public final class Hold: @unchecked Sendable {
   private let arrived = AsyncStream<Void>.makeStream()
   private let freed = AsyncStream<Void>.makeStream()
+  private let gone = AsyncStream<Void>.makeStream()
 
   /// Returns when the request reached the transport.
   public func entered() async {
@@ -165,11 +166,17 @@ public final class Hold: @unchecked Sendable {
     _ = await arrivals.next()
   }
 
+  /// Returns when the library dropped the held request before its release.
+  public func dropped() async {
+    var drops = gone.stream.makeAsyncIterator()
+    _ = await drops.next()
+  }
+
   public func release() { freed.continuation.yield(()) }
 
   fileprivate func pass() async {
     arrived.continuation.yield(())
     var releases = freed.stream.makeAsyncIterator()
-    _ = await releases.next()
+    if await releases.next() == nil { gone.continuation.yield(()) }
   }
 }

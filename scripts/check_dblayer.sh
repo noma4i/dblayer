@@ -3,7 +3,6 @@
 set -uo pipefail
 
 root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)"
-export PATH="/opt/homebrew/opt/rustup/bin:$PATH"
 export ANDROID_HOME="${ANDROID_HOME:-$HOME/Library/Android/sdk}"
 export BUILD_RUN_ID="${BUILD_RUN_ID:-check-dblayer-$$-$(date +%s)}"
 gradle="${GRADLE:-$(ls -d "$HOME"/.gradle/wrapper/dists/gradle-9.*-bin/*/gradle-9.*/bin/gradle 2> /dev/null | sort -V | tail -1)}"
@@ -13,8 +12,6 @@ slot="$HOME/.claude/bin/build-slot -- bash $root/scripts/check_bounded.sh {limit
 source "$root/scripts/check_steps.sh"
 
 steps=(
-  "cheap|fixtures|120|*|bash scripts/gen_fixtures.sh --check"
-  "cheap|fixtures-args|120|*|bash scripts/gen_fixtures_test.sh"
   "cheap|zoo|120|*|bash scripts/check_zoo.sh"
   "cheap|zoo-selftest|120|*|bash scripts/check_zoo_test.sh"
   "cheap|protocol-config|120|*|bash scripts/check_protocol_config.sh && bash scripts/check_protocol_config.sh --selftest"
@@ -30,6 +27,8 @@ steps=(
   "cheap|silent-selftest|120|*|bash scripts/check_silent_test.sh"
   "cheap|coverage-selftest|120|*|python3 -I scripts/check_coverage_test.py"
   "cargo|cargo-test-workspace|600|core/ gen/ Cargo.|$slot cargo-step cargo test --manifest-path Cargo.toml --workspace --all-features"
+  "cargo|fixtures|120|core/ gen/ Cargo. fixtures/|bash scripts/gen_fixtures.sh --check"
+  "cargo|fixtures-args|120|core/ gen/ Cargo. fixtures/|bash scripts/gen_fixtures_test.sh"
   "swift|ios-slices|600|swift/|$slot bash-step bash scripts/build_ios.sh --check"
   "swift|swift-test|600|swift/|$slot swift-step swift test --package-path swift --enable-code-coverage -Xswiftc -Xllvm -Xswiftc -instrprof-atomic-counter-update-all"
   "swift|ios-sim-compile|600|swift/|cd swift && $slot xcodebuild-step xcodebuild build -scheme DBlayer -destination 'generic/platform=iOS Simulator' ARCHS=arm64 -derivedDataPath ../target/dd-swift.noindex -quiet"

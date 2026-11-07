@@ -460,6 +460,7 @@ class TransferTest {
             fun copyCount() = copies.list()?.size ?: 0
             assertEquals(1, copyCount())
             db.setOnline(false)
+            awaitWithin("the held step was dropped offline") { held.dropped() }
             row.discard("upload_clip")
             assertEquals(0, copyCount())
             assertTrue(source.exists())
