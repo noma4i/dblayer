@@ -113,6 +113,12 @@ Typical scenarios to cover:
 | No code swallows an error with `try?` or `runCatching {...}.getOrNull()` outside `scripts/silent_allowlist.txt` | `bash scripts/check_silent.sh` |
 | Network code has executable coverage for every source file | `bash scripts/check_coverage.sh` (after the swift and gradle test lanes with coverage) |
 | Coverage rejects missing reports and unexecuted lines on both platforms | `python3 -I scripts/check_coverage_test.py` |
+| The docs check accepts a correct tree and refuses unpaired examples, non-English text, banned words, status wording, missing paths and broken links | `python3 -I scripts/check_docs_test.py` |
+| The marker count check refuses old-name markers, files named for them and development files | `python3 -I scripts/check_markers_test.py` |
+| The Android artifact check refuses ABI mismatch, missing libraries and stale source hash | `python3 -I scripts/check_android_artifacts_test.py` |
+| The consumer check refuses missing inputs and reports a red lane | `python3 -I scripts/check_consumers_test.py` |
+| The sequence check refuses differing staged bytes and a lane whose listed tests did not pass | `python3 -I scripts/check_sequences_test.py` |
+| The step limit kills the whole process tree and reports it | `python3 -I scripts/check_bounded_test.py` |
 
 The check command stops after 300 seconds and kills its own child processes.
 Build the native artifacts before running checks. Unchanged native inputs reuse the built artifacts.
