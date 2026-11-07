@@ -44,9 +44,7 @@ struct EnumTests {
   }
 
   @Test
-  func aNestedEnumKeepsAValueTheDeclarationLacksOnBothDecodePaths() async throws {
-    let json = Data(#"{"title":"t","state":"mystery"}"#.utf8)
-    #expect(try JSONDecoder().decode(NestedValue.self, from: json).state == .unknown("mystery"))
+  func aNestedEnumKeepsAValueTheDeclarationLacks() async throws {
     let database = try await open()
     let wire = try await database.create(epoch: database.sessionEpoch(), model: "NestedSample", valuesJson: #"{"value":{"title":"t","state":"mystery"}}"#, argsJson: "{}").optimisticValue!
     let sample = try NestedSample.decode(wire)

@@ -445,7 +445,7 @@ data class PricingLoadResult(
 @Immutable
 @Serializable
 data class PricingLoadResultRewards(
-    @Serializable(with = IDText::class) val id: String? = null,
+    val id: String? = null,
     val name: String? = null,
     val price: Long? = null,
 )
@@ -465,13 +465,13 @@ data class MomentCreateResult(
 @Immutable
 @Serializable
 data class MomentCreateResultMoment(
-    @Serializable(with = IDText::class) val id: String? = null,
+    val id: String? = null,
 )
 
 @Immutable
 @Serializable
 data class GiphyLoadResult(
-    @Serializable(with = IDText::class) val id: String? = null,
+    val id: String? = null,
     val url: String? = null,
     val isSticker: Boolean? = null,
 )
@@ -492,16 +492,32 @@ data class ContainerMediaLoadResult(
 )
 
 object Operations {
+    private const val whenReturns = """{"name":"when","kind":{"type":"object"},"nullable":false,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":"WhenResult","merge":null,"fields":[{"name":"default","kind":{"type":"scalar","kind":"str"},"nullable":true,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":null,"merge":null},{"name":"when","kind":{"type":"scalar","kind":"str"},"nullable":true,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":null,"merge":null},{"name":"container","kind":{"type":"scalar","kind":"str"},"nullable":true,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":null,"merge":null},{"name":"r","kind":{"type":"scalar","kind":"str"},"nullable":true,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":null,"merge":null}]}"""
+
+    private const val qrCodeCreateReturns = """{"name":"qr_code_create","kind":{"type":"object"},"nullable":false,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":"QrCodeCreateResult","merge":null,"fields":[{"name":"url","kind":{"type":"scalar","kind":"str"},"nullable":true,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":null,"merge":null}]}"""
+
+    private const val stickerSendReturns = """{"name":"sticker_send","kind":{"type":"object"},"nullable":false,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":"StickerSendResult","merge":null,"fields":[{"name":"id","kind":{"type":"scalar","kind":"str"},"nullable":true,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":null,"merge":null}]}"""
+
+    private const val pricingLoadReturns = """{"name":"pricing_load","kind":{"type":"object"},"nullable":false,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":"PricingLoadResult","merge":null,"fields":[{"name":"rewards","kind":{"type":"array"},"nullable":true,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":"PricingLoadResultRewards","merge":null,"fields":[{"name":"id","kind":{"type":"scalar","kind":"id"},"nullable":true,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":null,"merge":null},{"name":"name","kind":{"type":"scalar","kind":"str"},"nullable":true,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":null,"merge":null},{"name":"price","kind":{"type":"scalar","kind":"int"},"nullable":true,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":null,"merge":null}]},{"name":"videoIntro","kind":{"type":"object"},"nullable":true,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":"PricingLoadResultVideoIntro","merge":null,"fields":[{"name":"enabled","kind":{"type":"scalar","kind":"bool"},"nullable":true,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":null,"merge":null}]},{"name":"tags","kind":{"type":"list","element":"str"},"nullable":true,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":null,"merge":null},{"name":"spec","kind":{"type":"raw"},"nullable":true,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":null,"merge":null}]}"""
+
+    private const val momentCreateReturns = """{"name":"moment_create","kind":{"type":"object"},"nullable":false,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":"MomentCreateResult","merge":null,"fields":[{"name":"moment","kind":{"type":"object"},"nullable":true,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":"MomentCreateResultMoment","merge":null,"fields":[{"name":"id","kind":{"type":"scalar","kind":"id"},"nullable":true,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":null,"merge":null}]}]}"""
+
+    private const val giphyLoadReturns = """{"name":"giphy_load","kind":{"type":"object"},"nullable":false,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":"GiphyLoadResult","merge":null,"fields":[{"name":"id","kind":{"type":"scalar","kind":"id"},"nullable":true,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":null,"merge":null},{"name":"url","kind":{"type":"scalar","kind":"str"},"nullable":true,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":null,"merge":null},{"name":"isSticker","kind":{"type":"scalar","kind":"bool"},"nullable":true,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":null,"merge":null}]}"""
+
+    private const val widgetsSendReturns = """{"name":"widgets_send","kind":{"type":"object"},"nullable":false,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":"WidgetsSendResult","merge":null,"fields":[{"name":"id","kind":{"type":"scalar","kind":"str"},"nullable":true,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":null,"merge":null}]}"""
+
+    private const val containerMediaLoadReturns = """{"name":"container_media_load","kind":{"type":"object"},"nullable":false,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":"ContainerMediaLoadResult","merge":null,"fields":[{"name":"visualCount","kind":{"type":"scalar","kind":"int"},"nullable":true,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":null,"merge":null},{"name":"audioCount","kind":{"type":"scalar","kind":"int"},"nullable":true,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":null,"merge":null},{"name":"rewardCount","kind":{"type":"scalar","kind":"int"},"nullable":true,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":null,"merge":null},{"name":"latestSequence","kind":{"type":"scalar","kind":"int"},"nullable":true,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":null,"merge":null}]}"""
+
     suspend fun `when`(`class`: String, account: AccountScope? = null): WhenResult {
         val variables_ = mutableMapOf<String, JsonElement>()
         variables_["class"] = jsonValue(`class`)
-        return DBlayer.run("KeywordCall", JsonObject(variables_), WhenResult.serializer(), account)
+        return DBlayer.run("KeywordCall", JsonObject(variables_), whenReturns, WhenResult.serializer(), account)
     }
     suspend fun qrCodeCreate(kind: String, size: Long? = null, account: AccountScope? = null): QrCodeCreateResult {
         val variables_ = mutableMapOf<String, JsonElement>()
         variables_["kind"] = jsonValue(kind)
         if (size != null) variables_["size"] = jsonValue(size)
-        return DBlayer.run("QrCodeCreate", JsonObject(mapOf("input" to JsonObject(variables_))), QrCodeCreateResult.serializer(), account)
+        return DBlayer.run("QrCodeCreate", JsonObject(mapOf("input" to JsonObject(variables_))), qrCodeCreateReturns, QrCodeCreateResult.serializer(), account)
     }
     suspend fun signOut(account: AccountScope? = null) {
         val variables_ = mutableMapOf<String, JsonElement>()
@@ -510,32 +526,32 @@ object Operations {
     suspend fun stickerSend(input: StickerInput, account: AccountScope? = null): StickerSendResult {
         val variables_ = mutableMapOf<String, JsonElement>()
         variables_["input"] = jsonValue(input)
-        return DBlayer.run("StickerSend", JsonObject(variables_), StickerSendResult.serializer(), account)
+        return DBlayer.run("StickerSend", JsonObject(variables_), stickerSendReturns, StickerSendResult.serializer(), account)
     }
     suspend fun pricingLoad(account: AccountScope? = null): PricingLoadResult {
         val variables_ = mutableMapOf<String, JsonElement>()
-        return DBlayer.run("Pricing", JsonObject(variables_), PricingLoadResult.serializer(), account)
+        return DBlayer.run("Pricing", JsonObject(variables_), pricingLoadReturns, PricingLoadResult.serializer(), account)
     }
     suspend fun momentCreate(input: MomentInput, account: AccountScope? = null): MomentCreateResult {
         val variables_ = mutableMapOf<String, JsonElement>()
         variables_["input"] = jsonValue(input)
-        return DBlayer.run("MomentCreate", JsonObject(variables_), MomentCreateResult.serializer(), account)
+        return DBlayer.run("MomentCreate", JsonObject(variables_), momentCreateReturns, MomentCreateResult.serializer(), account)
     }
     suspend fun giphyLoad(type: String, limit: Long? = null, account: AccountScope? = null): List<GiphyLoadResult> {
         val variables_ = mutableMapOf<String, JsonElement>()
         variables_["type"] = jsonValue(type)
         if (limit != null) variables_["limit"] = jsonValue(limit)
-        return DBlayer.run("Giphy", JsonObject(variables_), ListSerializer(GiphyLoadResult.serializer()), account)
+        return DBlayer.run("Giphy", JsonObject(variables_), giphyLoadReturns, ListSerializer(GiphyLoadResult.serializer()), account)
     }
     suspend fun widgetsSend(widgets: List<StickerWidgetInput>? = null, account: AccountScope? = null): WidgetsSendResult {
         val variables_ = mutableMapOf<String, JsonElement>()
         if (widgets != null) variables_["widgets"] = jsonValue(widgets)
-        return DBlayer.run("WidgetsSend", JsonObject(variables_), WidgetsSendResult.serializer(), account)
+        return DBlayer.run("WidgetsSend", JsonObject(variables_), widgetsSendReturns, WidgetsSendResult.serializer(), account)
     }
     suspend fun containerMediaLoad(containerId: String, upToSequence: Long? = null, account: AccountScope? = null): ContainerMediaLoadResult {
         val variables_ = mutableMapOf<String, JsonElement>()
         variables_["containerId"] = jsonValue(containerId)
         if (upToSequence != null) variables_["upToSequence"] = jsonValue(upToSequence)
-        return DBlayer.run("containerMedia", JsonObject(variables_), ContainerMediaLoadResult.serializer(), account)
+        return DBlayer.run("containerMedia", JsonObject(variables_), containerMediaLoadReturns, ContainerMediaLoadResult.serializer(), account)
     }
 }

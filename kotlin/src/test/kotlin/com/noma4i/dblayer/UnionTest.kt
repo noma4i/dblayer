@@ -45,7 +45,7 @@ class UnionTest {
             val encoded = sample.attachment?.let { jsonValue(it) } ?: JsonNull
             assertEquals(label, comparableJson(fields.getValue("output")), comparableJson(encoded))
             val input = fields["attachment"]
-            if (input != null && input != JsonNull) assertEquals(label, dbJson.decodeFromJsonElement(RecordAttachment.serializer(), input), sample.attachment)
+            if (input != null && input != JsonNull) assertEquals(label, dbJson.decodeFromJsonElement(RecordAttachment.serializer(), fields.getValue("output")), sample.attachment)
         }
     }
 

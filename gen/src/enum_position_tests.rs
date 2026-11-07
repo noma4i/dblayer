@@ -11,7 +11,6 @@ fn a_list_of_enum_values_is_typed_inside_nested_objects_union_variants_arrays_an
     let swift = emit_swift(&models, &[], &Default::default());
     for line in [
         "    public let tags: [MetaTag]\n",
-        "tags = try container.decodeIfPresent([MetaTag].self, forKey: .tags) ?? [MetaTag.a]",
         "tags = try r.list(0, \\.asText).map(MetaTag.init(rawValue:))",
         "    public let tones: [CardTone]\n",
         "tones = try r.list(1, \\.asText).map(CardTone.init(rawValue:))",
@@ -75,7 +74,6 @@ fn an_operation_takes_a_list_of_schema_enums_in_its_input_object_and_its_result(
     for line in [
         "public let kinds: GraphQLNullable<[WidgetKind]>",
         "    public let kinds: [WidgetKind]?\n",
-        "kinds = try container.decodeIfPresent([WidgetKind].self, forKey: .kinds)",
         "    public let many: [WidgetKind]?\n",
         "public enum WidgetKind: Codable, Sendable, Hashable {",
     ] {

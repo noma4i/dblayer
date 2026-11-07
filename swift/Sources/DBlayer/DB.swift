@@ -26,9 +26,9 @@ public enum DB {
 
   public static func openReport() throws -> OpenReport { try database.openReport() }
 
-  @concurrent public static func run<Answer: Decodable & Sendable>(_ operation: String, variables: [String: JSONValue], as _: Answer.Type, in scope: AccountScope? = nil) async throws -> Answer {
+  @concurrent public static func run<Answer: Decodable & Sendable>(_ operation: String, variables: [String: JSONValue], returns: String, as _: Answer.Type, in scope: AccountScope? = nil) async throws -> Answer {
     let (database, epoch) = try admitted(scope)
-    return try JSONDecoder().decode(Answer.self, from: Data(try await database.run(epoch: epoch, operation: operation, variablesJson: JSONValue.object(variables).text).utf8))
+    return try JSONDecoder().decode(Answer.self, from: Data(try await database.call(epoch: epoch, operation: operation, variablesJson: JSONValue.object(variables).text, returnsJson: returns).utf8))
   }
 
   @concurrent public static func run(_ operation: String, variables: [String: JSONValue], in scope: AccountScope? = nil) async throws {

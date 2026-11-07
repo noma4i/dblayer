@@ -105,7 +105,7 @@ fn kotlin_interfaces_are_sealed_classes_with_shared_properties_and_variant_class
         "val id: String?\n        get() = when (this) {\n            is Button -> value.id",
         "is Unknown -> null",
         "val press: SampleAction?\n",
-        "data class SampleButton(\n    @Serializable(with = IDText::class) val id: String,\n    @Serializable(with = IDTexts::class) val children: List<String>,\n    val press: SampleAction? = null,\n    val label: String? = null,",
+        "data class SampleButton(\n    val id: String,\n    val children: List<String>,\n    val press: SampleAction? = null,\n    val label: String? = null,",
         "val elements: List<SampleElement>",
         "r.arr(1) { SampleElement.fromCells(it) }",
     ] {

@@ -1051,6 +1051,7 @@ end
 - `copies_receiver_to :target, field: :chatId, set: { isForwarded: true, authorId: { of: User, field: :id }, originId: { owner: :authorId } }` adds a copy of the row with `chatId` set to the argument `target`. `set:` puts a literal, a field of the copied row (`owner:`) or a field of the singleton row of a model (`of:`) on the copy. The answer row replaces the copy, a refusal removes it.
 - `joins_scope` adds the rows named by `rows:` to the end of the scope list, and `leaves_scope` takes them out. A row that is not cached is skipped by both; the answer and the next read of the list bring it. `orders:` lists every value of the order parameter, so all sort orders of the list change together. A refusal restores the ids and the order of every list.
 - The call returns after the answer. While the network is away it waits in the queue and the request goes out when the network returns. A refusal restores the lists.
+- The core reads the answer of a typed operation call by its `returns` block before Swift and Kotlin decode it: an `:id` is text, `:int` and `:num` are numbers (a number sent as text becomes a number), an absent field is `null`, a field outside the block is dropped, and a value of another type fails the call with `Invalid`. The generated types decode this form and refuse any other.
 
 ```swift
 let left = try await club.leave()

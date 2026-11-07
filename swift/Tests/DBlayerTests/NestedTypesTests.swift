@@ -21,21 +21,17 @@ struct NestedTypesTests {
     let cases = try JSONDecoder().decode([JSONValue].self, from: Data(contentsOf: root.appendingPathComponent("fixtures/nested.json")))
     for row in cases {
       let fields = (try row.objectValue)
+      guard fields["error"] != .bool(true), let output = fields["output"] else { continue }
       let label = fields["name"]!.stringValue!
-      let input = try fields["inputText"]?.stringValue.map { Data($0.utf8) } ?? JSONEncoder().encode(fields["input"]!)
-      if fields["error"] == .bool(true) {
-        #expect(throws: (any Error).self, Comment(rawValue: label)) {
-          try JSONDecoder().decode(NestedValue.self, from: input)
-        }
-      } else {
-        let decoded = try JSONDecoder().decode(NestedValue.self, from: input)
-        let encoded = try JSONDecoder().decode(JSONValue.self, from: JSONEncoder().encode(decoded))
-        #expect(withoutNullKeys(encoded) == withoutNullKeys(fields["output"]!), Comment(rawValue: label))
-      }
+      let decoded = try JSONDecoder().decode(NestedValue.self, from: JSONEncoder().encode(output))
+      let encoded = try JSONDecoder().decode(JSONValue.self, from: JSONEncoder().encode(decoded))
+      #expect(withoutNullKeys(encoded) == withoutNullKeys(output), Comment(rawValue: label))
     }
-    let reply = try JSONDecoder().decode(RecordReplyNode.self, from: Data(#"{"userId":23,"user":{"id":"u1","fullName":"Ada"},"media":{}}"#.utf8))
+    let loose = Data(#"{"title":"loose","owner_id":42}"#.utf8)
+    #expect(throws: (any Error).self) { try JSONDecoder().decode(NestedValue.self, from: loose) }
+    let reply = try JSONDecoder().decode(RecordReplyNode.self, from: Data(#"{"userId":"23","user":{"id":"u1","fullName":"Ada"},"media":{"id":""}}"#.utf8))
     #expect(reply.userId == "23" && reply.user?.fullName == "Ada" && reply.media?.id == "")
-    let tree = try JSONDecoder().decode(NestedTree.self, from: Data(#"{"name":"root","children":[{"name":"leaf"}]}"#.utf8))
+    let tree = try JSONDecoder().decode(NestedTree.self, from: Data(#"{"name":"root","children":[{"name":"leaf","children":[]}]}"#.utf8))
     #expect(tree.children.first?.name == "leaf" && tree.children.first?.children == [])
   }
 }

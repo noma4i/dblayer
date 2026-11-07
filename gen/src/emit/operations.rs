@@ -20,6 +20,10 @@ fn result_name(operation: &OperationCall) -> &str {
     operation.result.as_ref().and_then(|root| root.app_type.as_deref()).unwrap_or_default()
 }
 
+fn returns_name(operation: &OperationCall) -> String {
+    format!("{}Returns", name(&operation.name))
+}
+
 fn returned(operation: &OperationCall, swift: bool) -> String {
     match (operation.list, swift) {
         (true, true) => format!("[{}]", result_name(operation)),
@@ -37,6 +41,9 @@ pub(super) fn emit_swift_operations(out: &mut String, operations: &[OperationCal
     }
     writeln!(out, "public enum Operations {{").unwrap();
     for operation in operations {
+        if let Some(root) = &operation.result { writeln!(out, "    private static let {} = #\"{}\"#\n", returns_name(operation), serde_json::to_string(root).unwrap()).unwrap(); }
+    }
+    for operation in operations {
         let method = identifier(&name(&operation.name), true);
         let params = operation.args.iter().map(|(arg, kind)| format!("{}: {}{}", identifier(arg, true), arg_type(kind, true), if kind.ends_with('?') { "? = nil" } else { "" })).collect::<Vec<_>>().join(", ");
         let scope = "scope_";
@@ -50,7 +57,7 @@ pub(super) fn emit_swift_operations(out: &mut String, operations: &[OperationCal
         }
         let sent = operation.wrap.as_ref().map_or("variables_".to_string(), |wrap| format!("[\"{wrap}\": JSONValue.object(variables_)]"));
         if operation.result.is_none() { writeln!(out, "        try await DB.run(\"{}\", variables: {sent}, in: {scope})\n    }}", operation.operation).unwrap(); }
-        else { writeln!(out, "        return try await DB.run(\"{}\", variables: {sent}, as: {}.self, in: {scope})\n    }}", operation.operation, returned(operation, true)).unwrap(); }
+        else { writeln!(out, "        return try await DB.run(\"{}\", variables: {sent}, returns: {}, as: {}.self, in: {scope})\n    }}", operation.operation, returns_name(operation), returned(operation, true)).unwrap(); }
     }
     writeln!(out, "}}\n").unwrap();
 }
@@ -64,6 +71,9 @@ pub(super) fn emit_kotlin_operations(out: &mut String, operations: &[OperationCa
     }
     writeln!(out, "object Operations {{").unwrap();
     for operation in operations {
+        if let Some(root) = &operation.result { writeln!(out, "    private const val {} = \"\"\"{}\"\"\"\n", returns_name(operation), serde_json::to_string(root).unwrap()).unwrap(); }
+    }
+    for operation in operations {
         let method = identifier(&name(&operation.name), false);
         let params = operation.args.iter().map(|(arg, kind)| format!("{}: {}{}", identifier(arg, false), arg_type(kind, false), if kind.ends_with('?') { "? = null" } else { "" })).collect::<Vec<_>>().join(", ");
         let account = super::ACCOUNT;
@@ -76,8 +86,8 @@ pub(super) fn emit_kotlin_operations(out: &mut String, operations: &[OperationCa
         }
         let sent = operation.wrap.as_ref().map_or("JsonObject(variables_)".to_string(), |wrap| format!("JsonObject(mapOf(\"{wrap}\" to JsonObject(variables_)))"));
         if operation.result.is_none() { writeln!(out, "        DBlayer.run(\"{}\", {sent}, {account})\n    }}", operation.operation).unwrap(); }
-        else if operation.list { writeln!(out, "        return DBlayer.run(\"{}\", {sent}, ListSerializer({}.serializer()), {account})\n    }}", operation.operation, result_name(operation)).unwrap(); }
-        else { writeln!(out, "        return DBlayer.run(\"{}\", {sent}, {}.serializer(), {account})\n    }}", operation.operation, result_name(operation)).unwrap(); }
+        else if operation.list { writeln!(out, "        return DBlayer.run(\"{}\", {sent}, {}, ListSerializer({}.serializer()), {account})\n    }}", operation.operation, returns_name(operation), result_name(operation)).unwrap(); }
+        else { writeln!(out, "        return DBlayer.run(\"{}\", {sent}, {}, {}.serializer(), {account})\n    }}", operation.operation, returns_name(operation), result_name(operation)).unwrap(); }
     }
     writeln!(out, "}}\n").unwrap();
 }

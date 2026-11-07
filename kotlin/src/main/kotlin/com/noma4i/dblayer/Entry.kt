@@ -34,8 +34,8 @@ object DBlayer {
 
     fun openReport(): OpenReport = database.openReport()
 
-    suspend fun <Answer> run(operation: String, variables: JsonObject, serializer: KSerializer<Answer>, account: AccountScope? = null): Answer =
-        onAccount(account) { database, epoch -> dbJson.decodeFromString(serializer, database.run(epoch, operation, variables.jsonText())) }
+    suspend fun <Answer> run(operation: String, variables: JsonObject, returns: String, serializer: KSerializer<Answer>, account: AccountScope? = null): Answer =
+        onAccount(account) { database, epoch -> dbJson.decodeFromString(serializer, database.call(epoch, operation, variables.jsonText(), returns)) }
 
     suspend fun run(operation: String, variables: JsonObject, account: AccountScope? = null) {
         onAccount(account) { database, epoch -> database.run(epoch, operation, variables.jsonText()) }

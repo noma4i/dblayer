@@ -92,22 +92,6 @@ pub(super) fn emit_swift_type(out: &mut String, declaration: &FieldSpec, types: 
     for field in fields { writeln!(out, "        self.{0} = {0}", identifier(&field.name, true)).unwrap(); }
     out.push_str("    }\n\n    private enum CodingKeys: String, CodingKey {\n");
     for field in fields { writeln!(out, "        case {} = {}", identifier(&field.name, true), string_literal(key_of(field), true)).unwrap(); }
-    out.push_str("    }\n\n    public init(from decoder: Decoder) throws {\n        let container = try decoder.container(keyedBy: CodingKeys.self)\n");
-    for field in fields {
-        let base = field_type(field, true);
-        let base = base.strip_suffix('?').unwrap_or(&base);
-        let id_list = matches!(field.kind, FieldKind::List { element: ScalarKind::Id });
-        let base = if id_list { "[IDText]" } else if is_id(field) { "IDText" } else { base };
-        let optional = is_nullable(field) || field.default.is_some();
-        let read = format!("container.{}({base}.self, forKey: .{})", if optional { "decodeIfPresent" } else { "decode" }, identifier(&field.name, true));
-        let mapped = if id_list { if optional { "?.map(\\.value)" } else { ".map(\\.value)" } } else if is_id(field) { if optional { "?.value" } else { ".value" } } else { "" };
-        let read = format!("try {read}{mapped}");
-        let read = if let Some(value) = &field.default {
-            let default = literal(field, value, true, types);
-            if is_nullable(field) { format!("try (container.contains(.{}) ? {} : {default})", identifier(&field.name, true), read.strip_prefix("try ").unwrap()) } else { format!("{read} ?? {default}") }
-        } else { read };
-        writeln!(out, "        self.{} = {read}", identifier(&field.name, true)).unwrap();
-    }
     out.push_str("    }\n");
     if cells {
         out.push_str("\n    public init(cells: [Cell]) throws {\n        let r = CellReader(cells)\n");
@@ -122,8 +106,6 @@ pub(super) fn emit_kotlin_type(out: &mut String, declaration: &FieldSpec, types:
     for field in &declaration.fields {
         let mut notes = String::new();
         if key_of(field) != field.name { write!(notes, "@SerialName({}) ", string_literal(key_of(field), false)).unwrap(); }
-        if is_id(field) { notes.push_str("@Serializable(with = IDText::class) "); }
-        if matches!(field.kind, FieldKind::List { element: ScalarKind::Id }) { notes.push_str("@Serializable(with = IDTexts::class) "); }
         writeln!(out, "    {notes}val {}: {}{},", identifier(&field.name, false), field_type(field, false), default_argument(field, false, types)).unwrap();
     }
     if !cells {

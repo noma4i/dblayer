@@ -10,7 +10,7 @@ use crate::identity::ModelKey;
 use crate::owners::read::codec::{extract, normalize_nodes, root_value};
 use crate::owners::store::RowValue;
 use crate::schema::{Coverage, RemoteShape};
-use crate::value::read_id;
+use crate::value::{read_id, read_scalar, ScalarKind};
 
 /// What the executor needs to read the answer of one operation.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -61,7 +61,10 @@ pub fn decode_answer(db: &Store, root_of: &dyn Fn(&str) -> Option<String>, job: 
     let root = root.as_str();
     if let Some(declared) = declared.filter(|declared| !declared.result.is_empty()) {
         if root_value(&data, root).is_none_or(Value::is_null) {
-            let result = returns_of(&data, default_root_of(declared.mutation.as_deref().and_then(root_of), root), &declared.result);
+            let result = match returns_of(&data, default_root_of(declared.mutation.as_deref().and_then(root_of), root), &declared.result) {
+                Ok(result) => result,
+                Err(detail) => return refused(detail),
+            };
             return Decoded::Land { rows: Vec::new(), swaps: Vec::new(), stale, result: Some(result), missing: Vec::new() };
         }
     }
@@ -111,7 +114,10 @@ pub fn decode_answer(db: &Store, root_of: &dyn Fn(&str) -> Option<String>, job: 
         let Some(id) = row.get("id").and_then(read_id) else { continue };
         by_model.entry(model).or_default().push(RowValue { row_id: id.to_string(), values: Value::Object(row.clone()).to_string() });
     }
-    let result = declared.filter(|declared| !declared.result.is_empty()).map(|declared| returns_of(&data, default_root_of(declared.mutation.as_deref().and_then(root_of), root), &declared.result));
+    let result = match declared.filter(|declared| !declared.result.is_empty()).map(|declared| returns_of(&data, default_root_of(declared.mutation.as_deref().and_then(root_of), root), &declared.result)).transpose() {
+        Ok(result) => result,
+        Err(detail) => return refused(detail),
+    };
     Decoded::Land { rows: by_model.into_iter().collect(), swaps, stale, result, missing }
 }
 
@@ -121,20 +127,24 @@ fn default_root_of(mutation_root: Option<String>, row_root: &str) -> String {
 }
 
 /// The fields of the `returns` block read from the root of the answer: a field the answer lacks is null, an `id` is text.
-fn returns_of(data: &Value, container: String, fields: &BTreeMap<String, String>) -> String {
+fn returns_of(data: &Value, container: String, fields: &BTreeMap<String, String>) -> Result<String, String> {
     let source = root_value(data, &container);
-    let values: serde_json::Map<String, Value> = fields
-        .iter()
-        .map(|(name, kind)| {
-            let value = source.and_then(|root| root.get(name)).cloned().unwrap_or(Value::Null);
-            let value = match (kind.as_str(), &value) {
-                ("id", Value::Number(number)) => Value::String(number.to_string()),
-                _ => value,
-            };
-            (name.clone(), value)
-        })
-        .collect();
-    Value::Object(values).to_string()
+    let mut values = serde_json::Map::new();
+    for (name, kind) in fields {
+        let kind = match kind.as_str() {
+            "id" => ScalarKind::Id,
+            "int" => ScalarKind::Int,
+            "num" => ScalarKind::Num,
+            "bool" => ScalarKind::Bool,
+            _ => ScalarKind::Str,
+        };
+        let value = match source.and_then(|root| root.get(name)).filter(|value| !value.is_null()) {
+            Some(value) => read_scalar(value, kind).ok_or_else(|| format!("returns {name}: the value does not match the declaration"))?,
+            None => Value::Null,
+        };
+        values.insert(name.clone(), value);
+    }
+    Ok(Value::Object(values).to_string())
 }
 
 fn at<'a>(row: &'a serde_json::Map<String, Value>, path: &str) -> Option<&'a Value> {

@@ -16,7 +16,7 @@ fn a_result_with_objects_lists_and_raw_json_becomes_nested_types_on_both_platfor
         "public struct PricingLoadResultGifts: Codable, Sendable, Equatable {",
         "    public let price: Int?",
         "public struct PricingLoadResultWallet: Codable, Sendable, Equatable {",
-        "return try await DB.run(\"Pricing\", variables: variables_, as: PricingLoadResult.self, in: scope_)",
+        "return try await DB.run(\"Pricing\", variables: variables_, returns: pricingLoadReturns, as: PricingLoadResult.self, in: scope_)",
     ] {
         assert!(swift.contains(line), "swift lacks {line}\n{swift}");
     }
@@ -29,8 +29,8 @@ fn a_result_with_objects_lists_and_raw_json_becomes_nested_types_on_both_platfor
         "    val tags: List<String>? = null,",
         "    val spec: JsonElement? = null,",
         "data class PricingLoadResultGifts(",
-        "    @Serializable(with = IDText::class) val id: String? = null,",
-        "DBlayer.run(\"Pricing\", JsonObject(variables_), PricingLoadResult.serializer(), account)",
+        "    val id: String? = null,",
+        "DBlayer.run(\"Pricing\", JsonObject(variables_), pricingLoadReturns, PricingLoadResult.serializer(), account)",
     ] {
         assert!(kotlin.contains(line), "kotlin lacks {line}\n{kotlin}");
     }

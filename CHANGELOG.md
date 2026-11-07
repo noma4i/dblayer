@@ -42,6 +42,7 @@
 
 ### Changed
 
+- The core reads an operation result by its `returns` block: ids are text, numbers are numbers, absent fields are `null`, and the generated types decode it strictly.
 - One executor class per platform serves the transport and the encrypted HTTP, and the core picks it by `endpoint` and `encrypted`.
 - `Projected.edits` is a list for every delivery: a snapshot removes the rows before it and inserts its rows.
 - `RetryProgress.changes` is an `AsyncThrowingStream` and ends with the error of the subscription.

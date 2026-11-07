@@ -157,10 +157,6 @@ fn is_nullable(field: &FieldSpec) -> bool {
     field.nullable || field.optional
 }
 
-fn is_id(field: &FieldSpec) -> bool {
-    matches!(field.kind, FieldKind::Scalar { kind: ScalarKind::Id })
-}
-
 fn key_of(field: &FieldSpec) -> &str {
     field.from.as_deref().unwrap_or(&field.name)
 }

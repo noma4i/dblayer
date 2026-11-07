@@ -658,14 +658,6 @@ public struct WhenResult: Codable, Sendable, Equatable {
         case container = "container"
         case r = "r"
     }
-
-    public init(from decoder: Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-        self.`default` = try container.decodeIfPresent(String.self, forKey: .`default`)
-        self.when = try container.decodeIfPresent(String.self, forKey: .when)
-        self.container = try container.decodeIfPresent(String.self, forKey: .container)
-        self.r = try container.decodeIfPresent(String.self, forKey: .r)
-    }
 }
 
 public struct QrCodeCreateResult: Codable, Sendable, Equatable {
@@ -678,11 +670,6 @@ public struct QrCodeCreateResult: Codable, Sendable, Equatable {
     private enum CodingKeys: String, CodingKey {
         case url = "url"
     }
-
-    public init(from decoder: Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-        self.url = try container.decodeIfPresent(String.self, forKey: .url)
-    }
 }
 
 public struct StickerSendResult: Codable, Sendable, Equatable {
@@ -694,11 +681,6 @@ public struct StickerSendResult: Codable, Sendable, Equatable {
 
     private enum CodingKeys: String, CodingKey {
         case id = "id"
-    }
-
-    public init(from decoder: Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-        self.id = try container.decodeIfPresent(String.self, forKey: .id)
     }
 }
 
@@ -721,14 +703,6 @@ public struct PricingLoadResult: Codable, Sendable, Equatable {
         case tags = "tags"
         case spec = "spec"
     }
-
-    public init(from decoder: Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-        self.rewards = try container.decodeIfPresent([PricingLoadResultRewards].self, forKey: .rewards)
-        self.videoIntro = try container.decodeIfPresent(PricingLoadResultVideoIntro.self, forKey: .videoIntro)
-        self.tags = try container.decodeIfPresent([String].self, forKey: .tags)
-        self.spec = try container.decodeIfPresent(JSONValue.self, forKey: .spec)
-    }
 }
 
 public struct PricingLoadResultRewards: Codable, Sendable, Equatable {
@@ -747,13 +721,6 @@ public struct PricingLoadResultRewards: Codable, Sendable, Equatable {
         case name = "name"
         case price = "price"
     }
-
-    public init(from decoder: Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-        self.id = try container.decodeIfPresent(IDText.self, forKey: .id)?.value
-        self.name = try container.decodeIfPresent(String.self, forKey: .name)
-        self.price = try container.decodeIfPresent(Int.self, forKey: .price)
-    }
 }
 
 public struct PricingLoadResultVideoIntro: Codable, Sendable, Equatable {
@@ -765,11 +732,6 @@ public struct PricingLoadResultVideoIntro: Codable, Sendable, Equatable {
 
     private enum CodingKeys: String, CodingKey {
         case enabled = "enabled"
-    }
-
-    public init(from decoder: Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-        self.enabled = try container.decodeIfPresent(Bool.self, forKey: .enabled)
     }
 }
 
@@ -783,11 +745,6 @@ public struct MomentCreateResult: Codable, Sendable, Equatable {
     private enum CodingKeys: String, CodingKey {
         case moment = "moment"
     }
-
-    public init(from decoder: Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-        self.moment = try container.decodeIfPresent(MomentCreateResultMoment.self, forKey: .moment)
-    }
 }
 
 public struct MomentCreateResultMoment: Codable, Sendable, Equatable {
@@ -799,11 +756,6 @@ public struct MomentCreateResultMoment: Codable, Sendable, Equatable {
 
     private enum CodingKeys: String, CodingKey {
         case id = "id"
-    }
-
-    public init(from decoder: Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-        self.id = try container.decodeIfPresent(IDText.self, forKey: .id)?.value
     }
 }
 
@@ -823,13 +775,6 @@ public struct GiphyLoadResult: Codable, Sendable, Equatable {
         case url = "url"
         case isSticker = "isSticker"
     }
-
-    public init(from decoder: Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-        self.id = try container.decodeIfPresent(IDText.self, forKey: .id)?.value
-        self.url = try container.decodeIfPresent(String.self, forKey: .url)
-        self.isSticker = try container.decodeIfPresent(Bool.self, forKey: .isSticker)
-    }
 }
 
 public struct WidgetsSendResult: Codable, Sendable, Equatable {
@@ -841,11 +786,6 @@ public struct WidgetsSendResult: Codable, Sendable, Equatable {
 
     private enum CodingKeys: String, CodingKey {
         case id = "id"
-    }
-
-    public init(from decoder: Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-        self.id = try container.decodeIfPresent(String.self, forKey: .id)
     }
 }
 
@@ -868,27 +808,35 @@ public struct ContainerMediaLoadResult: Codable, Sendable, Equatable {
         case rewardCount = "rewardCount"
         case latestSequence = "latestSequence"
     }
-
-    public init(from decoder: Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-        self.visualCount = try container.decodeIfPresent(Int.self, forKey: .visualCount)
-        self.audioCount = try container.decodeIfPresent(Int.self, forKey: .audioCount)
-        self.rewardCount = try container.decodeIfPresent(Int.self, forKey: .rewardCount)
-        self.latestSequence = try container.decodeIfPresent(Int.self, forKey: .latestSequence)
-    }
 }
 
 public enum Operations {
+    private static let whenReturns = #"{"name":"when","kind":{"type":"object"},"nullable":false,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":"WhenResult","merge":null,"fields":[{"name":"default","kind":{"type":"scalar","kind":"str"},"nullable":true,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":null,"merge":null},{"name":"when","kind":{"type":"scalar","kind":"str"},"nullable":true,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":null,"merge":null},{"name":"container","kind":{"type":"scalar","kind":"str"},"nullable":true,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":null,"merge":null},{"name":"r","kind":{"type":"scalar","kind":"str"},"nullable":true,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":null,"merge":null}]}"#
+
+    private static let qrCodeCreateReturns = #"{"name":"qr_code_create","kind":{"type":"object"},"nullable":false,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":"QrCodeCreateResult","merge":null,"fields":[{"name":"url","kind":{"type":"scalar","kind":"str"},"nullable":true,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":null,"merge":null}]}"#
+
+    private static let stickerSendReturns = #"{"name":"sticker_send","kind":{"type":"object"},"nullable":false,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":"StickerSendResult","merge":null,"fields":[{"name":"id","kind":{"type":"scalar","kind":"str"},"nullable":true,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":null,"merge":null}]}"#
+
+    private static let pricingLoadReturns = #"{"name":"pricing_load","kind":{"type":"object"},"nullable":false,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":"PricingLoadResult","merge":null,"fields":[{"name":"rewards","kind":{"type":"array"},"nullable":true,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":"PricingLoadResultRewards","merge":null,"fields":[{"name":"id","kind":{"type":"scalar","kind":"id"},"nullable":true,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":null,"merge":null},{"name":"name","kind":{"type":"scalar","kind":"str"},"nullable":true,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":null,"merge":null},{"name":"price","kind":{"type":"scalar","kind":"int"},"nullable":true,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":null,"merge":null}]},{"name":"videoIntro","kind":{"type":"object"},"nullable":true,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":"PricingLoadResultVideoIntro","merge":null,"fields":[{"name":"enabled","kind":{"type":"scalar","kind":"bool"},"nullable":true,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":null,"merge":null}]},{"name":"tags","kind":{"type":"list","element":"str"},"nullable":true,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":null,"merge":null},{"name":"spec","kind":{"type":"raw"},"nullable":true,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":null,"merge":null}]}"#
+
+    private static let momentCreateReturns = #"{"name":"moment_create","kind":{"type":"object"},"nullable":false,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":"MomentCreateResult","merge":null,"fields":[{"name":"moment","kind":{"type":"object"},"nullable":true,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":"MomentCreateResultMoment","merge":null,"fields":[{"name":"id","kind":{"type":"scalar","kind":"id"},"nullable":true,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":null,"merge":null}]}]}"#
+
+    private static let giphyLoadReturns = #"{"name":"giphy_load","kind":{"type":"object"},"nullable":false,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":"GiphyLoadResult","merge":null,"fields":[{"name":"id","kind":{"type":"scalar","kind":"id"},"nullable":true,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":null,"merge":null},{"name":"url","kind":{"type":"scalar","kind":"str"},"nullable":true,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":null,"merge":null},{"name":"isSticker","kind":{"type":"scalar","kind":"bool"},"nullable":true,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":null,"merge":null}]}"#
+
+    private static let widgetsSendReturns = #"{"name":"widgets_send","kind":{"type":"object"},"nullable":false,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":"WidgetsSendResult","merge":null,"fields":[{"name":"id","kind":{"type":"scalar","kind":"str"},"nullable":true,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":null,"merge":null}]}"#
+
+    private static let containerMediaLoadReturns = #"{"name":"container_media_load","kind":{"type":"object"},"nullable":false,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":"ContainerMediaLoadResult","merge":null,"fields":[{"name":"visualCount","kind":{"type":"scalar","kind":"int"},"nullable":true,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":null,"merge":null},{"name":"audioCount","kind":{"type":"scalar","kind":"int"},"nullable":true,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":null,"merge":null},{"name":"rewardCount","kind":{"type":"scalar","kind":"int"},"nullable":true,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":null,"merge":null},{"name":"latestSequence","kind":{"type":"scalar","kind":"int"},"nullable":true,"optional":false,"default":null,"indexed":false,"id_from_parent":null,"from":null,"app_type":null,"merge":null}]}"#
+
     @concurrent public static func when(`class`: String, in scope_: AccountScope? = nil) async throws -> WhenResult {
         var variables_: [String: JSONValue] = [:]
         variables_["class"] = try JSONValue.encode(`class`)
-        return try await DB.run("KeywordCall", variables: variables_, as: WhenResult.self, in: scope_)
+        return try await DB.run("KeywordCall", variables: variables_, returns: whenReturns, as: WhenResult.self, in: scope_)
     }
     @concurrent public static func qrCodeCreate(kind: String, size: Int? = nil, in scope_: AccountScope? = nil) async throws -> QrCodeCreateResult {
         var variables_: [String: JSONValue] = [:]
         variables_["kind"] = try JSONValue.encode(kind)
         if let value = size { variables_["size"] = try JSONValue.encode(value) }
-        return try await DB.run("QrCodeCreate", variables: ["input": JSONValue.object(variables_)], as: QrCodeCreateResult.self, in: scope_)
+        return try await DB.run("QrCodeCreate", variables: ["input": JSONValue.object(variables_)], returns: qrCodeCreateReturns, as: QrCodeCreateResult.self, in: scope_)
     }
     @concurrent public static func signOut(in scope_: AccountScope? = nil) async throws {
         let variables_: [String: JSONValue] = [:]
@@ -897,32 +845,32 @@ public enum Operations {
     @concurrent public static func stickerSend(input: StickerInput, in scope_: AccountScope? = nil) async throws -> StickerSendResult {
         var variables_: [String: JSONValue] = [:]
         variables_["input"] = try JSONValue.encode(input)
-        return try await DB.run("StickerSend", variables: variables_, as: StickerSendResult.self, in: scope_)
+        return try await DB.run("StickerSend", variables: variables_, returns: stickerSendReturns, as: StickerSendResult.self, in: scope_)
     }
     @concurrent public static func pricingLoad(in scope_: AccountScope? = nil) async throws -> PricingLoadResult {
         let variables_: [String: JSONValue] = [:]
-        return try await DB.run("Pricing", variables: variables_, as: PricingLoadResult.self, in: scope_)
+        return try await DB.run("Pricing", variables: variables_, returns: pricingLoadReturns, as: PricingLoadResult.self, in: scope_)
     }
     @concurrent public static func momentCreate(input: MomentInput, in scope_: AccountScope? = nil) async throws -> MomentCreateResult {
         var variables_: [String: JSONValue] = [:]
         variables_["input"] = try JSONValue.encode(input)
-        return try await DB.run("MomentCreate", variables: variables_, as: MomentCreateResult.self, in: scope_)
+        return try await DB.run("MomentCreate", variables: variables_, returns: momentCreateReturns, as: MomentCreateResult.self, in: scope_)
     }
     @concurrent public static func giphyLoad(type: String, limit: Int? = nil, in scope_: AccountScope? = nil) async throws -> [GiphyLoadResult] {
         var variables_: [String: JSONValue] = [:]
         variables_["type"] = try JSONValue.encode(type)
         if let value = limit { variables_["limit"] = try JSONValue.encode(value) }
-        return try await DB.run("Giphy", variables: variables_, as: [GiphyLoadResult].self, in: scope_)
+        return try await DB.run("Giphy", variables: variables_, returns: giphyLoadReturns, as: [GiphyLoadResult].self, in: scope_)
     }
     @concurrent public static func widgetsSend(widgets: [StickerWidgetInput]? = nil, in scope_: AccountScope? = nil) async throws -> WidgetsSendResult {
         var variables_: [String: JSONValue] = [:]
         if let value = widgets { variables_["widgets"] = try JSONValue.encode(value) }
-        return try await DB.run("WidgetsSend", variables: variables_, as: WidgetsSendResult.self, in: scope_)
+        return try await DB.run("WidgetsSend", variables: variables_, returns: widgetsSendReturns, as: WidgetsSendResult.self, in: scope_)
     }
     @concurrent public static func containerMediaLoad(containerId: String, upToSequence: Int? = nil, in scope_: AccountScope? = nil) async throws -> ContainerMediaLoadResult {
         var variables_: [String: JSONValue] = [:]
         variables_["containerId"] = try JSONValue.encode(containerId)
         if let value = upToSequence { variables_["upToSequence"] = try JSONValue.encode(value) }
-        return try await DB.run("containerMedia", variables: variables_, as: ContainerMediaLoadResult.self, in: scope_)
+        return try await DB.run("containerMedia", variables: variables_, returns: containerMediaLoadReturns, as: ContainerMediaLoadResult.self, in: scope_)
     }
 }

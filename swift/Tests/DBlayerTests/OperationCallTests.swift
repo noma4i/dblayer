@@ -25,6 +25,15 @@ extension BridgeProbeTests {
     #expect(try JSONValue.read(sent) == JSONValue.read(#"{"input":{"kind":"container","size":3}}"#), "variables sent: \(sent)")
   }
 
+  @Test
+  func aLooseResultIsRefusedByTheWrapper() throws {
+    func decode(_ text: String) throws -> PricingLoadResultRewards { try JSONDecoder().decode(PricingLoadResultRewards.self, from: Data(text.utf8)) }
+    for loose in [#"{"id":7}"#, #"{"id":"7","price":"3"}"#, #"{"id":"7","name":5}"#] {
+      #expect(throws: (any Error).self, Comment(rawValue: loose)) { try decode(loose) }
+    }
+    #expect(try decode(#"{"id":"7","name":null,"price":3}"#) == PricingLoadResultRewards(id: "7", name: nil, price: 3))
+  }
+
   @MainActor
   @Test(.timeLimit(.minutes(1)), arguments: [
     ("a status", DbError.Http(status: 401, detail: "unauthorized"), "Unauthorized"),

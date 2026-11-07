@@ -6,6 +6,7 @@ import com.noma4i.dblayer.models.NestedValue
 import com.noma4i.dblayer.models.modelsJSON
 import com.noma4i.dblayer.models.NestedTree
 import java.io.File
+import kotlinx.serialization.SerializationException
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonNull
@@ -30,20 +31,18 @@ class NestedTypesTest {
         val cases = parseJson(File("../fixtures/nested.json").readText()) as JsonArray
         for (row in cases) {
             val fields = row.jsonObject
+            if (fields["error"] == JsonPrimitive(true)) continue
             val label = fields.getValue("name").toString()
-            val input = (fields["inputText"] as? JsonPrimitive)?.content ?: fields.getValue("input").toString()
-            if (fields["error"] == JsonPrimitive(true)) {
-                assertThrows(label, Exception::class.java) { dbJson.decodeFromString(NestedValue.serializer(), input) }
-            } else {
-                val decoded = dbJson.decodeFromString(NestedValue.serializer(), input)
-                assertEquals(label, comparableJson(fields.getValue("output")), comparableJson(jsonValue(decoded)))
-            }
+            val output = fields.getValue("output")
+            val decoded = dbJson.decodeFromString(NestedValue.serializer(), output.toString())
+            assertEquals(label, comparableJson(output), comparableJson(jsonValue(decoded)))
         }
-        val reply = dbJson.decodeFromString(RecordReplyNode.serializer(), """{"userId":23,"user":{"id":"u1","fullName":"Ada"},"media":{}}""")
+        assertThrows(SerializationException::class.java) { dbJson.decodeFromString(NestedValue.serializer(), """{"title":"loose","owner_id":42}""") }
+        val reply = dbJson.decodeFromString(RecordReplyNode.serializer(), """{"userId":"23","user":{"id":"u1","fullName":"Ada"},"media":{"id":""}}""")
         assertEquals("23", reply.userId)
         assertEquals("Ada", reply.user?.fullName)
         assertEquals("", reply.media?.id)
-        val tree = dbJson.decodeFromString(NestedTree.serializer(), """{"name":"root","children":[{"name":"leaf"}]}""")
+        val tree = dbJson.decodeFromString(NestedTree.serializer(), """{"name":"root","children":[{"name":"leaf","children":[]}]}""")
         assertEquals("leaf", tree.children.first().name)
         assertEquals(emptyList<NestedTree>(), tree.children.first().children)
     }

@@ -1949,13 +1949,6 @@ public struct SampleSpec: Codable, Sendable, Equatable {
         case state = "state"
     }
 
-    public init(from decoder: Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-        self.root = try container.decode(IDText.self, forKey: .root).value
-        self.elements = try container.decode([SampleElement].self, forKey: .elements)
-        self.state = try container.decode([SampleStateEntry].self, forKey: .state)
-    }
-
     public init(cells: [Cell]) throws {
         let r = CellReader(cells)
         self.root = try r.req(0, \.asId)
@@ -2108,16 +2101,6 @@ public struct SampleButton: Codable, Sendable, Equatable {
         case disabled = "disabled"
     }
 
-    public init(from decoder: Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-        self.id = try container.decode(IDText.self, forKey: .id).value
-        self.children = try container.decode([IDText].self, forKey: .children).map(\.value)
-        self.press = try container.decodeIfPresent(SampleAction.self, forKey: .press)
-        self.visible = try container.decodeIfPresent(SampleVisibility.self, forKey: .visible)
-        self.label = try container.decodeIfPresent(SampleTextValue.self, forKey: .label)
-        self.disabled = try container.decodeIfPresent(SampleFlagValue.self, forKey: .disabled)
-    }
-
     public init(cells: [Cell]) throws {
         let r = CellReader(cells)
         self.id = try r.req(0, \.asId)
@@ -2201,12 +2184,6 @@ public struct SampleNavigateAction: Codable, Sendable, Equatable {
         case title = "title"
     }
 
-    public init(from decoder: Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-        self.slug = try container.decode(String.self, forKey: .slug)
-        self.title = try container.decodeIfPresent(String.self, forKey: .title)
-    }
-
     public init(cells: [Cell]) throws {
         let r = CellReader(cells)
         self.slug = try r.req(0, \.asText)
@@ -2223,11 +2200,6 @@ public struct SampleOpenRecordAction: Codable, Sendable, Equatable {
 
     private enum CodingKeys: String, CodingKey {
         case recordId = "recordId"
-    }
-
-    public init(from decoder: Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-        self.recordId = try container.decode(String.self, forKey: .recordId)
     }
 
     public init(cells: [Cell]) throws {
@@ -2247,11 +2219,6 @@ public struct SampleOpenExternalAction: Codable, Sendable, Equatable {
         case url = "url"
     }
 
-    public init(from decoder: Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-        self.url = try container.decode(String.self, forKey: .url)
-    }
-
     public init(cells: [Cell]) throws {
         let r = CellReader(cells)
         self.url = try r.req(0, \.asText)
@@ -2267,11 +2234,6 @@ public struct SampleOpenProfileAction: Codable, Sendable, Equatable {
 
     private enum CodingKeys: String, CodingKey {
         case userId = "userId"
-    }
-
-    public init(from decoder: Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-        self.userId = try container.decode(String.self, forKey: .userId)
     }
 
     public init(cells: [Cell]) throws {
@@ -2358,14 +2320,6 @@ public struct SampleCondition: Codable, Sendable, Equatable {
         case path = "path"
     }
 
-    public init(from decoder: Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-        self.comparison = try container.decode(String.self, forKey: .comparison)
-        self.negated = try container.decode(Bool.self, forKey: .negated)
-        self.operand = try container.decodeIfPresent(SampleOperand.self, forKey: .operand)
-        self.path = try container.decode(String.self, forKey: .path)
-    }
-
     public init(cells: [Cell]) throws {
         let r = CellReader(cells)
         self.comparison = try r.req(0, \.asText)
@@ -2444,11 +2398,6 @@ public struct SampleFlagLiteral: Codable, Sendable, Equatable {
         case flag = "flag"
     }
 
-    public init(from decoder: Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-        self.flag = try container.decode(Bool.self, forKey: .flag)
-    }
-
     public init(cells: [Cell]) throws {
         let r = CellReader(cells)
         self.flag = try r.req(0, \.asBool)
@@ -2464,11 +2413,6 @@ public struct SampleNumberLiteral: Codable, Sendable, Equatable {
 
     private enum CodingKeys: String, CodingKey {
         case number = "number"
-    }
-
-    public init(from decoder: Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-        self.number = try container.decode(Double.self, forKey: .number)
     }
 
     public init(cells: [Cell]) throws {
@@ -2488,11 +2432,6 @@ public struct SampleStateRef: Codable, Sendable, Equatable {
         case path = "path"
     }
 
-    public init(from decoder: Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-        self.path = try container.decode(String.self, forKey: .path)
-    }
-
     public init(cells: [Cell]) throws {
         let r = CellReader(cells)
         self.path = try r.req(0, \.asText)
@@ -2508,11 +2447,6 @@ public struct SampleTextLiteral: Codable, Sendable, Equatable {
 
     private enum CodingKeys: String, CodingKey {
         case text = "text"
-    }
-
-    public init(from decoder: Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-        self.text = try container.decode(String.self, forKey: .text)
     }
 
     public init(cells: [Cell]) throws {
@@ -2532,11 +2466,6 @@ public struct SampleVisibleAll: Codable, Sendable, Equatable {
         case conditions = "conditions"
     }
 
-    public init(from decoder: Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-        self.conditions = try container.decode([SampleCondition].self, forKey: .conditions)
-    }
-
     public init(cells: [Cell]) throws {
         let r = CellReader(cells)
         self.conditions = try r.arr(0, SampleCondition.init(cells:))
@@ -2554,11 +2483,6 @@ public struct SampleVisibleAny: Codable, Sendable, Equatable {
         case conditions = "conditions"
     }
 
-    public init(from decoder: Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-        self.conditions = try container.decode([SampleCondition].self, forKey: .conditions)
-    }
-
     public init(cells: [Cell]) throws {
         let r = CellReader(cells)
         self.conditions = try r.arr(0, SampleCondition.init(cells:))
@@ -2574,11 +2498,6 @@ public struct SampleVisibleFlag: Codable, Sendable, Equatable {
 
     private enum CodingKeys: String, CodingKey {
         case flag = "flag"
-    }
-
-    public init(from decoder: Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-        self.flag = try container.decode(Bool.self, forKey: .flag)
     }
 
     public init(cells: [Cell]) throws {
@@ -2705,16 +2624,6 @@ public struct SampleColumn: Codable, Sendable, Equatable {
         case alignItems = "alignItems"
     }
 
-    public init(from decoder: Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-        self.id = try container.decode(IDText.self, forKey: .id).value
-        self.children = try container.decode([IDText].self, forKey: .children).map(\.value)
-        self.press = try container.decodeIfPresent(SampleAction.self, forKey: .press)
-        self.visible = try container.decodeIfPresent(SampleVisibility.self, forKey: .visible)
-        self.gap = try container.decodeIfPresent(SampleNumberValue.self, forKey: .gap)
-        self.alignItems = try container.decodeIfPresent(String.self, forKey: .alignItems)
-    }
-
     public init(cells: [Cell]) throws {
         let r = CellReader(cells)
         self.id = try r.req(0, \.asId)
@@ -2798,16 +2707,6 @@ public struct SampleHeading: Codable, Sendable, Equatable {
         case level = "level"
     }
 
-    public init(from decoder: Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-        self.id = try container.decode(IDText.self, forKey: .id).value
-        self.children = try container.decode([IDText].self, forKey: .children).map(\.value)
-        self.press = try container.decodeIfPresent(SampleAction.self, forKey: .press)
-        self.visible = try container.decodeIfPresent(SampleVisibility.self, forKey: .visible)
-        self.text = try container.decodeIfPresent(SampleTextValue.self, forKey: .text)
-        self.level = try container.decodeIfPresent(Int.self, forKey: .level)
-    }
-
     public init(cells: [Cell]) throws {
         let r = CellReader(cells)
         self.id = try r.req(0, \.asId)
@@ -2837,14 +2736,6 @@ public struct SamplePressable: Codable, Sendable, Equatable {
         case children = "children"
         case press = "press"
         case visible = "visible"
-    }
-
-    public init(from decoder: Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-        self.id = try container.decode(IDText.self, forKey: .id).value
-        self.children = try container.decode([IDText].self, forKey: .children).map(\.value)
-        self.press = try container.decodeIfPresent(SampleAction.self, forKey: .press)
-        self.visible = try container.decodeIfPresent(SampleVisibility.self, forKey: .visible)
     }
 
     public init(cells: [Cell]) throws {
@@ -2877,15 +2768,6 @@ public struct SampleSpacer: Codable, Sendable, Equatable {
         case press = "press"
         case visible = "visible"
         case length = "length"
-    }
-
-    public init(from decoder: Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-        self.id = try container.decode(IDText.self, forKey: .id).value
-        self.children = try container.decode([IDText].self, forKey: .children).map(\.value)
-        self.press = try container.decodeIfPresent(SampleAction.self, forKey: .press)
-        self.visible = try container.decodeIfPresent(SampleVisibility.self, forKey: .visible)
-        self.length = try container.decodeIfPresent(SampleNumberValue.self, forKey: .length)
     }
 
     public init(cells: [Cell]) throws {
@@ -2924,16 +2806,6 @@ public struct SampleSwitch: Codable, Sendable, Equatable {
         case label = "label"
     }
 
-    public init(from decoder: Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-        self.id = try container.decode(IDText.self, forKey: .id).value
-        self.children = try container.decode([IDText].self, forKey: .children).map(\.value)
-        self.press = try container.decodeIfPresent(SampleAction.self, forKey: .press)
-        self.visible = try container.decodeIfPresent(SampleVisibility.self, forKey: .visible)
-        self.checked = try container.decodeIfPresent(SampleFlagValue.self, forKey: .checked)
-        self.label = try container.decodeIfPresent(SampleTextValue.self, forKey: .label)
-    }
-
     public init(cells: [Cell]) throws {
         let r = CellReader(cells)
         self.id = try r.req(0, \.asId)
@@ -2957,12 +2829,6 @@ public struct SampleStateEntry: Codable, Sendable, Equatable {
     private enum CodingKeys: String, CodingKey {
         case path = "path"
         case value = "value"
-    }
-
-    public init(from decoder: Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-        self.path = try container.decode(String.self, forKey: .path)
-        self.value = try container.decode(SampleStateValue.self, forKey: .value)
     }
 
     public init(cells: [Cell]) throws {
@@ -3050,16 +2916,6 @@ public struct KeywordValue: Codable, Sendable, Equatable {
         case child = "child"
     }
 
-    public init(from decoder: Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-        self.`default` = try container.decode(String.self, forKey: .`default`)
-        self.when = try container.decode(String.self, forKey: .when)
-        self.`class` = try container.decode(String.self, forKey: .`class`)
-        self.container = try container.decode(String.self, forKey: .container)
-        self.r = try container.decode(String.self, forKey: .r)
-        self.child = try container.decodeIfPresent(KeywordChild.self, forKey: .child) ?? KeywordChild(default: "d", when: "w", class: "c")
-    }
-
     public init(cells: [Cell]) throws {
         let r = CellReader(cells)
         self.`default` = try r.req(0, \.asText)
@@ -3086,13 +2942,6 @@ public struct KeywordChild: Codable, Sendable, Equatable {
         case `default` = "default"
         case when = "when"
         case `class` = "class"
-    }
-
-    public init(from decoder: Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-        self.`default` = try container.decode(String.self, forKey: .`default`)
-        self.when = try container.decode(String.self, forKey: .when)
-        self.`class` = try container.decode(String.self, forKey: .`class`)
     }
 
     public init(cells: [Cell]) throws {
@@ -3180,33 +3029,6 @@ public struct NestedValue: Codable, Sendable, Equatable {
         case children = "children"
     }
 
-    public init(from decoder: Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-        self.title = try container.decode(String.self, forKey: .title)
-        self.note = try container.decodeIfPresent(String.self, forKey: .note)
-        self.nullableDefault = try (container.contains(.nullableDefault) ? container.decodeIfPresent(String.self, forKey: .nullableDefault) : "default")
-        self.ownerId = try container.decodeIfPresent(IDText.self, forKey: .ownerId)?.value
-        self.count = try container.decodeIfPresent(Int.self, forKey: .count) ?? 2
-        self.ratio = try container.decodeIfPresent(Double.self, forKey: .ratio) ?? 1.5
-        self.enabled = try container.decodeIfPresent(Bool.self, forKey: .enabled) ?? false
-        self.createdAt = try container.decodeIfPresent(String.self, forKey: .createdAt)
-        self.state = try container.decodeIfPresent(NestedValueState.self, forKey: .state) ?? NestedValueState.ready
-        self.labels = try container.decodeIfPresent([String].self, forKey: .labels) ?? []
-        self.counts = try container.decodeIfPresent([Int].self, forKey: .counts) ?? []
-        self.ratios = try container.decodeIfPresent([Double].self, forKey: .ratios) ?? []
-        self.flags = try container.decodeIfPresent([Bool].self, forKey: .flags) ?? []
-        self.dates = try container.decodeIfPresent([String].self, forKey: .dates) ?? []
-        self.owners = try container.decodeIfPresent([IDText].self, forKey: .owners)?.map(\.value) ?? []
-        self.payload = try container.decodeIfPresent(JSONValue.self, forKey: .payload)
-        self.rawValue = try container.decodeIfPresent(JSONValue.self, forKey: .rawValue) ?? .object(["free": .array([.integer(1), .bool(true), .null])])
-        self.preferences = try container.decodeIfPresent(NestedValuePreferences.self, forKey: .preferences) ?? NestedValuePreferences(label: "base")
-        self.presets = try container.decodeIfPresent([NestedValuePreferences].self, forKey: .presets) ?? [NestedValuePreferences(label: "first")]
-        self.metadata = try container.decodeIfPresent(JSONValue.self, forKey: .metadata)
-        self.values = try container.decodeIfPresent(JSONValue.self, forKey: .values)
-        self.child = try container.decodeIfPresent(NestedValueChild.self, forKey: .child)
-        self.children = try container.decodeIfPresent([NestedValueChild].self, forKey: .children) ?? []
-    }
-
     public init(cells: [Cell]) throws {
         let r = CellReader(cells)
         self.title = try r.req(0, \.asText)
@@ -3249,12 +3071,6 @@ public struct NestedValuePreferences: Codable, Sendable, Equatable {
         case active = "active"
     }
 
-    public init(from decoder: Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-        self.label = try container.decode(String.self, forKey: .label)
-        self.active = try container.decodeIfPresent(Bool.self, forKey: .active) ?? true
-    }
-
     public init(cells: [Cell]) throws {
         let r = CellReader(cells)
         self.label = try r.req(0, \.asText)
@@ -3276,12 +3092,6 @@ public struct NestedValueChild: Codable, Sendable, Equatable {
         case horizontal = "x"
     }
 
-    public init(from decoder: Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-        self.body = try container.decodeIfPresent(String.self, forKey: .body)
-        self.horizontal = try container.decodeIfPresent(Double.self, forKey: .horizontal) ?? 0.0
-    }
-
     public init(cells: [Cell]) throws {
         let r = CellReader(cells)
         self.body = try r.opt(0, \.asText)
@@ -3301,12 +3111,6 @@ public struct NestedTree: Codable, Sendable, Equatable {
     private enum CodingKeys: String, CodingKey {
         case name = "name"
         case children = "children"
-    }
-
-    public init(from decoder: Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-        self.name = try container.decode(String.self, forKey: .name)
-        self.children = try container.decodeIfPresent([NestedTree].self, forKey: .children) ?? []
     }
 
     public init(cells: [Cell]) throws {
@@ -3340,16 +3144,6 @@ public struct RecordReplyNode: Codable, Sendable, Equatable {
         case userId = "userId"
         case user = "user"
         case media = "media"
-    }
-
-    public init(from decoder: Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-        self.id = try container.decodeIfPresent(IDText.self, forKey: .id)?.value
-        self.body = try container.decodeIfPresent(String.self, forKey: .body)
-        self.kind = try container.decodeIfPresent(String.self, forKey: .kind)
-        self.userId = try container.decodeIfPresent(IDText.self, forKey: .userId)?.value
-        self.user = try container.decodeIfPresent(RecordUserRef.self, forKey: .user)
-        self.media = try container.decodeIfPresent(NestedMedia.self, forKey: .media)
     }
 
     public init(cells: [Cell]) throws {
@@ -3386,15 +3180,6 @@ public struct RecordUserRef: Codable, Sendable, Equatable {
         case avatarUrl = "avatarUrl"
     }
 
-    public init(from decoder: Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-        self.id = try container.decodeIfPresent(IDText.self, forKey: .id)?.value
-        self.fullName = try container.decodeIfPresent(String.self, forKey: .fullName)
-        self.name = try container.decodeIfPresent(String.self, forKey: .name)
-        self.username = try container.decodeIfPresent(String.self, forKey: .username)
-        self.avatarUrl = try container.decodeIfPresent(String.self, forKey: .avatarUrl)
-    }
-
     public init(cells: [Cell]) throws {
         let r = CellReader(cells)
         self.id = try r.opt(0, \.asId)
@@ -3417,12 +3202,6 @@ public struct NestedMedia: Codable, Sendable, Equatable {
     private enum CodingKeys: String, CodingKey {
         case id = "id"
         case fileUrl = "fileUrl"
-    }
-
-    public init(from decoder: Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-        self.id = try container.decodeIfPresent(IDText.self, forKey: .id)?.value ?? ""
-        self.fileUrl = try container.decodeIfPresent(String.self, forKey: .fileUrl)
     }
 
     public init(cells: [Cell]) throws {
@@ -3449,13 +3228,6 @@ public struct RecordReactionNode: Codable, Sendable, Equatable {
         case user = "user"
     }
 
-    public init(from decoder: Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-        self.body = try container.decodeIfPresent(String.self, forKey: .body)
-        self.userId = try container.decodeIfPresent(IDText.self, forKey: .userId)?.value
-        self.user = try container.decodeIfPresent(RecordReactionUser.self, forKey: .user)
-    }
-
     public init(cells: [Cell]) throws {
         let r = CellReader(cells)
         self.body = try r.opt(0, \.asText)
@@ -3476,12 +3248,6 @@ public struct RecordReactionUser: Codable, Sendable, Equatable {
     private enum CodingKeys: String, CodingKey {
         case id = "id"
         case name = "name"
-    }
-
-    public init(from decoder: Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-        self.id = try container.decodeIfPresent(IDText.self, forKey: .id)?.value
-        self.name = try container.decodeIfPresent(String.self, forKey: .name)
     }
 
     public init(cells: [Cell]) throws {
@@ -3569,14 +3335,6 @@ public struct RewardAttachment: Codable, Sendable, Equatable {
         case tags = "tags"
     }
 
-    public init(from decoder: Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-        self.id = try container.decode(IDText.self, forKey: .id).value
-        self.tier = try container.decode(String.self, forKey: .tier)
-        self.status = try container.decodeIfPresent(String.self, forKey: .status)
-        self.tags = try container.decodeIfPresent([String].self, forKey: .tags) ?? []
-    }
-
     public init(cells: [Cell]) throws {
         let r = CellReader(cells)
         self.id = try r.req(0, \.asId)
@@ -3600,12 +3358,6 @@ public struct MomentAttachment: Codable, Sendable, Equatable {
         case caption = "caption"
     }
 
-    public init(from decoder: Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-        self.momentId = try container.decode(IDText.self, forKey: .momentId).value
-        self.caption = try container.decodeIfPresent(String.self, forKey: .caption)
-    }
-
     public init(cells: [Cell]) throws {
         let r = CellReader(cells)
         self.momentId = try r.req(0, \.asId)
@@ -3622,11 +3374,6 @@ public struct ProfileAttachment: Codable, Sendable, Equatable {
 
     private enum CodingKeys: String, CodingKey {
         case user = "user"
-    }
-
-    public init(from decoder: Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-        self.user = try container.decodeIfPresent(AttachmentUser.self, forKey: .user)
     }
 
     public init(cells: [Cell]) throws {
@@ -3649,12 +3396,6 @@ public struct AttachmentUser: Codable, Sendable, Equatable {
         case name = "name"
     }
 
-    public init(from decoder: Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-        self.id = try container.decode(IDText.self, forKey: .id).value
-        self.name = try container.decodeIfPresent(String.self, forKey: .name)
-    }
-
     public init(cells: [Cell]) throws {
         let r = CellReader(cells)
         self.id = try r.req(0, \.asId)
@@ -3671,11 +3412,6 @@ public struct ReactionAttachment: Codable, Sendable, Equatable {
 
     private enum CodingKeys: String, CodingKey {
         case body = "body"
-    }
-
-    public init(from decoder: Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-        self.body = try container.decode(String.self, forKey: .body)
     }
 
     public init(cells: [Cell]) throws {
@@ -3701,13 +3437,6 @@ public struct RecordMedia: Codable, Sendable, Equatable {
         case fileUrl = "fileUrl"
     }
 
-    public init(from decoder: Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-        self.kind = try container.decodeIfPresent(String.self, forKey: .kind)
-        self.transcoded = try container.decodeIfPresent(Bool.self, forKey: .transcoded)
-        self.fileUrl = try container.decodeIfPresent(String.self, forKey: .fileUrl)
-    }
-
     public init(cells: [Cell]) throws {
         let r = CellReader(cells)
         self.kind = try r.opt(0, \.asText)
@@ -3728,12 +3457,6 @@ public struct ScreenRequires: Codable, Sendable, Equatable {
     private enum CodingKeys: String, CodingKey {
         case ios = "ios"
         case android = "android"
-    }
-
-    public init(from decoder: Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-        self.ios = try container.decodeIfPresent(Int.self, forKey: .ios)
-        self.android = try container.decodeIfPresent(Int.self, forKey: .android)
     }
 
     public init(cells: [Cell]) throws {
@@ -3760,13 +3483,6 @@ public struct ScreenSpec: Codable, Sendable, Equatable {
         case elements = "elements"
     }
 
-    public init(from decoder: Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-        self.root = try container.decode(IDText.self, forKey: .root).value
-        self.state = try container.decode([ScreenStateEntry].self, forKey: .state)
-        self.elements = try container.decode([ScreenElement].self, forKey: .elements)
-    }
-
     public init(cells: [Cell]) throws {
         let r = CellReader(cells)
         self.root = try r.req(0, \.asId)
@@ -3787,12 +3503,6 @@ public struct ScreenStateEntry: Codable, Sendable, Equatable {
     private enum CodingKeys: String, CodingKey {
         case path = "path"
         case value = "value"
-    }
-
-    public init(from decoder: Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-        self.path = try container.decode(String.self, forKey: .path)
-        self.value = try container.decode(JSONValue.self, forKey: .value)
     }
 
     public init(cells: [Cell]) throws {
@@ -3853,25 +3563,6 @@ public struct ScreenElement: Codable, Sendable, Equatable {
         case expand = "expand"
         case align = "align"
         case accessibilityLabel = "accessibilityLabel"
-    }
-
-    public init(from decoder: Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-        self.id = try container.decode(IDText.self, forKey: .id).value
-        self.type = try container.decode(String.self, forKey: .type)
-        self.slot = try container.decodeIfPresent(String.self, forKey: .slot)
-        self.children = try container.decode([IDText].self, forKey: .children).map(\.value)
-        self.props = try container.decodeIfPresent(JSONValue.self, forKey: .props)
-        self.visible = try container.decodeIfPresent(JSONValue.self, forKey: .visible)
-        self.press = try container.decodeIfPresent(JSONValue.self, forKey: .press)
-        self.change = try container.decodeIfPresent(JSONValue.self, forKey: .change)
-        self.padding = try container.decodeIfPresent(String.self, forKey: .padding)
-        self.margin = try container.decodeIfPresent(String.self, forKey: .margin)
-        self.background = try container.decodeIfPresent(String.self, forKey: .background)
-        self.radius = try container.decodeIfPresent(String.self, forKey: .radius)
-        self.expand = try container.decodeIfPresent(Bool.self, forKey: .expand)
-        self.align = try container.decodeIfPresent(String.self, forKey: .align)
-        self.accessibilityLabel = try container.decodeIfPresent(String.self, forKey: .accessibilityLabel)
     }
 
     public init(cells: [Cell]) throws {
@@ -3951,11 +3642,6 @@ public struct MomentEmojiProps: Codable, Sendable, Equatable {
         case emoji = "emoji"
     }
 
-    public init(from decoder: Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-        self.emoji = try container.decode(String.self, forKey: .emoji)
-    }
-
     public init(cells: [Cell]) throws {
         let r = CellReader(cells)
         self.emoji = try r.req(0, \.asText)
@@ -3974,12 +3660,6 @@ public struct MomentLabelProps: Codable, Sendable, Equatable {
     private enum CodingKeys: String, CodingKey {
         case text = "text"
         case size = "size"
-    }
-
-    public init(from decoder: Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-        self.text = try container.decode(String.self, forKey: .text)
-        self.size = try container.decodeIfPresent(Int.self, forKey: .size)
     }
 
     public init(cells: [Cell]) throws {

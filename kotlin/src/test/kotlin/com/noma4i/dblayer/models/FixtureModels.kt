@@ -1924,7 +1924,7 @@ data class MomentVibeFeedEdge(
 @Immutable
 @Serializable
 data class SampleSpec(
-    @Serializable(with = IDText::class) val root: String,
+    val root: String,
     val elements: List<SampleElement>,
     val state: List<SampleStateEntry>,
 ) {
@@ -2064,8 +2064,8 @@ enum class SampleElementKind {
 @Immutable
 @Serializable
 data class SampleButton(
-    @Serializable(with = IDText::class) val id: String,
-    @Serializable(with = IDTexts::class) val children: List<String>,
+    val id: String,
+    val children: List<String>,
     val press: SampleAction? = null,
     val visible: SampleVisibility? = null,
     val label: SampleTextValue? = null,
@@ -2564,8 +2564,8 @@ enum class SampleFlagValueKind {
 @Immutable
 @Serializable
 data class SampleColumn(
-    @Serializable(with = IDText::class) val id: String,
-    @Serializable(with = IDTexts::class) val children: List<String>,
+    val id: String,
+    val children: List<String>,
     val press: SampleAction? = null,
     val visible: SampleVisibility? = null,
     val gap: SampleNumberValue? = null,
@@ -2638,8 +2638,8 @@ enum class SampleNumberValueKind {
 @Immutable
 @Serializable
 data class SampleHeading(
-    @Serializable(with = IDText::class) val id: String,
-    @Serializable(with = IDTexts::class) val children: List<String>,
+    val id: String,
+    val children: List<String>,
     val press: SampleAction? = null,
     val visible: SampleVisibility? = null,
     val text: SampleTextValue? = null,
@@ -2663,8 +2663,8 @@ data class SampleHeading(
 @Immutable
 @Serializable
 data class SamplePressable(
-    @Serializable(with = IDText::class) val id: String,
-    @Serializable(with = IDTexts::class) val children: List<String>,
+    val id: String,
+    val children: List<String>,
     val press: SampleAction? = null,
     val visible: SampleVisibility? = null,
 ) {
@@ -2684,8 +2684,8 @@ data class SamplePressable(
 @Immutable
 @Serializable
 data class SampleSpacer(
-    @Serializable(with = IDText::class) val id: String,
-    @Serializable(with = IDTexts::class) val children: List<String>,
+    val id: String,
+    val children: List<String>,
     val press: SampleAction? = null,
     val visible: SampleVisibility? = null,
     val length: SampleNumberValue? = null,
@@ -2707,8 +2707,8 @@ data class SampleSpacer(
 @Immutable
 @Serializable
 data class SampleSwitch(
-    @Serializable(with = IDText::class) val id: String,
-    @Serializable(with = IDTexts::class) val children: List<String>,
+    val id: String,
+    val children: List<String>,
     val press: SampleAction? = null,
     val visible: SampleVisibility? = null,
     val checked: SampleFlagValue? = null,
@@ -2852,7 +2852,7 @@ data class NestedValue(
     val title: String,
     val note: String? = null,
     val nullableDefault: String? = "default",
-    @SerialName("owner_id") @Serializable(with = IDText::class) val ownerId: String? = null,
+    @SerialName("owner_id") val ownerId: String? = null,
     val count: Long = 2L,
     val ratio: Double = 1.5,
     val enabled: Boolean = false,
@@ -2863,7 +2863,7 @@ data class NestedValue(
     val ratios: List<Double> = listOf(),
     val flags: List<Boolean> = listOf(),
     val dates: List<String> = listOf(),
-    @Serializable(with = IDTexts::class) val owners: List<String> = listOf(),
+    val owners: List<String> = listOf(),
     val payload: JsonElement? = null,
     val rawValue: JsonElement = JsonObject(mapOf("free" to JsonArray(listOf(JsonPrimitive(1), JsonPrimitive(true), JsonNull)))),
     val preferences: NestedValuePreferences = NestedValuePreferences(label = "base"),
@@ -2959,10 +2959,10 @@ data class NestedTree(
 @Immutable
 @Serializable
 data class RecordReplyNode(
-    @Serializable(with = IDText::class) val id: String? = null,
+    val id: String? = null,
     val body: String? = null,
     val kind: String? = null,
-    @Serializable(with = IDText::class) val userId: String? = null,
+    val userId: String? = null,
     val user: RecordUserRef? = null,
     val media: NestedMedia? = null,
 ) {
@@ -2984,7 +2984,7 @@ data class RecordReplyNode(
 @Immutable
 @Serializable
 data class RecordUserRef(
-    @Serializable(with = IDText::class) val id: String? = null,
+    val id: String? = null,
     val fullName: String? = null,
     val name: String? = null,
     val username: String? = null,
@@ -3007,7 +3007,7 @@ data class RecordUserRef(
 @Immutable
 @Serializable
 data class NestedMedia(
-    @Serializable(with = IDText::class) val id: String = "",
+    val id: String = "",
     val fileUrl: String? = null,
 ) {
     companion object {
@@ -3025,7 +3025,7 @@ data class NestedMedia(
 @Serializable
 data class RecordReactionNode(
     val body: String? = null,
-    @SerialName("user.id") @Serializable(with = IDText::class) val userId: String? = null,
+    @SerialName("user.id") val userId: String? = null,
     val user: RecordReactionUser? = null,
 ) {
     companion object {
@@ -3043,7 +3043,7 @@ data class RecordReactionNode(
 @Immutable
 @Serializable
 data class RecordReactionUser(
-    @Serializable(with = IDText::class) val id: String? = null,
+    val id: String? = null,
     val name: String? = null,
 ) {
     companion object {
@@ -3123,7 +3123,7 @@ enum class RecordAttachmentKind {
 @Immutable
 @Serializable
 data class RewardAttachment(
-    @Serializable(with = IDText::class) val id: String,
+    val id: String,
     @SerialName("rewardTier") val tier: String,
     val status: String? = null,
     val tags: List<String> = listOf(),
@@ -3144,7 +3144,7 @@ data class RewardAttachment(
 @Immutable
 @Serializable
 data class MomentAttachment(
-    @Serializable(with = IDText::class) val momentId: String,
+    val momentId: String,
     val caption: String? = null,
 ) {
     companion object {
@@ -3176,7 +3176,7 @@ data class ProfileAttachment(
 @Immutable
 @Serializable
 data class AttachmentUser(
-    @Serializable(with = IDText::class) val id: String,
+    val id: String,
     val name: String? = null,
 ) {
     companion object {
@@ -3244,7 +3244,7 @@ data class ScreenRequires(
 @Immutable
 @Serializable
 data class ScreenSpec(
-    @Serializable(with = IDText::class) val root: String,
+    val root: String,
     val state: List<ScreenStateEntry>,
     val elements: List<ScreenElement>,
 ) {
@@ -3280,10 +3280,10 @@ data class ScreenStateEntry(
 @Immutable
 @Serializable
 data class ScreenElement(
-    @Serializable(with = IDText::class) val id: String,
+    val id: String,
     val type: String,
     val slot: String? = null,
-    @Serializable(with = IDTexts::class) val children: List<String>,
+    val children: List<String>,
     val props: JsonElement? = null,
     val visible: JsonElement? = null,
     val press: JsonElement? = null,

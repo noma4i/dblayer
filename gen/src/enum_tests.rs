@@ -46,7 +46,6 @@ fn model_and_nested_enums_are_typed_enums_with_an_unknown_case_on_both_platforms
         "mood = try r.opt(",
         ").map(Mood.init(rawValue:))",
         "state: MetaState = MetaState.ready",
-        "?? MetaState.ready",
     ] {
         assert!(swift.contains(line), "swift lacks {line}\n{swift}");
     }

@@ -7,7 +7,7 @@ extension BridgeProbeTests {
   @Test(.timeLimit(.minutes(1)))
   func keywordNamesPreserveStoredKeysAndNestedValues() async throws {
     try await reopen(config: Config(path: nil, dataVersion: nil), modelsJson: modelsJSON, transport: nil)
-    let input = #"{"default":"nested","when":"now","class":"kind","container":"box","r":"reader"}"#
+    let input = #"{"default":"nested","when":"now","class":"kind","container":"box","r":"reader","child":{"default":"d","when":"w","class":"c"}}"#
     let nested = try JSONDecoder().decode(KeywordValue.self, from: Data(input.utf8))
     let created = try await KeywordRecord.create(default: "row", class: "selected", value: nested).optimisticValue!
     let updated = try await created.update(default: "changed").optimisticValue!

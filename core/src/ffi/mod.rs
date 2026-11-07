@@ -20,6 +20,7 @@ pub(crate) async fn settled(database: &Database) -> Result<(), DbError> {
 }
 #[cfg(test)]
 mod close_tests;
+mod call_result;
 mod call_state;
 pub(crate) use call_state::CallState;
 mod foreign_future;
@@ -238,6 +239,8 @@ mod local_open_tests;
 mod open_tests;
 #[cfg(test)]
 mod write_calls_tests;
+#[cfg(test)]
+mod call_result_tests;
 #[cfg(test)]
 #[cfg(test)]
 mod read_load_tests;

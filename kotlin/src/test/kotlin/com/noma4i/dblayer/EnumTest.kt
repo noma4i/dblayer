@@ -50,9 +50,7 @@ class EnumTest {
     }
 
     @Test
-    fun aNestedEnumKeepsAValueTheDeclarationLacksOnBothDecodePaths() = bounded {
-        val decoded = dbJson.decodeFromString(NestedValue.serializer(), """{"title":"t","state":"mystery"}""")
-        assertEquals(NestedValueState.Unknown("mystery"), decoded.state)
+    fun aNestedEnumKeepsAValueTheDeclarationLacks() = bounded {
         val wire = open().let { it.create(it.sessionEpoch(), "NestedSample", """{"value":{"title":"t","state":"mystery"}}""", "{}").optimisticValue!! }
         val sample = NestedSample.read(wire)
         assertEquals(NestedValueState.Unknown("mystery"), sample.value?.state)

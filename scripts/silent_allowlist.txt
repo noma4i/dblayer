@@ -1,4 +1,3 @@
-swift/Sources/DBlayer/IDText.swift	if let text = try? container.decode(String.self) {	picks the String or Int64 variant of an id
 swift/Sources/DBlayer/JSONValue.swift	else if let value = try? container.decode(Bool.self) { self = .bool(value) }	picks the variant of a JSON value
 swift/Sources/DBlayer/JSONValue.swift	else if let value = try? container.decode(Int64.self) { self = .integer(value) }	picks the variant of a JSON value
 swift/Sources/DBlayer/JSONValue.swift	else if let value = try? container.decode(Double.self) { self = .number(value) }	picks the variant of a JSON value

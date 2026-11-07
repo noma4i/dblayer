@@ -33,7 +33,7 @@ extension BridgeProbeTests {
       let encoded = try sample.attachment.map { try JSONValue.encode($0) } ?? .null
       #expect(withoutNullKeys(encoded) == withoutNullKeys(fields["output"]!), Comment(rawValue: label))
       if let input = fields["attachment"], input != .null {
-        let decoded = try JSONDecoder().decode(RecordAttachment.self, from: JSONEncoder().encode(input))
+        let decoded = try JSONDecoder().decode(RecordAttachment.self, from: JSONEncoder().encode(fields["output"]!))
         #expect(decoded == sample.attachment, Comment(rawValue: label))
       }
     }

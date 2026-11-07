@@ -3,6 +3,7 @@ package com.noma4i.dblayer
 import com.noma4i.dblayer.models.Operations
 import com.noma4i.dblayer.models.MomentInput
 import com.noma4i.dblayer.models.OwnerInput
+import com.noma4i.dblayer.models.PricingLoadResultRewards
 import com.noma4i.dblayer.models.KeywordInput
 import com.noma4i.dblayer.models.KeywordChoice
 import com.noma4i.dblayer.models.RecursiveInput
@@ -13,7 +14,9 @@ import com.noma4i.dblayer.models.WidgetInput
 import com.noma4i.dblayer.models.WidgetKind
 import com.noma4i.dblayer.models.modelsJSON
 import kotlinx.coroutines.withTimeout
+import kotlinx.serialization.SerializationException
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertThrows
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
@@ -42,6 +45,14 @@ class OperationCallTest {
         is DbException.Http -> "Http ${error.status}"
         is DbException.Graphql -> "Graphql ${error.messages.joinToString(",")}"
         else -> error.javaClass.simpleName
+    }
+
+    @Test
+    fun aLooseResultIsRefusedByTheWrapper() {
+        for (loose in listOf("""{"id":7}""", """{"id":"7","price":true}""", """{"id":"7","name":5}""")) {
+            assertThrows(loose, SerializationException::class.java) { dbJson.decodeFromString(PricingLoadResultRewards.serializer(), loose) }
+        }
+        assertEquals(PricingLoadResultRewards(id = "7", name = null, price = 3), dbJson.decodeFromString(PricingLoadResultRewards.serializer(), """{"id":"7","name":null,"price":3}"""))
     }
 
     @Test

@@ -349,6 +349,10 @@ impl Database {
             _ => Err(super::command::ended()),
         }
     }
+    pub async fn call(&self, epoch: u64, operation: String, variables_json: String, returns_json: String) -> Result<String, DbError> {
+        let root = self.run(epoch, operation, variables_json).await?;
+        self.offload(move || super::call_result::normalize(&root, &returns_json).map_err(|detail| DbError::Invalid { detail })).await
+    }
     pub async fn retry(&self, epoch: u64, model: String, row_id: String, action: Option<String>, source: Option<WireUploadRequest>) -> Result<WireOperationReceipt, DbError> {
         if source.is_some() || action.as_deref().is_some_and(|action| self.db.spec(&model).is_ok_and(|spec| spec.upload_action(action).is_some())) {
             return self.retry_transfer(epoch, model, row_id, action, source).await;

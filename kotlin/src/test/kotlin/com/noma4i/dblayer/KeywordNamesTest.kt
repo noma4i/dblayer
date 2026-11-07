@@ -11,7 +11,7 @@ class KeywordNamesTest {
     @Test
     fun keywordNamesPreserveStoredKeysAndNestedValues() = bounded {
         reopen(Config(null, null), modelsJSON, null)
-        val input = """{"default":"nested","when":"now","class":"kind","container":"box","r":"reader"}"""
+        val input = """{"default":"nested","when":"now","class":"kind","container":"box","r":"reader","child":{"default":"d","when":"w","class":"c"}}"""
         val nested = dbJson.decodeFromString(KeywordValue.serializer(), input)
         val created = KeywordRecord.create(default = "row", `class` = "selected", value = nested).optimisticValue!!
         val updated = created.update(default = "changed").optimisticValue!!
