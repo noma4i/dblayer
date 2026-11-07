@@ -33,6 +33,7 @@ mod profile_flow_tests;
 mod upload_fixtures;
 mod upload_flow_tests;
 mod upload_stand;
+mod upload_stand_tests;
 mod upload_answer_tests;
 mod upload_refusal_tests;
 mod upload_expiry_tests;

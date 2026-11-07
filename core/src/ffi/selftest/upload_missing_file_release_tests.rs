@@ -19,6 +19,7 @@ async fn a_reopen_with_the_saved_step_of_an_upload_whose_file_is_gone_does_not_h
     database.close_now();
     lost.release();
     std::fs::remove_file(&file).unwrap();
+    for copy in std::fs::read_dir(directory.path().join("db.sqlite.files/transfers")).unwrap() { std::fs::remove_file(copy.unwrap().path()).unwrap(); }
 
     let reopened = stand.open(Some(&path), &[CREATE_MOMENT]).await;
     stand.script.data("CreateMoment", ANSWER);
@@ -26,6 +27,7 @@ async fn a_reopen_with_the_saved_step_of_an_upload_whose_file_is_gone_does_not_h
     let later = bound(reopened.send(plain("Moment", r#"{"text":"B"}"#, epoch))).await.unwrap();
 
     assert!(matches!(bound(reopened.outcome(later)).await.unwrap(), WireOperationOutcome::Confirmed { .. }), "the mutation of another row is sent");
-    assert_eq!(stand.puts.seen.lock().unwrap().len(), 0, "the upload whose file is gone sends no bytes");
+    let puts = stand.puts.seen.lock().unwrap().clone();
+    assert_eq!(puts.len(), 0, "the upload whose file is gone sends no bytes: {puts:?} calls {:?}", stand.script.names());
     reopened.close_now();
 }

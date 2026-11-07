@@ -69,6 +69,18 @@ pub(super) struct Call {
 pub(super) struct Script {
     queues: Mutex<HashMap<String, VecDeque<Answer>>>,
     calls: Mutex<Vec<Call>>,
+    settled: Mutex<HashMap<Pair, Answer>>,
+}
+
+type Pair = (String, String, Option<i64>);
+
+fn settled_of(answer: &Answer) -> Option<Answer> {
+    match answer {
+        Answer::Data(text) => Some(Answer::Data(text.clone())),
+        Answer::Status(status) => Some(Answer::Status(*status)),
+        Answer::Held(_, next) => settled_of(next),
+        Answer::Lost => None,
+    }
 }
 
 impl Script {
@@ -78,6 +90,14 @@ impl Script {
         let hold = Arc::new(Hold::default());
         self.enqueue(operation, Answer::Held(hold.clone(), Box::new(Answer::Data(reply.into()))));
         hold
+    }
+    /// The server answers a repeated pair `(request id, sequence)` of an operation with the answer it gave the first time. A different pair takes the next scripted answer. A lost answer settles nothing.
+    pub(super) fn answer(&self, operation: &str, request_id: &str, sequence: Option<i64>) -> Option<Answer> {
+        let pair = (operation.to_string(), request_id.to_string(), sequence);
+        if let Some(known) = self.settled.lock().unwrap().get(&pair) { return settled_of(known); }
+        let answer = self.queues.lock().unwrap().get_mut(operation).and_then(VecDeque::pop_front)?;
+        if let Some(known) = settled_of(&answer) { self.settled.lock().unwrap().insert(pair, known); }
+        Some(answer)
     }
     pub(super) fn names(&self) -> Vec<String> { self.calls.lock().unwrap().iter().map(|call| call.operation.clone()).collect() }
     pub(super) fn count(&self, operation: &str) -> usize { self.calls.lock().unwrap().iter().filter(|call| call.operation == operation).count() }
@@ -96,7 +116,7 @@ impl EncryptedHttp for ScriptedHttp {
         let request = decrypt_request(&body).unwrap();
         let Some(operation) = request["body"]["operationName"].as_str().map(str::to_string) else { return self.session.post(path, body, purpose).await };
         self.script.calls.lock().unwrap().push(Call { operation: operation.clone(), variables: request["body"]["variables"].clone(), purpose });
-        let mut answer = self.script.queues.lock().unwrap().get_mut(&operation).and_then(VecDeque::pop_front);
+        let mut answer = self.script.answer(&operation, request["requestId"].as_str().unwrap_or_default(), request["sequence"].as_i64());
         loop {
             match answer {
                 Some(Answer::Held(hold, next)) => {
