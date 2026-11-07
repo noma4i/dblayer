@@ -11,11 +11,11 @@ import org.junit.Test
 class SealedErrorsTest {
     private class RefusedRetry : Database(NoHandle) {
         override suspend fun retry(epoch: ULong, model: String, rowId: String, action: String?, source: WireUploadRequest?): WireOperationReceipt = throw DbException.Invalid("retry refused")
-        override fun sessionEpoch(): ULong = 1uL
+        override fun admit(accountEpoch: ULong?): ULong = accountEpoch ?: 1uL
     }
 
     @Test fun modelRetriesPropagateErrorsToTheirCaller() = bounded {
-        reopenSigned(Config(null, null, 8u), modelsJSON)
+        reopenSigned(Config(null, null), modelsJSON)
         val row = Moment.create(text = "saved", account = AccountScope.current()).optimisticValue!!
         val real = DBlayer.database
         DBlayer.database = RefusedRetry()
@@ -42,7 +42,7 @@ class SealedErrorsTest {
     fun aSessionCodeArrivesTypedThroughALoadAnOperationCallAndAMutationOutcome() = bounded {
         for (code in codes) {
             val transport = MockTransport()
-            reopen(Config(null, null, 32u), modelsJSON, transport)
+            reopen(Config(null, null), modelsJSON, transport)
             DBlayer.database.registerOperations(operations)
             val failure = DbException.Session(code, code.name)
 

@@ -47,13 +47,13 @@ data class UploadInfo(
     val stage: String,
     @SerialName("sent_bytes") val sentBytes: ULong,
     @SerialName("total_bytes") val totalBytes: ULong,
+    /** The sent share of the bytes in percent, 0 to 100. */
+    val progress: Double,
     @SerialName("wait_reason") val waitReason: String? = null,
     val attempts: Int = 0,
     val error: OperationFailure? = null,
 ) {
     companion object
-
-    val percent: Double get() = if (totalBytes == 0uL) 0.0 else minOf(100.0, sentBytes.toDouble() * 100 / totalBytes.toDouble())
 }
 
 interface DBModel {
@@ -65,11 +65,13 @@ interface DBModel {
 
 val DBModel.errorMessage: String? get() = sync.error?.message
 
-/** The database and the epoch a command belongs to: the pair the account holds, else the open database and the epoch of its session now. A command of an account that left is refused. */
+/** The database and the epoch a command belongs to: the epoch the account holds, else the epoch the core admits for the open database. */
 internal class Admission(val database: Database, val epoch: ULong)
 
-internal fun admit(account: AccountScope?): Admission =
-    if (account != null) Admission(account.database, account.epoch) else DBlayer.database.let { Admission(it, it.sessionEpoch()) }
+internal fun admit(account: AccountScope?): Admission {
+    val database = account?.database ?: DBlayer.database
+    return Admission(database, database.admit(account?.epoch))
+}
 
 /** Admits the call before the work leaves the caller, then runs it off the caller with the pair. */
 suspend fun <T> onAccount(account: AccountScope?, call: suspend (Database, ULong) -> T): T {

@@ -119,6 +119,7 @@ fun UploadInfo.Companion.of(wire: WireUpload): UploadInfo = UploadInfo(
     stage = wire.stage,
     sentBytes = wire.sentBytes,
     totalBytes = wire.totalBytes,
+    progress = wire.progress,
     waitReason = wire.waitReason,
     attempts = wire.attempts.toInt(),
     error = wire.error?.let { OperationFailure(it.kind, it.message, it.extensions) },

@@ -4,40 +4,25 @@ import android.content.Context
 import kotlinx.serialization.KSerializer
 import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.encodeToString
-import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
-import kotlinx.serialization.json.JsonPrimitive
 
 object DBlayer {
     private val opener = OpenDatabase()
     @Volatile internal var opened: Database? = null
-    @Volatile private var running = false
-    @Volatile private var powerSaving: PowerSaving.Registration? = null
-    @Volatile private var stopReachability: (() -> Unit)? = null
 
-    internal fun openedDatabase(): Database? = opened.takeIf { running }
+    internal fun openedDatabase(): Database? = opened
 
     suspend inline fun <reified Body, reified Answer> sessionCall(operation: String, body: Body): Answer =
         offCaller { dbJson.decodeFromString<Answer>(database.sessionCall(operation, dbJson.encodeToString(body))) }
-
-    suspend inline fun <reified Body> sessionSend(operation: String, body: Body) {
-        offCaller { database.sessionCall(operation, dbJson.encodeToString(body)) }
-    }
 
     /** Ends the session: work of the old session ends, the credential and the data of the account go. Call it for every sign-out; the library clears the data itself. */
     suspend fun sessionReset() {
         offCaller { database.sessionReset() }
     }
 
-    /** Closes the database. Every request, load and subscription ends, and the call returns after the library released its resources. */
+    /** Closes the database. Every request, load and subscription ends, and the call returns after the library released its resources. A call on the closed database, a second close included, gets the closed error of the core. */
     suspend fun close() {
         val database = this.database
-        running = false
-        ForegroundEvents.stop()
-        powerSaving?.stop()
-        powerSaving = null
-        stopReachability?.invoke()
-        stopReachability = null
         offCaller { database.closeDatabase() }
     }
 
@@ -54,17 +39,10 @@ object DBlayer {
 
     var database: Database
         get() = opened ?: throw DbException.NotOpen("database is not open; call DBlayer.open once at app start")
-        internal set(value) { opened = value; running = true }
+        internal set(value) { opened = value }
 
-    suspend fun serverConfig(context: Context, encrypted: EncryptedConfig, platform: AppPlatform, version: String, build: String? = null, http: EncryptedHttp? = null, retries: RetryProgress? = null): ServerConfig {
-        val connectivity = Connectivity(false)
-        val stop = Reachability.observe(context) { connectivity.setOnline(it) }
-        try {
-            return fetchServerConfig(encrypted, platform, version, build, http ?: OkHttpEncryptedHttp(encrypted.origin), retries, connectivity)
-        } finally {
-            stop()
-        }
-    }
+    suspend fun serverConfig(context: Context, encrypted: EncryptedConfig, platform: AppPlatform, version: String, build: String? = null, http: EncryptedHttp? = null, retries: RetryProgress? = null): ServerConfig =
+        fetchServerConfig(encrypted, platform, version, build, http ?: OkHttpEncryptedHttp(encrypted.origin), retries, SystemObservers(context))
 
     suspend fun open(
         context: Context,
@@ -81,14 +59,8 @@ object DBlayer {
     ) {
         checkUploadPermission(android.os.Build.VERSION.SDK_INT) { context.packageManager.getPackageInfo(context.packageName, android.content.pm.PackageManager.GET_PERMISSIONS).requestedPermissions.orEmpty().toList() }
         UploadNotifications.store(context, uploadNotification)
-        val definitions = operations.map { JsonObject(mapOf("name" to JsonPrimitive(it.operationName), "document" to JsonPrimitive(it.document))) }
-        val options = OpenOptions(operations = JsonArray(definitions).jsonText(), powerSaving = PowerSaving.saving(context))
-        val selectedTransport = transport ?: (endpoint ?: encrypted?.origin)?.let { OkHttpTransport(it, headers) }
-        val made = opener.open(Config(path, null, 2000u), modelsJson, options, OpenPorts(selectedTransport, encrypted, credentials, http ?: encrypted?.let { OkHttpEncryptedHttp(it.origin, headers = headers) }))
-        val sink = made.onlineSink()
-        stopReachability = Reachability.observe(context) { sink.setOnline(it) }
-        ForegroundEvents.start(sink)
-        powerSaving = PowerSaving.start(context, sink)
+        val ports = OpenPorts(transport ?: (endpoint ?: encrypted?.origin)?.let { OkHttpTransport(it, headers) }, encrypted, credentials, http ?: encrypted?.let { OkHttpEncryptedHttp(it.origin, headers = headers) })
+        val made = opener.open(Config(path, null), modelsJson, OpenOptions(definitions(operations)), ports, SystemObservers(context))
         made.setRoundJobs(UploadRounds(context.applicationContext, made))
         database = made
         UploadService.opened(made)
@@ -97,8 +69,9 @@ object DBlayer {
     internal suspend fun openOnClock(config: Config, modelsJson: String, transport: Transport?, clock: TestClock, encrypted: EncryptedConfig? = null, credentials: CredentialStore? = null, http: EncryptedHttp? = null): Database = opener.openWithClock(config, modelsJson, OpenPorts(transport, encrypted, credentials, http), clock)
 
     internal suspend fun install(opened: Database, transport: Transport?, operations: List<GraphQLOperation>) {
-        val definitions = operations.map { JsonObject(mapOf("name" to JsonPrimitive(it.operationName), "document" to JsonPrimitive(it.document))) }
-        if (transport != null) opened.registerOperations(JsonArray(definitions).jsonText())
+        if (transport != null) opened.declareOperations(definitions(operations))
         database = opened
     }
+
+    private fun definitions(operations: List<GraphQLOperation>): List<OperationDefinition> = operations.map { OperationDefinition(it.operationName, it.document) }
 }

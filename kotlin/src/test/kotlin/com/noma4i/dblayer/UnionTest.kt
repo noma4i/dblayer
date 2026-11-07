@@ -32,7 +32,7 @@ class UnionTest {
         is JsonPrimitive -> value
     }
 
-    private suspend fun open(transport: MockTransport? = null) = reopen(Config(null, null, 64u), modelsJSON, transport)
+    private suspend fun open(transport: MockTransport? = null) = reopen(Config(null, null), modelsJSON, transport)
 
     @Test
     fun aStoredUnionReadsFromCellsAndEncodesLikeTheSharedCases() = bounded {

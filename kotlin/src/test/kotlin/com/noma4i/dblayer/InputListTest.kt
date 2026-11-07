@@ -24,7 +24,7 @@ class InputListTest {
     private suspend fun rig(reply: String): MockTransport {
         val transport = MockTransport()
         transport.enqueue("WidgetsSend", reply)
-        reopen(Config(null, null, 32u), modelsJSON, transport)
+        reopen(Config(null, null), modelsJSON, transport)
         DBlayer.database.registerOperations("""[{"name":"WidgetsSend","document":"mutation WidgetsSend(${'$'}widgets: [StickerWidgetInput!]) { widgetsSend(widgets: ${'$'}widgets) { id } }"}]""")
         return transport
     }

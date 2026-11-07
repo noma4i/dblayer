@@ -23,11 +23,11 @@ class SessionBridgeTest {
             calls.add("retry $model $rowId ${action ?: "null"}")
             throw DbException.Invalid("recorded")
         }
-        override fun sessionEpoch(): ULong = 1uL
+        override fun admit(accountEpoch: ULong?): ULong = accountEpoch ?: 1uL
     }
 
     private suspend fun withRecordingSession(block: suspend (RecordingSession) -> Unit) {
-        reopen(Config(null, null, 8u), modelsJSON, null)
+        reopen(Config(null, null), modelsJSON, null)
         val real = DBlayer.database
         val recording = RecordingSession()
         DBlayer.database = recording
@@ -42,7 +42,7 @@ class SessionBridgeTest {
         withRecordingSession { recording ->
             val answer: TicketAnswer = DBlayer.sessionCall("otp", PhoneBody("+61400000000"))
             assertEquals(TicketAnswer("t-1"), answer)
-            DBlayer.sessionSend("otp", PhoneBody("+61411111111"))
+            DBlayer.sessionCall<PhoneBody, kotlinx.serialization.json.JsonElement>("otp", PhoneBody("+61411111111"))
             assertEquals(listOf("""call otp {"phone":"+61400000000"}""", """call otp {"phone":"+61411111111"}"""), recording.calls)
         }
     }

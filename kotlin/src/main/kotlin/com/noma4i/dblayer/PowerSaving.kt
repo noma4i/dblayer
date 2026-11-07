@@ -11,18 +11,15 @@ internal object PowerSaving {
         override fun onReceive(context: Context, intent: Intent) = report(read())
     }
 
-    fun saving(context: Context): Boolean =
-        (context.applicationContext.getSystemService(Context.POWER_SERVICE) as PowerManager).isPowerSaveMode
-
-    fun start(context: Context, sink: OnlineSinkInterface): Registration {
+    /** Reports the OS value at once and on every change until the returned stop runs. */
+    fun observe(context: Context, report: (Boolean) -> Unit): () -> Unit {
         val app = context.applicationContext
-        val made = receiver({ saving(app) }, sink::setPowerSaving)
+        val made = receiver({ saving(app) }, report)
         app.registerReceiver(made, IntentFilter(PowerManager.ACTION_POWER_SAVE_MODE_CHANGED))
-        sink.setPowerSaving(saving(app))
-        return Registration(made, app)
+        report(saving(app))
+        return { app.unregisterReceiver(made) }
     }
 
-    class Registration(private val receiver: BroadcastReceiver, private val context: Context) {
-        fun stop() = context.unregisterReceiver(receiver)
-    }
+    private fun saving(context: Context): Boolean =
+        (context.getSystemService(Context.POWER_SERVICE) as PowerManager).isPowerSaveMode
 }

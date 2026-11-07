@@ -34,7 +34,7 @@ class SwitchableHarnessTest {
                 val first = MockTransport(Unanswered.NetworkError)
                 first.enqueue("UserProfile", profile("A"))
                 val switchable = SwitchableTransport(first, unset)
-                reopen(Config(null, null, 32u), modelsJSON, switchable, operations)
+                reopen(Config(null, null), modelsJSON, switchable, operations)
                 val entity = heldUser()
                 eventually("the held entity shows A") { entity.value?.name == "A" }
                 val before = first.calls.size
@@ -46,7 +46,7 @@ class SwitchableHarnessTest {
                 assertEquals("work of the close reached the old transport", before, first.calls.size)
                 assertTrue("work of the close reached the next transport", second.calls.isEmpty())
                 switchable.target = second
-                reopen(Config(null, null, 32u), modelsJSON, switchable, operations)
+                reopen(Config(null, null), modelsJSON, switchable, operations)
 
                 val next = heldUser()
                 next.loaded()
@@ -65,7 +65,7 @@ class SwitchableHarnessTest {
         try {
             val first = MockTransport(Unanswered.NetworkError)
             first.enqueue("UserProfile", profile("A"))
-            reopen(Config(null, null, 32u), modelsJSON, first, operations)
+            reopen(Config(null, null), modelsJSON, first, operations)
             val entity = heldUser()
             eventually("the held entity shows A") { entity.value?.name == "A" }
             closeForCleanup()
@@ -75,7 +75,7 @@ class SwitchableHarnessTest {
 
             val second = MockTransport(Unanswered.NetworkError)
             second.enqueue("UserProfile", profile("B"))
-            reopen(Config(null, null, 32u), modelsJSON, second, operations)
+            reopen(Config(null, null), modelsJSON, second, operations)
             val reopened = heldUser()
             eventually("the reopened entity shows B") { reopened.value?.name == "B" }
             assertEquals(1, first.calls.size)

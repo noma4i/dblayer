@@ -212,7 +212,7 @@ class AccountScope private constructor(val epoch: ULong, internal val database: 
     companion object {
         fun current(): AccountScope {
             val database = DBlayer.database
-            return AccountScope(database.sessionEpoch(), database)
+            return AccountScope(database.admit(null), database)
         }
     }
 }

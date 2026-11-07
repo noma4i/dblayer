@@ -14,7 +14,7 @@ class UploadAnswerTest {
         val source = Files.createTempFile("intro", ".mp4").toFile().apply { writeText("video") }
         try {
             val transport = MockTransport()
-            val database = reopen(Config(null, null, 32u), modelsJSON, transport, operations = """[{"name":"CreateBlob","document":"mutation CreateBlob { createBlob { url headers signedId blobId } }"},{"name":"CreateMoment","document":"mutation CreateMoment { createMoment { id } }"}]""")
+            val database = reopen(Config(null, null), modelsJSON, transport, operations = """[{"name":"CreateBlob","document":"mutation CreateBlob { createBlob { url headers signedId blobId } }"},{"name":"CreateMoment","document":"mutation CreateMoment { createMoment { id } }"}]""")
             database.setOnline(false)
             val local = Moment.create(text = "intro", account = AccountScope.current()).optimisticValue!!
             local.uploadClip(AccountScope.current(), UploadRequest(source.path))
@@ -23,7 +23,7 @@ class UploadAnswerTest {
             assertEquals(UploadStatus.Waiting, waiting.status)
             assertEquals(5uL, waiting.totalBytes)
             assertEquals(0uL, waiting.sentBytes)
-            assertEquals(0.0, waiting.percent, 0.0)
+            assertEquals(0.0, waiting.progress, 0.0)
             assertTrue(transport.calls.isEmpty())
         } finally {
             closeForCleanup()
@@ -38,7 +38,7 @@ class UploadAnswerTest {
             val transport = MockTransport()
             val row = """"__typename":"Moment","id":"m77","uuid":"u","likedByMe":false,"media":{},"createdAt":"2026-10-08T00:00:00.000Z""""
             transport.enqueue("CreateMoment", """{"data":{"createMoment":{$row}}}""")
-            reopen(Config(null, null, 32u), modelsJSON, transport, operations = """[{"name":"CreateBlob","document":"mutation CreateBlob { createBlob { url headers signedId blobId } }"},{"name":"CreateMoment","document":"mutation CreateMoment { createMoment { id uuid likedByMe media createdAt successMessage } }"}]""")
+            reopen(Config(null, null), modelsJSON, transport, operations = """[{"name":"CreateBlob","document":"mutation CreateBlob { createBlob { url headers signedId blobId } }"},{"name":"CreateMoment","document":"mutation CreateMoment { createMoment { id uuid likedByMe media createdAt successMessage } }"}]""")
             val moment = requireNotNull(Moment.find(Moment.create(text = "intro", account = AccountScope.current()).confirmed().id).current())
             for ((turn, expected) in listOf("Intro received", null).withIndex()) {
                 if (turn == 0) transport.enqueue("CreateBlob", """{"data":{"createBlob":{"url":"https://storage.test/video","headers":{},"signedId":"signed","blobId":"blob"}}}""")

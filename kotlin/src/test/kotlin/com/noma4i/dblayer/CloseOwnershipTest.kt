@@ -11,7 +11,7 @@ import java.util.concurrent.CopyOnWriteArrayList
 class CloseOwnershipTest {
     @Test
     fun closingTheDatabaseEndsAWaitingChangesFlow() = bounded {
-        reopenSigned(Config(null, null, 8u), modelsJSON)
+        reopenSigned(Config(null, null), modelsJSON)
         Moment.create(text = "kept", account = AccountScope.current()).optimisticValue!!
         val received = CopyOnWriteArrayList<Any>()
         val collecting = launch(Dispatchers.Default) { Moment.recent.live.flow.collect { received.add(it) } }

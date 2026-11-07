@@ -13,7 +13,7 @@ import org.junit.Test
 class FileFieldTest {
     @Test
     fun aFileIsAttachedReadLocatedAndDetachedThroughTheRecord() = bounded {
-        reopen(Config(null, null, 32u), modelsJSON, null)
+        reopen(Config(null, null), modelsJSON, null)
         val user = User.create(name = "ann").optimisticValue!!
         assertNull(user.file(User.avatar))
 

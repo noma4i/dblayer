@@ -112,7 +112,7 @@ class ClubTest {
     fun aPendingOperationSurvivesAnOldFormatWithoutRestoringTheCachedRow() = bounded {
         for (keep in listOf(false, true)) {
             val directory = java.nio.file.Files.createTempDirectory("dblayer-old-format").toFile()
-            val config = Config(directory.resolve("old.sqlite").absolutePath, null, 32u)
+            val config = Config(directory.resolve("old.sqlite").absolutePath, null)
             val models = clubModels(keepLetter = keep)
             try {
                 reopenSigned(config, models, CLUB_DEFS)
@@ -389,7 +389,7 @@ class ClubTest {
 
     private suspend fun openClubSession(transport: Transport, models: String = modelsJSON, subscription: String? = null) {
         val defs = if (subscription == null) CLUB_DEFS else CLUB_DEFS.dropLast(1) + "," + subscription + "]"
-        reopen(Config(null, null, 32u), models, transport, defs)
+        reopen(Config(null, null), models, transport, defs)
     }
 
     private suspend fun club(id: String) = Query("Club", Club).readRow(id)!!

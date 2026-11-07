@@ -19,7 +19,7 @@ class MediaMarkerTest {
         val root = if (directory.name == "kotlin") directory.parentFile else directory
         val document = File(root, "fixtures/operations/queries/media.graphql").readText()
         val transport = MockTransport()
-        reopen(Config(null, null, 64u), File(root, "fixtures/media-marker.json").readText(), transport)
+        reopen(Config(null, null), File(root, "fixtures/media-marker.json").readText(), transport)
         val definitions = listOf("chatMedia", "chatMediaState").map { name -> buildJsonObject {
             put("name", JsonPrimitive(name))
             put("document", JsonPrimitive(document))

@@ -27,7 +27,7 @@ class MockTransportStrictTest {
     class UnansweredLoad {
         fun loadsWithoutAReply() = bounded {
             val transport = MockTransport()
-            reopen(Config(null, null, 8u), modelsJSON, transport, """[{"name":"MomentsFeed","document":"query MomentsFeed(${'$'}first: Int, ${'$'}after: String) { feed(first: ${'$'}first, after: ${'$'}after) { nodes { id uuid likedByMe media createdAt } pageInfo { hasNextPage endCursor } } }"}]""")
+            reopen(Config(null, null), modelsJSON, transport, """[{"name":"MomentsFeed","document":"query MomentsFeed(${'$'}first: Int, ${'$'}after: String) { feed(first: ${'$'}first, after: ${'$'}after) { nodes { id uuid likedByMe media createdAt } pageInfo { hasNextPage endCursor } } }"}]""")
             runCatching { Moment.feed.refresh() }
             eventually("the load reaches the mock", 5000) { transport.unscripted.isNotEmpty() }
         }

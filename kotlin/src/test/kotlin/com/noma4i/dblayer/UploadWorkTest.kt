@@ -36,21 +36,21 @@ class UploadWorkTest {
     @Test
     fun theJobIsUserInitiatedNeedsANetworkAndIsNotPersisted() {
         val context = org.robolectric.RuntimeEnvironment.getApplication()
-        assertNull(UploadJobService.schedule(context, 1uL, 1uL))
+        val round = RoundJob(7uL, 3u, 9uL)
+        assertNull(UploadJobService.schedule(context, round))
         val job = context.getSystemService(JobScheduler::class.java).allPendingJobs.single()
         assertTrue(job.isUserInitiated)
         assertTrue(job.networkType != android.app.job.JobInfo.NETWORK_TYPE_NONE)
         assertTrue(!job.isPersisted)
-        assertNull("a pending job is kept instead of replaced", UploadJobService.schedule(context, 2uL, 1uL))
-        assertEquals(1, context.getSystemService(JobScheduler::class.java).allPendingJobs.size)
+        assertEquals("the system job carries the round value of the core", round, roundJobOf(job.extras))
     }
 
     @Test
     fun onlyUploadRequestsGoThroughTheNetworkOfTheRunningJob() = bounded {
-        val old = UploadJobToken()
-        val current = UploadJobToken()
-        UploadNetwork.started(null, old)
-        UploadNetwork.started(null, current)
+        val old = 1u
+        val current = 2u
+        UploadNetwork.started(old, null)
+        UploadNetwork.started(current, null)
         try {
             UploadNetwork.ended(old)
             MockWebServer().use { server ->
@@ -78,9 +78,9 @@ class UploadWorkTest {
         val directory = Files.createTempDirectory("accepted").toFile()
         try {
             val source = java.io.File(directory, "image.png").apply { writeText("image") }
-            val database = reopen(Config(null, null, 32u), modelsJSON, MockTransport(), operations = """[{"name":"CreateBlob","document":"mutation CreateBlob { createBlob { url headers signedId blobId } }"},{"name":"CreateAssets","document":"mutation CreateAssets { createAssets { assets { id clientKey size } } }"}]""")
+            val database = reopen(Config(null, null), modelsJSON, MockTransport(), operations = """[{"name":"CreateBlob","document":"mutation CreateBlob { createBlob { url headers signedId blobId } }"},{"name":"CreateAssets","document":"mutation CreateAssets { createAssets { assets { id clientKey size } } }"}]""")
             database.setOnline(false)
-            database.setRoundJobs(UploadRounds(org.robolectric.RuntimeEnvironment.getApplication(), database, UploadScheduler { _, _, _ -> "the app was not visible" }))
+            database.setRoundJobs(UploadRounds(org.robolectric.RuntimeEnvironment.getApplication(), database, UploadScheduler { _, _ -> "the app was not visible" }))
             fun batch(keys: IntRange) = keys.map { UploadItem(values = buildJsonObject { put("clientKey", "key-$it"); put("size", 2) }, path = source.path) }
             val rows = AccountScope.current().uploadBatch(Asset, batch(0..1), UploadBatchRequest(operation = "create_files"))
             eventually("every member of the refused batch shows the reason") {
@@ -98,7 +98,7 @@ class UploadWorkTest {
         val context = org.robolectric.RuntimeEnvironment.getApplication()
         UploadNotifications.store(context, notification)
         val controller = Robolectric.buildService(UploadService::class.java).create()
-        controller.startCommand(0, 1)
+        controller.withIntent(android.content.Intent(context, UploadService::class.java).putExtra("request", 1L).putExtra("round", 1L).putExtra("epoch", 1L)).startCommand(0, 1)
         assertNotNull("the foreground notification is shown before open ran", shadowOf(controller.get()).lastForegroundNotification)
         assertTrue(!shadowOf(controller.get()).isStoppedBySelf)
         try {

@@ -17,7 +17,7 @@ class ClosedDatabaseTest {
 
     @Test
     fun aClosedDatabaseRefusesEveryCallWithClosedFromTheCore() = bounded {
-        reopenSigned(Config(null, null, 8u), modelsJSON)
+        reopenSigned(Config(null, null), modelsJSON)
         DBlayer.close()
         val errors = listOf(
             refusal { DBlayer.sessionReset() },
@@ -31,7 +31,7 @@ class ClosedDatabaseTest {
 
     @Test
     fun twoConcurrentClosesBothSucceedAndThenTheCoreAnswersClosed() = bounded {
-        reopenSigned(Config(null, null, 8u), modelsJSON)
+        reopenSigned(Config(null, null), modelsJSON)
         val closes = List(2) { async(Dispatchers.Default) { runCatching { DBlayer.close() } } }
         val results = awaitWithin("both closes to return") { closes.awaitAll() }
         for (result in results) {
@@ -46,7 +46,6 @@ class ClosedDatabaseTest {
             val calls: List<suspend () -> Unit> = listOf(
                 { DBlayer.run("Probe", JsonObject(emptyMap())) },
                 { DBlayer.sessionCall<JsonNull, JsonElement>("Probe", JsonNull) },
-                { DBlayer.sessionSend("Probe", JsonNull) },
                 { DBlayer.sessionReset() },
                 { DBlayer.subscriptionCensus() },
                 { DBlayer.openReport() },
@@ -65,11 +64,19 @@ class ClosedDatabaseTest {
         }
         closeForCleanup()
         DBlayer.opened = null
-        assertEquals(List(9) { "not_open" }, entries())
-        reopenSigned(Config(null, null, 8u), modelsJSON)
+        assertEquals(List(8) { "not_open" }, entries())
+        reopenSigned(Config(null, null), modelsJSON)
         DBlayer.close()
         val afterClose = entries()
-        assertEquals(List(5) { "closed" }, listOf(0, 1, 2, 3, 7).map { afterClose[it] })
-        assertEquals("none", afterClose[8])
+        assertEquals(List(7) { "closed" }, (0..6).map { afterClose[it] })
+        assertEquals("none", afterClose[7])
+    }
+
+    @Test
+    fun aQueryWithoutARelationIsInvalidFromTheCore() = bounded {
+        reopen(Config(null, null), modelsJSON, MockTransport())
+        assertTrue(refusal { Query("Moment", Moment).refresh() } is DbException.Invalid)
+        assertTrue(refusal { Query("Moment", Moment).load() } is DbException.Invalid)
+        closeForCleanup()
     }
 }

@@ -7,49 +7,17 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleOwner
 import androidx.lifecycle.ProcessLifecycleOwner
 
-internal class ForegroundEvents(private val lifecycle: Lifecycle, private val deliver: () -> Unit) {
-    @Volatile private var active = true
-
-    private val observer = object : DefaultLifecycleObserver {
-        override fun onStart(owner: LifecycleOwner) {
-            if (active) deliver()
+internal object ForegroundEvents {
+    /** Calls [deliver] on every start of the process lifecycle until the returned stop runs. */
+    fun observe(lifecycle: Lifecycle = ProcessLifecycleOwner.get().lifecycle, post: (() -> Unit) -> Unit = ::onMain, deliver: () -> Unit): () -> Unit {
+        val observer = object : DefaultLifecycleObserver {
+            override fun onStart(owner: LifecycleOwner) = deliver()
         }
+        post { lifecycle.addObserver(observer) }
+        return { post { lifecycle.removeObserver(observer) } }
     }
 
-    fun start() {
-        if (!active) return
-        lifecycle.addObserver(observer)
-    }
-
-    fun deactivate() {
-        active = false
-    }
-
-    fun detach() = lifecycle.removeObserver(observer)
-
-    companion object {
-        private var current: ForegroundEvents? = null
-
-        @Synchronized
-        fun start(sink: OnlineSink) {
-            retire()
-            val made = ForegroundEvents(ProcessLifecycleOwner.get().lifecycle) { sink.enterForeground() }
-            current = made
-            onMain { made.start() }
-        }
-
-        @Synchronized
-        fun stop() = retire()
-
-        private fun retire() {
-            val old = current ?: return
-            current = null
-            old.deactivate()
-            onMain { old.detach() }
-        }
-
-        private fun onMain(work: () -> Unit) {
-            Handler(Looper.getMainLooper()).post(work)
-        }
+    private fun onMain(work: () -> Unit) {
+        Handler(Looper.getMainLooper()).post(work)
     }
 }

@@ -20,7 +20,7 @@ class ReadmeExamplesTest {
         closeForCleanup()
         val transport = MockTransport()
         transport.enqueue("CreateMoment", """{"data":{"createMoment":{"__typename":"Moment","id":"m1","uuid":"u","userId":"u1","text":"hello","likedByMe":false,"media":{},"createdAt":"2026-10-08T00:00:00.000Z"}}}""")
-        reopen(Config(null, null, 32u), modelsJSON, transport, SEND_MOMENT)
+        reopen(Config(null, null), modelsJSON, transport, SEND_MOMENT)
         val scope = AccountScope.current()
         val screen = CoroutineScope(SupervisorJob() + Dispatchers.Default)
         try {
@@ -34,7 +34,8 @@ class ReadmeExamplesTest {
             val info = user.attach(User.avatar, byteArrayOf(1, 2, 3), name = "a.png", mime = "image/png")
             assertEquals(Triple("a.png", "image/png", 3L), Triple(info.name, info.mime, info.size))
 
-            DBlayer.sessionSend("login_link", PhoneBody("+61400000000"))
+            DBlayer.sessionCall<PhoneBody, kotlinx.serialization.json.JsonElement>("login_link", PhoneBody("+61400000000"))
+            Unit
         } finally {
             screen.cancel()
         }

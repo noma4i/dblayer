@@ -27,7 +27,7 @@ class ForegroundEventsTest {
     fun aReturnToTheForegroundReachesTheCoreUntilTheRegistrationEnds() = bounded {
         val transport = MockTransport()
         repeat(8) { transport.enqueue("MomentsFeed", DbException.Http(400u, "bad request")) }
-        reopen(Config(null, null, 32u), modelsJSON.replace("\"name\":\"feed\",\"updates\"", "\"name\":\"feed\",\"refresh_on_foreground\":true,\"updates\""), transport)
+        reopen(Config(null, null), modelsJSON.replace("\"name\":\"feed\",\"updates\"", "\"name\":\"feed\",\"refresh_on_foreground\":true,\"updates\""), transport)
         DBlayer.database.registerOperations("""[{"name":"MomentsFeed","document":"query MomentsFeed(${'$'}first: Int, ${'$'}after: String) { feed(first: ${'$'}first, after: ${'$'}after) { nodes { id uuid likedByMe media createdAt } pageInfo { hasNextPage endCursor } } }"}]""")
         val scope = CoroutineScope(SupervisorJob())
         val list = ListReader(Moment.feed, scope)
@@ -35,21 +35,19 @@ class ForegroundEventsTest {
         owner.lifecycle.currentState = Lifecycle.State.CREATED
         val sink = DBlayer.database.onlineSink()
         val delivered = java.util.concurrent.atomic.AtomicInteger()
-        val events = ForegroundEvents(owner.lifecycle) {
+        val stop = ForegroundEvents.observe(owner.lifecycle, post = { it() }) {
             delivered.incrementAndGet()
             sink.enterForeground()
         }
-        events.start()
         val before = transport.calls.size
 
         owner.lifecycle.currentState = Lifecycle.State.STARTED
         assertEquals(1, delivered.get())
         eventually("the delivered start reloads the failed window") { transport.calls.size > before }
 
-        events.deactivate()
+        stop()
         returnToForeground()
         assertEquals(1, delivered.get())
-        events.detach()
         scope.cancel()
     }
 }

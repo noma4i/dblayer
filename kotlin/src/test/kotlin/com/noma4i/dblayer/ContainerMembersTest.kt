@@ -21,7 +21,7 @@ class ContainerMembersTest {
     @Test
     fun containerMembersPassesArgumentsAndDecodesTypedSnapshots() = bounded {
         val transport = MockTransport()
-        reopen(Config(null, null, 64u), modelsJSON, transport)
+        reopen(Config(null, null), modelsJSON, transport)
         val def = buildJsonObject { put("name", JsonPrimitive("ContainerMembers")); put("document", JsonPrimitive(document)) }
         DBlayer.database.registerOperations(JsonArray(listOf(def)).toString())
         transport.enqueue("ContainerMembers", page("a0", true))
@@ -46,7 +46,7 @@ class ContainerMembersTest {
     @Test
     fun loadAllReadsEveryPageAndForceRestartsTheList() = bounded {
         val transport = MockTransport()
-        reopen(Config(null, null, 64u), modelsJSON, transport)
+        reopen(Config(null, null), modelsJSON, transport)
         val def = buildJsonObject { put("name", JsonPrimitive("ContainerMembers")); put("document", JsonPrimitive(document)) }
         DBlayer.database.registerOperations(JsonArray(listOf(def)).toString())
         transport.enqueue("ContainerMembers", page("a0", true))
@@ -66,7 +66,7 @@ class ContainerMembersTest {
     @Test
     fun membersSnapshotPlatforms() = bounded {
         val transport = MockTransport()
-        reopen(Config(null, null, 64u), modelsJSON, transport)
+        reopen(Config(null, null), modelsJSON, transport)
         val def = buildJsonObject { put("name", JsonPrimitive("ContainerMembers")); put("document", JsonPrimitive(document)) }
         DBlayer.database.registerOperations(JsonArray(listOf(def)).toString())
         transport.enqueue("ContainerMembers", page("a0", true))

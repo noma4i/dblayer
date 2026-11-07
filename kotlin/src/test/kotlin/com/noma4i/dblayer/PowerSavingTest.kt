@@ -25,14 +25,9 @@ class PowerSavingTest {
     fun theCoreIsToldTheStateWithNoPowerSavingLockHeld() {
         val context = org.robolectric.RuntimeEnvironment.getApplication()
         val probes = java.util.concurrent.CopyOnWriteArrayList<Boolean>()
-        var registration: PowerSaving.Registration? = null
-        val sink = object : OnlineSinkInterface {
-            override fun enterForeground() {}
-            override fun setOnline(online: Boolean) {}
-            override fun setPowerSaving(saving: Boolean) { probes += finishesElsewhere { registration?.stop() } }
-        }
-        registration = PowerSaving.start(context, sink)
-        registration?.stop()
+        var stop: (() -> Unit)? = null
+        stop = PowerSaving.observe(context) { probes += finishesElsewhere { stop?.invoke() } }
+        stop.invoke()
 
         assertEquals(listOf(true), probes.toList())
     }

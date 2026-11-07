@@ -4,7 +4,13 @@ package com.noma4i.dblayer
 interface WrapsMock { val base: MockTransport }
 
 suspend fun openDatabase(config: Config, modelsJson: String, transport: Transport? = null, encrypted: EncryptedConfig? = null, credentials: CredentialStore? = null, http: EncryptedHttp? = null, operations: String = "[]"): Database =
-    OpenDatabase().open(config, modelsJson, OpenOptions(withUploadSteps(operations, modelsJson), false), OpenPorts(transport, encrypted, credentials, http))
+    OpenDatabase().open(config, modelsJson, OpenOptions(definitionsOf(withUploadSteps(operations, modelsJson))), OpenPorts(transport, encrypted, credentials, http), null)
+
+private fun definitionsOf(operations: String): List<OperationDefinition> =
+    (kotlinx.serialization.json.Json.parseToJsonElement(operations) as kotlinx.serialization.json.JsonArray).map { entry ->
+        val operation = entry as kotlinx.serialization.json.JsonObject
+        OperationDefinition((operation["name"] as kotlinx.serialization.json.JsonPrimitive).content, (operation["document"] as kotlinx.serialization.json.JsonPrimitive).content)
+    }
 
 /** A cleanup close: a database that is already closed stays closed. */
 suspend fun closeForCleanup() {
@@ -105,7 +111,7 @@ suspend fun reopenClocked(modelsJson: String, transport: MockTransport, operatio
     } catch (_: DbException.Closed) {
     } catch (_: DbException.NotOpen) {
     }
-    val credential = credentialOf(Config(path, null, 2000u))
+    val credential = credentialOf(Config(path, null))
     val restored = credential.get() != null
     val clock = DBlayer.openTesting(transport, modelsJson, path = path, startMillis = startMillis, encrypted = standEncrypted(), credentials = credential, http = server)
     DBlayer.database.registerOperations(withSessionProfile(operations))

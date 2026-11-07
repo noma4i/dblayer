@@ -7,7 +7,7 @@ annotation class DBlayerTestingApi
 @DBlayerTestingApi
 suspend fun DBlayer.openTesting(transport: Transport?, modelsJson: String, path: String? = null, operations: List<GraphQLOperation> = emptyList(), startMillis: Long = System.currentTimeMillis(), encrypted: EncryptedConfig? = null, credentials: CredentialStore? = null, http: EncryptedHttp? = null): TestClock {
     val clock = TestClock(startMillis.toULong())
-    install(openOnClock(Config(path, null, 2000u), modelsJson, transport, clock, encrypted, credentials, http), transport, operations)
+    install(openOnClock(Config(path, null), modelsJson, transport, clock, encrypted, credentials, http), transport, operations)
     return clock
 }
 

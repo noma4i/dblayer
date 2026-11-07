@@ -15,7 +15,7 @@ class NoticeTest {
     @Test
     fun oneSignalRoutesTypedActionsAndNotices() = bounded {
         val transport = MockTransport()
-        reopen(Config(null, null, 32u), schema("ChatActionSignal"), transport, """[{"name":"ChatActionSignal","document":"subscription ChatActionSignal { chatActionSignal { chatId userId kind active } }"}]""")
+        reopen(Config(null, null), schema("ChatActionSignal"), transport, """[{"name":"ChatActionSignal","document":"subscription ChatActionSignal { chatActionSignal { chatId userId kind active } }"}]""")
         val events = AccountScope.current().events(ChatActivityNotice).events(ChatActivityNotice)
         val seen = MutableStateFlow<List<ChatAction>?>(null)
         val collecting = async { ChatAction.byChat("c").live.flow.collect { seen.value = it } }
@@ -35,7 +35,7 @@ class NoticeTest {
     @Test
     fun memoryNoticesReachTheGeneratedLiveQueryWithoutAReadRequest() = bounded {
         val transport = MockTransport()
-        reopen(Config(null, null, 32u), schema("BulletinAdded"), transport, """[{"name":"BulletinAdded","document":"subscription BulletinAdded { bulletinAdded { body occurredAt } }","rootPath":"bulletinAdded"}]""")
+        reopen(Config(null, null), schema("BulletinAdded"), transport, """[{"name":"BulletinAdded","document":"subscription BulletinAdded { bulletinAdded { body occurredAt } }","rootPath":"bulletinAdded"}]""")
         val notices = async { Notice.recent.live.flow.first { it.isNotEmpty() } }
         eventually("the notice subscription opens") { transport.calls.size == 1 }
         transport.emit("BulletinAdded", """{"data":{"bulletinAdded":{"body":"hello","occurredAt":"2026-10-18T00:00:00Z"}}}""")

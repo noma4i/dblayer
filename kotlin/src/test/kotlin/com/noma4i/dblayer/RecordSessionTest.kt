@@ -15,7 +15,7 @@ suspend fun openRecordSession(reactDelayMillis: Long = 0, reacts: Int = 3, recor
     val transport = MockTransport()
     transport.enqueue("CreateRecord", recordReply)
     repeat(reacts) { transport.enqueue("RecordReact", RECORD_REACTED, reactDelayMillis) }
-    reopen(Config(null, null, 32u), modelsJSON, transport)
+    reopen(Config(null, null), modelsJSON, transport)
     DBlayer.database.registerOperations("""[{"name":"CreateRecord","document":"mutation CreateRecord(${'$'}containerId: ID!, ${'$'}text: String!, ${'$'}signedId: String, ${'$'}attachedUserId: ID) { createRecord(containerId: ${'$'}containerId, text: ${'$'}text, signedId: ${'$'}signedId, attachedUserId: ${'$'}attachedUserId) { id containerId authorId text createdAt reactions { body userId } } }"},{"name":"RecordReact","document":"mutation RecordReact(${'$'}id: ID!, ${'$'}reactionBody: String!, ${'$'}userId: ID!) { recordReact(id: ${'$'}id, reactionBody: ${'$'}reactionBody, userId: ${'$'}userId) { id containerId authorId text createdAt reactions { body userId } } }"}]""")
     return transport
 }
