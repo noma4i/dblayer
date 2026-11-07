@@ -46,8 +46,10 @@ impl Rig {
         Self { server: FakeServer::new(Arc::new(SystemClock)), credentials: Arc::default() }
     }
 
-    pub(super) async fn open(&self, path: Option<&Path>, pin: &str) -> Result<Arc<Database>, DbError> {
-        let database = Database::open(Config { path: path.map(|path| path.to_string_lossy().into_owned()), data_version: None }, crate::ffi::EMPTY_SPECS.to_string(), crate::ffi::OpenPorts { transport: Some(Arc::new(SubscriptionsOnly)), encrypted: Some(EncryptedConfig { origin: origin().to_string(), server_key: public_key_der_b64().to_string(), pin: pin.to_string(), ..crate::transport::encrypted::protocol_tests::config() }), credentials: Some(self.credentials.clone()), http: Some(Arc::new(ThroughServer(self.server.clone()))), endpoint: Some(crate::ffi::FAKE_ENDPOINT.into()), ..Default::default() }).await?;
+    pub(super) async fn open(&self, path: Option<&Path>, pin: &str) -> Result<Arc<Database>, DbError> { self.open_models(path, pin, crate::ffi::EMPTY_SPECS.to_string()).await }
+
+    async fn open_models(&self, path: Option<&Path>, pin: &str, models: String) -> Result<Arc<Database>, DbError> {
+        let database = Database::open(Config { path: path.map(|path| path.to_string_lossy().into_owned()), data_version: None }, models, crate::ffi::OpenPorts { transport: Some(Arc::new(SubscriptionsOnly)), encrypted: Some(EncryptedConfig { origin: origin().to_string(), server_key: public_key_der_b64().to_string(), pin: pin.to_string(), ..crate::transport::encrypted::protocol_tests::config() }), credentials: Some(self.credentials.clone()), http: Some(Arc::new(ThroughServer(self.server.clone()))), endpoint: Some(crate::ffi::FAKE_ENDPOINT.into()), ..Default::default() }).await?;
         database.set_online(true)?;
         Ok(database)
     }
@@ -97,6 +99,41 @@ async fn a_refusal_code_is_typed_and_keeps_the_credential() {
             assert_eq!(code(refused), expected, "{wire} confirmed={confirmed}");
             assert_eq!((rig.credentials.inner.value(), rig.touched()), (credential, (1, 0)), "{wire} confirmed={confirmed}");
         }
+    }
+}
+
+/// P-LIFE-07, executor `ClearAccount`. Observable: the `CredentialStore` of the app (value and `clear` calls) and `encrypted_session`. `SessionReset` and `ServerEnded` clear the secret once, `IdentityChanged`, `Close` and `ResetModels` clear nothing.
+#[tokio::test(flavor = "multi_thread")]
+async fn the_credential_secret_is_cleared_only_by_session_reset_and_server_end() {
+    use crate::test_wait::{within, yield_until};
+    for end in ["identity_changed", "close", "reset_models", "session_reset", "server_ended"] {
+        let rig = Rig::new();
+        let database = rig.open_models(None, pin(), crate::ffi::specs(super::lifecycle_tests::models())).await.unwrap();
+        within(database.session_call("social".into(), SOCIAL_BODY.into())).await.unwrap();
+        let credential = rig.credentials.inner.value();
+        assert!(credential.is_some() && database.signed_in_digest().is_some() && rig.touched() == (1, 0), "{end}: signed in");
+        let life = database.life_handle();
+        let epoch = life.published().epoch;
+        match end {
+            "identity_changed" => {
+                life.credential_committed(life.published().identity.expect("an identity") + 1);
+                yield_until("the next epoch was published", || life.published().epoch > epoch).await;
+            }
+            "close" => within(database.close_database()).await.unwrap(),
+            "reset_models" => {
+                let outcome = within(life.reset_models(["User".to_string()].into()).wait()).await;
+                assert!(matches!(outcome, crate::runtime::Outcome::Value(crate::owners::life::LifeReply::Life(Ok(())))), "{outcome:?}");
+            }
+            "session_reset" => within(database.session_reset()).await.unwrap(),
+            _ => { within(database.session_call("logout".into(), "{}".into())).await.unwrap(); }
+        }
+        if matches!(end, "session_reset" | "server_ended") {
+            assert_eq!((rig.credentials.inner.value(), rig.touched(), database.signed_in_digest()), (None, (1, 1), None), "{end}: the secret and the session are erased");
+        } else {
+            let session_kept = end == "close" || database.signed_in_digest().is_some();
+            assert_eq!((rig.credentials.inner.value(), rig.touched(), session_kept), (credential, (1, 0), true), "{end}: the secret and the session stay");
+        }
+        database.close_now();
     }
 }
 

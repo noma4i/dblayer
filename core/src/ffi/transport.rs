@@ -204,3 +204,7 @@ impl core::Upstream for ForeignTransport {
 #[cfg(test)]
 #[path = "transport_tests.rs"]
 mod transport_tests;
+
+#[cfg(test)]
+#[path = "transport_headers_tests.rs"]
+mod transport_headers_tests;
