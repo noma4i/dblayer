@@ -7,4 +7,3 @@ panic:core/src/value/mod.rs:expect("string map serializes")   # a map of strings
 panic:core/src/store/ddl/mod.rs:expect("fingerprint serializes")   # own Serialize type, string keys
 
 
-z26:runtime/threaded.rs:373   # the Timeline maps Clock to a monotonic origin once at start, every later read goes through Clock
