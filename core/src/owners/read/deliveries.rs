@@ -200,6 +200,7 @@ enum Emit {
     Run(StreamEffect),
     Load { force: bool },
     InterestPlus,
+    InterestPassive,
     ReloadOnConnect,
     InterestMinus,
     WantPlus,
@@ -431,6 +432,7 @@ fn lower(peers: DeliveryPeers, revision: i64, stream: StreamId, machine: &Delive
         let effect = match emit {
             Emit::Run(effect) => Effect::Run(DeliveryEffect::Stream { stream, effect }),
             Emit::InterestPlus => Effect::Send(Outbound::new(peers.windows, WindowsInput::InterestPlus { key: machine.view.window.clone(), id: stream, now: machine.opened_at })),
+            Emit::InterestPassive => Effect::Send(Outbound::new(peers.windows, WindowsInput::InterestPassive { key: machine.view.window.clone(), id: stream })),
             Emit::ReloadOnConnect => Effect::Send(Outbound::new(peers.windows, WindowsInput::ReloadOnConnect { key: machine.view.window.clone(), id: stream })),
             Emit::Load { force } => Effect::Send(Outbound::new(peers.windows, WindowsInput::Load { key: machine.view.window.clone(), id: stream, goal: Goal::First, force, store_revision: revision, now: machine.opened_at })),
             Emit::InterestMinus => Effect::Send(Outbound::new(peers.windows, WindowsInput::InterestMinus { key: machine.view.window.clone(), id: stream })),

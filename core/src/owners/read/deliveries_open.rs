@@ -73,7 +73,7 @@ impl Delivery {
                 let watches = machine.view.remote
                     && matches!(kind, Kind::List | Kind::Count | Kind::Entity { fetch: Fetch::Stale | Fetch::Force | Fetch::IfMissing });
                 if watches {
-                    fx.push(Emit::InterestPlus);
+                    fx.push(if kind == (Kind::Entity { fetch: Fetch::IfMissing }) { Emit::InterestPassive } else { Emit::InterestPlus });
                     if machine.view.reload { fx.push(Emit::ReloadOnConnect); }
                     machine.interested = true;
                     if kind == (Kind::Entity { fetch: Fetch::Force }) {

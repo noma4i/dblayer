@@ -149,6 +149,7 @@ pub(super) enum Pulled {
 pub(super) enum Effect {
     Read(i64),
     InterestPlus,
+    InterestPassive,
     Load { force: bool },
     InterestMinus,
     WantPlus,
@@ -397,7 +398,8 @@ impl Delivery {
                         self.stage = Stage::Opening;
                         fx.push(Effect::Read(0));
                         match kind {
-                            Kind::List | Kind::Count | Kind::Entity(Fetch::Stale | Fetch::IfMissing) => { self.interested = true; fx.push(Effect::InterestPlus); }
+                            Kind::List | Kind::Count | Kind::Entity(Fetch::Stale) => { self.interested = true; fx.push(Effect::InterestPlus); }
+                            Kind::Entity(Fetch::IfMissing) => { self.interested = true; fx.push(Effect::InterestPassive); }
                             Kind::Entity(Fetch::Force) => { self.interested = true; fx.push(Effect::InterestPlus); fx.push(Effect::Load { force: true }); }
                             _ => {}
                         }

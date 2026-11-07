@@ -359,3 +359,65 @@ fn win_dictionary_and_online_belong_to_the_epoch() {
     twin.post_call(w::WindowsInput::Online { online: Online(true), online_seq: 1, now: NOW });
     assert_eq!(twin.stage(), Some(WindowStage::Loading));
 }
+
+/// P-WIN-27: while the interest of a second call is in the waiters before the first call leaves, no order of the second `Load`, the `Interest-` of the first and the response gives a second request or a cancel.
+#[test]
+fn win_prop_cancel_sibling_single_flight() {
+    const JOIN: u8 = 0;
+    const LEAVE: u8 = 1;
+    const ANSWER: u8 = 2;
+    for order in [[JOIN, LEAVE, ANSWER], [JOIN, ANSWER, LEAVE], [ANSWER, JOIN, LEAVE]] {
+        let mut twin = loading();
+        let mut trace = Vec::new();
+        for turn in order {
+            let effects = match turn {
+                JOIN => twin.call(2, Goal::First),
+                LEAVE => twin.step(Input::InterestMinus { id: 1 }),
+                _ => twin.respond(None),
+            };
+            trace.push((turn, effects));
+        }
+        if twin.stage() == Some(WindowStage::Landing) {
+            let landed = twin.land();
+            trace.push((9, landed));
+        }
+        let again = trace.iter().flat_map(|(_, effects)| effects).filter(|effect| matches!(effect, Effect::Request { .. } | Effect::Cancel { .. })).count();
+        assert_eq!(again, 0, "order {order:?} sent a second request or a cancel, trace {trace:?}");
+        assert_eq!(twin.stage(), Some(WindowStage::Idle), "order {order:?}");
+    }
+}
+
+/// P-WIN-28: one return of the network gives one read of a watched window in either order of `Online(true)` and `Stale{Gap}`.
+#[test]
+fn win_prop_reconnect_gap_one_reload() {
+    const SEQ: u64 = 1;
+    for (name, make) in [("fresh", fresh_watched as fn() -> Twin), ("failed", failed_watched as fn() -> Twin)] {
+        for reload in [false, true] {
+            for gap_first in [false, true] {
+                let mut twin = make();
+                if reload {
+                    twin.post_call(w::WindowsInput::ReloadOnConnect { key: key(), id: u64::from(STREAM) });
+                }
+                take(&twin.log);
+                let mut sent = Vec::new();
+                let mut feed = |twin: &mut Twin, input: w::WindowsInput| {
+                    twin.post(input);
+                    let (effects, _) = twin.split(take(&twin.log));
+                    sent.extend(effects);
+                };
+                feed(&mut twin, w::WindowsInput::Online { online: Online(false), online_seq: 0, now: NOW });
+                let online = w::WindowsInput::Online { online: Online(true), online_seq: SEQ, now: NOW };
+                let gap = w::WindowsInput::Stale { model: "Moment".into(), keys: StaleKeys::All, cause: w::StaleCause::Gap { online_seq: SEQ } };
+                if gap_first {
+                    feed(&mut twin, gap);
+                    feed(&mut twin, online);
+                } else {
+                    feed(&mut twin, online);
+                    feed(&mut twin, gap);
+                }
+                let reads = sent.iter().filter(|effect| matches!(effect, Effect::Request { .. })).count();
+                assert_eq!(reads, 1, "{name} reload={reload} gap_first={gap_first}: {sent:?}");
+            }
+        }
+    }
+}

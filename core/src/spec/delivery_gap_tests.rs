@@ -179,6 +179,7 @@ impl Twin {
                     });
                 }
                 Emitted::Send { to: WINDOWS, input } if input.starts_with("InterestPlus") => modelled.push(Effect::InterestPlus),
+                Emitted::Send { to: WINDOWS, input } if input.starts_with("InterestPassive") => modelled.push(Effect::InterestPassive),
                 Emitted::Send { to: WINDOWS, input } if input.starts_with("Load") => modelled.push(Effect::Load { force: input.contains("force: true") }),
                 Emitted::Send { to: WINDOWS, .. } => modelled.push(Effect::InterestMinus),
                 Emitted::Send { to: FEED, input } if input.starts_with("WantPlus") => modelled.push(Effect::WantPlus),
@@ -358,10 +359,23 @@ fn dlv_open_rows() {
         (Kind::Entity(Fetch::Never), vec![Effect::Read(0)]),
         (Kind::Entity(Fetch::Stale), vec![Effect::Read(0), Effect::InterestPlus]),
         (Kind::Entity(Fetch::Force), vec![Effect::Read(0), Effect::InterestPlus, Effect::Load { force: true }]),
-        (Kind::Entity(Fetch::IfMissing), vec![Effect::Read(0), Effect::InterestPlus]),
+        (Kind::Entity(Fetch::IfMissing), vec![Effect::Read(0), Effect::InterestPassive]),
     ] {
         assert_eq!(Twin::new().step(Input::Open { kind, epoch_current: true }), effects, "{kind:?}");
     }
+}
+
+/// P-DLV-26: an Entity `if_missing` opens with a passive interest and asks the window to load only after a read without a row; `stale` and `force` hold an active interest.
+#[test]
+fn dlv_open_if_missing_passive() {
+    for (fetch, active) in [(Fetch::IfMissing, false), (Fetch::Stale, true), (Fetch::Force, true)] {
+        let effects = Twin::new().step(Input::Open { kind: Kind::Entity(fetch), epoch_current: true });
+        assert_eq!(effects.contains(&Effect::InterestPlus), active, "{fetch:?}: {effects:?}");
+        assert_eq!(effects.contains(&Effect::InterestPassive), !active, "{fetch:?}: {effects:?}");
+    }
+    let mut twin = open_as(Kind::Entity(Fetch::IfMissing));
+    let (effects, _) = twin.step_read(Input::ReadDone { revision: 1, rows: Vec::new() });
+    assert_eq!(effects.iter().filter(|effect| matches!(effect, Effect::Load { .. })).count(), 1, "one load after the empty read: {effects:?}");
 }
 
 #[test]

@@ -89,6 +89,11 @@ impl Facts {
                 self.push_fx(effect);
                 Handled
             }
+            Ev::InterestPassive { id } => {
+                self.interest.insert(*id);
+                self.announce();
+                Handled
+            }
             Ev::InterestPlus { id, .. } => {
                 self.interest.insert(*id);
                 self.announce();
@@ -216,6 +221,11 @@ impl Facts {
                 RejectReason::Storage(message) => self.fail(message, None),
                 RejectReason::Invalid => self.fail("the batch has no basis for a model of its rows", None),
             },
+            Ev::InterestPassive { id } => {
+                self.interest.insert(*id);
+                self.announce();
+                Handled
+            }
             Ev::InterestPlus { id, .. } => {
                 self.interest.insert(*id);
                 self.announce();
@@ -253,6 +263,11 @@ impl Facts {
             Ev::OfflineRefused { message } => {
                 self.error = Some(crate::ffi::DbError::Offline { detail: message.clone() });
                 self.set_phase(self.failed_phase());
+                self.announce();
+                Handled
+            }
+            Ev::InterestPassive { id } => {
+                self.interest.insert(*id);
                 self.announce();
                 Handled
             }
