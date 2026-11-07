@@ -249,7 +249,7 @@ fn out_prop_landing_no_stale() {
 fn store_outcome(twin: &mut Twin, batch: u64, outcome: Option<RejectReason>) -> Vec<OutboxEffect> {
     take_fx(&twin.log, None);
     let input = match outcome {
-        None => OutboxInput::Committed(Committed { batch, revision: 11, tables: vec!["moments".into()], rows: None, models: Default::default(), stale_parents: Vec::new(), position: 0 }),
+        None => OutboxInput::Committed(Committed { batch, revision: 11, tables: vec!["moments".into()], rows: None, shown: None, models: Default::default(), stale_parents: Vec::new(), position: 0 }),
         Some(reason) => OutboxInput::Rejected(Rejected { batch, reason }),
     };
     twin.det.post(crate::runtime::Address::<crate::owners::write::outbox::Outbox>::new(OUTBOX_AT), crate::runtime::EpochStamp::Control, input);
