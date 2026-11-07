@@ -379,3 +379,42 @@ fn life_prop_open_no_timeout() {
     failed.feed(Event::SaveFailed(1));
     assert_eq!(failed.replies(), vec![(7, Err(LifecycleError::Storage))], "a failed save answers open with Storage without waiting for anything");
 }
+
+/// P-LIFE-22: every order of the owner drains, `ObserversStopped` at every position, duplicates of every input and a joining second `close` end in one `Ok` per `close` and `Closed`.
+#[test]
+fn life_prop_closing_all_orders() {
+    let n = OWNERS.len();
+    for shift in 0..n {
+        for reversed in [false, true] {
+            let mut order: Vec<_> = OWNERS.into_iter().cycle().skip(shift).take(n).collect();
+            if reversed { order.reverse(); }
+            for stop_at in 0..=n + 1 {
+                for duplicate in [false, true] {
+                    let label = format!("shift {shift} reversed {reversed} stop_at {stop_at} duplicate {duplicate}");
+                    let mut steps: Vec<Event> = Vec::new();
+                    for (index, owner) in order.iter().enumerate() {
+                        if index == stop_at { steps.push(Event::ObserversStopped); }
+                        steps.push(Event::Drained(*owner));
+                        if duplicate { steps.push(Event::Drained(*owner)); }
+                        if index == n / 2 { steps.push(close(2)); }
+                    }
+                    if stop_at == n { steps.push(Event::ObserversStopped); }
+                    steps.push(Event::StoreClosed);
+                    if stop_at == n + 1 { steps.push(Event::ObserversStopped); }
+                    let mut twin = session(1);
+                    twin.feed(close(1));
+                    for step in steps {
+                        twin.feed(step);
+                        if !matches!(twin.state(), RefState::Closed) { assert!(twin.replies().is_empty(), "{label}: answered before the end"); }
+                    }
+                    assert_eq!(*twin.state(), RefState::Closed, "{label}");
+                    twin.feed_all([Event::StoreClosed, Event::ObserversStopped, Event::Drained(order[0])]);
+                    let mut replies = twin.replies();
+                    replies.sort_by_key(|reply| reply.0);
+                    assert_eq!(replies, vec![(1, Ok(())), (2, Ok(()))], "{label}: one Ok per close");
+                    assert_eq!(twin.history.iter().filter(|effect| matches!(effect, LifecycleEffect::StoreClose)).count(), 1, "{label}: one StoreClose");
+                }
+            }
+        }
+    }
+}

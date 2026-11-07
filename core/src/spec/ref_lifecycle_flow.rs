@@ -332,42 +332,29 @@ impl Lifecycle {
             }
             (state @ State::Resetting { .. }, _) => state,
 
-            (State::Closing { mut waiting, erases, close_replies, store_closing, store_closed, observers_stopped }, Event::Drained(owner)) => {
-                waiting.remove(&owner);
-                let last = waiting.is_empty() && erases.is_empty() && !store_closing;
-                if last { out.effects.push(Effect::StoreClose); }
-                State::Closing { waiting, erases, close_replies, store_closing: store_closing || last, store_closed, observers_stopped }
-            }
-            (State::Closing { waiting, mut erases, close_replies, mut store_closing, store_closed, observers_stopped }, ev @ (Event::Cleared(_) | Event::ModelsCleared(..) | Event::ClearFailed(_))) => {
-                let (Event::Cleared(id) | Event::ModelsCleared(_, id) | Event::ClearFailed(id)) = ev.clone() else { unreachable!() };
-                if let Some(erase) = Self::take_erase(&mut erases, id) {
-                    answer_all(&mut out, erase.replies, if matches!(ev, Event::ClearFailed(_)) { Answer::Storage } else { Answer::Ok });
-                    if waiting.is_empty() && erases.is_empty() {
-                        store_closing = true;
-                        out.effects.push(Effect::StoreClose);
+            (State::Closing { mut waiting, mut erases, mut close_replies, mut store_closing, mut store_closed, mut observers_stopped }, ev @ (Event::Drained(_) | Event::Cleared(_) | Event::ModelsCleared(..) | Event::ClearFailed(_) | Event::StoreClosed | Event::ObserversStopped | Event::Close(_))) => {
+                match ev.clone() {
+                    Event::Drained(owner) => { waiting.remove(&owner); }
+                    Event::Cleared(id) | Event::ModelsCleared(_, id) | Event::ClearFailed(id) => {
+                        if let Some(erase) = Self::take_erase(&mut erases, id) {
+                            answer_all(&mut out, erase.replies, if matches!(ev, Event::ClearFailed(_)) { Answer::Storage } else { Answer::Ok });
+                        }
                     }
+                    Event::StoreClosed => store_closed = store_closed || store_closing,
+                    Event::ObserversStopped => observers_stopped = true,
+                    Event::Close(reply) => close_replies.push(reply),
+                    _ => {}
                 }
-                State::Closing { waiting, erases, close_replies, store_closing, store_closed, observers_stopped }
-            }
-            (State::Closing { waiting, erases, close_replies, store_closing, store_closed, observers_stopped }, Event::StoreClosed) => {
-                if store_closing && observers_stopped {
+                if waiting.is_empty() && erases.is_empty() && !store_closing {
+                    store_closing = true;
+                    out.effects.push(Effect::StoreClose);
+                }
+                if store_closed && observers_stopped {
                     answer_all(&mut out, close_replies, Answer::Ok);
                     State::Closed
                 } else {
-                    State::Closing { waiting, erases, close_replies, store_closing, store_closed: store_closed || store_closing, observers_stopped }
+                    State::Closing { waiting, erases, close_replies, store_closing, store_closed, observers_stopped }
                 }
-            }
-            (State::Closing { waiting, erases, close_replies, store_closing, store_closed, .. }, Event::ObserversStopped) => {
-                if store_closed {
-                    answer_all(&mut out, close_replies, Answer::Ok);
-                    State::Closed
-                } else {
-                    State::Closing { waiting, erases, close_replies, store_closing, store_closed, observers_stopped: true }
-                }
-            }
-            (State::Closing { waiting, erases, mut close_replies, store_closing, store_closed, observers_stopped }, Event::Close(reply)) => {
-                close_replies.push(reply);
-                State::Closing { waiting, erases, close_replies, store_closing, store_closed, observers_stopped }
             }
             (state @ State::Closing { .. }, Event::SessionReset(reply)) => {
                 answer_all(&mut out, reply.into_iter().collect(), Answer::Closed);

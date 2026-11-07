@@ -19,7 +19,7 @@ async fn local_notes() -> Arc<Database> {
     Database::open(config(), crate::ffi::specs(serde_json::to_string(&vec![model]).unwrap()), crate::ffi::OpenPorts::default()).await.unwrap()
 }
 
-async fn with_transport(clock: Arc<dyn Clock>) -> (Arc<Database>, Arc<MockTransport>) {
+pub(super) async fn with_transport(clock: Arc<dyn Clock>) -> (Arc<Database>, Arc<MockTransport>) {
     let transport = Arc::new(MockTransport::new());
     let mut notice = ModelSpec::new("Notice", vec![FieldSpec::scalar("id", ScalarKind::Id)]);
     notice.listens.push(serde_json::from_value(json!({"subscription":"Signal"})).unwrap());

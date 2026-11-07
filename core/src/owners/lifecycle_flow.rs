@@ -223,50 +223,38 @@ impl LifecycleState {
             }
             (phase @ LifecyclePhase::Resetting { .. }, _) => phase,
 
-            (LifecyclePhase::Closing { mut waiting, erases, close_replies, store_closing, store_closed, observers_stopped }, LifecycleInput::Drained(Drained { owner })) => {
-                if let Some(peer) = Peer::named(owner) {
-                    waiting.remove(&peer);
+            (LifecyclePhase::Closing { mut waiting, mut erases, mut close_replies, mut store_closing, mut store_closed, mut observers_stopped }, input @ (LifecycleInput::Drained(_) | LifecycleInput::Cleared { .. } | LifecycleInput::ModelsCleared { .. } | LifecycleInput::ClearFailed { .. } | LifecycleInput::StoreClosed | LifecycleInput::ObserversStopped | LifecycleInput::Close { .. })) => {
+                match input {
+                    LifecycleInput::Drained(Drained { owner }) => {
+                        if let Some(peer) = Peer::named(owner) {
+                            waiting.remove(&peer);
+                        }
+                    }
+                    LifecycleInput::Cleared { erase_id } | LifecycleInput::ModelsCleared { erase_id, .. } => {
+                        if let Some(erase) = take_erase(&mut erases, erase_id) {
+                            reply_all(erase.replies, Ok(()), fx);
+                        }
+                    }
+                    LifecycleInput::ClearFailed { erase_id, .. } => {
+                        if let Some(erase) = take_erase(&mut erases, erase_id) {
+                            reply_all(erase.replies, Err(LifecycleError::Storage), fx);
+                        }
+                    }
+                    LifecycleInput::StoreClosed => store_closed = store_closed || store_closing,
+                    LifecycleInput::ObserversStopped => observers_stopped = true,
+                    LifecycleInput::Close { reply } => close_replies.push(reply),
+                    _ => {}
                 }
-                let last = waiting.is_empty() && erases.is_empty() && !store_closing;
-                if last {
+                if waiting.is_empty() && erases.is_empty() && !store_closing {
+                    store_closing = true;
                     fx.push(LifecycleEffect::StoreClose);
                 }
-                LifecyclePhase::Closing { waiting, erases, close_replies, store_closing: store_closing || last, store_closed, observers_stopped }
-            }
-            (LifecyclePhase::Closing { waiting, mut erases, close_replies, mut store_closing, store_closed, observers_stopped }, input @ (LifecycleInput::Cleared { .. } | LifecycleInput::ModelsCleared { .. } | LifecycleInput::ClearFailed { .. })) => {
-                let (erase_id, result) = match input {
-                    LifecycleInput::Cleared { erase_id } | LifecycleInput::ModelsCleared { erase_id, .. } => (erase_id, Ok(())),
-                    LifecycleInput::ClearFailed { erase_id, .. } => (erase_id, Err(LifecycleError::Storage)),
-                    _ => (u64::MAX, Ok(())),
-                };
-                if let Some(erase) = take_erase(&mut erases, erase_id) {
-                    reply_all(erase.replies, result, fx);
-                    if waiting.is_empty() && erases.is_empty() {
-                        store_closing = true;
-                        fx.push(LifecycleEffect::StoreClose);
-                    }
-                }
-                LifecyclePhase::Closing { waiting, erases, close_replies, store_closing, store_closed, observers_stopped }
-            }
-            (LifecyclePhase::Closing { waiting, erases, close_replies, store_closing, store_closed, observers_stopped }, LifecycleInput::StoreClosed) => {
-                if store_closing && observers_stopped {
+                if store_closed && observers_stopped {
                     reply_all(close_replies, Ok(()), fx);
                     LifecyclePhase::Closed
                 } else {
-                    LifecyclePhase::Closing { waiting, erases, close_replies, store_closing, store_closed: store_closed || store_closing, observers_stopped }
+                    LifecyclePhase::Closing { waiting, erases, close_replies, store_closing, store_closed, observers_stopped }
                 }
-            }
-            (LifecyclePhase::Closing { waiting, erases, close_replies, store_closing, store_closed, .. }, LifecycleInput::ObserversStopped) => {
-                if store_closed {
-                    reply_all(close_replies, Ok(()), fx);
-                    LifecyclePhase::Closed
-                } else {
-                    LifecyclePhase::Closing { waiting, erases, close_replies, store_closing, store_closed, observers_stopped: true }
-                }
-            }
-            (LifecyclePhase::Closing { waiting, erases, mut close_replies, store_closing, store_closed, observers_stopped }, LifecycleInput::Close { reply }) => {
-                close_replies.push(reply);
-                LifecyclePhase::Closing { waiting, erases, close_replies, store_closing, store_closed, observers_stopped }
             }
             (phase @ LifecyclePhase::Closing { .. }, LifecycleInput::SessionReset { reply } | LifecycleInput::ResetModels { reply, .. }) => {
                 reply_all(reply.into_iter().collect(), Err(LifecycleError::Closed), fx);
