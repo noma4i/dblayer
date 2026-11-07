@@ -298,6 +298,8 @@ val sent = Message.create(chatId = chat.id, text = "hi", account = scope)
 val outcome = sent.outcome()             // Confirmed, Rejected, Interrupted
 ```
 
+Every queued write shows in `operations()` with its status, and a refused write is retried from that list: see [the queue of operations](sync-state.md#the-queue-of-operations).
+
 An action that loses its meaning with time declares how long it may wait. `expires_after:` takes whole seconds:
 
 ```ruby

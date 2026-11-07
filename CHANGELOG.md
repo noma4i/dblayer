@@ -31,12 +31,15 @@
 - `Query.offset` skips rows before the `limit` window on both platforms; a `limit` of 0 fails with `Invalid`.
 - `ModelEventItem.ready` tells that the source of an events stream is open.
 - `DbError.NotOpen` reports a call before the first successful `open`; a database that was opened and closed keeps answering `Closed`.
+- `AccountScope.operations` streams the queue of operations as `OperationInfo` values with status, attempts, error and `blockedBy`.
+- `AccountScope.retry` and `AccountScope.discard` take the model, id and action of an `OperationInfo`.
 
 ### Changed
 
 - Rows reach Swift and Kotlin with every cell in its declared type, and a cell of another type throws instead of converting.
 - `Transport` and `EncryptedHttp` take one `HttpRequest` built by the core and return a raw `RawOutcome`; the core classifies the failure.
 - `Transport.openCable` returns a `PlatformSocket` and reports frames to `CableEvents`; `CableLease` and `EncryptedSocketEvent` are removed.
+- The status of an operation is `pending`, `sending`, `failed`, `committed` or `rolledback`, written with each transition.
 - `DbError` names the failures of the cells: `Offline`, `Dropped`, `Unauthorized`, `InFlight`, `Storage`, `Runtime`, `Internal` and `Copy`. `Storage` replaces `Database`.
 - `ListEdit.rewrite` carries the `temporary` id it settles, `Projected.edits` replaces `takeEdits`, and `ModelEventItem.ended` replaces `failed`.
 - Projections mirror each delivery and drop `temporaryIds`, the decode counters and the resync decision.

@@ -84,6 +84,40 @@ Use them for an "unsent" banner, a retry-all button or a badge with the number o
 
 `retry(action)` resets the one failed operation and returns a new receipt; read its `outcome()` for the result of the retry. It throws errors to the caller.
 
+## The queue of operations
+
+`operations()` streams every write that has not ended, oldest first: the whole list when you open it and again after each change. A write enters the list before its receipt returns and leaves it when the server confirmed it or it rolled back.
+
+| Field | Meaning |
+| ----- | ------- |
+| `seq` | the order of the write |
+| `model`, `rowId`, `action` | the write; the same three arguments address `retry` and `discard` |
+| `status` | `pending` (queued, not sent), `sending` (an attempt was written and not answered) or `failed` (refused and kept, `on_failure: keep`) |
+| `attempts` | how many attempts were written |
+| `error` | the failure of a `failed` write |
+| `createdAt` | when the write was queued |
+| `blockedBy` | the `seq` of the failed write of the same row that this write waits behind |
+
+```swift
+let scope = try DB.account()
+for try await queue in scope.operations() {
+  badge = queue.filter { $0.status == .failed }.count
+  if let refused = queue.first(where: { $0.status == .failed }) {
+    try await scope.retry(model: refused.model, id: refused.rowId, action: refused.action)
+  }
+}
+```
+
+```kotlin
+val scope = AccountScope.current()
+scope.operations().collect { queue ->
+  badge = queue.count { it.status == OperationQueueStatus.FAILED }
+  queue.firstOrNull { it.status == OperationQueueStatus.FAILED }?.let { scope.retry(it.model, it.rowId, it.action) }
+}
+```
+
+`retry` sends a failed write again and throws `NotFound` when the write is gone. `discard` drops a write that is not on its way and rolls back its optimistic change; it throws `InFlight` for a write that is on its way. A write queued behind a failed write of the same row waits and shows `blockedBy`.
+
 ## How a mutation is sent
 
 The network decides what happens to a mutation that did not get an answer:
