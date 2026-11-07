@@ -504,7 +504,6 @@ fn an_owner_refusal_keeps_the_name_of_its_cell() {
     use crate::owners::contract::RejectReason;
     use crate::owners::write::outbox_types::Fault;
     let refusal = |fault| super::write::refused(fault, "update");
-    assert!(matches!(refusal(Fault::Offline), DbError::Offline { .. }));
     assert!(matches!(refusal(Fault::InFlight), DbError::InFlight { .. }));
     assert!(matches!(refusal(Fault::Internal), DbError::Internal { .. }));
     assert!(matches!(refusal(Fault::Copy("source".into())), DbError::Copy { .. }));

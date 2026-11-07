@@ -330,7 +330,7 @@ impl OutboxState {
         operation.outcome = Some(outcome.clone());
         self.tell_transfer(op_id, &outcome, next_goes, fx);
         self.give_outcome(op_id, &outcome, fx);
-        if next_goes {
+        if outcome != OutboxOutcome::Interrupted {
             self.drain(fx);
         }
     }

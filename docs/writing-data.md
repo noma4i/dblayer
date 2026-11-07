@@ -286,7 +286,7 @@ val outcome = sent.outcome()
 
 ## Writing without a network
 
-Every write is queued durably. It writes the row at once, queues the request, and survives a lost network and a closed app. When the network returns, the queue sends the operations by themselves, oldest first. At most 4 requests are in the network at the same time, and a row has at most 1. A write never fails because the network is away.
+Every write is queued durably. It writes the row at once, queues the request, and survives a lost network and a closed app. When the network returns, the queue sends the operations by themselves, oldest first. One request is in the network at a time, in write order. A write never fails because the network is away.
 
 ```swift
 let sent = try await Message.create(chatId: chat.id, text: "hi", in: scope)
@@ -307,7 +307,7 @@ operation :typing, expires_after: 30 do
 end
 ```
 
-When the library picks a queued operation to send and its waiting time is over, it does not send it. It rolls back the optimistic change and ends the operation with the outcome `rejected` and the failure kind `expired`. No timer runs: the check happens when the network returns, when a request ends or when the app opens. Without `expires_after` an operation waits as long as needed.
+When the library picks a queued operation for its first send and its waiting time is over, it does not send it. An operation that was sent at least once is never expired. It rolls back the optimistic change and ends the operation with the outcome `rejected` and the failure kind `expired`. No timer runs: the check happens when the network returns, when a request ends or when the app opens. Without `expires_after` an operation waits as long as needed.
 
 `outcome()` waits for the one final value, also while the network is away. A command of an ended session ends with it and does not go to the next account.
 A model without a server mutation for `create` writes rows that only this device holds.

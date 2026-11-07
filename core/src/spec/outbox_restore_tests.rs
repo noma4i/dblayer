@@ -148,9 +148,9 @@ fn out_restore_ready() {
     declare(&mut twin);
     restore(&mut twin, vec![stored(7, "a"), stored(8, "b")]);
     let effects = ready(&mut twin);
-    assert_eq!((twin.state().phase, kinds(&effects)), (Phase::Ready, vec![CommitKind::Attempt, CommitKind::Attempt]));
+    assert_eq!((twin.state().phase, kinds(&effects)), (Phase::Ready, vec![CommitKind::Attempt]));
     let order: Vec<_> = effects.iter().filter_map(|effect| match effect { OutboxEffect::Store { op_id, .. } => *op_id, _ => None }).collect();
-    assert_eq!(order, vec![7, 8], "in the order of seq");
+    assert_eq!((order, twin.stage(8)), (vec![7], Some(St::Queued)), "the lowest seq takes the one slot, the next waits");
 }
 
 #[test]
@@ -335,7 +335,7 @@ fn out_prop_restore_classes() {
     let classes: Vec<_> = (1..=8).map(|id| twin.stage(id)).collect();
     assert_eq!(
         classes,
-        vec![Some(St::Failed), Some(St::WaitingDeclaration), Some(St::Landing), Some(St::Failed), Some(St::MarkingFailed), Some(St::PersistingAttempt), Some(St::PersistingAttempt), Some(St::Queued)]
+        vec![Some(St::Failed), Some(St::WaitingDeclaration), Some(St::Landing), Some(St::Failed), Some(St::MarkingFailed), Some(St::PersistingAttempt), Some(St::Queued), Some(St::Queued)]
     );
 }
 

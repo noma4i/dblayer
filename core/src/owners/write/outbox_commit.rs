@@ -108,6 +108,7 @@ impl OutboxState {
             }
             _ => {}
         }
+        self.drain(fx);
     }
 
     /// The `destroy` that cancelled an unsent `create` ends with the rollback of that `create`.

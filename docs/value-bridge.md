@@ -57,7 +57,7 @@ On Android the screen collects the `StateFlow` of the projection.
 
 ## Offline and reconnect
 
-Every write waits for the network in the queue: `create`, `update`, `act`, `destroy`, a send and a media upload. The queue sends at most 4 requests at the same time.
+Every write waits for the network in the queue: `create`, `update`, `act`, `destroy`, a send and a media upload. The queue sends one request at a time, oldest first.
 A write whose attempt failed on the network goes out at once when the network returns, without a wait for its backoff.
 While the network is away `refresh`, `loadMore` and a one-off load fail at once with the network error, and the stream state shows it.
 A list stream opened with `refreshOnConnect` loads again once each time the network returns. The app writes no refresh for that moment.

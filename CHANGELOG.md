@@ -61,7 +61,7 @@
 - A session end replays after a crash between the credential and the data clear.
 - A test opens its database and closes it; there is no reset between tests.
 - iOS uploads use a plain `URLSession` PUT.
-- Every write is queued durably when offline and sent when the network returns, at most 4 at a time.
+- Every write is queued durably when offline and sent when the network returns, one request at a time in write order.
 - `Model.create` replaces the generated `Model.send`.
 - A send, a stream request and a prepared delivery end with the epoch they belong to.
 - A server create returns its optimistic value and a separate outcome; `send` takes a model with `operation :create`.
