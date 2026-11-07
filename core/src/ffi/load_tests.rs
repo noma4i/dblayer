@@ -146,8 +146,9 @@ async fn settled_waits_for_a_load_that_outlives_a_data_reset() {
     let _entity = db.watch(ReadRequest::Entity { model: "Moment".into(), id: "m1".into(), fetch: super::ReadFetch::Force }, listener.clone());
     within(transport.started.notified()).await;
     let settling = tokio::spawn({ let db = db.clone(); async move { crate::ffi::settled(&db).await } });
-    for _ in 0..200 { tokio::task::yield_now().await; }
-    assert!(!settling.is_finished());
+    crate::ffi::owners_drained(&db).await.unwrap();
+    assert_eq!(db.life.requests_in_flight(), 1, "the held request is the only one on its way");
+    assert!(!settling.is_finished(), "settled returned while the request was held");
     hold.add_permits(1);
     within(settling).await.unwrap().unwrap();
     crate::test_wait::yield_until("the entity row", || listener.len() == 1).await;
@@ -271,7 +272,8 @@ async fn an_entity_stream_is_not_loaded_when_its_first_empty_snapshot_arrives_be
     crate::test_wait::yield_until("the empty first snapshot", || listener.last().is_some()).await;
     let mut loaded = std::pin::pin!(entity.wait_for_initial_load());
     let mut cx = std::task::Context::from_waker(std::task::Waker::noop());
-    for _ in 0..50 { tokio::task::yield_now().await; }
+    crate::ffi::owners_drained(&db).await.unwrap();
+    assert_eq!(db.life.requests_in_flight(), 1, "the held request is the only one on its way");
     assert!(std::future::Future::poll(loaded.as_mut(), &mut cx).is_pending(), "loaded() returned before the transport answered");
     hold.add_permits(1);
     within(loaded).await.unwrap();

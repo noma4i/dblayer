@@ -190,7 +190,6 @@ async fn a_stream_that_refreshes_on_connect_loads_again_once_when_the_network_re
     rig.database.cancel_stream(stream);
     rig.database.set_online(false).unwrap();
     rig.database.set_online(true).unwrap();
-    for _ in 0..50 { tokio::task::yield_now().await; }
     settle(&rig).await;
     assert_eq!(rig.world.count("Thread"), before + 1, "a cancelled stream loaded on reconnect");
     rig.database.close_now();

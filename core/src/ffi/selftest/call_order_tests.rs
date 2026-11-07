@@ -44,7 +44,7 @@ where
     assert!(first.await.unwrap_err().is_cancelled());
     let second = tokio::spawn(second);
     yield_until("the second call registered", || rig.database.loads.registered_through(ticket)).await;
-    for _ in 0..50 { tokio::task::yield_now().await; }
+    crate::ffi::owners_drained(&rig.database).await.unwrap();
     held.release();
     bound(second).await.unwrap().unwrap();
 }

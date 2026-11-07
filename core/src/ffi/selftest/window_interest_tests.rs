@@ -54,7 +54,7 @@ async fn a_list_that_refreshes_on_connect_loads_again_once_when_the_network_retu
     rig.database.set_online(false).unwrap();
     rig.database.set_online(true).unwrap();
     yield_until("the list loaded again", || feed_requests(&rig) >= 2).await;
-    for _ in 0..200 { tokio::task::yield_now().await; }
+    rig.settle().await;
     assert_eq!(feed_requests(&rig), 2, "the list loaded more or less than once on reconnect: {:?}", rig.world.log());
     rig.database.close_now();
 }

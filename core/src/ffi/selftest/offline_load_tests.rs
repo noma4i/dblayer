@@ -14,7 +14,7 @@ async fn a_load_whose_request_is_at_the_server_waits_for_the_network_and_ends_wi
     held.entered().await;
     rig.database.set_online(false).unwrap();
     held.release();
-    for _ in 0..50 { tokio::task::yield_now().await; }
+    rig.settle().await;
     assert!(!loading.is_finished(), "the load ended while the network was away");
     assert_eq!(profile_requests(&rig), before + 1, "a request went out while the network was away");
     rig.database.set_online(true).unwrap();

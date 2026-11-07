@@ -3,11 +3,15 @@ mod cable;
 mod receipt;
 #[cfg(test)]
 #[cfg(test)]
+pub(crate) async fn owners_drained(database: &Database) -> Result<(), DbError> {
+    let owners = database.life.clone();
+    database::blocking(move || { owners.barrier(); Ok(()) }).await
+}
+#[cfg(test)]
 pub(crate) async fn settled(database: &Database) -> Result<(), DbError> {
     loop {
         database.operations_quiet().await;
-        let owners = database.life.clone();
-        database::blocking(move || { owners.barrier(); Ok(()) }).await?;
+        owners_drained(database).await?;
         if database.life.requests_in_flight() == 0 { return Ok(()); }
         database.life.requests_none().await;
     }

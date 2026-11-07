@@ -397,8 +397,10 @@ async fn the_outcome_of_an_offline_command_waits_and_ends_with_the_epoch_of_its_
     let epoch = rig.database.session_epoch();
     rig.database.set_online(false).unwrap();
     let receipt = bound(rig.database.send(message(epoch, "queued", 2))).await.unwrap();
+    let waiting = rig.database.life.waiting_calls();
     let outcome = { let database = rig.database.clone(); let receipt = receipt.clone(); tokio::spawn(async move { database.outcome(receipt).await }) };
-    for _ in 0..50 { tokio::task::yield_now().await; }
+    crate::test_wait::yield_until("the outcome call waits for the command", || rig.database.life.waiting_calls() > waiting).await;
+    crate::ffi::owners_drained(&rig.database).await.unwrap();
     assert!(!outcome.is_finished(), "the outcome of a queued command returned before the command settled");
     bound(rig.database.session_reset()).await.unwrap();
     assert!(matches!(bound(outcome).await.unwrap().unwrap(), WireOperationOutcome::Interrupted));

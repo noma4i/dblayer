@@ -65,7 +65,6 @@ async fn close_releases_old_engine() {
     yield_until("the old database has no owner while the platform still holds the sink", || owner.upgrade().is_none()).await;
     let requests = transport.call_count("Signal");
     clock.advance(std::time::Duration::from_secs(3600));
-    for _ in 0..16 { tokio::task::yield_now().await; }
     assert_eq!(transport.call_count("Signal"), requests, "advancing the clock starts no old work");
     drop(sink);
 }
