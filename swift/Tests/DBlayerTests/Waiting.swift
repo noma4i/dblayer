@@ -104,41 +104,17 @@ func eventually(
   Issue.record("timed out after \(timeout) waiting for \(what)", sourceLocation: sourceLocation)
 }
 
-func eventuallyAsync(
-  _ what: String = "the condition",
+/// Waits for the first list of the query's value stream that satisfies `predicate`: the stream is the event, a read after it is exact.
+@discardableResult
+func rowsReach<Model: DBModel>(
+  _ what: String,
+  _ query: Query<Model>,
   timeout: Duration = hangGuard,
-  isolation: isolated (any Actor)? = #isolation,
   sourceLocation: SourceLocation = #_sourceLocation,
-  _ condition: () async -> Bool
-) async {
-  let deadline = ContinuousClock.now + timeout
-  while ContinuousClock.now < deadline {
-    let seen = TestPulse.shared.current
-    if await condition() {
-      return
-    }
-    await untilPulse(after: seen, deadline: deadline)
-  }
-  if await condition() {
-    Issue.record("\(what) held only at the deadline: a state change without a pulse", sourceLocation: sourceLocation)
-    return
-  }
-  Issue.record("timed out after \(timeout) waiting for \(what)", sourceLocation: sourceLocation)
-}
-
-/// The wait of a condition that reads: a read that throws fails the test with its error instead of reading as "not yet".
-func eventuallyThrowing(
-  _ what: String = "the condition",
-  timeout: Duration = hangGuard,
-  isolation: isolated (any Actor)? = #isolation,
-  sourceLocation: SourceLocation = #_sourceLocation,
-  _ condition: () async throws -> Bool
-) async throws {
-  var failure: (any Error)?
-  await eventuallyAsync(what, timeout: timeout, sourceLocation: sourceLocation) {
-    do { return try await condition() } catch { failure = error; return true }
-  }
-  if let failure { throw failure }
+  where predicate: @Sendable ([Model]) -> Bool
+) async throws -> Bool {
+  let cursor = Cursor(try await query.live.stream())
+  return await cursor.first(what, timeout: timeout, sourceLocation: sourceLocation, where: predicate) != nil
 }
 
 func consuming<Sequence: AsyncSequence & SendableMetatype>(

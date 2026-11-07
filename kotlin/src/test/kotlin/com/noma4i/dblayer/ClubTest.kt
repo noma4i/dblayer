@@ -549,7 +549,8 @@ class ClubTest {
             hold.release()
             val receipt = withTimeout(5000) { leaving.await() }
             assertEquals("the outcome of leave", refusal, withTimeout(5000) { receipt.outcome() } is OperationOutcome.Rejected)
-            eventually("the club list after the outcome") { (Query("Club", Club).readRow(created.id) != null) == refusal }
+            Club.ids(listOf(created.id)).rowsReach("the club list after the outcome") { it.isNotEmpty() == refusal }
+            assertEquals(refusal, Query("Club", Club).readRow(created.id) != null)
         }
     }
 
@@ -593,7 +594,9 @@ class ClubTest {
             hold.release()
             val receipt = withTimeout(5000) { forwarding.await() }
             assertEquals("$case: the outcome of forward", refusal, withTimeout(5000) { receipt.outcome() } is OperationOutcome.Rejected)
-            eventually("the target thread shows the outcome") { thread.read().map { it.id } == (if (refusal) emptyList() else listOf("fwd-1")) }
+            val expected = if (refusal) emptyList() else listOf("fwd-1")
+            thread.rowsReach("the target thread shows the outcome") { rows -> rows.map { it.id } == expected }
+            assertEquals(expected, thread.read().map { it.id })
         }
     }
 }

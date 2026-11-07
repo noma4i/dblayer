@@ -538,7 +538,9 @@ extension BridgeProbeTests {
     let waiting = Task { try await receipt.outcome() }
     let outcome = try await valueBeforeDeadline(waiting) { hold.release() }
     if case .rejected = outcome { #expect(refusal) } else { #expect(!refusal) }
-    await eventuallyAsync("the club list after the outcome") { ((try? await Club.ids([club.id]).read().map(\.id)) ?? ["?"]) == (refusal ? [club.id] : []) }
+    let expected = refusal ? [club.id] : []
+    try await rowsReach("the club list after the outcome", Club.ids([club.id])) { $0.map(\.id) == expected }
+    #expect(try await Club.ids([club.id]).read().map(\.id) == expected)
   }
 
   /// K12: a forward into the same chat and into another chat leaves the source row unchanged, upserts the answer row in its own chat, and the call returns the answer row.
@@ -587,6 +589,8 @@ extension BridgeProbeTests {
     let waiting = Task { try await receipt.outcome() }
     let result = try await valueBeforeDeadline(waiting) { hold.release() }
     if case .rejected = result { #expect(refusal) } else { #expect(!refusal) }
-    await eventuallyAsync("the target thread shows the outcome") { ((try? await thread.read().map(\.id)) ?? ["?"]) == (refusal ? [] : ["fwd-1"]) }
+    let expected = refusal ? [] : ["fwd-1"]
+    try await rowsReach("the target thread shows the outcome", thread) { $0.map(\.id) == expected }
+    #expect(try await thread.read().map(\.id) == expected)
   }
 }

@@ -108,3 +108,10 @@ suspend fun <M : DBModel> Projected<M>.loaded() {
     }
     throw DbException.Interrupted("the stream ended before its rows were shown")
 }
+
+/** Returns at the first list of the query's value stream that satisfies the condition: the stream is the event, a read after it is exact. Bounded by the hang guard. */
+suspend fun <M : DBModel> Query<M>.rowsReach(what: String, condition: (List<M>) -> Boolean) {
+    awaitWithin(what) { live.flow.first(condition) }
+}
+
+fun <M : DBModel> ModelDecoder<M>.ids(ids: List<String>): Query<M> = idsQuery(modelName, this, ids)

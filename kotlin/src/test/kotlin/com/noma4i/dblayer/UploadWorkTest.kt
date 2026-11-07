@@ -80,8 +80,8 @@ class UploadWorkTest {
             database.setRoundJobs(UploadRounds(org.robolectric.RuntimeEnvironment.getApplication(), database, UploadScheduler { _, _ -> Refusal(RoundRefusal.JOB_REFUSED, "") }))
             fun batch(keys: IntRange) = keys.map { UploadItem(values = buildJsonObject { put("clientKey", "key-$it"); put("size", 2) }, path = source.path) }
             val rows = AccountScope.current().uploadBatch(Asset, batch(0..1), UploadBatchRequest(operation = "create_files"))
-            eventually("every member of the refused batch shows the reason") {
-                rows.items.all { Asset.find(it.optimisticValue.id).current()?.uploads?.values?.singleOrNull()?.error?.message?.contains("while the app was not visible") == true }
+            Asset.ids(rows.items.map { it.optimisticValue.id }).rowsReach("every member of the refused batch shows the reason") { found ->
+                found.size == rows.items.size && found.all { it.uploads.values.singleOrNull()?.error?.message?.contains("while the app was not visible") == true }
             }
         } finally {
             closeForCleanup()

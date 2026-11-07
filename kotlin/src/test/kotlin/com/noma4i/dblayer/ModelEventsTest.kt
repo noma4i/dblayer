@@ -78,7 +78,8 @@ class ModelEventsTest {
             eventually("the signal subscription opens") { transport.calls.size == 1 }
             for (burst in listOf(0 until 200, 200 until 400)) {
                 for (index in burst) transport.emit("ChatActionSignal", screenshot("c$index"))
-                eventually("the notices of the burst are stored") { Query(ChatActivityNotice.modelName, ChatActivityNotice).read().size == burst.last + 1 }
+                Query(ChatActivityNotice.modelName, ChatActivityNotice).rowsReach("the notices of the burst are stored") { it.size == burst.last + 1 }
+                assertEquals(burst.last + 1, Query(ChatActivityNotice.modelName, ChatActivityNotice).read().size)
             }
             gate.complete(Unit)
             var events = 0L
