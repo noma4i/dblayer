@@ -75,7 +75,7 @@ class SwitchableHarnessTest {
             reopen(Config(null, null), modelsJSON, second, operations)
             val reopened = heldUser()
             eventually("the reopened entity shows B") { reopened.value?.name == "B" }
-            assertEquals(1, first.calls.size)
+            assertEquals("the first transport saw: ${first.calls.map { it.operationName }}", 1, first.calls.size)
         } finally {
             closeForCleanup()
         }
