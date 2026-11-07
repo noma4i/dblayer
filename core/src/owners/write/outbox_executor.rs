@@ -11,6 +11,7 @@ use crate::runtime::{Back, EffectRunner, Epoch, EpochStamp};
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum OutboxSignal {
     Started(Epoch),
+    SnapshotRequest(Epoch),
     RestoreClassified(Epoch),
 }
 
@@ -39,6 +40,7 @@ impl EffectRunner<Outbox> for OutboxExecutor {
             OutboxEffect::Reply { reply, answer } => (self.settle)(reply, answer),
             OutboxEffect::Drained(drained) => (self.drained)(drained),
             OutboxEffect::Started { epoch } => (self.signal)(OutboxSignal::Started(epoch)),
+            OutboxEffect::SnapshotRequest { epoch } => (self.signal)(OutboxSignal::SnapshotRequest(epoch)),
             OutboxEffect::RestoreClassified { epoch } => (self.signal)(OutboxSignal::RestoreClassified(epoch)),
             OutboxEffect::Stale { families, revision } => {
                 if let Some(stale) = &self.stale { stale(families, revision); }

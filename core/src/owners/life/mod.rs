@@ -408,10 +408,11 @@ impl Life {
             let executor = OutboxExecutor {
                 settle: Arc::new(move |reply, answer| { settle_wiring.outcomes.settle(crate::runtime::OutcomeId::from_raw(reply), LifeReply::Outbox(answer)); }),
                 drained: Arc::new(move |drained| drained_wiring.to_lifecycle(LifecycleInput::Drained(drained))),
-                signal: Arc::new(move |signal| signal_wiring.to_lifecycle(match signal {
-                    OutboxSignal::Started(epoch) => LifecycleInput::Started { owner: Peer::Outbox, epoch },
-                    OutboxSignal::RestoreClassified(epoch) => LifecycleInput::RestoreClassified { owner: Peer::Outbox, epoch },
-                })),
+                signal: Arc::new(move |signal| match signal {
+                    OutboxSignal::Started(epoch) => signal_wiring.to_lifecycle(LifecycleInput::Started { owner: Peer::Outbox, epoch }),
+                    OutboxSignal::SnapshotRequest(epoch) => signal_wiring.to_network(NetworkInput::SnapshotRequest { owner: Peer::Outbox, epoch }),
+                    OutboxSignal::RestoreClassified(epoch) => signal_wiring.to_lifecycle(LifecycleInput::RestoreClassified { owner: Peer::Outbox, epoch }),
+                }),
                 copy: None,
                 counted: Some(builder.handle()),
                 stale: Some({

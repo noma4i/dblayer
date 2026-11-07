@@ -119,8 +119,10 @@ fn out_restoring_foreign() {
 
 #[test]
 fn out_epoch_started_tells_lifecycle() {
-    let twin = Twin::bare();
-    assert_eq!(told(&twin.started), epoch_started_effects(), "{:?}", twin.started);
+    let mut twin = Twin::bare();
+    let effects = twin.post(OutboxInput::EpochStarted(EpochStarted { epoch: EPOCH, identity: Some(9), generation: 2 }));
+    assert_eq!(told(&effects), epoch_started_effects(), "{effects:?}");
+    assert!(effects.iter().any(|effect| matches!(effect, OutboxEffect::Started { epoch } if *epoch == EPOCH)), "Started names the epoch: {effects:?}");
 }
 
 #[test]
@@ -368,14 +370,6 @@ fn out_prop_restore_answer() {
     effects.extend(twin.post(OutboxInput::Tick(crate::runtime::Time(5))));
     effects.extend(twin.post(OutboxInput::Response { op_id: 7, rows: server_rows(), swaps: Vec::new(), stale: Vec::new(), result: None, missing: Vec::new(), errors: None }));
     assert_eq!((sends(&effects), kinds(&effects)), (0, vec![CommitKind::Land]));
-}
-
-#[test]
-fn out_epoch_started_tells_lifecycle() {
-    let mut twin = Twin::bare();
-    let effects = twin.post(OutboxInput::EpochStarted(EpochStarted { epoch: EPOCH, identity: Some(9), generation: 2 }));
-    let started: Vec<u64> = effects.iter().filter_map(|effect| match effect { OutboxEffect::Started { epoch } => Some(*epoch), _ => None }).collect();
-    assert_eq!((started, effects.len()), (vec![EPOCH], 1), "{effects:?}");
 }
 
 fn freed_row_twin() -> Twin {

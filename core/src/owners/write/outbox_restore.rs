@@ -164,6 +164,7 @@ impl OutboxState {
             OutboxInput::EpochStarted(started) => {
                 self.base_generation = started.generation;
                 fx.push(Effect::Run(OutboxEffect::Started { epoch: started.epoch }));
+                fx.push(Effect::Run(OutboxEffect::SnapshotRequest { epoch: started.epoch }));
             }
             OutboxInput::RegisterOperations { declarations } => self.declarations.extend(declarations),
             OutboxInput::EpochEnded(_) => {
