@@ -14,6 +14,7 @@ mod mailbox;
 mod open_slot;
 mod outcomes;
 mod owner;
+mod held_ids;
 mod published;
 mod retry;
 mod sync;
@@ -35,6 +36,7 @@ pub use det::{Choice, DetScheduler, Lane, TraceEntry};
 pub use flights::{Flights, Running};
 pub use gate::{send_in_cut, send_in_epoch, EpochGate};
 pub use open_slot::{OpenLease, OpenSlot};
+pub use held_ids::HeldIds;
 pub use published::PublishedCell;
 pub use explore::{explore, Limits, Report, Violation};
 #[cfg(test)]

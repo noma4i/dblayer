@@ -114,8 +114,10 @@ pub(crate) struct Wiring {
     open_failed: OnceLock<(String, bool)>,
     /// The answers to `Mutate{reply_to = Calls, req_id}`: the executor of Calls waits for its request under `req_id`.
     pub(crate) calls_answers: Outcomes<AuthorOutcome>,
-    /// The waits of direct calls by author id: a pending that a later `Mutate` of the same owner takes over answers the author of that `Mutate`.
+    /// The waits of direct calls by author id.
     pub(crate) mutations: Outcomes<LifeReply>,
+    /// The request id of the unanswered `Mutate` of a transfer step: the repeat of the step is the same `Mutate` under the same id until an answer settles it.
+    held_requests: crate::runtime::HeldIds<crate::transport::RequestOwner>,
     /// Where the answer of Store to a batch goes, by author: the `install` of Window, Feed, Outbox and Transfer registers its owner here, the last registration of an author answers.
     store_sinks: AppendLog<(BatchAuthor, StoreSink)>,
     network_sinks: AppendLog<(Peer, NetworkSink)>,
@@ -146,12 +148,20 @@ impl Wiring {
             open_failed: OnceLock::new(),
             calls_answers: Outcomes::new(),
             mutations: Outcomes::new(),
+            held_requests: Default::default(),
             store_sinks: AppendLog::default(),
             network_sinks: AppendLog::default(),
             committed_sinks: AppendLog::default(),
             restore_failures: AppendLog::default(),
         }
     }
+
+    /// The id a repeat of the step of `owner` carries: the held one, else a new one that stays held.
+    pub(crate) fn request_of(&self, owner: &crate::transport::RequestOwner) -> RequestId { self.held_requests.id_of(owner, super::contract::next_request_id) }
+
+    pub(crate) fn hold_request(&self, owner: crate::transport::RequestOwner, id: RequestId) { self.held_requests.hold(owner, id); }
+
+    pub(crate) fn settle_request(&self, id: RequestId) { self.held_requests.settle(id); }
 
     /// `None` only before `install` finished: no effect runs by then.
     pub fn addresses(&self) -> Option<Addresses> { self.addresses.get().copied() }
@@ -274,7 +284,10 @@ impl Wiring {
         match author {
             super::session::OUTBOX_AUTHOR => self.to_outbox(OutboxInput::Answered { req_id, outcome }),
             super::session::CALLS_AUTHOR => { self.calls_answers.settle(OutcomeId::from_raw(req_id), outcome); }
-            WAITER_AUTHOR.. => { self.mutations.settle(OutcomeId::from_raw(author), LifeReply::Mutated(outcome)); }
+            WAITER_AUTHOR.. => {
+                if !matches!(outcome, AuthorOutcome::Dropped | AuthorOutcome::Error { pending_retained: true, .. }) { self.settle_request(req_id); }
+                self.mutations.settle(OutcomeId::from_raw(author), LifeReply::Mutated(outcome));
+            }
             _ => self.fault(format!("no author {author} for the answer to request {req_id}")),
         }
     }
@@ -438,7 +451,10 @@ impl Life {
                             LifeSignal::Started(epoch) => signal_wiring.to_lifecycle(LifecycleInput::Started { owner: Peer::Transfer, epoch }),
                             LifeSignal::SnapshotRequest(epoch) => signal_wiring.to_network(NetworkInput::SnapshotRequest { owner: Peer::Transfer, epoch }),
                             LifeSignal::RestoreClassified(epoch) => signal_wiring.to_lifecycle(LifecycleInput::RestoreClassified { owner: Peer::Transfer, epoch }),
-                            LifeSignal::ReleaseStep(req_id) => signal_wiring.to_session(SessionInput::Release { req_id }),
+                            LifeSignal::ReleaseStep(req_id) => {
+                                signal_wiring.settle_request(req_id);
+                                signal_wiring.to_session(SessionInput::Release { req_id });
+                            }
                         }),
                     },
                     { let db = ports.db.clone(); Arc::new(move |sha256: &str| db.blob_cache_lookup(sha256)) },

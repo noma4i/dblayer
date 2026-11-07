@@ -369,8 +369,7 @@ impl Session {
                 self.state = state;
                 self.queue.push_back(Queued::Mutate { author, owner, req_id, epoch, path, body, purpose });
             }
-            (State::PendingHeld { pending }, Input::Mutate { req_id, .. }) if req_id == pending.request_id => self.start_calling(pending, out),
-            (State::PendingHeld { pending }, Input::Mutate { author, owner: Some(owner @ Owner::Transfer { .. }), .. }) if pending.owner.as_ref() == Some(&owner) => self.start_calling(Pending { author: Some(author), ..pending }, out),
+            (State::PendingHeld { pending }, Input::Mutate { author, req_id, .. }) if req_id == pending.request_id => self.start_calling(Pending { author: Some(author), ..pending }, out),
             (State::PendingHeld { pending }, Input::SessionCall { operation, body, reply }) => {
                 self.queue.push_back(Queued::Call { operation, body, reply });
                 self.state = State::PendingHeld { pending };

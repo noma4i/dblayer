@@ -31,7 +31,7 @@ fn sess_open_pending() {
 fn sess_open_pending_transfer_replays_its_pair_for_the_same_step() {
     let owner = crate::transport::RequestOwner::Transfer { operation_id: 4, item_id: "key-1".into(), step: crate::owners::write::upload::UploadStage::Create };
     let mut twin = opened(open(Some((CRED, 6)), Some(stored(Some(owner.clone()), 3, 7)), false, Secret::Present(CRED)));
-    twin.feed(Input::Mutate { author: 9, owner: Some(owner), req_id: 11, epoch: EPOCH, path: OTP.into(), body: "{\"other\":1}".into(), purpose: 0 });
+    twin.feed(Input::Mutate { author: 9, owner: Some(owner), req_id: 3, epoch: EPOCH, path: OTP.into(), body: "{\"other\":1}".into(), purpose: 0 });
     assert!(matches!(&twin.reference.state, RefState::Calling { pending, .. } if pending.author == Some(9) && pending.request_id == 3 && pending.body == "{}"), "the saved pair goes out again for the new asker, the new body does not");
 }
 
