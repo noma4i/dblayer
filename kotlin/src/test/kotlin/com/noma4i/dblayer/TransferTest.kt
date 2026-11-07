@@ -153,7 +153,6 @@ class TransferTest {
                     closeForCleanup()
                     DBlayer.openTesting(transport, modelsJSON, path = path, encrypted = encrypted, credentials = credential, http = server)
                     DBlayer.database.registerOperations(operations)
-                    DBlayer.database.setOnline(true)
                     DBlayer.database.sessionCall("login_link", """{"account":"A"}""")
                     val files = (0..2).map { index -> directory.resolve("$index.jpg").apply { writeText("image-$index") } }
                     val items = files.mapIndexed { index, file -> UploadItem(values = buildJsonObject { put("clientKey", "key-$index"); put("size", 3); put("position", index) }, path = file.path) }
@@ -168,7 +167,7 @@ class TransferTest {
                         closeForCleanup()
                         DBlayer.openTesting(transport, modelsJSON, path = path, encrypted = encrypted, credentials = credential, http = server)
                         DBlayer.database.registerOperations(operations)
-                        eventually("both assets are stored") { Asset.find("a1").current() != null && Asset.find("a2").current() != null }
+                        eventuallyRead("both assets are stored") { Asset.find("a1").current() != null && Asset.find("a2").current() != null }
                         assertEquals(listOf("a1", "a2"), listOf("a1", "a2").filter { Asset.find(it).current() != null })
                     } else {
                         assertEquals(listOf(null, "a1", "a2"), confirmedIds(receipt))
@@ -198,7 +197,7 @@ class TransferTest {
         transport.enqueue("CreateBlob", DbException.Http(422u, "rejected"))
         val sent = AccountScope.current().send(Moment, buildJsonObject { put("text", "video") }, upload = UploadCommand("upload_clip", UploadRequest(source.path)))
         val row = requireNotNull(sent.optimisticValue)
-        eventually("the refused upload failed") { Moment.find(row.id).current()?.sync?.state == SyncState.Failed }
+        eventuallyRead("the refused upload failed") { Moment.find(row.id).current()?.sync?.state == SyncState.Failed }
         return row
     }
 
@@ -217,7 +216,7 @@ class TransferTest {
             val row = refusedUpload(transport, source)
             closeForCleanup()
             val reopened = reopenClocked(modelsJSON, transport, expiryOperations, path = path, startMillis = 1_000_000L + 7L * 24 * 60 * 60 * 1000 + 1)
-            eventually("the expired upload is discarded at the open") { reopened.advance(1); isGone(row) }
+            eventuallyRead("the expired upload is discarded at the open") { reopened.advance(1); isGone(row) }
             closeForCleanup()
         } finally { closeForCleanup(); directory.deleteRecursively() }
     }
@@ -287,7 +286,7 @@ class TransferTest {
             val items = files.mapIndexed { index, file -> UploadItem(values = buildJsonObject { put("clientKey", "key-$index"); put("size", 2); put("position", index) }, path = file.path) }
             val receipt = AccountScope.current().uploadBatch(Asset, items, UploadBatchRequest(operation = "create_files"))
             val rows = receipt.items.map { it.optimisticValue }
-            eventually("the refused file failed") { Asset.find(rows[0].id).current()?.sync?.state == SyncState.Failed }
+            eventuallyRead("the refused file failed") { Asset.find(rows[0].id).current()?.sync?.state == SyncState.Failed }
             assertEquals(SyncState.Failed, requireNotNull(Asset.find(rows[0].id).current()).sync.state)
             rows[0].discard("create_files")
             assertEquals(listOf(null, "a1"), confirmedIds(receipt))
@@ -312,7 +311,7 @@ class TransferTest {
             val items = files.mapIndexed { index, file -> UploadItem(values = buildJsonObject { put("clientKey", "key-$index"); put("size", 3); put("position", index) }, path = file.path) }
             val receipt = AccountScope.current().uploadBatch(Asset, items, UploadBatchRequest(operation = "create_files"))
             val rows = receipt.items.map { it.optimisticValue }
-            eventually("the refused file failed") { Asset.find(rows[0].id).current()?.sync?.state == SyncState.Failed }
+            eventuallyRead("the refused file failed") { Asset.find(rows[0].id).current()?.sync?.state == SyncState.Failed }
             assertEquals(SyncState.Failed, requireNotNull(Asset.find(rows[0].id).current()).sync.state)
             val retried = rows[0].retry("create_files")
             assertTrue(receipt.items[0].receipt.outcome() is OperationOutcome.Rejected)
@@ -369,10 +368,8 @@ class TransferTest {
             val transport = MockTransport()
             val clock = reopenClocked(modelsJSON, transport, expiryOperations)
             val row = refusedUpload(transport, source)
-            DBlayer.database.setOnline(false)
             clock.advance(7L * 24 * 60 * 60 * 1000 + 1)
-            DBlayer.database.setOnline(true)
-            eventually("the expired upload is discarded when the network returns") { clock.advance(1); isGone(row) }
+            eventuallyRead("the expired upload is discarded when the network returns") { clock.advance(1); isGone(row) }
             closeForCleanup()
         } finally { closeForCleanup(); source.delete() }
     }
@@ -394,7 +391,7 @@ class TransferTest {
             reopen(Config(null, null), modelsJSON, transport, operations)
             val sent = AccountScope.current().send(Moment, buildJsonObject { put("text", "video") }, upload = UploadCommand("upload_clip", UploadRequest(source.path)))
             val row = requireNotNull(sent.optimisticValue)
-            eventually("the refused complete fails the upload") { Moment.find(row.id).current()?.sync?.state == SyncState.Failed }
+            eventuallyRead("the refused complete fails the upload") { Moment.find(row.id).current()?.sync?.state == SyncState.Failed }
             val retried = row.retry("upload_clip")
             assertEquals("m1", retried.confirmed().id)
             assertEquals(SyncState.Synced, Moment.find("m1").current()?.sync?.state)
@@ -465,7 +462,7 @@ class TransferTest {
             db.setOnline(false)
             awaitWithin("the held step was dropped offline") { held.dropped() }
             row.discard("upload_clip")
-            eventually("the copy is gone") { copyCount() == 0 }
+            eventuallyRead("the copy is gone") { copyCount() == 0 }
             assertTrue(source.exists())
             held.release()
             closeForCleanup()

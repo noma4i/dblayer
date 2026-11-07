@@ -188,7 +188,7 @@ extension BridgeProbeTests {
     #expect(try await DB.subscriptionCensus().observedQueries == 1)
 
     projected = nil
-    await eventually("the stream left the core") { (try? await DB.subscriptionCensus().observedQueries) == 0 }
+    await eventuallyRead("the stream left the core") { (try? await DB.subscriptionCensus().observedQueries) == 0 }
   }
 
   /// B07: a change of one row decodes one row, and the subscriptions are the readers.
@@ -330,7 +330,7 @@ extension BridgeProbeTests {
     let cursor = Cursor(stream)
     var projection = ListProjection<Moment>()
     var received = 0
-    await eventually("the first settled snapshot") {
+    await eventuallyRead("the first settled snapshot") {
       if projection.state?.settled == true { return true }
       if let value = await cursor.next("the first settled snapshot") { _ = try? projection.apply(value) }
       return projection.state?.settled == true

@@ -19,4 +19,7 @@ suspend fun DBlayer.openTesting(transport: Transport?, modelsJson: String, path:
 }
 
 @DBlayerTestingApi
-fun TestClock.advance(millis: Long) = advance(millis.toULong())
+fun TestClock.advance(millis: Long) {
+    advance(millis.toULong())
+    TestPulse.pulse()
+}

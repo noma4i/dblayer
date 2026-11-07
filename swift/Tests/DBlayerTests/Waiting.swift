@@ -49,13 +49,9 @@ func valueBeforeDeadline<Value: Sendable>(_ task: Task<Value, any Error>, releas
 }
 let hangGuard: Duration = .seconds(20)
 
-/// Returns at the next pulse of the doubles and collectors. With a database open the wait is one round trip through the core: it ends when the owners have handled what was posted before it, and frees the thread meanwhile.
-func untilChange(after seen: Int, deadline: ContinuousClock.Instant) async {
+/// Returns at the next pulse of the tests or at the deadline. It never calls the core: a core that waits for the test must not hold the wait.
+func untilPulse(after seen: Int, deadline: ContinuousClock.Instant) async {
   if TestPulse.shared.current != seen { return }
-  if let database = try? DB.database {
-    _ = try? await database.subscriptionCensus()
-    return
-  }
   await withTaskGroup(of: Void.self) { group in
     group.addTask { await TestPulse.shared.next(after: seen) }
     group.addTask { try? await expiry(ContinuousClock.now.duration(to: deadline)) }
@@ -85,7 +81,30 @@ func startListening(_ listener: NWListener) async throws {
     listener.start(queue: .global())
   }
 }
+/// Waits for a condition on state that the tests observe: a read of an observable projection pulses at its change, the doubles and collectors pulse at theirs.
 func eventually(
+  _ what: String = "the condition",
+  timeout: Duration = hangGuard,
+  isolation: isolated (any Actor)? = #isolation,
+  sourceLocation: SourceLocation = #_sourceLocation,
+  _ condition: () -> Bool
+) async {
+  let deadline = ContinuousClock.now + timeout
+  while ContinuousClock.now < deadline {
+    let seen = TestPulse.shared.current
+    if withObservationTracking({ condition() }, onChange: { TestPulse.shared.pulse() }) {
+      return
+    }
+    await untilPulse(after: seen, deadline: deadline)
+  }
+  if condition() {
+    return
+  }
+  Issue.record("timed out after \(timeout) waiting for \(what)", sourceLocation: sourceLocation)
+}
+
+/// Waits for a condition that reads the core. The state it reads changes by commits that no stream announces to the tests, so each turn is one more read: the wait is the round trip of that read, not a pause or a call that is not the check.
+func eventuallyRead(
   _ what: String = "the condition",
   timeout: Duration = hangGuard,
   isolation: isolated (any Actor)? = #isolation,
@@ -94,11 +113,10 @@ func eventually(
 ) async {
   let deadline = ContinuousClock.now + timeout
   while ContinuousClock.now < deadline {
-    let seen = TestPulse.shared.current
     if await condition() {
       return
     }
-    await untilChange(after: seen, deadline: deadline)
+    await Task.yield()
   }
   if await condition() {
     return

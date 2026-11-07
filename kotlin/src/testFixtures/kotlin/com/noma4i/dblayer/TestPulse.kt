@@ -8,6 +8,10 @@ import kotlinx.coroutines.flow.update
 object TestPulse {
     private val generation = MutableStateFlow(0)
 
+    init {
+        StreamProbe.delivered = { pulse() }
+    }
+
     val current: Int get() = generation.value
 
     fun pulse() = generation.update { it + 1 }

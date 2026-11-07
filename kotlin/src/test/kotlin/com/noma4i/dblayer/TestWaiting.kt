@@ -26,6 +26,14 @@ suspend fun eventually(what: String, timeoutMillis: Long = HANG_GUARD_MILLIS, de
         untilChange(seen, remainingMillis)
     }
 }
+/** Waits for a condition that reads the core. The state it reads changes by commits that no stream announces to the tests, so each turn is one more read: the wait is the round trip of that read. */
+suspend fun eventuallyRead(what: String, timeoutMillis: Long = HANG_GUARD_MILLIS, detail: () -> String = { "" }, condition: suspend () -> Boolean) {
+    val deadline = System.nanoTime() + timeoutMillis * 1_000_000
+    while (!condition()) {
+        if (System.nanoTime() > deadline) throw AssertionError("timed out after $timeoutMillis ms waiting for $what\n${detail()}")
+        yield()
+    }
+}
 /** The one poller left: state of an Android shadow (network callbacks, services) has no change event. Each turn is a coroutine yield, bounded by the hang guard. */
 suspend fun eventuallyOs(what: String, condition: () -> Boolean) {
     val deadline = System.nanoTime() + HANG_GUARD_MILLIS * 1_000_000
@@ -34,10 +42,9 @@ suspend fun eventuallyOs(what: String, condition: () -> Boolean) {
         yield()
     }
 }
-/** Returns at the next pulse of the doubles. With a database open the wait is one round trip through the core: it ends when the owners have handled what was posted before it, and frees the thread meanwhile. */
+/** Returns at the next pulse of the doubles and of the screen models, or at the deadline. It never calls the core: a core that waits for the test must not hold the wait. */
 suspend fun untilChange(seen: Int, remainingMillis: Long) {
     if (TestPulse.current != seen) return
-    if (runCatching { DBlayer.subscriptionCensus() }.isSuccess) return
     withTimeoutOrNull(remainingMillis) { TestPulse.next(seen) }
 }
 suspend fun fencedUntil(what: String, fence: suspend () -> Unit, ready: () -> Boolean) {

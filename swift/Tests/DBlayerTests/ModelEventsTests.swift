@@ -49,11 +49,11 @@ extension BridgeProbeTests {
     await eventually("the signal subscription opens") { transport.calls.count == 1 }
     for burst in [0..<200, 200..<400] {
       for index in burst { try transport.emit("ChatActionSignal", json: Self.screenshot("c\(index)")) }
-      await eventually("the notices of the burst are stored") { (try? await Query<ChatActivityNotice>().read().count) == burst.upperBound }
+      await eventuallyRead("the notices of the burst are stored") { (try? await Query<ChatActivityNotice>().read().count) == burst.upperBound }
     }
     var events: UInt64 = 0
     var lost: [(UInt64, UInt64)] = []
-    await eventually("the burst is accounted") {
+    await eventuallyRead("the burst is accounted") {
       if events + lost.reduce(0, { $0 + $1.1 - $1.0 + 1 }) >= 400 { return true }
       switch await collector.next("the next item of the burst") {
       case .event?: events += 1

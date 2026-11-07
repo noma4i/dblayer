@@ -229,7 +229,7 @@ class ValueBridgeTest {
             assertEquals(1uL, DBlayer.subscriptionCensus().observedQueries)
 
             projected.close()
-            eventually("the stream left the core") { DBlayer.subscriptionCensus().observedQueries == 0uL }
+            eventuallyRead("the stream left the core") { DBlayer.subscriptionCensus().observedQueries == 0uL }
         } finally {
             screen.cancel()
             closeForCleanup()
@@ -364,7 +364,7 @@ class ValueBridgeTest {
             val cancelled = CoroutineScope(SupervisorJob())
             cancelled.cancel()
             Projected(scope.stream(User.profile), User, cancelled)
-            eventually("the stream left the core") { DBlayer.subscriptionCensus().subscriptions == 0uL }
+            eventuallyRead("the stream left the core") { DBlayer.subscriptionCensus().subscriptions == 0uL }
         } finally {
             closeForCleanup()
         }
@@ -409,6 +409,7 @@ class ValueBridgeTest {
                     received.incrementAndGet()
                     projection = projection.apply(value, Moment) ?: projection
                     rowCount.set(projection.rows.size)
+                    TestPulse.pulse()
                     if (projection.state?.settled == true) settled.complete(Unit)
                 }
             }

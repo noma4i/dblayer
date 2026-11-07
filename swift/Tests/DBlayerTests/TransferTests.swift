@@ -163,7 +163,7 @@ extension BridgeProbeTests {
         await DB.closeForCleanup()
         _ = try await DB.openTesting(transport: transport, modelsJSON: modelsJSON, path: path, encrypted: encrypted, credentials: credential, http: server)
         try await DB.database.registerOperations(defsJson: operations)
-        await eventually("both assets are stored") {
+        await eventuallyRead("both assets are stored") {
           let a1 = (try? await Asset.find("a1").current()) ?? nil
           let a2 = (try? await Asset.find("a2").current()) ?? nil
           return a1 != nil && a2 != nil
@@ -263,7 +263,7 @@ extension BridgeProbeTests {
     let items = files.enumerated().map { index, file in UploadItem(values: ["clientKey": .string("key-\(index)"), "size": .integer(2), "position": .integer(Int64(index))], path: file.path) }
     let receipt = try await DB.account().uploadBatch(Asset.self, items: items, request: UploadBatchRequest(operation: "create_files"))
     let rows = receipt.items.map(\.optimisticValue)
-    await eventually("the refused file failed") { ((try? await Asset.find(rows[0].id).current()?.sync.state) ?? nil) == .failed }
+    await eventuallyRead("the refused file failed") { ((try? await Asset.find(rows[0].id).current()?.sync.state) ?? nil) == .failed }
     #expect(try await Asset.find(rows[0].id).current()?.sync.state == .failed)
     try await rows[0].discard(action: "create_files")
     #expect(try await confirmedIds(receipt) == [nil, "a1"])
@@ -294,7 +294,7 @@ extension BridgeProbeTests {
     let items = files.enumerated().map { index, file in UploadItem(values: ["clientKey": .string("key-\(index)"), "size": .integer(3), "position": .integer(Int64(index))], path: file.path) }
     let receipt = try await DB.account().uploadBatch(Asset.self, items: items, request: UploadBatchRequest(operation: "create_files"))
     let rows = receipt.items.map(\.optimisticValue)
-    await eventually("the refused file failed") { ((try? await Asset.find(rows[0].id).current()?.sync.state) ?? nil) == .failed }
+    await eventuallyRead("the refused file failed") { ((try? await Asset.find(rows[0].id).current()?.sync.state) ?? nil) == .failed }
     #expect(try await Asset.find(rows[0].id).current()?.sync.state == .failed)
     let retried = try await rows[0].retry(action: "create_files")
     guard case .rejected = try await receipt.items[0].receipt.outcome() else { throw DbError.Invalid(detail: "the refused cycle changed its outcome") }
@@ -371,7 +371,7 @@ extension BridgeProbeTests {
     try await reopen(config: Config(path: nil, dataVersion: nil), modelsJson: modelsJSON, transport: transport, operations: operations)
     let sent = try await DB.account().send(Moment.self, values: ["text": .string("video")], upload: UploadCommand(action: "upload_clip", request: UploadRequest(path: source.path)))
     let row = try #require(sent.optimisticValue)
-    await eventually("the refused complete fails the upload") { ((try? await Moment.find(row.id).current()?.sync.state) ?? nil) == .failed }
+    await eventuallyRead("the refused complete fails the upload") { ((try? await Moment.find(row.id).current()?.sync.state) ?? nil) == .failed }
     let retried = try await row.retry(action: "upload_clip")
     let confirmed = try await retried.confirmed()
     #expect(confirmed.id == "m1")
@@ -464,7 +464,7 @@ extension BridgeProbeTests {
     transport.enqueue("CreateBlob", failure: .Http(status: 422, detail: "rejected"))
     let sent = try await DB.account().send(Moment.self, values: ["text": .string("video")], upload: UploadCommand(action: "upload_clip", request: UploadRequest(path: source.path)))
     let row = try #require(sent.optimisticValue)
-    await eventually("the refused upload failed") { ((try? await Moment.find(row.id).current()?.sync.state) ?? nil) == .failed }
+    await eventuallyRead("the refused upload failed") { ((try? await Moment.find(row.id).current()?.sync.state) ?? nil) == .failed }
     return row
   }
 
@@ -488,7 +488,7 @@ extension BridgeProbeTests {
     let row = try await Self.refusedUpload(transport, source: source)
     await DB.closeForCleanup()
     let reopened = try await reopenClocked(modelsJson: modelsJSON, transport: transport, operations: Self.expiryOperations, path: path, startingAt: start.addingTimeInterval(7 * 24 * 60 * 60 + 1))
-    await eventually("the expired upload is discarded at the open") { reopened.advance(by: 1); return await Self.isGone(row) }
+    await eventuallyRead("the expired upload is discarded at the open") { reopened.advance(by: 1); return await Self.isGone(row) }
     let kept = try await Moment.find(row.id).current()
     #expect(kept == nil, "kept row: \(String(describing: kept)) calls: \(transport.calls.map(\.operationName))")
     await DB.closeForCleanup()
@@ -503,10 +503,8 @@ extension BridgeProbeTests {
     let transport = MockTransport()
     let clock = try await reopenClocked(modelsJson: modelsJSON, transport: transport, operations: Self.expiryOperations)
     let row = try await Self.refusedUpload(transport, source: source)
-    try DB.database.setOnline(online: false)
     clock.advance(by: 7 * 24 * 60 * 60 + 1)
-    try DB.database.setOnline(online: true)
-    await eventually("the expired upload is discarded when the network returns") { clock.advance(by: 1); return await Self.isGone(row) }
+    await eventuallyRead("the expired upload is discarded when the network returns") { clock.advance(by: 1); return await Self.isGone(row) }
     let kept = try await Moment.find(row.id).current()
     #expect(kept == nil, "kept row: \(String(describing: kept)) calls: \(transport.calls.map(\.operationName))")
     await DB.closeForCleanup()

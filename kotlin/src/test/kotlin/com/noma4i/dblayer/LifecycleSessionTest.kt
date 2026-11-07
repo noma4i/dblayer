@@ -46,6 +46,7 @@ private class RowHistory {
             projection.apply(value, User)?.let {
                 projection = it
                 states.add(it.rows.map { row -> row.name })
+                TestPulse.pulse()
             }
         }
     }

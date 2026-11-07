@@ -61,7 +61,7 @@ class BridgeProbeTest {
         DBlayer.database.registerOperations("""[{"name":"MomentsFeed","document":"query MomentsFeed(${'$'}first: Int, ${'$'}after: String) { feed(first: ${'$'}first, after: ${'$'}after) { nodes { id uuid text likedByMe media createdAt } pageInfo { hasNextPage endCursor } } }"},{"name":"UpdateMoment","document":"mutation UpdateMoment(${'$'}id: ID!, ${'$'}text: String) { updateMoment(id: ${'$'}id, text: ${'$'}text) { id uuid text likedByMe media createdAt } }"},{"name":"DeleteMoment","document":"mutation DeleteMoment(${'$'}id: ID!) { deleteMoment(id: ${'$'}id) { id } }"}]""")
         val scope = CoroutineScope(SupervisorJob())
         val deliveries = java.util.concurrent.CopyOnWriteArrayList<List<String?>>()
-        scope.launch { Moment.recent.live.flow.collect { rows -> deliveries.add(rows.map { it.text }) } }
+        scope.launch { Moment.recent.live.flow.collect { rows -> deliveries.add(rows.map { it.text }); TestPulse.pulse() } }
         try {
             eventually("the open list shows its first value") { deliveries.isNotEmpty() }
             Moment.feed.load()
@@ -85,7 +85,7 @@ class BridgeProbeTest {
         DBlayer.database.registerOperations("""[{"name":"MomentsFeed","document":"query MomentsFeed(${'$'}first: Int, ${'$'}after: String) { feed(first: ${'$'}first, after: ${'$'}after) { nodes { id uuid text likedByMe media createdAt } pageInfo { hasNextPage endCursor } } }"},{"name":"UpdateMoment","document":"mutation UpdateMoment(${'$'}id: ID!, ${'$'}text: String) { updateMoment(id: ${'$'}id, text: ${'$'}text) { id uuid text likedByMe media createdAt } }"},{"name":"DeleteMoment","document":"mutation DeleteMoment(${'$'}id: ID!) { deleteMoment(id: ${'$'}id) { id } }"}]""")
         val scope = CoroutineScope(SupervisorJob())
         val deliveries = java.util.concurrent.CopyOnWriteArrayList<List<String?>>()
-        scope.launch { Moment.recent.live.flow.collect { rows -> deliveries.add(rows.map { it.text }) } }
+        scope.launch { Moment.recent.live.flow.collect { rows -> deliveries.add(rows.map { it.text }); TestPulse.pulse() } }
         try {
             eventually("the open list shows its first value") { deliveries.isNotEmpty() }
             Moment.feed.load()

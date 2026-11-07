@@ -88,6 +88,11 @@ class ListProjection<Model : DBModel> private constructor(
     fun apply(value: ReadValue, decoder: ModelDecoder<Model>): ListProjection<Model>? = value.listDelivery(decoder)?.let(::apply)
 }
 
+/** Called after a screen model took a delivery. The test fixtures set it to wake their waits. */
+object StreamProbe {
+    @Volatile var delivered: (() -> Unit)? = null
+}
+
 /** The screen model of a stream of rows: a StateFlow over a projection. It reads the stream until its scope completes, and the completion of the reading job ends the stream in the core, also when the scope was cancelled before the first delivery. Rows are decoded on [Dispatchers.Default], the collecting scope only publishes them. */
 class Projected<Model : DBModel>(val stream: ValueStream, decoder: ModelDecoder<Model>, scope: CoroutineScope) {
     private val held = MutableStateFlow(ListProjection<Model>())
@@ -100,7 +105,10 @@ class Projected<Model : DBModel>(val stream: ValueStream, decoder: ModelDecoder<
                 stream.resync()
                 null
             }
-        }.flowOn(Dispatchers.Default).collect { held.value = held.value.apply(it) }
+        }.flowOn(Dispatchers.Default).collect {
+            held.value = held.value.apply(it)
+            StreamProbe.delivered?.invoke()
+        }
     }.also { job -> job.invokeOnCompletion { stream.close() } }
 
     val value: Model? get() = held.value.rows.firstOrNull()
@@ -136,6 +144,7 @@ class ProjectedCount(val stream: ValueStream, scope: CoroutineScope) {
                 is ReadValue.Ended -> over.value = value.cause
                 else -> {}
             }
+            StreamProbe.delivered?.invoke()
         }
     }.also { it.invokeOnCompletion { stream.close() } }
 

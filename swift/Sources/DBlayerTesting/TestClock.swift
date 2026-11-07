@@ -2,7 +2,10 @@
 import Foundation
 
 extension TestClock {
-  public func advance(by interval: TimeInterval) { advance(millis: UInt64(interval * 1000)) }
+  public func advance(by interval: TimeInterval) {
+    advance(millis: UInt64(interval * 1000))
+    TestPulse.shared.pulse()
+  }
 }
 
 private let opener = OpenDatabase()
