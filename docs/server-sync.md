@@ -68,7 +68,7 @@ object ArchiveGroupMutation : GraphQLOperation {
 }
 ```
 
-The transport is an interface with four calls: `appHeaders`, `send`, `openCable` and `put`. The core builds the URL, the headers (yours, its own and the `User-Agent`), the GraphQL body and the timeouts (connect 10 seconds, request 30 seconds) and classifies every raw outcome. Your app gets HTTP and WebSocket implementations for each platform (`UrlSessionTransport`, `OkHttpTransport`). Tests use a mock transport. A REST transport implements the same interface, see [your own transport](cable-protocol.md#your-own-transport).
+The transport is an interface with four calls: `appHeaders`, `send`, `openCable` and `put`. The core builds the URL, the headers (yours, its own and the `User-Agent`), the GraphQL body and the timeouts (connect 10 seconds, request 30 seconds) and classifies every raw outcome. On Apple platforms the applied bound is the idle timeout of the request: URLSession gives no connect bound and no total bound per request. Kotlin applies connect, read, write and call timeouts. Your app gets HTTP and WebSocket implementations for each platform (`UrlSessionTransport`, `OkHttpTransport`). Tests use a mock transport. A REST transport implements the same interface, see [your own transport](cable-protocol.md#your-own-transport).
 
 No HTTP call of the library follows a redirect: a `3xx` answer to a query, an encrypted request or a file upload is reported with its status (`Http` for a query) and the server sees one request.
 

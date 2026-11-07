@@ -57,7 +57,7 @@ The GraphQL address of a database without an encrypted session is `endpoint` of 
 | `NSURLErrorDomain` -1001, `java.net.SocketTimeoutException`, `java.io.InterruptedIOException` | A timeout of the call expired |
 | anything else, `url` | Any other failure of the connection |
 
-The core sets the timeouts and the platform applies them. URLSession has no connect timeout: Swift sets `requestMs` as the idle bound and as the total bound of an HTTP request and ignores `connectMs`. Kotlin sets `connectMs` as the connect timeout and `requestMs` as the idle and total bound.
+The core sets the timeouts and the platform applies them. On Apple platforms the applied bound is the idle timeout of the request (`URLRequest.timeoutInterval = requestMs`): there is no connect bound and no total bound. Kotlin applies all four: connect, read, write and call.
 
 `CableOutcome.failed` carries `handshakeStatus`, the HTTP status of a refused upgrade when the server answered. The core turns a status other than 101 into an `Http` error.
 
