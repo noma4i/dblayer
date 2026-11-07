@@ -78,6 +78,8 @@ fn stored_info(connection: &Connection, key: &SyncKey, row: &Row<'_>, first: usi
     Ok(info)
 }
 
+fn unsigned(value: i64, column: usize) -> rusqlite::Result<u64> { u64::try_from(value).map_err(|_| rusqlite::Error::IntegralValueOutOfRange(column, value)) }
+
 type Uploads = std::collections::BTreeMap<String, crate::owners::write::upload::UploadInfo>;
 
 fn read_uploads(connection: &Connection, model: &str, ids: &[String]) -> rusqlite::Result<HashMap<String, (Uploads, BTreeSet<String>)>> {
@@ -90,9 +92,9 @@ fn read_uploads(connection: &Connection, model: &str, ids: &[String]) -> rusqlit
         while let Some(row) = rows.next()? {
             if let Some(mut info) = info_at(row, 2)? {
                 let (id, action): (String, String) = (row.get(0)?, row.get(1)?);
-                let size = row.get::<_, Option<i64>>(10)?.and_then(|size| u64::try_from(size).ok()).unwrap_or(0);
+                let size = row.get::<_, Option<i64>>(10)?.map_or(Ok(0), |size| unsigned(size, 10))?;
                 if size > 0 {
-                    info.copy_file = Some(crate::owners::write::transfer::file_id(u64::try_from(row.get::<_, i64>(11)?).unwrap_or_default()));
+                    info.copy_file = Some(crate::owners::write::transfer::file_id(unsigned(row.get(11)?, 11)?));
                 }
                 if let (None, Some(reason)) = (&info.error, row.get::<_, Option<String>>(13)?) {
                     info.error = Some(crate::value::sync::OperationFailure::new(crate::value::sync::FailureKind::Refused, reason));

@@ -19,6 +19,16 @@ fn unknown_stored_sync_state_is_a_read_error() {
     assert!(error.to_string().contains("unknown stored sync state broken"), "{error}");
 }
 
+#[test]
+fn a_stored_upload_with_a_negative_size_or_transfer_is_a_read_error() {
+    for (size, transfer, column) in [(-1, "7", "size"), (40, "-3", "transfer_id")] {
+        let connection = database();
+        connection.execute_batch(&format!("INSERT INTO sync_upload (model, row_id, action, status, stage, sent, total, attempts, seq, size, transfer_id) VALUES ('moments', 'm1', 'photo', 'uploading', 'part', 2, 5, 1, 7, {size}, {transfer})")).unwrap();
+        let error = read_sync(&connection, "moments", &["m1".into()]).unwrap_err();
+        assert!(matches!(error, rusqlite::Error::IntegralValueOutOfRange(..) | rusqlite::Error::FromSqlConversionFailure(..)), "{column}: {error}");
+    }
+}
+
 fn insert(connection: &Connection, action_key: &str, status: &str, started: i64, row_ids: &str, input: &str) -> i64 {
     connection
         .execute("INSERT INTO op (action_key, status, transport_started, created_at, since) VALUES (?1, ?2, ?3, 5, 5)", rusqlite::params![action_key, status, started])

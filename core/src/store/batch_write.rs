@@ -60,7 +60,7 @@ impl Store {
                 for id in discarded {
                     if let Err(error) = files.discard(std::slice::from_ref(&id)) { faults.push(format!("remove file {id}: {error}")); }
                 }
-                let revision = result.result().revision.unwrap_or_default();
+                let revision = result.result().revision.ok_or_else(|| StoreError::Invalid("a committed batch has no revision".into()))?;
                 let rows = Some(super::changed_log::table_rows(result.result()));
                 result.publish();
                 Ok(BatchWritten { revision: u64::try_from(revision).map_err(|_| StoreError::Constraint("negative revision".into()))?, position, observed, faults, expiring, removed_memory, stale_parents, removed_operations, resets, rows })
