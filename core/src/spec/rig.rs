@@ -282,11 +282,12 @@ impl Drop for Rig {
         let db = self.db.clone();
         let closer = std::thread::spawn(move || {
             let runtime = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
-            let _ = runtime.block_on(crate::test_wait::within(db.close_database()));
-            let _ = done.send(());
+            runtime.block_on(crate::test_wait::within(db.close_database()))
         });
-        if !std::thread::panicking() {
-            crate::test_wait::recv_within(&finished);
+        if std::thread::panicking() {
+            let _ = closer.join();
+        } else {
+            let _ = crate::test_wait::join_within(closer);
         }
     }
 }
