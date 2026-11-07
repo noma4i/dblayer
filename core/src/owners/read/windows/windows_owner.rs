@@ -419,6 +419,13 @@ impl StateOwner for Windows {
             WindowsInput::OfflineRefused { key, message } => Self::on(state, &key, Ev::OfflineRefused { message }, &mut out),
             WindowsInput::InterestMinus { key, id } => Self::on(state, &key, Ev::InterestMinus { id }, &mut out),
             WindowsInput::Load { key, id, goal, force, store_revision, now } => Self::load(state, key, (id, now), (goal, force, store_revision), &mut out),
+            WindowsInput::LoadNoWait { key, id, verb, .. } if state.online != Some(true) => {
+                let WindowKind::Relation { relation, .. } = key.kind() else { return out };
+                let message = format!("{}.{relation} {verb} needs the network", key.model);
+                out = Self::step(state, WindowsInput::OfflineRefused { key: key.clone(), message: message.clone() });
+                out.push(Effect::Run(WindowsEffect::Window { key, effect: WindowEffect::Outcome { id, outcome: WindowOutcome::Offline { message } } }));
+            }
+            WindowsInput::LoadNoWait { key, id, goal, force, store_revision, now, .. } => Self::load(state, key, (id, now), (goal, force, store_revision), &mut out),
             WindowsInput::Pinned { request_id, base_revision } => {
                 if state.windows.values().any(|window| window.owns(request_id)) {
                     Self::by_request(state, request_id, Ev::Pinned { request: request_id, base_revision }, &mut out);

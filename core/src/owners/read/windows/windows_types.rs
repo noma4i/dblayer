@@ -135,6 +135,7 @@ pub enum WindowOutcome {
     Loaded { revision: i64, has_more: bool, fetched: bool },
     Failed { error: String, source: Option<crate::transport::TransportError> },
     PageLimit,
+    Offline { message: String },
     Interrupted,
 }
 
@@ -227,6 +228,8 @@ pub enum WindowsInput {
     InterestMinus { key: WindowKey, id: InterestId },
     /// `begin_load`, `begin_load_all`, `refresh`, `load_more`, `node`, `nodes`. `store_revision` is the Published revision of the Store at the entry.
     Load { key: WindowKey, id: InterestId, goal: Goal, force: bool, store_revision: i64, now: i64 },
+    /// `refresh`, `load_more`, `node(force)`: a `Load` that does not wait for the network. Without `online = Some(true)` the owner answers `Offline` and applies `OfflineRefused`.
+    LoadNoWait { key: WindowKey, id: InterestId, goal: Goal, force: bool, store_revision: i64, now: i64, verb: &'static str },
     Pinned { request_id: RequestId, base_revision: u64 },
     Response { request: RequestId, attempt: u32, page: AnswerPage, now: i64 },
     Failure { request: RequestId, attempt: u32, error: RequestError },

@@ -173,6 +173,19 @@ async fn a_load_without_the_network_waits_and_asks_when_the_network_returns_whil
     assert_eq!(transport.requests(), 1);
 }
 
+/// net_prop_offline_decided_by_owner: `Err(Offline)` is the answer of Windows to its own `online`, `ffi` has no precheck.
+#[tokio::test(flavor = "multi_thread")]
+async fn net_prop_offline_decided_by_owner() {
+    let (db, transport) = open(false).await;
+    db.set_online(false).unwrap();
+    assert!(matches!(refresh(&db).await, Err(DbError::Offline { detail }) if detail == "Moment.feed refresh needs the network"));
+    assert!(matches!(more(&db).await, Err(DbError::Offline { detail }) if detail == "Moment.feed load more needs the network"));
+    assert_eq!(transport.requests(), 0, "no request leaves while the owner is offline");
+    db.set_online(true).unwrap();
+    tokio::time::timeout(LIMIT, refresh(&db)).await.expect("the refresh ends within 5 s").unwrap();
+    assert_eq!(transport.requests(), 1, "the owner took the call once it was online");
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn a_panic_in_the_window_transport_ends_the_refresh_with_an_error_and_closes_the_database() {
     let (db, transport) = open(false).await;

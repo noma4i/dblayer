@@ -409,11 +409,6 @@ impl Database {
     pub(super) fn remote(&self) -> Result<(), DbError> {
         if self.remote { Ok(()) } else { Err(DbError::NoSession { detail: "transport is required for server operations".into() }) }
     }
-    /// A call that always goes to the server fails at once while the network is away. It does not wait for the network and does not retry.
-    pub(super) fn require_online(&self, what: &str) -> Result<(), DbError> {
-        if self.db.connectivity().is_online() { return Ok(()); }
-        Err(DbError::Offline { detail: format!("{what} needs the network") })
-    }
 
     pub(super) fn parsed_query(&self, spec: &super::QuerySpec) -> Result<crate::store::ParsedQuery, DbError> {
         let relation = spec.relation.as_deref().map(|name| parse_json::<serde_json::Map<String, serde_json::Value>>(&spec.params_json).map(|params| (name, params))).transpose()?;

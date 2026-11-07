@@ -1,4 +1,4 @@
-//! What the Store knows about the open database besides the SQL: the models, the files, the connectivity and the notice of the commits.
+//! What the Store knows about the open database besides the SQL: the models, the files and the notice of the commits.
 
 use std::collections::{BTreeMap, HashSet};
 use std::path::Path;
@@ -66,7 +66,6 @@ pub(crate) struct Context {
     pub pointer_guards: BTreeMap<String, Vec<AssociationSpec>>,
     pub files: Arc<FileDirectories>,
     pub opened: OpenReport,
-    pub connectivity: Arc<crate::transport::Connectivity>,
     pub replaced: Arc<ReplacedLog>,
     pub changed: Arc<ChangedLog>,
     pub commits: Arc<CommitSink>,
@@ -80,7 +79,6 @@ impl Context {
             pointer_guards: BTreeMap::new(),
             files: Arc::new(FileDirectories::scratch()),
             opened: OpenReport { recreated: None, changed_models: Vec::new(), reset_models: Vec::new(), dropped: Vec::new() },
-            connectivity: crate::transport::Connectivity::new(true),
             replaced: Arc::default(),
             changed: Arc::default(),
             commits: Arc::default(),
@@ -143,7 +141,6 @@ impl Store {
             specs: models.into_iter().map(|spec| (spec.key.as_str().to_string(), spec)).collect(),
             files: Arc::new(path.map_or_else(FileDirectories::scratch, FileDirectories::beside)),
             opened,
-            connectivity: crate::transport::Connectivity::new(true),
             replaced,
             changed,
             commits,
@@ -167,8 +164,6 @@ impl Store {
     pub(crate) fn observers(&self) -> &OnceLock<Arc<dyn crate::owners::life::ObserverPort>> { &self.context.observers }
 
     pub fn open_report(&self) -> &OpenReport { &self.context.opened }
-
-    pub fn connectivity(&self) -> Arc<crate::transport::Connectivity> { self.context.connectivity.clone() }
 
     pub(crate) fn on_commit(&self, sink: impl Fn(CommittedBroadcast) + Send + Sync + 'static) -> Result<(), StoreError> {
         self.context.commits.0.set(Arc::new(sink)).map_err(|_| StoreError::AlreadyAttached("the commit sink"))

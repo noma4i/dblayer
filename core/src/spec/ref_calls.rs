@@ -35,6 +35,8 @@ pub enum Input {
     TransportError { call_id: CallId, error: Fail },
     Dropped { call_id: CallId },
     Online(bool),
+    Snapshot(bool),
+    EpochStarted(u64),
     EpochEnded,
     Closing,
 }
@@ -117,7 +119,14 @@ impl Calls {
                 self.done(call_id, Err(Fail::Dropped), &mut out);
             }
             Input::Response { .. } | Input::TransportError { .. } | Input::Dropped { .. } => {}
-            Input::Online(online) => self.online = Some(online),
+            Input::Online(online) if self.online.is_some() => self.online = Some(online),
+            Input::Online(_) => {}
+            Input::Snapshot(online) => self.online = Some(online),
+            Input::EpochStarted(epoch) => {
+                self.epoch = epoch;
+                self.online = None;
+                self.calls.clear();
+            }
             Input::EpochEnded => self.interrupt(&mut out),
             Input::Closing => {
                 self.interrupt(&mut out);

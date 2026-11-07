@@ -167,13 +167,17 @@ impl Addresses {
 
 impl super::Life {
     /// A platform call that waits for a load of `key`: the waiter is the id of the call in `Windows`.
-    pub fn load(&self, epoch: Epoch, key: WindowKey, goal: Goal, force: bool, store_revision: i64) -> (Waiter<LifeReply>, u64) {
+    pub fn load(&self, epoch: Epoch, key: WindowKey, goal: Goal, force: bool, store_revision: i64, no_wait: Option<&'static str>) -> (Waiter<LifeReply>, u64) {
         let waiter = self.wiring.outcomes.register(epoch);
         let id = waiter.id().raw() | CALL;
         if self.is_shut() {
             self.wiring.outcomes.settle(waiter.id(), LifeReply::Closed);
         } else {
-            self.wiring.to_windows_in(epoch, WindowsInput::Load { key, id, goal, force, store_revision, now: (self.wiring.now)() });
+            let now = (self.wiring.now)();
+            self.wiring.to_windows_in(epoch, match no_wait {
+                Some(verb) => WindowsInput::LoadNoWait { key, id, goal, force, store_revision, now, verb },
+                None => WindowsInput::Load { key, id, goal, force, store_revision, now },
+            });
         }
         (waiter, id)
     }
@@ -184,9 +188,6 @@ impl super::Life {
     /// The platform calls that wait for an outcome of `Windows` now.
     #[cfg(test)]
     pub fn waiting_calls(&self) -> usize { self.wiring.outcomes.waiting() }
-
-    /// A call of the platform was refused at once because the network is away: the window shows the error.
-    pub fn offline_refused(&self, key: WindowKey, message: String) { self.wiring.to_windows(WindowsInput::OfflineRefused { key, message }); }
 
     /// The caller of `id` gives up: the window decides whether the request goes on for the others.
     pub fn leave_load(&self, key: WindowKey, id: u64) { self.wiring.to_windows(WindowsInput::InterestMinus { key, id }); }

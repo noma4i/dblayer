@@ -80,7 +80,10 @@ pub enum CallsInput {
     Response { call_id: CallId, body: Option<String>, errors: Vec<String>, extensions: Option<crate::transport::GraphqlExtensions> },
     TransportError { call_id: CallId, error: CallError },
     Dropped { call_id: CallId },
+    /// The broadcast of `Network`: it changes `online` only after the addressed `Snapshot` of the epoch.
     Online(Online),
+    /// The addressed answer of `Network` to `SnapshotRequest{Calls}`.
+    Snapshot(Online),
     ActivateEpoch(Epoch),
     EpochEnded,
     Closing,
@@ -164,8 +167,10 @@ impl StateOwner for Calls {
                 state.declared = operations.into_iter().collect();
                 state.generation += 1;
             }
-            CallsInput::Online(Online(online)) => state.online = Some(online),
-            CallsInput::ActivateEpoch(epoch) => { state.epoch = epoch; state.calls.clear(); }
+            CallsInput::Online(Online(online)) if state.online.is_some() => state.online = Some(online),
+            CallsInput::Online(_) => {}
+            CallsInput::Snapshot(Online(online)) => state.online = Some(online),
+            CallsInput::ActivateEpoch(epoch) => { state.epoch = epoch; state.online = None; state.calls.clear(); }
             CallsInput::EpochEnded => state.interrupt(&mut fx),
             CallsInput::Closing => {
                 state.interrupt(&mut fx);

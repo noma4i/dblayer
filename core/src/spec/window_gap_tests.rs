@@ -109,7 +109,7 @@ fn class_of(failure: Failure) -> ErrorClass {
 fn result_of(outcome: &WindowOutcome) -> Result3 {
     match outcome {
         WindowOutcome::Loaded { .. } => Result3::Loaded,
-        WindowOutcome::Failed { .. } => Result3::Failed,
+        WindowOutcome::Failed { .. } | WindowOutcome::Offline { .. } => Result3::Failed,
         WindowOutcome::PageLimit => Result3::PageLimit,
         WindowOutcome::Interrupted => Result3::Interrupted,
     }

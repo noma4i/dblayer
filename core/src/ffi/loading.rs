@@ -119,8 +119,7 @@ impl Database {
 
     pub async fn refresh(&self, epoch: u64, model: String, relation: Option<String>, params_json: String) -> Result<(), DbError> {
         let relation = relation_named(&model, relation)?;
-        self.refuse_offline(&model, &relation, &params_json, "refresh")?;
-        let call = self.start_load(epoch, &model, &relation, &params_json, Goal::First, true).await?;
+        let call = self.start_load(epoch, &model, &relation, &params_json, (Goal::First, true), Some("refresh")).await?;
         self.finish_load(call).await.map(drop)
     }
 
@@ -132,8 +131,7 @@ impl Database {
 
     pub async fn load_more(&self, epoch: u64, model: String, relation: Option<String>, params_json: String) -> Result<LoadMoreResult, DbError> {
         let relation = relation_named(&model, relation)?;
-        self.refuse_offline(&model, &relation, &params_json, "load more")?;
-        let call = self.start_load(epoch, &model, &relation, &params_json, Goal::Next, false).await?;
+        let call = self.start_load(epoch, &model, &relation, &params_json, (Goal::Next, false), Some("load more")).await?;
         self.finish_load(call).await
     }
 
@@ -141,9 +139,8 @@ impl Database {
         let params = Map::from_iter([(NODE_PARAM.to_string(), json!(row_id))]);
         self.node_relation(&model, &relation, NodeRead::One)?;
         let id = RowId::new(&row_id).map_err(|error| DbError::Invalid { detail: error.to_string() })?;
-        if force { self.refuse_offline(&model, &relation, &Value::Object(params.clone()).to_string(), "node")?; }
         let wire = self.wire(&model)?.clone();
-        let call = self.start_load(epoch, &model, &relation, &Value::Object(params.clone()).to_string(), Goal::First, force).await?;
+        let call = self.start_load(epoch, &model, &relation, &Value::Object(params.clone()).to_string(), (Goal::First, force), force.then_some("node")).await?;
         self.finish_load(call).await?;
         let (db, found) = (self.db.clone(), model.clone());
         let row = self.offload(move || Ok(if db.window_member(&found, &relation, &params, id.as_str())? { db.find(&found, &id)? } else { None })).await?;
@@ -158,7 +155,7 @@ impl Database {
         let wire = self.wire(&model)?.clone();
         let key = WindowKey::nodes(&model, &row_ids.iter().map(String::as_str).collect::<Vec<_>>());
         let name = key.name.clone();
-        let call = self.start_window(epoch, key, Goal::First, true)?;
+        let call = self.start_window(epoch, key, (Goal::First, true), None)?;
         self.finish_load(call).await?;
         let (db, found) = (self.db.clone(), model.clone());
         let rows = self.offload(move || {
@@ -173,15 +170,6 @@ impl Database {
 }
 
 impl Database {
-    /// A call that goes to the server only fails at once with `Network` while the network is away. The window of the call shows the error.
-    fn refuse_offline(&self, model: &str, relation: &str, params_json: &str, what: &str) -> Result<(), DbError> {
-        let Err(error) = self.require_online(&format!("{model}.{relation} {what}")) else { return Ok(()) };
-        if let Ok(params) = serde_json::from_str::<Map<String, Value>>(params_json) {
-            self.life.offline_refused(WindowKey::relation(model, relation, &params), error.to_string());
-        }
-        Err(error)
-    }
-
     fn begin(&self, args: LoadArgs) -> Result<Arc<LoadRequest>, DbError> {
         self.remote()?;
         let (sender, outcome) = tokio::sync::watch::channel(None);
@@ -198,7 +186,7 @@ impl Database {
             let started = match this.prepare_load(&model, &relation, &params_json, goal, force).await {
                 Ok((params, force)) => {
                     turn.wait().await;
-                    this.start_window(epoch, WindowKey::relation(&model, &relation, &params), goal, force)
+                    this.start_window(epoch, WindowKey::relation(&model, &relation, &params), (goal, force), None)
                 }
                 Err(error) => Err(error),
             };
@@ -226,11 +214,11 @@ impl Database {
     }
 
     /// Registers a call that waits for a load of the window of a relation. The window keeps the request while this call or another one waits for it.
-    async fn start_load(&self, epoch: u64, model: &str, relation: &str, params_json: &str, goal: Goal, force: bool) -> Result<LoadCall, DbError> {
+    async fn start_load(&self, epoch: u64, model: &str, relation: &str, params_json: &str, (goal, force): (Goal, bool), no_wait: Option<&'static str>) -> Result<LoadCall, DbError> {
         let turn = self.loads.begin();
         let (params, force) = self.prepare_load(model, relation, params_json, goal, force).await?;
         turn.wait().await;
-        self.start_window(epoch, WindowKey::relation(model, relation, &params), goal, force)
+        self.start_window(epoch, WindowKey::relation(model, relation, &params), (goal, force), no_wait)
     }
 
     async fn prepare_load(&self, model: &str, relation: &str, params_json: &str, goal: Goal, force: bool) -> Result<(Map<String, Value>, bool), DbError> {
@@ -249,13 +237,13 @@ impl Database {
         prepared
     }
 
-    fn start_window(&self, epoch: u64, key: WindowKey, goal: Goal, force: bool) -> Result<LoadCall, DbError> {
+    fn start_window(&self, epoch: u64, key: WindowKey, (goal, force): (Goal, bool), no_wait: Option<&'static str>) -> Result<LoadCall, DbError> {
         self.remote()?;
         self.account_call(epoch)?;
         let published = self.life.published();
         if published.epoch != epoch { return Err(super::command::ended()); }
         if published.identity.is_none() { return Err(DbError::NoSession { detail: "the database has no session in this epoch".into() }); }
-        let (waiter, id) = self.life.load(epoch, key.clone(), goal, force, self.db.revision_seq()?);
+        let (waiter, id) = self.life.load(epoch, key.clone(), goal, force, self.db.revision_seq()?, no_wait);
         Ok(LoadCall { epoch, waiter, leave: LeaveLoad { life: self.life.clone(), order: self.loads.clone(), key, id, settled: false } })
     }
 
@@ -269,6 +257,7 @@ impl Database {
             WindowOutcome::Loaded { has_more, fetched, .. } => Ok(if fetched { LoadMoreResult::Loaded { has_more } } else { LoadMoreResult::NoMore }),
             WindowOutcome::Failed { source: Some(source), .. } => Err(DbError::from(source)),
             WindowOutcome::Failed { error, .. } => Err(DbError::Storage { detail: error }),
+            WindowOutcome::Offline { message } => Err(DbError::Offline { detail: message }),
             WindowOutcome::PageLimit => Err(DbError::Invalid { detail: "the window reached its page limit".into() }),
             _ => Err(super::command::ended()),
         }

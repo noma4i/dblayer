@@ -415,6 +415,15 @@ for path in files:
         if suppressed and f"z29:{relative}:{suppressed.group(1)}" not in allowed:
             findings.append(f"Z29 a lint is fixed at its cause, not suppressed (spawn lives in task.rs): {path.relative_to(root)}:{number}: {suppressed.group(0)}")
 
+before_open = {"ffi/encrypted.rs", "ffi/transport.rs"}
+for path in files:
+    relative = str(path.relative_to(source))
+    if not (relative.startswith(("ffi/", "owners/", "store/", "runtime/"))) or relative in before_open:
+        continue
+    for number, line in enumerate(contents[path].splitlines(), 1):
+        if "connectivity" in line.lower():
+            findings.append(f"Z30 after open online has one source, the Network owner (P-NET-08): {path.relative_to(root)}:{number}: {line.strip()}")
+
 if findings:
     print("zoo check found", len(findings), "problem(s):")
     for finding in findings:

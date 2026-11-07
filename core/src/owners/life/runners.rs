@@ -284,7 +284,6 @@ impl EffectRunner<Network> for NetworkRunner {
         let wiring = &self.wiring;
         match effect {
             NetworkEffect::Broadcast { online, online_seq } => {
-                self.db.connectivity().change(online);
                 wiring.to_windows(WindowsInput::Online { online: Online(online), online_seq, now: self.db.lock().now_ms() });
                 wiring.to_feed(FeedInput::Online { online: Online(online), online_seq });
                 wiring.to_outbox(OutboxInput::Tick(crate::runtime::Time(u64::try_from(self.db.lock().now_ms()).unwrap_or(0))));
@@ -305,7 +304,7 @@ impl EffectRunner<Network> for NetworkRunner {
                 match owner {
                     Peer::Windows => wiring.to_windows_in(epoch, WindowsInput::Online { online: Online(online), online_seq, now: self.db.lock().now_ms() }),
                     Peer::Feed => wiring.to_feed(FeedInput::Online { online: Online(online), online_seq }),
-                    Peer::Calls => wiring.to_calls_at(stamp, CallsInput::Online(Online(online))),
+                    Peer::Calls => wiring.to_calls_at(stamp, CallsInput::Snapshot(Online(online))),
                     Peer::Outbox => {
                         wiring.to_outbox_at(stamp, OutboxInput::Tick(crate::runtime::Time(u64::try_from(self.db.lock().now_ms()).unwrap_or(0))));
                         wiring.to_outbox_at(stamp, OutboxInput::Online(Online(online)));

@@ -118,16 +118,14 @@ async fn life_open_session_continues_the_saved_epoch() {
     closed(&life).await;
 }
 
-/// net_set_online_changed: `set_online` answers and the old `online` mirror follows the Network owner.
+/// net_set_online_changed: `set_online` answers, and after the close it answers `closed`.
 #[tokio::test(flavor = "multi_thread")]
-async fn net_set_online_reaches_the_mirror() {
+async fn net_set_online_answers() {
     let db = Store::open_models(None, vec![moments_spec()], None).map(std::sync::Arc::new).unwrap();
     let transport = Arc::new(MockTransport::new());
     let life = start(&db, &transport).await;
     assert_eq!(answer(life.set_online(true)).await, Reply::Online { closed: false });
-    assert!(db.connectivity().is_online());
     assert_eq!(answer(life.set_online(false)).await, Reply::Online { closed: false });
-    assert!(!db.connectivity().is_online());
     closed(&life).await;
     assert_eq!(answer(life.set_online(true)).await, Reply::Online { closed: true }, "net_closed");
 }
@@ -235,9 +233,9 @@ async fn a_loaded_page_lands_through_the_store_and_the_caller_hears_loaded() {
     life.credential_committed(2);
     crate::test_wait::yield_until("the next identity was published", || life.published().identity == Some(2)).await;
     let old_key = crate::owners::read::windows::WindowKey::relation("moments", "mine", json!({"userId": "old"}).as_object().unwrap());
-    let (stale, _) = life.load(epoch, old_key, crate::owners::read::windows::Goal::First, true, 0);
+    let (stale, _) = life.load(epoch, old_key, crate::owners::read::windows::Goal::First, true, 0, None);
     assert!(matches!(crate::test_wait::within(stale.wait()).await, crate::runtime::Outcome::EpochEnded(_)));
-    let (waiter, _) = life.load(life.published().epoch, key, crate::owners::read::windows::Goal::First, false, 0);
+    let (waiter, _) = life.load(life.published().epoch, key, crate::owners::read::windows::Goal::First, false, 0, None);
     let reply = answer(waiter).await;
     assert!(matches!(&reply, Reply::Window(outcome) if matches!(**outcome, crate::owners::read::windows::WindowOutcome::Loaded { .. })), "the load ends as loaded: {reply:?} {:?}", life.faults());
     let stored: Vec<_> = ["m1", "m2"].iter().map(|id| db.find("moments", &crate::identity::RowId::new(id).unwrap()).unwrap().map(|row| row.text("text").map(str::to_string))).collect();
@@ -272,16 +270,16 @@ async fn net_open_power_saving() {
     database.close_database().await.unwrap();
 }
 
+/// net_prop_connectivity_not_database: after the open only `SetOnline` changes the `online` of the owners.
 #[tokio::test(flavor = "multi_thread")]
 async fn net_prop_connectivity_not_database() {
     let db = Store::open_models(None, vec![moments_spec()], None).map(std::sync::Arc::new).unwrap();
     let transport = Arc::new(MockTransport::new());
     let life = start(&db, &transport).await;
     life.declare(vec![("Op".into(), crate::owners::calls::CallKind::Query)]);
-    db.connectivity().change(true);
+    assert_eq!(answer(life.set_online(false)).await, Reply::Online { closed: false });
     assert_eq!(answer(life.run(1, "Op".into(), "{}".into())).await, Reply::Call(Err(CallError::Offline)));
     assert_eq!(answer(life.set_online(true)).await, Reply::Online { closed: false });
-    db.connectivity().change(false);
     transport.enqueue("Op", MockReply::data(json!({ "feed": [1] })));
     assert_eq!(answer(life.run(1, "Op".into(), "{}".into())).await, Reply::Call(Ok("[1]".into())));
     assert_eq!(transport.calls().len(), 1);

@@ -56,10 +56,8 @@ async fn close_releases_old_engine() {
     database.hold(slot.acquire().unwrap());
     let sink = database.online_sink().unwrap();
     let owner = Arc::downgrade(&database.life);
-    let connectivity = database.db.connectivity();
     database.close_now();
     sink.set_online(false);
-    assert!(connectivity.is_online(), "a late call through the retained sink is refused");
     let reopened = slot.acquire();
     assert!(reopened.is_ok(), "the slot is free after the close");
     assert!(slot.acquire().is_err(), "and has exactly one owner after the reopen");
