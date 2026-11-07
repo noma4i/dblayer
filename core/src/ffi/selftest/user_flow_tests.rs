@@ -2,7 +2,8 @@ use std::sync::Arc;
 
 use serde_json::json;
 
-use super::rig_tests::{bound, Held, Rig, World};
+use super::rig_tests::{bound, Rig, World};
+use super::rig_held::Held;
 use super::flow_fixtures::{add_chat, chat_row, land_event};
 use crate::ffi::tape::Rows;
 use crate::ffi::ReadEnd;

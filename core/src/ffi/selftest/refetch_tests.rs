@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use serde_json::json;
 
-use super::bridge_tests::group;
+use super::bridge_support_tests::group;
 use super::rig_tests::{bound, Rig};
 use crate::test_wait::yield_until;
 

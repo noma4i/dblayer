@@ -4,7 +4,8 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use tokio::sync::mpsc;
 
-use super::rig_tests::{bound, plain_models};
+use super::rig_tests::{bound};
+use super::rig_models::plain_models;
 use crate::ffi::encrypted_tests::ThroughServer;
 use crate::ffi::session_guards_tests::{Rig, SOCIAL_BODY};
 use crate::ffi::{ByteProgress, CableLease, Config, Database, DbError, EncryptedSocketEvent, PutReply, ReadRequest, Transport, TransportRequest};

@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
-use super::rig_tests::{bound, Held, Rig, World};
+use super::rig_tests::{bound, Rig, World};
+use super::rig_held::Held;
 use crate::ffi::lifecycle_tests::{named, Rows};
 use crate::ffi::tape::Watched;
 use crate::ffi::{DbError, Transport};

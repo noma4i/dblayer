@@ -4,7 +4,8 @@ use serde_json::json;
 use tokio::sync::mpsc;
 
 use super::encrypted_cable_tests::Peer;
-use super::rig_tests::{bound, plain_models};
+use super::rig_tests::{bound};
+use super::rig_models::plain_models;
 use crate::ffi::encrypted_tests::ThroughServer;
 use crate::ffi::session_guards_tests::{Rig, SOCIAL_BODY};
 use crate::ffi::{Config, Database, ReadRequest, ReadValue};

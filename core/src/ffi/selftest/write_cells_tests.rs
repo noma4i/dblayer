@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use serde_json::json;
 
-use super::bridge_tests::message;
+use super::bridge_support_tests::message;
 use super::flow_fixtures::{add_chat, add_media, chat_row, land_event};
 use super::rig_tests::{bound, Rig, World};
 use super::upload_fixtures::add_message_file;

@@ -4,7 +4,8 @@ use std::sync::{Arc, Mutex};
 use serde_json::json;
 
 use super::flow_fixtures::{add_chat, add_moment, add_profile, add_reactor_user, cell, land_event, texts};
-use super::rig_tests::{add_reactions, bound, Fault, Rig, World};
+use super::rig_tests::{bound, Fault, Rig, World};
+use super::rig_models::add_reactions;
 use crate::ffi::{Database, DbError, ReadFetch, ReadRequest, ReadStream, ReadValue, WireOperationOutcome};
 use crate::ffi::wire::Cell;
 

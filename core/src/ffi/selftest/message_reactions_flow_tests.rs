@@ -2,7 +2,8 @@ use std::sync::Arc;
 
 use serde_json::{json, Value};
 
-use super::rig_tests::{add_reactions, bound, Fault, Rig, World};
+use super::rig_tests::{bound, Fault, Rig, World};
+use super::rig_models::add_reactions;
 use super::flow_fixtures::{add_chat, add_reactor_user, cell, chat_row, land_delete, land_event, texts};
 use crate::ffi::tape::Rows;
 use crate::ffi::{ReadFetch, ReadRequest, WireOperationOutcome};

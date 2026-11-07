@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use serde_json::{json, Value};
 
-use super::bridge_tests::message;
+use super::bridge_support_tests::message;
 use super::rig_tests::{bound, Rig, World};
 use super::flow_fixtures::{add_chat, add_media, cell, chat_row, int, land_event, text, texts};
 use super::upload_fixtures::add_message_file;

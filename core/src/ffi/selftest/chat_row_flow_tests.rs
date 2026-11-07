@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use serde_json::{json, Value};
 
-use super::bridge_tests::message;
+use super::bridge_support_tests::message;
 use super::rig_tests::{bound, Fault, Rig, World};
 use super::flow_fixtures::{add_chat, cell, chat_row, int, land_event};
 use crate::ffi::tape::Rows;

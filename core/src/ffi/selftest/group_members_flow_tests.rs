@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use serde_json::json;
 
-use super::bridge_tests::{group, seed_members};
+use super::bridge_support_tests::{group, seed_members};
 use super::rig_tests::{bound, Fault, Rig, World};
 use crate::ffi::tape::Rows;
 use crate::ffi::{WireOperationOutcome, WireRow};

@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use serde_json::json;
 
-use super::bridge_tests::{group, member_list, message, seed_members, strings};
+use super::bridge_support_tests::{group, member_list, message, seed_members, strings};
 use super::rig_tests::{bound, Fault, Rig, World};
 use crate::test_wait::yield_until;
 

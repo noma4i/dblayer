@@ -5,7 +5,8 @@ use std::sync::{Arc, Mutex};
 use async_trait::async_trait;
 
 
-use super::rig_tests::{bound, Gate, Held, Rig};
+use super::rig_tests::{bound, Gate, Rig};
+use super::rig_held::Held;
 use crate::ffi::lifecycle_tests::Rows;
 use crate::ffi::{ByteProgress, CableLease, Config, Database, DbError, EncryptedSocketEvent, LoadMoreResult, OpenDatabase, PutReply, TestClock, Transport, TransportRequest};
 use crate::schema::{Coverage, FieldSpec, ModelSpec, PageDirection, RelationSpec, RemoteShape, RemoteSpec, Storage};
