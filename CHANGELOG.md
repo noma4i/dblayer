@@ -124,7 +124,6 @@
 - A parent pointer follows a sent child to the id the server gave it.
 - Events of the server subscription land in the cache and reach event streams.
 - A destroy the server answers only with NOT_FOUND is confirmed and the open lists of the model are read once more.
-- An offline refresh shows its error in the state of the stream of the window.
 - The first value of a stream of a loaded window holds the loaded phase.
 - A stream opened on a closed database ends as closed.
 - A request that cannot be read ends its stream as invalid.
@@ -159,8 +158,7 @@
 - A flush, load retry, preload, resume or upload cleanup woken during a model reset runs once after it.
 - An events reader receives the exact range of lost positions, then one end.
 - A window opened after a failed load of its query no longer shows that error.
-- A parameter named like a query no longer captures the generated call.
-- A Kotlin parameter named `read`, `put` or `act` no longer captures a generated call.
+- A parameter named like a query or like `read`, `put` or `act` no longer captures a generated call.
 - `waitForInitialLoad` of a held entity ends after `sessionReset` and logout instead of waiting.
 - Every terminal subscription failure reaches the query listener once.
 - A `create` with an id given by the caller returns the confirmed row.
