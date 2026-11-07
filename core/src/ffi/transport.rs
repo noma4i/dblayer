@@ -124,7 +124,7 @@ impl std::future::Future for Opening {
 impl Drop for Opening {
     fn drop(&mut self) {
         let (Some(open), Ok(handle)) = (self.0.take(), tokio::runtime::Handle::try_current()) else { return };
-        crate::task::spawn_on(crate::task::Carry::Detached, &handle, async move { drop(open.await) });
+        crate::task::spawn_on(&handle, async move { drop(open.await) });
     }
 }
 
