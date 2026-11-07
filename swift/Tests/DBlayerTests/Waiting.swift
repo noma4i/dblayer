@@ -98,6 +98,7 @@ func eventually(
     await untilPulse(after: seen, deadline: deadline)
   }
   if condition() {
+    Issue.record("\(what) held only at the deadline: a state change without a pulse", sourceLocation: sourceLocation)
     return
   }
   Issue.record("timed out after \(timeout) waiting for \(what)", sourceLocation: sourceLocation)
@@ -119,6 +120,7 @@ func eventuallyAsync(
     await untilPulse(after: seen, deadline: deadline)
   }
   if await condition() {
+    Issue.record("\(what) held only at the deadline: a state change without a pulse", sourceLocation: sourceLocation)
     return
   }
   Issue.record("timed out after \(timeout) waiting for \(what)", sourceLocation: sourceLocation)

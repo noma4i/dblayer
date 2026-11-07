@@ -15,6 +15,7 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.mapNotNull
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
@@ -138,11 +139,11 @@ class ClubTest {
                 assertTrue(Query("Letter", Letter).readRow(id) == null)
                 transport.enqueue("SendLetter", DbException.Http(422.toUShort(), "refused again"))
                 if (keep) {
-                    var attempt: MutationReceipt<Letter>? = null
-                    eventually("the refusal of the first attempt is recorded") {
-                        try { attempt = withTimeout(5000) { Letter.retry(id, null) }; true } catch (error: DbException.Invalid) { false }
+                    awaitWithin("the refusal of the first attempt is recorded") {
+                        AccountScope.current().operations().mapNotNull { (it as? OperationQueueItem.Queue)?.items }.first { it.firstOrNull()?.status == OperationQueueStatus.FAILED }
                     }
-                    assertTrue(withTimeout(5000) { requireNotNull(attempt).outcome() } is OperationOutcome.Rejected)
+                    val attempt = withTimeout(5000) { Letter.retry(id, null) }
+                    assertTrue(withTimeout(5000) { attempt.outcome() } is OperationOutcome.Rejected)
                 } else {
                     eventually("the refused operation is gone") {
                         try { withTimeout(5000) { Letter.retry(id, null) }; false } catch (error: DbException.NotFound) { true } catch (error: DbException.Invalid) { false }

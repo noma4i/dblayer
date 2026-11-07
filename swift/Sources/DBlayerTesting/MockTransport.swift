@@ -130,6 +130,7 @@ public final class MockTransport: ScriptedTransport, @unchecked Sendable {
       return .Network(detail: "no reply queued for \(request.operationName)")
     case .strict:
       lock.withLock { missed.append(request) }
+      TestPulse.shared.pulse()
       let detail = "MockTransport has no reply queued for \(request.operationName) variables=\(request.variablesJson)"
       await withCheckedContinuation { done in
         if case .terminated = reports.yield(Report(message: detail, done: done)) { done.resume() }

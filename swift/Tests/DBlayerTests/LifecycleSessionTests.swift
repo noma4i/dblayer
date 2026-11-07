@@ -28,12 +28,16 @@ private final class RowHistory: @unchecked Sendable {
 
   var states: [[String]] { lock.withLock { history } }
 
-  func begin() { lock.withLock { projection = ListProjection<User>() } }
+  func begin() {
+    lock.withLock { projection = ListProjection<User>() }
+    TestPulse.shared.pulse()
+  }
 
   func take(_ value: ReadValue) {
     lock.withLock {
       if (try? projection.apply(value)) == true { history.append(projection.rows.map(\.name)) }
     }
+    TestPulse.shared.pulse()
   }
 }
 
@@ -59,7 +63,10 @@ private final class Outcome: @unchecked Sendable {
   private let lock = NSLock()
   private var finished = false
   var isDone: Bool { lock.withLock { finished } }
-  func finish() { lock.withLock { finished = true } }
+  func finish() {
+    lock.withLock { finished = true }
+    TestPulse.shared.pulse()
+  }
 }
 
 private final class OneShot: @unchecked Sendable {

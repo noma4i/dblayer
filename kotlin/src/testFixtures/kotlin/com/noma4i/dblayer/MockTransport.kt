@@ -152,6 +152,7 @@ class MockTransport(private val unanswered: Unanswered = Unanswered.Strict) : Sc
             val detail = "MockTransport has no reply queued for ${request.operationName} variables=${request.variablesJson}"
             missed.add(Missed(this, "$detail (mock created at $createdAt)"))
             unscripted.add(request)
+            TestPulse.pulse()
             throw DbException.Invalid(detail)
         }
     }

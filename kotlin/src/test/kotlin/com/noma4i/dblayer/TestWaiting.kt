@@ -19,8 +19,12 @@ suspend fun eventually(what: String, timeoutMillis: Long = HANG_GUARD_MILLIS, de
     val deadline = System.nanoTime() + timeoutMillis * 1_000_000
     while (true) {
         val seen = TestPulse.current
-        if (condition()) return
+        val held = condition()
         val remainingMillis = (deadline - System.nanoTime()) / 1_000_000
+        if (held) {
+            if (remainingMillis <= 0) throw AssertionError("$what held only at the deadline: a state change without a pulse\n${detail()}")
+            return
+        }
         if (remainingMillis <= 0) throw AssertionError("timed out after $timeoutMillis ms waiting for $what\n${detail()}")
         untilChange(seen, remainingMillis)
     }
