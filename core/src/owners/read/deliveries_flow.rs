@@ -39,6 +39,10 @@ impl Delivery {
         if read_id != self.read_id || !self.view.kind.reads_rows() {
             return;
         }
+        if self.view.kind == Kind::Operations {
+            self.finish(EndCause::Storage { error }, false, fx);
+            return;
+        }
         if self.stage == DeliveryStage::Live && self.resync_pending {
             if self.resync_failed {
                 self.finish(EndCause::Storage { error }, false, fx);

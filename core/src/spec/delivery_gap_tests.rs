@@ -13,6 +13,8 @@ use crate::owners::read::windows::{WindowKey, Windows};
 use crate::spec::support::{as_owner, new_log, snapshot, take, Discard, Emitted, Ender, EnderState, Log, Silent, Sink, Source, SourceInput, SourceState, Spy, SpyState};
 use crate::runtime::{explore, Address, Cause as Ended, DetScheduler, EpochStamp, Limits, Outcomes};
 
+#[path = "delivery_operations_tests.rs"]
+mod delivery_operations_tests;
 #[path = "delivery_more_tests.rs"]
 mod delivery_more_tests;
 #[path = "delivery_read_tests.rs"]
@@ -90,6 +92,7 @@ fn val_of(value: &d::Value) -> Val {
         d::Value::Snapshot { revision, rows, state } => Val::Snapshot { revision: *revision, rows: ids(rows), state: ws_of(state) },
         d::Value::Delta(delta) => Val::Delta { base: delta.base, revision: delta.revision, size: delta.size as usize, edits: delta.edits.iter().map(ed_of).collect(), state: ws_of(&delta.state) },
         d::Value::Count { revision, count, state } => Val::Count { revision: *revision, count: *count, state: ws_of(state) },
+        d::Value::Operations { .. } => unreachable!("the reference models no queue stream"),
         d::Value::State { revision, state } => Val::State { revision: *revision, state: ws_of(state) },
         d::Value::Ready => Val::Ready,
         d::Value::Event { position, payload } => Val::Event { position: *position, payload: payload.clone() },

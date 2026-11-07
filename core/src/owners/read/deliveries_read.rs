@@ -24,6 +24,7 @@ impl Delivery {
             ReadData::Overflow => None,
             ReadData::Rows { rows, replaced, total } => Some(Whole::Rows { rows, replaced, total }),
             ReadData::Count(count) => Some(Whole::Count(count)),
+            ReadData::Operations(items) => Some(Whole::Operations(items)),
             ReadData::Changes { keys, rows, replaced, total } => {
                 let changed: HashMap<&str, &StreamRow> = rows.iter().map(|row| (row.id.as_str(), row)).collect();
                 let held: HashMap<&str, &StreamRow> = self.rows.iter().map(|row| (row.id.as_str(), row)).collect();
@@ -43,7 +44,7 @@ impl Delivery {
                         self.ended_given = true;
                         self.journal.clear();
                     }
-                    Value::Snapshot { revision, .. } | Value::Count { revision, .. } => self.acknowledge(*revision),
+                    Value::Snapshot { revision, .. } | Value::Count { revision, .. } | Value::Operations { revision, .. } => self.acknowledge(*revision),
                     Value::Delta(delta) => {
                         for (id, temporary) in &delta.temporary {
                             self.temporary.insert(id.clone(), temporary.clone());
@@ -90,7 +91,7 @@ impl Delivery {
         };
         let was_empty = self.journal.is_empty();
         match &value {
-            Value::Snapshot { .. } | Value::Count { .. } => self.journal.retain(|kept| !matches!(kept, Value::Delta(_) | Value::Snapshot { .. } | Value::Count { .. } | Value::State { .. })),
+            Value::Snapshot { .. } | Value::Count { .. } | Value::Operations { .. } => self.journal.retain(|kept| !matches!(kept, Value::Delta(_) | Value::Snapshot { .. } | Value::Count { .. } | Value::Operations { .. } | Value::State { .. })),
             Value::Delta(_) if self.journal.iter().any(Value::is_rows) => self.journal.retain(|kept| !matches!(kept, Value::Delta(_) | Value::Snapshot { .. } | Value::Count { .. } | Value::State { .. })),
             Value::State { .. } => self.journal.retain(|kept| !matches!(kept, Value::State { .. })),
             Value::Status { .. } => self.journal.retain(|kept| !matches!(kept, Value::Status { .. })),
@@ -192,6 +193,7 @@ impl Delivery {
             let unchanged = match &data {
                 Whole::Rows { rows, total, .. } => *rows == self.rows && *total == self.total,
                 Whole::Count(count) => self.count == Some(*count),
+                Whole::Operations(items) => self.operations.as_ref() == Some(items),
             };
             if !self.resync_pending && unchanged {
                 self.push(Value::State { revision: self.revision, state: self.window.clone() }, fx);
@@ -208,6 +210,20 @@ impl Delivery {
                 self.push(Value::Snapshot { revision, rows, state }, fx);
                 if missing {
                     fx.push(Emit::Load { force: false });
+                }
+            }
+            (DeliveryStage::Opening, Whole::Operations(items)) => {
+                self.operations = Some(items.clone());
+                self.revision = revision;
+                self.stage = DeliveryStage::Live;
+                self.push(Value::Operations { revision, items }, fx);
+            }
+            (DeliveryStage::Live, Whole::Operations(items)) => {
+                if self.operations.as_ref() != Some(&items) {
+                    let shown = self.shown_revision(revision);
+                    self.operations = Some(items.clone());
+                    self.revision = shown;
+                    self.push(Value::Operations { revision: shown, items }, fx);
                 }
             }
             (DeliveryStage::Opening, Whole::Count(now)) if self.view.kind == Kind::Count => {

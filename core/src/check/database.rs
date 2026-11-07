@@ -231,6 +231,11 @@ impl DatabaseSut {
                 out.insert("count".into(), (*count).into());
                 Observation::new("count", Value::Object(out))
             }
+            ReadValue::Operations { revision, items } => {
+                out.insert("revision".into(), (*revision).into());
+                out.insert("operations".into(), items.len().into());
+                Observation::new("operations", Value::Object(out))
+            }
             ReadValue::State { state, .. } => {
                 self.state(stream, state, &mut out);
                 Observation::new("state", Value::Object(out))

@@ -43,13 +43,15 @@ pub enum Kind {
     List,
     Entity { fetch: Fetch },
     Count,
+    /// The queue of operations: the table `op`, read whole after every commit that touched it.
+    Operations,
     Events,
     Blob,
     RetryStatus,
 }
 
 impl Kind {
-    fn reads_rows(self) -> bool { matches!(self, Kind::List | Kind::Entity { .. } | Kind::Count) }
+    fn reads_rows(self) -> bool { matches!(self, Kind::List | Kind::Entity { .. } | Kind::Count | Kind::Operations) }
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -59,6 +61,7 @@ pub enum ReadData {
     /// The membership in order with the stamp of each member, and the rows that changed after the version the owner holds: the others are the rows the owner holds.
     Changes { keys: Vec<(String, i64)>, rows: Vec<StreamRow>, replaced: Vec<(String, String)>, total: Option<u64> },
     Count(u64),
+    Operations(Vec<crate::ffi::OperationInfo>),
     Overflow,
 }
 
@@ -66,6 +69,7 @@ pub enum ReadData {
 pub(super) enum Whole {
     Rows { rows: Vec<StreamRow>, replaced: Vec<(String, String)>, total: Option<u64> },
     Count(u64),
+    Operations(Vec<crate::ffi::OperationInfo>),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -152,6 +156,7 @@ pub enum Value {
     Snapshot { revision: i64, rows: Vec<StreamRow>, state: WindowState },
     Delta(Delta),
     Count { revision: i64, count: u64, state: WindowState },
+    Operations { revision: i64, items: Vec<crate::ffi::OperationInfo> },
     State { revision: i64, state: WindowState },
     Ready,
     Event { position: u64, payload: String },
@@ -163,7 +168,7 @@ pub enum Value {
 }
 
 impl Value {
-    fn is_rows(&self) -> bool { matches!(self, Value::Snapshot { .. } | Value::Delta(_) | Value::Count { .. }) }
+    fn is_rows(&self) -> bool { matches!(self, Value::Snapshot { .. } | Value::Delta(_) | Value::Count { .. } | Value::Operations { .. }) }
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -277,6 +282,7 @@ struct Delivery {
     /// Server id to the temporary id of the rows the reader took.
     temporary: BTreeMap<String, String>,
     count: Option<u64>,
+    operations: Option<Vec<crate::ffi::OperationInfo>>,
     total: Option<u64>,
     window: WindowState,
     held_state: Option<WindowState>,

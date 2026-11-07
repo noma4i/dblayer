@@ -41,6 +41,7 @@ mod load_order;
 mod loading;
 mod write;
 mod read;
+mod queue;
 #[cfg(test)]
 mod read_tests;
 #[cfg(test)]
@@ -76,6 +77,8 @@ pub use command::CommandRequest;
 pub use read::{ReadEnd, ReadFetch, ReadPhase, ReadRequest, ReadState, ReadStream, ReadValue, RowEdit};
 pub use upload_rounds::{RoundJob, RoundJobsSink};
 pub use wire::{Cell, CellEntry, WireFailure, WireFile, WireModel, WireRow, WireSync, WireSyncState, WireProcessing, WireUpload, WireUploadStatus};
+pub(crate) use queue::queue_of;
+pub use queue::{OperationInfo, OperationQueueStatus};
 pub use crate::transport::{PutFile, PutReply};
 #[cfg(test)]
 mod fixtures;

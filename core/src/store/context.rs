@@ -47,7 +47,8 @@ pub(crate) struct CommitNotice {
 impl CommitNotice {
     fn of_commit(result: &CommitResult) -> Self {
         let models: std::collections::BTreeSet<&str> = result.rows.iter().map(|change| change.row.model.as_str()).chain(result.scopes.iter().map(|scope| scope.model.as_str())).chain(result.members.iter().map(|row| row.model.as_str())).collect();
-        Self { revision: result.revision.unwrap_or_default(), tables: models.iter().map(|model| table_name(model)).collect(), models: models.into_iter().map(str::to_string).collect(), all: false, position: result.position, rows: Some(super::changed_log::table_rows(result)) }
+        let queue = (!result.operations.is_empty()).then(|| crate::store::operation::QUEUE_TABLE.to_string());
+        Self { revision: result.revision.unwrap_or_default(), tables: models.iter().map(|model| table_name(model)).chain(queue).collect(), models: models.into_iter().map(str::to_string).collect(), all: false, position: result.position, rows: Some(super::changed_log::table_rows(result)) }
     }
 
     fn of_reset(revision: i64, models: Option<&[String]>) -> Self {

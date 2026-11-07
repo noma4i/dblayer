@@ -142,6 +142,17 @@ impl Store {
         Ok((query, remote))
     }
 
+    /// The open operations of the queue in one snapshot that is not older than `floor`; gives the revision of the snapshot.
+    pub(crate) fn read_operations(&self, floor: i64) -> Result<(i64, Vec<crate::owners::write::operation_status::Operation>), CoreError> {
+        self.read_models(&[], |reader| {
+            let seen = reader.revision_seq()?;
+            if seen < floor {
+                return Err(CoreError::Internal(format!("the snapshot is at revision {seen}, older than {floor}")));
+            }
+            Ok((seen, crate::store::operation::open_operations(reader.connection())?))
+        })
+    }
+
     /// Reads `query` in one snapshot that is not older than `floor`; gives the revision of the snapshot.
     pub(crate) fn read_view(&self, query: &Query, count: bool, floor: i64, window: Option<&crate::owners::read::windows::WindowKey>, held: Option<HeldVersion>) -> Result<(i64, ViewRead), CoreError> {
         #[cfg(test)]

@@ -74,13 +74,15 @@ fn model_apply(model: &mut Model, act: Act) {
 fn want_or(state: St, ctx: &Ctx, input: In) -> Step { step_of(state, ctx, input).unwrap_or(Step { next: state, obs: vec![], eff: vec![] }) }
 
 #[derive(Clone, Copy, PartialEq)]
-enum Check { Outcomes, RollbackClean, Idle }
+enum Check { Outcomes, RollbackClean, Idle, StatusColumn, Operations }
 
 async fn run_trace(trace: &[Act], check: Check) {
     let rig = Rig::open(OnFailure::Rollback).await;
     rig.server.hold(Kind::Mutate, true);
     let mut model = Model { ops: vec![], online: true };
     let label = format!("{trace:?}");
+    let queue = (check == Check::Operations).then(|| rig.db.subscribe_values(rig.epoch(), crate::ffi::ReadRequest::Operations));
+    let mut seen: Vec<(i64, String)> = Vec::new();
     for (index, act) in trace.iter().enumerate() {
         step(&format!("{label} step {index} {act:?}"));
         match act {
@@ -118,6 +120,19 @@ async fn run_trace(trace: &[Act], check: Check) {
         let expected: Vec<_> = model.ops.iter().map(|op| op.resolved.is_some()).collect();
         until(&format!("{label} step {index}: resolved {expected:?}"), || model.ops.iter().all(|op| op.resolved.is_none() || op.handle.is_finished())).await;
         rig.quiet().await;
+        if let (Some(queue), false) = (&queue, matches!(act, Act::Close)) {
+            let stored = rig.db.op_statuses();
+            while seen != stored {
+                let Some(crate::ffi::ReadValue::Operations { items, .. }) = within(queue.pull()).await.unwrap() else { panic!("{label} step {index}: the stream gave no queue value") };
+                seen = items.iter().map(|item| (item.seq, format!("{:?}", item.status).to_lowercase())).collect();
+            }
+        }
+        if check == Check::StatusColumn && !matches!(act, Act::Close) {
+            let reached: Vec<String> = rig.server.seen().iter().filter_map(|seen| seen.variables["text"].as_str().map(str::to_string)).collect();
+            let expected: Vec<&str> = model.ops.iter().filter(|op| op.resolved.is_none()).map(|op| if reached.contains(&op.text) { "sending" } else { "pending" }).collect();
+            let stored: Vec<String> = rig.db.op_statuses().into_iter().map(|(_, status)| status).collect();
+            assert_eq!(stored, expected, "{label} step {index}: the status column");
+        }
         for (number, op) in model.ops.iter().enumerate() {
             assert_eq!(op.handle.is_finished(), op.resolved.is_some(), "{label} step {index}: op {number} {:?}", op.state);
             if let (Some(want_out), true) = (op.resolved, op.handle.is_finished()) {
@@ -168,6 +183,18 @@ async fn run_all(check: Check) {
 fn out_prop_outcome_once() { bounded("out_prop_outcome_once", out_prop_outcome_once_run) }
 
 async fn out_prop_outcome_once_run() { run_all(Check::Outcomes).await }
+
+/// P-OUT-33: the column `op.status` of an operation is `pending` until its first request is written and `sending` after it: the server saw the request of every `sending` operation and of no `pending` one.
+#[test]
+fn out_prop_status_column() { bounded("out_prop_status_column", out_prop_status_column_run) }
+
+async fn out_prop_status_column_run() { run_all(Check::StatusColumn).await }
+
+/// P-DLV-24: every value of the queue stream is the rows of `op` at its revision, and the stream reaches the stored rows after every step.
+#[test]
+fn dlv_prop_operations_mirror() { bounded("dlv_prop_operations_mirror", dlv_prop_operations_mirror_run) }
+
+async fn dlv_prop_operations_mirror_run() { run_all(Check::Operations).await }
 
 #[test]
 fn out_prop_rollback_clean() { bounded("out_prop_rollback_clean", out_prop_rollback_clean_run) }
@@ -317,4 +344,44 @@ async fn out_queued_drain_limit_api_run() {
         assert_eq!(kind_of(&rig.outcome(receipt).await), "Confirmed");
     }
     assert_eq!(rig.server.count("MakeMoment"), 5);
+}
+
+async fn queue_until(queue: &crate::ffi::ReadStream, wanted: impl Fn(&[crate::ffi::OperationInfo]) -> bool) -> Vec<crate::ffi::OperationInfo> {
+    loop {
+        let Some(crate::ffi::ReadValue::Operations { items, .. }) = within(queue.pull()).await.unwrap() else { panic!("the queue stream ended") };
+        if wanted(&items) { return items; }
+    }
+}
+
+/// P-DLV-24 through the database: an offline `update` is `pending`, goes `sending`, a refusal with `on_failure: keep` leaves it `failed` with its error, `retry` by the fields of the info sends it again and it leaves the queue.
+#[test]
+fn p_dlv_24_the_queue_stream_follows_an_update_through_refusal_and_retry() { bounded("p_dlv_24_the_queue_stream_follows_an_update_through_refusal_and_retry", p_dlv_24_run) }
+
+async fn p_dlv_24_run() {
+    use crate::ffi::OperationQueueStatus::{Failed, Pending, Sending};
+    let rig = Rig::open(OnFailure::Keep).await;
+    let seed = rig.create("seed").await;
+    assert_eq!(kind_of(&rig.outcome(&seed).await), "Confirmed");
+    let landed = rig.update(&temp_id(&seed), "landed").await.unwrap();
+    assert_eq!(kind_of(&rig.outcome(&landed).await), "Confirmed");
+    let real = temp_id(&landed);
+    let queue = rig.db.subscribe_values(rig.epoch(), crate::ffi::ReadRequest::Operations);
+    rig.db.set_online(false).unwrap();
+    rig.update(&real, "edited").await.unwrap();
+    let queued = queue_until(&queue, |items| items.len() == 1).await;
+    assert_eq!((queued[0].status, queued[0].action.as_str(), queued[0].model.as_str(), queued[0].row_id.as_str(), queued[0].attempts), (Pending, "update", "Moment", real.as_str(), 0));
+    rig.server.hold(Kind::Mutate, true);
+    rig.db.set_online(true).unwrap();
+    rig.server.wait_held(Kind::Mutate, 1).await;
+    assert_eq!(queue_until(&queue, |items| items.len() == 1 && items[0].status == Sending).await[0].seq, queued[0].seq);
+    rig.server.answer(Kind::Mutate, Reply::Refuse);
+    let failed = queue_until(&queue, |items| items.iter().any(|item| item.status == Failed)).await;
+    assert!(failed[0].error.is_some() && failed[0].seq == queued[0].seq, "{failed:?}");
+    let before = rig.server.count("UpdateMoment");
+    rig.server.hold(Kind::Mutate, true);
+    within(rig.db.retry(rig.epoch(), failed[0].model.clone(), failed[0].row_id.clone(), Some(failed[0].action.clone()), None)).await.unwrap();
+    rig.server.wait_held(Kind::Mutate, 1).await;
+    rig.server.answer(Kind::Mutate, Reply::Ok);
+    queue_until(&queue, |items| items.is_empty()).await;
+    assert_eq!(rig.server.count("UpdateMoment"), before + 1, "the retry sent the same operation again");
 }

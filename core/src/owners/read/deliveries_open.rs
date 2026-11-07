@@ -22,6 +22,7 @@ impl Delivery {
             acked_rows: Vec::new(),
             temporary: BTreeMap::new(),
             count: None,
+            operations: None,
             total: None,
             window,
             held_state: None,
@@ -59,7 +60,7 @@ impl Delivery {
                 fx.push(Emit::Run(StreamEffect::StatusInterest { plus: true }));
                 machine.interested = true;
             }
-            Kind::List | Kind::Count | Kind::Entity { .. } => {
+            Kind::List | Kind::Count | Kind::Operations | Kind::Entity { .. } => {
                 fx.push(machine.new_read(revision));
                 if machine.view.live {
                     fx.push(Emit::WantPlus);

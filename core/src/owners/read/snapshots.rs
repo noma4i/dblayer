@@ -28,11 +28,15 @@ impl DbSnapshots {
 
 impl Snapshots for DbSnapshots {
     fn read(&self, view: &View, revision: i64, after: i64, mode: ReadMode) -> Result<(i64, ReadData), String> {
+        if view.kind == Kind::Operations {
+            let (seen, operations) = self.db.read_operations(revision).map_err(|error| error.to_string())?;
+            return Ok((seen, ReadData::Operations(crate::ffi::queue_of(&operations))));
+        }
         let (query, count) = match view.kind {
             Kind::List => (self.db.parse_query(&view.subject).map_err(|error| error.to_string())?.0, false),
             Kind::Count => (self.db.parse_query(&view.subject).map_err(|error| error.to_string())?.0, true),
             Kind::Entity { .. } => (crate::store::query::Query::new(&view.model).filtered(crate::store::query::Where::equal("id", serde_json::json!(view.subject))), false),
-            Kind::Events | Kind::Blob | Kind::RetryStatus => return Err("a stream of this kind reads no rows".to_string()),
+            Kind::Events | Kind::Blob | Kind::RetryStatus | Kind::Operations => return Err("a stream of this kind reads no rows".to_string()),
         };
         let held = match mode {
             ReadMode::Snapshot => None,

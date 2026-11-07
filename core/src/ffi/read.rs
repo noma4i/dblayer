@@ -4,6 +4,7 @@
 use std::sync::Arc;
 
 use super::database::Database;
+use super::queue::OperationInfo;
 use super::wire::{WireModel, WireRow};
 use super::DbError;
 use crate::owners::contract::{WindowPhase, WindowState};
@@ -60,6 +61,8 @@ pub enum ReadValue {
     /// The change after the last value the reader took: the steps from the rows it holds to the rows of `revision`.
     Delta { base: i64, revision: i64, edits: Vec<RowEdit>, state: ReadState },
     Count { revision: i64, count: u64, state: ReadState },
+    /// The whole queue of operations at a revision.
+    Operations { revision: i64, items: Vec<OperationInfo> },
     State { revision: i64, state: ReadState },
     Ready,
     /// One event of a model: the rows before and after its landing, read only while a stream of events is open.
@@ -91,6 +94,8 @@ pub enum ReadRequest {
     Events { model: String },
     /// The status of the transfer of `uploads[action]`, by its key `model:row:action`.
     Blob { key: String },
+    /// The queue of operations of the database.
+    Operations,
 }
 
 fn state_of(state: WindowState) -> ReadState {
@@ -155,6 +160,7 @@ fn read_value(value: Value, wire: Option<&WireModel>) -> Result<ReadValue, DbErr
             state: state_of(delta.state),
         },
         Value::Count { revision, count, state } => ReadValue::Count { revision, count, state: state_of(state) },
+        Value::Operations { revision, items } => ReadValue::Operations { revision, items },
         Value::State { revision, state } => ReadValue::State { revision, state: state_of(state) },
         Value::Ready => ReadValue::Ready,
         Value::Event { position, payload } => event_of(position, &payload, wire),
@@ -276,6 +282,7 @@ impl Database {
                 self.db.spec(model)?;
                 Ok(View { kind: Kind::Events, model: model.clone(), tables: Vec::new(), local: false, remote: false, live: false, reload: false, window: WindowKey { model: model.clone(), name: String::new() }, subject: model.clone() })
             }
+            ReadRequest::Operations => Ok(View { kind: Kind::Operations, model: String::new(), tables: vec![crate::store::operation::QUEUE_TABLE.to_string()], local: true, remote: false, live: false, reload: false, window: WindowKey { model: String::new(), name: String::new() }, subject: String::new() }),
             ReadRequest::Blob { key } => Ok(View { kind: Kind::Blob, model: String::new(), tables: Vec::new(), local: true, remote: false, live: false, reload: false, window: WindowKey { model: String::new(), name: String::new() }, subject: key.clone() }),
             ReadRequest::Entity { model, id, fetch } => {
                 let spec = self.db.spec(model)?;
