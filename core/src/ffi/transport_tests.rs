@@ -175,7 +175,7 @@ impl Transport for Held {
     async fn send(&self, _: HttpRequest) -> RawOutcome { unreachable!() }
     async fn open_cable(&self, _: String, _: HashMap<String, String>, _: u64, events: Arc<dyn CableEvents>) -> CableOutcome {
         self.entered.notify_one();
-        self.release.notified().await;
+        crate::test_wait::within(self.release.notified()).await;
         *crate::lock::lock(&self.link.events) = Some(events);
         CableOutcome::Open { connection: self.link.clone() }
     }
