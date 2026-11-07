@@ -201,11 +201,10 @@ async fn data_insert_on_create() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn create_without_durable_send_joins_loaded_window() {
+async fn create_joins_loaded_window() {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("create-call.sqlite").to_str().unwrap().to_string();
     let mut models: Vec<crate::schema::ModelSpec> = serde_json::from_str(&moment_models(OnFailure::Rollback)).unwrap();
-    models[0].actions.iter_mut().find(|action| action.name == "create").unwrap().durable = false;
     models[0].relations.push(relation("created", true, false));
     let server = Server::new();
     let rig = open_models(serde_json::to_string(&models).unwrap(), path, server.clone(), Arc::default()).await;

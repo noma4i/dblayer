@@ -154,7 +154,7 @@ impl Store {
                 path: raw.path,
                 body: raw.body,
                 effects: IntentEffects::default(),
-                durable: true,
+                created_at: 0, expires_after: None,
             },
             steps: Steps { path: raw.steps_path, body: raw.steps_body },
             restore_failed: None,

@@ -231,7 +231,7 @@ pub(crate) struct MutationCall {
     pub mutation: String,
     pub variables: Value,
     pub on_failure: crate::schema::OnFailure,
-    pub durable: bool,
+    pub expires_after: Option<u64>,
 }
 
 /// What `set_local` writes: the whole row when it is in the base, the value that waits for the row when it is not.
@@ -253,7 +253,7 @@ impl Store {
         let temp = planned.row_id.is_temp().then_some(&planned.row_id);
         let variables = crate::owners::write::plan_variables::mutation_variables(declaration, &planned.input, temp, &is_id);
         let variables = crate::owners::write::plan_variables::idempotent_variables(declaration, &planned.input, variables, client_mutation_id);
-        Ok(Some(MutationCall { mutation, variables, on_failure: declaration.on_failure, durable: declaration.durable || declaration.upload }))
+        Ok(Some(MutationCall { mutation, variables, on_failure: declaration.on_failure, expires_after: declaration.expires_after }))
     }
 
     /// The write of a local field: the value goes on the row, or waits for the row when it is not in the base.

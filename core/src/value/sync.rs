@@ -46,6 +46,8 @@ pub enum FailureKind {
     /// The answer of the server breaks the contract of the action: a batch answer lacks the row of an element.
     Protocol,
     Refused,
+    /// A queued operation waited longer than its `expires_after`.
+    Expired,
 }
 
 const SESSION_PREFIX: &str = "session:";
@@ -63,6 +65,7 @@ impl FailureKind {
             FailureKind::Unrecognized => "unrecognized".into(),
             FailureKind::Protocol => "protocol".into(),
             FailureKind::Refused => "refused".into(),
+            FailureKind::Expired => "expired".into(),
         }
     }
 
@@ -75,6 +78,7 @@ impl FailureKind {
             "unrecognized" => Some(FailureKind::Unrecognized),
             "protocol" => Some(FailureKind::Protocol),
             "refused" => Some(FailureKind::Refused),
+            "expired" => Some(FailureKind::Expired),
             _ => text.strip_prefix(TOO_LARGE_PREFIX).and_then(|numbers| numbers.split_once(':')).and_then(|(size, limit)| Some(FailureKind::RequestTooLarge { size: size.parse().ok()?, limit: limit.parse().ok()? })).or_else(|| text.strip_prefix(SESSION_PREFIX).and_then(SessionCode::named).map(FailureKind::Session)),
         }
     }

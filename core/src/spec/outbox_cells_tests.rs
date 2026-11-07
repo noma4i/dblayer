@@ -89,7 +89,7 @@ pub(super) fn marking_retry(twin: &mut Twin) -> OpId {
     id
 }
 
-/// An unsent `Queued` operation of the row `r`: a durable blocker holds the row.
+/// An unsent `Queued` operation of the row `r`: a blocker holds the row.
 pub(super) fn queued_behind_blocker(twin: &mut Twin, op: NewOp) -> OpId {
     sending(twin, Policy::Rollback, false);
     let id = submit_op(twin, op, 20);
@@ -104,27 +104,6 @@ pub(super) fn unchanged_by(twin: &mut Twin, id: OpId, stage: St, inputs: Vec<Out
         assert_eq!(twin.stage(id), Some(stage), "{input:?}");
         assert!(effects.is_empty(), "{input:?}: {effects:?}");
     }
-}
-
-#[test]
-fn out_submit_offline_not_durable() {
-    let mut twin = Twin::new();
-    twin.post(OutboxInput::Online(Online(false)));
-    let effects = twin.post(OutboxInput::Submit { epoch: EPOCH, op: NewOp { durable: false, ..model_op("r", Policy::Rollback, false) }, reply: 21 });
-    assert_eq!(answers(&effects, 21), vec![OutboxAnswer::Err(Fault::Offline)]);
-    assert!(kinds(&effects).is_empty() && twin.state().ops.is_empty(), "no optimism, no intent: {effects:?}");
-}
-
-#[test]
-fn out_queued_plain_offline() {
-    let mut twin = Twin::new();
-    let id = queued_behind_blocker(&mut twin, NewOp { durable: false, ..model_op("r", Policy::Rollback, false) });
-    twin.waiter(id);
-    let effects = twin.post(OutboxInput::Online(Online(false)));
-    assert_eq!(kinds(&effects), vec![CommitKind::Rollback]);
-    let done = twin.committed(id);
-    assert!(answers(&done, WAITER).iter().any(|answer| matches!(answer, OutboxAnswer::Outcome(OutboxOutcome::Rejected { error }) if error == "network")), "{done:?}");
-    assert_eq!(sends(&twin.post(OutboxInput::Online(Online(true)))), 0, "it is not sent after the network returns");
 }
 
 #[test]

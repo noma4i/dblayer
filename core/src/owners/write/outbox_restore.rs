@@ -69,9 +69,7 @@ impl OutboxState {
                 operation.pending_owned = true;
             }
         }
-        if self.goes_out(op_id) {
-            self.begin_attempt(op_id, fx);
-        }
+        self.try_start(op_id, fx);
     }
 
     /// No operation owns these answers: one batch takes them out, nothing waits for its result.

@@ -18,6 +18,8 @@ pub(super) const PURPOSE_TRANSFER: u8 = 1;
 pub(super) const EXPIRE_TIMER: u64 = 1 << 32;
 /// Attempts of an operation before the permanent error.
 pub(super) const ATTEMPT_LIMIT: u32 = 40;
+/// Operations with a `Mutate` in flight at the same time.
+pub const DRAIN_LIMIT: usize = 4;
 
 /// The owners Outbox sends to.
 #[derive(Clone, Copy, Debug)]
@@ -64,8 +66,10 @@ pub struct NewOp {
     pub body: String,
     /// The optimistic changes of the operation. `RollBack` takes them back by `op_id`.
     pub effects: IntentEffects,
-    /// A durable operation waits for the network in the queue, any other ends with `Rejected{network}` when the network goes away before it left.
-    pub durable: bool,
+    /// Milliseconds of the clock when the call was made.
+    pub created_at: u64,
+    /// The time the operation may wait in the queue before it is rolled back with `Rejected{Expired}`.
+    pub expires_after: Option<std::time::Duration>,
 }
 
 /// An intent kept in the base (`encrypted_pending` pair when a request left before the close).
@@ -109,7 +113,6 @@ pub enum Fault {
     NotFound,
     InFlight,
     Interrupted,
-    Offline,
     Closed,
     /// The intent was dropped by the layout move: only `discard` ends it.
     RestoreFailed,

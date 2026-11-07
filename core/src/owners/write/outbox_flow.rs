@@ -50,6 +50,7 @@ impl OutboxState {
             operation.result = result;
         }
         self.store(op_id, CommitKind::Land, fx);
+        self.drain(fx);
     }
 
     pub(super) fn transport_failed(&mut self, op_id: OpId, temporary: bool, fx: &mut Effects<Outbox>) {
@@ -57,14 +58,8 @@ impl OutboxState {
             return;
         }
         if !temporary {
-            return self.reject_or_keep(op_id, fx);
-        }
-        if !self.ops[&op_id].op.durable {
-            if let Some(operation) = self.ops.get_mut(&op_id) {
-                operation.stage = Stage::RollingBack(Why::Rejected);
-                operation.reject_error = Some(super::failure::network());
-            }
-            return self.store(op_id, CommitKind::Rollback, fx);
+            self.reject_or_keep(op_id, fx);
+            return self.drain(fx);
         }
         let attempts = self.ops[&op_id].attempts;
         if attempts >= ATTEMPT_LIMIT {
@@ -77,6 +72,7 @@ impl OutboxState {
         } else if let Some(operation) = self.ops.get_mut(&op_id) {
             operation.stage = Stage::Queued;
         }
+        self.drain(fx);
     }
 
     pub(super) fn retry_due(&mut self, op_id: OpId, cycle_id: u64, fx: &mut Effects<Outbox>) {
@@ -231,9 +227,7 @@ impl OutboxState {
         if !self.declarations.contains(&(op.model.clone(), op.action.clone())) {
             return Self::reply(fx, reply, OutboxAnswer::Err(Fault::Invalid));
         }
-        if !op.durable && !self.online {
-            return Self::reply(fx, reply, OutboxAnswer::Err(Fault::Offline));
-        }
+        self.now = self.now.max(op.created_at);
         let row = self.aliases.get(&(op.model.clone(), op.row_id.clone())).cloned().unwrap_or_else(|| op.row_id.clone());
         let unsent_create = (op.action == "destroy")
             .then(|| self.ops.values().find(|other| other.stage == Stage::Queued && !other.sent && other.op.action == "create" && other.op.model == op.model && other.op.row_id == row).map(|other| other.op_id))
@@ -278,18 +272,7 @@ impl OutboxState {
 
     pub(super) fn online_changed(&mut self, on: bool, fx: &mut Effects<Outbox>) {
         self.online = on;
-        let queued: Vec<OpId> = self.ops.values().filter(|operation| operation.stage == Stage::Queued).map(|operation| operation.op_id).collect();
-        for op_id in queued {
-            if on {
-                self.try_start(op_id, fx);
-            } else if self.ops.get(&op_id).is_some_and(|operation| !operation.op.durable && !operation.sent) {
-                if let Some(operation) = self.ops.get_mut(&op_id) {
-                    operation.stage = Stage::RollingBack(Why::Rejected);
-                    operation.reject_error = Some(super::failure::network());
-                }
-                self.store(op_id, CommitKind::Rollback, fx);
-            }
-        }
+        self.drain(fx);
     }
 
 }

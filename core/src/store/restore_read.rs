@@ -177,7 +177,8 @@ impl Store {
                 path: String::new(),
                 body: entry.input.to_string(),
                 effects: Default::default(),
-                durable: true,
+                created_at: u64::try_from(operation.created_at).unwrap_or(0),
+                expires_after: declared.and_then(|declaration| declaration.expires_after).map(std::time::Duration::from_secs),
             };
             let seq = operation.id.0;
             let resume = pending.as_ref().filter(|pending| pending.owner == Some(RequestOwner::Operation { seq })).and_then(|pending| Some((pending.req_id, u64::try_from(pending.sequence).ok()?)));
@@ -199,7 +200,7 @@ impl Store {
             let Some(op_id) = columns.get("seq").and_then(serde_json::Value::as_u64) else { continue };
             let Some((model, action)) = columns.get("action_key").and_then(serde_json::Value::as_str).and_then(|key| key.split_once(':')) else { continue };
             let row_id = columns.get("temp_id").and_then(serde_json::Value::as_str).unwrap_or(&row.key).to_string();
-            let op = NewOp { model: model.to_string(), row_id, action: action.to_string(), on_failure: OnFailure::Keep, origin: OpSource::Api, path: String::new(), body: String::new(), effects: Default::default(), durable: true };
+            let op = NewOp { model: model.to_string(), row_id, action: action.to_string(), on_failure: OnFailure::Keep, origin: OpSource::Api, path: String::new(), body: String::new(), effects: Default::default(), created_at: 0, expires_after: None };
             dropped.push(StoredOp { answered: None, op_id, op, error_mark: false, pending: None, attempts: 1, cycle_id: 0, restore_failed: Some(row.reason.clone()), restore_element: Some((row.table.clone(), row.key.clone())) });
         }
         Ok(dropped)

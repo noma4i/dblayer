@@ -236,7 +236,6 @@ pub fn moment_models(on_failure: OnFailure) -> String {
     model.upload_steps = Some(upload_operations());
     let mut create = ActionDeclaration::new("create", RootShape::Upsert);
     create.mutation = Some("MakeMoment".into());
-    create.durable = true;
     create.has_optimistic = true;
     create.has_temp_row_retention = true;
     create.on_failure = on_failure;
@@ -244,7 +243,6 @@ pub fn moment_models(on_failure: OnFailure) -> String {
     model.actions.push(create);
     let mut update = ActionDeclaration::new("update", RootShape::Upsert);
     update.mutation = Some("UpdateMoment".into());
-    update.durable = true;
     update.has_optimistic = true;
     update.has_temp_row_retention = true;
     update.on_failure = on_failure;
@@ -313,7 +311,7 @@ impl Rig {
 
     pub fn epoch(&self) -> u64 { self.db.session_epoch() }
 
-    pub async fn create(&self, text: &str) -> WireOperationReceipt { within(self.db.create_durable("Moment", &json!({"text": text}).to_string())).await }
+    pub async fn create(&self, text: &str) -> WireOperationReceipt { within(self.db.send_create("Moment", &json!({"text": text}).to_string())).await }
 
     pub async fn update(&self, row: &str, text: &str) -> Result<WireOperationReceipt, DbError> {
         within(self.db.update(self.epoch(), "Moment".into(), row.into(), json!({"text": text}).to_string(), "{}".into())).await

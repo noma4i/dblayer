@@ -34,6 +34,9 @@ pub struct OutboxState {
     pub(super) peers: OutboxPeers,
     pub epoch: Epoch,
     pub online: bool,
+    /// The clock in milliseconds as the last `Tick` or `Submit` told it.
+    pub(super) now: u64,
+    pub drain_limit: usize,
     pub generation: BTreeMap<String, u64>,
     /// The generation of the models without an entry in `generation`.
     pub(super) base_generation: u64,
@@ -81,6 +84,8 @@ impl OutboxState {
             peers,
             epoch,
             online: true,
+            now: 0,
+            drain_limit: DRAIN_LIMIT,
             generation: BTreeMap::new(),
             base_generation: 0,
             ops: BTreeMap::new(),
@@ -116,8 +121,10 @@ impl OutboxState {
     /// A new epoch: a fresh instance. The platform call gate keeps calls out of an epoch without an identity.
     pub(super) fn begin_epoch(&mut self, epoch: Epoch) {
         let declarations = std::mem::take(&mut self.declarations);
+        let drain_limit = self.drain_limit;
         *self = if self.author == BatchAuthor::LocalWrites { Self::local_writes(epoch, self.peers.store) } else { Self::new(epoch, self.peers) };
         self.declarations = declarations;
+        self.drain_limit = drain_limit;
     }
 
     pub fn stage_of(&self, op_id: OpId) -> Option<Stage> { self.ops.get(&op_id).map(|operation| operation.stage) }
@@ -130,7 +137,28 @@ impl OutboxState {
         self.ops.values().any(|other| other.op_id < op_id && other.op.model == operation.op.model && other.op.row_id == operation.op.row_id && other.stage != Stage::Done)
     }
 
-    pub(super) fn goes_out(&self, op_id: OpId) -> bool { self.online && !self.row_busy(op_id) }
+    /// Operations with a `Mutate` in flight (or about to be): `Sending` outside the retry wait, and the write of the next attempt.
+    pub fn slots_taken(&self) -> usize {
+        self.ops.values().filter(|operation| operation.stage == Stage::PersistingAttempt || (operation.stage == Stage::Sending && !operation.waiting_retry)).count()
+    }
+
+    pub(super) fn goes_out(&self, op_id: OpId) -> bool { self.online && !self.row_busy(op_id) && self.slots_taken() < self.drain_limit }
+
+    fn expired(&self, op_id: OpId) -> bool {
+        let Some(operation) = self.ops.get(&op_id) else { return false };
+        operation.op.expires_after.is_some_and(|after| u128::from(self.now.saturating_sub(operation.op.created_at)) > after.as_millis())
+    }
+
+    /// The Queued operations in `seq` order: each one goes out while a slot is free or ends `Rejected{Expired}`.
+    pub(super) fn drain(&mut self, fx: &mut Effects<Outbox>) {
+        if !self.online {
+            return;
+        }
+        let queued: Vec<OpId> = self.ops.values().filter(|operation| operation.stage == Stage::Queued).map(|operation| operation.op_id).collect();
+        for op_id in queued {
+            self.try_start(op_id, fx);
+        }
+    }
 
     pub(super) fn add_operation(&mut self, op_id: OpId, op: NewOp, stage: Stage) {
         let sequence = self.next_sequence;
@@ -304,26 +332,27 @@ impl OutboxState {
         let Some(operation) = self.ops.get_mut(&op_id) else { return };
         operation.stage = Stage::Done;
         operation.outcome = Some(outcome.clone());
-        let (model, row) = (operation.op.model.clone(), operation.op.row_id.clone());
         self.tell_transfer(op_id, &outcome, next_goes, fx);
         self.give_outcome(op_id, &outcome, fx);
         if next_goes {
-            self.kick_row(&model, &row, fx);
+            self.drain(fx);
         }
     }
 
-    /// The first operation of the row that is not Done goes out when it is Queued and the row is free.
-    pub(super) fn kick_row(&mut self, model: &str, row: &str, fx: &mut Effects<Outbox>) {
-        let next = self.ops.values().find(|operation| operation.stage != Stage::Done && operation.op.model == model && operation.op.row_id == row).map(|operation| operation.op_id);
-        if let Some(op_id) = next {
-            self.try_start(op_id, fx);
-        }
-    }
-
-    /// A Queued operation goes to the network: the first `Mutate` of the cycle at once, a repeat after its attempt is written, the 41st attempt never.
+    /// A Queued operation on a free row ends `Rejected{Expired}` when its time is over, else goes to the network while a slot is free: the first `Mutate` of the cycle at once, a repeat after its attempt is written, the 41st attempt never.
     pub(super) fn try_start(&mut self, op_id: OpId, fx: &mut Effects<Outbox>) {
         let Some(operation) = self.ops.get(&op_id) else { return };
-        if operation.stage != Stage::Queued || !self.goes_out(op_id) {
+        if operation.stage != Stage::Queued || !self.online || self.row_busy(op_id) {
+            return;
+        }
+        if self.expired(op_id) {
+            if let Some(operation) = self.ops.get_mut(&op_id) {
+                operation.stage = Stage::RollingBack(Why::Rejected);
+                operation.reject_error = Some(super::failure::expired());
+            }
+            return self.store(op_id, CommitKind::Rollback, fx);
+        }
+        if self.slots_taken() >= self.drain_limit {
             return;
         }
         if !operation.sent && operation.attempts <= 1 {
@@ -509,6 +538,9 @@ impl StateOwner for Outbox {
         if let OutboxInput::ActivateEpoch(epoch) = &input {
             state.begin_epoch(*epoch);
             return fx;
+        }
+        if let OutboxInput::Tick(now) = &input {
+            state.now = state.now.max(now.0);
         }
         if let OutboxInput::Landed { op_id, reply } = input {
             let answer = state.ops.get(&op_id).and_then(|operation| operation.landed.clone()).map_or(OutboxAnswer::Err(Fault::NotFound), OutboxAnswer::Resolved);

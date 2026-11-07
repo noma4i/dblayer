@@ -63,7 +63,7 @@ async fn data_upsert_lands() {
     let epoch = db.session_epoch();
     let load = db.begin_load(epoch, "Annotation".into(), "all".into(), "{}".into()).unwrap();
     within(load.result()).await.unwrap();
-    let receipt = within(db.create_durable("Moment", &json!({"text": "root"}).to_string())).await;
+    let receipt = within(db.send_create("Moment", &json!({"text": "root"}).to_string())).await;
     assert!(matches!(within(db.outcome(receipt)).await.unwrap(), WireOperationOutcome::Confirmed { .. }));
     let root = within(db.read_row(epoch, "Moment".into(), "m1".into())).await.unwrap().unwrap();
     for (id, text) in [("a1", "first"), ("a2", "second")] {

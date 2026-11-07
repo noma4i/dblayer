@@ -152,7 +152,7 @@ impl Joint {
             path: text_of(mutation, "path")?,
             body: text_of(mutation, "body")?,
             effects: Default::default(),
-            durable: true,
+            created_at: 0, expires_after: None,
         };
         Some(Self { minimum: usize::try_from(value.get("minimum")?.as_u64()?).ok()?, maximum: usize::try_from(value.get("maximum")?.as_u64()?).ok()?, items_key: text_of(&value, "items_key")?, mutation: op, renumber })
     }

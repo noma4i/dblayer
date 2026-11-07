@@ -18,6 +18,10 @@ pub(super) struct Ctx {
     pub epoch_current: bool,
     pub online: bool,
     pub row_free: bool,
+    /// Fewer than `DRAIN_LIMIT` operations hold a slot.
+    pub slot_free: bool,
+    /// `now - created_at > expires_after` of the operation.
+    pub expired: bool,
     pub policy: Policy,
     pub owns_model: bool,
     /// The `op_id` (or the row) of the input is the operation of the state.
@@ -28,7 +32,7 @@ pub(super) struct Ctx {
 }
 
 impl Ctx {
-    pub fn ready() -> Self { Self { epoch_current: true, online: true, row_free: true, policy: Policy::Rollback, owns_model: true, ours: true, attempts_left: true, transfer: false } }
+    pub fn ready() -> Self { Self { epoch_current: true, online: true, row_free: true, slot_free: true, expired: false, policy: Policy::Rollback, owns_model: true, ours: true, attempts_left: true, transfer: false } }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -54,7 +58,7 @@ pub(super) enum In {
 pub(super) enum Out { Confirmed, Rejected, Failed, Discarded, Interrupted }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum Fault { NoSession, Reason(Reason), InFlight, NotFound, Interrupted, Offline, Closed, RestoreFailed, StateLost, Internal }
+pub(super) enum Fault { NoSession, Reason(Reason), InFlight, NotFound, Interrupted, Closed, RestoreFailed, StateLost, Internal }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum Obs {
@@ -103,7 +107,7 @@ fn done_marked(ctx: &Ctx) -> Option<Step> {
     Some(Step { next: St::Failed, obs: vec![Obs::RowCarriesError, Obs::Outcome(Out::Failed)], eff })
 }
 
-fn goes_out(ctx: &Ctx) -> bool { ctx.online && ctx.row_free }
+fn goes_out(ctx: &Ctx) -> bool { ctx.online && ctx.row_free && ctx.slot_free }
 
 /// Ends an operation with `out`: the effects `before`, the outcome for the transfer owner when the origin is `Transfer{key}`, the effects `after`.
 fn done_with(ctx: &Ctx, out: Out, obs: &[Obs], before: &[Eff], after: &[Eff]) -> Option<Step> {
@@ -131,6 +135,7 @@ pub fn step_of(state: St, ctx: &Ctx, input: In) -> Option<Step> {
         (Submitting, In::Retry) => step(Submitting, &[Receipt], &[]),
         (Submitting, In::Online(_) | In::ModelsReset | In::Response | In::TransportError { .. } | In::Dropped | In::Tick) => step(Submitting, &[], &[]),
 
+        (Queued, In::Online(true) | In::RowFreed) if ctx.online && ctx.row_free && ctx.expired => step(RollingBack(Why::Rejected), &[], &[Store(Rollback)]),
         (Queued, In::Online(true) | In::RowFreed) if goes_out(ctx) => step(Sending, &[], &[Send]),
         (Queued, In::Online(true) | In::RowFreed) => step(Queued, &[], &[]),
         (Queued, In::Online(false)) => step(Queued, &[], &[]),

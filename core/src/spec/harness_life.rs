@@ -59,7 +59,6 @@ fn models_json() -> String {
     let mut model = ModelSpec::new("Moment", vec![FieldSpec::scalar("id", ScalarKind::Id), FieldSpec::scalar("text", ScalarKind::Str).optional()]);
     let mut create = ActionDeclaration::new("create", RootShape::Upsert);
     create.mutation = Some("MakeMoment".to_string());
-    create.durable = true;
     create.has_optimistic = true;
     create.has_temp_row_retention = true;
     create.on_failure = OnFailure::Keep;

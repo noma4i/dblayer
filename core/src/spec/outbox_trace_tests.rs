@@ -246,3 +246,75 @@ async fn out_prop_intent_kept_run() {
         drop(second);
     }
 }
+
+#[test]
+fn out_prop_offline_queue() { bounded("out_prop_offline_queue", out_prop_offline_queue_run) }
+
+async fn out_prop_offline_queue_run() {
+    for (action, operation) in [("create", "MakeMoment"), ("update", "UpdateMoment"), ("destroy", "DeleteMoment")] {
+        step(&format!("offline queue {action}"));
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("db.sqlite").to_string_lossy().to_string();
+        let first = Rig::open_at(OnFailure::Rollback, Some(path.clone()), Server::new()).await;
+        let seed = first.create("seed").await;
+        assert_eq!(kind_of(&first.outcome(&seed).await), "Confirmed");
+        let landed = first.update(&temp_id(&seed), "landed").await.unwrap();
+        assert_eq!(kind_of(&first.outcome(&landed).await), "Confirmed");
+        let real = temp_id(&landed);
+        let before = first.server.mutations();
+        first.db.set_online(false).unwrap();
+        let receipt = match action {
+            "create" => first.create("queued").await,
+            "update" => first.update(&real, "edited").await.unwrap(),
+            _ => within(first.db.destroy(first.epoch(), "Moment".into(), real.clone())).await.unwrap(),
+        };
+        first.quiet().await;
+        assert_eq!(first.server.mutations(), before, "{action}: nothing leaves while the network is away");
+        let target = if action == "create" { temp_id(&receipt) } else { real.clone() };
+        let visible = |row: Option<crate::ffi::WireRow>| match (action, row) {
+            ("destroy", row) => row.is_none(),
+            ("update", Some(row)) => format!("{:?}", row.cells).contains("edited"),
+            (_, row) => row.is_some(),
+        };
+        assert!(visible(first.row(&target).await), "{action}: the optimism is visible before the close");
+        within(first.db.close_database()).await.unwrap();
+        drop(first);
+
+        let server = Server::new();
+        server.hold(Kind::Mutate, true);
+        let second = Rig::open_at(OnFailure::Rollback, Some(path), server.clone()).await;
+        server.wait_held(Kind::Mutate, 1).await;
+        assert!(visible(second.row(&target).await), "{action}: the optimism is visible after the reopen");
+        server.hold(Kind::Mutate, false);
+        server.answer(Kind::Mutate, Reply::Ok);
+        second.quiet().await;
+        assert_eq!((server.count(operation), server.mutations()), (1, 1), "{action}: sent once on the network that returned, no call of the platform");
+        drop(second);
+    }
+}
+
+#[test]
+fn out_queued_drain_limit_api() { bounded("out_queued_drain_limit_api", out_queued_drain_limit_api_run) }
+
+async fn out_queued_drain_limit_api_run() {
+    let rig = Rig::open(OnFailure::Rollback).await;
+    rig.server.hold(Kind::Mutate, true);
+    rig.db.set_online(false).unwrap();
+    let mut receipts = Vec::new();
+    for number in 0..5 { receipts.push(rig.create(&format!("m{number}")).await); }
+    rig.quiet().await;
+    assert_eq!(rig.server.mutations(), 0, "nothing leaves while the network is away");
+    rig.db.set_online(true).unwrap();
+    for sent in 1..=5 {
+        rig.server.wait_held(Kind::Mutate, 1).await;
+        assert_eq!(rig.server.mutations(), sent, "Session puts one request in the network at a time, the queue gives it the next");
+        rig.server.answer(Kind::Mutate, Reply::Ok);
+    }
+    let texts: Vec<_> = rig.server.seen().iter().filter(|seen| seen.operation == "MakeMoment").map(|seen| seen.variables["text"].as_str().unwrap_or("").to_string()).collect();
+    assert_eq!(texts, ["m0", "m1", "m2", "m3", "m4"], "the requests reach the transport in the order of the writes");
+    rig.server.hold(Kind::Mutate, false);
+    for receipt in &receipts {
+        assert_eq!(kind_of(&rig.outcome(receipt).await), "Confirmed");
+    }
+    assert_eq!(rig.server.count("MakeMoment"), 5);
+}

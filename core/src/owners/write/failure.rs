@@ -37,14 +37,11 @@ pub fn of_graphql(message: String, extensions: Option<GraphqlExtensions>) -> Str
 
 /// The kept text as a failure; a plain text is a refusal with that message.
 pub fn parse(error: &str) -> OperationFailure {
-    if error == NETWORK { return OperationFailure::new(FailureKind::Network, NETWORK); }
     serde_json::from_str(error).unwrap_or_else(|_| OperationFailure::new(FailureKind::Rejected, error))
 }
 
 /// The answer lacks what the action promised.
 pub fn protocol(message: &str) -> String { text(&OperationFailure::new(FailureKind::Protocol, message)) }
 
-/// The request never reached the server and the action does not wait for the network.
-pub fn network() -> String { NETWORK.into() }
-
-const NETWORK: &str = "network";
+/// The operation waited in the queue longer than its `expires_after`.
+pub fn expired() -> String { text(&OperationFailure::new(FailureKind::Expired, "expired")) }
