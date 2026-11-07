@@ -19,12 +19,11 @@ fn offline_blocks_until_online() { crate::test_wait::paused(async {
     let link = Connectivity::new(true);
     assert!(link.is_online());
     link.set_online(false);
-    let waiting = tokio::spawn({
-        let link = link.clone();
-        async move { link.online().await }
-    });
-    tokio::time::sleep(std::time::Duration::from_secs(5)).await;
-    assert!(!waiting.is_finished());
+    tokio::select! {
+        biased;
+        () = link.online() => panic!("online() returned while the link is offline"),
+        () = std::future::ready(()) => {}
+    }
     link.set_online(true);
-    waiting.await.unwrap();
+    link.online().await;
 }) }

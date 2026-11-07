@@ -68,14 +68,8 @@ pub fn pump<O: StateOwner>(det: &mut DetScheduler, owner: Address<O>, mut done: 
         }
         assert!(Instant::now() < deadline, "the condition did not hold in time, trace: {:?}", det.trace());
         det.post(owner, EpochStamp::Control, O::tick(Time(0)));
-        std::thread::sleep(Duration::from_millis(2));
+        std::thread::yield_now();
     }
-}
-
-/// Steps the scheduler for `span`: the proof that something does not happen.
-pub fn pump_for<O: StateOwner>(det: &mut DetScheduler, owner: Address<O>, span: Duration) {
-    let end = Instant::now() + span;
-    pump(det, owner, |_| Instant::now() >= end);
 }
 
 pub fn saw_input(det: &DetScheduler, prefix: &str) -> usize { det.trace().iter().filter(|entry| entry.input.starts_with(prefix)).count() }

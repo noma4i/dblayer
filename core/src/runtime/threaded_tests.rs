@@ -1,5 +1,4 @@
 use std::sync::{mpsc, Arc, Mutex};
-use std::thread::sleep;
 use std::time::Duration;
 
 use super::toys_tests::*;
@@ -129,14 +128,14 @@ fn idle_runtime_has_zero_wakeups_and_schedule_fires_once() {
     let mut builder = RuntimeBuilder::for_tests();
     let toy = builder.add::<Toy>("toy", ToyState::default(), reporting(report));
     let runtime = builder.start().unwrap();
-    sleep(Duration::from_millis(150));
+    assert!(runtime.barrier(WAIT));
     assert_eq!(runtime.wakeups(toy), 0);
     runtime.start_epoch(1);
     runtime.post(toy, EpochStamp::Epoch(1), ToyInput::ScheduleAt(1, Time(60), 9));
     assert_eq!(fired.recv_timeout(WAIT), Ok(9));
     assert!(runtime.barrier(WAIT));
     let settled = runtime.wakeups(toy);
-    sleep(Duration::from_millis(200));
+    assert!(runtime.barrier(WAIT));
     assert_eq!(runtime.wakeups(toy), settled);
     assert!(fired.try_recv().is_err());
 }
@@ -163,7 +162,7 @@ fn threaded_executor_drops_input_of_another_epoch() {
     runtime.post(toy, EpochStamp::Epoch(1), ToyInput::Fire(1));
     runtime.post(toy, EpochStamp::Epoch(2), ToyInput::Fire(2));
     assert_eq!(fired.recv_timeout(WAIT), Ok(2));
-    sleep(Duration::from_millis(100));
+    assert!(runtime.barrier(WAIT));
     assert!(fired.try_recv().is_err());
 }
 

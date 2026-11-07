@@ -165,7 +165,7 @@ async fn a_load_without_the_network_waits_and_asks_when_the_network_returns_whil
     let (db, transport) = open(false).await;
     db.set_online(false).unwrap();
     let call = begin(&db).await;
-    tokio::time::sleep(Duration::from_millis(200)).await;
+    crate::test_wait::within(crate::ffi::settled(&db)).await.unwrap();
     assert_eq!(transport.requests(), 0, "no request leaves while the network is away");
     assert!(matches!(refresh(&db).await, Err(DbError::Offline { .. })), "a refresh needs the network now");
     db.set_online(true).unwrap();

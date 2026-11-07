@@ -244,8 +244,11 @@ fn cancel_on_retry_waits_for_a_retry_that_the_executor_reaches_late() { crate::t
     let progress = retries.inner.clone();
     let clock = crate::runtime::ManualClock::new(std::time::Duration::ZERO);
     let online = crate::transport::Connectivity::new(true);
+    let (reached, late) = std::sync::mpsc::channel::<()>();
+    let executor_turn = tokio::spawn(async move { tokio::task::yield_now().await; reached.send(()).unwrap(); });
     let call = async {
-        super::database::executor().unwrap().spawn_blocking(|| std::thread::sleep(std::time::Duration::from_millis(300))).await.unwrap();
+        super::database::executor().unwrap().spawn_blocking(move || crate::test_wait::recv_within(&late)).await.unwrap();
+        executor_turn.await.unwrap();
         let _ = Retrying::new(&clock, &progress, &online, crate::runtime::RetryPolicy::Http).failed(TransportError::Network("down".into())).await;
     };
     cancel_on_retry(&retries, call).await;

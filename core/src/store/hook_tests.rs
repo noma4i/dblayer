@@ -64,7 +64,7 @@ fn inv_conc_01_events_reach_the_hook_in_commit_order_while_an_earlier_hook_is_st
     first_entered.recv_timeout(Duration::from_secs(5)).unwrap();
     let later = store.clone();
     let second = std::thread::spawn(move || written(&later, "m2"));
-    std::thread::sleep(Duration::from_millis(200));
+    crate::test_wait::spin_until("the later commit never reached the store", Duration::from_secs(5), || store.revision_seq().unwrap() >= 2);
     assert_eq!(revisions.lock().unwrap().len(), 1, "the later commit waits for the earlier hook");
     release.send(()).unwrap();
     join_within(first);

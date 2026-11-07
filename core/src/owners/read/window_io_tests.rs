@@ -10,7 +10,7 @@ const NOW: i64 = 1_000_000;
 
 use serde_json::json;
 
-use super::rig::{admit, open_gate, collector, pump, pump_for, runtime, saw_input, BatchPeer, Batches};
+use super::rig::{admit, open_gate, collector, pump, runtime, saw_input, BatchPeer, Batches};
 use super::{WindowCodec, WindowIo, WindowReader};
 use crate::owners::read::deliveries::Deliveries;
 use crate::owners::read::windows::{self as w, AnswerPage, WindowEffect, WindowKey, WindowOutcome, Windows, WindowsEffect, WindowsInput};
@@ -137,12 +137,13 @@ fn win_io_error_classes() {
 #[test]
 fn win_io_cancel_no_answer() {
     let mut rig = rig();
-    rig.mock.enqueue("Page", Reply::data(json!({ "rows": ["r1"], "cursor": null })).after(Duration::from_millis(300)));
+    rig.mock.enqueue("Page", Reply::data(json!({ "rows": ["r1"], "cursor": null })).after(Duration::from_secs(3600)));
     rig.watch(1);
     pump(&mut rig.det, rig.windows, |det| det.trace().iter().any(|entry| entry.effects.contains("Request")));
     rig.det.post(rig.windows, EpochStamp::Epoch(EPOCH), WindowsInput::InterestMinus { key: key(), id: 1 });
     pump(&mut rig.det, rig.windows, |det| det.trace().iter().any(|entry| entry.effects.contains("Cancel")));
-    pump_for(&mut rig.det, rig.windows, Duration::from_millis(900));
+    let mock = rig.mock.clone();
+    pump(&mut rig.det, rig.windows, |_| mock.abandoned_calls() == 1);
     assert_eq!(saw_input(&rig.det, "Response"), 0, "a cancelled request gives no answer");
     assert!(rig.batches.all().is_empty());
 }

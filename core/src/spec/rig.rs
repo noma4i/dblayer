@@ -329,7 +329,12 @@ impl Rig {
     pub async fn outcome(&self, receipt: &WireOperationReceipt) -> WireOperationOutcome { within(self.db.outcome(receipt.clone())).await.unwrap() }
 
     pub async fn pending(&self, receipt: &WireOperationReceipt) -> bool {
-        tokio::time::timeout(Duration::from_millis(200), self.db.outcome(receipt.clone())).await.is_err()
+        self.quiet().await;
+        tokio::select! {
+            biased;
+            _ = self.db.outcome(receipt.clone()) => false,
+            () = std::future::ready(()) => true,
+        }
     }
 }
 
@@ -348,7 +353,7 @@ pub async fn until(what: &str, mut condition: impl FnMut() -> bool) {
     let deadline = std::time::Instant::now() + Duration::from_secs(LIMIT_SECS);
     while !condition() {
         assert!(std::time::Instant::now() < deadline, "{what}: the event did not come");
-        tokio::time::sleep(Duration::from_millis(2)).await;
+        tokio::task::yield_now().await;
     }
 }
 

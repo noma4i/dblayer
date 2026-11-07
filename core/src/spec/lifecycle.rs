@@ -105,7 +105,7 @@ impl Sut for LifecycleSut {
         let id = self.step;
         if step.name == "idle" {
             let before = self.rig.as_ref().map_or(0, |rig| rig.server.seen().len());
-            tokio::time::sleep(std::time::Duration::from_millis(60)).await;
+            if let Some(rig) = &self.rig { crate::ffi::settled(&rig.database).await.expect("the database settles"); }
             let after = self.rig.as_ref().map_or(0, |rig| rig.server.seen().len());
             return if after == before { Vec::new() } else { vec![Observation::new("traffic", json!(after - before))] };
         }

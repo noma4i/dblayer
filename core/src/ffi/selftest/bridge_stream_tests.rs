@@ -395,7 +395,8 @@ async fn work_counters_idle_zero_one_row_one_decode_and_subscriptions_equal_read
     assert_eq!(rig.database.stream_census().open, 2);
 
     let idle = (rig.world.hits(), rig.database.db.counters().observer_calls, reader.len(), other.len());
-    tokio::time::sleep(std::time::Duration::from_millis(400)).await;
+    rig.clock.advance(3_600_000);
+    settle(&rig).await;
     assert_eq!(idle, (rig.world.hits(), rig.database.db.counters().observer_calls, reader.len(), other.len()), "an idle stream did work");
 
     let mut costs = Vec::new();

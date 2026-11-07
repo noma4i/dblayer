@@ -21,7 +21,8 @@ extern "C" fn arm_test_deadline() {
     if !args.iter().any(|argument| argument == "--exact") { return; }
     let name = args.iter().find(|argument| argument.contains("::")).cloned().unwrap_or_default();
     std::thread::spawn(move || {
-        std::thread::sleep(Duration::from_secs(TEST_DEADLINE));
+        let (_alive, never) = std::sync::mpsc::channel::<()>();
+        let _ = never.recv_timeout(Duration::from_secs(TEST_DEADLINE));
         eprintln!("TIMEOUT {TEST_DEADLINE}s {name}: the test hangs, a blocked thread cannot be caught by a bounded wait");
         std::process::abort();
     });
@@ -36,6 +37,15 @@ pub(crate) fn recv_within<T>(receiver: &Receiver<T>) -> T {
 }
 
 
+#[track_caller]
+pub(crate) fn spin_until(what: &str, limit: Duration, mut ready: impl FnMut() -> bool) {
+    let deadline = Instant::now() + limit;
+    while !ready() {
+        assert!(Instant::now() < deadline, "{what}");
+        std::thread::yield_now();
+    }
+}
+
 pub(crate) trait Joinable<T> {
     fn join_bounded(self) -> T;
 }
@@ -43,11 +53,7 @@ pub(crate) trait Joinable<T> {
 impl<T> Joinable<T> for JoinHandle<T> {
     #[track_caller]
     fn join_bounded(self) -> T {
-        let deadline = Instant::now() + BLOCK_LIMIT;
-        while !self.is_finished() {
-            assert!(Instant::now() < deadline, "the thread did not finish");
-            std::thread::sleep(Duration::from_millis(1));
-        }
+        spin_until("the thread did not finish", BLOCK_LIMIT, || self.is_finished());
         self.join().unwrap()
     }
 }

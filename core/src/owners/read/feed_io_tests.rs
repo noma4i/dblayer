@@ -8,14 +8,13 @@
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
-use std::time::Duration;
 
 use async_trait::async_trait;
 use serde_json::{json, Value};
 use tokio::sync::mpsc;
 
 use super::feed::FramedEvent;
-use super::rig::{collector, pump, pump_for, runtime, saw_input, BatchPeer, Batches};
+use super::rig::{collector, pump, runtime, saw_input, BatchPeer, Batches};
 use super::{FeedCodec, FeedIo};
 use crate::owners::contract::Online;
 use crate::owners::read::deliveries::Deliveries;
@@ -125,7 +124,7 @@ fn feed_io_frames_commit() {
 #[test]
 fn feed_io_unsubscribe_closes() {
     let (line, peer) = line();
-    let (mut det, feed, _batches, runtime) = rig(vec![line]);
+    let (mut det, feed, _batches, _runtime) = rig(vec![line.clone()]);
     pump(&mut det, feed, |det| det.state(feed).is_some_and(|state| state.mode() == Mode::Live));
     det.post(feed, EpochStamp::Epoch(EPOCH), FeedInput::WantMinus { model: "Chat".into(), id: 1 });
     let closed = peer.closed.clone();
@@ -133,9 +132,9 @@ fn feed_io_unsubscribe_closes() {
     let sent = peer.sent.lock().unwrap_or_else(PoisonError::into_inner).clone();
     assert_eq!(sent.iter().map(|(counter, body)| (*counter, body["t"].as_str().unwrap_or(""))).collect::<Vec<_>>(), [(0, "subscribe"), (1, "unsubscribe")]);
     let before = saw_input(&det, "FrameOpened");
+    pump(&mut det, feed, |_| line.incoming.try_lock().is_ok());
     let _ = peer.frames.send(next(1, "late"));
-    runtime.block_on(async { tokio::time::sleep(Duration::from_millis(50)).await });
-    pump_for(&mut det, feed, Duration::from_millis(300));
+    pump(&mut det, feed, |_| true);
     assert_eq!(saw_input(&det, "FrameOpened"), before, "no frame reaches the owner after the line closed");
 }
 
