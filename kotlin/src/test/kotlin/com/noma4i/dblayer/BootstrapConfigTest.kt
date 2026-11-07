@@ -44,7 +44,7 @@ class BootstrapConfigTest {
             override fun canceled(call: Call) { cancelled.complete(Unit) }
         }).build()
         val server = MockWebServer()
-        server.enqueue(MockResponse().setBody("pending").throttleBody(1, 60, java.util.concurrent.TimeUnit.SECONDS))
+        server.enqueue(MockResponse().setBody("pending").setHeader("Content-Length", "100"))
         server.start()
         val http = OkHttpTransport(client = client)
         val task = launch { runCatching { http.send(probeRequest(server.url("/probe").toString(), "x")) } }

@@ -14,8 +14,8 @@ internal object Reachability {
             override fun onLost(network: Network) = changed(false)
             override fun onCapabilitiesChanged(network: Network, capabilities: NetworkCapabilities) = changed(validated(capabilities))
         }
-        service.registerDefaultNetworkCallback(callback)
         changed(current())
+        service.registerDefaultNetworkCallback(callback)
         return { service.unregisterNetworkCallback(callback) }
     }
 

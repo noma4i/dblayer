@@ -403,9 +403,13 @@ class ClubTest {
     @Test
     fun aServerCreateReturnsTheConfirmedRow() = bounded {
         val transport = MockTransport()
-        transport.enqueue("CreateClub", CLUB_CREATED, 300)
+        val hold = transport.hold("CreateClub", CLUB_CREATED)
         openClubSession(transport)
-        val created = confirmedClub()
+        val receipt = withTimeout(5000) { Club.create(name = "friends") }
+        hold.entered()
+        hold.release()
+        check(withTimeout(5000) { receipt.outcome() } is OperationOutcome.Confirmed)
+        val created = Query("Club", Club).read().first()
         assertTrue("the call returned before the server answered", created.id == "g1" && created.name == "friends" && created.sync.state == SyncState.Synced)
         assertEquals(1, transport.calls.count { it.operationName == "CreateClub" })
     }

@@ -1,6 +1,5 @@
 package com.noma4i.dblayer
 
-import kotlinx.coroutines.delay
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ConcurrentLinkedQueue
@@ -89,21 +88,21 @@ class MockTransport(private val unanswered: Unanswered = Unanswered.Strict) : Sc
         (cableSinks.remove(token) ?: throw DbException.Network("cable socket is closed")).ended(code, reason, null)
     }
 
-    private class Reply(val body: String?, val failure: DbException?, val delayMillis: Long, val hold: Hold? = null)
+    private class Reply(val body: String?, val failure: DbException?, val hold: Hold? = null)
 
     private val replies = ConcurrentHashMap<String, java.util.ArrayDeque<Reply>>()
     private val recorded = CopyOnWriteArrayList<TransportRequest>()
 
     val calls: List<TransportRequest> get() { failTestThread(); return recorded.toList() }
 
-    fun enqueue(operation: String, reply: String, delayMillis: Long = 0) = push(operation, Reply(reply, null, delayMillis))
+    fun enqueue(operation: String, reply: String) = push(operation, Reply(reply, null))
 
-    fun enqueue(operation: String, failure: DbException, delayMillis: Long = 0) = push(operation, Reply(null, failure, delayMillis))
+    fun enqueue(operation: String, failure: DbException) = push(operation, Reply(null, failure))
 
     /** Queues an answer that waits at the server: `entered()` returns when the request arrived, and the answer goes out when the test calls `release()`. */
     fun hold(operation: String, reply: String = "{}", failure: DbException? = null): Hold {
         val hold = Hold()
-        push(operation, Reply(if (failure == null) reply else null, failure, 0, hold))
+        push(operation, Reply(if (failure == null) reply else null, failure, hold))
         return hold
     }
 
@@ -135,7 +134,6 @@ class MockTransport(private val unanswered: Unanswered = Unanswered.Strict) : Sc
         settled[identity]?.let { return it }
         val reply = synchronized(replies) { replies[request.operationName]?.pollFirst() } ?: refuse(request)
         try {
-            if (reply.delayMillis > 0) delay(reply.delayMillis)
             reply.hold?.pass()
         } catch (cancelled: kotlinx.coroutines.CancellationException) {
             reply.body?.let { settled[identity] = it }

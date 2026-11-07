@@ -41,7 +41,8 @@ class OptimisticReactionChainTest {
     /** The order of the app: a send the server confirmed, then each reaction on the row the previous call returned. The session of the plain transport holds from the open. */
     @Test
     fun eachReactionOnTheRowOfThePreviousCallKeepsOtherUsersReactions() = bounded {
-        openRecordSession(reactDelayMillis = 30_000, reacts = 4)
+        val transport = openRecordSession(reacts = 0)
+        repeat(4) { transport.hold("RecordReact", RECORD_REACTED) }
         var reacted = settledRecord().react(reactionBody = "A", userId = "u1").optimisticValue!!
         reacted = reacted.react(reactionBody = "B", userId = "u2").optimisticValue!!
         reacted = reacted.react(reactionBody = "C", userId = "u1").optimisticValue!!

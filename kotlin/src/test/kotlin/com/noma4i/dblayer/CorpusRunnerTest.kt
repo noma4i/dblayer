@@ -8,7 +8,6 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.sync.withPermit
 import kotlinx.serialization.json.Json
@@ -39,6 +38,8 @@ private class Pulled(val stream: ValueStream, heard: Heard, scope: CoroutineScop
         } catch (_: Exception) {
         }
     }
+
+    fun hasNext(): Boolean = !queue.isEmpty()
 
     fun next(): Pair<ULong, ReadValue>? {
         val value = queue.poll() ?: return null
@@ -141,6 +142,10 @@ private class DatabaseRunner {
     val loads = HashMap<String, LoadRequest>()
     val streams = HashMap<String, Pulled>()
     var calls = ArrayList<Deferred<Done>>()
+    var wanted = 0
+    var wantedFirst: String? = null
+    var at = ""
+    private val fence: suspend () -> Unit = { runCatching { database?.subscriptionCensus() } }
     val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
     fun idOf(name: String): String = rows[name] ?: name
@@ -173,8 +178,12 @@ private class DatabaseRunner {
 
     fun spawn(work: suspend () -> Done) { calls.add(scope.async { try { work() } catch (error: Throwable) { failed(error) } }) }
 
-    suspend fun settle(): List<JsonObject> {
-        quiesce("the corpus run to go quiet") { listOf(mock.count.toLong(), calls.count { it.isCompleted }.toLong(), heard.count.get().toLong()) }
+    @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+    private fun available(): Int = mock.unannounced + calls.filter { it.isCompleted && !it.isCancelled }.sumOf { it.getCompleted().observed.size }
+
+    suspend fun settle(already: Int = 0): List<JsonObject> {
+        fencedUntil("${wanted - already} observations of $at", fence) { available() >= wanted - already }
+        quiesce("the corpus run to go quiet", fence = fence) { listOf(mock.count.toLong(), calls.count { it.isCompleted }.toLong(), heard.count.get().toLong()) }
         val observed = ArrayList<JsonObject>()
         val waiting = ArrayList<Deferred<Done>>()
         for (call in calls) {
@@ -195,7 +204,7 @@ private class DatabaseRunner {
         opened.registerOperations(File(corpusDirectory, "operations.json").readText())
         opened.setOnline(true)
         database = opened
-        settle()
+        settle(wanted)
         listOf(observation("opened"))
     } catch (error: Exception) { failure("open") }
 
@@ -376,12 +385,18 @@ private class DatabaseRunner {
             "tick" -> { clock.advance((args["ms"] as? JsonPrimitive)?.longOrNull?.toULong() ?: 0uL); return settle() }
             "answer", "error", "drop", "ready", "frame" -> {
                 val id = args.text("id") ?: return failure("arguments")
+                if (wantedFirst != "error") fencedUntil("the request $id of $at", fence) { mock.knows(id) }
                 val reached = when (name) {
                     "answer" -> mock.answer(id, (args["json"] ?: return failure("arguments")).toString())
                     "error" -> mock.fail(id, args.text("kind") ?: return failure("arguments"))
                     "drop" -> mock.dropConnection(id)
                     "ready" -> mock.ready(id)
-                    else -> try { mock.frame(id, (args["event"] ?: return failure("arguments")).toString()) } catch (error: Exception) { return failure("frame") }
+                    else -> try {
+                        val event = (args["event"] ?: return failure("arguments")).toString()
+                        var delivered = mock.frame(id, event)
+                        if (!delivered && wantedFirst != "error") fencedUntil("the frame $id of $at", fence) { delivered = mock.frame(id, event); delivered }
+                        delivered
+                    } catch (error: Exception) { return failure("frame") }
                 }
                 if (!reached) return failure("no_request")
                 return settle()
@@ -399,6 +414,7 @@ private class DatabaseRunner {
             "pull" -> {
                 val key = args.text("stream") ?: return failure("arguments")
                 val pulled = streams[key] ?: return failure("unknown_stream")
+                if (wantedFirst != "empty") fencedUntil("a value of the stream $key at $at", fence) { pulled.hasNext() }
                 val next = pulled.next()
                 observed.add(if (next != null) value(key, next.second) else obs("empty", "stream" to key))
             }
@@ -410,7 +426,7 @@ private class DatabaseRunner {
             }
             else -> observed.addAll(start(database, name, args) ?: return listOf(observation("unsupported", JsonPrimitive(name))))
         }
-        observed.addAll(settle())
+        observed.addAll(settle(observed.size))
         if (name == "close" && calls.isEmpty()) this.database = null
         return observed
     }
@@ -423,6 +439,9 @@ private suspend fun runCorpus(file: java.io.File): String? {
     for ((index, line) in lines.withIndex()) {
         val step = Json.parseToJsonElement(line).jsonObject
         val expected: JsonElement = step["out"] ?: JsonArray(emptyList())
+        runner.at = "${file.name} step ${index + 1} input ${step["in"]}"
+        runner.wanted = (expected as? JsonArray)?.size ?: 0
+        runner.wantedFirst = ((expected as? JsonArray)?.firstOrNull() as? JsonObject)?.get("o")?.let { (it as? JsonPrimitive)?.contentOrNull }
         val got = JsonArray(runner.apply(step))
         if (expected != got) { red = "${file.name} step ${index + 1} input ${step["in"]} expected $expected got $got"; break }
     }

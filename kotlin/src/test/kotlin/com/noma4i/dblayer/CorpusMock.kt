@@ -22,6 +22,10 @@ class CorpusMock : ScriptedTransport, ScriptedHttp {
 
     val count: Int get() = synchronized(seen) { seen.size }
 
+    fun knows(id: String): Boolean = waiting.containsKey(id) || waitingPuts.containsKey(id) || waitingHttp.containsKey(id) || cables.containsKey(id)
+
+    val unannounced: Int get() = synchronized(seen) { seen.count { !it.announced } }
+
     /** The requests that arrived since the last call, in arrival order, as `request` observations. */
     fun announce(): List<JsonObject> = synchronized(seen) {
         seen.filter { !it.announced }.map {

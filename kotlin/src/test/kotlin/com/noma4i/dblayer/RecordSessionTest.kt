@@ -8,13 +8,13 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 private const val RECORD_CREATED = """{"data":{"createRecord":{"__typename":"Record","id":"x1","containerId":"c1","authorId":"u1","text":"hello","createdAt":"2026-10-08T00:00:00.000Z"}}}"""
-private const val RECORD_REACTED = """{"data":{"recordReact":{"__typename":"Record","id":"x1","containerId":"c1","authorId":"u1","text":"hello","createdAt":"2026-10-08T00:00:00.000Z","reactions":[{"body":"C","userId":"u1"}]}}}"""
+const val RECORD_REACTED = """{"data":{"recordReact":{"__typename":"Record","id":"x1","containerId":"c1","authorId":"u1","text":"hello","createdAt":"2026-10-08T00:00:00.000Z","reactions":[{"body":"C","userId":"u1"}]}}}"""
 
 /** A signed-in plain transport: a test that edits the record starts after the server answered its create. */
-suspend fun openRecordSession(reactDelayMillis: Long = 0, reacts: Int = 3, recordReply: String = RECORD_CREATED): MockTransport {
+suspend fun openRecordSession(reacts: Int = 3, recordReply: String = RECORD_CREATED): MockTransport {
     val transport = MockTransport()
     transport.enqueue("CreateRecord", recordReply)
-    repeat(reacts) { transport.enqueue("RecordReact", RECORD_REACTED, reactDelayMillis) }
+    repeat(reacts) { transport.enqueue("RecordReact", RECORD_REACTED) }
     reopen(Config(null, null), modelsJSON, transport)
     DBlayer.database.registerOperations("""[{"name":"CreateRecord","document":"mutation CreateRecord(${'$'}containerId: ID!, ${'$'}text: String!, ${'$'}signedId: String, ${'$'}attachedUserId: ID) { createRecord(containerId: ${'$'}containerId, text: ${'$'}text, signedId: ${'$'}signedId, attachedUserId: ${'$'}attachedUserId) { id containerId authorId text createdAt reactions { body userId } } }"},{"name":"RecordReact","document":"mutation RecordReact(${'$'}id: ID!, ${'$'}reactionBody: String!, ${'$'}userId: ID!) { recordReact(id: ${'$'}id, reactionBody: ${'$'}reactionBody, userId: ${'$'}userId) { id containerId authorId text createdAt reactions { body userId } } }"}]""")
     return transport

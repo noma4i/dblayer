@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- Android reports the network state before it registers the network callback.
+
 ## 6.17.0 - 2026-11-07
 
 ### Added

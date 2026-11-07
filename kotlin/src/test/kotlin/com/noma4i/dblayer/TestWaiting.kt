@@ -2,9 +2,9 @@ package com.noma4i.dblayer
 
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.TimeoutCancellationException
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.yield
 import kotlinx.serialization.decodeFromString
 const val HANG_GUARD_MILLIS = 18_000L
 const val TEST_DEADLINE_MILLIS = 20_000L
@@ -19,17 +19,28 @@ suspend fun eventually(what: String, timeoutMillis: Long = HANG_GUARD_MILLIS, de
     val deadline = System.nanoTime() + timeoutMillis * 1_000_000
     while (!condition()) {
         if (System.nanoTime() > deadline) throw AssertionError("timed out after $timeoutMillis ms waiting for $what\n${detail()}")
-        delay(5)
+        yield()
+        Thread.onSpinWait()
     }
 }
-suspend fun <State> quiesce(what: String, timeoutMillis: Long = 6_000L, samples: Int = 25, state: suspend () -> State) {
-    val deadline = System.nanoTime() + timeoutMillis * 1_000_000
-    var last: State? = null
-    var quiet = 0
-    while (System.nanoTime() < deadline && quiet < samples) {
-        delay(10)
+suspend fun fencedUntil(what: String, fence: suspend () -> Unit, ready: () -> Boolean) {
+    val deadline = System.nanoTime() + 8_000_000_000L
+    while (!ready()) {
+        if (System.nanoTime() > deadline) throw AssertionError("timed out waiting for $what")
+        fence()
+        yield()
+    }
+}
+suspend fun <State> quiesce(what: String, rounds: Int = 3, fence: suspend () -> Unit, state: suspend () -> State) {
+    val deadline = System.nanoTime() + HANG_GUARD_MILLIS * 1_000_000
+    var last = state()
+    var stable = 0
+    while (stable < rounds) {
+        if (System.nanoTime() > deadline) throw AssertionError("$what: the state kept changing for $HANG_GUARD_MILLIS ms")
+        fence()
+        yield()
         val now = state()
-        quiet = if (now == last) quiet + 1 else 0
+        stable = if (now == last) stable + 1 else 0
         last = now
     }
 }
