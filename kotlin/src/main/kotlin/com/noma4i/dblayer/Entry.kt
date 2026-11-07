@@ -10,7 +10,7 @@ import kotlinx.serialization.json.JsonPrimitive
 
 object DBlayer {
     private val opener = OpenDatabase()
-    @Volatile private var opened: Database? = null
+    @Volatile internal var opened: Database? = null
     @Volatile private var running = false
     @Volatile private var powerSaving: PowerSaving.Registration? = null
     @Volatile private var stopReachability: (() -> Unit)? = null
@@ -31,13 +31,14 @@ object DBlayer {
 
     /** Closes the database. Every request, load and subscription ends, and the call returns after the library released its resources. */
     suspend fun close() {
+        val database = this.database
         running = false
         ForegroundEvents.stop()
         powerSaving?.stop()
         powerSaving = null
         stopReachability?.invoke()
         stopReachability = null
-        opened?.let { offCaller { it.closeDatabase() } }
+        offCaller { database.closeDatabase() }
     }
 
     suspend fun subscriptionCensus(): SubscriptionCensus = database.subscriptionCensus()
@@ -52,7 +53,7 @@ object DBlayer {
     }
 
     var database: Database
-        get() = opened ?: throw IllegalStateException("database is not open; call DBlayer.open once at app start")
+        get() = opened ?: throw DbException.NotOpen("database is not open; call DBlayer.open once at app start")
         internal set(value) { opened = value; running = true }
 
     suspend fun serverConfig(context: Context, encrypted: EncryptedConfig, platform: AppPlatform, version: String, build: String? = null, http: EncryptedHttp? = null, retries: RetryProgress? = null): ServerConfig {

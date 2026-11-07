@@ -11,6 +11,7 @@ suspend fun closeForCleanup() {
     try {
         DBlayer.close()
     } catch (_: DbException.Closed) {
+    } catch (_: DbException.NotOpen) {
     }
 }
 
@@ -18,6 +19,7 @@ suspend fun adopt(database: Database): Database {
     try {
         DBlayer.close()
     } catch (_: DbException.Closed) {
+    } catch (_: DbException.NotOpen) {
     }
     DBlayer.database = database
     return database
@@ -101,6 +103,7 @@ suspend fun reopenClocked(modelsJson: String, transport: MockTransport, operatio
     try {
         DBlayer.close()
     } catch (_: DbException.Closed) {
+    } catch (_: DbException.NotOpen) {
     }
     val credential = credentialOf(Config(path, null, 2000u))
     val restored = credential.get() != null

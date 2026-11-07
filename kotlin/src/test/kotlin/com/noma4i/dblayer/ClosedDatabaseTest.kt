@@ -5,6 +5,10 @@ import com.noma4i.dblayer.models.modelsJSON
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
+import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonNull
+import kotlinx.serialization.json.JsonObject
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -34,5 +38,36 @@ class ClosedDatabaseTest {
             assertTrue("${result.exceptionOrNull()}", result.isSuccess)
         }
         assertTrue(refusal { DBlayer.sessionReset() } is DbException.Closed)
+    }
+
+    @Test
+    fun life_prop_not_open_typed() = bounded {
+        suspend fun entries(): List<String> {
+            val calls: List<suspend () -> Unit> = listOf(
+                { DBlayer.run("Probe", JsonObject(emptyMap())) },
+                { DBlayer.sessionCall<JsonNull, JsonElement>("Probe", JsonNull) },
+                { DBlayer.sessionSend("Probe", JsonNull) },
+                { DBlayer.sessionReset() },
+                { DBlayer.subscriptionCensus() },
+                { DBlayer.openReport() },
+                { AccountScope.current() },
+                { Moment.recent.live.current() },
+                { DBlayer.close() },
+            )
+            return calls.map { call ->
+                when (val error = runCatching { call() }.exceptionOrNull()) {
+                    null -> "none"
+                    is DbException.NotOpen -> "not_open"
+                    is DbException.Closed -> "closed"
+                    else -> "other $error"
+                }
+            }
+        }
+        closeForCleanup()
+        DBlayer.opened = null
+        assertEquals(List(9) { "not_open" }, entries())
+        reopenSigned(Config(null, null, 8u), modelsJSON)
+        DBlayer.close()
+        assertEquals(List(8) { "closed" } + "none", entries())
     }
 }

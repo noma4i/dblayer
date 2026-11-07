@@ -14,15 +14,19 @@ final class Opened: Sendable {
 }
 
 public enum DB {
-  private static var slot: Opened?
+  static var slot: Opened?
   private static let opener = OpenDatabase()
   private static let cacheRows: UInt32 = 2000
 
   static var database: Database {
     get throws {
-      guard let opened = slot else { throw DatabaseNotOpen() }
-      return opened.database
+      try slotOrThrow().database
     }
+  }
+
+  private static func slotOrThrow() throws -> Opened {
+    guard let opened = slot else { throw DbError.NotOpen(detail: "database is not open; call DBlayer.open once at app start") }
+    return opened
   }
 
   /// The database and the epoch a command belongs to: the pair the scope holds when the caller has one, else the open database and the epoch of its session now.
@@ -34,7 +38,7 @@ public enum DB {
 
   /// Closes the database. Every request, load and subscription ends, and the call returns after the library released its resources. A call on the closed database, a second close included, gets the closed error of the core.
   @MainActor public static func close() async throws {
-    guard let opened = slot else { return }
+    let opened = try slotOrThrow()
     opened.stopObservers()
     try await opened.database.closeDatabase()
   }
@@ -112,10 +116,4 @@ public enum DB {
     slot = opened
     previous?.stopObservers()
   }
-}
-
-public struct DatabaseNotOpen: Error, LocalizedError, CustomStringConvertible {
-  public init() {}
-  public var description: String { "database is not open; call DBlayer.open once at app start" }
-  public var errorDescription: String? { description }
 }

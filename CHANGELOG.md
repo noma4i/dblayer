@@ -29,6 +29,7 @@
 - A projection keeps the edits of its deltas and the temporary id of a row.
 - `Query.beginLoad` returns the interest of one caller with `result()` and `cancel()`.
 - `ModelEventItem.ready` tells that the source of an events stream is open.
+- `DbError.NotOpen` reports a call before the first successful `open`; a database that was opened and closed keeps answering `Closed`.
 
 ### Changed
 

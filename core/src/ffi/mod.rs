@@ -115,6 +115,9 @@ pub enum DbError {
     Closed { detail: String },
     #[error("corrupt manifest: {detail}")]
     CorruptManifest { detail: String },
+    /// No database was opened yet.
+    #[error("not open: {detail}")]
+    NotOpen { detail: String },
 }
 
 impl From<crate::store::CoreError> for DbError {

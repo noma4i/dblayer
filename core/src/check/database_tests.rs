@@ -1,5 +1,6 @@
 use super::corpus;
-use super::database::DatabaseSut;
+use super::database::{error_kind, DatabaseSut};
+use crate::ffi::DbError;
 use super::model::replay;
 
 /// Requirement: the shared corpus is green on the core through the public API of `Database`.
@@ -43,3 +44,11 @@ async fn the_shared_corpus_is_green_on_the_core_part_6() { shared_corpus(6).awai
 
 #[tokio::test(flavor = "multi_thread")]
 async fn the_shared_corpus_is_green_on_the_core_part_7() { shared_corpus(7).await }
+
+/// Requirement: a call before any open is `NotOpen`, a different corpus kind from `Closed`.
+/// Observable: the corpus error kind of each variant.
+#[test]
+fn life_call_not_open() {
+    assert_eq!(error_kind(&DbError::NotOpen { detail: String::new() }), "not_open");
+    assert_eq!(error_kind(&DbError::Closed { detail: String::new() }), "closed");
+}
