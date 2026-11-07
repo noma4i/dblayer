@@ -21,7 +21,7 @@ class ClosedDatabaseTest {
         DBlayer.close()
         val errors = listOf(
             refusal { DBlayer.sessionReset() },
-            refusal { Moment.send(AccountScope.current(), text = "late").optimisticValue!! },
+            refusal { Moment.create(text = "late", account = AccountScope.current()).optimisticValue!! },
             refusal { Moment.recent.live.current() },
         )
         for (error in errors) {

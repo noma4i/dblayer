@@ -19,11 +19,11 @@
 - `NoSession` reports server work without a session or transport on both platforms.
 - Core encrypted calls and cable subscriptions take the admission of their caller.
 - Value bridge: `AccountScope`, `ValueStream`, `Projected`, snapshots and keyed deltas with the session epoch.
-- `AccountScope.send`: a durable message command with an operation receipt, refused for an old epoch.
+- `AccountScope.send`: a message command with an operation receipt, refused for an old epoch.
 - `refresh` and `loadMore` on a stream, interrupted when its session ends.
 - Streams for counts, related rows, rows by id, model events and upload status.
 - `AccountScope.send` carries a media upload; `uploadBatch` sends many files.
-- `durable: true` on `operation :create` generates `Model.send`.
+- `expires_after: <seconds>` on `operation` rolls back a queued operation that waited too long, with the outcome `rejected` of kind `expired`.
 - `Query.read` and `Query.readRow` read storage once without a stream.
 - `AccountScope.stream` takes `refreshOnConnect`; a list stream opened with it loads again when the network returns.
 - A projection keeps the edits of its deltas and the temporary id of a row.
@@ -61,12 +61,13 @@
 - A session end replays after a crash between the credential and the data clear.
 - A test opens its database and closes it; there is no reset between tests.
 - iOS uploads use a plain `URLSession` PUT.
-- Only a message send and a media upload wait for the network; other actions fail at once offline.
+- Every write is queued durably when offline and sent when the network returns, at most 4 at a time.
+- `Model.create` replaces the generated `Model.send`.
 - A send, a stream request and a prepared delivery end with the epoch they belong to.
-- A server create returns its optimistic value and a separate outcome; only a durable create uses `send`.
+- A server create returns its optimistic value and a separate outcome; `send` takes a model with `operation :create`.
 - Every command, one-off read and blob call carries the session epoch of its account and is refused when that account left.
 - A send needs a signed-in session.
-- An action that is not a durable command is refused and rolled back while the network is away, after a reopen and when another account signs in.
+- A queued write is kept while the network is away and after a reopen, and ends when another account signs in.
 - A pinned write checks its epoch and commits while the lifecycle holds its commit line.
 - A session end, a reset and a close end the work of the old epoch at once and do not wait for it. A late write of the old epoch is refused at its commit.
 - A load, `loadMore` or node read whose answer arrives after a reset of model caches ends with `Interrupted` and stores nothing. A send of another model goes on.
@@ -85,7 +86,7 @@
 - `uploadBatch` returns one receipt whose items keep their client keys and confirmed rows.
 - `retry` of a record returns the receipt of the retried operation.
 - A rejected outcome carries the session code of a session refusal.
-- A durable send that failed on the network goes out at once when the network returns.
+- A write that failed on the network goes out at once when the network returns.
 - `refresh`, `loadMore` and a one-off load fail at once with the network error while offline, and the stream state shows it.
 - An action whose answer carries another row returns that row in its outcome and leaves the receiver unchanged.
 - The first delivery of a projection is a snapshot; `takeEdits` returns `nil` until a delta arrives.
@@ -192,6 +193,8 @@
 ### Removed
 
 - `OpenOptions.lowRam` is gone: the core has no input that reads it.
+- The `durable` key of `operation` is gone: every write is queued.
+- A write no longer fails with a network error while the network is away.
 - `LoadMoreResult.alreadyLoading` is gone.
 - `scope.related` is gone: read a server relation with a query.
 - `Blob`, `BlobUpload`, `DB.blob` and `blob_upload` are gone: upload through a model action.

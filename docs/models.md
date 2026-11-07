@@ -1003,6 +1003,14 @@ val groups = Group.nodes(ids)
 - `scope.entity(Model, id)` is the way to watch a row. A node read fills it.
 - The generator stops with file and line when a field is selected under `node` outside `... on`, when the `... on` type is not an implementation of the interface, when one `node` selects two types, or when the model has an attribute that the `... on` type lacks. A selection outside `... on` would give a row for a foreign type, so it is an error.
 
+## Waiting time of a queued operation
+
+Every operation that reaches the server waits in the durable queue while the network is away. An option on the `operation` line limits that wait.
+
+| Line | Meaning | Default |
+| ---- | ------- | ------- |
+| `operation :typing, expires_after: 30 do` | whole seconds a queued operation may wait before it is sent. When the library picks it after that time, it rolls the optimistic change back and ends the operation `rejected` with the failure kind `expired` | none: the operation waits as long as needed |
+
 ## Effects of an operation before the answer
 
 An operation that waits for the server shows its change at once and takes it back when the server refuses. Four effects exist, one per operation, and no others: `removes_receiver`, `copies_receiver_to`, `joins_scope` and `leaves_scope`. Write `optimistic false` next to them.
@@ -1042,7 +1050,7 @@ end
 - `removes_receiver` takes the row out of every list before the answer. A refusal puts it back at its place.
 - `copies_receiver_to :target, field: :chatId, set: { isForwarded: true, authorId: { of: User, field: :id }, originId: { owner: :authorId } }` adds a copy of the row with `chatId` set to the argument `target`. `set:` puts a literal, a field of the copied row (`owner:`) or a field of the singleton row of a model (`of:`) on the copy. The answer row replaces the copy, a refusal removes it.
 - `joins_scope` adds the rows named by `rows:` to the end of the scope list, and `leaves_scope` takes them out. A row that is not cached is skipped by both; the answer and the next read of the list bring it. `orders:` lists every value of the order parameter, so all sort orders of the list change together. A refusal restores the ids and the order of every list.
-- The call returns after the answer. A network error ends it with `Network` and restores the lists, and nothing sends it later.
+- The call returns after the answer. While the network is away it waits in the queue and the request goes out when the network returns. A refusal restores the lists.
 
 ```swift
 let left = try await club.leave()

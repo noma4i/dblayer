@@ -57,7 +57,7 @@ extension BridgeProbeTests {
     #expect(transport.calls.count == calls, "a call offline reached the transport")
   }
 
-  /// K10: a durable send whose first attempt failed on the network goes out at once when the network returns. No clock step is taken.
+  /// K10: a send whose first attempt failed on the network goes out at once when the network returns. No clock step is taken.
   @MainActor
   @Test(.timeLimit(.minutes(1)))
   func aDurableSendThatFailedOnTheNetworkGoesOutAtOnceWhenTheNetworkReturns() async throws {

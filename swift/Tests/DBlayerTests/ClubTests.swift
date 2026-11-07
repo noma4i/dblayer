@@ -107,7 +107,7 @@ extension BridgeProbeTests {
     let config = Config(path: path, dataVersion: nil, cacheRows: 32)
     let models = try clubModels(keepLetter: keep)
     try await reopenSigned(config: config, modelsJson: models, operations: clubDefs)
-    let receipt = try await Letter.send(in: DB.account(), chatId: "c1", text: "held", at: 1)
+    let receipt = try await Letter.create(chatId: "c1", text: "held", at: 1, in: DB.account())
     let id = try #require(receipt.optimisticValue?.id)
     await DB.closeForCleanup()
     var connection: OpaquePointer?
@@ -158,7 +158,7 @@ extension BridgeProbeTests {
 
   @MainActor
   static func confirmedLetter() async throws -> Letter {
-    let sending = Task { try await Letter.send(in: DB.account(), chatId: "c1", text: "hello", at: 1) }
+    let sending = Task { try await Letter.create(chatId: "c1", text: "hello", at: 1, in: DB.account()) }
     let receipt = try await valueBeforeDeadline(sending) {}
     let waiting = Task { try await receipt.outcome() }
     guard case .confirmed = try await valueBeforeDeadline(waiting, release: {}) else { throw WaitFailure.unexpectedOutcome }
@@ -264,7 +264,7 @@ extension BridgeProbeTests {
     let hold = transport.hold("SendLetter", failure: .Http(status: 422, detail: "refused"))
     if retry { transport.enqueue("SendLetter", reply: letterSent) }
     defer { hold.release() }
-    let sent = try await Letter.send(in: DB.account(), chatId: "c1", text: "hello", at: 1)
+    let sent = try await Letter.create(chatId: "c1", text: "hello", at: 1, in: DB.account())
     let local = try #require(sent.optimisticValue)
     try #require(await entered(hold), "send did not reach the transport")
     #expect(try await Letter.ids([local.id]).read().count == 1)
@@ -346,25 +346,24 @@ extension BridgeProbeTests {
 
   @MainActor
   @Test(.timeLimit(.minutes(1)))
-  func anOfflineActionIsNotSentAfterReconnectButALetterIsSentOnce() async throws {
+  func anOfflineActionAndALetterAreEachSentOnceAfterReconnect() async throws {
     let transport = MockTransport()
     transport.enqueue("CreateClub", reply: clubCreated)
+    transport.enqueue("AddClubMember", reply: clubAnswer("addClubMember"))
     transport.enqueue("SendLetter", reply: letterSent)
     try await Self.openClubSession(transport)
     let club = try await Self.confirmedClub()
     try DB.database.setOnline(online: false)
-    do {
-      _ = try await club.addMember(userIds: ["u9"])
-      Issue.record("the offline action succeeded")
-    } catch {}
-    let sent = try await Letter.send(in: DB.account(), chatId: "c1", text: "hello", at: 1)
+    let action = try await club.addMember(userIds: ["u9"])
+    let sent = try await Letter.create(chatId: "c1", text: "hello", at: 1, in: DB.account())
     #expect(sent.optimisticValue != nil)
     #expect(transport.calls.filter { $0.operationName == "SendLetter" }.isEmpty)
     try DB.database.setOnline(online: true)
     let outcome = try await sent.outcome()
     if case .confirmed = outcome {} else { Issue.record("send was not confirmed") }
+    if case .confirmed = try await action.outcome() {} else { Issue.record("the action was not confirmed") }
     #expect(transport.calls.filter { $0.operationName == "SendLetter" }.count == 1)
-    #expect(transport.calls.filter { $0.operationName == "AddClubMember" }.isEmpty)
+    #expect(transport.calls.filter { $0.operationName == "AddClubMember" }.count == 1)
   }
 
   @MainActor
@@ -423,24 +422,16 @@ extension BridgeProbeTests {
     try await reopen(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: models, transport: transport, operations: defs)
   }
 
-  /// K04 (B4): a create the server answers returns the confirmed row, needs the network, and queues nothing offline.
+  /// K04 (B4): a create the server answers returns the confirmed row.
   @MainActor
   @Test(.timeLimit(.minutes(1)))
-  func aServerCreateReturnsTheConfirmedRowAndNeedsTheNetwork() async throws {
+  func aServerCreateReturnsTheConfirmedRow() async throws {
     let transport = MockTransport()
     transport.enqueue("CreateClub", reply: clubCreated, delay: 0.3)
     try await Self.openClubSession(transport)
     let club = try await Self.confirmedClub()
     #expect(club.id == "g1" && club.name == "friends" && club.sync.state == .synced, "the call returned before the server answered")
     let creates = { transport.calls.filter { $0.operationName == "CreateClub" }.count }
-    #expect(creates() == 1)
-
-    try DB.database.setOnline(online: false)
-    do {
-      _ = try await Club.create(name: "offline")
-      Issue.record("a server create offline did not fail")
-    } catch DbError.Offline {
-    }
     #expect(creates() == 1)
   }
 

@@ -16,7 +16,7 @@ class SealedErrorsTest {
 
     @Test fun modelRetriesPropagateErrorsToTheirCaller() = bounded {
         reopenSigned(Config(null, null, 8u), modelsJSON)
-        val row = Moment.send(AccountScope.current(), text = "saved").optimisticValue!!
+        val row = Moment.create(text = "saved", account = AccountScope.current()).optimisticValue!!
         val real = DBlayer.database
         DBlayer.database = RefusedRetry()
         try {
@@ -54,7 +54,7 @@ class SealedErrorsTest {
             assertEquals(code, codeOf(runCatching { withTimeout(5000) { Operations.qrCodeCreate(kind = "container", size = 3) } }.exceptionOrNull(), "call $code"))
 
             transport.enqueue("CreateMoment", failure)
-            val sent = Moment.send(AccountScope.current(), text = "hello", media = null)
+            val sent = Moment.create(text = "hello", media = null, account = AccountScope.current())
             assertEquals(code, withTimeout(5000) { sent.refusal() }.sessionCode)
         }
     }

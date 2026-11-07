@@ -22,8 +22,8 @@ class EnumListTest {
     @Test
     fun theTypedApiWritesAListOfEnumValuesAndAnAbsentListReadsAsNull() = bounded {
         open()
-        assertEquals(listOf(ContainerShelf.Secondary), Container.send(AccountScope.current(), title = "t", shelves = listOf(ContainerShelf.Secondary)).optimisticValue!!.shelves)
-        assertNull(Container.send(AccountScope.current(), title = "u").optimisticValue!!.shelves)
+        assertEquals(listOf(ContainerShelf.Secondary), Container.create(title = "t", shelves = listOf(ContainerShelf.Secondary), account = AccountScope.current()).optimisticValue!!.shelves)
+        assertNull(Container.create(title = "u", account = AccountScope.current()).optimisticValue!!.shelves)
     }
 
     @Test

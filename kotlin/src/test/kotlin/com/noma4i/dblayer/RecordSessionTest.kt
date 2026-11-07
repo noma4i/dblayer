@@ -10,7 +10,7 @@ import org.junit.Test
 private const val RECORD_CREATED = """{"data":{"createRecord":{"__typename":"Record","id":"x1","containerId":"c1","authorId":"u1","text":"hello","createdAt":"2026-10-08T00:00:00.000Z"}}}"""
 private const val RECORD_REACTED = """{"data":{"recordReact":{"__typename":"Record","id":"x1","containerId":"c1","authorId":"u1","text":"hello","createdAt":"2026-10-08T00:00:00.000Z","reactions":[{"body":"C","userId":"u1"}]}}}"""
 
-/** A signed-in plain transport: the tests of a non-durable action need the network, so the record is sent online and answered before the action starts. */
+/** A signed-in plain transport: a test that edits the record starts after the server answered its create. */
 suspend fun openRecordSession(reactDelayMillis: Long = 0, reacts: Int = 3, recordReply: String = RECORD_CREATED): MockTransport {
     val transport = MockTransport()
     transport.enqueue("CreateRecord", recordReply)
@@ -21,7 +21,7 @@ suspend fun openRecordSession(reactDelayMillis: Long = 0, reacts: Int = 3, recor
 }
 
 suspend fun settledRecord(): Record {
-    val receipt = withTimeout(5000) { Record.send(AccountScope.current(), containerId = "c1", authorId = "u1", text = "hello") }
+    val receipt = withTimeout(5000) { Record.create(containerId = "c1", authorId = "u1", text = "hello", account = AccountScope.current()) }
     check(withTimeout(5000) { receipt.outcome() } is OperationOutcome.Confirmed)
     return Query("Record", Record).read().first()
 }

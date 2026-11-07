@@ -310,7 +310,7 @@ public struct AccountScope: Sendable {
     UploadStatusStream(stream: database.openValueStream(epoch: epoch, request: .blob(key: "\(Model.modelName):\(row.id):\(action)")))
   }
 
-  /// Writes the model locally and queues it for the server. It works without a network and after the app closed. Only a durable create action (sending a message) and a declared upload action work this way; another model is refused. Throws `Interrupted` when the session of this scope ended.
+  /// Writes the model locally and queues it for the server. It works without a network and after the app closed. A model with a `create` operation and a declared upload action work this way; another model is refused. Throws `Interrupted` when the session of this scope ended.
   @concurrent public func send<Model: DBModel>(_: Model.Type, values: [String: JSONValue], args: [String: JSONValue] = [:], upload: UploadCommand? = nil) async throws -> MutationReceipt<Model> {
     let receipt = try await database.send(request: CommandRequest(epoch: epoch, model: Model.modelName, valuesJson: JSONValue.object(values).text, argsJson: JSONValue.object(args).text, upload: try upload.map { CommandUpload(action: $0.action, request: try $0.request.wire) }))
     return try MutationReceipt(database: database, wire: receipt)

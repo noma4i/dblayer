@@ -17,7 +17,7 @@ extension BridgeProbeTests {
     let scope = try DB.account()
 
     let moments: Projected<Moment> = Projected(try scope.stream(Moment.where(Moment.userId == "u1").order(Moment.createdAt.desc).limit(20)))
-    let moment = try await Moment.send(in: scope, text: "hello").optimisticValue
+    let moment = try await Moment.create(text: "hello", in: scope).optimisticValue
     #expect(moment?.text == "hello")
     await eventually("the row of the sent moment reaches the feed") { moments.rows.map(\.text) == ["hello"] }
 

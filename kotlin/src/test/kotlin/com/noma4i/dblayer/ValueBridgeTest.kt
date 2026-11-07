@@ -31,7 +31,7 @@ private class BridgeCredential : CredentialStore {
     override fun clear() { current = null }
 }
 
-/** The value bridge through its public API: streams of snapshots and deltas, a durable command, and the epoch of the session. */
+/** The value bridge through its public API: streams of snapshots and deltas, a command, and the epoch of the session. */
 @OptIn(DBlayerTestingApi::class)
 class ValueBridgeTest {
     private val account = AtomicReference<String?>(null)

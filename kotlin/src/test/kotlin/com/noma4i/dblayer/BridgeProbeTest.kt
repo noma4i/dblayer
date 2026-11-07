@@ -17,6 +17,7 @@ import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.withTimeout
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class BridgeProbeTest {
@@ -44,8 +45,8 @@ class BridgeProbeTest {
     @Test
     fun aSearchPassesWholeWordsToTheCore() = bounded {
         reopenSigned(Config(null, null, 32u), modelsJSON)
-        Moment.send(AccountScope.current(), text = "hello world").optimisticValue!!
-        Moment.send(AccountScope.current(), text = "hel").optimisticValue!!
+        Moment.create(text = "hello world", account = AccountScope.current()).optimisticValue!!
+        Moment.create(text = "hel", account = AccountScope.current()).optimisticValue!!
         val whole = Query("Moment", Moment).search("hel", wholeWords = true)
         assertEquals(listOf("hel"), withTimeout(5000) { whole.live.flow.first { it.isNotEmpty() } }.map { it.text })
     }
@@ -76,11 +77,38 @@ class BridgeProbeTest {
     }
 
     @Test
+    fun anOfflineUpdateIsSentOnceWhenTheNetworkReturns() = bounded {
+        val transport = MockTransport()
+        transport.enqueue("MomentsFeed", """{"data":{"feed":{"nodes":[{"__typename":"Moment","id":"1","uuid":"a","text":"m","likedByMe":false,"media":{},"createdAt":"2026-10-08T00:00:00.000Z"}],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}""")
+        transport.enqueue("UpdateMoment", """{"data":{"updateMoment":{"__typename":"Moment","id":"1","uuid":"a","text":"edited","likedByMe":false,"media":{},"createdAt":"2026-10-08T00:00:00.000Z"}}}""")
+        reopen(Config(null, null, 32u), modelsJSON, transport)
+        DBlayer.database.registerOperations("""[{"name":"MomentsFeed","document":"query MomentsFeed(${'$'}first: Int, ${'$'}after: String) { feed(first: ${'$'}first, after: ${'$'}after) { nodes { id uuid text likedByMe media createdAt } pageInfo { hasNextPage endCursor } } }"},{"name":"UpdateMoment","document":"mutation UpdateMoment(${'$'}id: ID!, ${'$'}text: String) { updateMoment(id: ${'$'}id, text: ${'$'}text) { id uuid text likedByMe media createdAt } }"},{"name":"DeleteMoment","document":"mutation DeleteMoment(${'$'}id: ID!) { deleteMoment(id: ${'$'}id) { id } }"}]""")
+        val scope = CoroutineScope(SupervisorJob())
+        val deliveries = java.util.concurrent.CopyOnWriteArrayList<List<String?>>()
+        scope.launch { Moment.recent.live.flow.collect { rows -> deliveries.add(rows.map { it.text }) } }
+        try {
+            eventually("the open list shows its first value") { deliveries.isNotEmpty() }
+            Moment.feed.load()
+            eventually("the open list shows the loaded row") { deliveries.lastOrNull() == listOf<String?>("m") }
+            val moment = Moment.recent.current().first()
+            DBlayer.database.setOnline(false)
+            val receipt = moment.update(text = GraphQLNullable.Value("edited"))
+            eventually("the same open list shows the edited row") { deliveries.lastOrNull() == listOf<String?>("edited") }
+            assertEquals(0, transport.calls.count { it.operationName == "UpdateMoment" })
+            DBlayer.database.setOnline(true)
+            assertTrue(withTimeout(5000) { receipt.outcome() } is OperationOutcome.Confirmed)
+            assertEquals(1, transport.calls.count { it.operationName == "UpdateMoment" })
+        } finally {
+            scope.cancel()
+        }
+    }
+
+    @Test
     fun writesReachTypedLiveRows() = bounded {
         reopenSigned(Config(null, null, 32u), modelsJSON)
         val live = Moment.recent.live.flow
         assertEquals(emptyList<Moment>(), withTimeout(5000) { live.first() })
-        val moment = Moment.send(AccountScope.current(), text = "m").optimisticValue!!
+        val moment = Moment.create(text = "m", account = AccountScope.current()).optimisticValue!!
         assertEquals("m", withTimeout(5000) { Moment.recent.live.flow.first { it.isNotEmpty() } }.first().text)
         moment.setLocal("tone", kotlinx.serialization.json.JsonPrimitive("warm"))
         assertEquals("warm", withTimeout(5000) { Moment.recent.live.flow.first { it.firstOrNull()?.tone == "warm" } }.first().tone)
@@ -148,7 +176,7 @@ class BridgeProbeTest {
         reopen(Config(null, null, 32u), modelsJSON, transport)
         DBlayer.database.registerOperations("""[{"name":"CreateMoment","document":"mutation CreateMoment(${'$'}text: String) { createMoment(text: ${'$'}text) { id uuid likedByMe media createdAt } }"}]""")
 
-        val sent = Moment.send(AccountScope.current(), text = "hello", media = null)
+        val sent = Moment.create(text = "hello", media = null, account = AccountScope.current())
         assertEquals(true, sent.optimisticValue?.id?.startsWith("temp"))
         assertEquals("m77", withTimeout(5000) { sent.confirmed() }.id)
     }
@@ -161,7 +189,7 @@ class BridgeProbeTest {
         DBlayer.database.registerOperations("""[{"name":"CreateMoment","document":"mutation CreateMoment(${'$'}text: String) { createMoment(text: ${'$'}text) { id uuid likedByMe media createdAt } }"}]""")
         val stream = AccountScope.current().stream(Moment.recent)
 
-        val local = Moment.send(AccountScope.current(), text = "hello", media = null).optimisticValue!!
+        val local = Moment.create(text = "hello", media = null, account = AccountScope.current()).optimisticValue!!
         val settled = withTimeout(5000) {
             stream.values.mapNotNull { value -> (value as? ReadValue.Delta)?.edits?.filterIsInstance<RowEdit.Rewrite>()?.firstOrNull { it.row.id == "m77" }?.temporary }.first()
         }

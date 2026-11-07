@@ -57,8 +57,8 @@ On Android the screen collects the `StateFlow` of the projection.
 
 ## Offline and reconnect
 
-Only a message send and a media upload wait for the network.
-A durable send whose attempt failed on the network goes out at once when the network returns, without a wait for its backoff.
+Every write waits for the network in the queue: `create`, `update`, `act`, `destroy`, a send and a media upload. The queue sends at most 4 requests at the same time.
+A write whose attempt failed on the network goes out at once when the network returns, without a wait for its backoff.
 While the network is away `refresh`, `loadMore` and a one-off load fail at once with the network error, and the stream state shows it.
 A list stream opened with `refreshOnConnect` loads again once each time the network returns. The app writes no refresh for that moment.
 
@@ -115,15 +115,15 @@ val outcome = sent.outcome()
 A command for an epoch that has gone is refused.
 A send needs a signed-in session.
 Pending commands of an ended account end with it. They do not go to the next account.
-Only message sends and media uploads survive the network and the app.
-Any other action needs the network: it fails at once while the network is away and is rolled back if the network goes away before it is sent.
+Every write survives the network and the app: it waits in the queue and goes out when the network returns.
+An operation that declares `expires_after:` is rolled back with the outcome `rejected` (kind `expired`) when its time is over before it is sent.
 
 ## Commands of an account
 
 Every command, one-off read and blob call carries the epoch of an account.
 Pass the scope of the account: a call of an account that left ends as `Interrupted` and changes nothing for the next account.
 Without the argument the call belongs to the account that is signed in when it is called.
-A create that the server answers, such as a new group, needs the network and returns a receipt with the optimistic row. Its `outcome()` carries the confirmed row.
+A create that the server answers, such as a new group, returns a receipt with the optimistic row. Its `outcome()` carries the confirmed row.
 
 ```swift
 let group = try await Chat.create(name: "Friends", userIds: ids, in: scope).outcome().confirmedValue

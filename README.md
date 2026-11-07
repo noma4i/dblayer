@@ -118,7 +118,7 @@ struct FeedView: View {
   }
 }
 
-let moment = try await Moment.send(in: scope, text: "hello").optimisticValue   // shown at once, queued, synced
+let moment = try await Moment.create(text: "hello", in: scope).optimisticValue   // shown at once, queued, synced
 try await user.attach(.avatar, data: bytes, name: "a.png", mime: "image/png")   // typed file call
 ```
 
@@ -130,7 +130,7 @@ class FeedModel(me: User, scope: AccountScope) : ViewModel() {
   val moments = Projected(scope.stream(query), query.decoder, viewModelScope)   // rows: moments.projection
 }
 
-val moment = Moment.send(scope, text = "hello").optimisticValue   // shown at once, queued, synced
+val moment = Moment.create(text = "hello", account = scope).optimisticValue   // shown at once, queued, synced
 user.attach(User.avatar, data = bytes, name = "a.png", mime = "image/png")   // typed file call
 ```
 

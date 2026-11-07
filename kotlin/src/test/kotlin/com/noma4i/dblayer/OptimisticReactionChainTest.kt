@@ -57,7 +57,7 @@ class OptimisticReactionChainTest {
         try {
             closeForCleanup()
             DBlayer.openTesting(null, modelsJSON)
-            val refused = runCatching { Record.send(AccountScope.current(), containerId = "c1", authorId = "u1", text = "hello") }.exceptionOrNull()
+            val refused = runCatching { Record.create(containerId = "c1", authorId = "u1", text = "hello", account = AccountScope.current()) }.exceptionOrNull()
             assertTrue("the send was not refused: $refused", refused is DbException.NoSession)
         } finally {
             closeForCleanup()

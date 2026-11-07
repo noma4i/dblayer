@@ -25,7 +25,7 @@ private final class BridgeAccount: @unchecked Sendable {
 
 private struct BridgeLogin: Encodable, Sendable { let account: String }
 
-/// The value bridge through its public API: streams of snapshots and deltas, a durable command, and the epoch of the session. The tests share `DB.database` with `BridgeProbeTests`, so they run in its serialized suite.
+/// The value bridge through its public API: streams of snapshots and deltas, a command, and the epoch of the session. The tests share `DB.database` with `BridgeProbeTests`, so they run in its serialized suite.
 extension BridgeProbeTests {
   private static let bridgeAccount = BridgeAccount()
 

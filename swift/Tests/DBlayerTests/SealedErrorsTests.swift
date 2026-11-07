@@ -20,7 +20,7 @@ extension BridgeProbeTests {
     try await reopenSigned(config: Config(path: nil, dataVersion: nil, cacheRows: 8), modelsJson: modelsJSON)
     let real = try DB.database
     defer { DB.use(real) }
-    let row = try await Moment.send(in: DB.account(), text: "saved").optimisticValue!
+    let row = try await Moment.create(text: "saved", in: DB.account()).optimisticValue!
     DB.use(RefusedRetry(noHandle: .init()))
     await #expect(throws: DbError.self) { try await row.retry(action: nil) }
   }
@@ -63,7 +63,7 @@ extension BridgeProbeTests {
     }
 
     transport.enqueue("CreateMoment", failure: failure)
-    let sent = try await Moment.send(in: DB.account(), text: "hello", media: nil)
+    let sent = try await Moment.create(text: "hello", media: nil, in: DB.account())
     #expect(try await sent.refusal().sessionCode == code, "outcome \(code)")
   }
 }

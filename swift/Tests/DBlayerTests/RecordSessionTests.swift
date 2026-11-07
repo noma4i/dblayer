@@ -6,7 +6,7 @@ import Testing
 private let recordCreated = #"{"data":{"createRecord":{"__typename":"Record","id":"x1","containerId":"c1","authorId":"u1","text":"hello","createdAt":"2026-10-08T00:00:00.000Z"}}}"#
 private let recordReacted = #"{"data":{"recordReact":{"__typename":"Record","id":"x1","containerId":"c1","authorId":"u1","text":"hello","createdAt":"2026-10-08T00:00:00.000Z","reactions":[{"body":"C","userId":"u1"}]}}}"#
 
-/// A signed-in plain transport and a settled record: the tests of a non-durable action need the network, so the record is sent online and answered before the action starts.
+/// A signed-in plain transport and a settled record: a test that edits the record starts after the server answered its create.
 extension BridgeProbeTests {
   @MainActor
   @Test(.timeLimit(.minutes(1)))
@@ -54,7 +54,7 @@ extension BridgeProbeTests {
 
   @MainActor
   static func settledRecord() async throws -> Record {
-    let sending = Task { try await Record.send(in: DB.account(), containerId: "c1", authorId: "u1", text: "hello") }
+    let sending = Task { try await Record.create(containerId: "c1", authorId: "u1", text: "hello", in: DB.account()) }
     let receipt = try await valueBeforeDeadline(sending) {}
     let waiting = Task { try await receipt.outcome() }
     guard case .confirmed = try await valueBeforeDeadline(waiting, release: {}) else { throw WaitFailure.unexpectedOutcome }

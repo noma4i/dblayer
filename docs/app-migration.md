@@ -86,8 +86,8 @@ Missing members join the head. Existing members keep their places. Manual node r
 ## One owner per stream
 
 Replace `LiveList`, `Live`, `Entity`, `.live`, `.snapshots`, `.find(id)`, `.entity(id)` and `Model.events()` with `AccountScope` streams and `Projected`. See [live data](live-data.md).
-Replace `Model.create` of a message or a media record with `Model.send(in: scope, ...)`. See [writing data](writing-data.md#sending-without-a-network).
-Replace `add_to`, `remove_from`, `create_row` and `change_row` lines with `upsert` and `refetch`. An action that needs the server fails at once while the network is away.
+Remove `durable: true` from `operation :create` and call `Model.create(..., in: scope)` instead of `Model.send(in: scope, ...)`. Every write is queued while the network is away, so the app handles no offline error of a write. See [writing data](writing-data.md#writing-without-a-network).
+Replace `add_to`, `remove_from`, `create_row` and `change_row` lines with `upsert` and `refetch`. An action that needs the server waits in the queue while the network is away.
 Make a new `AccountScope` after each sign-in and build the screens again for it.
 
 ## Journal of a stream

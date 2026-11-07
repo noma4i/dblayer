@@ -148,7 +148,7 @@ class UnionTest {
         open(transport)
         DBlayer.database.registerOperations("""[{"name":"CreateRecord","document":"mutation CreateRecord(${'$'}containerId: ID!, ${'$'}text: String!, ${'$'}signedId: String, ${'$'}attachedUserId: ID) { createRecord(containerId: ${'$'}containerId, text: ${'$'}text, signedId: ${'$'}signedId, attachedUserId: ${'$'}attachedUserId) { id containerId authorId text createdAt attachment { __typename ... on MomentAttachment { momentId caption } } } }"}]""")
 
-        val sent = Record.send(AccountScope.current(), containerId = "c", authorId = "u1", text = "hi")
+        val sent = Record.create(containerId = "c", authorId = "u1", text = "hi", account = AccountScope.current())
         assertNull(sent.optimisticValue!!.attachment)
         assertEquals(RecordAttachment.Moment(MomentAttachment(momentId = "m9", caption = "look")), attachmentOf(withTimeout(5000) { sent.confirmed() }.id))
     }

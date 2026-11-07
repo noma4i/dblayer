@@ -130,7 +130,7 @@ extension BridgeProbeTests {
     _ = try await open(transport)
     try await DB.database.registerOperations(defsJson: #"[{"name":"CreateRecord","document":"mutation CreateRecord($containerId: ID!, $text: String!, $signedId: String, $attachedUserId: ID) { createRecord(containerId: $containerId, text: $text, signedId: $signedId, attachedUserId: $attachedUserId) { id containerId authorId text createdAt attachment { __typename ... on MomentAttachment { momentId caption } } } }"}]"#)
 
-    let sent = try await Record.send(in: DB.account(), containerId: "c", authorId: "u1", text: "hi")
+    let sent = try await Record.create(containerId: "c", authorId: "u1", text: "hi", in: DB.account())
     #expect(sent.optimisticValue?.attachment == nil)
     let confirmed = try await sent.confirmed()
     #expect(try await Record.find(confirmed.id).current()?.attachment == .moment(MomentAttachment(momentId: "m9", caption: "look")))

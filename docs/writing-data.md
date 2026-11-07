@@ -14,16 +14,16 @@ DBlayer.sessionReset()
 
 The sign-out also stops singleton subscriptions and empties their entities. Signing in again restarts them: the app calls nothing.
 
-A write applies to the local database at once, so every open stream updates immediately. A send and a media upload are also placed in a durable queue in the same commit. Other actions that reach the server need the network and fail at once without it.
+A write applies to the local database at once, so every open stream updates immediately. Every write that reaches the server (`create`, `update`, `act`, `destroy`, a send and a media upload) is also placed in a durable queue in the same commit. The queue keeps it while the network is away and after the app closes.
 
 ```swift
-guard let moment = try await Moment.send(in: scope, text: "hello", media: nil).optimisticValue else { return }
+guard let moment = try await Moment.create(text: "hello", media: nil, in: scope).optimisticValue else { return }
 try await moment.update(text: "hello world")
 try await moment.destroy()
 ```
 
 ```kotlin
-val moment = requireNotNull(Moment.send(scope, text = "hello", media = null).optimisticValue)
+val moment = requireNotNull(Moment.create(text = "hello", media = null, account = scope).optimisticValue)
 moment.update(text = GraphQLNullable.Value("hello world"))
 moment.destroy()
 ```
@@ -38,14 +38,14 @@ try await moment.update(text: .some(nil))
 moment.update(text = GraphQLNullable.Null)
 ```
 
-`send` takes the attributes that `operation :create` maps with `variables`, or every attribute when no mapping exists. Add `local :userId` inside `operation :create` for attributes you set locally but do not send. `local :userId, from: { of: CurrentUser, field: :id }` fills the attribute from a singleton row. Repeat `local` with different destinations and sources. Generated `create` makes each sourced argument optional. A non-null explicit value wins. An absent singleton leaves the attribute unset. Duplicate destinations and incompatible types fail generation. `update` accepts plain `local` and rejects `local from:`.
+`create` takes the attributes that `operation :create` maps with `variables`, or every attribute when no mapping exists. Add `local :userId` inside `operation :create` for attributes you set locally but do not send. `local :userId, from: { of: CurrentUser, field: :id }` fills the attribute from a singleton row. Repeat `local` with different destinations and sources. Generated `create` makes each sourced argument optional. A non-null explicit value wins. An absent singleton leaves the attribute unset. Duplicate destinations and incompatible types fail generation. `update` accepts plain `local` and rejects `local from:`.
 
 ```swift
-let message = try await Message.send(in: scope, text: "hello").optimisticValue
+let message = try await Message.create(text: "hello", in: scope).optimisticValue
 ```
 
 ```kotlin
-val message = Message.send(scope, text = "hello").optimisticValue
+val message = Message.create(text = "hello", account = scope).optimisticValue
 ``` Attributes the server owns (ids, counters, dates) are left out of the call and the local row gets a zero value for each until the answer arrives: `""`, `0`, `false`, `[]`, `{}`, the first value of an enum, and the current time for a date.
 
 ## Values the row does not store
@@ -53,7 +53,7 @@ val message = Message.send(scope, text = "hello").optimisticValue
 A mutation may need a value that is not an attribute of the model, such as a signed upload id or the id of an attached record. Declare it with `parameter` inside `operation :create` or `operation :update`. Map it to a mutation variable with `variables`:
 
 ```ruby
-operation :create, durable: true do
+operation :create do
   mutation "SendNote"
   wrap "input"
   variables groupId: :groupId, body: :body, file: :file, attachedUserId: :attachedUserId
@@ -63,11 +63,11 @@ end
 ```
 
 ```swift
-let message = try await Note.send(in: scope, groupId: group.id, body: "hi", attachedUserId: "42", file: signedId).optimisticValue
+let message = try await Note.create(groupId: group.id, body: "hi", attachedUserId: "42", file: signedId, in: scope).optimisticValue
 ```
 
 ```kotlin
-val message = Note.send(scope, groupId = group.id, body = "hi", attachedUserId = "42", file = signedId).optimisticValue
+val message = Note.create(groupId = group.id, body = "hi", attachedUserId = "42", file = signedId, account = scope).optimisticValue
 ```
 
 A parameter has a type (`:bool`, `:int`, `:num`, `:string`, `:id` or `[:id]`). `null: true` makes it optional: the call may leave it out and the variable is then not sent. The generated call takes the parameters after the attributes, in alphabetical order. The parameters of `update` are always optional.
@@ -112,12 +112,12 @@ val outcome = receipt.outcome()
 The outcome is retained while the receipt is held. A confirmed outcome contains the server value. A rejected outcome contains the refusal. A session end returns `interrupted`.
 
 ```swift
-let receipt = try await Note.send(in: scope, groupId: group.id, body: "hi")
+let receipt = try await Note.create(groupId: group.id, body: "hi", in: scope)
 let noteId = try await receipt.outcome().confirmedValue?.id
 ```
 
 ```kotlin
-val receipt = Note.send(scope, groupId = group.id, body = "hi")
+val receipt = Note.create(groupId = group.id, body = "hi", account = scope)
 val noteId = receipt.outcome().confirmedValue?.id
 ```
 
@@ -284,32 +284,33 @@ val sent = user.sendGift(giftId = "g1", chatId = chat.id)
 val outcome = sent.outcome()
 ```
 
-An action that needs the server fails at once while the network is away (`DbError.Network`). It does not wait in a queue.
+## Writing without a network
 
-## Sending without a network
-
-Two operations are durable: sending a message and uploading media (chat, avatar, moment). They write the row at once, queue the request, and survive a lost network and a closed app.
-Declare the send with `durable: true` on `operation :create`. The generator then writes `Model.send(in: scope, ...)` (Swift) and `Model.send(account, ...)` (Kotlin).
-
-```ruby
-operation :create, durable: true do
-  mutation "MessageSend"
-  variables chatId: :chatId, text: :text
-end
-```
+Every write is queued durably. It writes the row at once, queues the request, and survives a lost network and a closed app. When the network returns, the queue sends the operations by themselves, oldest first. At most 4 requests are in the network at the same time, and a row has at most 1. A write never fails because the network is away.
 
 ```swift
-let sent = try await Message.send(in: scope, chatId: chat.id, text: "hi")
+let sent = try await Message.create(chatId: chat.id, text: "hi", in: scope)
 let outcome = try await sent.outcome()   // .confirmed, .rejected, .interrupted
 ```
 
 ```kotlin
-val sent = Message.send(scope, chatId = chat.id, text = "hi")
+val sent = Message.create(chatId = chat.id, text = "hi", account = scope)
 val outcome = sent.outcome()             // Confirmed, Rejected, Interrupted
 ```
 
+An action that loses its meaning with time declares how long it may wait. `expires_after:` takes whole seconds:
+
+```ruby
+operation :typing, expires_after: 30 do
+  mutation "ChatTyping"
+  variables chatId: :chatId
+end
+```
+
+When the library picks a queued operation to send and its waiting time is over, it does not send it. It rolls back the optimistic change and ends the operation with the outcome `rejected` and the failure kind `expired`. No timer runs: the check happens when the network returns, when a request ends or when the app opens. Without `expires_after` an operation waits as long as needed.
+
 `outcome()` waits for the one final value, also while the network is away. A command of an ended session ends with it and does not go to the next account.
-A model without a server mutation for `create` keeps `Model.create(...)` for rows that only this device holds.
+A model without a server mutation for `create` writes rows that only this device holds.
 
 ## What the server answered
 

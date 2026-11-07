@@ -64,7 +64,7 @@ class ReconnectTest {
         }
     }
 
-    /** K10: a durable send whose first attempt failed on the network goes out at once when the network returns. No clock step is taken. */
+    /** K10: a send whose first attempt failed on the network goes out at once when the network returns. No clock step is taken. */
     @Test
     fun aDurableSendThatFailedOnTheNetworkGoesOutAtOnceWhenTheNetworkReturns() = bounded {
         val transport = MockTransport()

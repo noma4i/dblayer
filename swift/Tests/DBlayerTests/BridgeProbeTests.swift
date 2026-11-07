@@ -8,8 +8,8 @@ struct BridgeProbeTests {
   @Test
   func aSearchPassesWholeWordsToTheCore() async throws {
     try await reopenSigned(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON)
-    _ = try await Moment.send(in: DB.account(), text: "hello world").optimisticValue!
-    _ = try await Moment.send(in: DB.account(), text: "hel").optimisticValue!
+    _ = try await Moment.create(text: "hello world", in: DB.account()).optimisticValue!
+    _ = try await Moment.create(text: "hel", in: DB.account()).optimisticValue!
     let whole = Cursor(try await Query<Moment>().search("hel", wholeWords: true).live.stream())
     #expect(await whole.first("the row with the whole word") { $0.map(\.text) == ["hel"] } != nil)
   }
@@ -19,7 +19,7 @@ struct BridgeProbeTests {
     try await reopenSigned(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON)
     let changes = Cursor(try await Moment.recent.live.stream())
     #expect(await changes.next()?.isEmpty == true)
-    let moment = try await Moment.send(in: DB.account(), text: "m").optimisticValue!
+    let moment = try await Moment.create(text: "m", in: DB.account()).optimisticValue!
     #expect(await changes.next()?.first?.text == "m")
     try await moment.setLocal("tone", .string("warm"))
     #expect(await changes.next()?.first?.tone == "warm")
@@ -43,6 +43,27 @@ struct BridgeProbeTests {
     #expect(await changes.first("the edited row") { $0.map(\.text) == ["edited"] } != nil)
     try await moment.destroy()
     #expect(await changes.first("the empty list") { $0.isEmpty } != nil)
+  }
+
+  /// An update written while the network is away shows at once, stays queued, and is sent and landed once when the network returns.
+  @Test @MainActor
+  func anOfflineUpdateIsSentOnceWhenTheNetworkReturns() async throws {
+    let transport = MockTransport()
+    transport.enqueue("MomentsFeed", reply: #"{"data":{"feed":{"nodes":[{"__typename":"Moment","id":"1","uuid":"a","text":"m","likedByMe":false,"media":{},"createdAt":"2026-10-08T00:00:00.000Z"}],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}"#)
+    transport.enqueue("UpdateMoment", reply: #"{"data":{"updateMoment":{"__typename":"Moment","id":"1","uuid":"a","text":"edited","likedByMe":false,"media":{},"createdAt":"2026-10-08T00:00:00.000Z"}}}"#)
+    try await reopen(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: transport)
+    try await DB.database.registerOperations(defsJson: #"[{"name":"MomentsFeed","document":"query MomentsFeed($first: Int, $after: String) { feed(first: $first, after: $after) { nodes { id uuid text likedByMe media createdAt } pageInfo { hasNextPage endCursor } } }"},{"name":"UpdateMoment","document":"mutation UpdateMoment($id: ID!, $text: String) { updateMoment(id: $id, text: $text) { id uuid text likedByMe media createdAt } }"},{"name":"DeleteMoment","document":"mutation DeleteMoment($id: ID!) { deleteMoment(id: $id) { id } }"}]"#)
+    let changes = Cursor(try await Moment.recent.live.stream())
+    try await Moment.feed.load()
+    let loaded = await changes.first("the loaded row") { $0.map(\.text) == ["m"] }
+    let moment = try #require(loaded?.first)
+    try DB.database.setOnline(online: false)
+    let receipt = try await moment.update(text: "edited")
+    #expect(await changes.first("the edited row") { $0.map(\.text) == ["edited"] } != nil)
+    #expect(transport.calls.filter { $0.operationName == "UpdateMoment" }.isEmpty, "a request left while the network was away")
+    try DB.database.setOnline(online: true)
+    if case .confirmed = try await receipt.outcome() {} else { Issue.record("the update was not confirmed") }
+    #expect(transport.calls.filter { $0.operationName == "UpdateMoment" }.count == 1)
   }
 
   @MainActor
@@ -112,7 +133,7 @@ struct BridgeProbeTests {
     try await reopen(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: transport)
     try await DB.database.registerOperations(defsJson: #"[{"name":"CreateMoment","document":"mutation CreateMoment($text: String) { createMoment(text: $text) { id uuid likedByMe media createdAt } }"}]"#)
 
-    let sent = try await Moment.send(in: DB.account(), text: "hello", media: nil)
+    let sent = try await Moment.create(text: "hello", media: nil, in: DB.account())
     #expect(sent.optimisticValue?.id.hasPrefix("temp") == true)
     #expect(try await sent.confirmed().id == "m77")
   }
@@ -124,7 +145,7 @@ struct BridgeProbeTests {
     try await reopen(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: transport)
     try await DB.database.registerOperations(defsJson: #"[{"name":"CreateMoment","document":"mutation CreateMoment($text: String) { createMoment(text: $text) { id uuid likedByMe media createdAt } }"}]"#)
 
-    let sent = try await Moment.send(in: DB.account(), text: "hello", media: nil)
+    let sent = try await Moment.create(text: "hello", media: nil, in: DB.account())
     let ids = try await withThrowingTaskGroup(of: String.self) { group in
       for _ in 0..<8 { group.addTask { try await sent.confirmed().id } }
       return try await group.reduce(into: [String]()) { $0.append($1) }
@@ -140,7 +161,7 @@ struct BridgeProbeTests {
     try await reopen(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: transport)
     try await DB.database.registerOperations(defsJson: #"[{"name":"CreateRecord","document":"mutation CreateRecord($containerId: ID!, $text: String!, $signedId: String, $attachedUserId: ID) { createRecord(containerId: $containerId, text: $text, signedId: $signedId, attachedUserId: $attachedUserId) { id containerId authorId text createdAt } }"}]"#)
 
-    let confirmed = try await Record.send(in: DB.account(), containerId: "c", authorId: "u1", text: "hi", attachedUserId: "42", signedId: "blob-1").confirmed()
+    let confirmed = try await Record.create(containerId: "c", authorId: "u1", text: "hi", attachedUserId: "42", signedId: "blob-1", in: DB.account()).confirmed()
     let sent = transport.calls.first { $0.operationName == "CreateRecord" }?.variablesJson ?? ""
     #expect(sent.contains(#""signedId":"blob-1""#) && sent.contains(#""attachedUserId":42"#), "variables sent: \(sent)")
     #expect(try await Record.find(confirmed.id).current()?.text == "hi")
@@ -156,7 +177,7 @@ struct BridgeProbeTests {
     transport.enqueue("CurrentRegionQuery", reply: #"{"data":{"region":{"id":"r1","name":"Home"}}}"#)
     try await CurrentUser.current.load()
     try await CurrentRegion.current.load()
-    let row = try await Record.send(in: DB.account(), containerId: "c", text: "hi").optimisticValue!
+    let row = try await Record.create(containerId: "c", text: "hi", in: DB.account()).optimisticValue!
     #expect(row.authorId == "u1" && row.regionId == "r1")
   }
 
@@ -171,7 +192,7 @@ struct BridgeProbeTests {
     let cursor = Cursor(stream)
     _ = await cursor.next("the first snapshot")
 
-    let local = try await Moment.send(in: DB.account(), text: "hello", media: nil).optimisticValue!
+    let local = try await Moment.create(text: "hello", media: nil, in: DB.account()).optimisticValue!
     var settled: String?
     for _ in 0..<20 where settled == nil {
       guard let value = await cursor.next("a delivery of the list") else { break }
@@ -233,7 +254,7 @@ struct BridgeProbeTests {
     transport.enqueue("CreateMoment", reply: #"{"data":{"createMoment":{"__typename":"Moment","id":"m77","uuid":"u","likedByMe":false,"media":{},"createdAt":"2026-10-08T00:00:00.000Z"}}}"#)
     try await reopen(config: Config(path: nil, dataVersion: nil, cacheRows: 32), modelsJson: modelsJSON, transport: transport)
     try await DB.database.registerOperations(defsJson: #"[{"name":"CreateMoment","document":"mutation CreateMoment($text: String) { createMoment(text: $text) { id uuid likedByMe media createdAt } }"},{"name":"ShareMoment","document":"mutation ShareMoment($momentId: ID!) { shareMoment(momentId: $momentId) { moment { id uuid likedByMe media createdAt } successMessage copies } }"}]"#)
-    let id = try await Moment.send(in: DB.account(), text: "hello", media: nil).confirmed().id
+    let id = try await Moment.create(text: "hello", media: nil, in: DB.account()).confirmed().id
     return try #require(await Moment.find(id).current())
   }
 

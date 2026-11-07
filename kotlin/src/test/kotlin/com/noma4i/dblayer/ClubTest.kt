@@ -103,7 +103,7 @@ class ClubTest {
     }
 
     private suspend fun confirmedLetter(): Letter {
-        val receipt = withTimeout(5000) { Letter.send(AccountScope.current(), chatId = "c1", text = "hello", at = 1) }
+        val receipt = withTimeout(5000) { Letter.create(chatId = "c1", text = "hello", at = 1, account = AccountScope.current()) }
         check(withTimeout(5000) { receipt.outcome() } is OperationOutcome.Confirmed)
         return Query("Letter", Letter).read().first()
     }
@@ -116,7 +116,7 @@ class ClubTest {
             val models = clubModels(keepLetter = keep)
             try {
                 reopenSigned(config, models, CLUB_DEFS)
-                val receipt = Letter.send(AccountScope.current(), chatId = "c1", text = "held", at = 1)
+                val receipt = Letter.create(chatId = "c1", text = "held", at = 1, account = AccountScope.current())
                 val id = requireNotNull(receipt.optimisticValue).id
                 closeForCleanup()
                 val sqlite = Native.load("sqlite3", Sqlite3Library::class.java)
@@ -242,7 +242,7 @@ class ClubTest {
         val hold = transport.hold("SendLetter", failure = DbException.Http(422.toUShort(), "refused"))
         if (retry) transport.enqueue("SendLetter", LETTER_SENT)
         try {
-            val sent = Letter.send(AccountScope.current(), chatId = "c1", text = "hello", at = 1)
+            val sent = Letter.create(chatId = "c1", text = "hello", at = 1, account = AccountScope.current())
             val local = sent.optimisticValue!!
             withTimeout(5000) { hold.entered() }
             assertTrue(Query("Letter", Letter).readRow(local.id) != null)
@@ -324,21 +324,23 @@ class ClubTest {
     }
 
     @Test
-    fun anOfflineActionIsNotSentAfterReconnectButALetterIsSentOnce() = bounded {
+    fun anOfflineActionAndALetterAreEachSentOnceAfterReconnect() = bounded {
         val transport = MockTransport()
         transport.enqueue("CreateClub", CLUB_CREATED)
+        transport.enqueue("AddClubMember", clubAnswer("addClubMember"))
         transport.enqueue("SendLetter", LETTER_SENT)
         openClubSession(transport)
         val created = confirmedClub()
         DBlayer.database.setOnline(false)
-        assertTrue(runCatching { created.addMember(userIds = listOf("u9")) }.isFailure)
-        val sent = Letter.send(AccountScope.current(), chatId = "c1", text = "hello", at = 1)
+        val action = created.addMember(userIds = listOf("u9"))
+        val sent = Letter.create(chatId = "c1", text = "hello", at = 1, account = AccountScope.current())
         assertTrue(sent.optimisticValue != null)
         assertEquals(0, transport.calls.count { it.operationName == "SendLetter" })
         DBlayer.database.setOnline(true)
         assertTrue(withTimeout(5000) { sent.outcome() } is OperationOutcome.Confirmed)
+        assertTrue(withTimeout(5000) { action.outcome() } is OperationOutcome.Confirmed)
         assertEquals(1, transport.calls.count { it.operationName == "SendLetter" })
-        assertEquals(0, transport.calls.count { it.operationName == "AddClubMember" })
+        assertEquals(1, transport.calls.count { it.operationName == "AddClubMember" })
     }
 
     @Test
@@ -392,18 +394,14 @@ class ClubTest {
 
     private suspend fun club(id: String) = Query("Club", Club).readRow(id)!!
 
-    /** K04 (B4): a create the server answers returns the confirmed row, needs the network, and queues nothing offline. */
+    /** K04 (B4): a create the server answers returns the confirmed row. */
     @Test
-    fun aServerCreateReturnsTheConfirmedRowAndNeedsTheNetwork() = bounded {
+    fun aServerCreateReturnsTheConfirmedRow() = bounded {
         val transport = MockTransport()
         transport.enqueue("CreateClub", CLUB_CREATED, 300)
         openClubSession(transport)
         val created = confirmedClub()
         assertTrue("the call returned before the server answered", created.id == "g1" && created.name == "friends" && created.sync.state == SyncState.Synced)
-        assertEquals(1, transport.calls.count { it.operationName == "CreateClub" })
-
-        DBlayer.database.setOnline(false)
-        try { Club.create(name = "offline"); fail("a server create offline did not fail") } catch (error: DbException.Offline) {}
         assertEquals(1, transport.calls.count { it.operationName == "CreateClub" })
     }
 

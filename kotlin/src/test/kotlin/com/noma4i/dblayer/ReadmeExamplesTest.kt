@@ -26,7 +26,7 @@ class ReadmeExamplesTest {
         try {
             val query = Moment.where(Moment.userId eq "u1").order(Moment.createdAt.desc).limit(20)
             val moments = Projected(scope.stream(query), query.decoder, screen)
-            val moment = Moment.send(scope, text = "hello").optimisticValue
+            val moment = Moment.create(text = "hello", account = scope).optimisticValue
             assertEquals("hello", moment?.text)
             eventually("the row of the sent moment reaches the feed") { moments.projection.value.rows.map { it.text } == listOf("hello") }
 
