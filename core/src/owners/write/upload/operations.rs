@@ -28,9 +28,6 @@ impl UploadOperation {
         Self { name: name.to_string(), root_path: None }
     }
 
-    pub fn rooted(name: &str, root_path: &str) -> Self {
-        Self { name: name.to_string(), root_path: Some(root_path.to_string()) }
-    }
 }
 
 impl UploadOperations {

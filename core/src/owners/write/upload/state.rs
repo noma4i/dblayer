@@ -121,19 +121,6 @@ impl UploadState {
         }
     }
 
-    pub fn is_transferred(&self) -> bool {
-        self.transferred
-    }
-
-    pub fn all_parts_confirmed(&self) -> bool {
-        self.scenario == Some(UploadScenario::Multipart)
-            && self.upload_id.is_some()
-            && self.key.is_some()
-            && self.total_bytes > 0
-            && self.parts.iter().enumerate().all(|(index, part)| part.number as usize == index + 1 && part.confirmed_bytes > 0 && !part.etag.is_empty())
-            && self.parts.iter().try_fold(0u64, |sum, part| sum.checked_add(part.confirmed_bytes)) == Some(self.total_bytes)
-    }
-
     pub fn attempts(&self) -> u32 {
         self.retries.iter().map(|retry| retry.attempts).sum()
     }

@@ -85,10 +85,6 @@ impl Operation {
         format!("{model}:{action}")
     }
 
-    pub fn upload_action_key(model: &str, action: &str) -> String {
-        format!("{model}:upload:{action}")
-    }
-
     pub fn split_action_key(action_key: &str) -> Option<(String, String)> {
         let mut parts = action_key.split(':');
         match (parts.next(), parts.next(), parts.next(), parts.next()) {

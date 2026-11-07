@@ -72,9 +72,8 @@ impl TransferState {
 
     /// Every restored row has exactly one class.
     pub(super) fn classify(&mut self, row: StoredTransfer, outcomes: &TransferOutcomes, fx: &mut Fx) {
-        if let Some(error) = row.restore_failed.clone() {
+        if row.restore_failed.is_some() {
             let id = self.insert_restored(&row, TransferStage::Failed);
-            let _ = error;
             return self.failed_restored(id, "RestoreFailed".into(), fx);
         }
         if !self.declarations.contains(&(row.mutation.model.clone(), row.mutation.action.clone())) {

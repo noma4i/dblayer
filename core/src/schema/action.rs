@@ -154,10 +154,6 @@ impl ProcessingDeclaration {
 }
 
 impl ActionDeclaration {
-    /// The call that queued the action waits for the answer and returns the row at its root: it has a mutation and no optimistic change, no declared result and no upload.
-    pub fn returns_answer(&self) -> bool {
-        self.mutation.is_some() && !self.has_optimistic && self.optimistic.is_empty() && self.result.is_empty() && !self.upload && !self.durable
-    }
 
     pub fn new(name: &str, root_shape: RootShape) -> Self {
         Self {

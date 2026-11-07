@@ -16,9 +16,8 @@ impl OutboxState {
     pub(super) fn classify(&mut self, item: StoredOp, pending_lost: bool, fx: &mut Effects<Outbox>) {
         let op_id = item.op_id;
         let (model, action) = (item.op.model.clone(), item.op.action.clone());
-        if let Some(error) = item.restore_failed.clone() {
+        if item.restore_failed.is_some() {
             self.add_operation(op_id, item.op, Stage::Failed);
-            let _ = error;
             if let Some(operation) = self.ops.get_mut(&op_id) {
                 operation.restore_element = item.restore_element;
             }
@@ -62,7 +61,6 @@ impl OutboxState {
         if attempts >= ATTEMPT_LIMIT {
             return self.fail_with(op_id, "Exhausted".into(), fx);
         }
-        let held_pair = pending.is_some();
         if let Some((request_id, sequence)) = pending {
             crate::owners::contract::seen_request_id(request_id);
             if let Some(operation) = self.ops.get_mut(&op_id) {
@@ -71,7 +69,6 @@ impl OutboxState {
                 operation.pending_owned = true;
             }
         }
-        let _ = held_pair;
         if self.goes_out(op_id) {
             self.begin_attempt(op_id, fx);
         }

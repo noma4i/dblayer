@@ -41,10 +41,6 @@ impl SessionCode {
         NAMES.iter().find(|(_, code)| *code == self).map_or("OTHER", |(name, _)| name)
     }
 
-    pub fn keeps_queue(self) -> bool {
-        matches!(self, Self::Unauthenticated | Self::AccountUnavailable)
-    }
-
     pub fn named(name: &str) -> Option<Self> {
         NAMES.iter().find(|(known, _)| *known == name).map(|(_, code)| *code)
     }

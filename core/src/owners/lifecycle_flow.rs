@@ -165,10 +165,9 @@ impl LifecycleState {
                 queued_replies.extend(reply);
                 LifecyclePhase::Resetting { epoch, identity, models, queued_models, queued_replies, pending_credential, erases }
             }
-            (LifecyclePhase::Resetting { epoch, identity, models, queued_models, queued_replies, pending_credential, mut erases }, LifecycleInput::ModelsCleared { generation_new, erase_id }) => match take_erase(&mut erases, erase_id) {
+            (LifecyclePhase::Resetting { epoch, identity, models, queued_models, queued_replies, pending_credential, mut erases }, LifecycleInput::ModelsCleared { erase_id, .. }) => match take_erase(&mut erases, erase_id) {
                 None => LifecyclePhase::Resetting { epoch, identity, models, queued_models, queued_replies, pending_credential, erases },
                 Some(erase) => {
-                    let _ = generation_new;
                     let generation_new = self.published.generation.max(erase.target);
                     self.published.generation = generation_new;
                     if !queued_models.is_empty() {

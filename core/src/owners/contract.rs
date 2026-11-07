@@ -213,14 +213,6 @@ pub struct ModelReady {
     pub model: String,
 }
 
-/// `ModelEvent{model, position, payload}`: Feed to the Deliveries of the model.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct EventAtPosition {
-    pub model: String,
-    pub position: u64,
-    pub payload: String,
-}
-
 /// `ModelLost{model, first, last}`: Feed positions that did not arrive.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ModelLost {
@@ -272,12 +264,6 @@ pub enum RestoreResult {
     Restored,
     WaitingDeclaration,
     RestoreFailed { error: String, retained: bool },
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct RestoreItem {
-    pub key: String,
-    pub result: RestoreResult,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

@@ -157,8 +157,6 @@ impl Handle {
     pub fn launch(&self) -> Launch {
         let place = std::panic::Location::caller();
         let id = NEXT_HOLDER.fetch_add(1, Ordering::SeqCst) as u64;
-        #[cfg(not(test))]
-        let _ = place;
         Launch { router: self.router().cloned().inspect(|router| {
             router.inflight.add();
             #[cfg(test)]

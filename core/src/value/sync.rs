@@ -118,10 +118,6 @@ pub struct SyncInfo {
 }
 
 impl SyncInfo {
-    #[cfg(test)]
-    pub fn is_synced(&self) -> bool {
-        self.state == SyncState::Synced
-    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

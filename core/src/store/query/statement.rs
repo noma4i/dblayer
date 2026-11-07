@@ -90,11 +90,6 @@ impl Query {
     }
 
     #[cfg(test)]
-    pub fn unsynced(model: &str) -> Self {
-        Self::new(model).filtered(Where::not_equal(SYNC_FIELD, Value::from("synced")))
-    }
-
-    #[cfg(test)]
     pub fn failed(model: &str) -> Self {
         Self::new(model).filtered(Where::equal(SYNC_FIELD, Value::from("failed")))
     }

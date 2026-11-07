@@ -46,11 +46,6 @@ impl Reply {
         Self { delay: Duration::ZERO, result: Ok(Response { data: None, errors: vec![error] }) }
     }
 
-    pub fn graphql_messages(messages: &[&str]) -> Self {
-        let errors = messages.iter().map(|message| GraphQLError { message: (*message).to_string(), path: None, extensions: None }).collect();
-        Self { delay: Duration::ZERO, result: Ok(Response { data: None, errors }) }
-    }
-
     pub fn fail(error: TransportError) -> Self {
         Self { delay: Duration::ZERO, result: Err(error) }
     }
@@ -131,24 +126,12 @@ impl MockTransport {
         }
     }
 
-    pub fn set_session(&self, session: Option<&str>) {
-        self.lock().session = Some(Ok(session.map(str::to_string)));
-    }
-
-    pub fn fail_session(&self, message: &str) {
-        self.lock().session = Some(Err(TransportError::Network(message.to_string())));
-    }
-
     pub fn enqueue(&self, operation_name: &str, reply: Reply) {
         self.lock().replies.entry(operation_name.to_string()).or_default().push_back(reply);
     }
 
     pub fn respond_with(&self, responder: impl Fn(&GraphQLRequest) -> Option<Reply> + Send + Sync + 'static) {
         self.lock().responder = Some(Arc::new(responder));
-    }
-
-    pub fn on_put_progress(&self, progress: impl Fn() + Send + Sync + 'static) {
-        self.lock().put_progress = Some(Arc::new(progress));
     }
 
     pub async fn await_calls(&self, operation_name: &str, count: usize) {
