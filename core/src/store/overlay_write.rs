@@ -8,7 +8,7 @@ use crate::identity::{ModelKey, RowId, RowRef};
 use super::overlay::{OverlaySnapshot, RowKey};
 use super::{ModelInfo, StoreError};
 
-pub(super) fn apply(snapshot: &mut OverlaySnapshot, models: &BTreeMap<String, ModelInfo>, writes: super::feed_write::OverlayWrites) -> Result<(Vec<RowChange>, Vec<crate::owners::store::EphemeralReset>), StoreError> {
+pub(super) fn apply(snapshot: &mut OverlaySnapshot, models: &BTreeMap<String, ModelInfo>, writes: super::feed_write::OverlayWrites, now_ms: u64) -> Result<(Vec<RowChange>, Vec<crate::owners::store::EphemeralReset>), StoreError> {
     let mut arms: Vec<crate::owners::store::EphemeralReset> = Vec::new();
     let mut before = BTreeMap::new();
     for (model, row_id, values) in writes {
@@ -21,7 +21,7 @@ pub(super) fn apply(snapshot: &mut OverlaySnapshot, models: &BTreeMap<String, Mo
             before.entry(key).or_insert_with(|| snapshot.values.get(&row).and_then(|fields| fields.get(&name)).map_or_else(|| field.initial(), |slot| slot.value.clone()));
             let position = snapshot.set(row.clone(), name.clone(), value);
             arms.retain(|arm| !(arm.model == model && arm.row_id == row_id && arm.field == name));
-            if let Some(window) = field.reset_window() { arms.push(crate::owners::store::EphemeralReset { model: model.clone(), row_id: row_id.clone(), field: name, position, after_ms: u64::try_from(window.as_millis()).unwrap_or(u64::MAX) }); }
+            if let Some(window) = field.reset_window() { arms.push(crate::owners::store::EphemeralReset { model: model.clone(), row_id: row_id.clone(), field: name, position, deadline: now_ms.saturating_add(u64::try_from(window.as_millis()).unwrap_or(u64::MAX)) }); }
         }
     }
     let mut changed: BTreeMap<RowRef, BTreeSet<String>> = BTreeMap::new();

@@ -40,7 +40,7 @@ impl OutboxState {
 
     pub(super) fn write_now(&mut self, call: LocalCall, (reply, now): (ReplyId, Time), fx: &mut Effects<Outbox>) {
         let expire = match call.kind {
-            LocalWriteKind::SetEphemeral { expire_after: Some(after) } => Some((Time(now.0 + after), after)),
+            LocalWriteKind::SetEphemeral { expire_after: Some(after) } => Some(Time(now.0 + after)),
             _ => None,
         };
         let generation = self.generation_of(&call.model);
@@ -102,8 +102,7 @@ impl OutboxState {
         let id = ScheduleId(EXPIRE_TIMER + self.next_schedule);
         self.next_schedule += 1;
         self.resets.insert(key, (id, reset.position));
-        let after = std::time::Duration::from_millis(reset.after_ms);
-        fx.push(Effect::Schedule { id, after, input: OutboxInput::ResetField { reset } });
+        fx.push(Effect::ScheduleAt { id, at: Time(reset.deadline), input: OutboxInput::ResetField { reset } });
     }
 
     pub(super) fn reset_field(&mut self, reset: crate::owners::store::EphemeralReset, fx: &mut Effects<Outbox>) {

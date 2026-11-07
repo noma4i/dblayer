@@ -240,7 +240,7 @@ pub struct EphemeralReset {
     pub row_id: String,
     pub field: String,
     pub position: u64,
-    pub after_ms: u64,
+    pub deadline: u64,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]

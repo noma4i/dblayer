@@ -26,7 +26,7 @@ pub(super) struct LocalCall {
 #[derive(Clone, Debug)]
 pub(super) enum Batch {
     Operation { op_id: OpId, kind: CommitKind },
-    Write { reply: ReplyId, call: LocalCall, expire: Option<(Time, u64)> },
+    Write { reply: ReplyId, call: LocalCall, expire: Option<Time> },
 }
 
 #[derive(Debug)]

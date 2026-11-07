@@ -18,12 +18,12 @@ impl OutboxState {
         match batch {
             Batch::Write { reply, call, expire } => {
                 Self::reply(fx, reply, OutboxAnswer::Ok);
-                if let Some((due, after)) = expire {
+                if let Some(due) = expire {
                     let LocalCall { model, row, .. } = call;
                     self.ephemeral.insert(row.clone(), due);
                     let id = ScheduleId(EXPIRE_TIMER + self.next_schedule);
                     self.next_schedule += 1;
-                    fx.push(Effect::Schedule { id, after: std::time::Duration::from_millis(after), input: OutboxInput::Expire { model, row, due } });
+                    fx.push(Effect::ScheduleAt { id, at: due, input: OutboxInput::Expire { model, row, due } });
                 }
                 self.maybe_drained(fx);
             }

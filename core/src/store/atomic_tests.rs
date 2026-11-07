@@ -244,10 +244,11 @@ fn out_ephemeral_reset_by_position() {
     put(&database, "moments", serde_json::json!({"id": "m1", "userId": "u1"}));
     let typing = |database: &Store| database.read(&["moments"], |reader| Ok(reader.point("moments", "m1")?.unwrap().get("typing").cloned())).unwrap();
     let set = || StoreBatch { author: BatchAuthor::Feed, id: 1, epoch: 1, basis: Default::default(), rows: vec![("moments".into(), serde_json::json!({"op":"ephemeral","id":"m1","values":{"typing":true}}).to_string())], intents: 0, credential: None, ops: Vec::new() };
+    let started = u64::try_from(database.lock().now_ms()).unwrap();
     let first = database.write_batch(&set(), database.files(), database.pointer_guards(), None).unwrap();
     let second = database.write_batch(&set(), database.files(), database.pointer_guards(), None).unwrap();
     let (old, current) = (first.resets[0].clone(), second.resets[0].clone());
-    assert_eq!((old.after_ms, old.field.as_str()), (5000, "typing"));
+    assert!(old.deadline >= started + 5000 && old.field == "typing");
     assert_ne!(old.position, current.position);
     let reset = |reset: &crate::owners::store::EphemeralReset| write(&database, vec![StoreOp::ResetEphemeral { model: reset.model.clone(), row_id: reset.row_id.clone(), field: reset.field.clone(), position: reset.position }]).unwrap();
     reset(&old);
