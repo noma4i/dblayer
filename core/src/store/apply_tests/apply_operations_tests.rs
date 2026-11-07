@@ -217,7 +217,7 @@ fn begin_with_an_entity_change_reports_the_row_once_with_its_own_kind() {
 }
 
 #[test]
-fn inv_op_12_fail_and_retry_rewrite_row_sync_and_each_commit_reports_the_row() {
+fn inv_op_12_start_fail_and_retry_rewrite_row_sync_and_each_commit_reports_the_row() {
     use crate::value::sync::{FailureKind, OperationFailure};
     let (store, _) = booted_store();
     let begun = transitions(&store, vec![OperationTransition::Begin(Box::new(record(None, OperationStatus::Pending, None)))]);
