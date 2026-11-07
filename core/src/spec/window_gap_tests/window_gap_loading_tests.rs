@@ -375,3 +375,15 @@ fn win_landing_stale_generation_offline() {
     assert!(twin.step(Input::Rejected { request: 1, reason: Reject::StaleGeneration }).is_empty());
     assert_eq!(twin.stage(), Some(WindowStage::Waiting));
 }
+
+#[test]
+fn win_loading_leave_forced_waiter() {
+    let mut twin = Twin::new();
+    let mut sent = requests(&twin.step(Input::Load { id: 1, goal: Goal::First, force: true }));
+    sent += requests(&twin.step(Input::Load { id: 2, goal: Goal::First, force: true }));
+    sent += requests(&twin.step(Input::InterestMinus { id: 1 }));
+    sent += requests(&twin.respond(None));
+    sent += requests(&twin.land());
+    assert_eq!((sent, twin.stage()), (1, Some(WindowStage::Idle)), "the second caller shares the request of the first");
+    assert!(twin.state().waiters(&key()).is_empty());
+}
