@@ -10,5 +10,3 @@ pub mod session;
 pub(crate) mod session_seal;
 pub mod store;
 pub mod write;
-
-#[cfg(test)]
