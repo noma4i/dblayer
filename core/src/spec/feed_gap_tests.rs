@@ -204,7 +204,7 @@ impl Twin {
             Input::HandshakeDeadline { to } => vec![FeedInput::HandshakeDeadline { connection_id: self.connection(*to) }],
             Input::Committed => {
                 let batch = self.batch();
-                vec![FeedInput::Committed(Committed { batch, revision: 1, tables: Vec::new(), rows: None, shown: None, models: Default::default(), stale_parents: Vec::new(), position: 0, shown: None })]
+                vec![FeedInput::Committed(Committed { batch, revision: 1, tables: Vec::new(), rows: None, models: Default::default(), stale_parents: Vec::new(), position: 0, shown: None })]
             }
             Input::CommittedAt(nth) => {
                 let batch = self.batch_at(*nth);
@@ -224,7 +224,7 @@ impl Twin {
             }
             Input::CommittedStale(parents) => {
                 let batch = self.batch();
-                vec![FeedInput::Committed(Committed { batch, revision: 1, tables: Vec::new(), rows: None, shown: None, models: Default::default(), stale_parents: parents.clone(), position: 0, shown: None })]
+                vec![FeedInput::Committed(Committed { batch, revision: 1, tables: Vec::new(), rows: None, models: Default::default(), stale_parents: parents.clone(), position: 0, shown: None })]
             }
             Input::Rejected(reason) => {
                 let batch = self.batch();
