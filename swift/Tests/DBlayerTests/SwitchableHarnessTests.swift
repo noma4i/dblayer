@@ -63,7 +63,7 @@ extension BridgeProbeTests {
       await DB.closeForCleanup()
       let second = MockTransport(unanswered: .networkError)
       second.enqueue("UserProfile", reply: Self.profile("B"))
-      #expect(first.calls.count == before, "work of the close reached the old transport: \(first.calls.dropFirst(before).map { "\(-e.author) \(-e.operationName) \(-e.requestId)" })")
+      #expect(first.calls.count == before, "work of the close reached the old transport: \(first.calls.dropFirst(before).map { "\($0.author) \($0.operationName) \($0.requestId)" })")
       #expect(second.calls.isEmpty, "work of the close reached the next transport")
       switchable.target = second
       try await reopen(config: Config(path: nil, dataVersion: nil), modelsJson: modelsJSON, transport: switchable, operations: Self.operations)
