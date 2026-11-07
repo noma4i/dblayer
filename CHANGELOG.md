@@ -106,6 +106,12 @@
 - The generator refuses scope and association names that repeat a generated member.
 - The DSL refuses a name that ends with `_`.
 - A delta carries the ordered steps from the reader's rows to the new rows, and `ListEdit` has a move.
+- `OpenOptions` takes the operations as typed definitions and no power saving flag.
+- `UploadInfo.percent` is `UploadInfo.progress`, computed by the core.
+- `openReport`, `subscriptionCensus` and `DB.account()` return `Closed` after `close`.
+- `close` returns after the core stopped the platform observers.
+- The core rejects a load call without a relation with `Invalid` on both platforms.
+- Kotlin reports the network value of the system on every callback.
 
 ### Fixed
 
@@ -221,6 +227,10 @@
 - `Transport.subscribe`, `Transport.unsubscribe` and `SubscriptionSink` are gone: server events arrive on the encrypted cable.
 - `restoreFailed` and `discardRestoreFailed` are gone.
 - The `retries` parameter of `open` and `openTesting` is gone: `serverConfig` still takes it.
+- `DBlayer.sessionSend`: use `sessionCall`.
+- `Config.cacheRows`.
+- `Connectivity` of `serverConfig`: the core takes the platform observer.
+
 
 ## 6.16.1 - 2026-11-03
 

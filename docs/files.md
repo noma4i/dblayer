@@ -86,7 +86,7 @@ try await DB.open(endpoint: endpoint, modelsJSON: models,
 let request = UploadRequest(path: url.path, variables: ["text": .string("hello")])
 try await DB.account().upload(moment, action: "upload_clip", request)
 moment.uploads["upload_clip"]?.status       // .uploading
-moment.uploads["upload_clip"]?.percent      // 42.0
+moment.uploads["upload_clip"]?.progress      // 42.0
 try await moment.cancelUpload(action: "upload_clip")
 ```
 
@@ -97,7 +97,7 @@ DBlayer.open(context, endpoint = endpoint, modelsJson = models,
 val request = UploadRequest(path = file.path, variables = variables)
 AccountScope.current().upload(moment, "upload_clip", request, UploadClipAnswer.serializer())
 moment.uploads["upload_clip"]?.status       // Uploading
-moment.uploads["upload_clip"]?.percent      // 42.0
+moment.uploads["upload_clip"]?.progress      // 42.0
 moment.cancelUpload("upload_clip")
 ```
 
@@ -123,14 +123,14 @@ Declare a named operation for each content mutation, with `upload MutationName` 
 ```swift
 let request = UploadRequest(path: url.path, variables: ["text": .string("hello")])
 let receipt = try await DB.account().send(Moment.self, values: ["text": .string("hello")], upload: UploadCommand(action: "upload_clip", request: request))
-receipt.optimisticValue?.uploads["upload_clip"]?.percent
+receipt.optimisticValue?.uploads["upload_clip"]?.progress
 let outcome = try await receipt.outcome()
 ```
 
 ```kotlin
 val request = UploadRequest(path = file.path, variables = variables)
 val receipt = AccountScope.current().send(Moment, values, upload = UploadCommand("upload_clip", request))
-receipt.optimisticValue?.uploads?.get("upload_clip")?.percent
+receipt.optimisticValue?.uploads?.get("upload_clip")?.progress
 val outcome = receipt.outcome()
 ```
 
@@ -266,11 +266,12 @@ The final content mutation does not hold a file permit.
 | `status` | `waiting`, `preparing`, `queued`, `uploading`, `sending`, `failed` |
 | `waitReason` | why a `waiting` upload does not run yet: `createUnconfirmed` (the record is still local, its `create` has no answer). A step that waits for the network or for power saving to end is `queued` |
 | `stage` | `prepare`, `create`, `put`, `init`, `presign`, `part`, `complete`, `abort`, `mutation` |
-| `sentBytes`, `totalBytes`, `fraction` | for multipart the sum over all parts divided by the file size |
+| `sentBytes`, `totalBytes` | for multipart the sum over all parts |
+| `progress` | the sent share of the bytes in percent from 0 to 100, 0 while the total is unknown |
 | `attempts` | saved attempts for the current unfinished step, preserved across restarts |
 | `error` | kind and message, `isRetryable` is false for a rejection |
 
-An upload of a local record starts as `waiting` with `totalBytes` set from the file size and `sentBytes` and `fraction` at zero. When the `create` is confirmed the real id replaces the local id in the upload variables and the status moves on through `preparing` or `queued` to `uploading`, `sending` and the end. If the `create` is refused the upload is discarded with the record. Every change of status, stage, bytes or reason reaches observers as a new row.
+An upload of a local record starts as `waiting` with `totalBytes` set from the file size and `sentBytes` and `progress` at zero. When the `create` is confirmed the real id replaces the local id in the upload variables and the status moves on through `preparing` or `queued` to `uploading`, `sending` and the end. If the `create` is refused the upload is discarded with the record. Every change of status, stage, bytes or reason reaches observers as a new row.
 
 A finished upload closes its operation and removes its entry from `uploads`. The record becomes `synced` when no other operation remains open. Progress advances when a part is confirmed and never decreases within a phase. A restarted phase begins with its confirmed parts.
 
