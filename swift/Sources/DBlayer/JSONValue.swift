@@ -55,18 +55,19 @@ public enum JSONValue: Codable, Sendable, Equatable, Hashable {
     return object
   }
 
+  public static func readObject(_ text: String) throws -> [String: JSONValue] { try decodeObject(Data(text.utf8)) }
+
   public static func read(_ text: String) throws -> JSONValue {
     try JSONDecoder().decode(JSONValue.self, from: Data(text.utf8))
   }
 
-  public var objectValue: [String: JSONValue] { if case .object(let value) = self { value } else { [:] } }
-  public var intValue: Int? {
-    switch self {
-    case .integer(let value): Int(exactly: value)
-    case .number(let value): Int(exactly: value)
-    default: nil
+  public var objectValue: [String: JSONValue] {
+    get throws {
+      guard case .object(let value) = self else { throw DecodingError.typeMismatch([String: JSONValue].self, DecodingError.Context(codingPath: [], debugDescription: "JSON value is not an object")) }
+      return value
     }
   }
+  public var intValue: Int? { if case .integer(let value) = self { Int(exactly: value) } else { nil } }
   public var doubleValue: Double? {
     switch self {
     case .integer(let value): Double(value)

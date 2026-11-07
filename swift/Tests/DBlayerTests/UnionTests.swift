@@ -14,7 +14,7 @@ extension BridgeProbeTests {
 
   private func vectors() throws -> [[String: JSONValue]] {
     let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
-    return try JSONDecoder().decode([JSONValue].self, from: Data(contentsOf: root.appendingPathComponent("fixtures/union.json"))).map(\.objectValue)
+    return try JSONDecoder().decode([JSONValue].self, from: Data(contentsOf: root.appendingPathComponent("fixtures/union.json"))).map { try $0.objectValue }
   }
 
   private func open(_ transport: MockTransport? = nil) async throws -> Database {

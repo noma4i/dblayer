@@ -20,7 +20,7 @@ struct NestedTypesTests {
     let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
     let cases = try JSONDecoder().decode([JSONValue].self, from: Data(contentsOf: root.appendingPathComponent("fixtures/nested.json")))
     for row in cases {
-      let fields = row.objectValue
+      let fields = (try row.objectValue)
       let label = fields["name"]!.stringValue!
       let input = try fields["inputText"]?.stringValue.map { Data($0.utf8) } ?? JSONEncoder().encode(fields["input"]!)
       if fields["error"] == .bool(true) {
@@ -81,7 +81,7 @@ struct CellDecoderTests {
     let cases = try JSONDecoder().decode([JSONValue].self, from: Data(contentsOf: root.appendingPathComponent("fixtures/nested.json")))
     let database = try await open()
     for row in cases {
-      let fields = row.objectValue
+      let fields = (try row.objectValue)
       guard fields["error"] != .bool(true), let input = fields["input"] else { continue }
       let label = fields["name"]!.stringValue!
       let values = String(decoding: try JSONEncoder().encode(["value": withoutUnknownKeys(input)]), as: UTF8.self)

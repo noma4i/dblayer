@@ -2,32 +2,27 @@ import Foundation
 
 extension Cell {
   public var asText: String? { if case let .text(value) = self { value } else { nil } }
-  public var asId: String? {
-    switch self {
-    case let .text(value): value
-    case let .int(value): String(value)
-    default: nil
-    }
-  }
+  public var asId: String? { if case let .text(value) = self { value } else { nil } }
   public var asBool: Bool? { if case let .bool(value) = self { value } else { nil } }
   public var asInt: Int? { if case let .int(value) = self { Int(value) } else { nil } }
-  public var asDouble: Double? {
-    switch self {
-    case let .real(value): value
-    case let .int(value): Double(value)
-    default: nil
-    }
-  }
+  public var asDouble: Double? { if case let .real(value) = self { value } else { nil } }
 
   public var asJSON: JSONValue {
-    switch self {
-    case .null: .null
-    case let .bool(value): .bool(value)
-    case let .int(value): .integer(value)
-    case let .real(value): .number(value)
-    case let .text(value): .string(value)
-    case let .seq(items): .array(items.map(\.asJSON))
-    case let .keyed(entries): .object(Dictionary(entries.map { ($0.key, $0.value.asJSON) }, uniquingKeysWith: { _, newer in newer }))
+    get throws {
+      switch self {
+      case .null: return .null
+      case let .bool(value): return .bool(value)
+      case let .int(value): return .integer(value)
+      case let .real(value): return .number(value)
+      case let .text(value): return .string(value)
+      case let .seq(items): return .array(try items.map { try $0.asJSON })
+      case let .keyed(entries):
+        var object: [String: JSONValue] = [:]
+        for entry in entries {
+          guard object.updateValue(try entry.value.asJSON, forKey: entry.key) == nil else { throw DbError.Invalid(detail: "the keyed cell repeats the key \(entry.key)") }
+        }
+        return .object(object)
+      }
     }
   }
 }
@@ -93,12 +88,12 @@ public struct CellReader: Sendable {
 
   public func jsonOpt(_ at: Int) throws -> JSONValue? {
     let cell = try cell(at)
-    return cell == .null ? nil : cell.asJSON
+    return cell == .null ? nil : try cell.asJSON
   }
 
   public func json(_ at: Int) throws -> JSONValue { try cell(at).asJSON }
 
-  public func fileOpt(_ at: Int) throws -> FileInfo? { try jsonOpt(at).map(FileInfo.init(json:)) }
+  public func fileOpt(_ at: Int) throws -> FileInfo? { try objOpt(at, FileInfo.init(cells:)) }
 
   public func file(_ at: Int) throws -> FileInfo { try required(try fileOpt(at), at) }
 }

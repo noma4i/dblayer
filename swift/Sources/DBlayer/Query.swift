@@ -103,7 +103,7 @@ public struct Query<Model: DBModel>: Sendable {
 
   @concurrent public func edgeValues(of id: String, in scope: AccountScope? = nil) async throws -> [String: JSONValue]? {
     let (database, epoch) = try DB.admitted(scope)
-    return try JSONValue.read(try await database.edgeValues(epoch: epoch, model: Model.modelName, relation: relationName, paramsJson: JSONValue.object(params).text, rowIds: [id])).objectValue[id]?.objectValue
+    return try JSONValue.readObject(try await database.edgeValues(epoch: epoch, model: Model.modelName, relation: relationName, paramsJson: JSONValue.object(params).text, rowIds: [id]))[id]?.objectValue
   }
 
   private var relationName: String { relation ?? "" }

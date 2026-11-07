@@ -21,7 +21,7 @@ extension BridgeProbeTests.EnumTests {
     let database = try await openShelves()
     let typed = JSONValue.object(["title": .string("t"), "shelves": try JSONValue.encode([ContainerShelf.secondary])])
     _ = database
-    #expect(try await DB.account().send(Container.self, values: typed.objectValue).optimisticValue!.shelves == [.secondary])
+    #expect(try await DB.account().send(Container.self, values: (try typed.objectValue)).optimisticValue!.shelves == [.secondary])
     #expect(try await DB.account().send(Container.self, values: ["title": .string("u")]).optimisticValue!.shelves == nil)
   }
 

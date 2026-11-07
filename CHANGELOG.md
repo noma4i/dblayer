@@ -34,6 +34,7 @@
 
 ### Changed
 
+- Rows reach Swift and Kotlin with every cell in its declared type, and a cell of another type throws instead of converting.
 - `DbError` names the failures of the cells: `Offline`, `Dropped`, `Unauthorized`, `InFlight`, `Storage`, `Runtime`, `Internal` and `Copy`. `Storage` replaces `Database`.
 - `ListEdit.rewrite` carries the `temporary` id it settles, `Projected.edits` replaces `takeEdits`, and `ModelEventItem.ended` replaces `failed`.
 - Projections mirror each delivery and drop `temporaryIds`, the decode counters and the resync decision.

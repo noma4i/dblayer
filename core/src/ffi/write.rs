@@ -175,7 +175,7 @@ impl Database {
         self.outbox_answer(waiter, "set ephemeral").await.map(drop)
     }
 
-    pub async fn attach(&self, epoch: u64, model: String, row_id: String, field: String, file: FileBytes) -> Result<String, DbError> {
+    pub async fn attach(&self, epoch: u64, model: String, row_id: String, field: String, file: FileBytes) -> Result<super::wire::WireFile, DbError> {
         let FileBytes { bytes, name, mime } = file;
         self.account_call(epoch)?;
         let row = id(&row_id)?;
@@ -186,7 +186,7 @@ impl Database {
         self.outbox_answer(waiter, "attach").await?;
         self.read_in_epoch(epoch, "attach", move |database| {
             let attached = database.db.file(&model, &row, &field)?.ok_or_else(|| DbError::Internal { detail: "the attached file is not on the row".into() })?;
-            Ok(attached.to_value().to_string())
+            Ok(attached.into())
         })
         .await
     }

@@ -7,13 +7,13 @@ public struct FileInfo: Codable, Sendable, Hashable {
   public let mime: String?
   public let sha256: String?
 
-  init(json: JSONValue) throws {
-    guard case let .object(members) = json, case let .string(id)? = members["id"], case let .integer(size)? = members["size"], size >= 0 else {
-      throw DecodingError.dataCorrupted(DecodingError.Context(codingPath: [], debugDescription: "File description needs id and size"))
-    }
-    func text(_ key: String) -> String? { if case let .string(value)? = members[key] { return value } else { return nil } }
-    self.init(id: id, size: UInt64(size), name: text("name"), mime: text("mime"), sha256: text("sha256"))
+  init(cells: [Cell]) throws {
+    let r = CellReader(cells)
+    guard let size = UInt64(exactly: try r.req(1, \.asInt)) else { throw DbError.Invalid(detail: "the file size is negative") }
+    self.init(id: try r.req(0, \.asText), size: size, name: try r.opt(2, \.asText), mime: try r.opt(3, \.asText), sha256: try r.opt(4, \.asText))
   }
+
+  init(wire: WireFile) { self.init(id: wire.id, size: wire.size, name: wire.name, mime: wire.mime, sha256: wire.sha256) }
 
   init(id: String, size: UInt64, name: String?, mime: String?, sha256: String?) {
     self.id = id
@@ -22,8 +22,6 @@ public struct FileInfo: Codable, Sendable, Hashable {
     self.mime = mime
     self.sha256 = sha256
   }
-
-  static func parse(_ text: String) throws -> FileInfo { try FileInfo(json: try JSONValue.read(text)) }
 }
 
 public enum NoFiles: String, Sendable {

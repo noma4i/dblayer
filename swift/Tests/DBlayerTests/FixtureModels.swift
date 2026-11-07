@@ -38,7 +38,7 @@ public struct Ledger: DBModel {
         return try await self.update(values: values_, in: scope_)
     }
     @concurrent public func move(scope: String, in scope_: AccountScope? = nil) async throws -> MutationReceipt<Self> {
-        let values_ = try JSONValue.read(#"{}"#).objectValue
+        let values_ = try JSONValue.readObject(#"{}"#)
         return try await self.act("move", values: values_, args: ["scope": try JSONValue.encode(scope)], in: scope_)
     }
 }
@@ -225,7 +225,7 @@ public struct Mailbox: DBModel {
         return try await self.update(values: values_, in: scope_)
     }
     @concurrent public func mark(put: String, in scope_: AccountScope? = nil) async throws -> MutationReceipt<Self> {
-        let values_ = try JSONValue.read(#"{}"#).objectValue
+        let values_ = try JSONValue.readObject(#"{}"#)
         return try await self.act("mark", values: values_, args: ["put": try JSONValue.encode(put)], in: scope_)
     }
 }
@@ -323,15 +323,15 @@ public struct Club: DBModel {
         return try await self.update(values: values_, in: scope_)
     }
     @concurrent public func leave(in scope_: AccountScope? = nil) async throws -> MutationReceipt<Self> {
-        let values_ = try JSONValue.read(#"{}"#).objectValue
+        let values_ = try JSONValue.readObject(#"{}"#)
         return try await self.act("leave", values: values_, args: [:], in: scope_)
     }
     @concurrent public func addMember(userIds: [String], in scope_: AccountScope? = nil) async throws -> MutationReceipt<Self> {
-        let values_ = try JSONValue.read(#"{}"#).objectValue
+        let values_ = try JSONValue.readObject(#"{}"#)
         return try await self.act("add_member", values: values_, args: ["userIds": try JSONValue.encode(userIds)], in: scope_)
     }
     @concurrent public func removeMember(userIds: [String], in scope_: AccountScope? = nil) async throws -> MutationReceipt<Self> {
-        let values_ = try JSONValue.read(#"{}"#).objectValue
+        let values_ = try JSONValue.readObject(#"{}"#)
         return try await self.act("remove_member", values: values_, args: ["userIds": try JSONValue.encode(userIds)], in: scope_)
     }
 }
@@ -433,7 +433,7 @@ public struct Letter: DBModel {
         return try await self.update(values: values_, in: scope_)
     }
     @concurrent public func forward(targetChatId: String, in scope_: AccountScope? = nil) async throws -> MutationReceipt<Self> {
-        let values_ = try JSONValue.read(#"{}"#).objectValue
+        let values_ = try JSONValue.readObject(#"{}"#)
         return try await self.act("forward", values: values_, args: ["targetChatId": try JSONValue.encode(targetChatId)], in: scope_)
     }
 }
@@ -960,11 +960,11 @@ public struct Moment: DBModel {
         public static let vibes = Association<Moment, Vibe>("vibes")
     }
     @concurrent public func like(in scope_: AccountScope? = nil) async throws -> MutationReceipt<Self> {
-        let values_ = try JSONValue.read(#"{"likedByMe":true}"#).objectValue
+        let values_ = try JSONValue.readObject(#"{"likedByMe":true}"#)
         return try await self.act("like", values: values_, args: [:], in: scope_)
     }
     @concurrent public func share(in scope_: AccountScope? = nil) async throws -> MutationReceipt<Self> {
-        let values_ = try JSONValue.read(#"{}"#).objectValue
+        let values_ = try JSONValue.readObject(#"{}"#)
         return try await self.act("share", values: values_, args: [:], in: scope_)
     }
     @concurrent public func uploadClip(_ request: UploadRequest, in scope_: AccountScope) async throws -> MutationReceipt<Self> {
@@ -1481,7 +1481,7 @@ public struct Record: DBModel {
         public static let container = Association<Record, Container>("container")
     }
     @concurrent public func react(reactionBody: String, userId: String, in scope_: AccountScope? = nil) async throws -> MutationReceipt<Self> {
-        let values_ = try JSONValue.read(#"{"reactions":{"$keyed":{"by":"userId","element":{"body":{"$arg":"reactionBody"},"userId":{"$arg":"userId"}}}}}"#).objectValue
+        let values_ = try JSONValue.readObject(#"{"reactions":{"$keyed":{"by":"userId","element":{"body":{"$arg":"reactionBody"},"userId":{"$arg":"userId"}}}}}"#)
         return try await self.act("react", values: values_, args: ["reactionBody": try JSONValue.encode(reactionBody), "userId": try JSONValue.encode(userId)], in: scope_)
     }
 }

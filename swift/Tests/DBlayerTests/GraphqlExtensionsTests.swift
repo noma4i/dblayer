@@ -43,7 +43,7 @@ extension BridgeProbeTests {
       #expect(restored.extensions?.code == code)
       #expect(restored.extensions?.transactionDisposition == disposition)
       let encoded = try JSONValue.decode(JSONEncoder().encode(restored.extensions))
-      #expect(encoded.objectValue["fields"] == .object(["detail": .string("\"refused\""), "limit": .string("3"), "context": .string(#"{"values":[true,null,2]}"#)]))
+      #expect((try encoded.objectValue)["fields"] == .object(["detail": .string("\"refused\""), "limit": .string("3"), "context": .string(#"{"values":[true,null,2]}"#)]))
     }
   }
 }

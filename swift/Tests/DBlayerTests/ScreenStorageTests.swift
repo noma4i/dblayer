@@ -8,17 +8,17 @@ extension BridgeProbeTests {
     let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
     let vectors = try JSONDecoder().decode([JSONValue].self, from: Data(contentsOf: root.appendingPathComponent("fixtures/screen.json")))
     let vector = vectors[index]
-    var input = vector.objectValue
+    var input = (try vector.objectValue)
     guard case let .array(elements) = input["elements"], case let .array(state) = input["state"] else { Issue.record("missing input"); return }
     input["elements"] = .array(try elements.map { element in
-      var fields = element.objectValue
+      var fields = (try element.objectValue)
       for key in ["props", "visible", "press", "change"] {
         if let value = fields[key] { fields[key] = .string(try value.text) }
       }
       return .object(fields)
     })
     input["state"] = .array(try state.map { entry in
-      var fields = entry.objectValue
+      var fields = (try entry.objectValue)
       fields["value"] = .string(try fields["value"]!.text)
       return .object(fields)
     })
@@ -32,10 +32,10 @@ extension BridgeProbeTests {
     let saved = try #require(await CustomScreen.find("sample").current())
     #expect(saved.slug == "sample" && saved.version == 1 && saved.requires == ScreenRequires(ios: 2, android: nil))
     let stored = try #require(saved.spec)
-    #expect(try JSONValue.encode(stored.state) == vector.objectValue["state"])
+    #expect(try JSONValue.encode(stored.state) == (try vector.objectValue)["state"])
     #expect(stored.elements.count == elements.count)
     for (element, source) in zip(stored.elements, elements) {
-      let fields = source.objectValue
+      let fields = (try source.objectValue)
       #expect(element.type == fields["type"]?.stringValue)
       #expect(element.props == fields["props"])
       #expect(element.visible == fields["visible"])

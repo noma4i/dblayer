@@ -4,6 +4,8 @@ use sha2::{Digest, Sha256};
 use crate::store::Record;
 use crate::store::operation::enum_text;
 use crate::schema::{FieldKind, FieldSpec, ModelSpec, TYPENAME};
+use crate::store::files::FileDescriptor;
+use crate::value::ScalarKind;
 use crate::value::sync::{OperationFailure, SyncInfo, SyncState};
 use crate::owners::write::upload::{UploadInfo, UploadStatus};
 
@@ -22,6 +24,21 @@ pub enum Cell {
 pub struct CellEntry {
     pub key: String,
     pub value: Cell,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
+pub struct WireFile {
+    pub id: String,
+    pub size: u64,
+    pub name: Option<String>,
+    pub mime: Option<String>,
+    pub sha256: Option<String>,
+}
+
+impl From<FileDescriptor> for WireFile {
+    fn from(file: FileDescriptor) -> Self {
+        Self { id: file.id, size: file.size, name: file.name, mime: file.mime, sha256: file.sha256 }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, uniffi::Enum)]
@@ -184,6 +201,22 @@ fn scalar_cell(value: &Value) -> Cell {
     }
 }
 
+fn typed_scalar(kind: ScalarKind, value: &Value) -> Cell {
+    match (kind, value) {
+        (ScalarKind::Id, Value::Number(number)) => number.as_i64().map_or_else(|| scalar_cell(value), |id| Cell::Text { value: id.to_string() }),
+        (ScalarKind::Num, Value::Number(number)) => Cell::Real { value: number.as_f64().unwrap_or(0.0) },
+        (ScalarKind::Int, Value::Number(number)) => number.as_i64().or_else(|| number.as_f64().filter(|real| real.fract() == 0.0 && real.abs() < 9.0e15).map(|real| real as i64)).map_or_else(|| scalar_cell(value), |value| Cell::Int { value }),
+        _ => scalar_cell(value),
+    }
+}
+
+fn file_cell(value: &Value) -> Cell {
+    FileDescriptor::from_value(value).map_or(Cell::Null, |file| {
+        let text = |value: Option<String>| value.map_or(Cell::Null, |value| Cell::Text { value });
+        Cell::Seq { items: vec![Cell::Text { value: file.id }, Cell::Int { value: file.size as i64 }, text(file.name), text(file.mime), text(file.sha256)] }
+    })
+}
+
 fn free_cell(value: &Value) -> Cell {
     match value {
         Value::Array(items) => Cell::Seq { items: items.iter().map(free_cell).collect() },
@@ -206,8 +239,10 @@ fn union_cell<'a>(field: &'a FieldSpec, value: &Value, types: &mut Types<'a>) ->
 fn cell<'a>(field: &'a FieldSpec, value: Option<&Value>, types: &mut Types<'a>) -> Cell {
     let Some(value) = value.filter(|value| field.nullable || !value.is_null()).or(field.default.as_ref()).filter(|value| !value.is_null()) else { return Cell::Null };
     match (&field.kind, field.app_type.as_deref()) {
-        (FieldKind::Scalar { .. } | FieldKind::Enum { .. }, _) => scalar_cell(value),
-        (FieldKind::List { .. }, _) => value.as_array().map_or(Cell::Null, |items| Cell::Seq { items: items.iter().map(scalar_cell).collect() }),
+        (FieldKind::Scalar { kind }, _) => typed_scalar(*kind, value),
+        (FieldKind::Enum { .. }, _) => scalar_cell(value),
+        (FieldKind::File, _) => file_cell(value),
+        (FieldKind::List { element }, _) => value.as_array().map_or(Cell::Null, |items| Cell::Seq { items: items.iter().map(|item| typed_scalar(*element, item)).collect() }),
         (FieldKind::Object, Some(_)) => value.as_object().map_or(Cell::Null, |object| Cell::Seq { items: member_cells(&field.fields, object, types) }),
         (FieldKind::Union, _) => union_cell(field, value, types),
         (FieldKind::UnionArray, _) => value.as_array().map_or(Cell::Null, |items| Cell::Seq { items: items.iter().filter(|item| item.get(TYPENAME).is_some_and(Value::is_string)).map(|item| union_cell(field, item, types)).collect() }),

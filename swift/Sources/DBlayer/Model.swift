@@ -45,11 +45,11 @@ extension DBModel {
   }
   @concurrent public func attach(_ field: Files, data: Data, name: String, mime: String, in scope: AccountScope? = nil) async throws -> FileInfo {
     let (database, epoch) = try DB.admitted(scope)
-    return try FileInfo.parse(try await database.attach(epoch: epoch, model: Self.modelName, rowId: id, field: field.rawValue, file: FileBytes(bytes: data, name: name, mime: mime)))
+    return FileInfo(wire: try await database.attach(epoch: epoch, model: Self.modelName, rowId: id, field: field.rawValue, file: FileBytes(bytes: data, name: name, mime: mime)))
   }
   @concurrent public func file(_ field: Files, in scope: AccountScope? = nil) async throws -> FileInfo? {
     let (database, epoch) = try DB.admitted(scope)
-    return try await database.file(epoch: epoch, model: Self.modelName, rowId: id, field: field.rawValue).map(FileInfo.parse)
+    return try await database.file(epoch: epoch, model: Self.modelName, rowId: id, field: field.rawValue).map(FileInfo.init(wire:))
   }
   @concurrent public func read(_ field: Files, in scope: AccountScope? = nil) async throws -> Data? {
     let (database, epoch) = try DB.admitted(scope)

@@ -97,7 +97,7 @@ public struct Inbox: DBModel {
         return try await self.update(values: values_, in: scope_)
     }
     @concurrent public func move(list: ContainerShelfKind, in scope_: AccountScope? = nil) async throws -> MutationReceipt<Self> {
-        let values_ = try JSONValue.read(#"{"stance":{"$map":{"from":"list","map":{"PRIMARY":"main","SECONDARY":"other"}}}}"#).objectValue
+        let values_ = try JSONValue.readObject(#"{"stance":{"$map":{"from":"list","map":{"PRIMARY":"main","SECONDARY":"other"}}}}"#)
         return try await self.act("move", values: values_, args: ["list": try JSONValue.encode(list)], in: scope_)
     }
 }

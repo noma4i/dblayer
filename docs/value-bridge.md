@@ -45,6 +45,26 @@ Each state says whether the first load `settled` and up to which `revision` of t
 A projection ignores a value of another epoch.
 A projection applies each delivery as it arrives and decides nothing. A row that cannot be decoded is reported to the core with `resync()`, and the core sends one snapshot.
 
+## Cell types
+
+The core sends each cell of a row in the form its field declares. Swift and Kotlin read a cell as that type and nothing else: a cell of another type throws, and the stream asks the core for a snapshot with `resync()`.
+
+| Declared type | Cell |
+| --- | --- |
+| `id` | text, also when the server sent an integer |
+| `string`, `date`, enum | text |
+| `int` | integer |
+| `num` | real, also when the server sent a whole number |
+| `bool` | bool |
+| list of a scalar | sequence of cells of the element type |
+| nested object | sequence of its members in declaration order |
+| nested array | sequence of such sequences |
+| union | sequence of the member name and the members |
+| `json` | the JSON tree: null, bool, integer, real, text, sequence or keyed cells with unique keys |
+| `file` | sequence of `id`, `size`, `name`, `mime` and `sha256`, null when the row has no file |
+
+`attach` and `file` return the same description as a record, not as text.
+
 ## Reading a projection on screen
 
 The first delivery of a stream is a snapshot. It carries no list of edits: `edits` is `nil` and the screen reads `rows` again.

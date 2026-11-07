@@ -108,7 +108,7 @@ fn every_field_kind_becomes_the_cell_the_decoder_reads() {
         seq(vec![text("u9"), Cell::Null]),
         keyed(vec![("k", seq(vec![int(1), text("x"), Cell::Null, keyed(vec![("deep", Cell::Bool { value: true })])]))]),
         keyed(vec![("n", Cell::Real { value: 1.25 })]),
-        keyed(vec![("id", text("f1")), ("size", int(10))]),
+        seq(vec![text("f1"), int(10), Cell::Null, Cell::Null, Cell::Null]),
         Cell::Bool { value: true },
     ];
     assert_eq!(row, expected);
@@ -200,5 +200,32 @@ fn the_upload_progress_is_the_sent_share_of_the_total() {
     for (sent, total, expected) in [(0u64, 0u64, 0.0), (5, 0, 0.0), (0, 5, 0.0), (1, 4, 25.0), (9, 4, 100.0)] {
         let info = UploadInfo { status: UploadStatus::Uploading, stage: UploadStage::Part, sent_bytes: sent, total_bytes: total, wait_reason: None, attempts: 0, error: None, local_url: None, processing: None, copy_file: None };
         assert_eq!(upload(&info).progress, expected, "{sent} of {total}");
+    }
+}
+
+#[test]
+fn data_wire_cell_types() {
+    let real = |value: f64| Cell::Real { value };
+    let table: Vec<(FieldSpec, Value, Cell)> = vec![
+        (FieldSpec::scalar("f", ScalarKind::Id), json!(7), text("7")),
+        (FieldSpec::scalar("f", ScalarKind::Id), json!("u7"), text("u7")),
+        (FieldSpec::scalar("f", ScalarKind::Num), json!(2), real(2.0)),
+        (FieldSpec::scalar("f", ScalarKind::Num), json!(2.5), real(2.5)),
+        (FieldSpec::scalar("f", ScalarKind::Int), json!(3), int(3)),
+        (FieldSpec::scalar("f", ScalarKind::Int), json!(3.0), int(3)),
+        (FieldSpec::scalar("f", ScalarKind::Bool), json!(true), Cell::Bool { value: true }),
+        (FieldSpec::scalar("f", ScalarKind::Str), json!("s"), text("s")),
+        (FieldSpec::scalar("f", ScalarKind::Date), json!("2026-10-14T00:00:00.000Z"), text("2026-10-14T00:00:00.000Z")),
+        (FieldSpec::enumeration("f", &["a", "b"]), json!("b"), text("b")),
+        (FieldSpec::list("f", ScalarKind::Id), json!([1, "u2"]), seq(vec![text("1"), text("u2")])),
+        (FieldSpec::list("f", ScalarKind::Num), json!([1, 1.5]), seq(vec![real(1.0), real(1.5)])),
+        (FieldSpec::file("f"), json!({"id": "f1", "size": 10, "name": "n", "mime": "image/png", "sha256": "ab"}), seq(vec![text("f1"), int(10), text("n"), text("image/png"), text("ab")])),
+        (FieldSpec::file("f"), json!({"id": "f1"}), Cell::Null),
+    ];
+    for (field, value, expected) in table {
+        let mut model = ModelSpec::new("typed", vec![FieldSpec::scalar("id", ScalarKind::Id), field.clone()]);
+        resolve_types(std::slice::from_mut(&mut model));
+        let row = WireModel::of(&model).row(&Arc::new(record(json!({"f": value.clone()}))));
+        assert_eq!(row.cells, vec![expected], "{:?} stored as {value}", field.kind);
     }
 }

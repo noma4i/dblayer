@@ -56,8 +56,7 @@ async fn attached_files_survive_reopen_and_detaching_one_keeps_the_other() {
     assert_eq!(db.read(epoch, "Files".into(), first, "photo".into()).await.unwrap(), None);
     assert_eq!(db.read(epoch, "Files".into(), second.clone(), "photo".into()).await.unwrap(), Some(large));
     let info = db.file(epoch, "Files".into(), second, "photo".into()).await.unwrap().unwrap();
-    let info: serde_json::Value = serde_json::from_str(&info).unwrap();
-    assert_eq!(info["name"], "large");
-    assert_eq!(info["size"], 300 * 1024);
+    assert_eq!(info.name.as_deref(), Some("large"));
+    assert_eq!(info.size, 300 * 1024);
     db.close_database().await.unwrap();
 }

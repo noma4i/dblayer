@@ -31,4 +31,19 @@ class JsonNumberTest {
         assertEquals("9007199254740993", Cell.Int(9007199254740993L).asJson().toString())
         assertEquals("9007199254740993", jsonValue(9007199254740993L).toString())
     }
+
+    @Test
+    fun aMistypedCellThrowsInsteadOfConverting() {
+        assertThrows(DbException.Invalid::class.java) { CellReader(listOf(Cell.Int(7))).req(0, Cell::asId) }
+        assertThrows(DbException.Invalid::class.java) { CellReader(listOf(Cell.Int(2))).req(0, Cell::asDouble) }
+        assertThrows(DbException.Invalid::class.java) { CellReader(listOf(Cell.Keyed(listOf(CellEntry("k", Cell.Null), CellEntry("k", Cell.Null))))).json(0) }
+    }
+
+    @Test
+    fun aCorrectlyTypedRowDecodes() {
+        val r = CellReader(listOf(Cell.Text("7"), Cell.Real(2.0), Cell.Seq(listOf(Cell.Text("f1"), Cell.Int(10), Cell.Null, Cell.Text("image/png"), Cell.Null))))
+        assertEquals("7", r.req(0, Cell::asId))
+        assertEquals(2.0, r.req(1, Cell::asDouble), 0.0)
+        assertEquals(FileInfo("f1", 10, null, "image/png", null), r.file(2))
+    }
 }

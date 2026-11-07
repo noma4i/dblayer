@@ -7,18 +7,10 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 
 fun Cell.asText(): String? = (this as? Cell.Text)?.value
-fun Cell.asId(): String? = when (this) {
-    is Cell.Text -> value
-    is Cell.Int -> value.toString()
-    else -> null
-}
+fun Cell.asId(): String? = (this as? Cell.Text)?.value
 fun Cell.asBool(): Boolean? = (this as? Cell.Bool)?.value
 fun Cell.asInt(): Long? = (this as? Cell.Int)?.value
-fun Cell.asDouble(): Double? = when (this) {
-    is Cell.Real -> value
-    is Cell.Int -> value.toDouble()
-    else -> null
-}
+fun Cell.asDouble(): Double? = (this as? Cell.Real)?.value
 
 fun Cell.asJson(): JsonElement = when (this) {
     Cell.Null -> JsonNull
@@ -27,7 +19,7 @@ fun Cell.asJson(): JsonElement = when (this) {
     is Cell.Real -> JsonPrimitive(value)
     is Cell.Text -> JsonPrimitive(value)
     is Cell.Seq -> JsonArray(items.map { it.asJson() })
-    is Cell.Keyed -> JsonObject(entries.associate { it.key to it.value.asJson() })
+    is Cell.Keyed -> JsonObject(entries.groupBy { it.key }.mapValues { (key, same) -> same.singleOrNull()?.value?.asJson() ?: throw DbException.Invalid("the keyed cell repeats the key $key") })
 }
 
 class CellReader(private val cells: List<Cell>) {
@@ -75,7 +67,7 @@ class CellReader(private val cells: List<Cell>) {
 
     fun json(at: Int): JsonElement = cell(at).asJson()
 
-    fun fileOpt(at: Int): FileInfo? = jsonOpt(at)?.let(FileInfo::of)
+    fun fileOpt(at: Int): FileInfo? = objOpt(at, FileInfo::of)
 
     fun file(at: Int): FileInfo = required(fileOpt(at), at)
 }
