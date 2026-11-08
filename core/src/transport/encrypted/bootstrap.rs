@@ -48,7 +48,7 @@ pub(super) fn accept(token: &str, response_key: &str, request_id: &str, digest: 
         return Err(authentication("the response does not match the bootstrap request"));
     }
     let body = &response["body"];
-    if let Some(error) = super::exchange::temporary_error(body) { return Err(error); }
+    if let Some(error) = crate::transport::retry::temporary_error(body) { return Err(error); }
     if body.get("error").is_some() { return Err(invalid("the server refused the bootstrap request")); }
     let config: ServerConfig = serde_json::from_value(body.clone()).map_err(|error| TransportError::Config { code: ConfigCode::InvalidFormat, detail: error.to_string() })?;
     if config.config_version != 1 {

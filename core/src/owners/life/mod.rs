@@ -297,7 +297,7 @@ impl Wiring {
             super::session::OUTBOX_AUTHOR => self.to_outbox(OutboxInput::Answered { req_id, outcome }),
             super::session::CALLS_AUTHOR => { self.calls_answers.settle(OutcomeId::from_raw(req_id), outcome); }
             WAITER_AUTHOR.. => {
-                if !matches!(&outcome, AuthorOutcome::Dropped | AuthorOutcome::Error { pending_retained: true, .. }) && !matches!(&outcome, AuthorOutcome::Response(text) if crate::transport::encrypted::exchange::temporary_refusal(text)) { self.settle_request(req_id); }
+                if !matches!(&outcome, AuthorOutcome::Dropped | AuthorOutcome::Error { pending_retained: true, .. }) && !matches!(&outcome, AuthorOutcome::Response(text) if serde_json::from_str::<serde_json::Value>(text).is_ok_and(|body| crate::transport::retry::temporary_error(&body).is_some())) { self.settle_request(req_id); }
                 self.mutations.settle(OutcomeId::from_raw(author), LifeReply::Mutated(outcome));
             }
             _ => self.fault(format!("no author {author} for the answer to request {req_id}")),

@@ -7,7 +7,8 @@ use sha2::{Digest, Sha256};
 use std::sync::{OnceLock, Weak};
 
 use super::credential::Secret;
-use super::exchange::{session_failure, temporary_error, Answer, Exchange};
+use super::exchange::{session_failure, Answer, Exchange};
+use crate::transport::retry::temporary_error;
 use super::jwe::random_token;
 use crate::store::Store;
 use crate::transport::{GraphQLError, GraphQLRequest, PutRequest, PutReply, Response, Upstream, TransportError};

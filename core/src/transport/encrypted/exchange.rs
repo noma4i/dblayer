@@ -8,7 +8,6 @@ use super::key::ServerKey;
 use super::HttpExchange;
 use crate::runtime::Clock;
 use crate::transport::{SessionCode, TransportError};
-use crate::transport::retry::RetryClass;
 
 const MAX_REQUEST_BYTES: usize = 256 * 1024;
 const PERMANENT_HTTP_REFUSALS: [u16; 6] = [400, 404, 405, 413, 415, 422];
@@ -138,18 +137,6 @@ pub(crate) struct SendOnce<'a> {
     pub body: &'a Value,
     pub purpose: crate::transport::NetworkPurpose,
     pub wire: crate::transport::WireIds,
-}
-
-pub(crate) fn temporary_error(body: &Value) -> Option<TransportError> {
-    let codes: Vec<_> = body.get("error").and_then(Value::as_str).into_iter().chain(
-        body.get("errors").and_then(Value::as_array).into_iter().flatten().filter_map(|error| error.get("extensions")?.get("code")?.as_str())
-    ).collect();
-    if codes.iter().any(|code| crate::transport::SessionCode::from_wire(code).is_some()) || RetryClass::classify(false, None, &codes) == RetryClass::Fatal { return None; }
-    Some(TransportError::Graphql { messages: codes.into_iter().map(str::to_string).collect(), extensions: None })
-}
-
-pub(crate) fn temporary_refusal(text: &str) -> bool {
-    serde_json::from_str::<Value>(text).ok().is_some_and(|body| temporary_error(&body).is_some())
 }
 
 impl Exchange {

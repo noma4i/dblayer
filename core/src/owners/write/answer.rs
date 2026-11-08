@@ -37,8 +37,10 @@ fn refused(detail: impl Into<String>) -> Decoded { Decoded::Refused { temporary:
 
 /// `root_of` gives the root field of a registered mutation.
 pub fn decode_answer(db: &Store, root_of: &dyn Fn(&str) -> Option<String>, job: &DecodeJob) -> Decoded {
-    if let Some(code) = serde_json::from_str::<Value>(&job.body).ok().and_then(|body| body.get("error").and_then(Value::as_str).map(str::to_string)) {
-        return Decoded::Refused { temporary: crate::transport::encrypted::exchange::temporary_refusal(&job.body), detail: super::failure::of_graphql(code, None) };
+    let parsed = serde_json::from_str::<Value>(&job.body).ok();
+    let temporary = parsed.as_ref().is_some_and(|body| crate::transport::retry::temporary_error(body).is_some());
+    if let Some(code) = parsed.and_then(|body| body.get("error").and_then(Value::as_str).map(str::to_string)) {
+        return Decoded::Refused { temporary, detail: super::failure::of_graphql(code, None) };
     }
     let Ok(answer) = serde_json::from_str::<crate::transport::Response>(&job.body) else { return refused("the answer is not a GraphQL response") };
     if !answer.errors.is_empty() && job.action == "destroy" && answer.errors.iter().all(|error| error.code() == Some("NOT_FOUND")) {
@@ -47,7 +49,7 @@ pub fn decode_answer(db: &Store, root_of: &dyn Fn(&str) -> Option<String>, job: 
     }
     if !answer.errors.is_empty() {
         let messages: Vec<&str> = answer.errors.iter().map(|error| error.message.as_str()).collect();
-        return Decoded::Refused { temporary: crate::transport::encrypted::exchange::temporary_refusal(&job.body), detail: super::failure::of_graphql(messages.join("; "), answer.extensions()) };
+        return Decoded::Refused { temporary, detail: super::failure::of_graphql(messages.join("; "), answer.extensions()) };
     }
     let data = answer.data.unwrap_or(Value::Null);
     let Ok(spec) = db.spec(&job.model) else { return refused(format!("unknown model {}", job.model)) };

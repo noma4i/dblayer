@@ -46,9 +46,12 @@ impl RetryClass {
 
 }
 
-pub(crate) fn temporary_response(response: &super::Response) -> bool {
-    let codes: Vec<&str> = response.errors.iter().filter_map(|error| error.code()).collect();
-    !codes.is_empty() && RetryClass::classify(false, None, &codes) != RetryClass::Fatal
+pub(crate) fn temporary_error(body: &serde_json::Value) -> Option<TransportError> {
+    let codes: Vec<_> = body.get("error").and_then(serde_json::Value::as_str).into_iter().chain(
+        body.get("errors").and_then(serde_json::Value::as_array).into_iter().flatten().filter_map(|error| error.get("extensions")?.get("code")?.as_str())
+    ).collect();
+    if codes.iter().any(|code| super::SessionCode::from_wire(code).is_some()) || RetryClass::classify(false, None, &codes) == RetryClass::Fatal { return None; }
+    Some(TransportError::Graphql { messages: codes.into_iter().map(str::to_string).collect(), extensions: None })
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]

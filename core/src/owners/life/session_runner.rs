@@ -16,7 +16,8 @@ use crate::owners::session::{secret_id, stored_answer, AttemptId, Credential, Op
 use crate::owners::store::{StoreBatch, StoreInput, StoreOp};
 use crate::runtime::{Back, EffectRunner, EpochStamp, OutcomeId};
 use crate::transport::encrypted::credential::{dropped_pending, stored_answers, stored_pending, stored_session, Secret};
-use crate::transport::encrypted::exchange::{digest_of, permanently_refused, temporary_error, Exchange};
+use crate::transport::encrypted::exchange::{digest_of, permanently_refused, Exchange};
+use crate::transport::retry::temporary_error;
 use crate::store::Store;
 use crate::transport::encrypted::jwe::random_token;
 use crate::transport::encrypted::CredentialSlot;
