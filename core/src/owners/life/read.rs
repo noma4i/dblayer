@@ -265,8 +265,6 @@ impl super::Life {
         waiter
     }
 
-    /// The transfer a stream of kind `Blob` follows changed its status.
-
     /// The last handle of the stream is gone.
     pub fn release_stream(&self, stream: StreamId) { self.wiring.to_deliveries(DeliveryInput::Release { stream, reader: None }); }
 

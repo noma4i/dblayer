@@ -18,7 +18,6 @@ pub struct WireReceiptTicket {
     pub(super) operation: Option<i64>,
     pub(super) revision: i64,
     pub(super) optimistic_value: Option<WireRow>,
-    pub(super) row: Option<String>,
 }
 
 impl std::fmt::Debug for WireReceiptTicket {
@@ -38,16 +37,15 @@ pub struct WireOperationReceipt {
 }
 
 pub(super) fn receipt_of(epoch: u64, model: String, operation: Option<i64>, revision: i64, optimistic_value: Option<WireRow>, ticket: Option<crate::owners::write::outbox::Receipt>, owner: Arc<crate::owners::life::Life>) -> WireOperationReceipt {
-    held_receipt(epoch, model, operation, revision, optimistic_value, (ticket.map(Ticket::Outbox), None), owner)
+    held_receipt(epoch, model, operation, revision, optimistic_value, ticket.map(Ticket::Outbox), owner)
 }
 
-pub(super) fn receipt_of_transfer(epoch: u64, model: String, held: crate::owners::write::outbox::Receipt, optimistic_value: Option<WireRow>, row: String, owner: Arc<crate::owners::life::Life>) -> WireOperationReceipt {
-    held_receipt(epoch, model, Some(i64::try_from(held.op_id).unwrap_or(i64::MAX)), held.revision, optimistic_value, (Some(Ticket::Transfer(held)), Some(row)), owner)
+pub(super) fn receipt_of_transfer(epoch: u64, model: String, held: crate::owners::write::outbox::Receipt, optimistic_value: Option<WireRow>, owner: Arc<crate::owners::life::Life>) -> WireOperationReceipt {
+    held_receipt(epoch, model, Some(i64::try_from(held.op_id).unwrap_or(i64::MAX)), held.revision, optimistic_value, Some(Ticket::Transfer(held)), owner)
 }
 
-fn held_receipt(epoch: u64, model: String, operation: Option<i64>, revision: i64, optimistic_value: Option<WireRow>, target: (Option<Ticket>, Option<String>), owner: Arc<crate::owners::life::Life>) -> WireOperationReceipt {
-    let (ticket, row) = target;
-    let held = WireReceiptTicket { ticket, owner, epoch, model: model.clone(), operation, revision, optimistic_value: optimistic_value.clone(), row };
+fn held_receipt(epoch: u64, model: String, operation: Option<i64>, revision: i64, optimistic_value: Option<WireRow>, ticket: Option<Ticket>, owner: Arc<crate::owners::life::Life>) -> WireOperationReceipt {
+    let held = WireReceiptTicket { ticket, owner, epoch, model: model.clone(), operation, revision, optimistic_value: optimistic_value.clone() };
     WireOperationReceipt { epoch, model, operation, revision, optimistic_value, ticket: Arc::new(held) }
 }
 

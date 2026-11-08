@@ -135,8 +135,8 @@ impl Database {
         }
     }
 
-    pub(super) fn transfer_receipt(&self, epoch: u64, model: String, held: Receipt, value: Option<super::wire::WireRow>, row: &str) -> WireOperationReceipt {
-        receipt_of_transfer(epoch, model, held, value, row.to_string(), self.life.clone())
+    pub(super) fn transfer_receipt(&self, epoch: u64, model: String, held: Receipt, value: Option<super::wire::WireRow>) -> WireOperationReceipt {
+        receipt_of_transfer(epoch, model, held, value, self.life.clone())
     }
 }
 
@@ -152,7 +152,7 @@ impl Database {
         let waiter = self.life.accept_upload(epoch, item, self.life.now());
         let TransferAnswer::Receipt(held) = self.transfer_answer(waiter, "upload").await? else { return Err(DbError::Internal { detail: "the owner answered an upload with no receipt".into() }) };
         let value = held.optimistic.as_ref().map(|shown| self.wire_of_row(&model, shown)).transpose()?;
-        Ok(self.transfer_receipt(epoch, model, held, value, row.as_str()))
+        Ok(self.transfer_receipt(epoch, model, held, value))
     }
 
     pub async fn upload_create_batch(&self, epoch: u64, model: String, items: Vec<WireUploadItem>, request: WireUploadBatch) -> Result<WireBatchReceipt, DbError> {
@@ -182,7 +182,7 @@ impl Database {
         for ((item, planned, _), held) in planned.into_iter().zip(held) {
             let key = item.values.get(&field).and_then(Value::as_str).unwrap_or_default().to_string();
             let value = held.optimistic.as_ref().map(|shown| self.wire_of_row(&model, shown)).transpose()?.ok_or_else(|| DbError::Internal { detail: format!("the accepted row {} of {model} is not shown", planned.row_id) })?;
-            items.push(WireItemReceipt { item: ItemId { value: key }, optimistic_value: value.clone(), receipt: self.transfer_receipt(epoch, model.clone(), held, Some(value), planned.row_id.as_str()) });
+            items.push(WireItemReceipt { item: ItemId { value: key }, optimistic_value: value.clone(), receipt: self.transfer_receipt(epoch, model.clone(), held, Some(value)) });
         }
         Ok(WireBatchReceipt { epoch, items })
     }
@@ -211,7 +211,7 @@ impl Database {
         let waiter = self.life.accept_upload(epoch, item, self.life.now());
         let TransferAnswer::Receipt(held) = self.transfer_answer(waiter, "send").await? else { return Err(DbError::Internal { detail: "the owner answered a send with no receipt".into() }) };
         let value = held.optimistic.as_ref().map(|shown| self.wire_of_row(&request.model, shown)).transpose()?.ok_or_else(|| DbError::Internal { detail: format!("the accepted row {} of {} is not shown", planned.row_id, request.model) })?;
-        Ok(self.transfer_receipt(epoch, request.model, held, Some(value), planned.row_id.as_str()))
+        Ok(self.transfer_receipt(epoch, request.model, held, Some(value)))
     }
 
     /// `retry` of a transfer with a new source of a file that is gone.
@@ -228,7 +228,7 @@ impl Database {
         let waiter = self.life.retry_upload(epoch, key_of(&model, row.as_str(), &action), source);
         let TransferAnswer::Receipt(held) = self.transfer_answer(waiter, "retry").await? else { return Err(DbError::Internal { detail: "the owner answered a retry with no receipt".into() }) };
         let value = held.optimistic.as_ref().map(|shown| self.wire_of_row(&model, shown)).transpose()?;
-        Ok(self.transfer_receipt(epoch, model, held, value, row.as_str()))
+        Ok(self.transfer_receipt(epoch, model, held, value))
     }
 
     /// `discard` of the transfer of an action.

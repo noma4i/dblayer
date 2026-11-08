@@ -158,7 +158,7 @@ async fn a_complete_failure_then_retry_keeps_the_confirmed_parts() {
     let again = bound(database.retry(epoch, "Moment".into(), id.clone(), Some("upload_clip".into()), None)).await.unwrap();
     let held = &again.ticket;
     let receipt_revision = held.revision;
-    let ticket = WireReceiptTicket { ticket: held.ticket.clone(), owner: held.owner.clone(), epoch: held.epoch, model: held.model.clone(), operation: held.operation, revision: held.revision, optimistic_value: None, row: held.row.clone() };
+    let ticket = WireReceiptTicket { ticket: held.ticket.clone(), owner: held.owner.clone(), epoch: held.epoch, model: held.model.clone(), operation: held.operation, revision: held.revision, optimistic_value: None };
     let late = WireOperationReceipt { optimistic_value: None, ticket: Arc::new(ticket), ..again };
     let WireOperationOutcome::Confirmed { value, .. } = bound(database.outcome(late)).await.unwrap() else { panic!("the retry was not confirmed") };
     let shown = value.map(|row| (row.id, row.sync.state));

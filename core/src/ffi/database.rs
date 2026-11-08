@@ -355,7 +355,7 @@ impl Database {
             return self.retry_transfer(epoch, model, row_id, action, source).await;
         }
         match self.retry_operation(epoch, model.clone(), row_id.clone(), action).await? {
-            super::write::Retried::Receipt(receipt) => Ok(receipt),
+            super::write::Retried::Receipt(receipt) => Ok(*receipt),
             super::write::Retried::Transfer(selected) => self.retry_transfer(epoch, model, row_id, selected, None).await,
         }
     }

@@ -78,6 +78,8 @@ pub enum ReadMode {
     Changes { from_revision: i64, from_position: u64, limit: usize },
 }
 
+type UploadRowRead = Result<(Option<String>, Option<crate::ffi::WireProcessing>), String>;
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct View {
     pub kind: Kind,
@@ -322,7 +324,7 @@ struct Delivery {
     /// The state of the transfer, as the last `TransferStatus` gave it.
     transfer: Option<BlobStatus>,
     /// What the row of the transfer showed at the last read of a `Blob` stream.
-    upload_row: Option<Result<(Option<String>, Option<crate::ffi::WireProcessing>), String>>,
+    upload_row: Option<UploadRowRead>,
     retry: Option<RetryStatus>,
     status_revision: i64,
     journal: VecDeque<Value>,

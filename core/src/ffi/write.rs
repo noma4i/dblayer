@@ -289,19 +289,18 @@ impl Database {
             LifeReply::Outbox(OutboxAnswer::Transfer { action }) => return Ok(Retried::Transfer(action)),
             LifeReply::Transfer(TransferAnswer::Receipt(held)) => {
                 let value = held.optimistic.as_ref().map(|row| self.wire_of_row(&model, row)).transpose()?;
-                let row = self.resolved(epoch, &model, id(&row_id)?).await?;
-                return Ok(Retried::Receipt(self.transfer_receipt(epoch, model, held, value, row.as_str())));
+                return Ok(Retried::Receipt(Box::new(self.transfer_receipt(epoch, model, held, value))));
             }
             LifeReply::Outbox(OutboxAnswer::Err(fault)) | LifeReply::Transfer(TransferAnswer::Err(fault)) => return Err(refused(fault, "retry")),
             _ => return Err(DbError::Internal { detail: "the owner answered a retry with no receipt".into() }),
         };
         let value = held.optimistic.as_ref().map(|row| self.wire_of_row(&model, row)).transpose()?;
-        Ok(Retried::Receipt(receipt_of(epoch, model, Some(i64::try_from(held.op_id).unwrap_or(i64::MAX)), held.revision, value, Some(held), self.life.clone())))
+        Ok(Retried::Receipt(Box::new(receipt_of(epoch, model, Some(i64::try_from(held.op_id).unwrap_or(i64::MAX)), held.revision, value, Some(held), self.life.clone()))))
     }
 }
 
 /// What `retry` of the first open operation of a row gave: the receipt of a new cycle, or the action of the transfer that owns the operation.
 pub(super) enum Retried {
-    Receipt(WireOperationReceipt),
+    Receipt(Box<WireOperationReceipt>),
     Transfer(String),
 }

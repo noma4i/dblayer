@@ -248,9 +248,10 @@ async fn a_blob_stream_of_a_row_that_cannot_be_looked_up_shows_failed_with_the_e
     let (db, _) = open(false).await;
     let stream = db.subscribe_values(db.session_epoch(), ReadRequest::Blob { model: "Moment".into(), id: " ".into(), action: "upload".into() });
     loop {
-        match crate::test_wait::within(stream.pull_next()).await.expect("a value") {
-            ReadValue::Status { state, error, .. } => { assert_eq!(state, "failed"); assert!(error.is_some_and(|error| !error.is_empty())); break; }
-            _ => {}
+        if let ReadValue::Status { state, error, .. } = crate::test_wait::within(stream.pull_next()).await.expect("a value") {
+            assert_eq!(state, "failed");
+            assert!(error.is_some_and(|error| !error.is_empty()));
+            break;
         }
     }
 }
