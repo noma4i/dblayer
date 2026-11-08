@@ -49,27 +49,30 @@ fn expected() -> Vec<String> {
     keys
 }
 
-/// D-166: 12 preload requests, `load()` of the 12 windows, still 12 requests and every `load()` is Loaded. Orders: landed before `load()`, `load()` while the answers are held, half and half.
+/// D-166: 12 preload requests, `load()` of the 12 windows, still 12 requests and every `load()` is Loaded. Landing orders: all landed before `load()`, all held, the first six held, an alternate set held. Each runs with the loads in key order and reversed.
 #[tokio::test(flavor = "multi_thread")]
 async fn consumer_yupi_preload_load_sends_no_second_request() {
     const ALL: [&str; 10] = ["activeCampaigns", "myMoments", "chats", "gifts", "meCompass", "vibesList", "feed", "transactions", "blockedUsers", "friendUsers"];
-    let held_by_order: [(&str, &[&str]); 3] = [("landed first", &[]), ("held", &ALL), ("half", &ALL[..6])];
-    for (order, held) in held_by_order {
+    const ALTERNATE: [&str; 5] = ["activeCampaigns", "chats", "meCompass", "feed", "blockedUsers"];
+    let held_by_order: [(&str, &[&str]); 4] = [("landed first", &[]), ("held", &ALL), ("half", &ALL[..6]), ("alternate", &ALTERNATE)];
+    let orders = held_by_order.iter().flat_map(|order| [(order.0, order.1, false), (order.0, order.1, true)]);
+    for (order, held, reversed) in orders {
+        let order = format!("{order}{}", if reversed { ", loads reversed" } else { "" });
         let stand = Stand::prepare().await;
         answers(&stand);
         stand.hold(held);
         stand.sign_in().await;
-        match order {
-            "landed first" => stand.settle().await,
-            "half" => {
-                let unheld = KEYS.iter().filter(|key| !held.contains(&key.3)).count();
-                stand.answered(unheld).await;
-                crate::ffi::owners_drained(&stand.database).await.unwrap();
-            }
-            _ => {}
+        if held.is_empty() {
+            stand.settle().await;
+        } else if held.len() < ALL.len() {
+            let unheld = KEYS.iter().filter(|key| !held.contains(&key.3)).count();
+            stand.answered(unheld).await;
+            crate::ffi::owners_drained(&stand.database).await.unwrap();
         }
         let epoch = stand.database.session_epoch();
-        let loads: Vec<_> = KEYS.iter().map(|(model, relation, params, _, _)| stand.database.begin_load(epoch, model.to_string(), Some(relation.to_string()), params.to_string()).unwrap()).collect();
+        let mut keys = KEYS.to_vec();
+        if reversed { keys.reverse(); }
+        let loads: Vec<_> = keys.iter().map(|(model, relation, params, _, _)| stand.database.begin_load(epoch, model.to_string(), Some(relation.to_string()), params.to_string()).unwrap()).collect();
         stand.release(held);
         let mut outcomes = Vec::new();
         for load in &loads { outcomes.push(crate::ffi::selftest::rig_tests::bound(load.result()).await.is_ok()); }

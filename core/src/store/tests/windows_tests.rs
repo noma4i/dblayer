@@ -89,14 +89,6 @@ fn save_keeps_landed_at_and_invalidation_of_existing_window() {
 }
 
 #[test]
-fn freshness_needs_landing_inside_window_and_no_invalidation() {
-    let fresh = WindowFreshness { landed_at: 100, stale_since: None };
-    assert!(fresh.is_fresh(110, 30));
-    assert!(!WindowFreshness { stale_since: Some(1), ..fresh }.is_fresh(110, 30));
-    assert!(!fresh.is_fresh(140, 30));
-}
-
-#[test]
 fn mark_family_marks_only_thread_keys() {
     let (store, _) = booted_store();
     let thread = key("messages", "thread", "1");

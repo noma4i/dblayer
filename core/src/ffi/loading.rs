@@ -181,8 +181,8 @@ impl Database {
             let sender = sender;
             let this = this;
             let LoadArgs { epoch, model, relation, params_json, goal, force } = args;
-            let started = match this.prepare_load(&model, &relation, &params_json, goal, force).await {
-                Ok((params, force)) => {
+            let started = match this.prepare_load(&model, &relation, &params_json).await {
+                Ok(params) => {
                     turn.wait().await;
                     this.start_window(epoch, WindowKey::relation(&model, &relation, &params), (goal, force), None)
                 }
@@ -214,12 +214,12 @@ impl Database {
     /// Registers a call that waits for a load of the window of a relation. The window keeps the request while this call or another one waits for it.
     async fn start_load(&self, epoch: u64, model: &str, relation: &str, params_json: &str, (goal, force): (Goal, bool), no_wait: Option<&'static str>) -> Result<LoadCall, DbError> {
         let turn = self.loads.begin();
-        let (params, force) = self.prepare_load(model, relation, params_json, goal, force).await?;
+        let params = self.prepare_load(model, relation, params_json).await?;
         turn.wait().await;
         self.start_window(epoch, WindowKey::relation(model, relation, &params), (goal, force), no_wait)
     }
 
-    async fn prepare_load(&self, model: &str, relation: &str, params_json: &str, goal: Goal, force: bool) -> Result<(Map<String, Value>, bool), DbError> {
+    async fn prepare_load(&self, model: &str, relation: &str, params_json: &str) -> Result<Map<String, Value>, DbError> {
         self.remote()?;
         let _kept = crate::runtime::hold_until_woken(self.life.launch());
         let (db, found, name, text) = (self.db.clone(), model.to_string(), relation.to_string(), params_json.to_string());
@@ -227,9 +227,7 @@ impl Database {
             let params: Map<String, Value> = serde_json::from_str(&text)?;
             let params = db.spec(&found)?.selection_values(&name, &params).map_err(crate::store::CoreError::from)?;
             db.window_record(&found, &name, &params)?;
-            let now = db.lock().now_ms();
-            let force = force || (goal == Goal::First && !db.window_is_fresh(&found, &name, &params, now)?);
-            Ok((params, force))
+            Ok(params)
         }).await;
         crate::runtime::release_holds();
         prepared

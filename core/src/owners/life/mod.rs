@@ -522,6 +522,12 @@ impl Life {
     #[cfg(test)]
     pub fn commit_for_tests(&self, batch: crate::owners::store::StoreBatch) { self.wiring.to_store(StoreInput::Commit(batch)); }
 
+    #[cfg(test)]
+    pub fn stale_for_tests(&self, model: &str) {
+        use super::read::windows::{StaleCause, StaleKeys, WindowsInput};
+        self.wiring.to_windows(WindowsInput::Stale { model: model.into(), keys: StaleKeys::All, cause: StaleCause::Change });
+    }
+
     /// Returns once every input posted to an owner was handled.
     #[cfg(test)]
     pub fn barrier(&self) { self.wiring.handle.barrier() }

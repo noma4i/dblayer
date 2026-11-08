@@ -38,23 +38,6 @@ impl Store {
         Ok(Some(crate::store::SavedWindow { landed_at: freshness.landed_at, fresh_until: freshness.landed_at.saturating_add(lifetime), stale: freshness.stale_since.is_some(), cursor: record.cursor, pages: u32::try_from(record.pages).unwrap_or(u32::MAX), has_rows, generation: u64::try_from(record.generation).unwrap_or(0), marker: super::windows::read_marker(&self.lock().connection, &key)?, members: self.read(&[model], |reader| reader.scope_member_count(model, scope.key.as_str()))? }))
     }
 
-    /// Whether the window landed within the stale time of its relation and nothing marked it stale since (`now_ms` is the clock of the database).
-    pub(crate) fn window_is_fresh(&self, model: &str, relation: &str, params: &Map<String, Value>, now_ms: i64) -> Result<bool, CoreError> {
-        Ok(self.window_age(model, relation, params, now_ms)?.unwrap_or(false))
-    }
-
-    fn window_age(&self, model: &str, relation: &str, params: &Map<String, Value>, now_ms: i64) -> Result<Option<bool>, CoreError> {
-        let spec = self.spec(model)?;
-        let declared = spec.relations.iter().find(|candidate| candidate.name == relation).ok_or_else(|| CoreError::Internal(format!("{model} has no relation {relation}")))?;
-        let remote = declared.remote.as_ref().ok_or_else(|| CoreError::Internal(format!("{model}.{relation} is no remote relation")))?;
-        let (scope, key) = window_identity(spec, model, relation, remote, params)?;
-        let Some(freshness) = self.window_freshness(&key)? else { return Ok(None) };
-        let is_empty = self.read(&[model], |reader| reader.scope_last_id(model, scope.key.as_str()))?.is_none();
-        let policy = crate::runtime::selected_policy(is_empty, &remote.stale_time, remote.empty_stale_time.as_deref());
-        let window = crate::runtime::parse_duration(policy).ok_or_else(|| CoreError::Internal(format!("unknown freshness {policy}")))?;
-        Ok(Some(freshness.is_fresh(now_ms, i64::try_from(window.as_millis()).unwrap_or(i64::MAX))))
-    }
-
     /// The edge values of the rows of a relation window, by row id.
     pub(crate) fn edge_values(&self, model: &str, relation: &str, params: &Map<String, Value>, ids: &[String]) -> Result<BTreeMap<String, Map<String, Value>>, CoreError> {
         let spec = self.spec(model)?;

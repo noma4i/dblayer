@@ -73,12 +73,6 @@ pub(crate) fn window_identity(spec: &crate::schema::ModelSpec, model: &str, rela
     Ok((crate::store::ScopeRef::new(crate::identity::ModelKey::new(model), scope_key), key))
 }
 
-impl WindowFreshness {
-    pub fn is_fresh(&self, now: i64, window: i64) -> bool {
-        self.stale_since.is_none() && now - self.landed_at < window
-    }
-}
-
 pub fn family_prefix(model: &str, relation: &str) -> String {
     ListKey::compose(&[model, relation]).as_str().to_string()
 }
