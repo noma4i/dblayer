@@ -45,11 +45,8 @@ impl Sut for DatabaseSut {
             "pull" => {
                 let Some(name) = input.text("stream") else { return error("arguments") };
                 let Some(pulled) = self.streams.get(name) else { return error("unknown_stream") };
-                let next = pulled.queue.lock().unwrap().pop_front();
-                match next {
-                    Some((_, value)) => vec![self.value(name, &value)],
-                    None => vec![Observation::new("empty", json!({ "stream": name }))],
-                }
+                let unread: Vec<ReadValue> = pulled.queue.lock().unwrap().drain(..).map(|(_, value)| value).collect();
+                if unread.is_empty() { vec![Observation::new("empty", json!({ "stream": name }))] } else { fold::fold(unread).iter().map(|folded| self.folded(name, folded)).collect() }
             }
             "cancel" => {
                 let Some(target) = input.text("target") else { return error("arguments") };

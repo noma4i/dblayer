@@ -28,10 +28,9 @@ private class Heard {
     fun add() { count.incrementAndGet(); TestPulse.pulse() }
 }
 
-/** A stream the runner reads: a task pulls it into a queue, `pull` of the corpus takes the next value. */
+/** A stream the runner reads: a task pulls it into a queue, `pull` of the corpus folds the unread values. */
 private class Pulled(val stream: ValueStream, heard: Heard, scope: CoroutineScope) {
     private val queue = java.util.concurrent.ConcurrentLinkedQueue<ReadValue>()
-    private val position = AtomicLong()
     private val job = scope.launch {
         try {
             stream.values.collect { value -> queue.add(value); heard.add() }
@@ -41,12 +40,14 @@ private class Pulled(val stream: ValueStream, heard: Heard, scope: CoroutineScop
 
     fun hasNext(): Boolean = !queue.isEmpty()
 
-    fun next(): Pair<ULong, ReadValue>? {
-        val value = queue.poll() ?: return null
-        return position.incrementAndGet().toULong() to value
-    }
+    fun drain(): List<ReadValue> = generateSequence { queue.poll() }.toList()
 
     fun stop() = job.cancel()
+}
+
+private sealed class Folded {
+    class Delta(val base: Long, val revision: Long, val rows: MutableList<String>, val removed: MutableList<String>, val state: ReadState) : Folded()
+    class Value(val value: ReadValue) : Folded()
 }
 
 private class Credentials : CredentialStore {
@@ -162,9 +163,51 @@ private class DatabaseRunner {
         return out
     }
 
+    fun folded(stream: String, values: List<ReadValue>): List<JsonObject> {
+        val folded = ArrayList<Folded>()
+        for (value in values) {
+            when (value) {
+                is ReadValue.Delta -> {
+                    val last = folded.lastOrNull() as? Folded.Delta
+                    val rows = last?.rows ?: ArrayList()
+                    val removed = last?.removed ?: ArrayList()
+                    apply(value.edits, rows, removed)
+                    val next = Folded.Delta(last?.base ?: value.base, value.revision, rows, removed, value.state)
+                    if (last != null) folded[folded.size - 1] = next else folded.add(next)
+                }
+                is ReadValue.Snapshot, is ReadValue.Count -> {
+                    folded.removeAll { it is Folded.Delta || (it as Folded.Value).value.let { kept -> kept is ReadValue.State || kept is ReadValue.Snapshot || kept is ReadValue.Count } }
+                    folded.add(Folded.Value(value))
+                }
+                is ReadValue.State -> {
+                    folded.removeAll { it is Folded.Value && it.value is ReadValue.State }
+                    folded.add(Folded.Value(value))
+                }
+                else -> folded.add(Folded.Value(value))
+            }
+        }
+        return folded.map { item ->
+            when (item) {
+                is Folded.Delta -> observation("delta", js(stateFields(stream, item.state).also { it["base"] = item.base; it["revision"] = item.revision; it["rows"] = item.rows.map(::nameOf); it["removed"] = item.removed.map(::nameOf) }))
+                is Folded.Value -> value(stream, item.value)
+            }
+        }
+    }
+
+    fun apply(edits: List<RowEdit>, rows: MutableList<String>, removed: MutableList<String>) {
+        for (edit in edits) {
+            when (edit) {
+                is RowEdit.Insert -> { removed.remove(edit.row.id); if (edit.row.id !in rows) rows.add(edit.row.id) }
+                is RowEdit.Rewrite -> { removed.remove(edit.row.id); if (edit.row.id !in rows) rows.add(edit.row.id) }
+                is RowEdit.Remove -> { rows.remove(edit.id); if (edit.id !in removed) removed.add(edit.id) }
+                is RowEdit.Move -> {}
+            }
+        }
+    }
+
     fun value(stream: String, value: ReadValue): JsonObject = when (value) {
         is ReadValue.Snapshot -> observation("snapshot", js(stateFields(stream, value.state).also { it["revision"] = value.revision; it["rows"] = names(value.rows) }))
-        is ReadValue.Delta -> observation("delta", js(stateFields(stream, value.state).also { it["base"] = value.base; it["revision"] = value.revision; it["rows"] = names(value.edits.mapNotNull { (it as? RowEdit.Insert)?.row ?: (it as? RowEdit.Rewrite)?.row }); it["removed"] = value.edits.mapNotNull { (it as? RowEdit.Remove)?.id }.map(::nameOf) }))
+        is ReadValue.Delta -> error("a delta is shown folded")
         is ReadValue.Count -> observation("count", js(stateFields(stream, value.state).also { it["revision"] = value.revision; it["count"] = value.count }))
         is ReadValue.State -> observation("state", js(stateFields(stream, value.state)))
         ReadValue.Ready -> obs("ready", "stream" to stream)
@@ -424,8 +467,8 @@ private class DatabaseRunner {
                 val key = args.text("stream") ?: return failure("arguments")
                 val pulled = streams[key] ?: return failure("unknown_stream")
                 if (wantedFirst != "empty") eventually("a value of the stream $key at $at") { pulled.hasNext() }
-                val next = pulled.next()
-                observed.add(if (next != null) value(key, next.second) else obs("empty", "stream" to key))
+                val unread = pulled.drain()
+                observed.addAll(if (unread.isEmpty()) listOf(obs("empty", "stream" to key)) else folded(key, unread))
             }
             "cancel" -> {
                 val target = args.text("target") ?: return failure("arguments")

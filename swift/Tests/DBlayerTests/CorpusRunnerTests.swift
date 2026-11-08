@@ -10,12 +10,11 @@ private final class Heard: @unchecked Sendable {
   func add() { lock.withLock { heard += 1 }; TestPulse.shared.pulse() }
 }
 
-/// A stream the runner reads: a task pulls it into a queue, `pull` of the corpus takes the next value.
+/// A stream the runner reads: a task pulls it into a queue, `pull` of the corpus folds the unread values.
 private final class Pulled: @unchecked Sendable {
   let stream: ValueStream
   private let lock = NSLock()
   private var queue: [ReadValue] = []
-  private var position: UInt64 = 0
   private var task: Task<Void, Never>?
 
   init(_ stream: ValueStream, heard: Heard) {
@@ -34,11 +33,27 @@ private final class Pulled: @unchecked Sendable {
 
   var hasNext: Bool { lock.withLock { !queue.isEmpty } }
 
-  func next() -> (UInt64, ReadValue)? {
+  func drain() -> [ReadValue] {
     lock.withLock {
-      guard !queue.isEmpty else { return nil }
-      position += 1
-      return (position, queue.removeFirst())
+      defer { queue.removeAll() }
+      return queue
+    }
+  }
+}
+
+private enum Folded {
+  case delta(Int64, Int64, [String], [String], ReadState)
+  case value(ReadValue)
+
+  var isState: Bool {
+    if case .value(.state) = self { true } else { false }
+  }
+
+  var survivesSnapshot: Bool {
+    switch self {
+    case .delta: false
+    case .value(.state), .value(.snapshot), .value(.count): false
+    case .value: true
     }
   }
 }
@@ -179,23 +194,62 @@ private final class DatabaseRunner {
     return out
   }
 
-  func value(_ stream: String, _ seq: UInt64, _ value: ReadValue) -> String {
+  func folded(_ stream: String, _ values: [ReadValue]) -> [String] {
+    var items: [Folded] = []
+    for value in values {
+      switch value {
+      case .delta(let base, let revision, let edits, let state):
+        if case .delta(let first, _, var rows, var removed, _)? = items.last {
+          apply(edits, &rows, &removed)
+          items[items.count - 1] = .delta(first, revision, rows, removed, state)
+        } else {
+          var rows: [String] = [], removed: [String] = []
+          apply(edits, &rows, &removed)
+          items.append(.delta(base, revision, rows, removed, state))
+        }
+      case .snapshot, .count:
+        items.removeAll { !$0.survivesSnapshot }
+        items.append(.value(value))
+      case .state:
+        items.removeAll { $0.isState }
+        items.append(.value(value))
+      default:
+        items.append(.value(value))
+      }
+    }
+    return items.map { item in
+      switch item {
+      case .delta(let base, let revision, let rows, let removed, let state):
+        var out = stateFields(stream, state); out["base"] = base; out["revision"] = revision; out["rows"] = rows.map(nameOf); out["removed"] = removed.map(nameOf)
+        return observation("delta", out)
+      case .value(let value):
+        return self.value(stream, value)
+      }
+    }
+  }
+
+  func apply(_ edits: [RowEdit], _ rows: inout [String], _ removed: inout [String]) {
+    for edit in edits {
+      switch edit {
+      case .insert(_, let row), .rewrite(_, let row, _):
+        removed.removeAll { $0 == row.id }
+        if !rows.contains(row.id) { rows.append(row.id) }
+      case .remove(_, let id):
+        rows.removeAll { $0 == id }
+        if !removed.contains(id) { removed.append(id) }
+      case .move:
+        break
+      }
+    }
+  }
+
+  func value(_ stream: String, _ value: ReadValue) -> String {
     switch value {
     case .snapshot(let revision, let list, _, let state):
       var out = stateFields(stream, state); out["revision"] = revision; out["rows"] = names(list)
       return observation("snapshot", out)
-    case .delta(let base, let revision, let edits, let state):
-      let list = edits.compactMap { edit -> WireRow? in
-        switch edit {
-        case .insert(_, let row), .rewrite(_, let row, _): row
-        default: nil
-        }
-      }
-      let removed = edits.compactMap { edit -> String? in
-        if case .remove(_, let id) = edit { id } else { nil }
-      }
-      var out = stateFields(stream, state); out["base"] = base; out["revision"] = revision; out["rows"] = names(list); out["removed"] = removed.map(nameOf)
-      return observation("delta", out)
+    case .delta:
+      fatalError("a delta is shown folded")
     case .count(let revision, let count, let state):
       var out = stateFields(stream, state); out["revision"] = revision; out["count"] = count
       return observation("count", out)
@@ -523,7 +577,8 @@ private final class DatabaseRunner {
       guard let label = args["stream"] as? String else { return failure("arguments") }
       guard let pulled = streams[label] else { return failure("unknown_stream") }
       if wantedFirst != "empty" { await eventually("a value of the stream \(label) at \(at)") { pulled.hasNext } }
-      if let (position, next) = pulled.next() { observed = [value(label, position, next)] } else { observed = [observation("empty", ["stream": label])] }
+      let unread = pulled.drain()
+      observed = unread.isEmpty ? [observation("empty", ["stream": label])] : folded(label, unread)
     case "cancel":
       guard let target = args["target"] as? String else { return failure("arguments") }
       if let load = loads[target] { load.cancel() } else if let pulled = streams[target] { let stream = pulled.stream; spawn { await stream.cancel(); return CallResult() } } else { return failure("unknown_target") }

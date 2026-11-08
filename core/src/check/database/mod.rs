@@ -25,7 +25,7 @@ type EncryptedParts = (Option<crate::ffi::EncryptedConfig>, Option<Arc<dyn crate
 #[derive(Default)]
 struct Heard(AtomicU64);
 
-/// A stream the runner reads: a task counted by the owners barrier pulls it into a queue, `read` takes the next value.
+/// A stream the runner reads: a task counted by the owners barrier pulls it into a queue, `pull` of the corpus folds the unread values.
 struct Pulled {
     stream: Arc<ReadStream>,
     queue: Arc<std::sync::Mutex<std::collections::VecDeque<(u64, ReadValue)>>>,
@@ -206,6 +206,21 @@ impl DatabaseSut {
         if let Some(at) = state.loaded { into.insert("loaded".into(), at.into()); }
     }
 
+    fn folded(&self, stream: &str, folded: &fold::Folded) -> Observation {
+        match folded {
+            fold::Folded::Delta { base, revision, rows, removed, state } => {
+                let mut out = Map::new();
+                self.state(stream, state, &mut out);
+                out.insert("base".into(), (*base).into());
+                out.insert("revision".into(), (*revision).into());
+                out.insert("rows".into(), Value::Array(rows.iter().map(|id| Value::String(self.name_of(id))).collect()));
+                out.insert("removed".into(), Value::Array(removed.iter().map(|id| Value::String(self.name_of(id))).collect()));
+                Observation::new("delta", Value::Object(out))
+            }
+            fold::Folded::Value(value) => self.value(stream, value),
+        }
+    }
+
     fn value(&self, stream: &str, value: &ReadValue) -> Observation {
         let mut out = Map::new();
         match value {
@@ -215,15 +230,7 @@ impl DatabaseSut {
                 out.insert("rows".into(), self.names(rows));
                 Observation::new("snapshot", Value::Object(out))
             }
-            ReadValue::Delta { base, revision, edits, state, .. } => {
-                let (rows, removed) = (crate::ffi::RowEdit::carried(edits), crate::ffi::RowEdit::removed(edits));
-                self.state(stream, state, &mut out);
-                out.insert("base".into(), (*base).into());
-                out.insert("revision".into(), (*revision).into());
-                out.insert("rows".into(), self.names(&rows));
-                out.insert("removed".into(), Value::Array(removed.iter().map(|id| Value::String(self.name_of(id))).collect()));
-                Observation::new("delta", Value::Object(out))
-            }
+            ReadValue::Delta { .. } => unreachable!("a delta is shown folded"),
             ReadValue::Count { revision, count, state } => {
                 self.state(stream, state, &mut out);
                 out.insert("revision".into(), (*revision).into());
@@ -572,3 +579,7 @@ fn more_name(result: LoadMoreResult) -> &'static str {
 }
 
 mod database_sut;
+mod fold;
+
+#[cfg(test)]
+mod tests;
