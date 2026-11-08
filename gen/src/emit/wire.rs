@@ -95,5 +95,5 @@ pub(super) fn wired(model: &ModelSpec) -> Vec<&FieldSpec> {
 pub(super) fn layout_of(models: &[ModelSpec], model: &ModelSpec) -> String {
     let mut resolved = models.to_vec();
     dblayer::schema::resolve_types(&mut resolved);
-    resolved.iter().find(|candidate| candidate.key == model.key).map(dblayer::ffi::wire::wire_layout).unwrap_or_default()
+    resolved.iter().find(|candidate| candidate.key == model.key).map(dblayer::ffi::wire::wire_layout).expect("a wired model is among the resolved models")
 }

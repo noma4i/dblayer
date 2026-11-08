@@ -16,6 +16,7 @@ mod members;
 mod enums;
 mod scalars;
 mod unions;
+mod naming;
 pub use emit::{emit_swift, emit_swift_with, emit_kotlin, specs_text, Access};
 pub use enums::EnumDecl;
 pub use scalars::Scalars;
@@ -85,7 +86,7 @@ pub fn compile_files(paths: &[impl AsRef<Path>], schema: Option<&Path>, operatio
     let parsed = parse_tree(&sources).map_err(locate)?;
     let scalars = scalars::build(&parsed.scalars).map_err(locate)?;
     let loaded = schema.map(schema_check::Schema::load).transpose().map_err(|message| vec![FileError {
-        file: schema.unwrap().display().to_string(), error: ParseError::new(0, 0, message),
+        file: schema.unwrap().display().to_string(), error: ParseError::new(1, 1, message),
     }])?;
     let models = decl::lower_models(&parsed.models, loaded.as_ref()).map_err(locate)?;
     if loaded.is_none() && models.iter().flat_map(|model| &model.scopes).any(|scope| scope.marker.is_some()) {
@@ -105,7 +106,7 @@ pub fn compile_files(paths: &[impl AsRef<Path>], schema: Option<&Path>, operatio
     let mut declared = build_declarations(&models, &calls).map_err(locate)?;
     stamp_upload_steps(&mut declared.models, steps);
     if let Some(checked) = &checked {
-        for media in declared.models.iter_mut().flat_map(|model| &mut model.relations).filter_map(|scope| scope.media.as_mut()) {
+        for media in declared.models.iter_mut().flat_map(|model| &mut model.relations).flat_map(|scope| scope.media.as_mut()) {
             media.marker_variables.retain(|name, _| checked.variables.get(&media.marker).is_some_and(|variables| variables.contains(name)));
             media.tail_variables.retain(|name, _| checked.variables.get(&media.tail).is_some_and(|variables| variables.contains(name)));
         }
@@ -113,7 +114,10 @@ pub fn compile_files(paths: &[impl AsRef<Path>], schema: Option<&Path>, operatio
             action.client_mutation_id = action.mutation.as_ref().is_some_and(|name| checked.idempotent_inputs.contains(&(name.clone(), action.wrap.clone().unwrap_or_else(|| "input".into()))));
         }
     }
-    let failed = |message: String| vec![FileError { file: names.first().cloned().unwrap_or_default(), error: ParseError::new(0, 0, message) }];
+    let failed = |message: String| {
+        let (file, pos) = declaration_site(&models, &calls, "");
+        vec![FileError { file: names[file].clone(), error: ParseError::new(pos.line, pos.column, message) }]
+    };
     declared.inputs = inputs_from_schema(loaded.as_ref(), &scalars, &declared.models, &declared.operations).map_err(failed)?;
     operation::resolve_result_enums(&mut declared.operations, loaded.as_ref()).map_err(failed)?;
     emit::enum_decls(&declared.models, &declared.operations, &declared.inputs).map_err(failed)?;
@@ -122,7 +126,10 @@ pub fn compile_files(paths: &[impl AsRef<Path>], schema: Option<&Path>, operatio
     let clashes = output_clash_errors(&declared, &models);
     if !clashes.is_empty() { return Err(locate(clashes)); }
     declared.scalars = scalars;
-    declared.notes = checked.map_or_else(Vec::new, |checked| checked.notes);
+    declared.notes = match checked {
+        Some(checked) => checked.notes,
+        None => Vec::new(),
+    };
     Ok(declared)
 }
 
@@ -151,7 +158,7 @@ fn read_sources(paths: &[impl AsRef<Path>]) -> Result<(Vec<String>, Vec<String>)
     for (path, name) in paths.iter().zip(&names) {
         match fs::read_to_string(Path::new(path.as_ref())) {
             Ok(text) => sources.push(text),
-            Err(error) => errors.push(FileError { file: name.clone(), error: ParseError::new(0, 0, error.to_string()) }),
+            Err(error) => errors.push(FileError { file: name.clone(), error: ParseError::new(1, 1, error.to_string()) }),
         }
     }
     if errors.is_empty() { Ok((names, sources)) } else { Err(errors) }
@@ -245,8 +252,10 @@ fn output_clash_errors(declared: &Declarations, declared_models: &[decl::ModelDe
     for (platform, source) in [(members::Platform::Swift, swift), (members::Platform::Kotlin, kotlin)] {
         for again in members::redeclared(&source, platform) {
             let model = declared.models.iter().filter(|model| again.outer.starts_with(model.key.as_str())).max_by_key(|model| model.key.as_str().len());
-            let subject = model.map_or_else(|| again.outer.clone(), |model| model.key.as_str().to_string());
-            let printed_by = model.map(|model| members::declared_names(model, &again.member)).unwrap_or_default();
+            let (subject, printed_by) = match model {
+                Some(model) => (model.key.as_str().to_string(), members::declared_names(model, &again.member)),
+                None => (again.outer.clone(), Vec::new()),
+            };
             let source_names = if printed_by.is_empty() { String::new() } else { format!(" It comes from {}.", printed_by.join(" and ")) };
             let at = declaration_site(declared_models, &[], &subject);
             errors.push((at.0, ParseError::new(at.1.line, at.1.column, format!(
@@ -260,7 +269,9 @@ fn output_clash_errors(declared: &Declarations, declared_models: &[decl::ModelDe
 fn declaration_site(models: &[decl::ModelDecl], calls: &[decl::CallDecl], subject: &str) -> (usize, decl::Pos) {
     models.iter().find(|node| node.name == subject).map(|node| (node.file, node.pos))
         .or_else(|| calls.iter().find(|call| call.name == subject).map(|call| (call.file, call.pos)))
-        .unwrap_or_default()
+        .or_else(|| models.first().map(|node| (node.file, node.pos)))
+        .or_else(|| calls.first().map(|call| (call.file, call.pos)))
+        .expect("an error without a node names a declaration")
 }
 
 #[cfg(test)]

@@ -5,7 +5,7 @@ impl<'a> Run<'a> {
         for operation in &node.operations {
             let Some(name) = operation.mutation.as_ref().map(|found| found.item.as_str()) else { continue };
             let input: Vec<(String, String)> = match (&operation.variables, operation.upload.is_some()) {
-                (Some(variables), _) => variables.iter().filter_map(|binding| match &binding.value {
+                (Some(variables), _) => variables.iter().flat_map(|binding| match &binding.value {
                     VariableValue::Parameter(source) => Some((binding.name.clone(), source.clone())),
                     VariableValue::Constant(_) => None,
                 }).collect(),
@@ -87,7 +87,13 @@ impl<'a> Run<'a> {
             return;
         };
         let accepted = match wrap {
-            Some(wrap) => operation.variables.get(wrap).and_then(|ty| self.schema.input_fields(ty.name())).unwrap_or_default(),
+            Some(wrap) => match operation.variables.get(wrap).and_then(|ty| self.schema.input_fields(ty.name())) {
+                Some(fields) => fields,
+                None => {
+                    fail(self, format!("upload batch wrap `{wrap}` must name an input object variable of `{mutation}`"));
+                    return;
+                }
+            },
             None => operation.variables.clone(),
         };
         let items = batch.items.as_str();
@@ -115,7 +121,13 @@ impl<'a> Run<'a> {
             return;
         };
         let single_fields = match single_operation.and_then(|single| single.wrap.as_deref()) {
-            Some(wrap) => operation.variables.get(wrap).and_then(|ty| self.schema.input_fields(ty.name())).unwrap_or_default(),
+            Some(wrap) => match operation.variables.get(wrap).and_then(|ty| self.schema.input_fields(ty.name())) {
+                Some(fields) => fields,
+                None => {
+                    fail(self, format!("single upload wrap `{wrap}` must name an input object variable"));
+                    return;
+                }
+            },
             None => operation.variables.clone(),
         };
         for key in std::iter::once("signedId").chain(batch.input.iter().map(|(target, _)| target.as_str())) {
@@ -275,12 +287,12 @@ impl<'a> Run<'a> {
     }
 
     pub(super) fn connection_node(&mut self, node: &ModelDecl, pos: Pos, connection: &Ty, remote: &ScopeDecl) -> Option<String> {
-        let nodes = self.schema.field(connection.name(), "nodes").ok().filter(Ty::is_list);
-        let edges = self.schema.field(connection.name(), "edges").ok();
+        let nodes = self.schema.find_field(connection.name(), "nodes").filter(Ty::is_list);
+        let edges = self.schema.find_field(connection.name(), "edges");
         self.edge = edges.as_ref().map(|edges| edges.name().to_string());
         let by_edges = nodes.is_none() || (self.edge_select(remote).is_some() && !self.selects_nodes(remote));
         let found = match (edges, nodes) {
-            (Some(edges), _) if by_edges => self.schema.field(edges.name(), "node").ok().map(|edge| edge.name().to_string()),
+            (Some(edges), _) if by_edges => self.schema.find_field(edges.name(), "node").map(|edge| edge.name().to_string()),
             (_, Some(nodes)) => Some(nodes.name().to_string()),
             _ => None,
         };

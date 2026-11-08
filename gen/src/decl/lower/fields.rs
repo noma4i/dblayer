@@ -68,6 +68,17 @@ pub(super) fn inferred_type(schema: &Schema, ty: &Ty) -> Result<TypeRef, String>
 #[derive(Clone)]
 pub(super) struct Owner(pub(super) Option<String>);
 
+fn schema_field(schema: &Schema, owner: &str, source: &str) -> Option<Ty> {
+    let mut reached = Ty { kind: TyKind::Named(owner.to_string()), nullable: false, has_default: false };
+    for part in source.split('.') {
+        match schema.field(reached.name(), part) {
+            Ok(next) => reached = next,
+            Err(_) => return None,
+        }
+    }
+    Some(reached)
+}
+
 pub(super) fn needs_inference(call: &Call) -> bool {
     let typed = call.args.len() >= 2;
     let inside = |children: &[Call]| children.iter().any(|child| match child.word.as_str() {
@@ -95,18 +106,19 @@ pub(super) fn attribute(cx: &mut Cx, call: &Call, site: Site, owner: &Owner) -> 
     }
     let local = line.opt(cx, "local").and_then(|pair| boolean(cx, &pair.value, "`local`")).unwrap_or(false);
     let explicit = call.args.get(1).map(|node| (type_ref(&node.item), node));
-    let mut inferred_null = false;
     let mut ty_owner = owner.clone();
     let mut resolved: Option<Ty> = None;
-    let walk = !local && needs_inference(call) && cx.schema.is_some() && owner.0.is_some();
-    if walk {
-        let schema = cx.schema.expect("walk needs a schema");
-        let source = line.opt(cx, "from").map(|pair| &pair.value).or_else(|| call.args.first());
-        let source_name = match source.map(|node| &node.item) {
-            Some(Value::Str(text) | Value::Symbol(text)) => text.clone(),
-            _ => name.clone(),
-        };
-        let mut ty = Ty { kind: TyKind::Named(owner.0.clone().unwrap_or_default()), nullable: false, has_default: false };
+    let source_name = match line.opt(cx, "from").map(|pair| &pair.value).or_else(|| call.args.first()).map(|node| &node.item) {
+        Some(Value::Str(text) | Value::Symbol(text)) => text.clone(),
+        _ => name.clone(),
+    };
+    let schema_field = match (cx.schema, &owner.0, local) {
+        (Some(schema), Some(type_name), false) => schema_field(schema, type_name, &source_name),
+        _ => None,
+    };
+    let schema_null = site != Site::Returns && schema_field.as_ref().is_some_and(|reached| reached.nullable);
+    if let (Some(schema), Some(type_name), true) = (cx.schema, &owner.0, !local && needs_inference(call)) {
+        let mut ty = Ty { kind: TyKind::Named(type_name.clone()), nullable: false, has_default: false };
         let mut failed = None;
         for part in source_name.split('.') {
             match schema.field(ty.name(), part) {
@@ -136,10 +148,7 @@ pub(super) fn attribute(cx: &mut Cx, call: &Call, site: Site, owner: &Owner) -> 
         }
         None => match (&resolved, cx.schema) {
             (Some(reached), Some(schema)) => match inferred_type(schema, reached) {
-                Ok(ty) => {
-                    inferred_null = reached.nullable;
-                    ty
-                }
+                Ok(ty) => ty,
                 Err(message) => {
                     cx.fail(line.pos, message);
                     return None;
@@ -176,7 +185,7 @@ pub(super) fn attribute(cx: &mut Cx, call: &Call, site: Site, owner: &Owner) -> 
         block: AttributeBlock::None,
     };
     let null_given = line.opt(cx, "null");
-    decl.null = null_given.and_then(|pair| boolean(cx, &pair.value, "`null`")).unwrap_or(inferred_null && null_given.is_none());
+    decl.null = null_given.map_or(schema_null, |pair| boolean(cx, &pair.value, "`null`").unwrap_or(false));
     decl.optional = line.opt(cx, "optional").and_then(|pair| boolean(cx, &pair.value, "`optional`")).unwrap_or(false);
     if let Some(pair) = line.opt(cx, "default") {
         decl.default = Some(Spanned::new(json_of(&pair.value.item), at(&pair.value)));

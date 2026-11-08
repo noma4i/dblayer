@@ -3,7 +3,7 @@ use std::collections::HashSet;
 use dblayer::schema::{FieldKind, FieldSpec, ModelSpec};
 use dblayer::value::ScalarKind;
 
-use crate::build::camel;
+use crate::naming::camel;
 use crate::decl::{AttributeBlock, AttributeDecl, CallDecl, ListElement, ResponseShape, TypeRef};
 use crate::ParseError;
 
@@ -56,7 +56,7 @@ pub(crate) fn resolve_result_enums(operations: &mut [OperationCall], schema: Opt
         }
         field.fields.iter_mut().try_for_each(|inner| walk(inner, schema))
     }
-    operations.iter_mut().filter_map(|operation| operation.result.as_mut()).try_for_each(|root| walk(root, schema))
+    operations.iter_mut().flat_map(|operation| operation.result.as_mut()).try_for_each(|root| walk(root, schema))
 }
 
 pub(crate) fn schema_type_names(models: &[ModelSpec], operations: &[OperationCall]) -> Vec<String> {

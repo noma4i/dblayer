@@ -1,5 +1,7 @@
 use dblayer::schema::{FieldKind, FieldSpec, ModelSpec};
 
+use crate::naming::{camel, lower_first};
+
 const SWIFT_KEYWORDS: &[&str] = &[
     "as", "break", "case", "class", "continue", "default", "defer", "do", "else", "enum", "for", "func", "guard", "if", "import", "in", "is", "let", "return", "switch", "var", "where", "while", "extension",
     "associatedtype", "catch", "deinit", "false", "fileprivate", "inout", "internal", "nil", "operator", "private", "protocol", "public", "rethrows", "self", "Self", "static", "struct", "subscript", "super", "throw", "throws", "true", "try", "typealias",
@@ -30,22 +32,12 @@ fn parts(value: &str) -> Vec<String> {
         .collect()
 }
 
-fn upper_first(text: &str) -> String {
-    let mut characters = text.chars();
-    characters.next().map(|first| first.to_uppercase().collect::<String>() + characters.as_str()).unwrap_or_default()
-}
-
-fn lower_first(text: &str) -> String {
-    let mut characters = text.chars();
-    characters.next().map(|first| first.to_lowercase().collect::<String>() + characters.as_str()).unwrap_or_default()
-}
-
 fn plain_case(value: &str, swift: bool) -> String {
     let words = parts(value);
     words
         .iter()
         .enumerate()
-        .map(|(at, word)| if swift && at == 0 { lower_first(word) } else { upper_first(word) })
+        .map(|(at, word)| if swift && at == 0 { lower_first(word) } else { camel(word) })
         .collect()
 }
 
@@ -128,7 +120,11 @@ fn collect(field: &FieldSpec, label: &str, path: &mut Vec<String>, found: &mut V
     found.extend(declared(field).map(|decl| (decl, path.clone())));
     let variants = matches!(field.kind, FieldKind::Union | FieldKind::UnionArray);
     for inner in &field.fields {
-        collect(inner, if variants { inner.app_type.as_deref().unwrap_or(&inner.name) } else { &inner.name }, path, found);
+        let label = match &inner.app_type {
+            Some(type_name) if variants => type_name.as_str(),
+            _ => inner.name.as_str(),
+        };
+        collect(inner, label, path, found);
     }
     for inner in &field.shared {
         collect(inner, &inner.name, path, found);

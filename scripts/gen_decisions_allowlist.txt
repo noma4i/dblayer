@@ -1,20 +1,11 @@
 gen/src/build/mod.rs	action.on_failure = operation.on_failure.as_ref().map(|found| found.item).unwrap_or_default();	M49
-gen/src/build/mod.rs	action.result = operation.returns.iter().flatten().map(|attribute| match &attribute.ty {	M53
-gen/src/build/mod.rs	action.variables = operation.variables.iter().flatten().map(|binding| match &binding.value {	M50
 gen/src/build/mod.rs	association.class_name.clone().unwrap_or_else(|| {	M47
 gen/src/build/mod.rs	association.foreign_key.clone().unwrap_or_else(|| match association.kind {	M46
-gen/src/build/mod.rs	chars.next().map(|first| first.to_lowercase().collect::<String>() + chars.as_str()).unwrap_or_default()	M46
-gen/src/build/mod.rs	chars.next().map(|first| first.to_uppercase().collect::<String>() + chars.as_str()).unwrap_or_default()	M47
 gen/src/build/mod.rs	decl::AssociationKind::HasMany | decl::AssociationKind::References => association.name.strip_suffix('s').unwrap_or(&association.name),	M47
-gen/src/build/mod.rs	for binding in scope.variables.iter().flatten() {	M50
-gen/src/build/mod.rs	let variables = scope.variables.iter().flatten().map(|binding| {	M50
 gen/src/build/mod.rs	stale_time: scope.freshness.as_ref().map_or(DEFAULT_FRESHNESS.to_string(), |fresh| fresh.expires_in.item.clone()),	M21
 gen/src/check/enums.rs	errors.push(at(node.file, site_pos(node, site).unwrap_or(node.pos), message));	M55
-gen/src/check/enums.rs	return if deeper.is_empty() { Some(variant.pos) } else { locate(&variant.fields.iter().flatten().collect::<Vec<_>>(), deeper) };	M55
-gen/src/check/mod.rs	None => report(refetch.pos, format!("`refetch` names unknown model `{}`", refetch.model.as_deref().unwrap_or_default())),	M55
 gen/src/check/scope.rs	report(scope.paginate.as_ref().map_or(scope.pos, |paginate| paginate.pos), format!("scope `{name}`: `paginate` and `response shape: :list` cannot be used together"));	M55
 gen/src/decl/lower/fields.rs	decl.block = AttributeBlock::Fields(children.iter().filter_map(|child| attribute(cx, child, nested_site, owner)).collect());	M55
-gen/src/decl/lower/fields.rs	decl.null = null_given.and_then(|pair| boolean(cx, &pair.value, "`null`")).unwrap_or(inferred_null && null_given.is_none());	M48
 gen/src/decl/lower/fields.rs	decl.optional = line.opt(cx, "optional").and_then(|pair| boolean(cx, &pair.value, "`optional`")).unwrap_or(false);	M48
 gen/src/decl/lower/fields.rs	let fields = child.block.as_ref().map(|block| block.iter().filter_map(|inner| attribute(cx, inner, Site::Nested, &Owner(owner.0.as_ref().map(|_| type_name.clone())))).collect());	M55
 gen/src/decl/lower/fields.rs	let fields: Vec<AttributeDecl> = block.iter().filter_map(|inner| attribute(cx, inner, Site::Nested, owner)).collect();	M55
@@ -41,11 +32,39 @@ gen/src/parser/mod.rs	self.tokens.last().map_or((1, 1), |token| (token.line, tok
 gen/src/schema_check/fields.rs	let pos = variants.first().map_or(attribute.pos, |variant| variant.pos);	M55
 gen/src/schema_check/graphql.rs	Selection::Field(field) => found.fields.push(SelectedField { key: field.alias.clone().unwrap_or_else(|| field.name.clone()), name: field.name.clone(), select: select_of(&field.selection_set) }),	M32
 gen/src/schema_check/graphql.rs	let key = field.alias.clone().unwrap_or_else(|| field.name.clone());	M32
-gen/src/schema_check/media.rs	let mapped = scope.variables.iter().flatten().find(|binding| binding.name == *variable).map(|binding| &binding.value);	M32
 gen/src/schema_check/operation.rs	let at = remote.response.as_ref().and_then(|read| read.from.as_ref()).map_or(query.pos, |found| found.pos);	M55
 gen/src/schema_check/operation.rs	let pos = remote.paginate.as_ref().map(|paginate| paginate.pos).or_else(|| remote.response.as_ref().map(|read| read.pos)).unwrap_or(query.pos);	M55
-gen/src/schema_check/selection.rs	let renamed = remote.variables.iter().flatten().find(|binding| matches!(&binding.value, VariableValue::Parameter(source) if source == param));	M32
-gen/src/schema_check/selection.rs	let renamed = scope.variables.iter().flatten().find(|binding| matches!(&binding.value, VariableValue::Parameter(source) if *source == parameter.name));	M32
 gen/src/schema_check/selection.rs	renamed.map_or(param.to_string(), |binding| binding.name.clone())	M32
 gen/src/schema_check/selection.rs	renamed.map_or(parameter.name.as_str(), |binding| binding.name.as_str()) == variable	M32
 gen/src/unions.rs	variants.iter().zip(derived).map(|(variant, case)| variant.case.clone().unwrap_or(case)).collect()	M54
+gen/src/decl/lower/operations.rs	let input = line.opt(cx, "input").map(|pair| symbol_pairs(cx, Some(pair), "`input`")).unwrap_or_default();	M58
+gen/src/decl/lower/operations.rs	let set = line.opt(cx, "set").map(|pair| copy_set(cx, pair)).unwrap_or_default();	M58
+gen/src/decl/lower/mod.rs	let storage = options.opt(cx, "storage").map_or(Storage::Disk, |pair| match &pair.value.item {	M62
+gen/src/decl/lower/scopes.rs	let null = line.opt(cx, "null").and_then(|pair| boolean(cx, &pair.value, "`null`")).unwrap_or(false);	M63
+gen/src/decl/lower/scopes.rs	let id = line.opt(cx, "id").map_or(Vec::new(), |pair| match &pair.value.item {	M58
+gen/src/check/nested.rs	target.fields.iter().all(|child| match values.get(child.from.as_deref().unwrap_or(&child.name)) {	M59
+gen/src/build/mod.rs	removes_on: change.removes_on.clone().unwrap_or_default(),	M58
+gen/src/build/mod.rs	list.values = attribute.values.clone().unwrap_or_default();	M58
+gen/src/build/mod.rs	let type_name = field.app_type.clone().unwrap_or_else(|| format!("{owner}{}", camel(name)));	M57
+gen/src/build/mod.rs	let type_name = field.app_type.clone().unwrap_or_else(|| format!("{owner}{}", camel(name)));	M57
+gen/src/build/mod.rs	let column = |name: &str| scope.where_.iter().flat_map(|clause| &clause.pairs).find(|(_, linked)| linked.item == name).map_or_else(|| name.to_string(), |(column, _)| column.item.clone());	M60
+gen/src/build/mod.rs	scope.where_.iter().flat_map(|clause| &clause.pairs).find(|(_, linked)| linked.item == parameter.item).map_or(parameter.item.clone(), |(column, _)| column.item.clone())	M60
+gen/src/build/mod.rs	let column = scope.where_.iter().flat_map(|clause| &clause.pairs).find(|(_, linked)| linked.item == parameter.item).map_or(parameter.item.clone(), |(column, _)| column.item.clone());	M60
+gen/src/build/mod.rs	Effect::Reread => Some(SubscriptionAction::Reread { via: apply.via.clone().unwrap_or_default() }),	M58
+gen/src/build/mod.rs	action.local = operation.local.clone().unwrap_or_default();	M58
+gen/src/lib.rs	action.client_mutation_id = action.mutation.as_ref().is_some_and(|name| checked.idempotent_inputs.contains(&(name.clone(), action.wrap.clone().unwrap_or_else(|| "input".into()))));	M64
+gen/src/schema_check/selection.rs	let key = field.from.as_ref().map_or(name, |found| found.item.as_str());	M59
+gen/src/schema_check/selection.rs	let real = selected.as_ref().and_then(|found| found.first().map(|field| field.name.clone())).unwrap_or_else(|| segments[0].to_string());	M32
+gen/src/emit/mod.rs	field.from.as_deref().unwrap_or(&field.name)	M59
+gen/src/emit/operations.rs	let sent = operation.wrap.as_ref().map_or("variables_".to_string(), |wrap| format!("[\"{wrap}\": JSONValue.object(variables_)]"));	M64
+gen/src/emit/operations.rs	let sent = operation.wrap.as_ref().map_or("JsonObject(variables_)".to_string(), |wrap| format!("JsonObject(mapOf(\"{wrap}\" to JsonObject(variables_)))"));	M64
+gen/src/schema_check/paths.rs	let path = root.map_or(first, |found| found.item.as_str());	M66
+gen/src/schema_check/media.rs	let path = root_path(scope).unwrap_or(&root.key);	M66
+gen/src/schema_check/operation.rs	let path = root_path(remote).unwrap_or(&root.key).to_string();	M66
+gen/src/schema_check/fields.rs	let path = root_path(remote).unwrap_or(&root.key);	M66
+gen/src/schema_check/fields.rs	self.fail(file, attribute.pos, format!("attribute `{name}`: the selection of `{}` must select `__typename`", attribute.from.as_ref().map_or(name, |found| found.item.as_str())));	M59
+gen/src/schema_check/fields.rs	let name = selects.iter().find_map(|select| self.operations.fields_in(select, key, &apart).first().map(|found| found.name.as_str())).unwrap_or(key);	M32
+gen/src/schema_check/fields.rs	let base = association.and_then(|association| association.from.as_deref()).unwrap_or(parent);	M59
+gen/src/schema_check/fields.rs	Some(attribute.from.as_ref().map_or(name, |found| found.item.as_str()).split('.').map(str::to_string).collect())	M59
+gen/src/schema_check/fields.rs	let segment = selected.first().map_or(*key, |field| field.name.as_str());	M32
+gen/src/decl/lower/fields.rs	decl.null = null_given.map_or(schema_null, |pair| boolean(cx, &pair.value, "`null`").unwrap_or(false));	M63

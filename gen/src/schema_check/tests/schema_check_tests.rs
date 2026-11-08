@@ -68,7 +68,7 @@ fn declarations_are_checked_against_the_schema() {
     let cases: [SchemaCase; 19] = [
         ("every kind fits", model(valid, REMOTE), None),
         ("missing field", model("    attribute :ghost, :string\n", REMOTE), Some((3, "type `Item` has no field `ghost`"))),
-        ("nullable in schema, required in model", model("    attribute :note, :string\n", REMOTE), Some((3, "declare `null: true`"))),
+        ("nullable in schema, required in model", model("    attribute :note, :string, null: false\n", REMOTE), Some((3, "declare `null: true`"))),
         ("list declared as scalar", model("    attribute :tags, :string\n", REMOTE), Some((3, "which is a list"))),
         ("scalar declared as list", model("    attribute :title, [:string]\n", REMOTE), Some((3, "not a list"))),
         ("wrong scalar kind", model("    attribute :title, :bool\n", REMOTE), Some((3, "does not fit the schema type"))),

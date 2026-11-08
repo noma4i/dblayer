@@ -17,7 +17,7 @@ fn declared(root: &FieldSpec) -> Vec<&FieldSpec> {
 }
 
 fn result_name(operation: &OperationCall) -> &str {
-    operation.result.as_ref().and_then(|root| root.app_type.as_deref()).unwrap_or_default()
+    operation.result.as_ref().and_then(|root| root.app_type.as_deref()).expect("a returning operation has a result type")
 }
 
 fn returned(operation: &OperationCall, swift: bool) -> String {

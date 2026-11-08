@@ -45,7 +45,7 @@ fn union_declarations_are_checked_against_the_schema_union() {
         ("variant outside the union", good(&format!("{VARIANTS}    on Owner do\n      attribute :id, :id\n    end\n")), Some("`Owner` is not a member of union `Attachment`")),
         ("union member without a variant", good(&VARIANTS[..VARIANTS.find("    on Moment").unwrap()]), Some("variant `Moment` of union `Attachment` is not declared")),
         ("variant field the schema type lacks", good(&VARIANTS.replace("attribute :tier, :string", "attribute :ghost, :string")), Some("type `Gift` has no field `ghost`")),
-        ("nullable union declared required", model(&format!("  attribute :attachment, Attachment do\n{VARIANTS}  end\n")), Some("declare `null: true`")),
+        ("nullable union declared required", model(&format!("  attribute :attachment, Attachment, null: false do\n{VARIANTS}  end\n")), Some("declare `null: true`")),
         ("union declared over an object type", model(&format!("  attribute :owner, Attachment, null: true do\n{VARIANTS}  end\n")), Some("is not a union")),
     ];
     for (name, source, expected) in cases {

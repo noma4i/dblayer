@@ -7,12 +7,29 @@ const SCHEMA: &str = "type Query { a: Int }\ntype Mutation { widgetsSend(widgets
 
 const UPLOAD_MUTATION: &str = "mutation MomentCreateFile($signedId: String!, $widgets: [WidgetInput!]) { momentCreate(input: { signedId: $signedId, widgets: $widgets }) { moment { id } } }\n";
 
+fn parameter_line(name: &str, kind: &str) -> String {
+    let (base, null) = kind.strip_suffix('?').map_or((kind, false), |base| (base, true));
+    let base = base.trim_start_matches(':');
+    let (shape, null_items) = match base.strip_prefix('[') {
+        Some(inner) => {
+            let inner = inner.trim_end_matches(']').trim_start_matches(':');
+            let (inner, null_items) = inner.strip_suffix('?').map_or((inner, false), |inner| (inner, true));
+            let inner = if inner.starts_with(char::is_uppercase) { inner.to_string() } else { format!(":{inner}") };
+            (format!("[{inner}]"), null_items)
+        }
+        None if base == "ids" => ("[:id]".to_string(), false),
+        None if base.starts_with(char::is_uppercase) => (base.to_string(), false),
+        None => (format!(":{base}"), false),
+    };
+    format!("parameter :{name}, {shape}{}{}", if null { ", null: true" } else { "" }, if null_items { ", null_items: true" } else { "" })
+}
+
 fn operation(arg: &str) -> String {
-    format!("operation :widgets_send do\n  mutation \"WidgetsSend\"\n  {}\n  returns do\n    attribute :id, :string\n  end\nend\n", crate::decl::parameter_line("widgets", arg))
+    format!("operation :widgets_send do\n  mutation \"WidgetsSend\"\n  {}\n  returns do\n    attribute :id, :string\n  end\nend\n", parameter_line("widgets", arg))
 }
 
 fn upload(arg: &str) -> String {
-    format!("model Moment do\n  attribute :text, :string, null: true\n  operation :create_file, upload: true do\n    mutation \"MomentCreateFile\"\n    optimistic false\n    {}\n    response from: \"momentCreate.moment\"\n  end\nend\n", crate::decl::parameter_line("widgets", arg))
+    format!("model Moment do\n  attribute :text, :string, null: true\n  operation :create_file, upload: true do\n    mutation \"MomentCreateFile\"\n    optimistic false\n    {}\n    response from: \"momentCreate.moment\"\n  end\nend\n", parameter_line("widgets", arg))
 }
 
 fn compile(source: &str, mutation: &str, schema: &str) -> Result<Declarations, Vec<String>> {

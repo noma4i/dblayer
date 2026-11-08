@@ -162,10 +162,7 @@ pub(super) fn check_preload_source(scope: &ScopeDecl, parameter: &ParameterDecl,
     if !matches!((&parameter.ty.base, parameter.ty.list), (ParamBase::String | ParamBase::Id | ParamBase::Named(_), false)) {
         report(source.pos, format!("scope `{name}`: `preload {}: {{ from: }}` takes row ids, but the parameter is {}", parameter.name, parameter.ty.describe()));
     }
-    let Some((model, relation)) = source.item.split_once('.') else {
-        report(source.pos, format!("scope `{name}`: `preload {}: {{ from: }}` takes `\"Model.scope\"`", parameter.name));
-        return;
-    };
+    let (model, relation) = source.item.split_once('.').expect("lowering keeps only `Model.scope` sources");
     let Some(model) = all.iter().find(|candidate| candidate.name == model) else {
         report(source.pos, format!("scope `{name}`: `preload` source names unknown model `{model}`"));
         return;
@@ -245,7 +242,7 @@ pub(super) fn check_row_rules(node: &ModelDecl, scope: &ScopeDecl, linked: &[&st
         }
     }
     let thresholds = scope.row_rules.iter().filter(|(rule, _)| matches!(rule.test, RowTest::GreaterThan { .. })).count();
-    let distinct: HashSet<_> = scope.row_rules.iter().filter_map(|(rule, _)| if let RowTest::GreaterThan { parameter } = &rule.test { Some(parameter) } else { None }).collect();
+    let distinct: HashSet<_> = scope.row_rules.iter().flat_map(|(rule, _)| match &rule.test { RowTest::GreaterThan { parameter } => Some(parameter), _ => None }).collect();
     if distinct.len() != thresholds {
         report(scope.row_rules[0].1, format!("scope `{name}`: a parameter can be used by one `greater_than` rule only"));
     }

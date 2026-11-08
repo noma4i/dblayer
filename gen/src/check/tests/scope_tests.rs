@@ -278,7 +278,7 @@ fn preload_lists_the_values_of_every_parameter_of_a_remote_scope() {
         ("rows of an unknown scope", &derived("    preload channel: { from: \"Sample.ghost\" }, limit: 40\n"), Some("has no scope `ghost`")),
         ("rows of a scope with parameters", &derived("    preload channel: { from: \"Sample.on_channel\" }, limit: 40\n"), Some("must be a list without parameters")),
         ("rows for a number parameter", &derived("    parameter :number, :int\n    preload channel: { from: \"Sample.list\" }, number: { from: \"Sample.list\" }, limit: 40\n"), Some("takes row ids")),
-        ("source without a model", &derived("    preload channel: { from: \"list\" }, limit: 40\n"), Some("takes `\"Model.scope\"`")),
+        ("source without a model", &derived("    preload channel: { from: \"list\" }, limit: 40\n"), Some("names its source scope")),
         ("source with another key", &derived("    preload channel: { of: \"Sample.list\" }\n"), Some("takes a list of values or `{ from:")),
     ]);
 }

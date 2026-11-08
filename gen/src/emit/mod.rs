@@ -2,6 +2,8 @@ use dblayer::schema::{FieldKind, FieldSpec, ModelSpec, RemoteShape, RelationSpec
 use dblayer::value::ScalarKind;
 use std::fmt::Write;
 
+use crate::naming::camel;
+
 mod nested;
 mod wire;
 mod inputs;
@@ -29,9 +31,7 @@ pub(crate) const ROW_ID: &str = "id";
 
 /// The relation that holds the one row of a model: the only global relation answered as a single record.
 fn swift_direction(direction: dblayer::value::SortDirection) -> String {
-    let mut words = direction.name().split('_');
-    let first = words.next().unwrap_or_default().to_string();
-    words.fold(first, |mut name, word| { name.push_str(&word[..1].to_uppercase()); name.push_str(&word[1..]); name })
+    name(direction.name())
 }
 
 fn singleton_relation(model: &ModelSpec) -> Option<&RelationSpec> {
@@ -40,16 +40,10 @@ fn singleton_relation(model: &ModelSpec) -> Option<&RelationSpec> {
     found.next().is_none().then_some(relation)
 }
 
-pub(crate) fn name(text: &str) -> String {
-    let upper = crate::build::camel(text);
-    let mut chars = upper.chars();
-    chars.next().map(|first| first.to_lowercase().collect::<String>() + chars.as_str()).unwrap_or_default()
-}
+pub(crate) use crate::naming::member as name;
 
 fn result_type(class: &str, action: &str) -> String {
-    let method = name(action);
-    let mut chars = method.chars();
-    format!("{class}{}{}Result", chars.next().map(|first| first.to_uppercase().collect::<String>()).unwrap_or_default(), chars.as_str())
+    format!("{class}{}Result", camel(action))
 }
 
 fn scalar(kind: ScalarKind, swift: bool) -> &'static str {
@@ -74,6 +68,10 @@ fn column_type(field: &FieldSpec, swift: bool) -> String {
     }
 }
 
+pub(super) fn scope_column_type(model: &ModelSpec, key: &str, swift: bool) -> String {
+    field_type(model.field(key).expect("a scope column is a field of its model"), swift)
+}
+
 fn is_file(field: &FieldSpec) -> bool { matches!(field.kind, FieldKind::File) }
 
 fn field_type(field: &FieldSpec, swift: bool) -> String {
@@ -82,11 +80,21 @@ fn field_type(field: &FieldSpec, swift: bool) -> String {
         FieldKind::Scalar { kind } => scalar(*kind, swift).to_string(),
         FieldKind::Enum { .. } => field.app_type.clone().expect("an enum field names its type"),
         FieldKind::List { element } => {
-            let item = field.app_type.as_deref().filter(|_| !field.values.is_empty()).unwrap_or_else(|| scalar(*element, swift));
+            let item = match &field.app_type {
+                Some(name) if !field.values.is_empty() => name.as_str(),
+                _ => scalar(*element, swift),
+            };
             if swift { format!("[{item}]") } else { format!("List<{item}>") }
         }
-        FieldKind::Array | FieldKind::UnionArray => field.app_type.as_ref().map(|name| if swift { format!("[{name}]") } else { format!("List<{name}>") }).unwrap_or_else(|| raw_type(swift)),
-        FieldKind::Object | FieldKind::Union => field.app_type.clone().unwrap_or_else(|| raw_type(swift)),
+        FieldKind::Array | FieldKind::UnionArray => match &field.app_type {
+            Some(name) if swift => format!("[{name}]"),
+            Some(name) => format!("List<{name}>"),
+            None => raw_type(swift),
+        },
+        FieldKind::Object | FieldKind::Union => match &field.app_type {
+            Some(name) => name.clone(),
+            None => raw_type(swift),
+        },
         _ => raw_type(swift),
     };
     if field.nullable || field.optional { format!("{base}?") } else { base }
@@ -101,13 +109,16 @@ pub(super) fn text_param(relation: &RelationSpec, key: &str, decls: &[EnumDecl],
         let case = declaration.cases(swift).into_iter().nth(declaration.values.iter().position(|candidate| candidate == value)?)?;
         Some(if swift { format!(" = .{case}") } else { format!(" = {kind}.{case}") })
     });
-    format!("{printed}: {kind}{}", default.unwrap_or_default())
+    match default {
+        Some(default) => format!("{printed}: {kind}{default}"),
+        None => format!("{printed}: {kind}"),
+    }
 }
 
 pub(crate) fn enum_decls(models: &[ModelSpec], operations: &[OperationCall], schema_types: &SchemaTypes) -> Result<Vec<EnumDecl>, String> {
     let mut found = schema_types.enums.clone();
     found.extend(declared_in(models).into_iter().map(|site| site.decl));
-    found.extend(operations.iter().filter_map(|operation| operation.result.as_ref()).flat_map(declared_in_field));
+    found.extend(operations.iter().flat_map(|operation| operation.result.as_ref()).flat_map(declared_in_field));
     merge_enums(found)
 }
 
@@ -155,7 +166,10 @@ pub(crate) fn declared_types(models: &[ModelSpec]) -> Vec<&FieldSpec> {
 
 pub fn specs_text(models: &[ModelSpec], operations: &[crate::operation::OperationCall]) -> String {
     let declared: Vec<String> = operations.iter().map(|operation| {
-        let returns = operation.result.clone().unwrap_or_else(|| FieldSpec::raw(&operation.name));
+        let returns = match &operation.result {
+            Some(result) => result.clone(),
+            None => FieldSpec::raw(&operation.name),
+        };
         format!("{{\"name\":{},\"returns\":{}}}", serde_json::to_string(&operation.operation).unwrap(), serde_json::to_string(&returns).unwrap())
     }).collect();
     format!("{{\"models\":{},\"operations\":[{}]}}", serde_json::to_string(models).unwrap(), declared.join(","))
@@ -183,7 +197,10 @@ fn create_optional(model: &ModelSpec, field: &FieldSpec) -> bool {
 }
 
 fn standard_args<'a>(model: &'a ModelSpec, action: &str) -> Vec<(&'a str, &'a str)> {
-    model.actions.iter().find(|declared| declared.name == action).map(|declared| declared.args.iter().map(|(name, kind)| (name.as_str(), kind.as_str())).collect()).unwrap_or_default()
+    match model.actions.iter().find(|declared| declared.name == action) {
+        Some(declared) => declared.args.iter().map(|(name, kind)| (name.as_str(), kind.as_str())).collect(),
+        None => Vec::new(),
+    }
 }
 
 fn arg_type(kind: &str, swift: bool) -> String {
@@ -243,7 +260,10 @@ pub fn emit_swift_with(models: &[ModelSpec], operations: &[OperationCall], schem
     source.lines().map(|line| {
         let indent = line.len() - line.trim_start().len();
         let trimmed = line.trim_start();
-        let (attribute, declaration) = trimmed.strip_prefix("@concurrent ").map_or(("", trimmed), |rest| ("@concurrent ", rest));
+        let (attribute, declaration) = match trimmed.strip_prefix("@concurrent ") {
+            Some(rest) => ("@concurrent ", rest),
+            None => ("", trimmed),
+        };
         match declaration.strip_prefix("public ") {
             Some(rest) => format!("{}{}{}", &line[..indent], attribute, rest),
             None => line.to_string(),
@@ -267,7 +287,10 @@ pub fn emit_swift(models: &[ModelSpec], operations: &[OperationCall], schema_typ
         writeln!(out, "    public let {SYNC}: SyncInfo\n    public let {UPLOADS}: [String: UploadInfo]\n").unwrap();
         let fields: Vec<&FieldSpec> = model.fields.iter().chain(model.ephemeral.iter().map(|field| &field.field)).collect();
         let params: Vec<String> = fields.iter().map(|field| {
-            let default = swift_default(field).map(|value| format!(" = {value}")).unwrap_or_default();
+            let default = match swift_default(field) {
+                Some(value) => format!(" = {value}"),
+                None => String::new(),
+            };
             format!("{}: {}{}", identifier(&field.name, true), field_type(field, true), default)
         }).chain([format!("{SYNC}: SyncInfo = SyncInfo()"), format!("{UPLOADS}: [String: UploadInfo] = [:]")]).collect();
         writeln!(out, "    public init({}) {{", params.join(", ")).unwrap();
@@ -287,7 +310,7 @@ pub fn emit_swift(models: &[ModelSpec], operations: &[OperationCall], schema_typ
             if let Some(kind) = relation.node { swift_node(&mut out, &method, relation, kind); continue; }
             if relation.by_columns.is_empty() && relation.text_params.is_empty() { writeln!(out, "    public static var {method}: Query<Self> {{").unwrap(); }
             else {
-                let params = relation.by_columns.iter().map(|key| format!("_ {}: {}", identifier(key, true), model.field(key).map(|field| field_type(field, true)).unwrap_or("String".into()))).chain(relation.text_params.iter().map(|key| text_param(relation, key, &decls, true))).collect::<Vec<_>>().join(", ");
+                let params = relation.by_columns.iter().map(|key| format!("_ {}: {}", identifier(key, true), scope_column_type(model, key, true))).chain(relation.text_params.iter().map(|key| text_param(relation, key, &decls, true))).collect::<Vec<_>>().join(", ");
                 writeln!(out, "    public static func {method}({params}) throws -> Query<Self> {{").unwrap();
             }
             let params = relation.by_columns.iter().chain(relation.text_params.iter()).map(|key| format!("\"{key}\": try JSONValue.encode({})", identifier(key, true))).collect::<Vec<_>>().join(", ");
@@ -418,7 +441,7 @@ pub fn emit_kotlin(models: &[ModelSpec], operations: &[OperationCall], schema_ty
         for relation in &model.relations {
             let method = identifier(&name(&relation.name), false);
             if let Some(kind) = relation.node { kotlin_node(&mut out, class, &method, relation, kind); continue; }
-            let params = relation.by_columns.iter().map(|key| format!("{}: {}", identifier(key, false), model.field(key).map(|field| field_type(field, false)).unwrap_or("String".into()))).chain(relation.text_params.iter().map(|key| text_param(relation, key, &decls, false))).collect::<Vec<_>>().join(", ");
+            let params = relation.by_columns.iter().map(|key| format!("{}: {}", identifier(key, false), scope_column_type(model, key, false))).chain(relation.text_params.iter().map(|key| text_param(relation, key, &decls, false))).collect::<Vec<_>>().join(", ");
             if params.is_empty() { writeln!(out, "        val {method}: Query<{class}> get() {{").unwrap(); }
             else { writeln!(out, "        fun {method}({params}): Query<{class}> {{").unwrap(); }
             writeln!(out, "            var {built} = Query(\"{class}\", this, relation = \"{}\", params = buildJsonObject {{ {} }})", relation.name, relation.by_columns.iter().chain(relation.text_params.iter()).map(|key| format!("this.put(\"{key}\", jsonValue({}))", identifier(key, false))).collect::<Vec<_>>().join("; ")).unwrap();
@@ -491,7 +514,7 @@ pub fn emit_kotlin(models: &[ModelSpec], operations: &[OperationCall], schema_ty
         for action in model.actions.iter().filter(|action| !action.upload && !["create", "update", "destroy"].contains(&action.name.as_str())) {
             let params = action.args.iter().map(|(arg, kind)| format!("{}: {}{}", identifier(arg, false), arg_type(kind, false), if kind.ends_with('?') { "? = null" } else { "" })).collect::<Vec<_>>().join(", ");
             let literals: serde_json::Map<String, serde_json::Value> = action.optimistic.iter().filter(|(_, value)| value.get("$arg").is_none()).map(|(key, value)| (key.clone(), value.clone())).collect();
-            let from_args = action.optimistic.iter().filter_map(|(field, value)| value.get("$arg").and_then(|arg| arg.as_str()).map(|arg| format!("\"{field}\" to jsonValue({printed})", printed = identifier(arg, false)))).collect::<Vec<_>>().join(", ");
+            let from_args = action.optimistic.iter().flat_map(|(field, value)| value.get("$arg").and_then(|arg| arg.as_str()).map(|arg| format!("\"{field}\" to jsonValue({printed})", printed = identifier(arg, false)))).collect::<Vec<_>>().join(", ");
             let args = action.args.keys().map(|arg| format!("\"{arg}\" to jsonValue({printed})", printed = identifier(arg, false))).collect::<Vec<_>>().join(", ");
             let call = format!("\"{}\", JsonObject(parseJsonObject(\"\"\"{}\"\"\") + mapOf({from_args})), JsonObject(mapOf({args})), {class}", action.name, serde_json::to_string(&literals).unwrap().replace('$', "${'$'}"));
             let params = kotlin_scope(&params, &account);

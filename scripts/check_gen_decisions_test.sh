@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Self test of check_gen_decisions.sh: a new filter_map exits 1, a listed one and a clean tree exit 0, a stale or non-norm line exits 1.
+# Self test of check_gen_decisions.sh: a new filter_map or default on a declaration value exits 1, a listed one and a clean tree exit 0, a stale or non-norm line exits 1, mechanics (Option<Vec> iteration, text parse) exit 0.
 set -euo pipefail
 
 root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)"
@@ -24,4 +24,9 @@ if run; then echo "check_gen_decisions_test: a non-norm ID passed" >&2; exit 1; 
 printf 'gen/src/decl/lower/a.rs\tlet x = faults.iter().filter_map(|f| find(f)).collect();\tM55\n' > "$work/allow.txt"
 printf 'fn a() -> u8 { 1 }\n' > "$file"
 if run; then echo "check_gen_decisions_test: a stale line passed" >&2; exit 1; fi
+printf '    let first = text.split(".").next().unwrap_or_default();\n    let all = options.iter().flatten().count();\n' > "$file"
+: > "$work/allow.txt"
+run || { echo "check_gen_decisions_test: a mechanic line failed" >&2; exit 1; }
+printf '    let via = change.via.clone().unwrap_or_default();\n' > "$file"
+if run; then echo "check_gen_decisions_test: a default on a declaration value passed" >&2; exit 1; fi
 echo "check_gen_decisions_test: ok"

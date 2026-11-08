@@ -3,6 +3,8 @@ use dblayer::schema::{
     PageDirection, CopyValue, ReceiverCopy, RelationSpec, RemoteShape, RemoteSpec, RootShape, ScopeEffect, ScopeEffectKind, Sort, SortField, SubscriptionAction, SubscriptionApply, UpdatesSpec, VariableSource, NODE_PARAM, EffectSource,
 };
 use dblayer::value::ScalarKind;
+
+use crate::naming::{camel, lower_first};
 use serde_json::{json, Map, Value as Json};
 
 use crate::decl::{
@@ -156,23 +158,11 @@ fn build_field(attribute: &AttributeDecl, owner: &str) -> FieldSpec {
     field
 }
 
-pub(crate) fn camel(name: &str) -> String {
-    name.split('_').filter(|part| !part.is_empty()).map(|part| {
-        let mut chars = part.chars();
-        chars.next().map(|first| first.to_uppercase().collect::<String>() + chars.as_str()).unwrap_or_default()
-    }).collect()
-}
-
-fn lower(name: &str) -> String {
-    let mut chars = name.chars();
-    chars.next().map(|first| first.to_lowercase().collect::<String>() + chars.as_str()).unwrap_or_default()
-}
-
 pub(crate) fn association_key(association: &AssociationDecl, owner: &str) -> String {
     association.foreign_key.clone().unwrap_or_else(|| match association.kind {
         decl::AssociationKind::BelongsTo => format!("{}Id", association.name),
         decl::AssociationKind::References => association.name.clone(),
-        _ => format!("{}Id", lower(owner)),
+        _ => format!("{}Id", lower_first(owner)),
     })
 }
 
@@ -262,7 +252,7 @@ fn build_scope(scope: &ScopeDecl) -> RelationSpec {
         let choice = match values {
             crate::decl::PreloadChoice::Listed(values) => dblayer::schema::PreloadChoice::Listed(values.iter().map(|value| value.item.clone()).collect()),
             crate::decl::PreloadChoice::RowsOf(source) => {
-                let (model, relation) = source.item.split_once('.').unwrap_or((&source.item, ""));
+                let (model, relation) = source.item.split_once('.').expect("lowering keeps only `Model.scope` sources");
                 dblayer::schema::PreloadChoice::RowsOf { from: dblayer::schema::PreloadSource { model: model.to_string(), relation: relation.to_string() } }
             }
         };
@@ -404,7 +394,7 @@ fn build_operation(operation: &OperationDecl, owner: &str) -> ActionDeclaration 
         orders: effect.orders.clone(),
     }).collect();
     if operation.kind == OperationKind::Custom && action.variables.is_empty() {
-        action.variables.insert(format!("{}Id", lower(owner)), "id".into());
+        action.variables.insert(format!("{}Id", lower_first(owner)), "id".into());
     }
     action
 }

@@ -341,7 +341,7 @@ pub(super) fn scope_line(cx: &mut Cx, call: &Call, decl: &mut ScopeDecl) {
             no_block(cx, call);
             line.no_args(cx);
             let limit = line.opt(cx, "limit").and_then(|pair| match &pair.value.item {
-                Value::Int(number) if *number > 0 => usize::try_from(*number).ok(),
+                Value::Int(number) if *number > 0 && usize::try_from(*number).is_ok() => Some(*number as usize),
                 _ => { cx.fail(at(&pair.value), "`preload limit` must be a positive integer"); None }
             });
             line.used.iter_mut().for_each(|used| *used = true);
@@ -358,7 +358,11 @@ pub(super) fn scope_line(cx: &mut Cx, call: &Call, decl: &mut ScopeDecl) {
                     }).collect()),
                     Value::Hash(parts) => match parts.as_slice() {
                         [part] if part.key == "from" => match &part.value.item {
-                            Value::Str(text) => PreloadChoice::RowsOf(Spanned::new(text.clone(), at(&part.value))),
+                            Value::Str(text) if text.contains('.') => PreloadChoice::RowsOf(Spanned::new(text.clone(), at(&part.value))),
+                            Value::Str(_) => {
+                                cx.fail(at(&part.value), "`preload rows of Model` names its source scope like `\"Vibe.list\"`");
+                                PreloadChoice::Listed(Vec::new())
+                            }
                             _ => {
                                 cx.fail(at(&part.value), "`preload ...: { from: }` takes a string like `\"Vibe.list\"`");
                                 PreloadChoice::Listed(Vec::new())
@@ -464,10 +468,10 @@ pub(super) fn subscribe(cx: &mut Cx, call: &Call) -> Option<SubscribeDecl> {
     let arg = exactly_one_arg(cx, &line, "a subscription name like `subscribe \"RecordChanged\"`")?;
     let name = string(cx, arg, "the subscription name")?;
     let from = line.opt(cx, "from").and_then(|pair| path(cx, &pair.value, "`from`"));
-    let id = line.opt(cx, "id").map(|pair| match &pair.value.item {
+    let id = line.opt(cx, "id").map_or(Vec::new(), |pair| match &pair.value.item {
         Value::Array(items) if !items.is_empty() => items.iter().filter_map(|item| path(cx, item, "`id`")).collect(),
         _ => path(cx, &pair.value, "`id`").into_iter().collect(),
-    }).unwrap_or_default();
+    });
     let debounce = line.opt(cx, "debounce").and_then(|pair| duration(cx, &pair.value, "`debounce`"));
     let apply = match line.opt(cx, "apply") {
         Some(pair) => apply(cx, pair)?,

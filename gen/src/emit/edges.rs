@@ -3,37 +3,36 @@ use std::fmt::Write;
 use dblayer::schema::{FieldKind, FieldSpec, ModelSpec, RelationSpec};
 use dblayer::value::ScalarKind;
 
-use super::{field_type, identifier, name, text_param, ACCOUNT, ROW_ID};
+use super::{field_type, identifier, name, scope_column_type, text_param, ACCOUNT, ROW_ID};
+use crate::naming::camel;
 use crate::EnumDecl;
 
-fn pascal(text: &str) -> String {
-    let mut chars = text.chars();
-    chars.next().map(|first| first.to_uppercase().collect::<String>() + chars.as_str()).unwrap_or_default()
+fn enum_type(field: &FieldSpec) -> &str {
+    field.app_type.as_deref().expect("an enum field names its type")
 }
 
 fn read(field: &FieldSpec, swift: bool) -> String {
     let key = &field.name;
-    let enum_type = field.app_type.as_deref().unwrap_or_default();
     match (&field.kind, swift) {
         (FieldKind::Scalar { kind: ScalarKind::Int }, true) => format!("values[\"{key}\"]?.intValue"),
         (FieldKind::Scalar { kind: ScalarKind::Num }, true) => format!("values[\"{key}\"]?.doubleValue"),
         (FieldKind::Scalar { kind: ScalarKind::Bool }, true) => format!("values[\"{key}\"]?.boolValue"),
-        (FieldKind::Enum { .. }, true) => format!("values[\"{key}\"]?.stringValue.map({enum_type}.init(rawValue:))"),
+        (FieldKind::Enum { .. }, true) => format!("values[\"{key}\"]?.stringValue.map({}.init(rawValue:))", enum_type(field)),
         (_, true) => format!("values[\"{key}\"]?.stringValue"),
         (FieldKind::Scalar { kind: ScalarKind::Int }, false) => format!("(values[\"{key}\"] as? JsonPrimitive)?.longOrNull"),
         (FieldKind::Scalar { kind: ScalarKind::Num }, false) => format!("(values[\"{key}\"] as? JsonPrimitive)?.doubleOrNull"),
         (FieldKind::Scalar { kind: ScalarKind::Bool }, false) => format!("(values[\"{key}\"] as? JsonPrimitive)?.booleanOrNull"),
-        (FieldKind::Enum { .. }, false) => format!("(values[\"{key}\"] as? JsonPrimitive)?.contentOrNull?.let {{ {enum_type}.of(it) }}"),
+        (FieldKind::Enum { .. }, false) => format!("(values[\"{key}\"] as? JsonPrimitive)?.contentOrNull?.let {{ {}.of(it) }}", enum_type(field)),
         (_, false) => format!("(values[\"{key}\"] as? JsonPrimitive)?.contentOrNull"),
     }
 }
 
 fn type_name(model: &ModelSpec, relation: &RelationSpec) -> String {
-    format!("{}{}Edge", model.key.as_str(), pascal(&name(&relation.name)))
+    format!("{}{}Edge", model.key.as_str(), camel(&relation.name))
 }
 
 fn parameters(model: &ModelSpec, relation: &RelationSpec, decls: &[EnumDecl], swift: bool) -> (String, String) {
-    let columns = relation.by_columns.iter().map(|key| (key.as_str(), model.field(key).map(|field| field_type(field, swift)).unwrap_or("String".into())));
+    let columns = relation.by_columns.iter().map(|key| (key.as_str(), scope_column_type(model, key, swift)));
     let all: Vec<(String, String)> = columns.map(|(key, kind)| {
         let key = identifier(key, swift);
         (if swift { format!("_ {key}: {kind}") } else { format!("{key}: {kind}") }, key)

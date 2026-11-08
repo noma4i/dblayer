@@ -48,7 +48,10 @@ pub(super) fn literal(field: &FieldSpec, value: &Value, swift: bool, types: &[&F
     match (&field.kind, value) {
         (FieldKind::Scalar { kind: ScalarKind::Num }, Value::Number(number)) => format!("{:?}", number.as_f64().unwrap()),
         (FieldKind::Scalar { kind: ScalarKind::Int }, Value::Number(number)) => format!("{}{}", number, if swift { "" } else { "L" }),
-        (FieldKind::Scalar { kind: ScalarKind::Id }, _) => string_literal(value.as_str().map(str::to_string).unwrap_or_else(|| value.to_string()).as_str(), swift),
+        (FieldKind::Scalar { kind: ScalarKind::Id }, _) => string_literal(&match value.as_str() {
+            Some(text) => text.to_string(),
+            None => value.to_string(),
+        }, swift),
         (FieldKind::Enum { values }, Value::String(text)) => enum_literal(field, values, text, swift),
         (FieldKind::Scalar { .. }, Value::String(text)) => string_literal(text, swift),
         (FieldKind::Scalar { .. }, Value::Bool(flag)) => flag.to_string(),
@@ -69,7 +72,7 @@ pub(super) fn literal(field: &FieldSpec, value: &Value, swift: bool, types: &[&F
         }
         (FieldKind::Object, Value::Object(values)) if field.app_type.is_some() => {
             let target = types.iter().find(|candidate| candidate.app_type == field.app_type).unwrap();
-            let args = target.fields.iter().filter_map(|child| values.get(key_of(child)).map(|value| format!("{}{}{}", if swift { child.name.clone() } else { identifier(&child.name, false) }, if swift { ": " } else { " = " }, literal(child, value, swift, types)))).collect::<Vec<_>>().join(", ");
+            let args = target.fields.iter().flat_map(|child| values.get(key_of(child)).map(|value| format!("{}{}{}", if swift { child.name.clone() } else { identifier(&child.name, false) }, if swift { ": " } else { " = " }, literal(child, value, swift, types)))).collect::<Vec<_>>().join(", ");
             format!("{}({args})", target.app_type.as_ref().unwrap())
         }
         _ => json_literal(value, swift),

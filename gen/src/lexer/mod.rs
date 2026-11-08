@@ -165,6 +165,9 @@ fn lex_number(cursor: &mut Cursor, line: usize, column: usize) -> Result<Kind, P
         cursor.advance();
         let decimals = cursor.take_while(|character| character.is_ascii_digit());
         let value: f64 = format!("{digits}.{decimals}").parse().expect("digits form a float");
+        if !value.is_finite() {
+            return Err(ParseError::new(line, column, "a number must be finite"));
+        }
         return Ok(Kind::Float(if negative { -value } else { value }));
     }
     let unit_follows = cursor.peek(0) == Some('.') && cursor.peek(1).is_some_and(char::is_alphabetic);

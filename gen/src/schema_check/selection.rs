@@ -22,7 +22,7 @@ impl<'a> Run<'a> {
             let keys = node.associations.iter().map(|association| crate::build::association_key(association, &node.name)).collect();
             let fields: Vec<&AttributeDecl> = node.attributes.iter().collect();
             let mut covered = BTreeSet::new();
-            let selects: Vec<&'a Select> = node.scopes.iter().filter(|scope| scope.is_remote()).filter_map(|scope| self.element_select(scope)).collect();
+            let selects: Vec<&'a Select> = node.scopes.iter().filter(|scope| scope.is_remote()).flat_map(|scope| self.element_select(scope)).collect();
             self.check_fields(node, &fields, &element, &Scope { keys, top: true, ..Scope::inside(node.file, selects.clone()) }, &mut covered, &mut Vec::new());
             self.check_associations(node, &element, selects);
             self.list_unmodeled(node, remote, &element, &covered);

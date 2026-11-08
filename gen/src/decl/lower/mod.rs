@@ -165,7 +165,7 @@ fn path(cx: &mut Cx, node: &Node<Value>, what: &str) -> Option<Spanned<String>> 
 fn json_of(value: &Value) -> Json {
     match value {
         Value::Int(number) => Json::from(*number),
-        Value::Float(number) => Number::from_f64(*number).map_or(Json::Null, Json::Number),
+        Value::Float(number) => Json::Number(Number::from_f64(*number).expect("the lexer accepts finite numbers only")),
         Value::Bool(flag) => Json::Bool(*flag),
         Value::Nil => Json::Null,
         Value::Array(items) => Json::Array(items.iter().map(|item| json_of(&item.item)).collect()),
@@ -421,7 +421,7 @@ pub(crate) fn lower_calls(nodes: &[OperationNode], errors: &mut Vec<Found>) -> V
 /// The one `uploads do` block of the project: the steps of file uploads. A project with upload operations needs it, a project without them refuses it.
 pub(crate) fn lower_uploads(nodes: &[UploadsNode], models: &[ModelDecl], errors: &mut Vec<Found>) -> Option<dblayer::owners::write::upload::UploadOperations> {
     use dblayer::owners::write::upload::{MultipartOperations, UploadOperation, UploadOperations};
-    let uses = models.iter().flat_map(|model| model.operations.iter().filter_map(move |operation| operation.upload.map(|pos| (model.file, pos, operation.name.clone()))));
+    let uses = models.iter().flat_map(|model| model.operations.iter().flat_map(move |operation| operation.upload.map(|pos| (model.file, pos, operation.name.clone()))));
     let Some(first) = nodes.first() else {
         if let Some((file, pos, name)) = uses.into_iter().next() {
             errors.push((file, ParseError::new(pos.line, pos.column, format!("operation `{name}` has `upload: true`: declare the steps of the upload once in `uploads do ... end`"))));

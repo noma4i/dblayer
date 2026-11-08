@@ -38,3 +38,4 @@ mod upload_steps_tests;
 mod removed_by_tests;
 mod default_decisions_tests;
 mod refusal_tests;
+mod norm_tests;

@@ -128,6 +128,13 @@ impl Schema {
         }
     }
 
+    pub fn find_field(&self, owner: &str, name: &str) -> Option<Ty> {
+        match self.types.get(owner) {
+            Some(TypeKind::Fields(fields)) => fields.get(name).cloned(),
+            _ => None,
+        }
+    }
+
     pub fn input_fields(&self, owner: &str) -> Option<HashMap<String, Ty>> {
         self.input_fields_in_order(owner).map(|fields| fields.iter().cloned().collect())
     }

@@ -11,8 +11,7 @@ impl<'a> Run<'a> {
     pub(super) fn check_change_payloads(&mut self, node: &'a ModelDecl, nodes: &'a [ModelDecl]) {
         let Some(feed) = nodes.iter().find_map(|node| node.changes.first()) else { return };
         let operation = feed.subscription.as_str();
-        for change in node.changed_by.iter().filter(|change| change.payload.is_some()) {
-            let path = change.payload.as_deref().unwrap_or_default();
+        for (change, path) in node.changed_by.iter().flat_map(|change| change.payload.as_deref().map(|path| (change, path))) {
             let Some(event) = self.follow_operation(Spot { file: node.file, at: change.pos, label: "changes" }, operation, &feed.from.item) else {
                 self.fail(node.file, change.pos, format!("payload requires subscription document `{operation}`"));
                 continue;
@@ -178,7 +177,7 @@ impl<'a> Run<'a> {
         let operation = query_of(remote);
         let Some(declared) = self.operations.named.get(operation) else { return };
         let Some(connection) = self.root_select(remote) else { return };
-        let root = root_path(remote).or_else(|| declared.root.as_ref().map(|found| found.key.as_str())).unwrap_or_default();
+        let Some(root) = root_path(remote).or_else(|| declared.root.as_ref().map(|found| found.key.as_str())) else { return };
         let prefix: Vec<&str> = root.split('.').collect();
         self.follow_inside(Spot { file: node.file, at: from.pos, label: "cursor from" }, operation, &prefix, &[connection], &from.item);
     }

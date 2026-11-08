@@ -70,7 +70,8 @@ impl<'a> Run<'a> {
         let root = operation.root.as_ref()?;
         let path = root_path(remote).unwrap_or(&root.key);
         let keys: Vec<&str> = path.split('.').collect();
-        operations.follow(&[&operation.select], &keys).ok()?.selects.first().copied()
+        let Ok(followed) = operations.follow(&[&operation.select], &keys) else { return None };
+        followed.selects.first().copied()
     }
 
     pub(super) fn check_union_selection(&mut self, file: usize, attribute: &AttributeDecl, union: &str, variants: &[VariantDecl], select: &Select) {
@@ -94,7 +95,7 @@ impl<'a> Run<'a> {
         let interface = self.schema.is_interface(union);
         let members: Vec<String> = match self.schema.types.get(union) {
             Some(TypeKind::Union(members)) => members.clone(),
-            Some(TypeKind::Fields(_)) if interface => self.schema.implementers.get(union).cloned().unwrap_or_default(),
+            Some(TypeKind::Fields(_)) if interface => self.schema.implementers.get(union).cloned().expect("an interface has an implementers entry"),
             _ => return,
         };
         let declared: Vec<&str> = variants.iter().map(|variant| variant.type_name.as_str()).collect();
@@ -224,7 +225,7 @@ impl<'a> Run<'a> {
         let builtin = Schema::is_builtin_scalar(named);
         let structured = matches!(kind, Some(TypeKind::Fields(_) | TypeKind::Union(_))) || self.custom_fits(named, "object");
         let (word, of) = fit_word(attribute);
-        let word = if word == "list" { of.unwrap_or("string") } else { word };
+        let word = if word == "list" { of.expect("a list names its element kind") } else { word };
         match word {
             "string" => matches!(named, "String" | "ID") || self.custom_fits(named, "string"),
             "id" => matches!(named, "ID" | "String" | "Int") || self.custom_fits(named, "id"),

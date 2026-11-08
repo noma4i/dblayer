@@ -1,6 +1,7 @@
 use std::fmt::Write;
 
 use crate::enums::identifier;
+use crate::naming::camel;
 use crate::schema_check::{InputField, InputObject, Ty, TyKind};
 
 fn element(name: &str, swift: bool) -> String {
@@ -41,8 +42,7 @@ fn payload(field: &InputField, swift: bool) -> String {
 }
 
 pub(super) fn case_name(field: &InputField) -> String {
-    let mut letters = field.name.chars();
-    letters.next().map(|first| first.to_uppercase().chain(letters).collect()).unwrap_or_default()
+    camel(&field.name)
 }
 
 fn emit_swift_one_of(out: &mut String, input: &InputObject) {

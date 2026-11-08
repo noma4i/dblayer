@@ -41,13 +41,14 @@ pub struct Outcome {
 }
 
 pub fn check_schema(schema: &Schema, scalars: &Scalars, operations: &[PathBuf], files: &[String], nodes: &[ModelDecl], standalone: &[CallDecl]) -> Result<Outcome, Vec<FileError>> {
-    let failed = |file: &Path, message: String| vec![FileError { file: file.display().to_string(), error: ParseError::new(0, 0, message) }];
+    let failed = |file: &Path, message: String| vec![FileError { file: file.display().to_string(), error: ParseError::new(1, 1, message) }];
     let mut documents = Operations::default();
-    for path in operation_files(operations) {
+    for path in operation_files(operations).map_err(|(path, message)| failed(&path, message))? {
         documents.load(&path).map_err(|message| failed(&path, message))?;
     }
     if let Some(spread) = documents.missing_spreads().into_iter().next() {
-        return Err(vec![FileError { file: "operation documents".to_string(), error: ParseError::new(0, 0, format!("fragment `{spread}` is not in the operation documents")) }]);
+        let first = operations.first().expect("a missing fragment comes from a loaded document");
+        return Err(failed(first, format!("fragment `{spread}` is not in the operation documents")));
     }
     let mismatched = documents.check_against(schema);
     if !mismatched.is_empty() {
@@ -68,7 +69,7 @@ pub fn check_schema(schema: &Schema, scalars: &Scalars, operations: &[PathBuf], 
     found.dedup();
     if !found.is_empty() { return Err(found); }
     let idempotent_inputs = documents.named.iter().filter(|(_, operation)| operation.kind == "mutation")
-        .flat_map(|(name, operation)| operation.variables.iter().filter_map(move |(variable, ty)| {
+        .flat_map(|(name, operation)| operation.variables.iter().flat_map(move |(variable, ty)| {
             schema.input_fields(ty.name()).filter(|fields| fields.contains_key("clientMutationId"))
                 .map(|_| (name.clone(), variable.clone()))
         })).collect();
@@ -76,19 +77,25 @@ pub fn check_schema(schema: &Schema, scalars: &Scalars, operations: &[PathBuf], 
     Ok(Outcome { variables, notes: run.notes, idempotent_inputs })
 }
 
-fn operation_files(paths: &[PathBuf]) -> Vec<PathBuf> {
+fn operation_files(paths: &[PathBuf]) -> Result<Vec<PathBuf>, (PathBuf, String)> {
     let mut found = Vec::new();
     for path in paths {
-        match fs::read_dir(path) {
-            Ok(entries) => {
-                let mut inside: Vec<PathBuf> = entries.filter_map(|entry| entry.ok().map(|entry| entry.path())).filter(|entry| entry.extension().is_some_and(|extension| extension == "graphql")).collect();
-                inside.sort();
-                found.extend(inside);
-            }
-            Err(_) => found.push(path.clone()),
+        if !path.is_dir() {
+            found.push(path.clone());
+            continue;
         }
+        let entries = fs::read_dir(path).map_err(|error| (path.clone(), format!("cannot read the operation directory: {error}")))?;
+        let mut inside = Vec::new();
+        for entry in entries {
+            let entry = entry.map_err(|error| (path.clone(), format!("cannot read the operation directory: {error}")))?;
+            if entry.path().extension().is_some_and(|extension| extension == "graphql") {
+                inside.push(entry.path());
+            }
+        }
+        inside.sort();
+        found.extend(inside);
     }
-    found
+    Ok(found)
 }
 
 fn collect_declared<'a>(attributes: &'a [AttributeDecl], file: usize, declared: &mut Declared<'a>) {
@@ -198,7 +205,7 @@ impl<'a> Scope<'a> {
 }
 
 fn query_of(scope: &ScopeDecl) -> &str {
-    scope.query.as_ref().map(|query| query.operation.as_str()).unwrap_or_default()
+    scope.query.as_ref().map(|query| query.operation.as_str()).expect("a remote scope has a query")
 }
 
 fn root_path(scope: &ScopeDecl) -> Option<&str> {

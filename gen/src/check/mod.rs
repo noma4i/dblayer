@@ -73,7 +73,8 @@ fn fault_errors(nodes: &[ModelDecl], faults: &[dblayer::schema::ModelFault]) -> 
     faults
         .iter()
         .map(|fault| {
-            let (file, pos) = nodes.iter().find(|node| node.name == fault.model.as_str()).map_or((0, Pos::default()), |node| (node.file, node.pos));
+            let node = nodes.iter().find(|node| node.name == fault.model.as_str()).or_else(|| nodes.first()).expect("a fault belongs to a project with a model");
+            let (file, pos) = (node.file, node.pos);
             let hint = if matches!(fault.error, dblayer::schema::DeclarationError::TooManyColumns { .. }) { ". A union stores its variants in the columns of one table: declare fewer variants or fields, or split the model" } else { "" };
             at(file, pos, format!("model {}: {}{hint}", fault.model.as_str(), fault.error))
         })
@@ -215,13 +216,16 @@ fn check_operation(node: &ModelDecl, all: &[ModelDecl], operation: &OperationDec
         _ => {}
     }
     for refetch in &operation.refetch {
-        let target = refetch.model.as_deref().map_or(Some(node), |model| all.iter().find(|candidate| candidate.name == model));
+        let target = match refetch.model.as_deref() {
+            Some(model) => all.iter().find(|candidate| candidate.name == model).ok_or(model),
+            None => Ok(node),
+        };
         match target {
-            None => report(refetch.pos, format!("`refetch` names unknown model `{}`", refetch.model.as_deref().unwrap_or_default())),
-            Some(target) if !target.scopes.iter().any(|scope| scope.name == refetch.scope && scope.is_remote()) => {
+            Err(model) => report(refetch.pos, format!("`refetch` names unknown model `{model}`")),
+            Ok(target) if !target.scopes.iter().any(|scope| scope.name == refetch.scope && scope.is_remote()) => {
                 report(refetch.pos, format!("`refetch` names `{}`, which is not a scope with `query` of `{}`", refetch.scope, target.name));
             }
-            Some(_) => {}
+            Ok(_) => {}
         }
     }
     let mut refetched = HashSet::new();

@@ -2,7 +2,7 @@ use super::graphql::{Operations, Schema, Select, TypeKind};
 use crate::{FileError, ParseError};
 
 fn failure(file: &str, message: String) -> FileError {
-    FileError { file: file.to_string(), error: ParseError::new(0, 0, message) }
+    FileError { file: file.to_string(), error: ParseError::new(1, 1, message) }
 }
 
 impl Operations {

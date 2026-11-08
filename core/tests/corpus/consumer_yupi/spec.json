@@ -4353,7 +4353,7 @@
               },
               "merge": null,
               "name": "requires",
-              "nullable": false,
+              "nullable": true,
               "optional": false
             },
             {

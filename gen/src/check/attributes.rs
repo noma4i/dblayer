@@ -167,7 +167,9 @@ fn collect_types<'a>(attributes: &'a [AttributeDecl], file: usize, out: &mut Vec
                 }
                 for variant in variants {
                     out.push(TypeUse { name: &variant.type_name, pos: variant.pos, file, declares: variant.fields.is_some() });
-                    collect_types(variant.fields.as_deref().unwrap_or_default(), file, out);
+                    if let Some(fields) = &variant.fields {
+                        collect_types(fields, file, out);
+                    }
                 }
             }
         }

@@ -80,7 +80,7 @@ fn a_list_of_enum_values_is_checked_against_the_schema_enum_list() {
     for (case, fields, error) in [
         ("value the schema lacks", good.replace("[\"PRIMARY\", \"SECONDARY\"]", "[\"PRIMARY\", \"TERTIARY\"]"), "lists values TERTIARY that enum `ChatList` does not have"),
         ("not a list in the declaration", good.replace("[:enum], values: [\"PRIMARY\", \"SECONDARY\"]", ":enum, values: [\"PRIMARY\", \"SECONDARY\"]"), "does not fit"),
-        ("nullable list without null", good.replace(", null: true", ""), "is nullable in the schema"),
+        ("nullable list without null", good.replace(", null: true", ", null: false"), "is nullable in the schema"),
     ] {
         let errors = check(&fields).expect_err(case);
         assert!(errors.iter().any(|text| text.contains(error)), "{case}: {errors:?}");

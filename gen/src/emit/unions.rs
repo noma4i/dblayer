@@ -8,8 +8,8 @@ use crate::enums::EnumDecl;
 
 fn cases(declaration: &FieldSpec, swift: bool) -> Vec<(String, String, &str)> {
     let names: Vec<String> = declaration.fields.iter().map(|variant| variant.name.clone()).collect();
-    let rendered = EnumDecl::new(declaration.app_type.as_deref().unwrap_or_default(), &names).cases(swift);
-    declaration.fields.iter().zip(rendered).map(|(variant, case)| (case, variant.app_type.clone().unwrap_or_default(), variant.name.as_str())).collect()
+    let rendered = EnumDecl::new(declaration.app_type.as_deref().expect("a union has a type name"), &names).cases(swift);
+    declaration.fields.iter().zip(rendered).map(|(variant, case)| (case, variant.app_type.clone().expect("a variant has a type name"), variant.name.as_str())).collect()
 }
 
 pub(super) fn emit_swift_union(out: &mut String, declaration: &FieldSpec) {

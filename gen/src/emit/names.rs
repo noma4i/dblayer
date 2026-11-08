@@ -47,7 +47,7 @@ fn typed_fields<'a>(root: &'a FieldSpec, out: &mut Vec<&'a FieldSpec>) {
 
 fn declared_in_results(operations: &[OperationCall]) -> Vec<&FieldSpec> {
     let mut out = Vec::new();
-    operations.iter().filter_map(|operation| operation.result.as_ref()).for_each(|root| typed_fields(root, &mut out));
+    operations.iter().flat_map(|operation| operation.result.as_ref()).for_each(|root| typed_fields(root, &mut out));
     out
 }
 
@@ -78,7 +78,8 @@ fn sites(models: &[ModelSpec], operations: &[OperationCall], inputs: &SchemaType
         }
     }
     for declaration in declared_types(models).into_iter().chain(declared_in_results(operations)) {
-        found.push(Site { subject: declaration.app_type.clone().unwrap_or_default(), site: format!("type `{}`", declaration.app_type.as_deref().unwrap_or_default()), kind: "field", names: field_names(&declaration.fields), fixed: Vec::new(), rename: RENAME });
+        let type_name = declaration.app_type.clone().expect("a declared type has a name");
+        found.push(Site { site: format!("type `{type_name}`"), subject: type_name, kind: "field", names: field_names(&declaration.fields), fixed: Vec::new(), rename: RENAME });
     }
     for operation in operations {
         found.push(Site { subject: operation.name.clone(), site: format!("operation `{}` call", operation.name), kind: "parameter", names: operation.args.iter().map(|(name, _)| name.clone()).collect(), fixed: vec![ACCOUNT], rename: RENAME });
@@ -96,8 +97,8 @@ fn refusal(name: &str, fixed: &[&str]) -> Option<String> {
 }
 
 fn type_names(models: &[ModelSpec], operations: &[OperationCall], inputs: &SchemaTypes) -> Vec<(String, String)> {
-    let declared = declared_types(models).into_iter().chain(declared_in_results(operations)).filter_map(|declaration| declaration.app_type.clone());
-    let enums = enum_decls(models, operations, inputs).unwrap_or_default().into_iter().map(|declaration| declaration.name);
+    let declared = declared_types(models).into_iter().chain(declared_in_results(operations)).flat_map(|declaration| declaration.app_type.clone());
+    let enums = enum_decls(models, operations, inputs).expect("enum declarations were checked before the name check").into_iter().map(|declaration| declaration.name);
     models.iter().map(|model| model.key.as_str().to_string()).chain(declared).chain(enums).chain(inputs.inputs.iter().map(|input| input.name.clone())).map(|name| (name.clone(), name)).collect()
 }
 
