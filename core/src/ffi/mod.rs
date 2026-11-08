@@ -2,7 +2,6 @@ mod database;
 mod cable;
 mod receipt;
 #[cfg(test)]
-#[cfg(test)]
 pub(crate) async fn owners_drained(database: &Database) -> Result<(), DbError> {
     let owners = database.life.clone();
     database::blocking(move || { owners.barrier(); Ok(()) }).await
@@ -222,7 +221,6 @@ mod session_guards_tests;
 #[cfg(test)]
 mod open_layout_tests;
 #[cfg(test)]
-#[cfg(test)]
 mod executor_tests;
 #[cfg(test)]
 mod failure_tests;
@@ -239,7 +237,6 @@ mod snapshot_tests;
 #[cfg(test)]
 mod request_ids_tests;
 #[cfg(test)]
-#[cfg(test)]
 mod local_open_tests;
 #[cfg(test)]
 mod open_tests;
@@ -247,7 +244,6 @@ mod open_tests;
 mod write_calls_tests;
 #[cfg(test)]
 mod call_result_tests;
-#[cfg(test)]
 #[cfg(test)]
 mod read_load_tests;
 #[cfg(test)]

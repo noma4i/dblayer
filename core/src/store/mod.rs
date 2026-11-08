@@ -457,7 +457,6 @@ mod progress_tests;
 #[cfg(test)]
 mod boot_tests;
 #[cfg(test)]
-#[cfg(test)]
 mod file_ops_tests;
 #[cfg(test)]
 mod memory_tests;

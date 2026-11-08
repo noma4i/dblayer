@@ -424,6 +424,15 @@ for path in files:
         if "connectivity" in line.lower():
             findings.append(f"Z30 after open online has one source, the Network owner (P-NET-08): {path.relative_to(root)}:{number}: {line.strip()}")
 
+for path in sorted(root.rglob("mod.rs")):
+    if "target" in path.parts:
+        continue
+    previous = None
+    for number, line in enumerate(path.read_text().splitlines(), 1):
+        if line.strip() == "#[cfg(test)]" and previous == "#[cfg(test)]":
+            findings.append(f"Z31 one #[cfg(test)] per test module declaration: {path.relative_to(root)}:{number}")
+        previous = line.strip()
+
 if findings:
     print("zoo check found", len(findings), "problem(s):")
     for finding in findings:
