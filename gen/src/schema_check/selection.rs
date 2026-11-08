@@ -123,6 +123,11 @@ impl<'a> Run<'a> {
         };
         let Some(operation) = self.operations.named.get(document) else { return };
         for parameter in remote.parameters.iter().filter(|parameter| !linked.contains(&parameter.name.as_str()) && !parameter.ty.list) {
+            let variable = mapped(&parameter.name);
+            if let Some(declared) = operation.variables.get(&variable).filter(|declared| parameter.null && !declared.optional()) {
+                self.fail(node.file, parameter.pos, format!("scope `{}` param `{}` may be nil but the variable `${variable}` of `{document}` is `{}`", remote.name, parameter.name, declared.describe()));
+                continue;
+            }
             let kind = match &parameter.ty.base {
                 ParamBase::Bool => "Boolean".to_string(),
                 ParamBase::Int => "Int".to_string(),
@@ -135,7 +140,6 @@ impl<'a> Run<'a> {
                 }
                 _ => continue,
             };
-            let variable = mapped(&parameter.name);
             match operation.variables.get(&variable) {
                 None => self.fail(node.file, parameter.pos, format!("scope `{}` param `{}` is `{kind}` but operation `{document}` has no variable `${variable}`", remote.name, parameter.name)),
                 Some(declared) if declared.is_list() || declared.name() != kind => self.fail(node.file, parameter.pos, format!("scope `{}` param `{}` is `{kind}` but the variable `${variable}` of `{document}` is `{}`", remote.name, parameter.name, declared.describe())),

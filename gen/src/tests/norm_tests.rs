@@ -60,6 +60,7 @@ fn gen_parameter_column_default() {
     assert_eq!(preload("by_owner").keys().collect::<Vec<_>>(), ["ownerId"]);
     assert_eq!(preload("by_channel").keys().collect::<Vec<_>>(), ["channel"]);
     assert!(matches!(preload("by_channel")["channel"], PreloadChoice::Listed(_)));
+    assert!(crate::check::check_source("model Sample do\n  scope :by_channel do\n    parameter :channel, :string\n    query \"T\"\n    preload channel: [\"a\"]\n  end\nend\n").is_ok());
 }
 
 #[test]
@@ -82,8 +83,20 @@ fn gen_nullability_explicit_then_schema() {
     assert_eq!(nullable, [false, true, true]);
     let explicit = compile_note(&note_model("  attribute :text, :string, null: true\n")).unwrap();
     assert!(explicit.models[0].field("text").unwrap().nullable);
-    let parameter = parse_models("model Sample do\n  scope :feed do\n    parameter :kind, :string\n    parameter :owner, :string, null: true\n    query \"F\"\n  end\nend\n");
-    assert!(parameter.is_ok());
+    let compiled = |declared: &str, variable: &str| {
+        let directory = tempfile::tempdir().unwrap();
+        let file = directory.path().join("note.dbl");
+        let schema = directory.path().join("schema.graphql");
+        let queries = directory.path().join("queries");
+        fs::write(&file, format!("model Note do\n  attribute :text, :string\n  scope :all do\n    parameter :kind, :string{declared}\n    query \"Notes\"\n    response shape: :list\n  end\nend\n")).unwrap();
+        fs::write(&schema, "type Query { notes(kind: String): [Note!]! }\ntype Note { id: ID! text: String! }").unwrap();
+        fs::create_dir(&queries).unwrap();
+        fs::write(queries.join("notes.graphql"), format!("query Notes($kind: {variable}) {{ notes(kind: $kind) {{ id text }} }}")).unwrap();
+        compile_files(&[file], Some(&schema), &[queries])
+    };
+    let mismatch = compiled(", null: true", "String!").unwrap_err().remove(0);
+    assert!(mismatch.file.ends_with("note.dbl") && mismatch.error.line >= 1 && mismatch.error.message.contains("kind"), "{mismatch}");
+    assert!(compiled("", "String!").is_ok() && compiled("", "String").is_ok() && compiled(", null: true", "String").is_ok());
 }
 
 #[test]
@@ -167,4 +180,28 @@ fn gen_error_positions_exact() {
     }
     let infinite = compile_files(&[directory.path().join("huge.dbl")], None, &[]).unwrap_err().remove(0);
     assert_eq!((infinite.error.line, infinite.error.message.contains("finite")), (2, true), "{infinite}");
+}
+
+#[test]
+fn gen_operation_without_returns_raw() {
+    let declared = parse_all(&["operation :sign_out do\n  mutation \"SignOut\"\nend\n"]).unwrap();
+    assert!(declared.operations[0].result.is_none());
+    let swift = emit_swift(&declared.models, &declared.operations, &Default::default());
+    let kotlin = emit_kotlin(&declared.models, &declared.operations, &Default::default());
+    assert!(swift.contains("try await DB.call(\"SignOut\", variables: variables_, in: scope_)") && !swift.contains("SignOutResult"), "{swift}");
+    assert!(kotlin.contains("DBlayer.call(\"SignOut\", JsonObject(variables_), account)") && !kotlin.contains("SignOutResult"), "{kotlin}");
+}
+
+#[test]
+fn gen_refetch_own_model() {
+    let source = "model Sample do\n  scope :feed do\n    query \"F\"\n  end\n  operation :poke do\n    mutation \"Poke\"\n    optimistic false\n    refetch :feed\n  end\nend\n\nmodel Other do\n  scope :feed do\n    query \"G\"\n  end\n  operation :nudge do\n    mutation \"Nudge\"\n    optimistic false\n    refetch :feed, model: Sample\n  end\nend\n";
+    let models = crate::check::check_source(source).unwrap();
+    assert_eq!((models[0].actions[0].refetch.clone(), models[1].actions[0].refetch.clone()), (vec!["feed".to_string()], vec!["Sample.feed".to_string()]));
+}
+
+#[test]
+fn gen_association_key_not_in_schema() {
+    let model = "model Note do\n  attribute :text, :string\n  attribute :ownerId, :id\n  index :ownerId\n  belongs_to :owner, class_name: Note, foreign_key: :ownerId\n  scope :all do\n    query \"Notes\"\n    response shape: :list\n  end\nend\n";
+    let checked = compile_note(model);
+    assert!(checked.is_ok(), "{:?}", checked.err());
 }
