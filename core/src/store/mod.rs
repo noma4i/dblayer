@@ -314,7 +314,6 @@ impl Store {
             #[cfg(test)]
             require_unlocked_responses: std::sync::atomic::AtomicBool::new(false),
             #[cfg(test)]
-            #[cfg(test)]
             panic_reads: std::sync::atomic::AtomicU8::new(0),
             #[cfg(test)]
             after_network_check: Mutex::new(None),
