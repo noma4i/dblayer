@@ -6,7 +6,6 @@ use async_trait::async_trait;
 use serde_json::json;
 
 use super::rig_tests::{bound, Gate};
-use crate::ffi::tests::encrypted_tests::ThroughServer;
 use crate::ffi::tests::sealed_errors_tests::moment_spec;
 use crate::ffi::tests::session_guards_tests::{Rig as SessionRig, SOCIAL_BODY};
 use crate::ffi::upload_wire::WireUploadRequest;
@@ -17,6 +16,21 @@ use crate::owners::write::upload::UploadFile;
 fn effects(rig: &SessionRig, operation: &str) -> Vec<serde_json::Value> {
     rig.server.executed().into_iter().filter(|body| body["operationName"] == operation).collect()
 }
+
+const FEED: &str = "query Feed { moments { id text } }";
+
+/// The rows 42 and 43 come the way the app gets rows: the server answers the feed and the load of the epoch stores them.
+async fn load_rows(database: &Database) {
+    let load = database.begin_load(database.session_epoch(), "Moment".into(), Some("feed".into()), "{}".into()).unwrap();
+    bound(load.result()).await.unwrap();
+}
+
+async fn declare_feed(rig: &SessionRig, database: &Database) {
+    rig.server.register(FEED);
+    database.register_operations(json!([{"name": "Feed", "document": FEED, "rootPath": "moments"}]).to_string()).await.unwrap();
+}
+
+fn two_rows() -> serde_json::Value { json!([{"id": "42", "text": "clip"}, {"id": "43", "text": "clip"}]) }
 
 struct HeldPut { gate: Arc<Gate>, ended: Arc<tokio::sync::Notify> }
 
@@ -53,17 +67,19 @@ async fn a_round_running_at_the_session_exit_asks_for_the_job_of_the_next_epoch_
     let directory = tempfile::tempdir().unwrap();
     let source = directory.path().join("upload.mp4");
     std::fs::write(&source, b"abc").unwrap();
-    let database = Database::open(Config { path: None, data_version: None }, crate::ffi::specs(serde_json::to_string(&vec![moment_spec()]).unwrap()), crate::ffi::OpenPorts { transport: Some(Arc::new(HeldPut { gate, ended: Arc::new(tokio::sync::Notify::new()) })), encrypted: Some(EncryptedConfig { origin: origin().into(), server_key: public_key_der_b64().into(), pin: pin().into(), ..crate::transport::encrypted::tests::protocol_tests::config() }), credentials: Some(rig.credentials.clone()), http: Some(Arc::new(ThroughServer(rig.server.clone()))), endpoint: Some(crate::ffi::FAKE_ENDPOINT.into()), ..Default::default() }).await.unwrap();
+    let database = Database::open(Config { path: None, data_version: None }, crate::ffi::specs(serde_json::to_string(&vec![moment_spec()]).unwrap()), crate::ffi::OpenPorts { transport: Some(Arc::new(HeldPut { gate, ended: Arc::new(tokio::sync::Notify::new()) })), encrypted: Some(EncryptedConfig { origin: origin().into(), server_key: public_key_der_b64().into(), pin: pin().into(), ..crate::transport::encrypted::tests::protocol_tests::config() }), credentials: Some(rig.credentials.clone()), http: Some(Arc::new(super::upload_tests::UploadHttp(rig.server.clone(), two_rows()))), endpoint: Some(crate::ffi::FAKE_ENDPOINT.into()), ..Default::default() }).await.unwrap();
     let registered: Vec<_> = [("CreateBlob", "createBlob"), ("MakeMoment", "makeMoment"), ("InitMultipart", "initMultipart"), ("PresignParts", "presignParts"), ("CompleteMultipart", "completeMultipart"), ("AbortMultipart", "abortMultipart")].into_iter().map(|(name, root)| {
         let document = format!("mutation {name} {{ {root} {{ id }} }}");
         rig.server.register(&document);
         json!({"name": name, "document": document, "rootPath": root})
     }).collect();
     database.register_operations(json!(registered).to_string()).await.unwrap();
+    declare_feed(&rig, &database).await;
     database.set_online(true).unwrap();
     let jobs = Arc::new(Jobs::default());
     database.set_round_jobs(jobs.clone());
     bound(database.session_call("social".into(), SOCIAL_BODY.into())).await.unwrap();
+    load_rows(&database).await;
     let first = database.session_epoch();
     let file = || WireUploadRequest::of(&UploadFile::new(source.to_str().unwrap()));
     bound(database.upload(first, "Moment".into(), "42".into(), "upload".into(), file())).await.unwrap();
@@ -75,6 +91,7 @@ async fn a_round_running_at_the_session_exit_asks_for_the_job_of_the_next_epoch_
     bound(database.session_call("social".into(), SOCIAL_BODY.into())).await.unwrap();
     let second = database.session_epoch();
     assert_ne!(first, second);
+    load_rows(&database).await;
     bound(database.upload(second, "Moment".into(), "43".into(), "upload".into(), file())).await.unwrap();
     assert_eq!(jobs.0.lock().unwrap().len(), 1, "the running round of A asked for a second job");
     database.round_ended(7, first);
@@ -92,16 +109,18 @@ async fn an_active_and_a_queued_upload_end_at_the_exit_and_the_next_sign_in_runs
         let gate = Gate::new();
         let put_ended = Arc::new(tokio::sync::Notify::new());
         let directory = tempfile::tempdir().unwrap();
-        let database = Database::open(Config { path: None, data_version: None }, crate::ffi::specs(serde_json::to_string(&vec![moment_spec()]).unwrap()), crate::ffi::OpenPorts { transport: Some(Arc::new(HeldPut { gate: gate.clone(), ended: put_ended.clone() })), encrypted: Some(EncryptedConfig { origin: origin().into(), server_key: public_key_der_b64().into(), pin: pin().into(), ..crate::transport::encrypted::tests::protocol_tests::config() }), credentials: Some(rig.credentials.clone()), http: Some(Arc::new(ThroughServer(rig.server.clone()))), endpoint: Some(crate::ffi::FAKE_ENDPOINT.into()), ..Default::default() }).await.unwrap();
+        let database = Database::open(Config { path: None, data_version: None }, crate::ffi::specs(serde_json::to_string(&vec![moment_spec()]).unwrap()), crate::ffi::OpenPorts { transport: Some(Arc::new(HeldPut { gate: gate.clone(), ended: put_ended.clone() })), encrypted: Some(EncryptedConfig { origin: origin().into(), server_key: public_key_der_b64().into(), pin: pin().into(), ..crate::transport::encrypted::tests::protocol_tests::config() }), credentials: Some(rig.credentials.clone()), http: Some(Arc::new(super::upload_tests::UploadHttp(rig.server.clone(), two_rows()))), endpoint: Some(crate::ffi::FAKE_ENDPOINT.into()), ..Default::default() }).await.unwrap();
         let registered: Vec<_> = [("CreateBlob", "createBlob"), ("MakeMoment", "makeMoment"), ("InitMultipart", "initMultipart"), ("PresignParts", "presignParts"), ("CompleteMultipart", "completeMultipart"), ("AbortMultipart", "abortMultipart")].into_iter().map(|(name, root)| {
             let document = format!("mutation {name} {{ {root} {{ id }} }}");
             rig.server.register(&document);
             json!({"name": name, "document": document, "rootPath": root})
         }).collect();
         database.register_operations(json!(registered).to_string()).await.unwrap();
+        declare_feed(&rig, &database).await;
         database.set_online(true).unwrap();
         bound(database.session_call("social".into(), SOCIAL_BODY.into())).await.unwrap();
         rig.server.reply_with(json!({"createBlob": {"url": "https://upload", "signedId": "sid", "blobId": "bid"}, "makeMoment": {"id": "42", "text": "clip"}}));
+        load_rows(&database).await;
         let mut receipts = Vec::new();
         for id in ["42", "43"] {
             let source = directory.path().join(format!("{id}.mp4"));

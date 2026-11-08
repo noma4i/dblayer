@@ -296,6 +296,8 @@ pub struct QueuedOperation {
     pub stale: Vec<(String, String)>,
     /// The root row of the answer that landed (the real id of a `create`, the row an action returned).
     pub landed: Option<String>,
+    /// The row the landing batch shows: the value of the confirmed outcome, fixed by that batch.
+    pub shown: Option<crate::store::Row>,
     pub outcome: Option<OutboxOutcome>,
     /// The error of the batch `MarkFailed` that is in flight, and the error shown on the row.
     pub error: Option<String>,

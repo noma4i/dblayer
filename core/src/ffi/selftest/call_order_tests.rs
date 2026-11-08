@@ -88,3 +88,18 @@ async fn nodes_survives_the_cancel_of_an_earlier_nodes() {
     assert_eq!(requests(&rig, "ContainersByIds"), 1, "the second nodes sent a request of its own");
     rig.database.close_now();
 }
+
+/// boundary_node_read_epoch: a node whose request is held while the session ends gets the end of its epoch.
+#[tokio::test(flavor = "multi_thread")]
+async fn node_held_at_the_server_ends_with_its_epoch_and_stores_no_row_for_the_next_session() {
+    let rig = rig().await;
+    let epoch = rig.database.session_epoch();
+    let held = rig.world.hold_next("ContainerNode");
+    let reading = { let database = rig.database.clone(); rig.spawn(async move { database.node(epoch, "Container".into(), "node".into(), "k1".into(), true).await }) };
+    held.entered().await;
+    bound(rig.database.session_reset()).await.unwrap();
+    held.release();
+    let result = bound(reading).await.unwrap();
+    assert!(matches!(result, Err(DbError::Interrupted { .. } | DbError::NoSession { .. })), "{result:?}");
+    rig.database.close_now();
+}

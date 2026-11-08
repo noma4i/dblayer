@@ -103,10 +103,9 @@ impl Database {
         let shown = planned.shown.clone();
         if planned.noop {
             if self.db.spec(&model)?.is_memory() {
-                let renewal = IntentEffects { rows: vec![EffectRow { model: model.clone(), row_id: shown.to_string(), values: json!({ "id": shown.as_str() }).to_string() }], ..Default::default() };
+                let renewal = IntentEffects { rows: vec![EffectRow { model: model.clone(), row_id: shown.to_string(), values: json!({ "id": shown.as_str() }).to_string() }], shown: Some((model.clone(), shown.to_string())), ..Default::default() };
                 let waiter = self.life.local_write(epoch, model.clone(), LocalWriteKind::Model(renewal), row.to_string(), String::new(), self.now());
-                let (revision, _) = self.written(waiter, action, &model).await?;
-                let value = self.optimistic(&model, &shown)?;
+                let (revision, value) = self.written(waiter, action, &model).await?;
                 return Ok(receipt_of(epoch, model, None, revision, value, None, self.life.clone()));
             }
             let value = self.optimistic(&model, &shown)?;
@@ -222,9 +221,6 @@ impl Database {
         if receipt.epoch != held.epoch || receipt.model != held.model || receipt.operation != held.operation || receipt.revision != held.revision || receipt.optimistic_value != held.optimistic_value {
             return Err(DbError::Invalid { detail: "the receipt was changed".into() });
         }
-        if let Some(Ticket::Outbox(ticket)) = &held.ticket {
-            if let Some(kept) = crate::lock::lock(&self.outcomes).get(&(ticket.epoch, ticket.op_id, ticket.cycle_id)).cloned() { return Ok(kept); }
-        }
         if !self.admits(receipt.epoch) { return Ok(WireOperationOutcome::Interrupted); }
         match held.ticket.clone() {
             None => {
@@ -259,19 +255,8 @@ impl Database {
         let _ = self.await_life(self.life.operations_quiet(self.life.published().epoch)).await;
     }
 
-    /// The outcome of a receipt does not change: the first one is kept and given again.
+    /// The outcome of a receipt is the one the owner Outbox holds for its cycle: the value is the row its landing batch showed.
     async fn operation_outcome(&self, receipt: WireOperationReceipt, ticket: Receipt) -> Result<WireOperationOutcome, DbError> {
-        let key = (ticket.epoch, ticket.op_id, ticket.cycle_id);
-        let outcome = self.read_outcome(receipt, ticket).await?;
-        if matches!(outcome, WireOperationOutcome::Confirmed { .. } | WireOperationOutcome::Rejected { .. }) {
-            let mut kept = crate::lock::lock(&self.outcomes);
-            kept.retain(|(epoch, _, _), _| *epoch == key.0);
-            kept.insert(key, outcome.clone());
-        }
-        Ok(outcome)
-    }
-
-    async fn read_outcome(&self, receipt: WireOperationReceipt, ticket: Receipt) -> Result<WireOperationOutcome, DbError> {
         let answer = match self.await_life(self.life.operation_outcome(receipt.epoch, ticket.clone())).await {
             Ok(LifeReply::Outbox(OutboxAnswer::Outcome(outcome))) => outcome,
             Ok(LifeReply::Outbox(OutboxAnswer::Err(Fault::NoSession | Fault::Closed | Fault::Interrupted))) | Err(DbError::NoSession { .. } | DbError::Interrupted { .. } | DbError::Closed { .. }) => return Ok(WireOperationOutcome::Interrupted),
@@ -282,19 +267,15 @@ impl Database {
         };
         Ok(match answer {
             OutboxOutcome::Confirmed { result, .. } => {
-                let landed = match self.await_life(self.life.landed_row(receipt.epoch, ticket.op_id)).await {
-                    Ok(LifeReply::Outbox(OutboxAnswer::Resolved(row))) => id(&row).ok(),
-                    _ => None,
+                let shown = match self.await_life(self.life.landed_row(receipt.epoch, ticket.op_id)).await {
+                    Ok(LifeReply::Outbox(OutboxAnswer::Written { shown, .. })) => shown,
+                    Ok(LifeReply::Outbox(OutboxAnswer::Err(Fault::NoSession | Fault::Closed | Fault::Interrupted))) | Err(DbError::NoSession { .. } | DbError::Interrupted { .. } | DbError::Closed { .. }) => return Ok(WireOperationOutcome::Interrupted),
+                    Ok(LifeReply::Outbox(OutboxAnswer::Err(fault))) => return Err(refused(fault, "operation outcome")),
+                    Ok(_) => return Err(super::database::foreign_reply()),
+                    Err(error) => return Err(error),
                 };
-                let value = match (landed, receipt.optimistic_value.as_ref().map(|row| id(&row.id))) {
-                    (Some(row), _) => self.optimistic(&receipt.model, &row)?,
-                    (None, Some(Ok(row))) => {
-                        let current = self.resolved(receipt.epoch, &receipt.model, row).await?;
-                        self.optimistic(&receipt.model, &current)?
-                    }
-                    _ => None,
-                };
-                WireOperationOutcome::Confirmed { value: value.or(receipt.optimistic_value), answer_json: result }
+                let value = shown.map(|row| self.wire_of_row(&receipt.model, &row)).transpose()?;
+                WireOperationOutcome::Confirmed { value, answer_json: result }
             }
             OutboxOutcome::Rejected { error } | OutboxOutcome::Failed { error } => WireOperationOutcome::Rejected { failure: failure_of(&error) },
             OutboxOutcome::Discarded | OutboxOutcome::Interrupted => WireOperationOutcome::Interrupted,

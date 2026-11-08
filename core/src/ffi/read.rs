@@ -147,17 +147,26 @@ fn edit_of(edit: &Edit) -> Result<RowEdit, DbError> {
     })
 }
 
-fn event_row(wire: Option<&WireModel>, id: &str, value: Option<&serde_json::Value>) -> Option<Box<WireRow>> {
-    let (wire, data) = (wire?, value?.as_object()?);
-    let id = crate::identity::RowId::new(id).ok()?;
-    Some(Box::new(wire.row(&crate::store::Record { id, revision: 0, data: data.clone(), sync: Default::default() })))
+fn damaged_event(detail: &str) -> DbError { DbError::Internal { detail: format!("the payload of an event is damaged: {detail}") } }
+
+fn event_row(wire: Option<&WireModel>, id: &str, value: Option<&serde_json::Value>) -> Result<Option<Box<WireRow>>, DbError> {
+    let Some(value) = value.filter(|value| !value.is_null()) else { return Ok(None) };
+    let Some(wire) = wire else { return Ok(None) };
+    let data = value.as_object().ok_or_else(|| damaged_event("a row is not an object"))?;
+    let id = crate::identity::RowId::new(id).map_err(|error| damaged_event(&error.to_string()))?;
+    Ok(Some(Box::new(wire.row(&crate::store::Record { id, revision: 0, data: data.clone(), sync: Default::default() }))))
 }
 
-fn event_of(position: u64, payload: &str, wire: Option<&WireModel>) -> ReadValue {
-    let fields: serde_json::Value = serde_json::from_str(payload).unwrap_or(serde_json::Value::Null);
-    let text = |name: &str| fields.get(name).and_then(serde_json::Value::as_str).unwrap_or_default().to_string();
-    let id = text("id");
-    ReadValue::Event { position, area: text("area"), kind: text("kind"), before: event_row(wire, &id, fields.get("before")), after: event_row(wire, &id, fields.get("after")), id }
+fn event_of(position: u64, payload: &str, wire: Option<&WireModel>) -> Result<ReadValue, DbError> {
+    let fields: serde_json::Value = serde_json::from_str(payload).map_err(|error| damaged_event(&error.to_string()))?;
+    if !fields.is_object() { return Err(damaged_event("the payload is not an object")); }
+    let text = |name: &str| match fields.get(name) {
+        None | Some(serde_json::Value::Null) => Ok(String::new()),
+        Some(serde_json::Value::String(text)) => Ok(text.clone()),
+        Some(_) => Err(damaged_event(&format!("{name} is not text"))),
+    };
+    let (id, area, kind) = (text("id")?, text("area")?, text("kind")?);
+    Ok(ReadValue::Event { position, area, kind, before: event_row(wire, &id, fields.get("before"))?, after: event_row(wire, &id, fields.get("after"))?, id })
 }
 
 fn read_value(value: Value, wire: Option<&WireModel>) -> Result<ReadValue, DbError> {
@@ -174,7 +183,7 @@ fn read_value(value: Value, wire: Option<&WireModel>) -> Result<ReadValue, DbErr
         Value::State { revision, state } => ReadValue::State { revision, state: state_of(state) },
         Value::Ready => ReadValue::Ready,
         Value::Changes { revision, rows } => ReadValue::Changes { revision, rows: rows.into_iter().map(|(table, id)| ChangedRow { model: table.strip_prefix("row_").unwrap_or(&table).to_string(), id }).collect() },
-        Value::Event { position, payload } => event_of(position, &payload, wire),
+        Value::Event { position, payload } => event_of(position, &payload, wire)?,
         Value::Lost { first, last } => ReadValue::Lost { first, last },
         Value::Gap => ReadValue::Gap,
         Value::Status { revision, blob } => ReadValue::Status { revision, state: blob.state, progress: blob.progress, error: blob.error, local_url: blob.local_url, processing: blob.processing },

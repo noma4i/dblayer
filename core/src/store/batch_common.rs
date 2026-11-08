@@ -54,6 +54,7 @@ pub(super) fn apply_common(writer: &mut RowWrite<'_>, op: &StoreOp, index: usize
             }
         }
         StoreOp::Planned { effects } => results.push(super::intent_write::planned(writer, effects)?),
+        StoreOp::Show { .. } => {}
         StoreOp::Intent { op_id, model, row_id, action, payload, effects, origin } => {
             results.push(super::intent_write::intent(writer, *op_id, model, row_id, action, payload, effects)?);
             super::upload_ops::put_intent_origin(writer.connection, *op_id, origin)?;

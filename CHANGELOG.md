@@ -6,6 +6,8 @@
 
 - `UploadInfo` carries `localUrl` and `processing` on Swift and Kotlin.
 - `OperationFailure` carries `sessionCode`, `requestSize` and `requestLimit` on Swift and Kotlin.
+- A confirmed operation outcome carries the row its landing batch wrote.
+- A damaged model event ends the read with an internal error.
 
 ## 6.18.0 - 2026-11-08
 

@@ -179,6 +179,7 @@ impl OutboxState {
                 result: None,
                 stale: Vec::new(),
                 landed: None,
+                shown: None,
                 outcome: None,
                 error: None,
                 failed_errors: BTreeMap::new(),
@@ -229,6 +230,7 @@ impl OutboxState {
                 .chain(operation.landing.iter().map(|(model, rows)| StoreOp::Rows { model: model.clone(), rows: rows.clone() }))
                 .chain((!operation.stale.is_empty()).then(|| StoreOp::StaleFamilies { families: operation.stale.clone() }))
                 .chain([StoreOp::RemoveIntent { op_id }, StoreOp::RemoveAnswer { request_id: operation.request_id }])
+                .chain([StoreOp::Show { model: operation.op.model.clone(), row_id: operation.landed.clone().unwrap_or_else(|| operation.op.row_id.clone()) }])
                 .collect(),
             CommitKind::Rollback if operation.restore_element.is_some() => operation.restore_element.iter().map(|(table, key)| StoreOp::DiscardRestoreFailed { table: table.clone(), key: key.clone() }).chain([StoreOp::RemoveIntent { op_id }]).collect(),
             CommitKind::Rollback => [StoreOp::RollBack { op_id }, StoreOp::RemoveIntent { op_id }, StoreOp::RemoveAnswer { request_id: operation.request_id }]
@@ -549,7 +551,10 @@ impl StateOwner for Outbox {
             state.now = state.now.max(now.0);
         }
         if let OutboxInput::Landed { op_id, reply } = input {
-            let answer = state.ops.get(&op_id).and_then(|operation| operation.landed.clone()).map_or(OutboxAnswer::Err(Fault::NotFound), OutboxAnswer::Resolved);
+            let answer = state.ops.get(&op_id).map_or(OutboxAnswer::Err(Fault::NotFound), |operation| match &operation.outcome {
+                Some(OutboxOutcome::Confirmed { revision, .. }) => OutboxAnswer::Written { revision: *revision, shown: operation.shown.clone() },
+                _ => OutboxAnswer::Err(Fault::NotFound),
+            });
             OutboxState::reply(&mut fx, reply, answer);
             return fx;
         }

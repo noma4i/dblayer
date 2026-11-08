@@ -21,14 +21,14 @@ use crate::owners::write::upload::{UploadFile, MEBIBYTE};
 #[derive(Default)]
 struct Puts(Mutex<Vec<(u64, u64)>>);
 
-struct UploadHttp(Arc<FakeServer>);
+pub(super) struct UploadHttp(pub(super) Arc<FakeServer>, pub(super) serde_json::Value);
 
 #[async_trait]
 impl crate::ffi::FakeHttp for UploadHttp {
     async fn post(&self, path: String, body: String, purpose: NetworkPurpose) -> Result<crate::ffi::EncryptedReply, DbError> {
         let request = decrypt_request(&body).unwrap();
         if request["body"]["operationName"] == "Feed" {
-            return Ok(crate::ffi::EncryptedReply { status: 200, body: seal_response(&request, request["sequence"].as_i64(), json!({"data":{"moments":[]}})) });
+            return Ok(crate::ffi::EncryptedReply { status: 200, body: seal_response(&request, request["sequence"].as_i64(), json!({"data":{"moments":self.1.clone()}})) });
         }
         crate::ffi::FakeHttp::post(&ThroughServer(self.0.clone()), path, body, purpose).await
     }
@@ -49,11 +49,22 @@ fn executed(rig: &SessionRig, operation: &str) -> Vec<serde_json::Value> {
 }
 
 async fn opened(rig: &SessionRig, puts: Arc<Puts>) -> Arc<Database> {
-    opened_with_model(rig, puts, moment_spec()).await
+    opened_with_model(rig, puts, moment_spec(), json!([])).await
 }
 
-async fn opened_with_model(rig: &SessionRig, puts: Arc<Puts>, model: crate::schema::ModelSpec) -> Arc<Database> {
-    let database = Database::open(Config { path: None, data_version: None }, crate::ffi::specs(serde_json::to_string(&vec![model]).unwrap()), crate::ffi::OpenPorts { transport: Some(puts), encrypted: Some(EncryptedConfig { origin: origin().into(), server_key: public_key_der_b64().into(), pin: pin().into(), ..crate::transport::encrypted::tests::protocol_tests::config() }), credentials: Some(rig.credentials.clone()), http: Some(Arc::new(UploadHttp(rig.server.clone()))), endpoint: Some(crate::ffi::FAKE_ENDPOINT.into()), ..Default::default() }).await.unwrap();
+/// The row 42 comes the way the app gets rows: the server answers the feed and the load stores it.
+async fn opened_with_row(rig: &SessionRig, puts: Arc<Puts>) -> Arc<Database> {
+    let database = opened_with_model(rig, puts, moment_spec(), json!([{"id": "42", "text": "clip"}])).await;
+    let document = "query Feed { moments { id text } }";
+    rig.server.register(document);
+    database.register_operations(json!([{"name":"Feed", "document":document, "rootPath":"moments"}]).to_string()).await.unwrap();
+    let load = database.begin_load(database.session_epoch(), "Moment".into(), Some("feed".into()), "{}".into()).unwrap();
+    bound(load.result()).await.unwrap();
+    database
+}
+
+async fn opened_with_model(rig: &SessionRig, puts: Arc<Puts>, model: crate::schema::ModelSpec, feed: serde_json::Value) -> Arc<Database> {
+    let database = Database::open(Config { path: None, data_version: None }, crate::ffi::specs(serde_json::to_string(&vec![model]).unwrap()), crate::ffi::OpenPorts { transport: Some(puts), encrypted: Some(EncryptedConfig { origin: origin().into(), server_key: public_key_der_b64().into(), pin: pin().into(), ..crate::transport::encrypted::tests::protocol_tests::config() }), credentials: Some(rig.credentials.clone()), http: Some(Arc::new(UploadHttp(rig.server.clone(), feed))), endpoint: Some(crate::ffi::FAKE_ENDPOINT.into()), ..Default::default() }).await.unwrap();
     let registered: Vec<_> = [("CreateBlob", "createBlob"), ("MakeMoment", "makeMoment"), ("InitMultipart", "initMultipart"), ("PresignParts", "presignParts"), ("CompleteMultipart", "completeMultipart"), ("AbortMultipart", "abortMultipart")].into_iter().map(|(name, root)| {
         let document = format!("mutation {name} {{ {root} {{ id }} }}");
         rig.server.register(&document);
@@ -78,7 +89,7 @@ async fn a_send_with_a_file_joins_a_loaded_create_window() {
     let rig = SessionRig::new();
     let mut model = moment_spec();
     model.relations.iter_mut().find(|relation| relation.name == "feed").unwrap().joins_created = true;
-    let database = opened_with_model(&rig, Arc::new(Puts::default()), model).await;
+    let database = opened_with_model(&rig, Arc::new(Puts::default()), model, json!([])).await;
     let document = "query Feed { moments { id text } }";
     rig.server.register(document);
     database.register_operations(json!([{"name":"Feed", "document":document, "rootPath":"moments"}]).to_string()).await.unwrap();
@@ -104,7 +115,7 @@ fn request(path: &std::path::Path) -> WireUploadRequest { WireUploadRequest::of(
 async fn a_small_file_uploads_in_one_step_and_its_mutation_carries_the_signed_id() {
     let rig = SessionRig::new();
     let puts = Arc::new(Puts::default());
-    let database = opened(&rig, puts.clone()).await;
+    let database = opened_with_row(&rig, puts.clone()).await;
     let directory = tempfile::tempdir().unwrap();
     let source = directory.path().join("clip.mp4");
     std::fs::write(&source, b"abc").unwrap();
@@ -123,7 +134,7 @@ async fn a_small_file_uploads_in_one_step_and_its_mutation_carries_the_signed_id
 async fn a_large_file_uploads_in_parts_and_completes_before_its_mutation() {
     let rig = SessionRig::new();
     let puts = Arc::new(Puts::default());
-    let database = opened(&rig, puts.clone()).await;
+    let database = opened_with_row(&rig, puts.clone()).await;
     let directory = tempfile::tempdir().unwrap();
     let source = directory.path().join("long.mp4");
     std::fs::File::create(&source).unwrap().set_len(11 * MEBIBYTE).unwrap();
@@ -143,7 +154,7 @@ async fn a_large_file_uploads_in_parts_and_completes_before_its_mutation() {
 async fn a_cancelled_upload_sends_nothing() {
     let rig = SessionRig::new();
     let puts = Arc::new(Puts::default());
-    let database = opened(&rig, puts.clone()).await;
+    let database = opened_with_row(&rig, puts.clone()).await;
     database.set_online(false).unwrap();
     let directory = tempfile::tempdir().unwrap();
     let source = directory.path().join("clip.mp4");

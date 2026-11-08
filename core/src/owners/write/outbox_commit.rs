@@ -66,6 +66,7 @@ impl OutboxState {
                     fx.push(Effect::Run(OutboxEffect::Stale { families: operation.stale.clone(), revision }));
                 }
                 let result = self.ops.get(&op_id).and_then(|operation| operation.result.clone());
+                if let Some(operation) = self.ops.get_mut(&op_id) { operation.shown = shown; }
                 self.finish(op_id, OutboxOutcome::Confirmed { revision, result }, true, fx);
             }
             (CommitKind::Rollback, Stage::RollingBack(why)) => {

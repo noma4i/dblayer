@@ -136,6 +136,8 @@ pub enum StoreOp {
     Requeue { op_id: u64 },
     /// A `create` with a temporary id landed: the row `temp` becomes `real` with its references and membership.
     Swap { model: String, temp: String, real: String },
+    /// The row the batch answers with: the Store reads it in the transaction of the batch and replies with it.
+    Show { model: String, row_id: String },
     /// The rows, membership, tombstones and touches of a call that has no operation (a local model, an action without a mutation): final at once.
     Planned { effects: IntentEffects },
     /// A file for a field of a row: the bytes go to the directory of the files or to the table, the row gets the descriptor.
