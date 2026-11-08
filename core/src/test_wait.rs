@@ -281,3 +281,9 @@ pub(crate) fn permutations<T: Clone>(items: &[T]) -> Vec<Vec<T>> {
         permutations(&rest).into_iter().map(move |mut tail| { tail.insert(0, first.clone()); tail })
     }).collect()
 }
+
+/// The orders of `events` in which every pair `(first, second)` of `before` keeps its order: the causal filter of a permutation test.
+pub(crate) fn orders_of<T: Copy + PartialEq>(events: &[T], before: &[(T, T)]) -> Vec<Vec<T>> {
+    let at = |order: &[T], event: T| order.iter().position(|found| *found == event);
+    permutations(events).into_iter().filter(|order| before.iter().all(|(first, second)| at(order, *first) < at(order, *second))).collect()
+}

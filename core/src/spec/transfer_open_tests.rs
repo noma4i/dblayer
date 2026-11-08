@@ -1,5 +1,6 @@
 //! Owner-level tests of the owner `Transfer`: the opening: `Restored`, `RegisterOperations`, `RestoreReady` and the class of every restored row.
 
+use crate::test_wait::permutations;
 use std::collections::BTreeMap;
 
 use super::transfer_harness::*;

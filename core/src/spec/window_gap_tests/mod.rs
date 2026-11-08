@@ -256,7 +256,7 @@ impl Twin {
                 self.post(w::WindowsInput::Response { request: *request, attempt: *attempt, page, now: self.now });
             }
             Input::TransportError { request, attempt, failure } => {
-                self.post(w::WindowsInput::Failure { request: *request, attempt: *attempt, error: RequestError { message: "e".to_string(), class: class_of(*failure), source: None } });
+                self.post(w::WindowsInput::Failure { request: *request, attempt: *attempt, error: RequestError { class: class_of(*failure), failure: crate::ffi::DbError::Network { detail: "e".into() } } });
             }
             Input::MarkerAnswer { request, attempt, marker } => {
                 let page = AnswerPage::marked(w::Marker { sequence: marker.sequence, values: [("revision".to_string(), marker.revision), ("count".to_string(), marker.count)].into() });

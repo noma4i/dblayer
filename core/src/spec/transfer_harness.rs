@@ -560,14 +560,4 @@ impl Twin {
     pub fn quiet(out: &Out) -> bool { out.runs.is_empty() && out.batches.is_empty() && out.outbox.is_empty() && out.rounds.is_empty() && out.timers == 0 }
 }
 
-/// Every ordering of `items`.
-pub fn permutations<T: Clone>(items: &[T]) -> Vec<Vec<T>> {
-    if items.len() <= 1 { return vec![items.to_vec()]; }
-    (0..items.len()).flat_map(|at| {
-        let mut rest = items.to_vec();
-        let first = rest.remove(at);
-        permutations(&rest).into_iter().map(move |mut tail| { tail.insert(0, first.clone()); tail })
-    }).collect()
-}
-
 pub fn refusal() -> String { crate::owners::write::failure::of_graphql("refused".into(), None) }

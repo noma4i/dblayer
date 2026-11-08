@@ -416,3 +416,64 @@ fn a_job_that_starts_with_nothing_unfinished_ends_at_once() {
     let (runs, _) = step(&mut state, RoundsInput::RoundStarted { request_id, round_id: 5, epoch: 1 });
     assert_eq!(ended_jobs(&runs), vec![5]);
 }
+
+/// The two ways a round ends by itself (D-86): the last transfer of a running round goes idle, or a job starts when nothing is unfinished. Both leave the state at none.
+fn ended_by_itself(prefix: usize) -> RoundsState {
+    let mut state = state(1);
+    if prefix == 0 {
+        running(&mut state, 1, 5);
+        let (runs, _) = step(&mut state, RoundsInput::Idle { epoch: 1, transfer_id: 10 });
+        assert_eq!(ended_jobs(&runs), vec![5]);
+    } else {
+        let request_id = requested(&mut state, 1, &[10]);
+        step(&mut state, RoundsInput::Idle { epoch: 1, transfer_id: 10 });
+        let (runs, _) = step(&mut state, RoundsInput::RoundStarted { request_id, round_id: 5, epoch: 1 });
+        assert_eq!(ended_jobs(&runs), vec![5]);
+    }
+    assert_eq!(state.round, Round::None, "the round that ended its job is none");
+    state
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum After {
+    Needed,
+    Ended,
+    Started,
+}
+
+/// P-XFER-42 (D-193, xfer_round_reuse_after_idle): after the round ended its own job, a new need gets a new job in every order of the late callbacks of the old round, and the old round never changes the new request.
+#[test]
+fn xfer_round_reuse_after_idle() {
+    for prefix in 0..2 {
+        for order in crate::test_wait::permutations(&[After::Needed, After::Ended, After::Started]) {
+            let mut state = ended_by_itself(prefix);
+            for step_name in &order {
+                let (runs, sends) = match step_name {
+                    After::Needed => step(&mut state, RoundsInput::Needed { epoch: 1, ids: vec![20] }),
+                    After::Ended => step(&mut state, RoundsInput::RoundEnded { round_id: 5, epoch: 1 }),
+                    After::Started => step(&mut state, RoundsInput::RoundStarted { request_id: 1, round_id: 5, epoch: 1 }),
+                };
+                let case = format!("prefix {prefix}, order {order:?}, step {step_name:?}");
+                assert_eq!(sends.len(), 0, "{case}");
+                match step_name {
+                    After::Needed => assert_eq!((jobs(&runs), ended_jobs(&runs)), (vec![(2, 1)], Vec::<u32>::new()), "{case}"),
+                    After::Ended => assert!(runs.is_empty(), "{case}"),
+                    After::Started => assert_eq!(ended_jobs(&runs), vec![5], "{case}"),
+                }
+            }
+            assert_eq!(state.round, Round::Requested { epoch: 1, request_id: 2 }, "the new need holds its request in {order:?}");
+        }
+    }
+}
+
+/// xfer_round_started_duplicate (D-193): the repeated start of the running identity changes nothing; a start that differs in the round id ends only its own job.
+#[test]
+fn xfer_round_started_duplicate() {
+    let mut state = state(1);
+    running(&mut state, 1, 5);
+    let running_round = state.round;
+    let (duplicate, _) = step(&mut state, RoundsInput::RoundStarted { request_id: 1, round_id: 5, epoch: 1 });
+    assert_eq!((duplicate.len(), state.round), (0, running_round), "the duplicate ends no job");
+    let (other, _) = step(&mut state, RoundsInput::RoundStarted { request_id: 1, round_id: 6, epoch: 1 });
+    assert_eq!((ended_jobs(&other), state.round), (vec![6], running_round), "a foreign round id ends only its own job");
+}

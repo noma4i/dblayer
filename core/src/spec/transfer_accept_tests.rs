@@ -99,6 +99,24 @@ fn xfer_accept_batch_invalid() {
     assert_eq!(Twin::fault(&out, 10), Some(Fault::NoSession));
 }
 
+/// xfer_accept_batch_invalid (D-196): the size of a batch has one predicate; the owner refuses min-1 and max+1 without a write, and accepts min and max. The call of the platform asks the same predicate before it plans the rows.
+#[test]
+fn xfer_accept_batch_size_domain() {
+    let joint = joint();
+    let keys: Vec<String> = (0..=joint.maximum + 1).map(|index| format!("Moment:r{index}:upload")).collect();
+    for count in [joint.minimum - 1, joint.minimum, joint.maximum, joint.maximum + 1] {
+        let inside = count >= joint.minimum && count <= joint.maximum;
+        assert_eq!(crate::owners::write::transfer::batch_size_admitted((joint.minimum, joint.maximum), count), inside, "{count} items");
+        let mut twin = Twin::new();
+        let items: Vec<_> = keys.iter().take(count).map(|key| item(key, 2)).collect();
+        let out = twin.post(TransferInput::AcceptBatch { joint: Box::new(super::transfer_harness::joint()), epoch: EPOCH, items, reply: 9, now: Time(0) });
+        match inside {
+            true => assert_eq!(Twin::fault(&out, 9), None, "{count} items are accepted"),
+            false => assert_eq!((Twin::fault(&out, 9), out.writes()), (Some(Fault::Invalid), 0), "{count} items are refused without a write"),
+        }
+    }
+}
+
 #[test]
 fn xfer_accepting_committed() {
     let mut twin = Twin::new();

@@ -127,3 +127,19 @@ fn win_prop_nowait_second_epoch_orders() {
         }
     }
 }
+
+/// win_loading_error (P-BND-04, D-195): the window ends with the typed failure of the request as it came: a source-less failure is no `Storage`.
+#[test]
+fn win_loading_error_keeps_the_type_of_the_failure() {
+    use crate::ffi::DbError;
+    use crate::owners::contract::{ErrorClass, RequestError};
+    let key = WindowKey { model: "Item".into(), name: "items".into() };
+    for failure in [DbError::Invalid { detail: "bad".into() }, DbError::Storage { detail: "disk".into() }, DbError::Dropped { detail: "gone".into() }, DbError::Runtime { detail: "task".into() }, DbError::Interrupted { detail: "epoch".into() }] {
+        let mut state = state();
+        no_wait(&mut state);
+        let _ = Windows::step(&mut state, WindowsInput::WindowRead { key: key.clone(), read_id: 1, result: Ok(None) });
+        let _ = Windows::step(&mut state, WindowsInput::Pinned { request_id: 1, base_revision: 12 });
+        let effects = Windows::step(&mut state, WindowsInput::Failure { request: 1, attempt: 1, error: RequestError { class: ErrorClass::Permanent, failure: failure.clone() } });
+        assert_eq!(outcome_of(&effects), Some(WindowOutcome::Failed { failure: failure.clone() }), "{failure:?}");
+    }
+}

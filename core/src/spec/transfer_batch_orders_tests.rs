@@ -1,5 +1,6 @@
 //! Orders of the inputs of the owner `Transfer` for the batches: the copies, the files and the removals of the elements.
 
+use crate::test_wait::permutations;
 use serde_json::Value;
 
 use super::transfer_harness::*;

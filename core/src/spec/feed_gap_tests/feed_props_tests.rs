@@ -324,7 +324,7 @@ fn feed_prop_stale_connection() {
 fn feed_drain_vs_cancel_orders() {
     let ends = [Input::Dropped { to: To::Draining }, Input::Ended { to: To::Draining }, Input::ChannelLost { to: To::Draining, dropped: None }, Input::Drain { own: true }];
     let closes = [Input::Closing, Input::Online(false), minus("Chat"), Input::FrameOpened { to: To::Active, counter: Counter::Replayed, events: Vec::new() }];
-    for (close, order) in closes.iter().flat_map(|close| crate::spec::transfer_harness::permutations(&ends).into_iter().map(move |order| (close, order))) {
+    for (close, order) in closes.iter().flat_map(|close| crate::test_wait::permutations(&ends).into_iter().map(move |order| (close, order))) {
         let mut twin = live();
         twin.step(close.clone());
         for end in &order {

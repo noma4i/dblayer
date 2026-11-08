@@ -1,4 +1,7 @@
 mod app_tests;
+mod receipt_snapshot_tests;
+mod secret_read_tests;
+mod typed_outcome_tests;
 mod bridge_command_tests;
 mod bridge_groups_tests;
 mod bridge_load_tests;

@@ -7,17 +7,13 @@ use crate::owners::contract::ReplyId;
 use crate::owners::write::outbox::OutboxOutcome;
 use crate::owners::write::transfer::{StoredTransfer, TransferAnswer, TransferEffect, TransferId, TransferInput, TransferStage, TransferTick};
 use crate::runtime::Time;
+use crate::test_wait::{orders_of, permutations};
 use crate::store::files::Location;
 use crate::transport::NetworkPurpose;
 
 const KEY: &str = "Moment:r1:upload";
 const OTHER: &str = "Moment:r2:upload";
 const THIRD: &str = "Moment:r3:upload";
-
-pub(super) fn orders_of<T: Copy + PartialEq>(events: &[T], before: &[(T, T)]) -> Vec<Vec<T>> {
-    let at = |order: &[T], event: T| order.iter().position(|found| *found == event);
-    permutations(events).into_iter().filter(|order| before.iter().all(|(first, second)| at(order, *first) < at(order, *second))).collect()
-}
 
 pub(super) fn commit_if_pending(twin: &mut Twin) -> Out { if twin.has_pending() { twin.commit() } else { Out::default() } }
 

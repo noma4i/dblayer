@@ -115,7 +115,7 @@ fn error_of(error: &CallError) -> Fail {
         CallError::Dropped => Fail::Dropped,
         CallError::InvalidResponse => Fail::InvalidResponse,
         CallError::Interrupted => Fail::Interrupted,
-        CallError::Storage => panic!("the Calls table does not read Published"),
+        CallError::Storage | CallError::Failed(_) => panic!("the Calls table does not read Published"),
     }
 }
 

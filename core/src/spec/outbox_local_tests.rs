@@ -272,7 +272,7 @@ fn out_prop_local_write_orders() {
     use Event::*;
     let stale = RejectReason::StaleGeneration { models: vec!["Moment".into()], generation: NEW_GENERATION };
     let outcomes: [Vec<(u64, Option<RejectReason>)>; 3] = [vec![(1, None)], vec![(1, Some(RejectReason::NoSession))], vec![(1, Some(stale)), (2, None)]];
-    let orders: Vec<_> = super::transfer_harness::permutations(&[Write, Outcome, Closing, EpochEnded, ModelsReset]).into_iter().filter(|order| order.iter().position(|e| *e == Write) < order.iter().position(|e| *e == Outcome)).collect();
+    let orders: Vec<_> = crate::test_wait::permutations(&[Write, Outcome, Closing, EpochEnded, ModelsReset]).into_iter().filter(|order| order.iter().position(|e| *e == Write) < order.iter().position(|e| *e == Outcome)).collect();
     assert_eq!(orders.len(), 60);
     for outcome in outcomes {
         for order in &orders {

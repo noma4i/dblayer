@@ -287,6 +287,8 @@ pub struct FeedState {
     confirmed: BTreeSet<Channel>,
     /// Models given `ModelReady` on the active connection.
     announced: BTreeSet<String>,
+    /// Readers that joined a model whose channels were not all confirmed: each owes one `ModelReady` at the next readiness of its model.
+    waiting: BTreeSet<SubscriptionId>,
     /// Models that owe a `ModelGap` at their next readiness: a break came before their channels were confirmed.
     gapped: BTreeSet<String>,
     channel_attempts: BTreeMap<Channel, u32>,

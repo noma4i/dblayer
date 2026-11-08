@@ -1,5 +1,7 @@
 //! Owner-level tests of the owner `Transfer`: the multipart uploads of removed transfers (`orphans`), the names of copies, the first start of a small file and the restart of a multipart upload.
 
+use crate::owners::contract::RejectReason;
+use crate::test_wait::permutations;
 use super::transfer_harness::*;
 use crate::owners::write::transfer::{TransferId, TransferInput, TransferStage};
 
@@ -313,4 +315,51 @@ fn xfer_singleton_row_upload() {
     twin.commit();
     let (reply, out) = twin.outcome(failed, 1);
     assert_eq!(out.replies(reply), vec![TransferAnswer::Outcome(OutboxOutcome::Failed { error: error.into() }, None)], "the error and its extensions reach the outcome");
+}
+
+fn minted_due(twin: &mut Twin, upload_id: &str) -> Out {
+    let attempt_id = twin.state().minted_attempt(upload_id).expect("the write of the minted id is owed");
+    twin.post(TransferInput::Tick { now: crate::runtime::Time(1), kind: crate::owners::write::transfer::TransferTick::Minted { upload_id: upload_id.into(), attempt_id } })
+}
+
+/// xfer_minted_write_storage, xfer_minted_write_retry, xfer_minted_write_committed (P-XFER-41, D-192): the Store refuses the write of the id of a live transfer. The debt stays, the write goes again with the current row, and the id is durable after Committed.
+#[test]
+fn xfer_minted_write_storage() {
+    let mut twin = Twin::new();
+    let id = twin.uploading(KEY, 3);
+    twin.online(false);
+    let out = minted(&mut twin, id, "u1");
+    assert_eq!(out.writes(), 1);
+
+    let refused = twin.reject(RejectReason::Storage("disk".into()));
+    assert_eq!((refused.timers, refused.orphan_aborts().len(), refused.orphans_written().len(), twin.t(id).upload_id.as_deref()), (1, 0, 0, Some("u1")), "the debt is kept and scheduled, nothing is aborted: {refused:?}");
+    assert!(minted(&mut twin, id, "u1").runs.is_empty(), "the same id again is no new debt");
+
+    let again = minted_due(&mut twin, "u1");
+    assert_eq!(again.writes(), 1, "the write goes again");
+    twin.commit();
+    assert_eq!(twin.state().minted_attempt("u1"), None, "Committed settles the debt");
+    let (_, discarded) = twin.discard(KEY);
+    assert_eq!(discarded.orphans_written(), vec![("u1".to_string(), KEY.to_string())], "the removal carries the orphan of the durable id");
+}
+
+/// xfer_minted_write_storage, xfer_minted_write_retry (P-XFER-41, D-192): the id of a removed transfer is aborted only after its orphan record is durable. A refused write is repeated, and the abort comes after Committed of the repeat.
+#[test]
+fn xfer_minted_write_storage_late() {
+    let mut twin = Twin::new();
+    let id = twin.uploading(KEY, 3);
+    twin.discard(KEY);
+    twin.commit();
+    let out = minted(&mut twin, id, "u1");
+    assert_eq!((out.orphans_written(), out.orphan_aborts().len()), (vec![("u1".to_string(), KEY.to_string())], 0));
+
+    let refused = twin.reject(RejectReason::Storage("disk".into()));
+    assert_eq!((refused.timers, refused.orphan_aborts().len()), (1, 0), "no abort before the orphan is durable: {refused:?}");
+
+    let again = minted_due(&mut twin, "u1");
+    assert_eq!((again.orphans_written(), again.orphan_aborts().len()), (vec![("u1".to_string(), KEY.to_string())], 0), "the same record is written again");
+    let committed = twin.commit();
+    assert_eq!(committed.orphan_aborts(), vec!["u1".to_string()], "the abort goes once the record is durable");
+    let refused_abort = twin.post(TransferInput::AbortDone { upload_id: "u1".into(), answered: false });
+    assert_eq!(refused_abort.orphans_removed().len(), 0, "an unanswered abort keeps the record");
 }

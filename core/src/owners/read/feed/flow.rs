@@ -18,7 +18,7 @@ impl FeedState {
                 self.held.push(accepted);
             }
             Mode::Live if self.active_connection() == Some(connection) && self.subscribed.contains(channel) => {
-                let ready = self.announced.contains(&event.model);
+                let ready = self.model_is_ready(&event.model);
                 let accepted = self.accept(event);
                 if ready {
                     self.seat(vec![accepted], fx);
@@ -34,12 +34,13 @@ impl FeedState {
         if self.mode != Mode::Live || self.active_connection() != Some(connection) || !self.subscribed.contains(&channel) || !self.confirmed.insert(channel.clone()) {
             return;
         }
-        let regapped: Vec<String> = self.models_of(&channel).into_iter().filter(|model| self.announced.contains(model) && self.gapped.remove(model)).collect();
+        let regapped: Vec<String> = self.models_of(&channel).into_iter().filter(|model| self.announced.contains(model) && self.model_is_ready(model) && self.gapped.remove(model)).collect();
         for model in &regapped {
             fx.push(Fx::ModelGap { model: model.clone() });
         }
         self.stale_gap(&regapped, fx);
         self.announce_ready(fx);
+        self.release_recovered(fx);
     }
 
     /// The server closed one channel: without an error the channel subscribes again by the backoff, with an error its models leave `want`.
@@ -64,7 +65,7 @@ impl FeedState {
             self.announced.remove(&model);
             self.gapped.remove(&model);
             let removed = self.want.remove(&model).unwrap_or_default();
-            removed.iter().for_each(|id| { self.scoped.remove(id); });
+            removed.iter().for_each(|id| { self.scoped.remove(id); self.waiting.remove(id); });
             ids.extend(removed.into_iter().filter(|id| self.streams.remove(id)));
         }
         self.subscribed.remove(&channel);
@@ -233,7 +234,11 @@ impl FeedState {
                 if new {
                     self.announce_ready(fx);
                 } else if stream && self.announced.contains(&model) {
-                    fx.push(Fx::ModelReady { model, id: Some(id) });
+                    if self.model_is_ready(&model) {
+                        fx.push(Fx::ModelReady { model, id: Some(id) });
+                    } else {
+                        self.waiting.insert(id);
+                    }
                 }
             }
             _ => {}
@@ -246,6 +251,7 @@ impl FeedState {
             return;
         }
         self.streams.remove(&id);
+        self.waiting.remove(&id);
         let scoped = self.scoped.remove(&id).is_some();
         if !ids.is_empty() {
             if scoped && self.mode == Mode::Live {

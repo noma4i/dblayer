@@ -8,6 +8,13 @@
 - `OperationFailure` carries `sessionCode`, `requestSize` and `requestLimit` on Swift and Kotlin.
 - A confirmed operation outcome carries the row its landing batch wrote.
 - A damaged model event ends the read with an internal error.
+- A closed database answers `Closed` from every call before it reads the arguments.
+- A no-op write answers with the row and the revision of one snapshot.
+- A failed window, a call and a task of the executor keep the type of their failure.
+- A query or a cable connect with a missing secret ends with `StateLost` and creates no secret.
+- A refused write of a multipart upload id is repeated before the upload is aborted.
+- A round that ended its job starts a new job at the next need.
+- A late start of an old upload job leaves the network of the running job on Android.
 
 ## 6.18.0 - 2026-11-08
 

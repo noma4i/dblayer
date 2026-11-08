@@ -3,6 +3,8 @@ use crate::owners::read::windows::{Goal, WindowKey, Windows, WindowsInput, Windo
 use crate::owners::store::StoreWriter;
 use crate::runtime::{Address, StateOwner};
 
+use crate::test_wait::permutations;
+
 const NOW: i64 = 1_000_000;
 
 fn state() -> WindowsState {
@@ -12,15 +14,6 @@ fn state() -> WindowsState {
 fn key() -> WindowKey { WindowKey { model: "Item".into(), name: "items".into() } }
 
 fn load(id: u64) -> WindowsInput { WindowsInput::Load { key: key(), id, goal: Goal::First, force: false, store_revision: 0, now: NOW } }
-
-fn permutations(items: &[u64]) -> Vec<Vec<u64>> {
-    if items.len() <= 1 { return vec![items.to_vec()]; }
-    (0..items.len()).flat_map(|index| {
-        let mut rest = items.to_vec();
-        let head = rest.remove(index);
-        permutations(&rest).into_iter().map(move |mut tail| { tail.insert(0, head); tail })
-    }).collect()
-}
 
 /// boundary_load_cancel_orders (P-BND-01): whatever the order in which the loads of reserved calls arrive, the window registers their interests in the order of the ids.
 #[test]

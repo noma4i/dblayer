@@ -1,6 +1,7 @@
 use super::*;
 
 mod close_tests;
+mod closed_boundary_tests;
 mod close_load_tests;
 pub(crate) mod lifecycle_tests;
 pub(crate) mod database_tests;

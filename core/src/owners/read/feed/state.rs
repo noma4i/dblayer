@@ -17,6 +17,7 @@ impl FeedState {
             subscribed: BTreeSet::new(),
             confirmed: BTreeSet::new(),
             announced: BTreeSet::new(),
+            waiting: BTreeSet::new(),
             gapped: BTreeSet::new(),
             channel_attempts: BTreeMap::new(),
             slots: BTreeMap::new(),
@@ -319,6 +320,7 @@ impl FeedState {
     pub(super) fn begin_connection(&mut self, gap: bool, fx: &mut Vec<Fx>) {
         self.confirmed.clear();
         self.announced.clear();
+        self.waiting.clear();
         self.subscribed.clear();
         self.channel_attempts.clear();
         self.gapped = if gap { self.want.keys().cloned().collect() } else { BTreeSet::new() };
@@ -371,6 +373,18 @@ impl FeedState {
             self.announced.insert(model.clone());
         }
         let (mine, other): (Vec<FeedEvent>, Vec<FeedEvent>) = std::mem::take(&mut self.held).into_iter().partition(|event| ready.contains(&event.model));
+        self.held = other;
+        self.seat(mine, fx);
+    }
+
+    /// The models announced before whose channels are all confirmed again: the readers that joined during the recovery get their `ModelReady` once, then the frames `held` for them sit.
+    pub(super) fn release_recovered(&mut self, fx: &mut Vec<Fx>) {
+        let readers: Vec<(String, SubscriptionId)> = self.want.iter().filter(|(model, _)| self.announced.contains(*model) && self.model_is_ready(model)).flat_map(|(model, ids)| ids.iter().filter(|id| self.waiting.contains(id)).map(|id| (model.clone(), *id))).collect();
+        for (model, id) in readers {
+            self.waiting.remove(&id);
+            fx.push(Fx::ModelReady { model, id: Some(id) });
+        }
+        let (mine, other): (Vec<FeedEvent>, Vec<FeedEvent>) = std::mem::take(&mut self.held).into_iter().partition(|event| self.announced.contains(&event.model) && self.model_is_ready(&event.model));
         self.held = other;
         self.seat(mine, fx);
     }

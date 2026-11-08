@@ -88,19 +88,34 @@ fn load_on_thread(client: &Arc<Held>) -> std::thread::JoinHandle<Result<String, 
     std::thread::spawn(move || client.credential())
 }
 
+fn no_credential() -> TransportError { TransportError::Session { code: crate::transport::SessionCode::NoCredential, detail: "the call needs a session and the database has none".into() } }
+
 #[test]
-fn concurrent_credential_loads_mint_one_credential() {
+fn concurrent_reads_of_a_missing_secret_mint_nothing() {
     let rig = rig(Mode::BlockInGet);
     let first = load_on_thread(&rig.client);
     recv_within(&rig.entered);
     let second = load_on_thread(&rig.client);
     rig.release.send(()).unwrap();
 
-    let (first, second) = (join_within(first).unwrap(), join_within(second).unwrap());
+    let (first, second) = (join_within(first), join_within(second));
 
-    assert_eq!(first, second);
-    assert_eq!(rig.slot.sets.load(Ordering::SeqCst), 1);
-    assert_eq!(session_digest(&rig.db), Some(digest_of(&first)));
+    assert_eq!((first, second), (Err(no_credential()), Err(no_credential())));
+    assert_eq!((rig.slot.sets.load(Ordering::SeqCst), session_digest(&rig.db)), (0, None), "the read path creates no secret and writes no digest");
+}
+
+#[test]
+fn a_missing_secret_of_a_stored_session_is_lost_state_and_keeps_the_session() {
+    let rig = rig(Mode::BlockInGet);
+    rig.release.send(()).unwrap();
+    {
+        let inner = rig.db.lock();
+        session_state::start(&inner.connection, &digest_of("kept-secret")).unwrap();
+    }
+    let lost = TransportError::Session { code: crate::transport::SessionCode::StateLost, detail: "the stored session has no secret".into() };
+
+    assert_eq!(rig.client.credential(), Err(lost));
+    assert_eq!((rig.slot.sets.load(Ordering::SeqCst), session_digest(&rig.db)), (0, Some(digest_of("kept-secret"))), "the stored digest stays");
 }
 
 #[test]
@@ -134,6 +149,8 @@ fn sess_prop_credential_in_store() {
     }
     let slot = Arc::new(Counting { memory: MemoryCredentials::default(), gets: AtomicUsize::new(0), clears: AtomicUsize::new(0) });
     let client = Held::new(slot.clone(), Store::open_models(None, Vec::new(), None).map(std::sync::Arc::new).unwrap());
+    slot.memory.set("stored-secret").unwrap();
+    session_state::start(&client.db.lock().connection, &digest_of("stored-secret")).unwrap();
 
     let first = client.credential().unwrap();
     let second = client.credential().unwrap();

@@ -1,5 +1,5 @@
 use super::*;
-use crate::spec::transfer_harness::permutations;
+use crate::test_wait::permutations;
 
 // Orders of the independent inputs of a window (P-WIN-*): every order that keeps the causality is played on the twin, the observable of each trace is asserted against the table.
 

@@ -1,7 +1,9 @@
 //! Owner-level tests of the channels of `Feed` (feed.md, D-69): the owner on `DetScheduler` with models that read several channels.
 //! Names are the `Test` column of the spec. A model is ready once every channel of it is confirmed on the active connection.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
+
+use crate::test_wait::orders_of;
 
 use crate::owners::contract::{Committed, Online};
 use crate::owners::read::deliveries::Deliveries;
@@ -149,6 +151,8 @@ impl Rig {
     fn handshake(&mut self) -> Vec<String> { self.post(FeedInput::HandshakeDone { connection_id: FIRST, key_id: 7 }) }
 
     fn confirm(&mut self, channel: &str) -> Vec<String> { self.post(FeedInput::ChannelConfirmed { connection_id: FIRST, channel: channel.into() }) }
+
+    fn end(&mut self, channel: &str) -> Vec<String> { self.post(FeedInput::ChannelEnded { connection_id: FIRST, channel: channel.into(), failed: false }) }
 
     fn event(&mut self, channel: &str, model: &str, payload: &str) -> Vec<String> {
         self.post(FeedInput::Event { connection_id: FIRST, channel: channel.into(), event: FramedEvent { model: model.into(), payload: payload.into(), reread: StaleKeys::none(), refused: false } })
@@ -481,5 +485,57 @@ fn feed_prop_chan_ready_after_all() {
         assert!(first.is_empty(), "not ready after one of two channels: {first:?}");
         assert_eq!(second, ["modelready:1"]);
         assert!(rig.confirm(order[1]).is_empty(), "a repeated confirmation is no second ready");
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum Recovery {
+    EndA,
+    EndB,
+    ConfirmA,
+    ConfirmB,
+    EventA,
+    WantSecond,
+}
+
+/// P-FEED-23 (D-191): after the loss of channels the model is ready again only when all its channels are confirmed. Until then an event is held and a new reader gets no `ModelReady`. At that step the gap is given once, the held event commits and the new reader is ready once.
+#[test]
+fn feed_prop_chan_ready_after_recovery_orders() {
+    use Recovery::*;
+    let orders = orders_of(&[EndA, EndB, ConfirmA, ConfirmB, EventA, WantSecond], &[(EndA, ConfirmA), (EndB, ConfirmB)]);
+    assert_eq!(orders.len(), 180);
+    for order in orders {
+        let mut rig = Rig::new();
+        rig.want("Chat", CHAT);
+        rig.handshake();
+        rig.confirm("A");
+        rig.confirm("B");
+        let (mut down, mut held, mut waiting, mut second) = (BTreeSet::new(), 0usize, false, 0usize);
+        for step in &order {
+            let before = down.is_empty();
+            let words = match step {
+                EndA => { down.insert("A"); rig.end("A") }
+                EndB => { down.insert("B"); rig.end("B") }
+                ConfirmA => { down.remove("A"); rig.confirm("A") }
+                ConfirmB => { down.remove("B"); rig.confirm("B") }
+                EventA => { if !before { held += 1; } rig.event("A", "Chat", "e") }
+                WantSecond => { waiting = true; rig.want("Chat", POST) }
+            };
+            let after = down.is_empty();
+            let recovered = !before && after;
+            let commits = words.iter().filter(|word| *word == "commit").count();
+            let gaps = words.iter().filter(|word| word.starts_with("modelgap")).count();
+            let readied = words.iter().filter(|word| *word == &format!("modelready:{POST}")).count();
+            let expected_commits = usize::from(*step == EventA && before) + if recovered { std::mem::take(&mut held) } else { 0 };
+            assert_eq!(commits, expected_commits, "commits at {step:?} in {order:?}");
+            assert_eq!(gaps > 0, recovered, "the gap comes once the last channel is confirmed, at {step:?} in {order:?}: {words:?}");
+            if recovered { assert!(words.iter().position(|word| word.starts_with("modelgap")) < words.iter().position(|word| word == "commit") || commits == 0, "the gap comes before the held event in {order:?}: {words:?}"); }
+            let expected_ready = usize::from(waiting && after);
+            assert_eq!(readied, expected_ready, "the new reader is ready once and only when all channels are confirmed, at {step:?} in {order:?}");
+            second += readied;
+            if readied > 0 { waiting = false; }
+            assert!(!words.contains(&format!("modelready:{CHAT}")), "the first reader is not ready twice in {order:?}");
+        }
+        assert_eq!(second, 1, "the new reader gets one ready in {order:?}");
     }
 }

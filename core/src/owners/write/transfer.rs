@@ -242,6 +242,9 @@ impl TransferState {
         fx.push(Effect::Schedule { id, after: std::time::Duration::ZERO, input: TransferInput::Tick { now: self.now, kind: TransferTick::Expire } });
     }
 
+    #[cfg(test)]
+    pub fn minted_attempt(&self, upload_id: &str) -> Option<AttemptId> { self.minted.get(upload_id).map(|debt| debt.attempt_id) }
+
     /// The Store refused the write of a minted `upload_id`: the debt stays and the write goes again after the backoff.
     pub(super) fn owe_minted(&mut self, pending: &Pending, fx: &mut Fx) {
         let owed = match (&pending.orphan, pending.ids.first().and_then(|id| self.transfers.get(id))) {

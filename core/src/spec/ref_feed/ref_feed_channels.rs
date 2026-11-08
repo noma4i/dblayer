@@ -162,7 +162,7 @@ impl Chan {
                     return Some(out);
                 }
                 *self.position.entry(model.clone()).or_default() += 1;
-                if self.mode == Mode::Live && self.confirmed.contains(&channel) {
+                if self.mode == Mode::Live && self.complete(&model, &self.confirmed) {
                     out.push(Out::Commit);
                 } else {
                     self.held.push(model);
