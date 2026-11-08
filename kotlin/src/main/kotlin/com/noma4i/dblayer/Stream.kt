@@ -134,7 +134,6 @@ class Projected<Model : DBModel>(val stream: ValueStream, decoder: ModelDecoder<
 
     fun close() {
         reading.cancel()
-        stream.close()
     }
 }
 
@@ -165,7 +164,6 @@ class ProjectedCount(val stream: ValueStream, scope: CoroutineScope) {
 
     fun close() {
         reading.cancel()
-        stream.close()
     }
 }
 
