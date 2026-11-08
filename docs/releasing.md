@@ -37,7 +37,7 @@ Single run rule: one release run per checkout. `release.sh` holds the lock direc
 
 `check_consumers.sh` makes a fresh worktree of the consumer repository from the ref of each lane (default `master`; a missing ref fails with its name) and runs the lane command in it. The commands live in the consumer repository. The script never reads or writes shared library caches and removes its trees when it ends.
 
-Required environment: `CONSUMER_REPO` (the consumer checkout), `CONSUMER_IOS_COMMAND` (iOS lane) and `CONSUMER_ANDROID_COMMAND` (Android lane). The script names every missing variable in its error. Optional: `CONSUMER_IOS_REF`, `CONSUMER_ANDROID_REF`, `CONSUMER_WORK_ROOT`, `BUILD_SLOT`, `CONSUMER_LANE_LIMIT` (seconds per lane, default 300). A lane past the limit is killed, exits 124 and its log ends with `TIMEOUT <limit> lane <name>`.
+Required environment: `CONSUMER_REPO` (the consumer checkout), `CONSUMER_IOS_COMMAND` (iOS lane) and `CONSUMER_ANDROID_COMMAND` (Android lane). The script names every missing variable in its error. `CONSUMER_LANES` (default `ios android`) names the app lanes a release requires; the receipt records the required lanes under `consumer_lanes_required`, so a release checked on one lane says so. Optional: `CONSUMER_IOS_REF`, `CONSUMER_ANDROID_REF`, `CONSUMER_WORK_ROOT`, `BUILD_SLOT`, `CONSUMER_LANE_LIMIT` (seconds per lane, default 300). A lane past the limit is killed, exits 124 and its log ends with `TIMEOUT <limit> lane <name>`.
 
 A lane command receives `DBLAYER_PACKAGE` (local Swift package), `DBLAYER_MAVEN` (staged Maven directory), `DBLAYER_GEN` (staged generator), `DBLAYER_VERSION` and `DBLAYER_STAGE`. Only exit code 0 is a pass. `scripts/check_release_modes.sh` tests the refusals with stub commands.
 

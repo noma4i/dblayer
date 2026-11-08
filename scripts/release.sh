@@ -70,6 +70,8 @@ bash scripts/check_legacy.sh check || fail "check_legacy failed"
 # The app suites run when the release touches the library boundary or its build and test inputs. RELEASE_CONSUMERS=always forces them. No setting skips them.
 consumer_boundary='^(core/src/(lifecycle|ffi|session|sync|store)/|gen/|swift/|kotlin/|Cargo\.toml$|scripts/(build_|generate_|release\.sh|check_sequences|check_consumers))'
 consumers=required
+consumer_lanes="${CONSUMER_LANES:-ios android}"
+for lane in $consumer_lanes; do case "$lane" in ios | android) ;; *) fail "CONSUMER_LANES names an unknown lane: $lane" ;; esac; done
 if [ "${RELEASE_CONSUMERS:-}" != always ]; then
   changed="$(git diff --name-only "$previous_tag"..HEAD)" || fail 'cannot list files changed since the previous tag'
   grep -Eq "$consumer_boundary" <<< "$changed" || consumers=not-required
@@ -172,14 +174,16 @@ write_package > "$tmp/Package.swift"
 /bin/rm -f "$stage/sequences.tsv" "$stage/consumers.tsv" "$stage/RECEIPT.json"
 bash scripts/check_sequences.sh "$stage" --manifest "$manifest" || fail 'sequence suites are red or incomplete: no tag'
 if [ "$consumers" = required ]; then
-  bash scripts/check_consumers.sh "$stage" --version "$version" --maven "$artifact_dir" --package-swift "$tmp/Package.swift" || fail 'app suites are red or incomplete: no tag'
+  lane_args=()
+  for lane in $consumer_lanes; do lane_args+=(--lane "$lane"); done
+  bash scripts/check_consumers.sh "$stage" --version "$version" --maven "$artifact_dir" --package-swift "$tmp/Package.swift" "${lane_args[@]}" || fail 'app suites are red or incomplete: no tag'
 fi
 require_source
-python3 -I - "$stage" "$version" "$manifest" "$consumers" "$source_sha" "$run_id" <<'RECEIPT' || fail 'lane reports are missing or incomplete: no tag'
+python3 -I - "$stage" "$version" "$manifest" "$consumers" "$source_sha" "$run_id" "$consumer_lanes" <<'RECEIPT' || fail 'lane reports are missing or incomplete: no tag'
 import hashlib, json, sys
 from pathlib import Path
 
-stage, version, manifest, consumers, commit, run_id = Path(sys.argv[1]), sys.argv[2], sys.argv[3], sys.argv[4], sys.argv[5], sys.argv[6]
+stage, version, manifest, consumers, commit, run_id, required_consumer_lanes = Path(sys.argv[1]), sys.argv[2], sys.argv[3], sys.argv[4], sys.argv[5], sys.argv[6], sys.argv[7].split()
 def refuse(message):
     sys.exit(f"release: {message}")
 def rows(name):
@@ -215,7 +219,7 @@ for lane, row in lanes("sequences.tsv", ["core", "swift", "kotlin"], 7).items():
     sequences[lane] = {"listed": listed, "passed": passed, "rc": row[3]}
 consumer_lanes = {}
 if consumers == "required":
-    for lane, row in lanes("consumers.tsv", ["ios", "android"], 5).items():
+    for lane, row in lanes("consumers.tsv", required_consumer_lanes, 5).items():
         if row[1] != "0":
             refuse(f"consumers lane {lane} is red: rc={row[1]}")
         consumer_lanes[lane] = {"rc": row[1]}
@@ -227,6 +231,7 @@ receipt = {
     "sequences": sequences,
     "consumers": consumers,
     "consumer_lanes": consumer_lanes,
+    "consumer_lanes_required": required_consumer_lanes,
 }
 (stage / "RECEIPT.json").write_text(json.dumps(receipt, indent=2, sort_keys=True) + "\n")
 RECEIPT
