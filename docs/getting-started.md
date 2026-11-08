@@ -84,7 +84,7 @@ The native build fingerprint includes both deployment versions.
 | `bash scripts/build_kotlin.sh --abis` | Local development: explicitly builds all 4 Android ABIs and Kotlin bindings |
 | `bash scripts/build_kotlin.sh --host` | Builds the host debug library and Kotlin bindings for JNA unit tests |
 | `bash scripts/build_kotlin.sh --jvm` | Builds a universal macOS release library for JVM without changing Kotlin bindings |
-| `bash scripts/generate_kotlin_bindings.sh --bindgen <uniffi-bindgen> --library <libdblayer.a or .so> --config <uniffi.toml> --out <directory>` | Generates `dblayer.kt` from a built library and inserts `ProcessOwner.claim()`. Needs no DBlayer checkout layout: copy this one file and pass the paths. `build_kotlin.sh` uses it too |
+| `bash scripts/generate_kotlin_bindings.sh --bindgen <uniffi-bindgen> --library <libdblayer.a or .so> --config <uniffi.toml> --out <directory>` | Generates `dblayer.kt` from a built library. The `uniffi-bindgen` of this repository (`bindgen/`) makes every edit of the output, including `ProcessOwner.claim()`. Needs no DBlayer checkout layout: copy this one file and pass the paths. `build_kotlin.sh` uses it too |
 | `bash scripts/check_android_artifacts.sh --release` | Checks release ABI files and the fingerprint. Use `--abis` to check all 4 ABIs |
 | `bash scripts/check_zoo.sh` | Finds duplicate mechanisms and names (see [architecture](architecture.md)) |
 | `bash scripts/check_docs.sh` | Checks that paths mentioned in README and docs exist |

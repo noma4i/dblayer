@@ -77,7 +77,12 @@ class Query<Model : DBModel>(
     fun offset(count: Int) = copy(offsetCount = count)
 
     internal fun spec(refreshOnConnect: Boolean = false) =
-        QuerySpec(modelName, relation, params.jsonText(), conditions.map { it.tree }, orders, limitCount?.toUInt(), offsetCount?.toUInt(), refreshOnConnect)
+        QuerySpec(modelName, relation, params.jsonText(), conditions.map { it.tree }, orders, window(limitCount, "limit"), window(offsetCount, "offset"), refreshOnConnect)
+
+    private fun window(count: Int?, name: String): UInt? {
+        if (count != null && count < 0) throw DbException.Invalid("$name $count is outside 0..${UInt.MAX_VALUE}")
+        return count?.toUInt()
+    }
 
     /** The rows of this query read from storage once. It sends no request and keeps no stream. */
     suspend fun read(account: AccountScope? = null): List<Model> = onAccount(account) { database, epoch -> database.readQuery(epoch, spec()).map(decoder::read) }

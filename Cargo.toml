@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["core", "gen"]
+members = ["core", "gen", "bindgen"]
 exclude = ["core/vendor/statig_macro"]
 
 [profile.release]

@@ -68,11 +68,10 @@ if [ "$part" = --jvm ]; then
 fi
 
 if [ "$part" = --host ]; then
-  cargo build --manifest-path "$root/core/Cargo.toml" --features cli
+  cargo build --manifest-path "$root/core/Cargo.toml"
   library="$root/target/debug/libdblayer.dylib"
-else
-  bash "$root/scripts/build_bindgen.sh"
 fi
+bash "$root/scripts/build_bindgen.sh"
 
 if [ "$part" != --host ]; then
   ndk_bin="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/darwin-x86_64/bin"

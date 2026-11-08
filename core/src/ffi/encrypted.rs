@@ -88,11 +88,6 @@ pub(super) fn wire(
     Ok(Wiring { transport: Some(encrypted_transport.clone()), encrypted: Some(Encrypted { exchange, secret, transport: encrypted_transport }), cable: Some(cable), seal: Some(Arc::new(seal)) })
 }
 
-#[uniffi::export(rust, foreign)]
-pub trait RetryProgressListener: Send + Sync {
-    fn changed(&self, snapshot: core::RetrySnapshot);
-}
-
 #[derive(uniffi::Object)]
 pub struct RetryProgress { pub(super) inner: Arc<core::RetryCalls> }
 
@@ -103,43 +98,34 @@ impl RetryProgress {
 
     pub fn current(&self) -> core::RetrySnapshot { self.inner.current() }
 
-    /// Delivers the current snapshot at once, then each newer one. A slow listener sees the newest snapshot and delays no request.
-    pub fn subscribe(&self, listener: Arc<dyn RetryProgressListener>) -> Result<Arc<RetrySubscription>, DbError> {
-        let mut changes = self.inner.watch();
-        let runtime = super::database::executor()?;
-        let calls = Arc::new(crate::ffi::CallState::new());
-        let handle = runtime.handle().clone();
-        let task = crate::task::spawn_on(runtime.handle(), {
-            let calls = calls.clone();
-            async move {
-                loop {
-                    let snapshot = changes.borrow_and_update().clone();
-                    let (listener, calls) = (listener.clone(), calls.clone());
-                    let _ = crate::task::spawn_blocking_on(&handle, None, move || {
-                        crate::lock::assert_no_library_lock("RetryProgressListener::changed");
-                        calls.call(|| listener.changed(snapshot))
-                    }).await;
-                    if changes.changed().await.is_err() { break; }
-                }
-            }
-        });
-        Ok(Arc::new(RetrySubscription { task: task.abort_handle(), calls }))
+    /// A reader of the snapshots: its first `next` returns the current snapshot, each later one the newest snapshot that is newer than the last it returned. A slow reader skips the snapshots between, never the last one.
+    pub fn subscribe(&self) -> Arc<RetrySubscription> {
+        let (stopped, _) = tokio::sync::watch::channel(false);
+        Arc::new(RetrySubscription { changes: tokio::sync::Mutex::new(Reading { changes: self.inner.watch(), first: true }), stopped })
     }
 }
 
+struct Reading { changes: tokio::sync::watch::Receiver<core::RetrySnapshot>, first: bool }
+
 #[derive(uniffi::Object)]
-pub struct RetrySubscription { pub(super) task: tokio::task::AbortHandle, pub(crate) calls: Arc<crate::ffi::CallState> }
+pub struct RetrySubscription { changes: tokio::sync::Mutex<Reading>, stopped: tokio::sync::watch::Sender<bool> }
 
 #[uniffi::export]
 impl RetrySubscription {
-    pub fn cancel(&self) {
-        self.calls.cancel();
-        crate::lock::effect(|| self.task.abort());
+    /// The next snapshot, `None` once the reader was cancelled or the progress is gone.
+    pub async fn next(&self) -> Option<core::RetrySnapshot> {
+        let mut stopped = self.stopped.subscribe();
+        let mut reading = self.changes.lock().await;
+        if *stopped.borrow() { return None; }
+        if std::mem::take(&mut reading.first) { return Some(reading.changes.borrow_and_update().clone()); }
+        tokio::select! {
+            changed = reading.changes.changed() => changed.ok().map(|()| reading.changes.borrow_and_update().clone()),
+            _ = stopped.wait_for(|stopped| *stopped) => None,
+        }
     }
-}
 
-impl Drop for RetrySubscription {
-    fn drop(&mut self) { self.cancel(); }
+    /// Ends this reader: a waiting `next` and every later one return `None`.
+    pub fn cancel(&self) { crate::lock::effect(|| self.stopped.send_replace(true)); }
 }
 
 fn session_body(body: &str) -> Result<String, DbError> {

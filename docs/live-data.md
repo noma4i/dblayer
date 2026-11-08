@@ -34,7 +34,7 @@ scope.events(Message).events(Message).collect { item -> show(item) }
 scope.changes().collect { item -> refresh(item) }
 ```
 
-A stream lives while its reader lives. Release the model or close its scope and the core drops the stream.
+A stream lives while its reader lives. Release the model or close its scope and the core drops the stream. A stream has one reader: the first iterator or collector takes it, a second one ends at once with `ended(.invalid)`, and a reader that stops ends the stream in the core also while the `ValueStream` is held.
 
 ## What a delta contains
 

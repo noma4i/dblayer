@@ -120,13 +120,13 @@ extension BridgeProbeTests {
     #expect(try await Letter.ids([id]).read().isEmpty)
     transport.enqueue("SendLetter", failure: .Http(status: 422, detail: "refused again"))
     if keep {
-      let queue = Cursor(try DB.account().operations().compactMap { item -> [OperationInfo]? in if case let .queue(items) = item { items } else { nil } })
+      let queue = Cursor(try DB.account().operations().compactMap { item -> [OperationInfo]? in if case let .queue(_, items) = item { items } else { nil } })
       _ = try #require(await queue.first("the refusal of the first attempt is recorded") { $0.first?.status == .failed })
       let retried = try await Letter.retry(id: id, action: nil)
       let waiting = Task { try await retried.outcome() }
       guard case .rejected = try await valueBeforeDeadline(waiting, release: {}) else { throw WaitFailure.unexpectedOutcome }
     } else {
-      let queue = Cursor(try DB.account().operations().compactMap { item -> [OperationInfo]? in if case let .queue(items) = item { items } else { nil } })
+      let queue = Cursor(try DB.account().operations().compactMap { item -> [OperationInfo]? in if case let .queue(_, items) = item { items } else { nil } })
       _ = try #require(await queue.first("the refused operation is gone") { $0.allSatisfy { $0.rowId != id } })
     }
     #expect(try await Letter.ids([id]).read().isEmpty)

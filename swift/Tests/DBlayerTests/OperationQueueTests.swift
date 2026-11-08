@@ -19,7 +19,7 @@ private func momentsKeepingUpdates() throws -> String {
 
 private extension OperationQueueStream {
   var queues: AsyncCompactMapSequence<OperationQueueStream, [OperationInfo]> {
-    compactMap { if case let .queue(items) = $0 { items } else { nil } }
+    compactMap { if case let .queue(_, items) = $0 { items } else { nil } }
   }
 }
 

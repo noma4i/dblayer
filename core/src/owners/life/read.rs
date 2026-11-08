@@ -105,6 +105,9 @@ pub(super) fn add(builder: &mut RuntimeBuilder, wiring: &Arc<Wiring>, ports: &Po
             DeliveryEffect::Stream { effect: StreamEffect::Cancelled { reply }, .. } => {
                 deliveries_wiring.outcomes.settle(OutcomeId::from_raw(reply), LifeReply::Cancelled);
             }
+            DeliveryEffect::Stream { effect: StreamEffect::ReaderClaimed { reply, claimed }, .. } => {
+                deliveries_wiring.outcomes.settle(OutcomeId::from_raw(reply), LifeReply::Reader { claimed });
+            }
             DeliveryEffect::Drained(done) => drained(&deliveries_wiring, done),
             DeliveryEffect::Census { reply, observed, retained } => {
                 deliveries_wiring.outcomes.settle(OutcomeId::from_raw(reply), LifeReply::Streams { observed, retained });
@@ -248,5 +251,16 @@ impl super::Life {
     pub fn push_status(&self, stream: StreamId, blob: crate::owners::read::deliveries::BlobStatus) { self.wiring.to_deliveries(DeliveryInput::TransferStatus { stream, blob }); }
 
     /// The last handle of the stream is gone.
-    pub fn release_stream(&self, stream: StreamId) { self.wiring.to_deliveries(DeliveryInput::Release { stream }); }
+    pub fn release_stream(&self, stream: StreamId) { self.wiring.to_deliveries(DeliveryInput::Release { stream, reader: None }); }
+
+    /// A reader takes the stream: the first claim wins and a later one is refused.
+    pub async fn claim_reader(&self, stream: StreamId, reader: u64) -> bool {
+        if self.is_shut() { return false; }
+        let waiter = self.wiring.outcomes.register(Epoch::MAX);
+        self.wiring.to_deliveries(DeliveryInput::ClaimReader { stream, reader, reply: waiter.id().raw() });
+        matches!(waiter.wait().await, Outcome::Value(LifeReply::Reader { claimed: true }))
+    }
+
+    /// The reader left the stream and its handle is still held: the interest of the stream ends.
+    pub fn release_reader(&self, stream: StreamId, reader: u64) { self.wiring.to_deliveries(DeliveryInput::Release { stream, reader: Some(reader) }); }
 }

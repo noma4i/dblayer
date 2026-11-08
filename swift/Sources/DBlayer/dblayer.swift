@@ -3652,6 +3652,11 @@ public protocol ReadStreamProtocol: AnyObject, Sendable {
     func cancel() async 
     
     /**
+     * Takes the stream for one reader and returns its number. `Invalid` when another reader holds the stream.
+     */
+    func claimReader() async throws  -> UInt64
+    
+    /**
      * Loads the next page of the relation of this stream.
      */
     func loadMore() async throws  -> LoadMoreResult
@@ -3665,6 +3670,11 @@ public protocol ReadStreamProtocol: AnyObject, Sendable {
      * Loads the first page of the relation of this stream again. `Invalid` when the stream reads no relation, `Interrupted` when its session ended.
      */
     func refresh() async throws 
+    
+    /**
+     * The reader left the stream: its interest ends while the handle lives. Another reader's number changes nothing.
+     */
+    func releaseReader(reader: UInt64) 
     
     func resync() 
     
@@ -3746,6 +3756,25 @@ open func cancel()async   {
 }
     
     /**
+     * Takes the stream for one reader and returns its number. `Invalid` when another reader holds the stream.
+     */
+open func claimReader()async throws  -> UInt64  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_dblayer_fn_method_readstream_claim_reader(
+                        self.uniffiCloneHandle()
+                )
+            },
+            pollFunc: ffi_dblayer_rust_future_poll_u64,
+            completeFunc: ffi_dblayer_rust_future_complete_u64,
+            freeFunc: ffi_dblayer_rust_future_free_u64,
+            liftFunc: FfiConverterUInt64.lift,
+            errorHandler: FfiConverterTypeDbError_lift
+        )
+}
+    
+    /**
      * Loads the next page of the relation of this stream.
      */
 open func loadMore()async throws  -> LoadMoreResult  {
@@ -3801,6 +3830,18 @@ open func refresh()async throws   {
             liftFunc: { $0 },
             errorHandler: FfiConverterTypeDbError_lift
         )
+}
+    
+    /**
+     * The reader left the stream: its interest ends while the handle lives. Another reader's number changes nothing.
+     */
+open func releaseReader(reader: UInt64)  {try! rustCall() {
+        uniffiCallStatus in
+    uniffi_dblayer_fn_method_readstream_release_reader(
+            self.uniffiCloneHandle(),
+        FfiConverterUInt64.lower(reader),uniffiCallStatus
+    )
+}
 }
     
 open func resync()  {try! rustCall() {
@@ -3866,9 +3907,9 @@ public protocol RetryProgressProtocol: AnyObject, Sendable {
     func current()  -> RetrySnapshot
     
     /**
-     * Delivers the current snapshot at once, then each newer one. A slow listener sees the newest snapshot and delays no request.
+     * A reader of the snapshots: its first `next` returns the current snapshot, each later one the newest snapshot that is newer than the last it returned. A slow reader skips the snapshots between, never the last one.
      */
-    func subscribe(listener: RetryProgressListener) throws  -> RetrySubscription
+    func subscribe()  -> RetrySubscription
     
 }
 open class RetryProgress: RetryProgressProtocol, @unchecked Sendable {
@@ -3942,14 +3983,13 @@ open func current() -> RetrySnapshot  {
 }
     
     /**
-     * Delivers the current snapshot at once, then each newer one. A slow listener sees the newest snapshot and delays no request.
+     * A reader of the snapshots: its first `next` returns the current snapshot, each later one the newest snapshot that is newer than the last it returned. A slow reader skips the snapshots between, never the last one.
      */
-open func subscribe(listener: RetryProgressListener)throws  -> RetrySubscription  {
-    return try  FfiConverterTypeRetrySubscription_lift(try rustCallWithError(FfiConverterTypeDbError_lift) {
+open func subscribe() -> RetrySubscription  {
+    return try!  FfiConverterTypeRetrySubscription_lift(try! rustCall() {
         uniffiCallStatus in
     uniffi_dblayer_fn_method_retryprogress_subscribe(
-            self.uniffiCloneHandle(),
-        FfiConverterTypeRetryProgressListener_lower(listener),uniffiCallStatus
+            self.uniffiCloneHandle(),uniffiCallStatus
     )
 })
 }
@@ -4004,207 +4044,17 @@ public func FfiConverterTypeRetryProgress_lower(_ value: RetryProgress) -> UInt6
 
 
 
-public protocol RetryProgressListener: AnyObject, Sendable {
-    
-    func changed(snapshot: RetrySnapshot) 
-    
-}
-open class RetryProgressListenerImpl: RetryProgressListener, @unchecked Sendable {
-    fileprivate let handle: UInt64
-
-    /// Used to instantiate a [FFIObject] without an actual handle, for fakes in tests, mostly.
-#if swift(>=5.8)
-    @_documentation(visibility: private)
-#endif
-    public struct NoHandle {
-        public init() {}
-    }
-
-    // TODO: We'd like this to be `private` but for Swifty reasons,
-    // we can't implement `FfiConverter` without making this `required` and we can't
-    // make it `required` without making it `public`.
-#if swift(>=5.8)
-    @_documentation(visibility: private)
-#endif
-    required public init(unsafeFromHandle handle: UInt64) {
-        self.handle = handle
-    }
-
-    // This constructor can be used to instantiate a fake object.
-    // - Parameter noHandle: Placeholder value so we can have a constructor separate from the default empty one that may be implemented for classes extending [FFIObject].
-    //
-    // - Warning:
-    //     Any object instantiated with this constructor cannot be passed to an actual Rust-backed object. Since there isn't a backing handle the FFI lower functions will crash.
-#if swift(>=5.8)
-    @_documentation(visibility: private)
-#endif
-    public init(noHandle: NoHandle) {
-        self.handle = 0
-    }
-
-#if swift(>=5.8)
-    @_documentation(visibility: private)
-#endif
-    public func uniffiCloneHandle() -> UInt64 {
-        return try! rustCall { uniffi_dblayer_fn_clone_retryprogresslistener(self.handle, $0) }
-    }
-    // No primary constructor declared for this class.
-
-    deinit {
-        if handle == 0 {
-            // Mock objects have handle=0 don't try to free them
-            return
-        }
-
-        try! rustCall { uniffi_dblayer_fn_free_retryprogresslistener(handle, $0) }
-    }
-
-    
-
-    
-open func changed(snapshot: RetrySnapshot)  {try! rustCall() {
-        uniffiCallStatus in
-    uniffi_dblayer_fn_method_retryprogresslistener_changed(
-            self.uniffiCloneHandle(),
-        FfiConverterTypeRetrySnapshot_lower(snapshot),uniffiCallStatus
-    )
-}
-}
-    
-
-    
-}
-
-
-
-// Put the implementation in a struct so we don't pollute the top-level namespace
-fileprivate struct UniffiCallbackInterfaceRetryProgressListener {
-
-    // Create the VTable using a series of closures.
-    // Swift automatically converts these into C callback functions.
-    //
-    // Store the vtable directly.
-    static let vtable: UniffiVTableCallbackInterfaceRetryProgressListener = UniffiVTableCallbackInterfaceRetryProgressListener(
-        uniffiFree: { (uniffiHandle: UInt64) -> () in
-            do {
-                try FfiConverterTypeRetryProgressListener.handleMap.remove(handle: uniffiHandle)
-            } catch {
-                print("Uniffi callback interface RetryProgressListener: handle missing in uniffiFree")
-            }
-        },
-        uniffiClone: { (uniffiHandle: UInt64) -> UInt64 in
-            do {
-                return try FfiConverterTypeRetryProgressListener.handleMap.clone(handle: uniffiHandle)
-            } catch {
-                fatalError("Uniffi callback interface RetryProgressListener: handle missing in uniffiClone")
-            }
-        },
-        changed: { (
-            uniffiHandle: UInt64,
-            snapshot: RustBuffer,
-            uniffiOutReturn: UnsafeMutableRawPointer,
-            uniffiCallStatus: UnsafeMutablePointer<RustCallStatus>
-        ) in
-            let makeCall = {
-                () throws -> () in
-                guard let uniffiObj = try? FfiConverterTypeRetryProgressListener.handleMap.get(handle: uniffiHandle) else {
-                    throw UniffiInternalError.unexpectedStaleHandle
-                }
-                return uniffiObj.changed(
-                     snapshot: try FfiConverterTypeRetrySnapshot_lift(snapshot)
-                )
-            }
-
-            
-            let writeReturn = { () }
-            uniffiTraitInterfaceCall(
-                callStatus: uniffiCallStatus,
-                makeCall: makeCall,
-                writeReturn: writeReturn
-            )
-        }
-    )
-
-    // Rust stores this pointer for future callback invocations, so it must live
-    // for the process lifetime (not just for the init function call).
-    //
-    // `nonisolated(unsafe)` is needed under Swift 6 strict concurrency.
-    // This is safe because the pointee is initialized once during static init
-    // and never mutated by either side of the FFI.  Its fields are C function pointers.
-    nonisolated(unsafe) static let vtablePtr: UnsafePointer<UniffiVTableCallbackInterfaceRetryProgressListener> = {
-        let ptr = UnsafeMutablePointer<UniffiVTableCallbackInterfaceRetryProgressListener>.allocate(capacity: 1)
-        ptr.initialize(to: vtable)
-        return UnsafePointer(ptr)
-    }()
-}
-
-private func uniffiCallbackInitRetryProgressListener() {
-    uniffi_dblayer_fn_init_callback_vtable_retryprogresslistener(UniffiCallbackInterfaceRetryProgressListener.vtablePtr)
-}
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public struct FfiConverterTypeRetryProgressListener: FfiConverter {
-    fileprivate static let handleMap = UniffiHandleMap<RetryProgressListener>()
-
-    typealias FfiType = UInt64
-    typealias SwiftType = RetryProgressListener
-
-    public static func lift(_ handle: UInt64) throws -> RetryProgressListener {
-        if ((handle & 1) == 0) {
-            // Rust-generated handle, construct a new class that uses the handle to implement the
-            // interface
-            return RetryProgressListenerImpl(unsafeFromHandle: handle)
-        } else {
-            // Swift-generated handle, get the object from the handle map
-            return try handleMap.remove(handle: handle)
-        }
-    }
-
-    public static func lower(_ value: RetryProgressListener) -> UInt64 {
-         if let rustImpl = value as? RetryProgressListenerImpl {
-             // Rust-implemented object.  Clone the handle and return it
-            return rustImpl.uniffiCloneHandle()
-         } else {
-            // Swift object, generate a new vtable handle and return that.
-            return handleMap.insert(obj: value)
-         }
-    }
-
-    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> RetryProgressListener {
-        let handle: UInt64 = try readInt(&buf)
-        return try lift(handle)
-    }
-
-    public static func write(_ value: RetryProgressListener, into buf: inout [UInt8]) {
-        writeInt(&buf, lower(value))
-    }
-}
-
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeRetryProgressListener_lift(_ handle: UInt64) throws -> RetryProgressListener {
-    return try FfiConverterTypeRetryProgressListener.lift(handle)
-}
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeRetryProgressListener_lower(_ value: RetryProgressListener) -> UInt64 {
-    return FfiConverterTypeRetryProgressListener.lower(value)
-}
-
-
-
-
-
-
 public protocol RetrySubscriptionProtocol: AnyObject, Sendable {
     
+    /**
+     * Ends this reader: a waiting `next` and every later one return `None`.
+     */
     func cancel() 
+    
+    /**
+     * The next snapshot, `None` once the reader was cancelled or the progress is gone.
+     */
+    func next() async  -> RetrySnapshot?
     
 }
 open class RetrySubscription: RetrySubscriptionProtocol, @unchecked Sendable {
@@ -4260,12 +4110,35 @@ open class RetrySubscription: RetrySubscriptionProtocol, @unchecked Sendable {
     
 
     
+    /**
+     * Ends this reader: a waiting `next` and every later one return `None`.
+     */
 open func cancel()  {try! rustCall() {
         uniffiCallStatus in
     uniffi_dblayer_fn_method_retrysubscription_cancel(
             self.uniffiCloneHandle(),uniffiCallStatus
     )
 }
+}
+    
+    /**
+     * The next snapshot, `None` once the reader was cancelled or the progress is gone.
+     */
+open func next()async  -> RetrySnapshot?  {
+    return
+        try!  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_dblayer_fn_method_retrysubscription_next(
+                        self.uniffiCloneHandle()
+                )
+            },
+            pollFunc: ffi_dblayer_rust_future_poll_rust_buffer,
+            completeFunc: ffi_dblayer_rust_future_complete_rust_buffer,
+            freeFunc: ffi_dblayer_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterOptionTypeRetrySnapshot.lift,
+            errorHandler: nil
+            
+        )
 }
     
 
@@ -11886,6 +11759,30 @@ fileprivate struct FfiConverterOptionTypeRetryAttempt: FfiConverterRustBuffer {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterOptionTypeRetrySnapshot: FfiConverterRustBuffer {
+    typealias SwiftType = RetrySnapshot?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeRetrySnapshot.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeRetrySnapshot.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterOptionTypeWireFailure: FfiConverterRustBuffer {
     typealias SwiftType = WireFailure?
 
@@ -12579,6 +12476,44 @@ private let UNIFFI_RUST_FUTURE_POLL_WAKE: Int8 = 1
 
 fileprivate let uniffiContinuationHandleMap = UniffiHandleMap<UnsafeContinuation<Int8, Never>>()
 
+enum RuntimeLane {
+  private static let queue = DispatchQueue(label: "com.noma4i.dblayer.runtime-lane", qos: .userInitiated)
+  static func enqueue(_ work: @escaping @Sendable () -> Void) { queue.async(execute: work) }
+}
+
+final class RustFutureHandle: @unchecked Sendable {
+  let value: UInt64
+  private var cancelled = false
+  private var freed = false
+  private let cancelCall: ((UInt64) -> Void)?
+  private let freeCall: (UInt64) -> Void
+  private let lane: (@escaping @Sendable () -> Void) -> Void
+
+  init(_ value: UInt64, cancel: ((UInt64) -> Void)?, free: @escaping (UInt64) -> Void, lane: @escaping (@escaping @Sendable () -> Void) -> Void = RuntimeLane.enqueue) {
+    self.value = value
+    cancelCall = cancel
+    freeCall = free
+    self.lane = lane
+  }
+
+  func cancel() {
+    guard cancelCall != nil else { return }
+    lane { [self] in
+      guard !freed, !cancelled, let cancelCall else { return }
+      cancelled = true
+      cancelCall(value)
+    }
+  }
+
+  func free() {
+    lane { [self] in
+      guard !freed else { return }
+      freed = true
+      freeCall(value)
+    }
+  }
+}
+
 fileprivate func uniffiRustCallAsync<F, T>(
     rustFutureFunc: () -> UInt64,
     cancelFunc: ((UInt64) -> ())? = nil,
@@ -13014,13 +12949,13 @@ private let initializationResult: InitializationResult = {
     if (uniffi_dblayer_checksum_method_retryprogress_current() != 45910) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_dblayer_checksum_method_retryprogress_subscribe() != 21723) {
+    if (uniffi_dblayer_checksum_method_retryprogress_subscribe() != 3686) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_dblayer_checksum_method_retryprogresslistener_changed() != 52273) {
+    if (uniffi_dblayer_checksum_method_retrysubscription_cancel() != 38015) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_dblayer_checksum_method_retrysubscription_cancel() != 51114) {
+    if (uniffi_dblayer_checksum_method_retrysubscription_next() != 20026) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_dblayer_checksum_method_loadrequest_cancel() != 50053) {
@@ -13041,6 +12976,9 @@ private let initializationResult: InitializationResult = {
     if (uniffi_dblayer_checksum_method_readstream_cancel() != 53433) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_dblayer_checksum_method_readstream_claim_reader() != 16793) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_dblayer_checksum_method_readstream_load_more() != 27067) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -13048,6 +12986,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_dblayer_checksum_method_readstream_refresh() != 22747) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_dblayer_checksum_method_readstream_release_reader() != 23746) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_dblayer_checksum_method_readstream_resync() != 9292) {
@@ -13113,7 +13054,6 @@ private let initializationResult: InitializationResult = {
     uniffiCallbackInitEncryptedHttp()
     uniffiCallbackInitPlatformObserver()
     uniffiCallbackInitPlatformSocket()
-    uniffiCallbackInitRetryProgressListener()
     uniffiCallbackInitRoundJobsSink()
     uniffiCallbackInitTransport()
     return InitializationResult.ok

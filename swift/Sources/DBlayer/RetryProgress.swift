@@ -1,21 +1,22 @@
 import Foundation
 
-final class RetrySnapshotListener: RetryProgressListener, @unchecked Sendable {
-  let body: @Sendable (RetrySnapshot) -> Void
-  init(_ body: @escaping @Sendable (RetrySnapshot) -> Void) { self.body = body }
-  func changed(snapshot: RetrySnapshot) { body(snapshot) }
+/// The snapshots of the encrypted HTTP calls that wait for a retry, pulled one by one from the core. The first is the current snapshot. A slow reader gets the newest one. Cancelling the reading task ends only that reader.
+public struct RetryChanges: AsyncSequence, Sendable {
+  public typealias Element = RetrySnapshot
+  let progress: RetryProgress
+
+  public func makeAsyncIterator() -> AsyncIterator { AsyncIterator(subscription: progress.subscribe()) }
+
+  public struct AsyncIterator: AsyncIteratorProtocol {
+    let subscription: RetrySubscription
+
+    public mutating func next() async -> RetrySnapshot? {
+      let subscription = subscription
+      return await withTaskCancellationHandler { await subscription.next() } onCancel: { subscription.cancel() }
+    }
+  }
 }
 
 extension RetryProgress {
-  /// The encrypted HTTP calls that wait for a retry. The core delivers the current snapshot first, then each newer one. Cancelling the reading task ends only that reader.
-  public var changes: AsyncThrowingStream<RetrySnapshot, Error> {
-    AsyncThrowingStream { continuation in
-      do {
-        let subscription = try subscribe(listener: RetrySnapshotListener { continuation.yield($0) })
-        continuation.onTermination = { _ in subscription.cancel() }
-      } catch {
-        continuation.finish(throwing: error)
-      }
-    }
-  }
+  public var changes: RetryChanges { RetryChanges(progress: self) }
 }

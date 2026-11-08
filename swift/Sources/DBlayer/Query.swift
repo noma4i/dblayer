@@ -51,7 +51,13 @@ public struct Query<Model: DBModel>: Sendable {
   public func offset(_ count: Int) -> Query { var copy = self; copy.offsetCount = count; return copy }
 
   func spec(refreshOnConnect: Bool = false) throws -> QuerySpec {
-    QuerySpec(model: Model.modelName, relation: relation, paramsJson: try JSONValue.object(params).text, conditions: conditions.map(\.tree), order: orders, limit: limitCount.map { UInt32(clamping: $0) }, offset: offsetCount.map { UInt32(clamping: $0) }, refreshOnConnect: refreshOnConnect)
+    QuerySpec(model: Model.modelName, relation: relation, paramsJson: try JSONValue.object(params).text, conditions: conditions.map(\.tree), order: orders, limit: try Self.window(limitCount, "limit"), offset: try Self.window(offsetCount, "offset"), refreshOnConnect: refreshOnConnect)
+  }
+
+  private static func window(_ count: Int?, _ name: String) throws -> UInt32? {
+    guard let count else { return nil }
+    guard let exact = UInt32(exactly: count) else { throw DbError.Invalid(detail: "\(name) \(count) is outside 0...\(UInt32.max)") }
+    return exact
   }
 
   @concurrent public func cachedRow(_ id: String, in scope: AccountScope? = nil) async throws -> Model? {

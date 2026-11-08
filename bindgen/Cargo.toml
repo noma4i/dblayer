@@ -1,0 +1,17 @@
+[package]
+name = "dblayer-bindgen"
+version = "6.18.0"
+edition = "2021"
+
+[lib]
+name = "dblayer_bindgen"
+
+[[bin]]
+name = "uniffi-bindgen"
+path = "src/main.rs"
+
+[lints.rust]
+warnings = "deny"
+
+[dependencies]
+uniffi = { version = "0.32.2", features = ["cli"] }

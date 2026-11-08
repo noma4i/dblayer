@@ -7,12 +7,16 @@ public struct Clip: DBModel {
     public let title: String?
     public let sync: SyncInfo
     public let uploads: [String: UploadInfo]
+    public let rowRevision: Int64
+    public let estimatedBytes: UInt64
 
-    public init(id: String, title: String? = nil, sync: SyncInfo = SyncInfo(), uploads: [String: UploadInfo] = [:]) {
+    public init(id: String, title: String? = nil, sync: SyncInfo = SyncInfo(), uploads: [String: UploadInfo] = [:], rowRevision: Int64 = 0, estimatedBytes: UInt64 = 0) {
         self.id = id
         self.title = title
         self.sync = sync
         self.uploads = uploads
+        self.rowRevision = rowRevision
+        self.estimatedBytes = estimatedBytes
     }
 
     public static let wireLayout = "e9226eea266088346d0e13a891650ac9945faf4f4ff01bfa2daed4a6ed5e8092"
@@ -23,6 +27,8 @@ public struct Clip: DBModel {
         self.title = try r.opt(0, \.asText)
         self.sync = SyncInfo(wire: row.sync)
         self.uploads = Dictionary(uniqueKeysWithValues: row.uploads.map { ($0.action, UploadInfo(wire: $0.upload)) })
+        self.rowRevision = row.revision
+        self.estimatedBytes = row.estimatedBytes
     }
 
     public static let title = Column<Clip, String?>("title")
@@ -57,13 +63,17 @@ public struct Inbox: DBModel {
     public let stance: String?
     public let sync: SyncInfo
     public let uploads: [String: UploadInfo]
+    public let rowRevision: Int64
+    public let estimatedBytes: UInt64
 
-    public init(id: String, title: String, stance: String? = nil, sync: SyncInfo = SyncInfo(), uploads: [String: UploadInfo] = [:]) {
+    public init(id: String, title: String, stance: String? = nil, sync: SyncInfo = SyncInfo(), uploads: [String: UploadInfo] = [:], rowRevision: Int64 = 0, estimatedBytes: UInt64 = 0) {
         self.id = id
         self.title = title
         self.stance = stance
         self.sync = sync
         self.uploads = uploads
+        self.rowRevision = rowRevision
+        self.estimatedBytes = estimatedBytes
     }
 
     public static let wireLayout = "2069e3ab4783e460fc6cb6b14859d746510bc8544c6342cb14c9ff5a89f93b0c"
@@ -75,6 +85,8 @@ public struct Inbox: DBModel {
         self.stance = try r.opt(1, \.asText)
         self.sync = SyncInfo(wire: row.sync)
         self.uploads = Dictionary(uniqueKeysWithValues: row.uploads.map { ($0.action, UploadInfo(wire: $0.upload)) })
+        self.rowRevision = row.revision
+        self.estimatedBytes = row.estimatedBytes
     }
 
     public static let title = Column<Inbox, String>("title")
@@ -109,13 +121,17 @@ public struct MediaEntry: DBModel {
     public let sequenceNumber: Int
     public let sync: SyncInfo
     public let uploads: [String: UploadInfo]
+    public let rowRevision: Int64
+    public let estimatedBytes: UInt64
 
-    public init(id: String, text: String? = nil, sequenceNumber: Int, sync: SyncInfo = SyncInfo(), uploads: [String: UploadInfo] = [:]) {
+    public init(id: String, text: String? = nil, sequenceNumber: Int, sync: SyncInfo = SyncInfo(), uploads: [String: UploadInfo] = [:], rowRevision: Int64 = 0, estimatedBytes: UInt64 = 0) {
         self.id = id
         self.text = text
         self.sequenceNumber = sequenceNumber
         self.sync = sync
         self.uploads = uploads
+        self.rowRevision = rowRevision
+        self.estimatedBytes = estimatedBytes
     }
 
     public static let wireLayout = "3d888c449b3a4c344c639a31a082e38e5a5856b16d4b932bfd615e243785441d"
@@ -127,6 +143,8 @@ public struct MediaEntry: DBModel {
         self.sequenceNumber = try r.req(1, \.asInt)
         self.sync = SyncInfo(wire: row.sync)
         self.uploads = Dictionary(uniqueKeysWithValues: row.uploads.map { ($0.action, UploadInfo(wire: $0.upload)) })
+        self.rowRevision = row.revision
+        self.estimatedBytes = row.estimatedBytes
     }
 
     public static let text = Column<MediaEntry, String?>("text")
@@ -156,12 +174,16 @@ public struct Roster: DBModel {
     public let title: String
     public let sync: SyncInfo
     public let uploads: [String: UploadInfo]
+    public let rowRevision: Int64
+    public let estimatedBytes: UInt64
 
-    public init(id: String, title: String, sync: SyncInfo = SyncInfo(), uploads: [String: UploadInfo] = [:]) {
+    public init(id: String, title: String, sync: SyncInfo = SyncInfo(), uploads: [String: UploadInfo] = [:], rowRevision: Int64 = 0, estimatedBytes: UInt64 = 0) {
         self.id = id
         self.title = title
         self.sync = sync
         self.uploads = uploads
+        self.rowRevision = rowRevision
+        self.estimatedBytes = estimatedBytes
     }
 
     public static let wireLayout = "e9226eea266088346d0e13a891650ac9945faf4f4ff01bfa2daed4a6ed5e8092"
@@ -172,6 +194,8 @@ public struct Roster: DBModel {
         self.title = try r.req(0, \.asText)
         self.sync = SyncInfo(wire: row.sync)
         self.uploads = Dictionary(uniqueKeysWithValues: row.uploads.map { ($0.action, UploadInfo(wire: $0.upload)) })
+        self.rowRevision = row.revision
+        self.estimatedBytes = row.estimatedBytes
     }
 
     public static let title = Column<Roster, String>("title")

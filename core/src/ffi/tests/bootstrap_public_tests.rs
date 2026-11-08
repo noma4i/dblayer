@@ -107,11 +107,6 @@ async fn life_bootstrap_retry() {
     assert_eq!(retries.current(), RetrySnapshot::default());
 }
 
-struct Heard(tokio::sync::watch::Sender<Option<RetrySnapshot>>);
-impl super::RetryProgressListener for Heard {
-    fn changed(&self, snapshot: RetrySnapshot) { self.0.send_replace(Some(snapshot)); }
-}
-
 #[tokio::test(flavor = "multi_thread")]
 async fn life_bootstrap_cancel() {
     let (platform, started) = Platform::offline();
@@ -119,16 +114,16 @@ async fn life_bootstrap_cancel() {
     http.online.store(true, Ordering::SeqCst);
     let clock = TestClock::new(1_800_000_000_000);
     let retries = RetryProgress::new();
-    let (heard, mut seen) = tokio::sync::watch::channel(None);
-    let subscription = retries.subscribe(Arc::new(Heard(heard))).unwrap();
+    let subscription = retries.subscribe();
     let call = fetch(&http, &clock, Some(retries.clone()), platform.clone());
     recv_within(&started);
     platform.go_online();
     within(clock.await_armed(0)).await;
-    within(seen.wait_for(|snapshot| snapshot.as_ref().is_some_and(|snapshot| snapshot.active_calls == 1))).await.unwrap();
+    assert_eq!(within(subscription.next()).await.unwrap().active_calls, 1);
     call.abort();
     assert!(within(call).await.unwrap_err().is_cancelled());
-    within(seen.wait_for(|snapshot| snapshot.as_ref().is_some_and(|snapshot| snapshot.active_calls == 0 && snapshot.last_attempt.is_none()))).await.unwrap();
+    let last = within(subscription.next()).await.unwrap();
+    assert_eq!((last.active_calls, last.last_attempt), (0, None));
     crate::test_wait::signalled(&platform.stopped, "the platform observers stopped with the cancelled call", || platform.stops.load(Ordering::SeqCst) == 1).await;
     subscription.cancel();
     assert_eq!(http.requests.load(Ordering::SeqCst), 1);

@@ -8,6 +8,10 @@ public protocol DBModel: Sendable, Identifiable, Hashable {
   var id: String { get }
   var sync: SyncInfo { get }
   var uploads: [String: UploadInfo] { get }
+  /// The revision of the store the row was read at.
+  var rowRevision: Int64 { get }
+  /// The bytes the core estimates the row holds.
+  var estimatedBytes: UInt64 { get }
 }
 
 public protocol DBSingleton: DBModel { static var singleton: Query<Self> { get } }

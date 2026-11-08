@@ -33,7 +33,7 @@ pub use relation::*;
 pub use effect::{EffectSource, SelectionKeyError};
 pub use ephemeral::{EphemeralSpec, Storage};
 pub use merge::MergeRule;
-pub use reserved::{generated_member_names, reserved_member_names, ReservedMember, LAYOUT, MODEL_NAME, RESERVED_MEMBERS, SINGLETON, SYNC, UPLOADS, WIRE_LAYOUT};
+pub use reserved::{generated_member_names, reserved_member_names, ReservedMember, ESTIMATED_BYTES, LAYOUT, MODEL_NAME, RESERVED_MEMBERS, ROW_REVISION, SINGLETON, SYNC, UPLOADS, WIRE_LAYOUT};
 pub use search::{search_text, SearchPath};
 pub use specs::{OperationSpec, Specs};
 pub use types::{resolve_types, ValueFault};

@@ -32,7 +32,7 @@ class ReadmeExamplesTest {
 
             val user = User.create(name = "ann").optimisticValue!!
             val info = user.attach(User.avatar, byteArrayOf(1, 2, 3), name = "a.png", mime = "image/png")
-            assertEquals(Triple("a.png", "image/png", 3L), Triple(info.name, info.mime, info.size))
+            assertEquals(Triple("a.png", "image/png", 3UL), Triple(info.name, info.mime, info.size))
 
             DBlayer.sessionCall<PhoneBody, kotlinx.serialization.json.JsonElement>("login_link", PhoneBody("+61400000000"))
             Unit

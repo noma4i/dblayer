@@ -3,14 +3,14 @@ package com.noma4i.dblayer
 import java.io.File
 import java.net.URI
 
-data class FileInfo(val id: String, val size: Long, val name: String?, val mime: String?, val sha256: String?) {
+data class FileInfo(val id: String, val size: ULong, val name: String?, val mime: String?, val sha256: String?) {
     companion object {
         internal fun of(cells: List<Cell>): FileInfo {
             val r = CellReader(cells)
-            return FileInfo(r.req(0, Cell::asText), r.req(1, Cell::asInt), r.opt(2, Cell::asText), r.opt(3, Cell::asText), r.opt(4, Cell::asText))
+            return FileInfo(r.req(0, Cell::asText), r.req(1, Cell::asInt).also { if (it < 0) throw DbException.Invalid("the file size is negative") }.toULong(), r.opt(2, Cell::asText), r.opt(3, Cell::asText), r.opt(4, Cell::asText))
         }
 
-        internal fun of(wire: WireFile): FileInfo = FileInfo(wire.id, wire.size.toLong(), wire.name, wire.mime, wire.sha256)
+        internal fun of(wire: WireFile): FileInfo = FileInfo(wire.id, wire.size, wire.name, wire.mime, wire.sha256)
     }
 }
 

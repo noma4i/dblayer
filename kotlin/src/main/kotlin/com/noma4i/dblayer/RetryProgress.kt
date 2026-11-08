@@ -1,16 +1,15 @@
 package com.noma4i.dblayer
 
-import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.callbackFlow
+import kotlinx.coroutines.flow.flow
 
-internal class RetrySnapshotListener(private val body: (RetrySnapshot) -> Unit) : RetryProgressListener {
-    override fun changed(snapshot: RetrySnapshot) = body(snapshot)
-}
-
-/** The encrypted HTTP calls that wait for a retry. The core delivers the current snapshot first, then each newer one. Cancelling the collector ends only that reader. */
+/** The snapshots of the encrypted HTTP calls that wait for a retry, pulled one by one from the core. The first is the current snapshot. A slow collector gets the newest one. Cancelling the collector ends only that reader. */
 val RetryProgress.flow: Flow<RetrySnapshot>
-    get() = callbackFlow {
-        val subscription = subscribe(RetrySnapshotListener { trySend(it) })
-        awaitClose { subscription.cancel() }
+    get() = flow {
+        val subscription = subscribe()
+        try {
+            while (true) emit(subscription.next() ?: break)
+        } finally {
+            subscription.cancel()
+        }
     }

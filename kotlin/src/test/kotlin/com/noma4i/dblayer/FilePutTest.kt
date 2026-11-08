@@ -27,4 +27,22 @@ class FilePutTest {
             assertEquals(4uL, sent.last())
         }
     }
+
+    /** bridge_prop_raw_io (P-BR-08): the body of a PUT answer reaches the core as it is, the empty one too. */
+    @Test
+    fun putCarriesTheBodyOfTheAnswerToTheCore() = bounded {
+        val file = File.createTempFile("body", ".bin").apply { writeBytes("0123".toByteArray()); deleteOnExit() }
+        MockWebServer().use { server ->
+            server.enqueue(MockResponse().setBody("stored"))
+            server.enqueue(MockResponse())
+            server.start()
+            val progress = object : ByteProgress(NoHandle) {
+                override fun sent(bytes: ULong) {}
+                override fun isCancelled() = false
+            }
+            suspend fun put() = putFile(OkHttpClient(), server.url("/part").toString(), emptyMap(), 10_000uL, 30_000uL, PutFile(file.path, 0u, 4u), progress)
+            assertEquals(RawOutcome.Response(200u, null, "stored"), put())
+            assertEquals(RawOutcome.Response(200u, null, ""), put())
+        }
+    }
 }

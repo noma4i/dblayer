@@ -11,7 +11,9 @@ data class Ledger(
     override val id: String,
     val scope: String,
     override val sync: SyncInfo = SyncInfo(),
-    override val uploads: Map<String, UploadInfo> = emptyMap()
+    override val uploads: Map<String, UploadInfo> = emptyMap(),
+    override val rowRevision: Long = 0,
+    override val estimatedBytes: ULong = 0u
 ) : DBModel {
     override val modelName get() = "Ledger"
     companion object : ModelDecoder<Ledger> {
@@ -24,6 +26,8 @@ data class Ledger(
                 scope = r.req(0, Cell::asText),
                 sync = SyncInfo.of(row.sync),
                 uploads = row.uploads.associate { it.action to UploadInfo.of(it.upload) },
+                rowRevision = row.revision,
+                estimatedBytes = row.estimatedBytes,
             )
         }
 
@@ -53,7 +57,9 @@ data class LedgerFeed(
     override val id: String,
     val title: String,
     override val sync: SyncInfo = SyncInfo(),
-    override val uploads: Map<String, UploadInfo> = emptyMap()
+    override val uploads: Map<String, UploadInfo> = emptyMap(),
+    override val rowRevision: Long = 0,
+    override val estimatedBytes: ULong = 0u
 ) : DBModel {
     override val modelName get() = "LedgerFeed"
     companion object : ModelDecoder<LedgerFeed> {
@@ -66,6 +72,8 @@ data class LedgerFeed(
                 title = r.req(0, Cell::asText),
                 sync = SyncInfo.of(row.sync),
                 uploads = row.uploads.associate { it.action to UploadInfo.of(it.upload) },
+                rowRevision = row.revision,
+                estimatedBytes = row.estimatedBytes,
             )
         }
 
@@ -99,7 +107,9 @@ data class Shadow(
     override val id: String,
     val title: String,
     override val sync: SyncInfo = SyncInfo(),
-    override val uploads: Map<String, UploadInfo> = emptyMap()
+    override val uploads: Map<String, UploadInfo> = emptyMap(),
+    override val rowRevision: Long = 0,
+    override val estimatedBytes: ULong = 0u
 ) : DBModel {
     override val modelName get() = "Shadow"
     companion object : ModelDecoder<Shadow> {
@@ -112,6 +122,8 @@ data class Shadow(
                 title = r.req(0, Cell::asText),
                 sync = SyncInfo.of(row.sync),
                 uploads = row.uploads.associate { it.action to UploadInfo.of(it.upload) },
+                rowRevision = row.revision,
+                estimatedBytes = row.estimatedBytes,
             )
         }
 
@@ -150,7 +162,9 @@ data class Holder(
     override val id: String,
     val label: String? = null,
     override val sync: SyncInfo = SyncInfo(),
-    override val uploads: Map<String, UploadInfo> = emptyMap()
+    override val uploads: Map<String, UploadInfo> = emptyMap(),
+    override val rowRevision: Long = 0,
+    override val estimatedBytes: ULong = 0u
 ) : DBModel {
     override val modelName get() = "Holder"
     companion object : ModelDecoder<Holder> {
@@ -163,6 +177,8 @@ data class Holder(
                 label = r.opt(0, Cell::asText),
                 sync = SyncInfo.of(row.sync),
                 uploads = row.uploads.associate { it.action to UploadInfo.of(it.upload) },
+                rowRevision = row.revision,
+                estimatedBytes = row.estimatedBytes,
             )
         }
 
@@ -196,7 +212,9 @@ data class Mailbox(
     val read: Boolean,
     val put: String? = null,
     override val sync: SyncInfo = SyncInfo(),
-    override val uploads: Map<String, UploadInfo> = emptyMap()
+    override val uploads: Map<String, UploadInfo> = emptyMap(),
+    override val rowRevision: Long = 0,
+    override val estimatedBytes: ULong = 0u
 ) : DBModel {
     override val modelName get() = "Mailbox"
     companion object : ModelDecoder<Mailbox> {
@@ -210,6 +228,8 @@ data class Mailbox(
                 put = r.opt(1, Cell::asText),
                 sync = SyncInfo.of(row.sync),
                 uploads = row.uploads.associate { it.action to UploadInfo.of(it.upload) },
+                rowRevision = row.revision,
+                estimatedBytes = row.estimatedBytes,
             )
         }
 
@@ -249,7 +269,9 @@ data class Asset(
     val size: Long,
     val position: Long,
     override val sync: SyncInfo = SyncInfo(),
-    override val uploads: Map<String, UploadInfo> = emptyMap()
+    override val uploads: Map<String, UploadInfo> = emptyMap(),
+    override val rowRevision: Long = 0,
+    override val estimatedBytes: ULong = 0u
 ) : DBModel {
     override val modelName get() = "Asset"
     companion object : ModelDecoder<Asset> {
@@ -264,6 +286,8 @@ data class Asset(
                 position = r.req(2, Cell::asInt),
                 sync = SyncInfo.of(row.sync),
                 uploads = row.uploads.associate { it.action to UploadInfo.of(it.upload) },
+                rowRevision = row.revision,
+                estimatedBytes = row.estimatedBytes,
             )
         }
 
@@ -303,7 +327,9 @@ data class Club(
     override val id: String,
     val name: String,
     override val sync: SyncInfo = SyncInfo(),
-    override val uploads: Map<String, UploadInfo> = emptyMap()
+    override val uploads: Map<String, UploadInfo> = emptyMap(),
+    override val rowRevision: Long = 0,
+    override val estimatedBytes: ULong = 0u
 ) : DBModel {
     override val modelName get() = "Club"
     companion object : ModelDecoder<Club> {
@@ -316,6 +342,8 @@ data class Club(
                 name = r.req(0, Cell::asText),
                 sync = SyncInfo.of(row.sync),
                 uploads = row.uploads.associate { it.action to UploadInfo.of(it.upload) },
+                rowRevision = row.revision,
+                estimatedBytes = row.estimatedBytes,
             )
         }
 
@@ -347,7 +375,9 @@ data class Person(
     override val id: String,
     val name: String,
     override val sync: SyncInfo = SyncInfo(),
-    override val uploads: Map<String, UploadInfo> = emptyMap()
+    override val uploads: Map<String, UploadInfo> = emptyMap(),
+    override val rowRevision: Long = 0,
+    override val estimatedBytes: ULong = 0u
 ) : DBModel {
     override val modelName get() = "Person"
     companion object : ModelDecoder<Person> {
@@ -360,6 +390,8 @@ data class Person(
                 name = r.req(0, Cell::asText),
                 sync = SyncInfo.of(row.sync),
                 uploads = row.uploads.associate { it.action to UploadInfo.of(it.upload) },
+                rowRevision = row.revision,
+                estimatedBytes = row.estimatedBytes,
             )
         }
 
@@ -394,7 +426,9 @@ data class Letter(
     val text: String,
     val at: Long,
     override val sync: SyncInfo = SyncInfo(),
-    override val uploads: Map<String, UploadInfo> = emptyMap()
+    override val uploads: Map<String, UploadInfo> = emptyMap(),
+    override val rowRevision: Long = 0,
+    override val estimatedBytes: ULong = 0u
 ) : DBModel {
     override val modelName get() = "Letter"
     companion object : ModelDecoder<Letter> {
@@ -409,6 +443,8 @@ data class Letter(
                 at = r.req(2, Cell::asInt),
                 sync = SyncInfo.of(row.sync),
                 uploads = row.uploads.associate { it.action to UploadInfo.of(it.upload) },
+                rowRevision = row.revision,
+                estimatedBytes = row.estimatedBytes,
             )
         }
 
@@ -455,7 +491,9 @@ data class Container(
     val isPublic: Boolean? = null,
     val shelves: List<ContainerShelf>? = null,
     override val sync: SyncInfo = SyncInfo(),
-    override val uploads: Map<String, UploadInfo> = emptyMap()
+    override val uploads: Map<String, UploadInfo> = emptyMap(),
+    override val rowRevision: Long = 0,
+    override val estimatedBytes: ULong = 0u
 ) : DBModel {
     override val modelName get() = "Container"
     companion object : ModelDecoder<Container> {
@@ -473,6 +511,8 @@ data class Container(
                 shelves = r.listOpt(5, Cell::asText)?.map { ContainerShelf.of(it) },
                 sync = SyncInfo.of(row.sync),
                 uploads = row.uploads.associate { it.action to UploadInfo.of(it.upload) },
+                rowRevision = row.revision,
+                estimatedBytes = row.estimatedBytes,
             )
         }
 
@@ -541,7 +581,9 @@ data class Document(
     override val id: String,
     val slug: String,
     override val sync: SyncInfo = SyncInfo(),
-    override val uploads: Map<String, UploadInfo> = emptyMap()
+    override val uploads: Map<String, UploadInfo> = emptyMap(),
+    override val rowRevision: Long = 0,
+    override val estimatedBytes: ULong = 0u
 ) : DBModel {
     override val modelName get() = "Document"
     companion object : ModelDecoder<Document> {
@@ -554,6 +596,8 @@ data class Document(
                 slug = r.req(0, Cell::asText),
                 sync = SyncInfo.of(row.sync),
                 uploads = row.uploads.associate { it.action to UploadInfo.of(it.upload) },
+                rowRevision = row.revision,
+                estimatedBytes = row.estimatedBytes,
             )
         }
 
@@ -588,7 +632,9 @@ data class Chat(
     val serverRevision: Long,
     val lists: List<String>,
     override val sync: SyncInfo = SyncInfo(),
-    override val uploads: Map<String, UploadInfo> = emptyMap()
+    override val uploads: Map<String, UploadInfo> = emptyMap(),
+    override val rowRevision: Long = 0,
+    override val estimatedBytes: ULong = 0u
 ) : DBModel {
     override val modelName get() = "Chat"
     companion object : ModelDecoder<Chat> {
@@ -603,6 +649,8 @@ data class Chat(
                 lists = r.list(2, Cell::asText),
                 sync = SyncInfo.of(row.sync),
                 uploads = row.uploads.associate { it.action to UploadInfo.of(it.upload) },
+                rowRevision = row.revision,
+                estimatedBytes = row.estimatedBytes,
             )
         }
 
@@ -643,7 +691,9 @@ data class Message(
     val text: String,
     val chatId: String,
     override val sync: SyncInfo = SyncInfo(),
-    override val uploads: Map<String, UploadInfo> = emptyMap()
+    override val uploads: Map<String, UploadInfo> = emptyMap(),
+    override val rowRevision: Long = 0,
+    override val estimatedBytes: ULong = 0u
 ) : DBModel {
     override val modelName get() = "Message"
     companion object : ModelDecoder<Message> {
@@ -657,6 +707,8 @@ data class Message(
                 chatId = r.req(1, Cell::asId),
                 sync = SyncInfo.of(row.sync),
                 uploads = row.uploads.associate { it.action to UploadInfo.of(it.upload) },
+                rowRevision = row.revision,
+                estimatedBytes = row.estimatedBytes,
             )
         }
 
@@ -690,7 +742,9 @@ data class InterfaceRecord(
     val slug: String,
     val spec: SampleSpec? = null,
     override val sync: SyncInfo = SyncInfo(),
-    override val uploads: Map<String, UploadInfo> = emptyMap()
+    override val uploads: Map<String, UploadInfo> = emptyMap(),
+    override val rowRevision: Long = 0,
+    override val estimatedBytes: ULong = 0u
 ) : DBModel {
     override val modelName get() = "InterfaceRecord"
     companion object : ModelDecoder<InterfaceRecord> {
@@ -704,6 +758,8 @@ data class InterfaceRecord(
                 spec = r.objOpt(1) { SampleSpec.fromCells(it) },
                 sync = SyncInfo.of(row.sync),
                 uploads = row.uploads.associate { it.action to UploadInfo.of(it.upload) },
+                rowRevision = row.revision,
+                estimatedBytes = row.estimatedBytes,
             )
         }
 
@@ -738,7 +794,9 @@ data class KeywordRecord(
     val `class`: String,
     val value: KeywordValue? = null,
     override val sync: SyncInfo = SyncInfo(),
-    override val uploads: Map<String, UploadInfo> = emptyMap()
+    override val uploads: Map<String, UploadInfo> = emptyMap(),
+    override val rowRevision: Long = 0,
+    override val estimatedBytes: ULong = 0u
 ) : DBModel {
     override val modelName get() = "KeywordRecord"
     companion object : ModelDecoder<KeywordRecord> {
@@ -753,6 +811,8 @@ data class KeywordRecord(
                 value = r.objOpt(2) { KeywordValue.fromCells(it) },
                 sync = SyncInfo.of(row.sync),
                 uploads = row.uploads.associate { it.action to UploadInfo.of(it.upload) },
+                rowRevision = row.revision,
+                estimatedBytes = row.estimatedBytes,
             )
         }
 
@@ -795,7 +855,9 @@ data class MediaMessage(
     val mediaKind: MediaKindValue? = null,
     val sequenceNumber: Long? = null,
     override val sync: SyncInfo = SyncInfo(),
-    override val uploads: Map<String, UploadInfo> = emptyMap()
+    override val uploads: Map<String, UploadInfo> = emptyMap(),
+    override val rowRevision: Long = 0,
+    override val estimatedBytes: ULong = 0u
 ) : DBModel {
     override val modelName get() = "MediaMessage"
     companion object : ModelDecoder<MediaMessage> {
@@ -811,6 +873,8 @@ data class MediaMessage(
                 sequenceNumber = r.opt(3, Cell::asInt),
                 sync = SyncInfo.of(row.sync),
                 uploads = row.uploads.associate { it.action to UploadInfo.of(it.upload) },
+                rowRevision = row.revision,
+                estimatedBytes = row.estimatedBytes,
             )
         }
 
@@ -878,7 +942,9 @@ data class Moment(
     val tone: String? = null,
     val createdAt: String,
     override val sync: SyncInfo = SyncInfo(),
-    override val uploads: Map<String, UploadInfo> = emptyMap()
+    override val uploads: Map<String, UploadInfo> = emptyMap(),
+    override val rowRevision: Long = 0,
+    override val estimatedBytes: ULong = 0u
 ) : DBModel {
     override val modelName get() = "Moment"
     companion object : ModelDecoder<Moment> {
@@ -897,6 +963,8 @@ data class Moment(
                 createdAt = r.req(6, Cell::asText),
                 sync = SyncInfo.of(row.sync),
                 uploads = row.uploads.associate { it.action to UploadInfo.of(it.upload) },
+                rowRevision = row.revision,
+                estimatedBytes = row.estimatedBytes,
             )
         }
 
@@ -978,7 +1046,9 @@ data class NestedSample(
     val tree: NestedTree? = null,
     val replyTo: RecordReplyNode? = null,
     override val sync: SyncInfo = SyncInfo(),
-    override val uploads: Map<String, UploadInfo> = emptyMap()
+    override val uploads: Map<String, UploadInfo> = emptyMap(),
+    override val rowRevision: Long = 0,
+    override val estimatedBytes: ULong = 0u
 ) : DBModel {
     override val modelName get() = "NestedSample"
     companion object : ModelDecoder<NestedSample> {
@@ -995,6 +1065,8 @@ data class NestedSample(
                 replyTo = r.objOpt(4) { RecordReplyNode.fromCells(it) },
                 sync = SyncInfo.of(row.sync),
                 uploads = row.uploads.associate { it.action to UploadInfo.of(it.upload) },
+                rowRevision = row.revision,
+                estimatedBytes = row.estimatedBytes,
             )
         }
 
@@ -1035,7 +1107,9 @@ data class NestedReference(
     override val id: String,
     val values: List<NestedValue>,
     override val sync: SyncInfo = SyncInfo(),
-    override val uploads: Map<String, UploadInfo> = emptyMap()
+    override val uploads: Map<String, UploadInfo> = emptyMap(),
+    override val rowRevision: Long = 0,
+    override val estimatedBytes: ULong = 0u
 ) : DBModel {
     override val modelName get() = "NestedReference"
     companion object : ModelDecoder<NestedReference> {
@@ -1048,6 +1122,8 @@ data class NestedReference(
                 values = r.arr(0) { NestedValue.fromCells(it) },
                 sync = SyncInfo.of(row.sync),
                 uploads = row.uploads.associate { it.action to UploadInfo.of(it.upload) },
+                rowRevision = row.revision,
+                estimatedBytes = row.estimatedBytes,
             )
         }
 
@@ -1077,7 +1153,9 @@ data class Notice(
     val body: String,
     val occurredAt: String,
     override val sync: SyncInfo = SyncInfo(),
-    override val uploads: Map<String, UploadInfo> = emptyMap()
+    override val uploads: Map<String, UploadInfo> = emptyMap(),
+    override val rowRevision: Long = 0,
+    override val estimatedBytes: ULong = 0u
 ) : DBModel {
     override val modelName get() = "Notice"
     companion object : ModelDecoder<Notice> {
@@ -1091,6 +1169,8 @@ data class Notice(
                 occurredAt = r.req(1, Cell::asText),
                 sync = SyncInfo.of(row.sync),
                 uploads = row.uploads.associate { it.action to UploadInfo.of(it.upload) },
+                rowRevision = row.revision,
+                estimatedBytes = row.estimatedBytes,
             )
         }
 
@@ -1129,7 +1209,9 @@ data class InteractionNotice(
     val actorUserId: String,
     val occurredAt: String,
     override val sync: SyncInfo = SyncInfo(),
-    override val uploads: Map<String, UploadInfo> = emptyMap()
+    override val uploads: Map<String, UploadInfo> = emptyMap(),
+    override val rowRevision: Long = 0,
+    override val estimatedBytes: ULong = 0u
 ) : DBModel {
     override val modelName get() = "InteractionNotice"
     companion object : ModelDecoder<InteractionNotice> {
@@ -1144,6 +1226,8 @@ data class InteractionNotice(
                 occurredAt = r.req(2, Cell::asText),
                 sync = SyncInfo.of(row.sync),
                 uploads = row.uploads.associate { it.action to UploadInfo.of(it.upload) },
+                rowRevision = row.revision,
+                estimatedBytes = row.estimatedBytes,
             )
         }
 
@@ -1186,7 +1270,9 @@ data class ChatAction(
     val kind: String,
     val active: Boolean,
     override val sync: SyncInfo = SyncInfo(),
-    override val uploads: Map<String, UploadInfo> = emptyMap()
+    override val uploads: Map<String, UploadInfo> = emptyMap(),
+    override val rowRevision: Long = 0,
+    override val estimatedBytes: ULong = 0u
 ) : DBModel {
     override val modelName get() = "ChatAction"
     companion object : ModelDecoder<ChatAction> {
@@ -1202,6 +1288,8 @@ data class ChatAction(
                 active = r.req(3, Cell::asBool),
                 sync = SyncInfo.of(row.sync),
                 uploads = row.uploads.associate { it.action to UploadInfo.of(it.upload) },
+                rowRevision = row.revision,
+                estimatedBytes = row.estimatedBytes,
             )
         }
 
@@ -1247,7 +1335,9 @@ data class ChatActivityNotice(
     val kind: String,
     val active: Boolean,
     override val sync: SyncInfo = SyncInfo(),
-    override val uploads: Map<String, UploadInfo> = emptyMap()
+    override val uploads: Map<String, UploadInfo> = emptyMap(),
+    override val rowRevision: Long = 0,
+    override val estimatedBytes: ULong = 0u
 ) : DBModel {
     override val modelName get() = "ChatActivityNotice"
     companion object : ModelDecoder<ChatActivityNotice> {
@@ -1263,6 +1353,8 @@ data class ChatActivityNotice(
                 active = r.req(3, Cell::asBool),
                 sync = SyncInfo.of(row.sync),
                 uploads = row.uploads.associate { it.action to UploadInfo.of(it.upload) },
+                rowRevision = row.revision,
+                estimatedBytes = row.estimatedBytes,
             )
         }
 
@@ -1306,7 +1398,9 @@ data class Presence(
     val userId: String,
     val room: String,
     override val sync: SyncInfo = SyncInfo(),
-    override val uploads: Map<String, UploadInfo> = emptyMap()
+    override val uploads: Map<String, UploadInfo> = emptyMap(),
+    override val rowRevision: Long = 0,
+    override val estimatedBytes: ULong = 0u
 ) : DBModel {
     override val modelName get() = "Presence"
     companion object : ModelDecoder<Presence> {
@@ -1320,6 +1414,8 @@ data class Presence(
                 room = r.req(1, Cell::asText),
                 sync = SyncInfo.of(row.sync),
                 uploads = row.uploads.associate { it.action to UploadInfo.of(it.upload) },
+                rowRevision = row.revision,
+                estimatedBytes = row.estimatedBytes,
             )
         }
 
@@ -1379,7 +1475,9 @@ data class Record(
     val attachment: RecordAttachment? = null,
     val media: RecordMedia? = null,
     override val sync: SyncInfo = SyncInfo(),
-    override val uploads: Map<String, UploadInfo> = emptyMap()
+    override val uploads: Map<String, UploadInfo> = emptyMap(),
+    override val rowRevision: Long = 0,
+    override val estimatedBytes: ULong = 0u
 ) : DBModel {
     override val modelName get() = "Record"
     companion object : ModelDecoder<Record> {
@@ -1400,6 +1498,8 @@ data class Record(
                 media = r.objOpt(8) { RecordMedia.fromCells(it) },
                 sync = SyncInfo.of(row.sync),
                 uploads = row.uploads.associate { it.action to UploadInfo.of(it.upload) },
+                rowRevision = row.revision,
+                estimatedBytes = row.estimatedBytes,
             )
         }
 
@@ -1475,7 +1575,9 @@ data class CurrentUser(
     override val id: String,
     val name: String,
     override val sync: SyncInfo = SyncInfo(),
-    override val uploads: Map<String, UploadInfo> = emptyMap()
+    override val uploads: Map<String, UploadInfo> = emptyMap(),
+    override val rowRevision: Long = 0,
+    override val estimatedBytes: ULong = 0u
 ) : DBModel {
     override val modelName get() = "CurrentUser"
     companion object : ModelDecoder<CurrentUser> {
@@ -1488,6 +1590,8 @@ data class CurrentUser(
                 name = r.req(0, Cell::asText),
                 sync = SyncInfo.of(row.sync),
                 uploads = row.uploads.associate { it.action to UploadInfo.of(it.upload) },
+                rowRevision = row.revision,
+                estimatedBytes = row.estimatedBytes,
             )
         }
 
@@ -1520,7 +1624,9 @@ data class CurrentRegion(
     override val id: String,
     val name: String,
     override val sync: SyncInfo = SyncInfo(),
-    override val uploads: Map<String, UploadInfo> = emptyMap()
+    override val uploads: Map<String, UploadInfo> = emptyMap(),
+    override val rowRevision: Long = 0,
+    override val estimatedBytes: ULong = 0u
 ) : DBModel {
     override val modelName get() = "CurrentRegion"
     companion object : ModelDecoder<CurrentRegion> {
@@ -1533,6 +1639,8 @@ data class CurrentRegion(
                 name = r.req(0, Cell::asText),
                 sync = SyncInfo.of(row.sync),
                 uploads = row.uploads.associate { it.action to UploadInfo.of(it.upload) },
+                rowRevision = row.revision,
+                estimatedBytes = row.estimatedBytes,
             )
         }
 
@@ -1568,7 +1676,9 @@ data class CustomScreen(
     val requires: ScreenRequires,
     val spec: ScreenSpec? = null,
     override val sync: SyncInfo = SyncInfo(),
-    override val uploads: Map<String, UploadInfo> = emptyMap()
+    override val uploads: Map<String, UploadInfo> = emptyMap(),
+    override val rowRevision: Long = 0,
+    override val estimatedBytes: ULong = 0u
 ) : DBModel {
     override val modelName get() = "CustomScreen"
     companion object : ModelDecoder<CustomScreen> {
@@ -1584,6 +1694,8 @@ data class CustomScreen(
                 spec = r.objOpt(3) { ScreenSpec.fromCells(it) },
                 sync = SyncInfo.of(row.sync),
                 uploads = row.uploads.associate { it.action to UploadInfo.of(it.upload) },
+                rowRevision = row.revision,
+                estimatedBytes = row.estimatedBytes,
             )
         }
 
@@ -1622,7 +1734,9 @@ data class StorageRow(
     override val id: String,
     val record: String,
     override val sync: SyncInfo = SyncInfo(),
-    override val uploads: Map<String, UploadInfo> = emptyMap()
+    override val uploads: Map<String, UploadInfo> = emptyMap(),
+    override val rowRevision: Long = 0,
+    override val estimatedBytes: ULong = 0u
 ) : DBModel {
     override val modelName get() = "StorageRow"
     companion object : ModelDecoder<StorageRow> {
@@ -1635,6 +1749,8 @@ data class StorageRow(
                 record = r.req(0, Cell::asText),
                 sync = SyncInfo.of(row.sync),
                 uploads = row.uploads.associate { it.action to UploadInfo.of(it.upload) },
+                rowRevision = row.revision,
+                estimatedBytes = row.estimatedBytes,
             )
         }
 
@@ -1663,7 +1779,9 @@ data class Tail(
     override val id: String,
     val text: String,
     override val sync: SyncInfo = SyncInfo(),
-    override val uploads: Map<String, UploadInfo> = emptyMap()
+    override val uploads: Map<String, UploadInfo> = emptyMap(),
+    override val rowRevision: Long = 0,
+    override val estimatedBytes: ULong = 0u
 ) : DBModel {
     override val modelName get() = "Tail"
     companion object : ModelDecoder<Tail> {
@@ -1676,6 +1794,8 @@ data class Tail(
                 text = r.req(0, Cell::asText),
                 sync = SyncInfo.of(row.sync),
                 uploads = row.uploads.associate { it.action to UploadInfo.of(it.upload) },
+                rowRevision = row.revision,
+                estimatedBytes = row.estimatedBytes,
             )
         }
 
@@ -1710,7 +1830,9 @@ data class UnionSample(
     val attachment: RecordAttachment? = null,
     val props: MomentWidgetItemProps? = null,
     override val sync: SyncInfo = SyncInfo(),
-    override val uploads: Map<String, UploadInfo> = emptyMap()
+    override val uploads: Map<String, UploadInfo> = emptyMap(),
+    override val rowRevision: Long = 0,
+    override val estimatedBytes: ULong = 0u
 ) : DBModel {
     override val modelName get() = "UnionSample"
     companion object : ModelDecoder<UnionSample> {
@@ -1725,6 +1847,8 @@ data class UnionSample(
                 props = r.objOpt(2) { MomentWidgetItemProps.fromCells(it) },
                 sync = SyncInfo.of(row.sync),
                 uploads = row.uploads.associate { it.action to UploadInfo.of(it.upload) },
+                rowRevision = row.revision,
+                estimatedBytes = row.estimatedBytes,
             )
         }
 
@@ -1763,7 +1887,9 @@ data class User(
     val typing: Boolean,
     val mood: String? = null,
     override val sync: SyncInfo = SyncInfo(),
-    override val uploads: Map<String, UploadInfo> = emptyMap()
+    override val uploads: Map<String, UploadInfo> = emptyMap(),
+    override val rowRevision: Long = 0,
+    override val estimatedBytes: ULong = 0u
 ) : DBModel {
     override val modelName get() = "User"
     companion object : ModelDecoder<User> {
@@ -1780,6 +1906,8 @@ data class User(
                 mood = r.opt(4, Cell::asText),
                 sync = SyncInfo.of(row.sync),
                 uploads = row.uploads.associate { it.action to UploadInfo.of(it.upload) },
+                rowRevision = row.revision,
+                estimatedBytes = row.estimatedBytes,
             )
         }
 
@@ -1832,7 +1960,9 @@ data class Vibe(
     val userId: String,
     val kind: VibeKind,
     override val sync: SyncInfo = SyncInfo(),
-    override val uploads: Map<String, UploadInfo> = emptyMap()
+    override val uploads: Map<String, UploadInfo> = emptyMap(),
+    override val rowRevision: Long = 0,
+    override val estimatedBytes: ULong = 0u
 ) : DBModel {
     override val modelName get() = "Vibe"
     companion object : ModelDecoder<Vibe> {
@@ -1847,6 +1977,8 @@ data class Vibe(
                 kind = r.req(2, Cell::asText).let { VibeKind.of(it) },
                 sync = SyncInfo.of(row.sync),
                 uploads = row.uploads.associate { it.action to UploadInfo.of(it.upload) },
+                rowRevision = row.revision,
+                estimatedBytes = row.estimatedBytes,
             )
         }
 

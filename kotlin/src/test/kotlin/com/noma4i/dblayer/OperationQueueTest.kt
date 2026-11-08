@@ -4,6 +4,7 @@ import com.noma4i.dblayer.models.Moment
 import com.noma4i.dblayer.models.modelsJSON
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.async
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.mapNotNull
 import kotlinx.coroutines.flow.onEach
@@ -35,6 +36,18 @@ private fun momentsKeepingUpdates(): String = JsonArray(Json.parseToJsonElement(
     }
 }).toString()
 
+/** The one reader a queue stream has: it takes every value in order, `until` waits for the first value that fits. */
+private class QueueReader(scope: kotlinx.coroutines.CoroutineScope, queue: kotlinx.coroutines.flow.Flow<List<OperationInfo>>) {
+    private val values = kotlinx.coroutines.channels.Channel<List<OperationInfo>>(kotlinx.coroutines.channels.Channel.UNLIMITED)
+    private val reading = scope.launch { queue.collect { values.send(it) } }
+
+    suspend fun until(fits: (List<OperationInfo>) -> Boolean): List<OperationInfo> {
+        while (true) values.receive().let { if (fits(it)) return it }
+    }
+
+    fun close() = reading.cancel()
+}
+
 /** The queue of operations through its public API: `operations()` shows each write with its status, and `retry` takes the fields of an `OperationInfo`. */
 class OperationQueueTest {
     @Test
@@ -46,17 +59,18 @@ class OperationQueueTest {
         DBlayer.database.registerOperations(QUEUE_DEFS)
         Moment.feed.load()
         val moment = withTimeout(5000) { Moment.recent.live.flow.first { it.isNotEmpty() } }.first()
-        val queue = AccountScope.current().operations().mapNotNull { (it as? OperationQueueItem.Queue)?.items }
+        val queue = QueueReader(this, AccountScope.current().operations().mapNotNull { (it as? OperationQueueItem.Queue)?.items })
         DBlayer.database.setOnline(false)
         val receipt = moment.update(text = GraphQLNullable.Value("edited"))
-        val pending = withTimeout(5000) { queue.first { it.size == 1 && it[0].status == OperationQueueStatus.PENDING } }
+        val pending = withTimeout(5000) { queue.until { it.size == 1 && it[0].status == OperationQueueStatus.PENDING } }
         assertEquals(listOf("Moment", "update", moment.id), listOf(pending[0].model, pending[0].action, pending[0].rowId))
         DBlayer.database.setOnline(true)
-        val sending = withTimeout(5000) { queue.first { it.firstOrNull()?.status == OperationQueueStatus.SENDING } }
+        val sending = withTimeout(5000) { queue.until { it.firstOrNull()?.status == OperationQueueStatus.SENDING } }
         assertEquals(1u, sending[0].attempts)
         hold.release()
         assertTrue(withTimeout(5000) { receipt.outcome() } is OperationOutcome.Confirmed)
-        assertEquals(emptyList<OperationInfo>(), withTimeout(5000) { queue.first { it.isEmpty() } })
+        assertEquals(emptyList<OperationInfo>(), withTimeout(5000) { queue.until { it.isEmpty() } })
+        queue.close()
     }
 
     @Test
@@ -69,13 +83,14 @@ class OperationQueueTest {
         DBlayer.database.registerOperations(QUEUE_DEFS)
         Moment.feed.load()
         val moment = withTimeout(5000) { Moment.recent.live.flow.first { it.isNotEmpty() } }.first()
-        val queue = AccountScope.current().operations().mapNotNull { (it as? OperationQueueItem.Queue)?.items }
+        val queue = QueueReader(this, AccountScope.current().operations().mapNotNull { (it as? OperationQueueItem.Queue)?.items })
         moment.update(text = GraphQLNullable.Value("edited"))
-        val failed = withTimeout(5000) { queue.first { it.firstOrNull()?.status == OperationQueueStatus.FAILED } }.first()
+        val failed = withTimeout(5000) { queue.until { it.firstOrNull()?.status == OperationQueueStatus.FAILED } }.first()
         assertNotNull(failed.error)
         AccountScope.current().retry(failed.model, failed.rowId, failed.action)
-        withTimeout(5000) { queue.first { it.isEmpty() } }
+        withTimeout(5000) { queue.until { it.isEmpty() } }
         assertEquals(2, transport.calls.count { it.operationName == "UpdateMoment" })
+        queue.close()
     }
 
     @Test

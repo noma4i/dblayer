@@ -191,6 +191,7 @@ pub enum StreamEffect {
     Available,
     CloseSink,
     Cancelled { reply: ReplyId },
+    ReaderClaimed { reply: ReplyId, claimed: bool },
     StatusInterest { plus: bool },
 }
 
@@ -241,7 +242,9 @@ pub enum DeliveryInput {
     Census { reply: ReplyId },
     Resync { stream: StreamId },
     Cancel { stream: StreamId, reply: ReplyId },
-    Release { stream: StreamId },
+    ClaimReader { stream: StreamId, reader: u64, reply: ReplyId },
+    /// `reader` is the reader that left the stream while its handle is held, `None` is the drop of the handle.
+    Release { stream: StreamId, reader: Option<u64> },
     SinkClosed { stream: StreamId },
     EpochStarted(EpochStarted),
     EpochEnded(EpochEnded),
@@ -306,6 +309,7 @@ struct Delivery {
     replies: Vec<ReplyId>,
     closing: bool,
     released: bool,
+    reader: Option<u64>,
     sink_closed: bool,
     interested: bool,
     /// A read stream of a live model holds a `Want+` of the Feed.
@@ -493,7 +497,11 @@ impl StateOwner for Deliveries {
                     out.push(Effect::Run(DeliveryEffect::Stream { stream, effect: StreamEffect::Cancelled { reply } }));
                 }
             }
-            DeliveryInput::Release { stream } => on(state, stream, &mut out, |machine, fx| machine.release(fx)),
+            DeliveryInput::ClaimReader { stream, reader, reply } => {
+                let claimed = state.streams.get_mut(&stream).is_some_and(|machine| machine.claim(reader));
+                out.push(Effect::Run(DeliveryEffect::Stream { stream, effect: StreamEffect::ReaderClaimed { reply, claimed } }));
+            }
+            DeliveryInput::Release { stream, reader } => on(state, stream, &mut out, |machine, fx| if machine.reader.is_none() || reader.is_none() || machine.reader == reader { machine.release(fx) }),
             DeliveryInput::SinkClosed { stream } => on(state, stream, &mut out, |machine, fx| machine.sink_closed(fx)),
             DeliveryInput::Pull { stream, outcome } => {
                 if state.streams.contains_key(&stream) {

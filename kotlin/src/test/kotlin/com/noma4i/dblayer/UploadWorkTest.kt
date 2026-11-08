@@ -47,7 +47,7 @@ class UploadWorkTest {
 
     @Test
     fun onlyUploadRequestsGoThroughTheNetworkOfTheRunningJob() = bounded {
-        UploadNetwork.started(null)
+        UploadNetwork.started(3u, null)
         try {
             MockWebServer().use { server ->
                 repeat(2) { server.enqueue(MockResponse().setResponseCode(200).setBody("""{"data":{}}""")) }
@@ -57,11 +57,33 @@ class UploadWorkTest {
                 assertEquals(RawOutcome.Response(200u, null, """{"data":{}}"""), transport.send(graphql))
                 refused { transport.send(graphql.copy(purpose = NetworkPurpose.TRANSFER)) }
                 refused { OkHttpTransport().send(probeRequest(server.url("/api/graphql").toString(), "a.b.c.d.e").copy(purpose = NetworkPurpose.TRANSFER)) }
-                UploadNetwork.ended()
+                UploadNetwork.ended(3u)
                 assertEquals(RawOutcome.Response(200u, null, """{"data":{}}"""), transport.send(graphql.copy(purpose = NetworkPurpose.TRANSFER)))
             }
         } finally {
-            UploadNetwork.ended()
+            UploadNetwork.ended(3u)
+        }
+    }
+
+    /** boundary_round_orders (P-BND-08, D-176): the end and the network change of another round leave the network of the running round. */
+    @Test
+    fun theEndAndTheNetworkChangeOfAnotherRoundLeaveTheRunningRound() = bounded {
+        UploadNetwork.started(4u, null)
+        try {
+            UploadNetwork.ended(3u)
+            UploadNetwork.changed(3u, null)
+            MockWebServer().use { server ->
+                server.start()
+                refused { OkHttpTransport().send(probeRequest(server.url("/graphql").toString(), "{}").copy(purpose = NetworkPurpose.TRANSFER)) }
+            }
+            UploadNetwork.ended(4u)
+            MockWebServer().use { server ->
+                server.enqueue(MockResponse().setResponseCode(200).setBody("{}"))
+                server.start()
+                assertEquals(RawOutcome.Response(200u, null, "{}"), OkHttpTransport().send(probeRequest(server.url("/graphql").toString(), "{}").copy(purpose = NetworkPurpose.TRANSFER)))
+            }
+        } finally {
+            UploadNetwork.ended(4u)
         }
     }
 

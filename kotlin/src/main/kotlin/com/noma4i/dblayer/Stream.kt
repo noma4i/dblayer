@@ -22,11 +22,22 @@ import kotlinx.serialization.json.JsonObject
 /** The values of one stream in order, taken from the core one by one. Collecting it reads the stream, and a collector that is cancelled cancels the stream in the core and leaves the object alive. A stream that ends by itself delivers one `ReadValue.Ended` last. */
 class ValueStream internal constructor(val epoch: ULong, private val reader: ReadStream) {
     val values: Flow<ReadValue> = flow {
+        val claim = try {
+            reader.claimReader()
+        } catch (refused: DbException.Invalid) {
+            emit(ReadValue.Ended(ReadEnd.Invalid))
+            return@flow
+        } catch (failed: DbException) {
+            emit(ReadValue.Ended(ReadEnd.Closed))
+            return@flow
+        }
         try {
             while (true) emit(reader.pull() ?: break)
         } catch (cancelled: CancellationException) {
             if (!currentCoroutineContext().isActive) withContext(NonCancellable) { reader.cancel() }
             throw cancelled
+        } finally {
+            reader.releaseReader(claim)
         }
     }
 
@@ -54,16 +65,16 @@ internal fun Database.openValueStream(epoch: ULong, request: ReadRequest): Value
 /** One delivery of a stream of rows with its rows decoded: the platform value that [ListProjection] mirrors. */
 sealed interface ListDelivery<out Model> {
     class Snapshot<Model>(val revision: Long, val rows: List<Model>, val edits: List<ListEdit<Model>>, val state: ReadState) : ListDelivery<Model>
-    class Delta<Model>(val revision: Long, val edits: List<ListEdit<Model>>, val state: ReadState) : ListDelivery<Model>
-    class State(val state: ReadState) : ListDelivery<Nothing>
+    class Delta<Model>(val base: Long, val revision: Long, val edits: List<ListEdit<Model>>, val state: ReadState) : ListDelivery<Model>
+    class State(val revision: Long, val state: ReadState) : ListDelivery<Nothing>
     class Ended(val cause: ReadEnd) : ListDelivery<Nothing>
 }
 
 /** Decodes the rows of a value of a stream of rows. `null` for a value that carries no list. Throws when a row cannot be decoded: the reader then asks the core for a snapshot. */
 fun <Model : DBModel> ReadValue.listDelivery(decoder: ModelDecoder<Model>): ListDelivery<Model>? = when (this) {
     is ReadValue.Snapshot -> ListDelivery.Snapshot(revision, rows.map(decoder::read), edits.map { listEdit(it, decoder) }, state)
-    is ReadValue.Delta -> ListDelivery.Delta(revision, edits.map { listEdit(it, decoder) }, state)
-    is ReadValue.State -> ListDelivery.State(state)
+    is ReadValue.Delta -> ListDelivery.Delta(base, revision, edits.map { listEdit(it, decoder) }, state)
+    is ReadValue.State -> ListDelivery.State(revision, state)
     is ReadValue.Ended -> ListDelivery.Ended(cause)
     else -> null
 }
@@ -80,11 +91,13 @@ class ListProjection<Model : DBModel> private constructor(
     val rows: List<Model>,
     val state: ReadState?,
     val revision: Long?,
+    /** The revision the last delta continues from. */
+    val base: Long?,
     val ended: ReadEnd?,
     /** The steps of the last delivery from the rows before to the rows after, as the core gives them for a snapshot and a delta alike. */
     val lastEdits: List<ListEdit<Model>>,
 ) {
-    constructor() : this(emptyList(), null, null, null, emptyList())
+    constructor() : this(emptyList(), null, null, null, null, emptyList())
 
     val phase: ReadPhase? get() = state?.phase
 
@@ -92,10 +105,10 @@ class ListProjection<Model : DBModel> private constructor(
     val error: DbException? get() = state?.error
 
     fun apply(delivery: ListDelivery<Model>): ListProjection<Model> = when (delivery) {
-        is ListDelivery.Snapshot -> ListProjection(delivery.rows, delivery.state, delivery.revision, ended, delivery.edits)
-        is ListDelivery.Delta -> ListProjection(rows.toMutableList().also { it.replay(delivery.edits) }, delivery.state, delivery.revision, ended, delivery.edits)
-        is ListDelivery.State -> ListProjection(rows, delivery.state, revision, ended, emptyList())
-        is ListDelivery.Ended -> ListProjection(rows, state, revision, delivery.cause, emptyList())
+        is ListDelivery.Snapshot -> ListProjection(delivery.rows, delivery.state, delivery.revision, null, ended, delivery.edits)
+        is ListDelivery.Delta -> ListProjection(rows.toMutableList().also { it.replay(delivery.edits) }, delivery.state, delivery.revision, delivery.base, ended, delivery.edits)
+        is ListDelivery.State -> ListProjection(rows, delivery.state, delivery.revision, base, ended, emptyList())
+        is ListDelivery.Ended -> ListProjection(rows, state, revision, base, delivery.cause, emptyList())
     }
 
     /** Decodes and applies a value. `null` for a value that carries no list. Throws when a row cannot be decoded. */
@@ -137,26 +150,25 @@ class Projected<Model : DBModel>(val stream: ValueStream, decoder: ModelDecoder<
     }
 }
 
-/** The screen model of a count stream. */
+/** What a screen shows of a count stream: the count, its revision and its state are one value of one delivery. */
+class CountProjection(val count: ULong?, val revision: Long?, val state: ReadState?, val ended: ReadEnd?) {
+    val error: DbException? get() = state?.error
+
+    internal fun apply(value: ReadValue): CountProjection = when (value) {
+        is ReadValue.Count -> CountProjection(value.count, value.revision, value.state, ended)
+        is ReadValue.State -> CountProjection(count, value.revision, value.state, ended)
+        is ReadValue.Ended -> CountProjection(count, revision, state, value.cause)
+        else -> this
+    }
+}
+
+/** The screen model of a count stream: a StateFlow over a projection. */
 class ProjectedCount(val stream: ValueStream, scope: CoroutineScope) {
-    private val held = MutableStateFlow<Long?>(null)
-    val count: StateFlow<Long?> = held.asStateFlow()
-    private val shown = MutableStateFlow<ReadState?>(null)
-    /** The state of the stream with its error. */
-    val state: StateFlow<ReadState?> = shown.asStateFlow()
-    private val over = MutableStateFlow<ReadEnd?>(null)
-    /** Why the stream ended by itself. */
-    val ended: StateFlow<ReadEnd?> = over.asStateFlow()
+    private val held = MutableStateFlow(CountProjection(null, null, null, null))
+    val projection: StateFlow<CountProjection> = held.asStateFlow()
     internal val reading: Job = scope.launch(start = CoroutineStart.ATOMIC) {
         try {
-            stream.values.collect { value ->
-                when (value) {
-                    is ReadValue.Count -> { held.value = value.count.toLong(); shown.value = value.state }
-                    is ReadValue.State -> shown.value = value.state
-                    is ReadValue.Ended -> over.value = value.cause
-                    else -> {}
-                }
-            }
+            stream.values.collect { held.value = held.value.apply(it) }
         } finally {
             stream.close()
         }
@@ -223,7 +235,7 @@ val ValueStream.uploadStatus: Flow<TransferItem>
 
 /** One item of the queue of operations: the whole queue, or the end of the stream with the cause of the core. */
 sealed interface OperationQueueItem {
-    class Queue(val items: List<OperationInfo>) : OperationQueueItem
+    class Queue(val revision: Long, val items: List<OperationInfo>) : OperationQueueItem
     class Ended(val cause: ReadEnd) : OperationQueueItem
 }
 
@@ -232,7 +244,7 @@ internal fun ValueStream.operationLists(): Flow<OperationQueueItem> =
     flow {
         values.collect { value ->
             when (value) {
-                is ReadValue.Operations -> emit(OperationQueueItem.Queue(value.items))
+                is ReadValue.Operations -> emit(OperationQueueItem.Queue(value.revision, value.items))
                 is ReadValue.Ended -> emit(OperationQueueItem.Ended(value.cause))
                 else -> {}
             }

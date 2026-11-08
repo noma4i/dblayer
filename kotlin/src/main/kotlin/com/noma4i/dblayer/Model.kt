@@ -77,6 +77,10 @@ interface DBModel {
     val modelName: String
     val sync: SyncInfo
     val uploads: Map<String, UploadInfo>
+    /** The revision of the store the row was read at. */
+    val rowRevision: Long
+    /** The bytes the core estimates the row holds. */
+    val estimatedBytes: ULong
 }
 
 val DBModel.errorMessage: String? get() = sync.error?.message

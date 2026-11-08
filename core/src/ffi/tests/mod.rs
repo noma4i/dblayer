@@ -7,6 +7,7 @@ pub(crate) mod database_tests;
 mod query_spec_tests;
 mod read_tests;
 mod read_cancel_tests;
+mod reader_tests;
 pub(super) mod encrypted_tests;
 mod bootstrap_public_tests;
 mod lost_session_recovery_tests;

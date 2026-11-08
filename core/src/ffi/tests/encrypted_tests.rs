@@ -8,7 +8,6 @@ use crate::runtime::SystemClock;
 use crate::transport::encrypted::tests::fake_server_tests::{FakeServer, MemoryCredentials};
 use crate::transport::encrypted::tests::vectors_tests::{origin, pin, public_key_der_b64};
 use crate::transport::{CredentialSlot as CoreCredentials, HttpExchange, TransportError};
-use crate::test_wait::recv_within;
 
 pub(in super::super) struct ThroughServer(pub(in super::super) Arc<FakeServer>);
 
@@ -373,11 +372,8 @@ async fn sessionless_calls_leave_no_session_state_even_when_refused() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn retry_progress_delivers_the_current_snapshot_to_each_reader_and_a_slow_reader_delays_no_request() {
-    use std::sync::atomic::{AtomicUsize, Ordering};
-    use std::sync::Mutex;
+async fn bridge_prop_bootstrap_reader_a_slow_reader_gets_the_newest_snapshot_and_delays_no_request() {
     use tokio::sync::watch;
-    use crate::transport::RetrySnapshot;
 
     struct Failing(watch::Sender<usize>);
     #[async_trait]
@@ -387,34 +383,11 @@ async fn retry_progress_delivers_the_current_snapshot_to_each_reader_and_a_slow_
             Ok(EncryptedReply { status: 503, body: String::new() })
         }
     }
-    struct Tap {
-        seen: watch::Sender<Option<RetrySnapshot>>,
-        deliveries: AtomicUsize,
-        gate: Mutex<Option<std::sync::mpsc::Receiver<()>>>,
-    }
-    impl super::RetryProgressListener for Tap {
-        fn changed(&self, snapshot: RetrySnapshot) {
-            self.deliveries.fetch_add(1, Ordering::SeqCst);
-            let gate = self.gate.lock().unwrap().take();
-            if let Some(gate) = gate { recv_within(&gate); }
-            self.seen.send_replace(Some(snapshot));
-        }
-    }
-    fn tap(gate: Option<std::sync::mpsc::Receiver<()>>) -> (Arc<Tap>, watch::Receiver<Option<RetrySnapshot>>) {
-        let (seen, receiver) = watch::channel(None);
-        (Arc::new(Tap { seen, deliveries: AtomicUsize::new(0), gate: Mutex::new(gate) }), receiver)
-    }
-    async fn reaches(seen: &mut watch::Receiver<Option<RetrySnapshot>>, expected: impl Fn(&RetrySnapshot) -> bool) {
-        crate::test_wait::timeout(std::time::Duration::from_secs(5), seen.wait_for(|snapshot| snapshot.as_ref().is_some_and(&expected))).await.expect("snapshot delivered").unwrap();
-    }
-
     let (posted, mut posts) = watch::channel(0);
     let http = Arc::new(Failing(posted));
     let config = crate::transport::EncryptedConfig { origin: origin().into(), pin: pin().into(), server_key: public_key_der_b64().into(), ..crate::transport::encrypted::tests::protocol_tests::config() };
     let retries = super::RetryProgress::new();
-    let (release, gate) = std::sync::mpsc::channel();
-    let (slow, mut slow_seen) = tap(Some(gate));
-    let slow_subscription = retries.subscribe(slow.clone()).unwrap();
+    let slow = retries.subscribe();
     let clock = super::TestClock::new(1_800_000_000_000);
     let call = tokio::spawn({
         let (retries, clock) = (retries.clone(), clock.manual());
@@ -424,66 +397,20 @@ async fn retry_progress_delivers_the_current_snapshot_to_each_reader_and_a_slow_
     crate::test_wait::within(clock.await_armed(0)).await;
     clock.advance(1_000);
     crate::test_wait::timeout(std::time::Duration::from_secs(5), posts.wait_for(|posts| *posts == 2)).await.expect("the request retried while the first delivery blocked").unwrap();
-    assert!(slow_seen.borrow().is_none(), "the blocked reader has not seen anything yet");
     assert_eq!(retries.current().active_calls, 1);
 
-    let (late, mut late_seen) = tap(None);
-    let late_subscription = retries.subscribe(late.clone()).unwrap();
-    reaches(&mut late_seen, |snapshot| snapshot.active_calls == 1 && snapshot.last_attempt.as_ref().is_some_and(|attempt| attempt.reason == "HTTP 503")).await;
+    let late = retries.subscribe();
+    let first = crate::test_wait::within(late.next()).await.unwrap();
+    assert_eq!((first.active_calls, first.last_attempt.as_ref().map(|attempt| attempt.reason.as_str())), (1, Some("HTTP 503")));
 
-    release.send(()).unwrap();
-    reaches(&mut slow_seen, |snapshot| snapshot.active_calls == 1).await;
-    slow_subscription.cancel();
-    let delivered = slow.deliveries.load(Ordering::SeqCst);
+    let newest = crate::test_wait::within(slow.next()).await.unwrap();
+    assert_eq!(newest, first, "the slow reader that pulled after two retries gets the newest snapshot as its first value");
+    slow.cancel();
+    assert_eq!(crate::test_wait::within(slow.next()).await, None, "a cancelled reader returns nothing more");
 
     call.abort();
-    reaches(&mut late_seen, |snapshot| snapshot.active_calls == 0 && snapshot.last_attempt.is_none()).await;
-    assert_eq!(slow.deliveries.load(Ordering::SeqCst), delivered, "a cancelled reader hears nothing more, the other reader kept going");
-    drop(late_subscription);
-}
-
-fn hold_before_the_call(call_state: &crate::ffi::CallState) -> (std::sync::mpsc::Receiver<()>, std::sync::mpsc::Sender<()>) {
-    let (reached, at_the_call) = std::sync::mpsc::channel();
-    let (release, released) = std::sync::mpsc::channel::<()>();
-    *call_state.before_enter.lock().unwrap() = Some(Box::new(move || {
-        reached.send(()).unwrap();
-        crate::test_wait::recv_within(&released);
-    }));
-    (at_the_call, release)
-}
-
-#[tokio::test(flavor = "multi_thread")]
-async fn inv_observe_08_a_retry_progress_call_that_passed_the_cancel_check_does_not_start_after_the_cancel_returns() {
-    use crate::transport::retry::Retrying;
-    struct Tap(std::sync::Mutex<std::sync::mpsc::Sender<()>>, Arc<crate::test_wait::Flag>);
-    impl Drop for Tap { fn drop(&mut self) { self.1.set(); } }
-    impl super::RetryProgressListener for Tap {
-        fn changed(&self, _: crate::transport::RetrySnapshot) {
-            self.0.lock().unwrap().send(()).unwrap();
-        }
-    }
-    let (heard, deliveries) = std::sync::mpsc::channel();
-    let gone = Arc::new(crate::test_wait::Flag::default());
-    let keep = heard.clone();
-    let tap = Arc::new(Tap(std::sync::Mutex::new(heard), gone.clone()));
-    let retries = super::RetryProgress::new();
-    let subscription = retries.subscribe(tap.clone()).unwrap();
-    crate::test_wait::recv_within(&deliveries);
-    let (at_the_call, release) = hold_before_the_call(&subscription.calls);
-    let progress = retries.inner.clone();
-    let retrying = tokio::spawn(async move {
-        let clock = crate::runtime::ManualClock::new(std::time::Duration::ZERO);
-        let online = crate::transport::Connectivity::new(true);
-        let _ = Retrying::new(&clock, &progress, &online, crate::runtime::RetryPolicy::Http).failed(TransportError::Network("down".into())).await;
-    });
-    crate::test_wait::recv_within(&at_the_call);
-    subscription.cancel();
-    release.send(()).unwrap();
-    drop(tap);
-    gone.wait("the blocked delivery ended").await;
-    assert!(deliveries.try_recv().is_err());
-    retrying.abort();
-    drop(keep);
+    let last = crate::test_wait::within(late.next()).await.unwrap();
+    assert_eq!((last.active_calls, last.last_attempt), (0, None), "the other reader kept going and gets the final snapshot");
 }
 
 /// Requirement: a call that the close ended answers `Closed`, a refused sign-in over a session answers `AlreadyAuthenticated`, a 401 answers `Unauthorized`.

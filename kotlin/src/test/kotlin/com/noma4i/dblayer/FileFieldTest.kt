@@ -19,11 +19,12 @@ class FileFieldTest {
 
         val bytes = byteArrayOf(1, 2, 3, 4)
         val info = user.attach(User.avatar, bytes, "a.png", "image/png")
-        assertEquals(Triple("a.png", "image/png", 4L), Triple(info.name, info.mime, info.size))
+        assertEquals(Triple("a.png", "image/png", 4UL), Triple(info.name, info.mime, info.size))
         assertEquals(info, user.file(User.avatar))
         assertArrayEquals(bytes, user.read(User.avatar))
         assertArrayEquals(bytes, File(user.url(User.avatar)!!).readBytes())
         assertEquals(info, User.find(user.id).current()!!.avatar)
+        User.find(user.id).current()!!.let { assertTrue("bridge_prop_projection_revision: the row keeps the metadata of its wire row", it.rowRevision > 0 && it.estimatedBytes > 0u) }
 
         val other = user.attach(User.avatar, byteArrayOf(9), "b.png", "image/png")
         assertArrayEquals(byteArrayOf(9), user.read(User.avatar))

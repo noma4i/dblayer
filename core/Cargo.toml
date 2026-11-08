@@ -7,14 +7,6 @@ edition = "2021"
 crate-type = ["lib", "cdylib", "staticlib"]
 name = "dblayer"
 
-[features]
-cli = ["uniffi/cli"]
-
-[[bin]]
-name = "uniffi-bindgen"
-path = "src/bin/uniffi-bindgen.rs"
-required-features = ["cli"]
-
 
 [lints.rust]
 warnings = "deny"

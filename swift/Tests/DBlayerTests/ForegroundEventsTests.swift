@@ -47,4 +47,15 @@ extension BridgeProbeTests {
     #expect(await Cursor(events).next("foreground at registration") != nil)
     stop()
   }
+
+  /// boundary_observer_stop_orders (P-BND-09): a first call queued on the main queue and stopped before it ran never delivers.
+  @MainActor
+  @Test(.timeLimit(.minutes(1)))
+  func aStopBeforeTheQueuedFirstCallDropsIt() async {
+    let delivered = Delivered()
+    let stop = ForegroundEvents.observe(name: Notification.Name("DBlayerTestStop"), active: { true }) { delivered.add() }
+    stop()
+    await withCheckedContinuation { continuation in DispatchQueue.main.async { continuation.resume() } }
+    #expect(delivered.count == 0)
+  }
 }

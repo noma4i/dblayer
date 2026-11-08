@@ -462,7 +462,7 @@ class TransferTest {
             assertArrayEquals(large, restoredSecond.read(User.avatar))
             val info = requireNotNull(restoredSecond.file(User.avatar))
             assertEquals("large", info.name)
-            assertEquals(300L * 1024, info.size)
+            assertEquals(300UL * 1024UL, info.size)
             closeForCleanup()
         } finally { closeForCleanup(); directory.deleteRecursively() }
     }

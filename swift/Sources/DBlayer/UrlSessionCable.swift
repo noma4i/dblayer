@@ -54,10 +54,12 @@ private final class SocketOpening: NSObject, URLSessionWebSocketDelegate, @unche
 
 private final class UrlSessionCableConnection: PlatformSocket, @unchecked Sendable {
   private let socket: any CableWebSocket
+  private let events: CableEvents
   private var receiver: Task<Void, Never>?
 
   init(socket: any CableWebSocket, events: CableEvents) {
     self.socket = socket
+    self.events = events
     receiver = Task { [socket] in
       while !Task.isCancelled {
         do {
@@ -78,7 +80,9 @@ private final class UrlSessionCableConnection: PlatformSocket, @unchecked Sendab
 
   func send(text: String) -> Bool {
     guard socket.closeCode == .invalid else { return false }
-    socket.send(.string(text)) { _ in }
+    socket.send(.string(text)) { [events] error in
+      if let error { events.ended(closeCode: nil, reason: nil, failure: RawFailure(error)) }
+    }
     return true
   }
 

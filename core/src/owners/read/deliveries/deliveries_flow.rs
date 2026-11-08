@@ -284,6 +284,8 @@ impl Delivery {
         }
     }
 
+    pub(super) fn claim(&mut self, reader: u64) -> bool { *self.reader.get_or_insert(reader) == reader }
+
     pub(super) fn release(&mut self, fx: &mut Vec<Emit>) {
         match self.stage {
             DeliveryStage::Opening | DeliveryStage::Live => {
@@ -349,6 +351,7 @@ impl Delivery {
                 self.stage = DeliveryStage::Ended;
                 self.sink_closed = true;
                 if self.released {
+                    if let Some(outcome) = self.waiting.take() { fx.push(Emit::Run(StreamEffect::Answer { outcome, answer: PullAnswer::Done })); }
                     return;
                 }
                 self.journal.clear();

@@ -40,6 +40,7 @@ impl Delivery {
             replies: Vec::new(),
             closing: false,
             released: false,
+            reader: None,
             sink_closed: false,
             interested: false,
             wants: false,

@@ -39,13 +39,14 @@ public final class UrlSessionTransport: Transport, EncryptedHttp, @unchecked Sen
       let delegate = PutProgress(progress)
       let size = try FileManager.default.attributesOfItem(atPath: file.path)[.size] as? UInt64 ?? 0
       let response: URLResponse
+      let body: Data
       if file.offset == 0 && file.length == size {
-        (_, response) = try await session.upload(for: request, fromFile: URL(fileURLWithPath: file.path), delegate: delegate)
+        (body, response) = try await session.upload(for: request, fromFile: URL(fileURLWithPath: file.path), delegate: delegate)
       } else {
-        (_, response) = try await session.upload(for: request, from: try part(file), delegate: delegate)
+        (body, response) = try await session.upload(for: request, from: try part(file), delegate: delegate)
       }
       let http = response as? HTTPURLResponse
-      return .response(status: UInt16(clamping: http?.statusCode ?? 0), etag: http?.value(forHTTPHeaderField: "ETag"), body: "")
+      return .response(status: UInt16(clamping: http?.statusCode ?? 0), etag: http?.value(forHTTPHeaderField: "ETag"), body: String(decoding: body, as: UTF8.self))
     } catch {
       return .failed(error)
     }

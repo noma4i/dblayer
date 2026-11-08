@@ -50,4 +50,17 @@ class ForegroundEventsTest {
         assertEquals(1, delivered.get())
         scope.cancel()
     }
+
+    /** boundary_observer_stop_orders (P-BND-09, D-177): a registration queued on the main thread and stopped before it ran never delivers, and the stop needs no main thread. */
+    @Test
+    fun aStopBeforeTheQueuedRegistrationRanVoidsIt() {
+        owner.lifecycle.currentState = Lifecycle.State.CREATED
+        val queue = java.util.concurrent.LinkedBlockingQueue<() -> Unit>()
+        val delivered = java.util.concurrent.atomic.AtomicInteger()
+        val stop = ForegroundEvents.observe(owner.lifecycle, post = { queue.put(it) }) { delivered.incrementAndGet() }
+        stop()
+        while (queue.isNotEmpty()) queue.take()()
+        owner.lifecycle.currentState = Lifecycle.State.STARTED
+        assertEquals(0, delivered.get())
+    }
 }

@@ -47,19 +47,6 @@ cp "$build/swift/dblayerFFI.h" "$build/headers/"
 cp "$build/swift/dblayerFFI.modulemap" "$build/headers/module.modulemap"
 cp "$build/swift/dblayer.swift" "$bridge/Sources/DBlayer/dblayer.swift"
 
-generated="$bridge/Sources/DBlayer/dblayer.swift"
-task_line='    let task = Task {'
-free_line='        free: uniffiForeignFutureDroppedCallback'
-[ "$(grep -cxF -- "$task_line" "$generated")" = 2 ] || { echo "build_ios.sh: expected exactly 2 foreign future Task lines in dblayer.swift, the UniFFI template changed" >&2; exit 1; }
-[ "$(grep -cxF -- "$free_line" "$generated")" = 2 ] || { echo "build_ios.sh: expected exactly 2 dropped callback lines in dblayer.swift, the UniFFI template changed" >&2; exit 1; }
-awk -v task_line="$task_line" -v free_line="$free_line" '
-  $0 == task_line { print "    let (gateStream, gate) = AsyncStream<Void>.makeStream()"; print; print "        for await _ in gateStream { break }"; next }
-  after_free { after_free = 0; if ($0 == "    )") { print; print "    gate.yield()"; print "    gate.finish()"; next } }
-  { print }
-  $0 == free_line { after_free = 1 }' "$generated" > "$generated.gated"
-mv "$generated.gated" "$generated"
-[ "$(grep -cxF -- '    gate.finish()' "$generated")" = 2 ] || { echo "build_ios.sh: the foreign future gate was not inserted twice into dblayer.swift" >&2; exit 1; }
-
 arguments=()
 if [ "$#" -eq 0 ]; then
   mkdir -p "$build/macos" "$build/simulator"

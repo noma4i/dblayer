@@ -20,7 +20,9 @@ data class Clip(
     override val id: String,
     val title: String? = null,
     override val sync: SyncInfo = SyncInfo(),
-    override val uploads: Map<String, UploadInfo> = emptyMap()
+    override val uploads: Map<String, UploadInfo> = emptyMap(),
+    override val rowRevision: Long = 0,
+    override val estimatedBytes: ULong = 0u
 ) : DBModel {
     override val modelName get() = "Clip"
     companion object : ModelDecoder<Clip> {
@@ -33,6 +35,8 @@ data class Clip(
                 title = r.opt(0, Cell::asText),
                 sync = SyncInfo.of(row.sync),
                 uploads = row.uploads.associate { it.action to UploadInfo.of(it.upload) },
+                rowRevision = row.revision,
+                estimatedBytes = row.estimatedBytes,
             )
         }
 
@@ -70,7 +74,9 @@ data class Inbox(
     val title: String,
     val stance: String? = null,
     override val sync: SyncInfo = SyncInfo(),
-    override val uploads: Map<String, UploadInfo> = emptyMap()
+    override val uploads: Map<String, UploadInfo> = emptyMap(),
+    override val rowRevision: Long = 0,
+    override val estimatedBytes: ULong = 0u
 ) : DBModel {
     override val modelName get() = "Inbox"
     companion object : ModelDecoder<Inbox> {
@@ -84,6 +90,8 @@ data class Inbox(
                 stance = r.opt(1, Cell::asText),
                 sync = SyncInfo.of(row.sync),
                 uploads = row.uploads.associate { it.action to UploadInfo.of(it.upload) },
+                rowRevision = row.revision,
+                estimatedBytes = row.estimatedBytes,
             )
         }
 
@@ -121,7 +129,9 @@ data class MediaEntry(
     val text: String? = null,
     val sequenceNumber: Long,
     override val sync: SyncInfo = SyncInfo(),
-    override val uploads: Map<String, UploadInfo> = emptyMap()
+    override val uploads: Map<String, UploadInfo> = emptyMap(),
+    override val rowRevision: Long = 0,
+    override val estimatedBytes: ULong = 0u
 ) : DBModel {
     override val modelName get() = "MediaEntry"
     companion object : ModelDecoder<MediaEntry> {
@@ -135,6 +145,8 @@ data class MediaEntry(
                 sequenceNumber = r.req(1, Cell::asInt),
                 sync = SyncInfo.of(row.sync),
                 uploads = row.uploads.associate { it.action to UploadInfo.of(it.upload) },
+                rowRevision = row.revision,
+                estimatedBytes = row.estimatedBytes,
             )
         }
 
@@ -170,7 +182,9 @@ data class Roster(
     override val id: String,
     val title: String,
     override val sync: SyncInfo = SyncInfo(),
-    override val uploads: Map<String, UploadInfo> = emptyMap()
+    override val uploads: Map<String, UploadInfo> = emptyMap(),
+    override val rowRevision: Long = 0,
+    override val estimatedBytes: ULong = 0u
 ) : DBModel {
     override val modelName get() = "Roster"
     companion object : ModelDecoder<Roster> {
@@ -183,6 +197,8 @@ data class Roster(
                 title = r.req(0, Cell::asText),
                 sync = SyncInfo.of(row.sync),
                 uploads = row.uploads.associate { it.action to UploadInfo.of(it.upload) },
+                rowRevision = row.revision,
+                estimatedBytes = row.estimatedBytes,
             )
         }
 

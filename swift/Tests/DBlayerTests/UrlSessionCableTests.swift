@@ -48,6 +48,7 @@ struct UrlSessionCableTests {
     var handshakeStatus: Int?
     var incoming: [Result<URLSessionWebSocketTask.Message, Error>] = [.success(.string("server frame"))]
     var openError: Error?
+    var sendError: Error?
     private(set) var sent: [String] = []
     private(set) var resumed = false
     private(set) var cancelled: URLSessionWebSocketTask.CloseCode?
@@ -59,7 +60,7 @@ struct UrlSessionCableTests {
     }
     func send(_ message: URLSessionWebSocketTask.Message, completion: @escaping @Sendable (Error?) -> Void) {
       lock.withLock { if case let .string(text) = message { sent.append(text) } }
-      completion(nil)
+      completion(sendError)
     }
     func receive() async throws -> URLSessionWebSocketTask.Message {
       let next = lock.withLock { incoming.isEmpty ? nil : incoming.removeFirst() }
@@ -101,6 +102,24 @@ struct UrlSessionCableTests {
     socket.closeCode = .goingAway
     #expect(!connection.send(text: "late"))
     #expect(socket.sent == ["client frame"])
+  }
+
+  /// bridge_prop_raw_io (P-BR-08): the failure of a send completion reaches the core as the end of the socket, with the native failure.
+  @Test func aFailedSendReachesTheCoreWithTheNativeFailure() async throws {
+    let socket = Socket()
+    socket.incoming = []
+    socket.sendError = URLError(.networkConnectionLost)
+    let events = RecordingEvents()
+    let cable = UrlSessionCable { _ in socket }
+    guard case let .open(connection) = await cable.open(url: "wss://example.com/api/cable", headers: [:], connectMs: 10_000, events: events) else {
+      Issue.record("the cable did not open")
+      return
+    }
+    _ = connection.send(text: "client frame")
+    guard case let .ended(closeCode, _, failure)? = await events.next() else { Issue.record("the failed send did not reach the core"); return }
+    #expect(closeCode == nil)
+    #expect((failure?.domain, failure?.code) == (NSURLErrorDomain, Int64(URLError.networkConnectionLost.rawValue)))
+    connection.cancel()
   }
 
   @Test(arguments: [4401, 1006, 1003])

@@ -7,15 +7,12 @@ public struct ValueStream: AsyncSequence, Sendable {
   public let epoch: UInt64
   let reader: ReadStream
 
-  public func makeAsyncIterator() -> AsyncIterator { AsyncIterator(reader: reader) }
+  public func makeAsyncIterator() -> AsyncIterator { AsyncIterator(lease: ReaderLease(reader)) }
 
   public struct AsyncIterator: AsyncIteratorProtocol {
-    let reader: ReadStream
+    let lease: ReaderLease
 
-    public mutating func next() async -> ReadValue? {
-      let reader = reader
-      return await withTaskCancellationHandler { await reader.pull() } onCancel: { Task { await reader.cancel() } }
-    }
+    public mutating func next() async -> ReadValue? { await lease.next() }
   }
 
   /// Loads the relation of the stream again. Throws `Interrupted` when the session of the stream ended and `Invalid` when the stream has no relation.
@@ -29,6 +26,32 @@ public struct ValueStream: AsyncSequence, Sendable {
   }
 }
 
+/// The one reader a stream has: the core refuses a second claim with `Invalid`, and a reader that leaves ends the interest of the stream while the `ValueStream` is held.
+final class ReaderLease: @unchecked Sendable {
+  private enum Claim { case unclaimed, held(UInt64), over }
+  private let reader: ReadStream
+  private var claim = Claim.unclaimed
+
+  init(_ reader: ReadStream) { self.reader = reader }
+
+  func next() async -> ReadValue? {
+    if case .unclaimed = claim {
+      do { claim = .held(try await reader.claimReader()) } catch {
+        claim = .over
+        guard case .Invalid? = error as? DbError else { return .ended(cause: .closed) }
+        return .ended(cause: .invalid)
+      }
+    }
+    guard case .held = claim else { return nil }
+    let reader = reader
+    return await withTaskCancellationHandler { await reader.pull() } onCancel: { Task { await reader.cancel() } }
+  }
+
+  deinit {
+    if case let .held(id) = claim { reader.releaseReader(reader: id) }
+  }
+}
+
 extension Database {
   fileprivate func openValueStream(epoch: UInt64, request: ReadRequest) -> ValueStream {
     ValueStream(epoch: epoch, reader: subscribeValues(epoch: epoch, request: request))
@@ -38,16 +61,16 @@ extension Database {
 /// One delivery of a stream of rows with its rows decoded: the platform value that `ListProjection` mirrors.
 public enum ListDelivery<Model: DBModel>: Sendable {
   case snapshot(revision: Int64, rows: [Model], edits: [ListEdit<Model>], state: ReadState)
-  case delta(revision: Int64, edits: [ListEdit<Model>], state: ReadState)
-  case state(ReadState)
+  case delta(base: Int64, revision: Int64, edits: [ListEdit<Model>], state: ReadState)
+  case state(revision: Int64, state: ReadState)
   case ended(ReadEnd)
 
   /// Decodes the rows of a value of a stream of rows. `nil` for a value that carries no list. Throws when a row cannot be decoded: the reader then calls `ReadStream.resync()`.
   public init?(_ value: ReadValue) throws {
     switch value {
     case let .snapshot(revision, wire, edits, state): self = .snapshot(revision: revision, rows: try wire.map(Model.decode), edits: try edits.map(Self.step), state: state)
-    case let .delta(_, revision, edits, state): self = .delta(revision: revision, edits: try edits.map(Self.step), state: state)
-    case let .state(_, state): self = .state(state)
+    case let .delta(base, revision, edits, state): self = .delta(base: base, revision: revision, edits: try edits.map(Self.step), state: state)
+    case let .state(revision, state): self = .state(revision: revision, state: state)
     case let .ended(cause): self = .ended(cause)
     default: return nil
     }
@@ -68,6 +91,8 @@ public struct ListProjection<Model: DBModel>: Sendable {
   public private(set) var rows: [Model] = []
   public private(set) var state: ReadState?
   public private(set) var revision: Int64?
+  /// The revision the last delta continues from.
+  public private(set) var base: Int64?
   public private(set) var ended: ReadEnd?
   /// The steps of the last delivery from the rows before to the rows after, as the core gives them for a snapshot and a delta alike.
   public private(set) var lastEdits: [ListEdit<Model>] = []
@@ -84,13 +109,16 @@ public struct ListProjection<Model: DBModel>: Sendable {
       lastEdits = edits
       self.rows = rows
       self.revision = revision
+      base = nil
       self.state = state
-    case let .delta(revision, edits, state):
+    case let .delta(base, revision, edits, state):
       rows.replay(edits)
+      self.base = base
       self.revision = revision
       self.state = state
       lastEdits = edits
-    case let .state(state):
+    case let .state(revision, state):
+      self.revision = revision
       self.state = state
       lastEdits = []
     case let .ended(cause):
@@ -152,7 +180,8 @@ public final class Projected<Model: DBModel> {
 /// The screen model of a count stream.
 @MainActor @Observable
 public final class ProjectedCount {
-  public private(set) var count: Int?
+  public private(set) var count: UInt64?
+  public private(set) var revision: Int64?
   public private(set) var state: ReadState?
   /// Why the stream ended by itself.
   public private(set) var ended: ReadEnd?
@@ -172,8 +201,8 @@ public final class ProjectedCount {
 
   private func receive(_ value: ReadValue) {
     switch value {
-    case let .count(_, count, state): self.count = Int(count); self.state = state
-    case let .state(_, state): self.state = state
+    case let .count(revision, count, state): (self.count, self.revision, self.state) = (count, revision, state)
+    case let .state(revision, state): (self.revision, self.state) = (revision, state)
     case let .ended(cause): ended = cause
     default: break
     }
@@ -283,7 +312,7 @@ public struct UploadStatusStream: AsyncSequence, Sendable {
 
 /// One item of the queue of operations: the whole queue, or the end of the stream with the cause of the core.
 public enum OperationQueueItem: Sendable {
-  case queue([OperationInfo])
+  case queue(revision: Int64, items: [OperationInfo])
   case ended(ReadEnd)
 }
 
@@ -298,7 +327,7 @@ public struct OperationQueueStream: AsyncSequence, Sendable {
     public mutating func next() async -> OperationQueueItem? {
       while let value = await inner.next() {
         switch value {
-        case let .operations(_, items): return .queue(items)
+        case let .operations(revision, items): return .queue(revision: revision, items: items)
         case let .ended(cause): return .ended(cause)
         default: continue
         }

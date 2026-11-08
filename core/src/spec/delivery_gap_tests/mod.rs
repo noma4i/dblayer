@@ -170,6 +170,7 @@ impl Twin {
                         StreamEffect::Available => Effect::Available,
                         StreamEffect::CloseSink => Effect::CloseSink,
                         StreamEffect::Cancelled { reply } => Effect::Cancelled(reply),
+                        StreamEffect::ReaderClaimed { .. } => unreachable!("the twin posts no ClaimReader"),
                         StreamEffect::StatusInterest { plus } => Effect::StatusInterest(plus),
                     });
                 }
@@ -236,7 +237,7 @@ impl Twin {
                 self.call(d::DeliveryInput::PullCancelled { stream, outcome });
             }
             Input::Cancel { reply } => self.call(d::DeliveryInput::Cancel { stream, reply: *reply }),
-            Input::Release => self.call(d::DeliveryInput::Release { stream }),
+            Input::Release => self.call(d::DeliveryInput::Release { stream, reader: None }),
             Input::SinkClosed => self.call(d::DeliveryInput::SinkClosed { stream }),
             Input::EpochEnded { own } => {
                 self.det.end_epoch(if *own { EPOCH } else { EPOCH + 1 }, Ended::SessionReset);
@@ -334,7 +335,7 @@ fn dlv_wait_subscription_census() {
     assert_eq!(census_of(&mut twin), (1, 0), "an open stream of a window is observed");
     twin.step(Input::EpochEnded { own: true });
     assert_eq!(census_of(&mut twin), (0, 1), "an ended stream stays retained until its Release");
-    twin.call(d::DeliveryInput::Release { stream: STREAM });
+    twin.call(d::DeliveryInput::Release { stream: STREAM, reader: None });
     assert_eq!(census_of(&mut twin), (0, 0), "a released stream leaves the census");
 }
 

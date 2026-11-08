@@ -1,5 +1,3 @@
-import Foundation
-
 enum RuntimeLane {
   private static let queue = DispatchQueue(label: "com.noma4i.dblayer.runtime-lane", qos: .userInitiated)
   static func enqueue(_ work: @escaping @Sendable () -> Void) { queue.async(execute: work) }
@@ -37,3 +35,4 @@ final class RustFutureHandle: @unchecked Sendable {
     }
   }
 }
+

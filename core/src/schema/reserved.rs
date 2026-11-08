@@ -4,6 +4,8 @@ pub const LAYOUT: &str = "layout";
 pub const SYNC: &str = "sync";
 pub const UPLOADS: &str = "uploads";
 pub const SINGLETON: &str = "singleton";
+pub const ROW_REVISION: &str = "rowRevision";
+pub const ESTIMATED_BYTES: &str = "estimatedBytes";
 
 /// A name a model cannot give to a relation, association or action. `generated` marks the members every generated model class declares itself: attributes cannot take those either.
 pub struct ReservedMember {
@@ -19,9 +21,9 @@ const fn generated(name: &'static str) -> ReservedMember {
     ReservedMember { name, generated: true }
 }
 
-pub const RESERVED_MEMBERS: [ReservedMember; 17] = [
+pub const RESERVED_MEMBERS: [ReservedMember; 19] = [
     runtime("id"), runtime("find"), runtime("where"), runtime("save"), runtime("count"), runtime("exists"), runtime("first"), runtime("observe"), runtime("order"), runtime("retry"), runtime("discard"),
-    generated(MODEL_NAME), generated(WIRE_LAYOUT), generated(LAYOUT), generated(SYNC), generated(UPLOADS), generated(SINGLETON),
+    generated(MODEL_NAME), generated(WIRE_LAYOUT), generated(LAYOUT), generated(SYNC), generated(UPLOADS), generated(SINGLETON), generated(ROW_REVISION), generated(ESTIMATED_BYTES),
 ];
 
 pub fn reserved_member_names() -> Vec<&'static str> {

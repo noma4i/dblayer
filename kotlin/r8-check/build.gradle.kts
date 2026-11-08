@@ -6,7 +6,7 @@ kotlin {
     jvmToolchain(17)
     sourceSets.main {
         kotlin.srcDirs("../src/main/kotlin", "src")
-        kotlin.include("**/dblayer.kt", "**/ProcessOwner.kt", "**/RuntimeLane.kt", "**/R8Probe.kt")
+        kotlin.include("**/dblayer.kt", "**/R8Probe.kt")
     }
 }
 

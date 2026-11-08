@@ -19,6 +19,7 @@ extension BridgeProbeTests {
     #expect(try Data(contentsOf: url) == bytes)
     let row = try #require(try await User.find(user.id).current())
     #expect(row.avatar == info)
+    #expect(row.rowRevision > 0 && row.estimatedBytes > 0, "bridge_prop_projection_revision: the row keeps the metadata of its wire row")
 
     let other = try await user.attach(.avatar, data: Data([9]), name: "b.png", mime: "image/png")
     #expect(try await user.read(.avatar) == Data([9]) && other.id != info.id)

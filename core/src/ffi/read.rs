@@ -278,6 +278,19 @@ impl ReadStream {
         database.load_more(self.epoch, load.model.clone(), Some(load.relation.clone()), load.params_json.clone()).await
     }
 
+    /// Takes the stream for one reader and returns its number. `Invalid` when another reader holds the stream.
+    pub async fn claim_reader(&self) -> Result<u64, DbError> {
+        static READERS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+        let life = self.life().ok_or_else(super::command::closed)?;
+        let reader = READERS.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        if life.claim_reader(self.stream, reader).await { Ok(reader) } else { Err(DbError::Invalid { detail: "the stream has a reader".into() }) }
+    }
+
+    /// The reader left the stream: its interest ends while the handle lives. Another reader's number changes nothing.
+    pub fn release_reader(&self, reader: u64) {
+        if let Some(life) = self.life() { life.release_reader(self.stream, reader); }
+    }
+
     /// Returns when no value of this stream is delivered any more.
     pub async fn cancel(&self) {
         if let Some(life) = self.life() { let _ = life.cancel_stream(self.stream).wait().await; }

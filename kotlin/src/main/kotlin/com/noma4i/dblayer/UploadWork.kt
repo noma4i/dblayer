@@ -83,9 +83,10 @@ internal class UploadRounds(private val context: Context, private val database: 
     }
 
     override fun endJob(roundId: UInt) {
-        UploadNetwork.ended()
-        context.getSystemService(JobScheduler::class.java).cancel(UploadJobService.JOB_ID)
-        UploadService.stop()
+        UploadNetwork.ended(roundId)
+        val scheduler = context.getSystemService(JobScheduler::class.java)
+        if (scheduler.getPendingJob(UploadJobService.JOB_ID)?.extras?.let(::roundJobOf)?.roundId == roundId) scheduler.cancel(UploadJobService.JOB_ID)
+        UploadService.stop(roundId)
     }
 }
 
@@ -96,12 +97,12 @@ private const val EPOCH = "epoch"
 internal fun roundJobOf(extras: android.os.PersistableBundle) = RoundJob(extras.getLong(REQUEST).toULong(), extras.getLong(ROUND).toUInt(), extras.getLong(EPOCH).toULong())
 
 internal object UploadNetwork {
-    private class Held(val network: Network?)
+    private class Held(val roundId: UInt, val network: Network?)
     private val current = java.util.concurrent.atomic.AtomicReference<Held?>(null)
 
-    fun started(network: Network?) { current.set(Held(network)) }
-    fun changed(network: Network?) { current.updateAndGet { if (it != null) Held(network) else it } }
-    fun ended() { current.set(null) }
+    fun started(roundId: UInt, network: Network?) { current.set(Held(roundId, network)) }
+    fun changed(roundId: UInt, network: Network?) { current.updateAndGet { if (it?.roundId == roundId) Held(roundId, network) else it } }
+    fun ended(roundId: UInt) { current.updateAndGet { if (it?.roundId == roundId) null else it } }
 
     fun route(client: OkHttpClient): OkHttpClient {
         val held = current.get() ?: return client
@@ -117,18 +118,18 @@ internal class UploadJobService : JobService() {
         val database = DBlayer.openedDatabase()
         if (database == null) { jobFinished(params, false); return false }
         val job = roundJobOf(params.extras)
-        UploadNetwork.started(params.network)
+        UploadNetwork.started(job.roundId, params.network)
         database.roundStarted(job.requestId, job.roundId, job.epoch)
         return true
     }
 
     override fun onNetworkChanged(params: JobParameters) {
-        UploadNetwork.changed(params.network)
+        UploadNetwork.changed(roundJobOf(params.extras).roundId, params.network)
     }
 
     override fun onStopJob(params: JobParameters): Boolean {
         val job = roundJobOf(params.extras)
-        UploadNetwork.ended()
+        UploadNetwork.ended(job.roundId)
         DBlayer.openedDatabase()?.roundEnded(job.roundId, job.epoch)
         return false
     }
@@ -187,8 +188,8 @@ internal class UploadService : Service() {
 
         fun opened(database: Database) { live?.report(database) }
 
-        fun stop() {
-            live?.stopSelf()
+        fun stop(roundId: UInt) {
+            live?.takeIf { it.round?.roundId == roundId }?.stopSelf()
         }
 
         fun start(context: Context, job: RoundJob): Refusal? = try {

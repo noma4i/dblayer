@@ -46,7 +46,7 @@ internal suspend fun putFile(client: OkHttpClient, url: String, headers: Map<Str
         return RawOutcome.Failed(urlFailure())
     }
     return try {
-        (if (routed) UploadNetwork.route(client) else client).timed(connectMs, requestMs, total = false).newCall(request).exchange { RawOutcome.Response(it.code.toUShort(), it.header("ETag"), "") }
+        (if (routed) UploadNetwork.route(client) else client).timed(connectMs, requestMs, total = false).newCall(request).exchange { RawOutcome.Response(it.code.toUShort(), it.header("ETag"), it.body.string()) }
     } catch (error: java.io.IOException) {
         RawOutcome.Failed(rawFailure(error))
     }
