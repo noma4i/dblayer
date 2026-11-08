@@ -45,11 +45,15 @@ class ForegroundEventsTest {
     private suspend fun openFailedFeed(transport: MockTransport, os: FakeOs): ListReader<Moment> {
         repeat(16) { transport.enqueue("MomentsFeed", DbException.Http(400u, "bad request")) }
         openSignedClocked(modelsJSON.replace("\"name\":\"feed\",\"updates\"", "\"name\":\"feed\",\"refresh_on_foreground\":true,\"updates\""), transport, FEED_OPERATIONS, observers = os)
+        eventually("the core started the observer and queued the registration") { os.queue.isNotEmpty() }
         os.runMain()
         val list = ListReader(Moment.feed, CoroutineScope(SupervisorJob()))
         withTimeout(5000) { list.snapshot.first { it.phase == LoadPhase.Failed } }
         return list
     }
+
+    /** The loads of the window: the cable subscriptions share `calls` and arrive on their own schedule. */
+    private fun feedLoads(transport: MockTransport) = transport.calls.count { it.operationName == "MomentsFeed" }
 
     private val FEED_OPERATIONS = """[{"name":"MomentsFeed","document":"query MomentsFeed(${'$'}first: Int, ${'$'}after: String) { feed(first: ${'$'}first, after: ${'$'}after) { nodes { id uuid likedByMe media createdAt } pageInfo { hasNextPage endCursor } } }"}]"""
 
@@ -60,10 +64,10 @@ class ForegroundEventsTest {
         val os = FakeOs()
         openFailedFeed(transport, os)
         owner.lifecycle.currentState = Lifecycle.State.CREATED
-        val before = transport.calls.size
+        val before = feedLoads(transport)
 
         owner.lifecycle.currentState = Lifecycle.State.STARTED
-        eventually("the delivery reloads the failed window") { transport.calls.size == before + 1 }
+        eventually("the delivery reloads the failed window") { feedLoads(transport) == before + 1 }
     }
 
     /** boundary_observer_stop_orders, stop before delivery: after `close` acknowledged the stop of the observers, a start of the lifecycle and a delivery with the old token reach nothing. */

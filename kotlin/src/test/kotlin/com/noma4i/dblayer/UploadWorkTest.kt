@@ -104,7 +104,7 @@ class UploadWorkTest {
         try {
             database.setRoundJobs(object : RoundJobsSink {
                 override fun scheduleJob(job: RoundJob) {}
-                override fun endJob(roundId: UInt) { ended.add(roundId) }
+                override fun endJob(roundId: UInt) { ended.add(roundId); TestPulse.pulse() }
             })
             val controller = Robolectric.buildService(UploadService::class.java).create()
             controller.withIntent(android.content.Intent(context, UploadService::class.java).putExtra("request", 1L).putExtra("round", 1L).putExtra("epoch", 1L)).startCommand(0, 1)

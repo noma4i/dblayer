@@ -11,11 +11,12 @@ import java.util.concurrent.CopyOnWriteArrayList
 private const val SERVER_KEY = "MIIBojANBgkqhkiG9w0BAQEFAAOCAY8AMIIBigKCAYEAtzb67l/cXul2uArFqeZXsMf4tImrLcaHb3uiVNp8mjjJrFK/zwUEEazm3pmriAbj1nBzSxQLuq3jNUeFHXoQxjwWmTdv+PoAypz4ZII6Dz6rknk290/ddmimc1Z4Mx0AkT4ffAA9WHiDtLPF6tKZWNsWF/SpJps9PWrIKNOKY78ZfCgfegrWfKwoNYExyZ0IuUUgG0lsRjEEE/U59GpbNBqdKtw7KaIGK47QRk6HWOkCQtyqqjsseOJLwdI0k6jDNmcH6DulPNmar9AbwsmpngD55P8y4JdH49Eq3Nr040gmg0Y1p1FZm5PbKeC4WgZZdmg1bxjKAa+MYP0fROi4dFz05/81fqFb6DWaXencb0p/Iz+IUfQiI/0EYNv1SfdTUHzGyHFAmQHeCUIKLSkNNg3uF/jqKthFecCnWEfTUWRWFsN/8/Nb65a1UI/L1hP/qd+T6xKfchqVBEf767yeHdgsy3GeuqTsgXUPkuA1DO9HPP1xWqa6orUNWkimSwxDAgMBAAE="
 private const val SERVER_PIN = "fab4f816eb33917161942684230405ae47ad4df5b456bd973085599b1364342a"
 
-private class RecordedHttp(private val status: UShort) : ScriptedHttp {
+private class RecordedHttp(private val status: UShort, private val refusal: DbException? = null) : ScriptedHttp {
     val posts = CopyOnWriteArrayList<Pair<String, String>>()
 
     override suspend fun post(path: String, body: String, purpose: NetworkPurpose): EncryptedReply {
         posts.add(path to body)
+        refusal?.let { throw it }
         return EncryptedReply(status, "")
     }
 
@@ -48,6 +49,21 @@ private suspend inline fun <reified Failure : Throwable> failsWith(block: () -> 
 @org.junit.runner.RunWith(org.robolectric.RobolectricTestRunner::class)
 @org.robolectric.annotation.Config(sdk = [35])
 class EncryptedSessionTest {
+    @Test
+    fun aScriptedRequestTooLargeReachesTheCallOnceWithoutRetry() = bounded {
+        val http = RecordedHttp(400u, DbException.RequestTooLarge(300_000uL, 262_144uL))
+        val database = openDatabase(config = Config(null, null), modelsJson = modelsJSON, transport = MockTransport(), encrypted = EncryptedConfig("https://api.example.com", SERVER_KEY, SERVER_PIN, EncryptedEndpoints("/api/graphql", "/api/cable", "/api/logout", "/api/bootstrap", mapOf("otp" to EncryptedSessionOperation("/api/auth/otp", EncryptedOperationClass.SESSIONLESS))), "example-ws-v1", "ws.hello", "EncryptedGraphqlChannel"), credentials = HeldCredential(), http = http)
+        database.setOnline(true)
+        try {
+            database.sessionCall("otp", """{"phone":"+61400000000"}""")
+            throw AssertionError("expected the scripted size refusal")
+        } catch (error: DbException.RequestTooLarge) {
+            assertEquals(300_000uL, error.size)
+            assertEquals(262_144uL, error.limit)
+        }
+        assertEquals(1, http.posts.size)
+    }
+
     @Test
     fun oversizedSessionCallsFailLocallyAndLeaveTheNextCallAvailable() = bounded {
         val http = RecordedHttp(400u)

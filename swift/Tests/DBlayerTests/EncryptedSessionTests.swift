@@ -11,12 +11,18 @@ private final class RecordedHttp: ScriptedHttp, @unchecked Sendable {
   private var recorded: [(path: String, body: String)] = []
   let status: UInt16
 
-  init(status: UInt16) { self.status = status }
+  let refusal: DbError?
+
+  init(status: UInt16, refusal: DbError? = nil) {
+    self.status = status
+    self.refusal = refusal
+  }
 
   var posts: [(path: String, body: String)] { lock.withLock { recorded } }
 
   func post(path: String, body: String, purpose: NetworkPurpose) async throws -> EncryptedReply {
     lock.withLock { recorded.append((path, body)) }
+    if let refusal { throw refusal }
     return EncryptedReply(status: status, body: "")
   }
 
@@ -69,6 +75,20 @@ struct EncryptedSessionTests {
   }
 
 
+
+  @Test
+  func aScriptedRequestTooLargeReachesTheCallOnceWithoutRetry() async throws {
+    let http = RecordedHttp(status: 400, refusal: DbError.RequestTooLarge(size: 300_000, limit: 262_144))
+    let database = try await openDatabase(config: Config(path: nil, dataVersion: nil), modelsJson: modelsJSON, transport: MockTransport(), encrypted: EncryptedConfig(origin: Self.origin.absoluteString, serverKey: serverKey, pin: serverPin, endpoints: EncryptedEndpoints(graphql: "/api/graphql", cable: "/api/cable", logout: "/api/logout", bootstrap: "/api/bootstrap", sessionOperations: ["otp": EncryptedSessionOperation(path: "/api/auth/otp", class: .sessionless)]), protocolLabel: "example-ws-v1", cablePurpose: "ws.hello", cableChannel: "EncryptedGraphqlChannel"), credentials: HeldCredential(), http: http)
+    try database.setOnline(online: true)
+    do {
+      _ = try await database.sessionCall(operation: "otp", bodyJson: #"{"phone":"+61400000000"}"#)
+      Issue.record("expected the scripted size refusal")
+    } catch DbError.RequestTooLarge(let size, let limit) {
+      #expect(size == 300_000 && limit == 262_144)
+    }
+    #expect(http.posts.count == 1)
+  }
 
   @Test
   func aResponseThatIsNotHttpHasStatusZero() async throws {

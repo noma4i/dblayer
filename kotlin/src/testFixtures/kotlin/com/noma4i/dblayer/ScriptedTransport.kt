@@ -36,6 +36,7 @@ private fun failed(kind: ScriptedFailure, message: String): RawOutcome = RawOutc
 fun scriptedOutcome(error: Throwable): RawOutcome = when (error) {
     is DbException.Http -> RawOutcome.Response(error.status, null, error.detail)
     is DbException.Network, is DbException.Offline -> failed(ScriptedFailure.UNREACHABLE, error.message ?: "network")
+    is DbException.RequestTooLarge -> RawOutcome.Failed(RawFailure("dblayer.RequestTooLarge", null, "${error.size}:${error.limit}"))
     is DbException.Interrupted, is kotlinx.coroutines.CancellationException -> failed(ScriptedFailure.CANCELLED, error.message ?: "cancelled")
     is DbException.Security -> failed(if (error.code == SecurityCode.TLS_TRUST) ScriptedFailure.TLS else ScriptedFailure.IO, error.message ?: "security")
     is DbException.Graphql -> RawOutcome.Response(200u, null, buildJsonObject {
