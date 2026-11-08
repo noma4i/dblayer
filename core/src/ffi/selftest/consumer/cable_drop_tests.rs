@@ -37,3 +37,26 @@ async fn consumer_cable_drop_resubscribes_and_reloads_only_observed() {
     stand.settle().await;
     assert_eq!((stand.requests_with("MomentNode", "momentId", "mo1"), stand.requests("MomentNode")), (2, 2));
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn consumer_moment_updated_after_cable_drops_rereads_the_node() {
+    let stand = Stand::open().await;
+    stand.answer("MomentNode", json!({"node": super::stand::moment("mo1", 0)}));
+    let (events, mut token) = stand.events("Moment").await;
+    let _node = stand.entity("Moment", "mo1", ReadFetch::Stale);
+    stand.settle().await;
+    let loaded = stand.asked();
+    assert_eq!(stand.requests("MomentNode"), 1);
+
+    for drop in 1..=3 {
+        stand.drop_cable(&token);
+        token = stand.next_subscription().await;
+        while !matches!(crate::ffi::selftest::rig_tests::bound(events.pull_next()).await, Some(crate::ffi::ReadValue::Gap)) {}
+        stand.settle().await;
+        assert_eq!(stand.asked(), loaded, "cable drop {drop} with the network up: the node load already covers the gap");
+    }
+
+    stand.push(&token, json!({"area": "MOMENT", "kind": "UPDATED", "entityId": "mo1"}));
+    stand.settle().await;
+    assert_eq!((stand.requests("MomentNode"), stand.asked().len()), (2, loaded.len() + 1));
+}
