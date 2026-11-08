@@ -12,9 +12,9 @@ use crate::store::fixtures::{all_specs, moments_spec, put, row};
 use crate::store::Store;
 use crate::value::SortDirection;
 
-fn open() -> Arc<Store> { Arc::new(Store::open_models(None, all_specs(), None).unwrap()) }
+pub(super) fn open() -> Arc<Store> { Arc::new(Store::open_models(None, all_specs(), None).unwrap()) }
 
-fn write(db: &Store, author: BatchAuthor, rows: Vec<(String, String)>, ops: Vec<StoreOp>) {
+pub(super) fn write(db: &Store, author: BatchAuthor, rows: Vec<(String, String)>, ops: Vec<StoreOp>) {
     let batch = StoreBatch { author, id: 1, epoch: 1, basis: Default::default(), rows, intents: 0, credential: None, ops };
     db.write_batch(&batch, db.files(), db.pointer_guards(), None).unwrap();
 }
@@ -32,7 +32,7 @@ fn inv_row_06_count_exists_and_first_follow_the_query() {
     assert_eq!(texts(&db, &first), [json!("b")], "first follows the order of the query");
 }
 
-fn intent(op_id: u64) -> StoreOp {
+pub(super) fn intent(op_id: u64) -> StoreOp {
     let effects = IntentEffects { rows: vec![EffectRow { model: "moments".into(), row_id: "m1".into(), values: json!({"id": "m1", "userId": "u1", "text": "edit"}).to_string() }], ..Default::default() };
     StoreOp::Intent { op_id, model: "moments".into(), row_id: "m1".into(), action: "update".into(), payload: "{}".into(), effects, origin: crate::owners::store::IntentOrigin::Api }
 }
@@ -126,7 +126,7 @@ fn inv_sync_02_state_change_reaches_a_list_observer_and_a_scope_free_query() {
     assert_eq!(db.count(&pending).unwrap(), 0, "the end of the operation moves the row out of the pending query");
 }
 
-fn ephemeral_specs() -> Vec<crate::schema::ModelSpec> {
+pub(super) fn ephemeral_specs() -> Vec<crate::schema::ModelSpec> {
     let mut specs = all_specs();
     let field = crate::schema::FieldSpec::scalar("typing", crate::value::ScalarKind::Bool).with_default(json!(false));
     specs.iter_mut().find(|spec| spec.key.as_str() == "moments").unwrap().ephemeral.push(crate::schema::EphemeralSpec::new(field).resetting_after("5.seconds"));
@@ -134,13 +134,13 @@ fn ephemeral_specs() -> Vec<crate::schema::ModelSpec> {
     specs
 }
 
-fn set_typing(db: &Store, id: &str, on: bool) -> crate::store::batch_write::BatchWritten {
+pub(super) fn set_typing(db: &Store, id: &str, on: bool) -> crate::store::batch_write::BatchWritten {
     let event = json!({"op": "ephemeral", "id": id, "values": {"typing": on}}).to_string();
     let batch = StoreBatch { author: BatchAuthor::Feed, id: 1, epoch: 1, basis: Default::default(), rows: vec![("moments".into(), event)], intents: 0, credential: None, ops: Vec::new() };
     db.write_batch(&batch, db.files(), db.pointer_guards(), None).unwrap()
 }
 
-fn typing(db: &Store, id: &str) -> Option<Value> { db.read(&["moments"], |reader| Ok(reader.point("moments", id)?.and_then(|row| row.get("typing").cloned()))).unwrap() }
+pub(super) fn typing(db: &Store, id: &str) -> Option<Value> { db.read(&["moments"], |reader| Ok(reader.point("moments", id)?.and_then(|row| row.get("typing").cloned()))).unwrap() }
 
 #[test]
 fn inv_ephemeral_01_values_and_memory_rows_do_not_survive_a_restart() {
@@ -246,7 +246,7 @@ fn inv_order_02_equal_keys_sort_temp_rows_first_then_by_id_in_every_permutation(
     }
 }
 
-fn server_row(path: &str, db: &Store, row: Value) {
+pub(super) fn server_row(path: &str, db: &Store, row: Value) {
     match path {
         "answer" => write(db, BatchAuthor::Outbox, Vec::new(), vec![StoreOp::Rows { model: "moments".into(), rows: vec![crate::owners::store::RowValue { row_id: "m1".into(), values: row.to_string() }] }]),
         "event" => write(db, BatchAuthor::Feed, vec![("moments".into(), json!({"op": "upsert", "id": "m1", "row": row}).to_string())], Vec::new()),
@@ -258,7 +258,7 @@ fn server_row(path: &str, db: &Store, row: Value) {
     }
 }
 
-fn field(db: &Store, name: &str) -> Value { db.read(&["moments"], |reader| Ok(reader.point("moments", "m1")?.and_then(|row| row.get(name).cloned()).unwrap_or(Value::Null))).unwrap() }
+pub(super) fn field(db: &Store, name: &str) -> Value { db.read(&["moments"], |reader| Ok(reader.point("moments", "m1")?.and_then(|row| row.get(name).cloned()).unwrap_or(Value::Null))).unwrap() }
 
 #[test]
 fn inv_merge_01_inv_merge_02_every_path_applies_the_sent_fields_and_leaves_the_rest() {
@@ -287,7 +287,7 @@ fn inv_merge_03_a_server_row_does_not_undo_an_unconfirmed_local_edit() {
     }
 }
 
-fn attach(model_row: &str, bytes: Vec<u8>) -> StoreOp {
+pub(super) fn attach(model_row: &str, bytes: Vec<u8>) -> StoreOp {
     StoreOp::AttachFile { model: "moments".into(), row_id: model_row.into(), field: "media".into(), bytes, name: "photo".into(), mime: "image/jpeg".into() }
 }
 
@@ -384,7 +384,7 @@ fn inv_id_06_a_real_row_that_arrived_before_the_create_answer_leaves_one_row_aft
     assert_eq!(db.count(&Query::new("moments")).unwrap(), 1, "one row stays");
 }
 
-fn sent_create(db: &Store, op_id: u64, text: &str) -> String {
+pub(super) fn sent_create(db: &Store, op_id: u64, text: &str) -> String {
     let temp = crate::identity::RowId::generate_temp(None).to_string();
     let values = json!({"id": temp, "userId": "u1", "text": text}).to_string();
     let effects = IntentEffects { rows: vec![EffectRow { model: "moments".into(), row_id: temp.clone(), values }], ..Default::default() };
@@ -392,7 +392,7 @@ fn sent_create(db: &Store, op_id: u64, text: &str) -> String {
     temp
 }
 
-fn event_row(db: &Store, id: &str, text: &str) {
+pub(super) fn event_row(db: &Store, id: &str, text: &str) {
     write(db, BatchAuthor::Feed, vec![("moments".into(), json!({"op": "upsert", "id": id, "row": {"id": id, "userId": "u1", "text": text}}).to_string())], Vec::new());
 }
 

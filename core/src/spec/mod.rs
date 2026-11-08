@@ -62,6 +62,7 @@ mod transfer_reserve_tests;
 mod transfer_matrix_tests;
 mod transfer_cache_tests;
 mod transfer_steps_tests;
+mod transfer_progress_orders_tests;
 mod transfer_mutating_tests;
 mod transfer_end_tests;
 mod transfer_orphan_tests;

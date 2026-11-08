@@ -377,6 +377,32 @@ fn inv_dsl_04_fingerprint_ignores_declaration_order() {
 }
 
 #[test]
+fn data_orders_fingerprint_over_every_declaration_order() {
+    use crate::test_wait::permutations;
+    let fields = vec![
+        FieldSpec::scalar("title", ScalarKind::Str).nullable(),
+        FieldSpec::scalar("count", ScalarKind::Int).indexed().with_default(json!(0)),
+        FieldSpec::scalar("createdAt", ScalarKind::Date),
+    ];
+    let relations = vec![("author", vec!["tenantId", "authorId"]), ("comments", vec!["postId", "position"])];
+    let build = |fields: Vec<FieldSpec>, relations: Vec<(&str, Vec<&str>)>| ModelSpec { relations: relations.into_iter().map(|(name, keys)| RelationSpec::new(name, &keys)).collect(), ..ModelSpec::new("posts", fields) };
+    let expected = fingerprint(&build(fields.clone(), relations.clone()));
+    let mut traces = 0;
+    for field_order in permutations(&fields) {
+        for relation_order in permutations(&relations) {
+            for author_keys in permutations(&relations[0].1) {
+                for comment_keys in permutations(&relations[1].1) {
+                    let relations = relation_order.iter().map(|(name, _)| match *name { "author" => (*name, author_keys.clone()), _ => (*name, comment_keys.clone()) }).collect::<Vec<_>>();
+                    assert_eq!(fingerprint(&build(field_order.clone(), relations)), expected, "{field_order:?} {relation_order:?} {author_keys:?} {comment_keys:?}");
+                    traces += 1;
+                }
+            }
+        }
+    }
+    assert_eq!(traces, 6 * 2 * 2 * 2);
+}
+
+#[test]
 fn inv_dsl_04_field_and_relation_changes_change_the_fingerprint() {
     let field = |field: FieldSpec| fingerprint(&ModelSpec::new("posts", vec![field]));
     let relation = |relation: RelationSpec| fingerprint(&ModelSpec { relations: vec![relation], ..ModelSpec::new("posts", vec![FieldSpec::raw("id")]) });

@@ -8,22 +8,22 @@ use crate::owners::store::{RowValue, StoreBatch, StoreOp};
 use crate::store::fixtures::{all_specs, put};
 use crate::store::Store;
 
-fn write(db: &Arc<Store>, author: BatchAuthor, rows: Vec<(String, String)>, ops: Vec<StoreOp>) {
+pub(super) fn write(db: &Arc<Store>, author: BatchAuthor, rows: Vec<(String, String)>, ops: Vec<StoreOp>) {
     let batch = StoreBatch { author, id: 1, epoch: 1, basis: Default::default(), rows, intents: 0, credential: None, ops };
     db.write_batch(&batch, db.files(), db.pointer_guards(), None).unwrap();
 }
 
-fn message(id: &str, at: i64) -> RowValue {
+pub(super) fn message(id: &str, at: i64) -> RowValue {
     RowValue { row_id: id.into(), values: json!({"id": id, "chatId": "c1", "body": id, "createdAt": at}).to_string() }
 }
 
-fn chat(db: &Store) -> Value {
+pub(super) fn chat(db: &Store) -> Value {
     let row = db.read(&["chats"], |reader| reader.point("chats", "c1")).unwrap().unwrap();
     let at = row.get("lastMessageAt").and_then(Value::as_str).and_then(|text| text.rsplit(':').next()).and_then(|seconds| seconds.trim_end_matches('Z').parse::<f64>().ok()).map_or(Value::Null, |seconds| json!((seconds * 1000.0).round() as i64));
     json!([row.get("lastMessageId").cloned().unwrap_or(Value::Null), at])
 }
 
-fn open() -> Arc<Store> {
+pub(super) fn open() -> Arc<Store> {
     let db = Arc::new(Store::open_models(None, all_specs(), None).unwrap());
     put(&db, "chats", json!({"id": "c1", "title": "t", "lastMessageId": null, "lastMessageAt": null}));
     db

@@ -5,6 +5,7 @@ mod cells_tests;
 mod data_sets_tests;
 mod data_cells_tests;
 mod data_inv_tests;
+mod data_orders_tests;
 mod data_nested_tests;
 mod nodes_answer_tests;
 mod data_decode_tests;

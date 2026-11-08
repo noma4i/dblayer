@@ -272,3 +272,12 @@ pub(crate) async fn timeout<T>(duration: Duration, work: impl std::future::Futur
         () = pass(duration) => Err(()),
     }
 }
+
+pub(crate) fn permutations<T: Clone>(items: &[T]) -> Vec<Vec<T>> {
+    if items.len() <= 1 { return vec![items.to_vec()]; }
+    (0..items.len()).flat_map(|at| {
+        let mut rest = items.to_vec();
+        let first = rest.remove(at);
+        permutations(&rest).into_iter().map(move |mut tail| { tail.insert(0, first.clone()); tail })
+    }).collect()
+}

@@ -42,3 +42,44 @@ fn inv_panic_02_two_first_starts_build_one_runtime() {
     join_within(second).unwrap();
     assert_eq!(BUILDS.load(std::sync::atomic::Ordering::SeqCst), 1);
 }
+
+#[test]
+fn data_orders_two_first_starts_while_the_first_builds_and_after_it() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Arc;
+    fn build(builds: &AtomicUsize) -> std::io::Result<tokio::runtime::Runtime> {
+        builds.fetch_add(1, Ordering::SeqCst);
+        tokio::runtime::Builder::new_multi_thread().worker_threads(1).build()
+    }
+    for overlap in [true, false] {
+        let slot = Arc::new(Starter::new());
+        let builds = Arc::new(AtomicUsize::new(0));
+        let (building_tx, building) = std::sync::mpsc::channel();
+        let (release_tx, release) = std::sync::mpsc::channel::<()>();
+        let first = {
+            let (slot, builds) = (slot.clone(), builds.clone());
+            std::thread::spawn(move || {
+                started(&slot, || {
+                    building_tx.send(()).unwrap();
+                    recv_within(&release);
+                    build(&builds)
+                })
+                .map(|_| ())
+            })
+        };
+        recv_within(&building);
+        if overlap {
+            let (second_slot, second_builds) = (slot.clone(), builds.clone());
+            let second = std::thread::spawn(move || started(&second_slot, || build(&second_builds)).map(|_| ()));
+            assert!(slot.cold_entries_reach(2, std::time::Duration::from_secs(10)), "the second start never reached the cold path while the first builder was held");
+            release_tx.send(()).unwrap();
+            join_within(first).unwrap();
+            join_within(second).unwrap();
+        } else {
+            release_tx.send(()).unwrap();
+            join_within(first).unwrap();
+            started(&slot, || build(&builds)).unwrap();
+        }
+        assert_eq!(builds.load(Ordering::SeqCst), 1, "overlap {overlap}");
+    }
+}
