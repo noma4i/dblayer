@@ -41,3 +41,12 @@ fn event_payload_declarations_check_paths_types_fields_and_revision() {
         }
     }
 }
+
+#[test]
+fn two_models_of_one_area_keep_their_own_payload_and_revision() {
+    let message = "model Message do\n  attribute :text, :string\n  scope :node, node: :one do\n    parameter :id, :id\n    query \"MessageNode\"\n    variables id: :id\n  end\n  changed_by \"MESSAGE\", via: :node, payload: \"message\", removes_on: [\"DELETED\"]\nend\n";
+    let specs = parse_models(&format!("{MODEL}{message}")).unwrap();
+    let read = |model: &str| specs.iter().find(|spec| spec.key.as_str() == model).map(|spec| (spec.changes.iter().map(|read| (read.area.clone(), read.payload.clone())).collect::<Vec<_>>(), spec.server_revision.clone())).unwrap();
+    assert_eq!(read("Chat"), (vec![("MESSAGE".into(), Some("chat".into()))], Some("serverRevision".into())));
+    assert_eq!(read("Message"), (vec![("MESSAGE".into(), Some("message".into()))], None));
+}

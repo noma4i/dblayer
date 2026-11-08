@@ -36,10 +36,10 @@ async fn feed_database_with_models(listen: Option<serde_json::Value>, fanout: bo
 }
 
 pub(super) async fn feed_database_in(world: Arc<World>, listen: Option<serde_json::Value>, fanout: bool, memory: bool) -> (Arc<Database>, Arc<FeedTransport>) {
-    feed_database_changed_by(world, listen, fanout, memory, vec![json!({"area":"MESSAGE","relation":"node","payload":"chat","removes_on":["DELETED"]})]).await
+    feed_database_changed_by(world, listen, fanout.then_some("chat"), memory, vec![json!({"area":"MESSAGE","relation":"node","payload":"chat","removes_on":["DELETED"]})]).await
 }
 
-async fn feed_database_changed_by(world: Arc<World>, listen: Option<serde_json::Value>, fanout: bool, memory: bool, changes: Vec<serde_json::Value>) -> (Arc<Database>, Arc<FeedTransport>) {
+async fn feed_database_changed_by(world: Arc<World>, listen: Option<serde_json::Value>, fanout: Option<&str>, memory: bool, changes: Vec<serde_json::Value>) -> (Arc<Database>, Arc<FeedTransport>) {
     use crate::schema::{Coverage, FieldSpec, Membership, ModelSpec, NodeRead, RelationSpec, RemoteShape, VariableSource, NODE_PARAM};
     use crate::value::ScalarKind;
     let mut revision = FieldSpec::scalar("serverRevision", ScalarKind::Int);
@@ -66,9 +66,11 @@ async fn feed_database_changed_by(world: Arc<World>, listen: Option<serde_json::
     chat.changes = changes.into_iter().map(|read| serde_json::from_value(read).unwrap()).collect();
     if let Some(listen) = listen { chat.listens.push(serde_json::from_value(listen).unwrap()); }
     chat.change_feed = Some(crate::schema::ChangeFeed { subscription: "RecordEvents".into(), root: "recordEvents.entries".into(), area: "topic".into(), kind: "action".into(), id: "recordId".into() });
-    let models = if fanout {
+    let models = if let Some(room_payload) = fanout {
         let mut room = chat.clone();
         room.key = crate::identity::ModelKey::new("Room");
+        for read in &mut room.changes { read.payload = read.payload.as_ref().map(|_| room_payload.to_string()); }
+        if room_payload != "chat" { room.server_revision = None; }
         vec![chat, room]
     } else { vec![chat] };
     let mut encrypted = crate::transport::encrypted::protocol_tests::config();
@@ -448,7 +450,7 @@ async fn dlv_live_overlay_position() {
 #[tokio::test(flavor = "multi_thread")]
 async fn feed_prop_changed_by_reader_wants() {
     let world = World::new("server", "A", true);
-    let (database, transport) = feed_database_changed_by(world.clone(), None, false, false, vec![json!({"area":"CHAT","relation":"list","observed":true})]).await;
+    let (database, transport) = feed_database_changed_by(world.clone(), None, None, false, vec![json!({"area":"CHAT","relation":"list","observed":true})]).await;
     let rows = Arc::new(crate::ffi::tape::Rows::default());
     let stream = database.watch_query(r#"{"model":"Chat","relation":"list","params":{"list":"PRIMARY"}}"#, rows.clone());
     bound(stream.wait_for_initial_load()).await.unwrap();
@@ -471,7 +473,7 @@ async fn feed_prop_event_area_kind() {
         json!({"area":"NAMED","relation":"list","parameter":"list"}),
         json!({"area":"OBSERVED","relation":"list","observed":true}),
     ];
-    let (database, transport) = feed_database_changed_by(World::new("server", "A", true), None, false, false, changes).await;
+    let (database, transport) = feed_database_changed_by(World::new("server", "A", true), None, None, false, changes).await;
     let stream = database.subscribe_values(database.session_epoch(), ReadRequest::Events { model: "Chat".into() });
     assert!(matches!(bound(stream.pull()).await, Some(ReadValue::Ready)));
     let token = transport.token.lock().unwrap().clone().unwrap();
@@ -482,5 +484,30 @@ async fn feed_prop_event_area_kind() {
         let Some(ReadValue::Event { area: seen_area, kind: seen_kind, id, .. }) = bound(stream.pull()).await else { panic!("no event for {area} {kind}") };
         assert_eq!((seen_area.as_str(), seen_kind.as_str(), id.as_str()), (area, kind, "c1"));
     }
+    bound(database.close_database()).await.unwrap();
+}
+
+/// feed_payload_two_models_one_entry (D-151): one entry with two payload objects lands one row in each model that declares the area and gives each model one event.
+#[tokio::test(flavor = "multi_thread")]
+async fn feed_payload_two_models_one_entry() {
+    let changes = vec![json!({"area":"MESSAGE","relation":"node","payload":"chat"})];
+    let world = World::new("server", "A", true);
+    let (database, transport) = feed_database_changed_by(world.clone(), None, Some("room"), false, changes).await;
+    let chat = database.subscribe_values(database.session_epoch(), ReadRequest::Events { model: "Chat".into() });
+    let room = database.subscribe_values(database.session_epoch(), ReadRequest::Events { model: "Room".into() });
+    assert!(matches!(bound(chat.pull()).await, Some(ReadValue::Ready)));
+    assert!(matches!(bound(room.pull()).await, Some(ReadValue::Ready)));
+    let token = transport.token.lock().unwrap().clone().unwrap();
+    let requests = world.count("ChatNode");
+    let entry = json!({"topic":"MESSAGE","action":"CREATED","recordId":"m1","chat":{"__typename":"Chat","id":"1","title":"chat","revision":5,"lists":[]},"room":{"__typename":"Room","id":"r1","title":"room","revision":1,"lists":[]}});
+    assert!(transport.cable.event(&token, json!({"data":{"recordEvents":{"entries":[entry]}}})));
+    assert!(matches!(bound(chat.pull()).await, Some(ReadValue::Event { position: 1, area, kind, id, after: Some(row), .. }) if area == "MESSAGE" && kind == "CREATED" && id == "1" && crate::ffi::lifecycle_tests::named(&row, "chat")));
+    assert!(matches!(bound(room.pull()).await, Some(ReadValue::Event { position: 1, area, kind, id, after: Some(row), .. }) if area == "MESSAGE" && kind == "CREATED" && id == "r1" && crate::ffi::lifecycle_tests::named(&row, "room")));
+    for (model, id, title) in [("Chat", "1", "chat"), ("Room", "r1", "room")] {
+        let entity = database.subscribe_values(database.session_epoch(), ReadRequest::Entity { model: model.into(), id: id.into(), fetch: ReadFetch::Never });
+        assert!(matches!(bound(entity.pull()).await, Some(ReadValue::Snapshot { rows, .. }) if rows.len() == 1 && crate::ffi::lifecycle_tests::named(&rows[0], title)), "{model} row");
+    }
+    assert_eq!(bound(database.subscription_census()).await.unwrap().refused_events, 0);
+    assert_eq!(world.count("ChatNode"), requests);
     bound(database.close_database()).await.unwrap();
 }
