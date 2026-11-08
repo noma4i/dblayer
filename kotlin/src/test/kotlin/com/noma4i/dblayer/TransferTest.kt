@@ -79,7 +79,7 @@ private class HoldSecondFile(private val server: SealedServer, private val mock:
 
 private const val REFUSED_BLOB = """{"errors":[{"message":"no storage","extensions":{"code":"FORBIDDEN"}}]}"""
 
-private fun createdBlob(index: Int) = """{"data":{"createBlob":{"url":"https://storage/file","headers":{},"signedId":"signed-$index","blobId":"b$index"}}}"""
+private fun createdBlob(index: Int) = """{"data":{"blobCreate":{"url":"https://storage/file","headers":{},"signedId":"signed-$index","blobId":"b$index"}}}"""
 
 private class RefuseFirstFile(private val mock: MockTransport) : ScriptedTransport {
     override suspend fun query(request: TransportRequest): String = mock.query(request)
@@ -158,7 +158,7 @@ class TransferTest {
                         path == "/api/auth/login_link" -> Json.parseToJsonElement("""{"sessionId":"A"}""").jsonObject
                         body["operationName"]?.jsonPrimitive?.content == "CreateBlob" -> {
                             val name = body.getValue("variables").jsonObject.getValue("filename").jsonPrimitive.content
-                            Json.parseToJsonElement("""{"data":{"createBlob":{"url":"https://storage/file","headers":{},"signedId":"signed-$name","blobId":"blob-$name"}}}""").jsonObject
+                            Json.parseToJsonElement("""{"data":{"blobCreate":{"url":"https://storage/file","headers":{},"signedId":"signed-$name","blobId":"blob-$name"}}}""").jsonObject
                         }
                         body["operationName"]?.jsonPrimitive?.content == "CreateAssets" -> Json.parseToJsonElement("""{"data":{"createAssets":{"assets":[{"id":"a2","clientKey":"key-2","size":2,"position":1},{"id":"a1","clientKey":"key-1","size":2,"position":0}]}}}""").jsonObject
                         else -> Json.parseToJsonElement("""{"errors":[{"message":"unexpected operation"}]}""").jsonObject
@@ -245,7 +245,7 @@ class TransferTest {
         val source = Files.createTempFile("photo", ".jpg").toFile().apply { writeText("image") }
         try {
             val transport = MockTransport()
-            transport.enqueue("CreateBlob", """{"data":{"createBlob":{"url":"https://storage/file","headers":{},"signedId":"signed","blobId":"blob"}}}""")
+            transport.enqueue("CreateBlob", """{"data":{"blobCreate":{"url":"https://storage/file","headers":{},"signedId":"signed","blobId":"blob"}}}""")
             transport.enqueue("CreateMoment", DbException.Http(422u, "rejected"))
             val operations = """[{"name":"CreateBlob","document":"mutation CreateBlob { createBlob { url headers signedId blobId } }"},{"name":"CreateMoment","document":"mutation CreateMoment { createMoment { id uuid likedByMe media createdAt } }"}]"""
             openSigned(Config(null, null), modelsJSON, transport, operations)
@@ -353,10 +353,10 @@ class TransferTest {
     fun cancellingTheMiddleFileKeepsTheOtherFilesInOrder() = bounded {
         val directory = Files.createTempDirectory("album").toFile()
         val transport = MockTransport()
-        val held = transport.hold("CreateBlob", reply = """{"data":{"createBlob":{"url":"https://storage/file","headers":{},"signedId":"signed-0","blobId":"b0"}}}""")
+        val held = transport.hold("CreateBlob", reply = """{"data":{"blobCreate":{"url":"https://storage/file","headers":{},"signedId":"signed-0","blobId":"b0"}}}""")
         try {
             val files = (0..2).map { index -> directory.resolve("$index.jpg").apply { writeText("image-$index") } }
-            transport.enqueue("CreateBlob", """{"data":{"createBlob":{"url":"https://storage/file","headers":{},"signedId":"signed-2","blobId":"b2"}}}""")
+            transport.enqueue("CreateBlob", """{"data":{"blobCreate":{"url":"https://storage/file","headers":{},"signedId":"signed-2","blobId":"b2"}}}""")
             transport.enqueue("CreateAssets", """{"data":{"createAssets":{"assets":[{"id":"a2","clientKey":"key-2","size":2,"position":1},{"id":"a0","clientKey":"key-0","size":2,"position":0}]}}}""")
             val operations = """[{"name":"CreateBlob","document":"mutation CreateBlob { createBlob { url headers signedId blobId } }"},{"name":"CreateAssets","document":"mutation CreateAssets { createAssets { assets { id clientKey size position } } }"},{"name":"CreateAsset","document":"mutation CreateAsset { createAsset { asset { id clientKey size position } } }"}]"""
             openSigned(Config(null, null), modelsJSON, transport, operations)

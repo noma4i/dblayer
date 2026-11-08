@@ -23,7 +23,7 @@ extension BridgeProbeTests {
     #expect(rows.allSatisfy { $0.id.hasPrefix("temp-") && $0.sync.state == .sending && !$0.uploads.isEmpty })
     try FileManager.default.removeItem(at: source)
     for _ in 0..<2 {
-      transport.enqueue("CreateBlob", reply: #"{"data":{"createBlob":{"url":"https://storage.test/file","headers":{},"signedId":"signed","blobId":"blob"}}}"#)
+      transport.enqueue("CreateBlob", reply: #"{"data":{"blobCreate":{"url":"https://storage.test/file","headers":{},"signedId":"signed","blobId":"blob"}}}"#)
     }
     transport.enqueue("CreateAssets", reply: #"{"data":{"createAssets":{"assets":[{"id":"a1","clientKey":"key-1","size":2},{"id":"a0","clientKey":"key-0","size":2}]}}}"#)
     try DB.database.setOnline(online: true)

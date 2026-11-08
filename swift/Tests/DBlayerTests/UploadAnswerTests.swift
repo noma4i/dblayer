@@ -35,7 +35,7 @@ extension BridgeProbeTests {
     let id = try await Moment.create(text: "intro", in: DB.account()).confirmed().id
     let moment = try #require(try await Moment.find(id).current())
     for (turn, expected) in (["Intro received", nil] as [String?]).enumerated() {
-      if turn == 0 { transport.enqueue("CreateBlob", reply: #"{"data":{"createBlob":{"url":"https://storage.test/video","headers":{},"signedId":"signed","blobId":"blob"}}}"#) }
+      if turn == 0 { transport.enqueue("CreateBlob", reply: #"{"data":{"blobCreate":{"url":"https://storage.test/video","headers":{},"signedId":"signed","blobId":"blob"}}}"#) }
       let field = expected.map { ",\"successMessage\":\"\($0)\"" } ?? ""
       transport.enqueue("CreateMoment", reply: "{\"data\":{\"createMoment\":{\(row)\(field)}}}")
       let uploaded = try await moment.uploadClip(UploadRequest(path: source.path), in: DB.account())
