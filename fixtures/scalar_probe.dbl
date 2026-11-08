@@ -1,0 +1,9 @@
+model ScalarProbe, storage: :local do
+  attribute :text, :string, null: true
+  attribute :count, :int, null: true
+  attribute :ratio, :num, null: true
+  attribute :flag, :bool, null: true
+  attribute :at, :date, null: true
+  attribute :blob, :json, null: true
+  attribute :file, :file, null: true
+end
