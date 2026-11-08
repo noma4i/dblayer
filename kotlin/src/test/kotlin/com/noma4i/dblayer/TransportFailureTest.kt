@@ -20,7 +20,7 @@ class TransportFailureTest {
     )
 
     @Test
-    fun theWrapperReportsTheClassNameAndTheTextOfThePlatformError() {
+    fun bridge_prop_classifier_only_theWrapperReportsTheClassNameAndTheTextOfThePlatformError() {
         for (error in table) {
             val raw = rawFailure(error)
             assertEquals(error.toString(), error.javaClass.name, raw.domain)
@@ -54,7 +54,7 @@ class TransportFailureTest {
     }
 
     @Test
-    fun theWrapperNeverBuildsAClassOfItsOwn() {
+    fun bridge_prop_classifier_only_theWrapperNeverBuildsAClassOfItsOwn() {
         val sources = java.io.File("src/main/kotlin/com/noma4i/dblayer").walkTopDown().filter { it.extension == "kt" && it.name != "dblayer.kt" }.toList()
         assertTrue(sources.isNotEmpty())
         for (file in sources) {

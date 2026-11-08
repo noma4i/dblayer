@@ -80,6 +80,31 @@ extension BridgeProbeTests {
     #expect(transport.mock.calls.filter { $0.operationName == "ContainerMembers" }.count == 6)
   }
 
+  /// bridge_prop_future_handle (P-BR-01): the cancel of a call and the answer of its request race from many tasks, and every wait ends.
+  @MainActor
+  @Test(.timeLimit(.minutes(1)))
+  func bridge_prop_future_handle_cancelAndAnswerFromManyTasksEndEveryWait() async throws {
+    let transport = MockTransport()
+    try await openSigned(config: Config(path: nil, dataVersion: nil), modelsJson: modelsJSON, transport: transport)
+    try await DB.database.registerOperations(defsJson: JSONValue.array([.object(["name": .string("ContainerMembers"), "document": .string(Self.membersDocument)])]).text)
+    let holds = (0..<8).map { transport.hold("ContainerMembers", reply: membersPage("a\($0)", hasNext: false)) }
+    let calls = try (0..<8).map { number in
+      let query = try User.containerMembers("c\(number)")
+      return Task { try? await query.loadAll() }
+    }
+    for hold in holds { await hold.entered() }
+    await withTaskGroup(of: Void.self) { group in
+      for number in 0..<8 {
+        group.addTask { calls[number].cancel() }
+        group.addTask { holds[number].release() }
+      }
+    }
+    for call in calls { _ = await call.value }
+    transport.enqueue("ContainerMembers", reply: membersPage("b0", hasNext: false))
+    try await User.containerMembers("c99").loadAll()
+    #expect(transport.calls.filter { $0.operationName == "ContainerMembers" }.count == 9)
+  }
+
   @MainActor
   @Test(.timeLimit(.minutes(1)))
   func containerMembersPassesArgumentsAndDecodesTypedSnapshots() async throws {

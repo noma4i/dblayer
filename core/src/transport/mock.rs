@@ -258,8 +258,9 @@ impl MockTransport {
             reply.result.clone()
         };
         let outcome = tokio::select! {
-            result = run => result,
+            biased;
             () = request.cancel.cancelled() => Err(TransportError::Interrupted("cancelled".to_string())),
+            result = run => result,
         };
         self.lock().puts_running -= 1;
         outcome

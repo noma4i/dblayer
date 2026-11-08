@@ -23,7 +23,7 @@ struct TransportFailureTests {
   ]
 
   @Test(arguments: cases)
-  func theWrapperReportsTheDomainTheCodeAndTheTextOfThePlatformError(_ failure: Case) {
+  func bridge_prop_classifier_only_theWrapperReportsTheDomainTheCodeAndTheTextOfThePlatformError(_ failure: Case) {
     let raw = RawFailure(failure.error)
     #expect(raw.domain == failure.domain)
     #expect(failure.code == nil || raw.code == failure.code)
@@ -52,7 +52,7 @@ struct TransportFailureTests {
   }
 
   @Test
-  func theWrapperNeverBuildsAClassOfItsOwn() throws {
+  func bridge_prop_classifier_only_theWrapperNeverBuildsAClassOfItsOwn() throws {
     let sources = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
       .appendingPathComponent("Sources/DBlayer")
     let files = try #require(FileManager.default.enumerator(at: sources, includingPropertiesForKeys: nil))

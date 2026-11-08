@@ -507,7 +507,7 @@ private suspend fun runCorpus(file: java.io.File): String? {
 
 class CorpusRunnerTest {
     @Test
-    fun theSharedCorpusIsGreenThroughTheKotlinWrapper() = bounded {
+    fun bridge_prop_one_history_theSharedCorpusIsGreenThroughTheKotlinWrapper() = bounded {
         val files = corpusDirectory.listFiles { file -> file.extension == "jsonl" }!!.sortedBy { it.name }
         assertTrue(files.isNotEmpty())
         val gate = kotlinx.coroutines.sync.Semaphore(6)

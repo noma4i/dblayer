@@ -626,7 +626,7 @@ private func runCorpus(_ file: URL) async throws -> String? {
 @Suite
 struct CorpusRunnerTests {
   @Test(.timeLimit(.minutes(1)))
-  func theSharedCorpusIsGreenThroughTheSwiftWrapper() async throws {
+  func bridge_prop_one_history_theSharedCorpusIsGreenThroughTheSwiftWrapper() async throws {
     let files = try corpusFiles()
     #expect(!files.isEmpty)
     let mismatches = try await parallel(files, limit: 6) { try await runCorpus($0) }.compactMap { $0 }

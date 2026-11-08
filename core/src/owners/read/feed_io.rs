@@ -119,6 +119,7 @@ impl FeedIo {
             };
             let reader = Self::read(line.clone(), codec, connection, reply);
             tokio::select! {
+                biased;
                 () = cancel.cancelled() => {}
                 () = writer => {}
                 () = reader => {}

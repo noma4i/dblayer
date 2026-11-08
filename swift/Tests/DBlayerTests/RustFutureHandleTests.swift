@@ -23,7 +23,7 @@ private final class HandleCalls: @unchecked Sendable {
 
 struct RustFutureHandleTests {
   @Test
-  func cancelsAndFreesQueuedOnTheLaneReachTheFutureInOrderAndOnce() {
+  func bridge_prop_future_handle_cancelsAndFreesQueuedOnTheLaneReachTheFutureInOrderAndOnce() {
     let calls = HandleCalls()
     let handle = RustFutureHandle(42, cancel: calls.cancel, free: calls.free, lane: calls.lane)
     handle.cancel()
@@ -39,7 +39,7 @@ struct RustFutureHandleTests {
   }
 
   @Test
-  func aCancelAfterTheFreeNeverReachesTheFutureAndAFreeInsideACancelRunsOnce() {
+  func bridge_prop_future_handle_aCancelAfterTheFreeNeverReachesTheFutureAndAFreeInsideACancelRunsOnce() {
     let calls = HandleCalls()
     let handle = RustFutureHandle(7, cancel: calls.cancel, free: calls.free, lane: calls.lane)
     handle.free()
@@ -56,7 +56,7 @@ struct RustFutureHandleTests {
   }
 
   @Test
-  func concurrentCancelsAndFreesOnTheRuntimeLaneCallTheFutureOnceEach() async {
+  func bridge_prop_future_handle_concurrentCancelsAndFreesOnTheRuntimeLaneCallTheFutureOnceEach() async {
     let calls = HandleCalls()
     let handle = RustFutureHandle(42, cancel: calls.cancel, free: calls.free)
     await withTaskGroup(of: Void.self) { group in

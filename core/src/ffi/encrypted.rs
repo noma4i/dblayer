@@ -119,8 +119,9 @@ impl RetrySubscription {
         if *stopped.borrow() { return None; }
         if std::mem::take(&mut reading.first) { return Some(reading.changes.borrow_and_update().clone()); }
         tokio::select! {
-            changed = reading.changes.changed() => changed.ok().map(|()| reading.changes.borrow_and_update().clone()),
-            _ = stopped.wait_for(|stopped| *stopped) => None,
+            biased;
+            _ = async { let _ = stopped.wait_for(|stopped| *stopped).await; } => None,
+            changed = reading.changes.changed() => changed.ok().filter(|_| !*self.stopped.borrow()).map(|()| reading.changes.borrow_and_update().clone()),
         }
     }
 

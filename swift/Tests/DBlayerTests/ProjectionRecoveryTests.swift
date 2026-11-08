@@ -32,7 +32,7 @@ struct ProjectionDomainTests {
   private let state = ReadState(phase: .loaded, error: nil, loaded: nil, hasMore: false, settled: true, total: nil)
 
   @Test
-  func theDeltaKeepsItsBaseAndTheStateKeepsItsRevision() throws {
+  func bridge_prop_projection_revision_theDeltaKeepsItsBaseAndTheStateKeepsItsRevision() throws {
     var projection = ListProjection<Moment>()
     #expect(try projection.apply(.snapshot(revision: 1, rows: [], edits: [], state: state)))
     #expect(try projection.apply(.delta(base: 1, revision: 300, edits: [], state: state)))
@@ -42,7 +42,7 @@ struct ProjectionDomainTests {
   }
 
   @Test
-  func aQueryWindowOutsideTheCoreDomainIsInvalidInsteadOfClamped() throws {
+  func bridge_prop_numeric_domain_aQueryWindowOutsideTheCoreDomainIsInvalidInsteadOfClamped() throws {
     for query in [Query<Moment>().limit(-1), Query<Moment>().offset(-1), Query<Moment>().limit(Int(UInt32.max) + 1)] {
       #expect(throws: DbError.self) { try query.spec() }
     }

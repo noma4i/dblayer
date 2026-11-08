@@ -201,6 +201,25 @@ struct BootstrapConfigTests {
     #expect(http.calls == 1)
   }
 
+  /// bridge_prop_bootstrap_reader (P-BR-10): a reader that does not pull while the call retries and leaves gets the final snapshot as its next value, not the snapshots between.
+  @Test
+  func bridge_prop_bootstrap_reader_aSlowReaderGetsTheFinalSnapshotAndNothingIsBuffered() async throws {
+    let peer = try BootstrapPeer()
+    let http = BootstrapHttp(peer, "timeout")
+    let retries = RetryProgress()
+    let slow = Cursor(retries.changes)
+    let fast = Cursor(retries.changes)
+    let idle = RetrySnapshot(activeCalls: 0, lastAttempt: nil)
+    #expect(await slow.next("the snapshot at connect") == idle)
+    #expect(await fast.next("the snapshot at connect") == idle)
+    let task = Task { try await DB.serverConfig(encrypted: peer.encrypted, platform: .ios, version: "1.2", http: http, retries: retries) }
+    #expect(await fast.next("the first retry")?.lastAttempt != nil)
+    task.cancel()
+    _ = await task.result
+    #expect(await fast.next("the cancelled call leaving") == idle)
+    #expect(await slow.next("the final snapshot of the slow reader") == idle)
+  }
+
   @Test(arguments: [AppPlatform.ios, .android], ["ok", "http", "pin"])
   func configBeforeDatabaseUsesTheCoreAndKeepsTheClassOfEveryOutcomeTheWrapperTypes(platform: AppPlatform, kind: String) async throws {
     let peer = try BootstrapPeer()

@@ -106,6 +106,33 @@ class BootstrapConfigTest {
         assertEquals(1, calls.get())
     }
 
+    /** bridge_prop_bootstrap_reader (P-BR-10): a collector that does not pull while the call retries and leaves gets the final snapshot as its next value, not the snapshots between. */
+    @Test
+    fun bridge_prop_bootstrap_reader_aSlowCollectorGetsTheFinalSnapshotAndNothingIsBuffered() = bounded {
+        val http = object : ScriptedHttp {
+            override suspend fun send(request: HttpRequest): RawOutcome = RawOutcome.Failed(ScriptedFailure.TIMEOUT.raw("timeout"))
+
+            override suspend fun post(path: String, body: String, purpose: NetworkPurpose): EncryptedReply = error("the timeout script answers in send")
+        }
+        val retries = RetryProgress()
+        val idle = RetrySnapshot(0u, null)
+        val gate = CompletableDeferred<Unit>()
+        val seen = kotlinx.coroutines.channels.Channel<RetrySnapshot>(kotlinx.coroutines.channels.Channel.UNLIMITED)
+        val slow = launch { retries.flow.collect { seen.send(it); gate.await() } }
+        assertEquals(idle, seen.receive())
+        val fast = retries.subscribe()
+        assertEquals(idle, fast.next())
+        val call = launch { DBlayer.serverConfig(context, encrypted(), AppPlatform.ANDROID, "1.2", http = http, retries = retries) }
+        assertNotNull(fast.next()?.lastAttempt)
+        call.cancelAndJoin()
+        assertEquals(idle, fast.next())
+        gate.complete(Unit)
+        assertEquals(idle, seen.receive())
+        assertTrue(seen.tryReceive().isFailure)
+        slow.cancelAndJoin()
+        fast.cancel()
+    }
+
     private val kat = Json.parseToJsonElement(File("../fixtures/bootstrap-config/bootstrap_kat.json").readText()).jsonObject
     private fun JsonObject.text(key: String) = getValue(key).jsonPrimitive.content
     private fun decode(text: String) = Base64.getUrlDecoder().decode(text)

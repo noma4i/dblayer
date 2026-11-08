@@ -30,7 +30,7 @@ class ProjectionDomainTest {
     private val state = ReadState(ReadPhase.LOADED, null, null, false, true, null)
 
     @Test
-    fun theDeltaKeepsItsBaseAndTheStateKeepsItsRevision() {
+    fun bridge_prop_projection_revision_theDeltaKeepsItsBaseAndTheStateKeepsItsRevision() {
         var projection = ListProjection<Moment>().apply(ListDelivery.Snapshot(1, emptyList(), emptyList(), state))
         projection = projection.apply(ListDelivery.Delta(1, 300, emptyList(), state))
         assertEquals(1L to 300L, projection.base to projection.revision)
@@ -39,13 +39,13 @@ class ProjectionDomainTest {
     }
 
     @Test
-    fun theCountIsOneValueOfOneDelivery() {
+    fun bridge_prop_projection_revision_theCountIsOneValueOfOneDelivery() {
         val projection = CountProjection(null, null, null, null).apply(ReadValue.Count(7, ULong.MAX_VALUE, state))
         assertEquals(Triple(ULong.MAX_VALUE, 7L, state), Triple(projection.count, projection.revision, projection.state))
     }
 
     @Test
-    fun aQueryWindowBelowZeroIsInvalidInsteadOfWrapped() {
+    fun bridge_prop_numeric_domain_aQueryWindowBelowZeroIsInvalidInsteadOfWrapped() {
         val query = Query("Moment", Moment)
         for (bad in listOf(query.limit(-1), query.offset(-1))) {
             assertThrows(DbException.Invalid::class.java) { bad.spec() }

@@ -34,3 +34,4 @@ pub(crate) mod signed_session_tests;
 mod load_all_cancel_tests;
 mod boundary_tests;
 mod event_decode_tests;
+mod retry_progress_tests;
