@@ -1,10 +1,10 @@
 model User do
-  scope :chat_members do
+  scope :chat_members, members_complete: true do
     parameter :chatId, :string
     parameter :order, ChatMemberOrder, default: "OWNER_FIRST"
     query "chatMembers"
     response from: "node.members"
-    paginate size: 30, direction: :forward
+    paginate size: 100, direction: :forward
     freshness expires_in: 5.minutes
     total from: "node.membersCount"
   end

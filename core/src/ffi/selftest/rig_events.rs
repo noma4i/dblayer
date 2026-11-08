@@ -10,7 +10,7 @@ use crate::transport::encrypted::cable::tests::peer_tests::{CablePeer, PeerEvent
 pub(super) struct Events {
     pub(super) peer: CablePeer,
     token: tokio::sync::watch::Sender<Option<String>>,
-    streams: tokio::sync::Mutex<BTreeMap<(u64, String), Arc<ReadStream>>>,
+    streams: tokio::sync::Mutex<BTreeMap<(u64, String), (Arc<ReadStream>, u64)>>,
 }
 
 impl Events {
@@ -44,21 +44,22 @@ impl Rig {
     async fn frame(&self, model: &str, row: Value) {
         let events = &self.switch.events;
         let epoch = self.database.session_epoch();
-        let stream = {
+        let (stream, reader) = {
             let mut streams = events.streams.lock().await;
             match streams.get(&(epoch, model.to_string())) {
-                Some(stream) => stream.clone(),
+                Some(entry) => entry.clone(),
                 None => {
                     let stream = self.database.subscribe_values(epoch, ReadRequest::Events { model: model.into() });
-                    assert!(matches!(bound(stream.pull()).await, Some(ReadValue::Ready)), "the cable is ready for {model}");
-                    streams.insert((epoch, model.to_string()), stream.clone());
-                    stream
+                    let reader = stream.claim_reader().await.unwrap();
+                    assert!(matches!(bound(stream.pull(reader)).await, Some(ReadValue::Ready)), "the cable is ready for {model}");
+                    streams.insert((epoch, model.to_string()), (stream.clone(), reader));
+                    (stream, reader)
                 }
             }
         };
         let token = bound(events.token.subscribe().wait_for(|token| token.is_some())).await.unwrap().clone().unwrap();
         assert!(events.peer.event(&token, json!({"data": {"rigEvents": {model: row}}})), "the subscription is open");
-        let seen = bound(stream.pull()).await;
+        let seen = bound(stream.pull(reader)).await;
         assert!(matches!(seen, Some(ReadValue::Event { .. })), "{model} event landed: {seen:?}");
         self.settle().await;
     }

@@ -1,6 +1,314 @@
 {
   "models": [
     {
+      "actions": [],
+      "associations": [],
+      "ephemeral": [],
+      "expire_after": "30.seconds",
+      "fields": [
+        {
+          "app_type": null,
+          "default": null,
+          "from": null,
+          "id_from_parent": null,
+          "indexed": false,
+          "kind": {
+            "kind": "id",
+            "type": "scalar"
+          },
+          "merge": null,
+          "name": "id",
+          "nullable": false,
+          "optional": false
+        },
+        {
+          "app_type": "CallEventKind",
+          "default": null,
+          "from": null,
+          "id_from_parent": null,
+          "indexed": false,
+          "kind": {
+            "type": "enum",
+            "values": [
+              "ACCEPTED",
+              "DECLINED",
+              "ENDED",
+              "INCOMING",
+              "SIGNAL"
+            ]
+          },
+          "merge": null,
+          "name": "kind",
+          "nullable": false,
+          "optional": false
+        },
+        {
+          "app_type": null,
+          "default": null,
+          "from": null,
+          "id_from_parent": null,
+          "indexed": true,
+          "kind": {
+            "kind": "date",
+            "type": "scalar"
+          },
+          "merge": null,
+          "name": "occurredAt",
+          "nullable": false,
+          "optional": false
+        },
+        {
+          "app_type": null,
+          "default": null,
+          "from": "call.id",
+          "id_from_parent": null,
+          "indexed": false,
+          "kind": {
+            "kind": "id",
+            "type": "scalar"
+          },
+          "merge": null,
+          "name": "callId",
+          "nullable": false,
+          "optional": false
+        },
+        {
+          "app_type": "CallEventStatus",
+          "default": null,
+          "from": "call.status",
+          "id_from_parent": null,
+          "indexed": false,
+          "kind": {
+            "type": "enum",
+            "values": [
+              "ACCEPTED",
+              "DECLINED",
+              "ENDED",
+              "FAILED",
+              "MISSED",
+              "RINGING"
+            ]
+          },
+          "merge": null,
+          "name": "callStatus",
+          "nullable": false,
+          "optional": false
+        },
+        {
+          "app_type": "CallEventOrigin",
+          "default": null,
+          "from": "call.origin",
+          "id_from_parent": null,
+          "indexed": false,
+          "kind": {
+            "type": "enum",
+            "values": [
+              "ADMIN_TEST",
+              "APP"
+            ]
+          },
+          "merge": null,
+          "name": "callOrigin",
+          "nullable": false,
+          "optional": false
+        },
+        {
+          "app_type": "CallEventDirection",
+          "default": null,
+          "from": "call.direction",
+          "id_from_parent": null,
+          "indexed": false,
+          "kind": {
+            "type": "enum",
+            "values": [
+              "INCOMING",
+              "OUTGOING"
+            ]
+          },
+          "merge": null,
+          "name": "callDirection",
+          "nullable": false,
+          "optional": false
+        },
+        {
+          "app_type": null,
+          "default": null,
+          "from": "call.peer.id",
+          "id_from_parent": null,
+          "indexed": false,
+          "kind": {
+            "kind": "id",
+            "type": "scalar"
+          },
+          "merge": null,
+          "name": "peerId",
+          "nullable": true,
+          "optional": false
+        },
+        {
+          "app_type": null,
+          "default": null,
+          "from": "call.createdAt",
+          "id_from_parent": null,
+          "indexed": false,
+          "kind": {
+            "kind": "date",
+            "type": "scalar"
+          },
+          "merge": null,
+          "name": "createdAt",
+          "nullable": false,
+          "optional": false
+        },
+        {
+          "app_type": null,
+          "default": null,
+          "from": "call.answeredAt",
+          "id_from_parent": null,
+          "indexed": false,
+          "kind": {
+            "kind": "date",
+            "type": "scalar"
+          },
+          "merge": null,
+          "name": "answeredAt",
+          "nullable": true,
+          "optional": false
+        },
+        {
+          "app_type": null,
+          "default": null,
+          "from": "call.endedAt",
+          "id_from_parent": null,
+          "indexed": false,
+          "kind": {
+            "kind": "date",
+            "type": "scalar"
+          },
+          "merge": null,
+          "name": "endedAt",
+          "nullable": true,
+          "optional": false
+        },
+        {
+          "app_type": "CallEventSignalKind",
+          "default": null,
+          "from": "signal.kind",
+          "id_from_parent": null,
+          "indexed": false,
+          "kind": {
+            "type": "enum",
+            "values": [
+              "ANSWER",
+              "CANDIDATE",
+              "OFFER"
+            ]
+          },
+          "merge": null,
+          "name": "signalKind",
+          "nullable": true,
+          "optional": false
+        },
+        {
+          "app_type": null,
+          "default": null,
+          "from": "signal.sdp",
+          "id_from_parent": null,
+          "indexed": false,
+          "kind": {
+            "kind": "str",
+            "type": "scalar"
+          },
+          "merge": null,
+          "name": "sdp",
+          "nullable": true,
+          "optional": false
+        },
+        {
+          "app_type": null,
+          "default": null,
+          "from": "signal.candidate",
+          "id_from_parent": null,
+          "indexed": false,
+          "kind": {
+            "kind": "str",
+            "type": "scalar"
+          },
+          "merge": null,
+          "name": "candidate",
+          "nullable": true,
+          "optional": false
+        },
+        {
+          "app_type": null,
+          "default": null,
+          "from": "signal.sdpMid",
+          "id_from_parent": null,
+          "indexed": false,
+          "kind": {
+            "kind": "str",
+            "type": "scalar"
+          },
+          "merge": null,
+          "name": "sdpMid",
+          "nullable": true,
+          "optional": false
+        },
+        {
+          "app_type": null,
+          "default": null,
+          "from": "signal.sdpMLineIndex",
+          "id_from_parent": null,
+          "indexed": false,
+          "kind": {
+            "kind": "int",
+            "type": "scalar"
+          },
+          "merge": null,
+          "name": "sdpMLineIndex",
+          "nullable": true,
+          "optional": false
+        }
+      ],
+      "indexes": [],
+      "key": "CallEvent",
+      "listens": [],
+      "relations": [
+        {
+          "by_columns": [],
+          "is_global": true,
+          "joins_created": false,
+          "joins_events": false,
+          "name": "recent",
+          "remote": null,
+          "sort": {
+            "fields": [
+              {
+                "column": "occurredAt",
+                "direction": "desc"
+              }
+            ]
+          },
+          "text_params": [],
+          "updates": [
+            {
+              "apply": {
+                "effect": "upsert",
+                "matches": {}
+              },
+              "debounce": null,
+              "deleted_by": null,
+              "removes": false,
+              "root": null,
+              "set": {},
+              "subscription": "callEvents"
+            }
+          ]
+        }
+      ],
+      "storage": "memory"
+    },
+    {
       "actions": [
         {
           "args": {},
@@ -11074,11 +11382,12 @@
           "is_global": false,
           "joins_created": false,
           "joins_events": false,
+          "members_complete": true,
           "name": "chat_members",
           "remote": {
             "empty_stale_time": null,
             "operation": "chatMembers",
-            "page_size": 30,
+            "page_size": 100,
             "root": "node.members",
             "selects_page_info": true,
             "shape": {
