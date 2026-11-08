@@ -1,5 +1,5 @@
 use crate::ffi::database::{blocking, on_executor};
-use crate::ffi::DbError;
+use crate::ffi::{Database, DbError, WireOperationOutcome, WireOperationReceipt};
 
 /// bridge errors (P-BND-04, D-195): a task of the executor that ends with a panic is a `Runtime` failure of the executor, not a refusal of the caller.
 #[tokio::test(flavor = "multi_thread")]
@@ -53,4 +53,60 @@ async fn an_aborted_task_is_interrupted_and_a_panicked_task_is_a_runtime_failure
     let failed = super::super::database::joined(panicked.await.unwrap_err());
     assert!(matches!(cancelled, DbError::Interrupted { .. }), "{cancelled:?}");
     assert!(matches!(failed, DbError::Runtime { .. }), "{failed:?}");
+}
+
+/// The owner of the call holds it, then loses its answer while the epoch of the caller ends: the call ends as the answer the caller lost.
+async fn outcome_whose_answer_is_lost(database: &Database, receipt: WireOperationReceipt) -> Result<WireOperationOutcome, DbError> {
+    use crate::runtime::{Cause, OutcomeId};
+    let outcomes = database.life.outcomes();
+    let epoch = database.session_epoch();
+    let probe = outcomes.register(epoch);
+    let lost = OutcomeId::from_raw(probe.id().raw() + 1);
+    outcomes.forget(probe.id());
+    let held = outcomes.open_count();
+    let mut call = Box::pin(database.outcome(receipt));
+    tokio::select! { biased; _ = &mut call => panic!("the owner answered at once"), () = std::future::ready(()) => {} }
+    let life = database.life_handle();
+    crate::test_wait::within(tokio::task::spawn_blocking(move || life.barrier())).await.unwrap();
+    assert_eq!(outcomes.open_count(), held + 1, "the owner holds the call");
+    outcomes.forget(lost);
+    outcomes.end_epoch(epoch, Cause::SessionReset);
+    super::rig_tests::bound(call).await
+}
+
+/// K7.09 (P-BND-04, D-195): the outcome of a write whose owner lost the answer is `Internal` when the epoch of the caller ended meanwhile, not `Interrupted`.
+#[tokio::test(flavor = "multi_thread")]
+async fn the_outcome_of_a_write_with_a_lost_answer_is_internal() {
+    use super::rig_tests::bound;
+    use super::upload_stand::{plain, Stand, CREATE_MOMENT};
+    let stand = Stand::new();
+    let database = stand.open(None, &[CREATE_MOMENT]).await;
+    database.set_online(false).unwrap();
+    let receipt = bound(database.send(plain("Moment", r#"{"text":"intro"}"#, database.session_epoch()))).await.unwrap();
+
+    let answer = outcome_whose_answer_is_lost(&database, receipt).await;
+
+    assert!(matches!(answer, Err(DbError::Internal { .. })), "{answer:?}");
+    database.close_now();
+}
+
+/// K7.10 (P-BND-04, D-195): the outcome of a transfer whose owner lost the answer is `Internal` when the epoch of the caller ended meanwhile, not `Interrupted`.
+#[tokio::test(flavor = "multi_thread")]
+async fn the_outcome_of_an_upload_with_a_lost_answer_is_internal() {
+    use super::rig_tests::bound;
+    use super::upload_stand::{plain, request, Stand, CREATE_MOMENT};
+    let stand = Stand::new();
+    let database = stand.open(None, &[CREATE_MOMENT]).await;
+    database.set_online(false).unwrap();
+    let epoch = database.session_epoch();
+    let directory = tempfile::tempdir().unwrap();
+    let source = directory.path().join("intro.mp4");
+    std::fs::write(&source, b"video").unwrap();
+    let local = bound(database.send(plain("Moment", r#"{"text":"intro"}"#, epoch))).await.unwrap().optimistic_value.unwrap();
+    let receipt = bound(database.upload(epoch, "Moment".into(), local.id, "upload_clip".into(), request(&source))).await.unwrap();
+
+    let answer = outcome_whose_answer_is_lost(&database, receipt).await;
+
+    assert!(matches!(answer, Err(DbError::Internal { .. })), "{answer:?}");
+    database.close_now();
 }

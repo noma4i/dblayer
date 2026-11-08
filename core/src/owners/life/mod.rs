@@ -563,6 +563,9 @@ impl Life {
     /// Subscribes to the Store broadcast `Committed`: one call per committed batch, clear and models reset, in the order of revisions.
     pub fn on_committed(&self, sink: impl Fn(CommittedBroadcast) + Send + Sync + 'static) { self.wiring.on_committed(sink); }
 
+    #[cfg(test)]
+    pub(crate) fn outcomes(&self) -> &Outcomes<LifeReply> { &self.wiring.outcomes }
+
     fn settled(&self, reply: LifeReply) -> Waiter<LifeReply> {
         let waiter = self.wiring.outcomes.register(Epoch::MAX);
         self.wiring.outcomes.settle(waiter.id(), reply);

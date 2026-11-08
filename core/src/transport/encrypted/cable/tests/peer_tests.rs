@@ -68,6 +68,9 @@ impl CablePeer {
         Self { observer: Some(Arc::new(observer)), ..Self::new(config) }
     }
 
+    /// The sockets opened so far.
+    pub(crate) fn connects(&self) -> usize { self.next.load(Ordering::SeqCst) }
+
     fn observe(&self, event: PeerEvent) {
         if let Some(observer) = &self.observer { observer(event); }
     }
