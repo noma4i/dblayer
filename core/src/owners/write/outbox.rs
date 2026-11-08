@@ -460,7 +460,7 @@ impl OutboxState {
 
     /// Transfer named the smallest open operation of the row here: an operation of a transfer goes on through its Transfer, any other by its own cell.
     fn selected(&mut self, (model, row_id): (String, String), action: String, kind: SelectKind, reply: ReplyId, fx: &mut Effects<Outbox>) {
-        if self.open_on_row(&model, &row_id, Some(&action)).is_some_and(|op_id| matches!(self.ops[&op_id].op.origin, OpSource::Transfer { .. })) {
+        if kind == SelectKind::Retry && self.open_on_row(&model, &row_id, Some(&action)).is_some_and(|op_id| matches!(self.ops[&op_id].op.origin, OpSource::Transfer { .. })) {
             return Self::reply(fx, reply, OutboxAnswer::Transfer { action });
         }
         match kind {

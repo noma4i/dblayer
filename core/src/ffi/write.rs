@@ -237,7 +237,6 @@ impl Database {
         let waiter = self.life.discard_operation(epoch, (model.clone(), row_id.clone()), action);
         match self.await_life(waiter).await? {
             LifeReply::Transfer(TransferAnswer::Err(fault)) | LifeReply::Outbox(OutboxAnswer::Err(fault)) => Err(refused(fault, "discard")),
-            LifeReply::Outbox(OutboxAnswer::Transfer { action }) => self.discard_transfer(epoch, &model, &row_id, &action).await,
             LifeReply::Outbox(_) | LifeReply::Transfer(_) => Ok(()),
             _ => Err(super::database::foreign_reply()),
         }

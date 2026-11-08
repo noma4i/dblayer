@@ -82,7 +82,7 @@ impl TransferState {
     /// The smallest `op_id` among the open transfers of the row decides: a transfer that precedes the operation of Outbox answers the call itself.
     pub(super) fn select_row(&mut self, (model, rows): (String, Vec<String>), outbox_min: Option<(super::outbox::OpId, String)>, kind: super::outbox_types::SelectKind, rep: ReplyId, fx: &mut Fx) {
         let named = |key: &str| rows.iter().any(|row| key.strip_prefix(&format!("{model}:{row}:")).is_some());
-        let first = self.scan().filter(|transfer| transfer.stage != TransferStage::Done && named(&transfer.key)).filter_map(|transfer| {
+        let first = self.scan().filter(|transfer| transfer.stage != TransferStage::Done && !transfer.submitted && named(&transfer.key)).filter_map(|transfer| {
             let op_id = transfer.op_id.or_else(|| self.group_entry(transfer.transfer_id).and_then(|group| self.groups.get(&group)?.op_id))?;
             Some((op_id, transfer.key.clone()))
         }).min();
