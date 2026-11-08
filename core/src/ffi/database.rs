@@ -71,7 +71,7 @@ pub(super) fn started(slot: &Starter, build: impl FnOnce() -> std::io::Result<Ru
 }
 
 /// The task of the executor ended without an answer: a cancelled task is `Interrupted`, a task that panicked is `Runtime`.
-fn joined(error: tokio::task::JoinError) -> DbError {
+pub(super) fn joined(error: tokio::task::JoinError) -> DbError {
     if error.is_cancelled() { DbError::Interrupted { detail: error.to_string() } } else { DbError::Runtime { detail: error.to_string() } }
 }
 

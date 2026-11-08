@@ -42,3 +42,15 @@ async fn a_lost_answer_of_an_owner_is_internal_even_after_the_epoch_ended() {
     assert!(matches!(answer, Err(DbError::Internal { .. })), "{answer:?}");
     database.close_now();
 }
+
+/// K7.13-15 (P-BND-04, D-195): a task of the executor that was aborted ends `Interrupted`, one that panicked ends `Runtime`.
+#[tokio::test(flavor = "multi_thread")]
+async fn an_aborted_task_is_interrupted_and_a_panicked_task_is_a_runtime_failure() {
+    let aborted = tokio::spawn(std::future::pending::<()>());
+    aborted.abort();
+    let cancelled = super::super::database::joined(aborted.await.unwrap_err());
+    let panicked = tokio::spawn(async { if std::hint::black_box(true) { panic!("the task failed"); } });
+    let failed = super::super::database::joined(panicked.await.unwrap_err());
+    assert!(matches!(cancelled, DbError::Interrupted { .. }), "{cancelled:?}");
+    assert!(matches!(failed, DbError::Runtime { .. }), "{failed:?}");
+}
