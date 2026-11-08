@@ -52,7 +52,10 @@ public final class EncryptedCablePeer: CablePeer, ScriptedTransport, @unchecked 
       self.peer = peer
       self.token = token
     }
-    func send(text: String) -> Bool { (try? peer.receive(token: token, text: text)) != nil }
+    func send(text: String) -> Bool {
+      do { try peer.receive(token: token, text: text) } catch { preconditionFailure("the cable double cannot read a frame of the library: \(error)") }
+      return true
+    }
     func close(code: UInt16, reason: String) { peer.closed.continuation.yield(token) }
     func cancel() {}
   }
@@ -103,7 +106,7 @@ public final class EncryptedCablePeer: CablePeer, ScriptedTransport, @unchecked 
       connection.subscriptions[body["operationName"] as? String ?? ""] = id
       try emit(token: token, body: ["t": "subscribed", "id": id])
       subscribed.continuation.yield(token)
-      let variables = (body["variables"] as? [String: Any]).flatMap { try? JSONSerialization.data(withJSONObject: $0, options: [.sortedKeys]) }.flatMap { String(data: $0, encoding: .utf8) } ?? "{}"
+      let variables = try (body["variables"] as? [String: Any]).map { String(decoding: try JSONSerialization.data(withJSONObject: $0, options: [.sortedKeys]), as: UTF8.self) } ?? "{}"
       onSubscribe?(TransportRequest(document: body["query"] as? String ?? "", operationName: body["operationName"] as? String ?? "", variablesJson: variables, purpose: .standard))
     }
   }

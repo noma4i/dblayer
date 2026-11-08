@@ -45,7 +45,10 @@ class EncryptedCablePeer(private val server: SealedServer) : CablePeer, Scripted
     private fun text(value: JsonObject) = value.toString()
 
     private class Link(private val peer: EncryptedCablePeer, private val token: String) : PlatformSocket {
-        override fun send(text: String): Boolean = runCatching { peer.receive(token, text) }.isSuccess
+        override fun send(text: String): Boolean {
+            peer.receive(token, text)
+            return true
+        }
 
         override fun close(code: UShort, reason: String) {
             peer.closed.trySend(token)
