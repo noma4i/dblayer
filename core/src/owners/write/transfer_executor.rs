@@ -41,7 +41,7 @@ impl Link {
         let id = (self.ids.mint)(step);
         let request = request.by(crate::transport::WireIds::new(crate::transport::Author::Transfer, id, crate::transport::WireIds::next_attempt()));
         let response = self.gate.mutate(self.epoch, request).await?;
-        (self.ids.settle)(id);
+        if !crate::transport::retry::temporary_response(&response) { (self.ids.settle)(id); }
         Ok(response)
     }
 

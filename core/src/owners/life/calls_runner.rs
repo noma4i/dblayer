@@ -8,7 +8,7 @@ use tokio::task::AbortHandle;
 
 use super::{LifeReply, Ports, Wiring};
 use crate::owners::calls::{CallError, CallKind, Calls, CallsEffect, CallsInput};
-use crate::owners::contract::RequestId;
+use crate::owners::contract::{ErrorClass, RequestId};
 use crate::owners::lifecycle::{LifecycleInput, Peer};
 use crate::owners::network::NetworkInput;
 use crate::owners::session::{AuthorOutcome, SessionError, SessionInput, CALLS_AUTHOR};
@@ -43,13 +43,14 @@ fn input_of(call_id: u64, root: &str, result: Result<crate::transport::Response,
 
 fn session_call_error(code: SessionCode) -> CallError { CallError::Session { code, detail: code.name().to_string() } }
 
-fn answer_input(call_id: u64, root: &str, outcome: AuthorOutcome) -> CallsInput {
+pub(super) fn answer_input(call_id: u64, root: &str, outcome: AuthorOutcome) -> CallsInput {
     match outcome {
         AuthorOutcome::Response(text) => match serde_json::from_str::<Value>(&text) {
             Ok(body) => input_of(call_id, root, crate::transport::encrypted::response_of(crate::transport::encrypted::Answer { sequence: None, body })),
             Err(error) => input_of(call_id, root, Err(TransportError::Decode(error.to_string()))),
         },
         AuthorOutcome::Dropped => CallsInput::Dropped { call_id },
+        AuthorOutcome::Error { class: ErrorClass::Network, .. } => CallsInput::TransportError { call_id, error: CallError::Network },
         AuthorOutcome::Error { error, .. } => CallsInput::TransportError { call_id, error: match error {
             SessionError::NoSession => CallError::NoSession,
             SessionError::Interrupted | SessionError::Closed => CallError::Interrupted,

@@ -4,6 +4,7 @@ mod bridge_groups_tests;
 mod bridge_load_tests;
 mod bridge_stream_tests;
 mod bridge_support_tests;
+mod call_refusal_tests;
 mod calls_tests;
 mod effect_rows_tests;
 mod encrypted_cable_tests;

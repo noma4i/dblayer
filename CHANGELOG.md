@@ -147,6 +147,7 @@
 
 ### Fixed
 
+- Operation calls get `Network` on a transport failure and the GraphQL error on a temporary server refusal.
 - An upload step reads its answer from the `root:` of `uploads do` and names the root when a field is missing.
 - A stream that outlives `close` no longer holds the database.
 - A cable socket that opens after the core gave up on it is closed.

@@ -23,6 +23,23 @@ extension BridgeProbeTests {
     try await DB.database.registerOperations(defsJson: operations)
   }
 
+  @MainActor
+  @Test(.timeLimit(.minutes(1))) func aGraphqlRefusalKeepsEveryExtensionFieldThroughAnOperationCall() async throws {
+    let transport = MockTransport()
+    try await openSealedRig(transport)
+    let sent = GraphqlExtensions(code: "FORBIDDEN", transactionDisposition: .keep, fields: ["reasonCode": ""child""])
+    transport.enqueue("QrCodeCreate", failure: DbError.Graphql(messages: ["Forbidden"], extensions: sent))
+    do {
+      _ = try await Operations.qrCodeCreate(kind: "container", size: 3)
+      Issue.record("the operation call did not throw")
+    } catch DbError.Graphql(let messages, let extensions) {
+      #expect(messages == ["Forbidden"])
+      #expect(extensions?.code == "FORBIDDEN")
+      #expect(extensions?.transactionDisposition == .keep)
+      #expect(extensions?.fields == ["reasonCode": ""child""])
+    }
+  }
+
   private func sealedCode(_ error: Error, _ comment: String) -> SessionCode? {
     guard case DbError.Session(let code, _) = error else {
       Issue.record("\(comment): surfaced as \(error), not as a session error")

@@ -12,7 +12,7 @@ fn sess_calling_dropped_offline() {
 #[test]
 fn sess_calling_persisted_query_missing() {
     let mut twin = calling();
-    let input = Input::HttpError { request_id: twin.rid(), attempt_id: twin.aid(), temporary: false, auth: false, persisted_missing: true, security: None };
+    let input = Input::HttpError { request_id: twin.rid(), attempt_id: twin.aid(), temporary: false, auth: false, persisted_missing: true, security: None, body: None };
     let effects = twin.feed(input);
     assert!(matches!(&effects[..], [RefEffect::HttpRequest { full_document: true, .. }]), "the same pair goes with the document: {effects:?}");
     assert!(matches!(twin.reference.state, RefState::Calling { attempts: 0, document_sent: true, .. }));
@@ -21,7 +21,7 @@ fn sess_calling_persisted_query_missing() {
 #[test]
 fn sess_calling_persisted_query_refused() {
     let mut twin = calling();
-    let missing = |twin: &Twin| Input::HttpError { request_id: twin.rid(), attempt_id: twin.aid(), temporary: false, auth: false, persisted_missing: true, security: None };
+    let missing = |twin: &Twin| Input::HttpError { request_id: twin.rid(), attempt_id: twin.aid(), temporary: false, auth: false, persisted_missing: true, security: None, body: None };
     let first = missing(&twin);
     twin.feed(first);
     let second = missing(&twin);
@@ -72,11 +72,20 @@ fn sess_calling_temporary_mutate() {
 }
 
 #[test]
+fn sess_calling_temporary_mutate_body() {
+    let mut twin = calling_mutate();
+    let body = r#"{"errors":[{"message":"Busy","extensions":{"code":"SERVICE_UNAVAILABLE"}}]}"#.to_string();
+    let input = Input::HttpError { request_id: twin.rid(), attempt_id: twin.aid(), temporary: true, auth: false, persisted_missing: false, security: None, body: Some(body.clone()) };
+    assert_eq!(twin.feed(input), vec![answer(7, 11, Outcome::Response(body))]);
+    assert!(matches!(twin.reference.state, RefState::PendingHeld { .. }));
+}
+
+#[test]
 fn sess_calling_temporary_offline() {
     let mut twin = calling();
     let (rid, aid) = (twin.rid(), twin.aid());
     twin.feed(Input::Online(false));
-    let late = Input::HttpError { request_id: rid, attempt_id: aid, temporary: true, auth: false, persisted_missing: false, security: None };
+    let late = Input::HttpError { request_id: rid, attempt_id: aid, temporary: true, auth: false, persisted_missing: false, security: None, body: None };
     assert!(twin.feed(late).is_empty(), "no timer while the network is away");
     assert!(twin.in_phase(CallPhase::WaitingNetwork));
     assert!(matches!(&twin.feed(Input::Online(true))[..], [RefEffect::HttpRequest { .. }]));
@@ -311,7 +320,7 @@ fn sess_idle_stray() {
     let mut twin = Twin::new();
     twin.feed_all([
         Input::Response { request_id: 1, attempt_id: 1, body: "{}".into(), sequence: Some(1), refusal: None },
-        Input::HttpError { request_id: 1, attempt_id: 1, temporary: true, auth: false, persisted_missing: false, security: None },
+        Input::HttpError { request_id: 1, attempt_id: 1, temporary: true, auth: false, persisted_missing: false, security: None, body: None },
         Input::Dropped { request_id: 1, attempt_id: 1 },
         Input::Revoked { request_id: 1, attempt_id: 1, body: "{}".into() },
         committed(), rejected(Reason::Storage), Input::Tick,

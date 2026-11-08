@@ -294,7 +294,7 @@ impl OutboxState {
         let Some(op_id) = self.ops.values().find(|operation| operation.request_id == req_id && operation.stage == Stage::Sending).map(|operation| operation.op_id) else { return };
         match outcome {
             AuthorOutcome::Response(body) => {
-                if let Some(operation) = self.ops.get_mut(&op_id) { operation.pending_owned = false; }
+                if let Some(operation) = self.ops.get_mut(&op_id) { operation.pending_owned = crate::transport::encrypted::exchange::temporary_refusal(&body); }
                 self.decode_answer(op_id, body, fx);
             }
             AuthorOutcome::Error { class, error, pending_retained } => {

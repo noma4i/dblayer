@@ -17,7 +17,7 @@ pub(super) fn login_response(rig: &mut Rig, attempt: u64) -> Vec<SessionEffect> 
 }
 
 pub(super) fn login_refused(rig: &mut Rig, attempt: u64) -> Vec<SessionEffect> {
-    let landing = rig.send(SessionInput::HttpError { request_id: 11, attempt_id: attempt, temporary: false, auth: false, persisted_missing: false, status: 0, too_large: None, security: None });
+    let landing = rig.send(SessionInput::HttpError { request_id: 11, attempt_id: attempt, temporary: false, auth: false, persisted_missing: false, status: 0, too_large: None, security: None, body: None });
     commit_landing(rig, &landing)
 }
 

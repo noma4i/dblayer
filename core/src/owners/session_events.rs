@@ -516,9 +516,12 @@ impl SessionState {
             }
             SessionInput::HttpError { request_id, attempt_id, security: Some((code, detail)), .. } if mine(request_id, attempt_id) => self.land(pending, Err(SessionError::Security { code, detail }), None, None, false, fx),
             SessionInput::HttpError { request_id, attempt_id, persisted_missing: true, .. } if mine(request_id, attempt_id) && !document_sent => self.request_http(pending, attempts, true, fx),
-            SessionInput::HttpError { request_id, attempt_id, temporary: true, persisted_missing: false, status, .. } if mine(request_id, attempt_id) => {
+            SessionInput::HttpError { request_id, attempt_id, temporary: true, persisted_missing: false, status, body, .. } if mine(request_id, attempt_id) => {
                 if let Some(author) = pending.author {
-                    author_error_retained(fx, author, pending.request_id, ErrorClass::Network, SessionError::Http { status }, true);
+                    match body {
+                        Some(body) => fx.push(SessionEffect::Answer { author, req_id: pending.request_id, outcome: AuthorOutcome::Response(body) }),
+                        None => author_error_retained(fx, author, pending.request_id, ErrorClass::Network, SessionError::Http { status }, true),
+                    }
                     self.phase = SessionPhase::PendingHeld { pending };
                 } else if self.is_online() {
                     fx.push(SessionEffect::ScheduleTick { attempts: attempts + 1 });

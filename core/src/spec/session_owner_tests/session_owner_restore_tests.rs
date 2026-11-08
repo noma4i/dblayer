@@ -445,7 +445,7 @@ fn sess_held_other() {
     twin.feed_all([Input::Online(false), Input::Online(true), Input::Tick, published(PubState::Session), committed(), rejected(Reason::Storage),
         Input::Response { request_id: rid, attempt_id: aid, body: "{}".into(), sequence: Some(1), refusal: None },
         Input::Revoked { request_id: rid, attempt_id: aid, body: "{}".into() },
-        Input::HttpError { request_id: rid, attempt_id: aid, temporary: false, auth: true, persisted_missing: false, security: None },
+        Input::HttpError { request_id: rid, attempt_id: aid, temporary: false, auth: true, persisted_missing: false, security: None, body: None },
         Input::Dropped { request_id: rid, attempt_id: aid }]);
     assert!(matches!(twin.reference.state, RefState::PendingHeld { .. }));
     assert_eq!(twin.reference.online, Some(true));
@@ -500,7 +500,7 @@ pub(super) fn trace(seed: u64, steps: usize, mut check: impl FnMut(&Twin, &Input
             5 => rejected(Reason::Storage),
             6 | 7 => Input::Response { request_id: request, attempt_id: attempt, body: "{}".into(), sequence: Some(if next(&mut s).is_multiple_of(6) { sequence + 1 } else { sequence }), refusal: None },
             8 => Input::Revoked { request_id: request, attempt_id: attempt, body: String::new() },
-            9 => Input::HttpError { request_id: request, attempt_id: attempt, temporary: next(&mut s).is_multiple_of(2), auth: next(&mut s).is_multiple_of(2), persisted_missing: next(&mut s).is_multiple_of(5), security: None },
+            9 => Input::HttpError { request_id: request, attempt_id: attempt, temporary: next(&mut s).is_multiple_of(2), auth: next(&mut s).is_multiple_of(2), persisted_missing: next(&mut s).is_multiple_of(5), security: None, body: None },
             10 => Input::Tick,
             11 => Input::Online(next(&mut s).is_multiple_of(2)),
             12 => Input::Published { epoch: EPOCH + next(&mut s) % 3, identity: None, state: [PubState::Session, PubState::Ending, PubState::EndingFailed, PubState::NoSession][(next(&mut s) % 4) as usize] },
@@ -519,7 +519,7 @@ pub(super) fn trace(seed: u64, steps: usize, mut check: impl FnMut(&Twin, &Input
             26 => Input::SecretRead { op, read: [Secret::Present(CRED), Secret::Missing, Secret::Error("x".into())][(next(&mut s) % 3) as usize].clone() },
             27 => Input::InterestPlus(next(&mut s) % 3),
             28 => Input::InterestMinus(next(&mut s) % 3),
-            _ => Input::HttpError { request_id: request, attempt_id: attempt, temporary: false, auth: false, persisted_missing: true, security: None },
+            _ => Input::HttpError { request_id: request, attempt_id: attempt, temporary: false, auth: false, persisted_missing: true, security: None, body: None },
         };
         let effects = twin.feed(input.clone());
         check(&twin, &input, &effects);

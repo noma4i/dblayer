@@ -78,6 +78,12 @@ class SealedServer(private val deduplicate: Boolean = false, private val answer:
     suspend fun lostAnswer() { lostAnswers.receive() }
     fun hasLostAnswer(): Boolean = lost.get()
 
+    private fun wireExtensions(extensions: GraphqlExtensions?): JsonObject = buildJsonObject {
+        extensions?.fields?.forEach { (key, text) -> put(key, Json.parseToJsonElement(text)) }
+        extensions?.code?.let { put("code", it) }
+        extensions?.transactionDisposition?.let { put("transactionDisposition", transactionDispositionText(it)) }
+    }
+
     override suspend fun post(path: String, body: String, purpose: NetworkPurpose): EncryptedReply {
         val request = open(body)
         val sent = request.getValue("body").jsonObject
@@ -100,7 +106,7 @@ class SealedServer(private val deduplicate: Boolean = false, private val answer:
                         failure.messages.forEach { message ->
                             add(buildJsonObject {
                                 put("message", message)
-                                put("extensions", buildJsonObject { failure.extensions?.code?.let { put("code", it) } })
+                                put("extensions", wireExtensions(failure.extensions))
                             })
                         }
                     })

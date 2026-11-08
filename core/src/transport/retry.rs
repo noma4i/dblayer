@@ -46,6 +46,11 @@ impl RetryClass {
 
 }
 
+pub(crate) fn temporary_response(response: &super::Response) -> bool {
+    let codes: Vec<&str> = response.errors.iter().filter_map(|error| error.code()).collect();
+    !codes.is_empty() && RetryClass::classify(false, None, &codes) != RetryClass::Fatal
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
 pub struct RetryAttempt {
     pub attempt: u64,

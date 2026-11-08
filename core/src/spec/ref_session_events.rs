@@ -488,9 +488,12 @@ impl Session {
             }
             Input::HttpError { request_id, attempt_id, security: Some((code, detail)), .. } if mine(request_id, attempt_id) => self.land(pending, Err(Fail::Security { code, detail }), None, None, false, out),
             Input::HttpError { request_id, attempt_id, persisted_missing: true, .. } if mine(request_id, attempt_id) && !document_sent => self.send(pending, attempts, true, out),
-            Input::HttpError { request_id, attempt_id, temporary: true, persisted_missing: false, .. } if mine(request_id, attempt_id) => {
+            Input::HttpError { request_id, attempt_id, temporary: true, persisted_missing: false, body, .. } if mine(request_id, attempt_id) => {
                 if let Some(author) = pending.author {
-                    out.effects.push(author_error_retained(author, pending.request_id, Kind::Temporary, Fail::Http, true));
+                    out.effects.push(match body {
+                        Some(body) => Effect::Answer { author, req_id: pending.request_id, outcome: Outcome::Response(body) },
+                        None => author_error_retained(author, pending.request_id, Kind::Temporary, Fail::Http, true),
+                    });
                     self.state = State::PendingHeld { pending };
                 } else if self.is_online() {
                     out.effects.push(Effect::ScheduleTick { attempts: attempts + 1 });

@@ -148,6 +148,10 @@ pub(crate) fn temporary_error(body: &Value) -> Option<TransportError> {
     Some(TransportError::Graphql { messages: codes.into_iter().map(str::to_string).collect(), extensions: None })
 }
 
+pub(crate) fn temporary_refusal(text: &str) -> bool {
+    serde_json::from_str::<Value>(text).ok().is_some_and(|body| temporary_error(&body).is_some())
+}
+
 impl Exchange {
     pub fn new(config: &EncryptedConfig, http: Arc<dyn HttpExchange>, clock: Arc<dyn Clock>) -> Result<Self, TransportError> {
         config.validate()?;
