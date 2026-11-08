@@ -49,7 +49,7 @@ fn expected() -> Vec<String> {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn consumer_yupi_preload_load_sends_no_second_request() {
+async fn consumer_preload_load_sends_no_second_request() {
     const ALL: [&str; 10] = ["activeCampaigns", "myMoments", "chats", "gifts", "meCompass", "vibesList", "feed", "transactions", "blockedUsers", "friendUsers"];
     const ALTERNATE: [&str; 5] = ["activeCampaigns", "chats", "meCompass", "feed", "blockedUsers"];
     let held_by_order: [(&str, &[&str]); 4] = [("landed first", &[]), ("held", &ALL), ("half", &ALL[..6]), ("alternate", &ALTERNATE)];

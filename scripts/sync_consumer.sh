@@ -8,7 +8,7 @@ fi
 
 root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)"
 app="$(cd -- "$1" && pwd -P)"
-dest="$root/fixtures/consumer/yupi"
+dest="$root/fixtures/consumer/app"
 export LC_ALL=C
 
 for kind in schemas/models schemas/operations; do

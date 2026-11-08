@@ -7,7 +7,7 @@ use crate::ffi::{ReadFetch, ReadValue};
 use crate::test_wait::settled;
 
 #[tokio::test(flavor = "multi_thread")]
-async fn consumer_yupi_chat_updated_lands_payload_then_rereads_the_watched_node() {
+async fn consumer_chat_updated_lands_payload_then_rereads_the_watched_node() {
     let stand = Stand::open().await;
     stand.answer("ChatNode", json!({"node": chat("c1", "before")}));
     let (events, token) = stand.events("Chat").await;
@@ -23,7 +23,7 @@ async fn consumer_yupi_chat_updated_lands_payload_then_rereads_the_watched_node(
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn consumer_yupi_chat_updated_without_a_reader_asks_for_nothing() {
+async fn consumer_chat_updated_without_a_reader_asks_for_nothing() {
     let stand = Stand::open().await;
     let (events, token) = stand.events("Chat").await;
     stand.push(&token, json!({"area": "CHAT", "kind": "UPDATED", "entityId": "c1", "chat": chat("c1", "payload")}));
@@ -34,7 +34,7 @@ async fn consumer_yupi_chat_updated_without_a_reader_asks_for_nothing() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn consumer_yupi_events_of_chat_give_nothing_for_an_area_it_does_not_declare() {
+async fn consumer_events_of_chat_give_nothing_for_an_area_it_does_not_declare() {
     let stand = Stand::open().await;
     let (events, token) = stand.events("Chat").await;
     stand.push(&token, json!({"area": "REACTION", "kind": "UPDATED", "entityId": "c1"}));

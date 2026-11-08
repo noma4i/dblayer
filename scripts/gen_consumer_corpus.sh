@@ -8,8 +8,8 @@ fi
 
 root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)"
 export PATH="/opt/homebrew/opt/rustup/bin:$PATH" LC_ALL=C
-app="$root/fixtures/consumer/yupi"
-out="$root/core/tests/corpus/consumer_yupi"
+app="$root/fixtures/consumer/app"
+out="$root/core/tests/corpus/consumer"
 
 models=()
 while IFS= read -r file; do models+=("$file"); done < <(find "$app/schemas" -name '*.dbl' -type f | sort)

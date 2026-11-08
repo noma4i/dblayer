@@ -33,7 +33,7 @@ async fn shown_at(stream: &ReadStream, shown: &mut Vec<WireRow>, revision: i64) 
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn consumer_yupi_message_reaction_keyed_by_user() {
+async fn consumer_message_reaction_keyed_by_user() {
     let stand = Stand::open().await;
     let (_events, token) = stand.events("Message").await;
     stand.push(&token, seeded());

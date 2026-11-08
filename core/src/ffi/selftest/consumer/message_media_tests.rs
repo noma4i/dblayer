@@ -12,7 +12,7 @@ fn media_event(url: &str, progress: i64) -> Value {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn consumer_yupi_message_media_keeps_url_and_progress() {
+async fn consumer_message_media_keeps_url_and_progress() {
     let stand = Stand::open().await;
     let (_events, token) = stand.events("Message").await;
     let rows = stand.entity("Message", "m1", ReadFetch::Never);

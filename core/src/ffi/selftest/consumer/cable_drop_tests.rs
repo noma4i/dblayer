@@ -7,7 +7,7 @@ use crate::ffi::ReadFetch;
 fn page() -> serde_json::Value { json!({"user": {"moments": {"edges": [], "pageInfo": {"hasNextPage": false, "endCursor": null}}}}) }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn consumer_yupi_cable_drop_resubscribes_and_reloads_only_observed() {
+async fn consumer_cable_drop_resubscribes_and_reloads_only_observed() {
     let stand = Stand::open().await;
     stand.answer("userMoments", page());
     stand.answer("MomentNode", json!({"node": super::stand::moment("mo1", 0)}));

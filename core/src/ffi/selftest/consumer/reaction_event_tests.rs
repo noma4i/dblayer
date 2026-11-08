@@ -7,7 +7,7 @@ use crate::ffi::{ReadFetch, ReadValue};
 use crate::test_wait::settled;
 
 #[tokio::test(flavor = "multi_thread")]
-async fn consumer_yupi_message_reaction_lands_the_payload_row() {
+async fn consumer_message_reaction_lands_the_payload_row() {
     let stand = Stand::open().await;
     let (events, token) = stand.events("Message").await;
     stand.push(&token, json!({"area": "REACTION", "kind": "UPDATED", "entityId": "m1", "message": message("m1", "c1", "reacted")}));
@@ -18,7 +18,7 @@ async fn consumer_yupi_message_reaction_lands_the_payload_row() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn consumer_yupi_message_reaction_without_payload_is_lost() {
+async fn consumer_message_reaction_without_payload_is_lost() {
     let stand = Stand::open().await;
     let (events, token) = stand.events("Message").await;
     stand.push(&token, json!({"area": "REACTION", "kind": "UPDATED", "entityId": "m1"}));
@@ -29,7 +29,7 @@ async fn consumer_yupi_message_reaction_without_payload_is_lost() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn consumer_yupi_moment_reaction_rereads_the_watched_node() {
+async fn consumer_moment_reaction_rereads_the_watched_node() {
     let stand = Stand::open().await;
     stand.answer("MomentNode", json!({"node": moment("mo1", 0)}));
     let (events, token) = stand.events("Moment").await;
@@ -45,7 +45,7 @@ async fn consumer_yupi_moment_reaction_rereads_the_watched_node() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn consumer_yupi_moment_reaction_without_a_window_asks_for_nothing() {
+async fn consumer_moment_reaction_without_a_window_asks_for_nothing() {
     let stand = Stand::open().await;
     stand.answer("MomentNode", json!({"node": moment("mo1", 5)}));
     let (_events, token) = stand.events("Moment").await;

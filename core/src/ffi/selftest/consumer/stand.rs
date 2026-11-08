@@ -11,8 +11,8 @@ use crate::ffi::{Config, Database, DbError, EncryptedReply, FakeHttp, FakeTransp
 use crate::transport::encrypted::tests::fake_server_tests::{decrypt_request, seal_response};
 use crate::transport::encrypted::cable::tests::peer_tests::{CablePeer, PeerEvent};
 
-const SPEC: &str = include_str!("../../../../tests/corpus/consumer_yupi/spec.json");
-const OPERATIONS: &str = include_str!("../../../../tests/corpus/consumer_yupi/operations.json");
+const SPEC: &str = include_str!("../../../../tests/corpus/consumer/spec.json");
+const OPERATIONS: &str = include_str!("../../../../tests/corpus/consumer/operations.json");
 
 struct Cable {
     peer: CablePeer,

@@ -53,7 +53,7 @@ mod upload_session_tests;
 mod user_flow_tests;
 mod wallet_search_flow_tests;
 mod windows_tests;
-mod consumer_yupi;
+mod consumer;
 mod nested_storage_tests;
 mod offline_load_tests;
 mod record_reactions_tests;
