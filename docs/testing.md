@@ -36,7 +36,7 @@ For model events, open the reader before calling `emit`: `let events = try scope
 
 Keep the projections and streams of a test alive until every asynchronous assertion finishes. A stream ends in the core when its reader is released.
 
-A live query loads by itself when something subscribes, and an explicit refresh can add a second request. Queue 2 or 3 replies per operation and assert the content of `transport.calls`, not their exact count.
+A live query sends one request when its first reader subscribes. Another reader or `load()` of the same window sends nothing until its `freshness` ends, and the test clock moves only on `advance`. `refresh` always sends. Queue one reply per expected request and assert the exact list in `transport.calls`. A reply left in the queue answers the next request of its operation, so a spare reply hides an extra request.
 
 Move time with a test clock instead of sleeping. `DB.openTesting` (Swift, `DBlayerTesting`) and `DBlayer.openTesting` (Kotlin) open the database on a clock that only `advance` moves, and return it. The clock drives `fresh_for`, load retries and ephemeral expiry. `advance` expires due memory rows and resets due ephemeral values at once, with no waiting. The production `open` has no clock parameter and no test hook: the test artifacts call the core with the clock and hand the opened database to the library with one setter. `openTesting` also takes `observers`, the platform observer that reports online, foreground and power saving; Swift reports online at once when none is given. In Kotlin, `openTesting` and `TestClock.advance` need `@OptIn(DBlayerTestingApi::class)` on the calling declaration.
 
