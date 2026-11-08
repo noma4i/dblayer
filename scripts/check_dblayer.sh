@@ -26,6 +26,8 @@ steps=(
   "cheap|check-logs-selftest|120|*|bash scripts/check_logs_test.sh"
   "cheap|record-parity|120|core/ specs/ scripts/|python3 -I scripts/check_record_parity.py"
   "cheap|record-parity-selftest|120|*|python3 -I scripts/check_record_parity_test.py"
+  "cheap|projection-parity|120|core/ specs/ scripts/ swift/ kotlin/|python3 -I scripts/check_projection_parity.py"
+  "cheap|projection-parity-selftest|120|*|python3 -I scripts/check_projection_parity_test.py"
   "cheap|artifact-provenance|120|scripts/ core/ swift/ kotlin/|bash scripts/check_artifact_provenance.sh"
   "cheap|artifact-provenance-selftest|120|*|bash scripts/check_artifact_provenance.sh --selftest"
   "cheap|silent|120|*|bash scripts/check_silent.sh"
