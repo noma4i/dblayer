@@ -8,7 +8,6 @@ import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
-import java.io.File
 import java.security.KeyFactory
 import java.security.PrivateKey
 import java.security.spec.MGF1ParameterSpec
@@ -22,7 +21,7 @@ import javax.crypto.spec.OAEPParameterSpec
 import javax.crypto.spec.PSource
 import javax.crypto.spec.SecretKeySpec
 
-internal class RequestPurpose(val value: NetworkPurpose) : kotlin.coroutines.AbstractCoroutineContextElement(Key) {
+class RequestPurpose(val value: NetworkPurpose) : kotlin.coroutines.AbstractCoroutineContextElement(Key) {
     companion object Key : kotlin.coroutines.CoroutineContext.Key<RequestPurpose>
 }
 
@@ -30,6 +29,7 @@ internal class RequestPurpose(val value: NetworkPurpose) : kotlin.coroutines.Abs
 class SealedServer(private val deduplicate: Boolean = false, private val answer: suspend (path: String, body: JsonObject) -> JsonObject) : ScriptedHttp {
     companion object {
         const val SERVER_KEY = "MIIBojANBgkqhkiG9w0BAQEFAAOCAY8AMIIBigKCAYEAtzb67l/cXul2uArFqeZXsMf4tImrLcaHb3uiVNp8mjjJrFK/zwUEEazm3pmriAbj1nBzSxQLuq3jNUeFHXoQxjwWmTdv+PoAypz4ZII6Dz6rknk290/ddmimc1Z4Mx0AkT4ffAA9WHiDtLPF6tKZWNsWF/SpJps9PWrIKNOKY78ZfCgfegrWfKwoNYExyZ0IuUUgG0lsRjEEE/U59GpbNBqdKtw7KaIGK47QRk6HWOkCQtyqqjsseOJLwdI0k6jDNmcH6DulPNmar9AbwsmpngD55P8y4JdH49Eq3Nr040gmg0Y1p1FZm5PbKeC4WgZZdmg1bxjKAa+MYP0fROi4dFz05/81fqFb6DWaXencb0p/Iz+IUfQiI/0EYNv1SfdTUHzGyHFAmQHeCUIKLSkNNg3uF/jqKthFecCnWEfTUWRWFsN/8/Nb65a1UI/L1hP/qd+T6xKfchqVBEf767yeHdgsy3GeuqTsgXUPkuA1DO9HPP1xWqa6orUNWkimSwxDAgMBAAE="
+        private const val PRIVATE_KEY_BODY = "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"
         const val SERVER_PIN = "fab4f816eb33917161942684230405ae47ad4df5b456bd973085599b1364342a"
     }
 
@@ -47,9 +47,7 @@ class SealedServer(private val deduplicate: Boolean = false, private val answer:
     val effects = CopyOnWriteArrayList<JsonObject>()
 
     init {
-        val fixture = Json.parseToJsonElement(File("../fixtures/encrypted-http/kat.json").readText()).jsonObject
-        val pem = fixture.getValue("SERVER_PRIVATE_KEY_PEM").jsonPrimitive.content.lines().filter { !it.startsWith("-----") }.joinToString("")
-        val pkcs1 = Base64.getDecoder().decode(pem)
+        val pkcs1 = Base64.getDecoder().decode(PRIVATE_KEY_BODY)
         val inner = pkcs1.size + 22
         val pkcs8 = byteArrayOf(0x30, 0x82.toByte(), (inner shr 8).toByte(), inner.toByte(), 0x02, 0x01, 0x00, 0x30, 0x0d, 0x06, 0x09, 0x2a, 0x86.toByte(), 0x48, 0x86.toByte(), 0xf7.toByte(), 0x0d, 0x01, 0x01, 0x01, 0x05, 0x00, 0x04, 0x82.toByte(), (pkcs1.size shr 8).toByte(), pkcs1.size.toByte()) + pkcs1
         privateKey = KeyFactory.getInstance("RSA").generatePrivate(PKCS8EncodedKeySpec(pkcs8))

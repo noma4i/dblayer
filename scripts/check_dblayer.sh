@@ -17,6 +17,7 @@ steps=(
   "cheap|protocol-config|120|*|bash scripts/check_protocol_config.sh && bash scripts/check_protocol_config.sh --selftest"
   "cheap|build-modes|120|*|bash scripts/check_build_modes.sh"
   "cheap|release-modes|120|*|bash scripts/check_release_modes.sh"
+  "cheap|testing-doubles|120|swift/ kotlin/|bash scripts/check_testing_doubles.sh && bash scripts/check_testing_doubles.sh --selftest"
   "cheap|docs|120|*|bash scripts/check_docs.sh"
   "cheap|waits|120|*|bash scripts/check_waits.sh"
   "cheap|waits-selftest|120|*|bash scripts/check_waits_test.sh"

@@ -1,10 +1,8 @@
 import CryptoKit
 import Foundation
-import DBlayerTesting
-import Testing
-@testable import DBlayer
+import DBlayer
 
-final class EncryptedCablePeer: CablePeer, ScriptedTransport, @unchecked Sendable {
+public final class EncryptedCablePeer: CablePeer, ScriptedTransport, @unchecked Sendable {
   final class Connection: @unchecked Sendable {
     let events: CableEvents
     init(events: CableEvents) { self.events = events }
@@ -17,17 +15,17 @@ final class EncryptedCablePeer: CablePeer, ScriptedTransport, @unchecked Sendabl
     let order = NSLock()
   }
 
-  let server: SealedServer
-  var onSubscribe: (@Sendable (TransportRequest) -> Void)?
-  let opened = AsyncStream<String>.makeStream()
-  let subscribed = AsyncStream<String>.makeStream()
-  let closed = AsyncStream<String>.makeStream()
+  public let server: SealedServer
+  public var onSubscribe: (@Sendable (TransportRequest) -> Void)?
+  public let opened = AsyncStream<String>.makeStream()
+  public let subscribed = AsyncStream<String>.makeStream()
+  public let closed = AsyncStream<String>.makeStream()
   private let lock = NSLock()
   private var connections: [String: Connection] = [:]
   private var latest: String?
-  var lastOpened: String? { lock.withLock { latest } }
+  public var lastOpened: String? { lock.withLock { latest } }
 
-  init(server: SealedServer) { self.server = server }
+  public init(server: SealedServer) { self.server = server }
 
   private func encode(_ data: Data) -> String {
     data.base64EncodedString().replacingOccurrences(of: "+", with: "-").replacingOccurrences(of: "/", with: "_").replacingOccurrences(of: "=", with: "")
@@ -59,9 +57,9 @@ final class EncryptedCablePeer: CablePeer, ScriptedTransport, @unchecked Sendabl
     func cancel() {}
   }
 
-  func scriptedCable(url: String, events: CableEvents) async -> CableOutcome { await openCable(url: url, events: events) }
+  public func scriptedCable(url: String, events: CableEvents) async -> CableOutcome { await openCable(url: url, events: events) }
 
-  func openCable(url: String, events: CableEvents) async -> CableOutcome {
+  public func openCable(url: String, events: CableEvents) async -> CableOutcome {
     do { return try open(events: events) } catch { return .failed(failure: .scripted(.io, "\(error)"), handshakeStatus: nil) }
   }
 
@@ -75,7 +73,7 @@ final class EncryptedCablePeer: CablePeer, ScriptedTransport, @unchecked Sendabl
     return .open(connection: Link(peer: self, token: token))
   }
 
-  func receive(token: String, text: String) throws {
+  public func receive(token: String, text: String) throws {
     let connection = try connection(token)
     let command = try JSONSerialization.jsonObject(with: Data(text.utf8)) as! [String: Any]
     if command["command"] as? String == "subscribe" {
@@ -117,7 +115,7 @@ final class EncryptedCablePeer: CablePeer, ScriptedTransport, @unchecked Sendabl
     return try JSONSerialization.jsonObject(with: plain) as! [String: Any]
   }
 
-  func emit(token: String, body: [String: Any]) throws {
+  public func emit(token: String, body: [String: Any]) throws {
     let connection = try connection(token)
     connection.order.lock()
     defer { connection.order.unlock() }
@@ -132,29 +130,29 @@ final class EncryptedCablePeer: CablePeer, ScriptedTransport, @unchecked Sendabl
   }
 
   /// A data event of the open subscription. False while no subscription is open.
-  func event(token: String, operation: String, result: [String: Any]) throws -> Bool {
+  public func event(token: String, operation: String, result: [String: Any]) throws -> Bool {
     guard let id = try connection(token).subscriptions[operation] else { return false }
     try emit(token: token, body: ["t": "next", "id": id, "result": result])
     return true
   }
 
-  func event(operation: String, result: String) throws -> Bool {
+  public func event(operation: String, result: String) throws -> Bool {
     guard let token = lastOpened, let value = try JSONSerialization.jsonObject(with: Data(result.utf8)) as? [String: Any] else { return false }
     return try event(token: token, operation: operation, result: value)
   }
 
   /// A data event of the first open subscription.
-  func event(token: String, result: [String: Any]) throws -> Bool {
+  public func event(token: String, result: [String: Any]) throws -> Bool {
     guard let operation = try connection(token).subscriptions.keys.sorted().first else { return false }
     return try event(token: token, operation: operation, result: result)
   }
 
   /// The socket breaks.
-  func drop(token: String) throws {
+  public func drop(token: String) throws {
     try connection(token).events.ended(closeCode: 1006, reason: "dropped", failure: nil)
   }
 
-  func emitOld(token: String) throws {
+  public func emitOld(token: String) throws {
     let id = try connection(token).subscriptions.values.first!
     try emit(token: token, body: ["t": "next", "id": id, "result": ["data": ["bulletinAdded": ["body": "old", "occurredAt": "2026-10-18T00:00:00Z"]]]])
   }

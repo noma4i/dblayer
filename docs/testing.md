@@ -30,6 +30,8 @@ A live query loads by itself when something subscribes, and an explicit refresh 
 
 Move time with a test clock instead of sleeping. `DB.openTesting` (Swift, `DBlayerTesting`) and `DBlayer.openTesting` (Kotlin) open the database on a clock that only `advance` moves, and return it. The clock drives `fresh_for`, load retries and ephemeral expiry. `advance` expires due memory rows and resets due ephemeral values at once, with no waiting. The production `open` has no clock parameter and no test hook: the test artifacts call the core with the clock and hand the opened database to the library with one setter. `openTesting` also takes `observers`, the platform observer that reports online, foreground and power saving; Swift reports online at once when none is given. In Kotlin, `openTesting` and `TestClock.advance` need `@OptIn(DBlayerTestingApi::class)` on the calling declaration.
 
+To run the real encrypted session in a test, use `SealedServer` and `EncryptedCablePeer`, both in `DBlayerTesting` (Swift) and in the `testFixtures` of the Maven artifact (Kotlin). `SealedServer` opens every sealed request with the fixture key and seals the answer. `EncryptedCablePeer` is the cable end on top of it: it completes the handshake, confirms subscriptions and pushes a data event with `event(operation, result)`. Pass the server as `http` and the peer as the cable of the transport.
+
 When declaring `uploads`, pass their `GraphQLOperation` definitions in `operations`.
 
 A test opens its database and closes it. There is no reset between tests: close the database, set the next transport and open again. `close` waits until every lease ended.
